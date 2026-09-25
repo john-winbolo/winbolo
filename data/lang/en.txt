@@ -2664,3 +2664,6 @@ STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH=Nothing to publish yet. Put a mod or scena
 STR_DLGSETTINGS_WORKSHOP_PUB_HEADING=Publish this mod or scenario to the Steam Workshop
 STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE=Update the item this file came from
 
+# The lobby's Workshop chip
+STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop
+

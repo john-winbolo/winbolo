@@ -3174,6 +3174,12 @@
 #define STR_DLGSETTINGS_WORKSHOP_PUB_HEADING     2678
 #define STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE      2679
 
+/* The lobby's Workshop chip */
+/* The chip after a script's Mod or Scenario chip in the lobby, on a script
+ * published to the Steam Workshop. The link beside it reuses
+ * STR_DLGSETTINGS_WORKSHOP_OPEN. */
+#define STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP       2680
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

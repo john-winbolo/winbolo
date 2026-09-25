@@ -2655,3 +2655,6 @@ STR_DLGSETTINGS_WORKSHOP_NONE_SUBSCRIBED=Je bent op geen mods, scenario's of kaa
 STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH=Nog niets om te publiceren. Zet een mod of scenario in je Mods-map, of pak een scenario in een kaart in.
 STR_DLGSETTINGS_WORKSHOP_PUB_HEADING=Publiceer deze mod of dit scenario naar de Steam Workshop
 STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE=Het item bijwerken waar dit bestand vandaan komt
+
+# The lobby's Workshop chip
+STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop

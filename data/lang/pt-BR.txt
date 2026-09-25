@@ -2653,3 +2653,6 @@ STR_DLGSETTINGS_WORKSHOP_NONE_SUBSCRIBED=Você não está inscrito em nenhum mod
 STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH=Nada para publicar ainda. Coloque um mod ou cenário na sua pasta Mods, ou empacote um cenário em um mapa.
 STR_DLGSETTINGS_WORKSHOP_PUB_HEADING=Publicar este mod ou cenário na Oficina Steam
 STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE=Atualizar o item de onde este arquivo veio
+
+# The lobby's Workshop chip
+STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Oficina

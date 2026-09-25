@@ -620,6 +620,19 @@ float lobbyNameTagHeight(float s);
  * links measure the wrap point against it. */
 void  lobbyScenarioKindTag(bool mod, float s);
 float lobbyScenarioKindTagWidth(bool mod, float s);
+/* The "Workshop" chip a script published to the Steam Workshop wears after
+ * its kind chip, and the "Open in Workshop" button that opens its page. Each
+ * draws nothing and measures 0 for a Workshop id of 0, and the button also
+ * for a build or a run where Steam's Workshop is not available, so a caller
+ * hands them the row's id and draws and measures them on every row.
+ *
+ * The chip is placed as the kind chip is: a SameLine of its own, centred on
+ * the item before it, which is the kind chip. The button puts its own
+ * SameLine in front of itself. Both widths count the spacing in front. */
+void  lobbyScenarioWorkshopTag(uint64_t workshopId, float s);
+float lobbyScenarioWorkshopTagWidth(uint64_t workshopId, float s);
+void  lobbyScenarioWorkshopLink(uint64_t workshopId);
+float lobbyScenarioWorkshopLinkWidth(uint64_t workshopId);
 const char *lobbyGameTypeStr(gameType gt);
 /* What is playing, in two shapes for the two places that ask.
  *

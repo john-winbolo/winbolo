@@ -2653,3 +2653,6 @@ STR_DLGSETTINGS_WORKSHOP_NONE_SUBSCRIBED=Вы не подписаны ни на 
 STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH=Пока нечего публиковать. Поместите мод или сценарий в папку Mods или упакуйте сценарий в карту.
 STR_DLGSETTINGS_WORKSHOP_PUB_HEADING=Опубликовать этот мод или сценарий в Мастерской Steam
 STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE=Обновить элемент, из которого взят этот файл
+
+# The lobby's Workshop chip
+STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Мастерская

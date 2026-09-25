@@ -2630,6 +2630,7 @@ static const LangEntry langTable[] = {
     {2677, "Nothing to publish yet. Put a mod or scenario in your Mods folder, or pack a scenario into a map."},
     {2678, "Publish this mod or scenario to the Steam Workshop"},
     {2679, "Update the item this file came from"},
+    {2680, "Workshop"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

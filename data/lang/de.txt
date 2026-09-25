@@ -2655,3 +2655,6 @@ STR_DLGSETTINGS_WORKSHOP_NONE_SUBSCRIBED=Du hast keine Mods, Szenarien oder Kart
 STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH=Noch nichts zu veröffentlichen. Lege eine Mod oder ein Szenario in deinen Mods-Ordner oder packe ein Szenario in eine Karte.
 STR_DLGSETTINGS_WORKSHOP_PUB_HEADING=Diese Mod oder dieses Szenario im Steam Workshop veröffentlichen
 STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE=Das Objekt aktualisieren, aus dem diese Datei stammt
+
+# The lobby's Workshop chip
+STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop

@@ -85,6 +85,7 @@ extern "C" {
 #include "../../../gamefront.h"  /* gameFrontGetServerSim — whether the server is in this process */
 #include "../../../../server/threads.h"  /* threadsWaitForMutex / Release — the in-process read runs on the render thread */
 #include "../../../../common/wb_log.h"   /* WB_LOG_WARN / WB_LOG_CAT_GUI — a script send that did not start */
+#include "../../../../steam/steam_wrapper.h"  /* steam_workshop_open_item_page — the round rows' menu */
 }
 
 /* The window's ID. The caption before ### is translated and the ID after it
@@ -143,7 +144,8 @@ static bool                s_localRead  = false;
  *
  * state says where the file is. source is the server's SERVER_SCENARIO_SOURCE_*
  * for a row the server holds, and file is the local file's name for a row it
- * does not. */
+ * does not. workshopId is the Workshop item of the entry the row was filled
+ * from, the server's for a row the server holds, and 0 for none. */
 struct LobbyScenarioRow {
     const char         *file;
     const char         *name;
@@ -154,6 +156,7 @@ struct LobbyScenarioRow {
     bool                keepsWinCondition;
     LobbyScriptRowState state;
     uint8_t             source;
+    uint64_t            workshopId;
 };
 
 /* The one script this dialog has sent, and what became of it. s_sending is
@@ -290,6 +293,7 @@ struct LobbyRoundRow {
     bool mod;    /* keeps the round's win condition */
     bool bound;  /* written for one map, so it is the map's and not the
                     host's — it is drawn locked and never sent */
+    uint64_t workshopId;  /* the Workshop item, 0 for none */
 };
 
 /* The host's draft, and the lobby's own answer the draft was taken from.
@@ -315,14 +319,16 @@ static int           s_liveCount  = 0;
 static bool          s_roundTaken = false;
 
 static void lobbyRoundSetRow(LobbyRoundRow *r, const char *file,
-                             const char *name, bool mod, bool bound) {
+                             const char *name, bool mod, bool bound,
+                             uint64_t workshopId) {
     SDL_snprintf(r->file, sizeof(r->file), "%s", file);
     /* A manifest that named nothing still came from a file, and a row with a
        gap where its name goes reads as a fault. */
     SDL_snprintf(r->name, sizeof(r->name), "%s",
                  name[0] != '\0' ? name : file);
-    r->mod   = mod;
-    r->bound = bound;
+    r->mod        = mod;
+    r->bound      = bound;
+    r->workshopId = workshopId;
 }
 
 /* The round as the lobby reports it, composed from the two places the answer
@@ -366,10 +372,12 @@ static int lobbyRoundLive(ClientSim *cs, LobbyRoundRow *out, int max) {
             }
         }
         if (!listed && n < max) {
+            /* The attached slot carries no Workshop id, so this row has
+               none to show. */
             lobbyRoundSetRow(&out[n++], attached,
                              clientSimGetLobbyScenarioName(cs),
                              clientSimGetLobbyScenarioKeepsWinCondition(cs),
-                             clientSimGetLobbyScenarioBound(cs));
+                             clientSimGetLobbyScenarioBound(cs), 0);
         }
     }
 
@@ -377,7 +385,8 @@ static int lobbyRoundLive(ClientSim *cs, LobbyRoundRow *out, int max) {
         lobbyRoundSetRow(&out[n++], clientSimGetLobbyScriptFile(cs, i),
                          clientSimGetLobbyScriptName(cs, i),
                          clientSimGetLobbyScriptKeepsWinCondition(cs, i),
-                         clientSimGetLobbyScriptBound(cs, i));
+                         clientSimGetLobbyScriptBound(cs, i),
+                         clientSimGetLobbyScriptWorkshopId(cs, i));
     }
     return n;
 }
@@ -490,7 +499,7 @@ static void lobbyRoundAdd(const LobbyScenarioRow *row) {
        column offers. Copied rather than hard-coded false so a row that
        reached here another way is still drawn for what it is. */
     lobbyRoundSetRow(r, row->file, row->name, lobbyScenarioRowIsMod(row),
-                     row->bound);
+                     row->bound, row->workshopId);
 }
 
 static void lobbyRoundDrop(int idx) {
@@ -586,12 +595,15 @@ static bool s_detailsBound      = false;
    fetched by file name like every other row's. */
 static bool s_detailsAttached   = false;
 static int  s_detailsKind       = -1;   /* -1 unknown, 0 scenario, 1 mod */
+/* The Workshop item, 0 for none or where the source did not carry one. */
+static uint64_t s_detailsWorkshopId = 0;
 
 void lobbyScenarioDetailsReset(void) {
     s_detailsOpen     = false;
     s_detailsWantOpen = false;
     s_detailsAttached = false;
     s_detailsKind     = -1;
+    s_detailsWorkshopId = 0;
     s_detailsFile[0]  = '\0';
     s_detailsName[0]  = '\0';
     s_detailsDesc[0]  = '\0';
@@ -804,6 +816,7 @@ static void lobbyScenarioDetailsOpenRow(const LobbyScenarioRow *row) {
     s_detailsBound      = row->bound;
     s_detailsAttached   = false;
     s_detailsKind       = lobbyScenarioRowIsMod(row) ? 1 : 0;
+    s_detailsWorkshopId = row->workshopId;
     s_detailsOpen       = true;
     s_detailsWantOpen   = true;
 }
@@ -840,6 +853,8 @@ void lobbyScenarioDetailsOpenAttached(ClientSim *cs) {
     s_detailsBound      = clientSimGetLobbyScenarioBound(cs);
     s_detailsAttached   = true;
     s_detailsKind       = clientSimGetLobbyScenarioKeepsWinCondition(cs) ? 1 : 0;
+    /* CTRL_LOBBY_SETTINGS carries no Workshop id for the attached script. */
+    s_detailsWorkshopId = 0;
     s_detailsOpen       = true;
     s_detailsWantOpen   = true;
 }
@@ -952,6 +967,7 @@ void lobbyScenarioDetailsOpenScript(ClientSim *cs, int idx) {
     s_detailsAttached   = same;
     s_detailsKind       = clientSimGetLobbyScriptKeepsWinCondition(cs, idx)
                               ? 1 : 0;
+    s_detailsWorkshopId = clientSimGetLobbyScriptWorkshopId(cs, idx);
     s_detailsOpen       = true;
     s_detailsWantOpen   = true;
 }
@@ -1540,6 +1556,12 @@ void lobbyScenarioDetailsRenderModal(ClientSim *cs, float s) {
            from a source that did not carry it gets no tag rather than a
            guessed one. */
         if (s_detailsKind >= 0) lobbyScenarioKindTag(s_detailsKind == 1, s);
+        /* A published script's Workshop chip, and the button to its page
+           beside it. On the name's line and not in the footer, which is
+           DialogFooter's centred Close row and has no place for a second
+           kind of button. */
+        lobbyScenarioWorkshopTag(s_detailsWorkshopId, s);
+        lobbyScenarioWorkshopLink(s_detailsWorkshopId);
         /* The file under the name and quieter than it, because the name is
            what a host picked the thing by and the file is how they find it
            on disk when they want to read it. */
@@ -2037,8 +2059,10 @@ static void lobbyScenarioLocalRow(ClientSim *cs, const LobbyScenarioRow *row,
     float inner = ImGui::GetStyle().ItemInnerSpacing.x;
     float minW  = (ImGui::GetTextLineHeight() + inner) * 2.0f;
     float sendW = ImGui::GetFrameHeight() + inner;
-    float tagW  = lobbyScenarioKindTagWidth(lobbyScenarioRowIsMod(row), s);
-    float nameW = ImGui::GetContentRegionAvail().x - sendW - tagW;
+    float tagW  = lobbyScenarioKindTagWidth(lobbyScenarioRowIsMod(row), s) +
+                  lobbyScenarioWorkshopTagWidth(row->workshopId, s);
+    float linkW = lobbyScenarioWorkshopLinkWidth(row->workshopId);
+    float nameW = ImGui::GetContentRegionAvail().x - sendW - tagW - linkW;
     int   why   = lobbyScenarioWhyNotSend(cs, mayEdit);
     bool  mine  = SDL_strcmp(row->file, s_sendFile) == 0;
 
@@ -2046,6 +2070,9 @@ static void lobbyScenarioLocalRow(ClientSim *cs, const LobbyScenarioRow *row,
     lobbyTruncateName(row->name, nameW, nameBuf, sizeof(nameBuf));
     ImGui::TextUnformatted(nameBuf);
     lobbyScenarioKindTag(lobbyScenarioRowIsMod(row), s);
+    lobbyScenarioWorkshopTag(row->workshopId, s);
+    /* Beside the send arrow, as the server's rows carry it beside theirs. */
+    lobbyScenarioWorkshopLink(row->workshopId);
 
     ImGui::SameLine(0.0f, inner);
     if (lobbyScenarioArrow("##send", ImGuiDir_Up, why == 0,
@@ -2167,7 +2194,7 @@ static void lobbyScenarioChooserCatalogue(ClientSim *cs,
 
     for (i = 0; i < count; i++) {
         char                 nameBuf[SERVER_SCENARIO_FILE_LEN + 4];
-        float                minW, arrowW, saveW, tagW, nameW;
+        float                minW, arrowW, saveW, tagW, linkW, nameW;
         int                  why;
         bool                 can;
         bool                 save;
@@ -2222,8 +2249,11 @@ static void lobbyScenarioChooserCatalogue(ClientSim *cs,
         saveW  = save ? ImGui::GetFrameHeight() +
                             ImGui::GetStyle().ItemInnerSpacing.x
                       : 0.0f;
-        tagW   = lobbyScenarioKindTagWidth(lobbyScenarioRowIsMod(&rows[i]), s);
-        nameW  = ImGui::GetContentRegionAvail().x - arrowW - saveW - tagW;
+        tagW   = lobbyScenarioKindTagWidth(lobbyScenarioRowIsMod(&rows[i]), s) +
+                 lobbyScenarioWorkshopTagWidth(rows[i].workshopId, s);
+        linkW  = lobbyScenarioWorkshopLinkWidth(rows[i].workshopId);
+        nameW  = ImGui::GetContentRegionAvail().x - arrowW - saveW - tagW -
+                 linkW;
         if (nameW < minW) nameW = 0.0f;
         lobbyTruncateName(rows[i].name, nameW, nameBuf, sizeof(nameBuf));
 
@@ -2255,6 +2285,11 @@ static void lobbyScenarioChooserCatalogue(ClientSim *cs,
             focused = true;
         }
         lobbyScenarioKindTag(lobbyScenarioRowIsMod(&rows[i]), s);
+        lobbyScenarioWorkshopTag(rows[i].workshopId, s);
+        /* The item's Workshop page, next to the Save arrow on a row that has
+           one. Subscribing there is the better copy of a Workshop script:
+           Steam keeps it up to date. */
+        lobbyScenarioWorkshopLink(rows[i].workshopId);
 
 #ifndef __EMSCRIPTEN__
         /* Down, for a file coming to this computer, as the send's arrow
@@ -2426,7 +2461,18 @@ static void lobbyScenarioChooserRound(ClientSim *cs, LobbyScenarioRow *rows,
             lobbyRoundOpenDetails(cs, r, rows, count);
         }
         imguiHandOnHover();
+        /* The Workshop page is on the name's right-click menu here. This row
+           has no width for another button: the up and down arrows hold the
+           right edge, and a name that reaches them already wraps. Asked for
+           while the name is the last item, and drawn at the end of the row. */
+        if (lobbyScenarioWorkshopLinkWidth(r->workshopId) > 0.0f) {
+            ImGui::OpenPopupOnItemClick("##workshopMenu",
+                                        ImGuiPopupFlags_MouseButtonRight);
+        }
         lobbyScenarioKindTag(r->mod, s);
+        /* After the kind chip, so the width test below, which reads the last
+           item's right edge, counts it. */
+        lobbyScenarioWorkshopTag(r->workshopId, s);
 
         if (mayEdit) {
             /* Where the last thing drawn ended, in this window's own
@@ -2467,6 +2513,13 @@ static void lobbyScenarioChooserRound(ClientSim *cs, LobbyScenarioRow *rows,
                    height as the pointer passes over it. */
                 ImGui::Dummy(ImVec2(moveW, frameH));
             }
+        }
+        if (ImGui::BeginPopup("##workshopMenu")) {
+            if (ImGui::MenuItem(langGetText(STR_DLGSETTINGS_WORKSHOP_OPEN))) {
+                steam_workshop_open_item_page(r->workshopId);
+            }
+            imguiHandOnHover();
+            ImGui::EndPopup();
         }
         ImGui::PopID();
     }
@@ -2524,7 +2577,11 @@ void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
     float lineH  = ImGui::GetTextLineHeightWithSpacing();
     float frameH = ImGui::GetFrameHeight();
     float inner  = ImGui::GetStyle().ItemInnerSpacing.x;
-    float tagW   = lobbyScenarioKindTagWidth(false, s);
+    /* The Workshop chip is counted as though every row wore one: any id but
+       0 gives its width. The button beside it is not; a row that cannot fit
+       it cuts its name shorter, and under that wraps. */
+    float tagW   = lobbyScenarioKindTagWidth(false, s) +
+                   lobbyScenarioWorkshopTagWidth(1, s);
     float chromeW;
     float nameW  = 200.0f * s;
     float winW;
@@ -2616,6 +2673,7 @@ void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
             rows[i].keepsWinCondition = e->keepsWinCondition;
             rows[i].state             = merged[i].state;
             rows[i].source            = e->source;
+            rows[i].workshopId        = e->workshopId;
         }
         /* A manifest that named nothing still came from a file. Done here
            rather than where a name is drawn, so the filter, the details

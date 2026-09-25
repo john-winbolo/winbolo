@@ -2655,3 +2655,6 @@ STR_DLGSETTINGS_WORKSHOP_NONE_SUBSCRIBED=Ви не підписані на жо�
 STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH=Поки що нічого публікувати. Покладіть мод або сценарій у теку Mods або запакуйте сценарій у карту.
 STR_DLGSETTINGS_WORKSHOP_PUB_HEADING=Опублікувати цей мод або сценарій у Майстерні Steam
 STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE=Оновити елемент, з якого походить цей файл
+
+# The lobby's Workshop chip
+STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Майстерня

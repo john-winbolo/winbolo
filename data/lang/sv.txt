@@ -2655,3 +2655,6 @@ STR_DLGSETTINGS_WORKSHOP_NONE_SUBSCRIBED=Du prenumererar inte på några moddar,
 STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH=Inget att publicera än. Lägg en modd eller ett scenario i din Mods-mapp, eller packa in ett scenario i en karta.
 STR_DLGSETTINGS_WORKSHOP_PUB_HEADING=Publicera den här modden eller det här scenariot till Steam Workshop
 STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE=Uppdatera det objekt den här filen kom från
+
+# The lobby's Workshop chip
+STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop
