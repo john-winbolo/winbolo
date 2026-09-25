@@ -672,7 +672,8 @@ static bool skinPublishStart(void) {
 
     return steam_workshop_publish_begin(folder, s_pubTitle, s_pubDesc,
                                         previewArg,
-                                        s_pubAsNew ? 0 : s_pubExistingId);
+                                        s_pubAsNew ? 0 : s_pubExistingId,
+                                        "Skin");
 }
 #endif  /* !BOLO_MOBILE && !__EMSCRIPTEN__ */
 

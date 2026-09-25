@@ -111,6 +111,7 @@ static char s_pubTitle[k_cchPublishedDocumentTitleMax];
 static char s_pubDesc[k_cchPublishedDocumentDescriptionMax];
 static char s_pubPreview[1024];
 static char s_pubFolder[1024];
+static char s_pubTag[256];
 
 /* StartItemUpdate through SubmitItemUpdate for one item, using the fields
    copied above.  Defined with the other publish functions at the foot of the
@@ -149,6 +150,7 @@ extern "C" void steam_shutdown(void) {
   s_pubDesc[0] = '\0';
   s_pubPreview[0] = '\0';
   s_pubFolder[0] = '\0';
+  s_pubTag[0] = '\0';
 }
 
 extern "C" void steam_run_callbacks(void) {
@@ -804,12 +806,15 @@ static bool steam_publish_submit_update(PublishedFileId_t id) {
      SetItemPreview would fail the whole update. */
   if (s_pubPreview[0] != '\0') ugc->SetItemPreview(h, s_pubPreview);
 
-  /* One "Skin" tag — what the app's Workshop page filters on. */
-  const char *tags[] = {"Skin"};
-  SteamParamStringArray_t arr;
-  arr.m_ppStrings = tags;
-  arr.m_nNumStrings = 1;
-  ugc->SetItemTags(h, &arr);
+  /* The item's one tag — what the app's Workshop page filters on.  An empty
+     tag leaves the item's tags alone. */
+  if (s_pubTag[0] != '\0') {
+    const char *tags[] = {s_pubTag};
+    SteamParamStringArray_t arr;
+    arr.m_ppStrings = tags;
+    arr.m_nNumStrings = 1;
+    ugc->SetItemTags(h, &arr);
+  }
 
   /* Visibility is deliberately left alone.  A new item starts private, and
      the author makes it public from the item page — where this flow sends
@@ -824,7 +829,8 @@ extern "C" bool steam_workshop_publish_begin(const char *contentFolder,
                                              const char *title,
                                              const char *description,
                                              const char *previewPng,
-                                             uint64_t existingId) {
+                                             uint64_t existingId,
+                                             const char *tag) {
   if (!steam_workshop_available()) return false;
   /* One publish at a time — a second begin would overwrite the handle the
      dispatch arm is matching against and strand the first. */
@@ -840,6 +846,7 @@ extern "C" bool steam_workshop_publish_begin(const char *contentFolder,
   steam_publish_copy(s_pubTitle, sizeof(s_pubTitle), title);
   steam_publish_copy(s_pubDesc, sizeof(s_pubDesc), description);
   steam_publish_copy(s_pubPreview, sizeof(s_pubPreview), previewPng);
+  steam_publish_copy(s_pubTag, sizeof(s_pubTag), tag);
   s_pubNeedsLegal = false;
   s_pubFileId = 0;
   s_pubUpdate = k_UGCUpdateHandleInvalid;
