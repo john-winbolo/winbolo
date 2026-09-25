@@ -146,6 +146,12 @@ function M.guard_build_spot(world, info, tmx, tmy, threat_mx, threat_my, state)
   local cands = {}
   local blocked = state and state.blocked or nil
   local now_blk = state and state.tick or 0
+  -- Live blitz shot lines (C.PILL_PLACE_AVOID_BLITZ_LINE; nil = off / no
+  -- blitz, and then nothing below changes): a guard pill must not stand on our
+  -- own or a squadmate's line to the blitz pill. squad is loaded long before
+  -- builder (attack requires it), so this require is only a table read.
+  local sq = require("squad")
+  local blitz_lines = state and sq.blitz_shot_lines(state, world, now_blk, info.player_number)
   -- slot[tier][class] = { cx, cy }
   local slot = { {}, {} }
   local n_class = { 0, 0, 0 }
@@ -159,10 +165,16 @@ function M.guard_build_spot(world, info, tmx, tmy, threat_mx, threat_my, state)
       local cy = U.mclamp(math.floor(tmy + dy * dist + 0.5))
       local rej, tier, cls = nil, nil, nil
       local blk_until = blocked and blocked[cy * C.MAP_W + cx] or nil
+      local on_line = blitz_lines and not (blk_until and now_blk < blk_until)
+                      and U.is_placeable(cx, cy, world)
+                      and sq.tile_on_blitz_line(world, blitz_lines, cx, cy, now_blk) or nil
       if blk_until and now_blk < blk_until then
         rej = "blocked"
       elseif not U.is_placeable(cx, cy, world) then
         rej = "not_placeable"
+      elseif on_line then
+        rej = "blitz_line"
+        local ln = on_line
       else
         local tt = U.ttype(cx, cy)
         if tt == C.T_GRASS or tt == C.T_ROAD then tier = 1
@@ -1385,6 +1397,17 @@ function M.decide(state, world, info, now)
                        and wtt ~= C.T_FOREST
                        and can_reach
                        and safety_ok
+      -- A pillbox blocker is a NEW pill: not on a live blitz shot line
+      -- (C.PILL_PLACE_AVOID_BLITZ_LINE). The slot then falls through to the
+      -- wall build below, exactly as with no pill in hand.
+      if can_pbox then
+        local sq = require("squad")
+        local bl = sq.blitz_shot_lines(state, world, now, info.player_number)
+        local hit = bl and sq.tile_on_blitz_line(world, bl, wx, wy, now)
+        if hit then
+          can_pbox = false
+        end
+      end
       if can_pbox then
         -- NOTE: this is "attempts dispatched", not "blockers actually
         -- placed". If the engine refuses the action or the LGM dies

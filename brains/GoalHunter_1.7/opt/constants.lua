@@ -1041,6 +1041,17 @@ M.BLITZ_GO_GATE_FROM_STANDOFF   = true
 -- standoff sanity check (squad.update_pending_pills fills
 -- world.pending_pill_at). false = only live pills block. KEEL false.
 M.BLITZ_SPOT_PENDING_PILLS      = true
+-- Pill placement avoids blitz shot lines, 2026-09-25. true => while a blitz is
+-- live (negotiating, committed, approach, blitz_wait, charge) every NEW pill
+-- placement pick refuses a tile that would block a blitz shot line: our own
+-- spot -> target pill, and each squadmate's broadcast spot (bes) -> the same
+-- pill. "Would block" = the arbiter's own spot test (squad
+-- blitz_spot_shot_blocked) passes without the tile and fails with a pill on it.
+-- Covers the offensive/panic guard spot (builder.guard_build_spot), the
+-- strategic scan (eval_place_pill_strategic), HARVEST_RESUME and the
+-- pillbox-as-wall-blocker. Repairs are not affected (a pill cannot move).
+-- false = the old picks. KEEL false.
+M.PILL_PLACE_AVOID_BLITZ_LINE   = true
 M.EARLY_CAPTURE_BASE_HYST_EXEMPT = true -- opening phase: capture_base skips ALL hysteresis (switch + commit + history), same as capture_pill
 M.REFUEL_URGENCY_MIN       = 0.37  -- minimum urgency multiplier for refuel cost
 -- Critical-armour need floor, expressed in the "need" convention used across
@@ -1506,6 +1517,21 @@ M.DIJKSTRA_SHORT_RESTART_DIST   = 2     -- tank-moved threshold for short-range 
 -- what a tank may ENTER, not about which layer priced it. Plumbed to the C
 -- pathfinder in cpathfinder.lua's M.configure as "nextstep_foot_sea_rule".
 M.PF_NEXTSTEP_FOOT_SEA_RULE     = true  -- boatless tank is never handed a deep-sea next step (KEEL: false)
+-- Dijkstra next step, 2026-09-25. The slate's g-cost is cost FROM THE SLATE
+-- ROOT, so the two next-step fallbacks (veer round a live obstacle tile, and
+-- "tank drifted off the traced chain") picked the neighbour with the LOWEST g,
+-- which is the neighbour nearest the root: the tank turned back to the tile it
+-- had just left (20260925_105315 bot9 t=2931-3055, A->B->A round p0's avoid
+-- tiles). true => both fallbacks first pick the neighbour that touches the
+-- traced chain furthest toward the destination; the old pick only when no
+-- neighbour touches the chain ahead. Needs the engine to know the config key
+-- "nextstep_chain_veer" (an older engine ignores it). KEEL false.
+M.PF_NEXTSTEP_CHAIN_VEER        = true
+-- Path flip guard, 2026-09-25. true => when the next path step is the tile
+-- the tank just left (A->B->A) and not the destination, steering runs a fresh
+-- A* from the current tile instead of the Dijkstra step, for as long as the
+-- tank stays on that tile. Cheap: one tile compare per path call. KEEL false.
+M.PF_FLIP_FRESH_ASTAR           = true
 M.DIJKSTRA_USE_FOR_GOALS        = true  -- replace cost_to in step_eval_queue with dijkstra
                                         -- lookup_by_kind. Pill pools use kind=1 (low-danger
                                         -- slate), other pools use kind=0 (normal-danger slate).
@@ -4656,6 +4682,14 @@ M.PRESETS = {
     -- 2026-09-25: a pill our man or an ally's man is walking to build blocks a
     -- blitz spot's shot line like a live pill. KEEL: only live pills block.
     BLITZ_SPOT_PENDING_PILLS      = false,
+    -- 2026-09-25: new pill placements refuse a tile on a live blitz shot line.
+    -- KEEL placed anywhere.
+    PILL_PLACE_AVOID_BLITZ_LINE   = false,
+    -- 2026-09-25: the Dijkstra next-step fallbacks follow the traced chain
+    -- toward the destination. KEEL took the lowest g (toward the slate root).
+    PF_NEXTSTEP_CHAIN_VEER        = false,
+    -- 2026-09-25: an A->B->A next step forces a fresh A*. KEEL kept the step.
+    PF_FLIP_FRESH_ASTAR           = false,
     -- 2026-09-05 (evening): BLITZ_CONTESTED_ALL_SUICIDERS had an entry here and
     -- no longer needs one -- the bench sent it back and its DEFAULT is now
     -- false, which is already the KEEL value. A knob whose default equals its

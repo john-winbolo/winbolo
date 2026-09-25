@@ -2597,8 +2597,14 @@ function Brain.think(info)
           reason = "panic_override"
         else
           local ok, why = builder.place_tile_valid(info, world, trip.mx, trip.my)
+          -- A resume is a NEW pill: refuse it on a live blitz shot line
+          -- (C.PILL_PLACE_AVOID_BLITZ_LINE; nil lines = off / no blitz).
+          local _bl = ok and squad.blitz_shot_lines(state, world, now, info.player_number)
+          local _bl_hit = _bl and squad.tile_on_blitz_line(world, _bl, trip.mx, trip.my, now)
           if not ok then
             reason = (why == "unreachable") and "unreachable" or ("invalid_" .. why)
+          elseif _bl_hit then
+            reason = "blitz_line"
           elseif trip.score_at_dispatch then
             -- Fresh re-score, TRAVEL-FREE: sc7 pinned (as before) AND the tank
             -- position pinned to where we stood when the builder was sent.

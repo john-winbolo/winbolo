@@ -289,6 +289,7 @@ end
 --     wallset      commander shield walls for the shell test
 --     site, tick   for the reject log line
 --     spot_fx/fy   spot float coords to print (defaults to the origin)
+--     quiet        no reject line (a probe, not a real spot test)
 --   Returns idx, awx, awy, trees when an aim passes both tests, else nil.
 --   Aim preference matches clear_aim_from_world: prefer_idx if it passes, else
 --   a clear centre, else a clear corner, else the fewest trees.
@@ -335,7 +336,7 @@ function M.clear_aim_margin(ox, oy, pmx, pmy, world, margin, opts)
     end
   end
   if best_i then return best_i, best_wx, best_wy, best_trees end
-  if first_fail then
+  if first_fail and not opts.quiet then
     local f = first_fail
     local off_i = offs[first_fail_i]
   end

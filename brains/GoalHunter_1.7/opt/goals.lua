@@ -3378,9 +3378,20 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
       end
   end  -- score_cell
 
+  -- Live blitz shot lines (C.PILL_PLACE_AVOID_BLITZ_LINE): a tile that would
+  -- block our own or a squadmate's line to the blitz pill is not a candidate,
+  -- so the scan takes the next-best tile. nil = knob off / no blitz: the scan
+  -- is exactly the old one. Checked here, outside score_cell, so score_cell
+  -- keeps its upvalue count.
+  local blitz_lines = squad.blitz_shot_lines(state, world, blk_now, info.player_number)
+  local n_line_skip = 0
+
   if only then
     -- Harvest re-score: one tile, fresh context. nil = the tile no longer
     -- qualifies at all (category drift / surplus / blocked / occupied).
+    if blitz_lines and squad.tile_on_blitz_line(world, blitz_lines, only.mx, only.my, blk_now) then
+      return nil
+    end
     score_cell(only.mx, only.my)
     if best_mx then return best_score end
     return nil
@@ -3389,8 +3400,16 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   for dy = -R, R do
     for dx = -R, R do
       -- TANK-centric: scan around our position
-      score_cell(U.mclamp(tmx + dx), U.mclamp(tmy + dy))
+      local cx, cy = U.mclamp(tmx + dx), U.mclamp(tmy + dy)
+      if blitz_lines and U.is_placeable(cx, cy, world)
+         and squad.tile_on_blitz_line(world, blitz_lines, cx, cy, blk_now) then
+        n_line_skip = n_line_skip + 1
+      else
+        score_cell(cx, cy)
+      end
     end
+  end
+  if n_line_skip > 0 then
   end
 
   if not best_mx then

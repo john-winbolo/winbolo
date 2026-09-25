@@ -597,6 +597,42 @@ local function stuck_recovery(state, info, goal)
   end
 end
 
+-- Path flip guard (C.PF_FLIP_FRESH_ASTAR; PRESETS.keel = false).
+-- The Dijkstra next step can send the tank back to the tile it just left
+-- (A->B->A): 20260925_105315 bot9 t=2931-3055 drove (147,123)->(147,122)->
+-- (147,123)->(147,122) for 120 ticks round an ally's avoid tiles (see
+-- chain_rank_pick in brain_pathfinder.c for the cause). When the step names
+-- the tile we just left and it is not the destination, run a fresh A* from
+-- the current tile instead, and keep doing so while we stay on this tile.
+--
+-- M.flip_track(state, tmx, tmy): call once per path call. Remembers the last
+-- tile we LEFT (state._pf_left_mx/my) and drops the hold when we move.
+function M.flip_track(state, tmx, tmy)
+  if state._pf_cur_mx ~= tmx or state._pf_cur_my ~= tmy then
+    if state._pf_cur_mx then
+      state._pf_left_mx, state._pf_left_my = state._pf_cur_mx, state._pf_cur_my
+    end
+    state._pf_cur_mx, state._pf_cur_my = tmx, tmy
+    state._pf_flip_hold = nil
+  end
+end
+
+-- M.flip_is_back(state, dest_mx, dest_my, nx, ny) -> true when (nx,ny) is the
+-- tile we just left and not the destination. Pure: one compare.
+function M.flip_is_back(state, dest_mx, dest_my, nx, ny)
+  return nx ~= nil and nx >= 0 and state._pf_left_mx ~= nil
+     and nx == state._pf_left_mx and ny == state._pf_left_my
+     and not (nx == dest_mx and ny == dest_my)
+end
+
+-- M.flip_holding(state, tmx, tmy, dest_mx, dest_my) -> true while a flip hold
+-- is set for this tile and this destination.
+function M.flip_holding(state, tmx, tmy, dest_mx, dest_my)
+  local h = state._pf_flip_hold
+  return h ~= nil and h.mx == tmx and h.my == tmy
+     and h.dmx == dest_mx and h.dmy == dest_my
+end
+
 -- Wrapper: call C pathfinder and update state.pf for compatibility with
 -- stuck detection, debug logging, and other consumers of state.pf.
 local function cpf_path_to(state, info, dest_mx, dest_my)
@@ -643,9 +679,36 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
     avoid = merged
   end
   local _t_s0 = BRAIN_PROFILE and clock_us() or 0
-  local status, nx, ny = cpf.path_to(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, C.ASTAR_BUDGET, false, avoid,
-                                     nogo and (C.SEA_NOGO_AVOID_PENALTY or 30000)
-                                          or C.NAV_AVOID_PENALTY)
+  -- Not while a sea no-go set is live: A* does not take the obstacle set, and
+  -- the no-go water is a hard rule (the ally avoid tiles are only a dodge).
+  local flip_on = C.PF_FLIP_FRESH_ASTAR and not nogo
+  if flip_on then M.flip_track(state, tmx, tmy) end
+  local status, nx, ny
+  local flip_astar = flip_on and M.flip_holding(state, tmx, tmy, dest_mx, dest_my)
+  if not flip_astar then
+    status, nx, ny = cpf.path_to(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, C.ASTAR_BUDGET, false, avoid,
+                                 nogo and (C.SEA_NOGO_AVOID_PENALTY or 30000)
+                                      or C.NAV_AVOID_PENALTY)
+    if flip_on and status == 1 and M.flip_is_back(state, dest_mx, dest_my, nx, ny) then
+      state._pf_flip_hold = { mx = tmx, my = tmy, dmx = dest_mx, dmy = dest_my }
+      flip_astar = true
+      print2(string.format("PF_FLIP t=%d tile=(%d,%d) next=(%d,%d) = tile just left, dest=(%d,%d) -> fresh A* while on this tile",
+        state.tick or 0, tmx, tmy, nx, ny, dest_mx, dest_my))
+    end
+  end
+  if flip_astar then
+    -- skip_dijkstra = true: A* from THIS tile. Taken only when it gives a
+    -- step (done, or running with a step); otherwise the Dijkstra step as
+    -- before, so a budget-starved A* cannot freeze the tank.
+    local a_st, a_nx, a_ny = cpf.path_to(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, C.ASTAR_BUDGET, true)
+    if a_st == 1 or (a_st == 0 and a_nx and a_nx >= 0) then
+      status, nx, ny = a_st, a_nx, a_ny
+    elseif status == nil then
+      status, nx, ny = cpf.path_to(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, C.ASTAR_BUDGET, false, avoid,
+                                   nogo and (C.SEA_NOGO_AVOID_PENALTY or 30000)
+                                        or C.NAV_AVOID_PENALTY)
+    end
+  end
   if BRAIN_PROFILE then
     _path_search_us = _path_search_us + (clock_us() - _t_s0)
     -- Snapshot which method (dij/astar) cpf.path_to actually used
@@ -748,6 +811,7 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
   end
   return nil, nil
 end
+M._cpf_path_to = cpf_path_to   -- unit tests (test_place_line_flip.lua)
 
 -- Impassable terrain types for path lookahead line-of-sight checks.
 local IMPASSABLE = {
