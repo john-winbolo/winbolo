@@ -1900,6 +1900,50 @@ M.KILL_LGM_NAV_INSET   = 3   -- tiles: nav target sits this far INSIDE the engag
                              -- (engage trigger still fires at SHOOT_RANGE; only the
                              -- "where to drive to" target gets pulled in)
 
+-- ── LGM destination aim (2026-09-25) ──────────────────────────────────────
+-- An enemy builder walks a straight line from where his tank stood to the
+-- CENTRE of the tile he was sent to (lgm.c lgmNewPrimaryRequest sets destX/Y
+-- to tile*256+128; lgmMoveAway re-aims at it every tick). A common job is a
+-- repair of his own team's DEAD pill. When his recent positions lie on one
+-- clean line and that line, projected forward, passes a dead hostile pill,
+-- kill_lgm.predict_aim takes the PILL CENTRE as his destination instead of
+-- the map-edge point the 3-window dest_lock uses: the lead sim stops at the
+-- pill (he stands there for LGM_BUILD_TIME, 20 game ticks), and any predicted
+-- impact inside the pill tile snaps to the tile centre. A dead pill does not
+-- stop a shell (pillsIsPillHit needs armour > 0), so the shell must END its
+-- life in that tile; the tile counts as SOLID for the builder death test
+-- (pillsExistPos has no armour check), so the blast kills only a man on that
+-- same tile -- the centre is the point with the most margin. When the man is
+-- not walking a clean line (just out of the tank, stopped, turning, sliding
+-- along a wall, turned back, heading to his own tank) nothing is locked and
+-- the old predictor runs unchanged.
+-- HARD ONLY: M.MODE_LEVELS turns all three switches (AIM, LIVE_PILLS,
+-- HOLD_FIRE) off in every medium and easy bundle, so Easy/Medium keep the old
+-- aim and fire gate. No difficulty token = C.DIFFICULTY "hard" = on.
+M.LGM_DEST_AIM            = true  -- master switch (keel false = old aim exactly)
+M.LGM_DEST_WINDOW_TICKS   = 20    -- brain ticks of position history the heading fit uses
+M.LGM_DEST_MIN_SAMPLES    = 6     -- fewer samples than this in the window = no heading (fallback)
+M.LGM_DEST_COLLINEAR_WU   = 24    -- max distance (wu) of any sample from the oldest->newest chord (man pos is 16-wu quantized)
+M.LGM_DEST_BACKSTEP_WU    = 16    -- a sample may fall this far BEHIND the previous one along the chord (turned back = fallback)
+M.LGM_DEST_MIN_SPEED      = 3     -- wu/tick over the window AND over the last 4 ticks; slower = stopped / stuck (fallback)
+M.LGM_DEST_MIN_SPEED_FRAC = 0.8   -- measured speed / terrain speed below this = sliding along a wall (fallback); 0 = off
+M.LGM_DEST_RAY_TILES      = 16    -- how far ahead of the man the ray looks for a dead pill
+M.LGM_DEST_PERP_WU        = 96    -- a pill centre within this distance (wu) of the ray counts as on it ...
+M.LGM_DEST_PERP_DEG       = 3     -- ... widened to along*tan(this) further out (heading noise grows with range)
+-- 2026-09-25 (Andrew's review): he also walks to a LIVE hostile pill below
+-- full armour to repair it (lgm.c refuses a walk to a full pill). A live pill
+-- STOPS the shell: it goes off at the tile centre on the first tick it is in
+-- the tile (shellsCalcCollision -> pillsIsPillHit). The tile is solid for the
+-- builder death test either way, so only a man on the tile dies. Note: our
+-- shell damages that pill, and a live pill in range shoots back; the pill-
+-- danger logic is unchanged.
+M.LGM_DEST_LIVE_PILLS     = true  -- live hostile pill with 0 < health < PILLS_MAX_HEALTH is a candidate too
+-- Hold fire while a destination pill is locked until the predicted blast goes
+-- off while he stands on the pill tile (entered it, not yet LGM_BUILD_TIME 20
+-- ticks past his arrival). The gun keeps aiming at the pill centre so it is
+-- ready. "Otherwise we just make the LGM mad." (Andrew). No lock = old fire.
+M.LGM_DEST_HOLD_FIRE      = true
+
 -- ── Capture-pill LGM hunt (2026-09-08) ────────────────────────────────────
 -- A hostile LGM standing on or beside the dead pill we are driving to grab is
 -- a builder rebuilding the corpse out from under us: the moment his repair
@@ -4683,6 +4727,25 @@ M.PRESETS = {
     --   competition, so its keel value has to be the identity, 1.0, for the
     --   baseline pool numbers to come out unchanged.
     FOCUS_OTHER_COST_MULT         = 1.0,
+    -- 2026-09-25: the kill_lgm lead predictor now takes a dead hostile pill on
+    -- the enemy builder's straight-line heading as his destination (lead sim
+    -- stops at the pill, impact inside the pill tile snaps to its centre).
+    -- KEEL leads him toward the map edge (3-window dest_lock) or linearly.
+    -- The tuning knobs below are unread while the master is false and are
+    -- pinned only so a later tweak to one of their DEFAULTS cannot leak into
+    -- the baseline.
+    LGM_DEST_AIM                  = false,
+    LGM_DEST_WINDOW_TICKS         = 20,
+    LGM_DEST_MIN_SAMPLES          = 6,
+    LGM_DEST_COLLINEAR_WU         = 24,
+    LGM_DEST_BACKSTEP_WU          = 16,
+    LGM_DEST_MIN_SPEED            = 3,
+    LGM_DEST_MIN_SPEED_FRAC       = 0.8,
+    LGM_DEST_RAY_TILES            = 16,
+    LGM_DEST_PERP_WU              = 96,
+    LGM_DEST_PERP_DEG             = 3,
+    LGM_DEST_LIVE_PILLS           = false,
+    LGM_DEST_HOLD_FIRE            = false,
   },
   -- nolgm_off: RUDDER as it stood BEFORE the loaded, builder-less work
   -- (2026-09-08) -- every knob that work added, at its pre-change value, and
@@ -4757,6 +4820,9 @@ M.MODE_LEVELS = {
       REPAIR_UNDER_FIRE_MULT = 8.0, REPAIR_QUIET_TICKS = 150, REPAIR_DEAD_ADV_RELIEF_PER_TANK = 0.10,
       -- fuelled
       ARMOUR_LOW = 18, SHELLS_LOW = 22, ARMOUR_COMBAT = 33, SHELLS_COMBAT = 33,
+      -- LGM destination aim is Hard only (Andrew, 2026-09-25): the old lead
+      -- predictor and the old fire gate, exactly as before the feature.
+      LGM_DEST_AIM = false, LGM_DEST_LIVE_PILLS = false, LGM_DEST_HOLD_FIRE = false,
     },
     easy = {
       -- Blitz: solo, never gangs up (BLITZ_ENABLED=false is the Stage 3 Pass A
@@ -4799,9 +4865,18 @@ M.MODE_LEVELS = {
       CROSSFIRE_MULTIPLIER_ENABLED = true,
       -- Refuel: predictable, fuelled
       ARMOUR_LOW = 22, SHELLS_LOW = 24, ARMOUR_COMBAT = 36, SHELLS_COMBAT = 36,
+      -- LGM destination aim is Hard only (Andrew, 2026-09-25): the old lead
+      -- predictor and the old fire gate, exactly as before the feature.
+      LGM_DEST_AIM = false, LGM_DEST_LIVE_PILLS = false, LGM_DEST_HOLD_FIRE = false,
     },
   },
-  survival = { hard = {}, medium = {}, easy = {} },  -- placeholders (see modes.txt)
+  -- survival: placeholders (see modes.txt); only the Hard-only LGM
+  -- destination aim is switched off below Hard so far, as in default.
+  survival = {
+    hard = {},
+    medium = { LGM_DEST_AIM = false, LGM_DEST_LIVE_PILLS = false, LGM_DEST_HOLD_FIRE = false },
+    easy   = { LGM_DEST_AIM = false, LGM_DEST_LIVE_PILLS = false, LGM_DEST_HOLD_FIRE = false },
+  },
 }
 
 return M

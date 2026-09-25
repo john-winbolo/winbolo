@@ -7984,9 +7984,14 @@ function Brain.think(info)
                                                 cpf.SHOT_TANK or 0, 0)
             if tiles then
               local origin_mx, origin_my = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
+              -- LGM_DEST_AIM: aimed at the destination pill -> its tile is the
+              -- target, not a blocker (a live damaged pill would read as one).
+              local dpt = (elm.predict_tier == "dest_pill" or elm.predict_tier == "dest_pill_hold")
+                          and elm.dest_pill or nil
               for ti = 1, #tiles do
                 local t = tiles[ti]
                 if t.mx == elm.mx and t.my == elm.my then break end
+                if dpt and t.mx == dpt.mx and t.my == dpt.my then break end
                 if not (t.mx == origin_mx and t.my == origin_my) then
                   local tt = U.ttype(t.mx, t.my)
                   if tt == C.T_BUILDING or tt == C.T_HALFBUILD then
@@ -8032,6 +8037,11 @@ function Brain.think(info)
           local KILL_WU = 64  -- ½-tile-diameter circle around predicted LGM center
           if los_blocked then
             _ev.status = "los_blocked"
+          elseif C.LGM_DEST_HOLD_FIRE and elm.dest_hold then
+            -- LGM_DEST_HOLD_FIRE: the aim is on his destination pill but the
+            -- blast would not go off while he is on its tile.  Hold the
+            -- trigger; the crosshair driver below still aims at the pill.
+            _ev.status = "dest_hold"
           elseif impact_off > KILL_WU then
             _ev.status = "gunrange_off"
           elseif _shoot_busy or _already_fired then
@@ -8443,6 +8453,7 @@ function Brain.think(info)
         --                and refire.id == cand.seen_since and (refire.misses or 0) >= MAXM
         local capped = false
         if cand and killable and not capped
+           and not (C.LGM_DEST_HOLD_FIRE and cand.dest_hold)  -- LGM_DEST_HOLD_FIRE: see the kill-LGM gate
            and not _no_shells and not _shoot_busy and not _already_fired
            and (bit.band(taps, KEY_SHOOT)) == 0
            and clh.dist_wu <= C.KILL_LGM_SHOOT_RANGE * 256 then
@@ -9270,6 +9281,56 @@ function Brain.think(info)
           "  sim_T = round(T * DEST_LEAD_SCALE(%.2f)) = %d", DS, sT))
         viz.detail_text(did, "  sim_forward_to_dest steps from lgm toward dest,")
         viz.detail_text(did, "  each step: angle-to-dest * MAN_SPEED[tile], wall-slide on block")
+      elseif (tier == "dest_pill" or tier == "dest_pill_lead" or tier == "dest_pill_hold")
+             and elm.dest_pill and elm.dest_ray then
+        local dp, ray = elm.dest_pill, elm.dest_ray
+        local D  = elm.predicted_dist_wu or 0
+        local T  = elm.flight_ticks or 0
+        local DS = kill_lgm.DEST_LEAD_SCALE
+        viz.detail_text(did, string.format("LGM_DEST_AIM: %s hostile pill on his heading (health %d):",
+                                           dp.live and "live damaged" or "dead", dp.health or 0))
+        viz.detail_text(did, string.format(
+          "  heading: chord (%.0f,%.0f)->(%.0f,%.0f) u=(%.2f,%.2f) speed=%.1f wu/tick",
+          ray.ax, ray.ay, ray.ox, ray.oy, ray.ux, ray.uy, ray.speed))
+        viz.detail_text(did, string.format(
+          "  pill #%s tile=(%d,%d) centre=(%.0f,%.0f) along=%.0fwu (max %.0f)",
+          tostring(dp.id), dp.mx, dp.my, dp.cx, dp.cy, dp.along, ray.len))
+        viz.detail_text(did, string.format(
+          "  perp=%.0fwu <= tol=max(PERP_WU %.0f, along %.0f * tan %.4f = %.0f) = %.0f",
+          dp.perp, ray.perp_wu, dp.along, ray.perp_tan, dp.along * ray.perp_tan, dp.tol))
+        local dt = elm.dest_timing
+        if dt then
+          -- LGM_DEST_HOLD_FIRE: every term of the fire / hold verdict.
+          viz.detail_text(did, string.format(
+            "  aim = pill centre; D=%.0fwu sl=sightlen_for(D)=%d T_full=4*sl-5=%d",
+            dt.D, dt.sl, dt.T_full))
+          viz.detail_text(did, string.format(
+            "  T_entry = first t>=1 with tank+32*(t+5)wu inside the tile = %d",
+            dt.T_entry))
+          viz.detail_text(did, string.format(
+            "  steps = round(T * %.2f): s_full=%d s_entry=%d", DS, dt.s_full, dt.s_entry))
+          viz.detail_text(did, string.format(
+            "  man sim (one step per tick): on tile at s_enter=%s, arrives s_arrive=%s",
+            tostring(dt.s_enter), tostring(dt.s_arrive)))
+          viz.detail_text(did, string.format(
+            "  shell goes off at s_x=%d (T=%d): %s", dt.s_x, dt.T_x, dt.how))
+          viz.detail_text(did, string.format(
+            "  fire iff s_enter <= s_x <= s_arrive + %d (LGM_BUILD_TIME)  -> %s",
+            dt.dwell, dt.verdict == "fire" and "FIRE" or ("HOLDING FIRE (" .. dt.verdict .. ")")))
+        else
+          viz.detail_text(did, string.format(
+            "  T = flight_ticks(sightlen_for(D=%.0fwu)) = %d; sim_T = round(T * %.2f) = %d",
+            D, T, DS, math.floor(T * DS + 0.5)))
+          viz.detail_text(did, "  sim walks him to the pill centre (pill tile passable at")
+          viz.detail_text(did, "  MAN_SPEED_BLESSED) and holds him there once within 16 wu")
+        end
+        if dt then
+          -- the hold verdict is the last line above
+        elseif tier == "dest_pill" then
+          viz.detail_text(did, "  impact on the pill tile -> aim = pill tile centre")
+        else
+          viz.detail_text(did, "  impact before he reaches the pill tile -> aim = lead point")
+        end
       end
     end
   end
@@ -9356,12 +9417,114 @@ function Brain.think(info)
     end
   end
 
+  -- LGM_DEST_AIM "which pill did this bot predict" overlay (Hard only: the
+  -- knobs are off at Medium/Easy, so elm.dest_pill is nil and nothing draws).
+  -- Orange + black nested boxes on elm.dest_pill -- the SAME table
+  -- predict_aim aims at and the fire gates hold on -- a bold line from the
+  -- enemy LGM to its centre, an X on the gate's actual aim point
+  -- (elm.predicted_wx/wy), a dashed line + ring from THIS tank so the
+  -- predicting bot is plain, and labels: pill id, bot name, dead / hp N,
+  -- hold/fire state and the kill-LGM gate status.  Own block (not inside
+  -- the kill_lgm_status one) so it draws whatever that toggle says.
+  if BRAIN_DEBUG_MODE and viz.is_on("kill_lgm_dest_target") then
+    local VID = "kill_lgm_dest_target"
+    local OR, OG, OB = 255, 120, 0     -- orange: not used by the other LGM overlays
+    local gate_by_id = {}
+    for _, ev in ipairs(state._kill_lgm_eval or {}) do
+      if ev.idnum ~= nil then gate_by_id[ev.idnum] = ev.status end
+    end
+    local tx, ty = info.tankx / 256, info.tanky / 256
+    for _, elm in ipairs(state.perc.enemy_lgms or {}) do
+      local dp = elm.dest_pill
+      if dp then
+        local mx, my = dp.mx, dp.my
+        local pcx, pcy = dp.cx / 256, dp.cy / 256
+        -- Tile: faint fill, then orange band framed by black on both sides.
+        viz.rect(VID, mx, my, mx + 1, my + 1, OR, OG, OB, 55, true)
+        local RINGS = { { -0.24, 0, 0, 0 }, { -0.18, OR, OG, OB }, { -0.12, OR, OG, OB },
+                        { -0.06, OR, OG, OB }, { 0.0, 0, 0, 0 } }
+        for _, rg in ipairs(RINGS) do
+          local d = rg[1]
+          viz.rect(VID, mx + d, my + d, mx + 1 - d, my + 1 - d, rg[2], rg[3], rg[4], 255, false)
+        end
+        -- Crosshair on the pill centre (the point the aim snaps to).
+        viz.line(VID, pcx - 0.35, pcy, pcx + 0.35, pcy, OR, OG, OB, 255)
+        viz.line(VID, pcx, pcy - 0.35, pcx, pcy + 0.35, OR, OG, OB, 255)
+        -- Enemy LGM -> pill: three parallel lines (bold) + arrowhead.
+        local lx, ly = (elm.wx or 0) / 256, (elm.wy or 0) / 256
+        local ddx, ddy = pcx - lx, pcy - ly
+        local dl = math.sqrt(ddx * ddx + ddy * ddy)
+        if dl > 0.01 then
+          local ux, uy = ddx / dl, ddy / dl
+          local nx, ny = -uy, ux
+          for k = -1, 1 do
+            local o = k * 0.04
+            viz.line(VID, lx + nx * o, ly + ny * o, pcx + nx * o, pcy + ny * o, OR, OG, OB, 255)
+          end
+          local hx, hy = pcx - ux * 0.5, pcy - uy * 0.5   -- arrow tip on the tile edge side
+          for side = -1, 1, 2 do
+            viz.line(VID, hx, hy, hx - ux * 0.4 + nx * 0.25 * side,
+                     hy - uy * 0.4 + ny * 0.25 * side, OR, OG, OB, 255)
+          end
+        end
+        viz.circle(VID, lx, ly, 0.3, OR, OG, OB, 255)
+        -- The fire gate's actual aim point this tick.
+        if elm.predicted_wx and elm.predicted_wy then
+          local ax, ay = elm.predicted_wx / 256, elm.predicted_wy / 256
+          viz.line(VID, ax - 0.2, ay - 0.2, ax + 0.2, ay + 0.2, 255, 255, 255, 255)
+          viz.line(VID, ax - 0.2, ay + 0.2, ax + 0.2, ay - 0.2, 255, 255, 255, 255)
+        end
+        -- This bot -> pill: dashed pale-orange line + ring on our tank.
+        local bdx, bdy = pcx - tx, pcy - ty
+        local bl = math.sqrt(bdx * bdx + bdy * bdy)
+        if bl > 0.01 then
+          local ux, uy = bdx / bl, bdy / bl
+          local t = 0
+          while t < bl do
+            local t2 = math.min(t + 0.3, bl)
+            viz.line(VID, tx + ux * t, ty + uy * t, tx + ux * t2, ty + uy * t2, 255, 190, 120, 180)
+            t = t + 0.6
+          end
+        end
+        viz.circle(VID, tx, ty, 0.8, 255, 190, 120, 220)
+        viz.text(VID, tx, ty - 1.0, string.format("LGM DEST -> pill #%s", tostring(dp.id)),
+                 "center", 255, 190, 120, 230, 0.8)
+        -- Labels (kept clear of kill_lgm_dest_pill's lines at -0.75 / +0.85).
+        local tier = elm.predict_tier
+        local dt = elm.dest_timing
+        local what
+        if tier == "dest_pill_hold" then
+          what = "HOLD FIRE (" .. tostring(dt and dt.verdict or "?") .. ")"
+        elseif tier == "dest_pill" then
+          what = dt and "FIRE WINDOW" or "AIM CENTRE"
+        elseif tier == "dest_pill_lead" then
+          what = "LEAD (walking in)"
+        else
+          what = "old aim (" .. tostring(tier) .. ")"
+        end
+        local hp = (dp.health or 0) > 0 and ("hp " .. tostring(dp.health)) or "dead"
+        local gate = gate_by_id[elm.idnum]
+        viz.text(VID, pcx, pcy - 1.2,
+                 string.format("LGM DEST  pill #%s  (%s)", tostring(dp.id),
+                               tostring(state.player_name or "?")),
+                 "center", OR, OG, OB, 255)
+        viz.text(VID, pcx, pcy + 1.3,
+                 string.format("%s | %s%s", hp, what, gate and (" | gate " .. gate) or ""),
+                 "center", OR, OG, OB, 255)
+      elseif elm.dest_why then
+        viz.text(VID, (elm.wx or 0) / 256, (elm.wy or 0) / 256 + 1.25,
+                 "no dest: " .. elm.dest_why, "center", 200, 160, 120, 180, 0.7)
+      end
+    end
+  end
+
   if state._kill_lgm_eval and #state._kill_lgm_eval > 0 and viz.is_on("kill_lgm_status") then
     local _STATUS_COLOR = {
       shooting      = { 255,  80,  80, 240 },   -- red: firing this tick
       ready_busy    = { 255, 200,  80, 220 },   -- amber: would fire but shoot key already used
       off_aim       = { 200, 200, 200, 220 },   -- light gray
       los_blocked   = { 160, 100, 220, 220 },   -- purple: wall in the way
+      dest_hold     = { 150, 150, 255, 220 },   -- LGM_DEST_HOLD_FIRE: aimed at his pill, trigger held
       out_of_range  = { 130, 130, 130, 200 },
       no_shells     = { 100, 100, 100, 200 },
       in_boat       = { 100, 100, 100, 200 },
@@ -9397,8 +9560,11 @@ function Brain.think(info)
     -- (3-match map-edge sim).
     if BRAIN_DEBUG_MODE and viz.is_on("kill_lgm_predict") then
       local TIER_COL = {
-        linear    = { 255, 220,  60 },
-        dest_lock = {  80, 220, 255 },
+        linear         = { 255, 220,  60 },
+        dest_lock      = {  80, 220, 255 },
+        dest_pill      = { 255,  80, 255 },  -- LGM_DEST_AIM: impact on the pill tile, aimed at its centre
+        dest_pill_lead = { 200, 140, 255 },  -- LGM_DEST_AIM: still walking to the pill at impact
+        dest_pill_hold = { 150, 150, 150 },  -- LGM_DEST_HOLD_FIRE: aimed at the pill, trigger held
       }
       for _, elm in ipairs(state.perc.enemy_lgms or {}) do
         if elm.predicted_wx and elm.predicted_wy then
@@ -9415,6 +9581,70 @@ function Brain.think(info)
                    string.format("PRED ft=%d %s", elm.flight_ticks or 0,
                                  elm.predict_tier or "linear"),
                    "center", cr, cg, cb, 230)
+        end
+      end
+    end
+
+    -- LGM_DEST_AIM overlay: the exact shape kill_lgm.find_dest_pill tested.
+    -- White = the oldest->newest chord of the fit window (the samples the
+    -- heading came from).  Thin line = the ray, LGM_DEST_RAY_TILES long.  The
+    -- two side lines = the pill-centre tolerance max(LGM_DEST_PERP_WU,
+    -- along * tan(LGM_DEST_PERP_DEG)): piecewise linear with ONE bend at
+    -- along = perp_wu / perp_tan, so three points per side draw it exactly.
+    -- Magenta tile + dot = the locked pill (its centre is what was tested and
+    -- what the aim snaps to).  No lock = the fallback reason under the man.
+    if BRAIN_DEBUG_MODE and viz.is_on("kill_lgm_dest_pill") then
+      for _, elm in ipairs(state.perc.enemy_lgms or {}) do
+        local ray = elm.dest_ray
+        if ray then
+          local ox, oy = ray.ox, ray.oy
+          viz.line("kill_lgm_dest_pill", ray.ax / 256, ray.ay / 256, ox / 256, oy / 256,
+                   255, 255, 255, 220)
+          local rr, rg, rb = 200, 140, 255
+          if elm.dest_pill then rr, rg, rb = 255, 80, 255 end
+          viz.line("kill_lgm_dest_pill", ox / 256, oy / 256,
+                   (ox + ray.ux * ray.len) / 256, (oy + ray.uy * ray.len) / 256,
+                   rr, rg, rb, 140)
+          local ts = { 0 }
+          local bend = (ray.perp_tan > 0) and (ray.perp_wu / ray.perp_tan) or math.huge
+          if bend < ray.len then ts[#ts + 1] = bend end
+          ts[#ts + 1] = ray.len
+          local nx, ny = -ray.uy, ray.ux
+          for side = -1, 1, 2 do
+            local px, py
+            for _, t in ipairs(ts) do
+              local w = math.max(ray.perp_wu, t * ray.perp_tan) * side
+              local qx = (ox + ray.ux * t + nx * w) / 256
+              local qy = (oy + ray.uy * t + ny * w) / 256
+              if px then
+                viz.line("kill_lgm_dest_pill", px, py, qx, qy, rr, rg, rb, 90)
+              end
+              px, py = qx, qy
+            end
+          end
+        end
+        local dp = elm.dest_pill
+        if dp then
+          viz.rect("kill_lgm_dest_pill", dp.mx, dp.my, dp.mx + 1, dp.my + 1,
+                   255, 80, 255, 230, false)
+          viz.circle("kill_lgm_dest_pill", dp.cx / 256, dp.cy / 256, 0.12, 255, 80, 255, 255)
+          viz.text("kill_lgm_dest_pill", dp.cx / 256, dp.cy / 256 - 0.75,
+                   string.format("DEST pill#%s perp=%.0f/%.0f", tostring(dp.id), dp.perp, dp.tol),
+                   "center", 255, 80, 255, 230)
+          -- LGM_DEST_HOLD_FIRE verdict: the shell-off step against his
+          -- on-tile window [s_enter, s_arrive + LGM_BUILD_TIME].
+          local dt = elm.dest_timing
+          if dt then
+            local hold = dt.verdict ~= "fire"
+            viz.text("kill_lgm_dest_pill", dp.cx / 256, dp.cy / 256 + 0.85,
+                     string.format("%s  off=%d on=[%s,%s+%d]",
+                                   hold and ("holding fire (" .. dt.verdict .. ")") or "FIRE window",
+                                   dt.s_x, tostring(dt.s_enter), tostring(dt.s_arrive), dt.dwell),
+                     "center", hold and 150 or 255, hold and 150 or 80, 255, 230)
+          end
+        elseif elm.dest_why then
+          viz.text("kill_lgm_dest_pill", (elm.wx or 0) / 256, (elm.wy or 0) / 256 + 0.8,
+                   "DEST " .. elm.dest_why, "center", 200, 140, 255, 200)
         end
       end
     end

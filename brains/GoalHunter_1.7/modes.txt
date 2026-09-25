@@ -13,7 +13,8 @@
 # The brain applies the level in constants.lua (M.MODE_LEVELS[mode][level],
 # a bundle of knob overrides applied before any preset= or cfg= token):
 # hard is an empty bundle, so Hard is today's brain unchanged; medium and
-# easy hand the bot handicaps. The survival mode's bundles are still empty.
+# easy hand the bot handicaps. The survival mode's bundles only switch off
+# the Hard-only LGM destination aim (LGM_DEST_*) below Hard.
 
 [default]
 label = Default

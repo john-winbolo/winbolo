@@ -715,6 +715,19 @@ function M.update(state, world, info)
           _ent.dest_wy     = h.dest_wy
           _ent.dest_locked = h.dest_locked
           _ent.lock_status = h.lock_status
+          -- LGM_DEST_AIM: straight-line walk into a dead hostile pill?  The
+          -- lock rides h (read by predict_aim below) and the entry (overlay).
+          -- Knob off: never run, h.dest_pill stays nil, old aim exactly.
+          if C.LGM_DEST_AIM then
+            local dp, ray, why = kill_lgm.find_dest_pill(h, _ent, world.pills, enemy_tanks, now)
+            h.dest_pill = dp
+            _ent.dest_pill, _ent.dest_ray, _ent.dest_why = dp, ray, why
+            local log_key = dp and ("lock#" .. tostring(dp.id)) or why
+            if h.dest_log_key ~= log_key then
+              h.dest_log_key = log_key
+              if BRAIN_DEBUG_MODE then print2(string.format("LGM_DEST_AIM t=%d lgm=%s pos=(%d,%d) %s", now, tostring(_ent.idnum), _ent.wx, _ent.wy, dp and string.format("LOCK pill#%s tile=(%d,%d) along=%.0f perp=%.0f/%.0f speed=%.1f", tostring(dp.id), dp.mx, dp.my, dp.along, dp.perp, dp.tol, ray.speed) or string.format("fallback=%s%s", why, ray and string.format(" heading=(%.2f,%.2f) speed=%.1f", ray.ux, ray.uy, ray.speed) or ""))) end
+            end
+          end
         end
         local aim_wx, aim_wy, sl, ft, d_wu, tier = kill_lgm.predict_aim(
           info.tankx, info.tanky, _ent, h)
@@ -726,6 +739,19 @@ function M.update(state, world, info)
         _ent.flight_ticks     = ft
         _ent.predicted_dist_wu = d_wu
         _ent.predict_tier     = tier
+        -- LGM_DEST_HOLD_FIRE: the fire gates hold the trigger on this flag.
+        -- Only predict_aim's hold branch sets tier dest_pill_hold, so the
+        -- flag is false with the knob (or LGM_DEST_AIM) off.
+        _ent.dest_hold   = (tier == "dest_pill_hold")
+        _ent.dest_timing = h and h.dest_timing or nil
+        if BRAIN_DEBUG_MODE and C.LGM_DEST_HOLD_FIRE and h then
+          local dt = h.dest_timing
+          local hold_key = dt and (dt.verdict .. "#" .. tostring(h.dest_pill and h.dest_pill.id)) or nil
+          if h.dest_hold_log_key ~= hold_key then
+            h.dest_hold_log_key = hold_key
+            if dt then print2(string.format("LGM_DEST_HOLD t=%d lgm=%s pill#%s %s %s shell_off=%d steps (T=%d) on_tile=[%s,%s+%d] %s", now, tostring(_ent.idnum), tostring(h.dest_pill and h.dest_pill.id), dt.live and "live" or "dead", dt.verdict == "fire" and "FIRE" or ("holding fire (" .. dt.verdict .. ")"), dt.s_x, dt.T_x, tostring(dt.s_enter), tostring(dt.s_arrive), dt.dwell, dt.how)) end
+          end
+        end
         n_lgm = n_lgm + 1
         enemy_lgms[n_lgm] = _ent
       end

@@ -6579,9 +6579,14 @@ function Brain.think(info)
                                                 cpf.SHOT_TANK or 0, 0)
             if tiles then
               local origin_mx, origin_my = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
+              -- LGM_DEST_AIM: aimed at the destination pill -> its tile is the
+              -- target, not a blocker (a live damaged pill would read as one).
+              local dpt = (elm.predict_tier == "dest_pill" or elm.predict_tier == "dest_pill_hold")
+                          and elm.dest_pill or nil
               for ti = 1, #tiles do
                 local t = tiles[ti]
                 if t.mx == elm.mx and t.my == elm.my then break end
+                if dpt and t.mx == dpt.mx and t.my == dpt.my then break end
                 if not (t.mx == origin_mx and t.my == origin_my) then
                   local tt = U.ttype(t.mx, t.my)
                   if tt == C.T_BUILDING or tt == C.T_HALFBUILD then
@@ -6627,6 +6632,11 @@ function Brain.think(info)
           local KILL_WU = 64  -- ½-tile-diameter circle around predicted LGM center
           if los_blocked then
             _ev.status = "los_blocked"
+          elseif C.LGM_DEST_HOLD_FIRE and elm.dest_hold then
+            -- LGM_DEST_HOLD_FIRE: the aim is on his destination pill but the
+            -- blast would not go off while he is on its tile.  Hold the
+            -- trigger; the crosshair driver below still aims at the pill.
+            _ev.status = "dest_hold"
           elseif impact_off > KILL_WU then
             _ev.status = "gunrange_off"
           elseif _shoot_busy or _already_fired then
@@ -7015,6 +7025,7 @@ function Brain.think(info)
         --                and refire.id == cand.seen_since and (refire.misses or 0) >= MAXM
         local capped = false
         if cand and killable and not capped
+           and not (C.LGM_DEST_HOLD_FIRE and cand.dest_hold)  -- LGM_DEST_HOLD_FIRE: see the kill-LGM gate
            and not _no_shells and not _shoot_busy and not _already_fired
            and (bit.band(taps, KEY_SHOOT)) == 0
            and clh.dist_wu <= C.KILL_LGM_SHOOT_RANGE * 256 then
@@ -7480,12 +7491,23 @@ function Brain.think(info)
   -- LGM tile to expand the panel; body lists every (turn × speed ×
   -- gun) combo with its predicted crosshair-to-LGM euclidean distance.
 
+  -- LGM_DEST_AIM "which pill did this bot predict" overlay (Hard only: the
+  -- knobs are off at Medium/Easy, so elm.dest_pill is nil and nothing draws).
+  -- Orange + black nested boxes on elm.dest_pill -- the SAME table
+  -- predict_aim aims at and the fire gates hold on -- a bold line from the
+  -- enemy LGM to its centre, an X on the gate's actual aim point
+  -- (elm.predicted_wx/wy), a dashed line + ring from THIS tank so the
+  -- predicting bot is plain, and labels: pill id, bot name, dead / hp N,
+  -- hold/fire state and the kill-LGM gate status.  Own block (not inside
+  -- the kill_lgm_status one) so it draws whatever that toggle says.
+
   if state._kill_lgm_eval and #state._kill_lgm_eval > 0 and viz.is_on("kill_lgm_status") then
     local _STATUS_COLOR = {
       shooting      = { 255,  80,  80, 240 },   -- red: firing this tick
       ready_busy    = { 255, 200,  80, 220 },   -- amber: would fire but shoot key already used
       off_aim       = { 200, 200, 200, 220 },   -- light gray
       los_blocked   = { 160, 100, 220, 220 },   -- purple: wall in the way
+      dest_hold     = { 150, 150, 255, 220 },   -- LGM_DEST_HOLD_FIRE: aimed at his pill, trigger held
       out_of_range  = { 130, 130, 130, 200 },
       no_shells     = { 100, 100, 100, 200 },
       in_boat       = { 100, 100, 100, 200 },
@@ -7517,6 +7539,15 @@ function Brain.think(info)
     -- Lead-prediction overlay: ring + line at the predicted impact tile
     -- per LGM.  Tier color: yellow=linear (no dest), cyan=dest-lock
     -- (3-match map-edge sim).
+
+    -- LGM_DEST_AIM overlay: the exact shape kill_lgm.find_dest_pill tested.
+    -- White = the oldest->newest chord of the fit window (the samples the
+    -- heading came from).  Thin line = the ray, LGM_DEST_RAY_TILES long.  The
+    -- two side lines = the pill-centre tolerance max(LGM_DEST_PERP_WU,
+    -- along * tan(LGM_DEST_PERP_DEG)): piecewise linear with ONE bend at
+    -- along = perp_wu / perp_tan, so three points per side draw it exactly.
+    -- Magenta tile + dot = the locked pill (its centre is what was tested and
+    -- what the aim snaps to).  No lock = the fallback reason under the man.
 
     -- Forward-sim path overlay: dotted trail of the LGM's predicted
     -- positions over the next flight_ticks, using the engine sim
