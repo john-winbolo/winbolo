@@ -6254,6 +6254,9 @@ set(_unit_test_names
     scenario_mod_dirs_same_dir_once
     scenario_mod_dirs_all_missing_is_quiet
     scenario_mod_dirs_attach_reads_shipped
+    scenario_mod_dirs_workshop_precedence
+    scenario_mod_dirs_workshop_local
+    scenario_mod_dirs_workshop_upload_clash
     scenario_precedence_mod_over_map
     scenario_precedence_none_restores_map
     scenario_precedence_plain_map_keeps_mod

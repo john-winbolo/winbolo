@@ -36,6 +36,7 @@
 #define SSL_MAX 16
 
 static char sslModDir[512];
+static char sslWorkshopDir[512];
 
 static void sslSetEnv(const char *key, const char *val) {
 #ifdef _WIN32
@@ -46,13 +47,26 @@ static void sslSetEnv(const char *key, const char *val) {
 #endif
 }
 
+/* The Workshop directory beside Mods, named so the real one is never read
+   and left uncreated, so it holds nothing and the scratch path holds only
+   what each case makes. */
+static const char *sslWorkshop(void) {
+    if (!utScratchPath(sslWorkshopDir, sizeof(sslWorkshopDir), "Workshop")) {
+        snprintf(sslWorkshopDir, sizeof(sslWorkshopDir), "%s-Workshop",
+                 sslModDir);
+    }
+    return sslWorkshopDir;
+}
+
 static ScenarioLocalSaveResult sslSave(const char *file, const void *bytes,
                                        size_t len) {
     ScenarioLocalSaveResult r;
 
     sslSetEnv("WB_MOD_DIR_USER", sslModDir);
+    sslSetEnv("WB_MOD_DIR_WORKSHOP", sslWorkshop());
     r = scenarioHostSaveLocalScript(file, (const uint8_t *)bytes, len);
     sslSetEnv("WB_MOD_DIR_USER", NULL);
+    sslSetEnv("WB_MOD_DIR_WORKSHOP", NULL);
     return r;
 }
 
@@ -60,8 +74,10 @@ static bool sslPath(const char *file, char *out, size_t outLen) {
     bool ok;
 
     sslSetEnv("WB_MOD_DIR_USER", sslModDir);
+    sslSetEnv("WB_MOD_DIR_WORKSHOP", sslWorkshop());
     ok = scenarioHostLocalScriptPath(file, out, outLen);
     sslSetEnv("WB_MOD_DIR_USER", NULL);
+    sslSetEnv("WB_MOD_DIR_WORKSHOP", NULL);
     return ok;
 }
 
@@ -69,8 +85,10 @@ static int sslList(ServerScenarioEntry *out, int max) {
     int n;
 
     sslSetEnv("WB_MOD_DIR_USER", sslModDir);
+    sslSetEnv("WB_MOD_DIR_WORKSHOP", sslWorkshop());
     n = scenarioHostListLocalScripts(out, max);
     sslSetEnv("WB_MOD_DIR_USER", NULL);
+    sslSetEnv("WB_MOD_DIR_WORKSHOP", NULL);
     return n;
 }
 

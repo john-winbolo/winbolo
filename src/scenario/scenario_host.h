@@ -443,8 +443,10 @@ void scenarioHostRegisterScenarioLister(ServerSim *sim);
  *PURPOSE:
  *  The scripts on this computer: the player's own Mods
  *  directory under SDL_GetPrefPath (WB_MOD_DIR_USER in the
- *  tests). What the lobby's Mods chooser offers to send to
- *  a server that does not have them.
+ *  tests), then the Workshop directory beside it
+ *  (WB_MOD_DIR_WORKSHOP), where a name Mods holds is Mods'
+ *  file. What the lobby's Mods chooser offers to send to a
+ *  server that does not have them.
  *
  *  Needs no sim, because a remote client has none, and reads
  *  through the same modify-time cache a server's listing
@@ -452,9 +454,11 @@ void scenarioHostRegisterScenarioLister(ServerSim *sim);
  *  call. Still a directory read: call it when the chooser
  *  opens or a transfer ends, never per frame.
  *
- *  Every row says SERVER_SCENARIO_SOURCE_SERVER, and its
- *  workshopId is the Workshop item the file's manifest
- *  names, 0 for none. File-name order, case-insensitive.
+ *  A row read from the Workshop directory says
+ *  SERVER_SCENARIO_SOURCE_WORKSHOP and every other row
+ *  SERVER_SCENARIO_SOURCE_SERVER. Its workshopId is the
+ *  Workshop item the file's manifest names, 0 for none.
+ *  File-name order, case-insensitive.
  *
  *ARGUMENTS:
  *  out - Rows written here

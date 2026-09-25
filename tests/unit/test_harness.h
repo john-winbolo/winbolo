@@ -3461,6 +3461,12 @@ int run_scenario_mod_dirs_merged_and_sorted(void);
 int run_scenario_mod_dirs_same_dir_once(void);
 int run_scenario_mod_dirs_all_missing_is_quiet(void);
 int run_scenario_mod_dirs_attach_reads_shipped(void);
+/* The Workshop directory between the player's own and the shipped one: its
+ * place in the precedence, its rows' source in both listings, and the local
+ * path, save and upload checks that read it. */
+int run_scenario_mod_dirs_workshop_precedence(void);
+int run_scenario_mod_dirs_workshop_local(void);
+int run_scenario_mod_dirs_workshop_upload_clash(void);
 
 /* Which scenario plays when a map and a mod both have a claim
  * (test_scenario_precedence.c): the three rules, the four points the

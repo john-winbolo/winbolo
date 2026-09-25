@@ -6419,18 +6419,19 @@ void scenarioHostRegisterMapScripted(ServerSim *sim) {
  *
  * One cache per directory rather than one for the process, because a listing
  * merges the mod directories: the one this host was given, the player's own
- * under SDL_GetPrefPath, the mods shipped beside the executable, and the
- * directory players' uploads land in. A slot each and one spare, so every
- * directory of a listing finds its own slot once they are filled and nothing
- * evicts. It is held under a lock because the read is not the tick thread's
- * alone — a client hosting in process reads it from the UI thread through
- * serverSimEnumerateScenarioDir. The lock and the rows live as long as the
- * process; there is nothing to free them at, and nothing that would grow
- * them past that many directories' worth. */
-/* How many directories a listing merges. The four scnModDirs builds:
-   the one this host was given, the player's own, the shipped one, and the
-   uploads directory. */
-#define SCN_MOD_DIRS_MAX 4
+ * under SDL_GetPrefPath, the Workshop items beside it, the mods shipped
+ * beside the executable, and the directory players' uploads land in. A slot
+ * each and one spare, so every directory of a listing finds its own slot
+ * once they are filled and nothing evicts. It is held under a lock because
+ * the read is not the tick thread's alone — a client hosting in process
+ * reads it from the UI thread through serverSimEnumerateScenarioDir. The
+ * lock and the rows live as long as the process; there is nothing to free
+ * them at, and nothing that would grow them past that many directories'
+ * worth. */
+/* How many directories a listing merges. The five scnModDirs builds:
+   the one this host was given, the player's own, the Workshop one, the
+   shipped one, and the uploads directory. */
+#define SCN_MOD_DIRS_MAX 5
 
 typedef struct {
     bool         valid;
@@ -6562,43 +6563,46 @@ static int scnDirListCached(const char *dir, ScnDirEntry *out,
 
 /* ── Where mods are read from ─────────────────────────────────────── */
 
-/* Four directories, in the order a name clash resolves between them:
-   the one this host was given, the player's own, the mods that ship with
-   the build, and the directory scripts players upload land in. The first
-   three are the same shape brainListParents gives brains, and for the same
-   reason — a player who drops a file in their own directory is offered it,
-   and one who does nothing is still offered what the build came with.
+/* Five directories, in the order a name clash resolves between them:
+   the one this host was given, the player's own, the one the player's
+   Workshop subscriptions are copied into, the mods that ship with the build,
+   and the directory scripts players upload land in. The host's, the
+   player's and the shipped ones are the same shape brainListParents gives
+   brains, and for the same reason — a player who drops a file in their own
+   directory is offered it, and one who does nothing is still offered what
+   the build came with.
 
    The order is the precedence. A file name in two directories resolves to
    the one further up this list and the others are left out, so replacing a
    shipped mod means putting a file of that name in a directory above it.
    That is the way round a player can act on; there is nothing they could do
-   about it if it went the other way. The uploads directory is last so an
-   upload can never stand in for a file the server offers of its own, and an
-   upload whose name a directory above holds is refused.
+   about it if it went the other way. The Workshop directory sits between
+   the player's own and the shipped one: a file the player wrote wins over a
+   subscribed item of the same name, and a subscribed item wins over a mod
+   the build came with. The uploads directory is last so an upload can never
+   stand in for a file the server offers of its own, and an upload whose
+   name a directory above holds is refused.
 
    A directory that is not there says nothing, which is the ordinary case
    for every one of them. */
 
 /* SDL_GetPrefPath allocates and creates the directory on every call, and a
    listing asks for it once per directory it merges, so the prefix it answers
-   is resolved once and kept. Under scnDirCacheLock, which the directory cache
+   is resolved once and kept, and the player's Mods and Workshop directories
+   are both named from it. Under scnDirCacheLock, which the directory cache
    above already takes and for the same reason: this is read on the tick
    thread for a server's own listing, and on the UI thread when a client
    hosting in process fills the chooser through serverSimEnumerateScenarioDir.
    Nothing is kept allocated, so there is nothing to free at shutdown. */
-static char scnModUserDir[SCN_SCRIPT_PATH_MAX];
-static bool scnModUserDirKnown;
+static char scnModPrefDir[SCN_SCRIPT_PATH_MAX];
+static bool scnModPrefDirKnown;
 
-/* The player's own. ~/Library/Application Support/WinBolo/WinBolo/Mods on
-   macOS, and whatever SDL_GetPrefPath answers elsewhere — the same writable
-   place brain_list.c reads Brains from, and named the same way.
-
-   False when SDL cannot name it, which is not an error: it means a machine
-   with no place of its own for mods, and the other directories are the
-   whole of the answer. */
-static bool scnModDirUser(char *out, size_t outLen) {
-    const char *env;
+/* <prefpath><leaf>, or what the environment variable env names when it is
+   set. False when SDL cannot name the preferences directory or the path is
+   too long to hold. */
+static bool scnModDirPref(const char *env, const char *leaf, char *out,
+                          size_t outLen) {
+    const char *over;
     char       *pref;
     bool        locked;
     bool        ok;
@@ -6610,36 +6614,56 @@ static bool scnModDirUser(char *out, size_t outLen) {
        directory would leave files in the home directory of whoever ran it.
        Read on every call and never kept, because the cases set and clear it
        between themselves. */
-    env = getenv("WB_MOD_DIR_USER");
-    if (env != NULL && env[0] != '\0') {
-        return (size_t)snprintf(out, outLen, "%s", env) < outLen;
+    over = getenv(env);
+    if (over != NULL && over[0] != '\0') {
+        return (size_t)snprintf(out, outLen, "%s", over) < outLen;
     }
 
     /* No lock until the lister is registered, the way scnDirListCached reads
        its own head: nothing else is running yet to race with. */
     locked = scnDirCacheLock.m != NULL;
     if (locked) scnLockEnter(&scnDirCacheLock);
-    if (!scnModUserDirKnown) {
+    if (!scnModPrefDirKnown) {
         /* SDL_GetPrefPath returns a trailing separator and a string the caller
            frees. A path SDL cannot name, or one too long to hold, is not
            recorded, so a later call asks again rather than answering "" for
            the life of the process. */
         pref = SDL_GetPrefPath("WinBolo", "WinBolo");
         if (pref != NULL) {
-            if ((size_t)snprintf(scnModUserDir, sizeof(scnModUserDir), "%sMods",
-                                 pref) < sizeof(scnModUserDir)) {
-                scnModUserDirKnown = true;
+            if ((size_t)snprintf(scnModPrefDir, sizeof(scnModPrefDir), "%s",
+                                 pref) < sizeof(scnModPrefDir)) {
+                scnModPrefDirKnown = true;
             } else {
-                scnModUserDir[0] = '\0';
+                scnModPrefDir[0] = '\0';
             }
             SDL_free(pref);
         }
     }
-    ok = scnModUserDirKnown &&
-         (size_t)snprintf(out, outLen, "%s", scnModUserDir) < outLen;
+    ok = scnModPrefDirKnown &&
+         (size_t)snprintf(out, outLen, "%s%s", scnModPrefDir, leaf) < outLen;
     if (locked) scnLockLeave(&scnDirCacheLock);
     if (!ok) out[0] = '\0';
     return ok;
+}
+
+/* The player's own. ~/Library/Application Support/WinBolo/WinBolo/Mods on
+   macOS, and whatever SDL_GetPrefPath answers elsewhere — the same writable
+   place brain_list.c reads Brains from, and named the same way.
+
+   False when SDL cannot name it, which is not an error: it means a machine
+   with no place of its own for mods, and the other directories are the
+   whole of the answer. */
+static bool scnModDirUser(char *out, size_t outLen) {
+    return scnModDirPref("WB_MOD_DIR_USER", "Mods", out, outLen);
+}
+
+/* Where the player's Workshop subscriptions are copied to: Workshop beside
+   Mods under SDL_GetPrefPath. Only read here; nothing in this file writes
+   to it.
+
+   False when SDL cannot name it, for the reason scnModDirUser gives. */
+static bool scnModDirWorkshop(char *out, size_t outLen) {
+    return scnModDirPref("WB_MOD_DIR_WORKSHOP", "Workshop", out, outLen);
 }
 
 /* The mods that ship with the build, which live in data/mods beside the
@@ -6694,17 +6718,34 @@ static void scnModDirAdd(char dirs[][SCN_SCRIPT_PATH_MAX], int *count,
    was given: the -moddir argument on a dedicated server, the "Mod Dir"
    preference on a desktop host. `uploads` is where the sim puts scripts
    players upload (serverSimGetScriptUploadDir), and NULL or "" where there
-   is no sim or no uploads. */
-static int scnModDirs(char dirs[][SCN_SCRIPT_PATH_MAX], const char *configured,
-                      const char *uploads) {
+   is no sim or no uploads.
+
+   *workshopAt, when not NULL, is set to the Workshop directory's index, or
+   -1 when it has no entry of its own: SDL could not name it, or a directory
+   above is the same one and its files are that directory's. */
+static int scnModDirsAt(char dirs[][SCN_SCRIPT_PATH_MAX],
+                        const char *configured, const char *uploads,
+                        int *workshopAt) {
     char one[SCN_SCRIPT_PATH_MAX];
     int  count = 0;
 
+    if (workshopAt != NULL) *workshopAt = -1;
     scnModDirAdd(dirs, &count, configured);
     if (scnModDirUser(one, sizeof(one)))    scnModDirAdd(dirs, &count, one);
+    if (scnModDirWorkshop(one, sizeof(one))) {
+        int before = count;
+
+        scnModDirAdd(dirs, &count, one);
+        if (workshopAt != NULL && count > before) *workshopAt = before;
+    }
     if (scnModDirShipped(one, sizeof(one))) scnModDirAdd(dirs, &count, one);
     scnModDirAdd(dirs, &count, uploads);
     return count;
+}
+
+static int scnModDirs(char dirs[][SCN_SCRIPT_PATH_MAX], const char *configured,
+                      const char *uploads) {
+    return scnModDirsAt(dirs, configured, uploads, NULL);
 }
 
 /* The uploads directory of the sim a lister or reader was registered with,
@@ -6731,25 +6772,27 @@ static int scnDirMergedCmp(const void *a, const void *b) {
    about nothing else.
 
    `dir` is what this host was given and the head of the list scnModDirs
-   builds; the player's own directory, the shipped one and the uploads
-   directory come behind it. Each is read in turn and a file name already
-   taken by a directory above is left out, so the rows are the union of the
-   directories with the higher precedence copy of a clashing name.
+   builds; the player's own directory, the Workshop one, the shipped one and
+   the uploads directory come behind it. Each is read in turn and a file name
+   already taken by a directory above is left out, so the rows are the union
+   of the directories with the higher precedence copy of a clashing name.
 
    A directory that cannot be read answers -1, which is read here as no rows
    rather than as a failure: a host with no mod directory of its own is the
    ordinary case, and the rest of the list still comes through.
 
    Every row a directory read makes says SCN_DIR_SOURCE_SERVER. The rows read
-   from the uploads directory are marked SCN_DIR_SOURCE_UPLOAD here, after the
-   read, so the cache holds what the directory says and nothing about where
-   it sits in the list. */
+   from the Workshop directory are marked SCN_DIR_SOURCE_WORKSHOP and those
+   from the uploads directory SCN_DIR_SOURCE_UPLOAD here, after the read, so
+   the cache holds what the directory says and nothing about where it sits
+   in the list. */
 static int scnDirListCb(void *ctx, const char *dir, ScnDirEntry *out,
                         int max) {
     char        dirs[SCN_MOD_DIRS_MAX][SCN_SCRIPT_PATH_MAX];
     const char *uploads = scnModDirUploads(ctx);
     int         count;
     int         above;
+    int         workshop;
     int         n = 0;
     int         d;
 
@@ -6759,15 +6802,21 @@ static int scnDirListCb(void *ctx, const char *dir, ScnDirEntry *out,
     /* The list without the uploads directory, then with it: scnModDirs adds
        it last, and leaves it out when a directory above is the same one. In
        that case it has no entry of its own and its files are that
-       directory's, so nothing is marked. */
+       directory's, so nothing is marked. The Workshop directory is the same:
+       scnModDirsAt names its entry only when it has one of its own. */
     above = scnModDirs(dirs, dir, NULL);
-    count = scnModDirs(dirs, dir, uploads);
+    count = scnModDirsAt(dirs, dir, uploads, &workshop);
     for (d = 0; d < count && n < max; d++) {
         int extra = scnDirListCached(dirs[d], out + n, NULL, max - n);
         int i;
 
         if (extra <= 0) {
             continue;
+        }
+        if (d == workshop) {
+            for (i = 0; i < extra; i++) {
+                out[n + i].source = SCN_DIR_SOURCE_WORKSHOP;
+            }
         }
         if (d >= above && uploads != NULL && strcmp(dirs[d], uploads) == 0) {
             for (i = 0; i < extra; i++) {
@@ -7331,14 +7380,24 @@ void scenarioHostRegisterScenarioLister(ServerSim *sim) {
 /* ── The scripts on this computer ─────────────────────────────────── */
 
 /* Where this computer's own scripts are read from, in the order a name
-   clash resolves between them: the player's own Mods directory. The
-   Workshop directory goes after it here once Workshop items are synced to
-   one. */
-static int scnLocalDirs(char dirs[][SCN_SCRIPT_PATH_MAX]) {
+   clash resolves between them: the player's own Mods directory, then the
+   Workshop directory the player's subscriptions are copied to, so a file
+   the player wrote wins over a subscribed item of the same name.
+
+   *workshopAt, when not NULL, is set to the Workshop directory's index, or
+   -1 when it has no entry of its own, as scnModDirsAt sets it. */
+static int scnLocalDirs(char dirs[][SCN_SCRIPT_PATH_MAX], int *workshopAt) {
     char one[SCN_SCRIPT_PATH_MAX];
     int  count = 0;
 
+    if (workshopAt != NULL) *workshopAt = -1;
     if (scnModDirUser(one, sizeof(one))) scnModDirAdd(dirs, &count, one);
+    if (scnModDirWorkshop(one, sizeof(one))) {
+        int before = count;
+
+        scnModDirAdd(dirs, &count, one);
+        if (workshopAt != NULL && count > before) *workshopAt = before;
+    }
     return count;
 }
 
@@ -7353,6 +7412,7 @@ int scenarioHostListLocalScripts(ServerScenarioEntry *out, int max) {
     char         dirs[SCN_MOD_DIRS_MAX][SCN_SCRIPT_PATH_MAX];
     ScnDirEntry *rows;
     int          count;
+    int          workshop;
     int          n = 0;
     int          d;
 
@@ -7371,7 +7431,7 @@ int scenarioHostListLocalScripts(ServerScenarioEntry *out, int max) {
     rows = (ScnDirEntry *)calloc((size_t)max, sizeof(*rows));
     if (rows == NULL) return 0;
 
-    count = scnLocalDirs(dirs);
+    count = scnLocalDirs(dirs, &workshop);
     for (d = 0; d < count && n < max; d++) {
         int got = scnDirListCached(dirs[d], rows, NULL, max);
         int i;
@@ -7398,7 +7458,9 @@ int scenarioHostListLocalScripts(ServerScenarioEntry *out, int max) {
             e->bots              = rows[i].bots;
             e->bound             = rows[i].bound;
             e->keepsWinCondition = rows[i].keepsWinCondition;
-            e->source            = SERVER_SCENARIO_SOURCE_SERVER;
+            e->source            = (d == workshop)
+                                       ? SERVER_SCENARIO_SOURCE_WORKSHOP
+                                       : SERVER_SCENARIO_SOURCE_SERVER;
             e->workshopId        = rows[i].workshopId;
             n++;
         }
@@ -7425,7 +7487,7 @@ bool scenarioHostLocalScriptPath(const char *file, char *out, size_t outLen) {
         return false;
     }
 
-    count = scnLocalDirs(dirs);
+    count = scnLocalDirs(dirs, NULL);
     for (d = 0; d < count; d++) {
         char         path[SCN_SCRIPT_PATH_MAX];
         SDL_PathInfo info;
@@ -7529,18 +7591,21 @@ ScenarioLocalSaveResult scenarioHostSaveLocalScript(const char *file,
     bool  ok;
     FILE *f;
     int   count;
+    int   workshop;
     int   d;
 
     if (!scnLocalSaveNameOk(file)) return SCENARIO_LOCAL_SAVE_BAD_NAME;
 
     /* A file of that name in any of this computer's directories is the
        player's own, and a copy never replaces it. */
-    count = scnLocalDirs(dirs);
+    count = scnLocalDirs(dirs, &workshop);
     for (d = 0; d < count; d++) {
         if (scnLocalDirHolds(dirs[d], file)) return SCENARIO_LOCAL_SAVE_EXISTS;
     }
 
-    if (count == 0 || (bytes == NULL && len > 0)) {
+    /* The copy goes in dirs[0], the player's Mods directory. With no Mods
+       directory the head is the Workshop one, which only its sync writes. */
+    if (count == 0 || workshop == 0 || (bytes == NULL && len > 0)) {
         return SCENARIO_LOCAL_SAVE_WRITE;
     }
     if (!SDL_CreateDirectory(dirs[0])) return SCENARIO_LOCAL_SAVE_WRITE;
