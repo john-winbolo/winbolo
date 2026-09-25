@@ -6666,6 +6666,10 @@ static bool scnModDirWorkshop(char *out, size_t outLen) {
     return scnModDirPref("WB_MOD_DIR_WORKSHOP", "Workshop", out, outLen);
 }
 
+bool scenarioHostWorkshopDir(char *out, size_t outLen) {
+    return scnModDirWorkshop(out, outLen);
+}
+
 /* The mods that ship with the build, which live in data/mods beside the
    executable. Resolved from SDL_GetBasePath rather than from the working
    directory, the way data/lang and data/maps are: a dedicated server is

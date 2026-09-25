@@ -3468,6 +3468,16 @@ int run_scenario_mod_dirs_workshop_precedence(void);
 int run_scenario_mod_dirs_workshop_local(void);
 int run_scenario_mod_dirs_workshop_upload_clash(void);
 
+/* The Workshop sync (test_workshop_sync.c): what an item folder holds, and
+ * what a pass copies, indexes and removes in the Workshop directory. */
+int run_workshop_sync_classify(void);
+int run_workshop_sync_copies_and_indexes(void);
+int run_workshop_sync_removes_unsubscribed(void);
+int run_workshop_sync_unavailable_touches_nothing(void);
+int run_workshop_sync_name_clash(void);
+int run_workshop_sync_renamed_content(void);
+int run_workshop_sync_bumps_script_dirs_gen(void);
+
 /* Which scenario plays when a map and a mod both have a claim
  * (test_scenario_precedence.c): the three rules, the four points the
  * template is applied at, and the game a round is played by. */

@@ -488,6 +488,25 @@ int scenarioHostListLocalScripts(ServerScenarioEntry *out, int max);
  *********************************************************/
 bool scenarioHostLocalScriptPath(const char *file, char *out, size_t outLen);
 
+/*********************************************************
+ *NAME:          scenarioHostWorkshopDir
+ *PURPOSE:
+ *  <prefpath>Workshop, where subscribed Workshop items are
+ *  copied to, or what WB_MOD_DIR_WORKSHOP names. The same
+ *  directory the mod listing and the local listing read,
+ *  so the one that writes it and the ones that read it
+ *  agree on the path and its override.
+ *
+ *ARGUMENTS:
+ *  out    - The path is written here
+ *  outLen - The size of out
+ *
+ *RETURNS:
+ *  True with the path in out. False when SDL cannot name
+ *  it or it does not fit, with out "".
+ *********************************************************/
+bool scenarioHostWorkshopDir(char *out, size_t outLen);
+
 /* What scenarioHostSaveLocalScript made of one file. */
 typedef enum {
     SCENARIO_LOCAL_SAVE_OK = 0,

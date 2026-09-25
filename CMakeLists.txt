@@ -1608,6 +1608,10 @@ set(CLIENT_SOURCES
     src/gui/sdl3/map_stars.cpp
     src/gui/sdl3/wbn_map_source.cpp
     src/gui/sdl3/news_image_cache.cpp
+    # Copies subscribed Workshop items into <prefpath>Workshop. Desktop only:
+    # winbolo.c, imgui_steam_nav.cpp and imgui_settings.cpp call it, and the
+    # mobile and wasm builds leave those calls out rather than link it.
+    src/gui/sdl3/workshop_sync.c
     # Smart-ping pie menu and the markers for pings that have arrived.
     src/gui/sdl3/ping_overlay.cpp
     src/gui/sdl3/ping_icons.c
@@ -4294,6 +4298,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Name arithmetic only: no audio device, and it opens no file.
     tests/unit/test_sound_variants.c
     src/gui/sdl3/sound_variants.c
+    # The Workshop sync over item folders a case builds: what a folder holds,
+    # what is copied and indexed, and what is removed. The Steam calls are
+    # replaced by a source table, and the stub wrapper links the rest.
+    tests/unit/test_workshop_sync.c
+    src/gui/sdl3/workshop_sync.c
     # The Bolo pascal-string reader in both places it is implemented —
     # src/bolo/util.c and the log viewer's own copy.
     tests/unit/test_pascal_string.c
@@ -6257,6 +6266,13 @@ set(_unit_test_names
     scenario_mod_dirs_workshop_precedence
     scenario_mod_dirs_workshop_local
     scenario_mod_dirs_workshop_upload_clash
+    workshop_sync_classify
+    workshop_sync_copies_and_indexes
+    workshop_sync_removes_unsubscribed
+    workshop_sync_unavailable_touches_nothing
+    workshop_sync_name_clash
+    workshop_sync_renamed_content
+    workshop_sync_bumps_script_dirs_gen
     scenario_precedence_mod_over_map
     scenario_precedence_none_restores_map
     scenario_precedence_plain_map_keeps_mod

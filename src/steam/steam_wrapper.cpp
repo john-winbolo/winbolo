@@ -73,7 +73,9 @@ static InputHandle_t s_real_controller_handle = 0;
    the pad's input dead in the menus.  Force a re-activation to re-bind it. */
 static bool s_force_actionset_reactivate = false;
 /* Set when a Workshop item finishes installing or downloading; consumed by
-   steam_workshop_consume_installed_event() so the skin picker can rescan. */
+   steam_workshop_consume_installed_event(), whose one caller is
+   workshopSyncPoll(): it copies the item into the Workshop directory and
+   moves on the generation the skin picker rescans by. */
 static bool s_workshop_installed_event = false;
 
 /* Workshop publish.  CreateItem and SubmitItemUpdate hand back a

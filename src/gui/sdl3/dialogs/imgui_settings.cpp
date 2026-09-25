@@ -54,6 +54,7 @@ extern "C" {
 #include "../tileloader.h"
 #include "../../lang.h"
 #include "../../../steam/steam_wrapper.h"
+#include "../workshop_sync.h"  /* workshopSyncGeneration — the skin picker */
 #include "imgui_settings.h"
 #include "imgui_keyboard.h"
 #include "imgui_keysetup.h"
@@ -1089,8 +1090,18 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
         }
 
         /* A Workshop download finishing while the picker is open leaves the
-           rows stale.  Drained every frame so the flag doesn't sit set. */
-        const bool workshopChanged = steam_workshop_consume_installed_event();
+           rows stale.  The sync consumes Steam's installed edge and moves its
+           generation on; a generation this block has not seen yet is that
+           edge. */
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+        static uint32_t s_workshopGenSeen = 0;
+        const uint32_t  workshopGen       = workshopSyncGeneration();
+        const bool      workshopChanged   = workshopGen != s_workshopGenSeen;
+        s_workshopGenSeen = workshopGen;
+#else
+        /* No Workshop on these builds: the stub's edge never fired here. */
+        const bool workshopChanged = false;
+#endif
 
         /* The item that just finished downloading may be the one the player
            picked before it existed locally.  activeId is a local copy, so this
