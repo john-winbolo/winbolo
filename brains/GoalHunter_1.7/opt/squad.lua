@@ -182,6 +182,85 @@ function M.can_lead_blitz(state, info, pill_hp)
   return true, "can lead"
 end
 
+-- Free allies for the blitz-only commander gate (C.BLITZ_ONLY_CMDR_NEEDS_FREE,
+-- 2026-09-25). An ally is FREE when it is live (active slot, not dead since
+-- its last broadcast) and in NO blitz. In a blitz means any of:
+--   call   it has an open call of its own (state.blitz_calls[pn])
+--   cmdr   it is a commander on a take (broadcast sqst "blitz")
+--   C<n>   it answers commander n: committed (cmdr set, sqst "join") or
+--          negotiating (cmdr set, sqst "nego" -> shown "nego:C<n>")
+--   bac    a live ally commander lists it in its bac accept list
+-- Everything else (sqst "free" / "bz" / "full" / none) is free. /info state
+-- replaces the whole slot, so role/cmdr/sqst are the ally's current values.
+-- Returns count, desc: desc names every live ally and its state, e.g.
+-- "p0=cmdr p1=C0 p2=nego:C0 p4=C6 p6=call", so the reject breakdown shows
+-- where the count comes from.
+function M.free_ally_count(state, now, self_pn)
+  local max_age = C.SQUAD_ALLY_MAX_AGE or 1750
+  local dead    = state.tank_dead_at
+  local calls   = state.blitz_calls
+  -- Soldiers any live commander has accepted (bac "1" / "1,2").
+  local accepted = nil
+  for pn, slot in ally_state.iter_active(now, max_age) do
+    if pn ~= self_pn then
+      local is_dead = dead and dead[pn] and dead[pn] > (slot.last_tick or 0)
+      local bac = slot.info and slot.info.bac
+      if not is_dead and bac and bac ~= "" then
+        for s in tostring(bac):gmatch("%d+") do
+          accepted = accepted or {}
+          accepted[tonumber(s)] = pn
+        end
+      end
+    end
+  end
+  local n, parts = 0, {}
+  for pn, slot in ally_state.iter_active(now, max_age) do
+    if pn ~= self_pn then
+      local is_dead = dead and dead[pn] and dead[pn] > (slot.last_tick or 0)
+      if not is_dead then
+        local h = slot.info or {}
+        local cm = tonumber(h.cmdr or "")
+        local st
+        if calls and calls[pn] then st = "call"
+        elseif h.sqst == "blitz" then st = "cmdr"
+        elseif cm and h.sqst == "nego" then st = "nego:C" .. cm
+        elseif cm then st = "C" .. cm
+        elseif accepted and accepted[pn] then st = "bac:C" .. accepted[pn]
+        else st = "free"; n = n + 1 end
+        parts[#parts + 1] = string.format("p%d=%s", pn, st)
+      end
+    end
+  end
+  return n, (#parts > 0) and table.concat(parts, " ") or "no live allies"
+end
+
+-- Soldier call pick under the commander gate (C.BLITZ_ONLY_CMDR_NEEDS_FREE,
+-- blitz-only only). The pick in M.update answers the NEAREST joinable call,
+-- but availability() says yes only for the call on our goal pill. When goal
+-- selection chose a different open call's pill (the gate sends a blocked bot
+-- there), return that call instead: pn, dist, pill. Joinable matches only
+-- (is_full(pn, pill) false); nearest wins, tie -> lower pn. nil = keep the
+-- nearest pick (knob off, no blitz-only, a cost switch chose already, no
+-- attack_pill goal, nearest already on our pill, or no joinable match).
+function M.goal_call_pick(state, cmd_info, best_pn, best_target, is_full)
+  if not (best_pn and not state._blitz_switch_to
+          and C.BLITZ_ONLY_CMDR_NEEDS_FREE and M.blitz_only(state)) then
+    return nil
+  end
+  local g = state.goal
+  local gt = g and g.kind == "attack_pill" and g.target_id
+  if not gt or best_target == gt then return nil end
+  local m_pn, m_d
+  for pn, ci in pairs(cmd_info) do
+    if ci.target == gt and not is_full(pn, ci.target)
+       and (not m_d or ci.dist < m_d or (ci.dist == m_d and pn < m_pn)) then
+      m_pn, m_d = pn, ci.dist
+    end
+  end
+  if not m_pn then return nil end
+  return m_pn, m_d, gt
+end
+
 -- Every soldier COMMITTED to our blitz on `our_pid`, as an array of
 -- { pn = n, suicider = bool } sorted by player number. Same membership test as
 -- blitz_ready_status (role s, cmdr = us, past negotiation, broadcasting
@@ -1745,6 +1824,18 @@ update_body = function(state, info, now, world)
        and not squad_full(state._blitz_switch_to, cmd_info[state._blitz_switch_to].target) then
       best_pn     = state._blitz_switch_to
       best_target = cmd_info[best_pn].target
+    end
+    -- Blitz-only commander gate (C.BLITZ_ONLY_CMDR_NEEDS_FREE): a bot the gate
+    -- kept from starting its own take joins through goal selection, which
+    -- picks ONE open call's pill. Answer THAT call: availability() says yes
+    -- only for the call on our goal pill, so with two calls open the
+    -- nearest-call pick above declined "bz" every tick when the nearest call
+    -- was the other one. Joinable matches only; nearest wins, tie -> lower pn.
+    do
+      local m_pn, m_d, m_t = M.goal_call_pick(state, cmd_info, best_pn, best_target, squad_full)
+      if m_pn then
+        best_pn, best_d, best_target = m_pn, m_d, m_t
+      end
     end
     if best_pn then
       local ok, reason = M.availability(state, info, best_target)

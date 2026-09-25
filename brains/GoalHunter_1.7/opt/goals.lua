@@ -10847,8 +10847,9 @@ local function get_formula_inner(e)
   if e._reject == "blitz_only" then
     return reject_with_breakdown(e,
       string.format("REJECT blitz_only @(%d,%d)", e._mx or 0, e._my or 0),
-      string.format("reject:blitz_only — pills only inside a blitz (%s); this pill is not our blitz, has no open call to join, and we cannot lead one: %s",
-        tostring(e._blitz_only_src), tostring(e._blitz_only_why)))
+      string.format("reject:blitz_only — pills only inside a blitz (%s); this pill is not our blitz, has no open call to join, and we cannot lead one: %s%s",
+        tostring(e._blitz_only_src), tostring(e._blitz_only_why),
+        e._blitz_only_desc and (" — allies: " .. e._blitz_only_desc) or ""))
   end
   if e._reject == "ally_pill_take_priority" then
     local rem = e._reject_remaining or 0
@@ -14427,9 +14428,13 @@ local function apply_blitz_only_gate(state, info, world)
     end
   end
   local marked = false
+  -- Commander gate (C.BLITZ_ONLY_CMDR_NEEDS_FREE): free-ally count, computed
+  -- once per call and only when a row actually reaches the lead test.
+  local free_n, free_desc = nil, nil
   for _, e in pairs(cache) do
     if e._p == 6 and e._id then
       local why = nil
+      local gate_need = nil
       if on then
         local pid = e._id
         if state.squad_blitz_target ~= pid and state.squad_negotiate_pill ~= pid
@@ -14437,29 +14442,54 @@ local function apply_blitz_only_gate(state, info, world)
           local pill = world and world.pills and world.pills[pid]
           local hp = (pill and pill.health) or e._hpv or 0
           local ok, w = squad.can_lead_blitz(state, info, hp)
-          if not ok then why = w end
+          if not ok then
+            why = w
+          elseif C.BLITZ_ONLY_CMDR_NEEDS_FREE then
+            -- A NEW take as commander needs itself + free allies >= blitz
+            -- min, else the call can never fill. Only this lead test is
+            -- gated: rows 1-3 above (our blitz, negotiating, open call to
+            -- join) never get here, so joins and a take we already lead
+            -- (squad_blitz_target) are untouched.
+            if not free_n then
+              free_n, free_desc = squad.free_ally_count(state, now, info.player_number)
+            end
+            local need = squad.blitz_min() - 1
+            if free_n < need then
+              why = string.format("cmdr gate: 1 + free allies %d < blitz min %d", free_n, need + 1)
+              gate_need = need
+            end
+          end
         end
       end
       if why then
         marked = true
+        local desc = gate_need and free_desc or nil
+        if e._blitz_only_desc ~= desc then
+          e._blitz_only_desc = desc
+          if e._reject == "blitz_only" then e.formula = nil end   -- re-render the ally list
+        end
         if not e._reject or (e._reject == "blitz_only" and e._blitz_only_why ~= why) then
           e._reject           = "blitz_only"
           e._reject_remaining = 0
           e._blitz_only_why   = why
           e._blitz_only_src   = squad.blitz_only_label(state)
           e.formula           = nil
+          if gate_need then
+          end
         end
       elseif e._reject == "blitz_only" then
         e._reject           = nil
         e._reject_remaining = 0
         e._blitz_only_why   = nil
         e._blitz_only_src   = nil
+        e._blitz_only_desc  = nil
         e.formula           = nil
       end
     end
   end
   state._blitz_only_marked = marked
 end
+M._apply_blitz_only_gate = apply_blitz_only_gate   -- unit tests
 
 function M.finalize_pools(state, world, info)
   -- ── Ally-claimed REJECT sync (runs before partial → pool_cache) ──

@@ -3021,6 +3021,24 @@ M.BLITZ_ONLY_EXTEND_WAIT = true -- true => under blitz-only (flag or knob
                            -- until the set parks, the pill dies or the goal
                            -- changes. false = the old GO rules. No effect
                            -- without blitz-only. KEEL false.
+M.BLITZ_ONLY_CMDR_NEEDS_FREE = true -- true => under blitz-only a bot may
+                           -- START a new take as commander (a pill with no
+                           -- blitz of ours, no negotiation and no open call)
+                           -- only when itself + its FREE live allies >=
+                           -- squad.blitz_min(). Free = alive and in no blitz:
+                           -- no open call of its own, not a commander on a
+                           -- take (sqst "blitz"), not answering a commander
+                           -- (cmdr set, sqst "nego"/"join") and not in any
+                           -- commander's bac list (squad.free_ally_count).
+                           -- A blocked row is REJECTED "blitz_only"
+                           -- (BLITZ_CMDR_GATE in print2), so the bot falls
+                           -- through to its other goals, including joining a
+                           -- short open blitz. Joins, a take we already lead
+                           -- and our availability to recruiters are not
+                           -- touched. Also: a soldier answers the call on its
+                           -- goal pill, not just the nearest call. false =
+                           -- old rules. No effect without blitz-only. KEEL
+                           -- false.
 M.SQUAD_KILL_RECOVER = true -- true => squad.update snapshots its per-tick
                            -- outputs (squad_cmdr, squad_blitz_target, ...) and,
                            -- when a budget kill cut it short, the next tick
@@ -4679,6 +4697,11 @@ M.PRESETS = {
     -- blitz_min tanks PARKED; at timeout it extends the wait. KEEL went GO at
     -- READY_TIMEOUT with whoever was committed (or abandoned if short).
     BLITZ_ONLY_EXTEND_WAIT        = false,
+    -- 2026-09-25: under blitz-only, a new commander take needs itself + free
+    -- allies >= blitz_min, and a soldier answers the call on its goal pill.
+    -- KEEL opened a take with nobody free to join it and answered the
+    -- nearest call only.
+    BLITZ_ONLY_CMDR_NEEDS_FREE    = false,
     -- 2026-09-25: a pill our man or an ally's man is walking to build blocks a
     -- blitz spot's shot line like a live pill. KEEL: only live pills block.
     BLITZ_SPOT_PENDING_PILLS      = false,
