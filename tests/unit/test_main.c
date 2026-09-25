@@ -2013,6 +2013,9 @@ static const UnitTestEntry s_tests[] = {
     { "editor_pack_twice_identical",             run_editor_pack_twice_identical             },
     { "editor_pack_refuses_unbound",             run_editor_pack_refuses_unbound             },
     { "editor_pack_survives_map_save",             run_editor_pack_survives_map_save             },
+    { "workshop_map_dir_offered_at_root",        run_workshop_map_dir_offered_at_root        },
+    { "workshop_map_dir_resolve",                run_workshop_map_dir_resolve                },
+    { "workshop_map_dir_absent",                 run_workshop_map_dir_absent                 },
 #ifdef WB_NETDEBUG
     { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },
     { "netdebug_overshoot_under_loss",           run_netdebug_overshoot_under_loss           },

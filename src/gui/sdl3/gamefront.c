@@ -1901,6 +1901,16 @@ bool gameFrontSetDlgState(openingStates newState) {
              beside it for the same reason: what the list holds has nothing to
              do with whichever map is being hosted. */
           serverSimSetScenarioDir(spServerSim, gameFrontHostingScenarioDir);
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__) && !defined(__EMSCRIPTEN__)
+          /* And where subscribed Workshop items are copied to, which the map
+             list offers as a "Workshop" folder. Mobile has no Workshop. */
+          {
+            char workshopDir[FILENAME_MAX];
+            if (scenarioHostWorkshopDir(workshopDir, sizeof(workshopDir))) {
+              serverSimSetWorkshopMapDir(spServerSim, workshopDir);
+            }
+          }
+#endif
           scenarioHostRegisterScenarioLister(spServerSim);
           if (strncmp(fileName, "randommap:", 10) != 0 && fileName[0] != '\0') {
             char scenarioErr[512];
@@ -3550,6 +3560,15 @@ bool gameFrontSetupServer(void) {
       gameFrontHostingScriptUploadPolicy != SCRIPT_UPLOAD_OFF);
   scenarioHostRegisterMapScripted(spServerSim);
   serverSimSetScenarioDir(spServerSim, gameFrontHostingScenarioDir);
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__) && !defined(__EMSCRIPTEN__)
+  /* And the Workshop map folder, as on the single-player path. */
+  {
+    char workshopDir[FILENAME_MAX];
+    if (scenarioHostWorkshopDir(workshopDir, sizeof(workshopDir))) {
+      serverSimSetWorkshopMapDir(spServerSim, workshopDir);
+    }
+  }
+#endif
   scenarioHostRegisterScenarioLister(spServerSim);
   if (strncmp(fileName, "randommap:", 10) != 0 && fileName[0] != '\0') {
     char scenarioErr[512];

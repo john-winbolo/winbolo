@@ -524,6 +524,20 @@ void serverSimSetUploadPersistDir(ServerSim *sim, const char *dir) {
     }
 }
 
+void serverSimSetWorkshopMapDir(ServerSim *sim, const char *dir) {
+    if (sim == NULL) return;
+    if (dir != NULL) {
+        SDL_strlcpy(sim->workshopMapDir, dir, sizeof(sim->workshopMapDir));
+    } else {
+        sim->workshopMapDir[0] = '\0';
+    }
+}
+
+const char *serverSimGetWorkshopMapDir(const ServerSim *sim) {
+    if (sim == NULL) return "";
+    return sim->workshopMapDir;
+}
+
 bool serverSimMapDirPickRandom(ServerSim *sim) {
     int idx;
     char msg[512];
@@ -1121,11 +1135,13 @@ static bool relPathIsSafe(const char *p) {
     return true;
 }
 
-/* Resolve a client-facing map relPath to an absolute filesystem path. The
- * virtual "Uploads" folder (and "Uploads/<name>") redirects to the configured
- * persist directory when the sim has one set; every other path — and the unset
- * case — resolves under the map-dir root as before. relPath must already have
- * passed relPathIsSafe. out holds at least FILENAME_MAX bytes.
+/* Resolve a client-facing map relPath to an absolute filesystem path. Two
+ * virtual folders live outside the map root: "Uploads" (and "Uploads/<name>")
+ * redirects to the configured persist directory, and "Workshop" (and
+ * "Workshop/<name>") to the directory the host copies its Workshop items to.
+ * Each redirects only when the sim has that directory set; every other path —
+ * and the unset case — resolves under the map-dir root as before. relPath must
+ * already have passed relPathIsSafe. out holds at least FILENAME_MAX bytes.
  *
  * Not static: the lobby's set-map command and the upload preview's use-local
  * path name a map by the same relPath a listing gave, and each used to build
@@ -1143,6 +1159,18 @@ void serverSimResolveMapPath(const ServerSim *sim, const char *relPath,
         }
         if (SDL_strncmp(relPath, "Uploads/", 8) == 0) {
             SDL_snprintf(out, outSize, "%s/%s", persist, relPath + 8);
+            return;
+        }
+    }
+    const char *workshop =
+        (sim && sim->workshopMapDir[0] != '\0') ? sim->workshopMapDir : NULL;
+    if (workshop != NULL && relPath != NULL) {
+        if (SDL_strcmp(relPath, "Workshop") == 0) {
+            SDL_strlcpy(out, workshop, outSize);
+            return;
+        }
+        if (SDL_strncmp(relPath, "Workshop/", 9) == 0) {
+            SDL_snprintf(out, outSize, "%s/%s", workshop, relPath + 9);
             return;
         }
     }
@@ -1211,6 +1239,33 @@ int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
                             : serverSimScenarioMapIsScripted(sim, child);
     }
     SDL_free(list);
+
+    /* The root also offers the Workshop directory as a folder, the way the
+       resolve above reaches it. Left out when the directory is not there yet
+       (nothing subscribed), when the listing is full, and when the map root
+       already holds a real folder of that name in any case, so the chooser
+       never draws two rows called Workshop. A real "Workshop" row still opens
+       the Workshop directory, because the resolve decides where it leads. */
+    if ((relPath == NULL || relPath[0] == '\0') && sim != NULL &&
+        sim->workshopMapDir[0] != '\0' && count < maxEntries) {
+        SDL_PathInfo info;
+        bool present = false;
+        for (int i = 0; i < count; i++) {
+            if (SDL_strcasecmp(entries[i].name, "Workshop") == 0) {
+                present = true;
+                break;
+            }
+        }
+        if (!present && SDL_GetPathInfo(sim->workshopMapDir, &info) &&
+            info.type == SDL_PATHTYPE_DIRECTORY) {
+            ServerMapEntry *e = &entries[count++];
+            SDL_strlcpy(e->name, "Workshop", sizeof(e->name));
+            e->isFolder = true;
+            e->modTime  = (int64_t)info.modify_time;
+            e->size     = 0;
+            e->scripted = false;
+        }
+    }
 
     /* Folders first; alphabetical within each group. */
     for (int i = 1; i < count; i++) {

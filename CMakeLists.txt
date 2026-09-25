@@ -3843,6 +3843,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/gui/visibility_presets.c
     tests/unit/test_info_packet_view_policies.c
     tests/unit/test_upload_cap.c
+    # The virtual "Workshop" folder in the map listing and the resolve.
+    tests/unit/test_workshop_map_dir.c
     tests/unit/test_map_field_clamps.c
     tests/unit/test_map_reload_rollback.c
     tests/unit/test_map_read_memory.c
@@ -6365,6 +6367,9 @@ set(_unit_test_names
     editor_pack_twice_identical
     editor_pack_refuses_unbound
     editor_pack_survives_map_save
+    workshop_map_dir_offered_at_root
+    workshop_map_dir_resolve
+    workshop_map_dir_absent
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via

@@ -793,6 +793,33 @@ void        serverSimGetUploadsDir(const ServerSim *sim, char *out,
                                    size_t outLen);
 
 /*********************************************************
+ *NAME:          serverSimSetWorkshopMapDir
+ *               serverSimGetWorkshopMapDir
+ *PURPOSE:
+ *  The directory subscribed Workshop items are copied to,
+ *  which the map listing offers as the virtual folder
+ *  "Workshop". "" or NULL clears it.
+ *
+ *  While it is set, "Workshop" and "Workshop/<name>" name
+ *  that directory and the files in it, for the listing,
+ *  the preview read and the lobby's set-map command alike,
+ *  as "Uploads" names the persist directory. The root of
+ *  the listing shows the folder only while the directory
+ *  exists. Unset, which is how the dedicated server always
+ *  runs, "Workshop" is an ordinary path under the map root.
+ *
+ *  Setting it reads nothing. The getter answers "" when
+ *  nothing is set.
+ *
+ *ARGUMENTS:
+ *  sim - Pointer to the ServerSim
+ *  dir - The directory, no trailing slash; NULL or "" to
+ *        clear it
+ *********************************************************/
+void        serverSimSetWorkshopMapDir(ServerSim *sim, const char *dir);
+const char *serverSimGetWorkshopMapDir(const ServerSim *sim);
+
+/*********************************************************
  *NAME:          serverSimGetSelectedScenario
  *PURPOSE:
  *  Which scenario from that directory the lobby host has

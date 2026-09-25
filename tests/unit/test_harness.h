@@ -3725,6 +3725,14 @@ int run_editor_pack_twice_identical(void);
 int run_editor_pack_refuses_unbound(void);
 int run_editor_pack_survives_map_save(void);
 
+/* The virtual "Workshop" map folder (test_workshop_map_dir.c): offered at the
+ * root of the map listing when the host has named a Workshop directory that
+ * exists, resolved into that directory, and left out, or listed once beside a
+ * real folder of that name, otherwise. */
+int run_workshop_map_dir_offered_at_root(void);
+int run_workshop_map_dir_resolve(void);
+int run_workshop_map_dir_absent(void);
+
 /* The last status tile frontEndStatusTank was handed by the stub in
  * test_stubs.c: the 1-based player number, and the tankAlliance as an int so
  * the header does not have to pull screentank.h in. Both are -1 until the
