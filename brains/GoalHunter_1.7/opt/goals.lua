@@ -8048,6 +8048,49 @@ function M.kill_pickup_score(state, world, info, pill)
   return c or 1e30
 end
 
+-- Public: our rank among the live claimers of fresh-kill pill kp.id (Override
+-- 3b handoff). An ally BEATS us when it broadcasts kg = this pill and its kc is
+-- lower than our cost, or equal and its player number is lower. rank = 1 +
+-- allies that beat us. DEAD allies are skipped (their kg/kc lingers, but they
+-- cannot grab). keep = how many claimers keep the claim: 2 when
+-- C.KILL_PICKUP_PAIR_MIN_SQUAD > 0 and our recorded blitz size (kp.squad_n)
+-- is >= it, else 1. The caller stands down when rank > keep.
+-- While the pair rule is on, our cost is rounded with the SAME "%.0f" the kc
+-- broadcast uses (init.lua), so both claimers compare the same numbers: with
+-- raw 20.4 vs 20.2 both used to see the other's "20" as cheaper. Off (keel):
+-- the raw cost, exactly as before.
+-- Returns rank, keep, best_pn, best_cost (best ally that beats us, or nil),
+-- our compared cost, and the list of every live claimer ally { pn, kc } (pn
+-- order) so the panel can show each factor.
+function M.kill_pickup_rank(state, kp, mc, my_pn, now)
+  local pair_min = C.KILL_PICKUP_PAIR_MIN_SQUAD or 0
+  local keep = (pair_min > 0 and (kp.squad_n or 1) >= pair_min) and 2 or 1
+  local mc_cmp = mc
+  if pair_min > 0 then mc_cmp = tonumber(string.format("%.0f", mc)) or mc end
+  local beaten, best_pn, best_cost = 0, nil, nil
+  local claimers = {}
+  local tdead = state.tank_dead_at
+  for apn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
+    local is_dead = tdead and tdead[apn] and tdead[apn] > (slot.last_tick or 0)
+    if apn ~= my_pn and not is_dead then
+      local si = slot.info
+      if si and si.kg and tonumber(si.kg) == kp.id then
+        local a_cost = tonumber(si.kc) or 1e9
+        claimers[#claimers + 1] = { pn = apn, kc = a_cost }
+        if a_cost < mc_cmp or (a_cost == mc_cmp and apn < my_pn) then
+          beaten = beaten + 1
+          -- Track the BEST such ally so the viz names the real grabber.
+          if not best_cost or a_cost < best_cost
+             or (a_cost == best_cost and apn < (best_pn or 1e9)) then
+            best_pn, best_cost = apn, a_cost
+          end
+        end
+      end
+    end
+  end
+  return beaten + 1, keep, best_pn, best_cost, mc_cmp, claimers
+end
+
 -- =========================================================================
 -- SEA-PILL HARVEST — the DEEP-SEA branch of capture_pill
 --
@@ -16161,32 +16204,29 @@ local function goal_selection(state, world, info, quiet)
       -- Handoff: defer to the blitz member with the LOWEST capture_pill score
       -- (the same balanced metric the goal selector uses) that also claims
       -- this kill; tie → lower player number. We broadcast our own score as kc.
+      -- Pair pickup (KILL_PICKUP_PAIR_MIN_SQUAD): a big enough blitz keeps the
+      -- best TWO claimers, so we yield only when `keep` allies beat us.
       local yield_to, yield_cost = nil, nil
+      local kp_rank, kp_keep, kp_best, kp_best_cost, kp_mc_cmp, kp_claimers = 1, 1, nil, nil, mc, nil
       if C.KILL_PICKUP_HANDOFF and ally_state.iter_active and info.player_number then
-        local my_pn  = info.player_number
-        local tdead  = state.tank_dead_at
-        for apn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
-          -- Don't yield to a DEAD claimer (its kg/kc broadcast lingers but it
-          -- can't grab) — else a live bot stands down for a corpse and the pill
-          -- goes unclaimed.
-          local is_dead = tdead and tdead[apn] and tdead[apn] > (slot.last_tick or 0)
-          if apn ~= my_pn and not is_dead then
-            local si = slot.info
-            if si and si.kg and tonumber(si.kg) == kp.id then
-              local a_cost = tonumber(si.kc) or 1e9
-              -- An ally beats us if its score is lower, or equal + lower pn.
-              -- Track the BEST such ally so the viz names the real grabber.
-              if a_cost < mc or (a_cost == mc and apn < my_pn) then
-                if not yield_cost or a_cost < yield_cost
-                   or (a_cost == yield_cost and apn < (yield_to or 1e9)) then
-                  yield_to, yield_cost = apn, a_cost
-                end
-              end
-            end
-          end
-        end
+        kp_rank, kp_keep, kp_best, kp_best_cost, kp_mc_cmp, kp_claimers =
+          M.kill_pickup_rank(state, kp, mc, info.player_number, now)
+        if kp_rank > kp_keep then yield_to, yield_cost = kp_best, kp_best_cost end
       end
       kp._yield_to = yield_to  -- for viz
+      kp._rank, kp._keep, kp._mc_cmp = kp_rank, kp_keep, kp_mc_cmp
+      -- Every live claimer ally as "pN=kc", for the panel / viz. Built only
+      -- when something shows it (the pair-rule desc or the debug viz).
+      local kp_vs = nil
+      if kp_claimers and #kp_claimers > 0
+         and (BRAIN_DEBUG_MODE or (C.KILL_PICKUP_PAIR_MIN_SQUAD or 0) > 0) then
+        local parts = {}
+        for i = 1, #kp_claimers do
+          parts[i] = string.format("p%d=%s", kp_claimers[i].pn, tostring(kp_claimers[i].kc))
+        end
+        kp_vs = table.concat(parts, " ")
+      end
+      kp._vs = kp_vs
       if not reachable then
         -- WAY OUT (unreachable): no path to the body within the A* budget —
         -- walled in or simply too far. Drop the claim so the pill reopens to
@@ -16222,6 +16262,13 @@ local function goal_selection(state, world, info, quiet)
                      wx = U.m2w(p.mx), wy = U.m2w(p.my), target_id = kp.id,
                      race_mode = true, kill_grab = true }
           desc = string.format("killgrab#%d@(%d,%d) [HARD pickup]", kp.id, p.mx, p.my)
+        end
+        -- Pair pickup on: every factor of the keep decision, so the panel
+        -- shows why we keep it (rank <= keep; keep=2 when squad >= min).
+        if (C.KILL_PICKUP_PAIR_MIN_SQUAD or 0) > 0 then
+          desc = desc .. string.format(" rank %d<=keep %d (squad %d, min %d) me p%d=%s vs %s",
+            kp_rank, kp_keep, kp.squad_n or 1, C.KILL_PICKUP_PAIR_MIN_SQUAD,
+            info.player_number or -1, tostring(kp_mc_cmp), kp_vs or "none")
         end
       end
     end

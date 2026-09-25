@@ -7398,8 +7398,13 @@ function Brain.think(info)
       local eta = state._repair_dispatch_eta
         or (U.mdist(dtx, dty, build_cmd.x, build_cmd.y)
             * (C.REPAIR_DEAD_GRASS_TICKS_PER_TILE or 16))
+      -- pbox: the man goes to build or repair a PILL there. The advert
+      -- appends "P" so allies can treat the tile as a pending pill
+      -- (squad.update_pending_pills). Readers of the first 8 chars are
+      -- unchanged.
       state._lgm_dispatch = { x = build_cmd.x, y = build_cmd.y,
-                              eta_tick = now + eta, tick = now }
+                              eta_tick = now + eta, tick = now,
+                              pbox = (build_cmd.action == BUILDMODE_PBOX) or nil }
       state._repair_dispatch_eta = nil
     end
     -- Placement trip flag. ONE record per placement dispatch (harvest or
@@ -8443,6 +8448,10 @@ function Brain.think(info)
       bse.lgmd = string.format("%02X%02X%04X",
                                bit.band(ld.x or 0, 0xFF),
                                bit.band(ld.y or 0, 0xFF), left)
+      -- 9th char "P" = a pill build/repair trip (pending pill for allies'
+      -- blitz spot tests). Only with C.BLITZ_SPOT_PENDING_PILLS, so KEEL
+      -- sends the old 8-char advert byte for byte.
+      if ld.pbox and C.BLITZ_SPOT_PENDING_PILLS then bse.lgmd = bse.lgmd .. "P" end
     else
       if state._lgm_dispatch and info.man_status == C.LGM_INTANK
          and (now - (state._lgm_dispatch.tick or 0)) > 2 then

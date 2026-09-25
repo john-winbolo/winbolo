@@ -729,6 +729,7 @@ local function blitz_spot_shot_blocked(world, sfx, sfy, pmx, pmy, now, pn)
         if tt == C.T_BUILDING or tt == C.T_HALFBUILD then blocked = true; break end
         local be = world and world.base_at and world.base_at[t.my * 256 + t.mx]
         if be and be.base then blocked = true; break end
+        if SM.pending_pill_at(world, t.mx, t.my) then blocked = true; break end
         local plist = world and world.pill_at and world.pill_at[t.my * 256 + t.mx]
         if plist then for _, e in ipairs(plist) do local pp = e.id and world.pills[e.id]; if pp and not pp.in_tank and (pp.health or 0) > 0 and pp.mx == t.mx and pp.my == t.my then blocked = true; break end end end
         if blocked then break end
@@ -738,6 +739,8 @@ local function blitz_spot_shot_blocked(world, sfx, sfy, pmx, pmy, now, pn)
   end
   return true   -- every aim point blocked → no clean shot
 end
+
+M._blitz_spot_shot_blocked = blitz_spot_shot_blocked   -- unit tests
 
 function M.blitz_arbitrate(state, info, now, self_pn)
   local max_age = C.SQUAD_ALLY_MAX_AGE or 1750
@@ -931,6 +934,8 @@ local function read_cmdr_brj(state, self_pn)
   end
 end
 
+M._read_cmdr_brj = read_cmdr_brj   -- unit tests
+
 -- ── Budget-killed squad.update guard ──────────────────────────────────────
 -- update_body (below) clears its per-tick outputs (squad_cmdr,
 -- squad_blitz_target, ...) part-way through and re-derives them further down.
@@ -982,7 +987,54 @@ function M.recover_killed_update(state, now)
   end
 end
 
+-- Pending pills (C.BLITZ_SPOT_PENDING_PILLS, 2026-09-25): tiles where a pill
+-- WILL stand in a few seconds, so the blitz spot tests (spot_margin
+-- world_blocker / aim_line_trees, blitz_clear_aim, the arbiter's legacy loop,
+-- the standoff sanity check) block on them like a live pill. Sources:
+--   own   our man is out on a pill build/repair dispatch (_lgm_dispatch.pbox)
+--   own   our goal is place_pill_strategic and we carry a pill (the target)
+--   ally  an ally's lgmd advert ends in "P" (its man is out on a pill job)
+-- Allies do NOT broadcast a place_pill_strategic target before the man
+-- leaves, so an ally's pill counts only from its dispatch on.
+-- Writes world.pending_pill_at (packed y*256+x -> source label), or nil when
+-- the knob is off (KEEL) or no tile is pending.
+function M.update_pending_pills(state, info, now, world)
+  if not world then return end
+  if not C.BLITZ_SPOT_PENDING_PILLS then world.pending_pill_at = nil; return end
+  local set = nil
+  local ld = state._lgm_dispatch
+  if ld and ld.pbox and ld.x and ld.y and info.man_status ~= C.LGM_INTANK then
+    set = set or {}
+    set[ld.y * 256 + ld.x] = "own_lgm"
+  end
+  local g = state.goal
+  if g and g.kind == "place_pill_strategic" and g.mx and g.my
+     and (info.carried_pills or 0) > 0 then
+    set = set or {}
+    local k = g.my * 256 + g.mx
+    if not set[k] then set[k] = "own_place" end
+  end
+  local self_pn = info.player_number
+  for pn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
+    if pn ~= self_pn then
+      local h = slot.info
+      local al = h and h.lgmd
+      if al and #al >= 9 and string.sub(al, 9, 9) == "P" then
+        local lx = tonumber(string.sub(al, 1, 2), 16)
+        local ly = tonumber(string.sub(al, 3, 4), 16)
+        if lx and ly then
+          set = set or {}
+          local k = ly * 256 + lx
+          if not set[k] then set[k] = "ally_p" .. tostring(pn) end
+        end
+      end
+    end
+  end
+  world.pending_pill_at = set
+end
+
 update_body = function(state, info, now, world)
+  M.update_pending_pills(state, info, now, world)
   local pns, self_pn = protocol_pns(state, info, now)
   state.squad_pns  = pns
 
@@ -1560,6 +1612,12 @@ update_body = function(state, info, now, world)
           elseif _call and _call.pill then
             state.squad_blitz_target = _call.pill
           end
+          -- A committed soldier still reads brj: the commander can reject the
+          -- spot we committed to (e.g. shot_blocked by a pill that appeared
+          -- after the accept). attack.lua drops the spot and replans on it
+          -- (BLITZ_BRJ_REPLAN); before this, only negotiating soldiers read
+          -- brj and a committed one drove to a rejected spot forever.
+          read_cmdr_brj(state, self_pn)
           return role
         end
       else
@@ -2384,6 +2442,15 @@ function M.draw_blitz_wait_timeout(state, info, now)
   do
     local party = 1 + (v.total or 0)
     local short = party < (v.blitz_min or 2)
+    local short_txt = v.bo_hold and "  SHORT -> extend at timeout" or "  SHORT -> abandon at timeout"
+    y = y + dy
+  end
+  -- Blitz-only hold (C.BLITZ_ONLY_EXTEND_WAIT): GO needs the PARKED set
+  -- (commander + soldiers at their spots) >= MIN; each timeout short of it
+  -- adds one more READY_TIMEOUT instead of charging or abandoning.
+  if v.bo_hold then
+    local parked = v.parked or 1
+    local pshort = parked < (v.blitz_min or 2)
     y = y + dy
   end
   -- Contested: a hostile tank within BLITZ_CONTESTED_RANGE of the pill turns

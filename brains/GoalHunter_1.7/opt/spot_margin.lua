@@ -122,7 +122,21 @@ end
 
 -- ── Blocker lookup ───────────────────────────────────────────────────────
 
--- Blocker kind at tile (x,y): "wall", "base", "pill" or false.
+-- Pending pill at tile (x,y): a pill that is not on the map YET but will be
+-- soon -- our man (or an ally's, from its lgmd advert) is walking there to
+-- build or repair it, or we carry a pill to a placement target. Filled per
+-- tick by squad.update_pending_pills into world.pending_pill_at (packed
+-- y*256+x). The table is nil when C.BLITZ_SPOT_PENDING_PILLS is off (KEEL),
+-- so every check below is then exactly the old code.
+-- (20260925_105315 bot1/bot9: p1 picked (143.73,123.27) at t=3022 across the
+-- tile p9's man was walking to; the pill appeared at t=3032 and the commander
+-- rejected the spot every tick after.)
+function M.pending_pill_at(world, x, y)
+  local pp = world and world.pending_pill_at
+  return pp ~= nil and pp[y * 256 + x] ~= nil
+end
+
+-- Blocker kind at tile (x,y): "wall", "base", "pill", "pill_pending" or false.
 -- Reads terrain through U.ttype_peek (a pure read): U.ttype is a change
 -- DETECTOR and priming new tiles from here would move threat recomputes.
 local function world_blocker(world, x, y)
@@ -145,6 +159,7 @@ local function world_blocker(world, x, y)
       end
     end
   end
+  if M.pending_pill_at(world, x, y) then return "pill_pending" end
   return false
 end
 
@@ -223,6 +238,7 @@ function M.aim_line_trees(ox, oy, omx, omy, pmx, pmy, world, i, wallset)
   local pill_at = world and world.pill_at
   local base_at = world and world.base_at
   local pills   = world and world.pills
+  local pending = world and world.pending_pill_at
   local blocked, reached, trees = false, false, 0
   for ti = 1, #tiles do
     local t = tiles[ti]
@@ -239,6 +255,7 @@ function M.aim_line_trees(ox, oy, omx, omy, pmx, pmy, world, i, wallset)
       if wallset and wallset[key] then blocked = true; break end
       local be = base_at and base_at[key]
       if be and be.base then blocked = true; break end
+      if pending and pending[key] then blocked = true; break end
       local plist = pill_at and pill_at[key]
       if plist then
         for _, e in ipairs(plist) do

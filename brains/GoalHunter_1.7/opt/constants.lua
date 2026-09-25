@@ -1033,6 +1033,14 @@ M.BLITZ_SPOT_EXACT_ORIGIN       = true
 -- standoff float point (where the charge fires from), not from where it waits,
 -- 2.25 tiles further out. false = the live tank position. KEEL false.
 M.BLITZ_GO_GATE_FROM_STANDOFF   = true
+-- Blitz spot pending pills, 2026-09-25. true => a tile where a pill WILL stand
+-- soon blocks a blitz shot line like a live pill: our man is out on a pill
+-- build/repair trip, our place_pill_strategic target while we carry a pill, or
+-- an ally's man on a pill trip (its lgmd advert ends in "P"; only sent with
+-- this knob on). Read by the spot pick, the arbiter, blitz_clear_aim and the
+-- standoff sanity check (squad.update_pending_pills fills
+-- world.pending_pill_at). false = only live pills block. KEEL false.
+M.BLITZ_SPOT_PENDING_PILLS      = true
 M.EARLY_CAPTURE_BASE_HYST_EXEMPT = true -- opening phase: capture_base skips ALL hysteresis (switch + commit + history), same as capture_pill
 M.REFUEL_URGENCY_MIN       = 0.37  -- minimum urgency multiplier for refuel cost
 -- Critical-armour need floor, expressed in the "need" convention used across
@@ -1807,6 +1815,19 @@ M.KILL_PICKUP_HANDOFF = true   -- defer the pickup to the blitz member with the
 -- bodies; this backstops the reachable-but-slow case. ~10 s. A body you just
 -- killed is normally a few tiles away, so a real grab finishes well inside it.
 M.KILL_PICKUP_MAX_TICKS = 500
+-- Pair pickup (2026-09-25). When the blitz that killed the pill had at least
+-- this many tanks, the TWO best claimers keep their claims (rank 1 and rank 2
+-- under the handoff rule: lower kc, tie -> lower player number); rank 3+ stand
+-- down as before. A smaller blitz keeps only the best claimer. Blitz size is
+-- recorded on the claim when it is made (state.kill_pickup.squad_n, attack.lua
+-- mark_kill_pickup): the largest count of committed tanks on that pill (self +
+-- allies on attack_pill for it, past negotiation, not dead) that this bot saw
+-- during the take; 1 when the take was not a blitz. Each claimer uses ITS OWN
+-- recorded size (they normally agree; a bot that missed a joiner can disagree).
+-- While on (> 0), our own cost is rounded like the kc broadcast (%.0f) before
+-- the compare, so both claimers compare the same numbers.
+-- 0 = OFF (single grabber, unrounded compare, exactly the KEEL behaviour).
+M.KILL_PICKUP_PAIR_MIN_SQUAD = 3   -- default 3; KEEL 0 (off)
 -- Strategic-center bias: the placement scan is tank-centric, but spots near the
 -- chosen strategic center (war zone / base-vs-threat / contested pill) score
 -- higher. Bonus = max(0, CAP - dist_to_center) * WEIGHT. Optional (0 if no center).
@@ -2963,6 +2984,17 @@ M.BLITZ_ONLY_PILL_ATTACKS = false -- true => this bot attacks a LIVE pill ONLY
                            -- (state.blitz_only) turns the same gate on per bot
                            -- and is what a scenario uses; either one on = on.
                            -- Read through squad.blitz_only(state). KEEL false.
+M.BLITZ_ONLY_EXTEND_WAIT = true -- true => under blitz-only (flag or knob
+                           -- above) a blitz COMMANDER goes GO only when the
+                           -- PARKED set (itself + soldiers at their spots in
+                           -- a ready substate) reaches squad.blitz_min(). At
+                           -- READY_TIMEOUT with fewer parked it neither
+                           -- charges nor abandons: it adds another
+                           -- SQUAD_BLITZ_READY_TIMEOUT to the wait
+                           -- (BLITZ_WAIT_EXTEND in print2). No cap: it waits
+                           -- until the set parks, the pill dies or the goal
+                           -- changes. false = the old GO rules. No effect
+                           -- without blitz-only. KEEL false.
 M.SQUAD_KILL_RECOVER = true -- true => squad.update snapshots its per-tick
                            -- outputs (squad_cmdr, squad_blitz_target, ...) and,
                            -- when a budget kill cut it short, the next tick
@@ -4613,6 +4645,17 @@ M.PRESETS = {
     -- 2026-09-24: the blitz soldier's GO gate tests from its standoff. KEEL
     -- tested from the live tank at its SETUP point.
     BLITZ_GO_GATE_FROM_STANDOFF   = false,
+    -- 2026-09-25: a 3+ blitz kill keeps TWO capture_pill claimers (rank 1 and
+    -- 2), and our own cost is rounded like kc before the handoff compare. KEEL
+    -- kept one grabber and compared the unrounded cost. 0 = off.
+    KILL_PICKUP_PAIR_MIN_SQUAD    = 0,
+    -- 2026-09-25: under blitz-only, the commander goes GO only with
+    -- blitz_min tanks PARKED; at timeout it extends the wait. KEEL went GO at
+    -- READY_TIMEOUT with whoever was committed (or abandoned if short).
+    BLITZ_ONLY_EXTEND_WAIT        = false,
+    -- 2026-09-25: a pill our man or an ally's man is walking to build blocks a
+    -- blitz spot's shot line like a live pill. KEEL: only live pills block.
+    BLITZ_SPOT_PENDING_PILLS      = false,
     -- 2026-09-05 (evening): BLITZ_CONTESTED_ALL_SUICIDERS had an entry here and
     -- no longer needs one -- the bench sent it back and its DEFAULT is now
     -- false, which is already the KEEL value. A knob whose default equals its
