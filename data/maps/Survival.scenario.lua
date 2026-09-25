@@ -238,6 +238,10 @@ local WAVE_BLITZ_MIN_SUICIDERS = 1
 local WAVE_BLITZ_MIN_SUICIDERS_BY_WAVE = { [2] = 4, [4] = 4 }
 local WAVE_NOBLITZ = { [3] = true }              -- waves that never blitz
 local WAVE_NOCLAIM = { [1] = true, [2] = true }  -- ignore allies' dead-pill claims
+-- Waves that attack pills only inside a blitz: no solo pill attacks (the
+-- brain's "blitzonly" flag). Dead-pill grabs are not affected. Empty = off;
+-- { [1] = true } makes wave 1 blitz-only.
+local WAVE_BLITZ_ONLY = {}
 
 -- Waves fielded entirely as pill suiciders. Empty on purpose: waves 2 and 4
 -- used to be, and it made those two rounds play as one long pill rush
@@ -290,6 +294,7 @@ local function wave_init(w)
   if SUICIDER_WAVES[w] then t.suicider    = "1" end
   if WAVE_NOBLITZ[w]   then t.noblitz     = "1" end
   if WAVE_NOCLAIM[w]   then t.noclaimdead = "1" end
+  if WAVE_BLITZ_ONLY[w] then t.blitzonly  = "1" end
   -- No `refuel` token. The loadout policy below is what keeps an attacker
   -- from going home, and it does it by filling the tank rather than by
   -- pricing the errand.
