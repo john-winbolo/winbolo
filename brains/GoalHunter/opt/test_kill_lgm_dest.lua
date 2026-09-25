@@ -375,7 +375,7 @@ do
     if tier == "dest_pill" then
       if not first_fire then first_fire = n end
       if not (dt and dt.verdict == "fire" and dt.s_enter <= dt.s_x
-              and (dt.s_arrive == nil or dt.s_x <= dt.s_arrive + dt.dwell)) then bad = n end
+              and (dt.s_arrive == nil or dt.s_x <= dt.s_arrive + dt.dwell + dt.s_exit)) then bad = n end
     elseif tier == "dest_pill_hold" then
       if not first_fire then
         early_before = early_before + 1
@@ -529,6 +529,132 @@ do
   -- The same walk on Hard is held (test 21's early phase).
   local ah = { K.predict_aim(tx, ty, lgm, (function() h.dest_pill = lock; return h end)()) }
   check("hard: same walk -> dest_pill_hold", ah[6] == "dest_pill_hold", ah[6])
+end
+
+-- =========================================================================
+-- The walk off the pill tile after the build (bug fix, 2026-09-25): he is
+-- still on the pill tile until he crosses its edge, and the pill is live
+-- by then, so a shell in the tile during the walk-off kills him.
+-- =========================================================================
+print("\nkill_lgm.lua — hold fire: the walk off the tile")
+
+-- 27. Exit steps from the centre toward his tank: east vs north.  Man at
+--     16 wu/step (MAN_SPEED_BLESSED on the pill tile).  East: x offset
+--     128 + 16k leaves [0,256) at k = 8 -> 7 steps still on the tile.
+--     North: y offset 128 - 16k is still 0 (on the tile) at k = 8 and
+--     leaves at k = 9 -> 8 steps.  South-east diagonal: 11.3 wu per axis per
+--     step, leaves at k = 12 -> 11.
+do
+  local pmx, pmy = 108, 100
+  local pcx, pcy = centre(pmx, pmy)
+  local p = { mx = pmx, my = pmy, cx = pcx, cy = pcy }
+  local e, es = K.dest_exit_steps(p, pcx + 10 * 256, pcy)
+  local n, ns = K.dest_exit_steps(p, pcx, pcy - 10 * 256)
+  local d, ds = K.dest_exit_steps(p, pcx + 10 * 256, pcy + 10 * 256)
+  check("exit toward a tank to the east: 7 steps still on the tile", e == 7 and not es, e)
+  check("exit toward a tank to the north: 8 steps still on the tile", n == 8 and not ns, n)
+  check("exit toward a tank to the south-east: 11 steps", d == 11 and not ds, d)
+  -- Wall on the way out (east neighbour is a building, tank due east): the
+  -- sim walks him to the tile edge (7 steps) and stops him there, still on
+  -- the tile -> 7 steps, stalled, loop bounded.
+  painted[pmy * 256 + pmx + 1] = C.T_BUILDING
+  local w, ws = K.dest_exit_steps(p, pcx + 10 * 256, pcy)
+  painted[pmy * 256 + pmx + 1] = nil
+  check("exit blocked by a wall -> stalled at the edge, 7 steps", w == 7 and ws == true, tostring(w) .. " " .. tostring(ws))
+end
+
+-- 28. The fire window includes the walk-off.  Man at the pill centre now
+--     (s_enter = s_arrive = 0), dead pill, his tank 10 tiles east
+--     (s_exit = 7), shooter south of the pill at a sweep of distances.
+--     Window = [0, 0 + 20 + 7].
+do
+  local pmx, pmy = 108, 100
+  local pcx, pcy = centre(pmx, pmy)
+  local p = { id = 1, mx = pmx, my = pmy, cx = pcx, cy = pcy, live = false }
+  local walkoff_fire, late, dwell_fire, bad = 0, 0, 0, nil
+  for dy = 2 * 256, 12 * 256, 16 do
+    local h = { owner_wx = pcx + 10 * 256, owner_wy = pcy, owner_src = "tank" }
+    local _, _, _, _, _, tier = K.predict_dest_hold(pcx, pcy + dy, { wx = pcx, wy = pcy }, h, p)
+    local dt = h.dest_timing
+    if not (dt.s_enter == 0 and dt.s_arrive == 0 and dt.s_exit == 7 and dt.exit_src == "tank") then
+      bad = "timeline " .. dy
+    elseif dt.s_x <= 20 then
+      if tier == "dest_pill" and dt.verdict == "fire" then dwell_fire = dwell_fire + 1 else bad = "dwell " .. dy end
+    elseif dt.s_x <= 27 then
+      if tier == "dest_pill" and dt.verdict == "fire" then walkoff_fire = walkoff_fire + 1 else bad = "walkoff " .. dy end
+    else
+      if tier == "dest_pill_hold" and dt.verdict == "late" then late = late + 1 else bad = "late " .. dy end
+    end
+  end
+  check("shell goes off during the build -> fire", dwell_fire > 0 and not bad, dwell_fire)
+  check("shell goes off during the walk-off (s_arrive+20 < s_x <= +s_exit) -> fire (was 'late')",
+        walkoff_fire > 0 and not bad, string.format("%d bad=%s", walkoff_fire, tostring(bad)))
+  check("shell goes off after he leaves the tile -> late", late > 0 and not bad,
+        string.format("%d bad=%s", late, tostring(bad)))
+end
+
+-- 29. Same shooter, his tank north instead of east: s_exit = 8, so the
+--     window end moves one step (the timeline follows the exit direction).
+do
+  local pmx, pmy = 108, 100
+  local pcx, pcy = centre(pmx, pmy)
+  local p = { id = 1, mx = pmx, my = pmy, cx = pcx, cy = pcy, live = false }
+  local found
+  for dy = 2 * 256, 12 * 256, 16 do
+    local he = { owner_wx = pcx + 10 * 256, owner_wy = pcy, owner_src = "tank" }
+    local hn = { owner_wx = pcx, owner_wy = pcy - 10 * 256, owner_src = "tank" }
+    K.predict_dest_hold(pcx, pcy + dy, { wx = pcx, wy = pcy }, he, p)
+    K.predict_dest_hold(pcx, pcy + dy, { wx = pcx, wy = pcy }, hn, p)
+    if he.dest_timing.s_x == 28 then
+      found = { he.dest_timing, hn.dest_timing }
+      break
+    end
+  end
+  check("s_x = 28: tank east (s_exit 7) -> late, tank north (s_exit 8) -> fire",
+        found and found[1].verdict == "late" and found[1].s_exit == 7
+              and found[2].verdict == "fire" and found[2].s_exit == 8,
+        found and (found[1].verdict .. "/" .. found[2].verdict) or "no s_x = 28 in sweep")
+end
+
+-- 30. No tank position -> mirror: s_exit = s_arrive - s_enter.  Man 200 wu
+--     west of the centre walking east at 16: on the tile at step 5 (-120),
+--     arrives at step 12 (within 16 wu) -> s_exit = 7, exit_src "mirror".
+do
+  local pmx, pmy = 108, 100
+  local pcx, pcy = centre(pmx, pmy)
+  local p = { id = 1, mx = pmx, my = pmy, cx = pcx, cy = pcy, live = false }
+  local h = {}
+  K.predict_dest_hold(pcx, pcy + 6 * 256, { wx = pcx - 200, wy = pcy }, h, p)
+  local dt = h.dest_timing
+  check("unknown tank -> mirror fallback, s_exit = s_arrive - s_enter",
+        dt and dt.exit_src == "mirror" and dt.s_enter == 5 and dt.s_arrive == 12 and dt.s_exit == 7,
+        dt and string.format("%s enter=%s arrive=%s exit=%s", tostring(dt.exit_src),
+                             tostring(dt.s_enter), tostring(dt.s_arrive), tostring(dt.s_exit)))
+  -- No arrival in the look-ahead: no late end, no exit computed.
+  local h2 = {}
+  K.predict_dest_hold(pcx, pcy + 2 * 256, { wx = pcx - 20 * 256, wy = pcy }, h2, p)
+  check("no arrival in look-ahead -> no s_exit, never late",
+        h2.dest_timing and h2.dest_timing.s_arrive == nil and h2.dest_timing.s_exit == nil
+        and h2.dest_timing.verdict ~= "late", h2.dest_timing and h2.dest_timing.verdict)
+end
+
+-- 31. note_owner_pos: his tank visible -> "tank"; out of sight -> the last
+--     position we saw it at ("tank_last"); a different owner id -> cleared.
+do
+  local h = {}
+  local lgm = { near_tank_idnum = 4 }
+  K.note_owner_pos(h, lgm, { { id = 2, wx = 1, wy = 1 }, { id = 4, wx = 5000, wy = 6000 } })
+  check("owner visible -> tank position, src tank",
+        h.owner_wx == 5000 and h.owner_wy == 6000 and h.owner_src == "tank", h.owner_src)
+  K.note_owner_pos(h, lgm, { { id = 2, wx = 1, wy = 1 } })
+  check("owner out of sight -> last seen position, src tank_last",
+        h.owner_wx == 5000 and h.owner_wy == 6000 and h.owner_src == "tank_last", h.owner_src)
+  K.note_owner_pos(h, { near_tank_idnum = 9 }, {})
+  check("different owner id -> position cleared (mirror fallback)",
+        h.owner_wx == nil and h.owner_src == nil, h.owner_src)
+  local h0 = {}
+  K.note_owner_pos(h0, {}, { { id = 4, wx = 5000, wy = 6000 } })
+  check("no owner id -> nothing recorded", h0.owner_wx == nil, h0.owner_wx)
 end
 
 print(string.format("\n%d passed, %d failed", pass, fail))
