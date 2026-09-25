@@ -7978,6 +7978,17 @@ function Brain.think(info)
         bsi.bes = string.format("%.4f,%.4f",
                     g.standoff_fx or (g.standoff_mx + 0.5),
                     g.standoff_fy or (g.standoff_my + 0.5))
+      elseif C.BLITZ_NOSPOT_RENEGOTIATE and state.squad_role ~= "c"
+             and g and g.kind == "attack_pill" and (g.standoff_fx or g.standoff_mx)
+             and (state.squad_cmdr or state.squad_negotiate_cmdr)
+             and g.target_id ~= nil
+             and g.target_id == (state.squad_blitz_target or state.squad_negotiate_pill) then
+        -- 2026-09-25 evening: a soldier on the blitz pill with no engage
+        -- spot (NO-SPOT, or its own plan_position pick) still broadcasts
+        -- the standoff it drives to, so the commander and allies see it.
+        bsi.bes = string.format("%.4f,%.4f",
+                    g.standoff_fx or (g.standoff_mx + 0.5),
+                    g.standoff_fy or (g.standoff_my + 0.5))
       end
       -- Commander GO signal. Tied to the live goal (_blitz_go) so it self-clears
       -- when the take ends — a stale GO can't trigger the next blitz. _blitz_go

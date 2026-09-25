@@ -282,6 +282,14 @@ local function clear_attack_goal(state, reason, no_urgent)
   state.squad_blitz_aimed = nil
   state.squad_blitz_bd = nil
   state._blitz_reject = nil   -- soldier's rejected-standoff set (parallel negotiation)
+  -- C.BLITZ_NOSPOT_RENEGOTIATE: the engage spot just went, so the accept that
+  -- was given FOR that spot goes too. squad.update then negotiates again (a
+  -- fresh bes, checked by the commander's arbiter) instead of re-committing
+  -- with no spot and self-scanning (20260925_134920 bot2 t=3044-3079).
+  if C.BLITZ_NOSPOT_RENEGOTIATE and state.squad_blitz_accepted then
+    state.squad_blitz_accepted = nil
+    state._blitz_commit_tick   = nil
+  end
   if state.pf then state.pf.status = "idle" end
   -- Auto-derive a caller location if the call site didn't pass a reason,
   -- so the overlay still tells you which line cleared the goal.
@@ -2487,6 +2495,8 @@ local function reset_to_plan_position(state, goal)
   goal._blitz_prog_bd           = nil
   goal._blitz_prog_tick         = nil
   goal._blitz_wait_since        = nil
+  goal._blitz_wait_entry        = nil
+  goal._blitz_follow_logged     = nil
   state.squad_blitz_in_position = nil
   -- A re-entered charge has to start its own accounting. Left set, the stall
   -- backstop would still be measuring progress against the FIRST charge and
@@ -2559,6 +2569,77 @@ local function blitz_go_margin(state, goal, world, ox, oy, pmx, pmy, now)
   local w = goal._shield_scan and goal._shield_scan.best
   if w and w.aims and w.aims[idx] then w.best_aim_idx = idx end
   return nil
+end
+
+-- Known blitz spots a soldier's own plan_position pick must keep clear of
+-- (C.BLITZ_NOSPOT_RENEGOTIATE, 2026-09-25 evening). Recorded case: after a
+-- NO-SPOT, bot2's own scan picked a spot 0.25 tile from its commander's bes
+-- (122.0745,144.3533). Returns a list of {fx, fy, pn} -- the commander's bes
+-- plus the bes of every other soldier of that commander -- or nil when the
+-- knob is off, we lead this take, or the goal is not on the blitz pill.
+function M._blitz_ally_spots(state, goal, self_pn)
+  if not C.BLITZ_NOSPOT_RENEGOTIATE then return nil end
+  if not goal or goal._blitz_cmdr or state.squad_role == "c" then return nil end
+  local cmdr = state.squad_blitz_accepted or state.squad_cmdr or state.squad_negotiate_cmdr
+  if not cmdr or cmdr == self_pn then return nil end
+  local call = state.blitz_calls and state.blitz_calls[cmdr]
+  local pill = state.squad_blitz_target or state.squad_negotiate_pill or (call and call.pill)
+  if pill == nil or pill ~= goal.target_id then return nil end
+  local out = {}
+  local function add(pn, b)
+    if b and b ~= "" then
+      local x, y = tostring(b):match("^(%-?[%d.]+),(%-?[%d.]+)$")
+      x, y = tonumber(x), tonumber(y)
+      if x and y then out[#out + 1] = { x, y, pn } end
+    end
+  end
+  add(cmdr, ally_state.get_key(cmdr, "bes"))
+  local now = state.tick or 0
+  local dead = state.tank_dead_at
+  for pn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
+    if pn ~= self_pn and pn ~= cmdr and slot.info
+       and tonumber(slot.info.cmdr or "") == cmdr
+       and not (dead and dead[pn] and dead[pn] > (slot.last_tick or 0)) then
+      add(pn, slot.info.bes)
+    end
+  end
+  return out
+end
+
+-- First known spot within SQUAD_BLITZ_CLASH_TILES of (fx, fy), as
+-- (pn, dist), or nil. No new number: the same clash distance the
+-- commander's arbiter uses.
+function M._blitz_spot_clash(known, fx, fy)
+  if not (known and fx and fy) then return nil end
+  local clash = C.SQUAD_BLITZ_CLASH_TILES or 1
+  for i = 1, #known do
+    local k = known[i]
+    local dx, dy = fx - k[1], fy - k[2]
+    local dd = math.sqrt(dx * dx + dy * dy)
+    if dd <= clash then return k[3], dd end
+  end
+  return nil
+end
+
+-- plan_position filter: skip every LOS spot that clashes with a known blitz
+-- spot. Returns (skip, n_los, n_skip) or nil when M._blitz_ally_spots is nil
+-- or there is nothing to test.
+function M._blitz_ally_spot_filter(state, goal, spots, self_pn)
+  local known = M._blitz_ally_spots(state, goal, self_pn)
+  if not known or #known == 0 then return nil end
+  local now = state.tick or 0
+  local skip, n_los, n_skip = {}, 0, 0
+  for _, s in ipairs(spots) do
+    if s.has_los and s.cx and s.cy then
+      n_los = n_los + 1
+      local pn, dd = M._blitz_spot_clash(known, s.cx, s.cy)
+      if pn then
+        skip[s] = true
+        n_skip = n_skip + 1
+      end
+    end
+  end
+  return skip, n_los, n_skip
 end
 
 -- A committed blitz SOLDIER whose line was blocked goes back to plan_position
@@ -2679,6 +2760,38 @@ function M.blitz_brj_replan(state, goal, pmx, pmy, now)
   return "replan"
 end
 M._blitz_sync_engage = blitz_sync_engage   -- unit tests
+
+-- Soldier blitz_wait backstop follow (C.BLITZ_SOLDIER_WAIT_FOLLOW_CMDR,
+-- 2026-09-25 evening). True when the soldier should restart its
+-- SQUAD_BLITZ_WAIT_TIMEOUT count from the commander's last message
+-- (cslot.last_tick): blitz-only with BLITZ_ONLY_EXTEND_WAIT (the only case a
+-- commander extends with no cap), the commander's call is open on our pill,
+-- its bac names us, and it has sent something since the count last started.
+-- Logs BLITZ_WAIT_FOLLOW once per goal.
+function M.blitz_soldier_wait_follow(state, goal, cslot, cmdr, self_pn, now)
+  if not (C.BLITZ_SOLDIER_WAIT_FOLLOW_CMDR and C.BLITZ_ONLY_EXTEND_WAIT
+          and squad.blitz_only(state)) then return false end
+  if not (cslot and cslot.info and goal and goal._blitz_wait_since) then return false end
+  local call = state.blitz_calls and state.blitz_calls[cmdr]
+  if not (call and call.pill == goal.target_id) then return false end
+  local named = false
+  local bac = cslot.info.bac
+  if bac then
+    for s in string.gmatch(tostring(bac), "%d+") do
+      if tonumber(s) == self_pn then named = true; break end
+    end
+  end
+  if not named then return false end
+  local last = cslot.last_tick or 0
+  if last <= goal._blitz_wait_since then return false end
+  -- Log once, on the first tick the follow keeps us past the old backstop.
+  local entry = goal._blitz_wait_entry or goal._blitz_wait_since
+  if not goal._blitz_follow_logged
+     and (now - entry) > (C.SQUAD_BLITZ_WAIT_TIMEOUT or 1500) then
+    goal._blitz_follow_logged = true
+  end
+  return true
+end
 
 -- Commander GO verdict in blitz_wait, as a pure function (unit tests).
 --   bo_hold    squad.blitz_only(state) and C.BLITZ_ONLY_EXTEND_WAIT
@@ -4208,6 +4321,13 @@ function M.update_attack_substate(goal, state, world, info)
         if not blitz_commit_negotiated(goal, state, world, info, pmx, pmy) then
           -- No negotiated/derivable spot yet — retry the commit next tick.
           goal._blitz_started = nil
+          -- C.BLITZ_NOSPOT_RENEGOTIATE: committed with no engage spot. Drop
+          -- the accept so squad.update negotiates a fresh, arbiter-checked
+          -- spot; the blitz-ended check then clears this goal next tick.
+          if C.BLITZ_NOSPOT_RENEGOTIATE and state.squad_blitz_accepted then
+            state.squad_blitz_accepted = nil
+            state._blitz_commit_tick   = nil
+          end
         else
         end
       end
@@ -4576,6 +4696,21 @@ function M.update_attack_substate(goal, state, world, info)
       -- that fail the LOS margin or sit on the commander's standoff (nil = no
       -- filter; see blitz_soldier_replan_filter). Solo takes: always nil.
       local bz_skip, bz_aims = blitz_soldier_replan_filter(state, goal, world, spots, pmx, pmy)
+      -- C.BLITZ_NOSPOT_RENEGOTIATE: a soldier's own pick on the blitz pill
+      -- keeps SQUAD_BLITZ_CLASH_TILES from the commander's and allies' spots.
+      -- Every LOS spot clashes = no spot of our own; drop the goal and
+      -- negotiate again.
+      do
+        local az_skip, az_los, az_n = M._blitz_ally_spot_filter(state, goal, spots, info.player_number or -1)
+        if az_skip and az_n > 0 then
+          if az_n >= az_los then
+            clear_attack_goal(state, string.format("blitz: every own spot (%d) clashes with a squad spot, renegotiate", az_los))
+            return
+          end
+          bz_skip = bz_skip or {}
+          for s in pairs(az_skip) do bz_skip[s] = true end
+        end
+      end
 
       -- Step 2: collect all "green" spots (adj_score < 10 with LOS)
       local greens = {}
@@ -4780,6 +4915,17 @@ function M.update_attack_substate(goal, state, world, info)
           (not (state.is_pill_suicider or goal._human_near)) or nil
       else
         local smx, smy = M.pick_standoff(world, info, pill, state)
+        -- C.BLITZ_NOSPOT_RENEGOTIATE: the geometric fallback gets the same
+        -- clash test as the scan spots.
+        if smx then
+          local cpn, cdd = M._blitz_spot_clash(
+            M._blitz_ally_spots(state, goal, info.player_number or -1), smx + 0.5, smy + 0.5)
+          if cpn then
+            clear_attack_goal(state, string.format("blitz: fallback standoff (%d,%d) %.2f tiles from p%s's spot, renegotiate",
+              smx, smy, cdd, tostring(cpn)))
+            return
+          end
+        end
         goal.standoff_mx = smx
         goal.standoff_my = smy
         if smx then
@@ -5583,7 +5729,19 @@ function M.update_attack_substate(goal, state, world, info)
         clear_attack_goal(state, "blitz_wait: commander gone/retargeted/dead")
         return
       end
-      if not goal._blitz_wait_since then goal._blitz_wait_since = now end
+      if not goal._blitz_wait_since then
+        goal._blitz_wait_since = now
+        goal._blitz_wait_entry = now   -- first blitz_wait tick (the follow log reads it)
+      end
+      -- C.BLITZ_SOLDIER_WAIT_FOLLOW_CMDR: under blitz-only the commander
+      -- extends its own wait with no cap (BLITZ_WAIT_EXTEND). While it still
+      -- has the call open on our pill and names us in bac, restart our
+      -- backstop from its last message, so we do not time out under a
+      -- commander that is still waiting for the set. Silent / call closed /
+      -- dropped us = no restart, and the backstop runs from there.
+      if M.blitz_soldier_wait_follow(state, goal, cslot, cmdr, info.player_number or -1, now) then
+        goal._blitz_wait_since = cslot.last_tick
+      end
       if (now - goal._blitz_wait_since) > (C.SQUAD_BLITZ_WAIT_TIMEOUT or 1500) then
         clear_attack_goal(state, "blitz_wait: GO never arrived (timeout)")
         return

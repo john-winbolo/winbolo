@@ -3039,6 +3039,93 @@ M.BLITZ_ONLY_CMDR_NEEDS_FREE = true -- true => under blitz-only a bot may
                            -- goal pill, not just the nearest call. false =
                            -- old rules. No effect without blitz-only. KEEL
                            -- false.
+M.BLITZ_SOLDIER_WAIT_FOLLOW_CMDR = true -- true => under blitz-only with
+                           -- BLITZ_ONLY_EXTEND_WAIT, a soldier in blitz_wait
+                           -- restarts its SQUAD_BLITZ_WAIT_TIMEOUT backstop
+                           -- from the commander's last message while that
+                           -- commander still has the call open on our pill
+                           -- and still names us in bac. So the soldier waits
+                           -- as long as the commander extends
+                           -- (BLITZ_WAIT_FOLLOW in print2). A commander that
+                           -- goes silent, closes the call or drops us from
+                           -- bac stops the restarts, and the old 1500-tick
+                           -- backstop runs from that point; dead / retarget
+                           -- still abort at once. false = the backstop counts
+                           -- from blitz_wait entry (20260925_134920 bot2
+                           -- t=3044: p2 timed out while C3 was at extension
+                           -- 2). KEEL false.
+M.BLITZ_NOSPOT_RENEGOTIATE = true -- true => (1) clear_attack_goal also drops
+                           -- squad_blitz_accepted, and a committed soldier
+                           -- whose negotiated engage spot is gone
+                           -- ("BLITZ_COMMIT NO-SPOT") drops it too, so the
+                           -- soldier negotiates again and the commander's
+                           -- arbiter re-checks the new spot
+                           -- (BLITZ_ACCEPT_DROP in print2). (2) A blitz
+                           -- soldier's own plan_position pick skips every
+                           -- spot within SQUAD_BLITZ_CLASH_TILES of the
+                           -- commander's or a squadmate's bes
+                           -- (BLITZ_ALLY_SPOT_SKIP); all skipped = the attack
+                           -- goal clears and the soldier negotiates. (3) A
+                           -- blitz soldier with a goal standoff but no engage
+                           -- spot broadcasts that standoff as bes, so the
+                           -- arbiter sees it. false = the old rules: the
+                           -- accept outlives the goal, the soldier re-commits
+                           -- with no spot and self-scans unchecked and silent
+                           -- (20260925_134920 bot2 t=3079: spot 0.25 tile
+                           -- from C3's). KEEL false.
+M.BLITZ_GO_ACCEPTED_ONLY = true -- true => the commander's GO counts
+                           -- (squad.blitz_ready_status inwait/ready, used by
+                           -- blitz_wait GO and the en-route GO) and the
+                           -- suicider pick (squad.blitz_members) take only
+                           -- soldiers in its own accept list (bac). The
+                           -- committed total (abandon rule) is unchanged.
+                           -- false = any soldier broadcasting cmdr=us on our
+                           -- pill counts (20260925_134920 bot3 t=3889:
+                           -- set_inwait=3 with p2 not accepted). KEEL false.
+M.BLITZ_LINES_AFTER_LEAVE = true -- true => squad.blitz_shot_lines keeps the
+                           -- lines of a blitz we just left (yield, steal,
+                           -- switch, goal cleared) until that blitz ends:
+                           -- the pill dies / is taken / leaves the map, no
+                           -- ally is on attack_pill on it and no call is
+                           -- open on it, or SQUAD_BLITZ_WAIT_TIMEOUT ticks
+                           -- since we were last in it (squad.blitz_window,
+                           -- BLITZ_WINDOW in print2). Lines then = every
+                           -- live ally's bes on that pill; our own old spot
+                           -- is not a line. false = the lines stop the tick
+                           -- our goal leaves the blitz (20260925_134920 bot3
+                           -- t=4003). KEEL false.
+M.BLITZ_NO_BUILD_ACTIVE = true -- true => no NEW pill build while this bot
+                           -- is in a live blitz or inside the blitz window
+                           -- above: set_mode will not dispatch place_pill
+                           -- (strategic, guard drop, harvest resume,
+                           -- pill_place), the strategic scan and the
+                           -- OFF_BUILD panic drop skip, trail drops skip.
+                           -- Repairs, walls and the take's own shield /
+                           -- pillbox blockers are not affected
+                           -- (PLACE_BLOCKED in print2, on change only).
+                           -- false = the old rules (20260925_134920 bot3
+                           -- t=4003: man sent out 1 tick after STEAL_YIELD,
+                           -- dead at t=4004). KEEL false.
+M.PLACE_PILL_MAN_PATH_SAFE = false -- true => refuse a NEW pill tile when the
+                           -- tile or any tile on the man's straight line
+                           -- from the tank (the line lgm_path_safe_enhanced
+                           -- samples, taken at every tile) is within
+                           -- PILL_FIRE_RANGE (euclidean) of a live hostile
+                           -- or neutral pill, or lies on a live blitz / ally
+                           -- shot line (squad blitz lines, spot -> pill,
+                           -- line crosses the tile square). A forest tile in
+                           -- that fire is covered by the same refusal: a
+                           -- shell stops on forest and its blast kills a man
+                           -- within half a tile. Applied in the strategic
+                           -- scan, the guard-spot search and at dispatch.
+                           -- false = no path test (the place_pill danger gate
+                           -- stays off). KEEL false.
+M.PLACE_PILL_BEHIND_ONLY = false -- true => inside a live blitz window a NEW
+                           -- pill tile must be on the far side of the tank
+                           -- from the blitz pill: dot(tile - tank,
+                           -- pill - tank) <= 0. Same three sites as above.
+                           -- No effect outside a blitz window. false = any
+                           -- side. KEEL false.
 M.SQUAD_KILL_RECOVER = true -- true => squad.update snapshots its per-tick
                            -- outputs (squad_cmdr, squad_blitz_target, ...) and,
                            -- when a budget kill cut it short, the next tick
@@ -4702,6 +4789,33 @@ M.PRESETS = {
     -- KEEL opened a take with nobody free to join it and answered the
     -- nearest call only.
     BLITZ_ONLY_CMDR_NEEDS_FREE    = false,
+    -- 2026-09-25 (evening): under blitz-only a blitz_wait soldier restarts its
+    -- wait backstop while the commander keeps the call open and names it in
+    -- bac. KEEL timed out 1500 ticks after entering blitz_wait.
+    BLITZ_SOLDIER_WAIT_FOLLOW_CMDR = false,
+    -- 2026-09-25 (evening): a cleared goal / NO-SPOT commit drops the blitz
+    -- accept and renegotiates; a soldier's own spot pick keeps the clash
+    -- distance from the commander's and squadmates' bes; a soldier with only
+    -- a goal standoff broadcasts it as bes. KEEL kept the stale accept,
+    -- self-scanned unchecked and sent no bes.
+    BLITZ_NOSPOT_RENEGOTIATE      = false,
+    -- 2026-09-25 (evening): GO parked/ready counts and the suicider pick take
+    -- only soldiers in the commander's accept list. KEEL counted any soldier
+    -- naming it as cmdr.
+    BLITZ_GO_ACCEPTED_ONLY        = false,
+    -- 2026-09-25 (evening): blitz shot lines stay live after we leave a blitz
+    -- until it ends. KEEL dropped them with the goal.
+    BLITZ_LINES_AFTER_LEAVE       = false,
+    -- 2026-09-25 (evening): no new pill build in a live blitz or its window.
+    -- KEEL built whenever the goal allowed it.
+    BLITZ_NO_BUILD_ACTIVE         = false,
+    -- 2026-09-25 (evening): refuse a new pill tile whose man path crosses
+    -- pill fire or a blitz line. Default false = KEEL; listed so an A/B
+    -- that turns it on has one place to look.
+    PLACE_PILL_MAN_PATH_SAFE      = false,
+    -- 2026-09-25 (evening): in a blitz window, new pill tiles only behind
+    -- the tank. Default false = KEEL; listed for the same reason.
+    PLACE_PILL_BEHIND_ONLY        = false,
     -- 2026-09-25: a pill our man or an ally's man is walking to build blocks a
     -- blitz spot's shot line like a live pill. KEEL: only live pills block.
     BLITZ_SPOT_PENDING_PILLS      = false,

@@ -2863,7 +2863,13 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- which is how a bot at armour 10 with the nearest enemy 15 tiles away and
   -- not even visible dumped four pills in 200 ticks. See danger.lua.
   local _panic, _panic_thresh, _panic_why = danger.should_panic_build(state, info)
+  -- C.BLITZ_NO_BUILD_ACTIVE: no panic / offensive drop in or just after a
+  -- live blitz (squad.blitz_window).
+  local _db_blitz = C.BLITZ_NO_BUILD_ACTIVE
+                    and squad.blitz_window(state, world, state.tick or 0, info.player_number or -1) or nil
   local _db_skip = ((not _db_carrying) and " -> SKIP(not carrying a pill)")
+                or (_db_blitz and string.format(" -> SKIP(blitz_active pill=#%s %s)",
+                      tostring(_db_blitz.pill), _db_blitz.live and "live" or "left"))
                 or ((not actionable) and " -> SKIP(not actionable: builder not in tank / in boat)")
                 or ((_db_et == 0 and not _panic) and " -> SKIP(no visible enemy tank, armour ok)") or ""
   print2(string.format("OFF_BUILD t=%d gate carried=%d man=%s inboat=%s enemy_tanks=%d panic=%s(%s v=%.1f i=%.1f th=%.1f) arm=%d%s",
@@ -2878,7 +2884,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- can never dispatch (20260901_000042_1_loss_b6 bot3 t=11075: winner
   -- offensive_build@(133,121) cost=1, tank motionless 55 ticks, dead at
   -- 11191). An overlay flag must never change what the bot DOES.
-  if (_db_et > 0 or _panic) and _db_carrying and actionable then
+  if (_db_et > 0 or _panic) and _db_carrying and actionable and not _db_blitz then
     local closest_et, closest_dist = nil, math.huge
     for _, et in ipairs(state.perc.enemy_tanks) do
       if et.dist < closest_dist then closest_dist = et.dist; closest_et = et end
@@ -3471,6 +3477,22 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
       end
   end  -- score_cell
 
+  -- C.BLITZ_NO_BUILD_ACTIVE (2026-09-25 evening): no new pill while we are
+  -- in a blitz, or just left one that is still running (squad.blitz_window).
+  -- Only the placement is skipped: this runs after the harvest hold and the
+  -- seek-trees redirect above. Logs on change only.
+  if C.BLITZ_NO_BUILD_ACTIVE then
+    local bwin = squad.blitz_window(state, world, blk_now, info.player_number or -1)
+    if bwin then
+      if state._strat_nobuild_pill ~= bwin.pill then
+        state._strat_nobuild_pill = bwin.pill
+        print2(string.format("PLACE_BLOCKED t=%d site=strategic_scan reason=blitz_active pill=#%s cmdr=p%s %s -> no new pill",
+          blk_now, tostring(bwin.pill), tostring(bwin.cmdr), bwin.live and "live" or "left"))
+      end
+      return nil
+    end
+    state._strat_nobuild_pill = nil
+  end
   -- Live blitz shot lines (C.PILL_PLACE_AVOID_BLITZ_LINE): a tile that would
   -- block our own or a squadmate's line to the blitz pill is not a candidate,
   -- so the scan takes the next-best tile. nil = knob off / no blitz: the scan
@@ -3478,11 +3500,18 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- keeps its upvalue count.
   local blitz_lines = squad.blitz_shot_lines(state, world, blk_now, info.player_number)
   local n_line_skip = 0
+  -- C.PLACE_PILL_MAN_PATH_SAFE / C.PLACE_PILL_BEHIND_ONLY: per-tile test
+  -- (builder.place_tile_check). Off = never called, scan unchanged.
+  local tchk_on = C.PLACE_PILL_MAN_PATH_SAFE or C.PLACE_PILL_BEHIND_ONLY
+  local n_tchk_skip = 0
 
   if only then
     -- Harvest re-score: one tile, fresh context. nil = the tile no longer
     -- qualifies at all (category drift / surplus / blocked / occupied).
     if blitz_lines and squad.tile_on_blitz_line(world, blitz_lines, only.mx, only.my, blk_now) then
+      return nil
+    end
+    if tchk_on and builder.place_tile_check(state, world, info, only.mx, only.my, blk_now, true) then
       return nil
     end
     score_cell(only.mx, only.my)
@@ -3497,10 +3526,17 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
       if blitz_lines and U.is_placeable(cx, cy, world)
          and squad.tile_on_blitz_line(world, blitz_lines, cx, cy, blk_now) then
         n_line_skip = n_line_skip + 1
+      elseif tchk_on and U.is_placeable(cx, cy, world)
+             and builder.place_tile_check(state, world, info, cx, cy, blk_now, true) then
+        n_tchk_skip = n_tchk_skip + 1
       else
         score_cell(cx, cy)
       end
     end
+  end
+  if n_tchk_skip > 0 then
+    print2(string.format("PLACE_TILE_CHECK t=%d site=strategic_scan skipped=%d tile(s) (man path / behind-only) -> best=%s",
+      blk_now, n_tchk_skip, best_mx and string.format("(%d,%d)", best_mx, best_my) or "none"))
   end
   if n_line_skip > 0 then
     print2(string.format("PLACE_BLITZ_LINE t=%d site=strategic_scan skipped=%d tile(s) on a blitz shot line (%d line(s)) -> best=%s",

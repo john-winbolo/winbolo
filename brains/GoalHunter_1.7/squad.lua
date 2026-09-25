@@ -268,6 +268,21 @@ end
 -- which is set for a forced, slate-picked OR already blitz-designated suicider.
 -- SORTED because the designation picks from it with the seeded RNG and
 -- ally_state's pairs() order is not reproducible.
+-- C.BLITZ_GO_ACCEPTED_ONLY (2026-09-25 evening): is soldier `pn` in the
+-- accept list this commander computed (state.squad_blitz_accept, "1,2", the
+-- list it sends as bac)? Knob off, or we are not the commander -> true (count
+-- as before). 20260925_134920 bot3 t=3889: GO counted p2, which the arbiter
+-- had dropped at t=3043 when p2's bes vanished.
+function M.go_counts_soldier(state, pn)
+  if not C.BLITZ_GO_ACCEPTED_ONLY or state.squad_role ~= M.ROLE_COMMANDER then return true end
+  local acc = state.squad_blitz_accept
+  if not acc then return false end
+  for s in string.gmatch(acc, "%d+") do
+    if tonumber(s) == pn then return true end
+  end
+  return false
+end
+
 function M.blitz_members(state, now, self_pn, our_pid)
   local out = {}
   if not our_pid then return out end
@@ -278,7 +293,8 @@ function M.blitz_members(state, now, self_pn, our_pid)
       local is_dead = dead and dead[pn] and dead[pn] > (slot.last_tick or 0)
       if not is_dead and h.role == "s" and tonumber(h.cmdr or "") == self_pn
          and h.sqst ~= "nego"
-         and h.goal == "attack_pill" and tonumber(h.target or "") == our_pid then
+         and h.goal == "attack_pill" and tonumber(h.target or "") == our_pid
+         and M.go_counts_soldier(state, pn) then
         out[#out + 1] = { pn = pn, suicider = (h.psu == "1") }
       end
     end
@@ -858,10 +874,12 @@ M._blitz_spot_shot_blocked = blitz_spot_shot_blocked   -- unit tests
 --   squad_blitz_target) while another goal briefly holds the tank; and the
 --   target pill alive on the map. Covers negotiating, committed, approach,
 --   blitz_wait and charge alike.
-function M.blitz_shot_lines(state, world, now, self_pn)
-  if not C.PILL_PLACE_AVOID_BLITZ_LINE then return nil end
+-- Raw lines, no knob test: M.blitz_shot_lines (PILL_PLACE_AVOID_BLITZ_LINE)
+-- and the man-path test (PLACE_PILL_MAN_PATH_SAFE) both read it.
+function M.blitz_shot_lines_raw(state, world, now, self_pn)
   local g = state and state.goal
-  local tid
+  local tid, cmdr
+  local left = false   -- lines of a blitz we already LEFT (blitz window)
   if g and g.kind == "attack_pill" and not g._blitz_solo
      and (g._blitz or state.squad_negotiate_cmdr) then
     tid = g.target_id
@@ -872,13 +890,20 @@ function M.blitz_shot_lines(state, world, now, self_pn)
     tid = state.squad_blitz_target
     g = nil
   else
-    return nil
+    -- C.BLITZ_LINES_AFTER_LEAVE: we left a blitz (yield / steal / switch /
+    -- goal cleared) that is still running. Its allies still fire down their
+    -- lines, so keep them until the blitz ends (M.blitz_window).
+    local win = state and C.BLITZ_LINES_AFTER_LEAVE and M.blitz_window(state, world, now, self_pn)
+    if not win or win.live then return nil end
+    tid, cmdr, left, g = win.pill, win.cmdr, true, nil
   end
   local p = tid and world and world.pills and world.pills[tid]
   if not p or p.in_tank or (p.health or 0) <= 0 or not p.mx then return nil end
   local pmx, pmy = p.mx, p.my
   local lines = {}
-  if state.squad_blitz_engage_mx then
+  -- A blitz we left: our old spot is not a line any more (we no longer shoot
+  -- from it), so only the allies' lines below count.
+  if state.squad_blitz_engage_mx and not left then
     lines[#lines + 1] = { fx = state.squad_blitz_engage_fx or (state.squad_blitz_engage_mx + 0.5),
                           fy = state.squad_blitz_engage_fy or (state.squad_blitz_engage_my + 0.5),
                           pmx = pmx, pmy = pmy, who = "self" }
@@ -888,7 +913,8 @@ function M.blitz_shot_lines(state, world, now, self_pn)
                           pmx = pmx, pmy = pmy, who = "self" }
   end
   -- Commander of this blitz: our squad_cmdr / the call we negotiate, or us.
-  local cmdr = state.squad_cmdr or state.squad_negotiate_cmdr or self_pn
+  -- (A blitz we left: the commander latched in the window.)
+  cmdr = cmdr or state.squad_cmdr or state.squad_negotiate_cmdr or self_pn
   local dead = state.tank_dead_at
   local function add(pn)
     local bes = ally_state.get_key(pn, "bes")
@@ -902,12 +928,107 @@ function M.blitz_shot_lines(state, world, now, self_pn)
   for pn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
     local is_dead = dead and dead[pn] and dead[pn] > (slot.last_tick or 0)
     if pn ~= self_pn and not is_dead
-       and (pn == cmdr or tonumber(slot.info.cmdr or "") == cmdr) then
+       and (pn == cmdr or tonumber(slot.info.cmdr or "") == cmdr
+            or (left and slot.info.goal == "attack_pill"
+                and tonumber(slot.info.target or "") == tid)) then
       add(pn)
     end
   end
   if #lines == 0 then return nil end
   return lines
+end
+
+function M.blitz_shot_lines(state, world, now, self_pn)
+  if not C.PILL_PLACE_AVOID_BLITZ_LINE then return nil end
+  return M.blitz_shot_lines_raw(state, world, now, self_pn)
+end
+
+-- ── Blitz window (2026-09-25 evening) ──────────────────────────────────
+-- C.BLITZ_LINES_AFTER_LEAVE / C.BLITZ_NO_BUILD_ACTIVE / C.PLACE_PILL_BEHIND_ONLY.
+-- M.blitz_window(state, world, now, self_pn) -> win or nil
+--   win = { pill, cmdr, last, live }. live = we are in the blitz THIS tick
+--   (the test blitz_shot_lines uses: an attack_pill blitz goal, or a
+--   committed soldier). After we leave it the window stays open until the
+--   blitz ends:
+--     * the pill is dead, in a tank, off the map or ours;
+--     * no live ally is on attack_pill on that pill and no call is open on it;
+--     * SQUAD_BLITZ_WAIT_TIMEOUT ticks since we were last in it (backstop).
+--   Kept on state._blitz_win; evaluated once per tick. squad.update calls it
+--   every tick so the window latches even on ticks nothing else asks.
+--   Opening / closing logs BLITZ_WINDOW.
+local function _live_blitz(state)
+  local g = state.goal
+  if g and g.kind == "attack_pill" and not g._blitz_solo
+     and (g._blitz or state.squad_negotiate_cmdr) and g.target_id then
+    return g.target_id, state.squad_blitz_accepted or state.squad_cmdr or state.squad_negotiate_cmdr
+  elseif state.squad_blitz_accepted and state.squad_blitz_target then
+    return state.squad_blitz_target, state.squad_blitz_accepted
+  end
+  return nil
+end
+
+local function _pill_live(world, pid)
+  local p = pid and world and world.pills and world.pills[pid]
+  if not p or p.in_tank or (p.health or 0) <= 0 or not p.mx then return nil end
+  if p.owner == "friendly" then return nil end
+  return p
+end
+
+function M.blitz_window(state, world, now, self_pn)
+  if not (C.BLITZ_LINES_AFTER_LEAVE or C.BLITZ_NO_BUILD_ACTIVE or C.PLACE_PILL_BEHIND_ONLY) then
+    state._blitz_win = nil
+    return nil
+  end
+  local win = state._blitz_win
+  local pid, cmdr = _live_blitz(state)
+  if pid and _pill_live(world, pid) then
+    if not win then win = {}; state._blitz_win = win end
+    if BRAIN_DEBUG_MODE and not (win.open and win.pill == pid) then
+      print2(string.format("BLITZ_WINDOW t=%d OPEN pill=#%s cmdr=p%s", now, tostring(pid), tostring(cmdr or self_pn)))
+    end
+    win.pill, win.cmdr, win.last = pid, cmdr or self_pn, now
+    win.live, win.open, win.tick = true, true, now
+    return win
+  end
+  if not (win and win.open) then return nil end
+  -- Left the blitz. The end test walks the allies, so run it once per tick.
+  if win.tick == now and not win.live then return win end
+  win.live, win.tick = false, now
+  local why
+  if not _pill_live(world, win.pill) then
+    why = "pill dead/taken/gone"
+  elseif (now - (win.last or now)) > (C.SQUAD_BLITZ_WAIT_TIMEOUT or 1500) then
+    why = "timeout"
+  else
+    local busy = false
+    local calls = state.blitz_calls
+    if calls then
+      for _, call in pairs(calls) do
+        if call.pill == win.pill then busy = true; break end
+      end
+    end
+    if not busy then
+      local dead = state.tank_dead_at
+      for pn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
+        local is_dead = dead and dead[pn] and dead[pn] > (slot.last_tick or 0)
+        if pn ~= self_pn and not is_dead and slot.info.goal == "attack_pill"
+           and tonumber(slot.info.target or "") == win.pill then
+          busy = true
+          break
+        end
+      end
+    end
+    if not busy then why = "nobody on it" end
+  end
+  if why then
+    win.open = false
+    if BRAIN_DEBUG_MODE then
+      print2(string.format("BLITZ_WINDOW t=%d CLOSE pill=#%s cmdr=p%s left %dt ago: %s",
+        now, tostring(win.pill), tostring(win.cmdr), now - (win.last or now), why))
+    end
+    return nil
+  end
+  return win
 end
 
 -- M.tile_on_blitz_line(world, lines, tx, ty, now) -> line or nil
@@ -1164,7 +1285,11 @@ local _N_TICK_FIELDS = #_TICK_FIELDS
 local update_body
 
 function M.update(state, info, now, world)
-  if not C.SQUAD_KILL_RECOVER then return update_body(state, info, now, world) end
+  if not C.SQUAD_KILL_RECOVER then
+    local r0 = update_body(state, info, now, world)
+    M.blitz_window(state, world, now, info and info.player_number or -1)
+    return r0
+  end
   local snap = state._squad_upd_snap
   if not snap then snap = {}; state._squad_upd_snap = snap end
   for i = 1, _N_TICK_FIELDS do
@@ -1175,6 +1300,9 @@ function M.update(state, info, now, world)
   state._squad_upd_open = true
   local r = update_body(state, info, now, world)
   state._squad_upd_open = nil
+  -- Latch / expire the blitz window (C.BLITZ_LINES_AFTER_LEAVE and friends)
+  -- every tick, after this tick's squad fields are final.
+  M.blitz_window(state, world, now, info and info.player_number or -1)
   return r
 end
 
@@ -2307,13 +2435,16 @@ function M.blitz_ready_status(state, now, self_pn, info)
          and h.sqst ~= "nego"   -- still negotiating (offered, not yet accepted) → not a member yet
          and h.goal == "attack_pill" and tonumber(h.target or "") == our_pid then
         total = total + 1
+        -- C.BLITZ_GO_ACCEPTED_ONLY: a soldier we have not accepted (not in our
+        -- bac) is still committed (total) but is not parked or ready for GO.
+        local go_ok = M.go_counts_soldier(state, pn)
         -- Parked at its firing spot (past approach), independent of aim — the
         -- overwhelm wait (blitz_wait) OR anywhere in the PPT firing sequence
         -- (aim → in_range_* → shoot_pill). A soldier here is "go-able": it fires
         -- on GO without travelling, so it counts toward the early-GO quorum.
-        if M.BLITZ_READY_SUBS[h.sub or ""] then inwait = inwait + 1 end
+        if go_ok and M.BLITZ_READY_SUBS[h.sub or ""] then inwait = inwait + 1 end
         if h.rdy == "1" then
-          ready = ready + 1
+          if go_ok then ready = ready + 1 end
         else
           -- Still approaching/aiming — track the closest one's REMAINING walk
           -- distance so the commander can tell whether anyone is still closing.
