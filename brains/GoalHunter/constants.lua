@@ -2311,8 +2311,8 @@ M.KILL_LGM_FIRE_WU    = 128   -- keel 64 (burst must land this close to the pred
 -- not walking a clean line (just out of the tank, stopped, turning, sliding
 -- along a wall, turned back, heading to his own tank) nothing is locked and
 -- the old predictor runs unchanged.
--- HARD ONLY: M.MODE_LEVELS turns all three switches (AIM, LIVE_PILLS,
--- HOLD_FIRE) off in every medium and easy bundle, so Easy/Medium keep the old
+-- HARD ONLY: M.MODE_LEVELS turns all five switches (AIM, LIVE_PILLS,
+-- HOLD_FIRE, INTERCEPT, PASS_THROUGH) off in every medium and easy bundle, so Easy/Medium keep the old
 -- aim and fire gate. No difficulty token = C.DIFFICULTY "hard" = on.
 M.LGM_DEST_AIM            = true  -- master switch (keel false = old aim exactly)
 M.LGM_DEST_WINDOW_TICKS   = 20    -- brain ticks of position history the heading fit uses
@@ -2337,6 +2337,20 @@ M.LGM_DEST_LIVE_PILLS     = true  -- live hostile pill with 0 < health < PILLS_M
 -- ticks past his arrival). The gun keeps aiming at the pill centre so it is
 -- ready. "Otherwise we just make the LGM mad." (Andrew). No lock = old fire.
 M.LGM_DEST_HOLD_FIRE      = true
+-- 2026-09-25 (Andrew): with the hold on, first try to kill him on his walk IN,
+-- before he steps onto the pill tile (a dead man repairs nothing). The lead
+-- sim stops him at the pill centre, so the lead point never goes through the
+-- pill. Walk-in shot when the lead point is off the pill tile, in shell reach
+-- (14 x 128 wu) and no LIVE pill stops the shell before it; else the hold-fire
+-- pill window as before. Needs LGM_DEST_HOLD_FIRE (without it the lead tier
+-- already fires on the walk in).
+M.LGM_DEST_INTERCEPT      = true
+-- 2026-09-25 (Andrew): wrong guess. He walks on more than 16 wu (the engine's
+-- arrive tolerance) past the locked pill's centre without stopping: that pill
+-- is not his job. Never lock it again while he keeps this heading; look further
+-- along the line for the next pill (then intercept / window again), none =
+-- plain lead. Forgotten when his heading is lost (stop, turn, walk home).
+M.LGM_DEST_PASS_THROUGH   = true
 
 -- ── Capture-pill LGM hunt (2026-09-08) ────────────────────────────────────
 -- A hostile LGM standing on or beside the dead pill we are driving to grab is
@@ -6351,6 +6365,10 @@ M.PRESETS = {
     LGM_DEST_PERP_DEG             = 3,
     LGM_DEST_LIVE_PILLS           = false,
     LGM_DEST_HOLD_FIRE            = false,
+    -- 2026-09-25: walk-in intercept before the pill window, and dropping a
+    -- pill he walked through (look further along his line). KEEL: neither.
+    LGM_DEST_INTERCEPT            = false,
+    LGM_DEST_PASS_THROUGH         = false,
   },
   -- nolgm_off: RUDDER as it stood BEFORE the loaded, builder-less work
   -- (2026-09-08) -- every knob that work added, at its pre-change value, and
@@ -6546,6 +6564,7 @@ M.MODE_LEVELS = {
       -- LGM destination aim is Hard only (Andrew, 2026-09-25): the old lead
       -- predictor and the old fire gate, exactly as before the feature.
       LGM_DEST_AIM = false, LGM_DEST_LIVE_PILLS = false, LGM_DEST_HOLD_FIRE = false,
+      LGM_DEST_INTERCEPT = false, LGM_DEST_PASS_THROUGH = false,
     },
     easy = {
       -- Blitz: solo, never gangs up (BLITZ_ENABLED=false is the Stage 3 Pass A
@@ -6595,6 +6614,7 @@ M.MODE_LEVELS = {
       -- LGM destination aim is Hard only (Andrew, 2026-09-25): the old lead
       -- predictor and the old fire gate, exactly as before the feature.
       LGM_DEST_AIM = false, LGM_DEST_LIVE_PILLS = false, LGM_DEST_HOLD_FIRE = false,
+      LGM_DEST_INTERCEPT = false, LGM_DEST_PASS_THROUGH = false,
     },
   },
 }
