@@ -4018,8 +4018,13 @@ M.BUILDER_POOL_PING_PILL_TICKS = 500    -- keel 500 (10 s; moot with the bonus a
 -- THE PING DEFEND REPAIR (Andrew, 2026-09-26: "a bot ping on a friendly
 -- pillbox to be defend but ALSO a 100% sure REPAIR once the tank is within say
 -- 10 tiles of it").  The bonus above is only a weight on a 10 s clock, and the
--- ordered defend goal (alarm mode) never sets goal.repair, so the repair
--- feeder never seeds.  With this on, a bot that HOLDS a human's bot-command
+-- repair feeder seeds only now and then: the ORDER INJECTED defend goal
+-- (goals.order_goal, alarm mode) never carries goal.repair, and the pool's
+-- own defend_pill row for the pill carries it only when defend_pill_score
+-- picks its repair handoff (shelling quiet REPAIR_QUIET_TICKS, man aboard,
+-- trees, no ally repair inbound) and the order pass keeps that row as the
+-- held one.  A seeded dispatch then clears the defend goal.  With this on,
+-- a bot that HOLDS a human's bot-command
 -- ping defend order on one of our pills that is damaged (0 < hp < max) and
 -- whose tank is within PING_DEFEND_REPAIR_RANGE tiles (straight line, the
 -- DEFEND_ARRIVE_RADIUS metric) FORCES the pill's builder-pool row
@@ -4033,7 +4038,10 @@ M.BUILDER_POOL_PING_PILL_TICKS = 500    -- keel 500 (10 s; moot with the bonus a
 --   * it KEEPS the man-safety gates: fire_exchange, under_fire (the tank hit
 --     inside BUILDER_POOL_UNDER_FIRE_TICKS) and the shell gate (a shell-gated
 --     forced row holds the man; no other job takes him), plus ally_repairing
---     and unreachable.  Armour at ARMOUR_CRITICAL (the order is paused) ends it.
+--     and unreachable.  Armour at ARMOUR_CRITICAL (the order is paused) ends it,
+--     and so does a live flee_to_base / refuel_at_base goal (reactive, so it
+--     outbids the order: the tank is driving away and must not leave the man
+--     behind on a job).
 --   * NO WOOD (0 trees): step 1 is a forced harvest -- the farm row with the
 --     shortest walk out is forced the same way (its path-safety gate kept);
 --     the repair follows when the man is home with wood.
