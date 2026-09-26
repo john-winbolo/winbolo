@@ -568,6 +568,9 @@ int run_spectator_ring(void);
  * a registered ring driven by serverSimTick (logWriteTick) populates and a
  * delay-0 seek returns a seed, with no logStart and no .wbv file. */
 int run_spectator_ring_nolog(void);
+/* And a log_ServerTick every FULL_SYNC_INTERVAL ticks in that ring's events,
+ * with no snapshot ever written to a .wbv. */
+int run_spectator_ring_nolog_tick_anchors(void);
 
 /* Spectator replay translator (test_spectator_replay.c): specReplayWriteHeader
  * lays out the v2 header field-for-field, specReplayTranslateEvents /
@@ -3576,6 +3579,7 @@ int run_lv_scripted_game_type_settings(void);
 int run_scripts_record_scripted_round(void);
 int run_scripts_record_plain_round(void);
 int run_scripts_record_scripted_then_plain(void);
+int run_scripts_record_detach_before_stop(void);
 int run_scripts_record_setter_cap(void);
 int run_scripts_record_json_write(void);
 /* The log viewer reading scripts.json into its LvScripts holder
@@ -3590,6 +3594,7 @@ int run_lv_scripts_json_malformed(void);
 int run_lv_scripts_json_wrong_version(void);
 int run_lv_scripts_json_hostile_values(void);
 int run_lv_scripts_json_over_cap(void);
+int run_lv_scripts_json_close_clears(void);
 /* The log viewer's rules at the playhead (test_lv_rule_changes.c, with the
  * rule-change round recorded by lv_scripts_fixture.c): a mid-round change
  * collected at load, LvRules right after seeking either way, a plain round
@@ -3601,6 +3606,7 @@ int run_lv_rule_changes_plain_round(void);
 int run_lv_rule_changes_hostile(void);
 int run_lv_rule_changes_live_feed(void);
 int run_lv_rule_changes_armour_levels(void);
+int run_lv_rule_changes_live_same_tick(void);
 /* The log viewer's scenario panels, scores, announcement and markers at the
  * playhead (test_lv_presentation.c, with the presentation round recorded by
  * lv_scripts_fixture.c): a hand-written log played through and seeked both
@@ -3619,6 +3625,8 @@ int run_lv_presentation_panel_choice(void);
 int run_lv_presentation_slot_team(void);
 int run_lv_presentation_announce_posts(void);
 int run_lv_presentation_marker_visible(void);
+int run_lv_presentation_live_seek(void);
+int run_lv_presentation_live_fast_forward(void);
 /* The server's game tick at the playhead (test_lv_server_tick.c): a recorded
  * round's tick at end-of-log, hand-written anchors either side of a snapshot
  * and across a new round's run, records of the wrong length, a recording from

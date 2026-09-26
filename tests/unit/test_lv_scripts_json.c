@@ -18,10 +18,14 @@
  *       empty and the round still plays.
  *   lv_scripts_json_wrong_version — a member of another version is not read.
  *   lv_scripts_json_hostile_values — twelve script rows keep ten, an unknown
- *       rule is dropped, a region off the map is dropped and an over-long
- *       string is cut to its buffer.
+ *       rule and an infinite value are dropped, a region off the map, one
+ *       that runs off its edge and an empty one are dropped, one that ends on
+ *       the edge is kept, and an over-long string is cut to its buffer.
  *   lv_scripts_json_over_cap — a member one byte over SCN_RECORD_TEXT_MAX is
  *       refused whole and the round still plays.
+ *   lv_scripts_json_close_clears — a rule the member set is read at the
+ *       playhead while the recording is open, and reads classic again once it
+ *       is closed.
  *
  * The members of the last four are written by hand below and added to a
  * plain recording with minizip's append mode; none is produced by the
@@ -280,11 +284,16 @@ int run_lv_scripts_json_hostile_values(void) {
         "\"map\":\"" LVSJ_M200 "\","
         "\"mods_enabled\":\"yes\","
         "\"rules\":{\"no_such_rule\":5,\"tank_death_ticks\":400,"
-        "\"tank_reload_ticks\":\"fast\"},"
+        "\"tank_reload_ticks\":\"fast\",\"pill_max_armour\":1e999},"
         "\"regions\":["
         "{\"name\":\"far\",\"x\":300,\"y\":1,\"w\":1,\"h\":1,\"file\":\"s1.lua\"},"
         "{\"name\":\"half\",\"x\":1.5,\"y\":1,\"w\":1,\"h\":1,\"file\":\"s1.lua\"},"
-        "{\"name\":\"keep\",\"x\":10,\"y\":12,\"w\":6,\"h\":4,\"file\":\"s1.lua\"}"
+        "{\"name\":\"keep\",\"x\":10,\"y\":12,\"w\":6,\"h\":4,\"file\":\"s1.lua\"},"
+        "{\"name\":\"overrun\",\"x\":200,\"y\":1,\"w\":200,\"h\":1,\"file\":\"s1.lua\"},"
+        "{\"name\":\"tall\",\"x\":1,\"y\":100,\"w\":1,\"h\":157,\"file\":\"s1.lua\"},"
+        "{\"name\":\"thin\",\"x\":5,\"y\":5,\"w\":0,\"h\":3,\"file\":\"s1.lua\"},"
+        "{\"name\":\"flat\",\"x\":5,\"y\":5,\"w\":3,\"h\":0,\"file\":\"s1.lua\"},"
+        "{\"name\":\"edge\",\"x\":1,\"y\":0,\"w\":255,\"h\":2,\"file\":\"s1.lua\"}"
         "],"
         "\"scripts\":["
         LVSJ_ROW(1) "," LVSJ_ROW(2) "," LVSJ_ROW(3) "," LVSJ_ROW(4) ","
@@ -309,7 +318,8 @@ int run_lv_scripts_json_hostile_values(void) {
                       strcmp(lvsjGot.scripts[9].name, "S10") == 0,
                   "the kept rows are not the first ten in order");
 
-    /* The unknown rule and the rule that is not a number are dropped. */
+    /* The unknown rule, the rule that is not a number and the rule whose
+       value is infinite are dropped. */
     UT_ASSERT_MSG(lvsjGot.ruleCount == 1, "ruleCount is %d, wanted 1",
                   lvsjGot.ruleCount);
     UT_ASSERT_MSG(lvsjGot.rules[0].index ==
@@ -317,12 +327,17 @@ int run_lv_scripts_json_hostile_values(void) {
                       lvsjGot.rules[0].value == 400.0,
                   "the kept rule is not tank_death_ticks = 400");
 
-    /* x = 300 and x = 1.5 are dropped; the region on the map is kept. */
-    UT_ASSERT_MSG(lvsjGot.regionCount == 1, "regionCount is %d, wanted 1",
+    /* x = 300 and x = 1.5 are dropped, as are a region that runs off the
+       right edge, one that runs off the bottom and the two with no area. The
+       region on the map is kept, and so is the one that ends on the edge. */
+    UT_ASSERT_MSG(lvsjGot.regionCount == 2, "regionCount is %d, wanted 2",
                   lvsjGot.regionCount);
     UT_ASSERT_MSG(strcmp(lvsjGot.regions[0].name, "keep") == 0 &&
                       lvsjGot.regions[0].x == 10 && lvsjGot.regions[0].y == 12,
-                  "the kept region is not keep at 10,12");
+                  "the first kept region is not keep at 10,12");
+    UT_ASSERT_MSG(strcmp(lvsjGot.regions[1].name, "edge") == 0 &&
+                      lvsjGot.regions[1].x == 1 && lvsjGot.regions[1].w == 255,
+                  "the second kept region is not edge at x 1, 255 wide");
 
     /* A 200-character map name is cut to the buffer and terminated. */
     UT_ASSERT_MSG(strlen(lvsjGot.map) == LV_SCRIPTS_MAP_LEN - 1,
@@ -363,5 +378,73 @@ int run_lv_scripts_json_over_cap(void) {
     UT_ASSERT_MSG(played, "an over-cap member stopped playback");
     UT_ASSERT_MSG(!lvsjGot.present && lvsjGot.map[0] == '\0',
                   "a member over SCN_RECORD_TEXT_MAX was read");
+    return 0;
+}
+
+/* ── 8. Closing the recording drops its scripts ───────────────────── */
+
+/* The .wbv at path read into a heap buffer, which
+   lv_screenLoadMapFromMemory takes ownership of. */
+static uint8_t *lvsjReadFile(const char *path, size_t *outLen) {
+    FILE    *f = fopen(path, "rb");
+    long     sz;
+    uint8_t *out;
+
+    if (f == NULL) return NULL;
+    fseek(f, 0, SEEK_END);
+    sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    out = (sz > 0) ? (uint8_t *)malloc((size_t)sz) : NULL;
+    if (out == NULL || fread(out, 1, (size_t)sz, f) != (size_t)sz) {
+        fclose(f);
+        free(out);
+        return NULL;
+    }
+    fclose(f);
+    *outLen = (size_t)sz;
+    return out;
+}
+
+int run_lv_scripts_json_close_clears(void) {
+    static const char kText[] =
+        "{\"version\":1,\"rules\":{\"tank_death_ticks\":400}}";
+    ReplayHarness   h;
+    LogViewerState *lv;
+    uint8_t        *data;
+    size_t          len = 0;
+    int             rule = simRulesRuleIndex("tank_death_ticks");
+    double          open;
+    double          closed;
+    bool            loaded;
+
+    UT_ASSERT_MSG(rule >= 0, "tank_death_ticks has no index");
+    UT_ASSERT_MSG(simRulesClassicValue(rule) != 400.0,
+                  "the classic value is the one the member sets");
+    if (!lvsjPlainRound(&h, "lvScriptsClose") ||
+        !lvsjAppendMember(h.path, kText, sizeof(kText) - 1)) {
+        replayHarnessStop(&h);
+        UT_FAIL("could not build the recording");
+    }
+    data = lvsjReadFile(h.path, &len);
+    replayHarnessStop(&h);
+    UT_ASSERT_MSG(data != NULL, "could not read the recording back");
+
+    lv = lv_decoderCreate(false);
+    if (lv == NULL) {
+        free(data);
+        UT_FAIL("lv_decoderCreate returned NULL");
+    }
+    loaded = lv_screenLoadMapFromMemory(data, len) == TRUE;
+    open   = lv_screenRuleValueAt(rule, 0);
+    lv_screenCloseLog();
+    closed = lv_screenRuleValueAt(rule, 0);
+    lv_decoderDestroy(lv);
+
+    UT_ASSERT_MSG(loaded, "the recording did not open");
+    UT_ASSERT_MSG(open == 400.0, "tank_death_ticks read %g while open "
+                  "(want 400)", open);
+    UT_ASSERT_MSG(closed == simRulesClassicValue(rule),
+                  "tank_death_ticks read %g after the close (want the classic "
+                  "%g)", closed, simRulesClassicValue(rule));
     return 0;
 }

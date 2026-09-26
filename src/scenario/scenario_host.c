@@ -9432,9 +9432,12 @@ void scenarioHostDetach(ScenarioHost *h) {
            that never had a scenario publishes nothing at all rather than an
            empty set saying one has just left. */
         serverSimSetScenarioRules(h->sim, NULL, 0);
-        /* And the recording's description of the scripts, so a round the
-           next map plays without a host records none. */
-        serverSimSetScenarioRecordText(h->sim, NULL, 0);
+        /* The recording's description of the scripts is left on the sim.
+           This round ran them, and a host that leaves mid-round detaches
+           before it closes the round's log, so clearing it here would leave
+           that recording with no scripts.json. logStop clears it once it has
+           written it, which is what keeps a later round on a plain map from
+           recording this one's. */
         /* Both channels go with the slot, and an invalid handle is a
            no-op, so this needs no test of its own. */
         serverSimUnregisterSubscriber(h->sim, h->sub);

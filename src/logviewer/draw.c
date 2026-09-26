@@ -812,7 +812,12 @@ BYTE lv_drawSetup(void) {
     return TRUE;
 }
 
+static void lvFlushRegionNames(void);
+
 void lv_drawCleanup(void) {
+    /* First, while the renderer the names were made on and the font they
+       were made from are both still there. */
+    lvFlushRegionNames();
     if (textureTiles) { SDL_DestroyTexture(textureTiles); textureTiles = NULL; }
     if (textureTanks) { SDL_DestroyTexture(textureTanks); textureTanks = NULL; }
     if (textureBoats) { SDL_DestroyTexture(textureBoats); textureBoats = NULL; }
@@ -1001,6 +1006,36 @@ static void lvMarkSquares(int x0, int y0, int x1, int y1) {
     }
 }
 
+/* The declared regions' names as the overview draws them, rendered once and
+ * kept: the overview repaints often while playing, and a region's name does
+ * not change. An entry is good while its name matches the region at its
+ * index. The overview draws with one font at one size whatever the zoom, so
+ * the name is the whole key. Every entry is freed by lv_drawCleanup, which is
+ * where the font and the renderer they were made with go; a recording loaded
+ * or closed in between leaves entries whose names still describe the
+ * textures they hold, so they are kept for a region of the same name. */
+typedef struct {
+    SDL_Texture *tex;
+    int          w, h;
+    char         name[LV_SCRIPTS_REGION_NAME_LEN];
+} LvRegionName;
+
+static LvRegionName lvRegionNames[LV_SCRIPTS_REGIONS_MAX];
+
+static void lvFlushRegionNames(void) {
+    int i;
+
+    for (i = 0; i < LV_SCRIPTS_REGIONS_MAX; i++) {
+        if (lvRegionNames[i].tex != NULL) {
+            SDL_DestroyTexture(lvRegionNames[i].tex);
+        }
+        lvRegionNames[i].tex     = NULL;
+        lvRegionNames[i].w       = 0;
+        lvRegionNames[i].h       = 0;
+        lvRegionNames[i].name[0] = '\0';
+    }
+}
+
 /* The recording's declared regions, into the overview's render target, while
  * Options -> Regions is on. The outline lies inside the region's border
  * squares and the name inside the squares at its top-left, and every one of
@@ -1033,16 +1068,22 @@ static void lvDrawRegions(BYTE zoomFactor) {
 
     for (i = 0; i < count; i++) {
         const LvScriptRegion *r = &scripts->regions[i];
+        LvRegionName *label = &lvRegionNames[i];
         LvRegionRect rect;
-        SDL_Texture *name;
-        int nameW = 0, nameH = 0;
+        int nameW, nameH;
         int x0, y0, x1, y1;
 
         if (!lvRegionScreenRect(&view, r->x, r->y, r->w, r->h, &rect)) continue;
-        name = lv_drawRegionName(sdlRenderer, labelFont, r->name, &nameW, &nameH);
+        if (label->tex == NULL || SDL_strcmp(label->name, r->name) != 0) {
+            if (label->tex != NULL) SDL_DestroyTexture(label->tex);
+            label->tex = lv_drawRegionName(sdlRenderer, labelFont, r->name,
+                                           &label->w, &label->h);
+            SDL_strlcpy(label->name, r->name, sizeof(label->name));
+        }
+        nameW = label->w;
+        nameH = label->h;
         lv_drawRegion(sdlRenderer, rect.x, rect.y, rect.w, rect.h, side,
-                      name, nameW, nameH);
-        if (name != NULL) SDL_DestroyTexture(name);
+                      label->tex, nameW, nameH);
 
         /* The four sides, then the name with a square to spare for its
            inset. */

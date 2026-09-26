@@ -509,9 +509,18 @@ reader cannot tell what a timer read at a given moment.
 Written by the server's per-tick log pass (`serverSimLogTick`,
 `src/server/sim/server_sim_tick.c`) in a running round, queued just before
 the tick's `logWriteTick`, so it lands in that tick's own `LOG_EVENT` block. It
-is written at the round's first entry and at every entry where a snapshot was
-written (`logSnapshotWrittenThisTick`). A snapshot skipped because nothing was
-recorded since the last one writes no record.
+is written at the round's first entry, at every entry where a snapshot was
+written (`logSnapshotWrittenThisTick`), and at every entry whose tick is a
+multiple of `FULL_SYNC_INTERVAL` (250) whether or not a snapshot was written
+there. A tick that meets more than one of these still carries one record.
+
+The interval is for a live spectator of a server that is not recording to a
+file. Such a server writes no snapshot into the stream it feeds spectators:
+`logWriteSnapshot` returns before noting one when no `.wbv` is open, and the
+spectator ring's keyframes do not note theirs. Without the interval that feed
+would carry the round's first anchor and no other. On a recording server the
+interval ticks are the ones the periodic snapshot is written at, so the
+interval adds a record to a file only where that snapshot was skipped.
 
 The server writes one entry every other game tick, and the decoder spends
 20 ms on every record it reads, so playback time and entries drift apart: a

@@ -548,3 +548,107 @@ int run_lv_rule_changes_armour_levels(void) {
     }
     return 0;
 }
+
+/* ── 7. Two changes to one rule in one tick, on a feed ─────────────── */
+
+/* One LOG_EVENT frame holding two log_RuleSet records to pill_max_armour,
+ * 20.0 and then 30.0, so both land at the same playback time. A loaded file
+ * answers the later value, the one the tick ended on, and its list keeps both
+ * changes in file order through playback; a feed, which has no walk and
+ * collects changes as playback reads them, has to give the same answer rather
+ * than keep the first. 20.0 is 0x4034000000000000. */
+int run_lv_rule_changes_live_same_tick(void) {
+    static const uint8_t first[3 + 8] = {
+        LVRC_CAP_HI, LVRC_CAP_LO, 8,
+        0x40, 0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    static const uint8_t second[3 + 8] = {
+        LVRC_CAP_HI, LVRC_CAP_LO, 8,
+        0x40, 0x3E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    static LvrcLog  b;
+    LogViewerState *lv;
+    uint32_t        ms    = 0;
+    double          value = 0.0;
+    double          at    = 0.0;
+    bool            loaded;
+    bool            ended;
+    int             count;
+    int             cap;
+
+    b.len = 0;
+    lvrcPutHeader(&b);
+    lvrcPutSnapshot(&b);
+    lvrcPutNoEvents(&b, 2);
+    lvrcPutU8(&b, LOG_EVENT);
+    lvrcPutU8(&b, 2);
+    lvrcPutU8(&b, log_RuleSet);
+    lvrcPutU8(&b, 0);
+    lvrcPutU8(&b, (uint8_t)sizeof(first));
+    lvrcPut(&b, first, sizeof(first));
+    lvrcPutU8(&b, log_RuleSet);
+    lvrcPutU8(&b, 0);
+    lvrcPutU8(&b, (uint8_t)sizeof(second));
+    lvrcPut(&b, second, sizeof(second));
+    lvrcPutNoEvents(&b, 2);
+    lvrcPutU8(&b, LOG_QUIT);
+
+    lv = lv_decoderCreate(false);
+    UT_ASSERT_MSG(lv != NULL, "lv_decoderCreate returned NULL");
+    lv_screenSetSizeX(30);
+    lv_screenSetSizeY(30);
+
+    loaded = lv_screenLoadFromStream(b.buf, b.len) == TRUE;
+    ended  = loaded && lvrcPlayToEnd();
+    count  = lvrcCountFor(SIM_RULE_pill_max_armour, &ms, &value);
+    at     = lv_screenRuleValueAt(SIM_RULE_pill_max_armour, ms);
+    cap    = lv->rules.pillMaxArmour;
+    lv_decoderDestroy(lv);
+
+    UT_ASSERT_MSG(loaded, "the stream failed to load");
+    UT_ASSERT_MSG(ended, "playback did not reach end-of-log on the feed");
+    UT_ASSERT_MSG(count == 1, "%d pill_max_armour changes on the feed "
+                  "(want 1 for the one tick)", count);
+    UT_ASSERT_MSG(value == 30.0 && at == 30.0,
+                  "the tick's change holds %g and reads %g (want the later "
+                  "value, 30)", value, at);
+    UT_ASSERT_MSG(cap == 30, "pillMaxArmour %d at end of the feed (want 30)",
+                  cap);
+
+    /* The same bytes as a file. */
+    {
+        const char         *path = "lv_rule_changes_same_tick.wbv";
+        const LvRuleChange *changes = NULL;
+        uint8_t            *zipData;
+        size_t              zipLen = 0;
+        int                 n = 0;
+        int                 i;
+        double              seen[2] = {0.0, 0.0};
+
+        zipData = lvrcZipToMemory(&b, path, &zipLen);
+        remove(path);
+        UT_ASSERT_MSG(zipData != NULL, "could not build the file");
+        lv = lv_decoderCreate(false);
+        UT_ASSERT_MSG(lv != NULL, "lv_decoderCreate returned NULL");
+        lv_screenSetSizeX(30);
+        lv_screenSetSizeY(30);
+        loaded = lv_screenLoadMapFromMemory(zipData, zipLen) == TRUE;
+        ended  = loaded && lvrcPlayToEnd();
+        count  = lv_screenGetRuleChanges(&changes);
+        for (i = 0; i < count; i++) {
+            if (changes[i].index == SIM_RULE_pill_max_armour && n < 2) {
+                seen[n++] = changes[i].value;
+            }
+        }
+        at  = lv_screenRuleValueAt(SIM_RULE_pill_max_armour, ms);
+        cap = lv->rules.pillMaxArmour;
+        lv_decoderDestroy(lv);
+
+        UT_ASSERT_MSG(loaded, "the file failed to load");
+        UT_ASSERT_MSG(ended, "playback did not reach end-of-log in the file");
+        UT_ASSERT_MSG(n == 2 && seen[0] == 20.0 && seen[1] == 30.0,
+                      "the file's list holds %d changes, %g then %g (want 20 "
+                      "then 30)", n, seen[0], seen[1]);
+        UT_ASSERT_MSG(at == 30.0 && cap == 30,
+                      "the file reads %g, pillMaxArmour %d (want 30)", at, cap);
+    }
+    return 0;
+}

@@ -158,7 +158,9 @@ ls <repo>/tests/fuzz/crashes/
   the build dir holds `WinBoloUnitTests`.
 - `crashes/` — minimized regressions. A crash found in discovery lands here and
   is replayed by the ctest on every build. Commit new crash inputs alongside
-  the fix.
+  the fix. The `fuzz_replay` inputs here are the exception: they were not
+  minimized, and keep the `crash-` and `timeout-` names libFuzzer wrote them
+  under.
 
 ## Known lead this harness is built to catch
 

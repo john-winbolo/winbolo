@@ -35,7 +35,7 @@ document is the stable reference for the rules themselves.
 | `src/android/` | T1 + T3 + T4 | Mobile renderer; uses T3 like `src/gui/`. |
 | `src/ios/` | T1 + T3 + T4 | Mobile renderer; uses T3 like `src/gui/`. |
 | `src/client_frontend/` | T1 + T3 + T4 | The shared sim-driving cores every client platform calls instead of keeping its own copy: `client_frontend_tick.c` (the alternating keys/game tick step), `client_frontend_connect.c` (the post-connect join/landing wait), `client_frontend_common.c` (the sim-state-guarded `frontEnd*` bodies). Not a library — the sources compile directly inside each frontend target (WinBolo, WinBoloIOS, android `main`, wasm `winbolo`) under that target's `gui` profile, so they see only `public/`. See "Platform variants: share the logic, fork only the driver". |
-| `src/logviewer/` | T1 + T3 + T4 | Replays recorded games; uses T3 for the playback render path. |
+| `src/logviewer/` | T1 + T3 + T4 | Replays recorded games; uses T3 for the playback render path. The standalone `LogViewer` and the wasm log viewer compile `src/bolo/sim_rules.c` from source under a per-file T2 grant, since neither links `bolo_static`; that is the sim's own file rather than anything in this directory (see "Per-file T2 grants"). |
 | `src/winbolonet/winbolonet_core/` | T1 + T4 | Shared HTTP, async event queue, WBN key storage. Includes `server_sim.h` (T1) only. Linked by every WBN-aware binary. |
 | `src/winbolonet/winbolonet_server/` | T1 + T4 | Server tracker calls (`server/register`, `server/update`, lobby/map/teams/balance). Linked by binaries that run a server: WinBoloDS, WinBoloHeadless, SDL3 client (SP host). |
 | `src/winbolonet/winbolonet_client/` | T4 | User auth, comments. Linked by binaries with a UI: SDL3 client, LogViewer. |
@@ -2476,7 +2476,7 @@ resolve the same headers.
 
 It exists because some sim source files have to compile per-target
 rather than join `bolo_static` or `server_static`. The reasons fall
-into two categories.
+into four categories.
 
 **Compile-def divergence.** A TU has `#ifdef HAVE_STEAM` (or another
 target-specific switch) and its gated code paths can't be archive-

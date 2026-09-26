@@ -7,7 +7,8 @@
  * The server's game tick at the playhead.
  *
  * A recording states the server's tick in log_ServerTick records, at the
- * round's first entry and at every entry that carries a snapshot. The viewer
+ * round's first entry, at every entry that carries a snapshot and every
+ * FULL_SYNC_INTERVAL ticks. The viewer
  * keeps each as an anchor and answers the tick at any playback time from the
  * last anchor at or before it, counting the server's log entries in between
  * rather than milliseconds, since a LOG_NOEVENTS run, a snapshot and the

@@ -22,6 +22,8 @@
 #include "../lv_presentation.h"
 #include "../../gui/sim_rules_phrase.h"
 
+#include <SDL3/SDL_stdinc.h>   /* SDL_utf8strlcpy */
+
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -401,7 +403,9 @@ static void game_info_draw_scripts(void) {
             ImGui::TextUnformatted(scenario);
         } else {
             MessageArgs args = {};
-            strncpy(args.string1, scenario, sizeof(args.string1) - 1);
+            /* A script's name is the script's own text, and a byte count
+               can end inside a character: cut it where one ends. */
+            SDL_utf8strlcpy(args.string1, scenario, sizeof(args.string1));
             args.number = mods;
             ImGui::TextUnformatted(langGetTextFmt(
                 mods == 1 ? STR_LV_INFO_SCENARIO_MODS_1 : STR_LV_INFO_SCENARIO_MODS_N,
@@ -524,8 +528,12 @@ static void game_info_draw_scripts(void) {
 
         MessageArgs args = {};
         args.number = (int)lv_screenServerTickAt(ch->ms);
-        strncpy(args.string1, simRulesRuleName(ch->index), sizeof(args.string1) - 1);
-        strncpy(args.string2, phrase, sizeof(args.string2) - 1);
+        /* The phrase comes from the translation table, so it can hold
+           characters of more than one byte: cut both where a character
+           ends. */
+        SDL_utf8strlcpy(args.string1, simRulesRuleName(ch->index),
+                        sizeof(args.string1));
+        SDL_utf8strlcpy(args.string2, phrase, sizeof(args.string2));
         ImGui::TextUnformatted(langGetTextFmt(STR_LV_INFO_RULE_CHANGE, &args));
     }
 }

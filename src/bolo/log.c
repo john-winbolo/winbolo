@@ -464,6 +464,13 @@ void logStop() {
           zipCloseFileInZip(logFile);
           WB_LOG_INFO(WB_LOG_CAT_SERVER, "scripts record: bytes=%zu", slen);
         }
+        /* The text described this recording's round and has now been
+         * written into it. Cleared here rather than when the scenario host
+         * detaches, because a host that leaves mid-round detaches before its
+         * log is closed. A later round that boots scripts sets it again; a
+         * later round on a map with no host attached, which nothing else
+         * would clear it for, records none. */
+        serverSimSetScenarioRecordText(logSsim, NULL, 0);
       }
     }
     zipClose(logFile, "WinBolo Log File");

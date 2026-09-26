@@ -5508,6 +5508,7 @@ set(_unit_test_names
     channel_mux_control_reset_clears_backlog
     spectator_ring
     spectator_ring_nolog
+    spectator_ring_nolog_tick_anchors
     spectator_replay
     spectator_config
     spectator_join
@@ -6388,6 +6389,7 @@ set(_unit_test_names
     scripts_record_scripted_round
     scripts_record_plain_round
     scripts_record_scripted_then_plain
+    scripts_record_detach_before_stop
     scripts_record_setter_cap
     scripts_record_json_write
     lv_scripts_json_scripted_round
@@ -6397,12 +6399,14 @@ set(_unit_test_names
     lv_scripts_json_wrong_version
     lv_scripts_json_hostile_values
     lv_scripts_json_over_cap
+    lv_scripts_json_close_clears
     lv_rule_changes_collected
     lv_rule_changes_seek
     lv_rule_changes_plain_round
     lv_rule_changes_hostile
     lv_rule_changes_live_feed
     lv_rule_changes_armour_levels
+    lv_rule_changes_live_same_tick
     lv_presentation_seek
     lv_presentation_hostile
     lv_presentation_scripted_round
@@ -6412,6 +6416,8 @@ set(_unit_test_names
     lv_presentation_slot_team
     lv_presentation_announce_posts
     lv_presentation_marker_visible
+    lv_presentation_live_seek
+    lv_presentation_live_fast_forward
     lv_server_tick_recorded
     lv_server_tick_anchors
     lv_server_tick_hostile

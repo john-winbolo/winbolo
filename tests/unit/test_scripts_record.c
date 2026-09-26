@@ -15,7 +15,11 @@
  *       attribution.trk is still there.
  *   scripts_record_scripted_then_plain — the same sim plays a scripted round
  *       and then, with the script gone and the list empty, a plain one. The
- *       second recording has no member: the detach cleared the text.
+ *       second recording has no member: logStop cleared the text once the
+ *       first recording held it, and the detach did not put it back.
+ *   scripts_record_detach_before_stop — the host detaches while the round's
+ *       recording is still open, which is the order a desktop host leaving
+ *       mid-round takes, and the recording still carries the member.
  *   scripts_record_setter_cap — the sim refuses text over
  *       SCN_RECORD_TEXT_MAX, keeps text at the cap, and hands a short text
  *       back byte for byte.
@@ -421,6 +425,8 @@ int run_scripts_record_scripted_then_plain(void) {
     srRecordDone(&h);
     UT_ASSERT_MSG(first, "the scripted round wrote no %s",
                   SCRIPTS_RECORD_MEMBER);
+    UT_ASSERT_MSG(serverSimGetScenarioRecordText(sim, &len) == NULL && len == 0,
+                  "logStop left the recorded round's text on the sim");
 
     /* Back to the lobby, the map's script gone and the list emptied: the
        decision finds nothing to play and detaches the host. */
@@ -429,8 +435,9 @@ int run_scripts_record_scripted_then_plain(void) {
     srDropMapScript();
     UT_ASSERT_MSG(srPick(sim, NULL, 0) == CMD_OK, "the empty list was refused");
     UT_ASSERT_MSG(srSlot == NULL, "a host is still attached");
+    len = 1;
     UT_ASSERT_MSG(serverSimGetScenarioRecordText(sim, &len) == NULL && len == 0,
-                  "the detach left the last round's text on the sim");
+                  "the sim has text for a round with no host");
 
     srStartRound(sim);
     UT_ASSERT_MSG(srRecord(sim, "then_plain_2", &h),
@@ -442,6 +449,45 @@ int run_scripts_record_scripted_then_plain(void) {
 
     UT_ASSERT_MSG(!second, "the plain round after a scripted one wrote %s",
                   SCRIPTS_RECORD_MEMBER);
+    return 0;
+}
+
+/* ── 3b. The host detaches before the recording closes ─────────────── */
+
+/* A desktop host leaving mid-round detaches its scenario host under the sim
+   lock and only then closes the round's log, so the text has to outlive the
+   detach for logStop to find it. */
+int run_scripts_record_detach_before_stop(void) {
+    ServerSim     *sim;
+    ReplayHarness  h;
+    bool           scripts;
+    size_t         len = 1;
+
+    UT_ASSERT(srMakeDir("detach_stop"));
+    sim = srScriptedSim();
+    UT_ASSERT_MSG(sim != NULL, "the scenario and the mod did not attach");
+
+    memset(&h, 0, sizeof(h));
+    UT_ASSERT(utScratchPath(h.path, sizeof(h.path),
+                            "wbtest_scn_rec_detach_stop.wbv"));
+    remove(h.path);
+    h.sim = sim;
+    UT_ASSERT_MSG(replayHarnessBeginRecording(&h), "could not start recording");
+    replayHarnessTick(&h, 6);
+
+    scenarioHostDetach(srSlot);
+    srSlot = NULL;
+    UT_ASSERT_MSG(serverSimGetScenarioRecordText(sim, &len) != NULL && len > 0,
+                  "the detach cleared the text of a round still recording");
+
+    UT_ASSERT_MSG(replayHarnessStopRecording(&h), "could not stop recording");
+    scripts = srHasMember(h.path, SCRIPTS_RECORD_MEMBER);
+    srRecordDone(&h);
+    srDestroy(sim);
+    srDropDir();
+
+    UT_ASSERT_MSG(scripts, "a round whose host detached before the log closed "
+                  "wrote no %s", SCRIPTS_RECORD_MEMBER);
     return 0;
 }
 

@@ -104,6 +104,13 @@ void lv_imgui_scenario_panel_window(bool logLoaded) {
     bool                  have;
     uint32_t              tick = 0;
 
+    /* Reset Windows puts the square back to its smallest. Ahead of the
+     * returns below, so the reset takes whether or not the panel is drawn
+     * on the frame it was asked for. */
+    if (lv_g_reset_window_positions) {
+        s_side = LV_SCN_PANEL_SIDE_MIN;
+    }
+
     if (!logLoaded || !lv_g_show_scenario_panel_window) {
         return;
     }
@@ -140,16 +147,16 @@ void lv_imgui_scenario_panel_window(bool logLoaded) {
         fit.sideMax = lvScnPanelMin(vp.x - fit.frame.x, vp.y - fit.frame.y);
         if (fit.sideMax < fit.sideMin) fit.sideMax = fit.sideMin;
 
-        /* Reset Windows puts the square back to its smallest. */
-        if (lv_g_reset_window_positions) {
-            s_side = LV_SCN_PANEL_SIDE_MIN;
-        }
         side = (float)s_side;
         if (side > fit.sideMax) side = fit.sideMax;
 
         /* Left of Game Information, which sits 280 wide against the right
-         * edge. */
-        ImGui::SetNextWindowPos(ImVec2(vp.x - 280 - 10 - side - 30, 30), cond);
+         * edge, and no further left than the viewport's own edge. */
+        {
+            float x = vp.x - 280 - 10 - side - 30;
+            if (x < 0.0f) x = 0.0f;
+            ImGui::SetNextWindowPos(ImVec2(x, 30), cond);
+        }
         ImGui::SetNextWindowSize(ImVec2(side + fit.frame.x, side + fit.frame.y),
                                  cond);
         ImGui::SetNextWindowSizeConstraints(
@@ -183,12 +190,20 @@ void lv_imgui_scenario_panel_window(bool logLoaded) {
         scnPanelDraw(&s_list, origin.x, origin.y, &env);
         /* Kept for the preference, which is saved on exit. Taken from the
          * window's size by the same sum that sets it, so a restart puts it
-         * back exactly. */
+         * back exactly. A side at the viewport's limit and below the one
+         * kept is the size constraint shrinking the window to fit a smaller
+         * viewport, not the user resizing it, and is not kept: otherwise one
+         * session in a small window would shrink the square for good. */
         {
-            ImVec2 win = ImGui::GetWindowSize();
-            float  kept = lvScnPanelMin(win.x - s_fit.frame.x,
-                                        win.y - s_fit.frame.y);
-            lv_imgui_scenario_panel_set_side((int)(kept + 0.5f));
+            ImVec2 win     = ImGui::GetWindowSize();
+            float  kept    = lvScnPanelMin(win.x - s_fit.frame.x,
+                                           win.y - s_fit.frame.y);
+            int    keptInt = (int)(kept + 0.5f);
+            bool   clamped = kept >= s_fit.sideMax - 0.5f && keptInt < s_side;
+
+            if (!clamped) {
+                lv_imgui_scenario_panel_set_side(keptInt);
+            }
         }
     }
     ImGui::End();

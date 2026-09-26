@@ -1248,3 +1248,119 @@ int run_lv_presentation_marker_visible(void) {
                   "slot 1's marker was shown to another slot or to nobody");
     return 0;
 }
+
+/* ── A live feed ───────────────────────────────────────────────────── */
+
+/* kLvpStream as a live feed that has caught up with its head: the stream
+   without its LOG_QUIT, loaded as a stream, in live mode and played to the
+   last byte. The feed state is module state in screen.c, so each case turns
+   live mode off again before it destroys the decoder. */
+static LogViewerState *lvpOpenLive(LvpLog *b) {
+    LogViewerState *lv;
+
+    lvpPutOpening(b);
+    lvpPut(b, kLvpStream, sizeof(kLvpStream) - 1);
+    lv = lv_decoderCreate(false);
+    if (lv == NULL) return NULL;
+    lv_screenSetSizeX(30);
+    lv_screenSetSizeY(30);
+    if (lv_screenLoadFromStream(b->buf, b->len) != TRUE) {
+        lv_decoderDestroy(lv);
+        return NULL;
+    }
+    lv_screenSpecSetLiveMode(TRUE);
+    lv_screenSpecJumpToLive();
+    return lv;
+}
+
+static void lvpCloseLive(LogViewerState *lv) {
+    lv_screenSpecSetLiveMode(FALSE);
+    lv_decoderDestroy(lv);
+}
+
+/* Seeking back on a live feed puts the stores back to what they held at the
+ * earlier time. A feed has no load walk, so playback indexes each record as
+ * it reads it and the rebuild after the seek works from that index. */
+int run_lv_presentation_live_seek(void) {
+    static LvpLog         b;
+    LogViewerState       *lv;
+    const LvPresMarker   *m;
+    const char           *why = NULL;
+
+    lv = lvpOpenLive(&b);
+    UT_ASSERT_MSG(lv != NULL, "the feed could not be loaded");
+
+    /* At the head: marker 3 was placed at 100 ms and cleared at 240 ms, and
+       marker 5 placed at 160 ms. */
+    m = lv_screenGetMarker(5);
+    if (m == NULL || !m->set) {
+        why = "marker 5 is not set at the head of the feed";
+    }
+
+    /* Back before every record. */
+    if (why == NULL) {
+        lv_screenSeekToTimeMs(20);
+        if (lv_screenGetTimeRunning() > 100) {
+            why = "the seek back did not land before the first record";
+        } else if (lv_screenGetMarker(5)->set || lv_screenGetMarker(3)->set) {
+            why = "a marker is still set before its record";
+        } else if (!lvpRowEmpty(lv_screenGetPanelRow(0, 0xFF)) ||
+                   !lvpRowEmpty(lv_screenGetPanelRow(2, 0xFF))) {
+            why = "a panel is still up before its record";
+        } else if (lv_screenGetScore(SCN_SCORE_KIND_TEAM, 1)->valid) {
+            why = "team 1's score is still there before its record";
+        } else if (lv_screenGetAnnounce()->set) {
+            why = "the line is still up before its record";
+        }
+    }
+
+    /* Forward to 160 ms: replayed, and indexed only once. */
+    if (why == NULL) {
+        lv_screenSeekToTimeMs(160);
+        m = lv_screenGetMarker(3);
+        if (m == NULL || !m->set || m->x != 10 || m->y != 12) {
+            why = "marker 3 is not back at (10, 12) at 160 ms";
+        } else if (!lvpRowHolds(lv_screenGetPanelRow(0, 0xFF), kLvpListA,
+                                sizeof(kLvpListA))) {
+            why = "everyone's panel is not list A at 160 ms";
+        }
+    }
+
+    /* And back again, which a doubled index entry would not survive. */
+    if (why == NULL) {
+        lv_screenSeekToTimeMs(20);
+        if (lv_screenGetMarker(3)->set ||
+            !lvpRowEmpty(lv_screenGetPanelRow(0, 0xFF))) {
+            why = "the second seek back left a record's store set";
+        }
+    }
+
+    lvpCloseLive(lv);
+    UT_ASSERT_MSG(why == NULL, "live feed: %s", why);
+    return 0;
+}
+
+/* Fast Forward on a live feed that has caught up with its head returns: the
+ * tick finds nothing to read, and there is no snapshot or end-of-log ahead
+ * for the loop to stop at until the host appends more. */
+int run_lv_presentation_live_fast_forward(void) {
+    static LvpLog   b;
+    LogViewerState *lv;
+    uint32_t        before;
+    uint32_t        after;
+    bool            playing;
+
+    lv = lvpOpenLive(&b);
+    UT_ASSERT_MSG(lv != NULL, "the feed could not be loaded");
+    before = lv_screenGetTimeRunning();
+    lv_screenFastForward();
+    after   = lv_screenGetTimeRunning();
+    playing = lv_screenIsPlaying() == TRUE;
+    lvpCloseLive(lv);
+
+    UT_ASSERT_MSG(playing, "fast forward ended playback on a live feed");
+    UT_ASSERT_MSG(after >= before && after - before <= 200,
+                  "fast forward at the head moved playback from %u to %u ms",
+                  (unsigned)before, (unsigned)after);
+    return 0;
+}
