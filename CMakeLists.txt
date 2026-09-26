@@ -3718,6 +3718,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # client, a joiner arriving on the changed table, a server-only rule
     # publishing nothing, and a new table clamping what the client holds.
     tests/unit/test_lgm_under_fire.c
+    tests/unit/test_lgm_kill_rewind.c
     tests/unit/test_loopback_sim_rules.c
     # The client's own check of the rules table before it keeps one.
     tests/unit/test_sim_rules_client_check.c
@@ -4851,6 +4852,13 @@ set(_unit_test_names
     # purpose; the nolag case is its control and passes.
     lgm_wall_behind_tank_under_fire_lagged
     lgm_wall_behind_tank_under_fire_nolag
+    # The server rewinding a builder when a shell goes off near him: a lagged
+    # shooter, its clean-link control, the rewind window's bound, and the
+    # pill shell's rewind by the man owner's lag.
+    lgm_kill_rewind_lagged_shooter
+    lgm_kill_rewind_nolag_control
+    lgm_kill_rewind_bounded
+    lgm_kill_rewind_pill_owner_lag
     loopback_lobby_running_loss
     loopback_quiet_lobby_control_loss
     loopback_command_liveness
