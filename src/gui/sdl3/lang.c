@@ -2646,8 +2646,8 @@ static const LangEntry langTable[] = {
     {2678, "Publish this mod or scenario to the Steam Workshop"},
     {2679, "Update the item this file came from"},
     {2680, "Workshop"},
-    {2681, "Positional sound"},
-    {2682, "Sounds play from the side of the screen they happen on."},
+    {2694, "Positional sound"},
+    {2695, "Sounds play from the side of the screen they happen on."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
