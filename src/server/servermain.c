@@ -47,6 +47,7 @@
 #include "../winbolonet/winbolonet_server.h"
 #include "server_sim.h"
 #include "server_sim_lifecycle.h"
+#include "server_sim_join.h"      /* serverSimRepickAllLobbyStarts — after -allybots / -teams move the bots */
 #include "mapgen.h"
 #include "log.h"
 #include "transport_udp.h"
@@ -3088,6 +3089,13 @@ int main(int argc, char **argv) {
       } else {
         fprintf(stderr, "Added %d bot(s) with brain '%s'\n", numBots, brainPath);
       }
+      /* Each bot reserved a lobby start as it was added, on team 0 and so
+       * with no side; -allybots and -teams then moved it with the batch
+       * setter, which leaves that reservation where it was. Pick again for
+       * the teams the bots are on now, or a team with a side starts a bot
+       * on the other team's. Only a lobby server has reservations: a
+       * -nolobby round is already running here and this does nothing. */
+      serverSimRepickAllLobbyStarts(serverSim);
     } else if (numBots > 0) {
       fprintf(stderr, "Warning: -bots specified but no -brain path given\n");
     }
