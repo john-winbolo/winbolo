@@ -1933,6 +1933,8 @@ STR_DLGLOBBY_CLASSIC_MODE_TIP=Bunker Görünümü'nü Tuş, Üs Görünümü ve 
 STR_MENU_CLASSIC_MODE_TIP=Sunucuda klasik mod açık, bu yüzden bu görünüm kapalı.
 STR_DLGLOBBY_ALLIES_TREES_CB=Ağaçlardaki müttefikleri gör
 STR_DLGLOBBY_ALLIES_TREES_TIP=Ağaçların içinde duran müttefik tanklar gizlenmek yerine\nekranınıza çizilir. Savaş sisi hâlâ geçerli, yani onları\nyalnızca zaten gördüğünüz yerde görürsünüz. Kapalı olması\nklasik kuraldır ve klasik mod bunu kapatır.
+STR_DLGLOBBY_POSITIONAL_SOUND_CB=Konumsal ses
+STR_DLGLOBBY_POSITIONAL_SOUND_TIP=Sesler, ekranın olayın geçtiği tarafından gelir.
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_OVERVIEW_WINDOW=Genel Bakış penceresi
 STR_DLGLOBBY_OVERVIEW_WINDOW_TIP=Harita Genel Görünümü'nün kendi tankınızın etrafında\ncanlı tuttuğu kare bloğu. Genişletilmiş, klasik\ngörünümün kaydırabileceği her şeydir; Klasik ise\nbunu o görünümün gösterdiği pencereye daraltır.\nKlasik mod bunu Klasik'e ayarlar ve öyle tutar.\nSunucu her durumda aynı harita verisini gönderir.

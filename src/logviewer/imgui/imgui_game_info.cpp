@@ -107,6 +107,8 @@ static int  s_view_policy[3] = {0, 0, 0};
 static int  s_view_decay[3] = {0, 0, 0};
 static bool s_classic_mode = false;
 static bool s_allies_in_trees = false;
+/* A recording without the settings-flags byte reads as off. */
+static bool s_positional_sound = false;
 /* A log with no settings record, or one written before these two bits
  * existed, has both clear — which is the expanded window with nothing
  * blocking sight, what the game did before the settings existed. */
@@ -329,6 +331,7 @@ void lv_imgui_game_info_set_settings(const unsigned char *payload, int len) {
      * left them on. A recording with no settings-flags byte decodes as
      * allowed, which is what those servers did. */
     s_smart_pings_allowed = !s.smartPingsOff;
+    s_positional_sound = s.positionalSound;
     s_have_settings = true;
 }
 
@@ -773,6 +776,8 @@ void lv_imgui_game_info_window(void) {
                         langGetText(s_classic_mode ? STR_YES : STR_NO));
             ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_ALLIES_TREES_CB),
                         langGetText(s_allies_in_trees ? STR_YES : STR_NO));
+            ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_POSITIONAL_SOUND_CB),
+                        langGetText(s_positional_sound ? STR_YES : STR_NO));
             ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_OVERVIEW_WINDOW),
                         langGetText(s_overview_window == overviewWindowNone
                                         ? STR_DLGLOBBY_WINDOW_NONE

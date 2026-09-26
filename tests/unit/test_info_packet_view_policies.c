@@ -399,6 +399,9 @@ int run_info_packet_preset_round_trip(void) {
         UT_ASSERT(visibilityPresetSettings((VisibilityPreset)p, &want));
         packPreset(&pkt, &want);
         got = readPacket(&pkt);
+        /* The packet has no positional-sound bit, so that one value is
+         * copied across from the set that was packed. */
+        got.positionalSound = want.positionalSound;
         UT_ASSERT_MSG(visibilityPresetMatch(&got) == (VisibilityPreset)p,
                       "preset %d came back off the wire as %d", p,
                       (int)visibilityPresetMatch(&got));
@@ -472,6 +475,8 @@ int run_info_packet_absent_views_read_classic(void) {
             UT_ASSERT(visibilityPresetSettings((VisibilityPreset)p, &want));
             packPreset(&pkt, &want);
             got = readPacket2(&pkt, sizeof(pkt));
+            /* No positional-sound bit in the packet; see above. */
+            got.positionalSound = want.positionalSound;
             UT_ASSERT_MSG(visibilityPresetMatch(&got) == (VisibilityPreset)p,
                           "preset %d with the bytes present read as %d", p,
                           (int)visibilityPresetMatch(&got));

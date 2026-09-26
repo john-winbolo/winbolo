@@ -2218,9 +2218,9 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
     }
 
     /* ---- Visibility ----
-     * The seven view rules a game hosted from here starts with: the
+     * The eight view rules a game hosted from here starts with: the
      * pill / base / allied-tank policies, classic mode, allies in trees,
-     * the overview window and line of sight.  The host can still change
+     * positional sound, the overview window and line of sight.  The host can still change
      * them from the lobby once the game is up, and this dialog has no
      * path into a running game.  The setters persist to prefs and clamp
      * the seconds, so the values go through them untouched. */
@@ -2267,6 +2267,15 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
         }
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_ALLIES_TREES_TIP));
+        }
+
+        bool sound = gameFrontPositionalSound;
+        if (ImGui::Checkbox(langGetText(STR_DLGLOBBY_POSITIONAL_SOUND_CB),
+                            &sound)) {
+            gameFrontSetPositionalSound(sound);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_POSITIONAL_SOUND_TIP));
         }
 
         /* Which block of squares the map overview keeps live round the

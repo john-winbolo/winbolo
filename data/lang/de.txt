@@ -1933,6 +1933,8 @@ STR_DLGLOBBY_CLASSIC_MODE_TIP=Setzt Bunkeransicht auf Taste und Basenansicht sow
 STR_MENU_CLASSIC_MODE_TIP=Auf dem Server ist der klassische Modus aktiv, daher ist diese Ansicht abgeschaltet.
 STR_DLGLOBBY_ALLIES_TREES_CB=Verbündete im Wald sehen
 STR_DLGLOBBY_ALLIES_TREES_TIP=Verbündete Panzer, die im Wald stehen, werden auf\ndeinem Bildschirm gezeichnet statt versteckt. Der Nebel\ndes Krieges gilt weiterhin, du siehst sie also nur dort,\nwo du ohnehin siehst. Aus ist die klassische Regel, und\nder klassische Modus schaltet es zwangsweise aus.
+STR_DLGLOBBY_POSITIONAL_SOUND_CB=Räumlicher Klang
+STR_DLGLOBBY_POSITIONAL_SOUND_TIP=Geräusche kommen von der Seite des Bildschirms, auf der sie passieren.
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_OVERVIEW_WINDOW=Übersichtsfenster
 STR_DLGLOBBY_OVERVIEW_WINDOW_TIP=Welchen Kachelblock die Kartenübersicht rund um deinen\neigenen Panzer aktuell hält. Erweitert ist alles, wohin die\nklassische Ansicht scrollen kann; Klassisch schränkt es auf\ndas Fenster ein, das diese Ansicht gerade zeigt. Der\nklassische Modus setzt es auf Klassisch und hält es dort.\nDer Server sendet die gleichen Kartendaten so oder so.

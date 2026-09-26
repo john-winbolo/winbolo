@@ -1985,6 +1985,8 @@ STR_DLGLOBBY_CLASSIC_MODE_TIP=Ajusta Vista de búnker a Tecla, y Vista de base y
 STR_MENU_CLASSIC_MODE_TIP=El servidor tiene el modo clásico activado, así que esta vista está desactivada.
 STR_DLGLOBBY_ALLIES_TREES_CB=Ver aliados en los árboles
 STR_DLGLOBBY_ALLIES_TREES_TIP=Los tanques aliados que están en los árboles se dibujan\nen tu pantalla en vez de quedar ocultos. La niebla de\nguerra sigue aplicándose, así que solo los ves donde ya\nves. Desactivado es la regla clásica, y el modo clásico\nlo desactiva a la fuerza.
+STR_DLGLOBBY_POSITIONAL_SOUND_CB=Sonido posicional
+STR_DLGLOBBY_POSITIONAL_SOUND_TIP=Los sonidos se oyen desde el lado de la pantalla donde ocurren.
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_OVERVIEW_WINDOW=Ventana del mapa general
 STR_DLGLOBBY_OVERVIEW_WINDOW_TIP=El bloque de casillas que el mapa general mantiene\nactualizado alrededor de tu tanque. Ampliado es todo lo\nque la vista clásica puede recorrer; Clásico lo reduce a\nla ventana que esa vista está mostrando. El modo clásico\nlo ajusta a Clásico y lo mantiene así. El servidor envía\nlos mismos datos del mapa en ambos casos.

@@ -295,6 +295,7 @@ int gameFrontViewBaseDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 int gameFrontViewAllyDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 bool gameFrontClassicMode      = FALSE;
 bool gameFrontAlliesInTrees    = FALSE;
+bool gameFrontPositionalSound  = FALSE;
 /* Which block of squares the map overview keeps live, and what stops the
  * player seeing inside it. Ints rather than bools because each holds a
  * named value — OverviewWindow and LineOfSightMode — the way the three
@@ -1057,11 +1058,14 @@ static void gameFrontApplyVisibilityPrefs(ServerSim *sim) {
                          (ViewPolicy)gameFrontViewAllyPolicy,
                          (uint16_t)gameFrontViewAllyDecaySecs);
   /* After the three policies, so classic mode wins over them when both
-   * are set, and allies in trees before classic mode, which forces it
-   * back off. Both only pushed when on — off is what the sim was
-   * created with. */
+   * are set, and allies in trees and positional sound before classic
+   * mode, which forces them back off. Each only pushed when on — off is
+   * what the sim was created with. */
   if (gameFrontAlliesInTrees) {
     serverSimSetAlliesInTrees(sim, true);
+  }
+  if (gameFrontPositionalSound) {
+    serverSimSetPositionalSound(sim, true);
   }
   /* These two go on whatever they hold, not only when on: either value
    * is a real choice, and the expanded window is not what the sim was
@@ -2646,6 +2650,11 @@ void gameFrontSetAlliesInTrees(bool on) {
   prefsSetString("GAME OPTIONS", "Allies In Trees", TRUEFALSE_TO_STR(on));
 }
 
+void gameFrontSetPositionalSound(bool on) {
+  gameFrontPositionalSound = on;
+  prefsSetString("GAME OPTIONS", "Positional Sound", TRUEFALSE_TO_STR(on));
+}
+
 void gameFrontSetOverviewWindow(int window) {
   gameFrontOverviewWindow = window;
   prefsSetString("GAME OPTIONS", "Overview Window",
@@ -2675,7 +2684,7 @@ int                gameFrontVisibilityPreset = (int)visibilityPresetClassic;
 VisibilitySettings gameFrontVisibilityCustom;
 bool               gameFrontVisibilityCustomSaved = FALSE;
 
-/* The seven [GAME OPTIONS] visibility globals as one set, and back. Every
+/* The eight [GAME OPTIONS] visibility globals as one set, and back. Every
  * caller below works in the set rather than in the globals, so a setting
  * added to the struct is added in one place here. */
 void gameFrontGetVisibilitySettings(VisibilitySettings *out) {
@@ -2691,6 +2700,7 @@ void gameFrontGetVisibilitySettings(VisibilitySettings *out) {
   out->overviewWindow              = (uint8_t)gameFrontOverviewWindow;
   out->lineOfSight                 = (uint8_t)gameFrontLineOfSight;
   out->alliesInTrees               = gameFrontAlliesInTrees;
+  out->positionalSound             = gameFrontPositionalSound;
 }
 
 /* Writes a whole set through the per-setting setters above, so the keys
@@ -2705,6 +2715,7 @@ static void gameFrontPutVisibilitySettings(const VisibilitySettings *v) {
   gameFrontSetViewBaseDecaySecs((int)v->decaySecs[viewCategoryBase]);
   gameFrontSetViewAllyDecaySecs((int)v->decaySecs[viewCategoryAlly]);
   gameFrontSetAlliesInTrees(v->alliesInTrees);
+  gameFrontSetPositionalSound(v->positionalSound);
   gameFrontSetOverviewWindow((int)v->overviewWindow);
   gameFrontSetLineOfSight((int)v->lineOfSight);
   gameFrontSetClassicMode(v->classicMode);
@@ -2745,10 +2756,12 @@ void gameFrontSetVisibilityCustom(const VisibilitySettings *v) {
                  overviewWindowPrefWord((int)v->overviewWindow));
   prefsSetString("GAME OPTIONS", "Custom Line Of Sight",
                  TRUEFALSE_TO_STR(v->lineOfSight != (uint8_t)lineOfSightOff));
+  prefsSetString("GAME OPTIONS", "Custom Positional Sound",
+                 TRUEFALSE_TO_STR(v->positionalSound));
 }
 
 /* Remembers a visibility set as the host's choice. Three things move
- * together, which is why they are one call rather than three: the seven
+ * together, which is why they are one call rather than three: the eight
  * per-setting keys, so a game hosted again in this same session starts
  * there without a restart; which named set it is, so a preset that is
  * later given a different value follows the choice rather than the
@@ -4428,6 +4441,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     gameFrontClassicMode = YESNO_TO_TRUEFALSE(buff[0]);
     prefsGetString("GAME OPTIONS", "Allies In Trees", "No", buff, FILENAME_MAX);
     gameFrontAlliesInTrees = YESNO_TO_TRUEFALSE(buff[0]);
+    prefsGetString("GAME OPTIONS", "Positional Sound", "No", buff, FILENAME_MAX);
+    gameFrontPositionalSound = YESNO_TO_TRUEFALSE(buff[0]);
     /* Same derivation as the three above: the INI default word and the
      * fallback both come from OVERVIEW_WINDOW_STOCK. */
     prefsGetString("GAME OPTIONS", "Overview Window",
@@ -4502,10 +4517,14 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
       gameFrontVisibilityCustom.lineOfSight =
           YESNO_TO_TRUEFALSE(buff[0]) ? (uint8_t)lineOfSightBuildingsAndTrees
                                       : (uint8_t)lineOfSightOff;
+      prefsGetString("GAME OPTIONS", "Custom Positional Sound",
+                     TRUEFALSE_TO_STR(gameFrontVisibilityCustom.positionalSound),
+                     buff, FILENAME_MAX);
+      gameFrontVisibilityCustom.positionalSound = YESNO_TO_TRUEFALSE(buff[0]);
     }
 
     /* What the host last chose, which is what a game hosted from here
-     * starts on. The seven keys above have already put the last values on
+     * starts on. The eight keys above have already put the last values on
      * the globals; this writes the chosen set over them, so a preset that
      * is later given a different value follows the host's choice rather
      * than the values it happened to have when they made it. An INI with
@@ -5049,6 +5068,8 @@ void gameFrontPutPrefs(keyItems *keys) {
                  TRUEFALSE_TO_STR(gameFrontClassicMode));
   prefsSetString("GAME OPTIONS", "Allies In Trees",
                  TRUEFALSE_TO_STR(gameFrontAlliesInTrees));
+  prefsSetString("GAME OPTIONS", "Positional Sound",
+                 TRUEFALSE_TO_STR(gameFrontPositionalSound));
   prefsSetString("GAME OPTIONS", "Overview Window",
                  overviewWindowPrefWord(gameFrontOverviewWindow));
   prefsSetString("GAME OPTIONS", "Line Of Sight",

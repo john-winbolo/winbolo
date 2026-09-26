@@ -35,6 +35,9 @@ extern "C" {
 /* Bits of the settings-flags byte (payload offset 16). Matches
  * LOG_SETTINGS_FLAG_* in src/server/server_dedicated_log.h. */
 #define LV_GAME_SETTINGS_FLAG_SMART_PINGS_OFF 0x01u
+/* LOG_SETTINGS_FLAG_POSITIONAL_SOUND: sounds were sent with their side of
+ * the screen. */
+#define LV_GAME_SETTINGS_FLAG_POSITIONAL_SOUND 0x02u
 
 typedef struct {
     int      viewPolicy[3];      /* pill, base, ally */
@@ -51,6 +54,9 @@ typedef struct {
     /* Absent reads as false, which means smart pings were allowed — the
      * behaviour of every server that predates the byte. */
     bool     smartPingsOff;
+    /* Absent reads as false: positional sound off, which is what a server
+     * that predates the bit sent. */
+    bool     positionalSound;
 } LvGameSettings;
 
 /* Decode payload[0..len-1] — the framed bytes, with the length byte

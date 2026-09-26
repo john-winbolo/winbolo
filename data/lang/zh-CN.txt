@@ -1931,6 +1931,8 @@ STR_DLGLOBBY_CLASSIC_MODE_TIP=将碉堡显示设为“按键”，将基地显�
 STR_MENU_CLASSIC_MODE_TIP=服务器已开启经典模式，因此此视图已关闭。
 STR_DLGLOBBY_ALLIES_TREES_CB=显示树林中的友军
 STR_DLGLOBBY_ALLIES_TREES_TIP=站在树林中的友军坦克会显示在你的屏幕上，而不是被隐藏。\n战争迷雾仍然有效，所以你只能在原本可见的地方看到他们。\n关闭是经典规则，经典模式会强制关闭此项。
+STR_DLGLOBBY_POSITIONAL_SOUND_CB=位置音效
+STR_DLGLOBBY_POSITIONAL_SOUND_TIP=声音从屏幕上发生的那一侧传来。
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_OVERVIEW_WINDOW=总览范围
 STR_DLGLOBBY_OVERVIEW_WINDOW_TIP=地图总览在你坦克周围始终保持实时的瓦片范围。\n展开是主视图能滚动到的全部范围；经典则缩小为该画面\n正在显示的范围。经典模式会将其设为经典并保持不变。\n无论哪种情况服务器发送的地图数据都相同。
