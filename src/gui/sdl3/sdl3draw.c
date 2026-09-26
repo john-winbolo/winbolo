@@ -2437,6 +2437,7 @@ void sdl3DrawFlushOverviewInWindow(void) {
   OverviewHudLayout hud = gOverviewPrepHud;
 
   overviewViewRenderOffscreen(gOverviewView, gRenderer, gTilesTex, gSheetScale,
+                              gSpritesTex, gSpriteAtlas,
                               gCrosshairTex, w, h, gOverviewSnapshot, true);
 
   if (drawHud) {
