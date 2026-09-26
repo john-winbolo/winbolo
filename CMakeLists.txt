@@ -3623,6 +3623,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # list, the refusal each malformed list gets, the caps at their edges,
     # and a decoded list written back out and parsed again.
     tests/unit/test_scenario_panel.c
+    # The tablet UI's scenario panel square: its side and corner on a phone,
+    # a tablet, and views too small for the full side.
+    tests/unit/test_scenario_panel_slot.c
     # The four presentation control events: their body codecs against
     # hand-written bytes, the refusals a malformed body gets, and the
     # recipient filter the in-process subscriber applies before storing.
@@ -6376,6 +6379,7 @@ set(_unit_test_names
     scenario_panel_roundtrip
     scenario_panel_timer_text
     scenario_announce_remaining
+    scenario_panel_slot_rect
     lv_rule_names_and_panel_parse
     lv_scripted_game_type_header
     lv_scripted_game_type_settings

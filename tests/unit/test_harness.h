@@ -3552,6 +3552,10 @@ int run_scenario_panel_timer_text(void);
  * long — the other piece of the presentation's arithmetic with no renderer
  * in it. */
 int run_scenario_announce_remaining(void);
+/* The tablet UI's scenario panel square (test_scenario_panel_slot.c): a
+ * quarter of the screen's shorter side in the game view's top-right, on a
+ * phone, a tablet, and views too small for the full side. */
+int run_scenario_panel_slot_rect(void);
 /* The names and the panel parser the log viewer compiles in
  * (test_lv_sim_rules_names.c): a rule's name from its index and back, and
  * a hand-written two-primitive list through scnPanelParse. */

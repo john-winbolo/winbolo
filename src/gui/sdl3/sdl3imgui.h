@@ -388,6 +388,34 @@ bool sdl3ImguiPlayerIsBot(unsigned char playerNum);
 bool sdl3ImguiTankLabelsLong(void);
 
 /*********************************************************
+*NAME:          sdl3ImguiScnPanelShown
+*PURPOSE:
+*  Whether the scenario has a panel to show: a list on
+*  the ClientSim with at least one primitive in it. The
+*  desktop window and the tablet slot both draw only when
+*  this is true.
+*********************************************************/
+bool sdl3ImguiScnPanelShown(struct ClientSim *cs);
+
+/*********************************************************
+*NAME:          sdl3ImguiScnPanelDraw
+*PURPOSE:
+*  Draws the scenario panel's list into the current ImGui
+*  window, as a square of the given side with its top-left
+*  at (originX, originY) in screen pixels. The list is
+*  scaled so its 128 units fill the side.
+*
+*  alpha fades what the scenario drew, from 0 to 1. With
+*  backing set, the panel's dim backing is drawn under the
+*  list at the same alpha; the desktop window leaves it off
+*  because its window background is that backing.
+*
+*  Draws nothing when sdl3ImguiScnPanelShown is false.
+*********************************************************/
+void sdl3ImguiScnPanelDraw(struct ClientSim *cs, float originX, float originY,
+                           float side, float alpha, bool backing);
+
+/*********************************************************
 *NAME:          sdl3ImguiGetPlatformIcon
 *PURPOSE:
 *  Returns the SDL_Texture for the platform icon matching
