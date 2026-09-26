@@ -28,6 +28,8 @@ struct LvMenuState {
     bool gameViewActive;       /* gameView — disables Use Team Colours */
     bool tankCentred;          /* checkbox */
     bool hideLobby;            /* checkbox */
+    bool showRegions;          /* checkbox */
+    bool hasRegions;           /* the recording declares regions — enables Regions */
     bool soundEffects;         /* checkbox */
     int  soundVolume;          /* 0-100; Volume submenu checkmark */
     bool dnsLookups;           /* checkbox */

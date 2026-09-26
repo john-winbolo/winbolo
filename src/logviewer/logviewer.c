@@ -907,6 +907,8 @@ static void lvHostRenderFrame(const char *overlay) {
         lvms.gameViewActive   = g_lv->gameView ? true : false;
         lvms.tankCentred      = lv_imgui_get_tank_centred() ? true : false;
         lvms.hideLobby        = lv_screenGetHideLobby() ? true : false;
+        lvms.showRegions      = lv_g_show_regions;
+        lvms.hasRegions       = lv_imgui_has_regions() ? true : false;
         lvms.soundEffects     = g_lv->isSoundsPlaying ? true : false;
         lvms.soundVolume      = g_lv->soundVolume;
         lvms.dnsLookups       = lv_imgui_get_dns_lookups() ? true : false;

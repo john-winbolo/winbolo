@@ -2623,6 +2623,7 @@ STR_LV_INFO_SCORES=Skorlar
 STR_LV_INFO_SCORE_SLOT=Slot {number}
 STR_LV_SCN_ANNOUNCE={string1}{string2}{string3}
 STR_LV_SCN_ANNOUNCE_TO=[{player}] {string1}{string2}{string3}
+STR_LV_REGIONS_TIP=tanımlanmış bölgeler
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADS=Oyunculardan Gelen Betikler
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_SESSION=Bu oturum için izin ver
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_KEEP=İzin ver ve sakla

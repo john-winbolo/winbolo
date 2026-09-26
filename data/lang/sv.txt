@@ -2623,6 +2623,7 @@ STR_LV_INFO_SCORES=Poäng
 STR_LV_INFO_SCORE_SLOT=Plats {number}
 STR_LV_SCN_ANNOUNCE={string1}{string2}{string3}
 STR_LV_SCN_ANNOUNCE_TO=[{player}] {string1}{string2}{string3}
+STR_LV_REGIONS_TIP=deklarerade regioner
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADS=Skript från spelare
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_SESSION=Tillåt för den här sessionen
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_KEEP=Tillåt och behåll

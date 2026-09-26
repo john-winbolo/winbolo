@@ -2857,6 +2857,8 @@
 /* A scenario announcement on the newswire: {string1}{string2}{string3} = the line, {player} = the team or player it went to. */
 #define STR_LV_SCN_ANNOUNCE                      2689
 #define STR_LV_SCN_ANNOUNCE_TO                   2690
+/* The tooltip on the Options menu's Regions item, which outlines the recording's regions on the map. */
+#define STR_LV_REGIONS_TIP                       2691
 
 /* Rule descriptions */
 

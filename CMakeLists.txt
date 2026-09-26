@@ -4457,6 +4457,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # the writer ticks counted between them, hostile records, an old
     # recording, a live feed and a recorded round.
     tests/unit/test_lv_server_tick.c
+    # Where the viewer draws a declared region on the overview and the game
+    # view (lv_region_rect.h, header only).
+    tests/unit/test_lv_region_rect.c
     # Stream-load decode path: feeds the v2 fixture's plaintext log.dat through
     # lv_screenLoadFromStream and asserts it decodes the same content the zip
     # reader does (reuses extractLogDat from test_log_roundtrip.c).
@@ -6409,6 +6412,7 @@ set(_unit_test_names
     lv_server_tick_old_recording
     lv_server_tick_alternating
     lv_server_tick_live_feed
+    lv_region_rect_placement
     scn_presentation_codec_bodies
     scn_presentation_codec_refuses_short
     scn_presentation_decoder_sets_broadcast

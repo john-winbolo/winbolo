@@ -99,6 +99,9 @@ bool lv_g_show_comments_window = false;  /* Opt-in: WBN comments are noisy if yo
    plain recording never shows it whatever this says. */
 bool lv_g_show_scenario_panel_window = true;
 bool lv_g_reset_window_positions = false;
+/* Off until asked for: the outlines sit over the map a recording is watched
+   for. */
+bool lv_g_show_regions = false;
 
 /* Options state */
 static bool s_tank_centred = false;
@@ -144,6 +147,9 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
 
     lv_platform_config_get_string("LOGVIEWER", "Window.ScenarioPanel.Visible", "Yes", val, sizeof(val));
     lv_g_show_scenario_panel_window = (val[0] == 'Y' || val[0] == 'y');
+
+    lv_platform_config_get_string("LOGVIEWER", "Show Regions", "No", val, sizeof(val));
+    lv_g_show_regions = (val[0] == 'Y' || val[0] == 'y');
 }
 
 void lv_imgui_main_menu_save(void) {
@@ -158,6 +164,7 @@ void lv_imgui_main_menu_save(void) {
     lv_platform_config_set_string("LOGVIEWER", "Window.ItemInformation.Visible", lv_g_show_item_info_window ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.Comments.Visible", lv_g_show_comments_window ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.ScenarioPanel.Visible", lv_g_show_scenario_panel_window ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Show Regions", lv_g_show_regions ? "Yes" : "No");
 }
 
 static void zoom_at_center(int stepIndex) {
@@ -183,6 +190,21 @@ void lv_imgui_toggle_tank_centred(void) {
  * playhead, so the menu always reads the live value back. */
 void lv_imgui_toggle_hide_lobby(void) {
     lv_screenSetHideLobby(lv_screenGetHideLobby() ? 0 : 1);
+}
+
+int lv_imgui_has_regions(void) {
+    const LvScripts *scripts = lv_screenGetScripts();
+    return (scripts != NULL && scripts->regionCount > 0) ? 1 : 0;
+}
+
+/* The overview keeps its render target between frames and repaints only the
+ * squares marked for it, so turning the outlines off repaints the whole map,
+ * and asks for the frame now rather than at the next tick of a paused
+ * replay. */
+void lv_imgui_toggle_regions(void) {
+    lv_g_show_regions = !lv_g_show_regions;
+    lv_drawDirtyScreen();
+    lv_windowNeedRedraw();
 }
 
 int lv_imgui_get_dns_lookups(void) { return s_dns_lookups ? 1 : 0; }
@@ -394,6 +416,15 @@ int lv_imgui_main_menu_bar(void) {
                                 lv_screenGetHideLobby() != 0)) {
                 lv_imgui_toggle_hide_lobby();
                 clicked = 1;
+            }
+            if (ImGui::MenuItem(langGetText(STR_MAPEDIT_SCENARIO_REGIONS), NULL,
+                                lv_g_show_regions,
+                                lv_imgui_has_regions() != 0)) {
+                lv_imgui_toggle_regions();
+                clicked = 1;
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("%s", langGetText(STR_LV_REGIONS_TIP));
             }
             if (ImGui::MenuItem(langGetText(STR_MENU_SOUND_EFFECTS), NULL, s_lv->isSoundsPlaying != 0)) {
                 s_lv->isSoundsPlaying = s_lv->isSoundsPlaying ? 0 : 1;

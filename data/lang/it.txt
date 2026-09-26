@@ -2625,6 +2625,7 @@ STR_LV_INFO_SCORES=Punteggi
 STR_LV_INFO_SCORE_SLOT=Slot {number}
 STR_LV_SCN_ANNOUNCE={string1}{string2}{string3}
 STR_LV_SCN_ANNOUNCE_TO=[{player}] {string1}{string2}{string3}
+STR_LV_REGIONS_TIP=regioni dichiarate
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADS=Script dai giocatori
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_SESSION=Consenti per questa sessione
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_KEEP=Consenti e conserva

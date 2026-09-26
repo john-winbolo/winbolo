@@ -46,6 +46,10 @@ The log viewer reads the member when it opens the recording, alongside
 JSON or of another version leaves the viewer without one, and the recording
 plays as it would have without it.
 
+With Options → Regions on, the viewer outlines each of the member's `regions`
+on the map with its name; a region a script defines while the round runs is
+not in the member and is not drawn.
+
 ```json
 {
   "version": 1,
