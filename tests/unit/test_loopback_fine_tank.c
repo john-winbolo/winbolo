@@ -79,6 +79,8 @@ static uint32_t lfFeed(LoopbackHarness *h, uint32_t tick) {
 static void lfHold(ServerSim *sim, WORLD wx, WORLD wy) {
     tank *t = &sim->sim.tanks[LF_SEAT];
     tankSetWorld(&sim->sim, t, wx, wy, (TURNTYPE)BRADIANS_NEAST, FALSE);
+    /* Clear the speed, the coast and the slowdown every tick, so the bot
+       brain cannot drive the tank off the held spot. */
     tankSetSpeed(t, 0);
     tankSetOnBoat(t, FALSE);
     (*t)->residualSpeed = 0;
