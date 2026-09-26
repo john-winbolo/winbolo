@@ -167,6 +167,8 @@ int run_workshop_map_dir_absent(void) {
     char           ws[FILENAME_MAX];
     char           missing[FILENAME_MAX];
     char           realFolder[FILENAME_MAX];
+    char           out[FILENAME_MAX];
+    char           want[FILENAME_MAX];
     ServerMapEntry entries[WMD_MAX_ENTRIES];
     ServerSim     *sim;
     bool           isFolder = false;
@@ -209,6 +211,24 @@ int run_workshop_map_dir_absent(void) {
     UT_ASSERT_MSG(got == 2, "root listing held %d entries", got);
     UT_ASSERT(wmdCountNamed(entries, got, "Workshop", &isFolder) == 1);
     UT_ASSERT(isFolder);
+
+    /* The row listed is the real folder, so the path leads there too, the
+       way the lobby's chooser opens it, and not to the Workshop
+       directory. */
+    serverSimResolveMapPath(sim, "Workshop", out, sizeof(out));
+    UT_ASSERT_MSG(strcmp(out, realFolder) == 0,
+                  "with a real folder, 'Workshop' resolved to '%s'", out);
+    serverSimResolveMapPath(sim, "Workshop/x.map", out, sizeof(out));
+    SDL_snprintf(want, sizeof(want), "%s/x.map", realFolder);
+    UT_ASSERT_MSG(strcmp(out, want) == 0,
+                  "with a real folder, 'Workshop/x.map' resolved to '%s'", out);
+
+    UT_ASSERT(wmdWriteMap(realFolder, "x.map"));
+    got = serverSimEnumerateMapDir(sim, "Workshop", entries, WMD_MAX_ENTRIES);
+    UT_ASSERT_MSG(got == 1, "the real folder listed %d entries", got);
+    UT_ASSERT(wmdCountNamed(entries, got, "x.map", NULL) == 1);
+    UT_ASSERT_MSG(wmdCountNamed(entries, got, "a.map", NULL) == 0,
+                  "listing 'Workshop' read the Workshop directory");
 
     serverSimDestroy(sim);
     return 0;
