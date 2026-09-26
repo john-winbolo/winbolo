@@ -782,6 +782,12 @@ void frontEndPlaySound(ClientSim *cs, sndEffects value) {
     if (soundEffects) soundPlayEffect(value);
 }
 
+void frontEndPlaySoundPan(ClientSim *cs, sndEffects value,
+                          uint16_t gainL, uint16_t gainR) {
+    (void)gainL; (void)gainR;
+    frontEndPlaySound(cs, value);
+}
+
 void windowPlaySound(sndEffects value) {
     if (soundEffects) soundPlayEffect(value);
 }

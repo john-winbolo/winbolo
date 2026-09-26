@@ -2557,6 +2557,12 @@ int run_sprite_atlas_packed_sheet_unsafe(void);
 int run_sound_variant_pool_names(void);
 int run_sound_variant_load_compaction(void);
 
+/* One slot's samples scaled by its Q8 left and right gains into the mix
+   accumulator (test_sound_mix.c). */
+int run_sound_mix_unity_matches_plain_sum(void);
+int run_sound_mix_channel_parity_across_resume(void);
+int run_sound_mix_mono_device(void);
+
 /* Bolo pascal-string reader, both copies of it (test_pascal_string.c). */
 int run_pascal_string_lengths(void);
 int run_pascal_string_viewer_copy_agrees(void);

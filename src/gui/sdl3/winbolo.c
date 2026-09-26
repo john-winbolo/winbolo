@@ -2231,9 +2231,14 @@ void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE a
 }
 
 void frontEndPlaySound(ClientSim *cs, sndEffects value) {
+  frontEndPlaySoundPan(cs, value, SOUND_GAIN_UNITY, SOUND_GAIN_UNITY);
+}
+
+void frontEndPlaySoundPan(ClientSim *cs, sndEffects value,
+                          uint16_t gainL, uint16_t gainR) {
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (soundEffects == TRUE) {
-    soundPlayEffect(value);
+    soundPlayEffectPan(value, gainL, gainR);
   }
 }
 

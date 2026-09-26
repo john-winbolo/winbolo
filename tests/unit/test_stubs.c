@@ -268,12 +268,17 @@ int ut_sound_get(int index) {
   return s_ut_sounds[index];
 }
 
-void frontEndPlaySound(ClientSim *cs, sndEffects value) {
-  (void)cs;
+void frontEndPlaySoundPan(ClientSim *cs, sndEffects value,
+                          uint16_t gainL, uint16_t gainR) {
+  (void)cs; (void)gainL; (void)gainR;
   if (s_ut_sound_count < UT_SOUND_MAX) {
     s_ut_sounds[s_ut_sound_count] = (int)value;
     s_ut_sound_count++;
   }
+}
+
+void frontEndPlaySound(ClientSim *cs, sndEffects value) {
+  frontEndPlaySoundPan(cs, value, SOUND_GAIN_UNITY, SOUND_GAIN_UNITY);
 }
 
 void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,

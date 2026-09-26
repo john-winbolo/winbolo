@@ -67,6 +67,7 @@ void clientMutexRelease(void)   {}
 void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour, BYTE trees) { (void)cs; (void)shells; (void)mines; (void)armour; (void)trees; }
 void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour) { (void)cs; (void)shells; (void)mines; (void)armour; }
 void frontEndPlaySound(ClientSim *cs, sndEffects value) { (void)cs; (void)value; }
+void frontEndPlaySoundPan(ClientSim *cs, sndEffects value, uint16_t gainL, uint16_t gainR) { (void)cs; (void)value; (void)gainL; (void)gainR; }
 void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks, screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms, int32_t srtDelay, bool isPillView, int edgeX, int edgeY) { (void)cs; (void)value; (void)mineView; (void)tks; (void)gs; (void)sBullet; (void)lgms; (void)srtDelay; (void)isPillView; (void)edgeX; (void)edgeY; }
 void frontEndStatusPillbox(ClientSim *cs, BYTE pillNum, pillAlliance pb) { (void)cs; (void)pillNum; (void)pb; }
 void frontEndStatusTank(ClientSim *cs, BYTE tankNum, tankAlliance ts) { (void)cs; (void)tankNum; (void)ts; }
