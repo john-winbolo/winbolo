@@ -6757,6 +6757,78 @@ if(WB_FUZZ)
                      ${WB_FUZZ_CORPUS_DIR}/map_fields ${WB_FUZZ_CRASH_DIR})
     set_tests_properties(fuzz.map_fields PROPERTIES TIMEOUT 120)
 
+    # The log viewer loading and playing a .wbv. The input is a plaintext
+    # log.dat with an optional scripts.json in front of it; the target stores
+    # both in a zip it builds in memory and hands it to
+    # lv_screenLoadMapFromMemory, then plays, seeks back and reads the
+    # results. Links like map_load, plus the log-viewer decode subset and the
+    # link-only viewer stubs WinBoloUnitTests compiles for the same path.
+    add_executable(fuzz_replay
+        tests/fuzz/fuzz_replay.c
+        tests/unit/test_stubs.c
+        tests/unit/test_logviewer_stubs.c
+        src/steam/steam_wrapper_stub.c
+        src/common/prefs_doc.c
+        src/common/prefs.c
+        src/common/md5.c
+        src/common/mp_diag_log.c
+        src/server/server_dedicated_log_path.c
+        src/winbolonet/wbn_bearer.c
+        src/winbolonet/wbn_country_cache.c
+        src/winbolonet/wbn_news_parser.cpp
+        src/winbolonet/wbn_prefs_sync.c
+        src/bolo/transport_udp_client.c
+        src/lzw/dcodlzw.c
+        src/lzw/ecodlzw.c
+        src/logviewer/screen.c
+        src/logviewer/blocks.c
+        src/logviewer/lv_attribution.c
+        src/logviewer/lv_stats.c
+        src/logviewer/snapshot.c
+        src/logviewer/players.c
+        src/logviewer/spec_seed_load.c
+        src/logviewer/pillbox.c
+        src/logviewer/bases.c
+        src/logviewer/starts.c
+        src/logviewer/shells.c
+        src/logviewer/bolo_map.c
+        src/logviewer/screencalc.c
+        src/logviewer/screentank.c
+        src/logviewer/screenlgm.c
+        src/logviewer/screenbullet.c
+        src/logviewer/sounddist.c
+        src/logviewer/allience.c
+        src/logviewer/labels.c
+        src/logviewer/util.c
+        src/logviewer/global.c
+        src/logviewer/clientmutex.c
+        src/logviewer/dns.c
+        src/logviewer/game_settings_blob.c)
+    bolo_apply_include_rules(fuzz_replay unittests)
+    target_include_directories(fuzz_replay PRIVATE
+        src/gui/sdl3 src/server src src/winbolonet src/logviewer
+        ${CMAKE_SOURCE_DIR}/tests/unit ${cjson_SOURCE_DIR})
+    target_compile_definitions(fuzz_replay PRIVATE
+        HAVE_SCREEN_C=1
+        WINBOLO_VERSION="${WINBOLO_VERSION}"
+        WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
+        WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
+        WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+        WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
+        BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+        BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+        BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION})
+    target_link_libraries(fuzz_replay PRIVATE
+        bolo_static ${SERVER_LINK_GROUP} bot_brains_static
+        SDL3::SDL3 minizip lua_static cjson utf8proc mdns ${MATH_LIB} pthread)
+    target_compile_options(fuzz_replay PRIVATE -fcommon)
+    target_link_options(fuzz_replay PRIVATE -fsanitize=fuzzer)
+    set_flat_output(fuzz_replay "${CMAKE_BINARY_DIR}")
+    add_test(NAME fuzz.replay
+             COMMAND $<TARGET_FILE:fuzz_replay> -runs=0
+                     ${WB_FUZZ_CORPUS_DIR}/replay ${WB_FUZZ_CRASH_DIR})
+    set_tests_properties(fuzz.replay PROPERTIES TIMEOUT 120)
+
     # Tier 1 — the channel-mux frame parser (channelRecvFrame), the single
     # bounds-checked decode site the reliability rework collapsed every reliable
     # queue / carrier / chunker onto. bolo_static only, like the wire codecs.
@@ -6969,6 +7041,9 @@ if(WB_FUZZ)
     add_custom_command(TARGET fuzz_join_accept POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:fuzz_join_accept>")
+    add_custom_command(TARGET fuzz_replay POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:fuzz_replay>")
     if(HAVE_ONNXRUNTIME AND DEFINED ONNXRUNTIME_LIBDIR)
         file(GLOB _FUZZ_ORT_SO "${ONNXRUNTIME_LIBDIR}/libonnxruntime*")
         foreach(_f ${_FUZZ_ORT_SO})
@@ -6984,6 +7059,9 @@ if(WB_FUZZ)
             add_custom_command(TARGET fuzz_join_accept POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${_f}" "$<TARGET_FILE_DIR:fuzz_join_accept>")
+            add_custom_command(TARGET fuzz_replay POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_f}" "$<TARGET_FILE_DIR:fuzz_replay>")
         endforeach()
     endif()
 endif()

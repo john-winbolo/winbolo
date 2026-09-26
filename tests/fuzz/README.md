@@ -32,6 +32,7 @@ is the default because it needs no external driver.
 | `fuzz_join_accept` | The client `PACKET_JOIN_ACCEPT` handler — the join handshake (server-assigned slot, mapSize/connId parsing), a path the snapshot target can't reach (it starts already CONNECTED). Input is the accept body. |
 | `fuzz_map_load` | `mapLoadCompressedMap` — the parser every map that arrives over the network lands in: three fixed-size struct memcpys for the bases, pillboxes and starts, then an LZW decode of the terrain into the 256x256 array. Input is the whole compressed blob, copied onto an exact-size heap buffer so ASan catches an over-read past `inputLen`. Covers the LZW decoder and the reject paths; it almost never reaches a successful load, because a mutated stream rarely decodes to exactly 65536 bytes. |
 | `fuzz_map_fields` | The same loader, past the LZW gate. Takes the struct region straight from the fuzzer, fills the terrain from the rest of the input, compresses it with the writer's own `lzwencoding`, and hands the result to the real `mapLoadCompressedMap`, so every input loads. This is what exercises `basesValidate` / `pillsValidate` / `startsValidate` and the terrain values the nibble-packed file format cannot express. Each input costs a full compress and decompress, so it runs far slower than `fuzz_map_load` and saturates within seconds. |
+| `fuzz_replay` | The log viewer loading and playing a `.wbv` — a file anyone can hand it, including the round a game server sends for the post-game reel. Input is `[u16 big-endian scriptsLen][scripts.json][log.dat]`, with `scriptsLen` clamped to what follows and 0 leaving the member out. The target stores both in a zip built in memory and hands it to `lv_screenLoadMapFromMemory`, so every input runs the viewer's zip reading, the `scripts.json` parser and the load walks (total time, game start, slot names, rule changes, presentation index, server ticks) on a plaintext log the fuzzer can mutate. It then plays at most 4096 ticks, seeks back to halfway through what it played and then to the start, and reads the server-tick lookup, the scripts holder, the rule changes and the slot names into a volatile sink. Nothing touches the disk. |
 
 ## Build
 
@@ -39,7 +40,7 @@ is the default because it needs no external driver.
 cmake -B build-fuzz -DWB_FUZZ=ON \
       -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 # Build just the fuzz targets (pulls only their library deps, not the whole game):
-cmake --build build-fuzz --target fuzz_wire_codec fuzz_channel_frame fuzz_voice_segment fuzz_bulk_transfer fuzz_server_dispatch fuzz_client_snapshot fuzz_join_accept fuzz_map_load fuzz_map_fields
+cmake --build build-fuzz --target fuzz_wire_codec fuzz_channel_frame fuzz_voice_segment fuzz_bulk_transfer fuzz_server_dispatch fuzz_client_snapshot fuzz_join_accept fuzz_map_load fuzz_map_fields fuzz_replay
 ```
 
 `WB_FUZZ` is a **dedicated build config** — when ON the whole build is
@@ -150,6 +151,11 @@ ls <repo>/tests/fuzz/crashes/
   counts at their maxima and every base field set to 200 (past the owner and
   stock clamps) over terrain of 200, and a terrain mix spanning legal tiles,
   `DEEP_SEA` (255) and nothing in between. All load, by construction.
+- `corpus/replay/` — every committed recording in `tests/fixtures/wbv/`, plus
+  a scripted round (`scripts.json` and panel, score and announcement records)
+  that the `lv_presentation_scripted_round` unit case keeps when `WB_KEEP_WBV`
+  names a path. Regenerate with `tests/fuzz/seed_replay.sh <build-dir>`, where
+  the build dir holds `WinBoloUnitTests`.
 - `crashes/` — minimized regressions. A crash found in discovery lands here and
   is replayed by the ctest on every build. Commit new crash inputs alongside
   the fix.

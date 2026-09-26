@@ -671,6 +671,32 @@ static void lvpReadScripted(void *ctx) {
     seen->panelAt     = lv_screenGetPanelRow(0, 0xFF)->set;
 }
 
+/* With WB_KEEP_WBV set to a path, a copy of the recording at from is written
+ * there. tests/fuzz/seed_replay.sh uses it to seed fuzz_replay with a round
+ * that carries scripts.json and presentation records. Unset, it does
+ * nothing, and a failed copy does not fail the case. */
+static void lvpKeepCopy(const char *from) {
+    const char *to = getenv("WB_KEEP_WBV");
+    FILE       *in;
+    FILE       *out;
+    char        buf[4096];
+    size_t      n;
+
+    if (to == NULL || to[0] == '\0') return;
+    in = fopen(from, "rb");
+    if (in == NULL) return;
+    out = fopen(to, "wb");
+    if (out == NULL) {
+        fclose(in);
+        return;
+    }
+    while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
+        if (fwrite(buf, 1, n, out) != n) break;
+    }
+    fclose(out);
+    fclose(in);
+}
+
 int run_lv_presentation_scripted_round(void) {
     LvpScripted seen;
     char        path[512];
@@ -683,6 +709,7 @@ int run_lv_presentation_scripted_round(void) {
                                                 sizeof(path));
     if (recorded) {
         played = replayHarnessDecodeFileThen(path, lvpReadScripted, &seen);
+        lvpKeepCopy(path);
     }
     if (path[0] != '\0') remove(path);
     UT_ASSERT_MSG(recorded, "the presentation round could not be recorded");

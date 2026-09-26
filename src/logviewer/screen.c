@@ -4861,12 +4861,14 @@ LogViewerState *lv_decoderCreate(bool fromMainMenu) {
 /* Close any loaded log (frees the zip buffer + screen structures), free the
  * decoder state, and clear the active state. NULL-safe. lv_screenCloseLog is
  * safe on a never-loaded state (lv_blocksDestroy and lv_screenDestroy both
- * no-op on the zeroed pointers), so it is called unconditionally. */
+ * no-op on the zeroed pointers), so it is called unconditionally. Closing
+ * keeps the snapshot list, which a load replaces, so it is freed here. */
 void lv_decoderDestroy(LogViewerState *lv) {
   if (lv == NULL) {
     return;
   }
   lv_screenCloseLog();
+  lv_snapshotDestroy(&lv->snap);
   free(lv);
   lv_screenSetState(NULL);
 }
