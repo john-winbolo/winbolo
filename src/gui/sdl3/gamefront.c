@@ -666,6 +666,9 @@ extern bool isTutorial;
 extern int frameRate;
 extern bool showGunsight;
 extern bool soundEffects;
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+extern bool positionalSound;
+#endif
 extern bool backgroundSound;
 extern bool useSoundKeepalive;
 extern int  soundVolume;
@@ -4583,6 +4586,10 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   showGunsight = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("MENU", "Sound Effects", "Yes", buff, FILENAME_MAX);
   soundEffects = YESNO_TO_TRUEFALSE(buff[0]);
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+  prefsGetString("MENU", "Positional Sound", "Yes", buff, FILENAME_MAX);
+  positionalSound = YESNO_TO_TRUEFALSE(buff[0]);
+#endif
   prefsGetString("MENU", "Allow Background Sound", "Yes", buff, FILENAME_MAX);
   backgroundSound = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("MENU", "Sound keepalive", "No", buff, FILENAME_MAX);
@@ -5089,6 +5096,9 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("MENU", "Frame Rate", buff);
   prefsSetString("MENU", "Show Gunsight", TRUEFALSE_TO_STR(showGunsight));
   prefsSetString("MENU", "Sound Effects", TRUEFALSE_TO_STR(soundEffects));
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+  prefsSetString("MENU", "Positional Sound", TRUEFALSE_TO_STR(positionalSound));
+#endif
   prefsSetString("MENU", "Allow Background Sound", TRUEFALSE_TO_STR(backgroundSound));
   prefsSetString("MENU", "Sound keepalive", TRUEFALSE_TO_STR(useSoundKeepalive));
   intToStr(soundVolume, buff, sizeof(buff));

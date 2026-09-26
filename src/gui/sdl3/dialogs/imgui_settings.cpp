@@ -99,6 +99,7 @@ extern "C" {
   extern bool labelSelf;
   extern BYTE zoomFactor;
   extern bool soundEffects;
+  extern bool positionalSound;
   extern bool backgroundSound;
   extern bool useSoundKeepalive;
   extern int  soundVolume;
@@ -117,6 +118,7 @@ extern "C" {
   void windowShowPillLabels_toggle(struct ClientSim *cs);
   void windowShowBaseLabels_toggle(struct ClientSim *cs);
   void windowSoundEffects_toggle(void);
+  void windowPositionalSound_toggle(void);
   void windowBackgroundSoundChange_toggle(void);
   void windowSoundKeepalive(void);
   void windowSetSoundVolume(int pct);
@@ -1535,6 +1537,12 @@ extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
         bool se = (bool)soundEffects;
         if (ImGui::Checkbox(langGetText(STR_MENU_SOUND_EFFECTS), &se)) windowSoundEffects_toggle();
     }
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+    {
+        bool ps = (bool)positionalSound;
+        if (ImGui::Checkbox(langGetText(STR_DLGLOBBY_POSITIONAL_SOUND_CB), &ps)) windowPositionalSound_toggle();
+    }
+#endif
     if (!uiModeIsTablet()) {
         bool bgs = (bool)backgroundSound;
         if (ImGui::Checkbox(langGetText(STR_MENU_BACKGROUND_SOUND), &bgs)) windowBackgroundSoundChange_toggle();
