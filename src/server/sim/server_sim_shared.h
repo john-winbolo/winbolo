@@ -133,6 +133,13 @@ int serverSimGetPills(ServerSim *sim, PillSnapshot *out, int maxOut);
  * human. */
 void serverSimResetLobbyToDefaults(ServerSim *sim);
 
+/* Defined in server_sim_lobby.c — the start sides a freshly opened lobby
+ * gets: team 1 north, team 2 south, both marked filled-in. Run when a lobby
+ * server starts up (serverSimApplyInstanceConfig) and when the last human
+ * leaves (serverSimResetLobbyToDefaults), and nowhere else, so a side the
+ * host chose is never written over while anyone is in the lobby. */
+void serverSimApplyDefaultTeamSides(ServerSim *sim);
+
 /* The player slot every base owner is allied to when one side has swept
  * the map, or NEUTRAL when no side has. Same predicate as
  * serverSimCheckGameWin: a base at or below base_capture_armour is dead
