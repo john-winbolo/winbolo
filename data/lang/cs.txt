@@ -2217,6 +2217,8 @@ STR_BOT_DIFF_DESC_HARD=Tento bot loví nepřátelské bunkry a základny, koordi
 STR_DLGLOBBY_BOTCFG_MODE=Režim
 STR_DLGLOBBY_BOT_DOCS_TITLE=Příkazy: {string1}
 STR_COPY=Kopírovat
+STR_DLGLOBBY_BOT_DOCS_LOADING=Načítání příkazů ze serveru...
+STR_DLGLOBBY_BOT_DOCS_FAILED=Server tyto příkazy neposlal. Zavřete toto okno a otevřete ho znovu, abyste to zkusili znovu.
 
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_PRESET_CLASSIC=Klasické

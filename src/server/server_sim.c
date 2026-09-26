@@ -670,7 +670,7 @@ void serverSimDestroy(ServerSim *sim) {
      * this destroy walk an already-empty bots[] on this call. */
     botManagerDestroy(sim);
 
-    /* The brains' lobby texts (~271 KB), allocated on the first refresh. */
+    /* The brains' lobby texts, allocated on the first refresh. */
     serverSimFreeBrainDocs(sim);
 
     for (count = 0; count < MAX_TANKS; count++) {

@@ -1907,20 +1907,30 @@ void serverSimRefreshBrainDocs(ServerSim *sim);
  * nothing else needs to. */
 void serverSimFreeBrainDocs(ServerSim *sim);
 
-/* Stream every brain's LOBBY TEXTS as CTRL_LOBBY_BRAIN_DOCS_CHUNK events
- * through `deliver`, out of the cache above — one stream per brain, and only
- * for brains that ship at least one of the two files, so a server whose
- * brains carry none emits nothing and a sim that never refreshed emits
- * nothing either.
+/* Send one CTRL_LOBBY_BRAIN_ANNOUNCE per brain through `deliver`, out of the
+ * cache above: the brain's announce.txt, and the length and generation of
+ * its commands.txt without the text. Only for brains that ship at least one
+ * of the two files, so a server whose brains carry none emits nothing and a
+ * sim that never refreshed emits nothing either.
  *
  * Called beside the brain list, on the two paths where a real client is
  * listening: a joiner's (or spectator's) sync replay, and the broadcast bus
  * when a round hands the lobby back. NOT from the delayed spectator ring's
- * control snapshot — that is rebuilt per keyframe and has a size cap these
- * fragments would push it past. */
-void serverSimEmitBrainDocs(const ServerSim *sim,
-                            void (*deliver)(void *, const struct ControlEvent *),
-                            void *ctx);
+ * control snapshot, which is rebuilt per keyframe and whose size cap does not
+ * count them. */
+void serverSimEmitBrainAnnounces(const ServerSim *sim,
+                                 void (*deliver)(void *, const struct ControlEvent *),
+                                 void *ctx);
+
+/* Brain `brainIdx`'s commands.txt as the cache holds it: compressed with
+ * brainDocsCompress (brain_list.h). *outZ points into the cache and stays
+ * valid until the next serverSimRefreshBrainDocs or serverSimFreeBrainDocs,
+ * so a caller copies it out under the same lock it read it under. False when
+ * the index is not a brain or the brain ships no commands.txt; the outs are
+ * then untouched. Any out may be NULL. */
+bool serverSimGetBrainDocs(const ServerSim *sim, int brainIdx,
+                           uint32_t *outGen, uint16_t *outLen,
+                           const uint8_t **outZ, uint16_t *outZLen);
 
 /*********************************************************
  * Read accessors.

@@ -4079,6 +4079,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_player_mute.c
     tests/unit/test_lock_channel.c
     tests/unit/test_loopback_preview.c
+    tests/unit/test_loopback_brain_docs.c
     tests/unit/test_loopback_download.c
     tests/unit/test_loopback_map_change.c
     tests/unit/test_loopback_entity_change.c
@@ -4723,9 +4724,12 @@ set(_unit_test_names
     lobby_brain_docs_chunk_codec_roundtrip
     lobby_brain_docs_chunk_len_is_exact
     lobby_brain_list_clears_stale_texts
+    lobby_brain_announce_codec_and_apply
+    lobby_brain_docs_put_follows_generation
     lobby_chat_line_format_is_what_is_appended
     lobby_brain_docs_stay_out_of_the_control_snapshot
     lobby_brain_docs_reach_a_joining_subscriber
+    lobby_brain_docs_refresh_moves_the_generation
     lobby_sync_complete_codec_roundtrip
     lobby_rating_posted_codec_roundtrip
     command_codec_roundtrip_variants
@@ -4973,6 +4977,7 @@ set(_unit_test_names
     brain_inbox_clear_resets
     brain_list_scan_path_resolves
     brain_list_texts_read
+    brain_docs_compress_roundtrip
     unit_test_names_match_cmake
     brain_modes_manifest_parses
     brain_modes_missing_falls_back
@@ -5429,6 +5434,8 @@ set(_unit_test_names
     player_mute_mask_roundtrip
     lock_channel
     loopback_map_preview
+    loopback_brain_docs_fetch
+    loopback_brain_docs_spectator
     loopback_map_upload
     upload_begin_golden
     script_upload_begin_refusals

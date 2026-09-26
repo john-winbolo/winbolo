@@ -1152,10 +1152,9 @@ static EncodeResult encodeLobbyBotPoolChunkBody(const ControlEvent *evt,
 
 /* PACKET_LOBBY_BRAIN_DOCS_CHUNK wire format:
  *   [header 8] [brainIdx 1] [seq 1] [count 1] [fragLen 2 BE] [frag fragLen]
- * One slice of ONE brain's announce.txt + commands.txt blob. Worst case on
- * the wire is 8 + 5 + 900 = 913 bytes, well inside MAX_CONTROL_PACKET: the
- * fragment cap bounds the datagram, and the blob's own size only decides how
- * MANY fragments there are (19 at the current caps). */
+ * One slice of ONE brain's announce.txt + commands.txt blob. RETIRED:
+ * nothing sends it now (CTRL_LOBBY_BRAIN_ANNOUNCE and BULK_KIND_BRAIN_DOCS
+ * replaced it), and the codec stays so recordings that hold it decode. */
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeLobbyBrainDocsChunkBody(const ControlEvent *evt,
@@ -1207,10 +1206,52 @@ BOLO_STATIC_ASSERT(
  *   (2 + 512 + 2 + 16384 + 899) / 900 = 19 today.
  * Raising BRAIN_DOCS_MAX past about 229 KB breaks the build here rather than
  * wrapping the seq byte and reassembling two brains' texts into one. */
+/* CTRL_LOBBY_BRAIN_ANNOUNCE body:
+ *   [brainIdx 1] [docsGen 4 BE] [docsLen 2 BE] [announceLen 2 BE]
+ *   [announce announceLen]
+ * One brain's announce line and the length and generation of its
+ * commands.txt, which travels on CHANNEL_BULK when asked for. A brain with
+ * no docs says 0 for both numbers, and a body where only one of them is 0
+ * does not decode. */
+#define LOBBY_BRAIN_ANNOUNCE_FIXED 9
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeLobbyBrainAnnounceBody(const ControlEvent *evt,
+                                                 const struct UdpServerClient *recipient,
+                                                 uint8_t *buf, size_t bufCap,
+                                                 size_t *outLen) {
+    (void)recipient;
+    uint16_t al  = evt->u.lobbyBrainAnnounce.announceLen;
+    uint16_t dl  = evt->u.lobbyBrainAnnounce.docsLen;
+    uint32_t gen = evt->u.lobbyBrainAnnounce.docsGen;
+    size_t   pos = 0;
+    if (evt->u.lobbyBrainAnnounce.brainIdx >= BRAIN_LIST_MAX) return ENCODE_OVERFLOW;
+    if (al > BRAIN_ANNOUNCE_MAX || dl > BRAIN_DOCS_MAX) return ENCODE_OVERFLOW;
+    if ((gen == 0) != (dl == 0)) return ENCODE_OVERFLOW;
+    if (bufCap < (size_t)(LOBBY_BRAIN_ANNOUNCE_FIXED + al)) return ENCODE_OVERFLOW;
+    buf[pos++] = evt->u.lobbyBrainAnnounce.brainIdx;
+    buf[pos++] = (uint8_t)((gen >> 24) & 0xFF);
+    buf[pos++] = (uint8_t)((gen >> 16) & 0xFF);
+    buf[pos++] = (uint8_t)((gen >> 8) & 0xFF);
+    buf[pos++] = (uint8_t)(gen & 0xFF);
+    buf[pos++] = (uint8_t)((dl >> 8) & 0xFF);
+    buf[pos++] = (uint8_t)(dl & 0xFF);
+    buf[pos++] = (uint8_t)((al >> 8) & 0xFF);
+    buf[pos++] = (uint8_t)(al & 0xFF);
+    if (al > 0) {
+        memcpy(buf + pos, evt->u.lobbyBrainAnnounce.announce, al);
+        pos += al;
+    }
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
 BOLO_STATIC_ASSERT(
-    (LOBBY_BRAIN_DOCS_WIRE_MAX + LOBBY_BRAIN_DOCS_FRAG_MAX - 1) /
-        LOBBY_BRAIN_DOCS_FRAG_MAX <= 255,
-    brain_docs_blob_fits_255_fragments);
+    LOBBY_BRAIN_ANNOUNCE_FIXED + BRAIN_ANNOUNCE_MAX <= CONTROL_BODY_MAX,
+    brain_announce_fits_control_segment);
+
+/* docsLen travels in two bytes. */
+BOLO_STATIC_ASSERT(BRAIN_DOCS_MAX <= 0xFFFF, brain_docs_len_fits_u16);
 
 static EncodeResult encodeRoundStats(const ControlEvent *evt,
                                      const struct UdpServerClient *recipient,
@@ -2773,6 +2814,36 @@ static bool decodeLobbyBrainDocsChunkBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+static bool decodeLobbyBrainAnnounceBody(const uint8_t *buf, size_t len,
+                                         ControlEvent *outEvt) {
+    /* Layout: see encodeLobbyBrainAnnounceBody. */
+    uint8_t  idx;
+    uint32_t gen;
+    uint16_t dl, al;
+    if (len < LOBBY_BRAIN_ANNOUNCE_FIXED) return false;
+    idx = buf[0];
+    gen = ((uint32_t)buf[1] << 24) | ((uint32_t)buf[2] << 16) |
+          ((uint32_t)buf[3] << 8) | (uint32_t)buf[4];
+    dl  = (uint16_t)(((uint16_t)buf[5] << 8) | buf[6]);
+    al  = (uint16_t)(((uint16_t)buf[7] << 8) | buf[8]);
+    if (idx >= BRAIN_LIST_MAX) return false;
+    if (dl > BRAIN_DOCS_MAX || al > BRAIN_ANNOUNCE_MAX) return false;
+    if ((gen == 0) != (dl == 0)) return false;
+    if (len != (size_t)LOBBY_BRAIN_ANNOUNCE_FIXED + al) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_LOBBY_BRAIN_ANNOUNCE;
+    outEvt->u.lobbyBrainAnnounce.brainIdx    = idx;
+    outEvt->u.lobbyBrainAnnounce.docsGen     = gen;
+    outEvt->u.lobbyBrainAnnounce.docsLen     = dl;
+    outEvt->u.lobbyBrainAnnounce.announceLen = al;
+    if (al > 0) {
+        memcpy(outEvt->u.lobbyBrainAnnounce.announce,
+               buf + LOBBY_BRAIN_ANNOUNCE_FIXED, al);
+    }
+    outEvt->u.lobbyBrainAnnounce.announce[al] = '\0';
+    return true;
+}
+
 static bool decodeLobbyMapChangeBody(const uint8_t *buf, size_t len,
                                      ControlEvent *outEvt) {
     (void)buf; (void)len;
@@ -3620,6 +3691,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_SCENARIO_RULES]        = encodeScenarioRulesBody,
     [CTRL_LOBBY_SCRIPT_LIST]     = encodeLobbyScriptListBody,
     [CTRL_LOBBY_SCRIPT_SETTING]  = encodeLobbyScriptSettingBody,
+    [CTRL_LOBBY_BRAIN_ANNOUNCE]  = encodeLobbyBrainAnnounceBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -3673,6 +3745,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_SCENARIO_RULES]        = decodeScenarioRulesBody,
     [CTRL_LOBBY_SCRIPT_LIST]     = decodeLobbyScriptListBody,
     [CTRL_LOBBY_SCRIPT_SETTING]  = decodeLobbyScriptSettingBody,
+    [CTRL_LOBBY_BRAIN_ANNOUNCE]  = decodeLobbyBrainAnnounceBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {

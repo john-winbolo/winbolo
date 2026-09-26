@@ -2219,6 +2219,8 @@ STR_BOT_DIFF_DESC_HARD=このボットは敵のトーチカや基地を狩り、
 STR_DLGLOBBY_BOTCFG_MODE=モード
 STR_DLGLOBBY_BOT_DOCS_TITLE={string1} のコマンド
 STR_COPY=コピー
+STR_DLGLOBBY_BOT_DOCS_LOADING=サーバーからコマンドを取得しています...
+STR_DLGLOBBY_BOT_DOCS_FAILED=サーバーからコマンドが送られてきませんでした。このウィンドウを閉じてもう一度開くと再試行します。
 
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_PRESET_CLASSIC=クラシック

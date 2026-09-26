@@ -2219,6 +2219,8 @@ STR_BOT_DIFF_DESC_HARD=Deze bot jaagt op vijandelijke bunkers en bases, werkt sa
 STR_DLGLOBBY_BOTCFG_MODE=Modus
 STR_DLGLOBBY_BOT_DOCS_TITLE={string1}-commando's
 STR_COPY=Kopiëren
+STR_DLGLOBBY_BOT_DOCS_LOADING=Commando's worden van de server opgehaald...
+STR_DLGLOBBY_BOT_DOCS_FAILED=De server heeft deze commando's niet gestuurd. Sluit dit venster en open het opnieuw om het nog eens te proberen.
 
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_PRESET_CLASSIC=Klassiek

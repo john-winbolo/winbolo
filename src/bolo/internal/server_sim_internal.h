@@ -329,8 +329,9 @@ struct ServerSim {
      * never appears on the public API or the wire. */
     char            brainPaths[BRAIN_LIST_MAX][BRAIN_LIST_PATH_LEN];
 
-    /* The brains' lobby texts, read off disk ONCE and kept as the wire blob
-     * the CTRL_LOBBY_BRAIN_DOCS_CHUNK fragments are cut from.
+    /* The brains' lobby texts, read off disk ONCE: each brain's announce
+     * line, which CTRL_LOBBY_BRAIN_ANNOUNCE carries, and its commands.txt
+     * compressed, ready for a PACKET_LOBBY_BRAIN_DOCS_REQ answer.
      *
      * These used to be read at the moment they were sent. The send is inside
      * serverSimSyncSubscriber, which the delayed spectator ring's control
@@ -339,8 +340,9 @@ struct ServerSim {
      * files per brain, nine brains, both multiplied by the ring's keyframe
      * rate, on the tick thread.
      *
-     * ~271 KB, so it is allocated on first fill and freed with the sim
-     * rather than sitting in every ServerSim that never hosts a lobby.
+     * About 8 KB plus the compressed docs, allocated on first fill and
+     * freed with the sim rather than sitting in every ServerSim that never
+     * hosts a lobby.
      * serverSimRefreshBrainDocs fills it and re-reads a brain whose files
      * have a newer mtime, so an operator editing a brain's announce.txt
      * between rounds still sees the change without a restart. */

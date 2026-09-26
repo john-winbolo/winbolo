@@ -773,7 +773,8 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               progress keeps what it started
                                               with. */
 
-#define PACKET_LOBBY_BRAIN_DOCS_CHUNK  222  /* server → client: one fragment
+#define PACKET_LOBBY_BRAIN_DOCS_CHUNK  222  /* RETIRED: nothing sends it.
+                                              Server → client: one fragment
                                               of ONE brain's lobby texts.
                                               { brainIdx 1, seq 1, count 1,
                                                 fragLen 2 BE, frag N }.
@@ -898,6 +899,21 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               a CTRL_LOBBY_SCRIPT_SETTING,
                                               because an older one cannot
                                               decode it. */
+
+#define PACKET_LOBBY_BRAIN_DOCS_REQ    230  /* client -> server
+                                              { brainIdx 1 }
+                                              one brain's commands.txt, asked
+                                              for when a player opens it from
+                                              the lobby. The answer streams
+                                              back over CHANNEL_BULK as a
+                                              BULK_KIND_BRAIN_DOCS transfer
+                                              whose gen is the docs
+                                              generation
+                                              CTRL_LOBBY_BRAIN_ANNOUNCE
+                                              carries. A request that finds
+                                              the client's bulk stream busy
+                                              is dropped, and the client
+                                              asks again. */
 
 #ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
 #define GAME_VOTE_KIND_BACK_TO_LOBBY  1

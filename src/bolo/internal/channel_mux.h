@@ -134,6 +134,14 @@ enum {
  * rounded up to 340 KiB. The ring is indexed modulo this size, so it need
  * not be a power of two.
  *
+ * OUT OF DATE, AND KEPT ON PURPOSE. The brain docs line is gone: commands.txt
+ * now goes on CHANNEL_BULK when a client asks for it, and the replay carries
+ * one CTRL_LOBBY_BRAIN_ANNOUNCE per brain instead, 16 x (5 + 9 + 512) = 8,416
+ * bytes. But the table above never counted the up to 49 script setting
+ * records, or a mid-round joiner's scenario panels, markers and score rows,
+ * which serverSimSyncSubscriber replays by the hundred; the docs' 273 KB
+ * covered for them. The size stays at 340 KiB until that replay is counted.
+ *
  * The cost is real memory, not reserved address space: transportUdpServerCreate
  * zeroes the whole server struct and channelMuxInit zeroes each mux, so every
  * backlog is written and resident. It adds about 340 KiB to each mux, about
