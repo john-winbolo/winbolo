@@ -115,39 +115,31 @@ enum {
  *
  * Sized for the largest join sync replay the caps allow, since the replay
  * goes onto a joiner's channel in one tick, before anything can be acked.
- * Each queued message costs 2 (length) + 3 (type, bodyLen) + its body:
+ * JOIN_REPLAY_BACKLOG_MAX in udp_server_control.c counts it from the caps and
+ * a static assertion there fails the build when the replay no longer fits.
+ * The fix for that is to move the data that grew onto CHANNEL_BULK, as brain
+ * docs were, not to raise this: every connection pays for it in memory. At
+ * the current caps the replay is 183,000 bytes:
  *
- *   brain docs: 16 brains x (18 chunks x 910 + one of 710)        273,440
- *   bot-name catalogue: blob <= 4 + compressBound(64 KiB)
- *     = 65,573 bytes, 73 chunks (72 x 909 + 782)                    66,230
- *   settings 538, brain list 902, rules 1,026, script list
- *     2 x 1,026, scenario rules 2 x 1,026, panels 3 x 1,026          9,648
- *   116 small records (16 slots, 32 spectator slots, 15 team
- *     meta, 15 bot config, 15 bot brain, 16 joins, 2 votes,
- *     balance, map skip, entity sync, phase, sync marker) x 133     15,428
- *   whole replay                                                   364,746
- *   less what the window takes first (56 messages, leaving 8
- *     for events already in flight: 6 leading events + 50 docs)    -50,038
- *   live publishes during the join, 32 x 1,026                     +32,832
- *   total                                                          347,540
+ *   bot-name catalogue, 78 chunks of 909                           70,902
+ *   scenario panels, 32 lists of 1,025                             32,800
+ *   events published live during the join, 32 x 1,026              32,832
+ *   164 small records x 133                                        21,812
+ *   script settings, 49 x 170                                       8,330
+ *   brain announces, 16 x 526                                       8,416
+ *   six whole-segment events x 1,026                                6,156
+ *   scenario rules, 3 fragments x 584                               1,752
  *
- * rounded up to 340 KiB. The ring is indexed modulo this size, so it need
- * not be a power of two.
- *
- * OUT OF DATE, AND KEPT ON PURPOSE. The brain docs line is gone: commands.txt
- * now goes on CHANNEL_BULK when a client asks for it, and the replay carries
- * one CTRL_LOBBY_BRAIN_ANNOUNCE per brain instead, 16 x (5 + 9 + 512) = 8,416
- * bytes. But the table above never counted the up to 49 script setting
- * records, or a mid-round joiner's scenario panels, markers and score rows,
- * which serverSimSyncSubscriber replays by the hundred; the docs' 273 KB
- * covered for them. The size stays at 340 KiB until that replay is counted.
+ * rounded up to 192 KiB. Brain docs are not in it: they go on CHANNEL_BULK
+ * when a client asks, where they used to be 273 KB of the replay. The ring is
+ * indexed modulo this size, so it need not be a power of two.
  *
  * The cost is real memory, not reserved address space: transportUdpServerCreate
  * zeroes the whole server struct and channelMuxInit zeroes each mux, so every
- * backlog is written and resident. It adds about 340 KiB to each mux, about
- * 16 MiB to a process that runs the UDP server (16 player and 32 spectator
- * muxes), and 340 KiB to a client. */
-#define CHANNEL_CONTROL_BACKLOG (340u * 1024u)
+ * backlog is written and resident. It adds 192 KiB to each mux, about 9 MiB to
+ * a process that runs the UDP server (16 player and 32 spectator muxes), and
+ * 192 KiB to a client. */
+#define CHANNEL_CONTROL_BACKLOG (192u * 1024u)
 
 /* Per-channel reliability state. ackedSeq / expectedSeq are exclusive
  * upper bounds (matching the shipped queue model: "confirmed up to here,
