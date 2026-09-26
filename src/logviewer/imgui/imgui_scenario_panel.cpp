@@ -8,8 +8,9 @@
  * (at your option) any later version.
  *
  * The list the followed player would have had on screen at the playhead,
- * drawn through the same scenario_panel_draw.cpp the game uses, at its
- * native 128 pixels with nothing faded. The row is chosen by
+ * drawn through the same scenario_panel_draw.cpp the game uses, with nothing
+ * faded, in a square window that resizes from 128 pixels (one a panel unit)
+ * up to the shorter side of the viewport. The row is chosen by
  * lv_screenFollowedPanelRow and the timer counts on the server's tick at the
  * playhead, which is the clock the scenario set its targets on.
  */
@@ -37,8 +38,47 @@ extern "C" {
     void lv_clientMutexRelease(void);
 }
 
-/* The panel's side in screen pixels: one pixel a panel unit. */
-#define LV_SCN_PANEL_PX ((float)SCN_PANEL_UNITS)
+/* The square's side in screen pixels. Starts at one pixel a panel unit; the
+ * preference and a resize drag change it. */
+static int s_side = LV_SCN_PANEL_SIDE_MIN;
+
+int lv_imgui_scenario_panel_side(void) {
+    return s_side;
+}
+
+void lv_imgui_scenario_panel_set_side(int side) {
+    s_side = (side < LV_SCN_PANEL_SIDE_MIN) ? LV_SCN_PANEL_SIDE_MIN : side;
+}
+
+/* What the size callback needs: the window's size around its content (title
+ * bar and padding) and the range the content's side may take. */
+typedef struct {
+    ImVec2 frame;
+    float  sideMin;
+    float  sideMax;
+} LvScnPanelFit;
+
+/* Keeps the content square while the window is resized. The edge the drag
+ * moves decides the side: whichever of width and height changed the more. */
+static void lvScnPanelSquare(ImGuiSizeCallbackData *data) {
+    const LvScnPanelFit *fit = (const LvScnPanelFit *)data->UserData;
+    float dx = data->DesiredSize.x - data->CurrentSize.x;
+    float dy = data->DesiredSize.y - data->CurrentSize.y;
+    float side = (dx * dx >= dy * dy) ? data->DesiredSize.x - fit->frame.x
+                                      : data->DesiredSize.y - fit->frame.y;
+
+    if (side < fit->sideMin) side = fit->sideMin;
+    if (side > fit->sideMax) side = fit->sideMax;
+    data->DesiredSize = ImVec2(side + fit->frame.x, side + fit->frame.y);
+}
+
+static float lvScnPanelMin(float a, float b) {
+    return (a < b) ? a : b;
+}
+
+/* Read by the callback inside Begin, and by the window to turn its size back
+ * into a side. */
+static LvScnPanelFit s_fit;
 
 /* The row's bytes as they stood under the lock, and the list parsed from
  * them. Static because the list is several kilobytes. */
@@ -84,37 +124,72 @@ void lv_imgui_scenario_panel_window(bool logLoaded) {
     }
 
     {
+        LvScnPanelFit    &fit   = s_fit;
+        const ImGuiStyle &style = ImGui::GetStyle();
         ImGuiCond cond = lv_g_reset_window_positions ? ImGuiCond_Always
                                                      : ImGuiCond_FirstUseEver;
         ImVec2 vp = ImGui::GetMainViewport()->Size;
+        float  side;
+
+        /* Title bar and padding: the window is this much bigger than the
+         * square it holds. */
+        fit.frame   = ImVec2(style.WindowPadding.x * 2.0f,
+                             style.WindowPadding.y * 2.0f +
+                                 ImGui::GetFrameHeight());
+        fit.sideMin = (float)LV_SCN_PANEL_SIDE_MIN;
+        fit.sideMax = lvScnPanelMin(vp.x - fit.frame.x, vp.y - fit.frame.y);
+        if (fit.sideMax < fit.sideMin) fit.sideMax = fit.sideMin;
+
+        /* Reset Windows puts the square back to its smallest. */
+        if (lv_g_reset_window_positions) {
+            s_side = LV_SCN_PANEL_SIDE_MIN;
+        }
+        side = (float)s_side;
+        if (side > fit.sideMax) side = fit.sideMax;
+
         /* Left of Game Information, which sits 280 wide against the right
          * edge. */
-        ImGui::SetNextWindowPos(ImVec2(vp.x - 280 - 10 - LV_SCN_PANEL_PX - 30,
-                                       30),
-                                cond);
+        ImGui::SetNextWindowPos(ImVec2(vp.x - 280 - 10 - side - 30, 30), cond);
+        ImGui::SetNextWindowSize(ImVec2(side + fit.frame.x, side + fit.frame.y),
+                                 cond);
+        ImGui::SetNextWindowSizeConstraints(
+            ImVec2(fit.sideMin + fit.frame.x, fit.sideMin + fit.frame.y),
+            ImVec2(fit.sideMax + fit.frame.x, fit.sideMax + fit.frame.y),
+            lvScnPanelSquare, &fit);
     }
 
     char title[128];
     snprintf(title, sizeof(title), "%s###lvscnpanel",
              langGetText(STR_SCNPANEL_SETTINGS_TITLE));
     if (ImGui::Begin(title, &lv_g_show_scenario_panel_window,
-                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
-                     ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoCollapse |
                      ImGuiWindowFlags_NoScrollbar |
                      ImGuiWindowFlags_NoScrollWithMouse)) {
         ImVec2          origin = ImGui::GetCursorScreenPos();
+        ImVec2          avail  = ImGui::GetContentRegionAvail();
+        float           side   = lvScnPanelMin(avail.x, avail.y);
         ScnPanelDrawEnv env;
 
+        if (side < 1.0f) side = 1.0f;
         memset(&env, 0, sizeof(env));
         env.playerName = panelPlayerName;
         env.ctx        = NULL;
         env.tick       = tick;
-        env.scale      = 1.0f;
+        env.scale      = side / (float)SCN_PANEL_UNITS;
         env.alpha      = 1.0f;
         env.tiles      = (void *)lv_drawGetTilesTexture();
-        /* The square's room in the layout, so the window sizes to it. */
-        ImGui::Dummy(ImVec2(LV_SCN_PANEL_PX, LV_SCN_PANEL_PX));
+        /* The square's room in the layout. */
+        ImGui::Dummy(ImVec2(side, side));
         scnPanelDraw(&s_list, origin.x, origin.y, &env);
+        /* Kept for the preference, which is saved on exit. Taken from the
+         * window's size by the same sum that sets it, so a restart puts it
+         * back exactly. */
+        {
+            ImVec2 win = ImGui::GetWindowSize();
+            float  kept = lvScnPanelMin(win.x - s_fit.frame.x,
+                                        win.y - s_fit.frame.y);
+            lv_imgui_scenario_panel_set_side((int)(kept + 0.5f));
+        }
     }
     ImGui::End();
 }

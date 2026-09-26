@@ -23,6 +23,17 @@ extern "C" {
  * is every frame of a plain recording. */
 void lv_imgui_scenario_panel_window(bool logLoaded);
 
+/* The smallest side the window's square may have, in screen pixels: one pixel
+ * a panel unit, the size it had before it could be resized. The largest is
+ * whatever fits the shorter side of the main viewport. */
+#define LV_SCN_PANEL_SIDE_MIN 128
+
+/* The side of the square in screen pixels, as the window last drew it or as
+ * the preference set it. The setter raises a value under
+ * LV_SCN_PANEL_SIDE_MIN to it; the window keeps it inside the viewport. */
+int  lv_imgui_scenario_panel_side(void);
+void lv_imgui_scenario_panel_set_side(int side);
+
 #ifdef __cplusplus
 }
 #endif

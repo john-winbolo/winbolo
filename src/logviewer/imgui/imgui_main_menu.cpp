@@ -9,6 +9,7 @@
  */
 
 #include "imgui_main_menu.h"
+#include "imgui_scenario_panel.h"
 #include "imgui_dialogs.h"
 #include "imgui.h"
 #include "platform_config.h"
@@ -148,6 +149,18 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
     lv_platform_config_get_string("LOGVIEWER", "Window.ScenarioPanel.Visible", "Yes", val, sizeof(val));
     lv_g_show_scenario_panel_window = (val[0] == 'Y' || val[0] == 'y');
 
+    /* The panel's side in whole pixels. A value that is not a whole number
+       keeps the default; the panel raises one under its smallest side and
+       keeps one past the screen inside it. */
+    lv_platform_config_get_string("LOGVIEWER", "Window.ScenarioPanel.Size", "", val, sizeof(val));
+    {
+        char *end = NULL;
+        long side = strtol(val, &end, 10);
+        if (end != val && *end == '\0' && side > 0 && side <= 65535) {
+            lv_imgui_scenario_panel_set_side((int)side);
+        }
+    }
+
     lv_platform_config_get_string("LOGVIEWER", "Show Regions", "No", val, sizeof(val));
     lv_g_show_regions = (val[0] == 'Y' || val[0] == 'y');
 }
@@ -164,6 +177,11 @@ void lv_imgui_main_menu_save(void) {
     lv_platform_config_set_string("LOGVIEWER", "Window.ItemInformation.Visible", lv_g_show_item_info_window ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.Comments.Visible", lv_g_show_comments_window ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.ScenarioPanel.Visible", lv_g_show_scenario_panel_window ? "Yes" : "No");
+    {
+        char side[16];
+        snprintf(side, sizeof(side), "%d", lv_imgui_scenario_panel_side());
+        lv_platform_config_set_string("LOGVIEWER", "Window.ScenarioPanel.Size", side);
+    }
     lv_platform_config_set_string("LOGVIEWER", "Show Regions", lv_g_show_regions ? "Yes" : "No");
 }
 
