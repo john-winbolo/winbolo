@@ -12,11 +12,13 @@
  *      culled by map-square distance at SDIST_NONE, a player's own shot is
  *      skipped, bubbles reach only the player losing the ammo, a tank hit
  *      reaches the player hit whatever the range, and a near-only sound whose
- *      tier came back far is not sent at all.
+ *      dist came back past SDIST_SOFT is not sent at all.
  *
- *   3. What the middle two payload bytes hold. A human recipient is sent a tier
- *      and a compass bearing measured against its own tank, never the sound's
- *      map square; a bot recipient is sent the square.
+ *   3. What the middle two payload bytes hold. A human recipient is sent a
+ *      stepped east-west pan and a banded distance measured against its own
+ *      tank, never the sound's map square; a bot recipient is sent the square.
+ *      soundPanAndDist, which works both out, is also driven directly over
+ *      every offset out to 40 squares.
  *
  * The builder keeps the closest event of each sound id, so every arm stages its
  * own events and builds once. Where two events in the same build have to be
@@ -119,6 +121,26 @@ static int sdCountSounds(const GameEvent *ev, int n) {
         }
     }
     return count;
+}
+
+/* The pan a human is sent for SD_GAP_NEAR squares east: clamped to
+ * SOUND_PAN_MAX, then truncated to a multiple of SOUND_PAN_STEP. */
+#define SD_PAN_NEAR (((SD_GAP_NEAR > SOUND_PAN_MAX) ? SOUND_PAN_MAX : SD_GAP_NEAR) \
+                     / SOUND_PAN_STEP * SOUND_PAN_STEP)
+
+/* True if b, read as a signed byte, is one of the nine pans a human can be
+ * sent: -SOUND_PAN_MAX .. SOUND_PAN_MAX in steps of SOUND_PAN_STEP. */
+static bool sdIsPan(uint8_t b) {
+    int p = (int8_t)b;
+    return p >= -SOUND_PAN_MAX && p <= SOUND_PAN_MAX &&
+           p % SOUND_PAN_STEP == 0;
+}
+
+/* True if b is one of the eight dist band tops: 5, 10 .. 35, and 39. */
+static bool sdIsBandTop(uint8_t b) {
+    return b == SOUND_DIST_MAX ||
+           (b >= SOUND_DIST_BAND && b < SOUND_DIST_MAX &&
+            b % SOUND_DIST_BAND == 0);
 }
 
 /* 1. Codec round-trip: all four data bytes of each sound event survive, the
@@ -361,10 +383,10 @@ int run_sound_delivery_builder(void) {
                       (unsigned)SD_LISTENER_MY, SD_GAP_SILENT, SDIST_NONE);
     }
 
-    /* ---- manLayingMineNear reaches the near tier only -------------------- */
+    /* ---- manLayingMineNear reaches the near band only -------------------- */
     /* manLayingMineNear and bubbles have no far variant, so a far one would be
      * silence at the recipient. The builder drops those two for a human
-     * recipient once the tier comes back far, whatever axis the gap is on: a
+     * recipient once the dist comes back past SDIST_SOFT, whatever axis the gap is on: a
      * mine laid SD_GAP_HEARD squares along the listener's row is past
      * SDIST_SOFT and is not sent, one at SD_GAP_NEAR is inside it and is. */
     {
@@ -401,10 +423,10 @@ int run_sound_delivery_builder(void) {
                       SD_GAP_NEAR, (unsigned)SD_LISTENER_MX,
                       (unsigned)SD_LISTENER_MY, SDIST_SOFT, n,
                       sdCountSounds(ev, n));
-        UT_ASSERT_MSG(hit->data[1] == SOUND_TIER_NEAR,
-                      "manLayingMineNear %d squares away came back tier %u, "
-                      "expected SOUND_TIER_NEAR (%d)", SD_GAP_NEAR,
-                      hit->data[1], SOUND_TIER_NEAR);
+        UT_ASSERT_MSG(hit->data[2] <= SDIST_SOFT,
+                      "manLayingMineNear %d squares away came back dist %u, "
+                      "expected at most SDIST_SOFT (%d)", SD_GAP_NEAR,
+                      hit->data[2], SDIST_SOFT);
     }
 
     serverSimDestroy(sim);
@@ -445,18 +467,19 @@ int run_sound_payload_shape(void) {
                   (unsigned)(BYTE)(lwx >> 8), (unsigned)(BYTE)(lwy >> 8),
                   (unsigned)SD_LISTENER_MX, (unsigned)SD_LISTENER_MY);
 
-    /* ---- Tier boundary at SDIST_SOFT ------------------------------------- */
+    /* ---- Dist band edge at SDIST_SOFT ------------------------------------ */
     /* bigExplosionNear has a far variant, so neither side of the boundary is
      * dropped and both come back to be read. One build per case: the two share
-     * a sound id and the dedup would otherwise keep only the nearer. */
+     * a sound id and the dedup would otherwise keep only the nearer. The band
+     * edge sits on SDIST_SOFT, so the near side is sent 15 and the far side
+     * 20. */
     {
         static const struct {
             int         gap;
-            uint8_t     tier;
-            const char *name;
+            uint8_t     dist;
         } cases[] = {
-            { SDIST_SOFT,     SOUND_TIER_NEAR, "SOUND_TIER_NEAR" },
-            { SDIST_SOFT + 1, SOUND_TIER_FAR,  "SOUND_TIER_FAR"  },
+            { SDIST_SOFT,     15 },
+            { SDIST_SOFT + 1, 20 },
         };
 
         for (c = 0; c < (int)(sizeof(cases) / sizeof(cases[0])); c++) {
@@ -472,32 +495,34 @@ int run_sound_payload_shape(void) {
                           "a sound %d squares along the listener's row was not "
                           "delivered — %d event(s) came back, %d of them "
                           "sound(s)", cases[c].gap, n, sdCountSounds(ev, n));
-            UT_ASSERT_MSG(hit->data[1] == cases[c].tier,
+            UT_ASSERT_MSG(hit->data[2] == cases[c].dist,
                           "a sound %d squares from the listener (SDIST_SOFT is "
-                          "%d) came back tier %u, expected %s (%u)",
-                          cases[c].gap, SDIST_SOFT, hit->data[1],
-                          cases[c].name, cases[c].tier);
+                          "%d) came back dist %u, expected %u",
+                          cases[c].gap, SDIST_SOFT, hit->data[2],
+                          cases[c].dist);
         }
     }
 
-    /* ---- Direction, map-absolute with Y increasing southward -------------- */
-    /* Axis cases have one component zero and diagonals equal magnitudes, so
-     * each sits in the middle of its sector rather than on a boundary. */
+    /* ---- Pan and dist, east positive ------------------------------------- */
+    /* The pan follows the east-west offset only, so north and south are
+     * centred. The dist is the larger axis, so the diagonals are sent the same
+     * band as the axis cases: SD_GAP_NEAR (10) is its own band top. The
+     * listener's own square is centred and in the first band. */
     {
         static const struct {
             int         dx, dy;
-            uint8_t     dir;
-            const char *name;
+            int         pan;
+            uint8_t     dist;
         } cases[] = {
-            {            0, -SD_GAP_NEAR, SOUND_DIR_N,      "SOUND_DIR_N"      },
-            {  SD_GAP_NEAR, -SD_GAP_NEAR, SOUND_DIR_NE,     "SOUND_DIR_NE"     },
-            {  SD_GAP_NEAR,            0, SOUND_DIR_E,      "SOUND_DIR_E"      },
-            {  SD_GAP_NEAR,  SD_GAP_NEAR, SOUND_DIR_SE,     "SOUND_DIR_SE"     },
-            {            0,  SD_GAP_NEAR, SOUND_DIR_S,      "SOUND_DIR_S"      },
-            { -SD_GAP_NEAR,  SD_GAP_NEAR, SOUND_DIR_SW,     "SOUND_DIR_SW"     },
-            { -SD_GAP_NEAR,            0, SOUND_DIR_W,      "SOUND_DIR_W"      },
-            { -SD_GAP_NEAR, -SD_GAP_NEAR, SOUND_DIR_NW,     "SOUND_DIR_NW"     },
-            {            0,            0, SOUND_DIR_CENTRE, "SOUND_DIR_CENTRE" },
+            {            0, -SD_GAP_NEAR,            0, 10 },
+            {  SD_GAP_NEAR, -SD_GAP_NEAR,  SD_PAN_NEAR, 10 },
+            {  SD_GAP_NEAR,            0,  SD_PAN_NEAR, 10 },
+            {  SD_GAP_NEAR,  SD_GAP_NEAR,  SD_PAN_NEAR, 10 },
+            {            0,  SD_GAP_NEAR,            0, 10 },
+            { -SD_GAP_NEAR,  SD_GAP_NEAR, -SD_PAN_NEAR, 10 },
+            { -SD_GAP_NEAR,            0, -SD_PAN_NEAR, 10 },
+            { -SD_GAP_NEAR, -SD_GAP_NEAR, -SD_PAN_NEAR, 10 },
+            {            0,            0,            0,  5 },
         };
 
         for (c = 0; c < (int)(sizeof(cases) / sizeof(cases[0])); c++) {
@@ -516,11 +541,12 @@ int run_sound_payload_shape(void) {
                           "them sound(s)", (unsigned)soundMX, (unsigned)soundMY,
                           cases[c].dx, cases[c].dy, (unsigned)SD_LISTENER_MX,
                           (unsigned)SD_LISTENER_MY, n, sdCountSounds(ev, n));
-            UT_ASSERT_MSG(hit->data[2] == cases[c].dir,
-                          "a sound %d,%d from the listener came back direction "
-                          "%u, expected %s (%u) — map Y increases southward",
-                          cases[c].dx, cases[c].dy, hit->data[2],
-                          cases[c].name, cases[c].dir);
+            UT_ASSERT_MSG((int8_t)hit->data[1] == cases[c].pan &&
+                          hit->data[2] == cases[c].dist,
+                          "a sound %d,%d from the listener came back pan %d "
+                          "dist %u, expected pan %d dist %u — east is positive",
+                          cases[c].dx, cases[c].dy, (int)(int8_t)hit->data[1],
+                          hit->data[2], cases[c].pan, cases[c].dist);
         }
     }
 
@@ -585,14 +611,14 @@ int run_sound_payload_shape(void) {
                           "came back carrying its own map Y in data[2]",
                           (unsigned)soundMX, (unsigned)SD_LISTENER_MY,
                           cases[c].where);
-            UT_ASSERT_MSG(hit->data[1] <= SOUND_TIER_FAR,
+            UT_ASSERT_MSG(sdIsPan(hit->data[1]),
+                          "a sound %s the listener's rect came back with %d in "
+                          "data[1], which is not one of the nine pans",
+                          cases[c].where, (int)(int8_t)hit->data[1]);
+            UT_ASSERT_MSG(sdIsBandTop(hit->data[2]),
                           "a sound %s the listener's rect came back with %u in "
-                          "data[1]; the tier runs to SOUND_TIER_FAR (%d)",
-                          cases[c].where, hit->data[1], SOUND_TIER_FAR);
-            UT_ASSERT_MSG(hit->data[2] <= SOUND_DIR_NW,
-                          "a sound %s the listener's rect came back with %u in "
-                          "data[2]; the direction runs to SOUND_DIR_NW (%d)",
-                          cases[c].where, hit->data[2], SOUND_DIR_NW);
+                          "data[2], which is not one of the eight dist band tops",
+                          cases[c].where, hit->data[2]);
         }
     }
 
@@ -624,8 +650,8 @@ int run_sound_payload_shape(void) {
                       (unsigned)SD_LISTENER_MY, n, sdCountSounds(ev, n));
         UT_ASSERT_MSG(hit->data[1] == soundMX && hit->data[2] == SD_LISTENER_MY,
                       "a bot was sent %u,%u for a sound staged at %u,%u — a bot "
-                      "keeps the square, only a human is sent a tier and a "
-                      "direction", hit->data[1], hit->data[2],
+                      "keeps the square, only a human is sent a pan and a "
+                      "dist", hit->data[1], hit->data[2],
                       (unsigned)soundMX, (unsigned)SD_LISTENER_MY);
     }
 
@@ -665,19 +691,70 @@ int run_sound_payload_shape(void) {
         UT_ASSERT_MSG(mine != NULL &&
                       mine->data[1] == mineMX && mine->data[2] == SD_LISTENER_MY,
                       "a far manLayingMineNear was %s a flagged slot — it reads "
-                      "the square as a position and has no tier to be silent in",
+                      "the square as a position and has no far band to be silent in",
                       mine == NULL ? "dropped for" : "reshaped for");
 
         serverSimSetSoundSquares(sim, 1, false);
 
         n = sdBuild(sim, 1, ev);
         hit = sdFind(ev, n, EVENT_SOUND, (uint8_t)bigExplosionNear);
-        UT_ASSERT_MSG(hit != NULL && hit->data[1] <= SOUND_TIER_FAR &&
-                      hit->data[2] <= SOUND_DIR_NW,
+        UT_ASSERT_MSG(hit != NULL && sdIsPan(hit->data[1]) &&
+                      sdIsBandTop(hit->data[2]),
                       "clearing serverSimSetSoundSquares did not restore the "
-                      "tier and direction a human is sent");
+                      "pan and dist a human is sent");
     }
 
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* 4. soundPanAndDist over every offset out to 40 squares on both axes. Every
+ *    pan is one of the nine and every dist one of the eight band tops; the
+ *    near band (dist <= SDIST_SOFT) is exactly the square near area the client
+ *    used to be sent as a tier, so the near/far variant that plays does not
+ *    change; the in-range answer is the SDIST_NONE square; and east and west
+ *    are mirror images. */
+int run_sound_pan_dist_encoding(void) {
+    int dx, dy;
+
+    for (dy = -40; dy <= 40; dy++) {
+        for (dx = -40; dx <= 40; dx++) {
+            int8_t pan = 0, mirrorPan = 0;
+            uint8_t dist = 0, mirrorDist = 0;
+            int ax = (dx < 0) ? -dx : dx;
+            int ay = (dy < 0) ? -dy : dy;
+            bool wantNear = ax <= SDIST_SOFT && ay <= SDIST_SOFT;
+            bool wantInRange = ax < SDIST_NONE && ay < SDIST_NONE;
+            bool inRange;
+
+            inRange = soundPanAndDist(SD_LISTENER_MX, SD_LISTENER_MY,
+                                      SD_LISTENER_MX + dx, SD_LISTENER_MY + dy,
+                                      &pan, &dist);
+            soundPanAndDist(SD_LISTENER_MX, SD_LISTENER_MY,
+                            SD_LISTENER_MX - dx, SD_LISTENER_MY + dy,
+                            &mirrorPan, &mirrorDist);
+
+            UT_ASSERT_MSG(sdIsPan((uint8_t)pan),
+                          "offset %d,%d gave pan %d, not one of the nine",
+                          dx, dy, (int)pan);
+            UT_ASSERT_MSG(sdIsBandTop(dist),
+                          "offset %d,%d gave dist %u, not one of the eight "
+                          "band tops", dx, dy, (unsigned)dist);
+            UT_ASSERT_MSG((dist <= SDIST_SOFT) == wantNear,
+                          "offset %d,%d gave dist %u, which reads as %s, but "
+                          "the square near area at SDIST_SOFT %d says %s",
+                          dx, dy, (unsigned)dist,
+                          (dist <= SDIST_SOFT) ? "near" : "far", SDIST_SOFT,
+                          wantNear ? "near" : "far");
+            UT_ASSERT_MSG(inRange == wantInRange,
+                          "offset %d,%d returned in range %d, expected %d "
+                          "(SDIST_NONE %d)", dx, dy, (int)inRange,
+                          (int)wantInRange, SDIST_NONE);
+            UT_ASSERT_MSG(pan == -mirrorPan,
+                          "offset %d,%d gave pan %d but %d,%d gave %d — east "
+                          "and west must mirror", dx, dy, (int)pan, -dx, dy,
+                          (int)mirrorPan);
+        }
+    }
     return 0;
 }

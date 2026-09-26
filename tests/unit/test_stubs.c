@@ -247,10 +247,12 @@ void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE a
 }
 
 /* What frontEndPlaySound was handed, so a test can assert which variant of a
-   sound the client played. Bounded: once the array is full, further sounds are
-   neither stored nor counted. */
+   sound the client played and at what gains. Bounded: once the array is full,
+   further sounds are neither stored nor counted. */
 #define UT_SOUND_MAX 64
 static int s_ut_sounds[UT_SOUND_MAX];
+static int s_ut_sound_gain_l[UT_SOUND_MAX];
+static int s_ut_sound_gain_r[UT_SOUND_MAX];
 static int s_ut_sound_count;
 
 void ut_sound_reset(void) {
@@ -268,11 +270,27 @@ int ut_sound_get(int index) {
   return s_ut_sounds[index];
 }
 
+int ut_sound_get_gain_left(int index) {
+  if (index < 0 || index >= s_ut_sound_count) {
+    return -1;
+  }
+  return s_ut_sound_gain_l[index];
+}
+
+int ut_sound_get_gain_right(int index) {
+  if (index < 0 || index >= s_ut_sound_count) {
+    return -1;
+  }
+  return s_ut_sound_gain_r[index];
+}
+
 void frontEndPlaySoundPan(ClientSim *cs, sndEffects value,
                           uint16_t gainL, uint16_t gainR) {
-  (void)cs; (void)gainL; (void)gainR;
+  (void)cs;
   if (s_ut_sound_count < UT_SOUND_MAX) {
     s_ut_sounds[s_ut_sound_count] = (int)value;
+    s_ut_sound_gain_l[s_ut_sound_count] = (int)gainL;
+    s_ut_sound_gain_r[s_ut_sound_count] = (int)gainR;
     s_ut_sound_count++;
   }
 }

@@ -1,15 +1,15 @@
 /*
  * Sound delivery over the wire (test_sound_delivery_wire.c).
  *
- * Both delivery paths now cull sounds the same way. soundTierAndDirection
- * measures the sound against the recipient's own tank square and reports
- * whether it is inside SDIST_NONE; the UDP drain and the in-process snapshot
- * builder both call it, so a wire client hears exactly as far as a host does.
- * The viewport rects have no say in it any more.
+ * Both delivery paths now cull sounds the same way. soundPanAndDist measures
+ * the sound against the recipient's own tank square and reports whether it is
+ * inside SDIST_NONE; the UDP drain and the in-process snapshot builder both
+ * call it, so a wire client hears exactly as far as a host does. The viewport
+ * rects have no say in it any more.
  *
- * What the drain puts on the wire is [soundId, tier, bearing, sourcePlayer] —
- * a near/far band and a coarse compass bearing in place of the map square the
- * sound was raised at.
+ * What the drain puts on the wire is [soundId, pan, dist, sourcePlayer] — a
+ * stepped east-west pan and a banded larger-axis distance in place of the map
+ * square the sound was raised at.
  *
  * The arms:
  *   - a sound 10 squares out is delivered;
@@ -55,7 +55,7 @@
 #include "client_enums.h"          /* sndEffects */
 #include "view_policy.h"           /* viewCategoryPill / viewPolicyOff */
 #include "sounddist.h"             /* SDIST_NONE */
-#include "input_packet.h"          /* SOUND_TIER_* / SOUND_DIR_* */
+#include "input_packet.h"          /* SOUND_PAN_* / SOUND_DIST_* */
 #include "transport_udp.h"         /* the server drain + the download-complete test hook */
 #include "threads.h"
 #include "test_harness.h"
@@ -467,7 +467,7 @@ int run_sound_delivery_wire_cull(void) {
     }
 
     /* ---- What a delivered sound carries ---------------------------------- */
-    /* The wire payload is [soundId, tier, bearing, sourcePlayer]: the map
+    /* The wire payload is [soundId, pan, dist, sourcePlayer]: the map
      * square the sound was raised at does not reach the client. Run on both
      * sides of the rect, since the rect no longer decides anything about
      * sound. */
@@ -490,14 +490,14 @@ int run_sound_delivery_wire_cull(void) {
             n = serverSimBuildViewports(h.sim, slot, vps, MAX_VIEWPORTS);
             soundMX = (BYTE)((int)listenMX + dir * payloadArms[k].gap);
 
-            /* A staged square below the largest bearing could pass for a tier
-             * or a bearing byte, and the assertions below would prove nothing
-             * about what was sent. */
-            if (soundMX <= SOUND_DIR_NW) {
+            /* A staged square at or below SOUND_DIST_MAX could pass for a dist
+             * byte, and the dist assertion below would prove nothing about
+             * what was sent. The pan check below covers the other byte. */
+            if (soundMX <= SOUND_DIST_MAX) {
                 loopbackHarnessStop(&h);
-                UT_FAIL("the staged square %u is not above the largest bearing "
+                UT_FAIL("the staged square %u is not above the largest dist "
                         "value %d — the payload arm proves nothing",
-                        (unsigned)soundMX, SOUND_DIR_NW);
+                        (unsigned)soundMX, SOUND_DIST_MAX);
             }
             if (inAnyViewport(vps, n, soundMX, listenMY) !=
                 payloadArms[k].inRect) {
@@ -535,24 +535,30 @@ int run_sound_delivery_wire_cull(void) {
                 UT_FAIL("the sound at %u,%u went missing between the wait and "
                         "the read", (unsigned)soundMX, (unsigned)listenMY);
             }
-            if (got->data[1] > SOUND_TIER_FAR) {
-                loopbackHarnessStop(&h);
-                UT_FAIL("the sound staged at %u,%u arrived with data[1] = %u, "
-                        "which is not a tier (near %d, far %d)",
-                        (unsigned)soundMX, (unsigned)listenMY,
-                        (unsigned)got->data[1], SOUND_TIER_NEAR,
-                        SOUND_TIER_FAR);
+            {
+                int pan = (int8_t)got->data[1];
+                if (pan < -SOUND_PAN_MAX || pan > SOUND_PAN_MAX ||
+                    pan % SOUND_PAN_STEP != 0) {
+                    loopbackHarnessStop(&h);
+                    UT_FAIL("the sound staged at %u,%u arrived with data[1] = "
+                            "%d, which is not one of the nine pans (-%d to %d "
+                            "in steps of %d)", (unsigned)soundMX,
+                            (unsigned)listenMY, pan, SOUND_PAN_MAX,
+                            SOUND_PAN_MAX, SOUND_PAN_STEP);
+                }
             }
-            /* The staged square is above the largest bearing, checked before
-             * the stage, so the two range checks above already rule out the
-             * square reaching the client in either byte. */
-            if (got->data[2] > SOUND_DIR_NW) {
+            /* The staged square is above SOUND_DIST_MAX, checked before the
+             * stage, so a band top in data[2] cannot be the square. */
+            if (!(got->data[2] == SOUND_DIST_MAX ||
+                  (got->data[2] >= SOUND_DIST_BAND &&
+                   got->data[2] < SOUND_DIST_MAX &&
+                   got->data[2] % SOUND_DIST_BAND == 0))) {
                 loopbackHarnessStop(&h);
                 UT_FAIL("the sound staged at %u,%u arrived with data[2] = %u, "
-                        "which is not a bearing (centre %d through NW %d)",
+                        "which is not a dist band top (%d, %d .. %d)",
                         (unsigned)soundMX, (unsigned)listenMY,
-                        (unsigned)got->data[2], SOUND_DIR_CENTRE,
-                        SOUND_DIR_NW);
+                        (unsigned)got->data[2], SOUND_DIST_BAND,
+                        2 * SOUND_DIST_BAND, SOUND_DIST_MAX);
             }
         }
     }
@@ -609,7 +615,7 @@ int run_sound_tier_playback(void) {
     int dir, at, k, expected, unexpected;
 
     /* Each arm stages one sound at a gap and names the variant the client
-     * should end up playing. The client is handed a tier, not the square, so
+     * should end up playing. The client is handed a dist band, not the square, so
      * the variant it plays is the server's reading of the distance rather than
      * its own. */
     static const struct {

@@ -174,8 +174,9 @@ void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bo
   if (msgType < player0Message || msgType > player15Message) return;
   messageInboxPushLine(ms, (BYTE)(msgType - player0Message), bottom);
 }
-void clientSoundDist(GameSim *sim, sndEffects value, BYTE tier, BYTE dir) { (void)sim; (void)value; (void)tier; (void)dir; }
+void clientSoundDist(GameSim *sim, sndEffects value, int8_t pan, BYTE dist) { (void)sim; (void)value; (void)pan; (void)dist; }
 void clientSoundDistLocal(GameSim *sim, sndEffects value, BYTE mx, BYTE my) { (void)sim; (void)value; (void)mx; (void)my; }
+void clientSoundPing(GameSim *sim, BYTE listener, sndEffects value, BYTE mx) { (void)sim; (void)listener; (void)value; (void)mx; }
 
 /* Stubs for client-only subsystems that client_sim.c references */
 void *dialogAllianceCreate(void) { return NULL; }

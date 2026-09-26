@@ -598,8 +598,8 @@ uint64_t transportUdpServerGetClientConnId(BYTE playerNum) {
  * being cleared at the start of the next tick.
  * The three sound events are culled against SDIST_NONE measured from the
  * recipient's own tank and deduplicated per sound type — only the closest
- * instance of each type is sent, and it goes out carrying a near/far tier and
- * a compass bearing in place of the map square it was raised at. */
+ * instance of each type is sent, and it goes out carrying an east-west pan and
+ * a banded distance in place of the map square it was raised at. */
 void transportUdpServerDrainEvents(ServerSim *sim) {
     int i, c;
 
@@ -771,7 +771,7 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
          * what a recipient hears. */
 
         /* Pass 1: the closest sound of each type for this client, shaped as
-         * a tier and a bearing. soundPickOffer holds every rule about who
+         * a pan and a dist. soundPickOffer holds every rule about who
          * hears what, shared with the snapshot builder. keepSquare is false
          * here whatever the slot is flagged: a wire recipient is never trusted
          * with the square. */

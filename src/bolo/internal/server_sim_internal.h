@@ -1482,14 +1482,15 @@ typedef struct {
 int  serverSimBuildViewports(ServerSim *sim, BYTE clientIdx, ViewportRect *out, int maxOut);
 bool inAnyViewport(const ViewportRect *vps, int count, int mx, int my);
 
-/* The near/far tier and the coarse compass bearing a human recipient is sent in
- * place of a sound's map square. Returns false when the sound is at or past
- * SDIST_NONE on either axis — the range cull both delivery paths apply — and
- * true when it is in range. *tier and *dir are written whatever it returns, so
- * a caller that deliberately skips the range cull (a tank hit on the recipient
- * itself) still has values to send. */
-bool soundTierAndDirection(int listenerMX, int listenerMY, int mx, int my,
-                           uint8_t *tier, uint8_t *dir);
+/* The stepped east-west pan and the banded larger-axis distance a human
+ * recipient is sent in place of a sound's map square (see Sound event payloads
+ * in input_packet.h). Returns false when the sound is at or past SDIST_NONE on
+ * either axis — the range cull both delivery paths apply — and true when it
+ * is in range. *pan and *dist are written whatever it returns, so a caller
+ * that deliberately skips the range cull (a tank hit on the recipient itself)
+ * still has values to send. */
+bool soundPanAndDist(int listenerMX, int listenerMY, int mx, int my,
+                     int8_t *pan, uint8_t *dist);
 
 /* One recipient's pick of a tick's sound events: the closest instance of
  * each sound id, already shaped for that recipient. The snapshot builder and
@@ -1514,7 +1515,7 @@ void soundPickInit(SoundPick *pick);
  * must not hear, and sounds farther than the one already held for that id are
  * left alone. listenerMX/MY is the recipient's tank square. With keepSquare
  * the held copy carries the real square; without it the middle two bytes are
- * rewritten to the tier and bearing measured from the listener. */
+ * rewritten to the pan and dist measured from the listener. */
 void soundPickOffer(SoundPick *pick, const GameEvent *ev, BYTE recipient,
                     int listenerMX, int listenerMY, bool keepSquare);
 

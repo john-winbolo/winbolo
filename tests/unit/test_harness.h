@@ -1435,14 +1435,28 @@ int run_viewport_floor(void);
  * and nothing past it; serverSimBuildSnapshot's sound block culls by distance
  * at SDIST_NONE, skips a recipient's own shot, sends bubbles only to the player
  * losing the ammo, sends a tank hit to the player hit at any range, and drops
- * manLayingMineNear once its tier is far; and the delivered payload carries a
- * tier and a compass direction for a human recipient — never the sound's map
+ * manLayingMineNear once its dist is past SDIST_SOFT; the delivered payload
+ * carries a pan and a dist for a human recipient — never the sound's map
  * square, in or out of its viewport rects — while a bot keeps the square, and
  * so does a local slot flagged through serverSimSetSoundSquares until the flag
- * is cleared. */
+ * is cleared; and soundPanAndDist, over every offset out to 40 squares, gives
+ * only the nine pans and eight band tops, keeps the near/far split and the
+ * range cull, and mirrors east and west. */
 int run_sound_event_codec(void);
 int run_sound_delivery_builder(void);
 int run_sound_payload_shape(void);
+int run_sound_pan_dist_encoding(void);
+
+/* Positional sound gains (test_sound_gains.c): soundDistGains never goes above
+ * unity for any pan and dist, keeps the channel towards the sound at unity
+ * inside SDIST_SOFT, centres a sound with no east-west offset, and mirrors
+ * east and west; clientSoundDist picks the near or far variant on the
+ * SDIST_SOFT band edge and hands the frontend its gains. */
+int run_sound_gains_table(void);
+int run_sound_gains_centre_unity(void);
+int run_sound_gains_never_above_unity(void);
+int run_sound_gains_mirror(void);
+int run_sound_dist_variant_by_band(void);
 
 /* Policy-driven viewport rects (test_view_policy_rects.c):
  * serverSimBuildViewports honours the per-category ViewPolicy — allied pills,
@@ -2238,7 +2252,7 @@ int run_loopback_map_cull_resync(void);
 /* Sound culling over the loopback transport (test_sound_delivery_wire.c): for a
  * recipient whose only viewport rect is its own tank screen, both delivery
  * paths carry a sound 30 squares away and neither carries one at 45, a
- * delivered sound arrives with a tier and a bearing rather than its map
+ * delivered sound arrives with a pan and a dist rather than its map
  * square, a far manLayingMineNear is dropped, and a tank hit on the recipient
  * arrives from 60 squares out. */
 int run_sound_delivery_wire_cull(void);
@@ -3772,10 +3786,14 @@ struct GameSim *ut_rules_only_sim(void);
 /* The sounds frontEndPlaySound was handed, recorded by the stub in
  * test_stubs.c so a test can assert which variant the client played.
  * ut_sound_get returns the sndEffects value at that index, or -1 past the
- * end. The recorder is bounded; sounds past its cap are not kept. */
+ * end. The recorder is bounded; sounds past its cap are not kept.
+ * ut_sound_get_gain_left / _right return the Q8 gains that sound was played
+ * at (SOUND_GAIN_UNITY for plain frontEndPlaySound), or -1 past the end. */
 void ut_sound_reset(void);
 int  ut_sound_count(void);
 int  ut_sound_get(int index);
+int  ut_sound_get_gain_left(int index);
+int  ut_sound_get_gain_right(int index);
 
 /* The fixture brain in test_stubs.c. The unit binary has no Lua brain, so
  * luaBrainInstanceCreate is a stub there; arming it makes the stub report

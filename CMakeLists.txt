@@ -3985,6 +3985,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_sim_rules_codec.c
     tests/unit/test_fx_viewport_cull.c
     tests/unit/test_sound_delivery.c
+    # The Q8 left and right gains a sound's pan and dist turn into: never
+    # above unity, centred at north and south, east and west mirrored, and
+    # the near/far variant clientSoundDist picks on the SDIST_SOFT edge.
+    tests/unit/test_sound_gains.c
     tests/unit/test_view_policy_rects.c
     tests/unit/test_tree_hide.c
     tests/unit/test_lgm_visibility.c
@@ -5268,6 +5272,12 @@ set(_unit_test_names
     sound_event_codec
     sound_delivery_builder
     sound_payload_shape
+    sound_pan_dist_encoding
+    sound_gains_table
+    sound_gains_centre_unity
+    sound_gains_never_above_unity
+    sound_gains_mirror
+    sound_dist_variant_by_band
     view_rects_default_baseline
     view_rects_always_base_ally
     view_rects_off

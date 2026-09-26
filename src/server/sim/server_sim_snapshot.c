@@ -69,36 +69,36 @@ bool inAnyViewport(const ViewportRect *vps, int count, int mx, int my) {
 /* Written once here and exported through server_sim_internal.h so both sound
  * delivery paths measure the same way.
  *
- * The tier follows the general near/far rule the client applies today: near
- * inside the SDIST_SOFT square on both axes, far outside it. The bearing is
- * map-absolute, with map Y increasing southward, and is a pure axis when one
- * component is more than twice the other, a diagonal otherwise.
+ * pan is the east-west offset (east positive), clamped to +-SOUND_PAN_MAX and
+ * truncated towards zero to a multiple of SOUND_PAN_STEP, so one square either
+ * side is centred. dist is the larger of the two axis distances, sent as the
+ * top of its band. The larger axis, not the straight line, because the near
+ * test the client applies to it (dist <= SDIST_SOFT) has to agree with the
+ * square near area and the square SDIST_NONE cull below. A distance past
+ * SOUND_DIST_MAX is sent as SOUND_DIST_MAX; only a tank hit on the recipient
+ * gets that far.
  *
  * The listener square comes from wx >> 8, which every other server-side cull
  * uses. That sits half a square from the client's own tankGetScreenMX, so a
  * boundary case can land one square either side of what the client would work
  * out for itself. */
-bool soundTierAndDirection(int listenerMX, int listenerMY, int mx, int my,
-                           uint8_t *tier, uint8_t *dir) {
+BOLO_STATIC_ASSERT(SOUND_DIST_MAX == SDIST_NONE - 1,
+                   sound_dist_max_is_last_in_range_distance);
+BOLO_STATIC_ASSERT(SDIST_SOFT % SOUND_DIST_BAND == 0,
+                   sound_dist_band_edge_on_sdist_soft);
+
+bool soundPanAndDist(int listenerMX, int listenerMY, int mx, int my,
+                     int8_t *pan, uint8_t *dist) {
     int dx = mx - listenerMX;
     int dy = my - listenerMY;
     int ax = (dx < 0) ? -dx : dx;
     int ay = (dy < 0) ? -dy : dy;
+    int clamped = dx;
 
-    *tier = (ax <= SDIST_SOFT && ay <= SDIST_SOFT) ? SOUND_TIER_NEAR
-                                                   : SOUND_TIER_FAR;
-
-    if (dx == 0 && dy == 0) {
-        *dir = SOUND_DIR_CENTRE;
-    } else if (ay > 2 * ax) {
-        *dir = (dy < 0) ? SOUND_DIR_N : SOUND_DIR_S;
-    } else if (ax > 2 * ay) {
-        *dir = (dx > 0) ? SOUND_DIR_E : SOUND_DIR_W;
-    } else if (dx > 0) {
-        *dir = (dy < 0) ? SOUND_DIR_NE : SOUND_DIR_SE;
-    } else {
-        *dir = (dy < 0) ? SOUND_DIR_NW : SOUND_DIR_SW;
-    }
+    if (clamped > SOUND_PAN_MAX) clamped = SOUND_PAN_MAX;
+    if (clamped < -SOUND_PAN_MAX) clamped = -SOUND_PAN_MAX;
+    *pan = (int8_t)((clamped / SOUND_PAN_STEP) * SOUND_PAN_STEP);
+    *dist = soundDistBandTop((ax > ay) ? ax : ay);
 
     return ax < SDIST_NONE && ay < SDIST_NONE;
 }
@@ -121,8 +121,8 @@ void soundPickOffer(SoundPick *pick, const GameEvent *ev, BYTE recipient,
     uint8_t soundId = ev->data[0];
     int mx = ev->data[1];
     int my = ev->data[2];
-    uint8_t tier = SOUND_TIER_NEAR;
-    uint8_t dir = SOUND_DIR_CENTRE;
+    int8_t pan = 0;
+    uint8_t sdist = soundDistBandTop(0);
     bool everywhere = (mx == 0xFF && my == 0xFF);
     bool inRange;
     int ax, ay, dist;
@@ -150,9 +150,9 @@ void soundPickOffer(SoundPick *pick, const GameEvent *ev, BYTE recipient,
         inRange = true;
     } else {
         /* Worked out for every sound, including the tank hit below that skips
-         * the range cull, so the winner always has a tier and a bearing. */
-        inRange = soundTierAndDirection(listenerMX, listenerMY, mx, my,
-                                        &tier, &dir);
+         * the range cull, so the winner always has a pan and a dist. */
+        inRange = soundPanAndDist(listenerMX, listenerMY, mx, my,
+                                  &pan, &sdist);
     }
 
     /* A tank hit reaches the player hit at any range: they play hitTankSelf
@@ -163,10 +163,11 @@ void soundPickOffer(SoundPick *pick, const GameEvent *ev, BYTE recipient,
     }
 
     /* Neither bubbles nor manLayingMineNear has a far variant, so a far one
-     * is silence at a recipient that plays tiers. Dropped ahead of the dedup
-     * so it cannot take the slot a nearer one wants. A recipient that keeps
-     * the square reads the sound as a position, not a variant, and gets it. */
-    if (!keepSquare && tier == SOUND_TIER_FAR && ev->type == EVENT_SOUND &&
+     * is silence at a recipient that picks the variant from dist. Dropped
+     * ahead of the dedup so it cannot take the slot a nearer one wants. A
+     * recipient that keeps the square reads the sound as a position, not a
+     * variant, and gets it. */
+    if (!keepSquare && sdist > SDIST_SOFT && ev->type == EVENT_SOUND &&
         (soundId == bubbles || soundId == manLayingMineNear)) {
         return;
     }
@@ -185,11 +186,11 @@ void soundPickOffer(SoundPick *pick, const GameEvent *ev, BYTE recipient,
 
     /* Shaped into the pick's own copy: the sim's event array is shared by
      * every recipient in the tick, so rewriting it in place would hand the
-     * next client a bearing measured against this one's tank. */
+     * next client a pan measured against this one's tank. */
     pick->ev[soundId] = *ev;
     if (!keepSquare) {
-        pick->ev[soundId].data[1] = tier;
-        pick->ev[soundId].data[2] = dir;
+        pick->ev[soundId].data[1] = (uint8_t)pan;
+        pick->ev[soundId].data[2] = sdist;
     }
     pick->dist[soundId] = dist;
     pick->has[soundId] = true;
@@ -1452,7 +1453,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
             clientMY = (BYTE)(cwy >> 8);
         }
 
-        /* A human recipient is sent a tier and a bearing in place of each
+        /* A human recipient is sent a pan and a dist in place of each
          * sound's map square. A recipient that reads the square keeps it — a
          * bot's observation builder turns it into a relative position vector,
          * and so does the gym agent's — and so does the recording path, which

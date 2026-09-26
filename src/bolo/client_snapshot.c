@@ -558,10 +558,10 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
         }
         break;
       case EVENT_SOUND:
-        /* data: [soundId, tier, direction, sourcePlayer] — play the variant the
-         * tier names. The server measured the sound against this recipient's
-         * tank and dropped anything out of earshot, so there is no distance
-         * work left here. Sounds are server-authoritative (isPredicting
+        /* data: [soundId, pan, dist, sourcePlayer] — play the variant dist
+         * picks, panned by pan. The server measured the sound against this
+         * recipient's tank and dropped anything out of earshot, so there is
+         * no range test left here. Sounds are server-authoritative (isPredicting
          * suppresses prediction-side sounds). Bubbles and tank-sink are
          * restricted to the local player: they're tied to the player's own
          * boat/drown event and would otherwise play whenever any remote tank
@@ -571,23 +571,23 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
           sndEffects sid = (sndEffects)events[i].data[0];
           bool selfOnly = (sid == bubbles || sid == tankSinkNear || sid == tankSinkFar);
           if (!selfOnly || events[i].data[3] == csPtr->myPlayerNum) {
-            clientSoundDist(&csPtr->sim, sid, events[i].data[1], events[i].data[2]);
+            clientSoundDist(&csPtr->sim, sid, (int8_t)events[i].data[1], events[i].data[2]);
           }
         }
         break;
       case EVENT_SOUND_SHOOT:
-        /* data: [soundId, tier, direction, firingPlayer] — skip own shots (client plays shootSelf via prediction) */
+        /* data: [soundId, pan, dist, firingPlayer] — skip own shots (client plays shootSelf via prediction) */
         if (isHuman && events[i].data[3] != csPtr->myPlayerNum) {
-          clientSoundDist(&csPtr->sim, shootNear, events[i].data[1], events[i].data[2]);
+          clientSoundDist(&csPtr->sim, shootNear, (int8_t)events[i].data[1], events[i].data[2]);
         }
         break;
       case EVENT_SOUND_TANK_HIT:
-        /* data: [soundId, tier, direction, hitPlayer] */
+        /* data: [soundId, pan, dist, hitPlayer] */
         if (isHuman) {
           if (events[i].data[3] == csPtr->myPlayerNum) {
             frontEndPlaySound(csPtr, hitTankSelf);
           } else {
-            clientSoundDist(&csPtr->sim, hitTankNear, events[i].data[1], events[i].data[2]);
+            clientSoundDist(&csPtr->sim, hitTankNear, (int8_t)events[i].data[1], events[i].data[2]);
           }
         }
         break;
@@ -987,12 +987,15 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
           /* And its sound, out through the same seam the lobby sounds use:
              the frontend owns every audio decision from here on, including
              whether this kind has a sound of its own or plays the default
-             one. Not distance-attenuated — a ping is a message, not
-             something happening on the map — and the sender's own copy plays
-             too, as the confirmation that the ping went out. A replay does
-             not reach this code at all: the log viewer keeps its own ping
-             ring and plays nothing for it. */
-          frontEndPlaySound(csPtr, pingSoundEffect(kind));
+             one. It pans by the pinged square's east-west offset from this
+             player's own tank, but it is not distance-attenuated — a ping is
+             a message, not something happening on the map — and the sender's
+             own copy plays too, as the confirmation that the ping went out. A
+             replay does not reach this code at all: the log viewer keeps its
+             own ping ring and plays nothing for it. px is in world units,
+             256 to a map square. */
+          clientSoundPing(&csPtr->sim, csPtr->myPlayerNum, pingSoundEffect(kind),
+                          (BYTE)(px >> 8));
         }
         break;
       }
