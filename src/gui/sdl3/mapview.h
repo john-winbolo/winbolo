@@ -55,10 +55,11 @@ typedef struct {
        terrain does not. sprite_atlas.h says why they are worth carrying. */
     SDL_Texture       *spritesTex;
     const SpriteAtlas *sprites;
-    /* Read by mapViewRenderCentered only. NULL, which every positional
-       initialiser leaves it, keeps its camera on whole game pixels; the
-       menu background sets it (see MapViewPreciseCam). */
-    struct MapViewPreciseCam *precise;
+    /* Read by mapViewRenderCentered only. NULL keeps its camera on whole
+       game pixels; the menu background sets it (see MapViewPreciseCam). A
+       positional initialiser leaves it NULL, but a member-wise fill must
+       set it. */
+    const struct MapViewPreciseCam *precise;
 } MapViewCtx;
 
 /* A camera for mapViewRenderCentered placed to the whole SCREEN pixel

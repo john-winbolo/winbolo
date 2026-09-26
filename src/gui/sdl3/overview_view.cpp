@@ -965,6 +965,7 @@ static void overviewViewDrawEntities(OverviewView *v,
        has none, and the sprites draw from the sheet as before. */
     ctx.spritesTex = sprites;
     ctx.sprites    = atlas;
+    ctx.precise    = NULL;
 
     SDL_memset(&ov, 0, sizeof(ov));
     ov.simpleTanks = simple;

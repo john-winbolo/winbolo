@@ -1153,7 +1153,7 @@ static bool gameFrontDialogs(void) {
   sdl3DrawDisableLogicalPresentation();
 
   /* Retrieve the process-lifetime shared bg (created in gameFrontStart's
-   * one-shot init); mark it visible so bgGameTick runs while we're on
+   * one-shot init); mark it visible so the bg sim ticks while we're on
    * the welcome / settings dialogs. */
   BgGame *bg = bgGameGetShared();
   bool hasBg = (bg != NULL);
