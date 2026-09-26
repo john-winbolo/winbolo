@@ -1717,14 +1717,21 @@ void lv_screenProcessLog(unsigned short numEvents) {
     bool isV2 = (g_lv->loadedLogVersion >= LOG_VERSION_V2);
     unsigned short evLen = 0; /* framed payload length after code */
 
-    logReadBytes(&code, 1);
+    /* The count is off the recording and can name more events than the log
+       holds. Once a read comes back short there are none left, so stop
+       rather than count down the rest with nothing to read. */
+    if (logReadBytes(&code, 1) != 1) {
+      break;
+    }
 
     if (isV2) {
       /* v2 frames every event as [type][u16 BE payload-length][payload].
          Read the length unconditionally; known-type cases below consume
          exactly that many payload bytes, unknown types skip it. */
       BYTE lenBytes[2];
-      logReadBytes(lenBytes, 2);
+      if (logReadBytes(lenBytes, 2) != 2) {
+        break;
+      }
       evLen = (unsigned short)((lenBytes[0] << 8) | lenBytes[1]);
     }
 
@@ -2579,8 +2586,8 @@ void lv_screenRequestUpdate() {
 bool lv_screenLogTick() {
   bool returnValue = FALSE;
   BYTE code;
-  BYTE top;
-  BYTE bottom;
+  BYTE top = 0;    /* stay 0 if the log runs out partway through a header */
+  BYTE bottom = 0;
   unsigned short us;
   unsigned short len = 0;
 
@@ -2598,7 +2605,19 @@ bool lv_screenLogTick() {
     switch (g_lv->state) {
     case lv_lr_start:
       /* Read bytes */
-      logReadBytes(&code, 1);
+      if (logReadBytes(&code, 1) != 1) {
+        /* Out of bytes with no LOG_QUIT read. A live feed has caught up with
+           its head and waits for the next record. A file was cut short, so
+           it ends here as LOG_QUIT would end it, rather than going on to
+           switch on a byte it never read on every tick from now on. */
+        if (lv_screenSpecIsLiveMode() == FALSE) {
+          g_lv->isPlaying = FALSE;
+          lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_END_OF_LOG, NULL);
+          lv_finished();
+          returnValue = TRUE;
+        }
+        break;
+      }
       switch (code) {
       case LOG_QUIT:
         g_lv->isPlaying = FALSE;
