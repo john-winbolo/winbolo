@@ -517,7 +517,6 @@ void gameFrontSetServerPaused(bool paused) {
  * lives inside humanSim; these flags only track whether a UDP join
  * is active for higher-level lifecycle gating. */
 static bool udpTransportActive = FALSE;
-static BYTE udpPlayerNum = 0;
 
 /* Send callbacks for ClientSim — route through the client_net.h wrappers.
  * (The callback layer is retained for this transition; future cleanup
@@ -1736,7 +1735,6 @@ bool gameFrontSetDlgState(openingStates newState) {
          * running game or entry into the server lobby — see clientFrontAwaitJoin. */
         if (clientFrontAwaitJoin(humanSim, 1500)) {
           joined = TRUE;
-          udpPlayerNum = clientSimGetServerPlayerNum(humanSim);
           udpTransportActive = TRUE;
 
           /* Store server address in ClientSim for brain info */
@@ -5263,7 +5261,11 @@ ServerSim *gameFrontGetSinglePlayerServerSim(void) {
 }
 
 BYTE gameFrontGetPlayerNum(void) {
-  if (udpTransportActive) return udpPlayerNum;
+  /* Read the slot live from the transport, never a copy taken at join.
+   * clientFrontAwaitJoin returns once the lobby replay lands, which can be
+   * before JOIN_ACCEPT: if the first accept is lost the slot is still 0
+   * then, and the real one arrives with the server's resent accept. */
+  if (udpTransportActive) return clientSimGetServerPlayerNum(humanSim);
   return 0;
 }
 

@@ -1043,6 +1043,13 @@ void transportUdpClientTestResyncState(Transport *t, bool *resyncActive,
 #if WB_ENABLE_NETIMPAIR
 void transportUdpClientTestUploadTimeout(Transport *t);
 void transportUdpClientTestDropUploadReply(Transport *t, uint8_t packet_type);
+/* Drop the next `count` inbound packets of packet_type before the client
+ * processes them, as if the server's datagrams were lost on the wire. Other
+ * packet types pass. DropNextLeft reads how many drops are still pending, so
+ * a test can check the drop really happened. */
+void transportUdpClientTestDropNext(Transport *t, uint8_t packet_type,
+                                    int count);
+int  transportUdpClientTestDropNextLeft(Transport *t);
 /* Hand the client a clock of the caller's own instead of SDL_GetTicks. Two
  * things read it and they have to agree: the impairment layer's delivery
  * times, and the client's own round-trip measurement (the PING stamp and the
