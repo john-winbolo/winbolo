@@ -37,6 +37,7 @@
 #include "bolo_map.h"
 #include "interpolation.h"
 #include "tank_diagonal_snap.h"
+#include "util.h"
 #include "test_harness.h"
 
 /* Put tank 0 on a patch of one terrain, at rest, facing angle, offX/offY
@@ -260,6 +261,12 @@ int run_tank_diagonal_steps_both_axes(void) {
         UT_ASSERT(tankDiagonalDir16(BRADIANS_NWEST) == 14);
         UT_ASSERT(tankDiagonalDir16(8) == 0 && tankDiagonalDir16(9) == 1);
         UT_ASSERT(tankDiagonalDir16(248) == 15 && tankDiagonalDir16(249) == 0);
+        {
+            int a;
+            for (a = 0; a < 256; a++) {
+                UT_ASSERT(tankDiagonalDir16(a) == (int)utilGetDir((TURNTYPE)a));
+            }
+        }
     }
 
     /* ---- 4. Render-clock lerp on a NE run keeps x + y fixed ---- */
