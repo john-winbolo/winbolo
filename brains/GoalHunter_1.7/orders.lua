@@ -1273,10 +1273,15 @@ M.forget_order = forget_order
 -- urgent replan) instead of the bot standing on a goto_tile nobody holds.
 -- A fight goal is left alone: it is a real goal and normal play may carry
 -- on with it.  Every way a decoy slot is emptied comes through here.
+-- The hold goal is found by its _decoy mark as well as by the decoy square
+-- (Sep 26): after a DECOY GETAWAY step it points at a chain square, and the
+-- square test alone left it behind at every hold end.  The square test stays
+-- for the ping order's own goto_tile, which decoy_lock keeps in place.
 local function decoy_drop_goal(state, h)
   if not (h and h.decoy) then return end
   local g = state.goal
-  if g and g.kind == "goto_tile" and g.mx == h.mx and g.my == h.my then
+  if g and g.kind == "goto_tile"
+     and (g._decoy or (g.mx == h.mx and g.my == h.my)) then
     require("attack").clear_attack_goal(state, "decoy hold over")
   end
 end
@@ -1730,6 +1735,10 @@ function M.decoy_lock(state, world, info, now)
   local pmx, pmy = GA.park_tile(h)
   local g = state.goal
   if g and g.kind == "goto_tile" and g.mx == pmx and g.my == pmy then
+    -- On arrival at a chain square the park square is the square it drove
+    -- to, so this goal table is kept; its _getaway mark (set only while the
+    -- chain moves) is taken off here (Sep 26).
+    if g._getaway and not GA.driving(h) then g._getaway = nil end
     return true
   end
   if M.hold_parked(state, info) and M.decoy_allows(state, info, g) then

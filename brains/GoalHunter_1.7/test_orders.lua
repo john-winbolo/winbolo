@@ -4873,6 +4873,135 @@ print("decoy_getaway.lua -- the decoy getaway")
         and d.st.goal.my == 25, tostring(h.ga.phase))
   TMAP[26 * 256 + 22] = nil
 
+  ;(function() -- own function: the main chunk is at its 200-local limit
+  -- 8b. A HOLD THAT ENDS AFTER A STEP takes its hold goal with it (Sep 26).
+  -- After a step the hold goal points at the chain square, not the decoy
+  -- square; every hold end must still clear it (attack.clear_attack_goal:
+  -- kind "none").  stepped(): parked on square 1 (22,25) after one hit.
+  local function stepped()
+    local b = dbot(); arrive(b, 200); lock(b, 201)
+    b.inf.armour = 35; lock(b, 202)
+    b.inf.tanky = 25 * 256 + 128; lock(b, 204)
+    return b
+  end
+  local function cleared(b)
+    return b.st.orders.held == nil and b.st.goal and b.st.goal.kind == "none"
+  end
+  local b = stepped()
+  check("stepped rig: parked on square 1, the hold goal on (22,25)",
+        b.st.orders.held.ga.phase == "wait" and b.st.goal.kind == "goto_tile"
+        and b.st.goal.mx == 22 and b.st.goal.my == 25 and b.st.goal._decoy == true,
+        tostring(b.st.goal.kind) .. " " .. tostring(b.st.goal.my))
+  check("parked on the chain square: the kept goal has no _getaway mark",
+        b.st.goal._getaway == nil, tostring(b.st.goal._getaway))
+  check("parked with no _getaway mark: no diagonal drive from the goal",
+        ORD.getaway_diagonal(b.st.goal, 21, 24, false, b.w) == nil, "?")
+  ORD.update(b.st, b.w, b.inf, 200 + HOLD)
+  check("the clock ends it after a step: no hold goal left",
+        cleared(b), tostring(b.st.goal and b.st.goal.kind))
+  b = stepped()
+  ORD.on_chat(b.st, b.w, b.inf, 0, "cancel", 300, true, false)
+  check("cancel after a step: no hold goal left",
+        cleared(b), tostring(b.st.goal and b.st.goal.kind))
+  b = stepped()
+  b.w.pills[5].health = 0
+  check("pills down after a step: no hold goal left",
+        lock(b, 300) == false and cleared(b), tostring(b.st.goal and b.st.goal.kind))
+  b = stepped()
+  b.inf.events = { ping(1, 0, 23, 25) }
+  ORD.on_events(b.st, b.w, b.inf, 300)
+  b.inf.events = {}
+  check("a caution after a step: no hold goal left",
+        cleared(b), tostring(b.st.goal and b.st.goal.kind))
+  b = stepped()
+  ORD.on_death(b.st, b.inf)
+  check("death after a step: no hold goal left",
+        cleared(b), tostring(b.st.goal and b.st.goal.kind))
+  -- While it drives to square 2 (the goal carries _getaway).
+  b = stepped()
+  b.inf.armour = 30; lock(b, 206)
+  check("moving to square 2: the goal is marked _getaway",
+        b.st.orders.held.ga.phase == "move" and b.st.goal.my == 26
+        and b.st.goal._getaway == true, tostring(b.st.goal._getaway))
+  ORD.on_chat(b.st, b.w, b.inf, 0, "cancel", 300, true, false)
+  check("cancel while moving: no hold goal left",
+        cleared(b), tostring(b.st.goal and b.st.goal.kind))
+
+  -- 8c. THE MOVE TIMEOUT (Sep 26).  A move that never reaches its square
+  -- parks where the tank is after DECOY_GETAWAY_MOVE_TICKS, counted from
+  -- when the move began.
+  local CAP = C.DECOY_GETAWAY_MOVE_TICKS or 300
+  local m = dbot(); arrive(m, 200); lock(m, 201)
+  local hm = m.st.orders.held
+  m.inf.armour = 35; lock(m, 202)
+  check("timeout rig: moving to square 1 from tick 202",
+        hm.ga.phase == "move" and hm.ga.move_tick == 202 and m.st.goal.my == 25,
+        tostring(hm.ga.phase))
+  -- Pushed to (23,25), never on (22,25).
+  m.inf.tankx, m.inf.tanky = 23 * 256 + 128, 25 * 256 + 128
+  lock(m, 202 + CAP - 1)
+  check("one tick before the cap: still moving",
+        hm.ga.phase == "move" and m.st.goal.mx == 22 and m.st.goal.my == 25,
+        tostring(hm.ga.phase))
+  lock(m, 202 + CAP)
+  check("at the cap: parked on the tank's square (23,25), one step used",
+        hm.ga.phase == "wait" and hm.ga.park_mx == 23 and hm.ga.park_my == 25
+        and hm.ga.used == 1 and m.st.goal.kind == "goto_tile"
+        and m.st.goal.mx == 23 and m.st.goal.my == 25 and m.st.goal._getaway == nil
+        and ORD.hold_parked(m.st, m.inf) == true,
+        tostring(hm.ga.phase) .. " " .. tostring(hm.ga.park_mx) .. "," .. tostring(hm.ga.park_my))
+  check("at the cap: a fresh scan from (23,25) with the steps left, new baseline",
+        pstr(hm.ga.path) == "22,26 22,27" and hm.ga.idx == 1 and hm.ga.viz.sx == 23
+        and hm.ga.viz.sy == 25 and hm.ga.viz.steps == 4 and hm.ga.hits == 0
+        and hm.ga.arm == 35, pstr(hm.ga.path))
+  m.inf.armour = 30; lock(m, 202 + CAP + 5)
+  check("after the timeout a later hit counts: it moves on to (22,26)",
+        hm.ga.hits == 1 and hm.ga.phase == "move" and m.st.goal.mx == 22
+        and m.st.goal.my == 26 and hm.ga.move_tick == 202 + CAP + 5,
+        tostring(hm.ga.hits) .. " " .. tostring(hm.ga.phase))
+  -- A tank that never left the square it began on: no step used.
+  m = dbot(); arrive(m, 200); lock(m, 201)
+  hm = m.st.orders.held
+  m.inf.armour = 35; lock(m, 202)
+  lock(m, 202 + CAP)
+  check("never left its square: parked there at the cap, no step used",
+        hm.ga.phase == "wait" and hm.ga.used == 0 and hm.ga.park_mx == 22
+        and hm.ga.park_my == 24 and pstr(hm.ga.path) == "22,25 22,26 22,27",
+        tostring(hm.ga.phase) .. " " .. tostring(hm.ga.used))
+  m.inf.armour = 30; lock(m, 202 + CAP + 1)
+  check("never left its square: a later hit moves it again",
+        hm.ga.phase == "move" and hm.ga.hits == 1 and m.st.goal.my == 25,
+        tostring(hm.ga.phase))
+  -- No chain from where it stopped: done, parked there.
+  m = dbot(); arrive(m, 200); lock(m, 201)
+  hm = m.st.orders.held
+  m.inf.armour = 35; lock(m, 202)
+  m.inf.tankx, m.inf.tanky = 23 * 256 + 128, 25 * 256 + 128
+  S({})
+  lock(m, 202 + CAP)
+  S({ { 22, 25, 1.0 }, { 22, 26, 1.0 }, { 22, 27, 1.0 } })
+  check("at the cap with no chain from there: done, parked on (23,25)",
+        hm.ga.phase == "done" and hm.ga.park_mx == 23 and hm.ga.park_my == 25
+        and m.st.goal.mx == 23 and m.st.goal.my == 25, tostring(hm.ga.phase))
+  -- A normal move that arrives is not cut off, and each move has its own
+  -- start: arrive one tick before the cap, then a new move later.
+  m = dbot(); arrive(m, 200); lock(m, 201)
+  hm = m.st.orders.held
+  m.inf.armour = 35; lock(m, 202)
+  m.inf.tanky = 25 * 256 + 128; lock(m, 202 + CAP - 1)
+  check("arrives one tick before the cap: parked on square 1",
+        hm.ga.phase == "wait" and hm.ga.used == 1 and hm.ga.park_my == 25, tostring(hm.ga.phase))
+  lock(m, 202 + 2 * CAP)
+  check("arrived: no timeout later (still parked on square 1)",
+        hm.ga.phase == "wait" and hm.ga.used == 1 and hm.ga.park_my == 25
+        and m.st.goal.my == 25, tostring(hm.ga.phase))
+  m.inf.armour = 30; lock(m, 202 + 2 * CAP + 1)
+  lock(m, 202 + 2 * CAP + 2)
+  check("a second move counts from its own start, not the first move's",
+        hm.ga.phase == "move" and hm.ga.move_tick == 202 + 2 * CAP + 1
+        and m.st.goal.my == 26, tostring(hm.ga.phase))
+  end)()
+
   -- 9. NO CHAIN: today's hold, and a hit changes nothing.
   S({})
   d = dbot(); arrive(d, 200); d.inf.direction = 64; lock(d, 201)

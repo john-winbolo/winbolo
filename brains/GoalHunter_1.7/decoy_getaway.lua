@@ -77,7 +77,9 @@
 --          square is it) it parks: wait again, with a new baseline, facing
 --          the square after it.  If the square can no longer be driven on:
 --          a fresh scan from where the tank is with the steps that are left
---          (and on to its first square), or park where it is.
+--          (and on to its first square), or park where it is.  Not there
+--          after DECOY_GETAWAY_MOVE_TICKS (300): it parks on the square it
+--          is on and scans again from there (THE MOVE TIMEOUT, Sep 26).
 --          THE BLOCKER STEP (Andrew, Sep 24: move on when the blocker has
 --          "2 or less shots left"): parked on a chain square (never the
 --          decoy square: the first step still waits for a hit), every think
@@ -289,7 +291,8 @@ end
 
 -- The chain search: the outward DP described at the top.  Returns the best
 -- chain (a list of cells, nil = none), its score, the scan context (cells
--- for the overlay) and the number of steps it tried.
+-- for the overlay) and the number of edges it took (steps from a reached
+-- square onto a getaway square of the next ring).
 function M.search(world, P, sx, sy, steps, in_boat)
   local ctx = { world = world, P = P, in_boat = in_boat,
                 cells = {}, list = {}, pass = {}, traces = 0 }
@@ -776,6 +779,8 @@ function M.update(state, world, info, h, now)
                     and ga.blk.shots <= (C.DECOY_GETAWAY_BLOCKER_SHOTS or 2)) and true or false
     if ga.path and ga.path[ga.idx] and (by_hit or by_blk) then
       ga.phase = "move"
+      -- For THE MOVE TIMEOUT: when the move began and the square it began on.
+      ga.move_tick, ga.move_mx, ga.move_my = now, tx, ty
       local trig = by_hit and "hit" or "blk"
       ga.trigs = ga.trigs or {}
       ga.trigs[#ga.trigs + 1] = trig
@@ -821,6 +826,28 @@ function M.update(state, world, info, h, now)
       if not M.rescan(world, info, h, tx, ty, left, now, "next_blocked") then
         ga.phase = "done"
         park_on(ga, tx, ty, arm)
+        print2(string.format("DECOY_GETAWAY_PARK t=%d oid=%d tile=(%d,%d) steps=%d -- no chain left",
+               now or -1, h.oid or 0, tx, ty, ga.used))
+      end
+    elseif now - (ga.move_tick or now) >= (C.DECOY_GETAWAY_MOVE_TICKS or 300) then
+      -- THE MOVE TIMEOUT (Sep 26).  The next square is still drivable but
+      -- the tank has not got there (an enemy tank on it, a long pathfinder
+      -- detour).  Without a cap it drove about under fire for the rest of
+      -- the hold, with hits not counted and fights refused.  After
+      -- DECOY_GETAWAY_MOVE_TICKS it parks on the square it is on, as if it
+      -- had arrived there: a new baseline and a new hit ledger, and the
+      -- steps that are left come from a fresh scan from that square.  The
+      -- move counts as a step only when the tank left the square it began
+      -- on.  No chain from there: done, parked where it is.
+      print2(string.format("DECOY_GETAWAY_MOVE_TIMEOUT t=%d oid=%d to=(%d,%d) tank=(%d,%d) ticks=%d",
+             now or -1, h.oid or 0, t.mx, t.my, tx, ty, now - (ga.move_tick or now)))
+      if tx ~= ga.move_mx or ty ~= ga.move_my then ga.used = ga.used + 1 end
+      park_on(ga, tx, ty, arm)
+      local left = max_steps - ga.used
+      if M.rescan(world, info, h, tx, ty, left, now, "move_timeout") then
+        ga.phase = "wait"
+      else
+        ga.phase = "done"
         print2(string.format("DECOY_GETAWAY_PARK t=%d oid=%d tile=(%d,%d) steps=%d -- no chain left",
                now or -1, h.oid or 0, tx, ty, ga.used))
       end
