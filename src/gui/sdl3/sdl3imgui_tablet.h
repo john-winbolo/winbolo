@@ -109,6 +109,10 @@ typedef struct {
   float scrollJoyX, scrollJoyY, scrollJoyW, scrollJoyH;
   float scrollJoyOuterRadius;
   float scrollJoyInnerRadius;
+
+  /* Scenario panel — fixed square in the game view's top-right corner.
+     scnSlotSide is 0 when the view has no room for one. */
+  float scnSlotX, scnSlotY, scnSlotSide;
 } TabletLayoutConfig;
 
 void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,

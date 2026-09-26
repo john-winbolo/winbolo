@@ -33,13 +33,14 @@
  *
  * The two cases below pin both halves:
  *
- *   lobby_brain_docs_stay_out_of_the_control_snapshot — nine brains each
- *       shipping a full-size commands.txt. The snapshot must serialize (not
- *       overflow) and must carry no docs record — and the test says by how
+ *   lobby_brain_docs_stay_out_of_the_control_snapshot — every brain the
+ *       catalogue holds, each shipping a full-size commands.txt. The snapshot
+ *       must serialize (not overflow) and must carry no docs record — and the
+ *       test says by how
  *       much the docs would have overrun the cap, so the number is on the
  *       record rather than taken on trust.
  *
- *   lobby_brain_docs_reach_a_joining_subscriber — the same nine brains reach
+ *   lobby_brain_docs_reach_a_joining_subscriber — the same brains reach
  *       a registering subscriber, in full, reassembling to the bytes on disk.
  *
  * The brains are written into the test's own scratch directory and pointed at
@@ -67,12 +68,15 @@
 #include "threads.h"
 #include "test_harness.h"
 
-/* Nine brains shipping docs is what the maintainer measured on a real server,
- * and it is what tips the snapshot over its cap. */
-#define BD_BRAINS 9
+/* Every brain the catalogue holds, each shipping full-size docs: sixteen of
+ * them come to around 265 KB against a cap of under 200 KB. Nine was the
+ * count measured on a real server, and nine full-size docs are no longer
+ * enough on their own to clear a cap that counts the scenario markers and
+ * score rows as well. */
+#define BD_BRAINS BRAIN_LIST_MAX
 
 /* Each brain's announce line, and a commands.txt at the cap the wire carries.
- * Full size on purpose: that is what makes nine brains overrun
+ * Full size on purpose: that is what makes the brains overrun
  * LOG_CONTROL_SNAPSHOT_MAX, which is the failure the gate exists to stop, and
  * a brain shipping a real command reference is not a small file. The docs are
  * filled with a per-brain letter so a reassembled blob can be told from its

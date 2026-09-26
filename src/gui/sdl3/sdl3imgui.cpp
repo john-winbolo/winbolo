@@ -3901,6 +3901,46 @@ static const char *scnPanelPlayerName(void *ctx, uint8_t slot) {
     return name;
 }
 
+/* The list the scenario panel shows, or NULL when there is nothing to show:
+   no ClientSim, no list, or a list the scenario cleared. */
+static const ScnPanelList *scnPanelShownList(ClientSim *cs) {
+    const ScnPanelList *list =
+        (cs != nullptr) ? clientSimGetScnPanel(cs, 0) : nullptr;
+    if (list == nullptr || list->count == 0) return nullptr;
+    return list;
+}
+
+bool sdl3ImguiScnPanelShown(struct ClientSim *cs) {
+    return scnPanelShownList(cs) != nullptr;
+}
+
+void sdl3ImguiScnPanelDraw(struct ClientSim *cs, float originX, float originY,
+                           float side, float alpha, bool backing) {
+    const ScnPanelList *list = scnPanelShownList(cs);
+    if (list == nullptr || side <= 0.0f) return;
+
+    if (backing) {
+        ImGui::GetWindowDrawList()->AddRectFilled(
+            ImVec2(originX, originY), ImVec2(originX + side, originY + side),
+            IM_COL32(0, 0, 0,
+                     (int)lroundf(alpha * (float)SCN_PANEL_BACKING_ALPHA)));
+    }
+
+    ScnPanelDrawEnv env;
+    env.playerName = scnPanelPlayerName;
+    env.ctx        = nullptr;
+    /* The tick a ClientSim last heard from the server — the clock the
+       scenario counted its timer's tick on. */
+    env.tick       = clientSimGetLastServerTick(cs);
+    /* The scale the square is really being drawn at, which is the side it
+       is on screen over the 128 units a list is written in. The game's zoom
+       on its own would leave a resized window's drawing at the size it was. */
+    env.scale      = side / (float)SCN_PANEL_UNITS;
+    env.alpha      = alpha;
+    env.tiles      = (void *)sdl3DrawGetTilesTexture();
+    scnPanelDraw(list, originX, originY, &env);
+}
+
 /* The scenario the panel on screen is laid out for, which is the row its
    position, size and opacity are kept under. Empty until a panel with a
    scenario behind it is drawn, and empty again for one without: that panel
@@ -4047,8 +4087,7 @@ static void renderScenarioPanel(ClientSim *cs) {
     static bool s_scnPanelAlphaSeeded  = false;
     static int  s_scnPanelAlphaPct     = SCN_PANEL_ALPHA_DEFAULT;
 
-    const ScnPanelList *list =
-        (cs != nullptr) ? clientSimGetScnPanel(cs, 0) : nullptr;
+    const bool shown = sdl3ImguiScnPanelShown(cs);
 
     /* Tablet mode is the mobile frontends. They map the square into a slot
        of their own rather than into a window the player drags, so this one
@@ -4058,8 +4097,7 @@ static void renderScenarioPanel(ClientSim *cs) {
        It is the panel's own window and there is no panel: left open it would
        be a stray box with a slider in it, adjusting something that is not on
        screen and with no gear anywhere to shut it again. */
-    if (cs == nullptr || uiModeIsTablet() || list == nullptr ||
-        list->count == 0) {
+    if (cs == nullptr || uiModeIsTablet() || !shown) {
         s_scnPanelPlaced        = false;
         s_scnPanelResizing      = false;
         s_scnPanelSettingsOpen  = false;
@@ -4406,18 +4444,10 @@ static void renderScenarioPanel(ClientSim *cs) {
             scnPanelPersistLayout();
         }
 
-        ScnPanelDrawEnv env;
-        env.playerName = scnPanelPlayerName;
-        env.ctx        = nullptr;
-        /* The tick a ClientSim last heard from the server — the clock the
-           scenario counted its timer's tick on. */
-        env.tick       = clientSimGetLastServerTick(cs);
-        /* The scale the square is really being drawn at, which is the side
-           the player has dragged it to over the 128 units a list is written
-           in. The game's zoom on its own would leave the window resizing and
-           the drawing inside it staying the size it was. */
-        env.scale      = side / (float)SCN_PANEL_UNITS;
-        /* The opacity slider, on what the scenario drew. The same percent
+        /* Drawn at the side the player has dragged the square to, so the
+           drawing resizes with the window.
+
+           The opacity slider, on what the scenario drew. The same percent
            the backing is pushed through ImGuiCol_WindowBg at above, so the
            two fade together and the panel stays one object rather than
            writing that floats over a backing that has left without it.
@@ -4426,10 +4456,12 @@ static void renderScenarioPanel(ClientSim *cs) {
            after this at their own alpha and are deliberately not on this
            list: they are the frontend's chrome. A panel at nothing has to
            keep a gear to click and a bar to grab, or there is no way back
-           from it. */
-        env.alpha      = (float)s_scnPanelAlphaPct / 100.0f;
-        env.tiles      = (void *)sdl3DrawGetTilesTexture();
-        scnPanelDraw(list, pos.x, pos.y, &env);
+           from it.
+
+           No backing from the drawer: the window background pushed above is
+           this panel's backing. */
+        sdl3ImguiScnPanelDraw(cs, pos.x, pos.y, side,
+                              (float)s_scnPanelAlphaPct / 100.0f, false);
 
         /* The border, and the grips on top of it, drawn after the list so
            that a scenario filling its square does not bury them.

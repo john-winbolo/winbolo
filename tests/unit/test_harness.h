@@ -568,6 +568,9 @@ int run_spectator_ring(void);
  * a registered ring driven by serverSimTick (logWriteTick) populates and a
  * delay-0 seek returns a seed, with no logStart and no .wbv file. */
 int run_spectator_ring_nolog(void);
+/* And a log_ServerTick every FULL_SYNC_INTERVAL ticks in that ring's events,
+ * with no snapshot ever written to a .wbv. */
+int run_spectator_ring_nolog_tick_anchors(void);
 
 /* Spectator replay translator (test_spectator_replay.c): specReplayWriteHeader
  * lays out the v2 header field-for-field, specReplayTranslateEvents /
@@ -1163,11 +1166,15 @@ int run_lv_team_colours_events(void);
  * stored or walked; a log_EntityChange removal naming an index past the array
  * is refused for every kind; a server line to a slot past the roster reads as
  * an empty seat; a log_TankSetModifiers blob of the wrong length is consumed
- * by its length so the record behind it still decodes. */
+ * by its length so the record behind it still decodes; a map run of
+ * identical squares that would pass column 255 stops at it; a record whose
+ * frame length disagrees with its fields is left at the frame's end. */
 int run_lv_hostile_item_counts(void);
 int run_lv_hostile_entity_remove_index(void);
 int run_lv_hostile_server_text_slot(void);
 int run_lv_hostile_modifiers_length(void);
+int run_lv_hostile_map_run_edge(void);
+int run_lv_hostile_frame_length(void);
 
 /* .wbv reader gate (test_wbv_reader.c): loads the committed fixtures
  * through the production log-viewer reader (lv_screenLoadMapFromMemory)
@@ -3552,6 +3559,87 @@ int run_scenario_panel_timer_text(void);
  * long — the other piece of the presentation's arithmetic with no renderer
  * in it. */
 int run_scenario_announce_remaining(void);
+/* The tablet UI's scenario panel square (test_scenario_panel_slot.c): a
+ * quarter of the screen's shorter side in the game view's top-right, on a
+ * phone, a tablet, and views too small for the full side. */
+int run_scenario_panel_slot_rect(void);
+/* The names and the panel parser the log viewer compiles in
+ * (test_lv_sim_rules_names.c): a rule's name from its index and back, and
+ * a hand-written two-primitive list through scnPanelParse. */
+int run_lv_rule_names_and_panel_parse(void);
+/* The scripted game type in the log viewer (test_lv_scripted_game_type.c):
+ * a recorded round set to gameScripted decodes with header game type 4, and
+ * a hand-written settings payload with byte 7 = 4 decodes to the same. */
+int run_lv_scripted_game_type_header(void);
+int run_lv_scripted_game_type_settings(void);
+/* The scripts.json member a scripted round's recording carries
+ * (test_scripts_record.c): written for a scenario and a mod in load order,
+ * absent for a plain round and for a plain round after a scripted one, the
+ * sim's cap on the text, and the writer on a hand-built description. */
+int run_scripts_record_scripted_round(void);
+int run_scripts_record_plain_round(void);
+int run_scripts_record_scripted_then_plain(void);
+int run_scripts_record_detach_before_stop(void);
+int run_scripts_record_setter_cap(void);
+int run_scripts_record_json_write(void);
+/* The log viewer reading scripts.json into its LvScripts holder
+ * (test_lv_scripts_json.c, with the scripted round recorded by
+ * lv_scripts_fixture.c): a scripted round read in load order, a plain round
+ * and an old recording read as none, and a malformed, wrong-version,
+ * over-long or over-cap member held to what the holder takes. */
+int run_lv_scripts_json_scripted_round(void);
+int run_lv_scripts_json_plain_round(void);
+int run_lv_scripts_json_old_recording(void);
+int run_lv_scripts_json_malformed(void);
+int run_lv_scripts_json_wrong_version(void);
+int run_lv_scripts_json_hostile_values(void);
+int run_lv_scripts_json_over_cap(void);
+int run_lv_scripts_json_close_clears(void);
+/* The log viewer's rules at the playhead (test_lv_rule_changes.c, with the
+ * rule-change round recorded by lv_scripts_fixture.c): a mid-round change
+ * collected at load, LvRules right after seeking either way, a plain round
+ * on the classic values, hostile log_RuleSet records consumed and ignored in
+ * a file and on a live feed, and the pill picture scaled to the cap. */
+int run_lv_rule_changes_collected(void);
+int run_lv_rule_changes_seek(void);
+int run_lv_rule_changes_plain_round(void);
+int run_lv_rule_changes_hostile(void);
+int run_lv_rule_changes_live_feed(void);
+int run_lv_rule_changes_armour_levels(void);
+int run_lv_rule_changes_live_same_tick(void);
+/* The log viewer's scenario panels, scores, announcement and markers at the
+ * playhead (test_lv_presentation.c, with the presentation round recorded by
+ * lv_scripts_fixture.c): a hand-written log played through and seeked both
+ * ways, hostile records consumed and ignored, a recorded scripted round, a
+ * rebuild over thousands of records and a plain round with every store
+ * empty; the row the panel draws of the everyone, team and slot rows; and a
+ * slot's team from log_TeamSet, kept across seeks with no line posted by a
+ * rebuild; announcements posted to the newswire once by playback and never
+ * by a rebuild; and which markers the followed player sees. */
+int run_lv_presentation_seek(void);
+int run_lv_presentation_hostile(void);
+int run_lv_presentation_scripted_round(void);
+int run_lv_presentation_rebuild_many(void);
+int run_lv_presentation_plain_round(void);
+int run_lv_presentation_panel_choice(void);
+int run_lv_presentation_slot_team(void);
+int run_lv_presentation_announce_posts(void);
+int run_lv_presentation_marker_visible(void);
+int run_lv_presentation_live_seek(void);
+int run_lv_presentation_live_fast_forward(void);
+/* The server's game tick at the playhead (test_lv_server_tick.c): a recorded
+ * round's tick at end-of-log, hand-written anchors either side of a snapshot
+ * and across a new round's run, records of the wrong length, a recording from
+ * before the record, events and empty ticks alternating, and a live feed. */
+int run_lv_server_tick_recorded(void);
+int run_lv_server_tick_anchors(void);
+int run_lv_server_tick_hostile(void);
+int run_lv_server_tick_old_recording(void);
+int run_lv_server_tick_alternating(void);
+int run_lv_server_tick_live_feed(void);
+/* Where the log viewer draws a declared region (test_lv_region_rect.c): at the
+ * overview's edges, off it, and on the game view at 2x with a pan. */
+int run_lv_region_rect_placement(void);
 
 /* The four presentation control events (test_scenario_presentation_codec.c):
  * their body codecs against hand-written bytes, the refusals a short or
@@ -3565,13 +3653,19 @@ int run_scn_presentation_client_filters(void);
 /* The four presentation ops (test_scenario_presentation_arms.c): the panel
  * list published, recorded, replayed to a joiner and pared back to the
  * everyone-addressed lists in the spectator ring's snapshot, the coalescing
- * key, every refusal, and the score, announcement and marker arms. */
+ * key, every refusal, and the score, announcement and marker arms; the
+ * markers and scores replayed to a joiner, in the ring's snapshot, after the
+ * reset, and to a late joiner over the loopback transport. */
 int run_scn_arm_panel_publishes_and_records(void);
 int run_scn_arm_panel_refusals(void);
 int run_scn_arm_panel_one_update_per_tick(void);
 int run_scn_arm_panel_replayed_to_joiner(void);
 int run_scn_arm_panel_snapshot_bounded(void);
 int run_scn_arm_score_announce_marker(void);
+int run_scn_arm_markers_scores_replayed_to_joiner(void);
+int run_scn_arm_markers_scores_snapshot(void);
+int run_scn_arm_markers_scores_reset(void);
+int run_scn_markers_scores_loopback_late_join(void);
 
 /* The rules a scenario's manifest sets (test_scenario_rules_codec.c,
  * test_scenario_rules_published.c, test_scenario_rules_reaches_joiner.c):

@@ -710,6 +710,10 @@ void serverSimDestroy(ServerSim *sim) {
         sim->trackLen = 0;
     }
 
+    /* And the scripts.json text beside it. logDestroy above has already
+     * closed any recording that could still write it. */
+    serverSimSetScenarioRecordText(sim, NULL, 0);
+
     /* Free cached map data */
     if (sim->cachedMapData != NULL) {
         free(sim->cachedMapData);

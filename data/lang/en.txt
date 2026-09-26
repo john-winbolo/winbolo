@@ -2419,6 +2419,19 @@ STR_DLGLOBBY_DETAILS_TYPE_TRIGGER=Trigger
 STR_DLGLOBBY_DETAILS_COL_NEW_VALUE=New value
 STR_DLGLOBBY_SCENARIO_UNSAFE=This server runs scenario scripts with the full Lua library and no limits.
 
+# Log viewer game info panel — scripts and rules
+STR_LV_INFO_SCENARIO_MODS_1={string1} · 1 mod
+STR_LV_INFO_SCENARIO_MODS_N={string1} · {number} mods
+STR_LV_INFO_SCRIPTS=Scripts
+STR_LV_INFO_SCRIPT_SOURCE_MAP=map
+STR_LV_INFO_SCRIPT_SOURCE_SERVER=server
+STR_LV_INFO_RULE_CHANGE=tick {number}: {string1} → {string2}
+STR_LV_INFO_SCORES=Scores
+STR_LV_INFO_SCORE_SLOT=Slot {number}
+STR_LV_SCN_ANNOUNCE={string1}{string2}{string3}
+STR_LV_SCN_ANNOUNCE_TO=[{player}] {string1}{string2}{string3}
+STR_LV_REGIONS_TIP=declared regions
+
 # Rule descriptions
 STR_RULE_DESC_tank_reload_ticks=Ticks a tank waits between shots.
 STR_RULE_DESC_tank_full_shells=The most shells a tank can hold.

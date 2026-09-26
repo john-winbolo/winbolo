@@ -54,9 +54,11 @@
  * to 2*MAX_TANKS bot config+brain, up to two vote states, one balance, one
  * map-skip, one stats seed, one entity sync, up to
  * CTRL_SCENARIO_RULES_FRAGS_MAX scenario-rules fragments, up to
- * SCN_PANEL_IDS scenario panels and up to MAX_TANKS player-joins — (8 +
- * CTRL_SCENARIO_RULES_FRAGS_MAX + SCN_PANEL_IDS + 5*MAX_TANKS) events, each
- * charged a 4-byte [u16 type] [u16 bodyLen] header plus a body of
+ * SCN_PANEL_IDS scenario panels, up to SCN_MARKERS_MAX scenario markers, up
+ * to MAX_TANKS player score rows and MAX_TANKS-1 team score rows, and up to
+ * MAX_TANKS player-joins — (8 + CTRL_SCENARIO_RULES_FRAGS_MAX +
+ * SCN_PANEL_IDS + SCN_MARKERS_MAX + 2*MAX_TANKS-1 + 5*MAX_TANKS) events,
+ * each charged a 4-byte [u16 type] [u16 bodyLen] header plus a body of
  * MAX_CONTROL_PACKET.
  *
  * Those terms are not the whole replay, so this is a size taken from the
@@ -73,9 +75,11 @@
  * serverSimSyncSubscriber's fullReplay false, which takes each panel's
  * everyone-addressed list and leaves the ones held to a team or a slot,
  * because a spectator is on neither and serverSpectatorDeliverControl would
- * drop them. */
+ * drop them. A marker is one per id for the same reason: it is kept by id,
+ * and the ones held to a team or a slot are left out the same way. */
 #define LOG_CONTROL_SNAPSHOT_MAX                                                \
-  ((8 + CTRL_SCENARIO_RULES_FRAGS_MAX + SCN_PANEL_IDS + 5 * MAX_TANKS) *        \
+  ((8 + CTRL_SCENARIO_RULES_FRAGS_MAX + SCN_PANEL_IDS + SCN_MARKERS_MAX +       \
+    2 * MAX_TANKS - 1 + 5 * MAX_TANKS) *                                        \
    (MAX_CONTROL_PACKET + 4))
 
 /* Register a spectator ring fed by the log writer. While a ring is

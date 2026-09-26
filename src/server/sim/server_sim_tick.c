@@ -173,6 +173,31 @@ static void serverSimLogTick(ServerSim *sim) {
         sim->roundLogStartTick = sim->tick;
     }
 
+    /* The tick this entry is written at, so a viewer can turn playback time
+     * into the clock a scenario's timer counts in. Queued after the snapshot
+     * above and before logWriteTick, so it lands in this tick's own entry:
+     * logWriteSnapshot has already flushed what came before it. Written at
+     * the round's first entry, at every entry a snapshot was written for,
+     * which is where a viewer can start playing from, and every
+     * FULL_SYNC_INTERVAL ticks whether or not there was one. The last is for
+     * a live spectator of a server that is not recording to a file: no
+     * snapshot is written for it, since logWriteSnapshot returns before
+     * noting one with no .wbv open and the ring's keyframes do not note
+     * theirs, so without it the feed would carry the first anchor only. On a
+     * recording server that interval is also where the snapshot above is
+     * written. The three tests are one condition, so a tick where more than
+     * one holds still writes one record. */
+    if (sim->state == serverStateRunning &&
+        (sim->roundLogStartTick == sim->tick ||
+         logSnapshotWrittenThisTick() ||
+         (sim->tick % FULL_SYNC_INTERVAL) == 0)) {
+        logAddEvent(log_ServerTick,
+                    (BYTE)((sim->tick >> 24) & 0xFF),
+                    (BYTE)((sim->tick >> 16) & 0xFF),
+                    (BYTE)((sim->tick >> 8) & 0xFF),
+                    (BYTE)(sim->tick & 0xFF), 0, NULL);
+    }
+
     logWriteTick();
 }
 
