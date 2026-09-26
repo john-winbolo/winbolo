@@ -1082,6 +1082,7 @@ int run_lobby_default_sides_balance_keeps_hand_pick(void);
 int run_lobby_default_sides_shape_rule(void);
 int run_lobby_default_sides_map_shape(void);
 int run_lobby_default_sides_map_change(void);
+int run_lobby_default_sides_map_change_repeated(void);
 
 /* Team start sides end to end (test_starts_side_integration.c): lobby
  * reservations, the batch's side table and the spawn scatter put a north

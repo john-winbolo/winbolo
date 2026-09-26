@@ -38,9 +38,11 @@
  *       tall or square map, the sea around an island not counted;
  *  (13) the live map picks the pair at start-up and at the reset;
  *  (14) a map change re-picks the untouched default pair for the new map
- *       and keeps every pair the host chose.
+ *       and keeps every pair the host chose;
+ *  (15) the untouched default follows every map change, tall and wide in
+ *       turn, not only the first.
  *
- * Everard Island is wider than tall, so tests (1) to (11) and (14) make it
+ * Everard Island is wider than tall, so tests (1) to (11), (14) and (15) make it
  * tall first (make_map_tall: two grass squares out in the sea, the island
  * untouched) and run on a north/south lobby.
  *
@@ -106,10 +108,12 @@ static void put_land(ServerSim *sim, int x, int y) {
 
 /* Two grass squares out in the sea, one near the top edge and one near the
  * bottom, in a column the island already spans. The island is not touched
- * and gets no wider, but the land now spans 213 rows, more than its width,
- * so the lobby's default is north/south. */
-#define TALL_TOP_Y    22
-#define TALL_BOTTOM_Y 234
+ * and gets no wider, but the land now spans 205 rows, more than its width,
+ * so the lobby's default is north/south. The two rows are centred on 126,
+ * where mapRead recentres a map's land, so a tall map saved and loaded
+ * again keeps both squares inside the map. */
+#define TALL_TOP_Y    24
+#define TALL_BOTTOM_Y 228
 static void make_map_tall(ServerSim *sim) {
     int minX;
     int minY;
@@ -984,6 +988,116 @@ int run_lobby_default_sides_map_change(void) {
     UT_ASSERT_MSG(reload_wide(sim), "setup: the map reload must succeed");
     UT_ASSERT_MSG(sides_are(sim, START_SIDE_ANY, START_SIDE_ANY),
                   "custom starts must survive a map change");
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* Everard Island made tall (make_map_tall), saved the way a map upload
+ * sends it. *outLen is the compressed length; false when it failed. */
+static bool tall_map_bytes(BYTE *out, int cap, int *outLen) {
+    ServerSim *src = make_sim();
+    GameSim *gs;
+    int len;
+    if (src == NULL) return false;
+    gs = &src->sim;
+    len = mapSaveCompressedMap(&gs->mp, &gs->pb, &gs->bs, &gs->ss, out, cap);
+    serverSimDestroy(src);
+    if (len <= 0) return false;
+    *outLen = len;
+    return true;
+}
+
+/* Load compressed map bytes into a lobby through the map-change path. */
+static bool reload_bytes(ServerSim *sim, const BYTE *bytes, int len, const char *name) {
+    bool ok;
+    threadsWaitForMutex();
+    ok = serverSimReloadCompressedInMemory(sim, bytes, len, name) ? true : false;
+    threadsReleaseMutex();
+    return ok;
+}
+
+/* Every connected slot in 0..n-1 holds a live start its team's side allows. */
+static bool starts_follow_sides(ServerSim *sim, BYTE n) {
+    BYTE i;
+    for (i = 0; i < n; i++) {
+        BYTE idx1 = sim->lobbyPlayers[i].startIdx;
+        BYTE side = sim->teams[sim->lobbyPlayers[i].teamNumber].startSide;
+        if (idx1 < 1 || idx1 > startsGetNumStarts(&sim->sim.ss)) return false;
+        if (!startSideAccepts(mask_of(sim, idx1), side)) return false;
+    }
+    return true;
+}
+
+/* (15) The default follows every map change while it is untouched, not
+ *      only the first: tall, wide, tall, wide, and a second wide map that
+ *      leaves the pair as it is. Each re-pick keeps both sides filled-in,
+ *      so the next change can re-pick again. Once the host names a side,
+ *      later changes of either shape keep the host's pair. */
+int run_lobby_default_sides_map_change_repeated(void) {
+    static BYTE tallBytes[MAP_COMPRESSED_MAX_SIZE];
+    int tallLen = 0;
+    ServerSim *sim;
+    int step;
+
+    UT_ASSERT_MSG(tall_map_bytes(tallBytes, (int)sizeof(tallBytes), &tallLen),
+                  "setup: the tall map must save");
+
+    sim = make_wide_sim();
+    UT_ASSERT(sim != NULL);
+    boot_sim(sim, true, false);
+    add_human(sim, 0, 1);
+    add_human(sim, 1, 2);
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_E, START_SIDE_W), "setup: wide map east/west");
+
+    for (step = 0; step < 4; step++) {
+        bool tall = (step % 2) == 0;
+        if (tall) {
+            UT_ASSERT_MSG(reload_bytes(sim, tallBytes, tallLen, "Tall Everard"),
+                          "setup: change %d to the tall map must succeed", step + 1);
+            UT_ASSERT_MSG(sides_are(sim, START_SIDE_N, START_SIDE_S),
+                          "change %d to a tall map must give north/south (got %u/%u)",
+                          step + 1, sim->teams[1].startSide, sim->teams[2].startSide);
+        } else {
+            UT_ASSERT_MSG(reload_wide(sim),
+                          "setup: change %d to the wide map must succeed", step + 1);
+            UT_ASSERT_MSG(sides_are(sim, START_SIDE_E, START_SIDE_W),
+                          "change %d to a wide map must give east/west (got %u/%u)",
+                          step + 1, sim->teams[1].startSide, sim->teams[2].startSide);
+        }
+        UT_ASSERT_MSG(sim->teams[1].sideAutoFilled && sim->teams[2].sideAutoFilled,
+                      "change %d must leave both sides filled-in", step + 1);
+        UT_ASSERT_MSG(starts_follow_sides(sim, 2),
+                      "change %d: every start is on its team's side", step + 1);
+    }
+
+    /* A second wide map: the pair is already east/west and stays so. */
+    UT_ASSERT_MSG(reload_wide(sim), "setup: the second wide map must load");
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_E, START_SIDE_W),
+                  "a wide map after a wide map keeps east/west");
+    UT_ASSERT_MSG(sim->teams[1].sideAutoFilled && sim->teams[2].sideAutoFilled,
+                  "and keeps both sides filled-in");
+
+    /* And after all that it is still the default: one more tall map. */
+    UT_ASSERT_MSG(reload_bytes(sim, tallBytes, tallLen, "Tall Everard"),
+                  "setup: the tall map must load again");
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_N, START_SIDE_S),
+                  "the default still follows a tall map after five changes");
+
+    /* The host names team 1 east (team 2 follows to west). From here both
+     * shapes keep the host's pair. */
+    UT_ASSERT(apply_team_side(sim, 0, 1, START_SIDE_E) == CMD_OK);
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_E, START_SIDE_W), "setup: host's east/west");
+    UT_ASSERT_MSG(reload_bytes(sim, tallBytes, tallLen, "Tall Everard"),
+                  "setup: the tall map must load");
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_E, START_SIDE_W),
+                  "a tall map must keep the host's east/west");
+    UT_ASSERT_MSG(reload_wide(sim), "setup: the wide map must load");
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_E, START_SIDE_W),
+                  "a wide map must keep the host's east/west");
+    UT_ASSERT_MSG(reload_bytes(sim, tallBytes, tallLen, "Tall Everard"),
+                  "setup: the tall map must load");
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_E, START_SIDE_W),
+                  "a second tall map must keep the host's east/west");
     serverSimDestroy(sim);
     return 0;
 }
