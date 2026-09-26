@@ -816,6 +816,11 @@ struct ClientSim {
      * tab's pump loop notices this on the next frame and falls back
      * to the regular PACKET_LOBBY_MAP_UPLOAD_BEGIN / CHUNK flow. */
     bool     lobbyMapUseLocalNeedsFallback;
+    /* The directory this computer copies its Workshop items to, or "" for
+     * none. A map picked from under it is offered to the server as
+     * "Workshop/<name>" before it is uploaded. Set by the frontend through
+     * clientSimSetWorkshopMapDir. */
+    char     workshopMapDir[FILENAME_MAX];
 
     /* Winbolo.net preview result — driven by
      * PACKET_LOBBY_PREVIEW_WBN_DONE. status: 0=idle,

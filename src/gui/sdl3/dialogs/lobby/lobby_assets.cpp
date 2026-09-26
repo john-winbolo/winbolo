@@ -33,6 +33,7 @@ extern "C" {
 #include "control_event.h"       /* LobbyScenarioSource — what the source accessor returns */
 #include "../../../lang.h"
 #include "../../../gamefront.h"  /* gameFrontHostingScripts / gameFrontGetServerSim */
+#include "../../../../steam/steam_wrapper.h"  /* steam_workshop_available / open_item_page */
 }
 
 /* ── The one name tag ─────────────────────────────────────────────
@@ -133,6 +134,64 @@ void lobbyScenarioKindTag(bool mod, float s) {
                      s);
 }
 
+/* The chip that says a script was published to the Steam Workshop, drawn
+   after the kind chip. Nothing, and no width, for a script whose Workshop id
+   is 0, so a caller hands it the id and draws and measures it on every row.
+
+   In the style's own frame colours, as the Workshop settings draw their Map
+   chip: the kind chip's two fills say which of the two a script is, and a
+   third fill here would read as a third kind.
+
+   Centred the way the kind chip centres itself. The kind chip is the item it
+   follows, and that chip already sits centred on the name. */
+float lobbyScenarioWorkshopTagWidth(uint64_t workshopId, float s) {
+    if (workshopId == 0) return 0.0f;
+    return ImGui::GetStyle().ItemInnerSpacing.x +
+           lobbyNameTagWidth(langGetText(STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP),
+                             s);
+}
+
+void lobbyScenarioWorkshopTag(uint64_t workshopId, float s) {
+    float mid;
+    float h;
+
+    if (workshopId == 0) return;
+    mid = (ImGui::GetItemRectMin().y + ImGui::GetItemRectMax().y) * 0.5f;
+    h   = lobbyNameTagHeight(s);
+    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() +
+                         (mid - h * 0.5f - ImGui::GetCursorScreenPos().y));
+    lobbyDrawNameTag(langGetText(STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP),
+                     ImGui::GetColorU32(ImGuiCol_FrameBg),
+                     ImGui::GetColorU32(ImGuiCol_Text),
+                     ImGui::GetColorU32(ImGuiCol_Border), s);
+}
+
+/* The button that opens the script's Workshop page in Steam. Drawn only
+   where Steam's Workshop is running: steam_workshop_available answers false
+   on a build without Steam, so the same call serves every build and there is
+   nothing to leave out at compile time. Nothing, and no width, for an id of
+   0 either. The width counts the spacing in front of the button. */
+float lobbyScenarioWorkshopLinkWidth(uint64_t workshopId) {
+    if (workshopId == 0 || !steam_workshop_available()) return 0.0f;
+    return ImGui::GetStyle().ItemInnerSpacing.x +
+           ImGui::CalcTextSize(langGetText(STR_DLGSETTINGS_WORKSHOP_OPEN)).x +
+           ImGui::GetStyle().FramePadding.x * 2.0f;
+}
+
+void lobbyScenarioWorkshopLink(uint64_t workshopId) {
+    if (workshopId == 0 || !steam_workshop_available()) return;
+    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+    /* Under an id of its own, because the label is translated and a row
+       may carry another item whose label reads the same. */
+    ImGui::PushID("workshopOpen");
+    if (ImGui::SmallButton(langGetText(STR_DLGSETTINGS_WORKSHOP_OPEN))) {
+        steam_workshop_open_item_page(workshopId);
+    }
+    imguiHandOnHover();
+    ImGui::PopID();
+}
+
 const char *lobbyGameTypeStr(gameType gt) {
     switch (gt) {
         case gameOpen:             return langGetText(STR_DLGGAMEINFO_OPEN);
@@ -215,6 +274,13 @@ static bool lobbyScriptRowIsMod(ClientSim *cs, int i) {
         return clientSimGetLobbyScriptKeepsWinCondition(cs, i);
     }
     return clientSimGetLobbyScenarioKeepsWinCondition(cs);
+}
+
+/* A row's Workshop item, 0 for none. The single attached slot the fallback
+ * reads carries no Workshop id, so a client that has no list yet says 0. */
+static uint64_t lobbyScriptRowWorkshopId(ClientSim *cs, int i) {
+    if (i < 0 || clientSimGetLobbyScriptCount(cs) <= 0) return 0;
+    return clientSimGetLobbyScriptWorkshopId(cs, i);
 }
 
 /* A row's name, and its file name where it named itself nothing: a script
@@ -333,12 +399,17 @@ static void lobbyScenarioModLinks(ClientSim *cs, const char *idTag, float s,
 
     ImGui::PushID(idTag);
     for (i = 0; i < n; i++) {
-        char  shown[96];
-        float w;
+        char     shown[96];
+        float    w;
+        uint64_t workshopId = showKind
+                                  ? lobbyScriptRowWorkshopId(
+                                        cs, lobbyScenarioModRow(cs, i))
+                                  : 0;
 
         SDL_snprintf(shown, sizeof(shown), "%s%s",
                      lobbyScenarioModName(cs, i), (i + 1 < n) ? "," : "");
-        w = ImGui::CalcTextSize(shown).x + tagW;
+        w = ImGui::CalcTextSize(shown).x + tagW +
+            lobbyScenarioWorkshopTagWidth(workshopId, s);
         if (i > 0 &&
             ImGui::GetItemRectMax().x + st.ItemInnerSpacing.x + w <= right) {
             ImGui::SameLine(0.0f, st.ItemInnerSpacing.x);
@@ -352,6 +423,12 @@ static void lobbyScenarioModLinks(ClientSim *cs, const char *idTag, float s,
            itself on whatever it follows, and anything between the two would
            be what it lined up against instead. */
         if (showKind) lobbyScenarioKindTag(true, s);
+        /* The Workshop chip goes with the kind chip: the Server Settings
+           column, which wears neither, gets 0 above and draws nothing. The
+           word only, and no button to the item's page: this line is a
+           readout everyone sees, and the details dialog the name opens is
+           where that button is. */
+        lobbyScenarioWorkshopTag(workshopId, s);
         ImGui::PopID();
     }
     ImGui::PopID();
@@ -699,6 +776,10 @@ void lobbyRenderScenarioInfoLines(ClientSim *cs, float s) {
            whole of what a reader wants: a scenario may end the round and say
            who won, a mod may not. */
         lobbyScenarioKindTag(false, s);
+        /* The word only, as on the mods line below. */
+        lobbyScenarioWorkshopTag(
+            lobbyScriptRowWorkshopId(cs, lobbyScriptRowIndexOfKind(cs, false)),
+            s);
         /* The icon stays on the end of the link and opens the same dialog.
            The link says the name can be pressed and the icon says what
            pressing it gives, and a panel read at a glance can use both. */

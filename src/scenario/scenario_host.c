@@ -113,6 +113,10 @@
                                      * against the table its script declares */
 #include "scenario_package.h"      /* scnPackageFindInMap — the second way a
                                     * map can carry a script */
+#include "scenario_chunk.h"        /* scnIoSetWorkshopId — an id carried
+                                    * across a repack for publishing */
+#include "scenario_pack.h"         /* scnPackScript — a loose script packed
+                                    * for publishing */
 #include "scenario_sandbox.h"      /* the libraries a scenario state gets */
 #include "scenario_validate.h"     /* ScnParseReport, and the parse this file
                                     * shares with the validator */
@@ -1264,6 +1268,29 @@ static ScnManifestKind scnReadKind(lua_State *L, int tbl,
     return kind;
 }
 
+/* scenario.workshop_id or scenario.workshop_author: the twin of mjDecodeId in
+ * scenario_manifest_json.c, through the same scnManifestParseId. Absent is 0
+ * without a word. A string of digits that fits 64 bits is the value; anything
+ * else, a Lua number included, is reported under its key and read as 0,
+ * because a number has already been made a double and lost the low digits of
+ * a real id. */
+static uint64_t scnReadWorkshopId(lua_State *L, int tbl, const char *key,
+                                  ScnParseReport *rep) {
+    uint64_t v = 0;
+
+    scnRawField(L, tbl, key);
+    if (!lua_isnil(L, -1) &&
+        (lua_type(L, -1) != LUA_TSTRING ||
+         !scnManifestParseId(lua_tostring(L, -1), &v))) {
+        scnReport(rep, key,
+                  "scenario: %s is not a string of digits naming a Steam id; "
+                  "0 used", key);
+        v = 0;
+    }
+    lua_pop(L, 1);
+    return v;
+}
+
 static void scnReadLobby(lua_State *L, int tbl, ScnManifestLobby *lob) {
     int lt;
 
@@ -2155,6 +2182,8 @@ bool scnReadManifest(lua_State *L, int envRef, ScenarioManifest *m,
     m->api        = scnReadInt(L, tbl, "api", 1);
     m->bound      = scnReadBool(L, tbl, "bound", true);
     m->fillToCaps = scnReadBool(L, tbl, "fill_to_caps", false);
+    m->workshopId     = scnReadWorkshopId(L, tbl, "workshop_id", rep);
+    m->workshopAuthor = scnReadWorkshopId(L, tbl, "workshop_author", rep);
 
     scnReadLobby(L, tbl, &m->lobby);
     scnReadRules(L, tbl, m, rep);
@@ -2484,6 +2513,26 @@ void scnPushManifestGlobal(lua_State *L, int envRef,
     lua_setfield(L, t, "bound");
     lua_pushboolean(L, m->fillToCaps ? 1 : 0);
     lua_setfield(L, t, "fill_to_caps");
+    /* The Workshop item and author as the digit strings the file writes
+       them as, and left out for 0, which a reader sees the same as absent.
+       A packaged script that assigns nothing then reads the package's own
+       id back. */
+    if (m->workshopId != 0) {
+        char digits[24];
+
+        snprintf(digits, sizeof(digits), "%llu",
+                 (unsigned long long)m->workshopId);
+        lua_pushstring(L, digits);
+        lua_setfield(L, t, "workshop_id");
+    }
+    if (m->workshopAuthor != 0) {
+        char digits[24];
+
+        snprintf(digits, sizeof(digits), "%llu",
+                 (unsigned long long)m->workshopAuthor);
+        lua_pushstring(L, digits);
+        lua_setfield(L, t, "workshop_author");
+    }
 
     scnPushLobby(L, &m->lobby);
     lua_setfield(L, t, "lobby");
@@ -6374,18 +6423,19 @@ void scenarioHostRegisterMapScripted(ServerSim *sim) {
  *
  * One cache per directory rather than one for the process, because a listing
  * merges the mod directories: the one this host was given, the player's own
- * under SDL_GetPrefPath, the mods shipped beside the executable, and the
- * directory players' uploads land in. A slot each and one spare, so every
- * directory of a listing finds its own slot once they are filled and nothing
- * evicts. It is held under a lock because the read is not the tick thread's
- * alone — a client hosting in process reads it from the UI thread through
- * serverSimEnumerateScenarioDir. The lock and the rows live as long as the
- * process; there is nothing to free them at, and nothing that would grow
- * them past that many directories' worth. */
-/* How many directories a listing merges. The four scnModDirs builds:
-   the one this host was given, the player's own, the shipped one, and the
-   uploads directory. */
-#define SCN_MOD_DIRS_MAX 4
+ * under SDL_GetPrefPath, the Workshop items beside it, the mods shipped
+ * beside the executable, and the directory players' uploads land in. A slot
+ * each and one spare, so every directory of a listing finds its own slot
+ * once they are filled and nothing evicts. It is held under a lock because
+ * the read is not the tick thread's alone — a client hosting in process
+ * reads it from the UI thread through serverSimEnumerateScenarioDir. The
+ * lock and the rows live as long as the process; there is nothing to free
+ * them at, and nothing that would grow them past that many directories'
+ * worth. */
+/* How many directories a listing merges. The five scnModDirs builds:
+   the one this host was given, the player's own, the Workshop one, the
+   shipped one, and the uploads directory. */
+#define SCN_MOD_DIRS_MAX 5
 
 typedef struct {
     bool         valid;
@@ -6517,43 +6567,46 @@ static int scnDirListCached(const char *dir, ScnDirEntry *out,
 
 /* ── Where mods are read from ─────────────────────────────────────── */
 
-/* Four directories, in the order a name clash resolves between them:
-   the one this host was given, the player's own, the mods that ship with
-   the build, and the directory scripts players upload land in. The first
-   three are the same shape brainListParents gives brains, and for the same
-   reason — a player who drops a file in their own directory is offered it,
-   and one who does nothing is still offered what the build came with.
+/* Five directories, in the order a name clash resolves between them:
+   the one this host was given, the player's own, the one the player's
+   Workshop subscriptions are copied into, the mods that ship with the build,
+   and the directory scripts players upload land in. The host's, the
+   player's and the shipped ones are the same shape brainListParents gives
+   brains, and for the same reason — a player who drops a file in their own
+   directory is offered it, and one who does nothing is still offered what
+   the build came with.
 
    The order is the precedence. A file name in two directories resolves to
    the one further up this list and the others are left out, so replacing a
    shipped mod means putting a file of that name in a directory above it.
    That is the way round a player can act on; there is nothing they could do
-   about it if it went the other way. The uploads directory is last so an
-   upload can never stand in for a file the server offers of its own, and an
-   upload whose name a directory above holds is refused.
+   about it if it went the other way. The Workshop directory sits between
+   the player's own and the shipped one: a file the player wrote wins over a
+   subscribed item of the same name, and a subscribed item wins over a mod
+   the build came with. The uploads directory is last so an upload can never
+   stand in for a file the server offers of its own, and an upload whose
+   name a directory above holds is refused.
 
    A directory that is not there says nothing, which is the ordinary case
    for every one of them. */
 
 /* SDL_GetPrefPath allocates and creates the directory on every call, and a
    listing asks for it once per directory it merges, so the prefix it answers
-   is resolved once and kept. Under scnDirCacheLock, which the directory cache
+   is resolved once and kept, and the player's Mods and Workshop directories
+   are both named from it. Under scnDirCacheLock, which the directory cache
    above already takes and for the same reason: this is read on the tick
    thread for a server's own listing, and on the UI thread when a client
    hosting in process fills the chooser through serverSimEnumerateScenarioDir.
    Nothing is kept allocated, so there is nothing to free at shutdown. */
-static char scnModUserDir[SCN_SCRIPT_PATH_MAX];
-static bool scnModUserDirKnown;
+static char scnModPrefDir[SCN_SCRIPT_PATH_MAX];
+static bool scnModPrefDirKnown;
 
-/* The player's own. ~/Library/Application Support/WinBolo/WinBolo/Mods on
-   macOS, and whatever SDL_GetPrefPath answers elsewhere — the same writable
-   place brain_list.c reads Brains from, and named the same way.
-
-   False when SDL cannot name it, which is not an error: it means a machine
-   with no place of its own for mods, and the other directories are the
-   whole of the answer. */
-static bool scnModDirUser(char *out, size_t outLen) {
-    const char *env;
+/* <prefpath><leaf>, or what the environment variable env names when it is
+   set. False when SDL cannot name the preferences directory or the path is
+   too long to hold. */
+static bool scnModDirPref(const char *env, const char *leaf, char *out,
+                          size_t outLen) {
+    const char *over;
     char       *pref;
     bool        locked;
     bool        ok;
@@ -6565,36 +6618,60 @@ static bool scnModDirUser(char *out, size_t outLen) {
        directory would leave files in the home directory of whoever ran it.
        Read on every call and never kept, because the cases set and clear it
        between themselves. */
-    env = getenv("WB_MOD_DIR_USER");
-    if (env != NULL && env[0] != '\0') {
-        return (size_t)snprintf(out, outLen, "%s", env) < outLen;
+    over = getenv(env);
+    if (over != NULL && over[0] != '\0') {
+        return (size_t)snprintf(out, outLen, "%s", over) < outLen;
     }
 
     /* No lock until the lister is registered, the way scnDirListCached reads
        its own head: nothing else is running yet to race with. */
     locked = scnDirCacheLock.m != NULL;
     if (locked) scnLockEnter(&scnDirCacheLock);
-    if (!scnModUserDirKnown) {
+    if (!scnModPrefDirKnown) {
         /* SDL_GetPrefPath returns a trailing separator and a string the caller
            frees. A path SDL cannot name, or one too long to hold, is not
            recorded, so a later call asks again rather than answering "" for
            the life of the process. */
         pref = SDL_GetPrefPath("WinBolo", "WinBolo");
         if (pref != NULL) {
-            if ((size_t)snprintf(scnModUserDir, sizeof(scnModUserDir), "%sMods",
-                                 pref) < sizeof(scnModUserDir)) {
-                scnModUserDirKnown = true;
+            if ((size_t)snprintf(scnModPrefDir, sizeof(scnModPrefDir), "%s",
+                                 pref) < sizeof(scnModPrefDir)) {
+                scnModPrefDirKnown = true;
             } else {
-                scnModUserDir[0] = '\0';
+                scnModPrefDir[0] = '\0';
             }
             SDL_free(pref);
         }
     }
-    ok = scnModUserDirKnown &&
-         (size_t)snprintf(out, outLen, "%s", scnModUserDir) < outLen;
+    ok = scnModPrefDirKnown &&
+         (size_t)snprintf(out, outLen, "%s%s", scnModPrefDir, leaf) < outLen;
     if (locked) scnLockLeave(&scnDirCacheLock);
     if (!ok) out[0] = '\0';
     return ok;
+}
+
+/* The player's own. ~/Library/Application Support/WinBolo/WinBolo/Mods on
+   macOS, and whatever SDL_GetPrefPath answers elsewhere — the same writable
+   place brain_list.c reads Brains from, and named the same way.
+
+   False when SDL cannot name it, which is not an error: it means a machine
+   with no place of its own for mods, and the other directories are the
+   whole of the answer. */
+static bool scnModDirUser(char *out, size_t outLen) {
+    return scnModDirPref("WB_MOD_DIR_USER", "Mods", out, outLen);
+}
+
+/* Where the player's Workshop subscriptions are copied to: Workshop beside
+   Mods under SDL_GetPrefPath. Only read here; nothing in this file writes
+   to it.
+
+   False when SDL cannot name it, for the reason scnModDirUser gives. */
+static bool scnModDirWorkshop(char *out, size_t outLen) {
+    return scnModDirPref("WB_MOD_DIR_WORKSHOP", "Workshop", out, outLen);
+}
+
+bool scenarioHostWorkshopDir(char *out, size_t outLen) {
+    return scnModDirWorkshop(out, outLen);
 }
 
 /* The mods that ship with the build, which live in data/mods beside the
@@ -6649,17 +6726,34 @@ static void scnModDirAdd(char dirs[][SCN_SCRIPT_PATH_MAX], int *count,
    was given: the -moddir argument on a dedicated server, the "Mod Dir"
    preference on a desktop host. `uploads` is where the sim puts scripts
    players upload (serverSimGetScriptUploadDir), and NULL or "" where there
-   is no sim or no uploads. */
-static int scnModDirs(char dirs[][SCN_SCRIPT_PATH_MAX], const char *configured,
-                      const char *uploads) {
+   is no sim or no uploads.
+
+   *workshopAt, when not NULL, is set to the Workshop directory's index, or
+   -1 when it has no entry of its own: SDL could not name it, or a directory
+   above is the same one and its files are that directory's. */
+static int scnModDirsAt(char dirs[][SCN_SCRIPT_PATH_MAX],
+                        const char *configured, const char *uploads,
+                        int *workshopAt) {
     char one[SCN_SCRIPT_PATH_MAX];
     int  count = 0;
 
+    if (workshopAt != NULL) *workshopAt = -1;
     scnModDirAdd(dirs, &count, configured);
     if (scnModDirUser(one, sizeof(one)))    scnModDirAdd(dirs, &count, one);
+    if (scnModDirWorkshop(one, sizeof(one))) {
+        int before = count;
+
+        scnModDirAdd(dirs, &count, one);
+        if (workshopAt != NULL && count > before) *workshopAt = before;
+    }
     if (scnModDirShipped(one, sizeof(one))) scnModDirAdd(dirs, &count, one);
     scnModDirAdd(dirs, &count, uploads);
     return count;
+}
+
+static int scnModDirs(char dirs[][SCN_SCRIPT_PATH_MAX], const char *configured,
+                      const char *uploads) {
+    return scnModDirsAt(dirs, configured, uploads, NULL);
 }
 
 /* The uploads directory of the sim a lister or reader was registered with,
@@ -6686,25 +6780,27 @@ static int scnDirMergedCmp(const void *a, const void *b) {
    about nothing else.
 
    `dir` is what this host was given and the head of the list scnModDirs
-   builds; the player's own directory, the shipped one and the uploads
-   directory come behind it. Each is read in turn and a file name already
-   taken by a directory above is left out, so the rows are the union of the
-   directories with the higher precedence copy of a clashing name.
+   builds; the player's own directory, the Workshop one, the shipped one and
+   the uploads directory come behind it. Each is read in turn and a file name
+   already taken by a directory above is left out, so the rows are the union
+   of the directories with the higher precedence copy of a clashing name.
 
    A directory that cannot be read answers -1, which is read here as no rows
    rather than as a failure: a host with no mod directory of its own is the
    ordinary case, and the rest of the list still comes through.
 
    Every row a directory read makes says SCN_DIR_SOURCE_SERVER. The rows read
-   from the uploads directory are marked SCN_DIR_SOURCE_UPLOAD here, after the
-   read, so the cache holds what the directory says and nothing about where
-   it sits in the list. */
+   from the Workshop directory are marked SCN_DIR_SOURCE_WORKSHOP and those
+   from the uploads directory SCN_DIR_SOURCE_UPLOAD here, after the read, so
+   the cache holds what the directory says and nothing about where it sits
+   in the list. */
 static int scnDirListCb(void *ctx, const char *dir, ScnDirEntry *out,
                         int max) {
     char        dirs[SCN_MOD_DIRS_MAX][SCN_SCRIPT_PATH_MAX];
     const char *uploads = scnModDirUploads(ctx);
     int         count;
     int         above;
+    int         workshop;
     int         n = 0;
     int         d;
 
@@ -6714,15 +6810,21 @@ static int scnDirListCb(void *ctx, const char *dir, ScnDirEntry *out,
     /* The list without the uploads directory, then with it: scnModDirs adds
        it last, and leaves it out when a directory above is the same one. In
        that case it has no entry of its own and its files are that
-       directory's, so nothing is marked. */
+       directory's, so nothing is marked. The Workshop directory is the same:
+       scnModDirsAt names its entry only when it has one of its own. */
     above = scnModDirs(dirs, dir, NULL);
-    count = scnModDirs(dirs, dir, uploads);
+    count = scnModDirsAt(dirs, dir, uploads, &workshop);
     for (d = 0; d < count && n < max; d++) {
         int extra = scnDirListCached(dirs[d], out + n, NULL, max - n);
         int i;
 
         if (extra <= 0) {
             continue;
+        }
+        if (d == workshop) {
+            for (i = 0; i < extra; i++) {
+                out[n + i].source = SCN_DIR_SOURCE_WORKSHOP;
+            }
         }
         if (d >= above && uploads != NULL && strcmp(dirs[d], uploads) == 0) {
             for (i = 0; i < extra; i++) {
@@ -7286,14 +7388,24 @@ void scenarioHostRegisterScenarioLister(ServerSim *sim) {
 /* ── The scripts on this computer ─────────────────────────────────── */
 
 /* Where this computer's own scripts are read from, in the order a name
-   clash resolves between them: the player's own Mods directory. The
-   Workshop directory goes after it here once Workshop items are synced to
-   one. */
-static int scnLocalDirs(char dirs[][SCN_SCRIPT_PATH_MAX]) {
+   clash resolves between them: the player's own Mods directory, then the
+   Workshop directory the player's subscriptions are copied to, so a file
+   the player wrote wins over a subscribed item of the same name.
+
+   *workshopAt, when not NULL, is set to the Workshop directory's index, or
+   -1 when it has no entry of its own, as scnModDirsAt sets it. */
+static int scnLocalDirs(char dirs[][SCN_SCRIPT_PATH_MAX], int *workshopAt) {
     char one[SCN_SCRIPT_PATH_MAX];
     int  count = 0;
 
+    if (workshopAt != NULL) *workshopAt = -1;
     if (scnModDirUser(one, sizeof(one))) scnModDirAdd(dirs, &count, one);
+    if (scnModDirWorkshop(one, sizeof(one))) {
+        int before = count;
+
+        scnModDirAdd(dirs, &count, one);
+        if (workshopAt != NULL && count > before) *workshopAt = before;
+    }
     return count;
 }
 
@@ -7308,6 +7420,7 @@ int scenarioHostListLocalScripts(ServerScenarioEntry *out, int max) {
     char         dirs[SCN_MOD_DIRS_MAX][SCN_SCRIPT_PATH_MAX];
     ScnDirEntry *rows;
     int          count;
+    int          workshop;
     int          n = 0;
     int          d;
 
@@ -7326,7 +7439,7 @@ int scenarioHostListLocalScripts(ServerScenarioEntry *out, int max) {
     rows = (ScnDirEntry *)calloc((size_t)max, sizeof(*rows));
     if (rows == NULL) return 0;
 
-    count = scnLocalDirs(dirs);
+    count = scnLocalDirs(dirs, &workshop);
     for (d = 0; d < count && n < max; d++) {
         int got = scnDirListCached(dirs[d], rows, NULL, max);
         int i;
@@ -7353,8 +7466,11 @@ int scenarioHostListLocalScripts(ServerScenarioEntry *out, int max) {
             e->bots              = rows[i].bots;
             e->bound             = rows[i].bound;
             e->keepsWinCondition = rows[i].keepsWinCondition;
-            e->source            = SERVER_SCENARIO_SOURCE_SERVER;
-            e->workshopId        = 0;
+            e->source            = (d == workshop)
+                                       ? SERVER_SCENARIO_SOURCE_WORKSHOP
+                                       : SERVER_SCENARIO_SOURCE_SERVER;
+            e->workshopId        = rows[i].workshopId;
+            e->workshopAuthor    = rows[i].workshopAuthor;
             n++;
         }
     }
@@ -7380,7 +7496,7 @@ bool scenarioHostLocalScriptPath(const char *file, char *out, size_t outLen) {
         return false;
     }
 
-    count = scnLocalDirs(dirs);
+    count = scnLocalDirs(dirs, NULL);
     for (d = 0; d < count; d++) {
         char         path[SCN_SCRIPT_PATH_MAX];
         SDL_PathInfo info;
@@ -7484,18 +7600,21 @@ ScenarioLocalSaveResult scenarioHostSaveLocalScript(const char *file,
     bool  ok;
     FILE *f;
     int   count;
+    int   workshop;
     int   d;
 
     if (!scnLocalSaveNameOk(file)) return SCENARIO_LOCAL_SAVE_BAD_NAME;
 
     /* A file of that name in any of this computer's directories is the
        player's own, and a copy never replaces it. */
-    count = scnLocalDirs(dirs);
+    count = scnLocalDirs(dirs, &workshop);
     for (d = 0; d < count; d++) {
         if (scnLocalDirHolds(dirs[d], file)) return SCENARIO_LOCAL_SAVE_EXISTS;
     }
 
-    if (count == 0 || (bytes == NULL && len > 0)) {
+    /* The copy goes in dirs[0], the player's Mods directory. With no Mods
+       directory the head is the Workshop one, which only its sync writes. */
+    if (count == 0 || workshop == 0 || (bytes == NULL && len > 0)) {
         return SCENARIO_LOCAL_SAVE_WRITE;
     }
     if (!SDL_CreateDirectory(dirs[0])) return SCENARIO_LOCAL_SAVE_WRITE;
@@ -7764,6 +7883,185 @@ static bool scnPackagedScript(const char *mapPath, ScnScriptSource *out,
     scnPackageClose(p);
     free(file);
     return ok;
+}
+
+/* ── A file's package, read for publishing ────────────────────────── */
+
+/* The manifest of a container already in memory, whichever file it came
+ * from: the chunk on the end of a map, or a .scenario file, which is nothing
+ * else. Only manifest.json is read; the script and any brains are not. */
+static bool scnManifestOfContainer(const uint8_t *bytes, size_t len,
+                                   ScenarioManifest *out) {
+    ScnPackage     *p       = NULL;
+    uint8_t        *json    = NULL;
+    size_t          jsonLen = 0;
+    ScnManifestDoc *doc     = NULL;
+    const ScenarioManifest *values;
+    char            err[SCN_ERR_LEN];
+    bool            ok = false;
+
+    err[0] = '\0';
+    p = scnPackageOpen(bytes, len, err, sizeof(err));
+    if (p == NULL) {
+        return false;
+    }
+    if (scnPackageReadEntry(p, SCN_PACKAGE_MANIFEST_ENTRY,
+                            SCN_PACKAGE_MANIFEST_MAX_BYTES, &json, &jsonLen,
+                            err, sizeof(err))) {
+        doc    = scnManifestParse(json, jsonLen, NULL, err, sizeof(err));
+        values = scnManifestValues(doc);
+        if (values != NULL) {
+            *out = *values;
+            ok   = true;
+        }
+    }
+    scnManifestFree(doc);
+    free(json);
+    scnPackageClose(p);
+    return ok;
+}
+
+/* The last part of a path, after either separator. */
+static const char *scnPathLeaf(const char *path) {
+    const char *slash = strrchr(path, '/');
+    const char *back  = strrchr(path, '\\');
+
+    if (back != NULL && (slash == NULL || back > slash)) slash = back;
+    return (slash != NULL) ? slash + 1 : path;
+}
+
+bool scenarioHostMapPackageInfo(const char *mapPath, ServerScenarioEntry *out) {
+    uint8_t          *file     = NULL;
+    size_t            fileLen  = 0;
+    const uint8_t    *chunk    = NULL;
+    size_t            chunkLen = 0;
+    ScenarioManifest *m;
+    char              err[SCN_ERR_LEN];
+    bool              ok = false;
+
+    if (out == NULL) return false;
+    memset(out, 0, sizeof(*out));
+    if (mapPath == NULL || mapPath[0] == '\0') return false;
+
+    /* The same read the attach makes, under the same cap. */
+    err[0] = '\0';
+    if (!scnReadMapBytes(mapPath, &file, &fileLen, err, sizeof(err))) {
+        return false;
+    }
+    /* On the heap: a manifest carries its whole trigger table. */
+    m = (ScenarioManifest *)malloc(sizeof(*m));
+    if (m != NULL && scnPackageFindInMap(file, fileLen, &chunk, &chunkLen) &&
+        scnManifestOfContainer(chunk, chunkLen, m)) {
+        SDL_strlcpy(out->file, scnPathLeaf(mapPath), sizeof(out->file));
+        SDL_strlcpy(out->name, m->name, sizeof(out->name));
+        SDL_strlcpy(out->description, m->description,
+                    sizeof(out->description));
+        out->bound             = m->bound;
+        out->keepsWinCondition = scnManifestKeepsWinCondition(m);
+        out->source            = SERVER_SCENARIO_SOURCE_SERVER;
+        out->workshopId        = m->workshopId;
+        out->workshopAuthor    = m->workshopAuthor;
+        ok = true;
+    }
+    free(m);
+    free(file);
+    return ok;
+}
+
+/* Where a loose script is moved once it has been packed, beside the package
+   in the Mods directory. The mod lister globs "*" and skips anything that is
+   not a file, so nothing in here is listed. */
+#define SCN_PACK_SOURCES_DIR "Sources"
+
+bool scenarioHostPackLooseScript(const char *luaPath, char *outScenarioPath,
+                                 size_t outLen, char *err, size_t errLen) {
+    char              dir[SCN_SCRIPT_PATH_MAX];
+    char              stem[SCN_SCRIPT_PATH_MAX];
+    char              packed[SCN_SCRIPT_PATH_MAX];
+    char              sources[SCN_SCRIPT_PATH_MAX];
+    char              moved[SCN_SCRIPT_PATH_MAX];
+    const char       *leaf;
+    uint8_t          *old      = NULL;
+    size_t            oldLen   = 0;
+    ScenarioManifest *m;
+    uint64_t          keptId     = 0;
+    uint64_t          keptAuthor = 0;
+    size_t            dirLen;
+    size_t            stemLen;
+
+    if (err != NULL && errLen > 0) err[0] = '\0';
+    if (outScenarioPath != NULL && outLen > 0) outScenarioPath[0] = '\0';
+    if (luaPath == NULL || !scnHasExt(luaPath, SCN_SCENARIO_SCRIPT_EXT) ||
+        outScenarioPath == NULL || outLen == 0) {
+        scnFmt(err, errLen, "scenario: there is no loose script to pack");
+        return false;
+    }
+
+    /* Mods/<stem>.lua gives Mods, <stem>, Mods/<stem>.scenario and
+       Mods/Sources/<stem>.lua. */
+    leaf    = scnPathLeaf(luaPath);
+    dirLen  = (size_t)(leaf - luaPath);
+    stemLen = strlen(leaf) - strlen(SCN_SCENARIO_SCRIPT_EXT);
+    if (dirLen == 0 || dirLen > sizeof(dir) || stemLen == 0 ||
+        stemLen >= sizeof(stem)) {
+        scnFmt(err, errLen, "scenario: %s is not a script in a directory",
+               luaPath);
+        return false;
+    }
+    /* The directory without its trailing separator. */
+    memcpy(dir, luaPath, dirLen - 1);
+    dir[dirLen - 1] = '\0';
+    memcpy(stem, leaf, stemLen);
+    stem[stemLen] = '\0';
+    if ((size_t)snprintf(packed, sizeof(packed), "%s/%s%s", dir, stem,
+                         SCN_SCENARIO_PACKAGE_EXT) >= sizeof(packed) ||
+        (size_t)snprintf(sources, sizeof(sources), "%s/%s", dir,
+                         SCN_PACK_SOURCES_DIR) >= sizeof(sources) ||
+        (size_t)snprintf(moved, sizeof(moved), "%s/%s", sources, leaf) >=
+            sizeof(moved) ||
+        strlen(packed) >= outLen) {
+        scnFmt(err, errLen, "scenario: %s gives a path too long to pack to",
+               luaPath);
+        return false;
+    }
+
+    /* A package already there that carries a Workshop item keeps it: the
+       repack writes a manifest from the script's table, which names no item,
+       so the pair is read now and written back after. */
+    if (scnReadMapBytes(packed, &old, &oldLen, NULL, 0)) {
+        m = (ScenarioManifest *)malloc(sizeof(*m));
+        if (m != NULL && scnManifestOfContainer(old, oldLen, m)) {
+            keptId     = m->workshopId;
+            keptAuthor = m->workshopAuthor;
+        }
+        free(m);
+        free(old);
+    }
+
+    if (!scnPackScript(luaPath, packed, err, errLen)) {
+        return false;
+    }
+    serverSimNoteScriptDirsChanged();
+
+    if (keptId != 0 &&
+        !scnIoSetWorkshopId(packed, keptId, keptAuthor, err, errLen)) {
+        /* The package is packed and names no item; the script stays where it
+           was, so the next attempt packs it again and tries once more. */
+        return false;
+    }
+    SDL_strlcpy(outScenarioPath, packed, outLen);
+
+    /* The script out of the listed directory, so the mod list shows the
+       package and not the two. An older copy in Sources is replaced. A move
+       that fails leaves both listed, which is untidy and not wrong: the
+       package is what was asked for. */
+    if (!SDL_CreateDirectory(sources) || !SDL_RenamePath(luaPath, moved)) {
+        WB_LOG_WARN(WB_LOG_CAT_CLIENT, "scenario: packed %s but could not move "
+                    "it into %s: %s", luaPath, sources, SDL_GetError());
+    } else {
+        serverSimNoteScriptDirsChanged();
+    }
+    return true;
 }
 
 /* What script this map has, and where it came from. The attach and the

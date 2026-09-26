@@ -40,9 +40,10 @@
  *                                    arriving stops the server sending it,
  *                                    and the client reports it cut off
  *
- * The scenarios directory, the player's own directory and the shipped one
- * are all scratch directories of the case's own (WB_MOD_DIR_USER and
- * WB_MOD_DIR_SHIPPED name the last two), so nothing on the machine running
+ * The scenarios directory, the player's own directory, the Workshop one and
+ * the shipped one are all scratch directories of the case's own
+ * (WB_MOD_DIR_USER, WB_MOD_DIR_WORKSHOP and WB_MOD_DIR_SHIPPED name the last
+ * three), so nothing on the machine running
  * the test is read. Reads the ServerSim and the server transport's globals
  * directly; the unittests profile permits it.
  */
@@ -83,13 +84,15 @@
 
 static char sfScn[512];       /* the server's scenarios directory */
 static char sfUser[512];      /* the player's own mods directory  */
+static char sfWorkshop[512];  /* the Workshop directory, left empty */
 static char sfShipped[512];   /* the shipped mods directory       */
 static char sfLanding[512];   /* where uploads would land          */
-static char sfOld[2][1024];   /* the two seams as the case found them */
-static bool sfHadOld[2];
+static char sfOld[3][1024];   /* the three seams as the case found them */
+static bool sfHadOld[3];
 
-static const char *const kSfSeams[2] = { "WB_MOD_DIR_USER",
-                                         "WB_MOD_DIR_SHIPPED" };
+static const char *const kSfSeams[3] = { "WB_MOD_DIR_USER",
+                                         "WB_MOD_DIR_SHIPPED",
+                                         "WB_MOD_DIR_WORKSHOP" };
 
 static void sfSetEnv(const char *key, const char *val) {
 #ifdef _WIN32
@@ -103,18 +106,20 @@ static void sfSetEnv(const char *key, const char *val) {
 static bool sfDirs(void) {
     if (!utScratchPath(sfScn, sizeof(sfScn), "scenarios") ||
         !utScratchPath(sfUser, sizeof(sfUser), "Mods") ||
+        !utScratchPath(sfWorkshop, sizeof(sfWorkshop), "Workshop") ||
         !utScratchPath(sfShipped, sizeof(sfShipped), "shipped") ||
         !utScratchPath(sfLanding, sizeof(sfLanding), "landing")) {
         return false;
     }
     return SDL_CreateDirectory(sfScn) && SDL_CreateDirectory(sfUser) &&
+           SDL_CreateDirectory(sfWorkshop) &&
            SDL_CreateDirectory(sfShipped) && SDL_CreateDirectory(sfLanding);
 }
 
 static void sfEnvUp(void) {
     int i;
 
-    for (i = 0; i < 2; i++) {
+    for (i = 0; i < 3; i++) {
         const char *was = getenv(kSfSeams[i]);
 
         sfHadOld[i] = (was != NULL);
@@ -122,12 +127,13 @@ static void sfEnvUp(void) {
     }
     sfSetEnv(kSfSeams[0], sfUser);
     sfSetEnv(kSfSeams[1], sfShipped);
+    sfSetEnv(kSfSeams[2], sfWorkshop);
 }
 
 static void sfEnvDown(void) {
     int i;
 
-    for (i = 0; i < 2; i++) {
+    for (i = 0; i < 3; i++) {
         sfSetEnv(kSfSeams[i], sfHadOld[i] ? sfOld[i] : NULL);
     }
 }

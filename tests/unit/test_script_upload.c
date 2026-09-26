@@ -26,8 +26,9 @@
  *
  * Landing, with the real host callbacks registered by
  * scenarioHostRegisterScenarioLister. Every directory is a scratch one: the
- * host's own, the player's (WB_MOD_DIR_USER), the shipped one
- * (WB_MOD_DIR_SHIPPED) and the landing directory, set on the sim.
+ * host's own, the player's (WB_MOD_DIR_USER), an empty Workshop one
+ * (WB_MOD_DIR_WORKSHOP), the shipped one (WB_MOD_DIR_SHIPPED) and the
+ * landing directory, set on the sim.
  *
  *   loopback_script_upload_lands_listed
  *                                a mod .lua lands in the landing directory
@@ -665,12 +666,14 @@ int run_script_upload_client_refusals(void) {
 
 /* ── landing, with the host's own callbacks ──────────────────────────── */
 
-/* The four directories a landing case reads, each under the case's scratch
+/* The five directories a landing case reads, each under the case's scratch
  * directory. The landing one is not made here: the accept callback makes it,
- * and a case that needs it first makes it itself. */
+ * and a case that needs it first makes it itself. The Workshop one is made
+ * and left empty. */
 typedef struct {
     char configured[1024];
     char user[1024];
+    char workshop[1024];
     char shipped[1024];
     char landing[1024];
 } UpDirs;
@@ -678,12 +681,14 @@ typedef struct {
 static bool up_dirs(UpDirs *d, const char *landingLeaf) {
     if (!utScratchPath(d->configured, sizeof(d->configured), "configured") ||
         !utScratchPath(d->user, sizeof(d->user), "Mods") ||
+        !utScratchPath(d->workshop, sizeof(d->workshop), "Workshop") ||
         !utScratchPath(d->shipped, sizeof(d->shipped), "shipped") ||
         !utScratchPath(d->landing, sizeof(d->landing), landingLeaf)) {
         return false;
     }
     return SDL_CreateDirectory(d->configured) &&
            SDL_CreateDirectory(d->user) &&
+           SDL_CreateDirectory(d->workshop) &&
            SDL_CreateDirectory(d->shipped);
 }
 
@@ -696,16 +701,19 @@ static void up_set_env(const char *key, const char *val) {
 #endif
 }
 
-/* The player's directory and the shipped one, which SDL would otherwise name
- * in the home directory and beside the executable. Up for the whole case and
- * taken down by the runner before it returns, pass or fail. */
+/* The player's directory, the Workshop one and the shipped one, which SDL
+ * would otherwise name in the home directory and beside the executable. Up
+ * for the whole case and taken down by the runner before it returns, pass or
+ * fail. */
 static void up_env(const UpDirs *d) {
     up_set_env("WB_MOD_DIR_USER", d->user);
+    up_set_env("WB_MOD_DIR_WORKSHOP", d->workshop);
     up_set_env("WB_MOD_DIR_SHIPPED", d->shipped);
 }
 
 static void up_env_clear(void) {
     up_set_env("WB_MOD_DIR_USER", NULL);
+    up_set_env("WB_MOD_DIR_WORKSHOP", NULL);
     up_set_env("WB_MOD_DIR_SHIPPED", NULL);
 }
 

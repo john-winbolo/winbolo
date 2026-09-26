@@ -2642,3 +2642,19 @@ STR_DLGLOBBY_SCENARIO_SAVE_NOT_FOUND=Servern har inte längre den här filen.
 STR_DLGLOBBY_SCENARIO_SAVE_TOO_LARGE=Filen är för stor för att kopieras.
 STR_DLGLOBBY_SCENARIO_SAVE_NO_ANSWER=Servern svarade inte. Försök igen.
 STR_DLGLOBBY_SCENARIO_SAVE_WRITE=Kopian kunde inte sparas i din Mods-mapp.
+STR_MAPEDIT_SCENARIO_WORKSHOP=Workshop-objekt #{string1}, publicerat av {string2}
+STR_DLGSETTINGS_WORKSHOP_HEADING=Steam Workshop
+STR_DLGSETTINGS_WORKSHOP_SUBSCRIBED=Prenumerationer
+STR_DLGSETTINGS_WORKSHOP_PUBLISH=Publicera
+STR_DLGSETTINGS_WORKSHOP_INSTALLED=Installerat
+STR_DLGSETTINGS_WORKSHOP_OPEN=Öppna i Workshop
+STR_DLGSETTINGS_WORKSHOP_UPDATE=Uppdatera
+STR_DLGSETTINGS_WORKSHOP_TAG_MAP=Karta
+STR_DLGSETTINGS_WORKSHOP_ITEM=Objekt #{string1}
+STR_DLGSETTINGS_WORKSHOP_NONE_SUBSCRIBED=Du prenumererar inte på några moddar, scenarier eller kartor.
+STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH=Inget att publicera än. Lägg en modd eller ett scenario i din Mods-mapp, eller packa in ett scenario i en karta.
+STR_DLGSETTINGS_WORKSHOP_PUB_HEADING=Publicera den här modden eller det här scenariot till Steam Workshop
+STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE=Uppdatera det objekt den här filen kom från
+
+# The lobby's Workshop chip
+STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop

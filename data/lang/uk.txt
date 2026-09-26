@@ -2642,3 +2642,19 @@ STR_DLGLOBBY_SCENARIO_SAVE_NOT_FOUND=На сервері більше немає
 STR_DLGLOBBY_SCENARIO_SAVE_TOO_LARGE=Цей файл завеликий для копіювання.
 STR_DLGLOBBY_SCENARIO_SAVE_NO_ANSWER=Сервер не відповів. Спробуйте ще раз.
 STR_DLGLOBBY_SCENARIO_SAVE_WRITE=Не вдалося зберегти копію в теку Mods.
+STR_MAPEDIT_SCENARIO_WORKSHOP=Предмет Майстерні №{string1}, опублікував {string2}
+STR_DLGSETTINGS_WORKSHOP_HEADING=Майстерня Steam
+STR_DLGSETTINGS_WORKSHOP_SUBSCRIBED=Підписки
+STR_DLGSETTINGS_WORKSHOP_PUBLISH=Опублікувати
+STR_DLGSETTINGS_WORKSHOP_INSTALLED=Встановлено
+STR_DLGSETTINGS_WORKSHOP_OPEN=Відкрити в Майстерні
+STR_DLGSETTINGS_WORKSHOP_UPDATE=Оновити
+STR_DLGSETTINGS_WORKSHOP_TAG_MAP=Карта
+STR_DLGSETTINGS_WORKSHOP_ITEM=Предмет №{string1}
+STR_DLGSETTINGS_WORKSHOP_NONE_SUBSCRIBED=Ви не підписані на жодні моди, сценарії чи карти.
+STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH=Поки що нічого публікувати. Покладіть мод або сценарій у теку Mods або запакуйте сценарій у карту.
+STR_DLGSETTINGS_WORKSHOP_PUB_HEADING=Опублікувати цей мод або сценарій у Майстерні Steam
+STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE=Оновити елемент, з якого походить цей файл
+
+# The lobby's Workshop chip
+STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Майстерня

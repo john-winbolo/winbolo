@@ -1443,6 +1443,10 @@ bool     clientSimSpectatorIsLiveLobby(const ClientSim *cs);
  * 2=ack received (chunks in flight), 3=done, 4=rejected. */
 uint8_t     clientSimGetLobbyMapUploadStatus(const ClientSim *cs);
 uint8_t     clientSimGetLobbyMapUploadRejectCode(const ClientSim *cs);
+/* The directory this computer copies its Workshop items to. A map picked
+   from it is offered to the server as "Workshop/<name>" before it is
+   uploaded. "" or NULL clears it. */
+void        clientSimSetWorkshopMapDir(ClientSim *cs, const char *dir);
 const char *clientSimGetLobbyMapUploadFinalPath(const ClientSim *cs);
 /* Which kind of upload the status, reject-code, final-path and
  * progress-percent accessors above describe: UPLOAD_KIND_MAP or

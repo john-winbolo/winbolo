@@ -2640,3 +2640,19 @@ STR_DLGLOBBY_SCENARIO_SAVE_NOT_FOUND=Server už tento soubor nemá.
 STR_DLGLOBBY_SCENARIO_SAVE_TOO_LARGE=Tento soubor je na zkopírování příliš velký.
 STR_DLGLOBBY_SCENARIO_SAVE_NO_ANSWER=Server neodpověděl. Zkuste to znovu.
 STR_DLGLOBBY_SCENARIO_SAVE_WRITE=Kopii se nepodařilo uložit do složky Mods.
+STR_MAPEDIT_SCENARIO_WORKSHOP=Položka Workshopu č. {string1}, zveřejnil {string2}
+STR_DLGSETTINGS_WORKSHOP_HEADING=Steam Workshop
+STR_DLGSETTINGS_WORKSHOP_SUBSCRIBED=Odebírané
+STR_DLGSETTINGS_WORKSHOP_PUBLISH=Publikovat
+STR_DLGSETTINGS_WORKSHOP_INSTALLED=Nainstalováno
+STR_DLGSETTINGS_WORKSHOP_OPEN=Otevřít ve Workshopu
+STR_DLGSETTINGS_WORKSHOP_UPDATE=Aktualizovat
+STR_DLGSETTINGS_WORKSHOP_TAG_MAP=Mapa
+STR_DLGSETTINGS_WORKSHOP_ITEM=Položka č. {string1}
+STR_DLGSETTINGS_WORKSHOP_NONE_SUBSCRIBED=Neodebíráte žádné mody, scénáře ani mapy.
+STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH=Zatím není co publikovat. Vložte mod nebo scénář do složky Mods, nebo zabalte scénář do mapy.
+STR_DLGSETTINGS_WORKSHOP_PUB_HEADING=Publikovat tento mod nebo scénář do Steam Workshopu
+STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE=Aktualizovat položku, ze které tento soubor pochází
+
+# The lobby's Workshop chip
+STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop

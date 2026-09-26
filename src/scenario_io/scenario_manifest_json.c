@@ -196,6 +196,54 @@ static void mjString(const cJSON *obj, const char *key, char *dst,
     }
 }
 
+bool scnManifestParseId(const char *s, uint64_t *out) {
+    uint64_t    v = 0;
+    const char *p;
+
+    if (out != NULL) {
+        *out = 0;
+    }
+    if (s == NULL || s[0] == '\0' || out == NULL) {
+        return false;
+    }
+    for (p = s; *p != '\0'; p++) {
+        unsigned digit;
+
+        if (*p < '0' || *p > '9') {
+            return false;
+        }
+        digit = (unsigned)(*p - '0');
+        if (v > (UINT64_MAX - digit) / 10u) {
+            return false;               /* more than 64 bits hold */
+        }
+        v = v * 10u + digit;
+    }
+    *out = v;
+    return true;
+}
+
+/* workshop_id or workshop_author, read through scnManifestParseId. Absent,
+ * and null, is 0 without a word, the way an absent kind is a scenario.
+ * Anything else that does not parse is reported and read as 0 — a JSON
+ * number included, because by the time cJSON has made a double of it the
+ * low digits of a real id are already gone. */
+static uint64_t mjDecodeId(const cJSON *root, const char *key,
+                           ScnParseReport *rep) {
+    const cJSON *it = cJSON_GetObjectItemCaseSensitive(root, key);
+    uint64_t     v  = 0;
+
+    if (it == NULL || cJSON_IsNull(it)) {
+        return 0;
+    }
+    if (cJSON_IsString(it) && scnManifestParseId(it->valuestring, &v)) {
+        return v;
+    }
+    mjReport(rep, key,
+             "scenario: %s is not a string of digits naming a Steam id; 0 "
+             "used", key);
+    return 0;
+}
+
 /* One pair of a team's init table, stored the way the Lua reader stores it.
  * A string is itself; a number is its digits, because that is what
  * lua_tostring makes of a script's number before it reaches the table. JSON
@@ -1145,6 +1193,8 @@ static bool mjDecode(ScnManifestDoc *d, ScnParseReport *rep,
     }
     m->bound      = mjBool(d->root, "bound", true);
     m->fillToCaps = mjBool(d->root, "fill_to_caps", false);
+    m->workshopId     = mjDecodeId(d->root, "workshop_id", rep);
+    m->workshopAuthor = mjDecodeId(d->root, "workshop_author", rep);
 
     mjDecodeLobby(d->root, &m->lobby, rep);
     mjDecodeRules(d->root, m, rep);
@@ -1317,6 +1367,20 @@ static void mjPutString(cJSON *obj, const char *key, const char *v) {
 
 static void mjPutBool(cJSON *obj, const char *key, bool v) {
     mjPut(obj, key, cJSON_CreateBool(v ? 1 : 0));
+}
+
+/* An id as its decimal digits, or no key at all for 0. Left out rather than
+ * written as "0", so a manifest that names no item is the text it was before
+ * the key existed, and setting an id back to 0 takes the key away. */
+static void mjPutId(cJSON *obj, const char *key, uint64_t v) {
+    char digits[24];
+
+    if (v == 0) {
+        cJSON_DeleteItemFromObjectCaseSensitive(obj, key);
+        return;
+    }
+    snprintf(digits, sizeof(digits), "%llu", (unsigned long long)v);
+    mjPutString(obj, key, digits);
 }
 
 /* The object under key, made if it is not there and replaced if what is
@@ -1550,6 +1614,8 @@ static void mjEmit(cJSON *root, const ScnManifestDoc *d) {
     mjPutString(root, "game", m->game);
     mjPutBool(root, "bound", m->bound);
     mjPutBool(root, "fill_to_caps", m->fillToCaps);
+    mjPutId(root, "workshop_id", m->workshopId);
+    mjPutId(root, "workshop_author", m->workshopAuthor);
 
     lobby = mjObjectFor(root, "lobby");
     if (lobby != NULL) {
@@ -1669,6 +1735,14 @@ char *scnManifestWrite(const ScnManifestDoc *d, char *err, size_t errLen) {
         return NULL;
     }
     return text;
+}
+
+void scnManifestSetWorkshop(ScnManifestDoc *d, uint64_t id, uint64_t author) {
+    if (d == NULL) {
+        return;
+    }
+    d->values.workshopId     = id;
+    d->values.workshopAuthor = author;
 }
 
 /* ── The two forms against each other ─────────────────────────────── */
@@ -1871,6 +1945,28 @@ bool scnManifestAgrees(const ScenarioManifest *fromJson,
                         "script's table says %s",
                         fromJson->fillToCaps ? "true" : "false",
                         fromLua->fillToCaps ? "true" : "false");
+    }
+    /* The Workshop item and its author are held to agreeing only where the
+       script's table states them. Both are written into manifest.json after
+       the file is published, and nothing rewrites the script, so a script
+       that assigns its own scenario table reads 0 for both and could never
+       be expected to restate them. A table that does state one, and states
+       a different one, is the disagreement. */
+    if (fromLua->workshopId != 0 &&
+        fromLua->workshopId != fromJson->workshopId) {
+        return mjDiffer(key, keyLen, err, errLen, "workshop_id",
+                        "scenario: the manifest says Workshop item %llu and "
+                        "the script's table says %llu",
+                        (unsigned long long)fromJson->workshopId,
+                        (unsigned long long)fromLua->workshopId);
+    }
+    if (fromLua->workshopAuthor != 0 &&
+        fromLua->workshopAuthor != fromJson->workshopAuthor) {
+        return mjDiffer(key, keyLen, err, errLen, "workshop_author",
+                        "scenario: the manifest says it was published by "
+                        "%llu and the script's table says %llu",
+                        (unsigned long long)fromJson->workshopAuthor,
+                        (unsigned long long)fromLua->workshopAuthor);
     }
     /* The settings are held to agreeing, unlike the callbacks: they are
        what the host is offered and what game.setting answers, so a package

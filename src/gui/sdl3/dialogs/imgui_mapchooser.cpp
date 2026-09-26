@@ -1075,6 +1075,75 @@ static void normaliseAndDedupe(MapChooserState *state) {
     state->numMaps = writeIdx;
 }
 
+void mapChooserSetWorkshopDir(MapChooserState *state, const char *dir) {
+    if (!state) return;
+    state->workshopDir[0] = '\0';
+    if (!dir || dir[0] == '\0') return;
+    SDL_strlcpy(state->workshopDir, dir, sizeof(state->workshopDir));
+    for (char *p = state->workshopDir; *p; p++) {
+        if (*p == '\\') *p = '/';
+    }
+    size_t len = SDL_strlen(state->workshopDir);
+    while (len > 0 && state->workshopDir[len - 1] == '/') {
+        state->workshopDir[--len] = '\0';
+    }
+}
+
+/* Whether path is the tab's Workshop directory or lies under it. On true,
+ * rest holds what follows the directory and its separator, or "" for the
+ * directory itself. Either separator is accepted in path, and a trailing
+ * one is ignored. False when the tab has no Workshop directory. */
+static bool mapChooserWorkshopRest(const MapChooserState *state,
+                                   const char *path,
+                                   char *rest, size_t restLen) {
+    size_t wsLen = SDL_strlen(state->workshopDir);
+    if (wsLen == 0 || !path) return false;
+    char norm[FILENAME_MAX];
+    SDL_strlcpy(norm, path, sizeof(norm));
+    for (char *p = norm; *p; p++) {
+        if (*p == '\\') *p = '/';
+    }
+    size_t len = SDL_strlen(norm);
+    while (len > 0 && norm[len - 1] == '/') norm[--len] = '\0';
+    if (SDL_strncmp(norm, state->workshopDir, wsLen) != 0) return false;
+    if (norm[wsLen] == '\0') {
+        rest[0] = '\0';
+        return true;
+    }
+    if (norm[wsLen] != '/') return false;
+    SDL_strlcpy(rest, norm + wsLen + 1, restLen);
+    return true;
+}
+
+/* The part of a map path the breadcrumbs show after the tab's root label:
+ *   "data/maps/Sub/X"   → "Sub/X"
+ *   "data/maps"         → ""
+ *   "<workshopDir>/Sub" → "Workshop/Sub"
+ *   "<workshopDir>"     → "Workshop"
+ * Any other path, such as the Server Maps and WinBolo.net tabs' relative
+ * ones, is copied unchanged. The Workshop directory's absolute path is
+ * never shown. */
+static void mapChooserCrumbRel(const MapChooserState *state,
+                               const char *path,
+                               char *out, size_t outLen) {
+    static const char kRoot[]     = "data/maps/";
+    static const char kRootBare[] = "data/maps";
+    char rest[FILENAME_MAX];
+    if (SDL_strncmp(path, kRoot, sizeof(kRoot) - 1) == 0) {
+        SDL_strlcpy(out, path + sizeof(kRoot) - 1, outLen);
+    } else if (SDL_strcasecmp(path, kRootBare) == 0) {
+        out[0] = '\0';
+    } else if (mapChooserWorkshopRest(state, path, rest, sizeof(rest))) {
+        if (rest[0] != '\0') {
+            SDL_snprintf(out, outLen, "Workshop/%s", rest);
+        } else {
+            SDL_strlcpy(out, "Workshop", outLen);
+        }
+    } else {
+        SDL_strlcpy(out, path, outLen);
+    }
+}
+
 void mapChooserLocalFsEnumerate(MapChooserState *state,
                                  const char *relPath, void *ctx) {
     (void)ctx;
@@ -1121,6 +1190,13 @@ void mapChooserLocalFsEnumerate(MapChooserState *state,
         }
         if (plen > 0) e->path[plen - 1] = '\0';
         if (e->path[0] == '\0') {
+            SDL_strlcpy(e->path, root, sizeof(e->path));
+        }
+        /* The Workshop folder is listed at the root, so going up from it
+         * goes back there rather than to the directory that holds it. */
+        char wsRest[FILENAME_MAX];
+        if (mapChooserWorkshopRest(state, dir, wsRest, sizeof(wsRest)) &&
+            wsRest[0] == '\0') {
             SDL_strlcpy(e->path, root, sizeof(e->path));
         }
         e->isFolder = true;
@@ -1177,6 +1253,32 @@ void mapChooserLocalFsEnumerate(MapChooserState *state,
             }
         }
         SDL_free(list);
+    }
+
+    /* Root view also offers the Workshop directory as a folder named
+     * "Workshop", when the tab has one and it exists. Its row carries the
+     * absolute directory, which a click makes currentDir; the listing
+     * above reads any directory path, so the folder's own view needs
+     * nothing more. A real data/maps/Workshop folder is listed instead. */
+    if (!inSubfolder && state->workshopDir[0] != '\0' &&
+        state->numMaps < MAP_CHOOSER_MAX_MAPS) {
+        bool present = false;
+        for (int j = 0; j < state->numMaps; j++) {
+            if (state->maps[j].isFolder &&
+                SDL_strcasecmp(state->maps[j].name, "Workshop") == 0) {
+                present = true; break;
+            }
+        }
+        SDL_PathInfo pi;
+        if (!present && SDL_GetPathInfo(state->workshopDir, &pi) &&
+            pi.type == SDL_PATHTYPE_DIRECTORY) {
+            MapChooserEntry *e = &state->maps[state->numMaps++];
+            memset(e, 0, sizeof(*e));
+            SDL_strlcpy(e->name, "Workshop", sizeof(e->name));
+            SDL_strlcpy(e->path, state->workshopDir, sizeof(e->path));
+            e->isFolder = true;
+            e->modTime  = (int64_t)pi.modify_time;
+        }
     }
 
     /* Root view also surfaces .map files saved to the writable per-user
@@ -1735,19 +1837,14 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
          * preview, so segments are clickable here too. The pieces:
          *   - state->crumbsRootLabel ("Maps" on all tabs today)
          *   - state->currentDir, stripped of any "data/maps[/]" prefix
-         *     so Upload's absolute path matches the Server / WBN
+         *     and with the Workshop directory read as "Workshop", so
+         *     Upload's absolute path matches the Server / WBN
          *     conventions before the root label is prepended.
          * Full absolute path lives in the hover tooltip
          * (pathTooltipPrefix) for callers that want one. */
         {
-            const char *rel = state->currentDir;
-            static const char kRoot[]     = "data/maps/";
-            static const char kRootBare[] = "data/maps";
-            if (SDL_strncmp(rel, kRoot, sizeof(kRoot) - 1) == 0) {
-                rel += sizeof(kRoot) - 1;
-            } else if (SDL_strcasecmp(rel, kRootBare) == 0) {
-                rel = "";
-            }
+            char rel[FILENAME_MAX];
+            mapChooserCrumbRel(state, state->currentDir, rel, sizeof(rel));
             char pathLine[FILENAME_MAX + 64];
             if (state->crumbsRootLabel[0] != '\0' && rel[0] != '\0') {
                 SDL_snprintf(pathLine, sizeof(pathLine), "%s/%s",
@@ -2919,17 +3016,12 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                     if (lastSep) *lastSep = '\0';
                 }
                 /* Strip the on-disk root so the breadcrumb reads
-                 * relative to data/maps; if nothing's left, fall
-                 * back to "data/maps" so root-level files still
-                 * surface a path indicator. */
-                const char *rel = tmp;
-                static const char kRoot[] = "data/maps/";
-                static const char kRootBare[] = "data/maps";
-                if (strncmp(rel, kRoot, sizeof(kRoot) - 1) == 0) {
-                    rel += sizeof(kRoot) - 1;
-                } else if (SDL_strcasecmp(rel, kRootBare) == 0) {
-                    rel = "";
-                }
+                 * relative to data/maps, with the Workshop directory
+                 * read as "Workshop"; if nothing's left, fall back to
+                 * "data/maps" so root-level files still surface a path
+                 * indicator. */
+                char rel[FILENAME_MAX];
+                mapChooserCrumbRel(state, tmp, rel, sizeof(rel));
                 if (rel[0] == '\0') {
                     /* When the tab supplies a crumbsRootLabel the
                      * label itself IS the root indicator — adding
@@ -2937,7 +3029,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                      * "Maps / data / maps". Leave empty so only the
                      * label appears. */
                     if (state->crumbsRootLabel[0] == '\0') {
-                        SDL_strlcpy(crumbsRendered, kRootBare,
+                        SDL_strlcpy(crumbsRendered, "data/maps",
                                     sizeof(crumbsRendered));
                     }
                 } else {
@@ -2961,17 +3053,12 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
             /* No selection AND no active breadcrumb (e.g. just after
              * a breadcrumb-jump cleared selectedIdx) — fall back to
              * the current folder, same source the upper path label
-             * uses. Strip the local "data/maps[/]" prefix so the
-             * Upload tab's absolute currentDir lines up with the
-             * relative scheme Server Maps / WBN already use. */
-            const char *rel = state->currentDir;
-            static const char kRoot[]     = "data/maps/";
-            static const char kRootBare[] = "data/maps";
-            if (strncmp(rel, kRoot, sizeof(kRoot) - 1) == 0) {
-                rel += sizeof(kRoot) - 1;
-            } else if (SDL_strcasecmp(rel, kRootBare) == 0) {
-                rel = "";
-            }
+             * uses. Strip the local "data/maps[/]" prefix, and read
+             * the Workshop directory as "Workshop", so the Upload tab's
+             * absolute currentDir lines up with the relative scheme
+             * Server Maps / WBN already use. */
+            char rel[FILENAME_MAX];
+            mapChooserCrumbRel(state, state->currentDir, rel, sizeof(rel));
             if (rel[0] != '\0') {
                 SDL_strlcpy(crumbsRendered, rel, sizeof(crumbsRendered));
             }

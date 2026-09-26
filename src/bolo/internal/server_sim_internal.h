@@ -823,6 +823,12 @@ struct ServerSim {
      * PERSIST-policy uploads. Empty → "<mapDirPath>/Uploads". Set from
      * ServerInstanceConfig.uploadPersistDir at startup. */
     char         uploadPersistDir[FILENAME_MAX];
+    /* Absolute directory backing the virtual "Workshop/" folder: where a
+     * desktop host copies its subscribed Workshop items. Empty → no Workshop
+     * folder, and "Workshop/<name>" resolves under the map root like any
+     * other path. Set by the host through serverSimSetWorkshopMapDir; the
+     * dedicated server never sets it. */
+    char         workshopMapDir[FILENAME_MAX];
     /* The scenarios this server offers on their own, independently of any
      * map: the -scenariodir CLI arg on the dedicated server and the
      * "Scenario Dir" preference on a desktop host. Empty → the built-in

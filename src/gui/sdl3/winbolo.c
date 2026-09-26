@@ -83,6 +83,7 @@
 #include "dialogs/dialog_quit.h"
 #include "../tiles.h"
 #include "luabrainshandler.h"
+#include "workshop_sync.h"
 #include "../../scenario/scenario_host.h"
 #include "bg_game.h"
 #include "cursor.h"
@@ -483,6 +484,10 @@ int main(int argc, char *argv[]) {
     /* Auto-connect once the pre-filled join dialog opens (see callback). */
     gameFrontRequestUdpAutoJoin();
   }
+  /* Bring the Workshop directory up to date with what the player is
+     subscribed to, so the first listing already offers it. Later changes
+     arrive through workshopSyncPoll. */
+  workshopSyncRun();
   /* Steam Input (Path A): start in Menu set — game launches into the
      main menu / lobby UI.  In-game switch handled per-frame in
      sdl3ImguiPumpAndRender.  No-op when running without the SDK. */
@@ -760,6 +765,7 @@ int main(int argc, char *argv[]) {
       while (done == FALSE) {
         sdl3ImguiProcessEvents(cs);
         steam_run_callbacks();
+        workshopSyncPoll();
         /* Steam overlay open/close (updated by steam_run_callbacks above):
            pause a single-player game — freezing both the client and the
            server tick — and rebase the wallclock on close so the catch-up

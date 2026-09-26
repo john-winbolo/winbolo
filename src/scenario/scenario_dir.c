@@ -248,10 +248,14 @@ void scnDirEntryFromManifest(ScnDirEntry *e, const char *file,
        loaded. The lobby script list carries this per entry: it is how a
        chooser knows which rows may sit together. */
     e->keepsWinCondition = scnManifestKeepsWinCondition(m);
-    /* The manifest has no Workshop field yet, so no file names an item. The
-       source is left to the caller: a directory read does not know which of
-       the server's directories it is reading. */
-    e->workshopId = 0;
+    /* The Workshop item the manifest names, 0 for none, which is how a
+       chooser matches a row to the item it came from. The source is left to
+       the caller: a directory read does not know which of the server's
+       directories it is reading. */
+    e->workshopId = m->workshopId;
+    /* The account that published it, for this computer's own listings; the
+       wire carries the id alone. */
+    e->workshopAuthor = m->workshopAuthor;
 }
 
 /* File-name order. Two scenarios may share a manifest name and two files in

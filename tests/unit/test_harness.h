@@ -3077,6 +3077,7 @@ int run_scenario_host_metatable_not_read(void);
 int run_scenario_host_hook_via_global_metatable(void);
 int run_scenario_host_script_env_is_its_own(void);
 int run_scenario_host_manifest_read_from_its_own_env(void);
+int run_scenario_host_manifest_reads_workshop(void);
 int run_scenario_host_errors_counted_per_script(void);
 int run_scenario_host_many_rules_all_applied(void);
 
@@ -3325,6 +3326,17 @@ int run_scenario_manifest_json_trigger_no_when(void);
 int run_scenario_manifest_json_trigger_action_no_op(void);
 int run_scenario_manifest_json_trigger_where_no_field(void);
 int run_scenario_manifest_json_trigger_text_cut(void);
+/* The Workshop item and its author: read as digit strings and written back
+ * as them, and the comparison that lets a table stating none agree with a
+ * manifest that names one. */
+int run_scenario_manifest_workshop_keys(void);
+int run_scenario_manifest_agrees_workshop(void);
+
+/* The Workshop item stamped into a scenario file that already exists
+ * (test_scenario_workshop_id.c): a .scenario package and a packed map, with
+ * everything but the manifest kept, and a loose script and a plain map
+ * refused. */
+int run_scenario_io_set_workshop_id(void);
 
 /* Where a map file's map data ends (test_scenario_map_body.c): the measure
  * itself, the container found after it, the scripted tag it gives the
@@ -3359,6 +3371,8 @@ int run_scenario_pack_writes_container(void);
 int run_scenario_pack_manifest_agrees(void);
 int run_scenario_pack_replaces_trailer(void);
 int run_scenario_pack_refuses_unscripted(void);
+int run_scenario_pack_script_mod(void);
+int run_scenario_pack_script_refusals(void);
 
 /* The brain a scenario names (test_scenario_brain_name.c): the name a team
  * writes reaching the seat as that brain's init.lua, the name this server has
@@ -3449,6 +3463,28 @@ int run_scenario_mod_dirs_merged_and_sorted(void);
 int run_scenario_mod_dirs_same_dir_once(void);
 int run_scenario_mod_dirs_all_missing_is_quiet(void);
 int run_scenario_mod_dirs_attach_reads_shipped(void);
+/* The Workshop directory between the player's own and the shipped one: its
+ * place in the precedence, its rows' source in both listings, and the local
+ * path, save and upload checks that read it. */
+int run_scenario_mod_dirs_workshop_precedence(void);
+int run_scenario_mod_dirs_workshop_local(void);
+int run_scenario_mod_dirs_workshop_upload_clash(void);
+
+/* The Workshop sync (test_workshop_sync.c): what an item folder holds, and
+ * what a pass copies, indexes and removes in the Workshop directory. */
+int run_workshop_sync_classify(void);
+int run_workshop_sync_copies_and_indexes(void);
+int run_workshop_sync_removes_unsubscribed(void);
+int run_workshop_sync_unavailable_touches_nothing(void);
+int run_workshop_sync_name_clash(void);
+int run_workshop_sync_renamed_content(void);
+int run_workshop_sync_bumps_script_dirs_gen(void);
+int run_workshop_sync_disabled_item_left_alone(void);
+int run_workshop_sync_recovers_bad_index(void);
+int run_workshop_map_package_info(void);
+int run_workshop_pack_loose_script(void);
+int run_workshop_sync_index_rows(void);
+int run_local_rows_carry_author(void);
 
 /* Which scenario plays when a map and a mod both have a claim
  * (test_scenario_precedence.c): the three rules, the four points the
@@ -3696,6 +3732,22 @@ int run_editor_pack_map_round_trip(void);
 int run_editor_pack_twice_identical(void);
 int run_editor_pack_refuses_unbound(void);
 int run_editor_pack_survives_map_save(void);
+
+/* The virtual "Workshop" map folder (test_workshop_map_dir.c): offered at the
+ * root of the map listing when the host has named a Workshop directory that
+ * exists, resolved into that directory, and left out, or listed once beside a
+ * real folder of that name, otherwise. */
+int run_workshop_map_dir_offered_at_root(void);
+int run_workshop_map_dir_resolve(void);
+int run_workshop_map_dir_absent(void);
+/* The client's side of it (test_workshop_map_dir.c): a map upload's USE_LOCAL
+ * pre-check names a map in the Workshop directory "Workshop/<name>", and one
+ * under data/maps relative to data/maps, with either separator. */
+int run_workshop_use_local_rel_path(void);
+/* And end to end (test_loopback_upload.c): with the server and the client
+ * sharing a Workshop directory, uploading a map from it finishes through
+ * USE_LOCAL with nothing sent on the bulk channel. */
+int run_workshop_use_local(void);
 
 /* The last status tile frontEndStatusTank was handed by the stub in
  * test_stubs.c: the 1-based player number, and the tankAlliance as an int so

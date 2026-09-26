@@ -1522,7 +1522,9 @@ static int scanLocations(SkinEntry *out, int max, int *written) {
     /* 2. Steam Workshop install folders — SKIN_KIND_WORKSHOP, ids of the form
      *    "workshop:<publishedfileid>". An item the user is subscribed to but
      *    Steam has not finished delivering has no folder yet, so it is listed
-     *    as pending rather than left out of the picker entirely. */
+     *    as pending rather than left out of the picker entirely. An item the
+     *    player disabled in Steam is left out: it is not coming, and asking
+     *    Steam to download it would go against what the player chose. */
     {
         int wsCount = steam_workshop_subscribed_count();
         int i;
@@ -1536,6 +1538,7 @@ static int scanLocations(SkinEntry *out, int max, int *written) {
 
             installed = steam_workshop_item(i, &wid, folder, sizeof(folder));
             if (wid == 0) continue;
+            if (!installed && steam_workshop_item_disabled(wid)) continue;
 
             SDL_snprintf(base, sizeof(base), "%llu", (unsigned long long)wid);
             SDL_snprintf(id, sizeof(id), "workshop:%s", base);

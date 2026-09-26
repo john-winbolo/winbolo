@@ -403,6 +403,14 @@ typedef struct {
      * unless the file asks for it, which leaves a map's own numbers alone. */
     bool fillToCaps;
 
+    /* The Steam Workshop item this file was published as, and the account
+     * that published it, written into the file once it is published
+     * (scnIoSetWorkshopId in scenario_chunk.h). Both keys are written as
+     * strings of decimal digits: an id is a 64-bit number, and a JSON number
+     * or a Lua number is a double, which does not hold every digit of one. */
+    uint64_t workshopId;      /* Steam Workshop item this file was published as; 0 = none */
+    uint64_t workshopAuthor;  /* SteamID64 of the account that published it; 0 = none */
+
     ScnManifestLobby lobby;
 
     uint16_t        numRules;

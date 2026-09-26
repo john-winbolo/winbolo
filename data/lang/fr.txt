@@ -2642,3 +2642,19 @@ STR_DLGLOBBY_SCENARIO_SAVE_NOT_FOUND=Le serveur n'a plus ce fichier.
 STR_DLGLOBBY_SCENARIO_SAVE_TOO_LARGE=Ce fichier est trop volumineux pour être copié.
 STR_DLGLOBBY_SCENARIO_SAVE_NO_ANSWER=Le serveur n'a pas répondu. Réessayez.
 STR_DLGLOBBY_SCENARIO_SAVE_WRITE=La copie n'a pas pu être enregistrée dans votre dossier Mods.
+STR_MAPEDIT_SCENARIO_WORKSHOP=Objet du Workshop n° {string1}, publié par {string2}
+STR_DLGSETTINGS_WORKSHOP_HEADING=Steam Workshop
+STR_DLGSETTINGS_WORKSHOP_SUBSCRIBED=Abonnements
+STR_DLGSETTINGS_WORKSHOP_PUBLISH=Publier
+STR_DLGSETTINGS_WORKSHOP_INSTALLED=Installé
+STR_DLGSETTINGS_WORKSHOP_OPEN=Ouvrir dans le Workshop
+STR_DLGSETTINGS_WORKSHOP_UPDATE=Mettre à jour
+STR_DLGSETTINGS_WORKSHOP_TAG_MAP=Carte
+STR_DLGSETTINGS_WORKSHOP_ITEM=Objet n° {string1}
+STR_DLGSETTINGS_WORKSHOP_NONE_SUBSCRIBED=Vous n'êtes abonné à aucun mod, scénario ou carte.
+STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH=Rien à publier pour l'instant. Placez un mod ou un scénario dans votre dossier Mods, ou intégrez un scénario à une carte.
+STR_DLGSETTINGS_WORKSHOP_PUB_HEADING=Publier ce mod ou ce scénario sur le Steam Workshop
+STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE=Mettre à jour l'objet dont provient ce fichier
+
+# The lobby's Workshop chip
+STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop

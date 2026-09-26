@@ -589,6 +589,7 @@ int run_scenario_dir_merges_shipped_mods(void) {
     ScnDirEntry  shipped[SD_MERGE_MAX];
     ScnDirEntry  list[SD_MERGE_MAX];
     char         shippedDir[512];
+    char         workshopDir[512];
     const char  *base;
     ServerSim   *sim;
     char         seen[1024];
@@ -624,17 +625,25 @@ int run_scenario_dir_merges_shipped_mods(void) {
        Pointed at this case's own directory, which the list then holds once,
        so what is listed is the two directories this case wrote and nothing
        the machine happens to hold. The third directory is tested on its own
-       in test_scenario_mod_dirs.c. */
+       in test_scenario_mod_dirs.c. The Workshop directory sits beside the
+       player's own and is pointed at an empty one of this case's for the
+       same reason. */
+    UT_ASSERT(utScratchPath(workshopDir, sizeof(workshopDir), "Workshop"));
+    UT_ASSERT(SDL_CreateDirectory(workshopDir));
 #ifdef _WIN32
     _putenv_s("WB_MOD_DIR_USER", sdDir);
+    _putenv_s("WB_MOD_DIR_WORKSHOP", workshopDir);
 #else
     setenv("WB_MOD_DIR_USER", sdDir, 1);
+    setenv("WB_MOD_DIR_WORKSHOP", workshopDir, 1);
 #endif
     n = serverSimScenarioListDir(sim, list, SD_MERGE_MAX);
 #ifdef _WIN32
     _putenv_s("WB_MOD_DIR_USER", "");
+    _putenv_s("WB_MOD_DIR_WORKSHOP", "");
 #else
     unsetenv("WB_MOD_DIR_USER");
+    unsetenv("WB_MOD_DIR_WORKSHOP");
 #endif
     sdNames(list, (n > 0) ? n : 0, seen, sizeof(seen));
     UT_ASSERT_MSG(sdFind(list, n, "hold.lua") != NULL,
