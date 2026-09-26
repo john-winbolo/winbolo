@@ -89,6 +89,25 @@ typedef struct BgGame {
     bool         tankHave[MAX_TANKS];       /* alive at the last tick */
     WORLD        tankPrevX[MAX_TANKS], tankPrevY[MAX_TANKS];
     WORLD        tankCurX[MAX_TANKS], tankCurY[MAX_TANKS];
+    /* The clock the draw blends by: it moves a whole number of refresh
+     * periods per draw (see bgInterpAlpha). */
+    Uint64       interpClockNs;
+    bool         interpClockValid;
+    /* The drawn scene, kept so the Frame Rate setting can redraw it every
+     * n-th refresh and copy it on the others (see bgFrameRender). Two
+     * textures drawn in turn, so a failed draw is never the one shown.
+     * Same lifetime rules as tilesTex: a renderer change forgets them, a
+     * resize or bgGameDestroy destroys them. frameBroken = they could not
+     * be made on this renderer at this size; the scene draws direct. */
+    SDL_Renderer *frameRenderer;
+    SDL_Texture  *frameTex[2];
+    int           frameFront;      /* -1 = no complete scene yet */
+    int           frameW, frameH;
+    int           frameZoom;       /* zoom the front scene was drawn at */
+    unsigned int  frameTilesGen;   /* tile sheet it was drawn from */
+    bool          frameBroken;
+    int           frameSince;      /* refreshes shown since the last redraw */
+    Uint64        frameRedrawNs;   /* wall clock of the last redraw */
 } BgGame;
 
 bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer);
