@@ -1131,6 +1131,7 @@ static const UnitTestEntry s_tests[] = {
     { "console_kick_host_without_newline",       run_console_kick_host_without_newline       },
     { "console_read_reports_eof",                run_console_read_reports_eof                },
     { "console_read_timeout_then_eof",           run_console_read_timeout_then_eof           },
+    { "tank_diagonal_steps_both_axes",                 run_tank_diagonal_steps_both_axes                 },
     { "tank_mod_speed_caps_on_road",             run_tank_mod_speed_caps_on_road             },
     { "tank_mod_speed_river_still_moves",        run_tank_mod_speed_river_still_moves        },
     { "tank_mod_accel_doubles_ticks_to_cap",     run_tank_mod_accel_doubles_ticks_to_cap     },

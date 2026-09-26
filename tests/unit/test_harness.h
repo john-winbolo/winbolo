@@ -2544,6 +2544,7 @@ int run_console_say_keeps_case(void);
 /* The sites that read a modifier (test_tank_modifier_sites.c): one case per
  * site, each pairing the modified run with a classic one on the same
  * square so only the modifier is under test. */
+int run_tank_diagonal_steps_both_axes(void);
 int run_tank_mod_speed_caps_on_road(void);
 int run_tank_mod_speed_river_still_moves(void);
 int run_tank_mod_accel_doubles_ticks_to_cap(void);
