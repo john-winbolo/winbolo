@@ -603,7 +603,15 @@ end
 -- (147,123)->(147,122) for 120 ticks round an ally's avoid tiles (see
 -- chain_rank_pick in brain_pathfinder.c for the cause). When the step names
 -- the tile we just left and it is not the destination, run a fresh A* from
--- the current tile instead, and keep doing so while we stay on this tile.
+-- the current tile instead, and keep doing so while we stay on this tile, for
+-- at most C.PF_FLIP_FRESH_ASTAR_TICKS path calls (about one per tick). After
+-- that the hold is spent: Dijkstra steps again on this tile, and no new hold
+-- starts until the tank moves.
+--
+-- 2026-09-26: the fresh A* takes the same avoid tiles as the Dijkstra step
+-- (M.flip_astar below), and the hold is capped. Before, the A* could drive
+-- into the ally the Dijkstra path was avoiding, and a full A* ran on every
+-- path call for as long as the tank stayed on the tile.
 --
 -- M.flip_track(state, tmx, tmy): call once per path call. Remembers the last
 -- tile we LEFT (state._pf_left_mx/my) and drops the hold when we move.
@@ -627,10 +635,70 @@ end
 
 -- M.flip_holding(state, tmx, tmy, dest_mx, dest_my) -> true while a flip hold
 -- is set for this tile and this destination.
+-- A spent hold (h.spent, see M.flip_use) is not holding.
 function M.flip_holding(state, tmx, tmy, dest_mx, dest_my)
   local h = state._pf_flip_hold
-  return h ~= nil and h.mx == tmx and h.my == tmy
+  return h ~= nil and not h.spent and h.mx == tmx and h.my == tmy
      and h.dmx == dest_mx and h.dmy == dest_my
+end
+
+-- M.flip_spent(state, tmx, tmy, dest_mx, dest_my) -> true when the hold for
+-- this tile and destination has used up its PF_FLIP_FRESH_ASTAR_TICKS. No new
+-- hold starts then (flip_track clears it when the tank moves).
+function M.flip_spent(state, tmx, tmy, dest_mx, dest_my)
+  local h = state._pf_flip_hold
+  return h ~= nil and h.spent == true and h.mx == tmx and h.my == tmy
+     and h.dmx == dest_mx and h.dmy == dest_my
+end
+
+-- M.flip_use(state) -> true while the hold may still run a fresh A*. Counts
+-- one path call; at PF_FLIP_FRESH_ASTAR_TICKS the hold is marked spent.
+function M.flip_use(state)
+  local h = state._pf_flip_hold
+  if not h or h.spent then return false end
+  h.n = (h.n or 0) + 1
+  if h.n > (C.PF_FLIP_FRESH_ASTAR_TICKS or 60) then
+    h.spent = true
+    print2(string.format("PF_FLIP_SPENT t=%d tile=(%d,%d) dest=(%d,%d) -- fresh A* for %d path calls, back to the Dijkstra step",
+      state.tick or 0, h.mx, h.my, h.dmx, h.dmy, h.n - 1))
+    return false
+  end
+  return true
+end
+
+-- M.flip_astar(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines,
+--              armour, avoid, penalty) -> status, nx, ny
+--   The flip guard's fresh A* (skip_dijkstra = true). The C A* takes no
+--   obstacle set, so the avoid tiles (the same list the Dijkstra tracer is
+--   given, packed y*256+x) are added to the cost overlay for this one call
+--   and put back straight after: the overlay is an int16, so the added cost
+--   is capped at 32767 there (the tracer adds `penalty` itself). The tank's
+--   own tile and the destination are left alone, as the tracer does.
+function M.flip_astar(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, avoid, penalty)
+  local saved = nil
+  if avoid and penalty and penalty > 0 then
+    saved = {}
+    for k, v in pairs(avoid) do
+      local key = (v == true) and k or v   -- list of keys, or a key set
+      if type(key) == "number" and saved[key] == nil then
+        local x, y = key % 256, math.floor(key / 256)
+        if not (x == tmx and y == tmy) and not (x == dest_mx and y == dest_my) then
+          local old = cpf.get_overlay(x, y) or 0
+          saved[key] = old
+          local add = old + penalty
+          if add > 32767 then add = 32767 end
+          cpf.set_overlay(x, y, add)
+        end
+      end
+    end
+  end
+  local st, nx, ny = cpf.path_to(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, C.ASTAR_BUDGET, true)
+  if saved then
+    for key, old in pairs(saved) do
+      cpf.set_overlay(key % 256, math.floor(key / 256), old)
+    end
+  end
+  return st, nx, ny
 end
 
 -- Wrapper: call C pathfinder and update state.pf for compatibility with
@@ -684,29 +752,32 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
   local flip_on = C.PF_FLIP_FRESH_ASTAR and not nogo
   if flip_on then M.flip_track(state, tmx, tmy) end
   local status, nx, ny
+  local avoid_pen = nogo and (C.SEA_NOGO_AVOID_PENALTY or 30000) or C.NAV_AVOID_PENALTY
   local flip_astar = flip_on and M.flip_holding(state, tmx, tmy, dest_mx, dest_my)
+                     and M.flip_use(state)
   if not flip_astar then
     status, nx, ny = cpf.path_to(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, C.ASTAR_BUDGET, false, avoid,
-                                 nogo and (C.SEA_NOGO_AVOID_PENALTY or 30000)
-                                      or C.NAV_AVOID_PENALTY)
-    if flip_on and status == 1 and M.flip_is_back(state, dest_mx, dest_my, nx, ny) then
+                                 avoid_pen)
+    if flip_on and status == 1 and M.flip_is_back(state, dest_mx, dest_my, nx, ny)
+       and not M.flip_spent(state, tmx, tmy, dest_mx, dest_my) then
       state._pf_flip_hold = { mx = tmx, my = tmy, dmx = dest_mx, dmy = dest_my }
-      flip_astar = true
-      print2(string.format("PF_FLIP t=%d tile=(%d,%d) next=(%d,%d) = tile just left, dest=(%d,%d) -> fresh A* while on this tile",
-        state.tick or 0, tmx, tmy, nx, ny, dest_mx, dest_my))
+      flip_astar = M.flip_use(state)
+      print2(string.format("PF_FLIP t=%d tile=(%d,%d) next=(%d,%d) = tile just left, dest=(%d,%d) -> fresh A* while on this tile (up to %d path calls)",
+        state.tick or 0, tmx, tmy, nx, ny, dest_mx, dest_my, C.PF_FLIP_FRESH_ASTAR_TICKS or 60))
     end
   end
   if flip_astar then
-    -- skip_dijkstra = true: A* from THIS tile. Taken only when it gives a
-    -- step (done, or running with a step); otherwise the Dijkstra step as
-    -- before, so a budget-starved A* cannot freeze the tank.
-    local a_st, a_nx, a_ny = cpf.path_to(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, C.ASTAR_BUDGET, true)
+    -- skip_dijkstra = true: A* from THIS tile, with the same avoid tiles.
+    -- Taken only when it gives a step (done, or running with a step);
+    -- otherwise the Dijkstra step as before, so a budget-starved A* cannot
+    -- freeze the tank.
+    local a_st, a_nx, a_ny = M.flip_astar(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour,
+                                          avoid, avoid_pen)
     if a_st == 1 or (a_st == 0 and a_nx and a_nx >= 0) then
       status, nx, ny = a_st, a_nx, a_ny
     elseif status == nil then
       status, nx, ny = cpf.path_to(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, C.ASTAR_BUDGET, false, avoid,
-                                   nogo and (C.SEA_NOGO_AVOID_PENALTY or 30000)
-                                        or C.NAV_AVOID_PENALTY)
+                                   avoid_pen)
     end
   end
   if BRAIN_PROFILE then

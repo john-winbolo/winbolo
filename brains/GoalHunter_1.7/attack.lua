@@ -2813,6 +2813,15 @@ local function blitz_sync_engage(state, goal, now)
   state.squad_blitz_engage_mx, state.squad_blitz_engage_my = goal.standoff_mx, goal.standoff_my
   state.squad_blitz_engage_fx, state.squad_blitz_engage_fy = sfx, sfy
   state.squad_blitz_engage_deg = goal._chosen_deg
+  -- 2026-09-26: the reject flag was read against the OLD spot. While we sat
+  -- in plan_position this function returned early, so squad.update's
+  -- read_cmdr_brj kept matching the commander's brj (still naming the old
+  -- spot) against the old engage fields and set the flag again. Left set,
+  -- M.blitz_brj_replan below saw it with the NEW spot's key and replanned a
+  -- second time for one reject: a good angle banned and one of the
+  -- SANITY_PILL_REPLANS_MAX tries used. A reject of the new spot sets it
+  -- again at the next read.
+  state._blitz_call_rejected = nil
 end
 
 -- brj for a COMMITTED soldier (bug, 20260925_105315 bot1 t=3032+): the
@@ -2855,7 +2864,8 @@ M._blitz_sync_engage = blitz_sync_engage   -- unit tests
 -- 2026-09-25 evening). True when the soldier should restart its
 -- SQUAD_BLITZ_WAIT_TIMEOUT count from the commander's last message
 -- (cslot.last_tick): blitz-only with BLITZ_ONLY_EXTEND_WAIT (the only case a
--- commander extends with no cap), the commander's call is open on our pill,
+-- commander extends its wait, at most BLITZ_ONLY_EXTEND_MAX times), the
+-- commander's call is open on our pill,
 -- its bac names us, and it has sent something since the count last started.
 -- Logs BLITZ_WAIT_FOLLOW once per goal.
 function M.blitz_soldier_wait_follow(state, goal, cslot, cmdr, self_pn, now)
@@ -2891,12 +2901,24 @@ end
 --   timed_out  READY_TIMEOUT (+ extensions) elapsed
 --   ready/total  soldiers ready / committed; party = 1 + total
 --   set_inwait   PARKED set: commander + soldiers in a ready substate
--- Returns "extend" (blitz-only, timed out, parked < min: add a timeout),
--- "abandon" (timed out, party < min), "go", or "wait".
+--   ext_n        extensions already added on this goal (nil = 0)
+--   ext_max      cap on ext_n (nil = C.BLITZ_ONLY_EXTEND_MAX)
+-- Returns "extend" (blitz-only, timed out, parked < min, ext_n < ext_max: add
+-- a timeout), "abandon" (timed out and party < min; or blitz-only, timed out,
+-- parked < min with the extensions used up), "go", or "wait".
 -- bo_hold false = exactly the old rules.
-function M.blitz_cmdr_go_verdict(bo_hold, timed_out, ready, total, party, set_inwait, bmin)
+-- 2026-09-26: the extensions are capped. With no cap a commander that nobody
+-- joined extended forever, its soldiers followed it (BLITZ_SOLDIER_WAIT_FOLLOW
+-- _CMDR) and BLITZ_NO_BUILD_ACTIVE kept pill building off the whole time. Once
+-- the cap is reached, a blitz-only commander still short of parked tanks gives
+-- the take up: blitz-only never charges short.
+function M.blitz_cmdr_go_verdict(bo_hold, timed_out, ready, total, party, set_inwait, bmin, ext_n, ext_max)
   local early_go = set_inwait >= bmin
-  if bo_hold and timed_out and not early_go then return "extend" end
+  if bo_hold and timed_out and not early_go then
+    ext_max = ext_max or C.BLITZ_ONLY_EXTEND_MAX or 3
+    if (ext_n or 0) < ext_max then return "extend" end
+    return "abandon"
+  end
   if timed_out and party < bmin then return "abandon" end
   local go_now
   if bo_hold then
@@ -6022,8 +6044,11 @@ function M.update_attack_substate(goal, state, world, info)
     if state.squad_role == "c" then
       local total, ready, min_bd, any_unseen, inwait = squad.blitz_ready_status(state, now, info.player_number or -1, info)
       -- Blitz-only (squad.blitz_only): nobody answering is NOT a solo GO. Fall
-      -- through to the wait below: a joiner can still arrive, and at
-      -- READY_TIMEOUT party=1 < MIN gives the take up (BLITZ_ABANDON_SHORT).
+      -- through to the wait below: a joiner can still arrive. At READY_TIMEOUT
+      -- with party=1 < MIN: without BLITZ_ONLY_EXTEND_WAIT the take is given
+      -- up (BLITZ_ABANDON_SHORT); with it the wait is extended up to
+      -- BLITZ_ONLY_EXTEND_MAX times first, then given up the same way
+      -- (2026-09-26: before the cap it extended forever).
       if total == 0 and not squad.blitz_only(state) then
         -- Nobody (left) answering. If we SKIPPED walls for a joiner who is now
         -- gone (full-pill PPT, no shield built), degrade to a normal SOLO
@@ -6130,7 +6155,9 @@ function M.update_attack_substate(goal, state, world, info)
       -- reaching MIN. Committed-but-still-driving soldiers do not count, and
       -- the timeout neither charges nor abandons: it adds one more
       -- SQUAD_BLITZ_READY_TIMEOUT to the wait. The call stays open in
-      -- blitz_wait, so recruiting goes on meanwhile. No cap.
+      -- blitz_wait, so recruiting goes on meanwhile. At most
+      -- BLITZ_ONLY_EXTEND_MAX extensions (2026-09-26), then the take is given
+      -- up below (BLITZ_ABANDON_SHORT).
       local bo_hold = squad.blitz_only(state) and C.BLITZ_ONLY_EXTEND_WAIT
       if BRAIN_DEBUG_MODE and state._blitz_wait_viz then
         local v = state._blitz_wait_viz
@@ -6138,13 +6165,14 @@ function M.update_attack_substate(goal, state, world, info)
         v.bo_hold = bo_hold
         v.bo_ext_n = goal._blitz_only_ext_n or 0
       end
-      local verdict = M.blitz_cmdr_go_verdict(bo_hold, timed_out, ready, total, party, set_inwait, bmin)
+      local verdict = M.blitz_cmdr_go_verdict(bo_hold, timed_out, ready, total, party, set_inwait, bmin,
+                                              goal._blitz_only_ext_n or 0, C.BLITZ_ONLY_EXTEND_MAX or 3)
       if verdict == "extend" then
         local add = C.SQUAD_BLITZ_READY_TIMEOUT or 150
         goal._blitz_timeout_ext = (goal._blitz_timeout_ext or 0) + add
         goal._blitz_only_ext_n  = (goal._blitz_only_ext_n or 0) + 1
-        print2(string.format("BLITZ_WAIT_EXTEND t=%d pill=%s parked=%d < min=%d, extensions=%d (+%d, wait now %d) ready=%d/%d party=%d [%s %s] -- blitz-only: no GO short, no abandon",
-          now, tostring(goal.target_id), set_inwait, bmin, goal._blitz_only_ext_n, add,
+        print2(string.format("BLITZ_WAIT_EXTEND t=%d pill=%s parked=%d < min=%d, extensions=%d/%d (+%d, wait now %d) ready=%d/%d party=%d [%s %s] -- blitz-only: no GO short",
+          now, tostring(goal.target_id), set_inwait, bmin, goal._blitz_only_ext_n, C.BLITZ_ONLY_EXTEND_MAX or 3, add,
           (C.SQUAD_BLITZ_READY_TIMEOUT or 150) + goal._blitz_timeout_ext,
           ready, total, party, squad.blitz_size_label(), squad.blitz_only_label(state)))
         if BRAIN_DEBUG_MODE and state._blitz_wait_viz then
@@ -6162,10 +6190,12 @@ function M.update_attack_substate(goal, state, world, info)
       -- soldier still holding for a GO that is never coming. The next replan
       -- picks a fresh goal; if this pill still looks worth a blitz the call
       -- reopens, which is also the recruiting window a third tank needs.
+      -- Blitz-only with the extensions used up (BLITZ_ONLY_EXTEND_MAX) ends
+      -- here too, with party possibly >= min but parked < min.
       if verdict == "abandon" then
-        print2(string.format("BLITZ_ABANDON_SHORT t=%d pill=%s party=%d < min=%d (ready=%d/%d inwait=%d) [%s] -- READY_TIMEOUT with too few tanks; releasing the call instead of charging short",
-              now, tostring(goal.target_id), party, bmin, ready, total, inwait or 0, squad.blitz_size_label()))
-        clear_attack_goal(state, string.format("blitz_wait: READY_TIMEOUT short-handed (party=%d < min=%d)", party, bmin))
+        print2(string.format("BLITZ_ABANDON_SHORT t=%d pill=%s party=%d parked=%d min=%d (ready=%d/%d inwait=%d ext=%d) [%s] -- READY_TIMEOUT with too few tanks; releasing the call instead of charging short",
+              now, tostring(goal.target_id), party, set_inwait, bmin, ready, total, inwait or 0, goal._blitz_only_ext_n or 0, squad.blitz_size_label()))
+        clear_attack_goal(state, string.format("blitz_wait: READY_TIMEOUT short-handed (party=%d parked=%d < min=%d, ext=%d)", party, set_inwait, bmin, goal._blitz_only_ext_n or 0))
         return
       end
       if verdict == "go" then
@@ -6210,7 +6240,8 @@ function M.update_attack_substate(goal, state, world, info)
         goal._blitz_wait_entry = now   -- first blitz_wait tick (the follow log reads it)
       end
       -- C.BLITZ_SOLDIER_WAIT_FOLLOW_CMDR: under blitz-only the commander
-      -- extends its own wait with no cap (BLITZ_WAIT_EXTEND). While it still
+      -- extends its own wait (BLITZ_WAIT_EXTEND, at most BLITZ_ONLY_EXTEND_MAX
+      -- times, then it clears its goal and sends bcc). While it still
       -- has the call open on our pill and names us in bac, restart our
       -- backstop from its last message, so we do not time out under a
       -- commander that is still waiting for the set. Silent / call closed /

@@ -2805,6 +2805,26 @@ static void note_sea_veto(BrainPathfinder *pf, int fx, int fy,
   pf->sea_veto_pick_y = (int16_t)py;
 }
 
+/* Hazard part of the cost of entering tile (x,y) on layer `boat`, as the
+ * slate prices it (see the normal-tile branch of the slate expansion):
+ * danger * slate danger_scale * (16/speed) + overlay + mine penalty. The
+ * terrain part (edge_cost) is left out. */
+static float tile_hazard(const BrainPathfinder *pf, const DijkstraSlate *s,
+                         int x, int y, int boat) {
+  int m = y * MAP_SIZE + x;
+  int t = pf->map[m] & 0x0F;
+  float danger = (float)pf->danger_grid[m] + (float)pf->danger_offset_grid[m];
+  float spd;
+  float h;
+  if (danger < 0.0f) danger = 0.0f;
+  spd = (boat && is_water_tile(t)) ? pf->terrain_speed_table[TT_BOAT]
+                                   : pf->terrain_speed_table[t];
+  h = danger * s->danger_scale * (16.0f / fmaxf(spd, 0.1f))
+      + (float)pf->overlay_grid[m];
+  if (pf->map[m] & 0x80) h += pf->mine_penalty;
+  return h;
+}
+
 /* Chain-rank neighbour pick for the next-step fallbacks (config key
  * "nextstep_chain_veer"; off = never called).
  *
@@ -2822,7 +2842,17 @@ static void note_sea_veto(BrainPathfinder *pf, int fx, int fy,
  * only at chain[0 .. limit-1]. Ties: on the chain beats next to it, then
  * nearer the destination. Returns 1 and the tile, or 0 when no neighbour
  * touches that part of the chain (the caller then keeps its old pick).
- * Cost: 8 x limit integer compares, only on a fallback tick. */
+ * Cost: 8 x limit integer compares, only on a fallback tick.
+ *
+ * Cost bound (2026-09-26): the pick used g only as reached-or-not, so a
+ * mined or pill-covered side tile could win over a safe one. The old veer
+ * ranks by g, which carries exactly those terms, so it only takes such a tile
+ * when every other neighbour is worse. Now a neighbour is skipped when the
+ * step onto it cannot be made (edge_cost COST_INF from the tank's tile), or
+ * when its hazard (tile_hazard: danger, overlay, mine) is more than the
+ * hazard of the chain tile it touches plus the plain terrain cost of the
+ * step. A tile ON the chain always passes: the path already pays it. The
+ * chain-rank order among the rest is unchanged. */
 static int chain_rank_pick(const BrainPathfinder *pf, const DijkstraSlate *s,
                            const int *chain, int limit,
                            int sx, int sy, int dx, int dy,
@@ -2830,6 +2860,11 @@ static int chain_rank_pick(const BrainPathfinder *pf, const DijkstraSlate *s,
                            int foot_rule, int *out_x, int *out_y) {
   int best_k = limit, best_on = 0, best_d2 = 0x7FFFFFFF;
   int bx = -1, by = -1;
+  /* The tank's layer: the cheaper one at its tile, as the fallbacks read g. */
+  float sgl = s->g_cost[node_idx(sx, sy, 0)];
+  float sgb = s->g_cost[node_idx(sx, sy, 1)];
+  int s_boat = (foot_rule || !(sgb < sgl)) ? 0 : 1;
+  int s_node = node_idx(sx, sy, s_boat);
   for (int d = 0; d < 8; d++) {
     int ax = sx + DX8[d], ay = sy + DY8[d];
     if (ax < 0 || ax > 255 || ay < 0 || ay > 255) continue;
@@ -2838,6 +2873,8 @@ static int chain_rank_pick(const BrainPathfinder *pf, const DijkstraSlate *s,
     float gl = s->g_cost[node_idx(ax, ay, 0)];
     float gb = s->g_cost[node_idx(ax, ay, 1)];
     if (gl >= COST_INF && gb >= COST_INF) continue;
+    float step_ec = pf->edge_cost ? pf->edge_cost[s_node * 8 + d] : 0.0f;
+    if (step_ec >= COST_INF) continue;
     int k_hit = -1, on = 0;
     for (int k = 0; k < limit && k < best_k + 1; k++) {
       int cdx = node_x(chain[k]) - ax, cdy = node_y(chain[k]) - ay;
@@ -2848,6 +2885,13 @@ static int chain_rank_pick(const BrainPathfinder *pf, const DijkstraSlate *s,
       }
     }
     if (k_hit < 0) continue;
+    if (!on) {
+      int c_boat = (chain[k_hit] >= BOAT_OFFSET) ? 1 : 0;
+      float h_a = tile_hazard(pf, s, ax, ay, (gb < gl) ? 1 : 0);
+      float h_c = tile_hazard(pf, s, node_x(chain[k_hit]), node_y(chain[k_hit]),
+                              c_boat);
+      if (h_a > h_c + step_ec) continue;
+    }
     int d2 = (ax - dx) * (ax - dx) + (ay - dy) * (ay - dy);
     if (k_hit < best_k
         || (k_hit == best_k && (on > best_on

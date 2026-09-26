@@ -198,6 +198,13 @@ function M.line_margin(ctx, ofx, ofy, afx, afy, margin)
   local x1 = floor((ofx > afx and ofx or afx) + margin)
   local y0 = floor((ofy < afy and ofy or afy) - margin) - 1
   local y1 = floor((ofy > afy and ofy or afy) + margin)
+  -- 2026-09-26: keep the box on the map. The origin can come off the wire (an
+  -- ally's bes); "99999999,5" made this loop run until the think budget ran
+  -- out, every tick. Tiles outside 0..255 are not map tiles.
+  if x0 < 0 then x0 = 0 end
+  if y0 < 0 then y0 = 0 end
+  if x1 > 255 then x1 = 255 end
+  if y1 > 255 then y1 = 255 end
   local worst, worst_short = nil, 0
   for by = y0, y1 do
     for bx = x0, x1 do

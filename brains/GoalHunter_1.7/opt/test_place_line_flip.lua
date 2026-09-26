@@ -68,6 +68,8 @@ check("PF_FLIP_FRESH_ASTAR default true", C.PF_FLIP_FRESH_ASTAR == true)
 check("PRESETS.keel PILL_PLACE_AVOID_BLITZ_LINE = false", keel.PILL_PLACE_AVOID_BLITZ_LINE == false)
 check("PRESETS.keel PF_NEXTSTEP_CHAIN_VEER = false", keel.PF_NEXTSTEP_CHAIN_VEER == false)
 check("PRESETS.keel PF_FLIP_FRESH_ASTAR = false", keel.PF_FLIP_FRESH_ASTAR == false)
+check("PF_FLIP_FRESH_ASTAR_TICKS default 60", C.PF_FLIP_FRESH_ASTAR_TICKS == 60, C.PF_FLIP_FRESH_ASTAR_TICKS)
+check("PRESETS.keel PF_FLIP_FRESH_ASTAR_TICKS = 60", keel.PF_FLIP_FRESH_ASTAR_TICKS == 60)
 do
   local seen = {}
   local saved = {}
@@ -318,6 +320,64 @@ do
         #calls == 1 and calls[1].skip == false and nx == 147 and ny == 123, xy(nx, ny))
   check("  no flip state written", st._pf_cur_mx == nil and st._pf_flip_hold == nil)
   C.PF_FLIP_FRESH_ASTAR = true
+
+  -- 2026-09-26: the fresh A* takes the ally avoid tiles (on the overlay for
+  -- that one call, then put back); the tracer call gets them as before.
+  local ov = {}
+  local real_get, real_set = cpf.get_overlay, cpf.set_overlay
+  cpf.get_overlay = function(x, y) return ov[y * 256 + x] or 0 end
+  cpf.set_overlay = function(x, y, v) ov[y * 256 + x] = v end
+  local seen_ov = nil
+  cpf.path_to = function(tmx, tmy, dmx, dmy, ib, sh, tr, mi, ar, budget, skip, obst, pen)
+    calls[#calls + 1] = { tmx = tmx, tmy = tmy, skip = skip and true or false, obst = obst, pen = pen }
+    if skip then
+      seen_ov = { a = ov[123 * 256 + 148] or 0, self = ov[122 * 256 + 147] or 0,
+                  dest = ov[DY * 256 + DX] or 0 }
+    end
+    local r = table.remove(script, 1) or { 1, -1, -1 }
+    return r[1], r[2], r[3]
+  end
+  st = new_state()
+  ov[123 * 256 + 148] = 800                     -- an existing ally stamp
+  st._nav_avoid_tiles = { 123 * 256 + 148, 122 * 256 + 147, DY * 256 + DX }
+  step(st, 147, 123, { { 1, 147, 122 } })
+  nx, ny = step(st, 147, 122, { { 1, 147, 123 }, { 1, 147, 121 } })
+  check("flip A*: Dijkstra call got the avoid list and penalty",
+        calls[1].obst == st._nav_avoid_tiles and calls[1].pen == C.NAV_AVOID_PENALTY)
+  check("flip A*: avoid tile on the overlay during the A* (capped 32767)",
+        seen_ov and seen_ov.a == 32767, seen_ov and seen_ov.a)
+  check("  own tile and dest left alone", seen_ov and seen_ov.self == 0 and seen_ov.dest == 0)
+  check("  overlay put back after the call", ov[123 * 256 + 148] == 800, ov[123 * 256 + 148])
+  check("  A* step used (147,121)", nx == 147 and ny == 121, xy(nx, ny))
+  st._nav_avoid_tiles = nil
+
+  -- The hold is capped at PF_FLIP_FRESH_ASTAR_TICKS path calls.
+  local cap = C.PF_FLIP_FRESH_ASTAR_TICKS
+  C.PF_FLIP_FRESH_ASTAR_TICKS = 3
+  st = new_state()
+  step(st, 147, 123, { { 1, 147, 122 } })
+  local astars = 0
+  step(st, 147, 122, { { 1, 147, 123 }, { 1, 148, 123 } })   -- hold set: call 1
+  if calls[#calls].skip then astars = astars + 1 end
+  for _ = 1, 2 do                                             -- calls 2 and 3
+    step(st, 147, 122, { { 1, 148, 123 } })
+    if #calls == 1 and calls[1].skip then astars = astars + 1 end
+  end
+  check("cap 3: three path calls on the tile run the fresh A*", astars == 3, astars)
+  nx, ny = step(st, 147, 122, { { 1, 147, 123 } })
+  check("  4th call: hold spent -> Dijkstra only, its step",
+        #calls == 1 and calls[1].skip == false and nx == 147 and ny == 123, xy(nx, ny))
+  check("  hold marked spent", st._pf_flip_hold and st._pf_flip_hold.spent == true)
+  nx, ny = step(st, 147, 122, { { 1, 147, 123 } })
+  check("  5th call: still Dijkstra only, no new hold", #calls == 1 and calls[1].skip == false
+        and st._pf_flip_hold.spent == true, #calls)
+  step(st, 147, 123, { { 1, 147, 122 } })
+  check("  tank moved: the spent hold on B is gone",
+        st._pf_flip_hold == nil or (not st._pf_flip_hold.spent and st._pf_flip_hold.my == 123))
+  nx, ny = step(st, 147, 122, { { 1, 147, 123 }, { 1, 148, 123 } })
+  check("  back on B: a new hold runs the A* again", #calls == 2 and calls[2].skip == true, #calls)
+  C.PF_FLIP_FRESH_ASTAR_TICKS = cap
+  cpf.get_overlay, cpf.set_overlay = real_get, real_set
   cpf.path_to = real_path_to
 end
 

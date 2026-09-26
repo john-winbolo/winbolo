@@ -608,6 +608,10 @@ function M.reset_blitz_state(state)
   -- fresh-kill pickup claim dies with the tank (a respawn shouldn't chase a
   -- pill it "killed" in a previous life).
   state.kill_pickup             = nil
+  -- Blitz window (M.blitz_window, 2026-09-26): a respawned bot kept the last
+  -- life's window and went on keeping that blitz's lines and the no-build
+  -- rule for up to SQUAD_BLITZ_WAIT_TIMEOUT ticks.
+  state._blitz_win              = nil
 end
 
 
@@ -804,6 +808,34 @@ function M.availability(state, info, help_target_id)
   return ok, reason
 end
 
+-- M.parse_bes(bes, pmx, pmy) -> fx, fy or nil
+--   An ally's broadcast standoff ("fx,fy", float tile coords) as two numbers,
+--   or nil when it is not two numbers, is off the map (outside 0..255), or,
+--   when the pill tile (pmx,pmy) is given, lies more than BES_MAX_PILL_DIST
+--   tiles from the pill centre. 2026-09-26: `bes` comes off the wire from any
+--   ally. "1.2.3,4" matches the pattern but tonumber gives nil, which then
+--   reached math.floor; "99999999,5" made the spot tests (spot_margin
+--   .line_margin) walk a box millions of tiles wide on every tick until the
+--   think budget ran out.
+-- Bound: a standoff is picked at ATTACK_PILL_STANDOFF (7.4) or PPT_STANDOFF
+-- (7) from the pill, a wall-shield spot at WALL_SHIELD_STANDOFF +1 (8), and
+-- nothing is fired from beyond ATTACK_PILL_RANGE (9.5). 12 tiles leaves a
+-- margin over all of them; a spot further out is not a spot on this pill.
+local BES_MAX_PILL_DIST = 12
+M.BES_MAX_PILL_DIST = BES_MAX_PILL_DIST   -- unit tests
+function M.parse_bes(bes, pmx, pmy)
+  if type(bes) ~= "string" then return nil end
+  local sx, sy = bes:match("^(%-?[%d.]+),(%-?[%d.]+)$")
+  local fx, fy = tonumber(sx), tonumber(sy)
+  if not (fx and fy) then return nil end
+  if fx < 0 or fx >= 256 or fy < 0 or fy >= 256 then return nil end
+  if pmx and pmy then
+    local dx, dy = fx - (pmx + 0.5), fy - (pmy + 0.5)
+    if dx * dx + dy * dy > BES_MAX_PILL_DIST * BES_MAX_PILL_DIST then return nil end
+  end
+  return fx, fy
+end
+
 -- Commander standoff arbiter: gather every soldier answering THIS commander
 -- (broadcast cmdr == self) plus self, each with their chosen standoff (bes) and
 -- reported walk distance (bd). On a conflict (standoffs within CLASH tiles) the
@@ -919,9 +951,13 @@ function M.blitz_shot_lines_raw(state, world, now, self_pn)
   local function add(pn)
     local bes = ally_state.get_key(pn, "bes")
     if not bes then return end
-    local fx, fy = bes:match("^(%-?[%d.]+),(%-?[%d.]+)$")
+    -- 2026-09-26: parse_bes drops a malformed or off-map spot (tonumber nil
+    -- used to reach math.floor in tile_on_blitz_line). No distance bound
+    -- here: line_margin keeps its box on the map, so a long line only costs
+    -- more reads.
+    local fx, fy = M.parse_bes(bes)
     if fx then
-      lines[#lines + 1] = { fx = tonumber(fx), fy = tonumber(fy),
+      lines[#lines + 1] = { fx = fx, fy = fy,
                             pmx = pmx, pmy = pmy, who = "p" .. tostring(pn) }
     end
   end
@@ -1102,9 +1138,15 @@ function M.blitz_arbitrate(state, info, now, self_pn)
     local is_dead = dead and dead[pn] and dead[pn] > (slot.last_tick or 0)
     if pn ~= self_pn and slot.info.role == "s"
        and tonumber(slot.info.cmdr or "") == self_pn and not is_dead then
-      local fx, fy
-      if slot.info.bes then fx, fy = slot.info.bes:match("^(%-?[%d.]+),(%-?[%d.]+)$") end
-      parts[#parts + 1] = { pn = pn, fx = fx and tonumber(fx), fy = fy and tonumber(fy),
+      -- 2026-09-26: a malformed, off-map or far-away bes counts as no offer
+      -- (not answered, so not accepted), so it never reaches the spot test.
+      local fx, fy = M.parse_bes(slot.info.bes, state.goal and state.goal.mx, state.goal and state.goal.my)
+      if BRAIN_DEBUG_MODE and slot.info.bes and not fx then
+        print2(string.format("BLITZ_ARB_BAD_BES t=%d p%s bes=%q pill=(%s,%s) -- not two numbers, off the map or over %d tiles from the pill; ignored",
+          now, tostring(pn), tostring(slot.info.bes):sub(1, 40),
+          tostring(state.goal and state.goal.mx), tostring(state.goal and state.goal.my), BES_MAX_PILL_DIST))
+      end
+      parts[#parts + 1] = { pn = pn, fx = fx, fy = fy,
                             bd = tonumber(slot.info.bd or ""),
                             committed = (slot.info.sub == "blitz_wait") or (slot.info.rdy == "1") }
     end
@@ -2454,8 +2496,8 @@ function M.blitz_ready_status(state, now, self_pn, info)
           local bd, seen = nil, false
           local p = pos_by_pn and pos_by_pn[pn]
           if p and h.bes then
-            local bx, by = h.bes:match("^(%-?[%d.]+),(%-?[%d.]+)$")
-            if bx then bd = U.mdist(p.mx, p.my, tonumber(bx), tonumber(by)); seen = true end
+            local bx, by = M.parse_bes(h.bes)   -- 2026-09-26: nil-safe
+            if bx then bd = U.mdist(p.mx, p.my, bx, by); seen = true end
           end
           if not bd then bd = tonumber(h.bd or "") end
           if not seen then any_unseen = true end
@@ -2493,9 +2535,8 @@ function M.draw_blitz(state, info, now)
         local mine = (tonumber(h.cmdr or "") == squad_id) or (pn == squad_id)
         if mine and h.bes then
           -- bes is the standoff's FLOAT tile center (4dp) — use as-is, no +0.5.
-          local bx, by = h.bes:match("^(%-?[%d.]+),(%-?[%d.]+)$")
+          local bx, by = M.parse_bes(h.bes)
           if bx then
-            bx, by = tonumber(bx), tonumber(by)
             local rc = (h.rdy == "1") and { 120, 255, 120 } or { 200, 120, 200 }
             viz.circle("squad_blitz", bx, by, 0.45, rc[1], rc[2], rc[3], 160)
             local tag = (h.role == "c") and "C" or "S"
@@ -2563,8 +2604,8 @@ function M.blitz_claims(state, now, self_pn)
   local function add(pn)
     local bes = ally_state.get_key(pn, "bes")
     if bes then
-      local fx, fy = bes:match("^(%-?[%d.]+),(%-?[%d.]+)$")
-      if fx then claims[#claims + 1] = { fx = tonumber(fx), fy = tonumber(fy) } end
+      local fx, fy = M.parse_bes(bes)   -- 2026-09-26: nil-safe
+      if fx then claims[#claims + 1] = { fx = fx, fy = fy } end
     end
   end
   add(cmdr)  -- the commander's own standoff
@@ -2855,8 +2896,8 @@ function M.draw_blitz_roster(state, info, now)
       gsub  = ally_state.get_key(m.pn, "sub")
       local b = ally_state.get_key(m.pn, "bes")
       if b then
-        local fx, fy = b:match("^(%-?[%d.]+),(%-?[%d.]+)$")
-        if fx then bes = string.format("%.1f,%.1f", tonumber(fx), tonumber(fy)) end
+        local fx, fy = M.parse_bes(b)
+        if fx then bes = string.format("%.1f,%.1f", fx, fy) end
       end
       rdy = ally_state.get_key(m.pn, "rdy") == "1"
     end
@@ -2921,13 +2962,13 @@ function M.draw_blitz_wait_timeout(state, info, now)
   end
   -- Blitz-only hold (C.BLITZ_ONLY_EXTEND_WAIT): GO needs the PARKED set
   -- (commander + soldiers at their spots) >= MIN; each timeout short of it
-  -- adds one more READY_TIMEOUT instead of charging or abandoning.
+  -- adds one more READY_TIMEOUT, up to BLITZ_ONLY_EXTEND_MAX, then abandons.
   if v.bo_hold then
     local parked = v.parked or 1
     local pshort = parked < (v.blitz_min or 2)
     viz.hud_text("blitz_wait_timeout", x, y,
-                 string.format("parked %d/min %d (blitzonly: GO needs parked>=min)  ext %d",
-                               parked, v.blitz_min or 2, v.bo_ext_n or 0),
+                 string.format("parked %d/min %d (blitzonly: GO needs parked>=min)  ext %d/%d",
+                               parked, v.blitz_min or 2, v.bo_ext_n or 0, C.BLITZ_ONLY_EXTEND_MAX or 3),
                  "topright", pshort and 240 or 140, pshort and 160 or 230, pshort and 90 or 140, 255)
     y = y + dy
   end

@@ -1529,9 +1529,18 @@ M.PF_NEXTSTEP_FOOT_SEA_RULE     = true  -- boatless tank is never handed a deep-
 M.PF_NEXTSTEP_CHAIN_VEER        = true
 -- Path flip guard, 2026-09-25. true => when the next path step is the tile
 -- the tank just left (A->B->A) and not the destination, steering runs a fresh
--- A* from the current tile instead of the Dijkstra step, for as long as the
--- tank stays on that tile. Cheap: one tile compare per path call. KEEL false.
+-- A* from the current tile instead of the Dijkstra step, while the tank stays
+-- on that tile, for at most PF_FLIP_FRESH_ASTAR_TICKS path calls. The A* gets
+-- the same ally avoid tiles as the Dijkstra step (added to the cost overlay
+-- for that one call). The test is one tile compare per path call; the cost is
+-- a full A* on every path call while the hold is on, which is why it is
+-- capped. KEEL false.
 M.PF_FLIP_FRESH_ASTAR           = true
+-- 2026-09-26: cap on the flip hold above, in path calls (about one per tick
+-- while driving). At the cap the hold is spent: Dijkstra steps again on that
+-- tile and no new hold starts until the tank moves. Before it the hold had no
+-- cap. KEEL 60 (unused there: PF_FLIP_FRESH_ASTAR is false).
+M.PF_FLIP_FRESH_ASTAR_TICKS     = 60
 M.DIJKSTRA_USE_FOR_GOALS        = true  -- replace cost_to in step_eval_queue with dijkstra
                                         -- lookup_by_kind. Pill pools use kind=1 (low-danger
                                         -- slate), other pools use kind=0 (normal-danger slate).
@@ -3003,8 +3012,10 @@ M.BLITZ_ONLY_PILL_ATTACKS = false -- true => this bot attacks a LIVE pill ONLY
                            -- dropped (BLITZ_ONLY_ABORT); a pill under
                            -- HARD_TAKE_MIN_HP is still blitzed (no "finish it
                            -- solo" shortcut) and a commander with nobody joined
-                           -- waits out READY_TIMEOUT and gives the take up
-                           -- instead of going GO alone. Dead-pill grabs
+                           -- never goes GO alone: it waits out READY_TIMEOUT
+                           -- (plus up to BLITZ_ONLY_EXTEND_MAX extensions when
+                           -- BLITZ_ONLY_EXTEND_WAIT is on) and then gives the
+                           -- take up. Dead-pill grabs
                            -- (capture_pill, pool 4) are NOT pill attacks and are
                            -- unchanged. The "blitzonly" init flag
                            -- (state.blitz_only) turns the same gate on per bot
@@ -3017,10 +3028,21 @@ M.BLITZ_ONLY_EXTEND_WAIT = true -- true => under blitz-only (flag or knob
                            -- READY_TIMEOUT with fewer parked it neither
                            -- charges nor abandons: it adds another
                            -- SQUAD_BLITZ_READY_TIMEOUT to the wait
-                           -- (BLITZ_WAIT_EXTEND in print2). No cap: it waits
-                           -- until the set parks, the pill dies or the goal
-                           -- changes. false = the old GO rules. No effect
-                           -- without blitz-only. KEEL false.
+                           -- (BLITZ_WAIT_EXTEND in print2), at most
+                           -- BLITZ_ONLY_EXTEND_MAX times; after that a
+                           -- timeout short of the parked set gives the take
+                           -- up (BLITZ_ABANDON_SHORT). false = the old GO
+                           -- rules. No effect without blitz-only. KEEL false.
+M.BLITZ_ONLY_EXTEND_MAX = 3 -- 2026-09-26: cap on the BLITZ_ONLY_EXTEND_WAIT
+                           -- extensions per take. Before it there was no cap:
+                           -- a commander nobody joined extended forever, its
+                           -- soldiers followed it (BLITZ_SOLDIER_WAIT_FOLLOW
+                           -- _CMDR) and BLITZ_NO_BUILD_ACTIVE kept pill
+                           -- building off all that time. At the cap the
+                           -- commander clears the goal; that closes the call
+                           -- (bcc) and its soldiers leave blitz_wait when its
+                           -- broadcast goal changes. Only read with
+                           -- BLITZ_ONLY_EXTEND_WAIT on. KEEL 3 (unused there).
 M.BLITZ_ONLY_CMDR_NEEDS_FREE = true -- true => under blitz-only a bot may
                            -- START a new take as commander (a pill with no
                            -- blitz of ours, no negotiation and no open call)
@@ -4503,6 +4525,12 @@ M.DECOY_GETAWAY_MAX_STEPS    = 5      -- keel 5 (moot; master off)
 M.DECOY_GETAWAY_HITS         = 1      -- keel 1 (moot)
 M.DECOY_GETAWAY_LAST_WEIGHT  = 2.0    -- keel 2.0 (moot)
 M.DECOY_GETAWAY_RESCAN_TICKS = 50     -- keel 50 (moot)
+-- 2026-09-26: THE MOVE TIMEOUT.  A getaway move that has not reached its
+-- square after this many ticks (the square still drivable, but an enemy tank
+-- on it or a long pathfinder detour) parks on the square the tank is on and
+-- scans again from there.  Before the cap the tank drove about under fire for
+-- the rest of the hold, hits not counted and fights refused.
+M.DECOY_GETAWAY_MOVE_TICKS   = 300    -- keel 300 (moot)
 M.DECOY_GETAWAY_WALL_FULL    = 1.0    -- keel 1.0 (moot)
 M.DECOY_GETAWAY_WALL_DAMAGED = 0.5    -- keel 0.5 (moot)
 -- CLOSENESS (Andrew: "we should favor tiles that are closer to the pillbox.
@@ -4514,11 +4542,17 @@ M.DECOY_GETAWAY_WALL_DAMAGED = 0.5    -- keel 0.5 (moot)
 M.DECOY_GETAWAY_PROX_WEIGHT  = 0.5    -- keel 0
 -- 2026-09-24: THE BLOCKER STEP (Andrew: consider ONLY the CLOSEST hostile
 -- pill; move on when the blocker has "2 or less shots left").  Parked on a
--- chain square (never the decoy square), the closest counted pill's shell
--- line to the tank is walked; each wall (full or damaged) and live pill of
--- ours on it is worth the pill shells it still stops, and the sum is the
--- shots left.  Shots left <= DECOY_GETAWAY_BLOCKER_SHOTS moves the tank on
--- without waiting for a hit.  A hit still moves it.  false = hits only.
+-- chain square (never the decoy square), the shell line from the counted
+-- pill closest to the PARK square, to the park square (not to the tank: a
+-- knock off the square keeps the same line), is walked for blockers: walls
+-- (full or damaged) and live pills of ours or an ally's.  With two or more
+-- blockers on it the tank waits.  With one, that LAST blocker alone is
+-- counted: the pill shells it still stops are the shots left.  With none,
+-- shots left is 0.  Shots left <= DECOY_GETAWAY_BLOCKER_SHOTS moves the tank
+-- on without waiting for a hit.  A hit still moves it.  A shell that stops
+-- short of the park square: no count.  (Comment corrected 2026-09-26: it
+-- used to say the line ran to the tank and the shots of every blocker were
+-- summed.)  false = hits only.
 M.DECOY_GETAWAY_BLOCKER_STEP  = true  -- keel false
 M.DECOY_GETAWAY_BLOCKER_SHOTS = 2     -- keel 2 (not used: the step is off)
 -- The engine rules the shots left are worked out from.  The brain cannot
@@ -4816,6 +4850,9 @@ M.PRESETS = {
     -- blitz_min tanks PARKED; at timeout it extends the wait. KEEL went GO at
     -- READY_TIMEOUT with whoever was committed (or abandoned if short).
     BLITZ_ONLY_EXTEND_WAIT        = false,
+    -- 2026-09-26: cap on those extensions. KEEL never extended, so the cap
+    -- is never read there; same value as the default.
+    BLITZ_ONLY_EXTEND_MAX         = 3,
     -- 2026-09-25: under blitz-only, a new commander take needs itself + free
     -- allies >= blitz_min, and a soldier answers the call on its goal pill.
     -- KEEL opened a take with nobody free to join it and answered the
@@ -4859,6 +4896,9 @@ M.PRESETS = {
     PF_NEXTSTEP_CHAIN_VEER        = false,
     -- 2026-09-25: an A->B->A next step forces a fresh A*. KEEL kept the step.
     PF_FLIP_FRESH_ASTAR           = false,
+    -- 2026-09-26: cap on that hold. Unused with the guard off; same value as
+    -- the default.
+    PF_FLIP_FRESH_ASTAR_TICKS     = 60,
     -- 2026-09-05 (evening): BLITZ_CONTESTED_ALL_SUICIDERS had an entry here and
     -- no longer needs one -- the bench sent it back and its DEFAULT is now
     -- false, which is already the KEEL value. A knob whose default equals its
@@ -5048,6 +5088,7 @@ M.PRESETS = {
     DECOY_GETAWAY_HITS            = 1,
     DECOY_GETAWAY_LAST_WEIGHT     = 2.0,
     DECOY_GETAWAY_RESCAN_TICKS    = 50,
+    DECOY_GETAWAY_MOVE_TICKS      = 300,
     DECOY_GETAWAY_WALL_FULL       = 1.0,
     DECOY_GETAWAY_WALL_DAMAGED    = 0.5,
     DECOY_GETAWAY_PROX_WEIGHT     = 0,

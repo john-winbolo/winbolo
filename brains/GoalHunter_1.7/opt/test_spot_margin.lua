@@ -171,5 +171,33 @@ do
   end
 end
 
+do
+  -- 2026-09-26: an ally's bes such as "99999999,5" reached line_margin as the
+  -- origin and the box loop ran until the think budget ran out. The box is now
+  -- kept on the 0..255 map.
+  print("\n-- 6. line_margin keeps its box on the map (huge origin from the wire)")
+  local reads = 0
+  local ctx = SM.new_ctx(nil, 123, 137, function(x, y)
+    reads = reads + 1
+    return false
+  end)
+  local t0 = os.clock()
+  local ok = SM.line_margin(ctx, 99999999, 5, 123.5, 137.5, MARGIN)
+  local dt = os.clock() - t0
+  check("6a huge x origin returns", ok == true, "ok=" .. tostring(ok))
+  check("6b reads at most 256*256 tiles", reads <= 256 * 256, "reads=" .. reads)
+  check("6c returns promptly (< 1 s)", dt < 1.0, string.format("%.3fs", dt))
+  reads = 0
+  ok = SM.line_margin(ctx, -99999999, -99999999, 123.5, 137.5, MARGIN)
+  check("6d huge negative origin: reads at most 256*256 tiles", ok == true and reads <= 256 * 256,
+        "reads=" .. reads)
+  -- The clamp must not hide a blocker that is on the map: a line from far
+  -- off the east edge along y=137 still fails on a wall at (200,137).
+  local ctx2 = ctx_with(123, 137, { { 200, 137, "wall" } })
+  local ok2, f2 = SM.line_margin(ctx2, 99999999, 137.5, 123.5, 137.5, MARGIN)
+  check("6e on-map blocker still found with a huge origin", ok2 == false and f2 and f2.bx == 200,
+        "ok=" .. tostring(ok2))
+end
+
 print(string.format("\n%d passed, %d failed", passes, fails))
 os.exit(fails == 0 and 0 or 1)

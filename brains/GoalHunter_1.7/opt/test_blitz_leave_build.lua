@@ -255,6 +255,16 @@ do
   AS.set_info(1, 4005, { goal = "refuel_at_base", role = "s" })
   AS.set_info(2, 4005, { goal = "none", role = "s" })
   check("call closed + allies off the pill -> closes", SQ.blitz_window(stN, w, 4006, 3) == nil)
+  -- Ends: our own death (2026-09-26). reset_blitz_state drops the window,
+  -- so the respawned bot has no lines and no no-build rule from the last life.
+  soldiers(4001)
+  local stR = yield_state(); SQ.blitz_window(stR, w, 4001, 3)
+  check("window latched before death", stR._blitz_win ~= nil and stR._blitz_win.open)
+  SQ.reset_blitz_state(stR)
+  check("death: reset_blitz_state clears _blitz_win", stR._blitz_win == nil)
+  stR.goal = { kind = "none" }
+  check("  respawned bot: no window", SQ.blitz_window(stR, w, 4010, 3) == nil)
+  check("  respawned bot: no shot lines", SQ.blitz_shot_lines_raw(stR, w, 4010, 3) == nil)
   -- Knob off: no lines after leaving.
   knobs({ BLITZ_LINES_AFTER_LEAVE = false })
   soldiers(4001)
