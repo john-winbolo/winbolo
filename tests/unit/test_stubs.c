@@ -314,8 +314,25 @@ void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) {
   (void)cs; (void)baseNum; (void)bs;
 }
 
+/* The two newswire lines frontEndMessages was last handed, so a test can read
+   what the front end was told to show. Empty until the first call. Sized well
+   past MESSAGE_LINE_BYTES (68 cells of up to 4 bytes each). */
+static char s_ut_messagesTop[512]    = "";
+static char s_ut_messagesBottom[512] = "";
+
+const char *ut_messages_last_top(void) {
+  return s_ut_messagesTop;
+}
+
+const char *ut_messages_last_bottom(void) {
+  return s_ut_messagesBottom;
+}
+
 void frontEndMessages(ClientSim *cs, char *top, char *bottom) {
-  (void)cs; (void)top; (void)bottom;
+  (void)cs;
+  SDL_strlcpy(s_ut_messagesTop, top ? top : "", sizeof(s_ut_messagesTop));
+  SDL_strlcpy(s_ut_messagesBottom, bottom ? bottom : "",
+              sizeof(s_ut_messagesBottom));
 }
 
 void frontEndKillsDeaths(ClientSim *cs, int kills, int deaths) {

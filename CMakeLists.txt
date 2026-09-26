@@ -4758,6 +4758,7 @@ set(_unit_test_names
     live_stats_out_of_range_slot_ignored
     live_stats_cleared_on_running_phase
     build_select_reset_on_running_phase
+    newswire_blanked_on_running_phase
     shell_death_codec_roundtrip
     shell_death_culls_matching_predicted_shell
     shell_death_rejected_culls_without_impact

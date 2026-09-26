@@ -135,6 +135,7 @@ static const UnitTestEntry s_tests[] = {
     { "live_stats_out_of_range_slot_ignored",      run_live_stats_out_of_range_slot_ignored      },
     { "live_stats_cleared_on_running_phase",       run_live_stats_cleared_on_running_phase       },
     { "build_select_reset_on_running_phase",       run_build_select_reset_on_running_phase       },
+    { "newswire_blanked_on_running_phase",         run_newswire_blanked_on_running_phase         },
     { "shell_death_codec_roundtrip",              run_shell_death_codec_roundtrip              },
     { "shell_death_culls_matching_predicted_shell",run_shell_death_culls_matching_predicted_shell},
     { "shell_death_rejected_culls_without_impact",run_shell_death_rejected_culls_without_impact},
