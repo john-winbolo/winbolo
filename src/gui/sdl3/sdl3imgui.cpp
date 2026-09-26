@@ -99,6 +99,7 @@ extern "C" {
 /* Include input.h for keyItems — SDL3 already included, safe here */
 extern "C" {
 #include "input.h"
+#include "build_cursor.h"
 #include "input_touch.h"
 #include "input_gamepad.h"
 #include "input_source.h"
@@ -7775,6 +7776,9 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         bool nowInLobby = (cs && clientSimIsInLobby(cs));
         if (s_wasInLobby && !nowInLobby) {
             imguiLobbyFrameReset();
+            /* The desktop loop does this as it opens the game view; here the
+               ClientSim outlives the round the same way. */
+            if (cs) sdl3ImguiNewGame(cs);
             /* Lobby → running edge: play the game-start jingle, mirroring
                the desktop blocking loop's netRunning break. A Leave or a
                dropped connection exits the lobby too, but not into
@@ -8737,6 +8741,19 @@ bool sdl3ImguiWantsKeyboard(void) {
 
 void sdl3ImguiClearNavFocus(void) {
     s_clearNavFocus = true;
+}
+
+void sdl3ImguiNewGame(ClientSim *cs) {
+    /* An alliance request still open when the last round ended would come
+       back up in this one, and Accept would go to whatever player holds that
+       slot now. */
+    s_showAllianceOpen = false;
+    s_allianceVisible  = false;
+    /* The build target is the square a click or Build Now sends the man to,
+       and cursor mode may have been left on. */
+    buildCursorReset();
+    sdl3ImguiTabletNewGame();
+    sdl3DrawNewGame(clientSimGetCurrentBuildSelect(cs));
 }
 
 void sdl3ImguiShowAllianceRequest(const char *playerName, unsigned char playerNum) {

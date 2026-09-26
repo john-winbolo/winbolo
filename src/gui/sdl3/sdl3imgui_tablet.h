@@ -128,6 +128,14 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
 *********************************************************/
 void sdl3ImguiTabletOverlay(struct ClientSim *cs);
 
+/*********************************************************
+*NAME:          sdl3ImguiTabletNewGame
+*PURPOSE:
+*  Forgets the last game's messages and armour, so the
+*  message fade and the damage buzz start from the new one.
+*********************************************************/
+void sdl3ImguiTabletNewGame(void);
+
 #ifdef __cplusplus
 }
 #endif

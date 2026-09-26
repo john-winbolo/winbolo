@@ -2727,6 +2727,11 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
 
   sdl3DrawAssertTilesSampler();
 
+  /* The sim owns the build selection; the panel and the full screen map's
+     build strip draw from gCurrentBuildSelect, so bring it up to date every
+     frame whichever way the selection was changed. */
+  sdl3DrawSelectIndentsOn(clientSimGetCurrentBuildSelect(cs), 0, 0);
+
   /* Held for the returning-to-lobby frame, which redraws the map with no
      arguments of its own. */
   gLastPillLabels = showPillLabels;
@@ -3931,17 +3936,29 @@ void sdl3DrawCopyManStatus(int x, int y) {
 
 void sdl3DrawSelectIndentsOn(buildSelect value, int x, int y) {
   (void)x; (void)y;
-  /* Every way of changing the selection comes through here — the keys, the
-     click on the strip, the classic panel's own hit-test, the D-pad cycle —
-     so this is where the full screen map's build strip is told to come up and
-     show the new one. Only on an actual change: the redraw paths call this
-     with the selection already showing, and holding the strip up for those
-     would leave it up for the whole game. */
+  /* sdl3DrawMainScreen calls this every frame with the sim's selection, so
+     however it was changed — the keys, the click on the strip, the classic
+     panel's own hit-test, the D-pad cycle, the tablet bar — this is where the
+     full screen map's build strip is told to come up and show the new one.
+     Only on an actual change: holding the strip up for the calls that find
+     the selection already showing would leave it up for the whole game. */
   if (value != gCurrentBuildSelect) {
     gOverviewHudHoldUntil[OVERVIEW_HUD_PANEL_BUILD] =
         SDL_GetTicks() + OVERVIEW_HUD_HOLD_MS;
   }
   gCurrentBuildSelect = value;
+}
+
+void sdl3DrawNewGame(buildSelect value) {
+  /* The new game's selection, taken without the change bringing the build
+     strip up: the player did not pick it. */
+  gCurrentBuildSelect = value;
+  /* The full screen map's view keeps its camera spot, follow flag and last
+     alive state, and would start the next round parked where the last one
+     was left, or playing a respawn for a tank that died as it ended. It is
+     made again on the first full screen frame. */
+  overviewViewDestroy(gOverviewView);
+  gOverviewView = NULL;
 }
 
 void sdl3DrawSelectIndentsOff(buildSelect value, int x, int y) {

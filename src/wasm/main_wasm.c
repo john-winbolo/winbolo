@@ -1215,6 +1215,9 @@ void frontEndSetActiveClientSim(struct ClientSim *cs) {
        set it, so without this the first click of the next game is dispatched
        to a tile chosen in the last one. */
     buildCursorReset();
+    if (cs != NULL) {
+      sdl3ImguiNewGame(cs);
+    }
   }
   s_activeUiCs = cs;
 }

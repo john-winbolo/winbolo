@@ -67,6 +67,17 @@ void sdl3ImguiResetFrameState(void);
 
 void sdl3ImguiPumpAndRender(struct ClientSim *cs);
 void sdl3ImguiClearNavFocus(void);
+
+/*********************************************************
+*NAME:          sdl3ImguiNewGame
+*PURPOSE:
+*  Drops what the last game left in the draw, ImGui and
+*  input state as a game view opens: the build selection
+*  and build target, an unanswered alliance request, the
+*  full screen map's camera and the tablet overlay's
+*  message and armour tracking. Runs on the main thread.
+*********************************************************/
+void sdl3ImguiNewGame(struct ClientSim *cs);
 void sdl3ImguiForwardEvent(const void *event);
 bool sdl3ImguiWantCaptureMouse(void);
 bool sdl3ImguiIsDialogOpen(void);

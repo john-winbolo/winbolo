@@ -1038,6 +1038,11 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         /* Message scroller: queued-but-unshown chat would scroll in the
          * instant the new game's ticks resume. */
         messageReset(&cs->messages);
+        /* The newswire draws from its own copy of the two lines, which only
+         * hears about a change when a character scrolls in; hand it the
+         * blanked lines now or it shows the last game's until the first
+         * message of this one. */
+        frontEndMessages(cs, cs->messages.topLine, cs->messages.bottomLine);
         /* Steam per-game achievement counters (consumed at CTRL_GAME_OVER).
          * Left un-reset, a death in any prior game permanently blocks the
          * flawless / no-LGM-loss achievements for the rest of the session. */
