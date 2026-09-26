@@ -117,6 +117,9 @@ bool transportUdpServerCreate(unsigned short port,
     (void)sim; /* Used later during tick */
 
     bolo_net_init();
+    /* The memset below would lose any script buffer a server that was never
+     * destroyed still holds. */
+    udpServerFreeScriptUploadBufs();
     memset(&udpServer, 0, sizeof(udpServer));
     memset(punchQueue, 0, sizeof(punchQueue));
 
@@ -178,6 +181,8 @@ bool transportUdpServerCreate(unsigned short port,
     udpServer.tickCount = 0;
     udpServer.uploadMaxFiles        = 64;
     udpServer.uploadMaxStorageBytes = 8u * 1024u * 1024u;
+    udpServer.scriptUploadMaxFiles        = 32;
+    udpServer.scriptUploadMaxStorageBytes = 64u * 1024u * 1024u;
     serverSimSetServerPort(sim, port);
     WB_LOG_INFO(WB_LOG_CAT_NET,
         "server created: port=%u bindAddr=%s maxPlayers=%u password=%s",
@@ -218,7 +223,11 @@ bool transportUdpServerCreate(unsigned short port,
 void transportUdpServerSetUploadConfig(UploadPolicy policy,
                                        uint8_t maxFiles,
                                        uint32_t maxStorageBytes,
-                                       const char *persistDir) {
+                                       const char *persistDir,
+                                       ScriptUploadPolicy scriptPolicy,
+                                       uint8_t scriptMaxFiles,
+                                       uint32_t scriptMaxStorageBytes,
+                                       const char *scriptDir) {
     udpServer.uploadPolicy = policy;
     if (maxFiles != 0) {
         udpServer.uploadMaxFiles = maxFiles;
@@ -231,6 +240,19 @@ void transportUdpServerSetUploadConfig(UploadPolicy policy,
                     sizeof(udpServer.uploadPersistDir));
     } else {
         udpServer.uploadPersistDir[0] = '\0';
+    }
+    udpServer.scriptUploadPolicy = scriptPolicy;
+    if (scriptMaxFiles != 0) {
+        udpServer.scriptUploadMaxFiles = scriptMaxFiles;
+    }
+    if (scriptMaxStorageBytes != 0) {
+        udpServer.scriptUploadMaxStorageBytes = scriptMaxStorageBytes;
+    }
+    if (scriptDir != NULL) {
+        SDL_strlcpy(udpServer.scriptUploadDir, scriptDir,
+                    sizeof(udpServer.scriptUploadDir));
+    } else {
+        udpServer.scriptUploadDir[0] = '\0';
     }
 }
 
@@ -278,6 +300,7 @@ void transportUdpServerDestroy(void) {
             serverCleanupMapDownload(i);
         }
     }
+    udpServerFreeScriptUploadBufs();
     udpServer.running = false;
     /* Drop any verify still waiting on a result. The slots it names are gone
      * with this transport, and a later server on this process starts its
@@ -395,17 +418,19 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
         udpServerResetRoundLogLimits(i);
         udpServerResetMapReaskLimit(i);
 
-        /* A round-log transfer is a lobby/game-over affair and must not bleed
-         * into the round starting now: CHANNEL_BULK is deliberately not
-         * re-based above, so an unfinished one would keep streaming into the
-         * new game's map downloads. Abort it with the same triple the map
-         * change uses — drop the staged blob, collapse the send window, and
-         * carry the new bulk baseline so the client abandons its partial.
-         * Gating on the sender's kind is what leaves every other in-flight
-         * transfer (a join download, a resync) undisturbed. */
+        /* A round-log transfer and a script copy are lobby/game-over affairs
+         * and must not bleed into the round starting now: CHANNEL_BULK is
+         * deliberately not re-based above, so an unfinished one (either can
+         * be several MiB) would keep streaming into the new game's map
+         * downloads. Abort it with the same triple the map change uses —
+         * drop the staged blob, collapse the send window, and carry the new
+         * bulk baseline so the client abandons its partial. Checking the
+         * sender's kind is what leaves every other in-flight transfer (a
+         * join download, a resync) undisturbed. */
         if (udpServer.clients[i].connected &&
             bulkSenderBusy(&udpServer.bulkSend[i]) &&
-            udpServer.bulkSend[i].kind == BULK_KIND_ROUND_LOG) {
+            (udpServer.bulkSend[i].kind == BULK_KIND_ROUND_LOG ||
+             udpServer.bulkSend[i].kind == BULK_KIND_SCRIPT_PACKAGE)) {
             uint32_t b3;
             ControlEvent resetEvt;
             ControlEncodeBodyFn enc =

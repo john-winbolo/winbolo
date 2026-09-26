@@ -2627,4 +2627,55 @@ STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — it changes how the game plays and leaves w
 STR_MAPEDIT_SCENARIO_KIND_NOTE=A mod may not set the game type, move the clock, keep a score of its own or end the round, so those are not offered while this says Mod. A different question from Built for this map below, which is about which map the file was written for.
 STR_MAPEDIT_SCENARIO_GAME_MOD=A mod leaves the game type to the server
 STR_MAPEDIT_SCENARIO_FN_MOD={string1} is not offered while this file says Mod: it is the one answer that decides an ending, and a mod leaves the win condition alone.
+STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADS=Scripts from Players
+STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_SESSION=Allow this session
+STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_KEEP=Allow and keep
+STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADDIR=Script Upload Directory
+STR_DLGLOBBY_SCENARIO_SRC_SERVER=server
+STR_DLGLOBBY_SCENARIO_SRC_UPLOADED=uploaded
+STR_DLGLOBBY_SCENARIO_SRC_LOCAL=on this computer
+STR_DLGLOBBY_SCENARIO_SEND=Send to server
+STR_DLGLOBBY_SCENARIO_SEND_NOT_HOST=Only the host or an admin can send scripts.
+STR_DLGLOBBY_SCRIPT_ERR_DISABLED=This server doesn't take scripts.
+STR_DLGLOBBY_SCRIPT_ERR_NAME_TAKEN=The server already has a script with this name.
+STR_DLGLOBBY_SCRIPT_ERR_WRITE=The server could not save the file.
+STR_DLGLOBBY_SCRIPT_ERR_MANIFEST=The package's manifest will not parse.
+STR_DLGLOBBY_SCRIPT_ERR_SYNTAX=The script will not load: error on line {number}.
+STR_DLGLOBBY_SCRIPT_ERR_NO_TABLE=The script declares no scenario table.
+STR_DLGLOBBY_SCRIPT_ERR_API=It asks for api {number} and this server runs api {number2}.
+STR_DLGLOBBY_SCRIPT_ERR_KIND=It declares a kind this server does not know.
+STR_DLGLOBBY_SCRIPT_ERR_BOUND=It is bound to a map. Send the map instead.
+STR_DLGSETTINGS_HOSTING_SHARESCRIPTS=Let players copy this server's scripts
+STR_DLGSETTINGS_HOSTING_SHARESCRIPTS_TIP=Players can save a copy of this server's mods and scenarios to their own Mods folder.
+STR_DLGLOBBY_SCENARIO_SAVE=Save a copy to your Mods folder
+STR_DLGLOBBY_SCENARIO_SAVE_SPECTATOR=Spectators can't copy scripts.
+STR_DLGLOBBY_SCENARIO_SAVE_SHARING_OFF=This server doesn't share its scripts.
+STR_DLGLOBBY_SCENARIO_SAVE_INFLIGHT=A copy is already on its way.
+STR_DLGLOBBY_SCENARIO_SAVE_HAVE=Your Mods folder already has a file with this name.
+STR_DLGLOBBY_SCENARIO_SAVE_NOT_FOUND=The server no longer has this file.
+STR_DLGLOBBY_SCENARIO_SAVE_TOO_LARGE=This file is too large to copy.
+STR_DLGLOBBY_SCENARIO_SAVE_NO_ANSWER=The server didn't answer. Try again.
+STR_DLGLOBBY_SCENARIO_SAVE_WRITE=The copy could not be saved to your Mods folder.
+STR_DLGLOBBY_DETAILS_SETTINGS=Settings:
+STR_DLGLOBBY_DETAILS_SETTINGS_HOST=Only the host can change these.
+STR_DLGLOBBY_DETAILS_SETTINGS_OLD=This server cannot change script settings, so the defaults apply.
+STR_DLGLOBBY_DETAILS_SETTING_DEFAULT={number} (default)
+STR_MAPEDIT_SCENARIO_WORKSHOP=Workshop item #{string1}, published by {string2}
+
+# The Workshop section of Settings
+STR_DLGSETTINGS_WORKSHOP_HEADING=Steam Workshop
+STR_DLGSETTINGS_WORKSHOP_SUBSCRIBED=Subscribed
+STR_DLGSETTINGS_WORKSHOP_PUBLISH=Publish
+STR_DLGSETTINGS_WORKSHOP_INSTALLED=Installed
+STR_DLGSETTINGS_WORKSHOP_OPEN=Open in Workshop
+STR_DLGSETTINGS_WORKSHOP_UPDATE=Update
+STR_DLGSETTINGS_WORKSHOP_TAG_MAP=Map
+STR_DLGSETTINGS_WORKSHOP_ITEM=Item #{string1}
+STR_DLGSETTINGS_WORKSHOP_NONE_SUBSCRIBED=You are not subscribed to any mods, scenarios or maps.
+STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH=Nothing to publish yet. Put a mod or scenario in your Mods folder, or pack a scenario into a map.
+STR_DLGSETTINGS_WORKSHOP_PUB_HEADING=Publish this mod or scenario to the Steam Workshop
+STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE=Update the item this file came from
+
+# The lobby's Workshop chip
+STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop
 

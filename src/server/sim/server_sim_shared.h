@@ -147,7 +147,8 @@ void serverSimCacheMapMd5FromFile(ServerSim *sim, const char *path);
 
 /* Defined in server_sim_maps.c — turns a client-facing map relPath into the
  * file it names, redirecting the virtual "Uploads" folder to the configured
- * persist directory. The listing, the search and serverSimReadMapFile go
+ * persist directory and the virtual "Workshop" folder to the directory
+ * serverSimSetWorkshopMapDir named. The listing, the search and serverSimReadMapFile go
  * through it; so do the lobby's set-map command in server_command_dispatch.c
  * and the upload preview's use-local path in udp_server_dispatch.c, which
  * would otherwise open a different file from the one the client picked.

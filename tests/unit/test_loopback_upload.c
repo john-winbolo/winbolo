@@ -113,6 +113,109 @@ int run_loopback_map_upload(void) {
     return 0;
 }
 
+/* Watches an upload for the status that means the server took a BEGIN and
+ * the bytes are going over the bulk channel. */
+static bool pred_upload_settled_note_bulk(LoopbackHarness *h, void *user) {
+    uint8_t st = clientSimGetLobbyMapUploadStatus(h->cs);
+    if (st == 2) *(bool *)user = true;
+    return st == 3 || st == 4;
+}
+
+/* A map picked from the Workshop directory is offered as "Workshop/<name>"
+ * before it is uploaded. The server and the client share one scratch
+ * Workshop directory here, so the server holds the same file: the upload
+ * finishes through USE_LOCAL, the bulk channel carries nothing, and the
+ * server's map is the one it read from that directory. */
+int run_workshop_use_local(void) {
+    LoopbackHarness h;
+    char     ws[FILENAME_MAX];
+    char     mapPath[FILENAME_MAX];
+    uint32_t ackedBefore = 0;
+    uint32_t ackedAfter  = 0;
+    bool     sawBulk     = false;
+    bool     saved;
+    int      settledAt;
+    char     mapName[MAP_STR_SIZE];
+
+    UT_ASSERT(utScratchPath(ws, sizeof(ws), "workshop"));
+    UT_ASSERT(SDL_CreateDirectory(ws));
+    SDL_snprintf(mapPath, sizeof(mapPath), "%s/a.map", ws);
+
+    UT_ASSERT_MSG(loopbackHarnessStart(&h, "Uploader", /*lobbyMode*/ true,
+                                       /*impairSpec*/ NULL,
+                                       /*seed*/ 0xC0FFEEu),
+                  "harness start (workshop use-local) failed");
+    if (loopbackHarnessPumpUntil(&h, CONNECT_MAX, pred_connected, NULL) < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("client never reached CONNECTED within %d pumps", CONNECT_MAX);
+    }
+
+    /* The server's own map written out as a.map, so the file is a whole map
+       both sides read the same way. */
+    threadsWaitForMutex();
+    serverSimSetOpenHost(h.sim, true);
+    serverSimSetWorkshopMapDir(h.sim, ws);
+    saved = serverSimSaveMap(h.sim, mapPath);
+    threadsReleaseMutex();
+    if (!saved) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("could not write %s", mapPath);
+    }
+    clientSimSetWorkshopMapDir(h.cs, ws);
+
+    transportUdpClientChannelTestStats(&h.cs->transport, CHANNEL_BULK, NULL,
+                                       &ackedBefore, NULL);
+    if (!clientSimNetSendLobbyMapUpload(h.cs, mapPath)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("upload kick rejected for %s", mapPath);
+    }
+    settledAt = loopbackHarnessPumpUntil(&h, UPLOAD_MAX,
+                                         pred_upload_settled_note_bulk,
+                                         &sawBulk);
+    transportUdpClientChannelTestStats(&h.cs->transport, CHANNEL_BULK, NULL,
+                                       &ackedAfter, NULL);
+    threadsWaitForMutex();
+    SDL_strlcpy(mapName, serverSimGetMapName(h.sim), sizeof(mapName));
+    threadsReleaseMutex();
+
+    fprintf(stderr, "  workshop use-local: settled@%d status=%d reject=%d "
+                    "bulk=%d acked %u->%u map='%s' path='%s'\n",
+            settledAt, (int)clientSimGetLobbyMapUploadStatus(h.cs),
+            (int)clientSimGetLobbyMapUploadRejectCode(h.cs), (int)sawBulk,
+            (unsigned)ackedBefore, (unsigned)ackedAfter, mapName,
+            clientSimGetLobbyMapUploadFinalPath(h.cs));
+
+    if (settledAt < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("upload never settled within %d pumps", UPLOAD_MAX);
+    }
+    if (clientSimGetLobbyMapUploadStatus(h.cs) != 3 ||
+        clientSimGetLobbyMapUploadRejectCode(h.cs) != 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("upload did not complete (status=%d reject=%d)",
+                (int)clientSimGetLobbyMapUploadStatus(h.cs),
+                (int)clientSimGetLobbyMapUploadRejectCode(h.cs));
+    }
+    if (sawBulk || ackedAfter != ackedBefore) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the map went over the bulk channel (status 2 seen=%d, "
+                "acked %u->%u) rather than through USE_LOCAL",
+                (int)sawBulk, (unsigned)ackedBefore, (unsigned)ackedAfter);
+    }
+    if (strcmp(clientSimGetLobbyMapUploadFinalPath(h.cs), "Workshop/a.map") != 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the server answered for '%s', not Workshop/a.map",
+                clientSimGetLobbyMapUploadFinalPath(h.cs));
+    }
+    if (strcmp(mapName, "a") != 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the server's map is '%s', not a", mapName);
+    }
+
+    loopbackHarnessStop(&h);
+    return 0;
+}
+
 /* Drop a specific handshake reply while every liveness packet still flows.
  * Advance only the watchdog clock, rather than sleeping through its timeout. */
 static int upload_timeout_recovery(bool lose_done, bool other_player, bool partial) {

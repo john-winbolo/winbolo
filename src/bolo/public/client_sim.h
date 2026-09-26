@@ -40,7 +40,7 @@
 #include "brain.h"  /* For BuildInfo, ObjectInfo */
 #include "brain_list.h"   /* BrainList — value type used by clientSimGetLobbyBrainList */
 #include "round_stats.h"  /* RoundStatsSummary — clientSimGetLastRoundStats return */
-#include "upload_policy.h" /* UploadPolicy — clientSimGetUploadPolicy return */
+#include "upload_policy.h" /* UploadPolicy, ScriptUploadPolicy — upload-policy getters */
 #include "view_policy.h"   /* ViewPolicy / ViewCategory — clientSimGetViewPolicy */
 #include "ping_display.h" /* PingBand — clientSimGetPlayerPingBand return */
 #include "server_voice_mode.h" /* ServerVoiceMode — clientSimGetServerVoiceMode return */
@@ -1115,6 +1115,11 @@ const char *clientSimGetLobbyScriptFile(const ClientSim *cs, int i);
 const char *clientSimGetLobbyScriptName(const ClientSim *cs, int i);
 bool        clientSimGetLobbyScriptKeepsWinCondition(const ClientSim *cs, int i);
 bool        clientSimGetLobbyScriptBound(const ClientSim *cs, int i);
+/* Where the server got the file, one of SERVER_SCENARIO_SOURCE_*
+ * (server_sim.h), and the Workshop item it came from, 0 for none. The map's
+ * own script reads SERVER. SERVER and 0 out of range. */
+uint8_t     clientSimGetLobbyScriptSource(const ClientSim *cs, int i);
+uint64_t    clientSimGetLobbyScriptWorkshopId(const ClientSim *cs, int i);
 uint32_t    clientSimGetLobbyScriptSeq(const ClientSim *cs);
 
 /* The rules that scenario's own manifest sets, mirrored via
@@ -1133,6 +1138,18 @@ double      clientSimGetScenarioRuleValue(const ClientSim *cs, int idx);
 /* Server map-upload policy as last broadcast in the lobby-settings event.
  * Defaults to UPLOAD_POLICY_ALLOW until the first event arrives. */
 UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs);
+
+/* Server script-upload policy as last broadcast in the lobby-settings event.
+ * Defaults to SCRIPT_UPLOAD_ALLOW until the first event arrives, and for a
+ * NULL cs. */
+ScriptUploadPolicy clientSimGetScriptUploadPolicy(const ClientSim *cs);
+
+/* Whether the server lets players save a copy of its mods and scenarios.
+ * Positive on purpose: the client stores it in the negative sense (see
+ * lobbyScriptSharingOff) so a zeroed client reads as sharing, and this
+ * accessor is where that flips back. Answers true for a NULL cs and until
+ * the first lobby-settings event lands. */
+bool clientSimGetScriptSharing(const ClientSim *cs);
 
 /* Server visibility rules (pillboxes / bases / allied tanks) as last
  * broadcast in the lobby-settings event. Raw mirror. Until the first event
@@ -1272,6 +1289,13 @@ bool        clientSimGetLobbyScenarioListBound(const ClientSim *cs, int idx);
  * and a chooser listing the two separately reads this one. */
 bool        clientSimGetLobbyScenarioListKeepsWinCondition(const ClientSim *cs,
                                                            int idx);
+/* Where the server got the file, one of SERVER_SCENARIO_SOURCE_*
+ * (server_sim.h): its own directories, a player's upload, or the Workshop.
+ * And the Workshop item it came from, 0 for none. SERVER and 0 out of
+ * range. */
+uint8_t     clientSimGetLobbyScenarioListSource(const ClientSim *cs, int idx);
+uint64_t    clientSimGetLobbyScenarioListWorkshopId(const ClientSim *cs,
+                                                    int idx);
 bool        clientSimGetLobbyScenarioListReady(const ClientSim *cs);
 bool        clientSimGetLobbyScenarioListInFlight(const ClientSim *cs);
 /* Ticked on each completed response, so a caller holding its own last-seen
@@ -1353,6 +1377,28 @@ ClientScnDetailsState clientSimGetLobbyScenarioDetails(const ClientSim *cs,
                                                        const uint8_t **bytes,
                                                        size_t *len);
 
+/* One file's settings block (scenario_settings.h), beside its details.
+ * Put stores it on the slot the details were put on, so it goes after
+ * clientSimLobbyScenarioDetailsPut with found true; a blob that does not
+ * read is stored as no settings. Get answers false while no block is known
+ * for file (no answer yet, or a server that does not send settings), and
+ * true with *bytes and *len otherwise, which is 0 bytes for a file that
+ * declares none. The bytes stay good until the next Want, Put or Forget. */
+void clientSimLobbyScenarioSettingsPut(ClientSim *cs, const char *file,
+                                       const uint8_t *bytes, size_t len);
+bool clientSimGetLobbyScenarioSettings(const ClientSim *cs, const char *file,
+                                       const uint8_t **bytes, size_t *len);
+
+/* The values the host chose for scripts' settings, from
+ * CTRL_LOBBY_SCRIPT_SETTING. Get answers false when none is held for
+ * file's setting id, which means the declared default. Supported is true
+ * once the server has sent one such event, which is how a client knows
+ * the server takes clientSimNetSendSetScriptSetting. */
+#define LOBBY_SCRIPT_SETTING_VALUES_MAX 48
+bool     clientSimGetLobbyScriptSetting(const ClientSim *cs, const char *file,
+                                        const char *id, int32_t *out);
+bool     clientSimLobbyScriptSettingsSupported(const ClientSim *cs);
+
 /* Spectator feed drain — the session uses these to pull the captured seed and
  * the ordered forward records the bulk sink reassembled while connected as a
  * tankless spectator. The raw bytes are translated/fed to the decoder in a
@@ -1397,7 +1443,23 @@ bool     clientSimSpectatorIsLiveLobby(const ClientSim *cs);
  * 2=ack received (chunks in flight), 3=done, 4=rejected. */
 uint8_t     clientSimGetLobbyMapUploadStatus(const ClientSim *cs);
 uint8_t     clientSimGetLobbyMapUploadRejectCode(const ClientSim *cs);
+/* The directory this computer copies its Workshop items to. A map picked
+   from it is offered to the server as "Workshop/<name>" before it is
+   uploaded. "" or NULL clears it. */
+void        clientSimSetWorkshopMapDir(ClientSim *cs, const char *dir);
 const char *clientSimGetLobbyMapUploadFinalPath(const ClientSim *cs);
+/* Which kind of upload the status, reject-code, final-path and
+ * progress-percent accessors above describe: UPLOAD_KIND_MAP or
+ * UPLOAD_KIND_SCRIPT (upload_policy.h), set when an upload starts.
+ * UPLOAD_KIND_MAP for NULL and before any upload. */
+uint8_t     clientSimGetLobbyUploadKind(const ClientSim *cs);
+/* Why the server refused a script upload, one of SCRIPT_REFUSE_*
+ * (upload_policy.h), and the two numbers the reason carries: which 0 is the
+ * first (a line, or the api the script asks for) and 1 the second (the api
+ * the server runs). SCRIPT_REFUSE_NONE and 0 for NULL, for a map, while an
+ * upload runs and after one the server took. */
+uint8_t     clientSimGetLobbyScriptRefuseReason(const ClientSim *cs);
+int32_t     clientSimGetLobbyScriptRefuseNumber(const ClientSim *cs, int which);
 /* True (and clears the flag) if the server NACK'd a USE_LOCAL request
  * since the last call — drives the BEGIN/CHUNK fallback inside the
  * UDP transport's upload pump. No frontend caller. */

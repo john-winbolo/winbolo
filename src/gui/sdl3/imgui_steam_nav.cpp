@@ -19,6 +19,7 @@ extern "C" {
 #include "input_gamepad.h"   /* native pad: left-stick -> menu nav */
 #include "input_source.h"    /* track active device for controller-mode UI */
 #include "dialogs/imgui_keyboard.h"  /* keyboardIsOpen: our OSK owns the pad */
+#include "workshop_sync.h"   /* workshopSyncPoll: the installed-item edge */
 /* While the Set Keys dialog is capturing a controller binding, the held
    button must reach the capture intercept as a raw button — not be injected
    as Space/Escape nav (which would also activate the focused dialog button,
@@ -101,6 +102,12 @@ extern "C" void imguiSteamNavFeedCurrentContext(void) {
        never detected in those contexts and menu nav silently dies.
        RunFrame is level-based, so the extra in-game call is harmless. */
     steam_run_callbacks();   /* dispatch device hot-plug callbacks on the menus too */
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__) && !defined(__EMSCRIPTEN__)
+    /* A Workshop item that finished installing while a menu was up is
+       copied in here; the game loop does the same after its own pump. The
+       mobile and wasm builds have no Workshop and do not link the sync. */
+    workshopSyncPoll();
+#endif
     steam_input_run_frame();
     ImGuiIO &io = ImGui::GetIO();
 

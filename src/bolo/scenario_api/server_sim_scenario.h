@@ -27,6 +27,7 @@
 #include "server_sim.h"
 #include "scenario_defs.h"
 #include "control_event.h"  /* LobbyScenarioSource — the identity setter's source */
+#include "upload_policy.h"  /* ScriptUploadRefusal — the accept callback's answer */
 
 /*********************************************************
  *NAME:          serverSimApplyScenarioOp
@@ -330,6 +331,60 @@ void serverSimSetScenarioLister(ServerSim *sim,
 int serverSimScenarioListDir(const ServerSim *sim, ScnDirEntry *out, int max);
 
 /*********************************************************
+ *NAME:          serverSimSetScriptUploadAccept
+ *PURPOSE:
+ *  Registers what takes a script a player uploaded: a
+ *  .scenario or .lua that arrived whole over
+ *  PACKET_LOBBY_MAP_UPLOAD_BEGIN with UPLOAD_KIND_SCRIPT.
+ *  The callback checks the bytes and writes them under
+ *  dir/name, answering true. Otherwise it answers false and
+ *  fills why: a SCRIPT_REFUSE_* code and its numbers, which
+ *  go back to the sender in the DONE reply for the client to
+ *  say in its own language, and one line of text for the
+ *  operator's console.
+ *
+ *  A callback rather than a call, for the reason the lister
+ *  above is one: reading a package and running a script are
+ *  the scenario library's to do, and src/server/ cannot call
+ *  src/scenario/.
+ *
+ *  NULL clears it. With nothing registered the server
+ *  refuses a script upload at BEGIN, before any bytes are
+ *  sent, and serverSimScriptUploadAccept answers false with
+ *  SCRIPT_REFUSE_SCRIPTS_OFF.
+ *
+ *  dir is where the upload lands, chosen by the server's
+ *  script upload policy; the callback creates it if it is
+ *  not there.
+ *********************************************************/
+typedef bool (*ScriptUploadAcceptFn)(void *ctx, const char *dir,
+                                     const char *name,
+                                     const uint8_t *bytes, uint32_t len,
+                                     ScriptUploadRefusal *why);
+void serverSimSetScriptUploadAccept(ServerSim *sim, ScriptUploadAcceptFn fn,
+                                    void *ctx);
+
+/*********************************************************
+ *NAME:          serverSimHasScriptUploadAccept
+ *PURPOSE:
+ *  Whether a script upload callback is registered, which is
+ *  whether a script upload can be taken at all.
+ *********************************************************/
+bool serverSimHasScriptUploadAccept(const ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimScriptUploadAccept
+ *PURPOSE:
+ *  Hands an uploaded script to the registered callback and
+ *  answers what it answers. With nothing registered, answers
+ *  false with SCRIPT_REFUSE_SCRIPTS_OFF in why. why is
+ *  cleared first either way and may be NULL.
+ *********************************************************/
+bool serverSimScriptUploadAccept(const ServerSim *sim, const char *dir,
+                                 const char *name, const uint8_t *bytes,
+                                 uint32_t len, ScriptUploadRefusal *why);
+
+/*********************************************************
  *NAME:          serverSimSetScenarioDetailsReader
  *PURPOSE:
  *  Registers the read of one directory file's details
@@ -348,6 +403,45 @@ void serverSimSetScenarioDetailsReader(ServerSim *sim,
                                                    const char *file,
                                                    uint8_t *out, size_t cap),
                                        void *ctx);
+
+/*********************************************************
+ *NAME:          serverSimSetScriptFileReader
+ *PURPOSE:
+ *  Registers the read of one directory file's raw bytes
+ *  for serverSimScriptFileRead, which a player's request
+ *  for a copy of a script is answered from. A callback for
+ *  the reason the lister above is one, and registered
+ *  beside it. The reader finds the file among the names
+ *  its listing holds, refuses one over cap before reading
+ *  it, and on SERVER_SCRIPT_READ_FOUND hands back a
+ *  malloc'd buffer the caller frees. dir is the sim's,
+ *  handed over per call as the lister's is.
+ *
+ *  NULL clears it, and with nothing registered every name
+ *  answers SERVER_SCRIPT_READ_NOT_FOUND.
+ *********************************************************/
+void serverSimSetScriptFileReader(ServerSim *sim,
+                                  ServerScriptReadResult (*read)(
+                                      void *ctx, const char *dir,
+                                      const char *file, uint8_t **outBytes,
+                                      uint32_t *outLen, uint32_t cap),
+                                  void *ctx);
+
+/*********************************************************
+ *NAME:          serverSimSetScenarioSettingsReader
+ *PURPOSE:
+ *  Registers the read of one directory file's settings
+ *  block (scenario_settings.h) for
+ *  serverSimScenarioSettingsDecl, on the terms
+ *  serverSimSetScenarioDetailsReader registers the details
+ *  read. NULL clears it.
+ *********************************************************/
+void serverSimSetScenarioSettingsReader(ServerSim *sim,
+                                        int (*read)(void *ctx,
+                                                    const char *dir,
+                                                    const char *file,
+                                                    uint8_t *out, size_t cap),
+                                        void *ctx);
 
 /*********************************************************
  *NAME:          serverSimSetScenarioLobbyTemplate
@@ -613,6 +707,18 @@ const ScnDirEntry *serverSimGetMapScript(const ServerSim *sim);
  *********************************************************/
 void serverSimSetMapScriptDetails(ServerSim *sim, const uint8_t *details,
                                   size_t len);
+
+/*********************************************************
+ *NAME:          serverSimSetMapScriptSettings
+ *PURPOSE:
+ *  The settings block (scenario_settings.h) of the row
+ *  serverSimSetMapScript just recorded, on the terms
+ *  serverSimSetMapScriptDetails takes the details. Ignored
+ *  when no row is recorded, and for a blob longer than
+ *  SCN_SETTINGS_BLOB_MAX.
+ *********************************************************/
+void serverSimSetMapScriptSettings(ServerSim *sim, const uint8_t *settings,
+                                   size_t len);
 
 /*********************************************************
  *NAME:          serverSimGetLobbyScriptCount /

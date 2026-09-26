@@ -199,6 +199,13 @@ struct MapChooserState_s {
      * this and re-runs discoverMaps. */
     char            currentDir[FILENAME_MAX];
 
+    /* The directory mapChooserLocalFsEnumerate lists as a "Workshop"
+     * folder at its root, with '/' separators and no trailing one. ""
+     * for none, which every tab but the lobby's Local Maps tab keeps.
+     * Its rows carry absolute paths under it, and the breadcrumbs show
+     * those as "Workshop/...". Set through mapChooserSetWorkshopDir. */
+    char            workshopDir[FILENAME_MAX];
+
     /* When true, the widget hides its "Load from device" and "Generate
      * Random Map" buttons. The lobby's map chooser surfaces those
      * features as separate tabs, so they'd be duplicated here. */
@@ -392,6 +399,13 @@ void mapChooserRefresh(MapChooserState *state);
  * compatibility). */
 void mapChooserLocalFsEnumerate(MapChooserState *state,
                                  const char *relPath, void *ctx);
+
+/* Names the directory mapChooserLocalFsEnumerate offers as a "Workshop"
+ * folder at its root. The folder is listed only while the directory
+ * exists, and not when data/maps already holds a folder of that name.
+ * Backslashes become '/' and a trailing separator is dropped. "" or NULL
+ * clears it. Call before the next refresh. */
+void mapChooserSetWorkshopDir(MapChooserState *state, const char *dir);
 
 /* Post-pass for listProviders running a recursive search. The provider
  * appends matching file rows with their enclosing folder path in

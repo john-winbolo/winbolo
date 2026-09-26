@@ -32,6 +32,7 @@ bug worth reporting.
 - [Talking to players, and ending the round](#talking-to-players-and-ending-the-round)
 - [Showing things on a client](#showing-things-on-a-client)
   - [The panel](#the-panel)
+- [Settings](#settings)
 - [Rules](#rules)
 - [Triggers](#triggers)
   - [The fields a hook offers](#the-fields-a-hook-offers)
@@ -437,6 +438,9 @@ scenario = {
 | `triggers` | array | What the scenario does without a line of Lua: hooks to listen on, tests against what each hook is handed, and calls to make when every test holds. A scenario may carry triggers, a script, or both. See [Triggers](#triggers). |
 | `fill_to_caps` | boolean | False by default. True starts every pillbox and base on the map at the caps your `rules` table leaves in force rather than at the numbers the map file holds. A map file states a number for each pill's armour and each base's stocks and has no way of stating "full", so a scenario that raises `base_full_armour` or `pill_max_armour` would otherwise open with the map's own smaller numbers and climb to the new ones over the round. Raising only: anything already at or above a cap is left where it is, and anything above one is brought down by the rules themselves. A pill's firing rate is not touched. |
 | `callbacks` | table | What each of the script's callbacks does, one sentence each for a player, keyed by the callback's name: `callbacks = { on_start = "Lines the teams up.", can_die = "Builders cannot be killed." }`. The lobby's details dialog shows them under the rules table, headed "What this mod implements:" or "What this scenario implements:", as a table of Method (the callback's name), Type and High-level overview (the sentence). Type is Event for a hook whose return the engine ignores, Query for a policy whose answer it uses, and Trigger for a hook only a trigger's `when` defines. A script with no block shows no such section. Optional, and it changes nothing about how the round plays. At most 40 rows, each sentence cut at 159 bytes (at a UTF-8 character boundary), and 896 bytes for the whole block packed (a type byte and two length bytes per row plus the name and the sentence, and one count byte) — about nine lines of eighty letters. The load warns, and never refuses the file, for each callback the script defines that the block does not describe, for each name that is no callback the engine calls, and for each name the script never defines; those last two rows are dropped. The warnings go to the server console and `-validate` prints them. The names are the ones in the hook and policy tables below; a trigger's `when` counts as defining its hook. |
+| `workshop_id` | string | The Steam Workshop item the file was published as, written as a string of decimal digits (`"3301234567"`), because a Lua number cannot hold every digit of a 64-bit id. The game writes it into the file's manifest when you publish it; it is not meant to be set by hand. A script that declares its own `scenario` table need not repeat it: it is compared with the manifest only when the table states it, and a table that states a different id is refused. Anything that is not a string of digits is reported and read as none. |
+| `workshop_author` | string | The SteamID64 of the account that published the file, a string of decimal digits like `workshop_id`, and written by the game at the same time. The same rules apply: not meant to be set by hand, need not be repeated, and refused only when the table states a different one. |
+| `settings` | table | Choices the host makes in the lobby details dialog, one dropdown each, read by the script with `game.setting(id)`. See [`scenario.settings`](#scenariosettings). Optional; a script with none shows no Settings section. |
 
 ### `scenario.lobby`
 
@@ -552,6 +556,40 @@ rules = {
   tank_reload_ticks = 10,
 },
 ```
+
+### `scenario.settings`
+
+Choices the host makes in the lobby, before the round, without editing the
+script. Each one is a dropdown in the script's details dialog. The script
+reads the value with [`game.setting(id)`](#settings).
+
+```lua
+settings = {
+  { id = "round_minutes", label = "Round length (minutes)", type = "int",
+    min = 1, max = 10, step = 1, default = 4 },
+  { id = "rounds", label = "Rounds", type = "int",
+    min = 1, max = 5, step = 1, default = 5 },
+},
+```
+
+| Field | What it is |
+|---|---|
+| `id` | The name `game.setting` takes. 1 to 31 letters, digits and `_`, and unique in the script. |
+| `label` | What the dialog shows beside the dropdown, up to 63 bytes. This is the script's own text; it is not translated. |
+| `type` | `"int"`, which is also what a missing type means. Only whole numbers exist today. |
+| `min`, `max` | The range, both ends in it. Required. |
+| `step` | The gap between entries, above 0. Optional; 1 when missing. |
+| `default` | The value when the host picks nothing. Required, inside the range and on the step. |
+
+A script may declare up to 16 settings, and a setting may offer up to 100
+entries (`(max - min) / step + 1`). A row that breaks a rule, a duplicate id,
+and a row past the sixteenth are reported and dropped; the rest still apply.
+`-validate` prints the same reports. A package's `manifest.json`
+carries the same list under `"settings"` with the same fields.
+
+The server reads the declaration without running the script, the same way it
+reads `rules`. A value the host picks is held for the lobby session, per
+script file.
 
 ### `scenario.tags`
 
@@ -1158,8 +1196,8 @@ The table **replaces** the bot's, whole. What the spawn's table said and this
 one does not say is gone, because the brain's table is rebuilt rather than
 merged into. Values are text and numbers, as a spawn's are, so a flag a brain
 reads as on or off is written `"1"` and `"0"` rather than `true` and `false`.
-GoalHunter treats only its known flag words that way (`noblitz`, `suicider`,
-`nosuicider`, `noclaimdead`, `normal`, `ammoless`); a valued token such as
+GoalHunter treats only its known flag words that way (`noblitz`, `blitzonly`,
+`suicider`, `nosuicider`, `noclaimdead`, `normal`, `ammoless`); a valued token such as
 `blitzsuiciders = "1"` keeps its value.
 
 What the bot does with it is the brain's business, and there are two levels
@@ -1176,8 +1214,8 @@ to it:
 
 GoalHunter, the brain that ships with the server, writes one: it re-reads the
 whole token string, so `cfg=NAME=VALUE` and `preset=` change its constants
-there and then, and the bare flags (`noblitz`, `suicider`, `nosuicider`,
-`noclaimdead`, `normal`, `ammoless`) change the bot's behaviour from the next
+there and then, and the bare flags (`noblitz`, `blitzonly`, `suicider`,
+`nosuicider`, `noclaimdead`, `normal`, `ammoless`) change the bot's behaviour from the next
 tick. `difficulty=` and `mode=` are **not** applied at runtime — those choose a
 whole bundle of values at load and a second bundle cannot unset the first — so
 the brain logs them as unsupported and leaves them. It also says one line to
@@ -1300,6 +1338,11 @@ it, holds it for the same sixty seconds, and drops it for anything a person
 says afterwards. A player can call a scripted order off with `cancel all` or
 by naming the bot — a bare `cancel` cannot, because that one releases only
 the speaker's own order and a hint's sender is the scenario.
+
+GoalHunter 1.7 also reads `ping = "1"` on a `goto`: the order is filed as if
+a bot-command ping had given it, so a square a hostile pillbox can shoot turns
+the hold into the decoy hold. No scenario op places a ping, so this key is how
+a script reaches the decoy hold (the `decoy_getaway` ROOST test uses it).
 
 Three of the seven are as near as the brain's existing goals get. `defend` on
 a **base** stands on the base, because there is no defend-a-base goal — a base
@@ -1473,6 +1516,27 @@ gives them a colour. The names are also on the `game` table as
 `game.TIMER_MODE`, for a script that computes one rather than writing it.
 
 ---
+
+## Settings
+
+| Call | What it does |
+|---|---|
+| `game.setting(id)` | The value the host picked in the lobby for one of this script's own [`settings`](#scenariosettings), or its declared default when the host picked nothing. An id the script does not declare **raises**, for the reason an unknown rule name does. |
+
+The value is fixed for the round. Read it in `on_init`, or at the top of the
+file, and keep it in a local:
+
+```lua
+local WAVES        = game.setting("rounds")
+local WAVE_LIMIT_S = game.setting("round_minutes") * 60
+```
+
+A script reads only its own settings: the id is looked up in the declaration
+of the file that makes the call. The server checks every value the host
+sends. A value below the range becomes the lowest entry, one above it the
+highest, and one inside the range but off the step the default. An older
+server, or a client that cannot send a pick, leaves every setting at its
+default, so a script must play correctly on its defaults alone.
 
 ## Rules
 

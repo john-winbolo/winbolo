@@ -292,6 +292,8 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbySettings.lobbyWbnAvailable        = winbolonetIsRunning();
     evt->u.lobbySettings.lobbyServerLocks         = sim->serverLocks;
     evt->u.lobbySettings.uploadPolicy             = sim->uploadPolicy;
+    evt->u.lobbySettings.scriptUploadPolicy       = sim->scriptUploadPolicy;
+    evt->u.lobbySettings.scriptSharing            = !sim->scriptSharingOff;
     for (int vc = 0; vc < VIEW_CATEGORY_COUNT; vc++) {
         evt->u.lobbySettings.viewPolicy[vc]    = sim->viewPolicy[vc];
         evt->u.lobbySettings.viewDecaySecs[vc] = sim->viewDecaySecs[vc];
@@ -378,6 +380,8 @@ void serverSimFillScriptListEvent(const ServerSim *sim, uint8_t chunk,
         snprintf(dst->name, sizeof(dst->name), "%s", src->name);
         dst->keepsWinCondition = src->keepsWinCondition;
         dst->bound             = src->bound;
+        dst->source            = src->source;
+        dst->workshopId        = src->workshopId;
     }
 }
 
@@ -942,6 +946,15 @@ static void serverSimSyncSubscriber(
             serverSimFillScriptListEvent(sim, chunk, &evt);
             deliver(ctx, &evt);
         }
+    }
+
+    /* The values the host chose for scripts' settings, as a CLEAR and one
+     * SET each. Sent even when none is held, because the CLEAR is also how
+     * a client learns this server takes CMD_SET_SCRIPT_SETTING. Only to a
+     * real joiner: the ring's snapshot reaches spectators, who hold no
+     * lobby dialog. */
+    if (fullReplay) {
+        serverSimReplayScriptSettings(sim, deliver, ctx);
     }
 
     /* The gameplay numbers this sim is running on. A joiner's own table

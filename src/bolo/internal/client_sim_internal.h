@@ -390,6 +390,8 @@ struct ClientSim {
     uint8_t          lobbyBaseCount;
     uint8_t          lobbyStartCount;
     UploadPolicy     uploadPolicy;      /* server map-upload policy; ALLOW until first event */
+    ScriptUploadPolicy scriptUploadPolicy; /* server script-upload policy; ALLOW until first event */
+    bool lobbyScriptSharingOff; /* server refuses script copies; false (sharing) until first event */
     /* Server visibility rules, indexed by ViewCategory. Raw mirror of the
      * lobby-settings event; until one lands these hold the same three a
      * server starts with (clientSimCreate), so what the overview draws
@@ -678,6 +680,10 @@ struct ClientSim {
        unbound scenario are both unbound, and a chooser that sorts the two
        into different columns needs the kind as well. */
     bool     lobbyScenarioListKeepsWin[LOBBY_SCENARIO_LIST_MAX];
+    /* Where the server got the file (SERVER_SCENARIO_SOURCE_*), and the
+       Workshop item it came from, 0 for none. */
+    uint8_t  lobbyScenarioListSource[LOBBY_SCENARIO_LIST_MAX];
+    uint64_t lobbyScenarioListWorkshopId[LOBBY_SCENARIO_LIST_MAX];
     bool     lobbyScenarioListReady;    /* true once a response arrives */
     bool     lobbyScenarioListInFlight; /* true after send, false on response */
     /* False until the first chunk of the response in flight lands, which is
@@ -770,11 +776,21 @@ struct ClientSim {
         uint32_t sentTick;  /* transport localTick of the last request */
         uint16_t len;       /* bytes of details once found */
         uint8_t  bytes[SCN_DETAILS_MAX];
+        /* The file's settings block (scenario_settings.h), which only a
+           server that knows settings sends. settingsKnown false is a
+           server that did not say, which the dialog reads as no settings
+           it can draw. */
+        bool     settingsKnown;
+        uint16_t settingsLen;
+        uint8_t  settings[SCN_SETTINGS_BLOB_MAX];
     } lobbyScnDetails[LOBBY_SCN_DETAILS_SLOTS];
-    /* The bulk receiver's landing buffer for one answer: the status byte and
-     * the details. rxSlot is one more than the slot it is filling, and 0
-     * for none, so a zeroed ClientSim starts with none. */
-    uint8_t  lobbyScnDetailsRx[1 + SCN_DETAILS_MAX];
+    /* The bulk receiver's landing buffer for one answer: the status byte,
+     * then the details, or for BULK_SCN_DETAILS_FOUND_V2 a details length,
+     * the details and the settings block. rxSlot is one more than the slot
+     * it is filling, and 0 for none, so a zeroed ClientSim starts with
+     * none. */
+    uint8_t  lobbyScnDetailsRx[1 + 2 + SCN_DETAILS_MAX +
+                               SCN_SETTINGS_BLOB_MAX];
     int      lobbyScnDetailsRxSlot;
 
     /* Upload progress — driven by the Upload tab and the
@@ -783,12 +799,28 @@ struct ClientSim {
      * 4=rejected. */
     uint8_t  lobbyMapUploadStatus;
     uint8_t  lobbyMapUploadRejectCode; /* server's reject byte, if any */
-    char     lobbyMapUploadFinalPath[256]; /* server-relative path */
+    char     lobbyMapUploadFinalPath[256]; /* server-relative path, or the
+                                            * server's reason on a refused
+                                            * script */
+    /* UPLOAD_KIND_MAP / _SCRIPT: which upload the three fields above
+     * describe. Set when an upload starts; zero (MAP) before any. */
+    uint8_t  lobbyUploadKind;
+    /* Why the server refused a script (SCRIPT_REFUSE_*) and the two numbers
+     * that reason carries, off the DONE reply. NONE and zeros while an
+     * upload runs, after one the server took, and for a map. */
+    uint8_t  lobbyScriptRefuseReason;
+    int32_t  lobbyScriptRefuseA;
+    int32_t  lobbyScriptRefuseB;
     /* Set by the PACKET_LOBBY_MAP_USE_LOCAL_NACK handler when the
      * server can't fulfil the MD5-skip-upload shortcut. The Upload
      * tab's pump loop notices this on the next frame and falls back
      * to the regular PACKET_LOBBY_MAP_UPLOAD_BEGIN / CHUNK flow. */
     bool     lobbyMapUseLocalNeedsFallback;
+    /* The directory this computer copies its Workshop items to, or "" for
+     * none. A map picked from under it is offered to the server as
+     * "Workshop/<name>" before it is uploaded. Set by the frontend through
+     * clientSimSetWorkshopMapDir. */
+    char     workshopMapDir[FILENAME_MAX];
 
     /* Winbolo.net preview result — driven by
      * PACKET_LOBBY_PREVIEW_WBN_DONE. status: 0=idle,
@@ -866,8 +898,22 @@ struct ClientSim {
     char     lobbyScriptNames[LOBBY_SCRIPT_LIST_MAX][LOBBY_SCENARIO_NAME_LEN];
     bool     lobbyScriptKeepsWin[LOBBY_SCRIPT_LIST_MAX];
     bool     lobbyScriptBound[LOBBY_SCRIPT_LIST_MAX];
+    uint8_t  lobbyScriptSource[LOBBY_SCRIPT_LIST_MAX];
+    uint64_t lobbyScriptWorkshopId[LOBBY_SCRIPT_LIST_MAX];
     int      lobbyScriptPendingCount;
     LobbyScriptEntry lobbyScriptPending[LOBBY_SCRIPT_LIST_MAX];
+    /* The values the host chose for scripts' settings, from
+     * CTRL_LOBBY_SCRIPT_SETTING, keyed like the server's store. Supported
+     * is set by the first such event, which only a server that takes
+     * CMD_SET_SCRIPT_SETTING sends; the dialog lets the host change a
+     * value only once it is set. */
+    bool     lobbyScriptSettingsSupported;
+    int      lobbyScriptSettingCount;
+    struct {
+        char    file[LOBBY_SCENARIO_FILE_LEN];
+        char    id[SCN_SETTING_ID_LEN];
+        int32_t value;
+    }        lobbyScriptSettings[LOBBY_SCRIPT_SETTING_VALUES_MAX];
     /* Set when a run of chunks is thrown away for overrunning the cap, and
      * held until that run's last chunk. Zeroing the pending count is not
      * enough on its own: zero is exactly where a fresh list starts, so the

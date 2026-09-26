@@ -39,10 +39,12 @@
  *      * the horde really does hold the low seats, so the case is testing
  *        what it says it is
  *      * every centre pill belongs to a seat on the defenders' team
- *      * each defender BOT has exactly one pill dug in, at full armour and
- *        standing on the ring road
- *      * the human still holds at least one pill and every one of them is
- *        dead on the ground
+ *      * each defender BOT has a pill dug in, at full armour and standing
+ *        on the ring road
+ *      * a keep with fewer than six defenders has the pill of every empty
+ *        puddle start built as well, so every centre pill but the human's
+ *        one to place stands built
+ *      * the human still holds at least one pill dead on the ground
  *      * the round opens with the "dig in" line
  *      * the first wave's first attacker takes the field after the grace
  *        (GRACE_S = 10) and not before, and the whole wave is ashore inside
@@ -294,10 +296,10 @@ static int slrRound(int bots, bool inPlace) {
                       (int)slrTeam(sim, p->owner));
     }
 
-    /* (b) Each defender BOT has exactly one pill dug in: at full armour and
-           standing on the ring road, which is where the pre-build slides it.
-           Exactly one, because a bot mans one station however many pills the
-           deal happened to give it. */
+    /* (b) Each defender BOT has a pill dug in: at full armour and standing
+           on the ring road, which is where the pre-build slides it. A bot can
+           own more than one built pill: a short-handed keep builds the pill
+           of every empty puddle start too, and keeps the dealt owner. */
     for (i = 0; i < bots; i++) {
         int n;
         int mineBuilt = -1;
@@ -309,9 +311,9 @@ static int slrRound(int bots, bool inPlace) {
             mineCount++;
             if (mineBuilt < 0) mineBuilt = n;
         }
-        UT_ASSERT_MSG(mineCount == 1,
-                      "the defender bot in slot %d has %d pill(s) dug in, "
-                      "expected 1", botSlot[i], mineCount);
+        UT_ASSERT_MSG(mineCount >= 1,
+                      "the defender bot in slot %d has no pill dug in",
+                      botSlot[i]);
         {
             const pillbox *p = &(*sim->sim.pb).item[mineBuilt];
             BYTE tile = (*sim->sim.mp).mapItem[p->x][p->y];
@@ -329,30 +331,43 @@ static int slrRound(int bots, bool inPlace) {
     UT_ASSERT_MSG(built == bots,
                   "%d pill(s) dug in for %d defender bot(s)", built, bots);
 
-    /* (c) The human still holds a pill, and every one they hold is dead on
-           the ground: a person carries it and builds it where they choose,
-           and the pre-build must never take the last one off them. */
+    /* (g) Every centre pill stands built except the human's one to place:
+           one per bot, plus one per puddle start nobody stands on. With the
+           human and the bots that is SLR_CENTER_PILLS - 1 in both shapes. */
+    {
+        int n;
+        int standing = 0;
+        for (n = 0; n < SLR_CENTER_PILLS; n++) {
+            const pillbox *p = &(*sim->sim.pb).item[n];
+            if (p->armour > 0) standing++;
+        }
+        UT_ASSERT_MSG(standing == SLR_CENTER_PILLS - 1,
+                      "%d centre pill(s) stand built with %d defender "
+                      "bot(s) and one human, expected %d", standing, bots,
+                      SLR_CENTER_PILLS - 1);
+    }
+
+    /* (c) The human still holds a pill dead on the ground: a person
+           carries it and builds it where they choose, and neither pre-build
+           may take the last one off them. */
     {
         int n;
         int mine = 0;
         for (n = 0; n < SLR_CENTER_PILLS; n++) {
             const pillbox *p = &(*sim->sim.pb).item[n];
-            if (p->owner != (BYTE)humanSlot) continue;
-            mine++;
-            UT_ASSERT_MSG(p->armour == 0,
-                          "pill %d, the human's, was built for them "
-                          "(armour %d)", n + 1, (int)p->armour);
+            if (p->owner == (BYTE)humanSlot && p->armour == 0) mine++;
         }
         UT_ASSERT_MSG(mine > 0,
-                      "the human in slot %d was left with no centre pill",
-                      humanSlot);
+                      "the human in slot %d was left with no dead centre "
+                      "pill", humanSlot);
     }
 
     /* (f) A defender bot that reaches the field AFTER the setup is caught
            up. The pre-build used to run once, at the setup, and never again,
            so a seat that was not there for it never dug in at all. Only
-           where there is a seat free and a pill to spare, which is the
-           two-bot shape: the full keep has neither. */
+           where there is a seat free, which is the two-bot shape. No dead
+           pill is left for it there, so it takes over a pill built for an
+           empty start. */
     if (bots < SLR_MAX_BOTS) {
         int late = serverSimFindFreeSlot(sim, true);
         int n;

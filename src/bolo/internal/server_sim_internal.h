@@ -38,6 +38,7 @@
 #include "input_packet.h"   /* PING_SPAM_MAX_5S / PING_SPAM_MAX_30S — ping anti-spam caps */
 #include "scenario_defs.h"  /* ScenarioPolicy — the vtable pointer below */
 #include "scenario_details.h" /* SCN_DETAILS_MAX — the map script's details */
+#include "scenario_settings.h" /* SCN_SETTINGS_BLOB_MAX — its settings */
 
 /* PlayerRoundStats, NotableType, NotableEvent and NOTABLE_EVENTS_MAX are the
  * shared accumulator/timeline types, defined in round_stats.h (included above)
@@ -370,6 +371,17 @@ struct ServerSim {
     bool     mapMd5Valid;          /* mapMd5 holds a usable hash */
     char     mapMd5Hex[33];        /* mapMd5 as 32 lowercase hex chars + NUL; "" when invalid */
     UploadPolicy uploadPolicy;     /* mirrored from server-startup config */
+    ScriptUploadPolicy scriptUploadPolicy;  /* mirrored from server-startup config */
+    bool               scriptSharingOff;    /* refuse copies of this server's scripts;
+                                             * negative so a zeroed sim shares */
+    /* Where a script a player uploads lands under the policy in force, and
+     * the lowest directory of the merged script listing. "" under OFF.
+     * Resolved once by serverInstanceStartup. */
+    char     scriptUploadDir[FILENAME_MAX];
+    /* The session directory ALLOW lands in, on a host that takes remote
+     * clients; "" otherwise. Emptied at startup, at shutdown and by
+     * serverSimResetLobbyToDefaults. */
+    char     scriptSessionDir[FILENAME_MAX];
     /* Per-category visibility rules, indexed by ViewCategory. Set from
      * the CLI / hosting prefs at startup and from the lobby via
      * LST_PILL_VIEW / LST_BASE_VIEW / LST_ALLY_VIEW; broadcast in the
@@ -811,6 +823,12 @@ struct ServerSim {
      * PERSIST-policy uploads. Empty → "<mapDirPath>/Uploads". Set from
      * ServerInstanceConfig.uploadPersistDir at startup. */
     char         uploadPersistDir[FILENAME_MAX];
+    /* Absolute directory backing the virtual "Workshop/" folder: where a
+     * desktop host copies its subscribed Workshop items. Empty → no Workshop
+     * folder, and "Workshop/<name>" resolves under the map root like any
+     * other path. Set by the host through serverSimSetWorkshopMapDir; the
+     * dedicated server never sets it. */
+    char         workshopMapDir[FILENAME_MAX];
     /* The scenarios this server offers on their own, independently of any
      * map: the -scenariodir CLI arg on the dedicated server and the
      * "Scenario Dir" preference on a desktop host. Empty → the built-in
@@ -879,6 +897,23 @@ struct ServerSim {
        by serverSimSetMapScript. */
     uint8_t      scenarioMapScriptDetails[SCN_DETAILS_MAX];
     uint16_t     scenarioMapScriptDetailsLen;
+    /* And its settings block (scenario_settings.h), for the same reason and
+       on the same terms: written by serverSimSetMapScriptSettings and
+       forgotten by serverSimSetMapScript. */
+    uint8_t      scenarioMapScriptSettings[SCN_SETTINGS_BLOB_MAX];
+    uint16_t     scenarioMapScriptSettingsLen;
+    /* The values the host chose for scripts' settings this session, keyed by
+       the script's file name and the setting's id. A value equal to the
+       declared default is not kept: a missing value is the default. Kept
+       across rounds and map changes, never saved. Written only by
+       serverSimSetScriptSetting, which checks each value against the
+       declaration first. */
+    struct {
+        char    file[LOBBY_SCENARIO_FILE_LEN];
+        char    id[SCN_SETTING_ID_LEN];
+        int32_t value;
+    }            scriptSettingValues[SERVER_SCRIPT_SETTING_VALUES_MAX];
+    int          scriptSettingValueCount;
 
     /* Random map generation (for -randommap mode) */
     bool         randomMapEnabled;       /* true when using -randommap */
@@ -985,12 +1020,35 @@ struct ServerSim {
     int                  (*scenarioLister)(void *ctx, const char *dir,
                                            ScnDirEntry *out, int max);
     void                  *scenarioListerCtx;
+    /* Takes a script a player uploaded (serverSimSetScriptUploadAccept).
+       NULL means nothing registered and script uploads are refused. */
+    bool                 (*scriptUploadAccept)(void *ctx, const char *dir,
+                                               const char *name,
+                                               const uint8_t *bytes,
+                                               uint32_t len,
+                                               ScriptUploadRefusal *why);
+    void                  *scriptUploadAcceptCtx;
     /* Reads one directory file's details for serverSimScenarioDetails.
        NULL means nothing registered and only the map's own script has any. */
     int                  (*scenarioDetailsReader)(void *ctx, const char *dir,
                                                   const char *file,
                                                   uint8_t *out, size_t cap);
     void                  *scenarioDetailsReaderCtx;
+    /* Reads one directory file's raw bytes for serverSimScriptFileRead.
+       NULL means nothing registered and no file is served. */
+    ServerScriptReadResult (*scriptFileReader)(void *ctx, const char *dir,
+                                               const char *file,
+                                               uint8_t **outBytes,
+                                               uint32_t *outLen,
+                                               uint32_t cap);
+    void                  *scriptFileReaderCtx;
+    /* Reads one directory file's settings block for
+       serverSimScenarioSettingsDecl. NULL means nothing registered and only
+       the map's own script declares any. */
+    int                  (*scenarioSettingsReader)(void *ctx, const char *dir,
+                                                   const char *file,
+                                                   uint8_t *out, size_t cap);
+    void                  *scenarioSettingsReaderCtx;
     /* What a lobby host's reload request runs. NULL means no scenario is
        attached and a request answers so. */
     bool                 (*scenarioReload)(void *ctx, char *err, size_t errLen);

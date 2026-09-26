@@ -428,6 +428,7 @@ void transportUdpServerFuzzInit(ServerSim *sim) {
      * here so the seam can take it around each serverProcessPacket call, the
      * way serverInstanceTick holds it in production. Idempotent. */
     threadsCreate(true);
+    udpServerFreeScriptUploadBufs();  /* the memset would lose them */
     memset(&udpServer, 0, sizeof(udpServer));
     memset(punchQueue, 0, sizeof(punchQueue));
     udpServer.sock = INVALID_SOCKET;
@@ -440,6 +441,8 @@ void transportUdpServerFuzzInit(ServerSim *sim) {
     udpServerClearAllReauthPending();
     udpServer.uploadMaxFiles        = 64;
     udpServer.uploadMaxStorageBytes = 8u * 1024u * 1024u;
+    udpServer.scriptUploadMaxFiles        = 32;
+    udpServer.scriptUploadMaxStorageBytes = 64u * 1024u * 1024u;
     udpServer.compressedMapSize = 0;
     for (i = 0; i < MAX_TANKS; i++) {
         udpServer.clients[i].connected = false;

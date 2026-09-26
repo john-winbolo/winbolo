@@ -115,7 +115,7 @@ static bool scnDirReadFile(const char *path, uint8_t **out, size_t *outLen) {
  * straight out of it. scnPackageOpen takes a buffer that starts at the magic,
  * which a package file does — the trailer hunt is only for maps. No Lua runs
  * here, so a container lists on a server that would refuse to run its script. */
-static bool scnDirReadPackage(const char *path, ScenarioManifest *out) {
+bool scnDirReadPackage(const char *path, ScenarioManifest *out) {
     uint8_t        *file     = NULL;
     size_t          fileLen  = 0;
     uint8_t        *json     = NULL;
@@ -222,6 +222,18 @@ size_t scnDirDetailsFromManifest(uint8_t *out, size_t cap,
     return len;
 }
 
+size_t scnDirSettingsFromManifest(uint8_t *out, size_t cap,
+                                  const ScenarioManifest *m) {
+    size_t  len = 0;
+    uint8_t i;
+
+    if (out == NULL || cap == 0 || m == NULL) return 0;
+    for (i = 0; i < m->numSettings && i < SCN_SETTINGS_MAX; i++) {
+        (void)scnSettingsBlobAppend(out, cap, &len, &m->settings[i]);
+    }
+    return len;
+}
+
 void scnDirEntryFromManifest(ScnDirEntry *e, const char *file,
                              const ScenarioManifest *m) {
     memset(e, 0, sizeof(*e));
@@ -236,6 +248,14 @@ void scnDirEntryFromManifest(ScnDirEntry *e, const char *file,
        loaded. The lobby script list carries this per entry: it is how a
        chooser knows which rows may sit together. */
     e->keepsWinCondition = scnManifestKeepsWinCondition(m);
+    /* The Workshop item the manifest names, 0 for none, which is how a
+       chooser matches a row to the item it came from. The source is left to
+       the caller: a directory read does not know which of the server's
+       directories it is reading. */
+    e->workshopId = m->workshopId;
+    /* The account that published it, for this computer's own listings; the
+       wire carries the id alone. */
+    e->workshopAuthor = m->workshopAuthor;
 }
 
 /* File-name order. Two scenarios may share a manifest name and two files in
@@ -336,6 +356,10 @@ int scnDirListDetails(const char *dir, ScnDirEntry *out,
                 details[n].len = (uint16_t)scnDirDetailsFromManifest(
                     details[n].bytes, sizeof(details[n].bytes),
                     &check->manifest);
+                details[n].settingsLen =
+                    (uint16_t)scnDirSettingsFromManifest(
+                        details[n].settings, sizeof(details[n].settings),
+                        &check->manifest);
             }
             n++;
         }

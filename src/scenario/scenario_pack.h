@@ -11,7 +11,9 @@
  *  Puts the scenario beside a map into the map: the script
  *  is read, the manifest is derived from the table that
  *  script declares, and the two go into a WBSC container
- *  written on to the end of the map file.
+ *  written on to the end of the map file. A loose script
+ *  with no map goes into a container of its own, a
+ *  .scenario file, the same way.
  *
  *  Nothing writes a manifest by hand. It comes from the
  *  parse the validator already does, so what a package says
@@ -39,5 +41,14 @@
    twice gives the same bytes. False with err set and the file untouched when
    there is nothing to pack or the script has problems. */
 bool scnPackMap(const char *mapPath, char *err, size_t errLen);
+
+/* Pack a loose scenario script into a .scenario package at outPath: the
+   manifest its scenario table parses to, and the script as main.lua. The
+   script is validated as a scenario directory would (no map). Refused, with
+   err set and nothing written, when it has problems, declares no scenario
+   table, or is bound (a bound scenario ships inside its map). An existing
+   outPath is replaced through a temporary file and a rename. */
+bool scnPackScript(const char *luaPath, const char *outPath,
+                   char *err, size_t errLen);
 
 #endif /* SCENARIO_PACK_H */

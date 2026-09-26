@@ -549,6 +549,108 @@ local function stuck_recovery(state, info, goal)
   end
 end
 
+-- Path flip guard (C.PF_FLIP_FRESH_ASTAR; PRESETS.keel = false).
+-- The Dijkstra next step can send the tank back to the tile it just left
+-- (A->B->A): 20260925_105315 bot9 t=2931-3055 drove (147,123)->(147,122)->
+-- (147,123)->(147,122) for 120 ticks round an ally's avoid tiles (see
+-- chain_rank_pick in brain_pathfinder.c for the cause). When the step names
+-- the tile we just left and it is not the destination, run a fresh A* from
+-- the current tile instead, and keep doing so while we stay on this tile, for
+-- at most C.PF_FLIP_FRESH_ASTAR_TICKS path calls (about one per tick). After
+-- that the hold is spent: Dijkstra steps again on this tile, and no new hold
+-- starts until the tank moves.
+--
+-- 2026-09-26: the fresh A* takes the same avoid tiles as the Dijkstra step
+-- (M.flip_astar below), and the hold is capped. Before, the A* could drive
+-- into the ally the Dijkstra path was avoiding, and a full A* ran on every
+-- path call for as long as the tank stayed on the tile.
+--
+-- M.flip_track(state, tmx, tmy): call once per path call. Remembers the last
+-- tile we LEFT (state._pf_left_mx/my) and drops the hold when we move.
+function M.flip_track(state, tmx, tmy)
+  if state._pf_cur_mx ~= tmx or state._pf_cur_my ~= tmy then
+    if state._pf_cur_mx then
+      state._pf_left_mx, state._pf_left_my = state._pf_cur_mx, state._pf_cur_my
+    end
+    state._pf_cur_mx, state._pf_cur_my = tmx, tmy
+    state._pf_flip_hold = nil
+  end
+end
+
+-- M.flip_is_back(state, dest_mx, dest_my, nx, ny) -> true when (nx,ny) is the
+-- tile we just left and not the destination. Pure: one compare.
+function M.flip_is_back(state, dest_mx, dest_my, nx, ny)
+  return nx ~= nil and nx >= 0 and state._pf_left_mx ~= nil
+     and nx == state._pf_left_mx and ny == state._pf_left_my
+     and not (nx == dest_mx and ny == dest_my)
+end
+
+-- M.flip_holding(state, tmx, tmy, dest_mx, dest_my) -> true while a flip hold
+-- is set for this tile and this destination.
+-- A spent hold (h.spent, see M.flip_use) is not holding.
+function M.flip_holding(state, tmx, tmy, dest_mx, dest_my)
+  local h = state._pf_flip_hold
+  return h ~= nil and not h.spent and h.mx == tmx and h.my == tmy
+     and h.dmx == dest_mx and h.dmy == dest_my
+end
+
+-- M.flip_spent(state, tmx, tmy, dest_mx, dest_my) -> true when the hold for
+-- this tile and destination has used up its PF_FLIP_FRESH_ASTAR_TICKS. No new
+-- hold starts then (flip_track clears it when the tank moves).
+function M.flip_spent(state, tmx, tmy, dest_mx, dest_my)
+  local h = state._pf_flip_hold
+  return h ~= nil and h.spent == true and h.mx == tmx and h.my == tmy
+     and h.dmx == dest_mx and h.dmy == dest_my
+end
+
+-- M.flip_use(state) -> true while the hold may still run a fresh A*. Counts
+-- one path call; at PF_FLIP_FRESH_ASTAR_TICKS the hold is marked spent.
+function M.flip_use(state)
+  local h = state._pf_flip_hold
+  if not h or h.spent then return false end
+  h.n = (h.n or 0) + 1
+  if h.n > (C.PF_FLIP_FRESH_ASTAR_TICKS or 60) then
+    h.spent = true
+    return false
+  end
+  return true
+end
+
+-- M.flip_astar(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines,
+--              armour, avoid, penalty) -> status, nx, ny
+--   The flip guard's fresh A* (skip_dijkstra = true). The C A* takes no
+--   obstacle set, so the avoid tiles (the same list the Dijkstra tracer is
+--   given, packed y*256+x) are added to the cost overlay for this one call
+--   and put back straight after: the overlay is an int16, so the added cost
+--   is capped at 32767 there (the tracer adds `penalty` itself). The tank's
+--   own tile and the destination are left alone, as the tracer does.
+function M.flip_astar(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, avoid, penalty)
+  local saved = nil
+  if avoid and penalty and penalty > 0 then
+    saved = {}
+    for k, v in pairs(avoid) do
+      local key = (v == true) and k or v   -- list of keys, or a key set
+      if type(key) == "number" and saved[key] == nil then
+        local x, y = key % 256, math.floor(key / 256)
+        if not (x == tmx and y == tmy) and not (x == dest_mx and y == dest_my) then
+          local old = cpf.get_overlay(x, y) or 0
+          saved[key] = old
+          local add = old + penalty
+          if add > 32767 then add = 32767 end
+          cpf.set_overlay(x, y, add)
+        end
+      end
+    end
+  end
+  local st, nx, ny = cpf.path_to(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, C.ASTAR_BUDGET, true)
+  if saved then
+    for key, old in pairs(saved) do
+      cpf.set_overlay(key % 256, math.floor(key / 256), old)
+    end
+  end
+  return st, nx, ny
+end
+
 -- Wrapper: call C pathfinder and update state.pf for compatibility with
 -- stuck detection, debug logging, and other consumers of state.pf.
 local function cpf_path_to(state, info, dest_mx, dest_my)
@@ -595,9 +697,37 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
     avoid = merged
   end
   local _t_s0 = BRAIN_PROFILE and clock_us() or 0
-  local status, nx, ny = cpf.path_to(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, C.ASTAR_BUDGET, false, avoid,
-                                     nogo and (C.SEA_NOGO_AVOID_PENALTY or 30000)
-                                          or C.NAV_AVOID_PENALTY)
+  -- Not while a sea no-go set is live: A* does not take the obstacle set, and
+  -- the no-go water is a hard rule (the ally avoid tiles are only a dodge).
+  local flip_on = C.PF_FLIP_FRESH_ASTAR and not nogo
+  if flip_on then M.flip_track(state, tmx, tmy) end
+  local status, nx, ny
+  local avoid_pen = nogo and (C.SEA_NOGO_AVOID_PENALTY or 30000) or C.NAV_AVOID_PENALTY
+  local flip_astar = flip_on and M.flip_holding(state, tmx, tmy, dest_mx, dest_my)
+                     and M.flip_use(state)
+  if not flip_astar then
+    status, nx, ny = cpf.path_to(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, C.ASTAR_BUDGET, false, avoid,
+                                 avoid_pen)
+    if flip_on and status == 1 and M.flip_is_back(state, dest_mx, dest_my, nx, ny)
+       and not M.flip_spent(state, tmx, tmy, dest_mx, dest_my) then
+      state._pf_flip_hold = { mx = tmx, my = tmy, dmx = dest_mx, dmy = dest_my }
+      flip_astar = M.flip_use(state)
+    end
+  end
+  if flip_astar then
+    -- skip_dijkstra = true: A* from THIS tile, with the same avoid tiles.
+    -- Taken only when it gives a step (done, or running with a step);
+    -- otherwise the Dijkstra step as before, so a budget-starved A* cannot
+    -- freeze the tank.
+    local a_st, a_nx, a_ny = M.flip_astar(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour,
+                                          avoid, avoid_pen)
+    if a_st == 1 or (a_st == 0 and a_nx and a_nx >= 0) then
+      status, nx, ny = a_st, a_nx, a_ny
+    elseif status == nil then
+      status, nx, ny = cpf.path_to(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, C.ASTAR_BUDGET, false, avoid,
+                                   avoid_pen)
+    end
+  end
   if BRAIN_PROFILE then
     _path_search_us = _path_search_us + (clock_us() - _t_s0)
     -- Snapshot which method (dij/astar) cpf.path_to actually used
@@ -663,6 +793,19 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
     pf.next_my = -1
   end
 
+  -- DECOY GETAWAY diagonal step (C.DECOY_GETAWAY_DIAGONAL): while the chain
+  -- moves, a diagonal next square is driven straight at, not round by a side
+  -- square (decoy_getaway.diagonal_next says why the Dijkstra goes round).
+  local g_ga = state.goal
+  if g_ga and g_ga._getaway and g_ga.mx == dest_mx and g_ga.my == dest_my then
+    local gx, gy = orders_mod().getaway_diagonal(g_ga, tmx, tmy, info.inboat, state.world)
+    if gx then
+      pf.status  = "done"
+      pf.next_mx, pf.next_my = gx, gy
+      pf.path_chain = { tmx, tmy, gx, gy }
+    end
+  end
+
   -- Boat-mode near deep water: when the tank sits on a tile bordering deep sea
   -- (any of the 8 neighbours), keep the nav destination within ONE tile of the
   -- tank. Stops steering from aiming a long diagonal that clips a deep-water
@@ -687,6 +830,7 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
   end
   return nil, nil
 end
+M._cpf_path_to = cpf_path_to   -- unit tests (test_place_line_flip.lua)
 
 -- Impassable terrain types for path lookahead line-of-sight checks.
 local IMPASSABLE = {

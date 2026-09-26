@@ -661,6 +661,77 @@ static bool commandDecodeLobbySetScenario(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CMD_SET_SCRIPT_SETTING - PACKET_SET_SCRIPT_SETTING
+ * Wire: [header 8] [cmdSeq 4] [fileLen 1] [file N] [idLen 1] [id M]
+ *       [value 4 BE]
+ *
+ * An empty file or id, or one past its field, is refused on both sides: it
+ * would name another script's setting or none. */
+static bool commandEncodeSetScriptSetting(const ClientCommand *cmd,
+                                          uint8_t *buf, size_t bufCap,
+                                          size_t *outLen) {
+    const CmdSetScriptSetting *s = &cmd->u.setScriptSetting;
+    size_t fileLen = strnlen(s->file, CMD_SCRIPT_LIST_FILE_LEN);
+    size_t idLen   = strnlen(s->id, CMD_SCRIPT_SETTING_ID_LEN);
+    size_t pos;
+
+    if (fileLen == 0 || fileLen >= CMD_SCRIPT_LIST_FILE_LEN || idLen == 0 ||
+        idLen >= CMD_SCRIPT_SETTING_ID_LEN) {
+        return false;
+    }
+    if (bufCap < CMD_PACKET_BODY_OFFSET + 1 + fileLen + 1 + idLen + 4) {
+        return false;
+    }
+    packHeader(buf, PACKET_SET_SCRIPT_SETTING, 0);
+    pos = CMD_PACKET_BODY_OFFSET;
+    buf[pos++] = (uint8_t)fileLen;
+    memcpy(buf + pos, s->file, fileLen);
+    pos += fileLen;
+    buf[pos++] = (uint8_t)idLen;
+    memcpy(buf + pos, s->id, idLen);
+    pos += idLen;
+    buf[pos++] = (uint8_t)(((uint32_t)s->value >> 24) & 0xFFu);
+    buf[pos++] = (uint8_t)(((uint32_t)s->value >> 16) & 0xFFu);
+    buf[pos++] = (uint8_t)(((uint32_t)s->value >> 8) & 0xFFu);
+    buf[pos++] = (uint8_t)((uint32_t)s->value & 0xFFu);
+    *outLen = pos;
+    return true;
+}
+
+static bool commandDecodeSetScriptSetting(const uint8_t *buf, size_t len,
+                                          ClientCommand *cmd) {
+    CmdSetScriptSetting *s = &cmd->u.setScriptSetting;
+    size_t  pos = CMD_PACKET_BODY_OFFSET;
+    uint8_t fileLen;
+    uint8_t idLen;
+
+    if (len < pos + 1) return false;
+    memset(s, 0, sizeof(*s));
+    cmd->type = CMD_SET_SCRIPT_SETTING;
+    fileLen = buf[pos++];
+    if (fileLen == 0 || fileLen >= CMD_SCRIPT_LIST_FILE_LEN ||
+        len < pos + fileLen + 1) {
+        return false;
+    }
+    memcpy(s->file, buf + pos, fileLen);
+    s->file[fileLen] = '\0';
+    pos += fileLen;
+    idLen = buf[pos++];
+    if (idLen == 0 || idLen >= CMD_SCRIPT_SETTING_ID_LEN ||
+        len != pos + idLen + 4) {
+        return false;
+    }
+    memcpy(s->id, buf + pos, idLen);
+    s->id[idLen] = '\0';
+    pos += idLen;
+    s->value = (int32_t)(((uint32_t)buf[pos] << 24) |
+                         ((uint32_t)buf[pos + 1] << 16) |
+                         ((uint32_t)buf[pos + 2] << 8) |
+                         (uint32_t)buf[pos + 3]);
+    /* A NUL inside either name would make it a shorter, different name. */
+    return strlen(s->file) == fileLen && strlen(s->id) == idLen;
+}
+
 /* CMD_SET_SCRIPT_LIST - PACKET_SET_SCRIPT_LIST
  * Wire: [header 8] [cmdSeq 4] [count 1] then count * [fileLen 1] [file N]
  *
@@ -1217,6 +1288,7 @@ bool commandCodecEncode(const ClientCommand *cmd,
         case CMD_LOBBY_SET_MAP:         ok = commandEncodeLobbySetMap(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_SET_SCENARIO:    ok = commandEncodeLobbySetScenario(cmd, buf, bufCap, outLen); break;
         case CMD_SET_SCRIPT_LIST:       ok = commandEncodeSetScriptList(cmd, buf, bufCap, outLen); break;
+        case CMD_SET_SCRIPT_SETTING:    ok = commandEncodeSetScriptSetting(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_PREVIEW_CANCEL:  ok = commandEncodeLobbyPreviewCancel(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_RELOAD_SCENARIO: ok = commandEncodeLobbyReloadScenario(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_PREVIEW_COMMIT:  ok = commandEncodeLobbyPreviewCommit(cmd, buf, bufCap, outLen); break;
@@ -1272,6 +1344,7 @@ bool commandCodecDecode(const uint8_t *buf, size_t len,
         case PACKET_LOBBY_SET_MAP:         return commandDecodeLobbySetMap(buf, len, cmd);
         case PACKET_LOBBY_SET_SCENARIO:    return commandDecodeLobbySetScenario(buf, len, cmd);
         case PACKET_SET_SCRIPT_LIST:       return commandDecodeSetScriptList(buf, len, cmd);
+        case PACKET_SET_SCRIPT_SETTING:    return commandDecodeSetScriptSetting(buf, len, cmd);
         case PACKET_LOBBY_PREVIEW_CANCEL:  return commandDecodeLobbyPreviewCancel(buf, len, cmd);
         case PACKET_LOBBY_RELOAD_SCENARIO: return commandDecodeLobbyReloadScenario(buf, len, cmd);
         case PACKET_LOBBY_PREVIEW_COMMIT:  return commandDecodeLobbyPreviewCommit(buf, len, cmd);

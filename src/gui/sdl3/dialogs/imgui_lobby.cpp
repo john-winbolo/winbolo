@@ -1178,6 +1178,11 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         *lobbyPlayersForceTab() == 1 ? ImGuiTabItemFlags_SetSelected : 0)) {
                     activeTab = 1;
                     float tabH = ImGui::GetContentRegionAvail().y - btnAreaH;
+                    /* Last frame's height of everything drawn under the
+                     * preview, and where that block starts this frame
+                     * (below 0 when no preview is drawn). */
+                    static float tabMapBelowH = 0.0f;
+                    float tabMapBelowTopY = -1.0f;
 
                     /* "Choose Map" — opens the separate chooser window.
                      * Host / admin / openHost-allowed only; non-privileged
@@ -1235,7 +1240,18 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         ImVec2 uv0((float)bx0 / MAP_PREVIEW_SIZE, (float)by0 / MAP_PREVIEW_SIZE);
                         ImVec2 uv1((float)(bx1 + 1) / MAP_PREVIEW_SIZE, (float)(by1 + 1) / MAP_PREVIEW_SIZE);
 
-                        float infoH = ImGui::GetTextLineHeightWithSpacing() * 2;
+                        /* The height of what sits under the preview is
+                         * measured on the previous frame rather than
+                         * counted here: the scenario, mods and unsafe
+                         * lines depend on what the round carries and wrap
+                         * at the tab's width, and a count that falls
+                         * short overflows the tab, whose scrollbar then
+                         * narrows the width the preview is bound by and
+                         * flips the layout every frame. The count is used
+                         * only until there is a measurement. */
+                        float infoH = tabMapBelowH > 0.0f
+                                    ? tabMapBelowH
+                                    : ImGui::GetTextLineHeightWithSpacing() * 2;
                         float previewMaxH = tabH - infoH;
                         float previewMaxW = ImGui::GetContentRegionAvail().x;
                         float previewSize = previewMaxW < previewMaxH ? previewMaxW : previewMaxH;
@@ -1294,6 +1310,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         }
                         /* Reserve the full box so the gap also sits below. */
                         ImGui::SetCursorPosY(boxTopY + previewSize);
+                        tabMapBelowTopY = ImGui::GetCursorPosY();
                         /* A click that didn't land on a start opens the zoomed
                          * popup (clicking a free start moves you there). */
                         if (lobbyMapPreview()->popupCompressedData && !miniConsumed &&
@@ -1362,6 +1379,10 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                             ImGui::TextUnformatted(langGetTextFmt(STR_DLGLOBBY_VOTES, &args));
                         }
                         if (countdownActive) ImGui::EndDisabled();
+                    }
+
+                    if (tabMapBelowTopY >= 0.0f) {
+                        tabMapBelowH = ImGui::GetCursorPosY() - tabMapBelowTopY;
                     }
 
                     ImGui::EndTabItem();
@@ -2052,6 +2073,11 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
              * stays true, so the panel is exactly the map panel. The child
              * keeps its id so the map chooser's scrim still finds it. */
             bool showMapPanel = !lobbyShowLastRound || *lobbyRecapShowMap();
+            /* Last frame's height of everything drawn under the preview,
+             * and where that block starts this frame (below 0 when no
+             * preview is drawn). */
+            static float mapPanelBelowH = 0.0f;
+            float mapPanelBelowTopY = -1.0f;
             if (lobbyShowLastRound) {
                 /* The flip lands on the next frame, so the caption and what is
                  * under it always describe the same view. */
@@ -2101,13 +2127,17 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
 
                 /* Size the preview square as (M - N) - small margin, where
                  *   M = total panel inner vertical space available now
-                 *   N = total vertical height of every other thing that
-                 *       will render in this panel (Choose Map button,
-                 *       separator, the 4-line info block, optional
+                 *   N = total vertical height of everything drawn under
+                 *       the preview (Choose Map button, separator, the
+                 *       map info rows, the scenario and mods lines, the
                  *       Skip Map vote row).
-                 * Pre-measure N so the preview can claim everything else
-                 * deterministically and the panel doesn't end up with
-                 * either dead space or content pushed past the bottom. */
+                 * N is last frame's measured height of that block, not a
+                 * count: the scenario, mods and unsafe lines depend on
+                 * what the round carries and wrap at the panel's width,
+                 * and a count that falls short overflows the panel, whose
+                 * scrollbar then narrows the width the preview is bound
+                 * by and flips the layout every frame. The count below
+                 * is used only until there is a measurement. */
                 bool isHostLocal  = lobbyIsHost(cs, myPlayerNum);
                 bool isAdminLocal = (myPlayerNum < MAX_TANKS &&
                     (clientSimGetLobbySlot(cs, (BYTE)myPlayerNum)->clientFlags
@@ -2122,15 +2152,17 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 float frameH  = ImGui::GetFrameHeight();
                 float spcH    = ImGui::GetStyle().ItemSpacing.y;
 
-                float N = 0.0f;
-                /* Choose Map button (right under the preview) */
-                if (effHostMap) N += frameH + spcH;
-                /* Spacing + Separator + Spacing */
-                N += spcH + 1.0f + spcH;
-                /* Map / pillboxes / bases / starts — 4 text rows */
-                N += 4.0f * lineH;
-                /* Skip Map button row (button + same-line votes text) */
-                if (skipAvail) N += spcH + frameH;
+                float N = mapPanelBelowH;
+                if (N <= 0.0f) {
+                    /* Choose Map button (right under the preview) */
+                    if (effHostMap) N += frameH + spcH;
+                    /* Spacing + Separator + Spacing */
+                    N += spcH + 1.0f + spcH;
+                    /* Map / pillboxes / bases / starts — 4 text rows */
+                    N += 4.0f * lineH;
+                    /* Skip Map button row (button + same-line votes text) */
+                    if (skipAvail) N += spcH + frameH;
+                }
 
                 float panelWidth = ImGui::GetContentRegionAvail().x;
                 float previewSize = M - N - 6.0f;  /* small breathing room */
@@ -2178,6 +2210,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 lobbyDrawPreviewCompass(cs, effHostMap, miniMin, innerSize, gapPx, s);
                 /* Reserve the full box so the gap also sits below the map. */
                 ImGui::SetCursorPosY(boxTopY + previewSize);
+                mapPanelBelowTopY = ImGui::GetCursorPosY();
                 /* A click that didn't land on a start opens the zoomed popup
                  * (clicking a free start moves you there instead). Mouse only;
                  * this two-column layout is never used in controller mode. */
@@ -2237,12 +2270,16 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 lobbyRenderScenarioInfoLines(cs, s);
 
                 lobbyRenderMapSkipVote(cs, spectator, hasTransport, s, false);
+
+                if (mapPanelBelowTopY >= 0.0f) {
+                    mapPanelBelowH = ImGui::GetCursorPosY() - mapPanelBelowTopY;
+                }
             }
 
             /* Choose Map button moved up to sit directly under the
              * preview image (see the mapPreviewTex branch above). The
-             * pre-measured N height for the preview-sizing math
-             * accounts for it. */
+             * measured N height for the preview-sizing math includes
+             * it. */
 
             ImGui::EndChild(); /* ##MapPanel */
 

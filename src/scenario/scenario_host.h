@@ -25,6 +25,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "server_sim.h" /* ServerSim, and MAX_TANKS / MAX_PILLS / MAX_BASES /
                          * MAX_STARTS through global.h and types.h */
@@ -436,6 +437,167 @@ void scenarioHostRegisterMapScripted(ServerSim *sim);
  *  sim - The sim being told where to send the question
  *********************************************************/
 void scenarioHostRegisterScenarioLister(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          scenarioHostListLocalScripts
+ *PURPOSE:
+ *  The scripts on this computer: the player's own Mods
+ *  directory under SDL_GetPrefPath (WB_MOD_DIR_USER in the
+ *  tests), then the Workshop directory beside it
+ *  (WB_MOD_DIR_WORKSHOP), where a name Mods holds is Mods'
+ *  file. What the lobby's Mods chooser offers to send to a
+ *  server that does not have them.
+ *
+ *  Needs no sim, because a remote client has none, and reads
+ *  through the same modify-time cache a server's listing
+ *  does, so a loose script's VM boots once and not on every
+ *  call. Still a directory read: call it when the chooser
+ *  opens or a transfer ends, never per frame.
+ *
+ *  A row read from the Workshop directory says
+ *  SERVER_SCENARIO_SOURCE_WORKSHOP and every other row
+ *  SERVER_SCENARIO_SOURCE_SERVER. Its workshopId is the
+ *  Workshop item the file's manifest names, 0 for none, and
+ *  workshopAuthor the account the manifest says published
+ *  it, 0 for none.
+ *  File-name order, case-insensitive.
+ *
+ *ARGUMENTS:
+ *  out - Rows written here
+ *  max - How many out holds
+ *
+ *RETURNS:
+ *  How many rows were written; 0 for a directory that is
+ *  missing or empty.
+ *********************************************************/
+int scenarioHostListLocalScripts(ServerScenarioEntry *out, int max);
+
+/*********************************************************
+ *NAME:          scenarioHostLocalScriptPath
+ *PURPOSE:
+ *  The full path of a file scenarioHostListLocalScripts
+ *  listed, so the chooser can hand it to the upload.
+ *
+ *ARGUMENTS:
+ *  file   - A file name as a row gave it; a name with a
+ *           directory separator in it is refused
+ *  out    - The path is written here
+ *  outLen - The size of out
+ *
+ *RETURNS:
+ *  True when one of those directories holds the file and
+ *  its path fits out. False otherwise, with out "".
+ *********************************************************/
+bool scenarioHostLocalScriptPath(const char *file, char *out, size_t outLen);
+
+/*********************************************************
+ *NAME:          scenarioHostWorkshopDir
+ *PURPOSE:
+ *  <prefpath>Workshop, where subscribed Workshop items are
+ *  copied to, or what WB_MOD_DIR_WORKSHOP names. The same
+ *  directory the mod listing and the local listing read,
+ *  so the one that writes it and the ones that read it
+ *  agree on the path and its override.
+ *
+ *ARGUMENTS:
+ *  out    - The path is written here
+ *  outLen - The size of out
+ *
+ *RETURNS:
+ *  True with the path in out. False when SDL cannot name
+ *  it or it does not fit, with out "".
+ *********************************************************/
+bool scenarioHostWorkshopDir(char *out, size_t outLen);
+
+/*********************************************************
+ *NAME:          scenarioHostMapPackageInfo
+ *PURPOSE:
+ *  The scenario packed into a map file: fills out's name,
+ *  description, keepsWinCondition, bound, workshopId and
+ *  workshopAuthor from the chunk's manifest, and file with
+ *  the map's file name. Only the manifest is read; no
+ *  script runs. The file is read under the cap the attach
+ *  reads it under. A directory read per call: build a list
+ *  with it when the list is asked for, never per frame.
+ *
+ *ARGUMENTS:
+ *  mapPath - The map file
+ *  out     - Filled on true, cleared otherwise
+ *
+ *RETURNS:
+ *  False for a map with no chunk or one that does not read.
+ *********************************************************/
+bool scenarioHostMapPackageInfo(const char *mapPath, ServerScenarioEntry *out);
+
+/*********************************************************
+ *NAME:          scenarioHostPackLooseScript
+ *PURPOSE:
+ *  Pack Mods/<stem>.lua into Mods/<stem>.scenario for
+ *  publishing, then move the .lua into Mods/Sources/ so the
+ *  mod list shows one row. A <stem>.scenario already there
+ *  that carries a Workshop id keeps it: the id and author
+ *  are read before the pack and written back after it
+ *  (scnIoSetWorkshopId). A <stem>.lua already in Sources is
+ *  replaced. The listings are told after the pack and after
+ *  the move.
+ *
+ *  A move that fails is logged and still answers true: the
+ *  package is in place, and the script is left listed
+ *  beside it.
+ *
+ *ARGUMENTS:
+ *  luaPath         - The loose script
+ *  outScenarioPath - The package's path, on true
+ *  outLen          - The size of outScenarioPath
+ *  err, errLen     - The reason, on false
+ *
+ *RETURNS:
+ *  False with err set, and the .lua left where it was, when
+ *  the pack fails or the kept id cannot be written back.
+ *********************************************************/
+bool scenarioHostPackLooseScript(const char *luaPath, char *outScenarioPath,
+                                 size_t outLen, char *err, size_t errLen);
+
+/* What scenarioHostSaveLocalScript made of one file. */
+typedef enum {
+    SCENARIO_LOCAL_SAVE_OK = 0,
+    SCENARIO_LOCAL_SAVE_BAD_NAME,   /* not a bare .lua / .scenario file name */
+    SCENARIO_LOCAL_SAVE_EXISTS,     /* this computer already has that name  */
+    SCENARIO_LOCAL_SAVE_WRITE       /* the directory or the file could not be written */
+} ScenarioLocalSaveResult;
+
+/*********************************************************
+ *NAME:          scenarioHostSaveLocalScript
+ *PURPOSE:
+ *  Puts a copy of a server's script in the player's own
+ *  Mods directory, the first of the directories
+ *  scenarioHostListLocalScripts reads, making it if it is
+ *  not there yet.
+ *
+ *  The name came from a server, so it is held to a bare
+ *  file name ending in .lua or .scenario before anything is
+ *  written. A name any of those directories already holds,
+ *  in whatever case, is refused: a copy never replaces a
+ *  file of the player's own.
+ *
+ *  The bytes go to a dot file in the directory and are
+ *  renamed onto the name, so a failed write leaves nothing
+ *  behind. A saved file is listed on the next call to
+ *  scenarioHostListLocalScripts.
+ *
+ *ARGUMENTS:
+ *  file  - The bare file name, as the server gave it
+ *  bytes - The file's contents; may be NULL only when len
+ *          is 0
+ *  len   - How many bytes; 0 writes an empty file
+ *
+ *RETURNS:
+ *  SCENARIO_LOCAL_SAVE_OK once the file is in place, or
+ *  the reason it is not.
+ *********************************************************/
+ScenarioLocalSaveResult scenarioHostSaveLocalScript(const char *file,
+                                                    const uint8_t *bytes,
+                                                    size_t len);
 
 /*********************************************************
  *NAME:          scenarioHostAttach

@@ -224,6 +224,8 @@ BOLO_STATIC_ASSERT(CMD_SCRIPT_LIST_FILE_LEN == LOBBY_SCENARIO_FILE_LEN,
                    cmd_script_list_file_len_matches_lobby_scenario_file_len);
 BOLO_STATIC_ASSERT(SCN_DIR_FILE_LEN == LOBBY_SCENARIO_FILE_LEN,
                    scn_dir_file_len_matches_lobby_scenario_file_len);
+BOLO_STATIC_ASSERT(CMD_SCRIPT_SETTING_ID_LEN == SCN_SETTING_ID_LEN,
+                   cmd_script_setting_id_len_matches_scn_setting_id_len);
 BOLO_STATIC_ASSERT(SCN_DIR_NAME_LEN == LOBBY_SCENARIO_NAME_LEN,
                    scn_dir_name_len_matches_lobby_scenario_name_len);
 
@@ -1229,6 +1231,36 @@ scriptListDone:
            is freed whichever way it leaves. */
         free(dirRows);
         return result;
+    }
+    case CMD_SET_SCRIPT_SETTING: {
+        /* The host choosing a value for one of a script's own settings.
+           Lobby-only and host-only, like the list it is chosen beside: the
+           value changes how the next round plays. The script need not be on
+           the list yet, so a host can set a mod up before adding it.
+
+           Nothing from the client is trusted past the names.
+           serverSimSetScriptSetting reads the declaration for the file on
+           this server, refuses an id it does not declare, and falls back to
+           the default for a value outside the range or off the step. */
+        const CmdSetScriptSetting *s = &cmd->u.setScriptSetting;
+
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+        if (memchr(s->file, '\0', sizeof(s->file)) == NULL ||
+            memchr(s->id, '\0', sizeof(s->id)) == NULL ||
+            !lobbyScenarioNameShapeOk(s->file)) {
+            return CMD_REJECT_INVALID;
+        }
+        if (!serverSimSetScriptSetting(sim, s->file, s->id, s->value, NULL)) {
+            return CMD_REJECT_INVALID;
+        }
+        /* What the round plays by changed, so a ready player is asked to
+           look again, as a map or list change asks. */
+        lobbyAutoUnreadyOnChange(sim);
+        return CMD_OK;
     }
     case CMD_LOBBY_RELOAD_SCENARIO: {
         /* The edit-reload-play loop the dedicated server's console already

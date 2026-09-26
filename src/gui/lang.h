@@ -2840,23 +2840,23 @@
 /* What a recording's scripts.json says the round ran. The line over the list:
  * {string1} = the scenario's name, or its file where it has none, or the map
  * when no scenario ran; with no mods the name is drawn alone. */
-#define STR_LV_INFO_SCENARIO_MODS_1              2634
-#define STR_LV_INFO_SCENARIO_MODS_N              2635
+#define STR_LV_INFO_SCENARIO_MODS_1              2681
+#define STR_LV_INFO_SCENARIO_MODS_N              2682
 /* The heading over the script list, and the word a row ends with for where
  * the script came from: the map's own, or the server's scenarios directory. */
-#define STR_LV_INFO_SCRIPTS                      2636
-#define STR_LV_INFO_SCRIPT_SOURCE_MAP            2637
-#define STR_LV_INFO_SCRIPT_SOURCE_SERVER         2638
+#define STR_LV_INFO_SCRIPTS                      2683
+#define STR_LV_INFO_SCRIPT_SOURCE_MAP            2684
+#define STR_LV_INFO_SCRIPT_SOURCE_SERVER         2685
 /* One rule change the playhead has passed, under the Rules table.
  * {number} = the round's tick, {string1} = the rule as scripts spell it,
  * {string2} = what the new value does to it in words. */
-#define STR_LV_INFO_RULE_CHANGE                  2639
+#define STR_LV_INFO_RULE_CHANGE                  2686
 /* Game Information's Scores heading, and a slot's row with no name ({number} = the slot). */
-#define STR_LV_INFO_SCORES                       2640
-#define STR_LV_INFO_SCORE_SLOT                   2641
+#define STR_LV_INFO_SCORES                       2687
+#define STR_LV_INFO_SCORE_SLOT                   2688
 /* A scenario announcement on the newswire: {string1}{string2}{string3} = the line, {player} = the team or player it went to. */
-#define STR_LV_SCN_ANNOUNCE                      2642
-#define STR_LV_SCN_ANNOUNCE_TO                   2643
+#define STR_LV_SCN_ANNOUNCE                      2689
+#define STR_LV_SCN_ANNOUNCE_TO                   2690
 
 /* Rule descriptions */
 
@@ -3098,6 +3098,110 @@
  * {string1} is that function's name, read off the catalogue rather than
  * written into the line. */
 #define STR_MAPEDIT_SCENARIO_FN_MOD          2584
+
+/* The hosting settings' combo for scripts players send this host: off, keep
+ * for the session, or keep for good, and the directory kept ones go to.
+ * "Off" is the map uploads' STR_DLGSETTINGS_HOSTING_UPLOAD_OFF. */
+#define STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADS    2634
+#define STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_SESSION 2635
+#define STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_KEEP 2636
+#define STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADDIR  2637
+
+/* The Mods chooser's rows from the player's own computer. The three words
+ * under a row say where it is: on the server, sent there by a player, on
+ * this computer. The button sends a file only this computer holds, and its
+ * greyed reason for a player who may not change the round. The other
+ * greyed reasons are STR_DLGLOBBY_SCRIPT_ERR_DISABLED below and the map
+ * upload's STR_DLGLOBBY_UPLOAD_ERR_INFLIGHT. */
+#define STR_DLGLOBBY_SCENARIO_SRC_SERVER         2638
+#define STR_DLGLOBBY_SCENARIO_SRC_UPLOADED       2639
+#define STR_DLGLOBBY_SCENARIO_SRC_LOCAL          2640
+#define STR_DLGLOBBY_SCENARIO_SEND               2641
+#define STR_DLGLOBBY_SCENARIO_SEND_NOT_HOST      2642
+
+/* Why a server refused a script, where no map upload reason says it: the
+ * server takes no scripts, or holds one of that name already. */
+#define STR_DLGLOBBY_SCRIPT_ERR_DISABLED         2643
+#define STR_DLGLOBBY_SCRIPT_ERR_NAME_TAKEN       2644
+/* And the reasons its accept callback gives, one per SCRIPT_REFUSE_* code
+ * on the DONE reply: it could not save the file, the package's manifest will
+ * not parse, the script will not load ({number} is the line), it declares no
+ * scenario table, it asks for a newer api ({number} asked, {number2} the
+ * server's), it declares a kind the server does not know, or it is bound to
+ * a map. */
+#define STR_DLGLOBBY_SCRIPT_ERR_WRITE            2645
+#define STR_DLGLOBBY_SCRIPT_ERR_MANIFEST         2646
+#define STR_DLGLOBBY_SCRIPT_ERR_SYNTAX           2647
+#define STR_DLGLOBBY_SCRIPT_ERR_NO_TABLE         2648
+#define STR_DLGLOBBY_SCRIPT_ERR_API              2649
+#define STR_DLGLOBBY_SCRIPT_ERR_KIND             2650
+#define STR_DLGLOBBY_SCRIPT_ERR_BOUND            2651
+
+/* The hosting setting that lets players save a copy of this server's mods
+ * and scenarios, and its tooltip. */
+#define STR_DLGSETTINGS_HOSTING_SHARESCRIPTS     2652
+#define STR_DLGSETTINGS_HOSTING_SHARESCRIPTS_TIP 2653
+
+/* The Mods chooser's Save a copy arrow on a row only the server holds: its
+ * tooltip, the three reasons it is greyed (a spectator, a server that does
+ * not share its scripts, a copy already on its way), and the notes a row
+ * shows for five seconds after a press that saved nothing: the file is
+ * already here, the server no longer has it, it is too large, the server
+ * did not answer, or it could not be written to the Mods folder. */
+#define STR_DLGLOBBY_SCENARIO_SAVE               2654
+#define STR_DLGLOBBY_SCENARIO_SAVE_SPECTATOR     2655
+#define STR_DLGLOBBY_SCENARIO_SAVE_SHARING_OFF   2656
+#define STR_DLGLOBBY_SCENARIO_SAVE_INFLIGHT      2657
+#define STR_DLGLOBBY_SCENARIO_SAVE_HAVE          2658
+#define STR_DLGLOBBY_SCENARIO_SAVE_NOT_FOUND     2659
+#define STR_DLGLOBBY_SCENARIO_SAVE_TOO_LARGE     2660
+#define STR_DLGLOBBY_SCENARIO_SAVE_NO_ANSWER     2661
+#define STR_DLGLOBBY_SCENARIO_SAVE_WRITE         2662
+
+/* The details dialog's Settings section, for a script that declares
+ * settings in its scenario table (scenario_settings.h): the heading, the
+ * line a player who is not the host sees under it, the line a host sees
+ * on a server too old to take a change, and a dropdown entry for the
+ * declared default ({number} = the value). The settings' own labels are
+ * the script's text, not strings here. */
+#define STR_DLGLOBBY_DETAILS_SETTINGS            2663
+#define STR_DLGLOBBY_DETAILS_SETTINGS_HOST       2664
+#define STR_DLGLOBBY_DETAILS_SETTINGS_OLD        2665
+#define STR_DLGLOBBY_DETAILS_SETTING_DEFAULT     2666
+
+/* The map editor's metadata form: the read-only line naming the Steam
+ * Workshop item a scenario was published as ({string1} = the item id) and
+ * the account that published it ({string2} = its SteamID64). Shown only
+ * when the manifest names an item. */
+#define STR_MAPEDIT_SCENARIO_WORKSHOP            2667
+
+/* The Workshop section of Settings */
+/* Its heading; the two buttons that switch its views; a subscribed item's
+ * state and the button to its Workshop page; the Update button on a row the
+ * player published before; the chip on a plain map; a subscribed item still
+ * downloading, whose name is not known yet ({string1} = the item id); the
+ * line each view shows when it has no rows; and the publish window's heading
+ * and "update" radio for a mod, scenario or map. Refresh, Downloading...,
+ * Publish, and the Mod and Scenario chips reuse the strings that already say
+ * them. */
+#define STR_DLGSETTINGS_WORKSHOP_HEADING         2668
+#define STR_DLGSETTINGS_WORKSHOP_SUBSCRIBED      2669
+#define STR_DLGSETTINGS_WORKSHOP_PUBLISH         2670
+#define STR_DLGSETTINGS_WORKSHOP_INSTALLED       2671
+#define STR_DLGSETTINGS_WORKSHOP_OPEN            2672
+#define STR_DLGSETTINGS_WORKSHOP_UPDATE          2673
+#define STR_DLGSETTINGS_WORKSHOP_TAG_MAP         2674
+#define STR_DLGSETTINGS_WORKSHOP_ITEM            2675
+#define STR_DLGSETTINGS_WORKSHOP_NONE_SUBSCRIBED 2676
+#define STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH    2677
+#define STR_DLGSETTINGS_WORKSHOP_PUB_HEADING     2678
+#define STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE      2679
+
+/* The lobby's Workshop chip */
+/* The chip after a script's Mod or Scenario chip in the lobby, on a script
+ * published to the Steam Workshop. The link beside it reuses
+ * STR_DLGSETTINGS_WORKSHOP_OPEN. */
+#define STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP       2680
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
