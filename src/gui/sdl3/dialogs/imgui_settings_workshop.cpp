@@ -516,6 +516,9 @@ static void wsDrawPublish(float s) {
         wsKindChip(r.mod ? WS_KIND_MOD : WS_KIND_SCENARIO, s);
 
         ImGui::TableSetColumnIndex(1);
+        /* Another item still uploading refuses this one, so the button is
+           drawn disabled until that upload is over. */
+        ImGui::BeginDisabled(workshopPublishBusyFor(r.key));
         if (ImGui::SmallButton(own ? langGetText(STR_DLGSETTINGS_WORKSHOP_UPDATE)
                                    : langGetText(STR_DLGSKIN_PUBLISH_GO))) {
             /* The window opens only when no other item is still uploading,
@@ -531,6 +534,7 @@ static void wsDrawPublish(float s) {
                 ImGui::OpenPopup(s_spec.popupId);
             }
         }
+        ImGui::EndDisabled();
         imguiHandOnHover();
         ImGui::PopID();
     }

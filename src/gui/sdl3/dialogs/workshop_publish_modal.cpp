@@ -142,6 +142,11 @@ static bool publishStart(const WorkshopPublishSpec *spec) {
                                         spec->tag);
 }
 
+bool workshopPublishBusyFor(const char *key) {
+    return s_pubStarted && strcmp(s_pubKey, key) != 0 &&
+           steam_workshop_publish_poll(nullptr, nullptr) == 0;
+}
+
 bool workshopPublishPrepare(const char *key, const char *title,
                             const char *desc, uint64_t existingId,
                             uint64_t author) {
@@ -150,8 +155,7 @@ bool workshopPublishPrepare(const char *key, const char *title,
     /* The wrapper runs one publish at a time and the state here is that
        publish's, so another item waits until the upload is over rather than
        taking the state from under it. */
-    if (s_pubStarted && !sameKey &&
-        steam_workshop_publish_poll(nullptr, nullptr) == 0) {
+    if (workshopPublishBusyFor(key)) {
         return false;
     }
 

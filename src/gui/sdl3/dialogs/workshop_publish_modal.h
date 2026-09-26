@@ -60,6 +60,14 @@ bool workshopPublishPrepare(const char *key, const char *title,
                             const char *desc, uint64_t existingId,
                             uint64_t author);
 
+/* True when a publish for a key other than key is still uploading, which is
+   when workshopPublishPrepare(key, ...) would answer false. A caller draws
+   its Publish button disabled on it, so the button does not look as if it
+   works and then does nothing. An empty key is no item's, so "" asks
+   whether any publish is uploading. Reads state only: cheap enough to ask
+   every frame. */
+bool workshopPublishBusyFor(const char *key);
+
 /* Draw the window if it is open: progress, the id write-back, close and the
    cleanup of the upload scratch. Call every frame the popup can be open on,
    so the frame it goes away is seen. */

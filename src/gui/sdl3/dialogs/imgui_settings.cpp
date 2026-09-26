@@ -544,6 +544,11 @@ static bool s_skinPopupWasOpen = false;
    context both callbacks below are handed. */
 static char s_skinPublishPath[SKIN_PATH_MAX];
 
+/* The skin id the Publish button last opened the window on, beside its
+   path. The button only has the picked skin's id before it is pressed, so
+   this says whether s_skinPublishPath is the picked skin's path. */
+static char s_skinPublishReqId[SKIN_ID_MAX];
+
 /* Builds the item's content — one .wsf, whichever shape the skin has on disk
    — and writes a preview where the window asks for it. */
 static bool skinPublishBuild(void *ctx, const char *folder,
@@ -1234,9 +1239,18 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
                 reqId != nullptr && reqId[0] != '\0' &&
                 skinKindFromId(reqId) == SKIN_KIND_USER &&
                 skinGetActiveSource() != nullptr;
+            /* Another item still uploading refuses this skin. The picked
+               skin's path is known here only when it is the skin the window
+               last opened on; for any other skin "" is asked, which is busy
+               while any upload runs. */
+            const bool  publishBusy =
+                canPublish &&
+                workshopPublishBusyFor(strcmp(reqId, s_skinPublishReqId) == 0
+                                           ? s_skinPublishPath
+                                           : "");
 
             ImGui::SameLine();
-            ImGui::BeginDisabled(!canPublish);
+            ImGui::BeginDisabled(!canPublish || publishBusy);
             if (ImGui::Button(langGetText(STR_DLGSKIN_PUBLISH))) {
                 /* The picker's rows only live while its combo is open, so the
                    skin's path on disk comes from a scan made here. */
@@ -1272,6 +1286,8 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
                                                info.workshopAuthor)) {
                         SDL_strlcpy(s_skinPublishPath, path,
                                     sizeof(s_skinPublishPath));
+                        SDL_strlcpy(s_skinPublishReqId, reqId,
+                                    sizeof(s_skinPublishReqId));
                         ImGui::OpenPopup(s_skinPublishSpec.popupId);
                     }
                 }
@@ -1281,11 +1297,13 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
             /* A disabled item is not hovered as far as ImGui is concerned
                unless it is asked for, and the reason it is disabled is exactly
                what the player needs to read. */
-            if (!canPublish &&
+            if ((!canPublish || publishBusy) &&
                 ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled |
                                      ImGuiHoveredFlags_ForTooltip)) {
                 ImGui::SetTooltip("%s",
-                                  langGetText(STR_DLGSKIN_PUBLISH_NEEDUSER));
+                                  langGetText(canPublish
+                                                  ? STR_DLGSKIN_PUBLISH_WORKING
+                                                  : STR_DLGSKIN_PUBLISH_NEEDUSER));
             }
 
             workshopPublishDraw(&s_skinPublishSpec);
