@@ -1644,6 +1644,13 @@ static void serverSimApplyMapChange(ServerSim *sim) {
        where the round starts drop theirs. */
     serverSimScenarioResetFill(sim);
 
+    /* Teams 1 and 2 still on the default pair the lobby opened with follow
+     * the new map's shape: north/south for a tall or square map, east/west
+     * for a wide one. A side the host chose is kept. Before the reconcile
+     * below, so each reservation is checked against the sides it will
+     * start on. */
+    serverSimRefreshDefaultTeamSides(sim);
+
     /* A reservation from the previous map can index past the new map's
      * start list, or sit on a side the slot's team may not use now the
      * starts have moved; drop those, then re-cluster every now-unassigned

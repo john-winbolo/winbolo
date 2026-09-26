@@ -25,13 +25,24 @@
  *   (7) a rename resends the side the team already has, and that keeps a
  *       filled-in side filled in;
  *   (8) a round that had a human and ends with none left resets to
- *       north/south on the way back to the lobby;
+ *       the default pair on the way back to the lobby (east/west there,
+ *       because the round restores the wide map from the file);
  *   (9) the reset puts the default back before the scenario seats its
  *       teams, so each seat reserves a start on its team's side;
  *  (10) a host alone on team 1 who drops its side leaves team 2 on south
  *       (no one is on team 2, so the two-team mirror does not act);
  *  (11) a balance keeps an unmoved player's hand-picked start that is
- *       still on its team's side, and re-picks only the moved players.
+ *       still on its team's side, and re-picks only the moved players;
+ *  (12) the shape rule on synthetic grids: east/west when the squares that
+ *       are not deep sea span more columns than rows, north/south for a
+ *       tall or square map, the sea around an island not counted;
+ *  (13) the live map picks the pair at start-up and at the reset;
+ *  (14) a map change re-picks the untouched default pair for the new map
+ *       and keeps every pair the host chose.
+ *
+ * Everard Island is wider than tall, so tests (1) to (11) and (14) make it
+ * tall first (make_map_tall: two grass squares out in the sea, the island
+ * untouched) and run on a north/south lobby.
  *
  * Commands go through serverSimApplyCommand under the threads mutex, as in
  * test_lobby_team_side_dispatch.c. Start layouts are injected the way that
@@ -68,11 +79,53 @@
 #include "threads.h"
 #include "test_harness.h"
 
-/* An Everard Island ServerSim, before any boot. */
-static ServerSim *make_sim(void) {
+/* An Everard Island ServerSim as the map file has it, before any boot.
+ * Its squares that are not deep sea span more columns than rows, so a
+ * lobby on it opens east/west. */
+static ServerSim *make_wide_sim(void) {
     BYTE emap[6000] = E_MAP;
     return serverSimCreateCompressed(emap, 5097, "Everard Island",
                                      gameOpen, false, 0, -1);
+}
+
+/* The bounding box of the live map's squares that are not deep sea, read
+ * the way the lobby reads it. */
+static bool land_bounds(const ServerSim *sim, int *minX, int *minY,
+                        int *maxX, int *maxY) {
+    static BYTE terrain[SERVER_SIM_TERRAIN_BYTES];
+    if (!serverSimGetMapTerrainBuffer(sim, terrain, sizeof(terrain))) return false;
+    return startSideLandBounds(terrain, MAP_ARRAY_SIZE, MAP_ARRAY_SIZE,
+                               MAP_ARRAY_SIZE, minX, minY, maxX, maxY);
+}
+
+/* One grass square at (x, y), deep sea or not before. */
+static void put_land(ServerSim *sim, int x, int y) {
+    GameSim *gs = &sim->sim;
+    mapSetPos(gs, &gs->mp, (BYTE)x, (BYTE)y, GRASS, FALSE, TRUE);
+}
+
+/* Two grass squares out in the sea, one near the top edge and one near the
+ * bottom, in a column the island already spans. The island is not touched
+ * and gets no wider, but the land now spans 213 rows, more than its width,
+ * so the lobby's default is north/south. */
+#define TALL_TOP_Y    22
+#define TALL_BOTTOM_Y 234
+static void make_map_tall(ServerSim *sim) {
+    int minX;
+    int minY;
+    int maxX;
+    int maxY;
+    if (!land_bounds(sim, &minX, &minY, &maxX, &maxY)) return;
+    put_land(sim, minX, TALL_TOP_Y);
+    put_land(sim, minX, TALL_BOTTOM_Y);
+}
+
+/* An Everard Island ServerSim made tall (make_map_tall), before any boot.
+ * The tests below were written for a north/south lobby. */
+static ServerSim *make_sim(void) {
+    ServerSim *sim = make_wide_sim();
+    if (sim != NULL) make_map_tall(sim);
+    return sim;
 }
 
 /* The operator's startup config. lobby = the flag the GUI host sets;
@@ -501,16 +554,24 @@ int run_lobby_default_sides_rename_keeps_fill(void) {
 }
 
 /* (8) A round that had a human and ends with none left goes back to a
- *     fresh lobby, north/south included. */
+ *     fresh lobby, the default pair included. The round puts the map back
+ *     the way the file has it, and Everard Island as the file has it is
+ *     wide, so the reset's pair is east/west. The host's own north/south
+ *     (both named) must not survive it. */
 int run_lobby_default_sides_round_end_reset(void) {
     ServerSim *sim = make_sim();
     UT_ASSERT(sim != NULL);
     boot_sim(sim, true, false);
     add_human(sim, 0, 1);
-    /* Both named: team 2 has no players, so no mirror fills it in. */
+    /* Both named: team 2 has no players, so no mirror fills it in. East
+     * first, so north is a change and clears team 1's mark. */
     UT_ASSERT(apply_team_side(sim, 0, 1, START_SIDE_E) == CMD_OK);
-    UT_ASSERT(apply_team_side(sim, 0, 2, START_SIDE_W) == CMD_OK);
-    UT_ASSERT_MSG(sides_are(sim, START_SIDE_E, START_SIDE_W), "setup: host's sides");
+    UT_ASSERT(apply_team_side(sim, 0, 1, START_SIDE_N) == CMD_OK);
+    UT_ASSERT(apply_team_side(sim, 0, 2, START_SIDE_E) == CMD_OK);
+    UT_ASSERT(apply_team_side(sim, 0, 2, START_SIDE_S) == CMD_OK);
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_N, START_SIDE_S), "setup: host's sides");
+    UT_ASSERT_MSG(!sim->teams[1].sideAutoFilled && !sim->teams[2].sideAutoFilled,
+                  "setup: both sides named");
 
     serverSimStartGame(sim);
     UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
@@ -518,14 +579,14 @@ int run_lobby_default_sides_round_end_reset(void) {
     /* The tick sets this while a human is in the round. */
     sim->roundHadHuman = true;
     serverSimRemovePlayer(sim, 0);
-    UT_ASSERT_MSG(sides_are(sim, START_SIDE_E, START_SIDE_W),
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_N, START_SIDE_S),
                   "a departure mid-round must not touch the sides");
 
     serverSimReturnToLobby(sim);
     UT_ASSERT_MSG(serverSimGetState(sim) == serverStateLobby, "setup: back in the lobby");
-    UT_ASSERT_MSG(sides_are(sim, START_SIDE_N, START_SIDE_S),
-                  "a round that ends with no human left must reset to "
-                  "north/south (got %u/%u)",
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_E, START_SIDE_W),
+                  "a round that ends with no human left must reset to the "
+                  "pair for the restored (wide) map, east/west (got %u/%u)",
                   sim->teams[1].startSide, sim->teams[2].startSide);
     UT_ASSERT_MSG(sim->teams[1].sideAutoFilled && sim->teams[2].sideAutoFilled,
                   "the restored pair is filled-in, not named");
@@ -679,6 +740,250 @@ int run_lobby_default_sides_balance_keeps_hand_pick(void) {
                       "slot %u (team %u) must start the round on its team's side", i,
                       sim->lobbyPlayers[i].teamNumber);
     }
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* (12) The shape rule on synthetic grids. Everything is deep sea except
+ *      the rectangles painted in: more columns than rows gives east/west,
+ *      more rows than columns or a tie gives north/south, and the sea
+ *      around an island does not count. */
+static BYTE s_grid[MAP_ARRAY_SIZE * MAP_ARRAY_SIZE];
+
+static void grid_clear(void) {
+    memset(s_grid, DEEP_SEA, sizeof(s_grid));
+}
+
+/* Paint terrain over columns x0..x1 and rows y0..y1, inclusive. */
+static void grid_paint(int x0, int y0, int x1, int y1, BYTE terrain) {
+    int x;
+    int y;
+    for (y = y0; y <= y1; y++) {
+        for (x = x0; x <= x1; x++) {
+            s_grid[(y * MAP_ARRAY_SIZE) + x] = terrain;
+        }
+    }
+}
+
+static bool grid_is_east_west(void) {
+    return startSideDefaultIsEastWest(s_grid, MAP_ARRAY_SIZE, MAP_ARRAY_SIZE,
+                                      MAP_ARRAY_SIZE);
+}
+
+int run_lobby_default_sides_shape_rule(void) {
+    int minX;
+    int minY;
+    int maxX;
+    int maxY;
+
+    /* A wide island in open sea: 81 columns by 31 rows. */
+    grid_clear();
+    grid_paint(90, 110, 170, 140, GRASS);
+    UT_ASSERT_MSG(startSideLandBounds(s_grid, MAP_ARRAY_SIZE, MAP_ARRAY_SIZE,
+                                      MAP_ARRAY_SIZE, &minX, &minY, &maxX, &maxY),
+                  "a grid with land has bounds");
+    UT_ASSERT_MSG(minX == 90 && maxX == 170 && minY == 110 && maxY == 140,
+                  "the bounds are the island's alone, not the sea around it "
+                  "(got x %d..%d, y %d..%d)", minX, maxX, minY, maxY);
+    UT_ASSERT_MSG(grid_is_east_west(), "a wide island must give east/west");
+
+    /* A tall island: 31 columns by 81 rows. */
+    grid_clear();
+    grid_paint(110, 90, 140, 170, GRASS);
+    UT_ASSERT_MSG(!grid_is_east_west(), "a tall island must give north/south");
+
+    /* A square island: 61 by 61. The tie keeps north/south. */
+    grid_clear();
+    grid_paint(100, 100, 160, 160, GRASS);
+    UT_ASSERT_MSG(!grid_is_east_west(), "a square island must give north/south");
+
+    /* One column more than rows tips it to east/west. */
+    grid_clear();
+    grid_paint(100, 100, 161, 160, GRASS);
+    UT_ASSERT_MSG(grid_is_east_west(), "one column wider than tall must give east/west");
+
+    /* Every terrain but deep sea counts: shallow river, mined grass and a
+     * boat stretch the box as land does. */
+    grid_clear();
+    grid_paint(120, 120, 130, 130, GRASS);
+    grid_paint(40, 125, 40, 125, RIVER);
+    grid_paint(210, 125, 210, 125, MINE_GRASS);
+    UT_ASSERT_MSG(grid_is_east_west(), "river and mined squares count as playable");
+    grid_clear();
+    grid_paint(120, 120, 130, 130, GRASS);
+    grid_paint(125, 30, 125, 30, BOAT);
+    UT_ASSERT_MSG(!grid_is_east_west(), "a boat square counts as playable");
+
+    /* A deep lake inside a wide island changes nothing. */
+    grid_clear();
+    grid_paint(60, 120, 200, 135, SWAMP);
+    grid_paint(100, 124, 160, 131, DEEP_SEA);
+    UT_ASSERT_MSG(grid_is_east_west(), "a deep lake inside a wide island changes nothing");
+
+    /* All deep sea: no bounds, and north/south. */
+    grid_clear();
+    UT_ASSERT_MSG(!startSideLandBounds(s_grid, MAP_ARRAY_SIZE, MAP_ARRAY_SIZE,
+                                       MAP_ARRAY_SIZE, NULL, NULL, NULL, NULL),
+                  "an all-sea grid has no bounds");
+    UT_ASSERT_MSG(!grid_is_east_west(), "an all-sea grid must give north/south");
+    return 0;
+}
+
+/* (13) The live map's shape picks the pair at start-up and at the reset:
+ *      Everard Island as the file has it is wide and opens with team 1 east
+ *      and team 2 west, the order the compass sets that axis in; made tall
+ *      it opens north/south; made exactly square it opens north/south. */
+int run_lobby_default_sides_map_shape(void) {
+    ServerSim *sim;
+    int minX;
+    int minY;
+    int maxX;
+    int maxY;
+
+    sim = make_wide_sim();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(land_bounds(sim, &minX, &minY, &maxX, &maxY));
+    UT_ASSERT_MSG(maxX - minX > maxY - minY,
+                  "setup: Everard Island is wider than tall (x %d..%d, y %d..%d)",
+                  minX, maxX, minY, maxY);
+    boot_sim(sim, true, false);
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_E, START_SIDE_W),
+                  "a wide map must open on team 1 east, team 2 west (got %u/%u)",
+                  sim->teams[1].startSide, sim->teams[2].startSide);
+    UT_ASSERT_MSG(sim->teams[1].sideAutoFilled && sim->teams[2].sideAutoFilled,
+                  "the east/west default is filled-in, not named");
+
+    /* The reset reads the map again. Change the squares directly (no
+     * map-change path), then let the last human leave. */
+    add_human(sim, 0, 1);
+    make_map_tall(sim);
+    serverSimRemovePlayer(sim, 0);
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_N, START_SIDE_S),
+                  "the reset must pick the pair for the map as it is now "
+                  "(got %u/%u)", sim->teams[1].startSide, sim->teams[2].startSide);
+    serverSimDestroy(sim);
+
+    /* The dedicated server's zeroed config on a wide map. */
+    sim = make_wide_sim();
+    UT_ASSERT(sim != NULL);
+    boot_sim(sim, false, false);
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_E, START_SIDE_W),
+                  "a dedicated-server lobby on a wide map opens east/west");
+    serverSimDestroy(sim);
+
+    /* Exactly square: one land square below the island makes the rows
+     * span match the columns span. */
+    sim = make_wide_sim();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(land_bounds(sim, &minX, &minY, &maxX, &maxY));
+    UT_ASSERT_MSG(minY + (maxX - minX) < MAP_MINE_EDGE_BOTTOM,
+                  "setup: room for the square's bottom row");
+    put_land(sim, minX, minY + (maxX - minX));
+    UT_ASSERT(land_bounds(sim, &minX, &minY, &maxX, &maxY));
+    UT_ASSERT_MSG(maxX - minX == maxY - minY, "setup: the land is square");
+    boot_sim(sim, true, false);
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_N, START_SIDE_S),
+                  "a square map keeps north/south (got %u/%u)",
+                  sim->teams[1].startSide, sim->teams[2].startSide);
+    serverSimDestroy(sim);
+
+    /* No lobby, no sides, whatever the shape. */
+    sim = make_wide_sim();
+    UT_ASSERT(sim != NULL);
+    boot_sim(sim, false, true);
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_ANY, START_SIDE_ANY),
+                  "a -nolobby start on a wide map keeps no sides");
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* Reload Everard Island (wide) into a lobby through the map-change path. */
+static bool reload_wide(ServerSim *sim) {
+    BYTE emap[6000] = E_MAP;
+    bool ok;
+    threadsWaitForMutex();
+    ok = serverSimReloadCompressedInMemory(sim, emap, 5097, "Everard Island") ? true : false;
+    threadsReleaseMutex();
+    return ok;
+}
+
+/* (14) A map change in the lobby: the untouched default pair follows the
+ *      new map's shape; a pair the host chose, one the mirror filled in
+ *      against a named side included, is kept. */
+int run_lobby_default_sides_map_change(void) {
+    ServerSim *sim;
+    BYTE i;
+
+    /* Untouched default: tall map, north/south, then a wide map. */
+    sim = make_sim();
+    UT_ASSERT(sim != NULL);
+    boot_sim(sim, true, false);
+    add_human(sim, 0, 1);
+    add_human(sim, 1, 2);
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_N, START_SIDE_S), "setup: tall map north/south");
+    UT_ASSERT_MSG(reload_wide(sim), "setup: the map reload must succeed");
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_E, START_SIDE_W),
+                  "the untouched default must follow a wide new map to "
+                  "east/west (got %u/%u)",
+                  sim->teams[1].startSide, sim->teams[2].startSide);
+    UT_ASSERT_MSG(sim->teams[1].sideAutoFilled && sim->teams[2].sideAutoFilled,
+                  "the re-picked default stays filled-in");
+    /* Every reservation is a live start its team's new side allows. */
+    for (i = 0; i < 2; i++) {
+        BYTE idx1 = sim->lobbyPlayers[i].startIdx;
+        BYTE side = sim->teams[sim->lobbyPlayers[i].teamNumber].startSide;
+        UT_ASSERT_MSG(idx1 >= 1 && idx1 <= startsGetNumStarts(&sim->sim.ss),
+                      "slot %u keeps a start after the map change", (unsigned)i);
+        UT_ASSERT_MSG(startSideAccepts(mask_of(sim, idx1), side),
+                      "slot %u's start is on its team's new side", (unsigned)i);
+    }
+    /* The mirror still treats the re-picked pair as a pair. */
+    UT_ASSERT(apply_team_side(sim, 0, 1, START_SIDE_N) == CMD_OK);
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_N, START_SIDE_S),
+                  "team 2's filled-in west must follow team 1 to south");
+    serverSimDestroy(sim);
+
+    /* The host chose north/south: team 1 to east and back to north names
+     * team 1's side, and the mirror fills team 2 in at south. Kept. */
+    sim = make_sim();
+    UT_ASSERT(sim != NULL);
+    boot_sim(sim, true, false);
+    add_human(sim, 0, 1);
+    add_human(sim, 1, 2);
+    UT_ASSERT(apply_team_side(sim, 0, 1, START_SIDE_E) == CMD_OK);
+    UT_ASSERT(apply_team_side(sim, 0, 1, START_SIDE_N) == CMD_OK);
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_N, START_SIDE_S), "setup: host's north/south");
+    UT_ASSERT_MSG(!sim->teams[1].sideAutoFilled && sim->teams[2].sideAutoFilled,
+                  "setup: team 1 named, team 2 filled in");
+    UT_ASSERT_MSG(reload_wide(sim), "setup: the map reload must succeed");
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_N, START_SIDE_S),
+                  "a pair the host chose must survive a map change "
+                  "(got %u/%u)", sim->teams[1].startSide, sim->teams[2].startSide);
+    serverSimDestroy(sim);
+
+    /* Both named by the host: kept. */
+    sim = make_sim();
+    UT_ASSERT(sim != NULL);
+    boot_sim(sim, true, false);
+    add_human(sim, 0, 1);
+    UT_ASSERT(apply_team_side(sim, 0, 1, START_SIDE_W) == CMD_OK);
+    UT_ASSERT(apply_team_side(sim, 0, 2, START_SIDE_E) == CMD_OK);
+    UT_ASSERT_MSG(reload_wide(sim), "setup: the map reload must succeed");
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_W, START_SIDE_E),
+                  "two named sides must survive a map change");
+    serverSimDestroy(sim);
+
+    /* Both taken back to no side by the host: kept at no side. */
+    sim = make_sim();
+    UT_ASSERT(sim != NULL);
+    boot_sim(sim, true, false);
+    add_human(sim, 0, 1);
+    add_human(sim, 1, 2);
+    UT_ASSERT(apply_team_side(sim, 0, 1, START_SIDE_ANY) == CMD_OK);
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_ANY, START_SIDE_ANY), "setup: custom starts");
+    UT_ASSERT_MSG(reload_wide(sim), "setup: the map reload must succeed");
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_ANY, START_SIDE_ANY),
+                  "custom starts must survive a map change");
     serverSimDestroy(sim);
     return 0;
 }

@@ -162,10 +162,10 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
     sim->teams[2].color      = 1;  /* blue */
     sim->teams[2].namingPool = 0;
     SDL_strlcpy(sim->teams[2].name, "Team 2", LOBBY_TEAM_NAME_LEN);
-    /* And the sides a lobby opens with, the ones the server started on, so
-     * the next joiner finds teams 1 and 2 on north and south whatever the
-     * last occupants chose. Before the scenario seating below, which runs
-     * against the reset teams. */
+    /* And the sides a lobby opens with, the pair for the current map's
+     * shape, so the next joiner finds teams 1 and 2 on north/south (or
+     * east/west on a wide map) whatever the last occupants chose. Before
+     * the scenario seating below, which runs against the reset teams. */
     serverSimApplyDefaultTeamSides(sim);
     memset(sim->botConfigs, 0, sizeof(sim->botConfigs));
     /* Difficulty's default is Hard, not the memset's 0 (= Easy) — same
