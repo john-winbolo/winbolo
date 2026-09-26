@@ -12,7 +12,8 @@ QUICK INFO:
      (a bot on a decoy hold never does). If none can, one bot says
      "All bots busy".
    - Ping a pill, base or tank again to add a second bot, etc. Ping the same
-     open ground again and the bot there just keeps going.
+     open ground again and the bot there just keeps going; if no bot is on
+     that order any more (it died or let it go), one bot is sent again.
 
 Ping "CAUTION" on a target or bot to cancel; on a bot holding nothing it
 retreats it. A ping on an ALLY BOT selects it for your next order.
@@ -219,7 +220,9 @@ PING AGAIN TO ADD A BOT
   free, the nearest bot on another order switches to it (see A BOT KEEPS
   YOUR ORDER); a bot already on this order is never counted twice.
   A second ping on the same open ground does not add a bot. It starts the
-  order's clock again, and the bot answers "Still on it".
+  order's clock again, and the bot answers "Still on it". If no bot holds
+  that order any more (it died, it let the order go, or no bot was free the
+  first time), the second ping sends one bot again, as the first ping did.
 
 A BOT KEEPS YOUR ORDER
   A bot that holds an order from a person does not take a new ping, a new

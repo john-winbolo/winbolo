@@ -4259,7 +4259,10 @@ M.ORDER_HOLDER_KEEPS_JOB = true   -- keel false
 -- 2026-09-25: a repeat ping on the same PILL, BASE or TANK adds one bot per
 -- ping.  On plain ground ("go there") it did too; Andrew: it should only
 -- refresh the first bot's order.  false = a repeat ping on a ground square
--- refreshes the order and adds no bot.  true = every repeat adds one (keel).
+-- refreshes the order and adds no bot while a bot holds it; with no bot on
+-- the order (the holder died or let it go, or nobody was free) it sends one
+-- bot again and the order stays a one-bot order.  true = every repeat adds
+-- one (keel).
 M.ORDER_LAND_REPEAT_ADDS = false  -- keel true
 -- 2026-09-25: NO FREE BOT, THE CHEAPEST BUSY ONE SWITCHES (Andrew, PR #393).
 -- Only used with ORDER_HOLDER_KEEPS_JOB on.  A ping or chat auction that no

@@ -3528,12 +3528,12 @@ do
   local o = a.st.orders
   o.known[424242] = { spec = { oid = 424242, sender = ORD.HINT_SENDER }, tick = 100 }
   o.known[515151] = { spec = { oid = 515151, sender = 0 }, tick = 100 }
-  ORD.clear_older_orders(a.st, a.inf, 999, 200)
+  ORD.clear_older_orders(a.st, a.inf, 999, 101)
   check("a hint order is kept", o.known[424242] ~= nil, "forgot")
   check("an older person's order is forgotten", o.known[515151] == nil, "kept")
   C.ORDER_NEW_CLEARS_ALL = false
   o.known[515151] = { spec = { oid = 515151, sender = 0 }, tick = 100 }
-  ORD.clear_older_orders(a.st, a.inf, 999, 200)
+  ORD.clear_older_orders(a.st, a.inf, 999, 101)
   check("keel: nothing is forgotten", o.known[515151] ~= nil, "forgot")
   C.ORDER_NEW_CLEARS_ALL = true
   check("keel does not clear", C.PRESETS.keel.ORDER_NEW_CLEARS_ALL == false, "?")
@@ -3713,6 +3713,48 @@ do
   check("HOLDER_KEEPS_JOB off: no offer, W leaves one order for the other",
         not offered and said(w2, "^Leaving"), table.concat(w2.st.orders.out, " | "))
   C.ORDER_HOLDER_KEEPS_JOB = true
+end
+do
+  -- The same two pings, and W hears its own obo and obd, as a bot in the
+  -- game does (pumpn does not hand a bot its own lines).  W opens the
+  -- auction on the offered order with its own "no" in it, sends no second
+  -- "no", and settles it on X's bid like the other bots.
+  local w, x = BOT(1, 31, 31), BOT(2, 60, 60)
+  local all = { w, x }
+  for _, b in ipairs(all) do gping(b, 100, 35, 35) end
+  pumpn(all, 100)
+  for _, b in ipairs(all) do gping(b, 101, 38, 38) end
+  pumpn(all, 101)
+  upd(all, 102)
+  local own, offer = {}, nil
+  for i, m in ipairs(w.st.orders.out) do
+    own[i] = m
+    offer = offer or tonumber(m:match("^/info obo (%d+)$"))
+  end
+  check("setup: W offers one of the two orders", offer ~= nil, table.concat(own, " | "))
+  -- X is an active ally from here on, so W's auction waits for X's answer
+  -- instead of settling on the think it opens (the harness has no allies).
+  local AS = require("ally_state")
+  if not AS.slots[2] then AS.init() end
+  AS.set_info(2, 102, {})
+  pumpn(all, 102)
+  for _, m in ipairs(own) do ORD.rx(w.pn, m, 102, w.st) end
+  upd(all, 103)
+  local again = 0
+  for _, m in ipairs(w.st.orders.out) do
+    if offer and m:match("^/info obd " .. offer .. " ") then again = again + 1 end
+  end
+  check("W, hearing its own offer, opens the auction on it",
+        offer ~= nil and w.st.orders.auctions[offer] ~= nil, "no auction")
+  check("W sends no second 'no' for its own offer", again == 0,
+        table.concat(w.st.orders.out, " | "))
+  pumpn(all, 103); upd(all, 104)
+  local cl = offer and w.st.orders.claims[offer]
+  check("W settles its own offer on X's bid: X is the claimant",
+        cl ~= nil and cl.pn == 2, tostring(cl and cl.pn))
+  check("and W has no auction left on it",
+        offer ~= nil and w.st.orders.auctions[offer] == nil, "still open")
+  AS.clear(2)
 end
 do
   -- Far apart, with the knob off: the winner still switches (keel).
@@ -3919,6 +3961,54 @@ do
   check("LAND_REPEAT_ADDS on: a ground repeat adds B",
         b.st.orders.held ~= nil and b.st.orders.held.oid == x,
         tostring(b.st.orders.held and b.st.orders.held.oid))
+  C.ORDER_LAND_REPEAT_ADDS = false
+end
+-- A repeat ping on ground whose order nobody holds any more sends a bot
+-- again.  A takes the order, then A dies (or lets the order go).  A is back
+-- but busy, so only B can answer the repeat.  `how` is "death" or "release".
+local function ground_repeat_unmanned(how)
+  local a, b = BOT(1, 32, 32), BOT(2, 60, 60)
+  local all = { a, b }
+  for _, q in ipairs(all) do gping(q, 100, 35, 35) end
+  pumpn(all, 100); upd(all, 101); pumpn(all, 101); upd(all, 102); pumpn(all, 102)
+  local x = a.st.orders.held and a.st.orders.held.oid
+  if how == "death" then
+    ORD.on_death(a.st, a.inf)
+  else
+    ORD.release_held(a.st, a.inf, nil, true)
+  end
+  pumpn(all, 150); upd(all, 151); pumpn(all, 151); upd(all, 152)
+  a.st.stuck_for = 10000
+  for _, q in ipairs(all) do q.st.orders.say = {} end
+  for _, q in ipairs(all) do gping(q, 200, 35, 35) end
+  pumpn(all, 200); upd(all, 201); pumpn(all, 201); upd(all, 202); pumpn(all, 202)
+  upd(all, 215)
+  return a, b, all, x
+end
+for _, how in ipairs({ "death", "release" }) do
+  local a, b, all, x = ground_repeat_unmanned(how)
+  check("setup (" .. how .. "): A held the ground order and holds it no more",
+        x ~= nil and a.st.orders.held == nil,
+        tostring(a.st.orders.held and a.st.orders.held.oid))
+  check("a ground repeat after the holder's " .. how .. " sends B",
+        b.st.orders.held ~= nil and b.st.orders.held.oid == x,
+        tostring(b.st.orders.held and b.st.orders.held.oid))
+  check("and the order is still a one-bot order (" .. how .. ")",
+        b.st.orders.anchors[x] ~= nil and b.st.orders.anchors[x].want == 1,
+        tostring(b.st.orders.anchors[x] and b.st.orders.anchors[x].want))
+  check("and nobody says 'Still on it' (" .. how .. ")",
+        said_n(all, "^Still on it") == 0, "said")
+end
+do
+  -- Keel: the repeat after the holder's death adds a slot as before.
+  C.ORDER_LAND_REPEAT_ADDS = true
+  local _, b, _, x = ground_repeat_unmanned("death")
+  check("LAND_REPEAT_ADDS on: a ground repeat after a death sends B",
+        b.st.orders.held ~= nil and b.st.orders.held.oid == x,
+        tostring(b.st.orders.held and b.st.orders.held.oid))
+  check("LAND_REPEAT_ADDS on: and adds a slot (want 2)",
+        b.st.orders.anchors[x] ~= nil and b.st.orders.anchors[x].want == 2,
+        tostring(b.st.orders.anchors[x] and b.st.orders.anchors[x].want))
   C.ORDER_LAND_REPEAT_ADDS = false
 end
 do

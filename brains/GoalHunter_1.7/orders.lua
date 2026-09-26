@@ -3142,7 +3142,16 @@ local function ping_bot_command(state, world, info, sender, mx, my, now)
     -- again refreshes the first bot's order: the travel focus, or the hold
     -- clock once it has arrived.  The holder answers "Still on it".  No
     -- auction opens and `want` stays where it was.
-    if not C.ORDER_LAND_REPEAT_ADDS and k.spec.tkind == "here" then
+    --
+    -- That is only while a bot still holds the order.  o.gclaims[prev] is the
+    -- holder set every bot shares (obc adds to it, obr and a death take the
+    -- bot out), and it includes this bot's own claim.  With nobody on it (the
+    -- holder died or let it go, or no bot was free the first time) the
+    -- repeat re-runs the auction for the same one slot below, so a bot goes
+    -- again.
+    local ground = not C.ORDER_LAND_REPEAT_ADDS and k.spec.tkind == "here"
+    local manned = next(o.gclaims[prev] or {}) ~= nil
+    if ground and manned then
       local h = o.held
       if h and h.oid == prev then
         if h.hold then
@@ -3156,11 +3165,14 @@ local function ping_bot_command(state, world, info, sender, mx, my, now)
              a.want or 1))
       return
     end
-    a.want = (a.want or 1) + 1
+    -- A ground repeat with nobody on it keeps its one slot; any other repeat
+    -- adds one.
+    a.want = (a.want or 1) + (ground and 0 or 1)
     if o.held and o.held.oid == prev then
       o.held.expiry = now + (C.ORDER_FOCUS_TICKS or 3000)   -- focus reset
     end
-    print2(string.format("PING_ADD t=%d oid=%d want=%d", now, prev, a.want))
+    print2(string.format("PING_%s t=%d oid=%d want=%d", ground and "RESEND" or "ADD",
+           now, prev, a.want))
     -- Re-open the auction for the extra slot. Bots that already hold the
     -- order are excluded at settle time (o.gclaims), so this only fills what
     -- is still open, and it refreshes the focus for the whole group.
@@ -3586,7 +3598,14 @@ function M.update(state, world, info, now)
         M.note_bid(o.auctions[r.oid], me, bid)
         o.auctions[r.oid].bids[me] = cost
         M.merge_early_bids(o, r.oid, now)
-        tx(state, string.format("/info obd %d %d", r.oid, bid))
+        -- This bot's OWN offer, heard back (a bot hears its own chat lines):
+        -- its "no" already went out right after the obo, so no second obd.
+        -- It still keeps the auction and its own "no" in it, so it settles
+        -- the offer like the others do and can be the bot that says "All
+        -- bots busy".
+        if not (r.offer and r.from == me) then
+          tx(state, string.format("/info obd %d %d", r.oid, bid))
+        end
       end
     end
   end
@@ -3746,8 +3765,10 @@ function M.update(state, world, info, now)
       if offer then
         -- The offer, then this bot's "no" for the auction it re-opens on the
         -- other bots (they read the two lines in this order), so they need
-        -- not wait out the window for this bot's answer.  No auction here:
-        -- this bot would settle it before any other bid came in.
+        -- not wait out the window for this bot's answer.  No auction is
+        -- opened here.  This bot hears its own obo on its next think, and
+        -- the release handler above opens the auction then with its own
+        -- "no" in it, without sending that "no" a second time.
         tx(state, string.format("/info obo %d", oid))
         tx(state, string.format("/info obd %d %d", oid, M.BID_BUSY))
         print2(string.format("ORDER_OFFER t=%d oid=%d -- holding oid=%s",
