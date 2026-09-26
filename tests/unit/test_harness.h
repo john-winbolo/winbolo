@@ -1076,6 +1076,12 @@ int run_lobby_default_sides_round_end_reset(void);
 int run_lobby_default_sides_reset_before_seating(void);
 int run_lobby_default_sides_solo_host_any_keeps_south(void);
 int run_lobby_default_sides_balance_keeps_hand_pick(void);
+/* The pair follows the map's shape: east/west when the squares that are
+ * not deep sea span more columns than rows, else north/south; and a map
+ * change re-picks only the untouched default. */
+int run_lobby_default_sides_shape_rule(void);
+int run_lobby_default_sides_map_shape(void);
+int run_lobby_default_sides_map_change(void);
 
 /* Team start sides end to end (test_starts_side_integration.c): lobby
  * reservations, the batch's side table and the spawn scatter put a north

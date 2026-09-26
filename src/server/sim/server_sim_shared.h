@@ -134,11 +134,19 @@ int serverSimGetPills(ServerSim *sim, PillSnapshot *out, int maxOut);
 void serverSimResetLobbyToDefaults(ServerSim *sim);
 
 /* Defined in server_sim_lobby.c — the start sides a freshly opened lobby
- * gets: team 1 north, team 2 south, both marked filled-in. Run when a lobby
- * server starts up (serverSimApplyInstanceConfig) and when the last human
- * leaves (serverSimResetLobbyToDefaults), and nowhere else, so a side the
- * host chose is never written over while anyone is in the lobby. */
+ * gets: team 1 north and team 2 south, or team 1 east and team 2 west when
+ * the map's squares that are not deep sea span more columns than rows;
+ * both marked filled-in. Run when a lobby server starts up
+ * (serverSimApplyInstanceConfig) and when the last human leaves
+ * (serverSimResetLobbyToDefaults), so a side the host chose is never
+ * written over while anyone is in the lobby. */
 void serverSimApplyDefaultTeamSides(ServerSim *sim);
+
+/* Defined in server_sim_lobby.c — on a map change, picks the default pair
+ * again for the new map when teams 1 and 2 still hold it untouched (both
+ * filled-in, in the default order), and publishes both teams. Leaves any
+ * side the host chose. Returns true when the sides changed. */
+bool serverSimRefreshDefaultTeamSides(ServerSim *sim);
 
 /* The player slot every base owner is allied to when one side has swept
  * the map, or NEUTRAL when no side has. Same predicate as
