@@ -117,16 +117,13 @@ static void bgGameBuildSprites(BgGame *bg, SDL_Renderer *renderer,
 /* Drops the kept scene (see bgFrameRender). destroy is false when the
  * renderer that owned the textures is already gone. */
 static void bgFrameDrop(BgGame *bg, bool destroy) {
-    for (int i = 0; i < 2; i++) {
-        if (bg->frameTex[i] && destroy) SDL_DestroyTexture(bg->frameTex[i]);
-        bg->frameTex[i] = NULL;
-    }
-    bg->frameFront = -1;
+    if (bg->frameTex && destroy) SDL_DestroyTexture(bg->frameTex);
+    bg->frameTex = NULL;
+    bg->frameValid = false;
 }
 
 bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
     SDL_memset(bg, 0, sizeof(*bg));
-    bg->frameFront = -1;
     bg->valid = false;
 
     WB_LOG_INFO(WB_LOG_CAT_GUI, "[BgGame] Creating with map: %s", mapFile);
@@ -676,38 +673,50 @@ static int bgFrameTargetHz(void) {
 
 /* Redraw the menu game every n refreshes: refresh / Frame Rate, rounded,
  * at least 1. At 60 Hz: 60->1 50->1 30->2 20->3 15->4 12->5 10->6. */
-static int bgFrameEveryN(SDL_Renderer *renderer) {
-    double refreshHz = 1000000000.0 / (double)bgFrameRefreshNs(renderer);
+static int bgFrameEveryN(Sint64 periodNs) {
+    double refreshHz = 1000000000.0 / (double)periodNs;
     int n = (int)(refreshHz / (double)bgFrameTargetHz() + 0.5);
     return n < 1 ? 1 : n;
 }
 
 /* How far this draw is between the last two ticks: 0 = the tick before,
- * 1 = the last tick. It is read off a clock that moves exactly `steps`
- * refresh periods per draw, so with vsync every shown frame moves the same
- * amount. The clock follows the wall clock by 1/32 of the gap each draw so
- * an inexact refresh rate does not drift, and it resets when it is more
- * than two draws out (missed frames, a pause). The ticks still land on the
+ * 1 = the last tick. It is read off a clock that moves a whole number of
+ * refresh periods per draw: the time since the last draw, rounded to whole
+ * periods, at least one. With vsync that is `steps` every time, so every
+ * shown frame moves the same amount; where a draw spans more refreshes
+ * than that (a loop that sleeps, no real vsync) it still keeps up. The
+ * clock follows the wall clock by 1/32 of the rest each draw so an inexact
+ * refresh rate does not drift, and it resets when it runs more than two
+ * draws ahead (draws faster than the refresh). The ticks still land on the
  * wall clock, so a quarter tick either side is allowed rather than a clamp
- * that would hitch. */
-static float bgInterpAlpha(BgGame *bg, SDL_Renderer *renderer, int steps) {
+ * that would hitch; with no tick for two tick intervals (paused) it is
+ * held to the last two ticks instead. */
+static float bgInterpAlpha(BgGame *bg, Sint64 periodNs, int steps) {
     Uint64 nowNs  = SDL_GetTicksNS();
-    Sint64 stepNs = bgFrameRefreshNs(renderer) * (Sint64)steps;
+    Sint64 stepNs = periodNs * (Sint64)steps;
     if (bg->interpClockValid) {
-        Sint64 gap = (Sint64)nowNs - (Sint64)(bg->interpClockNs + (Uint64)stepNs);
-        if (gap > 2 * stepNs || gap < -2 * stepNs) {
+        Sint64 k = ((Sint64)(nowNs - bg->interpClockNs) + periodNs / 2) / periodNs;
+        if (k < 1) k = 1;
+        Sint64 gap = (Sint64)nowNs - (Sint64)(bg->interpClockNs + (Uint64)(k * periodNs));
+        if (gap < -2 * stepNs) {
             bg->interpClockNs = nowNs;
         } else {
-            bg->interpClockNs += (Uint64)(stepNs + gap / 32);
+            bg->interpClockNs += (Uint64)(k * periodNs + gap / 32);
         }
     } else {
         bg->interpClockNs = nowNs;
         bg->interpClockValid = true;
     }
+    const double tickNs = BG_TICK_INTERVAL_MS * 1000000.0;
     Sint64 sinceNs = (Sint64)(bg->interpClockNs - bg->interpTickMs * 1000000u);
-    float alpha = (float)((double)sinceNs / (BG_TICK_INTERVAL_MS * 1000000.0));
-    if (alpha < -0.25f) alpha = -0.25f;
-    if (alpha > 1.25f) alpha = 1.25f;
+    float alpha = (float)((double)sinceNs / tickNs);
+    float lo = -0.25f, hi = 1.25f;
+    if ((double)(Sint64)(nowNs - bg->interpTickMs * 1000000u) > 2.0 * tickNs) {
+        lo = 0.0f;
+        hi = 1.0f;
+    }
+    if (alpha < lo) alpha = lo;
+    if (alpha > hi) alpha = hi;
     return alpha;
 }
 
@@ -715,14 +724,14 @@ static float bgInterpAlpha(BgGame *bg, SDL_Renderer *renderer, int steps) {
  * periods after the last one. Before the first tick, the live camera and
  * the live tank positions. */
 static void bgInterpFill(BgGame *bg, MapViewPreciseCam *pc,
-                         SDL_Renderer *renderer, int steps) {
+                         Sint64 periodNs, int steps) {
     SDL_memset(pc, 0, sizeof(*pc));
     if (!bg->interpValid) {
         pc->centerWX = (float)bg->viewCenterX;
         pc->centerWY = (float)bg->viewCenterY;
         return;
     }
-    float a = bgInterpAlpha(bg, renderer, steps);
+    float a = bgInterpAlpha(bg, periodNs, steps);
     pc->centerWX = (float)bg->camPrevX + ((float)bg->camCurX - (float)bg->camPrevX) * a;
     pc->centerWY = (float)bg->camPrevY + ((float)bg->camCurY - (float)bg->camPrevY) * a;
     for (int i = 0; i < MAX_TANKS; i++) {
@@ -742,9 +751,10 @@ static void bgInterpFill(BgGame *bg, MapViewPreciseCam *pc,
  * pixels between ticks instead, it glides; the tanks go the same way so
  * they keep pace with it. */
 static void bgGameDrawScene(BgGame *bg, SDL_Renderer *renderer,
-                            int screenW, int screenH, int zf, int steps) {
+                            int screenW, int screenH, int zf,
+                            Sint64 periodNs, int steps) {
     MapViewPreciseCam pc;
-    bgInterpFill(bg, &pc, renderer, steps);
+    bgInterpFill(bg, &pc, periodNs, steps);
     MapViewCtx ctx = { renderer, bg->tilesTex, zf, 1, (float)zf,
                        bg->spritesTex, bg->spriteAtlas, &pc };
     /* With precise set, the centre below is not used: pc carries it. */
@@ -769,37 +779,39 @@ static void bgFramePrepare(BgGame *bg, SDL_Renderer *renderer,
     }
 }
 
-/* Draw the scene into the back texture; it becomes the front only when
- * the whole draw worked. */
+/* Draw the scene into the kept texture. One texture is enough: the only
+ * step that can fail before anything is drawn is setting the target, and
+ * then the texture still holds the old scene. */
 static bool bgFrameRedraw(BgGame *bg, SDL_Renderer *renderer,
-                          int screenW, int screenH, int zf, int n) {
-    int back = (bg->frameFront == 0) ? 1 : 0;
-    if (!bg->frameTex[back]) {
-        bg->frameTex[back] = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
-                                               SDL_TEXTUREACCESS_TARGET,
-                                               screenW, screenH);
-        if (!bg->frameTex[back]) {
+                          int screenW, int screenH, int zf,
+                          Sint64 periodNs, int n) {
+    if (!bg->frameTex) {
+        bg->frameTex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
+                                         SDL_TEXTUREACCESS_TARGET,
+                                         screenW, screenH);
+        if (!bg->frameTex) {
             WB_LOG_WARN(WB_LOG_CAT_GUI,
                         "[BgGame] scene texture %dx%d failed (%s); drawing "
                         "direct every frame", screenW, screenH, SDL_GetError());
             bg->frameBroken = true;
             return false;
         }
-        SDL_SetTextureScaleMode(bg->frameTex[back], SDL_SCALEMODE_NEAREST);
-        SDL_SetTextureBlendMode(bg->frameTex[back], SDL_BLENDMODE_NONE);
+        SDL_SetTextureScaleMode(bg->frameTex, SDL_SCALEMODE_NEAREST);
+        SDL_SetTextureBlendMode(bg->frameTex, SDL_BLENDMODE_NONE);
     }
     SDL_Texture *prev = SDL_GetRenderTarget(renderer);
-    if (!SDL_SetRenderTarget(renderer, bg->frameTex[back])) return false;
+    if (!SDL_SetRenderTarget(renderer, bg->frameTex)) return false;
     SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
     SDL_RenderClear(renderer);
-    bgGameDrawScene(bg, renderer, screenW, screenH, zf, n);
+    bgGameDrawScene(bg, renderer, screenW, screenH, zf, periodNs, n);
     if (!SDL_SetRenderTarget(renderer, prev)) {
         SDL_SetRenderTarget(renderer, NULL);   /* put the window back regardless */
         return false;
     }
-    bg->frameFront = back;
+    bg->frameValid = true;
     bg->frameZoom = zf;
     bg->frameTilesGen = bg->tilesGeneration;
+    bg->frameFilter = bg->tilesFilter;
     return true;
 }
 
@@ -813,23 +825,25 @@ static bool bgFrameRedraw(BgGame *bg, SDL_Renderer *renderer,
  * the redraw slot, so it redraws instead and the scene keeps changing every
  * n periods. A redraw frame always redraws, even late. So two redraws are
  * never on back-to-back refreshes, and one missed frame makes at most one
- * gap of n + 1 periods. The blend clock moves n periods per redraw.
+ * gap of n + 1 periods. The blend clock moves by the periods that really
+ * passed, n with vsync.
  *
  * False when no scene could be shown; the caller then draws direct. */
 static bool bgFrameRender(BgGame *bg, SDL_Renderer *renderer,
-                          int screenW, int screenH, int zf, int n) {
+                          int screenW, int screenH, int zf,
+                          Sint64 periodNs, int n) {
     Uint64 nowNs    = SDL_GetTicksNS();
-    Sint64 periodNs = bgFrameRefreshNs(renderer);
     int    since    = bg->frameSince + 1;
-    bool redraw = bg->frameFront < 0 ||                     /* first, or lost */
+    bool redraw = !bg->frameValid ||                        /* first, or lost */
                   bg->frameZoom != zf ||
                   bg->frameTilesGen != bg->tilesGeneration ||
+                  bg->frameFilter != bg->tilesFilter ||
                   since >= n ||                             /* every n-th     */
                   (Sint64)(nowNs - bg->frameRedrawNs) >=
                       (Sint64)(2 * n - 1) * periodNs / 2;   /* re-align       */
     if (redraw) {
-        if (!bgFrameRedraw(bg, renderer, screenW, screenH, zf, n)) {
-            bg->frameFront = -1;   /* try again next frame */
+        if (!bgFrameRedraw(bg, renderer, screenW, screenH, zf, periodNs, n)) {
+            bg->frameValid = false;   /* try again next frame */
             return false;
         }
         bg->frameSince = 0;
@@ -838,7 +852,7 @@ static bool bgFrameRender(BgGame *bg, SDL_Renderer *renderer,
         bg->frameSince = since;
     }
     SDL_FRect dst = { 0.0f, 0.0f, (float)screenW, (float)screenH };
-    SDL_RenderTexture(renderer, bg->frameTex[bg->frameFront], NULL, &dst);
+    SDL_RenderTexture(renderer, bg->frameTex, NULL, &dst);
     return true;
 }
 
@@ -866,15 +880,16 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
     /* Redraw every n refreshes by the Frame Rate setting; n = 1 draws
      * direct every frame, and so does a renderer that cannot keep the
      * scene offscreen. */
-    int n = bgFrameEveryN(renderer);
+    Sint64 periodNs = bgFrameRefreshNs(renderer);
+    int n = bgFrameEveryN(periodNs);
     bgFramePrepare(bg, renderer, screenW, screenH);
     if (n < 2) bgFrameDrop(bg, true);
     if (bg->tilesTex != NULL) {
         bool shown = n >= 2 && !bg->frameBroken &&
                      screenW > 0 && screenH > 0 &&
-                     bgFrameRender(bg, renderer, screenW, screenH, zf, n);
+                     bgFrameRender(bg, renderer, screenW, screenH, zf, periodNs, n);
         if (!shown) {
-            bgGameDrawScene(bg, renderer, screenW, screenH, zf, 1);
+            bgGameDrawScene(bg, renderer, screenW, screenH, zf, periodNs, 1);
         }
     }
 
