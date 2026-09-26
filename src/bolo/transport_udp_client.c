@@ -455,6 +455,10 @@ typedef struct {
 
 #if WB_ENABLE_NETIMPAIR
     uint8_t test_drop_upload_packet;
+    /* Drop the next test_drop_next_count inbound packets of this type, as if
+     * the server's datagram was lost on the wire. 0 = off. */
+    uint8_t test_drop_next_type;
+    int     test_drop_next_count;
 #endif
 
 #ifdef __EMSCRIPTEN__
@@ -2626,6 +2630,11 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
 
 #if WB_ENABLE_NETIMPAIR
     if (pktType != 0 && pktType == c->test_drop_upload_packet) return;
+    if (pktType != 0 && pktType == c->test_drop_next_type &&
+        c->test_drop_next_count > 0) {
+        c->test_drop_next_count--;
+        return;
+    }
 #endif
 
     c->packetsRecvThisSec++;
@@ -6077,6 +6086,18 @@ void transportUdpClientTestDropUploadReply(Transport *t, uint8_t packet_type) {
 bool transportUdpClientTestBotPoolArriving(Transport *t) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     return c->botPoolBuf != NULL && c->bulkRecv.dst == c->botPoolBuf;
+}
+
+void transportUdpClientTestDropNext(Transport *t, uint8_t packet_type,
+                                    int count) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    c->test_drop_next_type  = packet_type;
+    c->test_drop_next_count = count;
+}
+
+int transportUdpClientTestDropNextLeft(Transport *t) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    return c->test_drop_next_count;
 }
 #endif
 

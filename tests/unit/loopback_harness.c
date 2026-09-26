@@ -19,6 +19,7 @@
 #include "client_sim.h"
 #include "client_net.h"
 #include "client_connect_state.h"
+#include "client_sim_internal.h"  /* ClientSim::transport */
 #include "threads.h"
 #include "transport_udp.h"  /* transportUdpServerRecvQueuePending, GetBoundPort */
 
@@ -370,6 +371,30 @@ void loopbackHarnessPumpClientOnly(LoopbackHarness *h, int n) {
          * socket and its recv thread still queues them; they sit in that
          * queue until something drains it. */
     }
+}
+
+void loopbackHarnessDropNextToClient(LoopbackHarness *h, struct ClientSim *cs,
+                                     uint8_t packetType, int count) {
+    (void)h;
+#if WB_ENABLE_NETIMPAIR
+    if (cs == NULL) return;
+    transportUdpClientTestDropNext(&cs->transport, packetType, count);
+#else
+    (void)cs;
+    (void)packetType;
+    (void)count;
+#endif
+}
+
+int loopbackHarnessDropNextLeft(LoopbackHarness *h, struct ClientSim *cs) {
+    (void)h;
+#if WB_ENABLE_NETIMPAIR
+    if (cs == NULL) return 0;
+    return transportUdpClientTestDropNextLeft(&cs->transport);
+#else
+    (void)cs;
+    return 0;
+#endif
 }
 
 int loopbackHarnessPumpUntil(LoopbackHarness *h, int maxIters,
