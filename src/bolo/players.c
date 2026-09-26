@@ -401,6 +401,7 @@ void playersSetPlayer(ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE p
     (*plrs)->item[playerNum].mapY = my;
     (*plrs)->item[playerNum].pixelX = px;
     (*plrs)->item[playerNum].pixelY = py;
+    (*plrs)->item[playerNum].fineSet = FALSE;
     (*plrs)->item[playerNum].frame = frame;
     (*plrs)->item[playerNum].onBoat = onBoat;
     (*plrs)->item[playerNum].allie = allienceCreate();
@@ -525,6 +526,7 @@ void playersUpdate(players *plrs, BYTE playerNum, BYTE mx, BYTE my, BYTE px, BYT
     (*plrs)->item[playerNum].mapY = my;
     (*plrs)->item[playerNum].pixelX = px;
     (*plrs)->item[playerNum].pixelY = py;
+    (*plrs)->item[playerNum].fineSet = FALSE;
     (*plrs)->item[playerNum].frame = frame;
     (*plrs)->item[playerNum].onBoat = onBoat;
     (*plrs)->item[playerNum].lgmMapX = lgmMX;
@@ -532,6 +534,14 @@ void playersUpdate(players *plrs, BYTE playerNum, BYTE mx, BYTE my, BYTE px, BYT
     (*plrs)->item[playerNum].lgmPixelX = lgmPX;
     (*plrs)->item[playerNum].lgmPixelY = lgmPY;
     (*plrs)->item[playerNum].lgmFrame = lgmFrame;
+  }
+}
+
+void playersSetFinePosition(players *plrs, BYTE playerNum, WORLD worldX, WORLD worldY) {
+  if (playerNum < MAX_TANKS && (*plrs)->item[playerNum].inUse == TRUE) {
+    (*plrs)->item[playerNum].fineX = worldX;
+    (*plrs)->item[playerNum].fineY = worldY;
+    (*plrs)->item[playerNum].fineSet = TRUE;
   }
 }
 
@@ -1073,6 +1083,12 @@ void playersMakeScreenTanks(ClientSim *cs, GameSim *sim, players *plrs, screenTa
   BYTE my;
   BYTE px;
   BYTE py;
+  BYTE subX;                     /* World offsets inside the square */
+  BYTE subY;
+  WORLD fineX = 0;               /* Full world position, less TANK_SUBTRACT */
+  WORLD fineY = 0;
+  bool useFine;
+  bool fine = clientSimGetFineTankPositions(cs);
 
 /* FIXME: This function could use some optimisation I think */
   {
@@ -1114,6 +1130,16 @@ void playersMakeScreenTanks(ClientSim *cs, GameSim *sim, players *plrs, screenTa
       conv -= TANK_SUBTRACT;
       conv >>= TANK_SHIFT_MAPSIZE;
       my = (BYTE) conv;
+      /* Smooth drawing asks for the full world position the render
+         interpolation kept, where there is one; mx/px then come from it
+         too, so the square, pixel and world offset agree. */
+      useFine = fine && (*plrs)->item[count].fineSet;
+      if (useFine) {
+        fineX = (WORLD) ((*plrs)->item[count].fineX - TANK_SUBTRACT);
+        fineY = (WORLD) ((*plrs)->item[count].fineY - TANK_SUBTRACT);
+        mx = (BYTE) (fineX >> TANK_SHIFT_MAPSIZE);
+        my = (BYTE) (fineY >> TANK_SHIFT_MAPSIZE);
+      }
 
       if (mx >= leftPos && mx <= rightPos && my >= top && my <= bottom) {
         /* Extract fixed pixel co-ordinates */
@@ -1136,6 +1162,14 @@ void playersMakeScreenTanks(ClientSim *cs, GameSim *sim, players *plrs, screenTa
         conv <<= TANK_SHIFT_MAPSIZE;
         conv >>= TANK_SHIFT_PIXELSIZE;
         py = (BYTE) conv;
+        subX = (BYTE) (px << TANK_SHIFT_RIGHT2);
+        subY = (BYTE) (py << TANK_SHIFT_RIGHT2);
+        if (useFine) {
+          subX = (BYTE) fineX;
+          subY = (BYTE) fineY;
+          px = (BYTE) (subX >> TANK_SHIFT_RIGHT2);
+          py = (BYTE) (subY >> TANK_SHIFT_RIGHT2);
+        }
         /* Extract player screen name */
         playersMakeScreenName(cs, plrs, clientSimGetMyPlayerNum(cs), count, playerName);
         frame = (*plrs)->item[count].frame;
@@ -1147,12 +1181,13 @@ void playersMakeScreenTanks(ClientSim *cs, GameSim *sim, players *plrs, screenTa
         } else {
           frame += TANK_EVIL_ADD;
         }
-        /* The wire carries a 4 bit pixel offset and a 16 step facing,
-           so the sub-square offsets and the angle are those values
-           scaled back up to world units and to 0-255. */
+        /* The players list holds a 4 bit pixel offset and a 16 step
+           facing, so the sub-square offsets and the angle are those values
+           scaled back up to world units and to 0-255 -- unless the full
+           world position is in use, which gives the offsets directly. */
         screenTanksAddItem(value,(BYTE) (mx - leftPos), (BYTE) (my - top), px, py, frame, count, playerName,
-                           (BYTE) (px << TANK_SHIFT_RIGHT2), (BYTE) (py << TANK_SHIFT_RIGHT2),
-                           (BYTE) ((*plrs)->item[count].frame << 4)); 
+                           subX, subY,
+                           (BYTE) ((*plrs)->item[count].frame << 4));
       }
     }
   }
@@ -2524,6 +2559,7 @@ void playersCheckUpdate(players *plrs, BYTE playerNum) {
   if ((*plrs)->item[playerNum].inUse == TRUE) {
     (*plrs)->item[playerNum].mapX = 0;
     (*plrs)->item[playerNum].mapY = 0;
+    (*plrs)->item[playerNum].fineSet = FALSE;
     (*plrs)->item[playerNum].needUpdate = TRUE;
   }
 }

@@ -16,6 +16,12 @@
  * game pixel, without the two-pixel offset the classic pass used to add, and
  * is held at the clip's left edge; the same at every rung.
  *
+ * tank_label_smooth: in the Smooth animation mode the name is placed from the
+ * sprite's own world position (square and world offset, as mapViewDrawTanks
+ * places the tank), one square across, so the name and the tank move
+ * together; in Classic and Match pixelation it is exactly the square-and-
+ * pixel placement above.
+ *
  * cursor: the cursor's top-left is its square's — the classic formula's at an
  * integer zoom, and a whole number of squares from the origin at every rung.
  *
@@ -29,6 +35,7 @@
 #include "sprite_positions.h"
 #include "tiles.h"           /* TILE_SIZE_X / TILE_SIZE_Y */
 #include "overview_camera.h" /* the overview's zoom ladder */
+#include "gfx_settings.h"    /* GFX_ANIM_* */
 
 #define ARRAY_LEN(a) ((int)(sizeof(a) / sizeof((a)[0])))
 
@@ -160,6 +167,73 @@ int run_mapview_overlay_tank_label(void) {
                       "(%.4f,%.4f)",
                       (double)zs, (double)gotX, (double)gotY,
                       (double)wantX, (double)wantY);
+    }
+
+    return 0;
+}
+
+int run_mapview_overlay_tank_label_smooth(void) {
+    /* Square 3 and world offset 91 across (pixel 5 and 11/16), square 2 and
+     * world offset 157 down (pixel 9 and 13/16). */
+    const int mx = 3, my = 2, px = 5, py = 9, wx = 91, wy = 157;
+    static const float kScales[] = { 1.0f, 2.0f, 3.0f, 1.37f };
+    static const int   kModes[]  = { GFX_ANIM_CLASSIC,
+                                     GFX_ANIM_MATCH_PIXELATION };
+    const float kExact = 1.0e-3f;
+
+    for (int z = 0; z < ARRAY_LEN(kScales); z++) {
+        const float zs = kScales[z];
+        const float baseX = kOriginX - (float)TILE_SIZE_X * zs - kEdgeX;
+        const float baseY = kOriginY - (float)TILE_SIZE_Y * zs - kEdgeY;
+        /* The tank sprite's top-left in Smooth (mapViewDrawTanks). */
+        const float tankX = baseX + spritePositionOffset(GFX_ANIM_SMOOTH, zs, 1,
+                                                         mx, px, wx);
+        const float tankY = baseY + spritePositionOffset(GFX_ANIM_SMOOTH, zs, 1,
+                                                         my, py, wy);
+        const float wantX = baseX + ((float)(mx * 256 + wx) / 16.0f +
+                                     (float)TILE_SIZE_X) * zs;
+        const float wantY = baseY + ((float)(my * 256 + wy) / 16.0f) * zs;
+        float gotX = 0.0f, gotY = 0.0f;
+
+        spritePositionTankLabelAt(baseX, baseY, GFX_ANIM_SMOOTH, zs, 1,
+                                  mx, my, px, py, wx, wy, -1.0e6f,
+                                  &gotX, &gotY);
+        UT_ASSERT_MSG(fabsf(gotX - wantX) < kExact &&
+                      fabsf(gotY - wantY) < kExact,
+                      "%.2fx smooth: name at (%.4f,%.4f), expected "
+                      "(%.4f,%.4f)", (double)zs, (double)gotX, (double)gotY,
+                      (double)wantX, (double)wantY);
+        UT_ASSERT_MSG(fabsf(gotX - (tankX + (float)TILE_SIZE_X * zs)) < kExact &&
+                      fabsf(gotY - tankY) < kExact,
+                      "%.2fx smooth: name at (%.4f,%.4f) is not one square "
+                      "right of the tank sprite at (%.4f,%.4f)", (double)zs,
+                      (double)gotX, (double)gotY, (double)tankX,
+                      (double)tankY);
+
+        /* Held at the clip's left edge, across only. */
+        spritePositionTankLabelAt(baseX, baseY, GFX_ANIM_SMOOTH, zs, 1,
+                                  mx, my, px, py, wx, wy, wantX + 50.0f,
+                                  &gotX, &gotY);
+        UT_ASSERT_MSG(fabsf(gotX - (wantX + 50.0f)) < kExact &&
+                      fabsf(gotY - wantY) < kExact,
+                      "%.2fx smooth: name not held at the left edge",
+                      (double)zs);
+
+        /* Classic and Match pixelation: the square-and-pixel placement,
+         * whatever the world offset says. */
+        for (int m = 0; m < ARRAY_LEN(kModes); m++) {
+            float oldX = 0.0f, oldY = 0.0f;
+            spritePositionTankLabel(baseX, baseY, zs, mx, my, px, py,
+                                    kOriginX, &oldX, &oldY);
+            spritePositionTankLabelAt(baseX, baseY, kModes[m], zs, 1,
+                                      mx, my, px, py, wx, wy, kOriginX,
+                                      &gotX, &gotY);
+            UT_ASSERT_MSG(gotX == oldX && gotY == oldY,
+                          "%.2fx mode %d: name at (%.4f,%.4f), expected the "
+                          "unchanged (%.4f,%.4f)", (double)zs, kModes[m],
+                          (double)gotX, (double)gotY, (double)oldX,
+                          (double)oldY);
+        }
     }
 
     return 0;

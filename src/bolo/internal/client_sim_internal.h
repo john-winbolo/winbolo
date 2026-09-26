@@ -158,6 +158,11 @@ struct ClientSim {
      * discrete). */
     InterpRenderCtl interpRenderCtl;
 
+    /* Draw other tanks from their full interpolated world position rather
+     * than the game pixel (clientSimSetFineTankPositions). False from the
+     * create memset, so only a front end that asks gets it. */
+    bool fineTankPositions;
+
     /* Server shell snapshots for UDP mode */
     ShellSnapshot serverShellSnaps[MAX_SNAPSHOT_SHELLS];
     int         serverShellCount;

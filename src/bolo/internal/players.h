@@ -80,6 +80,14 @@ typedef struct {
   BYTE mapY;
   BYTE pixelX;                      /* Pixel X and Y co-ordinates */
   BYTE pixelY;
+  /* The tank's full world position (256 to a square, 16 to a game pixel),
+     before it is cut to mapX/pixelX and before the diagonal snap. Set only
+     by the client's render interpolation for other tanks, and only while
+     fineSet is true: every other write of mapX/pixelX clears fineSet. The
+     Smooth animation mode draws from it (playersMakeScreenTanks). */
+  WORLD fineX;
+  WORLD fineY;
+  bool fineSet;
   BYTE frame;                       /* Animation frame */
   bool onBoat;                      /* Is this player on a boat ? */
   /* LGM Stuff */
@@ -277,6 +285,22 @@ void playerSetLocation(players *plrs, char *ip, char *host);
 * lgmFrame   - Lgm Frame number
 *********************************************************/
 void playersUpdate(players *plrs, BYTE playerNum, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, bool onBoat, BYTE lgmMX, BYTE lgmMY, BYTE lgmPX, BYTE lgmPY, BYTE lgmFrame);
+
+/*********************************************************
+*NAME:          playersSetFinePosition
+*PURPOSE:
+* Keeps a tank's full world position beside the pixel one
+* playersUpdate just stored, for drawing in the Smooth
+* animation mode. Call it after playersUpdate; the next
+* playersUpdate clears it again.
+*
+*ARGUMENTS:
+* plrs      - Pointer to the players object
+* playerNum - The player number to set
+* worldX    - World X, 256 to a square
+* worldY    - World Y, 256 to a square
+*********************************************************/
+void playersSetFinePosition(players *plrs, BYTE playerNum, WORLD worldX, WORLD worldY);
 
 /*********************************************************
 *NAME:          playersGameTickUpdate

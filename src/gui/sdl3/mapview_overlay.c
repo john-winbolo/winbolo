@@ -105,6 +105,7 @@ static void overlayDrawTankLabels(MapViewCtx *ctx, const MapViewOverlay *ov,
   OverlayClip clip;
   BYTE total;
   BYTE count;
+  int mode = (int)gfxGetAnimSmoothness();
 
   if (ov->labelCache == NULL || ov->labelFont == NULL) return;
 
@@ -114,16 +115,22 @@ static void overlayDrawTankLabels(MapViewCtx *ctx, const MapViewOverlay *ov,
   overlayClipBegin(ctx, ov, &clip);
   for (count = 1; count <= total; count++) {
     BYTE mx, my, px, py, frame, playerNum;
+    BYTE wx, wy, angle = 0;
     char name[256];
     float sx = 0.0f, sy = 0.0f;
 
     screenTanksGetItem(tks, count, &mx, &my, &px, &py, &frame, &playerNum,
                        name);
     if (name[0] == '\0') continue;
+    wx = (BYTE)(px << 4);
+    wy = (BYTE)(py << 4);
+    screenTanksGetSubPixel(tks, count, &wx, &wy, &angle);
 
-    spritePositionTankLabel(baseX, baseY, ctx->scale,
-                            (int)mx, (int)my, (int)px, (int)py,
-                            ov->clipLeft, &sx, &sy);
+    /* In Smooth the name follows the sprite's world position; the other
+       modes keep the square-and-pixel placement. */
+    spritePositionTankLabelAt(baseX, baseY, mode, ctx->scale, ctx->sheetScale,
+                              (int)mx, (int)my, (int)px, (int)py,
+                              (int)wx, (int)wy, ov->clipLeft, &sx, &sy);
     if (sx > ov->clipRight || sy > ov->clipBottom) continue;
 
     tankLabelDraw(ov->labelCache, ctx->renderer, ov->labelFont, name,
