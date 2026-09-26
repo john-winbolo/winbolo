@@ -884,6 +884,7 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
      with no sub-pixel motion, so the sampler has nothing to blend. */
   ctx.spritesTex = NULL;
   ctx.sprites    = NULL;
+  ctx.precise    = NULL;
 
   /* Set clip rect so the map render stays within the main view (no
    * spillover into the surrounding chrome from the 1-tile mapView

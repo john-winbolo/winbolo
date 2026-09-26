@@ -329,8 +329,8 @@ void bgGameDestroy(BgGame *bg) {
 }
 
 /* The draw places the camera and the tanks between the last two sim ticks
- * (see bgGameRender). A move of more than two tiles in one tick is a
- * respawn or a camera cycle, not motion: gliding across it would fly over
+ * (see bgGameRender). A tank moving more than two tiles in one tick is a
+ * respawn, not motion: gliding across it would fly over
  * the map, so the old position is dropped. */
 #define BG_INTERP_SNAP_WU 512   /* two tiles, world units */
 
@@ -363,10 +363,11 @@ static void bgInterpRecordTanks(BgGame *bg) {
     }
 }
 
+/* No jump test here: the camera only moves by the 1/8 ease, so after a far
+ * respawn it would trip for several ticks in a row and step instead of
+ * glide. bgGameCycleCamera snaps the drawn camera itself. */
 static void bgInterpRecordCamera(BgGame *bg) {
-    if (!bg->interpValid ||
-        bgInterpJumped(bg->camCurX, bg->viewCenterX) ||
-        bgInterpJumped(bg->camCurY, bg->viewCenterY)) {
+    if (!bg->interpValid) {
         bg->camPrevX = bg->viewCenterX;
         bg->camPrevY = bg->viewCenterY;
     } else {
@@ -412,10 +413,6 @@ static bool bgGameStep(BgGame *bg) {
     return true;
 }
 
-void bgGameTick(BgGame *bg) {
-    (void)bgGameStep(bg);
-}
-
 /* Follow the next tank, wrapping past the last one back to the first.
  * Walks slots rather than counting to numBots: a bot whose create failed
  * leaves a gap, and serverSimGetTankRender is false for an empty slot, so
@@ -425,7 +422,7 @@ void bgGameTick(BgGame *bg) {
 void bgGameCycleCamera(BgGame *bg) {
     if (!bg || !bg->valid) return;
 
-    /* The same mutex contract bgGameTick honours: the bot pool runs the
+    /* The same mutex contract bgGameStep honours: the bot pool runs the
      * brains inside it, so the tank array is only read with it held. */
     threadsWaitForMutex();
     for (BYTE step = 1; step <= MAX_TANKS; step++) {
@@ -433,7 +430,7 @@ void bgGameCycleCamera(BgGame *bg) {
         TankRenderInfo info;
         if (!serverSimGetTankRender(bg->sim, slot, &info)) continue;
         bg->cameraPlayer = slot;
-        /* Snap rather than let bgGameTick's 1/8 lerp glide there: across
+        /* Snap rather than let bgGameStep's 1/8 lerp glide there: across
          * a full map that is a second of flying over open ocean. */
         bg->viewCenterX = info.world_x;
         bg->viewCenterY = info.world_y;
@@ -701,6 +698,7 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
         bgInterpFill(bg, &pc);
         MapViewCtx ctx = { renderer, bg->tilesTex, zf, 1, (float)zf,
                            bg->spritesTex, bg->spriteAtlas, &pc };
+        /* With precise set, the centre below is not used: pc carries it. */
         mapViewRenderCentered(&ctx, bg->sim,
                               bg->viewCenterX, bg->viewCenterY,
                               0, 0, screenW, screenH, bg->cameraPlayer);

@@ -70,7 +70,7 @@ typedef struct BgGame {
     BYTE         numTeams;      /* Number of teams (0 = FFA) */
     bool         paused;        /* User-toggled pause state (persists across dialogs) */
     bool         hiddenByForeground;  /* true while a foreground SP/host game is active —
-                                       * bgGameTick early-returns so the bg doesn't dispatch
+                                       * the bg tick early-returns so the bg doesn't dispatch
                                        * brains to the shared worker pool. Independent of
                                        * the user-pause flag (paused), which only drives
                                        * the map-name overlay fade. */
@@ -93,7 +93,6 @@ typedef struct BgGame {
 
 bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer);
 void bgGameDestroy(BgGame *bg);
-void bgGameTick(BgGame *bg);
 void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH);
 
 /* Convenience: tick at fixed 50 Hz rate using a running timestamp */
@@ -107,7 +106,7 @@ void bgGameRenderWithOverlay(BgGame *bg, SDL_Renderer *renderer, int screenW, in
 void bgGameTogglePause(BgGame *bg);
 
 /* Mark bg as hidden by a foreground game (SP or host). While hidden,
- * bgGameTick is a no-op. Independent of bgGameTogglePause. */
+ * bgGameTickFixed runs no sim ticks. Independent of bgGameTogglePause. */
 void bgGameSetHiddenByForeground(BgGame *bg, bool hidden);
 
 /* Point the camera at the next occupied tank slot, wrapping from the last
