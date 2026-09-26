@@ -54,6 +54,10 @@ BgGame *bgGameGetShared(void) { return sharedBg; }
 #define BG_MIN_ZOOM 1
 #define BG_MAX_ZOOM 8
 
+/* The drawn camera moves in steps of this many world units: two game
+   pixels, the period of a one-pixel checkerboard (see bgGameRender). */
+#define BG_CAMERA_STEP_WU 32
+
 /* Brain script path */
 #define BG_BRAIN_PATH "Brains/GoalHunter_1.7/init.lua"
 
@@ -551,8 +555,15 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
 
     if (bg->tilesTex != NULL) {
         MapViewCtx ctx = { renderer, bg->tilesTex, zf, 1, (float)zf };
-        mapViewRenderCentered(&ctx, bg->sim,
-                              bg->viewCenterX, bg->viewCenterY,
+        /* The camera eases after its tank every tick, so it moves a game
+         * pixel or two at a time. Tile art dithered in a one-pixel
+         * checkerboard (the buildings) turns into its own inverse when
+         * moved by one pixel, so every odd step flashes it dark and light.
+         * Drawing from a centre cut down to two game pixels keeps the
+         * checkerboard in phase; the follow itself is unchanged. */
+        WORLD camX = (WORLD)(bg->viewCenterX & ~(WORLD)(BG_CAMERA_STEP_WU - 1));
+        WORLD camY = (WORLD)(bg->viewCenterY & ~(WORLD)(BG_CAMERA_STEP_WU - 1));
+        mapViewRenderCentered(&ctx, bg->sim, camX, camY,
                               0, 0, screenW, screenH, bg->cameraPlayer);
     }
 
