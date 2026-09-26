@@ -4414,7 +4414,8 @@ M.ORDER_HOLD_PARK_KINDS = {
 -- for itself (refuel, take_cover, a flee, a water escape, a stuck handler)
 -- takes it off.  It ends when those pills are down, after
 -- ORDER_GOTO_HOLD_TICKS, on a caution ping beside the tank, a cancel, the
--- tank's death, or a new order.  Chat "!goto" and scenario hints keep the
+-- tank's death, or a new order that names the bot (a new ping elsewhere
+-- goes to a free bot: ORDER_HOLDER_KEEPS_JOB).  Chat "!goto" and scenario hints keep the
 -- soft hold.  false = every ping hold is the soft hold above, as before.
 -- See orders.lua (GO-THERE DECOY HARD HOLD) for the whole rule.
 -- 2026-09-24: a new order from a person (chat or bot-command ping) makes
@@ -4448,6 +4449,37 @@ M.ORDER_NO_HAND_BACK = true    -- keel false
 -- its goal.
 M.ORDER_MAN_OUT_TAKES = true   -- keel false
 M.ORDER_GOTO_DECOY = true        -- keel false (2026-09-24: KEEL had the soft hold only)
+-- 2026-09-25: A BOT KEEPS THE JOB A PERSON GAVE IT (Andrew, PR #393).  Ping
+-- pill 1, then ping pill 2, however long after: the bot on pill 1 stays on
+-- pill 1 and a FREE bot takes pill 2.  A bot that holds an order from a
+-- person (a ping or a chat line; not a scenario hint) answers every auction
+-- "no", the way a busy bot does, and if it wins an auction it bid on before
+-- it held anything, it offers that order to the others (obo) instead of
+-- taking it.  A decoy hold is such an order too, so a ping elsewhere no
+-- longer ends it.  An order that NAMES the bot ("socrates attack 5", a
+-- selection, all, nearby) still switches it.  With every bot holding a job
+-- the auction finds nobody: one bot says "All bots busy", and the order
+-- stays known, so a bot that comes free inside ORDER_FOCUS_TICKS takes it
+-- (with ORDER_NO_FREE_TAKES_LOWEST on, the cheapest holder switches instead).
+-- false = the auction winner leaves its old order for the new one.
+M.ORDER_HOLDER_KEEPS_JOB = true   -- keel false
+-- 2026-09-25: a repeat ping on the same PILL, BASE or TANK adds one bot per
+-- ping.  On plain ground ("go there") it did too; Andrew: it should only
+-- refresh the first bot's order.  false = a repeat ping on a ground square
+-- refreshes the order and adds no bot while a bot holds it; with no bot on
+-- the order (the holder died or let it go, or nobody was free) it sends one
+-- bot again and the order stays a one-bot order.  true = every repeat adds
+-- one (keel).
+M.ORDER_LAND_REPEAT_ADDS = false  -- keel true
+-- 2026-09-25: NO FREE BOT, THE CHEAPEST BUSY ONE SWITCHES (Andrew, PR #393).
+-- Only used with ORDER_HOLDER_KEEPS_JOB on.  A ping or chat auction that no
+-- free bot can take goes to the bot on a person's job with the lowest cost
+-- to the new target (a tie goes to the lower player number).  It drops its
+-- old order and says "No free bot. Leaving ... for ...".  A bot on a decoy
+-- hold is never taken.  The same goes for each slot a repeat ping adds, but
+-- never to a bot that already holds that order.  false = nobody goes: one
+-- bot says "All bots busy" and the order waits for a bot to come free.
+M.ORDER_NO_FREE_TAKES_LOWEST = true  -- keel false
 -- DECOY GETAWAY (Andrew, 2026-09-24).  A decoy hold (ORDER_GOTO_DECOY) looks
 -- for a way out the moment it starts: a chain of up to
 -- DECOY_GETAWAY_MAX_STEPS squares, each one ring further out from the start
@@ -5028,6 +5060,14 @@ M.PRESETS = {
     ORDER_CLAIM_TIEBREAK          = false,
     ORDER_NO_HAND_BACK            = false,
     ORDER_MAN_OUT_TAKES           = false,
+    --   2026-09-25: a bot holding a person's order keeps it against a new
+    --   ping, and a repeat ping on plain ground adds no bot.  KEEL: the
+    --   auction winner switched, and every repeat ping added a bot.
+    ORDER_HOLDER_KEEPS_JOB        = false,
+    ORDER_LAND_REPEAT_ADDS        = true,
+    --   2026-09-25: with no free bot, the cheapest bot on a person's job
+    --   switched to the new order.  KEEL: holders never bid.
+    ORDER_NO_FREE_TAKES_LOWEST    = false,
     --   FOCUS_OTHER_COST_MULT is the one stage-2 knob that is NOT covered by
     --   the master switch: the focus multiplier sits inside the cost
     --   competition, so its keel value has to be the identity, 1.0, for the

@@ -92,13 +92,21 @@ int      steam_workshop_subscribed_count(void);
 
 /* Details of the idx'th subscribed item.  Writes the item's published file
  * id to *id whether or not the item is installed, and returns true only when
- * the item IS installed and *folder holds its install path.  A false return
- * with a non-zero *id therefore reads as "subscribed, still downloading" —
- * the caller can list it as pending and ask for it with
+ * the item IS installed, not disabled locally, and *folder holds its install
+ * path.  A false return with a non-zero *id is a subscribed item that cannot
+ * be used: one the player disabled locally when
+ * steam_workshop_item_disabled(*id) says so, and otherwise one still
+ * downloading, which the caller can list as pending and ask for with
  * steam_workshop_request_download.  Both outs are cleared on entry, so a
  * false return with a zero *id is "no such item". */
 bool     steam_workshop_item(int idx, uint64_t *id, char *folder,
                              size_t folderSize);
+
+/* True when the player has disabled the subscribed item id locally in
+ * Steam: it is still subscribed, but its files are not to be used and it
+ * is not to be downloaded.  False when the Workshop is unavailable or id is
+ * 0. */
+bool     steam_workshop_item_disabled(uint64_t id);
 
 /* Ask Steam to download (or update) a subscribed item.  Completion shows up
  * as the install event below, not as a return value.  No-op when the
@@ -124,10 +132,14 @@ void     steam_workshop_open_browse_page(void);
  * 1MB when given.  existingId 0 creates a new item; non-zero updates that
  * item rather than making a duplicate.  Returns false immediately when the
  * Workshop is unavailable or a publish is already in flight.  The strings are
- * copied, so the caller need not keep them alive past the call. */
+ * copied, so the caller need not keep them alive past the call.  tag becomes
+ * the item's one Workshop tag, which the app's Workshop page filters on; it is
+ * copied like the other strings, and NULL or empty publishes without setting
+ * tags. */
 bool     steam_workshop_publish_begin(const char *contentFolder, const char *title,
                                       const char *description, const char *previewPng,
-                                      uint64_t existingId /* 0 = new item */);
+                                      uint64_t existingId /* 0 = new item */,
+                                      const char *tag);
 
 /* State of the publish: 0 still in progress, 1 done (*outId holds the
  * published file id), -1 failed.  Both outs may be NULL and are cleared

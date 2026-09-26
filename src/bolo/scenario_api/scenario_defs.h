@@ -137,16 +137,35 @@ typedef struct {
  * mod. keepsWinCondition true says the file declares itself a mod: it changes
  * how the game plays and leaves the win condition alone, so several of them
  * can run at once behind one scenario. The two are separate questions and a
- * file may answer either way to both. */
+ * file may answer either way to both.
+ *
+ * source says which of the server's directories the row was read from, one
+ * of the SCN_DIR_SOURCE_* values below. A directory read leaves it
+ * SCN_DIR_SOURCE_SERVER; the merged lister sets it for the rows it takes
+ * from the uploads directory. workshopId is the Steam Workshop item the file
+ * came from, 0 for none, and workshopAuthor the SteamID64 of the account that
+ * published it, 0 for none. The author is for this computer's own listings
+ * (the Settings dialog's Workshop section asks it to offer Update rather than
+ * Publish) and is never sent: the scenario-list packet and the script-list
+ * event carry the id and not the author. */
 typedef struct {
-    char    file[SCN_DIR_FILE_LEN];  /* the name in the directory */
-    char    name[SCN_DIR_NAME_LEN];  /* the manifest's */
-    char    description[SCN_DIR_DESC_LEN];
-    uint8_t maxPlayers;
-    uint8_t bots;
-    bool    bound;
-    bool    keepsWinCondition;
+    char     file[SCN_DIR_FILE_LEN];  /* the name in the directory */
+    char     name[SCN_DIR_NAME_LEN];  /* the manifest's */
+    char     description[SCN_DIR_DESC_LEN];
+    uint8_t  maxPlayers;
+    uint8_t  bots;
+    bool     bound;
+    bool     keepsWinCondition;
+    uint8_t  source;
+    uint64_t workshopId;
+    uint64_t workshopAuthor;
 } ScnDirEntry;
+
+/* ScnDirEntry.source. One byte on the wire, in the scenario-list packet and
+ * the script-list event. */
+#define SCN_DIR_SOURCE_SERVER   0 /* one of the server's own directories */
+#define SCN_DIR_SOURCE_UPLOAD   1 /* the directory players upload scripts to */
+#define SCN_DIR_SOURCE_WORKSHOP 2 /* the directory Workshop items sync into */
 
 /* How many roster changes may be outstanding at once. Spawns and
  * removals share one first-in first-out queue and the sim drains one of

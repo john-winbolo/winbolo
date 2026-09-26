@@ -1608,6 +1608,17 @@ set(CLIENT_SOURCES
     src/gui/sdl3/map_stars.cpp
     src/gui/sdl3/wbn_map_source.cpp
     src/gui/sdl3/news_image_cache.cpp
+    # Copies subscribed Workshop items into <prefpath>Workshop. Desktop only:
+    # winbolo.c, imgui_steam_nav.cpp and imgui_settings.cpp call it, and the
+    # mobile and wasm builds leave those calls out rather than link it.
+    src/gui/sdl3/workshop_sync.c
+    # The Workshop publish window the skin picker opens. Desktop only for the
+    # same reason: imgui_settings.cpp is also compiled for iOS, Android and
+    # wasm, and leaves its calls into this out there.
+    src/gui/sdl3/dialogs/workshop_publish_modal.cpp
+    # The Workshop section of the Settings dialog, which opens that window
+    # for mods, scenarios and scenario maps. Desktop only, the same way.
+    src/gui/sdl3/dialogs/imgui_settings_workshop.cpp
     # Smart-ping pie menu and the markers for pings that have arrived.
     src/gui/sdl3/ping_overlay.cpp
     src/gui/sdl3/ping_icons.c
@@ -3553,6 +3564,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # read still in it, and the comparison that holds a package's manifest
     # against the table its script declared.
     tests/unit/test_scenario_manifest_json.c
+    # The Workshop item stamped into a .scenario package or a packed map
+    # that already exists, with every other entry and unknown manifest key
+    # kept, and a loose script and a plain map refused.
+    tests/unit/test_scenario_workshop_id.c
     # Where a map file's map data ends: the measure over synthetic BMAPs, the
     # container found after one, the scripted tag a packed map gets, and the
     # lobby preview that stops at the end of the map.
@@ -3577,6 +3592,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     # against committed golden bytes and decoded back.
     tests/unit/test_scenario_dir.c
     tests/unit/test_scenario_callbacks.c
+    # A copy of one of the server's scripts, fetched by name over the
+    # loopback transport, and each answer the server gives.
+    tests/unit/test_script_fetch.c
+    # A copy of a server's script saved to the player's own Mods
+    # directory: the name check, the refusal to replace, and the write.
+    tests/unit/test_script_save_local.c
     tests/unit/test_scenario_mod_dirs.c
     # Which scenario plays when a map and a mod both have a claim, and the
     # points the template is applied at.
@@ -3701,6 +3722,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # without one, the scripted game type a commit sets and gives back, and
     # the ranked and AI-policy settings a scenario does not go with.
     tests/unit/test_lobby_scenario_settings.c
+    # The policy a server holds for scripts players send it: the word it is
+    # set from, its byte on the lobby-settings event, and the sim's and the
+    # client's copies.
+    tests/unit/test_script_upload_policy.c
     tests/unit/test_unfielded_seat.c
     # What a wave costs: the brain, the ClientSim and the control subscription
     # behind a held seat, destroyed when the seat comes off the field and built
@@ -3825,6 +3850,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/gui/visibility_presets.c
     tests/unit/test_info_packet_view_policies.c
     tests/unit/test_upload_cap.c
+    # The virtual "Workshop" folder in the map listing and the resolve.
+    tests/unit/test_workshop_map_dir.c
     tests/unit/test_map_field_clamps.c
     tests/unit/test_map_reload_rollback.c
     tests/unit/test_map_read_memory.c
@@ -3842,6 +3869,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The lobby's ordered script list: the chunked control event, the
     # whole-list command, the dispatcher's gates and the client's reassembly.
     tests/unit/test_lobby_script_list.c
+    # A script's own lobby settings: declaration, wire, game.setting, Survival.
+    tests/unit/test_scenario_settings.c
     tests/unit/test_wbn_bearer_state.c
     tests/unit/test_wbn_rekey_codec.c
     tests/unit/test_wbn_news_parse.cpp
@@ -4056,6 +4085,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_sound_delivery_wire.c
     tests/unit/test_view_ally_loopback.c
     tests/unit/test_loopback_upload.c
+    tests/unit/test_script_upload.c
+    tests/unit/test_lobby_script_rows.c
     tests/unit/test_gate1_integration.c
     tests/unit/test_interp_jitter_e2e.c
     tests/unit/test_join_version_gate.c
@@ -4276,6 +4307,15 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Name arithmetic only: no audio device, and it opens no file.
     tests/unit/test_sound_variants.c
     src/gui/sdl3/sound_variants.c
+    # The Workshop sync over item folders a case builds: what a folder holds,
+    # what is copied and indexed, and what is removed. The Steam calls are
+    # replaced by a source table, and the stub wrapper links the rest.
+    tests/unit/test_workshop_sync.c
+    src/gui/sdl3/workshop_sync.c
+    # What the Settings dialog's Workshop section reads and writes: a map's
+    # packed scenario, a loose script packed for publishing, the sync's index
+    # in id order, and the author on a local listing row.
+    tests/unit/test_workshop_publish.c
     # The Bolo pascal-string reader in both places it is implemented —
     # src/bolo/util.c and the log viewer's own copy.
     tests/unit/test_pascal_string.c
@@ -4823,6 +4863,7 @@ set(_unit_test_names
     upload_lost_done_retry
     upload_partial_timeout_retry
     upload_filename_safe
+    upload_filename_safe_script
     lobby_bot_name_rejects_reserved_prefix
     lobby_bot_name_rejects_disallowed_char
     lobby_bot_name_rejects_collision
@@ -4849,6 +4890,16 @@ set(_unit_test_names
     script_list_command_codec
     script_list_dispatch
     script_list_lists_once
+    scenario_settings_blob
+    scenario_settings_manifest_lua
+    scenario_settings_manifest_json
+    scenario_settings_server_clamp
+    scenario_settings_codec
+    scenario_settings_client_apply
+    scenario_settings_game_setting
+    scenario_settings_wire
+    scenario_settings_survival_decl
+    scenario_settings_survival_short
     script_list_client_apply
     lobby_map_search_chunked
     wbn_bearer_state
@@ -5317,6 +5368,33 @@ set(_unit_test_names
     lock_channel
     loopback_map_preview
     loopback_map_upload
+    upload_begin_golden
+    script_upload_begin_refusals
+    loopback_script_upload_at_cap
+    loopback_script_upload_refused
+    script_upload_client_refusals
+    loopback_script_upload_lands_listed
+    loopback_script_upload_package_listed
+    loopback_script_upload_bound_refused
+    loopback_script_upload_syntax_line
+    script_upload_name_taken
+    script_upload_persist_caps
+    script_upload_accept_refusals
+    script_upload_session_emptied
+    script_upload_listing_sees_own_removal
+    script_upload_reset_drops_session_picks
+    loopback_script_upload_plays_next_round
+    script_upload_list_source
+    loopback_script_upload_source_on_wire
+    loopback_script_upload_list_after_done
+    lobby_script_rows_states_by_name
+    lobby_script_rows_case_only_match
+    lobby_script_rows_workshop_id_matches
+    lobby_script_rows_workshop_id_differs
+    lobby_script_rows_in_process
+    lobby_script_rows_order
+    lobby_script_rows_truncated
+    scenario_local_scripts_listed
     loopback_download_join
     loopback_download_midgame
     loopback_resync
@@ -5761,6 +5839,13 @@ set(_unit_test_names
     lobby_scenario_boot_sets_type
     lobby_scenario_identity_strips_controls
     lobby_scenario_nolobby_boot_seats_template
+    script_upload_policy_resolve
+    script_upload_policy_word
+    script_upload_policy_codec
+    script_upload_policy_event
+    script_sharing_codec
+    script_sharing_sim
+    script_sharing_client
     unfielded_seat_counts
     unfielded_seat_is_empty
     unfielded_seat_all_ready
@@ -5935,6 +6020,7 @@ set(_unit_test_names
     scenario_host_hook_via_global_metatable
     scenario_host_script_env_is_its_own
     scenario_host_manifest_read_from_its_own_env
+    scenario_host_manifest_reads_workshop
     scenario_host_errors_counted_per_script
     scenario_host_many_rules_all_applied
     scenario_host_disabled_refuses_script
@@ -6117,6 +6203,9 @@ set(_unit_test_names
     scenario_manifest_json_trigger_action_no_op
     scenario_manifest_json_trigger_where_no_field
     scenario_manifest_json_trigger_text_cut
+    scenario_manifest_workshop_keys
+    scenario_manifest_agrees_workshop
+    scenario_io_set_workshop_id
     scenario_map_body_length
     scenario_map_find_container
     scenario_map_has_script_chunk
@@ -6130,11 +6219,14 @@ set(_unit_test_names
     scenario_packed_map_table_disagrees
     scenario_packed_map_round_start_keeps_it
     scenario_packed_map_upload_switch
+    scenario_packed_map_script_upload_policy
     scenario_packed_map_team_init
     scenario_pack_writes_container
     scenario_pack_manifest_agrees
     scenario_pack_replaces_trailer
     scenario_pack_refuses_unscripted
+    scenario_pack_script_mod
+    scenario_pack_script_refusals
     scenario_brain_name_resolves
     scenario_brain_name_missing
     scenario_brain_name_rejects_path
@@ -6162,6 +6254,22 @@ set(_unit_test_names
     scenario_details_fetch_give_up
     scenario_details_override_order
     scenario_details_reload_map_script
+    script_fetch_req_golden
+    script_fetch_found_lua
+    script_fetch_found_package
+    script_fetch_found_shipped
+    script_fetch_not_found
+    script_fetch_disabled
+    script_fetch_too_large
+    script_fetch_busy_retry
+    script_fetch_give_up
+    script_fetch_sink_bound
+    script_fetch_stall_fails
+    script_fetch_round_start_abort
+    script_save_local_ok
+    script_save_local_exists
+    script_save_local_bad_name
+    script_save_local_creates_dir
     scenario_mod_dirs_user_dir_offered
     scenario_mod_dirs_shipped_offered
     scenario_mod_dirs_configured_wins
@@ -6170,6 +6278,22 @@ set(_unit_test_names
     scenario_mod_dirs_same_dir_once
     scenario_mod_dirs_all_missing_is_quiet
     scenario_mod_dirs_attach_reads_shipped
+    scenario_mod_dirs_workshop_precedence
+    scenario_mod_dirs_workshop_local
+    scenario_mod_dirs_workshop_upload_clash
+    workshop_sync_classify
+    workshop_sync_copies_and_indexes
+    workshop_sync_removes_unsubscribed
+    workshop_sync_unavailable_touches_nothing
+    workshop_sync_name_clash
+    workshop_sync_renamed_content
+    workshop_sync_bumps_script_dirs_gen
+    workshop_sync_disabled_item_left_alone
+    workshop_sync_recovers_bad_index
+    workshop_map_package_info
+    workshop_pack_loose_script
+    workshop_sync_index_rows
+    local_rows_carry_author
     scenario_precedence_mod_over_map
     scenario_precedence_none_restores_map
     scenario_precedence_plain_map_keeps_mod
@@ -6262,6 +6386,11 @@ set(_unit_test_names
     editor_pack_twice_identical
     editor_pack_refuses_unbound
     editor_pack_survives_map_save
+    workshop_map_dir_offered_at_root
+    workshop_map_dir_resolve
+    workshop_map_dir_absent
+    workshop_use_local_rel_path
+    workshop_use_local
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via
@@ -6281,6 +6410,9 @@ foreach(_name IN LISTS _unit_test_names)
                          TIMEOUT 60
                          FIXTURES_REQUIRED warm_binaries)
 endforeach()
+# A 4 MiB package over the loopback bulk channel is a few thousand pumps of
+# at least a millisecond each; give it room on a loaded machine.
+set_tests_properties(unit.loopback_script_upload_at_cap PROPERTIES TIMEOUT 180)
 
 # ---------------------------------------------------------------------------
 # WinBoloWbnTests -- the WinBolo.net HTTP layer against a local TCP listener.

@@ -2770,6 +2770,8 @@ double clientSimGetScenarioRuleValue(const ClientSim *cs, int idx) {
 bool     clientSimGetLobbyWbnAvailable(const ClientSim *cs)          { return cs ? cs->lobbyWbnAvailable : false; }
 uint32_t clientSimGetLobbyServerLocks(const ClientSim *cs)           { return cs->lobbyServerLocks; }
 UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs)           { return cs ? cs->uploadPolicy : UPLOAD_POLICY_ALLOW; }
+ScriptUploadPolicy clientSimGetScriptUploadPolicy(const ClientSim *cs) { return cs ? cs->scriptUploadPolicy : SCRIPT_UPLOAD_ALLOW; }
+bool clientSimGetScriptSharing(const ClientSim *cs) { return cs ? !cs->lobbyScriptSharingOff : true; }
 
 /* The NULL-cs answers here and in the two getters below are meaning B in
  * view_policy.h — what a reader assumes when nothing named a policy —
@@ -2950,6 +2952,17 @@ bool clientSimGetLobbyScenarioListKeepsWinCondition(const ClientSim *cs,
   if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return false;
   return cs->lobbyScenarioListKeepsWin[idx];
 }
+uint8_t clientSimGetLobbyScenarioListSource(const ClientSim *cs, int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) {
+    return SERVER_SCENARIO_SOURCE_SERVER;
+  }
+  return cs->lobbyScenarioListSource[idx];
+}
+uint64_t clientSimGetLobbyScenarioListWorkshopId(const ClientSim *cs,
+                                                 int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return 0;
+  return cs->lobbyScenarioListWorkshopId[idx];
+}
 /* The lobby's ordered script list: what the host has picked, in the order
  * the round will load it. Entry 0 is the script the round is decided by and
  * is the same file the attached-scenario accessors describe; the entries
@@ -2974,6 +2987,16 @@ bool clientSimGetLobbyScriptKeepsWinCondition(const ClientSim *cs, int i) {
 bool clientSimGetLobbyScriptBound(const ClientSim *cs, int i) {
   if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) return false;
   return cs->lobbyScriptBound[i];
+}
+uint8_t clientSimGetLobbyScriptSource(const ClientSim *cs, int i) {
+  if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) {
+    return SERVER_SCENARIO_SOURCE_SERVER;
+  }
+  return cs->lobbyScriptSource[i];
+}
+uint64_t clientSimGetLobbyScriptWorkshopId(const ClientSim *cs, int i) {
+  if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) return 0;
+  return cs->lobbyScriptWorkshopId[i];
 }
 uint32_t clientSimGetLobbyScriptSeq(const ClientSim *cs) {
   return cs ? cs->lobbyScriptSeq : 0;
@@ -3127,6 +3150,10 @@ void clientSimLobbyScenarioDetailsPut(ClientSim *cs, const char *file,
       found ? LOBBY_SCN_DETAILS_FOUND : LOBBY_SCN_DETAILS_NONE;
   cs->lobbyScnDetails[i].len = found ? (uint16_t)len : 0;
   if (found && len > 0) memcpy(cs->lobbyScnDetails[i].bytes, bytes, len);
+  /* The settings block, if any, is put after this, so an answer without
+     one reads as a server that did not say. */
+  cs->lobbyScnDetails[i].settingsKnown = false;
+  cs->lobbyScnDetails[i].settingsLen   = 0;
 }
 
 void clientSimLobbyScenarioDetailsForget(ClientSim *cs) {
@@ -3135,6 +3162,61 @@ void clientSimLobbyScenarioDetailsForget(ClientSim *cs) {
   /* An answer still arriving belongs to a slot that is gone; the bulk
      receiver finishes filling the buffer and the completion drops it. */
   cs->lobbyScnDetailsRxSlot = 0;
+}
+
+void clientSimLobbyScenarioSettingsPut(ClientSim *cs, const char *file,
+                                       const uint8_t *bytes, size_t len) {
+  int i;
+  if (cs == NULL || !clientSimScnDetailsNameOk(file)) return;
+  i = clientSimScnDetailsFind(cs, file);
+  if (i < 0 || cs->lobbyScnDetails[i].state != LOBBY_SCN_DETAILS_FOUND) {
+    return;
+  }
+  /* A block that does not read is kept as no settings, so the dialog draws
+     nothing rather than a half-read row. */
+  if (len > SCN_SETTINGS_BLOB_MAX || (len > 0 && bytes == NULL) ||
+      scnSettingsBlobRead(bytes, len, NULL, 0) < 0) {
+    len = 0;
+  }
+  cs->lobbyScnDetails[i].settingsKnown = true;
+  cs->lobbyScnDetails[i].settingsLen   = (uint16_t)len;
+  if (len > 0) memcpy(cs->lobbyScnDetails[i].settings, bytes, len);
+}
+
+bool clientSimGetLobbyScenarioSettings(const ClientSim *cs, const char *file,
+                                       const uint8_t **bytes, size_t *len) {
+  int i;
+  if (bytes != NULL) *bytes = NULL;
+  if (len != NULL) *len = 0;
+  if (cs == NULL || file == NULL || file[0] == '\0') return false;
+  i = clientSimScnDetailsFind(cs, file);
+  if (i < 0 || cs->lobbyScnDetails[i].state != LOBBY_SCN_DETAILS_FOUND ||
+      !cs->lobbyScnDetails[i].settingsKnown) {
+    return false;
+  }
+  if (len != NULL) *len = cs->lobbyScnDetails[i].settingsLen;
+  if (bytes != NULL && cs->lobbyScnDetails[i].settingsLen > 0) {
+    *bytes = cs->lobbyScnDetails[i].settings;
+  }
+  return true;
+}
+
+bool clientSimGetLobbyScriptSetting(const ClientSim *cs, const char *file,
+                                    const char *id, int32_t *out) {
+  int i;
+  if (cs == NULL || file == NULL || id == NULL) return false;
+  for (i = 0; i < cs->lobbyScriptSettingCount; i++) {
+    if (strcmp(cs->lobbyScriptSettings[i].file, file) == 0 &&
+        strcmp(cs->lobbyScriptSettings[i].id, id) == 0) {
+      if (out != NULL) *out = cs->lobbyScriptSettings[i].value;
+      return true;
+    }
+  }
+  return false;
+}
+
+bool clientSimLobbyScriptSettingsSupported(const ClientSim *cs) {
+  return cs != NULL && cs->lobbyScriptSettingsSupported;
 }
 
 ClientScnDetailsState clientSimGetLobbyScenarioDetails(const ClientSim *cs,
@@ -3414,6 +3496,30 @@ bool specSeedDecodeInfo(const uint8_t *seed, size_t seedLen, SpecSeedInfo *out) 
 uint8_t  clientSimGetLobbyMapUploadStatus(const ClientSim *cs)     { return cs->lobbyMapUploadStatus; }
 uint8_t  clientSimGetLobbyMapUploadRejectCode(const ClientSim *cs) { return cs->lobbyMapUploadRejectCode; }
 const char *clientSimGetLobbyMapUploadFinalPath(const ClientSim *cs){ return cs->lobbyMapUploadFinalPath; }
+
+void clientSimSetWorkshopMapDir(ClientSim *cs, const char *dir) {
+  if (cs == NULL) return;
+  if (dir != NULL && dir[0] != '\0') {
+    SDL_strlcpy(cs->workshopMapDir, dir, sizeof(cs->workshopMapDir));
+  } else {
+    cs->workshopMapDir[0] = '\0';
+  }
+}
+
+uint8_t clientSimGetLobbyUploadKind(const ClientSim *cs) {
+  if (cs == NULL) return UPLOAD_KIND_MAP;
+  return cs->lobbyUploadKind;
+}
+
+uint8_t clientSimGetLobbyScriptRefuseReason(const ClientSim *cs) {
+  if (cs == NULL) return SCRIPT_REFUSE_NONE;
+  return cs->lobbyScriptRefuseReason;
+}
+
+int32_t clientSimGetLobbyScriptRefuseNumber(const ClientSim *cs, int which) {
+  if (cs == NULL) return 0;
+  return which == 0 ? cs->lobbyScriptRefuseA : cs->lobbyScriptRefuseB;
+}
 
 bool clientSimConsumeUseLocalFallback(ClientSim *cs) {
   if (!cs || !cs->lobbyMapUseLocalNeedsFallback) return false;

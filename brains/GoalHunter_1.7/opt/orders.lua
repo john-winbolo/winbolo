@@ -8,7 +8,12 @@
 -- verbs, so a recorded game replays the same way.
 --
 -- Wire verbs (internal channel, msg_dest 0 — never seen by a human):
---   /info obd <oid> <cost>   BID.   cost -1 means "no, I'm busy".
+--   /info obd <oid> <cost>   BID.   cost -1 means "no, I cannot go" and -2
+--                            "no, I am busy or on a person's job".  -3 or
+--                            lower is "no, I am on a person's job, but I
+--                            would switch at cost -3 - <cost>"
+--                            (ORDER_NO_FREE_TAKES_LOWEST; M.note_bid).
+--                            Older bots read any negative cost as "no".
 --   /info obc <oid> <cost>   CLAIM. the winner (or a stealer) holds it.
 --   /info obr <oid>          RELEASE. re-bid it among the rest.
 -- They are their own verbs, NOT fields on the /info state slate: that slate
@@ -1129,10 +1134,11 @@ function M.rx(sender, text, tick, state)
     o.rx[#o.rx + 1] = { kind = "release", oid = tonumber(oid), from = sender, tick = tick }
     return true
   end
-  -- OFFER (ORDER_NEW_CLEARS_ALL): a release of an order this bot took and
-  -- left at once for the other order of a close pair (see clear_older_orders).
-  -- It is an obr that ORDER_NO_HAND_BACK does not stop: two pings are two
-  -- bots, so another bot has to take the order this one left.
+  -- OFFER (ORDER_HOLDER_KEEPS_JOB): "I won this auction but I will not take
+  -- it".  The sender bid before it held a person's order, then won another
+  -- auction first; it keeps that job (see the settle in M.update).  Every bot
+  -- re-opens the auction on an offer, ORDER_NO_HAND_BACK or not: the order
+  -- was never taken, so it still needs a bot.
   oid = text:match("^/info obo (%d+)$")
   if oid then
     local o = S(state)
@@ -1222,12 +1228,6 @@ local function forget_order(o, oid)
   o.gclaims[oid]  = nil
   o.announce[oid] = nil
   o.anchors[oid]  = nil
-  if o.sibs and o.sibs[oid] then
-    for other in pairs(o.sibs[oid]) do
-      if o.sibs[other] then o.sibs[other][oid] = nil end
-    end
-    o.sibs[oid] = nil
-  end
 end
 M.forget_order = forget_order
 
@@ -1269,8 +1269,7 @@ local function decoy_drop_goal(state, h)
   end
 end
 
--- offer = true sends obo instead of obr (see the obo verb in M.rx).
-local function release_held(state, info, why, quiet, cancelled, offer)
+local function release_held(state, info, why, quiet, cancelled)
   local o = S(state)
   local h = o.held
   if not h then return end
@@ -1282,8 +1281,6 @@ local function release_held(state, info, why, quiet, cancelled, offer)
   if cancelled then
     tx(state, string.format("/info obx %d", h.oid))
     forget_order(o, h.oid)
-  elseif offer then
-    tx(state, string.format("/info obo %d", h.oid))
   else
     tx(state, string.format("/info obr %d", h.oid))
   end
@@ -1765,23 +1762,56 @@ function M.slot_keepers(o, oid)
   return keep, #rank
 end
 
+-- A BOT KEEPS THE JOB A PERSON GAVE IT (ORDER_HOLDER_KEEPS_JOB, Andrew,
+-- PR #393).  Ping pill 1, then pill 2 -- half a second later or a minute
+-- later, there is no time window -- and the bot on pill 1 stays on pill 1:
+-- a person told it to go there.  A FREE bot takes pill 2.  So a bot that
+-- holds an order from a person (a ping or a chat line) is out of every
+-- auction: it bids "no", as a busy bot does (start_order, the re-bids in
+-- M.update), and an auction it won with a bid from before it held anything
+-- is offered back to the team (obo, the settle in M.update).  Its own
+-- order included: the slots a repeat ping adds are filled by the bots that
+-- do NOT hold it yet, and the settle leaves the holders out anyway.
+-- A decoy hold is a person's order like any other, so a ping elsewhere no
+-- longer ends it (see M.busy).  A scenario hint is not from a person: a
+-- bot on a hint still takes a new order, as before.  An order that NAMES
+-- bots (names, a selection, `last`, all, nearby) runs no auction and
+-- still switches the bots it names.
+-- NO FREE BOT (ORDER_NO_FREE_TAKES_LOWEST): the holder's "no" carries its
+-- cost (M.switch_bid), and when no free bot can take the order the holder
+-- with the lowest cost drops its job for it (the settle in M.update).  A
+-- decoy never does.
+function M.holds_job(state)
+  if not C.ORDER_HOLDER_KEEPS_JOB then return false end
+  local h = state and state.orders and state.orders.held
+  return h ~= nil and h.sender ~= (M.HINT_SENDER or 255)
+end
+
 -- group = true when several bots take the SAME order (all / nearby / a
 -- selection).  Then nobody acks straight away: each taker broadcasts its obc
 -- claim, and ORDER_AUCTION_TICKS later the lowest player number among the
 -- claimants says ONE line with the count ("3 on pill 5").  A solo order acks
 -- at once.
-local function take_order(state, world, info, spec, cost, now, group, stolen)
+-- switched = true when this bot won the order only because no free bot could
+-- take it (ORDER_NO_FREE_TAKES_LOWEST).  Its old order is DROPPED, not handed
+-- back: a cancel (obx) when this bot is its only holder, else a quiet release
+-- of this bot's share (the other holders keep it).
+local function take_order(state, world, info, spec, cost, now, group, stolen, switched)
   local o = S(state)
   if o.held and o.held.oid ~= spec.oid then
     -- Latest order wins.  Say what we are leaving so the human can follow it.
     local old = o.held
-    sayg(state, string.format("Leaving %s for %s",
+    sayg(state, string.format("%sLeaving %s for %s",
+        switched and "No free bot. " or "",
         goal_label(old.kind, old.tid), goal_label(spec.kind, spec.tid)))
-    -- Two orders given close together are two jobs (see clear_older_orders):
-    -- the one this bot leaves is offered to the others (obo).
-    local pair = C.ORDER_NEW_CLEARS_ALL and o.sibs and o.sibs[old.oid]
-                 and o.sibs[old.oid][spec.oid]
-    release_held(state, info, nil, true, nil, pair and true or nil)
+    local drop = nil
+    if switched then
+      drop = true
+      for pn in pairs(o.gclaims[old.oid] or {}) do
+        if pn ~= state.player_number then drop = nil end
+      end
+    end
+    release_held(state, info, nil, true, drop)
   end
   o.held = {
     oid = spec.oid, kind = spec.kind, tkind = spec.tkind, tid = spec.tid,
@@ -1921,8 +1951,8 @@ end
 M.HELP = {
   "Orders: [all|nearby|last|N|bot name, default nearest] attack|capture|sweep <pill#|base#|closest|tank name>, defend <pill#>,",
   "retreat, cancel [all|bot name], focus bases|pills|off, reposition on|off, bot pings on|off, bot chat on|off",
-  "Ping a tile: nearest bot goes, ping again adds one. Ping bots to select them,",
-  "then order. Caution ping cancels; caution on a bot retreats it. 3 shots on a tile: come here.",
+  "Ping a tile: nearest free bot goes, else nearest busy one switches (decoys stay). Again: pill/base/tank +1, ground renews.",
+  "Ping bots to select them, then order. Caution ping cancels; caution on a bot retreats it. 3 shots on a tile: come here.",
 }
 -- There is NO game-start banner any more (Andrew, Sep 14).  The brain says
 -- what it can do in the LOBBY instead, through two text files it ships beside
@@ -2208,34 +2238,19 @@ end
 -- yet, so a second ping inside ORDER_AUCTION_TICKS would otherwise delete
 -- the first order before any bot could take it.
 -- ORDER_NEW_CLEARS_ALL = false (keel) keeps the old hand-back behaviour.
---
--- TWO PINGS ARE TWO BOTS, HOWEVER CLOSE (Andrew, PR #389 review item 8).
--- Kept as well: an order heard no more than ORDER_AUCTION_TICKS ago, even if
--- its auction has settled here (a bot that heard every bid settles early).
--- Its winner may still win the new order too, and the other bots must still
--- know the old one then.  Each such order and the new one are marked as a
--- CLOSE PAIR (o.sibs, both ways).  A bot that wins both takes the new one;
--- take_order then offers the one it leaves (obo), and the other bots re-bid
--- it, so each order ends with its own bot.
+-- Two pings close together are still two bots under ORDER_HOLDER_KEEPS_JOB:
+-- the bot that took the first order bids "no" on the second, or offers it
+-- back if it won both (see M.holds_job).
 local function clear_older_orders(state, info, keep_oid, now)
   if not C.ORDER_NEW_CLEARS_ALL then return end
   local o = S(state)
   local hint = M.HINT_SENDER or 255
   local held = o.held and o.held.oid
-  local win = C.ORDER_AUCTION_TICKS or 10
   local drop = {}
   for oid, k in pairs(o.known) do
-    if oid ~= keep_oid and not (k.spec and k.spec.sender == hint) then
-      -- An open auction is kept (above); so is an order still in its window.
-      if o.auctions[oid] or (now and k.tick and (now - k.tick) <= win) then
-        o.sibs = o.sibs or {}
-        o.sibs[oid] = o.sibs[oid] or {}
-        o.sibs[keep_oid] = o.sibs[keep_oid] or {}
-        o.sibs[oid][keep_oid] = true
-        o.sibs[keep_oid][oid] = true
-      elseif oid ~= held then
-        drop[#drop + 1] = oid
-      end
+    if oid ~= keep_oid and oid ~= held and not o.auctions[oid]
+       and not (k.spec and k.spec.sender == hint) then
+      drop[#drop + 1] = oid
     end
   end
   for _, oid in ipairs(drop) do forget_order(o, oid) end
@@ -2250,6 +2265,46 @@ M.clear_older_orders = clear_older_orders
 -- out its window without it, and two bots could each see themselves as the
 -- cheapest.  M.update keeps such bids in o.early; a new auction takes the
 -- ones younger than two auction windows.
+-- Keep one bid in an auction.  A negative cost is "no"; BID_BUSY (-2) is a
+-- "no" because the bot is busy or holds a person's job, not because it cannot
+-- reach the target.  a.busy lists those bots: "All bots busy" is only said
+-- when one of them answered (ORDER_HOLDER_KEEPS_JOB).
+-- BID_HOLD (-3) and lower is a "no" from a bot on a person's job that WOULD
+-- switch if no free bot can go (ORDER_NO_FREE_TAKES_LOWEST): its cost to the
+-- new target is BID_HOLD - wire.  It is kept apart in a.hold, so the free
+-- bids in a.bids always win first.  One number on the old wire shape: the
+-- receiver's `%-?%d+` still matches it, and any negative cost is a "no".
+M.BID_BUSY = -2
+M.BID_HOLD = -3
+function M.note_bid(a, pn, cost)
+  a.bids[pn] = (cost >= 0) and cost or nil
+  a.answered[pn] = true
+  if cost <= M.BID_BUSY then
+    a.busy = a.busy or {}
+    a.busy[pn] = true
+  end
+  if cost <= M.BID_HOLD then
+    a.hold = a.hold or {}
+    a.hold[pn] = M.BID_HOLD - cost
+  end
+end
+
+-- The wire bid of a bot on a person's job (M.holds_job) that is not busy for
+-- any other reason: BID_HOLD - cost when it may be switched to `spec`, else
+-- nil (the caller bids BID_BUSY).  Never switched: a bot already on this
+-- order, a bot on a decoy hold (Andrew: "decoy stays"), and never for a
+-- scenario hint or a three-shot order (those still go to free bots only).
+function M.switch_bid(state, world, info, spec)
+  if not (C.ORDER_NO_FREE_TAKES_LOWEST and M.holds_job(state)) then return nil end
+  local h = state.orders.held
+  if h.oid == spec.oid or decoy_held(state) then return nil end
+  if spec.sender == (M.HINT_SENDER or 255) then return nil end
+  if spec.who and spec.who.near then return nil end
+  local c = M.travel_cost(state, world, info, spec)
+  if not c or c >= 1e29 then return nil end
+  return M.BID_HOLD - math.floor(math.min(c, 999999))
+end
+
 function M.merge_early_bids(o, oid, now)
   local e = o.early and o.early[oid]
   local a = o.auctions[oid]
@@ -2257,8 +2312,7 @@ function M.merge_early_bids(o, oid, now)
   local win = 2 * (C.ORDER_AUCTION_TICKS or 10)
   for pn, b in pairs(e) do
     if (now - b.tick) <= win and not a.answered[pn] then
-      a.bids[pn] = (b.cost >= 0) and b.cost or nil
-      a.answered[pn] = true
+      M.note_bid(a, pn, b.cost)
     end
   end
   o.early[oid] = nil
@@ -2297,6 +2351,8 @@ local function start_order(state, world, info, spec, who, now, want)
   end
 
   -- ── auction: everyone bids, the `want` cheapest take it ────────────────
+  -- A bot on a person's order bids "no" (ORDER_HOLDER_KEEPS_JOB).
+  if not busy and M.holds_job(state) then busy, reason = true, "holding" end
   local cost = (not busy) and M.travel_cost(state, world, info, spec) or nil
   if cost and cost >= 1e29 then cost = nil end
   -- RANGE RULE, for the three-shot order: only bots within who.near tiles
@@ -2326,10 +2382,16 @@ local function start_order(state, world, info, spec, who, now, want)
     spec = spec, open = now, bids = {}, answered = {}, want = want or 1,
   }
   M.merge_early_bids(o, spec.oid, now)
+  local bid = cost and math.floor(math.min(cost, 999999))
+              or (busy and M.BID_BUSY or -1)
+  -- Holding a person's job and busy for no other reason: bid the cost with
+  -- the switch marker (ORDER_NO_FREE_TAKES_LOWEST, M.switch_bid).
+  if reason == "holding" then
+    bid = M.switch_bid(state, world, info, spec) or bid
+  end
+  M.note_bid(o.auctions[spec.oid], me, bid)
   o.auctions[spec.oid].bids[me] = cost
-  o.auctions[spec.oid].answered[me] = true
-  tx(state, string.format("/info obd %d %d", spec.oid,
-     cost and math.floor(math.min(cost, 999999)) or -1))
+  tx(state, string.format("/info obd %d %d", spec.oid, bid))
   return true
 end
 
@@ -2486,7 +2548,6 @@ function M.on_chat(state, world, info, sender, text, now, from_ally, sender_is_b
       o.announce = {}
       o.anchors = {}
       o.last_by = {}
-      o.sibs = nil
     elseif t and t.kind == "tank" then
       if o.held and t.pn == me then release_held(state, info, "released", false, true) end
     elseif last_pns then
@@ -2958,10 +3019,15 @@ function M.busy(state, info)
      or (state.stuck_for or 0) >= (C.ORDER_STUCK_BUSY_TICKS or 150) then
     return true, "escaping"
   end
-  -- A DECOY HOLD IS NOT BUSY, on purpose: a new order from a person is one
-  -- of its endings (take_order, "latest order wins").  Nothing above can
-  -- fire for it either -- the decoy lock keeps escape_water out, and the
-  -- stuck detector reads the park as deliberate so stuck_for stays at 0.
+  -- A DECOY HOLD IS NOT BUSY here.  An order that NAMES the bot is one of
+  -- its endings (take_order, "latest order wins").  A new PING or chat
+  -- auction is not, under ORDER_HOLDER_KEEPS_JOB: the decoy holds a person's
+  -- order, so it bids "no" (M.holds_job) and runs to its own end -- pills
+  -- down, the clock, a caution, a cancel or its death.  With the knob off
+  -- (keel) the auction winner leaves its decoy for the new order, as before.
+  -- Nothing above can fire for it either -- the decoy lock keeps
+  -- escape_water out, and the stuck detector reads the park as deliberate
+  -- so stuck_for stays at 0.
   return false, nil
 end
 
@@ -3037,7 +3103,35 @@ local function ping_bot_command(state, world, info, sender, mx, my, now)
     if kind == "attack_pill" then
       o.botcmd[sender] = { tid = tid, tick = now, oid = prev }
     end
-    a.want = (a.want or 1) + 1
+    -- A REPEAT ON PLAIN GROUND ADDS NO BOT (ORDER_LAND_REPEAT_ADDS false).
+    -- Only a pill, a base or a tank takes one more bot per ping.  "Go there"
+    -- again refreshes the first bot's order: the travel focus, or the hold
+    -- clock once it has arrived.  The holder answers "Still on it".  No
+    -- auction opens and `want` stays where it was.
+    --
+    -- That is only while a bot still holds the order.  o.gclaims[prev] is the
+    -- holder set every bot shares (obc adds to it, obr and a death take the
+    -- bot out), and it includes this bot's own claim.  With nobody on it (the
+    -- holder died or let it go, or no bot was free the first time) the
+    -- repeat re-runs the auction for the same one slot below, so a bot goes
+    -- again.
+    local ground = not C.ORDER_LAND_REPEAT_ADDS and k.spec.tkind == "here"
+    local manned = next(o.gclaims[prev] or {}) ~= nil
+    if ground and manned then
+      local h = o.held
+      if h and h.oid == prev then
+        if h.hold then
+          h.expiry = now + (C.ORDER_GOTO_HOLD_TICKS or 500)
+        else
+          h.expiry = now + (C.ORDER_FOCUS_TICKS or 3000)
+        end
+        repeat_ack(state, info, prev, now)
+      end
+      return
+    end
+    -- A ground repeat with nobody on it keeps its one slot; any other repeat
+    -- adds one.
+    a.want = (a.want or 1) + (ground and 0 or 1)
     if o.held and o.held.oid == prev then
       o.held.expiry = now + (C.ORDER_FOCUS_TICKS or 3000)   -- focus reset
     end
@@ -3313,8 +3407,7 @@ function M.update(state, world, info, now)
     if r.kind == "bid" then
       local a = o.auctions[r.oid]
       if a then
-        a.bids[r.from] = (r.cost >= 0) and r.cost or nil
-        a.answered[r.from] = true
+        M.note_bid(a, r.from, r.cost)
       elseif C.ORDER_CLAIM_TIEBREAK and r.from ~= me then
         -- This bot has not opened its auction on that order yet (it heard
         -- the ping a think later than the bidder).  Keep the bid for it.
@@ -3327,6 +3420,7 @@ function M.update(state, world, info, now)
       o.gclaims[r.oid] = o.gclaims[r.oid] or {}
       o.gclaims[r.oid][r.from] = r.cost
       o.auctions[r.oid] = nil
+      if o.known[r.oid] then o.known[r.oid].unfilled = nil end
       -- Someone else claimed what we hold.  With ORDER_CLAIM_TIEBREAK the
       -- two claims are ranked below and only the loser lets go; without it
       -- (keel) this bot goes quiet and lets them have it.  A GROUP order is
@@ -3418,19 +3512,42 @@ function M.update(state, world, info, now)
         end
       end
       -- "Don't pass the order back" (ORDER_NO_HAND_BACK): nobody re-bids.
-      -- An OFFER (obo) is the exception: the order was left for the other
-      -- order of a close pair and still needs a bot of its own.
+      -- An OFFER (obo) is the exception: nobody ever took that order (see
+      -- the settle below), so it still needs a bot.  Every bot answers an
+      -- offer, a bot holding a job with "no", so the auction settles at once
+      -- and "All bots busy" can be said when nobody is free.  The slots it
+      -- fills are the ping's (anchor want); the holders are left out as ever.
       if C.ORDER_NO_HAND_BACK and not r.offer then k = nil end
-      if k and not still and not o.held and not o.auctions[r.oid]
+      if k and (r.offer or (not still and not o.held)) and not o.auctions[r.oid]
          and (now - k.tick) < (C.ORDER_FOCUS_TICKS or 3000) then
-        local busy = M.busy(state, info)
+        local busy = M.busy(state, info) or M.holds_job(state)
+                     or (r.offer and o.held ~= nil)
         local cost = (not busy) and M.travel_cost(state, world, info, k.spec) or nil
         if cost and cost >= 1e29 then cost = nil end
-        o.auctions[r.oid] = { spec = k.spec, open = now, bids = { [me] = cost },
-                              answered = { [me] = true } }
+        local anc = o.anchors[r.oid]
+        local bid = cost and math.floor(math.min(cost, 999999))
+                    or (busy and M.BID_BUSY or -1)
+        -- An offer is still a person's order nobody took, so a holder may be
+        -- switched to it when no free bot can go (M.switch_bid).  A plain
+        -- hand-back (obr) never switches a holder: its old order would be
+        -- handed back in turn, and so on round the team.
+        if r.offer and r.from ~= me and not M.busy(state, info) then
+          bid = M.switch_bid(state, world, info, k.spec) or bid
+        end
+        o.auctions[r.oid] = { spec = k.spec, open = now, bids = {},
+                              answered = {},
+                              want = r.offer and anc and anc.want or nil }
+        M.note_bid(o.auctions[r.oid], me, bid)
+        o.auctions[r.oid].bids[me] = cost
         M.merge_early_bids(o, r.oid, now)
-        tx(state, string.format("/info obd %d %d", r.oid,
-           cost and math.floor(math.min(cost, 999999)) or -1))
+        -- This bot's OWN offer, heard back (a bot hears its own chat lines):
+        -- its "no" already went out right after the obo, so no second obd.
+        -- It still keeps the auction and its own "no" in it, so it settles
+        -- the offer like the others do and can be the bot that says "All
+        -- bots busy".
+        if not (r.offer and r.from == me) then
+          tx(state, string.format("/info obd %d %d", r.oid, bid))
+        end
       end
     end
   end
@@ -3492,24 +3609,114 @@ function M.update(state, world, info, now)
         return x.pn < y.pn
       end)
       local need, won = math.max(0, want - n_held), {}
+      local offer = false
       for i = 1, math.min(need, #rank) do
         won[#won + 1] = rank[i].pn
         if rank[i].pn == me then
-          take_order(state, world, info, a.spec, rank[i].c, now, want > 1)
+          -- WON, BUT ALREADY ON A PERSON'S JOB (ORDER_HOLDER_KEEPS_JOB).  The
+          -- bid went out before this bot held anything: two pings inside one
+          -- auction window, and it won the other one first.  It keeps that
+          -- job and offers this one (obo); the other bots re-open the auction
+          -- and this bot answers it "no" (see the obo verb in M.rx).
+          if M.holds_job(state) and o.held.oid ~= oid then
+            offer = true
+          else
+            take_order(state, world, info, a.spec, rank[i].c, now, want > 1)
+          end
         else
           o.claims[oid] = { pn = rank[i].pn, cost = rank[i].c, tick = now }
+        end
+      end
+      -- NO FREE BOT, THE CHEAPEST BUSY ONE SWITCHES (ORDER_NO_FREE_TAKES_LOWEST,
+      -- Andrew, PR #393).  Slots the free bids could not fill go to the bots
+      -- on a person's job that bid a switch cost (a.hold, BID_HOLD), lowest
+      -- cost first, a tie to the lower player number -- the same sort as the
+      -- free bids, over the same table on every bot, so every bot names the
+      -- same bot.  Never a bot that already holds this order (heldby), so a
+      -- repeat ping adds a DIFFERENT bot.  A decoy never bid a switch cost
+      -- (M.switch_bid).  The winner drops its old order (take_order,
+      -- switched).  If it is on a decoy or busy by the time the auction
+      -- settles, it offers the order on (obo) the way a free winner on a job
+      -- does.
+      local short = need - #won
+      if short > 0 and a.hold and C.ORDER_HOLDER_KEEPS_JOB
+         and C.ORDER_NO_FREE_TAKES_LOWEST then
+        local taken = {}
+        for _, pn in ipairs(won) do taken[pn] = true end
+        local hr = {}
+        for pn = 0, 15 do
+          if a.hold[pn] and not heldby[pn] and not taken[pn] then
+            hr[#hr + 1] = { pn = pn, c = a.hold[pn] }
+          end
+        end
+        table.sort(hr, function(x, y)
+          if x.c ~= y.c then return x.c < y.c end
+          return x.pn < y.pn
+        end)
+        for i = 1, math.min(short, #hr) do
+          won[#won + 1] = hr[i].pn
+          if hr[i].pn == me then
+            if decoy_held(state) or M.busy(state, info) then
+              offer = true
+            else
+              take_order(state, world, info, a.spec, hr[i].c, now, want > 1, nil, true)
+            end
+          else
+            o.claims[oid] = { pn = hr[i].pn, cost = hr[i].c, tick = now }
+          end
         end
       end
       -- A REPEAT PING with no room left: the extra slot found nobody (every
       -- eligible bot already holds the order, or the rest cannot go), so the
       -- holders answer it the way a repeated chat line is answered.
       if a.repeated and #won == 0 then repeat_ack(state, info, oid, now) end
+      -- NOBODY FREE (ORDER_HOLDER_KEEPS_JOB).  Every bot that answered said
+      -- "no", and at least one of them because it is busy or holds a job
+      -- (a.busy, from BID_BUSY).  Nobody goes, and the bots keep what they
+      -- hold.  An order every bot said "no" to only because it cannot get
+      -- there is not "busy", so nothing is said.  ONE bot says so -- the
+      -- lowest player number that answered busy, so a dead speaker does not
+      -- leave the line unsaid --
+      -- because a person gave an order and is owed an answer (plain say, not
+      -- the goal-chat latch).  A three-shot order with nobody in range stays
+      -- silent, as it always was, and so does an order on a tank this bot
+      -- cannot see (nobody could price it: that is not "busy").  The order
+      -- stays known (k.unfilled): a bot that comes free inside
+      -- ORDER_FOCUS_TICKS takes it (3b below).  With ORDER_NO_FREE_TAKES_LOWEST
+      -- this is only reached when no holder could be switched either (all
+      -- on decoys, busy, or unable to get there), or the knob is off.
+      if C.ORDER_HOLDER_KEEPS_JOB and need > 0 and #won == 0 and not a.repeated then
+        local k = o.known[oid]
+        if k then k.unfilled = true end
+        local low = nil
+        for pn = 0, 15 do
+          if a.busy and a.busy[pn] then low = pn break end
+        end
+        local sp = a.spec or {}
+        if low == me and not (sp.who and sp.who.near)
+           and sp.sender ~= (M.HINT_SENDER or 255)
+           and M.target_tile(world, state, sp) then
+          say(state, "All bots busy")
+        end
+      end
       o.auctions[oid] = nil
+      if offer then
+        -- The offer, then this bot's "no" for the auction it re-opens on the
+        -- other bots (they read the two lines in this order), so they need
+        -- not wait out the window for this bot's answer.  No auction is
+        -- opened here.  This bot hears its own obo on its next think, and
+        -- the release handler above opens the auction then with its own
+        -- "no" in it, without sending that "no" a second time.
+        tx(state, string.format("/info obo %d", oid))
+        tx(state, string.format("/info obd %d %d", oid, M.BID_BUSY))
+      end
       local bl = {}
       for pn = 0, 15 do
         if a.answered[pn] then
           bl[#bl + 1] = string.format("p%d=%s", pn,
-            a.bids[pn] and string.format("%.0f", a.bids[pn]) or "no")
+            a.bids[pn] and string.format("%.0f", a.bids[pn])
+            or (a.hold and a.hold[pn] and string.format("h%d", a.hold[pn]))
+            or "no")
         end
       end
     end
@@ -3589,6 +3796,30 @@ function M.update(state, world, info, now)
              and mine <= cl.cost - margin then
             take_order(state, world, info, k.spec, mine, now, nil, true)
             break
+          end
+        end
+      end
+      -- 3b. AN ORDER NOBODY WAS FREE FOR (ORDER_HOLDER_KEEPS_JOB).  Its
+      --     auction found every bot on a job ("All bots busy") and it is
+      --     still known.  The first bot to come free -- its job done, or back
+      --     from the dead -- takes it, while it is inside ORDER_FOCUS_TICKS.
+      --     Two bots freed on one think both take it; the claim tiebreak
+      --     keeps one.  Oldest order id first, like every loop here.
+      if not o.held and C.ORDER_HOLDER_KEEPS_JOB then
+        for _, oid in ipairs(sorted_keys(o.known)) do
+          local k  = o.known[oid]
+          local sp = k and k.spec
+          if k and k.unfilled and sp and not o.auctions[oid]
+             and not next(o.gclaims[oid] or {})
+             and (now - k.tick) < (C.ORDER_FOCUS_TICKS or 3000)
+             and sp.sender ~= (M.HINT_SENDER or 255)
+             and not (sp.who and sp.who.near) then
+            local mine = M.travel_cost(state, world, info, sp)
+            if mine and mine < 1e29 then
+              k.unfilled = nil
+              take_order(state, world, info, sp, mine, now)
+              break
+            end
           end
         end
       end

@@ -507,6 +507,8 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->sim.scenarioBaseGame =
             (gameType)evt->u.lobbySettings.scenarioBaseGame;
         cs->uploadPolicy             = evt->u.lobbySettings.uploadPolicy;
+        cs->scriptUploadPolicy       = evt->u.lobbySettings.scriptUploadPolicy;
+        cs->lobbyScriptSharingOff    = !evt->u.lobbySettings.scriptSharing;
         /* The policy byte is stored raw, with no range check. This mirror
          * drives nothing the server does not enforce for itself, so a value
          * outside the enum can only make the local display wrong, never more
@@ -758,6 +760,47 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         break;
     }
 
+    case CTRL_LOBBY_SCRIPT_SETTING: {
+        /* One value the host chose, or the CLEAR a join sync starts with.
+           Either says the server takes CMD_SET_SCRIPT_SETTING. The strings
+           are terminated here as well as by the decoder, because the
+           in-process subscriber hands the struct over undecoded. */
+        char    file[LOBBY_SCENARIO_FILE_LEN];
+        char    id[SCN_SETTING_ID_LEN];
+        int     i;
+        int     at = -1;
+
+        cs->lobbyScriptSettingsSupported = true;
+        if (evt->u.lobbyScriptSetting.op == LOBBY_SCRIPT_SETTING_CLEAR) {
+            cs->lobbyScriptSettingCount = 0;
+            break;
+        }
+        if (evt->u.lobbyScriptSetting.op != LOBBY_SCRIPT_SETTING_SET) break;
+        SDL_strlcpy(file, evt->u.lobbyScriptSetting.file, sizeof(file));
+        SDL_strlcpy(id, evt->u.lobbyScriptSetting.id, sizeof(id));
+        if (file[0] == '\0' || id[0] == '\0') break;
+        for (i = 0; i < cs->lobbyScriptSettingCount; i++) {
+            if (strcmp(cs->lobbyScriptSettings[i].file, file) == 0 &&
+                strcmp(cs->lobbyScriptSettings[i].id, id) == 0) {
+                at = i;
+                break;
+            }
+        }
+        if (at < 0) {
+            if (cs->lobbyScriptSettingCount >=
+                LOBBY_SCRIPT_SETTING_VALUES_MAX) {
+                break;
+            }
+            at = cs->lobbyScriptSettingCount++;
+            SDL_strlcpy(cs->lobbyScriptSettings[at].file, file,
+                        sizeof(cs->lobbyScriptSettings[at].file));
+            SDL_strlcpy(cs->lobbyScriptSettings[at].id, id,
+                        sizeof(cs->lobbyScriptSettings[at].id));
+        }
+        cs->lobbyScriptSettings[at].value = evt->u.lobbyScriptSetting.value;
+        break;
+    }
+
     case CTRL_LOBBY_SCRIPT_LIST: {
         /* One chunk of the lobby's script list. The chunks of a list arrive
            in order and back to back on the reliable control channel — the
@@ -816,6 +859,9 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                 cs->lobbyScriptKeepsWin[i] =
                     cs->lobbyScriptPending[i].keepsWinCondition;
                 cs->lobbyScriptBound[i] = cs->lobbyScriptPending[i].bound;
+                cs->lobbyScriptSource[i] = cs->lobbyScriptPending[i].source;
+                cs->lobbyScriptWorkshopId[i] =
+                    cs->lobbyScriptPending[i].workshopId;
             }
             cs->lobbyScriptPendingCount = 0;
             cs->lobbyScriptSeq++;

@@ -662,14 +662,14 @@ void printArgs() {
   fprintf(stderr, "-noscenarios  - Do not load the scenario script beside a map. Every map,\n");
   fprintf(stderr, "                including one committed later, plays plainly. A map that\n");
   fprintf(stderr, "                has a script says which one was not loaded.\n");
-  fprintf(stderr, "-nouploadscripts - Do not run a script carried by a map a client uploaded.\n");
-  fprintf(stderr, "                Maps in the uploads directory play plainly, whether the\n");
-  fprintf(stderr, "                script is packed into the file or sits beside it; every\n");
-  fprintf(stderr, "                other map is unaffected. Each upload turned down is named.\n");
+  fprintf(stderr, "-nouploadscripts - The old spelling of -scriptuploads off (see Script\n");
+  fprintf(stderr, "                uploads below). -scriptuploads wins when both are given.\n");
   fprintf(stderr, "-allow-unsafe-scripts - Run scenario scripts with the full Lua standard\n");
   fprintf(stderr, "                library, no memory cap, no time limits and precompiled chunks\n");
   fprintf(stderr, "                accepted. Reaches uploaded maps' scripts and -validate too;\n");
-  fprintf(stderr, "                -nouploadscripts still refuses uploads. Only for trusted content.\n");
+  fprintf(stderr, "                -scriptuploads off still refuses uploads. A script a player\n");
+  fprintf(stderr, "                sends runs its top level the moment it lands, before any host\n");
+  fprintf(stderr, "                picks it. Only for trusted content.\n");
   fprintf(stderr, "-validate <File> - Check the scenario script beside a map and exit without\n");
   fprintf(stderr, "                starting a server. Each problem is printed as\n");
   fprintf(stderr, "                file:line: key: message. Exits 0 when the map is\n");
@@ -744,11 +744,27 @@ void printArgs() {
   fprintf(stderr, "-uploadpolicy <P> - Client map-upload handling: \"off\" refuses uploads,\n");
   fprintf(stderr, "                \"allow\" plays the upload in memory and drops it on the next\n");
   fprintf(stderr, "                map change (default), \"persist\" also saves it to\n");
-  fprintf(stderr, "                data/maps/Uploads/.\n");
+  fprintf(stderr, "                <map root>/Uploads/, or the -uploaddir directory.\n");
+  fprintf(stderr, "-uploaddir <Dir> - Directory persisted maps are written to, used with\n");
+  fprintf(stderr, "                -uploadpolicy persist (default <map root>/Uploads).\n");
   fprintf(stderr, "-uploadmaxfiles <N> - Max stored upload files in persist mode (1-255,\n");
   fprintf(stderr, "                default 64).\n");
-  fprintf(stderr, "-uploadmaxstorage <MB> - Max upload storage in persist mode (1-4096 MB,\n");
+  fprintf(stderr, "-uploadmaxstorage <MB> - Max upload storage in persist mode (1-4095 MB,\n");
   fprintf(stderr, "                default 8).\n");
+
+  fprintf(stderr, "\nScript uploads (scripts players send in the lobby):\n");
+  fprintf(stderr, "-scriptuploads <P> - Player script handling: \"off\" refuses script uploads\n");
+  fprintf(stderr, "                and does not run a script carried by a map a client\n");
+  fprintf(stderr, "                uploaded (those maps play plainly, and each script turned\n");
+  fprintf(stderr, "                down is named), \"allow\" keeps them for the session\n");
+  fprintf(stderr, "                (default), \"persist\" keeps them for good.\n");
+  fprintf(stderr, "-scriptuploaddir <Dir> - Directory persisted scripts are written to.\n");
+  fprintf(stderr, "-scriptuploadmaxfiles <N> - Max stored script files in persist mode\n");
+  fprintf(stderr, "                (1-255, default 32).\n");
+  fprintf(stderr, "-scriptuploadmaxstorage <MB> - Max script storage in persist mode\n");
+  fprintf(stderr, "                (1-4095 MB, default 64).\n");
+  fprintf(stderr, "-noscriptsharing - Refuse players' requests for a copy of this server's\n");
+  fprintf(stderr, "                mods and scenarios. Sharing is on by default.\n");
 
   fprintf(stderr, "\nBots & AI:\n");
   fprintf(stderr, "-bots <N>     - Number of AI bot players to add (default: 0)\n");
@@ -1864,12 +1880,17 @@ int main(int argc, char **argv) {
   if (argExist(argc, argv, "noscenarios") == TRUE) {
     scenarioHostSetEnabled(false);
   }
-  /* -nouploadscripts: the narrower one. A map a client sent plays plainly
-     whatever it carries, and the operator's own maps are untouched. Set in
-     the same place and before the first attach for the same reason. */
-  if (argExist(argc, argv, "nouploadscripts") == TRUE) {
-    scenarioHostSetUploadScriptsEnabled(false);
-  }
+  /* -scriptuploads: the narrower one. Under off a map a client sent plays
+     plainly whatever it carries, and the operator's own maps are untouched.
+     -nouploadscripts is the old spelling of off, used when no word is given.
+     Resolved here rather than beside the map-upload flags below because the
+     host switch has to be set before the first attach, for the same reason
+     as -noscenarios; the same value goes into the instance config below. */
+  const int scriptPolicyArg = findArg(argc, argv, "scriptuploads");
+  const ScriptUploadPolicy scriptUploadPolicy = scriptUploadPolicyResolve(
+      scriptPolicyArg != ARG_NOT_FOUND ? (char *)argv[scriptPolicyArg] : NULL,
+      argExist(argc, argv, "nouploadscripts") == TRUE);
+  scenarioHostSetUploadScriptsEnabled(scriptUploadPolicy != SCRIPT_UPLOAD_OFF);
   /* And the question the map lister asks of every map it finds, so the list
      a player picks from says which maps are scripted. Registered here rather
      than at the attach below: an attach answers NULL for a map with no
@@ -2405,6 +2426,10 @@ int main(int argc, char **argv) {
     UploadPolicy uploadPolicy = UPLOAD_POLICY_ALLOW;
     uint8_t      uploadMaxFiles = 0;        /* 0 = leave transport default */
     uint32_t     uploadMaxStorageBytes = 0; /* 0 = leave transport default */
+    const char  *uploadDir = NULL;          /* NULL = <map root>/Uploads */
+    uint8_t     scriptUploadMaxFiles = 0;        /* 0 = leave transport default */
+    uint32_t     scriptUploadMaxStorageBytes = 0; /* 0 = leave transport default */
+    const char  *scriptUploadDir = NULL;
 
     {
       int policyArg = findArg(argc, argv, "uploadpolicy");
@@ -2440,17 +2465,61 @@ int main(int argc, char **argv) {
       }
     }
     {
+      /* 4095, not 4096: the cap is held as bytes in a uint32_t, and 4096 MB
+         is 2^32, which wraps to 0 and would read as "keep the default". */
       int storageArg = findArg(argc, argv, "uploadmaxstorage");
       if (storageArg != ARG_NOT_FOUND) {
         int v = atoi((char *)argv[storageArg]);
         if (v < 1) {
           fprintf(stderr, "-uploadmaxstorage %d out of range; clamping to 1\n", v);
           v = 1;
-        } else if (v > 4096) {
-          fprintf(stderr, "-uploadmaxstorage %d out of range; clamping to 4096\n", v);
-          v = 4096;
+        } else if (v > 4095) {
+          fprintf(stderr, "-uploadmaxstorage %d out of range; clamping to 4095\n", v);
+          v = 4095;
         }
         uploadMaxStorageBytes = (uint32_t)v * 1024u * 1024u;
+      }
+    }
+    {
+      int dirArg = findArg(argc, argv, "uploaddir");
+      if (dirArg != ARG_NOT_FOUND) {
+        uploadDir = (const char *)argv[dirArg];
+      }
+    }
+    {
+      int dirArg = findArg(argc, argv, "scriptuploaddir");
+      if (dirArg != ARG_NOT_FOUND) {
+        scriptUploadDir = (const char *)argv[dirArg];
+      }
+    }
+    {
+      int filesArg = findArg(argc, argv, "scriptuploadmaxfiles");
+      if (filesArg != ARG_NOT_FOUND) {
+        int v = atoi((char *)argv[filesArg]);
+        if (v < 1) {
+          fprintf(stderr, "-scriptuploadmaxfiles %d out of range; clamping to 1\n", v);
+          v = 1;
+        } else if (v > 255) {
+          fprintf(stderr, "-scriptuploadmaxfiles %d out of range; clamping to 255\n", v);
+          v = 255;
+        }
+        scriptUploadMaxFiles = (uint8_t)v;
+      }
+    }
+    {
+      /* 4095, not 4096: the cap is held as bytes in a uint32_t, and 4096 MB
+         is 2^32, which wraps to 0 and would read as "keep the default". */
+      int storageArg = findArg(argc, argv, "scriptuploadmaxstorage");
+      if (storageArg != ARG_NOT_FOUND) {
+        int v = atoi((char *)argv[storageArg]);
+        if (v < 1) {
+          fprintf(stderr, "-scriptuploadmaxstorage %d out of range; clamping to 1\n", v);
+          v = 1;
+        } else if (v > 4095) {
+          fprintf(stderr, "-scriptuploadmaxstorage %d out of range; clamping to 4095\n", v);
+          v = 4095;
+        }
+        scriptUploadMaxStorageBytes = (uint32_t)v * 1024u * 1024u;
       }
     }
 
@@ -2471,6 +2540,13 @@ int main(int argc, char **argv) {
     instCfg.uploadPolicy          = uploadPolicy;
     instCfg.uploadMaxFiles        = uploadMaxFiles;
     instCfg.uploadMaxStorageBytes = uploadMaxStorageBytes;
+    instCfg.uploadPersistDir      = uploadDir;
+    instCfg.scriptUploadPolicy          = scriptUploadPolicy;
+    instCfg.scriptUploadMaxFiles        = scriptUploadMaxFiles;
+    instCfg.scriptUploadMaxStorageBytes = scriptUploadMaxStorageBytes;
+    instCfg.scriptUploadDir             = scriptUploadDir;
+    instCfg.noScriptSharing             =
+        (argExist(argc, argv, "noscriptsharing") == TRUE);
     instCfg.skipLobby           = skipLobby;
     instCfg.emptyResetEnabled   = emptyResetEnabled;
     instCfg.hasPassword         = (pass[0] != '\0');

@@ -69,6 +69,11 @@ typedef struct {
     char     file[SCN_DIR_FILE_LEN];
     uint16_t len;                      /* 0 = the file declares nothing */
     uint8_t  bytes[SCN_DETAILS_MAX];
+    /* The file's settings block (scenario_settings.h), which travels apart
+       from the details because an older client would refuse a details blob
+       with more bytes on the end. 0 = the file declares no setting. */
+    uint16_t settingsLen;
+    uint8_t  settings[SCN_SETTINGS_BLOB_MAX];
 } ScnDirDetails;
 
 /*********************************************************
@@ -87,6 +92,22 @@ int scnDirListDetails(const char *dir, ScnDirEntry *out,
                       ScnDirDetails *details, int max);
 
 /*********************************************************
+ *NAME:          scnDirReadPackage
+ *PURPOSE:
+ *  The manifest of the .scenario package at path, read the
+ *  way the listing reads one: the manifest.json straight out
+ *  of the container, with no Lua run. False for a file that
+ *  cannot be read, is over the package cap, is not a
+ *  container, or carries a manifest that will not parse; the
+ *  reason goes to the console in one line.
+ *
+ *  The listing is one caller. The other is the check an
+ *  uploaded package passes before it lands, so what is taken
+ *  is what the listing would offer.
+ *********************************************************/
+bool scnDirReadPackage(const char *path, ScenarioManifest *out);
+
+/*********************************************************
  *NAME:          scnDirEntryFromManifest
  *PURPOSE:
  *  One row of the list, filled from a manifest already in
@@ -103,6 +124,17 @@ int scnDirListDetails(const char *dir, ScnDirEntry *out,
  *********************************************************/
 void scnDirEntryFromManifest(ScnDirEntry *e, const char *file,
                              const ScenarioManifest *m);
+
+/*********************************************************
+ *NAME:          scnDirSettingsFromManifest
+ *PURPOSE:
+ *  One file's settings block (scenario_settings.h), packed
+ *  from a manifest already in hand into out, which holds
+ *  cap bytes. Answers the length, 0 for a file that
+ *  declares no setting.
+ *********************************************************/
+size_t scnDirSettingsFromManifest(uint8_t *out, size_t cap,
+                                  const ScenarioManifest *m);
 
 /*********************************************************
  *NAME:          scnDirDetailsFromManifest

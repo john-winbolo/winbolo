@@ -380,6 +380,7 @@ int run_upload_timeout_releases_other_player(void);
 int run_upload_lost_done_retry(void);
 int run_upload_partial_timeout_retry(void);
 int run_upload_filename_safe(void);
+int run_upload_filename_safe_script(void);
 int run_lobby_time_minutes_valid(void);
 int run_lobby_bot_name_rejects_reserved_prefix(void);
 int run_lobby_bot_name_rejects_disallowed_char(void);
@@ -443,6 +444,19 @@ int run_script_list_control_codec(void);
 int run_script_list_command_codec(void);
 int run_script_list_dispatch(void);
 int run_script_list_lists_once(void);
+
+/* test_scenario_settings.c: a script's own lobby settings, from the
+ * declaration through the wire to game.setting and Survival. */
+int run_scenario_settings_blob(void);
+int run_scenario_settings_manifest_lua(void);
+int run_scenario_settings_manifest_json(void);
+int run_scenario_settings_server_clamp(void);
+int run_scenario_settings_codec(void);
+int run_scenario_settings_client_apply(void);
+int run_scenario_settings_game_setting(void);
+int run_scenario_settings_wire(void);
+int run_scenario_settings_survival_decl(void);
+int run_scenario_settings_survival_short(void);
 int run_script_list_client_apply(void);
 int run_lobby_map_search_chunked(void);
 int run_wbn_bearer_state(void);
@@ -2000,6 +2014,54 @@ int run_loopback_map_preview(void);
 /* Client->server map upload over CHANNEL_BULK (test_loopback_upload.c): a map
  * uploaded under loss completes and the server decodes the reassembled bytes. */
 int run_loopback_map_upload(void);
+/* Script upload (test_script_upload.c): the BEGIN body for both kinds against
+ * hand-written bytes; the server's BEGIN refusals for a script, and the map
+ * ones the kind byte must leave alone; a 4 MiB package arriving whole at the
+ * accept callback; a refused script's reason reaching the client; and the
+ * client refusing a file before sending anything. */
+int run_upload_begin_golden(void);
+int run_script_upload_begin_refusals(void);
+int run_loopback_script_upload_at_cap(void);
+int run_loopback_script_upload_refused(void);
+int run_script_upload_client_refusals(void);
+/* Script upload landing (test_script_upload.c), with the host's own accept
+ * callback: a mod and a package land and are listed; a bound package and a
+ * .lua that will not load are refused, the second with its line; a name a
+ * higher directory holds is refused at BEGIN; the persist caps; the accept
+ * callback's own refusals; the session directory emptied and the persist one
+ * kept; the lobby reset dropping the session's picks; and an uploaded mod
+ * composing in the next decision. */
+int run_loopback_script_upload_lands_listed(void);
+int run_loopback_script_upload_package_listed(void);
+int run_loopback_script_upload_bound_refused(void);
+int run_loopback_script_upload_syntax_line(void);
+int run_script_upload_name_taken(void);
+int run_script_upload_persist_caps(void);
+int run_script_upload_accept_refusals(void);
+int run_script_upload_session_emptied(void);
+/* A file the server removed is not listed even when the directory's stamp
+ * is put back to the one the listing was kept at (POSIX only). */
+int run_script_upload_listing_sees_own_removal(void);
+int run_script_upload_reset_drops_session_picks(void);
+int run_loopback_script_upload_plays_next_round(void);
+int run_script_upload_list_source(void);
+int run_loopback_script_upload_source_on_wire(void);
+/* A list request sent as DONE lands is answered, not dropped by the request
+ * cooldown the upload's BEGIN started. */
+int run_loopback_script_upload_list_after_done(void);
+/* The Mods chooser's rows from the server and from this computer
+ * (test_lobby_script_rows.c): which of the two holds each file, by Workshop
+ * id or by name ignoring case, in the server's order then the local order,
+ * none of this computer's alone in process, and the cap; and the listing of
+ * the player's own Mods directory with no sim. */
+int run_lobby_script_rows_states_by_name(void);
+int run_lobby_script_rows_case_only_match(void);
+int run_lobby_script_rows_workshop_id_matches(void);
+int run_lobby_script_rows_workshop_id_differs(void);
+int run_lobby_script_rows_in_process(void);
+int run_lobby_script_rows_order(void);
+int run_lobby_script_rows_truncated(void);
+int run_scenario_local_scripts_listed(void);
 /* Map join-download + live resync over CHANNEL_BULK (test_loopback_download.c):
  * a lobby join download completes under loss; a mid-game joiner downloads while
  * the server is Running (the bulk-carrier deadlock case); and a reported
@@ -2685,6 +2747,20 @@ int run_lobby_scenario_boot_sets_type(void);
 int run_lobby_scenario_identity_strips_controls(void);
 int run_lobby_scenario_nolobby_boot_seats_template(void);
 
+/* The policy a server holds for scripts players send it
+ * (test_script_upload_policy.c): the word it is set from and the legacy flag
+ * that stands for off, the spelling a preference is written in, its byte on
+ * the lobby-settings event, and the copies the sim and the client keep. */
+int run_script_upload_policy_resolve(void);
+int run_script_upload_policy_word(void);
+int run_script_upload_policy_codec(void);
+int run_script_upload_policy_event(void);
+/* Whether players may copy the server's scripts (same file): its byte on the
+ * lobby-settings event, the sim's setting, and the client's copy. */
+int run_script_sharing_codec(void);
+int run_script_sharing_sim(void);
+int run_script_sharing_client(void);
+
 /* The lobby template (test_lobby_template.c): the engine seating a
  * scenario's teams where a lobby is built or rebuilt, reconciling one that
  * comes back from a round against what the host did to it, and leaving a
@@ -3001,6 +3077,7 @@ int run_scenario_host_metatable_not_read(void);
 int run_scenario_host_hook_via_global_metatable(void);
 int run_scenario_host_script_env_is_its_own(void);
 int run_scenario_host_manifest_read_from_its_own_env(void);
+int run_scenario_host_manifest_reads_workshop(void);
 int run_scenario_host_errors_counted_per_script(void);
 int run_scenario_host_many_rules_all_applied(void);
 
@@ -3249,6 +3326,17 @@ int run_scenario_manifest_json_trigger_no_when(void);
 int run_scenario_manifest_json_trigger_action_no_op(void);
 int run_scenario_manifest_json_trigger_where_no_field(void);
 int run_scenario_manifest_json_trigger_text_cut(void);
+/* The Workshop item and its author: read as digit strings and written back
+ * as them, and the comparison that lets a table stating none agree with a
+ * manifest that names one. */
+int run_scenario_manifest_workshop_keys(void);
+int run_scenario_manifest_agrees_workshop(void);
+
+/* The Workshop item stamped into a scenario file that already exists
+ * (test_scenario_workshop_id.c): a .scenario package and a packed map, with
+ * everything but the manifest kept, and a loose script and a plain map
+ * refused. */
+int run_scenario_io_set_workshop_id(void);
 
 /* Where a map file's map data ends (test_scenario_map_body.c): the measure
  * itself, the container found after it, the scripted tag it gives the
@@ -3272,6 +3360,7 @@ int run_scenario_packed_map_script_omits_table(void);
 int run_scenario_packed_map_table_disagrees(void);
 int run_scenario_packed_map_round_start_keeps_it(void);
 int run_scenario_packed_map_upload_switch(void);
+int run_scenario_packed_map_script_upload_policy(void);
 int run_scenario_packed_map_team_init(void);
 
 /* Writing a map's scenario into the map (test_scenario_pack.c): the container
@@ -3282,6 +3371,8 @@ int run_scenario_pack_writes_container(void);
 int run_scenario_pack_manifest_agrees(void);
 int run_scenario_pack_replaces_trailer(void);
 int run_scenario_pack_refuses_unscripted(void);
+int run_scenario_pack_script_mod(void);
+int run_scenario_pack_script_refusals(void);
 
 /* The brain a scenario names (test_scenario_brain_name.c): the name a team
  * writes reaching the seat as that brain's init.lua, the name this server has
@@ -3331,6 +3422,35 @@ int run_scenario_details_fetch_give_up(void);
 int run_scenario_details_override_order(void);
 int run_scenario_details_reload_map_script(void);
 
+/* A copy of one of the server's scripts (test_script_fetch.c): the request
+ * body against committed hex, a .lua, a .scenario and a shipped mod fetched
+ * whole over the loopback transport, each refusal the server answers, a
+ * BUSY answer asked again, a server that never answers, the client's bulk
+ * sink refusing a header that is not its answer, a copy that stops arriving,
+ * and a round started while a copy is arriving. */
+int run_script_fetch_req_golden(void);
+int run_script_fetch_found_lua(void);
+int run_script_fetch_found_package(void);
+int run_script_fetch_found_shipped(void);
+int run_script_fetch_not_found(void);
+int run_script_fetch_disabled(void);
+int run_script_fetch_too_large(void);
+int run_script_fetch_busy_retry(void);
+int run_script_fetch_give_up(void);
+int run_script_fetch_sink_bound(void);
+int run_script_fetch_stall_fails(void);
+int run_script_fetch_round_start_abort(void);
+
+/* The copy a player saves to their own Mods directory
+ * (test_script_save_local.c): a .lua and a .scenario written whole through
+ * a temporary file, a name already there in either case refused, a name
+ * that is not a bare script file name refused, and a Mods directory made
+ * when it is missing. */
+int run_script_save_local_ok(void);
+int run_script_save_local_exists(void);
+int run_script_save_local_bad_name(void);
+int run_script_save_local_creates_dir(void);
+
 /* The three directories a mod can come from (test_scenario_mod_dirs.c): the
  * one the host was given, the player's own under SDL_GetPrefPath and the
  * mods that ship beside the executable, merged into one listing with the
@@ -3343,6 +3463,28 @@ int run_scenario_mod_dirs_merged_and_sorted(void);
 int run_scenario_mod_dirs_same_dir_once(void);
 int run_scenario_mod_dirs_all_missing_is_quiet(void);
 int run_scenario_mod_dirs_attach_reads_shipped(void);
+/* The Workshop directory between the player's own and the shipped one: its
+ * place in the precedence, its rows' source in both listings, and the local
+ * path, save and upload checks that read it. */
+int run_scenario_mod_dirs_workshop_precedence(void);
+int run_scenario_mod_dirs_workshop_local(void);
+int run_scenario_mod_dirs_workshop_upload_clash(void);
+
+/* The Workshop sync (test_workshop_sync.c): what an item folder holds, and
+ * what a pass copies, indexes and removes in the Workshop directory. */
+int run_workshop_sync_classify(void);
+int run_workshop_sync_copies_and_indexes(void);
+int run_workshop_sync_removes_unsubscribed(void);
+int run_workshop_sync_unavailable_touches_nothing(void);
+int run_workshop_sync_name_clash(void);
+int run_workshop_sync_renamed_content(void);
+int run_workshop_sync_bumps_script_dirs_gen(void);
+int run_workshop_sync_disabled_item_left_alone(void);
+int run_workshop_sync_recovers_bad_index(void);
+int run_workshop_map_package_info(void);
+int run_workshop_pack_loose_script(void);
+int run_workshop_sync_index_rows(void);
+int run_local_rows_carry_author(void);
 
 /* Which scenario plays when a map and a mod both have a claim
  * (test_scenario_precedence.c): the three rules, the four points the
@@ -3590,6 +3732,22 @@ int run_editor_pack_map_round_trip(void);
 int run_editor_pack_twice_identical(void);
 int run_editor_pack_refuses_unbound(void);
 int run_editor_pack_survives_map_save(void);
+
+/* The virtual "Workshop" map folder (test_workshop_map_dir.c): offered at the
+ * root of the map listing when the host has named a Workshop directory that
+ * exists, resolved into that directory, and left out, or listed once beside a
+ * real folder of that name, otherwise. */
+int run_workshop_map_dir_offered_at_root(void);
+int run_workshop_map_dir_resolve(void);
+int run_workshop_map_dir_absent(void);
+/* The client's side of it (test_workshop_map_dir.c): a map upload's USE_LOCAL
+ * pre-check names a map in the Workshop directory "Workshop/<name>", and one
+ * under data/maps relative to data/maps, with either separator. */
+int run_workshop_use_local_rel_path(void);
+/* And end to end (test_loopback_upload.c): with the server and the client
+ * sharing a Workshop directory, uploading a map from it finishes through
+ * USE_LOCAL with nothing sent on the bulk channel. */
+int run_workshop_use_local(void);
 
 /* The last status tile frontEndStatusTank was handed by the stub in
  * test_stubs.c: the 1-based player number, and the tankAlliance as an int so

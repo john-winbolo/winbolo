@@ -223,6 +223,11 @@ int            gameFrontHostingUploadPolicy     = UPLOAD_POLICY_ALLOW;
 int            gameFrontHostingUploadMaxFiles   = 64;
 int            gameFrontHostingUploadMaxStorage = 8;
 char           gameFrontHostingUploadDir[FILENAME_MAX] = "";
+int            gameFrontHostingScriptUploadPolicy     = SCRIPT_UPLOAD_ALLOW;
+bool           gameFrontHostingShareScripts           = TRUE;
+int            gameFrontHostingScriptUploadMaxFiles   = 32;
+int            gameFrontHostingScriptUploadMaxStorage = 64;
+char           gameFrontHostingScriptUploadDir[FILENAME_MAX] = "";
 bool           gameFrontHostingLogging          = TRUE;
 char           gameFrontHostingLogDir[FILENAME_MAX] = "";
 bool           gameFrontHostingServeReplays     = TRUE;
@@ -1023,6 +1028,27 @@ void gameFrontSetHostingUploadMaxStorage(int maxStorageMb) {
 void gameFrontSetHostingUploadDir(const char *dir) {
   SDL_strlcpy(gameFrontHostingUploadDir, dir ? dir : "",
               sizeof(gameFrontHostingUploadDir));
+}
+
+void gameFrontSetHostingScriptUploadPolicy(int policy) {
+  gameFrontHostingScriptUploadPolicy = policy;
+}
+
+void gameFrontSetHostingShareScripts(bool on) {
+  gameFrontHostingShareScripts = on;
+}
+
+void gameFrontSetHostingScriptUploadMaxFiles(int maxFiles) {
+  gameFrontHostingScriptUploadMaxFiles = maxFiles;
+}
+
+void gameFrontSetHostingScriptUploadMaxStorage(int maxStorageMb) {
+  gameFrontHostingScriptUploadMaxStorage = maxStorageMb;
+}
+
+void gameFrontSetHostingScriptUploadDir(const char *dir) {
+  SDL_strlcpy(gameFrontHostingScriptUploadDir, dir ? dir : "",
+              sizeof(gameFrontHostingScriptUploadDir));
 }
 
 void gameFrontSetHostingLogDir(const char *dir) {

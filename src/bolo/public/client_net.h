@@ -220,6 +220,15 @@ void clientSimNetSendLobbySetScenario(ClientSim *cs, const char *relPath);
 void clientSimNetSendSetScriptList(ClientSim *cs,
                                    const char *const *files, int count);
 
+/* The host's value for one of a script's own settings
+ * (scenario_settings.h). Does nothing on a server that has not shown it
+ * takes the command (clientSimLobbyScriptSettingsSupported), for a
+ * spectator, and for a file or id too long for the command to carry. The
+ * server checks the value and answers with a CTRL_LOBBY_SCRIPT_SETTING,
+ * which is what clientSimGetLobbyScriptSetting then reads. */
+void clientSimNetSendSetScriptSetting(ClientSim *cs, const char *file,
+                                      const char *id, int32_t value);
+
 /* Lobby preview cycle. SET_MAP and a completed upload auto-stash
  * the previous committed map; these two close the loop:
  *   - Cancel: roll back to the stashed map (server re-broadcasts).
@@ -287,8 +296,18 @@ bool clientSimNetSendLobbyMapUploadBytes(ClientSim *cs,
                                          const uint8_t *buf, size_t len,
                                          const char *mapName);
 
+/* Script upload: send a .scenario or .lua of up to
+ * LOBBY_PACKAGE_UPLOAD_MAX_BYTES to the server, which hands it to its
+ * script accept callback. Returns false, sending nothing, on a missing,
+ * empty or over-cap file, a name without either suffix, a spectator, an
+ * upload already in flight, or a transport that is not UDP (an
+ * in-process host never sends). Progress and the outcome come back
+ * through the same clientSimGetLobbyMapUpload* accessors as a map, and
+ * clientSimGetLobbyUploadKind says it is a script. */
+bool clientSimNetSendLobbyScriptUpload(ClientSim *cs, const char *localFilePath);
+
 /* Upload progress as 0..100 driven by bytesSent / fileLen. Returns 0
- * when no upload is in flight. */
+ * when no upload is in flight. Serves a map or a script upload. */
 uint8_t clientSimGetLobbyMapUploadProgressPercent(const ClientSim *cs);
 
 /* Pre-upload optimisation: if the server already has the same file
@@ -418,6 +437,71 @@ bool clientSimNetSendRoundLogRequest(ClientSim *cs);
  * to lvEmbedBegin, which takes ownership and frees it itself, including on
  * every refusal. */
 uint8_t *clientSimTakeRoundLog(ClientSim *cs, size_t *outLen);
+
+/* === A copy of one of the server's scripts ===
+ * A player in the lobby can take home a copy of a mod or scenario the server
+ * offers. The server answers on the bulk channel with a status and, when the
+ * file is found, its raw bytes: a .scenario as its ZIP bytes, a .lua as its
+ * source. */
+
+typedef enum {
+  CLIENT_SCRIPT_FETCH_IDLE = 0,  /* nothing asked for, or the copy was taken */
+  CLIENT_SCRIPT_FETCH_WAITING,   /* request sent, no answer yet               */
+  CLIENT_SCRIPT_FETCH_RECEIVING, /* answer arriving; see the percent getter   */
+  CLIENT_SCRIPT_FETCH_DONE,      /* whole file held, waiting to be taken      */
+  CLIENT_SCRIPT_FETCH_FAILED     /* refused, or no answer; see the status     */
+} ClientScriptFetchState;
+
+/* The values clientSimGetScriptFetchStatus answers once the server has
+ * answered. The same numbers as the status byte on the wire. */
+#define CLIENT_SCRIPT_FETCH_STATUS_FOUND     0
+#define CLIENT_SCRIPT_FETCH_STATUS_NOT_FOUND 1
+#define CLIENT_SCRIPT_FETCH_STATUS_DISABLED  2
+#define CLIENT_SCRIPT_FETCH_STATUS_TOO_LARGE 3
+#define CLIENT_SCRIPT_FETCH_STATUS_BUSY      4
+
+/* What clientSimGetScriptFetchStatus answers for a fetch that got no answer
+ * at all, or whose answer stopped arriving or was cut off (a stalled
+ * transfer, or the bulk channel starting over for a map change or a round
+ * start). Outside every status byte the server can send. */
+#define CLIENT_SCRIPT_FETCH_NO_ANSWER (-1)
+
+/* Ask the server for a copy of `file`, a name from its scenario listing.
+ * Drops anything held from an earlier fetch that is DONE or FAILED and moves
+ * the state to CLIENT_SCRIPT_FETCH_WAITING. Returns false and changes
+ * nothing while a fetch is WAITING or RECEIVING, for a name that is empty or
+ * longer than 255 bytes, or without a connected UDP transport. */
+bool clientSimNetSendLobbyScriptFetch(ClientSim *cs, const char *file);
+
+/* Current state, as a ClientScriptFetchState. CLIENT_SCRIPT_FETCH_IDLE with a
+ * NULL cs or no UDP transport. */
+int clientSimGetScriptFetchState(const ClientSim *cs);
+
+/* Transfer progress as 0..100 while the state is
+ * CLIENT_SCRIPT_FETCH_RECEIVING; 0 otherwise. */
+uint8_t clientSimGetScriptFetchPercent(const ClientSim *cs);
+
+/* What the server's last answer said: CLIENT_SCRIPT_FETCH_STATUS_FOUND,
+ * _NOT_FOUND (no such file, or the map's own script), _DISABLED (the server
+ * does not share its scripts), _TOO_LARGE or _BUSY (asked again too often),
+ * or CLIENT_SCRIPT_FETCH_NO_ANSWER when none came or it was cut off. A status
+ * this build does not know is passed through as its number. Read it once the
+ * state is CLIENT_SCRIPT_FETCH_FAILED to word the refusal. */
+int clientSimGetScriptFetchStatus(const ClientSim *cs);
+
+/* Take a finished copy: *outBytes gets the file's bytes (the caller frees
+ * them with free(); a file of no bytes still hands over a buffer) and *outLen
+ * their count, nameOut the name that was asked for, and the state moves to
+ * CLIENT_SCRIPT_FETCH_IDLE. nameOut may be NULL. Returns false and leaves the
+ * state as it is unless the state is CLIENT_SCRIPT_FETCH_DONE, or when the
+ * name does not fit in nameCap. */
+bool clientSimTakeScriptFetch(ClientSim *cs, uint8_t **outBytes,
+                              size_t *outLen, char *nameOut, size_t nameCap);
+
+/* Dismiss a finished or failed fetch: DONE or FAILED goes back to
+ * CLIENT_SCRIPT_FETCH_IDLE and anything held is freed. Does nothing in any
+ * other state. */
+void clientSimClearScriptFetch(ClientSim *cs);
 
 /* === Voice ===
  * Encoded audio frames move as opaque bytes: the caller supplies and

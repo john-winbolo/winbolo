@@ -33,7 +33,9 @@
 #include "client_sim.h"   /* ClientLobbySlot */
 #include "brain_list.h"   /* BrainList for CTRL_LOBBY_BRAIN_LIST */
 #include "round_stats.h"  /* RoundStatsSummary for CTRL_ROUND_STATS */
-#include "upload_policy.h" /* UploadPolicy in lobbySettings */
+#include "scenario_settings.h" /* SCN_SETTING_ID_LEN for
+                                  CTRL_LOBBY_SCRIPT_SETTING */
+#include "upload_policy.h" /* UploadPolicy, ScriptUploadPolicy in lobbySettings */
 #include "view_policy.h"   /* ViewPolicy / VIEW_CATEGORY_COUNT in lobbySettings */
 #include "server_voice_mode.h" /* ServerVoiceMode in lobbySettings */
 #include "scenario_panel.h" /* SCN_PANEL_MAX for the panel event's byte list */
@@ -264,13 +266,13 @@ typedef enum {
      *
      * Its own event rather than more of the CTRL_LOBBY_SETTINGS tail, and
      * that is a measurement rather than a preference. A whole list at the
-     * cap is 1 + 10 * 192 = 1921 body bytes, which is past the 1021 a
+     * cap is 2 + 10 * 202 = 2022 body bytes, which is past the 1021 a
      * control segment carries, so it has to be chunked whichever event it
      * rides. Chunking the settings tail would put a fragment number on every
      * lobby change, and the settings variant would have to hold the widest
      * fragment by value: at LOBBY_CHAT_BUFFER_MAX ControlEvents per sim,
      * growing that union member is paid two hundred times over on every sim.
-     * This variant is 967 bytes, under the 1108 the round-stats member
+     * This variant is 1048 bytes, under the 1108 the round-stats member
      * already spends, so the union does not grow at all and the settings
      * event is left the size it was.
      *
@@ -289,6 +291,30 @@ typedef enum {
      * Appended at the END, like every type above it: the tables in
      * transport_control_codec.c are indexed by this enum. */
     CTRL_LOBBY_SCRIPT_LIST,
+    /* CTRL_LOBBY_SCRIPT_SETTING — one value the host chose for one of a
+     * script's own settings (scenario_settings.h), or the order to forget
+     * every value held.
+     *
+     * op LOBBY_SCRIPT_SETTING_CLEAR comes first in every join sync, even
+     * when no value is held, and is followed by one
+     * LOBBY_SCRIPT_SETTING_SET per value. A live change is one SET. A
+     * client reads any event of this type as proof that the server takes
+     * CMD_SET_SCRIPT_SETTING: an older server never sends one, and a client
+     * that sent it that command anyway would stall its command stream on a
+     * command the server cannot decode.
+     *
+     * The value is the one the server resolved against the declaration, so
+     * what a client shows is what game.setting will answer. A value equal to
+     * the default is still sent, so the dialog of every client moves when
+     * the host picks the default back.
+     *
+     * Broadcast and body-only on CHANNEL_CONTROL, as CTRL_LOBBY_SCRIPT_LIST
+     * is. An older client does not know the type and skips it, so it plays
+     * with the values and cannot see them.
+     *
+     * Appended at the END, like every type above it: the tables in
+     * transport_control_codec.c are indexed by this enum. */
+    CTRL_LOBBY_SCRIPT_SETTING,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -417,15 +443,15 @@ typedef enum {
  * measured rather than chosen.
  *
  * One entry is at worst [flags 1][fileLen 1][file 127][nameLen 1][name 63]
- * = 193 bytes, and a body spends 2 more on final and count. The flags byte
- * is a byte and not a bool, so the two flags an entry carries — keeps the
- * win condition, bound to a map — are bits in it and the entry does not
- * widen when a third one arrives. A control event
- * is one channel segment, which is CHANNEL_CONTROL_SEG (1024) less the
- * channel frame's type(1) and bodyLen(2) — 1021 bytes. So:
+ * [source 1][workshopId 8] = 193 + 9 = 202 bytes, and a body spends 2 more
+ * on final and count. The flags byte is a byte and not a bool, so the two
+ * flags an entry carries — keeps the win condition, bound to a map — are
+ * bits in it and the entry does not widen when a third one arrives. A
+ * control event is one channel segment, which is CHANNEL_CONTROL_SEG (1024)
+ * less the channel frame's type(1) and bodyLen(2) — 1021 bytes. So:
  *
- *   5 entries: 2 + 5 * 193 =  967   fits, 54 bytes spare
- *   6 entries: 2 + 6 * 193 = 1160   139 over, and a body past the segment is
+ *   5 entries: 2 + 5 * 202 = 1012   fits, 9 bytes spare
+ *   6 entries: 2 + 6 * 202 = 1214   193 over, and a body past the segment is
  *                                   logged and dropped with nothing visible
  *                                   to the client
  *
@@ -434,10 +460,14 @@ typedef enum {
  * LOBBY_SCRIPT_LIST_MAX is therefore two chunks. */
 #define LOBBY_SCRIPT_LIST_CHUNK 5
 
+/* What a CTRL_LOBBY_SCRIPT_SETTING says. */
+#define LOBBY_SCRIPT_SETTING_CLEAR 0 /* forget every value held */
+#define LOBBY_SCRIPT_SETTING_SET   1 /* file's setting id is now value */
+
 /* One script on the list, as CTRL_LOBBY_SCRIPT_LIST carries it and as a
  * client holds it afterwards.
  *
- * No description. One would be 257 bytes on top of the 193 here and would
+ * No description. One would be 257 bytes on top of the 202 here and would
  * cut a chunk to two entries, and a client already has every description it
  * needs: PACKET_LOBBY_SCENARIO_LIST_RSP carries them for the whole
  * directory and the chooser already fetches it, keyed by this same file
@@ -460,6 +490,12 @@ typedef struct LobbyScriptEntry {
      * name a file the listing no longer holds, and a row that cannot say
      * whether it is removable is worse than one row of wire. */
     bool bound;
+    /* Where the server got the file: SCN_DIR_SOURCE_SERVER, _UPLOAD or
+     * _WORKSHOP (scenario_defs.h; SERVER_SCENARIO_SOURCE_* in server_sim.h
+     * for a gui reader). The map's own script reads SERVER. */
+    uint8_t  source;
+    /* The Workshop item the file came from, 0 for none. */
+    uint64_t workshopId;
 } LobbyScriptEntry;
 
 /* Which rules CTRL_SIM_RULES carries, and how wide each one goes.
@@ -660,6 +696,9 @@ typedef struct ControlEvent {
                                           * from WBN) on remote clients */
             uint32_t lobbyServerLocks;
             UploadPolicy uploadPolicy;
+            ScriptUploadPolicy scriptUploadPolicy;
+            bool     scriptSharing;  /* 1 = players may save a copy of this
+                                      * server's mods and scenarios */
             uint8_t  hostSlot;   /* current lobby host's player slot */
             /* Visibility rules, indexed by ViewCategory. */
             ViewPolicy viewPolicy[VIEW_CATEGORY_COUNT];
@@ -1152,6 +1191,15 @@ typedef struct ControlEvent {
             uint8_t          count;  /* entries in THIS chunk */
             LobbyScriptEntry entries[LOBBY_SCRIPT_LIST_CHUNK];
         } lobbyScriptList;
+
+        /* CTRL_LOBBY_SCRIPT_SETTING — see the enum. file and id are empty
+         * on a CLEAR. */
+        struct {
+            uint8_t op;                            /* LOBBY_SCRIPT_SETTING_* */
+            char    file[LOBBY_SCENARIO_FILE_LEN]; /* the script's file name */
+            char    id[SCN_SETTING_ID_LEN];        /* the setting's id */
+            int32_t value;
+        } lobbyScriptSetting;
     } u;
 } ControlEvent;
 

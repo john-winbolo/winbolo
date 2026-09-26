@@ -36,6 +36,10 @@
  *      — a packed map sitting where this server's uploads land attaches with
  *        scripts in uploaded maps on and attaches nothing with them off,
  *        while the same bytes outside that directory attach either way
+ * run_scenario_packed_map_script_upload_policy
+ *      — the same uploaded packed map under each script upload policy, with
+ *        the switch set the way every frontend sets it: nothing attaches
+ *        under off, and the package's scenario runs under allow and persist
  * run_scenario_packed_map_team_init
  *      — a container whose team declares an init, a mode and a level, in a
  *        package whose script declares no table, attaches, and all three
@@ -63,6 +67,7 @@
 #include "scenario_validate.h"     /* scenarioHostManifest */
 #include "scenario_table.h"        /* scnTableGet — the team's init pairs */
 #include "scenario_package.h"
+#include "upload_policy.h"         /* ScriptUploadPolicy */
 #include "test_harness.h"
 
 /* ── What the package says it is ──────────────────────────────────── */
@@ -628,6 +633,70 @@ int run_scenario_packed_map_upload_switch(void) {
     serverSimDestroy(sim);
     remove(mapPath);
     remove(outside);
+    (void)SDL_RemovePath(uploads);
+    return 0;
+}
+
+/* ── 6b. The script upload policy behind that switch ───────────────── */
+
+/* The frontends no longer hold the switch as a yes or no of its own: each one
+ * resolves a ScriptUploadPolicy and sets the switch to "not off". This case
+ * sets it with that same line for each of the three policies and attaches the
+ * uploaded packed map under each, so a frontend that mapped the policy to the
+ * switch any other way would be caught here. */
+int run_scenario_packed_map_script_upload_policy(void) {
+    static const ScriptUploadPolicy kPolicies[3] = {
+        SCRIPT_UPLOAD_OFF, SCRIPT_UPLOAD_ALLOW, SCRIPT_UPLOAD_PERSIST
+    };
+    char          uploads[1024];
+    char          mapPath[1024];
+    char          loose[1024];
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          err[512];
+    int           i;
+
+    UT_ASSERT(utScratchPath(uploads, sizeof(uploads), "uploads_policy"));
+    (void)SDL_RemovePath(uploads);
+    UT_ASSERT_MSG(SDL_CreateDirectory(uploads),
+                  "the uploads directory could not be made: %s",
+                  SDL_GetError());
+    snprintf(mapPath, sizeof(mapPath), "%s/packed_policy.map", uploads);
+    pmLoosePath(mapPath, loose, sizeof(loose));
+    remove(loose);
+    UT_ASSERT_MSG(pmWritePacked(mapPath, kPmManifest, kPmRestates),
+                  "the uploaded packed map could not be written");
+
+    sim = pmSim();
+    UT_ASSERT(sim != NULL);
+    serverSimSetUploadPersistDir(sim, uploads);
+
+    for (i = 0; i < 3; i++) {
+        const ScriptUploadPolicy p = kPolicies[i];
+        scenarioHostSetUploadScriptsEnabled(p != SCRIPT_UPLOAD_OFF);
+        err[0] = '\0';
+        h = scenarioHostAttach(sim, mapPath, err, sizeof(err));
+        if (p == SCRIPT_UPLOAD_OFF) {
+            UT_ASSERT_MSG(h == NULL,
+                          "an uploaded packed map attached '%s' under the off "
+                          "policy", h != NULL ? scenarioHostName(h) : "");
+        } else {
+            UT_ASSERT_MSG(h != NULL,
+                          "an uploaded packed map was refused under policy "
+                          "%d: %s", (int)p, err);
+            UT_ASSERT_MSG(strcmp(scenarioHostName(h), PM_NAME) == 0,
+                          "under policy %d the uploaded map's scenario is "
+                          "called '%s', expected '%s'",
+                          (int)p, scenarioHostName(h), PM_NAME);
+            scenarioHostDetach(h);
+        }
+    }
+
+    /* Back to the default, because the switch is one answer for the whole
+       process and the cases run in sequence. */
+    scenarioHostSetUploadScriptsEnabled(true);
+    serverSimDestroy(sim);
+    remove(mapPath);
     (void)SDL_RemovePath(uploads);
     return 0;
 }

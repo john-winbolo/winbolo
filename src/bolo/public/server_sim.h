@@ -37,6 +37,7 @@
 #include "attribution_track.h" /* AttrSlotIdentity — track accessors below */
 #include "view_policy.h"       /* ViewPolicy / ViewCategory — view-policy accessors below */
 #include "server_voice_mode.h" /* ServerVoiceMode — voice-mode accessors below */
+#include "upload_policy.h"     /* ScriptUploadPolicy — script-upload accessors below */
 
 /* MapGenConfig is defined in src/bolo/public/mapgen.h.
  * Forward-declared here so the public server_sim header doesn't
@@ -790,6 +791,33 @@ const char *serverSimGetScenarioDir(const ServerSim *sim);
  *********************************************************/
 void        serverSimGetUploadsDir(const ServerSim *sim, char *out,
                                    size_t outLen);
+
+/*********************************************************
+ *NAME:          serverSimSetWorkshopMapDir
+ *               serverSimGetWorkshopMapDir
+ *PURPOSE:
+ *  The directory subscribed Workshop items are copied to,
+ *  which the map listing offers as the virtual folder
+ *  "Workshop". "" or NULL clears it.
+ *
+ *  While it is set, "Workshop" and "Workshop/<name>" name
+ *  that directory and the files in it, for the listing,
+ *  the preview read and the lobby's set-map command alike,
+ *  as "Uploads" names the persist directory. The root of
+ *  the listing shows the folder only while the directory
+ *  exists. Unset, which is how the dedicated server always
+ *  runs, "Workshop" is an ordinary path under the map root.
+ *
+ *  Setting it reads nothing. The getter answers "" when
+ *  nothing is set.
+ *
+ *ARGUMENTS:
+ *  sim - Pointer to the ServerSim
+ *  dir - The directory, no trailing slash; NULL or "" to
+ *        clear it
+ *********************************************************/
+void        serverSimSetWorkshopMapDir(ServerSim *sim, const char *dir);
+const char *serverSimGetWorkshopMapDir(const ServerSim *sim);
 
 /*********************************************************
  *NAME:          serverSimGetSelectedScenario
@@ -2112,18 +2140,30 @@ bool serverSimReadMapFile(ServerSim *sim, const char *relPath,
 #define SERVER_SCENARIO_FILE_LEN 128
 #define SERVER_SCENARIO_NAME_LEN 64
 #define SERVER_SCENARIO_DESC_LEN 256
+/* Where a row came from: ServerScenarioEntry.source, and the source byte
+ * the scenario-list packet and the script-list event carry. The same
+ * values as SCN_DIR_SOURCE_* in scenario_defs.h, mirrored and held
+ * against them for the reason the lengths are. */
+#define SERVER_SCENARIO_SOURCE_SERVER   0 /* the server's own directories */
+#define SERVER_SCENARIO_SOURCE_UPLOAD   1 /* a player uploaded it */
+#define SERVER_SCENARIO_SOURCE_WORKSHOP 2 /* a Steam Workshop item */
 typedef struct {
-    char    file[SERVER_SCENARIO_FILE_LEN];  /* the name in the scenarios
-                                                directory */
-    char    name[SERVER_SCENARIO_NAME_LEN];  /* the manifest's, or "" */
-    char    description[SERVER_SCENARIO_DESC_LEN];
-    uint8_t maxPlayers;  /* 0 = the server's own cap */
-    uint8_t bots;        /* seats the template asks for */
-    bool    bound;       /* belongs to one map; not selectable as a mod */
-    bool    keepsWinCondition;  /* keeps the round's win condition, which is
-                                   what a mod does and a scenario does not.
-                                   Not the same question as bound: a mod and
-                                   an unbound scenario are both unbound. */
+    char     file[SERVER_SCENARIO_FILE_LEN];  /* the name in the scenarios
+                                                 directory */
+    char     name[SERVER_SCENARIO_NAME_LEN];  /* the manifest's, or "" */
+    char     description[SERVER_SCENARIO_DESC_LEN];
+    uint8_t  maxPlayers;  /* 0 = the server's own cap */
+    uint8_t  bots;        /* seats the template asks for */
+    bool     bound;       /* belongs to one map; not selectable as a mod */
+    bool     keepsWinCondition;  /* keeps the round's win condition, which is
+                                    what a mod does and a scenario does not.
+                                    Not the same question as bound: a mod and
+                                    an unbound scenario are both unbound. */
+    uint8_t  source;      /* SERVER_SCENARIO_SOURCE_* */
+    uint64_t workshopId;  /* the Workshop item, 0 for none */
+    uint64_t workshopAuthor;  /* the SteamID64 that published it, 0 for none.
+                                 Filled by this computer's own listings and
+                                 never by what a server sends. */
 } ServerScenarioEntry;
 
 int serverSimEnumerateScenarioDir(ServerSim *sim,
@@ -2145,6 +2185,74 @@ int serverSimEnumerateScenarioDir(ServerSim *sim,
  * blob that does not fit cap). */
 int serverSimScenarioDetails(ServerSim *sim, const char *file, uint8_t *out,
                              size_t cap);
+
+/* What serverSimScriptFileRead found. */
+typedef enum {
+    SERVER_SCRIPT_READ_FOUND = 0,
+    SERVER_SCRIPT_READ_NOT_FOUND,
+    SERVER_SCRIPT_READ_DISABLED,
+    SERVER_SCRIPT_READ_TOO_LARGE
+} ServerScriptReadResult;
+
+/* One of the server's script files, whole and as it sits on disk, for a
+ * player who asked for a copy with PACKET_LOBBY_SCRIPT_FETCH_REQ: a
+ * .scenario as its ZIP bytes, a .lua as its source. file is a name from the
+ * scenario listing, and is only ever compared with the names a directory
+ * read found, never opened as a path.
+ *
+ * The committed map's own script is not served (its file is the map), and
+ * answers NOT_FOUND, as does a name no directory holds. DISABLED means the
+ * process runs no scripts, TOO_LARGE a file over
+ * LOBBY_PACKAGE_UPLOAD_MAX_BYTES. On FOUND, *outBytes is malloc'd and the
+ * caller frees it; otherwise *outBytes is NULL and *outLen is 0. */
+ServerScriptReadResult serverSimScriptFileRead(ServerSim *sim,
+                                               const char *file,
+                                               uint8_t **outBytes,
+                                               uint32_t *outLen);
+
+/* One script file's settings block (scenario_settings.h): the settings its
+ * manifest lets the host choose, packed into out, which holds cap bytes.
+ * Looked up the way serverSimScenarioDetails looks up the details: the
+ * committed map's own script first, then the scenarios directory.
+ *
+ * Returns the blob's length, which is 0 for a file that declares no
+ * setting, or -1 for a file neither place holds (and for a blob that does
+ * not fit cap). */
+int serverSimScenarioSettingsDecl(ServerSim *sim, const char *file,
+                                  uint8_t *out, size_t cap);
+
+/* How many values the server keeps for scripts' settings at once. A value
+ * equal to its default is not kept, so this is values a host moved off the
+ * default, across every script the session has seen. */
+#define SERVER_SCRIPT_SETTING_VALUES_MAX 48
+
+/* The value the host chose for file's setting id, in *out. False when none
+ * is kept, which means the declared default. The value is the one
+ * serverSimSetScriptSetting checked; a caller holding the declaration
+ * resolves it again with scnSettingResolve all the same, because the file
+ * may have been edited since. */
+bool serverSimGetScriptSetting(const ServerSim *sim, const char *file,
+                               const char *id, int32_t *out);
+
+/* Sets file's setting id to value, checked against the declaration
+ * serverSimScenarioSettingsDecl reads for file. A value below the range is
+ * clamped to the lowest entry and one above it to the highest; one inside
+ * the range but off the step falls back to the default
+ * (scnSettingClamp). The default is also what clears a kept value. Publishes the result as
+ * a CTRL_LOBBY_SCRIPT_SETTING SET.
+ *
+ * Returns the value now in effect, in *resolved when it is not NULL.
+ * False, and nothing changed or published, for a file with no declaration,
+ * an id it does not declare, or a store that is full. */
+bool serverSimSetScriptSetting(ServerSim *sim, const char *file,
+                               const char *id, int32_t value,
+                               int32_t *resolved);
+
+/* Every kept value, as one CTRL_LOBBY_SCRIPT_SETTING CLEAR and then one SET
+ * per value, into deliver. The join sync is the caller. */
+void serverSimReplayScriptSettings(
+    const ServerSim *sim, void (*deliver)(void *, const struct ControlEvent *),
+    void *ctx);
 
 /* autoLockOnGameStart — when true, sets allowNewPlayers=false the
  * moment the lobby transitions out of serverStateLobby. */
@@ -2275,6 +2383,65 @@ bool        serverSimGetModsOff(const ServerSim *sim);
  * and the getter returns serverVoiceOn for a NULL sim. */
 void            serverSimSetVoiceMode(ServerSim *sim, ServerVoiceMode mode);
 ServerVoiceMode serverSimGetVoiceMode(const ServerSim *sim);
+
+/* Script upload policy — how the server treats scripts players send it:
+ * OFF refuses them and does not run a script an uploaded map carries,
+ * ALLOW keeps them for the session, PERSIST keeps them for good. Set once
+ * from ServerInstanceConfig.scriptUploadPolicy at startup and carried to
+ * clients on the lobby-settings event. The getter returns
+ * SCRIPT_UPLOAD_ALLOW for a NULL sim. */
+void               serverSimSetScriptUploadPolicy(ServerSim *sim, ScriptUploadPolicy p);
+ScriptUploadPolicy serverSimGetScriptUploadPolicy(const ServerSim *sim);
+
+/* Script sharing — whether players may save a copy of this server's mods
+ * and scenarios. Set once from ServerInstanceConfig.noScriptSharing at
+ * startup and carried to clients on the lobby-settings event. A new sim
+ * shares. The setter ignores a NULL sim, and the getter returns true for
+ * one. */
+void serverSimSetScriptSharing(ServerSim *sim, bool on);
+bool serverSimGetScriptSharing(const ServerSim *sim);
+
+/* The directory a script a player uploads lands in: the persist directory
+ * under PERSIST, the session directory under ALLOW, "" under OFF. Resolved
+ * once by serverInstanceStartup. The transport writes there, and the
+ * scenario host reads it as the lowest-precedence directory of the merged
+ * script listing. NULL sets "". The getter never returns NULL. */
+void        serverSimSetScriptUploadDir(ServerSim *sim, const char *dir);
+const char *serverSimGetScriptUploadDir(const ServerSim *sim);
+
+/* The session directory: the landing directory under ALLOW on a host that
+ * takes remote clients, "" otherwise. Only this one is ever emptied. NULL
+ * sets "". The getter never returns NULL. */
+void        serverSimSetScriptSessionDir(ServerSim *sim, const char *dir);
+const char *serverSimGetScriptSessionDir(const ServerSim *sim);
+
+/* Removes every regular file directly in the session directory, and nothing
+ * in a directory below it. A no-op when the session directory is "" or not
+ * there. Answers how many files went. Called at startup, at shutdown and by
+ * the lobby reset. */
+int         serverSimEmptyScriptSessionDir(ServerSim *sim);
+
+/* A count of the changes this process has made to a scripts directory: a
+ * file an upload put in place, or files the session emptying removed. The
+ * scenario library's directory listing keeps what it read against this as
+ * well as against the directory's modify time, which the kernel stamps too
+ * coarsely to see a change made straight after a read. Process-wide because
+ * that listing cache is process-wide. Safe from any thread. */
+void        serverSimNoteScriptDirsChanged(void);
+uint32_t    serverSimScriptDirsGen(void);
+
+/* Resolve the script upload policy from its command-line or preference
+ * word. A non-empty word is matched against off / allow / persist
+ * ignoring case and always wins over legacyOff; an unknown word logs a
+ * warning naming it and resolves to SCRIPT_UPLOAD_ALLOW. With no word
+ * (NULL or empty), legacyOff — the old -nouploadscripts flag or
+ * "Run Upload Scripts" preference set to No — gives SCRIPT_UPLOAD_OFF,
+ * else SCRIPT_UPLOAD_ALLOW. */
+ScriptUploadPolicy scriptUploadPolicyResolve(const char *word, bool legacyOff);
+
+/* The preference spelling of a policy: "Off", "Allow" or "Persist".
+ * Anything out of range reads as "Allow". */
+const char        *scriptUploadPolicyWord(ScriptUploadPolicy p);
 
 /* openHost — when true, any connected player has host-level edit
  * authority on lobby state (see lobbyClientMayEdit). */

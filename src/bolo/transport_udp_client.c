@@ -45,6 +45,7 @@
 #include "wbn_key_codec.h"
 #include "bolo_map_validate.h"
 #include "wire_limits.h"
+#include "upload_policy.h"             /* UPLOAD_KIND_MAP / _SCRIPT */
 #include "../common/md5.h"
 #include "../gui/lang.h"
 #include "../gui/winbolo.h"
@@ -336,6 +337,7 @@ typedef struct {
     uint32_t  uploadOffset;               /* blob bytes handed to the channel,
                                            * for the progress-percent getter   */
     char      uploadName[128];            /* wire-side filename announced to server */
+    uint8_t   uploadKind;                 /* UPLOAD_KIND_MAP / _SCRIPT, sent in BEGIN */
     BulkSender uploadSend;                /* feeds the map bytes onto CHANNEL_BULK */
     bool      uploadBulkStarted;          /* bulkSenderBegin issued post-ACK */
     bool      uploadFedDone;              /* whole blob handed to the channel */
@@ -423,6 +425,27 @@ typedef struct {
                                        * a witness for the no-progress timer,
                                        * never the source of the percentage   */
 
+    /* A copy of one of the server's scripts (BULK_KIND_SCRIPT_PACKAGE), pulled
+     * with PACKET_LOBBY_SCRIPT_FETCH_REQ. onBegin mallocs scriptFetchBuf sized
+     * to the stream header, status byte included, and onComplete parks it;
+     * it stays owned by this context until transportUdpClientTakeScriptFetch
+     * hands out the bytes after the status byte. */
+    uint8_t *scriptFetchBuf;
+    size_t   scriptFetchLen;          /* scriptFetchBuf's size (0 when none)  */
+    int      scriptFetchState;        /* ClientScriptFetchState (client_net.h) */
+    int      scriptFetchStatus;       /* BULK_SCRIPT_* of the last answer, or
+                                       * CLIENT_SCRIPT_FETCH_NO_ANSWER        */
+    char     scriptFetchFile[BULK_PATH_MAX + 1];  /* the name asked for    */
+    uint32_t scriptFetchReqSeq;       /* reqSeq of the outstanding request    */
+    uint32_t scriptFetchSeqCounter;   /* monotonic source for fresh reqSeqs   */
+    uint32_t scriptFetchSentTick;     /* localTick the request last went out  */
+    uint32_t scriptFetchSends;        /* requests sent since the last answer  */
+    uint32_t scriptFetchBusyRetries;  /* re-requests after a BUSY answer      */
+    uint32_t scriptFetchRetryAtTick;  /* earliest localTick to re-ask after
+                                       * BUSY (0 = none parked)              */
+    uint32_t scriptFetchProgressTick; /* localTick body bytes last advanced   */
+    uint32_t scriptFetchWatchdogBytes;/* bodyReceived at the last stall check */
+
 #if WB_ENABLE_NETIMPAIR
     uint8_t test_drop_upload_packet;
 #endif
@@ -509,7 +532,7 @@ static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int le
         locLen = (socklen_t)sizeof(localAddr);
         if (getsockname(c->sock, (struct sockaddr *)&localAddr, &locLen) == 0
             && localAddr.sin_port != 0) {
-            mpDiagLog("[cli] local socket bound at %s:%u (kernel-assigned ephemeral; SO_REUSEADDR=on) -> server %s:%u",
+            mpDiagLog("[cli] local socket bound at %s:%u (kernel-assigned ephemeral) -> server %s:%u",
                       inet_ntoa(localAddr.sin_addr),
                       (unsigned)ntohs(localAddr.sin_port),
                       inet_ntoa(c->serverAddr.sin_addr),
@@ -933,6 +956,7 @@ static bool udpClientReadLenStr(const uint8_t *buf, int len, int *pos,
  *   [header 8] [final 1] [count 1]
  *   per entry: [fileLen 1][file M][nameLen 1][name N][descLen 1][desc D]
  *              [maxPlayers 1][bots 1][bound 1][keepsWinCondition 1]
+ *              [source 1][workshopId 8 BE]
  *
  * No path, unlike the map list: the scenarios directory is flat, so there is
  * nothing to ask about and nothing to recognise a stale response by. The
@@ -1004,12 +1028,12 @@ void udpClientHandleLobbyScenarioListRsp(ClientSim *cs,
             !udpClientReadLenStr(buf, len, &pos, desc, sizeof(desc))) {
             break;
         }
-        if (pos + 4 > len) break;
+        if (pos + 4 + 9 > len) break;
         /* Read into locals first, so a chunk that arrives past the cap is
            still walked to its end rather than leaving the position stranded
            mid-entry. */
         if (cs->lobbyScenarioListCount >= LOBBY_SCENARIO_LIST_MAX) {
-            pos += 4;
+            pos += 4 + 9;
             continue;
         }
         idx = cs->lobbyScenarioListCount++;
@@ -1023,6 +1047,11 @@ void udpClientHandleLobbyScenarioListRsp(ClientSim *cs,
         cs->lobbyScenarioListBots[idx]       = buf[pos++];
         cs->lobbyScenarioListBound[idx]      = buf[pos++] ? true : false;
         cs->lobbyScenarioListKeepsWin[idx]   = buf[pos++] ? true : false;
+        cs->lobbyScenarioListSource[idx]     = buf[pos++];
+        cs->lobbyScenarioListWorkshopId[idx] =
+            ((uint64_t)unpackU32(buf + pos) << 32) |
+            (uint64_t)unpackU32(buf + pos + 4);
+        pos += 8;
     }
 
     if (finalFlag) {
@@ -1222,6 +1251,7 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_SCN_MARKER:       return "SCN_MARKER";
     case CTRL_SCENARIO_RULES:   return "SCENARIO_RULES";
     case CTRL_LOBBY_SCRIPT_LIST: return "LOBBY_SCRIPT_LIST";
+    case CTRL_LOBBY_SCRIPT_SETTING: return "LOBBY_SCRIPT_SETTING";
     default:                    return "<unknown>";
     }
 }
@@ -1238,6 +1268,7 @@ static const char *mpDiagCtrlName(int type) {
  * no sim semantics and must never reach clientSimApplyControl. */
 static void udpClientFreeResyncBuf(TransportUdpClientCtx *c);     /* defined below */
 static void udpClientFreeRoundLogBuf(TransportUdpClientCtx *c);   /* defined below */
+static void udpClientFreeScriptFetchBuf(TransportUdpClientCtx *c); /* defined below */
 static void clientApplyChannelReset(TransportUdpClientCtx *c,
                                     const ControlEvent *evt) {
     static const struct { uint8_t ch; const char *name; } kChans[3] = {
@@ -1292,6 +1323,18 @@ static void clientApplyChannelReset(TransportUdpClientCtx *c,
                 c->roundLogRetries = 0;
                 c->roundLogTransientRetries = 0;
                 c->roundLogRetryAtTick = 0;
+            }
+            /* A script copy still being filled is abandoned with it, and one
+             * still waiting fails too: its answer, queued behind the old
+             * stream, is lost with it. Either ends as no answer, which the
+             * lobby reports, rather than going quiet. A copy that already
+             * completed is left alone, for the reason the round log's is. */
+            if (c->scriptFetchState == CLIENT_SCRIPT_FETCH_WAITING ||
+                c->scriptFetchState == CLIENT_SCRIPT_FETCH_RECEIVING) {
+                udpClientFreeScriptFetchBuf(c);
+                c->scriptFetchState       = CLIENT_SCRIPT_FETCH_FAILED;
+                c->scriptFetchStatus      = CLIENT_SCRIPT_FETCH_NO_ANSWER;
+                c->scriptFetchRetryAtTick = 0;
             }
             bulkReceiverInit(&c->bulkRecv);
             if (c->mapResyncBuf != NULL) {
@@ -1686,7 +1729,7 @@ static void udpClientRoundLogTick(TransportUdpClientCtx *c) {
 /* Put one details request on the wire and stamp the slot ASKED. */
 static void udpClientSendScnDetailsReq(TransportUdpClientCtx *c, int slot) {
     ClientSim *cs = c->clientSim;
-    uint8_t buf[PACKET_HEADER_SIZE + 1 + 255];
+    uint8_t buf[PACKET_HEADER_SIZE + 1 + 255 + 1];
     size_t n = strlen(cs->lobbyScnDetails[slot].file);
     if (n == 0 || n > 255) {
         cs->lobbyScnDetails[slot].state = LOBBY_SCN_DETAILS_NONE;
@@ -1695,7 +1738,11 @@ static void udpClientSendScnDetailsReq(TransportUdpClientCtx *c, int slot) {
     packHeader(buf, PACKET_LOBBY_SCENARIO_DETAILS_REQ, c->outSequence++);
     buf[PACKET_HEADER_SIZE] = (uint8_t)n;
     memcpy(buf + PACKET_HEADER_SIZE + 1, cs->lobbyScnDetails[slot].file, n);
-    udpClientSendTo(c, buf, (int)(PACKET_HEADER_SIZE + 1 + n));
+    /* The flags byte after the name asks for the settings block as well. An
+       older server reads the name by its length and never looks here, so it
+       answers as it always has. */
+    buf[PACKET_HEADER_SIZE + 1 + n] = BULK_SCN_DETAILS_WANT_SETTINGS;
+    udpClientSendTo(c, buf, (int)(PACKET_HEADER_SIZE + 1 + n + 1));
     cs->lobbyScnDetails[slot].state = LOBBY_SCN_DETAILS_ASKED;
     cs->lobbyScnDetails[slot].tries++;
     cs->lobbyScnDetails[slot].sentTick = c->localTick;
@@ -1731,6 +1778,92 @@ static void udpClientScnDetailsTick(TransportUdpClientCtx *c) {
             return;
         }
     }
+}
+
+/* ---- A copy of one of the server's scripts (BULK_KIND_SCRIPT_PACKAGE).
+ *
+ * The request is a bare datagram and the server drops one it cannot start at
+ * once (this client's bulk stream busy), so a request with no answer after
+ * SCRIPT_FETCH_TIMEOUT_TICKS is sent again under the same reqSeq, up to
+ * SCRIPT_FETCH_SENDS sends in all. A BUSY answer means the server's request
+ * cooldown refused it: the request goes again SCRIPT_FETCH_BUSY_RETRY_TICKS
+ * later, up to SCRIPT_FETCH_BUSY_RETRIES times. Once the answer has started
+ * arriving it is not held to elapsed time, since the bulk channel resends its
+ * own lost fragments and a 4 MiB file on a slow link makes progress the whole
+ * way; it is abandoned only after SCRIPT_FETCH_NO_PROGRESS_TICKS with no
+ * further byte received. */
+
+/* Drop the fetch buffer this context owns, the way udpClientFreeRoundLogBuf
+ * drops the round log: clear the receiver's dst first so the rest of a body
+ * still arriving is consumed and discarded. */
+static void udpClientFreeScriptFetchBuf(TransportUdpClientCtx *c) {
+    if (c->scriptFetchBuf != NULL) {
+        if (c->bulkRecv.dst == c->scriptFetchBuf) {
+            c->bulkRecv.dst = NULL;
+        }
+        free(c->scriptFetchBuf);
+        c->scriptFetchBuf = NULL;
+    }
+    c->scriptFetchLen = 0;
+}
+
+/* Put the outstanding request on the wire again, under its own reqSeq. */
+static void udpClientSendScriptFetchReq(TransportUdpClientCtx *c) {
+    uint8_t buf[PACKET_HEADER_SIZE + 4 + 1 + BULK_PATH_MAX];
+    size_t  n;
+
+    n = transportUdpClientBuildScriptFetchReqBody(
+        buf + PACKET_HEADER_SIZE, sizeof(buf) - PACKET_HEADER_SIZE,
+        c->scriptFetchReqSeq, c->scriptFetchFile);
+    if (n == 0) return;
+    packHeader(buf, PACKET_LOBBY_SCRIPT_FETCH_REQ, c->outSequence++);
+    udpClientSendTo(c, buf, (int)(PACKET_HEADER_SIZE + n));
+    c->scriptFetchSends++;
+    c->scriptFetchSentTick = c->localTick;
+}
+
+/* Per-tick deadlines for an outstanding fetch. */
+static void udpClientScriptFetchTick(TransportUdpClientCtx *c) {
+    if (c->scriptFetchState == CLIENT_SCRIPT_FETCH_RECEIVING) {
+        uint32_t have = (c->scriptFetchBuf != NULL &&
+                         c->bulkRecv.dst == c->scriptFetchBuf)
+                            ? c->bulkRecv.bodyReceived : 0u;
+        if (have != c->scriptFetchWatchdogBytes) {
+            c->scriptFetchWatchdogBytes = have;
+            c->scriptFetchProgressTick  = c->localTick;
+            return;
+        }
+        if ((uint32_t)(c->localTick - c->scriptFetchProgressTick) >=
+            SCRIPT_FETCH_NO_PROGRESS_TICKS) {
+            WB_LOG_WARN(WB_LOG_CAT_NET,
+                "copy of %s stalled at %u bytes -> abandon",
+                c->scriptFetchFile, (unsigned)have);
+            udpClientFreeScriptFetchBuf(c);
+            c->scriptFetchState  = CLIENT_SCRIPT_FETCH_FAILED;
+            c->scriptFetchStatus = CLIENT_SCRIPT_FETCH_NO_ANSWER;
+        }
+        return;
+    }
+    if (c->scriptFetchState != CLIENT_SCRIPT_FETCH_WAITING) return;
+    if (c->scriptFetchRetryAtTick != 0) {
+        if (c->localTick >= c->scriptFetchRetryAtTick) {
+            c->scriptFetchRetryAtTick = 0;
+            udpClientSendScriptFetchReq(c);
+        }
+        return;
+    }
+    if ((uint32_t)(c->localTick - c->scriptFetchSentTick) <
+        SCRIPT_FETCH_TIMEOUT_TICKS) {
+        return;
+    }
+    if (c->scriptFetchSends < SCRIPT_FETCH_SENDS) {
+        udpClientSendScriptFetchReq(c);
+        return;
+    }
+    WB_LOG_WARN(WB_LOG_CAT_NET, "no copy of %s after %u requests",
+                c->scriptFetchFile, (unsigned)c->scriptFetchSends);
+    c->scriptFetchState  = CLIENT_SCRIPT_FETCH_FAILED;
+    c->scriptFetchStatus = CLIENT_SCRIPT_FETCH_NO_ANSWER;
 }
 
 /* Bulk-receiver onBegin (CHANNEL_BULK): a full stream header parsed. Dispatch by
@@ -1867,6 +2000,29 @@ static uint8_t *clientBulkOnBegin(void *ctx, const BulkStreamHeader *h) {
         }
         return NULL;
     }
+
+    case BULK_KIND_SCRIPT_PACKAGE:
+        /* A copy of a script, answering this client's
+         * PACKET_LOBBY_SCRIPT_FETCH_REQ. Taken only while that request is
+         * outstanding, for its reqSeq and the name it asked for. totalSize is
+         * attacker-controlled: bound it by the package cap before allocating.
+         * h->path is a label only; nothing here opens it. */
+        if (c->scriptFetchState != CLIENT_SCRIPT_FETCH_WAITING) return NULL;
+        if (h->gen != c->scriptFetchReqSeq) return NULL;
+        if (strcmp(h->path, c->scriptFetchFile) != 0) return NULL;
+        if (h->totalSize < 1 ||
+            h->totalSize > 1u + LOBBY_PACKAGE_UPLOAD_MAX_BYTES) {
+            return NULL;
+        }
+        udpClientFreeScriptFetchBuf(c);
+        c->scriptFetchBuf = (uint8_t *)malloc(h->totalSize);
+        if (c->scriptFetchBuf == NULL) return NULL;
+        c->scriptFetchLen           = (size_t)h->totalSize;
+        c->scriptFetchState         = CLIENT_SCRIPT_FETCH_RECEIVING;
+        c->scriptFetchRetryAtTick   = 0;
+        c->scriptFetchProgressTick  = c->localTick;
+        c->scriptFetchWatchdogBytes = 0;
+        return c->scriptFetchBuf;
 
     default:
         return NULL;
@@ -2061,9 +2217,60 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
             strcmp(cs->lobbyScnDetails[slot].file, h->path) != 0) {
             break;
         }
+        if (buf[0] == BULK_SCN_DETAILS_FOUND_V2) {
+            /* [status][detailsLen 2][details][settings]. A length past the
+               blob makes the whole answer not-found. */
+            size_t total = (size_t)h->totalSize;
+            size_t dLen  = (total >= 3) ? (((size_t)buf[1] << 8) | buf[2])
+                                        : (size_t)-1;
+            if (total < 3 || 3 + dLen > total) {
+                clientSimLobbyScenarioDetailsPut(cs, h->path, false, NULL, 0);
+                break;
+            }
+            clientSimLobbyScenarioDetailsPut(cs, h->path, true, buf + 3,
+                                             dLen);
+            clientSimLobbyScenarioSettingsPut(cs, h->path, buf + 3 + dLen,
+                                              total - 3 - dLen);
+            break;
+        }
         clientSimLobbyScenarioDetailsPut(
             cs, h->path, buf[0] == BULK_SCN_DETAILS_FOUND, buf + 1,
             (size_t)h->totalSize - 1);
+        break;
+    }
+
+    case BULK_KIND_SCRIPT_PACKAGE: {
+        /* The status byte says what came. FOUND holds the bytes behind it,
+         * which may be none; BUSY asks again a little later, up to its own
+         * count; anything else, a status this build does not know included,
+         * ends the fetch with that status for the lobby to word. */
+        uint8_t status;
+        if (c->scriptFetchState != CLIENT_SCRIPT_FETCH_RECEIVING ||
+            buf == NULL || buf != c->scriptFetchBuf) {
+            break;
+        }
+        status = buf[0];
+        c->scriptFetchStatus = status;
+        if (status == BULK_SCRIPT_FOUND) {
+            c->scriptFetchLen   = (size_t)h->totalSize;
+            c->scriptFetchState = CLIENT_SCRIPT_FETCH_DONE;
+            WB_LOG_INFO(WB_LOG_CAT_NET, "copy of %s received (%u bytes)",
+                        c->scriptFetchFile, (unsigned)(h->totalSize - 1));
+            break;
+        }
+        udpClientFreeScriptFetchBuf(c);
+        if (status == BULK_SCRIPT_BUSY &&
+            c->scriptFetchBusyRetries < SCRIPT_FETCH_BUSY_RETRIES) {
+            c->scriptFetchBusyRetries++;
+            c->scriptFetchSends       = 0;
+            c->scriptFetchState       = CLIENT_SCRIPT_FETCH_WAITING;
+            c->scriptFetchRetryAtTick =
+                c->localTick + SCRIPT_FETCH_BUSY_RETRY_TICKS;
+            break;
+        }
+        WB_LOG_INFO(WB_LOG_CAT_NET, "copy of %s refused (status %u)",
+                    c->scriptFetchFile, (unsigned)status);
+        c->scriptFetchState = CLIENT_SCRIPT_FETCH_FAILED;
         break;
     }
 
@@ -3476,12 +3683,25 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     }
 
     case PACKET_LOBBY_MAP_UPLOAD_DONE: {
-        /* [header 8] [status 1] [pathLen 1] [path N] */
+        /* [header 8] [status 1] [pathLen 1] [path N] for a map. A script's
+         * reply carries [reason 1] [a 2 BE] [b 2 BE] between the status and
+         * the length: why it was refused, for the frontend to say in the
+         * player's language, and the numbers the line needs. */
         if (!c->clientSim || len < PACKET_HEADER_SIZE + 2) break;
         if (c->clientSim->lobbyMapUploadStatus != 1 &&
             c->clientSim->lobbyMapUploadStatus != 2) break;
         int pos = PACKET_HEADER_SIZE;
         uint8_t status = buf[pos++];
+        if (c->clientSim->lobbyUploadKind == UPLOAD_KIND_SCRIPT) {
+            if (len < pos + 5 + 1) break;
+            c->clientSim->lobbyScriptRefuseReason = buf[pos++];
+            c->clientSim->lobbyScriptRefuseA =
+                (int32_t)(((uint16_t)buf[pos] << 8) | buf[pos + 1]);
+            pos += 2;
+            c->clientSim->lobbyScriptRefuseB =
+                (int32_t)(((uint16_t)buf[pos] << 8) | buf[pos + 1]);
+            pos += 2;
+        }
         if (status == 0) {
             if (!wireTakeU8Field(buf, len, &pos,
                                  c->clientSim->lobbyMapUploadFinalPath,
@@ -3496,6 +3716,13 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             c->clientSim->lobbyMapListReady = false;
             c->clientSim->lobbyMapListSeq++;
         } else {
+            /* A refused script carries the operator's line where the path
+             * would be; kept for the log, never shown. */
+            if (c->clientSim->lobbyUploadKind == UPLOAD_KIND_SCRIPT) {
+                (void)wireTakeU8Field(buf, len, &pos,
+                                      c->clientSim->lobbyMapUploadFinalPath,
+                                      sizeof(c->clientSim->lobbyMapUploadFinalPath));
+            }
             c->clientSim->lobbyMapUploadStatus = 4;
             c->clientSim->lobbyMapUploadRejectCode = status;
         }
@@ -3764,6 +3991,7 @@ static bool udpClientTick(void *ctx) {
     if (c->joinState == UDP_CLIENT_CONNECTED) {
         udpClientRoundLogTick(c);
         udpClientScnDetailsTick(c);
+        udpClientScriptFetchTick(c);
     }
 
     /* Control-event acks now ride the channel-frame trailer (the per-tick
@@ -4231,6 +4459,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     c = (TransportUdpClientCtx *)malloc(sizeof(TransportUdpClientCtx));
     memset(c, 0, sizeof(TransportUdpClientCtx));
     c->clientSim = clientSim;
+    c->scriptFetchStatus = CLIENT_SCRIPT_FETCH_NO_ANSWER;
     c->outCmdNextSeq = 1;
     c->outHeadSeq = 1;
     c->outTailSeq = 1;
@@ -4440,6 +4669,9 @@ void transportUdpClientDestroy(Transport *t) {
     }
     if (c->roundLogBuf != NULL) {
         free(c->roundLogBuf);   /* round log nobody took, or a partial one */
+    }
+    if (c->scriptFetchBuf != NULL) {
+        free(c->scriptFetchBuf);   /* script copy nobody took, or a partial one */
     }
     bulkSenderReset(&c->uploadSend);
     free(c);
@@ -4895,6 +5127,125 @@ uint8_t *transportUdpClientTakeRoundLog(Transport *t, size_t *outLen) {
     return blob;
 }
 
+size_t transportUdpClientBuildScriptFetchReqBody(uint8_t *out, size_t cap,
+                                                 uint32_t reqSeq,
+                                                 const char *file) {
+    size_t n;
+
+    if (out == NULL || file == NULL) return 0;
+    n = strlen(file);
+    if (n == 0 || n > BULK_PATH_MAX) return 0;
+    if (cap < 4 + 1 + n) return 0;
+    packU32(out, reqSeq);
+    out[4] = (uint8_t)n;
+    memcpy(out + 5, file, n);
+    return 4 + 1 + n;
+}
+
+bool transportUdpClientSendScriptFetch(Transport *t, const char *file) {
+    TransportUdpClientCtx *c;
+    size_t n;
+    if (t == NULL || t->ctx == NULL || file == NULL) return false;
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (c->joinState != UDP_CLIENT_CONNECTED) return false;
+    if (c->scriptFetchState == CLIENT_SCRIPT_FETCH_WAITING ||
+        c->scriptFetchState == CLIENT_SCRIPT_FETCH_RECEIVING) {
+        return false;
+    }
+    n = strlen(file);
+    if (n == 0 || n > BULK_PATH_MAX) return false;
+    /* A finished or failed fetch nobody cleared is dropped for the new one. */
+    udpClientFreeScriptFetchBuf(c);
+    memcpy(c->scriptFetchFile, file, n + 1);
+    c->scriptFetchSeqCounter++;
+    if (c->scriptFetchSeqCounter == 0) c->scriptFetchSeqCounter = 1;
+    c->scriptFetchReqSeq      = c->scriptFetchSeqCounter;
+    c->scriptFetchState       = CLIENT_SCRIPT_FETCH_WAITING;
+    c->scriptFetchStatus      = CLIENT_SCRIPT_FETCH_NO_ANSWER;
+    c->scriptFetchSends       = 0;
+    c->scriptFetchBusyRetries = 0;
+    c->scriptFetchRetryAtTick = 0;
+    udpClientSendScriptFetchReq(c);
+    return true;
+}
+
+int transportUdpClientGetScriptFetchState(Transport *t) {
+    if (t == NULL || t->ctx == NULL) return CLIENT_SCRIPT_FETCH_IDLE;
+    return ((TransportUdpClientCtx *)t->ctx)->scriptFetchState;
+}
+
+int transportUdpClientGetScriptFetchStatus(Transport *t) {
+    if (t == NULL || t->ctx == NULL) return CLIENT_SCRIPT_FETCH_NO_ANSWER;
+    return ((TransportUdpClientCtx *)t->ctx)->scriptFetchStatus;
+}
+
+uint8_t transportUdpClientGetScriptFetchPercent(Transport *t) {
+    TransportUdpClientCtx *c;
+    uint32_t total, pct;
+    if (t == NULL || t->ctx == NULL) return 0;
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (c->scriptFetchState != CLIENT_SCRIPT_FETCH_RECEIVING) return 0;
+    /* Live from the receiver, as the round-log percent reads it. */
+    if (c->scriptFetchBuf == NULL || c->bulkRecv.dst != c->scriptFetchBuf) {
+        return 0;
+    }
+    total = c->bulkRecv.hdr.totalSize;
+    if (total == 0) return 0;
+    pct = (uint32_t)(((uint64_t)c->bulkRecv.bodyReceived * 100u) / total);
+    return pct > 100 ? 100 : (uint8_t)pct;
+}
+
+bool transportUdpClientTakeScriptFetch(Transport *t, uint8_t **outBytes,
+                                       size_t *outLen, char *nameOut,
+                                       size_t nameCap) {
+    TransportUdpClientCtx *c;
+    size_t len;
+    if (outBytes != NULL) *outBytes = NULL;
+    if (outLen != NULL) *outLen = 0;
+    if (t == NULL || t->ctx == NULL || outBytes == NULL || outLen == NULL) {
+        return false;
+    }
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (c->scriptFetchState != CLIENT_SCRIPT_FETCH_DONE ||
+        c->scriptFetchBuf == NULL || c->scriptFetchLen < 1) {
+        return false;
+    }
+    /* A name cut short would be the wrong name to save under. */
+    if (nameOut != NULL &&
+        (nameCap == 0 || strlen(c->scriptFetchFile) >= nameCap)) {
+        return false;
+    }
+    if (nameOut != NULL) {
+        memcpy(nameOut, c->scriptFetchFile, strlen(c->scriptFetchFile) + 1);
+    }
+    /* The file's bytes sit behind the status byte; move them to the front so
+     * the buffer handed out is the file and nothing else. */
+    len = c->scriptFetchLen - 1;
+    memmove(c->scriptFetchBuf, c->scriptFetchBuf + 1, len);
+    *outBytes = c->scriptFetchBuf;
+    *outLen   = len;
+    c->scriptFetchBuf         = NULL;
+    c->scriptFetchLen         = 0;
+    c->scriptFetchState       = CLIENT_SCRIPT_FETCH_IDLE;
+    c->scriptFetchReqSeq      = 0;
+    c->scriptFetchRetryAtTick = 0;
+    return true;
+}
+
+void transportUdpClientClearScriptFetch(Transport *t) {
+    TransportUdpClientCtx *c;
+    if (t == NULL || t->ctx == NULL) return;
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (c->scriptFetchState != CLIENT_SCRIPT_FETCH_DONE &&
+        c->scriptFetchState != CLIENT_SCRIPT_FETCH_FAILED) {
+        return;
+    }
+    udpClientFreeScriptFetchBuf(c);
+    c->scriptFetchState       = CLIENT_SCRIPT_FETCH_IDLE;
+    c->scriptFetchReqSeq      = 0;
+    c->scriptFetchRetryAtTick = 0;
+}
+
 void transportUdpClientSendWbnReauth(Transport *t) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
@@ -5119,30 +5470,47 @@ void transportUdpClientSendLobbyMapSearchRequest(Transport *t,
  * so both the public Transport*-flavoured entry points and the
  * transport-internal pump can drive the same packet layout. */
 
+size_t transportUdpClientBuildUploadBeginBody(uint8_t *out, size_t cap,
+                                              uint8_t kind, uint32_t totalLen,
+                                              const char *name,
+                                              uint32_t bulkStartSeq) {
+    size_t nameLen, pos;
+
+    if (out == NULL) return 0;
+    if (name == NULL) name = "";
+    nameLen = strlen(name);
+    if (nameLen > 255) nameLen = 255;
+    if (cap < 1 + 4 + 1 + nameLen + 4) return 0;
+
+    pos = 0;
+    out[pos++] = kind;
+    out[pos++] = (uint8_t)((totalLen >> 24) & 0xFF);
+    out[pos++] = (uint8_t)((totalLen >> 16) & 0xFF);
+    out[pos++] = (uint8_t)((totalLen >>  8) & 0xFF);
+    out[pos++] = (uint8_t)( totalLen        & 0xFF);
+    out[pos++] = (uint8_t)nameLen;
+    if (nameLen > 0) { memcpy(out + pos, name, nameLen); pos += nameLen; }
+    packU32(out + pos, bulkStartSeq);
+    pos += 4;
+    return pos;
+}
+
 static void udpClientUploadSendBegin(TransportUdpClientCtx *c,
+                                      uint8_t kind,
                                       uint32_t totalLen,
                                       const char *name) {
-    uint8_t buf[PACKET_HEADER_SIZE + 4 + 1 + 255 + 4];
-    int nameLen, len;
+    uint8_t buf[PACKET_HEADER_SIZE + 1 + 4 + 1 + 255 + 4];
+    size_t bodyLen;
 
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
-    if (name == NULL) name = "";
-    nameLen = (int)strlen(name);
-    if (nameLen > 255) nameLen = 255;
 
     packHeader(buf, PACKET_LOBBY_MAP_UPLOAD_BEGIN, c->outSequence++);
-    buf[PACKET_HEADER_SIZE + 0] = (uint8_t)((totalLen >> 24) & 0xFF);
-    buf[PACKET_HEADER_SIZE + 1] = (uint8_t)((totalLen >> 16) & 0xFF);
-    buf[PACKET_HEADER_SIZE + 2] = (uint8_t)((totalLen >>  8) & 0xFF);
-    buf[PACKET_HEADER_SIZE + 3] = (uint8_t)( totalLen        & 0xFF);
-    buf[PACKET_HEADER_SIZE + 4] = (uint8_t)nameLen;
-    if (nameLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 5, name, nameLen);
-    len = PACKET_HEADER_SIZE + 5 + nameLen;
     /* Drop any abandoned upload tail without reusing its sequence numbers.
      * The receiver adopts this boundary before acknowledging BEGIN. */
-    packU32(buf + len, channelResetSend(&c->channelMux, CHANNEL_BULK));
-    len += 4;
-    udpClientSendTo(c, buf, len);
+    bodyLen = transportUdpClientBuildUploadBeginBody(
+        buf + PACKET_HEADER_SIZE, sizeof(buf) - PACKET_HEADER_SIZE, kind,
+        totalLen, name, channelResetSend(&c->channelMux, CHANNEL_BULK));
+    udpClientSendTo(c, buf, (int)(PACKET_HEADER_SIZE + bodyLen));
 
     if (c->clientSim) {
         c->clientSim->lobbyMapUploadStatus = 1;
@@ -5194,7 +5562,8 @@ static void udpClientUploadSendUseLocal(TransportUdpClientCtx *c,
 void transportUdpClientSendLobbyMapUploadBegin(Transport *t,
                                                 uint32_t totalLen,
                                                 const char *name) {
-    udpClientUploadSendBegin((TransportUdpClientCtx *)t->ctx, totalLen, name);
+    udpClientUploadSendBegin((TransportUdpClientCtx *)t->ctx, UPLOAD_KIND_MAP,
+                             totalLen, name);
 }
 
 void transportUdpClientSendLobbyMapUseLocal(Transport *t,
@@ -5230,6 +5599,7 @@ static void udpClientUploadCleanup(TransportUdpClientCtx *c) {
     c->uploadPrevStatus      = 0;
     c->uploadPrevProgressMs  = 0;
     c->uploadPrevAcked       = 0;
+    c->uploadKind            = UPLOAD_KIND_MAP;
 }
 
 /* Shared kick: stash the bytes on the transport, optionally try
@@ -5241,20 +5611,25 @@ static void udpClientUploadCleanup(TransportUdpClientCtx *c) {
  * terminator, so comparing whole files would NACK every packed map both
  * sides already have. len stays the whole file — that is what a fallback
  * upload sends, container and all. */
+/* kind (UPLOAD_KIND_MAP / _SCRIPT) picks the size cap and rides BEGIN. */
 static bool udpClientUploadStart(TransportUdpClientCtx *c,
+                                  uint8_t kind,
                                   const uint8_t *buf, size_t len,
                                   const char *name,
                                   const char *relPath, /* nullable */
                                   const char *md5Hex,  /* 32 hex chars + NUL, required iff relPath */
                                   size_t useLocalLen   /* bytes the pre-check names; 0 for len */) {
+    size_t maxLen = (kind == UPLOAD_KIND_SCRIPT) ? LOBBY_PACKAGE_UPLOAD_MAX_BYTES
+                                                 : LOBBY_MAP_UPLOAD_MAX_BYTES;
     if (c == NULL || buf == NULL || name == NULL || name[0] == '\0') {
         return false;
     }
-    if (len == 0 || len > LOBBY_MAP_UPLOAD_MAX_BYTES) return false;
+    if (len == 0 || len > maxLen) return false;
     if (c->joinState != UDP_CLIENT_CONNECTED) return false;
     if (c->uploadActive) return false;
 
     udpClientUploadCleanup(c);
+    c->uploadKind = kind;
 
     c->uploadBuf = (uint8_t *)malloc(len);
     if (c->uploadBuf == NULL) return false;
@@ -5275,6 +5650,10 @@ static bool udpClientUploadStart(TransportUdpClientCtx *c,
         c->clientSim->lobbyMapUploadRejectCode = 0;
         c->clientSim->lobbyMapUploadFinalPath[0] = '\0';
         c->clientSim->lobbyMapUseLocalNeedsFallback = false;
+        c->clientSim->lobbyUploadKind = kind;
+        c->clientSim->lobbyScriptRefuseReason = SCRIPT_REFUSE_NONE;
+        c->clientSim->lobbyScriptRefuseA = 0;
+        c->clientSim->lobbyScriptRefuseB = 0;
     }
 
     if (relPath != NULL && relPath[0] != '\0' && md5Hex != NULL) {
@@ -5286,7 +5665,8 @@ static bool udpClientUploadStart(TransportUdpClientCtx *c,
         c->uploadUseLocalPending = true;
         c->uploadBeginSent       = false;
     } else {
-        udpClientUploadSendBegin(c, c->uploadTotal, c->uploadName);
+        udpClientUploadSendBegin(c, c->uploadKind, c->uploadTotal,
+                                 c->uploadName);
         c->uploadUseLocalPending = false;
         c->uploadBeginSent       = true;
     }
@@ -5366,7 +5746,9 @@ static void udpClientUploadPump(TransportUdpClientCtx *c, uint64_t now) {
      * against the bytes already buffered. */
     if (c->uploadUseLocalPending &&
         clientSimConsumeUseLocalFallback(c->clientSim)) {
-        udpClientUploadSendBegin(c, c->uploadTotal, c->uploadName);
+        /* Only a map tries USE_LOCAL, so the fallback is always a map. */
+        udpClientUploadSendBegin(c, UPLOAD_KIND_MAP, c->uploadTotal,
+                                 c->uploadName);
         c->uploadUseLocalPending = false;
         c->uploadBeginSent       = true;
         return; /* wait one more tick for ACK */
@@ -5428,9 +5810,58 @@ bool transportUdpClientStartLobbyMapUploadFromBytes(Transport *t,
                                                      size_t len,
                                                      const char *mapName) {
     return udpClientUploadStart((TransportUdpClientCtx *)t->ctx,
-                                 buf, len, mapName,
+                                 UPLOAD_KIND_MAP, buf, len, mapName,
                                  /*relPath=*/NULL, /*md5=*/NULL,
                                  /*useLocalLen=*/0);
+}
+
+/* The path the USE_LOCAL pre-check names, which is where the server would
+ * find its own copy of the file. Both prefixes are accepted:
+ *   - "data/maps/Foo/Bar.map" gives "Foo/Bar.map", the scheme
+ *     PACKET_LOBBY_MAP_PREVIEW_REQ uses;
+ *   - "<workshopDir>/Bar.map" gives "Workshop/Bar.map", which the server
+ *     resolves into its own Workshop directory.
+ * The local FS provider hands us either; on Windows the separators may be
+ * backslashes. A path under neither gets no relPath, and the upload skips
+ * USE_LOCAL and goes straight to BEGIN. */
+bool transportUdpClientUseLocalRelPath(const char *localFilePath,
+                                       const char *workshopDir,
+                                       char *out, size_t outLen) {
+    char normalized[FILENAME_MAX];
+    char *p;
+    const char *kPrefix = "data/maps/";
+    const size_t kPrefixLen = 10;
+
+    if (out == NULL || outLen == 0) return false;
+    out[0] = '\0';
+    if (localFilePath == NULL) return false;
+
+    SDL_strlcpy(normalized, localFilePath, sizeof(normalized));
+    for (p = normalized; *p; p++) {
+        if (*p == '\\') *p = '/';
+    }
+    if (strncmp(normalized, kPrefix, kPrefixLen) == 0) {
+        SDL_strlcpy(out, normalized + kPrefixLen, outLen);
+    } else if (workshopDir != NULL && workshopDir[0] != '\0') {
+        char   ws[FILENAME_MAX];
+        size_t wsLen;
+        SDL_strlcpy(ws, workshopDir, sizeof(ws));
+        for (p = ws; *p; p++) {
+            if (*p == '\\') *p = '/';
+        }
+        wsLen = strlen(ws);
+        while (wsLen > 0 && ws[wsLen - 1] == '/') ws[--wsLen] = '\0';
+        if (wsLen > 0 && strncmp(normalized, ws, wsLen) == 0 &&
+            normalized[wsLen] == '/' && normalized[wsLen + 1] != '\0') {
+            /* A name too long for out is not offered at all: a cut one
+             * would name some other file. */
+            if ((size_t)SDL_snprintf(out, outLen, "Workshop/%s",
+                                     normalized + wsLen + 1) >= outLen) {
+                out[0] = '\0';
+            }
+        }
+    }
+    return out[0] != '\0';
 }
 
 bool transportUdpClientStartLobbyMapUploadFromPath(Transport *t,
@@ -5474,27 +5905,15 @@ bool transportUdpClientStartLobbyMapUploadFromPath(Transport *t,
         SDL_strlcpy(nameBuf, base, sizeof(nameBuf));
     }
 
-    /* Derive a data/maps-relative path for the USE_LOCAL pre-check.
-     * Local FS provider hands us paths like "data/maps/Foo/Bar.map";
-     * on Windows the separators may be backslashes. Strip the prefix
-     * to get a path like "Foo/Bar.map" — same scheme
-     * PACKET_LOBBY_MAP_PREVIEW_REQ uses. If the path doesn't sit
-     * under data/maps/, skip USE_LOCAL and go straight to BEGIN. */
-    relPath[0] = '\0';
-    {
-        char normalized[FILENAME_MAX];
-        char *p;
-        const char *kPrefix = "data/maps/";
-        const size_t kPrefixLen = 10;
-        SDL_strlcpy(normalized, localFilePath, sizeof(normalized));
-        for (p = normalized; *p; p++) {
-            if (*p == '\\') *p = '/';
-        }
-        if (strncmp(normalized, kPrefix, kPrefixLen) == 0) {
-            SDL_strlcpy(relPath, normalized + kPrefixLen, sizeof(relPath));
-        }
+    haveRelPath = transportUdpClientUseLocalRelPath(
+        localFilePath,
+        c->clientSim != NULL ? c->clientSim->workshopMapDir : NULL,
+        relPath, sizeof(relPath));
+    if (haveRelPath) {
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+                    "map upload: offering '%s' as USE_LOCAL '%s' before "
+                    "sending it", nameBuf, relPath);
     }
-    haveRelPath = (relPath[0] != '\0');
     /* What the pre-check asks about is the map, not the file. A packed map
        carries a scenario container after its terminator, and the server
        answers from serverSimReadMapFile, which trims there — so a whole-file
@@ -5514,10 +5933,66 @@ bool transportUdpClientStartLobbyMapUploadFromPath(Transport *t,
         md5ToHex(md5, md5Hex);
     }
 
-    ok = udpClientUploadStart(c, (const uint8_t *)fileData, fileLen, nameBuf,
+    ok = udpClientUploadStart(c, UPLOAD_KIND_MAP,
+                               (const uint8_t *)fileData, fileLen, nameBuf,
                                haveRelPath ? relPath : NULL,
                                haveRelPath ? md5Hex  : NULL,
                                haveRelPath ? bodyLen : 0);
+    SDL_free(fileData);
+    return ok;
+}
+
+bool transportUdpClientStartLobbyScriptUpload(Transport *t,
+                                              const char *localFilePath) {
+    TransportUdpClientCtx *c;
+    SDL_PathInfo info;
+    size_t fileLen = 0;
+    void *fileData = NULL;
+    char nameBuf[128];
+    size_t nameLen;
+    bool ok;
+
+    if (t == NULL || localFilePath == NULL || localFilePath[0] == '\0') {
+        return false;
+    }
+    c = (TransportUdpClientCtx *)t->ctx;
+
+    /* Basename of the local path (drop directory components). The server
+     * holds the name to its full rule; here only the suffix is checked. */
+    {
+        const char *base = localFilePath;
+        const char *p;
+        for (p = localFilePath; *p; p++) {
+            if (*p == '/' || *p == '\\') base = p + 1;
+        }
+        SDL_strlcpy(nameBuf, base, sizeof(nameBuf));
+    }
+    nameLen = strlen(nameBuf);
+    if (!((nameLen > 9 &&
+           SDL_strcasecmp(nameBuf + nameLen - 9, ".scenario") == 0) ||
+          (nameLen > 4 &&
+           SDL_strcasecmp(nameBuf + nameLen - 4, ".lua") == 0))) {
+        return false;
+    }
+
+    /* Size before the read, so an over-cap file never enters memory. */
+    if (!SDL_GetPathInfo(localFilePath, &info) ||
+        info.type != SDL_PATHTYPE_FILE || info.size == 0 ||
+        info.size > (Uint64)LOBBY_PACKAGE_UPLOAD_MAX_BYTES) {
+        return false;
+    }
+    fileData = SDL_LoadFile(localFilePath, &fileLen);
+    if (fileData == NULL) return false;
+    if (fileLen == 0 || fileLen > LOBBY_PACKAGE_UPLOAD_MAX_BYTES) {
+        SDL_free(fileData);
+        return false;
+    }
+
+    /* No USE_LOCAL: a script has no data/maps twin to match. */
+    ok = udpClientUploadStart(c, UPLOAD_KIND_SCRIPT,
+                               (const uint8_t *)fileData, fileLen, nameBuf,
+                               /*relPath=*/NULL, /*md5=*/NULL,
+                               /*useLocalLen=*/0);
     SDL_free(fileData);
     return ok;
 }

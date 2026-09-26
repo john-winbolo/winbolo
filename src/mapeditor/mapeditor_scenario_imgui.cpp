@@ -751,6 +751,21 @@ static void meScnMetadataBody(MEScenarioForm *f, MEScenarioState *st,
     }
     meScnHint(langGetText(STR_MAPEDIT_SCENARIO_KIND_NOTE));
 
+    /* The Workshop item the file was published as, read-only: publishing is
+     * what writes it, never this form. The two numbers go in as text because
+     * a {number} is an int and neither id fits one. Nothing is drawn for a
+     * file that was never published. */
+    if (m->workshopId != 0) {
+        MessageArgs args = {};
+        SDL_snprintf(args.string1, sizeof(args.string1), "%llu",
+                     (unsigned long long)m->workshopId);
+        SDL_snprintf(args.string2, sizeof(args.string2), "%llu",
+                     (unsigned long long)m->workshopAuthor);
+        ImGui::TextWrapped("%s",
+                           langGetTextFmt(STR_MAPEDIT_SCENARIO_WORKSHOP,
+                                          &args));
+    }
+
     /* The game type is win-deciding: open, tournament and strict end a round
      * on different things, and it is the only way a file picks between them.
      * So a mod is not shown the combo at all, rather than being shown one it

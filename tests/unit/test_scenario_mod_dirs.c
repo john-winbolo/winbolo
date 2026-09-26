@@ -19,6 +19,12 @@
  * and WB_MOD_DIR_SHIPPED name them instead, and every case here points them
  * at directories of its own under the scratch path.
  *
+ * The Workshop directory sits between the player's own and the shipped one,
+ * and is also under the preferences directory: WB_MOD_DIR_WORKSHOP names it
+ * in every case, empty unless the case is about it. The last cases are about
+ * it: its place in the precedence, the rows it is marked on, this computer's
+ * own listing, and an upload under a name it holds.
+ *
  * The seams are set for the length of the listing call and taken away again
  * before anything is asserted, so a case that fails leaves the environment
  * as it found it — the cases in every other file run in the same process
@@ -46,18 +52,22 @@
 
 static char mdConfigured[512];
 static char mdUser[512];
+static char mdWorkshop[512];
 static char mdShipped[512];
 
 /* All three under this test's own scratch directory. Not all of them are
  * created: a case that wants a directory to be missing passes false for it,
  * because "not there" is the ordinary case for every one of them and the
- * listing has to say nothing about it. */
+ * listing has to say nothing about it. The Workshop directory is always
+ * made, and holds nothing until a case writes to it. */
 static bool mdMakeDirs(bool configured, bool user, bool shipped) {
     if (!utScratchPath(mdConfigured, sizeof(mdConfigured), "configured") ||
         !utScratchPath(mdUser, sizeof(mdUser), "Mods") ||
+        !utScratchPath(mdWorkshop, sizeof(mdWorkshop), "Workshop") ||
         !utScratchPath(mdShipped, sizeof(mdShipped), "shipped")) {
         return false;
     }
+    if (!SDL_CreateDirectory(mdWorkshop)) return false;
     if (configured && !SDL_CreateDirectory(mdConfigured)) return false;
     if (user && !SDL_CreateDirectory(mdUser)) return false;
     if (shipped && !SDL_CreateDirectory(mdShipped)) return false;
@@ -96,15 +106,25 @@ static void mdSetEnv(const char *key, const char *val) {
 #endif
 }
 
-/* The list, with the two seams up only while it is taken. */
+static void mdEnvUp(void) {
+    mdSetEnv("WB_MOD_DIR_USER", mdUser);
+    mdSetEnv("WB_MOD_DIR_WORKSHOP", mdWorkshop);
+    mdSetEnv("WB_MOD_DIR_SHIPPED", mdShipped);
+}
+
+static void mdEnvDown(void) {
+    mdSetEnv("WB_MOD_DIR_USER", NULL);
+    mdSetEnv("WB_MOD_DIR_WORKSHOP", NULL);
+    mdSetEnv("WB_MOD_DIR_SHIPPED", NULL);
+}
+
+/* The list, with the seams up only while it is taken. */
 static int mdList(ServerSim *sim, ScnDirEntry *out, int max) {
     int n;
 
-    mdSetEnv("WB_MOD_DIR_USER", mdUser);
-    mdSetEnv("WB_MOD_DIR_SHIPPED", mdShipped);
+    mdEnvUp();
     n = serverSimScenarioListDir(sim, out, max);
-    mdSetEnv("WB_MOD_DIR_USER", NULL);
-    mdSetEnv("WB_MOD_DIR_SHIPPED", NULL);
+    mdEnvDown();
     return n;
 }
 
@@ -367,16 +387,184 @@ int run_scenario_mod_dirs_attach_reads_shipped(void) {
     sim = mdSim(mdConfigured);
     UT_ASSERT(sim != NULL);
 
-    mdSetEnv("WB_MOD_DIR_USER", mdUser);
-    mdSetEnv("WB_MOD_DIR_SHIPPED", mdShipped);
+    mdEnvUp();
     h = scenarioHostAttachMod(sim, mdConfigured, "shipped.lua", err,
                               sizeof(err));
-    mdSetEnv("WB_MOD_DIR_USER", NULL);
-    mdSetEnv("WB_MOD_DIR_SHIPPED", NULL);
+    mdEnvDown();
 
     UT_ASSERT_MSG(h != NULL, "a mod only the shipped directory holds was "
                              "refused: %s", err);
     scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 8. The Workshop directory ────────────────────────────────────── */
+
+/* A file the player wrote wins over a subscribed item of the same name, and
+   a subscribed item wins over a shipped mod. The Workshop directory's own
+   rows say so; a name the player's directory took from it does not. */
+int run_scenario_mod_dirs_workshop_precedence(void) {
+    ServerSim         *sim;
+    ScnDirEntry        list[MD_MAX];
+    const ScnDirEntry *row;
+    char               seen[1024];
+    int                n;
+
+    UT_ASSERT(mdMakeDirs(true, true, true));
+    UT_ASSERT(mdWriteMod(mdUser, "same.lua", "From User"));
+    UT_ASSERT(mdWriteMod(mdWorkshop, "same.lua", "From Workshop"));
+    UT_ASSERT(mdWriteMod(mdShipped, "same.lua", "From Shipped"));
+    UT_ASSERT(mdWriteMod(mdWorkshop, "two.lua", "Two From Workshop"));
+    UT_ASSERT(mdWriteMod(mdShipped, "two.lua", "Two From Shipped"));
+    UT_ASSERT(mdWriteMod(mdWorkshop, "sub.lua", "Subscribed"));
+
+    sim = mdSim(mdConfigured);
+    UT_ASSERT(sim != NULL);
+    n = mdList(sim, list, MD_MAX);
+    mdNames(list, (n > 0) ? n : 0, seen, sizeof(seen));
+
+    UT_ASSERT_MSG(n == 3, "the listing holds %d rows, wanted same, two and "
+                          "sub once each: %s", n, seen);
+
+    row = mdFind(list, n, "same.lua");
+    UT_ASSERT(row != NULL);
+    UT_ASSERT_MSG(strcmp(row->name, "From User") == 0,
+                  "same.lua resolved to \"%s\", wanted the player's copy",
+                  row->name);
+    UT_ASSERT_MSG(row->source == SCN_DIR_SOURCE_SERVER,
+                  "the player's same.lua says source %d", (int)row->source);
+
+    row = mdFind(list, n, "two.lua");
+    UT_ASSERT(row != NULL);
+    UT_ASSERT_MSG(strcmp(row->name, "Two From Workshop") == 0,
+                  "two.lua resolved to \"%s\", wanted the Workshop copy",
+                  row->name);
+    UT_ASSERT_MSG(row->source == SCN_DIR_SOURCE_WORKSHOP,
+                  "the Workshop's two.lua says source %d", (int)row->source);
+
+    row = mdFind(list, n, "sub.lua");
+    UT_ASSERT(row != NULL);
+    UT_ASSERT_MSG(row->source == SCN_DIR_SOURCE_WORKSHOP,
+                  "a file only the Workshop holds says source %d",
+                  (int)row->source);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* This computer's own listing reads the Workshop directory after Mods: its
+   rows say SERVER_SCENARIO_SOURCE_WORKSHOP, a name Mods also holds is Mods'
+   file, its files have a path, and a copy is never saved over a name it
+   holds. */
+int run_scenario_mod_dirs_workshop_local(void) {
+    ServerScenarioEntry     list[MD_MAX];
+    ScenarioLocalSaveResult saved;
+    char                    path[1200];
+    char                    want[768];
+    bool                    found;
+    int                     n;
+    int                     i;
+    bool                    sawMine = false;
+    bool                    sawSub  = false;
+    bool                    sawBoth = false;
+
+    UT_ASSERT(mdMakeDirs(false, true, false));
+    UT_ASSERT(mdWriteMod(mdUser, "mine.lua", "Mine"));
+    UT_ASSERT(mdWriteMod(mdUser, "both.lua", "Both From Mods"));
+    UT_ASSERT(mdWriteMod(mdWorkshop, "both.lua", "Both From Workshop"));
+    UT_ASSERT(mdWriteMod(mdWorkshop, "sub.lua", "Subscribed"));
+
+    mdEnvUp();
+    n     = scenarioHostListLocalScripts(list, MD_MAX);
+    found = scenarioHostLocalScriptPath("sub.lua", path, sizeof(path));
+    saved = scenarioHostSaveLocalScript("SUB.lua", (const uint8_t *)"-- x\n", 5);
+    mdEnvDown();
+
+    UT_ASSERT_MSG(n == 3, "%d local rows, wanted mine, both and sub", n);
+    for (i = 0; i < n; i++) {
+        if (strcmp(list[i].file, "mine.lua") == 0) {
+            sawMine = true;
+            UT_ASSERT_MSG(list[i].source == SERVER_SCENARIO_SOURCE_SERVER,
+                          "mine.lua says source %d", (int)list[i].source);
+        } else if (strcmp(list[i].file, "sub.lua") == 0) {
+            sawSub = true;
+            UT_ASSERT_MSG(list[i].source == SERVER_SCENARIO_SOURCE_WORKSHOP,
+                          "sub.lua says source %d", (int)list[i].source);
+        } else if (strcmp(list[i].file, "both.lua") == 0) {
+            sawBoth = true;
+            UT_ASSERT_MSG(strcmp(list[i].name, "Both From Mods") == 0,
+                          "both.lua resolved to \"%s\", wanted Mods' copy",
+                          list[i].name);
+            UT_ASSERT_MSG(list[i].source == SERVER_SCENARIO_SOURCE_SERVER,
+                          "both.lua says source %d", (int)list[i].source);
+        }
+    }
+    UT_ASSERT(sawMine && sawSub && sawBoth);
+
+    snprintf(want, sizeof(want), "%s/sub.lua", mdWorkshop);
+    UT_ASSERT_MSG(found, "no path for a file only the Workshop holds");
+    UT_ASSERT_MSG(strcmp(path, want) == 0, "path '%s', wanted '%s'", path,
+                  want);
+
+    UT_ASSERT_MSG(saved == SCENARIO_LOCAL_SAVE_EXISTS,
+                  "a copy under a name the Workshop holds answered %d",
+                  (int)saved);
+    snprintf(want, sizeof(want), "%s/SUB.lua", mdUser);
+    UT_ASSERT_MSG(!SDL_GetPathInfo(want, NULL),
+                  "the refused copy landed in Mods anyway");
+    return 0;
+}
+
+/* An upload under a name the Workshop directory holds is refused, as one
+   under a name the player's own directory holds is: the Workshop directory
+   is above the landing one. */
+int run_scenario_mod_dirs_workshop_upload_clash(void) {
+    static const char kMod[] =
+        "scenario = {\n"
+        "  name = \"Uploaded\",\n"
+        "  api = 1,\n"
+        "  kind = \"mod\",\n"
+        "  bound = false,\n"
+        "}\n";
+    ServerSim          *sim;
+    ScriptUploadRefusal why;
+    char                landing[512];
+    char                path[768];
+    bool                clash;
+    bool                other;
+
+    UT_ASSERT(mdMakeDirs(true, true, true));
+    UT_ASSERT(utScratchPath(landing, sizeof(landing), "landing"));
+    UT_ASSERT(mdWriteMod(mdWorkshop, "clash.lua", "Subscribed"));
+
+    sim = mdSim(mdConfigured);
+    UT_ASSERT(sim != NULL);
+    serverSimSetScriptUploadDir(sim, landing);
+
+    mdEnvUp();
+    clash = serverSimScriptUploadAccept(sim, landing, "clash.lua",
+                                        (const uint8_t *)kMod,
+                                        sizeof(kMod) - 1, &why);
+    mdEnvDown();
+
+    UT_ASSERT_MSG(!clash, "an upload under a name the Workshop holds was "
+                          "taken");
+    UT_ASSERT_MSG(why.reason == SCRIPT_REFUSE_NAME_TAKEN, "reason %d '%s'",
+                  (int)why.reason, why.text);
+    snprintf(path, sizeof(path), "%s/clash.lua", landing);
+    UT_ASSERT_MSG(!SDL_GetPathInfo(path, NULL),
+                  "the refused upload landed anyway");
+
+    /* A name nothing above holds still lands. */
+    mdEnvUp();
+    other = serverSimScriptUploadAccept(sim, landing, "other.lua",
+                                        (const uint8_t *)kMod,
+                                        sizeof(kMod) - 1, &why);
+    mdEnvDown();
+    UT_ASSERT_MSG(other, "a name nothing above holds was refused: %s",
+                  why.text);
+
     serverSimDestroy(sim);
     return 0;
 }
