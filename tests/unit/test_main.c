@@ -581,6 +581,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_hostile_entity_remove_index",          run_lv_hostile_entity_remove_index          },
     { "lv_hostile_server_text_slot",             run_lv_hostile_server_text_slot             },
     { "lv_hostile_modifiers_length",             run_lv_hostile_modifiers_length             },
+    { "lv_hostile_map_run_edge",                 run_lv_hostile_map_run_edge                 },
     { "wbv_reader_v1",                           run_wbv_reader_v1                           },
     { "wbv_reader_v2",                           run_wbv_reader_v2                           },
     { "attribution_reader_roundtrip",            run_attribution_reader_roundtrip            },

@@ -37,6 +37,7 @@
 #include "lv_bases.h"
 #include "lv_starts.h"
 #include "lv_players.h"
+#include "blocks.h"
 #include "test_harness.h"
 
 static void packU32BE(uint8_t *p, uint32_t v) {
@@ -350,5 +351,69 @@ int run_lv_hostile_modifiers_length(void) {
 
   lv_specSeedControlClear();
   lv_decoderDestroy(lv);
+  return 0;
+}
+
+/* Decode one run of elems data bytes on row y from startX through the
+ * blocks stream, into a fresh all-DEEP_SEA map. The byte after the data is
+ * padding: lv_mapProcessRun stops at the end of the stream before it has
+ * used the last byte it read. */
+static bool decodeRun(map *mp, const uint8_t *data, BYTE elems, BYTE y,
+                      BYTE startX, BYTE endX) {
+  uint8_t bytes[16];
+
+  memcpy(bytes, data, elems);
+  bytes[elems] = 0;
+  lv_blocksBeginStream();
+  lv_blocksAppendBytes(bytes, (size_t) elems + 1);
+  return lv_mapProcessRun(mp, elems, y, startX, endX);
+}
+
+/* A run of identical squares that starts near the right edge stops at column
+ * 255 rather than writing past the map, and ends there: the run's position
+ * wraps to 0, so a header naming 0 as its end is the one that matches. Both
+ * the low-nibble and the high-nibble forms. Without the bound the write runs
+ * three columns past the array and the position lands on 3. */
+int run_lv_hostile_map_run_edge(void) {
+  /* 0xF3: length code 15 (nine identical squares) of terrain 3. */
+  static const uint8_t kLowSame[] = {0xF3};
+  /* 0x1A and the high nibble of 0xBF: two different squares, terrain 10
+   * then 11. The low nibble of 0xBF is length code 15, so the high nibble of
+   * 0x40 is nine squares of terrain 4. Its low nibble starts a one-square run
+   * the element count ends. */
+  static const uint8_t kHighSame[] = {0x1A, 0xBF, 0x40};
+  map mp;
+  bool ok;
+  int x;
+
+  lv_mapCreate(&mp);
+  ok = decodeRun(&mp, kLowSame, 1, 100, 250, 0);
+  UT_ASSERT_MSG(ok, "a low-nibble run from column 250 was refused");
+  for (x = 250; x <= 255; x++) {
+    UT_ASSERT_MSG(lv_mapGetPos(&mp, (BYTE) x, 100) == 3,
+                  "column %d of row 100 is %d (want 3)", x,
+                  lv_mapGetPos(&mp, (BYTE) x, 100));
+  }
+  for (x = 0; x < 3; x++) {
+    UT_ASSERT_MSG(lv_mapGetPos(&mp, (BYTE) x, 100) == DEEP_SEA,
+                  "column %d of row 100 was written by a run past the edge", x);
+  }
+  lv_mapDestroy(&mp);
+
+  lv_mapCreate(&mp);
+  ok = decodeRun(&mp, kHighSame, 3, 101, 248, 0);
+  UT_ASSERT_MSG(ok, "a high-nibble run from column 250 was refused");
+  UT_ASSERT_MSG(lv_mapGetPos(&mp, 248, 101) == 10 &&
+                lv_mapGetPos(&mp, 249, 101) == 11,
+                "columns 248 and 249 of row 101 are %d and %d (want 10 and 11)",
+                lv_mapGetPos(&mp, 248, 101), lv_mapGetPos(&mp, 249, 101));
+  for (x = 250; x <= 255; x++) {
+    UT_ASSERT_MSG(lv_mapGetPos(&mp, (BYTE) x, 101) == 4,
+                  "column %d of row 101 is %d (want 4)", x,
+                  lv_mapGetPos(&mp, (BYTE) x, 101));
+  }
+  lv_mapDestroy(&mp);
+
+  lv_blocksDestroy();
   return 0;
 }

@@ -1163,11 +1163,13 @@ int run_lv_team_colours_events(void);
  * stored or walked; a log_EntityChange removal naming an index past the array
  * is refused for every kind; a server line to a slot past the roster reads as
  * an empty seat; a log_TankSetModifiers blob of the wrong length is consumed
- * by its length so the record behind it still decodes. */
+ * by its length so the record behind it still decodes; a map run of
+ * identical squares that would pass column 255 stops at it. */
 int run_lv_hostile_item_counts(void);
 int run_lv_hostile_entity_remove_index(void);
 int run_lv_hostile_server_text_slot(void);
 int run_lv_hostile_modifiers_length(void);
+int run_lv_hostile_map_run_edge(void);
 
 /* .wbv reader gate (test_wbv_reader.c): loads the committed fixtures
  * through the production log-viewer reader (lv_screenLoadMapFromMemory)
