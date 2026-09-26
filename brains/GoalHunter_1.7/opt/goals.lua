@@ -2814,7 +2814,13 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- which is how a bot at armour 10 with the nearest enemy 15 tiles away and
   -- not even visible dumped four pills in 200 ticks. See danger.lua.
   local _panic, _panic_thresh, _panic_why = danger.should_panic_build(state, info)
+  -- C.BLITZ_NO_BUILD_ACTIVE: no panic / offensive drop in or just after a
+  -- live blitz (squad.blitz_window).
+  local _db_blitz = C.BLITZ_NO_BUILD_ACTIVE
+                    and squad.blitz_window(state, world, state.tick or 0, info.player_number or -1) or nil
   local _db_skip = ((not _db_carrying) and " -> SKIP(not carrying a pill)")
+                or (_db_blitz and string.format(" -> SKIP(blitz_active pill=#%s %s)",
+                      tostring(_db_blitz.pill), _db_blitz.live and "live" or "left"))
                 or ((not actionable) and " -> SKIP(not actionable: builder not in tank / in boat)")
                 or ((_db_et == 0 and not _panic) and " -> SKIP(no visible enemy tank, armour ok)") or ""
   -- `actionable` is re-checked HERE, not just at the gate above: in a debug
@@ -2824,7 +2830,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- can never dispatch (20260901_000042_1_loss_b6 bot3 t=11075: winner
   -- offensive_build@(133,121) cost=1, tank motionless 55 ticks, dead at
   -- 11191). An overlay flag must never change what the bot DOES.
-  if (_db_et > 0 or _panic) and _db_carrying and actionable then
+  if (_db_et > 0 or _panic) and _db_carrying and actionable and not _db_blitz then
     local closest_et, closest_dist = nil, math.huge
     for _, et in ipairs(state.perc.enemy_tanks) do
       if et.dist < closest_dist then closest_dist = et.dist; closest_et = et end
@@ -3378,9 +3384,41 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
       end
   end  -- score_cell
 
+  -- C.BLITZ_NO_BUILD_ACTIVE (2026-09-25 evening): no new pill while we are
+  -- in a blitz, or just left one that is still running (squad.blitz_window).
+  -- Only the placement is skipped: this runs after the harvest hold and the
+  -- seek-trees redirect above. Logs on change only.
+  if C.BLITZ_NO_BUILD_ACTIVE then
+    local bwin = squad.blitz_window(state, world, blk_now, info.player_number or -1)
+    if bwin then
+      if state._strat_nobuild_pill ~= bwin.pill then
+        state._strat_nobuild_pill = bwin.pill
+      end
+      return nil
+    end
+    state._strat_nobuild_pill = nil
+  end
+  -- Live blitz shot lines (C.PILL_PLACE_AVOID_BLITZ_LINE): a tile that would
+  -- block our own or a squadmate's line to the blitz pill is not a candidate,
+  -- so the scan takes the next-best tile. nil = knob off / no blitz: the scan
+  -- is exactly the old one. Checked here, outside score_cell, so score_cell
+  -- keeps its upvalue count.
+  local blitz_lines = squad.blitz_shot_lines(state, world, blk_now, info.player_number)
+  local n_line_skip = 0
+  -- C.PLACE_PILL_MAN_PATH_SAFE / C.PLACE_PILL_BEHIND_ONLY: per-tile test
+  -- (builder.place_tile_check). Off = never called, scan unchanged.
+  local tchk_on = C.PLACE_PILL_MAN_PATH_SAFE or C.PLACE_PILL_BEHIND_ONLY
+  local n_tchk_skip = 0
+
   if only then
     -- Harvest re-score: one tile, fresh context. nil = the tile no longer
     -- qualifies at all (category drift / surplus / blocked / occupied).
+    if blitz_lines and squad.tile_on_blitz_line(world, blitz_lines, only.mx, only.my, blk_now) then
+      return nil
+    end
+    if tchk_on and builder.place_tile_check(state, world, info, only.mx, only.my, blk_now, true) then
+      return nil
+    end
     score_cell(only.mx, only.my)
     if best_mx then return best_score end
     return nil
@@ -3389,8 +3427,21 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   for dy = -R, R do
     for dx = -R, R do
       -- TANK-centric: scan around our position
-      score_cell(U.mclamp(tmx + dx), U.mclamp(tmy + dy))
+      local cx, cy = U.mclamp(tmx + dx), U.mclamp(tmy + dy)
+      if blitz_lines and U.is_placeable(cx, cy, world)
+         and squad.tile_on_blitz_line(world, blitz_lines, cx, cy, blk_now) then
+        n_line_skip = n_line_skip + 1
+      elseif tchk_on and U.is_placeable(cx, cy, world)
+             and builder.place_tile_check(state, world, info, cx, cy, blk_now, true) then
+        n_tchk_skip = n_tchk_skip + 1
+      else
+        score_cell(cx, cy)
+      end
     end
+  end
+  if n_tchk_skip > 0 then
+  end
+  if n_line_skip > 0 then
   end
 
   if not best_mx then
@@ -8048,6 +8099,49 @@ function M.kill_pickup_score(state, world, info, pill)
   return c or 1e30
 end
 
+-- Public: our rank among the live claimers of fresh-kill pill kp.id (Override
+-- 3b handoff). An ally BEATS us when it broadcasts kg = this pill and its kc is
+-- lower than our cost, or equal and its player number is lower. rank = 1 +
+-- allies that beat us. DEAD allies are skipped (their kg/kc lingers, but they
+-- cannot grab). keep = how many claimers keep the claim: 2 when
+-- C.KILL_PICKUP_PAIR_MIN_SQUAD > 0 and our recorded blitz size (kp.squad_n)
+-- is >= it, else 1. The caller stands down when rank > keep.
+-- While the pair rule is on, our cost is rounded with the SAME "%.0f" the kc
+-- broadcast uses (init.lua), so both claimers compare the same numbers: with
+-- raw 20.4 vs 20.2 both used to see the other's "20" as cheaper. Off (keel):
+-- the raw cost, exactly as before.
+-- Returns rank, keep, best_pn, best_cost (best ally that beats us, or nil),
+-- our compared cost, and the list of every live claimer ally { pn, kc } (pn
+-- order) so the panel can show each factor.
+function M.kill_pickup_rank(state, kp, mc, my_pn, now)
+  local pair_min = C.KILL_PICKUP_PAIR_MIN_SQUAD or 0
+  local keep = (pair_min > 0 and (kp.squad_n or 1) >= pair_min) and 2 or 1
+  local mc_cmp = mc
+  if pair_min > 0 then mc_cmp = tonumber(string.format("%.0f", mc)) or mc end
+  local beaten, best_pn, best_cost = 0, nil, nil
+  local claimers = {}
+  local tdead = state.tank_dead_at
+  for apn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
+    local is_dead = tdead and tdead[apn] and tdead[apn] > (slot.last_tick or 0)
+    if apn ~= my_pn and not is_dead then
+      local si = slot.info
+      if si and si.kg and tonumber(si.kg) == kp.id then
+        local a_cost = tonumber(si.kc) or 1e9
+        claimers[#claimers + 1] = { pn = apn, kc = a_cost }
+        if a_cost < mc_cmp or (a_cost == mc_cmp and apn < my_pn) then
+          beaten = beaten + 1
+          -- Track the BEST such ally so the viz names the real grabber.
+          if not best_cost or a_cost < best_cost
+             or (a_cost == best_cost and apn < (best_pn or 1e9)) then
+            best_pn, best_cost = apn, a_cost
+          end
+        end
+      end
+    end
+  end
+  return beaten + 1, keep, best_pn, best_cost, mc_cmp, claimers
+end
+
 -- =========================================================================
 -- SEA-PILL HARVEST — the DEEP-SEA branch of capture_pill
 --
@@ -8161,12 +8255,18 @@ end
 -- (it is rubble the shell flies over), which is what lets us test a line onto
 -- the dead sea pills at all.
 -- Returns reached (bool), stop_mx, stop_my (the tile that ate it, or nil when
--- the shell simply ran out of range).
-local function sea_shot_reaches(world, owx, owy, tmx, tmy, shooter)
+-- the shell simply ran out of range).  A 4th value, true, says the trace
+-- itself failed (cpf.simulate_shot raised or gave nothing): the nil stop
+-- square then does NOT mean the shell ran out.
+-- `stoppers` (optional) replaces SEA_SHOT_STOPPERS as the set of terrain
+-- types that eat the shell.  The decoy getaway (decoy_getaway.lua) passes
+-- walls only: a tree or a boat is shot away, so it is not cover.  Pills and
+-- bases still stop the shell whatever the set is.
+local function sea_shot_reaches(world, owx, owy, tmx, tmy, shooter, stoppers)
   if owx == U.m2w(tmx) and owy == U.m2w(tmy) then return true, tmx, tmy end
   local ok, tiles = pcall(cpf.simulate_shot, owx, owy, U.m2w(tmx), U.m2w(tmy),
                           shooter or cpf.SHOT_PILL, 0)
-  if not ok or not tiles then return false, nil, nil end
+  if not ok or not tiles then return false, nil, nil, true end
   local omx = bit.rshift(owx, 8)
   local omy = bit.rshift(owy, 8)
   for i = 1, #tiles do
@@ -8174,7 +8274,7 @@ local function sea_shot_reaches(world, owx, owy, tmx, tmy, shooter)
     if st.mx == tmx and st.my == tmy then return true, tmx, tmy end
     if st.mx ~= omx or st.my ~= omy then
       local tt = U.ttype(st.mx, st.my)
-      if SEA_SHOT_STOPPERS[tt] then return false, st.mx, st.my end
+      if (stoppers or SEA_SHOT_STOPPERS)[tt] then return false, st.mx, st.my end
       local plist = world.pill_at and world.pill_at[st.my * 256 + st.mx]
       if plist then
         for _, pe in ipairs(plist) do
@@ -10776,6 +10876,13 @@ local function get_formula_inner(e)
         e._armour_at_reject or 0, C.ATTACK_PILL_UNSAFE_ARMOUR_FLOOR,
         e._pillhp_at_reject or 0, C.ATTACK_PILL_UNSAFE_HP_THRESHOLD))
   end
+  if e._reject == "blitz_only" then
+    return reject_with_breakdown(e,
+      string.format("REJECT blitz_only @(%d,%d)", e._mx or 0, e._my or 0),
+      string.format("reject:blitz_only — pills only inside a blitz (%s); this pill is not our blitz, has no open call to join, and we cannot lead one: %s%s",
+        tostring(e._blitz_only_src), tostring(e._blitz_only_why),
+        e._blitz_only_desc and (" — allies: " .. e._blitz_only_desc) or ""))
+  end
   if e._reject == "ally_pill_take_priority" then
     local rem = e._reject_remaining or 0
     local by  = e._priority_by
@@ -11596,6 +11703,7 @@ local function get_formula(e)
   if e._reject == "ally_claimed"
      or e._reject == "order"
      or e._reject == "armour_too_low"
+     or e._reject == "blitz_only"
      or e._reject == "ally_pill_take_priority" then
     return f
   end
@@ -14322,6 +14430,99 @@ local function apply_blitz_capture_defer(state, info)
   end
 end
 
+-- Blitz-only pill attacks ("blitzonly" flag / C.BLITZ_ONLY_PILL_ATTACKS, read
+-- through squad.blitz_only). A pool-6 (attack_pill) row stays a live
+-- candidate only when this pill can be taken INSIDE a blitz:
+--   1. it is our blitz already (squad_blitz_target: a committed soldier's
+--      commander pill, or the pill we command),
+--   2. we are negotiating to join a blitz on it (squad_negotiate_pill),
+--   3. an ally has an OPEN blitz call on it we could join (blitz_calls), or
+--   4. we could LEAD a fresh blitz on it (squad.can_lead_blitz: the same gates
+--      the commander election applies).
+-- Anything else is a SOLO attack and the row is REJECTED "blitz_only", with
+-- the failing lead gate kept on the entry for the breakdown and printed once
+-- per change. This only decides what may be PICKED; attack.lua's
+-- BLITZ_ONLY_ABORT is what stops a picked take from firing without a GO.
+-- Runs after the blitz target / join discount passes (they clear other
+-- rejects on blitz rows) and before rederive_pool_partial_best. An existing
+-- reject of another kind is left as it is. When the flag goes off (a runtime
+-- bot_init without it) the leftover rejects are cleared once.
+local function apply_blitz_only_gate(state, info, world)
+  local on = info and squad.blitz_only(state)
+  if not on and not state._blitz_only_marked then return end
+  local cache = state.cost_cache
+  if not cache then return end
+  local now = state.tick or 0
+  local open = nil
+  if on and state.blitz_calls then
+    for _, c in pairs(state.blitz_calls) do
+      if c.pill then open = open or {}; open[c.pill] = true end
+    end
+  end
+  local marked = false
+  -- Commander gate (C.BLITZ_ONLY_CMDR_NEEDS_FREE): free-ally count, computed
+  -- once per call and only when a row actually reaches the lead test.
+  local free_n, free_desc = nil, nil
+  for _, e in pairs(cache) do
+    if e._p == 6 and e._id then
+      local why = nil
+      local gate_need = nil
+      if on then
+        local pid = e._id
+        if state.squad_blitz_target ~= pid and state.squad_negotiate_pill ~= pid
+           and not (open and open[pid]) then
+          local pill = world and world.pills and world.pills[pid]
+          local hp = (pill and pill.health) or e._hpv or 0
+          local ok, w = squad.can_lead_blitz(state, info, hp)
+          if not ok then
+            why = w
+          elseif C.BLITZ_ONLY_CMDR_NEEDS_FREE then
+            -- A NEW take as commander needs itself + free allies >= blitz
+            -- min, else the call can never fill. Only this lead test is
+            -- gated: rows 1-3 above (our blitz, negotiating, open call to
+            -- join) never get here, so joins and a take we already lead
+            -- (squad_blitz_target) are untouched.
+            if not free_n then
+              free_n, free_desc = squad.free_ally_count(state, now, info.player_number)
+            end
+            local need = squad.blitz_min() - 1
+            if free_n < need then
+              why = string.format("cmdr gate: 1 + free allies %d < blitz min %d", free_n, need + 1)
+              gate_need = need
+            end
+          end
+        end
+      end
+      if why then
+        marked = true
+        local desc = gate_need and free_desc or nil
+        if e._blitz_only_desc ~= desc then
+          e._blitz_only_desc = desc
+          if e._reject == "blitz_only" then e.formula = nil end   -- re-render the ally list
+        end
+        if not e._reject or (e._reject == "blitz_only" and e._blitz_only_why ~= why) then
+          e._reject           = "blitz_only"
+          e._reject_remaining = 0
+          e._blitz_only_why   = why
+          e._blitz_only_src   = squad.blitz_only_label(state)
+          e.formula           = nil
+          if gate_need then
+          end
+        end
+      elseif e._reject == "blitz_only" then
+        e._reject           = nil
+        e._reject_remaining = 0
+        e._blitz_only_why   = nil
+        e._blitz_only_src   = nil
+        e._blitz_only_desc  = nil
+        e.formula           = nil
+      end
+    end
+  end
+  state._blitz_only_marked = marked
+end
+M._apply_blitz_only_gate = apply_blitz_only_gate   -- unit tests
+
 function M.finalize_pools(state, world, info)
   -- ── Ally-claimed REJECT sync (runs before partial → pool_cache) ──
   local _tpre = clock_us()
@@ -14332,6 +14533,7 @@ function M.finalize_pools(state, world, info)
   apply_blitz_target(state, info)
   apply_blitz_join_discount(state, info, world)
   apply_blitz_capture_defer(state, info)
+  apply_blitz_only_gate(state, info, world)
   rederive_pool_partial_best(state)
   local _t_apply = clock_us()
   if BRAIN_PROFILE then
@@ -16083,32 +16285,29 @@ local function goal_selection(state, world, info, quiet)
       -- Handoff: defer to the blitz member with the LOWEST capture_pill score
       -- (the same balanced metric the goal selector uses) that also claims
       -- this kill; tie → lower player number. We broadcast our own score as kc.
+      -- Pair pickup (KILL_PICKUP_PAIR_MIN_SQUAD): a big enough blitz keeps the
+      -- best TWO claimers, so we yield only when `keep` allies beat us.
       local yield_to, yield_cost = nil, nil
+      local kp_rank, kp_keep, kp_best, kp_best_cost, kp_mc_cmp, kp_claimers = 1, 1, nil, nil, mc, nil
       if C.KILL_PICKUP_HANDOFF and ally_state.iter_active and info.player_number then
-        local my_pn  = info.player_number
-        local tdead  = state.tank_dead_at
-        for apn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
-          -- Don't yield to a DEAD claimer (its kg/kc broadcast lingers but it
-          -- can't grab) — else a live bot stands down for a corpse and the pill
-          -- goes unclaimed.
-          local is_dead = tdead and tdead[apn] and tdead[apn] > (slot.last_tick or 0)
-          if apn ~= my_pn and not is_dead then
-            local si = slot.info
-            if si and si.kg and tonumber(si.kg) == kp.id then
-              local a_cost = tonumber(si.kc) or 1e9
-              -- An ally beats us if its score is lower, or equal + lower pn.
-              -- Track the BEST such ally so the viz names the real grabber.
-              if a_cost < mc or (a_cost == mc and apn < my_pn) then
-                if not yield_cost or a_cost < yield_cost
-                   or (a_cost == yield_cost and apn < (yield_to or 1e9)) then
-                  yield_to, yield_cost = apn, a_cost
-                end
-              end
-            end
-          end
-        end
+        kp_rank, kp_keep, kp_best, kp_best_cost, kp_mc_cmp, kp_claimers =
+          M.kill_pickup_rank(state, kp, mc, info.player_number, now)
+        if kp_rank > kp_keep then yield_to, yield_cost = kp_best, kp_best_cost end
       end
       kp._yield_to = yield_to  -- for viz
+      kp._rank, kp._keep, kp._mc_cmp = kp_rank, kp_keep, kp_mc_cmp
+      -- Every live claimer ally as "pN=kc", for the panel / viz. Built only
+      -- when something shows it (the pair-rule desc or the debug viz).
+      local kp_vs = nil
+      if kp_claimers and #kp_claimers > 0
+         and (BRAIN_DEBUG_MODE or (C.KILL_PICKUP_PAIR_MIN_SQUAD or 0) > 0) then
+        local parts = {}
+        for i = 1, #kp_claimers do
+          parts[i] = string.format("p%d=%s", kp_claimers[i].pn, tostring(kp_claimers[i].kc))
+        end
+        kp_vs = table.concat(parts, " ")
+      end
+      kp._vs = kp_vs
       if not reachable then
         -- WAY OUT (unreachable): no path to the body within the A* budget —
         -- walled in or simply too far. Drop the claim so the pill reopens to
@@ -16144,6 +16343,13 @@ local function goal_selection(state, world, info, quiet)
                      wx = U.m2w(p.mx), wy = U.m2w(p.my), target_id = kp.id,
                      race_mode = true, kill_grab = true }
           desc = string.format("killgrab#%d@(%d,%d) [HARD pickup]", kp.id, p.mx, p.my)
+        end
+        -- Pair pickup on: every factor of the keep decision, so the panel
+        -- shows why we keep it (rank <= keep; keep=2 when squad >= min).
+        if (C.KILL_PICKUP_PAIR_MIN_SQUAD or 0) > 0 then
+          desc = desc .. string.format(" rank %d<=keep %d (squad %d, min %d) me p%d=%s vs %s",
+            kp_rank, kp_keep, kp.squad_n or 1, C.KILL_PICKUP_PAIR_MIN_SQUAD,
+            info.player_number or -1, tostring(kp_mc_cmp), kp_vs or "none")
         end
       end
     end

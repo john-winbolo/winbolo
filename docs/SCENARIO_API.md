@@ -1196,8 +1196,8 @@ The table **replaces** the bot's, whole. What the spawn's table said and this
 one does not say is gone, because the brain's table is rebuilt rather than
 merged into. Values are text and numbers, as a spawn's are, so a flag a brain
 reads as on or off is written `"1"` and `"0"` rather than `true` and `false`.
-GoalHunter treats only its known flag words that way (`noblitz`, `suicider`,
-`nosuicider`, `noclaimdead`, `normal`, `ammoless`); a valued token such as
+GoalHunter treats only its known flag words that way (`noblitz`, `blitzonly`,
+`suicider`, `nosuicider`, `noclaimdead`, `normal`, `ammoless`); a valued token such as
 `blitzsuiciders = "1"` keeps its value.
 
 What the bot does with it is the brain's business, and there are two levels
@@ -1214,8 +1214,8 @@ to it:
 
 GoalHunter, the brain that ships with the server, writes one: it re-reads the
 whole token string, so `cfg=NAME=VALUE` and `preset=` change its constants
-there and then, and the bare flags (`noblitz`, `suicider`, `nosuicider`,
-`noclaimdead`, `normal`, `ammoless`) change the bot's behaviour from the next
+there and then, and the bare flags (`noblitz`, `blitzonly`, `suicider`,
+`nosuicider`, `noclaimdead`, `normal`, `ammoless`) change the bot's behaviour from the next
 tick. `difficulty=` and `mode=` are **not** applied at runtime — those choose a
 whole bundle of values at load and a second bundle cannot unset the first — so
 the brain logs them as unsupported and leaves them. It also says one line to
@@ -1338,6 +1338,11 @@ it, holds it for the same sixty seconds, and drops it for anything a person
 says afterwards. A player can call a scripted order off with `cancel all` or
 by naming the bot — a bare `cancel` cannot, because that one releases only
 the speaker's own order and a hint's sender is the scenario.
+
+GoalHunter 1.7 also reads `ping = "1"` on a `goto`: the order is filed as if
+a bot-command ping had given it, so a square a hostile pillbox can shoot turns
+the hold into the decoy hold. No scenario op places a ping, so this key is how
+a script reaches the decoy hold (the `decoy_getaway` ROOST test uses it).
 
 Three of the seven are as near as the brain's existing goals get. `defend` on
 a **base** stands on the base, because there is no defend-a-base goal — a base

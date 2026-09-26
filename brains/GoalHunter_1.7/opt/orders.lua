@@ -41,6 +41,7 @@ local ally_state = require("ally_state")
 local print2     = require("print2")
 local bit        = require('bitcompat')
 local CMDS       = require("commands")
+local GA         = require("decoy_getaway")
 
 local M = {}
 
@@ -1260,10 +1261,15 @@ M.forget_order = forget_order
 -- urgent replan) instead of the bot standing on a goto_tile nobody holds.
 -- A fight goal is left alone: it is a real goal and normal play may carry
 -- on with it.  Every way a decoy slot is emptied comes through here.
+-- The hold goal is found by its _decoy mark as well as by the decoy square
+-- (Sep 26): after a DECOY GETAWAY step it points at a chain square, and the
+-- square test alone left it behind at every hold end.  The square test stays
+-- for the ping order's own goto_tile, which decoy_lock keeps in place.
 local function decoy_drop_goal(state, h)
   if not (h and h.decoy) then return end
   local g = state.goal
-  if g and g.kind == "goto_tile" and g.mx == h.mx and g.my == h.my then
+  if g and g.kind == "goto_tile"
+     and (g._decoy or (g.mx == h.mx and g.my == h.my)) then
     require("attack").clear_attack_goal(state, "decoy hold over")
   end
 end
@@ -1527,8 +1533,15 @@ function M.hold_parked(state, info)
     return false
   end
   if not (info and info.tankx and info.tanky) then return false end
-  local dx = bit.rshift(info.tankx, 8) - h.mx
-  local dy = bit.rshift(info.tanky, 8) - h.my
+  -- A DECOY GETAWAY (decoy_getaway.lua) that is driving its chain is not
+  -- parked, and once it is done it parks on the chain's last square.
+  local pmx, pmy = h.mx, h.my
+  if h.decoy and h.ga then
+    if GA.driving(h) then return false end
+    pmx, pmy = GA.park_tile(h)
+  end
+  local dx = bit.rshift(info.tankx, 8) - pmx
+  local dy = bit.rshift(info.tanky, 8) - pmy
   if dx < 0 then dx = -dx end
   if dy < 0 then dy = -dy end
   return dx <= 1 and dy <= 1
@@ -1602,10 +1615,14 @@ M.decoy_pills = decoy_pills
 -- The hold goal: the same goto_tile pick_goal hands back in a hold, marked
 -- so the end of the decoy can tell it from any other goto_tile.  A NEW
 -- table every call: clear_attack_goal wipes the live goal in place.
+-- With a DECOY GETAWAY under way it points at the chain's next square, or
+-- at the square the chain ended on (decoy_getaway.park_tile).
 function M.decoy_goal(h)
-  return { kind = "goto_tile", mx = h.mx, my = h.my,
-           wx = U.m2w(h.mx), wy = U.m2w(h.my), target_id = -1,
-           _ordered = true, _order_hold = true, _decoy = true }
+  local mx, my = GA.park_tile(h)
+  return { kind = "goto_tile", mx = mx, my = my,
+           wx = U.m2w(mx), wy = U.m2w(my), target_id = -1,
+           _ordered = true, _order_hold = true, _decoy = true,
+           _getaway = GA.driving(h) or nil }
 end
 
 -- Is this goal allowed while the decoy stands?  attack_tank on an ENEMY
@@ -1617,6 +1634,8 @@ end
 -- chase, so the goal would only point the gun at nothing.
 function M.decoy_allows(state, info, g)
   if not (g and DECOY_FIGHT_KINDS[g.kind]) then return false end
+  -- A getaway that is driving its chain never leaves it to fight.
+  if GA.driving(state and state._order) then return false end
   if g.km_ally_pn then return false end
   if not (info and info.tankx and info.tanky) then return false end
   local tx, ty = g.mx, g.my
@@ -1677,8 +1696,16 @@ function M.decoy_lock(state, world, info, now)
     decoy_end(state, info, "pills down")
     return false
   end
+  -- THE GETAWAY (decoy_getaway.lua): scan, turn, drive after the hit.  It
+  -- moves the square the hold goal points at; nothing else here changes.
+  GA.update(state, world, info, h, now)
+  local pmx, pmy = GA.park_tile(h)
   local g = state.goal
-  if g and g.kind == "goto_tile" and g.mx == h.mx and g.my == h.my then
+  if g and g.kind == "goto_tile" and g.mx == pmx and g.my == pmy then
+    -- On arrival at a chain square the park square is the square it drove
+    -- to, so this goal table is kept; its _getaway mark (set only while the
+    -- chain moves) is taken off here (Sep 26).
+    if g._getaway and not GA.driving(h) then g._getaway = nil end
     return true
   end
   if M.hold_parked(state, info) and M.decoy_allows(state, info, g) then
@@ -1697,14 +1724,26 @@ end
 -- away for the park kinds, but init.lua's kill_lgm crosshair search runs
 -- AFTER steering and picks throttle as one of its 27 moves.  The soft hold
 -- lets that through; a decoy does not.  Called on the final keys.
+-- A DECOY GETAWAY with a chain turns the parked tank to face the chain's
+-- first square here too (decoy_getaway.keys).
 function M.decoy_keys(state, info, keys, taps)
   local KF = _G.KEY_FASTER
-  if KF and decoy_held(state) and M.hold_parked(state, info) then
-    if keys then keys = bit.band(keys, bit.bnot(KF)) end
-    if taps then taps = bit.band(taps, bit.bnot(KF)) end
+  local h = decoy_held(state)
+  if h and M.hold_parked(state, info) then
+    if KF then
+      if keys then keys = bit.band(keys, bit.bnot(KF)) end
+      if taps then taps = bit.band(taps, bit.bnot(KF)) end
+    end
+    keys, taps = GA.keys(state, info, h, keys, taps)
   end
   return keys, taps
 end
+
+-- The getaway overlay, for init.lua (think() is at its upvalue cap, so it
+-- is reached through ORD).
+M.draw_getaway = GA.draw
+-- The getaway's diagonal step, for steering.lua (cpf_path_to).
+M.getaway_diagonal = GA.diagonal_next
 
 -- ONE SLOT, ONE BOT (ORDER_CLAIM_TIEBREAK).  A repeat ping adds one slot to a
 -- ping order (anchor want + 1), and when the auction for it times out two
@@ -2749,7 +2788,7 @@ local function hint_start(state, world, info, cmd, now)
     tkind = cmd.target and cmd.target.kind or nil,
     tid = tid, sender = HINT_SENDER, sender_name = "scenario",
     mx = cmd.target and cmd.target.mx, my = cmd.target and cmd.target.my,
-    needs_shells = needs_shells, who = cmd.who,
+    needs_shells = needs_shells, who = cmd.who, ping = cmd.ping,
   }
   o.known[spec.oid] = { spec = spec, tick = now }
   note_last(o, HINT_SENDER, spec.oid)
@@ -2774,7 +2813,13 @@ local function hint_command(state, world, info, t)
   if v == "goto" then
     local mx, my = hint_rect_middle(t)
     if not mx then return nil end
-    return hint_goto(state, mx, my)
+    local cmd = hint_goto(state, mx, my)
+    -- ping = "1": the order is filed as if a bot-command ping had given it,
+    -- so arriving on a square a pill can shoot starts the decoy hold (see
+    -- GO-THERE DECOY HARD HOLD).  A scenario has no call that places a ping;
+    -- this key is how a ROOST round reaches the decoy hold.
+    if t.ping == "1" or t.ping == 1 or t.ping == true then cmd.ping = true end
+    return cmd
   end
 
   if v == "hold" then
