@@ -18,6 +18,12 @@
  *
  * What it pins:
  *   - The joiner's first PACKET_JOIN_ACCEPT really was dropped.
+ *   - The race itself: at the first pump the joiner is in the lobby (the
+ *     moment clientFrontAwaitJoin returns and the old copy was taken), its
+ *     slot is not yet its real one. The server sends the accept and starts
+ *     the lobby replay in the same JOIN handling, and the client resends JOIN
+ *     only after JOIN_RETRY_INTERVAL (50 ticks), so the replay always lands
+ *     well before the resent accept here.
  *   - After the resent accept, clientSimGetServerPlayerNum on the joiner is
  *     the slot the server gave it (found by name on the server), and agrees
  *     with clientSimGetMyPlayerNum.
@@ -25,11 +31,6 @@
  *     clientSimNetSendReady (the path the Ready button takes) sets the
  *     joiner's slot ready on the server and in the joiner's own lobby view.
  *
- * What it only prints: the slot clientSimGetServerPlayerNum returned at the
- * first pump the joiner was in the lobby — the moment clientFrontAwaitJoin
- * would have returned and the old copy was taken. It is 0 when the lobby
- * replay beat the resent accept, but that order depends on timing, and the
- * fix does not change it, so it is not asserted.
  *
  * Clean path apart from the one chosen drop. Server state is read off the
  * ServerSim struct (the unittests profile permits internal access).
@@ -158,6 +159,9 @@ int run_loopback_join_accept_lost_ready(void) {
             "(at landing=%u)\n", connectedAt, (unsigned)joinerSlot,
             (unsigned)liveSlot, (unsigned)slotAtLanding);
     UT_ASSERT_MSG(joinerSlot != hostSlot, "joiner shares the host's slot");
+    UT_ASSERT_MSG(slotAtLanding != joinerSlot,
+                  "joiner had its real slot on landing: the lost-accept race "
+                  "did not happen");
     UT_ASSERT_MSG(liveSlot == joinerSlot,
                   "live player number does not match the server's slot");
     UT_ASSERT_MSG(clientSimGetMyPlayerNum(h.cs2) == joinerSlot,
