@@ -100,7 +100,8 @@ typedef struct BOLO_PACK_ATTR {
                           /* base = bits 2-3, ally = bits 4-5; bit 6 is   */
                           /* classic mode, bit 7 is allies in trees       */
   BYTE view_policies2;    /* overviewWindow = bits 0-1, lineOfSight =     */
-                          /* bits 2-3; bits 4-7 spare                     */
+                          /* bits 2-3; bit 4 is positional sound; bits    */
+                          /* 5-7 spare                                    */
 } INFO_PACKET;
 #pragma pack(pop)
 BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 113, INFO_PACKET_must_be_113_bytes);
@@ -170,38 +171,46 @@ static inline void infoPacketReadViewPolicies(const INFO_PACKET *info,
   if (alliesInTrees) *alliesInTrees = (info->view_policies & 0x80u) != 0;
 }
 
-/* Pack the overview window and the line-of-sight mode into
- * INFO_PACKET.view_policies2. Two bits each — the window at bits 0-1,
- * line of sight at bits 2-3 — so bits 4-7 stay clear for whatever needs
- * them next. Both are masked, so a value from a newer sender cannot
- * reach the spare bits. */
+/* Pack the overview window, the line-of-sight mode and the
+ * positional-sound flag into INFO_PACKET.view_policies2. Two bits each
+ * for the first two — the window at bits 0-1, line of sight at bits
+ * 2-3 — and positional sound at bit 4, so bits 5-7 stay clear for
+ * whatever needs them next. Both modes are masked, so a value from a
+ * newer sender cannot reach the other bits. */
 static inline BYTE infoPacketPackViewPolicies2(uint8_t overviewWindow,
-                                               uint8_t lineOfSight) {
+                                               uint8_t lineOfSight,
+                                               bool positionalSound) {
   return (BYTE)(((unsigned)overviewWindow & 0x3u)
-              | (((unsigned)lineOfSight & 0x3u) << 2));
+              | (((unsigned)lineOfSight & 0x3u) << 2)
+              | (positionalSound ? 0x10u : 0u));
 }
 
-/* Read the overview window and the line-of-sight mode back out of a
- * received INFO_PACKET. A packet shorter than the full layout predates
- * the byte, so it reports the built-in defaults — the expanded window
- * with nothing blocking sight inside it. Two bits can also hold a value
+/* Read the overview window, the line-of-sight mode and the
+ * positional-sound flag back out of a received INFO_PACKET. A packet
+ * shorter than the full layout predates the byte, so it reports the
+ * built-in defaults — the expanded window with nothing blocking sight
+ * inside it, and positional sound off. Two bits can also hold a value
  * neither enum names; that reports the default as well, so a browser row
  * never shows a mode this build cannot name. Meaning B in view_policy.h,
  * so not the OVERVIEW_WINDOW_STOCK / LINE_OF_SIGHT_STOCK pair. */
 static inline void infoPacketReadViewPolicies2(const INFO_PACKET *info,
                                                size_t len,
                                                uint8_t *overviewWindow,
-                                               uint8_t *lineOfSight) {
+                                               uint8_t *lineOfSight,
+                                               bool *positionalSound) {
   unsigned window = (unsigned)overviewWindowExpanded;
   unsigned sight  = (unsigned)lineOfSightOff;
+  bool sound = false;
   if (info != NULL && len >= sizeof(INFO_PACKET)) {
     unsigned w = (unsigned)info->view_policies2 & 0x3u;
     unsigned s = ((unsigned)info->view_policies2 >> 2) & 0x3u;
     if (w < (unsigned)OVERVIEW_WINDOW_COUNT) window = w;
     if (s < (unsigned)LINE_OF_SIGHT_COUNT) sight = s;
+    sound = (info->view_policies2 & 0x10u) != 0;
   }
   if (overviewWindow) *overviewWindow = (uint8_t)window;
   if (lineOfSight) *lineOfSight = (uint8_t)sight;
+  if (positionalSound) *positionalSound = sound;
 }
 #endif
 

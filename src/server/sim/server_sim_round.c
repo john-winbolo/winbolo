@@ -630,6 +630,7 @@ void serverSimRefreshWbnLobbyInfo(ServerSim *sim) {
     info.alliesInTrees   = serverSimGetAlliesInTrees(sim);
     info.overviewWindow  = serverSimGetOverviewWindow(sim);
     info.lineOfSight     = serverSimGetLineOfSight(sim);
+    info.positionalSound = serverSimGetPositionalSound(sim);
     info.smartPingsOff   = serverSimGetSmartPingsOff(sim);
     info.pillViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryPill);
     info.baseViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryBase);

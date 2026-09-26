@@ -135,7 +135,8 @@ static void discoveryFillServerFromInfoPacket(const INFO_PACKET *info, const str
                              &out->pillView, &out->baseView, &out->allyView,
                              &out->classicMode, &out->alliesInTrees);
   infoPacketReadViewPolicies2(info, len,
-                              &out->overviewWindow, &out->lineOfSight);
+                              &out->overviewWindow, &out->lineOfSight,
+                              &out->positionalSound);
   /* Same tier: a packet that reaches the view byte said something about
    * the rules, and a shorter one said nothing and took the stand-in. */
   out->hasViewInfo = (len >= (size_t)INFO_PACKET_PRE_VIEWS2_SIZE);
@@ -492,7 +493,8 @@ bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPing
                                &out->pillView, &out->baseView, &out->allyView,
                                &out->classicMode, &out->alliesInTrees);
     infoPacketReadViewPolicies2(info, (size_t)len,
-                                &out->overviewWindow, &out->lineOfSight);
+                                &out->overviewWindow, &out->lineOfSight,
+                                &out->positionalSound);
     /* Same tier - see discoveryFillServerFromInfoPacket. */
     out->hasViewInfo = ((size_t)len >= (size_t)INFO_PACKET_PRE_VIEWS2_SIZE);
     out->hasRichInfo = rich;
