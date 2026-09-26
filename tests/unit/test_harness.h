@@ -170,6 +170,7 @@ int run_live_stats_lgm_loss_splits_victim_and_killer(void);
 int run_live_stats_captures_credit_new_owner(void);
 int run_live_stats_out_of_range_slot_ignored(void);
 int run_live_stats_cleared_on_running_phase(void);
+int run_build_select_reset_on_running_phase(void);
 int run_shell_death_codec_roundtrip(void);
 int run_shell_death_culls_matching_predicted_shell(void);
 int run_shell_death_rejected_culls_without_impact(void);

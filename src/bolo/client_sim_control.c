@@ -1067,6 +1067,9 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->pendingBuildAction = 0;
         cs->pendingBuildX = 0;
         cs->pendingBuildY = 0;
+        /* Every game starts on trees, as a new ClientSim does; the last
+         * game's pick would otherwise carry into this one. */
+        cs->currentBuildSelect = BsTrees;
         /* Reseed the death-detection edge to "alive" so the new game's first
          * snapshot doesn't register a spurious death or respawn edge against
          * the previous game's last value. */
