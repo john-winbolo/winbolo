@@ -354,6 +354,67 @@ int run_lv_hostile_modifiers_length(void) {
   return 0;
 }
 
+/* A record whose frame says a different length from the fields its type
+ * reads is left at the frame's end, so the record behind it still decodes.
+ * Both ways: a frame two bytes longer than a log_TankSetStock, and one two
+ * bytes shorter, where the case reads into the next record's header. */
+int run_lv_hostile_frame_length(void) {
+  uint8_t body[2048];
+  uint8_t records[64];
+  uint8_t rec[8];
+  size_t pos = 0;
+  size_t bodyLen;
+  LogViewerState *lv;
+
+  lv = lv_decoderCreate(false);
+  UT_ASSERT_MSG(lv != NULL, "lv_decoderCreate returned NULL");
+  lv_screenSetSizeX(30);
+  lv_screenSetSizeY(30);
+
+  bodyLen = buildOrdinaryBody(body);
+  UT_ASSERT_MSG(loadBody(body, bodyLen) == TRUE, "seed snapshot failed to load");
+
+  /* Slot 2's stocks with two bytes the type does not read behind them. */
+  rec[0] = 2; rec[1] = 9; rec[2] = 8; rec[3] = 7; rec[4] = 6;
+  rec[5] = 0xAA; rec[6] = 0xBB;
+  pos = appendRecord(records, pos, (uint8_t) log_TankSetStock, rec, 7);
+  rec[0] = 3; rec[1] = 1; rec[2] = 2; rec[3] = 3; rec[4] = 4;
+  pos = appendRecord(records, pos, (uint8_t) log_TankSetStock, rec, 5);
+
+  UT_ASSERT_MSG(lv_specRecordPump(false, records, pos) == TRUE,
+                "record pump stopped playback on a long frame");
+  UT_ASSERT_MSG(lv->tankInv[2].shells == 9 && lv->tankInv[2].trees == 6,
+                "slot 2 stocks = %d/%d/%d/%d (want 9/8/7/6)",
+                lv->tankInv[2].shells, lv->tankInv[2].mines,
+                lv->tankInv[2].armour, lv->tankInv[2].trees);
+  UT_ASSERT_MSG(lv->tankInv[3].shells == 1 && lv->tankInv[3].mines == 2 &&
+                lv->tankInv[3].armour == 3 && lv->tankInv[3].trees == 4,
+                "slot 3 stocks = %d/%d/%d/%d after a long frame "
+                "(want 1/2/3/4: the reader lost its alignment)",
+                lv->tankInv[3].shells, lv->tankInv[3].mines,
+                lv->tankInv[3].armour, lv->tankInv[3].trees);
+
+  /* A frame of three bytes around a record the type reads five of: the case
+     runs on into the next record's type and length bytes. */
+  rec[0] = 4; rec[1] = 5; rec[2] = 6;
+  pos = appendRecord(records, 0, (uint8_t) log_TankSetStock, rec, 3);
+  rec[0] = 5; rec[1] = 11; rec[2] = 12; rec[3] = 13; rec[4] = 14;
+  pos = appendRecord(records, pos, (uint8_t) log_TankSetStock, rec, 5);
+
+  UT_ASSERT_MSG(lv_specRecordPump(false, records, pos) == TRUE,
+                "record pump stopped playback on a short frame");
+  UT_ASSERT_MSG(lv->tankInv[5].shells == 11 && lv->tankInv[5].mines == 12 &&
+                lv->tankInv[5].armour == 13 && lv->tankInv[5].trees == 14,
+                "slot 5 stocks = %d/%d/%d/%d after a short frame "
+                "(want 11/12/13/14: the reader lost its alignment)",
+                lv->tankInv[5].shells, lv->tankInv[5].mines,
+                lv->tankInv[5].armour, lv->tankInv[5].trees);
+
+  lv_specSeedControlClear();
+  lv_decoderDestroy(lv);
+  return 0;
+}
+
 /* Decode one run of elems data bytes on row y from startX through the
  * blocks stream, into a fresh all-DEEP_SEA map. The byte after the data is
  * padding: lv_mapProcessRun stops at the end of the stream before it has

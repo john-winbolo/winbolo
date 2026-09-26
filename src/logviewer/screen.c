@@ -1716,6 +1716,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
        since keeps it. */
     bool isV2 = (g_lv->loadedLogVersion >= LOG_VERSION_V2);
     unsigned short evLen = 0; /* framed payload length after code */
+    size_t payloadStart = 0;  /* where the framed payload begins */
 
     /* The count is off the recording and can name more events than the log
        holds. Once a read comes back short there are none left, so stop
@@ -1726,13 +1727,14 @@ void lv_screenProcessLog(unsigned short numEvents) {
 
     if (isV2) {
       /* v2 frames every event as [type][u16 BE payload-length][payload].
-         Read the length unconditionally; known-type cases below consume
-         exactly that many payload bytes, unknown types skip it. */
+         The cases below read their own fields; the cursor is then put at
+         the end of the frame, however many bytes a case took. */
       BYTE lenBytes[2];
       if (logReadBytes(lenBytes, 2) != 2) {
         break;
       }
       evLen = (unsigned short)((lenBytes[0] << 8) | lenBytes[1]);
+      payloadStart = lv_logGetCurrentPosition();
     }
 
     switch (code) {
@@ -2558,6 +2560,14 @@ void lv_screenProcessLog(unsigned short numEvents) {
       }
       break;
 
+    }
+    /* The frame's length decides where the next event starts, not the
+       fields a case read. The writer frames each event by the bytes it
+       wrote, so the two agree in a file it produced; where they do not, a
+       case that read short or long would otherwise leave every event after
+       it decoding from the wrong byte. */
+    if (isV2) {
+      lv_logSetPosition(payloadStart + evLen);
     }
     /* v2 is plaintext: blockKey stays 0 for the whole stream, so the
        per-event key roll is suppressed. v1 rolls the key to the event

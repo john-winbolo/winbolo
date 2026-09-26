@@ -1164,12 +1164,14 @@ int run_lv_team_colours_events(void);
  * is refused for every kind; a server line to a slot past the roster reads as
  * an empty seat; a log_TankSetModifiers blob of the wrong length is consumed
  * by its length so the record behind it still decodes; a map run of
- * identical squares that would pass column 255 stops at it. */
+ * identical squares that would pass column 255 stops at it; a record whose
+ * frame length disagrees with its fields is left at the frame's end. */
 int run_lv_hostile_item_counts(void);
 int run_lv_hostile_entity_remove_index(void);
 int run_lv_hostile_server_text_slot(void);
 int run_lv_hostile_modifiers_length(void);
 int run_lv_hostile_map_run_edge(void);
+int run_lv_hostile_frame_length(void);
 
 /* .wbv reader gate (test_wbv_reader.c): loads the committed fixtures
  * through the production log-viewer reader (lv_screenLoadMapFromMemory)
