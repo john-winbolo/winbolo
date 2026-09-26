@@ -47,6 +47,7 @@
 #include "../gui/ping_kinds.h"
 #include "../gui/sdl3/ping_icons.h"   /* pingIconsInit -- the replay shares the game's icons */
 #include "../gui/sdl3/ping_marker.h"  /* pingMarkerDraw */
+#include "scenario_panel.h"           /* SCN_MARKERS_MAX */
 
 #include "game_view.h"
 
@@ -62,6 +63,12 @@ extern bool lv_screenGetPing(int index, unsigned char *sender,
                              unsigned char *kind, uint16_t *worldX,
                              uint16_t *worldY, uint32_t *ageMs);
 extern int  lv_screenGetPingCapacity(void);
+/* lv_presentation.h and draw.h: a scenario marker's square for the followed
+   player, and the viewer's drawing of one. */
+extern bool lv_screenMarkerPlace(BYTE id, BYTE *mx, BYTE *my, BYTE *colour);
+extern void lv_drawScnMarker(SDL_Renderer *renderer, BYTE colour,
+                             float cx, float cy, float tileW, float tileH,
+                             uint32_t nowMs);
 
 /* The names under the replay's ping markers, in a cache of their own rather
  * than the classic label pass's: the shared drawer in tank_label.c keys on
@@ -713,6 +720,31 @@ static void gv_drawPings(SDL_Renderer *renderer,
   }
 }
 
+/* --- Scenario map markers -----------------------------------------
+ * The markers the camera tank's player would see, on the same squares the
+ * pings use and with the same arithmetic. The view is redrawn every frame,
+ * so they breathe on the wall clock whether the replay is playing or not. */
+static void gv_drawScnMarkers(SDL_Renderer *renderer,
+                              int originX, int originY, int tileW, int tileH,
+                              int edgeX, int edgeY) {
+  uint32_t now = (uint32_t)SDL_GetTicks();
+  BYTE id;
+
+  for (id = 0; id < SCN_MARKERS_MAX; id++) {
+    BYTE mx, my, colour;
+    float cx, cy;
+
+    if (!lv_screenMarkerPlace(id, &mx, &my, &colour)) continue;
+    cx = (float)originX
+       + ((float)mx + 0.5f - (float)(lv_screenGetXOffset() + 1)) * (float)tileW
+       - (float)edgeX;
+    cy = (float)originY
+       + ((float)my + 0.5f - (float)(lv_screenGetYOffset() + 1)) * (float)tileH
+       - (float)edgeY;
+    lv_drawScnMarker(renderer, colour, cx, cy, (float)tileW, (float)tileH, now);
+  }
+}
+
 /* --- Frame assembly (mirrors sdl3DrawMainScreen step-for-step) ---- */
 
 void lv_drawGameViewFrame(void *screenView, void *mineView,
@@ -792,6 +824,10 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
    * border rather than painting over the chrome. A replay has no team, so
    * every ping in the recording is shown. */
   gv_drawPings(renderer, originX, originY, tileW, tileH, edgeX, edgeY);
+
+  /* A scenario's markers, on the ground beside the pings and inside the
+   * same clip. */
+  gv_drawScnMarkers(renderer, originX, originY, tileW, tileH, edgeX, edgeY);
 
   /* Steps 4-5 — sprites. lv_screenUpdate already populated tks/shells/
    * lgmList just before calling us via lv_drawMainScreen. */

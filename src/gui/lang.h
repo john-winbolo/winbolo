@@ -2854,6 +2854,9 @@
 /* Game Information's Scores heading, and a slot's row with no name ({number} = the slot). */
 #define STR_LV_INFO_SCORES                       2640
 #define STR_LV_INFO_SCORE_SLOT                   2641
+/* A scenario announcement on the newswire: {string1}{string2}{string3} = the line, {player} = the team or player it went to. */
+#define STR_LV_SCN_ANNOUNCE                      2642
+#define STR_LV_SCN_ANNOUNCE_TO                   2643
 
 /* Rule descriptions */
 

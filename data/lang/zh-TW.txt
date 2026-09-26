@@ -2619,3 +2619,5 @@ STR_LV_INFO_SCRIPT_SOURCE_SERVER=伺服器
 STR_LV_INFO_RULE_CHANGE=節拍 {number}：{string1} → {string2}
 STR_LV_INFO_SCORES=分數
 STR_LV_INFO_SCORE_SLOT=位置 {number}
+STR_LV_SCN_ANNOUNCE={string1}{string2}{string3}
+STR_LV_SCN_ANNOUNCE_TO=[{player}] {string1}{string2}{string3}

@@ -2619,3 +2619,5 @@ STR_LV_INFO_SCRIPT_SOURCE_SERVER=сервер
 STR_LV_INFO_RULE_CHANGE=тик {number}: {string1} → {string2}
 STR_LV_INFO_SCORES=Очки
 STR_LV_INFO_SCORE_SLOT=Слот {number}
+STR_LV_SCN_ANNOUNCE={string1}{string2}{string3}
+STR_LV_SCN_ANNOUNCE_TO=[{player}] {string1}{string2}{string3}

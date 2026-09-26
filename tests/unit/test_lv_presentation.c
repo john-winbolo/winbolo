@@ -1060,3 +1060,164 @@ int run_lv_presentation_slot_team(void) {
     UT_ASSERT_MSG(!drawnAt0, "a panel is drawn before any record");
     return 0;
 }
+
+/* ── 8. Announcements on the newswire ──────────────────────────────── */
+
+/* After the opening:
+ *   tick 0   "Go!" to team 2 for 250 ticks                        20 ms
+ *   tick 1   "Hi" to everyone for 100 ticks                       40 ms
+ *   tick 2   the line cleared                                     60 ms
+ *   ticks 3-6 NOEVENTS 3
+ *   tick 7   LOG_QUIT                                            160 ms
+ * The unit binary's lang table answers "?" for every string, so what is
+ * counted is the lines, not their words. */
+static const uint8_t kLvpAnnounceStream[] = {
+    0x03, 0x01, 0x40, 0x00, 0x08,
+        0x02, 0xFF, 0x00, 0xFA, 0x03, 0x47, 0x6F, 0x21,
+    0x03, 0x01, 0x40, 0x00, 0x07,
+        0x00, 0xFF, 0x00, 0x64, 0x02, 0x48, 0x69,
+    0x03, 0x01, 0x40, 0x00, 0x05,
+        0x00, 0xFF, 0x00, 0x00, 0x00,
+    0x01, 0x03,
+    0x00,
+};
+
+/* Past the clear, before LOG_QUIT, which posts a line of its own. */
+#define LVP_ANNOUNCE_MID_MS 120u
+
+int run_lv_presentation_announce_posts(void) {
+    const char     *path = "lv_presentation_announce.wbv";
+    static LvpLog   b;
+    LogViewerState *lv;
+    int             linesPlayed, linesBack, linesForward;
+    int             before;
+    bool            clearedAtMid;
+
+    UT_ASSERT(log_ScnAnnounce == 0x40);
+
+    lvpPutOpening(&b);
+    lvpPut(&b, kLvpAnnounceStream, sizeof(kLvpAnnounceStream));
+    lv = lvpOpen(&b, path);
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the hand-built log could not be loaded");
+    }
+
+    /* Played past both lines and the clear: one line each, none for the
+       clear. */
+    before = g_lvStubEventsAdded;
+    {
+        int steps = 0;
+        while (lv_screenIsPlaying() == TRUE &&
+               lv_screenGetTimeRunning() < LVP_ANNOUNCE_MID_MS && steps < 64) {
+            lv_screenLogTick();
+            steps++;
+        }
+    }
+    linesPlayed  = g_lvStubEventsAdded - before;
+    clearedAtMid = !lv_screenGetAnnounce()->set;
+
+    /* Back before the first line: the rebuild stores nothing and posts
+       nothing. */
+    before    = g_lvStubEventsAdded;
+    lv_screenSeekToTimeMs(0);
+    linesBack = g_lvStubEventsAdded - before;
+
+    /* Forward past them again: playback posts the two lines once more, and
+       the rebuild after it posts none of its own. */
+    before       = g_lvStubEventsAdded;
+    lv_screenSeekToTimeMs(LVP_ANNOUNCE_MID_MS);
+    linesForward = g_lvStubEventsAdded - before;
+
+    lv_decoderDestroy(lv);
+    remove(path);
+
+    UT_ASSERT_MSG(linesPlayed == 2, "playback posted %d lines (want one for "
+                  "each announcement and none for the clear)", linesPlayed);
+    UT_ASSERT_MSG(clearedAtMid, "the line is still stored after its clear");
+    UT_ASSERT_MSG(linesBack == 0, "the seek back posted %d lines", linesBack);
+    UT_ASSERT_MSG(linesForward == 2, "the seek forward posted %d lines (want "
+                  "playback's two; the rebuild posts none)", linesForward);
+    return 0;
+}
+
+/* ── 9. Which markers the followed player sees ─────────────────────── */
+
+/* A marker as a record would have left it. */
+static LvPresMarker lvpMarker(BYTE destTeam, BYTE destPlayer) {
+    LvPresMarker m;
+
+    memset(&m, 0, sizeof(m));
+    m.set        = TRUE;
+    m.kind       = SCN_MARKER_KIND_SQUARE;
+    m.destTeam   = destTeam;
+    m.destPlayer = destPlayer;
+    m.x          = 10;
+    m.y          = 12;
+    m.colour     = 5;
+    return m;
+}
+
+int run_lv_presentation_marker_visible(void) {
+    const char     *path = "lv_presentation_marker.wbv";
+    static LvpLog   b;
+    LogViewerState *lv;
+    LvPresMarker    everyone = lvpMarker(0, 0xFF);
+    LvPresMarker    team2    = lvpMarker(2, 0xFF);
+    LvPresMarker    team3    = lvpMarker(3, 0xFF);
+    LvPresMarker    slot1    = lvpMarker(0, 1);
+    LvPresMarker    unset    = lvpMarker(0, 0xFF);
+    bool            everyoneShown, everyoneNobody, unsetHidden;
+    bool            team2Slot1, team2Slot0, team3Slot1, team2Unknown;
+    bool            slot1Slot1, slot1Slot0, slot1Nobody;
+
+    unset.set = FALSE;
+
+    /* kLvpTeamStream puts slot 1 on team 2 at 40 ms. */
+    lvpPutOpening(&b);
+    lvpPut(&b, kLvpTeamStream, sizeof(kLvpTeamStream));
+    lv = lvpOpen(&b, path);
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the hand-built log could not be loaded");
+    }
+    if (!lvpPlayToEnd()) {
+        lv_decoderDestroy(lv);
+        remove(path);
+        UT_FAIL("playback did not reach end-of-log");
+    }
+
+    everyoneShown  = lv_screenMarkerVisible(&everyone, 1);
+    everyoneNobody = lv_screenMarkerVisible(&everyone, NEUTRAL);
+    unsetHidden    = !lv_screenMarkerVisible(&unset, 1) &&
+                     !lv_screenMarkerVisible(NULL, 1);
+    team2Slot1     = lv_screenMarkerVisible(&team2, 1);
+    team2Slot0     = lv_screenMarkerVisible(&team2, 0);
+    team3Slot1     = lv_screenMarkerVisible(&team3, 1);
+    slot1Slot1     = lv_screenMarkerVisible(&slot1, 1);
+    slot1Slot0     = lv_screenMarkerVisible(&slot1, 0);
+    slot1Nobody    = lv_screenMarkerVisible(&slot1, NEUTRAL);
+
+    /* Before the log_TeamSet slot 1's team is not known. */
+    lv_screenSeekToTimeMs(20);
+    team2Unknown = lv_screenMarkerVisible(&team2, 1);
+
+    lv_decoderDestroy(lv);
+    remove(path);
+
+    UT_ASSERT_MSG(everyoneShown && everyoneNobody,
+                  "a marker to everyone was hidden");
+    UT_ASSERT_MSG(unsetHidden, "an unset marker was shown");
+    UT_ASSERT_MSG(team2Slot1, "team 2's marker was hidden from slot 1 on "
+                  "team 2");
+    UT_ASSERT_MSG(!team2Slot0, "team 2's marker was shown to slot 0, whose "
+                  "team is not known");
+    UT_ASSERT_MSG(!team3Slot1, "team 3's marker was shown to slot 1 on "
+                  "team 2");
+    UT_ASSERT_MSG(!team2Unknown, "team 2's marker was shown to slot 1 before "
+                  "it joined the team");
+    UT_ASSERT_MSG(slot1Slot1, "slot 1's marker was hidden from slot 1");
+    UT_ASSERT_MSG(!slot1Slot0 && !slot1Nobody,
+                  "slot 1's marker was shown to another slot or to nobody");
+    return 0;
+}

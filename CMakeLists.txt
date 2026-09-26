@@ -6277,6 +6277,8 @@ set(_unit_test_names
     lv_presentation_plain_round
     lv_presentation_panel_choice
     lv_presentation_slot_team
+    lv_presentation_announce_posts
+    lv_presentation_marker_visible
     lv_server_tick_recorded
     lv_server_tick_anchors
     lv_server_tick_hostile

@@ -1911,6 +1911,8 @@ static const UnitTestEntry s_tests[] = {
     { "lv_presentation_plain_round",                     run_lv_presentation_plain_round                     },
     { "lv_presentation_panel_choice",                    run_lv_presentation_panel_choice                    },
     { "lv_presentation_slot_team",                       run_lv_presentation_slot_team                       },
+    { "lv_presentation_announce_posts",                  run_lv_presentation_announce_posts                  },
+    { "lv_presentation_marker_visible",                  run_lv_presentation_marker_visible                  },
     { "lv_server_tick_recorded",                         run_lv_server_tick_recorded                         },
     { "lv_server_tick_anchors",                          run_lv_server_tick_anchors                          },
     { "lv_server_tick_hostile",                          run_lv_server_tick_hostile                          },

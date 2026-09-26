@@ -1114,8 +1114,10 @@ static void lv_presApply(const LvPresPayload *p, int key, uint32_t ms) {
 }
 
 /* Read one of the four records from the reader's position and store what it
- * says, as at time ms, if it passes its checks. What playback runs. */
-static void lv_presReadRecord(BYTE code, uint32_t ms) {
+ * says, as at time ms, if it passes its checks. What playback runs. Answers
+ * the key it stored under, or -1 for a record that failed; s_presPayload
+ * still holds what was read. */
+static int lv_presReadRecord(BYTE code, uint32_t ms) {
   int key;
 
   lv_presReadPayload(code, &s_presPayload);
@@ -1123,6 +1125,64 @@ static void lv_presReadRecord(BYTE code, uint32_t ms) {
   if (key >= 0) {
     lv_presApply(&s_presPayload, key, ms);
   }
+  return key;
+}
+
+/* Post an announcement playback has just stored to the newswire, labelled
+ * with who it went to when that was not everyone. The viewer watches every
+ * player at once, so every announcement is posted whatever its destination.
+ * The message step only: a rebuild stores announcements without it, so a
+ * seek never posts one twice. A clear posts nothing.
+ *
+ * The line is the script's own bytes, up to LV_PRES_ANNOUNCE_MAX of them,
+ * split across the three string arguments since each holds 63. */
+static void lv_presPostAnnounce(const LvPresPayload *p) {
+  const BYTE *h = p->hdr;
+  char        text[LV_PRES_ANNOUNCE_MAX + 1];
+  size_t      len;
+  size_t      part = LANG_MSGARG_STRING_LEN - 1;
+  MessageArgs args = {0};
+  langid      body = STR_LV_SCN_ANNOUNCE;
+
+  if (p->code != log_ScnAnnounce || p->len == 0) {
+    return;
+  }
+  len = (p->len > LV_PRES_ANNOUNCE_MAX) ? LV_PRES_ANNOUNCE_MAX : p->len;
+  memcpy(text, p->data, len);
+  text[len] = '\0';
+  snprintf(args.string1, sizeof(args.string1), "%.*s",
+           (int)(len < part ? len : part), text);
+  if (len > part) {
+    size_t rest = len - part;
+    snprintf(args.string2, sizeof(args.string2), "%.*s",
+             (int)(rest < part ? rest : part), text + part);
+  }
+  if (len > 2 * part) {
+    snprintf(args.string3, sizeof(args.string3), "%s", text + 2 * part);
+  }
+
+  /* A slot wins over a team, the way the panel rows are picked. */
+  if (h[1] != 0xFF) {
+    char name[PLAYER_NAME_LEN];
+    name[0] = '\0';
+    if (lv_playersIsInUse(h[1])) {
+      lv_playersGetPlayerName(h[1], name, sizeof(name));
+    } else if (!lv_screenGetLoggedPlayerName(h[1], name, sizeof(name))) {
+      MessageArgs slotArgs = {0};
+      slotArgs.number = h[1];
+      snprintf(name, sizeof(name), "%s",
+               langGetTextFmt(STR_LV_INFO_SCORE_SLOT, &slotArgs));
+    }
+    snprintf(args.playerName, sizeof(args.playerName), "%s", name);
+    body = STR_LV_SCN_ANNOUNCE_TO;
+  } else if (h[0] != 0) {
+    MessageArgs teamArgs = {0};
+    teamArgs.number = h[0];
+    snprintf(args.playerName, sizeof(args.playerName), "%s",
+             langGetTextFmt(STR_DLGLOBBY_TEAM_HEADER, &teamArgs));
+    body = STR_LV_SCN_ANNOUNCE_TO;
+  }
+  lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, body, &args);
 }
 
 /* Store the team a log_TeamSet playback has already read, as at time ms, if
@@ -1203,6 +1263,54 @@ const LvPresPanelRow *lv_screenFollowedPanelRow(void) {
   }
   return lv_screenChoosePanelRow(lv_screenGetPanelRow(0, 0xFF), teamRow,
                                  slotRow);
+}
+
+bool lv_screenMarkerVisible(const LvPresMarker *m, BYTE followedSlot) {
+  BYTE team;
+
+  if (m == NULL || !m->set) {
+    return FALSE;
+  }
+  /* A slot wins over a team, the way the panel rows are picked. */
+  if (m->destPlayer != 0xFF) {
+    return followedSlot < MAX_TANKS && m->destPlayer == followedSlot;
+  }
+  if (m->destTeam != 0) {
+    return followedSlot < MAX_TANKS &&
+           lv_screenGetSlotTeam(followedSlot, &team) && team == m->destTeam;
+  }
+  return TRUE;
+}
+
+bool lv_screenMarkerPlace(BYTE id, BYTE *mx, BYTE *my, BYTE *colour) {
+  const LvPresMarker *m = lv_screenGetMarker(id);
+  BYTE x, y;
+
+  if (m == NULL || !lv_screenMarkerVisible(m, lv_screenFollowedSlot())) {
+    return FALSE;
+  }
+  if (m->kind == SCN_MARKER_KIND_FOLLOW) {
+    /* The square of the tank the viewer draws for that slot: the same test
+       lv_playersMakeScreenTanks makes, so a marker rides a tank that is on
+       the map and nothing else. */
+    BYTE px, py, frame;
+    bool onBoat;
+
+    if (m->slot >= MAX_TANKS || !lv_playersIsInUse(m->slot)) {
+      return FALSE;
+    }
+    lv_playersGetTankDetails(m->slot, &x, &y, &px, &py, &frame, &onBoat);
+    if (x == 0 && y == 0 && px == 0 && py == 0) {
+      return FALSE;
+    }
+  } else {
+    x = m->x;
+    y = m->y;
+  }
+  if (mx != NULL) *mx = x;
+  if (my != NULL) *my = y;
+  if (colour != NULL) *colour = m->colour;
+  return TRUE;
 }
 
 const LvPresPanelRow *lv_screenGetPanelRow(BYTE destTeam, BYTE destPlayer) {
@@ -1958,8 +2066,13 @@ void lv_screenProcessLog(unsigned short numEvents) {
          leaves the stores as a rebuild at this time would; on a live feed,
          which has no index, it is the only way they fill. The reader
          consumes the record's own lengths, so everything after it is still
-         read from the right byte. */
-      lv_presReadRecord(code, g_lv->timeRunning);
+         read from the right byte. An announcement that was stored is also
+         posted to the newswire, here and not in the store step, so a rebuild
+         never posts it again. */
+      if (lv_presReadRecord(code, g_lv->timeRunning) >= 0 &&
+          code == log_ScnAnnounce) {
+        lv_presPostAnnounce(&s_presPayload);
+      }
       break;
     case log_ScnHint:
       /* An order a scenario gave one bot: the bot's slot, then the verb the

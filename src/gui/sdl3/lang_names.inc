@@ -1411,6 +1411,8 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_LV_RETURN_MAIN_MENU", STR_LV_RETURN_MAIN_MENU },
     { "STR_LV_REWIND", STR_LV_REWIND },
     { "STR_LV_REW_BTN", STR_LV_REW_BTN },
+    { "STR_LV_SCN_ANNOUNCE", STR_LV_SCN_ANNOUNCE },
+    { "STR_LV_SCN_ANNOUNCE_TO", STR_LV_SCN_ANNOUNCE_TO },
     { "STR_LV_SECONDS", STR_LV_SECONDS },
     { "STR_LV_SELECT_TEAM", STR_LV_SELECT_TEAM },
     { "STR_LV_SHELLS_FMT", STR_LV_SHELLS_FMT },
@@ -2319,4 +2321,4 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_YES", STR_YES },
 };
 
-#define K_LANG_NAME_TABLE_SIZE  2306
+#define K_LANG_NAME_TABLE_SIZE  2308

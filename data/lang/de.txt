@@ -2621,3 +2621,5 @@ STR_LV_INFO_SCRIPT_SOURCE_SERVER=Server
 STR_LV_INFO_RULE_CHANGE=Tick {number}: {string1} → {string2}
 STR_LV_INFO_SCORES=Punkte
 STR_LV_INFO_SCORE_SLOT=Slot {number}
+STR_LV_SCN_ANNOUNCE={string1}{string2}{string3}
+STR_LV_SCN_ANNOUNCE_TO=[{player}] {string1}{string2}{string3}

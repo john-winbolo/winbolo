@@ -435,7 +435,10 @@ line up for no time.
 Written by the scenario funnel's announce arm. The viewer keeps the last line,
 with the time it landed, until a clear replaces it, and rebuilds it at the
 playhead after a seek. A record with a destination out of range or a text
-past 128 bytes is consumed and ignored.
+past 128 bytes is consumed and ignored. Playback also posts each line to the
+viewer's newswire once, whatever its destination, prefixed "[Team N]" or
+"[name]" when it went to a team or a player; a clear posts nothing, and a
+seek's rebuild posts nothing.
 
 ### `log_ScnMarker` payload
 
@@ -461,7 +464,11 @@ Written by the scenario funnel's marker arm. The viewer keeps each marker by
 id until a clear removes it — the record has no expiry — and rebuilds the
 markers at the playhead after a seek. A record with an id past 15, a kind past
 2, a destination out of range, a placement that is not four bytes, a colour
-past 15 or a follow slot past the last slot is consumed and ignored.
+past 15 or a follow slot past the last slot is consumed and ignored. The
+viewer draws the markers the followed player would see on its map — one to
+everyone, one to that player's slot, or one to the team log_TeamSet last put
+that slot on — a follow marker on its slot's tank while that tank is on the
+map.
 
 ### `log_ScnHint` payload
 

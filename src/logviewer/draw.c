@@ -156,6 +156,88 @@ static void lvDrawItemMarkers(const LvItemMarker *hits, int count,
     SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
 }
 
+/* --- Scenario map markers ---------------------------------------------
+ * The game draws these through scnMarkerDraw (src/gui/sdl3/scenario_marker.c),
+ * whose header brings in the game's screentank.h; its screenTanks is not the
+ * viewer's, so no viewer file can include it. This is the same drawing, with
+ * the same numbers, over the same palette. A change to how the game's marker
+ * looks is a change here too. */
+
+/* The scenario palette, from scenario_panel_draw.cpp. Declared here rather
+   than through scenario_panel_draw.h: that header's timer needs the game's
+   global.h, and lv_global.h shares its include guard, so in this file the
+   game's one is never read. */
+bool scnPanelColourRGBA(uint8_t index, uint8_t *r, uint8_t *g, uint8_t *b,
+                        uint8_t *a);
+
+/* How much of the colour shows at the bottom and the top of a breath, and one
+   breath in milliseconds. */
+#define LV_SCN_MARKER_ALPHA_LOW  0.45f
+#define LV_SCN_MARKER_ALPHA_HIGH 0.95f
+#define LV_SCN_MARKER_BREATH_MS  1600.0f
+
+/* The outline's thickness, and the pointer's height, width and gap above the
+   square, as fractions of a map square. */
+#define LV_SCN_MARKER_STROKE    0.10f
+#define LV_SCN_MARKER_POINT_H   0.38f
+#define LV_SCN_MARKER_POINT_W   0.30f
+#define LV_SCN_MARKER_POINT_GAP 0.12f
+
+void lv_drawScnMarker(SDL_Renderer *renderer, BYTE colour,
+                      float cx, float cy, float tileW, float tileH,
+                      uint32_t nowMs) {
+    uint8_t r = 0, g = 0, b = 0, a = 0;
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
+    float phase, breath, halfW, halfH, stroke, height, halfPoint, tipY;
+    Uint8 ca;
+    int steps, rows, i;
+
+    if (renderer == NULL || tileW <= 0.0f || tileH <= 0.0f) return;
+    if (!scnPanelColourRGBA(colour, &r, &g, &b, &a)) return;
+
+    /* A cosine, so the turn at each end breathes rather than ticks. */
+    phase  = fmodf((float)nowMs, LV_SCN_MARKER_BREATH_MS) /
+             LV_SCN_MARKER_BREATH_MS;
+    breath = 0.5f - 0.5f * cosf(phase * 6.2831853f);
+    ca = (Uint8)((float)a * (LV_SCN_MARKER_ALPHA_LOW +
+                 (LV_SCN_MARKER_ALPHA_HIGH - LV_SCN_MARKER_ALPHA_LOW) * breath));
+
+    SDL_GetRenderDrawBlendMode(renderer, &oldBlend);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer, r, g, b, ca);
+
+    /* The outline, as nested one-pixel rects: SDL has no stroke width. */
+    halfW  = tileW * 0.5f;
+    halfH  = tileH * 0.5f;
+    stroke = tileH * LV_SCN_MARKER_STROKE;
+    steps  = (int)(stroke + 0.5f);
+    if (steps < 1) steps = 1;
+    for (i = 0; i < steps; i++) {
+        SDL_FRect rect;
+        rect.x = cx - halfW + (float)i;
+        rect.y = cy - halfH + (float)i;
+        rect.w = tileW - (float)(2 * i);
+        rect.h = tileH - (float)(2 * i);
+        if (rect.w <= 0.0f || rect.h <= 0.0f) break;
+        SDL_RenderRect(renderer, &rect);
+    }
+
+    /* The pointer above it, tip down, filled a row at a time. */
+    height    = tileH * LV_SCN_MARKER_POINT_H;
+    halfPoint = tileW * LV_SCN_MARKER_POINT_W * 0.5f;
+    tipY      = cy - halfH - tileH * LV_SCN_MARKER_POINT_GAP;
+    rows      = (int)(height + 0.5f);
+    if (rows < 1) rows = 1;
+    for (i = 0; i < rows; i++) {
+        float t = (float)i / (float)rows;
+        float w = halfPoint * (1.0f - t);
+        float y = tipY - height + (float)i;
+        SDL_RenderLine(renderer, cx - w, y, cx + w, y);
+    }
+
+    SDL_SetRenderDrawBlendMode(renderer, oldBlend);
+}
+
 /* Embed mode: a host that already owns an ImGui frame draws the world
  * texture itself, so the two framebuffer blits must not run, the viewer's
  * menu bar does not exist, and the tile grid sizes against the host's
@@ -795,6 +877,38 @@ static void drawRenderTexture(SDL_Texture *texture, int srcX, int srcY, int srcW
     SDL_RenderTexture(sdlRenderer, texture, &srcRect, &dstRect);
 }
 
+/* The markers the followed player would see, into the overview's render
+ * target, whose square (0, 0) is the viewport's top-left. A marker's square
+ * and the one above it, where the pointer sits, are marked for redraw the
+ * way a tank's are, so the next frame repaints the ground under them before
+ * drawing them again and a marker that has moved or gone leaves nothing. The
+ * target is only redrawn when the replay moves or the view does, so a paused
+ * replay holds its markers still. */
+static void lvDrawScnMarkers(BYTE zoomFactor) {
+    LogViewerState *lv = lv_screenGetState();
+    float side = (float)(zoomFactor * TILE_SIZE_X);
+    uint32_t now = (uint32_t)SDL_GetTicks();
+    BYTE id;
+
+    for (id = 0; id < SCN_MARKERS_MAX; id++) {
+        BYTE mx, my, colour;
+        int sx, sy;
+
+        if (!lv_screenMarkerPlace(id, &mx, &my, &colour)) continue;
+        sx = (int)mx - (int)lv->xOffset;
+        sy = (int)my - (int)lv->yOffset;
+        if (sx < 0 || sy < 0 || sx > lv_screenGetSizeX() ||
+            sy > lv_screenGetSizeY()) {
+            continue;
+        }
+        lv_drawScnMarker(sdlRenderer, colour,
+                         (float)sx * side + side / 2.0f,
+                         (float)sy * side + side / 2.0f, side, side, now);
+        lv_drawLast[sx][sy] = 10000;
+        if (sy > 0) lv_drawLast[sx][sy - 1] = 10000;
+    }
+}
+
 void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, screenGunsight *gs, screenBullets *sBullets, screenLgm *lgms, BYTE showPillLabels, BYTE showBaseLabels, int32_t srtDelay, BYTE isPillView, int edgeX, int edgeY, BYTE useCursor, BYTE cursorLeft, BYTE cursorTop) {
     bool done, isPill, isBase, shouldDraw;
     /* x/y must be wider than BYTE: the loop runs to lv_screenGetSizeX()/Y(),
@@ -947,6 +1061,10 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
     if (simple) {
         lvDrawItemMarkers(itemHits, itemHitCount, zoomFactor);
     }
+
+    /* A scenario's markers: on the ground, under everything that moves, as
+       the game view draws them. */
+    lvDrawScnMarkers(zoomFactor);
 
     lv_drawShells(sBullets);
     lv_drawTanks(tks);

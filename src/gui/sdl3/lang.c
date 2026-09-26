@@ -2405,6 +2405,8 @@ static const LangEntry langTable[] = {
     {2639, "tick {number}: {string1} \xE2\x86\x92 {string2}"},
     {2640, "Scores"},
     {2641, "Slot {number}"},
+    {2642, "{string1}{string2}{string3}"},
+    {2643, "[{player}] {string1}{string2}{string3}"},
     {2435, "Once before the round's first tick, after the scenario's rules are applied: where the map is arranged."},
     {2436, "The round's first running tick, where the tanks exist and the roster has settled."},
     {2437, "Once per frame, fifty times a second; the tick it is handed goes up by two each time."},

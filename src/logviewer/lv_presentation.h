@@ -134,6 +134,20 @@ const LvPresPanelRow *lv_screenChoosePanelRow(const LvPresPanelRow *everyone,
  * playhead. NULL when there is nothing to draw. */
 const LvPresPanelRow *lv_screenFollowedPanelRow(void);
 
+/* Whether a marker is shown to the player in followedSlot: one to everyone
+ * always is; one to a slot only to that slot; one to a team only to a slot
+ * whose team log_TeamSet has named and matches. A pair naming both a slot and
+ * a team is taken as the slot, as the panel rows are. False for a NULL or
+ * unset marker and, for an addressed marker, for a followedSlot of MAX_TANKS
+ * or more. Reads the marker and the slot teams and nothing else. */
+bool lv_screenMarkerVisible(const LvPresMarker *m, BYTE followedSlot);
+
+/* Where marker id is drawn for the followed player at the playhead, as a map
+ * square, and its palette colour. A square marker is at its own (x, y); a
+ * follow marker is on the square of its slot's tank, and is not drawn while
+ * that slot has no tank on the map. False when there is nothing to draw. */
+bool lv_screenMarkerPlace(BYTE id, BYTE *mx, BYTE *my, BYTE *colour);
+
 /* The server's game tick at playback time ms: the clock a scenario's timer
  * target and an announcement's arrival are counted in, a hundred a second and
  * reset each round. Worked out from the recording's log_ServerTick records

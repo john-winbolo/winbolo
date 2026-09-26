@@ -264,6 +264,22 @@ struct SDL_Texture* lv_drawGetTilesTexture(void);
 int lv_drawGetSheetScale(void);
 
 /*********************************************************
+*NAME:          lv_drawScnMarker
+*PURPOSE:
+*  Draws one scenario map marker the way the game does: the
+*  square outlined in the marker's palette colour with a
+*  pointer above it, both breathing on the wall clock.
+*  (cx, cy) is the centre of the square in the renderer's
+*  current coordinates and tileW/tileH its size there. A
+*  colour the palette draws nothing for draws nothing.
+*  Both the overview and the game view call this, so the
+*  two cannot disagree about how a marker looks.
+*********************************************************/
+void lv_drawScnMarker(struct SDL_Renderer *renderer, BYTE colour,
+                      float cx, float cy, float tileW, float tileH,
+                      uint32_t nowMs);
+
+/*********************************************************
 *NAME:          lv_drawBlitGameTexture
 *PURPOSE:
 *  Blits the game render texture to the screen without

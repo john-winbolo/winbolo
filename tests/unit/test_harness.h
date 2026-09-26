@@ -3458,7 +3458,8 @@ int run_lv_rule_changes_armour_levels(void);
  * rebuild over thousands of records and a plain round with every store
  * empty; the row the panel draws of the everyone, team and slot rows; and a
  * slot's team from log_TeamSet, kept across seeks with no line posted by a
- * rebuild. */
+ * rebuild; announcements posted to the newswire once by playback and never
+ * by a rebuild; and which markers the followed player sees. */
 int run_lv_presentation_seek(void);
 int run_lv_presentation_hostile(void);
 int run_lv_presentation_scripted_round(void);
@@ -3466,6 +3467,8 @@ int run_lv_presentation_rebuild_many(void);
 int run_lv_presentation_plain_round(void);
 int run_lv_presentation_panel_choice(void);
 int run_lv_presentation_slot_team(void);
+int run_lv_presentation_announce_posts(void);
+int run_lv_presentation_marker_visible(void);
 /* The server's game tick at the playhead (test_lv_server_tick.c): a recorded
  * round's tick at end-of-log, hand-written anchors either side of a snapshot
  * and across a new round's run, records of the wrong length, a recording from
