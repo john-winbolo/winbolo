@@ -2385,6 +2385,14 @@ bool        serverSimGetClassicMode(const ServerSim *sim);
 void        serverSimSetAlliesInTrees(ServerSim *sim, bool on);
 bool        serverSimGetAlliesInTrees(const ServerSim *sim);
 
+/* Positional sound — when on, each sound event to a human carries which
+ * side the sound is on and a banded distance. Off is the classic
+ * behaviour: every sound is sent centred, with only its near or far
+ * variant chosen. Bots and the recording keep real squares either way.
+ * Off by default, and turning classic mode on forces it off. */
+void        serverSimSetPositionalSound(ServerSim *sim, bool on);
+bool        serverSimGetPositionalSound(const ServerSim *sim);
+
 /* Overview window — which block of squares the map overview keeps live
  * around the player's own tank, and line of sight — whether anything
  * stops the player seeing inside that block. Values are OverviewWindow

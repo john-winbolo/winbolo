@@ -425,7 +425,11 @@ struct ServerSim {
                                     * to their allies instead of being
                                     * withheld; off is the classic
                                     * behaviour. */
-    uint8_t  overviewWindow;       /* OverviewWindow — which block of squares
+    bool     positionalSound;      /* sound events tell a human which side a
+                                    * sound is on and roughly how far; off
+                                    * sends every sound centred, which is the
+                                    * classic behaviour. */
+    uint8_t  overviewWindow;      /* OverviewWindow — which block of squares
                                     * the map overview keeps live round the
                                     * player's own tank. Expanded (0) is
                                     * today's behaviour. */
@@ -495,6 +499,7 @@ struct ServerSim {
         uint16_t   viewDecaySecs[VIEW_CATEGORY_COUNT];
         bool       classicMode;
         bool       alliesInTrees;
+        bool       positionalSound;
         uint8_t    overviewWindow;
         uint8_t    lineOfSight;
         bool       smartPingsOff;
@@ -1515,9 +1520,13 @@ void soundPickInit(SoundPick *pick);
  * must not hear, and sounds farther than the one already held for that id are
  * left alone. listenerMX/MY is the recipient's tank square. With keepSquare
  * the held copy carries the real square; without it the middle two bytes are
- * rewritten to the pan and dist measured from the listener. */
+ * rewritten to the pan and dist measured from the listener. positional is the
+ * lobby's positional-sound setting: when false a positioned sound is written
+ * with pan 0 and dist SDIST_SOFT (near) or SOUND_DIST_MAX (far). A sound with
+ * no square and a keepSquare recipient are the same either way. */
 void soundPickOffer(SoundPick *pick, const GameEvent *ev, BYTE recipient,
-                    int listenerMX, int listenerMY, bool keepSquare);
+                    int listenerMX, int listenerMY, bool keepSquare,
+                    bool positional);
 
 /* True when an in-process recipient is sent a sound's real map square: a
  * bot-manager bot, or a slot flagged through serverSimSetSoundSquares. */

@@ -276,12 +276,15 @@ int run_sound_delivery_wire_cull(void) {
      * ally one — so the rect set is the recipient's own tank screen and nothing
      * else. The range arms no longer turn on that, but the payload arm reads
      * the rect to place a square inside it and another outside it, and a
-     * fixture that is not what it claims would make that arm meaningless. */
+     * fixture that is not what it claims would make that arm meaningless.
+     * Positional sound is turned on so the payload arm reads the pan and
+     * band top a human is sent with it on. */
     threadsWaitForMutex();
     serverSimSetViewPolicy(h.sim, viewCategoryPill, viewPolicyOff,
                            VIEW_DECAY_DEFAULT_SECS);
     serverSimSetViewPolicy(h.sim, viewCategoryBase, viewPolicyOff,
                            VIEW_DECAY_DEFAULT_SECS);
+    serverSimSetPositionalSound(h.sim, true);
     threadsReleaseMutex();
 
     n = serverSimBuildViewports(h.sim, slot, vps, MAX_VIEWPORTS);

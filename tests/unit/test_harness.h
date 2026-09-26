@@ -348,6 +348,9 @@ int run_classic_mode_lock_blocks_dispatch(void);
 int run_classic_mode_lobby_reset(void);
 int run_allies_in_trees_defaults(void);
 int run_allies_in_trees_classic_mode(void);
+int run_positional_sound_defaults(void);
+int run_positional_sound_classic_mode(void);
+int run_positional_sound_lobby_event(void);
 int run_lobby_mods_enabled_defaults(void);
 int run_lobby_mods_enabled_dispatch(void);
 int run_lobby_mods_enabled_codec(void);
@@ -1443,22 +1446,26 @@ int run_viewport_floor(void);
  * so does a local slot flagged through serverSimSetSoundSquares until the flag
  * is cleared; and soundPanAndDist, over every offset out to 40 squares, gives
  * only the nine pans and eight band tops, keeps the near/far split and the
- * range cull, and mirrors east and west. */
+ * range cull, and mirrors east and west; with positional sound off
+ * soundPickOffer sends a human pan 0 and only a near or far dist. */
 int run_sound_event_codec(void);
 int run_sound_delivery_builder(void);
 int run_sound_payload_shape(void);
 int run_sound_pan_dist_encoding(void);
+int run_sound_positional_off_centred(void);
 
 /* Positional sound gains (test_sound_gains.c): soundDistGains never goes above
  * unity for any pan and dist, keeps the channel towards the sound at unity
  * inside SDIST_SOFT, centres a sound with no east-west offset, and mirrors
  * east and west; clientSoundDist picks the near or far variant on the
- * SDIST_SOFT band edge and hands the frontend its gains. */
+ * SDIST_SOFT band edge and hands the frontend its gains, or unity on both
+ * channels while the server has positional sound off. */
 int run_sound_gains_table(void);
 int run_sound_gains_centre_unity(void);
 int run_sound_gains_never_above_unity(void);
 int run_sound_gains_mirror(void);
 int run_sound_dist_variant_by_band(void);
+int run_sound_positional_off_unity(void);
 
 /* Policy-driven viewport rects (test_view_policy_rects.c):
  * serverSimBuildViewports honours the per-category ViewPolicy — allied pills,

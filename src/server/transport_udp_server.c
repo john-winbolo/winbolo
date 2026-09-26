@@ -781,7 +781,8 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
         if (hasPos) {
             for (i = 0; i < (int)serverSimGetEventCount(sim); i++) {
                 soundPickOffer(&pick, &serverSimGetEvents(sim)[i], (BYTE)c,
-                               clientMX, clientMY, false);
+                               clientMX, clientMY, false,
+                               serverSimGetPositionalSound(sim));
             }
         }
 

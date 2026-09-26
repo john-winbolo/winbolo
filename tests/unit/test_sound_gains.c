@@ -8,10 +8,12 @@
  * ever produces a gain above unity, that a sound straight north or south is
  * centred at full volume, and that east and west are mirror images.
  *
- * The last case drives clientSoundDist on a client sim and reads the played
- * sound back from the frontend recorder in test_stubs.c: the dist picks the
- * near or the far variant on the SDIST_SOFT edge, and the pan reaches the
- * frontend as its gains.
+ * The last two cases drive clientSoundDist on a client sim and read the
+ * played sound back from the frontend recorder in test_stubs.c: the dist
+ * picks the near or the far variant on the SDIST_SOFT edge, and the pan
+ * reaches the frontend as its gains while the server has positional sound
+ * on. With it off the variant is picked the same way and both channels
+ * play at unity.
  */
 
 #include <stdint.h>
@@ -19,6 +21,7 @@
 
 #include "global.h"
 #include "client_sim.h"
+#include "client_sim_internal.h" /* positionalSound, set here by hand */
 #include "client_enums.h"   /* sndEffects */
 #include "game_sim.h"
 #include "sounddist.h"      /* soundDistGains, SDIST_SOFT / SDIST_NONE */
@@ -134,6 +137,9 @@ int run_sound_dist_variant_by_band(void) {
     clientSimCreate(cs);
     gs = clientSimGetGameSim(cs);
     UT_ASSERT_MSG(gs != NULL, "clientSimGetGameSim returned NULL");
+    /* As the lobby-settings event leaves it when the server has positional
+     * sound on. */
+    cs->positionalSound = true;
 
     /* SDIST_SOFT is the near band's top: the near variant, panned hard
      * east. */
@@ -163,6 +169,37 @@ int run_sound_dist_variant_by_band(void) {
                   "the left channel must be the quieter", SOUND_PAN_MAX,
                   SDIST_SOFT + SOUND_DIST_BAND, ut_sound_get_gain_left(0),
                   ut_sound_get_gain_right(0));
+
+    ut_sound_reset();
+    clientSimDestroy(cs);
+    return 0;
+}
+
+int run_sound_positional_off_unity(void) {
+    ClientSim *cs = clientSimAlloc();
+    GameSim *gs;
+
+    UT_ASSERT(cs != NULL);
+    clientSimCreate(cs);
+    gs = clientSimGetGameSim(cs);
+    UT_ASSERT_MSG(gs != NULL, "clientSimGetGameSim returned NULL");
+    cs->positionalSound = false;
+    UT_ASSERT(!clientSimGetPositionalSound(cs));
+
+    /* Hard east at the last in-range distance: the far variant, and both
+     * channels at unity because the server has positional sound off. */
+    ut_sound_reset();
+    clientSoundDist(gs, bigExplosionNear, SOUND_PAN_MAX, SOUND_DIST_MAX);
+    UT_ASSERT_MSG(ut_sound_count() == 1 &&
+                  ut_sound_get(0) == (int)bigExplosionFar,
+                  "dist %d played %d sound(s), the first %d; expected "
+                  "bigExplosionFar (%d)", SOUND_DIST_MAX, ut_sound_count(),
+                  ut_sound_get(0), (int)bigExplosionFar);
+    UT_ASSERT_MSG(ut_sound_get_gain_left(0) == SG_UNITY &&
+                  ut_sound_get_gain_right(0) == SG_UNITY,
+                  "with positional sound off pan %d played at %d,%d, "
+                  "expected 256,256", SOUND_PAN_MAX,
+                  ut_sound_get_gain_left(0), ut_sound_get_gain_right(0));
 
     ut_sound_reset();
     clientSimDestroy(cs);

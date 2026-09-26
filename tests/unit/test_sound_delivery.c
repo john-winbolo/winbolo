@@ -447,6 +447,9 @@ int run_sound_payload_shape(void) {
 
     UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
     serverSimAddPlayer(sim, 1, "P1", false);
+    /* The pans and dists below are what a human is sent with positional
+     * sound on; off is pinned by run_sound_positional_off_centred. */
+    serverSimSetPositionalSound(sim, true);
 
     gs = serverSimGetGameSim(sim);
     UT_ASSERT_MSG(gs != NULL, "serverSimGetGameSim returned NULL");
@@ -755,6 +758,93 @@ int run_sound_pan_dist_encoding(void) {
                           "and west must mirror", dx, dy, (int)pan, -dx, dy,
                           (int)mirrorPan);
         }
+    }
+    return 0;
+}
+
+/* 5. soundPickOffer with the lobby's positional-sound setting off and on. Off,
+ *    a human is sent pan 0 and only near or far: dist SDIST_SOFT or
+ *    SOUND_DIST_MAX. On, the pan and band top soundPanAndDist gives. A sound
+ *    with no square is centred and near either way, and a recipient that keeps
+ *    the square is sent the square either way. */
+static const GameEvent *sdOffer(SoundPick *pick, uint8_t soundId, BYTE mx,
+                                BYTE my, bool keepSquare, bool positional) {
+    GameEvent ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.type = EVENT_SOUND;
+    ev.data[0] = soundId;
+    ev.data[1] = mx;
+    ev.data[2] = my;
+    ev.data[3] = 1;
+    soundPickInit(pick);
+    soundPickOffer(pick, &ev, 0, SD_LISTENER_MX, SD_LISTENER_MY, keepSquare,
+                   positional);
+    return pick->has[soundId] ? &pick->ev[soundId] : NULL;
+}
+
+int run_sound_positional_off_centred(void) {
+    static const struct {
+        int     gap;       /* squares east of the listener */
+        int     offPan;
+        uint8_t offDist;
+        int     onPan;
+        uint8_t onDist;
+    } cases[] = {
+        { SD_GAP_NEAR,  0, SDIST_SOFT,     SOUND_PAN_MAX, 10 },
+        { SD_GAP_HEARD, 0, SOUND_DIST_MAX, SOUND_PAN_MAX, 30 },
+    };
+    SoundPick pick;
+    const GameEvent *got;
+    int c, p;
+
+    for (c = 0; c < (int)(sizeof(cases) / sizeof(cases[0])); c++) {
+        const BYTE soundMX = (BYTE)(SD_LISTENER_MX + cases[c].gap);
+
+        for (p = 0; p < 2; p++) {
+            const bool positional = (p == 1);
+            const int wantPan = positional ? cases[c].onPan : cases[c].offPan;
+            const uint8_t wantDist =
+                positional ? cases[c].onDist : cases[c].offDist;
+
+            got = sdOffer(&pick, (uint8_t)bigExplosionNear, soundMX,
+                          SD_LISTENER_MY, false, positional);
+            UT_ASSERT_MSG(got != NULL,
+                          "a sound %d squares east was not picked with "
+                          "positional sound %s", cases[c].gap,
+                          positional ? "on" : "off");
+            UT_ASSERT_MSG((int8_t)got->data[1] == wantPan &&
+                          got->data[2] == wantDist,
+                          "a sound %d squares east with positional sound %s "
+                          "came back pan %d dist %u, expected pan %d dist %u",
+                          cases[c].gap, positional ? "on" : "off",
+                          (int)(int8_t)got->data[1], got->data[2], wantPan,
+                          wantDist);
+
+            /* A recipient that keeps the square is sent it whatever the
+             * setting says. */
+            got = sdOffer(&pick, (uint8_t)bigExplosionNear, soundMX,
+                          SD_LISTENER_MY, true, positional);
+            UT_ASSERT_MSG(got != NULL && got->data[1] == soundMX &&
+                          got->data[2] == SD_LISTENER_MY,
+                          "a keepSquare recipient with positional sound %s was "
+                          "not sent the square %u,%u", positional ? "on" : "off",
+                          (unsigned)soundMX, (unsigned)SD_LISTENER_MY);
+        }
+    }
+
+    /* A sound with no square is centred and in the first band either way. */
+    for (p = 0; p < 2; p++) {
+        const bool positional = (p == 1);
+
+        got = sdOffer(&pick, (uint8_t)bigExplosionNear, 0xFF, 0xFF, false,
+                      positional);
+        UT_ASSERT_MSG(got != NULL && got->data[1] == 0 &&
+                      got->data[2] == soundDistBandTop(0),
+                      "a sound with no square with positional sound %s came "
+                      "back pan %d dist %u, expected pan 0 dist %u",
+                      positional ? "on" : "off",
+                      got ? (int)(int8_t)got->data[1] : -1,
+                      got ? got->data[2] : 0, soundDistBandTop(0));
     }
     return 0;
 }

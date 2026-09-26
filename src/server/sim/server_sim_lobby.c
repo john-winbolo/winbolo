@@ -110,6 +110,7 @@ void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cf
   }
   sim->originalLobbySettings.classicMode         = sim->classicMode;
   sim->originalLobbySettings.alliesInTrees       = sim->alliesInTrees;
+  sim->originalLobbySettings.positionalSound     = sim->positionalSound;
   sim->originalLobbySettings.overviewWindow      = sim->overviewWindow;
   sim->originalLobbySettings.lineOfSight         = sim->lineOfSight;
   sim->originalLobbySettings.smartPingsOff       = sim->smartPingsOff;
@@ -853,6 +854,15 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
              * is set, the same way it owns the three view policies. */
             if (sim->classicMode) return false;
             serverSimSetAlliesInTrees(sim, value[0] != 0);
+            return true;
+        }
+        case LST_POSITIONAL_SOUND: {
+            if (len != 1) return false;
+            /* Classic mode plays every sound centred and owns this value
+             * while it is set, the same as LST_ALLIES_IN_TREES. A plain
+             * bool, so any non-zero byte means on. */
+            if (sim->classicMode) return false;
+            serverSimSetPositionalSound(sim, value[0] != 0);
             return true;
         }
         case LST_OVERVIEW_WINDOW: {

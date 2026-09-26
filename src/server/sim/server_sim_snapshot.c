@@ -117,7 +117,8 @@ void soundPickInit(SoundPick *pick) {
 }
 
 void soundPickOffer(SoundPick *pick, const GameEvent *ev, BYTE recipient,
-                    int listenerMX, int listenerMY, bool keepSquare) {
+                    int listenerMX, int listenerMY, bool keepSquare,
+                    bool positional) {
     uint8_t soundId = ev->data[0];
     int mx = ev->data[1];
     int my = ev->data[2];
@@ -153,6 +154,13 @@ void soundPickOffer(SoundPick *pick, const GameEvent *ev, BYTE recipient,
          * the range cull, so the winner always has a pan and a dist. */
         inRange = soundPanAndDist(listenerMX, listenerMY, mx, my,
                                   &pan, &sdist);
+        /* With positional sound off the recipient learns only near or far:
+         * centred, at the top of the near range or the last in-range
+         * distance. The near test below and at the client reads the same. */
+        if (!positional) {
+            pan = 0;
+            sdist = (sdist <= SDIST_SOFT) ? SDIST_SOFT : SOUND_DIST_MAX;
+        }
     }
 
     /* A tank hit reaches the player hit at any range: they play hitTankSelf
@@ -1469,7 +1477,8 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         if (hasClientPos) {
             for (i = 0; i < sim->eventCount; i++) {
                 soundPickOffer(&pick, &sim->events[i], clientIdx,
-                               clientMX, clientMY, keepSquare);
+                               clientMX, clientMY, keepSquare,
+                               serverSimGetPositionalSound(sim));
             }
         }
 

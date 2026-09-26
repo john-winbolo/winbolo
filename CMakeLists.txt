@@ -3861,6 +3861,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_view_policy_settings.c
     tests/unit/test_classic_mode_settings.c
     tests/unit/test_allies_in_trees_settings.c
+    # The positional-sound setting: apply, classic mode, lock and the
+    # lobby-settings byte.
+    tests/unit/test_positional_sound_settings.c
     tests/unit/test_lobby_mods_enabled.c
     tests/unit/test_fog_settings.c
     # The named visibility sets the lobby offers, and the match that reads
@@ -4900,6 +4903,9 @@ set(_unit_test_names
     classic_mode_lobby_reset
     allies_in_trees_defaults
     allies_in_trees_classic_mode
+    positional_sound_defaults
+    positional_sound_classic_mode
+    positional_sound_lobby_event
     lobby_mods_enabled_defaults
     lobby_mods_enabled_dispatch
     lobby_mods_enabled_codec
@@ -5276,11 +5282,13 @@ set(_unit_test_names
     sound_delivery_builder
     sound_payload_shape
     sound_pan_dist_encoding
+    sound_positional_off_centred
     sound_gains_table
     sound_gains_centre_unity
     sound_gains_never_above_unity
     sound_gains_mirror
     sound_dist_variant_by_band
+    sound_positional_off_unity
     view_rects_default_baseline
     view_rects_always_base_ally
     view_rects_off

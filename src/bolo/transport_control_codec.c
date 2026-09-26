@@ -512,6 +512,7 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
  *   [pillDecay 2 BE] [baseDecay 2 BE] [allyDecay 2 BE]
  *   [classicMode 1] [alliesInTrees 1] [voiceMode 1]
  *   [overviewWindow 1] [lineOfSight 1] [smartPingsOff 1] [modsOff 1]
+ *   [positionalSound 1]
  *
  * A new field goes where it belongs in the layout, and every field
  * after it moves; the sender and the receiver are built from the same
@@ -528,10 +529,10 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
  * + hostSlot(1) + three view
  * policies(3) + three view decay seconds(6) + classicMode(1)
  * + alliesInTrees(1) + voiceMode(1) + overviewWindow(1) + lineOfSight(1)
- * + smartPingsOff(1) + modsOff(1). */
+ * + smartPingsOff(1) + modsOff(1) + positionalSound(1). */
 #define LOBBY_SETTINGS_WIRE_PAYLOAD \
     (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 1 + 1 + 4 + 1 + 3 + 6 + 1 + 1 + 1 \
-     + 1 + 1 + 1 + 1)
+     + 1 + 1 + 1 + 1 + 1)
 
 /* The scenario tail, written only when the lobby has one. A lobby with no
  * scenario writes exactly LOBBY_SETTINGS_WIRE_PAYLOAD bytes and nothing
@@ -544,7 +545,7 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
  * behind what was already there so none of the offsets ahead of it move.
  *
  * Worst case measured: 1 + 1 + 64 + 128 + 256 + 1 + 1 + 1 + 1 = 454, on top
- * of LOBBY_SETTINGS_WIRE_PAYLOAD's 82, so 536 bytes against a 1021-byte
+ * of LOBBY_SETTINGS_WIRE_PAYLOAD's 83, so 537 bytes against a 1021-byte
  * segment. The two asserts behind the encoder are what hold that. */
 #define LOBBY_SETTINGS_WIRE_SCENARIO_MAX                                   \
     (1 + 1 + (1 + (LOBBY_SCENARIO_NAME_LEN - 1))                           \
@@ -624,6 +625,8 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
     /* Negative sense again, and for the same reason: 1 means the round
      * composes none of the picked mods, 0 means it composes them all. */
     buf[pos++] = evt->u.lobbySettings.lobbyModsOff ? 1 : 0;
+    /* Plain sense: 1 means sounds carry a side and a banded distance. */
+    buf[pos++] = evt->u.lobbySettings.lobbyPositionalSound ? 1 : 0;
     /* Nothing past here for a lobby with no scenario. */
     if (hasScenario) {
         buf[pos++] = (uint8_t)evt->u.lobbySettings.scenarioSource;
@@ -2639,6 +2642,11 @@ static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
      * test below is a bounds check on a short body, not a version test. */
     if (len >= pos + 1) {
         outEvt->u.lobbySettings.lobbyModsOff = buf[pos++] ? true : false;
+    }
+    /* Positional sound, also in the fixed part ahead of the scenario tail.
+     * A short body leaves it false, which sends every sound centred. */
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.lobbyPositionalSound = buf[pos++] ? true : false;
     }
     /* The scenario tail. A body that stops here came from a lobby with no
      * scenario, and the memset above has already left every field of it

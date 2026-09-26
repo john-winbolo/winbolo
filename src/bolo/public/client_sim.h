@@ -1173,6 +1173,12 @@ bool        clientSimGetClassicMode(const ClientSim *cs);
  * too — which matches the classic behaviour the option turns off. */
 bool        clientSimGetAlliesInTrees(const ClientSim *cs);
 
+/* True when the server sends sounds with the side they are on and a
+ * banded distance, as last broadcast in the lobby-settings event. Reads
+ * back false until the first event arrives, and false plays every sound
+ * centred, which is the classic behaviour. */
+bool        clientSimGetPositionalSound(const ClientSim *cs);
+
 /* What the server last asked the map overview for in the lobby-settings
  * event: which block of squares it keeps live around the player's own tank
  * (OverviewWindow), and what stops the player seeing inside that block

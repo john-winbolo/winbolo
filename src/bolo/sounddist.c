@@ -104,13 +104,31 @@ void soundDistGains(int8_t pan, BYTE dist, uint16_t *gainL, uint16_t *gainR) {
 }
 
 /*********************************************************
+*NAME:          soundDistPositional
+*AUTHOR:        John Morrison
+*CREATION DATE: 27/09/26
+*LAST MODIFIED: 27/09/26
+*PURPOSE:
+*  Returns whether sounds are played panned and attenuated
+*  by their position. False while the server has positional
+*  sound off, and every sound then plays centred at unity.
+*
+*ARGUMENTS:
+*  sim - Sim the sound is played against
+*********************************************************/
+static bool soundDistPositional(GameSim *sim) {
+  return clientSimGetPositionalSound(clientSimFromSim(sim));
+}
+
+/*********************************************************
 *NAME:          soundDistPlay
 *AUTHOR:        John Morrison
 *CREATION DATE: 19/01/99
-*LAST MODIFIED: 26/09/26
+*LAST MODIFIED: 27/09/26
 *PURPOSE:
 *  Plays the near or the far variant of a sound, panned
-*  and attenuated by soundDistGains.
+*  and attenuated by soundDistGains, or at unity on both
+*  channels while positional sound is off.
 *
 *ARGUMENTS:
 *  sim   - Sim the sound is played against
@@ -125,7 +143,12 @@ static void soundDistPlay(GameSim *sim, sndEffects value, bool isFar,
   uint16_t gL;
   uint16_t gR;
 
-  soundDistGains(pan, dist, &gL, &gR);
+  if (soundDistPositional(sim)) {
+    soundDistGains(pan, dist, &gL, &gR);
+  } else {
+    gL = SOUND_GAIN_UNITY;
+    gR = SOUND_GAIN_UNITY;
+  }
 
   /* Determine whether loud/soft sound should be played */
   switch (value) {
@@ -322,13 +345,13 @@ void clientSoundDistLocal(GameSim *sim, sndEffects value, BYTE mx, BYTE my) {
 *NAME:          clientSoundPing
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/09/26
-*LAST MODIFIED: 26/09/26
+*LAST MODIFIED: 27/09/26
 *PURPOSE:
 *  Plays a smart-ping sound panned by the pinged square's
 *  east-west offset from the listener's tank. Distance does
 *  not change its volume: a ping is a message and stays
-*  audible wherever it is. With no listener tank it plays
-*  centred.
+*  audible wherever it is. With no listener tank, or with
+*  positional sound off, it plays centred.
 *
 *ARGUMENTS:
 *  sim      - Sim the sound is played against
@@ -342,7 +365,8 @@ void clientSoundPing(GameSim *sim, BYTE listener, sndEffects value, BYTE mx) {
   uint16_t gL;
   uint16_t gR;
 
-  if (listener >= MAX_TANKS || sim->tanks[listener] == NULL) {
+  if (!soundDistPositional(sim) || listener >= MAX_TANKS ||
+      sim->tanks[listener] == NULL) {
     frontEndPlaySound(cs, value);
     return;
   }

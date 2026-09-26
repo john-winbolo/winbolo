@@ -140,6 +140,7 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
         }
         sim->classicMode         = sim->originalLobbySettings.classicMode;
         sim->alliesInTrees       = sim->originalLobbySettings.alliesInTrees;
+        sim->positionalSound     = sim->originalLobbySettings.positionalSound;
         sim->overviewWindow      = sim->originalLobbySettings.overviewWindow;
         sim->lineOfSight         = sim->originalLobbySettings.lineOfSight;
         sim->smartPingsOff       = sim->originalLobbySettings.smartPingsOff;

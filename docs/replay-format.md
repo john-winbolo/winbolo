@@ -184,7 +184,7 @@ is the value each later field had before it was recorded.
 | 10–11 | Time minutes | Big-endian; meaningless when the time-limit bit is clear |
 | 12–13 | Lobby locks, low half | Big-endian — bits 0–15 of the `LOBBY_LOCK_*` mask (`src/bolo/public/wire_limits.h`), which settings the host was allowed to change |
 | 14–15 | Lobby locks, high half | Big-endian — bits 16–31 of the same mask. Absent in a recording older than the field, where it reads as zero |
-| 16 | Settings flags | bit0 smart pings banned. Absent in a recording older than the byte, where it reads as zero — smart pings allowed, which is what those servers did |
+| 16 | Settings flags | bit0 smart pings banned (`LOG_SETTINGS_FLAG_SMART_PINGS_OFF`); bit1 positional sound on (`LOG_SETTINGS_FLAG_POSITIONAL_SOUND`), where sounds tell each player which side they are on and a banded distance. Absent in a recording older than the byte, where it reads as zero — smart pings allowed and every sound centred, which is what those servers did |
 
 Bit 4 of the flags says only that a password is set; the password itself is
 never recorded.
@@ -193,7 +193,8 @@ The flags byte at offset 9 is **full**. Bits 6 and 7 are one bit each because
 the overview window and the line-of-sight mode have two values apiece today
 (`OverviewWindow` and `LineOfSightMode` in `src/bolo/public/view_policy.h`); a
 third value in either setting has nowhere to go in that byte. Byte 16 is where
-a new flag belongs: it was added for smart pings and has seven bits free.
+a new flag belongs: it was added for smart pings, carries positional sound in
+bit 1, and has six bits free.
 
 The lock mask is carried **whole**, as a `uint32_t`, but in two pieces: bytes
 12–13 hold its low half and bytes 14–15 its high half. The split is not a
