@@ -181,7 +181,61 @@ typedef struct {
 	int32_t base_full_armour;
 	int32_t base_full_shells;
 	int32_t base_full_mines;
+	/* The damage a shell does to a tank before any modifier, and how a shell
+	   flies: its life in ticks, its speed and the longest gunsight. */
+	int32_t shell_damage;
+	int32_t shell_life;
+	int32_t shell_speed;
+	int32_t gunsight_max;
+	int32_t tree_hide_distance;
+	/* The rest of the pill numbers: how long anger lasts, what a tree of
+	   repair gives back, how far a pill fires (WORLD units), what a tank's
+	   shell takes off a pill and how fast a hit angers it. */
+	int32_t pill_cooldown_ticks;
+	int32_t pill_repair_amount;
+	int32_t pill_range;
+	int32_t pill_shell_damage;
+	int32_t pill_angry_divisor;
+	/* The base numbers a brain prices a capture or a steal with, and how
+	   often a base regenerates. */
+	int32_t base_capture_armour;
+	int32_t base_hit_armour;
+	int32_t base_regen_ticks;
+	/* The builder: how long a build takes, what each job costs in trees,
+	   what a forest gives, and how fast a dead builder flies back. */
+	int32_t lgm_build_ticks;
+	int32_t lgm_cost_road;
+	int32_t lgm_cost_building;
+	int32_t lgm_cost_pill_repair;
+	int32_t lgm_cost_boat;
+	int32_t lgm_cost_pill_new;
+	int32_t lgm_cost_mine;
+	int32_t lgm_gather_trees;
+	int32_t lgm_helicopter_speed;
+	/* The cap the builder's walk clamps to on each terrain. */
+	int32_t man_speed_road;
+	int32_t man_speed_grass;
+	int32_t man_speed_forest;
+	int32_t man_speed_river;
+	int32_t man_speed_swamp;
+	int32_t man_speed_crater;
+	int32_t man_speed_rubble;
+	int32_t man_speed_boat;
+	int32_t man_speed_deep_sea;
+	int32_t man_speed_refuel_base;
 } BrainRules;
+
+/* This tank's own modifiers, each a percent of the classic figure. The
+   engine stores 0 for "classic"; this view resolves that to 100 so a brain
+   can multiply by it directly. */
+typedef struct {
+	u_short speed;
+	u_short accel;
+	u_short turn;
+	u_short reload;
+	u_short dealt;
+	u_short taken;
+} BrainTankMods;
 
 enum { GameType_open=1, GameType_tournament, GameType_strict_tment };
 
@@ -392,6 +446,12 @@ typedef struct
 	BYTE    ping_kind;
 	WORLD_X ping_x;
 	WORLD_Y ping_y;
+
+	// This tank's own modifiers (a scenario sets them per tank, at any tick)
+	// and the reload interval they give, in ticks. brain_data.c fills both
+	// once per tick. Appended, like everything else here.
+	BrainTankMods mods;
+	BYTE    reload_ticks;
 
 	} BrainInfo;
 

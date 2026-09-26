@@ -137,6 +137,12 @@ struct BrainWorldSim {
   int           pill_attack_ticks;     /* calm fire interval */
   int           pill_attack_min_ticks; /* interval at full anger */
   int           pill_cooldown_ticks;   /* ticks an anger chain runs for */
+  /* Live-rule numbers a brain may push through brainWorldSimSetRules. The
+   * classic defaults reproduce the numbers the sim used before they existed,
+   * and all three survive brainWorldSimClear like the rules above. */
+  int           tank_shoot_interval_base; /* our shot interval a clear restores (8) */
+  int           pill_hit_damage;       /* health one shell takes off a pill (1) */
+  int           forest_range;          /* WU a pill can see into forest (768) */
   /* Ticks the tank stands still on the destination tile once it reaches the
    * end of its path. N gives exactly N parked ticks, counting the arrival
    * tick itself (the tank is already standing there when that tick's pills
@@ -174,6 +180,13 @@ void brainWorldSimDestroy(BrainWorldSim *sim);
 void brainWorldSimClear(BrainWorldSim *sim);
 void brainWorldSimSetMap(BrainWorldSim *sim, const BYTE *map);
 void brainWorldSimSetTerrainSpeed(BrainWorldSim *sim, int type, float speed);
+/* Push live rule numbers. Any argument <= 0 keeps the current value, so a
+ * brain can set only the numbers it knows. With the classic values this
+ * leaves every result exactly as it was. */
+void brainWorldSimSetRules(BrainWorldSim *sim, int shell_damage, int pill_range,
+                           int pill_attack_ticks, int pill_attack_min_ticks,
+                           int pill_cooldown_ticks, int pill_hit_damage,
+                           int shoot_interval, int forest_range);
 
 /* Set the cooperative abort flag the per-tick sim loop polls.
  * `flag` is an SDL_AtomicInt * (void * here so callers without SDL
