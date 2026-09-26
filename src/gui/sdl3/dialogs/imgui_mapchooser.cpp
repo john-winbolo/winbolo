@@ -1488,9 +1488,9 @@ static void generateRandomPreview(MapChooserState *state, SDL_Renderer *renderer
     MinimapBounds mb = {0, 0, 0, 0};
     if (view) {
         state->previewTex = minimapCreateTexture(renderer, view, &mb, 0);
-        state->previewPills  = clientMapPreviewGetPillCount(view);
-        state->previewBases  = clientMapPreviewGetBaseCount(view);
-        state->previewStarts = clientMapPreviewGetStartCount(view);
+        state->previewPills  = clientMapPreviewGetLivePillCount(view);
+        state->previewBases  = clientMapPreviewGetLiveBaseCount(view);
+        state->previewStarts = clientMapPreviewGetLiveStartCount(view);
         clientMapPreviewDestroy(view);
     }
     state->previewBoundsMinX = mb.minX;
@@ -3164,9 +3164,9 @@ void mapChooserSetSelectedMapBytes(MapChooserState *state,
                                                     state->compressedLen);
     if (mp) {
         state->previewTex = minimapCreateTexture(renderer, mp, &mb, 0);
-        state->previewPills  = clientMapPreviewGetPillCount(mp);
-        state->previewBases  = clientMapPreviewGetBaseCount(mp);
-        state->previewStarts = clientMapPreviewGetStartCount(mp);
+        state->previewPills  = clientMapPreviewGetLivePillCount(mp);
+        state->previewBases  = clientMapPreviewGetLiveBaseCount(mp);
+        state->previewStarts = clientMapPreviewGetLiveStartCount(mp);
         clientMapPreviewDestroy(mp);
     }
     state->previewBoundsMinX = mb.minX;

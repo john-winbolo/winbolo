@@ -1726,6 +1726,9 @@ BYTE         clientSimGetPillCount(const ClientSim *cs);
 BYTE         clientSimGetBaseCount(const ClientSim *cs);
 BYTE         clientSimGetStartCount(const ClientSim *cs);
 
+/* The counts above are slot counts. The pill and base readers below return
+ * false for a number out of range and for a slot whose item is not on the
+ * map. */
 bool         clientSimGetPill(ClientSim *cs, BYTE i,
                               BYTE *x, BYTE *y, BYTE *owner, BYTE *armour,
                               bool *inTank);

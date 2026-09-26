@@ -40,6 +40,7 @@
 #include "log.h"
 #include "server_sim.h"
 #include "pillbox.h"
+#include "bolo_map.h"
 #include "game_sim.h"
 #include "client_sim.h"
 #include "client_sim_internal.h"
@@ -2414,4 +2415,50 @@ BYTE pillsGetNumActive(pillboxes *value) {
     }
   }
   return live;
+}
+
+/*********************************************************
+*NAME:          pillsRemoveBorderPills
+*PURPOSE:
+*  Takes off the map every live pillbox that sits in the
+*  mined border round the edge, the same rule as
+*  startsRemoveBorderStarts. No tank can reach a pillbox
+*  out there, so it could never be shot or picked up, yet it
+*  was counted, drawn and handed to the bots. A pillbox in a
+*  tank is not on a square and is left alone: its square is
+*  only where it was picked up. Nothing is changed when no
+*  live pillbox on the ground is inside the border, so such
+*  a map still plays as it does today. Slot numbers do not
+*  change. Returns how many pillboxes were taken off.
+*
+*ARGUMENTS:
+*  value - Pointer to the pillbox structure
+*********************************************************/
+BYTE pillsRemoveBorderPills(pillboxes *value) {
+  BYTE count;
+  BYTE inside = 0;
+  BYTE removed = 0;
+
+  if (value == NULL || *value == NULL) {
+    return 0;
+  }
+  for (count = 0; count < (*value)->numPills && count < MAX_PILLS; count++) {
+    if ((*value)->active[count] != FALSE &&
+        (*value)->item[count].inTank == FALSE &&
+        mapPosInBounds((*value)->item[count].x, (*value)->item[count].y)) {
+      inside++;
+    }
+  }
+  if (inside == 0) {
+    return 0;
+  }
+  for (count = 0; count < (*value)->numPills && count < MAX_PILLS; count++) {
+    if ((*value)->active[count] != FALSE &&
+        (*value)->item[count].inTank == FALSE &&
+        !mapPosInBounds((*value)->item[count].x, (*value)->item[count].y)) {
+      (*value)->active[count] = FALSE;
+      removed++;
+    }
+  }
+  return removed;
 }

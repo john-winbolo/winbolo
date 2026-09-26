@@ -214,7 +214,10 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
     BYTE numPb = pillsGetNumPills(&gs->pb);
     BYTE pi;
     for (pi = 0; pi < numPb && numViewRects < BRAIN_VIEW_MAX_RECTS; pi++) {
-      if ((*gs->pb).item[pi].inTank == FALSE
+      /* A pill not on the map (removed by a scenario, or by the loader in
+       * the mined border) gives no view. */
+      if (pillsIsActive(&gs->pb, (BYTE)(pi + 1))
+          && (*gs->pb).item[pi].inTank == FALSE
           && (*gs->pb).item[pi].owner < MAX_TANKS
           && ((*gs->pb).item[pi].owner == myPN
               || playersIsAllie(&gs->plyrs, myPN, (*gs->pb).item[pi].owner) == TRUE)) {

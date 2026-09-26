@@ -177,11 +177,24 @@ BYTE clientMapPreviewGetStartCount(const MapPreview *mp) {
   return startsGetNumStarts(&((MapPreview *)mp)->ss);
 }
 
+BYTE clientMapPreviewGetLiveStartCount(const MapPreview *mp) {
+  return startsGetNumActive(&((MapPreview *)mp)->ss);
+}
+
+BYTE clientMapPreviewGetLivePillCount(const MapPreview *mp) {
+  return pillsGetNumActive(&((MapPreview *)mp)->pb);
+}
+
+BYTE clientMapPreviewGetLiveBaseCount(const MapPreview *mp) {
+  return basesGetNumActive(&((MapPreview *)mp)->bs);
+}
+
 bool clientMapPreviewGetPill(const MapPreview *mp, BYTE i,
                              BYTE *x, BYTE *y, BYTE *owner, BYTE *armour) {
   pillbox p;
   BYTE n = pillsGetNumPills(&((MapPreview *)mp)->pb);
   if (i == 0 || i > n) return false;
+  if (!pillsIsActive(&((MapPreview *)mp)->pb, i)) return false;
   pillsGetPill(&((MapPreview *)mp)->pb, &p, i);
   if (x)      *x      = p.x;
   if (y)      *y      = p.y;
@@ -195,6 +208,7 @@ bool clientMapPreviewGetBase(const MapPreview *mp, BYTE i,
   base b;
   BYTE n = basesGetNumBases(&((MapPreview *)mp)->bs);
   if (i == 0 || i > n) return false;
+  if (!basesIsActive(&((MapPreview *)mp)->bs, i)) return false;
   basesGetBase(&((MapPreview *)mp)->bs, &b, i);
   if (x)     *x     = b.x;
   if (y)     *y     = b.y;
@@ -207,6 +221,7 @@ bool clientMapPreviewGetStart(const MapPreview *mp, BYTE i,
   start s;
   BYTE n = startsGetNumStarts(&((MapPreview *)mp)->ss);
   if (i == 0 || i > n) return false;
+  if (!startsIsActive(&((MapPreview *)mp)->ss, i)) return false;
   startsGetStartStruct(&((MapPreview *)mp)->ss, &s, i);
   if (x)   *x   = s.x;
   if (y)   *y   = s.y;

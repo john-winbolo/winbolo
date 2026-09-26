@@ -49,10 +49,13 @@ struct ClientSim;
  * and the mouse picker blocks it the same way — and says so when focused.
  * NULL applies no side rule.
  *
+ * onMap, when given, is indexed the same way; a start whose entry is false
+ * is not on the map and gets no row. NULL lists every start.
+ *
  * Returns the 1-based index of the currently focused start, or 0 when none
  * is focused — so the caller can highlight that start on the map preview. */
 int lobbyStartListRender(struct ClientSim *cs, int myPlayerNum, int startCount,
-                         const BYTE *sideMasks);
+                         const BYTE *sideMasks, const bool *onMap);
 
 #ifdef __cplusplus
 }

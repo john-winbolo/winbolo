@@ -425,6 +425,7 @@ bool serverSimGetPill(ServerSim *sim, BYTE i,
     pillbox p;
     BYTE n = pillsGetNumPills(&sim->sim.pb);
     if (i == 0 || i > n) return false;
+    if (!pillsIsActive(&sim->sim.pb, i)) return false;
     pillsGetPill(&sim->sim.pb, &p, i);
     if (x)      *x      = p.x;
     if (y)      *y      = p.y;
@@ -441,6 +442,7 @@ bool serverSimGetPillSpeed(ServerSim *sim, BYTE i, BYTE *speed) {
     pillbox p;
     BYTE n = pillsGetNumPills(&sim->sim.pb);
     if (i == 0 || i > n) return false;
+    if (!pillsIsActive(&sim->sim.pb, i)) return false;
     pillsGetPill(&sim->sim.pb, &p, i);
     if (speed) *speed = p.speed;
     return true;
@@ -471,6 +473,7 @@ bool serverSimGetBase(ServerSim *sim, BYTE i,
     base b;
     BYTE n = basesGetNumBases(&sim->sim.bs);
     if (i == 0 || i > n) return false;
+    if (!basesIsActive(&sim->sim.bs, i)) return false;
     basesGetBase(&sim->sim.bs, &b, i);
     if (x)     *x     = b.x;
     if (y)     *y     = b.y;
@@ -482,6 +485,7 @@ bool serverSimGetBaseStats(ServerSim *sim, BYTE i,
                            BYTE *shells, BYTE *mines, BYTE *armour) {
     BYTE n = basesGetNumBases(&sim->sim.bs);
     if (i == 0 || i > n) return false;
+    if (!basesIsActive(&sim->sim.bs, i)) return false;
     basesGetStats(&sim->sim.bs, i, shells, mines, armour);
     return true;
 }
