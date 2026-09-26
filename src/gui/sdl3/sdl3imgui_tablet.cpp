@@ -1471,6 +1471,15 @@ static void renderScenarioSlot(ClientSim *cs) {
   ImGui::PopStyleVar(2);
 }
 
+void sdl3ImguiTabletNewGame(void) {
+  s_lastMsgTop[0] = '\0';
+  s_lastMsgBottom[0] = '\0';
+  s_msgLastChangeTime = 0;
+  s_msgTimerInitialized = false;
+  s_prevArmour = 0;
+  s_armourInitialized = false;
+}
+
 /* -------------------------------------------------------
  * Main overlay entry point
  * ------------------------------------------------------- */
