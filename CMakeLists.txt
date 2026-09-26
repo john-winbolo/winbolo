@@ -6423,6 +6423,10 @@ set(_unit_test_names
     scn_arm_panel_replayed_to_joiner
     scn_arm_panel_snapshot_bounded
     scn_arm_score_announce_marker
+    scn_arm_markers_scores_replayed_to_joiner
+    scn_arm_markers_scores_snapshot
+    scn_arm_markers_scores_reset
+    scn_markers_scores_loopback_late_join
     scenario_rules_codec
     scenario_rules_published
     scenario_rules_reaches_joiner

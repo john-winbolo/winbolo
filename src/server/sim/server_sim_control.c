@@ -890,7 +890,8 @@ static void serverSimSyncOrderingDeliver(void *ctx,
  * only when it is addressed to everyone; a snapshot carrying the targeted
  * ones would spend up to 127 further records on lists that reach nobody. The
  * everyone-addressed lists still go, which is every list a spectator can
- * see. */
+ * see. The scenario markers held to one team or one player are left out on
+ * the same terms. */
 static void serverSimSyncSubscriber(
     ServerSim *sim,
     void (*deliver)(void *, const struct ControlEvent *),
@@ -1104,10 +1105,20 @@ static void serverSimSyncSubscriber(
      * filters a live one, so a list held to one team or one player reaches
      * the joiner only if it is addressed to them. The ring's snapshot takes
      * the everyone-addressed lists alone, for the reason above the function.
-     * Placed ahead of the player-join roster for the reason the entity sync
-     * is — the ordering check refuses a non-join event after the first
+     *
+     * Then the markers up and the score rows set, the same way. A marker is
+     * kept by id and a score row by slot or team, so the last event for each
+     * is the whole of its state; a cleared marker is left out, since a
+     * joiner's markers start empty. The markers carry their recipient pair
+     * and are filtered on delivery like the panels, and the ring's snapshot
+     * takes only the everyone-addressed ones. Scores are broadcast and go to
+     * both.
+     *
+     * Both placed ahead of the player-join roster for the reason the entity
+     * sync is — the ordering check refuses a non-join event after the first
      * join. */
     serverSimScenarioReplayPanels(sim, deliver, ctx, fullReplay);
+    serverSimScenarioReplayMarkersAndScores(sim, deliver, ctx, fullReplay);
 
     /* What the attached scenario's own manifest sets, so a client that joins
      * after the attach reads the same table the lobby's popup draws from.

@@ -3637,13 +3637,19 @@ int run_scn_presentation_client_filters(void);
 /* The four presentation ops (test_scenario_presentation_arms.c): the panel
  * list published, recorded, replayed to a joiner and pared back to the
  * everyone-addressed lists in the spectator ring's snapshot, the coalescing
- * key, every refusal, and the score, announcement and marker arms. */
+ * key, every refusal, and the score, announcement and marker arms; the
+ * markers and scores replayed to a joiner, in the ring's snapshot, after the
+ * reset, and to a late joiner over the loopback transport. */
 int run_scn_arm_panel_publishes_and_records(void);
 int run_scn_arm_panel_refusals(void);
 int run_scn_arm_panel_one_update_per_tick(void);
 int run_scn_arm_panel_replayed_to_joiner(void);
 int run_scn_arm_panel_snapshot_bounded(void);
 int run_scn_arm_score_announce_marker(void);
+int run_scn_arm_markers_scores_replayed_to_joiner(void);
+int run_scn_arm_markers_scores_snapshot(void);
+int run_scn_arm_markers_scores_reset(void);
+int run_scn_markers_scores_loopback_late_join(void);
 
 /* The rules a scenario's manifest sets (test_scenario_rules_codec.c,
  * test_scenario_rules_published.c, test_scenario_rules_reaches_joiner.c):

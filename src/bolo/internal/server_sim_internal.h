@@ -191,6 +191,19 @@ typedef struct {
     char    label[16];
 } ScnScoreRow;
 
+/* One map marker, as the marker op last placed it. valid is false for an id
+ * nothing has placed and for one a clear removed. The fields are the ones
+ * the CTRL_SCN_MARKER that placed it carried, destination pair included. */
+typedef struct {
+    bool    valid;
+    uint8_t kind;          /* SCN_MARKER_KIND_SQUARE or _FOLLOW */
+    uint8_t x, y;          /* the square, for SCN_MARKER_KIND_SQUARE */
+    uint8_t slot;          /* the 0-based slot, for SCN_MARKER_KIND_FOLLOW */
+    uint8_t colour;
+    uint8_t destTeam;      /* 0 = everyone, else the team */
+    uint8_t destPlayer;    /* 0xFF = everyone, else a 0-based slot */
+} ScnMarkerRow;
+
 struct ServerSim {
     GameSim      sim;    /* MUST be first member */
 
@@ -1251,12 +1264,20 @@ struct ServerSim {
     ScnPanelList           scenarioPanelScratch;
 
     /* A scenario's own score for each player slot and each team, as the
-     * score op last set it. Nothing reads these yet: the lobby's round
-     * stats are what will. Player rows are keyed by a 0-based slot, team
-     * rows by the team number, which runs 1..MAX_TANKS-1, so row 0 of the
-     * team array names no team and is never written. */
+     * score op last set it. serverSimBuildRoundStatsSummary reads them for
+     * the round's recap, and the join replay hands every valid row to a
+     * subscriber that arrives mid-round. Player rows are keyed by a 0-based
+     * slot, team rows by the team number, which runs 1..MAX_TANKS-1, so row
+     * 0 of the team array names no team and is never written. */
     ScnScoreRow            scenarioPlayerScores[MAX_TANKS];
     ScnScoreRow            scenarioTeamScores[MAX_TANKS];
+
+    /* Each map marker a scenario has up, by id, as the marker op last placed
+     * it: a place or a follow sets the row and a clear empties it. Markers
+     * have no expiry, so this is the whole of what the map shows, and the
+     * join replay hands every valid row to a subscriber that arrives
+     * mid-round. */
+    ScnMarkerRow           scenarioMarkers[SCN_MARKERS_MAX];
 
     /* Spectator roster enumerator (registered by the transport layer). Invoked
      * during sync-replay to emit one CTRL_SPECTATOR_SLOT per connected
@@ -1335,7 +1356,7 @@ void serverSimScenarioResetRoster(ServerSim *sim);
  * scenario surface: the caller is the sim's own round start. */
 void serverSimScenarioResetTickStats(ServerSim *sim);
 
-/* Forget every stored panel list and every score row. What a scenario was
+/* Forget every stored panel list, marker and score row. What a scenario was
  * presenting belongs to the round and the scenario that put it up, so both
  * the return to lobby and a detach drop the lot; a joiner arriving after
  * either is given nothing rather than the last round's panels. Called from
@@ -1359,6 +1380,21 @@ void serverSimScenarioResetPresentation(ServerSim *sim);
  * than on the scenario surface because the caller is the sim's own join
  * path, not a scenario. */
 void serverSimScenarioReplayPanels(
+    ServerSim *sim,
+    void (*deliver)(void *, const struct ControlEvent *),
+    void *ctx,
+    bool withTargeted);
+
+/* Hand the markers up and the score rows set to a joining subscriber's
+ * callback, as the events that published them: one CTRL_SCN_MARKER per
+ * marker, then one CTRL_SCN_SCORE per player row and per team row. A
+ * cleared marker is not replayed, since a joiner's markers start empty.
+ *
+ * withTargeted false leaves out the markers held to a team or a slot, for
+ * the reason serverSimScenarioReplayPanels leaves out those lists. Scores
+ * are broadcast and go either way. Called from the sync replay in
+ * server_sim_control.c, beside the panel replay. */
+void serverSimScenarioReplayMarkersAndScores(
     ServerSim *sim,
     void (*deliver)(void *, const struct ControlEvent *),
     void *ctx,
