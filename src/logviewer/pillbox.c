@@ -471,15 +471,21 @@ BYTE lv_pillsGetScreenHealth(pillboxes *value, BYTE xValue, BYTE yValue,
   return returnValue;
 }
 
+/* The three setters below and lv_pillsSetPillOwner take the 0-based index a
+ * playback record names. It is a byte off the recording, so an index past
+ * item[] is ignored rather than written. */
 void lv_pillsSetHealth(pillboxes *value, BYTE pillNum, BYTE health) {
+  if (pillNum >= MAX_PILLS) return;
   (*value)->item[pillNum].armour = health;
 }
 
 void lv_pillsSetInTank(pillboxes *value, BYTE pillNum, bool inTank) {
+  if (pillNum >= MAX_PILLS) return;
   (*value)->item[pillNum].inTank = inTank;
 }
 
 void lv_pillsSetPos(pillboxes *value, BYTE pillNum, BYTE mx, BYTE my) {
+  if (pillNum >= MAX_PILLS) return;
   (*value)->item[pillNum].x = mx;
   (*value)->item[pillNum].y = my;
 }
@@ -510,6 +516,9 @@ BYTE lv_pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migra
   oldOwner[0] = '\0';
 
   returnValue = NEUTRAL;
+  if (pillNum >= MAX_PILLS) {
+    return returnValue;
+  }
   returnValue = (*value)->item[pillNum].owner;
   (*value)->item[pillNum].owner = owner;
   /* Make the message if required */
