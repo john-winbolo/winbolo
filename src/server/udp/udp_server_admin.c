@@ -54,6 +54,7 @@
                                    * serverSimSetHostSlot,
                                    * serverSimSetBalanceRequestInFlight,
                                    * serverSimSetBalanceIncludeBots */
+#include "server_sim_join.h"      /* serverSimRepickAllLobbyStarts — after a WBN balance moves players */
 #include "control_event.h"   /* ControlEvent, CTRL_CHAT, CTRL_SERVER_TEXT,
                               * CTRL_SERVER_SHUTDOWN, CTRL_BALANCE_* */
 #include "channel_mux.h"     /* channelMuxInit, channelSend, CHANNEL_GAME */
@@ -144,6 +145,10 @@ static int balanceThreadFunc(void *data) {
             }
         }
         serverSimReapplyTeamAlliances(sim);
+        /* Re-pick every reservation for the new teams — the batch left each
+         * moved slot on the start it held for its old team. Same as the
+         * CMD_BALANCE_APPLY arm in server_command_dispatch.c. */
+        serverSimRepickAllLobbyStarts(sim);
         serverSimClearBalanceProposal(sim);
         /* Publish the cleared proposal so balanceProposalActive flips
          * back to false on every client — keeps canBalance gating

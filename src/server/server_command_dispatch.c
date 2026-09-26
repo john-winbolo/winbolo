@@ -1455,6 +1455,12 @@ scriptListDone:
             }
         }
         serverSimReapplyTeamAlliances(sim);
+        /* The batch moves teamNumber and nothing else, so every swapped
+         * slot still holds the start it picked for its old team, on its
+         * old team's side, and the round honours a reservation as it
+         * stands. Pick again for the teams as they are now, the way a
+         * side change does; the slots that move are republished. */
+        serverSimRepickAllLobbyStarts(sim);
         serverSimClearBalanceProposal(sim);
         /* Publish the cleared proposal so balanceProposalActive flips
          * back to false on every client — keeps canBalance gating from

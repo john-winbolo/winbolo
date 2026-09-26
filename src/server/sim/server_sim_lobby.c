@@ -659,10 +659,14 @@ void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
     /* A side outside the START_SIDE_* range means no side. */
     if (startSide >= START_SIDE_COUNT) startSide = START_SIDE_ANY;
     t->startSide = startSide;
-    /* This write came in for this team, so the side is the team's own choice
-     * — START_SIDE_ANY included — and the fill-in below never writes over it
-     * again. */
-    t->sideAutoFilled = 0;
+    /* A write that changes the side makes it the team's own choice —
+     * START_SIDE_ANY included — and the fill-in below never writes over it
+     * again. A write that repeats the side leaves the mark alone: the lobby
+     * sends the side it already shows with every rename, colour and pool
+     * edit, and renaming a team is not choosing its side. */
+    if (prevSide != startSide) {
+        t->sideAutoFilled = 0;
+    }
     /* Per-team uniqueness on namingPool: if another in_use team
      * already owns this pool, pick the lowest pool index not
      * used by any other team. Falls back to the requested value
