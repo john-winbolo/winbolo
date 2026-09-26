@@ -1908,9 +1908,12 @@ end
 -- ping_force — THE PING DEFEND REPAIR (C.PING_DEFEND_REPAIR, 2026-09-26).
 --
 -- Is this bot holding a human's bot-command PING defend order on one of our
--- pills that needs armour, with the tank close enough to send the man?  Then
--- that pill's row is FORCED (see the constants.lua note for the full list of
--- what it waives and keeps).  Read off state._order -- the held order --
+-- pills that needs armour, with the tank close enough to send the man?  (The
+-- repair feeder's seed is not enough: the order-injected defend goal never
+-- carries goal.repair, the pool's own defend_pill row carries it only when
+-- its repair handoff fires, and a seeded dispatch clears the defend goal.)
+-- Then that pill's row is FORCED (see the constants.lua note for the full
+-- list of what it waives and keeps).  Read off state._order -- the held order --
 -- and NOT off state.goal: the ordered defend goal is an alarm goal, which
 -- init.lua's validity hook drops inside 9 tiles and the order re-injects, so
 -- the goal kind flickers while the order does not.
@@ -1946,6 +1949,18 @@ function M.ping_force(state, world, info, now)
   -- is about to run, and a man sent out now walks home to an empty tile.
   if (info.armour or 0) <= (C.ARMOUR_CRITICAL or 0) then
     return nil, "order_paused_armour", dist
+  end
+  -- The tank's live goal is a flee / resupply run. Both kinds are REACTIVE
+  -- (C.ORDER_REACTIVE_KINDS), so the order pass does not reject them, and a
+  -- defend order needs shells, so ORDER_REFUEL_SKIP_NO_SHELLS does not reject
+  -- refuel_at_base either: at low armour or shells it outbids the order and
+  -- the tank drives to a base. A man sent out now would be left behind.
+  -- (The dynamic flee threshold in goals.lua only applies in an attack_pill /
+  -- pill_place fight, never under a defend order; flee_pill likewise only
+  -- comes from those two goals.)
+  local gk = state.goal and state.goal.kind
+  if gk == "refuel_at_base" or gk == "flee_to_base" then
+    return nil, "tank_fleeing", dist
   end
   local range = C.PING_DEFEND_REPAIR_RANGE or 10
   if dist > range then return nil, "out_of_range", dist end
@@ -2205,8 +2220,6 @@ function M.update(state, world, info, now)
       force_seen = true
       if seed and row.mx == seed.mx and row.my == seed.my then seed_seen = true end
       rctx = force_ctx
-    elseif force and force.step == "harvest" and row.type == "farm" then
-      rctx = force_ctx
     elseif seed and row.mx == seed.mx and row.my == seed.my then
       row.seeded = seed.src
       row.out_of_leash = nil
@@ -2218,9 +2231,10 @@ function M.update(state, world, info, now)
     if row.forced then M.apply_force_bonus(row) end
   end
   -- The forced pill was not offered by discovery: it is missing less than
-  -- BUILDER_POOL_TOPUP_MIN_MISSING, or is beyond 2 x the repair leash
-  -- (Manhattan) while inside the straight-line range. Synthesise its row, the
-  -- way a seed's is synthesised.
+  -- BUILDER_POOL_TOPUP_MIN_MISSING. (Discovery reaches 2 x the repair leash,
+  -- 22 tiles Manhattan, and 10 tiles straight line is at most 14 Manhattan,
+  -- so "beyond discovery" can only happen if PING_DEFEND_REPAIR_RANGE is
+  -- raised above 15.) Synthesise its row, the way a seed's is synthesised.
   if force and not force_seen then
     local row = {
       type = "topup", id = force.tid, mx = force.mx, my = force.my,
@@ -2277,30 +2291,31 @@ function M.update(state, world, info, now)
     end
   end
   if seed_seen then state._bp_seed_drop_key = nil end
-  -- NO WOOD: step 1 of the force is a harvest. Of the farm rows that passed
-  -- their own gates (they were scored with force_ctx, so MIN_SCORE did not
-  -- stop them; the farm path-safety gate did run), force the one with the
-  -- shortest walk out -- the nearest forest the man can actually reach -- ties
-  -- by tile key. The others get their MIN_SCORE verdict back, so the panel
-  -- says what it would have said without the force.
+  -- NO WOOD: step 1 of the force is a harvest. The farm rows were scored
+  -- with the normal ctx above, so every row the panel shows keeps the verdict
+  -- the pool gives it without the force. Here each farm row is gated AGAIN,
+  -- on a copy, with force_ctx (MIN_SCORE, mode_owned and reserve_eta waived;
+  -- the farm path-safety gate and the man-safety gates kept). Of the copies
+  -- that pass, the one with the shortest walk out -- the nearest forest the
+  -- man can actually reach -- ties by tile key, replaces its row and is
+  -- forced. No trip is walked twice: gate_row reuses the row's trip.
   if force and force.step == "harvest" then
-    local best = nil
-    for _, r in ipairs(rows) do
-      if r.type == "farm" and not r.reject and r.out_ticks then
-        if not best or r.out_ticks < best.out_ticks
-           or (r.out_ticks == best.out_ticks
-               and (r.my * 256 + r.mx) < (best.my * 256 + best.mx)) then
-          best = r
+    local best, best_i = nil, nil
+    for i, r in ipairs(rows) do
+      if r.type == "farm" and r.out_ticks then
+        local fr = {}
+        for k, v in pairs(r) do fr[k] = v end
+        M.gate_row(state, world, info, now, fr, force_ctx)
+        if not fr.reject
+           and (not best or fr.out_ticks < best.out_ticks
+                or (fr.out_ticks == best.out_ticks
+                    and (fr.my * 256 + fr.mx) < (best.my * 256 + best.mx))) then
+          best, best_i = fr, i
         end
       end
     end
-    local MIN = C.BUILDER_POOL_MIN_SCORE or 20
-    for _, r in ipairs(rows) do
-      if r.type == "farm" and r ~= best and not r.reject and r.score < MIN then
-        r.reject = string.format("below_min_score(%.0f < %d)", r.score, MIN)
-      end
-    end
     if best then
+      rows[best_i] = best
       M.mark_forced(best, force, "harvest")
       M.apply_force_bonus(best)
     end

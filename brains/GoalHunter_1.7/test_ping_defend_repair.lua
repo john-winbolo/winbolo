@@ -428,5 +428,141 @@ do
   FOREST = {}
 end
 
+-- ── 10. The feeder seeds the same pill: the force replaces the seed ─────
+print("10. repair feeder seeds the pinged pill -> forced row, defend goal kept")
+do
+  -- The pool's own defend_pill row picked its repair handoff (goals.lua
+  -- defend_pill_score bd.repair) and the order pass kept it as the held row:
+  -- goal.repair is set, and repair_feeder seeds pill 7.
+  local function seeded_state(order)
+    local st = fresh_state(order)
+    st.goal = { kind = "defend_pill", target_id = 7, mx = 106, my = 100,
+                pill_mx = 106, pill_my = 100, repair = true }
+    return st
+  end
+  -- Knob off: the fixture really seeds, and the seeded dispatch sets
+  -- _repair_dispatched (init.lua then clears the defend goal).
+  C.PING_DEFEND_REPAIR = false
+  local st0 = seeded_state(ping_order())
+  -- (No competing rebuild here: BUILDER_POOL_SEEDED_COMPETES lets the rebuild
+  -- outscore a seeded topup, and this check is about the seed alone.)
+  local bp0, c0 = run(st0, world_of({ [7] = pill(106, 100, 10) }), info_at(TMX, TMY))
+  C.PING_DEFEND_REPAIR = true
+  local s0
+  for _, r in ipairs(bp0.rows) do if r.seeded then s0 = r end end
+  check("knob off: the feeder seeds pill 7", s0 and s0.id == 7 and s0.seeded == "defend_repair",
+        s0 and s0.seeded)
+  check("knob off: seeded dispatch to (106,100)", c0 and c0.x == 106 and c0.y == 100)
+  check("knob off: _repair_dispatched set (the defend goal would be cleared)",
+        st0._repair_dispatched == true)
+  -- Knob on: the same fixture, now forced.
+  LOG = {}
+  local st = seeded_state(ping_order())
+  local bp, cmd = run(st, base_world(), info_at(TMX, TMY))
+  local fr = forced_row(bp)
+  local n7, nseeded = 0, 0
+  for _, r in ipairs(bp.rows) do
+    if r.id == 7 and r.type ~= "farm" then n7 = n7 + 1 end
+    if r.seeded then nseeded = nseeded + 1 end
+  end
+  check("knob on: pill 7's row is forced, not seeded", fr and fr.id == 7 and fr.seeded == nil)
+  check("knob on: exactly one row for pill 7 (no extra seed row)", n7 == 1, n7)
+  check("knob on: no seeded row at all", nseeded == 0, nseeded)
+  check("knob on: dispatch to (106,100)", cmd and cmd.x == 106 and cmd.y == 100)
+  check("knob on: _repair_dispatched NOT set (the defend goal survives)",
+        st._repair_dispatched == nil)
+  check("knob on: seed consumed by the rung", st._bp_seed == nil)
+  if HAS_LOGS then
+    check("knob on: no REPAIR_DISPATCH_FIRED line", logged("^REPAIR_DISPATCH_FIRED") == nil,
+          logged("^REPAIR_DISPATCH_FIRED"))
+  end
+end
+
+-- ── 11. The tank is fleeing / resupplying: the force ends ────────────────
+print("11. tank goal refuel_at_base / flee_to_base -> force ends")
+do
+  for _, gk in ipairs({ "refuel_at_base", "flee_to_base" }) do
+    LOG = {}
+    local st = fresh_state(ping_order())
+    local bp = run(st, base_world(), info_at(TMX, TMY))
+    check(gk .. ": on first", bp.force ~= nil)
+    st._bp_job = nil
+    st.goal = { kind = gk, mx = 90, my = 100, target_id = 1 }
+    local info = info_at(TMX, TMY); info.armour = 8   -- above ARMOUR_CRITICAL
+    local bp2, c2 = run(st, base_world(), info, NOW + 1)
+    check(gk .. ": off, why=tank_fleeing", bp2.force == nil and bp2.force_why == "tank_fleeing",
+          bp2.force_why)
+    check(gk .. ": no forced row", forced_row(bp2) == nil)
+    check(gk .. ": pill 7 not dispatched", not (c2 and c2.x == 106 and c2.y == 100),
+          c2 and (c2.x .. "," .. c2.y))
+    check_log(gk .. ": END line", "^PING_REPAIR_FORCE_END t=1001 pill=7 why=tank_fleeing")
+    -- Back on the defend goal: the force comes back.
+    st.goal = { kind = "defend_pill", target_id = 7, alarm = true }
+    st._bp_job = nil
+    local bp3 = run(st, base_world(), info_at(TMX, TMY), NOW + 2)
+    check(gk .. ": back on defend -> forced again", bp3.force ~= nil)
+  end
+  -- Other reactive kinds (attack_tank, take_cover, kill_lgm) do not end it.
+  local st = fresh_state(ping_order()); st.goal = { kind = "take_cover", mx = 101, my = 100 }
+  local bp = run(st, base_world(), info_at(TMX, TMY))
+  check("take_cover goal: still forced", bp.force ~= nil, bp.force_why)
+end
+
+-- ── 12. Harvest step: every non-forced farm row keeps its normal verdict ─
+print("12. harvest: the panel matches the normal path for non-forced rows")
+do
+  FOREST[97 * 256 + 100] = true          -- N wedge, nearest (forced)
+  FOREST[100 * 256 + 104] = true         -- E wedge
+  FOREST[103 * 256 + 100] = true         -- S wedge
+  local function farm_by_tile(bp)
+    local t = {}
+    for _, r in ipairs(bp.rows) do
+      if r.type == "farm" then t[r.my * 256 + r.mx] = r end
+    end
+    return t
+  end
+  local function parity(label, mk_state)
+    C.PING_DEFEND_REPAIR = false
+    local bp0 = run(mk_state(), base_world(), info_at(TMX, TMY, 0))
+    C.PING_DEFEND_REPAIR = true
+    local st = mk_state()
+    local bp, cmd = run(st, base_world(), info_at(TMX, TMY, 0))
+    local off, on = farm_by_tile(bp0), farm_by_tile(bp)
+    local n, bad = 0, nil
+    for k, r in pairs(on) do
+      if not r.forced then
+        n = n + 1
+        local o = off[k]
+        if not o or o.reject ~= r.reject or o.score ~= r.score then
+          bad = string.format("(%d,%d) on=%s off=%s", r.mx, r.my, tostring(r.reject),
+                              tostring(o and o.reject))
+        end
+      end
+    end
+    check(label .. ": has non-forced farm rows", n >= 1, n)
+    check(label .. ": each non-forced farm row = knob-off verdict and score", bad == nil, bad)
+    check(label .. ": forced harvest dispatched to (100,97)",
+          cmd and cmd.x == 100 and cmd.y == 97 and cmd.action == BUILDMODE_FARM,
+          cmd and (cmd.x .. "," .. cmd.y))
+    return bp0, bp
+  end
+  parity("defend goal", function() return fresh_state(ping_order()) end)
+  -- A working mode: the normal path rejects every farm row mode_owned.
+  local bp0, bp = parity("mode_owned", function()
+    local st = fresh_state(ping_order())
+    st.builder.mode = "gather"; st.goal = { kind = "capture_pill" }
+    return st
+  end)
+  local mo = 0
+  for _, r in ipairs(bp.rows) do
+    if r.type == "farm" and not r.forced and r.reject
+       and r.reject:find("mode_owned", 1, true) then mo = mo + 1 end
+  end
+  check("mode_owned: non-forced farm rows still show mode_owned", mo >= 1, mo)
+  local fh = bp.force_harvest
+  check("mode_owned: the forced harvest row is ACCEPTED", fh and fh.reject == nil, fh and fh.reject)
+  FOREST = {}
+end
+
 print(string.format("%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end
