@@ -227,6 +227,7 @@ void simRulesClassic(SimRules *out) {
     out->tree_weight_crater        = TREE_GROW_CRATER;
     out->tree_weight_road          = TREE_GROW_ROAD;
     out->tree_weight_mine          = TREE_GROW_MINE;
+    out->tank_slide_armour_bonus   = TANK_SLIDE_ARMOUR_BONUS;
 }
 
 /* ---- Against the classic table -------------------------------------------
@@ -596,7 +597,8 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     X(tree_weight_half_building, INT,    -32768, 32767)                      \
     X(tree_weight_crater,        INT,    -32768, 32767)                      \
     X(tree_weight_road,          INT,    -32768, 32767)                      \
-    X(tree_weight_mine,          INT,    -32768, 32767)
+    X(tree_weight_mine,          INT,    -32768, 32767)                       \
+    X(tank_slide_armour_bonus,   INT,    0,      255)
 
 /* The rules a single other rule also caps, as the pairs below hold them.
  * Only a direct field against other_field test is here: where a ceiling is

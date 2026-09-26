@@ -142,10 +142,10 @@ int run_sim_rules_describe_names(void) {
 
     /* The last row, which is where a list one short of the struct shows. */
     UT_ASSERT_MSG(srdSame(simRulesClassicValue((int)SIM_RULE_COUNT - 1),
-                          (double)classic.tree_weight_mine),
-                  "the last rule reads %.4f and tree_weight_mine holds %ld",
+                          (double)classic.tank_slide_armour_bonus),
+                  "the last rule reads %.4f and tank_slide_armour_bonus holds %ld",
                   simRulesClassicValue((int)SIM_RULE_COUNT - 1),
-                  (long)classic.tree_weight_mine);
+                  (long)classic.tank_slide_armour_bonus);
 
     /* The tags and widths the list carries, on one row of each width. */
     UT_ASSERT_MSG(simRulesRuleValueKind(SIM_RULE_tank_reload_ticks) ==

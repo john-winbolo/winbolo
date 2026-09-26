@@ -2458,10 +2458,10 @@ static const LangEntry langTable[] = {
     {2493, "What decides which axis a shove between two tanks takes."},
     {2494, "How far one shove moves a tank."},
     {2495, "How many shoves are tried in a tick."},
-    {2496, "A right shift: a bump loses that much of itself each tick, so a bigger number is slower."},
+    {2496, "Knockback loses 1 / 2^this of its remaining displacement per reference 40 ms. A bigger number means slower decay and more total travel. Movement runs every 20 ms with the equivalent decay; 2 retains about 86.6% per tick."},
     {2497, "The reach a tank picks up a pillbox from."},
     {2498, "How far inside the bank a boat is held."},
-    {2499, "World units a knocked tank slides."},
+    {2499, "Reference 40 ms shell knockback step at full armour, in world units. Missing pre-hit armour adds a proportional tank_slide_armour_bonus. Applied smoothly every 20 ms. Zero disables shell knockback."},
     {2500, "How a tank comes off a wall it hits: 0 slides along it, 1 glides free."},
     {2501, "The fastest the builder may walk on a road."},
     {2502, "The fastest the builder may walk on grass."},
@@ -2631,6 +2631,7 @@ static const LangEntry langTable[] = {
     {2678, "Publish this mod or scenario to the Steam Workshop"},
     {2679, "Update the item this file came from"},
     {2680, "Workshop"},
+    {2681, "Extra reference 40 ms knockback step at zero armour, in world units. Scales with the fraction of armour missing before the shell hit. Zero makes all armour levels receive the same shove."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
