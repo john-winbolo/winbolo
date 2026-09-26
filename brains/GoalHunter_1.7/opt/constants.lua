@@ -4015,6 +4015,33 @@ M.BUILDER_POOL_GOAL_PILL_BONUS = 1.2    -- x score for the tank goal's own pill;
 -- bonus above also applies, the larger of the two is used, never both.
 M.BUILDER_POOL_PING_PILL_BONUS = 2.0    -- keel 1.0 (KEEL had no ping bonus)
 M.BUILDER_POOL_PING_PILL_TICKS = 500    -- keel 500 (10 s; moot with the bonus at 1.0)
+-- THE PING DEFEND REPAIR (Andrew, 2026-09-26: "a bot ping on a friendly
+-- pillbox to be defend but ALSO a 100% sure REPAIR once the tank is within say
+-- 10 tiles of it").  The bonus above is only a weight on a 10 s clock, and the
+-- ordered defend goal (alarm mode) never sets goal.repair, so the repair
+-- feeder never seeds.  With this on, a bot that HOLDS a human's bot-command
+-- ping defend order on one of our pills that is damaged (0 < hp < max) and
+-- whose tank is within PING_DEFEND_REPAIR_RANGE tiles (straight line, the
+-- DEFEND_ARRIVE_RADIUS metric) FORCES the pill's builder-pool row
+-- (builder_pool.ping_force):
+--   * it is sorted first, whatever any other row scores, and its printed score
+--     is bp_raw + PING_DEFEND_REPAIR_BONUS so the panel shows it on top;
+--   * it waives the leash, TOPUP_MIN_MISSING, the tree reserve (it needs one
+--     tree, the engine's lgm_cost_pill_repair), the goal's reserve_eta, the
+--     mode_owned gate, MIN_SCORE, the ping / goal-pill weight and the
+--     take_blocker / friendly_fire / blocked / repos discovery guards;
+--   * it KEEPS the man-safety gates: fire_exchange, under_fire (the tank hit
+--     inside BUILDER_POOL_UNDER_FIRE_TICKS) and the shell gate (a shell-gated
+--     forced row holds the man; no other job takes him), plus ally_repairing
+--     and unreachable.  Armour at ARMOUR_CRITICAL (the order is paused) ends it.
+--   * NO WOOD (0 trees): step 1 is a forced harvest -- the farm row with the
+--     shortest walk out is forced the same way (its path-safety gate kept);
+--     the repair follows when the man is home with wood.
+-- It lasts while the order holds, not on a clock, and repeats until full.
+M.PING_DEFEND_REPAIR       = true   -- keel false (KEEL only had the weight)
+M.PING_DEFEND_REPAIR_RANGE = 10     -- tiles, straight line; keel 10 (moot, master off)
+M.PING_DEFEND_REPAIR_BONUS = 1000   -- points added to the forced row's printed
+                                    -- score; keel 1000 (moot, master off)
 
 -- ── Eligibility ──────────────────────────────────────────────────────────
 -- Under-fire: NOT a single-tick test. perc.under_fire is "the danger field at
@@ -5011,6 +5038,12 @@ M.PRESETS = {
     -- pill's builder-pool repair row for 10 s.  KEEL had no such bonus.
     BUILDER_POOL_PING_PILL_BONUS = 1.0,
     BUILDER_POOL_PING_PILL_TICKS = 500,
+    -- 2026-09-26: a bot holding a human's ping defend order on a damaged pill
+    -- of ours, with its tank within 10 tiles, forces the man to repair it
+    -- (harvesting first with no wood).  KEEL had only the weight above.
+    PING_DEFEND_REPAIR = false,
+    PING_DEFEND_REPAIR_RANGE = 10,
+    PING_DEFEND_REPAIR_BONUS = 1000,
     -- 2026-09-08: the "loaded, builder-less" state (>= 3 pills aboard and the
     -- man dead or more than 20 s of walking away).  Six knobs, one per thing
     -- that changes inside it; every one of these values is what the brain did
