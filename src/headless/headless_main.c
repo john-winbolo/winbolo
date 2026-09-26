@@ -366,6 +366,7 @@ static const char *logEventsTypeName(int type) {
     case CTRL_SCENARIO_RULES:        return "CTRL_SCENARIO_RULES";
     case CTRL_LOBBY_SCRIPT_LIST:     return "CTRL_LOBBY_SCRIPT_LIST";
     case CTRL_LOBBY_SCRIPT_SETTING:  return "CTRL_LOBBY_SCRIPT_SETTING";
+    case CTRL_LOBBY_BRAIN_ANNOUNCE:  return "CTRL_LOBBY_BRAIN_ANNOUNCE";
     default:                         return NULL;
   }
 }
@@ -384,10 +385,12 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
    * stream to keep the baselines stable and content-independent. */
   if (evt->type == CTRL_LOBBY_BOT_POOL_CHUNK) return;
 
-  /* Same story for the per-brain lobby texts (announce.txt/commands.txt):
-   * they are lobby display data whose fragment count depends on which
-   * brains exist on the machine the baseline runs on. */
+  /* Same story for the per-brain announce lines: they are lobby display
+   * data whose count depends on which brains exist on the machine the
+   * baseline runs on. The retired docs chunk is dropped too, in case a
+   * recording replays one. */
   if (evt->type == CTRL_LOBBY_BRAIN_DOCS_CHUNK) return;
+  if (evt->type == CTRL_LOBBY_BRAIN_ANNOUNCE) return;
 
   /* Tick numbers come from the ClientSim's last-server-tick counter,
    * which both modes agree on (set by snapshot ingestion in --fast
@@ -684,6 +687,7 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
       break;
 
     case CTRL_LOBBY_BRAIN_DOCS_CHUNK:
+    case CTRL_LOBBY_BRAIN_ANNOUNCE:
       /* Dropped above; never reaches the body writer. */
       break;
 

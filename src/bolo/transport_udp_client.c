@@ -1252,6 +1252,7 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_SCENARIO_RULES:   return "SCENARIO_RULES";
     case CTRL_LOBBY_SCRIPT_LIST: return "LOBBY_SCRIPT_LIST";
     case CTRL_LOBBY_SCRIPT_SETTING: return "LOBBY_SCRIPT_SETTING";
+    case CTRL_LOBBY_BRAIN_ANNOUNCE: return "LOBBY_BRAIN_ANNOUNCE";
     default:                    return "<unknown>";
     }
 }
@@ -1335,6 +1336,31 @@ static void clientApplyChannelReset(TransportUdpClientCtx *c,
                 c->scriptFetchState       = CLIENT_SCRIPT_FETCH_FAILED;
                 c->scriptFetchStatus      = CLIENT_SCRIPT_FETCH_NO_ANSWER;
                 c->scriptFetchRetryAtTick = 0;
+            }
+            /* A brain docs answer or a script details answer still being
+             * filled is abandoned with it. Each is asked for again: the
+             * brain, or the slot, goes back to WANTED and its receive mark is
+             * cleared, since the tick treats a set mark as "arriving now" and
+             * would otherwise wait on the cut-off body for ever. */
+            if (c->clientSim != NULL) {
+                ClientSim *cs = c->clientSim;
+                struct ClientBrainTexts *t = cs->lobbyBrainTexts;
+                if (t != NULL && t->rxIdx > 0 && t->rxIdx <= BRAIN_LIST_MAX) {
+                    if (t->docs[t->rxIdx - 1].state == CLIENT_BRAIN_DOCS_S_ASKED) {
+                        t->docs[t->rxIdx - 1].state = CLIENT_BRAIN_DOCS_S_WANTED;
+                        t->docs[t->rxIdx - 1].tries = 0;
+                    }
+                    t->rxIdx = 0;
+                }
+                if (cs->lobbyScnDetailsRxSlot > 0 &&
+                    cs->lobbyScnDetailsRxSlot <= LOBBY_SCN_DETAILS_SLOTS) {
+                    int slot = cs->lobbyScnDetailsRxSlot - 1;
+                    if (cs->lobbyScnDetails[slot].state == LOBBY_SCN_DETAILS_ASKED) {
+                        cs->lobbyScnDetails[slot].state = LOBBY_SCN_DETAILS_WANTED;
+                        cs->lobbyScnDetails[slot].tries = 0;
+                    }
+                    cs->lobbyScnDetailsRxSlot = 0;
+                }
             }
             bulkReceiverInit(&c->bulkRecv);
             if (c->mapResyncBuf != NULL) {
@@ -1780,6 +1806,78 @@ static void udpClientScnDetailsTick(TransportUdpClientCtx *c) {
     }
 }
 
+/* ---- A brain's commands.txt for the lobby's docs dialog (BULK_KIND_BRAIN_DOCS).
+ *
+ * The dialog marks the brain WANTED (clientSimLobbyBrainDocsWant); this tick
+ * asks for one brain at a time with PACKET_LOBBY_BRAIN_DOCS_REQ and the answer
+ * comes back compressed on CHANNEL_BULK. The request is a bare datagram and
+ * the server drops one it cannot start at once (its bulk sender for this
+ * client busy), so an ASKED brain with no answer after
+ * CLIENT_BRAIN_DOCS_TIMEOUT_TICKS is asked again, up to CLIENT_BRAIN_DOCS_TRIES
+ * times, and then reads FAILED until the dialog is opened again. An answer
+ * that has started arriving is never timed out; the bulk channel resends its
+ * own lost fragments. */
+
+BOLO_STATIC_ASSERT(sizeof(((struct ClientBrainTexts *)0)->rx) ==
+                       BULK_BRAIN_DOCS_BLOB_MAX,
+                   brain_docs_rx_holds_the_largest_answer);
+
+/* Put one docs request on the wire and stamp the brain ASKED. */
+static void udpClientSendBrainDocsReq(TransportUdpClientCtx *c, int idx) {
+    struct ClientBrainTexts *t = c->clientSim->lobbyBrainTexts;
+    uint8_t buf[PACKET_HEADER_SIZE + 1];
+    packHeader(buf, PACKET_LOBBY_BRAIN_DOCS_REQ, c->outSequence++);
+    buf[PACKET_HEADER_SIZE] = (uint8_t)idx;
+    udpClientSendTo(c, buf, (int)sizeof(buf));
+    t->docs[idx].state    = CLIENT_BRAIN_DOCS_S_ASKED;
+    t->docs[idx].tries++;
+    t->docs[idx].sentTick = c->localTick;
+}
+
+/* Per-tick: at most one request out at a time, so the answers never queue
+ * behind each other in the server's one bulk sender for this client. */
+static void udpClientBrainDocsTick(TransportUdpClientCtx *c) {
+    struct ClientBrainTexts *t;
+    int i;
+    if (c->clientSim == NULL) return;
+    t = c->clientSim->lobbyBrainTexts;
+    if (t == NULL) return;
+    for (i = 0; i < BRAIN_LIST_MAX; i++) {
+        if (t->docs[i].state != CLIENT_BRAIN_DOCS_S_ASKED) continue;
+        if (t->rxIdx == i + 1) return;                     /* arriving now */
+        if ((uint32_t)(c->localTick - t->docs[i].sentTick) <
+            CLIENT_BRAIN_DOCS_TIMEOUT_TICKS) {
+            return;
+        }
+        if (t->docs[i].tries < CLIENT_BRAIN_DOCS_TRIES) {
+            udpClientSendBrainDocsReq(c, i);
+        } else {
+            WB_LOG_WARN(WB_LOG_CAT_NET,
+                "no commands.txt for brain %d after %u requests",
+                i, (unsigned)t->docs[i].tries);
+            t->docs[i].state = CLIENT_BRAIN_DOCS_S_FAILED;
+        }
+        return;
+    }
+    for (i = 0; i < BRAIN_LIST_MAX; i++) {
+        if (t->docs[i].state == CLIENT_BRAIN_DOCS_S_WANTED) {
+            udpClientSendBrainDocsReq(c, i);
+            return;
+        }
+    }
+}
+
+/* The brain index a BULK_KIND_BRAIN_DOCS header's path names, or -1. */
+static int udpClientBrainDocsPathIdx(const BulkStreamHeader *h) {
+    int idx = 0, n;
+    if (h->pathLen == 0 || h->pathLen > 2) return -1;
+    for (n = 0; n < h->pathLen; n++) {
+        if (h->path[n] < '0' || h->path[n] > '9') return -1;
+        idx = idx * 10 + (h->path[n] - '0');
+    }
+    return idx < BRAIN_LIST_MAX ? idx : -1;
+}
+
 /* ---- A copy of one of the server's scripts (BULK_KIND_SCRIPT_PACKAGE).
  *
  * The request is a bare datagram and the server drops one it cannot start at
@@ -2001,6 +2099,22 @@ static uint8_t *clientBulkOnBegin(void *ctx, const BulkStreamHeader *h) {
         return NULL;
     }
 
+    case BULK_KIND_BRAIN_DOCS: {
+        /* One brain's commands.txt, answering a PACKET_LOBBY_BRAIN_DOCS_REQ.
+         * Taken only for a brain this client is waiting on, and only for the
+         * docs generation it was told about, or a not-found answer; a late or
+         * stale answer is dropped and the request goes again. totalSize is
+         * attacker-controlled: bound it by the receive buffer. */
+        struct ClientBrainTexts *t = cs->lobbyBrainTexts;
+        int idx = udpClientBrainDocsPathIdx(h);
+        if (t == NULL || idx < 0) return NULL;
+        if (h->totalSize < 1 || h->totalSize > sizeof(t->rx)) return NULL;
+        if (t->docs[idx].state != CLIENT_BRAIN_DOCS_S_ASKED) return NULL;
+        if (h->gen != 0 && h->gen != t->docs[idx].gen) return NULL;
+        t->rxIdx = idx + 1;
+        return t->rx;
+    }
+
     case BULK_KIND_SCRIPT_PACKAGE:
         /* A copy of a script, answering this client's
          * PACKET_LOBBY_SCRIPT_FETCH_REQ. Taken only while that request is
@@ -2205,6 +2319,30 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
         WB_LOG_INFO(WB_LOG_CAT_NET,
             "round log received (%u bytes)", (unsigned)h->totalSize);
         break;
+
+    case BULK_KIND_BRAIN_DOCS: {
+        /* The brain onBegin matched, unless a new announce or brain list
+         * moved it on meanwhile. A not-found answer, or one that does not
+         * inflate, leaves the brain FAILED, which the dialog stops waiting
+         * on; one for another generation leaves it ASKED to be asked again. */
+        struct ClientBrainTexts *t = cs->lobbyBrainTexts;
+        int idx = udpClientBrainDocsPathIdx(h);
+        if (t == NULL || idx < 0 || t->rxIdx != idx + 1) break;
+        t->rxIdx = 0;
+        if (t->docs[idx].state != CLIENT_BRAIN_DOCS_S_ASKED) break;
+        if (buf[0] != BULK_BRAIN_DOCS_FOUND) {
+            t->docs[idx].state = CLIENT_BRAIN_DOCS_S_FAILED;
+            break;
+        }
+        if (h->totalSize < 3) {
+            t->docs[idx].state = CLIENT_BRAIN_DOCS_S_FAILED;
+            break;
+        }
+        (void)clientSimLobbyBrainDocsPut(
+            cs, idx, h->gen, buf + 3, (size_t)h->totalSize - 3,
+            ((size_t)buf[1] << 8) | buf[2]);
+        break;
+    }
 
     case BULK_KIND_SCENARIO_DETAILS: {
         /* The slot onBegin matched, unless the dialog forgot it meanwhile. A
@@ -3992,6 +4130,12 @@ static bool udpClientTick(void *ctx) {
         udpClientRoundLogTick(c);
         udpClientScnDetailsTick(c);
         udpClientScriptFetchTick(c);
+    }
+    /* A spectator in the live lobby reads the same bot announce lines, and
+     * the server answers its docs requests on its own bulk stream. */
+    if (c->joinState == UDP_CLIENT_CONNECTED ||
+        c->joinState == UDP_CLIENT_SPECTATING) {
+        udpClientBrainDocsTick(c);
     }
 
     /* Control-event acks now ride the channel-frame trailer (the per-tick

@@ -1352,6 +1352,67 @@ static void handleLobbyScenarioDetailsReq(ServerSim *sim, uint8_t *buf,
     free(blob);   /* bulkSenderBegin copied it into its own buffer */
 }
 
+static void handleLobbyBrainDocsReq(ServerSim *sim, uint8_t *buf, int len,
+                                    struct sockaddr_in *fromAddr) {
+    /* [header 8] [brainIdx 1]. One brain's commands.txt, for the lobby's
+     * docs dialog, streamed back compressed over CHANNEL_BULK behind a
+     * BULK_KIND_BRAIN_DOCS stream header, or a not-found answer the client
+     * can stop waiting on.
+     *
+     * A spectator is answered too, but only while it watches the live
+     * lobby: it reads the same team chat a player does, and its bulk stream
+     * is then free of the delayed feed, which has it the rest of the time.
+     *
+     * A request that finds the bulk stream busy (the join map download, a
+     * preview) is dropped rather than answered, the same as a script
+     * details request: the client asks again when no answer comes, and a
+     * busy server is never made to hold a queue. */
+    int              clientIdx = serverFindClient(fromAddr);
+    int              brainIdx;
+    uint32_t         gen  = 0;
+    uint16_t         rawLen = 0, zLen = 0;
+    const uint8_t   *z    = NULL;
+    uint8_t         *blob;
+    uint32_t         blobLen;
+    BulkSender      *sender;
+    BulkStreamHeader sh;
+
+    if (!serverSimIsLobbyEnabled(sim) || len < PACKET_HEADER_SIZE + 1) return;
+    if (clientIdx >= 0) {
+        sender = &udpServer.bulkSend[clientIdx];
+    } else {
+        int sIdx = serverFindSpectator(fromAddr);
+        if (sIdx < 0 || !udpServer.spectators[sIdx].live) return;
+        sender = &udpServer.spectators[sIdx].bulkSend;
+    }
+    if (bulkSenderBusy(sender)) return;
+    brainIdx = buf[PACKET_HEADER_SIZE];
+
+    blob = (uint8_t *)malloc(BULK_BRAIN_DOCS_BLOB_MAX);
+    if (blob == NULL) return;
+    if (serverSimGetBrainDocs(sim, brainIdx, &gen, &rawLen, &z, &zLen) &&
+        (size_t)zLen + 3 <= BULK_BRAIN_DOCS_BLOB_MAX) {
+        blob[0] = BULK_BRAIN_DOCS_FOUND;
+        blob[1] = (uint8_t)(rawLen >> 8);
+        blob[2] = (uint8_t)(rawLen & 0xFFu);
+        memcpy(blob + 3, z, zLen);
+        blobLen = 3u + zLen;
+    } else {
+        blob[0] = BULK_BRAIN_DOCS_NOT_FOUND;
+        blobLen = 1;
+        gen     = 0;
+    }
+
+    memset(&sh, 0, sizeof(sh));
+    sh.kind      = BULK_KIND_BRAIN_DOCS;
+    sh.gen       = gen;
+    sh.totalSize = blobLen;
+    sh.pathLen   = (uint8_t)SDL_snprintf(sh.path, sizeof(sh.path), "%d",
+                                         brainIdx);
+    (void)bulkSenderBegin(sender, &sh, blob, blobLen);
+    free(blob);   /* bulkSenderBegin copied it into its own buffer */
+}
+
 /* Answer a PACKET_LOBBY_SCRIPT_FETCH_REQ on this client's CHANNEL_BULK as a
  * BULK_KIND_SCRIPT_PACKAGE blob: [status 1] then bytes, which only a
  * BULK_SCRIPT_FOUND answer carries. gen echoes the request's reqSeq and the
@@ -1709,6 +1770,9 @@ void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         case PACKET_LOBBY_SCENARIO_DETAILS_REQ:
             handleLobbyScenarioDetailsReq(sim, buf, len, fromAddr);
+            break;
+        case PACKET_LOBBY_BRAIN_DOCS_REQ:
+            handleLobbyBrainDocsReq(sim, buf, len, fromAddr);
             break;
         case PACKET_LOBBY_SCRIPT_FETCH_REQ:
             handleLobbyScriptFetchReq(sim, buf, len, fromAddr);

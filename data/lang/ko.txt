@@ -2217,6 +2217,8 @@ STR_BOT_DIFF_DESC_HARD=이 봇은 적의 토치카와 기지를 사냥하듯 노
 STR_DLGLOBBY_BOTCFG_MODE=모드
 STR_DLGLOBBY_BOT_DOCS_TITLE={string1} 명령어
 STR_COPY=복사
+STR_DLGLOBBY_BOT_DOCS_LOADING=서버에서 명령어를 가져오는 중...
+STR_DLGLOBBY_BOT_DOCS_FAILED=서버가 이 명령어를 보내지 않았습니다. 이 창을 닫았다가 다시 열어 다시 시도하세요.
 
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_PRESET_CLASSIC=클래식

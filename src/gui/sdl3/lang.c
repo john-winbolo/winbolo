@@ -2408,6 +2408,10 @@ static const LangEntry langTable[] = {
     {2689, "{string1}{string2}{string3}"},
     {2690, "[{player}] {string1}{string2}{string3}"},
     {2691, "declared regions"},
+    /* The bot docs dialog while the server's copy of the brain's
+       commands.txt is still arriving, and when it never came. */
+    {2692, "Getting the commands from the server..."},
+    {2693, "The server did not send these commands. Close this window and open it again to try again."},
     {2435, "Once before the round's first tick, after the scenario's rules are applied: where the map is arranged."},
     {2436, "The round's first running tick, where the tanks exist and the roster has settled."},
     {2437, "Once per frame, fifty times a second; the tick it is handed goes up by two each time."},

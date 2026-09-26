@@ -2859,6 +2859,10 @@
 #define STR_LV_SCN_ANNOUNCE_TO                   2690
 /* The tooltip on the Options menu's Regions item, which outlines the recording's regions on the map. */
 #define STR_LV_REGIONS_TIP                       2691
+/* What the bot docs dialog shows while a brain's commands.txt is on its way
+ * from the server, and what it shows when the server did not send it. */
+#define STR_DLGLOBBY_BOT_DOCS_LOADING            2692
+#define STR_DLGLOBBY_BOT_DOCS_FAILED             2693
 
 /* Rule descriptions */
 

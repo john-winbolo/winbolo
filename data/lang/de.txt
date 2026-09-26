@@ -2219,6 +2219,8 @@ STR_BOT_DIFF_DESC_HARD=Dieser Bot jagt feindliche Bunker und Basen, koordiniert 
 STR_DLGLOBBY_BOTCFG_MODE=Modus
 STR_DLGLOBBY_BOT_DOCS_TITLE={string1}-Befehle
 STR_COPY=Kopieren
+STR_DLGLOBBY_BOT_DOCS_LOADING=Befehle werden vom Server geladen...
+STR_DLGLOBBY_BOT_DOCS_FAILED=Der Server hat diese Befehle nicht gesendet. Schließe dieses Fenster und öffne es erneut, um es noch einmal zu versuchen.
 
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_PRESET_CLASSIC=Klassisch

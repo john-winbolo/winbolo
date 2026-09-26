@@ -130,12 +130,15 @@ int run_lobby_brain_docs_chunk_len_is_exact(void);
  * spectator ring's per-keyframe control snapshot, and dropped on the client
  * when a new catalogue arrives. */
 int run_lobby_brain_list_clears_stale_texts(void);
+int run_lobby_brain_announce_codec_and_apply(void);
+int run_lobby_brain_docs_put_follows_generation(void);
 
 /* The "name: text" lobby chat line has ONE spelling, because the lobby's
  * bot-announce poll searches the history for the line it just appended. */
 int run_lobby_chat_line_format_is_what_is_appended(void);
 int run_lobby_brain_docs_stay_out_of_the_control_snapshot(void);
 int run_lobby_brain_docs_reach_a_joining_subscriber(void);
+int run_lobby_brain_docs_refresh_moves_the_generation(void);
 int run_lobby_sync_complete_codec_roundtrip(void);
 int run_lobby_rating_posted_codec_roundtrip(void);
 int run_command_codec_roundtrip_variants(void);
@@ -489,6 +492,7 @@ int run_brain_inbox_legacy_drain_fifo(void);
 int run_brain_inbox_clear_resets(void);
 int run_brain_list_scan_path_resolves(void);
 int run_brain_list_texts_read(void);
+int run_brain_docs_compress_roundtrip(void);
 
 /* The two test rosters — test_main.c's dispatch table and CMakeLists.txt's
  * _unit_test_names — say the same thing, so a case added to one and not the
@@ -2031,6 +2035,9 @@ int run_lock_channel(void);
 /* Server-map preview over CHANNEL_BULK (test_loopback_preview.c): a real .map
  * file streamed back under loss and reassembled byte-identical on the client. */
 int run_loopback_map_preview(void);
+int run_loopback_brain_docs_fetch(void);
+int run_loopback_brain_docs_spectator(void);
+int run_loopback_brain_docs_survives_bulk_rebase(void);
 /* Client->server map upload over CHANNEL_BULK (test_loopback_upload.c): a map
  * uploaded under loss completes and the server decodes the reassembled bytes. */
 int run_loopback_map_upload(void);

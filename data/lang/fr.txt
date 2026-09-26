@@ -2219,6 +2219,8 @@ STR_BOT_DIFF_DESC_HARD=Ce bot pourchasse les pillboxes et les bases ennemis, se 
 STR_DLGLOBBY_BOTCFG_MODE=Mode
 STR_DLGLOBBY_BOT_DOCS_TITLE=Commandes de {string1}
 STR_COPY=Copier
+STR_DLGLOBBY_BOT_DOCS_LOADING=Récupération des commandes depuis le serveur...
+STR_DLGLOBBY_BOT_DOCS_FAILED=Le serveur n'a pas envoyé ces commandes. Fermez cette fenêtre et rouvrez-la pour réessayer.
 
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_PRESET_CLASSIC=Classique

@@ -2221,6 +2221,8 @@ STR_BOT_DIFF_DESC_HARD=Questo bot dà la caccia a bunker e basi nemiche, coordin
 STR_DLGLOBBY_BOTCFG_MODE=Modalità
 STR_DLGLOBBY_BOT_DOCS_TITLE=Comandi di {string1}
 STR_COPY=Copia
+STR_DLGLOBBY_BOT_DOCS_LOADING=Recupero dei comandi dal server...
+STR_DLGLOBBY_BOT_DOCS_FAILED=Il server non ha inviato questi comandi. Chiudi questa finestra e riaprila per riprovare.
 
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_PRESET_CLASSIC=Classica

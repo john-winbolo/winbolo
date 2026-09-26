@@ -2219,6 +2219,8 @@ STR_BOT_DIFF_DESC_HARD=Bu bot, kendi bunkerlerini hayatta tutup mühimmatı azal
 STR_DLGLOBBY_BOTCFG_MODE=Mod
 STR_DLGLOBBY_BOT_DOCS_TITLE={string1} Komutları
 STR_COPY=Kopyala
+STR_DLGLOBBY_BOT_DOCS_LOADING=Komutlar sunucudan alınıyor...
+STR_DLGLOBBY_BOT_DOCS_FAILED=Sunucu bu komutları göndermedi. Yeniden denemek için bu pencereyi kapatıp tekrar açın.
 
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_PRESET_CLASSIC=Klasik

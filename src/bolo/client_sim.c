@@ -31,6 +31,7 @@
 #include "client_sim.h"
 #include "client_command.h"   /* ViewStateKind — the viewport's view kinds */
 #include "client_sim_internal.h"
+#include "brain_list.h"          /* brainDocsDecompress */
 #include "server_sim.h"        /* serverSimGetGameSim — the bound server's own
                                 * alliance matrix, which a hosted bot's inbox
                                 * filter reads instead of its local copy */
@@ -523,10 +524,7 @@ static void clientSimDestroyContents(ClientSim *cs) {
     cs->brainBuildInfo = NULL;
   }
 
-  if (cs->lobbyBrainTexts != NULL) {
-    free(cs->lobbyBrainTexts);
-    cs->lobbyBrainTexts = NULL;
-  }
+  clientSimBrainTextsFree(cs);
 
   /* Free any captured-but-undrained spectator seed/records. */
   clientSimSpectatorFeedClear(cs);
@@ -2864,9 +2862,92 @@ const char *clientSimGetLobbyBrainAnnounce(const ClientSim *cs, int brainIdx) {
 }
 
 const char *clientSimGetLobbyBrainDocs(const ClientSim *cs, int brainIdx) {
+  const char *text;
   if (cs == NULL || cs->lobbyBrainTexts == NULL) return "";
   if (brainIdx < 0 || brainIdx >= BRAIN_LIST_MAX) return "";
-  return cs->lobbyBrainTexts->docs[brainIdx];
+  text = cs->lobbyBrainTexts->docs[brainIdx].text;
+  return text != NULL ? text : "";
+}
+
+bool clientSimLobbyBrainHasDocs(const ClientSim *cs, int brainIdx) {
+  if (cs == NULL || cs->lobbyBrainTexts == NULL) return false;
+  if (brainIdx < 0 || brainIdx >= BRAIN_LIST_MAX) return false;
+  return cs->lobbyBrainTexts->docs[brainIdx].gen != 0;
+}
+
+ClientBrainDocsState clientSimGetLobbyBrainDocsState(const ClientSim *cs,
+                                                     int brainIdx) {
+  if (!clientSimLobbyBrainHasDocs(cs, brainIdx)) return CLIENT_BRAIN_DOCS_NONE;
+  switch (cs->lobbyBrainTexts->docs[brainIdx].state) {
+  case CLIENT_BRAIN_DOCS_S_HAVE:   return CLIENT_BRAIN_DOCS_READY;
+  case CLIENT_BRAIN_DOCS_S_FAILED: return CLIENT_BRAIN_DOCS_FAILED;
+  default:                         return CLIENT_BRAIN_DOCS_WAITING;
+  }
+}
+
+void clientSimLobbyBrainDocsWant(ClientSim *cs, int brainIdx,
+                                 bool retryFailed) {
+  uint8_t *state;
+  if (!clientSimLobbyBrainHasDocs(cs, brainIdx)) return;
+  state = &cs->lobbyBrainTexts->docs[brainIdx].state;
+  if (*state == CLIENT_BRAIN_DOCS_S_EMPTY ||
+      (retryFailed && *state == CLIENT_BRAIN_DOCS_S_FAILED)) {
+    *state = CLIENT_BRAIN_DOCS_S_WANTED;
+    cs->lobbyBrainTexts->docs[brainIdx].tries = 0;
+  }
+}
+
+bool clientSimLobbyBrainDocsPut(ClientSim *cs, int brainIdx, uint32_t gen,
+                                const uint8_t *z, size_t zLen, size_t rawLen) {
+  char *text;
+  if (!clientSimLobbyBrainHasDocs(cs, brainIdx)) return false;
+  /* Docs for another generation are not the ones this brain was announced
+     with: the server has re-read the file since, or this is an answer to a
+     request made before the last announce. The next announce, or the next
+     request, brings the right ones. */
+  if (gen != cs->lobbyBrainTexts->docs[brainIdx].gen ||
+      rawLen != cs->lobbyBrainTexts->docs[brainIdx].len) {
+    return false;
+  }
+  text = (char *)malloc(rawLen + 1);
+  if (text == NULL || !brainDocsDecompress(z, zLen, rawLen, text)) {
+    free(text);
+    cs->lobbyBrainTexts->docs[brainIdx].state = CLIENT_BRAIN_DOCS_S_FAILED;
+    return false;
+  }
+  free(cs->lobbyBrainTexts->docs[brainIdx].text);
+  cs->lobbyBrainTexts->docs[brainIdx].text  = text;
+  cs->lobbyBrainTexts->docs[brainIdx].state = CLIENT_BRAIN_DOCS_S_HAVE;
+  return true;
+}
+
+struct ClientBrainTexts *clientSimBrainTexts(ClientSim *cs) {
+  if (cs == NULL) return NULL;
+  if (cs->lobbyBrainTexts == NULL) {
+    cs->lobbyBrainTexts =
+        (struct ClientBrainTexts *)calloc(1, sizeof(*cs->lobbyBrainTexts));
+  }
+  return cs->lobbyBrainTexts;
+}
+
+void clientSimBrainTextsClear(ClientSim *cs) {
+  int i;
+  if (cs == NULL || cs->lobbyBrainTexts == NULL) return;
+  for (i = 0; i < BRAIN_LIST_MAX; i++) {
+    free(cs->lobbyBrainTexts->docs[i].text);
+  }
+  memset(cs->lobbyBrainTexts->announce, 0,
+         sizeof(cs->lobbyBrainTexts->announce));
+  memset(cs->lobbyBrainTexts->docs, 0, sizeof(cs->lobbyBrainTexts->docs));
+  /* An answer still arriving lands in rx and is dropped on completion. */
+  cs->lobbyBrainTexts->rxIdx = 0;
+}
+
+void clientSimBrainTextsFree(ClientSim *cs) {
+  if (cs == NULL || cs->lobbyBrainTexts == NULL) return;
+  clientSimBrainTextsClear(cs);
+  free(cs->lobbyBrainTexts);
+  cs->lobbyBrainTexts = NULL;
 }
 
 const RoundStatsSummary *clientSimGetLastRoundStats(const ClientSim *cs) {
