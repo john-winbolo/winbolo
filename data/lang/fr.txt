@@ -2219,6 +2219,8 @@ STR_BOT_DIFF_DESC_HARD=Ce bot pourchasse les pillboxes et les bases ennemis, se 
 STR_DLGLOBBY_BOTCFG_MODE=Mode
 STR_DLGLOBBY_BOT_DOCS_TITLE=Commandes de {string1}
 STR_COPY=Copier
+STR_DLGLOBBY_BOT_DOCS_LOADING=Récupération des commandes depuis le serveur...
+STR_DLGLOBBY_BOT_DOCS_FAILED=Le serveur n'a pas envoyé ces commandes. Fermez cette fenêtre et rouvrez-la pour réessayer.
 
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_PRESET_CLASSIC=Classique
@@ -2613,6 +2615,17 @@ STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — il change la façon dont la partie se joue
 STR_MAPEDIT_SCENARIO_KIND_NOTE=Un mod ne peut pas définir le type de partie, déplacer l'horloge, tenir son propre score ni terminer la manche, ces options ne sont donc pas proposées tant que ceci indique Mod. C'est une question différente de « Conçu pour cette carte » plus bas, qui porte sur la carte pour laquelle le fichier a été écrit.
 STR_MAPEDIT_SCENARIO_GAME_MOD=Un mod laisse le type de partie au serveur
 STR_MAPEDIT_SCENARIO_FN_MOD={string1} n'est pas proposé tant que ce fichier indique Mod : c'est la seule réponse qui décide d'une fin, et un mod n'interfère pas dans la condition de victoire.
+STR_LV_INFO_SCENARIO_MODS_1={string1} · 1 mod
+STR_LV_INFO_SCENARIO_MODS_N={string1} · {number} mods
+STR_LV_INFO_SCRIPTS=Scripts
+STR_LV_INFO_SCRIPT_SOURCE_MAP=carte
+STR_LV_INFO_SCRIPT_SOURCE_SERVER=serveur
+STR_LV_INFO_RULE_CHANGE=tick {number} : {string1} → {string2}
+STR_LV_INFO_SCORES=Scores
+STR_LV_INFO_SCORE_SLOT=Place {number}
+STR_LV_SCN_ANNOUNCE={string1}{string2}{string3}
+STR_LV_SCN_ANNOUNCE_TO=[{player}] {string1}{string2}{string3}
+STR_LV_REGIONS_TIP=régions déclarées
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADS=Scripts des joueurs
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_SESSION=Autoriser pour cette session
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_KEEP=Autoriser et conserver

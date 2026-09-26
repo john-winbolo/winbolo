@@ -72,10 +72,11 @@ typedef enum {
     CTRL_LOBBY_BOT_CONFIG,
     CTRL_LOBBY_BOT_BRAIN,
     CTRL_LOBBY_BRAIN_LIST,
-    /* CTRL_LOBBY_BOT_POOL_CHUNK — one fragment of the server's bot
-     * naming-pool catalog (a zlib-compressed blob), streamed during
-     * join sync so clients render/pick from the SERVER's pools. The
-     * client reassembles fragments seq 0..count-1, then installs. */
+    /* CTRL_LOBBY_BOT_POOL_CHUNK — RETIRED. One fragment of the server's
+     * bot naming-pool catalog. Nothing sends it any more and a client
+     * ignores it: CTRL_LOBBY_BOT_POOL_INFO names the catalogue, and a
+     * client that does not hold it fetches it on CHANNEL_BULK. The type
+     * and its codec stay so recordings made before still decode. */
     CTRL_LOBBY_BOT_POOL_CHUNK,
     CTRL_GAME_VOTE_STATE,
     CTRL_SERVER_TEXT,
@@ -206,11 +207,12 @@ typedef enum {
      * and replayed into a joining client's sync so it arrives with the
      * table the round is already using. */
     CTRL_SIM_RULES,
-    /* CTRL_LOBBY_BRAIN_DOCS_CHUNK — one fragment of ONE brain's lobby
-     * texts: its announce.txt line and its commands.txt docs. Sent per
-     * BRAIN, not per bot, alongside the brain list, and only for the
-     * brains that ship the files. The client reassembles fragments
-     * seq 0..count-1 for brainIdx, then installs both strings.
+    /* CTRL_LOBBY_BRAIN_DOCS_CHUNK — RETIRED. One fragment of ONE brain's
+     * announce.txt and commands.txt together. Nothing sends it any more and
+     * a client ignores it: CTRL_LOBBY_BRAIN_ANNOUNCE carries the announce
+     * line, and the docs go on CHANNEL_BULK when a client asks for them.
+     * The type and its codec stay, because recordings made before hold it
+     * by this number and a reader must still be able to step over it.
      *
      * Appended at the END of this enum on purpose: the tables in
      * transport_control_codec.c are indexed by it, so a new type goes
@@ -315,6 +317,50 @@ typedef enum {
      * Appended at the END, like every type above it: the tables in
      * transport_control_codec.c are indexed by this enum. */
     CTRL_LOBBY_SCRIPT_SETTING,
+    /* CTRL_LOBBY_BRAIN_ANNOUNCE — ONE brain's announce.txt, and what the
+     * server holds of its commands.txt: the length and a generation number,
+     * but not the text. One event per brain that ships either file, sent
+     * beside the brain list in a joiner's sync and again when a round hands
+     * the lobby back.
+     *
+     * The announce line has to be here because the lobby drops it into team
+     * chat by itself, the moment a bot running the brain joins the reader's
+     * team. The docs do not: they are read only when a player clicks that
+     * line, so the client asks for them then (PACKET_LOBBY_BRAIN_DOCS_REQ)
+     * and they come back compressed on CHANNEL_BULK (BULK_KIND_BRAIN_DOCS).
+     * docsLen 0 says the brain ships no commands.txt and there is nothing to
+     * ask for. docsGen names the text the server holds now; the bulk answer
+     * carries it, so a client can tell an answer for older docs from one
+     * for the docs it was told about, and a new generation here makes a
+     * client drop the docs it already has for the brain.
+     *
+     * One control segment at most: 9 + BRAIN_ANNOUNCE_MAX = 521 bytes.
+     * Body-only on CHANNEL_CONTROL, as CTRL_SIM_RULES is. Like the chunk it
+     * replaces, it is left out of the delayed spectator ring's control
+     * snapshot.
+     *
+     * Appended at the END, like every type above it: the tables in
+     * transport_control_codec.c are indexed by this enum. */
+    CTRL_LOBBY_BRAIN_ANNOUNCE,
+    /* CTRL_LOBBY_BOT_POOL_INFO — which bot naming-pool catalogue the server
+     * holds: its id (lobbyBotPoolsCatalogId, a CRC-32 of the uncompressed
+     * pools) and the length of its compressed blob. id 0 and len 0 say the
+     * server has no themed pools, and the client keeps its own.
+     *
+     * Sent in a joiner's lobby sync where the catalogue itself used to be,
+     * up to 78 chunks of it. Most servers run the shipped bot_names.json,
+     * which the client holds already, so a client whose own pools have the
+     * same id does nothing. One with another id asks for the blob
+     * (PACKET_LOBBY_BOT_POOL_REQ) once it is connected, and it comes back
+     * on CHANNEL_BULK (BULK_KIND_BOT_POOL).
+     *
+     * Body-only on CHANNEL_CONTROL, 8 bytes. Players only: spectators add
+     * no bots and the allowlist leaves it out, and it is left out of the
+     * spectator ring's control snapshot.
+     *
+     * Appended at the END, like every type above it: the tables in
+     * transport_control_codec.c are indexed by this enum. */
+    CTRL_LOBBY_BOT_POOL_INFO,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -360,22 +406,15 @@ BOLO_STATIC_ASSERT(CTRL_SCENARIO_RULES_FRAGS_MAX <= 255,
  * destPlayer are separate struct fields, not part of body[]. */
 #define CHAT_BODY_MAX 272
 
-/* Per-fragment payload cap for CTRL_LOBBY_BOT_POOL_CHUNK. Sized so one
+/* Per-fragment payload cap for the retired CTRL_LOBBY_BOT_POOL_CHUNK. Sized so one
  * fragment plus its header fits a single control datagram (well under
  * MAX_CONTROL_PACKET). A 64 KiB catalog therefore needs at most
  * ceil(65536/900) ≈ 73 fragments (< 255, the seq/count cap). */
 #define LOBBY_BOT_POOL_CHUNK_FRAG_MAX 900
 
-/* Per-fragment payload cap for CTRL_LOBBY_BRAIN_DOCS_CHUNK, and the size
- * of one brain's whole text blob on the wire:
- *   [announceLen 2 BE][announce][docsLen 2 BE][docs]
- * The blob is at most 2 + 512 + 2 + 16384 = 16900 bytes, so at 900 bytes a
- * fragment the worst case is ceil(16900/900) = 19 fragments per brain and
- * the seq/count byte is never near its limit. The fragment cap itself does
- * NOT move with BRAIN_DOCS_MAX: it is what makes one fragment plus its
- * header fit a single control datagram. */
+/* Per-fragment payload cap for the retired CTRL_LOBBY_BRAIN_DOCS_CHUNK,
+ * kept so a recording that holds one still decodes. */
 #define LOBBY_BRAIN_DOCS_FRAG_MAX 900
-#define LOBBY_BRAIN_DOCS_WIRE_MAX (2 + BRAIN_ANNOUNCE_MAX + 2 + BRAIN_DOCS_MAX)
 
 /* Which of the three item lists a CTRL_ENTITY_CHANGE names. The values
  * ride the wire, so they are written out rather than left to the order
@@ -881,10 +920,9 @@ typedef struct ControlEvent {
             uint8_t  frag[LOBBY_BOT_POOL_CHUNK_FRAG_MAX];
         } lobbyBotPoolChunk;
 
-        /* CTRL_LOBBY_BRAIN_DOCS_CHUNK — fragment `seq` of `count` of the
-         * lobby texts belonging to brain `brainIdx` (an index into the
-         * brain catalogue CTRL_LOBBY_BRAIN_LIST carries). fragLen bytes
-         * live in frag[]. */
+        /* CTRL_LOBBY_BRAIN_DOCS_CHUNK — retired; see the enum. Fragment
+         * `seq` of `count` of the lobby texts belonging to brain
+         * `brainIdx`. fragLen bytes live in frag[]. */
         struct {
             uint8_t  brainIdx;
             uint8_t  seq;
@@ -1200,6 +1238,24 @@ typedef struct ControlEvent {
             char    id[SCN_SETTING_ID_LEN];        /* the setting's id */
             int32_t value;
         } lobbyScriptSetting;
+
+        /* CTRL_LOBBY_BRAIN_ANNOUNCE — see the enum. announce holds
+         * announceLen bytes and a NUL. docsLen is commands.txt's length in
+         * bytes, 0 for none; docsGen is 0 exactly when docsLen is. */
+        struct {
+            uint8_t  brainIdx;       /* index into CTRL_LOBBY_BRAIN_LIST */
+            uint32_t docsGen;
+            uint16_t docsLen;
+            uint16_t announceLen;
+            char     announce[BRAIN_ANNOUNCE_MAX + 1];
+        } lobbyBrainAnnounce;
+
+        /* CTRL_LOBBY_BOT_POOL_INFO — see the enum. id is 0 exactly when len
+         * is. */
+        struct {
+            uint32_t id;
+            uint32_t len;    /* compressed blob bytes, <= LOBBY_BOT_CATALOG_WIRE_MAX */
+        } lobbyBotPoolInfo;
     } u;
 } ControlEvent;
 

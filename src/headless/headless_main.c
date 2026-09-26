@@ -366,6 +366,8 @@ static const char *logEventsTypeName(int type) {
     case CTRL_SCENARIO_RULES:        return "CTRL_SCENARIO_RULES";
     case CTRL_LOBBY_SCRIPT_LIST:     return "CTRL_LOBBY_SCRIPT_LIST";
     case CTRL_LOBBY_SCRIPT_SETTING:  return "CTRL_LOBBY_SCRIPT_SETTING";
+    case CTRL_LOBBY_BRAIN_ANNOUNCE:  return "CTRL_LOBBY_BRAIN_ANNOUNCE";
+    case CTRL_LOBBY_BOT_POOL_INFO:   return "CTRL_LOBBY_BOT_POOL_INFO";
     default:                         return NULL;
   }
 }
@@ -377,17 +379,22 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
 
   if (f == NULL || evt == NULL) return;
 
-  /* The server streams its bot-name pool catalog to every joiner as
-   * CTRL_LOBBY_BOT_POOL_CHUNK fragments during lobby sync. That is cosmetic
-   * lobby data, not a game/control event these baselines assert, and its
-   * fragment count tracks data/bot_names.json — so drop it from the captured
-   * stream to keep the baselines stable and content-independent. */
+  /* The server names its bot-name pool catalog to every joiner in lobby
+   * sync with CTRL_LOBBY_BOT_POOL_INFO, whose id is a CRC of
+   * data/bot_names.json's pools. That is cosmetic lobby data, not a
+   * game/control event these baselines assert, and the id moves whenever
+   * the file does — so drop it from the captured stream to keep the
+   * baselines stable and content-independent. The retired chunks it
+   * replaced are dropped too, in case a recording replays one. */
+  if (evt->type == CTRL_LOBBY_BOT_POOL_INFO) return;
   if (evt->type == CTRL_LOBBY_BOT_POOL_CHUNK) return;
 
-  /* Same story for the per-brain lobby texts (announce.txt/commands.txt):
-   * they are lobby display data whose fragment count depends on which
-   * brains exist on the machine the baseline runs on. */
+  /* Same story for the per-brain announce lines: they are lobby display
+   * data whose count depends on which brains exist on the machine the
+   * baseline runs on. The retired docs chunk is dropped too, in case a
+   * recording replays one. */
   if (evt->type == CTRL_LOBBY_BRAIN_DOCS_CHUNK) return;
+  if (evt->type == CTRL_LOBBY_BRAIN_ANNOUNCE) return;
 
   /* Tick numbers come from the ClientSim's last-server-tick counter,
    * which both modes agree on (set by snapshot ingestion in --fast
@@ -684,6 +691,8 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
       break;
 
     case CTRL_LOBBY_BRAIN_DOCS_CHUNK:
+    case CTRL_LOBBY_BRAIN_ANNOUNCE:
+    case CTRL_LOBBY_BOT_POOL_INFO:
       /* Dropped above; never reaches the body writer. */
       break;
 
@@ -1237,11 +1246,15 @@ static void logStateVerbose(int tickNum) {
   fprintf(f, ",\"pillboxes\":[");
   if (fastServerSim != NULL) {
     BYTE np = serverSimGetPillCount(fastServerSim);
+    int firstPill = 1;
     for (BYTE pi = 1; pi <= np; pi++) {
       BYTE px, py, powner, parmour;
       bool pinTank;
+      /* A slot whose pill is not on the map is skipped, so the comma goes by
+         what has been written rather than by the slot number. */
       if (!serverSimGetPill(fastServerSim, pi, &px, &py, &powner, &parmour, &pinTank)) continue;
-      if (pi > 1) fprintf(f, ",");
+      if (!firstPill) fprintf(f, ",");
+      firstPill = 0;
       fprintf(f, "{\"tx\":%u,\"ty\":%u,\"owner\":\"%s\",\"armor\":%u,\"in_tank\":%s}",
         (unsigned)px, (unsigned)py,
         verboseOwnerStr(powner, selfPlayer, alliesBits),
@@ -1255,12 +1268,14 @@ static void logStateVerbose(int tickNum) {
   fprintf(f, ",\"bases\":[");
   if (fastServerSim != NULL) {
     BYTE nb = serverSimGetBaseCount(fastServerSim);
+    int firstBase = 1;
     for (BYTE bsi = 1; bsi <= nb; bsi++) {
       BYTE bx, by, bowner;
       BYTE bshells, bmines, barmour;
       if (!serverSimGetBase(fastServerSim, bsi, &bx, &by, &bowner)) continue;
       serverSimGetBaseStats(fastServerSim, bsi, &bshells, &bmines, &barmour);
-      if (bsi > 1) fprintf(f, ",");
+      if (!firstBase) fprintf(f, ",");
+      firstBase = 0;
       fprintf(f, "{\"tx\":%u,\"ty\":%u,\"owner\":\"%s\",\"armor\":%u,\"shells\":%u,\"mines\":%u}",
         (unsigned)bx, (unsigned)by,
         verboseOwnerStr(bowner, selfPlayer, alliesBits),
@@ -1567,18 +1582,22 @@ static void logChangesBuild(TextBuf *b) {
   if (fastServerSim != NULL) {
     BYTE np = serverSimGetPillCount(fastServerSim);
     BYTE pi;
+    int firstPill = 1;
     for (pi = 1; pi <= np; pi++) {
       BYTE px, py, powner, parmour, pspeed;
       bool pinTank;
+      /* A slot whose pill is not on the map is skipped, so the comma goes by
+         what has been written rather than by the slot number. */
       if (!serverSimGetPill(fastServerSim, pi, &px, &py, &powner, &parmour, &pinTank)) continue;
       if (!serverSimGetPillSpeed(fastServerSim, pi, &pspeed)) continue;
       textBufPrintf(b, "%s{\"tx\":%u,\"ty\":%u,\"owner\":\"%s\",\"armor\":%u"
                        ",\"in_tank\":%s,\"speed\":%u}",
-                    pi > 1 ? "," : "",
+                    firstPill ? "" : ",",
                     (unsigned)px, (unsigned)py,
                     verboseOwnerStr(powner, selfPlayer, alliesBits),
                     (unsigned)parmour, pinTank ? "true" : "false",
                     (unsigned)pspeed);
+      firstPill = 0;
     }
   }
   textBufPrintf(b, "]");
@@ -1587,6 +1606,7 @@ static void logChangesBuild(TextBuf *b) {
   if (fastServerSim != NULL) {
     BYTE nb = serverSimGetBaseCount(fastServerSim);
     BYTE bsi;
+    int firstBase = 1;
     for (bsi = 1; bsi <= nb; bsi++) {
       BYTE bx, by, bowner;
       BYTE bshells, bmines, barmour;
@@ -1594,10 +1614,11 @@ static void logChangesBuild(TextBuf *b) {
       serverSimGetBaseStats(fastServerSim, bsi, &bshells, &bmines, &barmour);
       textBufPrintf(b, "%s{\"tx\":%u,\"ty\":%u,\"owner\":\"%s\",\"armor\":%u"
                        ",\"shells\":%u,\"mines\":%u}",
-                    bsi > 1 ? "," : "",
+                    firstBase ? "" : ",",
                     (unsigned)bx, (unsigned)by,
                     verboseOwnerStr(bowner, selfPlayer, alliesBits),
                     (unsigned)barmour, (unsigned)bshells, (unsigned)bmines);
+      firstBase = 0;
     }
   }
   textBufPrintf(b, "]");

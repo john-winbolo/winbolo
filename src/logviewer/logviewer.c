@@ -52,6 +52,7 @@
 #include "imgui/imgui_comments.h"
 #include "imgui/imgui_dialogs.h"
 #include "imgui/imgui_game_viewport.h"
+#include "imgui/imgui_scenario_panel.h"
 #include "imgui/imgui_game_view.h"
 #include "imgui/imgui_logviewer_menu.h"
 #include "game_view.h"
@@ -906,6 +907,8 @@ static void lvHostRenderFrame(const char *overlay) {
         lvms.gameViewActive   = g_lv->gameView ? true : false;
         lvms.tankCentred      = lv_imgui_get_tank_centred() ? true : false;
         lvms.hideLobby        = lv_screenGetHideLobby() ? true : false;
+        lvms.showRegions      = lv_g_show_regions;
+        lvms.hasRegions       = lv_imgui_has_regions() ? true : false;
         lvms.soundEffects     = g_lv->isSoundsPlaying ? true : false;
         lvms.soundVolume      = g_lv->soundVolume;
         lvms.dnsLookups       = lv_imgui_get_dns_lookups() ? true : false;
@@ -914,6 +917,7 @@ static void lvHostRenderFrame(const char *overlay) {
         lvms.showGameInfo     = lv_g_show_game_info_window;
         lvms.showItemInfo     = lv_g_show_item_info_window;
         lvms.showComments     = lv_g_show_comments_window;
+        lvms.showScenarioPanel = lv_g_show_scenario_panel_window;
         lvms.zoomStepIndex    = lv_drawGetZoomStepIndex();
         lvms.zoomStepCount    = lv_drawGetZoomStepCount();
         lvms.fromMainMenu     = g_lv->fromMainMenu ? true : false;
@@ -923,6 +927,8 @@ static void lvHostRenderFrame(const char *overlay) {
     if (g_lv->gameView) {
         lv_imgui_render_game_menu_bar(g_lv);
         lv_imgui_render_game_view(g_lv);
+        /* The camera tank's panel, as its player saw it. */
+        lv_imgui_scenario_panel_window(g_lv->isLoaded ? true : false);
         /* Live spectator keeps the DVR scrubber reachable in game view; the
          * standalone viewer's game view shows no scrubber (never live mode). */
         if (lv_screenSpecIsLiveMode()) {
@@ -947,6 +953,7 @@ static void lvHostRenderFrame(const char *overlay) {
         lv_imgui_events_window();
         lv_g_show_game_info_window = true;
         lv_imgui_game_info_window();
+        lv_imgui_scenario_panel_window(g_lv->isLoaded ? true : false);
         lv_imgui_spectator_badge(g_lv->gamePhase);
         lv_g_reset_window_positions = false;
         if (overlay != NULL) {
@@ -988,6 +995,15 @@ static void lvHostRenderFrame(const char *overlay) {
                 case LV_PANEL_EVENTS:
                 default:                 lv_imgui_events_window();    break;
             }
+            /* The panel square beside whichever panel is up: a scenario's
+             * timer is part of watching the round, not a panel to switch
+             * to, and there is no menu here to bring it back if closed. */
+            {
+                bool save_scn = lv_g_show_scenario_panel_window;
+                lv_g_show_scenario_panel_window = true;
+                lv_imgui_scenario_panel_window(g_lv->isLoaded ? true : false);
+                lv_g_show_scenario_panel_window = save_scn;
+            }
 
             lv_g_show_controls_window  = save_ctrl;
             lv_g_show_events_window    = save_evt;
@@ -1002,6 +1018,7 @@ static void lvHostRenderFrame(const char *overlay) {
             lv_imgui_events_window();
             lv_imgui_item_info_window();
             lv_imgui_comments_window();
+            lv_imgui_scenario_panel_window(g_lv->isLoaded ? true : false);
         }
         lv_g_reset_window_positions = false;
         /* Popup stacks over panels, under blocking modal dialogs. */

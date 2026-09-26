@@ -447,8 +447,9 @@
 #define TANK_GOOD_15_X (TANK_GOOD_13_X + (2 * TILE_SIZE_X))
 #define TANK_GOOD_15_Y TANK_GOOD_13_Y
 
-/* Was 320 */
-#define TANK_GOODBOAT_0_X 319
+/* Was 319, which cropped the art in skin.bmp and tile.bmp one pixel left of
+   where it is drawn and overlapped TANK_GOOD_15 by a column */
+#define TANK_GOODBOAT_0_X 320
 #define TANK_GOODBOAT_0_Y 114
 #define TANK_GOODBOAT_1_X (TANK_GOODBOAT_0_X + TILE_SIZE_X)
 #define TANK_GOODBOAT_1_Y TANK_GOODBOAT_0_Y

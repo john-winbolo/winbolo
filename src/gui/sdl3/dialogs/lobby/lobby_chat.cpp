@@ -39,6 +39,10 @@ extern "C" {
 #include "client_command.h"  /* CHAT_DEST_IS_TEAM */
 #include "../../../lang.h"
 #include "../../../sound.h"
+#include "../../../gamefront.h"  /* gameFrontGetServerSim — whether the server is in this process */
+#include "../../../../server/threads.h"  /* threadsWaitForMutex / Release — the in-process read runs on the render thread */
+#include "server_sim.h"   /* serverSimGetBrainDocs — the in-process read */
+#include "brain_list.h"   /* BRAIN_DOCS_Z_MAX */
 }
 
 /* Chat state shared between the chat panel and the map chooser.
@@ -219,6 +223,42 @@ static void lobbyRenderChatDocsBlock(const char *begin, const char *end,
                                         begin, end, wrapW);
 }
 
+/* Make sure brain `idx`'s commands.txt is on its way. The server sends the
+ * docs only when asked (brain_list.h), so the dialog asks as it opens and
+ * keeps asking each frame; clientSimLobbyBrainDocsWant leaves a brain that is
+ * already asked for or held alone. A server in this process is read directly
+ * instead, the way the scenario chooser reads script details: its cache
+ * holds the same compressed bytes a remote server would send. That read
+ * answers false while the announce for the brain has not reached this client
+ * yet, and then the request goes over the network like any other. */
+static void lobbyChatDocsFetch(ClientSim *cs, int idx) {
+    ServerSim *sim;
+    ClientBrainDocsState state = clientSimGetLobbyBrainDocsState(cs, idx);
+
+    if (state == CLIENT_BRAIN_DOCS_READY || state == CLIENT_BRAIN_DOCS_NONE ||
+        state == CLIENT_BRAIN_DOCS_FAILED) {
+        return;
+    }
+    sim = gameFrontGetServerSim();
+    if (sim != NULL) {
+        static uint8_t z[BRAIN_DOCS_Z_MAX];
+        const uint8_t *src = NULL;
+        uint32_t gen = 0;
+        uint16_t rawLen = 0, zLen = 0;
+        bool     got;
+
+        threadsWaitForMutex();
+        got = serverSimGetBrainDocs(sim, idx, &gen, &rawLen, &src, &zLen) &&
+              zLen <= sizeof(z);
+        if (got) memcpy(z, src, zLen);
+        threadsReleaseMutex();
+        if (got && clientSimLobbyBrainDocsPut(cs, idx, gen, z, zLen, rawLen)) {
+            return;
+        }
+    }
+    clientSimLobbyBrainDocsWant(cs, idx, false);
+}
+
 /* The docs dialog. Call it at the lobby window's own id scope, never inside
  * the chat child: BeginPopupModal only finds a popup opened at the same
  * scope. A viewport-relative modal, the docs in a read-only text box, and a
@@ -247,8 +287,11 @@ void lobbyChatDocsRenderModal(ClientSim *cs) {
     if (s_docs.wantOpen) {
         s_docs.wantOpen = false;
         ImGui::OpenPopup("###botdocs");
+        /* Opening again is the retry for docs the server did not send. */
+        clientSimLobbyBrainDocsWant(cs, s_docs.openIdx, true);
     }
     if (!s_docs.open || s_docs.openIdx < 0) return;
+    lobbyChatDocsFetch(cs, s_docs.openIdx);
 
     memset(&args, 0, sizeof(args));
     SDL_strlcpy(args.string1, s_docs.openName, sizeof(args.string1));
@@ -273,7 +316,21 @@ void lobbyChatDocsRenderModal(ClientSim *cs) {
     footerH = st->ItemSpacing.y * 3.0f + 1.0f +
               ImGui::GetFrameHeightWithSpacing();
 
-    docs    = clientSimGetLobbyBrainDocs(cs, s_docs.openIdx);
+    /* Until the text has arrived the box says why it is empty. */
+    switch (clientSimGetLobbyBrainDocsState(cs, s_docs.openIdx)) {
+    case CLIENT_BRAIN_DOCS_READY:
+        docs = clientSimGetLobbyBrainDocs(cs, s_docs.openIdx);
+        break;
+    case CLIENT_BRAIN_DOCS_WAITING:
+        docs = langGetText(STR_DLGLOBBY_BOT_DOCS_LOADING);
+        break;
+    case CLIENT_BRAIN_DOCS_FAILED:
+        docs = langGetText(STR_DLGLOBBY_BOT_DOCS_FAILED);
+        break;
+    default:
+        docs = "";
+        break;
+    }
     if (docs == NULL) docs = "";
     docsLen = SDL_strlen(docs);
     /* The cast is safe under ReadOnly: ImGui never writes back through the

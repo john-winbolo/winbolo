@@ -2217,6 +2217,8 @@ STR_BOT_DIFF_DESC_HARD=这个机器人会主动搜寻敌方碉堡和基地，与
 STR_DLGLOBBY_BOTCFG_MODE=模式
 STR_DLGLOBBY_BOT_DOCS_TITLE={string1} 指令
 STR_COPY=复制
+STR_DLGLOBBY_BOT_DOCS_LOADING=正在从服务器获取命令...
+STR_DLGLOBBY_BOT_DOCS_FAILED=服务器未发送这些命令。请关闭此窗口并重新打开以重试。
 
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_PRESET_CLASSIC=经典
@@ -2611,6 +2613,17 @@ STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — 只改变游戏的进行方式，不影响
 STR_MAPEDIT_SCENARIO_KIND_NOTE=Mod 不能设置游戏类型、调整时钟、保留自己的比分或结束回合，因此当此项为 Mod 时不会提供这些选项。这与下方“专为此地图制作”是不同的问题，后者关乎该文件是为哪张地图编写的。
 STR_MAPEDIT_SCENARIO_GAME_MOD=Mod 将游戏类型交由服务器决定
 STR_MAPEDIT_SCENARIO_FN_MOD=当此文件为 Mod 时，不会提供 {string1}：它是决定结局的唯一答案，而 Mod 不涉及胜利条件。
+STR_LV_INFO_SCENARIO_MODS_1={string1} · 1 个MOD
+STR_LV_INFO_SCENARIO_MODS_N={string1} · {number} 个MOD
+STR_LV_INFO_SCRIPTS=脚本
+STR_LV_INFO_SCRIPT_SOURCE_MAP=地图
+STR_LV_INFO_SCRIPT_SOURCE_SERVER=服务器
+STR_LV_INFO_RULE_CHANGE=节拍 {number}：{string1} → {string2}
+STR_LV_INFO_SCORES=分数
+STR_LV_INFO_SCORE_SLOT=槽位 {number}
+STR_LV_SCN_ANNOUNCE={string1}{string2}{string3}
+STR_LV_SCN_ANNOUNCE_TO=[{player}] {string1}{string2}{string3}
+STR_LV_REGIONS_TIP=已声明的区域
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADS=来自玩家的脚本
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_SESSION=仅本次会话允许
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_KEEP=允许并保留

@@ -370,7 +370,6 @@ static void lobbyBotAnnouncePoll(ClientSim *cs) {
         if (s_announceBrain[idx]) continue;             /* this brain spoke */
         {
             const char *announce = clientSimGetLobbyBrainAnnounce(cs, idx);
-            const char *docs     = clientSimGetLobbyBrainDocs(cs, idx);
             char        base[BRAIN_LIST_NAME_LEN];
             char        line[LOBBY_CHAT_LINE_MAX];
             const char *history;
@@ -408,8 +407,10 @@ static void lobbyBotAnnouncePoll(ClientSim *cs) {
             s_announceBrain[idx] = true;
 
             /* Registering text that is not in the blob would simply never
-             * match, so this waits on the same answer. */
-            if (docs != NULL && docs[0] != '\0') {
+             * match, so this waits on the same answer. The docs themselves
+             * are not here yet: the server sends them when the line is
+             * clicked, so the test is whether it has any to send. */
+            if (clientSimLobbyBrainHasDocs(cs, idx)) {
                 lobbyChatDocsRegister((int)idx, base, line);
             }
         }
@@ -1328,7 +1329,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_MAP_UNAVAILABLE));
                     }
                     ImGui::Spacing();
-                    ImGui::Text("%s - %dP %dB %dS", clientSimGetMapName(cs), clientSimGetLobbyPillCount(cs), clientSimGetLobbyBaseCount(cs), clientSimGetLobbyStartCount(cs));
+                    ImGui::Text("%s - %dP %dB %dS", clientSimGetMapName(cs), lobbyLivePillCount(cs), lobbyLiveBaseCount(cs), lobbyLiveStartCount(cs));
 
                     /* What is playing, under what is loaded, for everyone —
                      * host included. These are the read-only lines and not
@@ -2258,9 +2259,9 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                     ImGui::SameLine(0.0f, 4.0f * s);
                     lobbyRenderLockBadge();
                 }
-                ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_PILLBOXES), clientSimGetLobbyPillCount(cs));
-                ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_BASES), clientSimGetLobbyBaseCount(cs));
-                ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_STARTS), clientSimGetLobbyStartCount(cs));
+                ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_PILLBOXES), lobbyLivePillCount(cs));
+                ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_BASES), lobbyLiveBaseCount(cs));
+                ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_STARTS), lobbyLiveStartCount(cs));
                 /* Same as the Map tab above, and directly under the start
                  * count for the same reason: the scenario and the mods are
                  * the last of what is loaded, and everyone reads them here

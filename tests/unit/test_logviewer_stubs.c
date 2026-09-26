@@ -78,9 +78,17 @@ void lv_windowRemoveEvents(void) {}
 
 void lv_windowRemoveEventsAfter(uint32_t timeMs) { (void)timeMs; }
 
+/* Every newswire and status line lv_messageAdd posts arrives here. The count
+ * lets a test tell how many lines a stretch of playback or a seek posted
+ * (test_lv_presentation.c). */
+int g_lvStubEventsAdded = 0;
+
 /* Declared in backend.h (already included). */
 void lv_finished(void) {}
-void lv_windowAddEvent(int eventType, char *msg) { (void)eventType; (void)msg; }
+void lv_windowAddEvent(int eventType, char *msg) {
+  (void)eventType; (void)msg;
+  g_lvStubEventsAdded++;
+}
 void lv_windowAddHighlight(char *msg, uint32_t seekMs, int mapX, int mapY) {
   (void)msg; (void)seekMs; (void)mapX; (void)mapY;
 }

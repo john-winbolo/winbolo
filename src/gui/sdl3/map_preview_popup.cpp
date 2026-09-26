@@ -250,8 +250,9 @@ static bool startPickerWantsDrag(ImVec2 imgMin, ImVec2 contentSize,
 /* Side mask of every start the popup has parsed — the same startSideMaskFor
  * the server and the lobby's cache apply, over the bounding box of the
  * parsed starts. masks[] is 1-based (MAX_STARTS + 1 entries); returns the
- * start count, 0 when no map has parsed. */
-static int startPickerSideMasks(BYTE *masks) {
+ * start count, 0 when no map has parsed. onMap[], when given, is filled the
+ * same way with whether each start is on the map. */
+static int startPickerSideMasks(BYTE *masks, bool *onMap = NULL) {
     if (!g_popupView) return 0;
     int n = mapPreviewViewGetStartCount(g_popupView);
     if (n > MAX_STARTS) n = MAX_STARTS;
@@ -269,6 +270,7 @@ static int startPickerSideMasks(BYTE *masks) {
     for (int i = 1; i <= n; i++) {
         masks[i] = have[i] ? startSideMaskFor(xs[i], ys[i], minX, minY, maxX, maxY)
                            : 0;
+        if (onMap != NULL) onMap[i] = have[i];
     }
     return n;
 }
@@ -767,7 +769,8 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
                  * overlay, so a start the pad cannot take reads off-side
                  * in both places. */
                 BYTE listMasks[MAX_STARTS + 1] = {0};
-                startPickerSideMasks(listMasks);
+                bool listOnMap[MAX_STARTS + 1] = {false};
+                startPickerSideMasks(listMasks, listOnMap);
                 /* NavFlattened so the list's rows live in the popup window's
                  * focus scope — the pad navigates straight into them and
                  * B/Escape still closes the popup in one press (no extra
@@ -776,7 +779,8 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
                                   ImGuiChildFlags_NavFlattened);
                 int focusedStart = lobbyStartListRender(g_startPickerCs,
                                                         g_startPickerMySlot,
-                                                        startCount, listMasks);
+                                                        startCount, listMasks,
+                                                        listOnMap);
                 ImGui::EndChild();
                 ImGui::SameLine();
                 ImVec2 imgMin = ImGui::GetCursorScreenPos();

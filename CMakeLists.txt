@@ -1715,6 +1715,7 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/imgui/imgui_item_info.cpp
     src/logviewer/imgui/imgui_dialogs.cpp
     src/logviewer/imgui/imgui_game_viewport.cpp
+    src/logviewer/imgui/imgui_scenario_panel.cpp
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/imgui/imgui_logviewer_menu.cpp
@@ -2372,6 +2373,7 @@ set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_item_info.cpp
     src/logviewer/imgui/imgui_dialogs.cpp
     src/logviewer/imgui/imgui_game_viewport.cpp
+    src/logviewer/imgui/imgui_scenario_panel.cpp
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/imgui/imgui_logviewer_menu.cpp
@@ -2437,8 +2439,15 @@ add_executable(LogViewer
     # spectates, so these resolve the seam symbols here.
     src/logviewer/spectator_input_stub.c
     src/gui/sdl3/lang.c
-    # Not sim_rules_phrase.c beside it: the phrase calls
-    # simRulesDescribeChange in bolo_static, which this target does not link.
+    src/gui/sdl3/sim_rules_phrase.c
+    # The viewer names a rule, phrases a change and parses a scenario panel.
+    # The standalone links no bolo_static, so the rule tables and the panel
+    # parser compile in directly. Both call nothing but libc.
+    src/bolo/sim_rules.c
+    src/bolo/scenario_panel.c
+    # The panel square's drawer, the game's own. It needs ImGui, the public
+    # scenario_panel.h and sprite_positions.c below, and nothing else.
+    src/gui/sdl3/scenario_panel_draw.cpp
     src/gui/sdl3/gamefront_stubs.c
     # The replay draws the same smart-ping glyphs the game does, out of the
     # same loose files.
@@ -2508,6 +2517,10 @@ target_include_directories(LogViewer PRIVATE
     ${cjson_SOURCE_DIR}
 )
 bolo_apply_include_rules(LogViewer runtime_only)
+# sim_rules.c spells the classic values in the sim's own constants, which
+# live in internal/ headers.
+bolo_grant_internal_source_access(LogViewer
+    src/bolo/sim_rules.c)
 
 target_link_libraries(LogViewer PRIVATE
     winbolonet_core
@@ -3610,6 +3623,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # list, the refusal each malformed list gets, the caps at their edges,
     # and a decoded list written back out and parsed again.
     tests/unit/test_scenario_panel.c
+    # The tablet UI's scenario panel square: its side and corner on a phone,
+    # a tablet, and views too small for the full side.
+    tests/unit/test_scenario_panel_slot.c
     # The four presentation control events: their body codecs against
     # hand-written bytes, the refusals a malformed body gets, and the
     # recipient filter the in-process subscriber applies before storing.
@@ -3939,6 +3955,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_starts_pick_incremental.c
     tests/unit/test_starts_assign_batch.c
     tests/unit/test_starts_open_ideal.c
+    tests/unit/test_starts_border.c
     tests/unit/test_start_sides.c
     tests/unit/test_lobby_side_axis.c
     tests/unit/test_lobby_start_shared.c
@@ -4063,6 +4080,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_player_mute.c
     tests/unit/test_lock_channel.c
     tests/unit/test_loopback_preview.c
+    tests/unit/test_loopback_brain_docs.c
+    tests/unit/test_loopback_bot_pool.c
     tests/unit/test_loopback_download.c
     tests/unit/test_loopback_map_change.c
     tests/unit/test_loopback_entity_change.c
@@ -4418,6 +4437,36 @@ set(WINBOLO_UNITTESTS_SOURCES
     # arrays, an entity removal past the array, a server line to a slot past
     # the roster, a modifiers blob of the wrong length.
     tests/unit/test_lv_hostile_records.c
+    # The rule names and the panel parser the standalone and wasm viewers
+    # compile in: a rule's name from its index and back, and a two-primitive
+    # list through scnPanelParse.
+    tests/unit/test_lv_sim_rules_names.c
+    # The scripted game type through the viewer: the .wbv header byte of a
+    # recorded round, and byte 7 of a hand-written settings payload.
+    tests/unit/test_lv_scripted_game_type.c
+    # The scripts.json member a scripted round's recording carries, read
+    # back with minizip, and the writer that builds it.
+    tests/unit/test_scripts_record.c
+    # The viewer reading that member into LvScripts. The scripted round it
+    # reads is recorded by lv_scripts_fixture.c, on the sim side of the
+    # two-world split replay_harness.h describes.
+    tests/unit/test_lv_scripts_json.c
+    tests/unit/lv_scripts_fixture.c
+    # The viewer's rules at the playhead: rule changes collected at load,
+    # LvRules after a seek, hostile records and the pill picture's cap.
+    tests/unit/test_lv_rule_changes.c
+    # The viewer's scenario panels, scores, announcement and markers at the
+    # playhead: a hand-written log seeked both ways, hostile records, a
+    # recorded scripted round and a plain one, the panel row a followed
+    # player sees and each slot's team from log_TeamSet.
+    tests/unit/test_lv_presentation.c
+    # The server's game tick at the playhead: anchors from log_ServerTick and
+    # the writer ticks counted between them, hostile records, an old
+    # recording, a live feed and a recorded round.
+    tests/unit/test_lv_server_tick.c
+    # Where the viewer draws a declared region on the overview and the game
+    # view (lv_region_rect.h, header only).
+    tests/unit/test_lv_region_rect.c
     # Stream-load decode path: feeds the v2 fixture's plaintext log.dat through
     # lv_screenLoadFromStream and asserts it decodes the same content the zip
     # reader does (reuses extractLogDat from test_log_roundtrip.c).
@@ -4541,6 +4590,8 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     # Committed v1 .wbv fixture directory: the reader gate loads from here and
     # the on-demand capture (re)writes spectator_v1.wbv into it.
     WB_WBV_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/wbv"
+    # Committed map fixtures: old copies of shipped maps with bad data.
+    WB_MAP_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/maps"
     # Committed skin fixture directory: the parity test opens
     # <dir>/basic and zips it into the working directory at run time.
     WB_SKINS_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/skins"
@@ -4675,9 +4726,13 @@ set(_unit_test_names
     lobby_brain_docs_chunk_codec_roundtrip
     lobby_brain_docs_chunk_len_is_exact
     lobby_brain_list_clears_stale_texts
+    lobby_brain_announce_codec_and_apply
+    lobby_brain_docs_put_follows_generation
+    lobby_bot_pool_info_codec_and_apply
     lobby_chat_line_format_is_what_is_appended
     lobby_brain_docs_stay_out_of_the_control_snapshot
     lobby_brain_docs_reach_a_joining_subscriber
+    lobby_brain_docs_refresh_moves_the_generation
     lobby_sync_complete_codec_roundtrip
     lobby_rating_posted_codec_roundtrip
     command_codec_roundtrip_variants
@@ -4925,6 +4980,7 @@ set(_unit_test_names
     brain_inbox_clear_resets
     brain_list_scan_path_resolves
     brain_list_texts_read
+    brain_docs_compress_roundtrip
     unit_test_names_match_cmake
     brain_modes_manifest_parses
     brain_modes_missing_falls_back
@@ -5034,6 +5090,8 @@ set(_unit_test_names
     lv_hostile_entity_remove_index
     lv_hostile_server_text_slot
     lv_hostile_modifiers_length
+    lv_hostile_map_run_edge
+    lv_hostile_frame_length
     wbv_reader_v1
     wbv_reader_v2
     attribution_reader_roundtrip
@@ -5124,6 +5182,17 @@ set(_unit_test_names
     starts_open_ideal_friendly_pill_eligible
     starts_open_ideal_removed_pill_ignored
     starts_open_removed_start_never_chosen
+    starts_border_start_dropped
+    starts_border_all_border_kept
+    starts_border_compressed_load_agrees
+    starts_border_named_inactive_safe
+    starts_border_harvard_yard
+    pills_border_pill_dropped
+    bases_border_base_dropped
+    items_border_all_border_kept
+    items_border_compressed_load_agrees
+    items_border_game_ignores
+    pills_border_old_tutorial
     start_side_mask_sectors
     start_side_mask_degenerate_bbox
     start_side_eligible_closed_mask
@@ -5369,6 +5438,14 @@ set(_unit_test_names
     player_mute_mask_roundtrip
     lock_channel
     loopback_map_preview
+    loopback_brain_docs_fetch
+    loopback_brain_docs_spectator
+    lobby_bot_pool_join_sends_only_the_id
+    loopback_bot_pool_fetch
+    loopback_bot_pool_same_not_fetched
+    bot_pool_refresh_retakes_catalogue
+    loopback_bot_pool_survives_bulk_rebase
+    loopback_brain_docs_survives_bulk_rebase
     loopback_map_upload
     upload_begin_golden
     script_upload_begin_refusals
@@ -5462,6 +5539,7 @@ set(_unit_test_names
     channel_mux_control_reset_clears_backlog
     spectator_ring
     spectator_ring_nolog
+    spectator_ring_nolog_tick_anchors
     spectator_replay
     spectator_config
     spectator_join
@@ -5626,6 +5704,7 @@ set(_unit_test_names
     lobby_maxbots_cap_boundary
     empty_return_to_lobby_removes_bots_and_unlocks
     bot_pool_wire_chunk_transport
+    bot_pool_catalog_id
     voice_core_roundtrip
     voice_device_resolve
     voice_peak
@@ -6335,6 +6414,49 @@ set(_unit_test_names
     scenario_panel_roundtrip
     scenario_panel_timer_text
     scenario_announce_remaining
+    scenario_panel_slot_rect
+    lv_rule_names_and_panel_parse
+    lv_scripted_game_type_header
+    lv_scripted_game_type_settings
+    scripts_record_scripted_round
+    scripts_record_plain_round
+    scripts_record_scripted_then_plain
+    scripts_record_detach_before_stop
+    scripts_record_setter_cap
+    scripts_record_json_write
+    lv_scripts_json_scripted_round
+    lv_scripts_json_plain_round
+    lv_scripts_json_old_recording
+    lv_scripts_json_malformed
+    lv_scripts_json_wrong_version
+    lv_scripts_json_hostile_values
+    lv_scripts_json_over_cap
+    lv_scripts_json_close_clears
+    lv_rule_changes_collected
+    lv_rule_changes_seek
+    lv_rule_changes_plain_round
+    lv_rule_changes_hostile
+    lv_rule_changes_live_feed
+    lv_rule_changes_armour_levels
+    lv_rule_changes_live_same_tick
+    lv_presentation_seek
+    lv_presentation_hostile
+    lv_presentation_scripted_round
+    lv_presentation_rebuild_many
+    lv_presentation_plain_round
+    lv_presentation_panel_choice
+    lv_presentation_slot_team
+    lv_presentation_announce_posts
+    lv_presentation_marker_visible
+    lv_presentation_live_seek
+    lv_presentation_live_fast_forward
+    lv_server_tick_recorded
+    lv_server_tick_anchors
+    lv_server_tick_hostile
+    lv_server_tick_old_recording
+    lv_server_tick_alternating
+    lv_server_tick_live_feed
+    lv_region_rect_placement
     scn_presentation_codec_bodies
     scn_presentation_codec_refuses_short
     scn_presentation_decoder_sets_broadcast
@@ -6345,6 +6467,10 @@ set(_unit_test_names
     scn_arm_panel_replayed_to_joiner
     scn_arm_panel_snapshot_bounded
     scn_arm_score_announce_marker
+    scn_arm_markers_scores_replayed_to_joiner
+    scn_arm_markers_scores_snapshot
+    scn_arm_markers_scores_reset
+    scn_markers_scores_loopback_late_join
     scenario_rules_codec
     scenario_rules_published
     scenario_rules_reaches_joiner
@@ -6671,6 +6797,78 @@ if(WB_FUZZ)
                      ${WB_FUZZ_CORPUS_DIR}/map_fields ${WB_FUZZ_CRASH_DIR})
     set_tests_properties(fuzz.map_fields PROPERTIES TIMEOUT 120)
 
+    # The log viewer loading and playing a .wbv. The input is a plaintext
+    # log.dat with an optional scripts.json in front of it; the target stores
+    # both in a zip it builds in memory and hands it to
+    # lv_screenLoadMapFromMemory, then plays, seeks back and reads the
+    # results. Links like map_load, plus the log-viewer decode subset and the
+    # link-only viewer stubs WinBoloUnitTests compiles for the same path.
+    add_executable(fuzz_replay
+        tests/fuzz/fuzz_replay.c
+        tests/unit/test_stubs.c
+        tests/unit/test_logviewer_stubs.c
+        src/steam/steam_wrapper_stub.c
+        src/common/prefs_doc.c
+        src/common/prefs.c
+        src/common/md5.c
+        src/common/mp_diag_log.c
+        src/server/server_dedicated_log_path.c
+        src/winbolonet/wbn_bearer.c
+        src/winbolonet/wbn_country_cache.c
+        src/winbolonet/wbn_news_parser.cpp
+        src/winbolonet/wbn_prefs_sync.c
+        src/bolo/transport_udp_client.c
+        src/lzw/dcodlzw.c
+        src/lzw/ecodlzw.c
+        src/logviewer/screen.c
+        src/logviewer/blocks.c
+        src/logviewer/lv_attribution.c
+        src/logviewer/lv_stats.c
+        src/logviewer/snapshot.c
+        src/logviewer/players.c
+        src/logviewer/spec_seed_load.c
+        src/logviewer/pillbox.c
+        src/logviewer/bases.c
+        src/logviewer/starts.c
+        src/logviewer/shells.c
+        src/logviewer/bolo_map.c
+        src/logviewer/screencalc.c
+        src/logviewer/screentank.c
+        src/logviewer/screenlgm.c
+        src/logviewer/screenbullet.c
+        src/logviewer/sounddist.c
+        src/logviewer/allience.c
+        src/logviewer/labels.c
+        src/logviewer/util.c
+        src/logviewer/global.c
+        src/logviewer/clientmutex.c
+        src/logviewer/dns.c
+        src/logviewer/game_settings_blob.c)
+    bolo_apply_include_rules(fuzz_replay unittests)
+    target_include_directories(fuzz_replay PRIVATE
+        src/gui/sdl3 src/server src src/winbolonet src/logviewer
+        ${CMAKE_SOURCE_DIR}/tests/unit ${cjson_SOURCE_DIR})
+    target_compile_definitions(fuzz_replay PRIVATE
+        HAVE_SCREEN_C=1
+        WINBOLO_VERSION="${WINBOLO_VERSION}"
+        WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
+        WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
+        WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+        WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
+        BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+        BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+        BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION})
+    target_link_libraries(fuzz_replay PRIVATE
+        bolo_static ${SERVER_LINK_GROUP} bot_brains_static
+        SDL3::SDL3 minizip lua_static cjson utf8proc mdns ${MATH_LIB} pthread)
+    target_compile_options(fuzz_replay PRIVATE -fcommon)
+    target_link_options(fuzz_replay PRIVATE -fsanitize=fuzzer)
+    set_flat_output(fuzz_replay "${CMAKE_BINARY_DIR}")
+    add_test(NAME fuzz.replay
+             COMMAND $<TARGET_FILE:fuzz_replay> -runs=0
+                     ${WB_FUZZ_CORPUS_DIR}/replay ${WB_FUZZ_CRASH_DIR})
+    set_tests_properties(fuzz.replay PROPERTIES TIMEOUT 120)
+
     # Tier 1 — the channel-mux frame parser (channelRecvFrame), the single
     # bounds-checked decode site the reliability rework collapsed every reliable
     # queue / carrier / chunker onto. bolo_static only, like the wire codecs.
@@ -6883,6 +7081,9 @@ if(WB_FUZZ)
     add_custom_command(TARGET fuzz_join_accept POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:fuzz_join_accept>")
+    add_custom_command(TARGET fuzz_replay POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:fuzz_replay>")
     if(HAVE_ONNXRUNTIME AND DEFINED ONNXRUNTIME_LIBDIR)
         file(GLOB _FUZZ_ORT_SO "${ONNXRUNTIME_LIBDIR}/libonnxruntime*")
         foreach(_f ${_FUZZ_ORT_SO})
@@ -6898,6 +7099,9 @@ if(WB_FUZZ)
             add_custom_command(TARGET fuzz_join_accept POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${_f}" "$<TARGET_FILE_DIR:fuzz_join_accept>")
+            add_custom_command(TARGET fuzz_replay POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_f}" "$<TARGET_FILE_DIR:fuzz_replay>")
         endforeach()
     endif()
 endif()

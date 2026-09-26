@@ -206,6 +206,10 @@ void replayHarnessTick(ReplayHarness *h, int simTicks);
  * than assume it. */
 void replayHarnessSnapshot(ReplayHarness *h);
 
+/* The sim's game tick now (serverSimGetTick), for a case on the viewer side
+ * that cannot include the sim's headers. 0 for a harness with no sim. */
+uint32_t replayHarnessServerTick(const ReplayHarness *h);
+
 /* Capture the sim's world, then close the .wbv. Returns false if the
  * harness is not recording or the capture could not be allocated. */
 bool replayHarnessStopRecording(ReplayHarness *h);
@@ -222,6 +226,7 @@ typedef struct {
     char     mapName[REPLAY_MAP_NAME_LEN];  /* from the log header */
     int      ticks;         /* playback ticks to end-of-log */
     uint32_t totalTimeMs;   /* what the load's byte walk made of the file */
+    int      gameType;      /* the log header's game type byte */
 } ReplayFileInfo;
 
 /* totalTimeMs is the other reader in the viewer: the walk the load runs over
@@ -237,6 +242,26 @@ typedef struct {
  * replayHarnessDecode. Defined in replay_harness_decode.c. */
 bool replayHarnessDecodeFile(const char *path, ReplayWorld *w,
                              ReplayFileInfo *info);
+
+/* The same decode, and the viewer's scripts.json holder (LvScripts in
+ * src/logviewer/logviewer.h) copied into *scripts when that is not NULL.
+ * Named rather than included so the sim side of the harness still sees no
+ * viewer header; a caller that reads the holder includes logviewer.h.
+ * *scripts is written only when the file opened, which is also when the
+ * return value can be true. Defined in replay_harness_decode.c. */
+struct LvScripts;
+bool replayHarnessDecodeFileScripts(const char *path, ReplayWorld *w,
+                                    ReplayFileInfo *info,
+                                    struct LvScripts *scripts);
+
+/* The same decode, with fn(ctx) called once playback has reached end-of-log
+ * and before the decoder is torn down, so a case can read the viewer's own
+ * state or seek it while it is still live. fn is called only when playback
+ * reached end-of-log, which is also when this returns true. Defined in
+ * replay_harness_decode.c. */
+typedef void (*ReplayDecodedFn)(void *ctx);
+bool replayHarnessDecodeFileThen(const char *path, ReplayDecodedFn fn,
+                                 void *ctx);
 
 /* Decode a .wbv from its last mid-round snapshot rather than from the start:
  * the file is opened, the read cursor jumps to that snapshot, and playback

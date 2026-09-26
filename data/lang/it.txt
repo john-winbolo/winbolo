@@ -2221,6 +2221,8 @@ STR_BOT_DIFF_DESC_HARD=Questo bot dà la caccia a bunker e basi nemiche, coordin
 STR_DLGLOBBY_BOTCFG_MODE=Modalità
 STR_DLGLOBBY_BOT_DOCS_TITLE=Comandi di {string1}
 STR_COPY=Copia
+STR_DLGLOBBY_BOT_DOCS_LOADING=Recupero dei comandi dal server...
+STR_DLGLOBBY_BOT_DOCS_FAILED=Il server non ha inviato questi comandi. Chiudi questa finestra e riaprila per riprovare.
 
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_PRESET_CLASSIC=Classica
@@ -2615,6 +2617,17 @@ STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — cambia il modo in cui si gioca la partita 
 STR_MAPEDIT_SCENARIO_KIND_NOTE=Una mod non può impostare il tipo di partita, spostare l'orologio, tenere un proprio punteggio o terminare il round, quindi queste opzioni non vengono offerte finché qui c'è scritto Mod. È una domanda diversa da "Creato per questa mappa" più sotto, che riguarda per quale mappa è stato scritto il file.
 STR_MAPEDIT_SCENARIO_GAME_MOD=Una mod lascia il tipo di partita al server
 STR_MAPEDIT_SCENARIO_FN_MOD={string1} non viene offerto finché questo file dice Mod: è l'unica risposta che decide una fine, e una mod non interferisce con la condizione di vittoria.
+STR_LV_INFO_SCENARIO_MODS_1={string1} · 1 mod
+STR_LV_INFO_SCENARIO_MODS_N={string1} · {number} mod
+STR_LV_INFO_SCRIPTS=Script
+STR_LV_INFO_SCRIPT_SOURCE_MAP=mappa
+STR_LV_INFO_SCRIPT_SOURCE_SERVER=server
+STR_LV_INFO_RULE_CHANGE=tick {number}: {string1} → {string2}
+STR_LV_INFO_SCORES=Punteggi
+STR_LV_INFO_SCORE_SLOT=Slot {number}
+STR_LV_SCN_ANNOUNCE={string1}{string2}{string3}
+STR_LV_SCN_ANNOUNCE_TO=[{player}] {string1}{string2}{string3}
+STR_LV_REGIONS_TIP=regioni dichiarate
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADS=Script dai giocatori
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_SESSION=Consenti per questa sessione
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_KEEP=Consenti e conserva

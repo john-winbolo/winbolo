@@ -42,6 +42,7 @@
 #include "server_sim.h"
 #include "control_event.h"  /* ControlEvent — serverSimFillEntitySyncEvent's out-parameter */
 #include "attribution_track.h"
+#include "scripts_record.h"
 #include "log_internal.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "../common/wb_log.h"
@@ -55,6 +56,9 @@ unsigned short logMemSize;   /* How much memory are we using */
 BYTE logKey; /* Current log encryption key */
 BYTE logOldKey; /* Old key needed for writing state */
 bool logLastEmpty; /* Was the last log empty? */
+/* Set when logWriteSnapshot writes a snapshot, cleared at the end of every
+   logWriteTick: whether this tick's entry follows a snapshot. */
+static bool logSnapshotWritten = FALSE;
 
 logTanks logCheckTanks;
 
@@ -356,6 +360,11 @@ void logWriteTick() {
     }
     logOldKey = logKey;
   }
+  logSnapshotWritten = FALSE;
+}
+
+bool logSnapshotWrittenThisTick(void) {
+  return logSnapshotWritten;
 }
 
 /*********************************************************
@@ -439,6 +448,29 @@ void logStop() {
         WB_LOG_INFO(WB_LOG_CAT_SERVER,
                     "attribution track: recordCount=%u bytes=%zu truncated=%d",
                     trec, (size_t)(sizeof hdr + tlen), (int)ttrunc);
+      }
+      /* Third member: the scripts the round ran, as the scenario host
+       * described them at round boot. Only a round that ran scripts has
+       * any text, so a plain round's archive stays log.dat and the track. */
+      size_t slen = 0;
+      const char *stext = serverSimGetScenarioRecordText(logSsim, &slen);
+      if (stext != NULL && slen > 0) {
+        zip_fileinfo si;
+        memset(&si, 0, sizeof si);
+        if (zipOpenNewFileInZip(logFile, SCRIPTS_RECORD_MEMBER, &si,
+                                NULL, 0, NULL, 0, "",
+                                Z_DEFLATED, Z_DEFAULT_COMPRESSION) == Z_OK) {
+          zipWriteInFileInZip(logFile, stext, (unsigned)slen);
+          zipCloseFileInZip(logFile);
+          WB_LOG_INFO(WB_LOG_CAT_SERVER, "scripts record: bytes=%zu", slen);
+        }
+        /* The text described this recording's round and has now been
+         * written into it. Cleared here rather than when the scenario host
+         * detaches, because a host that leaves mid-round detaches before its
+         * log is closed. A later round that boots scripts sets it again; a
+         * later round on a map with no host attached, which nothing else
+         * would clear it for, records none. */
+        serverSimSetScenarioRecordText(logSsim, NULL, 0);
       }
     }
     zipClose(logFile, "WinBolo Log File");
@@ -931,6 +963,18 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
     memcpy(out + off, words, wordsLen);
     off += wordsLen;
     break;
+  case log_ServerTick:
+    /* The server's game tick for the entry this record sits in, as a
+       big-endian u32 across the four opt bytes, the way log_GameTimeSet
+       carries its int32. A viewer counts playback in entries and a scenario
+       counts in these ticks, and nothing else in the recording ties the two
+       together. */
+    out[off++] = log_ServerTick;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    out[off++] = opt4;
+    break;
   default:
     return 0;
   }
@@ -1300,6 +1344,8 @@ bool logWriteSnapshot(ServerSim *ssim, bool check) {
   ret = writeData(data, 1, logOldKey);
   if (ret != Z_OK) {
     returnValue = FALSE;
+  } else {
+    logSnapshotWritten = TRUE;
   }
 
   /* Serialize the snapshot body as plaintext, then emit it with a single

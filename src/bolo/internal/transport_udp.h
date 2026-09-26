@@ -1043,6 +1043,8 @@ void transportUdpClientTestResyncState(Transport *t, bool *resyncActive,
 #if WB_ENABLE_NETIMPAIR
 void transportUdpClientTestUploadTimeout(Transport *t);
 void transportUdpClientTestDropUploadReply(Transport *t, uint8_t packet_type);
+/* True while a bot-name catalogue answer is part way in on CHANNEL_BULK. */
+bool transportUdpClientTestBotPoolArriving(Transport *t);
 /* Drop the next `count` inbound packets of packet_type before the client
  * processes them, as if the server's datagrams were lost on the wire. Other
  * packet types pass. DropNextLeft reads how many drops are still pending, so

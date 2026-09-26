@@ -2835,6 +2835,35 @@
  * about to play under are not held to the sandbox. */
 #define STR_DLGLOBBY_SCENARIO_UNSAFE             2633
 
+/* Log viewer game info panel — scripts and rules */
+
+/* What a recording's scripts.json says the round ran. The line over the list:
+ * {string1} = the scenario's name, or its file where it has none, or the map
+ * when no scenario ran; with no mods the name is drawn alone. */
+#define STR_LV_INFO_SCENARIO_MODS_1              2681
+#define STR_LV_INFO_SCENARIO_MODS_N              2682
+/* The heading over the script list, and the word a row ends with for where
+ * the script came from: the map's own, or the server's scenarios directory. */
+#define STR_LV_INFO_SCRIPTS                      2683
+#define STR_LV_INFO_SCRIPT_SOURCE_MAP            2684
+#define STR_LV_INFO_SCRIPT_SOURCE_SERVER         2685
+/* One rule change the playhead has passed, under the Rules table.
+ * {number} = the round's tick, {string1} = the rule as scripts spell it,
+ * {string2} = what the new value does to it in words. */
+#define STR_LV_INFO_RULE_CHANGE                  2686
+/* Game Information's Scores heading, and a slot's row with no name ({number} = the slot). */
+#define STR_LV_INFO_SCORES                       2687
+#define STR_LV_INFO_SCORE_SLOT                   2688
+/* A scenario announcement on the newswire: {string1}{string2}{string3} = the line, {player} = the team or player it went to. */
+#define STR_LV_SCN_ANNOUNCE                      2689
+#define STR_LV_SCN_ANNOUNCE_TO                   2690
+/* The tooltip on the Options menu's Regions item, which outlines the recording's regions on the map. */
+#define STR_LV_REGIONS_TIP                       2691
+/* What the bot docs dialog shows while a brain's commands.txt is on its way
+ * from the server, and what it shows when the server did not send it. */
+#define STR_DLGLOBBY_BOT_DOCS_LOADING            2692
+#define STR_DLGLOBBY_BOT_DOCS_FAILED             2693
+
 /* Rule descriptions */
 
 /* What each simulation rule governs, one line apiece, shown wherever a rule

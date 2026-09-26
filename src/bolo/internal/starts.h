@@ -538,6 +538,10 @@ void startsSetStartCompressData(starts *value, BYTE *buff, int dataLen);
 /* Clamps every start field a map can supply. See basesValidate. */
 void startsValidate(starts *value);
 
+/* Takes off the map every start in the mined border, unless no start is
+ * inside it. Returns how many were taken off. See starts.c. */
+BYTE startsRemoveBorderStarts(starts *value);
+
 
 #endif /* STARTS_H */
 

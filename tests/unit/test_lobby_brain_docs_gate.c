@@ -13,34 +13,36 @@
  */
 
 /*
- * THE BRAINS' LOBBY TEXTS GO TO A JOINER, NOT INTO EVERY KEYFRAME.
+ * THE BRAINS' ANNOUNCE LINES GO TO A JOINER; THEIR DOCS DO NOT.
  *
- * announce.txt and commands.txt travel to a client as
- * CTRL_LOBBY_BRAIN_DOCS_CHUNK fragments, emitted from inside
- * serverSimSyncSubscriber. That function has TWO callers:
+ * announce.txt travels to a client as one CTRL_LOBBY_BRAIN_ANNOUNCE per brain,
+ * emitted from inside serverSimSyncSubscriber. commands.txt does not travel
+ * with it: the event carries its length and generation, and the text goes
+ * compressed on CHANNEL_BULK to a client that asks for it. Sixteen brains'
+ * docs in the join burst were what CHANNEL_CONTROL_BACKLOG had been sized
+ * for, and every joiner paid for them whether or not it opened one.
+ *
+ * serverSimSyncSubscriber has TWO callers:
  *
  *   serverSimRegisterSubscriber   — a client or spectator joining, once
  *   serverSimSerializeControlSnapshot — the delayed spectator ring's
  *                                       control snapshot, rebuilt on EVERY
  *                                       lobby keyframe
  *
- * The second is the problem. WinBoloDS defaults to 16 spectator slots and the
- * log writer runs in lobby state, so the docs were re-read off disk on the
- * tick thread at the keyframe rate — and, worse, the fragments themselves
- * pushed the snapshot past LOG_CONTROL_SNAPSHOT_MAX, at which point
- * serverSimSerializeControlSnapshot returns -1 and log.c drops the whole
- * keyframe without a word.
+ * The announces belong to the first and not the second. The cases below pin:
  *
- * The two cases below pin both halves:
+ *   lobby_brain_docs_stay_out_of_the_control_snapshot — every brain the
+ *       catalogue holds, each shipping a full-size commands.txt. The snapshot
+ *       must serialize and carry no brain texts record of either type.
  *
- *   lobby_brain_docs_stay_out_of_the_control_snapshot — nine brains each
- *       shipping a full-size commands.txt. The snapshot must serialize (not
- *       overflow) and must carry no docs record — and the test says by how
- *       much the docs would have overrun the cap, so the number is on the
- *       record rather than taken on trust.
+ *   lobby_brain_docs_reach_a_joining_subscriber — a registering subscriber is
+ *       sent every brain's announce line, and the length and generation of
+ *       its docs, but none of the docs text; and the docs the server holds
+ *       inflate to the bytes on disk.
  *
- *   lobby_brain_docs_reach_a_joining_subscriber — the same nine brains reach
- *       a registering subscriber, in full, reassembling to the bytes on disk.
+ *   lobby_brain_docs_refresh_moves_the_generation — a brain whose
+ *       commands.txt changed is given a new generation by the refresh, and a
+ *       brain whose files did not change keeps its own.
  *
  * The brains are written into the test's own scratch directory and pointed at
  * through sim->brainPaths, so the case does not depend on which brains happen
@@ -67,16 +69,14 @@
 #include "threads.h"
 #include "test_harness.h"
 
-/* Nine brains shipping docs is what the maintainer measured on a real server,
- * and it is what tips the snapshot over its cap. */
-#define BD_BRAINS 9
+/* Every brain the catalogue holds. */
+#define BD_BRAINS BRAIN_LIST_MAX
 
-/* Each brain's announce line, and a commands.txt at the cap the wire carries.
- * Full size on purpose: that is what makes nine brains overrun
- * LOG_CONTROL_SNAPSHOT_MAX, which is the failure the gate exists to stop, and
- * a brain shipping a real command reference is not a small file. The docs are
- * filled with a per-brain letter so a reassembled blob can be told from its
- * neighbour's. */
+/* Each brain's announce line, and a commands.txt at the cap the wire carries:
+ * a brain shipping a real command reference is not a small file, and the
+ * point of the join path is that its size no longer reaches the joiner. The
+ * docs are filled with a per-brain letter so one brain's text can be told
+ * from its neighbour's. */
 #define BD_DOCS_BYTES BRAIN_DOCS_MAX
 
 typedef struct {
@@ -162,41 +162,37 @@ static void bdTeardown(BdFixture *f) {
     if (f->sim) serverSimDestroy(f->sim);
 }
 
-/* One subscriber that counts the docs fragments it is handed and keeps the
- * bytes of brain 0's stream so the test can check what arrived. */
+/* One subscriber that records the brain texts events it is handed. */
 typedef struct {
-    int      chunks;
-    int      wireBytes;             /* what the same events cost a snapshot */
+    int      announces;
+    int      chunks;                /* the retired type: must stay 0 */
+    int      bodyBytes;             /* what the brain events cost the join */
     bool     sawBrain[BD_BRAINS];
-    uint8_t  blob[LOBBY_BRAIN_DOCS_WIRE_MAX];
-    int      blobLen;
-    bool     blobIsBrain0;
+    char     announce[BD_BRAINS][BRAIN_ANNOUNCE_MAX + 1];
+    uint32_t gen[BD_BRAINS];
+    uint16_t docsLen[BD_BRAINS];
 } BdSink;
 
 static void bdDeliver(void *ctx, const struct ControlEvent *evt) {
     BdSink *s = (BdSink *)ctx;
-    if (evt->type != CTRL_LOBBY_BRAIN_DOCS_CHUNK) return;
-    s->chunks++;
-    /* What this event would add to a control snapshot: the 4-byte record
-     * header plus the encoded body, whose fragment payload is fragLen. The
-     * body also carries brainIdx, seq, count and the length itself. */
-    s->wireBytes += 4 + 5 + (int)evt->u.lobbyBrainDocsChunk.fragLen;
-    if (evt->u.lobbyBrainDocsChunk.brainIdx < BD_BRAINS) {
-        s->sawBrain[evt->u.lobbyBrainDocsChunk.brainIdx] = true;
-    }
-    if (evt->u.lobbyBrainDocsChunk.brainIdx == 0) {
-        uint16_t fl = evt->u.lobbyBrainDocsChunk.fragLen;
-        if (evt->u.lobbyBrainDocsChunk.seq == 0) s->blobLen = 0;
-        if (s->blobLen + (int)fl <= (int)sizeof(s->blob)) {
-            memcpy(s->blob + s->blobLen, evt->u.lobbyBrainDocsChunk.frag, fl);
-            s->blobLen += (int)fl;
-        }
-        s->blobIsBrain0 = true;
+    uint8_t idx;
+    if (evt->type == CTRL_LOBBY_BRAIN_DOCS_CHUNK) s->chunks++;
+    if (evt->type != CTRL_LOBBY_BRAIN_ANNOUNCE) return;
+    s->announces++;
+    /* The encoded body: 9 fixed bytes and the announce text. */
+    s->bodyBytes += 9 + (int)evt->u.lobbyBrainAnnounce.announceLen;
+    idx = evt->u.lobbyBrainAnnounce.brainIdx;
+    if (idx < BD_BRAINS) {
+        s->sawBrain[idx] = true;
+        memcpy(s->announce[idx], evt->u.lobbyBrainAnnounce.announce,
+               sizeof(s->announce[idx]));
+        s->gen[idx]     = evt->u.lobbyBrainAnnounce.docsGen;
+        s->docsLen[idx] = evt->u.lobbyBrainAnnounce.docsLen;
     }
 }
 
 /* Walk the [u16 type][u16 bodyLen][body] records a control snapshot is made
- * of, counting the docs ones. False means the framing did not add up. */
+ * of, counting the brain texts ones. False means the framing did not add up. */
 static bool bdCountDocsRecords(const uint8_t *buf, int len, int *outDocs,
                                int *outRecords) {
     int pos = 0;
@@ -209,7 +205,10 @@ static bool bdCountDocsRecords(const uint8_t *buf, int len, int *outDocs,
         if (pos + (int)bodyLen > len) return false;
         pos += bodyLen;
         (*outRecords)++;
-        if (type == (uint16_t)CTRL_LOBBY_BRAIN_DOCS_CHUNK) (*outDocs)++;
+        if (type == (uint16_t)CTRL_LOBBY_BRAIN_DOCS_CHUNK ||
+            type == (uint16_t)CTRL_LOBBY_BRAIN_ANNOUNCE) {
+            (*outDocs)++;
+        }
     }
     return (pos == len);
 }
@@ -224,16 +223,16 @@ int run_lobby_brain_docs_stay_out_of_the_control_snapshot(void) {
     if (!threadsCreate(TRUE)) UT_FAIL("threadsCreate failed");
     if (bdSetup(&f) != 0) return 1;
 
-    /* First, what the docs would have cost. A subscriber gets them, so the
-       same events measured there are what the snapshot was carrying. */
+    /* A subscriber is sent the announces, so the snapshot has something to
+       leave out. */
     sink = (BdSink *)calloc(1, sizeof(*sink));
     UT_ASSERT(sink != NULL);
     h = serverSimRegisterSubscriber(f.sim, bdDeliver, sink);
     UT_ASSERT_MSG(h != SUBSCRIBER_HANDLE_INVALID, "could not register");
     serverSimUnregisterSubscriber(f.sim, h);
-    UT_ASSERT_MSG(sink->chunks > 0,
-                  "the joining subscriber was sent no docs at all, so this "
-                  "case cannot say anything about the snapshot");
+    UT_ASSERT_MSG(sink->announces > 0,
+                  "the joining subscriber was sent no announces at all, so "
+                  "this case cannot say anything about the snapshot");
 
     snap = (uint8_t *)malloc(LOG_CONTROL_SNAPSHOT_MAX);
     UT_ASSERT(snap != NULL);
@@ -248,19 +247,10 @@ int run_lobby_brain_docs_stay_out_of_the_control_snapshot(void) {
                   "the snapshot's record framing did not add up over %d bytes",
                   snapLen);
     UT_ASSERT_MSG(docsRecords == 0,
-                  "the control snapshot carries %d CTRL_LOBBY_BRAIN_DOCS_CHUNK "
-                  "record(s) out of %d. It is rebuilt on every lobby keyframe, "
-                  "so the brains' texts have no business in it",
+                  "the control snapshot carries %d brain texts record(s) out "
+                  "of %d. It is rebuilt on every lobby keyframe, and "
+                  "LOG_CONTROL_SNAPSHOT_MAX does not count them",
                   docsRecords, records);
-
-    /* And the number that makes the gate worth having: with the docs in, the
-       snapshot would have been this far over the cap. */
-    UT_ASSERT_MSG(snapLen + sink->wireBytes > LOG_CONTROL_SNAPSHOT_MAX,
-                  "%d brains' docs are only %d bytes on top of a %d-byte "
-                  "snapshot, which still fits %d — the fixture is too small to "
-                  "be testing the overflow it claims to",
-                  BD_BRAINS, sink->wireBytes, snapLen,
-                  LOG_CONTROL_SNAPSHOT_MAX);
 
     free(snap);
     free(sink);
@@ -273,8 +263,11 @@ int run_lobby_brain_docs_reach_a_joining_subscriber(void) {
     BdFixture f;
     BdSink   *sink = NULL;
     SubscriberHandle h;
-    int       i;
-    uint16_t  aLen, dLen;
+    int       i, j;
+    uint32_t  gen = 0;
+    uint16_t  rawLen = 0, zLen = 0;
+    const uint8_t *z = NULL;
+    char     *docs = NULL;
 
     if (!threadsCreate(TRUE)) UT_FAIL("threadsCreate failed");
     if (bdSetup(&f) != 0) return 1;
@@ -285,33 +278,107 @@ int run_lobby_brain_docs_reach_a_joining_subscriber(void) {
     UT_ASSERT_MSG(h != SUBSCRIBER_HANDLE_INVALID, "could not register");
     serverSimUnregisterSubscriber(f.sim, h);
 
+    UT_ASSERT_MSG(sink->chunks == 0,
+                  "the joiner was sent %d retired docs chunk(s)", sink->chunks);
     for (i = 0; i < BD_BRAINS; i++) {
         UT_ASSERT_MSG(sink->sawBrain[i],
                       "brain %d shipped an announce.txt and a commands.txt "
-                      "and the joiner was sent neither", i);
+                      "and the joiner was sent no announce for it", i);
+        UT_ASSERT_MSG(strcmp(sink->announce[i], f.announce[i]) == 0,
+                      "brain %d's announce arrived as '%s'", i,
+                      sink->announce[i]);
+        UT_ASSERT_MSG(sink->docsLen[i] == BD_DOCS_BYTES,
+                      "brain %d's docs were announced as %u bytes, expected %d",
+                      i, (unsigned)sink->docsLen[i], BD_DOCS_BYTES);
+        UT_ASSERT_MSG(sink->gen[i] != 0,
+                      "brain %d has docs and was announced at generation 0", i);
+        for (j = 0; j < i; j++) {
+            UT_ASSERT_MSG(sink->gen[i] != sink->gen[j],
+                          "brains %d and %d share docs generation %u", j, i,
+                          (unsigned)sink->gen[i]);
+        }
     }
 
-    /* Brain 0's stream reassembles to what is on disk: [u16 aLen][announce]
-       [u16 dLen][docs]. The cache is built once at scan time, so this is also
-       the check that it holds the right bytes. */
-    UT_ASSERT_MSG(sink->blobIsBrain0 && sink->blobLen >= 4,
-                  "brain 0's fragments did not arrive (%d bytes)",
-                  sink->blobLen);
-    aLen = (uint16_t)((sink->blob[0] << 8) | sink->blob[1]);
-    UT_ASSERT_MSG((int)aLen == (int)strlen(f.announce[0]),
-                  "announce is %u bytes, expected %d",
-                  (unsigned)aLen, (int)strlen(f.announce[0]));
-    UT_ASSERT_MSG(memcmp(sink->blob + 2, f.announce[0], aLen) == 0,
-                  "brain 0's announce text did not survive the trip");
-    dLen = (uint16_t)((sink->blob[2 + aLen] << 8) | sink->blob[3 + aLen]);
-    UT_ASSERT_MSG(dLen == (uint16_t)BD_DOCS_BYTES,
-                  "commands.txt arrived as %u bytes, expected %d",
-                  (unsigned)dLen, BD_DOCS_BYTES);
-    UT_ASSERT_MSG(sink->blob[4 + aLen] == 'a',
-                  "brain 0's docs body is brain %d's",
-                  (int)(sink->blob[4 + aLen] - 'a'));
+    /* None of the docs text is in the join: each announce is 9 bytes of
+       numbers and its own line, where the retired chunks carried the whole
+       commands.txt of every brain. */
+    UT_ASSERT_MSG(sink->bodyBytes <= BD_BRAINS * (9 + 64),
+                  "the brain events cost the join %d bytes of body for %d "
+                  "brains with %d-byte docs; the docs are riding along",
+                  sink->bodyBytes, BD_BRAINS, BD_DOCS_BYTES);
 
+    /* The docs the server holds for brain 3 are what is on disk, at the
+       generation the joiner was told. The cache is built once at scan time,
+       so this is also the check that it holds the right bytes. */
+    UT_ASSERT(serverSimGetBrainDocs(f.sim, 3, &gen, &rawLen, &z, &zLen));
+    UT_ASSERT_MSG(gen == sink->gen[3], "the server holds generation %u, the "
+                  "joiner was told %u", (unsigned)gen, (unsigned)sink->gen[3]);
+    UT_ASSERT(rawLen == BD_DOCS_BYTES);
+    UT_ASSERT_MSG(zLen < 1024, "%d bytes of one letter compressed to %u",
+                  BD_DOCS_BYTES, (unsigned)zLen);
+    docs = (char *)malloc(BD_DOCS_BYTES + 1);
+    UT_ASSERT(docs != NULL);
+    UT_ASSERT(brainDocsDecompress(z, zLen, rawLen, docs));
+    UT_ASSERT_MSG(docs[0] == 'd' && docs[BD_DOCS_BYTES - 1] == 'd',
+                  "brain 3's docs are some other brain's");
+
+    /* An index that is not a brain has none. */
+    UT_ASSERT(!serverSimGetBrainDocs(f.sim, BD_BRAINS, NULL, NULL, NULL, NULL));
+    UT_ASSERT(!serverSimGetBrainDocs(f.sim, -1, NULL, NULL, NULL, NULL));
+
+    free(docs);
     free(sink);
+    bdTeardown(&f);
+    threadsDestroy();
+    return 0;
+}
+
+int run_lobby_brain_docs_refresh_moves_the_generation(void) {
+    BdFixture f;
+    uint32_t  gen0 = 0, gen1 = 0, gen0b = 0, gen1b = 0;
+    uint16_t  len0b = 0;
+    char      path[600];
+    static const char kNew[] = "new commands";
+    int64_t   before;
+    int       tries;
+
+    if (!threadsCreate(TRUE)) UT_FAIL("threadsCreate failed");
+    if (bdSetup(&f) != 0) return 1;
+
+    UT_ASSERT(serverSimGetBrainDocs(f.sim, 0, &gen0, NULL, NULL, NULL));
+    UT_ASSERT(serverSimGetBrainDocs(f.sim, 1, &gen1, NULL, NULL, NULL));
+
+    /* Rewrite brain 0's commands.txt. The cache keys on mtime, and a
+       filesystem can keep whole seconds, so write until the file's time has
+       moved past the one the cache read. */
+    before = brainListTextsMtimeForPath(f.sim->brainPaths[0]);
+    snprintf(path, sizeof(path), "%s/commands.txt", f.dir[0]);
+    for (tries = 0; tries < 30; tries++) {
+        FILE *fp = fopen(path, "wb");
+        UT_ASSERT(fp != NULL);
+        fwrite(kNew, 1, strlen(kNew), fp);
+        fclose(fp);
+        if (brainListTextsMtimeForPath(f.sim->brainPaths[0]) != before) break;
+        SDL_Delay(100);
+    }
+    UT_ASSERT_MSG(brainListTextsMtimeForPath(f.sim->brainPaths[0]) != before,
+                  "brain 0's commands.txt kept its modification time after "
+                  "3 s of rewrites");
+
+    serverSimRefreshBrainDocs(f.sim);
+    UT_ASSERT(serverSimGetBrainDocs(f.sim, 0, &gen0b, &len0b, NULL, NULL));
+    UT_ASSERT(serverSimGetBrainDocs(f.sim, 1, &gen1b, NULL, NULL, NULL));
+    UT_ASSERT_MSG(len0b == strlen(kNew),
+                  "the refresh did not re-read brain 0 (%u bytes)",
+                  (unsigned)len0b);
+    UT_ASSERT_MSG(gen0b != gen0 && gen0b != 0,
+                  "brain 0's docs changed and kept generation %u",
+                  (unsigned)gen0);
+    UT_ASSERT_MSG(gen1b == gen1,
+                  "brain 1's docs did not change and moved from generation "
+                  "%u to %u, which would make every client fetch them again",
+                  (unsigned)gen1, (unsigned)gen1b);
+
     bdTeardown(&f);
     threadsDestroy();
     return 0;

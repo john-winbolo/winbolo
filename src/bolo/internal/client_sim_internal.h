@@ -37,7 +37,7 @@
 #include "scroll.h"
 #include "brain_list.h"
 #include "round_stats.h"   /* RoundStatsSummary — lastRoundStats store */
-#include "lobby_bot_pools.h" /* LOBBY_BOT_CATALOG_WIRE_MAX */
+#include "lobby_bot_pools.h" /* lobbyBotPoolsCatalogId, for the CTRL_LOBBY_BOT_POOL_INFO apply */
 #include "control_event.h"  /* LOBBY_BRAIN_DOCS_WIRE_MAX */
 #include "upload_policy.h"
 #include "view_policy.h"   /* ViewPolicy / VIEW_CATEGORY_COUNT — server view-rule mirror */
@@ -136,12 +136,54 @@ typedef struct {
     bool                  liveLobby;
 } ClientSpectatorFeed;
 
+/* A brain's commands.txt, as far as this client has got with it.
+ * EMPTY has not been asked for; WANTED is waiting its turn; ASKED has a
+ * request out; HAVE holds the text; FAILED is a brain the server had no docs
+ * for, or one given up on after CLIENT_BRAIN_DOCS_TRIES requests. */
+#define CLIENT_BRAIN_DOCS_S_EMPTY   0
+#define CLIENT_BRAIN_DOCS_S_WANTED  1
+#define CLIENT_BRAIN_DOCS_S_ASKED   2
+#define CLIENT_BRAIN_DOCS_S_HAVE    3
+#define CLIENT_BRAIN_DOCS_S_FAILED  4
+/* A request with no answer in this many transport ticks is sent again, up to
+ * CLIENT_BRAIN_DOCS_TRIES times. The server drops a request that finds this
+ * client's bulk stream busy, and the join's map download is the usual reason,
+ * so the tries cover a few seconds rather than one lost datagram. */
+#define CLIENT_BRAIN_DOCS_TIMEOUT_TICKS  150   /* 1.5 s at the 100/s tick */
+#define CLIENT_BRAIN_DOCS_TRIES          8
+
 /* Per-brain lobby texts, held on the heap and hung off ClientSim.
  * Indexed exactly like lobbyBrainList.entries[]. See lobbyBrainTexts. */
 struct ClientBrainTexts {
     char announce[BRAIN_LIST_MAX][BRAIN_ANNOUNCE_MAX + 1];
-    char docs    [BRAIN_LIST_MAX][BRAIN_DOCS_MAX + 1];
+    struct {
+        uint32_t gen;       /* CTRL_LOBBY_BRAIN_ANNOUNCE's docsGen; 0 = none */
+        uint16_t len;       /* its docsLen: the text's length in bytes */
+        uint8_t  state;     /* CLIENT_BRAIN_DOCS_S_* above */
+        uint8_t  tries;     /* requests sent for this generation */
+        uint32_t sentTick;  /* transport localTick of the last request */
+        char    *text;      /* len + 1 bytes, malloc'd once HAVE */
+    } docs[BRAIN_LIST_MAX];
+    /* The bulk receiver's landing buffer for one BULK_KIND_BRAIN_DOCS
+     * answer: [status 1][rawLen 2 BE][compressed bytes]. rxIdx is one more
+     * than the brain it is filling, and 0 for none. The buffer lives as long
+     * as this struct does, which is why a new brain list clears the struct
+     * rather than freeing it: an answer can be half-received when the list
+     * changes, and the receiver keeps writing where onBegin pointed it. */
+    int      rxIdx;
+    uint8_t  rx[1 + 2 + BRAIN_DOCS_Z_MAX];
 };
+
+/* The struct above, allocated on first use. NULL only when that allocation
+ * fails. */
+struct ClientBrainTexts *clientSimBrainTexts(ClientSim *cs);
+
+/* Forget every brain's announce line and docs, keeping the allocation (see
+ * rx above). A no-op when nothing was ever allocated. */
+void clientSimBrainTextsClear(ClientSim *cs);
+
+/* Free the struct and every docs text in it. clientSimDestroy calls it. */
+void clientSimBrainTextsFree(ClientSim *cs);
 
 struct ClientSim {
     GameSim     sim;    /* MUST be first member */
@@ -548,31 +590,25 @@ struct ClientSim {
     /* Per-brain LOBBY TEXTS, indexed exactly like lobbyBrainList.entries[]:
      * the brain's announce.txt (the one line the lobby drops into team chat
      * when a bot running it joins your team) and its commands.txt (the docs
-     * that line opens). Both arrive as CTRL_LOBBY_BRAIN_DOCS_CHUNK fragments
-     * beside the brain list, one stream per brain. An empty string means the
-     * brain ships no such file — that is the normal case, and the lobby then
-     * says nothing for that brain.
+     * that line opens). The announce line arrives as a
+     * CTRL_LOBBY_BRAIN_ANNOUNCE beside the brain list, one per brain, with
+     * the length and generation of the docs. The docs themselves are asked
+     * for when the lobby opens them (clientSimLobbyBrainDocsWant) and arrive
+     * compressed on CHANNEL_BULK. An empty announce and a docs generation of
+     * 0 mean the brain ships no such file — that is the normal case, and the
+     * lobby then says nothing for that brain.
      *
      * They come over the wire rather than being read off the local disk the
      * way about.txt is, because the SERVER chooses the brain and a client
      * need not have that brain installed at all.
      *
-     * Heap-held rather than inline: the whole table is ~264 KB and almost
-     * every ClientSim ever made (headless runs, unit tests, the recorder)
-     * never sees a brain that ships the files. The pointer is allocated on
-     * the first text that arrives, survives clientSimCreate's memset the way
-     * lobbyBrainList does, and is freed in clientSimDestroy. */
+     * Heap-held rather than inline: the table and its receive buffer are
+     * ~41 KB and almost every ClientSim ever made (headless runs, unit
+     * tests, the recorder) never sees a brain that ships the files. The
+     * pointer is allocated on the first text that arrives, survives
+     * clientSimCreate's memset the way lobbyBrainList does, and is freed in
+     * clientSimDestroy. */
     struct ClientBrainTexts *lobbyBrainTexts;
-
-    /* Reassembly of ONE brain's text blob. lobbyBrainDocsExpected == 0 is
-     * idle (so a memset-to-zero is a clean idle state). Fragments ride the
-     * reliable, ordered control channel, so seq is monotonic and brainIdx is
-     * constant within a stream; any mismatch aborts the stream. */
-    uint8_t  lobbyBrainDocsIdx;
-    uint8_t  lobbyBrainDocsExpected;
-    uint8_t  lobbyBrainDocsNextSeq;
-    uint32_t lobbyBrainDocsBlobLen;
-    uint8_t  lobbyBrainDocsBlob[LOBBY_BRAIN_DOCS_WIRE_MAX];
 
     /* Last finished round's scoreboard + awards, received via
      * CTRL_ROUND_STATS at game over. Round-only: cleared when the next
@@ -586,16 +622,31 @@ struct ClientSim {
      * ratings and comments; the value itself carries no meaning. */
     uint32_t          ratingPostedSeq;
 
-    /* Reassembly of the server's bot-pool catalog, streamed as
-     * CTRL_LOBBY_BOT_POOL_CHUNK fragments during join sync. Fragments
-     * arrive in order on the reliable control channel; on the final
-     * fragment the assembled blob is installed via
-     * lobbyBotPoolsDeserializeInstall (replacing the process-global pool
-     * table so the lobby dropdown shows the SERVER's pools). */
-    uint8_t  lobbyPoolChunkExpected;   /* total fragment count; 0 = idle */
-    uint8_t  lobbyPoolNextSeq;         /* next in-order fragment expected */
-    uint32_t lobbyPoolBlobLen;         /* bytes assembled so far */
-    uint8_t  lobbyPoolBlob[LOBBY_BOT_CATALOG_WIRE_MAX];
+    /* The server's bot-name catalogue, as far as this client has got with
+     * it. CTRL_LOBBY_BOT_POOL_INFO names it by id and length; a client
+     * whose own pools have that id already is done (HAVE). Otherwise it is
+     * WANTED, and the transport's tick asks for it with
+     * PACKET_LOBBY_BOT_POOL_REQ once connected, again every
+     * CLIENT_BOT_POOL_TIMEOUT_TICKS up to CLIENT_BOT_POOL_TRIES times. The
+     * answer lands from CHANNEL_BULK and is installed with
+     * lobbyBotPoolsDeserializeInstall, replacing the process-global pool
+     * table so the lobby dropdown shows the SERVER's pools. NONE is a
+     * server with no themed pools, and FAILED one that never answered;
+     * both leave this client on its own pools, which only mislabels the
+     * dropdown, since bot names travel as strings. A zeroed ClientSim is
+     * NONE. */
+#define CLIENT_BOT_POOL_S_NONE    0
+#define CLIENT_BOT_POOL_S_WANTED  1
+#define CLIENT_BOT_POOL_S_ASKED   2
+#define CLIENT_BOT_POOL_S_HAVE    3
+#define CLIENT_BOT_POOL_S_FAILED  4
+#define CLIENT_BOT_POOL_TIMEOUT_TICKS  150   /* 1.5 s at the 100/s tick */
+#define CLIENT_BOT_POOL_TRIES          8
+    uint8_t  lobbyPoolState;
+    uint8_t  lobbyPoolTries;       /* requests sent for this id */
+    uint32_t lobbyPoolSentTick;    /* transport localTick of the last request */
+    uint32_t lobbyPoolId;          /* the id the server named */
+    uint32_t lobbyPoolLen;         /* its compressed blob's length */
 
     /* Server-side map directory listing — populated from
      * PACKET_LOBBY_MAP_LIST_RSP. The chooser's listProvider sends a

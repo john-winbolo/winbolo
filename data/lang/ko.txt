@@ -2217,6 +2217,8 @@ STR_BOT_DIFF_DESC_HARD=이 봇은 적의 토치카와 기지를 사냥하듯 노
 STR_DLGLOBBY_BOTCFG_MODE=모드
 STR_DLGLOBBY_BOT_DOCS_TITLE={string1} 명령어
 STR_COPY=복사
+STR_DLGLOBBY_BOT_DOCS_LOADING=서버에서 명령어를 가져오는 중...
+STR_DLGLOBBY_BOT_DOCS_FAILED=서버가 이 명령어를 보내지 않았습니다. 이 창을 닫았다가 다시 열어 다시 시도하세요.
 
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_PRESET_CLASSIC=클래식
@@ -2611,6 +2613,17 @@ STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — 게임 진행 방식만 바꾸고 승패�
 STR_MAPEDIT_SCENARIO_KIND_NOTE=Mod는 게임 타입을 정하거나, 시계를 움직이거나, 자체 점수를 유지하거나, 라운드를 끝낼 수 없기 때문에 이 항목이 Mod로 되어 있는 동안에는 해당 항목들이 제공되지 않아요. 이는 아래의 "이 맵 전용"과는 다른 질문으로, 그쪽은 이 파일이 어느 맵을 위해 작성되었는지를 다뤄요.
 STR_MAPEDIT_SCENARIO_GAME_MOD=Mod는 게임 타입을 서버에 맡겨요
 STR_MAPEDIT_SCENARIO_FN_MOD=이 파일이 Mod로 되어 있는 동안에는 {string1} 항목이 제공되지 않아요. 이는 결말을 정하는 유일한 답이고, Mod는 승리 조건에 관여하지 않기 때문이에요.
+STR_LV_INFO_SCENARIO_MODS_1={string1} · 모드 1개
+STR_LV_INFO_SCENARIO_MODS_N={string1} · 모드 {number}개
+STR_LV_INFO_SCRIPTS=스크립트
+STR_LV_INFO_SCRIPT_SOURCE_MAP=맵
+STR_LV_INFO_SCRIPT_SOURCE_SERVER=서버
+STR_LV_INFO_RULE_CHANGE=틱 {number}: {string1} → {string2}
+STR_LV_INFO_SCORES=점수
+STR_LV_INFO_SCORE_SLOT=슬롯 {number}
+STR_LV_SCN_ANNOUNCE={string1}{string2}{string3}
+STR_LV_SCN_ANNOUNCE_TO=[{player}] {string1}{string2}{string3}
+STR_LV_REGIONS_TIP=선언된 영역
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADS=플레이어의 스크립트
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_SESSION=이번 세션만 허용
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_KEEP=허용하고 보관

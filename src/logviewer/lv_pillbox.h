@@ -163,11 +163,28 @@ void lv_pillsDeletePill(pillboxes *value, BYTE x, BYTE y);
 *  Returns the health of a pillbox as a screen define.
 *
 *ARGUMENTS:
-*  value  - Pointer to the pillbox structure
-*  xValue - X Location
-*  yValue - Y Location
+*  value     - Pointer to the pillbox structure
+*  xValue    - X Location
+*  yValue    - Y Location
+*  maxArmour - The round's pill_max_armour at the playhead
 *********************************************************/
-BYTE lv_pillsGetScreenHealth(pillboxes *value, BYTE xValue, BYTE yValue);
+BYTE lv_pillsGetScreenHealth(pillboxes *value, BYTE xValue, BYTE yValue,
+                             int maxArmour);
+
+/*********************************************************
+*NAME:          lv_pillsArmourLevel
+*PURPOSE:
+*  Which of the sixteen pillbox pictures, 0 (empty) to 15
+*  (intact), an armour value draws as against a cap of
+*  maxArmour. The client's rule: armour at or above the cap
+*  is 15, anything below it is armour * 15 / maxArmour
+*  rounded down, and a cap below 1 is read as the classic 15.
+*
+*ARGUMENTS:
+*  armour    - The pillbox's armour
+*  maxArmour - The round's pill_max_armour
+*********************************************************/
+BYTE lv_pillsArmourLevel(BYTE armour, int maxArmour);
 
 void lv_pillsSetHealth(pillboxes *value, BYTE pillNum, BYTE health);
 

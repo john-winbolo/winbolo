@@ -1219,12 +1219,49 @@ const BrainList *clientSimGetLobbyBrainList(const ClientSim *cs);
  *   announce — the brain's announce.txt: the message the lobby drops into
  *              team chat when a bot running this brain joins your team.
  *   docs     — the brain's commands.txt: the long text that message opens.
- * Both come from the server (CTRL_LOBBY_BRAIN_DOCS_CHUNK) rather than off the
- * local disk, because the server picks the brain and this machine need not
- * have it. Both always return a NUL-terminated string, "" when there is
- * nothing, so a caller tests the first byte rather than for NULL. */
+ * Both come from the server rather than off the local disk, because the
+ * server picks the brain and this machine need not have it. The announce
+ * line comes with the join (CTRL_LOBBY_BRAIN_ANNOUNCE); the docs only once
+ * asked for with clientSimLobbyBrainDocsWant. Both always return a
+ * NUL-terminated string, "" when there is nothing (yet), so a caller tests
+ * the first byte rather than for NULL. */
 const char *clientSimGetLobbyBrainAnnounce(const ClientSim *cs, int brainIdx);
 const char *clientSimGetLobbyBrainDocs(const ClientSim *cs, int brainIdx);
+
+/* True when the server said this brain ships a commands.txt, whether or not
+ * the text has been fetched. The lobby only makes an announce line clickable
+ * for a brain this answers true for. */
+bool clientSimLobbyBrainHasDocs(const ClientSim *cs, int brainIdx);
+
+/* Where a brain's commands.txt has got to, for the docs dialog. */
+typedef enum {
+    CLIENT_BRAIN_DOCS_NONE = 0,   /* the brain ships none, or unknown index */
+    CLIENT_BRAIN_DOCS_WAITING,    /* not here yet: asked for, or about to be */
+    CLIENT_BRAIN_DOCS_READY,      /* clientSimGetLobbyBrainDocs has it */
+    CLIENT_BRAIN_DOCS_FAILED      /* the server did not send it */
+} ClientBrainDocsState;
+ClientBrainDocsState clientSimGetLobbyBrainDocsState(const ClientSim *cs,
+                                                     int brainIdx);
+
+/* Ask for a brain's commands.txt. The UDP transport's tick sends one request
+ * at a time (PACKET_LOBBY_BRAIN_DOCS_REQ) and the answer lands from
+ * CHANNEL_BULK. A brain already asked for, or already held, is left alone;
+ * one that FAILED is asked for again only when retryFailed is true, which
+ * the dialog passes once as it opens and not on every frame. A server in
+ * this process has no transport: the lobby reads its docs with
+ * serverSimGetBrainDocs and hands them to clientSimLobbyBrainDocsPut
+ * instead. */
+void clientSimLobbyBrainDocsWant(ClientSim *cs, int brainIdx,
+                                 bool retryFailed);
+
+/* Install a brain's commands.txt from its compressed form: `gen` is the
+ * generation it was read at, z/zLen the brainDocsCompress output and rawLen
+ * the text's length. Taken only when gen is the generation the last
+ * CTRL_LOBBY_BRAIN_ANNOUNCE for the brain named; answers false otherwise, or
+ * when the bytes do not inflate to rawLen, and then marks the docs FAILED
+ * only for the second reason. */
+bool clientSimLobbyBrainDocsPut(ClientSim *cs, int brainIdx, uint32_t gen,
+                                const uint8_t *z, size_t zLen, size_t rawLen);
 
 /* Last finished round's scoreboard + awards, or NULL if none has been
  * received since the last countdown (round-only scope). */
@@ -1726,6 +1763,9 @@ BYTE         clientSimGetPillCount(const ClientSim *cs);
 BYTE         clientSimGetBaseCount(const ClientSim *cs);
 BYTE         clientSimGetStartCount(const ClientSim *cs);
 
+/* The counts above are slot counts. The pill and base readers below return
+ * false for a number out of range and for a slot whose item is not on the
+ * map. */
 bool         clientSimGetPill(ClientSim *cs, BYTE i,
                               BYTE *x, BYTE *y, BYTE *owner, BYTE *armour,
                               bool *inTank);

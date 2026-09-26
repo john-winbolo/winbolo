@@ -98,42 +98,41 @@ static void clientSimLobbyTeamLabel(const ClientSim *cs, BYTE team,
     SDL_strlcpy(out, langGetTextFmt(STR_DLGLOBBY_TEAM_HEADER, &args), outLen);
 }
 
-/* Install one brain's reassembled lobby-text blob.
+/* Take one brain's CTRL_LOBBY_BRAIN_ANNOUNCE: its announce line, and the
+ * length and generation of its commands.txt. Docs of any other generation
+ * are dropped here, fetched or not, because they are not the text the
+ * server holds now; a dialog showing them asks again. The same generation
+ * again (a round handing the lobby back re-sends every announce) leaves the
+ * docs as they are, so a player does not fetch a text they already have.
  *
- * Blob layout, written by the server:
- *   [announceLen 2 BE][announce bytes][docsLen 2 BE][docs bytes]
- * Either length may be 0. A blob that does not parse leaves both strings of
- * that brain as they were, so a malformed stream cannot half-replace a text.
- *
- * The whole table is allocated on first use: almost no ClientSim ever meets a
- * brain that ships these files, and the table is ~264 KB. */
-static void clientSimInstallBrainTexts(ClientSim *cs, uint8_t brainIdx,
-                                       const uint8_t *blob, uint32_t len) {
-    uint32_t pos = 0;
-    uint16_t aLen, dLen;
-    if (cs == NULL || blob == NULL || brainIdx >= BRAIN_LIST_MAX) return;
-    if (len < 4) return;
-    aLen = (uint16_t)(((uint16_t)blob[0] << 8) | blob[1]);
-    pos = 2;
-    if (aLen > BRAIN_ANNOUNCE_MAX || pos + aLen + 2u > len) return;
-    pos += aLen;
-    dLen = (uint16_t)(((uint16_t)blob[pos] << 8) | blob[pos + 1]);
-    pos += 2;
-    if (dLen > BRAIN_DOCS_MAX || pos + dLen > len) return;
+ * The table is allocated on first use: almost no ClientSim ever meets a
+ * brain that ships these files. */
+static void clientSimApplyBrainAnnounce(ClientSim *cs, const ControlEvent *evt) {
+    struct ClientBrainTexts *t;
+    uint8_t  idx = evt->u.lobbyBrainAnnounce.brainIdx;
+    uint16_t aLen = evt->u.lobbyBrainAnnounce.announceLen;
+    uint32_t gen = evt->u.lobbyBrainAnnounce.docsGen;
 
-    if (cs->lobbyBrainTexts == NULL) {
-        cs->lobbyBrainTexts =
-            (struct ClientBrainTexts *)calloc(1, sizeof(*cs->lobbyBrainTexts));
-        if (cs->lobbyBrainTexts == NULL) return;
+    if (idx >= BRAIN_LIST_MAX || aLen > BRAIN_ANNOUNCE_MAX) return;
+    t = clientSimBrainTexts(cs);
+    if (t == NULL) return;
+    memcpy(t->announce[idx], evt->u.lobbyBrainAnnounce.announce, aLen);
+    t->announce[idx][aLen] = '\0';
+
+    if (t->docs[idx].gen != gen) {
+        free(t->docs[idx].text);
+        memset(&t->docs[idx], 0, sizeof(t->docs[idx]));
+        t->docs[idx].gen = gen;
+        t->docs[idx].len = gen != 0 ? evt->u.lobbyBrainAnnounce.docsLen : 0;
+        /* An answer for the old generation may still be arriving; its
+           completion checks the generation and drops it. */
+        if (t->rxIdx == idx + 1) t->rxIdx = 0;
     }
-    if (aLen > 0) memcpy(cs->lobbyBrainTexts->announce[brainIdx], blob + 2, aLen);
-    cs->lobbyBrainTexts->announce[brainIdx][aLen] = '\0';
-    if (dLen > 0) memcpy(cs->lobbyBrainTexts->docs[brainIdx], blob + pos, dLen);
-    cs->lobbyBrainTexts->docs[brainIdx][dLen] = '\0';
 
     WB_LOG_INFO(WB_LOG_CAT_CLIENT,
-                "brain %u lobby texts installed: announce %u B, docs %u B",
-                (unsigned)brainIdx, (unsigned)aLen, (unsigned)dLen);
+                "brain %u lobby texts announced: announce %u B, docs %u B "
+                "(gen %u)", (unsigned)idx, (unsigned)aLen,
+                (unsigned)t->docs[idx].len, (unsigned)gen);
 }
 
 void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
@@ -604,17 +603,12 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * catalogue INDEX, and the next server's index 3 is a different
          * brain from this one's. Left standing, a reconnect to another
          * server showed the previous server's announce line under the new
-         * server's brain name. The fragments that go with the new list
+         * server's brain name. The announces that go with the new list
          * follow this event, so clearing here costs nothing that arrives.
-         * The partial-reassembly state goes too — a stream cut off by the
-         * list change must not splice onto the next one. */
-        if (cs->lobbyBrainTexts != NULL) {
-            free(cs->lobbyBrainTexts);
-            cs->lobbyBrainTexts = NULL;
-        }
-        cs->lobbyBrainDocsExpected = 0;
-        cs->lobbyBrainDocsNextSeq  = 0;
-        cs->lobbyBrainDocsBlobLen  = 0;
+         * Fetched docs and requests in flight go too: they are keyed by the
+         * same index. The table is cleared rather than freed, because a
+         * docs answer may be half-received into it. */
+        clientSimBrainTextsClear(cs);
         break;
 
     case CTRL_ROUND_STATS:
@@ -679,86 +673,40 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         break;
     }
 
-    case CTRL_LOBBY_BOT_POOL_CHUNK: {
-        /* Reassemble in-order fragments of the server's compressed
-         * bot-pool catalog; install on the final fragment so the lobby
-         * dropdown reflects the SERVER's pools. Fragments ride the
-         * reliable, ordered control channel, so seq is monotonic; any
-         * gap/mismatch aborts the in-progress reassembly. */
-        uint8_t  seq   = evt->u.lobbyBotPoolChunk.seq;
-        uint8_t  count = evt->u.lobbyBotPoolChunk.count;
-        uint16_t fl    = evt->u.lobbyBotPoolChunk.fragLen;
-        if (count == 0) break;
-        if (seq == 0) {
-            cs->lobbyPoolChunkExpected = count;
-            cs->lobbyPoolNextSeq = 0;
-            cs->lobbyPoolBlobLen = 0;
-        }
-        if (seq != cs->lobbyPoolNextSeq ||
-            count != cs->lobbyPoolChunkExpected ||
-            cs->lobbyPoolBlobLen + fl > sizeof(cs->lobbyPoolBlob)) {
-            cs->lobbyPoolChunkExpected = 0;   /* abort */
-            cs->lobbyPoolNextSeq = 0;
-            cs->lobbyPoolBlobLen = 0;
-            break;
-        }
-        if (fl > 0) {
-            memcpy(cs->lobbyPoolBlob + cs->lobbyPoolBlobLen,
-                   evt->u.lobbyBotPoolChunk.frag, fl);
-            cs->lobbyPoolBlobLen += fl;
-        }
-        cs->lobbyPoolNextSeq++;
-        if (cs->lobbyPoolNextSeq == count) {
-            lobbyBotPoolsDeserializeInstall(cs->lobbyPoolBlob,
-                                            (int)cs->lobbyPoolBlobLen, NULL);
-            cs->lobbyPoolChunkExpected = 0;
-            cs->lobbyPoolNextSeq = 0;
-            cs->lobbyPoolBlobLen = 0;
+    case CTRL_LOBBY_BOT_POOL_CHUNK:
+        /* Retired: an older server's way of sending the catalogue whole.
+         * Nothing sends it now; a recording that holds one is stepped
+         * over. */
+        break;
+
+    case CTRL_LOBBY_BOT_POOL_INFO: {
+        /* Which catalogue the server holds. The pools this client has now
+         * are its own shipped file, or the last server's until the lobby
+         * resets them on leaving; either may already be the server's, and
+         * then there is nothing to fetch. */
+        uint32_t id = evt->u.lobbyBotPoolInfo.id;
+        cs->lobbyPoolId    = id;
+        cs->lobbyPoolLen   = evt->u.lobbyBotPoolInfo.len;
+        cs->lobbyPoolTries = 0;
+        if (id == 0) {
+            cs->lobbyPoolState = CLIENT_BOT_POOL_S_NONE;
+        } else if (lobbyBotPoolsCatalogId() == id) {
+            cs->lobbyPoolState = CLIENT_BOT_POOL_S_HAVE;
+        } else {
+            cs->lobbyPoolState = CLIENT_BOT_POOL_S_WANTED;
         }
         break;
     }
 
-    case CTRL_LOBBY_BRAIN_DOCS_CHUNK: {
-        /* Reassemble ONE brain's lobby texts. Same in-order rule the bot-pool
-         * stream uses, plus the brain index: a stream is (brainIdx, seq
-         * 0..count-1), and a fragment that does not continue the one in hand
-         * throws the partial blob away rather than splicing two brains'
-         * texts together. */
-        uint8_t  idx   = evt->u.lobbyBrainDocsChunk.brainIdx;
-        uint8_t  seq   = evt->u.lobbyBrainDocsChunk.seq;
-        uint8_t  count = evt->u.lobbyBrainDocsChunk.count;
-        uint16_t fl    = evt->u.lobbyBrainDocsChunk.fragLen;
-        if (count == 0 || idx >= BRAIN_LIST_MAX) break;
-        if (seq == 0) {
-            cs->lobbyBrainDocsIdx      = idx;
-            cs->lobbyBrainDocsExpected = count;
-            cs->lobbyBrainDocsNextSeq  = 0;
-            cs->lobbyBrainDocsBlobLen  = 0;
-        }
-        if (seq != cs->lobbyBrainDocsNextSeq ||
-            count != cs->lobbyBrainDocsExpected ||
-            idx != cs->lobbyBrainDocsIdx ||
-            cs->lobbyBrainDocsBlobLen + fl > sizeof(cs->lobbyBrainDocsBlob)) {
-            cs->lobbyBrainDocsExpected = 0;   /* abort */
-            cs->lobbyBrainDocsNextSeq  = 0;
-            cs->lobbyBrainDocsBlobLen  = 0;
-            break;
-        }
-        if (fl > 0) {
-            memcpy(cs->lobbyBrainDocsBlob + cs->lobbyBrainDocsBlobLen,
-                   evt->u.lobbyBrainDocsChunk.frag, fl);
-            cs->lobbyBrainDocsBlobLen += fl;
-        }
-        cs->lobbyBrainDocsNextSeq++;
-        if (cs->lobbyBrainDocsNextSeq == count) {
-            clientSimInstallBrainTexts(cs, idx, cs->lobbyBrainDocsBlob,
-                                       cs->lobbyBrainDocsBlobLen);
-            cs->lobbyBrainDocsExpected = 0;
-            cs->lobbyBrainDocsNextSeq  = 0;
-            cs->lobbyBrainDocsBlobLen  = 0;
-        }
+    case CTRL_LOBBY_BRAIN_DOCS_CHUNK:
+        /* Retired: an older server's way of sending announce and docs
+         * together. Nothing sends it now; a recording that holds one is
+         * stepped over. */
         break;
-    }
+
+    case CTRL_LOBBY_BRAIN_ANNOUNCE:
+        clientSimApplyBrainAnnounce(cs, evt);
+        break;
 
     case CTRL_LOBBY_SCRIPT_SETTING: {
         /* One value the host chose, or the CLEAR a join sync starts with.

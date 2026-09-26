@@ -766,6 +766,42 @@ void        serverSimSetScenarioDir(ServerSim *sim, const char *dir);
 const char *serverSimGetScenarioDir(const ServerSim *sim);
 
 /*********************************************************
+ *NAME:          serverSimSetScenarioRecordText
+ *               serverSimGetScenarioRecordText
+ *PURPOSE:
+ *  The scripts.json text for this round's recording
+ *  (src/bolo/public/scripts_record.h). The scenario host
+ *  sets it at the end of a round boot that loaded scripts
+ *  and clears it for a round that runs none; logStop reads
+ *  it, writes it into the .wbv beside the attribution
+ *  track and clears it, so each recording carries it once.
+ *  A scenario host detaching does not clear it: a host that
+ *  leaves mid-round detaches before its log is closed.
+ *
+ *  The setter copies len bytes into a buffer the sim owns
+ *  and frees the one it replaces. NULL or a len of zero
+ *  clears it. A len over SCN_RECORD_TEXT_MAX stores nothing
+ *  — the text is cleared and a warning is logged — so an
+ *  over-long description is never written.
+ *
+ *  The getter returns the text and its length in *len, or
+ *  NULL with *len = 0 when there is none. The pointer is
+ *  valid until the next set.
+ *
+ *  No lock, the same as serverSimGetTrackBuffer: the round
+ *  boot and logStop both run on the thread that owns the
+ *  sim.
+ *
+ *ARGUMENTS:
+ *  sim  - Pointer to the ServerSim
+ *  text - The JSON text; it need not be NUL-terminated
+ *  len  - Its length in bytes
+ *********************************************************/
+void        serverSimSetScenarioRecordText(ServerSim *sim, const char *text,
+                                           size_t len);
+const char *serverSimGetScenarioRecordText(const ServerSim *sim, size_t *len);
+
+/*********************************************************
  *NAME:          serverSimGetUploadsDir
  *PURPOSE:
  *  Where an uploaded map lands on disk: the configured
@@ -1871,20 +1907,47 @@ void serverSimRefreshBrainDocs(ServerSim *sim);
  * nothing else needs to. */
 void serverSimFreeBrainDocs(ServerSim *sim);
 
-/* Stream every brain's LOBBY TEXTS as CTRL_LOBBY_BRAIN_DOCS_CHUNK events
- * through `deliver`, out of the cache above — one stream per brain, and only
- * for brains that ship at least one of the two files, so a server whose
- * brains carry none emits nothing and a sim that never refreshed emits
- * nothing either.
+/* Send one CTRL_LOBBY_BRAIN_ANNOUNCE per brain through `deliver`, out of the
+ * cache above: the brain's announce.txt, and the length and generation of
+ * its commands.txt without the text. Only for brains that ship at least one
+ * of the two files, so a server whose brains carry none emits nothing and a
+ * sim that never refreshed emits nothing either.
  *
  * Called beside the brain list, on the two paths where a real client is
  * listening: a joiner's (or spectator's) sync replay, and the broadcast bus
  * when a round hands the lobby back. NOT from the delayed spectator ring's
- * control snapshot — that is rebuilt per keyframe and has a size cap these
- * fragments would push it past. */
-void serverSimEmitBrainDocs(const ServerSim *sim,
-                            void (*deliver)(void *, const struct ControlEvent *),
-                            void *ctx);
+ * control snapshot, which is rebuilt per keyframe and whose size cap does not
+ * count them. */
+void serverSimEmitBrainAnnounces(const ServerSim *sim,
+                                 void (*deliver)(void *, const struct ControlEvent *),
+                                 void *ctx);
+
+/* Take the bot-name catalogue this server hands out from the pools loaded
+ * now (lobby_bot_pools.h), replacing the one held. serverSimCreate calls it,
+ * but the pools loaded then are not always the final ones: WinBoloDS makes
+ * the sim first, loads -botnames or the shipped file after, and calls this
+ * again. A test that installs other pools after the sim exists does the same. */
+void serverSimRefreshBotPools(ServerSim *sim);
+
+/* Fill the CTRL_LOBBY_BOT_POOL_INFO that names the catalogue held. */
+void serverSimFillBotPoolInfoEvent(const ServerSim *sim,
+                                   struct ControlEvent *evt);
+
+/* The held catalogue's compressed blob and id, for a
+ * PACKET_LOBBY_BOT_POOL_REQ answer. False when there is none. *outBlob
+ * points into the sim and stays valid until the next refresh. */
+bool serverSimGetBotPoolBlob(const ServerSim *sim, const uint8_t **outBlob,
+                             uint32_t *outLen, uint32_t *outId);
+
+/* Brain `brainIdx`'s commands.txt as the cache holds it: compressed with
+ * brainDocsCompress (brain_list.h). *outZ points into the cache and stays
+ * valid until the next serverSimRefreshBrainDocs or serverSimFreeBrainDocs,
+ * so a caller copies it out under the same lock it read it under. False when
+ * the index is not a brain or the brain ships no commands.txt; the outs are
+ * then untouched. Any out may be NULL. */
+bool serverSimGetBrainDocs(const ServerSim *sim, int brainIdx,
+                           uint32_t *outGen, uint16_t *outLen,
+                           const uint8_t **outZ, uint16_t *outZLen);
 
 /*********************************************************
  * Read accessors.
@@ -2669,6 +2732,10 @@ BYTE         serverSimGetPillCount(const ServerSim *sim);
 BYTE         serverSimGetBaseCount(const ServerSim *sim);
 BYTE         serverSimGetStartCount(const ServerSim *sim);
 
+/* The counts above are slot counts. The pill and base readers below return
+ * false for a number out of range and for a slot whose item is not on the
+ * map (taken off by a scenario, or by the loader for one in the mined
+ * border); the *Info readers report that as their active field instead. */
 bool         serverSimGetPill(ServerSim *sim, BYTE i,
                               BYTE *x, BYTE *y, BYTE *owner, BYTE *armour,
                               bool *inTank);

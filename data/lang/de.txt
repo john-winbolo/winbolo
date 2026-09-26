@@ -2219,6 +2219,8 @@ STR_BOT_DIFF_DESC_HARD=Dieser Bot jagt feindliche Bunker und Basen, koordiniert 
 STR_DLGLOBBY_BOTCFG_MODE=Modus
 STR_DLGLOBBY_BOT_DOCS_TITLE={string1}-Befehle
 STR_COPY=Kopieren
+STR_DLGLOBBY_BOT_DOCS_LOADING=Befehle werden vom Server geladen...
+STR_DLGLOBBY_BOT_DOCS_FAILED=Der Server hat diese Befehle nicht gesendet. Schließe dieses Fenster und öffne es erneut, um es noch einmal zu versuchen.
 
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_PRESET_CLASSIC=Klassisch
@@ -2613,6 +2615,17 @@ STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — er ändert, wie das Spiel abläuft, und l�
 STR_MAPEDIT_SCENARIO_KIND_NOTE=Ein Mod darf weder den Spieltyp festlegen, die Uhr verstellen, einen eigenen Punktestand führen noch die Runde beenden, daher werden diese Optionen nicht angeboten, solange dies Mod sagt. Das ist eine andere Frage als Für diese Karte erstellt weiter unten, bei der es darum geht, für welche Karte die Datei geschrieben wurde.
 STR_MAPEDIT_SCENARIO_GAME_MOD=Ein Mod überlässt den Spieltyp dem Server
 STR_MAPEDIT_SCENARIO_FN_MOD={string1} wird nicht angeboten, solange diese Datei Mod sagt: Das ist die einzige Antwort, die über ein Ende entscheidet, und ein Mod lässt die Siegbedingung unangetastet.
+STR_LV_INFO_SCENARIO_MODS_1={string1} · 1 Mod
+STR_LV_INFO_SCENARIO_MODS_N={string1} · {number} Mods
+STR_LV_INFO_SCRIPTS=Skripte
+STR_LV_INFO_SCRIPT_SOURCE_MAP=Karte
+STR_LV_INFO_SCRIPT_SOURCE_SERVER=Server
+STR_LV_INFO_RULE_CHANGE=Tick {number}: {string1} → {string2}
+STR_LV_INFO_SCORES=Punkte
+STR_LV_INFO_SCORE_SLOT=Slot {number}
+STR_LV_SCN_ANNOUNCE={string1}{string2}{string3}
+STR_LV_SCN_ANNOUNCE_TO=[{player}] {string1}{string2}{string3}
+STR_LV_REGIONS_TIP=deklarierte Regionen
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADS=Skripte von Spielern
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_SESSION=Für diese Sitzung zulassen
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_KEEP=Zulassen und behalten

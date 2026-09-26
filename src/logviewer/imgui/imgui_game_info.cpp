@@ -16,6 +16,13 @@
 #include "../../gui/lang.h"
 /* Plain C, no bolo headers — see the note at the top of that header. */
 #include "../game_settings_blob.h"
+/* The same for the scripts and rule changes a recording carries. */
+#include "../lv_scripts.h"
+/* And for the scenario's scores and the server's tick. */
+#include "../lv_presentation.h"
+#include "../../gui/sim_rules_phrase.h"
+
+#include <SDL3/SDL_stdinc.h>   /* SDL_utf8strlcpy */
 
 #include <cstdio>
 #include <cstring>
@@ -29,6 +36,8 @@ extern "C" {
     void lv_screenGetMapName(char *buffer);
     void lv_screenGetPlayerName(char *buffer, unsigned char player, size_t destSize);
     int lv_screenGetGameSettings(unsigned char *out, int maxLen);
+    bool lv_playersIsInUse(unsigned char playerNumber);
+    bool lv_screenGetLoggedPlayerName(unsigned char slot, char *dest, size_t destSize);
 }
 
 /* Game info state */
@@ -52,7 +61,8 @@ static bool s_time_limit_is_live = false;
 enum {
     gameOpen = 1,
     gameTournament,
-    gameStrictTournament
+    gameStrictTournament,
+    gameScripted
 };
 
 /* AI type enum */
@@ -65,7 +75,8 @@ enum {
 
 /* View policy, as the settings payload packs it. Matches ViewPolicy in
  * src/bolo/public/view_policy.h; spelled out here because this panel
- * deliberately includes no bolo headers. */
+ * deliberately includes no bolo headers, bar sim_rules_names.h for the
+ * rule names. */
 enum {
     viewPolicyAlways = 0,
     viewPolicyKey = 1,
@@ -161,6 +172,7 @@ void lv_imgui_game_info_set(int clear, unsigned char versionMajor, unsigned char
             case gameOpen:             id = STR_DLGGAMEINFO_OPEN;   break;
             case gameTournament:       id = STR_DLGGAMEINFO_TOURN;  break;
             case gameStrictTournament: id = STR_DLGGAMEINFO_STRICT; break;
+            case gameScripted:         id = STR_DLGGAMEINFO_SCRIPTED; break;
             default:                   id = STR_UNKNOWN;            break;
         }
         snprintf(s_game_type, sizeof(s_game_type), "%s", langGetText(id));
@@ -264,6 +276,7 @@ void lv_imgui_game_info_set_settings(const unsigned char *payload, int len) {
             case gameOpen:             id = STR_DLGGAMEINFO_OPEN;   break;
             case gameTournament:       id = STR_DLGGAMEINFO_TOURN;  break;
             case gameStrictTournament: id = STR_DLGGAMEINFO_STRICT; break;
+            case gameScripted:         id = STR_DLGGAMEINFO_SCRIPTED; break;
             default:                   id = STR_UNKNOWN;            break;
         }
         snprintf(s_ev_game_type, sizeof(s_ev_game_type), "%s", langGetText(id));
@@ -343,6 +356,258 @@ void imgui_game_info_update(void) {
     } else {
         s_start_delay[0] = '\0';
     }
+}
+
+/* A rule's value as the lobby's rules popup writes it: whole numbers without
+ * a decimal point, anything else to two places with the trailing zeros
+ * trimmed, so it agrees with the multiple simRulesPhrase prints beside it. */
+static void game_info_rule_number(double value, char *buf, size_t bufLen) {
+    size_t len;
+
+    snprintf(buf, bufLen, "%.2f", value);
+    if (strchr(buf, '.') == NULL) return;
+    len = strlen(buf);
+    while (len > 0 && buf[len - 1] == '0') buf[--len] = '\0';
+    if (len > 0 && buf[len - 1] == '.') buf[--len] = '\0';
+}
+
+/* What the recording's scripts.json says the round ran: the scenario and mod
+ * count, the scripts, the rules at the playhead and each rule change the
+ * playhead has passed. Draws nothing for a plain recording or a closed log. */
+static void game_info_draw_scripts(void) {
+    const LvScripts *sc = lv_screenGetScripts();
+    if (sc == NULL || !sc->present) {
+        return;
+    }
+
+    int count = sc->count;
+    if (count < 0) count = 0;
+    if (count > LV_SCRIPTS_MAX) count = LV_SCRIPTS_MAX;
+
+    /* The scenario line. The first scenario row names it; a round that ran
+     * only mods is named after its map. */
+    {
+        const char *scenario = sc->map;
+        int mods = 0;
+        bool found = false;
+        for (int i = 0; i < count; i++) {
+            const LvScriptRow *row = &sc->scripts[i];
+            if (strcmp(row->kind, "mod") == 0) {
+                mods++;
+            } else if (!found && strcmp(row->kind, "scenario") == 0) {
+                scenario = row->name[0] != '\0' ? row->name : row->file;
+                found = true;
+            }
+        }
+        if (mods == 0) {
+            ImGui::TextUnformatted(scenario);
+        } else {
+            MessageArgs args = {};
+            /* A script's name is the script's own text, and a byte count
+               can end inside a character: cut it where one ends. */
+            SDL_utf8strlcpy(args.string1, scenario, sizeof(args.string1));
+            args.number = mods;
+            ImGui::TextUnformatted(langGetTextFmt(
+                mods == 1 ? STR_LV_INFO_SCENARIO_MODS_1 : STR_LV_INFO_SCENARIO_MODS_N,
+                &args));
+        }
+    }
+
+    /* The scripts, in load order: file, kind and where it came from. */
+    if (count > 0) {
+        ImGui::SeparatorText(langGetText(STR_LV_INFO_SCRIPTS));
+        for (int i = 0; i < count; i++) {
+            const LvScriptRow *row = &sc->scripts[i];
+            const char *kind = row->kind;
+            const char *source = row->source;
+            if (strcmp(kind, "scenario") == 0) {
+                kind = langGetText(STR_DLGLOBBY_SCENARIO_TAG_SCENARIO);
+            } else if (strcmp(kind, "mod") == 0) {
+                kind = langGetText(STR_DLGLOBBY_SCENARIO_TAG_MOD);
+            }
+            if (strcmp(source, "map") == 0) {
+                source = langGetText(STR_LV_INFO_SCRIPT_SOURCE_MAP);
+            } else if (strcmp(source, "server") == 0) {
+                source = langGetText(STR_LV_INFO_SCRIPT_SOURCE_SERVER);
+            }
+            ImGui::BeginGroup();
+            ImGui::TextUnformatted(row->file);
+            ImGui::SameLine();
+            ImGui::TextDisabled("[%s]", kind);
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", source);
+            ImGui::EndGroup();
+            if (row->description[0] != '\0' && ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", row->description);
+            }
+        }
+    }
+
+    /* Every rule the round opened on or changed later, once each, in index
+     * order. */
+    const LvRuleChange *changes = NULL;
+    int changeCount = lv_screenGetRuleChanges(&changes);
+    if (changes == NULL || changeCount < 0) changeCount = 0;
+
+    bool listed[SIM_RULE_COUNT] = {};
+    bool any = false;
+    {
+        int ruleCount = sc->ruleCount;
+        if (ruleCount < 0) ruleCount = 0;
+        if (ruleCount > SIM_RULE_COUNT) ruleCount = SIM_RULE_COUNT;
+        for (int i = 0; i < ruleCount; i++) {
+            int index = sc->rules[i].index;
+            if (index >= 0 && index < SIM_RULE_COUNT) {
+                listed[index] = true;
+                any = true;
+            }
+        }
+        for (int i = 0; i < changeCount; i++) {
+            int index = changes[i].index;
+            if (index >= 0 && index < SIM_RULE_COUNT) {
+                listed[index] = true;
+                any = true;
+            }
+        }
+    }
+    if (!any) {
+        return;
+    }
+
+    uint32_t playhead = lv_screenGetTimeRunning();
+
+    ImGui::SeparatorText(langGetText(STR_DLGLOBBY_SCENARIO_RULES));
+    if (ImGui::BeginTable("##gi_rules", 4,
+                          ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
+        ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_RULES_COL_RULE),
+                                ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_RULES_COL_CLASSIC),
+                                ImGuiTableColumnFlags_WidthFixed,
+                                ImGui::CalcTextSize("00000").x);
+        ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_RULES_COL_SCENARIO),
+                                ImGuiTableColumnFlags_WidthFixed,
+                                ImGui::CalcTextSize("00000").x);
+        ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_RULES_COL_CHANGE),
+                                ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableHeadersRow();
+
+        for (int rule = 0; rule < SIM_RULE_COUNT; rule++) {
+            if (!listed[rule]) continue;
+
+            double value = lv_screenRuleValueAt(rule, playhead);
+            char   classicText[32];
+            char   valueText[32];
+            char   phrase[96];
+            game_info_rule_number(simRulesClassicValue(rule),
+                                  classicText, sizeof(classicText));
+            game_info_rule_number(value, valueText, sizeof(valueText));
+            simRulesPhrase(rule, value, phrase, sizeof(phrase));
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted(simRulesRuleName(rule));
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(classicText);
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextUnformatted(valueText);
+            ImGui::TableSetColumnIndex(3);
+            ImGui::TextUnformatted(phrase);
+        }
+        ImGui::EndTable();
+    }
+
+    /* The changes the playhead has passed, in the order the recording holds
+     * them, each at the server's game tick, the clock a script counts in. */
+    for (int i = 0; i < changeCount; i++) {
+        const LvRuleChange *ch = &changes[i];
+        if (ch->ms > playhead) continue;
+        if (ch->index < 0 || ch->index >= SIM_RULE_COUNT) continue;
+
+        char phrase[96];
+        simRulesPhrase(ch->index, ch->value, phrase, sizeof(phrase));
+
+        MessageArgs args = {};
+        args.number = (int)lv_screenServerTickAt(ch->ms);
+        /* The phrase comes from the translation table, so it can hold
+           characters of more than one byte: cut both where a character
+           ends. */
+        SDL_utf8strlcpy(args.string1, simRulesRuleName(ch->index),
+                        sizeof(args.string1));
+        SDL_utf8strlcpy(args.string2, phrase, sizeof(args.string2));
+        ImGui::TextUnformatted(langGetTextFmt(STR_LV_INFO_RULE_CHANGE, &args));
+    }
+}
+
+/* A scenario's scores at the playhead: every slot with a valid score, then
+ * every team. Draws nothing when no score is valid, which is every plain
+ * recording. */
+static void game_info_draw_scores(void) {
+    bool any = false;
+
+    for (int i = 0; i < MAX_TANKS && !any; i++) {
+        const LvPresScore *s = lv_screenGetScore(SCN_SCORE_KIND_PLAYER, (BYTE)i);
+        any = (s != NULL && s->valid);
+    }
+    for (int t = 1; t < LV_PRES_TEAMS && !any; t++) {
+        const LvPresScore *s = lv_screenGetScore(SCN_SCORE_KIND_TEAM, (BYTE)t);
+        any = (s != NULL && s->valid);
+    }
+    if (!any) {
+        return;
+    }
+
+    ImGui::SeparatorText(langGetText(STR_LV_INFO_SCORES));
+    if (!ImGui::BeginTable("##gi_scores", 3,
+                           ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
+        return;
+    }
+    ImGui::TableSetupColumn("##who", ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn("##label", ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn("##score", ImGuiTableColumnFlags_WidthFixed,
+                            ImGui::CalcTextSize("-00000000").x);
+
+    for (int i = 0; i < MAX_TANKS; i++) {
+        const LvPresScore *s = lv_screenGetScore(SCN_SCORE_KIND_PLAYER, (BYTE)i);
+        if (s == NULL || !s->valid) continue;
+
+        /* The name the slot plays under now, else the one the recording gave
+         * it, else its number. */
+        char name[64] = "";
+        if (lv_playersIsInUse((unsigned char)i)) {
+            lv_screenGetPlayerName(name, (unsigned char)i, sizeof(name));
+        } else {
+            lv_screenGetLoggedPlayerName((unsigned char)i, name, sizeof(name));
+        }
+        if (name[0] == '\0') {
+            MessageArgs args = {};
+            args.number = i;
+            snprintf(name, sizeof(name), "%s",
+                     langGetTextFmt(STR_LV_INFO_SCORE_SLOT, &args));
+        }
+
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextUnformatted(name);
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextUnformatted(s->label);
+        ImGui::TableSetColumnIndex(2);
+        ImGui::Text("%d", (int)s->score);
+    }
+    for (int t = 1; t < LV_PRES_TEAMS; t++) {
+        const LvPresScore *s = lv_screenGetScore(SCN_SCORE_KIND_TEAM, (BYTE)t);
+        if (s == NULL || !s->valid) continue;
+
+        MessageArgs args = {};
+        args.number = t;
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextUnformatted(langGetTextFmt(STR_DLGLOBBY_TEAM_HEADER, &args));
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextUnformatted(s->label);
+        ImGui::TableSetColumnIndex(2);
+        ImGui::Text("%d", (int)s->score);
+    }
+    ImGui::EndTable();
 }
 
 void lv_imgui_game_info_window(void) {
@@ -467,6 +732,9 @@ void lv_imgui_game_info_window(void) {
             strncpy(args.string1, s_start_time, sizeof(args.string1) - 1);
             ImGui::TextUnformatted(langGetTextFmt(STR_LV_INFO_START_TIME, &args));
         }
+
+        game_info_draw_scripts();
+        game_info_draw_scores();
 
         /* Server visibility rules and the two mode flags, from the settings
          * event. The row labels come from the lobby form and carry no

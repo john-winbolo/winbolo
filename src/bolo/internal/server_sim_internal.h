@@ -191,6 +191,19 @@ typedef struct {
     char    label[16];
 } ScnScoreRow;
 
+/* One map marker, as the marker op last placed it. valid is false for an id
+ * nothing has placed and for one a clear removed. The fields are the ones
+ * the CTRL_SCN_MARKER that placed it carried, destination pair included. */
+typedef struct {
+    bool    valid;
+    uint8_t kind;          /* SCN_MARKER_KIND_SQUARE or _FOLLOW */
+    uint8_t x, y;          /* the square, for SCN_MARKER_KIND_SQUARE */
+    uint8_t slot;          /* the 0-based slot, for SCN_MARKER_KIND_FOLLOW */
+    uint8_t colour;
+    uint8_t destTeam;      /* 0 = everyone, else the team */
+    uint8_t destPlayer;    /* 0xFF = everyone, else a 0-based slot */
+} ScnMarkerRow;
+
 struct ServerSim {
     GameSim      sim;    /* MUST be first member */
 
@@ -316,8 +329,9 @@ struct ServerSim {
      * never appears on the public API or the wire. */
     char            brainPaths[BRAIN_LIST_MAX][BRAIN_LIST_PATH_LEN];
 
-    /* The brains' lobby texts, read off disk ONCE and kept as the wire blob
-     * the CTRL_LOBBY_BRAIN_DOCS_CHUNK fragments are cut from.
+    /* The brains' lobby texts, read off disk ONCE: each brain's announce
+     * line, which CTRL_LOBBY_BRAIN_ANNOUNCE carries, and its commands.txt
+     * compressed, ready for a PACKET_LOBBY_BRAIN_DOCS_REQ answer.
      *
      * These used to be read at the moment they were sent. The send is inside
      * serverSimSyncSubscriber, which the delayed spectator ring's control
@@ -326,12 +340,25 @@ struct ServerSim {
      * files per brain, nine brains, both multiplied by the ring's keyframe
      * rate, on the tick thread.
      *
-     * ~271 KB, so it is allocated on first fill and freed with the sim
-     * rather than sitting in every ServerSim that never hosts a lobby.
+     * About 8 KB plus the compressed docs, allocated on first fill and
+     * freed with the sim rather than sitting in every ServerSim that never
+     * hosts a lobby.
      * serverSimRefreshBrainDocs fills it and re-reads a brain whose files
      * have a newer mtime, so an operator editing a brain's announce.txt
      * between rounds still sees the change without a restart. */
     struct ServerBrainDocsCache *brainDocs;
+
+    /* The bot-name catalogue this server hands out: lobbyBotPoolsSerialize's
+     * compressed blob of the pools loaded when the sim was made, its length,
+     * and its id (lobbyBotPoolsCatalogId). A joiner is told the id and the
+     * length (CTRL_LOBBY_BOT_POOL_INFO) and asks for the blob on
+     * CHANNEL_BULK only when its own pools differ. Kept rather than made
+     * per request so that the id a joiner was told and the blob it is then
+     * sent are always the same catalogue. NULL, 0, 0 when the pools hold no
+     * themed pool. */
+    uint8_t     *botPoolBlob;
+    uint32_t     botPoolBlobLen;
+    uint32_t     botPoolId;
 
     /* Layout A lobby flags — all persist across rounds. */
     bool     openHost;             /* anyone can edit when true */
@@ -1004,6 +1031,12 @@ struct ServerSim {
     void                  *scenarioRoundBootCtx;
     void                 (*scenarioRoundStart)(void *ctx);
     void                  *scenarioRoundStartCtx;
+    /* The scripts.json text for this round's recording, which the host
+       builds at round boot and logStop writes into the .wbv. NULL with a
+       length of zero for a round that ran no script. malloc'd; the setter
+       frees the one it replaces and serverSimDestroy frees the last. */
+    char                  *scenarioRecordText;
+    size_t                 scenarioRecordTextLen;
     /* Asked of each map the lister finds, so an entry can say whether it is
        scripted. NULL means nothing registered and every map reads plain. */
     bool                 (*scenarioMapScripted)(void *ctx, const char *mapPath);
@@ -1245,12 +1278,20 @@ struct ServerSim {
     ScnPanelList           scenarioPanelScratch;
 
     /* A scenario's own score for each player slot and each team, as the
-     * score op last set it. Nothing reads these yet: the lobby's round
-     * stats are what will. Player rows are keyed by a 0-based slot, team
-     * rows by the team number, which runs 1..MAX_TANKS-1, so row 0 of the
-     * team array names no team and is never written. */
+     * score op last set it. serverSimBuildRoundStatsSummary reads them for
+     * the round's recap, and the join replay hands every valid row to a
+     * subscriber that arrives mid-round. Player rows are keyed by a 0-based
+     * slot, team rows by the team number, which runs 1..MAX_TANKS-1, so row
+     * 0 of the team array names no team and is never written. */
     ScnScoreRow            scenarioPlayerScores[MAX_TANKS];
     ScnScoreRow            scenarioTeamScores[MAX_TANKS];
+
+    /* Each map marker a scenario has up, by id, as the marker op last placed
+     * it: a place or a follow sets the row and a clear empties it. Markers
+     * have no expiry, so this is the whole of what the map shows, and the
+     * join replay hands every valid row to a subscriber that arrives
+     * mid-round. */
+    ScnMarkerRow           scenarioMarkers[SCN_MARKERS_MAX];
 
     /* Spectator roster enumerator (registered by the transport layer). Invoked
      * during sync-replay to emit one CTRL_SPECTATOR_SLOT per connected
@@ -1329,7 +1370,7 @@ void serverSimScenarioResetRoster(ServerSim *sim);
  * scenario surface: the caller is the sim's own round start. */
 void serverSimScenarioResetTickStats(ServerSim *sim);
 
-/* Forget every stored panel list and every score row. What a scenario was
+/* Forget every stored panel list, marker and score row. What a scenario was
  * presenting belongs to the round and the scenario that put it up, so both
  * the return to lobby and a detach drop the lot; a joiner arriving after
  * either is given nothing rather than the last round's panels. Called from
@@ -1353,6 +1394,21 @@ void serverSimScenarioResetPresentation(ServerSim *sim);
  * than on the scenario surface because the caller is the sim's own join
  * path, not a scenario. */
 void serverSimScenarioReplayPanels(
+    ServerSim *sim,
+    void (*deliver)(void *, const struct ControlEvent *),
+    void *ctx,
+    bool withTargeted);
+
+/* Hand the markers up and the score rows set to a joining subscriber's
+ * callback, as the events that published them: one CTRL_SCN_MARKER per
+ * marker, then one CTRL_SCN_SCORE per player row and per team row. A
+ * cleared marker is not replayed, since a joiner's markers start empty.
+ *
+ * withTargeted false leaves out the markers held to a team or a slot, for
+ * the reason serverSimScenarioReplayPanels leaves out those lists. Scores
+ * are broadcast and go either way. Called from the sync replay in
+ * server_sim_control.c, beside the panel replay. */
+void serverSimScenarioReplayMarkersAndScores(
     ServerSim *sim,
     void (*deliver)(void *, const struct ControlEvent *),
     void *ctx,
