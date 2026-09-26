@@ -2219,6 +2219,8 @@ STR_BOT_DIFF_DESC_HARD=Den här botten jagar fiendens bunkrar och baser, samordn
 STR_DLGLOBBY_BOTCFG_MODE=Läge
 STR_DLGLOBBY_BOT_DOCS_TITLE={string1}-kommandon
 STR_COPY=Kopiera
+STR_DLGLOBBY_BOT_DOCS_LOADING=Hämtar kommandona från servern...
+STR_DLGLOBBY_BOT_DOCS_FAILED=Servern skickade inte dessa kommandon. Stäng fönstret och öppna det igen för att försöka på nytt.
 
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_PRESET_CLASSIC=Klassiskt

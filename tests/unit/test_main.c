@@ -959,6 +959,7 @@ static const UnitTestEntry s_tests[] = {
     { "loopback_map_preview",                    run_loopback_map_preview                    },
     { "loopback_brain_docs_fetch",               run_loopback_brain_docs_fetch               },
     { "loopback_brain_docs_spectator",           run_loopback_brain_docs_spectator           },
+    { "loopback_brain_docs_survives_bulk_rebase", run_loopback_brain_docs_survives_bulk_rebase },
     { "loopback_map_upload",                     run_loopback_map_upload                     },
     { "upload_begin_golden",                     run_upload_begin_golden                     },
     { "script_upload_begin_refusals",            run_script_upload_begin_refusals            },

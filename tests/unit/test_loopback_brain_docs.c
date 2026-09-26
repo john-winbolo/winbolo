@@ -31,6 +31,12 @@
  *       reads the same bot announce lines, so the server answers its request
  *       on the spectator's own bulk stream.
  *
+ *   loopback_brain_docs_survives_bulk_rebase — the server re-bases the
+ *       player's bulk channel (a lobby map change does this) while the docs
+ *       answer is part way through arriving. The client drops the partial
+ *       answer, so it must ask for the docs again rather than wait for the
+ *       rest of an answer that will never come.
+ *
  * The brain is written into the test's own scratch directory and put in the
  * server's catalogue by hand, so the case does not depend on which brains are
  * installed beside the binary.
@@ -50,6 +56,8 @@
 #include "control_event.h"
 #include "server_sim.h"
 #include "server_sim_internal.h"    /* brainList / brainPaths */
+#include "client_sim_internal.h"    /* lobbyBrainTexts->rxIdx */
+#include "transport_udp_server_internal.h" /* serverRebaseBulkAndRearmDownload */
 #include "threads.h"
 #include "test_harness.h"
 #include "loopback_harness.h"
@@ -288,6 +296,117 @@ int run_loopback_brain_docs_spectator(void) {
                 "(state %d)", DOCS_MAX, (int)st);
     }
     UT_ASSERT(strcmp(clientSimGetLobbyBrainDocs(h.cs, 0), docs) == 0);
+
+    loopbackHarnessStop(&h);
+    free(docs);
+    return 0;
+}
+
+/* Fill `out` with DOCS_BYTES of letters, digits, spaces and newlines drawn at
+ * random from `seed`. This compresses far less than makeDocs's words, so the
+ * answer spans more bulk segments and a lost one leaves it part way in. */
+static void makeNoisyDocs(char *out, uint32_t seed) {
+    static const char chars[] =
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 \n";
+    size_t pos;
+    for (pos = 0; pos < DOCS_BYTES; pos++) {
+        seed = seed * 1103515245u + 12345u;
+        out[pos] = chars[(seed >> 16) % (sizeof(chars) - 1)];
+    }
+    out[DOCS_BYTES] = '\0';
+}
+
+/* The docs answer has begun arriving: the receiver is filling brain 0 and the
+ * brain is still ASKED. */
+static bool docsMidBody(LoopbackHarness *h) {
+    return h->cs->lobbyBrainTexts != NULL &&
+           h->cs->lobbyBrainTexts->rxIdx == 1 &&
+           h->cs->lobbyBrainTexts->docs[0].state == CLIENT_BRAIN_DOCS_S_ASKED &&
+           clientSimGetLobbyBrainDocsState(h->cs, 0) == CLIENT_BRAIN_DOCS_WAITING;
+}
+
+int run_loopback_brain_docs_survives_bulk_rebase(void) {
+    LoopbackHarness h;
+    AnnounceWant    want;
+    char           *docs = NULL;
+    ClientBrainDocsState st;
+    BYTE            slot;
+    int             at, i;
+    bool            caught = false;
+
+    docs = (char *)malloc(DOCS_BYTES + 1);
+    UT_ASSERT(docs != NULL);
+    makeNoisyDocs(docs, 4u);
+    UT_ASSERT(setupDir("rebasedocsbrain"));
+    UT_ASSERT(writeBrain("Cut off.", docs));
+
+    UT_ASSERT_MSG(loopbackHarnessStart(&h, "DocsRebase", /*lobbyMode*/ true,
+                                       "loss=20,burst=2", /*seed*/ 0xBA5Eu),
+                  "harness start failed");
+    at = loopbackHarnessPumpUntil(&h, CONNECT_MAX, pred_connected, NULL);
+    if (at < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("client never reached CONNECTED within %d pumps", CONNECT_MAX);
+    }
+    /* The server's clients[] slot for this player is its player number. */
+    slot = clientSimGetMyPlayerNum(h.cs);
+    if (slot >= MAX_TANKS) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the client holds no player slot");
+    }
+
+    installAndAnnounce(&h);
+    want.announce = "Cut off.";
+    at = loopbackHarnessPumpUntil(&h, ANNOUNCE_MAX, pred_announced, &want);
+    if (at < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the announce never reached the client");
+    }
+
+    /* Ask once, then pump one step at a time until the answer is part way
+     * in. The client's tick sends the request on its own from here. */
+    clientSimLobbyBrainDocsWant(h.cs, 0, false);
+    for (i = 0; i < DOCS_MAX; i++) {
+        loopbackHarnessPump(&h);
+        if (docsMidBody(&h)) {
+            caught = true;
+            break;
+        }
+        if (clientSimGetLobbyBrainDocsState(h.cs, 0) == CLIENT_BRAIN_DOCS_READY ||
+            clientSimGetLobbyBrainDocsState(h.cs, 0) == CLIENT_BRAIN_DOCS_FAILED) {
+            break;
+        }
+    }
+    if (!caught) {
+        st = clientSimGetLobbyBrainDocsState(h.cs, 0);
+        loopbackHarnessStop(&h);
+        UT_FAIL("the docs answer was never seen part way in (state %d after "
+                "%d pumps)", (int)st, i);
+    }
+
+    /* The server re-bases this player's bulk channel, as a lobby map change
+     * does: the rest of the docs answer is never sent. */
+    threadsWaitForMutex();
+    serverRebaseBulkAndRearmDownload((int)slot);
+    threadsReleaseMutex();
+
+    /* The re-armed map download can hold the bulk stream first, and a request
+     * that reaches a busy sender is dropped and sent again 150 ticks later,
+     * so allow for several re-asks. */
+    at = loopbackHarnessPumpUntil(&h, DOCS_MAX, pred_docs_settled, NULL);
+    st = clientSimGetLobbyBrainDocsState(h.cs, 0);
+    fprintf(stderr, "  brain docs after bulk rebase: caught@%d settled@%d "
+            "state=%d\n", i, at, (int)st);
+    if (at < 0 || st != CLIENT_BRAIN_DOCS_READY) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the docs did not arrive within %d pumps of the bulk rebase "
+                "(state %d)", DOCS_MAX, (int)st);
+    }
+    UT_ASSERT_MSG(strcmp(clientSimGetLobbyBrainDocs(h.cs, 0), docs) == 0,
+                  "the docs arrived but are not the file on the server "
+                  "(%u bytes, want %u)",
+                  (unsigned)strlen(clientSimGetLobbyBrainDocs(h.cs, 0)),
+                  (unsigned)DOCS_BYTES);
 
     loopbackHarnessStop(&h);
     free(docs);

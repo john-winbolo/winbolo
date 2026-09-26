@@ -2217,6 +2217,8 @@ STR_BOT_DIFF_DESC_HARD=这个机器人会主动搜寻敌方碉堡和基地，与
 STR_DLGLOBBY_BOTCFG_MODE=模式
 STR_DLGLOBBY_BOT_DOCS_TITLE={string1} 指令
 STR_COPY=复制
+STR_DLGLOBBY_BOT_DOCS_LOADING=正在从服务器获取命令...
+STR_DLGLOBBY_BOT_DOCS_FAILED=服务器未发送这些命令。请关闭此窗口并重新打开以重试。
 
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_PRESET_CLASSIC=经典

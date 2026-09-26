@@ -5436,6 +5436,7 @@ set(_unit_test_names
     loopback_map_preview
     loopback_brain_docs_fetch
     loopback_brain_docs_spectator
+    loopback_brain_docs_survives_bulk_rebase
     loopback_map_upload
     upload_begin_golden
     script_upload_begin_refusals

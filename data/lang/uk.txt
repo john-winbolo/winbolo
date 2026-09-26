@@ -2219,6 +2219,8 @@ STR_BOT_DIFF_DESC_HARD=Цей бот наполегливо винищує вр�
 STR_DLGLOBBY_BOTCFG_MODE=Режим
 STR_DLGLOBBY_BOT_DOCS_TITLE=Команди {string1}
 STR_COPY=Копіювати
+STR_DLGLOBBY_BOT_DOCS_LOADING=Отримання команд із сервера...
+STR_DLGLOBBY_BOT_DOCS_FAILED=Сервер не надіслав ці команди. Закрийте це вікно й відкрийте його знову, щоб спробувати ще раз.
 
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_PRESET_CLASSIC=Класичний

@@ -938,7 +938,7 @@ public/internal split provides.
 | --- | --- |
 | Backed by a `ControlEventType` variant (state changes — joins, leaves, alliances, chat, lobby, phases, balance, shutdown) | `src/bolo/transport_control_codec.c` (encoder + decoder) |
 | Fixed-layout binary message (per-tick snapshots) | field list in `src/bolo/internal/wire_messages.h` + a `DEFINE_WIRE_CODEC[_MASKED]` line in `src/bolo/transport_udp_common.c` — see "Fixed-layout wire messages" below |
-| Bulk byte transfer (map preview / download / resync / scenario details / script copy) | streamed on `CHANNEL_BULK` behind a bulk-transfer stream header — `src/bolo/bulk_transfer.c`. Download and resync blobs are built per recipient; the scenario details reply (`BULK_KIND_SCENARIO_DETAILS`) carries one script file's rules and callbacks blob; the script copy reply (`BULK_KIND_SCRIPT_PACKAGE`) carries a status byte and then one script file's raw bytes for a player to keep |
+| Bulk byte transfer (map preview / download / resync / scenario details / script copy) | streamed on `CHANNEL_BULK` behind a bulk-transfer stream header — `src/bolo/bulk_transfer.c`. Download and resync blobs are built per recipient; the scenario details reply (`BULK_KIND_SCENARIO_DETAILS`) carries one script file's rules and callbacks blob; the script copy reply (`BULK_KIND_SCRIPT_PACKAGE`) carries a status byte and then one script file's raw bytes for a player to keep; the brain docs reply (`BULK_KIND_BRAIN_DOCS`) carries a status byte and then one brain's `commands.txt` zlib-compressed, with the docs generation in the header's `gen` |
 | Per-client handshake / reliability (JOIN_ACCEPT, JOIN_REJECT, NAME_CHANGE_REJECT, PONG) | `src/bolo/transport_udp_server.c` / `src/bolo/transport_udp_client.c` |
 
 These rows say where each payload is *defined*; **how** it is reliably
@@ -1364,6 +1364,12 @@ don't fit fire-and-apply:
   blob; the reply streams on `CHANNEL_BULK`
   (`BULK_KIND_SCENARIO_DETAILS`) and applies nothing to sim state,
   the same shape as the map preview.
+- `PACKET_LOBBY_BRAIN_DOCS_REQ` — the same shape again, sent by the
+  transport tick for a brain the docs dialog marked WANTED
+  (`clientSimLobbyBrainDocsWant`). The reply streams on `CHANNEL_BULK`
+  (`BULK_KIND_BRAIN_DOCS`) as one brain's `commands.txt`,
+  zlib-compressed, and is taken only when its generation is the one
+  the brain's `CTRL_LOBBY_BRAIN_ANNOUNCE` named.
 - `clientSimNetSendLobbyScriptFetch` — a request for a copy of one of
   the server's script files (`PACKET_LOBBY_SCRIPT_FETCH_REQ`), for the
   player to keep in their own Mods directory. The reply streams on

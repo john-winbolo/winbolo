@@ -2037,6 +2037,7 @@ int run_lock_channel(void);
 int run_loopback_map_preview(void);
 int run_loopback_brain_docs_fetch(void);
 int run_loopback_brain_docs_spectator(void);
+int run_loopback_brain_docs_survives_bulk_rebase(void);
 /* Client->server map upload over CHANNEL_BULK (test_loopback_upload.c): a map
  * uploaded under loss completes and the server decodes the reassembled bytes. */
 int run_loopback_map_upload(void);

@@ -1337,6 +1337,31 @@ static void clientApplyChannelReset(TransportUdpClientCtx *c,
                 c->scriptFetchStatus      = CLIENT_SCRIPT_FETCH_NO_ANSWER;
                 c->scriptFetchRetryAtTick = 0;
             }
+            /* A brain docs answer or a script details answer still being
+             * filled is abandoned with it. Each is asked for again: the
+             * brain, or the slot, goes back to WANTED and its receive mark is
+             * cleared, since the tick treats a set mark as "arriving now" and
+             * would otherwise wait on the cut-off body for ever. */
+            if (c->clientSim != NULL) {
+                ClientSim *cs = c->clientSim;
+                struct ClientBrainTexts *t = cs->lobbyBrainTexts;
+                if (t != NULL && t->rxIdx > 0 && t->rxIdx <= BRAIN_LIST_MAX) {
+                    if (t->docs[t->rxIdx - 1].state == CLIENT_BRAIN_DOCS_S_ASKED) {
+                        t->docs[t->rxIdx - 1].state = CLIENT_BRAIN_DOCS_S_WANTED;
+                        t->docs[t->rxIdx - 1].tries = 0;
+                    }
+                    t->rxIdx = 0;
+                }
+                if (cs->lobbyScnDetailsRxSlot > 0 &&
+                    cs->lobbyScnDetailsRxSlot <= LOBBY_SCN_DETAILS_SLOTS) {
+                    int slot = cs->lobbyScnDetailsRxSlot - 1;
+                    if (cs->lobbyScnDetails[slot].state == LOBBY_SCN_DETAILS_ASKED) {
+                        cs->lobbyScnDetails[slot].state = LOBBY_SCN_DETAILS_WANTED;
+                        cs->lobbyScnDetails[slot].tries = 0;
+                    }
+                    cs->lobbyScnDetailsRxSlot = 0;
+                }
+            }
             bulkReceiverInit(&c->bulkRecv);
             if (c->mapResyncBuf != NULL) {
                 udpClientFreeResyncBuf(c);
