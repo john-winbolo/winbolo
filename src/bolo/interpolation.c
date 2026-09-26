@@ -310,12 +310,22 @@ bool interpTankHidden(const InterpContext *ctx, BYTE playerNum) {
  * but past this the discrete freeze owns the motion). */
 #define INTERP_MAX_INTERVAL_MS 200
 
+/* The part of a move made by fraction t, rounded half away from zero so a
+ * move and its mirror round to the same size. Truncating the whole position
+ * instead rounds an axis that is growing down and one that is shrinking up,
+ * so on a diagonal x + y wobbles by a world unit from frame to frame, which
+ * is enough to flip the diagonal pixel snap (tank_diagonal_snap.h). */
+static int interpLerpDelta(WORLD from, WORLD to, float t) {
+  float d = ((float)to - (float)from) * t;
+  return (d >= 0.0f) ? (int)(d + 0.5f) : -(int)(0.5f - d);
+}
+
 /* Lerp one snapshot toward another at t in [0,1] (t clamped by the caller). */
 static void interpLerpSnap(const InterpSnapshot *a, const InterpSnapshot *b,
                            float t, WORLD *outX, WORLD *outY,
                            TURNTYPE *outAngle, bool *outOnBoat) {
-  *outX = (WORLD)((float)a->worldX + ((float)b->worldX - (float)a->worldX) * t);
-  *outY = (WORLD)((float)a->worldY + ((float)b->worldY - (float)a->worldY) * t);
+  *outX = (WORLD)((int)a->worldX + interpLerpDelta(a->worldX, b->worldX, t));
+  *outY = (WORLD)((int)a->worldY + interpLerpDelta(a->worldY, b->worldY, t));
   *outAngle = interpAngleLerp(a->angle, b->angle, t);
   *outOnBoat = (t < 0.5f) ? a->onBoat : b->onBoat;
 }
