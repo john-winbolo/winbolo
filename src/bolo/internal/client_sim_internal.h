@@ -785,7 +785,16 @@ struct ClientSim {
      * once complete, the same way the WBN tab handles its async
      * download. lobbyMapPreviewReqPath is the path we asked for;
      * lobbyMapPreviewPath echoes the path the completed bytes belong
-     * to so the GUI can ignore a stale response after navigating. */
+     * to so the GUI can ignore a stale response after navigating.
+     *
+     * The request is a bare datagram, so the transport's tick sends it again
+     * when no stream header has arrived LOBBY_MAP_PREVIEW_TIMEOUT_TICKS after
+     * the last send, up to LOBBY_MAP_PREVIEW_TRIES sends in all, and then
+     * sets lobbyMapPreviewError. A busy refusal (_ERR code 3) is retried the
+     * same way. Once the header has arrived the bulk channel resends its own
+     * lost fragments, so the answer is never timed out. */
+#define LOBBY_MAP_PREVIEW_TIMEOUT_TICKS  100   /* 1 s at the 100/s tick */
+#define LOBBY_MAP_PREVIEW_TRIES          6
     char     lobbyMapPreviewReqPath[256];
     char     lobbyMapPreviewPath[256];
     bool     lobbyMapPreviewInFlight;
@@ -793,6 +802,8 @@ struct ClientSim {
     bool     lobbyMapPreviewError;   /* server replied _ERR */
     uint32_t lobbyMapPreviewTotal;   /* expected total bytes from the stream header */
     uint32_t lobbyMapPreviewReceived;/* bytes accumulated so far */
+    uint8_t  lobbyMapPreviewTries;   /* requests sent for lobbyMapPreviewReqPath */
+    uint32_t lobbyMapPreviewSentTick;/* transport localTick of the last request */
     uint8_t  lobbyMapPreviewBytes[LOBBY_MAP_UPLOAD_MAX_BYTES];
 
     /* Script details (scenario_details.h) the lobby's details dialog asked

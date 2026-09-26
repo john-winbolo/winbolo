@@ -397,6 +397,31 @@ int loopbackHarnessDropNextLeft(LoopbackHarness *h, struct ClientSim *cs) {
 #endif
 }
 
+void loopbackHarnessDropNextFromClient(LoopbackHarness *h, struct ClientSim *cs,
+                                       uint8_t packetType, int count) {
+    (void)h;
+#if WB_ENABLE_NETIMPAIR
+    if (cs == NULL) return;
+    transportUdpClientTestDropNextOut(&cs->transport, packetType, count);
+#else
+    (void)cs;
+    (void)packetType;
+    (void)count;
+#endif
+}
+
+int loopbackHarnessDropNextFromClientLeft(LoopbackHarness *h,
+                                          struct ClientSim *cs) {
+    (void)h;
+#if WB_ENABLE_NETIMPAIR
+    if (cs == NULL) return 0;
+    return transportUdpClientTestDropNextOutLeft(&cs->transport);
+#else
+    (void)cs;
+    return 0;
+#endif
+}
+
 int loopbackHarnessPumpUntil(LoopbackHarness *h, int maxIters,
                              LoopbackPredicate pred, void *user) {
     int i;

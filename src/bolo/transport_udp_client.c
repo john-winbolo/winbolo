@@ -459,6 +459,10 @@ typedef struct {
      * the server's datagram was lost on the wire. 0 = off. */
     uint8_t test_drop_next_type;
     int     test_drop_next_count;
+    /* Drop the next test_drop_out_count outbound packets of this type, as if
+     * the client's datagram was lost on the wire. 0 = off. */
+    uint8_t test_drop_out_type;
+    int     test_drop_out_count;
 #endif
 
 #ifdef __EMSCRIPTEN__
@@ -516,6 +520,15 @@ static uint64_t udpClientVirtualNow(void) {
 
 /* Client send wrapper — tracks packet and byte counters */
 static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int len) {
+#if WB_ENABLE_NETIMPAIR
+    if (c->test_drop_out_count > 0 &&
+        getPacketType(buf, len) == c->test_drop_out_type) {
+        c->test_drop_out_count--;
+        c->packetsSentThisSec++;
+        c->bytesSentThisSec += len;
+        return;
+    }
+#endif
     /* When outbound impairment is enabled, hand the datagram to the layer
      * instead of sending directly — udpClientTick later pops the delayed
      * packets onto the wire. An oversize datagram (offer returns false)
@@ -1137,7 +1150,9 @@ static void clientDrainVoice(TransportUdpClientCtx *c) {
 
 /* PACKET_LOBBY_MAP_PREVIEW_ERR — server couldn't read the map. Wire:
  * [header 8] [pathLen 1] [path N] [code 1]. Flags the request failed
- * so the chooser shows "no preview" instead of spinning. */
+ * so the chooser shows "no preview" instead of spinning. Code 3 is the
+ * server's bulk sender being busy: while sends are left the request stays
+ * in flight and udpClientMapPreviewTick sends it again at its timeout. */
 void udpClientHandleLobbyMapPreviewErr(ClientSim *cs,
                                        const uint8_t *buf, int len) {
     if (!cs) return;
@@ -1146,6 +1161,10 @@ void udpClientHandleLobbyMapPreviewErr(ClientSim *cs,
     if (!wireTakeU8Field(buf, len, &pos, path, sizeof(path))) return;
     if (strncmp(path, cs->lobbyMapPreviewReqPath,
                 sizeof(cs->lobbyMapPreviewReqPath)) != 0) {
+        return;
+    }
+    if (pos < len && buf[pos] == 3 && cs->lobbyMapPreviewInFlight &&
+        cs->lobbyMapPreviewTries < LOBBY_MAP_PREVIEW_TRIES) {
         return;
     }
     cs->lobbyMapPreviewError    = true;
@@ -1386,6 +1405,20 @@ static void clientApplyChannelReset(TransportUdpClientCtx *c,
                     c->clientSim->lobbyPoolState = CLIENT_BOT_POOL_S_WANTED;
                     c->clientSim->lobbyPoolTries = 0;
                 }
+            }
+            /* A map preview still being filled is asked for again on the
+             * next tick: clearing its total puts it back under
+             * udpClientMapPreviewTick, and the back-dated stamp makes that
+             * tick send at once. */
+            if (c->clientSim != NULL &&
+                c->clientSim->lobbyMapPreviewInFlight &&
+                c->bulkRecv.dst == c->clientSim->lobbyMapPreviewBytes) {
+                ClientSim *cs = c->clientSim;
+                cs->lobbyMapPreviewTotal    = 0;
+                cs->lobbyMapPreviewReceived = 0;
+                cs->lobbyMapPreviewTries    = 0;
+                cs->lobbyMapPreviewSentTick =
+                    c->localTick - LOBBY_MAP_PREVIEW_TIMEOUT_TICKS;
             }
             bulkReceiverInit(&c->bulkRecv);
             if (c->mapResyncBuf != NULL) {
@@ -1955,6 +1988,48 @@ static void udpClientBotPoolTick(TransportUdpClientCtx *c) {
     cs->lobbyPoolState    = CLIENT_BOT_POOL_S_ASKED;
     cs->lobbyPoolTries++;
     cs->lobbyPoolSentTick = c->localTick;
+}
+
+/* ---- A server map's bytes for the lobby chooser's preview (BULK_KIND_PREVIEW). */
+
+/* Put the preview request for lobbyMapPreviewReqPath on the wire and stamp
+ * the send. */
+static void udpClientSendMapPreviewReq(TransportUdpClientCtx *c) {
+    ClientSim *cs = c->clientSim;
+    uint8_t buf[PACKET_HEADER_SIZE + 1 + 256];
+    size_t n = strlen(cs->lobbyMapPreviewReqPath);
+
+    packHeader(buf, PACKET_LOBBY_MAP_PREVIEW_REQ, c->outSequence++);
+    buf[PACKET_HEADER_SIZE] = (uint8_t)n;
+    memcpy(buf + PACKET_HEADER_SIZE + 1, cs->lobbyMapPreviewReqPath, n);
+    udpClientSendTo(c, buf, (int)(PACKET_HEADER_SIZE + 1 + n));
+    cs->lobbyMapPreviewTries++;
+    cs->lobbyMapPreviewSentTick = c->localTick;
+}
+
+/* Per-tick: send an unanswered preview request again, and give up on it
+ * after LOBBY_MAP_PREVIEW_TRIES sends. A request whose stream header has
+ * arrived (lobbyMapPreviewTotal set) is left to the bulk channel. */
+static void udpClientMapPreviewTick(TransportUdpClientCtx *c) {
+    ClientSim *cs = c->clientSim;
+    if (cs == NULL || !cs->lobbyMapPreviewInFlight ||
+        cs->lobbyMapPreviewTotal != 0 ||
+        cs->lobbyMapPreviewReqPath[0] == '\0') {
+        return;
+    }
+    if ((uint32_t)(c->localTick - cs->lobbyMapPreviewSentTick) <
+        LOBBY_MAP_PREVIEW_TIMEOUT_TICKS) {
+        return;
+    }
+    if (cs->lobbyMapPreviewTries < LOBBY_MAP_PREVIEW_TRIES) {
+        udpClientSendMapPreviewReq(c);
+        return;
+    }
+    WB_LOG_WARN(WB_LOG_CAT_NET, "no preview of %s after %u requests",
+                cs->lobbyMapPreviewReqPath,
+                (unsigned)cs->lobbyMapPreviewTries);
+    cs->lobbyMapPreviewError    = true;
+    cs->lobbyMapPreviewInFlight = false;
 }
 
 /* ---- A copy of one of the server's scripts (BULK_KIND_SCRIPT_PACKAGE).
@@ -4260,6 +4335,7 @@ static bool udpClientTick(void *ctx) {
         udpClientScnDetailsTick(c);
         udpClientScriptFetchTick(c);
         udpClientBotPoolTick(c);
+        udpClientMapPreviewTick(c);
     }
     /* A spectator in the live lobby reads the same bot announce lines, and
      * the server answers its docs requests on its own bulk stream. */
@@ -5671,31 +5747,24 @@ void transportUdpClientSendLobbyScenarioListRequest(Transport *t) {
 void transportUdpClientSendLobbyMapPreviewRequest(Transport *t,
                                                   const char *relPath) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 1 + 256];
-    int pathLen, len;
+    ClientSim *cs = c->clientSim;
+    size_t pathLen;
 
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (c->joinState != UDP_CLIENT_CONNECTED || cs == NULL) return;
     if (relPath == NULL) relPath = "";
-    pathLen = (int)strlen(relPath);
+    pathLen = strlen(relPath);
     if (pathLen == 0 || pathLen > 255) return;
 
-    packHeader(buf, PACKET_LOBBY_MAP_PREVIEW_REQ, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = (uint8_t)pathLen;
-    memcpy(buf + PACKET_HEADER_SIZE + 1, relPath, pathLen);
-    len = PACKET_HEADER_SIZE + 1 + pathLen;
-    udpClientSendTo(c, buf, len);
-
-    if (c->clientSim) {
-        ClientSim *cs = c->clientSim;
-        memset(cs->lobbyMapPreviewReqPath, 0, sizeof(cs->lobbyMapPreviewReqPath));
-        memcpy(cs->lobbyMapPreviewReqPath, relPath, (size_t)pathLen);
-        cs->lobbyMapPreviewPath[0]   = '\0';
-        cs->lobbyMapPreviewInFlight  = true;
-        cs->lobbyMapPreviewReady     = false;
-        cs->lobbyMapPreviewError     = false;
-        cs->lobbyMapPreviewTotal     = 0;
-        cs->lobbyMapPreviewReceived  = 0;
-    }
+    memset(cs->lobbyMapPreviewReqPath, 0, sizeof(cs->lobbyMapPreviewReqPath));
+    memcpy(cs->lobbyMapPreviewReqPath, relPath, pathLen);
+    cs->lobbyMapPreviewPath[0]   = '\0';
+    cs->lobbyMapPreviewInFlight  = true;
+    cs->lobbyMapPreviewReady     = false;
+    cs->lobbyMapPreviewError     = false;
+    cs->lobbyMapPreviewTotal     = 0;
+    cs->lobbyMapPreviewReceived  = 0;
+    cs->lobbyMapPreviewTries     = 0;
+    udpClientSendMapPreviewReq(c);
 }
 
 void transportUdpClientSendLobbyMapSearchRequest(Transport *t,
@@ -6098,6 +6167,18 @@ void transportUdpClientTestDropNext(Transport *t, uint8_t packet_type,
 int transportUdpClientTestDropNextLeft(Transport *t) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     return c->test_drop_next_count;
+}
+
+void transportUdpClientTestDropNextOut(Transport *t, uint8_t packet_type,
+                                       int count) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    c->test_drop_out_type  = packet_type;
+    c->test_drop_out_count = count;
+}
+
+int transportUdpClientTestDropNextOutLeft(Transport *t) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    return c->test_drop_out_count;
 }
 #endif
 

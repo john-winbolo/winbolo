@@ -155,6 +155,14 @@ void loopbackHarnessDropNextToClient(LoopbackHarness *h, struct ClientSim *cs,
                                      uint8_t packetType, int count);
 int  loopbackHarnessDropNextLeft(LoopbackHarness *h, struct ClientSim *cs);
 
+/* The same for client->server datagrams: drop the next `count` of
+ * packetType that client `cs` sends, as if they were lost on the way to the
+ * server. */
+void loopbackHarnessDropNextFromClient(LoopbackHarness *h, struct ClientSim *cs,
+                                       uint8_t packetType, int count);
+int  loopbackHarnessDropNextFromClientLeft(LoopbackHarness *h,
+                                           struct ClientSim *cs);
+
 /* Pump up to maxIters times, evaluating pred after each pump. Returns the
  * 1-based pump count at which pred first held, or -1 if it never held within
  * maxIters. A NULL pred pumps exactly maxIters times and returns maxIters. */
