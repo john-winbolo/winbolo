@@ -3714,6 +3714,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # What a real client draws when a held seat is taken off the field: the
     # tank has to go with it, though the roster row stays.
     tests/unit/test_loopback_unfield_tank.c
+    # Other tanks' full positions reaching the Smooth draw list.
+    tests/unit/test_loopback_fine_tank.c
     # The scripted game type: the fourth value resolving through the base game
     # a scenario declared, at the loadout and at the start, and that value
     # going when the template does.
@@ -5272,6 +5274,7 @@ set(_unit_test_names
     mapview_sprite_lgm_snap
     mapview_overlay_gunsight
     mapview_overlay_tank_label
+    mapview_overlay_tank_label_smooth
     mapview_overlay_cursor
     mapview_overlay_item_labels
     map_colours_item_kind
@@ -5803,6 +5806,7 @@ set(_unit_test_names
     survival_lobby_round_full
     survival_lobby_round_ds_order
     loopback_unfield_tank
+    loopback_fine_tank_position
     lobby_template_return_reconciles
     lobby_template_return_unfields
     lobby_template_reset_reseats

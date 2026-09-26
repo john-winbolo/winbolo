@@ -1774,6 +1774,7 @@ int run_mapview_sprite_lgm_snap(void);
  * numbers sit on their square and are withheld below the minimum scale. */
 int run_mapview_overlay_gunsight(void);
 int run_mapview_overlay_tank_label(void);
+int run_mapview_overlay_tank_label_smooth(void);
 int run_mapview_overlay_cursor(void);
 int run_mapview_overlay_item_labels(void);
 
@@ -2771,6 +2772,7 @@ int run_survival_lobby_round(void);
 int run_survival_lobby_round_full(void);
 int run_survival_lobby_round_ds_order(void);
 int run_loopback_unfield_tank(void);
+int run_loopback_fine_tank_position(void);
 int run_lobby_template_return_reconciles(void);
 int run_lobby_template_return_unfields(void);
 int run_lobby_template_reset_reseats(void);

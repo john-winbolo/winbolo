@@ -4453,6 +4453,15 @@ void clientSimCycleBuildSelect(ClientSim *cs, int delta) {
    Both routes to that strip ask this one question: the accessor below,
    which the per-frame draw sites call, and playersSetPlayer, which works
    out its own alliance for the status tile on a join or a rename. */
+void clientSimSetFineTankPositions(ClientSim *cs, bool on) {
+  if (cs == NULL) return;
+  cs->fineTankPositions = on;
+}
+
+bool clientSimGetFineTankPositions(const ClientSim *cs) {
+  return cs != NULL && cs->fineTankPositions;
+}
+
 bool clientSimSlotIsUnfielded(const ClientSim *cs, BYTE playerNum) {
   const ClientLobbySlot *slot;
 

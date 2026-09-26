@@ -42,6 +42,7 @@
 #include "../gui/winbolo.h"
 #include "../gui/sdl3/sdl3draw.h"
 #include "../gui/sdl3/sdl3imgui.h"
+#include "../gui/sdl3/gfx_settings.h"
 #include "../gui/sdl3/input_gamepad.h"
 #include "../gui/sdl3/build_cursor.h"
 #include "../gui/sdl3/luabrainshandler.h"
@@ -361,6 +362,8 @@ static void main_loop_iteration(void) {
         SDL_RenderClear(ren);
       }
     } else {
+      /* Smooth draws other tanks from their full world position. */
+      clientSimSetFineTankPositions(cs, gfxGetAnimSmoothness() == GFX_ANIM_SMOOTH);
       clientSimRenderPrepare(cs, tick);
       clientRenderFrame(cs, redraw);
     }

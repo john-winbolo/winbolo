@@ -1926,6 +1926,9 @@ void clientSnapshotRenderInterp(ClientSim *cs, uint32_t nowMs,
                    &lgmFrame);
       playersUpdate(&cs->sim.plyrs, pn, mx, my, px, py, frame, interpOnBoat,
                     lgmMX, lgmMY, lgmPX, lgmPY, lgmFrame);
+      /* The same position before the snap and the pixel cut, for the
+       * Smooth animation mode (clientSimSetFineTankPositions). */
+      playersSetFinePosition(&cs->sim.plyrs, pn, interpX, interpY);
     } else if (interpHasData(&cs->interpCtx, pn) &&
                (!interpIsAlive(&cs->interpCtx, pn) ||
                 interpTankHidden(&cs->interpCtx, pn))) {

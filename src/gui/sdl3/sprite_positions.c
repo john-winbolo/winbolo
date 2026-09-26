@@ -534,6 +534,26 @@ void spritePositionTankLabel(float baseX, float baseY, float scale,
   *outY = sy;
 }
 
+void spritePositionTankLabelAt(float baseX, float baseY, int mode, float scale,
+                               int sheetScale, int mx, int my, int px, int py,
+                               int wx, int wy, float clipLeft,
+                               float *outX, float *outY) {
+  float sx, sy;
+  if (mode != GFX_ANIM_SMOOTH) {
+    spritePositionTankLabel(baseX, baseY, scale, mx, my, px, py, clipLeft,
+                            outX, outY);
+    return;
+  }
+  /* Smooth: the tank sprite's own top-left (mapViewDrawTanks' formula),
+     then one square across, so the name glides with the tank. */
+  sx = baseX + spritePositionOffset(mode, scale, sheetScale, mx, px, wx) +
+       (float)TILE_SIZE_X * scale;
+  sy = baseY + spritePositionOffset(mode, scale, sheetScale, my, py, wy);
+  if (sx < clipLeft) sx = clipLeft;
+  *outX = sx;
+  *outY = sy;
+}
+
 bool spritePositionItemLabelShown(float scale, float minScale) {
   return scale >= minScale;
 }

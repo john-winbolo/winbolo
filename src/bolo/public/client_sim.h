@@ -1696,6 +1696,15 @@ void         clientSimCycleBuildSelect(ClientSim *cs, int delta);
  * when the slot is out of range, and for every seat that is on the field. */
 bool         clientSimSlotIsUnfielded(const ClientSim *cs, BYTE playerNum);
 
+/* Whether the screen tank list gives other tanks their full interpolated
+ * world position (square, pixel and world offset all from it) instead of
+ * the game pixel the players list stores. The front end turns it on for
+ * the Smooth animation mode, so other tanks glide the way the own tank
+ * does. Off by default; the players list, which brains read, is the same
+ * either way. The getter answers false when cs is NULL. */
+void         clientSimSetFineTankPositions(ClientSim *cs, bool on);
+bool         clientSimGetFineTankPositions(const ClientSim *cs);
+
 /* Alliance accessors. playerNum is 1-based (legacy screen-facade
  * convention); the function converts to 0-based internally. */
 tankAlliance clientSimGetTankAlliance(ClientSim *cs, BYTE playerNum);

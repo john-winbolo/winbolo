@@ -86,6 +86,7 @@
 #include "workshop_sync.h"
 #include "../../scenario/scenario_host.h"
 #include "bg_game.h"
+#include "gfx_settings.h"
 #include "cursor.h"
 
 #include "dialog_backend.h"
@@ -829,6 +830,8 @@ int main(int argc, char *argv[]) {
           DWORD tick = SDL_GetTicks();
           clientMutexWaitFor();
           if (finishedLoop == FALSE) {
+            /* Smooth draws other tanks from their full world position. */
+            clientSimSetFineTankPositions(cs, gfxGetAnimSmoothness() == GFX_ANIM_SMOOTH);
             clientSimRenderPrepare(cs, tick);
             clientRenderFrame(cs, redraw);
           }
