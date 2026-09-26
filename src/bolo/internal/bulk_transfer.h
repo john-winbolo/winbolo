@@ -99,8 +99,20 @@ enum {
      * [status 1] then, for BULK_BRAIN_DOCS_FOUND, [rawLen 2 BE] and the
      * compressed bytes; nothing more for BULK_BRAIN_DOCS_NOT_FOUND. So
      * totalSize is 1 to BULK_BRAIN_DOCS_BLOB_MAX. */
-    BULK_KIND_BRAIN_DOCS = 11
+    BULK_KIND_BRAIN_DOCS = 11,
+    /* Server->client, sent in answer to PACKET_LOBBY_BOT_POOL_REQ: the
+     * server's bot-name catalogue, as lobbyBotPoolsSerialize wrote it
+     * (already zlib-compressed). The header's gen is the catalogue id
+     * CTRL_LOBBY_BOT_POOL_INFO carries and its path is empty. The blob is
+     * [status 1] then, for BULK_BOT_POOL_FOUND, the catalogue; nothing more
+     * for BULK_BOT_POOL_NONE. So totalSize is 1 to
+     * 1 + LOBBY_BOT_CATALOG_WIRE_MAX. */
+    BULK_KIND_BOT_POOL = 12
 };
+
+/* The status byte that opens a BULK_KIND_BOT_POOL blob. */
+#define BULK_BOT_POOL_FOUND 0
+#define BULK_BOT_POOL_NONE  1   /* the server holds no themed pools */
 
 /* The status byte that opens a BULK_KIND_BRAIN_DOCS blob. */
 #define BULK_BRAIN_DOCS_FOUND     0

@@ -705,6 +705,52 @@ bool serverSimGetBrainDocs(const ServerSim *sim, int brainIdx,
     return true;
 }
 
+void serverSimRefreshBotPools(ServerSim *sim) {
+    uint8_t *blob;
+    int      len;
+    uint32_t id = 0;
+
+    if (sim == NULL) return;
+    free(sim->botPoolBlob);
+    sim->botPoolBlob    = NULL;
+    sim->botPoolBlobLen = 0;
+    sim->botPoolId      = 0;
+
+    blob = (uint8_t *)malloc(LOBBY_BOT_CATALOG_WIRE_MAX);
+    if (blob == NULL) return;
+    len = lobbyBotPoolsSerializeWithId(blob, (int)LOBBY_BOT_CATALOG_WIRE_MAX,
+                                       &id);
+    if (len <= 0 || id == 0) {
+        free(blob);
+        return;
+    }
+    /* Keep only what the blob uses: usually a few kilobytes of the 68 KiB. */
+    sim->botPoolBlob = (uint8_t *)realloc(blob, (size_t)len);
+    if (sim->botPoolBlob == NULL) {
+        free(blob);
+        return;
+    }
+    sim->botPoolBlobLen = (uint32_t)len;
+    sim->botPoolId      = id;
+}
+
+void serverSimFillBotPoolInfoEvent(const ServerSim *sim, ControlEvent *evt) {
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_LOBBY_BOT_POOL_INFO;
+    if (sim == NULL || sim->botPoolBlob == NULL) return;
+    evt->u.lobbyBotPoolInfo.id  = sim->botPoolId;
+    evt->u.lobbyBotPoolInfo.len = sim->botPoolBlobLen;
+}
+
+bool serverSimGetBotPoolBlob(const ServerSim *sim, const uint8_t **outBlob,
+                             uint32_t *outLen, uint32_t *outId) {
+    if (sim == NULL || sim->botPoolBlob == NULL) return false;
+    if (outBlob) *outBlob = sim->botPoolBlob;
+    if (outLen)  *outLen  = sim->botPoolBlobLen;
+    if (outId)   *outId   = sim->botPoolId;
+    return true;
+}
+
 /* Fill a CTRL_GAME_VOTE_STATE event for the given vote kind. Returns false
  * if there's no snapshot (caller must not deliver). Mirrors the inline
  * publish at publishGameVoteState. */
@@ -1016,39 +1062,16 @@ static void serverSimSyncSubscriber(
             serverSimEmitBrainAnnounces(sim, deliver, ctx);
         }
 
-        /* Bot-pool catalog: the server's themed naming pools (loaded from
-         * -botnames / data/bot_names.json), zlib-compressed and streamed
-         * as CTRL_LOBBY_BOT_POOL_CHUNK fragments so the joiner renders and
-         * picks from the SERVER's pools rather than its own shipped file.
-         * Same lobby-only gate as the brain list. */
-        {
-            unsigned char *blob =
-                (unsigned char *)malloc(LOBBY_BOT_CATALOG_WIRE_MAX);
-            if (blob) {
-                int blen = lobbyBotPoolsSerialize(blob,
-                                                  (int)LOBBY_BOT_CATALOG_WIRE_MAX);
-                if (blen > 0) {
-                    int frag = LOBBY_BOT_POOL_CHUNK_FRAG_MAX;
-                    int nChunks = (blen + frag - 1) / frag;
-                    int off = 0, ci;
-                    if (nChunks <= 255) {
-                        for (ci = 0; ci < nChunks; ci++) {
-                            int fl = blen - off;
-                            if (fl > frag) fl = frag;
-                            memset(&evt, 0, sizeof(evt));
-                            evt.type = CTRL_LOBBY_BOT_POOL_CHUNK;
-                            evt.u.lobbyBotPoolChunk.seq     = (uint8_t)ci;
-                            evt.u.lobbyBotPoolChunk.count   = (uint8_t)nChunks;
-                            evt.u.lobbyBotPoolChunk.fragLen = (uint16_t)fl;
-                            memcpy(evt.u.lobbyBotPoolChunk.frag, blob + off,
-                                   (size_t)fl);
-                            deliver(ctx, &evt);
-                            off += fl;
-                        }
-                    }
-                }
-                free(blob);
-            }
+        /* Which bot-name catalogue this server holds (-botnames or
+         * data/bot_names.json), so the joiner renders and picks from the
+         * SERVER's pools rather than its own shipped file. Only the id and
+         * the length: a joiner whose pools differ fetches the blob on
+         * CHANNEL_BULK once connected. Same lobby-only gate as the brain
+         * list, and only to a real joiner — the ring's spectators add no
+         * bots. */
+        if (fullReplay) {
+            serverSimFillBotPoolInfoEvent(sim, &evt);
+            deliver(ctx, &evt);
         }
     }
 

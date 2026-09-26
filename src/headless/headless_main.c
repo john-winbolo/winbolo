@@ -367,6 +367,7 @@ static const char *logEventsTypeName(int type) {
     case CTRL_LOBBY_SCRIPT_LIST:     return "CTRL_LOBBY_SCRIPT_LIST";
     case CTRL_LOBBY_SCRIPT_SETTING:  return "CTRL_LOBBY_SCRIPT_SETTING";
     case CTRL_LOBBY_BRAIN_ANNOUNCE:  return "CTRL_LOBBY_BRAIN_ANNOUNCE";
+    case CTRL_LOBBY_BOT_POOL_INFO:   return "CTRL_LOBBY_BOT_POOL_INFO";
     default:                         return NULL;
   }
 }
@@ -378,11 +379,14 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
 
   if (f == NULL || evt == NULL) return;
 
-  /* The server streams its bot-name pool catalog to every joiner as
-   * CTRL_LOBBY_BOT_POOL_CHUNK fragments during lobby sync. That is cosmetic
-   * lobby data, not a game/control event these baselines assert, and its
-   * fragment count tracks data/bot_names.json — so drop it from the captured
-   * stream to keep the baselines stable and content-independent. */
+  /* The server names its bot-name pool catalog to every joiner in lobby
+   * sync with CTRL_LOBBY_BOT_POOL_INFO, whose id is a CRC of
+   * data/bot_names.json's pools. That is cosmetic lobby data, not a
+   * game/control event these baselines assert, and the id moves whenever
+   * the file does — so drop it from the captured stream to keep the
+   * baselines stable and content-independent. The retired chunks it
+   * replaced are dropped too, in case a recording replays one. */
+  if (evt->type == CTRL_LOBBY_BOT_POOL_INFO) return;
   if (evt->type == CTRL_LOBBY_BOT_POOL_CHUNK) return;
 
   /* Same story for the per-brain announce lines: they are lobby display
@@ -688,6 +692,7 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
 
     case CTRL_LOBBY_BRAIN_DOCS_CHUNK:
     case CTRL_LOBBY_BRAIN_ANNOUNCE:
+    case CTRL_LOBBY_BOT_POOL_INFO:
       /* Dropped above; never reaches the body writer. */
       break;
 

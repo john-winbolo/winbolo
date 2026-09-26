@@ -915,6 +915,22 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               is dropped, and the client
                                               asks again. */
 
+#define PACKET_LOBBY_BOT_POOL_REQ      231  /* client -> server
+                                              { } (header only)
+                                              the server's bot-name
+                                              catalogue, asked for by a
+                                              client whose own pools have
+                                              another id than the one
+                                              CTRL_LOBBY_BOT_POOL_INFO
+                                              named. The answer streams
+                                              back over CHANNEL_BULK as a
+                                              BULK_KIND_BOT_POOL transfer
+                                              whose gen is the catalogue
+                                              id. A request that finds the
+                                              client's bulk stream busy is
+                                              dropped, and the client asks
+                                              again. */
+
 #ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
 #define GAME_VOTE_KIND_BACK_TO_LOBBY  1
 #define GAME_VOTE_KIND_SURRENDER      2

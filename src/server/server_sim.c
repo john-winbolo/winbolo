@@ -234,6 +234,9 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
      * ran, and it runs inside the sync replay the spectator ring rebuilds on
      * every lobby keyframe. */
     serverSimRefreshBrainDocs(sim);
+    /* The bot-name catalogue this server hands out, taken once from the
+     * pools loaded before the sim was made (-botnames or the shipped file). */
+    serverSimRefreshBotPools(sim);
 
     sim->startDelay = startDelay;
     sim->gameLength = gameLen;
@@ -672,6 +675,8 @@ void serverSimDestroy(ServerSim *sim) {
 
     /* The brains' lobby texts, allocated on the first refresh. */
     serverSimFreeBrainDocs(sim);
+    free(sim->botPoolBlob);
+    sim->botPoolBlob = NULL;
 
     for (count = 0; count < MAX_TANKS; count++) {
         if (sim->sim.tanks[count] != NULL) {

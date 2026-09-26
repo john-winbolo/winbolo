@@ -37,7 +37,7 @@
 #include "scroll.h"
 #include "brain_list.h"
 #include "round_stats.h"   /* RoundStatsSummary — lastRoundStats store */
-#include "lobby_bot_pools.h" /* LOBBY_BOT_CATALOG_WIRE_MAX */
+#include "lobby_bot_pools.h" /* lobbyBotPoolsCatalogId, for the CTRL_LOBBY_BOT_POOL_INFO apply */
 #include "control_event.h"  /* LOBBY_BRAIN_DOCS_WIRE_MAX */
 #include "upload_policy.h"
 #include "view_policy.h"   /* ViewPolicy / VIEW_CATEGORY_COUNT — server view-rule mirror */
@@ -622,16 +622,31 @@ struct ClientSim {
      * ratings and comments; the value itself carries no meaning. */
     uint32_t          ratingPostedSeq;
 
-    /* Reassembly of the server's bot-pool catalog, streamed as
-     * CTRL_LOBBY_BOT_POOL_CHUNK fragments during join sync. Fragments
-     * arrive in order on the reliable control channel; on the final
-     * fragment the assembled blob is installed via
-     * lobbyBotPoolsDeserializeInstall (replacing the process-global pool
-     * table so the lobby dropdown shows the SERVER's pools). */
-    uint8_t  lobbyPoolChunkExpected;   /* total fragment count; 0 = idle */
-    uint8_t  lobbyPoolNextSeq;         /* next in-order fragment expected */
-    uint32_t lobbyPoolBlobLen;         /* bytes assembled so far */
-    uint8_t  lobbyPoolBlob[LOBBY_BOT_CATALOG_WIRE_MAX];
+    /* The server's bot-name catalogue, as far as this client has got with
+     * it. CTRL_LOBBY_BOT_POOL_INFO names it by id and length; a client
+     * whose own pools have that id already is done (HAVE). Otherwise it is
+     * WANTED, and the transport's tick asks for it with
+     * PACKET_LOBBY_BOT_POOL_REQ once connected, again every
+     * CLIENT_BOT_POOL_TIMEOUT_TICKS up to CLIENT_BOT_POOL_TRIES times. The
+     * answer lands from CHANNEL_BULK and is installed with
+     * lobbyBotPoolsDeserializeInstall, replacing the process-global pool
+     * table so the lobby dropdown shows the SERVER's pools. NONE is a
+     * server with no themed pools, and FAILED one that never answered;
+     * both leave this client on its own pools, which only mislabels the
+     * dropdown, since bot names travel as strings. A zeroed ClientSim is
+     * NONE. */
+#define CLIENT_BOT_POOL_S_NONE    0
+#define CLIENT_BOT_POOL_S_WANTED  1
+#define CLIENT_BOT_POOL_S_ASKED   2
+#define CLIENT_BOT_POOL_S_HAVE    3
+#define CLIENT_BOT_POOL_S_FAILED  4
+#define CLIENT_BOT_POOL_TIMEOUT_TICKS  150   /* 1.5 s at the 100/s tick */
+#define CLIENT_BOT_POOL_TRIES          8
+    uint8_t  lobbyPoolState;
+    uint8_t  lobbyPoolTries;       /* requests sent for this id */
+    uint32_t lobbyPoolSentTick;    /* transport localTick of the last request */
+    uint32_t lobbyPoolId;          /* the id the server named */
+    uint32_t lobbyPoolLen;         /* its compressed blob's length */
 
     /* Server-side map directory listing — populated from
      * PACKET_LOBBY_MAP_LIST_RSP. The chooser's listProvider sends a
