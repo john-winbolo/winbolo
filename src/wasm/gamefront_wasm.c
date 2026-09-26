@@ -251,7 +251,6 @@ int gameFrontLineOfSight       = LINE_OF_SIGHT_STOCK;
  * inside humanSim; only high-level lifecycle gating is tracked here. */
 static ServerSim *wasmServerSim = NULL;
 static bool wasmTransportActive = FALSE;
-static BYTE wasmPlayerNum = 0;
 static SubscriberHandle wasmControlSub = SUBSCRIBER_HANDLE_INVALID;
 
 ClientSim *humanSim = NULL;
@@ -629,7 +628,6 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     break;
     }
 
-    wasmPlayerNum = clientSimGetServerPlayerNum(humanSim);
     wasmTransportActive = TRUE;
 
     /* Store server address in ClientSim for brain info */
@@ -659,7 +657,8 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
      * and the first snapshot apply fires the viewport finalisation. The lobby
      * vs running landing (netLobby) is settled by clientFrontAwaitJoin, and the
      * mapDownloadComplete flag stays transport-driven, so nothing to do here. */
-    printf("[WASM] UDP connected as player %d\n", wasmPlayerNum);
+    printf("[WASM] UDP connected as player %d\n",
+           clientSimGetServerPlayerNum(humanSim));
   } else {
     /* ---- Single-player via ServerSim + local transport ---- */
     printf("[WASM] Setting up single-player ServerSim...\n");
@@ -739,7 +738,6 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       return FALSE;
     }
     wasmTransportActive = TRUE;
-    wasmPlayerNum = 0;
     /* Session-type flag for the lobby/UI (hide multiplayer-only controls).
      * The shared tick core's keys-half pump skip keys off
      * clientSimTransportTicksServer, which clientSimConnectLocal (active)

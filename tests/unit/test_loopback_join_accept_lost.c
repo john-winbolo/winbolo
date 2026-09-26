@@ -167,7 +167,8 @@ int run_loopback_join_accept_lost_ready(void) {
     UT_ASSERT_MSG(clientSimGetMyPlayerNum(h.cs2) == joinerSlot,
                   "ClientSim slot does not match the server's slot");
 
-    /* Host readies; the joiner stays not ready, so no countdown starts. */
+    /* The host readies first while the joiner stays not ready, so the
+     * host's ready can be checked on its own. */
     clientSimNetSendReady(h.cs, true);
     UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, ACCEPT_LOST_READY_MAX,
                                            acceptLostSlotReady,
@@ -176,7 +177,9 @@ int run_loopback_join_accept_lost_ready(void) {
     UT_ASSERT_MSG(!h.sim->lobbyPlayers[joinerSlot].ready,
                   "joiner is ready before it asked to be");
 
-    /* The Ready button path: CMD_READY true through the client. */
+    /* The Ready button path: CMD_READY true through the client. This makes
+     * every player ready, so the server starts the countdown. That does not
+     * matter here because the test stops once both sides see the ready. */
     clientSimNetSendReady(h.cs2, true);
     view.cs   = h.cs2;
     view.slot = liveSlot;

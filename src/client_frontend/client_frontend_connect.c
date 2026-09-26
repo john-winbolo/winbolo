@@ -15,7 +15,11 @@ bool clientFrontAwaitJoin(ClientSim *cs, int timeoutTicks) {
     }
     /* Enter the lobby the instant it opens. Lobby-enabled servers deliver
      * CTRL_LOBBY_SETTINGS via sync replay before the map chunks, so inLobby
-     * becomes true while the connect state is still DOWNLOADING_MAP. */
+     * becomes true while the connect state is still DOWNLOADING_MAP. When
+     * the first JOIN_ACCEPT is lost the state is still JOINING here and the
+     * player's slot is not known yet; it arrives with the server's resent
+     * accept. That is why readers of the slot must read it live
+     * (gameFrontGetPlayerNum) and not take a copy when this wait returns. */
     if (clientSimIsInLobby(cs)) {
       break;
     }
