@@ -22,7 +22,9 @@
 #include "client_sim_internal.h"  /* LOBBY_MAP_PREVIEW_TRIES */
 #include "server_sim.h"
 #include "threads.h"
-#include "transport_udp.h"        /* PACKET_LOBBY_MAP_PREVIEW_REQ */
+#include "transport_udp.h"        /* PACKET_LOBBY_MAP_PREVIEW_REQ,
+                                     udpClientHandleLobbyMapPreviewErr */
+#include "transport_udp_internal.h" /* packHeader, PACKET_HEADER_SIZE */
 #include "test_harness.h"
 #include "loopback_harness.h"
 
@@ -271,5 +273,64 @@ int run_loopback_map_preview_request_gives_up(void) {
     UT_ASSERT_MSG(error && !ready && !inFlight,
                   "preview error=%d ready=%d inFlight=%d, want 1 0 0",
                   (int)error, (int)ready, (int)inFlight);
+    return 0;
+}
+
+/* A busy reply (PACKET_LOBBY_MAP_PREVIEW_ERR code 3) that arrives after the
+ * preview has finished, but before the chooser clears it, leaves the finished
+ * preview alone. The server answers a resend that crossed the first stream
+ * with code 3 while that stream is still being sent, so the reply can land
+ * after the last segment. */
+int run_loopback_map_preview_late_busy_kept(void) {
+    LoopbackHarness h;
+    int settledAt;
+    bool readyBefore, ready, error, inFlight;
+    uint32_t lenBefore, len;
+    uint8_t before[PROBE_BYTES];
+    bool bytesSame = false;
+    uint8_t err[PACKET_HEADER_SIZE + 1 + 256 + 1];
+    size_t n = strlen(kPreviewRel);
+    int pos;
+
+    UT_ASSERT_MSG(previewLostSetUp(&h), "harness start (preview) failed");
+
+    clientSimNetSendLobbyMapPreviewRequest(h.cs, kPreviewRel);
+    settledAt = loopbackHarnessPumpUntil(&h, PREVIEW_MAX, pred_preview_settled,
+                                         NULL);
+    readyBefore = clientSimGetLobbyMapPreviewReady(h.cs);
+    lenBefore   = clientSimGetLobbyMapPreviewLen(h.cs);
+    if (readyBefore && lenBefore == PROBE_BYTES) {
+        memcpy(before, clientSimGetLobbyMapPreviewBytes(h.cs), PROBE_BYTES);
+    }
+
+    /* [header 8] [pathLen 1] [path N] [code 1], code 3 = busy. */
+    packHeader(err, PACKET_LOBBY_MAP_PREVIEW_ERR, 0);
+    pos = PACKET_HEADER_SIZE;
+    err[pos++] = (uint8_t)n;
+    memcpy(err + pos, kPreviewRel, n);
+    pos += (int)n;
+    err[pos++] = 3;
+    udpClientHandleLobbyMapPreviewErr(h.cs, err, pos);
+
+    ready    = clientSimGetLobbyMapPreviewReady(h.cs);
+    error    = clientSimGetLobbyMapPreviewError(h.cs);
+    inFlight = clientSimGetLobbyMapPreviewInFlight(h.cs);
+    len      = clientSimGetLobbyMapPreviewLen(h.cs);
+    if (ready && len == PROBE_BYTES && lenBefore == PROBE_BYTES) {
+        const uint8_t *bytes = clientSimGetLobbyMapPreviewBytes(h.cs);
+        bytesSame = bytes != NULL && memcmp(bytes, before, PROBE_BYTES) == 0;
+    }
+    previewLostTearDown(&h);
+
+    UT_ASSERT_MSG(settledAt >= 0 && readyBefore && lenBefore == PROBE_BYTES,
+                  "preview did not complete on a clean link (settled@%d "
+                  "ready=%d len=%u)", settledAt, (int)readyBefore,
+                  (unsigned)lenBefore);
+    UT_ASSERT_MSG(ready && !error && !inFlight,
+                  "after a late busy reply ready=%d error=%d inFlight=%d, "
+                  "want 1 0 0", (int)ready, (int)error, (int)inFlight);
+    UT_ASSERT_MSG(len == PROBE_BYTES, "preview length %u after a late busy "
+                  "reply, want %d", (unsigned)len, PROBE_BYTES);
+    UT_ASSERT_MSG(bytesSame, "preview bytes changed after a late busy reply");
     return 0;
 }

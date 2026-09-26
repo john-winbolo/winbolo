@@ -1152,7 +1152,11 @@ static void clientDrainVoice(TransportUdpClientCtx *c) {
  * [header 8] [pathLen 1] [path N] [code 1]. Flags the request failed
  * so the chooser shows "no preview" instead of spinning. Code 3 is the
  * server's bulk sender being busy: while sends are left the request stays
- * in flight and udpClientMapPreviewTick sends it again at its timeout. */
+ * in flight and udpClientMapPreviewTick sends it again at its timeout.
+ * Code 3 is also ignored once the request is no longer in flight: a resend
+ * that crossed the first stream is answered busy, and that reply can arrive
+ * after the preview has finished; it must not replace the finished preview
+ * with an error. */
 void udpClientHandleLobbyMapPreviewErr(ClientSim *cs,
                                        const uint8_t *buf, int len) {
     if (!cs) return;
@@ -1163,8 +1167,9 @@ void udpClientHandleLobbyMapPreviewErr(ClientSim *cs,
                 sizeof(cs->lobbyMapPreviewReqPath)) != 0) {
         return;
     }
-    if (pos < len && buf[pos] == 3 && cs->lobbyMapPreviewInFlight &&
-        cs->lobbyMapPreviewTries < LOBBY_MAP_PREVIEW_TRIES) {
+    if (pos < len && buf[pos] == 3 &&
+        (!cs->lobbyMapPreviewInFlight ||
+         cs->lobbyMapPreviewTries < LOBBY_MAP_PREVIEW_TRIES)) {
         return;
     }
     cs->lobbyMapPreviewError    = true;

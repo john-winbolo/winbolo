@@ -965,6 +965,7 @@ static const UnitTestEntry s_tests[] = {
     { "loopback_map_preview",                    run_loopback_map_preview                    },
     { "loopback_map_preview_request_lost",       run_loopback_map_preview_request_lost       },
     { "loopback_map_preview_request_gives_up",   run_loopback_map_preview_request_gives_up   },
+    { "loopback_map_preview_late_busy_kept",     run_loopback_map_preview_late_busy_kept     },
     { "loopback_brain_docs_fetch",               run_loopback_brain_docs_fetch               },
     { "loopback_brain_docs_spectator",           run_loopback_brain_docs_spectator           },
     { "lobby_bot_pool_join_sends_only_the_id",   run_lobby_bot_pool_join_sends_only_the_id   },
