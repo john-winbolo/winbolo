@@ -1058,6 +1058,14 @@ int run_lobby_map_change_releases_off_side(void);
 int run_lobby_non_host_off_side_claim_rejected(void);
 int run_lobby_any_team_claim_kept_off_chosen_side(void);
 
+/* The start sides a fresh lobby opens with (test_lobby_default_sides.c):
+ * team 1 north and team 2 south at a lobby server's start-up and again
+ * when the last human leaves, and a side the host chose kept through
+ * joins and rounds while anyone is in the lobby. */
+int run_lobby_default_sides_on_startup(void);
+int run_lobby_default_sides_host_choice_survives(void);
+int run_lobby_default_sides_reapplied_when_empty(void);
+
 /* Team start sides end to end (test_starts_side_integration.c): lobby
  * reservations, the batch's side table and the spawn scatter put a north
  * team's tanks north and a larger south team's tanks south, on distinct

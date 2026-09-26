@@ -3945,6 +3945,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_starts_scatter_separation.c
     tests/unit/test_starts_team_side.c
     tests/unit/test_lobby_team_side_dispatch.c
+    tests/unit/test_lobby_default_sides.c
     tests/unit/test_starts_side_integration.c
     tests/unit/test_input_redundancy.c
     tests/unit/test_edge_send.c

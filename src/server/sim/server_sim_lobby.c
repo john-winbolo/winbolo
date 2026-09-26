@@ -89,6 +89,16 @@ void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cf
     serverSimEnterLobby(sim);
   }
 
+  /* A server that opens a lobby opens it with teams 1 and 2 on north and
+   * south. The dedicated server sets neither flag above and is left in the
+   * lobby serverSimCreate* made, so the test is the sim's own flag, not
+   * cfg->lobbyEnabled. A skipLobby start (-nolobby, -maprotate, and the
+   * local sims of bg_game, braintest and the gym) has no lobby and keeps
+   * placing teams with no side, as it always has. */
+  if (!cfg->skipLobby && sim->lobbyEnabled) {
+    serverSimApplyDefaultTeamSides(sim);
+  }
+
   /* Snapshot the configured lobby settings now that every startup field
    * is in place — serverSimResetLobbyToDefaults restores from this when
    * the last human leaves the lobby. */
@@ -603,6 +613,37 @@ static void lobbyMirrorSideToLoneOtherTeam(ServerSim *sim, BYTE teamId,
     ot->startSide      = want;
     ot->sideAutoFilled = (uint8_t)(want != START_SIDE_ANY ? 1 : 0);
     serverSimPublishLobbyTeamMeta(sim, other);
+}
+
+/* The sides a fresh lobby starts on. The lower team id takes north and the
+ * next one south, the order the map preview's compass assigns an axis in
+ * (lobby_side_axis.h). Every other team is left with no side, which the
+ * start rules already keep off the two chosen sides; a third team is not
+ * given east or west, because many maps have no starts there.
+ *
+ * Both sides are marked filled-in rather than named, so the lobby treats
+ * them as the answer to the other team's side: a host who moves team 1 to
+ * east has team 2 follow to west, and one who takes team 1 back to no side
+ * takes team 2 with it. A side the host names for a team clears the mark,
+ * and from then on it is never written over.
+ *
+ * A map with no north or south starts needs nothing here: the placement
+ * already drops a side with no valid start back to no side.
+ *
+ * Nothing is published. Both callers run with no subscribers (a server
+ * starting up, a lobby the last human has just left), and the next joiner
+ * reads the sides from the join-time replay of teams 1 and 2. */
+void serverSimApplyDefaultTeamSides(ServerSim *sim) {
+    TeamMetadata *t1;
+    TeamMetadata *t2;
+    if (sim == NULL) return;
+    t1 = serverSimGetTeamMetaMut(sim, 1);
+    t2 = serverSimGetTeamMetaMut(sim, 2);
+    if (t1 == NULL || t2 == NULL) return;
+    t1->startSide      = START_SIDE_N;
+    t1->sideAutoFilled = 1;
+    t2->startSide      = START_SIDE_S;
+    t2->sideAutoFilled = 1;
 }
 
 void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
