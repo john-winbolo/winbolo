@@ -171,6 +171,8 @@ int run_live_stats_lgm_loss_splits_victim_and_killer(void);
 int run_live_stats_captures_credit_new_owner(void);
 int run_live_stats_out_of_range_slot_ignored(void);
 int run_live_stats_cleared_on_running_phase(void);
+int run_build_select_reset_on_running_phase(void);
+int run_newswire_blanked_on_running_phase(void);
 int run_shell_death_codec_roundtrip(void);
 int run_shell_death_culls_matching_predicted_shell(void);
 int run_shell_death_rejected_culls_without_impact(void);
@@ -2055,6 +2057,9 @@ int run_lock_channel(void);
 /* Server-map preview over CHANNEL_BULK (test_loopback_preview.c): a real .map
  * file streamed back under loss and reassembled byte-identical on the client. */
 int run_loopback_map_preview(void);
+int run_loopback_map_preview_request_lost(void);
+int run_loopback_map_preview_request_gives_up(void);
+int run_loopback_map_preview_late_busy_kept(void);
 int run_loopback_brain_docs_fetch(void);
 int run_loopback_brain_docs_spectator(void);
 int run_lobby_bot_pool_join_sends_only_the_id(void);
@@ -3905,6 +3910,11 @@ int run_workshop_use_local(void);
  * and this is the only way to read what it decided. */
 int ut_status_tank_last_player(void);
 int ut_status_tank_last_alliance(void);
+
+/* The two newswire lines the frontEndMessages stub in test_stubs.c was last
+ * handed. Both are empty strings until the first call. */
+const char *ut_messages_last_top(void);
+const char *ut_messages_last_bottom(void);
 
 #ifdef __cplusplus
 }

@@ -3533,6 +3533,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_error_smoothing.c
     tests/unit/test_command_rejected_apply.c
     tests/unit/test_live_player_stats.c
+    tests/unit/test_build_select_reset.c
     tests/unit/test_shell_death_event.c
     tests/unit/test_alliance_reset.c
     tests/unit/test_lobby_add_bot_dispatch.c
@@ -4770,6 +4771,8 @@ set(_unit_test_names
     live_stats_captures_credit_new_owner
     live_stats_out_of_range_slot_ignored
     live_stats_cleared_on_running_phase
+    build_select_reset_on_running_phase
+    newswire_blanked_on_running_phase
     shell_death_codec_roundtrip
     shell_death_culls_matching_predicted_shell
     shell_death_rejected_culls_without_impact
@@ -5455,6 +5458,9 @@ set(_unit_test_names
     player_mute_mask_roundtrip
     lock_channel
     loopback_map_preview
+    loopback_map_preview_request_lost
+    loopback_map_preview_request_gives_up
+    loopback_map_preview_late_busy_kept
     loopback_brain_docs_fetch
     loopback_brain_docs_spectator
     lobby_bot_pool_join_sends_only_the_id

@@ -99,6 +99,7 @@ extern "C" {
 /* Include input.h for keyItems — SDL3 already included, safe here */
 extern "C" {
 #include "input.h"
+#include "build_cursor.h"
 #include "input_touch.h"
 #include "input_gamepad.h"
 #include "input_source.h"
@@ -2425,9 +2426,10 @@ static void renderOverviewInWindow(ClientSim *cs) {
                                  hovered && overNews);
 
         /* The build items are the only interactive part of the HUD; a click
-           anywhere else on it is simply swallowed. Same trio the classic
-           hit-test in sdl3DrawHandleEvent runs, so the indent drawn into the
-           HUD slice follows the new selection. */
+           anywhere else on it is simply swallowed. Only the sim is told, as
+           the classic hit-test in sdl3DrawHandleEvent does; sdl3DrawMainScreen
+           reads the selection back from it on the next frame, so the indent
+           drawn into the HUD slice follows the new selection. */
         if (overBuild && cs && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             for (int i = 0; i <= (int)BsMine; i++) {
                 float ix = 0.0f, iy = 0.0f, iw = 0.0f, ih = 0.0f;
@@ -2435,8 +2437,6 @@ static void renderOverviewInWindow(ClientSim *cs) {
                 if (!overviewHudRectHit(mouse, rx, ry, ix, iy, iw, ih)) continue;
                 buildSelect picked = (buildSelect)i;
                 if (picked != clientSimGetCurrentBuildSelect(cs)) {
-                    sdl3DrawSelectIndentsOff(clientSimGetCurrentBuildSelect(cs), 0, 0);
-                    sdl3DrawSelectIndentsOn(picked, 0, 0);
                     clientMutexWaitFor();
                     clientSimSetCurrentBuildSelect(cs, picked);
                     clientMutexRelease();
@@ -7775,6 +7775,9 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         bool nowInLobby = (cs && clientSimIsInLobby(cs));
         if (s_wasInLobby && !nowInLobby) {
             imguiLobbyFrameReset();
+            /* The desktop loop does this as it opens the game view; here the
+               ClientSim outlives the round the same way. */
+            if (cs) sdl3ImguiNewGame(cs);
             /* Lobby → running edge: play the game-start jingle, mirroring
                the desktop blocking loop's netRunning break. A Leave or a
                dropped connection exits the lobby too, but not into
@@ -8737,6 +8740,19 @@ bool sdl3ImguiWantsKeyboard(void) {
 
 void sdl3ImguiClearNavFocus(void) {
     s_clearNavFocus = true;
+}
+
+void sdl3ImguiNewGame(ClientSim *cs) {
+    /* An alliance request still open when the last round ended would come
+       back up in this one, and Accept would go to whatever player holds that
+       slot now. */
+    s_showAllianceOpen = false;
+    s_allianceVisible  = false;
+    /* The build target is the square a click or Build Now sends the man to,
+       and cursor mode may have been left on. */
+    buildCursorReset();
+    sdl3ImguiTabletNewGame();
+    sdl3DrawNewGame(clientSimGetCurrentBuildSelect(cs));
 }
 
 void sdl3ImguiShowAllianceRequest(const char *playerName, unsigned char playerNum) {

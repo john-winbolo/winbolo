@@ -761,6 +761,10 @@ int main(int argc, char *argv[]) {
       /* Clear any leftover ImGui nav focus so keyboard input
          reaches the game immediately (not captured by ImGui). */
       sdl3ImguiClearNavFocus();
+      /* Every game view opens here, the first and each one after a return
+         to the lobby, which keeps the ClientSim and so never reaches
+         frontEndSetActiveClientSim. */
+      sdl3ImguiNewGame(cs);
 
       while (done == FALSE) {
         sdl3ImguiProcessEvents(cs);

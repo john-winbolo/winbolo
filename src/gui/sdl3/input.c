@@ -701,11 +701,6 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
     int delta = inputGamepadGetBuildSelectChange();
     if (delta != 0) {
       clientSimCycleBuildSelect(cs, delta);
-      /* Sync the status-panel's cached gCurrentBuildSelect — the mouse
-         click path does this at sdl3draw.c:589, but the cycle only
-         updates the ClientSim field. Without this the left-side indent
-         doesn't move when D-pad cycles. */
-      sdl3DrawSelectIndentsOn(clientSimGetCurrentBuildSelect(cs), 0, 0);
     }
 
     /* Build-cursor toggle gesture:
@@ -863,8 +858,6 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
     if (wantSwitch) {
       curSelect = clientSimGetCurrentBuildSelect(cs);
       if (curSelect != newSelect) {
-        sdl3DrawSelectIndentsOff(curSelect, 0, 0);
-        sdl3DrawSelectIndentsOn(newSelect, 0, 0);
         clientSimSetCurrentBuildSelect(cs, newSelect);
       }
     }

@@ -1052,6 +1052,12 @@ bool transportUdpClientTestBotPoolArriving(Transport *t);
 void transportUdpClientTestDropNext(Transport *t, uint8_t packet_type,
                                     int count);
 int  transportUdpClientTestDropNextLeft(Transport *t);
+/* The same for outbound packets: drop the next `count` datagrams of
+ * packet_type the client sends, as if they were lost on the way to the
+ * server. */
+void transportUdpClientTestDropNextOut(Transport *t, uint8_t packet_type,
+                                       int count);
+int  transportUdpClientTestDropNextOutLeft(Transport *t);
 /* Hand the client a clock of the caller's own instead of SDL_GetTicks. Two
  * things read it and they have to agree: the impairment layer's delivery
  * times, and the client's own round-trip measurement (the PING stamp and the
