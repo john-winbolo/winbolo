@@ -94,17 +94,17 @@ typedef struct BgGame {
     Uint64       interpClockNs;
     bool         interpClockValid;
     /* The drawn scene, kept so the Frame Rate setting can redraw it every
-     * n-th refresh and copy it on the others (see bgFrameRender). Two
-     * textures drawn in turn, so a failed draw is never the one shown.
-     * Same lifetime rules as tilesTex: a renderer change forgets them, a
-     * resize or bgGameDestroy destroys them. frameBroken = they could not
-     * be made on this renderer at this size; the scene draws direct. */
+     * n-th refresh and copy it on the others (see bgFrameRender). Same
+     * lifetime rules as tilesTex: a renderer change forgets it, a resize
+     * or bgGameDestroy destroys it. frameBroken = it could not be made on
+     * this renderer at this size; the scene draws direct. */
     SDL_Renderer *frameRenderer;
-    SDL_Texture  *frameTex[2];
-    int           frameFront;      /* -1 = no complete scene yet */
+    SDL_Texture  *frameTex;
+    bool          frameValid;      /* frameTex holds a complete scene */
     int           frameW, frameH;
-    int           frameZoom;       /* zoom the front scene was drawn at */
+    int           frameZoom;       /* zoom the scene was drawn at */
     unsigned int  frameTilesGen;   /* tile sheet it was drawn from */
+    GfxTextureFilter frameFilter;  /* texture filter it was drawn with */
     bool          frameBroken;
     int           frameSince;      /* refreshes shown since the last redraw */
     Uint64        frameRedrawNs;   /* wall clock of the last redraw */
