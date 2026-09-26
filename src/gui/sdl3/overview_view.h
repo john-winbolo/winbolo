@@ -33,6 +33,7 @@
 #include <SDL3/SDL.h>
 
 #include "overview_camera.h"
+#include "sprite_atlas.h"   /* SpriteAtlas */
 
 #ifdef __cplusplus
 extern "C" {
@@ -60,6 +61,13 @@ void          overviewViewDestroy(OverviewView *v);
    renderer as the tile sheet for the same reason. NULL just leaves the
    crosshair undrawn.
 
+   sprites/atlas are the host's padded copy of the moving sprites, built off
+   that same sheet and on that same renderer (sprite_atlas.h says why they
+   exist). The camera is continuous, so a tank sits at a fractional position
+   and a filtered sample off the packed sheet picks up the sprite next door.
+   Both NULL draws every sprite from tiles, which is that artefact back rather
+   than a blank map.
+
    Everything the render reads from the sim comes through `snap`, which the
    host fills with clientSimFillOverviewSnapshot while it holds the client
    mutex and hands over here with the mutex released: nothing in this call
@@ -72,6 +80,8 @@ void          overviewViewDestroy(OverviewView *v);
    its own corner label. */
 void          overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
                                           SDL_Texture *tiles, int sheetScale,
+                                          SDL_Texture *sprites,
+                                          const SpriteAtlas *atlas,
                                           SDL_Texture *crosshair,
                                           int w, int h,
                                           const struct OverviewSnapshot *snap,

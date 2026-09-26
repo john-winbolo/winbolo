@@ -943,6 +943,12 @@ static int           s_overviewTilesScale    = 0;
    atlas without changing the renderer or the scale, so those two alone
    would keep the pop-out on the old art. */
 static unsigned int  s_overviewTilesGen      = 0;
+/* The padded copy of the moving sprites, off the same sheet and on the same
+   renderer, so the pop-out's tanks do not sample the packed layout either
+   (sprite_atlas.h). Built and dropped with s_overviewTiles; both NULL leaves
+   the sprites drawing from the sheet. */
+static SDL_Texture  *s_overviewSprites       = nullptr;
+static SpriteAtlas  *s_overviewAtlas         = nullptr;
 /* The gunsight sprite, on the pop-out's renderer for the same reason. */
 static SDL_Texture  *s_overviewCrosshair         = nullptr;
 static SDL_Renderer *s_overviewCrosshairRenderer = nullptr;
@@ -959,6 +965,17 @@ static bool          s_overviewWasRunning    = false;
    flowing, so it owns focus by the time the first one is judged. */
 static bool          s_gameInputHadFocus     = true;
 static bool          s_focusEventThisPoll    = false;
+
+/* Drops the pop-out's sprite atlas and its texture. Every place that drops
+   s_overviewTiles calls this: the atlas is a copy of that sheet. */
+static void overviewDropSprites(void) {
+    if (s_overviewSprites) {
+        SDL_DestroyTexture(s_overviewSprites);
+        s_overviewSprites = nullptr;
+    }
+    tileLoaderFreeSpriteAtlas(s_overviewAtlas);
+    s_overviewAtlas = nullptr;
+}
 
 static SDL_Texture *overviewEnsureTiles(SDL_Renderer *r) {
     if (!r) return nullptr;
@@ -977,6 +994,7 @@ static SDL_Texture *overviewEnsureTiles(SDL_Renderer *r) {
         SDL_DestroyTexture(s_overviewTiles);
         s_overviewTiles = nullptr;
     }
+    overviewDropSprites();
     s_overviewTilesRenderer = r;
     s_overviewTilesScale    = want;
     s_overviewTilesGen      = gen;
@@ -988,11 +1006,32 @@ static SDL_Texture *overviewEnsureTiles(SDL_Renderer *r) {
         return nullptr;
     }
     s_overviewTiles = SDL_CreateTextureFromSurface(r, sheet);
+
+    /* The padded copy, before the sheet goes. Not fatal when it fails: the
+       sprites keep drawing from the sheet. The sampler is re-asserted every
+       frame by overviewViewRenderOffscreen, like the sheet's. */
+    s_overviewAtlas = tileLoaderBuildSpriteAtlas(sheet, want);
+    if (s_overviewAtlas != nullptr) {
+        s_overviewSprites =
+            SDL_CreateTextureFromSurface(r, s_overviewAtlas->surface);
+        tileLoaderSpriteAtlasDropSurface(s_overviewAtlas);
+        if (s_overviewSprites != nullptr) {
+            SDL_SetTextureBlendMode(s_overviewSprites, SDL_BLENDMODE_BLEND);
+        } else {
+            WB_LOG_WARN(WB_LOG_CAT_ASSET,
+                        "[Overview] the sprite atlas would not become a "
+                        "texture (%s); sprites keep drawing from the sheet",
+                        SDL_GetError());
+            tileLoaderFreeSpriteAtlas(s_overviewAtlas);
+            s_overviewAtlas = nullptr;
+        }
+    }
     SDL_DestroySurface(sheet);
     if (!s_overviewTiles) {
         WB_LOG_ERROR(WB_LOG_CAT_ASSET,
                      "[Overview] SDL_CreateTextureFromSurface failed: %s",
                      SDL_GetError());
+        overviewDropSprites();
         return nullptr;
     }
 
@@ -8259,7 +8298,9 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             clientMutexRelease();
             overviewViewRenderOffscreen(s_overviewView,
                                         s_popMapOverview.renderer,
-                                        ovTiles, s_overviewTilesScale, ovCross,
+                                        ovTiles, s_overviewTilesScale,
+                                        s_overviewSprites, s_overviewAtlas,
+                                        ovCross,
                                         s_popMapOverview.width,
                                         s_popMapOverview.height,
                                         s_overviewSnapshot, false);
@@ -9400,6 +9441,7 @@ void sdl3ImguiCleanup(void) {
         SDL_DestroyTexture(s_overviewTiles);
         s_overviewTiles = nullptr;
     }
+    overviewDropSprites();
     s_overviewTilesRenderer = nullptr;
     s_overviewTilesScale    = 0;
     if (s_overviewCrosshair) {
