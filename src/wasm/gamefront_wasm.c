@@ -252,6 +252,9 @@ int gameFrontLineOfSight       = LINE_OF_SIGHT_STOCK;
 static ServerSim *wasmServerSim = NULL;
 static bool wasmTransportActive = FALSE;
 static BYTE wasmPlayerNum = 0;
+/* True while joined to a remote server over UDP: the slot is then read live
+ * from the transport (see gameFrontGetPlayerNum), not from wasmPlayerNum. */
+static bool wasmUdpJoined = FALSE;
 static SubscriberHandle wasmControlSub = SUBSCRIBER_HANDLE_INVALID;
 
 ClientSim *humanSim = NULL;
@@ -631,6 +634,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
 
     wasmPlayerNum = clientSimGetServerPlayerNum(humanSim);
     wasmTransportActive = TRUE;
+    wasmUdpJoined = TRUE;
 
     /* Store server address in ClientSim for brain info */
     {
@@ -739,6 +743,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       return FALSE;
     }
     wasmTransportActive = TRUE;
+    wasmUdpJoined = FALSE;
     wasmPlayerNum = 0;
     /* Session-type flag for the lobby/UI (hide multiplayer-only controls).
      * The shared tick core's keys-half pump skip keys off
@@ -780,6 +785,7 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
     }
     wasmTransportActive = FALSE;
   }
+  wasmUdpJoined = FALSE;
   frontEndSetActiveClientSim(NULL);
   clientSimDestroy(humanSim);  /* also tears down the embedded transport */
   humanSim = NULL;
@@ -1163,6 +1169,10 @@ ServerSim *gameFrontGetServerSim(void) {
 }
 
 BYTE gameFrontGetPlayerNum(void) {
+  /* Same race as the desktop gamefront.c: the join can land on the lobby
+   * replay before JOIN_ACCEPT, so the copy taken at join may still be 0.
+   * The resent accept updates the transport, so read it live. */
+  if (wasmUdpJoined && humanSim) return clientSimGetServerPlayerNum(humanSim);
   return wasmPlayerNum;
 }
 

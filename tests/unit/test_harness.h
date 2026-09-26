@@ -1985,6 +1985,10 @@ int run_loopback_hitch_recovers(void);
  * the peer sees the slot leave its roster, stays connected for 600 pumps, and
  * its own inputs keep being applied on tick numbers it actually sent. */
 int run_loopback_quit_keeps_peer(void);
+/* A joiner whose first JOIN_ACCEPT is lost (test_loopback_join_accept_lost.c):
+ * after the resent accept the live player number names its own slot, and
+ * CMD_READY true from it readies that slot on the server. */
+int run_loopback_join_accept_lost_ready(void);
 /* One running tick carries more than one channel frame
  * (test_send_multi_frame.c): a raw-socket client joined past map download is
  * given more reliable game events than one frame holds, and a single
