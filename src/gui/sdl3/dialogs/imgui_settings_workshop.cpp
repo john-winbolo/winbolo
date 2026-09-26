@@ -351,6 +351,11 @@ static bool wsBuildContent(void *ctx, const char *folder, char *previewOut,
                         "for publishing: %s", c->source, err);
             return false;
         }
+        /* The .lua is in Mods/Sources now. A second press in this window, a
+           retry or an Update, sends the package rather than packing a path
+           that is gone. */
+        SDL_strlcpy(c->source, c->published, sizeof(c->source));
+        c->isLua = false;
         /* The Mods directory changed under the rows either way. */
         wsMarkDirty();
     } else {
