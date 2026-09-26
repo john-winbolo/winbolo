@@ -524,10 +524,12 @@ bool workshopSyncRunWith(const WorkshopSyncSource *src, const char *dir,
             installed++;
             subs[nSubs++] = id;
         } else if (id != 0) {
-            /* Still downloading: its row and file stay as they are until
-               it arrives. */
-            if (src->requestDownload != NULL) src->requestDownload(id);
+            /* Still subscribed, so its row and file stay as they are. One
+               the player disabled is left there and not asked for; one
+               still downloading is asked for until it arrives. */
             subs[nSubs++] = id;
+            if (src->disabled != NULL && src->disabled(id)) continue;
+            if (src->requestDownload != NULL) src->requestDownload(id);
             rep->pending++;
         }
     }
@@ -700,6 +702,7 @@ void workshopSyncRun(void) {
         steam_workshop_subscribed_count,
         steam_workshop_item,
         steam_workshop_request_download,
+        steam_workshop_item_disabled,
     };
     WorkshopSyncReport rep;
     char               dir[WS_FOLDER_MAX];

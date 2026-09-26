@@ -76,6 +76,11 @@ bool steam_workshop_item(int idx, uint64_t *id, char *folder,
   return false;
 }
 
+bool steam_workshop_item_disabled(uint64_t id) {
+  (void)id;
+  return false;
+}
+
 void steam_workshop_request_download(uint64_t id) {
   (void)id;
 }

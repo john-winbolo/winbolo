@@ -30,18 +30,29 @@
 #include <stdint.h>
 
 /* What the sync reads items from. The default reads the Steam wrapper;
-   a test hands in its own. */
+   a test hands in its own.
+
+   item answers as steam_workshop_item does: true with the folder for an
+   installed item it may use, false with the id for a subscribed item it
+   may not, and false with id 0 for no item. disabled then says which of
+   those false answers is an item the player disabled locally: it is still
+   subscribed, so its file and index row are kept, but it is not asked for
+   and not counted pending. Every other false answer with an id is an item
+   still downloading. disabled may be NULL, which reads as no item
+   disabled. */
 typedef struct {
     bool (*available)(void);
     int  (*count)(void);
     bool (*item)(int idx, uint64_t *id, char *folder, size_t folderSize);
     void (*requestDownload)(uint64_t id);
+    bool (*disabled)(uint64_t id);
 } WorkshopSyncSource;
 
 typedef struct {
     int copied;     /* files copied in (new or changed) */
     int removed;    /* files removed with their index rows */
-    int pending;    /* subscribed, not installed; a download was asked for */
+    int pending;    /* subscribed, not installed; a download was asked for.
+                       An item disabled locally is not counted. */
     int skipped;    /* installed but not content, or a name clash */
 } WorkshopSyncReport;
 

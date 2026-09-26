@@ -209,14 +209,17 @@ static void wsBuildSubscribed(void) {
     }
 
     /* The items Steam has not finished downloading are not in the index yet,
-       so they come from Steam, named by their id until they arrive. */
+       so they come from Steam, named by their id until they arrive. An item
+       the player disabled in Steam is not downloading and is not listed
+       here. */
     int count = steam_workshop_subscribed_count();
     for (int i = 0; i < count && (int)s_subRows.size() < WS_ROWS_MAX; i++) {
         char     folder[WS_PATH_MAX];
         uint64_t id = 0;
         bool     indexed = false;
 
-        if (steam_workshop_item(i, &id, folder, sizeof(folder)) || id == 0) {
+        if (steam_workshop_item(i, &id, folder, sizeof(folder)) || id == 0 ||
+            steam_workshop_item_disabled(id)) {
             continue;
         }
         for (int j = 0; j < nIndex; j++) {

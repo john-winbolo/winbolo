@@ -3479,6 +3479,7 @@ int run_workshop_sync_unavailable_touches_nothing(void);
 int run_workshop_sync_name_clash(void);
 int run_workshop_sync_renamed_content(void);
 int run_workshop_sync_bumps_script_dirs_gen(void);
+int run_workshop_sync_disabled_item_left_alone(void);
 int run_workshop_map_package_info(void);
 int run_workshop_pack_loose_script(void);
 int run_workshop_sync_index_rows(void);

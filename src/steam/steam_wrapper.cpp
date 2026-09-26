@@ -753,6 +753,12 @@ extern "C" bool steam_workshop_item(int idx, uint64_t *id, char *folder,
   return true;
 }
 
+extern "C" bool steam_workshop_item_disabled(uint64_t id) {
+  if (!steam_workshop_available() || id == 0) return false;
+  return (SteamUGC()->GetItemState((PublishedFileId_t)id) &
+          k_EItemStateDisabledLocally) != 0;
+}
+
 extern "C" void steam_workshop_request_download(uint64_t id) {
   if (!steam_workshop_available() || id == 0) return;
   SteamUGC()->DownloadItem((PublishedFileId_t)id, true);

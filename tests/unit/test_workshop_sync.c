@@ -28,6 +28,10 @@
  *   workshop_sync_bumps_script_dirs_gen
  *                                     a pass that copies tells the listings,
  *                                     and one that copies nothing does not
+ *   workshop_sync_disabled_item_left_alone
+ *                                     an item the player disabled in Steam
+ *                                     is not asked for or counted pending,
+ *                                     and keeps the file and row it had
  */
 
 #include <stdbool.h>
@@ -50,6 +54,7 @@
 typedef struct {
     uint64_t id;
     bool     installed;
+    bool     disabled;   /* disabled locally: item answers false for it */
     char     folder[512];
 } WssItem;
 
@@ -64,13 +69,14 @@ static bool wssAvailableFn(void) { return wssAvailable; }
 static int wssCountFn(void) { return wssCount; }
 
 /* The wrapper's contract: both outs cleared, the id written whether or not
-   the item is installed, and true only when it is. */
+   the item is installed, and true only when it is installed and not
+   disabled. */
 static bool wssItemFn(int idx, uint64_t *id, char *folder, size_t folderSize) {
     if (id != NULL) *id = 0;
     if (folder != NULL && folderSize > 0) folder[0] = '\0';
     if (idx < 0 || idx >= wssCount || id == NULL) return false;
     *id = wssItems[idx].id;
-    if (!wssItems[idx].installed) return false;
+    if (!wssItems[idx].installed || wssItems[idx].disabled) return false;
     SDL_strlcpy(folder, wssItems[idx].folder, folderSize);
     return true;
 }
@@ -81,8 +87,17 @@ static void wssRequestFn(uint64_t id) {
     }
 }
 
+static bool wssDisabledFn(uint64_t id) {
+    int i;
+
+    for (i = 0; i < wssCount; i++) {
+        if (wssItems[i].id == id) return wssItems[i].disabled;
+    }
+    return false;
+}
+
 static const WorkshopSyncSource kWssSource = {
-    wssAvailableFn, wssCountFn, wssItemFn, wssRequestFn,
+    wssAvailableFn, wssCountFn, wssItemFn, wssRequestFn, wssDisabledFn,
 };
 
 static void wssReset(void) {
@@ -469,5 +484,46 @@ int run_workshop_sync_bumps_script_dirs_gen(void) {
     UT_ASSERT(rep.copied == 0 && rep.removed == 0);
     UT_ASSERT_MSG(serverSimScriptDirsGen() == gen,
                   "a pass that changed nothing moved the listings' count");
+    return 0;
+}
+
+int run_workshop_sync_disabled_item_left_alone(void) {
+    WorkshopSyncReport rep;
+    char               ws[512];
+    bool               found;
+    int                rows;
+
+    wssReset();
+    UT_ASSERT(utScratchPath(ws, sizeof(ws), "Workshop"));
+    UT_ASSERT(wssAddItem(100, true, "items/100"));
+    UT_ASSERT(wssWrite(wssItems[0].folder, "one.lua", kWssLua));
+    UT_ASSERT(workshopSyncRunWith(&kWssSource, ws, &rep));
+    UT_ASSERT(rep.copied == 1);
+
+    /* The player disables 100 in Steam, and 200, disabled before it ever
+       synced, is subscribed too. Both stay installed on disk. */
+    wssItems[0].disabled = true;
+    UT_ASSERT(wssAddItem(200, true, "items/200"));
+    UT_ASSERT(wssWrite(wssItems[1].folder, "two.lua", kWssLua));
+    wssItems[1].disabled = true;
+    wssRequestedCount    = 0;
+
+    UT_ASSERT(workshopSyncRunWith(&kWssSource, ws, &rep));
+    UT_ASSERT_MSG(rep.pending == 0 && rep.copied == 0 && rep.removed == 0,
+                  "%d pending %d copied %d removed", rep.pending, rep.copied,
+                  rep.removed);
+    UT_ASSERT_MSG(wssRequestedCount == 0,
+                  "a download was asked for %d time(s), first id %llu",
+                  wssRequestedCount,
+                  (unsigned long long)(wssRequestedCount > 0 ? wssRequested[0]
+                                                             : 0));
+    UT_ASSERT_MSG(wssHolds(ws, "one.lua", kWssLua),
+                  "the disabled item's synced file was removed or changed");
+    UT_ASSERT_MSG(!wssExists(ws, "two.lua"),
+                  "a disabled item that never synced was copied");
+
+    rows = wssIndexRows(ws, "100", "one.lua", &found);
+    UT_ASSERT_MSG(rows == 1 && found, "the index holds %d rows (100 %s)",
+                  rows, found ? "kept" : "missing");
     return 0;
 }
