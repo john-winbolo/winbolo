@@ -1923,8 +1923,10 @@ void serverSimEmitBrainAnnounces(const ServerSim *sim,
                                  void *ctx);
 
 /* Take the bot-name catalogue this server hands out from the pools loaded
- * now (lobby_bot_pools.h), replacing the one held. serverSimCreate calls it;
- * a test that installs other pools after the sim exists calls it again. */
+ * now (lobby_bot_pools.h), replacing the one held. serverSimCreate calls it,
+ * but the pools loaded then are not always the final ones: WinBoloDS makes
+ * the sim first, loads -botnames or the shipped file after, and calls this
+ * again. A test that installs other pools after the sim exists does the same. */
 void serverSimRefreshBotPools(ServerSim *sim);
 
 /* Fill the CTRL_LOBBY_BOT_POOL_INFO that names the catalogue held. */

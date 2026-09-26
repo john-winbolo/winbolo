@@ -2042,6 +2042,8 @@ int run_loopback_brain_docs_spectator(void);
 int run_lobby_bot_pool_join_sends_only_the_id(void);
 int run_loopback_bot_pool_fetch(void);
 int run_loopback_bot_pool_same_not_fetched(void);
+int run_bot_pool_refresh_retakes_catalogue(void);
+int run_loopback_bot_pool_survives_bulk_rebase(void);
 int run_loopback_brain_docs_survives_bulk_rebase(void);
 /* Client->server map upload over CHANNEL_BULK (test_loopback_upload.c): a map
  * uploaded under loss completes and the server decodes the reassembled bytes. */

@@ -160,8 +160,9 @@ bool lobbyBotPoolsLoadDefault(LobbyBotPoolLoadStats *stats);
  * shipped file), the server serialises its active themed pools into a
  * compact, zlib-compressed blob. A joiner is told the blob's id and
  * length in the lobby join sync (CTRL_LOBBY_BOT_POOL_INFO), and asks for
- * the blob on CHANNEL_BULK only when its own pools have another id.  The generated "Numbered Bots" pool is NOT
- * serialised — both ends append it locally, so indices line up.
+ * the blob on CHANNEL_BULK only when its own pools have another id.
+ * The generated "Numbered Bots" pool is NOT serialised — both ends
+ * append it locally, so indices line up.
  *
  * Blob layout: [u32 rawLen BE][zlib-deflated payload], where the
  * payload is:

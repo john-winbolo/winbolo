@@ -439,12 +439,6 @@ typedef struct {
     char     scriptFetchFile[BULK_PATH_MAX + 1];  /* the name asked for    */
     uint32_t scriptFetchReqSeq;       /* reqSeq of the outstanding request    */
     uint32_t scriptFetchSeqCounter;   /* monotonic source for fresh reqSeqs   */
-
-    /* The server's bot-name catalogue (BULK_KIND_BOT_POOL), pulled with
-     * PACKET_LOBBY_BOT_POOL_REQ when the ClientSim's lobbyPoolState is
-     * WANTED. onBegin mallocs botPoolBuf sized to the stream header, status
-     * byte included; onComplete installs the catalogue and frees it. */
-    uint8_t *botPoolBuf;
     uint32_t scriptFetchSentTick;     /* localTick the request last went out  */
     uint32_t scriptFetchSends;        /* requests sent since the last answer  */
     uint32_t scriptFetchBusyRetries;  /* re-requests after a BUSY answer      */
@@ -452,6 +446,12 @@ typedef struct {
                                        * BUSY (0 = none parked)              */
     uint32_t scriptFetchProgressTick; /* localTick body bytes last advanced   */
     uint32_t scriptFetchWatchdogBytes;/* bodyReceived at the last stall check */
+
+    /* The server's bot-name catalogue (BULK_KIND_BOT_POOL), pulled with
+     * PACKET_LOBBY_BOT_POOL_REQ when the ClientSim's lobbyPoolState is
+     * WANTED. onBegin mallocs botPoolBuf sized to the stream header, status
+     * byte included; onComplete installs the catalogue and frees it. */
+    uint8_t *botPoolBuf;
 
 #if WB_ENABLE_NETIMPAIR
     uint8_t test_drop_upload_packet;
@@ -1278,6 +1278,7 @@ static const char *mpDiagCtrlName(int type) {
 static void udpClientFreeResyncBuf(TransportUdpClientCtx *c);     /* defined below */
 static void udpClientFreeRoundLogBuf(TransportUdpClientCtx *c);   /* defined below */
 static void udpClientFreeScriptFetchBuf(TransportUdpClientCtx *c); /* defined below */
+static void udpClientFreeBotPoolBuf(TransportUdpClientCtx *c);     /* defined below */
 static void clientApplyChannelReset(TransportUdpClientCtx *c,
                                     const ControlEvent *evt) {
     static const struct { uint8_t ch; const char *name; } kChans[3] = {
@@ -1368,6 +1369,18 @@ static void clientApplyChannelReset(TransportUdpClientCtx *c,
                         cs->lobbyScnDetails[slot].tries = 0;
                     }
                     cs->lobbyScnDetailsRxSlot = 0;
+                }
+            }
+            /* A bot-name catalogue still being filled is abandoned with it
+             * and asked for again: the request goes back to WANTED with its
+             * tries cleared, so the tick sends it afresh rather than waiting
+             * on the cut-off body. */
+            if (c->botPoolBuf != NULL && c->bulkRecv.dst == c->botPoolBuf) {
+                udpClientFreeBotPoolBuf(c);
+                if (c->clientSim != NULL &&
+                    c->clientSim->lobbyPoolState == CLIENT_BOT_POOL_S_ASKED) {
+                    c->clientSim->lobbyPoolState = CLIENT_BOT_POOL_S_WANTED;
+                    c->clientSim->lobbyPoolTries = 0;
                 }
             }
             bulkReceiverInit(&c->bulkRecv);
@@ -1895,7 +1908,9 @@ static int udpClientBrainDocsPathIdx(const BulkStreamHeader *h) {
  * is a bare datagram, so one with no answer after
  * CLIENT_BOT_POOL_TIMEOUT_TICKS is sent again, up to CLIENT_BOT_POOL_TRIES
  * times, and then the client keeps its own pools. An answer that has started
- * arriving is never timed out. */
+ * arriving is never timed out. A bulk re-base that cuts off an answer part
+ * way in returns the request to WANTED with its tries cleared
+ * (clientApplyChannelReset), so it is asked for again. */
 
 /* Drop the catalogue buffer: clear the receiver's dst first so the rest of a
  * body still arriving is consumed and discarded. */
@@ -6055,6 +6070,13 @@ void transportUdpClientTestUploadTimeout(Transport *t) {
 void transportUdpClientTestDropUploadReply(Transport *t, uint8_t packet_type) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     c->test_drop_upload_packet = packet_type;
+}
+
+/* True while a bot-name catalogue answer is part way in: its buffer exists
+ * and the bulk receiver is filling it. */
+bool transportUdpClientTestBotPoolArriving(Transport *t) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    return c->botPoolBuf != NULL && c->bulkRecv.dst == c->botPoolBuf;
 }
 #endif
 

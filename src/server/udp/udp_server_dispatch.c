@@ -1426,6 +1426,7 @@ static void handleLobbyBotPoolReq(ServerSim *sim, uint8_t *buf, int len,
     int              clientIdx = serverFindClient(fromAddr);
     const uint8_t   *cat = NULL;
     uint32_t         catLen = 0, id = 0;
+    uint8_t          none = BULK_BOT_POOL_NONE;
     uint8_t         *blob;
     uint32_t         blobLen;
     BulkStreamHeader sh;
@@ -1435,15 +1436,17 @@ static void handleLobbyBotPoolReq(ServerSim *sim, uint8_t *buf, int len,
         len < PACKET_HEADER_SIZE) return;
     if (bulkSenderBusy(&udpServer.bulkSend[clientIdx])) return;
 
-    blob = (uint8_t *)malloc(1u + LOBBY_BOT_CATALOG_WIRE_MAX);
-    if (blob == NULL) return;
+    /* Size the answer to the catalogue held, usually a few kilobytes, rather
+     * than to the cap. The none answer is one byte and needs no allocation. */
     if (serverSimGetBotPoolBlob(sim, &cat, &catLen, &id) &&
         catLen <= LOBBY_BOT_CATALOG_WIRE_MAX) {
+        blob = (uint8_t *)malloc(1u + catLen);
+        if (blob == NULL) return;
         blob[0] = BULK_BOT_POOL_FOUND;
         memcpy(blob + 1, cat, catLen);
         blobLen = 1u + catLen;
     } else {
-        blob[0] = BULK_BOT_POOL_NONE;
+        blob    = &none;
         blobLen = 1;
         id      = 0;
     }
@@ -1454,7 +1457,9 @@ static void handleLobbyBotPoolReq(ServerSim *sim, uint8_t *buf, int len,
     sh.totalSize = blobLen;
     sh.pathLen   = 0;
     (void)bulkSenderBegin(&udpServer.bulkSend[clientIdx], &sh, blob, blobLen);
-    free(blob);   /* bulkSenderBegin copied it into its own buffer */
+    if (blob != &none) {
+        free(blob);   /* bulkSenderBegin copied it into its own buffer */
+    }
 }
 
 /* Answer a PACKET_LOBBY_SCRIPT_FETCH_REQ on this client's CHANNEL_BULK as a

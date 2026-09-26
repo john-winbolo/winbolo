@@ -234,8 +234,9 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
      * ran, and it runs inside the sync replay the spectator ring rebuilds on
      * every lobby keyframe. */
     serverSimRefreshBrainDocs(sim);
-    /* The bot-name catalogue this server hands out, taken once from the
-     * pools loaded before the sim was made (-botnames or the shipped file). */
+    /* The bot-name catalogue this server hands out, taken from the pools
+     * loaded now. WinBoloDS loads -botnames or the shipped file after the
+     * sim is made and calls serverSimRefreshBotPools again once it has. */
     serverSimRefreshBotPools(sim);
 
     sim->startDelay = startDelay;

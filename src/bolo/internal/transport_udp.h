@@ -1043,6 +1043,8 @@ void transportUdpClientTestResyncState(Transport *t, bool *resyncActive,
 #if WB_ENABLE_NETIMPAIR
 void transportUdpClientTestUploadTimeout(Transport *t);
 void transportUdpClientTestDropUploadReply(Transport *t, uint8_t packet_type);
+/* True while a bot-name catalogue answer is part way in on CHANNEL_BULK. */
+bool transportUdpClientTestBotPoolArriving(Transport *t);
 /* Hand the client a clock of the caller's own instead of SDL_GetTicks. Two
  * things read it and they have to agree: the impairment layer's delivery
  * times, and the client's own round-trip measurement (the PING stamp and the

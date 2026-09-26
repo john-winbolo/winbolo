@@ -5441,6 +5441,8 @@ set(_unit_test_names
     lobby_bot_pool_join_sends_only_the_id
     loopback_bot_pool_fetch
     loopback_bot_pool_same_not_fetched
+    bot_pool_refresh_retakes_catalogue
+    loopback_bot_pool_survives_bulk_rebase
     loopback_brain_docs_survives_bulk_rebase
     loopback_map_upload
     upload_begin_golden
