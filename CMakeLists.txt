@@ -6289,6 +6289,7 @@ set(_unit_test_names
     workshop_sync_renamed_content
     workshop_sync_bumps_script_dirs_gen
     workshop_sync_disabled_item_left_alone
+    workshop_sync_recovers_bad_index
     workshop_map_package_info
     workshop_pack_loose_script
     workshop_sync_index_rows

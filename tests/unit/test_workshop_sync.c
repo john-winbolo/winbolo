@@ -32,6 +32,10 @@
  *                                     an item the player disabled in Steam
  *                                     is not asked for or counted pending,
  *                                     and keeps the file and row it had
+ *   workshop_sync_recovers_bad_index  an index that does not parse is set
+ *                                     aside, the files the sync copied are
+ *                                     indexed again by their bytes, and a
+ *                                     file that differs is still left alone
  */
 
 #include <stdbool.h>
@@ -525,5 +529,52 @@ int run_workshop_sync_disabled_item_left_alone(void) {
     rows = wssIndexRows(ws, "100", "one.lua", &found);
     UT_ASSERT_MSG(rows == 1 && found, "the index holds %d rows (100 %s)",
                   rows, found ? "kept" : "missing");
+    return 0;
+}
+
+int run_workshop_sync_recovers_bad_index(void) {
+    WorkshopSyncReport rep;
+    char               ws[512];
+    bool               found;
+    int                rows;
+
+    wssReset();
+    UT_ASSERT(utScratchPath(ws, sizeof(ws), "Workshop"));
+    UT_ASSERT(wssAddItem(100, true, "items/100"));
+    UT_ASSERT(wssWrite(wssItems[0].folder, "one.lua", kWssLua));
+    UT_ASSERT(wssAddItem(200, true, "items/200"));
+    UT_ASSERT(wssWrite(wssItems[1].folder, "two.map", "BMAPBOLO two"));
+    UT_ASSERT(workshopSyncRunWith(&kWssSource, ws, &rep));
+    UT_ASSERT(rep.copied == 2);
+
+    /* The index is lost, and a third item names a file the player wrote by
+       hand, with other bytes than the item's. */
+    UT_ASSERT(wssWrite(ws, WORKSHOP_SYNC_INDEX, "this is not JSON {"));
+    UT_ASSERT(wssAddItem(300, true, "items/300"));
+    UT_ASSERT(wssWrite(wssItems[2].folder, "three.lua", "-- from 300\n"));
+    UT_ASSERT(wssWrite(ws, "three.lua", "-- the player's own\n"));
+
+    UT_ASSERT(workshopSyncRunWith(&kWssSource, ws, &rep));
+    UT_ASSERT_MSG(rep.skipped == 1 && rep.removed == 0,
+                  "%d skipped %d removed", rep.skipped, rep.removed);
+    UT_ASSERT_MSG(wssExists(ws, WORKSHOP_SYNC_INDEX ".bad"),
+                  "the index that did not parse was not set aside");
+
+    rows = wssIndexRows(ws, "100", "one.lua", &found);
+    UT_ASSERT_MSG(rows == 2, "the index holds %d rows, wanted 2", rows);
+    UT_ASSERT_MSG(found, "no row for 100 / one.lua");
+    (void)wssIndexRows(ws, "200", "two.map", &found);
+    UT_ASSERT_MSG(found, "no row for 200 / two.map");
+    UT_ASSERT(wssHolds(ws, "one.lua", kWssLua));
+    UT_ASSERT(wssHolds(ws, "two.map", "BMAPBOLO two"));
+    UT_ASSERT_MSG(wssHolds(ws, "three.lua", "-- the player's own\n"),
+                  "a file the sync did not write was written over");
+
+    /* Indexed again, the files follow their items: an update is copied. */
+    UT_ASSERT(wssWrite(wssItems[0].folder, "one.lua", "-- one, updated\n"));
+    UT_ASSERT(workshopSyncRunWith(&kWssSource, ws, &rep));
+    UT_ASSERT_MSG(rep.copied == 1 && rep.skipped == 1,
+                  "%d copied %d skipped", rep.copied, rep.skipped);
+    UT_ASSERT(wssHolds(ws, "one.lua", "-- one, updated\n"));
     return 0;
 }

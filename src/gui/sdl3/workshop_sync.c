@@ -226,9 +226,16 @@ static bool wsPath(char *out, size_t outLen, const char *dir,
 /* dir/workshop.json into ix. A missing index is an empty one and says
    nothing; one that cannot be read or parsed is empty too, with one line
    in the log. A row that is not whole, or names a file this directory may
-   not hold, is left out. */
-static void wsIndexLoad(const char *dir, WsIndex *ix) {
+   not hold, is left out.
+
+   With setAside, an index that was read but does not parse is renamed to
+   workshop.json.bad, so the pass that starts from the empty index writes a
+   new one in its place and the old text is kept for a person to read. The
+   pass then claims the files it had copied by their bytes (see
+   wsStrayIsCopy). */
+static void wsIndexLoad(const char *dir, WsIndex *ix, bool setAside) {
     char         path[WS_PATH_MAX];
+    char         bad[WS_PATH_MAX];
     SDL_PathInfo info;
     void        *data;
     size_t       len = 0;
@@ -250,9 +257,17 @@ static void wsIndexLoad(const char *dir, WsIndex *ix) {
     root = cJSON_Parse((const char *)data);
     SDL_free(data);
     if (!cJSON_IsArray(root)) {
+        cJSON_Delete(root);
+        if (setAside &&
+            wsPath(bad, sizeof(bad), dir, "", WORKSHOP_SYNC_INDEX ".bad") &&
+            SDL_RenamePath(path, bad)) {
+            WB_LOG_WARN(WB_LOG_CAT_CLIENT, "workshop: %s is not a JSON array; "
+                        "moved to %s, starting from an empty index", path,
+                        bad);
+            return;
+        }
         WB_LOG_WARN(WB_LOG_CAT_CLIENT, "workshop: %s is not a JSON array; "
                     "starting from an empty index", path);
-        cJSON_Delete(root);
         return;
     }
     cJSON_ArrayForEach(it, root) {
@@ -392,6 +407,37 @@ static bool wsRemove(const char *dir, const char *name) {
     return SDL_RemovePath(path);
 }
 
+/* Whether dir/name, a file no index row names, holds the same bytes as
+   folder/name, the installed item's source. Such a file is a copy the sync
+   made under an index that has since been lost, and the pass takes it back
+   rather than leave it. A file that differs is somebody else's. */
+static bool wsStrayIsCopy(const char *dir, const char *name,
+                          const char *folder) {
+    char         have[WS_PATH_MAX];
+    char         from[WS_PATH_MAX];
+    SDL_PathInfo hi;
+    SDL_PathInfo fi;
+    void        *hd;
+    void        *fd;
+    size_t       hl = 0;
+    size_t       fl = 0;
+    bool         same;
+
+    if (!wsPath(have, sizeof(have), dir, "", name) ||
+        !wsPath(from, sizeof(from), folder, "", name) ||
+        !SDL_GetPathInfo(have, &hi) || !SDL_GetPathInfo(from, &fi) ||
+        hi.type != SDL_PATHTYPE_FILE || fi.type != SDL_PATHTYPE_FILE ||
+        hi.size != fi.size || (uint64_t)fi.size > (uint64_t)wsCap(name)) {
+        return false;
+    }
+    hd   = SDL_LoadFile(have, &hl);
+    fd   = SDL_LoadFile(from, &fl);
+    same = hd != NULL && fd != NULL && hl == fl && memcmp(hd, fd, hl) == 0;
+    SDL_free(hd);
+    SDL_free(fd);
+    return same;
+}
+
 /* ── A pass ───────────────────────────────────────────────────────── */
 
 typedef struct {
@@ -489,7 +535,7 @@ bool workshopSyncRunWith(const WorkshopSyncSource *src, const char *dir,
         return false;
     }
 
-    wsIndexLoad(dir, &ix);
+    wsIndexLoad(dir, &ix, true);
     nStrays = wsStrays(dir, &ix, &strays);
 
     total = src->count();
@@ -572,11 +618,16 @@ bool workshopSyncRunWith(const WorkshopSyncSource *src, const char *dir,
             continue;
         }
         if (wsNameIn(strays, nStrays, name)) {
+            if (!wsStrayIsCopy(dir, name, item->folder)) {
+                WB_LOG_INFO(WB_LOG_CAT_CLIENT, "workshop: item %" PRIu64
+                            " skipped: %s is already in the directory and "
+                            "was not put there by the sync", item->id, name);
+                rep->skipped++;
+                continue;
+            }
             WB_LOG_INFO(WB_LOG_CAT_CLIENT, "workshop: item %" PRIu64
-                        " skipped: %s is already in the directory and was "
-                        "not put there by the sync", item->id, name);
-            rep->skipped++;
-            continue;
+                        " claims %s, which no index row named and which "
+                        "holds the item's bytes", item->id, name);
         }
         SDL_strlcpy(claimed[nClaimed++], name, sizeof(claimed[0]));
 
@@ -750,7 +801,7 @@ int workshopSyncIndexRows(WorkshopSyncRow *out, int max) {
     if (!scenarioHostWorkshopDir(dir, sizeof(dir))) return 0;
 
     memset(&ix, 0, sizeof(ix));
-    wsIndexLoad(dir, &ix);
+    wsIndexLoad(dir, &ix, false);
     if (ix.count > 1) {
         qsort(ix.rows, (size_t)ix.count, sizeof(ix.rows[0]), wsRowIdCmp);
     }
