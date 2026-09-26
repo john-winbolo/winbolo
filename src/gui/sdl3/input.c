@@ -858,8 +858,6 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
     if (wantSwitch) {
       curSelect = clientSimGetCurrentBuildSelect(cs);
       if (curSelect != newSelect) {
-        sdl3DrawSelectIndentsOff(curSelect, 0, 0);
-        sdl3DrawSelectIndentsOn(newSelect, 0, 0);
         clientSimSetCurrentBuildSelect(cs, newSelect);
       }
     }

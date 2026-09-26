@@ -2426,9 +2426,10 @@ static void renderOverviewInWindow(ClientSim *cs) {
                                  hovered && overNews);
 
         /* The build items are the only interactive part of the HUD; a click
-           anywhere else on it is simply swallowed. Same trio the classic
-           hit-test in sdl3DrawHandleEvent runs, so the indent drawn into the
-           HUD slice follows the new selection. */
+           anywhere else on it is simply swallowed. Only the sim is told, as
+           the classic hit-test in sdl3DrawHandleEvent does; sdl3DrawMainScreen
+           reads the selection back from it on the next frame, so the indent
+           drawn into the HUD slice follows the new selection. */
         if (overBuild && cs && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             for (int i = 0; i <= (int)BsMine; i++) {
                 float ix = 0.0f, iy = 0.0f, iw = 0.0f, ih = 0.0f;
@@ -2436,8 +2437,6 @@ static void renderOverviewInWindow(ClientSim *cs) {
                 if (!overviewHudRectHit(mouse, rx, ry, ix, iy, iw, ih)) continue;
                 buildSelect picked = (buildSelect)i;
                 if (picked != clientSimGetCurrentBuildSelect(cs)) {
-                    sdl3DrawSelectIndentsOff(clientSimGetCurrentBuildSelect(cs), 0, 0);
-                    sdl3DrawSelectIndentsOn(picked, 0, 0);
                     clientMutexWaitFor();
                     clientSimSetCurrentBuildSelect(cs, picked);
                     clientMutexRelease();

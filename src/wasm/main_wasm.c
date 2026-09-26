@@ -1213,10 +1213,12 @@ void frontEndSetActiveClientSim(struct ClientSim *cs) {
     /* Drop the previous game's latched build target for the same reason: it
        is the square a click builds at, and it outlives the ClientSim that
        set it, so without this the first click of the next game is dispatched
-       to a tile chosen in the last one. */
-    buildCursorReset();
+       to a tile chosen in the last one. sdl3ImguiNewGame does this for a new
+       game, so only the game-ended path calls it here. */
     if (cs != NULL) {
       sdl3ImguiNewGame(cs);
+    } else {
+      buildCursorReset();
     }
   }
   s_activeUiCs = cs;

@@ -401,7 +401,8 @@ void sdl3DrawSelectIndentsOn(buildSelect value, int x, int y);
 
 /* Drop what the last game left in the draw state as a game view opens: take
    the new game's build selection without bringing the full screen map's
-   build strip up, and let the full screen map's view be made afresh. */
+   build strip up, drop any hold on the strip that a frame drawn before this
+   call has already set, and let the full screen map's view be made afresh. */
 void sdl3DrawNewGame(buildSelect value);
 
 /*********************************************************

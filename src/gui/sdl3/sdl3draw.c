@@ -1387,8 +1387,6 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
             newSelect = BsMine;
           }
           if (newSelect != NO_SELECT && newSelect != clientSimGetCurrentBuildSelect(cs)) {
-            sdl3DrawSelectIndentsOff(clientSimGetCurrentBuildSelect(cs), 0, 0);
-            sdl3DrawSelectIndentsOn(newSelect, 0, 0);
             clientSimSetCurrentBuildSelect(cs, newSelect);
           }
         }
@@ -3361,6 +3359,9 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
 void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
                        bool showPillsStatus, bool showBasesStatus) {
   (void)rcWindow;
+  /* The build selection is read from the sim by sdl3DrawMainScreen, which
+     every platform that calls this also draws through each frame. */
+  (void)value;
   if (gRenderer == NULL) return;
 
   sdl3DrawAssertTilesSampler();
@@ -3379,8 +3380,6 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
   if (useRenderTarget) {
     SDL_SetRenderTarget(gRenderer, gGameRenderTarget);
   }
-
-  sdl3DrawSelectIndentsOn(value, 0, 0);
 
   /* Clear and draw background first so that status draws go on top */
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
@@ -3951,8 +3950,12 @@ void sdl3DrawSelectIndentsOn(buildSelect value, int x, int y) {
 
 void sdl3DrawNewGame(buildSelect value) {
   /* The new game's selection, taken without the change bringing the build
-     strip up: the player did not pick it. */
+     strip up: the player did not pick it. The hold is dropped as well,
+     because on wasm, iOS and Android the frame that starts the round draws
+     sdl3DrawMainScreen before this runs; its per-frame sync has already seen
+     the new selection against the old one and set the hold. */
   gCurrentBuildSelect = value;
+  gOverviewHudHoldUntil[OVERVIEW_HUD_PANEL_BUILD] = 0;
   /* The full screen map's view keeps its camera spot, follow flag and last
      alive state, and would start the next round parked where the last one
      was left, or playing a respawn for a tank that died as it ended. It is
