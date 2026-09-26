@@ -29,7 +29,9 @@
  *   (9) the reset puts the default back before the scenario seats its
  *       teams, so each seat reserves a start on its team's side;
  *  (10) a host alone on team 1 who drops its side leaves team 2 on south
- *       (no one is on team 2, so the two-team mirror does not act).
+ *       (no one is on team 2, so the two-team mirror does not act);
+ *  (11) a balance keeps an unmoved player's hand-picked start that is
+ *       still on its team's side, and re-picks only the moved players.
  *
  * Commands go through serverSimApplyCommand under the threads mutex, as in
  * test_lobby_team_side_dispatch.c. Start layouts are injected the way that
@@ -595,6 +597,88 @@ int run_lobby_default_sides_solo_host_any_keeps_south(void) {
                   "(got %u/%u)", sim->teams[1].startSide, sim->teams[2].startSide);
     UT_ASSERT_MSG(sim->teams[2].sideAutoFilled,
                   "team 2's south is still the filled-in default");
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* (11) A balance keeps a start a player chose by hand when the player did
+ *      not move and the start is still on the team's side. Only the moved
+ *      players' starts are picked again. */
+int run_lobby_default_sides_balance_keeps_hand_pick(void) {
+    ClientCommand cmd;
+    CmdResult r;
+    BYTE i;
+    BYTE handPick = 0;
+    ServerSim *sim = make_sim();
+    UT_ASSERT(sim != NULL);
+    boot_sim(sim, true, false);
+    inject_columns(sim);
+
+    add_human(sim, 0, 1);   /* the host */
+    add_human(sim, 1, 1);
+    add_human(sim, 2, 2);
+    add_human(sim, 3, 2);
+    add_human(sim, 4, 2);
+
+    /* Slot 1 claims the north start that nobody holds and that sits
+     * farthest along the row, not the one the picker gave it. */
+    for (i = 4; i >= 1 && handPick == 0; i--) {
+        BYTE k;
+        bool held = false;
+        for (k = 0; k < 5; k++) {
+            if (sim->lobbyPlayers[k].startIdx == i) held = true;
+        }
+        if (!held) handPick = i;
+    }
+    UT_ASSERT_MSG(handPick != 0, "setup: a free north start");
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.type   = CMD_LOBBY_CLAIM_START;
+    cmd.cmdSeq = 1;
+    cmd.u.lobbyClaimStart.targetSlot = 1;
+    cmd.u.lobbyClaimStart.startIdx   = handPick;
+    threadsWaitForMutex();
+    r = serverSimApplyCommand(sim, 1, &cmd);
+    threadsReleaseMutex();
+    UT_ASSERT_MSG(r == CMD_OK && sim->lobbyPlayers[1].startIdx == handPick,
+                  "setup: slot 1 claims start %u (got %d, holds %u)", handPick,
+                  (int)r, sim->lobbyPlayers[1].startIdx);
+
+    /* The balance moves slot 4 to team 1 and leaves everyone else. */
+    memset(sim->balanceProposal.teamForSlot, 0, sizeof(sim->balanceProposal.teamForSlot));
+    sim->balanceProposal.teamForSlot[0] = 1;
+    sim->balanceProposal.teamForSlot[1] = 1;
+    sim->balanceProposal.teamForSlot[2] = 2;
+    sim->balanceProposal.teamForSlot[3] = 2;
+    sim->balanceProposal.teamForSlot[4] = 1;
+    sim->balanceProposal.includeBots    = true;
+    sim->balanceProposal.pending        = true;
+
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.type   = CMD_BALANCE_APPLY;
+    cmd.cmdSeq = 2;
+    threadsWaitForMutex();
+    r = serverSimApplyCommand(sim, 0, &cmd);
+    threadsReleaseMutex();
+    UT_ASSERT_MSG(r == CMD_OK, "the host's balance accept must apply (got %d)", (int)r);
+    UT_ASSERT_MSG(sim->lobbyPlayers[1].startIdx == handPick,
+                  "an unmoved player's hand-picked start must survive a "
+                  "balance (had %u, holds %u)", handPick,
+                  sim->lobbyPlayers[1].startIdx);
+    for (i = 0; i < 5; i++) {
+        UT_ASSERT_MSG(start_on_team_side(sim, i),
+                      "after a balance, slot %u (team %u) must hold a start on "
+                      "its team's side (holds %u)", i,
+                      sim->lobbyPlayers[i].teamNumber, sim->lobbyPlayers[i].startIdx);
+    }
+
+    bolo_srand(11);
+    serverSimStartGameInPlace(sim);
+    UT_ASSERT(serverSimGetState(sim) == serverStateRunning);
+    for (i = 0; i < 5; i++) {
+        UT_ASSERT_MSG(tank_on_team_side(sim, i),
+                      "slot %u (team %u) must start the round on its team's side", i,
+                      sim->lobbyPlayers[i].teamNumber);
+    }
     serverSimDestroy(sim);
     return 0;
 }
