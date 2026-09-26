@@ -3955,6 +3955,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_starts_pick_incremental.c
     tests/unit/test_starts_assign_batch.c
     tests/unit/test_starts_open_ideal.c
+    tests/unit/test_starts_border.c
     tests/unit/test_start_sides.c
     tests/unit/test_lobby_side_axis.c
     tests/unit/test_lobby_start_shared.c
@@ -4586,6 +4587,8 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     # Committed v1 .wbv fixture directory: the reader gate loads from here and
     # the on-demand capture (re)writes spectator_v1.wbv into it.
     WB_WBV_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/wbv"
+    # Committed map fixtures: old copies of shipped maps with bad data.
+    WB_MAP_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/maps"
     # Committed skin fixture directory: the parity test opens
     # <dir>/basic and zips it into the working directory at run time.
     WB_SKINS_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/skins"
@@ -5171,6 +5174,17 @@ set(_unit_test_names
     starts_open_ideal_friendly_pill_eligible
     starts_open_ideal_removed_pill_ignored
     starts_open_removed_start_never_chosen
+    starts_border_start_dropped
+    starts_border_all_border_kept
+    starts_border_compressed_load_agrees
+    starts_border_named_inactive_safe
+    starts_border_harvard_yard
+    pills_border_pill_dropped
+    bases_border_base_dropped
+    items_border_all_border_kept
+    items_border_compressed_load_agrees
+    items_border_game_ignores
+    pills_border_old_tutorial
     start_side_mask_sectors
     start_side_mask_degenerate_bbox
     start_side_eligible_closed_mask

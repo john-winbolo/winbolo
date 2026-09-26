@@ -2606,6 +2606,49 @@ void startsValidate(starts *value) {
   }
 }
 
+/*********************************************************
+*NAME:          startsRemoveBorderStarts
+*PURPOSE:
+*  Takes off the map every live start that sits in the
+*  mined border round the edge, where no tank can be
+*  placed: mapIsMine counts every border square as mined.
+*  A map file can put a start out there (Harvard Yard's
+*  first start is in the far corner), and the pickers that
+*  go straight to a named start would scatter a tank in
+*  from it. Nothing is changed when no live start is inside
+*  the border, so such a map still has starts to use.
+*  Returns how many starts were taken off.
+*
+*ARGUMENTS:
+*  value - Pointer to the starts structure
+*********************************************************/
+BYTE startsRemoveBorderStarts(starts *value) {
+  BYTE count;
+  BYTE inside = 0;
+  BYTE removed = 0;
+
+  if (value == NULL || *value == NULL) {
+    return 0;
+  }
+  for (count = 0; count < (*value)->numStarts && count < MAX_STARTS; count++) {
+    if ((*value)->active[count] != FALSE &&
+        mapPosInBounds((*value)->item[count].x, (*value)->item[count].y)) {
+      inside++;
+    }
+  }
+  if (inside == 0) {
+    return 0;
+  }
+  for (count = 0; count < (*value)->numStarts && count < MAX_STARTS; count++) {
+    if ((*value)->active[count] != FALSE &&
+        !mapPosInBounds((*value)->item[count].x, (*value)->item[count].y)) {
+      (*value)->active[count] = FALSE;
+      removed++;
+    }
+  }
+  return removed;
+}
+
 void startsSetStartCompressData(starts *value, BYTE *buff, int dataLen) {
   memcpy(&(**value), buff, SIZEOF_STARTS);
   /* Clamp the wire-supplied count so a hostile map cannot drive out-of-bounds

@@ -38,7 +38,7 @@ extern "C" {
 #include "lobby_start_list.h"
 
 int lobbyStartListRender(ClientSim *cs, int myPlayerNum, int startCount,
-                         const BYTE *sideMasks) {
+                         const BYTE *sideMasks, const bool *onMap) {
     if (!cs) return 0;
     if (startCount > MAX_STARTS) startCount = MAX_STARTS;
     if (startCount < 0) startCount = 0;
@@ -52,6 +52,7 @@ int lobbyStartListRender(ClientSim *cs, int myPlayerNum, int startCount,
 
     int focused = 0;
     for (int i = 1; i <= startCount; i++) {
+        if (onMap != NULL && !onMap[i]) continue;
         int  holders[MAX_TANKS];
         int  nHold   = lobbyStartHolders(cs, i, holders, MAX_TANKS);
         bool free    = (nHold == 0);

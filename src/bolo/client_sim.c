@@ -4604,6 +4604,7 @@ bool clientSimGetPill(ClientSim *cs, BYTE i,
   pillbox p;
   BYTE n = pillsGetNumPills(&gs->pb);
   if (i == 0 || i > n) return false;
+  if (!pillsIsActive(&gs->pb, i)) return false;
   pillsGetPill(&gs->pb, &p, i);
   if (x)      *x      = p.x;
   if (y)      *y      = p.y;
@@ -4619,6 +4620,7 @@ bool clientSimGetBase(ClientSim *cs, BYTE i,
   base b;
   BYTE n = basesGetNumBases(&gs->bs);
   if (i == 0 || i > n) return false;
+  if (!basesIsActive(&gs->bs, i)) return false;
   basesGetBase(&gs->bs, &b, i);
   if (x)     *x     = b.x;
   if (y)     *y     = b.y;
@@ -4631,6 +4633,7 @@ bool clientSimGetBaseStats(ClientSim *cs, BYTE i,
   GameSim *gs = clientSimGetGameSim(cs);
   BYTE n = basesGetNumBases(&gs->bs);
   if (i == 0 || i > n) return false;
+  if (!basesIsActive(&gs->bs, i)) return false;
   basesGetStats(&gs->bs, i, shells, mines, armour);
   return true;
 }
