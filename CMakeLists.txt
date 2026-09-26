@@ -5441,6 +5441,9 @@ set(_unit_test_names
     player_mute_mask_roundtrip
     lock_channel
     loopback_map_preview
+    loopback_map_preview_request_lost
+    loopback_map_preview_request_gives_up
+    loopback_map_preview_late_busy_kept
     loopback_brain_docs_fetch
     loopback_brain_docs_spectator
     lobby_bot_pool_join_sends_only_the_id
