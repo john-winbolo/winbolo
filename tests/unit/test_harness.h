@@ -132,6 +132,7 @@ int run_lobby_brain_docs_chunk_len_is_exact(void);
 int run_lobby_brain_list_clears_stale_texts(void);
 int run_lobby_brain_announce_codec_and_apply(void);
 int run_lobby_brain_docs_put_follows_generation(void);
+int run_lobby_bot_pool_info_codec_and_apply(void);
 
 /* The "name: text" lobby chat line has ONE spelling, because the lobby's
  * bot-announce poll searches the history for the line it just appended. */
@@ -414,6 +415,7 @@ int run_await_join_connected_immediate(void);
 int run_await_join_lobby_latch(void);
 int run_await_join_timeout_and_error(void);
 int run_bot_pool_wire_chunk_transport(void);
+int run_bot_pool_catalog_id(void);
 int run_lobby_map_list_chunked(void);
 /* The scripted byte on a map-list entry: the layout by hand-written bytes,
  * and a list carrying a mix of scripted and plain maps. */
@@ -2037,6 +2039,11 @@ int run_lock_channel(void);
 int run_loopback_map_preview(void);
 int run_loopback_brain_docs_fetch(void);
 int run_loopback_brain_docs_spectator(void);
+int run_lobby_bot_pool_join_sends_only_the_id(void);
+int run_loopback_bot_pool_fetch(void);
+int run_loopback_bot_pool_same_not_fetched(void);
+int run_bot_pool_refresh_retakes_catalogue(void);
+int run_loopback_bot_pool_survives_bulk_rebase(void);
 int run_loopback_brain_docs_survives_bulk_rebase(void);
 /* Client->server map upload over CHANNEL_BULK (test_loopback_upload.c): a map
  * uploaded under loss completes and the server decodes the reassembled bytes. */

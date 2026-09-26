@@ -29,6 +29,7 @@
 #include "client_sim_control.h"
 #include "control_event.h"
 #include "brain_list.h"
+#include "lobby_bot_pools.h"
 #include "transport_control_codec.h"
 #include "transport_udp_internal.h"  /* PACKET_HEADER_SIZE */
 #include "netpacks.h"                /* PACKET_LOBBY_* IDs */
@@ -1194,6 +1195,109 @@ int run_lobby_brain_announce_codec_and_apply(void) {
     UT_ASSERT(clientSimGetLobbyBrainAnnounce(cs, -1)[0] == '\0');
     UT_ASSERT(clientSimGetLobbyBrainDocs(cs, BRAIN_LIST_MAX)[0] == '\0');
     UT_ASSERT(!clientSimLobbyBrainHasDocs(cs, BRAIN_LIST_MAX));
+    clientSimDestroy(cs);
+    return 0;
+}
+
+/* ================================================================
+ * CTRL_LOBBY_BOT_POOL_INFO — which bot-name catalogue the server holds.
+ *
+ * The codec half: 8 bytes exactly, and the bodies a sender could not have
+ * written are refused (an id with no length, a length with no id, a length
+ * past LOBBY_BOT_CATALOG_WIRE_MAX).
+ *
+ * The apply half: a client whose own pools have the id is done, one whose
+ * pools differ wants the catalogue, and a server with none leaves the client
+ * on its own. The retired chunk event changes nothing.
+ * ================================================================ */
+int run_lobby_bot_pool_info_codec_and_apply(void) {
+    ControlEncodeBodyFn enc =
+        transportControlCodecBodyEncoder(CTRL_LOBBY_BOT_POOL_INFO);
+    ControlDecodeBodyFn dec =
+        transportControlCodecBodyDecoder(CTRL_LOBBY_BOT_POOL_INFO);
+    ControlEvent in, out;
+    uint8_t      buf[MAX_CONTROL_PACKET];
+    size_t       len = 12345;
+    ClientSim   *cs;
+    uint32_t     ownId;
+
+    UT_ASSERT_MSG(enc != NULL && dec != NULL,
+                  "CTRL_LOBBY_BOT_POOL_INFO has no body codec");
+
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_BOT_POOL_INFO;
+    in.u.lobbyBotPoolInfo.id  = 0xCAFEF00Du;
+    in.u.lobbyBotPoolInfo.len = LOBBY_BOT_CATALOG_WIRE_MAX;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT_MSG(len == 8, "the body is %zu bytes, expected 8", len);
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT(dec(buf, len, &out));
+    UT_ASSERT(out.type == CTRL_LOBBY_BOT_POOL_INFO);
+    UT_ASSERT(out.u.lobbyBotPoolInfo.id == 0xCAFEF00Du);
+    UT_ASSERT(out.u.lobbyBotPoolInfo.len == LOBBY_BOT_CATALOG_WIRE_MAX);
+    UT_ASSERT(!dec(buf, len - 1, &out));
+    UT_ASSERT(!dec(buf, len + 1, &out));
+
+    /* None at all: both 0. */
+    in.u.lobbyBotPoolInfo.id  = 0;
+    in.u.lobbyBotPoolInfo.len = 0;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT(dec(buf, len, &out) && out.u.lobbyBotPoolInfo.id == 0);
+
+    /* Refused both ways. */
+    in.u.lobbyBotPoolInfo.id  = 5;
+    in.u.lobbyBotPoolInfo.len = 0;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) != ENCODE_OK);
+    in.u.lobbyBotPoolInfo.id  = 0;
+    in.u.lobbyBotPoolInfo.len = 5;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) != ENCODE_OK);
+    in.u.lobbyBotPoolInfo.id  = 5;
+    in.u.lobbyBotPoolInfo.len = LOBBY_BOT_CATALOG_WIRE_MAX + 1;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) != ENCODE_OK);
+    memset(buf, 0, 8);
+    buf[3] = 5;                                          /* id 5, len 0 */
+    UT_ASSERT_MSG(!dec(buf, 8, &out), "an id with no length decoded");
+    buf[3] = 0; buf[7] = 5;                              /* id 0, len 5 */
+    UT_ASSERT_MSG(!dec(buf, 8, &out), "a length with no id decoded");
+    buf[3] = 5; buf[4] = 0xFF;                           /* len past the cap */
+    UT_ASSERT_MSG(!dec(buf, 8, &out), "a length past the cap decoded");
+
+    /* APPLY. */
+    lobbyBotPoolsReset();
+    ownId = lobbyBotPoolsCatalogId();
+    UT_ASSERT(ownId != 0);
+    cs = fresh_client_sim();
+    UT_ASSERT(cs != NULL);
+
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_BOT_POOL_INFO;
+    in.u.lobbyBotPoolInfo.id  = ownId;
+    in.u.lobbyBotPoolInfo.len = 100;
+    clientSimApplyControl(cs, &in);
+    UT_ASSERT_MSG(cs->lobbyPoolState == CLIENT_BOT_POOL_S_HAVE,
+                  "a client holding the server's pools wants them anyway "
+                  "(state %u)", (unsigned)cs->lobbyPoolState);
+
+    in.u.lobbyBotPoolInfo.id = ownId ^ 0x1u;
+    clientSimApplyControl(cs, &in);
+    UT_ASSERT(cs->lobbyPoolState == CLIENT_BOT_POOL_S_WANTED);
+    UT_ASSERT(cs->lobbyPoolId == (ownId ^ 0x1u) && cs->lobbyPoolLen == 100);
+
+    in.u.lobbyBotPoolInfo.id  = 0;
+    in.u.lobbyBotPoolInfo.len = 0;
+    clientSimApplyControl(cs, &in);
+    UT_ASSERT(cs->lobbyPoolState == CLIENT_BOT_POOL_S_NONE);
+
+    /* The retired chunk: nothing moves, and the pools stay the client's. */
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_BOT_POOL_CHUNK;
+    in.u.lobbyBotPoolChunk.seq     = 0;
+    in.u.lobbyBotPoolChunk.count   = 1;
+    in.u.lobbyBotPoolChunk.fragLen = 4;
+    clientSimApplyControl(cs, &in);
+    UT_ASSERT(cs->lobbyPoolState == CLIENT_BOT_POOL_S_NONE);
+    UT_ASSERT(lobbyBotPoolsCatalogId() == ownId);
+
     clientSimDestroy(cs);
     return 0;
 }

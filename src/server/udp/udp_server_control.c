@@ -41,7 +41,6 @@
 #include "../../common/wb_log.h"      /* WB_LOG_ERROR, WB_LOG_CAT_NET */
 #include "../../common/mp_diag_log.h" /* mpDiagLog */
 #include "brain_list.h"          /* BRAIN_LIST_MAX, BRAIN_ANNOUNCE_MAX */
-#include "lobby_bot_pools.h"     /* LOBBY_BOT_CATALOG_WIRE_MAX */
 #include "scenario_panel.h"      /* SCN_PANEL_IDS, SCN_PANEL_MAX, SCN_MARKERS_MAX */
 #include "scenario_settings.h"   /* SCN_SETTING_ID_LEN */
 #include "server_sim_internal.h" /* SCN_PANEL_TARGETS */
@@ -58,8 +57,8 @@
  * spectator connection pays for the backlog in resident memory, and the
  * control channel is for small state changes. Move the data that grew onto
  * CHANNEL_BULK instead, sent when the client asks for it or after the join
- * has settled, the way brain docs are (PACKET_LOBBY_BRAIN_DOCS_REQ). The
- * bot-name catalogue is the next candidate: it is the largest term below.
+ * has settled, the way brain docs (PACKET_LOBBY_BRAIN_DOCS_REQ) and the
+ * bot-name catalogue (PACKET_LOBBY_BOT_POOL_REQ) are.
  *
  * A queued message costs 2 (its length) + 3 (type, bodyLen) + its body, and
  * no message is more than 2 + CHANNEL_CONTROL_SEG. It counts both kinds of
@@ -71,12 +70,12 @@
  *     script list's chunks
  *   script settings: a CLEAR and one SET per value
  *   brain announces: one per brain (brain docs go on CHANNEL_BULK)
- *   bot-name catalogue: its largest blob in 900-byte chunks
  *   scenario rules fragments, of SCN_RULES_FRAG_ROWS 9-byte rows
  *   scenario panels: every panel, for everyone, each team and each slot
  *   small records of at most 128 body bytes: a slot, a lobby join, bot config
  *     and bot brain per player; 32 spectator slots; 15 team metadata rows; 16
- *     markers; 31 score rows; two votes, balance, map skip, entity sync and
+ *     markers; 31 score rows; two votes, balance, map skip, entity sync,
+ *     the bot-name catalogue's id (the catalogue goes on CHANNEL_BULK) and
  *     the closing marker
  *   events published live while the replay is still queued: 32 whole ones */
 #define JOIN_MSG(body)    (5u + (unsigned)(body))
@@ -89,13 +88,10 @@
            JOIN_MSG(1 + 1 + (LOBBY_SCENARIO_FILE_LEN - 1) + 1 +               \
                     (SCN_SETTING_ID_LEN - 1) + 4)                             \
      + BRAIN_LIST_MAX * JOIN_MSG(9 + BRAIN_ANNOUNCE_MAX)                      \
-     + ((LOBBY_BOT_CATALOG_WIRE_MAX + LOBBY_BOT_POOL_CHUNK_FRAG_MAX - 1) /    \
-        LOBBY_BOT_POOL_CHUNK_FRAG_MAX) *                                      \
-           JOIN_MSG(4 + LOBBY_BOT_POOL_CHUNK_FRAG_MAX)                        \
      + CTRL_SCENARIO_RULES_FRAGS_MAX * JOIN_MSG(3 + SCN_RULES_FRAG_ROWS * 9)  \
      + SCN_PANEL_IDS * SCN_PANEL_TARGETS * JOIN_MSG(3 + SCN_PANEL_MAX)        \
      + (4u * MAX_TANKS + 32u + (MAX_TANKS - 1) + SCN_MARKERS_MAX +            \
-        (2u * MAX_TANKS - 1) + 6u) * JOIN_MSG_SMALL                           \
+        (2u * MAX_TANKS - 1) + 7u) * JOIN_MSG_SMALL                           \
      + 32u * JOIN_MSG_FULL)
 
 /* Failing here means the join replay outgrew the control channel: move the
@@ -148,6 +144,7 @@ const char *mpDiagCtrlName(int type) {
     case CTRL_LOBBY_SCRIPT_LIST: return "LOBBY_SCRIPT_LIST";
     case CTRL_LOBBY_SCRIPT_SETTING: return "LOBBY_SCRIPT_SETTING";
     case CTRL_LOBBY_BRAIN_ANNOUNCE: return "LOBBY_BRAIN_ANNOUNCE";
+    case CTRL_LOBBY_BOT_POOL_INFO:  return "LOBBY_BOT_POOL_INFO";
     default:                    return "<unknown>";
     }
 }

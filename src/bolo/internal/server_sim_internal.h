@@ -348,6 +348,18 @@ struct ServerSim {
      * between rounds still sees the change without a restart. */
     struct ServerBrainDocsCache *brainDocs;
 
+    /* The bot-name catalogue this server hands out: lobbyBotPoolsSerialize's
+     * compressed blob of the pools loaded when the sim was made, its length,
+     * and its id (lobbyBotPoolsCatalogId). A joiner is told the id and the
+     * length (CTRL_LOBBY_BOT_POOL_INFO) and asks for the blob on
+     * CHANNEL_BULK only when its own pools differ. Kept rather than made
+     * per request so that the id a joiner was told and the blob it is then
+     * sent are always the same catalogue. NULL, 0, 0 when the pools hold no
+     * themed pool. */
+    uint8_t     *botPoolBlob;
+    uint32_t     botPoolBlobLen;
+    uint32_t     botPoolId;
+
     /* Layout A lobby flags — all persist across rounds. */
     bool     openHost;             /* anyone can edit when true */
     BYTE     hostSlot;             /* current lobby host's player slot; 0 = slot 0 */

@@ -42,6 +42,7 @@
 #include "channel_mux.h"
 #include "voice_segment.h"
 #include "bulk_transfer.h"
+#include "lobby_bot_pools.h"   /* lobbyBotPoolsDeserializeInstall, lobbyBotPoolsCatalogId */
 #include "wbn_key_codec.h"
 #include "bolo_map_validate.h"
 #include "wire_limits.h"
@@ -445,6 +446,12 @@ typedef struct {
                                        * BUSY (0 = none parked)              */
     uint32_t scriptFetchProgressTick; /* localTick body bytes last advanced   */
     uint32_t scriptFetchWatchdogBytes;/* bodyReceived at the last stall check */
+
+    /* The server's bot-name catalogue (BULK_KIND_BOT_POOL), pulled with
+     * PACKET_LOBBY_BOT_POOL_REQ when the ClientSim's lobbyPoolState is
+     * WANTED. onBegin mallocs botPoolBuf sized to the stream header, status
+     * byte included; onComplete installs the catalogue and frees it. */
+    uint8_t *botPoolBuf;
 
 #if WB_ENABLE_NETIMPAIR
     uint8_t test_drop_upload_packet;
@@ -1253,6 +1260,7 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_LOBBY_SCRIPT_LIST: return "LOBBY_SCRIPT_LIST";
     case CTRL_LOBBY_SCRIPT_SETTING: return "LOBBY_SCRIPT_SETTING";
     case CTRL_LOBBY_BRAIN_ANNOUNCE: return "LOBBY_BRAIN_ANNOUNCE";
+    case CTRL_LOBBY_BOT_POOL_INFO:  return "LOBBY_BOT_POOL_INFO";
     default:                    return "<unknown>";
     }
 }
@@ -1270,6 +1278,7 @@ static const char *mpDiagCtrlName(int type) {
 static void udpClientFreeResyncBuf(TransportUdpClientCtx *c);     /* defined below */
 static void udpClientFreeRoundLogBuf(TransportUdpClientCtx *c);   /* defined below */
 static void udpClientFreeScriptFetchBuf(TransportUdpClientCtx *c); /* defined below */
+static void udpClientFreeBotPoolBuf(TransportUdpClientCtx *c);     /* defined below */
 static void clientApplyChannelReset(TransportUdpClientCtx *c,
                                     const ControlEvent *evt) {
     static const struct { uint8_t ch; const char *name; } kChans[3] = {
@@ -1360,6 +1369,18 @@ static void clientApplyChannelReset(TransportUdpClientCtx *c,
                         cs->lobbyScnDetails[slot].tries = 0;
                     }
                     cs->lobbyScnDetailsRxSlot = 0;
+                }
+            }
+            /* A bot-name catalogue still being filled is abandoned with it
+             * and asked for again: the request goes back to WANTED with its
+             * tries cleared, so the tick sends it afresh rather than waiting
+             * on the cut-off body. */
+            if (c->botPoolBuf != NULL && c->bulkRecv.dst == c->botPoolBuf) {
+                udpClientFreeBotPoolBuf(c);
+                if (c->clientSim != NULL &&
+                    c->clientSim->lobbyPoolState == CLIENT_BOT_POOL_S_ASKED) {
+                    c->clientSim->lobbyPoolState = CLIENT_BOT_POOL_S_WANTED;
+                    c->clientSim->lobbyPoolTries = 0;
                 }
             }
             bulkReceiverInit(&c->bulkRecv);
@@ -1878,6 +1899,60 @@ static int udpClientBrainDocsPathIdx(const BulkStreamHeader *h) {
     return idx < BRAIN_LIST_MAX ? idx : -1;
 }
 
+/* ---- The server's bot-name catalogue (BULK_KIND_BOT_POOL).
+ *
+ * The join names the server's catalogue by id (CTRL_LOBBY_BOT_POOL_INFO) and
+ * a client whose own pools differ marks it WANTED. This tick asks for it with
+ * PACKET_LOBBY_BOT_POOL_REQ, only once connected, so the join's map download
+ * is done and the server's bulk sender for this client is free. The request
+ * is a bare datagram, so one with no answer after
+ * CLIENT_BOT_POOL_TIMEOUT_TICKS is sent again, up to CLIENT_BOT_POOL_TRIES
+ * times, and then the client keeps its own pools. An answer that has started
+ * arriving is never timed out. A bulk re-base that cuts off an answer part
+ * way in returns the request to WANTED with its tries cleared
+ * (clientApplyChannelReset), so it is asked for again. */
+
+/* Drop the catalogue buffer: clear the receiver's dst first so the rest of a
+ * body still arriving is consumed and discarded. */
+static void udpClientFreeBotPoolBuf(TransportUdpClientCtx *c) {
+    if (c->botPoolBuf != NULL) {
+        if (c->bulkRecv.dst == c->botPoolBuf) {
+            c->bulkRecv.dst = NULL;
+        }
+        free(c->botPoolBuf);
+        c->botPoolBuf = NULL;
+    }
+}
+
+static void udpClientBotPoolTick(TransportUdpClientCtx *c) {
+    ClientSim *cs = c->clientSim;
+    uint8_t    buf[PACKET_HEADER_SIZE];
+    if (cs == NULL) return;
+    if (cs->lobbyPoolState == CLIENT_BOT_POOL_S_ASKED) {
+        if (c->botPoolBuf != NULL && c->bulkRecv.dst == c->botPoolBuf) {
+            return;                                     /* arriving now */
+        }
+        if ((uint32_t)(c->localTick - cs->lobbyPoolSentTick) <
+            CLIENT_BOT_POOL_TIMEOUT_TICKS) {
+            return;
+        }
+        if (cs->lobbyPoolTries >= CLIENT_BOT_POOL_TRIES) {
+            WB_LOG_WARN(WB_LOG_CAT_NET,
+                "no bot-name catalogue after %u requests; keeping our own "
+                "pools", (unsigned)cs->lobbyPoolTries);
+            cs->lobbyPoolState = CLIENT_BOT_POOL_S_FAILED;
+            return;
+        }
+    } else if (cs->lobbyPoolState != CLIENT_BOT_POOL_S_WANTED) {
+        return;
+    }
+    packHeader(buf, PACKET_LOBBY_BOT_POOL_REQ, c->outSequence++);
+    udpClientSendTo(c, buf, (int)sizeof(buf));
+    cs->lobbyPoolState    = CLIENT_BOT_POOL_S_ASKED;
+    cs->lobbyPoolTries++;
+    cs->lobbyPoolSentTick = c->localTick;
+}
+
 /* ---- A copy of one of the server's scripts (BULK_KIND_SCRIPT_PACKAGE).
  *
  * The request is a bare datagram and the server drops one it cannot start at
@@ -2115,6 +2190,22 @@ static uint8_t *clientBulkOnBegin(void *ctx, const BulkStreamHeader *h) {
         return t->rx;
     }
 
+    case BULK_KIND_BOT_POOL:
+        /* The server's bot-name catalogue, answering a
+         * PACKET_LOBBY_BOT_POOL_REQ. Taken only while a request is out, and
+         * only for the catalogue the join named or a none answer. totalSize
+         * is attacker-controlled: bound it by the catalogue cap before
+         * allocating. */
+        if (cs->lobbyPoolState != CLIENT_BOT_POOL_S_ASKED) return NULL;
+        if (h->gen != 0 && h->gen != cs->lobbyPoolId) return NULL;
+        if (h->totalSize < 1 ||
+            h->totalSize > 1u + LOBBY_BOT_CATALOG_WIRE_MAX) {
+            return NULL;
+        }
+        udpClientFreeBotPoolBuf(c);
+        c->botPoolBuf = (uint8_t *)malloc(h->totalSize);
+        return c->botPoolBuf;
+
     case BULK_KIND_SCRIPT_PACKAGE:
         /* A copy of a script, answering this client's
          * PACKET_LOBBY_SCRIPT_FETCH_REQ. Taken only while that request is
@@ -2319,6 +2410,35 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
         WB_LOG_INFO(WB_LOG_CAT_NET,
             "round log received (%u bytes)", (unsigned)h->totalSize);
         break;
+
+    case BULK_KIND_BOT_POOL: {
+        /* Install the server's pools over this client's own. A none answer,
+         * or a blob that does not install, leaves the client on its own
+         * pools (FAILED). A catalogue that installs but does not come out
+         * as the id the join named is kept, since it is the server's, and
+         * logged: the two ends serialized the same pools differently. */
+        uint32_t got;
+        if (buf == NULL || buf != c->botPoolBuf) break;
+        if (cs->lobbyPoolState == CLIENT_BOT_POOL_S_ASKED) {
+            if (buf[0] != BULK_BOT_POOL_FOUND || h->totalSize < 2 ||
+                lobbyBotPoolsDeserializeInstall(buf + 1,
+                                                (int)(h->totalSize - 1),
+                                                NULL) < 0) {
+                cs->lobbyPoolState = CLIENT_BOT_POOL_S_FAILED;
+            } else {
+                cs->lobbyPoolState = CLIENT_BOT_POOL_S_HAVE;
+                got = lobbyBotPoolsCatalogId();
+                if (got != cs->lobbyPoolId) {
+                    WB_LOG_WARN(WB_LOG_CAT_NET,
+                        "bot-name catalogue installed as id %08x, the server "
+                        "named %08x", (unsigned)got,
+                        (unsigned)cs->lobbyPoolId);
+                }
+            }
+        }
+        udpClientFreeBotPoolBuf(c);
+        break;
+    }
 
     case BULK_KIND_BRAIN_DOCS: {
         /* The brain onBegin matched, unless a new announce or brain list
@@ -4130,6 +4250,7 @@ static bool udpClientTick(void *ctx) {
         udpClientRoundLogTick(c);
         udpClientScnDetailsTick(c);
         udpClientScriptFetchTick(c);
+        udpClientBotPoolTick(c);
     }
     /* A spectator in the live lobby reads the same bot announce lines, and
      * the server answers its docs requests on its own bulk stream. */
@@ -4816,6 +4937,9 @@ void transportUdpClientDestroy(Transport *t) {
     }
     if (c->scriptFetchBuf != NULL) {
         free(c->scriptFetchBuf);   /* script copy nobody took, or a partial one */
+    }
+    if (c->botPoolBuf != NULL) {
+        free(c->botPoolBuf);       /* a catalogue still arriving */
     }
     bulkSenderReset(&c->uploadSend);
     free(c);
@@ -5946,6 +6070,13 @@ void transportUdpClientTestUploadTimeout(Transport *t) {
 void transportUdpClientTestDropUploadReply(Transport *t, uint8_t packet_type) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     c->test_drop_upload_packet = packet_type;
+}
+
+/* True while a bot-name catalogue answer is part way in: its buffer exists
+ * and the bulk receiver is filling it. */
+bool transportUdpClientTestBotPoolArriving(Transport *t) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    return c->botPoolBuf != NULL && c->bulkRecv.dst == c->botPoolBuf;
 }
 #endif
 

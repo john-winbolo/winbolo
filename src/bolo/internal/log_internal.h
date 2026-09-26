@@ -63,10 +63,11 @@
  *
  * Those terms are not the whole replay, so this is a size taken from the
  * ones listed rather than a bound proved over all of them. The same replay
- * also emits up to 255 CTRL_LOBBY_BOT_POOL_CHUNK fragments while the server
- * is in the lobby, one CTRL_SPECTATOR_SLOT per connected spectator, one
+ * also emits one CTRL_SPECTATOR_SLOT per connected spectator, one
  * CTRL_SIM_RULES and the closing CTRL_LOBBY_SYNC_COMPLETE, and the count
- * carries none of them. What leaves room for them is the charge rather than
+ * carries none of them. (It no longer carries the bot-name catalogue: a
+ * real joiner is sent the catalogue's id and fetches it on CHANNEL_BULK, and
+ * this replay is sent neither.) What leaves room for them is the charge rather than
  * the count: MAX_CONTROL_PACKET is 1400 and the largest body any of these
  * encodes is the brain list at around 905 bytes, the rest far under that, so
  * the counted events reserve a good deal more than they spend.

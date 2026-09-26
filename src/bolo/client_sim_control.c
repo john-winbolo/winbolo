@@ -673,41 +673,27 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         break;
     }
 
-    case CTRL_LOBBY_BOT_POOL_CHUNK: {
-        /* Reassemble in-order fragments of the server's compressed
-         * bot-pool catalog; install on the final fragment so the lobby
-         * dropdown reflects the SERVER's pools. Fragments ride the
-         * reliable, ordered control channel, so seq is monotonic; any
-         * gap/mismatch aborts the in-progress reassembly. */
-        uint8_t  seq   = evt->u.lobbyBotPoolChunk.seq;
-        uint8_t  count = evt->u.lobbyBotPoolChunk.count;
-        uint16_t fl    = evt->u.lobbyBotPoolChunk.fragLen;
-        if (count == 0) break;
-        if (seq == 0) {
-            cs->lobbyPoolChunkExpected = count;
-            cs->lobbyPoolNextSeq = 0;
-            cs->lobbyPoolBlobLen = 0;
-        }
-        if (seq != cs->lobbyPoolNextSeq ||
-            count != cs->lobbyPoolChunkExpected ||
-            cs->lobbyPoolBlobLen + fl > sizeof(cs->lobbyPoolBlob)) {
-            cs->lobbyPoolChunkExpected = 0;   /* abort */
-            cs->lobbyPoolNextSeq = 0;
-            cs->lobbyPoolBlobLen = 0;
-            break;
-        }
-        if (fl > 0) {
-            memcpy(cs->lobbyPoolBlob + cs->lobbyPoolBlobLen,
-                   evt->u.lobbyBotPoolChunk.frag, fl);
-            cs->lobbyPoolBlobLen += fl;
-        }
-        cs->lobbyPoolNextSeq++;
-        if (cs->lobbyPoolNextSeq == count) {
-            lobbyBotPoolsDeserializeInstall(cs->lobbyPoolBlob,
-                                            (int)cs->lobbyPoolBlobLen, NULL);
-            cs->lobbyPoolChunkExpected = 0;
-            cs->lobbyPoolNextSeq = 0;
-            cs->lobbyPoolBlobLen = 0;
+    case CTRL_LOBBY_BOT_POOL_CHUNK:
+        /* Retired: an older server's way of sending the catalogue whole.
+         * Nothing sends it now; a recording that holds one is stepped
+         * over. */
+        break;
+
+    case CTRL_LOBBY_BOT_POOL_INFO: {
+        /* Which catalogue the server holds. The pools this client has now
+         * are its own shipped file, or the last server's until the lobby
+         * resets them on leaving; either may already be the server's, and
+         * then there is nothing to fetch. */
+        uint32_t id = evt->u.lobbyBotPoolInfo.id;
+        cs->lobbyPoolId    = id;
+        cs->lobbyPoolLen   = evt->u.lobbyBotPoolInfo.len;
+        cs->lobbyPoolTries = 0;
+        if (id == 0) {
+            cs->lobbyPoolState = CLIENT_BOT_POOL_S_NONE;
+        } else if (lobbyBotPoolsCatalogId() == id) {
+            cs->lobbyPoolState = CLIENT_BOT_POOL_S_HAVE;
+        } else {
+            cs->lobbyPoolState = CLIENT_BOT_POOL_S_WANTED;
         }
         break;
     }

@@ -40,6 +40,7 @@
  *********************************************************/
 
 #include "transport_control_codec.h"
+#include "lobby_bot_pools.h"   /* LOBBY_BOT_CATALOG_WIRE_MAX */
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -1129,7 +1130,9 @@ static bool decodeStatsSeedBody(const uint8_t *buf, size_t len,
 /* PACKET_LOBBY_BOT_POOL_CHUNK wire format:
  *   [header 8] [seq 1] [count 1] [fragLen 2 BE] [frag fragLen]
  * Each fragment is one slice of the server's zlib-compressed bot-pool
- * catalog; the client reassembles seq 0..count-1 and installs. */
+ * catalog. RETIRED: nothing sends it now (CTRL_LOBBY_BOT_POOL_INFO and
+ * BULK_KIND_BOT_POOL replaced it), and the codec stays so recordings that
+ * hold it decode. */
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeLobbyBotPoolChunkBody(const ControlEvent *evt,
@@ -1252,6 +1255,31 @@ BOLO_STATIC_ASSERT(
 
 /* docsLen travels in two bytes. */
 BOLO_STATIC_ASSERT(BRAIN_DOCS_MAX <= 0xFFFF, brain_docs_len_fits_u16);
+
+/* CTRL_LOBBY_BOT_POOL_INFO body: [id 4 BE] [len 4 BE]. Which catalogue the
+ * server holds, and the length of its compressed blob; both 0 for none. A
+ * body where only one of them is 0, or a length past
+ * LOBBY_BOT_CATALOG_WIRE_MAX, does not decode. */
+#define LOBBY_BOT_POOL_INFO_BODY_LEN 8
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeLobbyBotPoolInfoBody(const ControlEvent *evt,
+                                               const struct UdpServerClient *recipient,
+                                               uint8_t *buf, size_t bufCap,
+                                               size_t *outLen) {
+    uint32_t id  = evt->u.lobbyBotPoolInfo.id;
+    uint32_t len = evt->u.lobbyBotPoolInfo.len;
+    (void)recipient;
+    if ((id == 0) != (len == 0)) return ENCODE_OVERFLOW;
+    if (len > LOBBY_BOT_CATALOG_WIRE_MAX) return ENCODE_OVERFLOW;
+    if (bufCap < LOBBY_BOT_POOL_INFO_BODY_LEN) return ENCODE_OVERFLOW;
+    buf[0] = (uint8_t)(id >> 24);  buf[1] = (uint8_t)(id >> 16);
+    buf[2] = (uint8_t)(id >> 8);   buf[3] = (uint8_t)id;
+    buf[4] = (uint8_t)(len >> 24); buf[5] = (uint8_t)(len >> 16);
+    buf[6] = (uint8_t)(len >> 8);  buf[7] = (uint8_t)len;
+    *outLen = LOBBY_BOT_POOL_INFO_BODY_LEN;
+    return ENCODE_OK;
+}
 
 static EncodeResult encodeRoundStats(const ControlEvent *evt,
                                      const struct UdpServerClient *recipient,
@@ -2814,6 +2842,23 @@ static bool decodeLobbyBrainDocsChunkBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+static bool decodeLobbyBotPoolInfoBody(const uint8_t *buf, size_t len,
+                                       ControlEvent *outEvt) {
+    uint32_t id, blobLen;
+    if (len != LOBBY_BOT_POOL_INFO_BODY_LEN) return false;
+    id      = ((uint32_t)buf[0] << 24) | ((uint32_t)buf[1] << 16) |
+              ((uint32_t)buf[2] << 8) | (uint32_t)buf[3];
+    blobLen = ((uint32_t)buf[4] << 24) | ((uint32_t)buf[5] << 16) |
+              ((uint32_t)buf[6] << 8) | (uint32_t)buf[7];
+    if ((id == 0) != (blobLen == 0)) return false;
+    if (blobLen > LOBBY_BOT_CATALOG_WIRE_MAX) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_LOBBY_BOT_POOL_INFO;
+    outEvt->u.lobbyBotPoolInfo.id  = id;
+    outEvt->u.lobbyBotPoolInfo.len = blobLen;
+    return true;
+}
+
 static bool decodeLobbyBrainAnnounceBody(const uint8_t *buf, size_t len,
                                          ControlEvent *outEvt) {
     /* Layout: see encodeLobbyBrainAnnounceBody. */
@@ -3692,6 +3737,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_LOBBY_SCRIPT_LIST]     = encodeLobbyScriptListBody,
     [CTRL_LOBBY_SCRIPT_SETTING]  = encodeLobbyScriptSettingBody,
     [CTRL_LOBBY_BRAIN_ANNOUNCE]  = encodeLobbyBrainAnnounceBody,
+    [CTRL_LOBBY_BOT_POOL_INFO]   = encodeLobbyBotPoolInfoBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -3746,6 +3792,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_LOBBY_SCRIPT_LIST]     = decodeLobbyScriptListBody,
     [CTRL_LOBBY_SCRIPT_SETTING]  = decodeLobbyScriptSettingBody,
     [CTRL_LOBBY_BRAIN_ANNOUNCE]  = decodeLobbyBrainAnnounceBody,
+    [CTRL_LOBBY_BOT_POOL_INFO]   = decodeLobbyBotPoolInfoBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {

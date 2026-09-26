@@ -4080,6 +4080,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lock_channel.c
     tests/unit/test_loopback_preview.c
     tests/unit/test_loopback_brain_docs.c
+    tests/unit/test_loopback_bot_pool.c
     tests/unit/test_loopback_download.c
     tests/unit/test_loopback_map_change.c
     tests/unit/test_loopback_entity_change.c
@@ -4726,6 +4727,7 @@ set(_unit_test_names
     lobby_brain_list_clears_stale_texts
     lobby_brain_announce_codec_and_apply
     lobby_brain_docs_put_follows_generation
+    lobby_bot_pool_info_codec_and_apply
     lobby_chat_line_format_is_what_is_appended
     lobby_brain_docs_stay_out_of_the_control_snapshot
     lobby_brain_docs_reach_a_joining_subscriber
@@ -5436,6 +5438,11 @@ set(_unit_test_names
     loopback_map_preview
     loopback_brain_docs_fetch
     loopback_brain_docs_spectator
+    lobby_bot_pool_join_sends_only_the_id
+    loopback_bot_pool_fetch
+    loopback_bot_pool_same_not_fetched
+    bot_pool_refresh_retakes_catalogue
+    loopback_bot_pool_survives_bulk_rebase
     loopback_brain_docs_survives_bulk_rebase
     loopback_map_upload
     upload_begin_golden
@@ -5695,6 +5702,7 @@ set(_unit_test_names
     lobby_maxbots_cap_boundary
     empty_return_to_lobby_removes_bots_and_unlocks
     bot_pool_wire_chunk_transport
+    bot_pool_catalog_id
     voice_core_roundtrip
     voice_device_resolve
     voice_peak

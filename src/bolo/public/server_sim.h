@@ -1922,6 +1922,23 @@ void serverSimEmitBrainAnnounces(const ServerSim *sim,
                                  void (*deliver)(void *, const struct ControlEvent *),
                                  void *ctx);
 
+/* Take the bot-name catalogue this server hands out from the pools loaded
+ * now (lobby_bot_pools.h), replacing the one held. serverSimCreate calls it,
+ * but the pools loaded then are not always the final ones: WinBoloDS makes
+ * the sim first, loads -botnames or the shipped file after, and calls this
+ * again. A test that installs other pools after the sim exists does the same. */
+void serverSimRefreshBotPools(ServerSim *sim);
+
+/* Fill the CTRL_LOBBY_BOT_POOL_INFO that names the catalogue held. */
+void serverSimFillBotPoolInfoEvent(const ServerSim *sim,
+                                   struct ControlEvent *evt);
+
+/* The held catalogue's compressed blob and id, for a
+ * PACKET_LOBBY_BOT_POOL_REQ answer. False when there is none. *outBlob
+ * points into the sim and stays valid until the next refresh. */
+bool serverSimGetBotPoolBlob(const ServerSim *sim, const uint8_t **outBlob,
+                             uint32_t *outLen, uint32_t *outId);
+
 /* Brain `brainIdx`'s commands.txt as the cache holds it: compressed with
  * brainDocsCompress (brain_list.h). *outZ points into the cache and stays
  * valid until the next serverSimRefreshBrainDocs or serverSimFreeBrainDocs,

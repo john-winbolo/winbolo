@@ -118,28 +118,28 @@ enum {
  * JOIN_REPLAY_BACKLOG_MAX in udp_server_control.c counts it from the caps and
  * a static assertion there fails the build when the replay no longer fits.
  * The fix for that is to move the data that grew onto CHANNEL_BULK, as brain
- * docs were, not to raise this: every connection pays for it in memory. At
- * the current caps the replay is 183,000 bytes:
+ * docs and the bot-name catalogue were, not to raise this: every connection
+ * pays for it in memory. At the current caps the replay is 112,231 bytes:
  *
- *   bot-name catalogue, 78 chunks of 909                           70,902
  *   scenario panels, 32 lists of 1,025                             32,800
  *   events published live during the join, 32 x 1,026              32,832
- *   164 small records x 133                                        21,812
+ *   165 small records x 133                                        21,945
  *   script settings, 49 x 170                                       8,330
  *   brain announces, 16 x 526                                       8,416
  *   six whole-segment events x 1,026                                6,156
  *   scenario rules, 3 fragments x 584                               1,752
  *
- * rounded up to 192 KiB. Brain docs are not in it: they go on CHANNEL_BULK
- * when a client asks, where they used to be 273 KB of the replay. The ring is
- * indexed modulo this size, so it need not be a power of two.
+ * rounded up to 120 KiB. Neither brain docs nor the bot-name catalogue is in
+ * it: both go on CHANNEL_BULK when a client asks, where they used to be 273 KB
+ * and 71 KB of the replay. The ring is indexed modulo this size, so it need
+ * not be a power of two.
  *
  * The cost is real memory, not reserved address space: transportUdpServerCreate
  * zeroes the whole server struct and channelMuxInit zeroes each mux, so every
- * backlog is written and resident. It adds 192 KiB to each mux, about 9 MiB to
- * a process that runs the UDP server (16 player and 32 spectator muxes), and
- * 192 KiB to a client. */
-#define CHANNEL_CONTROL_BACKLOG (192u * 1024u)
+ * backlog is written and resident. It adds 120 KiB to each mux, about 5.6 MiB
+ * to a process that runs the UDP server (16 player and 32 spectator muxes),
+ * and 120 KiB to a client. */
+#define CHANNEL_CONTROL_BACKLOG (120u * 1024u)
 
 /* Per-channel reliability state. ackedSeq / expectedSeq are exclusive
  * upper bounds (matching the shipped queue model: "confirmed up to here,

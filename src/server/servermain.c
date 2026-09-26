@@ -2338,6 +2338,10 @@ int main(int argc, char **argv) {
       if (poolsLoaded) {
         fprintf(stderr, "Loaded %d bot name pool(s)\n", poolStats.poolsKept);
       }
+      /* The sim was made further up, before these pools were loaded, so
+       * the catalogue copy it took then holds the built-in pools. Take it
+       * again so joiners are offered the pools loaded here. */
+      serverSimRefreshBotPools(serverSim);
     }
     /* If no -brain specified but AI is enabled, auto-discover a brain path
      * so that lobby "Add Bot" requests have a brain to use. */
