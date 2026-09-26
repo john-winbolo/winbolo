@@ -54,9 +54,8 @@ BgGame *bgGameGetShared(void) { return sharedBg; }
 #define BG_MIN_ZOOM 1
 #define BG_MAX_ZOOM 8
 
-/* The drawn camera moves in steps of this many world units: two game
-   pixels, the period of a one-pixel checkerboard (see bgGameRender). */
-#define BG_CAMERA_STEP_WU 32
+#define BG_TICK_INTERVAL_MS  20   /* 50 Hz — matches server tick rate */
+#define BG_MAX_CATCHUP_TICKS 3    /* cap catch-up so a stall can't snowball */
 
 /* Brain script path */
 #define BG_BRAIN_PATH "Brains/GoalHunter_1.7/init.lua"
@@ -78,6 +77,40 @@ static bool findBrainPath(char *out, size_t outLen) {
         }
     }
     return false;
+}
+
+/* Drops the sprite atlas and its texture. Every place that drops tilesTex
+ * calls this: the atlas is a copy of that sheet. destroyTex is false when
+ * the renderer that owned the texture is already gone (see
+ * bgGameEnsureTexture). */
+static void bgGameDropSprites(BgGame *bg, bool destroyTex) {
+    if (bg->spritesTex && destroyTex) SDL_DestroyTexture(bg->spritesTex);
+    bg->spritesTex = NULL;
+    tileLoaderFreeSpriteAtlas(bg->spriteAtlas);
+    bg->spriteAtlas = NULL;
+}
+
+/* The padded copy of the sheet's sprites, built before the caller frees
+ * the sheet. Not fatal when it fails: the sprites keep drawing from the
+ * sheet. */
+static void bgGameBuildSprites(BgGame *bg, SDL_Renderer *renderer,
+                               SDL_Surface *sheet, GfxTextureFilter filter) {
+    bg->spriteAtlas = tileLoaderBuildSpriteAtlas(sheet, 1);
+    if (bg->spriteAtlas == NULL) return;
+    bg->spritesTex = SDL_CreateTextureFromSurface(renderer,
+                                                  bg->spriteAtlas->surface);
+    tileLoaderSpriteAtlasDropSurface(bg->spriteAtlas);
+    if (bg->spritesTex == NULL) {
+        WB_LOG_WARN(WB_LOG_CAT_ASSET,
+                    "[BgGame] the sprite atlas would not become a texture "
+                    "(%s); sprites keep drawing from the sheet",
+                    SDL_GetError());
+        tileLoaderFreeSpriteAtlas(bg->spriteAtlas);
+        bg->spriteAtlas = NULL;
+        return;
+    }
+    SDL_SetTextureBlendMode(bg->spritesTex, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureScaleMode(bg->spritesTex, sdl3DrawScaleModeForFilter(filter));
 }
 
 bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
@@ -152,6 +185,7 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
         return false;
     }
     bg->tilesTex = SDL_CreateTextureFromSurface(renderer, sheet);
+    bgGameBuildSprites(bg, renderer, sheet, gfxGetTextureFilter());
     SDL_DestroySurface(sheet);
     if (bg->tilesTex) {
         SDL_SetTextureScaleMode(bg->tilesTex,
@@ -159,6 +193,7 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
     }
     if (!bg->tilesTex) {
         WB_LOG_ERROR(WB_LOG_CAT_ASSET, "[BgGame] SDL_CreateTextureFromSurface failed");
+        bgGameDropSprites(bg, true);
         serverSimDestroy(bg->sim);
         return false;
     }
@@ -286,15 +321,69 @@ void bgGameDestroy(BgGame *bg) {
         SDL_DestroyTexture(bg->tilesTex);
         bg->tilesTex = NULL;
     }
+    bgGameDropSprites(bg, true);
     if (bg->valid) {
         serverSimDestroy(bg->sim);
         bg->valid = false;
     }
 }
 
-void bgGameTick(BgGame *bg) {
-    if (!bg || !bg->valid || bg->numBots == 0) return;
-    if (bg->hiddenByForeground) return;
+/* The draw places the camera and the tanks between the last two sim ticks
+ * (see bgGameRender). A move of more than two tiles in one tick is a
+ * respawn or a camera cycle, not motion: gliding across it would fly over
+ * the map, so the old position is dropped. */
+#define BG_INTERP_SNAP_WU 512   /* two tiles, world units */
+
+static bool bgInterpJumped(WORLD from, WORLD to) {
+    int d = (int)to - (int)from;
+    return d > BG_INTERP_SNAP_WU || d < -BG_INTERP_SNAP_WU;
+}
+
+/* Caller holds the sim mutex. A dead or empty slot is forgotten, so a
+ * respawn starts from where it appears rather than where it died. */
+static void bgInterpRecordTanks(BgGame *bg) {
+    for (BYTE i = 0; i < MAX_TANKS; i++) {
+        TankRenderInfo info;
+        if (!serverSimGetTankRender(bg->sim, i, &info) || !info.alive) {
+            bg->tankHave[i] = false;
+            continue;
+        }
+        if (!bg->tankHave[i] ||
+            bgInterpJumped(bg->tankCurX[i], info.world_x) ||
+            bgInterpJumped(bg->tankCurY[i], info.world_y)) {
+            bg->tankPrevX[i] = info.world_x;
+            bg->tankPrevY[i] = info.world_y;
+        } else {
+            bg->tankPrevX[i] = bg->tankCurX[i];
+            bg->tankPrevY[i] = bg->tankCurY[i];
+        }
+        bg->tankCurX[i] = info.world_x;
+        bg->tankCurY[i] = info.world_y;
+        bg->tankHave[i] = true;
+    }
+}
+
+static void bgInterpRecordCamera(BgGame *bg) {
+    if (!bg->interpValid ||
+        bgInterpJumped(bg->camCurX, bg->viewCenterX) ||
+        bgInterpJumped(bg->camCurY, bg->viewCenterY)) {
+        bg->camPrevX = bg->viewCenterX;
+        bg->camPrevY = bg->viewCenterY;
+    } else {
+        bg->camPrevX = bg->camCurX;
+        bg->camPrevY = bg->camCurY;
+    }
+    bg->camCurX = bg->viewCenterX;
+    bg->camCurY = bg->viewCenterY;
+    bg->interpValid = true;
+}
+
+/* One sim tick. False when it did not run (no bots, or hidden behind a
+ * foreground game), so bgGameTickFixed only moves the draw's tick time
+ * for a tick that really happened. */
+static bool bgGameStep(BgGame *bg) {
+    if (!bg || !bg->valid || bg->numBots == 0) return false;
+    if (bg->hiddenByForeground) return false;
 
     /* serverSimApplyCommand asserts threadsCurrentlyHoldsMutex() — the
      * bot-pool drain inside botManagerTick dispatches CMD_CHAT through
@@ -307,6 +396,7 @@ void bgGameTick(BgGame *bg) {
      * frame; serverSimTick internally runs the keys + game half-steps. */
     serverSimBotTick(bg->sim, aiFull);
     serverSimTick(bg->sim);
+    bgInterpRecordTanks(bg);
     threadsReleaseMutex();
 
     /* Update camera to follow the tracked player (freeze while dead) */
@@ -318,6 +408,12 @@ void bgGameTick(BgGame *bg) {
             bg->viewCenterY = bg->viewCenterY + ((int)info.world_y - (int)bg->viewCenterY) / 8;
         }
     }
+    bgInterpRecordCamera(bg);
+    return true;
+}
+
+void bgGameTick(BgGame *bg) {
+    (void)bgGameStep(bg);
 }
 
 /* Follow the next tank, wrapping past the last one back to the first.
@@ -341,6 +437,10 @@ void bgGameCycleCamera(BgGame *bg) {
          * a full map that is a second of flying over open ocean. */
         bg->viewCenterX = info.world_x;
         bg->viewCenterY = info.world_y;
+        /* The drawn camera too, or it shows the old view until the next
+         * tick. */
+        bg->camPrevX = bg->camCurX = bg->viewCenterX;
+        bg->camPrevY = bg->camCurY = bg->viewCenterY;
         WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[BgGame] Camera now following slot %d",
                      (int)slot);
         break;
@@ -482,8 +582,9 @@ static void bgGameEnsureTexture(BgGame *bg) {
     GfxTextureFilter filter = gfxGetTextureFilter();
     if (bg->texRenderer == cur && bg->tilesGeneration == gen) {
         if (bg->tilesFilter != filter && bg->tilesTex) {
-            SDL_SetTextureScaleMode(bg->tilesTex,
-                                    sdl3DrawScaleModeForFilter(filter));
+            SDL_ScaleMode mode = sdl3DrawScaleModeForFilter(filter);
+            SDL_SetTextureScaleMode(bg->tilesTex, mode);
+            if (bg->spritesTex) SDL_SetTextureScaleMode(bg->spritesTex, mode);
             bg->tilesFilter = filter;
         }
         return;
@@ -499,6 +600,7 @@ static void bgGameEnsureTexture(BgGame *bg) {
      * SDL_DestroyTexture on the stale handle is undefined behaviour,
      * so we elide the destroy and just NULL the field. */
     bg->tilesTex = NULL;
+    bgGameDropSprites(bg, bg->texRenderer == cur);
     bg->texRenderer = cur;
     bg->tilesGeneration = gen;
     bg->tilesFilter = filter;
@@ -517,11 +619,13 @@ static void bgGameEnsureTexture(BgGame *bg) {
         return;
     }
     bg->tilesTex = SDL_CreateTextureFromSurface(cur, sheet);
+    bgGameBuildSprites(bg, cur, sheet, filter);
     SDL_DestroySurface(sheet);
     if (bg->tilesTex) {
         SDL_SetTextureScaleMode(bg->tilesTex,
                                 sdl3DrawScaleModeForFilter(filter));
     } else {
+        bgGameDropSprites(bg, true);
         Uint64 now = SDL_GetTicks();
         if (now - sLastTexErrLogMs > 5000) {
             WB_LOG_ERROR(WB_LOG_CAT_ASSET,
@@ -529,6 +633,39 @@ static void bgGameEnsureTexture(BgGame *bg) {
                          "during tile texture rebuild");
             sLastTexErrLogMs = now;
         }
+    }
+}
+
+/* How far this frame is between the last two ticks: 0 = the tick before,
+ * 1 = the last tick, and held at 1 when the sim is paused, hidden or late.
+ * Measured on the wall clock from the last tick's scheduled time. */
+static float bgInterpAlpha(const BgGame *bg) {
+    Sint64 sinceNs = (Sint64)(SDL_GetTicksNS() - bg->interpTickMs * 1000000u);
+    float alpha = (float)((double)sinceNs / (BG_TICK_INTERVAL_MS * 1000000.0));
+    if (alpha < 0.0f) alpha = 0.0f;
+    if (alpha > 1.0f) alpha = 1.0f;
+    return alpha;
+}
+
+/* The camera centre and tank positions for this frame. Before the first
+ * tick, the live camera and the live tank positions. */
+static void bgInterpFill(const BgGame *bg, MapViewPreciseCam *pc) {
+    SDL_memset(pc, 0, sizeof(*pc));
+    if (!bg->interpValid) {
+        pc->centerWX = (float)bg->viewCenterX;
+        pc->centerWY = (float)bg->viewCenterY;
+        return;
+    }
+    float a = bgInterpAlpha(bg);
+    pc->centerWX = (float)bg->camPrevX + ((float)bg->camCurX - (float)bg->camPrevX) * a;
+    pc->centerWY = (float)bg->camPrevY + ((float)bg->camCurY - (float)bg->camPrevY) * a;
+    for (int i = 0; i < MAX_TANKS; i++) {
+        if (!bg->tankHave[i]) continue;   /* drawn at its live position */
+        pc->haveTank[i] = true;
+        pc->tankWX[i] = (float)bg->tankPrevX[i] +
+                        ((float)bg->tankCurX[i] - (float)bg->tankPrevX[i]) * a;
+        pc->tankWY[i] = (float)bg->tankPrevY[i] +
+                        ((float)bg->tankCurY[i] - (float)bg->tankPrevY[i]) * a;
     }
 }
 
@@ -554,16 +691,18 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
     bg->lastZoom = zf;
 
     if (bg->tilesTex != NULL) {
-        MapViewCtx ctx = { renderer, bg->tilesTex, zf, 1, (float)zf };
-        /* The camera eases after its tank every tick, so it moves a game
-         * pixel or two at a time. Tile art dithered in a one-pixel
-         * checkerboard (the buildings) turns into its own inverse when
-         * moved by one pixel, so every odd step flashes it dark and light.
-         * Drawing from a centre cut down to two game pixels keeps the
-         * checkerboard in phase; the follow itself is unchanged. */
-        WORLD camX = (WORLD)(bg->viewCenterX & ~(WORLD)(BG_CAMERA_STEP_WU - 1));
-        WORLD camY = (WORLD)(bg->viewCenterY & ~(WORLD)(BG_CAMERA_STEP_WU - 1));
-        mapViewRenderCentered(&ctx, bg->sim, camX, camY,
+        /* The camera eases after its tank every tick. Placed in whole game
+         * pixels and moved only on ticks, it steps a game pixel at uneven
+         * moments, and tile art dithered in a one-pixel checkerboard (the
+         * buildings) turns into its own inverse on each step, so it
+         * flashes. Placed in whole screen pixels between ticks instead, it
+         * glides; the tanks go the same way so they keep pace with it. */
+        MapViewPreciseCam pc;
+        bgInterpFill(bg, &pc);
+        MapViewCtx ctx = { renderer, bg->tilesTex, zf, 1, (float)zf,
+                           bg->spritesTex, bg->spriteAtlas, &pc };
+        mapViewRenderCentered(&ctx, bg->sim,
+                              bg->viewCenterX, bg->viewCenterY,
                               0, 0, screenW, screenH, bg->cameraPlayer);
     }
 
@@ -571,16 +710,14 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
     bgGameRenderMapName(bg, renderer, screenW, screenH);
 }
 
-#define BG_TICK_INTERVAL_MS  20   /* 50 Hz — matches server tick rate */
-#define BG_MAX_CATCHUP_TICKS 3    /* cap catch-up so a stall can't snowball */
-
 void bgGameTickFixed(BgGame *bg, Uint64 *lastTickTime) {
     if (!bg || !bg->valid) return;
     Uint64 now = SDL_GetTicks();
     int ticks = 0;
+    bool ran = false;
     while (now - *lastTickTime >= BG_TICK_INTERVAL_MS &&
            ticks < BG_MAX_CATCHUP_TICKS) {
-        bgGameTick(bg);
+        ran |= bgGameStep(bg);
         *lastTickTime += BG_TICK_INTERVAL_MS;
         ticks++;
     }
@@ -589,6 +726,13 @@ void bgGameTickFixed(BgGame *bg, Uint64 *lastTickTime) {
      * right call for a decorative background sim. */
     if (now - *lastTickTime >= BG_TICK_INTERVAL_MS) {
         *lastTickTime = now;
+    }
+    /* The scheduled time of the tick just run, not the wall clock when it
+     * ran, so the draw moves exactly one tick per 20 ms however the frames
+     * fall. Only when a tick really ran: otherwise the draw holds the last
+     * position rather than replaying the last step. */
+    if (ran) {
+        bg->interpTickMs = *lastTickTime;
     }
 }
 

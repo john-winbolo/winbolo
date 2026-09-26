@@ -55,7 +55,25 @@ typedef struct {
        terrain does not. sprite_atlas.h says why they are worth carrying. */
     SDL_Texture       *spritesTex;
     const SpriteAtlas *sprites;
+    /* Read by mapViewRenderCentered only. NULL, which every positional
+       initialiser leaves it, keeps its camera on whole game pixels; the
+       menu background sets it (see MapViewPreciseCam). */
+    struct MapViewPreciseCam *precise;
 } MapViewCtx;
+
+/* A camera for mapViewRenderCentered placed to the whole SCREEN pixel
+   rather than the whole game pixel. The centre is in fractional world
+   units (256 per tile), so the caller can hand in a position between two
+   sim ticks. A slot with haveTank set is drawn at tankWX/Y (also
+   fractional world units) instead of its live position; its facing,
+   colour and alive state still come from the sim. Shells, explosions,
+   LGMs and debris keep their game-pixel positions against the same
+   camera. */
+typedef struct MapViewPreciseCam {
+    float centerWX, centerWY;
+    bool  haveTank[MAX_TANKS];
+    float tankWX[MAX_TANKS], tankWY[MAX_TANKS];
+} MapViewPreciseCam;
 
 /* Source rect for a cell of the tile atlas, inset by a whisker on every
  * side. The sheet packs sprites edge-to-edge — the row above the tanks is

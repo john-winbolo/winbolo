@@ -27,6 +27,7 @@
 #include <stdbool.h>
 #include "server_sim.h"
 #include "gfx_settings.h"
+#include "sprite_atlas.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -50,6 +51,12 @@ typedef struct BgGame {
      * only needs the scale mode re-applied, not a new sheet, so this is
      * checked separately from the generation. */
     GfxTextureFilter tilesFilter;
+    /* The padded copy of the moving sprites, off the same sheet as
+     * tilesTex and on the same renderer, so a filtered sample does not
+     * blend in the sprite packed next door (sprite_atlas.h). Built and
+     * dropped with tilesTex; both NULL draws the sprites from the sheet. */
+    SDL_Texture *spritesTex;
+    SpriteAtlas *spriteAtlas;
     BYTE         cameraPlayer;  /* Player slot to follow with camera */
     int          zoomUser;      /* User zoom factor from the +/- keys.
                                  * 0 = follow bgGameRender's fit-to-screen
@@ -72,6 +79,16 @@ typedef struct BgGame {
     Uint8        mapNameFadeFromAlpha; /* Starting alpha for the active pause-driven fade */
     /* Bounding box of map content (map coordinates) */
     int          mapMinX, mapMinY, mapMaxX, mapMaxY;
+    /* Camera centre and tank positions after the last two sim ticks, and
+     * the scheduled time (SDL_GetTicks ms) of the last one, so
+     * bgGameRender can draw in between. interpValid is false until the
+     * first tick records anything. */
+    bool         interpValid;
+    Uint64       interpTickMs;
+    WORLD        camPrevX, camPrevY, camCurX, camCurY;
+    bool         tankHave[MAX_TANKS];       /* alive at the last tick */
+    WORLD        tankPrevX[MAX_TANKS], tankPrevY[MAX_TANKS];
+    WORLD        tankCurX[MAX_TANKS], tankCurY[MAX_TANKS];
 } BgGame;
 
 bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer);
