@@ -739,6 +739,7 @@ static const UnitTestEntry s_tests[] = {
     { "lobby_default_sides_round_end_reset", run_lobby_default_sides_round_end_reset },
     { "lobby_default_sides_reset_before_seating", run_lobby_default_sides_reset_before_seating },
     { "lobby_default_sides_solo_host_any_keeps_south", run_lobby_default_sides_solo_host_any_keeps_south },
+    { "lobby_default_sides_balance_keeps_hand_pick", run_lobby_default_sides_balance_keeps_hand_pick },
     { "starts_side_end_to_end_four_v_twelve",    run_starts_side_end_to_end_four_v_twelve    },
     { "starts_side_region_sweep",                run_starts_side_region_sweep                },
     { "starts_side_unsided_kept_off_chosen_side",
