@@ -1008,7 +1008,7 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
 
     /* Redraw every n refreshes by the Frame Rate setting; n = 1 draws
      * direct every frame, and so does a renderer that cannot keep the
-     * scene offscreen. 1.5x cannot be drawn direct, so it always goes
+     * scene offscreen or a high-density screen (below). 1.5x cannot be drawn direct, so it always goes
      * through the kept scene; with n = 1 that is redrawn every frame. */
     Sint64 periodNs = bgFrameRefreshNs(renderer);
     int n = bgFrameEveryN(periodNs);
@@ -1016,7 +1016,15 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
     int texW = screenW * ssScale;
     int texH = screenH * ssScale;
     bgFramePrepare(bg, renderer, texW, texH);
-    if (n < 2 && ssScale == 1) bgFrameDrop(bg, true);
+    /* The 1x kept scene is sized in points. On a high-density screen
+     * (tablet mode) the window maps points to more pixels than that, so a
+     * copy would be blurred; the scene draws direct there instead. 1.5x is
+     * left alone: its texture is twice the points, about the pixels on a
+     * 2x screen. */
+    int pxW = 0, pxH = 0;
+    SDL_GetRenderOutputSize(renderer, &pxW, &pxH);
+    bool keep1x = n >= 2 && pxW == screenW && pxH == screenH;
+    if (!keep1x && ssScale == 1) bgFrameDrop(bg, true);
     if (bg->tilesTex != NULL) {
         bool wasBroken = bg->frameBroken;
         bool shown;
@@ -1033,7 +1041,7 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
                 zf = 1;   /* this frame: direct at 1x */
             }
         } else {
-            shown = n >= 2 && !bg->frameBroken &&
+            shown = keep1x && !bg->frameBroken &&
                     screenW > 0 && screenH > 0 &&
                     bgFrameRender(bg, renderer, screenW, screenH,
                                   screenW, screenH, zf, periodNs, n,
