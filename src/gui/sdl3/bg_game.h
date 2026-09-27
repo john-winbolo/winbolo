@@ -89,10 +89,6 @@ typedef struct BgGame {
     bool         tankHave[MAX_TANKS];       /* alive at the last tick */
     WORLD        tankPrevX[MAX_TANKS], tankPrevY[MAX_TANKS];
     WORLD        tankCurX[MAX_TANKS], tankCurY[MAX_TANKS];
-    /* The clock the draw blends by: it moves a whole number of refresh
-     * periods, 0 or more, per draw (see bgInterpAlpha). */
-    Uint64       interpClockNs;
-    bool         interpClockValid;
     /* The drawn scene, kept so the Frame Rate setting can redraw it every
      * n-th refresh and copy it on the others (see bgFrameRender). Same
      * lifetime rules as tilesTex: a renderer change forgets it, a resize
@@ -110,8 +106,21 @@ typedef struct BgGame {
     bool          frameBroken;
     Uint64        frameRedrawNs;   /* wall clock the next redraw is due n
                                     * periods after (see bgFrameRender) */
-    Uint64        frameLastNs;     /* wall clock of the last bgFrameRender */
-    Sint64        frameCallNs;     /* time between its calls, smoothed */
+    /* Kept by bgFrameNoteCall on every bgGameRender, whichever path draws:
+     * the time between calls, a clock on the refresh grid that the draw
+     * blends by when the calls land on that grid (gridMode), and the
+     * window of calls that decides gridMode. */
+    Uint64        frameLastNs;     /* wall clock of the last call */
+    Sint64        frameCallNs;     /* time between calls, smoothed */
+    Sint64        gridPeriodNs;    /* refresh period the state is for */
+    Uint64        gridClockNs;     /* moves whole periods per call */
+    bool          gridMode;        /* blend by gridClockNs, not the wall clock */
+    bool          gridDecided;     /* the first window has decided gridMode */
+    int           gridVotes;       /* windows in a row against gridMode */
+    Uint64        gridWinStartNs;  /* wall clock the window started */
+    int           gridWinCount;    /* calls in the window so far */
+    bool          gridWinFast;     /* a call in it came under half a period
+                                    * after the grid clock */
     /* The renderer and screen size the 1.5x scene texture could not be
      * made for; the background uses 1x until either changes. The
      * renderer is only compared, never used. */
