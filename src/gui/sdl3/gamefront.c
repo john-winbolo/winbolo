@@ -826,10 +826,20 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
        full screen here rather than waiting for a game. The preferences are
        already read and the window is created hidden, so the first dialog is
        the first thing drawn and there is no windowed flash. Big Picture,
-       tablet and the Deck are full screen from creation and are left alone. */
+       tablet and the Deck are full screen from creation and are left alone.
+
+       The switch is asynchronous (on macOS a Space animation of about half
+       a second), and SDL holds it for a hidden window until the window is
+       shown. So the window is shown here and SDL_SyncWindow waits for the
+       switch to finish; otherwise the first dialog frames draw at the
+       windowed size and the menu background jumps when the size changes.
+       The dialogs' own SDL_ShowWindow is then a no-op. */
     if (OKStart && gameFrontFullScreen && !uiModeIsTablet() &&
         !uiModeIsSteamDeck() && !steam_is_big_picture()) {
-      SDL_SetWindowFullscreen(sdl3DrawGetWindow(), true);
+      SDL_Window *win = sdl3DrawGetWindow();
+      SDL_SetWindowFullscreen(win, true);
+      SDL_ShowWindow(win);
+      SDL_SyncWindow(win);
     }
 #endif
 
