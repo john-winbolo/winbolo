@@ -27,7 +27,7 @@
  *                is where the scenario line now lives rather
  *                than under the map. Visibility is a row of
  *                named sets plus a Details table that holds
- *                the seven settings behind them.
+ *                the eight settings behind them.
  *********************************************************/
 
 #include <SDL3/SDL.h>
@@ -44,6 +44,7 @@ extern "C" {
 #include "../../../visibility_presets.h"  /* the named visibility sets */
 #include "../../../gamefront.h"  /* the remembered preset and custom set */
 #include "../../sdl3draw.h"    /* sdl3DrawGetRenderer — the summary's sprites */
+#include "../../sdl3imgui.h"   /* sdl3ImguiSpeakerIconTexture — the sound column */
 }
 
 /* Which row the Visibility dialog is showing as chosen. Read off the live
@@ -93,11 +94,11 @@ static float lobbyStepInputWidth(const char *widest) {
 }
 
 /* ── Visibility ───────────────────────────────────────────────────
- * The lobby carries seven visibility values. The row on the form offers
+ * The lobby carries eight visibility values. The row on the form offers
  * them as five named sets plus Custom, and the Details popup shows the
- * same six as a table with the individual controls on the Custom row.
+ * same seven as a table with the individual controls on the Custom row.
  *
- * None of that is on the wire. Every client already has all seven values,
+ * None of that is on the wire. Every client already has all eight values,
  * so each one works out for itself which preset they add up to and they
  * all show the same row; picking a preset just sends the values behind
  * it. See visibility_presets.h. */
@@ -108,7 +109,8 @@ static float lobbyStepInputWidth(const char *widest) {
 static const uint32_t kVisibilityLockMask =
     LOBBY_LOCK_PILL_VIEW | LOBBY_LOCK_BASE_VIEW | LOBBY_LOCK_ALLY_VIEW |
     LOBBY_LOCK_CLASSIC_MODE | LOBBY_LOCK_ALLIES_IN_TREES |
-    LOBBY_LOCK_OVERVIEW_WINDOW | LOBBY_LOCK_LINE_OF_SIGHT;
+    LOBBY_LOCK_OVERVIEW_WINDOW | LOBBY_LOCK_LINE_OF_SIGHT |
+    LOBBY_LOCK_POSITIONAL_SOUND;
 
 /* The live lobby settings in the shape the preset table compares. */
 static void lobbyVisibilityRead(ClientSim *cs, VisibilitySettings *out) {
@@ -121,6 +123,7 @@ static void lobbyVisibilityRead(ClientSim *cs, VisibilitySettings *out) {
     out->overviewWindow = clientSimGetOverviewWindow(cs);
     out->lineOfSight    = clientSimGetLineOfSight(cs);
     out->alliesInTrees  = clientSimGetAlliesInTrees(cs);
+    out->positionalSound = clientSimGetPositionalSound(cs);
 }
 
 /* Sends one category's [policy][decay hi][decay lo]. Shared by the preset
@@ -140,9 +143,9 @@ static void lobbyVisibilitySendView(ClientSim *cs, uint8_t lst, int policy,
  * ready flag.
  *
  * Classic mode goes first or last, never in the middle: while it is on
- * the server refuses an edit to any of the other six, so it has to come
+ * the server refuses an edit to any of the other seven, so it has to come
  * off before they can be written. Going the other way there is nothing to
- * write at all — turning it on sets the other six itself, to exactly the
+ * write at all — turning it on sets the other seven itself, to exactly the
  * values the Classic row holds. */
 static void lobbyVisibilityApply(ClientSim *cs, const VisibilitySettings *want) {
     VisibilitySettings cur;
@@ -176,6 +179,10 @@ static void lobbyVisibilityApply(ClientSim *cs, const VisibilitySettings *want) 
             uint8_t v = want->lineOfSight;
             lobbySendSetting(cs, LST_LINE_OF_SIGHT, &v, 1);
         }
+        if (cur.positionalSound != want->positionalSound) {
+            uint8_t v = want->positionalSound ? 1 : 0;
+            lobbySendSetting(cs, LST_POSITIONAL_SOUND, &v, 1);
+        }
     } else if (!cur.classicMode) {
         uint8_t on = 1;
         lobbySendSetting(cs, LST_CLASSIC_MODE, &on, 1);
@@ -202,7 +209,7 @@ static void lobbyVisibilityApplyPreset(ClientSim *cs, VisibilityPreset p) {
  *
  * An edit like this always lands on Custom, so the dialog's chosen row
  * moves there. Classic mode comes off because the server refuses an edit
- * to any of the other six settings while it is on, and lobbyVisibilityApply
+ * to any of the other seven settings while it is on, and lobbyVisibilityApply
  * sends that "off" ahead of the setting itself.
  *
  * customSettings and saveCustom say what this machine keeps, and there
@@ -266,7 +273,7 @@ static void lobbyVisibilityCommitView(ClientSim *cs,
 
 /* The one-line version of a set, for the Custom row of the dropdown and
  * the lobby's header line. Short labels and the same value words the
- * controls use, with the two on/off rules named only while they are on,
+ * controls use, with the three on/off rules named only while they are on,
  * so the stock set reads in about fifty characters. */
 void lobbyVisibilityDetailsLine(const VisibilitySettings *v, char *out,
                                 size_t outSize) {
@@ -324,6 +331,11 @@ void lobbyVisibilityDetailsLine(const VisibilitySettings *v, char *out,
                                      langGetText(STR_DLGLOBBY_ALLIES_TREES_CB));
         if (used >= outSize) return;
     }
+    if (v->positionalSound) {
+        used += (size_t)SDL_snprintf(out + used, outSize - used, "%s%s", sep,
+                                     langGetText(STR_DLGLOBBY_POSITIONAL_SOUND_CB));
+        if (used >= outSize) return;
+    }
     if (v->classicMode) {
         SDL_snprintf(out + used, outSize - used, "%s%s", sep,
                      langGetText(STR_DLGLOBBY_CLASSIC_MODE_CB));
@@ -331,7 +343,7 @@ void lobbyVisibilityDetailsLine(const VisibilitySettings *v, char *out,
 }
 
 /* Keeps the INI's memory of what the lobby is on in step with the lobby:
- * the seven per-setting values, and which named set they match. Run every
+ * the eight per-setting values, and which named set they match. Run every
  * frame the form is drawn rather than off each control, so a change from
  * anywhere - a preset, a Details control, another admin - is written down
  * the same way. The next game hosted from this machine starts there.
@@ -362,7 +374,7 @@ static void lobbyVisibilityRemember(ClientSim *cs, int myPlayerNum) {
 
 /* ── The Details table's columns ──────────────────────────────────
  * One per setting, in the order they read: what you see of pillboxes,
- * of bases, of allied tanks, then the three rules that shape all of it.
+ * of bases, of allied tanks, then the four rules that shape all of it.
  *
  * There is no classic-mode column. Classic mode forces exactly the
  * values the Classic row holds, so the row is classic mode: picking it
@@ -392,16 +404,20 @@ static const VisColumn kVisColumns[VIS_COLUMN_COUNT] = {
       STR_DLGLOBBY_OVERVIEW_WINDOW_TIP },
     { STR_DLGLOBBY_LINE_OF_SIGHT_CB, LOBBY_LOCK_LINE_OF_SIGHT,
       STR_DLGLOBBY_LINE_OF_SIGHT_TIP },
+    { STR_DLGLOBBY_POSITIONAL_SOUND_CB, LOBBY_LOCK_POSITIONAL_SOUND,
+      STR_DLGLOBBY_POSITIONAL_SOUND_TIP },
 };
 
-/* Which sprite stands for a setting on the lobby's header line. The last
- * two rules have never had one — there is no square to draw for "what
- * blocks sight" — so they read as the word on its own. */
+/* Which sprite stands for a setting on the lobby's header line. The
+ * overview window and line of sight have never had one — there is no
+ * square to draw for "what blocks sight" — so they read as the word on
+ * its own. */
 typedef enum {
     visIconPill = 0,
     visIconBase,
     visIconAlly,
     visIconTrees,   /* an allied tank on a forest square, drawn as a pair */
+    visIconSound,   /* the voice speaker, for positional sound */
     visIconNone
 } LobbyVisIcon;
 
@@ -449,6 +465,7 @@ static void lobbyRenderVisibilityValue(LobbyVisIcon icon, const char *word,
             tank = lobbyGetTankGood04Texture(renderer);
             if (tank == NULL) tex = NULL;
             break;
+        case visIconSound: tex = sdl3ImguiSpeakerIconTexture();       break;
         default: break;
         }
     }
@@ -495,7 +512,7 @@ static void lobbyRenderVisibilityValue(LobbyVisIcon icon, const char *word,
 
 /* What a row of the table puts in column c: the sprite, the word and
  * whether the pair is faint. The three view columns read in the four
- * policy words; the two on/off rules read yes or no, the way the header
+ * policy words; the three on/off rules read yes or no, the way the header
  * line has always said allies in trees; the overview window names its
  * mode and is never faint, because neither mode is "off".
  *
@@ -535,11 +552,15 @@ static void lobbyVisibilityCellValue(const VisibilitySettings *v, int c,
         /* None is a named mode like the other two, not an off state, so it
          * is not faint. */
         dim  = false;
-    } else {
+    } else if (c == 5) {
         bool on = (v->lineOfSight != (uint8_t)lineOfSightOff);
         *outIcon = visIconNone;
         word = langGetText(on ? STR_YES : STR_NO);
         dim  = !on;
+    } else {
+        *outIcon = visIconSound;
+        word = langGetText(v->positionalSound ? STR_YES : STR_NO);
+        dim  = !v->positionalSound;
     }
     if (outWord != NULL) *outWord = word;
     if (outDim != NULL)  *outDim  = dim;
@@ -599,9 +620,9 @@ static float lobbyVisibilityIconWidth(float s) {
     return 16.0f * s + 4.0f * s;
 }
 
-/* The narrowest the six value columns may be drawn. They are all one
+/* The narrowest the seven value columns may be drawn. They are all one
  * width on purpose - the table is read down a column and across a row,
- * and six different widths make both harder - so the widest minimum any
+ * and seven different widths make both harder - so the widest minimum any
  * one of them has is the minimum they all get.
  *
  * Three things are deliberately NOT in it. The column names: a header
@@ -742,7 +763,7 @@ static bool lobbyVisibilityRowPick(const char *name, bool sel, bool disabled,
  * written through customSettings instead.
  *
  * Both go out through lobbyVisibilityCommitEdit, which turns classic mode
- * off first: while it is on the server refuses an edit to any of the six. */
+ * off first: while it is on the server refuses an edit to any of the seven. */
 static void lobbyVisibilityCustomCell(ClientSim *cs, int c, bool effectiveHost,
                                       float maxCtrlW, float s,
                                       bool stackSeconds,
@@ -872,7 +893,7 @@ static void lobbyVisibilityCustomCell(ClientSim *cs, int c, bool effectiveHost,
             edited.overviewWindow = (uint8_t)window;
             lobbyVisibilityCommitEdit(cs, customSettings, realHost, &edited);
         }
-    } else {
+    } else if (c == 5) {
         const char *yesNo[] = {
             langGetText(STR_YES),
             langGetText(STR_NO),
@@ -884,6 +905,18 @@ static void lobbyVisibilityCustomCell(ClientSim *cs, int c, bool effectiveHost,
             edited.lineOfSight = (sel == 0)
                                      ? (uint8_t)lineOfSightBuildingsAndTrees
                                      : (uint8_t)lineOfSightOff;
+            lobbyVisibilityCommitEdit(cs, customSettings, realHost, &edited);
+        }
+    } else {
+        const char *yesNo[] = {
+            langGetText(STR_YES),
+            langGetText(STR_NO),
+        };
+        int sel = src->positionalSound ? 0 : 1;
+        ImGui::SetNextItemWidth(ctrlW);
+        if (ImGui::Combo("##sound", &sel, yesNo, 2)) {
+            VisibilitySettings edited = *src;
+            edited.positionalSound = (sel == 0);
             lobbyVisibilityCommitEdit(cs, customSettings, realHost, &edited);
         }
     }
@@ -918,7 +951,7 @@ static void lobbyRenderVisibilityTooltip(const VisibilitySettings *v,
      * go, since each of the three view settings carries its own.
      *
      * The values line up under one another rather than running on after
-     * their labels: six rows of two words each are read down the value
+     * their labels: seven rows of two words each are read down the value
      * column. The offset is measured off the longest label so a
      * translation that needs more room gets it. */
     {
@@ -1090,7 +1123,7 @@ static void lobbyVisibilityPresetCombo(ClientSim *cs, const char *id,
 }
 
 /* The Details body when the popup is too narrow for the table: the same
- * dropdown the lobby row carries, then the six settings stacked one to a
+ * dropdown the lobby row carries, then the seven settings stacked one to a
  * row the way the panel laid them out before the table existed.
  *
  * The controls here always show the live settings and send one setting at
@@ -2103,7 +2136,7 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
             ImGui::SetNextWindowSizeConstraints(ImVec2(minW, lockH),
                                                 ImVec2(maxW, lockH));
         }
-        /* Resizable on purpose: the table is six columns wide and a small
+        /* Resizable on purpose: the table is seven columns wide and a small
          * window cannot hold it, so the host is given the edge to drag
          * rather than a body that quietly hides its last two columns. */
         if (ImGui::BeginPopupModal(visTitle, &s_visOpen, 0)) {
@@ -2179,7 +2212,7 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
              * up with it.
              *
              * The narrowest a value column may be drawn. Below this the
-             * body switches to the stacked form; above it the six columns
+             * body switches to the stacked form; above it the seven columns
              * share every extra pixel equally. */
             float colW  = lobbyVisibilityValueColumnMinWidth(s);
             float nameW = 0.0f;
@@ -2197,7 +2230,7 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
             nameW += ImGui::GetFrameHeight() + tst.ItemSpacing.x;
 
             /* The narrowest the whole table can be drawn: the name column
-             * at its own width, and six value columns at their minimum. */
+             * at its own width, and seven value columns at their minimum. */
             outerW = nameW + tst.CellPadding.x * 2.0f
                    + ((float)VIS_COLUMN_COUNT
                       * (colW + tst.CellPadding.x * 2.0f));
@@ -2220,7 +2253,7 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
              * is exactly what went wrong when it could. */
             bool wideEnough = (ImGui::GetContentRegionAvail().x >= outerW);
 
-            /* The six value columns stretch and the name column does not,
+            /* The seven value columns stretch and the name column does not,
              * so the table fills whatever width the popup has and every
              * value column grows by the same amount. Equal weights, so they
              * stay equal at any size - the grid is read down a column as

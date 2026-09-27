@@ -34,6 +34,13 @@
 #include "lv_bolo_map.h"
 #include "lv_bases.h"
 #include "lv_starts.h"
+/* LvScripts, LvRuleChange and their accessors. Included here rather than
+ * next to LvRules because it brings in <stdbool.h>, and every bool below this
+ * line has been _Bool since sim_rules_names.h was included at this spot. */
+#include "lv_scripts.h"
+/* LvPresentation and its accessors: the scenario panels, scores,
+ * announcement and markers at the playhead. */
+#include "lv_presentation.h"
 
 /* Forward declarations for SDL types */
 struct SDL_Window;
@@ -87,10 +94,9 @@ typedef struct {
  *********************************************************/
 /* The gameplay numbers the viewer draws against. The viewer has no sim —
    it rebuilds its world from the .wbv stream — so it keeps its own holder
-   rather than reading one. Seeded with the classic values at create; a
-   later change fills it from a manifest in the recording header, and until
-   then the point is that the numbers come from one place instead of five
-   #defines. */
+   rather than reading one. Seeded with the classic values at create, then
+   filled with each rule's value at the playhead (lv_screenRuleValueAt) on
+   every load, every log_RuleSet the playhead passes and every seek. */
 typedef struct {
   BYTE tankFullShells;
   BYTE tankFullMines;
@@ -99,11 +105,26 @@ typedef struct {
   BYTE baseFullShells;
   BYTE baseFullMines;
   BYTE baseFullArmour;
+  /* pill_max_armour: the armour a pillbox draws as intact against. 1 to 255,
+     never 0, since the pill picture divides by it. */
+  int  pillMaxArmour;
 } LvRules;
 
 typedef struct LogViewerState {
   /* The rules this recording is drawn against. */
   LvRules      rules;
+  /* The scripts the recording says the round ran; empty for a plain round. */
+  LvScripts    scripts;
+  /* Every log_RuleSet the recording holds, in file order: collected by a walk
+     over the whole file when it loads, and appended as the playhead meets
+     them on a live feed, which has no file to walk. */
+  LvRuleChange ruleChanges[LV_RULE_CHANGES_MAX];
+  int          ruleChangeCount;
+  bool         ruleChangesTruncated;   /* the file held more than the array */
+  /* The scenario panels, scores, announcement and markers at the playhead:
+     filled as playback passes each record, and rebuilt from the load walk's
+     index wherever the playhead jumps. */
+  LvPresentation pres;
 
   /* --- FROM screen.c globals --- */
   screen       view;

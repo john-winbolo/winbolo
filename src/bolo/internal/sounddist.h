@@ -44,16 +44,31 @@
 
 /* Prototypes */
 
-/* Play the variant `tier` names for a sound the server delivered. `dir` is
-   the map-absolute bearing from input_packet.h, carried for a future stereo
-   panner and not read yet. */
-void clientSoundDist(struct GameSim *sim, sndEffects value, BYTE tier,
-                     BYTE dir);
+/* Q8 gains for a sound `pan` squares east (positive) or west (negative) of
+   the listener, `dist` squares away on the larger axis. The channel towards
+   the sound is unity and the other is ducked, so neither is ever above
+   SOUND_GAIN_UNITY; past SDIST_SOFT both fall towards the far gain at
+   SDIST_NONE. Pure integer arithmetic. */
+void soundDistGains(int8_t pan, BYTE dist, uint16_t *gainL, uint16_t *gainR);
+
+/* Play a sound the server delivered, with the pan and dist from its payload
+   (see Sound event payloads in input_packet.h): the far variant when dist is
+   past SDIST_SOFT, the near one otherwise, panned and attenuated by
+   soundDistGains. */
+void clientSoundDist(struct GameSim *sim, sndEffects value, int8_t pan,
+                     BYTE dist);
 
 /* A sound this client's own sim raised, which still has its real square:
-   work the tier out from the listener's tank and play it. */
+   work the near/far variant, the pan and the distance out from the listener's
+   tank and play it. */
 void clientSoundDistLocal(struct GameSim *sim, sndEffects value, BYTE mx,
                           BYTE my);
+
+/* A smart-ping sound, panned by the pinged square's east-west offset from
+   `listener`'s tank. Distance never quietens it. Plays centred when the
+   listener has no tank. */
+void clientSoundPing(struct GameSim *sim, BYTE listener, sndEffects value,
+                     BYTE mx);
 
 #endif /* _SOUNDDIST_H */
 

@@ -81,6 +81,8 @@ static void winbolonetAddLobbyInfoFields(cJSON *body) {
   cJSON_AddNumberToObject(body, "allyview", s_lobbyInfo.allyView);
   cJSON_AddBoolToObject(body, "classicmode", s_lobbyInfo.classicMode);
   cJSON_AddBoolToObject(body, "alliesintrees", s_lobbyInfo.alliesInTrees);
+  /* Absent reads as false, which is what every server did before the key. */
+  cJSON_AddBoolToObject(body, "positionalsound", s_lobbyInfo.positionalSound);
   cJSON_AddNumberToObject(body, "pillviewdecay", s_lobbyInfo.pillViewDecay);
   cJSON_AddNumberToObject(body, "baseviewdecay", s_lobbyInfo.baseViewDecay);
   cJSON_AddNumberToObject(body, "allyviewdecay", s_lobbyInfo.allyViewDecay);

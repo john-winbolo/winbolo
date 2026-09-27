@@ -166,7 +166,11 @@ BYTE lobbyStartSideMask(int k) {
 int lobbyLiveStartCount(ClientSim *cs) {
     int n = (int)clientSimGetLobbyStartCount(cs);
     /* The same slot count is the check that the cache is this map's, not the
-     * last one's while the new map's bytes are still arriving. */
+     * last one's while the new map's bytes are still arriving. It is only a
+     * check on the count: when the last map and the new one have the same
+     * number of slots but a different number in the border, the last map's
+     * live count shows until the new bytes land and the cache is rebuilt.
+     * The same holds for the pill and base counts below. */
     if (s_mapPreview.startCount > 0 && (int)s_mapPreview.startCount == n) {
         return (int)s_mapPreview.startLiveCount;
     }

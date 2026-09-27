@@ -48,10 +48,12 @@ bool lvGameSettingsDecode(const unsigned char *payload, int len,
     }
 
     /* Byte 16 is the settings-flags byte, appended with it. Absent means
-     * smart pings were allowed. */
+     * smart pings were allowed and positional sound was off. */
     if (len >= 17) {
         s.smartPingsOff =
             (payload[16] & LV_GAME_SETTINGS_FLAG_SMART_PINGS_OFF) != 0;
+        s.positionalSound =
+            (payload[16] & LV_GAME_SETTINGS_FLAG_POSITIONAL_SOUND) != 0;
     }
 
     *out = s;

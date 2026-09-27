@@ -50,6 +50,7 @@ static NSMenuItem *s_lv_modeSelectItem = nil;
 static NSMenuItem *s_lv_useTeamColoursItem = nil;
 static NSMenuItem *s_lv_tankCentredItem    = nil;
 static NSMenuItem *s_lv_hideLobbyItem      = nil;
+static NSMenuItem *s_lv_regionsItem        = nil;
 static NSMenuItem *s_lv_soundEffectsItem   = nil;
 static NSMenu     *s_lv_volumeMenu         = nil;
 static NSMenuItem *s_lv_dnsLookupsItem     = nil;
@@ -58,6 +59,7 @@ static NSMenuItem *s_lv_winEventsItem      = nil;
 static NSMenuItem *s_lv_winGameInfoItem    = nil;
 static NSMenuItem *s_lv_winItemInfoItem    = nil;
 static NSMenuItem *s_lv_winCommentsItem    = nil;
+static NSMenuItem *s_lv_winScnPanelItem    = nil;
 
 static int s_lv_zoomStepsBuilt = -1;   /* Zoom submenu's per-step items rebuilt on count change. */
 
@@ -88,6 +90,7 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleUseTeamColours:(id)sender;
 - (void)onToggleTankCentred:(id)sender;
 - (void)onToggleHideLobby:(id)sender;
+- (void)onToggleRegions:(id)sender;
 - (void)onToggleSoundEffects:(id)sender;
 - (void)onSetSoundVolume:(id)sender;
 - (void)onToggleDnsLookups:(id)sender;
@@ -97,6 +100,7 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleGameInfo:(id)sender;
 - (void)onToggleItemInfo:(id)sender;
 - (void)onToggleComments:(id)sender;
+- (void)onToggleScenarioPanel:(id)sender;
 - (void)onResetWindows:(id)sender;
 - (void)onHelp:(id)sender;
 @end
@@ -153,6 +157,10 @@ static void lv_push_sdl_quit(void) {
 }
 - (void)onToggleTankCentred:(id)sender { (void)sender; lv_imgui_toggle_tank_centred(); }
 - (void)onToggleHideLobby:(id)sender { (void)sender; lv_imgui_toggle_hide_lobby(); }
+- (void)onToggleRegions:(id)sender {
+    (void)sender;
+    if (lv_imgui_has_regions()) lv_imgui_toggle_regions();
+}
 - (void)onToggleSoundEffects:(id)sender {
     (void)sender;
     if (s_lv_state) s_lv_state->isSoundsPlaying = s_lv_state->isSoundsPlaying ? false : true;
@@ -172,6 +180,7 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleGameInfo:(id)sender { (void)sender; lv_g_show_game_info_window = !lv_g_show_game_info_window; }
 - (void)onToggleItemInfo:(id)sender { (void)sender; lv_g_show_item_info_window = !lv_g_show_item_info_window; }
 - (void)onToggleComments:(id)sender { (void)sender; lv_g_show_comments_window = !lv_g_show_comments_window; }
+- (void)onToggleScenarioPanel:(id)sender { (void)sender; lv_g_show_scenario_panel_window = !lv_g_show_scenario_panel_window; }
 - (void)onResetWindows:(id)sender { (void)sender; lv_g_reset_window_positions = true; }
 - (void)onHelp:(id)sender { (void)sender; /* Phase 3 — Help is a placeholder */ }
 @end
@@ -447,6 +456,15 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [optionsMenu addItem:hideLobby];
     s_lv_hideLobbyItem = hideLobby;
 
+    NSMenuItem *regions = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_MAPEDIT_SCENARIO_REGIONS)
+        action:@selector(onToggleRegions:)
+        keyEquivalent:@""];
+    [regions setTarget:s_lv_bridge];
+    [regions setToolTip:LANG_STR(STR_LV_REGIONS_TIP)];
+    [optionsMenu addItem:regions];
+    s_lv_regionsItem = regions;
+
     NSMenuItem *soundEffects = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MENU_SOUND_EFFECTS)
         action:@selector(onToggleSoundEffects:)
@@ -542,6 +560,14 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [winMenu addItem:winComments];
     s_lv_winCommentsItem = winComments;
 
+    NSMenuItem *winScnPanel = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_SCNPANEL_SETTINGS_TITLE)
+        action:@selector(onToggleScenarioPanel:)
+        keyEquivalent:@""];
+    [winScnPanel setTarget:s_lv_bridge];
+    [winMenu addItem:winScnPanel];
+    s_lv_winScnPanelItem = winScnPanel;
+
     [winMenu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem *resetWindows = [[NSMenuItem alloc]
@@ -619,6 +645,7 @@ void lv_mac_menubar_uninstall(void) {
     s_lv_useTeamColoursItem = nil;
     s_lv_tankCentredItem = nil;
     s_lv_hideLobbyItem = nil;
+    s_lv_regionsItem = nil;
     s_lv_soundEffectsItem = nil;
     s_lv_volumeMenu = nil;
     s_lv_dnsLookupsItem = nil;
@@ -627,6 +654,7 @@ void lv_mac_menubar_uninstall(void) {
     s_lv_winGameInfoItem = nil;
     s_lv_winItemInfoItem = nil;
     s_lv_winCommentsItem = nil;
+    s_lv_winScnPanelItem = nil;
     s_lv_zoomStepsBuilt = -1;
 }
 
@@ -652,6 +680,10 @@ void lv_mac_menubar_refresh(const struct LvMenuState *s) {
     }
     if (s_lv_tankCentredItem)  [s_lv_tankCentredItem  setState:(s->tankCentred  ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_hideLobbyItem)    [s_lv_hideLobbyItem    setState:(s->hideLobby    ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_regionsItem) {
+        [s_lv_regionsItem setState:(s->showRegions ? NSControlStateValueOn : NSControlStateValueOff)];
+        [s_lv_regionsItem setEnabled:(s->hasRegions ? YES : NO)];
+    }
     if (s_lv_soundEffectsItem) [s_lv_soundEffectsItem setState:(s->soundEffects ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_volumeMenu) {
         for (NSMenuItem *item in [s_lv_volumeMenu itemArray]) {
@@ -665,6 +697,7 @@ void lv_mac_menubar_refresh(const struct LvMenuState *s) {
     if (s_lv_winGameInfoItem) [s_lv_winGameInfoItem setState:(s->showGameInfo ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_winItemInfoItem) [s_lv_winItemInfoItem setState:(s->showItemInfo ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_winCommentsItem) [s_lv_winCommentsItem setState:(s->showComments ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_winScnPanelItem) [s_lv_winScnPanelItem setState:(s->showScenarioPanel ? NSControlStateValueOn : NSControlStateValueOff)];
 
     /* Zoom submenu — rebuild per-step items when the step count changes,
      * then mirror checkmarks every frame so wheel-zoom updates land. */

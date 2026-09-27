@@ -1985,6 +1985,8 @@ STR_DLGLOBBY_CLASSIC_MODE_TIP=Ajusta Vista de búnker a Tecla, y Vista de base y
 STR_MENU_CLASSIC_MODE_TIP=El servidor tiene el modo clásico activado, así que esta vista está desactivada.
 STR_DLGLOBBY_ALLIES_TREES_CB=Ver aliados en los árboles
 STR_DLGLOBBY_ALLIES_TREES_TIP=Los tanques aliados que están en los árboles se dibujan\nen tu pantalla en vez de quedar ocultos. La niebla de\nguerra sigue aplicándose, así que solo los ves donde ya\nves. Desactivado es la regla clásica, y el modo clásico\nlo desactiva a la fuerza.
+STR_DLGLOBBY_POSITIONAL_SOUND_CB=Sonido posicional
+STR_DLGLOBBY_POSITIONAL_SOUND_TIP=Los sonidos se oyen desde el lado de la pantalla donde ocurren.
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_OVERVIEW_WINDOW=Ventana del mapa general
 STR_DLGLOBBY_OVERVIEW_WINDOW_TIP=El bloque de casillas que el mapa general mantiene\nactualizado alrededor de tu tanque. Ampliado es todo lo\nque la vista clásica puede recorrer; Clásico lo reduce a\nla ventana que esa vista está mostrando. El modo clásico\nlo ajusta a Clásico y lo mantiene así. El servidor envía\nlos mismos datos del mapa en ambos casos.
@@ -2220,6 +2222,8 @@ STR_BOT_DIFF_DESC_HARD=Este bot persigue búnkeres y bases enemigas, coordinánd
 STR_DLGLOBBY_BOTCFG_MODE=Modo
 STR_DLGLOBBY_BOT_DOCS_TITLE=Comandos de {string1}
 STR_COPY=Copiar
+STR_DLGLOBBY_BOT_DOCS_LOADING=Obteniendo los comandos del servidor...
+STR_DLGLOBBY_BOT_DOCS_FAILED=El servidor no envió estos comandos. Cierra esta ventana y vuelve a abrirla para intentarlo de nuevo.
 
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_PRESET_CLASSIC=Clásico
@@ -2614,6 +2618,17 @@ STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — cambia cómo se juega la partida y no inte
 STR_MAPEDIT_SCENARIO_KIND_NOTE=Un mod no puede fijar el tipo de partida, mover el reloj, llevar su propia puntuación ni terminar la ronda, así que esas opciones no se ofrecen mientras esto diga Mod. Es una pregunta distinta de "Creado para este mapa", más abajo, que trata sobre para qué mapa se escribió el archivo.
 STR_MAPEDIT_SCENARIO_GAME_MOD=Un mod deja el tipo de partida al servidor
 STR_MAPEDIT_SCENARIO_FN_MOD={string1} no se ofrece mientras este archivo diga Mod: es la única respuesta que decide un final, y un mod no interfiere en la condición de victoria.
+STR_LV_INFO_SCENARIO_MODS_1={string1} · 1 mod
+STR_LV_INFO_SCENARIO_MODS_N={string1} · {number} mods
+STR_LV_INFO_SCRIPTS=Scripts
+STR_LV_INFO_SCRIPT_SOURCE_MAP=mapa
+STR_LV_INFO_SCRIPT_SOURCE_SERVER=servidor
+STR_LV_INFO_RULE_CHANGE=tick {number}: {string1} → {string2}
+STR_LV_INFO_SCORES=Puntuaciones
+STR_LV_INFO_SCORE_SLOT=Plaza {number}
+STR_LV_SCN_ANNOUNCE={string1}{string2}{string3}
+STR_LV_SCN_ANNOUNCE_TO=[{player}] {string1}{string2}{string3}
+STR_LV_REGIONS_TIP=regiones declaradas
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADS=Scripts de los jugadores
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_SESSION=Permitir en esta sesión
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_KEEP=Permitir y conservar

@@ -183,3 +183,78 @@ int run_brain_list_texts_read(void) {
     cleanup();
     return rc;
 }
+
+/* COMMANDS.TXT GOES OVER THE WIRE COMPRESSED, AND COMES BACK WHOLE OR NOT AT
+ * ALL.
+ *
+ * The server keeps each brain's docs as brainDocsCompress output and sends
+ * those bytes on CHANNEL_BULK; the client hands them to brainDocsDecompress
+ * with the length the announce said. What the client must never do is show
+ * part of a text, or a text of another length, as though it were the docs,
+ * so each way the bytes can be wrong is refused here: a stream cut short, a
+ * length that does not match, a length past the cap, and a stream that is not
+ * zlib at all. */
+int run_brain_docs_compress_roundtrip(void) {
+    char    *docs = NULL, *back = NULL;
+    uint8_t *z    = NULL;
+    size_t   zLen, i;
+    uint32_t seed = 12345;
+
+    docs = (char *)malloc(BRAIN_DOCS_MAX + 1);
+    back = (char *)malloc(BRAIN_DOCS_MAX + 1);
+    z    = (uint8_t *)malloc(BRAIN_DOCS_Z_MAX);
+    UT_ASSERT(docs != NULL && back != NULL && z != NULL);
+
+    /* The worst case: the whole cap of bytes that barely compress. The
+     * result must still fit BRAIN_DOCS_Z_MAX, which is what the wire and the
+     * client's receive buffer are sized from. */
+    for (i = 0; i < BRAIN_DOCS_MAX; i++) {
+        seed = seed * 1103515245u + 12345u;
+        docs[i] = (char)(' ' + (int)((seed >> 16) % 95u));
+    }
+    docs[BRAIN_DOCS_MAX] = '\0';
+    zLen = brainDocsCompress(docs, BRAIN_DOCS_MAX, z, BRAIN_DOCS_Z_MAX);
+    UT_ASSERT_MSG(zLen > 0 && zLen <= BRAIN_DOCS_Z_MAX,
+                  "a full-size random text compressed to %zu bytes, cap %d",
+                  zLen, BRAIN_DOCS_Z_MAX);
+    UT_ASSERT(brainDocsDecompress(z, zLen, BRAIN_DOCS_MAX, back));
+    UT_ASSERT(memcmp(back, docs, BRAIN_DOCS_MAX) == 0 &&
+              back[BRAIN_DOCS_MAX] == '\0');
+
+    /* Ordinary text shrinks, which is the point of sending it this way. */
+    for (i = 0; i < 20000; i++) docs[i] = "move north, hold, fire\n"[i % 23];
+    zLen = brainDocsCompress(docs, 20000, z, BRAIN_DOCS_Z_MAX);
+    UT_ASSERT_MSG(zLen > 0 && zLen < 2000,
+                  "20000 bytes of repeated text compressed to %zu", zLen);
+    UT_ASSERT(brainDocsDecompress(z, zLen, 20000, back));
+    UT_ASSERT(memcmp(back, docs, 20000) == 0 && back[20000] == '\0');
+
+    /* A length other than the one the stream inflates to is refused, in
+     * either direction, and leaves an empty string rather than a part. */
+    UT_ASSERT(!brainDocsDecompress(z, zLen, 19999, back));
+    UT_ASSERT(back[0] == '\0');
+    UT_ASSERT(!brainDocsDecompress(z, zLen, 20001, back));
+    UT_ASSERT(back[0] == '\0');
+    /* A stream cut short. */
+    UT_ASSERT(!brainDocsDecompress(z, zLen / 2, 20000, back));
+    UT_ASSERT(back[0] == '\0');
+    /* Bytes that are not a zlib stream. */
+    memset(z, 0xA5, 64);
+    UT_ASSERT(!brainDocsDecompress(z, 64, 100, back));
+    /* Lengths the wire cannot carry. */
+    UT_ASSERT(!brainDocsDecompress(z, 64, BRAIN_DOCS_MAX + 1, back));
+    UT_ASSERT(!brainDocsDecompress(z, 0, 10, back));
+    UT_ASSERT(!brainDocsDecompress(z, 64, 0, back));
+
+    /* And the compressor refuses what it may not send. */
+    UT_ASSERT(brainDocsCompress(docs, 0, z, BRAIN_DOCS_Z_MAX) == 0);
+    UT_ASSERT(brainDocsCompress(docs, BRAIN_DOCS_MAX + 1, z,
+                                BRAIN_DOCS_Z_MAX) == 0);
+    UT_ASSERT_MSG(brainDocsCompress(docs, 20000, z, 16) == 0,
+                  "a result that does not fit the buffer must be refused");
+
+    free(docs);
+    free(back);
+    free(z);
+    return 0;
+}

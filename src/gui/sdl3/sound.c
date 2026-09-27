@@ -30,11 +30,13 @@
 #include <SDL3/SDL.h>
 #include <stdio.h>
 #include "client_enums.h"  /* sndEffects */
+#include "frontend.h"      /* SOUND_GAIN_UNITY */
 #include "ping_sounds.h"   /* pingSoundResolve / pingSoundKindOf */
 #include "../sound.h"
 #include "../lang.h"
 #include "skin_source.h"
 #include "sound_variants.h"
+#include "sound_mix.h"
 #include "../../common/wb_log.h"
 
 #define NUM_SOUNDS 38
@@ -61,6 +63,8 @@ typedef struct {
     Uint32 pos;         /* Current playback position */
     int sound;          /* Index into sounds[] being played, -1 for none */
     bool active;        /* Is this slot playing? */
+    uint16_t gainL;     /* Q8 left channel gain */
+    uint16_t gainR;     /* Q8 right channel gain */
 } SoundSlot;
 
 /* Global sound state */
@@ -503,9 +507,9 @@ static void SDLCALL mixAudioCallback(void *userdata, SDL_AudioStream *stream, in
 
         /* Mix 16-bit samples into 32-bit buffer to avoid clipping */
         src_sample = (Sint16 *)(slots[i].data + slots[i].pos);
-        for (j = 0; j < bytes_to_mix / 2; j++) {
-            mix_buffer[j] += src_sample[j];
-        }
+        soundMixSlot(mix_buffer, src_sample, bytes_to_mix / 2,
+                     slots[i].pos / 2, deviceSpec.channels,
+                     slots[i].gainL, slots[i].gainR);
 
         slots[i].pos += bytes_to_mix;
 
@@ -816,8 +820,10 @@ void soundCleanup(void) {
 *
 *ARGUMENTS:
 *  index - Index into the sounds array
+*  gainL - Q8 left channel gain
+*  gainR - Q8 right channel gain
 *********************************************************/
-static void playSound(int index) {
+static void playSound(int index, uint16_t gainL, uint16_t gainR) {
     int i;
     int slot_found = -1;
     int search_start;
@@ -899,6 +905,8 @@ static void playSound(int index) {
     slots[slot_found].pos = 0;
     slots[slot_found].sound = index;
     slots[slot_found].active = true;
+    slots[slot_found].gainL = gainL;
+    slots[slot_found].gainR = gainR;
 
     if (slotsMutex) {
         SDL_UnlockMutex(slotsMutex);
@@ -951,6 +959,24 @@ static unsigned int soundPingFoundMask(void) {
 *  value       - The sound file number to play
 *********************************************************/
 void soundPlayEffect(sndEffects value) {
+    soundPlayEffectPan(value, SOUND_GAIN_UNITY, SOUND_GAIN_UNITY);
+}
+
+/*********************************************************
+*NAME:          soundPlayEffectPan
+*AUTHOR:        John Morrison
+*CREATION DATE: 26/9/26
+*LAST MODIFIED: 26/9/26
+*PURPOSE:
+*  Plays the correct Sound file with a separate Q8 gain
+*  for the left and right channels
+*
+*ARGUMENTS:
+*  value - The sound file number to play
+*  gainL - Q8 left channel gain
+*  gainR - Q8 right channel gain
+*********************************************************/
+void soundPlayEffectPan(sndEffects value, uint16_t gainL, uint16_t gainR) {
     int index;
     unsigned char pingKind = pingSoundKindOf(value);
 
@@ -1081,7 +1107,7 @@ void soundPlayEffect(sndEffects value) {
         break;
     }
 
-    playSound(index);
+    playSound(index, gainL, gainR);
 }
 
 /*********************************************************

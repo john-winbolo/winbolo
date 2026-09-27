@@ -74,6 +74,23 @@ void soundCleanup(void);
 void soundPlayEffect(sndEffects value);
 
 /*********************************************************
+*NAME:          soundPlayEffectPan
+*AUTHOR:        John Morrison
+*CREATION DATE: 26/9/26
+*LAST MODIFIED: 26/9/26
+*PURPOSE:
+*  Plays the correct Sound file with a separate Q8 gain
+*  for the left and right channels. soundPlayEffect plays
+*  at unity on both. Only the SDL3 mixer defines this.
+*
+*ARGUMENTS:
+*  value - The sound file number to play
+*  gainL - Q8 left channel gain
+*  gainR - Q8 right channel gain
+*********************************************************/
+void soundPlayEffectPan(sndEffects value, uint16_t gainL, uint16_t gainR);
+
+/*********************************************************
 *NAME:          soundKeepalive
 *AUTHOR:        John Morrison
 *CREATION DATE: 29/12/98

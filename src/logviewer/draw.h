@@ -264,6 +264,44 @@ struct SDL_Texture* lv_drawGetTilesTexture(void);
 int lv_drawGetSheetScale(void);
 
 /*********************************************************
+*NAME:          lv_drawScnMarker
+*PURPOSE:
+*  Draws one scenario map marker the way the game does: the
+*  square outlined in the marker's palette colour with a
+*  pointer above it, both breathing on the wall clock.
+*  (cx, cy) is the centre of the square in the renderer's
+*  current coordinates and tileW/tileH its size there. A
+*  colour the palette draws nothing for draws nothing.
+*  Both the overview and the game view call this, so the
+*  two cannot disagree about how a marker looks.
+*********************************************************/
+void lv_drawScnMarker(struct SDL_Renderer *renderer, BYTE colour,
+                      float cx, float cy, float tileW, float tileH,
+                      uint32_t nowMs);
+
+/*********************************************************
+*NAME:          lv_drawRegionName / lv_drawRegion
+*PURPOSE:
+*  A declared region as Options -> Regions shows it.
+*  lv_drawRegionName renders a region's name in font, in the
+*  regions' colour, and returns the texture (the caller
+*  destroys it) with its size in *outW, *outH; NULL for an
+*  empty name or a failed render. lv_drawRegion outlines the
+*  rectangle (x, y, w, h), in the renderer's current
+*  coordinates, with a stroke sized from tileH, and draws the
+*  name texture, when there is one, just inside its top-left
+*  corner on a dark box. Both the overview and the game view
+*  call these, so the two draw a region the same way.
+*********************************************************/
+struct TTF_Font;
+struct SDL_Texture *lv_drawRegionName(struct SDL_Renderer *renderer,
+                                      struct TTF_Font *font, const char *name,
+                                      int *outW, int *outH);
+void lv_drawRegion(struct SDL_Renderer *renderer, float x, float y,
+                   float w, float h, float tileH,
+                   struct SDL_Texture *name, int nameW, int nameH);
+
+/*********************************************************
 *NAME:          lv_drawBlitGameTexture
 *PURPOSE:
 *  Blits the game render texture to the screen without

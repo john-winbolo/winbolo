@@ -30,6 +30,7 @@
 
 #include <assert.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <SDL3/SDL.h>
@@ -56,6 +57,7 @@
 #include "sim_rules.h"     /* the table the rule arm writes, and its check */
 #include "log.h"           /* logAddEvent — the arm's record */
 #include "client_command.h" /* CMD_CHAT and the team destination the say arm builds */
+#include "scripts_record.h" /* SCN_RECORD_TEXT_MAX — the recording text's cap */
 
 /* SCN_PANEL_MAX is written as a literal on the scenario surface, which
  * cannot see the channel sizes. This is where the two meet: one panel
@@ -3193,11 +3195,25 @@ static ScnOpResult scenarioOpPanel(ServerSim *sim, const ScnOpPanel *p) {
     return SCN_OP_OK;
 }
 
+/* Fill the event one score row publishes as. Shared by the arm and the join
+ * replay so a late joiner is given the same event the round saw. */
+static void scenarioFillScoreEvent(ControlEvent *evt, BYTE kind, BYTE target,
+                                   int32_t score, const char *label) {
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_SCN_SCORE;
+    evt->u.scnScore.kind   = kind;
+    evt->u.scnScore.target = target;
+    evt->u.scnScore.score  = score;
+    memcpy(evt->u.scnScore.label, label, sizeof(evt->u.scnScore.label));
+    evt->u.scnScore.label[sizeof(evt->u.scnScore.label) - 1] = '\0';
+}
+
 /* Set a scenario's own score for one player or one team.
  *
  * Broadcast: the target says whose score it is, not who is meant to see it,
  * so the event carries no destination pair. The number and the label are kept
- * on the sim per slot and per team; nothing reads them yet. */
+ * on the sim per slot and per team, where serverSimBuildRoundStatsSummary
+ * reads them for the recap and the join replay hands them to a late joiner. */
 static ScnOpResult scenarioOpScore(ServerSim *sim, const ScnOpScore *p) {
     ControlEvent evt;
     ScnScoreRow *row;
@@ -3241,13 +3257,7 @@ static ScnOpResult scenarioOpScore(ServerSim *sim, const ScnOpScore *p) {
                 (BYTE)(((uint32_t)p->score >> 16) & 0xFF),
                 (unsigned short)((uint32_t)p->score & 0xFFFF), pstr);
 
-    memset(&evt, 0, sizeof(evt));
-    evt.type = CTRL_SCN_SCORE;
-    evt.u.scnScore.kind   = p->kind;
-    evt.u.scnScore.target = p->target;
-    evt.u.scnScore.score  = p->score;
-    memcpy(evt.u.scnScore.label, p->label, sizeof(evt.u.scnScore.label));
-    evt.u.scnScore.label[sizeof(evt.u.scnScore.label) - 1] = '\0';
+    scenarioFillScoreEvent(&evt, p->kind, p->target, p->score, p->label);
     serverSimPublishControl(sim, &evt);
     return SCN_OP_OK;
 }
@@ -3297,17 +3307,36 @@ static ScnOpResult scenarioOpAnnounce(ServerSim *sim, const ScnOpAnnounce *p) {
     return SCN_OP_OK;
 }
 
+/* Fill the event one marker publishes as. Shared by the arm and the join
+ * replay so a late joiner is given the same event the round saw. */
+static void scenarioFillMarkerEvent(ControlEvent *evt, BYTE id, BYTE kind,
+                                    BYTE x, BYTE y, BYTE slot, BYTE colour,
+                                    BYTE destTeam, BYTE destPlayer) {
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_SCN_MARKER;
+    evt->u.scnMarker.id         = id;
+    evt->u.scnMarker.kind       = kind;
+    evt->u.scnMarker.x          = x;
+    evt->u.scnMarker.y          = y;
+    evt->u.scnMarker.slot       = slot;
+    evt->u.scnMarker.colour     = colour;
+    evt->u.scnMarker.destTeam   = destTeam;
+    evt->u.scnMarker.destPlayer = destPlayer;
+}
+
 /* Put a mark on the map, or take one off.
  *
  * Markers are kept by id, so a second marker on the same id replaces the
  * first and the clear kind removes it. The clear reads none of the fields
  * that place a marker, which is what lets a script clear an id without
- * remembering what it put there. */
+ * remembering what it put there. The sim keeps the same store by id, which
+ * is what the join replay hands a late joiner. */
 static ScnOpResult scenarioOpMarker(ServerSim *sim, const ScnOpMarker *p) {
-    ControlEvent evt;
-    char         blob[1 + 4];
-    BYTE         destTeam, destPlayer;
-    ScnOpResult  r;
+    ControlEvent  evt;
+    char          blob[1 + 4];
+    BYTE          destTeam, destPlayer;
+    ScnOpResult   r;
+    ScnMarkerRow *row;
 
     r = scenarioTargetUnpack(p->target, &destTeam, &destPlayer);
     if (r != SCN_OP_OK) {
@@ -3343,16 +3372,24 @@ static ScnOpResult scenarioOpMarker(ServerSim *sim, const ScnOpMarker *p) {
     blob[4] = (char)p->colour;
     logAddEvent(log_ScnMarker, p->id, p->kind, destTeam, destPlayer, 0, blob);
 
-    memset(&evt, 0, sizeof(evt));
-    evt.type = CTRL_SCN_MARKER;
-    evt.u.scnMarker.id         = p->id;
-    evt.u.scnMarker.kind       = p->kind;
-    evt.u.scnMarker.x          = p->x;
-    evt.u.scnMarker.y          = p->y;
-    evt.u.scnMarker.slot       = p->slot;
-    evt.u.scnMarker.colour     = p->colour;
-    evt.u.scnMarker.destTeam   = destTeam;
-    evt.u.scnMarker.destPlayer = destPlayer;
+    /* The store is kept by id alone, as the markers are, so a clear empties
+       the row whatever the clear itself was addressed to. */
+    row = &sim->scenarioMarkers[p->id];
+    if (p->kind == SCN_MARKER_KIND_CLEAR) {
+        memset(row, 0, sizeof(*row));
+    } else {
+        row->valid      = true;
+        row->kind       = p->kind;
+        row->x          = p->x;
+        row->y          = p->y;
+        row->slot       = p->slot;
+        row->colour     = p->colour;
+        row->destTeam   = destTeam;
+        row->destPlayer = destPlayer;
+    }
+
+    scenarioFillMarkerEvent(&evt, p->id, p->kind, p->x, p->y, p->slot,
+                            p->colour, destTeam, destPlayer);
     serverSimPublishControl(sim, &evt);
     return SCN_OP_OK;
 }
@@ -3364,6 +3401,7 @@ void serverSimScenarioResetPresentation(ServerSim *sim) {
     memset(sim->scenarioPanels, 0, sizeof(sim->scenarioPanels));
     memset(sim->scenarioPlayerScores, 0, sizeof(sim->scenarioPlayerScores));
     memset(sim->scenarioTeamScores, 0, sizeof(sim->scenarioTeamScores));
+    memset(sim->scenarioMarkers, 0, sizeof(sim->scenarioMarkers));
 }
 
 void serverSimScenarioReplayPanels(
@@ -3403,6 +3441,50 @@ void serverSimScenarioReplayPanels(
             }
             scenarioFillPanelEvent(&evt, (BYTE)panel, destTeam, destPlayer,
                                    store->bytes, store->len);
+            deliver(ctx, &evt);
+        }
+    }
+}
+
+void serverSimScenarioReplayMarkersAndScores(
+    ServerSim *sim,
+    void (*deliver)(void *, const struct ControlEvent *),
+    void *ctx,
+    bool withTargeted) {
+    ControlEvent evt;
+    int          i;
+
+    if (sim == NULL || deliver == NULL) {
+        return;
+    }
+    for (i = 0; i < SCN_MARKERS_MAX; i++) {
+        const ScnMarkerRow *row = &sim->scenarioMarkers[i];
+        if (!row->valid) {
+            /* Never placed, or cleared: a joiner's markers start empty. */
+            continue;
+        }
+        if (!withTargeted && (row->destTeam != 0 || row->destPlayer != 0xFF)) {
+            continue;
+        }
+        scenarioFillMarkerEvent(&evt, (BYTE)i, row->kind, row->x, row->y,
+                                row->slot, row->colour, row->destTeam,
+                                row->destPlayer);
+        deliver(ctx, &evt);
+    }
+    for (i = 0; i < MAX_TANKS; i++) {
+        const ScnScoreRow *row = &sim->scenarioPlayerScores[i];
+        if (row->valid) {
+            scenarioFillScoreEvent(&evt, SCN_SCORE_KIND_PLAYER, (BYTE)i,
+                                   row->score, row->label);
+            deliver(ctx, &evt);
+        }
+    }
+    /* Team 0 names no team and its row is never written. */
+    for (i = 1; i < MAX_TANKS; i++) {
+        const ScnScoreRow *row = &sim->scenarioTeamScores[i];
+        if (row->valid) {
+            scenarioFillScoreEvent(&evt, SCN_SCORE_KIND_TEAM, (BYTE)i,
+                                   row->score, row->label);
             deliver(ctx, &evt);
         }
     }
@@ -4252,6 +4334,44 @@ void serverSimSetScenarioTickStats(ServerSim *sim, uint32_t instr,
 void serverSimScenarioResetTickStats(ServerSim *sim) {
     if (sim == NULL) return;
     memset(&sim->scenarioTickStats, 0, sizeof(sim->scenarioTickStats));
+}
+
+void serverSimSetScenarioRecordText(ServerSim *sim, const char *text,
+                                    size_t len) {
+    char *copy;
+
+    if (sim == NULL) return;
+    free(sim->scenarioRecordText);
+    sim->scenarioRecordText    = NULL;
+    sim->scenarioRecordTextLen = 0;
+    if (text == NULL || len == 0) {
+        return;
+    }
+    if (len > SCN_RECORD_TEXT_MAX) {
+        WB_LOG_WARN(WB_LOG_CAT_SIM,
+                    "scripts.json is %zu bytes, over the %u-byte cap, and is "
+                    "not recorded", len, (unsigned)SCN_RECORD_TEXT_MAX);
+        return;
+    }
+    copy = (char *)malloc(len);
+    if (copy == NULL) {
+        WB_LOG_WARN(WB_LOG_CAT_SIM,
+                    "no memory for %zu bytes of scripts.json, not recorded",
+                    len);
+        return;
+    }
+    memcpy(copy, text, len);
+    sim->scenarioRecordText    = copy;
+    sim->scenarioRecordTextLen = len;
+}
+
+const char *serverSimGetScenarioRecordText(const ServerSim *sim, size_t *len) {
+    if (sim == NULL || sim->scenarioRecordText == NULL) {
+        if (len != NULL) *len = 0;
+        return NULL;
+    }
+    if (len != NULL) *len = sim->scenarioRecordTextLen;
+    return sim->scenarioRecordText;
 }
 
 void serverSimSetScenarioRoundBoot(ServerSim *sim, void (*roundBoot)(void *ctx),

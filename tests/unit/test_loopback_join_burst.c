@@ -4,8 +4,9 @@
  *
  * A player joining a lobby is sent the whole lobby state at once: the join
  * replay (serverSimSyncSubscriber) delivers the phase, settings, script list,
- * rules, brain list, brain texts and bot-name catalogue, then a slot record,
- * bot config, bot brain and player join for every seat. All of it goes onto
+ * script settings, rules, brain list, brain announces and the bot-name
+ * catalogue's id, then a slot record, bot config, bot brain and player join
+ * for every seat. All of it goes onto
  * the joiner's reliable control channel inside one server tick, before the
  * joiner has had the chance to ack any of it. When that burst is larger than
  * CHANNEL_CONTROL_WINDOW the channel refuses the rest, and the server reads
@@ -16,12 +17,13 @@
  * channel is never the one that fills.
  *
  * Fourteen bots alone bring the replay to about one window, so the large case
- * also installs a bot-name catalogue of generated names, which is what a
- * server started with a large -botnames file sends. Its chunk count is
- * measured with the same serialize call the replay uses. Before the second
- * player joins, the case works out the size of the replay from the lobby's
- * state and requires at least 1.5 windows, so a brain more or less, or a
- * catalogue chunk more or less, does not take it back under the window.
+ * also fills the server's script settings store: every value the host could
+ * have chosen, each one a CTRL_LOBBY_SCRIPT_SETTING in the replay. (It used to
+ * install a large bot-name catalogue instead, which rode the replay in up to
+ * 78 chunks; the catalogue now goes on CHANNEL_BULK and the replay carries
+ * only its id.) Before the second player joins, the case works out the size
+ * of the replay from the lobby's state and requires at least 1.5 windows, so
+ * a brain more or less does not take it back under the window.
  *
  * Failure messages start "sizing:" when the lobby never reached the burst the
  * case needs, and "join:" when the second player's join went wrong.
@@ -48,9 +50,8 @@
 #include "client_sim_internal.h"   /* lobbySyncSettled */
 #include "client_net.h"            /* clientSimGetConnectState */
 #include "client_connect_state.h"
-#include "control_event.h"         /* LOBBY_BOT_POOL_CHUNK_FRAG_MAX */
+#include "control_event.h"
 #include "channel_mux.h"           /* CHANNEL_CONTROL_WINDOW */
-#include "lobby_bot_pools.h"
 #include "players.h"               /* playersIsInUse */
 #include "server_sim.h"
 #include "server_sim_internal.h"   /* playerConnected, lobbyPlayers,
@@ -70,19 +71,13 @@
 /* Every bot seat the lobby has once both humans are in it. */
 #define JB_MAX_BOTS (MAX_TANKS - 2)
 
-/* The generated catalogue: 4 pools of 230 names, 60 letters each, is about
- * 56 KB uncompressed, under LOBBY_BOT_CATALOG_MAX_BYTES (64 KiB). */
-#define JB_POOLS      4
-#define JB_POOL_NAMES 230
-#define JB_NAME_LEN   60
-
-/* The fewest catalogue chunks the large case accepts. */
-#define JB_MIN_CHUNKS 32
+/* The fewest script setting values the large case accepts. */
+#define JB_MIN_SETTINGS 40
 
 typedef struct {
     const char *label;
     int         bots;
-    bool        bigCatalogue;
+    bool        fillSettings;
     int         minBurst;   /* 0 = no floor */
     uint64_t    seed;
 } JbCase;
@@ -103,92 +98,45 @@ static bool jbMakeBrainFile(void) {
     return true;
 }
 
-/* ── The generated catalogue ──────────────────────────────────────────
- *
- * Letters from a seeded xorshift, both cases, so zlib finds little to
- * squeeze: about 5.7 bits of information in each 8-bit byte. Its own
- * generator rather than bolo_rand, so building it draws nothing from the
- * stream the harness seeds. */
-static char *jbNameStore;
-static const char **jbNamePtrs;
-
-static uint32_t jbXorshift(uint32_t *s) {
-    uint32_t x = *s;
-    x ^= x << 13;
-    x ^= x >> 17;
-    x ^= x << 5;
-    *s = x;
-    return x;
-}
-
-static bool jbInstallCatalogue(void) {
-    static const char letters[] =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-    static const char *labels[JB_POOLS] = {
-        "Burst One", "Burst Two", "Burst Three", "Burst Four"
-    };
-    LobbyBotPoolDef defs[JB_POOLS];
-    LobbyBotPoolLoadStats st;
-    uint32_t s = 0x9E3779B9u;
-    int total = JB_POOLS * JB_POOL_NAMES;
-    int i, c, p;
-
-    jbNameStore = (char *)malloc((size_t)total * (JB_NAME_LEN + 1));
-    jbNamePtrs  = (const char **)malloc((size_t)total * sizeof(*jbNamePtrs));
-    if (jbNameStore == NULL || jbNamePtrs == NULL) return false;
-
-    for (i = 0; i < total; i++) {
-        char *nm = jbNameStore + (size_t)i * (JB_NAME_LEN + 1);
-        for (c = 0; c < JB_NAME_LEN; c++) {
-            nm[c] = letters[jbXorshift(&s) % (sizeof(letters) - 1)];
-        }
-        nm[JB_NAME_LEN] = '\0';
-        jbNamePtrs[i] = nm;
+/* Fill the server's script settings store with every value it can hold,
+ * as serverSimSetScriptSetting would have kept them. Written straight into
+ * the store: the replay sends whatever is kept, and declaring a script with
+ * 48 settings for the setter to check against is not what this case is
+ * about. Returns how many values are kept. */
+static int jbFillScriptSettings(ServerSim *sim) {
+    int i;
+    for (i = 0; i < SERVER_SCRIPT_SETTING_VALUES_MAX; i++) {
+        snprintf(sim->scriptSettingValues[i].file,
+                 sizeof(sim->scriptSettingValues[i].file),
+                 "burst_script_%02d.lua", i);
+        snprintf(sim->scriptSettingValues[i].id,
+                 sizeof(sim->scriptSettingValues[i].id), "setting_%02d", i);
+        sim->scriptSettingValues[i].value = i;
     }
-    for (p = 0; p < JB_POOLS; p++) {
-        defs[p].label     = labels[p];
-        defs[p].names     = jbNamePtrs + p * JB_POOL_NAMES;
-        defs[p].nameCount = JB_POOL_NAMES;
-    }
-    memset(&st, 0, sizeof(st));
-    return lobbyBotPoolsInstall(defs, JB_POOLS, &st) == JB_POOLS &&
-           st.namesKept == total;
-}
-
-/* How many CTRL_LOBBY_BOT_POOL_CHUNK events the replay sends for the active
- * catalogue: the same serialize call and the same fragment size the replay
- * uses. -1 if it could not be serialized. */
-static int jbCatalogueChunks(void) {
-    unsigned char *blob = (unsigned char *)malloc(LOBBY_BOT_CATALOG_WIRE_MAX);
-    int blen;
-
-    if (blob == NULL) return -1;
-    blen = lobbyBotPoolsSerialize(blob, (int)LOBBY_BOT_CATALOG_WIRE_MAX);
-    free(blob);
-    if (blen < 0) return -1;
-    return (blen + LOBBY_BOT_POOL_CHUNK_FRAG_MAX - 1) /
-           LOBBY_BOT_POOL_CHUNK_FRAG_MAX;
+    sim->scriptSettingValueCount = SERVER_SCRIPT_SETTING_VALUES_MAX;
+    return sim->scriptSettingValueCount;
 }
 
 /* The fewest control events a joiner's replay carries, worked out from the
  * lobby's state along serverSimSyncSubscriber's lobby path:
  *
- *   phase, settings, rules, brain list, closing marker   5
+ *   phase, settings, rules, brain list, catalogue id,
+ *     closing marker                                     6
  *   script list                                          1 per chunk
- *   bot-name catalogue                                   1 per chunk
+ *   script settings                                      1, and 1 per value
  *   lobby slot                                           1 per seat
  *   bot config + bot brain                               2 per bot
  *   player join                                          1 per player
  *
- * Brain texts, team metadata, votes and the rest are left out: each only
+ * Brain announces, team metadata, votes and the rest are left out: each only
  * adds, and how much depends on what the machine has installed. The joiner's
  * own slot and join are left out too, because it is not seated yet. */
-static int jbExpectedBurst(ServerSim *sim, int catalogueChunks) {
-    int n = 5;
+static int jbExpectedBurst(ServerSim *sim) {
+    int n = 6;
     int i;
 
     n += (int)serverSimScriptListChunkCount(sim);
-    n += catalogueChunks;
+    n += 1 + sim->scriptSettingValueCount;
     for (i = 0; i < MAX_TANKS; i++) {
         if (sim->playerConnected[i]) {
             n += 1;
@@ -266,7 +214,7 @@ static int jbFlow(LoopbackHarness *h, const JbCase *tc) {
     BYTE host;
     BYTE joiner;
     int seated;
-    int chunks;
+    int settings = 0;
     int burst;
     int at;
     int i;
@@ -298,28 +246,22 @@ static int jbFlow(LoopbackHarness *h, const JbCase *tc) {
                   "sizing: %s: a control overflow fired while the bots were "
                   "being seated, before the second player joined", tc->label);
 
-    /* The catalogue goes in after the bots, so the host, which has already
-       had its replay, is never sent it; only the joiner's replay carries it. */
-    if (tc->bigCatalogue) {
-        UT_ASSERT_MSG(jbInstallCatalogue(),
-                      "sizing: %s: the generated catalogue did not install "
-                      "whole", tc->label);
-    }
-    chunks = jbCatalogueChunks();
-    UT_ASSERT_MSG(chunks >= 0, "sizing: %s: the catalogue did not serialize",
-                  tc->label);
-    if (tc->bigCatalogue) {
-        UT_ASSERT_MSG(chunks >= JB_MIN_CHUNKS,
-                      "sizing: %s: the catalogue is %d chunks, under the %d "
-                      "this case needs", tc->label, chunks, JB_MIN_CHUNKS);
-    }
-
+    /* The settings go in after the bots, so the host, which has already had
+       its replay, is never sent them; only the joiner's replay carries them. */
     threadsWaitForMutex();
-    burst = jbExpectedBurst(h->sim, chunks);
+    if (tc->fillSettings) {
+        settings = jbFillScriptSettings(h->sim);
+    }
+    burst = jbExpectedBurst(h->sim);
     threadsReleaseMutex();
-    fprintf(stderr, "  %s: %d bots, %d catalogue chunks, join replay at least "
+    if (tc->fillSettings) {
+        UT_ASSERT_MSG(settings >= JB_MIN_SETTINGS,
+                      "sizing: %s: %d script settings kept, under the %d this "
+                      "case needs", tc->label, settings, JB_MIN_SETTINGS);
+    }
+    fprintf(stderr, "  %s: %d bots, %d script settings, join replay at least "
                     "%d control events (window %d)\n",
-            tc->label, seated, chunks, burst, CHANNEL_CONTROL_WINDOW);
+            tc->label, seated, settings, burst, CHANNEL_CONTROL_WINDOW);
     UT_ASSERT_MSG(burst >= tc->minBurst,
                   "sizing: %s: the join replay is at least %d control events, "
                   "under the %d this case needs", tc->label, burst,
@@ -398,16 +340,8 @@ static int jbRun(const JbCase *tc) {
 
     rc = jbFlow(&h, tc);
 
-    /* Every path: the harness down, the built-in catalogue back (a fresh
-       unit process runs on the built-in one; the clients here install
-       whatever the server sends into the same process-global table), and
-       the fixture gone. */
+    /* Every path: the harness down and the fixture gone. */
     loopbackHarnessStop(&h);
-    lobbyBotPoolsReset();
-    free(jbNamePtrs);
-    free(jbNameStore);
-    jbNamePtrs  = NULL;
-    jbNameStore = NULL;
     remove(jbBrainPath);
     return rc;
 }

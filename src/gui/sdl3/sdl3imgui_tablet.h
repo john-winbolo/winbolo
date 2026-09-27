@@ -109,6 +109,10 @@ typedef struct {
   float scrollJoyX, scrollJoyY, scrollJoyW, scrollJoyH;
   float scrollJoyOuterRadius;
   float scrollJoyInnerRadius;
+
+  /* Scenario panel — fixed square in the game view's top-right corner.
+     scnSlotSide is 0 when the view has no room for one. */
+  float scnSlotX, scnSlotY, scnSlotSide;
 } TabletLayoutConfig;
 
 void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
@@ -123,6 +127,14 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
 *  No-op if not in tablet mode.
 *********************************************************/
 void sdl3ImguiTabletOverlay(struct ClientSim *cs);
+
+/*********************************************************
+*NAME:          sdl3ImguiTabletNewGame
+*PURPOSE:
+*  Forgets the last game's messages and armour, so the
+*  message fade and the damage buzz start from the new one.
+*********************************************************/
+void sdl3ImguiTabletNewGame(void);
 
 #ifdef __cplusplus
 }

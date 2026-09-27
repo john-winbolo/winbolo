@@ -3,12 +3,13 @@
  *
  * The LAN record carries the server's visibility rules in one key,
  * view=<4 hex chars>: the three view policies with the classic-mode and
- * allies-in-trees flags in the first byte, the overview window and line
- * of sight in the second. This drives the browser's parse seam directly
- * — no socket — packing the bytes the way mdns_advertise.c packs them
- * and handing the formatted value to discoveryMdnsFillServer.
+ * allies-in-trees flags in the first byte, the overview window, line of
+ * sight and the positional-sound flag in the second. This drives the
+ * browser's parse seam directly — no socket — packing the bytes the way
+ * mdns_advertise.c packs them and handing the formatted value to
+ * discoveryMdnsFillServer.
  *
- * Two things are pinned. All seven values survive the trip, and a record
+ * Two things are pinned. All eight values survive the trip, and a record
  * whose value is missing or malformed reports the defaults instead of
  * whatever the failed parse left behind. The base view is the one the
  * zero-fill gets wrong — viewPolicyOff is 3, not 0 — so it is asserted
@@ -47,7 +48,8 @@ static int isAllDefault(const DiscoveryServer *s) {
            s->classicMode == false &&
            s->alliesInTrees == false &&
            s->overviewWindow == (uint8_t)overviewWindowExpanded &&
-           s->lineOfSight == (uint8_t)lineOfSightOff;
+           s->lineOfSight == (uint8_t)lineOfSightOff &&
+           s->positionalSound == false;
 }
 
 int run_mdns_view_txt_roundtrip(void) {
@@ -55,7 +57,7 @@ int run_mdns_view_txt_roundtrip(void) {
     DiscoveryServer s;
     char value[8];
 
-    /* Seven values, none of them the default, packed and formatted the
+    /* Eight values, none of them the default, packed and formatted the
      * way the advertiser does it. */
     snprintf(value, sizeof(value), "%02X%02X",
              (unsigned)infoPacketPackViewPolicies(viewPolicyKey,
@@ -63,7 +65,7 @@ int run_mdns_view_txt_roundtrip(void) {
                                                   viewPolicyOff, true, true),
              (unsigned)infoPacketPackViewPolicies2(
                  (uint8_t)overviewWindowClassic,
-                 (uint8_t)lineOfSightBuildingsAndTrees));
+                 (uint8_t)lineOfSightBuildingsAndTrees, true));
     UT_ASSERT_MSG(strlen(value) == 4, "view value '%s' is not four hex chars",
                   value);
 
@@ -83,6 +85,30 @@ int run_mdns_view_txt_roundtrip(void) {
     UT_ASSERT_MSG(s.lineOfSight == (uint8_t)lineOfSightBuildingsAndTrees,
                   "sight = %u, want buildings and trees",
                   (unsigned)s.lineOfSight);
+    UT_ASSERT_MSG(s.positionalSound,
+                  "positional sound did not survive the key");
+
+    /* Bit 4 on its own, with every other rule at its default: the flag
+     * reads back on and nothing else moves. */
+    snprintf(value, sizeof(value), "%02X%02X",
+             (unsigned)infoPacketPackViewPolicies(viewPolicyAlways,
+                                                  viewPolicyOff,
+                                                  viewPolicyAlways,
+                                                  false, false),
+             (unsigned)infoPacketPackViewPolicies2(
+                 (uint8_t)overviewWindowExpanded, (uint8_t)lineOfSightOff,
+                 true));
+    UT_ASSERT_MSG(strcmp(value, "0C10") == 0, "view value '%s', want 0C10",
+                  value);
+    resolvedWithView(&r, value);
+    memset(&s, 0, sizeof(s));
+    UT_ASSERT(discoveryMdnsFillServer(&r, &s));
+    UT_ASSERT_MSG(s.positionalSound, "view=0C10 read positional sound off");
+    UT_ASSERT(s.pillView == viewPolicyAlways && s.baseView == viewPolicyOff &&
+              s.allyView == viewPolicyAlways && !s.classicMode &&
+              !s.alliesInTrees &&
+              s.overviewWindow == (uint8_t)overviewWindowExpanded &&
+              s.lineOfSight == (uint8_t)lineOfSightOff);
 
     /* A server running the defaults still sends a key — the base view's
      * viewPolicyOff is not zero, so the value is not four zeros — and it
@@ -93,7 +119,8 @@ int run_mdns_view_txt_roundtrip(void) {
                                                   viewPolicyAlways,
                                                   false, false),
              (unsigned)infoPacketPackViewPolicies2(
-                 (uint8_t)overviewWindowExpanded, (uint8_t)lineOfSightOff));
+                 (uint8_t)overviewWindowExpanded, (uint8_t)lineOfSightOff,
+                 false));
     resolvedWithView(&r, value);
     memset(&s, 0, sizeof(s));
     UT_ASSERT(discoveryMdnsFillServer(&r, &s));

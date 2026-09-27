@@ -600,8 +600,9 @@ static void lobbyServerMapsPumpPreview(ClientSim *cs, SDL_Renderer *renderer) {
      * MEMFS, and the cache directory has to be created at runtime). Both
      * failure branches were silent — no else on the fopen, none on a short
      * write — and the clear below runs either way, so a failed write
-     * dropped the blob with nothing left to re-request it: the sole
-     * PREVIEW_REQ goes out on the row click.
+     * dropped the blob with nothing left to re-request it: the PREVIEW_REQ
+     * goes out on the row click, and the transport resends it only while no
+     * stream has arrived, so nothing asks again once the blob is delivered.
      *
      * mapChooserSetSelectedMapBytes takes the same raw .map image the WBN
      * tab feeds it and needs no file at all. It does stamp a synthetic

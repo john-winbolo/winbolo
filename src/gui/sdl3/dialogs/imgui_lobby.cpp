@@ -370,7 +370,6 @@ static void lobbyBotAnnouncePoll(ClientSim *cs) {
         if (s_announceBrain[idx]) continue;             /* this brain spoke */
         {
             const char *announce = clientSimGetLobbyBrainAnnounce(cs, idx);
-            const char *docs     = clientSimGetLobbyBrainDocs(cs, idx);
             char        base[BRAIN_LIST_NAME_LEN];
             char        line[LOBBY_CHAT_LINE_MAX];
             const char *history;
@@ -408,8 +407,10 @@ static void lobbyBotAnnouncePoll(ClientSim *cs) {
             s_announceBrain[idx] = true;
 
             /* Registering text that is not in the blob would simply never
-             * match, so this waits on the same answer. */
-            if (docs != NULL && docs[0] != '\0') {
+             * match, so this waits on the same answer. The docs themselves
+             * are not here yet: the server sends them when the line is
+             * clicked, so the test is whether it has any to send. */
+            if (clientSimLobbyBrainHasDocs(cs, idx)) {
                 lobbyChatDocsRegister((int)idx, base, line);
             }
         }

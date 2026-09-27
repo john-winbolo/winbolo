@@ -334,14 +334,20 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
     return true;
 }
 
+void bgGameReleaseScene(BgGame *bg) {
+    if (!bg) return;
+    bgFrameDrop(bg, bg->frameRenderer == sdl3DrawGetRenderer());
+}
+
 void bgGameDestroy(BgGame *bg) {
     if (!bg) return;
-    if (bg->tilesTex) {
-        SDL_DestroyTexture(bg->tilesTex);
-        bg->tilesTex = NULL;
-    }
-    bgGameDropSprites(bg, true);
-    bgFrameDrop(bg, bg->frameRenderer == sdl3DrawGetRenderer());
+    /* A renderer made since the last draw (a zoom change) has already
+     * taken the old one's textures with it; see bgGameEnsureTexture. */
+    bool texLive = bg->texRenderer == sdl3DrawGetRenderer();
+    if (bg->tilesTex && texLive) SDL_DestroyTexture(bg->tilesTex);
+    bg->tilesTex = NULL;
+    bgGameDropSprites(bg, texLive);
+    bgGameReleaseScene(bg);
     if (bg->valid) {
         serverSimDestroy(bg->sim);
         bg->valid = false;
@@ -665,28 +671,14 @@ static Sint64 bgFrameRefreshNs(SDL_Renderer *renderer) {
     return (Sint64)(1000000000.0 / (double)hz);
 }
 
-/* The Frame Rate setting (Settings > Display) in Hz. frameRate holds a
- * FRAME_RATE_* code, not Hz. */
-extern int frameRate;
-static int bgFrameTargetHz(void) {
-    switch (frameRate) {
-        case FRAME_RATE_60: return 60;
-        case FRAME_RATE_50: return 50;
-        case FRAME_RATE_30: return 30;
-        case FRAME_RATE_20: return 20;
-        case FRAME_RATE_15: return 15;
-        case FRAME_RATE_12: return 12;
-        case FRAME_RATE_10: return 10;
-        default:            return 30;   /* the game's default */
-    }
-}
-
-/* Redraw the menu game every n refreshes: refresh / Frame Rate, rounded,
- * at least 1. At 60 Hz: 60->1 50->1 30->2 20->3 15->4 12->5 10->6. */
+/* Redraw the menu game every n refreshes. Held at 1, every refresh, until
+ * the Frame Rate setting means what it says (#312): its FRAME_RATE_* labels
+ * are not rates, and at the default "30" the game itself runs at about 60,
+ * so reading the label as Hz halved the menu game's rate. The n >= 2 paths
+ * below stay for that setting to use. */
 static int bgFrameEveryN(Sint64 periodNs) {
-    double refreshHz = 1000000000.0 / (double)periodNs;
-    int n = (int)(refreshHz / (double)bgFrameTargetHz() + 0.5);
-    return n < 1 ? 1 : n;
+    (void)periodNs;
+    return 1;
 }
 
 /* How far this draw is between the last two ticks: 0 = the tick before,
@@ -1002,7 +994,7 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
 
     /* Redraw every n refreshes by the Frame Rate setting; n = 1 draws
      * direct every frame, and so does a renderer that cannot keep the
-     * scene offscreen. 1.5x cannot be drawn direct, so it always goes
+     * scene offscreen or a high-density screen (below). 1.5x cannot be drawn direct, so it always goes
      * through the kept scene; with n = 1 that is redrawn every frame. */
     Sint64 periodNs = bgFrameRefreshNs(renderer);
     int n = bgFrameEveryN(periodNs);
@@ -1010,7 +1002,15 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
     int texW = screenW * ssScale;
     int texH = screenH * ssScale;
     bgFramePrepare(bg, renderer, texW, texH);
-    if (n < 2 && ssScale == 1) bgFrameDrop(bg, true);
+    /* The 1x kept scene is sized in points. On a high-density screen
+     * (tablet mode) the window maps points to more pixels than that, so a
+     * copy would be blurred; the scene draws direct there instead. 1.5x is
+     * left alone: its texture is twice the points, about the pixels on a
+     * 2x screen. */
+    int pxW = 0, pxH = 0;
+    SDL_GetRenderOutputSize(renderer, &pxW, &pxH);
+    bool keep1x = n >= 2 && pxW == screenW && pxH == screenH;
+    if (!keep1x && ssScale == 1) bgFrameDrop(bg, true);
     if (bg->tilesTex != NULL) {
         bool wasBroken = bg->frameBroken;
         bool shown;
@@ -1027,7 +1027,7 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
                 zf = 1;   /* this frame: direct at 1x */
             }
         } else {
-            shown = n >= 2 && !bg->frameBroken &&
+            shown = keep1x && !bg->frameBroken &&
                     screenW > 0 && screenH > 0 &&
                     bgFrameRender(bg, renderer, screenW, screenH,
                                   screenW, screenH, zf, periodNs, n,

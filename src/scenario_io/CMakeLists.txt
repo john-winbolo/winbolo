@@ -14,7 +14,9 @@
 #                     its table cannot disagree with it. Writing that
 #                     container on to a map file is here too, manifest and
 #                     all, which is what the server's -pack flag reaches
-#                     through scenario_static.
+#                     through scenario_static. So is the scripts.json text
+#                     a round's recording carries, written from a
+#                     description the scenario host fills.
 #
 #                     No Lua, and no view of src/bolo/scenario_api/ or
 #                     src/bolo/internal/: built under the runtime_only
@@ -39,6 +41,7 @@ add_library(scenario_io_static STATIC
     scenario_issues.c
     scenario_manifest_json.c
     scenario_package.c
+    scenario_record_json.c
 )
 
 bolo_apply_include_rules(scenario_io_static runtime_only)

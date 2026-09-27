@@ -179,7 +179,13 @@ void lv_windowStop(int corruptLog) {
                                  "Error: Corrupt Log File", NULL);
     }
     lv_windowPause();
+#ifndef __EMSCRIPTEN__
+    /* Gives a timer callback that was already running when the pause removed
+       its timer time to finish before the log is closed under it. The web
+       build is single-threaded, so there is no such callback to wait for, and
+       it links without ASYNCIFY, so a delay there would block the tab. */
     SDL_Delay(500);
+#endif
     lv_clientMutexWaitFor();
     lv_frontEndSetGameInformation(TRUE, 0, 0, 0, NULL, 0, 0, 0, 0, 0, NULL, 0);
     lv_updateItem(0, 0, 0, 0, 0, 0, 0, 0, FALSE);

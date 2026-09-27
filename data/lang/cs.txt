@@ -1931,6 +1931,8 @@ STR_DLGLOBBY_CLASSIC_MODE_TIP=Nastaví Pohled na bunkr na Klávesa a Pohled na z
 STR_MENU_CLASSIC_MODE_TIP=Server má zapnutý klasický režim, takže je toto zobrazení vypnuté.
 STR_DLGLOBBY_ALLIES_TREES_CB=Vidět spojence v lese
 STR_DLGLOBBY_ALLIES_TREES_TIP=Spojenecké tanky stojící v lese se na tvé obrazovce\nkreslí, místo aby byly skryté. Mlha války stále platí,\ntakže je vidíš jen tam, kam vidíš i tak. Vypnuto je\nklasické pravidlo a klasický režim toto nastavení vypne.
+STR_DLGLOBBY_POSITIONAL_SOUND_CB=Poziční zvuk
+STR_DLGLOBBY_POSITIONAL_SOUND_TIP=Zvuky zní z té strany obrazovky, kde se odehrají.
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_OVERVIEW_WINDOW=Okno přehledu
 STR_DLGLOBBY_OVERVIEW_WINDOW_TIP=Blok dlaždic, který přehled mapy udržuje živý kolem\ntvého tanku. Rozšířené je vše, kam může posunout\nklasický pohled; Klasické to zúží na okno, které tento\npohled ukazuje. Klasický režim ho nastaví na Klasické\na drží ho tak. Server posílá stejná data mapy tak jako tak.
@@ -2217,6 +2219,8 @@ STR_BOT_DIFF_DESC_HARD=Tento bot loví nepřátelské bunkry a základny, koordi
 STR_DLGLOBBY_BOTCFG_MODE=Režim
 STR_DLGLOBBY_BOT_DOCS_TITLE=Příkazy: {string1}
 STR_COPY=Kopírovat
+STR_DLGLOBBY_BOT_DOCS_LOADING=Načítání příkazů ze serveru...
+STR_DLGLOBBY_BOT_DOCS_FAILED=Server tyto příkazy neposlal. Zavřete toto okno a otevřete ho znovu, abyste to zkusili znovu.
 
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_PRESET_CLASSIC=Klasické
@@ -2611,6 +2615,17 @@ STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — mění průběh hry a vítězství necháv
 STR_MAPEDIT_SCENARIO_KIND_NOTE=Mod nesmí nastavit typ hry, posouvat čas, vést vlastní skóre ani ukončit kolo, takže tyto možnosti nejsou nabízeny, dokud je zde zvoleno Mod. Jde o jinou otázku než Vytvořeno pro tuto mapu níže, která se týká toho, pro jakou mapu byl soubor napsán.
 STR_MAPEDIT_SCENARIO_GAME_MOD=Mod ponechává typ hry na serveru
 STR_MAPEDIT_SCENARIO_FN_MOD={string1} není nabízeno, dokud tento soubor říká Mod: je to jediná odpověď, která rozhoduje o konci, a mod nechává podmínku výhry beze změny.
+STR_LV_INFO_SCENARIO_MODS_1={string1} · 1 mod
+STR_LV_INFO_SCENARIO_MODS_N={string1} · {number} modů
+STR_LV_INFO_SCRIPTS=Skripty
+STR_LV_INFO_SCRIPT_SOURCE_MAP=mapa
+STR_LV_INFO_SCRIPT_SOURCE_SERVER=server
+STR_LV_INFO_RULE_CHANGE=tick {number}: {string1} → {string2}
+STR_LV_INFO_SCORES=Skóre
+STR_LV_INFO_SCORE_SLOT=Slot {number}
+STR_LV_SCN_ANNOUNCE={string1}{string2}{string3}
+STR_LV_SCN_ANNOUNCE_TO=[{player}] {string1}{string2}{string3}
+STR_LV_REGIONS_TIP=deklarované oblasti
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADS=Skripty od hráčů
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_SESSION=Povolit na toto sezení
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_KEEP=Povolit a ponechat

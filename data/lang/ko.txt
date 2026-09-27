@@ -1931,6 +1931,8 @@ STR_DLGLOBBY_CLASSIC_MODE_TIP=토치카 표시를 '키'로, 기지 표시와 아
 STR_MENU_CLASSIC_MODE_TIP=서버가 클래식 모드이므로 이 보기는 꺼져 있습니다.
 STR_DLGLOBBY_ALLIES_TREES_CB=숲 속 아군 표시
 STR_DLGLOBBY_ALLIES_TREES_TIP=숲 속에 있는 아군 탱크가 숨겨지지 않고 화면에\n표시됩니다. 전장의 안개는 그대로 적용되므로 원래\n보이는 곳에서만 보입니다. 꺼짐이 기존 규칙이며,\n클래식 모드에서는 꺼짐으로 고정됩니다.
+STR_DLGLOBBY_POSITIONAL_SOUND_CB=위치 기반 사운드
+STR_DLGLOBBY_POSITIONAL_SOUND_TIP=소리가 화면에서 일어난 쪽에서 들립니다.
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_OVERVIEW_WINDOW=전체 보기 범위
 STR_DLGLOBBY_OVERVIEW_WINDOW_TIP=지도 전체 보기가 내 탱크 주위에 항상 유지하는\n타일 범위입니다. 확장은 메인 보기가 스크롤할\n수 있는 범위 전체이며, 클래식은 그 화면이\n보여주는 범위로 좁힙니다. 클래식 모드는 이를\n클래식으로 설정하고 그대로 유지합니다. 서버는\n어느 쪽이든 같은 지도 데이터를 보냅니다.
@@ -2217,6 +2219,8 @@ STR_BOT_DIFF_DESC_HARD=이 봇은 적의 토치카와 기지를 사냥하듯 노
 STR_DLGLOBBY_BOTCFG_MODE=모드
 STR_DLGLOBBY_BOT_DOCS_TITLE={string1} 명령어
 STR_COPY=복사
+STR_DLGLOBBY_BOT_DOCS_LOADING=서버에서 명령어를 가져오는 중...
+STR_DLGLOBBY_BOT_DOCS_FAILED=서버가 이 명령어를 보내지 않았습니다. 이 창을 닫았다가 다시 열어 다시 시도하세요.
 
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_PRESET_CLASSIC=클래식
@@ -2611,6 +2615,17 @@ STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — 게임 진행 방식만 바꾸고 승패�
 STR_MAPEDIT_SCENARIO_KIND_NOTE=Mod는 게임 타입을 정하거나, 시계를 움직이거나, 자체 점수를 유지하거나, 라운드를 끝낼 수 없기 때문에 이 항목이 Mod로 되어 있는 동안에는 해당 항목들이 제공되지 않아요. 이는 아래의 "이 맵 전용"과는 다른 질문으로, 그쪽은 이 파일이 어느 맵을 위해 작성되었는지를 다뤄요.
 STR_MAPEDIT_SCENARIO_GAME_MOD=Mod는 게임 타입을 서버에 맡겨요
 STR_MAPEDIT_SCENARIO_FN_MOD=이 파일이 Mod로 되어 있는 동안에는 {string1} 항목이 제공되지 않아요. 이는 결말을 정하는 유일한 답이고, Mod는 승리 조건에 관여하지 않기 때문이에요.
+STR_LV_INFO_SCENARIO_MODS_1={string1} · 모드 1개
+STR_LV_INFO_SCENARIO_MODS_N={string1} · 모드 {number}개
+STR_LV_INFO_SCRIPTS=스크립트
+STR_LV_INFO_SCRIPT_SOURCE_MAP=맵
+STR_LV_INFO_SCRIPT_SOURCE_SERVER=서버
+STR_LV_INFO_RULE_CHANGE=틱 {number}: {string1} → {string2}
+STR_LV_INFO_SCORES=점수
+STR_LV_INFO_SCORE_SLOT=슬롯 {number}
+STR_LV_SCN_ANNOUNCE={string1}{string2}{string3}
+STR_LV_SCN_ANNOUNCE_TO=[{player}] {string1}{string2}{string3}
+STR_LV_REGIONS_TIP=선언된 영역
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADS=플레이어의 스크립트
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_SESSION=이번 세션만 허용
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_KEEP=허용하고 보관

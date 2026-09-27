@@ -37,6 +37,7 @@
 #define LOBBY_BOT_POOLS_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "global.h"
 
@@ -157,9 +158,11 @@ bool lobbyBotPoolsLoadDefault(LobbyBotPoolLoadStats *stats);
  *
  * So clients render and pick from the *server's* pools (not their own
  * shipped file), the server serialises its active themed pools into a
- * compact, zlib-compressed blob and streams it to each client during
- * the lobby join sync.  The generated "Numbered Bots" pool is NOT
- * serialised — both ends append it locally, so indices line up.
+ * compact, zlib-compressed blob. A joiner is told the blob's id and
+ * length in the lobby join sync (CTRL_LOBBY_BOT_POOL_INFO), and asks for
+ * the blob on CHANNEL_BULK only when its own pools have another id.
+ * The generated "Numbered Bots" pool is NOT serialised — both ends
+ * append it locally, so indices line up.
  *
  * Blob layout: [u32 rawLen BE][zlib-deflated payload], where the
  * payload is:
@@ -184,6 +187,17 @@ bool lobbyBotPoolsLoadDefault(LobbyBotPoolLoadStats *stats);
  * see the .c). Writes nothing and returns 0 if there are no themed
  * pools. */
 int  lobbyBotPoolsSerialize(unsigned char *out, int outCap);
+
+/* The same, and *outId set to the catalogue's id (see below), or 0 when
+ * nothing was written. */
+int  lobbyBotPoolsSerializeWithId(unsigned char *out, int outCap,
+                                  uint32_t *outId);
+
+/* The id of the active themed pools: a CRC-32 of the uncompressed payload,
+ * never 0, and 0 when there are no themed pools. Two peers holding the same
+ * pools get the same id, which is how a client tells whether the server's
+ * catalogue is one it already has (CTRL_LOBBY_BOT_POOL_INFO). */
+uint32_t lobbyBotPoolsCatalogId(void);
 
 /* Decompress + parse a catalog blob produced by lobbyBotPoolsSerialize
  * and install it (replacing the active pools, same clamping as

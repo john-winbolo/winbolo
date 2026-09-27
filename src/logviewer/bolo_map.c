@@ -234,7 +234,7 @@ bool lv_mapProcessRun(map *value,BYTE elems, MAP_Y yValue, BYTE startX, BYTE end
 
       case lowSame:
         count2 = 0;
-        while (count2 < (len-MAP_RUN_SAME)) {
+        while (count2 < (len-MAP_RUN_SAME) && (mapPos+count2) < MAP_ARRAY_SIZE) {
           ((*value)->mapItem[mapPos+count2][yValue]) = lowNibble;
           count2++;
         }
@@ -244,7 +244,7 @@ bool lv_mapProcessRun(map *value,BYTE elems, MAP_Y yValue, BYTE startX, BYTE end
         break;
       case highSame:
         count2 = 0;
-        while (count2 < (len-MAP_RUN_SAME)) {
+        while (count2 < (len-MAP_RUN_SAME) && (mapPos+count2) < MAP_ARRAY_SIZE) {
           ((*value)->mapItem[mapPos+count2][yValue]) = highNibble;
           count2++;
         }

@@ -130,6 +130,12 @@ typedef struct BgGame {
 
 bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer);
 void bgGameDestroy(BgGame *bg);
+
+/* Free the kept scene texture (up to four times the window at 1.5x) when
+ * the menu stops drawing, so it does not sit in GPU memory through a game.
+ * The next bgGameRender makes it again. */
+void bgGameReleaseScene(BgGame *bg);
+
 void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH);
 
 /* Convenience: tick at fixed 50 Hz rate using a running timestamp */

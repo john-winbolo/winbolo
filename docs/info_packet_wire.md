@@ -68,7 +68,7 @@ and a field added to the layout reaches both paths at once.
 | 78 | 1 | u8 | max_players | server join-slot cap (16 unless configured lower) |
 | 79 | 32 | char[32] | map_md5 | 32 lowercase hex chars, no NUL; see below |
 | 111 | 1 | u8 | view_policies | 2 bits per visibility category plus the classic-mode and allies-in-trees bits, see below |
-| 112 | 1 | u8 | view_policies2 | overview window and line of sight, 2 bits each, see below |
+| 112 | 1 | u8 | view_policies2 | overview window and line of sight, 2 bits each, and the positional-sound bit, see below |
 
 Total: **113 bytes**.
 
@@ -127,12 +127,14 @@ so read it — only the two settings in `view_policies2` fall back at that lengt
 
 ## `view_policies2` byte (offset 112)
 
-Two bits per setting, low bits first:
+Two bits for each of the first two settings and one for the third, low bits
+first:
 
 ```
 bits 0-1  overview window   0 = expanded, 1 = classic
 bits 2-3  line of sight     0 = off, 1 = blocked by buildings and trees
-bits 4-7  spare — always clear
+bit  4    positional sound  0 = off, 1 = sounds panned by where they happen
+bits 5-7  spare — always clear
 ```
 
 The values are `OverviewWindow` and `LineOfSightMode` in
@@ -147,13 +149,15 @@ Two bits can hold a value neither enum names. Read such a value as the enum's
 zero — the expanded window, sight off — rather than reporting a mode you cannot
 name; `infoPacketReadViewPolicies2()` range-checks both fields against
 `OVERVIEW_WINDOW_COUNT` and `LINE_OF_SIGHT_COUNT` and does exactly that. A packet
-shorter than 113 bytes predates the byte and reads the same way.
+shorter than 113 bytes predates the byte and reads the same way, with positional
+sound off. A packet from a server that predates bit 4 sends it clear, so it also
+reads as off.
 
 ## What the view defaults mean
 
-The seven values a short packet reports — pill `always`, base `off`, ally
+The eight values a short packet reports — pill `always`, base `off`, ally
 `always`, classic mode off, allies in trees off, the expanded window, sight
-`off` — are the rules a server ran before each byte existed. They are
+`off`, positional sound off — are the rules a server ran before each byte existed. They are
 deliberately **not** the settings an unconfigured current server runs, which are
 pill `key`, base `off`, ally `off`, the **classic** window and sight `off`. A
 server old enough to leave the bytes out really does play differently from a
@@ -228,9 +232,10 @@ reads as.
 
 A value that does not parse as two hex bytes leaves the defaults in place, and so
 does a record with no `view` key: pill `always`, base `off`, ally `always`,
-classic mode off, allies in trees off, the expanded window and sight `off` — the
-same set a 111-byte packet gets, with the same caveat that it is not what a stock
-server runs.
+classic mode off, allies in trees off, the expanded window, sight `off` and
+positional sound off — the same set a 111-byte packet gets, with the same caveat
+that it is not what a stock server runs. Positional sound is bit 4 of the second
+byte, so a record from a server that predates the bit reads as off.
 
 TXT values are text — the md5 is the hex string, never raw bytes, and `view` is
 hex text rather than the two raw bytes.

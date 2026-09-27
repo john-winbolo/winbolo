@@ -33,13 +33,17 @@
  * move the others.
  *
  * Classic mode is the first column because it owns the rest: while it is
- * on the server writes the other six itself and refuses an edit to any of
+ * on the server writes the other seven itself and refuses an edit to any of
  * them, so the Classic row's remaining values are the ones classic mode
  * forces, and every other row has it off.
  *
  * Allies in trees rides with the bases-and-allies step rather than with
  * the window: "visibility provided by allies" is exactly what it adds, so
- * it goes on where the ally view does. */
+ * it goes on where the ally view does.
+ *
+ * Positional sound goes on with the expanded window: a panned sound
+ * tells a player which side an off-screen tank is on, which is the same
+ * kind of reach the wider window gives. */
 typedef struct {
     VisibilityPreset preset;
     bool             classicMode;
@@ -49,6 +53,7 @@ typedef struct {
     uint8_t          ally;
     uint8_t          lineOfSight;
     bool             alliesInTrees;
+    bool             positionalSound;
     const char      *prefWord;
     int              nameId;
     int              descId;
@@ -57,30 +62,30 @@ typedef struct {
 static const VisibilityPresetRow kPresets[VISIBILITY_PRESET_COUNT] = {
     { visibilityPresetClassic, true, (uint8_t)overviewWindowNone,
       (uint8_t)viewPolicyKey, (uint8_t)viewPolicyOff, (uint8_t)viewPolicyOff,
-      (uint8_t)lineOfSightOff, false, "Classic",
+      (uint8_t)lineOfSightOff, false, false, "Classic",
       STR_DLGLOBBY_PRESET_CLASSIC, STR_DLGLOBBY_PRESET_CLASSIC_DESC },
 
     { visibilityPresetClassicOverview, false, (uint8_t)overviewWindowClassic,
       (uint8_t)viewPolicyKey, (uint8_t)viewPolicyOff, (uint8_t)viewPolicyOff,
-      (uint8_t)lineOfSightOff, false, "ClassicOverview",
+      (uint8_t)lineOfSightOff, false, false, "ClassicOverview",
       STR_DLGLOBBY_PRESET_CLASSIC_OVERVIEW,
       STR_DLGLOBBY_PRESET_CLASSIC_OVERVIEW_DESC },
 
     { visibilityPresetExpanded, false, (uint8_t)overviewWindowExpanded,
       (uint8_t)viewPolicyAlways, (uint8_t)viewPolicyOff, (uint8_t)viewPolicyOff,
-      (uint8_t)lineOfSightOff, false, "Expanded",
+      (uint8_t)lineOfSightOff, false, true, "Expanded",
       STR_DLGLOBBY_PRESET_EXPANDED, STR_DLGLOBBY_PRESET_EXPANDED_DESC },
 
     { visibilityPresetMaxView, false, (uint8_t)overviewWindowExpanded,
       (uint8_t)viewPolicyAlways, (uint8_t)viewPolicyAlways,
       (uint8_t)viewPolicyAlways,
-      (uint8_t)lineOfSightOff, true, "MaxView",
+      (uint8_t)lineOfSightOff, true, true, "MaxView",
       STR_DLGLOBBY_PRESET_MAXVIEW, STR_DLGLOBBY_PRESET_MAXVIEW_DESC },
 
     { visibilityPresetSight, false, (uint8_t)overviewWindowExpanded,
       (uint8_t)viewPolicyAlways, (uint8_t)viewPolicyAlways,
       (uint8_t)viewPolicyAlways,
-      (uint8_t)lineOfSightBuildingsAndTrees, true, "LineOfSight",
+      (uint8_t)lineOfSightBuildingsAndTrees, true, true, "LineOfSight",
       STR_DLGLOBBY_PRESET_SIGHT, STR_DLGLOBBY_PRESET_SIGHT_DESC },
 };
 
@@ -100,6 +105,7 @@ static void rowToSettings(const VisibilityPresetRow *row,
     out->overviewWindow = row->overviewWindow;
     out->lineOfSight    = row->lineOfSight;
     out->alliesInTrees  = row->alliesInTrees;
+    out->positionalSound = row->positionalSound;
 }
 
 bool visibilityPresetSettings(VisibilityPreset preset,
@@ -123,6 +129,7 @@ VisibilityPreset visibilityPresetMatch(const VisibilitySettings *v) {
         if (row->ally != v->policy[viewCategoryAlly]) continue;
         if (row->lineOfSight != v->lineOfSight) continue;
         if (row->alliesInTrees != v->alliesInTrees) continue;
+        if (row->positionalSound != v->positionalSound) continue;
         return row->preset;
     }
     return visibilityPresetCustom;
@@ -140,7 +147,8 @@ bool visibilitySettingsEqual(const VisibilitySettings *a,
     return (a->classicMode == b->classicMode &&
             a->overviewWindow == b->overviewWindow &&
             a->lineOfSight == b->lineOfSight &&
-            a->alliesInTrees == b->alliesInTrees);
+            a->alliesInTrees == b->alliesInTrees &&
+            a->positionalSound == b->positionalSound);
 }
 
 int visibilityPresetNameId(VisibilityPreset preset) {

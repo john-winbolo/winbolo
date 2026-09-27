@@ -244,6 +244,7 @@ int gameFrontViewBaseDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 int gameFrontViewAllyDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 bool gameFrontClassicMode      = FALSE;
 bool gameFrontAlliesInTrees    = FALSE;
+bool gameFrontPositionalSound  = FALSE;
 int gameFrontOverviewWindow    = OVERVIEW_WINDOW_STOCK;
 int gameFrontLineOfSight       = LINE_OF_SIGHT_STOCK;
 
@@ -251,7 +252,6 @@ int gameFrontLineOfSight       = LINE_OF_SIGHT_STOCK;
  * inside humanSim; only high-level lifecycle gating is tracked here. */
 static ServerSim *wasmServerSim = NULL;
 static bool wasmTransportActive = FALSE;
-static BYTE wasmPlayerNum = 0;
 static SubscriberHandle wasmControlSub = SUBSCRIBER_HANDLE_INVALID;
 
 ClientSim *humanSim = NULL;
@@ -629,7 +629,6 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     break;
     }
 
-    wasmPlayerNum = clientSimGetServerPlayerNum(humanSim);
     wasmTransportActive = TRUE;
 
     /* Store server address in ClientSim for brain info */
@@ -659,7 +658,8 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
      * and the first snapshot apply fires the viewport finalisation. The lobby
      * vs running landing (netLobby) is settled by clientFrontAwaitJoin, and the
      * mapDownloadComplete flag stays transport-driven, so nothing to do here. */
-    printf("[WASM] UDP connected as player %d\n", wasmPlayerNum);
+    printf("[WASM] UDP connected as player %d\n",
+           clientSimGetServerPlayerNum(humanSim));
   } else {
     /* ---- Single-player via ServerSim + local transport ---- */
     printf("[WASM] Setting up single-player ServerSim...\n");
@@ -739,7 +739,6 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       return FALSE;
     }
     wasmTransportActive = TRUE;
-    wasmPlayerNum = 0;
     /* Session-type flag for the lobby/UI (hide multiplayer-only controls).
      * The shared tick core's keys-half pump skip keys off
      * clientSimTransportTicksServer, which clientSimConnectLocal (active)
@@ -1064,6 +1063,7 @@ void gameFrontSetViewBaseDecaySecs(int secs) { gameFrontViewBaseDecaySecs = secs
 void gameFrontSetViewAllyDecaySecs(int secs) { gameFrontViewAllyDecaySecs = secs; }
 void gameFrontSetClassicMode(bool on)        { gameFrontClassicMode = on; }
 void gameFrontSetAlliesInTrees(bool on)      { gameFrontAlliesInTrees = on; }
+void gameFrontSetPositionalSound(bool on)    { gameFrontPositionalSound = on; }
 void gameFrontSetOverviewWindow(int window)  { gameFrontOverviewWindow = window; }
 void gameFrontSetLineOfSight(int mode)       { gameFrontLineOfSight = mode; }
 
@@ -1102,6 +1102,7 @@ void gameFrontRememberVisibility(const VisibilitySettings *v,
   gameFrontViewAllyDecaySecs = (int)v->decaySecs[viewCategoryAlly];
   gameFrontClassicMode       = v->classicMode;
   gameFrontAlliesInTrees     = v->alliesInTrees;
+  gameFrontPositionalSound   = v->positionalSound;
   gameFrontOverviewWindow    = (int)v->overviewWindow;
   gameFrontLineOfSight       = (int)v->lineOfSight;
   p = visibilityPresetMatch(v);
@@ -1124,6 +1125,7 @@ void gameFrontGetVisibilitySettings(VisibilitySettings *out) {
   out->overviewWindow              = (uint8_t)gameFrontOverviewWindow;
   out->lineOfSight                 = (uint8_t)gameFrontLineOfSight;
   out->alliesInTrees               = gameFrontAlliesInTrees;
+  out->positionalSound             = gameFrontPositionalSound;
 }
 
 /* Steam rich presence — there is no Steam client behind a browser tab. */

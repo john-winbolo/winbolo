@@ -39,6 +39,18 @@
  *   run_scn_arm_score_announce_marker
  *       the other three arms: one success each, the fields the event
  *       carries and the record it writes, and every refusal.
+ *   run_scn_arm_markers_scores_replayed_to_joiner
+ *       a ClientSim registering after the markers and scores were set is
+ *       given the markers up and every score row; a marker held to another
+ *       team is filtered on the way in, and a cleared one is not sent.
+ *   run_scn_arm_markers_scores_snapshot
+ *       the ring's control snapshot carries the everyone-addressed marker
+ *       and both score rows, and not the marker held to a team.
+ *   run_scn_arm_markers_scores_reset
+ *       after the presentation reset a joiner is given none of them.
+ *   run_scn_markers_scores_loopback_late_join
+ *       a second client joining a running round over the real transport
+ *       ends up with the markers and scores the first one was sent live.
  *
  * What a published event carries is observed at a subscriber. What a
  * recording carries is observed by walking the .wbv's event stream, which
@@ -64,11 +76,14 @@
 #include "scenario_panel.h"
 #include "client_sim.h"            /* ClientSim — the joiner the replay reaches */
 #include "client_sim_internal.h"   /* cs->lobbySlots — the joiner's seat */
+#include "client_net.h"            /* clientSimGetConnectState */
+#include "client_connect_state.h"
 #include "log.h"                   /* log_Scn* and the stream opcodes */
 #include "log_internal.h"          /* serverSimSerializeControlSnapshot,
                                     * LOG_CONTROL_SNAPSHOT_MAX */
 #include "everard_map.h"
 #include "replay_harness.h"
+#include "loopback_harness.h"
 #include "test_harness.h"
 
 /* The seat the harness fills, and a second one the fixtures address. */
@@ -941,5 +956,385 @@ int run_scn_arm_score_announce_marker(void) {
                   (unsigned)hits.payload[1][7], PA_SLOT_HOST);
 
     replayHarnessStop(&h);
+    return 0;
+}
+
+/* ================================================================
+ * 7. Markers and scores handed to a subscriber that arrives after them.
+ * ================================================================ */
+
+/* The team the host's seat is put on, which the team-held marker names. The
+   other seat stays on PA_TEAM, so the one marker reaches one joiner and not
+   the other. */
+#define PA_JOIN_TEAM 2
+
+/* The marker ids the fixture uses: one for everyone, one held to
+   PA_JOIN_TEAM, and one placed and then cleared. */
+#define PA_MARKER_ALL     3
+#define PA_MARKER_TEAM    5
+#define PA_MARKER_CLEARED 7
+
+/* A lobby sim with two filled seats on two teams, and the markers and the
+   two score rows the replay cases read. The teams are set on the server's
+   lobby rows because the replay's CTRL_LOBBY_SLOT events carry them to the
+   joiner, overwriting anything the joiner was given beforehand. */
+static ServerSim *paMakeMarkerScoreSim(void) {
+    ServerSim *sim = paMakeLobbySim();
+    if (sim == NULL) return NULL;
+    serverSimAddPlayer(sim, PA_SLOT_OTHER, "Other", false);
+    sim->lobbyPlayers[PA_SLOT_HOST].teamNumber  = PA_JOIN_TEAM;
+    sim->lobbyPlayers[PA_SLOT_OTHER].teamNumber = PA_TEAM;
+
+    if (paMarker(sim, 0, PA_MARKER_ALL, SCN_MARKER_KIND_SQUARE, PA_SQUARE_X,
+                 PA_SQUARE_Y, 0, SCN_PANEL_COLOUR_RED) != SCN_OP_OK ||
+        paMarker(sim, PA_JOIN_TEAM, PA_MARKER_TEAM, SCN_MARKER_KIND_FOLLOW,
+                 0, 0, PA_SLOT_HOST, SCN_PANEL_COLOUR_GREEN) != SCN_OP_OK ||
+        paMarker(sim, 0, PA_MARKER_CLEARED, SCN_MARKER_KIND_SQUARE,
+                 PA_SQUARE_X, PA_SQUARE_Y, 0,
+                 SCN_PANEL_COLOUR_RED) != SCN_OP_OK ||
+        paMarker(sim, 0, PA_MARKER_CLEARED, SCN_MARKER_KIND_CLEAR,
+                 0, 0, 0, 0) != SCN_OP_OK ||
+        paScore(sim, SCN_SCORE_KIND_PLAYER, PA_SLOT_OTHER, 12,
+                "Kills") != SCN_OP_OK ||
+        paScore(sim, SCN_SCORE_KIND_TEAM, PA_JOIN_TEAM, 30,
+                "Waves") != SCN_OP_OK) {
+        serverSimDestroy(sim);
+        return NULL;
+    }
+    return sim;
+}
+
+/* A ClientSim sitting in `slot`, registered on the sim, so the replay has
+   run on it by the time this returns. */
+static ClientSim *paJoin(ServerSim *sim, BYTE slot, SubscriberHandle *out) {
+    ClientSim *cs = clientSimAlloc();
+    if (cs == NULL) return NULL;
+    clientSimCreate(cs);
+    clientSimSetPlayerNum(cs, slot);
+    *out = serverSimRegisterClientSubscriber(sim, cs);
+    if (*out == SUBSCRIBER_HANDLE_INVALID) {
+        clientSimDestroy(cs);
+        return NULL;
+    }
+    return cs;
+}
+
+/* Both score rows the fixture set, as the joiner holds them. */
+static int paJoinerHasScores(const ClientSim *cs, const char *who) {
+    const ClientScnScore *p = clientSimGetScnPlayerScore(cs, PA_SLOT_OTHER);
+    const ClientScnScore *t = clientSimGetScnTeamScore(cs, PA_JOIN_TEAM);
+    UT_ASSERT_MSG(p != NULL && p->valid,
+                  "%s was not given slot %d's score row", who, PA_SLOT_OTHER);
+    UT_ASSERT(p->score == 12);
+    UT_ASSERT(strcmp(p->label, "Kills") == 0);
+    UT_ASSERT_MSG(t != NULL && t->valid,
+                  "%s was not given team %d's score row", who, PA_JOIN_TEAM);
+    UT_ASSERT(t->score == 30);
+    UT_ASSERT(strcmp(t->label, "Waves") == 0);
+    return 0;
+}
+
+int run_scn_arm_markers_scores_replayed_to_joiner(void) {
+    ServerSim             *sim = paMakeMarkerScoreSim();
+    PaCapture              cap;
+    SubscriberHandle       capHandle;
+    ClientSim             *onTeam;
+    ClientSim             *offTeam;
+    SubscriberHandle       onHandle;
+    SubscriberHandle       offHandle;
+    const ClientScnMarker *m;
+
+    UT_ASSERT_MSG(sim != NULL, "the fixture's ops were refused");
+
+    /* What the replay sends, before any filter: the two markers still up
+       and the two score rows. The cleared marker is not among them. */
+    memset(&cap, 0, sizeof(cap));
+    capHandle = serverSimRegisterSubscriber(sim, paCaptureCb, &cap);
+    UT_ASSERT(capHandle != SUBSCRIBER_HANDLE_INVALID);
+    UT_ASSERT_MSG(cap.markerCount == 2,
+                  "the replay sent %d CTRL_SCN_MARKER, expected 2 — the "
+                  "cleared marker is not replayed", cap.markerCount);
+    UT_ASSERT_MSG(cap.scoreCount == 2,
+                  "the replay sent %d CTRL_SCN_SCORE, expected 2",
+                  cap.scoreCount);
+    serverSimUnregisterSubscriber(sim, capHandle);
+
+    /* A joiner on the team the follow marker is held to. */
+    onTeam = paJoin(sim, PA_SLOT_HOST, &onHandle);
+    UT_ASSERT_MSG(onTeam != NULL, "the first joiner could not register");
+
+    m = clientSimGetScnMarker(onTeam, PA_MARKER_ALL);
+    UT_ASSERT_MSG(m != NULL && m->active,
+                  "the joiner was not given marker %d", PA_MARKER_ALL);
+    UT_ASSERT(m->kind == SCN_MARKER_KIND_SQUARE);
+    UT_ASSERT(m->x == PA_SQUARE_X && m->y == PA_SQUARE_Y);
+    UT_ASSERT(m->colour == SCN_PANEL_COLOUR_RED);
+
+    m = clientSimGetScnMarker(onTeam, PA_MARKER_TEAM);
+    UT_ASSERT_MSG(m != NULL && m->active,
+                  "a joiner on team %d was not given marker %d, which is "
+                  "held to that team", PA_JOIN_TEAM, PA_MARKER_TEAM);
+    UT_ASSERT(m->kind == SCN_MARKER_KIND_FOLLOW);
+    UT_ASSERT_MSG(m->slot == PA_SLOT_HOST,
+                  "the marker follows slot %u, expected %d",
+                  (unsigned)m->slot, PA_SLOT_HOST);
+    UT_ASSERT(m->colour == SCN_PANEL_COLOUR_GREEN);
+
+    m = clientSimGetScnMarker(onTeam, PA_MARKER_CLEARED);
+    UT_ASSERT_MSG(m != NULL && !m->active,
+                  "the joiner holds marker %d, which was cleared",
+                  PA_MARKER_CLEARED);
+    if (paJoinerHasScores(onTeam, "the joiner on the marker's team") != 0) {
+        return 1;
+    }
+
+    /* And one on another team: the everyone-addressed marker and the scores
+       reach it, the team-held marker is filtered on the way in. */
+    offTeam = paJoin(sim, PA_SLOT_OTHER, &offHandle);
+    UT_ASSERT_MSG(offTeam != NULL, "the second joiner could not register");
+
+    m = clientSimGetScnMarker(offTeam, PA_MARKER_ALL);
+    UT_ASSERT_MSG(m != NULL && m->active,
+                  "the second joiner was not given marker %d", PA_MARKER_ALL);
+    m = clientSimGetScnMarker(offTeam, PA_MARKER_TEAM);
+    UT_ASSERT_MSG(m != NULL && !m->active,
+                  "a joiner on team %d holds marker %d, which is held to "
+                  "team %d", PA_TEAM, PA_MARKER_TEAM, PA_JOIN_TEAM);
+    m = clientSimGetScnMarker(offTeam, PA_MARKER_CLEARED);
+    UT_ASSERT(m != NULL && !m->active);
+    if (paJoinerHasScores(offTeam, "the joiner on another team") != 0) {
+        return 1;
+    }
+
+    serverSimUnregisterSubscriber(sim, offHandle);
+    serverSimUnregisterSubscriber(sim, onHandle);
+    clientSimDestroy(offTeam);
+    clientSimDestroy(onTeam);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ================================================================
+ * 8. The ring's control snapshot takes the everyone-addressed markers and
+ *    every score row, and leaves the markers held to a team or a slot.
+ * ================================================================ */
+
+#define PA_MAX_SNAP_MARKERS 8
+
+/* Walk the snapshot's records and collect every marker id, in order, and
+ * count the score records. The marker body is [id][kind][x][y][slot]
+ * [colour]. Returns the marker count, or -1 if the framing does not land
+ * exactly on the end of the buffer. */
+static int paSnapshotMarkers(const uint8_t *snap, int snapLen,
+                             uint8_t *ids, int idCap, int *scores) {
+    int pos = 0;
+    int found = 0;
+
+    *scores = 0;
+    while (pos < snapLen) {
+        uint16_t type;
+        uint16_t bodyLen;
+
+        if (pos + 4 > snapLen) return -1;
+        type    = (uint16_t)((snap[pos] << 8) | snap[pos + 1]);
+        bodyLen = (uint16_t)((snap[pos + 2] << 8) | snap[pos + 3]);
+        if (pos + 4 + (int)bodyLen > snapLen) return -1;
+        if (type == (uint16_t)CTRL_SCN_MARKER) {
+            if (bodyLen < 1) return -1;
+            if (found < idCap) ids[found] = snap[pos + 4];
+            found++;
+        } else if (type == (uint16_t)CTRL_SCN_SCORE) {
+            (*scores)++;
+        }
+        pos += 4 + (int)bodyLen;
+    }
+    return found;
+}
+
+int run_scn_arm_markers_scores_snapshot(void) {
+    ServerSim *sim = paMakeMarkerScoreSim();
+    uint8_t   *snap;
+    uint8_t    ids[PA_MAX_SNAP_MARKERS];
+    int        snapLen;
+    int        count;
+    int        scores;
+
+    UT_ASSERT_MSG(sim != NULL, "the fixture's ops were refused");
+
+    snap = (uint8_t *)malloc(LOG_CONTROL_SNAPSHOT_MAX);
+    UT_ASSERT(snap != NULL);
+    snapLen = serverSimSerializeControlSnapshot(sim, snap,
+                                                LOG_CONTROL_SNAPSHOT_MAX);
+    UT_ASSERT_MSG(snapLen > 0,
+                  "the control snapshot did not fit %d bytes, so the ring "
+                  "drops the keyframe", LOG_CONTROL_SNAPSHOT_MAX);
+
+    count = paSnapshotMarkers(snap, snapLen, ids, PA_MAX_SNAP_MARKERS,
+                              &scores);
+    UT_ASSERT_MSG(count >= 0, "the snapshot's record framing does not close");
+    UT_ASSERT_MSG(count == 1,
+                  "the snapshot holds %d marker record(s), expected 1 — the "
+                  "everyone-addressed one and not the one held to a team",
+                  count);
+    UT_ASSERT_MSG(ids[0] == PA_MARKER_ALL,
+                  "the snapshot's marker is id %u, expected %d",
+                  (unsigned)ids[0], PA_MARKER_ALL);
+    UT_ASSERT_MSG(scores == 2,
+                  "the snapshot holds %d score record(s), expected 2 — "
+                  "scores are broadcast and go in either way", scores);
+
+    free(snap);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ================================================================
+ * 9. The presentation reset drops the markers and the scores, so a joiner
+ *    after it is given none of them.
+ * ================================================================ */
+int run_scn_arm_markers_scores_reset(void) {
+    ServerSim        *sim = paMakeMarkerScoreSim();
+    PaCapture         cap;
+    SubscriberHandle  handle;
+    int               i;
+
+    UT_ASSERT_MSG(sim != NULL, "the fixture's ops were refused");
+
+    serverSimScenarioResetPresentation(sim);
+    for (i = 0; i < SCN_MARKERS_MAX; i++) {
+        UT_ASSERT_MSG(!sim->scenarioMarkers[i].valid,
+                      "marker %d survived the reset", i);
+    }
+
+    memset(&cap, 0, sizeof(cap));
+    handle = serverSimRegisterSubscriber(sim, paCaptureCb, &cap);
+    UT_ASSERT(handle != SUBSCRIBER_HANDLE_INVALID);
+    UT_ASSERT_MSG(cap.markerCount == 0,
+                  "a joiner after the reset was sent %d CTRL_SCN_MARKER",
+                  cap.markerCount);
+    UT_ASSERT_MSG(cap.scoreCount == 0,
+                  "a joiner after the reset was sent %d CTRL_SCN_SCORE",
+                  cap.scoreCount);
+
+    serverSimUnregisterSubscriber(sim, handle);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ================================================================
+ * 10. Over the real transport: a second client joining a running round
+ *     after the markers and scores were set ends up holding them.
+ * ================================================================ */
+
+#define PA_LB_CONNECT_MAX 2000   /* join + map download                   */
+#define PA_LB_SETTLE_MAX   200   /* a few running ticks after the download */
+#define PA_LB_SYNC_MAX     600   /* the replay crossing to the joiner      */
+
+/* The team the loopback score row is set for. Any team number takes a
+   score; it need not have anybody on it. */
+#define PA_LB_TEAM 1
+
+static bool paLbConnected(LoopbackHarness *h, void *user) {
+    (void)user;
+    return clientSimGetConnectState(h->cs) == CLIENT_CONNECT_CONNECTED;
+}
+
+static bool paLbJoinerConnected(LoopbackHarness *h, void *user) {
+    (void)user;
+    return h->cs2 != NULL &&
+           clientSimGetConnectState(h->cs2) == CLIENT_CONNECT_CONNECTED;
+}
+
+/* True once the joiner holds the marker and both score rows. `user` is the
+   slot the player row was set for. */
+static bool paLbJoinerHasAll(LoopbackHarness *h, void *user) {
+    BYTE slot = *(const BYTE *)user;
+    const ClientScnMarker *m;
+    const ClientScnScore  *p;
+    const ClientScnScore  *t;
+    if (h->cs2 == NULL) return false;
+    m = clientSimGetScnMarker(h->cs2, PA_MARKER_ALL);
+    p = clientSimGetScnPlayerScore(h->cs2, slot);
+    t = clientSimGetScnTeamScore(h->cs2, PA_LB_TEAM);
+    return m != NULL && m->active && p != NULL && p->valid &&
+           t != NULL && t->valid;
+}
+
+int run_scn_markers_scores_loopback_late_join(void) {
+    LoopbackHarness        h;
+    const ClientScnMarker *m;
+    const ClientScnScore  *p;
+    const ClientScnScore  *t;
+    BYTE                   firstSlot = MAX_TANKS;
+    BYTE                   i;
+    int                    at;
+
+    memset(&h, 0, sizeof(h));
+    UT_ASSERT_MSG(loopbackHarnessStart(&h, "MarkFirst", false, NULL, 90212),
+                  "loopback start failed");
+    at = loopbackHarnessPumpUntil(&h, PA_LB_CONNECT_MAX, paLbConnected, NULL);
+    UT_ASSERT_MSG(at > 0, "the first client never connected");
+    loopbackHarnessPumpUntil(&h, PA_LB_SETTLE_MAX, NULL, NULL);
+
+    /* The first client's seat, which the player score row is set against:
+       a player row has to name a filled seat. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (h.sim->playerConnected[i]) {
+            firstSlot = i;
+            break;
+        }
+    }
+    UT_ASSERT_MSG(firstSlot < MAX_TANKS, "the first client holds no seat");
+
+    /* A marker for everyone, one placed and cleared, and a score row of each
+       kind, all before anyone else is here to be told about them. */
+    UT_ASSERT(paMarker(h.sim, 0, PA_MARKER_ALL, SCN_MARKER_KIND_SQUARE,
+                       PA_SQUARE_X, PA_SQUARE_Y, 0,
+                       SCN_PANEL_COLOUR_RED) == SCN_OP_OK);
+    UT_ASSERT(paMarker(h.sim, 0, PA_MARKER_CLEARED, SCN_MARKER_KIND_SQUARE,
+                       PA_SQUARE_X, PA_SQUARE_Y, 0,
+                       SCN_PANEL_COLOUR_RED) == SCN_OP_OK);
+    UT_ASSERT(paMarker(h.sim, 0, PA_MARKER_CLEARED, SCN_MARKER_KIND_CLEAR,
+                       0, 0, 0, 0) == SCN_OP_OK);
+    UT_ASSERT(paScore(h.sim, SCN_SCORE_KIND_PLAYER, firstSlot, 12,
+                      "Kills") == SCN_OP_OK);
+    UT_ASSERT(paScore(h.sim, SCN_SCORE_KIND_TEAM, PA_LB_TEAM, 30,
+                      "Waves") == SCN_OP_OK);
+    loopbackHarnessPumpUntil(&h, PA_LB_SETTLE_MAX, NULL, NULL);
+
+    UT_ASSERT_MSG(loopbackHarnessAddClient(&h, "MarkJoiner"),
+                  "the second client failed to connect");
+    at = loopbackHarnessPumpUntil(&h, PA_LB_CONNECT_MAX, paLbJoinerConnected,
+                                  NULL);
+    UT_ASSERT_MSG(at > 0, "the joiner never connected");
+
+    at = loopbackHarnessPumpUntil(&h, PA_LB_SYNC_MAX, paLbJoinerHasAll,
+                                  &firstSlot);
+    UT_ASSERT_MSG(at > 0,
+                  "the joiner did not hold marker %d and both score rows "
+                  "after %d pumps", PA_MARKER_ALL, PA_LB_SYNC_MAX);
+
+    /* What it holds matches what the first client was sent live. */
+    m = clientSimGetScnMarker(h.cs2, PA_MARKER_ALL);
+    UT_ASSERT(m->kind == SCN_MARKER_KIND_SQUARE);
+    UT_ASSERT(m->x == PA_SQUARE_X && m->y == PA_SQUARE_Y);
+    UT_ASSERT(m->colour == SCN_PANEL_COLOUR_RED);
+    m = clientSimGetScnMarker(h.cs2, PA_MARKER_CLEARED);
+    UT_ASSERT_MSG(m != NULL && !m->active,
+                  "the joiner holds marker %d, which was cleared",
+                  PA_MARKER_CLEARED);
+    p = clientSimGetScnPlayerScore(h.cs2, firstSlot);
+    t = clientSimGetScnTeamScore(h.cs2, PA_LB_TEAM);
+    UT_ASSERT(p->score == 12 && strcmp(p->label, "Kills") == 0);
+    UT_ASSERT(t->score == 30 && strcmp(t->label, "Waves") == 0);
+
+    m = clientSimGetScnMarker(h.cs, PA_MARKER_ALL);
+    UT_ASSERT_MSG(m != NULL && m->active,
+                  "the first client does not hold marker %d either, so the "
+                  "two agreeing says nothing", PA_MARKER_ALL);
+    p = clientSimGetScnPlayerScore(h.cs, firstSlot);
+    UT_ASSERT(p != NULL && p->valid && p->score == 12);
+
+    loopbackHarnessStop(&h);
     return 0;
 }

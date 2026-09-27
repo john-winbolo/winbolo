@@ -19,6 +19,7 @@
 #include "lv_global.h"
 #include "blocks.h"
 #include "lv_attribution.h"
+#include "scripts_record.h"   /* SCRIPTS_RECORD_MEMBER, SCN_RECORD_TEXT_MAX */
 #include "unzip.h"
 #include "ioapi.h"
 
@@ -54,6 +55,10 @@ static bool     logEOF      = FALSE; /* No more data to decompress */
 static BYTE     blockKey    = 0;     /* XOR decryption key */
 
 static unzFile  logFile = NULL;
+
+/* The scripts.json member's bytes, NUL-terminated, or NULL. */
+static char    *scriptsJson    = NULL;
+static size_t   scriptsJsonLen = 0;
 
 /* Grow logData to at least 'needed' bytes. Returns TRUE on success. */
 static bool growBuffer(size_t needed) {
@@ -132,6 +137,67 @@ static void lv_blocksLoadAttributionTrack(unzFile zf) {
   free(buf);
 }
 
+static void lv_blocksDropScriptsJson(void) {
+  free(scriptsJson);
+  scriptsJson    = NULL;
+  scriptsJsonLen = 0;
+}
+
+/* Locate and keep the optional scripts.json member, which a recording of a
+ * round that ran scripts carries. The same bounded grow-and-read loop as the
+ * attribution track, capped at the writer's SCN_RECORD_TEXT_MAX and reading
+ * one byte past it, so an over-long member is refused rather than cut into
+ * something that might parse. Absent, over the cap or unreadable leaves no
+ * text and does not disturb the log load. Must be called with no zip
+ * current-file open, and leaves none open. */
+static void lv_blocksLoadScriptsJson(unzFile zf) {
+  lv_blocksDropScriptsJson();
+  if (zf == NULL) return;
+  if (unzLocateFile(zf, SCRIPTS_RECORD_MEMBER, 0) != UNZ_OK) return;  /* plain round */
+  if (unzOpenCurrentFile(zf) != UNZ_OK) return;
+
+  const size_t maxLen = SCN_RECORD_TEXT_MAX;
+
+  char   *buf = NULL;
+  size_t  size = 0, cap = 0;
+  bool    ok = TRUE;
+  for (;;) {
+    size_t want = (maxLen + 1) - size;
+    if (want > LOG_DECOMPRESS_CHUNK) want = LOG_DECOMPRESS_CHUNK;
+    if (size + want > cap) {
+      size_t newCap = cap ? cap * 2 : LOG_DECOMPRESS_CHUNK;
+      while (newCap < size + want) newCap *= 2;
+      if (newCap > maxLen + 1) newCap = maxLen + 1;
+      char *nb = (char *)realloc(buf, newCap);
+      if (nb == NULL) { ok = FALSE; break; }
+      buf = nb;
+      cap = newCap;
+    }
+    int got = unzReadCurrentFile(zf, buf + size, (unsigned)want);
+    if (got < 0) { ok = FALSE; break; }
+    if (got == 0) break;
+    size += (size_t)got;
+    if (size > maxLen) { ok = FALSE; break; }  /* larger than the writer's cap */
+  }
+  unzCloseCurrentFile(zf);
+  if (ok && buf != NULL && size > 0) {
+    /* Room for the terminator: size is at most maxLen here. */
+    char *text = (char *)realloc(buf, size + 1);
+    if (text != NULL) {
+      text[size]     = '\0';
+      scriptsJson    = text;
+      scriptsJsonLen = size;
+      return;
+    }
+  }
+  free(buf);
+}
+
+const char *lv_blocksGetScriptsJson(size_t *len) {
+  if (len != NULL) *len = scriptsJsonLen;
+  return scriptsJson;
+}
+
 /* Size parameter is ignored -- we buffer the whole file. */
 bool lv_blocksCreate(char *fileName, int size) {
   (void)size;
@@ -145,6 +211,7 @@ bool lv_blocksCreate(char *fileName, int size) {
   logFile     = NULL;
   free(ownedZipData);
   ownedZipData = NULL;
+  lv_blocksDropScriptsJson();
 
   logFile = unzOpen(fileName);
   if (logFile == NULL) return FALSE;
@@ -159,6 +226,8 @@ bool lv_blocksCreate(char *fileName, int size) {
    * stream: locating another member moves the zip cursor, so re-locate
    * log.dat afterward and open it last for the lazy streaming reader. */
   lv_blocksLoadAttributionTrack(logFile);
+  /* And the scripts.json member, for the same reason and at the same point. */
+  lv_blocksLoadScriptsJson(logFile);
 
   if (unzLocateFile(logFile, "log.dat", 0) != UNZ_OK) {
     unzClose(logFile);
@@ -251,6 +320,7 @@ bool lv_blocksCreateFromMemory(uint8_t *zipData, size_t zipLen) {
   logPosition = 0;
   logEOF      = FALSE;
   logFile     = NULL;
+  lv_blocksDropScriptsJson();
 
   /* Take ownership of the buffer */
   ownedZipData = zipData;
@@ -283,6 +353,8 @@ bool lv_blocksCreateFromMemory(uint8_t *zipData, size_t zipLen) {
    * stream: locating another member moves the zip cursor, so re-locate
    * log.dat afterward and open it last for the lazy streaming reader. */
   lv_blocksLoadAttributionTrack(logFile);
+  /* And the scripts.json member, for the same reason and at the same point. */
+  lv_blocksLoadScriptsJson(logFile);
 
   if (unzLocateFile(logFile, "log.dat", 0) != UNZ_OK) {
     unzClose(logFile);
@@ -327,6 +399,8 @@ void lv_blocksBeginStream(void) {
   logEOF      = FALSE;
   blockKey    = 0;
   logFile     = NULL;
+  /* A stream has no zip, so it has no scripts.json. */
+  lv_blocksDropScriptsJson();
 }
 
 /* Append plaintext bytes to the stream buffer. No XOR on write; reads de-XOR
@@ -362,6 +436,7 @@ void lv_blocksDestroy() {
   logEOF      = FALSE;
   free(ownedZipData);
   ownedZipData = NULL;
+  lv_blocksDropScriptsJson();
 }
 
 bool lv_blocksIsEOF() {

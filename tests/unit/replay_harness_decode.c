@@ -238,8 +238,12 @@ bool replayHarnessDecodeFromLastSnapshot(const char *path, ReplayWorld *w) {
     return true;
 }
 
-bool replayHarnessDecodeFile(const char *path, ReplayWorld *w,
-                             ReplayFileInfo *info) {
+/* replayHarnessDecodeFile, and the viewer's scripts.json holder copied into
+ * scripts when that is not NULL. The copy is taken as soon as the file is
+ * open, since the load is what reads the member, so a file that opens but
+ * does not play to its end still reports what it carried. */
+static bool replayDecodeFileInto(const char *path, ReplayWorld *w,
+                                 ReplayFileInfo *info, LvScripts *scripts) {
     LogViewerState *lv;
     int steps;
     bool reachedEnd;
@@ -253,6 +257,10 @@ bool replayHarnessDecodeFile(const char *path, ReplayWorld *w,
         return false;
     }
 
+    if (scripts != NULL) {
+        *scripts = lv->scripts;
+    }
+
     if (info != NULL) {
         memset(info, 0, sizeof(*info));
         /* The viewer's map name is at most MAP_STR_SIZE; the buffer is
@@ -260,6 +268,7 @@ bool replayHarnessDecodeFile(const char *path, ReplayWorld *w,
         lv_screenGetMapName(info->mapName);
         /* Computed by the load's byte walk, before any playback. */
         info->totalTimeMs = lv_screenGetState()->totalTimeMs;
+        info->gameType = lv_screenGetState()->gt;
     }
 
     /* The load decodes the header and the opening snapshot only; the event
@@ -279,6 +288,43 @@ bool replayHarnessDecodeFile(const char *path, ReplayWorld *w,
     }
 
     lv_decoderDestroy(lv);   /* closes the log, freeing the zip buffer */
+    return reachedEnd;
+}
+
+bool replayHarnessDecodeFile(const char *path, ReplayWorld *w,
+                             ReplayFileInfo *info) {
+    return replayDecodeFileInto(path, w, info, NULL);
+}
+
+bool replayHarnessDecodeFileScripts(const char *path, ReplayWorld *w,
+                                    ReplayFileInfo *info,
+                                    struct LvScripts *scripts) {
+    return replayDecodeFileInto(path, w, info, scripts);
+}
+
+bool replayHarnessDecodeFileThen(const char *path, ReplayDecodedFn fn,
+                                 void *ctx) {
+    LogViewerState *lv;
+    int steps;
+    bool reachedEnd;
+
+    if (path == NULL || path[0] == '\0') {
+        return false;
+    }
+    lv = replayDecoderOpen(path);
+    if (lv == NULL) {
+        return false;
+    }
+    steps = 0;
+    while (lv_screenIsPlaying() == TRUE && steps < REPLAY_DECODE_TICK_CAP) {
+        lv_screenLogTick();
+        steps++;
+    }
+    reachedEnd = lv_screenIsPlaying() != TRUE;
+    if (reachedEnd && fn != NULL) {
+        fn(ctx);
+    }
+    lv_decoderDestroy(lv);
     return reachedEnd;
 }
 

@@ -130,12 +130,16 @@ int run_lobby_brain_docs_chunk_len_is_exact(void);
  * spectator ring's per-keyframe control snapshot, and dropped on the client
  * when a new catalogue arrives. */
 int run_lobby_brain_list_clears_stale_texts(void);
+int run_lobby_brain_announce_codec_and_apply(void);
+int run_lobby_brain_docs_put_follows_generation(void);
+int run_lobby_bot_pool_info_codec_and_apply(void);
 
 /* The "name: text" lobby chat line has ONE spelling, because the lobby's
  * bot-announce poll searches the history for the line it just appended. */
 int run_lobby_chat_line_format_is_what_is_appended(void);
 int run_lobby_brain_docs_stay_out_of_the_control_snapshot(void);
 int run_lobby_brain_docs_reach_a_joining_subscriber(void);
+int run_lobby_brain_docs_refresh_moves_the_generation(void);
 int run_lobby_sync_complete_codec_roundtrip(void);
 int run_lobby_rating_posted_codec_roundtrip(void);
 int run_command_codec_roundtrip_variants(void);
@@ -167,6 +171,8 @@ int run_live_stats_lgm_loss_splits_victim_and_killer(void);
 int run_live_stats_captures_credit_new_owner(void);
 int run_live_stats_out_of_range_slot_ignored(void);
 int run_live_stats_cleared_on_running_phase(void);
+int run_build_select_reset_on_running_phase(void);
+int run_newswire_blanked_on_running_phase(void);
 int run_shell_death_codec_roundtrip(void);
 int run_shell_death_culls_matching_predicted_shell(void);
 int run_shell_death_rejected_culls_without_impact(void);
@@ -342,6 +348,9 @@ int run_classic_mode_lock_blocks_dispatch(void);
 int run_classic_mode_lobby_reset(void);
 int run_allies_in_trees_defaults(void);
 int run_allies_in_trees_classic_mode(void);
+int run_positional_sound_defaults(void);
+int run_positional_sound_classic_mode(void);
+int run_positional_sound_lobby_event(void);
 int run_lobby_mods_enabled_defaults(void);
 int run_lobby_mods_enabled_dispatch(void);
 int run_lobby_mods_enabled_codec(void);
@@ -411,6 +420,7 @@ int run_await_join_connected_immediate(void);
 int run_await_join_lobby_latch(void);
 int run_await_join_timeout_and_error(void);
 int run_bot_pool_wire_chunk_transport(void);
+int run_bot_pool_catalog_id(void);
 int run_lobby_map_list_chunked(void);
 /* The scripted byte on a map-list entry: the layout by hand-written bytes,
  * and a list carrying a mix of scripted and plain maps. */
@@ -489,6 +499,7 @@ int run_brain_inbox_legacy_drain_fifo(void);
 int run_brain_inbox_clear_resets(void);
 int run_brain_list_scan_path_resolves(void);
 int run_brain_list_texts_read(void);
+int run_brain_docs_compress_roundtrip(void);
 
 /* The two test rosters — test_main.c's dispatch table and CMakeLists.txt's
  * _unit_test_names — say the same thing, so a case added to one and not the
@@ -568,6 +579,9 @@ int run_spectator_ring(void);
  * a registered ring driven by serverSimTick (logWriteTick) populates and a
  * delay-0 seek returns a seed, with no logStart and no .wbv file. */
 int run_spectator_ring_nolog(void);
+/* And a log_ServerTick every FULL_SYNC_INTERVAL ticks in that ring's events,
+ * with no snapshot ever written to a .wbv. */
+int run_spectator_ring_nolog_tick_anchors(void);
 
 /* Spectator replay translator (test_spectator_replay.c): specReplayWriteHeader
  * lays out the v2 header field-for-field, specReplayTranslateEvents /
@@ -1072,8 +1086,9 @@ int run_lobby_non_host_off_side_claim_rejected(void);
 int run_lobby_any_team_claim_kept_off_chosen_side(void);
 
 /* The start sides a fresh lobby opens with (test_lobby_default_sides.c):
- * team 1 north and team 2 south at a lobby server's start-up and again
- * when the last human leaves, and a side the host chose kept through
+ * team 1 north and team 2 south (east and west on a wide map) at a lobby
+ * server's start-up and again when the last human leaves, and a side the
+ * host chose, one it re-picked as shown included, kept through
  * joins and rounds while anyone is in the lobby; start reservations on
  * the team's side after a join, a balance and the DS bot batch; a rename
  * keeps a filled-in side; the round-end reset and its order against the
@@ -1096,6 +1111,7 @@ int run_lobby_default_sides_shape_rule(void);
 int run_lobby_default_sides_map_shape(void);
 int run_lobby_default_sides_map_change(void);
 int run_lobby_default_sides_map_change_repeated(void);
+int run_lobby_default_sides_same_side_pick_kept(void);
 
 /* Team start sides end to end (test_starts_side_integration.c): lobby
  * reservations, the batch's side table and the spawn scatter put a north
@@ -1202,11 +1218,15 @@ int run_lv_team_colours_events(void);
  * stored or walked; a log_EntityChange removal naming an index past the array
  * is refused for every kind; a server line to a slot past the roster reads as
  * an empty seat; a log_TankSetModifiers blob of the wrong length is consumed
- * by its length so the record behind it still decodes. */
+ * by its length so the record behind it still decodes; a map run of
+ * identical squares that would pass column 255 stops at it; a record whose
+ * frame length disagrees with its fields is left at the frame's end. */
 int run_lv_hostile_item_counts(void);
 int run_lv_hostile_entity_remove_index(void);
 int run_lv_hostile_server_text_slot(void);
 int run_lv_hostile_modifiers_length(void);
+int run_lv_hostile_map_run_edge(void);
+int run_lv_hostile_frame_length(void);
 
 /* .wbv reader gate (test_wbv_reader.c): loads the committed fixtures
  * through the production log-viewer reader (lv_screenLoadMapFromMemory)
@@ -1452,14 +1472,32 @@ int run_viewport_floor(void);
  * and nothing past it; serverSimBuildSnapshot's sound block culls by distance
  * at SDIST_NONE, skips a recipient's own shot, sends bubbles only to the player
  * losing the ammo, sends a tank hit to the player hit at any range, and drops
- * manLayingMineNear once its tier is far; and the delivered payload carries a
- * tier and a compass direction for a human recipient — never the sound's map
+ * manLayingMineNear once its dist is past SDIST_SOFT; the delivered payload
+ * carries a pan and a dist for a human recipient — never the sound's map
  * square, in or out of its viewport rects — while a bot keeps the square, and
  * so does a local slot flagged through serverSimSetSoundSquares until the flag
- * is cleared. */
+ * is cleared; and soundPanAndDist, over every offset out to 40 squares, gives
+ * only the nine pans and eight band tops, keeps the near/far split and the
+ * range cull, and mirrors east and west; with positional sound off
+ * soundPickOffer sends a human pan 0 and only a near or far dist. */
 int run_sound_event_codec(void);
 int run_sound_delivery_builder(void);
 int run_sound_payload_shape(void);
+int run_sound_pan_dist_encoding(void);
+int run_sound_positional_off_centred(void);
+
+/* Positional sound gains (test_sound_gains.c): soundDistGains never goes above
+ * unity for any pan and dist, keeps the channel towards the sound at unity
+ * inside SDIST_SOFT, centres a sound with no east-west offset, and mirrors
+ * east and west; clientSoundDist picks the near or far variant on the
+ * SDIST_SOFT band edge and hands the frontend its gains, or unity on both
+ * channels while the server has positional sound off. */
+int run_sound_gains_table(void);
+int run_sound_gains_centre_unity(void);
+int run_sound_gains_never_above_unity(void);
+int run_sound_gains_mirror(void);
+int run_sound_dist_variant_by_band(void);
+int run_sound_positional_off_unity(void);
 
 /* Policy-driven viewport rects (test_view_policy_rects.c):
  * serverSimBuildViewports honours the per-category ViewPolicy — allied pills,
@@ -2073,6 +2111,17 @@ int run_lock_channel(void);
 /* Server-map preview over CHANNEL_BULK (test_loopback_preview.c): a real .map
  * file streamed back under loss and reassembled byte-identical on the client. */
 int run_loopback_map_preview(void);
+int run_loopback_map_preview_request_lost(void);
+int run_loopback_map_preview_request_gives_up(void);
+int run_loopback_map_preview_late_busy_kept(void);
+int run_loopback_brain_docs_fetch(void);
+int run_loopback_brain_docs_spectator(void);
+int run_lobby_bot_pool_join_sends_only_the_id(void);
+int run_loopback_bot_pool_fetch(void);
+int run_loopback_bot_pool_same_not_fetched(void);
+int run_bot_pool_refresh_retakes_catalogue(void);
+int run_loopback_bot_pool_survives_bulk_rebase(void);
+int run_loopback_brain_docs_survives_bulk_rebase(void);
 /* Client->server map upload over CHANNEL_BULK (test_loopback_upload.c): a map
  * uploaded under loss completes and the server decodes the reassembled bytes. */
 int run_loopback_map_upload(void);
@@ -2262,7 +2311,7 @@ int run_loopback_map_cull_resync(void);
 /* Sound culling over the loopback transport (test_sound_delivery_wire.c): for a
  * recipient whose only viewport rect is its own tank screen, both delivery
  * paths carry a sound 30 squares away and neither carries one at 45, a
- * delivered sound arrives with a tier and a bearing rather than its map
+ * delivered sound arrives with a pan and a dist rather than its map
  * square, a far manLayingMineNear is dropped, and a tank hit on the recipient
  * arrives from 60 squares out. */
 int run_sound_delivery_wire_cull(void);
@@ -2580,6 +2629,12 @@ int run_sprite_atlas_packed_sheet_unsafe(void);
    keeps a decoded pool contiguous (test_sound_variants.c). */
 int run_sound_variant_pool_names(void);
 int run_sound_variant_load_compaction(void);
+
+/* One slot's samples scaled by its Q8 left and right gains into the mix
+   accumulator (test_sound_mix.c). */
+int run_sound_mix_unity_matches_plain_sum(void);
+int run_sound_mix_channel_parity_across_resume(void);
+int run_sound_mix_mono_device(void);
 
 /* Bolo pascal-string reader, both copies of it (test_pascal_string.c). */
 int run_pascal_string_lengths(void);
@@ -3616,6 +3671,87 @@ int run_scenario_panel_timer_text(void);
  * long — the other piece of the presentation's arithmetic with no renderer
  * in it. */
 int run_scenario_announce_remaining(void);
+/* The tablet UI's scenario panel square (test_scenario_panel_slot.c): a
+ * quarter of the screen's shorter side in the game view's top-right, on a
+ * phone, a tablet, and views too small for the full side. */
+int run_scenario_panel_slot_rect(void);
+/* The names and the panel parser the log viewer compiles in
+ * (test_lv_sim_rules_names.c): a rule's name from its index and back, and
+ * a hand-written two-primitive list through scnPanelParse. */
+int run_lv_rule_names_and_panel_parse(void);
+/* The scripted game type in the log viewer (test_lv_scripted_game_type.c):
+ * a recorded round set to gameScripted decodes with header game type 4, and
+ * a hand-written settings payload with byte 7 = 4 decodes to the same. */
+int run_lv_scripted_game_type_header(void);
+int run_lv_scripted_game_type_settings(void);
+/* The scripts.json member a scripted round's recording carries
+ * (test_scripts_record.c): written for a scenario and a mod in load order,
+ * absent for a plain round and for a plain round after a scripted one, the
+ * sim's cap on the text, and the writer on a hand-built description. */
+int run_scripts_record_scripted_round(void);
+int run_scripts_record_plain_round(void);
+int run_scripts_record_scripted_then_plain(void);
+int run_scripts_record_detach_before_stop(void);
+int run_scripts_record_setter_cap(void);
+int run_scripts_record_json_write(void);
+/* The log viewer reading scripts.json into its LvScripts holder
+ * (test_lv_scripts_json.c, with the scripted round recorded by
+ * lv_scripts_fixture.c): a scripted round read in load order, a plain round
+ * and an old recording read as none, and a malformed, wrong-version,
+ * over-long or over-cap member held to what the holder takes. */
+int run_lv_scripts_json_scripted_round(void);
+int run_lv_scripts_json_plain_round(void);
+int run_lv_scripts_json_old_recording(void);
+int run_lv_scripts_json_malformed(void);
+int run_lv_scripts_json_wrong_version(void);
+int run_lv_scripts_json_hostile_values(void);
+int run_lv_scripts_json_over_cap(void);
+int run_lv_scripts_json_close_clears(void);
+/* The log viewer's rules at the playhead (test_lv_rule_changes.c, with the
+ * rule-change round recorded by lv_scripts_fixture.c): a mid-round change
+ * collected at load, LvRules right after seeking either way, a plain round
+ * on the classic values, hostile log_RuleSet records consumed and ignored in
+ * a file and on a live feed, and the pill picture scaled to the cap. */
+int run_lv_rule_changes_collected(void);
+int run_lv_rule_changes_seek(void);
+int run_lv_rule_changes_plain_round(void);
+int run_lv_rule_changes_hostile(void);
+int run_lv_rule_changes_live_feed(void);
+int run_lv_rule_changes_armour_levels(void);
+int run_lv_rule_changes_live_same_tick(void);
+/* The log viewer's scenario panels, scores, announcement and markers at the
+ * playhead (test_lv_presentation.c, with the presentation round recorded by
+ * lv_scripts_fixture.c): a hand-written log played through and seeked both
+ * ways, hostile records consumed and ignored, a recorded scripted round, a
+ * rebuild over thousands of records and a plain round with every store
+ * empty; the row the panel draws of the everyone, team and slot rows; and a
+ * slot's team from log_TeamSet, kept across seeks with no line posted by a
+ * rebuild; announcements posted to the newswire once by playback and never
+ * by a rebuild; and which markers the followed player sees. */
+int run_lv_presentation_seek(void);
+int run_lv_presentation_hostile(void);
+int run_lv_presentation_scripted_round(void);
+int run_lv_presentation_rebuild_many(void);
+int run_lv_presentation_plain_round(void);
+int run_lv_presentation_panel_choice(void);
+int run_lv_presentation_slot_team(void);
+int run_lv_presentation_announce_posts(void);
+int run_lv_presentation_marker_visible(void);
+int run_lv_presentation_live_seek(void);
+int run_lv_presentation_live_fast_forward(void);
+/* The server's game tick at the playhead (test_lv_server_tick.c): a recorded
+ * round's tick at end-of-log, hand-written anchors either side of a snapshot
+ * and across a new round's run, records of the wrong length, a recording from
+ * before the record, events and empty ticks alternating, and a live feed. */
+int run_lv_server_tick_recorded(void);
+int run_lv_server_tick_anchors(void);
+int run_lv_server_tick_hostile(void);
+int run_lv_server_tick_old_recording(void);
+int run_lv_server_tick_alternating(void);
+int run_lv_server_tick_live_feed(void);
+/* Where the log viewer draws a declared region (test_lv_region_rect.c): at the
+ * overview's edges, off it, and on the game view at 2x with a pan. */
+int run_lv_region_rect_placement(void);
 
 /* The four presentation control events (test_scenario_presentation_codec.c):
  * their body codecs against hand-written bytes, the refusals a short or
@@ -3629,13 +3765,19 @@ int run_scn_presentation_client_filters(void);
 /* The four presentation ops (test_scenario_presentation_arms.c): the panel
  * list published, recorded, replayed to a joiner and pared back to the
  * everyone-addressed lists in the spectator ring's snapshot, the coalescing
- * key, every refusal, and the score, announcement and marker arms. */
+ * key, every refusal, and the score, announcement and marker arms; the
+ * markers and scores replayed to a joiner, in the ring's snapshot, after the
+ * reset, and to a late joiner over the loopback transport. */
 int run_scn_arm_panel_publishes_and_records(void);
 int run_scn_arm_panel_refusals(void);
 int run_scn_arm_panel_one_update_per_tick(void);
 int run_scn_arm_panel_replayed_to_joiner(void);
 int run_scn_arm_panel_snapshot_bounded(void);
 int run_scn_arm_score_announce_marker(void);
+int run_scn_arm_markers_scores_replayed_to_joiner(void);
+int run_scn_arm_markers_scores_snapshot(void);
+int run_scn_arm_markers_scores_reset(void);
+int run_scn_markers_scores_loopback_late_join(void);
 
 /* The rules a scenario's manifest sets (test_scenario_rules_codec.c,
  * test_scenario_rules_published.c, test_scenario_rules_reaches_joiner.c):
@@ -3705,10 +3847,14 @@ struct GameSim *ut_rules_only_sim(void);
 /* The sounds frontEndPlaySound was handed, recorded by the stub in
  * test_stubs.c so a test can assert which variant the client played.
  * ut_sound_get returns the sndEffects value at that index, or -1 past the
- * end. The recorder is bounded; sounds past its cap are not kept. */
+ * end. The recorder is bounded; sounds past its cap are not kept.
+ * ut_sound_get_gain_left / _right return the Q8 gains that sound was played
+ * at (SOUND_GAIN_UNITY for plain frontEndPlaySound), or -1 past the end. */
 void ut_sound_reset(void);
 int  ut_sound_count(void);
 int  ut_sound_get(int index);
+int  ut_sound_get_gain_left(int index);
+int  ut_sound_get_gain_right(int index);
 
 /* The fixture brain in test_stubs.c. The unit binary has no Lua brain, so
  * luaBrainInstanceCreate is a stub there; arming it makes the stub report
@@ -3820,6 +3966,11 @@ int run_workshop_use_local(void);
  * and this is the only way to read what it decided. */
 int ut_status_tank_last_player(void);
 int ut_status_tank_last_alliance(void);
+
+/* The two newswire lines the frontEndMessages stub in test_stubs.c was last
+ * handed. Both are empty strings until the first call. */
+const char *ut_messages_last_top(void);
+const char *ut_messages_last_bottom(void);
 
 #ifdef __cplusplus
 }

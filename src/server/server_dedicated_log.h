@@ -143,6 +143,7 @@ void serverDedicatedLogComposePath(const char *logArg, const char *autoBase,
  * does not carry the byte at all and a reader treats it as zero, so every
  * bit here has to mean "off / classic behaviour" when clear. */
 #define LOG_SETTINGS_FLAG_SMART_PINGS_OFF 0x01u
+#define LOG_SETTINGS_FLAG_POSITIONAL_SOUND 0x02u
 
 /* Build the log_GameSettings blob in the pascal form logAddEvent takes:
  * out[0] is the byte count and out[1..] the fields, layout in

@@ -104,3 +104,72 @@ int run_spectator_ring_nolog(void) {
     serverSimDestroy(sim);
     return 0;
 }
+
+/* The number of log_ServerTick records in one ring event payload: a run of
+   [type][u16 big-endian length][payload] frames. */
+static int srn_count_anchors(const uint8_t *p, int len) {
+    int off   = 0;
+    int found = 0;
+
+    while (off + 3 <= len) {
+        int evLen = ((int)p[off + 1] << 8) | (int)p[off + 2];
+        if (p[off] == log_ServerTick) {
+            found++;
+        }
+        off += 3 + evLen;
+    }
+    return found;
+}
+
+/* A server that is not recording still gives a live spectator a
+   log_ServerTick every FULL_SYNC_INTERVAL ticks. With no .wbv open no snapshot
+   is ever noted, so before the interval test the feed carried the round's
+   first anchor and nothing after it. The cadence is set past the end of the
+   run so the first record is the ring's only keyframe, and no interval's
+   events are replaced by one. */
+int run_spectator_ring_nolog_tick_anchors(void) {
+    ServerSim     *sim;
+    SpectatorRing *ring;
+    uint32_t       it = 1;
+    uint32_t       seq;
+    uint32_t       head;
+    int            anchors = 0;
+    int            i;
+
+    sim = ut_make_running_sim("NoLogAnchors");
+    UT_ASSERT_MSG(sim != NULL, "running sim bringup failed");
+    logCreate();
+    UT_ASSERT_MSG(logIsRecording() == FALSE,
+                  "no .wbv recording should be active without logStart");
+    ring = spectatorRingCreate(100000, 100000);
+    UT_ASSERT(ring != NULL);
+    logSetSpectatorRing(ring, sim);
+
+    /* Two game ticks a call, so this passes four intervals. */
+    for (i = 0; i < 600; i++) {
+        srn_tick_idle(sim, &it);
+    }
+
+    head = spectatorRingHeadSeq(ring);
+    for (seq = spectatorRingOldestSeq(ring); seq <= head; seq++) {
+        bool           key = false;
+        const uint8_t *payload = NULL;
+        int            len = 0;
+        if (spectatorRingRecordAt(ring, seq, &key, &payload, &len, NULL,
+                                  NULL) &&
+            !key && payload != NULL) {
+            anchors += srn_count_anchors(payload, len);
+        }
+    }
+
+    logSetSpectatorRing(NULL, NULL);
+    spectatorRingDestroy(ring);
+    logDestroy();
+    serverSimDestroy(sim);
+
+    UT_ASSERT_MSG(anchors >= 3,
+                  "a feed from a server that is not recording carried %d "
+                  "log_ServerTick records over four sync intervals (want at "
+                  "least 3)", anchors);
+    return 0;
+}

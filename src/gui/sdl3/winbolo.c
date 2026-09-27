@@ -122,6 +122,8 @@ bool showGunsight = FALSE;
 
 /* Whether the sound effects are turned on or not */
 bool soundEffects = TRUE;
+/* Whether sound effects are panned by where they happen */
+bool positionalSound = TRUE;
 /* Do we play background sound */
 bool backgroundSound = TRUE;
 
@@ -762,6 +764,10 @@ int main(int argc, char *argv[]) {
       /* Clear any leftover ImGui nav focus so keyboard input
          reaches the game immediately (not captured by ImGui). */
       sdl3ImguiClearNavFocus();
+      /* Every game view opens here, the first and each one after a return
+         to the lobby, which keeps the ClientSim and so never reaches
+         frontEndSetActiveClientSim. */
+      sdl3ImguiNewGame(cs);
 
       while (done == FALSE) {
         sdl3ImguiProcessEvents(cs);
@@ -1772,6 +1778,10 @@ void windowSoundEffects_toggle(void) {
   soundEffects = !soundEffects;
 }
 
+void windowPositionalSound_toggle(void) {
+  positionalSound = !positionalSound;
+}
+
 void windowBackgroundSoundChange_toggle(void) {
   backgroundSound = !backgroundSound;
   if (soundEffects == TRUE) {
@@ -2234,9 +2244,20 @@ void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE a
 }
 
 void frontEndPlaySound(ClientSim *cs, sndEffects value) {
+  frontEndPlaySoundPan(cs, value, SOUND_GAIN_UNITY, SOUND_GAIN_UNITY);
+}
+
+void frontEndPlaySoundPan(ClientSim *cs, sndEffects value,
+                          uint16_t gainL, uint16_t gainR) {
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (soundEffects == TRUE) {
-    soundPlayEffect(value);
+    /* The player has turned positional sound off, so every sound plays
+       centred; the near/far variant is already chosen. */
+    if (!positionalSound) {
+      gainL = SOUND_GAIN_UNITY;
+      gainR = SOUND_GAIN_UNITY;
+    }
+    soundPlayEffectPan(value, gainL, gainR);
   }
 }
 

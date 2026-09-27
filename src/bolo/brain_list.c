@@ -23,6 +23,8 @@
 #include <time.h>
 #include <sys/stat.h>
 
+#include <zlib.h>
+
 #if defined(_WIN32)
 #  include <windows.h>
 #  define BRAIN_LIST_SEP '\\'
@@ -572,6 +574,40 @@ int64_t brainListTextsMtimeForPath(const char *brainPath) {
         if (info.modify_time > best) best = info.modify_time;
     }
     return best;
+}
+
+size_t brainDocsCompress(const char *docs, size_t len,
+                         uint8_t *out, size_t cap) {
+    uLongf zLen;
+    if (docs == NULL || out == NULL || len == 0 || len > BRAIN_DOCS_MAX) {
+        return 0;
+    }
+    if (cap > BRAIN_DOCS_Z_MAX) cap = BRAIN_DOCS_Z_MAX;
+    zLen = (uLongf)cap;
+    if (compress2(out, &zLen, (const Bytef *)docs, (uLong)len,
+                  Z_BEST_COMPRESSION) != Z_OK) {
+        return 0;
+    }
+    return (size_t)zLen;
+}
+
+bool brainDocsDecompress(const uint8_t *z, size_t zLen, size_t rawLen,
+                         char *out) {
+    uLongf got;
+    if (out == NULL) return false;
+    out[0] = '\0';
+    if (z == NULL || zLen == 0 || rawLen == 0 || rawLen > BRAIN_DOCS_MAX ||
+        zLen > BRAIN_DOCS_Z_MAX) {
+        return false;
+    }
+    got = (uLongf)rawLen;
+    if (uncompress((Bytef *)out, &got, (const Bytef *)z, (uLong)zLen) != Z_OK ||
+        got != (uLongf)rawLen) {
+        out[0] = '\0';
+        return false;
+    }
+    out[rawLen] = '\0';
+    return true;
 }
 
 /* ── modes.txt: a brain's own list of modes and difficulty levels ──── */

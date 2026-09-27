@@ -32,6 +32,9 @@ void serverDedicatedLogBuildSettings(ServerSim *sim, char *out) {
     BYTE settingFlags = 0;
 
     if (sim->smartPingsOff) settingFlags |= LOG_SETTINGS_FLAG_SMART_PINGS_OFF;
+    if (sim->positionalSound) {
+        settingFlags |= LOG_SETTINGS_FLAG_POSITIONAL_SOUND;
+    }
 
     if (sim->sim.hiddenMines)       flags |= 0x01u;
     if (serverSimGetTimeLimit(sim)) flags |= 0x02u;

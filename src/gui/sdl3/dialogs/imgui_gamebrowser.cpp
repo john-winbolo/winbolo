@@ -143,7 +143,8 @@ struct ServerEntry {
     /* Server visibility rules. An advertisement that doesn't carry them
      * predates them, so it reads as the behaviour of the day: pill
      * always, base off, ally always, classic mode and allies in trees
-     * off, the expanded overview window with nothing blocking sight.
+     * off, the expanded overview window with nothing blocking sight,
+     * positional sound off.
      * That back-compatibility reading is not what an unconfigured
      * server runs today - see serverEntryPresetName below. */
     ViewPolicy pillView;
@@ -153,7 +154,8 @@ struct ServerEntry {
     bool alliesInTrees;
     uint8_t overviewWindow;
     uint8_t lineOfSight;
-    /* Whether the game said anything about the seven fields above. They
+    bool positionalSound;
+    /* Whether the game said anything about the eight fields above. They
      * always hold something - an advertisement that stops short of them
      * is read as the back-compatibility set - so this says whether that
      * is the game's answer or a stand-in for one it never gave. */
@@ -184,8 +186,8 @@ struct ServerEntry {
 /* A listed game's advertised rules in the shape the preset table matches.
  * Every field the match needs rides both wires: the tracker row carries
  * pillview / baseview / allyview / classicmode / alliesintrees /
- * overviewwindow / lineofsight, and the INFO packet carries the same seven
- * across its two view bytes. So the browser names a preset exactly the way
+ * overviewwindow / lineofsight / positionalsound, and the INFO packet
+ * carries the same eight across its two view bytes. So the browser names a preset exactly the way
  * the lobby does rather than guessing from a subset.
  *
  * Decay seconds are left at zero: a browser row does not carry them, the
@@ -201,6 +203,7 @@ static VisibilitySettings serverEntryVisibility(const ServerEntry &e) {
     v.overviewWindow = e.overviewWindow;
     v.lineOfSight    = e.lineOfSight;
     v.alliesInTrees  = e.alliesInTrees;
+    v.positionalSound = e.positionalSound;
     return v;
 }
 
@@ -346,6 +349,7 @@ struct PingResult {
     bool alliesInTrees;
     uint8_t overviewWindow;
     uint8_t lineOfSight;
+    bool positionalSound;
     bool hasViewInfo;
     ServerVoiceMode voiceMode;
 };
@@ -432,6 +436,7 @@ static PingResult pingServer(const PingWork &work) {
     res.alliesInTrees = false;
     res.overviewWindow = (uint8_t)overviewWindowExpanded;
     res.lineOfSight = (uint8_t)lineOfSightOff;
+    res.positionalSound = false;
     res.hasViewInfo = false;
     res.voiceMode = serverVoiceOn;
 
@@ -463,6 +468,7 @@ static PingResult pingServer(const PingWork &work) {
         res.alliesInTrees   = dpr.alliesInTrees;
         res.overviewWindow  = dpr.overviewWindow;
         res.lineOfSight     = dpr.lineOfSight;
+        res.positionalSound = dpr.positionalSound;
         res.hasViewInfo     = dpr.hasViewInfo;
         res.voiceMode       = dpr.voiceMode;
         SDL_strlcpy(res.mapMd5, dpr.mapMd5, sizeof(res.mapMd5));
@@ -589,6 +595,7 @@ static ServerEntry serverEntryFromDiscovery(const DiscoveryServer *src) {
     e.alliesInTrees   = src->alliesInTrees;
     e.overviewWindow  = src->overviewWindow;
     e.lineOfSight     = src->lineOfSight;
+    e.positionalSound = src->positionalSound;
     e.hasViewInfo     = src->hasViewInfo;
     e.voiceMode       = src->voiceMode;
     e.smartPingsOff   = src->smartPingsOff;
@@ -908,6 +915,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         e.alliesInTrees = w.alliesInTrees;
                         e.overviewWindow = (uint8_t)w.overviewWindow;
                         e.lineOfSight = (uint8_t)w.lineOfSight;
+                        e.positionalSound = w.positionalSound;
                         e.hasViewInfo = w.hasViewInfo;
                         e.voiceMode = (ServerVoiceMode)w.voiceMode;
                         e.smartPingsOff = w.smartPingsOff;
@@ -1026,6 +1034,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         servers[pr.index].alliesInTrees   = pr.alliesInTrees;
                         servers[pr.index].overviewWindow  = pr.overviewWindow;
                         servers[pr.index].lineOfSight     = pr.lineOfSight;
+                        servers[pr.index].positionalSound = pr.positionalSound;
                         servers[pr.index].hasViewInfo     = pr.hasViewInfo;
                         servers[pr.index].voiceMode       = pr.voiceMode;
                         servers[pr.index].lobbyStatus     = pr.inLobby ? 1 : 0;

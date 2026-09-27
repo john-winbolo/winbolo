@@ -41,6 +41,11 @@ void frontEndPlaySound(ClientSim *cs, sndEffects value) {
   (void)cs; (void)value;
 }
 
+void frontEndPlaySoundPan(ClientSim *cs, sndEffects value,
+                          uint16_t gainL, uint16_t gainR) {
+  (void)cs; (void)value; (void)gainL; (void)gainR;
+}
+
 void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,
                             screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms,
                             int32_t srtDelay, bool isPillView,

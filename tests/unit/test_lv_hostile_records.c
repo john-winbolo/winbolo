@@ -37,6 +37,7 @@
 #include "lv_bases.h"
 #include "lv_starts.h"
 #include "lv_players.h"
+#include "blocks.h"
 #include "test_harness.h"
 
 static void packU32BE(uint8_t *p, uint32_t v) {
@@ -350,5 +351,130 @@ int run_lv_hostile_modifiers_length(void) {
 
   lv_specSeedControlClear();
   lv_decoderDestroy(lv);
+  return 0;
+}
+
+/* A record whose frame says a different length from the fields its type
+ * reads is left at the frame's end, so the record behind it still decodes.
+ * Both ways: a frame two bytes longer than a log_TankSetStock, and one two
+ * bytes shorter, where the case reads into the next record's header. */
+int run_lv_hostile_frame_length(void) {
+  uint8_t body[2048];
+  uint8_t records[64];
+  uint8_t rec[8];
+  size_t pos = 0;
+  size_t bodyLen;
+  LogViewerState *lv;
+
+  lv = lv_decoderCreate(false);
+  UT_ASSERT_MSG(lv != NULL, "lv_decoderCreate returned NULL");
+  lv_screenSetSizeX(30);
+  lv_screenSetSizeY(30);
+
+  bodyLen = buildOrdinaryBody(body);
+  UT_ASSERT_MSG(loadBody(body, bodyLen) == TRUE, "seed snapshot failed to load");
+
+  /* Slot 2's stocks with two bytes the type does not read behind them. */
+  rec[0] = 2; rec[1] = 9; rec[2] = 8; rec[3] = 7; rec[4] = 6;
+  rec[5] = 0xAA; rec[6] = 0xBB;
+  pos = appendRecord(records, pos, (uint8_t) log_TankSetStock, rec, 7);
+  rec[0] = 3; rec[1] = 1; rec[2] = 2; rec[3] = 3; rec[4] = 4;
+  pos = appendRecord(records, pos, (uint8_t) log_TankSetStock, rec, 5);
+
+  UT_ASSERT_MSG(lv_specRecordPump(false, records, pos) == TRUE,
+                "record pump stopped playback on a long frame");
+  UT_ASSERT_MSG(lv->tankInv[2].shells == 9 && lv->tankInv[2].trees == 6,
+                "slot 2 stocks = %d/%d/%d/%d (want 9/8/7/6)",
+                lv->tankInv[2].shells, lv->tankInv[2].mines,
+                lv->tankInv[2].armour, lv->tankInv[2].trees);
+  UT_ASSERT_MSG(lv->tankInv[3].shells == 1 && lv->tankInv[3].mines == 2 &&
+                lv->tankInv[3].armour == 3 && lv->tankInv[3].trees == 4,
+                "slot 3 stocks = %d/%d/%d/%d after a long frame "
+                "(want 1/2/3/4: the reader lost its alignment)",
+                lv->tankInv[3].shells, lv->tankInv[3].mines,
+                lv->tankInv[3].armour, lv->tankInv[3].trees);
+
+  /* A frame of three bytes around a record the type reads five of: the case
+     runs on into the next record's type and length bytes. */
+  rec[0] = 4; rec[1] = 5; rec[2] = 6;
+  pos = appendRecord(records, 0, (uint8_t) log_TankSetStock, rec, 3);
+  rec[0] = 5; rec[1] = 11; rec[2] = 12; rec[3] = 13; rec[4] = 14;
+  pos = appendRecord(records, pos, (uint8_t) log_TankSetStock, rec, 5);
+
+  UT_ASSERT_MSG(lv_specRecordPump(false, records, pos) == TRUE,
+                "record pump stopped playback on a short frame");
+  UT_ASSERT_MSG(lv->tankInv[5].shells == 11 && lv->tankInv[5].mines == 12 &&
+                lv->tankInv[5].armour == 13 && lv->tankInv[5].trees == 14,
+                "slot 5 stocks = %d/%d/%d/%d after a short frame "
+                "(want 11/12/13/14: the reader lost its alignment)",
+                lv->tankInv[5].shells, lv->tankInv[5].mines,
+                lv->tankInv[5].armour, lv->tankInv[5].trees);
+
+  lv_specSeedControlClear();
+  lv_decoderDestroy(lv);
+  return 0;
+}
+
+/* Decode one run of elems data bytes on row y from startX through the
+ * blocks stream, into a fresh all-DEEP_SEA map. The byte after the data is
+ * padding: lv_mapProcessRun stops at the end of the stream before it has
+ * used the last byte it read. */
+static bool decodeRun(map *mp, const uint8_t *data, BYTE elems, BYTE y,
+                      BYTE startX, BYTE endX) {
+  uint8_t bytes[16];
+
+  memcpy(bytes, data, elems);
+  bytes[elems] = 0;
+  lv_blocksBeginStream();
+  lv_blocksAppendBytes(bytes, (size_t) elems + 1);
+  return lv_mapProcessRun(mp, elems, y, startX, endX);
+}
+
+/* A run of identical squares that starts near the right edge stops at column
+ * 255 rather than writing past the map, and ends there: the run's position
+ * wraps to 0, so a header naming 0 as its end is the one that matches. Both
+ * the low-nibble and the high-nibble forms. Without the bound the write runs
+ * three columns past the array and the position lands on 3. */
+int run_lv_hostile_map_run_edge(void) {
+  /* 0xF3: length code 15 (nine identical squares) of terrain 3. */
+  static const uint8_t kLowSame[] = {0xF3};
+  /* 0x1A and the high nibble of 0xBF: two different squares, terrain 10
+   * then 11. The low nibble of 0xBF is length code 15, so the high nibble of
+   * 0x40 is nine squares of terrain 4. Its low nibble starts a one-square run
+   * the element count ends. */
+  static const uint8_t kHighSame[] = {0x1A, 0xBF, 0x40};
+  map mp;
+  bool ok;
+  int x;
+
+  lv_mapCreate(&mp);
+  ok = decodeRun(&mp, kLowSame, 1, 100, 250, 0);
+  UT_ASSERT_MSG(ok, "a low-nibble run from column 250 was refused");
+  for (x = 250; x <= 255; x++) {
+    UT_ASSERT_MSG(lv_mapGetPos(&mp, (BYTE) x, 100) == 3,
+                  "column %d of row 100 is %d (want 3)", x,
+                  lv_mapGetPos(&mp, (BYTE) x, 100));
+  }
+  for (x = 0; x < 3; x++) {
+    UT_ASSERT_MSG(lv_mapGetPos(&mp, (BYTE) x, 100) == DEEP_SEA,
+                  "column %d of row 100 was written by a run past the edge", x);
+  }
+  lv_mapDestroy(&mp);
+
+  lv_mapCreate(&mp);
+  ok = decodeRun(&mp, kHighSame, 3, 101, 248, 0);
+  UT_ASSERT_MSG(ok, "a high-nibble run from column 250 was refused");
+  UT_ASSERT_MSG(lv_mapGetPos(&mp, 248, 101) == 10 &&
+                lv_mapGetPos(&mp, 249, 101) == 11,
+                "columns 248 and 249 of row 101 are %d and %d (want 10 and 11)",
+                lv_mapGetPos(&mp, 248, 101), lv_mapGetPos(&mp, 249, 101));
+  for (x = 250; x <= 255; x++) {
+    UT_ASSERT_MSG(lv_mapGetPos(&mp, (BYTE) x, 101) == 4,
+                  "column %d of row 101 is %d (want 4)", x,
+                  lv_mapGetPos(&mp, (BYTE) x, 101));
+  }
+  lv_mapDestroy(&mp);
+
+  lv_blocksDestroy();
   return 0;
 }

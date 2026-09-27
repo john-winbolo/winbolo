@@ -128,7 +128,8 @@ typedef enum {
 typedef enum {
   gameOpen = 1,
   gameTournament,
-  gameStrictTournament
+  gameStrictTournament,
+  gameScripted
 } gameType;
 
 #endif

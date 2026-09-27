@@ -80,6 +80,7 @@ typedef struct {
   bool     alliesInTrees;            /* Allied tanks show through forest */
   BYTE     overviewWindow;           /* OverviewWindow the map overview keeps live */
   BYTE     lineOfSight;              /* LineOfSightMode inside that block */
+  bool     positionalSound;          /* Sounds panned by where they happen */
   bool     smartPingsOff;            /* server refuses smart pings. Negative
                                       * sense: false is "allowed", so a
                                       * tracker row with no such key reads as

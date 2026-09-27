@@ -62,7 +62,7 @@
 #include "game_sim.h"              /* GameSim.tanks — parking the listener */
 #include "tank.h"                  /* tankSetWorld */
 #include "sounddist.h"             /* SDIST_NONE — the cull the far sound is past */
-#include "input_packet.h"          /* EVENT_SOUND, SOUND_TIER_NEAR, SOUND_DIR_CENTRE */
+#include "input_packet.h"          /* EVENT_SOUND, soundDistBandTop */
 #include "log.h"                   /* log_ServerText and the stream opcodes */
 #include "allience.h"              /* allienceAdd — the bot and the talker are allies */
 #include "players.h"                /* playersSetPlayer — the names a chat line formats with */
@@ -463,12 +463,13 @@ int run_scenario_comms_sound(void) {
                   "a sound published at 0xFF, 0xFF did not reach a listener at "
                   "%d,%d — %d event(s) came back",
                   CC_LISTENER_MX, CC_LISTENER_MY, n);
-    UT_ASSERT_MSG(hit->data[1] == SOUND_TIER_NEAR,
-                  "the everywhere sound arrived at tier %u, expected near (%d)",
-                  (unsigned)hit->data[1], SOUND_TIER_NEAR);
-    UT_ASSERT_MSG(hit->data[2] == SOUND_DIR_CENTRE,
-                  "the everywhere sound arrived bearing %u, expected centre (%d)",
-                  (unsigned)hit->data[2], SOUND_DIR_CENTRE);
+    UT_ASSERT_MSG((int8_t)hit->data[1] == 0,
+                  "the everywhere sound arrived at pan %d, expected centre (0)",
+                  (int)(int8_t)hit->data[1]);
+    UT_ASSERT_MSG(hit->data[2] == soundDistBandTop(0),
+                  "the everywhere sound arrived at dist %u, expected the "
+                  "first band (%u)",
+                  (unsigned)hit->data[2], (unsigned)soundDistBandTop(0));
 
     /* Refusal: an id that is not a sound. */
     UT_ASSERT_MSG(ccSound(sim, 200, CC_LISTENER_MX, CC_LISTENER_MY) ==

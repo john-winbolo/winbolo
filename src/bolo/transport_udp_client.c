@@ -42,6 +42,7 @@
 #include "channel_mux.h"
 #include "voice_segment.h"
 #include "bulk_transfer.h"
+#include "lobby_bot_pools.h"   /* lobbyBotPoolsDeserializeInstall, lobbyBotPoolsCatalogId */
 #include "wbn_key_codec.h"
 #include "bolo_map_validate.h"
 #include "wire_limits.h"
@@ -446,12 +447,22 @@ typedef struct {
     uint32_t scriptFetchProgressTick; /* localTick body bytes last advanced   */
     uint32_t scriptFetchWatchdogBytes;/* bodyReceived at the last stall check */
 
+    /* The server's bot-name catalogue (BULK_KIND_BOT_POOL), pulled with
+     * PACKET_LOBBY_BOT_POOL_REQ when the ClientSim's lobbyPoolState is
+     * WANTED. onBegin mallocs botPoolBuf sized to the stream header, status
+     * byte included; onComplete installs the catalogue and frees it. */
+    uint8_t *botPoolBuf;
+
 #if WB_ENABLE_NETIMPAIR
     uint8_t test_drop_upload_packet;
     /* Drop the next test_drop_next_count inbound packets of this type, as if
      * the server's datagram was lost on the wire. 0 = off. */
     uint8_t test_drop_next_type;
     int     test_drop_next_count;
+    /* Drop the next test_drop_out_count outbound packets of this type, as if
+     * the client's datagram was lost on the wire. 0 = off. */
+    uint8_t test_drop_out_type;
+    int     test_drop_out_count;
 #endif
 
 #ifdef __EMSCRIPTEN__
@@ -509,6 +520,15 @@ static uint64_t udpClientVirtualNow(void) {
 
 /* Client send wrapper — tracks packet and byte counters */
 static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int len) {
+#if WB_ENABLE_NETIMPAIR
+    if (c->test_drop_out_count > 0 &&
+        getPacketType(buf, len) == c->test_drop_out_type) {
+        c->test_drop_out_count--;
+        c->packetsSentThisSec++;
+        c->bytesSentThisSec += len;
+        return;
+    }
+#endif
     /* When outbound impairment is enabled, hand the datagram to the layer
      * instead of sending directly — udpClientTick later pops the delayed
      * packets onto the wire. An oversize datagram (offer returns false)
@@ -1130,7 +1150,13 @@ static void clientDrainVoice(TransportUdpClientCtx *c) {
 
 /* PACKET_LOBBY_MAP_PREVIEW_ERR — server couldn't read the map. Wire:
  * [header 8] [pathLen 1] [path N] [code 1]. Flags the request failed
- * so the chooser shows "no preview" instead of spinning. */
+ * so the chooser shows "no preview" instead of spinning. Code 3 is the
+ * server's bulk sender being busy: while sends are left the request stays
+ * in flight and udpClientMapPreviewTick sends it again at its timeout.
+ * Code 3 is also ignored once the request is no longer in flight: a resend
+ * that crossed the first stream is answered busy, and that reply can arrive
+ * after the preview has finished; it must not replace the finished preview
+ * with an error. */
 void udpClientHandleLobbyMapPreviewErr(ClientSim *cs,
                                        const uint8_t *buf, int len) {
     if (!cs) return;
@@ -1139,6 +1165,11 @@ void udpClientHandleLobbyMapPreviewErr(ClientSim *cs,
     if (!wireTakeU8Field(buf, len, &pos, path, sizeof(path))) return;
     if (strncmp(path, cs->lobbyMapPreviewReqPath,
                 sizeof(cs->lobbyMapPreviewReqPath)) != 0) {
+        return;
+    }
+    if (pos < len && buf[pos] == 3 &&
+        (!cs->lobbyMapPreviewInFlight ||
+         cs->lobbyMapPreviewTries < LOBBY_MAP_PREVIEW_TRIES)) {
         return;
     }
     cs->lobbyMapPreviewError    = true;
@@ -1256,6 +1287,8 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_SCENARIO_RULES:   return "SCENARIO_RULES";
     case CTRL_LOBBY_SCRIPT_LIST: return "LOBBY_SCRIPT_LIST";
     case CTRL_LOBBY_SCRIPT_SETTING: return "LOBBY_SCRIPT_SETTING";
+    case CTRL_LOBBY_BRAIN_ANNOUNCE: return "LOBBY_BRAIN_ANNOUNCE";
+    case CTRL_LOBBY_BOT_POOL_INFO:  return "LOBBY_BOT_POOL_INFO";
     default:                    return "<unknown>";
     }
 }
@@ -1273,6 +1306,7 @@ static const char *mpDiagCtrlName(int type) {
 static void udpClientFreeResyncBuf(TransportUdpClientCtx *c);     /* defined below */
 static void udpClientFreeRoundLogBuf(TransportUdpClientCtx *c);   /* defined below */
 static void udpClientFreeScriptFetchBuf(TransportUdpClientCtx *c); /* defined below */
+static void udpClientFreeBotPoolBuf(TransportUdpClientCtx *c);     /* defined below */
 static void clientApplyChannelReset(TransportUdpClientCtx *c,
                                     const ControlEvent *evt) {
     static const struct { uint8_t ch; const char *name; } kChans[3] = {
@@ -1339,6 +1373,57 @@ static void clientApplyChannelReset(TransportUdpClientCtx *c,
                 c->scriptFetchState       = CLIENT_SCRIPT_FETCH_FAILED;
                 c->scriptFetchStatus      = CLIENT_SCRIPT_FETCH_NO_ANSWER;
                 c->scriptFetchRetryAtTick = 0;
+            }
+            /* A brain docs answer or a script details answer still being
+             * filled is abandoned with it. Each is asked for again: the
+             * brain, or the slot, goes back to WANTED and its receive mark is
+             * cleared, since the tick treats a set mark as "arriving now" and
+             * would otherwise wait on the cut-off body for ever. */
+            if (c->clientSim != NULL) {
+                ClientSim *cs = c->clientSim;
+                struct ClientBrainTexts *t = cs->lobbyBrainTexts;
+                if (t != NULL && t->rxIdx > 0 && t->rxIdx <= BRAIN_LIST_MAX) {
+                    if (t->docs[t->rxIdx - 1].state == CLIENT_BRAIN_DOCS_S_ASKED) {
+                        t->docs[t->rxIdx - 1].state = CLIENT_BRAIN_DOCS_S_WANTED;
+                        t->docs[t->rxIdx - 1].tries = 0;
+                    }
+                    t->rxIdx = 0;
+                }
+                if (cs->lobbyScnDetailsRxSlot > 0 &&
+                    cs->lobbyScnDetailsRxSlot <= LOBBY_SCN_DETAILS_SLOTS) {
+                    int slot = cs->lobbyScnDetailsRxSlot - 1;
+                    if (cs->lobbyScnDetails[slot].state == LOBBY_SCN_DETAILS_ASKED) {
+                        cs->lobbyScnDetails[slot].state = LOBBY_SCN_DETAILS_WANTED;
+                        cs->lobbyScnDetails[slot].tries = 0;
+                    }
+                    cs->lobbyScnDetailsRxSlot = 0;
+                }
+            }
+            /* A bot-name catalogue still being filled is abandoned with it
+             * and asked for again: the request goes back to WANTED with its
+             * tries cleared, so the tick sends it afresh rather than waiting
+             * on the cut-off body. */
+            if (c->botPoolBuf != NULL && c->bulkRecv.dst == c->botPoolBuf) {
+                udpClientFreeBotPoolBuf(c);
+                if (c->clientSim != NULL &&
+                    c->clientSim->lobbyPoolState == CLIENT_BOT_POOL_S_ASKED) {
+                    c->clientSim->lobbyPoolState = CLIENT_BOT_POOL_S_WANTED;
+                    c->clientSim->lobbyPoolTries = 0;
+                }
+            }
+            /* A map preview still being filled is asked for again on the
+             * next tick: clearing its total puts it back under
+             * udpClientMapPreviewTick, and the back-dated stamp makes that
+             * tick send at once. */
+            if (c->clientSim != NULL &&
+                c->clientSim->lobbyMapPreviewInFlight &&
+                c->bulkRecv.dst == c->clientSim->lobbyMapPreviewBytes) {
+                ClientSim *cs = c->clientSim;
+                cs->lobbyMapPreviewTotal    = 0;
+                cs->lobbyMapPreviewReceived = 0;
+                cs->lobbyMapPreviewTries    = 0;
+                cs->lobbyMapPreviewSentTick =
+                    c->localTick - LOBBY_MAP_PREVIEW_TIMEOUT_TICKS;
             }
             bulkReceiverInit(&c->bulkRecv);
             if (c->mapResyncBuf != NULL) {
@@ -1784,6 +1869,174 @@ static void udpClientScnDetailsTick(TransportUdpClientCtx *c) {
     }
 }
 
+/* ---- A brain's commands.txt for the lobby's docs dialog (BULK_KIND_BRAIN_DOCS).
+ *
+ * The dialog marks the brain WANTED (clientSimLobbyBrainDocsWant); this tick
+ * asks for one brain at a time with PACKET_LOBBY_BRAIN_DOCS_REQ and the answer
+ * comes back compressed on CHANNEL_BULK. The request is a bare datagram and
+ * the server drops one it cannot start at once (its bulk sender for this
+ * client busy), so an ASKED brain with no answer after
+ * CLIENT_BRAIN_DOCS_TIMEOUT_TICKS is asked again, up to CLIENT_BRAIN_DOCS_TRIES
+ * times, and then reads FAILED until the dialog is opened again. An answer
+ * that has started arriving is never timed out; the bulk channel resends its
+ * own lost fragments. */
+
+BOLO_STATIC_ASSERT(sizeof(((struct ClientBrainTexts *)0)->rx) ==
+                       BULK_BRAIN_DOCS_BLOB_MAX,
+                   brain_docs_rx_holds_the_largest_answer);
+
+/* Put one docs request on the wire and stamp the brain ASKED. */
+static void udpClientSendBrainDocsReq(TransportUdpClientCtx *c, int idx) {
+    struct ClientBrainTexts *t = c->clientSim->lobbyBrainTexts;
+    uint8_t buf[PACKET_HEADER_SIZE + 1];
+    packHeader(buf, PACKET_LOBBY_BRAIN_DOCS_REQ, c->outSequence++);
+    buf[PACKET_HEADER_SIZE] = (uint8_t)idx;
+    udpClientSendTo(c, buf, (int)sizeof(buf));
+    t->docs[idx].state    = CLIENT_BRAIN_DOCS_S_ASKED;
+    t->docs[idx].tries++;
+    t->docs[idx].sentTick = c->localTick;
+}
+
+/* Per-tick: at most one request out at a time, so the answers never queue
+ * behind each other in the server's one bulk sender for this client. */
+static void udpClientBrainDocsTick(TransportUdpClientCtx *c) {
+    struct ClientBrainTexts *t;
+    int i;
+    if (c->clientSim == NULL) return;
+    t = c->clientSim->lobbyBrainTexts;
+    if (t == NULL) return;
+    for (i = 0; i < BRAIN_LIST_MAX; i++) {
+        if (t->docs[i].state != CLIENT_BRAIN_DOCS_S_ASKED) continue;
+        if (t->rxIdx == i + 1) return;                     /* arriving now */
+        if ((uint32_t)(c->localTick - t->docs[i].sentTick) <
+            CLIENT_BRAIN_DOCS_TIMEOUT_TICKS) {
+            return;
+        }
+        if (t->docs[i].tries < CLIENT_BRAIN_DOCS_TRIES) {
+            udpClientSendBrainDocsReq(c, i);
+        } else {
+            WB_LOG_WARN(WB_LOG_CAT_NET,
+                "no commands.txt for brain %d after %u requests",
+                i, (unsigned)t->docs[i].tries);
+            t->docs[i].state = CLIENT_BRAIN_DOCS_S_FAILED;
+        }
+        return;
+    }
+    for (i = 0; i < BRAIN_LIST_MAX; i++) {
+        if (t->docs[i].state == CLIENT_BRAIN_DOCS_S_WANTED) {
+            udpClientSendBrainDocsReq(c, i);
+            return;
+        }
+    }
+}
+
+/* The brain index a BULK_KIND_BRAIN_DOCS header's path names, or -1. */
+static int udpClientBrainDocsPathIdx(const BulkStreamHeader *h) {
+    int idx = 0, n;
+    if (h->pathLen == 0 || h->pathLen > 2) return -1;
+    for (n = 0; n < h->pathLen; n++) {
+        if (h->path[n] < '0' || h->path[n] > '9') return -1;
+        idx = idx * 10 + (h->path[n] - '0');
+    }
+    return idx < BRAIN_LIST_MAX ? idx : -1;
+}
+
+/* ---- The server's bot-name catalogue (BULK_KIND_BOT_POOL).
+ *
+ * The join names the server's catalogue by id (CTRL_LOBBY_BOT_POOL_INFO) and
+ * a client whose own pools differ marks it WANTED. This tick asks for it with
+ * PACKET_LOBBY_BOT_POOL_REQ, only once connected, so the join's map download
+ * is done and the server's bulk sender for this client is free. The request
+ * is a bare datagram, so one with no answer after
+ * CLIENT_BOT_POOL_TIMEOUT_TICKS is sent again, up to CLIENT_BOT_POOL_TRIES
+ * times, and then the client keeps its own pools. An answer that has started
+ * arriving is never timed out. A bulk re-base that cuts off an answer part
+ * way in returns the request to WANTED with its tries cleared
+ * (clientApplyChannelReset), so it is asked for again. */
+
+/* Drop the catalogue buffer: clear the receiver's dst first so the rest of a
+ * body still arriving is consumed and discarded. */
+static void udpClientFreeBotPoolBuf(TransportUdpClientCtx *c) {
+    if (c->botPoolBuf != NULL) {
+        if (c->bulkRecv.dst == c->botPoolBuf) {
+            c->bulkRecv.dst = NULL;
+        }
+        free(c->botPoolBuf);
+        c->botPoolBuf = NULL;
+    }
+}
+
+static void udpClientBotPoolTick(TransportUdpClientCtx *c) {
+    ClientSim *cs = c->clientSim;
+    uint8_t    buf[PACKET_HEADER_SIZE];
+    if (cs == NULL) return;
+    if (cs->lobbyPoolState == CLIENT_BOT_POOL_S_ASKED) {
+        if (c->botPoolBuf != NULL && c->bulkRecv.dst == c->botPoolBuf) {
+            return;                                     /* arriving now */
+        }
+        if ((uint32_t)(c->localTick - cs->lobbyPoolSentTick) <
+            CLIENT_BOT_POOL_TIMEOUT_TICKS) {
+            return;
+        }
+        if (cs->lobbyPoolTries >= CLIENT_BOT_POOL_TRIES) {
+            WB_LOG_WARN(WB_LOG_CAT_NET,
+                "no bot-name catalogue after %u requests; keeping our own "
+                "pools", (unsigned)cs->lobbyPoolTries);
+            cs->lobbyPoolState = CLIENT_BOT_POOL_S_FAILED;
+            return;
+        }
+    } else if (cs->lobbyPoolState != CLIENT_BOT_POOL_S_WANTED) {
+        return;
+    }
+    packHeader(buf, PACKET_LOBBY_BOT_POOL_REQ, c->outSequence++);
+    udpClientSendTo(c, buf, (int)sizeof(buf));
+    cs->lobbyPoolState    = CLIENT_BOT_POOL_S_ASKED;
+    cs->lobbyPoolTries++;
+    cs->lobbyPoolSentTick = c->localTick;
+}
+
+/* ---- A server map's bytes for the lobby chooser's preview (BULK_KIND_PREVIEW). */
+
+/* Put the preview request for lobbyMapPreviewReqPath on the wire and stamp
+ * the send. */
+static void udpClientSendMapPreviewReq(TransportUdpClientCtx *c) {
+    ClientSim *cs = c->clientSim;
+    uint8_t buf[PACKET_HEADER_SIZE + 1 + 256];
+    size_t n = strlen(cs->lobbyMapPreviewReqPath);
+
+    packHeader(buf, PACKET_LOBBY_MAP_PREVIEW_REQ, c->outSequence++);
+    buf[PACKET_HEADER_SIZE] = (uint8_t)n;
+    memcpy(buf + PACKET_HEADER_SIZE + 1, cs->lobbyMapPreviewReqPath, n);
+    udpClientSendTo(c, buf, (int)(PACKET_HEADER_SIZE + 1 + n));
+    cs->lobbyMapPreviewTries++;
+    cs->lobbyMapPreviewSentTick = c->localTick;
+}
+
+/* Per-tick: send an unanswered preview request again, and give up on it
+ * after LOBBY_MAP_PREVIEW_TRIES sends. A request whose stream header has
+ * arrived (lobbyMapPreviewTotal set) is left to the bulk channel. */
+static void udpClientMapPreviewTick(TransportUdpClientCtx *c) {
+    ClientSim *cs = c->clientSim;
+    if (cs == NULL || !cs->lobbyMapPreviewInFlight ||
+        cs->lobbyMapPreviewTotal != 0 ||
+        cs->lobbyMapPreviewReqPath[0] == '\0') {
+        return;
+    }
+    if ((uint32_t)(c->localTick - cs->lobbyMapPreviewSentTick) <
+        LOBBY_MAP_PREVIEW_TIMEOUT_TICKS) {
+        return;
+    }
+    if (cs->lobbyMapPreviewTries < LOBBY_MAP_PREVIEW_TRIES) {
+        udpClientSendMapPreviewReq(c);
+        return;
+    }
+    WB_LOG_WARN(WB_LOG_CAT_NET, "no preview of %s after %u requests",
+                cs->lobbyMapPreviewReqPath,
+                (unsigned)cs->lobbyMapPreviewTries);
+    cs->lobbyMapPreviewError    = true;
+    cs->lobbyMapPreviewInFlight = false;
+}
+
 /* ---- A copy of one of the server's scripts (BULK_KIND_SCRIPT_PACKAGE).
  *
  * The request is a bare datagram and the server drops one it cannot start at
@@ -2005,6 +2258,38 @@ static uint8_t *clientBulkOnBegin(void *ctx, const BulkStreamHeader *h) {
         return NULL;
     }
 
+    case BULK_KIND_BRAIN_DOCS: {
+        /* One brain's commands.txt, answering a PACKET_LOBBY_BRAIN_DOCS_REQ.
+         * Taken only for a brain this client is waiting on, and only for the
+         * docs generation it was told about, or a not-found answer; a late or
+         * stale answer is dropped and the request goes again. totalSize is
+         * attacker-controlled: bound it by the receive buffer. */
+        struct ClientBrainTexts *t = cs->lobbyBrainTexts;
+        int idx = udpClientBrainDocsPathIdx(h);
+        if (t == NULL || idx < 0) return NULL;
+        if (h->totalSize < 1 || h->totalSize > sizeof(t->rx)) return NULL;
+        if (t->docs[idx].state != CLIENT_BRAIN_DOCS_S_ASKED) return NULL;
+        if (h->gen != 0 && h->gen != t->docs[idx].gen) return NULL;
+        t->rxIdx = idx + 1;
+        return t->rx;
+    }
+
+    case BULK_KIND_BOT_POOL:
+        /* The server's bot-name catalogue, answering a
+         * PACKET_LOBBY_BOT_POOL_REQ. Taken only while a request is out, and
+         * only for the catalogue the join named or a none answer. totalSize
+         * is attacker-controlled: bound it by the catalogue cap before
+         * allocating. */
+        if (cs->lobbyPoolState != CLIENT_BOT_POOL_S_ASKED) return NULL;
+        if (h->gen != 0 && h->gen != cs->lobbyPoolId) return NULL;
+        if (h->totalSize < 1 ||
+            h->totalSize > 1u + LOBBY_BOT_CATALOG_WIRE_MAX) {
+            return NULL;
+        }
+        udpClientFreeBotPoolBuf(c);
+        c->botPoolBuf = (uint8_t *)malloc(h->totalSize);
+        return c->botPoolBuf;
+
     case BULK_KIND_SCRIPT_PACKAGE:
         /* A copy of a script, answering this client's
          * PACKET_LOBBY_SCRIPT_FETCH_REQ. Taken only while that request is
@@ -2209,6 +2494,59 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
         WB_LOG_INFO(WB_LOG_CAT_NET,
             "round log received (%u bytes)", (unsigned)h->totalSize);
         break;
+
+    case BULK_KIND_BOT_POOL: {
+        /* Install the server's pools over this client's own. A none answer,
+         * or a blob that does not install, leaves the client on its own
+         * pools (FAILED). A catalogue that installs but does not come out
+         * as the id the join named is kept, since it is the server's, and
+         * logged: the two ends serialized the same pools differently. */
+        uint32_t got;
+        if (buf == NULL || buf != c->botPoolBuf) break;
+        if (cs->lobbyPoolState == CLIENT_BOT_POOL_S_ASKED) {
+            if (buf[0] != BULK_BOT_POOL_FOUND || h->totalSize < 2 ||
+                lobbyBotPoolsDeserializeInstall(buf + 1,
+                                                (int)(h->totalSize - 1),
+                                                NULL) < 0) {
+                cs->lobbyPoolState = CLIENT_BOT_POOL_S_FAILED;
+            } else {
+                cs->lobbyPoolState = CLIENT_BOT_POOL_S_HAVE;
+                got = lobbyBotPoolsCatalogId();
+                if (got != cs->lobbyPoolId) {
+                    WB_LOG_WARN(WB_LOG_CAT_NET,
+                        "bot-name catalogue installed as id %08x, the server "
+                        "named %08x", (unsigned)got,
+                        (unsigned)cs->lobbyPoolId);
+                }
+            }
+        }
+        udpClientFreeBotPoolBuf(c);
+        break;
+    }
+
+    case BULK_KIND_BRAIN_DOCS: {
+        /* The brain onBegin matched, unless a new announce or brain list
+         * moved it on meanwhile. A not-found answer, or one that does not
+         * inflate, leaves the brain FAILED, which the dialog stops waiting
+         * on; one for another generation leaves it ASKED to be asked again. */
+        struct ClientBrainTexts *t = cs->lobbyBrainTexts;
+        int idx = udpClientBrainDocsPathIdx(h);
+        if (t == NULL || idx < 0 || t->rxIdx != idx + 1) break;
+        t->rxIdx = 0;
+        if (t->docs[idx].state != CLIENT_BRAIN_DOCS_S_ASKED) break;
+        if (buf[0] != BULK_BRAIN_DOCS_FOUND) {
+            t->docs[idx].state = CLIENT_BRAIN_DOCS_S_FAILED;
+            break;
+        }
+        if (h->totalSize < 3) {
+            t->docs[idx].state = CLIENT_BRAIN_DOCS_S_FAILED;
+            break;
+        }
+        (void)clientSimLobbyBrainDocsPut(
+            cs, idx, h->gen, buf + 3, (size_t)h->totalSize - 3,
+            ((size_t)buf[1] << 8) | buf[2]);
+        break;
+    }
 
     case BULK_KIND_SCENARIO_DETAILS: {
         /* The slot onBegin matched, unless the dialog forgot it meanwhile. A
@@ -4001,6 +4339,14 @@ static bool udpClientTick(void *ctx) {
         udpClientRoundLogTick(c);
         udpClientScnDetailsTick(c);
         udpClientScriptFetchTick(c);
+        udpClientBotPoolTick(c);
+        udpClientMapPreviewTick(c);
+    }
+    /* A spectator in the live lobby reads the same bot announce lines, and
+     * the server answers its docs requests on its own bulk stream. */
+    if (c->joinState == UDP_CLIENT_CONNECTED ||
+        c->joinState == UDP_CLIENT_SPECTATING) {
+        udpClientBrainDocsTick(c);
     }
 
     /* Control-event acks now ride the channel-frame trailer (the per-tick
@@ -4681,6 +5027,9 @@ void transportUdpClientDestroy(Transport *t) {
     }
     if (c->scriptFetchBuf != NULL) {
         free(c->scriptFetchBuf);   /* script copy nobody took, or a partial one */
+    }
+    if (c->botPoolBuf != NULL) {
+        free(c->botPoolBuf);       /* a catalogue still arriving */
     }
     bulkSenderReset(&c->uploadSend);
     free(c);
@@ -5403,31 +5752,24 @@ void transportUdpClientSendLobbyScenarioListRequest(Transport *t) {
 void transportUdpClientSendLobbyMapPreviewRequest(Transport *t,
                                                   const char *relPath) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 1 + 256];
-    int pathLen, len;
+    ClientSim *cs = c->clientSim;
+    size_t pathLen;
 
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (c->joinState != UDP_CLIENT_CONNECTED || cs == NULL) return;
     if (relPath == NULL) relPath = "";
-    pathLen = (int)strlen(relPath);
+    pathLen = strlen(relPath);
     if (pathLen == 0 || pathLen > 255) return;
 
-    packHeader(buf, PACKET_LOBBY_MAP_PREVIEW_REQ, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = (uint8_t)pathLen;
-    memcpy(buf + PACKET_HEADER_SIZE + 1, relPath, pathLen);
-    len = PACKET_HEADER_SIZE + 1 + pathLen;
-    udpClientSendTo(c, buf, len);
-
-    if (c->clientSim) {
-        ClientSim *cs = c->clientSim;
-        memset(cs->lobbyMapPreviewReqPath, 0, sizeof(cs->lobbyMapPreviewReqPath));
-        memcpy(cs->lobbyMapPreviewReqPath, relPath, (size_t)pathLen);
-        cs->lobbyMapPreviewPath[0]   = '\0';
-        cs->lobbyMapPreviewInFlight  = true;
-        cs->lobbyMapPreviewReady     = false;
-        cs->lobbyMapPreviewError     = false;
-        cs->lobbyMapPreviewTotal     = 0;
-        cs->lobbyMapPreviewReceived  = 0;
-    }
+    memset(cs->lobbyMapPreviewReqPath, 0, sizeof(cs->lobbyMapPreviewReqPath));
+    memcpy(cs->lobbyMapPreviewReqPath, relPath, pathLen);
+    cs->lobbyMapPreviewPath[0]   = '\0';
+    cs->lobbyMapPreviewInFlight  = true;
+    cs->lobbyMapPreviewReady     = false;
+    cs->lobbyMapPreviewError     = false;
+    cs->lobbyMapPreviewTotal     = 0;
+    cs->lobbyMapPreviewReceived  = 0;
+    cs->lobbyMapPreviewTries     = 0;
+    udpClientSendMapPreviewReq(c);
 }
 
 void transportUdpClientSendLobbyMapSearchRequest(Transport *t,
@@ -5813,6 +6155,13 @@ void transportUdpClientTestDropUploadReply(Transport *t, uint8_t packet_type) {
     c->test_drop_upload_packet = packet_type;
 }
 
+/* True while a bot-name catalogue answer is part way in: its buffer exists
+ * and the bulk receiver is filling it. */
+bool transportUdpClientTestBotPoolArriving(Transport *t) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    return c->botPoolBuf != NULL && c->bulkRecv.dst == c->botPoolBuf;
+}
+
 void transportUdpClientTestDropNext(Transport *t, uint8_t packet_type,
                                     int count) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
@@ -5823,6 +6172,18 @@ void transportUdpClientTestDropNext(Transport *t, uint8_t packet_type,
 int transportUdpClientTestDropNextLeft(Transport *t) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     return c->test_drop_next_count;
+}
+
+void transportUdpClientTestDropNextOut(Transport *t, uint8_t packet_type,
+                                       int count) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    c->test_drop_out_type  = packet_type;
+    c->test_drop_out_count = count;
+}
+
+int transportUdpClientTestDropNextOutLeft(Transport *t) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    return c->test_drop_out_count;
 }
 #endif
 

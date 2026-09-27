@@ -54,6 +54,7 @@ static int parse_full_entry(void) {
         "\"alliesintrees\":true,"
         "\"overviewwindow\":1,"
         "\"lineofsight\":1,"
+        "\"positionalsound\":true,"
         "\"smartpingsoff\":true,"
         "\"pillviewdecay\":45,"
         "\"baseviewdecay\":90,"
@@ -96,6 +97,7 @@ static int parse_full_entry(void) {
     UT_ASSERT_MSG(s->overviewWindow == 1 && s->lineOfSight == 1,
                   "overview window/line of sight=%d/%d, want 1/1",
                   s->overviewWindow, s->lineOfSight);
+    UT_ASSERT_MSG(s->positionalSound, "positionalSound should be true");
     UT_ASSERT_MSG(s->pillViewDecay == 45 && s->baseViewDecay == 90 &&
                       s->allyViewDecay == 15,
                   "decay secs=%d/%d/%d", s->pillViewDecay, s->baseViewDecay,
@@ -146,6 +148,9 @@ static int parse_defaults(void) {
                   "absent view policies=%d/%d/%d, want 0/3/0",
                   s->pillView, s->baseView, s->allyView);
     UT_ASSERT_MSG(!s->alliesInTrees, "absent alliesintrees should be false");
+    /* Absent "positionalsound" is off, which is what every server that
+     * predates the key runs. */
+    UT_ASSERT_MSG(!s->positionalSound, "absent positionalsound should be false");
     /* Absent "smartpingsoff" is false, which means smart pings are ALLOWED —
      * what every server and tracker that predates the field reports. */
     UT_ASSERT_MSG(!s->smartPingsOff,

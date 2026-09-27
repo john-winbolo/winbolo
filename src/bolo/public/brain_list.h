@@ -102,12 +102,34 @@ bool brainListResolve(const char *name, char *outPath, size_t outLen);
  *   commands.txt   the long docs behind that line. Clicking the chat line
  *                  opens them in a dialog.
  *
- * Unlike about.txt these DO go over the wire (CTRL_LOBBY_BRAIN_DOCS_CHUNK),
- * because the server picks the brain and a client need not have it on disk.
- * The caps below are what the wire carries; a longer file is truncated at
- * the cap and the read says so, so the truncation is never silent. */
+ * Unlike about.txt these DO go over the wire, because the server picks the
+ * brain and a client need not have it on disk. announce.txt goes to every
+ * joiner as CTRL_LOBBY_BRAIN_ANNOUNCE; commands.txt goes zlib-compressed on
+ * CHANNEL_BULK, and only to a client that opens the docs
+ * (PACKET_LOBBY_BRAIN_DOCS_REQ). The caps below are what the wire carries;
+ * a longer file is truncated at the cap and the read says so, so the
+ * truncation is never silent. */
 #define BRAIN_ANNOUNCE_MAX  512    /* announce.txt bytes, NUL not counted */
-#define BRAIN_DOCS_MAX    16384    /* commands.txt bytes, NUL not counted */
+#define BRAIN_DOCS_MAX    32768    /* commands.txt bytes, NUL not counted */
+
+/* The largest compressed commands.txt: zlib's compressBound(BRAIN_DOCS_MAX),
+ * which is n + n/4096 + n/16384 + n/2^25 + 13 = 32,791, rounded up.
+ * brainDocsCompress refuses anything that does not fit, so a reader may
+ * refuse a longer one too. */
+#define BRAIN_DOCS_Z_MAX  (BRAIN_DOCS_MAX + 64)
+
+/* Compress `len` bytes of commands.txt into `out` (cap bytes). Returns the
+ * compressed length, or 0 when len is 0, over BRAIN_DOCS_MAX, or the result
+ * would not fit. */
+size_t brainDocsCompress(const char *docs, size_t len,
+                         uint8_t *out, size_t cap);
+
+/* Undo brainDocsCompress. `rawLen` is the length the sender said the text
+ * has; `out` must hold rawLen + 1 bytes and comes back NUL-terminated. False
+ * when rawLen is over BRAIN_DOCS_MAX, the bytes do not inflate, or they
+ * inflate to any length other than rawLen; out is then an empty string. */
+bool brainDocsDecompress(const uint8_t *z, size_t zLen, size_t rawLen,
+                         char *out);
 
 /* Read a brain's announce.txt and commands.txt out of its DIRECTORY
  * ("brains/GoalHunter_1.7", or the server's own brainPaths[i]). Either out

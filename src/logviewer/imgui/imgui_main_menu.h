@@ -25,7 +25,12 @@ extern bool lv_g_show_game_info_window;
 extern bool lv_g_show_events_window;
 extern bool lv_g_show_item_info_window;
 extern bool lv_g_show_comments_window;
+extern bool lv_g_show_scenario_panel_window;
 extern bool lv_g_reset_window_positions;
+
+/* Whether the map outlines the regions the recording's scripts.json
+   declares. Read by the overview and the game view each frame. */
+extern bool lv_g_show_regions;
 
 /* Render the main menu bar
  * Returns true if any menu item was clicked */
@@ -56,6 +61,10 @@ void lv_imgui_set_mode_information(int isInformation);
 int  lv_imgui_get_tank_centred(void);
 void lv_imgui_toggle_tank_centred(void);
 void lv_imgui_toggle_hide_lobby(void);
+/* Whether the loaded recording declares any region, which is when the
+   Regions item is enabled; and the item's flip, which repaints the map. */
+int  lv_imgui_has_regions(void);
+void lv_imgui_toggle_regions(void);
 int  lv_imgui_get_dns_lookups(void);
 void lv_imgui_toggle_dns_lookups(void);
 

@@ -340,7 +340,8 @@ static void mdnsFillServerInfo(ServerSim *sim, MdnsServerInfo *out) {
       serverSimGetAlliesInTrees(sim));
   out->viewPolicies2 = infoPacketPackViewPolicies2(
       serverSimGetOverviewWindow(sim),
-      serverSimGetLineOfSight(sim));
+      serverSimGetLineOfSight(sim),
+      serverSimGetPositionalSound(sim));
 }
 
 /*---------------------------------------------------------

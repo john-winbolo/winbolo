@@ -464,6 +464,11 @@ BYTE lv_basesSetOwner(bases *value, BYTE baseNum, BYTE owner, BYTE migrate) {
   ownerName[0] = '\0';
   oldOwner[0] = '\0';
 
+  /* baseNum is the 0-based index a playback record names, a byte off the
+     recording: one past item[] is ignored rather than written. */
+  if (baseNum >= MAX_BASES) {
+    return NEUTRAL;
+  }
   returnValue = (*value)->item[baseNum].owner;
   if (migrate == TRUE) {
     (*value)->item[baseNum].owner = owner;
@@ -489,6 +494,7 @@ BYTE lv_basesSetOwner(bases *value, BYTE baseNum, BYTE owner, BYTE migrate) {
 }
 
 void lv_basesSetStock(bases *value, BYTE baseNum, BYTE s, BYTE m, BYTE a) {
+  if (baseNum >= MAX_BASES) return;   /* 0-based, off the recording */
   (*value)->item[baseNum].shells = s;
   (*value)->item[baseNum].mines = m;
   (*value)->item[baseNum].armour = a;

@@ -1931,6 +1931,8 @@ STR_DLGLOBBY_CLASSIC_MODE_TIP=將碉堡顯示設為「按鍵」，將基地顯�
 STR_MENU_CLASSIC_MODE_TIP=伺服器已開啟經典模式，因此此檢視已關閉。
 STR_DLGLOBBY_ALLIES_TREES_CB=顯示樹林中的友軍
 STR_DLGLOBBY_ALLIES_TREES_TIP=站在樹林中的友軍坦克會顯示在你的畫面上，而不是被隱藏。\n戰爭迷霧仍然有效，所以你只能在原本看得到的地方看到他們。\n關閉是經典規則，經典模式會強制關閉此項。
+STR_DLGLOBBY_POSITIONAL_SOUND_CB=位置音效
+STR_DLGLOBBY_POSITIONAL_SOUND_TIP=聲音從畫面上發生的那一側傳來。
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_OVERVIEW_WINDOW=總覽範圍
 STR_DLGLOBBY_OVERVIEW_WINDOW_TIP=地圖總覽在你坦克周圍持續保持即時的圖格範圍。\n展開是主視角能捲動到的全部範圍；經典則縮小為該畫面\n正在顯示的範圍。經典模式會將其設為經典並保持不變。\n無論哪種情況伺服器送出的地圖資料都相同。
@@ -2217,6 +2219,8 @@ STR_BOT_DIFF_DESC_HARD=這個機器人會主動搜尋敵方碉堡與基地，與
 STR_DLGLOBBY_BOTCFG_MODE=模式
 STR_DLGLOBBY_BOT_DOCS_TITLE={string1} 指令
 STR_COPY=複製
+STR_DLGLOBBY_BOT_DOCS_LOADING=正在從伺服器取得命令...
+STR_DLGLOBBY_BOT_DOCS_FAILED=伺服器未傳送這些命令。請關閉此視窗並重新開啟以重試。
 
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_PRESET_CLASSIC=經典
@@ -2611,6 +2615,17 @@ STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — 只改變遊戲的進行方式，不影響
 STR_MAPEDIT_SCENARIO_KIND_NOTE=Mod 不能設定遊戲類型、調整時鐘、保留自己的比分或結束回合，因此當此項為 Mod 時不會提供這些選項。這與下方「專為此地圖製作」是不同的問題，後者關乎此檔案是為哪張地圖撰寫的。
 STR_MAPEDIT_SCENARIO_GAME_MOD=Mod 將遊戲類型交由伺服器決定
 STR_MAPEDIT_SCENARIO_FN_MOD=當此檔案為 Mod 時，不會提供 {string1}：它是決定結局的唯一答案，而 Mod 不涉及勝利條件。
+STR_LV_INFO_SCENARIO_MODS_1={string1} · 1 個模組
+STR_LV_INFO_SCENARIO_MODS_N={string1} · {number} 個模組
+STR_LV_INFO_SCRIPTS=腳本
+STR_LV_INFO_SCRIPT_SOURCE_MAP=地圖
+STR_LV_INFO_SCRIPT_SOURCE_SERVER=伺服器
+STR_LV_INFO_RULE_CHANGE=節拍 {number}：{string1} → {string2}
+STR_LV_INFO_SCORES=分數
+STR_LV_INFO_SCORE_SLOT=位置 {number}
+STR_LV_SCN_ANNOUNCE={string1}{string2}{string3}
+STR_LV_SCN_ANNOUNCE_TO=[{player}] {string1}{string2}{string3}
+STR_LV_REGIONS_TIP=已宣告的區域
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADS=來自玩家的腳本
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_SESSION=僅本次工作階段允許
 STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_KEEP=允許並保留
