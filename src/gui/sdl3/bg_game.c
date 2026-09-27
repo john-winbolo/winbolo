@@ -55,6 +55,11 @@ BgGame *bgGameGetShared(void) { return sharedBg; }
 #define BG_MIN_ZOOM 1
 #define BG_MAX_ZOOM 8
 
+/* A display this size or smaller keeps the old 1x floor for the
+ * fit-to-screen zoom; a bigger one is floored at 1.5x (see bgGameRender). */
+#define BG_SMALL_DISPLAY_MAX_W 1024
+#define BG_SMALL_DISPLAY_MAX_H 768
+
 #define BG_TICK_INTERVAL_MS  20   /* 50 Hz — matches server tick rate */
 #define BG_MAX_CATCHUP_TICKS 3    /* cap catch-up so a stall can't snowball */
 
@@ -779,31 +784,31 @@ static void bgFramePrepare(BgGame *bg, SDL_Renderer *renderer,
     }
 }
 
-/* Draw the scene into the kept texture. One texture is enough: the only
- * step that can fail before anything is drawn is setting the target, and
- * then the texture still holds the old scene. */
+/* Draw the scene into the kept texture, texW x texH: the screen size, or
+ * twice it at 1.5x. One texture is enough: the only step that can fail
+ * before anything is drawn is setting the target, and then the texture
+ * still holds the old scene. */
 static bool bgFrameRedraw(BgGame *bg, SDL_Renderer *renderer,
-                          int screenW, int screenH, int zf,
+                          int texW, int texH, int zf,
                           Sint64 periodNs, int n) {
     if (!bg->frameTex) {
         bg->frameTex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
                                          SDL_TEXTUREACCESS_TARGET,
-                                         screenW, screenH);
+                                         texW, texH);
         if (!bg->frameTex) {
             WB_LOG_WARN(WB_LOG_CAT_GUI,
-                        "[BgGame] scene texture %dx%d failed (%s); drawing "
-                        "direct every frame", screenW, screenH, SDL_GetError());
+                        "[BgGame] scene texture %dx%d failed (%s)",
+                        texW, texH, SDL_GetError());
             bg->frameBroken = true;
             return false;
         }
-        SDL_SetTextureScaleMode(bg->frameTex, SDL_SCALEMODE_NEAREST);
         SDL_SetTextureBlendMode(bg->frameTex, SDL_BLENDMODE_NONE);
     }
     SDL_Texture *prev = SDL_GetRenderTarget(renderer);
     if (!SDL_SetRenderTarget(renderer, bg->frameTex)) return false;
     SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
     SDL_RenderClear(renderer);
-    bgGameDrawScene(bg, renderer, screenW, screenH, zf, periodNs, n);
+    bgGameDrawScene(bg, renderer, texW, texH, zf, periodNs, n);
     if (!SDL_SetRenderTarget(renderer, prev)) {
         SDL_SetRenderTarget(renderer, NULL);   /* put the window back regardless */
         return false;
@@ -828,10 +833,15 @@ static bool bgFrameRedraw(BgGame *bg, SDL_Renderer *renderer,
  * gap of n + 1 periods. The blend clock moves by the periods that really
  * passed, n with vsync.
  *
+ * The scene is texW x texH and is copied to the window at screenW x
+ * screenH with copyMode. At 1.5x the texture is twice the screen and n may
+ * be 1, which redraws it every frame.
+ *
  * False when no scene could be shown; the caller then draws direct. */
 static bool bgFrameRender(BgGame *bg, SDL_Renderer *renderer,
-                          int screenW, int screenH, int zf,
-                          Sint64 periodNs, int n) {
+                          int texW, int texH, int screenW, int screenH,
+                          int zf, Sint64 periodNs, int n,
+                          SDL_ScaleMode copyMode) {
     Uint64 nowNs    = SDL_GetTicksNS();
     int    since    = bg->frameSince + 1;
     bool redraw = !bg->frameValid ||                        /* first, or lost */
@@ -842,7 +852,7 @@ static bool bgFrameRender(BgGame *bg, SDL_Renderer *renderer,
                   (Sint64)(nowNs - bg->frameRedrawNs) >=
                       (Sint64)(2 * n - 1) * periodNs / 2;   /* re-align       */
     if (redraw) {
-        if (!bgFrameRedraw(bg, renderer, screenW, screenH, zf, periodNs, n)) {
+        if (!bgFrameRedraw(bg, renderer, texW, texH, zf, periodNs, n)) {
             bg->frameValid = false;   /* try again next frame */
             return false;
         }
@@ -851,6 +861,7 @@ static bool bgFrameRender(BgGame *bg, SDL_Renderer *renderer,
     } else {
         bg->frameSince = since;
     }
+    SDL_SetTextureScaleMode(bg->frameTex, copyMode);
     SDL_FRect dst = { 0.0f, 0.0f, (float)screenW, (float)screenH };
     SDL_RenderTexture(renderer, bg->frameTex, NULL, &dst);
     return true;
@@ -870,24 +881,73 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
     int zfH = (mapTilesH > 0) ? (screenH + mapTilesH * 16 - 1) / (mapTilesH * 16) : 1;
     int zf = zfW < zfH ? zfW : zfH;
     if (zf < 1) zf = 1;
+    /* A fit of 1 is floored at 1.5x. At 1x each game pixel is one screen
+     * pixel, and the one-pixel speckle in the grass tiles shimmers as the
+     * camera scrolls over it; 2x shows too little of the map. 1.5x is not
+     * a whole zoom, and drawn straight its game pixels would be 1 and 2
+     * screen pixels wide by turns, which shimmers too. So the scene is
+     * drawn at zoom 3 into the kept texture at twice the screen size and
+     * copied to the window at half size with linear filtering: each screen
+     * pixel is the average of 2x2 texture pixels (supersampled). A small
+     * display keeps 1x, where 1.5x would show too little of the map. If
+     * that texture cannot be made, zoom 2 until the renderer or the size
+     * changes. A fit of 2 or more, or a user zoom, is drawn as before. */
+    int ssScale = 1;   /* kept scene size / screen size: 2 at 1.5x */
+    if (zf == 1 && bg->zoomUser == 0 && screenW > 0 && screenH > 0 &&
+        !(screenW <= BG_SMALL_DISPLAY_MAX_W &&
+          screenH <= BG_SMALL_DISPLAY_MAX_H)) {
+        bool failed = bg->ssFailRenderer == renderer &&
+                      bg->ssFailW == screenW && bg->ssFailH == screenH;
+        if (failed) {
+            zf = 2;
+        } else {
+            zf = 3;
+            ssScale = 2;
+        }
+    }
     /* A user zoom replaces the fit, so the +/- keys keep their step on a
      * window resize instead of snapping back to whatever fits now. The
      * fit stays the starting point: it is what zoomUser is seeded from
-     * on the first press, through lastZoom below. */
+     * on the first press, through lastZoom below. At 1.5x the fit counts
+     * as 1, so + goes to 2x and - to 1x. */
     if (bg->zoomUser > 0) zf = bg->zoomUser;
-    bg->lastZoom = zf;
+    bg->lastZoom = (ssScale == 2) ? 1 : zf;
 
     /* Redraw every n refreshes by the Frame Rate setting; n = 1 draws
      * direct every frame, and so does a renderer that cannot keep the
-     * scene offscreen. */
+     * scene offscreen. 1.5x cannot be drawn direct, so it always goes
+     * through the kept scene; with n = 1 that is redrawn every frame. */
     Sint64 periodNs = bgFrameRefreshNs(renderer);
     int n = bgFrameEveryN(periodNs);
-    bgFramePrepare(bg, renderer, screenW, screenH);
-    if (n < 2) bgFrameDrop(bg, true);
+    int texW = screenW * ssScale;
+    int texH = screenH * ssScale;
+    bgFramePrepare(bg, renderer, texW, texH);
+    if (n < 2 && ssScale == 1) bgFrameDrop(bg, true);
     if (bg->tilesTex != NULL) {
-        bool shown = n >= 2 && !bg->frameBroken &&
-                     screenW > 0 && screenH > 0 &&
-                     bgFrameRender(bg, renderer, screenW, screenH, zf, periodNs, n);
+        bool shown;
+        if (ssScale == 2) {
+            shown = !bg->frameBroken &&
+                    bgFrameRender(bg, renderer, texW, texH, screenW, screenH,
+                                  zf, periodNs, n, SDL_SCALEMODE_LINEAR);
+            if (!shown) {
+                if (bg->frameBroken) {
+                    bg->ssFailRenderer = renderer;
+                    bg->ssFailW = screenW;
+                    bg->ssFailH = screenH;
+                    WB_LOG_WARN(WB_LOG_CAT_GUI,
+                                "[BgGame] 1.5x scene texture %dx%d failed; "
+                                "menu background uses zoom 2 at %dx%d",
+                                texW, texH, screenW, screenH);
+                }
+                zf = 2;   /* this frame: direct at zoom 2 */
+            }
+        } else {
+            shown = n >= 2 && !bg->frameBroken &&
+                    screenW > 0 && screenH > 0 &&
+                    bgFrameRender(bg, renderer, screenW, screenH,
+                                  screenW, screenH, zf, periodNs, n,
+                                  SDL_SCALEMODE_NEAREST);
+        }
         if (!shown) {
             bgGameDrawScene(bg, renderer, screenW, screenH, zf, periodNs, 1);
         }

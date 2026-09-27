@@ -97,17 +97,24 @@ typedef struct BgGame {
      * n-th refresh and copy it on the others (see bgFrameRender). Same
      * lifetime rules as tilesTex: a renderer change forgets it, a resize
      * or bgGameDestroy destroys it. frameBroken = it could not be made on
-     * this renderer at this size; the scene draws direct. */
+     * this renderer at this size; the scene draws direct. The 1.5x zoom
+     * (see bgGameRender) uses it too, at twice the screen size. */
     SDL_Renderer *frameRenderer;
     SDL_Texture  *frameTex;
     bool          frameValid;      /* frameTex holds a complete scene */
-    int           frameW, frameH;
+    int           frameW, frameH;  /* frameTex size: the screen, or twice
+                                    * it at 1.5x */
     int           frameZoom;       /* zoom the scene was drawn at */
     unsigned int  frameTilesGen;   /* tile sheet it was drawn from */
     GfxTextureFilter frameFilter;  /* texture filter it was drawn with */
     bool          frameBroken;
     int           frameSince;      /* refreshes shown since the last redraw */
     Uint64        frameRedrawNs;   /* wall clock of the last redraw */
+    /* The renderer and screen size the 1.5x scene texture could not be
+     * made for; the background uses zoom 2 until either changes. The
+     * renderer is only compared, never used. */
+    SDL_Renderer *ssFailRenderer;
+    int           ssFailW, ssFailH;
 } BgGame;
 
 bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer);
