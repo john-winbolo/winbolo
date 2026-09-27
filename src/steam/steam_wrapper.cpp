@@ -799,6 +799,16 @@ static void steam_publish_copy(char *dst, size_t dstSize, const char *src) {
   dst[dstSize - 1] = '\0';
 }
 
+/* The size of a file in bytes, or -1 when it cannot be opened.  Steam refuses
+ * a preview under 16 bytes or over 1 MB, so the submit log carries it. */
+static long steam_publish_file_size(const char *path) {
+  FILE *f = fopen(path, "rb");
+  if (!f) return -1;
+  long size = (fseek(f, 0, SEEK_END) == 0) ? ftell(f) : -1;
+  fclose(f);
+  return size;
+}
+
 static bool steam_publish_submit_update(PublishedFileId_t id) {
   ISteamUGC *ugc = SteamUGC();
   ISteamUtils *utils = SteamUtils();
@@ -807,12 +817,31 @@ static bool steam_publish_submit_update(PublishedFileId_t id) {
   UGCUpdateHandle_t h = ugc->StartItemUpdate(utils->GetAppID(), id);
   if (h == k_UGCUpdateHandleInvalid) return false;
 
-  ugc->SetItemTitle(h, s_pubTitle);
-  ugc->SetItemDescription(h, s_pubDesc);
-  ugc->SetItemContent(h, s_pubFolder);
+  /* A setter that refuses its value does not stop the submit, whose result
+     then only says "invalid parameter" — so each refusal is logged here with
+     what it was handed. */
+  WB_LOG_INFO(WB_LOG_CAT_GUI,
+              "steam_workshop: submitting id=%llu folder=\"%s\" "
+              "preview=\"%s\" (%ld bytes) tag=\"%s\"",
+              (unsigned long long)id, s_pubFolder, s_pubPreview,
+              s_pubPreview[0] != '\0' ? steam_publish_file_size(s_pubPreview)
+                                      : 0L,
+              s_pubTag);
+  if (!ugc->SetItemTitle(h, s_pubTitle))
+    WB_LOG_ERROR(WB_LOG_CAT_GUI,
+                 "steam_workshop: SetItemTitle refused \"%s\"", s_pubTitle);
+  if (!ugc->SetItemDescription(h, s_pubDesc))
+    WB_LOG_ERROR(WB_LOG_CAT_GUI,
+                 "steam_workshop: SetItemDescription refused (%u bytes)",
+                 (unsigned)strlen(s_pubDesc));
+  if (!ugc->SetItemContent(h, s_pubFolder))
+    WB_LOG_ERROR(WB_LOG_CAT_GUI,
+                 "steam_workshop: SetItemContent refused \"%s\"", s_pubFolder);
   /* An empty preview path is "no preview image"; handing that to
      SetItemPreview would fail the whole update. */
-  if (s_pubPreview[0] != '\0') ugc->SetItemPreview(h, s_pubPreview);
+  if (s_pubPreview[0] != '\0' && !ugc->SetItemPreview(h, s_pubPreview))
+    WB_LOG_ERROR(WB_LOG_CAT_GUI,
+                 "steam_workshop: SetItemPreview refused \"%s\"", s_pubPreview);
 
   /* The item's one tag — what the app's Workshop page filters on.  An empty
      tag leaves the item's tags alone. */
@@ -821,7 +850,9 @@ static bool steam_publish_submit_update(PublishedFileId_t id) {
     SteamParamStringArray_t arr;
     arr.m_ppStrings = tags;
     arr.m_nNumStrings = 1;
-    ugc->SetItemTags(h, &arr);
+    if (!ugc->SetItemTags(h, &arr))
+      WB_LOG_ERROR(WB_LOG_CAT_GUI,
+                   "steam_workshop: SetItemTags refused \"%s\"", s_pubTag);
   }
 
   /* Visibility is deliberately left alone.  A new item starts private, and
