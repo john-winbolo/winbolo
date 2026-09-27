@@ -1471,6 +1471,11 @@ static bool gameFrontDialogs(void) {
     }
   }
 
+  /* The menu stops drawing here for every kind of game (single player,
+   * hosted or joined), so its kept scene texture is freed rather than held
+   * in GPU memory through the game. The next menu draw makes it again. */
+  if (hasBg) bgGameReleaseScene(bg);
+
   /* Restore render logical presentation for the game view (Android). */
   sdl3DrawRestoreLogicalPresentation();
 

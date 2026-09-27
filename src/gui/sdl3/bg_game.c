@@ -334,14 +334,20 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
     return true;
 }
 
+void bgGameReleaseScene(BgGame *bg) {
+    if (!bg) return;
+    bgFrameDrop(bg, bg->frameRenderer == sdl3DrawGetRenderer());
+}
+
 void bgGameDestroy(BgGame *bg) {
     if (!bg) return;
-    if (bg->tilesTex) {
-        SDL_DestroyTexture(bg->tilesTex);
-        bg->tilesTex = NULL;
-    }
-    bgGameDropSprites(bg, true);
-    bgFrameDrop(bg, bg->frameRenderer == sdl3DrawGetRenderer());
+    /* A renderer made since the last draw (a zoom change) has already
+     * taken the old one's textures with it; see bgGameEnsureTexture. */
+    bool texLive = bg->texRenderer == sdl3DrawGetRenderer();
+    if (bg->tilesTex && texLive) SDL_DestroyTexture(bg->tilesTex);
+    bg->tilesTex = NULL;
+    bgGameDropSprites(bg, texLive);
+    bgGameReleaseScene(bg);
     if (bg->valid) {
         serverSimDestroy(bg->sim);
         bg->valid = false;
