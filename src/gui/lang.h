@@ -3183,8 +3183,8 @@
  * when the manifest names an item. */
 #define STR_MAPEDIT_SCENARIO_WORKSHOP            2667
 
-/* The Workshop section of Settings */
-/* Its heading; the two buttons that switch its views; a subscribed item's
+/* The Steam Workshop tab of Settings */
+/* The tab's name; the two buttons that switch its views; a subscribed item's
  * state and the button to its Workshop page; the Update button on a row the
  * player published before; the chip on a plain map; a subscribed item still
  * downloading, whose name is not known yet ({string1} = the item id); the

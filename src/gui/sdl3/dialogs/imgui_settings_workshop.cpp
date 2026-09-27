@@ -7,7 +7,7 @@
  * Name:          imgui_settings_workshop
  * Filename:      imgui_settings_workshop.cpp
  * Purpose:
- *   The Workshop section of the Settings dialog. See
+ *   The Settings dialog's Steam Workshop tab. See
  *   imgui_settings_workshop.h.
  *
  *   Subscribed lists the items the sync copied into the
@@ -107,7 +107,7 @@ struct WsPubRow {
     uint64_t author;
 };
 
-/* File scope because both settings shells share the Display tab. */
+/* File scope because both settings shells draw the same Workshop tab. */
 static WsView                s_view = WS_VIEW_SUBSCRIBED;
 static std::vector<WsSubRow> s_subRows;
 static std::vector<WsPubRow> s_pubRows;
@@ -590,9 +590,6 @@ void imguiSettingsWorkshopSection(void) {
         wsMarkDirty();
     }
 
-    ImGui::Spacing();
-    ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_WORKSHOP_HEADING));
-
     wsViewButton(STR_DLGSETTINGS_WORKSHOP_SUBSCRIBED, WS_VIEW_SUBSCRIBED);
     ImGui::SameLine();
     wsViewButton(STR_DLGSETTINGS_WORKSHOP_PUBLISH, WS_VIEW_PUBLISH);
@@ -602,6 +599,13 @@ void imguiSettingsWorkshopSection(void) {
            copied in before the rows are read. */
         workshopSyncRun();
         wsMarkDirty();
+    }
+    imguiHandOnHover();
+    ImGui::SameLine();
+    /* Skins, mods, scenarios and maps alike: what the player subscribes to
+       there turns up in the Subscribed view once Steam installs it. */
+    if (ImGui::Button(langGetText(STR_DLGSKIN_BROWSE_WORKSHOP))) {
+        steam_workshop_open_browse_page();
     }
     imguiHandOnHover();
 

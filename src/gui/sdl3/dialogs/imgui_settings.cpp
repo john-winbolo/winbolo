@@ -1223,14 +1223,9 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
         imguiHandOnHover();
 
         /* Runtime check, not an #ifdef: the stub build answers false, so the
-           button simply isn't there when Steam isn't running. */
+           button simply isn't there when Steam isn't running. Browsing the
+           Workshop is on the Steam Workshop tab, beside what it installs. */
         if (steam_workshop_available()) {
-            ImGui::SameLine();
-            if (ImGui::Button(langGetText(STR_DLGSKIN_BROWSE_WORKSHOP))) {
-                steam_workshop_open_browse_page();
-            }
-            imguiHandOnHover();
-
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
             /* Publishing is for a skin the player put in their own folder and
                that actually loaded: the built-in art has no files to send, a
@@ -1309,11 +1304,6 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
             }
 
             workshopPublishDraw(&s_skinPublishSpec);
-
-            /* The mods, scenarios and maps the player is subscribed to or can
-               publish, under the skin's own Workshop buttons; the Browse
-               Workshop button above serves both. */
-            imguiSettingsWorkshopSection();
 #endif  /* !BOLO_MOBILE && !__EMSCRIPTEN__ */
         }
 
@@ -2529,7 +2519,7 @@ extern "C" void imguiSettingsShow(void) {
         /* Controller tab cycling: shoulder buttons (or the Steam menu-tab
            actions where the pad is hidden from SDL) step through the visible
            tabs, skipping any that aren't present and wrapping at the ends. */
-        enum { STAB_GENERAL, STAB_DISPLAY, STAB_SOUND, STAB_CONTROLS, STAB_GAMEHUD, STAB_HOSTING, STAB_LAST, STAB_COUNT };
+        enum { STAB_GENERAL, STAB_DISPLAY, STAB_SOUND, STAB_CONTROLS, STAB_GAMEHUD, STAB_HOSTING, STAB_WORKSHOP, STAB_LAST, STAB_COUNT };
         static int s_pgActiveTab = STAB_GENERAL;
         static int s_pgForceTab  = -1;
         bool present[STAB_COUNT];
@@ -2549,6 +2539,12 @@ extern "C" void imguiSettingsShow(void) {
 #else
         present[STAB_CONTROLS] = false;
         present[STAB_LAST]     = false;
+#endif
+        /* The Workshop's module is desktop only, and the tab needs Steam. */
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+        present[STAB_WORKSHOP] = steam_workshop_available();
+#else
+        present[STAB_WORKSHOP] = false;
 #endif
         {
             int shift = (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ? 1 : 0)
@@ -2640,6 +2636,17 @@ extern "C" void imguiSettingsShow(void) {
                 s_pgActiveTab = STAB_HOSTING;
                 ImGui::BeginChild("##hostingPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
                 imguiSettingsRenderHostingTab(&ctx);
+                ImGui::EndChild();
+                ImGui::EndTabItem();
+            }
+#endif
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+            if (present[STAB_WORKSHOP] &&
+                ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_WORKSHOP_HEADING), nullptr,
+                    s_pgForceTab == STAB_WORKSHOP ? ImGuiTabItemFlags_SetSelected : 0)) {
+                s_pgActiveTab = STAB_WORKSHOP;
+                ImGui::BeginChild("##workshopPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
+                imguiSettingsWorkshopSection();
                 ImGui::EndChild();
                 ImGui::EndTabItem();
             }

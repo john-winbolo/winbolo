@@ -105,6 +105,7 @@ extern "C" {
 #include "input_source.h"
 #include "../ui_mode.h"
 #include "../../steam/steam_input_actions.h"
+#include "../../steam/steam_wrapper.h"  /* steam_workshop_available — the Workshop tab */
 }
 
 #include "sdl3imgui_tablet.h"
@@ -122,6 +123,8 @@ extern "C" {
 #include "dialogs/dialog_footer.h"
 #include "dialogs/imgui_keysetup.h"
 #include "dialogs/imgui_settings.h"
+#include "dialogs/imgui_settings_workshop.h"  /* declarations only; the call is
+                                                 desktop-only, like the module */
 #include "dialogs/imgui_about.h"
 #include "dialogs/imgui_nav_outline.h"
 #include "dialogs/imgui_lobby.h"
@@ -5406,8 +5409,9 @@ static void renderSettingsPanel(ClientSim *cs) {
     /* Controller tab cycling: shoulder buttons (or the Steam menu-tab actions
        where the pad is hidden from SDL) step through the tabs, wrapping at the
        ends.  Every in-game tab is present except Hosting in the web build,
-       where a browser tab can't listen for connections. */
-    enum { STAB_GENERAL, STAB_DISPLAY, STAB_SOUND, STAB_CONTROLS, STAB_GAMEHUD, STAB_HOSTING, STAB_LAST, STAB_COUNT };
+       where a browser tab can't listen for connections, and Steam Workshop
+       anywhere Steam's Workshop is not running. */
+    enum { STAB_GENERAL, STAB_DISPLAY, STAB_SOUND, STAB_CONTROLS, STAB_GAMEHUD, STAB_HOSTING, STAB_WORKSHOP, STAB_LAST, STAB_COUNT };
     static int s_igActiveTab = STAB_GENERAL;
     static int s_igForceTab  = -1;
     bool present[STAB_COUNT];
@@ -5420,6 +5424,12 @@ static void renderSettingsPanel(ClientSim *cs) {
     present[STAB_HOSTING]  = false;
 #else
     present[STAB_HOSTING]  = true;
+#endif
+    /* The Workshop's module is desktop only, and the tab needs Steam. */
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+    present[STAB_WORKSHOP] = steam_workshop_available();
+#else
+    present[STAB_WORKSHOP] = false;
 #endif
     present[STAB_LAST]     = true;
     {
@@ -5510,6 +5520,17 @@ static void renderSettingsPanel(ClientSim *cs) {
             s_igActiveTab = STAB_HOSTING;
             ImGui::BeginChild("##hostingPanelIG", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
             imguiSettingsRenderHostingTab(&ctx);
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+#endif
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+        if (present[STAB_WORKSHOP] &&
+            ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_WORKSHOP_HEADING), nullptr,
+                s_igForceTab == STAB_WORKSHOP ? ImGuiTabItemFlags_SetSelected : 0)) {
+            s_igActiveTab = STAB_WORKSHOP;
+            ImGui::BeginChild("##workshopPanelIG", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
+            imguiSettingsWorkshopSection();
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
