@@ -55,8 +55,9 @@ BgGame *bgGameGetShared(void) { return sharedBg; }
 #define BG_MIN_ZOOM 1
 #define BG_MAX_ZOOM 8
 
-/* A display this size or smaller keeps the old 1x floor for the
- * fit-to-screen zoom; a bigger one is floored at 1.5x (see bgGameRender). */
+/* A window (or screen, when full screen) this size or smaller keeps the
+ * old 1x floor for the fit-to-screen zoom; a bigger one is floored at 1.5x
+ * (see bgGameRender). */
 #define BG_SMALL_DISPLAY_MAX_W 1024
 #define BG_SMALL_DISPLAY_MAX_H 768
 
@@ -686,27 +687,27 @@ static int bgFrameEveryN(Sint64 periodNs) {
 
 /* How far this draw is between the last two ticks: 0 = the tick before,
  * 1 = the last tick. It is read off a clock that moves a whole number of
- * refresh periods per draw: the time since the last draw, rounded to whole
- * periods, at least one. With vsync that is `steps` every time, so every
- * shown frame moves the same amount; where a draw spans more refreshes
- * than that (a loop that sleeps, no real vsync) it still keeps up. The
- * clock follows the wall clock by 1/32 of the rest each draw so an inexact
- * refresh rate does not drift, and it resets when it runs more than two
- * draws ahead (draws faster than the refresh). The ticks still land on the
- * wall clock, so a quarter tick either side is allowed rather than a clamp
- * that would hitch; with no tick for two tick intervals (paused) it is
- * held to the last two ticks instead. */
-static float bgInterpAlpha(BgGame *bg, Sint64 periodNs, int steps) {
+ * refresh periods per draw: the time since the clock, rounded to whole
+ * periods. With vsync that is the n refreshes between redraws every time,
+ * so every shown frame moves the same amount; where a draw spans more
+ * refreshes than that (a loop that sleeps) it still keeps up. A draw less
+ * than half a period after the clock moves it 0 periods, so draws faster
+ * than the refresh (no real vsync, or a refresh rate the display does not
+ * report) never run it ahead of time. The clock follows the wall clock by
+ * 1/32 of the rest each draw so an inexact refresh rate does not drift,
+ * and it is never more than half a period ahead of the wall clock. The
+ * ticks still land on the wall clock, so a quarter tick either side is
+ * allowed rather than a clamp that would hitch; with no tick for two tick
+ * intervals (paused) it is held to the last two ticks instead. */
+static float bgInterpAlpha(BgGame *bg, Sint64 periodNs) {
     Uint64 nowNs  = SDL_GetTicksNS();
-    Sint64 stepNs = periodNs * (Sint64)steps;
     if (bg->interpClockValid) {
         Sint64 k = ((Sint64)(nowNs - bg->interpClockNs) + periodNs / 2) / periodNs;
-        if (k < 1) k = 1;
+        if (k < 0) k = 0;
         Sint64 gap = (Sint64)nowNs - (Sint64)(bg->interpClockNs + (Uint64)(k * periodNs));
-        if (gap < -2 * stepNs) {
-            bg->interpClockNs = nowNs;
-        } else {
-            bg->interpClockNs += (Uint64)(k * periodNs + gap / 32);
+        bg->interpClockNs += (Uint64)(k * periodNs + gap / 32);
+        if ((Sint64)(bg->interpClockNs - nowNs) > periodNs / 2) {
+            bg->interpClockNs = nowNs + (Uint64)(periodNs / 2);
         }
     } else {
         bg->interpClockNs = nowNs;
@@ -725,18 +726,17 @@ static float bgInterpAlpha(BgGame *bg, Sint64 periodNs, int steps) {
     return alpha;
 }
 
-/* The camera centre and tank positions for a draw that is `steps` refresh
- * periods after the last one. Before the first tick, the live camera and
- * the live tank positions. */
+/* The camera centre and tank positions for a draw now (see bgInterpAlpha).
+ * Before the first tick, the live camera and the live tank positions. */
 static void bgInterpFill(BgGame *bg, MapViewPreciseCam *pc,
-                         Sint64 periodNs, int steps) {
+                         Sint64 periodNs) {
     SDL_memset(pc, 0, sizeof(*pc));
     if (!bg->interpValid) {
         pc->centerWX = (float)bg->viewCenterX;
         pc->centerWY = (float)bg->viewCenterY;
         return;
     }
-    float a = bgInterpAlpha(bg, periodNs, steps);
+    float a = bgInterpAlpha(bg, periodNs);
     pc->centerWX = (float)bg->camPrevX + ((float)bg->camCurX - (float)bg->camPrevX) * a;
     pc->centerWY = (float)bg->camPrevY + ((float)bg->camCurY - (float)bg->camPrevY) * a;
     for (int i = 0; i < MAX_TANKS; i++) {
@@ -757,9 +757,9 @@ static void bgInterpFill(BgGame *bg, MapViewPreciseCam *pc,
  * they keep pace with it. */
 static void bgGameDrawScene(BgGame *bg, SDL_Renderer *renderer,
                             int screenW, int screenH, int zf,
-                            Sint64 periodNs, int steps) {
+                            Sint64 periodNs) {
     MapViewPreciseCam pc;
-    bgInterpFill(bg, &pc, periodNs, steps);
+    bgInterpFill(bg, &pc, periodNs);
     MapViewCtx ctx = { renderer, bg->tilesTex, zf, 1, (float)zf,
                        bg->spritesTex, bg->spriteAtlas, &pc };
     /* With precise set, the centre below is not used: pc carries it. */
@@ -787,18 +787,15 @@ static void bgFramePrepare(BgGame *bg, SDL_Renderer *renderer,
 /* Draw the scene into the kept texture, texW x texH: the screen size, or
  * twice it at 1.5x. One texture is enough: the only step that can fail
  * before anything is drawn is setting the target, and then the texture
- * still holds the old scene. */
+ * still holds the old scene. When the texture cannot be made, frameBroken
+ * is set and bgGameRender logs it. */
 static bool bgFrameRedraw(BgGame *bg, SDL_Renderer *renderer,
-                          int texW, int texH, int zf,
-                          Sint64 periodNs, int n) {
+                          int texW, int texH, int zf, Sint64 periodNs) {
     if (!bg->frameTex) {
         bg->frameTex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
                                          SDL_TEXTUREACCESS_TARGET,
                                          texW, texH);
         if (!bg->frameTex) {
-            WB_LOG_WARN(WB_LOG_CAT_GUI,
-                        "[BgGame] scene texture %dx%d failed (%s)",
-                        texW, texH, SDL_GetError());
             bg->frameBroken = true;
             return false;
         }
@@ -808,7 +805,7 @@ static bool bgFrameRedraw(BgGame *bg, SDL_Renderer *renderer,
     if (!SDL_SetRenderTarget(renderer, bg->frameTex)) return false;
     SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
     SDL_RenderClear(renderer);
-    bgGameDrawScene(bg, renderer, texW, texH, zf, periodNs, n);
+    bgGameDrawScene(bg, renderer, texW, texH, zf, periodNs);
     if (!SDL_SetRenderTarget(renderer, prev)) {
         SDL_SetRenderTarget(renderer, NULL);   /* put the window back regardless */
         return false;
@@ -824,42 +821,37 @@ static bool bgFrameRedraw(BgGame *bg, SDL_Renderer *renderer,
  * offscreen on every n-th refresh and the refreshes between copy it. The
  * menu UI itself still draws and presents every refresh.
  *
- * The normal pattern is one redraw, then n - 1 copies. A late frame
- * decides by the wall clock: a copy frame n - 0.5 refresh periods or more
- * after the last redraw means copy slots were missed and this frame sits in
- * the redraw slot, so it redraws instead and the scene keeps changing every
- * n periods. A redraw frame always redraws, even late. So two redraws are
- * never on back-to-back refreshes, and one missed frame makes at most one
- * gap of n + 1 periods. The blend clock moves by the periods that really
- * passed, n with vsync.
+ * It decides by the wall clock: a frame n - 0.5 refresh periods or more
+ * after the last redraw redraws, and an earlier one copies. With vsync
+ * that is one redraw, then n - 1 copies. A late frame (missed refreshes)
+ * redraws, so the scene keeps changing every n periods and one missed
+ * frame makes at most one gap of n + 1 periods. Frames faster than the
+ * refresh (no real vsync, or a refresh rate the display does not report)
+ * copy until the time is up, so the scene still changes at the Frame Rate.
+ * The blend clock moves by the periods that really passed, n with vsync.
  *
  * The scene is texW x texH and is copied to the window at screenW x
  * screenH with copyMode. At 1.5x the texture is twice the screen and n may
- * be 1, which redraws it every frame.
+ * be 1, which redraws it every refresh.
  *
  * False when no scene could be shown; the caller then draws direct. */
 static bool bgFrameRender(BgGame *bg, SDL_Renderer *renderer,
                           int texW, int texH, int screenW, int screenH,
                           int zf, Sint64 periodNs, int n,
                           SDL_ScaleMode copyMode) {
-    Uint64 nowNs    = SDL_GetTicksNS();
-    int    since    = bg->frameSince + 1;
+    Uint64 nowNs = SDL_GetTicksNS();
     bool redraw = !bg->frameValid ||                        /* first, or lost */
                   bg->frameZoom != zf ||
                   bg->frameTilesGen != bg->tilesGeneration ||
                   bg->frameFilter != bg->tilesFilter ||
-                  since >= n ||                             /* every n-th     */
                   (Sint64)(nowNs - bg->frameRedrawNs) >=
-                      (Sint64)(2 * n - 1) * periodNs / 2;   /* re-align       */
+                      (Sint64)(2 * n - 1) * periodNs / 2;   /* n - 0.5 periods */
     if (redraw) {
-        if (!bgFrameRedraw(bg, renderer, texW, texH, zf, periodNs, n)) {
+        if (!bgFrameRedraw(bg, renderer, texW, texH, zf, periodNs)) {
             bg->frameValid = false;   /* try again next frame */
             return false;
         }
-        bg->frameSince = 0;
         bg->frameRedrawNs = nowNs;
-    } else {
-        bg->frameSince = since;
     }
     SDL_SetTextureScaleMode(bg->frameTex, copyMode);
     SDL_FRect dst = { 0.0f, 0.0f, (float)screenW, (float)screenH };
@@ -889,18 +881,26 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
      * drawn at zoom 3 into the kept texture at twice the screen size and
      * copied to the window at half size with linear filtering: each screen
      * pixel is the average of 2x2 texture pixels (supersampled). A small
-     * display keeps 1x, where 1.5x would show too little of the map. If
-     * that texture cannot be made, zoom 2 until the renderer or the size
-     * changes. A fit of 2 or more, or a user zoom, is drawn as before. */
+     * window keeps 1x, where 1.5x would show too little of the map. So
+     * does a renderer whose largest texture is smaller than twice the
+     * screen (a phone's GPU can be), or one where that texture could not
+     * be made, until the renderer or the size changes: 1x shows more of
+     * the map than zoom 2. A fit of 2 or more, or a user zoom, is drawn as
+     * before. */
     int ssScale = 1;   /* kept scene size / screen size: 2 at 1.5x */
     if (zf == 1 && bg->zoomUser == 0 && screenW > 0 && screenH > 0 &&
         !(screenW <= BG_SMALL_DISPLAY_MAX_W &&
           screenH <= BG_SMALL_DISPLAY_MAX_H)) {
+        SDL_PropertiesID props = SDL_GetRendererProperties(renderer);
+        Sint64 maxTex = props ? SDL_GetNumberProperty(props,
+                                    SDL_PROP_RENDERER_MAX_TEXTURE_SIZE_NUMBER, 0)
+                              : 0;   /* 0 = not known: try it */
+        bool fits = maxTex <= 0 ||
+                    ((Sint64)screenW * 2 <= maxTex &&
+                     (Sint64)screenH * 2 <= maxTex);
         bool failed = bg->ssFailRenderer == renderer &&
                       bg->ssFailW == screenW && bg->ssFailH == screenH;
-        if (failed) {
-            zf = 2;
-        } else {
+        if (fits && !failed) {
             zf = 3;
             ssScale = 2;
         }
@@ -924,6 +924,7 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
     bgFramePrepare(bg, renderer, texW, texH);
     if (n < 2 && ssScale == 1) bgFrameDrop(bg, true);
     if (bg->tilesTex != NULL) {
+        bool wasBroken = bg->frameBroken;
         bool shown;
         if (ssScale == 2) {
             shown = !bg->frameBroken &&
@@ -934,12 +935,8 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
                     bg->ssFailRenderer = renderer;
                     bg->ssFailW = screenW;
                     bg->ssFailH = screenH;
-                    WB_LOG_WARN(WB_LOG_CAT_GUI,
-                                "[BgGame] 1.5x scene texture %dx%d failed; "
-                                "menu background uses zoom 2 at %dx%d",
-                                texW, texH, screenW, screenH);
                 }
-                zf = 2;   /* this frame: direct at zoom 2 */
+                zf = 1;   /* this frame: direct at 1x */
             }
         } else {
             shown = n >= 2 && !bg->frameBroken &&
@@ -948,8 +945,15 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
                                   screenW, screenH, zf, periodNs, n,
                                   SDL_SCALEMODE_NEAREST);
         }
+        if (bg->frameBroken && !wasBroken) {
+            WB_LOG_WARN(WB_LOG_CAT_GUI,
+                        "[BgGame] scene texture %dx%d failed (%s); %s",
+                        texW, texH, SDL_GetError(),
+                        ssScale == 2 ? "menu background uses 1x"
+                                     : "drawing direct every frame");
+        }
         if (!shown) {
-            bgGameDrawScene(bg, renderer, screenW, screenH, zf, periodNs, 1);
+            bgGameDrawScene(bg, renderer, screenW, screenH, zf, periodNs);
         }
     }
 

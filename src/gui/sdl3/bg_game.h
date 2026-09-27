@@ -90,7 +90,7 @@ typedef struct BgGame {
     WORLD        tankPrevX[MAX_TANKS], tankPrevY[MAX_TANKS];
     WORLD        tankCurX[MAX_TANKS], tankCurY[MAX_TANKS];
     /* The clock the draw blends by: it moves a whole number of refresh
-     * periods per draw (see bgInterpAlpha). */
+     * periods, 0 or more, per draw (see bgInterpAlpha). */
     Uint64       interpClockNs;
     bool         interpClockValid;
     /* The drawn scene, kept so the Frame Rate setting can redraw it every
@@ -108,10 +108,9 @@ typedef struct BgGame {
     unsigned int  frameTilesGen;   /* tile sheet it was drawn from */
     GfxTextureFilter frameFilter;  /* texture filter it was drawn with */
     bool          frameBroken;
-    int           frameSince;      /* refreshes shown since the last redraw */
     Uint64        frameRedrawNs;   /* wall clock of the last redraw */
     /* The renderer and screen size the 1.5x scene texture could not be
-     * made for; the background uses zoom 2 until either changes. The
+     * made for; the background uses 1x until either changes. The
      * renderer is only compared, never used. */
     SDL_Renderer *ssFailRenderer;
     int           ssFailW, ssFailH;
