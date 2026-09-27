@@ -108,7 +108,10 @@ typedef struct BgGame {
     unsigned int  frameTilesGen;   /* tile sheet it was drawn from */
     GfxTextureFilter frameFilter;  /* texture filter it was drawn with */
     bool          frameBroken;
-    Uint64        frameRedrawNs;   /* wall clock of the last redraw */
+    Uint64        frameRedrawNs;   /* wall clock the next redraw is due n
+                                    * periods after (see bgFrameRender) */
+    Uint64        frameLastNs;     /* wall clock of the last bgFrameRender */
+    Sint64        frameCallNs;     /* time between its calls, smoothed */
     /* The renderer and screen size the 1.5x scene texture could not be
      * made for; the background uses 1x until either changes. The
      * renderer is only compared, never used. */
