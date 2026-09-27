@@ -84,6 +84,28 @@ void frontEndUpdateBaseStatusBars(struct ClientSim *cs, BYTE shells, BYTE mines,
 *********************************************************/
 void frontEndPlaySound(struct ClientSim *cs, sndEffects value);
 
+#define SOUND_GAIN_UNITY 256  /* Q8: 256 is 1.0 */
+
+/*********************************************************
+*NAME:          frontEndPlaySoundPan
+*AUTHOR:        John Morrison
+*CREATION DATE: 26/9/26
+*LAST MODIFIED: 26/9/26
+*PURPOSE:
+*  Plays a sound effect if it is turned on, with a
+*  separate gain for the left and right channels.
+*  frontEndPlaySound plays at SOUND_GAIN_UNITY on both.
+*
+*ARGUMENTS:
+*  value - The sound effect to play
+*  gainL - Left channel gain
+*  gainR - Right channel gain
+*********************************************************/
+/* gainL/gainR are Q8 — SOUND_GAIN_UNITY is unity, 0 is silent. Never above
+   SOUND_GAIN_UNITY. */
+void frontEndPlaySoundPan(struct ClientSim *cs, sndEffects value,
+                          uint16_t gainL, uint16_t gainR);
+
 /*********************************************************
 *NAME:          frontEndDrawMainScreen
 *AUTHOR:        John Morrison

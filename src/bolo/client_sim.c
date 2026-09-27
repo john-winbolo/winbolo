@@ -2790,6 +2790,10 @@ bool clientSimGetAlliesInTrees(const ClientSim *cs) {
   return cs ? cs->alliesInTrees : false;
 }
 
+bool clientSimGetPositionalSound(const ClientSim *cs) {
+  return cs ? cs->positionalSound : false;
+}
+
 uint8_t clientSimGetOverviewWindow(const ClientSim *cs) {
   return cs ? cs->overviewWindow : (uint8_t)overviewWindowExpanded;
 }

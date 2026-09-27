@@ -1931,6 +1931,8 @@ STR_DLGLOBBY_CLASSIC_MODE_TIP=Nastaví Pohled na bunkr na Klávesa a Pohled na z
 STR_MENU_CLASSIC_MODE_TIP=Server má zapnutý klasický režim, takže je toto zobrazení vypnuté.
 STR_DLGLOBBY_ALLIES_TREES_CB=Vidět spojence v lese
 STR_DLGLOBBY_ALLIES_TREES_TIP=Spojenecké tanky stojící v lese se na tvé obrazovce\nkreslí, místo aby byly skryté. Mlha války stále platí,\ntakže je vidíš jen tam, kam vidíš i tak. Vypnuto je\nklasické pravidlo a klasický režim toto nastavení vypne.
+STR_DLGLOBBY_POSITIONAL_SOUND_CB=Poziční zvuk
+STR_DLGLOBBY_POSITIONAL_SOUND_TIP=Zvuky zní z té strany obrazovky, kde se odehrají.
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_OVERVIEW_WINDOW=Okno přehledu
 STR_DLGLOBBY_OVERVIEW_WINDOW_TIP=Blok dlaždic, který přehled mapy udržuje živý kolem\ntvého tanku. Rozšířené je vše, kam může posunout\nklasický pohled; Klasické to zúží na okno, které tento\npohled ukazuje. Klasický režim ho nastaví na Klasické\na drží ho tak. Server posílá stejná data mapy tak jako tak.

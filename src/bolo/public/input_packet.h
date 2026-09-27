@@ -272,7 +272,7 @@ typedef struct {
 #define CAPTURE_CLASS_ALLY    2  /* from an ally — tracked for nobody */
 
 #define EVENT_MAP_CHANGE    7  /* data: [mx, my, newTerrain] */
-#define EVENT_SOUND         8  /* data: [soundId, tier or mx, direction or my, sourcePlayer] — see Sound event payloads below */
+#define EVENT_SOUND         8  /* data: [soundId, pan or mx, dist or my, sourcePlayer] — see Sound event payloads below */
 #define EVENT_SERVER_MSG    9  /* data: [msgId] — server status message */
 #define EVENT_PILL_UPDATE  10  /* data: [pillIndex, x, y, owner, pillFlags, armour] */
 #define EVENT_BASE_UPDATE  11  /* data: [baseIndex, owner] — owner change (reliable) */
@@ -281,8 +281,8 @@ typedef struct {
 #define EVENT_LGM_LOST     14 /* data: [victim, killer, quiet] — builder killed, broadcast newswire.
                                * The man's map cell follows at data[3]/data[4], past the wire size
                                * and read by the server's stats funnel alone. */
-#define EVENT_SOUND_TANK_HIT 15 /* data: [soundId, tier or mx, direction or my, hitPlayer] — see Sound event payloads below */
-#define EVENT_SOUND_SHOOT    16 /* data: [soundId, tier or mx, direction or my, firingPlayer] — see Sound event payloads below */
+#define EVENT_SOUND_TANK_HIT 15 /* data: [soundId, pan or mx, dist or my, hitPlayer] — see Sound event payloads below */
+#define EVENT_SOUND_SHOOT    16 /* data: [soundId, pan or mx, dist or my, firingPlayer] — see Sound event payloads below */
 #define EVENT_MINE_VISIBLE   17 /* data: [mx, my, sourcePlayer] — bit 7 of sourcePlayer = broadcast to all */
 #define EVENT_TK_EXPLOSION   18 /* data: [xHi, xLo, yHi, yLo, angle, length, explodeType, creator] — tank fireball spawn */
 #define EVENT_BASE_STOCK   19  /* data: [baseIndex, armour, shells, mines] — best-effort, culled to recipient's closest base */
@@ -370,33 +370,42 @@ typedef struct {
  * EVENT_SOUND_SHOOT each carry four bytes, and the middle two carry one of two
  * shapes:
  *
- *   to a human: [soundId, tier, direction, sourcePlayer]
+ *   to a human: [soundId, pan, dist, sourcePlayer]
  *   to a bot:   [soundId, mx, my, sourcePlayer]
  *
  * Nothing on the wire says which. A recipient tells them apart by knowing its
- * own client type: the server works the tier and direction out against the
- * human recipient's own tank and sends those instead of the square, while a bot
+ * own client type: the server works the pan and dist out against the human
+ * recipient's own tank and sends those instead of the square, while a bot
  * keeps the square its observation builder reads. "Bot" here means a
  * bot-manager bot or a local slot the host marked with
  * serverSimSetSoundSquares (the gym agent, the headless brain harness). A
- * wire client is always sent the tier and direction.
+ * wire client is always sent the pan and dist.
  *
- * The direction is map-absolute — north is decreasing map Y — and is not
- * relative to where the listener is facing. The main view is north-up, so the
- * map axis and the screen axis are the same one, and a stereo panner can read
- * the direction as its pan axis. */
-#define SOUND_TIER_NEAR 0
-#define SOUND_TIER_FAR  1
+ * pan is a signed int8_t stored in the byte: the east-west offset in squares
+ * from the listener, east positive, clamped to +-SOUND_PAN_MAX and truncated
+ * towards zero to a multiple of SOUND_PAN_STEP. That gives nine values,
+ * -8, -6 .. 6, 8. It is map-absolute and not relative to where the listener
+ * is facing. The main view is north-up, so the map's east-west axis is the
+ * screen's left-right axis, which is what a stereo panner needs.
+ *
+ * dist is the larger of the east-west and north-south distances in squares,
+ * sent as the top of its SOUND_DIST_BAND-wide band (soundDistBandTop): 5, 10,
+ * .. 35, 39. The edge between 15 and 16 is SDIST_SOFT, so dist <= SDIST_SOFT
+ * picks the near variant for exactly the sounds inside the near square. */
+#define SOUND_PAN_MAX   8   /* |pan| clamp, in squares */
+#define SOUND_PAN_STEP  2   /* pan is sent in steps of this */
+#define SOUND_DIST_BAND 5   /* dist is sent as the top of a band this wide */
+#define SOUND_DIST_MAX  39  /* the last in-range distance, SDIST_NONE - 1 */
 
-#define SOUND_DIR_CENTRE 0
-#define SOUND_DIR_N      1
-#define SOUND_DIR_NE     2
-#define SOUND_DIR_E      3
-#define SOUND_DIR_SE     4
-#define SOUND_DIR_S      5
-#define SOUND_DIR_SW     6
-#define SOUND_DIR_W      7
-#define SOUND_DIR_NW     8
+/* The band top sent for a larger-axis distance d: 0-5 -> 5, 6-10 -> 10, ...
+   31-35 -> 35, 36 and over -> SOUND_DIST_MAX. */
+static inline uint8_t soundDistBandTop(int d) {
+    int top;
+    if (d <= SOUND_DIST_BAND) return SOUND_DIST_BAND;
+    top = ((d - 1) / SOUND_DIST_BAND + 1) * SOUND_DIST_BAND;
+    if (top > SOUND_DIST_MAX) top = SOUND_DIST_MAX;
+    return (uint8_t)top;
+}
 
 /* True if this game event must arrive (rides the reliable game channel);
  * false if it is ephemeral and rides the best-effort channel. Single source

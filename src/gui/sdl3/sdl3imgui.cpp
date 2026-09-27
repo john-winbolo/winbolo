@@ -413,6 +413,10 @@ static SDL_Texture *s_iconPingMuted[ICON_SLOT_COUNT] = {};
  * corner grips tint themselves dim or bright from whether the pointer is on
  * them and a tint multiplier cannot brighten an authored colour. */
 static SDL_Texture *s_iconScnPanelGear[ICON_SLOT_COUNT] = {};
+/* The speaker. Outside the voice guard because the lobby's visibility table
+ * draws it for the positional sound column in every build; the players
+ * panel's voice states below use it too. */
+static SDL_Texture *s_iconSpeaker[ICON_SLOT_COUNT]      = {};
 #if defined(WINBOLO_VOICE)
 /* Voice state icons for the players panel. Which shape is drawn says which
  * end the state belongs to: a speaker for the states about playback here —
@@ -424,7 +428,6 @@ static SDL_Texture *s_iconScnPanelGear[ICON_SLOT_COUNT] = {};
 static SDL_Texture *s_iconMic[ICON_SLOT_COUNT]          = {};
 static SDL_Texture *s_iconMicMuted[ICON_SLOT_COUNT]     = {};
 static SDL_Texture *s_iconMicOff[ICON_SLOT_COUNT]       = {};
-static SDL_Texture *s_iconSpeaker[ICON_SLOT_COUNT]      = {};
 static SDL_Texture *s_iconSpeakerMuted[ICON_SLOT_COUNT] = {};
 /* The local player's slot, read once a frame in sdl3ImguiPumpAndRender — the
  * only place here with a ClientSim to ask. PLAYER_SELF_UNKNOWN rather than 0
@@ -529,11 +532,13 @@ static void ensureWbnIconsLoaded(void) {
      * every build. */
     s_iconScnPanelGear[slot] = imguiLoadSvgIconWhite(r, "data/ui/settings.svg",
                                                      WBN_ICON_RASTER_PX);
+    /* The speaker, outside the voice guard: the lobby's visibility table
+     * draws it in every build. */
+    s_iconSpeaker[slot]      = imguiLoadSvgIconWhite(r, "data/ui/speaker.svg",       WBN_ICON_RASTER_PX);
 #if defined(WINBOLO_VOICE)
     s_iconMic[slot]          = imguiLoadSvgIconWhite(r, "data/ui/mic.svg",           WBN_ICON_RASTER_PX);
     s_iconMicMuted[slot]     = imguiLoadSvgIconWhite(r, "data/ui/mic-muted.svg",     WBN_ICON_RASTER_PX);
     s_iconMicOff[slot]       = imguiLoadSvgIconWhite(r, "data/ui/mic-off.svg",       WBN_ICON_RASTER_PX);
-    s_iconSpeaker[slot]      = imguiLoadSvgIconWhite(r, "data/ui/speaker.svg",       WBN_ICON_RASTER_PX);
     s_iconSpeakerMuted[slot] = imguiLoadSvgIconWhite(r, "data/ui/speaker-muted.svg", WBN_ICON_RASTER_PX);
 #endif
     /* Renderer-free, so they are loaded once for every slot rather than
@@ -750,11 +755,13 @@ static void destroyIconSlot(int slot) {
     if (s_iconPing[slot]) { SDL_DestroyTexture(s_iconPing[slot]); s_iconPing[slot] = nullptr; }
     if (s_iconPingMuted[slot]) { SDL_DestroyTexture(s_iconPingMuted[slot]); s_iconPingMuted[slot] = nullptr; }
     if (s_iconScnPanelGear[slot]) { SDL_DestroyTexture(s_iconScnPanelGear[slot]); s_iconScnPanelGear[slot] = nullptr; }
+    /* Outside the voice guard: the lobby's visibility table draws the speaker
+     * in every build. */
+    if (s_iconSpeaker[slot]) { SDL_DestroyTexture(s_iconSpeaker[slot]); s_iconSpeaker[slot] = nullptr; }
 #if defined(WINBOLO_VOICE)
     if (s_iconMic[slot]) { SDL_DestroyTexture(s_iconMic[slot]); s_iconMic[slot] = nullptr; }
     if (s_iconMicMuted[slot]) { SDL_DestroyTexture(s_iconMicMuted[slot]); s_iconMicMuted[slot] = nullptr; }
     if (s_iconMicOff[slot]) { SDL_DestroyTexture(s_iconMicOff[slot]); s_iconMicOff[slot] = nullptr; }
-    if (s_iconSpeaker[slot]) { SDL_DestroyTexture(s_iconSpeaker[slot]); s_iconSpeaker[slot] = nullptr; }
     if (s_iconSpeakerMuted[slot]) { SDL_DestroyTexture(s_iconSpeakerMuted[slot]); s_iconSpeakerMuted[slot] = nullptr; }
 #endif
     s_wbnIconsLoaded[slot] = false;
@@ -1887,6 +1894,7 @@ static void renderGameInfoContent(ClientSim *cs) {
         vis.overviewWindow = clientSimGetOverviewWindow(cs);
         vis.lineOfSight    = clientSimGetLineOfSight(cs);
         vis.alliesInTrees  = clientSimGetAlliesInTrees(cs);
+        vis.positionalSound = clientSimGetPositionalSound(cs);
 
         VisibilityPreset preset = visibilityPresetMatch(&vis);
         ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_VISIBILITY_LBL),
@@ -8839,6 +8847,11 @@ void sdl3ImguiUpdatePlayerPing(unsigned char playerNum, uint16_t ping) {
 SDL_Texture *sdl3ImguiGetSteamIcon(void) {
     ensureWbnIconsLoaded();
     return s_iconSteam[activeIconSlot()];
+}
+
+SDL_Texture *sdl3ImguiSpeakerIconTexture(void) {
+    ensureWbnIconsLoaded();
+    return s_iconSpeaker[activeIconSlot()];
 }
 
 SDL_Surface *sdl3ImguiGetBotIconSurface(bool isAlly) {

@@ -140,6 +140,7 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
         }
         sim->classicMode         = sim->originalLobbySettings.classicMode;
         sim->alliesInTrees       = sim->originalLobbySettings.alliesInTrees;
+        sim->positionalSound     = sim->originalLobbySettings.positionalSound;
         sim->overviewWindow      = sim->originalLobbySettings.overviewWindow;
         sim->lineOfSight         = sim->originalLobbySettings.lineOfSight;
         sim->smartPingsOff       = sim->originalLobbySettings.smartPingsOff;
@@ -629,6 +630,7 @@ void serverSimRefreshWbnLobbyInfo(ServerSim *sim) {
     info.alliesInTrees   = serverSimGetAlliesInTrees(sim);
     info.overviewWindow  = serverSimGetOverviewWindow(sim);
     info.lineOfSight     = serverSimGetLineOfSight(sim);
+    info.positionalSound = serverSimGetPositionalSound(sim);
     info.smartPingsOff   = serverSimGetSmartPingsOff(sim);
     info.pillViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryPill);
     info.baseViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryBase);

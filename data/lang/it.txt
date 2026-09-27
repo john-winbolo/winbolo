@@ -1935,6 +1935,8 @@ STR_DLGLOBBY_CLASSIC_MODE_TIP=Imposta Vista bunker su Tasto, e Vista base e Vist
 STR_MENU_CLASSIC_MODE_TIP=Il server ha la modalità classica attiva, quindi questa vista è disattivata.
 STR_DLGLOBBY_ALLIES_TREES_CB=Vedi gli alleati negli alberi
 STR_DLGLOBBY_ALLIES_TREES_TIP=I tank alleati fermi negli alberi vengono disegnati sul\ntuo schermo invece di essere nascosti. La nebbia di\nguerra vale ancora, quindi li vedi solo dove vedi già.\nDisattivato è la regola classica, e la modalità classica\nlo disattiva.
+STR_DLGLOBBY_POSITIONAL_SOUND_CB=Audio posizionale
+STR_DLGLOBBY_POSITIONAL_SOUND_TIP=I suoni arrivano dal lato dello schermo in cui avvengono.
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_OVERVIEW_WINDOW=Finestra panoramica
 STR_DLGLOBBY_OVERVIEW_WINDOW_TIP=Il blocco di tile che la panoramica della mappa tiene\naggiornato intorno al tuo tank. Estesa è tutto ciò su cui\npuò scorrere la vista classica; Classica lo restringe alla\nfinestra che quella vista sta mostrando. La modalità\nclassica lo imposta su Classica e lo mantiene così. Il\nserver invia sempre gli stessi dati della mappa.

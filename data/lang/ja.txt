@@ -1933,6 +1933,8 @@ STR_DLGLOBBY_CLASSIC_MODE_TIP=トーチカ表示を「キー」に、基地表�
 STR_MENU_CLASSIC_MODE_TIP=サーバーがクラシックモードのため、この表示はオフになっています。
 STR_DLGLOBBY_ALLIES_TREES_CB=森の中の味方を表示
 STR_DLGLOBBY_ALLIES_TREES_TIP=森の中にいる味方戦車が隠されずに画面に表示されます。\n戦場の霧は引き続き適用されるため、もともと見える範囲\nでしか見えません。オフが従来のルールで、クラシック\nモードではオフに固定されます。
+STR_DLGLOBBY_POSITIONAL_SOUND_CB=位置に応じたサウンド
+STR_DLGLOBBY_POSITIONAL_SOUND_TIP=音は画面上で起きた側から聞こえます。
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_OVERVIEW_WINDOW=全体表示範囲
 STR_DLGLOBBY_OVERVIEW_WINDOW_TIP=マップ全体表示が自分の戦車の周りに常に保つタイル\nの範囲です。拡張はメインビューがスクロールできる\n範囲すべてで、クラシックはその画面が今表示している\n範囲に絞り込みます。クラシックモードはこれを\nクラシックに設定し、そのまま固定します。サーバーは\nどちらの場合も同じマップデータを送ります。

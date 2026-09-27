@@ -286,6 +286,17 @@ const char *sdl3ImguiGetPlayerName(unsigned char playerNum);
 SDL_Texture *sdl3ImguiGetSteamIcon(void);
 
 /*********************************************************
+*NAME:          sdl3ImguiSpeakerIconTexture
+*PURPOSE:
+*  Returns the speaker icon (data/ui/speaker.svg) for the
+*  active renderer, white on transparent for tinting.
+*  Loads the icons lazily on first call. Available in every
+*  build, voice or not. Returns NULL if it could not be
+*  loaded.
+*********************************************************/
+SDL_Texture *sdl3ImguiSpeakerIconTexture(void);
+
+/*********************************************************
 *NAME:          sdl3ImguiGetBotIconSurface
 *PURPOSE:
 *  Returns the chip icon — the badge shown for a computer

@@ -522,6 +522,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         }
         cs->classicMode = evt->u.lobbySettings.lobbyClassicMode;
         cs->alliesInTrees = evt->u.lobbySettings.lobbyAlliesInTrees;
+        cs->positionalSound = evt->u.lobbySettings.lobbyPositionalSound;
         /* The server chooses what the map overview keeps live and what
          * blocks sight inside it; the keys no longer do. A byte this
          * build has no name for reads as the default rather than

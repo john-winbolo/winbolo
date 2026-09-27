@@ -244,6 +244,7 @@ int gameFrontViewBaseDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 int gameFrontViewAllyDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 bool gameFrontClassicMode      = FALSE;
 bool gameFrontAlliesInTrees    = FALSE;
+bool gameFrontPositionalSound  = FALSE;
 int gameFrontOverviewWindow    = OVERVIEW_WINDOW_STOCK;
 int gameFrontLineOfSight       = LINE_OF_SIGHT_STOCK;
 
@@ -1062,6 +1063,7 @@ void gameFrontSetViewBaseDecaySecs(int secs) { gameFrontViewBaseDecaySecs = secs
 void gameFrontSetViewAllyDecaySecs(int secs) { gameFrontViewAllyDecaySecs = secs; }
 void gameFrontSetClassicMode(bool on)        { gameFrontClassicMode = on; }
 void gameFrontSetAlliesInTrees(bool on)      { gameFrontAlliesInTrees = on; }
+void gameFrontSetPositionalSound(bool on)    { gameFrontPositionalSound = on; }
 void gameFrontSetOverviewWindow(int window)  { gameFrontOverviewWindow = window; }
 void gameFrontSetLineOfSight(int mode)       { gameFrontLineOfSight = mode; }
 
@@ -1100,6 +1102,7 @@ void gameFrontRememberVisibility(const VisibilitySettings *v,
   gameFrontViewAllyDecaySecs = (int)v->decaySecs[viewCategoryAlly];
   gameFrontClassicMode       = v->classicMode;
   gameFrontAlliesInTrees     = v->alliesInTrees;
+  gameFrontPositionalSound   = v->positionalSound;
   gameFrontOverviewWindow    = (int)v->overviewWindow;
   gameFrontLineOfSight       = (int)v->lineOfSight;
   p = visibilityPresetMatch(v);
@@ -1122,6 +1125,7 @@ void gameFrontGetVisibilitySettings(VisibilitySettings *out) {
   out->overviewWindow              = (uint8_t)gameFrontOverviewWindow;
   out->lineOfSight                 = (uint8_t)gameFrontLineOfSight;
   out->alliesInTrees               = gameFrontAlliesInTrees;
+  out->positionalSound             = gameFrontPositionalSound;
 }
 
 /* Steam rich presence — there is no Steam client behind a browser tab. */

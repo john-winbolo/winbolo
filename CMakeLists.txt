@@ -940,6 +940,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/sdl_bmp.c
     src/gui/sdl3/sound.c
     src/gui/sdl3/sound_variants.c
+    src/gui/sdl3/sound_mix.c
     src/gui/sdl3/lang.c
     src/gui/sdl3/sim_rules_phrase.c
     src/gui/sdl3/luabrainshandler.c
@@ -1634,6 +1635,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/tutorial_text.c
     src/gui/sdl3/lang.c src/gui/sdl3/sim_rules_phrase.c
     src/gui/sdl3/sound.c src/gui/sdl3/sound_variants.c
+    src/gui/sdl3/sound_mix.c
     src/client_frontend/voice_core.c
     src/client_frontend/voice_client.c
     src/gui/sdl3/voice.c
@@ -3859,6 +3861,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_view_policy_settings.c
     tests/unit/test_classic_mode_settings.c
     tests/unit/test_allies_in_trees_settings.c
+    # The positional-sound setting: apply, classic mode, lock and the
+    # lobby-settings byte.
+    tests/unit/test_positional_sound_settings.c
     tests/unit/test_lobby_mods_enabled.c
     tests/unit/test_fog_settings.c
     # The named visibility sets the lobby offers, and the match that reads
@@ -3984,6 +3989,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_sim_rules_codec.c
     tests/unit/test_fx_viewport_cull.c
     tests/unit/test_sound_delivery.c
+    # The Q8 left and right gains a sound's pan and dist turn into: never
+    # above unity, centred at north and south, east and west mirrored, and
+    # the near/far variant clientSoundDist picks on the SDIST_SOFT edge.
+    tests/unit/test_sound_gains.c
     tests/unit/test_view_policy_rects.c
     tests/unit/test_tree_hide.c
     tests/unit/test_lgm_visibility.c
@@ -4328,6 +4337,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Name arithmetic only: no audio device, and it opens no file.
     tests/unit/test_sound_variants.c
     src/gui/sdl3/sound_variants.c
+    # One slot's samples scaled by its left and right gains into the mix
+    # accumulator, including a slot that resumes partway through a frame.
+    # Integer arithmetic only: no audio device.
+    tests/unit/test_sound_mix.c
+    src/gui/sdl3/sound_mix.c
     # The Workshop sync over item folders a case builds: what a folder holds,
     # what is copied and indexed, and what is removed. The Steam calls are
     # replaced by a source table, and the stub wrapper links the rest.
@@ -4889,6 +4903,9 @@ set(_unit_test_names
     classic_mode_lobby_reset
     allies_in_trees_defaults
     allies_in_trees_classic_mode
+    positional_sound_defaults
+    positional_sound_classic_mode
+    positional_sound_lobby_event
     lobby_mods_enabled_defaults
     lobby_mods_enabled_dispatch
     lobby_mods_enabled_codec
@@ -5264,6 +5281,14 @@ set(_unit_test_names
     sound_event_codec
     sound_delivery_builder
     sound_payload_shape
+    sound_pan_dist_encoding
+    sound_positional_off_centred
+    sound_gains_table
+    sound_gains_centre_unity
+    sound_gains_never_above_unity
+    sound_gains_mirror
+    sound_dist_variant_by_band
+    sound_positional_off_unity
     view_rects_default_baseline
     view_rects_always_base_ally
     view_rects_off
@@ -5737,6 +5762,9 @@ set(_unit_test_names
     sprite_atlas_packed_sheet_unsafe
     sound_variant_pool_names
     sound_variant_load_compaction
+    sound_mix_unity_matches_plain_sum
+    sound_mix_channel_parity_across_resume
+    sound_mix_mono_device
     pascal_string_lengths
     pascal_string_viewer_copy_agrees
     pascal_string_roundtrip

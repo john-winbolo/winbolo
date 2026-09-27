@@ -21,7 +21,7 @@
  *  them.
  *
  *  There is nothing on the wire for a preset. Every client
- *  already has all seven values, so each one works out the
+ *  already has all eight values, so each one works out the
  *  preset for itself and they all arrive at the same answer;
  *  picking one in the lobby just sends the values it stands
  *  for. That is also why the match has to be exact rather
@@ -55,6 +55,7 @@ typedef struct VisibilitySettings {
     uint8_t  overviewWindow;                 /* OverviewWindow */
     uint8_t  lineOfSight;                    /* LineOfSightMode */
     bool     alliesInTrees;
+    bool     positionalSound;
 } VisibilitySettings;
 
 /* Ordered the way the lobby lists them, least sight to most, so the

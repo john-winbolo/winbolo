@@ -1529,6 +1529,8 @@ STR_DLGLOBBY_CLASSIC_MODE_TIP=- Pill View goes to Key; Base View and Allied Tank
 STR_MENU_CLASSIC_MODE_TIP=The server has the map overview turned off.
 STR_DLGLOBBY_ALLIES_TREES_CB=See allies in trees
 STR_DLGLOBBY_ALLIES_TREES_TIP=Allied tanks won't be hidden by trees.
+STR_DLGLOBBY_POSITIONAL_SOUND_CB=Positional sound
+STR_DLGLOBBY_POSITIONAL_SOUND_TIP=Sounds play from the side of the screen they happen on.
 
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_OVERVIEW_WINDOW=Overview window

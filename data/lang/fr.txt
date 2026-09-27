@@ -1933,6 +1933,8 @@ STR_DLGLOBBY_CLASSIC_MODE_TIP=Règle Vue pillbox sur Touche, et Vue base et Vue 
 STR_MENU_CLASSIC_MODE_TIP=Le serveur a le mode classique activé, cette vue est donc désactivée.
 STR_DLGLOBBY_ALLIES_TREES_CB=Voir les alliés dans les arbres
 STR_DLGLOBBY_ALLIES_TREES_TIP=Les tanks alliés qui se trouvent dans les arbres sont\naffichés sur votre écran au lieu d'être cachés. Le\nbrouillard de guerre s'applique toujours : vous ne les\nvoyez que là où vous voyez déjà. Désactivé est la règle\nclassique, et le mode classique le désactive de force.
+STR_DLGLOBBY_POSITIONAL_SOUND_CB=Son positionnel
+STR_DLGLOBBY_POSITIONAL_SOUND_TIP=Les sons viennent du côté de l'écran où ils se produisent.
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_OVERVIEW_WINDOW=Fenêtre d'ensemble
 STR_DLGLOBBY_OVERVIEW_WINDOW_TIP=Le bloc de cases que la vue d'ensemble de la carte garde\nà jour autour de votre tank. Étendu correspond à tout ce\nvers quoi la vue classique peut défiler ; Classique le\nréduit à la fenêtre que cette vue affiche. Le mode\nclassique le règle sur Classique et l'y maintient. Le\nserveur envoie les mêmes données de la carte dans les\ndeux cas.

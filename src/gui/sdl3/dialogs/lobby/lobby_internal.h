@@ -783,20 +783,20 @@ void lobbyRenderSmartPingSummary(ClientSim *cs, float s);
 
 /* ── One visibility value, drawn the one way ──────────────────
  * The lobby's header line, the Details table, the server browser and the
- * in-game info panel all show the same seven settings, so they all draw a
+ * in-game info panel all show the same eight settings, so they all draw a
  * value through this: the setting's sprite and the word it is on, faint
  * together when it is off, with the seconds added under Decay.
  *
  * column runs 0..LOBBY_VIS_COLUMN_COUNT-1 in the order the Details table
  * reads: pill view, base view, allied tank view, allies in trees, the
- * overview window, line of sight. The last two have no sprite and come
- * back as the word alone. The whole thing is one item, so the caller's
- * IsItemHovered covers it.
+ * overview window, line of sight, positional sound. The overview window
+ * and line of sight have no sprite and come back as the word alone. The
+ * whole thing is one item, so the caller's IsItemHovered covers it.
  *
  * lobbyVisibilityColumnLabelId names the setting, for a caller that lays
  * out its own label — the browser's detail pane does, the header line
  * does not. */
-#define LOBBY_VIS_COLUMN_COUNT 6
+#define LOBBY_VIS_COLUMN_COUNT 7
 void lobbyRenderVisibilityColumn(const VisibilitySettings *v, int column,
                                  float s);
 int  lobbyVisibilityColumnLabelId(int column);

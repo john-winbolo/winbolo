@@ -163,7 +163,7 @@ int run_mdns_discovery(void) {
                                                     viewPolicyOff, true, true);
   info.viewPolicies2   = infoPacketPackViewPolicies2(
       (uint8_t)overviewWindowClassic,
-      (uint8_t)lineOfSightBuildingsAndTrees);
+      (uint8_t)lineOfSightBuildingsAndTrees, true);
   /* Negative sense on the wire: spingoff=1 means the host banned them. */
   info.smartPingsOff   = true;
 
@@ -191,7 +191,7 @@ int run_mdns_discovery(void) {
   UT_ASSERT(s.game == (gameType)2);
   UT_ASSERT(s.ai == (aiType)0);
   UT_ASSERT_MSG(strcmp(s.address, "127.0.0.1") == 0, "addr='%s'", s.address);
-  /* The view key: seven values in four hex chars, over the real wire. */
+  /* The view key: eight values in four hex chars, over the real wire. */
   UT_ASSERT_MSG(s.pillView == viewPolicyKey, "pill=%d", (int)s.pillView);
   UT_ASSERT_MSG(s.baseView == viewPolicyAlways, "base=%d", (int)s.baseView);
   UT_ASSERT_MSG(s.allyView == viewPolicyOff, "ally=%d", (int)s.allyView);
@@ -201,6 +201,8 @@ int run_mdns_discovery(void) {
                 "window=%u", (unsigned)s.overviewWindow);
   UT_ASSERT_MSG(s.lineOfSight == (uint8_t)lineOfSightBuildingsAndTrees,
                 "sight=%u", (unsigned)s.lineOfSight);
+  UT_ASSERT_MSG(s.positionalSound == true,
+                "positional sound did not survive the wire");
   UT_ASSERT_MSG(s.smartPingsOff == true,
                 "spingoff did not survive the wire: smartPingsOff=%d",
                 (int)s.smartPingsOff);
@@ -217,6 +219,24 @@ int run_mdns_discovery(void) {
     UT_ASSERT(recvServer(browser, &sAllowed) == 0);
     UT_ASSERT_MSG(sAllowed.smartPingsOff == false,
                   "spingoff=0 read back as banned");
+  }
+
+  /* Positional sound off packs bit 4 clear, and the browser reads it back
+     as off with the other view values unchanged. */
+  {
+    MdnsServerInfo soundOff = info;
+    DiscoveryServer sSoundOff;
+    soundOff.viewPolicies2 = infoPacketPackViewPolicies2(
+        (uint8_t)overviewWindowClassic,
+        (uint8_t)lineOfSightBuildingsAndTrees, false);
+    soundOff.port = 27514;
+    UT_ASSERT(sendServerAnswer(responder, &browserAddr, &soundOff) == 0);
+    memset(&sSoundOff, 0, sizeof(sSoundOff));
+    UT_ASSERT(recvServer(browser, &sSoundOff) == 0);
+    UT_ASSERT_MSG(sSoundOff.positionalSound == false,
+                  "bit 4 clear read back as positional sound on");
+    UT_ASSERT(sSoundOff.overviewWindow == (uint8_t)overviewWindowClassic &&
+              sSoundOff.lineOfSight == (uint8_t)lineOfSightBuildingsAndTrees);
   }
 
   /* A record from a server old enough to send no spingoff key at all must

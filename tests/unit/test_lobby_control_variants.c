@@ -176,9 +176,9 @@ int run_lobby_settings_codec_and_apply(void) {
      * before these fields existed) must still decode, leaving the view
      * fields at their zero-init values rather than reading past the
      * buffer. Encode a full event, then hand the decoder a body length
-     * that is sixteen bytes shorter (3 policies + 3 u16 decay values +
+     * that is seventeen bytes shorter (3 policies + 3 u16 decay values +
      * classic mode + allies in trees + voice mode + overview window +
-     * line of sight + smart pings off + mods off). */
+     * line of sight + smart pings off + mods off + positional sound). */
     {
         uint8_t buf[MAX_CONTROL_PACKET];
         size_t encLen = 0;
@@ -189,7 +189,7 @@ int run_lobby_settings_codec_and_apply(void) {
         UT_ASSERT(dec != NULL);
 
         ControlEvent shortOut;
-        size_t shortBody = encLen - PACKET_HEADER_SIZE - 16;
+        size_t shortBody = encLen - PACKET_HEADER_SIZE - 17;
         UT_ASSERT_MSG(dec(buf + PACKET_HEADER_SIZE, shortBody, &shortOut),
                       "short lobby-settings payload failed to decode");
         UT_ASSERT_MSG(shortOut.u.lobbySettings.hostSlot == 3,
@@ -256,9 +256,10 @@ int run_lobby_settings_codec_and_apply(void) {
                           "body round-trip lost voice mode %d (got %d)",
                           (int)modes[m], (int)bout.u.lobbySettings.voiceMode);
 
-            /* The mode is the fifth byte from the end: the overview window,
-             * line of sight, smart-pings-off and mods-off follow it. */
-            body[bodyLen - 5] = 0x7F;
+            /* The mode is the sixth byte from the end: the overview window,
+             * line of sight, smart-pings-off, mods-off and positional sound
+             * follow it. */
+            body[bodyLen - 6] = 0x7F;
             memset(&bout, 0, sizeof(bout));
             UT_ASSERT(bdec(body, bodyLen, &bout));
             UT_ASSERT_MSG(bout.u.lobbySettings.voiceMode == serverVoiceOn,

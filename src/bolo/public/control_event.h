@@ -772,6 +772,11 @@ typedef struct ControlEvent {
                                             * without the byte does not decode
                                             * against one that has it. Nothing
                                             * here tries to read one. */
+            bool     lobbyPositionalSound; /* sound events to a human carry a
+                                            * side and a banded distance. Its
+                                            * byte follows modsOff in the fixed
+                                            * part; a body without it reads as
+                                            * off, every sound centred. */
             /* The scenario this lobby is running, if any. scenarioSource
              * none means there is none and the five fields below are empty:
              * a lobby with no scenario writes none of these bytes, so a

@@ -1173,6 +1173,9 @@ extern bool gameFrontClassicMode;
 /* Allied tanks standing in trees are sent to their allies. Applied before
  * classic mode, which forces it back off. Default off. */
 extern bool gameFrontAlliesInTrees;
+/* Sounds are sent with the side of the screen they happen on. Applied
+ * before classic mode, which forces it back off. Default off. */
+extern bool gameFrontPositionalSound;
 /* Which block of squares the map overview keeps live. Holds an
  * OverviewWindow; starts on OVERVIEW_WINDOW_STOCK. */
 extern int gameFrontOverviewWindow;
@@ -1189,6 +1192,7 @@ void gameFrontSetViewBaseDecaySecs(int secs);
 void gameFrontSetViewAllyDecaySecs(int secs);
 void gameFrontSetClassicMode(bool on);
 void gameFrontSetAlliesInTrees(bool on);
+void gameFrontSetPositionalSound(bool on);
 void gameFrontSetOverviewWindow(int window);
 void gameFrontSetLineOfSight(int mode);
 

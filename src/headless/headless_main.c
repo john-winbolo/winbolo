@@ -178,6 +178,9 @@ static OverviewWindow optOverviewWindow = OVERVIEW_WINDOW_STOCK;
 /* A bool here because the switch is on/off, so it tracks the stock mode
  * by asking whether that mode is the "nothing blocks sight" one. */
 static bool optLineOfSight = (LINE_OF_SIGHT_STOCK != lineOfSightOff);
+/* Sounds carry which side they are on and a banded distance; off sends
+ * every sound centred, which is classic. */
+static bool optPositionalSound = false;
 
 /* Binary observation format constants */
 #define BINARY_SPATIAL_SIZE 29
@@ -2165,10 +2168,14 @@ static void printUsage(const char *prog) {
     "  --lineofsight     Buildings and stands of trees block sight inside the\n"
     "                    live block (off by default, and off under\n"
     "                    --classicmode)\n"
+    "  --positionalsound Sounds tell each player which side they are on and\n"
+    "                    roughly how far (off by default, every sound\n"
+    "                    centred, and off under --classicmode)\n"
     "  --classicmode     Classic Bolo view: sets pillview key, baseview off\n"
     "                    and allyview off, overriding those three switches,\n"
-    "                    turns allies in trees off, and sets the overview\n"
-    "                    window to classic with line of sight off\n"
+    "                    turns allies in trees off, sets the overview\n"
+    "                    window to classic with line of sight off, and\n"
+    "                    turns positional sound off\n"
     "  An unknown mode word or a decay outside the range is an error here,\n"
     "  not a fallback, matching --ai and --gametype.\n",
     prog, prog);
@@ -2295,6 +2302,8 @@ static bool parseArgs(int argc, char **argv) {
       if (!parseOverviewWindowWord(argv[++i], &optOverviewWindow)) return FALSE;
     } else if (strcmp(argv[i], "--lineofsight") == 0) {
       optLineOfSight = true;
+    } else if (strcmp(argv[i], "--positionalsound") == 0) {
+      optPositionalSound = true;
     } else if (strcmp(argv[i], "--classicmode") == 0) {
       optClassicMode = true;
     } else if (strcmp(argv[i], "--noscenarios") == 0) {
@@ -2431,9 +2440,12 @@ static void applyViewPolicyOptions(ServerSim *sim) {
   if (optLineOfSight) {
     serverSimSetLineOfSight(sim, (uint8_t)lineOfSightBuildingsAndTrees);
   }
-  /* After the loop and after allies in trees, the overview window and
-   * line of sight, so classic mode wins over the three switches and over
-   * those three. */
+  if (optPositionalSound) {
+    serverSimSetPositionalSound(sim, true);
+  }
+  /* After the loop and after allies in trees, the overview window, line
+   * of sight and positional sound, so classic mode wins over the three
+   * switches and over those four. */
   if (optClassicMode) {
     serverSimSetClassicMode(sim, true);
   }

@@ -807,6 +807,7 @@ uint32_t serverSimGetSettingLockBit(uint8_t lstSettingType) {
         case LST_LINE_OF_SIGHT:     return LOBBY_LOCK_LINE_OF_SIGHT;
         case LST_SMART_PINGS_OFF:   return LOBBY_LOCK_SMART_PINGS;
         case LST_MODS_OFF:          return LOBBY_LOCK_MODS;
+        case LST_POSITIONAL_SOUND:  return LOBBY_LOCK_POSITIONAL_SOUND;
         default:                    return 0xFFFFFFFFu;  /* unknown setting */
     }
 }
@@ -820,12 +821,12 @@ bool serverSimIsSettingLocked(const ServerSim *sim, uint8_t lstSettingType) {
 
 uint32_t serverSimAddImpliedLocks(uint32_t locks) {
     /* Turning classic mode on writes the three view policies, allies in
-     * trees, the overview window and line of sight
+     * trees, the overview window, line of sight and positional sound
      * (serverSimSetClassicMode), so leaving the checkbox editable while
-     * any of those six is locked would let a host change a locked value
+     * any of those seven is locked would let a host change a locked value
      * with one tick — and the value does not come back, because turning
-     * classic mode off leaves all six where classic mode put them.
-     * Locking any of the six locks classic mode too.
+     * classic mode off leaves all seven where classic mode put them.
+     * Locking any of the seven locks classic mode too.
      *
      * Deliberately decided from the mask alone rather than from the
      * current values: the mask is fixed at startup, so the host sees a
@@ -833,7 +834,8 @@ uint32_t serverSimAddImpliedLocks(uint32_t locks) {
      * than one that appears and disappears as other settings move. */
     if (locks & (LOBBY_LOCK_PILL_VIEW | LOBBY_LOCK_BASE_VIEW |
                  LOBBY_LOCK_ALLY_VIEW | LOBBY_LOCK_ALLIES_IN_TREES |
-                 LOBBY_LOCK_OVERVIEW_WINDOW | LOBBY_LOCK_LINE_OF_SIGHT)) {
+                 LOBBY_LOCK_OVERVIEW_WINDOW | LOBBY_LOCK_LINE_OF_SIGHT |
+                 LOBBY_LOCK_POSITIONAL_SOUND)) {
         locks |= LOBBY_LOCK_CLASSIC_MODE;
     }
     return locks;
@@ -885,6 +887,8 @@ void serverSimSetClassicMode(ServerSim *sim, bool on) {
                                sim->viewDecaySecs[viewCategoryAlly]);
         /* Classic mode hides allies in trees, so it owns this value too. */
         serverSimSetAlliesInTrees(sim, false);
+        /* Classic mode plays every sound centred, so it owns this too. */
+        serverSimSetPositionalSound(sim, false);
         /* Classic mode offers no overview at all - no pop-out map and no
          * full screen map - with nothing blocking sight in the framed view
          * it leaves the player. */
@@ -904,6 +908,15 @@ void serverSimSetAlliesInTrees(ServerSim *sim, bool on) {
 
 bool serverSimGetAlliesInTrees(const ServerSim *sim) {
     return sim ? sim->alliesInTrees : false;
+}
+
+void serverSimSetPositionalSound(ServerSim *sim, bool on) {
+    if (sim == NULL) return;
+    sim->positionalSound = on;
+}
+
+bool serverSimGetPositionalSound(const ServerSim *sim) {
+    return sim ? sim->positionalSound : false;
 }
 
 void serverSimSetOverviewWindow(ServerSim *sim, uint8_t window) {

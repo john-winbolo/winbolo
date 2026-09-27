@@ -1931,6 +1931,8 @@ STR_DLGLOBBY_CLASSIC_MODE_TIP=Define Visão do bunker como Tecla, e Visão da ba
 STR_MENU_CLASSIC_MODE_TIP=O servidor está com o modo clássico ligado, então esta visão está desativada.
 STR_DLGLOBBY_ALLIES_TREES_CB=Ver aliados nas árvores
 STR_DLGLOBBY_ALLIES_TREES_TIP=Tanques aliados parados nas árvores são desenhados na\nsua tela em vez de ficarem escondidos. A névoa de guerra\ncontinua valendo, então você só os vê onde já vê.\nDesligado é a regra clássica, e o modo clássico o\ndesliga.
+STR_DLGLOBBY_POSITIONAL_SOUND_CB=Som posicional
+STR_DLGLOBBY_POSITIONAL_SOUND_TIP=Os sons vêm do lado da tela onde acontecem.
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_OVERVIEW_WINDOW=Janela de visão geral
 STR_DLGLOBBY_OVERVIEW_WINDOW_TIP=Qual bloco de tiles o Panorama do mapa mantém ativo\nao redor do seu tanque. Expandida é tudo o que a\nvisão clássica consegue alcançar rolando; Clássica\nrestringe isso à janela que essa visão está mostrando.\nO modo clássico a define como Clássica e a mantém\nassim. O servidor envia os mesmos dados do mapa de\nqualquer forma.

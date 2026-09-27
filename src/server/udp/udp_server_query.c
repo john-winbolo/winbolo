@@ -163,7 +163,8 @@ void buildInfoPacket(ServerSim *sim, INFO_PACKET *pkt) {
         serverSimGetAlliesInTrees(sim));
     pkt->view_policies2 = infoPacketPackViewPolicies2(
         serverSimGetOverviewWindow(sim),
-        serverSimGetLineOfSight(sim));
+        serverSimGetLineOfSight(sim),
+        serverSimGetPositionalSound(sim));
 }
 
 /* Handle an old-protocol info request (server browser compatibility).

@@ -447,7 +447,12 @@ struct ClientSim {
                                      * to their allies; raw mirror of the
                                      * lobby-settings event, false until the
                                      * first one lands */
-    uint8_t          overviewWindow;  /* OverviewWindow the server asked for */
+    bool             positionalSound; /* server sends sounds with a side and a
+                                     * banded distance; raw mirror of the
+                                     * lobby-settings event, false until the
+                                     * first one lands, which plays every
+                                     * sound centred */
+    uint8_t          overviewWindow; /* OverviewWindow the server asked for */
     uint8_t          lineOfSight;     /* LineOfSightMode the server asked for */
     bool             lobbySmartPingsOff; /* the server refuses smart pings; raw
                                      * mirror of the lobby-settings event. Held
