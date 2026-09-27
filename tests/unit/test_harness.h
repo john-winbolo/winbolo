@@ -1085,6 +1085,34 @@ int run_lobby_map_change_releases_off_side(void);
 int run_lobby_non_host_off_side_claim_rejected(void);
 int run_lobby_any_team_claim_kept_off_chosen_side(void);
 
+/* The start sides a fresh lobby opens with (test_lobby_default_sides.c):
+ * team 1 north and team 2 south (east and west on a wide map) at a lobby
+ * server's start-up and again when the last human leaves, and a side the
+ * host chose, one it re-picked as shown included, kept through
+ * joins and rounds while anyone is in the lobby; start reservations on
+ * the team's side after a join, a balance and the DS bot batch; a rename
+ * keeps a filled-in side; the round-end reset and its order against the
+ * scenario seating; and the solo-host rule as it stands. */
+int run_lobby_default_sides_on_startup(void);
+int run_lobby_default_sides_host_choice_survives(void);
+int run_lobby_default_sides_reapplied_when_empty(void);
+int run_lobby_default_sides_joiner_start_on_side(void);
+int run_lobby_default_sides_balance_repicks(void);
+int run_lobby_default_sides_ds_bot_batch_repicks(void);
+int run_lobby_default_sides_rename_keeps_fill(void);
+int run_lobby_default_sides_round_end_reset(void);
+int run_lobby_default_sides_reset_before_seating(void);
+int run_lobby_default_sides_solo_host_any_keeps_south(void);
+int run_lobby_default_sides_balance_keeps_hand_pick(void);
+/* The pair follows the map's shape: east/west when the squares that are
+ * not deep sea span more columns than rows, else north/south; and a map
+ * change re-picks only the untouched default. */
+int run_lobby_default_sides_shape_rule(void);
+int run_lobby_default_sides_map_shape(void);
+int run_lobby_default_sides_map_change(void);
+int run_lobby_default_sides_map_change_repeated(void);
+int run_lobby_default_sides_same_side_pick_kept(void);
+
 /* Team start sides end to end (test_starts_side_integration.c): lobby
  * reservations, the batch's side table and the spawn scatter put a north
  * team's tanks north and a larger south team's tanks south, on distinct

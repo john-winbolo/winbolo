@@ -160,9 +160,10 @@ typedef struct {
   uint8_t namingPool;   /* index into client-side bot pool table */
   uint8_t startSide;    /* START_SIDE_* choice (start_sides.h); START_SIDE_ANY = no side */
   /* 1 when startSide was filled in for this team because the one other team
-     in a two-team lobby named the opposite side, 0 when a player named it (or
-     named no side). Server-side only: it is on no wire packet and no
-     ControlEvent, and the client never sees it. The lobby reads it to decide
+     in a two-team lobby named the opposite side, or because the lobby opened
+     with its default pair (serverSimApplyDefaultTeamSides); 0 when
+     a player named it (or named no side). Server-side only: it is on no wire
+     packet and no ControlEvent, and the client never sees it. The lobby reads it to decide
      whether a later change by that other team may rewrite this side — a side
      a player named is never written over. */
   uint8_t sideAutoFilled;

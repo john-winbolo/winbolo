@@ -3968,6 +3968,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_starts_scatter_separation.c
     tests/unit/test_starts_team_side.c
     tests/unit/test_lobby_team_side_dispatch.c
+    tests/unit/test_lobby_default_sides.c
     tests/unit/test_starts_side_integration.c
     tests/unit/test_input_redundancy.c
     tests/unit/test_edge_send.c
@@ -5246,6 +5247,22 @@ set(_unit_test_names
     lobby_map_change_releases_off_side
     lobby_non_host_off_side_claim_rejected
     lobby_any_team_claim_kept_off_chosen_side
+    lobby_default_sides_on_startup
+    lobby_default_sides_host_choice_survives
+    lobby_default_sides_reapplied_when_empty
+    lobby_default_sides_joiner_start_on_side
+    lobby_default_sides_balance_repicks
+    lobby_default_sides_ds_bot_batch_repicks
+    lobby_default_sides_rename_keeps_fill
+    lobby_default_sides_round_end_reset
+    lobby_default_sides_reset_before_seating
+    lobby_default_sides_solo_host_any_keeps_south
+    lobby_default_sides_balance_keeps_hand_pick
+    lobby_default_sides_shape_rule
+    lobby_default_sides_map_shape
+    lobby_default_sides_map_change
+    lobby_default_sides_map_change_repeated
+    lobby_default_sides_same_side_pick_kept
     starts_side_end_to_end_four_v_twelve
     starts_side_region_sweep
     starts_side_unsided_kept_off_chosen_side
