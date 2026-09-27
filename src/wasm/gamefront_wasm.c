@@ -245,7 +245,7 @@ int gameFrontViewAllyDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 bool gameFrontClassicMode      = FALSE;
 bool gameFrontAlliesInTrees    = FALSE;
 bool gameFrontPositionalSound  = FALSE;
-int gameFrontOverviewWindow   = OVERVIEW_WINDOW_STOCK;
+int gameFrontOverviewWindow    = OVERVIEW_WINDOW_STOCK;
 int gameFrontLineOfSight       = LINE_OF_SIGHT_STOCK;
 
 /* Server-authoritative state — the Transport handle itself now lives

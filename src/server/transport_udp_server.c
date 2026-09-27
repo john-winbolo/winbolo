@@ -644,6 +644,7 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
         BYTE clientMX = 0, clientMY = 0;
         bool hasPos;
         bool culled;
+        bool positional;
 
         if (!udpServer.clients[c].connected) continue;
 
@@ -740,6 +741,7 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
             clientMX = (BYTE)(cwx >> 8);
             clientMY = (BYTE)(cwy >> 8);
         }
+        positional = serverSimGetPositionalSound(sim);
 
         /* Client's closest neutral/allied base drives the arrival push; the
          * per-base stock cull below keeps stock for every neutral/allied base
@@ -781,8 +783,7 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
         if (hasPos) {
             for (i = 0; i < (int)serverSimGetEventCount(sim); i++) {
                 soundPickOffer(&pick, &serverSimGetEvents(sim)[i], (BYTE)c,
-                               clientMX, clientMY, false,
-                               serverSimGetPositionalSound(sim));
+                               clientMX, clientMY, false, positional);
             }
         }
 

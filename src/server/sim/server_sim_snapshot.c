@@ -1470,6 +1470,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
          * UDP drain. */
         bool keepSquare = noCull ||
                           serverSimRecipientKeepsSoundSquares(sim, clientIdx);
+        bool positional = serverSimGetPositionalSound(sim);
         SoundPick pick;
         int s;
         soundPickInit(&pick);
@@ -1477,8 +1478,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         if (hasClientPos) {
             for (i = 0; i < sim->eventCount; i++) {
                 soundPickOffer(&pick, &sim->events[i], clientIdx,
-                               clientMX, clientMY, keepSquare,
-                               serverSimGetPositionalSound(sim));
+                               clientMX, clientMY, keepSquare, positional);
             }
         }
 
