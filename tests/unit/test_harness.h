@@ -1059,8 +1059,9 @@ int run_lobby_non_host_off_side_claim_rejected(void);
 int run_lobby_any_team_claim_kept_off_chosen_side(void);
 
 /* The start sides a fresh lobby opens with (test_lobby_default_sides.c):
- * team 1 north and team 2 south at a lobby server's start-up and again
- * when the last human leaves, and a side the host chose kept through
+ * team 1 north and team 2 south (east and west on a wide map) at a lobby
+ * server's start-up and again when the last human leaves, and a side the
+ * host chose, one it re-picked as shown included, kept through
  * joins and rounds while anyone is in the lobby; start reservations on
  * the team's side after a join, a balance and the DS bot batch; a rename
  * keeps a filled-in side; the round-end reset and its order against the
@@ -1083,6 +1084,7 @@ int run_lobby_default_sides_shape_rule(void);
 int run_lobby_default_sides_map_shape(void);
 int run_lobby_default_sides_map_change(void);
 int run_lobby_default_sides_map_change_repeated(void);
+int run_lobby_default_sides_same_side_pick_kept(void);
 
 /* Team start sides end to end (test_starts_side_integration.c): lobby
  * reservations, the batch's side table and the spawn scatter put a north

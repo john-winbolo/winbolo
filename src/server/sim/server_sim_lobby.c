@@ -725,17 +725,29 @@ void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
     TeamMetadata *t = serverSimGetTeamMetaMut(sim, teamId);
     if (t == NULL) return;
     uint8_t prevSide = t->startSide;
-    t->in_use = 1;
-    t->color = color;
+    bool repeatsAll;
     /* A side outside the START_SIDE_* range means no side. */
     if (startSide >= START_SIDE_COUNT) startSide = START_SIDE_ANY;
+    /* Whether this write names every field as the team already has it.
+     * The lobby sends one of those only when the host picks the side the
+     * team already shows: a pool, colour or name edit changes that field. */
+    repeatsAll = t->in_use && prevSide == startSide &&
+                 t->color == color && t->namingPool == namingPool &&
+                 SDL_strnlen(t->name, LOBBY_TEAM_NAME_LEN) == nameLen &&
+                 (nameLen == 0 ||
+                  (name != NULL && memcmp(t->name, name, nameLen) == 0));
+    t->in_use = 1;
+    t->color = color;
     t->startSide = startSide;
     /* A write that changes the side makes it the team's own choice —
      * START_SIDE_ANY included — and the fill-in below never writes over it
-     * again. A write that repeats the side leaves the mark alone: the lobby
+     * again. So does a write that repeats every field: that is the host
+     * picking the side the team already shows, and on the lobby's default
+     * pair it keeps that pair through a map change. A write that repeats
+     * the side but changes another field leaves the mark alone: the lobby
      * sends the side it already shows with every rename, colour and pool
      * edit, and renaming a team is not choosing its side. */
-    if (prevSide != startSide) {
+    if (prevSide != startSide || repeatsAll) {
         t->sideAutoFilled = 0;
     }
     /* Per-team uniqueness on namingPool: if another in_use team

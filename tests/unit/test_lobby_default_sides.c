@@ -40,9 +40,11 @@
  *  (14) a map change re-picks the untouched default pair for the new map
  *       and keeps every pair the host chose;
  *  (15) the untouched default follows every map change, tall and wide in
- *       turn, not only the first.
+ *       turn, not only the first;
+ *  (16) the host picking the side a default team already shows names it,
+ *       so a map change keeps the pair; a pool pick does not.
  *
- * Everard Island is wider than tall, so tests (1) to (11), (14) and (15) make it
+ * Everard Island is wider than tall, so tests (1) to (11), (14) to (16) make it
  * tall first (make_map_tall: two grass squares out in the sea, the island
  * untouched) and run on a north/south lobby.
  *
@@ -1098,6 +1100,82 @@ int run_lobby_default_sides_map_change_repeated(void) {
                   "setup: the tall map must load");
     UT_ASSERT_MSG(sides_are(sim, START_SIDE_E, START_SIDE_W),
                   "a second tall map must keep the host's east/west");
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A team-meta command that repeats every field the team has, bar the
+ * pool when newPool is not 0xFF: the write the side combo sends when the
+ * host picks the side already shown, and with a new pool the write a
+ * pool pick sends. */
+static CmdResult apply_team_meta_as_is(ServerSim *sim, int senderSlot,
+                                       BYTE teamId, BYTE newPool) {
+    ClientCommand cmd;
+    CmdResult r;
+    const TeamMetadata *t = &sim->teams[teamId];
+    size_t nameLen = strlen(t->name);
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.type = CMD_LOBBY_TEAM_META;
+    cmd.cmdSeq = 1;
+    cmd.u.lobbyTeamMeta.teamId     = teamId;
+    cmd.u.lobbyTeamMeta.color      = t->color;
+    cmd.u.lobbyTeamMeta.namingPool = (newPool == 0xFF) ? t->namingPool : newPool;
+    cmd.u.lobbyTeamMeta.startSide  = t->startSide;
+    cmd.u.lobbyTeamMeta.nameLen    = (uint8_t)nameLen;
+    memcpy(cmd.u.lobbyTeamMeta.name, t->name, nameLen);
+    threadsWaitForMutex();
+    r = serverSimApplyCommand(sim, senderSlot, &cmd);
+    threadsReleaseMutex();
+    return r;
+}
+
+/* (16) The host picks the side a default team already shows. That is a
+ *      choice of side, so the pair is no longer the untouched default and
+ *      a map change keeps it. A pool pick that repeats the side is not,
+ *      and the default still follows the map. */
+int run_lobby_default_sides_same_side_pick_kept(void) {
+    ServerSim *sim;
+
+    /* Team 1 re-picked at north on a tall map, then a wide map. */
+    sim = make_sim();
+    UT_ASSERT(sim != NULL);
+    boot_sim(sim, true, false);
+    add_human(sim, 0, 1);
+    add_human(sim, 1, 2);
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_N, START_SIDE_S), "setup: tall map north/south");
+    UT_ASSERT(apply_team_meta_as_is(sim, 0, 1, 0xFF) == CMD_OK);
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_N, START_SIDE_S),
+                  "re-picking north must leave the sides as they are");
+    UT_ASSERT_MSG(!sim->teams[1].sideAutoFilled,
+                  "re-picking north names team 1's side");
+    UT_ASSERT_MSG(sim->teams[2].sideAutoFilled,
+                  "team 2's side stays filled in");
+    UT_ASSERT_MSG(reload_wide(sim), "setup: the map reload must succeed");
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_N, START_SIDE_S),
+                  "a side the host re-picked must survive a map change "
+                  "(got %u/%u)", sim->teams[1].startSide, sim->teams[2].startSide);
+    UT_ASSERT_MSG(starts_follow_sides(sim, 2),
+                  "every start is on its team's side after the map change");
+    /* Team 2 still follows team 1, the way a filled-in side does. */
+    UT_ASSERT(apply_team_side(sim, 0, 1, START_SIDE_E) == CMD_OK);
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_E, START_SIDE_W),
+                  "team 2's filled-in south must follow team 1 to west");
+    serverSimDestroy(sim);
+
+    /* A pool pick on team 1 repeats its side but is not a choice of side. */
+    sim = make_sim();
+    UT_ASSERT(sim != NULL);
+    boot_sim(sim, true, false);
+    add_human(sim, 0, 1);
+    add_human(sim, 1, 2);
+    UT_ASSERT(apply_team_meta_as_is(sim, 0, 1,
+                                    (BYTE)(sim->teams[1].namingPool + 1)) == CMD_OK);
+    UT_ASSERT_MSG(sim->teams[1].sideAutoFilled && sim->teams[2].sideAutoFilled,
+                  "a pool pick must keep both sides filled in");
+    UT_ASSERT_MSG(reload_wide(sim), "setup: the map reload must succeed");
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_E, START_SIDE_W),
+                  "after a pool pick the default must still follow a wide map "
+                  "(got %u/%u)", sim->teams[1].startSide, sim->teams[2].startSide);
     serverSimDestroy(sim);
     return 0;
 }
