@@ -964,6 +964,7 @@ static void overviewViewDrawEntities(OverviewView *v,
        for the pop-out. */
     ctx.spritesTex = NULL;
     ctx.sprites    = NULL;
+    ctx.precise    = NULL;
 
     SDL_memset(&ov, 0, sizeof(ov));
     ov.simpleTanks = simple;

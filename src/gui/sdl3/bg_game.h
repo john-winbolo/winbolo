@@ -27,6 +27,7 @@
 #include <stdbool.h>
 #include "server_sim.h"
 #include "gfx_settings.h"
+#include "sprite_atlas.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -50,6 +51,12 @@ typedef struct BgGame {
      * only needs the scale mode re-applied, not a new sheet, so this is
      * checked separately from the generation. */
     GfxTextureFilter tilesFilter;
+    /* The padded copy of the moving sprites, off the same sheet as
+     * tilesTex and on the same renderer, so a filtered sample does not
+     * blend in the sprite packed next door (sprite_atlas.h). Built and
+     * dropped with tilesTex; both NULL draws the sprites from the sheet. */
+    SDL_Texture *spritesTex;
+    SpriteAtlas *spriteAtlas;
     BYTE         cameraPlayer;  /* Player slot to follow with camera */
     int          zoomUser;      /* User zoom factor from the +/- keys.
                                  * 0 = follow bgGameRender's fit-to-screen
@@ -63,7 +70,7 @@ typedef struct BgGame {
     BYTE         numTeams;      /* Number of teams (0 = FFA) */
     bool         paused;        /* User-toggled pause state (persists across dialogs) */
     bool         hiddenByForeground;  /* true while a foreground SP/host game is active —
-                                       * bgGameTick early-returns so the bg doesn't dispatch
+                                       * the bg tick early-returns so the bg doesn't dispatch
                                        * brains to the shared worker pool. Independent of
                                        * the user-pause flag (paused), which only drives
                                        * the map-name overlay fade. */
@@ -72,11 +79,63 @@ typedef struct BgGame {
     Uint8        mapNameFadeFromAlpha; /* Starting alpha for the active pause-driven fade */
     /* Bounding box of map content (map coordinates) */
     int          mapMinX, mapMinY, mapMaxX, mapMaxY;
+    /* Camera centre and tank positions after the last two sim ticks, and
+     * the scheduled time (SDL_GetTicks ms) of the last one, so
+     * bgGameRender can draw in between. interpValid is false until the
+     * first tick records anything. */
+    bool         interpValid;
+    Uint64       interpTickMs;
+    WORLD        camPrevX, camPrevY, camCurX, camCurY;
+    bool         tankHave[MAX_TANKS];       /* alive at the last tick */
+    WORLD        tankPrevX[MAX_TANKS], tankPrevY[MAX_TANKS];
+    WORLD        tankCurX[MAX_TANKS], tankCurY[MAX_TANKS];
+    /* The drawn scene, kept so the Frame Rate setting can redraw it every
+     * n-th refresh and copy it on the others (see bgFrameRender). Same
+     * lifetime rules as tilesTex: a renderer change forgets it, a resize
+     * or bgGameDestroy destroys it. frameBroken = it could not be made on
+     * this renderer at this size; the scene draws direct. The 1.5x zoom
+     * (see bgGameRender) uses it too, at twice the screen size. */
+    SDL_Renderer *frameRenderer;
+    SDL_Texture  *frameTex;
+    bool          frameValid;      /* frameTex holds a complete scene */
+    int           frameW, frameH;  /* frameTex size: the screen, or twice
+                                    * it at 1.5x */
+    int           frameZoom;       /* zoom the scene was drawn at */
+    unsigned int  frameTilesGen;   /* tile sheet it was drawn from */
+    GfxTextureFilter frameFilter;  /* texture filter it was drawn with */
+    bool          frameBroken;
+    Uint64        frameRedrawNs;   /* wall clock the next redraw is due n
+                                    * periods after (see bgFrameRender) */
+    /* Kept by bgFrameNoteCall on every bgGameRender, whichever path draws:
+     * the time between calls, a clock on the refresh grid that the draw
+     * blends by when the calls land on that grid (gridMode), and the
+     * window of calls that decides gridMode. */
+    Uint64        frameLastNs;     /* wall clock of the last call */
+    Sint64        frameCallNs;     /* time between calls, smoothed */
+    Sint64        gridPeriodNs;    /* refresh period the state is for */
+    Uint64        gridClockNs;     /* moves whole periods per call */
+    bool          gridMode;        /* blend by gridClockNs, not the wall clock */
+    bool          gridDecided;     /* the first window has decided gridMode */
+    int           gridVotes;       /* windows in a row against gridMode */
+    Uint64        gridWinStartNs;  /* wall clock the window started */
+    int           gridWinCount;    /* calls in the window so far */
+    bool          gridWinFast;     /* a call in it came under half a period
+                                    * after the grid clock */
+    /* The renderer and screen size the 1.5x scene texture could not be
+     * made for; the background uses 1x until either changes. The
+     * renderer is only compared, never used. */
+    SDL_Renderer *ssFailRenderer;
+    int           ssFailW, ssFailH;
 } BgGame;
 
 bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer);
 void bgGameDestroy(BgGame *bg);
-void bgGameTick(BgGame *bg);
+
+/* Free the kept scene texture (up to four times the window at 1.5x) when
+ * the menu stops drawing, so it does not sit in GPU memory through a game.
+ * The next bgGameRender makes it again. */
+void bgGameReleaseScene(BgGame *bg);
+
 void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH);
 
 /* Convenience: tick at fixed 50 Hz rate using a running timestamp */
@@ -90,7 +149,7 @@ void bgGameRenderWithOverlay(BgGame *bg, SDL_Renderer *renderer, int screenW, in
 void bgGameTogglePause(BgGame *bg);
 
 /* Mark bg as hidden by a foreground game (SP or host). While hidden,
- * bgGameTick is a no-op. Independent of bgGameTogglePause. */
+ * bgGameTickFixed runs no sim ticks. Independent of bgGameTogglePause. */
 void bgGameSetHiddenByForeground(BgGame *bg, bool hidden);
 
 /* Point the camera at the next occupied tank slot, wrapping from the last
