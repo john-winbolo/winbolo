@@ -2670,6 +2670,7 @@ STR_DLGSETTINGS_WORKSHOP_NONE_SUBSCRIBED=Hiçbir moda, senaryoya veya haritaya a
 STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH=Henüz yayımlanacak bir şey yok. Mods klasörünüze bir mod veya senaryo koyun ya da bir senaryoyu bir haritaya paketleyin.
 STR_DLGSETTINGS_WORKSHOP_PUB_HEADING=Bu Modu veya Senaryoyu Steam Atölyesi'nde Yayımla
 STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE=Bu dosyanın geldiği öğeyi güncelle
+STR_DLGSETTINGS_WORKSHOP_UNUSABLE=Kullanılamaz
 
 # The lobby's Workshop chip
 STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Atölye

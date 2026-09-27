@@ -2668,6 +2668,7 @@ STR_DLGSETTINGS_WORKSHOP_NONE_SUBSCRIBED=구독 중인 모드, 시나리오, 맵
 STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH=아직 게시할 것이 없습니다. Mods 폴더에 모드나 시나리오를 넣거나, 시나리오를 맵에 넣어 패키징하세요.
 STR_DLGSETTINGS_WORKSHOP_PUB_HEADING=이 모드 또는 시나리오를 Steam 창작마당에 게시
 STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE=이 파일이 파생된 아이템 업데이트
+STR_DLGSETTINGS_WORKSHOP_UNUSABLE=사용할 수 없음
 
 # The lobby's Workshop chip
 STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=창작마당

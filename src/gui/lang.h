@@ -3204,6 +3204,10 @@
 #define STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH    2677
 #define STR_DLGSETTINGS_WORKSHOP_PUB_HEADING     2678
 #define STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE      2679
+/* The state of a subscribed item that is installed but that the game cannot
+ * use: no content it reads, or a file name another item already holds. The
+ * Skin chip on a subscribed skin reuses STR_DLGSETTINGS_SKIN. */
+#define STR_DLGSETTINGS_WORKSHOP_UNUSABLE        2696
 
 /* The lobby's Workshop chip */
 /* The chip after a script's Mod or Scenario chip in the lobby, on a script

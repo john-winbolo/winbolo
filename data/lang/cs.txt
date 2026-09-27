@@ -2668,6 +2668,7 @@ STR_DLGSETTINGS_WORKSHOP_NONE_SUBSCRIBED=Neodebíráte žádné mody, scénáře
 STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH=Zatím není co publikovat. Vložte mod nebo scénář do složky Mods, nebo zabalte scénář do mapy.
 STR_DLGSETTINGS_WORKSHOP_PUB_HEADING=Publikovat tento mod nebo scénář do Steam Workshopu
 STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE=Aktualizovat položku, ze které tento soubor pochází
+STR_DLGSETTINGS_WORKSHOP_UNUSABLE=Nepoužitelné
 
 # The lobby's Workshop chip
 STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop
