@@ -25,7 +25,6 @@
 #include "tileloader.h"
 #include "sdl3draw.h"             /* sdl3DrawGetRenderer */
 #include "gfx_settings.h"         /* gfxGetTextureFilter */
-#include "../winbolo.h"            /* FRAME_RATE_* */
 #include "../../common/wb_log.h"
 #include "bolo_rand.h"
 #include "global.h"
@@ -671,28 +670,14 @@ static Sint64 bgFrameRefreshNs(SDL_Renderer *renderer) {
     return (Sint64)(1000000000.0 / (double)hz);
 }
 
-/* The Frame Rate setting (Settings > Display) in Hz. frameRate holds a
- * FRAME_RATE_* code, not Hz. */
-extern int frameRate;
-static int bgFrameTargetHz(void) {
-    switch (frameRate) {
-        case FRAME_RATE_60: return 60;
-        case FRAME_RATE_50: return 50;
-        case FRAME_RATE_30: return 30;
-        case FRAME_RATE_20: return 20;
-        case FRAME_RATE_15: return 15;
-        case FRAME_RATE_12: return 12;
-        case FRAME_RATE_10: return 10;
-        default:            return 30;   /* the game's default */
-    }
-}
-
-/* Redraw the menu game every n refreshes: refresh / Frame Rate, rounded,
- * at least 1. At 60 Hz: 60->1 50->1 30->2 20->3 15->4 12->5 10->6. */
+/* Redraw the menu game every n refreshes. Held at 1, every refresh, until
+ * the Frame Rate setting means what it says (#312): its FRAME_RATE_* labels
+ * are not rates, and at the default "30" the game itself runs at about 60,
+ * so reading the label as Hz halved the menu game's rate. The n >= 2 paths
+ * below stay for that setting to use. */
 static int bgFrameEveryN(Sint64 periodNs) {
-    double refreshHz = 1000000000.0 / (double)periodNs;
-    int n = (int)(refreshHz / (double)bgFrameTargetHz() + 0.5);
-    return n < 1 ? 1 : n;
+    (void)periodNs;
+    return 1;
 }
 
 /* How far this draw is between the last two ticks: 0 = the tick before,
