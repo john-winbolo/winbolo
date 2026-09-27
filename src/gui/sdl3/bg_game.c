@@ -688,14 +688,14 @@ static int bgFrameEveryN(Sint64 periodNs) {
 /* How far this draw is between the last two ticks: 0 = the tick before,
  * 1 = the last tick. It is read off a clock that moves a whole number of
  * refresh periods per draw: the time since the clock, rounded to whole
- * periods. With vsync that is the n refreshes between redraws every time,
- * so every shown frame moves the same amount; where a draw spans more
- * refreshes than that (a loop that sleeps) it still keeps up. A draw less
- * than half a period after the clock moves it 0 periods, so draws faster
- * than the refresh (no real vsync, or a refresh rate the display does not
- * report) never run it ahead of time. The clock follows the wall clock by
- * 1/32 of the rest each draw so an inexact refresh rate does not drift,
- * and it is never more than half a period ahead of the wall clock. The
+ * periods, which may be none. With vsync that is the n refreshes between
+ * redraws every time, so every shown frame moves the same amount; where a
+ * draw spans more refreshes than that (a loop that sleeps) it still keeps
+ * up. The clock follows the wall clock by 1/32 of the rest each draw so an
+ * inexact refresh rate does not drift. When the rest is more than a
+ * quarter period, the draws are not on the refresh grid (no real vsync, or
+ * a refresh rate the display reports wrongly or not at all), and the
+ * clock is set to the wall clock instead, so it never runs ahead. The
  * ticks still land on the wall clock, so a quarter tick either side is
  * allowed rather than a clamp that would hitch; with no tick for two tick
  * intervals (paused) it is held to the last two ticks instead. */
@@ -705,9 +705,11 @@ static float bgInterpAlpha(BgGame *bg, Sint64 periodNs) {
         Sint64 k = ((Sint64)(nowNs - bg->interpClockNs) + periodNs / 2) / periodNs;
         if (k < 0) k = 0;
         Sint64 gap = (Sint64)nowNs - (Sint64)(bg->interpClockNs + (Uint64)(k * periodNs));
-        bg->interpClockNs += (Uint64)(k * periodNs + gap / 32);
-        if ((Sint64)(bg->interpClockNs - nowNs) > periodNs / 2) {
-            bg->interpClockNs = nowNs + (Uint64)(periodNs / 2);
+        if (gap > periodNs / 4 || gap < -periodNs / 4) {
+            /* Off the refresh grid: whole periods would only add error. */
+            bg->interpClockNs = nowNs;
+        } else {
+            bg->interpClockNs += (Uint64)(k * periodNs + gap / 32);
         }
     } else {
         bg->interpClockNs = nowNs;
@@ -821,14 +823,19 @@ static bool bgFrameRedraw(BgGame *bg, SDL_Renderer *renderer,
  * offscreen on every n-th refresh and the refreshes between copy it. The
  * menu UI itself still draws and presents every refresh.
  *
- * It decides by the wall clock: a frame n - 0.5 refresh periods or more
- * after the last redraw redraws, and an earlier one copies. With vsync
- * that is one redraw, then n - 1 copies. A late frame (missed refreshes)
- * redraws, so the scene keeps changing every n periods and one missed
- * frame makes at most one gap of n + 1 periods. Frames faster than the
- * refresh (no real vsync, or a refresh rate the display does not report)
- * copy until the time is up, so the scene still changes at the Frame Rate.
- * The blend clock moves by the periods that really passed, n with vsync.
+ * It decides by the wall clock. Redraws are due on a grid n periods
+ * apart; the first frame no more than half a frame early redraws, and the
+ * frames before it copy. With vsync that is one redraw, then n - 1 copies,
+ * and a few ms of jitter either way does not move a redraw. Frames faster
+ * than the refresh (no real vsync, or a refresh rate the display does not
+ * report) redraw close to each due time, so the scene still changes n
+ * periods apart. After a redraw the next due time moves on by n periods,
+ * pulled 1/8 of the way to when the redraw really came so that an inexact
+ * refresh rate does not drift. A redraw half a period or more late
+ * (missed refreshes, a stall) or forced (first, zoom, tiles, filter)
+ * starts the grid again from now, so one missed frame makes one gap of
+ * n + 1 periods. The blend clock moves by the periods that really passed,
+ * n with vsync.
  *
  * The scene is texW x texH and is copied to the window at screenW x
  * screenH with copyMode. At 1.5x the texture is twice the screen and n may
@@ -840,18 +847,36 @@ static bool bgFrameRender(BgGame *bg, SDL_Renderer *renderer,
                           int zf, Sint64 periodNs, int n,
                           SDL_ScaleMode copyMode) {
     Uint64 nowNs = SDL_GetTicksNS();
-    bool redraw = !bg->frameValid ||                        /* first, or lost */
+    /* The time between calls, smoothed: about one period with vsync, much
+     * less when frames come faster. Each step counts at most two periods,
+     * so a stall does not hold it high for long. */
+    Sint64 dt = bg->frameLastNs ? (Sint64)(nowNs - bg->frameLastNs) : periodNs;
+    if (dt > 2 * periodNs) dt = 2 * periodNs;
+    if (dt < 0) dt = 0;
+    if (bg->frameLastNs == 0) bg->frameCallNs = periodNs;
+    bg->frameCallNs += (dt - bg->frameCallNs) / 8;
+    bg->frameLastNs = nowNs;
+
+    /* How early a frame may redraw: half a frame, at most half a period. */
+    Sint64 due    = (Sint64)n * periodNs;
+    Sint64 margin = bg->frameCallNs / 2;
+    if (margin > periodNs / 2) margin = periodNs / 2;
+    Sint64 since  = (Sint64)(nowNs - bg->frameRedrawNs);
+    bool forced = !bg->frameValid ||                        /* first, or lost */
                   bg->frameZoom != zf ||
                   bg->frameTilesGen != bg->tilesGeneration ||
-                  bg->frameFilter != bg->tilesFilter ||
-                  (Sint64)(nowNs - bg->frameRedrawNs) >=
-                      (Sint64)(2 * n - 1) * periodNs / 2;   /* n - 0.5 periods */
-    if (redraw) {
+                  bg->frameFilter != bg->tilesFilter;
+    if (forced || since >= due - margin) {
         if (!bgFrameRedraw(bg, renderer, texW, texH, zf, periodNs)) {
             bg->frameValid = false;   /* try again next frame */
             return false;
         }
-        bg->frameRedrawNs = nowNs;
+        Sint64 late = since - due;
+        if (!forced && late < periodNs / 2) {
+            bg->frameRedrawNs += (Uint64)(due + late / 8);   /* on the grid */
+        } else {
+            bg->frameRedrawNs = nowNs;                        /* re-align */
+        }
     }
     SDL_SetTextureScaleMode(bg->frameTex, copyMode);
     SDL_FRect dst = { 0.0f, 0.0f, (float)screenW, (float)screenH };
