@@ -156,6 +156,9 @@ local boost_from  = nil         -- the game.tick() the holder took the prize on,
                                 -- or nil when there is no boost to run
 local invuln_seat = nil         -- the seat damage_scale spares, or nil
 local invuln_to   = 0           -- the game.tick() that seat is spared until
+local last_holder = nil         -- the seat that took the prize last; kept
+                                -- when the prize drops, so a player who takes
+                                -- back their own prize is not a new hand
 
 local function whole(n)
   return math.floor(n + 0.5)
@@ -1261,21 +1264,23 @@ end
 -- Everything the holder gives up, and gets back. The modifier set is replaced
 -- whole rather than merged, so the empty table is the classic tank.
 --
--- Every new holder gets the head start, however the prize reached them: the
--- boost that carry_legs reads through boost_now, and INVULN_SECONDS that
--- damage_scale spares them for. A holder the prize is taken straight from
--- loses the prize, and with it their own boost and cover, first. A holder who
--- built the prize and drives back over it has not changed hands, so they get
--- no new head start.
+-- Every take of the prize gives the speed boost that carry_legs reads
+-- through boost_now, even a player picking up the prize they built. The
+-- INVULN_SECONDS that damage_scale spares a holder for come only when the
+-- prize changes hands: a seat other than last_holder takes it. A player who
+-- takes back their own prize keeps any cover they still have and gets no new
+-- cover. A holder the prize is taken straight from loses the prize, and with
+-- it their own boost and cover, first.
 local function take_the_prize(p)
   if holder ~= nil and holder ~= p then
     lose_the_prize(holder)
   end
-  local changed = (holder ~= p)
+  local new_hand = (last_holder ~= p)
   holder = p
+  last_holder = p
   seconds[p] = seconds[p] or 0
-  if changed then
-    boost_from = game.tick()
+  boost_from = game.tick()
+  if new_hand then
     if INVULN_SECONDS > 0 then
       invuln_seat = p
       invuln_to   = boost_from + INVULN_SECONDS * 100
@@ -1472,6 +1477,9 @@ end
 -- A holder who leaves with his prize built leaves a gun nobody scores for, so
 -- it is put back to nothing, and anybody can drive over it.
 function on_player_leave(p, scripted)
+  if last_holder == p then
+    last_holder = nil
+  end
   if holder == p then
     holder = nil
     boost_from = nil
