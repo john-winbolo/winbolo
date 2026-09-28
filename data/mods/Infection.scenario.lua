@@ -1263,11 +1263,5 @@ scenario = {
     base_refuel_armour_ticks = 23,
     base_refuel_shells_ticks = 4,
     base_regen_ticks         = 250,
-
-    -- Gunfire carries. The hunt only works if the horde can hear where the
-    -- shooting is, so a shot is heard near out to twenty squares and heard at
-    -- all out to sixty, rather than fifteen and forty.
-    sound_soft_range = 20,
-    sound_none_range = 60,
   },
 }
