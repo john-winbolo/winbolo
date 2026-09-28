@@ -115,6 +115,7 @@ local ends_at = 0             -- the tick the round ends on, for the panel clock
 local zero    = nil           -- the first to turn, once one has been picked
 local alone   = nil           -- the last survivor, once there is one
 local boosted = nil           -- the seat that holds ZERO_MODS, if any does
+local crushed = {}            -- pill -> true, run over by the horde, to go
 
 -- A seat that is in the round: on the roster, and on the field rather than
 -- held. A seat held for a bot is on the roster and has no tank.
@@ -1159,15 +1160,35 @@ function can_build(p, action, x, y, n)
   return nil
 end
 
--- And takes nothing. A base the horde drives over stays neutral, a dead pillbox
--- stays on the ground, and the map's supplies stay the survivors' to hold
--- rather than a prize for killing them. Shooting a base flat still neutralises
--- it, so the horde can deny what it cannot use.
+-- And takes nothing. A base the horde drives over stays neutral, and the
+-- map's supplies stay the survivors' to hold rather than a prize for killing
+-- them. Shooting a base flat still neutralises it, so the horde can deny what
+-- it cannot use. A dead pillbox the horde drives over is crushed: it comes
+-- off the map for the rest of the round. A policy may not change the game,
+-- so the pillbox is only noted here and on_tick takes it off.
 function can_capture(kind, n, p)
   if side[p] == INFECTED then
+    if kind == "pill" and n ~= nil then
+      crushed[n] = true
+    end
     return false
   end
   return nil
+end
+
+-- The pillboxes the horde ran over, taken off the map. Each is looked at
+-- again first: one a survivor picked up or rebuilt in the same tick stays.
+function on_tick()
+  if next(crushed) == nil then
+    return
+  end
+  for n in pairs(crushed) do
+    local pb = game.pill(n)
+    if pb ~= nil and not pb.in_tank and pb.armour == 0 then
+      game.remove_pill(n)
+    end
+  end
+  crushed = {}
 end
 
 -- No friendly fire, either way. A survivor shot by a survivor would join the
@@ -1235,6 +1256,7 @@ scenario = {
     allow_base_win = "Holding every base does not win.",
     can_build = "The infected cannot build.",
     can_capture = "The infected cannot take bases or pillboxes.",
+    on_tick = "A dead pillbox the infected drive over is removed.",
     on_choose_start = "The infected respawn near where they fell.",
     spawn_loadout = "Infected respawn with 8 shells and full armour.",
     damage_scale = "No friendly fire.",
