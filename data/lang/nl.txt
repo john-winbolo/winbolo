@@ -2658,7 +2658,7 @@ STR_DLGLOBBY_SCENARIO_SAVE_TOO_LARGE=Dit bestand is te groot om te kopiëren.
 STR_DLGLOBBY_SCENARIO_SAVE_NO_ANSWER=De server antwoordde niet. Probeer het opnieuw.
 STR_DLGLOBBY_SCENARIO_SAVE_WRITE=De kopie kon niet in je Mods-map worden opgeslagen.
 STR_MAPEDIT_SCENARIO_WORKSHOP=Workshop-item #{string1}, gepubliceerd door {string2}
-STR_DLGSETTINGS_WORKSHOP_HEADING=Steam Workshop
+STR_DLGSETTINGS_WORKSHOP_HEADING=Workshop
 STR_DLGSETTINGS_WORKSHOP_SUBSCRIBED=Geabonneerd
 STR_DLGSETTINGS_WORKSHOP_PUBLISH=Publiceren
 STR_DLGSETTINGS_WORKSHOP_INSTALLED=Geïnstalleerd
@@ -2670,6 +2670,7 @@ STR_DLGSETTINGS_WORKSHOP_NONE_SUBSCRIBED=Je bent op geen mods, scenario's of kaa
 STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH=Nog niets om te publiceren. Zet een mod of scenario in je Mods-map, of pak een scenario in een kaart in.
 STR_DLGSETTINGS_WORKSHOP_PUB_HEADING=Publiceer deze mod of dit scenario naar de Steam Workshop
 STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE=Het item bijwerken waar dit bestand vandaan komt
+STR_DLGSETTINGS_WORKSHOP_UNUSABLE=Niet bruikbaar
 
 # The lobby's Workshop chip
 STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop

@@ -2667,8 +2667,8 @@ STR_DLGLOBBY_DETAILS_SETTINGS_OLD=This server cannot change script settings, so 
 STR_DLGLOBBY_DETAILS_SETTING_DEFAULT={number} (default)
 STR_MAPEDIT_SCENARIO_WORKSHOP=Workshop item #{string1}, published by {string2}
 
-# The Workshop section of Settings
-STR_DLGSETTINGS_WORKSHOP_HEADING=Steam Workshop
+# The Steam Workshop tab of Settings
+STR_DLGSETTINGS_WORKSHOP_HEADING=Workshop
 STR_DLGSETTINGS_WORKSHOP_SUBSCRIBED=Subscribed
 STR_DLGSETTINGS_WORKSHOP_PUBLISH=Publish
 STR_DLGSETTINGS_WORKSHOP_INSTALLED=Installed
@@ -2680,6 +2680,7 @@ STR_DLGSETTINGS_WORKSHOP_NONE_SUBSCRIBED=You are not subscribed to any mods, sce
 STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH=Nothing to publish yet. Put a mod or scenario in your Mods folder, or pack a scenario into a map.
 STR_DLGSETTINGS_WORKSHOP_PUB_HEADING=Publish this mod or scenario to the Steam Workshop
 STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE=Update the item this file came from
+STR_DLGSETTINGS_WORKSHOP_UNUSABLE=Not usable
 
 # The lobby's Workshop chip
 STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop

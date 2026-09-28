@@ -2633,7 +2633,7 @@ static const LangEntry langTable[] = {
     {2665, "This server cannot change script settings, so the defaults apply."},
     {2666, "{number} (default)"},
     {2667, "Workshop item #{string1}, published by {string2}"},
-    {2668, "Steam Workshop"},
+    {2668, "Workshop"},
     {2669, "Subscribed"},
     {2670, "Publish"},
     {2671, "Installed"},
@@ -2648,6 +2648,7 @@ static const LangEntry langTable[] = {
     {2680, "Workshop"},
     {2694, "Positional sound"},
     {2695, "Sounds play from the side of the screen they happen on."},
+    {2696, "Not usable"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

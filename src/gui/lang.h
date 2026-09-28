@@ -3183,8 +3183,8 @@
  * when the manifest names an item. */
 #define STR_MAPEDIT_SCENARIO_WORKSHOP            2667
 
-/* The Workshop section of Settings */
-/* Its heading; the two buttons that switch its views; a subscribed item's
+/* The Steam Workshop tab of Settings */
+/* The tab's name; the two buttons that switch its views; a subscribed item's
  * state and the button to its Workshop page; the Update button on a row the
  * player published before; the chip on a plain map; a subscribed item still
  * downloading, whose name is not known yet ({string1} = the item id); the
@@ -3204,6 +3204,10 @@
 #define STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH    2677
 #define STR_DLGSETTINGS_WORKSHOP_PUB_HEADING     2678
 #define STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE      2679
+/* The state of a subscribed item that is installed but that the game cannot
+ * use: no content it reads, or a file name another item already holds. The
+ * Skin chip on a subscribed skin reuses STR_DLGSETTINGS_SKIN. */
+#define STR_DLGSETTINGS_WORKSHOP_UNUSABLE        2696
 
 /* The lobby's Workshop chip */
 /* The chip after a script's Mod or Scenario chip in the lobby, on a script
