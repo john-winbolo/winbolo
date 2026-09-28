@@ -35,11 +35,10 @@
 -- the rest of the round. The last survivor is never taken this way: the round
 -- ends in a fight or on the clock, not on a draw.
 --
--- A bot on the infected side is told who to chase. Left alone a brain plays the
--- ordinary game, and the ordinary game is the one this scenario has taken off
--- it, so each one is handed a survivor to hunt and given another when that one
--- turns. Every bot is also retuned for its side: a survivor gives ground when
--- he is outnumbered, and the horde does nothing but hunt.
+-- A bot plays the round the way it plays any game, with one thing taken away:
+-- on the infected side it never picks a base to refuel at, because no base
+-- refuels the horde. Nothing else about how a bot plays is changed, on either
+-- side.
 --
 -- For the last ninety seconds every survivor is drawn on the infected's map. A
 -- round that has come down to one man sitting in a wood has stopped being
@@ -59,14 +58,6 @@ local BEACON_SECONDS  = 90    -- the tail of the round the survivors are drawn i
 local HELP_EVERY      = 60    -- seconds with no infected kill before another turns
 local FEED_EVERY      = 2     -- seconds between points of armour for the infected
 local SHELL_EVERY     = 0.5   -- seconds between shells for the infected
-local AIM_REFRESH     = 8     -- seconds before a bot is told the same order again
-local CHANGE_AFTER    = 4     -- seconds a bot keeps an order before it is changed
-local SWITCH_MARGIN   = 5     -- squares nearer another survivor has to be before a
-                              -- bot is moved off the one it is chasing
-local VIEW_SQUARES    = 14    -- how far a brain sees a tank: half its 29-square view
-local ATTACK_WITHIN   = 11    -- a chase becomes an attack order this close
-local GOTO_SLACK      = 5     -- squares a survivor may move before a far bot is
-                              -- sent to where he is now
 
 -- What an infected tank comes back with, and the most the trickle feeds it
 -- to: half a full tank of shells.
@@ -101,14 +92,7 @@ local turned  = {}            -- seat -> how many it has turned
 local lived   = {}            -- seat -> seconds it lasted
 local fell    = {}            -- seat -> the square it last died on
 local marked  = {}            -- seat -> the horde is being shown where it is
-local chasing = {}            -- seat -> the survivor a bot's brain was pointed at
-local told_at = {}            -- seat -> when it was last handed an order
-local told    = {}            -- seat -> which order that was, as a short key
-local told_for = {}           -- seat -> what that order was after, as a short key
-local goto_at = {}            -- seat -> the square a goto order sent it to
-local tuned   = {}            -- seat -> the init table it was last handed, as text
-local touched = {}            -- seat -> every knob and flag word it has been handed
-local hide_at = 3             -- squares off a tank in forest stops being seen
+local handed  = {}            -- seat -> the word a bot's brain was last handed
 local elapsed = 0
 local running = false
 local over    = false
@@ -333,402 +317,49 @@ local function let_go_of(p)
   end
 end
 
--- How a bot on either side is tuned. Left alone a brain plays the ordinary
--- game at the ordinary numbers, and both sides here are playing something
--- else: a survivor is outnumbered from the tenth second on and should
--- give ground rather than trade armour, and an infected tank is a thing with
--- a trickle of shells, back in three seconds, that should do nothing but hunt.
+-- What a bot is handed, and it is one word. An infected bot is handed an init
+-- table holding "ammoless", GoalHunter's word for a bot that never picks a base
+-- to refuel at. A base refuels nobody on the horde, and a brain that was not
+-- told so would drive to one and sit on it. The word does nothing else: it
+-- leaves the bot's shells, its fighting and every other goal as they were.
 --
--- A brain is retuned with game.bot_init, which hands it a new init table.
--- The table replaces the last one whole, but the numbers it set do not go
--- back on their own: GoalHunter writes every cfg=NAME=VALUE into its own
--- constants, and a constant stays where it was put until something writes it
--- again. So a bot that changes sides is handed its new numbers AND the
--- ordinary value of every number its old side changed. DEFAULTS is that
--- ordinary value, read off the brain's constants.lua, for every knob either
--- side touches.
---
--- The ordinary value is the Hard one. A Medium or Easy bot plays with some of
--- these knobs moved by its level (the flee numbers, OUTNUMBERED_DISENGAGE,
--- TANK_COMBAT_BASE_COST), and a script cannot see a seat's level, so a knob
--- put back is put back to Hard. That only happens to a knob this script
--- changed on that seat earlier, and the only one it happens to is a survivor
--- turning: the horde loses the flee numbers the survivors were given, and a
--- tank fed its armour back a point at a time that ran at fifteen would
--- never fight.
-local DEFAULTS = {
-  OUTNUMBERED_DISENGAGE        = false,
-  OUTNUMBERED_NET              = 2,
-  TANK_COMBAT_FLEE_ARMOUR      = 0,
-  TANK_COMBAT_FLEE_SHELLS      = 0,
-  TANK_COMBAT_STANDOFF_RANGE   = 7,
-  TAKE_COVER_W_ENEMY           = 20,
-  TAKE_COVER_BASE_COST         = 60,
-  TANK_COMBAT_MIN_SHELLS       = 10,
-  TANK_COMBAT_BASE_COST        = 30,
-  ATTACK_TANK_COMMITMENT_BONUS = 50,
-  STRATEGIC_PLACE_ENABLED      = true,
-  PILL_REPOSITION_ENABLED      = true,
-  BUILDER_POOL_ENABLED         = true,
-}
-
--- The flag words a brain keeps until it is told the opposite. GoalHunter puts
--- noblitz, noclaimdead and suicider back itself on every new table; ammoless
--- it leaves standing, and "normal" is the word that takes it off.
-local FLAG_UNDO = { ammoless = "normal" }
-
--- The two sides. A survivor stays on his base and his pillboxes as he always
--- would; what changes is that he breaks off a fight he is losing, one enemy
--- more than his side is enough to count as losing, and he looks for cover
--- sooner and harder. An infected tank engages on one shell, bids for a tank
--- fight over everything else and sees one through, never goes looking for a
--- base it could not take (ammoless: nothing on the map refuels it), and has
--- its builder's pillbox and building work switched off, since the horde can
--- build nothing and hold nothing.
-local ROLES = {
-  survivor = {
-    flags = { "noblitz" },
-    cfg = {
-      OUTNUMBERED_DISENGAGE      = true,
-      OUTNUMBERED_NET            = 1,
-      TANK_COMBAT_FLEE_ARMOUR    = 15,
-      TANK_COMBAT_FLEE_SHELLS    = 3,
-      TANK_COMBAT_STANDOFF_RANGE = 8,
-      TAKE_COVER_W_ENEMY         = 40,
-      TAKE_COVER_BASE_COST       = 30,
-    },
-  },
-  infected = {
-    flags = { "noblitz", "nosuicider", "ammoless" },
-    cfg = {
-      TANK_COMBAT_MIN_SHELLS       = 1,
-      TANK_COMBAT_BASE_COST        = 5,
-      ATTACK_TANK_COMMITMENT_BONUS = 150,
-      STRATEGIC_PLACE_ENABLED      = false,
-      PILL_REPOSITION_ENABLED      = false,
-      BUILDER_POOL_ENABLED         = false,
-    },
-  },
-}
-
--- A table holds sixteen pairs of at most 63 bytes a value, and one key named
--- cfg. More than one override goes in one value by starting each after the
--- first with ";cfg=", because the brain splits the whole table on ";" before
--- it reads any of it; and more than fit in one value go under keys of their
--- own (cfg2, cfg3, ...) whose value starts "0;", so the key's own token,
--- "cfg2=0", is one the brain reads as nothing at all.
-local INIT_VALUE_MAX = 63
-local INIT_PAIRS_MAX = 16
-
-local function cfg_text(v)
-  if v == true then return "true" end
-  if v == false then return "false" end
-  return tostring(v)
+-- A survivor is handed "normal", the word that takes "ammoless" off again, and
+-- is what a brain plays with when it is told nothing. A survivor needs it: the
+-- word outlives the round. The server builds a bot's brain for the next round
+-- from the last table it was handed, so a bot that ended the last round
+-- infected would start this one as a survivor who never refuels. A seat never
+-- goes from the horde back to the survivors inside a round, so this is the
+-- only thing a survivor is ever handed.
+local function word_for(p)
+  if side[p] == INFECTED then
+    return "ammoless"
+  end
+  return "normal"
 end
 
--- The whole table for one seat on one side, and the same table as one line
--- of text so two of them can be compared. Every knob this seat has been
--- handed before and this side does not set goes back to DEFAULTS.
-local function init_table(side_name, p)
-  local role = ROLES[side_name]
-  local had  = touched[p] or {}
-  local want = {}
-  for k, v in pairs(role.cfg) do
-    want[k] = v
-  end
-  for k in pairs(had) do
-    if want[k] == nil and DEFAULTS[k] ~= nil then
-      want[k] = DEFAULTS[k]
-    end
-  end
-
-  local t, pairs_n = {}, 0
-  local flags = {}
-  for _, f in ipairs(role.flags) do
-    flags[f] = true
-    t[f] = "1"
-    pairs_n = pairs_n + 1
-  end
-  for f, undo in pairs(FLAG_UNDO) do
-    if had[f] and not flags[f] then
-      t[undo] = "1"
-      pairs_n = pairs_n + 1
-    end
-  end
-
-  local names = {}
-  for k in pairs(want) do
-    names[#names + 1] = k
-  end
-  table.sort(names)
-  local chunks, value = {}, nil
-  for _, k in ipairs(names) do
-    local item = k .. "=" .. cfg_text(want[k])
-    -- Every value after the first carries the six bytes of "0;cfg=" as well.
-    local room = (#chunks == 0) and INIT_VALUE_MAX or INIT_VALUE_MAX - 6
-    if value ~= nil and #value + 5 + #item <= room then
-      value = value .. ";cfg=" .. item
-    else
-      if value ~= nil then
-        chunks[#chunks + 1] = value
-      end
-      value = item
-    end
-  end
-  if value ~= nil then
-    chunks[#chunks + 1] = value
-  end
-  for i, v in ipairs(chunks) do
-    if i == 1 then
-      t.cfg = v
-    else
-      t["cfg" .. i] = "0;cfg=" .. v
-    end
-  end
-  pairs_n = pairs_n + #chunks
-  if pairs_n > INIT_PAIRS_MAX then
-    return nil
-  end
-
-  local keys = {}
-  for k in pairs(t) do
-    keys[#keys + 1] = k
-  end
-  table.sort(keys)
-  local line = {}
-  for i, k in ipairs(keys) do
-    line[i] = k .. "=" .. t[k]
-  end
-  return t, table.concat(line, " "), want
-end
-
--- Hands a bot the table for the side it is on, unless it already has that
--- table: every table a brain takes it says a line about to its own side, so
--- the same one twice is noise. A refusal is left for the next second to try
--- again: a bot that has only just joined may not have a brain to take it yet.
-local function tune(p)
+-- Hands a bot the word for its side, unless it already has it: every table a
+-- brain takes it says a line about to its own side, so the same one twice is
+-- noise. A refusal is left for the next second to try again: a bot that has
+-- only just joined may not have a brain to take it yet.
+local function hand_word(p)
   local slot = game.lobby_slot(p)
   if slot == nil or not slot.bot or side[p] == nil then
     return
   end
-  local name = (side[p] == INFECTED) and "infected" or "survivor"
-  local t, line, want = init_table(name, p)
-  if t == nil or tuned[p] == line then
+  local word = word_for(p)
+  if handed[p] == word then
     return
   end
-  if game.bot_init(p, t) then
-    tuned[p] = line
-    local had = touched[p] or {}
-    for k in pairs(want) do
-      had[k] = true
-    end
-    for _, f in ipairs(ROLES[name].flags) do
-      had[f] = true
-    end
-    touched[p] = had
+  if game.bot_init(p, { [word] = "1" }) then
+    handed[p] = word
   end
 end
 
-local function tune_everybody()
+local function hand_everybody()
   for p = 0, game.max_tanks() - 1 do
     if side[p] ~= nil and in_round(p) then
-      tune(p)
+      hand_word(p)
     end
-  end
-end
-
--- A bot the horde is made of is told who to chase with a hint, which the
--- brain takes the way it takes an order a teammate types: it says it back to
--- its own side, holds it for a minute, and drops it for anything a person on
--- that side says afterwards.
---
--- Two orders are used. Attack names the survivor's tank, and the brain only
--- keeps it while it can see him: ten seconds without a sight of him and it
--- gives the order up, saying so. So attack is for a survivor inside the
--- bot's own view and out of the woods, and for anybody further off, or
--- sitting in a forest where a tank cannot be seen from more than a few
--- squares, the bot is sent to the square he is on instead. It drives there
--- without stopping for anything, which is what a chase across the map wants,
--- and is handed the attack as soon as it is close enough to see him.
---
--- The same order handed to a bot that still holds it puts its minute back to
--- the start without a word said, so each bot is handed its order again every
--- eight seconds. A new order is a line in the horde's chat, and a changed
--- one is two, so a bot keeps the survivor it was given until another is
--- clearly nearer, keeps an attack while its man is still in view, and keeps
--- the square it was sent to until the man has moved a few squares off it.
-local function chebyshev(ax, ay, bx, by)
-  local dx, dy = math.abs(ax - bx), math.abs(ay - by)
-  return (dx > dy) and dx or dy
-end
-
-local function in_forest(x, y)
-  local t = game.map_tile(x, y)
-  return t == game.TERRAIN.forest or t == game.TERRAIN.mine_forest
-end
-
--- Somewhere a tank can be sent: on the map, not the sea, not a building. A
--- survivor in a boat is chased to the nearest shore rather than into the sea.
-local function standable(x, y)
-  if x < 0 or x > 255 or y < 0 or y > 255 then
-    return false
-  end
-  local t = game.map_tile(x, y)
-  return t ~= nil and t ~= game.TERRAIN.deep_sea and
-         t ~= game.TERRAIN.building and t ~= game.TERRAIN.half_building
-end
-
-local function standable_near(x, y)
-  if standable(x, y) then
-    return x, y
-  end
-  for r = 1, 3 do
-    for i = -r, r do
-      if standable(x + i, y - r) then return x + i, y - r end
-      if standable(x + i, y + r) then return x + i, y + r end
-      if standable(x - r, y + i) then return x - r, y + i end
-      if standable(x + r, y + i) then return x + r, y + i end
-    end
-  end
-  return nil
-end
-
-local function goto_order(p, x, y, from, target)
-  local g = goto_at[p]
-  if g ~= nil and chebyshev(g.x, g.y, x, y) <= GOTO_SLACK and
-     chebyshev(from.x, from.y, g.x, g.y) > 2 then
-    x, y = g.x, g.y
-  else
-    x, y = standable_near(x, y)
-    if x == nil then
-      return nil
-    end
-  end
-  return { key = string.format("goto %d,%d", x, y), x = x, y = y,
-           target = target, hint = { verb = "goto", x = x, y = y } }
-end
-
-local function order_for(p, q, from)
-  local s = game.tank(q)
-  if s == nil then
-    return nil
-  end
-  local d = chebyshev(from.x, from.y, s.mx, s.my)
-  local hidden = in_forest(s.mx, s.my) and d > hide_at
-  local key = "attack " .. q
-  local attack = { key = key, target = "tank " .. q,
-                   hint = { verb = "attack", player = q } }
-  -- A man who steps into a wood mid-fight is kept as an attack until the
-  -- order is due again, rather than swapped for a goto the moment he is out
-  -- of sight: at the edge of a forest that would be a new order every other
-  -- second. By then the brain has either seen him again or is about to give
-  -- the attack up, and he is sent to the square instead.
-  if told[p] == key and d <= VIEW_SQUARES then
-    if not hidden or (told_at[p] ~= nil and elapsed - told_at[p] < AIM_REFRESH) then
-      return attack
-    end
-  end
-  if not hidden and d <= ATTACK_WITHIN then
-    return attack
-  end
-  return goto_order(p, s.mx, s.my, from, "tank " .. q)
-end
-
--- A bot whose man is out of the tank answers any order with "Busy", so it is
--- not told anything until he is back in. A bot that is waiting to come back
--- is told as soon as its man reads as in the tank again.
---
--- A new order for the same quarry waits until the one the bot holds is
--- CHANGE_AFTER seconds old, and a goto that has only moved waits the whole
--- AIM_REFRESH: each change is two lines in chat (the bot says what it is
--- leaving, then answers the new order), and a man on the run would otherwise
--- move the square every few seconds. A new quarry is told at once.
-local function tell(p, order)
-  if order == nil then
-    return
-  end
-  local age = (told_at[p] ~= nil) and (elapsed - told_at[p]) or nil
-  if age ~= nil and order.key == told[p] then
-    if age < AIM_REFRESH then
-      return
-    end
-  elseif age ~= nil and order.target == told_for[p] then
-    local wait = CHANGE_AFTER
-    if order.hint.verb == "goto" and told[p]:sub(1, 4) == "goto" then
-      wait = AIM_REFRESH
-    end
-    if age < wait then
-      return
-    end
-  end
-  local man = game.builder(p)
-  if man ~= nil and man.state ~= "in_tank" then
-    return
-  end
-  if game.hint(p, order.hint) then
-    told[p]     = order.key
-    told_for[p] = order.target
-    told_at[p]  = elapsed
-    goto_at[p] = order.x and { x = order.x, y = order.y } or nil
-  end
-end
-
--- The nearest survivor, measured from where the bot is or, while it waits to
--- come back, from where it fell. The one it is already chasing is kept unless
--- another is SWITCH_MARGIN squares nearer: picking the nearest afresh every
--- pass would swing a bot between two men a square apart. survivors is
--- roll(SURVIVORS), built once by the caller for the whole pass.
-local function pick_target(p, from, survivors)
-  local cur = chasing[p]
-  local best, best_d, cur_d = nil, nil, nil
-  for _, q in ipairs(survivors) do
-    local s = game.tank(q)
-    if s ~= nil and not s.dead then
-      local d = chebyshev(from.x, from.y, s.mx, s.my)
-      if q == cur then
-        cur_d = d
-      end
-      if best_d == nil or d < best_d then
-        best, best_d = q, d
-      end
-    end
-  end
-  if cur_d ~= nil and cur_d - best_d < SWITCH_MARGIN then
-    return cur
-  end
-  return best
-end
-
--- survivors may be left out, and is then read here: a pass over the whole
--- horde builds it once and hands it to every bot.
-local function point_one(p, survivors)
-  local slot = game.lobby_slot(p)
-  if slot == nil or not slot.bot or side[p] ~= INFECTED then
-    return
-  end
-  local t = game.tank(p)
-  local from = fell[p]
-  if t ~= nil and (not t.dead or from == nil) then
-    from = { x = t.mx, y = t.my }
-  end
-  if from == nil then
-    return
-  end
-  local q = pick_target(p, from, survivors or roll(SURVIVORS))
-  if q == nil then
-    return
-  end
-  if q ~= chasing[p] then
-    chasing[p] = q
-    goto_at[p] = nil
-  end
-  tell(p, order_for(p, q, from))
-end
-
-local function point_the_horde()
-  local survivors = roll(SURVIVORS)
-  for _, p in ipairs(roll(INFECTED)) do
-    point_one(p, survivors)
   end
 end
 
@@ -771,10 +402,9 @@ local function infect(p, by)
   game.announce("You have turned", 3, p)
   game.message("You are infected. Everyone you kill joins you.", p)
   game.sound("man_dying_near")
-  -- A bot is retuned for the horde straight away rather than on the next pass,
-  -- so it comes back from its three seconds dead already playing the part.
-  tune(p)
-  point_one(p)
+  -- A bot is handed the horde's word straight away rather than on the next
+  -- pass, so it comes back from its three seconds dead not looking for a base.
+  hand_word(p)
   check_the_end()
 end
 
@@ -930,10 +560,12 @@ local function each_second()
     feed_the_horde()
   end
   -- Every second, because a bot that has only just joined may not take its
-  -- table on the first try, and a chase goes stale in seconds. Neither says
-  -- anything when there is nothing new to say.
-  tune_everybody()
-  point_the_horde()
+  -- word on the first try. It says nothing when there is nothing new to say.
+  -- The first pass is a second in rather than in on_start: a brain built for
+  -- this round reads the table it was built from on its first think, so a
+  -- survivor's "normal" that landed before then would be overruled by the
+  -- "ammoless" the last round left in it.
+  hand_everybody()
   if not beacon and elapsed >= ROUND_SECONDS - BEACON_SECONDS then
     light_the_beacon()
   end
@@ -972,9 +604,6 @@ function on_start()
       post_score(p)
     end
   end
-  -- How close a tank in a wood has to be before it can be seen, in squares.
-  hide_at = math.floor(game.rule("tree_hide_distance") / 256)
-  tune_everybody()
 
   -- Three lines, because a player who has not read the scenario has to be able
   -- to play it from what the newswire tells him in the first ten seconds.
@@ -1065,8 +694,7 @@ function on_player_join(p, scripted)
     game.set_team(p, SURVIVORS)
     game.message("You are a survivor. One of you turns soon.", p)
   end
-  tune(p)
-  point_one(p)
+  hand_word(p)
   -- A joiner is given the panels the round is holding, but not the scores, so
   -- everybody's is written again for them.
   for q = 0, game.max_tanks() - 1 do
@@ -1082,13 +710,7 @@ function on_player_leave(p, scripted)
   side[p]    = nil
   -- The engine does not clear a marker when its seat empties.
   unshow(p)
-  chasing[p] = nil
-  told_at[p]  = nil
-  told[p]     = nil
-  told_for[p] = nil
-  goto_at[p] = nil
-  tuned[p]   = nil
-  touched[p] = nil
+  handed[p]  = nil
   if alone == p then
     alone = nil
   end
@@ -1101,8 +723,6 @@ function on_player_leave(p, scripted)
   if boosted == p then
     boosted = nil
   end
-  -- A bot chasing the seat that just left is pointed somewhere else on the next
-  -- pass: its target reads as out of the round, which is what the pass tests.
   if not running or over then
     return
   end
