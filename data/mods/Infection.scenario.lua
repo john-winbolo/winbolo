@@ -1,6 +1,6 @@
 -- Infection
 --
--- Everybody starts on the same side. Twenty seconds in one of them turns, and
+-- Everybody starts on the same side. Ten seconds in one of them turns, and
 -- from there every tank that dies comes back infected: which side you are on
 -- is decided by who has killed you rather than by what the lobby put you on.
 -- The round ends when the last survivor turns, or when six minutes are up with
@@ -53,7 +53,7 @@ local SURVIVORS = 1
 local INFECTED  = 2
 
 local ROUND_SECONDS   = 360   -- the whole round
-local HEAD_START      = 20    -- before the first one turns
+local HEAD_START      = 10    -- before the first one turns
 local WARNING_SECONDS = 3     -- what the first one is told, and nobody else
 local BEACON_SECONDS  = 90    -- the tail of the round the survivors are drawn in
 local HELP_EVERY      = 60    -- seconds with no infected kill before another turns
@@ -335,7 +335,7 @@ end
 
 -- How a bot on either side is tuned. Left alone a brain plays the ordinary
 -- game at the ordinary numbers, and both sides here are playing something
--- else: a survivor is outnumbered from the twentieth second on and should
+-- else: a survivor is outnumbered from the tenth second on and should
 -- give ground rather than trade armour, and an infected tank is a thing with
 -- a trickle of shells, back in three seconds, that should do nothing but hunt.
 --
@@ -977,8 +977,8 @@ function on_start()
   tune_everybody()
 
   -- Three lines, because a player who has not read the scenario has to be able
-  -- to play it from what the newswire tells him in the first twenty seconds.
-  game.message("Infection: one of you turns in twenty seconds. " ..
+  -- to play it from what the newswire tells him in the first ten seconds.
+  game.message("Infection: one of you turns in ten seconds. " ..
                "Everyone he kills turns with him.")
   game.message("Survivors: the bases, the pillboxes and the mines are yours. " ..
                "Hold out for six minutes.")
@@ -1269,7 +1269,7 @@ scenario = {
   -- What each callback below does, in a line a player reads: the lobby's
   -- details dialog lists these under "What this scenario implements:".
   callbacks = {
-    on_start = "Puts everyone on the survivors; one turns after 20 s.",
+    on_start = "Puts everyone on the survivors; one turns after 10 s.",
     on_end = "Logs how long the round ran.",
     on_player_join = "A joiner after the first turn arrives infected.",
     on_player_leave = "Ends the round if no survivor is left.",
