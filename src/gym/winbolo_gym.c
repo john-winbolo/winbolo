@@ -49,6 +49,8 @@
 #include "server_sim.h"
 #include "game_sim.h"
 #include "brain_worldsim.h"
+#include "pillbox.h"
+#include "bases.h"
 
 /* Required by the engine — stub for library mode */
 bool isInMenu = FALSE;
@@ -288,6 +290,21 @@ static void gymMakeBrainInfo(WinBoloGym *g, BrainInfo *bi) {
                 carried++;
         }
         bi->carriedpills = carried;
+    }
+
+    /* Which pill and base numbers are on the map (see BrainInfo). */
+    {
+        BYTE numPb = pillsGetNumPills(&sim->pb);
+        BYTE numBs = basesGetNumBases(&sim->bs);
+        BYTE i;
+        for (i = 0; i < numPb && i < 32; i++) {
+            if (pillsIsActive(&sim->pb, (BYTE)(i + 1)))
+                bi->pills_on_map |= ((uint32_t)1u << i);
+        }
+        for (i = 0; i < numBs && i < 32; i++) {
+            if (basesIsActive(&sim->bs, (BYTE)(i + 1)))
+                bi->bases_on_map |= ((uint32_t)1u << i);
+        }
     }
 
     /* LGM */

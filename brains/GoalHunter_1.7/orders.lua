@@ -4095,7 +4095,12 @@ function M.update(state, world, info, now)
       end
     elseif h.tkind == "base" and h.tid then
       local b = world.bases[h.tid]
-      if b and (h.kind == "capture_base" or h.kind == "attack_base")
+      -- No record means the base is gone (a scenario removed it): the same
+      -- "order lapsed" a pill order ends on.  Without it the order stood for
+      -- good, since only a base turned friendly ended it.
+      if not b then
+        done, why = true, "order lapsed"
+      elseif (h.kind == "capture_base" or h.kind == "attack_base")
          and b.owner == "friendly" then
         done, why = true, string.format("base #%d done", h.tid)
       end

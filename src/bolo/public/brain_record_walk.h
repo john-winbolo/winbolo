@@ -37,6 +37,11 @@ typedef struct {
     void  *ctx;
     size_t (*read)(void *ctx, void *dst, size_t len);
     bool   (*skip)(void *ctx, size_t len);
+    /* The file's format version. brainRecWalkPreamble sets it from the
+     * header; a caller that walks frames without the preamble (it copied the
+     * preamble some other way) sets it itself. 0 counts as the version this
+     * build writes. */
+    uint32_t version;
 } BrainRecReader;
 
 /* What a walked frame turned out to be. mapKeyframe is the split-safe
@@ -47,6 +52,8 @@ typedef struct {
     bool     mapKeyframe;  /* true = full map, false = changed tiles only */
     int      botCount;     /* per-bot blocks in this frame */
     int      maxBotSlot;   /* highest bot slot seen, or -1 */
+    uint32_t pillsOnMap;   /* bit n: pill n is on the map (all set before v7) */
+    uint32_t basesOnMap;   /* bit n: base n is on the map (all set before v7) */
 } BrainRecFrameInfo;
 
 typedef enum {
@@ -63,6 +70,11 @@ size_t brainRecWalkHeaderSize(void);
 /* The BRAINREC_VERSION this translation unit was built against. A tool
  * refuses to touch a file that doesn't match. */
 uint32_t brainRecWalkFormatVersion(void);
+
+/* The format version stored in a header already read into memory (at least
+ * brainRecWalkHeaderSize() bytes). For a caller that copies the preamble as
+ * bytes and then walks frames: it sets BrainRecReader.version from this. */
+uint32_t brainRecWalkHeaderVersion(const void *header);
 
 /* Consume the file header plus the one-time legend block, i.e. everything
  * before the first frame. Fails on a bad magic or a version mismatch —

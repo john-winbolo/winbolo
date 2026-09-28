@@ -241,6 +241,12 @@ typedef struct {
      * .allie before render so pills/bases color by the followed bot's real
      * alliances — owner alone reads allies as enemy (red). */
     uint32_t          allie[MAX_TANKS];
+    /* Which pills and bases are still on the map (brainrec v7): bit n set
+     * means item n is there. A scenario's remove_pill / remove_base clears a
+     * bit, and the render hides that item. A v6 file has no masks; every bit
+     * is set, so nothing is hidden. */
+    uint32_t          pillsOnMap;
+    uint32_t          basesOnMap;
 
     /* Camera + brain perf for the HUD. */
     WORLD viewCenterX, viewCenterY;
@@ -736,13 +742,14 @@ static bool btPeekSession(const char *path, char mapNameOut[64], int *numBotsOut
     BrainRecHeader hdr;
     if (gzread(g, &hdr, (unsigned)sizeof hdr) != (int)sizeof hdr
         || !brainRecMagicMatches(&hdr)) { gzclose(g); return false; }
-    if (!brainRecVersionMatches(&hdr)) {
+    if (!brainRecVersionReadable(&hdr)) {
         /* Say which version it is rather than reading it: the frame bodies
-           are raw snapshot structs and an older file's are a different size,
-           so there is nothing to salvage by trying. */
-        fprintf(stderr, "%s: brainrec version %u, this build reads %u only — "
+           of a file older than v6 are raw snapshot structs of a different
+           size, so there is nothing to salvage by trying. */
+        fprintf(stderr, "%s: brainrec version %u, this build reads v%u to v%u — "
                         "record the session again\n",
-                path, (unsigned)hdr.version, (unsigned)BRAINREC_VERSION);
+                path, (unsigned)hdr.version, (unsigned)BRAINREC_VERSION_MIN_READ,
+                (unsigned)BRAINREC_VERSION);
         gzclose(g);
         return false;
     }
@@ -782,6 +789,7 @@ static bool btPeekSession(const char *path, char mapNameOut[64], int *numBotsOut
             uint32_t pl = bt_gz_u32(g); if (pl) gzseek(g, pl, SEEK_CUR);
         }
         gzseek(g, MAX_TANKS * 4, SEEK_CUR);   /* v5 per-player alliance words */
+        if (hdr.version >= 7u) gzseek(g, 8, SEEK_CUR);   /* v7 on-map masks */
         if (!deepScan) break;
         fm = bt_gz_u32(g);
     }
@@ -960,12 +968,13 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
     BrainRecHeader hdr;
     if (gzread(g, &hdr, (unsigned)sizeof hdr) != (int)sizeof hdr
         || !brainRecMagicMatches(&hdr)) { gzclose(g); return -1; }
-    if (!brainRecVersionMatches(&hdr)) {
-        /* Same refusal as the peek above, and for the same reason: an older
-           file's frames are raw structs of a size this build cannot walk. */
-        fprintf(stderr, "%s: brainrec version %u, this build reads %u only — "
+    if (!brainRecVersionReadable(&hdr)) {
+        /* Same refusal as the peek above, and for the same reason: a file
+           older than v6 has frames of a size this build cannot walk. */
+        fprintf(stderr, "%s: brainrec version %u, this build reads v%u to v%u — "
                         "record the session again\n",
-                path, (unsigned)hdr.version, (unsigned)BRAINREC_VERSION);
+                path, (unsigned)hdr.version, (unsigned)BRAINREC_VERSION_MIN_READ,
+                (unsigned)BRAINREC_VERSION);
         gzclose(g);
         return -1;
     }
@@ -1180,6 +1189,15 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
          * the per-bot block. */
         for (int i = 0; i < MAX_TANKS; i++) {
             f->allie[i] = bt_gz_u32(g);
+        }
+        /* Which pills and bases are on the map (v7). A v6 file has none:
+         * treat every item as there. */
+        if (hdr.version >= 7u) {
+            f->pillsOnMap = bt_gz_u32(g);
+            f->basesOnMap = bt_gz_u32(g);
+        } else {
+            f->pillsOnMap = 0xFFFFFFFFu;
+            f->basesOnMap = 0xFFFFFFFFu;
         }
 
         rb->count++;
@@ -3450,6 +3468,16 @@ static void recordingCapture(BrainTestApp *app) {
             f->allie[i] = (uint32_t)gs->plyrs->item[i].allie;
         }
     }
+    /* ── Pills and bases on the map ── the same masks the .btr carries,
+     * so a live recording hides a removed item the way a loaded one does. */
+    f->pillsOnMap = 0;
+    for (int i = 0; i < gs->pb->numPills && i < 32; i++) {
+        if (gs->pb->active[i]) f->pillsOnMap |= (uint32_t)1u << i;
+    }
+    f->basesOnMap = 0;
+    for (int i = 0; i < gs->bs->numBases && i < 32; i++) {
+        if (gs->bs->active[i]) f->basesOnMap |= (uint32_t)1u << i;
+    }
 
     /* ── Camera + brain perf for HUD ── */
     f->viewCenterX = app->viewCenterX;
@@ -5240,6 +5268,16 @@ static void appRender(BrainTestApp *app) {
                 gs->pb->item[i].armour = pf_->snapPills[i].armour;
                 gs->pb->item[i].speed  = pf_->snapPills[i].speed;
                 gs->pb->item[i].inTank = pf_->snapPills[i].inTank ? TRUE : FALSE;
+            }
+            /* Hide the pills and bases the frame says were removed (v7 masks;
+             * a v6 frame has every bit set). The draw paths skip an inactive
+             * slot. savedPills / savedBases put the live flags back after
+             * render. */
+            for (int i = 0; i < gs->pb->numPills && i < 32; i++) {
+                gs->pb->active[i] = ((pf_->pillsOnMap >> i) & 1u) ? TRUE : FALSE;
+            }
+            for (int i = 0; i < gs->bs->numBases && i < 32; i++) {
+                gs->bs->active[i] = ((pf_->basesOnMap >> i) & 1u) ? TRUE : FALSE;
             }
             /* Per-player alliances (brainrec v5): without these, the renderer's
              * playersIsAllie(owner, viewPlayer) reads allies as enemies and

@@ -23,10 +23,15 @@
  * PillSnapshot packs armour into the flags byte, both of which have since
  * changed width, so version 6 refuses it.
  *
+ * Version 7 only appended the on-map masks for pills and bases to the end of
+ * each frame, so a version 6 file is still read: the reader skips the tail it
+ * does not have and treats every item as on the map.
+ *
  * BrainTest's loader is a GUI main with no seam a test can call, so what this
  * asserts is the check the loader now makes: brainRecMagicMatches and
- * brainRecVersionMatches in brain_record.h, which both of its header reads go
- * through (btPeekSession and btLoadSession in src/braintest/braintest_main.c).
+ * brainRecVersionReadable in brain_record.h, which both of its header reads go
+ * through (btPeekSession and btLoadSession in src/braintest/braintest_main.c),
+ * as does the shared walker in src/bolo/brain_record_walk.c.
  */
 #include <string.h>
 
@@ -52,8 +57,19 @@ int run_brainrec_version_rejects_old(void) {
     UT_ASSERT_MSG(brainRecMagicMatches(&hdr),
                   "the writer's own magic did not match");
     UT_ASSERT_MSG(brainRecVersionMatches(&hdr),
+                  "version %u is what this build writes and it does not match",
+                  (unsigned) BRAINREC_VERSION);
+    UT_ASSERT_MSG(brainRecVersionReadable(&hdr),
                   "version %u is what this build writes and it was refused",
                   (unsigned) BRAINREC_VERSION);
+
+    /* Version 6 is still read: v7 only added a tail to each frame. */
+    brFillHeader(&hdr, 6u);
+    UT_ASSERT_MSG(brainRecVersionReadable(&hdr),
+                  "a version 6 brainrec was refused; v7 only appended the "
+                  "on-map masks, so it must still load");
+    UT_ASSERT_MSG(!brainRecVersionMatches(&hdr),
+                  "a version 6 brainrec matched the version this build writes");
 
     /* Version 5 — the last one before the snapshot structs changed size — is
      * refused. Its magic is the same, which is the point: only the version
@@ -61,16 +77,16 @@ int run_brainrec_version_rejects_old(void) {
     brFillHeader(&hdr, 5u);
     UT_ASSERT_MSG(brainRecMagicMatches(&hdr),
                   "a version 5 file has the same magic and should match it");
-    UT_ASSERT_MSG(!brainRecVersionMatches(&hdr),
-                  "a version 5 brainrec was accepted by a build that reads %u",
-                  (unsigned) BRAINREC_VERSION);
+    UT_ASSERT_MSG(!brainRecVersionReadable(&hdr),
+                  "a version 5 brainrec was accepted by a build that reads %u to %u",
+                  (unsigned) BRAINREC_VERSION_MIN_READ, (unsigned) BRAINREC_VERSION);
 
     /* And a version from the future is refused the same way, so the check is
-     * an equality rather than a floor: a newer file's frames are no more
+     * a range with a top as well as a floor: a newer file's frames are no more
      * walkable than an older one's. */
     brFillHeader(&hdr, BRAINREC_VERSION + 1u);
-    UT_ASSERT_MSG(!brainRecVersionMatches(&hdr),
-                  "a version %u brainrec was accepted by a build that reads %u",
+    UT_ASSERT_MSG(!brainRecVersionReadable(&hdr),
+                  "a version %u brainrec was accepted by a build that reads up to %u",
                   (unsigned) (BRAINREC_VERSION + 1u),
                   (unsigned) BRAINREC_VERSION);
 
@@ -81,9 +97,13 @@ int run_brainrec_version_rejects_old(void) {
     UT_ASSERT_MSG(!brainRecMagicMatches(&hdr),
                   "a file with the wrong magic was taken for a brainrec");
 
-    UT_ASSERT_MSG(BRAINREC_VERSION == 6u,
-                  "BRAINREC_VERSION is %u; the widened death wait and the "
-                  "pillbox's own armour byte are version 6",
+    UT_ASSERT_MSG(BRAINREC_VERSION == 7u,
+                  "BRAINREC_VERSION is %u; the on-map masks for pills and "
+                  "bases are version 7",
                   (unsigned) BRAINREC_VERSION);
+    UT_ASSERT_MSG(BRAINREC_VERSION_MIN_READ == 6u,
+                  "BRAINREC_VERSION_MIN_READ is %u; the widened death wait and "
+                  "the pillbox's own armour byte are version 6",
+                  (unsigned) BRAINREC_VERSION_MIN_READ);
     return 0;
 }

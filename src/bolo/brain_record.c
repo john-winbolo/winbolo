@@ -18,6 +18,7 @@
 #include "game_sim.h"    /* GameSim internals: ->mp->mapItem */
 #include "players.h"     /* players / struct playersObj: per-player alliance bitmap */
 #include "pillbox.h"     /* pillSetInTank — the pill flags byte */
+#include "bases.h"       /* basesIsActive — the base on-map mask */
 
 #define BRAINREC_MAP_TILES (MAP_ARRAY_SIZE * MAP_ARRAY_SIZE)
 
@@ -597,6 +598,25 @@ void brainRecordTick(ServerSim *sim) {
             uint32_t allie = (gsa && gsa->plyrs) ? (uint32_t)gsa->plyrs->item[i].allie : 0u;
             wr_u32(allie);
         }
+    }
+
+    /* ── On-map masks (v7) ── uint32 pills, then uint32 bases: bit n set means
+     * pill (base) n, 0 based, is on the map. A scenario can remove an item for
+     * good; its slot stays in the lists above with its last values, so without
+     * these a replay would keep drawing it. */
+    {
+        GameSim *gsm = serverSimGetGameSim(sim);
+        uint32_t pillMask = 0, baseMask = 0;
+        int np = (gsm && gsm->pb) ? gsm->pb->numPills : 0;
+        int nb = (gsm && gsm->bs) ? gsm->bs->numBases : 0;
+        for (int i = 0; i < np && i < 32; i++) {
+            if (pillsIsActive(&gsm->pb, (BYTE)(i + 1))) pillMask |= ((uint32_t)1u << i);
+        }
+        for (int i = 0; i < nb && i < 32; i++) {
+            if (basesIsActive(&gsm->bs, (BYTE)(i + 1))) baseMask |= ((uint32_t)1u << i);
+        }
+        wr_u32(pillMask);
+        wr_u32(baseMask);
     }
 
     /* Throttled gzip flush: a Z_SYNC_FLUSH every ~64 frames keeps the on-disk
