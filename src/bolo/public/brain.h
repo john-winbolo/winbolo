@@ -397,6 +397,17 @@ typedef struct
 	WORLD_X ping_x;
 	WORLD_Y ping_y;
 
+	// Which pill and base numbers are on the map this tick: bit n set means
+	// pill (or base) n, 0 based, is on it. A scenario can take a pill or a
+	// base off the map for good. The slot stays, so the numbers above it do
+	// not move, but the item is not shown in objects again. A brain that
+	// remembers items it saw earlier needs these to know one has gone,
+	// because an item that is merely out of sight looks the same in objects.
+	// A carried pill is on the map for this purpose; only a removal clears
+	// the bit. Bits at or past max_pillboxes / max_refbases are always 0.
+	uint32_t pills_on_map;
+	uint32_t bases_on_map;
+
 	} BrainInfo;
 
 #pragma pack(pop)

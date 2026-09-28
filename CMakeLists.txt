@@ -3958,6 +3958,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_entity_event.c
     tests/unit/test_entity_sync.c
     tests/unit/test_entity_record.c
+    tests/unit/test_brain_removed_items.c
+    src/bolo/brain_record_walk.c
     tests/unit/test_starts_pick_incremental.c
     tests/unit/test_starts_assign_batch.c
     tests/unit/test_starts_open_ideal.c
@@ -5187,6 +5189,8 @@ set(_unit_test_names
     entity_record_lobby_add_republishes_counts
     entity_record_lobby_removal_replays
     entity_record_seek_lands_on_the_right_liveness
+    brain_removed_items_info_masks
+    brain_removed_items_recording_masks
     starts_pick_cluster_nearest_teammate
     starts_pick_farthest_when_solo
     starts_pick_none_when_all_taken
