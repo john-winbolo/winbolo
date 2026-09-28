@@ -22,9 +22,15 @@
 --
 -- Nobody can hurt his own side. Friendly fire would otherwise be the quickest
 -- way to end the round, and a survivor shot by a survivor would join the horde
--- for it. What turns a survivor is the horde, or his own hand: drowning and his
--- own mine count once the first has turned, so the sea is not a way out of a
--- chase, while a pillbox nobody owns and a mine the map came with only kill him.
+-- for it. What turns a survivor is an infected tank's shell and nothing else:
+-- drowning, a mine, a pillbox or any other death only kills him, and he comes
+-- back a survivor.
+--
+-- Until the horde has made its first kill it is helped. Every minute that goes
+-- by without one, another survivor picked at random turns where he stands, and
+-- everybody is told why. The first kill by an infected shell ends the help for
+-- the rest of the round. The last survivor is never taken this way: the round
+-- ends in a fight or on the clock, not on a draw.
 --
 -- A bot on the infected side is told who to chase. Left alone a brain plays the
 -- ordinary game, and the ordinary game is the one this scenario has taken off
@@ -47,6 +53,7 @@ local ROUND_SECONDS   = 360   -- the whole round
 local HEAD_START      = 20    -- before the first one turns
 local WARNING_SECONDS = 3     -- what the first one is told, and nobody else
 local BEACON_SECONDS  = 90    -- the tail of the round the survivors are drawn in
+local HELP_EVERY      = 60    -- seconds with no infected kill before another turns
 local FEED_EVERY      = 2     -- seconds between an infected shell, and a point of armour
 local AIM_REFRESH     = 8     -- seconds before a bot is told the same order again
 local CHANGE_AFTER    = 4     -- seconds a bot keeps an order before it is changed
@@ -104,6 +111,8 @@ local running = false
 local over    = false
 local beacon  = false
 local loose   = false         -- the first one has turned
+local bitten  = false         -- an infected shell has turned somebody
+local helper  = nil           -- the help's waiting timer, while there is one
 local ends_at = 0             -- the tick the round ends on, for the panel clock
 local zero    = nil           -- the first to turn, once one has been picked
 local alone   = nil           -- the last survivor, once there is one
@@ -769,6 +778,26 @@ local function pick_zero()
   return from[math.random(#from)]
 end
 
+-- The help. A survivor at random turns where he stands, as the first one did,
+-- and the clock goes round again, until an infected shell has made a kill. It
+-- stops for good at one survivor: a joiner after the first turn is infected, so
+-- the count never goes back up.
+local function help_the_horde()
+  helper = nil
+  if over or not running or bitten then
+    return
+  end
+  local pool = roll(SURVIVORS)
+  if #pool < 2 then
+    return
+  end
+  local p = pool[math.random(#pool)]
+  game.message("No kills for a minute. The infection takes " ..
+               name_of(p) .. ".")
+  infect(p, nil)
+  helper = game.timer(HELP_EVERY, help_the_horde)
+end
+
 local function turn_zero()
   if over or not running then
     return
@@ -785,6 +814,13 @@ local function turn_zero()
   loose = true
   game.announce("The infection is loose", 3)
   infect(p, nil)
+  -- A restart after the whole horde has walked out is a fresh horde, and it is
+  -- helped the same way, so the clock is started over rather than doubled.
+  bitten = false
+  if helper ~= nil then
+    game.cancel_timer(helper)
+  end
+  helper = game.timer(HELP_EVERY, help_the_horde)
 end
 
 -- The warning is private, and it is the only advantage either side is given:
@@ -923,20 +959,14 @@ function on_start()
   panel()
 end
 
--- The horde turns you, and so does your own hand. The map does not.
+-- Only an infected tank's shell turns you. Every other death is a hazard, not
+-- a recruiter: dying to one costs a survivor his position and his pills and
+-- nothing else, and the horde does not get to count a kill its gun did not make.
 --
--- A pillbox nobody owns and a mine the map came with are hazards, not
--- recruiters: dying to one costs a survivor his position and his pills and
--- nothing else, and the horde does not get to count a kill it had no part in.
--- The sim fires every pillbox shell with no owner on it, whoever owns the gun,
--- so a pillbox kill arrives here as game.NEUTRAL and is one of those.
---
--- A death nobody caused names the dying tank as its own killer, which is how
--- drowning and your own mine read. Those do turn you. Without that the sea is a
--- way out of any chase the horde is winning, and a full tank of armour on the
--- other side of it. Not in the head start, though: there is no horde yet to run
--- from, and the first to turn is picked at twenty seconds whatever happens
--- before it, so a man who drowns early comes back a survivor.
+-- That covers drowning and your own mine (the dying tank is named as its own
+-- killer), a pillbox (the sim fires every pillbox shell with no owner on it, so
+-- the killer is game.NEUTRAL), and any mine, even one an infected tank is named
+-- for, because he laid it before he turned.
 function on_tank_killed(victim, killer, cause, scripted)
   if over or not running then
     return
@@ -948,15 +978,9 @@ function on_tank_killed(victim, killer, cause, scripted)
   if side[victim] == INFECTED then
     return
   end
-  if killer == victim and loose then
-    infect(victim, nil)
-  elseif side[killer] == INFECTED then
+  if cause == "shell" and side[killer] == INFECTED then
+    bitten = true
     infect(victim, killer)
-  else
-    -- Now that a death is sometimes a conversion and sometimes not, the man it
-    -- happened to is the one who has to be told which it was.
-    game.message("That was not the infection. You are still a survivor.",
-                 victim)
   end
 end
 
@@ -1120,8 +1144,8 @@ end
 
 -- The horde comes back at the start nearest to where it fell, so a fight that
 -- was won is a fight that is about to happen again in the same place. Survivors
--- are left to the engine, including one who respawns after a death to a
--- neutral pillbox or a map mine.
+-- are left to the engine, including one who respawns after any death but an
+-- infected shell.
 function on_choose_start(p)
   if side[p] ~= INFECTED then
     return nil
@@ -1166,7 +1190,7 @@ scenario = {
     on_player_leave = "Ends the round if no survivor is left.",
     on_team_changed = "Players cannot change side.",
     on_tank_spawned = "Keeps the infected quick and weak.",
-    on_tank_killed = "A survivor killed by the infected turns.",
+    on_tank_killed = "A survivor shot by the infected turns.",
     allow_extra_teams = "Only the two sides.",
     allow_base_win = "Holding every base does not win.",
     can_build = "The infected cannot build.",
@@ -1188,7 +1212,7 @@ scenario = {
 
   rules = {
     -- Three seconds rather than five. Mostly the horde's number: a survivor
-    -- only respawns as one after a neutral pillbox or a map mine kills him. It
+    -- only respawns as one after a death that was not an infected shell. It
     -- is what decides how much a fight bought the man who won it.
     tank_death_ticks = 150,
 
