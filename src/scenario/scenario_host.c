@@ -6528,11 +6528,20 @@ void scenarioHostRegisterMapScripted(ServerSim *sim) {
  * seen too.
  *
  * Stamping the files costs one directory walk and one SDL_GetPathInfo per
- * scenario file on every call, hit or not. A mods directory holds a handful
- * of files, so that is a few stat calls against a VM boot per file, and it is
- * made before the lock is taken, so a slow disk holds up only its own caller.
- * A directory with more scenario files than SCN_DIR_STAMPS_MAX is read every
- * time rather than kept.
+ * scenario file. A mods directory holds a handful of files, so that is a few
+ * stat calls against a VM boot per file, and it is made before the lock is
+ * taken, so a slow disk holds up only its own caller. A walk made less than
+ * SCN_DIR_STAMPS_REUSE_MS ago stands for a new one when the directory's time
+ * and the change count are unmoved: the lobby's details dialog asks once per
+ * file, each ask reads the file twice (its details, then its settings) and
+ * every read asks each mod directory in turn, so without it a client could
+ * make the server walk every directory several times a packet. An edit in
+ * place is seen that much later at most. A directory with more scenario
+ * files than SCN_DIR_STAMPS_MAX is read every time rather than kept.
+ *
+ * A file replaced in place with its modify time and its size both kept — an
+ * unzip or rsync that preserves times, writing a file of the same length —
+ * moves nothing this looks at, and is not seen until something else changes.
  *
  * The stamps are as fine as the kernel writes them, which is a few
  * milliseconds on an ordinary Linux filesystem rather than a nanosecond, so a
@@ -6567,6 +6576,17 @@ void scenarioHostRegisterMapScripted(ServerSim *sim) {
    shipped one, and the uploads directory. */
 #define SCN_MOD_DIRS_MAX 5
 
+/* One scenario file's modify time and size, which is what an edit in place
+   moves when the directory's own time does not. */
+typedef struct {
+    char     file[SCN_DIR_FILE_LEN];
+    SDL_Time modified;
+    Uint64   size;
+} ScnDirStamp;
+
+/* More scenario files than this in one directory and it is not kept. */
+#define SCN_DIR_STAMPS_MAX 256
+
 typedef struct {
     bool         valid;
     char         dir[SCN_SCRIPT_PATH_MAX];
@@ -6581,8 +6601,9 @@ typedef struct {
     int          count;
     /* Every scenario file's stamp as it stood before the read, sorted by
        name (scnDirStampsRead). */
-    struct ScnDirStamp *stamps;
+    ScnDirStamp *stamps;
     int          stampCount;
+    Uint64       stampTicks; /* SDL_GetTicks() when stamps were walked */
 } ScnDirCache;
 
 #define SCN_DIR_CACHE_SLOTS (SCN_MOD_DIRS_MAX + 1)
@@ -6600,22 +6621,13 @@ static void scnDirCacheDrop(ScnDirCache *c) {
     c->stamps = NULL;
     c->count  = 0;
     c->stampCount = 0;
+    c->stampTicks = 0;
     c->valid  = false;
     c->dir[0] = '\0';
 }
 
-/* One scenario file's modify time and size, which is what an edit in place
-   moves when the directory's own time does not. */
-typedef struct ScnDirStamp {
-    char     file[SCN_DIR_FILE_LEN];
-    SDL_Time modified;
-    Uint64   size;
-} ScnDirStamp;
-
-/* More scenario files than this in one directory and it is not kept. */
-#define SCN_DIR_STAMPS_MAX 256
-
-/* Does name end with ext, ignoring case? Defined with the upload checks. */
+/* Does name end with ext, ignoring case? Defined with the script readers,
+   after scnPackagedScript. */
 static bool scnHasExt(const char *name, const char *ext);
 
 static int scnDirStampCmp(const void *a, const void *b) {
@@ -6634,6 +6646,7 @@ static bool scnDirStampsRead(const char *dir, ScnDirStamp **outStamps,
     char       **files;
     ScnDirStamp *stamps;
     int          fileCount = 0;
+    int          cap;
     int          n         = 0;
     int          i;
     bool         ok        = true;
@@ -6644,8 +6657,11 @@ static bool scnDirStampsRead(const char *dir, ScnDirStamp **outStamps,
     if (files == NULL) {
         return false;
     }
-    stamps = (ScnDirStamp *)malloc(
-        (size_t)(fileCount > 0 ? fileCount : 1) * sizeof(*stamps));
+    /* No more than the cap is ever filled: one file past it and the walk
+       gives up. */
+    cap = fileCount < SCN_DIR_STAMPS_MAX ? fileCount : SCN_DIR_STAMPS_MAX;
+    stamps = (ScnDirStamp *)malloc((size_t)(cap > 0 ? cap : 1) *
+                                   sizeof(*stamps));
     if (stamps == NULL) {
         SDL_free(files);
         return false;
@@ -6662,13 +6678,14 @@ static bool scnDirStampsRead(const char *dir, ScnDirStamp **outStamps,
              !scnHasExt(name, SCN_SCENARIO_SCRIPT_EXT))) {
             continue;
         }
-        if (n >= SCN_DIR_STAMPS_MAX) {
-            ok = false;
-            break;
-        }
         snprintf(path, sizeof(path), "%s/%s", dir, name);
         if (!SDL_GetPathInfo(path, &info) || info.type != SDL_PATHTYPE_FILE) {
             continue;
+        }
+        /* After the file check, so a directory named x.lua does not count. */
+        if (n >= cap) {
+            ok = false;
+            break;
         }
         /* Zeroed first so the bytes past the name's end compare equal in
            scnDirCacheFresh's memcmp. */
@@ -6704,6 +6721,32 @@ static bool scnDirCacheFresh(const ScnDirCache *c, const char *dir,
                    (size_t)stampCount * sizeof(stamps[0])) == 0);
 }
 
+/* Is the slot fresh without a new walk: its path, its modify time and this
+   process's change count match, and its stamps were walked less than
+   SCN_DIR_STAMPS_REUSE_MS before now? Called with the lock held. */
+static bool scnDirCacheRecent(const ScnDirCache *c, const char *dir,
+                              SDL_Time modified, uint32_t gen, Uint64 now) {
+    return c->valid && c->modified == modified && c->gen == gen &&
+           strcmp(c->dir, dir) == 0 &&
+           now - c->stampTicks < SCN_DIR_STAMPS_REUSE_MS;
+}
+
+/* The slot's rows, and its details when details is not NULL, into the
+   caller's arrays; answers how many. Called with the lock held, on a slot
+   found fresh whose count fits the caller's arrays. */
+static int scnDirCacheCopyRows(const ScnDirCache *c, ScnDirEntry *out,
+                               ScnDirDetails *details) {
+    int n = c->count;
+
+    if (n > 0) {
+        memcpy(out, c->rows, (size_t)n * sizeof(out[0]));
+        if (details != NULL) {
+            memcpy(details, c->details, (size_t)n * sizeof(details[0]));
+        }
+    }
+    return n;
+}
+
 /* Which slot this directory is kept in: its own if it has one, otherwise an
    empty slot, otherwise slot 0. Called with the lock held. */
 static ScnDirCache *scnDirCacheSlot(const char *dir) {
@@ -6731,23 +6774,39 @@ static int scnDirListCached(const char *dir, ScnDirEntry *out,
     SDL_PathInfo   info;
     ScnDirCache   *c;
     ScnDirDetails *read;
-    ScnDirStamp   *stamps = NULL;
+    ScnDirStamp   *stamps     = NULL;
     int            stampCount = 0;
     int            n;
+    Uint64         now;
     /* Taken before the read for the reason the modify time is: a change this
        process makes while the read runs leaves the count newer than this, so
        the next call reads again. */
     uint32_t       gen = serverSimScriptDirsGen();
 
     /* Nothing to key a cache on, or nothing worth keying it to: the read still
-       answers, including the refusals it makes for itself. The file stamps
-       are taken here, before the lock and before the read, for the reason
-       the directory's time is. */
+       answers, including the refusals it makes for itself. */
     if (scnDirCacheLock.m == NULL || dir == NULL || dir[0] == '\0' ||
         out == NULL || max <= 0 || strlen(dir) >= sizeof(scnDirCache[0].dir) ||
         !SDL_GetPathInfo(dir, &info) ||
-        info.type != SDL_PATHTYPE_DIRECTORY ||
-        !scnDirStampsRead(dir, &stamps, &stampCount)) {
+        info.type != SDL_PATHTYPE_DIRECTORY) {
+        return scnDirListDetails(dir, out, details, max);
+    }
+
+    /* Walked a moment ago and nothing since: answered without a walk. */
+    now = SDL_GetTicks();
+    scnLockEnter(&scnDirCacheLock);
+    c = scnDirCacheSlot(dir);
+    if (c->count <= max &&
+        scnDirCacheRecent(c, dir, info.modify_time, gen, now)) {
+        n = scnDirCacheCopyRows(c, out, details);
+        scnLockLeave(&scnDirCacheLock);
+        return n;
+    }
+    scnLockLeave(&scnDirCacheLock);
+
+    /* The file stamps are taken here, before the lock and before the read,
+       for the reason the directory's time is. */
+    if (!scnDirStampsRead(dir, &stamps, &stampCount)) {
         return scnDirListDetails(dir, out, details, max);
     }
 
@@ -6755,13 +6814,8 @@ static int scnDirListCached(const char *dir, ScnDirEntry *out,
     c = scnDirCacheSlot(dir);
     if (c->count <= max &&
         scnDirCacheFresh(c, dir, info.modify_time, gen, stamps, stampCount)) {
-        n = c->count;
-        if (n > 0) {
-            memcpy(out, c->rows, (size_t)n * sizeof(out[0]));
-            if (details != NULL) {
-                memcpy(details, c->details, (size_t)n * sizeof(details[0]));
-            }
-        }
+        c->stampTicks = now;
+        n = scnDirCacheCopyRows(c, out, details);
         scnLockLeave(&scnDirCacheLock);
         free(stamps);
         return n;
@@ -6795,15 +6849,16 @@ static int scnDirListCached(const char *dir, ScnDirEntry *out,
                file that landed while the read was running leaves the directory
                newer than this, so the next call reads again rather than
                keeping an answer that missed it. */
-            c->modified = info.modify_time;
-            c->gen      = gen;
-            c->count    = n;
+            c->modified   = info.modify_time;
+            c->gen        = gen;
+            c->count      = n;
             /* The slot takes the stamps, taken before the read for the
                same reason as the time above. */
             c->stamps     = stamps;
             c->stampCount = stampCount;
+            c->stampTicks = now;
             stamps        = NULL;
-            c->valid    = true;
+            c->valid      = true;
         }
     }
     scnLockLeave(&scnDirCacheLock);
@@ -7132,9 +7187,10 @@ typedef enum {
    and nothing else. The same tests scnDirListCached makes before it answers
    from the cache: the lock exists, the directory is still a directory, and
    its time, this process's change count and every scenario file's modify
-   time and size are the ones the kept read was made at. Anything else
-   answers SCN_DIR_ONE_UNKNOWN and the caller reads the directory through
-   scnDirListCached, which also refills the cache.
+   time and size are the ones the kept read was made at, the files' stamps
+   being walked again only once the last walk is SCN_DIR_STAMPS_REUSE_MS
+   old. Anything else answers SCN_DIR_ONE_UNKNOWN and the caller reads the
+   directory through scnDirListCached, which also refills the cache.
 
    On SCN_DIR_ONE_FOUND, *got is the length copied into out, or -1 when the
    details do not fit in cap.
@@ -7153,39 +7209,65 @@ static int scnDirRecordCopy(const ScnDirDetails *d, bool settings,
     return (int)len;
 }
 
+/* The file's record in a slot found fresh: FOUND with *got set as
+   scnDirRecordCopy answers, or ABSENT. Called with the lock held. */
+static ScnDirOne scnDirCacheFind(const ScnDirCache *c, const char *file,
+                                 bool settings, uint8_t *out, size_t cap,
+                                 int *got) {
+    int i;
+
+    for (i = 0; i < c->count; i++) {
+        if (strcmp(c->details[i].file, file) == 0) {
+            *got = scnDirRecordCopy(&c->details[i], settings, out, cap);
+            return SCN_DIR_ONE_FOUND;
+        }
+    }
+    return SCN_DIR_ONE_ABSENT;
+}
+
 static ScnDirOne scnDirDetailsOneCached(const char *dir, const char *file,
                                         int max, bool settings, uint8_t *out,
                                         size_t cap, int *got) {
     SDL_PathInfo info;
     ScnDirCache *c;
     ScnDirOne    result = SCN_DIR_ONE_UNKNOWN;
-    ScnDirStamp *stamps = NULL;
+    ScnDirStamp *stamps     = NULL;
     int          stampCount = 0;
-    int          i;
-    uint32_t     gen = serverSimScriptDirsGen();
+    uint32_t     gen        = serverSimScriptDirsGen();
+    Uint64       now;
 
     *got = -1;
     if (scnDirCacheLock.m == NULL || dir == NULL || dir[0] == '\0' ||
         strlen(dir) >= sizeof(scnDirCache[0].dir) ||
         !SDL_GetPathInfo(dir, &info) ||
-        info.type != SDL_PATHTYPE_DIRECTORY ||
-        !scnDirStampsRead(dir, &stamps, &stampCount)) {
+        info.type != SDL_PATHTYPE_DIRECTORY) {
         return SCN_DIR_ONE_UNKNOWN;
     }
 
+    /* Walked a moment ago and nothing since: answered without a walk, which
+       is what keeps a burst of details asks from walking every directory
+       for each one. */
+    now = SDL_GetTicks();
+    scnLockEnter(&scnDirCacheLock);
+    c = scnDirCacheSlot(dir);
+    if (c->count <= max &&
+        scnDirCacheRecent(c, dir, info.modify_time, gen, now)) {
+        result = scnDirCacheFind(c, file, settings, out, cap, got);
+    }
+    scnLockLeave(&scnDirCacheLock);
+    if (result != SCN_DIR_ONE_UNKNOWN) {
+        return result;
+    }
+
+    if (!scnDirStampsRead(dir, &stamps, &stampCount)) {
+        return SCN_DIR_ONE_UNKNOWN;
+    }
     scnLockEnter(&scnDirCacheLock);
     c = scnDirCacheSlot(dir);
     if (c->count <= max &&
         scnDirCacheFresh(c, dir, info.modify_time, gen, stamps, stampCount)) {
-        result = SCN_DIR_ONE_ABSENT;
-        for (i = 0; i < c->count; i++) {
-            if (strcmp(c->details[i].file, file) != 0) {
-                continue;
-            }
-            *got   = scnDirRecordCopy(&c->details[i], settings, out, cap);
-            result = SCN_DIR_ONE_FOUND;
-            break;
-        }
+        c->stampTicks = now;
+        result = scnDirCacheFind(c, file, settings, out, cap, got);
     }
     scnLockLeave(&scnDirCacheLock);
     free(stamps);
