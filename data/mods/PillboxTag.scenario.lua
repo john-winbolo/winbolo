@@ -69,6 +69,8 @@ local BOOST_MULT          = 2.0  -- a new holder's speed, times their carry spee
 local BOOST_SECONDS       = 2    -- how long the full boost lasts
 local BOOST_DECAY_SECONDS = 3    -- how long it then takes to fade back to 1
 local INVULN_SECONDS      = 2    -- how long a new holder takes no damage
+local DEEP_WATER_SECONDS  = 10   -- how long the holder may carry the prize
+                                 -- on deep sea before their tank is killed
 
 local MINE_EVERY        = 30    -- seconds between a tank's mines
 local BASE_DOWN_SECONDS = 30    -- how long a used base stays off the map
@@ -159,6 +161,10 @@ local invuln_to   = 0           -- the game.tick() that seat is spared until
 local last_holder = nil         -- the seat that took the prize last; kept
                                 -- when the prize drops, so a player who takes
                                 -- back their own prize is not a new hand
+local wet_seat    = nil         -- the holder whose deep sea clock runs, or nil
+local wet_from    = 0           -- the game.tick() that clock started on
+local warned      = nil         -- the seat with the deep sea warning on
+                                -- screen, or nil
 
 local function whole(n)
   return math.floor(n + 0.5)
@@ -189,6 +195,7 @@ local function read_settings()
   BOOST_SECONDS       = game.setting("boost_seconds")
   BOOST_DECAY_SECONDS = game.setting("boost_decay_seconds")
   INVULN_SECONDS      = game.setting("invuln_seconds")
+  DEEP_WATER_SECONDS  = game.setting("deep_water_seconds")
   work_out_shares()
 end
 
@@ -310,6 +317,65 @@ local function leaderboard()
   return rows
 end
 
+-- A seat's name for a line in chat. A dead tank has no table, so the lobby's
+-- name for the seat is next.
+local function name_of(p)
+  local t = game.tank(p)
+  local slot = game.lobby_slot(p)
+  return (t ~= nil and t.name ~= "" and t.name) or
+         (slot ~= nil and slot.name ~= "" and slot.name) or "Somebody"
+end
+
+-- Takes the deep sea count off: the clock starts again the next time the
+-- holder takes the prize onto deep sea, and the warning comes off the screen
+-- it was on.
+local function dry_off()
+  wet_seat = nil
+  if warned ~= nil then
+    game.announce("", 0, warned)
+    warned = nil
+  end
+end
+
+-- The deep sea clock. It only counts the holder, and only while the prize is
+-- in their tank (not built, and not in their man's hands) and the tank is
+-- alive and on a deep sea square, afloat or not. Nobody can drive out to a
+-- holder there, so the holder has DEEP_WATER_SECONDS to come back to shore.
+-- Their screen shows the seconds left, to a tenth, and is written again on
+-- every refresh, so the count goes down as they watch. When it runs out their
+-- tank is killed. The kill drops the prize the way sinking does, so
+-- on_pill_placed takes it off them and rescue_from_the_sea walks it to land.
+-- A kill is not a hit, so damage_scale does not see it, and a new holder's
+-- cover does not stop it.
+local function watch_the_water(what, carrier)
+  local t = nil
+  if what == "IN TANK" and carrier ~= nil and carrier == holder then
+    t = game.tank(carrier)
+  end
+  if t == nil or t.dead or
+     game.map_tile(t.mx, t.my) ~= game.TERRAIN.deep_sea then
+    if wet_seat ~= nil or warned ~= nil then
+      dry_off()
+    end
+    return
+  end
+  local now = game.tick()
+  if wet_seat ~= carrier then
+    dry_off()
+    wet_seat, wet_from = carrier, now
+  end
+  local left = DEEP_WATER_SECONDS - (now - wet_from) / 100
+  if left <= 0 then
+    dry_off()
+    game.message(name_of(carrier) .. " stayed in deep water too long.")
+    game.kill_tank(carrier)
+  else
+    warned = carrier
+    game.announce(string.format("Deep water! You die in %.1f s", left), 1,
+                  carrier)
+  end
+end
+
 -- One player's compass. The needle is the vector from that player's tank to
 -- the prize, normalised to the rose's radius, so no angle is ever worked out
 -- and nothing here needs a two-argument arctangent — which LuaJIT and PUC-Lua
@@ -412,9 +478,9 @@ local function board_key(rows)
   return table.concat(parts, ",")
 end
 
--- Five times a second, one panel each. Every player's is different, and the
--- panel's own rule is one update per audience per tick, so sixteen of them in
--- the one call is fine. The scores only change once a second, so the board
+-- Five times a second: the deep sea clock, and one panel each. Every player's
+-- panel is different, and the panel's own rule is one update per audience per
+-- tick, so sixteen of them in the one call is fine. The scores only change once a second, so the board
 -- each_second built is the one used here, and a seat whose compass looks the
 -- same as last time is not sent it again.
 local function refresh()
@@ -422,6 +488,7 @@ local function refresh()
     return
   end
   local tx, ty, what, colour, carrier = prize()
+  watch_the_water(what, carrier)
   local rows = board
   local rows_key = board_key(rows)
   for p = 0, game.max_tanks() - 1 do
@@ -1020,11 +1087,7 @@ finish = function()
   if best == nil or best.score == 0 then
     line = "Nobody held the pillbox."
   else
-    -- A dead tank has no table, so the lobby's name for the seat is next.
-    local t = game.tank(best.slot)
-    local slot = game.lobby_slot(best.slot)
-    local who = (t ~= nil and t.name ~= "" and t.name) or
-                (slot ~= nil and slot.name ~= "" and slot.name) or "Somebody"
+    local who = name_of(best.slot)
     local tied = 0
     for _, row in ipairs(rows) do
       if row.score == best.score then
@@ -1480,6 +1543,13 @@ function on_player_leave(p, scripted)
   if last_holder == p then
     last_holder = nil
   end
+  -- The deep sea clock and its warning go with the seat.
+  if wet_seat == p then
+    wet_seat = nil
+  end
+  if warned == p then
+    warned = nil
+  end
   if holder == p then
     holder = nil
     boost_from = nil
@@ -1612,6 +1682,9 @@ scenario = {
       default = BOOST_DECAY_SECONDS },
     { id = "invuln_seconds", label = "New holder no-damage time (seconds)",
       type = "int", min = 0, max = 10, step = 1, default = INVULN_SECONDS },
+    { id = "deep_water_seconds", label = "Holder deep water time (seconds)",
+      type = "int", min = 3, max = 60, step = 1,
+      default = DEEP_WATER_SECONDS },
   },
 
   -- What each callback below does, in a line a player reads: the lobby's
@@ -1619,7 +1692,7 @@ scenario = {
   callbacks = {
     on_setup = "One pillbox is the prize, the rest go; bases start " ..
                "neutral.",
-    on_start = "Starts the clock and the compass.",
+    on_start = "Clock, compass, holder's sea timer.",
     on_end = "Logs how long the round ran.",
     on_tick = "Holder speed by terrain, plus boost.",
     on_player_join = "A joiner hunts, on 0 points.",
