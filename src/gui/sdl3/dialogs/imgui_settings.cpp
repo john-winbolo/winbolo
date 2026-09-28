@@ -2472,8 +2472,11 @@ extern "C" void imguiSettingsShow(void) {
                      ImGuiWindowFlags_NoScrollbar |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-        /* Centered overlay panel */
-        float panelW = 680.0f * s, panelH = 580.0f * s;
+        /* Centered overlay panel, 80% of the window wide so the tab names
+           fit whole: never narrower than the 680px it used to be, and no
+           wider than 900px, past which the settings only gain empty space. */
+        float panelW = SDL_clamp((float)winW * 0.8f, 680.0f * s, 900.0f * s);
+        float panelH = 580.0f * s;
         if (panelW > (float)winW * 0.95f) panelW = (float)winW * 0.95f;
         if (panelH > (float)winH * 0.95f) panelH = (float)winH * 0.95f;
 

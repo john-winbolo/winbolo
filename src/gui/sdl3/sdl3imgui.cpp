@@ -5385,9 +5385,14 @@ static void renderSettingsPanel(ClientSim *cs) {
     } else {
         /* Scale the panel with the UI scale — the font and style sizes are
            bumped on Deck (1.5x) and high-DPI desktop, so a fixed 520px window
-           clips the wider translated labels and combos. */
-        ImGui::SetNextWindowSize(ImVec2(680 * s_uiScale, 580 * s_uiScale),
-                                 ImGuiCond_FirstUseEver);
+           clips the wider translated labels and combos.  It opens 80% of the
+           screen wide, between 680px and 900px, as the pre-game panel does,
+           so the tab names fit. */
+        ImGui::SetNextWindowSize(
+            ImVec2(SDL_clamp(ImGui::GetIO().DisplaySize.x * 0.8f,
+                             680 * s_uiScale, 900 * s_uiScale),
+                   580 * s_uiScale),
+            ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSizeConstraints(ImVec2(280 * s_uiScale, 200 * s_uiScale),
                                             ImVec2(FLT_MAX, FLT_MAX));
     }

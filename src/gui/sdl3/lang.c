@@ -2633,7 +2633,7 @@ static const LangEntry langTable[] = {
     {2665, "This server cannot change script settings, so the defaults apply."},
     {2666, "{number} (default)"},
     {2667, "Workshop item #{string1}, published by {string2}"},
-    {2668, "Steam Workshop"},
+    {2668, "Workshop"},
     {2669, "Subscribed"},
     {2670, "Publish"},
     {2671, "Installed"},
