@@ -6516,17 +6516,28 @@ void scenarioHostRegisterMapScripted(ServerSim *sim) {
  * request.
  *
  * Invalidation: the cache answers only when the directory is the same path as
- * last time and SDL_GetPathInfo reports the same modify time on it. A file
- * added to the directory, removed from it or renamed in it moves that time, so
- * the next read is a fresh one. A file edited in place does not — the
- * directory itself is untouched — so a scenario whose text changed keeps the
- * row it had until something else in the directory moves or the server is
- * restarted. That is the bargain the attach already makes with a script: read
- * once, and read again when something asks.
+ * last time, SDL_GetPathInfo reports the same modify time on it, and every
+ * scenario file in it (each .scenario and .lua the read would open) has the
+ * same modify time and size it had. A file added to the directory, removed
+ * from it or renamed in it moves the directory's time, so the next read is a
+ * fresh one. A file edited in place leaves the directory's time alone but
+ * moves its own, so a scenario whose text changed is read again as well — a
+ * new setting or callback reaches the lobby's details dialog without a server
+ * restart. The files are stamped rather than only the rows, because a file
+ * whose manifest did not parse has no row, and fixing it in place has to be
+ * seen too.
  *
- * The stamp is as fine as the kernel writes it, which is a few milliseconds on
- * an ordinary Linux filesystem rather than a nanosecond, so a change inside the
- * same tick as the read that kept the listing leaves the stamp alone. The
+ * Stamping the files costs one directory walk and one SDL_GetPathInfo per
+ * scenario file on every call, hit or not. A mods directory holds a handful
+ * of files, so that is a few stat calls against a VM boot per file, and it is
+ * made before the lock is taken, so a slow disk holds up only its own caller.
+ * A directory with more scenario files than SCN_DIR_STAMPS_MAX is read every
+ * time rather than kept.
+ *
+ * The stamps are as fine as the kernel writes them, which is a few
+ * milliseconds on an ordinary Linux filesystem rather than a nanosecond, so a
+ * change inside the same tick as the read that kept the listing leaves the
+ * time alone (a file's size still moves if its length changed). The
  * server now changes these directories itself — an upload put in place, the
  * session directory emptied — and lists them straight after, so each slot also
  * keeps the change count serverSimScriptDirsGen answered when it was read, and
@@ -6568,6 +6579,10 @@ typedef struct {
        and keeping them is what spares that ask a VM boot per file. */
     ScnDirDetails *details;
     int          count;
+    /* Every scenario file's stamp as it stood before the read, sorted by
+       name (scnDirStampsRead). */
+    struct ScnDirStamp *stamps;
+    int          stampCount;
 } ScnDirCache;
 
 #define SCN_DIR_CACHE_SLOTS (SCN_MOD_DIRS_MAX + 1)
@@ -6579,11 +6594,114 @@ static ScnDirCache scnDirCache[SCN_DIR_CACHE_SLOTS];
 static void scnDirCacheDrop(ScnDirCache *c) {
     free(c->rows);
     free(c->details);
+    free(c->stamps);
     c->rows   = NULL;
     c->details = NULL;
+    c->stamps = NULL;
     c->count  = 0;
+    c->stampCount = 0;
     c->valid  = false;
     c->dir[0] = '\0';
+}
+
+/* One scenario file's modify time and size, which is what an edit in place
+   moves when the directory's own time does not. */
+typedef struct ScnDirStamp {
+    char     file[SCN_DIR_FILE_LEN];
+    SDL_Time modified;
+    Uint64   size;
+} ScnDirStamp;
+
+/* More scenario files than this in one directory and it is not kept. */
+#define SCN_DIR_STAMPS_MAX 256
+
+/* Does name end with ext, ignoring case? Defined with the upload checks. */
+static bool scnHasExt(const char *name, const char *ext);
+
+static int scnDirStampCmp(const void *a, const void *b) {
+    return strcmp(((const ScnDirStamp *)a)->file,
+                  ((const ScnDirStamp *)b)->file);
+}
+
+/* The stamp of every file in dir that scnDirListDetails would open, sorted
+   by name, into an array the caller frees. The same names it takes: a plain
+   file in this directory, not hidden, short enough for a row, ending in
+   .scenario or .lua. False when the directory cannot be walked, holds more
+   than SCN_DIR_STAMPS_MAX of them, or the array cannot be had; the caller
+   then reads without the cache. Called without the lock. */
+static bool scnDirStampsRead(const char *dir, ScnDirStamp **outStamps,
+                             int *outCount) {
+    char       **files;
+    ScnDirStamp *stamps;
+    int          fileCount = 0;
+    int          n         = 0;
+    int          i;
+    bool         ok        = true;
+
+    *outStamps = NULL;
+    *outCount  = 0;
+    files = SDL_GlobDirectory(dir, "*", 0, &fileCount);
+    if (files == NULL) {
+        return false;
+    }
+    stamps = (ScnDirStamp *)malloc(
+        (size_t)(fileCount > 0 ? fileCount : 1) * sizeof(*stamps));
+    if (stamps == NULL) {
+        SDL_free(files);
+        return false;
+    }
+    for (i = 0; i < fileCount; i++) {
+        const char  *name = files[i];
+        char         path[1024];
+        SDL_PathInfo info;
+
+        if (name == NULL || name[0] == '\0' || name[0] == '.' ||
+            strchr(name, '/') != NULL || strchr(name, '\\') != NULL ||
+            strlen(name) >= SCN_DIR_FILE_LEN ||
+            (!scnHasExt(name, SCN_SCENARIO_PACKAGE_EXT) &&
+             !scnHasExt(name, SCN_SCENARIO_SCRIPT_EXT))) {
+            continue;
+        }
+        if (n >= SCN_DIR_STAMPS_MAX) {
+            ok = false;
+            break;
+        }
+        snprintf(path, sizeof(path), "%s/%s", dir, name);
+        if (!SDL_GetPathInfo(path, &info) || info.type != SDL_PATHTYPE_FILE) {
+            continue;
+        }
+        /* Zeroed first so the bytes past the name's end compare equal in
+           scnDirCacheFresh's memcmp. */
+        memset(&stamps[n], 0, sizeof(stamps[n]));
+        snprintf(stamps[n].file, sizeof(stamps[n].file), "%s", name);
+        stamps[n].modified = info.modify_time;
+        stamps[n].size     = info.size;
+        n++;
+    }
+    SDL_free(files);
+    if (!ok) {
+        free(stamps);
+        return false;
+    }
+    if (n > 1) {
+        qsort(stamps, (size_t)n, sizeof(stamps[0]), scnDirStampCmp);
+    }
+    *outStamps = stamps;
+    *outCount  = n;
+    return true;
+}
+
+/* Does the slot hold what the directory holds now: its path, its modify
+   time, this process's change count, and every file's stamp? Called with
+   the lock held. */
+static bool scnDirCacheFresh(const ScnDirCache *c, const char *dir,
+                             SDL_Time modified, uint32_t gen,
+                             const ScnDirStamp *stamps, int stampCount) {
+    return c->valid && c->modified == modified && c->gen == gen &&
+           strcmp(c->dir, dir) == 0 && c->stampCount == stampCount &&
+           (stampCount == 0 ||
+            memcmp(c->stamps, stamps,
+                   (size_t)stampCount * sizeof(stamps[0])) == 0);
 }
 
 /* Which slot this directory is kept in: its own if it has one, otherwise an
@@ -6613,6 +6731,8 @@ static int scnDirListCached(const char *dir, ScnDirEntry *out,
     SDL_PathInfo   info;
     ScnDirCache   *c;
     ScnDirDetails *read;
+    ScnDirStamp   *stamps = NULL;
+    int            stampCount = 0;
     int            n;
     /* Taken before the read for the reason the modify time is: a change this
        process makes while the read runs leaves the count newer than this, so
@@ -6620,18 +6740,21 @@ static int scnDirListCached(const char *dir, ScnDirEntry *out,
     uint32_t       gen = serverSimScriptDirsGen();
 
     /* Nothing to key a cache on, or nothing worth keying it to: the read still
-       answers, including the refusals it makes for itself. */
+       answers, including the refusals it makes for itself. The file stamps
+       are taken here, before the lock and before the read, for the reason
+       the directory's time is. */
     if (scnDirCacheLock.m == NULL || dir == NULL || dir[0] == '\0' ||
         out == NULL || max <= 0 || strlen(dir) >= sizeof(scnDirCache[0].dir) ||
         !SDL_GetPathInfo(dir, &info) ||
-        info.type != SDL_PATHTYPE_DIRECTORY) {
+        info.type != SDL_PATHTYPE_DIRECTORY ||
+        !scnDirStampsRead(dir, &stamps, &stampCount)) {
         return scnDirListDetails(dir, out, details, max);
     }
 
     scnLockEnter(&scnDirCacheLock);
     c = scnDirCacheSlot(dir);
-    if (c->valid && c->count <= max && c->modified == info.modify_time &&
-        c->gen == gen && strcmp(c->dir, dir) == 0) {
+    if (c->count <= max &&
+        scnDirCacheFresh(c, dir, info.modify_time, gen, stamps, stampCount)) {
         n = c->count;
         if (n > 0) {
             memcpy(out, c->rows, (size_t)n * sizeof(out[0]));
@@ -6640,6 +6763,7 @@ static int scnDirListCached(const char *dir, ScnDirEntry *out,
             }
         }
         scnLockLeave(&scnDirCacheLock);
+        free(stamps);
         return n;
     }
 
@@ -6674,10 +6798,16 @@ static int scnDirListCached(const char *dir, ScnDirEntry *out,
             c->modified = info.modify_time;
             c->gen      = gen;
             c->count    = n;
+            /* The slot takes the stamps, taken before the read for the
+               same reason as the time above. */
+            c->stamps     = stamps;
+            c->stampCount = stampCount;
+            stamps        = NULL;
             c->valid    = true;
         }
     }
     scnLockLeave(&scnDirCacheLock);
+    free(stamps);
     if (read != details) {
         free(read);
     }
@@ -7001,9 +7131,10 @@ typedef enum {
 /* One file's details out of the kept read of dir, copying that one record
    and nothing else. The same tests scnDirListCached makes before it answers
    from the cache: the lock exists, the directory is still a directory, and
-   its time and this process's change count are the ones the kept read was
-   made at. Anything else answers SCN_DIR_ONE_UNKNOWN and the caller reads
-   the directory through scnDirListCached, which also refills the cache.
+   its time, this process's change count and every scenario file's modify
+   time and size are the ones the kept read was made at. Anything else
+   answers SCN_DIR_ONE_UNKNOWN and the caller reads the directory through
+   scnDirListCached, which also refills the cache.
 
    On SCN_DIR_ONE_FOUND, *got is the length copied into out, or -1 when the
    details do not fit in cap.
@@ -7028,6 +7159,8 @@ static ScnDirOne scnDirDetailsOneCached(const char *dir, const char *file,
     SDL_PathInfo info;
     ScnDirCache *c;
     ScnDirOne    result = SCN_DIR_ONE_UNKNOWN;
+    ScnDirStamp *stamps = NULL;
+    int          stampCount = 0;
     int          i;
     uint32_t     gen = serverSimScriptDirsGen();
 
@@ -7035,14 +7168,15 @@ static ScnDirOne scnDirDetailsOneCached(const char *dir, const char *file,
     if (scnDirCacheLock.m == NULL || dir == NULL || dir[0] == '\0' ||
         strlen(dir) >= sizeof(scnDirCache[0].dir) ||
         !SDL_GetPathInfo(dir, &info) ||
-        info.type != SDL_PATHTYPE_DIRECTORY) {
+        info.type != SDL_PATHTYPE_DIRECTORY ||
+        !scnDirStampsRead(dir, &stamps, &stampCount)) {
         return SCN_DIR_ONE_UNKNOWN;
     }
 
     scnLockEnter(&scnDirCacheLock);
     c = scnDirCacheSlot(dir);
-    if (c->valid && c->count <= max && c->modified == info.modify_time &&
-        c->gen == gen && strcmp(c->dir, dir) == 0) {
+    if (c->count <= max &&
+        scnDirCacheFresh(c, dir, info.modify_time, gen, stamps, stampCount)) {
         result = SCN_DIR_ONE_ABSENT;
         for (i = 0; i < c->count; i++) {
             if (strcmp(c->details[i].file, file) != 0) {
@@ -7054,6 +7188,7 @@ static ScnDirOne scnDirDetailsOneCached(const char *dir, const char *file,
         }
     }
     scnLockLeave(&scnDirCacheLock);
+    free(stamps);
     return result;
 }
 
@@ -7265,8 +7400,6 @@ static ServerScriptReadResult scnDirReadCb(void *ctx, const char *dir,
 /* What an upload is written through before it takes its own name. The
    leading dot keeps it out of every listing while it is there. */
 #define SCN_UPLOAD_TEMP_PREFIX ".upload-"
-
-static bool scnHasExt(const char *name, const char *ext);
 
 /* One refusal: the code and its numbers for the sender, who says it in their
    own language, and the line to the operator with the file named. The line

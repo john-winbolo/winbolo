@@ -6371,6 +6371,7 @@ set(_unit_test_names
     scenario_dir_skips_junk
     scenario_dir_skips_subdirectory
     scenario_dir_list_cached
+    scenario_dir_list_cached_sees_edit
     scenario_dir_merges_shipped_mods
     scenario_dir_entry_roundtrip
     scenario_dir_chunk_not_in_flight

@@ -1942,6 +1942,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_dir_skips_junk",                         run_scenario_dir_skips_junk                         },
     { "scenario_dir_skips_subdirectory",                 run_scenario_dir_skips_subdirectory                 },
     { "scenario_dir_list_cached",                        run_scenario_dir_list_cached                        },
+    { "scenario_dir_list_cached_sees_edit",              run_scenario_dir_list_cached_sees_edit              },
     { "scenario_dir_merges_shipped_mods",                run_scenario_dir_merges_shipped_mods                },
     { "scenario_dir_entry_roundtrip",                    run_scenario_dir_entry_roundtrip                    },
     { "scenario_dir_chunk_not_in_flight",                run_scenario_dir_chunk_not_in_flight                },
