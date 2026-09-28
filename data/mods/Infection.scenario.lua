@@ -57,7 +57,8 @@ local HEAD_START      = 20    -- before the first one turns
 local WARNING_SECONDS = 3     -- what the first one is told, and nobody else
 local BEACON_SECONDS  = 90    -- the tail of the round the survivors are drawn in
 local HELP_EVERY      = 60    -- seconds with no infected kill before another turns
-local FEED_EVERY      = 2     -- seconds between an infected shell, and a point of armour
+local FEED_EVERY      = 2     -- seconds between points of armour for the infected
+local SHELL_EVERY     = 0.5   -- seconds between shells for the infected
 local AIM_REFRESH     = 8     -- seconds before a bot is told the same order again
 local CHANGE_AFTER    = 4     -- seconds a bot keeps an order before it is changed
 local SWITCH_MARGIN   = 5     -- squares nearer another survivor has to be before a
@@ -66,8 +67,12 @@ local VIEW_SQUARES    = 14    -- how far a brain sees a tank: half its 29-square
 local ATTACK_WITHIN   = 11    -- a chase becomes an attack order this close
 local GOTO_SLACK      = 5     -- squares a survivor may move before a far bot is
                               -- sent to where he is now
-local INFECTED_SHELLS = 8     -- what one comes back with
-local INFECTED_CARRY  = 12    -- and the most the trickle feeds it to
+
+-- What an infected tank comes back with, and the most the trickle feeds it
+-- to: half a full tank of shells.
+local function infected_shells()
+  return math.floor(game.rule("tank_full_shells") / 2)
+end
 
 -- What the first one to turn is handed, and nobody else. Percentages of the
 -- classic tank. Reload and dealt are 100, a gun as good as anybody's; taken
@@ -745,7 +750,7 @@ local function infect(p, by)
   -- is one the help turns where he stands.
   local t = game.tank(p)
   if t ~= nil and not t.dead then
-    game.set_stocks(p, { shells = INFECTED_SHELLS, mines = 0, trees = 0,
+    game.set_stocks(p, { shells = infected_shells(), mines = 0, trees = 0,
                          armour = game.rule("tank_full_armour") })
   end
   if by ~= nil and by ~= p and side[by] == INFECTED then
@@ -864,27 +869,33 @@ local function warn_zero()
 end
 
 -- The infected are not resupplied by anything on the map, so they are fed here:
--- a shell and a point of armour every two seconds, to twelve shells and a full
--- tank of armour. It is slow enough that a fight costs them something and
--- fast enough that one that lives keeps hunting.
+-- a point of armour every two seconds, to a full tank of armour. It is slow
+-- enough that a fight costs them something and fast enough that one that
+-- lives keeps hunting.
 local function feed_the_horde()
   local armour_cap = game.rule("tank_full_armour")
   for _, p in ipairs(roll(INFECTED)) do
     local t = game.tank(p)
-    if t ~= nil and not t.dead then
-      local add = nil
-      if t.shells < INFECTED_CARRY then
-        add = { shells = 1 }
-      end
-      if t.armour < armour_cap then
-        add = add or {}
-        add.armour = 1
-      end
-      if add ~= nil then
-        game.add_stocks(p, add)
-      end
+    if t ~= nil and not t.dead and t.armour < armour_cap then
+      game.add_stocks(p, { armour = 1 })
     end
   end
+end
+
+-- And a shell every half second, to half a full tank of shells. On its own
+-- timer rather than the second's, which is too slow for it.
+local function feed_shells()
+  if over then
+    return
+  end
+  local cap = infected_shells()
+  for _, p in ipairs(roll(INFECTED)) do
+    local t = game.tank(p)
+    if t ~= nil and not t.dead and t.shells < cap then
+      game.add_stocks(p, { shells = 1 })
+    end
+  end
+  game.timer(SHELL_EVERY, feed_shells)
 end
 
 local function light_the_beacon()
@@ -975,6 +986,7 @@ function on_start()
   game.timer(HEAD_START - WARNING_SECONDS, warn_zero)
   game.timer(HEAD_START, turn_zero)
   game.timer(1, each_second)
+  game.timer(SHELL_EVERY, feed_shells)
   panel()
 end
 
@@ -1136,13 +1148,13 @@ function allow_extra_teams()
   return false
 end
 
--- A survivor comes back with everything; an infected one with eight shells,
--- nothing to build with, and a full tank of armour. Asked on every respawn,
--- and by then the seat has changed sides, so a survivor's last death is what
--- fuels his first life on the other side.
+-- A survivor comes back with everything; an infected one with half a tank
+-- of shells, nothing to build with, and a full tank of armour. Asked on every
+-- respawn, and by then the seat has changed sides, so a survivor's last death
+-- is what fuels his first life on the other side.
 function spawn_loadout(p)
   if side[p] == INFECTED then
-    return { shells = INFECTED_SHELLS, mines = 0,
+    return { shells = infected_shells(), mines = 0,
              armour = game.rule("tank_full_armour"), trees = 0 }
   end
   return { shells = game.rule("tank_full_shells"),
@@ -1258,7 +1270,7 @@ scenario = {
     can_capture = "The infected cannot take bases or pillboxes.",
     on_tick = "A dead pillbox the infected drive over is removed.",
     on_choose_start = "The infected respawn near where they fell.",
-    spawn_loadout = "Infected respawn with 8 shells and full armour.",
+    spawn_loadout = "Infected respawn with half shells and full armour.",
     damage_scale = "No friendly fire.",
   },
 
