@@ -7,11 +7,21 @@
 -- one still standing.
 --
 -- The two sides are the same tank with different numbers on it. The infected
--- are half again as quick, turn and accelerate harder, and pay for it with
--- armour that gives way in three hits rather than eight and a gun that fires
--- two thirds as often. They come back three seconds after they die, which is
--- what makes the horde a horde: a survivor who wins a fight has bought a few
--- seconds, not a kill.
+-- are half again as quick and turn and accelerate harder, all round long.
+-- What they pay for it grows with the horde. The first one to turn pays
+-- nothing and is harder to kill than a survivor: a full tank of armour that
+-- gives way in ten hits rather than eight, and a gun as good as anybody's. By
+-- the time one survivor is left, every infected tank has half a tank of
+-- armour that gives way in three hits, and a gun that fires two thirds as
+-- often and hits a fifth softer. In between, each turn moves every infected
+-- tank, the first one included, a step of the way. They come back three
+-- seconds after they die, which is what makes the horde a horde: a survivor
+-- who wins a fight has bought a few seconds, not a kill.
+--
+-- The step is the infected past the first, over the players in the round
+-- less two, so it reaches the full penalty exactly when one survivor is left.
+-- A round of two is the first turned and the last survivor at once, and
+-- there the first turned's rule wins: no penalty.
 --
 -- The map belongs to the survivors. Only they capture a base or a pillbox,
 -- only they build, and only they carry mines. The infected have the ground and
@@ -65,14 +75,24 @@ local GOTO_SLACK      = 5     -- squares a survivor may move before a far bot is
                               -- sent to where he is now
 local INFECTED_SHELLS = 8     -- what one comes back with
 local INFECTED_CARRY  = 12    -- and the most the trickle feeds it to
-local INFECTED_ARMOUR = 50    -- percent of a tank's armour an infected one spawns with
 
--- Faster, weaker. Speed, accel and turn are percentages of the classic tank;
--- reload is a percentage of the time between shots, so 160 is a gun that fires
--- two thirds as often; dealt and taken price every blow either way, so 180
--- taken is armour that gives way in three hits where a survivor's takes eight.
-local INFECTED_MODS   = { speed = 145, accel = 150, turn = 125,
-                          reload = 160, dealt = 80, taken = 180 }
+-- Faster, at every size of horde. Percentages of the classic tank.
+local INFECTED_BONUS  = { speed = 145, accel = 150, turn = 125 }
+
+-- Weaker, by how big the horde has grown. The FIRST numbers are the horde of
+-- one, the FULL numbers the horde that has one survivor left to find, and in
+-- between each one is drawn a straight line from the first to the full by
+-- how far the round has gone from the one to the other (horde_fraction).
+-- Reload is a percentage of the time between shots, so 160 is a gun that
+-- fires two thirds as often. Dealt and taken price every blow either way: a
+-- full tank's armour gives way in eight hits, so 80 taken is ten and 180
+-- taken on half a tank of armour is three. Armour is the percentage of a
+-- full tank an infected one spawns with, and the most the trickle feeds it
+-- to.
+local INFECTED_TAKEN_FIRST = 80   -- the first one's armour bonus
+local INFECTED_FIRST  = { reload = 100, dealt = 100,
+                          taken = INFECTED_TAKEN_FIRST, armour = 100 }
+local INFECTED_FULL   = { reload = 160, dealt = 80, taken = 180, armour = 50 }
 
 -- What the last survivor is handed, on the grounds that being the last one is
 -- punishment enough. Speed, accel and turn are left out, which is the classic
@@ -116,6 +136,10 @@ local helper  = nil           -- the help's waiting timer, while there is one
 local ends_at = 0             -- the tick the round ends on, for the panel clock
 local zero    = nil           -- the first to turn, once one has been picked
 local alone   = nil           -- the last survivor, once there is one
+local horde_mods = nil        -- the modifiers every infected tank has now
+local horde_key  = nil        -- the same, as text, to see when they change
+local horde_armour = 100      -- the percent of a full tank the horde spawns
+                              -- with and is fed to, now
 
 -- A seat that is in the round: on the roster, and on the field rather than
 -- held. A seat held for a bot is on the roster and has no tank.
@@ -157,6 +181,62 @@ local function post_score(p)
     game.score(p, turned[p] or 0, SCORE_TURNED)
   elseif side[p] == SURVIVORS then
     game.score(p, lived[p] or 0, SCORE_ALIVE)
+  end
+end
+
+-- How far the horde has come, from 0 while it is one tank to 1 when one
+-- survivor is left: the infected past the first, over the most there can be
+-- past the first with one survivor still standing. Two in the round is the
+-- first turned and the last survivor at once, and the first turned's rule
+-- wins it: nothing to scale over, so no penalty.
+local function horde_fraction()
+  local infected = #roll(INFECTED)
+  local players  = infected + #roll(SURVIVORS)
+  if players <= 2 or infected <= 1 then
+    return 0
+  end
+  local f = (infected - 1) / (players - 2)
+  if f > 1 then
+    f = 1
+  end
+  return f
+end
+
+local function between(key, f)
+  local a, b = INFECTED_FIRST[key], INFECTED_FULL[key]
+  return math.floor(a + (b - a) * f + 0.5)
+end
+
+-- The percent of a full tank's armour the horde spawns with and is fed to,
+-- as armour points.
+local function horde_armour_points()
+  local armour = math.floor(game.rule("tank_full_armour") * horde_armour / 100
+                            + 0.5)
+  if armour < 1 then
+    armour = 1
+  end
+  return armour
+end
+
+-- Works the horde's numbers out again from the round as it stands, and hands
+-- every infected tank the new modifiers when they have changed. p, when
+-- given, is a seat that has just joined the horde and is handed them even if
+-- nobody else needs them. Called on every turn, join and leave, and every
+-- second, since a seat can leave the field without a leave event.
+local function retune_horde(p)
+  local f = horde_fraction()
+  local mods = { speed = INFECTED_BONUS.speed, accel = INFECTED_BONUS.accel,
+                 turn = INFECTED_BONUS.turn, reload = between("reload", f),
+                 dealt = between("dealt", f), taken = between("taken", f) }
+  horde_armour = between("armour", f)
+  local key = string.format("%d/%d/%d", mods.reload, mods.dealt, mods.taken)
+  if key ~= horde_key then
+    horde_key, horde_mods = key, mods
+    for _, q in ipairs(roll(INFECTED)) do
+      game.set_modifiers(q, mods)
+    end
+  elseif p ~= nil and side[p] == INFECTED then
+    game.set_modifiers(p, horde_mods)
   end
 end
 
@@ -714,16 +794,24 @@ local function infect(p, by)
   side[p] = INFECTED
   turned[p] = turned[p] or 0
   game.set_team(p, INFECTED)
-  game.set_modifiers(p, INFECTED_MODS)
+  -- One more in the horde is a heavier penalty on every one of them, so the
+  -- whole horde is retuned, and this seat is handed the numbers either way.
+  retune_horde(p)
   post_score(p)
   -- Everybody but the first turns by dying, and comes back on the loadout the
   -- policy below hands the horde. The first turns where he stands, with a
   -- survivor's forty shells and forty mines still in the tank, so his kit is
-  -- brought down to the horde's here rather than at his first death. The armour
-  -- he has is left alone: the modifiers have already made it worth half.
+  -- brought down to the horde's here rather than at his first death. His
+  -- armour is filled to what the horde spawns with, never taken down, so one
+  -- turned mid-fight starts his new life whole.
   local t = game.tank(p)
   if t ~= nil and not t.dead then
-    game.set_stocks(p, { shells = INFECTED_SHELLS, mines = 0, trees = 0 })
+    local armour = horde_armour_points()
+    if t.armour > armour then
+      armour = t.armour
+    end
+    game.set_stocks(p, { shells = INFECTED_SHELLS, mines = 0, trees = 0,
+                         armour = armour })
   end
   if by ~= nil and by ~= p and side[by] == INFECTED then
     turned[by] = (turned[by] or 0) + 1
@@ -841,15 +929,13 @@ local function warn_zero()
 end
 
 -- The infected are not resupplied by anything on the map, so they are fed here:
--- a shell and a point of armour every two seconds, to a fraction of what a tank
--- holds. It is slow enough that a fight costs them something and fast enough
--- that one that lives keeps hunting.
+-- a shell and a point of armour every two seconds, to what the horde spawns
+-- with: a full tank of armour while it is one tank, half of one by the last
+-- survivor. It is slow enough that a fight costs them something and fast
+-- enough that one that lives keeps hunting. Armour over the cap is not taken
+-- away when the horde grows; it is only no longer fed.
 local function feed_the_horde()
-  local armour_cap = math.floor(game.rule("tank_full_armour") * INFECTED_ARMOUR
-                                / 100)
-  if armour_cap < 1 then
-    armour_cap = 1
-  end
+  local armour_cap = horde_armour_points()
   for _, p in ipairs(roll(INFECTED)) do
     local t = game.tank(p)
     if t ~= nil and not t.dead then
@@ -884,11 +970,13 @@ local function each_second()
   elapsed = elapsed + 1
 
   -- A survivor can leave the field without a leave event, so the roll is
-  -- checked every second as well as on every join, leave and death.
+  -- checked every second as well as on every join, leave and death, and so
+  -- are the horde's numbers, which only go out when they have changed.
   check_the_end()
   if over then
     return
   end
+  retune_horde()
 
   for _, p in ipairs(roll(SURVIVORS)) do
     lived[p] = (lived[p] or 0) + 1
@@ -951,8 +1039,8 @@ function on_start()
                "Everyone he kills turns with him.")
   game.message("Survivors: the bases, the pillboxes and the mines are yours. " ..
                "Hold out for six minutes.")
-  game.message("Infected: quicker, weaker, and back three seconds after " ..
-               "you die. Kill them all.")
+  game.message("Infected: quicker, weaker as you grow, and back three " ..
+               "seconds after you die. Kill them all.")
   game.timer(HEAD_START - WARNING_SECONDS, warn_zero)
   game.timer(HEAD_START, turn_zero)
   game.timer(1, each_second)
@@ -985,14 +1073,27 @@ function on_tank_killed(victim, killer, cause, scripted)
 end
 
 -- The modifiers are kept across a respawn, so this is a net under the moment of
--- turning rather than the thing that does it.
+-- turning rather than the thing that does it. A modifier of 0 is the classic
+-- tank, the same as 100.
+local function same_pct(a, b)
+  if a == nil or a == 0 then a = 100 end
+  if b == nil or b == 0 then b = 100 end
+  return a == b
+end
+
 function on_tank_spawned(p, mx, my, respawn, scripted)
-  if over or side[p] ~= INFECTED then
+  if over or side[p] ~= INFECTED or horde_mods == nil then
     return
   end
   local t = game.tank(p)
-  if t ~= nil and t.mods.speed ~= INFECTED_MODS.speed then
-    game.set_modifiers(p, INFECTED_MODS)
+  if t == nil then
+    return
+  end
+  for k, v in pairs(horde_mods) do
+    if not same_pct(t.mods[k], v) then
+      game.set_modifiers(p, horde_mods)
+      return
+    end
   end
 end
 
@@ -1019,6 +1120,8 @@ function on_player_join(p, scripted)
     game.set_team(p, SURVIVORS)
     game.message("You are a survivor. One of you turns soon.", p)
   end
+  -- One more in the round moves the horde's numbers either way.
+  retune_horde(p)
   tune(p)
   point_one(p)
   -- A joiner is given the panels the round is holding, but not the scores, so
@@ -1051,6 +1154,7 @@ function on_player_leave(p, scripted)
   if not running or over then
     return
   end
+  retune_horde()
   if was == SURVIVORS then
     check_the_end()
   elseif was == INFECTED and #roll(INFECTED) == 0 then
@@ -1091,18 +1195,15 @@ function allow_extra_teams()
   return false
 end
 
--- A survivor comes back with everything; an infected one with half a tank of
--- armour, eight shells and nothing to build with. Asked on every respawn, and
--- by then the seat has changed sides, so a survivor's last death is what fuels
--- his first life on the other side.
+-- A survivor comes back with everything; an infected one with eight shells,
+-- nothing to build with, and a full tank of armour while the horde is one
+-- tank, down to half of one by the last survivor. Asked on every respawn,
+-- and by then the seat has changed sides, so a survivor's last death is what
+-- fuels his first life on the other side.
 function spawn_loadout(p)
   if side[p] == INFECTED then
-    local armour = math.floor(game.rule("tank_full_armour") * INFECTED_ARMOUR
-                              / 100)
-    if armour < 1 then
-      armour = 1
-    end
-    return { shells = INFECTED_SHELLS, mines = 0, armour = armour, trees = 0 }
+    return { shells = INFECTED_SHELLS, mines = 0,
+             armour = horde_armour_points(), trees = 0 }
   end
   return { shells = game.rule("tank_full_shells"),
            mines  = game.rule("tank_full_mines"),
@@ -1171,8 +1272,8 @@ end
 scenario = {
   name        = "Infection",
   description = "One of you turns, and everyone he kills turns with him. " ..
-                "The survivors hold the map; the horde is quicker, weaker, " ..
-                "and back in three seconds.",
+                "The survivors hold the map; the horde is quicker, weaker " ..
+                "as it grows, and back in three seconds.",
   api         = 1,
   kind        = "scenario",
   game        = "open",
@@ -1189,14 +1290,15 @@ scenario = {
     on_player_join = "A joiner after the first turn arrives infected.",
     on_player_leave = "Ends the round if no survivor is left.",
     on_team_changed = "Players cannot change side.",
-    on_tank_spawned = "Keeps the infected quick and weak.",
+    on_tank_spawned = "Keeps the infected quick; weaker as the horde grows.",
     on_tank_killed = "A survivor shot by the infected turns.",
     allow_extra_teams = "Only the two sides.",
     allow_base_win = "Holding every base does not win.",
     can_build = "The infected cannot build.",
     can_capture = "The infected cannot take bases or pillboxes.",
     on_choose_start = "The infected respawn near where they fell.",
-    spawn_loadout = "The infected respawn with half armour and 8 shells.",
+    spawn_loadout = "Infected respawn with 8 shells; full to half armour " ..
+                    "as the horde grows.",
     damage_scale = "No friendly fire.",
   },
 
