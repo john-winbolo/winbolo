@@ -26,7 +26,11 @@ typedef enum {
   pillEvil,
   pillTankGood,
   pillTankAllie,
-  pillTankEvil
+  pillTankEvil,
+  /* A slot inside the map's pill count whose pillbox a scenario took off
+     the map. The panel leaves its place empty, as it does for a slot past
+     the count. Last, so the values above keep their numbers. */
+  pillOffMap
 } pillAlliance;
 
 /* Determines the base type, good, netral or evil */
