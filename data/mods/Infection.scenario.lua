@@ -9,8 +9,10 @@
 -- The two sides are the same tank. The one exception is the first to turn,
 -- who is half again as quick, turns and accelerates harder, and is harder to
 -- kill than anybody: a full tank of armour that gives way in ten hits rather
--- than eight, and a gun as good as anybody's. He keeps it all round long and
--- on every life, and nobody else is given it, not even if he leaves. Every
+-- than eight, and a gun as good as anybody's. They keep it all round long and
+-- on every life, and nobody else is given it while they are in the horde, not
+-- even if they leave. The one time it moves is when the whole horde has left:
+-- the infection starts again, and the new first one to turn is given it. Every
 -- other infected tank is the classic tank with a full tank of armour, and
 -- the last survivor is the classic tank too. The infected come back three
 -- seconds after they die, which is what makes the horde a horde: a survivor
@@ -32,7 +34,7 @@
 -- survivor without a death.
 --
 -- Until the horde has made its first kill it is helped. Every minute that goes
--- by without one, another survivor picked at random turns where he stands, and
+-- by without one, another survivor picked at random turns where they stand, and
 -- everybody is told why. The first kill by an infected shell ends the help for
 -- the rest of the round. The last survivor is never taken this way: the round
 -- ends in a fight or on the clock, not on a draw.
@@ -52,7 +54,10 @@
 -- survivor who stays on deep sea for ten seconds turns where they are, the same
 -- as any other turn, even the last survivor. Their screen counts the seconds
 -- down, and leaving the deep sea starts the count again. The host can change
--- the ten in the lobby.
+-- the ten in the lobby. Every start is on deep sea, so a survivor who has just
+-- respawned is not counted until they first reach land, or until twenty
+-- seconds have gone by, whichever comes first: a death that was not an
+-- infected shell must not turn them by the back door.
 --
 -- Nothing here names a square, a pillbox or a base, so it plays over whatever
 -- map the host has committed.
@@ -67,6 +72,8 @@ local HELP_EVERY      = 60    -- seconds with no infected kill before another tu
 local FEED_EVERY      = 2     -- seconds between points of armour for the infected
 local SHELL_EVERY     = 0.5   -- seconds between shells for the infected
 local REFRESH_SECONDS = 0.2   -- how often the deep sea clock and compass run
+local SPAWN_GRACE     = 20    -- seconds a respawned survivor has to reach land
+                              -- before the deep sea clock counts them
 local TICKS_PER_SEC   = 100   -- game.tick() counts a hundred to the second
 
 -- The defaults of the two lobby settings (scenario.settings at the bottom of
@@ -84,7 +91,7 @@ end
 
 -- What the first one to turn is handed, and nobody else. Percentages of the
 -- classic tank. Reload and dealt are 100, a gun as good as anybody's; taken
--- prices every blow he takes, and a full tank's armour gives way in eight
+-- prices every blow they take, and a full tank's armour gives way in eight
 -- hits, so 80 is ten. The whole set is replaced rather than merged, so every
 -- field is written out, and an empty table is the classic tank.
 local ZERO_MODS = { speed = 145, accel = 150, turn = 125,
@@ -118,6 +125,8 @@ local fell    = {}            -- seat -> the square it last died on
 local handed  = {}            -- seat -> the word a bot's brain was last handed
 local wet     = {}            -- seat -> the tick a survivor went onto deep sea
 local warned  = {}            -- seat -> the deep sea warning is on its screen
+local fresh   = {}            -- seat -> the tick a respawned survivor's deep sea
+                              -- clock starts, if they have not reached land
 local drawn   = {}            -- seat -> what its panel was last sent, as a key
 local heir_of = {}            -- seat -> who got its pillboxes when it turned
 local roster  = nil           -- the roster panel, while it is sent seat by seat
@@ -168,8 +177,8 @@ local function roll(s)
   return out
 end
 
--- A survivor's score is the seconds he has lasted; an infected one's is how
--- many he has turned. The label changes with the side, so the scoreboard says
+-- A survivor's score is the seconds they have lasted; an infected one's is how
+-- many they have turned. The label changes with the side, so the scoreboard says
 -- which one a player is on without being told.
 local function post_score(p)
   if side[p] == INFECTED then
@@ -179,7 +188,7 @@ local function post_score(p)
   end
 end
 
--- Hands the first one to turn his numbers once he is infected, and takes them
+-- Hands the first one to turn their numbers once they are infected, and takes them
 -- off any seat that held them and is not the first one any more, which is the
 -- old first one when the infection starts again. The engine keeps a tank's
 -- modifiers across a respawn and only clears them when the tank is made new,
@@ -591,16 +600,16 @@ local function infect(p, by)
   side[p] = INFECTED
   turned[p] = turned[p] or 0
   game.set_team(p, INFECTED)
-  -- The first one to turn is handed his numbers here; anybody else stays the
-  -- classic tank he already is.
+  -- The first one to turn is handed their numbers here; anybody else stays
+  -- the classic tank they already are.
   crown_zero()
   post_score(p)
   -- Everybody but the first turns by dying, and comes back on the loadout the
-  -- policy below hands the horde. The first turns where he stands, with a
-  -- survivor's forty shells and forty mines still in the tank, so his kit is
-  -- brought down to the horde's here rather than at his first death, and his
-  -- armour is filled, so one turned mid-fight starts his new life whole. So
-  -- is one the help turns where he stands.
+  -- policy below hands the horde. The first turns where they stand, with a
+  -- survivor's forty shells and forty mines still in the tank, so their kit
+  -- is brought down to the horde's here rather than at their first death, and
+  -- their armour is filled, so one turned mid-fight starts their new life
+  -- whole. So is one the help or deep sea turns where they stand.
   local t = game.tank(p)
   if t ~= nil and not t.dead then
     game.set_stocks(p, { shells = infected_shells(), mines = 0, trees = 0,
@@ -611,6 +620,7 @@ local function infect(p, by)
     post_score(by)
   end
   dry_off(p)
+  fresh[p] = nil
   heir_of[p] = nil
   let_go_of(p)
   -- A destroyed tank puts its cargo down as it goes, which can land after this
@@ -621,10 +631,11 @@ local function infect(p, by)
     end
   end)
   game.announce(name_of(p) .. " has turned", 2)
-  -- And the man it happened to is told in his own words, after the line that
-  -- goes to everybody so that his replaces it on his own screen. Turning is the
-  -- one thing in the round that happens to a player rather than being done by
-  -- him, and reading his own name in the third person is not being told.
+  -- And the player it happened to is told in their own words, after the line
+  -- that goes to everybody so that theirs replaces it on their own screen.
+  -- Turning is the one thing in the round that happens to a player rather than
+  -- being done by them, and reading your own name in the third person is not
+  -- being told.
   game.announce("You have turned", 3, p)
   game.message("You are infected. Everyone you kill joins you.", p)
   game.sound("man_dying_near")
@@ -663,7 +674,7 @@ local function pick_zero()
   return from[math.random(#from)]
 end
 
--- The help. A survivor at random turns where he stands, as the first one did,
+-- The help. A survivor at random turns where they stand, as the first one did,
 -- and the clock goes round again, until an infected shell has made a kill. It
 -- stops for good at one survivor: a joiner after the first turn is infected, so
 -- the count never goes back up.
@@ -711,7 +722,7 @@ end
 -- The warning is private, and it is the only advantage the warning gives:
 -- three seconds to be standing somewhere useful when it happens. It says what
 -- is about to happen rather than hinting at it, because a player reading it has
--- no way of knowing he is the one it is about.
+-- no way of knowing they are the one it is about.
 local function warn_zero()
   if over or not running then
     return
@@ -767,10 +778,12 @@ end
 -- The deep sea clock. It only runs once the first one has turned: before that
 -- there is nobody to hide from, and a turn would start the infection before
 -- its time. It only counts survivors, and only while their tank is alive and
--- on a deep sea square. Their screen shows the seconds left, to a tenth, and
--- is written again on every pass, so the count goes down as they watch. When
--- it runs out they turn where they are, through infect like every other turn,
--- so their pillboxes are handed on the same way.
+-- on a deep sea square. A survivor who has just respawned on a start is not
+-- counted until they first reach land or SPAWN_GRACE runs out. Their screen
+-- shows the seconds left, to a tenth, and is written again on every pass, so
+-- the count goes down as they watch. When it runs out they turn where they
+-- are, through infect like every other turn, so their pillboxes are handed on
+-- the same way.
 local function watch_the_water(now)
   local sea = game.TERRAIN.deep_sea
   for p = 0, game.max_tanks() - 1 do
@@ -778,7 +791,12 @@ local function watch_the_water(now)
     if loose and side[p] == SURVIVORS and in_round(p) then
       t = game.tank(p)
     end
-    if t ~= nil and not t.dead and game.map_tile(t.mx, t.my) == sea then
+    local alive  = t ~= nil and not t.dead
+    local afloat = alive and game.map_tile(t.mx, t.my) == sea
+    if fresh[p] ~= nil and ((alive and not afloat) or now >= fresh[p]) then
+      fresh[p] = nil
+    end
+    if afloat and fresh[p] == nil then
       wet[p] = wet[p] or now
       local left = DEEP_WATER_SECONDS - (now - wet[p]) / TICKS_PER_SEC
       if left <= 0 then
@@ -888,9 +906,9 @@ function on_start()
   end
 
   -- Three lines, because a player who has not read the scenario has to be able
-  -- to play it from what the newswire tells him in the first ten seconds.
+  -- to play it from what the newswire tells them in the first ten seconds.
   game.message("Infection: one of you turns in ten seconds. " ..
-               "Everyone he kills turns with him.")
+               "Everyone they kill turns with them.")
   game.message("Survivors: the bases, the pillboxes and the mines are yours. " ..
                "Hold out for six minutes.")
   game.message("Infected: back three seconds after you die, and the first " ..
@@ -906,13 +924,13 @@ function on_start()
 end
 
 -- Only an infected tank's shell turns you. Every other death is a hazard, not
--- a recruiter: dying to one costs a survivor his position and his pills and
+-- a recruiter: dying to one costs a survivor their position and their pills and
 -- nothing else, and the horde does not get to count a kill its gun did not make.
 --
 -- That covers drowning and your own mine (the dying tank is named as its own
 -- killer), a pillbox (the sim fires every pillbox shell with no owner on it, so
 -- the killer is game.NEUTRAL), and any mine, even one an infected tank is named
--- for, because he laid it before he turned.
+-- for, because it was laid before that player turned.
 function on_tank_killed(victim, killer, cause, scripted)
   if over or not running then
     return
@@ -932,16 +950,26 @@ end
 
 -- The modifiers are kept across a respawn, so this is a net under the moment of
 -- turning rather than the thing that does it: the first one's numbers are
--- only handed him again if his tank has come back without them. A modifier of
--- 0 is the classic tank, the same as 100.
+-- only handed to them again if their tank has come back without them. A
+-- modifier of 0 is the classic tank, the same as 100.
 local function same_pct(a, b)
   if a == nil or a == 0 then a = 100 end
   if b == nil or b == 0 then b = 100 end
   return a == b
 end
 
+-- A survivor comes back on a start, and every start is on deep sea, so the
+-- deep sea clock leaves them alone until they reach land or SPAWN_GRACE runs
+-- out. The first one's numbers are checked here too.
 function on_tank_spawned(p, mx, my, respawn, scripted)
-  if over or p ~= boosted then
+  if over then
+    return
+  end
+  if side[p] == SURVIVORS then
+    dry_off(p)
+    fresh[p] = game.tick() + SPAWN_GRACE * TICKS_PER_SEC
+  end
+  if p ~= boosted then
     return
   end
   local t = game.tank(p)
@@ -1001,14 +1029,15 @@ function on_player_leave(p, scripted)
   -- last sent are only forgotten, so a joiner in the seat starts from nothing.
   wet[p]     = nil
   warned[p]  = nil
+  fresh[p]   = nil
   drawn[p]   = nil
   handed[p]  = nil
   if alone == p then
     alone = nil
   end
-  -- The first one's numbers leave with him and nobody inherits them. His tank
-  -- goes with the seat, and a joiner in it is handed a new one, so there is
-  -- nothing to clear.
+  -- The first one's numbers leave with them and nobody inherits them. Their
+  -- tank goes with the seat, and a joiner in it is handed a new one, so there
+  -- is nothing to clear.
   if zero == p then
     zero = nil
   end
@@ -1022,9 +1051,9 @@ function on_player_leave(p, scripted)
     check_the_end()
   elseif was == INFECTED and #roll(INFECTED) == 0 then
     -- The horde walked out. Rather than running the clock down with nothing
-    -- hunting, the infection starts again, and the old first one, if he is
+    -- hunting, the infection starts again, and the old first one, if they are
     -- still on a seat, goes back to the classic tank before a new one is
-    -- picked.
+    -- picked and given the first one's numbers.
     zero = nil
     crown_zero()
     turn_zero()
@@ -1064,7 +1093,7 @@ end
 -- A survivor comes back with everything; an infected one with half a tank
 -- of shells, nothing to build with, and a full tank of armour. Asked on every
 -- respawn, and by then the seat has changed sides, so a survivor's last death
--- is what fuels his first life on the other side.
+-- is what fuels their first life on the other side.
 function spawn_loadout(p)
   if side[p] == INFECTED then
     return { shells = infected_shells(), mines = 0,
@@ -1167,7 +1196,7 @@ end
 
 scenario = {
   name        = "Infection",
-  description = "One of you turns, and everyone he kills turns with him. " ..
+  description = "One of you turns, and everyone they kill turns with them. " ..
                 "The survivors hold the map; the horde is back in three " ..
                 "seconds, and the first to turn is quicker and tougher.",
   api         = 1,
@@ -1192,20 +1221,22 @@ scenario = {
   -- What each callback below does, in a line a player reads: the lobby's
   -- details dialog lists these under "What this scenario implements:".
   callbacks = {
-    on_start = "Puts everyone on the survivors; one turns after 10 s. " ..
-               "Runs the deep water clock and the compass.",
+    on_start = "All start as survivors; one turns after 10 s. Runs the " ..
+               "deep water clock and compass.",
     on_end = "Logs how long the round ran.",
-    on_player_join = "A joiner after the first turn arrives infected.",
-    on_player_leave = "Ends the round if no survivor is left.",
+    on_player_join = "A late joiner arrives infected.",
+    on_player_leave = "Ends the round with no survivors; restarts it " ..
+                      "with no horde.",
     on_team_changed = "Players cannot change side.",
-    on_tank_spawned = "Keeps the first infected quick and tough.",
+    on_tank_spawned = "Keeps the first infected strong; survivors get " ..
+                      "20 s to reach land.",
     on_tank_killed = "A survivor shot by the infected turns; their " ..
                      "pillboxes go to a survivor.",
     allow_extra_teams = "Only the two sides.",
     allow_base_win = "Holding every base does not win.",
     can_build = "The infected cannot build.",
     can_capture = "The infected cannot take bases or pillboxes.",
-    on_tick = "Bases and dead pillboxes the infected drive over are removed.",
+    on_tick = "Removes bases and dead pillboxes the infected drive over.",
     on_choose_start = "The infected respawn near where they fell.",
     spawn_loadout = "Infected respawn with half shells and full armour.",
     damage_scale = "No friendly fire.",
@@ -1224,7 +1255,7 @@ scenario = {
   rules = {
     -- Three seconds rather than five. Mostly the horde's number: a survivor
     -- only respawns as one after a death that was not an infected shell. It
-    -- is what decides how much a fight bought the man who won it.
+    -- is what decides how much a fight bought the player who won it.
     tank_death_ticks = 150,
 
     -- A base is the survivors' only resupply and they are usually standing on
