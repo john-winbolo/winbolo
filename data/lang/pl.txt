@@ -2414,6 +2414,19 @@ STR_DLGLOBBY_RULES_COL_CHANGE=Zmiana
 STR_DLGLOBBY_RULE_DETAIL_TITLE=Reguła: {string1}
 STR_DLGLOBBY_RULES_INFO=Info
 STR_DLGLOBBY_RULES_RANGE=Zakres
+STR_DLGLOBBY_RULES_OVERRIDDEN=Nadpisane przez {string1}, które ustawia {string2}
+
+# Under the rules table of a mod, on a server that has mods turned off.
+STR_DLGLOBBY_DETAILS_MODS_OFF=Mody są wyłączone na tym serwerze, więc reguły tego moda nie mają zastosowania.
+STR_DLGLOBBY_DETAILS_IMPLEMENTS_MOD=Co implementuje ten mod:
+STR_DLGLOBBY_DETAILS_IMPLEMENTS_SCENARIO=Co implementuje ten scenariusz:
+STR_DLGLOBBY_DETAILS_COL_METHOD=Metoda
+STR_DLGLOBBY_DETAILS_COL_TYPE=Typ
+STR_DLGLOBBY_DETAILS_COL_OVERVIEW=Ogólny przegląd
+STR_DLGLOBBY_DETAILS_TYPE_EVENT=Zdarzenie
+STR_DLGLOBBY_DETAILS_TYPE_QUERY=Zapytanie
+STR_DLGLOBBY_DETAILS_TYPE_TRIGGER=Wyzwalacz
+STR_DLGLOBBY_DETAILS_COL_NEW_VALUE=Nowa wartość
 
 # Rule descriptions
 STR_RULE_DESC_tank_reload_ticks=Ile tików czołg czeka między strzałami.
@@ -2653,6 +2666,10 @@ STR_DLGLOBBY_SCENARIO_SAVE_NOT_FOUND=Serwer nie ma już tego pliku.
 STR_DLGLOBBY_SCENARIO_SAVE_TOO_LARGE=Ten plik jest za duży, aby go skopiować.
 STR_DLGLOBBY_SCENARIO_SAVE_NO_ANSWER=Serwer nie odpowiedział. Spróbuj ponownie.
 STR_DLGLOBBY_SCENARIO_SAVE_WRITE=Nie udało się zapisać kopii w folderze Mods.
+STR_DLGLOBBY_DETAILS_SETTINGS=Ustawienia:
+STR_DLGLOBBY_DETAILS_SETTINGS_HOST=Tylko gospodarz może je zmieniać.
+STR_DLGLOBBY_DETAILS_SETTINGS_OLD=Ten serwer nie może zmieniać ustawień skryptu, więc stosowane są wartości domyślne.
+STR_DLGLOBBY_DETAILS_SETTING_DEFAULT={number} (domyślnie)
 STR_MAPEDIT_SCENARIO_WORKSHOP=Element Warsztatu nr {string1}, opublikowany przez {string2}
 STR_DLGSETTINGS_WORKSHOP_HEADING=Warsztat Steam
 STR_DLGSETTINGS_WORKSHOP_SUBSCRIBED=Subskrybowane

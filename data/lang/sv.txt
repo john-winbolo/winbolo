@@ -2420,6 +2420,19 @@ STR_DLGLOBBY_RULES_COL_CHANGE=Ändring
 STR_DLGLOBBY_RULE_DETAIL_TITLE=Regel: {string1}
 STR_DLGLOBBY_RULES_INFO=Info
 STR_DLGLOBBY_RULES_RANGE=Intervall
+STR_DLGLOBBY_RULES_OVERRIDDEN=Åsidosatt av {string1}, som anger {string2}
+
+# Under the rules table of a mod, on a server that has mods turned off.
+STR_DLGLOBBY_DETAILS_MODS_OFF=Moddar är avstängda på den här servern, så den här moddens regler gäller inte.
+STR_DLGLOBBY_DETAILS_IMPLEMENTS_MOD=Vad den här modden implementerar:
+STR_DLGLOBBY_DETAILS_IMPLEMENTS_SCENARIO=Vad det här scenariot implementerar:
+STR_DLGLOBBY_DETAILS_COL_METHOD=Metod
+STR_DLGLOBBY_DETAILS_COL_TYPE=Typ
+STR_DLGLOBBY_DETAILS_COL_OVERVIEW=Översikt
+STR_DLGLOBBY_DETAILS_TYPE_EVENT=Händelse
+STR_DLGLOBBY_DETAILS_TYPE_QUERY=Fråga
+STR_DLGLOBBY_DETAILS_TYPE_TRIGGER=Utlösare
+STR_DLGLOBBY_DETAILS_COL_NEW_VALUE=Nytt värde
 
 # Rule descriptions
 STR_RULE_DESC_tank_reload_ticks=Ticks en tank väntar mellan skott.
@@ -2659,6 +2672,10 @@ STR_DLGLOBBY_SCENARIO_SAVE_NOT_FOUND=Servern har inte längre den här filen.
 STR_DLGLOBBY_SCENARIO_SAVE_TOO_LARGE=Filen är för stor för att kopieras.
 STR_DLGLOBBY_SCENARIO_SAVE_NO_ANSWER=Servern svarade inte. Försök igen.
 STR_DLGLOBBY_SCENARIO_SAVE_WRITE=Kopian kunde inte sparas i din Mods-mapp.
+STR_DLGLOBBY_DETAILS_SETTINGS=Inställningar:
+STR_DLGLOBBY_DETAILS_SETTINGS_HOST=Bara värden kan ändra dessa.
+STR_DLGLOBBY_DETAILS_SETTINGS_OLD=Den här servern kan inte ändra skriptinställningar, så standardvärdena gäller.
+STR_DLGLOBBY_DETAILS_SETTING_DEFAULT={number} (standard)
 STR_MAPEDIT_SCENARIO_WORKSHOP=Workshop-objekt #{string1}, publicerat av {string2}
 STR_DLGSETTINGS_WORKSHOP_HEADING=Steam Workshop
 STR_DLGSETTINGS_WORKSHOP_SUBSCRIBED=Prenumerationer

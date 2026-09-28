@@ -2418,6 +2418,19 @@ STR_DLGLOBBY_RULES_COL_CHANGE=Alteração
 STR_DLGLOBBY_RULE_DETAIL_TITLE=Regra: {string1}
 STR_DLGLOBBY_RULES_INFO=Info
 STR_DLGLOBBY_RULES_RANGE=Intervalo
+STR_DLGLOBBY_RULES_OVERRIDDEN=Substituída por {string1}, que define {string2}
+
+# Under the rules table of a mod, on a server that has mods turned off.
+STR_DLGLOBBY_DETAILS_MODS_OFF=Os mods estão desativados neste servidor, então as regras deste mod não se aplicam.
+STR_DLGLOBBY_DETAILS_IMPLEMENTS_MOD=O que este mod implementa:
+STR_DLGLOBBY_DETAILS_IMPLEMENTS_SCENARIO=O que este cenário implementa:
+STR_DLGLOBBY_DETAILS_COL_METHOD=Método
+STR_DLGLOBBY_DETAILS_COL_TYPE=Tipo
+STR_DLGLOBBY_DETAILS_COL_OVERVIEW=Visão geral
+STR_DLGLOBBY_DETAILS_TYPE_EVENT=Evento
+STR_DLGLOBBY_DETAILS_TYPE_QUERY=Consulta
+STR_DLGLOBBY_DETAILS_TYPE_TRIGGER=Gatilho
+STR_DLGLOBBY_DETAILS_COL_NEW_VALUE=Novo valor
 
 # Rule descriptions
 STR_RULE_DESC_tank_reload_ticks=Ticks que um tanque espera entre disparos.
@@ -2657,6 +2670,10 @@ STR_DLGLOBBY_SCENARIO_SAVE_NOT_FOUND=O servidor não tem mais este arquivo.
 STR_DLGLOBBY_SCENARIO_SAVE_TOO_LARGE=Este arquivo é grande demais para copiar.
 STR_DLGLOBBY_SCENARIO_SAVE_NO_ANSWER=O servidor não respondeu. Tente novamente.
 STR_DLGLOBBY_SCENARIO_SAVE_WRITE=Não foi possível salvar a cópia na sua pasta Mods.
+STR_DLGLOBBY_DETAILS_SETTINGS=Configurações:
+STR_DLGLOBBY_DETAILS_SETTINGS_HOST=Apenas o anfitrião pode alterá-las.
+STR_DLGLOBBY_DETAILS_SETTINGS_OLD=Este servidor não pode alterar as configurações do script, então os padrões se aplicam.
+STR_DLGLOBBY_DETAILS_SETTING_DEFAULT={number} (padrão)
 STR_MAPEDIT_SCENARIO_WORKSHOP=Item da Oficina Steam nº {string1}, publicado por {string2}
 STR_DLGSETTINGS_WORKSHOP_HEADING=Oficina Steam
 STR_DLGSETTINGS_WORKSHOP_SUBSCRIBED=Inscrições
