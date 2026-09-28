@@ -151,9 +151,6 @@ local function note_on_map(world, info)
   world._bases_on_map = info.bases_on_map
 end
 
-function M.pill_on_map(world, id) return id_on_map(world._pills_on_map, id) end
-function M.base_on_map(world, id) return id_on_map(world._bases_on_map, id) end
-
 -- Drop every record of a pill or base that is no longer on the map, with its
 -- tile index entry.  Every goal and order that names the id then finds no
 -- record and lets go, the way it does for any target that is gone.
