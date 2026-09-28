@@ -192,7 +192,7 @@ static const LangEntry langTable[] = {
     {439,  "{player} captured a Neutral Pillbox"},
     {440,  "{player} just stole pillbox from {other}"},
     {441,  "{player} just stole base from {other}"},
-    {442,  "{player} just lost his builder"},
+    {442,  "{player} just lost their builder"},
     {443,  "{player} just saved map file"},
     {444,  "{player} has quit game"},
     {445,  "Time Limit has expired. Game is over. Go in peace"},
