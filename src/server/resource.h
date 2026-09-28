@@ -183,7 +183,7 @@
 #define   MESSAGE_CAPTURE_PILL    " captured a Neutral Pillbox"
 #define   MESSAGE_STOLE_PILL      " just stole pillbox from "
 #define   MESSAGE_STOLE_BASE      " just stole base from "
-#define   MESSAGE_LGM_DEAD        " just lost his builder"
+#define   MESSAGE_LGM_DEAD        " just lost their builder"
 #define   MESSAGE_SAVED_MAP       " just saved map file"
 #define   MESSAGE_QUIT_GAME       " has quit game"
 #define   MESSAGE_TIME_LIMIT_EXPIRED "Time Limit has expired. Game is over. Go in peace"
