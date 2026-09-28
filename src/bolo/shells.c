@@ -217,9 +217,11 @@ void shellsDestroy(shells *value) {
 *  angle  - angle of the shot
 *  len    - Length in map units of the item
 *  owner  - Who fired the shell
+*  target - The player a pillbox is firing at, NEUTRAL
+*           for a tank's shell
 *  onBoat - Was the shell launched from a boat
 *********************************************************/
-void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle, TURNTYPE len, BYTE owner, bool onBoat) {
+void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle, TURNTYPE len, BYTE owner, BYTE target, bool onBoat) {
   shells q;
   int xAdd;
   int yAdd;
@@ -249,6 +251,7 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
   q->onBoat = onBoat;
   q->creator = sim->viewPlayer;
   q->owner = owner;
+  q->target = target;
   q->fireTick = sim->fireInputTick;  /* originating input tick, 0 when not a player fire */
   q->serverFireTick = 0;             /* filled from the shellFired callback below */
   q->packSent = FALSE;

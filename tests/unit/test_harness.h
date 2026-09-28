@@ -1986,6 +1986,14 @@ int run_sim_rules_pill_empties_without_wrapping(void);
 int run_sim_rules_pill_shell_damage_follows(void);
 int run_sim_rules_pill_angry_divisor_follows(void);
 int run_sim_rules_pill_massage_follows(void);
+/* pill_shell_cap and pill_max_shells_at_tank through pillsUpdate
+ * (test_pill_shell_cap.c). */
+int run_pill_shell_cap_off_is_no_limit(void);
+int run_pill_shell_cap_retargets_next_nearest(void);
+int run_pill_shell_cap_holds_then_fires_when_freed(void);
+int run_pill_shell_cap_out_of_range_clears_just_seen(void);
+int run_pill_shell_cap_counts_same_update_shots(void);
+int run_pill_shell_cap_ignores_tank_shells(void);
 int run_sim_rules_tank_explosion_follows(void);
 int run_sim_rules_water_loss_follows(void);
 int run_sim_rules_pairs(void);

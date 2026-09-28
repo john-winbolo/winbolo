@@ -264,6 +264,8 @@ int run_sim_rules_classic_defaults(void) {
     SR_EQ(pill_aim_iterations, MAX_AIM_ITERATE);
     SR_EQ(pill_massage_range, PILLBOX_MASSAGE_RANGE);
     SR_FEQ(pill_massage_cosine, PILLBOX_MASSAGE_COSINE);
+    SR_EQ(pill_shell_cap, PILLBOX_SHELL_CAP);
+    SR_EQ(pill_max_shells_at_tank, PILLBOX_MAX_SHELLS_AT_TANK);
 
     /* Base */
     SR_EQ(base_full_armour, BASE_FULL_ARMOUR);
@@ -1653,7 +1655,7 @@ int run_sim_rules_shell_flight_follows(void) {
 
     /* Fired east, so the whole step lands on X and the comparison is the
        speed itself, in 24.8 fixed point. */
-    shellsAddItem(gs, &gs->shs, 10000, 20000, east, len, 0, FALSE);
+    shellsAddItem(gs, &gs->shs, 10000, 20000, east, len, 0, NEUTRAL, FALSE);
     UT_ASSERT_MSG(gs->shs != NULL, "the classic shot produced no shell");
     classicStep = gs->shs->xStep;
     classicLen = gs->shs->length;
@@ -1669,7 +1671,7 @@ int run_sim_rules_shell_flight_follows(void) {
 
     /* Double the speed and the next shell steps twice as far per tick. */
     gs->rules.shell_speed *= 2;
-    shellsAddItem(gs, &gs->shs, 10000, 20000, east, len, 0, FALSE);
+    shellsAddItem(gs, &gs->shs, 10000, 20000, east, len, 0, NEUTRAL, FALSE);
     fastStep = gs->shs->xStep;
     UT_ASSERT_MSG(fastStep == classicStep * 2,
                   "doubling shell_speed gave a step of %ld, not %ld",
@@ -1678,7 +1680,7 @@ int run_sim_rules_shell_flight_follows(void) {
     /* And a longer life is a longer budget, on the same gunsight. */
     gs->rules.shell_speed /= 2;
     gs->rules.shell_life *= 2;
-    shellsAddItem(gs, &gs->shs, 10000, 20000, east, len, 0, FALSE);
+    shellsAddItem(gs, &gs->shs, 10000, 20000, east, len, 0, NEUTRAL, FALSE);
     longLen = gs->shs->length;
     UT_ASSERT_MSG(longLen > classicLen,
                   "doubling shell_life left the shell living %u ticks, not "

@@ -66,9 +66,9 @@ typedef enum {
  *                          entries in a weighted draw, six of them negative
  *                          and one zero — so the raw number is the answer.
  *
- * PERCENT and FLAG name no row today. They are here because the describe
- * arms that read them are here: the first rule that wants one takes the tag
- * rather than inventing a seventh. */
+ * PERCENT names no row today. It is here because the describe arm that
+ * reads it is here: the first rule that wants one takes the tag rather than
+ * inventing a seventh. */
 typedef enum {
     SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER,
     SIM_RULE_UNIT_COUNT,
@@ -217,6 +217,8 @@ typedef enum {
     X(pill_aim_iterations, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)          \
     X(pill_massage_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)           \
     X(pill_massage_cosine, SIM_RULE_VALUE_FLOAT, SIM_RULE_UNIT_COUNT)        \
+    X(pill_shell_cap, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_FLAG)                \
+    X(pill_max_shells_at_tank, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)      \
     /* Base */                                                               \
     X(base_full_armour, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \
     X(base_full_shells, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \

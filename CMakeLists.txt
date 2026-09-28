@@ -4038,6 +4038,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # test_stubs.c provides here, so it compiles in without lang.c.
     tests/unit/test_sim_rules_describe.c
     src/gui/sdl3/sim_rules_phrase.c
+    # pill_shell_cap and pill_max_shells_at_tank, driven through pillsUpdate.
+    tests/unit/test_pill_shell_cap.c
     # The range behind each rule, against the validator that refuses on it.
     tests/unit/test_sim_rules_range.c
     # A description id per rule, and the range in words. The phrase file above
@@ -5431,6 +5433,12 @@ set(_unit_test_names
     sim_rules_pill_shell_damage_follows
     sim_rules_pill_angry_divisor_follows
     sim_rules_pill_massage_follows
+    pill_shell_cap_off_is_no_limit
+    pill_shell_cap_retargets_next_nearest
+    pill_shell_cap_holds_then_fires_when_freed
+    pill_shell_cap_out_of_range_clears_just_seen
+    pill_shell_cap_counts_same_update_shots
+    pill_shell_cap_ignores_tank_shells
     sim_rules_tank_explosion_follows
     sim_rules_water_loss_follows
     sim_rules_pairs
