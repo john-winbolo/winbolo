@@ -441,6 +441,26 @@ void sdl3DrawStatusPillbox(BYTE pillNum, pillAlliance pa, bool labels) {
   if (!gRenderer || !gTilesTex) return;
   if (pillNum < 1 || pillNum > 16) return;
 
+  /* A pillbox a scenario took off the map leaves its place empty. The
+     place is painted black rather than skipped, because the pushed update
+     (frontEndStatusPillbox) draws over the icon the slot showed before,
+     with no clear of the panel first. */
+  if (pa == pillOffMap) {
+    int emptyX, emptyY;
+    float emptyOrgX, emptyOrgY;
+    sdl3StatusItemPos(pillNum, 1, &emptyX, &emptyY);
+    statusPanelOrigin(1, gZoomFactor, &emptyOrgX, &emptyOrgY);
+    SDL_FRect empty = {
+      emptyOrgX + (float)(gZoomFactor * emptyX),
+      emptyOrgY + (float)(gZoomFactor * emptyY),
+      (float)(gZoomFactor * STATUS_ITEM_SIZE_X),
+      (float)(gZoomFactor * STATUS_ITEM_SIZE_Y)
+    };
+    SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+    SDL_RenderFillRect(gRenderer, &empty);
+    return;
+  }
+
   int srcX, srcY;
   switch (pa) {
     case pillDead:      srcX=STATUS_ITEM_DEAD_X;           srcY=STATUS_ITEM_DEAD_Y;           break;

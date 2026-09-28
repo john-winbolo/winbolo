@@ -1215,8 +1215,14 @@ static void renderStatusDrawer(ClientSim *cs) {
     /* Pillbox status */
     if (ImGui::CollapsingHeader(langGetText(STR_TABLET_PILLBOXES))) {
       BYTE total = clientSimGetPillCount(cs);
+      int shown = 0;
       for (BYTE i = 1; i <= total; i++) {
         pillAlliance pa = clientSimGetPillAlliance(cs, i);
+        /* A pillbox a scenario took off the map is not listed, and the rows
+           of four are counted over the ones that are. */
+        if (pa == pillOffMap) continue;
+        if (shown > 0 && shown % 4 != 0) ImGui::SameLine(0, 20);
+        shown++;
         ImVec4 col;
         switch (pa) {
           case pillAllie:   col = ImVec4(0.0f, 0.8f, 0.0f, 1.0f); break;
@@ -1228,7 +1234,6 @@ static void renderStatusDrawer(ClientSim *cs) {
         MessageArgs args = {};
         args.number = i;
         ImGui::TextColored(col, "%s", langGetTextFmt(STR_TABLET_PILL_FMT, &args));
-        if (i % 4 != 0 && i < total) ImGui::SameLine(0, 20);
       }
     }
 

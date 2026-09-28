@@ -12,12 +12,13 @@
 -- river) 90, because it is slow for everybody already.
 --
 -- The map's own pillboxes are taken off at setup and one is kept back as the
--- prize. The holder may build it. It then stands where he put it as his own
+-- prize. The ones taken off are gone from the pillbox panel too. The holder
+-- may build it. It then stands where he put it as his own
 -- gun, and he is still the holder, but nobody scores while it stands: the
 -- points come only from carrying it. He keeps the slow legs, but his gun is
 -- filled again a shell a second like everybody else's, and a respawn arms
 -- him fully. It never holds more than three armour, so three shells put it
--- down.
+-- down, and it is drawn as a pillbox with three armour left of fifteen.
 -- Killing the holder does not move a built prize; the others shoot it down to
 -- nothing and drive over it, which makes the one who picks it up the new
 -- holder. A tank only picks up a dead pillbox, so the holder cannot take
@@ -25,6 +26,11 @@
 -- shells do that too), and then it is a race to drive over it. Picking it up
 -- empties the gun again in the same frame. Nobody but the holder may repair it,
 -- and a dead one lying on the ground is repaired by nobody.
+--
+-- Everybody starts on one team. The holder is moved to a team of his own
+-- the moment he takes the prize and back when he loses it, so every other
+-- tank is his enemy and an ally of the rest: the bots go after him and
+-- leave each other alone, and a built prize fires at everybody but him.
 --
 -- The compass is the panel. A script cannot draw on the edge of the game view,
 -- so the square over the view is a compass rose instead: the needle points at
@@ -56,12 +62,15 @@ local GOTO_SLACK        = 5     -- squares the holder may move before a far bot 
 local OVERSHOOT         = 2     -- squares past a grounded pillbox a bot is sent to
 local RUN_SQUARES       = 8     -- how far a new holder is sent to get out of a fight
 local ORDER_SECONDS     = 60    -- how long a brain holds an order it was handed
-local BUILT_MAX_ARMOUR  = 3     -- the most armour the prize holds when built. A
+local BUILT_ARMOUR      = 3     -- the most armour the prize holds when built. A
                                 -- classic pillbox holds 15 and a shell takes 1,
                                 -- so this is three hits from standing to dead.
-                                -- on_setup makes it the pillbox cap, so a
-                                -- build, a repair and a scripted set all stop
-                                -- here.
+                                -- The cap stays the classic 15, so a built
+                                -- prize is drawn as a pillbox shot twelve
+                                -- times. A build is set down to this in
+                                -- on_pill_placed and a repair in on_built.
+local HUNTERS           = 1     -- the team everybody but the holder is on
+local HOLDER_TEAM       = 2     -- the holder's team, on his own
 
 -- The holder's share of each ground's speed, as a percentage of the distance
 -- a classic tank covers there at full speed. The comment is the classic speed
@@ -108,6 +117,7 @@ local touched     = {}          -- seat -> every knob and flag word it has been 
 local hide_at     = 3           -- squares off a tank in forest stops being seen
 local board       = {}          -- the leaderboard, rebuilt once a second
 local drawn       = {}          -- seat -> what its panel last showed, as a short key
+local team_of     = {}          -- seat -> the team this script last put it on
 
 local function whole(n)
   return math.floor(n + 0.5)
@@ -824,6 +834,40 @@ local function stop_the_fight(p)
   tell(p, goto_hint(x, y, "run"), true)
 end
 
+-- A standing prize with more than BUILT_ARMOUR in it is set back down. The
+-- pillbox cap stays the classic 15, which is what makes armour 3 draw as a
+-- pillbox shot twelve times: the picture is the armour scaled against the
+-- cap, so a cap of 3 would draw the prize whole. A build arrives at the cap
+-- and a repair can reach it, so both come through here.
+local function hold_down_the_prize()
+  if pill == nil then
+    return
+  end
+  local pb = game.pill(pill)
+  if standing(pb) and pb.armour > BUILT_ARMOUR then
+    game.set_pill_armour(pill, BUILT_ARMOUR)
+  end
+end
+
+-- The team seat p belongs on: the holder on his own, everybody else together.
+-- A seat is only moved when that differs from where this script last put it,
+-- because each move sends every client the whole alliance table again.
+local function sort_team(p)
+  if over or not in_round(p) then
+    return
+  end
+  local want = (p == holder) and HOLDER_TEAM or HUNTERS
+  if team_of[p] ~= want and game.set_team(p, want) then
+    team_of[p] = want
+  end
+end
+
+local function sort_teams()
+  for p = 0, game.max_tanks() - 1 do
+    sort_team(p)
+  end
+end
+
 local finish
 local lose_the_prize
 
@@ -852,6 +896,12 @@ local function each_second()
     game.score(holder, seconds[holder], SCORE_LABEL)
   end
   board = leaderboard()
+
+  -- The nets under the hooks: a standing prize is held at BUILT_ARMOUR, and
+  -- every seat is on the team its part puts it on. Neither does anything
+  -- when that is already so.
+  hold_down_the_prize()
+  sort_teams()
 
   -- Every second, because a bot that has only just joined may not take its
   -- table on the first try, and a chase goes stale in seconds. Neither says
@@ -952,43 +1002,12 @@ restore_base = function(x, y, tries)
   end
 end
 
--- The pillbox cap comes down to BUILT_MAX_ARMOUR. The prize is the only
--- pillbox on the map, so the cap is its cap. Two rules are held at or under
--- the cap, the repair a unit of trees buys and the blast a dying tank deals,
--- so they come down with it: at the cap one unit of repair still fills it,
--- and a tank blowing up beside it still kills it.
---
--- This is not in the rules block below because that block is set one rule at
--- a time in no fixed order, and every rule is checked against the others as
--- it goes in: the cap cannot go under the repair, and the repair cannot go
--- to 3 while the cap is 15 (four units of 3 would not fill it). So they are
--- set here, in an order where every step holds: the blast, the cap to one
--- above the target, the repair, then the cap.
-local function cap_the_prize()
-  local steps = {
-    { "tank_explosion_damage", BUILT_MAX_ARMOUR },
-    { "pill_max_armour",       BUILT_MAX_ARMOUR + 1 },
-    { "pill_repair_amount",    BUILT_MAX_ARMOUR },
-    { "pill_max_armour",       BUILT_MAX_ARMOUR },
-  }
-  for _, s in ipairs(steps) do
-    if game.rule(s[1]) > s[2] then
-      local ok, code, why = game.set_rule(s[1], s[2])
-      if not ok then
-        game.log(string.format("Pillbox Tag: %s not set: %s", s[1],
-                               tostring(why)))
-      end
-    end
-  end
-end
-
 -- Before the round. The map's pillboxes come off, one is kept back as the
 -- prize, and every base is made neutral with full armour and no shells or
 -- mines, so the first tank over it gets a pit stop.
 function on_setup()
   half_armour = math.floor(game.rule("tank_full_armour") / 2)
   base_armour = game.rule("base_full_armour")
-  cap_the_prize()
 
   for n = 1, game.num_pills() do
     if game.pill(n) ~= nil then
@@ -1034,6 +1053,11 @@ function on_start()
     game.message(
       "Pillbox Tag: carry the pillbox. A point a second, ten minutes.")
   end
+
+  -- Whatever the lobby put people on, they start together: nobody holds the
+  -- prize yet, so everybody is a hunter. Roster writes are refused during the
+  -- setup that opens a round, which is why this is here and not in on_setup.
+  sort_teams()
 
   -- How close a tank in a wood has to be before it can be seen, in squares.
   hide_at = math.floor(game.rule("tree_hide_distance") / 256)
@@ -1143,6 +1167,9 @@ end
 local function take_the_prize(p)
   holder = p
   seconds[p] = seconds[p] or 0
+  -- On a team of his own before anybody is told to go after him, so a bot
+  -- handed the order to attack him is attacking an enemy.
+  sort_team(p)
   carry_start()
   local t = game.tank(p)
   if t ~= nil then
@@ -1165,6 +1192,8 @@ lose_the_prize = function(p)
   if p ~= nil then
     game.set_modifiers(p, {})
     tune(p)
+    -- Back with everybody else. A seat on its way out is left alone.
+    sort_team(p)
   end
 end
 
@@ -1177,9 +1206,10 @@ end
 
 -- Every way the pillbox reaches the ground comes through here: built, dropped
 -- by a tank that sank or was destroyed, or let go by a player on the way out.
--- A built one arrives at the sim's cap, BUILT_MAX_ARMOUR, and stays the
--- holder's, though it scores nothing while it stands. Every other route
--- arrives dead, and a dead prize has no holder.
+-- A built one arrives at the sim's cap, the classic 15, and is set down to
+-- BUILT_ARMOUR in the same frame. It stays the holder's, though it scores
+-- nothing while it stands. Every other route arrives dead, and a dead prize
+-- has no holder.
 --
 -- The builder is whoever was carrying it, which is the holder. The take is
 -- there for a pillbox that went up any other way, so that whoever owns a
@@ -1190,6 +1220,7 @@ function on_pill_placed(n, p, armour, scripted)
     return
   end
   if armour > 0 and p ~= nil and in_round(p) then
+    hold_down_the_prize()
     if p ~= holder then
       if holder ~= nil then
         lose_the_prize(holder)
@@ -1236,32 +1267,38 @@ function on_pill_captured(n, old, new, scripted)
 end
 
 -- A builder sent to a pillbox repairs it. The holder may patch his own prize
--- up, and the rules stop that at BUILT_MAX_ARMOUR. A repair of a prize with
--- no holder would bring a dead one back to life as a gun nobody holds,
--- so it goes to nothing again as soon as the work is done.
+-- up, and a repair that goes past BUILT_ARMOUR is set back down to it. A
+-- repair of a prize with no holder would bring a dead one back to life as a
+-- gun nobody holds, so it goes to nothing again as soon as the work is done.
 function on_built(p, action, x, y, scripted)
   -- A pillbox repair arrives as "repair" (a build order says "pill").
-  if over or pill == nil or action ~= "repair" or holder ~= nil then
+  if over or pill == nil or action ~= "repair" then
     return
   end
   local pb = game.pill(pill)
-  if standing(pb) and pb.x == x and pb.y == y then
+  if not standing(pb) or pb.x ~= x or pb.y ~= y then
+    return
+  end
+  if holder == nil then
     game.set_pill_armour(pill, 0)
+  else
+    hold_down_the_prize()
   end
 end
 
 -- And the repair is refused before it starts where it can be. A pill order
 -- on the square the prize is lying on is a repair of it. n is the pillbox the
 -- tank would put down, not the one on the square, so the square is what is
--- compared. Only the holder, and only on a prize still standing: a dead one
--- is picked up, not repaired.
+-- compared. Only the holder, and only on a prize still standing and under
+-- BUILT_ARMOUR: a dead one is picked up, not repaired, and the engine would
+-- spend his trees filling a full one to 15 only for on_built to take it back.
 function can_build(p, action, x, y, n)
   if over or pill == nil or action ~= "pill" then
     return nil
   end
   local pb = game.pill(pill)
   if pb ~= nil and not pb.in_tank and pb.x == x and pb.y == y then
-    if p == holder and standing(pb) then
+    if p == holder and standing(pb) and pb.armour < BUILT_ARMOUR then
       return nil
     end
     return false
@@ -1300,6 +1337,8 @@ function on_player_join(p, scripted)
   -- and is sent a whole panel of their own.
   seconds[p] = 0
   drawn[p]   = nil
+  team_of[p] = nil
+  sort_team(p)
   for q = 0, game.max_tanks() - 1 do
     if seconds[q] ~= nil and game.lobby_slot(q) ~= nil then
       game.score(q, seconds[q], SCORE_LABEL)
@@ -1329,6 +1368,18 @@ function on_player_leave(p, scripted)
   goto_at[p] = nil
   tuned[p]   = nil
   touched[p] = nil
+  team_of[p] = nil
+end
+
+-- The teams are the round's, not the players'. A seat that changes team
+-- itself is put back on the one its part says; a move this script made
+-- arrives here too, a tick later, and is left alone.
+function on_team_changed(p, team, scripted)
+  if scripted or not running or over then
+    return
+  end
+  team_of[p] = team
+  sort_team(p)
 end
 
 -- Owning every base is somebody else's way to win a round, and sixteen pit
@@ -1394,20 +1445,21 @@ scenario = {
   -- What each callback below does, in a line a player reads: the lobby's
   -- details dialog lists these under "What this scenario implements:".
   callbacks = {
-    on_setup = "One dead pillbox is the prize, 3 armour at most; bases " ..
-               "start neutral.",
+    on_setup = "One pillbox is the prize, the rest go; bases start " ..
+               "neutral.",
     on_start = "Starts the 10-minute clock and the compass.",
     on_end = "Logs how long the round ran.",
     on_tick = "Holder speed by terrain.",
-    on_player_join = "A joiner starts on 0 points.",
+    on_player_join = "A joiner hunts, on 0 points.",
     on_player_leave = "A leaving holder's built prize dies.",
     on_base_captured = "A base gives half armour, then is gone for 30 s.",
-    on_pill_placed = "A built prize halts scoring; a dropped one is dead.",
-    on_pill_picked_up = "The holder scores a point a second, slower and unarmed.",
+    on_pill_placed = "Built: 3 armour, no score. Dropped: dead.",
+    on_pill_picked_up = "Holder: own team, 1 point/s, slow, unarmed.",
     on_pill_killed = "A shot-down prize is anybody's.",
     on_pill_captured = "Only the holder can own a standing prize.",
-    on_built = "A repaired dead prize goes back to no armour.",
+    on_built = "A repair stops at 3 armour.",
     can_build = "Only the holder can repair the prize.",
+    on_team_changed = "Teams are fixed.",
     allow_base_win = "Holding every base does not win.",
     announce = "Base captures are not announced.",
     spawn_loadout = "Full shells, no mines; carriers get none.",

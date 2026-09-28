@@ -870,8 +870,10 @@ int run_scenario_removed_item_is_no_item(void) {
     UT_ASSERT_MSG(eaApply(sim, &op, NULL) == SCN_OP_OK,
                   "base set-owner refused the base beside the removed one");
 
-    /* The reads that draw and report an item answer as for an empty slot. */
-    UT_ASSERT_MSG(pillsGetAllianceNum(gs, &gs->pb, 1) == pillNeutral,
+    /* The reads that draw and report an item answer as for an empty slot.
+       A removed pillbox reads as pillOffMap, which the panel draws as an
+       empty place rather than a neutral pillbox. */
+    UT_ASSERT_MSG(pillsGetAllianceNum(gs, &gs->pb, 1) == pillOffMap,
                   "the status panel still has a colour for a removed pillbox");
     UT_ASSERT_MSG(basesGetStatusNum(gs, 1) == baseNeutral,
                   "the status panel still has a colour for a removed base");

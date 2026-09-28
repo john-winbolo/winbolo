@@ -466,9 +466,12 @@ pillAlliance pillsGetAllianceNum(GameSim *sim, pillboxes *value, BYTE pillNum) {
   returnValue = pillNeutral;
   pillNum--;
   if ((*value) != NULL) {
-    /* A pillbox off the map has no alliance to draw; it reads as neutral,
-       which is what the panel shows for a slot the map does not use. */
-    if ((pillNum) < ((*value)->numPills) && (*value)->active[pillNum] != FALSE) {
+    /* A pillbox off the map has no alliance to draw. It reads as
+       pillOffMap, and the panel leaves its place empty, the way it leaves
+       every slot past the map's count. */
+    if ((pillNum) < ((*value)->numPills) && (*value)->active[pillNum] == FALSE) {
+      returnValue = pillOffMap;
+    } else if ((pillNum) < ((*value)->numPills)) {
       if ((*value)->item[pillNum].armour == 0 && (*value)->item[pillNum].inTank == FALSE) {
         returnValue = pillDead;
       } else if ((*value)->item[pillNum].owner == sim->viewPlayer) {
