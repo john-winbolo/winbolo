@@ -582,9 +582,11 @@ static const char kSdRemarkedScript[] =
  * the cache also stamps each scenario file, so the read after the overwrite
  * is a fresh one and carries the file's new name. */
 int run_scenario_dir_list_cached_sees_edit(void) {
-    ScnDirEntry list[8];
-    ServerSim  *sim;
-    int         n;
+    ScnDirEntry  list[8];
+    ServerSim   *sim;
+    SDL_PathInfo before;
+    SDL_PathInfo after;
+    int          n;
 
     UT_ASSERT(sdMakeDir("cached_edit"));
     UT_ASSERT(sdWriteText("marked.lua", kSdMarkedScript));
@@ -609,7 +611,16 @@ int run_scenario_dir_list_cached_sees_edit(void) {
                   "case cannot tell whether the overwrite invalidated it");
 
     sdSaid[0] = '\0';
+    UT_ASSERT(SDL_GetPathInfo(sdDir, &before));
     UT_ASSERT(sdWriteText("marked.lua", kSdRemarkedScript));
+    UT_ASSERT(SDL_GetPathInfo(sdDir, &after));
+    UT_ASSERT_MSG(before.modify_time == after.modify_time,
+                  "this filesystem moved the directory time, so this case "
+                  "did not exercise the file stamps");
+    /* A read inside SCN_DIR_STAMPS_REUSE_MS of the last walk is answered
+       without stamping the files again, so wait it out: this case is about
+       the stamps, not the window. */
+    SDL_Delay(SCN_DIR_STAMPS_REUSE_MS + 50);
     memset(list, 0, sizeof(list));
     n = serverSimScenarioListDir(sim, list, 8);
     UT_ASSERT_MSG(sdFind(list, n, "marked.lua") != NULL,
