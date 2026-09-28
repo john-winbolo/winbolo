@@ -2,14 +2,29 @@
 --
 -- One pillbox, dead, loose on the map. Whoever is carrying it scores a point a
 -- second, and after ten minutes the one with the most points has won. Carrying
--- it costs three tenths of your speed and every shell you own, so the holder
--- runs and everybody else hunts. Kill the holder, or drive over the pillbox
--- where it falls, and it is yours.
+-- it costs you speed and every shell you own, so the holder runs and
+-- everybody else hunts. Kill the holder, or drive over the pillbox where it
+-- falls, and it is yours.
+--
+-- The holder's slow legs go by the ground under him. The faster the ground,
+-- the more of its speed he loses: on a road he keeps 60 in a hundred, on
+-- grass 70, in a wood 85, and on the slow ground (swamp, crater, rubble, a
+-- river) 90, because it is slow for everybody already.
 --
 -- The map's own pillboxes are taken off at setup and one is kept back as the
--- prize. It never fires: a pillbox that has been built or repaired is put back
--- to nothing the moment it goes up, so the only thing it is ever good for is
--- being carried.
+-- prize. The holder may build it. It then stands where he put it as his own
+-- gun, and he is still the holder, but nobody scores while it stands: the
+-- points come only from carrying it. He keeps the slow legs, but his gun is
+-- filled again a shell a second like everybody else's, and a respawn arms
+-- him fully. It never holds more than three armour, so three shells put it
+-- down.
+-- Killing the holder does not move a built prize; the others shoot it down to
+-- nothing and drive over it, which makes the one who picks it up the new
+-- holder. A tank only picks up a dead pillbox, so the holder cannot take
+-- his own back up while it stands; it has to be shot down first (his own
+-- shells do that too), and then it is a race to drive over it. Picking it up
+-- empties the gun again in the same frame. Nobody but the holder may repair it,
+-- and a dead one lying on the ground is repaired by nobody.
 --
 -- The compass is the panel. A script cannot draw on the edge of the game view,
 -- so the square over the view is a compass rose instead: the needle points at
@@ -19,14 +34,15 @@
 --
 -- A bot cannot read a compass, so it is told instead: every bot but the holder
 -- is sent after the prize, and every bot is tuned for the part it has. The
--- holder runs and never puts the prize down; the others hunt.
+-- holder runs and never puts the prize down; the others hunt. A built prize is
+-- the only live pillbox on the map, so it is the brain's own pillbox fight
+-- that goes after it.
 --
 -- The bases are pit stops. They start neutral, driving over one hands out half
 -- a tank of armour, and the base then goes off the map for half a minute
 -- before it comes back.
 
 local ROUND_SECONDS     = 600   -- the whole round
-local CARRY_SPEED_PCT   = 70    -- the holder's share of the terrain's speed cap
 local MINE_EVERY        = 30    -- seconds between a tank's mines
 local BASE_DOWN_SECONDS = 30    -- how long a used base stays off the map
 local REFRESH_SECONDS   = 0.2   -- how often each player's compass is redrawn
@@ -40,6 +56,29 @@ local GOTO_SLACK        = 5     -- squares the holder may move before a far bot 
 local OVERSHOOT         = 2     -- squares past a grounded pillbox a bot is sent to
 local RUN_SQUARES       = 8     -- how far a new holder is sent to get out of a fight
 local ORDER_SECONDS     = 60    -- how long a brain holds an order it was handed
+local BUILT_MAX_ARMOUR  = 3     -- the most armour the prize holds when built. A
+                                -- classic pillbox holds 15 and a shell takes 1,
+                                -- so this is three hits from standing to dead.
+                                -- on_setup makes it the pillbox cap, so a
+                                -- build, a repair and a scripted set all stop
+                                -- here.
+
+-- The holder's share of each ground's speed, as a percentage of the distance
+-- a classic tank covers there at full speed. The comment is the classic speed
+-- cap and the holder's share of it, in world units a frame.
+local CARRY_SPEED_PCT = {
+  road     = 60,    -- 16 to 9.6
+  grass    = 70,    -- 12 to 8.4
+  forest   = 85,    --  6 to 5.1
+  boat     = 70,    -- 16 to 11.2, on any water
+  swamp    = 90,    --  3 to 2.7
+  crater   = 90,    --  3 to 2.7
+  rubble   = 90,    --  3 to 2.7
+  river    = 90,    --  3 to 2.7
+  deep_sea = 100,   --  3, sinking
+}
+local CARRY_SPEED_OTHER = 70    -- a plain modifier for ground not above with
+                                -- no speed of its own (a building)
 
 -- The panel square is 128 units on a side, origin top left. The compass fills
 -- the middle of it, the round's clock sits above and the scores below.
@@ -51,7 +90,8 @@ local BOARD_STEP     = 9        -- small text is eight units tall
 local BOARD_ROWS     = 4
 
 local pill        = nil         -- the one pillbox, 1-based
-local holder      = nil         -- the seat carrying it, or nil
+local holder      = nil         -- the seat carrying it or whose built one
+                                -- stands, or nil
 local seconds     = {}          -- seconds held, by seat
 local running     = false
 local over        = false
@@ -96,6 +136,20 @@ end
 -- somebody has it: the answer comes from the holder instead. The tank's pill
 -- count drops the moment the builder takes it out of the hold, which is why
 -- the man is asked about before the tank is.
+--
+-- A prize on the ground with armour in it is one the holder built, and it is
+-- still his. One with none is lying there for anybody.
+local function standing(pb)
+  return pb ~= nil and not pb.in_tank and pb.armour > 0
+end
+
+-- Whether seat p is the holder with the prize in hand: in the tank, or in
+-- his man's hands on the way to a build. That is when the gun stays empty.
+-- While a built prize stands, the holder is restocked like everybody else.
+local function carrying(p)
+  return p ~= nil and p == holder and not standing(game.pill(pill))
+end
+
 local function prize()
   if pill == nil then
     return nil
@@ -103,6 +157,9 @@ local function prize()
   local pb = game.pill(pill)
   if pb == nil then
     return nil
+  end
+  if standing(pb) and holder ~= nil then
+    return pb.x + 0.5, pb.y + 0.5, "BUILT", "orange", holder
   end
   if not pb.in_tank then
     return pb.x + 0.5, pb.y + 0.5, "GROUND", "green", nil
@@ -188,6 +245,9 @@ local function compass(p, me, tx, ty, what, colour, carrier, rows, rows_key)
   local ux, uy, tipx, tipy = nil, nil, nil, nil
   if carrier == p then
     status, status_colour = "YOURS - RUN", "yellow"
+    if what == "BUILT" then
+      status = "YOURS - BUILT"
+    end
   elseif tx ~= nil then
     local dx = tx - (me.wx / 256)
     local dy = ty - (me.wy / 256)
@@ -336,9 +396,10 @@ local DEFAULTS = {
 -- it leaves standing, and "normal" is the word that takes it off.
 local FLAG_UNDO = { ammoless = "normal" }
 
--- The two parts. Neither has a live pillbox to charge or a reason to move
--- one, and neither should have its builder spend the round on walls and
--- guns. A hunter bids hard for a tank fight, because the holder is a tank.
+-- The two parts. Neither has a reason to move a pillbox, and neither should
+-- have its builder spend the round on walls and guns. The only live pillbox a
+-- hunter ever meets is a built prize, and its own pillbox fight is left on for
+-- that. A hunter bids hard for a tank fight, because the holder is a tank.
 -- The holder does not fight at all (it has no shells, and a tank fight is
 -- also when a brain puts a carried pillbox down as a guard), weighs danger
 -- twice as heavily when it runs, looks for cover sooner, never goes looking
@@ -698,6 +759,13 @@ local function aim_one(p)
   if pb == nil then
     return
   end
+  -- A built prize gets no order. The only order a script can give a bot
+  -- about a pillbox is defend, and a goto is a hold that shuts off every
+  -- other goal, the brain's pillbox fight with them. Left alone, the brain
+  -- sees a hostile pillbox and goes after it itself.
+  if standing(pb) then
+    return
+  end
   if not pb.in_tank then
     tell(p, ground_order(p, pb.x, pb.y, from))
     return
@@ -757,6 +825,7 @@ local function stop_the_fight(p)
 end
 
 local finish
+local lose_the_prize
 
 -- The second is the unit the whole round is counted in: the holder's point,
 -- everybody's shell, and every thirtieth of them a mine.
@@ -766,7 +835,19 @@ local function each_second()
   end
   elapsed = elapsed + 1
 
-  if holder ~= nil then
+  -- A built prize that is dead with a holder still on it went down some way
+  -- on_pill_killed did not hear about. Nobody holds a dead pillbox.
+  if holder ~= nil and pill ~= nil then
+    local pb = game.pill(pill)
+    if pb ~= nil and not pb.in_tank and pb.armour == 0 then
+      lose_the_prize(holder)
+      aim_everybody()
+    end
+  end
+
+  -- The point is for carrying it, in the tank or in the man's hands on the
+  -- way to a build. A built prize scores nothing while it stands.
+  if holder ~= nil and not standing(game.pill(pill)) then
     seconds[holder] = (seconds[holder] or 0) + 1
     game.score(holder, seconds[holder], SCORE_LABEL)
   end
@@ -782,10 +863,11 @@ local function each_second()
   for p = 0, game.max_tanks() - 1 do
     local t = game.tank(p)
     if t ~= nil and not t.dead then
-      -- The holder is the one tank that is not restocked: an empty gun is
-      -- what stops it shooting, and handing it a shell would undo that. A
-      -- shell it came by some other way is taken off it here.
-      if p == holder then
+      -- A holder carrying the prize is the one tank that is not restocked:
+      -- an empty gun is what stops it shooting, and handing it a shell would
+      -- undo that. A shell it came by some other way is taken off it here.
+      -- Once the prize is built he is restocked like everybody else.
+      if carrying(p) then
         if t.shells > 0 then
           game.set_stocks(p, { shells = 0 })
         end
@@ -870,12 +952,43 @@ restore_base = function(x, y, tries)
   end
 end
 
+-- The pillbox cap comes down to BUILT_MAX_ARMOUR. The prize is the only
+-- pillbox on the map, so the cap is its cap. Two rules are held at or under
+-- the cap, the repair a unit of trees buys and the blast a dying tank deals,
+-- so they come down with it: at the cap one unit of repair still fills it,
+-- and a tank blowing up beside it still kills it.
+--
+-- This is not in the rules block below because that block is set one rule at
+-- a time in no fixed order, and every rule is checked against the others as
+-- it goes in: the cap cannot go under the repair, and the repair cannot go
+-- to 3 while the cap is 15 (four units of 3 would not fill it). So they are
+-- set here, in an order where every step holds: the blast, the cap to one
+-- above the target, the repair, then the cap.
+local function cap_the_prize()
+  local steps = {
+    { "tank_explosion_damage", BUILT_MAX_ARMOUR },
+    { "pill_max_armour",       BUILT_MAX_ARMOUR + 1 },
+    { "pill_repair_amount",    BUILT_MAX_ARMOUR },
+    { "pill_max_armour",       BUILT_MAX_ARMOUR },
+  }
+  for _, s in ipairs(steps) do
+    if game.rule(s[1]) > s[2] then
+      local ok, code, why = game.set_rule(s[1], s[2])
+      if not ok then
+        game.log(string.format("Pillbox Tag: %s not set: %s", s[1],
+                               tostring(why)))
+      end
+    end
+  end
+end
+
 -- Before the round. The map's pillboxes come off, one is kept back as the
 -- prize, and every base is made neutral with full armour and no shells or
 -- mines, so the first tank over it gets a pit stop.
 function on_setup()
   half_armour = math.floor(game.rule("tank_full_armour") / 2)
   base_armour = game.rule("base_full_armour")
+  cap_the_prize()
 
   for n = 1, game.num_pills() do
     if game.pill(n) ~= nil then
@@ -931,13 +1044,115 @@ function on_start()
   refresh()
 end
 
+-- A tank's speed modifier is one whole percentage of the ground's speed cap,
+-- the engine drops the fraction from the capped speed, and a tank moves the
+-- whole part of its speed each frame. So a share such as 2.7 of a swamp's 3
+-- cannot be set; it is made by switching between the two whole caps either
+-- side of it (2 and 3). What decides is how far the holder really went:
+-- carry_ahead adds up the distance he covered past his share. He runs at the
+-- upper cap until he is one saved-up move ahead (see carry_legs), then at the
+-- lower cap until he is one saved-up move behind, and so on. Each change is a
+-- modifier sent to every client, so the band keeps it to about once a second;
+-- over the round he covers his share to within one saved-up move. A tank
+-- going slower than its share for its own reasons (turning, stuck on a wall)
+-- runs up no more than two saved-up moves of credit, and spends it at the
+-- upper cap, a unit a frame over his share at most, not as a burst.
+--
+-- The ground is read with map_tile, which answers the terrain under a base or
+-- a pillbox, so on a base square the share is worked from the ground under
+-- it. That is one square, and the band carries over it.
+local CARRY_JUMP = 64           -- world units in a frame that are not driving
+local carry_by_code             -- terrain code to { rule, pct }
+local carry_ahead = 0           -- world units the holder has gone past his share
+local carry_low = false         -- whether he is on the lower cap
+local carry_x, carry_y          -- where he was last frame, nil to start over
+
+local function carry_ground(t)
+  if carry_by_code == nil then
+    carry_by_code = {}
+    for name, pct in pairs(CARRY_SPEED_PCT) do
+      local row = { rule = "speed_" .. name, pct = pct }
+      carry_by_code[game.TERRAIN[name]] = row
+      local mined = game.TERRAIN["mine_" .. name]
+      if mined ~= nil then
+        carry_by_code[mined] = row
+      end
+    end
+  end
+  if t.boat then
+    return carry_by_code[game.TERRAIN.boat]
+  end
+  return carry_by_code[game.map_tile(t.mx, t.my)]
+end
+
+-- The smallest percentage that leaves a cap of `want` out of `cap`, worked
+-- the way the engine works it: the whole part of cap * pct / 100.
+local function carry_pct(want, cap)
+  if want >= cap then
+    return 100
+  end
+  return math.max(1, math.ceil(want * 100 / cap - 1e-9))
+end
+
+local function carry_start()
+  carry_ahead = 0
+  carry_low = false
+  carry_x, carry_y = nil, nil
+end
+
+-- The modifier set is replaced whole, and an empty one is the classic tank,
+-- which the engine reads back as a speed of 0.
+local function carry_legs(p, t)
+  local pct = CARRY_SPEED_OTHER
+  local row = carry_ground(t)
+  local cap = row and game.rule(row.rule) or 0
+  if cap > 0 then
+    local share = cap * row.pct / 100
+    -- A tank does not move every frame: it saves its speed up until it has
+    -- tank_min_move units to go, then goes them all at once. So one frame's
+    -- move is anything from 0 to cap + tank_min_move, and that saved-up move
+    -- is the band: the sum has to get that far past 0 before the cap
+    -- changes. It is let fall one more band behind, so the frames with no
+    -- move are not lost off the bottom, and no further.
+    local band = cap + game.rule("tank_min_move")
+    if carry_x ~= nil then
+      local dx, dy = t.wx - carry_x, t.wy - carry_y
+      local moved = math.sqrt(dx * dx + dy * dy)
+      -- A bigger jump is a respawn or a teleport, not driving.
+      if moved <= CARRY_JUMP then
+        carry_ahead = math.max(carry_ahead + moved - share, -2 * band)
+      end
+    end
+    if carry_ahead >= band then
+      carry_low = true
+    elseif carry_ahead <= -band then
+      carry_low = false
+    end
+    local want = carry_low and math.floor(share) or math.ceil(share)
+    pct = carry_pct(want, cap)
+  end
+  carry_x, carry_y = t.wx, t.wy
+  local now = (t.mods.speed == 0) and 100 or t.mods.speed
+  if now ~= pct then
+    game.set_modifiers(p, (pct == 100) and {} or { speed = pct })
+  end
+end
+
 -- Everything the holder gives up, and gets back. The modifier set is replaced
 -- whole rather than merged, so the empty table is the classic tank.
 local function take_the_prize(p)
   holder = p
   seconds[p] = seconds[p] or 0
-  game.set_modifiers(p, { speed = CARRY_SPEED_PCT })
-  game.set_stocks(p, { shells = 0 })
+  carry_start()
+  local t = game.tank(p)
+  if t ~= nil then
+    carry_legs(p, t)
+  end
+  -- The gun is emptied in the same frame as the pick-up. A prize that went
+  -- up some other way (see on_pill_placed) leaves the gun alone.
+  if carrying(p) then
+    game.set_stocks(p, { shells = 0 })
+  end
   game.score(p, seconds[p], SCORE_LABEL)
   -- A bot takes the holder's part at once, and everybody else is turned on it.
   stop_the_fight(p)
@@ -945,7 +1160,7 @@ local function take_the_prize(p)
   aim_everybody()
 end
 
-local function lose_the_prize(p)
+lose_the_prize = function(p)
   holder = nil
   if p ~= nil then
     game.set_modifiers(p, {})
@@ -962,10 +1177,26 @@ end
 
 -- Every way the pillbox reaches the ground comes through here: built, dropped
 -- by a tank that sank or was destroyed, or let go by a player on the way out.
--- A built one arrives at the sim's cap, and that is the one to put back to
--- nothing — the prize is never a gun.
+-- A built one arrives at the sim's cap, BUILT_MAX_ARMOUR, and stays the
+-- holder's, though it scores nothing while it stands. Every other route
+-- arrives dead, and a dead prize has no holder.
+--
+-- The builder is whoever was carrying it, which is the holder. The take is
+-- there for a pillbox that went up any other way, so that whoever owns a
+-- standing prize is always the holder. A seat that is on its way
+-- out gets nothing, and its prize is put back to nothing.
 function on_pill_placed(n, p, armour, scripted)
   if over or n ~= pill then
+    return
+  end
+  if armour > 0 and p ~= nil and in_round(p) then
+    if p ~= holder then
+      if holder ~= nil then
+        lose_the_prize(holder)
+      end
+      take_the_prize(p)
+    end
+    aim_everybody()
     return
   end
   lose_the_prize(p)
@@ -977,16 +1208,44 @@ function on_pill_placed(n, p, armour, scripted)
   aim_everybody()
 end
 
--- A builder sent to a pillbox repairs it, which would turn the prize back into
--- a gun. It goes to nothing again as soon as the work is done.
+-- A built prize shot down to nothing is lying on the ground like a dropped
+-- one: nobody holds it, the old holder gets his speed back (his gun is
+-- already being filled while it stands), and the first tank to drive over it
+-- is the new holder.
+function on_pill_killed(n, by, scripted)
+  if over or n ~= pill then
+    return
+  end
+  lose_the_prize(holder)
+  aim_everybody()
+end
+
+-- A standing prize owned by anybody but the holder would be a gun with no
+-- holder behind it. Nothing in the ordinary game hands a live pillbox over, so this
+-- is the net under the hooks above: it goes to nothing, and it is anybody's.
+-- A pick-up is not this — that one is in the tank, not standing.
+function on_pill_captured(n, old, new, scripted)
+  if over or n ~= pill then
+    return
+  end
+  if standing(game.pill(n)) and new ~= holder then
+    game.set_pill_armour(n, 0)
+    lose_the_prize(holder)
+    aim_everybody()
+  end
+end
+
+-- A builder sent to a pillbox repairs it. The holder may patch his own prize
+-- up, and the rules stop that at BUILT_MAX_ARMOUR. A repair of a prize with
+-- no holder would bring a dead one back to life as a gun nobody holds,
+-- so it goes to nothing again as soon as the work is done.
 function on_built(p, action, x, y, scripted)
   -- A pillbox repair arrives as "repair" (a build order says "pill").
-  if over or pill == nil or action ~= "repair" then
+  if over or pill == nil or action ~= "repair" or holder ~= nil then
     return
   end
   local pb = game.pill(pill)
-  if pb ~= nil and not pb.in_tank and pb.x == x and pb.y == y and
-     pb.armour > 0 then
+  if standing(pb) and pb.x == x and pb.y == y then
     game.set_pill_armour(pill, 0)
   end
 end
@@ -994,13 +1253,17 @@ end
 -- And the repair is refused before it starts where it can be. A pill order
 -- on the square the prize is lying on is a repair of it. n is the pillbox the
 -- tank would put down, not the one on the square, so the square is what is
--- compared.
+-- compared. Only the holder, and only on a prize still standing: a dead one
+-- is picked up, not repaired.
 function can_build(p, action, x, y, n)
   if over or pill == nil or action ~= "pill" then
     return nil
   end
   local pb = game.pill(pill)
   if pb ~= nil and not pb.in_tank and pb.x == x and pb.y == y then
+    if p == holder and standing(pb) then
+      return nil
+    end
     return false
   end
   return nil
@@ -1018,8 +1281,9 @@ function on_base_captured(n, old, new, scripted)
   end
   local x, y = b.x, b.y
   game.add_stocks(new, { armour = half_armour })
-  -- The empty gun: a base is the one thing that can hand the holder a shell.
-  if new == holder then
+  -- The empty gun: a base is the one thing that can hand a carrying holder
+  -- a shell.
+  if carrying(new) then
     game.set_stocks(new, { shells = 0 })
   end
   game.remove_base(n)
@@ -1047,9 +1311,16 @@ end
 -- A seat that leaves takes nothing with it into the next seat's play: what
 -- it was told and what it was tuned to are forgotten, so a bot that takes
 -- the seat starts from the brain's own numbers.
+--
+-- A holder who leaves with his prize built leaves a gun nobody scores for, so
+-- it is put back to nothing, and anybody can drive over it.
 function on_player_leave(p, scripted)
   if holder == p then
     holder = nil
+    if pill ~= nil and standing(game.pill(pill)) then
+      game.set_pill_armour(pill, 0)
+      aim_everybody()
+    end
   end
   drawn[p]    = nil
   told_at[p]  = nil
@@ -1073,12 +1344,28 @@ function announce(kind, subject, actor)
   return nil
 end
 
+-- Every frame: the distance is counted frame by frame (see carry_legs), and
+-- the holder crosses from one ground to the next in a fraction of a second. It is
+-- one tank and one square, and the modifier is only set when it changes.
+function on_tick(tick)
+  if over or holder == nil then
+    return
+  end
+  local t = game.tank(holder)
+  if t == nil or t.dead then
+    carry_start()
+  else
+    carry_legs(holder, t)
+  end
+end
+
 -- Full shells, no mines, and enough trees to put the pillbox down — though
 -- the rules below make that free, so the trees are only there for the rest of
--- what a builder does.
+-- what a builder does. A holder who is carrying the prize comes back with
+-- the empty gun; one whose prize stands comes back armed like anybody else.
 function spawn_loadout(p)
   return {
-    shells = game.rule("tank_full_shells"),
+    shells = carrying(p) and 0 or game.rule("tank_full_shells"),
     mines  = 0,
     armour = game.rule("tank_full_armour"),
     trees  = game.rule("tank_full_trees"),
@@ -1093,8 +1380,9 @@ end
 scenario = {
   name        = "Pillbox Tag",
   description = "One dead pillbox, ten minutes. Carrying it scores a point a " ..
-                "second, costs you three tenths of your speed, and empties " ..
-                "your gun.",
+                "second, slows you most on the fastest ground, and empties " ..
+                "your gun. Build it and it stops scoring but your gun " ..
+                "refills; three shells kill it.",
   api         = 1,
   kind        = "scenario",
   game        = "open",
@@ -1106,19 +1394,23 @@ scenario = {
   -- What each callback below does, in a line a player reads: the lobby's
   -- details dialog lists these under "What this scenario implements:".
   callbacks = {
-    on_setup = "Keeps one dead pillbox as the prize; bases start neutral.",
-    on_start = "Starts the 10-minute clock and the compass panel.",
+    on_setup = "One dead pillbox is the prize, 3 armour at most; bases " ..
+               "start neutral.",
+    on_start = "Starts the 10-minute clock and the compass.",
     on_end = "Logs how long the round ran.",
+    on_tick = "Holder speed by terrain.",
     on_player_join = "A joiner starts on 0 points.",
-    on_player_leave = "Forgets the seat's bot orders.",
+    on_player_leave = "A leaving holder's built prize dies.",
     on_base_captured = "A base gives half armour, then is gone for 30 s.",
-    on_pill_placed = "The prize is put down and loses its armour.",
+    on_pill_placed = "A built prize halts scoring; a dropped one is dead.",
     on_pill_picked_up = "The holder scores a point a second, slower and unarmed.",
-    on_built = "A repaired prize goes back to no armour.",
-    can_build = "Nobody can repair the prize.",
+    on_pill_killed = "A shot-down prize is anybody's.",
+    on_pill_captured = "Only the holder can own a standing prize.",
+    on_built = "A repaired dead prize goes back to no armour.",
+    can_build = "Only the holder can repair the prize.",
     allow_base_win = "Holding every base does not win.",
     announce = "Base captures are not announced.",
-    spawn_loadout = "Tanks spawn with full shells and no mines.",
+    spawn_loadout = "Full shells, no mines; carriers get none.",
   },
 
   rules = {
