@@ -1264,11 +1264,6 @@ scenario = {
     base_refuel_shells_ticks = 4,
     base_regen_ticks         = 250,
 
-    -- The dead take the fort with them. A wreck going up beside a pillbox takes
-    -- eight of the fifteen armour it holds, so two bodies is a gun, which is
-    -- the horde's answer to a wall it cannot shoot down.
-    tank_explosion_damage = 8,
-
     -- Gunfire carries. The hunt only works if the horde can hear where the
     -- shooting is, so a shot is heard near out to twenty squares and heard at
     -- all out to sixty, rather than fifteen and forty.
