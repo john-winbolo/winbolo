@@ -2803,6 +2803,37 @@ function M.blitz_soldier_wait_follow(state, goal, cslot, cmdr, self_pn, now)
   return true
 end
 
+-- HUMAN ORDER BLITZ CAP (C.HUMAN_ATTACK_BLITZ_WAIT_MAX_S, 2026-09-28).
+-- True when this attack_pill goal is a person's held order (state._order is an
+-- attack_pill order on the same pill) and the cap has run out.  The clock
+-- starts on the first tick this is asked for that order -- the first tick the
+-- bot runs the attack goal for it -- and is kept on state, keyed by the
+-- order's oid and take tick, so a replan that rebuilds the goal table does not
+-- restart it, and a new order on the same pill does.  0 / nil = no cap, and a
+-- goal the bot picked for itself always answers false.
+-- update_attack_substate stores the answer in goal._hcap_over every tick; the
+-- blitz waits read that field.
+function M.human_blitz_cap_over(goal, state, now)
+  local cap_s = C.HUMAN_ATTACK_BLITZ_WAIT_MAX_S
+  if not (C.BOT_COMMANDS_ENABLED and cap_s and cap_s > 0) then return false end
+  local o = state._order
+  if not (o and o.kind == "attack_pill" and goal and goal.target_id
+          and o.tid == goal.target_id) then
+    return false
+  end
+  local hc = state._hcap
+  if not hc or hc.oid ~= o.oid or hc.since ~= o.since then
+    hc = { oid = o.oid, since = o.since, t0 = now, logged = false }
+    state._hcap = hc
+  end
+  -- 50 ticks per second.
+  if (now - hc.t0) < cap_s * 50 then return false end
+  if not hc.logged then
+    hc.logged = true
+  end
+  return true
+end
+
 -- Commander GO verdict in blitz_wait, as a pure function (unit tests).
 --   bo_hold    squad.blitz_only(state) and C.BLITZ_ONLY_EXTEND_WAIT
 --   timed_out  READY_TIMEOUT (+ extensions) elapsed
@@ -4178,6 +4209,8 @@ function M.update_attack_substate(goal, state, world, info)
   local pmx, pmy = goal.mx, goal.my
 
   if not goal.substate then goal.substate = "plan_position" end
+  -- Person's attack order: has the blitz-wait cap run out? (M.human_blitz_cap_over)
+  goal._hcap_over = M.human_blitz_cap_over(goal, state, now or 0)
 
   -- Kill-claim blitz size (KILL_PICKUP_PAIR_MIN_SQUAD): keep the largest party
   -- seen on this take, so mark_kill_pickup still has it if members drop off
@@ -4489,6 +4522,9 @@ function M.update_attack_substate(goal, state, world, info)
      and not goal.scan_spots
      and not _hardline_candidate
      and not _pp_hold_stranded
+     -- A person's attack order past HUMAN_ATTACK_BLITZ_WAIT_MAX_S does not
+     -- wait for the man: the tank goes and he walks back to it.
+     and not goal._hcap_over
      and info.man_status ~= C.LGM_INTANK
      and info.man_status ~= C.LGM_DEAD then
     return  -- hold, don't advance plan_position until LGM is back
@@ -5179,7 +5215,9 @@ function M.update_attack_substate(goal, state, world, info)
             clear_attack_goal(state, "abort@approach_entry — " .. unsafe)
             return
           end
-          if blitz_join_unaccepted(state, info) then
+          -- A person's attack order past HUMAN_ATTACK_BLITZ_WAIT_MAX_S does
+          -- not wait for the accept any more: it approaches.
+          if blitz_join_unaccepted(state, info) and not goal._hcap_over then
             -- Ally is blitzing this pill and we're not accepted yet — HOLD at
             -- plan_position (keep the standoff fresh, let squad negotiation run);
             -- don't approach uninvited. Flips to approach on accept, or re-plans
@@ -5704,6 +5742,12 @@ function M.update_attack_substate(goal, state, world, info)
       local bo_hold = squad.blitz_only(state) and C.BLITZ_ONLY_EXTEND_WAIT
       local verdict = M.blitz_cmdr_go_verdict(bo_hold, timed_out, ready, total, party, set_inwait, bmin,
                                               goal._blitz_only_ext_n or 0, C.BLITZ_ONLY_EXTEND_MAX or 3)
+      -- A person's attack order past HUMAN_ATTACK_BLITZ_WAIT_MAX_S: GO now,
+      -- whoever is parked. No more waiting, no blitz-only extension, and no
+      -- short-handed abandon of the take the person asked for.
+      if goal._hcap_over and verdict ~= "go" then
+        verdict = "go"
+      end
       if verdict == "extend" then
         local add = C.SQUAD_BLITZ_READY_TIMEOUT or 150
         goal._blitz_timeout_ext = (goal._blitz_timeout_ext or 0) + add
@@ -5789,6 +5833,11 @@ function M.update_attack_substate(goal, state, world, info)
         if csub == "shoot_pill" or csub == "charge" or csub == "engage" or csub == "swerve" then
           go = "1"
         end
+      end
+      -- A person's attack order past HUMAN_ATTACK_BLITZ_WAIT_MAX_S: do not
+      -- wait for the commander's GO any more; go in now.
+      if go ~= "1" and goal._hcap_over then
+        go = "1"
       end
       if go == "1" then
         commit_fire()

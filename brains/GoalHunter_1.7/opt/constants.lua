@@ -4498,6 +4498,17 @@ M.ORDER_CLAIM_TIEBREAK = true  -- keel false
 -- holder, but no bot re-bids the order and nobody else is sent.  Group
 -- partners keep their share.  false = the next cheapest bot takes it over.
 M.ORDER_NO_HAND_BACK = true    -- keel false
+-- 2026-09-28: A PERSON'S ATTACK ORDER DOES NOT WAIT LONG FOR A BLITZ (Andrew:
+-- "when a human gives that command it's important that they actually follow
+-- it in a timely manner").  Seconds, counted from the first tick the bot runs
+-- the attack_pill goal for a held order on that pill.  Once they are up,
+-- every wait for blitz partners on that take ends and the bot goes in: the
+-- commander's blitz_wait GO (no READY_TIMEOUT wait, no blitz-only extension,
+-- no short-handed abandon), the soldier's wait for the commander's GO, the
+-- plan_position hold for a blitz accept, and the plan_position hold for the
+-- man to get back in.  An attack the bot picked for itself is not touched.
+-- 0 = no cap (the old waits).
+M.HUMAN_ATTACK_BLITZ_WAIT_MAX_S = 5   -- keel 0
 -- 2026-09-24: a bot whose man is out of the tank is NOT busy for an order
 -- (Andrew: "the man is out of the tank should not stop the interrupt").
 -- It takes the order and drives off; the builder walks back to the tank.
@@ -5141,6 +5152,9 @@ M.PRESETS = {
     ORDER_NEW_CLEARS_ALL         = false,
     ORDER_CLAIM_TIEBREAK          = false,
     ORDER_NO_HAND_BACK            = false,
+    --   2026-09-28: an attacking bot on a person's order waits at most
+    --   HUMAN_ATTACK_BLITZ_WAIT_MAX_S for blitz partners.  KEEL: no cap.
+    HUMAN_ATTACK_BLITZ_WAIT_MAX_S = 0,
     ORDER_MAN_OUT_TAKES           = false,
     --   2026-09-25: a bot holding a person's order keeps it against a new
     --   ping, and a repeat ping on plain ground adds no bot.  KEEL: the
