@@ -121,6 +121,7 @@ local zero    = nil           -- the first to turn, once one has been picked
 local alone   = nil           -- the last survivor, once there is one
 local boosted = nil           -- the seat that holds ZERO_MODS, if any does
 local crushed = {}            -- pill -> true, run over by the horde, to go
+local razed   = {}            -- base -> true, run over by the horde, to go
 
 -- A seat that is in the round: on the roster, and on the field rather than
 -- held. A seat held for a bot is on the roster and has no tank.
@@ -1172,26 +1173,31 @@ function can_build(p, action, x, y, n)
   return nil
 end
 
--- And takes nothing. A base the horde drives over stays neutral, and the
--- map's supplies stay the survivors' to hold rather than a prize for killing
--- them. Shooting a base flat still neutralises it, so the horde can deny what
--- it cannot use. A dead pillbox the horde drives over is crushed: it comes
--- off the map for the rest of the round. A policy may not change the game,
--- so the pillbox is only noted here and on_tick takes it off.
+-- And takes nothing: the map's supplies are the survivors' to hold rather
+-- than a prize for killing them. What the horde would have taken it destroys
+-- instead. A base it could capture and a dead pillbox it drives over come
+-- off the map for the rest of the round, so the survivors cannot have them
+-- back either. A policy may not change the game, so each one is only noted
+-- here and on_tick takes it off.
 function can_capture(kind, n, p)
   if side[p] == INFECTED then
-    if kind == "pill" and n ~= nil then
-      crushed[n] = true
+    if n ~= nil then
+      if kind == "pill" then
+        crushed[n] = true
+      elseif kind == "base" then
+        razed[n] = true
+      end
     end
     return false
   end
   return nil
 end
 
--- The pillboxes the horde ran over, taken off the map. Each is looked at
--- again first: one a survivor picked up or rebuilt in the same tick stays.
+-- The pillboxes and bases the horde ran over, taken off the map. A pillbox is
+-- looked at again first: one a survivor picked up or rebuilt in the same tick
+-- stays.
 function on_tick()
-  if next(crushed) == nil then
+  if next(crushed) == nil and next(razed) == nil then
     return
   end
   for n in pairs(crushed) do
@@ -1200,7 +1206,13 @@ function on_tick()
       game.remove_pill(n)
     end
   end
+  for n in pairs(razed) do
+    if game.base(n) ~= nil then
+      game.remove_base(n)
+    end
+  end
   crushed = {}
+  razed   = {}
 end
 
 -- No friendly fire, either way. A survivor shot by a survivor would join the
@@ -1268,7 +1280,7 @@ scenario = {
     allow_base_win = "Holding every base does not win.",
     can_build = "The infected cannot build.",
     can_capture = "The infected cannot take bases or pillboxes.",
-    on_tick = "A dead pillbox the infected drive over is removed.",
+    on_tick = "Bases and dead pillboxes the infected drive over are removed.",
     on_choose_start = "The infected respawn near where they fell.",
     spawn_loadout = "Infected respawn with half shells and full armour.",
     damage_scale = "No friendly fire.",
