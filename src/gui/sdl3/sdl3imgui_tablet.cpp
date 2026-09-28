@@ -1240,8 +1240,14 @@ static void renderStatusDrawer(ClientSim *cs) {
     /* Base status */
     if (ImGui::CollapsingHeader(langGetText(STR_TABLET_BASES))) {
       BYTE total = clientSimGetBaseCount(cs);
+      int shown = 0;
       for (BYTE i = 1; i <= total; i++) {
         baseAlliance ba = clientSimGetBaseAlliance(cs, i);
+        /* A base a scenario took off the map is not listed, and the rows of
+           four are counted over the ones that are. */
+        if (ba == baseOffMap) continue;
+        if (shown > 0 && shown % 4 != 0) ImGui::SameLine(0, 20);
+        shown++;
         ImVec4 col;
         switch (ba) {
           case baseOwnGood: col = ImVec4(0.0f, 0.8f, 0.0f, 1.0f); break;
@@ -1253,7 +1259,6 @@ static void renderStatusDrawer(ClientSim *cs) {
         MessageArgs args = {};
         args.number = i;
         ImGui::TextColored(col, "%s", langGetTextFmt(STR_TABLET_BASE_FMT, &args));
-        if (i % 4 != 0 && i < total) ImGui::SameLine(0, 20);
       }
     }
 
