@@ -2652,7 +2652,7 @@ STR_DLGLOBBY_SCENARIO_SAVE_TOO_LARGE=Ten plik jest za duży, aby go skopiować.
 STR_DLGLOBBY_SCENARIO_SAVE_NO_ANSWER=Serwer nie odpowiedział. Spróbuj ponownie.
 STR_DLGLOBBY_SCENARIO_SAVE_WRITE=Nie udało się zapisać kopii w folderze Mods.
 STR_MAPEDIT_SCENARIO_WORKSHOP=Element Warsztatu nr {string1}, opublikowany przez {string2}
-STR_DLGSETTINGS_WORKSHOP_HEADING=Warsztat Steam
+STR_DLGSETTINGS_WORKSHOP_HEADING=Warsztat
 STR_DLGSETTINGS_WORKSHOP_SUBSCRIBED=Subskrybowane
 STR_DLGSETTINGS_WORKSHOP_PUBLISH=Publikuj
 STR_DLGSETTINGS_WORKSHOP_INSTALLED=Zainstalowano
@@ -2664,6 +2664,7 @@ STR_DLGSETTINGS_WORKSHOP_NONE_SUBSCRIBED=Nie subskrybujesz żadnych modów, scen
 STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH=Na razie nie ma nic do opublikowania. Umieść mod lub scenariusz w folderze Mods albo spakuj scenariusz do mapy.
 STR_DLGSETTINGS_WORKSHOP_PUB_HEADING=Opublikuj ten mod lub scenariusz w Warsztacie Steam
 STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE=Zaktualizuj element, z którego pochodzi ten plik
+STR_DLGSETTINGS_WORKSHOP_UNUSABLE=Nie do użycia
 
 # The lobby's Workshop chip
 STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Warsztat

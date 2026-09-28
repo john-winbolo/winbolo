@@ -7,12 +7,14 @@
  * Name:          imgui_settings_workshop
  * Filename:      imgui_settings_workshop.cpp
  * Purpose:
- *   The Workshop section of the Settings dialog. See
+ *   The Settings dialog's Steam Workshop tab. See
  *   imgui_settings_workshop.h.
  *
  *   Subscribed lists the items the sync copied into the
- *   Workshop directory, from its index, and the ones Steam
- *   is still downloading. Publish lists the scripts in the
+ *   Workshop directory, from its index, and from Steam the
+ *   rest: the skins the skin picker reads in place, the
+ *   items still downloading, and the installed items the
+ *   sync could not use. Publish lists the scripts in the
  *   player's own Mods directory and the maps under
  *   data/maps that carry a scenario, each opening the
  *   shared publish window: a loose script is packed first,
@@ -45,6 +47,7 @@ extern "C" {
 #include "../../../common/wb_log.h"
 #include "../../lang.h"
 #include "../../../steam/steam_wrapper.h"
+#include "../skin_source.h"                    /* a subscribed skin's name */
 #include "../../../scenario/scenario_host.h"  /* the local listing, a map's
                                                  package, the loose pack */
 #include "scenario_chunk.h"                    /* scnIoSetWorkshopId */
@@ -68,13 +71,23 @@ extern "C" {
 enum WsView { WS_VIEW_SUBSCRIBED, WS_VIEW_PUBLISH };
 
 /* The chip a row wears. */
-enum WsKind { WS_KIND_NONE, WS_KIND_SCENARIO, WS_KIND_MOD, WS_KIND_MAP };
+enum WsKind {
+    WS_KIND_NONE, WS_KIND_SCENARIO, WS_KIND_MOD, WS_KIND_MAP, WS_KIND_SKIN
+};
+
+/* Where a subscribed item stands. */
+enum WsSubState {
+    WS_SUB_INSTALLED,    /* usable where the game looks for it */
+    WS_SUB_DOWNLOADING,  /* subscribed, Steam has not delivered it yet */
+    WS_SUB_UNUSABLE      /* installed, but the sync could not use it */
+};
 
 struct WsSubRow {
-    uint64_t id;
-    char     name[SERVER_SCENARIO_NAME_LEN + WORKSHOP_SYNC_FILE_MAX];
-    WsKind   kind;
-    bool     installed;  /* false: subscribed and still downloading */
+    uint64_t   id;
+    /* Empty when the item's name is not known: the row shows its id. */
+    char       name[SERVER_SCENARIO_NAME_LEN + WORKSHOP_SYNC_FILE_MAX];
+    WsKind     kind;
+    WsSubState state;
 };
 
 struct WsPubRow {
@@ -94,7 +107,7 @@ struct WsPubRow {
     uint64_t author;
 };
 
-/* File scope because both settings shells share the Display tab. */
+/* File scope because both settings shells draw the same Workshop tab. */
 static WsView                s_view = WS_VIEW_SUBSCRIBED;
 static std::vector<WsSubRow> s_subRows;
 static std::vector<WsPubRow> s_pubRows;
@@ -168,9 +181,9 @@ static void wsBuildSubscribed(void) {
         WsSubRow    r;
 
         memset(&r, 0, sizeof(r));
-        r.id        = index[(size_t)i].id;
-        r.installed = true;
-        r.kind      = WS_KIND_NONE;
+        r.id    = index[(size_t)i].id;
+        r.state = WS_SUB_INSTALLED;
+        r.kind  = WS_KIND_NONE;
         wsStem(file, r.name, sizeof(r.name));
 
         if (wsHasExt(file, ".map")) {
@@ -208,18 +221,21 @@ static void wsBuildSubscribed(void) {
         s_subRows.push_back(r);
     }
 
-    /* The items Steam has not finished downloading are not in the index yet,
-       so they come from Steam, named by their id until they arrive. An item
-       the player disabled in Steam is not downloading and is not listed
-       here. */
+    /* Every other subscription comes from Steam, so the list holds what the
+       overlay does: a skin, which the sync leaves where Steam put it for the
+       skin picker; an item still downloading, named by its id until it
+       arrives; and an installed item the sync skipped, for having nothing the
+       game reads or a file name a lower item already holds (the sync's log
+       line says which). An item the player disabled in Steam is not coming
+       and is not listed. */
     int count = steam_workshop_subscribed_count();
     for (int i = 0; i < count && (int)s_subRows.size() < WS_ROWS_MAX; i++) {
         char     folder[WS_PATH_MAX];
         uint64_t id = 0;
         bool     indexed = false;
+        bool     installed = steam_workshop_item(i, &id, folder, sizeof(folder));
 
-        if (steam_workshop_item(i, &id, folder, sizeof(folder)) || id == 0 ||
-            steam_workshop_item_disabled(id)) {
+        if (id == 0 || (!installed && steam_workshop_item_disabled(id))) {
             continue;
         }
         for (int j = 0; j < nIndex; j++) {
@@ -232,9 +248,26 @@ static void wsBuildSubscribed(void) {
 
         WsSubRow r;
         memset(&r, 0, sizeof(r));
-        r.id        = id;
-        r.installed = false;
-        r.kind      = WS_KIND_NONE;
+        r.id    = id;
+        r.kind  = WS_KIND_NONE;
+        r.state = WS_SUB_DOWNLOADING;
+        if (installed) {
+            if (workshopSyncClassify(folder, nullptr, 0, nullptr) ==
+                WORKSHOP_ITEM_SKIN) {
+                /* Named from its skin.ini, as the skin picker names it. */
+                SkinSource *skin = skinSourceOpen(folder);
+                r.kind  = WS_KIND_SKIN;
+                r.state = WS_SUB_INSTALLED;
+                if (skin != nullptr) {
+                    SkinInfo info;
+                    skinSourceReadIni(skin, &info);
+                    SDL_strlcpy(r.name, info.name, sizeof(r.name));
+                    skinSourceClose(skin);
+                }
+            } else {
+                r.state = WS_SUB_UNUSABLE;
+            }
+        }
         s_subRows.push_back(r);
     }
     s_subDirty = false;
@@ -414,11 +447,11 @@ static void wsViewButton(langid label, WsView view) {
 }
 
 /* The row's chip after its name: Mod and Scenario the way the lobby draws
-   them, and Map in the same chip in the style's own frame colours. */
+   them, and Map and Skin in the same chip in the style's own frame colours. */
 static void wsKindChip(WsKind kind, float s) {
     if (kind == WS_KIND_MOD || kind == WS_KIND_SCENARIO) {
         lobbyScenarioKindTag(kind == WS_KIND_MOD, s);
-    } else if (kind == WS_KIND_MAP) {
+    } else if (kind == WS_KIND_MAP || kind == WS_KIND_SKIN) {
         /* Centred on the name beside it, as lobbyScenarioKindTag centres. */
         float mid = (ImGui::GetItemRectMin().y + ImGui::GetItemRectMax().y) *
                     0.5f;
@@ -427,7 +460,9 @@ static void wsKindChip(WsKind kind, float s) {
         ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() +
                              (mid - h * 0.5f - ImGui::GetCursorScreenPos().y));
-        lobbyDrawNameTag(langGetText(STR_DLGSETTINGS_WORKSHOP_TAG_MAP),
+        lobbyDrawNameTag(langGetText(kind == WS_KIND_MAP
+                                         ? STR_DLGSETTINGS_WORKSHOP_TAG_MAP
+                                         : STR_DLGSETTINGS_SKIN),
                          ImGui::GetColorU32(ImGuiCol_FrameBg),
                          ImGui::GetColorU32(ImGuiCol_Text),
                          ImGui::GetColorU32(ImGuiCol_Border), s);
@@ -464,7 +499,7 @@ static void wsDrawSubscribed(float s) {
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
         ImGui::AlignTextToFramePadding();
-        if (r.installed) {
+        if (r.name[0] != '\0') {
             ImGui::TextUnformatted(r.name);
         } else {
             MessageArgs args = {};
@@ -477,10 +512,12 @@ static void wsDrawSubscribed(float s) {
 
         ImGui::TableSetColumnIndex(1);
         ImGui::AlignTextToFramePadding();
-        ImGui::TextDisabled("%s",
-                            r.installed
-                                ? langGetText(STR_DLGSETTINGS_WORKSHOP_INSTALLED)
-                                : langGetText(STR_DLGSKIN_DOWNLOADING));
+        ImGui::TextDisabled(
+            "%s", langGetText(r.state == WS_SUB_INSTALLED
+                                  ? STR_DLGSETTINGS_WORKSHOP_INSTALLED
+                              : r.state == WS_SUB_DOWNLOADING
+                                  ? STR_DLGSKIN_DOWNLOADING
+                                  : STR_DLGSETTINGS_WORKSHOP_UNUSABLE));
 
         ImGui::TableSetColumnIndex(2);
         if (ImGui::SmallButton(langGetText(STR_DLGSETTINGS_WORKSHOP_OPEN))) {
@@ -553,9 +590,6 @@ void imguiSettingsWorkshopSection(void) {
         wsMarkDirty();
     }
 
-    ImGui::Spacing();
-    ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_WORKSHOP_HEADING));
-
     wsViewButton(STR_DLGSETTINGS_WORKSHOP_SUBSCRIBED, WS_VIEW_SUBSCRIBED);
     ImGui::SameLine();
     wsViewButton(STR_DLGSETTINGS_WORKSHOP_PUBLISH, WS_VIEW_PUBLISH);
@@ -565,6 +599,13 @@ void imguiSettingsWorkshopSection(void) {
            copied in before the rows are read. */
         workshopSyncRun();
         wsMarkDirty();
+    }
+    imguiHandOnHover();
+    ImGui::SameLine();
+    /* Skins, mods, scenarios and maps alike: what the player subscribes to
+       there turns up in the Subscribed view once Steam installs it. */
+    if (ImGui::Button(langGetText(STR_DLGSKIN_BROWSE_WORKSHOP))) {
+        steam_workshop_open_browse_page();
     }
     imguiHandOnHover();
 

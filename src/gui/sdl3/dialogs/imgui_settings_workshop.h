@@ -7,12 +7,12 @@
  * Name:          imgui_settings_workshop
  * Filename:      imgui_settings_workshop.h
  * Purpose:
- *   The Workshop section of the Settings dialog's Display
- *   tab, drawn under the skin picker's Workshop buttons.
- *   Two views switched by two buttons: what the player is
- *   subscribed to, and the mods, scenarios and scenario
- *   maps of their own they can publish through the shared
- *   publish window.
+ *   The Settings dialog's Steam Workshop tab. A button to
+ *   the Workshop's browse page and two views switched by
+ *   two buttons: what the player is subscribed to, and the
+ *   mods, scenarios and scenario maps of their own they can
+ *   publish through the shared publish window. A skin is
+ *   published from the skin picker on the Display tab.
  *
  *   Desktop only. The .cpp is compiled into the desktop
  *   client alone; this header only declares, so it can be
@@ -23,8 +23,9 @@
 #ifndef IMGUI_SETTINGS_WORKSHOP_H
 #define IMGUI_SETTINGS_WORKSHOP_H
 
-/* Draw the section. Nothing at all unless Steam's Workshop is available.
-   Call every frame the Display tab draws, so the publish window it opens is
+/* Draw the tab's contents. Nothing at all unless Steam's Workshop is
+   available, so a caller shows the tab only when steam_workshop_available()
+   says yes. Call every frame the tab draws, so the publish window it opens is
    drawn every frame too. */
 void imguiSettingsWorkshopSection(void);
 

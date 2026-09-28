@@ -86,6 +86,13 @@ extern "C" {
 #include "../../../../server/threads.h"  /* threadsWaitForMutex / Release — the in-process read runs on the render thread */
 #include "../../../../common/wb_log.h"   /* WB_LOG_WARN / WB_LOG_CAT_GUI — a script send that did not start */
 #include "../../../../steam/steam_wrapper.h"  /* steam_workshop_open_item_page — the round rows' menu */
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+/* workshopSyncGeneration — an item Steam installed while the dialog is up.
+   The module is desktop only, as is every call into it below. */
+extern "C" {
+#include "../../workshop_sync.h"
+}
+#endif
 }
 
 /* The window's ID. The caption before ### is translated and the ID after it
@@ -133,6 +140,14 @@ static bool                s_remoteTaken = false;
 static ServerScenarioEntry s_localRows[LOBBY_SCENARIO_CHOOSER_MAX];
 static int                 s_localCount = 0;
 static bool                s_localRead  = false;
+
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+/* The Workshop sync's generation as of the last listing. The Browse Workshop
+ * button sends the host to subscribe from the Steam overlay while the dialog
+ * stays up; the sync copies what Steam installs into the Workshop directory
+ * and moves its generation on, and the listings are read again when it does. */
+static uint32_t            s_syncGen    = 0;
+#endif
 
 /* The merged column: every server row and every local row no server row
  * matches. */
@@ -2132,6 +2147,17 @@ static void lobbyScenarioChooserCatalogue(ClientSim *cs,
     int  i;
 
     ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_SCENARIO_OFFERED));
+    /* The Workshop's mods and scenarios, for a host who has none of the one
+       they want: what they subscribe to in the Steam overlay joins this
+       column once Steam installs it. Only for a host, the one player who can
+       put a script in the round. */
+    if (mayEdit && steam_workshop_available()) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton(langGetText(STR_DLGSKIN_BROWSE_WORKSHOP))) {
+            steam_workshop_open_browse_page();
+        }
+        imguiHandOnHover();
+    }
 
     /* The name box over the list, not in it: it filters the rows and is not
        one of them, and a controller stepping down the list must not land in a
@@ -2541,6 +2567,18 @@ void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
     }
 
     ServerSim *sim = gameFrontGetServerSim();
+
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+    /* Both listings of this computer's scripts read the Workshop directory:
+       a server in this process lists it among its scenarios, and this
+       computer's own column lists it beside the Mods directory. A remote
+       server's listing is its own and is left alone. */
+    if (workshopSyncGeneration() != s_syncGen) {
+        s_syncGen   = workshopSyncGeneration();
+        s_localRead = false;
+        if (sim != NULL) s_asked = false;
+    }
+#endif
 
     /* One listing per opening, obtained from here rather than from the button
        so a dialog opened again after the directory changed reads it again.
