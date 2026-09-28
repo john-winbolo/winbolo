@@ -39,7 +39,11 @@ typedef enum {
   baseOwnGood,
   baseAllieGood,
   baseNeutral,
-  baseEvil
+  baseEvil,
+  /* A slot inside the map's base count whose base a scenario took off the
+     map. The panel leaves its place empty, as it does for a slot past the
+     count. Last, so the values above keep their numbers. */
+  baseOffMap
 } baseAlliance;
 
 #endif /* ALLIANCE_ENUMS_H */
