@@ -19,15 +19,17 @@
 -- The map belongs to the survivors. Only they capture a base or a pillbox,
 -- only they build, and only they carry mines. The infected have the ground and
 -- nothing on it, and a trickle of shells so that an empty gun is not the end of
--- them. What a survivor owns is let go when he turns: his pillboxes and his
--- bases go neutral rather than changing sides with him, so a fort is taken back
--- rather than turned around, and a neutral gun shoots at whoever comes near it.
+-- them. What a survivor owns does not change sides with them when they turn:
+-- their pillboxes, standing or carried, go to the nearest survivor still
+-- alive, and their bases go neutral, so a fort stays with the survivors rather
+-- than being turned around on them.
 --
--- Nobody can hurt his own side. Friendly fire would otherwise be the quickest
+-- Nobody can hurt their own side. Friendly fire would otherwise be the quickest
 -- way to end the round, and a survivor shot by a survivor would join the horde
--- for it. What turns a survivor is an infected tank's shell and nothing else:
--- drowning, a mine, a pillbox or any other death only kills him, and he comes
--- back a survivor.
+-- for it. What kills and turns a survivor is an infected tank's shell and
+-- nothing else: drowning, a mine, a pillbox or any other death only kills
+-- them, and they come back a survivor. The help below and deep sea turn a
+-- survivor without a death.
 --
 -- Until the horde has made its first kill it is helped. Every minute that goes
 -- by without one, another survivor picked at random turns where he stands, and
@@ -40,10 +42,17 @@
 -- refuels the horde. Nothing else about how a bot plays is changed, on either
 -- side.
 --
--- For the last ninety seconds every survivor is drawn on the infected's map. A
--- round that has come down to one man sitting in a wood has stopped being
--- played, so the clock takes the hiding place away rather than the scenario
--- waiting it out.
+-- For the last ninety seconds every infected player's panel is a compass that
+-- points at the nearest survivor, which is the last survivor once only one is
+-- left. A round that has come down to one player sitting in a wood has stopped
+-- being played, so the clock takes the hiding place away rather than the
+-- scenario waiting it out. The host can change the ninety in the lobby.
+--
+-- Deep sea is no hiding place either. Once the first one has turned, a
+-- survivor who stays on deep sea for ten seconds turns where they are, the same
+-- as any other turn, even the last survivor. Their screen counts the seconds
+-- down, and leaving the deep sea starts the count again. The host can change
+-- the ten in the lobby.
 --
 -- Nothing here names a square, a pillbox or a base, so it plays over whatever
 -- map the host has committed.
@@ -54,10 +63,18 @@ local INFECTED  = 2
 local ROUND_SECONDS   = 360   -- the whole round
 local HEAD_START      = 10    -- before the first one turns
 local WARNING_SECONDS = 3     -- what the first one is told, and nobody else
-local BEACON_SECONDS  = 90    -- the tail of the round the survivors are drawn in
 local HELP_EVERY      = 60    -- seconds with no infected kill before another turns
 local FEED_EVERY      = 2     -- seconds between points of armour for the infected
 local SHELL_EVERY     = 0.5   -- seconds between shells for the infected
+local REFRESH_SECONDS = 0.2   -- how often the deep sea clock and compass run
+local TICKS_PER_SEC   = 100   -- game.tick() counts a hundred to the second
+
+-- The defaults of the two lobby settings (scenario.settings at the bottom of
+-- the file declares them from these numbers). on_start puts the host's choice
+-- over them.
+local COMPASS_SECONDS    = 90   -- the tail of the round the horde has a compass
+                                -- in; 0 is no compass
+local DEEP_WATER_SECONDS = 10   -- how long a survivor can stay on deep sea
 
 -- What an infected tank comes back with, and the most the trickle feeds it
 -- to: half a full tank of shells.
@@ -87,16 +104,28 @@ local COL_W       = 64        -- two columns, each half the square
 local COL_PAD     = 3         -- from a column's edge to its text
 local SMALL_EM    = 8         -- small text height in units, which is its em
 
+-- The compass, which takes the roster's place on an infected player's panel.
+-- The title and the clock stay where they are, and the rose sits under them.
+local CX, CY, RADIUS = 64, 66, 24
+local NORTH_Y     = 31        -- the "N" above the rose
+local STATUS_Y    = 96        -- who the needle points at, and how far off
+local COUNT_Y     = 108       -- how many survivors are left
+
 local side    = {}            -- seat -> SURVIVORS or INFECTED
 local turned  = {}            -- seat -> how many it has turned
 local lived   = {}            -- seat -> seconds it lasted
 local fell    = {}            -- seat -> the square it last died on
-local marked  = {}            -- seat -> the horde is being shown where it is
 local handed  = {}            -- seat -> the word a bot's brain was last handed
+local wet     = {}            -- seat -> the tick a survivor went onto deep sea
+local warned  = {}            -- seat -> the deep sea warning is on its screen
+local drawn   = {}            -- seat -> what its panel was last sent, as a key
+local heir_of = {}            -- seat -> who got its pillboxes when it turned
+local roster  = nil           -- the roster panel, while it is sent seat by seat
+local roster_n = 0            -- counts roster panels, to tell a seat is behind
 local elapsed = 0
 local running = false
 local over    = false
-local beacon  = false
+local compass_on = false      -- the horde has a compass on the survivors
 local loose   = false         -- the first one has turned
 local bitten  = false         -- an infected shell has turned somebody
 local helper  = nil           -- the help's waiting timer, while there is one
@@ -169,22 +198,37 @@ local function crown_zero()
   end
 end
 
--- The mark rides the tank and only the infected are shown it. Marker ids run 0
--- to 15 and so do seats, so a seat's own number is its mark.
-local function show(p)
-  if marked[p] then
-    return
-  end
-  marked[p] = true
-  game.marker_follow(p, p, "red", { team = INFECTED })
+local function whole(n)
+  return math.floor(n + 0.5)
 end
 
-local function unshow(p)
-  if not marked[p] then
-    return
+-- The compass rose, built once. It never moves and it is the same for
+-- everybody, so it is sixteen lines worked out at load and copied into each
+-- infected player's panel.
+local RING = {}
+do
+  local SEGMENTS = 16
+  local px, py
+  for i = 0, SEGMENTS do
+    local a = (i / SEGMENTS) * 2 * math.pi
+    local x = CX + RADIUS * math.sin(a)
+    local y = CY - RADIUS * math.cos(a)
+    if i > 0 then
+      RING[#RING + 1] = { "line", whole(px), whole(py), whole(x), whole(y),
+                          "grey_dark" }
+    end
+    px, py = x, y
   end
-  marked[p] = nil
-  game.clear_marker(p, { team = INFECTED })
+end
+
+-- Takes a survivor's deep sea count off: the clock starts again the next time
+-- they go onto deep sea, and the warning comes off their screen.
+local function dry_off(p)
+  wet[p] = nil
+  if warned[p] then
+    warned[p] = nil
+    game.announce("", 0, p)
+  end
 end
 
 -- How wide a string draws in small text, in panel units. The panel has no clip
@@ -224,16 +268,23 @@ local function fit(s, width)
   return out .. ".."
 end
 
-local function panel()
-  local left  = roll(SURVIVORS)
-  local horde = roll(INFECTED)
-  local list  = {
+-- The title bar and the round's clock, which every panel starts with.
+local function panel_head()
+  return {
     { "rect",  0, 0, 128, TITLE_H, "grey_dark", true },
     { "text",  64, 3, "white", "normal", "centre", "INFECTION" },
     { "timer", 64, CLOCK_Y, "yellow", "normal", "centre", "down", ends_at },
-    { "text",  COL_PAD, HEAD_Y, "cyan", "small", "left", "Uninfected" },
-    { "text",  COL_W + COL_PAD, HEAD_Y, "red", "small", "left", "Infected" },
   }
+end
+
+local function roster_list()
+  local left  = roll(SURVIVORS)
+  local horde = roll(INFECTED)
+  local list  = panel_head()
+  list[#list + 1] = { "text", COL_PAD, HEAD_Y, "cyan", "small", "left",
+                      "Uninfected" }
+  list[#list + 1] = { "text", COL_W + COL_PAD, HEAD_Y, "red", "small", "left",
+                      "Infected" }
   local n = #list
 
   -- One column: a name on the left of it and its number on the right, cut so
@@ -262,7 +313,118 @@ local function panel()
   column(left, 0, "cyan", function(p) return lived[p] or 0 end)
   column(horde, COL_W, "red", function(p) return turned[p] or 0 end)
 
-  game.panel(0, list)
+  return list
+end
+
+-- There is one panel, and a player is shown the last list that was sent to
+-- them, whether it went to everybody or to them alone. So until the compass
+-- comes on the roster goes to everybody at once. After that the infected are
+-- sent a compass each, and the roster is kept here for refresh to send to
+-- everybody else one seat at a time: a list sent to everybody would replace
+-- the compasses for a moment every second.
+local function panel()
+  local list = roster_list()
+  if compass_on then
+    roster   = list
+    roster_n = roster_n + 1
+  else
+    game.panel(0, list)
+  end
+end
+
+-- The survivor nearest to seat p's tank, by where the two tanks are, for p's
+-- compass. A survivor waiting to respawn is left out: their tank is not
+-- anywhere to point at. nil when no survivor has a tank on the field.
+local function nearest_survivor(me)
+  local best, best_d, bx, by = nil, nil, nil, nil
+  for _, q in ipairs(roll(SURVIVORS)) do
+    local t = game.tank(q)
+    if t ~= nil and not t.dead then
+      local x, y = t.wx / 256, t.wy / 256
+      local dx, dy = x - me.wx / 256, y - me.wy / 256
+      local d = dx * dx + dy * dy
+      if best_d == nil or d < best_d then
+        best, best_d, bx, by = q, d, x, y
+      end
+    end
+  end
+  return best, bx, by
+end
+
+-- One infected player's compass. The needle is the vector from their tank to
+-- the survivor's, cut to the rose's radius, so no angle is worked out. The
+-- panel is only sent when the needle's tip or the lines under it differ from
+-- what this seat was last sent.
+local function draw_compass(p, me, left)
+  local q, tx, ty = nearest_survivor(me)
+  local status, colour = "NOBODY TO FIND", "grey"
+  local ux, uy, tipx, tipy = nil, nil, nil, nil
+  if q ~= nil then
+    local dx, dy = tx - me.wx / 256, ty - me.wy / 256
+    local len = math.sqrt(dx * dx + dy * dy)
+    colour = "cyan"
+    status = string.format("%s %d", (left == 1) and "LAST ONE" or "NEAREST",
+                           whole(len))
+    if len >= 0.5 then
+      ux, uy = dx / len, dy / len
+      tipx, tipy = CX + RADIUS * ux, CY + RADIUS * uy
+    end
+  end
+  local count = string.format("%d uninfected left", left)
+
+  local key = string.format("c %s %s %s %s", tipx and whole(tipx) or "-",
+                            tipy and whole(tipy) or "-", status, count)
+  if drawn[p] == key then
+    return
+  end
+  drawn[p] = key
+
+  local list = panel_head()
+  local n = #list
+  for i = 1, #RING do
+    n = n + 1
+    list[n] = RING[i]
+  end
+  n = n + 1
+  list[n] = { "text", CX, NORTH_Y, "grey", "small", "centre", "N" }
+  if tipx ~= nil then
+    local backx, backy = tipx - 8 * ux, tipy - 8 * uy
+    -- The head, off a perpendicular of the same unit vector.
+    local px, py = -uy * 4, ux * 4
+    n = n + 1
+    list[n] = { "line", CX, CY, whole(tipx), whole(tipy), colour }
+    n = n + 1
+    list[n] = { "line", whole(tipx), whole(tipy), whole(backx + px),
+                whole(backy + py), colour }
+    n = n + 1
+    list[n] = { "line", whole(tipx), whole(tipy), whole(backx - px),
+                whole(backy - py), colour }
+  end
+  n = n + 1
+  list[n] = { "text", CX, STATUS_Y, colour, "small", "centre", status }
+  n = n + 1
+  list[n] = { "text", CX, COUNT_Y, "grey", "small", "centre", count }
+  game.panel(0, list, p)
+end
+
+-- Every seat's panel while the compass is on: a compass for the infected and
+-- the roster for everybody else. Each seat is sent at most one list here, and
+-- nothing else sends the panel while the compass is on, so the engine's one
+-- update per seat per tick is never met.
+local function draw_everybody()
+  local left = #roll(SURVIVORS)
+  local key  = "r " .. roster_n
+  for p = 0, game.max_tanks() - 1 do
+    local t = game.tank(p)
+    if t ~= nil and in_round(p) then
+      if side[p] == INFECTED then
+        draw_compass(p, t, left)
+      elseif roster ~= nil and drawn[p] ~= key then
+        drawn[p] = key
+        game.panel(0, roster, p)
+      end
+    end
+  end
 end
 
 local finish
@@ -289,24 +451,83 @@ local function check_the_end()
     finish("The infection took everyone.", INFECTED)
     return
   end
-  -- The last survivor is told and drawn on the horde's map, and is handed
-  -- nothing: he plays the round out on the classic tank.
+  -- The last survivor is told, and is handed nothing: they play the round
+  -- out on the classic tank. In the tail of the round the horde's compass
+  -- points at them.
   if #left == 1 and alone ~= left[1] then
     alone = left[1]
     game.announce(name_of(alone) .. " is the last one left", 4)
-    show(alone)
   end
 end
 
--- What a survivor owned goes to nobody rather than to the horde. A pillbox and
--- a base answer to a seat, not to a side, so without this a fort would change
--- hands the moment the man holding it did, and the survivors would be shot by
--- their own guns for the rest of the round.
+-- Who a survivor's pillboxes go to when they turn: the survivor whose tank is
+-- nearest theirs, not counting one waiting to respawn; when every survivor is
+-- waiting, the first survivor in seat order; when no survivor is left, nobody.
+-- The same survivor is used for the drop a second later, unless they have
+-- turned or gone by then.
+local function heir_for(p)
+  local h = heir_of[p]
+  if h ~= nil and side[h] == SURVIVORS and in_round(h) then
+    return h
+  end
+  local t = game.tank(p)
+  local best, best_d, any = nil, nil, nil
+  for _, q in ipairs(roll(SURVIVORS)) do
+    if q ~= p then
+      any = any or q
+      local s = game.tank(q)
+      if t ~= nil and s ~= nil and not s.dead then
+        local dx, dy = s.mx - t.mx, s.my - t.my
+        local d = dx * dx + dy * dy
+        if best_d == nil or d < best_d then
+          best, best_d = q, d
+        end
+      end
+    end
+  end
+  heir_of[p] = best or any
+  return heir_of[p]
+end
+
+-- A pillbox seat p is carrying, handed on. The engine only puts a pillbox
+-- into a tank from the ground and only changes the owner of one on the
+-- ground, so it is put down first. It is put down under the heir's tank and
+-- then put in it, which leaves the square as it was for the next one. When
+-- that square will not take it (a base, another pillbox) or the heir is
+-- waiting to respawn, it is put down under p's tank and given to the heir
+-- where it lies, dead, for them to pick up. When p cannot put it down at
+-- all it stays in their tank.
+local function pass_carried(p, heir, n)
+  local h = game.tank(heir)
+  if h ~= nil and not h.dead and game.drop_pill(p, n, h.mx, h.my) then
+    if not game.give_pill(heir, n) then
+      game.set_pill_owner(n, heir)
+    end
+    return
+  end
+  if game.drop_pill(p, n) then
+    game.set_pill_owner(n, heir)
+  end
+end
+
+-- What a survivor owned does not go to the horde. A pillbox and a base answer
+-- to a seat, not to a side, so without this a fort would change hands the
+-- moment the player holding it did, and the survivors would be shot by their
+-- own guns for the rest of the round. Pillboxes, on the ground or carried, go
+-- to another survivor (heir_for says which). When no survivor is left they
+-- are left as they are: the round is over by then. Bases go neutral.
 local function let_go_of(p)
-  for n = 1, game.num_pills() do
-    local pb = game.pill(n)
-    if pb ~= nil and pb.owner == p and not pb.in_tank then
-      game.set_pill_owner(n, game.NEUTRAL)
+  local heir = heir_for(p)
+  if heir ~= nil then
+    for n = 1, game.num_pills() do
+      local pb = game.pill(n)
+      if pb ~= nil and pb.owner == p then
+        if pb.in_tank then
+          pass_carried(p, heir, n)
+        else
+          game.set_pill_owner(n, heir)
+        end
+      end
     end
   end
   for n = 1, game.num_bases() do
@@ -389,11 +610,16 @@ local function infect(p, by)
     turned[by] = (turned[by] or 0) + 1
     post_score(by)
   end
-  unshow(p)
+  dry_off(p)
+  heir_of[p] = nil
   let_go_of(p)
-  -- A destroyed tank puts its cargo down as it goes, which lands after this
-  -- handler has run, so the pillbox it was carrying is released a second later.
-  game.timer(1, function() let_go_of(p) end)
+  -- A destroyed tank puts its cargo down as it goes, which can land after this
+  -- handler has run, so anything it was carrying is handed on a second later.
+  game.timer(1, function()
+    if not over then
+      let_go_of(p)
+    end
+  end)
   game.announce(name_of(p) .. " has turned", 2)
   -- And the man it happened to is told in his own words, after the line that
   -- goes to everybody so that his replaces it on his own screen. Turning is the
@@ -529,13 +755,63 @@ local function feed_shells()
   game.timer(SHELL_EVERY, feed_shells)
 end
 
-local function light_the_beacon()
-  beacon = true
-  for _, p in ipairs(roll(SURVIVORS)) do
-    show(p)
+-- From here to the end of the round the infected are sent a compass each
+-- rather than the roster. refresh draws them; each_second only builds the
+-- roster for everybody else.
+local function start_compass()
+  compass_on = true
+  game.announce("The horde has a compass on you", 3, { team = SURVIVORS })
+  game.announce("Your compass points at the survivors", 3, { team = INFECTED })
+end
+
+-- The deep sea clock. It only runs once the first one has turned: before that
+-- there is nobody to hide from, and a turn would start the infection before
+-- its time. It only counts survivors, and only while their tank is alive and
+-- on a deep sea square. Their screen shows the seconds left, to a tenth, and
+-- is written again on every pass, so the count goes down as they watch. When
+-- it runs out they turn where they are, through infect like every other turn,
+-- so their pillboxes are handed on the same way.
+local function watch_the_water(now)
+  local sea = game.TERRAIN.deep_sea
+  for p = 0, game.max_tanks() - 1 do
+    local t = nil
+    if loose and side[p] == SURVIVORS and in_round(p) then
+      t = game.tank(p)
+    end
+    if t ~= nil and not t.dead and game.map_tile(t.mx, t.my) == sea then
+      wet[p] = wet[p] or now
+      local left = DEEP_WATER_SECONDS - (now - wet[p]) / TICKS_PER_SEC
+      if left <= 0 then
+        dry_off(p)
+        game.message(name_of(p) .. " stayed in deep water too long.")
+        infect(p, nil)
+        if over then
+          return
+        end
+      else
+        warned[p] = true
+        game.announce(string.format("Deep water! You turn in %.1f s", left),
+                      1, p)
+      end
+    elseif wet[p] ~= nil or warned[p] then
+      dry_off(p)
+    end
   end
-  game.announce("They can see you now", 3, { team = SURVIVORS })
-  game.announce("The survivors are marked", 3, { team = INFECTED })
+end
+
+-- Five times a second: the deep sea clock, and while it is on, the compass.
+local function refresh()
+  if over then
+    return
+  end
+  watch_the_water(game.tick())
+  if over then
+    return
+  end
+  if compass_on then
+    draw_everybody()
+  end
+  game.timer(REFRESH_SECONDS, refresh)
 end
 
 local function each_second()
@@ -566,8 +842,9 @@ local function each_second()
   -- survivor's "normal" that landed before then would be overruled by the
   -- "ammoless" the last round left in it.
   hand_everybody()
-  if not beacon and elapsed >= ROUND_SECONDS - BEACON_SECONDS then
-    light_the_beacon()
+  if not compass_on and COMPASS_SECONDS > 0 and
+     elapsed >= ROUND_SECONDS - COMPASS_SECONDS then
+    start_compass()
   end
 
   panel()
@@ -585,6 +862,11 @@ local function each_second()
 end
 
 function on_start()
+  -- The host's lobby choices, over the defaults at the top of the file.
+  -- game.setting answers from inside a hook, where the host has read the
+  -- scenario table at the bottom of the file, not at the top level of it.
+  COMPASS_SECONDS    = game.setting("compass_seconds")
+  DEEP_WATER_SECONDS = game.setting("deep_water_seconds")
   running = true
   elapsed = 0
   ends_at = game.tick() + ROUND_SECONDS * 100
@@ -613,10 +895,13 @@ function on_start()
                "Hold out for six minutes.")
   game.message("Infected: back three seconds after you die, and the first " ..
                "of you is quicker and tougher. Kill them all.")
+  game.message(string.format("Survivors: stay in deep water for %d seconds " ..
+                             "and you turn.", DEEP_WATER_SECONDS))
   game.timer(HEAD_START - WARNING_SECONDS, warn_zero)
   game.timer(HEAD_START, turn_zero)
   game.timer(1, each_second)
   game.timer(SHELL_EVERY, feed_shells)
+  game.timer(REFRESH_SECONDS, refresh)
   panel()
 end
 
@@ -685,6 +970,10 @@ function on_player_join(p, scripted)
   turned[p] = 0
   lived[p]  = 0
   fell[p]   = nil
+  wet[p]    = nil
+  warned[p] = nil
+  drawn[p]  = nil
+  heir_of[p] = nil
   if loose then
     side[p] = INFECTED
     game.set_team(p, INFECTED)
@@ -708,8 +997,11 @@ end
 function on_player_leave(p, scripted)
   local was = side[p]
   side[p]    = nil
-  -- The engine does not clear a marker when its seat empties.
-  unshow(p)
+  -- Nothing is sent to an empty seat: the deep sea count and the panel it was
+  -- last sent are only forgotten, so a joiner in the seat starts from nothing.
+  wet[p]     = nil
+  warned[p]  = nil
+  drawn[p]   = nil
   handed[p]  = nil
   if alone == p then
     alone = nil
@@ -886,16 +1178,29 @@ scenario = {
   -- plays over whatever map the host has committed.
   bound       = false,
 
+  -- What the host sets in the lobby's details dialog; on_start reads them
+  -- with game.setting. The defaults are the numbers at the top of the file.
+  settings = {
+    { id = "deep_water_seconds", label = "Deep water time before turning (s)",
+      type = "int", min = 3, max = 60, step = 1,
+      default = DEEP_WATER_SECONDS },
+    { id = "compass_seconds", label = "Compass on survivors, last (s, 0 off)",
+      type = "int", min = 0, max = 300, step = 15,
+      default = COMPASS_SECONDS },
+  },
+
   -- What each callback below does, in a line a player reads: the lobby's
   -- details dialog lists these under "What this scenario implements:".
   callbacks = {
-    on_start = "Puts everyone on the survivors; one turns after 10 s.",
+    on_start = "Puts everyone on the survivors; one turns after 10 s. " ..
+               "Runs the deep water clock and the compass.",
     on_end = "Logs how long the round ran.",
     on_player_join = "A joiner after the first turn arrives infected.",
     on_player_leave = "Ends the round if no survivor is left.",
     on_team_changed = "Players cannot change side.",
     on_tank_spawned = "Keeps the first infected quick and tough.",
-    on_tank_killed = "A survivor shot by the infected turns.",
+    on_tank_killed = "A survivor shot by the infected turns; their " ..
+                     "pillboxes go to a survivor.",
     allow_extra_teams = "Only the two sides.",
     allow_base_win = "Holding every base does not win.",
     can_build = "The infected cannot build.",
