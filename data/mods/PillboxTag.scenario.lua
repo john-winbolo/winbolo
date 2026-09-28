@@ -1,15 +1,23 @@
 -- Pillbox Tag
 --
 -- One pillbox, dead, loose on the map. Whoever is carrying it scores a point a
--- second, and after ten minutes the one with the most points has won. Carrying
+-- second, and when the clock runs out (ten minutes unless the host sets
+-- another length in the lobby) the one with the most points has won. Carrying
 -- it costs you speed and every shell you own, so the holder runs and
 -- everybody else hunts. Kill the holder, or drive over the pillbox where it
 -- falls, and it is yours.
 --
--- The holder's slow legs go by the ground under him. The faster the ground,
--- the more of its speed he loses: on a road he keeps 60 in a hundred, on
--- grass 70, in a wood 85, and on the slow ground (swamp, crater, rubble, a
--- river) 90, because it is slow for everybody already.
+-- The holder's slow legs go by the ground under them. The faster the ground,
+-- the more of its speed they lose. With the lobby's speed penalty at its
+-- default of 30, on a road they keep 60 in a hundred, on grass 70, in a wood
+-- 85, and on the slow ground (swamp, crater, rubble, a river) 90, because it
+-- is slow for everybody already. Another penalty moves every one of those
+-- losses by the same factor (see CARRY_PENALTY).
+--
+-- Every time the prize changes hands, the new holder gets a head start: twice
+-- their carry speed for two seconds, fading back to their carry speed over
+-- the next three, and no damage for the first two. All of those numbers are
+-- the host's to change in the lobby (see "Tweak these" below).
 --
 -- The map's own pillboxes are taken off at setup and one is kept back as the
 -- prize. The ones taken off are gone from the pillbox panel too. The holder
@@ -48,7 +56,20 @@
 -- a tank of armour, and the base then goes off the map for half a minute
 -- before it comes back.
 
-local ROUND_SECONDS     = 600   -- the whole round
+-- Tweak these. Each is the default of a setting the host can change in the
+-- lobby's details dialog (scenario.settings at the bottom of the file
+-- declares them from these numbers), and read_settings, in on_setup, puts
+-- the host's choice over it. The lobby only offers whole numbers, so the
+-- boost is set there as a percentage (200 is twice) and the round in minutes.
+local ROUND_SECONDS       = 600  -- the whole round
+local SPEED_PENALTY_PCT   = 30   -- how much slower the holder is: 30 is 30%
+                                 -- slower on grass, more on a road and less
+                                 -- on slow ground (see CARRY_PENALTY)
+local BOOST_MULT          = 2.0  -- a new holder's speed, times their carry speed
+local BOOST_SECONDS       = 2    -- how long the full boost lasts
+local BOOST_DECAY_SECONDS = 3    -- how long it then takes to fade back to 1
+local INVULN_SECONDS      = 2    -- how long a new holder takes no damage
+
 local MINE_EVERY        = 30    -- seconds between a tank's mines
 local BASE_DOWN_SECONDS = 30    -- how long a used base stays off the map
 local REFRESH_SECONDS   = 0.2   -- how often each player's compass is redrawn
@@ -72,22 +93,35 @@ local BUILT_ARMOUR      = 3     -- the most armour the prize holds when built. A
 local HUNTERS           = 1     -- the team everybody but the holder is on
 local HOLDER_TEAM       = 2     -- the holder's team, on his own
 
--- The holder's share of each ground's speed, as a percentage of the distance
--- a classic tank covers there at full speed. The comment is the classic speed
--- cap and the holder's share of it, in world units a frame.
-local CARRY_SPEED_PCT = {
-  road     = 60,    -- 16 to 9.6
-  grass    = 70,    -- 12 to 8.4
-  forest   = 85,    --  6 to 5.1
-  boat     = 70,    -- 16 to 11.2, on any water
-  swamp    = 90,    --  3 to 2.7
-  crater   = 90,    --  3 to 2.7
-  rubble   = 90,    --  3 to 2.7
-  river    = 90,    --  3 to 2.7
-  deep_sea = 100,   --  3, sinking
+-- How much of each ground's speed the holder loses, as a percentage of the
+-- distance a classic tank covers there at full speed, when SPEED_PENALTY_PCT
+-- is 30. The penalty is not the same everywhere: the faster the ground, the
+-- more of it goes. Grass, water and a building lose the penalty itself, a
+-- road a third more, a wood half of it, the slow ground a third of it and
+-- deep sea nothing. Another penalty scales every row by penalty / 30, so the
+-- shape stays and 30 is exactly the table below. The comment is the classic
+-- speed cap and the holder's share of it at 30, in world units a frame.
+local CARRY_PENALTY = {
+  road     = 40,    -- 16 to 9.6
+  grass    = 30,    -- 12 to 8.4
+  forest   = 15,    --  6 to 5.1
+  boat     = 30,    -- 16 to 11.2, on any water
+  swamp    = 10,    --  3 to 2.7
+  crater   = 10,    --  3 to 2.7
+  rubble   = 10,    --  3 to 2.7
+  river    = 10,    --  3 to 2.7
+  deep_sea = 0,     --  3, sinking
 }
-local CARRY_SPEED_OTHER = 70    -- a plain modifier for ground not above with
-                                -- no speed of its own (a building)
+local CARRY_PENALTY_OTHER = 30  -- ground not above with no speed of its own
+                                -- (a building), set as a plain modifier
+local CARRY_PENALTY_AT = 30     -- the SPEED_PENALTY_PCT the table is written for
+
+-- The holder's share of each ground's speed, as a percentage, worked out
+-- from the table above and the penalty the host chose. Filled at load from
+-- the defaults and again by read_settings; a share can have a fraction,
+-- which carry_legs keeps.
+local CARRY_SPEED_PCT   = {}
+local CARRY_SPEED_OTHER = 100 - CARRY_PENALTY_OTHER
 
 -- The panel square is 128 units on a side, origin top left. The compass fills
 -- the middle of it, the round's clock sits above and the scores below.
@@ -118,9 +152,41 @@ local hide_at     = 3           -- squares off a tank in forest stops being seen
 local board       = {}          -- the leaderboard, rebuilt once a second
 local drawn       = {}          -- seat -> what its panel last showed, as a short key
 local team_of     = {}          -- seat -> the team this script last put it on
+local boost_from  = nil         -- the game.tick() the holder took the prize on,
+                                -- or nil when there is no boost to run
+local invuln_seat = nil         -- the seat damage_scale spares, or nil
+local invuln_to   = 0           -- the game.tick() that seat is spared until
 
 local function whole(n)
   return math.floor(n + 0.5)
+end
+
+-- The holder's share of each ground, worked out from the penalty. Multiplied
+-- before it is divided, so the default penalty gives the table's own whole
+-- numbers back exactly. A share is kept at 1 at the least: the lobby's range
+-- stops well short of that, but a share of nothing would stop the holder dead.
+local function work_out_shares()
+  for name, loss in pairs(CARRY_PENALTY) do
+    CARRY_SPEED_PCT[name] =
+      math.max(1, 100 - loss * SPEED_PENALTY_PCT / CARRY_PENALTY_AT)
+  end
+  CARRY_SPEED_OTHER = math.max(1, whole(100 - CARRY_PENALTY_OTHER *
+                                    SPEED_PENALTY_PCT / CARRY_PENALTY_AT))
+end
+work_out_shares()
+
+-- The host's lobby choices, over the defaults at the top of the file. Run in
+-- on_setup: game.setting answers from inside a hook, where the host has read
+-- the scenario table at the bottom of the file, and not at the top level of
+-- this one, where that table does not exist yet.
+local function read_settings()
+  ROUND_SECONDS       = game.setting("round_minutes") * 60
+  SPEED_PENALTY_PCT   = game.setting("speed_penalty")
+  BOOST_MULT          = game.setting("boost_pct") / 100
+  BOOST_SECONDS       = game.setting("boost_seconds")
+  BOOST_DECAY_SECONDS = game.setting("boost_decay_seconds")
+  INVULN_SECONDS      = game.setting("invuln_seconds")
+  work_out_shares()
 end
 
 -- The rose, built once. It never moves and it is the same for everybody, so it
@@ -1006,6 +1072,7 @@ end
 -- prize, and every base is made neutral with full armour and no shells or
 -- mines, so the first tank over it gets a pit stop.
 function on_setup()
+  read_settings()
   half_armour = math.floor(game.rule("tank_full_armour") / 2)
   base_armour = game.rule("base_full_armour")
 
@@ -1050,8 +1117,10 @@ function on_start()
     game.message("Pillbox Tag needs a map with a pillbox on it.")
     game.log("Pillbox Tag: the map has no pillbox; there is nothing to chase")
   else
-    game.message(
-      "Pillbox Tag: carry the pillbox. A point a second, ten minutes.")
+    local minutes = math.floor(ROUND_SECONDS / 60)
+    game.message(string.format(
+      "Pillbox Tag: carry the pillbox. A point a second, %d minute%s.",
+      minutes, (minutes == 1) and "" or "s"))
   end
 
   -- Whatever the lobby put people on, they start together: nobody holds the
@@ -1110,12 +1179,33 @@ local function carry_ground(t)
 end
 
 -- The smallest percentage that leaves a cap of `want` out of `cap`, worked
--- the way the engine works it: the whole part of cap * pct / 100.
+-- the way the engine works it: the whole part of cap * pct / 100. A boost
+-- can ask for more than the ground's own cap; the modifier is one byte, so
+-- 255 is as far as it goes.
+local SPEED_MOD_MAX = 255
+
 local function carry_pct(want, cap)
-  if want >= cap then
-    return 100
+  return math.min(SPEED_MOD_MAX,
+                  math.max(1, math.ceil(want * 100 / cap - 1e-9)))
+end
+
+-- The new holder's boost as a factor on their carry speed: BOOST_MULT for
+-- BOOST_SECONDS, then falling in a straight line to 1 over
+-- BOOST_DECAY_SECONDS, then 1. game.tick() counts 100 a second.
+local function boost_now()
+  if boost_from == nil then
+    return 1
   end
-  return math.max(1, math.ceil(want * 100 / cap - 1e-9))
+  local s = (game.tick() - boost_from) / 100
+  if s < BOOST_SECONDS then
+    return BOOST_MULT
+  end
+  s = s - BOOST_SECONDS
+  if s < BOOST_DECAY_SECONDS then
+    return BOOST_MULT + (1 - BOOST_MULT) * s / BOOST_DECAY_SECONDS
+  end
+  boost_from = nil
+  return 1
 end
 
 local function carry_start()
@@ -1126,19 +1216,25 @@ end
 
 -- The modifier set is replaced whole, and an empty one is the classic tank,
 -- which the engine reads back as a speed of 0.
+--
+-- A boost multiplies the share, and the same band makes the fraction of the
+-- boosted share, so it is kept to within a saved-up move too.
 local function carry_legs(p, t)
-  local pct = CARRY_SPEED_OTHER
+  local boost = boost_now()
+  local pct = math.min(SPEED_MOD_MAX, whole(CARRY_SPEED_OTHER * boost))
   local row = carry_ground(t)
   local cap = row and game.rule(row.rule) or 0
   if cap > 0 then
-    local share = cap * row.pct / 100
+    local share = cap * row.pct / 100 * boost
     -- A tank does not move every frame: it saves its speed up until it has
     -- tank_min_move units to go, then goes them all at once. So one frame's
     -- move is anything from 0 to cap + tank_min_move, and that saved-up move
     -- is the band: the sum has to get that far past 0 before the cap
     -- changes. It is let fall one more band behind, so the frames with no
-    -- move are not lost off the bottom, and no further.
-    local band = cap + game.rule("tank_min_move")
+    -- move are not lost off the bottom, and no further. A boost can put the
+    -- share over the ground's cap, and then the boosted cap is the one a
+    -- frame's move is measured against.
+    local band = math.max(cap, math.ceil(share)) + game.rule("tank_min_move")
     if carry_x ~= nil then
       local dx, dy = t.wx - carry_x, t.wy - carry_y
       local moved = math.sqrt(dx * dx + dy * dy)
@@ -1164,11 +1260,31 @@ end
 
 -- Everything the holder gives up, and gets back. The modifier set is replaced
 -- whole rather than merged, so the empty table is the classic tank.
+--
+-- Every new holder gets the head start, however the prize reached them: the
+-- boost that carry_legs reads through boost_now, and INVULN_SECONDS that
+-- damage_scale spares them for. A holder the prize is taken straight from
+-- loses the prize, and with it their own boost and cover, first. A holder who
+-- built the prize and drives back over it has not changed hands, so they get
+-- no new head start.
 local function take_the_prize(p)
+  if holder ~= nil and holder ~= p then
+    lose_the_prize(holder)
+  end
+  local changed = (holder ~= p)
   holder = p
   seconds[p] = seconds[p] or 0
-  -- On a team of his own before anybody is told to go after him, so a bot
-  -- handed the order to attack him is attacking an enemy.
+  if changed then
+    boost_from = game.tick()
+    if INVULN_SECONDS > 0 then
+      invuln_seat = p
+      invuln_to   = boost_from + INVULN_SECONDS * 100
+    else
+      invuln_seat = nil
+    end
+  end
+  -- On a team of their own before anybody is told to go after them, so a bot
+  -- handed the order to attack them is attacking an enemy.
   sort_team(p)
   carry_start()
   local t = game.tank(p)
@@ -1189,6 +1305,8 @@ end
 
 lose_the_prize = function(p)
   holder = nil
+  boost_from = nil
+  invuln_seat = nil
   if p ~= nil then
     game.set_modifiers(p, {})
     tune(p)
@@ -1327,7 +1445,7 @@ function on_base_captured(n, old, new, scripted)
   game.timer(BASE_DOWN_SECONDS, function() restore_base(x, y, 0) end)
 end
 
--- A player who arrives in the tenth minute is given a score row and everybody
+-- A player who arrives in the last minute is given a score row and everybody
 -- else's, because the panels are replayed to a joiner and the scores are not.
 function on_player_join(p, scripted)
   if not running or over then
@@ -1356,6 +1474,8 @@ end
 function on_player_leave(p, scripted)
   if holder == p then
     holder = nil
+    boost_from = nil
+    invuln_seat = nil
     if pill ~= nil and standing(game.pill(pill)) then
       game.set_pill_armour(pill, 0)
       aim_everybody()
@@ -1398,7 +1518,15 @@ end
 -- Every frame: the distance is counted frame by frame (see carry_legs), and
 -- the holder crosses from one ground to the next in a fraction of a second. It is
 -- one tank and one square, and the modifier is only set when it changes.
+--
+-- It is also where the new holder's cover ends. damage_scale is a policy, the
+-- engine asks it in the middle of a hit, and it asks the game nothing back:
+-- it goes by invuln_seat alone, and this puts that back to nil on the first
+-- frame past INVULN_SECONDS.
 function on_tick(tick)
+  if invuln_seat ~= nil and game.tick() >= invuln_to then
+    invuln_seat = nil
+  end
   if over or holder == nil then
     return
   end
@@ -1423,6 +1551,17 @@ function spawn_loadout(p)
   }
 end
 
+-- A new holder takes no damage for INVULN_SECONDS. Every shell and mine that
+-- hits a tank is priced through here, a pillbox's shell as well; nil is the
+-- ordinary amount. It does not keep them afloat: a hit still knocks a tank
+-- off its boat, and drowning is not damage.
+function damage_scale(attacker, victim, cause)
+  if invuln_seat ~= nil and victim == invuln_seat then
+    return 0
+  end
+  return nil
+end
+
 function on_end()
   over = true
   game.log(string.format("Pillbox Tag ended after %d seconds", elapsed))
@@ -1430,10 +1569,13 @@ end
 
 scenario = {
   name        = "Pillbox Tag",
-  description = "One dead pillbox, ten minutes. Carrying it scores a point a " ..
-                "second, slows you most on the fastest ground, and empties " ..
-                "your gun. Build it and it stops scoring but your gun " ..
-                "refills; three shells kill it.",
+  -- The round length here is the default; the lobby can set another.
+  description = string.format("One dead pillbox, %d minutes by default. " ..
+                "Carrying it scores a point a second, slows you most on " ..
+                "the fastest ground, and empties your gun; a new holder " ..
+                "gets a short head start. Build it and it stops scoring " ..
+                "but your gun refills; three shells kill it.",
+                math.floor(ROUND_SECONDS / 60)),
   api         = 1,
   kind        = "scenario",
   game        = "open",
@@ -1442,27 +1584,50 @@ scenario = {
   -- plays over whatever map the host has committed.
   bound       = false,
 
+  -- What the host sets in the lobby's details dialog; read_settings reads
+  -- them with game.setting. The defaults are the numbers under "Tweak these"
+  -- at the top of the file, which is the round as it always played, with the
+  -- head start added.
+  settings = {
+    { id = "round_minutes", label = "Round length (minutes)", type = "int",
+      min = 1, max = 30, step = 1, default = math.floor(ROUND_SECONDS / 60) },
+    { id = "speed_penalty", label = "Holder speed penalty (%)",
+      type = "int", min = 0, max = 60, step = 5,
+      default = SPEED_PENALTY_PCT },
+    { id = "boost_pct", label = "New holder boost (% of carry speed)",
+      type = "int", min = 100, max = 250, step = 10,
+      default = whole(BOOST_MULT * 100) },
+    { id = "boost_seconds", label = "Boost time (seconds)", type = "int",
+      min = 0, max = 10, step = 1, default = BOOST_SECONDS },
+    { id = "boost_decay_seconds", label = "Boost fade time (seconds)",
+      type = "int", min = 0, max = 10, step = 1,
+      default = BOOST_DECAY_SECONDS },
+    { id = "invuln_seconds", label = "New holder no-damage time (seconds)",
+      type = "int", min = 0, max = 10, step = 1, default = INVULN_SECONDS },
+  },
+
   -- What each callback below does, in a line a player reads: the lobby's
   -- details dialog lists these under "What this scenario implements:".
   callbacks = {
     on_setup = "One pillbox is the prize, the rest go; bases start " ..
                "neutral.",
-    on_start = "Starts the 10-minute clock and the compass.",
+    on_start = "Starts the clock and the compass.",
     on_end = "Logs how long the round ran.",
-    on_tick = "Holder speed by terrain.",
+    on_tick = "Holder speed by terrain, plus boost.",
     on_player_join = "A joiner hunts, on 0 points.",
     on_player_leave = "A leaving holder's built prize dies.",
-    on_base_captured = "A base gives half armour, then is gone for 30 s.",
+    on_base_captured = "A base: half armour, then gone 30 s.",
     on_pill_placed = "Built: 3 armour, no score. Dropped: dead.",
     on_pill_picked_up = "Holder: own team, 1 point/s, slow, unarmed.",
     on_pill_killed = "A shot-down prize is anybody's.",
-    on_pill_captured = "Only the holder can own a standing prize.",
+    on_pill_captured = "Only the holder may own a built prize.",
     on_built = "A repair stops at 3 armour.",
-    can_build = "Only the holder can repair the prize.",
+    can_build = "Only the holder may repair it.",
     on_team_changed = "Teams are fixed.",
     allow_base_win = "Holding every base does not win.",
     announce = "Base captures are not announced.",
     spawn_loadout = "Full shells, no mines; carriers get none.",
+    damage_scale = "New holder takes no damage at first.",
   },
 
   rules = {
@@ -1472,7 +1637,7 @@ scenario = {
 
     -- A dead builder comes back thirty times as fast. The classic 3 world
     -- units a frame is most of three minutes across a map, and a round is
-    -- only ten.
+    -- only ten minutes by default.
     --
     -- The tolerance has to go up with the speed. The helicopter steps
     -- straight at the tank and calls it a landing once both axes are inside
