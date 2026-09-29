@@ -24,9 +24,9 @@
 -- only they build, and only they carry mines. The infected have the ground and
 -- nothing on it, and a trickle of shells so that an empty gun is not the end of
 -- them. What a survivor owns does not change sides with them when they turn:
--- their pillboxes, standing or carried, go to the nearest survivor still
--- alive, and their bases go neutral, so a fort stays with the survivors rather
--- than being turned around on them.
+-- their pillboxes, standing or carried, and their bases go to the nearest
+-- survivor still alive, so a fort stays with the survivors rather than being
+-- turned around on them.
 --
 -- Nobody can hurt their own side. Friendly fire would otherwise be the quickest
 -- way to end the round, and a survivor shot by a survivor would join the horde
@@ -555,9 +555,11 @@ end
 -- What a survivor owned does not go to the horde. A pillbox and a base answer
 -- to a seat, not to a side, so without this a fort would change hands the
 -- moment the player holding it did, and the survivors would be shot by their
--- own guns for the rest of the round. Pillboxes, on the ground or carried, go
--- to another survivor (heir_for says which). When no survivor is left they
--- are left as they are: the round is over by then. Bases go neutral.
+-- own guns for the rest of the round. Pillboxes, on the ground or carried,
+-- and bases go to another survivor (heir_for says which). A base keeps what
+-- it holds, so the survivors do not lose its stock. When no survivor is left
+-- the pillboxes are left as they are and the bases go neutral: the round is
+-- over by then.
 local function let_go_of(p)
   local heir = heir_for(p)
   if heir ~= nil then
@@ -575,7 +577,7 @@ local function let_go_of(p)
   for n = 1, game.num_bases() do
     local b = game.base(n)
     if b ~= nil and b.owner == p then
-      game.set_base_owner(n, game.NEUTRAL, true)
+      game.set_base_owner(n, heir or game.NEUTRAL, true)
     end
   end
 end
