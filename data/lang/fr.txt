@@ -1283,6 +1283,7 @@ STR_DLGLOBBY_UPLOAD_ERR_DISABLED=Envois désactivés sur ce serveur.
 STR_DLGLOBBY_UPLOAD_ERR_FULL=La bibliothèque de cartes du serveur est pleine.
 STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN=Trop de requêtes \xe2\x80\x94 veuillez patienter avant de réessayer.
 STR_DLGLOBBY_UPLOAD_ERR_REJECTED=Envoi refusé par le serveur.
+STR_DLGLOBBY_UPLOAD_ERR_TIMEOUT=Aucune réponse du serveur. Veuillez réessayer l'envoi.
 STR_DLGLOBBY_WBN_ERR_DOWNLOAD=Échec du téléchargement
 STR_DLGLOBBY_WBN_ERR_BADRESPONSE=Réponse invalide de WinBolo.net
 STR_DLGLOBBY_WBN_ERR_NETERROR=Erreur réseau lors de la récupération de la carte

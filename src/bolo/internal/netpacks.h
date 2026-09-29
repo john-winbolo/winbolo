@@ -1059,6 +1059,9 @@ static inline bool lobbyBotNameAcceptable(
 #define LOBBY_REJECT_COOLDOWN          7   /* per-client request cooldown active */
 #define LOBBY_REJECT_NAME_TAKEN        8   /* a script of that name is in a
                                             * higher-precedence directory */
+#define LOBBY_REJECT_TIMEOUT           9   /* client-side only: no reply from
+                                            * the server in time; retrying is
+                                            * the fix, not a different file */
 
 /* Alliance update event types */
 #define ALLIANCE_EVENT_REQUEST  0

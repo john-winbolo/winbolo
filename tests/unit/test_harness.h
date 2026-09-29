@@ -388,6 +388,7 @@ int run_upload_lost_ack_retry(void);
 int run_upload_timeout_releases_other_player(void);
 int run_upload_lost_done_retry(void);
 int run_upload_partial_timeout_retry(void);
+int run_upload_begin_without_trailer_refused(void);
 int run_upload_filename_safe(void);
 int run_upload_filename_safe_script(void);
 int run_lobby_time_minutes_valid(void);

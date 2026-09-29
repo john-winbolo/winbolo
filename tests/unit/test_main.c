@@ -320,6 +320,7 @@ static const UnitTestEntry s_tests[] = {
     { "upload_timeout_releases_other_player",    run_upload_timeout_releases_other_player    },
     { "upload_lost_done_retry",                  run_upload_lost_done_retry                  },
     { "upload_partial_timeout_retry",            run_upload_partial_timeout_retry            },
+    { "upload_begin_without_trailer_refused",    run_upload_begin_without_trailer_refused    },
     { "upload_filename_safe",                    run_upload_filename_safe                    },
     { "upload_filename_safe_script",             run_upload_filename_safe_script             },
     { "lobby_time_minutes_valid",                run_lobby_time_minutes_valid                },

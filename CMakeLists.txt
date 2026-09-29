@@ -4938,6 +4938,7 @@ set(_unit_test_names
     upload_timeout_releases_other_player
     upload_lost_done_retry
     upload_partial_timeout_retry
+    upload_begin_without_trailer_refused
     upload_filename_safe
     upload_filename_safe_script
     lobby_bot_name_rejects_reserved_prefix

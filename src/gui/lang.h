@@ -1466,6 +1466,9 @@
 #define STR_DLGLOBBY_UPLOAD_ERR_FULL            1287
 #define STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN        1288
 #define STR_DLGLOBBY_UPLOAD_ERR_REJECTED        1289
+/* No reply to an upload in time (LOBBY_REJECT_TIMEOUT). The numbers after
+ * this block are taken, so its id sits outside it. */
+#define STR_DLGLOBBY_UPLOAD_ERR_TIMEOUT         2701
 #define STR_DLGLOBBY_WBN_ERR_DOWNLOAD           1290
 #define STR_DLGLOBBY_WBN_ERR_BADRESPONSE        1291
 #define STR_DLGLOBBY_WBN_ERR_NETERROR           1292

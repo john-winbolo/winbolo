@@ -1283,6 +1283,7 @@ STR_DLGLOBBY_UPLOAD_ERR_DISABLED=Caricamenti disabilitati su questo server.
 STR_DLGLOBBY_UPLOAD_ERR_FULL=La libreria mappe del server è piena.
 STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN=Troppe richieste \xe2\x80\x94 attendi un momento prima di riprovare.
 STR_DLGLOBBY_UPLOAD_ERR_REJECTED=Caricamento rifiutato dal server.
+STR_DLGLOBBY_UPLOAD_ERR_TIMEOUT=Nessuna risposta dal server. Riprova il caricamento.
 STR_DLGLOBBY_WBN_ERR_DOWNLOAD=Download non riuscito
 STR_DLGLOBBY_WBN_ERR_BADRESPONSE=Risposta non valida da WinBolo.net
 STR_DLGLOBBY_WBN_ERR_NETERROR=Errore di rete durante il recupero della mappa
