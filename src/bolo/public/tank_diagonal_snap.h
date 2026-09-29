@@ -35,7 +35,8 @@
  * Only the drawing reads this. The sim, the wire, replays and brains all
  * keep the tank's real position.
  *
- * dir16 is the 16-step facing (0 = north, 2 = NE, 6 = SE, 10 = SW, 14 = NW).
+ * dir16 is the 16-step facing utilGetDir gives (0 = north, 2 = NE, 6 = SE,
+ * 10 = SW, 14 = NW).
  * x and y are world co-ordinates (256 to a square, 16 to a game pixel) and
  * are replaced by the snapped ones, whose low four bits are zero. Any other
  * facing leaves them untouched. */
@@ -47,11 +48,6 @@ static inline int tankDiagonalFloorDiv(int n, int d) {
     q--;
   }
   return q;
-}
-
-/* The 16-step facing of a 0-255 angle, with the same buckets as utilGetDir. */
-static inline int tankDiagonalDir16(int angle) {
-  return ((angle + 7) >> 4) & 15;
 }
 
 static inline void tankDiagonalSnap(int dir16, int *x, int *y) {
