@@ -455,6 +455,7 @@ int run_sim_rules_validate_ranges(void) {
     SR_RANGE_INT(just_fired_ticks, 0, 255);
     SR_RANGE_INT(tank_min_move, 0, 255);
     SR_RANGE_INT(shell_speed, 1, 255);
+    SR_RANGE_INT(tank_slide_step, 0, 63);
 
     /* The gunsight ends and the two shell numbers the budget is built from
        all sit in one arithmetic, so each bound needs the others brought
