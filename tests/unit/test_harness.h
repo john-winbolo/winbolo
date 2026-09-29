@@ -1140,6 +1140,14 @@ int run_alliance_reset_apply_keeps_owners(void);
 int run_alliance_reset_changed_matrix_keeps_owners(void);
 int run_alliance_reset_set_team_leaves_old_team(void);
 
+/* A leave hands the leaver's planted pills and bases to an ally, and
+ * with no ally moves nothing (test_alliance_leave.c, issue #420). */
+int run_alliance_leave_no_ally_top_seat_empty(void);
+int run_alliance_leave_no_ally_top_seat_enemy(void);
+int run_alliance_leave_no_ally_leaver_is_top_seat(void);
+int run_alliance_leave_hands_to_ally(void);
+int run_alliance_leave_hands_to_top_seat_ally(void);
+
 /* Log replay round-trip (test_log_roundtrip.c). */
 int run_log_roundtrip_basic(void);
 int run_log_roundtrip_snapshot_keeps_chain_synced(void);
