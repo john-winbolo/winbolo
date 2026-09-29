@@ -965,6 +965,12 @@ int run_entity_record_lobby_add_republishes_counts(void);
 int run_entity_record_lobby_removal_replays(void);
 int run_entity_record_seek_lands_on_the_right_liveness(void);
 
+/* What a brain is told about a removed pill or base
+ * (test_brain_removed_items.c): BrainInfo's on-map masks clear the removed
+ * number, and the -brain-debug recording carries the same masks per frame. */
+int run_brain_removed_items_info_masks(void);
+int run_brain_removed_items_recording_masks(void);
+
 /* The entity-sync control event (test_entity_sync.c). CTRL_ENTITY_SYNC
  * carries three 16-bit masks, one per item list, saying which indices hold
  * an item that is on the map — the part the compressed map blob leaves out,
