@@ -21,7 +21,7 @@
 
 static ServerSim *make_sim(void) {
     BYTE emap[6000] = E_MAP;
-    return serverSimCreateCompressed(emap, 5097, "Everard Island",
+    return serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                      gameOpen, false, 0, -1);
 }
 

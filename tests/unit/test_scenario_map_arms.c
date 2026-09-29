@@ -68,7 +68,7 @@
 
 static ServerSim *maMakeLobbySim(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097,
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN,
                                                "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) return NULL;
@@ -929,7 +929,7 @@ int run_scenario_map_fill_dropped_at_map_swap(void) {
 
     /* A different map is installed. The state stays lobby throughout: this is
        a map swap, not a round boundary. */
-    UT_ASSERT_MSG(serverSimReloadCompressedInMemory(sim, emap, 5097,
+    UT_ASSERT_MSG(serverSimReloadCompressedInMemory(sim, emap, E_MAP_LEN,
                                                     "Everard Island"),
                   "the map swap was rejected");
     UT_ASSERT_MSG(serverSimGetState(sim) == serverStateLobby,

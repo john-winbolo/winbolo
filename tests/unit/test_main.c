@@ -1059,6 +1059,7 @@ static const UnitTestEntry s_tests[] = {
     { "map_compress_roundtrip_stock",            run_map_compress_roundtrip_stock            },
     { "map_compress_capacity_refuses",           run_map_compress_capacity_refuses           },
     { "map_compress_incompressible",           run_map_compress_incompressible           },
+    { "map_compress_rejects_damaged",            run_map_compress_rejects_damaged            },
     { "map_compress_roundtrip_mutated",          run_map_compress_roundtrip_mutated          },
     { "map_compress_rejects_null_handles",       run_map_compress_rejects_null_handles       },
     { "map_checksum_ignores_mines",              run_map_checksum_ignores_mines              },
@@ -2174,7 +2175,7 @@ GameSim *ut_rules_only_sim(void) {
 
 ServerSim *ut_make_running_sim(const char *player_name) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097,
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN,
                                                "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) {

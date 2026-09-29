@@ -512,8 +512,9 @@ static bool lobbyServerMapsGeneratePreview(const char *entryPath,
             return false;
         }
         /* clientMapPreviewLoadFromBuffer expects the runtime
-         * compressed format (basesCompressData + lzw-encoded map
-         * tiles); we have the raw BMAPBOLO file bytes. mapRead is
+         * compressed format (one zlib stream over the bases/pills/
+         * starts structs and the map tiles); we have the raw
+         * BMAPBOLO file bytes. mapRead is
          * the right parser, and it only knows how to read from a
          * FILE*, so spill the bytes to a worker-private temp file
          * and call clientMapPreviewLoadFromFile. The worker is

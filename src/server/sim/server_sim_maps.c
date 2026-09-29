@@ -848,10 +848,10 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
     stashCommittedMap(sim);
 
     /* Wipe the existing map/pill/base/start contents before the
-     * decoder touches them. mapLoadCompressedMap's RLE-decoder only
-     * writes cells encoded in the new blob — any tile NOT included
-     * in the new map's runs would otherwise keep the previous map's
-     * value. */
+     * decoder touches them. mapRead's run decoder, which the .map
+     * branch below reaches, only writes cells encoded in the new
+     * file — any tile NOT included in the new map's runs would
+     * otherwise keep the previous map's value. */
     {
         int x, y;
         memset((*sim->sim.mp).mapItem, DEEP_SEA,
@@ -872,7 +872,7 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
     /* The wire / upload / WBN paths all hand us a full .map file
      * (starting with the BMAPBOLO magic + version + counts header).
      * mapLoadCompressedMap expects a different on-the-wire layout
-     * (raw bases/pills/starts struct dump + LZW map), so feeding it
+     * (zlib over a bases/pills/starts struct dump + the map), so feeding it
      * the .map file bytes misaligns every field. Detect the magic
      * and route through mapRead via a temp file when it matches.
      * Fall back to the legacy mapLoadCompressedMap path for any
