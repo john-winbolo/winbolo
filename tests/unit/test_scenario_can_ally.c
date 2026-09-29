@@ -86,7 +86,7 @@ static void caFillPolicy(ScenarioPolicy *pol, CaCtx *c, bool answer) {
 /* A running round with four people in it, none of them allied. */
 static ServerSim *caRunningSim(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     BYTE i;
 
@@ -381,7 +381,7 @@ static ServerSim *caScriptSim(const char *mapPath, ScenarioHost **host) {
     BYTE       emap[6000] = E_MAP;
     char       err[512];
     const BYTE teams[4] = { 1, 1, 2, 2 };
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     BYTE       i;
 

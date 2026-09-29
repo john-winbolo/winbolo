@@ -98,7 +98,7 @@ static ServerSim *rso_make_sim(void) {
     int len;
     BYTE k;
 
-    src = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    src = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                     gameOpen, false, 0, -1);
     if (src == NULL) return NULL;
     rso_set_owners(serverSimGetGameSim(src));
