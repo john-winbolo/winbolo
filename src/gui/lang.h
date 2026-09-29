@@ -2384,7 +2384,7 @@
 #define STR_DLGLOBBY_SCENARIO_ON_MAP        2212
 
 /* The two lines the lobby draws about what is running, and the dialog behind
- * the icon on each of them. Two lines rather than one because a round has at
+ * the script names on them. Two lines rather than one because a round has at
  * most one scenario and any number of mods, and the two are not the same
  * question: the scenario arrives with the committed map, so changing it means
  * changing the map, while the mods are what the host picked and are the only
@@ -2403,7 +2403,10 @@
  *
  * Both are the summary half of the Server Settings row and neither names
  * mods any more: ENABLED_CB is the checkbox label at the head of that row
- * and says the word once. ACTIVE opens with the dash that binds the two, in
+ * and says the words once. It reads Mods/Scenario because the setting keeps
+ * the host's picked scenario out of the round as well as the mods, and the
+ * row under it names both, each with its Mod or Scenario tag; ACTIVE counts
+ * them together. ACTIVE opens with the dash that binds the two, in
  * the string rather than drawn beside it so a language that joins them
  * differently can move it.
  *

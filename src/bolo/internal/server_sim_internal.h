@@ -444,8 +444,10 @@ struct ServerSim {
                                     * both give — has to mean pings ALLOWED,
                                     * because that is what every build before
                                     * this one did. */
-    bool     modsOff;              /* the round composes none of the mods on
-                                    * the pick list. Stored in the negative
+    bool     modsOff;              /* the round composes none of the scripts
+                                    * on the pick list, mods and picked
+                                    * scenarios alike; the map's own script
+                                    * still plays. Stored in the negative
                                     * sense for the same reason as
                                     * smartPingsOff above. The pick list is
                                     * left alone, so this is what a host turns

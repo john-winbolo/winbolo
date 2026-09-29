@@ -486,14 +486,14 @@ bool lobbyScenarioChooserIsOpen(void);
 void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
                                       int screenW, int screenH);
 
-/* scenariodetails — what one scenario or mod is, behind the icon on the
- * lobby's two script lines and behind the name on every row of the chooser.
+/* scenariodetails — what one scenario or mod is, behind every script name
+ * the lobby draws as a link: the map panel's lines, the Server Settings
+ * column's row and every row of the chooser.
  * One dialog for all three, because the question is the same one.
  *
  * OpenScript describes one row of the lobby's ordered script list, which is
- * what the two lobby lines are drawn from: the scenario icon opens the
- * scenario row and the mods icon the first mod row, so the two icons on a
- * round running both do not describe the same script. OpenAttached is the
+ * what the lobby lines are drawn from: each name opens its own row, so the
+ * names on a round running several scripts each describe their own. OpenAttached is the
  * same dialog for the one attached script, for a client whose server has
  * sent no list. The chooser's rows open it on a listing entry instead, which
  * it snapshots. The modal must be rendered at the lobby window's own id
@@ -508,7 +508,7 @@ void lobbyScenarioDetailsOpenScript(ClientSim *cs, int idx);
 
 /* Which row of that list is the scenario, and which the first mod. -1 for
  * none of that kind. Lives beside the two renderers that classify the list,
- * in lobby_assets.cpp, so the lines and the icons agree about which row is
+ * in lobby_assets.cpp, so the lines and the links agree about which row is
  * which. */
 int  lobbyScriptRowIndexOfKind(ClientSim *cs, bool mod);
 bool lobbyScenarioDetailsIsOpen(void);
@@ -652,10 +652,10 @@ float lobbyScenarioWorkshopLinkWidth(uint64_t workshopId);
 const char *lobbyGameTypeStr(gameType gt);
 /* What is playing, in two shapes for the two places that ask.
  *
- * Line is the settings form's Server Settings column: the scenario named by
- * the game type it puts the round into, the mods row, and a host's Choose and
- * Rules buttons under them. The mods row is drawn even at none, because this
- * is where the control to change them lives. For a host who has the scripts
+ * Line is the settings form's Server Settings column: the Mods/Scenario row,
+ * which names every script with its Mod or Scenario tag, and a host's Rules
+ * button under it. The row is drawn even at none, because this is where the
+ * control to change them lives. For a host who has the scripts
  * preference switched off, one line saying so and no buttons.
  *
  * effectiveHost is the caller's own answer to whether this viewer may edit
@@ -664,8 +664,8 @@ const char *lobbyGameTypeStr(gameType gt);
  * as the time-limit and password rows beside it in that column.
  *
  * InfoLines is the map panel, for everyone: the same two facts read-only,
- * each line dropped where it has nothing to name, an icon on the scenario
- * line and a link per mod that open the details dialog, and a Details button
+ * each line dropped where it has nothing to name, the scenario's name and
+ * each mod's name a link that opens the details dialog, and a Details button
  * under them that opens the chooser. That button is the only way into the
  * chooser a joiner or a spectator has — the column Line draws in is host-only
  * — and the chooser has always known how to draw itself read-only.
@@ -687,13 +687,6 @@ void lobbyRenderScenarioInfoLines(ClientSim *cs, float s);
  * the checkbox and the list of names are both in the host-only settings
  * column, so this is where everybody else is told. */
 void lobbyRenderModsSummary(ClientSim *cs, float s);
-/* The icon those lines end in, and the icon on every row of the chooser.
- * Shared rather than written twice so the three read as one control: the
- * same glyph, the same tooltip and the same fallback where the icon did not
- * load. It puts its own SameLine in front of itself, so a caller draws the
- * text and then calls this. id carries a visible "i" before its ##, which
- * only the fallback draws. */
-bool lobbyScenarioInfoButton(const char *id);
 /* Whether this client may change which scripts play: the host slot, an admin,
  * or anybody at all while Open Host is on — and never a spectator. The same
  * answer lobbyClientMayEdit gives on the server, minus that last term, so a
