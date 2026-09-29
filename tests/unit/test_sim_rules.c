@@ -328,6 +328,9 @@ int run_sim_rules_classic_defaults(void) {
     SR_EQ(pill_shell_cap, PILLBOX_SHELL_CAP);
     SR_EQ(pill_max_shells_at_tank, PILLBOX_MAX_SHELLS_AT_TANK);
 
+    /* Base defence shape */
+    SR_EQ(pill_base_defend_shape, PILL_BASE_HIT_SHAPE);
+
     return 0;
 }
 

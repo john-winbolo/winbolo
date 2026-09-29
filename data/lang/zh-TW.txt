@@ -2522,6 +2522,7 @@ STR_RULE_DESC_pill_shell_damage=一枚砲彈對碉堡造成的裝甲損失。
 STR_RULE_DESC_pill_angry_divisor=碉堡射擊間隔從正常速率向最快速率靠近的一階幅度。
 STR_RULE_DESC_pill_fire_length=碉堡發射的砲彈飛行的距離。
 STR_RULE_DESC_pill_base_defend_range=攻擊基地要在多近的範圍內才會激怒碉堡。
+STR_RULE_DESC_pill_base_defend_shape=pill_base_defend_range 的測量方式。0 為正方形，按每個座標軸測量並包含邊界，即 WinBolo 規則。1 為圓形，按半徑測量且不含邊界，即 Mac Bolo 規則。
 STR_RULE_DESC_pill_aim_iterations=碉堡為預判移動目標所進行的計算強度。
 STR_RULE_DESC_pill_massage_range=坦克需要多接近，碉堡才會使用原始的前向預測而非求解器來瞄準；求解器對繞圈的坦克命中率較差。0（經典設定）表示碉堡總能正確預判目標；384 相當於 1.5 格，是舊版編譯期開關所用的距離。
 STR_RULE_DESC_pill_massage_cosine=面對近處的碉堡時，坦克仍要被正確瞄準所需的直線程度，以坦克朝向與其到碉堡連線之間夾角的餘弦值表示。1 表示對 pill_massage_range 範圍內的所有坦克都粗略瞄準，0 表示對其中任何坦克都不粗略瞄準。當 pill_massage_range 為 0 時，此值不起作用。

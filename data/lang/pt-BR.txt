@@ -2524,6 +2524,7 @@ STR_RULE_DESC_pill_shell_damage=Blindagem que um projétil tira de um bunker.
 STR_RULE_DESC_pill_angry_divisor=O passo que o intervalo de um bunker dá do seu ritmo normal em direção ao mais rápido.
 STR_RULE_DESC_pill_fire_length=Até onde voa o projétil disparado por um bunker.
 STR_RULE_DESC_pill_base_defend_range=A que distância uma base precisa estar para que atirar nela irrite um bunker.
+STR_RULE_DESC_pill_base_defend_shape=Como pill_base_defend_range é medido. 0 é um quadrado, medido em cada eixo com a borda incluída, a regra do WinBolo. 1 é um círculo, medido como raio sem a borda, a regra do Mac Bolo.
 STR_RULE_DESC_pill_aim_iterations=Quanto esforço um bunker faz para prever um alvo em movimento.
 STR_RULE_DESC_pill_massage_range=A que distância um tanque precisa estar para que um bunker aponte com a previsão linear original em vez do solucionador, que erra um tanque que gira em torno dele. Zero, a tabela clássica, é um bunker que sempre prevê corretamente seu alvo; 384 é uma célula e meia, a distância usada pela antiga chave definida na compilação.
 STR_RULE_DESC_pill_massage_cosine=Com que exatidão um tanque precisa estar dirigindo em direção a um bunker próximo para ainda assim ser bem visado, expresso como o cosseno do ângulo entre sua direção e a linha até o bunker. Um visa de forma imprecisa qualquer tanque dentro de pill_massage_range, zero não visa nenhum deles. Não faz nada enquanto essa regra for zero.

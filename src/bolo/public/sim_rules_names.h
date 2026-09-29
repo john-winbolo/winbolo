@@ -303,7 +303,10 @@ typedef enum {
        index is what the wire and a recording name a rule by, so a rule  \
        added anywhere else would move every rule after it. */            \
     X(pill_shell_cap, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_FLAG)                \
-    X(pill_max_shells_at_tank, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)
+    X(pill_max_shells_at_tank, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)      \
+    /* How pill_base_defend_range is measured. Last for the same reason. */  \
+    X(pill_base_defend_shape, SIM_RULE_VALUE_INT,                            \
+      SIM_RULE_UNIT_CONSTANT_BY_DESIGN)
 
 /* One member per rule, in the struct's own field order. SIM_RULE_COUNT is
  * one past the last, and an index at or above it names no rule. A rule's

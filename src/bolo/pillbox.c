@@ -1770,13 +1770,19 @@ void pillsBaseHit(GameSim *sim, pillboxes *value, BYTE mx, BYTE my, BYTE baseOwn
   BYTE count; /* Looping variable */
   int xDist;  /* x distance from the base */
   int yDist;  /* y distance from the base */
+  int range;  /* pill_base_defend_range */
+  bool inRange;
 
+  range = sim->rules.pill_base_defend_range;
   for (count=0;count<(*value)->numPills;count++) {
     xDist = ((*value)->item[count].x) - mx;
     yDist = ((*value)->item[count].y) - my;
-    if ((*value)->active[count] != FALSE &&
-        xDist * xDist + yDist * yDist <
-            sim->rules.pill_base_defend_range * sim->rules.pill_base_defend_range &&
+    if (sim->rules.pill_base_defend_shape == PILL_BASE_HIT_CIRCLE) {
+      inRange = (xDist * xDist + yDist * yDist < range * range);
+    } else {
+      inRange = (xDist >= -range && xDist <= range && yDist >= -range && yDist <= range);
+    }
+    if ((*value)->active[count] != FALSE && inRange &&
         (*value)->item[count].owner != NEUTRAL && (playersIsAllie(&sim->plyrs, baseOwner, (*value)->item[count].owner) == TRUE) && (*value)->item[count].armour > 0) {
       /* It is in range make it angry */
       (*value)->item[count].coolDown = (BYTE) sim->rules.pill_cooldown_ticks;

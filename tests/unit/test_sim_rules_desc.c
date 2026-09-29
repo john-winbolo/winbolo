@@ -54,8 +54,9 @@ static const langid srdDescIds[] = {
  * numbers were taken by the fog style strings and moved to the end of the
  * file, because the rules the table gained later were numbered on from
  * there, because the pillmassage pair start again past the map editor's
- * scenario strings, and because the pill shell cap pair took the next free
- * numbers after everything else. See the block comment in lang.h. */
+ * scenario strings, and because the pill shell cap pair and then
+ * pill_base_defend_shape took the next free numbers after everything else.
+ * See the block comment in lang.h. */
 #define SRD_FIRST_ID  2345u
 #define SRD_LAST_ID   2425u
 #define SRD_FIRST_ID2 2486u
@@ -63,7 +64,7 @@ static const langid srdDescIds[] = {
 #define SRD_FIRST_ID3 2575u
 #define SRD_LAST_ID3  2576u
 #define SRD_FIRST_ID4 2698u
-#define SRD_LAST_ID4  2699u
+#define SRD_LAST_ID4  2700u
 
 /* ── 1. A description id per rule ──────────────────────────────────────── */
 

@@ -2879,10 +2879,10 @@
  * had 2334 to 2344, which the fog style strings took as well; moving these
  * eleven to the end was the smaller change of the two. Fifty-three more are
  * the rules the table gained after the middle stretch was numbered, and the
- * last pair are the pillmassage rules, which start again past the map
+ * next pair are the pillmassage rules, which start again past the map
  * editor's scenario strings because everything up to them was taken.
- * The pill shell cap pair came after all of those and took the next free
- * numbers, at the end of the file. The
+ * The pill shell cap pair and then pill_base_defend_shape came after all of
+ * those and took the next free numbers, at the end of the file. The
  * order of the block is SIM_RULE_LIST's throughout, which is the order that
  * matters, and a hole in the numbers costs nothing: langTable is searched by
  * id rather than indexed by it. */
@@ -3035,6 +3035,7 @@
 #define STR_RULE_DESC_tree_weight_mine           2425
 #define STR_RULE_DESC_pill_shell_cap             2699
 #define STR_RULE_DESC_pill_max_shells_at_tank    2698
+#define STR_RULE_DESC_pill_base_defend_shape     2700
 
 /* Rule range wording */
 

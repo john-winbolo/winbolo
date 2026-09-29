@@ -2586,6 +2586,7 @@ STR_RULE_DESC_tree_weight_road=What a road counts for in a square's tree growing
 STR_RULE_DESC_tree_weight_mine=What a laid mine adds to a square's tree growing score, on top of the terrain under it.
 STR_RULE_DESC_pill_shell_cap=Whether pillboxes limit how many of their shells can be in the air at one tank, to pill_max_shells_at_tank. Off lets every pillbox fire at its nearest target however many shells are already on the way.
 STR_RULE_DESC_pill_max_shells_at_tank=The most pillbox shells that can be in the air at one tank. A pillbox whose nearest target already has this many coming fires at the next nearest instead, or holds its shot until one lands. Only read while pill_shell_cap is on.
+STR_RULE_DESC_pill_base_defend_shape=How pill_base_defend_range is measured. 0 is a square, taken on each axis with its edge included, the WinBolo rule. 1 is a circle, taken as a radius with its edge left out, the Mac Bolo rule.
 
 # Rule range wording
 STR_RULE_RANGE_BETWEEN={string1} to {string2}

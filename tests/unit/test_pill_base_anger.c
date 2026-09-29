@@ -1,4 +1,5 @@
-/* Mac Bolo heats allied pills strictly inside a seven-tile circle. */
+/* Which allied pills a shot base heats: the WinBolo square, inclusive, by
+ * default, and the Mac Bolo circle, exclusive, when the shape rule asks. */
 #include "global.h"
 #include "pillbox.h"
 #include "game_sim.h"
@@ -7,27 +8,41 @@
 
 int run_pill_base_anger_radius(void) {
     static const struct {
+        int shape;
         int range;
         int dx;
         int dy;
         bool angry;
     } cases[] = {
-        { 7, 1, 0, TRUE },
-        { 7, 6, 0, TRUE },
-        { 7, 6, 3, TRUE },
-        { 7, 4, 5, TRUE },
-        { 7, 7, 0, FALSE },
-        { 7, 5, 5, FALSE },
-        { 7, 6, 4, FALSE },
-        { 7, 9, 9, FALSE },
+        /* The classic square takes the range on each axis, edge included. */
+        { PILL_BASE_HIT_SQUARE, 9, 0, 0, TRUE },
+        { PILL_BASE_HIT_SQUARE, 9, 9, 0, TRUE },
+        { PILL_BASE_HIT_SQUARE, 9, 9, 9, TRUE },
+        { PILL_BASE_HIT_SQUARE, 9, 7, 0, TRUE },
+        { PILL_BASE_HIT_SQUARE, 9, 5, 5, TRUE },
+        { PILL_BASE_HIT_SQUARE, 9, 10, 0, FALSE },
+        { PILL_BASE_HIT_SQUARE, 9, 10, 9, FALSE },
+        { PILL_BASE_HIT_SQUARE, 4, 4, 4, TRUE },
+        { PILL_BASE_HIT_SQUARE, 4, 5, 0, FALSE },
+        { PILL_BASE_HIT_SQUARE, 0, 0, 0, TRUE },
+        { PILL_BASE_HIT_SQUARE, 0, 1, 0, FALSE },
+        /* Mac Bolo heats allied pills strictly inside a seven-tile circle. */
+        { PILL_BASE_HIT_CIRCLE, 7, 1, 0, TRUE },
+        { PILL_BASE_HIT_CIRCLE, 7, 6, 0, TRUE },
+        { PILL_BASE_HIT_CIRCLE, 7, 6, 3, TRUE },
+        { PILL_BASE_HIT_CIRCLE, 7, 4, 5, TRUE },
+        { PILL_BASE_HIT_CIRCLE, 7, 7, 0, FALSE },
+        { PILL_BASE_HIT_CIRCLE, 7, 5, 5, FALSE },
+        { PILL_BASE_HIT_CIRCLE, 7, 6, 4, FALSE },
+        { PILL_BASE_HIT_CIRCLE, 7, 9, 9, FALSE },
         /* Custom rules must move the circle and keep its edge exclusive. */
-        { 5, 2, 4, TRUE },
-        { 5, 3, 4, FALSE },
-        { 5, 5, 0, FALSE },
-        { 10, 7, 7, TRUE },
-        { 10, 6, 8, FALSE },
-        { 10, 10, 0, FALSE },
-        { 0, 0, 0, FALSE }
+        { PILL_BASE_HIT_CIRCLE, 5, 2, 4, TRUE },
+        { PILL_BASE_HIT_CIRCLE, 5, 3, 4, FALSE },
+        { PILL_BASE_HIT_CIRCLE, 5, 5, 0, FALSE },
+        { PILL_BASE_HIT_CIRCLE, 10, 7, 7, TRUE },
+        { PILL_BASE_HIT_CIRCLE, 10, 6, 8, FALSE },
+        { PILL_BASE_HIT_CIRCLE, 10, 10, 0, FALSE },
+        { PILL_BASE_HIT_CIRCLE, 0, 0, 0, FALSE }
     };
     ClientSim *cs = clientSimAlloc();
     GameSim *gs;
@@ -37,7 +52,8 @@ int run_pill_base_anger_radius(void) {
     UT_ASSERT(cs != NULL);
     clientSimCreate(cs);
     gs = clientSimGetGameSim(cs);
-    UT_ASSERT(gs->rules.pill_base_defend_range == 7);
+    UT_ASSERT(gs->rules.pill_base_defend_range == 9);
+    UT_ASSERT(gs->rules.pill_base_defend_shape == PILL_BASE_HIT_SQUARE);
     pillsSetNumPills(&gs->pb, 1);
     (*gs->pb).active[0] = TRUE;
     (*gs->pb).item[0].owner = 0;
@@ -45,6 +61,7 @@ int run_pill_base_anger_radius(void) {
 
     /* Reflect and swap each offset to cover every quadrant and both axes. */
     for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        gs->rules.pill_base_defend_shape = cases[i].shape;
         gs->rules.pill_base_defend_range = cases[i].range;
         for (swap = 0; swap < 2; swap++) {
             for (sx = -1; sx <= 1; sx += 2) {
@@ -59,11 +76,13 @@ int run_pill_base_anger_radius(void) {
                     pillsBaseHit(gs, &gs->pb, 128, 128, 0);
 
                     UT_ASSERT_MSG((*gs->pb).item[0].speed == (cases[i].angry ? 50 : 100),
-                                  "offset (%d,%d): speed=%u, angry=%d", dx, dy,
+                                  "shape %d range %d offset (%d,%d): speed=%u, angry=%d",
+                                  cases[i].shape, cases[i].range, dx, dy,
                                   (*gs->pb).item[0].speed, cases[i].angry);
                     UT_ASSERT_MSG((*gs->pb).item[0].coolDown ==
                                   (cases[i].angry ? gs->rules.pill_cooldown_ticks : 0),
-                                  "offset (%d,%d): cooldown=%u", dx, dy,
+                                  "shape %d range %d offset (%d,%d): cooldown=%u",
+                                  cases[i].shape, cases[i].range, dx, dy,
                                   (*gs->pb).item[0].coolDown);
                 }
             }

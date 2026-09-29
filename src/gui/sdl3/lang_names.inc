@@ -2126,6 +2126,7 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_RULE_DESC_pill_attack_min_ticks", STR_RULE_DESC_pill_attack_min_ticks },
     { "STR_RULE_DESC_pill_attack_ticks", STR_RULE_DESC_pill_attack_ticks },
     { "STR_RULE_DESC_pill_base_defend_range", STR_RULE_DESC_pill_base_defend_range },
+    { "STR_RULE_DESC_pill_base_defend_shape", STR_RULE_DESC_pill_base_defend_shape },
     { "STR_RULE_DESC_pill_cooldown_ticks", STR_RULE_DESC_pill_cooldown_ticks },
     { "STR_RULE_DESC_pill_fire_length", STR_RULE_DESC_pill_fire_length },
     { "STR_RULE_DESC_pill_massage_cosine", STR_RULE_DESC_pill_massage_cosine },
@@ -2377,4 +2378,4 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_YES", STR_YES },
 };
 
-#define K_LANG_NAME_TABLE_SIZE  2364
+#define K_LANG_NAME_TABLE_SIZE  2365

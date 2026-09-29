@@ -142,11 +142,11 @@ int run_sim_rules_describe_names(void) {
 
     /* The last row, which is where a list one short of the struct shows. */
     UT_ASSERT_MSG(srdSame(simRulesClassicValue((int)SIM_RULE_COUNT - 1),
-                          (double)classic.pill_max_shells_at_tank),
-                  "the last rule reads %.4f and pill_max_shells_at_tank "
+                          (double)classic.pill_base_defend_shape),
+                  "the last rule reads %.4f and pill_base_defend_shape "
                   "holds %ld",
                   simRulesClassicValue((int)SIM_RULE_COUNT - 1),
-                  (long)classic.pill_max_shells_at_tank);
+                  (long)classic.pill_base_defend_shape);
 
     /* The tags and widths the list carries, on one row of each width. */
     UT_ASSERT_MSG(simRulesRuleValueKind(SIM_RULE_tank_reload_ticks) ==

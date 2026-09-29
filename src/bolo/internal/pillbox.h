@@ -102,8 +102,17 @@ static inline bool    pillPosCurrentFromByte(uint8_t b) {
 /* Pillbox not found return Value */
 #define PILL_NOT_FOUND 254
 
-/* A pillbox must be strictly less than 7 map squares from a shot base. */
-#define PILL_BASE_HIT_RANGE 7
+/* How far from a shot base, in map squares, an allied pillbox gets angry.
+   Read by the shape below: 9 across a square is the WinBolo rule, and 7 as
+   a circle is the Mac Bolo one. */
+#define PILL_BASE_HIT_RANGE 9
+
+/* The two shapes pill_base_defend_shape can take. A square takes the range
+   on each axis and includes its edge; a circle takes it as a radius and a
+   pillbox exactly that far off is not angered. */
+#define PILL_BASE_HIT_SQUARE 0
+#define PILL_BASE_HIT_CIRCLE 1
+#define PILL_BASE_HIT_SHAPE  PILL_BASE_HIT_SQUARE
 
 /* Amount of damage each tree unit repairs */
 #define PILL_REPAIR_AMOUNT 4

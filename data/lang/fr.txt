@@ -2524,6 +2524,7 @@ STR_RULE_DESC_pill_shell_damage=Blindage que retire un obus à un pillbox.
 STR_RULE_DESC_pill_angry_divisor=Le pas que fait l'intervalle d'un pillbox depuis son rythme normal vers son rythme le plus rapide.
 STR_RULE_DESC_pill_fire_length=Quelle distance vole l'obus tiré par un pillbox.
 STR_RULE_DESC_pill_base_defend_range=À quelle distance une base doit se trouver pour que lui tirer dessus mette en colère un pillbox.
+STR_RULE_DESC_pill_base_defend_shape=Comment pill_base_defend_range est mesuré. 0 est un carré, mesuré sur chaque axe bord compris, la règle de WinBolo. 1 est un cercle, mesuré comme un rayon bord exclu, la règle de Mac Bolo.
 STR_RULE_DESC_pill_aim_iterations=Combien d'efforts fait un pillbox pour anticiper une cible en mouvement.
 STR_RULE_DESC_pill_massage_range=À quelle distance un tank doit se trouver pour qu'un pillbox vise avec la prédiction linéaire d'origine plutôt qu'avec le solveur, qui rate un tank qui tourne autour de lui. Zéro, la table classique, donne un pillbox qui anticipe toujours correctement sa cible ; 384 correspond à une case et demie, la distance qu'utilisait l'ancien interrupteur de compilation.
 STR_RULE_DESC_pill_massage_cosine=Avec quelle rectitude un tank doit rouler vers un pillbox proche pour être quand même bien visé, exprimé comme le cosinus de l'angle entre son cap et la ligne vers le pillbox. Un vise de façon imprécise tout tank à l'intérieur de pill_massage_range, zéro n'en vise aucun. Ne fait rien tant que cette règle est à zéro.
