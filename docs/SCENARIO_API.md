@@ -569,6 +569,8 @@ settings = {
     min = 1, max = 10, step = 1, default = 4 },
   { id = "rounds", label = "Rounds", type = "int",
     min = 1, max = 5, step = 1, default = 5 },
+  { id = "sudden_death", label = "Sudden death", type = "bool",
+    default = false },
 },
 ```
 
@@ -576,16 +578,17 @@ settings = {
 |---|---|
 | `id` | The name `game.setting` takes. 1 to 31 letters, digits and `_`, and unique in the script. |
 | `label` | What the dialog shows beside the dropdown, up to 63 bytes. This is the script's own text; it is not translated. |
-| `type` | `"int"`, which is also what a missing type means. Only whole numbers exist today. |
-| `min`, `max` | The range, both ends in it. Required. |
-| `step` | The gap between entries, above 0. Optional; 1 when missing. |
-| `default` | The value when the host picks nothing. Required, inside the range and on the step. |
+| `type` | `"int"`, a whole number, which is also what a missing type means. `"bool"`, on or off, drawn as a dropdown of On and Off. |
+| `min`, `max` | The range, both ends in it. Required for `"int"`; a `"bool"` row must not give them. |
+| `step` | The gap between entries, above 0. Optional for `"int"`, 1 when missing; a `"bool"` row must not give it. |
+| `default` | The value when the host picks nothing. Required. For `"int"`, a whole number inside the range and on the step; for `"bool"`, `true` or `false`. |
 
 A script may declare up to 16 settings, and a setting may offer up to 100
 entries (`(max - min) / step + 1`). A row that breaks a rule, a duplicate id,
 and a row past the sixteenth are reported and dropped; the rest still apply.
 `-validate` prints the same reports. A package's `manifest.json`
-carries the same list under `"settings"` with the same fields.
+carries the same list under `"settings"` with the same fields, a `"bool"`
+row's `"default"` being JSON `true` or `false`.
 
 The server reads the declaration without running the script, the same way it
 reads `rules`. A value the host picks is held for the lobby session, per
@@ -1562,7 +1565,7 @@ gives them a colour. The names are also on the `game` table as
 
 | Call | What it does |
 |---|---|
-| `game.setting(id)` | The value the host picked in the lobby for one of this script's own [`settings`](#scenariosettings), or its declared default when the host picked nothing. An id the script does not declare **raises**, for the reason an unknown rule name does. |
+| `game.setting(id)` | The value the host picked in the lobby for one of this script's own [`settings`](#scenariosettings), or its declared default when the host picked nothing: a number for an `"int"` setting, `true` or `false` for a `"bool"` one. An id the script does not declare **raises**, for the reason an unknown rule name does. |
 
 The value is fixed for the round. Read it in `on_init`, or at the top of the
 file, and keep it in a local:
@@ -1570,12 +1573,14 @@ file, and keep it in a local:
 ```lua
 local WAVES        = game.setting("rounds")
 local WAVE_LIMIT_S = game.setting("round_minutes") * 60
+local SUDDEN_DEATH = game.setting("sudden_death")   -- true or false
 ```
 
 A script reads only its own settings: the id is looked up in the declaration
 of the file that makes the call. The server checks every value the host
 sends. A value below the range becomes the lowest entry, one above it the
-highest, and one inside the range but off the step the default. An older
+highest, and one inside the range but off the step the default. A
+`"bool"` setting takes only on or off; anything else is refused. An older
 server, or a client that cannot send a pick, leaves every setting at its
 default, so a script must play correctly on its defaults alone.
 

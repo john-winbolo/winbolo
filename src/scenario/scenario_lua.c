@@ -865,6 +865,32 @@ static bool scnSettingsInt(lua_State *L, int row, const char *field,
     return ok;
 }
 
+/* Whether the row gives field at all, whatever its value. */
+static bool scnSettingsHas(lua_State *L, int row, const char *field) {
+    bool has;
+
+    lua_pushstring(L, field);
+    lua_rawget(L, row);
+    has = !lua_isnil(L, -1);
+    lua_pop(L, 1);
+    return has;
+}
+
+/* A bool row's default, true or false, into *out as 1 or 0. False for a
+ * default that is absent or is not a Lua boolean. */
+static bool scnSettingsBool(lua_State *L, int row, int32_t *out) {
+    bool ok;
+
+    lua_pushstring(L, "default");
+    lua_rawget(L, row);
+    ok = lua_isboolean(L, -1);
+    if (ok) {
+        *out = lua_toboolean(L, -1) ? 1 : 0;
+    }
+    lua_pop(L, 1);
+    return ok;
+}
+
 /* A string field of the row into dst. False for a value that is there but is
  * not a string, or does not fit. Absent answers true and leaves dst "". */
 static bool scnSettingsStr(lua_State *L, int row, const char *field,
@@ -969,18 +995,43 @@ int scenarioLuaReadSettings(lua_State *L, int tbl, ScnSetting *out, int max,
         }
         if (type[0] == '\0' || strcmp(type, "int") == 0) {
             s.type = SCN_SETTING_TYPE_INT;
+        } else if (strcmp(type, "bool") == 0) {
+            s.type = SCN_SETTING_TYPE_BOOL;
         } else {
             scnSettingsSay(report, ud, key,
-                           "scenario: %s: %s has type '%s'; only \"int\" is "
-                           "supported; dropped", path, key, type);
+                           "scenario: %s: %s has type '%s'; only \"int\" and "
+                           "\"bool\" are supported; dropped", path, key,
+                           type);
             lua_pop(L, 1);
             continue;
         }
-        if (!scnSettingsInt(L, row, "min", &s.min, &hadMin) ||
-            !scnSettingsInt(L, row, "max", &s.max, &hadMax) ||
-            !scnSettingsInt(L, row, "step", &s.step, &hadStep) ||
-            !scnSettingsInt(L, row, "default", &s.def, &hadDef) ||
-            !hadMin || !hadMax || !hadDef) {
+        if (s.type == SCN_SETTING_TYPE_BOOL) {
+            /* On or off has a fixed range, so a min, max or step on a
+               bool row is a mistake in the row. */
+            if (scnSettingsHas(L, row, "min") ||
+                scnSettingsHas(L, row, "max") ||
+                scnSettingsHas(L, row, "step")) {
+                scnSettingsSay(report, ud, key,
+                               "scenario: %s: %s is a bool setting and takes "
+                               "no min, max or step; dropped", path, key);
+                lua_pop(L, 1);
+                continue;
+            }
+            if (!scnSettingsBool(L, row, &s.def)) {
+                scnSettingsSay(report, ud, key,
+                               "scenario: %s: %s needs true or false for "
+                               "default; dropped", path, key);
+                lua_pop(L, 1);
+                continue;
+            }
+            s.min  = 0;
+            s.max  = 1;
+            s.step = 1;
+        } else if (!scnSettingsInt(L, row, "min", &s.min, &hadMin) ||
+                   !scnSettingsInt(L, row, "max", &s.max, &hadMax) ||
+                   !scnSettingsInt(L, row, "step", &s.step, &hadStep) ||
+                   !scnSettingsInt(L, row, "default", &s.def, &hadDef) ||
+                   !hadMin || !hadMax || !hadDef) {
             scnSettingsSay(report, ud, key,
                            "scenario: %s: %s needs whole numbers for min, "
                            "max and default (and step, if given); dropped",
@@ -1014,6 +1065,14 @@ int scenarioLuaReadSettings(lua_State *L, int tbl, ScnSetting *out, int max,
     }
     lua_pop(L, 1); /* settings */
     return n;
+}
+
+void scenarioLuaPushSetting(lua_State *L, const ScnSetting *s, int32_t v) {
+    if (s != NULL && s->type == SCN_SETTING_TYPE_BOOL) {
+        lua_pushboolean(L, v != 0);
+    } else {
+        lua_pushinteger(L, (lua_Integer)v);
+    }
 }
 
 /* The declared settings of the script that is calling, into rows. While a
@@ -1092,7 +1151,7 @@ static int scnLuaSetting(lua_State *L) {
         chosen = serverSimGetScriptSetting(
             c->sim, scnLuaSettingFile(c->runningFile), id, &v);
     }
-    lua_pushinteger(L, (lua_Integer)scnSettingResolve(s, chosen, v));
+    scenarioLuaPushSetting(L, s, scnSettingResolve(s, chosen, v));
     return 1;
 }
 
@@ -5098,8 +5157,9 @@ static const ScnLuaRow kScnLuaRows[] = {
       SCN_OP_PARAMS(rule), SCN_OP_READS },
     { "setting", scnLuaSetting,
       "setting(id) — the value the host chose in the lobby for one of "
-      "this script's own settings, or its declared default; an id the "
-      "script never declared raises.",
+      "this script's own settings, or its declared default: a number, or "
+      "true or false for a bool setting; an id the script never declared "
+      "raises.",
       SCN_OP_PARAMS(setting), SCN_OP_READS },
     { "tags", scnLuaTags,
       "tags(kind, n) — the tags the scenario put on a \"pill\", \"base\" or "

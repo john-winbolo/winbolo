@@ -3727,6 +3727,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # What a real client draws when a held seat is taken off the field: the
     # tank has to go with it, though the roster row stays.
     tests/unit/test_loopback_unfield_tank.c
+    # Other tanks' full positions reaching the Smooth draw list.
+    tests/unit/test_loopback_fine_tank.c
     # The scripted game type: the fourth value resolving through the base game
     # a scenario declared, at the loadout and at the start, and that value
     # going when the template does.
@@ -3851,6 +3853,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # reload helper, the damage helper, the boat-exit speed and the brain's
     # stop predictor.
     tests/unit/test_tank_modifier_sites.c
+    # A tank drawn on a diagonal stepping both axes in the same frame.
+    tests/unit/test_tank_diagonal_step.c
     tests/unit/test_visible_turn_taps.c
     tests/unit/test_md5.c
     tests/unit/test_rand_save_restore.c
@@ -4982,6 +4986,11 @@ set(_unit_test_names
     scenario_settings_wire
     scenario_settings_survival_decl
     scenario_settings_survival_short
+    scenario_settings_bool_blob
+    scenario_settings_bool_manifest_lua
+    scenario_settings_bool_manifest_json
+    scenario_settings_bool_server
+    scenario_settings_bool_game_setting
     script_list_client_apply
     lobby_map_search_chunked
     wbn_bearer_state
@@ -5417,6 +5426,7 @@ set(_unit_test_names
     mapview_sprite_lgm_snap
     mapview_overlay_gunsight
     mapview_overlay_tank_label
+    mapview_overlay_tank_label_smooth
     mapview_overlay_cursor
     mapview_overlay_item_labels
     map_colours_item_kind
@@ -5835,6 +5845,7 @@ set(_unit_test_names
     console_read_reports_eof
     console_read_timeout_then_eof
     wbv_fixture_summaries
+    tank_diagonal_steps_both_axes
     tank_mod_speed_caps_on_road
     tank_mod_speed_river_still_moves
     tank_mod_accel_doubles_ticks_to_cap
@@ -5973,6 +5984,7 @@ set(_unit_test_names
     survival_lobby_round_full
     survival_lobby_round_ds_order
     loopback_unfield_tank
+    loopback_fine_tank_position
     lobby_template_return_reconciles
     lobby_template_return_unfields
     lobby_template_reset_reseats

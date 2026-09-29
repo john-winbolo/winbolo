@@ -2659,8 +2659,12 @@ static const LangEntry langTable[] = {
     {2704, "A tank took a shell or a mine, with the armour it actually lost."},
     {2705, "Whether a shell may hit the tank or pillbox it has reached."},
     {2706, "What a hit on a pillbox is worth, asked on every shell and blast it takes."},
-    {2707, "Whether pillboxes use Mac Bolo aiming. Moving, unobstructed tanks within about one square make the pill aim far along their heading. Stopped or blocked tanks receive no lead. Overrides pill_massage_range, pill_massage_cosine and pill_aim_iterations."},
-    {2708, "Whether tanks use Mac Bolo's direction-dependent sprite boxes and pixel nudges against walls, live pills and hostile bases. Allows closer passes beside a pill for pill massage."},
+    {2707, "On"},
+    {2708, "Off"},
+    {2709, "On (default)"},
+    {2710, "Off (default)"},
+    {2711, "Whether pillboxes use Mac Bolo aiming. Moving, unobstructed tanks within about one square make the pill aim far along their heading. Stopped or blocked tanks receive no lead. Overrides pill_massage_range, pill_massage_cosine and pill_aim_iterations."},
+    {2712, "Whether tanks use Mac Bolo's direction-dependent sprite boxes and pixel nudges against walls, live pills and hostile bases. Allows closer passes beside a pill for pill massage."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

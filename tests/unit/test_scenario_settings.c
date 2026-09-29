@@ -44,6 +44,23 @@
  *   scenario_settings_survival_short  — Survival started through the lobby
  *       with rounds = 1 and round_minutes = 1: one wave of one minute, then
  *       the defenders win.
+ *   scenario_settings_bool_blob       — bool rows (type = "bool") and int
+ *       rows in one block, each read back with its type, and a bool row
+ *       with any range but 0..1 step 1 refused.
+ *   scenario_settings_bool_manifest_lua
+ *                                     — a loose script's bool rows with a
+ *       true and a false default kept beside an int row, and a bool row
+ *       with a numeric default, no default, or a min, max or step reported
+ *       and dropped.
+ *   scenario_settings_bool_manifest_json
+ *                                     — the same for manifest.json, and a
+ *       bool row written from the struct and read back unchanged.
+ *   scenario_settings_bool_server     — the host's command for a bool
+ *       setting refused for anything but 0 or 1, where an int is clamped.
+ *   scenario_settings_bool_game_setting
+ *                                     — game.setting answers true or false
+ *       for a bool setting, on its default and on the host's pick, and a
+ *       number for an int setting in the same script.
  *
  * Reads the ClientSim and ServerSim structs directly; the unittests profile
  * permits it.
@@ -428,15 +445,23 @@ int run_scenario_settings_manifest_json(void) {
 
 /* ── 4. The server's store ────────────────────────────────────────── */
 
-/* One file, "knobs.lua", declaring armour 100..200 step 10 default 120. */
+static ScnSetting ssBool(const char *id, const char *label, bool def);
+
+/* Two files: "knobs.lua", declaring armour 100..200 step 10 default 120,
+ * and "flags.lua", declaring the bool fog, default on, and the same armour. */
 static int ssReader(void *ctx, const char *dir, const char *file,
                     uint8_t *out, size_t cap) {
-    ScnSetting a = ssRow("armour", "Base armour", 100, 200, 10, 120);
+    ScnSetting a   = ssRow("armour", "Base armour", 100, 200, 10, 120);
+    ScnSetting fog = ssBool("fog", "Fog", true);
     size_t     len = 0;
 
     (void)ctx;
     (void)dir;
-    if (strcmp(file, "knobs.lua") != 0) return -1;
+    if (strcmp(file, "flags.lua") == 0) {
+        if (!scnSettingsBlobAppend(out, cap, &len, &fog)) return -1;
+    } else if (strcmp(file, "knobs.lua") != 0) {
+        return -1;
+    }
     if (!scnSettingsBlobAppend(out, cap, &len, &a)) return -1;
     return (int)len;
 }
@@ -1010,5 +1035,346 @@ int run_scenario_settings_survival_short(void) {
 
     scenarioHostDetach(host);
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 11. On or off ────────────────────────────────────────────────── */
+
+/* A bool row as both readers store it: 0..1 step 1, default 1 or 0. */
+static ScnSetting ssBool(const char *id, const char *label, bool def) {
+    ScnSetting s = ssRow(id, label, 0, 1, 1, def ? 1 : 0);
+
+    s.type = SCN_SETTING_TYPE_BOOL;
+    return s;
+}
+
+int run_scenario_settings_bool_blob(void) {
+    uint8_t    blob[SCN_SETTINGS_BLOB_MAX];
+    ScnSetting rows[SCN_SETTINGS_MAX];
+    ScnSetting a    = ssRow("armour", "Base armour", 100, 200, 10, 120);
+    ScnSetting fog  = ssBool("fog", "Fog", true);
+    ScnSetting b    = ssRow("gap", "Gap", 0, 100, 25, 50);
+    ScnSetting wall = ssBool("walls", "Walls", false);
+    ScnSetting bad;
+    size_t     len = 0;
+    int        n;
+
+    /* A mix of the two types, in order, each keeping its type. */
+    UT_ASSERT(scnSettingsBlobAppend(blob, sizeof(blob), &len, &a));
+    UT_ASSERT(scnSettingsBlobAppend(blob, sizeof(blob), &len, &fog));
+    UT_ASSERT(scnSettingsBlobAppend(blob, sizeof(blob), &len, &b));
+    UT_ASSERT(scnSettingsBlobAppend(blob, sizeof(blob), &len, &wall));
+    n = scnSettingsBlobRead(blob, len, rows, SCN_SETTINGS_MAX);
+    UT_ASSERT_MSG(n == 4, "%d rows read back, wanted 4", n);
+    UT_ASSERT(ssSame(&rows[0], &a) && rows[0].type == SCN_SETTING_TYPE_INT);
+    UT_ASSERT_MSG(ssSame(&rows[1], &fog) &&
+                      rows[1].type == SCN_SETTING_TYPE_BOOL,
+                  "fog came back as type %d %d..%d/%d def %d",
+                  (int)rows[1].type, (int)rows[1].min, (int)rows[1].max,
+                  (int)rows[1].step, (int)rows[1].def);
+    UT_ASSERT(ssSame(&rows[2], &b) && rows[2].type == SCN_SETTING_TYPE_INT);
+    UT_ASSERT(ssSame(&rows[3], &wall) &&
+              rows[3].type == SCN_SETTING_TYPE_BOOL && rows[3].def == 0);
+
+    /* A bool row is on or off and nothing wider. */
+    UT_ASSERT(scnSettingProblem(&fog) == NULL);
+    UT_ASSERT(scnSettingChoices(&fog) == 2);
+    bad      = fog;
+    bad.max  = 2;
+    UT_ASSERT(scnSettingProblem(&bad) != NULL);
+    UT_ASSERT(!scnSettingsBlobAppend(blob, sizeof(blob), &len, &bad));
+    bad      = fog;
+    bad.min  = -1;
+    bad.def  = 0;
+    UT_ASSERT(scnSettingProblem(&bad) != NULL);
+    bad      = fog;
+    bad.def  = 2;
+    UT_ASSERT(scnSettingProblem(&bad) != NULL);
+
+    /* A bool row whose range was changed on the wire does not read. */
+    {
+        uint8_t odd[SCN_SETTINGS_BLOB_MAX];
+        size_t  oddLen = 0;
+        size_t  at;
+
+        UT_ASSERT(scnSettingsBlobAppend(odd, sizeof(odd), &oddLen, &fog));
+        at = oddLen - 16 + 4;   /* max */
+        odd[at + 3] = 2;
+        UT_ASSERT(scnSettingsBlobRead(odd, oddLen, rows, SCN_SETTINGS_MAX) <
+                  0);
+    }
+    return 0;
+}
+
+/* Two good bool rows either side of an int row, and a bool row breaking
+ * each of its rules. game.setting at the top level answers a boolean under
+ * the checker too, or the file raises there. */
+static const char kSsBoolScript[] =
+    "scenario = {\n"
+    "  name = \"Flags\", api = 1, kind = \"mod\", bound = false,\n"
+    "  settings = {\n"
+    "    { id = \"fog\", label = \"Fog\", type = \"bool\", default = true },\n"
+    "    { id = \"armour\", label = \"Base armour\", min = 100, max = 200,\n"
+    "      step = 10, default = 120 },\n"
+    "    { id = \"walls\", label = \"Walls\", type = \"bool\",\n"
+    "      default = false },\n"
+    "    { id = \"numeric\", label = \"Numeric\", type = \"bool\",\n"
+    "      default = 1 },\n"
+    "    { id = \"nodef\", label = \"No default\", type = \"bool\" },\n"
+    "    { id = \"ranged\", label = \"Ranged\", type = \"bool\", min = 0,\n"
+    "      max = 1, default = true },\n"
+    "    { id = \"stepped\", label = \"Stepped\", type = \"bool\", step = 1,\n"
+    "      default = false },\n"
+    "  },\n"
+    "}\n"
+    "local F = game.setting(\"fog\")\n"
+    "if type(F) ~= \"boolean\" then error(\"fog is a \" .. type(F)) end\n"
+    "local A = game.setting(\"armour\")\n"
+    "if type(A) ~= \"number\" then error(\"armour is a \" .. type(A)) end\n";
+
+int run_scenario_settings_bool_manifest_lua(void) {
+    static ScnValidateResult r;
+    char                     path[512];
+    const ScenarioManifest  *m = &r.manifest;
+    ScnSetting               fog   = ssBool("fog", "Fog", true);
+    ScnSetting               arm   = ssRow("armour", "Base armour", 100, 200,
+                                           10, 120);
+    ScnSetting               walls = ssBool("walls", "Walls", false);
+
+    UT_ASSERT(ssMakeDir("bool_lua"));
+    UT_ASSERT(ssWriteText("flags.lua", kSsBoolScript));
+    snprintf(path, sizeof(path), "%s/flags.lua", ssDir);
+
+    memset(&r, 0, sizeof(r));
+    (void)scenarioValidateScript(NULL, path, &r);
+    UT_ASSERT_MSG(r.haveManifest, "the script did not run under the "
+                  "validator (game.setting answered the wrong type?)");
+    UT_ASSERT_MSG(m->numSettings == 3, "%d settings kept, wanted 3",
+                  (int)m->numSettings);
+    UT_ASSERT_MSG(ssSame(&m->settings[0], &fog),
+                  "fog read as type %d %d..%d/%d def %d",
+                  (int)m->settings[0].type, (int)m->settings[0].min,
+                  (int)m->settings[0].max, (int)m->settings[0].step,
+                  (int)m->settings[0].def);
+    UT_ASSERT(ssSame(&m->settings[1], &arm));
+    UT_ASSERT(ssSame(&m->settings[2], &walls));
+    UT_ASSERT_MSG(ssIssue(&r, "settings.numeric"),
+                  "a numeric default on a bool row was not reported");
+    UT_ASSERT(ssIssue(&r, "settings.nodef"));
+    UT_ASSERT_MSG(ssIssue(&r, "settings.ranged"),
+                  "a bool row with min and max was not reported");
+    UT_ASSERT(ssIssue(&r, "settings.stepped"));
+    UT_ASSERT(!ssIssue(&r, "settings.fog"));
+    UT_ASSERT(!ssIssue(&r, "settings.walls"));
+
+    ssRemoveTree(ssDir);
+    return 0;
+}
+
+static const char kSsBoolJson[] =
+    "{\n"
+    "  \"manifest\": 1, \"api\": 1, \"name\": \"Packed\", \"bound\": false,\n"
+    "  \"settings\": [\n"
+    "    { \"id\": \"fog\", \"label\": \"Fog\", \"type\": \"bool\",\n"
+    "      \"default\": true },\n"
+    "    { \"id\": \"laps\", \"label\": \"Laps\", \"min\": 1, \"max\": 9,\n"
+    "      \"default\": 3 },\n"
+    "    { \"id\": \"walls\", \"label\": \"Walls\", \"type\": \"bool\",\n"
+    "      \"default\": false },\n"
+    "    { \"id\": \"numeric\", \"label\": \"Numeric\", \"type\": \"bool\",\n"
+    "      \"default\": 1 },\n"
+    "    { \"id\": \"ranged\", \"label\": \"Ranged\", \"type\": \"bool\",\n"
+    "      \"min\": 0, \"max\": 1, \"default\": true }\n"
+    "  ],\n"
+    "  \"script\": \"main.lua\"\n"
+    "}\n";
+
+int run_scenario_settings_bool_manifest_json(void) {
+    static ScnValidateResult sink;
+    ScnParseReport           rep;
+    ScnManifestDoc          *d;
+    ScnManifestDoc          *back;
+    char                     soft[1024];
+    char                     err[256];
+    char                     key[64];
+    char                     why[256];
+    char                    *text;
+    const ScenarioManifest  *m;
+    const ScenarioManifest  *mb;
+    ScnSetting               fog   = ssBool("fog", "Fog", true);
+    ScnSetting               laps  = ssRow("laps", "Laps", 1, 9, 1, 3);
+    ScnSetting               walls = ssBool("walls", "Walls", false);
+
+    memset(&sink, 0, sizeof(sink));
+    soft[0]     = '\0';
+    rep.soft    = soft;
+    rep.softLen = sizeof(soft);
+    rep.sink    = &sink;
+    d = scnManifestParse((const uint8_t *)kSsBoolJson, strlen(kSsBoolJson),
+                         &rep, err, sizeof(err));
+    UT_ASSERT_MSG(d != NULL, "the manifest was refused: %s", err);
+    m = scnManifestValues(d);
+    UT_ASSERT_MSG(m->numSettings == 3, "%d settings kept, wanted 3",
+                  (int)m->numSettings);
+    UT_ASSERT(ssSame(&m->settings[0], &fog));
+    UT_ASSERT(ssSame(&m->settings[1], &laps));
+    UT_ASSERT(ssSame(&m->settings[2], &walls));
+    UT_ASSERT_MSG(ssIssue(&sink, "settings.numeric"),
+                  "a numeric default on a bool row was not reported");
+    UT_ASSERT(ssIssue(&sink, "settings.ranged"));
+
+    /* Written from the struct and read again: a bool row goes out as
+       "type": "bool" with a true or false default and no range, and comes
+       back the same. */
+    back = scnManifestFromValues(m, err, sizeof(err));
+    UT_ASSERT(back != NULL);
+    text = scnManifestWrite(back, err, sizeof(err));
+    scnManifestFree(back);
+    UT_ASSERT_MSG(text != NULL, "the manifest did not write: %s", err);
+    UT_ASSERT_MSG(strstr(text, "\"bool\"") != NULL,
+                  "the written manifest has no bool row:\n%s", text);
+    back = scnManifestParse((const uint8_t *)text, strlen(text), NULL, err,
+                            sizeof(err));
+    free(text);
+    UT_ASSERT_MSG(back != NULL, "the written manifest was refused: %s", err);
+    mb = scnManifestValues(back);
+    UT_ASSERT(mb->numSettings == 3);
+    UT_ASSERT(ssSame(&mb->settings[0], &fog));
+    UT_ASSERT(ssSame(&mb->settings[2], &walls));
+    UT_ASSERT(scnManifestAgrees(mb, m, key, sizeof(key), why, sizeof(why)));
+
+    scnManifestFree(back);
+    scnManifestFree(d);
+    return 0;
+}
+
+int run_scenario_settings_bool_server(void) {
+    ServerSim *sim;
+    int32_t    v   = 0;
+    int32_t    got = -1;
+
+    sim = ssLobbySim();
+    UT_ASSERT(sim != NULL);
+
+    /* Off, the other value from the default, is kept; on again, the
+       default, is kept as nothing. */
+    UT_ASSERT(serverSimSetScriptSetting(sim, "flags.lua", "fog", 0, &got));
+    UT_ASSERT(got == 0);
+    UT_ASSERT(serverSimGetScriptSetting(sim, "flags.lua", "fog", &v) &&
+              v == 0);
+    UT_ASSERT(serverSimSetScriptSetting(sim, "flags.lua", "fog", 1, &got));
+    UT_ASSERT(got == 1);
+    UT_ASSERT(!serverSimGetScriptSetting(sim, "flags.lua", "fog", &v));
+
+    /* Through the host's command: anything but 0 or 1 is refused and
+       changes nothing, where an int setting would be clamped. */
+    UT_ASSERT(ssApply(sim, 0, "flags.lua", "fog", 0) == CMD_OK);
+    UT_ASSERT(ssApply(sim, 0, "flags.lua", "fog", 2) == CMD_REJECT_INVALID);
+    UT_ASSERT(ssApply(sim, 0, "flags.lua", "fog", -1) == CMD_REJECT_INVALID);
+    UT_ASSERT(ssApply(sim, 0, "flags.lua", "fog", 1000) ==
+              CMD_REJECT_INVALID);
+    UT_ASSERT_MSG(serverSimGetScriptSetting(sim, "flags.lua", "fog", &v) &&
+                      v == 0,
+                  "a refused value changed what was kept");
+    UT_ASSERT(ssApply(sim, 0, "flags.lua", "fog", 1) == CMD_OK);
+    UT_ASSERT(!serverSimGetScriptSetting(sim, "flags.lua", "fog", &v));
+    /* The int row in the same file still clamps. */
+    UT_ASSERT(ssApply(sim, 0, "flags.lua", "armour", 9999) == CMD_OK);
+    UT_ASSERT(serverSimGetScriptSetting(sim, "flags.lua", "armour", &v) &&
+              v == 200);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A mod with two bool settings and an int one. on_setup writes what
+ * game.setting answered into three rules: shells 11 for fog on, 10 for off;
+ * mines 7 for walls on, 6 for off; either 1 when the answer was not a
+ * boolean; and armour as the number it read, or 100 when it was not a
+ * number. fog is read at the file's top level, the others in the hook. */
+static const char kSsFlagsMod[] =
+    "scenario = {\n"
+    "  name = \"Flags\", api = 1, kind = \"mod\", bound = false,\n"
+    "  settings = {\n"
+    "    { id = \"fog\", label = \"Fog\", type = \"bool\", default = true },\n"
+    "    { id = \"walls\", label = \"Walls\", type = \"bool\",\n"
+    "      default = false },\n"
+    "    { id = \"armour\", label = \"Base armour\", min = 100, max = 200,\n"
+    "      step = 10, default = 120 },\n"
+    "  },\n"
+    "}\n"
+    "local F = game.setting(\"fog\")\n"
+    "function on_setup()\n"
+    "  local W = game.setting(\"walls\")\n"
+    "  local A = game.setting(\"armour\")\n"
+    "  local s, m = 1, 1\n"
+    "  if type(F) == \"boolean\" then s = F and 11 or 10 end\n"
+    "  if type(W) == \"boolean\" then m = W and 7 or 6 end\n"
+    "  if type(A) ~= \"number\" then A = 100 end\n"
+    "  game.set_rule(\"tank_full_shells\", s)\n"
+    "  game.set_rule(\"tank_full_mines\", m)\n"
+    "  game.set_rule(\"base_full_armour\", A)\n"
+    "end\n";
+
+static int ssFlagsRound(bool chosen, int32_t *shells, int32_t *mines,
+                        int32_t *armour) {
+    ServerSim    *sim;
+    ScenarioHost *h;
+    GameSim      *gs;
+    char          err[512];
+
+    sim = ssPlainSim();
+    UT_ASSERT(sim != NULL);
+    serverSimSetScenarioDir(sim, ssDir);
+    scenarioHostRegisterScenarioLister(sim);
+    if (chosen) {
+        UT_ASSERT(serverSimSetScriptSetting(sim, "flags.lua", "fog", 0, NULL));
+        UT_ASSERT(serverSimSetScriptSetting(sim, "flags.lua", "walls", 1,
+                                            NULL));
+        UT_ASSERT(serverSimSetScriptSetting(sim, "flags.lua", "armour", 170,
+                                            NULL));
+    }
+    err[0] = '\0';
+    h = scenarioHostAttachMod(sim, ssDir, "flags.lua", err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the mod was refused: %s", err);
+    serverSimStartGame(sim);
+    UT_ASSERT_MSG(scenarioHostLastError(h)[0] == '\0',
+                  "the round complained: %s", scenarioHostLastError(h));
+    gs      = serverSimGetGameSim(sim);
+    *shells = gs->rules.tank_full_shells;
+    *mines  = gs->rules.tank_full_mines;
+    *armour = gs->rules.base_full_armour;
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+int run_scenario_settings_bool_game_setting(void) {
+    int32_t shells = 0;
+    int32_t mines  = 0;
+    int32_t armour = 0;
+
+    UT_ASSERT(ssMakeDir("bool_game_setting"));
+    UT_ASSERT(ssWriteText("flags.lua", kSsFlagsMod));
+
+    /* Nothing chosen: fog true and walls false, as booleans. */
+    UT_ASSERT(ssFlagsRound(false, &shells, &mines, &armour) == 0);
+    UT_ASSERT_MSG(shells == 11, "fog read as %d, wanted 11 (true)",
+                  (int)shells);
+    UT_ASSERT_MSG(mines == 6, "walls read as %d, wanted 6 (false)",
+                  (int)mines);
+    UT_ASSERT_MSG(armour == 120, "armour read as %d, wanted the number 120",
+                  (int)armour);
+
+    /* The host's picks: the other value of each. */
+    UT_ASSERT(ssFlagsRound(true, &shells, &mines, &armour) == 0);
+    UT_ASSERT_MSG(shells == 10, "fog read as %d, wanted 10 (false)",
+                  (int)shells);
+    UT_ASSERT_MSG(mines == 7, "walls read as %d, wanted 7 (true)",
+                  (int)mines);
+    UT_ASSERT_MSG(armour == 170, "armour read as %d, wanted the number 170",
+                  (int)armour);
+
+    ssRemoveTree(ssDir);
     return 0;
 }
