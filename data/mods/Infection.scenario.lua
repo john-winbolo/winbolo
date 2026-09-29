@@ -594,9 +594,11 @@ end
 -- goes from the horde back to the survivors inside a round, so this is the
 -- only thing a survivor is ever handed.
 --
--- Beside the word goes one GoalHunter setting, on for a survivor and off for
--- the horde: a survivor bot never fights a tank itself, and only shoots its
--- own pillbox to anger it at a tank that comes near.
+-- Beside the word go two GoalHunter settings, on for a survivor and off for
+-- the horde. ATTACK_TANK_PILL_HEAT_ONLY: a survivor bot never fights a tank
+-- itself, and only shoots its own pillbox to anger it at a tank that comes
+-- near. PILL_PLACE_TURTLE: a survivor bot builds its pillboxes as one cluster
+-- by its bases and its first pillboxes, instead of spreading them out.
 local function word_for(p)
   if side[p] == INFECTED then
     return "ammoless"
@@ -617,9 +619,13 @@ local function hand_word(p)
   if handed[p] == word then
     return
   end
+  -- One cfg key holds both settings: the brain splits its tokens on ';', so
+  -- "A=x;cfg=B=y" arrives as cfg=A=x and cfg=B=y. The whole value must stay
+  -- under 64 bytes (60 at most here).
+  local on = tostring(word == "normal")
   if game.bot_init(p, { [word] = "1",
-                        cfg = "ATTACK_TANK_PILL_HEAT_ONLY=" ..
-                              tostring(word == "normal") }) then
+                        cfg = "ATTACK_TANK_PILL_HEAT_ONLY=" .. on ..
+                              ";cfg=PILL_PLACE_TURTLE=" .. on }) then
     handed[p] = word
   end
 end
