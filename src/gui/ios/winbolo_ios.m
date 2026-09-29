@@ -24,6 +24,7 @@
 #include "client_render.h"
 #include "input_packet.h"
 #include "client_frontend_tick.h"
+#include "client_frontend_render.h"
 #include "gui_message.h"
 #include "../../common/wb_log.h"
 #include "server_sim.h"
@@ -36,7 +37,6 @@
 #include "../sound.h"
 #include "sdl3draw.h"
 #include "../sdl3/build_cursor.h"
-#include "../sdl3/gfx_settings.h"
 #include "../sdl3/sdl3imgui.h"
 #include "../sdl3/luabrainshandler.h"
 #include "../sdl3/dialog_backend.h"
@@ -423,9 +423,7 @@ ios_game_start:
         tick = SDL_GetTicks();
         clientMutexWaitFor();
         if (finishedLoop == FALSE) {
-            /* Smooth draws other tanks from their full world position. */
-            clientSimSetFineTankPositions(cs, gfxGetAnimSmoothness() == GFX_ANIM_SMOOTH);
-            clientSimRenderPrepare(cs, tick);
+            clientFrontRenderPrepare(cs, tick);
             clientRenderFrame(cs, redraw);
         }
         clientMutexRelease();

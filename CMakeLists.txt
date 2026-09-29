@@ -3833,6 +3833,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # reload helper, the damage helper, the boat-exit speed and the brain's
     # stop predictor.
     tests/unit/test_tank_modifier_sites.c
+    # A tank drawn on a diagonal stepping both axes in the same frame.
     tests/unit/test_tank_diagonal_step.c
     tests/unit/test_visible_turn_taps.c
     tests/unit/test_md5.c
