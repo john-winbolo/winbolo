@@ -79,7 +79,7 @@ static int tk_arm_and_hit(GameSim *gs, TURNTYPE angle) {
     tankGetWorld(&gs->tanks[0], &wx, &wy);
     /* Owner 1: any player other than the tank's own (0), so the hit counts
      * as damage taken rather than a self-hit the client path would ignore. */
-    UT_ASSERT_MSG(tankIsTankHit(gs, &gs->tanks[0], wx, wy, angle, 1) == TH_HIT,
+    UT_ASSERT_MSG(tankIsTankHit(gs, &gs->tanks[0], wx, wy, angle, 1, DMG_NO_PILL) == TH_HIT,
                   "the hit at brad %d did not land as a plain TH_HIT",
                   (int)angle);
     return 0;
@@ -370,9 +370,9 @@ static tankHit kb_hit(GameSim *gs, TURNTYPE angle, bool rewound) {
         /* Both collision coordinates are historical, distinct from the
          * real tank. Knockback must still move its real position. */
         return tankIsTankHitAtPosition(gs, &gs->tanks[0],
-                                      x - 256, y, x - 256, y, angle, 1);
+                                      x - 256, y, x - 256, y, angle, 1, DMG_NO_PILL);
     }
-    return tankIsTankHit(gs, &gs->tanks[0], x, y, angle, 1);
+    return tankIsTankHit(gs, &gs->tanks[0], x, y, angle, 1, DMG_NO_PILL);
 }
 
 static void kb_advance(GameSim *gs, int frames) {

@@ -496,12 +496,12 @@ int run_round_stats_direct_damage(void) {
     WORLD wx = 0, wy = 0;
     UT_ASSERT(serverSimGetTankState(sim, 1, &wx, &wy));
 
-    tankIsTankHit(&sim->sim, &sim->sim.tanks[1], wx, wy, 0, 0);
+    tankIsTankHit(&sim->sim, &sim->sim.tanks[1], wx, wy, 0, 0, DMG_NO_PILL);
     UT_ASSERT_MSG(serverSimGetRoundStats(sim, 0)->dmgToPlayers == DAMAGE,
                   "current-position hit credits one DAMAGE, got %llu",
                   (unsigned long long)serverSimGetRoundStats(sim, 0)->dmgToPlayers);
 
-    tankIsTankHitAtPosition(&sim->sim, &sim->sim.tanks[1], wx, wy, wx, wy, 0, 0);
+    tankIsTankHitAtPosition(&sim->sim, &sim->sim.tanks[1], wx, wy, wx, wy, 0, 0, DMG_NO_PILL);
     UT_ASSERT_MSG(serverSimGetRoundStats(sim, 0)->dmgToPlayers == 2 * DAMAGE,
                   "lag-compensated hit credits a second DAMAGE, got %llu",
                   (unsigned long long)serverSimGetRoundStats(sim, 0)->dmgToPlayers);

@@ -3793,6 +3793,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The can_ally policy at the alliance request and accept arms, against a
     # C policy and a script, and the game.allied read.
     tests/unit/test_scenario_can_ally.c
+    # can_hit, pill_damage_scale, the pillbox and blast arguments of
+    # damage_scale and can_die, and on_tank_hit, each answered from a script
+    # at the engine's own site.
+    tests/unit/test_scenario_friendly_fire.c
     # The in-process game-event channel: the second subscriber callback, and
     # the captures and builder death that reach it from GameSim callbacks
     # rather than from an event built in shared code, byte for byte as before.
@@ -6122,6 +6126,13 @@ set(_unit_test_names
     scenario_can_ally_script_not_asked
     scenario_can_ally_lua
     scenario_allied_read
+    scenario_can_hit_tank
+    scenario_can_hit_pill
+    scenario_pill_shell_names_pill
+    scenario_pill_damage_scale
+    scenario_blast_names_tank
+    scenario_mine_names_layer
+    scenario_on_tank_hit
     game_event_channel_base_captured
     game_event_channel_pill_captured
     game_event_channel_lgm_lost

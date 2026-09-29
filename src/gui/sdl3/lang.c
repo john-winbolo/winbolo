@@ -2656,6 +2656,9 @@ static const LangEntry langTable[] = {
     {2701, "No reply from the server. Try the upload again."},
     {2702, "Extra push step at zero armour, added to tank_slide_step in proportion to the armour missing before the hit. Only read while tank_slide_mac is on."},
     {2703, "Whether a shell hit pushes a tank the Mac Bolo way. On, the push grows as armour falls, by tank_slide_armour_bonus, and tank_slide_step and tank_bump_decay_shift are read per 40 ms, in a slide that moves every tick. Off is the WinBolo push, the same at every armour level."},
+    {2704, "A tank took a shell or a mine, with the armour it actually lost."},
+    {2705, "Whether a shell may hit the tank or pillbox it has reached."},
+    {2706, "What a hit on a pillbox is worth, asked on every shell and blast it takes."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

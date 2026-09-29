@@ -3140,6 +3140,17 @@ int run_scenario_can_ally_script_not_asked(void);
 int run_scenario_can_ally_lua(void);
 int run_scenario_allied_read(void);
 
+/* The questions a script needs to switch friendly fire off — can_hit,
+ * pill_damage_scale and the pillbox and blast arguments of damage_scale and
+ * can_die — and the on_tank_hit event (test_scenario_friendly_fire.c). */
+int run_scenario_can_hit_tank(void);
+int run_scenario_can_hit_pill(void);
+int run_scenario_pill_shell_names_pill(void);
+int run_scenario_pill_damage_scale(void);
+int run_scenario_blast_names_tank(void);
+int run_scenario_mine_names_layer(void);
+int run_scenario_on_tank_hit(void);
+
 /* The in-process game-event channel (test_game_event_channel.c): a subscriber
  * that asks for it hears the captures and the builder death on it rather than
  * on the control stream, with every byte of each event — the ones past

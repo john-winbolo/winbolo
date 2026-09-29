@@ -390,6 +390,10 @@ typedef struct {
     X(TANK_KILLED,      "on_tank_killed",      SCN_FN_EVENT_HOOK,            \
       SCN_FN_ARGS3("victim", SCN_PARAM_SLOT, "killer", SCN_PARAM_OWNER,      \
                    "cause", SCN_PARAM_WORD))                                 \
+    X(TANK_HIT,         "on_tank_hit",         SCN_FN_EVENT_HOOK,            \
+      SCN_FN_ARGS5("victim", SCN_PARAM_SLOT, "attacker", SCN_PARAM_OWNER,    \
+                   "cause", SCN_PARAM_WORD, "amount", SCN_PARAM_NUMBER,      \
+                   "pill", SCN_PARAM_PILL))                                  \
     X(LGM_DIED,         "on_lgm_died",         SCN_FN_EVENT_HOOK,            \
       SCN_FN_ARGS4("p", SCN_PARAM_SLOT, "killer", SCN_PARAM_OWNER,           \
                    "mx", SCN_PARAM_SQUARE_X, "my", SCN_PARAM_SQUARE_Y))      \
@@ -461,9 +465,14 @@ typedef struct {
       SCN_FN_ARGS3("kind", SCN_PARAM_WORD, "subject", SCN_PARAM_ITEM,        \
                    "actor", SCN_PARAM_OWNER),                                \
       "false to keep the line off every newswire")                           \
+    X(CAN_HIT,           "can_hit",                                          \
+      SCN_FN_ARGS4("attacker", SCN_PARAM_OWNER, "kind", SCN_PARAM_WORD,      \
+                   "n", SCN_PARAM_ITEM, "pill", SCN_PARAM_PILL),             \
+      "false to let the shell fly on as if nothing were there")              \
     X(CAN_DIE,           "can_die",                                          \
-      SCN_FN_ARGS4("kind", SCN_PARAM_WORD, "n", SCN_PARAM_ITEM,              \
-                   "killer", SCN_PARAM_OWNER, "cause", SCN_PARAM_WORD),      \
+      SCN_FN_ARGS5("kind", SCN_PARAM_WORD, "n", SCN_PARAM_ITEM,              \
+                   "killer", SCN_PARAM_OWNER, "cause", SCN_PARAM_WORD,       \
+                   "pill", SCN_PARAM_PILL),                                  \
       "false to leave what the blow landed on standing")                     \
     X(CAN_ALLY,          "can_ally",                                         \
       SCN_FN_ARGS2("p", SCN_PARAM_SLOT, "q", SCN_PARAM_SLOT),                \
@@ -475,9 +484,13 @@ typedef struct {
       SCN_FN_ARGS1("p", SCN_PARAM_SLOT),                                     \
       "a loadout word, or a table of shells, mines, armour and trees")       \
     X(DAMAGE_SCALE,      "damage_scale",                                     \
-      SCN_FN_ARGS3("attacker", SCN_PARAM_OWNER, "victim", SCN_PARAM_SLOT,    \
-                   "cause", SCN_PARAM_WORD),                                 \
-      "a percent from 0 to 10000, where 100 is the ordinary amount")
+      SCN_FN_ARGS4("attacker", SCN_PARAM_OWNER, "victim", SCN_PARAM_SLOT,    \
+                   "cause", SCN_PARAM_WORD, "pill", SCN_PARAM_PILL),         \
+      "a percent from 0 to 10000, where 100 is the ordinary amount")         \
+    X(PILL_DAMAGE_SCALE, "pill_damage_scale",                                \
+      SCN_FN_ARGS4("attacker", SCN_PARAM_OWNER, "n", SCN_PARAM_PILL,         \
+                   "cause", SCN_PARAM_WORD, "pill", SCN_PARAM_PILL),         \
+      "a percent from 0 to 10000 of the armour the pillbox loses")
 
 /*********************************************************
  *NAME:          scenarioLuaInstall
@@ -902,6 +915,14 @@ const char *scenarioLuaBuildOrderWord(int action);
 const char *scenarioLuaCaptureKindWord(int kind);
 
 /*********************************************************
+ *NAME:          scenarioLuaHitKindWord
+ *PURPOSE:
+ *  What a shell has reached, as the word can_hit is handed.
+ *  NULL for a kind the surface does not name.
+ *********************************************************/
+const char *scenarioLuaHitKindWord(int kind);
+
+/*********************************************************
  *NAME:          scenarioLuaDieKindWord
  *PURPOSE:
  *  What the blow would destroy, as the word can_die is
@@ -913,10 +934,12 @@ const char *scenarioLuaDieKindWord(int kind);
  *NAME:          scenarioLuaDamageSourceWord
  *PURPOSE:
  *  What inflicted a hit, as the word can_die is handed for a
- *  builder or a pill — a tank's cause reads through
- *  scenarioLuaDeathCauseWord instead, and the two vocabularies
- *  spell a shell and a mine the same way. NULL for a source
- *  the site could not name, DMG_SRC_UNKNOWN included.
+ *  builder or a pill and pill_damage_scale is handed always
+ *  — a tank's cause reads through scenarioLuaDeathCauseWord
+ *  instead, and the two vocabularies spell a shell and a
+ *  mine the same way. A dying tank's blast is "explosion".
+ *  NULL for a source the site could not name,
+ *  DMG_SRC_UNKNOWN included.
  *********************************************************/
 const char *scenarioLuaDamageSourceWord(int source);
 

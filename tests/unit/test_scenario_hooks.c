@@ -387,6 +387,9 @@ static void shkWatchText(ServerSim *sim, ShkText *c) {
 static const char *const kShkBody =
     "function on_tank_killed(p, k, c, s)"
     " note(\"tank_killed \"..p..\" \"..k..\" \"..c..\" \"..tostring(s)) end\n"
+    "function on_tank_hit(v, a, c, n, pill, s)"
+    " note(\"tank_hit \"..v..\" \"..a..\" \"..c..\" \"..n..\" \""
+    "..tostring(pill)..\" \"..tostring(s)) end\n"
     "function on_tank_spawned(p, x, y, r, s)"
     " note(\"tank_spawned \"..p..\" \"..x..\" \"..y..\" \"..tostring(r)"
     "..\" \"..tostring(s)) end\n"
@@ -440,6 +443,13 @@ static const ShkGameCase kShkGame[] = {
        takes the victim first and the cause as a word. */
     { EVENT_TANK_KILLED,   { 5, 2, LAST_DEATH_BY_SHELL, 1, 0, 40, 41 }, 7,
       "tank_killed 2 5 shell false\n" },
+    /* [victim, attacker, cause, amount, pill] — already the hook's order.
+       The pill is an index and reaches Lua one more; a shell no pillbox
+       fired carries DMG_NO_PILL and reaches it as nil. */
+    { EVENT_TANK_HIT,      { 4, NEUTRAL, LAST_DEATH_BY_SHELL, 5, 2 }, 5,
+      "tank_hit 4 255 shell 5 3 false\n" },
+    { EVENT_TANK_HIT,      { 6, 3, LAST_DEATH_BY_MINES, 0, DMG_NO_PILL }, 5,
+      "tank_hit 6 3 mine 0 nil false\n" },
     /* [player, mx, my, respawn] — the flag reaches Lua as a boolean. */
     { EVENT_TANK_SPAWNED,  { 3, 44, 45, 1 }, 4,
       "tank_spawned 3 44 45 true false\n" },

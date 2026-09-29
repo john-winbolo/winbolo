@@ -98,7 +98,7 @@ static void psc_seed(PscFixture *f, int n, BYTE owner, BYTE target) {
     int i;
 
     for (i = 0; i < n; i++) {
-        shellsAddItem(f->gs, &f->gs->shs, 100, 100, 0, 1, owner, target, FALSE);
+        shellsAddItem(f->gs, &f->gs->shs, 100, 100, 0, 1, owner, target, DMG_NO_PILL, FALSE);
     }
 }
 

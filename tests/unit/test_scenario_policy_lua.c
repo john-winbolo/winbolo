@@ -386,7 +386,7 @@ static void plaShoot(ServerSim *sim) {
     WORLD tx, ty;
     tankGetWorld(&sim->sim.tanks[PLA_OTHER], &tx, &ty);
     tankIsTankHit(&sim->sim, &sim->sim.tanks[PLA_OTHER], tx, ty, (TURNTYPE)0,
-                  PLA_SELF);
+                  PLA_SELF, DMG_NO_PILL);
 }
 
 /* A build order asked as a question: no dispatch, no spending, no line. */
@@ -1253,13 +1253,13 @@ int run_scenario_policy_lua_damage_scale(void) {
     UT_ASSERT_MSG(base > 1, "setup: a shell must do more than one point");
 
     halved = tankDamageAmount(gs, base, PLA_SELF, PLA_OTHER,
-                              LAST_DEATH_BY_SHELL);
+                              LAST_DEATH_BY_SHELL, DMG_NO_PILL);
     UT_ASSERT_MSG(halved > 0 && halved < base,
                   "a scale of fifty priced a shell at %u, which is not "
                   "between one and the classic %u",
                   (unsigned)halved, (unsigned)base);
 
-    none = tankDamageAmount(gs, base, PLA_SELF, 2, LAST_DEATH_BY_SHELL);
+    none = tankDamageAmount(gs, base, PLA_SELF, 2, LAST_DEATH_BY_SHELL, DMG_NO_PILL);
     UT_ASSERT_MSG(none == 0,
                   "a scale of zero priced a shell at %u, expected nothing",
                   (unsigned)none);
@@ -1275,7 +1275,7 @@ int run_scenario_policy_lua_damage_scale(void) {
     for (i = 0; i < 100; i++) {
         WORLD tx, ty;
         tankGetWorld(&gs->tanks[2], &tx, &ty);
-        tankIsTankHit(gs, &gs->tanks[2], tx, ty, (TURNTYPE)0, PLA_SELF);
+        tankIsTankHit(gs, &gs->tanks[2], tx, ty, (TURNTYPE)0, PLA_SELF, DMG_NO_PILL);
     }
     UT_ASSERT_MSG(tankGetArmour(&gs->tanks[2]) == armourBefore,
                   "the armour bar moved from %u to %u under a scale of zero",
@@ -1332,12 +1332,12 @@ static int plaClassicLeg(const char *mapPath, const char *body,
     base = (BYTE)gs->rules.shell_damage;
     serverSimAddPlayer(sim, PLA_OTHER, "Target", false);
     UT_ASSERT_MSG(tankDamageAmount(gs, base, PLA_SELF, PLA_OTHER,
-                                   LAST_DEATH_BY_SHELL) == base,
+                                   LAST_DEATH_BY_SHELL, DMG_NO_PILL) == base,
                   "%s: a shell was priced at %u, expected the classic %u — a "
                   "classic answer of zero would leave every tank in the round "
                   "invulnerable", what,
                   (unsigned)tankDamageAmount(gs, base, PLA_SELF, PLA_OTHER,
-                                             LAST_DEATH_BY_SHELL),
+                                             LAST_DEATH_BY_SHELL, DMG_NO_PILL),
                   (unsigned)base);
 
     plaEnd(sim, h, mapPath);
@@ -1428,7 +1428,7 @@ int run_scenario_policy_lua_value_error_counts(void) {
        reached it. */
     for (i = 0; i < SCN_ERROR_LIMIT; i++) {
         UT_ASSERT_MSG(tankDamageAmount(gs, base, PLA_SELF, PLA_OTHER,
-                                       LAST_DEATH_BY_SHELL) == base,
+                                       LAST_DEATH_BY_SHELL, DMG_NO_PILL) == base,
                       "error %d of %d priced a shell at anything but the "
                       "classic %u", i + 1, SCN_ERROR_LIMIT, (unsigned)base);
     }
@@ -1442,7 +1442,7 @@ int run_scenario_policy_lua_value_error_counts(void) {
     /* A switched-off round runs none of the script and still prices a shell
        at the classic amount. */
     UT_ASSERT_MSG(tankDamageAmount(gs, base, PLA_SELF, PLA_OTHER,
-                                   LAST_DEATH_BY_SHELL) == base,
+                                   LAST_DEATH_BY_SHELL, DMG_NO_PILL) == base,
                   "the switched-off round priced a shell at anything but the "
                   "classic %u", (unsigned)base);
 

@@ -420,6 +420,14 @@ const char *scenarioLuaCaptureKindWord(int kind) {
     }
 }
 
+const char *scenarioLuaHitKindWord(int kind) {
+    switch (kind) {
+        case HIT_KIND_TANK: return "tank";
+        case HIT_KIND_PILL: return "pill";
+        default:            return NULL;
+    }
+}
+
 const char *scenarioLuaDieKindWord(int kind) {
     switch (kind) {
         case DIE_KIND_TANK:    return "tank";
@@ -430,14 +438,17 @@ const char *scenarioLuaDieKindWord(int kind) {
 }
 
 /* A shell and a mine are spelled here as a tank's cause spells them, so a
-   script reads one vocabulary across the three kinds a death comes in.
+   script reads one vocabulary across the three kinds a death comes in. A
+   dying tank's blast is "explosion", a word only a builder or a pill is
+   handed: a tank takes no damage from one.
    DMG_SRC_UNKNOWN has no word on purpose: what the script is handed for it is
    nil, which says what the value says. */
 const char *scenarioLuaDamageSourceWord(int source) {
     switch (source) {
-        case DMG_SRC_SHELL: return "shell";
-        case DMG_SRC_MINE:  return "mine";
-        default:            return NULL;
+        case DMG_SRC_SHELL:     return "shell";
+        case DMG_SRC_MINE:      return "mine";
+        case DMG_SRC_EXPLOSION: return "explosion";
+        default:                return NULL;
     }
 }
 
@@ -5511,12 +5522,16 @@ static void scnFnFieldAdd(ScnLuaFnField *out, size_t outMax, size_t *count,
  * The derived names follow the parameters rather than sitting beside them,
  * so the first paramCount fields are always the function's own arguments in
  * the order it takes them. _team is prefixed with the parameter's name
- * because a function may take more than one seat; tag and region are bare
- * because no function in the catalogue takes two items or two squares. */
+ * because a function may take more than one seat. region is bare because no
+ * function in the catalogue takes two squares, and tag is bare for the first
+ * pillbox or base a row takes; pill_damage_scale takes two pillboxes, the one
+ * hit and the one whose shell hit it, and the second's is prefixed with its
+ * name the way a team is. */
 size_t scenarioLuaFnFields(size_t row, ScnLuaFnField *out, size_t outMax) {
     const ScnLuaFnRow *r;
-    size_t             count = 0;
+    size_t             count  = 0;
     size_t             i;
+    bool               tagged = false;
 
     if (row >= sizeof(kScnLuaFunctions) / sizeof(kScnLuaFunctions[0])) {
         return 0;
@@ -5541,8 +5556,16 @@ size_t scenarioLuaFnFields(size_t row, ScnLuaFnField *out, size_t outMax) {
 
             case SCN_PARAM_PILL:
             case SCN_PARAM_BASE:
-                scnFnFieldAdd(out, outMax, &count, "tag", SCN_PARAM_TAG, i,
-                              true);
+                if (tagged) {
+                    snprintf(derived, sizeof(derived), "%s_tag",
+                             r->params[i].name);
+                    scnFnFieldAdd(out, outMax, &count, derived,
+                                  SCN_PARAM_TAG, i, true);
+                } else {
+                    scnFnFieldAdd(out, outMax, &count, "tag", SCN_PARAM_TAG,
+                                  i, true);
+                    tagged = true;
+                }
                 break;
 
             case SCN_PARAM_SQUARE_X:
