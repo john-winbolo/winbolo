@@ -621,7 +621,7 @@ int run_lobby_map_rotate_holds_seats_again(void) {
 
     UT_ASSERT(mkSetUp());
     ut_brain_stub_arm(true);
-    sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
+    sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
                                     gameOpen, false, 0, -1);
     UT_ASSERT(sim != NULL);
     serverSimSetLobbyEnabled(sim, false);
