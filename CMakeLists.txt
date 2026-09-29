@@ -3537,6 +3537,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_shell_death_event.c
     tests/unit/test_alliance_reset.c
     tests/unit/test_alliance_leave.c
+    tests/unit/test_round_start_owners.c
     tests/unit/test_lobby_add_bot_dispatch.c
     tests/unit/test_lobby_bot_config_memory.c
     tests/unit/test_command_queue_drain.c
@@ -5157,6 +5158,8 @@ set(_unit_test_names
     alliance_leave_no_ally_leaver_is_top_seat
     alliance_leave_hands_to_ally
     alliance_leave_hands_to_top_seat_ally
+    round_start_owners_kept_with_lobby_team
+    round_start_owners_kept_after_manual_alliance
     treegrow_never_plants_on_deep_sea
     treegrow_reset_clears_stale_target
     pill_repair_tops_up_from_arrival_armour
