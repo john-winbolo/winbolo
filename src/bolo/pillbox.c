@@ -934,9 +934,7 @@ BYTE pillsGetScreenHealth(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yVal
 }
 
 /* Mac Bolo 0.99.7's quarter-wave table: trunc(128*sin(b*pi/128)),
- * clipped to 127. Used by both its lead vector and its integer aim search.
- * Reference: mac_bolo/goport/{trig/trig.go,sim/pills.go,sim/math.go,
- * sim/shells.go}, verified there against the original disassembly. */
+ * clipped to 127. Used by both its lead vector and its integer aim search. */
 static const BYTE pillMacSine[65] = {
   0, 3, 6, 9, 12, 15, 18, 21, 24, 28, 31, 34, 37, 40, 43, 46,
   48, 51, 54, 57, 60, 63, 65, 68, 71, 73, 76, 78, 81, 83, 85, 88,

@@ -257,7 +257,7 @@ static void tankNudgeOtherTanks(GameSim *sim, tank *value) {
  * bounding box. Returns accumulated BumpInfo flags.
  *********************************************************/
 static BumpInfo tankNudgeBuildingsMac(GameSim *sim, tank *value, int maxNudges) {
-  /* Mac Bolo Sprite_bbox: top, left, bottom, right in sprite pixels.
+  /* Mac Bolo tank boxes: top, left, bottom, right in sprite pixels.
    * Both boat and land movement use these sixteen tank boxes. WinBolo
    * stores centres, whereas Mac stores the sprite's top-left corner. */
   static const BYTE boxes[16][4] = {
@@ -288,7 +288,7 @@ static BumpInfo tankNudgeBuildingsMac(GameSim *sim, tank *value, int maxNudges) 
       if (tankBuildingCollision(sim, value, left, top, &bumptype, first)) hits |= 9;
     }
     /* Stop before nudging when caught between opposing walls. A corner
-     * pushes on both axes, just as in Mac's MoveMyTank. */
+     * pushes on both axes, matching Mac Bolo's movement. */
     if (hits == 0 || hits == 5 || hits == 10 || hits == 15) break;
     if (hits & 1) y = (y + 16) & TANK_GRID_MASK;
     if (hits & 2) x = (x - 16) | TANK_GRID_LOW_MASK;
