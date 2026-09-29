@@ -235,6 +235,10 @@ typedef struct SimRules {
     int32_t tree_weight_crater;
     int32_t tree_weight_road;
     int32_t tree_weight_mine;
+
+    /* ---- Pillbox shell cap ---- last, like its rows in SIM_RULE_LIST */
+    int32_t pill_shell_cap;         /* whether pill_max_shells_at_tank applies */
+    int32_t pill_max_shells_at_tank; /* pill shells one tank can have coming */
 } SimRules;
 
 /*********************************************************

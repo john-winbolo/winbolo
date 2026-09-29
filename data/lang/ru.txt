@@ -2418,6 +2418,19 @@ STR_DLGLOBBY_RULES_COL_CHANGE=Изменение
 STR_DLGLOBBY_RULE_DETAIL_TITLE=Правило: {string1}
 STR_DLGLOBBY_RULES_INFO=Инфо
 STR_DLGLOBBY_RULES_RANGE=Диапазон
+STR_DLGLOBBY_RULES_OVERRIDDEN=Переопределено {string1}: задаёт {string2}
+
+# Under the rules table of a mod, on a server that has mods turned off.
+STR_DLGLOBBY_DETAILS_MODS_OFF=Моды отключены на этом сервере, поэтому правила этого мода не применяются.
+STR_DLGLOBBY_DETAILS_IMPLEMENTS_MOD=Что реализует этот мод:
+STR_DLGLOBBY_DETAILS_IMPLEMENTS_SCENARIO=Что реализует этот сценарий:
+STR_DLGLOBBY_DETAILS_COL_METHOD=Метод
+STR_DLGLOBBY_DETAILS_COL_TYPE=Тип
+STR_DLGLOBBY_DETAILS_COL_OVERVIEW=Общий обзор
+STR_DLGLOBBY_DETAILS_TYPE_EVENT=Событие
+STR_DLGLOBBY_DETAILS_TYPE_QUERY=Запрос
+STR_DLGLOBBY_DETAILS_TYPE_TRIGGER=Триггер
+STR_DLGLOBBY_DETAILS_COL_NEW_VALUE=Новое значение
 
 # Rule descriptions
 STR_RULE_DESC_tank_reload_ticks=Сколько тиков танк ждёт между выстрелами.
@@ -2514,6 +2527,8 @@ STR_RULE_DESC_pill_base_defend_range=Как близко должна быть �
 STR_RULE_DESC_pill_aim_iterations=Как усердно бункер старается опередить движущуюся цель.
 STR_RULE_DESC_pill_massage_range=Как близко должен быть танк, чтобы бункер целился по исходному простому прогнозу, а не по решателю, который не попадает по танку, кружащему вокруг него. Ноль, классическое значение, — это бункер, который всегда правильно ведёт цель; 384 — полтора квадрата, расстояние, которое использовал старый переключатель времени компиляции.
 STR_RULE_DESC_pill_massage_cosine=Насколько прямо на близкий бункер должен ехать танк, чтобы всё равно быть правильно наведённым — как косинус угла между его курсом и линией к бункеру. Единица целится небрежно по каждому танку в пределах pill_massage_range, ноль — ни по одному из них. Ничего не делает, пока это правило равно нулю.
+STR_RULE_DESC_pill_shell_cap=Ограничивают ли бункеры число своих снарядов, одновременно летящих в один танк, значением pill_max_shells_at_tank. Если выключено, каждый бункер стреляет в ближайшую цель, сколько бы снарядов уже ни летело.
+STR_RULE_DESC_pill_max_shells_at_tank=Наибольшее число снарядов бункеров, которые могут одновременно лететь в один танк. Бункер, в чью ближайшую цель уже летит столько, стреляет в следующую ближайшую или ждёт, пока один не упадёт. Действует, только когда включён pill_shell_cap.
 STR_RULE_DESC_base_full_armour=Наибольшая броня, которая есть у базы.
 STR_RULE_DESC_base_full_shells=Наибольшее количество снарядов, которое есть у базы.
 STR_RULE_DESC_base_full_mines=Наибольшее количество мин, которое есть у базы.
@@ -2656,6 +2671,10 @@ STR_DLGLOBBY_SCENARIO_SAVE_NOT_FOUND=На сервере больше нет э�
 STR_DLGLOBBY_SCENARIO_SAVE_TOO_LARGE=Этот файл слишком большой для копирования.
 STR_DLGLOBBY_SCENARIO_SAVE_NO_ANSWER=Сервер не ответил. Попробуйте ещё раз.
 STR_DLGLOBBY_SCENARIO_SAVE_WRITE=Не удалось сохранить копию в папку Mods.
+STR_DLGLOBBY_DETAILS_SETTINGS=Настройки:
+STR_DLGLOBBY_DETAILS_SETTINGS_HOST=Изменить их может только хост.
+STR_DLGLOBBY_DETAILS_SETTINGS_OLD=Этот сервер не может изменять настройки скрипта, поэтому применяются значения по умолчанию.
+STR_DLGLOBBY_DETAILS_SETTING_DEFAULT={number} (по умолчанию)
 STR_MAPEDIT_SCENARIO_WORKSHOP=Предмет Мастерской №{string1}, опубликовал {string2}
 STR_DLGSETTINGS_WORKSHOP_HEADING=Мастерская
 STR_DLGSETTINGS_WORKSHOP_SUBSCRIBED=Подписки

@@ -2650,6 +2650,8 @@ static const LangEntry langTable[] = {
     {2695, "Sounds play from the side of the screen they happen on."},
     {2696, "Not usable"},
     {2697, "Whether one player may ally with another."},
+    {2698, "The most pillbox shells that can be in the air at one tank. A pillbox whose nearest target already has this many coming fires at the next nearest instead, or holds its shot until one lands. Only read while pill_shell_cap is on."},
+    {2699, "Whether pillboxes limit how many of their shells can be in the air at one tank, to pill_max_shells_at_tank. Off lets every pillbox fire at its nearest target however many shells are already on the way."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
