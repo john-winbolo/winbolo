@@ -1197,7 +1197,7 @@ one does not say is gone, because the brain's table is rebuilt rather than
 merged into. Values are text and numbers, as a spawn's are, so a flag a brain
 reads as on or off is written `"1"` and `"0"` rather than `true` and `false`.
 GoalHunter treats only its known flag words that way (`noblitz`, `blitzonly`,
-`suicider`, `nosuicider`, `noclaimdead`, `normal`, `ammoless`); a valued token such as
+`suicider`, `nosuicider`, `noclaimdead`, `normal`, `ammoless`, `survivor`, `horde`); a valued token such as
 `blitzsuiciders = "1"` keeps its value.
 
 What the bot does with it is the brain's business, and there are two levels
@@ -1215,7 +1215,7 @@ to it:
 GoalHunter, the brain that ships with the server, writes one: it re-reads the
 whole token string, so `cfg=NAME=VALUE` and `preset=` change its constants
 there and then, and the bare flags (`noblitz`, `blitzonly`, `suicider`,
-`nosuicider`, `noclaimdead`, `normal`, `ammoless`) change the bot's behaviour from the next
+`nosuicider`, `noclaimdead`, `normal`, `ammoless`, `survivor`, `horde`) change the bot's behaviour from the next
 tick. `difficulty=` and `mode=` are **not** applied at runtime — those choose a
 whole bundle of values at load and a second bundle cannot unset the first — so
 the brain logs them as unsupported and leaves them. It also says one line to

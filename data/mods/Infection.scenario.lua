@@ -580,30 +580,35 @@ local function let_go_of(p)
   end
 end
 
--- What a bot is handed, and it is one word. An infected bot is handed an init
--- table holding "ammoless", GoalHunter's word for a bot that never picks a base
--- to refuel at. A base refuels nobody on the horde, and a brain that was not
--- told so would drive to one and sit on it. The word does nothing else: it
--- leaves the bot's shells, its fighting and every other goal as they were.
+-- What a bot is handed, and it is one word: its side. An infected bot is
+-- handed "horde" and a survivor bot "survivor". GoalHunter reads the word as
+-- the side the bot is on, and each word also sets what the bot does on it.
 --
--- A survivor is handed "normal", the word that takes "ammoless" off again, and
--- is what a brain plays with when it is told nothing. A survivor needs it: the
--- word outlives the round. The server builds a bot's brain for the next round
--- from the last table it was handed, so a bot that ended the last round
--- infected would start this one as a survivor who never refuels. A seat never
--- goes from the horde back to the survivors inside a round, so this is the
--- only thing a survivor is ever handed.
+-- "horde": the bot never picks a base to refuel at. A base refuels nobody on
+-- the horde, and a brain that was not told so would drive to one and sit on
+-- it. The horde is not out of shells: Infection feeds each infected tank a
+-- shell every SHELL_EVERY seconds up to half a full tank, and a point of
+-- armour every FEED_EVERY seconds up to a full tank. The word also turns off
+-- the two survivor settings below.
 --
--- Beside the word go two GoalHunter settings, on for a survivor and off for
--- the horde. ATTACK_TANK_PILL_HEAT_ONLY: a survivor bot never fights a tank
+-- "survivor": the bot refuels at its bases as normal, and two GoalHunter
+-- settings go on. ATTACK_TANK_PILL_HEAT_ONLY: the bot never fights a tank
 -- itself, and only shoots its own pillbox to anger it at a tank that comes
--- near. PILL_PLACE_TURTLE: a survivor bot builds its pillboxes as one cluster
--- by its bases and its first pillboxes, instead of spreading them out.
+-- near. PILL_PLACE_TURTLE: the bot builds its pillboxes as one cluster by its
+-- bases and its first pillboxes, instead of spreading them out. The list of
+-- what each side turns on and off is in the brain (SIDE_SETTINGS in
+-- constants.lua), so this script only names the side.
+--
+-- A survivor needs its word too: the word outlives the round. The server
+-- builds a bot's brain for the next round from the last table it was handed,
+-- so a bot that ended the last round infected would start this one on the
+-- horde. A seat never goes from the horde back to the survivors inside a
+-- round, so this is the only thing a survivor is ever handed.
 local function word_for(p)
   if side[p] == INFECTED then
-    return "ammoless"
+    return "horde"
   end
-  return "normal"
+  return "survivor"
 end
 
 -- Hands a bot the word for its side, unless it already has it: every table a
@@ -619,13 +624,7 @@ local function hand_word(p)
   if handed[p] == word then
     return
   end
-  -- One cfg key holds both settings: the brain splits its tokens on ';', so
-  -- "A=x;cfg=B=y" arrives as cfg=A=x and cfg=B=y. The whole value must stay
-  -- under 64 bytes (60 at most here).
-  local on = tostring(word == "normal")
-  if game.bot_init(p, { [word] = "1",
-                        cfg = "ATTACK_TANK_PILL_HEAT_ONLY=" .. on ..
-                              ";cfg=PILL_PLACE_TURTLE=" .. on }) then
+  if game.bot_init(p, { [word] = "1" }) then
     handed[p] = word
   end
 end
@@ -909,8 +908,8 @@ local function each_second()
   -- word on the first try. It says nothing when there is nothing new to say.
   -- The first pass is a second in rather than in on_start: a brain built for
   -- this round reads the table it was built from on its first think, so a
-  -- survivor's "normal" that landed before then would be overruled by the
-  -- "ammoless" the last round left in it.
+  -- survivor's word that landed before then would be overruled by the
+  -- "horde" the last round left in it.
   hand_everybody()
   if not compass_on and COMPASS_SECONDS > 0 and
      elapsed >= ROUND_SECONDS - COMPASS_SECONDS then

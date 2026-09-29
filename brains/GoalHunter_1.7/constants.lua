@@ -1890,9 +1890,10 @@ M.STRATEGIC_PLACE_CENTER_BIAS_WEIGHT = 4    -- score per tile closer to the stra
 --     (0), not Easy's 80: it pays for FEW friendly pills near the candidate
 --     tile, which pushes a new pill out of the cluster.
 -- Any difficulty can turn it on: `preset=turtle` or
--- `cfg=PILL_PLACE_TURTLE=true`. A runtime cfg=PILL_PLACE_TURTLE=false turns
--- it off again (Infection does that when a survivor turns); the tunables are
--- read only while the switch is on.
+-- `cfg=PILL_PLACE_TURTLE=true`, or the `survivor` init word (M.SIDE_SETTINGS).
+-- A runtime cfg=PILL_PLACE_TURTLE=false or `horde` turns it off again
+-- (Infection sends `horde` when a survivor turns); the tunables are read only
+-- while the switch is on.
 M.PILL_PLACE_TURTLE = false
 -- Easy's back/defensive placement weights. MODE_LEVELS.default.easy reads
 -- the same table, so Easy and turtle share one set of numbers.
@@ -1975,9 +1976,9 @@ M.TANK_COMBAT_OPPORTUNISTIC_AIM = 8     -- bolo angle units (~11??) aim toleranc
 --     shots_needed = HEAT_MAX_HITS - round(anger / PILL_ANGER_BUMP), then capped
 -- by the pill's health via attack.lua heat_allowed_shots (see MIN_HP below).
 M.ATTACK_TANK_HEAT_PILL         = true  -- master: heat a friendly pill during attack_tank
--- Heat-only attack_tank (2026-09-29, Andrew; Infection survivors set it by
--- cfg=): the bot never closes on or shoots an enemy tank itself. An
--- attack_tank row stands only while a friendly pill can be heated at that
+-- Heat-only attack_tank (2026-09-29, Andrew; Infection survivors get it from
+-- the `survivor` init word, M.SIDE_SETTINGS): the bot never closes on or
+-- shoots an enemy tank itself. An attack_tank row stands only while a friendly pill can be heated at that
 -- tank (goals.lua eval_attack_tank, gate "heat_only"), and the fight loop
 -- holds still instead of close/engage (steering.lua tank_combat_steer).
 -- Not touched: a human's `attack <tank>` order, a "kill me" delivery, and the
@@ -5237,10 +5238,36 @@ M.PRESETS = {
   -- turtle: the "Defensive Turtle" placement on any difficulty (2026-09-29).
   -- Only the master switch; its tunables (PILL_PLACE_TURTLE_*) sit beside it.
   -- preset= is applied after the difficulty bundle, so this works at every
-  -- level. Infection sends cfg=PILL_PLACE_TURTLE= instead, because a preset
-  -- cannot be taken back at runtime and a cfg=...=false can.
+  -- level. Infection sends the `survivor` / `horde` word instead (see
+  -- M.SIDE_SETTINGS below), because a preset cannot be taken back at runtime
+  -- and a side word can.
   turtle = {
     PILL_PLACE_TURTLE = true,
+  },
+}
+
+-- ── SIDE SETTINGS (2026-09-29, Andrew; Infection) ─────────────────────────
+-- What the init words `survivor` and `horde` write into C (init.lua
+-- _apply_cfg_tokens). Each word also sets state.side, and the never-refuel
+-- flag (init.lua Brain.apply_init_tokens): horde never refuels, survivor does.
+--
+-- Unlike a preset, a side can be taken back at runtime: every setting one
+-- side turns on, the other side writes back to its default. So a survivor who
+-- is handed `horde` mid-round loses all of them. A new survivor or horde
+-- setting goes here, in BOTH tables.
+--
+-- Precedence: level < preset < side < cfg. A side word beats preset=keel, and
+-- an explicit cfg= in the same init table still beats the side word.
+-- With no side word nothing here is applied, so every other game plays as
+-- before.
+M.SIDE_SETTINGS = {
+  survivor = {
+    ATTACK_TANK_PILL_HEAT_ONLY = true,
+    PILL_PLACE_TURTLE          = true,
+  },
+  horde = {
+    ATTACK_TANK_PILL_HEAT_ONLY = false,
+    PILL_PLACE_TURTLE          = false,
   },
 }
 
