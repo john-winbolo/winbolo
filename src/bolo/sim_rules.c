@@ -162,8 +162,6 @@ void simRulesClassic(SimRules *out) {
     out->pill_aim_iterations   = MAX_AIM_ITERATE;
     out->pill_massage_range    = PILLBOX_MASSAGE_RANGE;
     out->pill_massage_cosine   = (float) PILLBOX_MASSAGE_COSINE;
-    out->pill_shell_cap        = PILLBOX_SHELL_CAP;
-    out->pill_max_shells_at_tank = PILLBOX_MAX_SHELLS_AT_TANK;
 
     /* ---- Base ---- */
     out->base_full_armour         = BASE_FULL_ARMOUR;
@@ -229,6 +227,10 @@ void simRulesClassic(SimRules *out) {
     out->tree_weight_crater        = TREE_GROW_CRATER;
     out->tree_weight_road          = TREE_GROW_ROAD;
     out->tree_weight_mine          = TREE_GROW_MINE;
+
+    /* ---- Pillbox shell cap ---- */
+    out->pill_shell_cap          = PILLBOX_SHELL_CAP;
+    out->pill_max_shells_at_tank = PILLBOX_MAX_SHELLS_AT_TANK;
 }
 
 /* ---- Against the classic table -------------------------------------------
@@ -533,8 +535,6 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     /* A cosine, so zero is a pillbox that aims true at any close tank and   \
        one is a pillbox that aims sloppily at all of them. */                \
     X(pill_massage_cosine,       FLT,    0.0,    1.0)                        \
-    X(pill_shell_cap,            INT,    0,      1)                          \
-    X(pill_max_shells_at_tank,   INT,    1,      255)                        \
     /* Base */                                                               \
     X(base_full_armour,          INT,    0,      255)                        \
     X(base_full_shells,          INT,    0,      255)                        \
@@ -600,7 +600,10 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     X(tree_weight_half_building, INT,    -32768, 32767)                      \
     X(tree_weight_crater,        INT,    -32768, 32767)                      \
     X(tree_weight_road,          INT,    -32768, 32767)                      \
-    X(tree_weight_mine,          INT,    -32768, 32767)
+    X(tree_weight_mine,          INT,    -32768, 32767)                      \
+    /* Pillbox shell cap */                                                 \
+    X(pill_shell_cap,            INT,    0,      1)                          \
+    X(pill_max_shells_at_tank,   INT,    1,      255)
 
 /* The rules a single other rule also caps, as the pairs below hold them.
  * Only a direct field against other_field test is here: where a ceiling is

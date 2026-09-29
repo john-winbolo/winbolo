@@ -2980,8 +2980,6 @@
 #define STR_RULE_DESC_pill_aim_iterations        2520
 #define STR_RULE_DESC_pill_massage_range         2575
 #define STR_RULE_DESC_pill_massage_cosine        2576
-#define STR_RULE_DESC_pill_shell_cap             2699
-#define STR_RULE_DESC_pill_max_shells_at_tank    2698
 #define STR_RULE_DESC_base_full_armour           2391
 #define STR_RULE_DESC_base_full_shells           2392
 #define STR_RULE_DESC_base_full_mines            2393
@@ -3035,6 +3033,8 @@
 #define STR_RULE_DESC_tree_weight_crater         2423
 #define STR_RULE_DESC_tree_weight_road           2424
 #define STR_RULE_DESC_tree_weight_mine           2425
+#define STR_RULE_DESC_pill_shell_cap             2699
+#define STR_RULE_DESC_pill_max_shells_at_tank    2698
 
 /* Rule range wording */
 

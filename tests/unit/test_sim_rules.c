@@ -264,8 +264,6 @@ int run_sim_rules_classic_defaults(void) {
     SR_EQ(pill_aim_iterations, MAX_AIM_ITERATE);
     SR_EQ(pill_massage_range, PILLBOX_MASSAGE_RANGE);
     SR_FEQ(pill_massage_cosine, PILLBOX_MASSAGE_COSINE);
-    SR_EQ(pill_shell_cap, PILLBOX_SHELL_CAP);
-    SR_EQ(pill_max_shells_at_tank, PILLBOX_MAX_SHELLS_AT_TANK);
 
     /* Base */
     SR_EQ(base_full_armour, BASE_FULL_ARMOUR);
@@ -325,6 +323,10 @@ int run_sim_rules_classic_defaults(void) {
     SR_EQ(tree_weight_crater, TREE_GROW_CRATER);
     SR_EQ(tree_weight_road, TREE_GROW_ROAD);
     SR_EQ(tree_weight_mine, TREE_GROW_MINE);
+
+    /* Pillbox shell cap */
+    SR_EQ(pill_shell_cap, PILLBOX_SHELL_CAP);
+    SR_EQ(pill_max_shells_at_tank, PILLBOX_MAX_SHELLS_AT_TANK);
 
     return 0;
 }
@@ -1825,7 +1827,7 @@ int run_sim_rules_are_classic(void) {
 
     /* The last field, so the walk is not stopping short of the end. */
     simRulesClassic(&r);
-    r.tree_weight_mine = r.tree_weight_mine + 1;
+    r.pill_max_shells_at_tank = r.pill_max_shells_at_tank + 1;
     UT_ASSERT_MSG(!simRulesAreClassic(&r),
                   "a table with its last field moved is reported classic");
 

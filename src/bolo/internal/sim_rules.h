@@ -162,8 +162,6 @@ typedef struct SimRules {
     int32_t pill_aim_iterations;    /* how hard a pill works to lead a target */
     int32_t pill_massage_range;     /* how near the old sloppy aim takes over */
     float   pill_massage_cosine;    /* how straight at the pill still aims true */
-    int32_t pill_shell_cap;         /* whether pill_max_shells_at_tank applies */
-    int32_t pill_max_shells_at_tank; /* pill shells one tank can have coming */
 
     /* ---- Base ---- */
     int32_t base_full_armour;
@@ -237,6 +235,10 @@ typedef struct SimRules {
     int32_t tree_weight_crater;
     int32_t tree_weight_road;
     int32_t tree_weight_mine;
+
+    /* ---- Pillbox shell cap ---- last, like its rows in SIM_RULE_LIST */
+    int32_t pill_shell_cap;         /* whether pill_max_shells_at_tank applies */
+    int32_t pill_max_shells_at_tank; /* pill shells one tank can have coming */
 } SimRules;
 
 /*********************************************************

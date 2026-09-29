@@ -217,8 +217,6 @@ typedef enum {
     X(pill_aim_iterations, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)          \
     X(pill_massage_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)           \
     X(pill_massage_cosine, SIM_RULE_VALUE_FLOAT, SIM_RULE_UNIT_COUNT)        \
-    X(pill_shell_cap, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_FLAG)                \
-    X(pill_max_shells_at_tank, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)      \
     /* Base */                                                               \
     X(base_full_armour, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \
     X(base_full_shells, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \
@@ -300,7 +298,12 @@ typedef enum {
     X(tree_weight_road, SIM_RULE_VALUE_INT,                                  \
       SIM_RULE_UNIT_CONSTANT_BY_DESIGN)                                      \
     X(tree_weight_mine, SIM_RULE_VALUE_INT,                                  \
-      SIM_RULE_UNIT_CONSTANT_BY_DESIGN)
+      SIM_RULE_UNIT_CONSTANT_BY_DESIGN)                                      \
+    /* Pillbox shell cap. Last rather than with the other pill rules: the  \
+       index is what the wire and a recording name a rule by, so a rule  \
+       added anywhere else would move every rule after it. */            \
+    X(pill_shell_cap, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_FLAG)                \
+    X(pill_max_shells_at_tank, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)
 
 /* One member per rule, in the struct's own field order. SIM_RULE_COUNT is
  * one past the last, and an index at or above it names no rule. A rule's

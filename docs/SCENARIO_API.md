@@ -1719,6 +1719,8 @@ tolerance at or above the step lands every one of them.
 | `pill_aim_iterations` | 200 | 1 to 65535 | The step budget the aim solver gets to lead a moving target. 1 is a pillbox that never leads and fires at where the target is standing now. |
 | `pill_massage_range` | 0 | 0 to 65535 | How near a tank has to be for a pillbox to aim with the original forward prediction rather than the solver, which misses a tank circling it. Zero, the classic table, is a pillbox that always leads its target properly; 384 is a square and a half, the distance the old build-time switch used. |
 | `pill_massage_cosine` | 0.5 | 0.0 to 1.0 | How straight at a close pillbox a tank has to be driving to be aimed at properly anyway, as the cosine of the angle between its heading and the line to the pillbox. One aims sloppily at every tank inside `pill_massage_range`, zero at none of them. Does nothing while that rule is zero. |
+| `pill_shell_cap` | 0 | 0 or 1 | Whether pillboxes limit how many of their shells can be in the air at one tank, to `pill_max_shells_at_tank`. 0, the classic table, lets every pillbox fire at its nearest target however many shells are already on the way. |
+| `pill_max_shells_at_tank` | 12 | 1 to 255 | The most pillbox shells that can be in the air at one tank. A pillbox whose nearest target already has this many coming fires at the next nearest enemy in range instead, or holds its shot until one lands. Only read while `pill_shell_cap` is 1. |
 
 **Base.**
 
