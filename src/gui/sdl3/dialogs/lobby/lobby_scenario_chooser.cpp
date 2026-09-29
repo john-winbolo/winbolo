@@ -1561,6 +1561,11 @@ void lobbyScenarioDetailsRenderModal(ClientSim *cs, float s) {
         float h = SDL_clamp(vp.y * 0.75f, SDL_min(420.0f * s, vp.y * 0.95f),
                             900.0f * s);
         ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Appearing);
+        /* Centred on every opening too. The popup centres itself only the
+           first time, so after a switch from full screen to a window it
+           would reopen where the larger screen had it. */
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
+                                ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         /* No narrower than the rules table needs to show its three number
            columns and their headers whole, where the screen has the room. */
         ImGui::SetNextWindowSizeConstraints(
