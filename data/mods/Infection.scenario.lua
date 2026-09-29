@@ -5,7 +5,8 @@
 -- is decided by who has killed you rather than by what the lobby put you on.
 -- The round ends when the last survivor turns, or when the clock runs out (ten
 -- minutes unless the host sets another length in the lobby) with one still
--- standing.
+-- standing. A last survivor shot dead is watched go up first: the round ends
+-- when their tank's explosion has played out, not the moment they die.
 --
 -- The two sides are the same tank. The one exception is the first to turn,
 -- who is half again as quick, turns and accelerates harder, and is harder to
@@ -76,6 +77,8 @@ local REFRESH_SECONDS = 0.2   -- how often the deep sea clock and compass run
 local SPAWN_GRACE     = 20    -- seconds a respawned survivor has to reach land
                               -- before the deep sea clock counts them
 local TICKS_PER_SEC   = 100   -- game.tick() counts a hundred to the second
+local BOOM_SECONDS    = 3     -- from the last survivor's death to the end of
+                              -- the round, so their explosion plays out
 
 -- The defaults of two more lobby settings (scenario.settings at the bottom of
 -- the file declares them from these numbers). on_start puts the host's choice
@@ -135,6 +138,7 @@ local roster_n = 0            -- counts roster panels, to tell a seat is behind
 local elapsed = 0
 local running = false
 local over    = false
+local ending  = false         -- the round is decided and waits on an explosion
 local compass_on = false      -- the horde has a compass on the survivors
 local loose   = false         -- the first one has turned
 local bitten  = false         -- an infected shell has turned somebody
@@ -446,8 +450,19 @@ end
 
 local finish
 
-finish = function(line, winner)
-  if over then
+-- Ends the round, now or after wait seconds. While it waits the round is
+-- decided: nothing else can end it, and the clock running out does not hand
+-- the survivors a round they have already lost.
+finish = function(line, winner, wait)
+  if over or ending then
+    return
+  end
+  if wait ~= nil then
+    ending = true
+    game.timer(wait, function()
+      ending = false
+      finish(line, winner)
+    end)
     return
   end
   over = true
@@ -459,13 +474,21 @@ end
 -- clock, and nowhere else: owning every base is taken out of the round below.
 -- Before the first one turns there is no horde, so nothing here can end the
 -- round and nobody is the last survivor yet.
-local function check_the_end()
+--
+-- shot is true when the last one turned by being shot dead. Their tank is
+-- going up, and the round waits for that: a fireball runs 40 steps of 4 ticks
+-- (tank_explosion_length, tank_explosion_update_ticks, on the sim's 50 a
+-- second), then bursts for 8 frames of 6 ticks, about 2.1 s in all, the same
+-- big or small. BOOM_SECONDS is that and some room for the client to draw it.
+-- Any other turn (deep sea, the help, a leave) has no explosion to wait for.
+local function check_the_end(shot)
   if over or not running or not loose then
     return
   end
   local left = roll(SURVIVORS)
   if #left == 0 then
-    finish("The infection took everyone.", INFECTED)
+    finish("The infection took everyone.", INFECTED,
+           shot and BOOM_SECONDS or nil)
     return
   end
   -- The last survivor is told, and is handed nothing: they play the round
@@ -656,7 +679,8 @@ local function infect(p, by)
   -- A bot is handed the horde's word straight away rather than on the next
   -- pass, so it comes back from its three seconds dead not looking for a base.
   hand_word(p)
-  check_the_end()
+  -- Only a shell kill names who did it, so by says the tank is going up.
+  check_the_end(by ~= nil)
 end
 
 -- Who turns first, and it matters who is in the room. Two people or more and
@@ -709,7 +733,7 @@ local function help_the_horde()
 end
 
 local function turn_zero()
-  if over or not running then
+  if over or ending or not running then
     return
   end
   local p = zero
@@ -1060,7 +1084,7 @@ function on_player_leave(p, scripted)
   if boosted == p then
     boosted = nil
   end
-  if not running or over then
+  if not running or over or ending then
     return
   end
   if was == SURVIVORS then
