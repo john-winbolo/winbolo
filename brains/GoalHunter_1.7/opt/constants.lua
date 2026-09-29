@@ -1869,6 +1869,55 @@ M.KILL_PICKUP_PAIR_MIN_SQUAD = 3   -- default 3; KEEL 0 (off)
 M.STRATEGIC_PLACE_CENTER_BIAS_CAP    = 16   -- tiles; beyond this the center bias is 0
 M.STRATEGIC_PLACE_CENTER_BIAS_WEIGHT = 4    -- score per tile closer to the strategic center
 
+-- ── Defensive turtle placement (2026-09-29, Andrew; Infection survivors) ──
+-- PILL_PLACE_TURTLE is the one master switch. Off (default) = the strategic
+-- placement scan is exactly today's. On, the scan (goals.lua
+-- eval_place_pill_strategic, and its heatmap mirror) builds ONE defended
+-- cluster instead of spreading pills out:
+--   * home: the friendly pill with the most friendly pills within
+--     PILL_FIRE_RANGE (ties: nearer the tank, then lower tile id); with no
+--     friendly pill yet, the nearest friendly base. The home is the
+--     strategic-center bias (existing CENTER_BIAS_CAP / _WEIGHT) AND the
+--     centre of the scan square, so a far tank still finds spots at home.
+--     No home at all = the normal centre chain and tank-centric scan.
+--   * the pill-spacing term uses PILL_PLACE_TURTLE_SPACING, not
+--     STRATEGIC_PLACE_PILL_SPACING, so pills may stand close together;
+--   * the pill-type balance does not steer it: no surplus skip, no
+--     STRICT_NEED gate, and the portfolio term (port) is 0;
+--   * four weights come from Easy's "back / defensive" placement bundle
+--     (MODE_LEVELS.default.easy), below, through one shared table;
+--   * the under-defended bonus (bdef) is PILL_PLACE_TURTLE_UNDERDEFENDED_BONUS
+--     (0), not Easy's 80: it pays for FEW friendly pills near the candidate
+--     tile, which pushes a new pill out of the cluster.
+-- Any difficulty can turn it on: `preset=turtle` or
+-- `cfg=PILL_PLACE_TURTLE=true`. A runtime cfg=PILL_PLACE_TURTLE=false turns
+-- it off again (Infection does that when a survivor turns); the tunables are
+-- read only while the switch is on.
+M.PILL_PLACE_TURTLE = false
+-- Easy's back/defensive placement weights. MODE_LEVELS.default.easy reads
+-- the same table, so Easy and turtle share one set of numbers.
+local EASY_DEFENSIVE_PLACE = {
+  base_weight          = 4.0,   -- STRATEGIC_PLACE_BASE_WEIGHT (default 2.0)
+  threat_weight        = 3.0,   -- STRATEGIC_PLACE_THREAT_WEIGHT (default 1.5)
+  beyond_front_penalty = 250,   -- STRATEGIC_PLACE_BEYOND_FRONT_PENALTY (default 100)
+  spike_bonus          = 0,     -- STRATEGIC_PLACE_SPIKE_BONUS (default 80)
+}
+M.PILL_PLACE_TURTLE_BASE_WEIGHT          = EASY_DEFENSIVE_PLACE.base_weight
+M.PILL_PLACE_TURTLE_THREAT_WEIGHT        = EASY_DEFENSIVE_PLACE.threat_weight
+M.PILL_PLACE_TURTLE_BEYOND_FRONT_PENALTY = EASY_DEFENSIVE_PLACE.beyond_front_penalty
+M.PILL_PLACE_TURTLE_SPIKE_BONUS          = EASY_DEFENSIVE_PLACE.spike_bonus
+-- Under-defended bonus per missing defender (target 2) while turtling
+-- (default STRATEGIC_PLACE_UNDERDEFENDED_BONUS = 50, Easy 80). It counts
+-- friendly pills within DEFENSE_RADIUS of the CANDIDATE tile, so any value
+-- above 0 scores a tile higher the fewer pills stand near it: the opposite
+-- of a cluster. 0 = that term is silent while turtling.
+M.PILL_PLACE_TURTLE_UNDERDEFENDED_BONUS  = 0
+-- Target minimum tile gap between friendly pills while turtling (default
+-- STRATEGIC_PLACE_PILL_SPACING = 5). 2 = only a tile right next to a pill
+-- pays the clustering penalty (PENALTY_W x (BASE^1 - 1) = 25); from 2 tiles
+-- out the existing spacing bonus (+15 up to SPACING_BONUS_MAX) applies.
+M.PILL_PLACE_TURTLE_SPACING = 2
+
 -- Tank combat
 M.TANK_COMBAT_ENABLED           = true
 M.TANK_COMBAT_MIN_SHELLS        = 10    -- don't engage with fewer shells
@@ -4853,6 +4902,9 @@ M.PRESETS = {
     -- 2026-09-29: heat-only attack_tank (no tank fighting of its own). KEEL
     -- fights every tank it picks.
     ATTACK_TANK_PILL_HEAT_ONLY    = false,
+    -- 2026-09-29: defensive turtle placement (one pill cluster at home).
+    -- KEEL spreads its pills by the normal placement scan.
+    PILL_PLACE_TURTLE             = false,
     -- 2026-09-06: the MAIN defend_pill evaluator is now ALARM MODE (see the
     -- DEFEND_ALARM_* block above): defend_pill is REJECTED unless a hostile
     -- tank is visible within 11 tiles of the pill RIGHT NOW, something enemy
@@ -5182,6 +5234,14 @@ M.PRESETS = {
     CAPTURE_BASE_NO_LGM_DANGER_MULT = 0,
     KILL_ME_ENABLED                 = false,
   },
+  -- turtle: the "Defensive Turtle" placement on any difficulty (2026-09-29).
+  -- Only the master switch; its tunables (PILL_PLACE_TURTLE_*) sit beside it.
+  -- preset= is applied after the difficulty bundle, so this works at every
+  -- level. Infection sends cfg=PILL_PLACE_TURTLE= instead, because a preset
+  -- cannot be taken back at runtime and a cfg=...=false can.
+  turtle = {
+    PILL_PLACE_TURTLE = true,
+  },
 }
 
 -- ── PER-(MODE, DIFFICULTY) LEVEL BUNDLES ──────────────────────────────────
@@ -5268,10 +5328,14 @@ M.MODE_LEVELS = {
       -- Steady / predictable (goal hysteresis)
       GOAL_SWITCH_PENALTY = 60, GOAL_SWITCH_RATIO = 0.5, GOAL_COMMITMENT_CAP = 150,
       GOAL_MIN_COMMIT_TICKS = 75, REFUEL_LOCK_IN = true, ATTACK_PILL_COMMITMENT_BONUS = 120,
-      -- Placement: back / defensive
-      STRATEGIC_PLACE_FRONT_WEIGHT = 1.0, STRATEGIC_PLACE_BASE_WEIGHT = 4.0,
-      STRATEGIC_PLACE_THREAT_WEIGHT = 3.0, STRATEGIC_PLACE_BEYOND_FRONT_PENALTY = 250,
-      STRATEGIC_PLACE_SPIKE_BONUS = 0, STRATEGIC_PLACE_UNDERDEFENDED_BONUS = 80,
+      -- Placement: back / defensive. Four of these come from
+      -- EASY_DEFENSIVE_PLACE (the same numbers PILL_PLACE_TURTLE uses).
+      STRATEGIC_PLACE_FRONT_WEIGHT = 1.0,
+      STRATEGIC_PLACE_BASE_WEIGHT = EASY_DEFENSIVE_PLACE.base_weight,
+      STRATEGIC_PLACE_THREAT_WEIGHT = EASY_DEFENSIVE_PLACE.threat_weight,
+      STRATEGIC_PLACE_BEYOND_FRONT_PENALTY = EASY_DEFENSIVE_PLACE.beyond_front_penalty,
+      STRATEGIC_PLACE_SPIKE_BONUS = EASY_DEFENSIVE_PLACE.spike_bonus,
+      STRATEGIC_PLACE_UNDERDEFENDED_BONUS = 80,
       -- Defend slow / loaded ambush target
       DEFEND_ALARM_BASE_COST = 220,             -- ENEMY_TILES unchanged at 11 ("defends its own")
       KILL_ME_ENABLED = false,
