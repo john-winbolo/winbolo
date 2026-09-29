@@ -2933,11 +2933,12 @@ local function tank_combat_steer(state, world, info, goal)
   -- C.ATTACK_TANK_PILL_HEAT_ONLY: the heat volley above is all this bot does
   -- on an attack_tank; it never closes on or shoots the tank. With no volley,
   -- hold still and ask for one replan (eval_attack_tank then drops the row if
-  -- no pill can be heated). A human's `attack <tank>` order and a "kill me"
-  -- delivery fall through and fight as before.
+  -- no pill can be heated). A human's `attack <tank>` order on THIS tank and
+  -- a "kill me" delivery fall through and fight as before.
   if C.ATTACK_TANK_PILL_HEAT_ONLY and not km_pn
      and not (C.BOT_COMMANDS_ENABLED and state._order
-              and state._order.kind == "attack_tank") then
+              and state._order.kind == "attack_tank"
+              and state._order.tid == target.id) then
     if goal.substate ~= "heat_only_hold" then
       goal.substate = "heat_only_hold"
       state._force_replan_reason = state._force_replan_reason or "heat_only_hold"
