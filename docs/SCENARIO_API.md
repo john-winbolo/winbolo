@@ -1614,7 +1614,7 @@ square.
 | `tank_bump_decay_shift` | 2 | 0 to 31 | A right shift: a knockback loses that fraction of itself each tick, plus one. A bigger number is a slower decay, not a faster one — 2 takes off a quarter a tick, 31 takes off only the one. |
 | `tank_pill_pickup_inset` | 16 | 0 to 255 | How far off its centre a tank reaches to pick a dead pillbox up. |
 | `tank_boat_exit_inset` | 64 | 0 to 255 | How far inside the bank a boat is held when a tank leaves one. |
-| `tank_slide_step` | 32 | 0 to 255 | How far a knocked tank slides per step. |
+| `tank_slide_step` | 32 | 0 to 63 | How far a knocked tank slides per step. |
 | `tank_wall_glide` | 0.0 | 0.0 to 1.0 | 0 slides a tank along a wall it hits; 1 lets it glide off free. |
 
 **Terrain: the cap a tank's speed clamps to.**

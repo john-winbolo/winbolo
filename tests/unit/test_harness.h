@@ -1476,9 +1476,9 @@ int run_tank_destroyed_snapshot_round_trip(void);
  * and C's >> rounds a negative value toward -infinity, not toward zero — a
  * push with a west or north component used to settle further than the same
  * push east or south for the same shell. The fix shifts by magnitude and
- * restores the sign afterwards. The bump is 32-bit so a tank_slide_step
- * above 63 no longer wraps, and a spent bump stays at zero at every decay
- * shift. */
+ * restores the sign afterwards. The largest tank_slide_step the rules
+ * allow (63) pushes the full distance the right way, and a spent bump stays
+ * at zero at every decay shift. */
 int run_tank_knockback_heading_symmetric(void);
 int run_tank_knockback_follows_shell_angle(void);
 int run_tank_knockback_speed_untouched(void);

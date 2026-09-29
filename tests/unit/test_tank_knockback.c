@@ -225,9 +225,11 @@ int run_tank_knockback_speed_untouched(void) {
     return 0;
 }
 
-/* A tank_slide_step above 63 makes step * 512 too big for 16 bits. When
- * bumpX/bumpY were int16_t, a step of 200 (102400) wrapped to -28672, so a
- * shell fired east pushed the tank west. */
+/* The largest tank_slide_step the rules allow pushes the tank the way the
+ * shell was going, the whole distance. Steps of 64 and over are refused by
+ * the rule's range (test_sim_rules.c); before that cap, and while bumpX/bumpY
+ * were int16_t, a step of 200 wrapped to -28672 and pushed the tank west
+ * from a shell fired east. */
 int run_tank_knockback_large_step(void) {
     ServerSim *sim = ut_make_running_sim("P0");
     GameSim *gs;
@@ -238,20 +240,20 @@ int run_tank_knockback_large_step(void) {
     UT_ASSERT_MSG(gs != NULL, "serverSimGetGameSim returned NULL");
     UT_ASSERT_MSG(gs->tanks[0] != NULL, "slot-0 tank not valid");
 
-    gs->rules.tank_slide_step = 200;
+    gs->rules.tank_slide_step = 63;
     if (tk_arm_and_hit(gs, 64) != 0) {
         return 1;
     }
-    UT_ASSERT_MSG(gs->tanks[0]->bumpX == 200 * 512,
-                  "bumpX is %d after a step-200 hit east, wanted %d",
-                  (int)gs->tanks[0]->bumpX, 200 * 512);
+    UT_ASSERT_MSG(gs->tanks[0]->bumpX == 63 * 512,
+                  "bumpX is %d after a step-63 hit east, wanted %d",
+                  (int)gs->tanks[0]->bumpX, 63 * 512);
 
     tk_settle(gs, &dx, &dy);
     serverSimDestroy(sim);
 
-    /* Step 200 at decay shift 2 slides roughly 200 * 4 WU. */
-    UT_ASSERT_MSG(dx > 600,
-                  "a step-200 hit fired east pushed x by %d WU, wanted well over 600",
+    /* Step 63 at decay shift 2 slides roughly 63 * 4 WU. */
+    UT_ASSERT_MSG(dx > 190,
+                  "a step-63 hit fired east pushed x by %d WU, wanted well over 190",
                   (int)dx);
     UT_ASSERT_MSG(dy > -2 && dy < 2, "a hit fired due east drifted y by %d WU", (int)dy);
 

@@ -451,7 +451,10 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     X(tank_bump_decay_shift,     INT,    0,      31)                         \
     X(tank_pill_pickup_inset,    INT,    0,      255)                        \
     X(tank_boat_exit_inset,      INT,    0,      255)                        \
-    X(tank_slide_step,           INT,    0,      255)                        \
+    /* The push moves the tank without a wall check, and at 64 or more its   \
+       first tick carries it a quarter of a map square or further before     \
+       the building nudge looks. */                                          \
+    X(tank_slide_step,           INT,    0,      63)                         \
     X(tank_wall_glide,           FLT,    0.0,    1.0)                        \
     /* Terrain speed caps: the players[].speed packing saturates at 63 */    \
     X(speed_road,                INT,    0,      63)                         \
