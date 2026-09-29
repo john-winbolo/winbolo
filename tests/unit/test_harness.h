@@ -1154,6 +1154,11 @@ int run_alliance_leave_no_ally_leaver_is_top_seat(void);
 int run_alliance_leave_hands_to_ally(void);
 int run_alliance_leave_hands_to_top_seat_ally(void);
 
+/* Pillbox and base owners from the map file survive a round start
+ * (test_round_start_owners.c, issue #422). */
+int run_round_start_owners_kept_with_lobby_team(void);
+int run_round_start_owners_kept_after_manual_alliance(void);
+
 /* Log replay round-trip (test_log_roundtrip.c). */
 int run_log_roundtrip_basic(void);
 int run_log_roundtrip_snapshot_keeps_chain_synced(void);
