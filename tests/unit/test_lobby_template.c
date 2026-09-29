@@ -39,6 +39,9 @@
  *                                       — and never binds a bot
  * run_lobby_template_cancel_keeps_trim  — a cancelled preview gives the
  *                                         host's trim back
+ * run_lobby_template_cancel_same_template_keeps_edits
+ *                                       — a preview with the same template
+ *                                         keeps what the host did during it
  * run_lobby_template_cancel_keeps_empty_team
  *                                       — and gives an emptied team back
  *                                         empty
@@ -850,6 +853,12 @@ int run_lobby_template_cancel_keeps_trim(void) {
     UT_ASSERT(ltPreview(sim, "Preview"));
     UT_ASSERT_MSG(serverSimHasPreviewMap(sim),
                   "the map change left no preview to cancel");
+    /* The lobby was seated directly, as a server booting onto a scripted map
+       seats it, and this is its first map change. The template is the same,
+       so the trim stands on the previewed map too. */
+    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 3,
+                  "the first map change after a boot seating left %d seats, "
+                  "expected the host's three", ltSeats(sim, LT_RAIDER));
 
     UT_ASSERT(serverSimRevertPreview(sim));
     UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 3,
@@ -860,6 +869,65 @@ int run_lobby_template_cancel_keeps_trim(void) {
                   ltSeats(sim, LT_GUARD));
     UT_ASSERT_MSG(!serverSimHasPreviewMap(sim),
                   "the cancel left a preview pending");
+
+    serverSimDestroy(sim);
+    ltDropBrainFile();
+    return 0;
+}
+
+/* A preview that keeps the template keeps the lobby, so what the host does
+ * to the roster while looking at it is the roster a Cancel leaves: a seat
+ * trimmed during the preview stays trimmed, and a bot added during it
+ * stays. */
+int run_lobby_template_cancel_same_template_keeps_edits(void) {
+    ServerSim       *sim;
+    ScnLobbyTemplate t;
+    int              hostBot;
+
+    UT_ASSERT(ltMakeBrainFile("cancel_same_template_keeps_edits"));
+    ut_brain_stub_arm(true);
+    sim = ltLobbySim();
+    UT_ASSERT(sim != NULL);
+
+    ltTemplate(&t, 4, 4, 1, 1);
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    serverSimScenarioSeatLobby(sim);
+    ltHoldInLobby(sim);
+    UT_ASSERT(ltSeats(sim, LT_RAIDER) == 4);
+    UT_ASSERT(serverSimGetState(sim) == serverStateLobby);
+
+    UT_ASSERT(ltPreview(sim, "Preview"));
+    UT_ASSERT(ltSeats(sim, LT_RAIDER) == 4);
+
+    /* While the preview stands: one raider seat off, and a bot of the host's
+       own on a team the template says nothing about. */
+    ltTrimTo(sim, LT_RAIDER, 3);
+    hostBot = serverSimFindFreeSlot(sim, true);
+    UT_ASSERT(hostBot >= 0);
+    {
+        ServerSimBotConfig cfg;
+        memset(&cfg, 0, sizeof(cfg));
+        cfg.brainPath  = ltBrainPath;
+        cfg.brainName  = "Host Bot";
+        cfg.ai         = aiFull;
+        cfg.gameType   = gameOpen;
+        cfg.teamNumber = 2;
+        UT_ASSERT(serverSimAddBot(sim, (BYTE)hostBot, &cfg));
+    }
+
+    UT_ASSERT(serverSimRevertPreview(sim));
+    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 3,
+                  "the trim made during the preview came back as %d after a "
+                  "cancel, expected 3", ltSeats(sim, LT_RAIDER));
+    UT_ASSERT_MSG(serverSimIsBot(sim, (BYTE)hostBot) &&
+                  !sim->lobbyPlayers[hostBot].keepSeat,
+                  "the bot added during the preview went with the cancel");
+    UT_ASSERT_MSG(sim->lobbyPlayers[hostBot].teamNumber == 2,
+                  "the bot added during the preview is on team %d, not 2",
+                  (int)sim->lobbyPlayers[hostBot].teamNumber);
+    UT_ASSERT_MSG(ltSeats(sim, LT_GUARD) == 1,
+                  "the untouched team came back at %d, expected 1",
+                  ltSeats(sim, LT_GUARD));
 
     serverSimDestroy(sim);
     ltDropBrainFile();
