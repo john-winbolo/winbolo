@@ -1267,7 +1267,7 @@ scenario = {
     { id = "compass_seconds", label = "Compass on survivors, last (s, 0 off)",
       type = "int", min = 0, max = 300, step = 15,
       default = COMPASS_SECONDS },
-    { id = "zero_human", label = "First infected is a person (1 yes, 0 no)",
+    { id = "zero_human", label = "First infected is a person (1 always, 0 auto)",
       type = "int", min = 0, max = 1, step = 1, default = ZERO_HUMAN },
   },
 
