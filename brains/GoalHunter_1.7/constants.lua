@@ -4509,6 +4509,13 @@ M.ORDER_NO_HAND_BACK = true    -- keel false
 -- man to get back in.  An attack the bot picked for itself is not touched.
 -- 0 = no cap (the old waits).
 M.HUMAN_ATTACK_BLITZ_WAIT_MAX_S = 5   -- keel 0
+-- 2026-09-29: A PERSON'S ATTACK ORDER DOES NOT GATHER TREES LONG either.
+-- Seconds, counted from the first tick the bot gathers trees (the protected
+-- take's gather_trees pre-flight) for a held order on that pill.  Once they
+-- are up, gathering ends the way PPT_GATHER_TIMEOUT ends it: the take drops
+-- the walls and goes in unshielded.  An attack the bot picked for itself
+-- keeps the full PPT_GATHER_TIMEOUT.  0 = no cap (the old wait).
+M.HUMAN_ATTACK_GATHER_MAX_S = 5   -- keel 0
 -- 2026-09-24: a bot whose man is out of the tank is NOT busy for an order
 -- (Andrew: "the man is out of the tank should not stop the interrupt").
 -- It takes the order and drives off; the builder walks back to the tank.
@@ -5155,6 +5162,9 @@ M.PRESETS = {
     --   2026-09-28: an attacking bot on a person's order waits at most
     --   HUMAN_ATTACK_BLITZ_WAIT_MAX_S for blitz partners.  KEEL: no cap.
     HUMAN_ATTACK_BLITZ_WAIT_MAX_S = 0,
+    --   2026-09-29: an attacking bot on a person's order gathers trees for
+    --   at most HUMAN_ATTACK_GATHER_MAX_S.  KEEL: no cap.
+    HUMAN_ATTACK_GATHER_MAX_S     = 0,
     ORDER_MAN_OUT_TAKES           = false,
     --   2026-09-25: a bot holding a person's order keeps it against a new
     --   ping, and a repeat ping on plain ground adds no bot.  KEEL: the
