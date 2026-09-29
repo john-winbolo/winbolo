@@ -9,10 +9,16 @@ These are downloaded and built by CMake — no manual installation needed:
 - SDL3
 - SDL3_ttf (with vendored FreeType/HarfBuzz)
 - Dear ImGui (docking branch)
-- Lua 5.4
+- LuaJIT, built with its own build system (`make`, or `msvcbuild.bat` on
+  Windows) — used for bot brains on Windows, Linux, macOS and Android
+- Lua 5.4 — used instead of LuaJIT on iOS and WebAssembly, where JIT
+  compilation is not possible, and when `-DWINBOLO_LUAJIT=OFF` is passed
 - zlib
 - cJSON
+- Opus and SpeexDSP (voice chat)
+- libplum (UPnP / NAT-PMP port mapping)
 - libmaxminddb (geo-IP lookups)
+- Sentry Native (crash reporting)
 - libcurl (Windows only — built from source with Schannel SSL)
 - ONNX Runtime (optional, for ML brain inference)
 
@@ -41,6 +47,10 @@ Executables and DLLs are placed in the `build/` directory:
 - `WinBolo.exe` — game client
 - `WinBoloDS.exe` — dedicated server
 - `LogViewer.exe` — log file viewer
+- `MapEditor.exe` — map and scenario editor
+- `WinBoloHeadless.exe` — headless client that runs a Lua brain
+
+See [Build targets](#build-targets) for the full list.
 
 ## Linux
 
@@ -53,14 +63,12 @@ Executables and DLLs are placed in the `build/` directory:
 
 **Debian / Ubuntu:**
 ```bash
-sudo apt install build-essential cmake git \
-    libcurl4-openssl-dev libsdl2-dev pkg-config
+sudo apt install build-essential cmake git pkg-config libcurl4-openssl-dev
 ```
 
 **Fedora / RHEL:**
 ```bash
-sudo dnf install gcc gcc-c++ cmake git \
-    libcurl-devel pkgconfig
+sudo dnf install gcc gcc-c++ make cmake git pkgconfig libcurl-devel
 ```
 
 **Arch Linux:**
@@ -68,14 +76,20 @@ sudo dnf install gcc gcc-c++ cmake git \
 sudo pacman -S base-devel cmake git curl
 ```
 
-Note: SDL3 is fetched and built by CMake. The `libsdl2-dev` package above is not used directly but ensures X11/Wayland headers and other low-level dependencies are available for SDL3 to build against. On a minimal system you may also need:
+libcurl is the only library WinBolo itself takes from the system on Linux.
+SDL3 is fetched and built by CMake, but it needs the development headers for
+the display, audio and input systems it talks to. SDL3 leaves out support for
+any system whose headers are missing, so a build without them can succeed and
+then have no sound or no Wayland window. On Debian / Ubuntu:
 
 ```bash
-# Debian/Ubuntu - additional headers SDL3 may need
 sudo apt install libx11-dev libxext-dev libxrandr-dev libxi-dev \
     libxcursor-dev libxss-dev libwayland-dev libxkbcommon-dev \
     libasound2-dev libpulse-dev libdbus-1-dev libudev-dev
 ```
+
+`make` (from `build-essential`, `base-devel` or the Fedora `make` package) is
+also needed to build LuaJIT.
 
 ### Build
 
@@ -90,30 +104,35 @@ Executables are placed in the `build/` directory:
 - `WinBolo` — game client
 - `WinBoloDS` — dedicated server
 - `LogViewer` — log file viewer
-- `WinBoloHeadless` — headless server (no GUI)
+- `MapEditor` — map and scenario editor
+- `WinBoloHeadless` — headless client (no window or sound) that runs a Lua brain
 - `libwinbolo_gym.so` — ML training gym library
 - `BrainTest` — brain debug viewer
 
 ### Build and run baseline tests
 
-To rebuild and run the `baseline` ctest suite in one command — and only run the tests if the build succeeds:
+The baseline tests run `WinBoloHeadless` and `WinBoloDS`, so both must be
+built. To rebuild and run the `baseline` ctest suite in one command, running
+the tests only if the build succeeds:
 
 ```bash
 if cmake --build ~/linux-build -j$(nproc); then ctest --test-dir ~/linux-build -R baseline -j$(nproc); else echo "build failed"; fi
 ```
 
-The `if` form gates on the build's exit status, so a build failure prints `build failed` and skips the tests rather than running ctest against stale binaries. A test failure reports through ctest as normal. `-j$(nproc)` runs scenarios in parallel — `--fast` scenarios share no state, and UDP scenarios are serialized per-port via CTest `RESOURCE_LOCK`s so different helpers still run concurrently.
+A build failure prints `build failed` and skips the tests, rather than running ctest against old binaries. A test failure reports through ctest as normal. `-j$(nproc)` runs scenarios in parallel. `--fast` scenarios share no state. UDP scenarios start their `WinBoloDS` with `-port 0` and read the port the operating system chose back from the server's output, so they use no fixed ports, hold no CTest `RESOURCE_LOCK`, and all run at the same time.
 
 #### Adding a new baseline scenario
 
 Each scenario is registered in **two places**, which must stay in sync:
 
-1. **`tests/baseline/run.sh`** — add a branch to the `dispatch_scenario` case statement mapping the scenario name to the helper invocation (`run`, `run_changes`, `run_ds`, `run_events_fast`, `run_events_udp`, `run_events_cmd_fast`, `run_events_cmd_udp`, `run_events_cmd_udp_server_only`, `run_events_cmd_udp_two_clients`, `run_events_cmd_udp_two_clients_lobby`, `run_events_cmd_udp_three_clients`, `run_events_udp_two_clients_ticklimit`, or `run_captures_udp_two_clients`) with its arguments (map, brain, command file, etc.). Also add the name to the appropriate `for` loop in the manual-mode block at the bottom so `run.sh` with no `--scenario` flag still exercises it.
-2. **`CMakeLists.txt`** — add the scenario name to one of the lists near the `enable_testing()` block:
-   - `_baseline_fast` for `--fast` scenarios (no UDP, parallelize freely).
-   - `_baseline_udp_<port>` matching the hardcoded port in the helper the scenario uses (`run_ds` → 50001, `run_events_udp` → 50002, `run_events_cmd_udp` → 50003, `run_events_cmd_udp_server_only` → 50004, `run_events_cmd_udp_two_clients` → 50005, `run_events_udp_two_clients_ticklimit` → 50006, `run_events_cmd_udp_two_clients_lobby` → 50007, `run_events_cmd_udp_three_clients` → 50008, `run_captures_udp_two_clients` → 50009). Same-port scenarios share a `RESOURCE_LOCK` and serialize; different-port scenarios stay concurrent.
+1. **`tests/baseline/run.sh`** — add a branch to the `dispatch_scenario` case statement mapping the scenario name to the helper invocation (`run`, `run_changes`, `run_ds`, `run_events_fast`, `run_events_udp`, `run_events_cmd_fast`, `run_scenario_fast`, `run_scenario_swap_udp`, `run_events_cmd_udp`, `run_events_cmd_udp_server_only`, `run_events_cmd_udp_two_clients`, `run_events_cmd_udp_two_clients_lobby`, `run_events_cmd_udp_three_clients`, `run_events_udp_two_clients_ticklimit`, or `run_captures_udp_two_clients`) with its arguments (map, brain, command file, etc.). Also add the name to the appropriate `for` loop in the manual-mode block at the bottom so `run.sh` with no `--scenario` flag still runs it.
+2. **`CMakeLists.txt`** — add the scenario name to one of the two lists after the `warmup.*` tests:
+   - `_baseline_fast` for `--fast` scenarios, which run in a single process with no network.
+   - `_baseline_udp` for scenarios that start a `WinBoloDS` and connect clients to it over UDP.
 
-Why two places: `run.sh` owns the per-scenario helper args (which CMake doesn't need to know), and `CMakeLists.txt` owns the CTest properties — timeout, resource lock — that `run.sh` can't express. A shared manifest would only deduplicate the name list, at the cost of a parser on both sides, so the names are kept as a small intentional duplication.
+   Every entry gets a 60 second timeout. A scenario that needs longer sets its own `TIMEOUT` with `set_tests_properties` after the lists, as `wave_swap_udp` does.
+
+Why two places: `run.sh` owns the per-scenario helper args (which CMake doesn't need to know), and `CMakeLists.txt` owns the CTest properties — timeout and the `warm_binaries` fixture — that `run.sh` can't express. A shared manifest would only deduplicate the name list, at the cost of a parser on both sides, so the names are kept as a small intentional duplication.
 
 After adding a scenario, run it once standalone to capture the golden output under `tests/baseline/expected/`. The exact form depends on the helper:
 
@@ -215,6 +234,30 @@ Then open `build-ios/winbolo.xcodeproj` in Xcode, select the `WinBoloIOS` target
 
 Note: The iOS build does not use libcurl (network features use platform stubs).
 
+## Android
+
+### Requirements
+
+- Android SDK with platform 34
+- Android NDK 27.0.12077973
+- CMake 3.31 or newer, installed through the SDK Manager
+- JDK 17 or newer
+
+Android Studio installs all of these. The Gradle project is in `android/`; its
+native build is `android/app/CMakeLists.txt`, which builds the same sources as
+the desktop client. The APK is built for `arm64-v8a` and `x86_64`, and runs on
+Android 8.0 (API 26) and later.
+
+### Build
+
+```bash
+cd android
+./gradlew assembleDebug
+```
+
+Or open `android/` in Android Studio. See [Android](#android-1) under release
+builds for the crash-reporting DSN.
+
 ## WebAssembly (WASM)
 
 There are two WASM builds: the game client and the log viewer. Each has its own standalone CMakeLists.txt.
@@ -310,15 +353,39 @@ Note: The WASM builds do not use libcurl (network features use platform stubs).
 | `WinBolo` | Game client with GUI | Windows, Linux, macOS |
 | `WinBoloDS` | Dedicated server | Windows, Linux, macOS |
 | `LogViewer` | Log file viewer | Windows, Linux, macOS |
-| `WinBoloHeadless` | Headless server (no GUI) | Windows, Linux, macOS |
+| `MapEditor` | Map and scenario editor | Windows, Linux, macOS |
+| `WinBoloHeadless` | Headless client (no window or sound) that runs a Lua brain | Windows, Linux, macOS |
 | `winbolo_gym` | ML training gym (shared lib) | Windows, Linux, macOS |
 | `BrainTest` | Brain debug viewer | Windows, Linux, macOS |
+| `WinBoloUnitTests` | Unit tests (run through ctest; needs `WinBoloHeadless` and `WinBoloDS` built too) | Windows, Linux, macOS |
 | `WinBoloIOS` | iOS app bundle | iOS |
 | `dist` | Distribution zip | All desktop |
 | `sign_macos` | Sign + notarize + staple app bundles and the WinBoloDS binary | macOS |
 | `package_macos` | Bundle signed apps + WinBoloDS into a notarized DMG | macOS |
 
 ## Optional features
+
+### LuaJIT (bot brains)
+
+On by default on Windows, Linux, macOS and Android. To run the brains on
+Lua 5.4 instead:
+
+```bash
+cmake -B build -S . -DWINBOLO_LUAJIT=OFF
+```
+
+The two are not guaranteed to give identical bot behaviour: LuaJIT and Lua 5.4
+differ in how they handle numbers and in the order `pairs()` visits a table.
+iOS and WebAssembly always use Lua 5.4.
+
+### Port mapping (UPnP / NAT-PMP)
+
+On by default. A hosted game asks the router to forward its port. To leave it
+out:
+
+```bash
+cmake -B build -S . -DBOLO_PORTMAP=OFF
+```
 
 ### ONNX Runtime (ML brain inference)
 
@@ -359,9 +426,15 @@ instead of the real wrapper. Everything builds and runs; the Steam-only
 features (rich presence, Steam Input, Workshop) simply report themselves as
 unavailable at runtime.
 
-For a Steam build, copy the SDK into `third_party/steamworks/` before
-configuring. Copy it rather than symlinking — the ignore pattern has a trailing
-slash and only matches a real directory. A fresh worktree or clone will not have
+For a Steam build, get the SDK from Valve through a Steamworks partner account
+and copy it into `third_party/steamworks/` before configuring. The SDK is
+Valve's and is not licensed under the GPL: do not commit it, and follow Valve's
+terms for it. A build that links it is distributed under Permission 1 in
+[LICENSE-EXCEPTION.md](../LICENSE-EXCEPTION.md); the stub build needs no such
+permission.
+
+Copy the SDK rather than symlinking it: the ignore pattern has a trailing
+slash and only matches a real directory, so a symlink could be committed. A fresh worktree or clone will not have
 it, so a Steam build there needs the copy repeating.
 
 ### Sentry crash reporting
@@ -504,12 +577,14 @@ export APPLE_DEVELOPER_ID_APPLICATION="Developer ID Application: Your Name (TEAM
 
 ### Entitlements
 
-The bundles request only two entitlements (defined in `src/gui/sdl3/platform/winbolo.entitlements`):
+The bundles and `WinBoloDS` are signed with the entitlements in `src/gui/sdl3/platform/winbolo.entitlements`:
 
 - `com.apple.security.network.client` — outbound connections to trackers and peers.
 - `com.apple.security.network.server` — listening UDP socket for inbound peer traffic.
+- `com.apple.security.cs.allow-jit` — LuaJIT compiles bot brains to machine code at run time. Without it the process is killed on the first compiled trace.
+- `com.apple.security.cs.allow-dyld-environment-variables` and `com.apple.security.cs.disable-library-validation` — the Steam client loads its overlay library into the game through `DYLD_INSERT_LIBRARIES`, and that library is signed by Valve. Without both, the Steam overlay and rich presence do not work in a signed build.
 
-No audio-input, file-access, or JIT entitlements are requested.
+No audio-input or file-access entitlements are requested.
 
 ### Troubleshooting
 

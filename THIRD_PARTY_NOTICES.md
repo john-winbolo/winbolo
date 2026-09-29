@@ -79,11 +79,38 @@ WinBolo uses the following third-party libraries and code.
 - Version: 0.14.2
 - License: MIT
 - https://github.com/getsentry/sentry-native
+- On Windows (MSVC) and Linux, sentry-native is built with its crashpad
+  backend, which brings in the two libraries below. MinGW and macOS use its
+  in-process backend and include neither.
+
+#### crashpad (sentry-native's fork, bundled with sentry-native)
+- License: Apache 2.0
+- https://github.com/getsentry/crashpad
+
+#### mini_chromium (bundled with crashpad)
+- License: BSD 3-Clause
+- https://github.com/getsentry/mini_chromium
 
 ### sentry-cocoa (optional, ENABLE_SENTRY; iOS)
 - Version: 9.8.0
 - License: MIT
 - https://github.com/getsentry/sentry-cocoa
+
+## Not included: Steamworks SDK
+
+### Steamworks SDK (optional; Steam builds only)
+- Owner: Valve Corporation
+- License: proprietary, under the
+  [Steamworks SDK Access Agreement](https://partner.steamgames.com/documentation/sdk_access_agreement).
+  Not licensed under the GPL.
+- Not included in this repository or in any WinBolo source release. A Steam
+  build needs a copy placed in `third_party/steamworks/`, obtained from Valve;
+  without it the build uses `src/steam/steam_wrapper_stub.c` instead.
+- A Steam build links the SDK's `steam_api` runtime library and ships it beside
+  the game. The copyright holders of WinBolo permit this linking and
+  distribution in Permission 1 of [LICENSE-EXCEPTION.md](LICENSE-EXCEPTION.md).
+- Provides the Steam overlay, rich presence, achievements, Steam Input and the
+  Workshop.
 
 ## Vendored Source
 
