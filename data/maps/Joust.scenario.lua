@@ -204,6 +204,11 @@ function on_tank_hit(victim, attacker, cause, amount, pill, scripted)
   if attacker == nil or attacker == game.NEUTRAL or attacker == victim then
     return
   end
+  -- A teammate's hit is not kept: it would take the drowning from the enemy
+  -- who knocked the tank in, and then score for nobody.
+  if side_of(attacker) == side_of(victim) then
+    return
+  end
   last_hit[victim] = { by = attacker, at = game.tick() }
 end
 
@@ -240,7 +245,19 @@ function on_tank_spawned(p, mx, my, respawn, scripted)
   end
   local side = end_of(p)
   local spots = SPOTS[side]
-  local at = spots[(math.floor(p / 2) % #spots) + 1]
+  -- Free-for-all splits seats by parity, so every second seat shares an end.
+  -- A team round puts the whole team on one end, so count the seat's place
+  -- among its own team instead, or teammates would land on the same square.
+  local slot = math.floor(p / 2)
+  if team_mode and team_of(p) > 0 then
+    slot = 0
+    for q = 0, p - 1 do
+      if team_of(q) == team_of(p) and in_round(q) then
+        slot = slot + 1
+      end
+    end
+  end
+  local at = spots[(slot % #spots) + 1]
   game.set_boat(p, false)
   game.teleport(p, at[1], at[2], FACING[side])
   last_hit[p] = nil
