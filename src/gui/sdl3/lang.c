@@ -2659,6 +2659,10 @@ static const LangEntry langTable[] = {
     {2704, "A tank took a shell or a mine, with the armour it actually lost."},
     {2705, "Whether a shell may hit the tank or pillbox it has reached."},
     {2706, "What a hit on a pillbox is worth, asked on every shell and blast it takes."},
+    {2707, "On"},
+    {2708, "Off"},
+    {2709, "On (default)"},
+    {2710, "Off (default)"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

@@ -4982,6 +4982,11 @@ set(_unit_test_names
     scenario_settings_wire
     scenario_settings_survival_decl
     scenario_settings_survival_short
+    scenario_settings_bool_blob
+    scenario_settings_bool_manifest_lua
+    scenario_settings_bool_manifest_json
+    scenario_settings_bool_server
+    scenario_settings_bool_game_setting
     script_list_client_apply
     lobby_map_search_chunked
     wbn_bearer_state

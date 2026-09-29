@@ -1441,6 +1441,11 @@ bool serverSimSetScriptSetting(ServerSim *sim, const char *file,
     if (n <= 0) return false;
     decl = scnSettingFind(rows, n, id);
     if (decl == NULL) return false;
+    /* On or off has no nearest entry to clamp to: anything else is not a
+       value the host's dropdown sends. */
+    if (decl->type == SCN_SETTING_TYPE_BOOL && value != 0 && value != 1) {
+        return false;
+    }
 
     v  = scnSettingClamp(decl, value);
     at = scriptSettingAt(sim, file, id);

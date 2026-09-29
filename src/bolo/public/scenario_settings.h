@@ -23,18 +23,27 @@
  *  which answers the declared default for any id the host
  *  has not chosen a value for.
  *
- *  Only "int" exists today and is drawn as a dropdown. The
- *  type is a byte on the wire and every row carries its own
- *  length, so a reader skips a type it does not know and a
- *  "bool" or a "choice" can be added later without breaking
- *  the readers already out there.
+ *  Two types exist. "int" is a whole number drawn as a
+ *  dropdown of every value on the step. "bool" is on or off,
+ *  declared with a true or false default and no range:
+ *
+ *      { id = "fog", label = "Fog", type = "bool",
+ *        default = true },
+ *
+ *  It is held as a range of 0..1 step 1, so the value checks
+ *  and the body below serve it unchanged, is drawn as an On
+ *  and Off dropdown, and game.setting answers true or false
+ *  for it. The type is a byte on the wire and every row
+ *  carries its own length, so a reader skips a type it does
+ *  not know and a "choice" can be added later.
  *
  *  The blob is one script's whole block:
  *
  *    [count 1] then count rows of
  *    [type 1][bodyLen 1][body]
  *
- *  and for SCN_SETTING_TYPE_INT the body is
+ *  and for SCN_SETTING_TYPE_INT and SCN_SETTING_TYPE_BOOL the
+ *  body is
  *
  *    [idLen 1][id][labelLen 1][label]
  *    [min 4][max 4][step 4][default 4]
@@ -79,7 +88,8 @@
 /* What kind of value a row holds. A byte on the wire, so the numbers are
  * fixed. SCN_SETTING_TYPE_COUNT is how many this build can read. */
 #define SCN_SETTING_TYPE_INT   0
-#define SCN_SETTING_TYPE_COUNT 1
+#define SCN_SETTING_TYPE_BOOL  1
+#define SCN_SETTING_TYPE_COUNT 2
 
 /* One declared setting. def is the default: "default" is a C keyword. */
 typedef struct {
@@ -144,7 +154,13 @@ static inline const char *scnSettingProblem(const ScnSetting *s) {
         return "id must be 1 to 31 letters, digits or '_'";
     }
     if (s->label[0] == '\0') return "label is empty";
-    if (s->type >= SCN_SETTING_TYPE_COUNT) return "type is not \"int\"";
+    if (s->type >= SCN_SETTING_TYPE_COUNT) {
+        return "type is not \"int\" or \"bool\"";
+    }
+    if (s->type == SCN_SETTING_TYPE_BOOL &&
+        (s->min != 0 || s->max != 1 || s->step != 1)) {
+        return "a bool setting takes no min, max or step";
+    }
     if (s->step <= 0) return "step must be greater than 0";
     if (s->min > s->max) return "min is greater than max";
     if (s->def < s->min || s->def > s->max) {
@@ -249,9 +265,10 @@ static inline bool scnSettingsBlobAppend(uint8_t *blob, size_t cap,
     return true;
 }
 
-/* One int row's body into *out. False for a body that is not one. */
+/* One int or bool row's body into *out, as a row of that type. False for a
+ * body that is not one. */
 static inline bool scnSettingsReadIntBody(const uint8_t *b, size_t n,
-                                          ScnSetting *out) {
+                                          uint8_t type, ScnSetting *out) {
     size_t  pos = 0;
     uint8_t idLen;
     uint8_t labelLen;
@@ -273,7 +290,7 @@ static inline bool scnSettingsReadIntBody(const uint8_t *b, size_t n,
     memcpy(out->label, b + pos, labelLen);
     out->label[labelLen] = '\0';
     pos += labelLen;
-    out->type = SCN_SETTING_TYPE_INT;
+    out->type = type;
     out->min  = scnSettingsGetI32(b + pos);
     out->max  = scnSettingsGetI32(b + pos + 4);
     out->step = scnSettingsGetI32(b + pos + 8);
@@ -310,9 +327,11 @@ static inline int scnSettingsBlobRead(const uint8_t *blob, size_t len,
         body = blob[pos + 1];
         pos += 2;
         if (pos + body > len) return -1;
-        if (type == SCN_SETTING_TYPE_INT) {
+        if (type == SCN_SETTING_TYPE_INT || type == SCN_SETTING_TYPE_BOOL) {
             ScnSetting row;
-            if (!scnSettingsReadIntBody(blob + pos, body, &row)) return -1;
+            if (!scnSettingsReadIntBody(blob + pos, body, type, &row)) {
+                return -1;
+            }
             if (out != NULL && n < max) out[n] = row;
             n++;
         }

@@ -2581,16 +2581,25 @@ void scnPushManifestGlobal(lua_State *L, int envRef,
             lua_setfield(L, -2, "id");
             lua_pushstring(L, d->label);
             lua_setfield(L, -2, "label");
-            lua_pushstring(L, "int");
-            lua_setfield(L, -2, "type");
-            lua_pushinteger(L, (lua_Integer)d->min);
-            lua_setfield(L, -2, "min");
-            lua_pushinteger(L, (lua_Integer)d->max);
-            lua_setfield(L, -2, "max");
-            lua_pushinteger(L, (lua_Integer)d->step);
-            lua_setfield(L, -2, "step");
-            lua_pushinteger(L, (lua_Integer)d->def);
-            lua_setfield(L, -2, "default");
+            if (d->type == SCN_SETTING_TYPE_BOOL) {
+                /* A bool row is written with no range, as the file
+                   declares it. */
+                lua_pushstring(L, "bool");
+                lua_setfield(L, -2, "type");
+                lua_pushboolean(L, d->def != 0);
+                lua_setfield(L, -2, "default");
+            } else {
+                lua_pushstring(L, "int");
+                lua_setfield(L, -2, "type");
+                lua_pushinteger(L, (lua_Integer)d->min);
+                lua_setfield(L, -2, "min");
+                lua_pushinteger(L, (lua_Integer)d->max);
+                lua_setfield(L, -2, "max");
+                lua_pushinteger(L, (lua_Integer)d->step);
+                lua_setfield(L, -2, "step");
+                lua_pushinteger(L, (lua_Integer)d->def);
+                lua_setfield(L, -2, "default");
+            }
             lua_rawseti(L, st, (int)i + 1);
         }
         lua_setfield(L, t, "settings");
