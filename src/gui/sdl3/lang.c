@@ -2552,8 +2552,8 @@ static const LangEntry langTable[] = {
     {2572, "Number"},
     {2573, "Text"},
     {2574, "An action carries one long line, and another argument has it"},
-    {2575, "How near a tank has to be for a pillbox to aim with the original forward prediction rather than the solver, which misses a tank circling it. Zero, the classic table, is a pillbox that always leads its target properly; 384 is a square and a half, the distance the old build-time switch used."},
-    {2576, "How straight at a close pillbox a tank has to be driving to be aimed at properly anyway, as the cosine of the angle between its heading and the line to the pillbox. One aims sloppily at every tank inside pill_massage_range, zero at none of them. Does nothing while that rule is zero."},
+    {2575, "How near a tank has to be for the legacy pill-massage approximation to replace the aim solver. Zero disables it; 384 is a square and a half. Ignored while pill_aim_mac is on."},
+    {2576, "The largest absolute cosine between a tank's heading and the line to the pill that uses the legacy massage approximation. One includes every heading; zero includes only exactly sideways movement. Does nothing when pill_massage_range is zero or pill_aim_mac is on."},
     {2577, "written as a local, so the host never finds it and it never runs"},
     {2578, "written on a table other than scenario, so the host never finds it and it never runs"},
     {2579, "What it may decide"},
@@ -2659,6 +2659,7 @@ static const LangEntry langTable[] = {
     {2704, "A tank took a shell or a mine, with the armour it actually lost."},
     {2705, "Whether a shell may hit the tank or pillbox it has reached."},
     {2706, "What a hit on a pillbox is worth, asked on every shell and blast it takes."},
+    {2707, "Whether pillboxes use Mac Bolo aiming. Moving, unobstructed tanks within about one square make the pill aim far along their heading. Stopped or blocked tanks receive no lead. Overrides pill_massage_range, pill_massage_cosine and pill_aim_iterations."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

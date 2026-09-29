@@ -18,15 +18,13 @@
 -- with no other target it holds its shot and fires as soon as one of those
 -- shells lands. The limit is twelve.
 --
--- Pillbox massage. Inside pill_massage_range a pillbox leads a tank
--- sliding past it with the original forward prediction, which aims well
--- wide of it, so a tank can circle a pillbox without being hit. A tank
--- driving at or away from the pillbox, more nearly than
--- pill_massage_cosine allows, is still led properly, and beyond the range
--- every tank is. The classic table has the range at zero, which is off.
--- The range is the one the old ENABLE_PILLMASSAGE_BUG build switch used:
--- 384 world units, a square and a half. The cosine is left at its default
--- of 0.5, which is also what that switch used.
+-- Pillbox aiming and massage. Use Mac Bolo's integer distance and lead
+-- calculation. Below one square (as its pixel distance measures it), the
+-- unsigned lead wraps and the pill aims roughly 32 squares along a moving
+-- tank's heading. Passing closely beside a pill can therefore evade its
+-- shots. There is no heading restriction; stopping or being obstructed
+-- removes the lead. Beyond that distance the same formula leads normally.
+-- This overrides the older pill_massage_range/cosine approximation.
 --
 -- Base defence. When a base is shot, every allied pillbox near it gets
 -- angry and fires faster. WinBolo has always counted "near" as a square:
@@ -82,8 +80,8 @@ scenario = {
     pill_shell_cap = 1,
     pill_max_shells_at_tank = 12,
 
-    -- Pillbox massage. A square and a half, in world units.
-    pill_massage_range = 384,
+    -- Original Mac Bolo aiming, including the unsigned pill-massage bug.
+    pill_aim_mac = 1,
 
     -- Base defence.
     pill_base_defend_shape = 1,  -- 1 is a circle, 0 the classic square

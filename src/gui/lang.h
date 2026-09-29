@@ -3042,6 +3042,7 @@
 #define STR_RULE_DESC_pill_base_defend_shape     2700
 #define STR_RULE_DESC_tank_slide_armour_bonus    2702
 #define STR_RULE_DESC_tank_slide_mac             2703
+#define STR_RULE_DESC_pill_aim_mac               2707
 
 /* Rule range wording */
 
