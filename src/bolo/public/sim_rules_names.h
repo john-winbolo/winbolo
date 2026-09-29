@@ -306,7 +306,11 @@ typedef enum {
     X(pill_max_shells_at_tank, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)      \
     /* How pill_base_defend_range is measured. Last for the same reason. */  \
     X(pill_base_defend_shape, SIM_RULE_VALUE_INT,                            \
-      SIM_RULE_UNIT_CONSTANT_BY_DESIGN)
+      SIM_RULE_UNIT_CONSTANT_BY_DESIGN)                                      \
+    /* The Mac Bolo shell push and its armour bonus. Last for the same       \
+       reason. */                                                            \
+    X(tank_slide_mac, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_FLAG)                \
+    X(tank_slide_armour_bonus, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)
 
 /* One member per rule, in the struct's own field order. SIM_RULE_COUNT is
  * one past the last, and an index at or above it names no rule. A rule's

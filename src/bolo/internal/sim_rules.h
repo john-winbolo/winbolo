@@ -242,6 +242,10 @@ typedef struct SimRules {
 
     /* ---- Base defence shape ---- last, like its row in SIM_RULE_LIST */
     int32_t pill_base_defend_shape; /* 0 a square, 1 a circle */
+
+    /* ---- Mac Bolo shell push ---- last, like their rows in SIM_RULE_LIST */
+    int32_t tank_slide_mac;          /* whether a shell hit pushes the Mac Bolo way */
+    int32_t tank_slide_armour_bonus; /* extra Mac Bolo push at zero armour */
 } SimRules;
 
 /*********************************************************
