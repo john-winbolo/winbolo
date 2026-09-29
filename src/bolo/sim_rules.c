@@ -227,6 +227,13 @@ void simRulesClassic(SimRules *out) {
     out->tree_weight_crater        = TREE_GROW_CRATER;
     out->tree_weight_road          = TREE_GROW_ROAD;
     out->tree_weight_mine          = TREE_GROW_MINE;
+
+    /* ---- Pillbox shell cap ---- */
+    out->pill_shell_cap          = PILLBOX_SHELL_CAP;
+    out->pill_max_shells_at_tank = PILLBOX_MAX_SHELLS_AT_TANK;
+
+    /* ---- Base defence shape ---- */
+    out->pill_base_defend_shape  = PILL_BASE_HIT_SHAPE;
 }
 
 /* ---- Against the classic table -------------------------------------------
@@ -520,7 +527,8 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     /* The shell's own length, in half map squares, the way a tank's is:     \
        the gunsight rows are bounded the same way. */                        \
     X(pill_fire_length,          FLT,    0.5,    127.0)                      \
-    /* Zero is a pill that only answers for the square it stands on. */      \
+    /* Zero is a pill that only answers for the square it stands on, or      \
+       with the circle's exclusive edge, one that never answers at all. */   \
     X(pill_base_defend_range,    INT,    0,      255)                        \
     /* The aim solver's step budget. One is a pill that never leads a        \
        target and fires straight at where it is standing now. */             \
@@ -596,7 +604,12 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     X(tree_weight_half_building, INT,    -32768, 32767)                      \
     X(tree_weight_crater,        INT,    -32768, 32767)                      \
     X(tree_weight_road,          INT,    -32768, 32767)                      \
-    X(tree_weight_mine,          INT,    -32768, 32767)
+    X(tree_weight_mine,          INT,    -32768, 32767)                      \
+    /* Pillbox shell cap */                                                 \
+    X(pill_shell_cap,            INT,    0,      1)                          \
+    X(pill_max_shells_at_tank,   INT,    1,      255)                        \
+    /* Base defence shape: PILL_BASE_HIT_SQUARE or PILL_BASE_HIT_CIRCLE. */  \
+    X(pill_base_defend_shape,    INT,    0,      1)
 
 /* The rules a single other rule also caps, as the pairs below hold them.
  * Only a direct field against other_field test is here: where a ceiling is

@@ -102,8 +102,17 @@ static inline bool    pillPosCurrentFromByte(uint8_t b) {
 /* Pillbox not found return Value */
 #define PILL_NOT_FOUND 254
 
-/* A pillbox must be strictly less than 7 map squares from a shot base. */
-#define PILL_BASE_HIT_RANGE 7
+/* How far from a shot base, in map squares, an allied pillbox gets angry.
+   Read by the shape below: 9 across a square is the WinBolo rule, and 7 as
+   a circle is the Mac Bolo one. */
+#define PILL_BASE_HIT_RANGE 9
+
+/* The two shapes pill_base_defend_shape can take. A square takes the range
+   on each axis and includes its edge; a circle takes it as a radius and a
+   pillbox exactly that far off is not angered. */
+#define PILL_BASE_HIT_SQUARE 0
+#define PILL_BASE_HIT_CIRCLE 1
+#define PILL_BASE_HIT_SHAPE  PILL_BASE_HIT_SQUARE
 
 /* Amount of damage each tree unit repairs */
 #define PILL_REPAIR_AMOUNT 4
@@ -118,6 +127,13 @@ static inline bool    pillPosCurrentFromByte(uint8_t b) {
    that always uses the solver, which is what the classic table plays. */
 #define PILLBOX_MASSAGE_RANGE  0
 #define PILLBOX_MASSAGE_COSINE 0.5
+
+/* Whether pillboxes limit the shells in the air at one tank, and the limit.
+   A pillbox whose nearest target already has that many coming at it fires at
+   the next nearest instead, or holds its shot. The classic table plays with
+   the limit off. */
+#define PILLBOX_SHELL_CAP          0
+#define PILLBOX_MAX_SHELLS_AT_TANK 12
 
 /* Brain stuff */
 /* Bases Brain stuff */

@@ -1468,7 +1468,7 @@
 #define STR_DLGLOBBY_UPLOAD_ERR_REJECTED        1289
 /* No reply to an upload in time (LOBBY_REJECT_TIMEOUT). The numbers after
  * this block are taken, so its id sits outside it. */
-#define STR_DLGLOBBY_UPLOAD_ERR_TIMEOUT         2698
+#define STR_DLGLOBBY_UPLOAD_ERR_TIMEOUT         2701
 #define STR_DLGLOBBY_WBN_ERR_DOWNLOAD           1290
 #define STR_DLGLOBBY_WBN_ERR_BADRESPONSE        1291
 #define STR_DLGLOBBY_WBN_ERR_NETERROR           1292
@@ -2878,12 +2878,14 @@
  * rule's own name is not translated — it is what a manifest, a script and an
  * operator line all spell — so there is no id for it here.
  *
- * The numbers run in four stretches rather than one. The first eleven rules
+ * The numbers run in five stretches rather than one. The first eleven rules
  * had 2334 to 2344, which the fog style strings took as well; moving these
  * eleven to the end was the smaller change of the two. Fifty-three more are
  * the rules the table gained after the middle stretch was numbered, and the
- * last pair are the pillmassage rules, which start again past the map
- * editor's scenario strings because everything up to them was taken. The
+ * next pair are the pillmassage rules, which start again past the map
+ * editor's scenario strings because everything up to them was taken.
+ * The pill shell cap pair and then pill_base_defend_shape came after all of
+ * those and took the next free numbers, at the end of the file. The
  * order of the block is SIM_RULE_LIST's throughout, which is the order that
  * matters, and a hole in the numbers costs nothing: langTable is searched by
  * id rather than indexed by it. */
@@ -3034,6 +3036,9 @@
 #define STR_RULE_DESC_tree_weight_crater         2423
 #define STR_RULE_DESC_tree_weight_road           2424
 #define STR_RULE_DESC_tree_weight_mine           2425
+#define STR_RULE_DESC_pill_shell_cap             2699
+#define STR_RULE_DESC_pill_max_shells_at_tank    2698
+#define STR_RULE_DESC_pill_base_defend_shape     2700
 
 /* Rule range wording */
 

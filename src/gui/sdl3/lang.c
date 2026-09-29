@@ -2650,7 +2650,10 @@ static const LangEntry langTable[] = {
     {2695, "Sounds play from the side of the screen they happen on."},
     {2696, "Not usable"},
     {2697, "Whether one player may ally with another."},
-    {2698, "No reply from the server. Try the upload again."},
+    {2698, "The most pillbox shells that can be in the air at one tank. A pillbox whose nearest target already has this many coming fires at the next nearest instead, or holds its shot until one lands. Only read while pill_shell_cap is on."},
+    {2699, "Whether pillboxes limit how many of their shells can be in the air at one tank, to pill_max_shells_at_tank. Off lets every pillbox fire at its nearest target however many shells are already on the way."},
+    {2700, "How pill_base_defend_range is measured. 0 is a square, taken on each axis with its edge included, the WinBolo rule. 1 is a circle, taken as a radius with its edge left out, the Mac Bolo rule."},
+    {2701, "No reply from the server. Try the upload again."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
