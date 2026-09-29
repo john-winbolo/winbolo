@@ -234,6 +234,10 @@ void simRulesClassic(SimRules *out) {
 
     /* ---- Base defence shape ---- */
     out->pill_base_defend_shape  = PILL_BASE_HIT_SHAPE;
+
+    /* ---- Mac Bolo shell push ---- */
+    out->tank_slide_mac          = TANK_SLIDE_MAC;
+    out->tank_slide_armour_bonus = TANK_SLIDE_ARMOUR_BONUS;
 }
 
 /* ---- Against the classic table -------------------------------------------
@@ -612,7 +616,10 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     X(pill_shell_cap,            INT,    0,      1)                          \
     X(pill_max_shells_at_tank,   INT,    1,      255)                        \
     /* Base defence shape: PILL_BASE_HIT_SQUARE or PILL_BASE_HIT_CIRCLE. */  \
-    X(pill_base_defend_shape,    INT,    0,      1)
+    X(pill_base_defend_shape,    INT,    0,      1)                          \
+    /* Mac Bolo shell push */                                               \
+    X(tank_slide_mac,            INT,    0,      1)                          \
+    X(tank_slide_armour_bonus,   INT,    0,      255)
 
 /* The rules a single other rule also caps, as the pairs below hold them.
  * Only a direct field against other_field test is here: where a ceiling is

@@ -1615,6 +1615,8 @@ square.
 | `tank_pill_pickup_inset` | 16 | 0 to 255 | How far off its centre a tank reaches to pick a dead pillbox up. |
 | `tank_boat_exit_inset` | 64 | 0 to 255 | How far inside the bank a boat is held when a tank leaves one. |
 | `tank_slide_step` | 32 | 0 to 63 | How far a knocked tank slides per step. |
+| `tank_slide_mac` | 0 | 0 to 1 | Whether a shell hit pushes a tank the Mac Bolo way. 0, the classic table, is the WinBolo push: `tank_slide_step` at every armour level, moved and decayed by `tank_bump_decay_shift` each tick. 1 is the Mac Bolo push: `tank_slide_step` plus the armour bonus below, with the step and `tank_bump_decay_shift` read per 40 ms, so a push travels step × 2^shift in all, in a slide that moves every tick with its fractions carried. Mac Bolo plays it with a step of 28 and a shift of 2. |
+| `tank_slide_armour_bonus` | 32 | 0 to 255 | Extra push step at zero armour, added to `tank_slide_step` in proportion to the armour missing before the hit: nothing at full armour, the whole bonus at none. Only read while `tank_slide_mac` is 1. A `tank_slide_step` of 0 is no push at all, bonus included. |
 | `tank_wall_glide` | 0.0 | 0.0 to 1.0 | 0 slides a tank along a wall it hits; 1 lets it glide off free. |
 
 **Terrain: the cap a tank's speed clamps to.**

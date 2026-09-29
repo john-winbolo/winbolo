@@ -331,6 +331,10 @@ int run_sim_rules_classic_defaults(void) {
     /* Base defence shape */
     SR_EQ(pill_base_defend_shape, PILL_BASE_HIT_SHAPE);
 
+    /* Mac Bolo shell push */
+    SR_EQ(tank_slide_mac, TANK_SLIDE_MAC);
+    SR_EQ(tank_slide_armour_bonus, TANK_SLIDE_ARMOUR_BONUS);
+
     return 0;
 }
 
