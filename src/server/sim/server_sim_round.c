@@ -1206,6 +1206,9 @@ void serverSimResetGameWorld(ServerSim *sim) {
     sim->prevPillCount = 0;
     sim->prevBaseCount = 0;
     memset(sim->lastClosestBase, BASE_NOT_FOUND, sizeof(sim->lastClosestBase));
+    /* A request belongs to the round it was made in. This runs at round
+     * start and at the return to the lobby. */
+    memset(sim->allianceAskedBy, 0, sizeof(sim->allianceAskedBy));
 
     /* 11. Reset player connection state and per-slot round/world state.
      * Connection identity (name, country, clientType, clientFlags, bot/WBN
