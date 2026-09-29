@@ -1207,8 +1207,8 @@ static float lobbyScenarioDetailsMinWidth(void) {
 /* The rules table's header row, shared by both tables below. False when the
  * table did not begin and nothing more is to be drawn. The rule's name takes
  * whatever the three equal number columns leave. The value column is headed
- * "New value" for every kind of script; the host's Rules popup keeps its own
- * "Scenario" header, which is why the two ids differ. */
+ * "New value" for every kind of script; the log viewer's rules table keeps
+ * its own "Scenario" header, which is why the two ids differ. */
 static bool lobbyScenarioDetailsRulesBegin(void) {
     float w = lobbyScenarioDetailsNumberColumnWidth();
 
@@ -1280,13 +1280,11 @@ static void lobbyScenarioDetailsRuleRow(int rule, double value,
 
 /* What the script's rules table says, folded into this dialog.
  *
- * The Rules button stayed in the Server Settings column, which is the host's
- * deep view — a row per rule with an Info popup a controller can land on. It
- * is gone from the map panel, which is now text and one icon, and a joiner's
- * only real question about a scenario is what it changes. So the table comes
- * along here, read-only and without the per-rule popup: a popup over a popup
- * over a window is more stack than the answer is worth, and the rule's own
- * description is on the row's hover.
+ * This is the one place the lobby shows a script's rules. The host's Rules
+ * popup in the Server Settings column is gone, because this dialog shows the
+ * same table to everyone. The popup's per-rule Info view, with the rule's
+ * description and its range, went with it, so the description is on the
+ * row's hover only.
  *
  * The table is the file's own, as its author wrote it, for every kind of row
  * the dialog opens on. Which script's value plays where two set the same
