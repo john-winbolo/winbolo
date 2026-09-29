@@ -3043,6 +3043,7 @@
 #define STR_RULE_DESC_tank_slide_armour_bonus    2702
 #define STR_RULE_DESC_tank_slide_mac             2703
 #define STR_RULE_DESC_pill_aim_mac               2707
+#define STR_RULE_DESC_tank_collision_mac         2708
 
 /* Rule range wording */
 

@@ -637,7 +637,11 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
             bestDist = amount;
             bestTankX = tankX;
             bestTankY = tankY;
-            bestTankDir = tankGetTravelAngel(&tanks[t]);
+            /* Let the Mac solver round the original heading itself.
+             * WinBolo's travel-angle helper rounds half-sectors downward,
+             * so pre-rounding here changes Mac aim at 8, 24, ... 248. */
+            bestTankDir = sim->rules.pill_aim_mac ? tankGet256Dir(&tanks[t]) :
+                tankGetTravelAngel(&tanks[t]);
             bestTankSpeed = tankGetSpeed(&tanks[t]);
             bestTank = &tanks[t];
             bestTankNum = t;

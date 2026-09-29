@@ -986,6 +986,7 @@ static const UnitTestEntry s_tests[] = {
     { "sim_rules_pill_angry_divisor_follows", run_sim_rules_pill_angry_divisor_follows },
     { "sim_rules_pill_massage_follows",       run_sim_rules_pill_massage_follows       },
     { "sim_rules_pill_aim_mac",               run_sim_rules_pill_aim_mac               },
+    { "sim_rules_tank_collision_mac",         run_sim_rules_tank_collision_mac         },
     { "pill_shell_cap_off_is_no_limit", run_pill_shell_cap_off_is_no_limit },
     { "pill_shell_cap_retargets_next_nearest", run_pill_shell_cap_retargets_next_nearest },
     { "pill_shell_cap_holds_then_fires_when_freed", run_pill_shell_cap_holds_then_fires_when_freed },

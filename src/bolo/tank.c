@@ -256,9 +256,57 @@ static void tankNudgeOtherTanks(GameSim *sim, tank *value) {
  * building collisions using the direction-dependent
  * bounding box. Returns accumulated BumpInfo flags.
  *********************************************************/
+static BumpInfo tankNudgeBuildingsMac(GameSim *sim, tank *value, int maxNudges) {
+  /* Mac Bolo Sprite_bbox: top, left, bottom, right in sprite pixels.
+   * Both boat and land movement use these sixteen tank boxes. WinBolo
+   * stores centres, whereas Mac stores the sprite's top-left corner. */
+  static const BYTE boxes[16][4] = {
+    {1,3,14,12}, {1,1,15,12}, {2,0,15,13}, {3,0,14,14},
+    {3,1,12,14}, {1,0,12,14}, {0,0,13,13}, {0,1,14,12},
+    {1,3,14,12}, {0,3,14,14}, {0,2,13,15}, {1,1,12,15},
+    {3,1,12,14}, {3,1,14,15}, {2,2,15,15}, {1,3,15,14}
+  };
+  const BYTE *box = boxes[((unsigned)(*value)->angle + 8) / 16 % 16];
+  BumpInfo bumptype = BumpInfo_None;
+  WORLD x = (*value)->x, y = (*value)->y;
+  int i;
+  for (i = 0; i < maxNudges; i++) {
+    WORLD top = (WORLD)(y + ((int)box[0] - 8) * 16);
+    WORLD left = (WORLD)(x + ((int)box[1] - 8) * 16);
+    WORLD bottom = (WORLD)(y + ((int)box[2] - 8) * 16);
+    WORLD right = (WORLD)(x + ((int)box[3] - 8) * 16);
+    BYTE hits = 0;
+    bool first = i == 0;
+    if (tankBuildingCollision(sim, value, x, top, &bumptype, first)) hits |= 1;
+    if (tankBuildingCollision(sim, value, right, y, &bumptype, first)) hits |= 2;
+    if (tankBuildingCollision(sim, value, x, bottom, &bumptype, first)) hits |= 4;
+    if (tankBuildingCollision(sim, value, left, y, &bumptype, first)) hits |= 8;
+    if (hits == 0) {
+      if (tankBuildingCollision(sim, value, right, top, &bumptype, first)) hits |= 3;
+      if (tankBuildingCollision(sim, value, right, bottom, &bumptype, first)) hits |= 6;
+      if (tankBuildingCollision(sim, value, left, bottom, &bumptype, first)) hits |= 12;
+      if (tankBuildingCollision(sim, value, left, top, &bumptype, first)) hits |= 9;
+    }
+    /* Stop before nudging when caught between opposing walls. A corner
+     * pushes on both axes, just as in Mac's MoveMyTank. */
+    if (hits == 0 || hits == 5 || hits == 10 || hits == 15) break;
+    if (hits & 1) y = (y + 16) & TANK_GRID_MASK;
+    if (hits & 2) x = (x - 16) | TANK_GRID_LOW_MASK;
+    if (hits & 4) y = (y - 16) | TANK_GRID_LOW_MASK;
+    if (hits & 8) x = (x + 16) & TANK_GRID_MASK;
+  }
+  (*value)->x = x;
+  (*value)->y = y;
+  return bumptype;
+}
+
 static BumpInfo tankNudgeBuildings(GameSim *sim, tank *value, int maxNudges) {
   BumpInfo bumptype = BumpInfo_None;
   bool isFirstBump = TRUE;
+
+  if (sim->rules.tank_collision_mac) {
+    return tankNudgeBuildingsMac(sim, value, maxNudges);
+  }
 
 #ifndef BOLO_LEGACY_SQUARE_COLLISION
   /* Circle-vs-AABB resolver (default). The tank is a circle of radius
@@ -1889,6 +1937,11 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
   BYTE newbmx;
   BYTE newbmy;
   bool movedThisTick = FALSE;
+  /* Mac compares 16-WU pixels after a 40 ms move. At our 20 ms cadence
+   * use half-pixels, or a 15-WU slide can falsely count as standing still. */
+  WORLD obstructionMask = sim->rules.tank_collision_mac ? 0xFFF8 : TANK_GRID_MASK;
+  WORLD startX = (*value)->x & obstructionMask;
+  WORLD startY = (*value)->y & obstructionMask;
 
   /* Shared setup */
   tankCheckGroundClear(sim, value);
@@ -1908,6 +1961,10 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
   }
 
   ang = utilGet16Dir((*value)->angle);
+  if (sim->rules.tank_collision_mac) {
+    /* Mac rounds a half-sector upward (including 248 back to north). */
+    ang = (BYTE)(((unsigned)(*value)->angle + 8) & 0xF0);
+  }
 
   /* Step 1 — Tank-to-tank nudge */
   if (!sim->isPredicting) {
@@ -1958,12 +2015,10 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
    * The legacy grid-snap nudge + collision slowdown (Step 5) are bypassed in
    * this mode. */
   {
-    WORLD oldX = (*value)->x & TANK_GRID_MASK;
-    WORLD oldY = (*value)->y & TANK_GRID_MASK;
     int preX = (int)(*value)->x, preY = (int)(*value)->y;
     BumpInfo bumptype = tankNudgeBuildings(sim, value, (int) sim->rules.tank_nudge_iterations);
     int pushX = (int)(*value)->x - preX, pushY = (int)(*value)->y - preY;
-    if ((pushX || pushY) && (xAmount || yAmount)) {
+    if (!sim->rules.tank_collision_mac && (pushX || pushY) && (xAmount || yAmount)) {
       const float SLIP = sim->rules.tank_wall_glide; /* 0 = plain slide, 1 = frictionless */
       float nlen = sqrtf((float)(pushX * pushX + pushY * pushY));
       float nx = pushX / nlen, ny = pushY / nlen;            /* outward normal  */
@@ -1982,21 +2037,16 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
         bumptype |= tankNudgeBuildings(sim, value, (int) sim->rules.tank_nudge_iterations);
       }
     }
-    /* Expose a wall-stuck signal to brains via tank_obstructed (read by
-     * Lua/ML observations). Same definition as the legacy path: a solid-wall
-     * collision that left the tank in the grid cell it started this nudge in
-     * — i.e. the wall blocked it rather than letting it slide. Sliding along
-     * a wall moves to a new grid cell and is NOT obstructed. Circle mode does
-     * not apply the legacy collision slowdown; this only sets the flag. */
+    /* Compare with the start of movement, not the start of the nudge.
+     * A small correction after sliding past a wall must not report stuck:
+     * Mac pill aiming disables its lead when this flag is set. */
     if (movedThisTick) {
       (*value)->obstructed = (bumptype & BumpInfo_SolidWall) &&
-          (((*value)->x & TANK_GRID_MASK) == oldX) &&
-          (((*value)->y & TANK_GRID_MASK) == oldY);
+          (((*value)->x & obstructionMask) == startX) &&
+          (((*value)->y & obstructionMask) == startY);
     }
   }
 #else
-  WORLD oldX = (*value)->x & TANK_GRID_MASK;
-  WORLD oldY = (*value)->y & TANK_GRID_MASK;
   BumpInfo bumptype = tankNudgeBuildings(sim, value, (int) sim->rules.tank_nudge_iterations);
 
   /* Step 5 — Slow down from collisions (not shore or boat — shore slowdown
@@ -2004,8 +2054,8 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
    * boat at all; the boat-on-boat destruction is handled in Step 9) */
   if (movedThisTick) {
     bool tankObstructed = (bumptype >= BumpInfo_SolidWall) &&
-        (((*value)->x & TANK_GRID_MASK) == oldX) &&
-        (((*value)->y & TANK_GRID_MASK) == oldY);
+        (((*value)->x & obstructionMask) == startX) &&
+        (((*value)->y & obstructionMask) == startY);
     if (tankObstructed) {
       if ((*value)->speed < sim->rules.tank_min_move) (*value)->speed = 0;
       else (*value)->speed -= sim->rules.tank_min_move;

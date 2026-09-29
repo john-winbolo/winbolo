@@ -335,6 +335,7 @@ int run_sim_rules_classic_defaults(void) {
     SR_EQ(tank_slide_mac, TANK_SLIDE_MAC);
     SR_EQ(tank_slide_armour_bonus, TANK_SLIDE_ARMOUR_BONUS);
     SR_EQ(pill_aim_mac, 0);
+    SR_EQ(tank_collision_mac, 0);
 
     return 0;
 }
@@ -1165,6 +1166,124 @@ int run_sim_rules_pill_angry_divisor_follows(void) {
     return 0;
 }
 
+int run_sim_rules_tank_collision_mac(void) {
+    /* Positions from mac_bolo Game.move_my_tank with speed 32: its 16-WU
+     * displacement matches one WinBolo tick at speed 16. Obstruction and
+     * aim use the actual 20/40 ms speed conversion, not that probe speed.
+     * In particular, row 3 must keep leading during a 15-WU wall slide. */
+    static const struct {
+        int x, y, heading, speed, endX, endY, blocked, shot;
+    } cases[] = {
+        {-32,-240,64,16, -16,-240,0,63},
+        {-32,-240,80,16, -17,-234,0,79},
+        {-32,-193,64,16, -16,-193,0,63},
+        {-32,-193,80,16, -17,-193,0,79},
+        {0,-225,128,16, 0,-225,1,1},
+        {-210,-210,96,16, -209,-209,1,223},
+        {-210,-210,0,0, -210,-210,0,223},
+        {-32,-240,72,16, -17,-234,0,79},
+        {-32,-240,248,16, -32,-256,0,251},
+    };
+    /* Mac's stationary-box probe, north of a pill, for all 16 sectors. */
+    static const int boxY[16] = {
+        -225,-241,-241,-225,-225,-225,-225,-225,
+        -225,-225,-225,-225,-225,-225,-241,-241
+    };
+    ServerSim *sim = ut_make_running_sim("Mac movement");
+    GameSim *gs;
+    tank target;
+    struct tankObj initial;
+    pillbox *pill;
+    bool connected[MAX_TANKS] = {false};
+    int x, y, prediction;
+    size_t i;
+    const int centre = 100 * 256 + 128;
+    UT_ASSERT(sim != NULL);
+    gs = serverSimGetGameSim(sim);
+    target = gs->tanks[0];
+    UT_ASSERT(target != NULL && gs->pb->numPills > 0);
+    for (x = 98; x <= 102; x++) for (y = 98; y <= 102; y++) {
+        mapSetPos(gs, &gs->mp, (BYTE)x, (BYTE)y, ROAD, FALSE, FALSE);
+    }
+    for (i = 0; i < gs->pb->numPills; i++) gs->pb->active[i] = FALSE;
+    gs->pb->active[0] = TRUE;
+    pill = &gs->pb->item[0];
+    pill->x = pill->y = 100;
+    pill->owner = NEUTRAL;
+    pill->armour = 15;
+    pill->inTank = FALSE;
+    target->autoSlowdown = FALSE;
+    target->destroyed = FALSE;
+    target->onBoat = FALSE;
+    target->boatState = BoatState_NotOnBoat;
+    target->deathWait = 0;
+    initial = *target;
+    gs->rules.pill_aim_mac = 1;
+    gs->rules.tank_collision_mac = 1;
+    connected[0] = true;
+    for (prediction = 0; prediction <= 1; prediction++) {
+        gs->isPredicting = prediction != 0;
+        for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+            *target = initial;
+            target->x = (WORLD)(centre + cases[i].x);
+            target->y = (WORLD)(centre + cases[i].y);
+            target->angle = (TURNTYPE)cases[i].heading;
+            target->speed = (SPEEDTYPE)cases[i].speed;
+            tankUpdate(gs, &gs->tanks[0], 0, FALSE, FALSE);
+            UT_ASSERT_MSG(target->x == centre + cases[i].endX &&
+                          target->y == centre + cases[i].endY,
+                "Mac move %u (prediction %d): (%d,%d), expected (%d,%d)",
+                (unsigned)i, prediction, target->x - centre, target->y - centre,
+                cases[i].endX, cases[i].endY);
+            UT_ASSERT_MSG(target->obstructed == (cases[i].blocked != 0),
+                "Mac move %u (prediction %d): blocked=%d", (unsigned)i,
+                prediction, target->obstructed);
+            if (!prediction) {
+                shellsDestroy(&gs->shs);
+                pill->reload = pill->speed;
+                pill->justSeen = TRUE;
+                pillsUpdate(gs, gs->tanks, connected, MAX_TANKS);
+                UT_ASSERT(gs->shs != NULL);
+                UT_ASSERT_MSG(gs->shs->angle == cases[i].shot,
+                    "pill after move %u: shot=%f, expected %d", (unsigned)i,
+                    (double)gs->shs->angle, cases[i].shot);
+            }
+        }
+        for (i = 0; i < 16; i++) {
+            *target = initial;
+            target->x = (WORLD)centre;
+            target->y = (WORLD)(centre - 225);
+            target->angle = (TURNTYPE)(i * 16);
+            target->speed = 0;
+            tankUpdate(gs, &gs->tanks[0], 0, FALSE, FALSE);
+            UT_ASSERT_MSG(target->x == centre && target->y == centre + boxY[i],
+                "Mac box sector %u: (%d,%d)", (unsigned)i,
+                target->x - centre, target->y - centre);
+        }
+    }
+    /* Turning the mod off restores the circle's 240-WU clearance. */
+    gs->isPredicting = FALSE;
+    gs->rules.tank_collision_mac = 0;
+    *target = initial;
+    target->x = (WORLD)(centre - 32);
+    target->y = (WORLD)(centre - 193);
+    target->angle = 64;
+    target->speed = 16;
+    tankUpdate(gs, &gs->tanks[0], 0, FALSE, FALSE);
+    UT_ASSERT(target->x == centre - 16 && target->y == centre - 240);
+    /* A circle sliding into a wall also compares with its pre-move cell. */
+    *target = initial;
+    target->x = (WORLD)(centre - 24);
+    target->y = (WORLD)(centre - 240);
+    target->angle = 80;
+    target->speed = 16;
+    tankUpdate(gs, &gs->tanks[0], 0, FALSE, FALSE);
+    UT_ASSERT(target->x == centre - 9 && target->y == centre - 240);
+    UT_ASSERT(!target->obstructed);
+    serverSimDestroy(sim);
+    return 0;
+}
+
 int run_sim_rules_pill_aim_mac(void) {
     /* Expected shell directions generated by mac_bolo's Game.aim_pill,
      * with WinBolo speeds multiplied by four. The first three rows are
@@ -1937,7 +2056,7 @@ int run_sim_rules_are_classic(void) {
 
     /* The last field, so the walk is not stopping short of the end. */
     simRulesClassic(&r);
-    r.pill_aim_mac = 1;
+    r.tank_collision_mac = 1;
     UT_ASSERT_MSG(!simRulesAreClassic(&r),
                   "a table with its last field moved is reported classic");
 

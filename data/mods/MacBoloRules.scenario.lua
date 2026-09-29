@@ -18,6 +18,9 @@
 -- with no other target it holds its shot and fires as soon as one of those
 -- shells lands. The limit is twelve.
 --
+-- Tank clearance. Use the original direction-dependent tank boxes and
+-- pixel nudges against solid tiles, allowing close passes beside pills.
+--
 -- Pillbox aiming and massage. Use Mac Bolo's integer distance and lead
 -- calculation. Below one square (as its pixel distance measures it), the
 -- unsigned lead wraps and the pill aims roughly 32 squares along a moving
@@ -82,6 +85,8 @@ scenario = {
 
     -- Original Mac Bolo aiming, including the unsigned pill-massage bug.
     pill_aim_mac = 1,
+    -- Original sprite boxes let a tank hug a pill inside its bad-lead range.
+    tank_collision_mac = 1,
 
     -- Base defence.
     pill_base_defend_shape = 1,  -- 1 is a circle, 0 the classic square

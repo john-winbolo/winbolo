@@ -141,13 +141,13 @@ int run_sim_rules_describe_names(void) {
                   (double)classic.turn_road);
 
     /* The last row, which is where a list one short of the struct shows. */
-    UT_ASSERT(SIM_RULE_pill_aim_mac == SIM_RULE_COUNT - 1);
+    UT_ASSERT(SIM_RULE_tank_collision_mac == SIM_RULE_COUNT - 1);
     UT_ASSERT_MSG(srdSame(simRulesClassicValue((int)SIM_RULE_COUNT - 1),
-                          (double)classic.pill_aim_mac),
-                  "the last rule reads %.4f and pill_aim_mac "
+                          (double)classic.tank_collision_mac),
+                  "the last rule reads %.4f and tank_collision_mac "
                   "holds %ld",
                   simRulesClassicValue((int)SIM_RULE_COUNT - 1),
-                  (long)classic.pill_aim_mac);
+                  (long)classic.tank_collision_mac);
 
     /* The tags and widths the list carries, on one row of each width. */
     UT_ASSERT_MSG(simRulesRuleValueKind(SIM_RULE_tank_reload_ticks) ==
