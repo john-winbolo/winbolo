@@ -434,21 +434,53 @@ static int lobbyRoundIndexOfFile(const char *file) {
     return -1;
 }
 
+/* Whether the row at idx is the map's own scenario with a picked scenario
+ * beside it in the draft. The server sends that list with Mods/Scenario off:
+ * the picks do not compose, so the map's own script plays and is put back at
+ * the front, while the list still holds the picked scenario for when the box
+ * goes back on.
+ *
+ * Such a row is not sent. A list naming the map's own scenario and a picked
+ * one is two scenarios, which the CMD_SET_SCRIPT_LIST arm refuses, and a list
+ * without the map's row is how a host says the picked scenario replaces it.
+ * That is also what the server does with this list while the box is off: the
+ * map's own script is put back at the front, so leaving it off loses
+ * nothing. Only a bound scenario is skipped; a map whose own script is a mod
+ * can go out beside a picked scenario. */
+static bool lobbyRoundBoundShadowed(int idx) {
+    int i;
+
+    if (idx < 0 || idx >= s_roundCount) return false;
+    if (!s_round[idx].bound || s_round[idx].mod) return false;
+    for (i = 0; i < s_roundCount; i++) {
+        if (!s_round[i].bound && !s_round[i].mod) return true;
+    }
+    return false;
+}
+
+/* The scenario a new scenario pick replaces. A shadowed map row is passed
+ * over, so the picked scenario is the one swapped and the map-lock note does
+ * not block the add. */
 static int lobbyRoundIndexOfScenario(void) {
     int i;
 
     for (i = 0; i < s_roundCount; i++) {
-        if (!s_round[i].mod) return i;
+        if (!s_round[i].mod && !lobbyRoundBoundShadowed(i)) return i;
     }
     return -1;
 }
 
-/* How many draft rows would go into the command, which is all of them. The
- * bound row used to be left out because the server refused a list that named
- * one; it accepts the committed map's own script now, so that row takes a
- * place in CMD_SCRIPT_LIST_MAX like any other. */
+/* How many draft rows would go into the command. The bound row takes a place
+ * in CMD_SCRIPT_LIST_MAX like any other, unless it is shadowed by a picked
+ * scenario and so is not sent: see lobbyRoundBoundShadowed. */
 static int lobbyRoundSendCount(void) {
-    return s_roundCount;
+    int n = 0;
+    int i;
+
+    for (i = 0; i < s_roundCount; i++) {
+        if (!lobbyRoundBoundShadowed(i)) n++;
+    }
+    return n;
 }
 
 /* Why a catalogue row cannot move over, as the lang id that says so, or 0
@@ -574,13 +606,18 @@ static void lobbyRoundMove(int idx, int dir) {
  * src/server/server_command_dispatch.c now makes one exception, for the
  * committed map's own script, so that row is named like the rest and lands
  * where the host put it. Every other bound file is still refused, and the
- * left column still never offers one. */
+ * left column still never offers one. The one bound row that stays home is
+ * the map's own scenario beside a picked one, which only a Mods/Scenario-off
+ * lobby shows. */
 static void lobbyRoundSend(ClientSim *cs) {
     const char *files[CMD_SCRIPT_LIST_MAX];
     int         n = 0;
     int         i;
 
     for (i = 0; i < s_roundCount && n < CMD_SCRIPT_LIST_MAX; i++) {
+        /* The map's own scenario beside a picked one, which the server would
+           refuse as two scenarios: see lobbyRoundBoundShadowed. */
+        if (lobbyRoundBoundShadowed(i)) continue;
         files[n++] = s_round[i].file;
     }
     clientSimNetSendSetScriptList(cs, files, n);
@@ -1211,11 +1248,13 @@ static void lobbyScenarioDetailsRuleRow(int rule, double value,
  * rule is worked out here, against the order the host is looking at (see
  * lobbyScenarioDetailsOrder): the first script on it that sets the rule
  * wins, as the round composes it, and the rows this script loses say so. A
- * mod on a server with mods turned off loads nothing, so it neither wins a
- * rule over another script nor has its own rules play, and a note under its
- * table says so rather than the table going missing. A mod that sets no rule
- * has no table and still gets the note, because the mod does not load
- * either way. */
+ * pick on a server with Mods/Scenario turned off loads nothing, mod or
+ * picked scenario alike, so it neither wins a rule over another script nor
+ * has its own rules play, and a note under its table says so rather than the
+ * table going missing. A pick that sets no rule has no table and still gets
+ * the note, because it does not load either way. The map's own script is not
+ * a pick: it loads with the box off, and gets neither the skip nor the
+ * note. */
 static void lobbyScenarioDetailsRules(ClientSim *cs) {
     LobbyRoundRow  order[LOBBY_ROUND_MAX];
     const uint8_t *blobs[LOBBY_ROUND_MAX];
@@ -1241,7 +1280,7 @@ static void lobbyScenarioDetailsRules(ClientSim *cs) {
     for (i = 0; i < n; i++) {
         blobs[i] = NULL;
         lens[i]  = 0;
-        if (order[i].mod && !modsOn) continue;
+        if (!order[i].bound && !modsOn) continue;
         if (lobbyScenarioDetailsOfFile(cs, order[i].file, &blobs[i],
                                        &lens[i]) ==
                 CLIENT_SCN_DETAILS_WAITING &&
@@ -1273,9 +1312,10 @@ static void lobbyScenarioDetailsRules(ClientSim *cs) {
         ImGui::EndTable();
     }
 
-    /* Shown whether or not the table is: a mod on a server with mods off
-       loads nothing, rules or not, and that does not wait on any answer. */
-    if (!modsOn && s_detailsKind == 1) {
+    /* Shown whether or not the table is: a pick on a server with
+       Mods/Scenario off loads nothing, rules or not, and that does not wait
+       on any answer. */
+    if (!modsOn && !s_detailsBound) {
         lobbyScenarioRowNote(langGetText(STR_DLGLOBBY_DETAILS_MODS_OFF));
     }
 }
