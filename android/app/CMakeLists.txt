@@ -237,7 +237,6 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
-    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_scenario_rules.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_settings.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_keysetup.cpp

@@ -581,44 +581,6 @@ static void lobbyRenderModsRow(ClientSim *cs, bool effectiveHost,
     }
 }
 
-/* ── The scenario line's button row ───────────────────────────────
- * The line ends in up to two SmallButtons that want to sit on one row. The
- * Server Settings column they sit in is the narrowest of the four, so the row
- * does not always have the width for all of them, and a column clips what it
- * cannot hold rather than wrapping it. There is no undoing a SameLine either,
- * so the width has to be known before the button is drawn.
- *
- * Begin records how much width this caller has — the map panel gives the line
- * more than the settings column does — and Fits answers, for the button about
- * to be drawn, whether it still fits beside the last one. It books the space
- * as it answers: true means put a SameLine in front of the button, false means
- * the button starts a row of its own and the booking restarts from it. */
-struct ScenarioButtonRow {
-    float avail;  /* width of one row */
-    float used;   /* width of the row being filled, 0 before the first button */
-};
-
-static void lobbyScenarioButtonRowBegin(ScenarioButtonRow *row) {
-    row->avail = ImGui::GetContentRegionAvail().x;
-    row->used  = 0.0f;
-}
-
-static bool lobbyScenarioButtonFits(ScenarioButtonRow *row, int stringId) {
-    /* A SmallButton is its label plus the frame padding either side — it
-       drops FramePadding.y only, not FramePadding.x. */
-    float w = ImGui::CalcTextSize(langGetText(stringId)).x
-            + ImGui::GetStyle().FramePadding.x * 2.0f;
-    if (row->used > 0.0f) {
-        float need = row->used + ImGui::GetStyle().ItemSpacing.x + w;
-        if (need <= row->avail) {
-            row->used = need;
-            return true;
-        }
-    }
-    row->used = w;
-    return false;
-}
-
 /* What is running, for the host who sets it. The foot of the settings form's
  * Server Settings column, under the time limit and the password, which are
  * the other two things a host sets about the server rather than about the
@@ -691,29 +653,6 @@ void lobbyRenderScenarioLine(ClientSim *cs, bool effectiveHost, float s) {
        row that switched a thing it did not name would leave the host
        guessing what the box does. */
     lobbyRenderModsRow(cs, effectiveHost, scriptCount, s);
-
-    /* The row the button below sits on, measured against the width this
-       caller has. lobbyScenarioButtonFits reports whether the next button
-       still fits beside the last one and books the space when it does. It is
-       one button now and the answer is always yes, and the row is kept
-       because a second button here is one line of code away.
-
-       Choose used to be the first of them and opened the chooser. The mods
-       row above opens the same dialog from its own Details button, so the
-       two said the same thing twice and Choose said it in a word that
-       matches no title the dialog carries. */
-    ScenarioButtonRow row;
-    lobbyScenarioButtonRowBegin(&row);
-    /* What the scenario's rules table says. A script whose whole content is
-       a rules table has nothing else to say what it does. */
-    if (lobbyScenarioRulesAvailable(cs)) {
-        if (lobbyScenarioButtonFits(&row, STR_DLGLOBBY_SCENARIO_RULES)) {
-            ImGui::SameLine();
-        }
-        if (ImGui::SmallButton(langGetText(STR_DLGLOBBY_SCENARIO_RULES))) {
-            lobbyScenarioRulesOpen();
-        }
-    }
 }
 
 /* The same two halves, read-only, for the map panel — under the map's name

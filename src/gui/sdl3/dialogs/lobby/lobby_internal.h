@@ -518,20 +518,6 @@ bool lobbyScenarioDetailsIsOpen(void);
  * scale is, so it is handed down rather than worked out again here. */
 void lobbyScenarioDetailsRenderModal(ClientSim *cs, float s);
 
-/* scenariorules — the popup behind the Rules button on the scenario line:
- * one row per rule the attached scenario's manifest sets, named, with the
- * classic value beside the scenario's and what the change does in words.
- *
- * Available is what the line asks before it draws the button, so a plain map
- * and a scenario that changes no rule offer no way in. Open is what the
- * button calls; the modal must be rendered at the lobby window's own id
- * scope, the way the bot docs dialog is, because the button that opens it
- * sits inside the Map tab. */
-void lobbyScenarioRulesReset(void);
-void lobbyScenarioRulesOpen(void);
-bool lobbyScenarioRulesAvailable(ClientSim *cs);
-void lobbyScenarioRulesRenderModal(ClientSim *cs);
-
 /* chat */
 void lobbyChatReset(void);
 void lobbyRenderChatHistory(const char *blob);
