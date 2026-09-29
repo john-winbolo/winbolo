@@ -465,6 +465,9 @@ typedef struct {
       SCN_FN_ARGS4("kind", SCN_PARAM_WORD, "n", SCN_PARAM_ITEM,              \
                    "killer", SCN_PARAM_OWNER, "cause", SCN_PARAM_WORD),      \
       "false to leave what the blow landed on standing")                     \
+    X(CAN_ALLY,          "can_ally",                                         \
+      SCN_FN_ARGS2("p", SCN_PARAM_SLOT, "q", SCN_PARAM_SLOT),                \
+      "false to refuse the alliance")                                        \
     X(ON_CHOOSE_START,   "on_choose_start",                                  \
       SCN_FN_ARGS1("p", SCN_PARAM_SLOT),                                     \
       "a start number, counted from 1 as game.start counts")                 \

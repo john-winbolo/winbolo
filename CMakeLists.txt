@@ -3789,6 +3789,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # answer, the op a policy may not issue while it is answering, and the
     # raise that counts toward the error limit.
     tests/unit/test_scenario_policy_lua.c
+    # The can_ally policy at the alliance request and accept arms, against a
+    # C policy and a script, and the game.allied read.
+    tests/unit/test_scenario_can_ally.c
     # The in-process game-event channel: the second subscriber callback, and
     # the captures and builder death that reach it from GameSim callbacks
     # rather than from an event built in shared code, byte for byte as before.
@@ -6086,6 +6089,11 @@ set(_unit_test_names
     scenario_policy_lua_value_classic
     scenario_policy_lua_value_error_counts
     scenario_policy_lua_value_in_policy
+    scenario_can_ally_request
+    scenario_can_ally_accept
+    scenario_can_ally_script_not_asked
+    scenario_can_ally_lua
+    scenario_allied_read
     game_event_channel_base_captured
     game_event_channel_pill_captured
     game_event_channel_lgm_lost

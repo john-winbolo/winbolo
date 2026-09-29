@@ -865,6 +865,12 @@ typedef struct ScenarioPolicy {
                         * source otherwise. NULL = always. false leaves
                         * a tank at zero armour and alive, a builder
                         * untouched, a pill at one armour */
+    bool (*canAlly)(void *ctx, BYTE player, BYTE other);
+                       /* may player ally with other? Asked when player
+                        * requests the alliance and again when other
+                        * accepts it. NULL = always. false refuses the
+                        * request or the accept; alliances a script makes
+                        * through set_team or seating are not asked */
     void *ctx;
 } ScenarioPolicy;
 

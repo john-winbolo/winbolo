@@ -2649,6 +2649,7 @@ static const LangEntry langTable[] = {
     {2694, "Positional sound"},
     {2695, "Sounds play from the side of the screen they happen on."},
     {2696, "Not usable"},
+    {2697, "Whether one player may ally with another."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

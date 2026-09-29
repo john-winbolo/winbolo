@@ -478,6 +478,7 @@ static const char *const kSlEveryRowCalls =
     "  tank        = function() return game.tank(0) end,\n"
     "  builder     = function() return game.builder(0) end,\n"
     "  lobby_slot  = function() return game.lobby_slot(0) end,\n"
+    "  allied      = function() return game.allied(0, 0) end,\n"
     "  rule        = function() return game.rule(\"tank_reload_ticks\") end,\n"
     "  tags        = function() return game.tags(\"pill\", 1) end,\n"
     "  tagged      = function() return game.tagged(\"keep\") end,\n"

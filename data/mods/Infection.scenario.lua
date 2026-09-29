@@ -1067,6 +1067,13 @@ function allow_extra_teams()
   return false
 end
 
+-- And no alliances across them. A survivor allied with an infected player
+-- would be spared by the other side's pillboxes and bases while the script
+-- still counted them a survivor.
+function can_ally(p, q)
+  return false
+end
+
 -- A survivor comes back with everything; an infected one with half a tank of
 -- armour, eight shells and nothing to build with. Asked on every respawn, and
 -- by then the seat has changed sides, so a survivor's last death is what fuels
@@ -1168,6 +1175,7 @@ scenario = {
     on_tank_spawned = "Keeps the infected quick and weak.",
     on_tank_killed = "A survivor killed by the infected turns.",
     allow_extra_teams = "Only the two sides.",
+    can_ally = "Players cannot ally.",
     allow_base_win = "Holding every base does not win.",
     can_build = "The infected cannot build.",
     can_capture = "The infected cannot take bases or pillboxes.",

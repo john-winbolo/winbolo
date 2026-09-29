@@ -42,9 +42,11 @@ static const langid kSfdIds[] = {
 
 #define SFD_ID_COUNT (sizeof(kSfdIds) / sizeof(kSfdIds[0]))
 
-/* The ends of the block lang.h set aside for these. */
+/* The ends of the block lang.h set aside for these, and the one id outside
+   it: can_ally's, because the number after the block was already taken. */
 #define SFD_ID_FIRST 2435
 #define SFD_ID_LAST  2469
+#define SFD_ID_EXTRA 2697
 
 int run_scenario_fndesc_table(void) {
     size_t count = 0;
@@ -85,12 +87,17 @@ int run_scenario_fndesc_table(void) {
     UT_ASSERT_MSG((int)STR_SCNFN_DESC_DAMAGE_SCALE == SFD_ID_LAST,
                   "the block ends at %d, expected %d",
                   (int)STR_SCNFN_DESC_DAMAGE_SCALE, SFD_ID_LAST);
+    UT_ASSERT_MSG((int)STR_SCNFN_DESC_CAN_ALLY == SFD_ID_EXTRA,
+                  "can_ally's description is %d, expected %d",
+                  (int)STR_SCNFN_DESC_CAN_ALLY, SFD_ID_EXTRA);
 
     for (i = 0; i < SFD_ID_COUNT; i++) {
-        UT_ASSERT_MSG((int)kSfdIds[i] >= SFD_ID_FIRST &&
-                          (int)kSfdIds[i] <= SFD_ID_LAST,
-                      "the id at row %d is %d, outside %d to %d", (int)i,
-                      (int)kSfdIds[i], SFD_ID_FIRST, SFD_ID_LAST);
+        UT_ASSERT_MSG(((int)kSfdIds[i] >= SFD_ID_FIRST &&
+                       (int)kSfdIds[i] <= SFD_ID_LAST) ||
+                          (int)kSfdIds[i] == SFD_ID_EXTRA,
+                      "the id at row %d is %d, outside %d to %d and not %d",
+                      (int)i, (int)kSfdIds[i], SFD_ID_FIRST, SFD_ID_LAST,
+                      SFD_ID_EXTRA);
         for (j = 0; j < i; j++) {
             UT_ASSERT_MSG(kSfdIds[j] != kSfdIds[i],
                           "rows %d and %d both read id %d", (int)j, (int)i,
