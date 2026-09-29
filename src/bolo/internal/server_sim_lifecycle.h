@@ -28,7 +28,9 @@ void serverSimLobbyCheckAllReady(ServerSim *sim);
  * host did between rounds, cuts a team back to maxBots, and returns the
  * seats a script fielded to being held. ClearSeats is the first half of
  * serverSimScenarioSeatLobby on its own. OnMapChanged tells whoever owns the
- * scenario about the new map and then seats what they leave behind.
+ * scenario about the new map and then seats what they leave behind, where
+ * that is a different template from the one the lobby was seated from; a
+ * template that did not change leaves every bot where it is.
  *
  * serverSimScenarioSeatLobby and serverSimScenarioApplyLobbyRules are on
  * server_sim.h instead: a process booting onto a scripted map makes both

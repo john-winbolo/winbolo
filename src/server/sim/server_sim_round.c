@@ -113,6 +113,11 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
             serverSimRemoveBot(sim, i);
         }
     }
+    /* The scenario's seats went with them, so the lobby no longer holds what
+       its template built. Said here so the decision below seats it again even
+       where the template it reaches is the one attached already, which is
+       the case a decision otherwise leaves alone. */
+    sim->scenarioLobbySeated = false;
 
     /* Clear per-slot start reservations back to the none sentinel. */
     for (i = 0; i < MAX_TANKS; i++) {

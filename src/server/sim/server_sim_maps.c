@@ -1088,10 +1088,12 @@ bool serverSimRevertPreview(ServerSim *sim) {
         "serverSimRevertPreview: rolled back to '%s'", sim->mapName);
     serverSimApplyMapChange(sim);
 
-    /* The map change above seated the template from scratch, which is what a
-       map the host commits wants and not what one they backed out of wants:
-       the seats are back at the template's counts and the host's trim is
-       gone. Put their counts back. */
+    /* Where the previewed map brought a different template, the map change
+       above seated this one from scratch, which is what a map the host
+       commits wants and not what one they backed out of wants: the seats are
+       back at the template's counts and the host's trim is gone. Put their
+       counts back. Where the template never changed nothing was re-seated,
+       and the trim finds every team at or under its count already. */
     if (sim->previousSeatsValid) {
         serverSimScenarioTrimSeatsTo(sim, sim->previousSeats);
     }

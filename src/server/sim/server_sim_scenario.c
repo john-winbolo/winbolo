@@ -2069,12 +2069,18 @@ static bool scenarioSeatOne(ServerSim *sim, const ScnLobbyTeam *team,
 /* Build the lobby the attached scenario asks for, from whatever is there
  * now. Every seat the previous scenario left goes first, so committing a
  * plain map over a scenario one leaves no held seats behind, and a scenario
- * with no template of its own leaves an ordinary lobby. */
+ * with no template of its own leaves an ordinary lobby.
+ *
+ * What the seats were built from is written here, at the one place they are
+ * built, so a lobby a server seated at boot or on a reload answers the next
+ * map change the same way as a lobby a map commit seated. */
 void serverSimScenarioSeatLobby(ServerSim *sim) {
     ScnBrainModesCache modesCache;
     BYTE t;
     if (sim == NULL) return;
     serverSimScenarioClearSeats(sim);
+    sim->scenarioLobbySeated         = sim->scenarioLobbyValid;
+    sim->scenarioLobbySeatedTemplate = sim->scenarioLobby;
     if (!sim->scenarioLobbyValid) return;
     modesCache.count = 0;
     for (t = 0; t < sim->scenarioLobby.numTeams; t++) {
@@ -2245,36 +2251,38 @@ static bool scenarioTemplatesSame(const ScnLobbyTemplate *a,
  * map has not changed. */
 void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath) {
     const char *path;
+    bool        unchanged;
 
     if (sim == NULL) return;
     path = (mapPath != NULL) ? mapPath : "";
     if (sim->scenarioMapChanged != NULL) {
         sim->scenarioMapChanged(sim->scenarioMapChangedCtx, sim, path);
     }
-    /* A lobby a script lays out starts from that lobby, so where the
-       template is not the one the seats already there came from, every bot
-       the lobby had goes first: a single-player game opens on the default
-       map with one seeded enemy, and a host may have added bots to a plain
-       map before choosing a scripted one. Left in, such a bot sits ahead of
-       the script's seats on a side the script never meant, an eleventh
-       attacker where Survival fields ten. A lobby this has never seated is
-       the same case — whatever is in it predates the template attached now.
+    /* A template that did not change leaves the lobby exactly as it is: the
+       bots the host added, the scenario's seats the host trimmed, and the
+       difficulty and team each of them was given. The map is not part of the
+       question. A host who adds bots to a picked scenario and then looks at
+       other maps is changing the map and nothing else, and a lobby a mod
+       change or a list reorder decides again is the same lobby. The starts
+       were already reconciled against the new map before this runs, so a bot
+       that kept its seat also has a start on the map it is now on, or none
+       where the map has fewer starts than players, as a join would.
 
-       A template that did not change keeps them, and that is the half the
-       lobby's own commands depend on: a mod brings no lobby of its own, so
-       turning mods off or reordering the list decides the same template
-       again, and the bots a host put there by hand are theirs to keep. A
-       different map file is a change in its own right even where the two
-       maps ask for the same lobby, which is what the seated map recorded
-       below is held for.
+       A template that did change lays out its own lobby, so every bot the
+       lobby had goes first: a single-player game opens on the default map
+       with one seeded enemy, and a host may have added bots to a plain map
+       before choosing a scripted one. Left in, such a bot sits ahead of the
+       script's seats on a side the script never meant, an eleventh attacker
+       where Survival fields ten. A lobby this has never seated is the same
+       case — whatever is in it predates the template attached now.
 
        People stay where they are; the seating below only ever takes the
        first free slots. */
-    if (sim->scenarioLobbyValid &&
-        (!sim->scenarioLobbySeated ||
-         strcmp(path, sim->scenarioLobbySeatedMap) != 0 ||
-         !scenarioTemplatesSame(&sim->scenarioLobby,
-                                &sim->scenarioLobbySeatedTemplate))) {
+    unchanged = sim->scenarioLobbyValid && sim->scenarioLobbySeated &&
+                scenarioTemplatesSame(&sim->scenarioLobby,
+                                      &sim->scenarioLobbySeatedTemplate);
+    if (unchanged) return;
+    if (sim->scenarioLobbyValid) {
         BYTE i;
         for (i = 0; i < MAX_TANKS; i++) {
             if (serverSimIsBot(sim, i)) {
@@ -2282,18 +2290,9 @@ void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath) {
             }
         }
     }
+    /* Which also records what the seats it leaves were built from, for the
+       next call to hold against. */
     serverSimScenarioSeatLobby(sim);
-    /* And what the lobby now holds was built from, which is the whole of
-       what the next call asks. Written after the seating rather than before
-       it, because it describes the seats the seating leaves: the template
-       reaches the sim from outside this function — a host sets it in the
-       callback above and a caller may set it before calling at all — so the
-       only moment it is known to be the one the seats came from is the
-       moment they were made from it. */
-    sim->scenarioLobbySeated         = sim->scenarioLobbyValid;
-    sim->scenarioLobbySeatedTemplate = sim->scenarioLobby;
-    SDL_strlcpy(sim->scenarioLobbySeatedMap, path,
-                sizeof(sim->scenarioLobbySeatedMap));
 }
 
 /* The lobby's own settings, brought into line with whatever scenario is
