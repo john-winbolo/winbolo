@@ -291,10 +291,17 @@ local function roster_list()
   local left  = roll(SURVIVORS)
   local horde = roll(INFECTED)
   local list  = panel_head()
-  list[#list + 1] = { "text", COL_PAD, HEAD_Y, "cyan", "small", "left",
-                      "Uninfected" }
-  list[#list + 1] = { "text", COL_W + COL_PAD, HEAD_Y, "red", "small", "left",
-                      "Infected" }
+  -- Each heading is black on a band of its side's colour, so it reads as a
+  -- heading and not as one more name. The band ends two units above the
+  -- first name, and a unit is left clear between the two bands.
+  local function heading(x0, colour, label)
+    list[#list + 1] = { "rect", x0 + 1, HEAD_Y - 1, COL_W - 2, SMALL_EM + 2,
+                        colour, true }
+    list[#list + 1] = { "text", x0 + COL_PAD, HEAD_Y, "black", "small", "left",
+                        label }
+  end
+  heading(0, "cyan", "UNINFECTED")
+  heading(COL_W, "red", "INFECTED")
   local n = #list
 
   -- One column: a name on the left of it and its number on the right, cut so
@@ -561,6 +568,10 @@ end
 -- infected would start this one as a survivor who never refuels. A seat never
 -- goes from the horde back to the survivors inside a round, so this is the
 -- only thing a survivor is ever handed.
+--
+-- Beside the word goes one GoalHunter setting, on for a survivor and off for
+-- the horde: a survivor bot never fights a tank itself, and only shoots its
+-- own pillbox to anger it at a tank that comes near.
 local function word_for(p)
   if side[p] == INFECTED then
     return "ammoless"
@@ -581,7 +592,9 @@ local function hand_word(p)
   if handed[p] == word then
     return
   end
-  if game.bot_init(p, { [word] = "1" }) then
+  if game.bot_init(p, { [word] = "1",
+                        cfg = "ATTACK_TANK_PILL_HEAT_ONLY=" ..
+                              tostring(word == "normal") }) then
     handed[p] = word
   end
 end
