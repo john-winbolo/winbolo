@@ -2507,6 +2507,7 @@ STR_RULE_DESC_pill_shell_damage=Ile pancerza odbiera bunkrowi jeden pocisk.
 STR_RULE_DESC_pill_angry_divisor=Krok, o jaki odstęp bunkra przesuwa się od normalnego tempa w stronę najszybszego.
 STR_RULE_DESC_pill_fire_length=Jak daleko leci pocisk wystrzelony przez bunkier.
 STR_RULE_DESC_pill_base_defend_range=Jak blisko musi być baza, aby ostrzelanie jej rozgniewało bunkier.
+STR_RULE_DESC_pill_base_defend_shape=Jak mierzony jest pill_base_defend_range. 0 to kwadrat, mierzony na każdej osi łącznie z krawędzią, zasada WinBolo. 1 to okrąg, mierzony jako promień bez krawędzi, zasada Mac Bolo.
 STR_RULE_DESC_pill_aim_iterations=Jak usilnie bunkier stara się wyprzedzić poruszający się cel.
 STR_RULE_DESC_pill_massage_range=Jak blisko musi być czołg, aby bunkier celował według oryginalnego prostego przewidywania, a nie solvera, który nie trafia czołgu krążącego wokół niego. Zero, wartość klasyczna, oznacza bunkier, który zawsze prawidłowo wyprzedza cel; 384 to półtora pola — odległość, jaką stosował stary przełącznik ustawiany przy kompilacji.
 STR_RULE_DESC_pill_massage_cosine=Jak dokładnie prosto na bliski bunkier musi jechać czołg, aby mimo to był poprawnie namierzony — jako cosinus kąta między jego kursem a linią do bunkra. Jedynka celuje niedokładnie w każdy czołg w zasięgu pill_massage_range, zero w żaden z nich. Nie robi nic, gdy ta reguła jest równa zero.

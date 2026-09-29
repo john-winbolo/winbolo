@@ -159,6 +159,7 @@ void simRulesClassic(SimRules *out) {
     out->pill_angry_divisor    = PILLBOX_ANGRY_DIVISOR;
     out->pill_fire_length      = (float) PILLBOX_FIRE_DISTANCE;
     out->pill_base_defend_range = PILL_BASE_HIT_RANGE;
+    out->pill_base_defend_shape = PILL_BASE_HIT_SHAPE;
     out->pill_aim_iterations   = MAX_AIM_ITERATE;
     out->pill_massage_range    = PILLBOX_MASSAGE_RANGE;
     out->pill_massage_cosine   = (float) PILLBOX_MASSAGE_COSINE;
@@ -520,8 +521,11 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     /* The shell's own length, in half map squares, the way a tank's is:     \
        the gunsight rows are bounded the same way. */                        \
     X(pill_fire_length,          FLT,    0.5,    127.0)                      \
-    /* Zero is a pill that only answers for the square it stands on. */      \
+    /* Zero is a pill that only answers for the square it stands on, or      \
+       with the circle's exclusive edge, one that never answers at all. */   \
     X(pill_base_defend_range,    INT,    0,      255)                        \
+    /* PILL_BASE_HIT_SQUARE or PILL_BASE_HIT_CIRCLE. */                      \
+    X(pill_base_defend_shape,    INT,    0,      1)                          \
     /* The aim solver's step budget. One is a pill that never leads a        \
        target and fires straight at where it is standing now. */             \
     X(pill_aim_iterations,       INT,    1,      65535)                      \

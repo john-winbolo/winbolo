@@ -2649,6 +2649,7 @@ static const LangEntry langTable[] = {
     {2694, "Positional sound"},
     {2695, "Sounds play from the side of the screen they happen on."},
     {2696, "Not usable"},
+    {2697, "How pill_base_defend_range is measured. 0 is a square, taken on each axis with its edge included, the WinBolo rule. 1 is a circle, taken as a radius with its edge left out, the Mac Bolo rule."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

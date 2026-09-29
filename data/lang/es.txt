@@ -2514,6 +2514,7 @@ STR_RULE_DESC_pill_shell_damage=Blindaje que le quita un obús a un búnker.
 STR_RULE_DESC_pill_angry_divisor=El paso que da el intervalo de un búnker desde su ritmo normal hacia el más rápido.
 STR_RULE_DESC_pill_fire_length=Cuánto vuela el obús que dispara un búnker.
 STR_RULE_DESC_pill_base_defend_range=A qué distancia debe estar una base para que dispararle enfade a un búnker.
+STR_RULE_DESC_pill_base_defend_shape=Cómo se mide pill_base_defend_range. 0 es un cuadrado, medido en cada eje con el borde incluido, la regla de WinBolo. 1 es un círculo, medido como radio sin el borde, la regla de Mac Bolo.
 STR_RULE_DESC_pill_aim_iterations=Cuánto se esfuerza un búnker en anticipar un objetivo en movimiento.
 STR_RULE_DESC_pill_massage_range=A qué distancia debe estar un tanque para que un búnker apunte con la predicción hacia delante original en vez de con el resolutor, que falla con un tanque que lo rodea en círculos. Cero, la tabla clásica, es un búnker que siempre anticipa bien a su objetivo; 384 es casilla y media, la distancia que usaba el antiguo interruptor de compilación.
 STR_RULE_DESC_pill_massage_cosine=Con qué rectitud debe dirigirse hacia un búnker cercano un tanque para que, aun así, se le apunte correctamente, como el coseno del ángulo entre su rumbo y la línea hacia el búnker. Uno apunta de forma imprecisa a todo tanque dentro de pill_massage_range, cero a ninguno. No hace nada mientras esa regla sea cero.

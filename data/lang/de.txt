@@ -2513,6 +2513,7 @@ STR_RULE_DESC_pill_shell_damage=Panzerung, die eine Granate einem Bunker abzieht
 STR_RULE_DESC_pill_angry_divisor=Der Schritt, um den sich das Intervall eines Bunkers von seiner normalen Rate zu seiner schnellsten hin bewegt.
 STR_RULE_DESC_pill_fire_length=Wie weit die Granate fliegt, die ein Bunker abfeuert.
 STR_RULE_DESC_pill_base_defend_range=Wie nahe eine Basis sein muss, damit ein Schuss auf sie einen Bunker verärgert.
+STR_RULE_DESC_pill_base_defend_shape=Wie pill_base_defend_range gemessen wird. 0 ist ein Quadrat, auf jeder Achse gemessen und mit Rand, die WinBolo-Regel. 1 ist ein Kreis, als Radius gemessen und ohne Rand, die Mac-Bolo-Regel.
 STR_RULE_DESC_pill_aim_iterations=Wie stark sich ein Bunker bemüht, einem beweglichen Ziel vorauszuzielen.
 STR_RULE_DESC_pill_massage_range=Wie nahe ein Panzer sein muss, damit ein Bunker mit der ursprünglichen Vorausberechnung zielt statt mit dem Löser, der einen ihn umkreisenden Panzer verfehlt. Null, die klassische Tabelle, ist ein Bunker, der sein Ziel immer richtig vorausberechnet; 384 ist anderthalb Felder, die Distanz, die der alte Kompilierzeit-Schalter verwendete.
 STR_RULE_DESC_pill_massage_cosine=Wie direkt ein Panzer auf einen nahen Bunker zufahren muss, um trotzdem richtig angezielt zu werden, als Kosinus des Winkels zwischen seiner Fahrtrichtung und der Linie zum Bunker. Bei Eins wird auf jeden Panzer innerhalb von pill_massage_range nachlässig gezielt, bei Null auf keinen von ihnen. Bewirkt nichts, solange diese Regel null ist.

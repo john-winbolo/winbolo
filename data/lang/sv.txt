@@ -2513,6 +2513,7 @@ STR_RULE_DESC_pill_shell_damage=Pansar en granat tar bort från en bunker.
 STR_RULE_DESC_pill_angry_divisor=Steget en bunkers intervall tar från sin normala takt mot sin snabbaste.
 STR_RULE_DESC_pill_fire_length=Hur långt granaten en bunker skjuter flyger.
 STR_RULE_DESC_pill_base_defend_range=Hur nära en bas måste vara för att skjuta på den ska göra en bunker arg.
+STR_RULE_DESC_pill_base_defend_shape=Hur pill_base_defend_range mäts. 0 är en kvadrat, mätt längs varje axel med kanten inräknad, WinBolos regel. 1 är en cirkel, mätt som en radie utan kanten, Mac Bolos regel.
 STR_RULE_DESC_pill_aim_iterations=Hur hårt en bunker jobbar för att leda ett rörligt mål.
 STR_RULE_DESC_pill_massage_range=Hur nära en tank måste vara för att en bunker ska sikta med den ursprungliga framåtförutsägelsen i stället för lösaren, som missar en tank som cirklar den. Noll, den klassiska tabellen, är en bunker som alltid leder sitt mål korrekt; 384 är en och en halv ruta, avståndet den gamla kompileringstidsomkopplaren använde.
 STR_RULE_DESC_pill_massage_cosine=Hur rakt mot en nära bunker en tank måste köra för att ändå siktas rätt på, som cosinus för vinkeln mellan dess kurs och linjen till bunkern. Vid ett siktas det slarvigt på varje tank inom pill_massage_range, vid noll på ingen av dem. Gör ingenting medan den regeln är noll.

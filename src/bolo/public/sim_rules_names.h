@@ -214,6 +214,8 @@ typedef enum {
     X(pill_angry_divisor, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)           \
     X(pill_fire_length, SIM_RULE_VALUE_FLOAT, SIM_RULE_UNIT_COUNT)           \
     X(pill_base_defend_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)       \
+    X(pill_base_defend_shape, SIM_RULE_VALUE_INT,                            \
+      SIM_RULE_UNIT_CONSTANT_BY_DESIGN)                                      \
     X(pill_aim_iterations, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)          \
     X(pill_massage_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)           \
     X(pill_massage_cosine, SIM_RULE_VALUE_FLOAT, SIM_RULE_UNIT_COUNT)        \
