@@ -874,10 +874,10 @@ void lobbyScenarioDetailsOpenAttached(ClientSim *cs) {
     s_detailsWantOpen   = true;
 }
 
-/* The same dialog for one row of the lobby's ordered script list. The icons
- * beside the scenario line and the mods line both land here, each with its
- * own row, so a round running a scenario and a mod at once gives two icons
- * that describe two different scripts.
+/* The same dialog for one row of the lobby's ordered script list. Every
+ * script name the lobby lines draw as a link lands here, each with its own
+ * row, so a round running a scenario and a mod at once gives two names that
+ * describe two different scripts.
  *
  * The list carries no description: the catalogue response is what carries
  * every description, keyed by file name. So the description is taken from

@@ -2586,7 +2586,7 @@ static const LangEntry langTable[] = {
     {2606, "All"},
     {2607, "Only mods"},
     {2608, "Only scenarios"},
-    {2609, "Mods Enabled"},
+    {2609, "Mods/Scenario Enabled"},
     {2610, "Opens the chooser, where mods are added, removed and ordered."},
     {2611, "Load and run order: Higher up has priority."},
     {2612, "Everything this server offers is already in the round."},

@@ -2382,8 +2382,8 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
            BeginPopupModal only finds a popup opened at its own scope. --- */
         lobbyScenarioRulesRenderModal(cs);
 
-        /* --- What one scenario or mod is, opened from the icon on either of
-           the two script lines or from a row of the chooser. Here because no
+        /* --- What one scenario or mod is, opened from a script name on
+           either of the two script lines or from a row of the chooser. Here because no
            one scope sees all three: the two lines are drawn inside the
            settings form and inside the map panel, and the chooser is a
            top-level window of its own drawn after this window has ended, so

@@ -758,7 +758,7 @@ typedef struct ControlEvent {
                                             * every server did before the field
                                             * existed. */
             bool     lobbyModsOff;         /* the round composes none of the
-                                            * picked mods. Held in the negative
+                                            * picked mods or scenarios. Held in the negative
                                             * sense for the same reason as
                                             * lobbySmartPingsOff above, and read
                                             * back through the positive accessor

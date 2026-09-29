@@ -163,19 +163,20 @@ typedef enum {
     LST_MODS_OFF          = 16, /* 1 byte bool, carried in the NEGATIVE
                                  * sense for the same reason as
                                  * LST_SMART_PINGS_OFF above: non-zero means
-                                 * the round composes none of the mods the
-                                 * host has picked. Running them is what
+                                 * the round composes none of the scripts
+                                 * the host has picked. Running them is what
                                  * every build before this one did, so it is
                                  * the zero, and a server or client that
                                  * never writes the byte behaves as it did.
                                  *
-                                 * Mods only. An entry whose manifest says
-                                 * kind = "mod" is skipped when this is set;
-                                 * a scenario on the list and the map's own
-                                 * script both still play. The pick list is
-                                 * not touched, so checking the box back on
-                                 * brings the same mods back in the same
-                                 * order. */
+                                 * Mods and picked scenarios alike: the
+                                 * lobby labels it Mods/Scenario. Every pick
+                                 * is skipped when this is set, and only the
+                                 * map's own script still plays. The pick
+                                 * list is not touched, so checking the box
+                                 * back on brings the same scripts back in
+                                 * the same order. A server built before the
+                                 * scenario half skips the mods alone. */
     LST_POSITIONAL_SOUND  = 17  /* 1 byte bool, carried the plain way
                                  * round: non-zero means on. When on,
                                  * sound events tell a human which side a
