@@ -421,6 +421,51 @@ static bool lobbyRoundSameFiles(const LobbyRoundRow *a, int aCount,
     return true;
 }
 
+/* Whether rows[idx] is the map's own scenario with a picked scenario beside
+ * it in the same list. The server sends that list with Mods/Scenario off:
+ * the picks do not compose, so the map's own script plays and is put back at
+ * the front, while the list still holds the picked scenario for when the box
+ * goes back on.
+ *
+ * Such a row is not sent. A list naming the map's own scenario and a picked
+ * one is two scenarios, which the CMD_SET_SCRIPT_LIST arm refuses, and a list
+ * without the map's row is how a host says the picked scenario replaces it.
+ * That is also what the server does with this list while the box is off: the
+ * map's own script is put back at the front, so leaving it off loses
+ * nothing. Only a bound scenario is skipped; a map whose own script is a mod
+ * can go out beside a picked scenario. */
+static bool lobbyRoundShadowedIn(const LobbyRoundRow *rows, int count,
+                                 int idx) {
+    int i;
+
+    if (idx < 0 || idx >= count) return false;
+    if (!rows[idx].bound || rows[idx].mod) return false;
+    for (i = 0; i < count; i++) {
+        if (!rows[i].bound && !rows[i].mod) return true;
+    }
+    return false;
+}
+
+/* Two compositions as they would go out, shadowed rows left off both. This is
+ * the test OK makes before it sends: a draft that differs from the round only
+ * in where a shadowed row sits sends the same list, and the server would
+ * re-attach and unready everyone for nothing. */
+static bool lobbyRoundSameSent(const LobbyRoundRow *a, int aCount,
+                               const LobbyRoundRow *b, int bCount) {
+    int i = 0;
+    int j = 0;
+
+    for (;;) {
+        while (i < aCount && lobbyRoundShadowedIn(a, aCount, i)) i++;
+        while (j < bCount && lobbyRoundShadowedIn(b, bCount, j)) j++;
+        if (i >= aCount || j >= bCount) break;
+        if (SDL_strcmp(a[i].file, b[j].file) != 0) return false;
+        i++;
+        j++;
+    }
+    return i >= aCount && j >= bCount;
+}
+
 /* Where a file sits in the draft, and where the draft's scenario sits. Both
  * -1 for none. The scenario is found by kind and never by position: a round
  * running mods and no scenario is one a host can set up from here, and index
@@ -434,28 +479,9 @@ static int lobbyRoundIndexOfFile(const char *file) {
     return -1;
 }
 
-/* Whether the row at idx is the map's own scenario with a picked scenario
- * beside it in the draft. The server sends that list with Mods/Scenario off:
- * the picks do not compose, so the map's own script plays and is put back at
- * the front, while the list still holds the picked scenario for when the box
- * goes back on.
- *
- * Such a row is not sent. A list naming the map's own scenario and a picked
- * one is two scenarios, which the CMD_SET_SCRIPT_LIST arm refuses, and a list
- * without the map's row is how a host says the picked scenario replaces it.
- * That is also what the server does with this list while the box is off: the
- * map's own script is put back at the front, so leaving it off loses
- * nothing. Only a bound scenario is skipped; a map whose own script is a mod
- * can go out beside a picked scenario. */
+/* The draft's own row at idx, shadowed: see lobbyRoundShadowedIn. */
 static bool lobbyRoundBoundShadowed(int idx) {
-    int i;
-
-    if (idx < 0 || idx >= s_roundCount) return false;
-    if (!s_round[idx].bound || s_round[idx].mod) return false;
-    for (i = 0; i < s_roundCount; i++) {
-        if (!s_round[i].bound && !s_round[i].mod) return true;
-    }
-    return false;
+    return lobbyRoundShadowedIn(s_round, s_roundCount, idx);
 }
 
 /* The scenario a new scenario pick replaces. A shadowed map row is passed
@@ -510,6 +536,18 @@ static int lobbyRoundWhyNotAdd(const LobbyScenarioRow *row) {
     }
     if (lobbyRoundSendCount() >= CMD_SCRIPT_LIST_MAX) {
         return STR_DLGLOBBY_SCENARIO_ROUND_FULL;
+    }
+    /* A draft with a shadowed row is full at CMD_SCRIPT_LIST_MAX rows, not
+       sent rows. The server publishes at most LOBBY_SCRIPT_LIST_MAX rows and
+       the map's row takes one of them, so with a full list of picks the last
+       pick is not in the list this draft was built from. One more pick here
+       would send a full list without that hidden pick, and it would leave
+       the round with nobody having asked. */
+    for (int i = 0; i < s_roundCount; i++) {
+        if (lobbyRoundBoundShadowed(i) &&
+            s_roundCount >= CMD_SCRIPT_LIST_MAX) {
+            return STR_DLGLOBBY_SCENARIO_ROUND_FULL;
+        }
     }
     return 0;
 }
@@ -576,12 +614,19 @@ static void lobbyRoundDrop(int idx) {
  * else. Both of those now do what the host says, and a region's identity no
  * longer comes from its script's position in the list, which is what made the
  * pin necessary. It still cannot be taken out of the round — that is
- * lobbyRoundDrop, and it is the map that decides it. */
+ * lobbyRoundDrop, and it is the map that decides it.
+ *
+ * A shadowed row does not move, and nothing moves past it. It is not sent
+ * (see lobbyRoundShadowedIn), so a move would change the screen and not the
+ * list, and the row would jump back to the front when the server answered. */
 static bool lobbyRoundMayMove(int idx, int dir) {
     int to = idx + dir;
 
     if (idx < 0 || idx >= s_roundCount) return false;
     if (to < 0 || to >= s_roundCount) return false;
+    if (lobbyRoundBoundShadowed(idx) || lobbyRoundBoundShadowed(to)) {
+        return false;
+    }
     return true;
 }
 
@@ -2859,9 +2904,10 @@ void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
            An identical list is not free: the server detaches and re-attaches
            the script and unreadies everyone for it, so a host who opened the
            dialog to read it and pressed OK would restart the round's script
-           for nothing. */
+           for nothing. Compared as sent, shadowed rows left off both sides,
+           because that is the list the server would get. */
         if (wantSend &&
-            !lobbyRoundSameFiles(s_round, s_roundCount, s_live, s_liveCount)) {
+            !lobbyRoundSameSent(s_round, s_roundCount, s_live, s_liveCount)) {
             lobbyRoundSend(cs);
         }
     }
