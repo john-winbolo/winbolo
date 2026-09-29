@@ -1080,7 +1080,7 @@ static inline bool lobbyBotNameAcceptable(
 /* PACKET_MAX_PLAYER_NAME lives in public/wire_limits.h (included above
  * via the file-top include list) alongside PACKET_MAX_CHAT_MESSAGE. */
 
-/* Maximum compressed map size (256x256 LZW + bases + pills + starts). The map
+/* Maximum compressed map size (zlib over bases + pills + starts + 256x256). The map
  * streams on CHANNEL_BULK (no per-chunk packet), but this still bounds the blob
  * the sender stages and the receiver allocates. */
 #define MAP_DOWNLOAD_MAX_SIZE 65536

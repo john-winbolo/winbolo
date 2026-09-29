@@ -49,7 +49,7 @@ static const AwardResult *find_award(const AwardResult *res, int n, int id) {
 
 static ServerSim *make_sim_running(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097,
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN,
                                                "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) return NULL;
@@ -482,7 +482,7 @@ int run_round_stats_attribution_callbacks(void) {
  * current-position and lag-compensated hit functions. */
 int run_round_stats_direct_damage(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     UT_ASSERT(sim != NULL);
     serverSimSetLobbyEnabled(sim, false);
@@ -547,7 +547,7 @@ int run_round_stats_mine_owner_api(void) {
 /* A mine detonation credits effective tank damage to the player who laid it. */
 int run_round_stats_mine_damage(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     UT_ASSERT(sim != NULL);
     serverSimSetLobbyEnabled(sim, false);
@@ -573,7 +573,7 @@ int run_round_stats_mine_damage(void) {
 /* A player removed mid-round has their mine cells released. */
 int run_round_stats_leaver_clears_mines(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     UT_ASSERT(sim != NULL);
     serverSimSetLobbyEnabled(sim, false);

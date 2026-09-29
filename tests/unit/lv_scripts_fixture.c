@@ -159,7 +159,7 @@ static bool lvsfRecordRound(const char *tag, const char *scenarioText,
         return false;
     }
 
-    sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                     gameOpen, false, 0, -1);
     if (sim == NULL) {
         lvsfDropDir();

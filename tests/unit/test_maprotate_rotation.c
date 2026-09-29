@@ -47,7 +47,7 @@ extern int  wbnStubLobbyUpdateCalls;
 /* No-lobby, map-rotation-mode ServerSim from the embedded Everard map. */
 static ServerSim *make_rotate_sim(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) return NULL;
     serverSimSetLobbyEnabled(sim, false);
@@ -120,7 +120,7 @@ int run_maprotate_defers_wbn_update_until_key_rotated(void) {
 /* Plain no-lobby ServerSim (e.g. -nolobby / -quitonwin): game-over is terminal. */
 static ServerSim *make_plain_nolobby_sim(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) return NULL;
     serverSimSetLobbyEnabled(sim, false);

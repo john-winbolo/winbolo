@@ -119,7 +119,7 @@ static int al_run_case(const BYTE *seats, int numSeats, BYTE leaver,
     int failed;
     int i;
 
-    sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                     gameOpen, false, 0, -1);
     UT_ASSERT(sim != NULL);
     serverSimSetLobbyEnabled(sim, true);

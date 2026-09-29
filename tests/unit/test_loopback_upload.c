@@ -39,7 +39,7 @@
 
 #define CONNECT_MAX  2000
 #define UPLOAD_MAX   4000   /* handshake + bulk transfer convergence */
-#define EMAP_LEN     5097   /* compressed length of E_MAP (matches harness) */
+#define EMAP_LEN     E_MAP_LEN   /* compressed length of E_MAP (matches harness) */
 
 static bool pred_connected(LoopbackHarness *h, void *user) {
     (void)user;
