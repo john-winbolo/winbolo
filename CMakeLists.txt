@@ -5996,6 +5996,7 @@ set(_unit_test_names
     lobby_template_cap_refuses_extra_human
     lobby_template_cap_never_binds_bots
     lobby_template_cancel_keeps_trim
+    lobby_template_cancel_same_template_keeps_edits
     lobby_template_cancel_keeps_empty_team
     lobby_template_cancel_chain_rolls_back
     lobby_template_commit_keeps_new_lobby
@@ -6009,6 +6010,7 @@ set(_unit_test_names
     lobby_map_keeps_bots_plain
     lobby_map_keeps_bots_scenario
     lobby_map_keeps_bots_map_own_row
+    lobby_map_rotate_holds_seats_again
     scripted_game_type_loadout_follows_base
     scripted_game_type_no_base_is_strict
     scripted_game_type_strict_ignores_base

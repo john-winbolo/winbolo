@@ -1498,13 +1498,10 @@ scriptListDone:
         if (!bp->pending) return CMD_REJECT_BAD_STATE;
         /* "Humans only" kicks every bot before applying the human-only
          * team assignments — the proposal contains no team for those
-         * slots. */
+         * slots. The scenario's seats go too, and the next map change
+         * seats them again. */
         if (!bp->includeBots) {
-            for (int i = 0; i < MAX_TANKS; i++) {
-                if (serverSimIsBot(sim, (BYTE)i)) {
-                    serverSimRemoveBot(sim, (BYTE)i);
-                }
-            }
+            serverSimRemoveAllBots(sim);
         }
         for (int i = 0; i < MAX_TANKS; i++) {
             if (bp->teamForSlot[i] != 0) {

@@ -2950,6 +2950,7 @@ int run_lobby_template_cap_seats_human_above_bots(void);
 int run_lobby_template_cap_refuses_extra_human(void);
 int run_lobby_template_cap_never_binds_bots(void);
 int run_lobby_template_cancel_keeps_trim(void);
+int run_lobby_template_cancel_same_template_keeps_edits(void);
 int run_lobby_template_cancel_keeps_empty_team(void);
 int run_lobby_template_cancel_chain_rolls_back(void);
 int run_lobby_template_commit_keeps_new_lobby(void);
@@ -2967,6 +2968,7 @@ int run_lobby_template_add_bot_takes_template(void);
 int run_lobby_map_keeps_bots_plain(void);
 int run_lobby_map_keeps_bots_scenario(void);
 int run_lobby_map_keeps_bots_map_own_row(void);
+int run_lobby_map_rotate_holds_seats_again(void);
 
 /* The scripted game type (test_scripted_game_type.c): gameScripted resolving
  * through the base game the scenario declared, at the loadout and at the

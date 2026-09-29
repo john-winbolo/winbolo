@@ -129,13 +129,10 @@ static int balanceThreadFunc(void *data) {
             serverSimPublishControl(sim, &propEvt);
         }
         /* "Humans only" kicks every bot before applying the human-only
-         * team assignments. */
+         * team assignments. The scenario's seats go too, and the next map
+         * change seats them again. */
         if (!includeBots) {
-            for (i = 0; i < MAX_TANKS; i++) {
-                if (serverSimIsBot(sim, (BYTE)i)) {
-                    serverSimRemoveBot(sim, (BYTE)i);
-                }
-            }
+            serverSimRemoveAllBots(sim);
         }
         for (i = 0; i < MAX_TANKS; i++) {
             if (serverSimGetBalanceProposal(sim)->teamForSlot[i] != 0) {

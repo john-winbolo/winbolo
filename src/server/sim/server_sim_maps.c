@@ -675,8 +675,10 @@ static bool serverSimApplyRandomMapConfig(ServerSim *sim,
  *
  * Everything a Cancel needs goes in together: the bytes, the display name,
  * the file the map was read from so a script can be found beside it again,
- * and the template seats each team holds, because the cancel re-seats the
- * template from scratch and the host's trim would otherwise go with it.
+ * and the template seats each team holds, because where the previewed map
+ * brought a different template the cancel re-seats this one from scratch,
+ * and the host's trim would otherwise go with it. Where the template never
+ * changed nothing is re-seated and the counts put back are the ones there.
  * previousSeatsValid comes from serverSimScenarioSeatCounts, which answers
  * false when no template is attached — that is what keeps "no template" apart
  * from a team the host emptied on purpose.

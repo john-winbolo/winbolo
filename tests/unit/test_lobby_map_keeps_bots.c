@@ -24,6 +24,10 @@
  *       with a mod picked over it. A plain map takes the map's row off the
  *       list and leaves the mod; the scripted map puts its row back. The
  *       bots stay through both.
+ *   lobby_map_rotate_holds_seats_again — a server that skips the lobby and
+ *       rotates maps. A seat the script fielded in one round is held again
+ *       in the next, though the template is the same, because nobody is
+ *       there between rounds to keep an edit.
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
@@ -598,5 +602,91 @@ int run_lobby_map_keeps_bots_map_own_row(void) {
     if (mkSameRoster(was, now, "back onto the big map") != 0) return 1;
 
     mkDestroy(sim);
+    return 0;
+}
+
+/* ── A rotation opens on the template's own lobby ─────────────────── */
+
+/* A server that skips the lobby and rotates maps, as -skiplobby -mapdir
+ * -maprotate runs one: nobody is there between rounds to keep an edit, so a
+ * seat the script fielded in the round that ended is held again in the next,
+ * even though the template the next map reaches is the same one. */
+int run_lobby_map_rotate_holds_seats_again(void) {
+    BYTE             emap[6000] = E_MAP;
+    ServerSim       *sim;
+    ScnLobbyTemplate t;
+    char             name[PLAYER_NAME_LEN];
+    int              slot, held;
+    BYTE             i;
+
+    UT_ASSERT(mkSetUp());
+    ut_brain_stub_arm(true);
+    sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
+                                    gameOpen, false, 0, -1);
+    UT_ASSERT(sim != NULL);
+    serverSimSetLobbyEnabled(sim, false);
+    serverSimSetMapRotate(sim, true);
+    serverSimSetBotAiType(sim, aiFull);
+    serverSimSetBotBrainPath(sim, mkBrain);
+    UT_ASSERT(serverSimMapDirBuild(sim, mkMaps));
+
+    /* Two held seats, seated the way a server booting onto the map seats
+       them. No scenario host follows the map here, so the template stays
+       attached across the rotation, as a script beside every map would. */
+    memset(&t, 0, sizeof(t));
+    t.numTeams         = 1;
+    t.teams[0].id      = 3;
+    t.teams[0].bots    = 2;
+    t.teams[0].maxBots = 2;
+    t.teams[0].fielded = false;
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    serverSimScenarioSeatLobby(sim);
+
+    slot = -1;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (sim->playerConnected[i] && sim->lobbyPlayers[i].keepSeat) {
+            slot = i;
+            break;
+        }
+    }
+    UT_ASSERT_MSG(slot >= 0, "the template seated nothing");
+
+    /* The round runs and a wave fields one of the seats. */
+    serverSimStartGame(sim);
+    playersGetPlayerName(&sim->sim.plyrs, (BYTE)slot, name, sizeof(name),
+                         TRUE);
+    {
+        ServerSimBotConfig cfg;
+        memset(&cfg, 0, sizeof(cfg));
+        cfg.brainPath  = mkBrain;
+        cfg.brainName  = name;
+        cfg.ai         = aiFull;
+        cfg.gameType   = gameOpen;
+        cfg.teamNumber = 3;
+        UT_ASSERT(serverSimAddBot(sim, (BYTE)slot, &cfg));
+    }
+    UT_ASSERT_MSG(sim->lobbyPlayers[slot].fielded, "the seat did not field");
+
+    serverSimMapRotateRound(sim);
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "the rotation did not start the next round");
+
+    held = 0;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i] || !sim->lobbyPlayers[i].keepSeat) {
+            continue;
+        }
+        UT_ASSERT_MSG(!sim->lobbyPlayers[i].fielded,
+                      "seat %d of the template is still on the field after "
+                      "the rotation", (int)i);
+        UT_ASSERT_MSG(sim->lobbyPlayers[i].teamNumber == 3,
+                      "seat %d of the template is on team %d, not 3", (int)i,
+                      (int)sim->lobbyPlayers[i].teamNumber);
+        held++;
+    }
+    UT_ASSERT_MSG(held == 2, "the next round holds %d of the template's "
+                  "seats, expected 2", held);
+
+    serverSimDestroy(sim);
     return 0;
 }

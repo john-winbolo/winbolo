@@ -105,19 +105,10 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
         serverSimConsoleMessage(msg);
     }
 
-    /* Drop any bots the previous occupants added, seats held for a bot that
-       was never fielded included — those have no bot manager entry, so the
-       roster is what has to be asked. */
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (serverSimIsBot(sim, i)) {
-            serverSimRemoveBot(sim, i);
-        }
-    }
-    /* The scenario's seats went with them, so the lobby no longer holds what
-       its template built. Said here so the decision below seats it again even
-       where the template it reaches is the one attached already, which is
-       the case a decision otherwise leaves alone. */
-    sim->scenarioLobbySeated = false;
+    /* Drop any bots the previous occupants added, the scenario's seats
+       included, so the decision below seats the template again even where
+       it reaches the one attached already. */
+    serverSimRemoveAllBots(sim);
 
     /* Clear per-slot start reservations back to the none sentinel. */
     for (i = 0; i < MAX_TANKS; i++) {
@@ -1788,6 +1779,15 @@ void serverSimMapRotateRound(ServerSim *sim) {
      * gameOver path via serverSimReturnToLobby). */
     sim->state = serverStateLobby;
     if (sim->mapDirFiles != NULL) {
+        /* The round being left may have fielded the scenario's held seats,
+           and nobody is here to keep an edit to them, so the next round
+           opens on the template's own lobby. A decision that reaches the
+           same template leaves the seats as they stand; this is what tells
+           it to seat them again. Not serverSimScenarioReconcileLobby: that
+           takes every fielded seat of the template off the field, a team
+           the template fields from the start included, and in a round that
+           starts straight away nothing puts that team back on. */
+        sim->scenarioLobbySeated = false;
         serverSimMapDirPickRandom(sim);
     }
 

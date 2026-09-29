@@ -1201,8 +1201,12 @@ void serverInstanceTick(ServerSim *sim) {
     sim->gameLength = sim->originalGameLength;
     sim->hadPlayersEver = FALSE;
     sim->emptyResetTicks = -1;
-    /* Pick next map from rotation if mapdir is configured */
+    /* Pick next map from rotation if mapdir is configured. The seats the
+     * round fielded go back to the template's own lobby, as they do in
+     * serverSimMapRotateRound (see the comment there): the server is empty,
+     * so there is no host edit to keep. */
     if (sim->mapDirFiles != NULL) {
+      sim->scenarioLobbySeated = false;
       serverSimMapDirPickRandom(sim);
     }
     /* End the WBN session, upload the round's log against the just-
