@@ -1284,6 +1284,7 @@ STR_DLGLOBBY_UPLOAD_ERR_DISABLED=Uploads uitgeschakeld op deze server.
 STR_DLGLOBBY_UPLOAD_ERR_FULL=Kaartbibliotheek van de server is vol.
 STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN=Te veel verzoeken \xe2\x80\x94 wacht even voordat je het opnieuw probeert.
 STR_DLGLOBBY_UPLOAD_ERR_REJECTED=Upload geweigerd door server.
+STR_DLGLOBBY_UPLOAD_ERR_TIMEOUT=Geen antwoord van de server. Probeer de upload opnieuw.
 STR_DLGLOBBY_WBN_ERR_DOWNLOAD=Downloaden mislukt
 STR_DLGLOBBY_WBN_ERR_BADRESPONSE=Ongeldige reactie van WinBolo.net
 STR_DLGLOBBY_WBN_ERR_NETERROR=Netwerkfout bij ophalen kaart

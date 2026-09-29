@@ -1778,6 +1778,7 @@ static const char *lobbyScenarioSendRefusal(void) {
         case 6: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_FULL);
         case 7: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN);
         case 8: return langGetText(STR_DLGLOBBY_SCRIPT_ERR_NAME_TAKEN);
+        case 9: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_TIMEOUT);
         default: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_REJECTED);
     }
 }

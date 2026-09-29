@@ -1282,6 +1282,7 @@ STR_DLGLOBBY_UPLOAD_ERR_DISABLED=Загрузка отключена на это
 STR_DLGLOBBY_UPLOAD_ERR_FULL=Библиотека карт сервера заполнена.
 STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN=Слишком много запросов — подождите немного перед повтором.
 STR_DLGLOBBY_UPLOAD_ERR_REJECTED=Загрузка отклонена сервером.
+STR_DLGLOBBY_UPLOAD_ERR_TIMEOUT=Сервер не ответил. Попробуйте загрузить ещё раз.
 STR_DLGLOBBY_WBN_ERR_DOWNLOAD=Загрузка не удалась
 STR_DLGLOBBY_WBN_ERR_BADRESPONSE=Неверный ответ от WinBolo.net
 STR_DLGLOBBY_WBN_ERR_NETERROR=Ошибка сети при загрузке карты

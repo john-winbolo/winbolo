@@ -1349,6 +1349,7 @@ STR_DLGLOBBY_UPLOAD_ERR_DISABLED=Subidas desactivadas en este servidor.
 STR_DLGLOBBY_UPLOAD_ERR_FULL=La biblioteca de mapas del servidor está llena.
 STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN=Demasiadas solicitudes \xe2\x80\x94 espera un momento antes de reintentar.
 STR_DLGLOBBY_UPLOAD_ERR_REJECTED=Subida rechazada por el servidor.
+STR_DLGLOBBY_UPLOAD_ERR_TIMEOUT=El servidor no respondió. Vuelve a intentar la subida.
 STR_DLGLOBBY_WBN_ERR_DOWNLOAD=Descarga fallida
 STR_DLGLOBBY_WBN_ERR_BADRESPONSE=Respuesta incorrecta de WinBolo.net
 STR_DLGLOBBY_WBN_ERR_NETERROR=Error de red al obtener el mapa

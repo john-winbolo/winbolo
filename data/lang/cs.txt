@@ -1298,6 +1298,7 @@ STR_DLGLOBBY_UPLOAD_ERR_DISABLED=Nahrávání je na tomto serveru zakázáno.
 STR_DLGLOBBY_UPLOAD_ERR_FULL=Knihovna map serveru je plná.
 STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN=Příliš mnoho požadavků — chvíli počkej a zkus to znovu.
 STR_DLGLOBBY_UPLOAD_ERR_REJECTED=Nahrání zamítnuto serverem.
+STR_DLGLOBBY_UPLOAD_ERR_TIMEOUT=Server neodpověděl. Zkus nahrání znovu.
 STR_DLGLOBBY_WBN_ERR_DOWNLOAD=Stahování selhalo
 STR_DLGLOBBY_WBN_ERR_BADRESPONSE=Chybná odpověď od WinBolo.net
 STR_DLGLOBBY_WBN_ERR_NETERROR=Chyba sítě při stahování mapy

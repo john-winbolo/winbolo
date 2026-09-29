@@ -1382,6 +1382,7 @@ STR_DLGLOBBY_UPLOAD_ERR_DISABLED=Uploads disabled on this server.
 STR_DLGLOBBY_UPLOAD_ERR_FULL=Server map library is full.
 STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN=Too many requests — please wait a moment before retrying.
 STR_DLGLOBBY_UPLOAD_ERR_REJECTED=Upload rejected by server.
+STR_DLGLOBBY_UPLOAD_ERR_TIMEOUT=No reply from the server. Try the upload again.
 STR_DLGLOBBY_WBN_ERR_DOWNLOAD=Download failed
 STR_DLGLOBBY_WBN_ERR_BADRESPONSE=Bad response from WinBolo.net
 STR_DLGLOBBY_WBN_ERR_NETERROR=Network error fetching map

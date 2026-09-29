@@ -1284,6 +1284,7 @@ STR_DLGLOBBY_UPLOAD_ERR_DISABLED=이 서버에서는 업로드가 비활성화�
 STR_DLGLOBBY_UPLOAD_ERR_FULL=서버 맵 라이브러리가 가득 찼어요.
 STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN=요청이 너무 많아요 \xe2\x80\x94 잠시 후 다시 시도해 주세요.
 STR_DLGLOBBY_UPLOAD_ERR_REJECTED=서버가 업로드를 거부했어요.
+STR_DLGLOBBY_UPLOAD_ERR_TIMEOUT=서버에서 응답이 없어요. 업로드를 다시 시도해 주세요.
 STR_DLGLOBBY_WBN_ERR_DOWNLOAD=다운로드 실패
 STR_DLGLOBBY_WBN_ERR_BADRESPONSE=WinBolo.net에서 잘못된 응답을 받았어요
 STR_DLGLOBBY_WBN_ERR_NETERROR=맵을 가져오는 중 네트워크 오류가 발생했어요

@@ -1284,6 +1284,7 @@ STR_DLGLOBBY_UPLOAD_ERR_DISABLED=Bu sunucuda yükleme devre dışı.
 STR_DLGLOBBY_UPLOAD_ERR_FULL=Sunucunun harita kütüphanesi dolu.
 STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN=Çok fazla istek \xe2\x80\x94 yeniden denemeden önce lütfen biraz bekleyin.
 STR_DLGLOBBY_UPLOAD_ERR_REJECTED=Yükleme sunucu tarafından reddedildi.
+STR_DLGLOBBY_UPLOAD_ERR_TIMEOUT=Sunucudan yanıt yok. Lütfen yüklemeyi yeniden deneyin.
 STR_DLGLOBBY_WBN_ERR_DOWNLOAD=İndirme başarısız
 STR_DLGLOBBY_WBN_ERR_BADRESPONSE=WinBolo.net'ten geçersiz yanıt
 STR_DLGLOBBY_WBN_ERR_NETERROR=Harita indirilirken ağ hatası
