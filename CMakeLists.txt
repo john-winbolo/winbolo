@@ -3983,6 +3983,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_gunsight_reconciliation.c
     tests/unit/test_tank_alliance_unfielded.c
     tests/unit/test_tank_death_state.c
+    tests/unit/test_tank_knockback.c
     tests/unit/test_tank_status_wire.c
     tests/unit/test_voice_flags.c
     tests/unit/test_voice_talking_codec.c
@@ -4942,6 +4943,7 @@ set(_unit_test_names
     upload_timeout_releases_other_player
     upload_lost_done_retry
     upload_partial_timeout_retry
+    upload_begin_without_trailer_refused
     upload_filename_safe
     upload_filename_safe_script
     lobby_bot_name_rejects_reserved_prefix
@@ -5303,6 +5305,16 @@ set(_unit_test_names
     tank_damage_overkill_destroys
     tank_damage_partial_survives
     tank_destroyed_snapshot_round_trip
+    tank_knockback_heading_symmetric
+    tank_knockback_follows_shell_angle
+    tank_knockback_speed_untouched
+    tank_knockback_large_step
+    tank_knockback_settles_to_zero
+    tank_knockback_armour_paths
+    tank_knockback_timing_drive
+    tank_knockback_replaces_mines
+    tank_knockback_rules_respawn
+    tank_knockback_mac_off_ignores_bonus
     tank_status_wire_bits
     tank_status_wire_start_find_round_trip
     two_clients_full_sync_independent

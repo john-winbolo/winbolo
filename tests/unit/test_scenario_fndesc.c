@@ -48,8 +48,8 @@ static const langid kSfdIds[] = {
 #define SFD_ID_FIRST 2435
 #define SFD_ID_LAST  2469
 #define SFD_ID_EXTRA 2697
-#define SFD_ID_LATER_FIRST 2701
-#define SFD_ID_LATER_LAST  2703
+#define SFD_ID_LATER_FIRST 2704
+#define SFD_ID_LATER_LAST  2706
 
 int run_scenario_fndesc_table(void) {
     size_t count = 0;

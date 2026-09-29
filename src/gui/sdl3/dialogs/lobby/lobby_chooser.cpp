@@ -875,6 +875,7 @@ static const char *lobbyGetActiveTabError(ClientSim *cs) {
                     case 5: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_DISABLED);
                     case 6: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_FULL);
                     case 7: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN);
+                    case 9: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_TIMEOUT);
                     default: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_REJECTED);
                 }
             }
@@ -892,6 +893,7 @@ static const char *lobbyGetActiveTabError(ClientSim *cs) {
                     case 5: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_DISABLED);
                     case 6: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_FULL);
                     case 7: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN);
+                    case 9: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_TIMEOUT);
                     default: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_REJECTED);
                 }
             }

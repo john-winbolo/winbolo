@@ -288,9 +288,10 @@ static uint8_t text_byte(size_t i) {
 
 /* BEGIN built here by hand, not through the client's builder, so the server
  * is held to the layout on its own: [header 8][kind 1][totalLen 4]
- * [nameLen 1][name N], and no bulkStartSeq (the optional tail). */
+ * [nameLen 1][name N][bulkStartSeq 4]. The callers pass the server's own
+ * expected bulk sequence for the slot, so taking it changes nothing. */
 static int hand_begin(uint8_t *buf, uint8_t kind, uint32_t totalLen,
-                      const char *name) {
+                      const char *name, uint32_t bulkStartSeq) {
     size_t nameLen = strlen(name);
     int pos = PACKET_HEADER_SIZE;
     packHeader(buf, PACKET_LOBBY_MAP_UPLOAD_BEGIN, 0);
@@ -301,7 +302,9 @@ static int hand_begin(uint8_t *buf, uint8_t kind, uint32_t totalLen,
     buf[pos++] = (uint8_t)totalLen;
     buf[pos++] = (uint8_t)nameLen;
     memcpy(buf + pos, name, nameLen);
-    return pos + (int)nameLen;
+    pos += (int)nameLen;
+    packU32(buf + pos, bulkStartSeq);
+    return pos + 4;
 }
 
 /* Whether the last send_begin left the server holding an upload for the slot,
@@ -314,8 +317,9 @@ static bool lastBeginArmed;
  * approved BEGIN is cleared again so the next one starts from nothing. */
 static int send_begin(LoopbackHarness *h, int slot, uint8_t kind,
                       uint32_t totalLen, const char *name) {
-    uint8_t pkt[PACKET_HEADER_SIZE + 6 + 128];
-    int len = hand_begin(pkt, kind, totalLen, name);
+    uint8_t pkt[PACKET_HEADER_SIZE + 6 + 128 + 4];
+    int len = hand_begin(pkt, kind, totalLen, name,
+        udpServer.channelMux[slot].ch[CHANNEL_BULK].expectedSeq);
     struct sockaddr_in from;
     int code;
 
@@ -365,9 +369,10 @@ int run_script_upload_begin_refusals(void) {
     /* Accepted at the cap: the case the refusals below are measured from.
      * A heap buffer of the announced size stands behind the approval. */
     {
-        uint8_t pkt[PACKET_HEADER_SIZE + 6 + 128];
+        uint8_t pkt[PACKET_HEADER_SIZE + 6 + 128 + 4];
         int len = hand_begin(pkt, UPLOAD_KIND_SCRIPT,
-                             LOBBY_PACKAGE_UPLOAD_MAX_BYTES, "cap.scenario");
+                             LOBBY_PACKAGE_UPLOAD_MAX_BYTES, "cap.scenario",
+                             udpServer.channelMux[slot].ch[CHANNEL_BULK].expectedSeq);
         struct sockaddr_in from;
         bool active, isScript, haveBuf, freed, kindBack, cleared;
         threadsWaitForMutex();

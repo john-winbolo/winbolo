@@ -275,6 +275,8 @@ typedef struct {
 #define TANK_MIN_MOVE_SPEED       6      /* Minimum residual speed before movement occurs */
 #define TANK_MAX_NUDGE_ITERATIONS 5      /* Max building nudge correction passes per tick */
 #define TANK_BUMP_DECAY_SHIFT     2      /* Bump decay rate: >>2 = 25% reduction per tick */
+#define TANK_SLIDE_MAC            0      /* 0 the WinBolo shell push, 1 the Mac Bolo one */
+#define TANK_SLIDE_ARMOUR_BONUS   32     /* Extra Mac Bolo push step at zero armour */
 #define TANK_PILL_PICKUP_INSET    16     /* Pill-pickup reach from tank centre in WORLD units (16 = 1 pixel tolerance past the centre tile) */
 
 typedef enum {

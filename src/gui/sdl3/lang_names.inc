@@ -905,6 +905,7 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_DLGLOBBY_UPLOAD_ERR_FULL", STR_DLGLOBBY_UPLOAD_ERR_FULL },
     { "STR_DLGLOBBY_UPLOAD_ERR_INFLIGHT", STR_DLGLOBBY_UPLOAD_ERR_INFLIGHT },
     { "STR_DLGLOBBY_UPLOAD_ERR_REJECTED", STR_DLGLOBBY_UPLOAD_ERR_REJECTED },
+    { "STR_DLGLOBBY_UPLOAD_ERR_TIMEOUT", STR_DLGLOBBY_UPLOAD_ERR_TIMEOUT },
     { "STR_DLGLOBBY_USETHISMAP", STR_DLGLOBBY_USETHISMAP },
     { "STR_DLGLOBBY_VIEW_ALLY", STR_DLGLOBBY_VIEW_ALLY },
     { "STR_DLGLOBBY_VIEW_ALWAYS", STR_DLGLOBBY_VIEW_ALWAYS },
@@ -2186,6 +2187,8 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_RULE_DESC_tank_nudge_threshold", STR_RULE_DESC_tank_nudge_threshold },
     { "STR_RULE_DESC_tank_pill_pickup_inset", STR_RULE_DESC_tank_pill_pickup_inset },
     { "STR_RULE_DESC_tank_reload_ticks", STR_RULE_DESC_tank_reload_ticks },
+    { "STR_RULE_DESC_tank_slide_armour_bonus", STR_RULE_DESC_tank_slide_armour_bonus },
+    { "STR_RULE_DESC_tank_slide_mac", STR_RULE_DESC_tank_slide_mac },
     { "STR_RULE_DESC_tank_slide_step", STR_RULE_DESC_tank_slide_step },
     { "STR_RULE_DESC_tank_wall_glide", STR_RULE_DESC_tank_wall_glide },
     { "STR_RULE_DESC_tank_water_ticks", STR_RULE_DESC_tank_water_ticks },
@@ -2381,4 +2384,4 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_YES", STR_YES },
 };
 
-#define K_LANG_NAME_TABLE_SIZE  2368
+#define K_LANG_NAME_TABLE_SIZE  2371

@@ -236,8 +236,13 @@ struct tankObj {
   BYTE shellNearFrames;
   vectorBody vectorBodyTank; /* Holds tank's actual moving direction and component vectors (x and y axis speed) */
   vectorBody vectorBodyCollide; /* Holds physics stuff for what hit the tank */
-  int16_t bumpX;            /* X bump effect from collisions/shells (>>9 applied per tick) */
-  int16_t bumpY;            /* Y bump effect from collisions/shells (>>9 applied per tick) */
+  int32_t bumpX;            /* X bump effect from shells (>>9 applied per tick); 32 bits so tank_slide_step * 512 fits */
+  int32_t bumpY;            /* Y bump effect from shells (>>9 applied per tick) */
+  /* The Mac Bolo shell push (tank_slide_mac): displacement still to come in
+   * world units, with fractions, and the per-tick multiplier taken at the hit. */
+  double slideX;
+  double slideY;
+  double slideRetention;
   BYTE residualSpeed;       /* Accumulated sub-tick movement */
   BYTE leavingBoatTimer;    /* Ticks remaining in LeavingBoat before returning to InBoat */
   BYTE leavingBoatAxis;     /* Bank-crossing axis bitmask (1=X, 2=Y); only checked for pastGrace */

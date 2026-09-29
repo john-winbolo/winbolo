@@ -388,6 +388,7 @@ int run_upload_lost_ack_retry(void);
 int run_upload_timeout_releases_other_player(void);
 int run_upload_lost_done_retry(void);
 int run_upload_partial_timeout_retry(void);
+int run_upload_begin_without_trailer_refused(void);
 int run_upload_filename_safe(void);
 int run_upload_filename_safe_script(void);
 int run_lobby_time_minutes_valid(void);
@@ -1469,6 +1470,28 @@ int run_tank_damage_exact_armour_survives(void);
 int run_tank_damage_overkill_destroys(void);
 int run_tank_damage_partial_survives(void);
 int run_tank_destroyed_snapshot_round_trip(void);
+
+/* Shell knockback heading symmetry (test_tank_knockback.c): the bump a
+ * surviving hit applies is a signed WORLD delta decayed by a right shift,
+ * and C's >> rounds a negative value toward -infinity, not toward zero — a
+ * push with a west or north component used to settle further than the same
+ * push east or south for the same shell. The fix shifts by magnitude and
+ * restores the sign afterwards. The largest tank_slide_step the rules
+ * allow (63) pushes the full distance the right way, and a spent bump stays
+ * at zero at every decay shift. The armour_paths, timing_drive,
+ * replaces_mines and rules_respawn tests are #380's own, run with
+ * tank_slide_mac on; mac_off_ignores_bonus checks the switch off leaves the
+ * WinBolo push alone. */
+int run_tank_knockback_heading_symmetric(void);
+int run_tank_knockback_follows_shell_angle(void);
+int run_tank_knockback_speed_untouched(void);
+int run_tank_knockback_large_step(void);
+int run_tank_knockback_settles_to_zero(void);
+int run_tank_knockback_armour_paths(void);
+int run_tank_knockback_timing_drive(void);
+int run_tank_knockback_replaces_mines(void);
+int run_tank_knockback_rules_respawn(void);
+int run_tank_knockback_mac_off_ignores_bonus(void);
 
 /* The destroyed state on the wire (test_tank_status_wire.c): tankStatus
  * carries TANK_STATUS_DEAD (in the respawn wait) and TANK_STATUS_DESTROYED

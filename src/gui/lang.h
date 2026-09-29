@@ -1466,6 +1466,9 @@
 #define STR_DLGLOBBY_UPLOAD_ERR_FULL            1287
 #define STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN        1288
 #define STR_DLGLOBBY_UPLOAD_ERR_REJECTED        1289
+/* No reply to an upload in time (LOBBY_REJECT_TIMEOUT). The numbers after
+ * this block are taken, so its id sits outside it. */
+#define STR_DLGLOBBY_UPLOAD_ERR_TIMEOUT         2701
 #define STR_DLGLOBBY_WBN_ERR_DOWNLOAD           1290
 #define STR_DLGLOBBY_WBN_ERR_BADRESPONSE        1291
 #define STR_DLGLOBBY_WBN_ERR_NETERROR           1292
@@ -2881,8 +2884,9 @@
  * the rules the table gained after the middle stretch was numbered, and the
  * next pair are the pillmassage rules, which start again past the map
  * editor's scenario strings because everything up to them was taken.
- * The pill shell cap pair and then pill_base_defend_shape came after all of
- * those and took the next free numbers, at the end of the file. The
+ * The pill shell cap pair, pill_base_defend_shape and then the Mac Bolo
+ * shell push pair came after all of those and took the next free numbers,
+ * at the end of the file. The
  * order of the block is SIM_RULE_LIST's throughout, which is the order that
  * matters, and a hole in the numbers costs nothing: langTable is searched by
  * id rather than indexed by it. */
@@ -3036,6 +3040,8 @@
 #define STR_RULE_DESC_pill_shell_cap             2699
 #define STR_RULE_DESC_pill_max_shells_at_tank    2698
 #define STR_RULE_DESC_pill_base_defend_shape     2700
+#define STR_RULE_DESC_tank_slide_armour_bonus    2702
+#define STR_RULE_DESC_tank_slide_mac             2703
 
 /* Rule range wording */
 
@@ -3098,9 +3104,9 @@
 #define STR_SCNFN_DESC_SPAWN_LOADOUT         2468
 #define STR_SCNFN_DESC_DAMAGE_SCALE          2469
 #define STR_SCNFN_DESC_CAN_ALLY              2697
-#define STR_SCNFN_DESC_TANK_HIT              2701
-#define STR_SCNFN_DESC_CAN_HIT               2702
-#define STR_SCNFN_DESC_PILL_DAMAGE_SCALE     2703
+#define STR_SCNFN_DESC_TANK_HIT              2704
+#define STR_SCNFN_DESC_CAN_HIT               2705
+#define STR_SCNFN_DESC_PILL_DAMAGE_SCALE     2706
 
 /* The scenario panel's kind control: what the file being edited is allowed
  * to decide. Not the same question as "Built for this map", which is which
