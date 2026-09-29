@@ -1502,21 +1502,6 @@ static void lobbySettingsShareColumns(float s) {
         float pwOne   = pwCheck + gap + pwBox;
         float pwTwo   = ImMax(pwCheck, pwBox);
 
-        /* The button the scenario line still draws. Reload script used to be
-           the first and the widest of three and Choose was the second; both
-           are gone from the line, so measuring either here would reserve
-           width for a button that never appears. This array is the line's own
-           row and has to be kept the same as it. */
-        const int btns[] = { STR_DLGLOBBY_SCENARIO_RULES };
-        const int btnCount = (int)(sizeof(btns) / sizeof(btns[0]));
-        float btnRow = 0.0f, btnWidest = 0.0f;
-        for (int i = 0; i < btnCount; i++) {
-            float w = ImGui::CalcTextSize(langGetText(btns[i])).x
-                    + st.FramePadding.x * 2.0f;
-            btnRow += (i > 0 ? gap : 0.0f) + w;
-            if (w > btnWidest) btnWidest = w;
-        }
-
         /* The mods row: the box and Details, which sit together on one line
            and stay together. It is the one row in this column with no second
            line to fall back on, so what it asks for is also what it will
@@ -1527,8 +1512,8 @@ static void lobbySettingsShareColumns(float s) {
                         + st.FramePadding.x * 2.0f;
         float modsRow   = modsCheck + gap + modsDet;
 
-        want[3]   = ImMax(ImMax(tlOne, pwOne), ImMax(btnRow, modsRow));
-        floorW[3] = ImMax(ImMax(tlTwo, pwTwo), ImMax(btnWidest, modsRow));
+        want[3]   = ImMax(ImMax(tlOne, pwOne), modsRow);
+        floorW[3] = ImMax(ImMax(tlTwo, pwTwo), modsRow);
     }
 
     /* Column 0 starts at the form's left edge and column 4 is its right

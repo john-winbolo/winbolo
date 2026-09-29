@@ -236,7 +236,6 @@ extern "C" void imguiLobbyFrameReset(void) {
 
     lobbyChooserReset();
     lobbyScenarioChooserReset();
-    lobbyScenarioRulesReset();
 
     lobbyChatReset();
 
@@ -2375,12 +2374,6 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
            asks for it happens inside the chat child, and BeginPopupModal
            only finds a popup opened at its own scope. --- */
         lobbyChatDocsRenderModal(cs);
-
-        /* --- The scenario's rules, opened from the scenario line. Here for
-           the same reason as the docs modal above: the Rules button is drawn
-           inside the settings form's Server Settings column, and
-           BeginPopupModal only finds a popup opened at its own scope. --- */
-        lobbyScenarioRulesRenderModal(cs);
 
         /* --- What one scenario or mod is, opened from a script name on
            either of the two script lines or from a row of the chooser. Here because no
