@@ -763,6 +763,25 @@ static int scnLuaLobbySlot(lua_State *L) {
     return 1;
 }
 
+/* The sim's own alliance table, which is what every game rule reads. It is
+ * not worked out from the two seats' teams: players ally and split in play,
+ * and the table is where that shows. A seat nobody holds answers nil, as
+ * lobby_slot does for it, and a seat is always on its own side. */
+static int scnLuaAllied(lua_State *L) {
+    const ScnLuaCtx *c = scnCtx(L);
+    BYTE             a;
+    BYTE             b;
+
+    if (!scnSlotOf(L, 1, "a", &a) || !scnSlotOf(L, 2, "b", &b) ||
+        !serverSimIsPlayerConnected(c->sim, a) ||
+        !serverSimIsPlayerConnected(c->sim, b)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushboolean(L, serverSimIsAllied(c->sim, a, b));
+    return 1;
+}
+
 /* ── The rules ────────────────────────────────────────────────────── */
 
 /* A name that spells no rule raises rather than answering nil: every other
@@ -4706,6 +4725,10 @@ static const ScnLuaOpParam kScnOpArgs_builder[] = {
 static const ScnLuaOpParam kScnOpArgs_lobby_slot[] = {
     { "p", SCN_PARAM_SLOT, false }, SCN_OP_ARG_END
 };
+static const ScnLuaOpParam kScnOpArgs_allied[] = {
+    { "a", SCN_PARAM_SLOT, false }, { "b", SCN_PARAM_SLOT, false },
+    SCN_OP_ARG_END
+};
 /* A rule name is matched against the rules table and a name that spells none
    raises, so it is a word out of a fixed set rather than free text. */
 static const ScnLuaOpParam kScnOpArgs_rule[] = {
@@ -5052,6 +5075,12 @@ static const ScnLuaRow kScnLuaRows[] = {
       "lobby_slot(p) — seat p as { connected, bot, team, name, ready, "
       "fielded, alive }, or nil for an empty seat.",
       SCN_OP_PARAMS(lobby_slot), SCN_OP_READS },
+    { "allied", scnLuaAllied,
+      "allied(a, b) — whether seats a and b are on the same side in the "
+      "game, including alliances players made in play, which can differ "
+      "from their lobby teams; true for a seat and itself, nil when either "
+      "seat is empty.",
+      SCN_OP_PARAMS(allied), SCN_OP_READS },
     { "rule", scnLuaRule,
       "rule(name) — what a gameplay rule is set to; a name that spells no "
       "rule raises.",

@@ -2611,6 +2611,7 @@ STR_SCNFN_DESC_CAN_DIE=Om ett slag får förstöra en tank, en byggare eller en 
 STR_SCNFN_DESC_ON_CHOOSE_START=Vilken startplats en plats tar, tillfrågad vid en spawn, en respawn, eller en teleport som inte namnger någon.
 STR_SCNFN_DESC_SPAWN_LOADOUT=Vad en spawnande tank får, om inte operationen som spawnade den namngav en utrustning.
 STR_SCNFN_DESC_DAMAGE_SCALE=Vad en träff på en tank är värd, tillfrågad vid varje träff den tar.
+STR_SCNFN_DESC_CAN_ALLY=Om en spelare får ingå en allians med en annan.
 STR_MAPEDIT_SCENARIO_KIND=Vad det får avgöra
 STR_MAPEDIT_SCENARIO_KIND_SCENARIO=Scenario — det kan avsluta omgången och säga vem som vann
 STR_MAPEDIT_SCENARIO_KIND_MOD=Modd — den ändrar hur spelet går till och lämnar segern orörd

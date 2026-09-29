@@ -2612,6 +2612,7 @@ STR_SCNFN_DESC_CAN_DIE=Si un golpe puede destruir un tanque, un constructor o un
 STR_SCNFN_DESC_ON_CHOOSE_START=Qué inicio ocupa una plaza, preguntado en una aparición, una reaparición o un teletransporte que no especifica ninguno.
 STR_SCNFN_DESC_SPAWN_LOADOUT=Qué se le entrega a un tanque que aparece, salvo que la operación que lo hizo aparecer especificara un equipamiento.
 STR_SCNFN_DESC_DAMAGE_SCALE=Cuánto vale un golpe a un tanque, preguntado en cada golpe que recibe.
+STR_SCNFN_DESC_CAN_ALLY=Si un jugador puede aliarse con otro.
 STR_MAPEDIT_SCENARIO_KIND=Qué puede decidir
 STR_MAPEDIT_SCENARIO_KIND_SCENARIO=Escenario — puede terminar la ronda y decir quién ganó
 STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — cambia cómo se juega la partida y no interfiere en quién gana

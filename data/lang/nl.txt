@@ -2611,6 +2611,7 @@ STR_SCNFN_DESC_CAN_DIE=Of een klap een tank, een bouwer of een bunker mag vernie
 STR_SCNFN_DESC_ON_CHOOSE_START=Welk startpunt een plek neemt, gevraagd bij een spawn, een respawn, of een teleport die er geen noemt.
 STR_SCNFN_DESC_SPAWN_LOADOUT=Wat een spawnende tank meekrijgt, tenzij de operatie die hem liet spawnen een uitrusting noemde.
 STR_SCNFN_DESC_DAMAGE_SCALE=Wat een klap op een tank waard is, gevraagd bij elke klap die hij krijgt.
+STR_SCNFN_DESC_CAN_ALLY=Of een speler een alliantie mag aangaan met een ander.
 STR_MAPEDIT_SCENARIO_KIND=Wat het mag beslissen
 STR_MAPEDIT_SCENARIO_KIND_SCENARIO=Scenario — kan de ronde beëindigen en zeggen wie er gewonnen heeft
 STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — verandert hoe het spel verloopt en laat winnen met rust

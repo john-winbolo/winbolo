@@ -2613,6 +2613,7 @@ STR_SCNFN_DESC_CAN_DIE=Se un colpo può distruggere un tank, un costruttore o un
 STR_SCNFN_DESC_ON_CHOOSE_START=Quale partenza occupa un posto, chiesto a un'apparizione, una rinascita o un teletrasporto che non ne indica nessuna.
 STR_SCNFN_DESC_SPAWN_LOADOUT=Cosa viene dato a un tank che appare, a meno che l'operazione che lo ha fatto apparire non abbia indicato un equipaggiamento.
 STR_SCNFN_DESC_DAMAGE_SCALE=Quanto vale un colpo su un tank, chiesto a ogni colpo che riceve.
+STR_SCNFN_DESC_CAN_ALLY=Se un giocatore può allearsi con un altro.
 STR_MAPEDIT_SCENARIO_KIND=Cosa può decidere
 STR_MAPEDIT_SCENARIO_KIND_SCENARIO=Scenario — può terminare il round e dire chi ha vinto
 STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — cambia il modo in cui si gioca la partita e non interferisce con la vittoria

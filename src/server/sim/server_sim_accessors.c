@@ -307,6 +307,13 @@ bool serverSimGetRosterSlot(ServerSim *sim, BYTE i, ServerSimRosterSlot *out) {
     return true;
 }
 
+bool serverSimIsAllied(ServerSim *sim, BYTE a, BYTE b) {
+    if (sim == NULL || a >= MAX_TANKS || b >= MAX_TANKS) return false;
+    if (!sim->playerConnected[a] || !sim->playerConnected[b]) return false;
+    if (a == b) return true;
+    return playersIsAllie(&sim->sim.plyrs, a, b) == TRUE;
+}
+
 BYTE serverSimGetNumFielded(ServerSim *sim) {
     BYTE count;
     BYTE num = 0;

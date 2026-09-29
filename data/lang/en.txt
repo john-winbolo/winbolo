@@ -2626,6 +2626,7 @@ STR_SCNFN_DESC_CAN_DIE=Whether a blow may destroy a tank, a builder or a pillbox
 STR_SCNFN_DESC_ON_CHOOSE_START=Which start a seat takes, asked at a spawn, a respawn or a teleport that names none.
 STR_SCNFN_DESC_SPAWN_LOADOUT=What a spawning tank is handed, unless the op that spawned it named a loadout.
 STR_SCNFN_DESC_DAMAGE_SCALE=What a hit on a tank is worth, asked on every hit it takes.
+STR_SCNFN_DESC_CAN_ALLY=Whether one player may ally with another.
 STR_MAPEDIT_SCENARIO_KIND=What it may decide
 STR_MAPEDIT_SCENARIO_KIND_SCENARIO=Scenario — it may end the round and say who won
 STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — it changes how the game plays and leaves winning alone
