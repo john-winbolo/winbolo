@@ -2059,8 +2059,16 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
     if not local_gate and low_shells_global and not boat_sink then
       local_gate = string.format("low_shells(%d<%d)", info.shells, C.TANK_COMBAT_MIN_SHELLS)
     end
-    -- `attack <tank name>` ORDER: the min-shells gate and the pill-crossfire
-    -- gate are waived for the ONE tank the human named. No danger check.
+    -- C.ATTACK_TANK_PILL_HEAT_ONLY: this bot does not fight tanks itself, so a
+    -- tank is a candidate only while a friendly pill can be heated at it.
+    if not local_gate and C.ATTACK_TANK_PILL_HEAT_ONLY
+       and not attack.heat_pill_available(state, world, info, et, state.tick or 0,
+                                          tmx, tmy, require("steering").shot_path_clear) then
+      local_gate = "heat_only"
+    end
+    -- `attack <tank name>` ORDER: the min-shells gate, the pill-crossfire
+    -- gate and the heat_only gate are waived for the ONE tank the human
+    -- named. No danger check.
     if C.BOT_COMMANDS_ENABLED and state._order
        and state._order.kind == "attack_tank" and state._order.tid == et.id then
       local_gate = nil

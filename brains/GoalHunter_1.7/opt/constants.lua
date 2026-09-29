@@ -1926,6 +1926,15 @@ M.TANK_COMBAT_OPPORTUNISTIC_AIM = 8     -- bolo angle units (~11??) aim toleranc
 --     shots_needed = HEAT_MAX_HITS - round(anger / PILL_ANGER_BUMP), then capped
 -- by the pill's health via attack.lua heat_allowed_shots (see MIN_HP below).
 M.ATTACK_TANK_HEAT_PILL         = true  -- master: heat a friendly pill during attack_tank
+-- Heat-only attack_tank (2026-09-29, Andrew; Infection survivors set it by
+-- cfg=): the bot never closes on or shoots an enemy tank itself. An
+-- attack_tank row stands only while a friendly pill can be heated at that
+-- tank (goals.lua eval_attack_tank, gate "heat_only"), and the fight loop
+-- holds still instead of close/engage (steering.lua tank_combat_steer).
+-- Not touched: a human's `attack <tank>` order, a "kill me" delivery, and the
+-- opportunistic shot on other goals (init.lua). Needs ATTACK_TANK_HEAT_PILL;
+-- with that off, attack_tank only ever runs on an order.
+M.ATTACK_TANK_PILL_HEAT_ONLY    = false
 M.ATTACK_TANK_HEAT_MIN_HP       = 5     -- health floor of the volley cap: a pill at or below this
                                         -- affords no heat shells at all. The cap scales linearly to
                                         -- PILLS_MAX_HEALTH (15 -> all 4 halvings): hp 15/13/10/7/6
@@ -4841,6 +4850,9 @@ M.PRESETS = {
     -- and fights the tank alongside us. KEEL never shoots its own pills, so
     -- attack_tank goes straight from the disengage checks to close/engage.
     ATTACK_TANK_HEAT_PILL         = false,
+    -- 2026-09-29: heat-only attack_tank (no tank fighting of its own). KEEL
+    -- fights every tank it picks.
+    ATTACK_TANK_PILL_HEAT_ONLY    = false,
     -- 2026-09-06: the MAIN defend_pill evaluator is now ALARM MODE (see the
     -- DEFEND_ALARM_* block above): defend_pill is REJECTED unless a hostile
     -- tank is visible within 11 tiles of the pill RIGHT NOW, something enemy
