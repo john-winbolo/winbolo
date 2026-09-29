@@ -47,8 +47,9 @@ static WORLD tk_square_world(BYTE mapCoord) {
 
 /* Put the slot-0 tank stationary at the test square, clear of anything that
  * could nudge it besides the bump itself, and land one survivable hit from
- * the given angle. */
-static void tk_arm_and_hit(GameSim *gs, TURNTYPE angle) {
+ * the given angle. Returns non-zero, having printed why, if the hit did not
+ * land. */
+static int tk_arm_and_hit(GameSim *gs, TURNTYPE angle) {
     int dx, dy;
     WORLD wx, wy;
 
@@ -80,6 +81,7 @@ static void tk_arm_and_hit(GameSim *gs, TURNTYPE angle) {
     UT_ASSERT_MSG(tankIsTankHit(gs, &gs->tanks[0], wx, wy, angle, 1) == TH_HIT,
                   "the hit at brad %d did not land as a plain TH_HIT",
                   (int)angle);
+    return 0;
 }
 
 /* Run the tank forward with no input until the bump has fully decayed, and
@@ -113,7 +115,9 @@ int run_tank_knockback_heading_symmetric(void) {
     UT_ASSERT_MSG(gsNorth->tanks[0] != NULL, "slot-0 tank not valid");
 
     /* North (brad 0): the heading the old flooring bug pushed furthest. */
-    tk_arm_and_hit(gsNorth, 0);
+    if (tk_arm_and_hit(gsNorth, 0) != 0) {
+        return 1;
+    }
     tk_settle(gsNorth, &dxN, &dyN);
     serverSimDestroy(simNorth);
 
@@ -124,7 +128,9 @@ int run_tank_knockback_heading_symmetric(void) {
     UT_ASSERT_MSG(gsEast->tanks[0] != NULL, "slot-0 tank not valid");
 
     /* East (brad 64): the heading the old flooring bug pushed least. */
-    tk_arm_and_hit(gsEast, 64);
+    if (tk_arm_and_hit(gsEast, 64) != 0) {
+        return 1;
+    }
     tk_settle(gsEast, &dxE, &dyE);
     serverSimDestroy(simEast);
 
@@ -160,7 +166,9 @@ int run_tank_knockback_follows_shell_angle(void) {
 
     /* North (brad 0): WORLD y grows downward, so a hit travelling north
      * must push y negative and leave x at (near) zero. */
-    tk_arm_and_hit(gsNorth, 0);
+    if (tk_arm_and_hit(gsNorth, 0) != 0) {
+        return 1;
+    }
     tk_settle(gsNorth, &dxN, &dyN);
     serverSimDestroy(simNorth);
 
@@ -174,7 +182,9 @@ int run_tank_knockback_follows_shell_angle(void) {
     UT_ASSERT_MSG(gsEast->tanks[0] != NULL, "slot-0 tank not valid");
 
     /* East (brad 64): pushes x positive, leaves y at (near) zero. */
-    tk_arm_and_hit(gsEast, 64);
+    if (tk_arm_and_hit(gsEast, 64) != 0) {
+        return 1;
+    }
     tk_settle(gsEast, &dxE, &dyE);
     serverSimDestroy(simEast);
 
@@ -195,7 +205,9 @@ int run_tank_knockback_speed_untouched(void) {
     UT_ASSERT_MSG(gs != NULL, "serverSimGetGameSim returned NULL");
     UT_ASSERT_MSG(gs->tanks[0] != NULL, "slot-0 tank not valid");
 
-    tk_arm_and_hit(gs, 64);
+    if (tk_arm_and_hit(gs, 64) != 0) {
+        return 1;
+    }
     speedBefore = tankGetSpeed(&gs->tanks[0]);
     UT_ASSERT_MSG(speedBefore == 0, "tank was not stationary before settling");
 
@@ -227,7 +239,9 @@ int run_tank_knockback_large_step(void) {
     UT_ASSERT_MSG(gs->tanks[0] != NULL, "slot-0 tank not valid");
 
     gs->rules.tank_slide_step = 200;
-    tk_arm_and_hit(gs, 64);
+    if (tk_arm_and_hit(gs, 64) != 0) {
+        return 1;
+    }
     UT_ASSERT_MSG(gs->tanks[0]->bumpX == 200 * 512,
                   "bumpX is %d after a step-200 hit east, wanted %d",
                   (int)gs->tanks[0]->bumpX, 200 * 512);
@@ -244,9 +258,10 @@ int run_tank_knockback_large_step(void) {
     return 0;
 }
 
-/* Once a push has died out bumpX/bumpY must stay at zero, for every decay
- * shift the rules allow. At shift 0 a sign-flipping decay swung a spent
- * bump between +1 and -1 for ever. */
+/* A push only shrinks toward zero, never changes sign, and stays at zero
+ * once it has died out. At decay shift 0 the old decay took a push east
+ * or south past zero to -1 for one tick, which moved the tank 1 WU back
+ * against the shell. */
 int run_tank_knockback_settles_to_zero(void) {
     /* Shifts above 4 slide the tank past the cleared squares, so stop
      * there; the zero-crossing only depends on the low shifts. */
@@ -259,6 +274,7 @@ int run_tank_knockback_settles_to_zero(void) {
         for (ai = 0; ai < sizeof(angles) / sizeof(angles[0]); ai++) {
             ServerSim *sim = ut_make_running_sim("P0");
             GameSim *gs;
+            int32_t hitX, hitY;
 
             UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
             gs = serverSimGetGameSim(sim);
@@ -266,10 +282,21 @@ int run_tank_knockback_settles_to_zero(void) {
             UT_ASSERT_MSG(gs->tanks[0] != NULL, "slot-0 tank not valid");
 
             gs->rules.tank_bump_decay_shift = shifts[si];
-            tk_arm_and_hit(gs, angles[ai]);
+            if (tk_arm_and_hit(gs, angles[ai]) != 0) {
+                return 1;
+            }
+            hitX = gs->tanks[0]->bumpX;
+            hitY = gs->tanks[0]->bumpY;
 
             for (i = 0; i < TK_SETTLE_TICKS * 4; i++) {
                 tankUpdate(gs, &gs->tanks[0], TNONE, FALSE, FALSE);
+                UT_ASSERT_MSG((int64_t)gs->tanks[0]->bumpX * hitX >= 0 &&
+                              (int64_t)gs->tanks[0]->bumpY * hitY >= 0,
+                              "shift %d, brad %d: bump (%d, %d) crossed zero "
+                              "from the hit's (%d, %d)",
+                              (int)shifts[si], (int)angles[ai],
+                              (int)gs->tanks[0]->bumpX, (int)gs->tanks[0]->bumpY,
+                              (int)hitX, (int)hitY);
                 if (gs->tanks[0]->bumpX == 0 && gs->tanks[0]->bumpY == 0) {
                     break;
                 }
