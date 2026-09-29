@@ -80,12 +80,14 @@ local TICKS_PER_SEC   = 100   -- game.tick() counts a hundred to the second
 local BOOM_SECONDS    = 3     -- from the last survivor's death to the end of
                               -- the round, so their explosion plays out
 
--- The defaults of two more lobby settings (scenario.settings at the bottom of
--- the file declares them from these numbers). on_start puts the host's choice
--- over them.
+-- The defaults of three more lobby settings (scenario.settings at the bottom
+-- of the file declares them from these numbers). on_start puts the host's
+-- choice over them.
 local COMPASS_SECONDS    = 90   -- the tail of the round the horde has a compass
                                 -- in; 0 is no compass
 local DEEP_WATER_SECONDS = 10   -- how long a survivor can stay on deep sea
+local ZERO_HUMAN         = 0    -- 1: the first to turn is always a person
+                                -- when one is playing; 0: pick_zero decides
 
 -- What an infected tank comes back with, and the most the trickle feeds it
 -- to: half a full tank of shells.
@@ -689,6 +691,10 @@ end
 -- and it is a bot: picking the only human is not a draw, it is a certainty, and
 -- it hands the one player in the round the one seat with nobody to hunt. Two in
 -- the round at least, either way, or there is nobody to hunt at all.
+--
+-- The host can say the first one is always a person (ZERO_HUMAN). Then it is
+-- one of the people whenever there is one, the only one included; a round of
+-- bots alone still picks a bot.
 local function pick_zero()
   local pool, humans, bots = {}, {}, {}
   for _, p in ipairs(roll(SURVIVORS)) do
@@ -704,7 +710,9 @@ local function pick_zero()
     return nil
   end
   local from = pool
-  if #humans > 1 then
+  if ZERO_HUMAN == 1 and #humans > 0 then
+    from = humans
+  elseif #humans > 1 then
     from = humans
   elseif #humans == 1 and #bots > 0 then
     from = bots
@@ -924,6 +932,7 @@ function on_start()
   ROUND_SECONDS      = game.setting("round_minutes") * 60
   COMPASS_SECONDS    = game.setting("compass_seconds")
   DEEP_WATER_SECONDS = game.setting("deep_water_seconds")
+  ZERO_HUMAN         = game.setting("zero_human")
   running = true
   elapsed = 0
   ends_at = game.tick() + ROUND_SECONDS * 100
@@ -1258,6 +1267,8 @@ scenario = {
     { id = "compass_seconds", label = "Compass on survivors, last (s, 0 off)",
       type = "int", min = 0, max = 300, step = 15,
       default = COMPASS_SECONDS },
+    { id = "zero_human", label = "First infected is a person (1 yes, 0 no)",
+      type = "int", min = 0, max = 1, step = 1, default = ZERO_HUMAN },
   },
 
   -- What each callback below does, in a line a player reads: the lobby's
