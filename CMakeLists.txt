@@ -5303,6 +5303,8 @@ set(_unit_test_names
     tank_knockback_heading_symmetric
     tank_knockback_follows_shell_angle
     tank_knockback_speed_untouched
+    tank_knockback_large_step
+    tank_knockback_settles_to_zero
     tank_status_wire_bits
     tank_status_wire_start_find_round_trip
     two_clients_full_sync_independent

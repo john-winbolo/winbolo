@@ -56,6 +56,27 @@ typedef struct ClientSim ClientSim;
 #include "shells.h"
 #include "util.h"
 
+/* A bump component's move this tick: its magnitude >> 9 with the sign put
+ * back. C's >> on a negative value rounds toward -infinity, so shifting
+ * the signed value moved a push with a west or north component one world
+ * unit further per tick than the same push east or south. */
+static int32_t tankBumpStep(int32_t bump) {
+  return bump >= 0 ? (bump >> 9) : -((-bump) >> 9);
+}
+
+/* A bump component after one tick's decay: its magnitude loses
+ * (magnitude >> shift) + 1 and stops at zero, so the decay is the same in
+ * every direction and a push that has died out stays at zero. */
+static int32_t tankBumpDecay(int32_t bump, int32_t shift) {
+  int32_t mag = bump >= 0 ? bump : -bump;
+
+  mag -= (mag >> shift) + 1;
+  if (mag <= 0) {
+    return 0;
+  }
+  return bump >= 0 ? mag : -mag;
+}
+
 /* Forward declarations */
 static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
                             tankButton tb, bool inBrain);
@@ -1875,27 +1896,12 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
     (*value)->residualSpeed = 0;
   }
 
-  /* Step 3 — Apply bump effect (shell knockback with decay).
-   * bumpX/bumpY are signed, and C's >> on a negative value rounds toward
-   * -infinity, not toward zero — so a plain ">> 9" (or ">> decay_shift")
-   * kept an extra world unit per tick on a negative component that a
-   * positive one of the same magnitude discarded. That made a push with a
-   * west or north component settle noticeably further than the same push
-   * east or south. Shifting the magnitude and restoring the sign makes the
-   * move and the decay symmetric regardless of direction. */
-  (*value)->x += (*value)->bumpX >= 0 ? ((*value)->bumpX >> 9) : -((-(*value)->bumpX) >> 9);
-  (*value)->y += (*value)->bumpY >= 0 ? ((*value)->bumpY >> 9) : -((-(*value)->bumpY) >> 9);
+  /* Step 3 — Apply bump effect (shell knockback with decay) */
+  (*value)->x += tankBumpStep((*value)->bumpX);
+  (*value)->y += tankBumpStep((*value)->bumpY);
   if (!(*value)->destroyed) {
-    if ((*value)->bumpX >= 0) {
-      (*value)->bumpX -= ((*value)->bumpX >> sim->rules.tank_bump_decay_shift) + 1;
-    } else {
-      (*value)->bumpX += ((-(*value)->bumpX) >> sim->rules.tank_bump_decay_shift) + 1;
-    }
-    if ((*value)->bumpY >= 0) {
-      (*value)->bumpY -= ((*value)->bumpY >> sim->rules.tank_bump_decay_shift) + 1;
-    } else {
-      (*value)->bumpY += ((-(*value)->bumpY) >> sim->rules.tank_bump_decay_shift) + 1;
-    }
+    (*value)->bumpX = tankBumpDecay((*value)->bumpX, sim->rules.tank_bump_decay_shift);
+    (*value)->bumpY = tankBumpDecay((*value)->bumpY, sim->rules.tank_bump_decay_shift);
   }
 
   /* Step 4 — Building nudge */

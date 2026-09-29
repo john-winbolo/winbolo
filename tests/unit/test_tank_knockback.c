@@ -36,6 +36,8 @@
 
 /* A map square's world centre, away from the edges and clear of anything
  * the map generator put there. */
+#define TK_CLEAR_RADIUS 4
+
 #define TK_TEST_MAP_X 128
 #define TK_TEST_MAP_Y 128
 
@@ -57,12 +59,13 @@ static void tk_arm_and_hit(GameSim *gs, TURNTYPE angle) {
     tankSetSpeed(&gs->tanks[0], 0);
     gs->inStartFind = FALSE;
 
-    /* Clear a ring round the square to grass so the building nudge cannot
-     * contribute anything — only the bump under test is left to move the
-     * tank. The push settles at well under one map square, so a 3x3 ring
-     * is enough room for it to run in. */
-    for (dy = -1; dy <= 1; dy++) {
-        for (dx = -1; dx <= 1; dx++) {
+    /* Clear the squares round the test square to grass so the building
+     * nudge cannot contribute anything — only the bump under test is left
+     * to move the tank. The default push settles well inside one map
+     * square; TK_CLEAR_RADIUS leaves room for the largest tank_slide_step
+     * the rules allow. */
+    for (dy = -TK_CLEAR_RADIUS; dy <= TK_CLEAR_RADIUS; dy++) {
+        for (dx = -TK_CLEAR_RADIUS; dx <= TK_CLEAR_RADIUS; dx++) {
             int nx = TK_TEST_MAP_X + dx, ny = TK_TEST_MAP_Y + dy;
             mapSetPos(gs, &gs->mp, (BYTE)nx, (BYTE)ny, GRASS, FALSE, FALSE);
         }
@@ -207,5 +210,86 @@ int run_tank_knockback_speed_untouched(void) {
                   "the tank did not move at all — the hit did not push it");
 
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* A tank_slide_step above 63 makes step * 512 too big for 16 bits. When
+ * bumpX/bumpY were int16_t, a step of 200 (102400) wrapped to -28672, so a
+ * shell fired east pushed the tank west. */
+int run_tank_knockback_large_step(void) {
+    ServerSim *sim = ut_make_running_sim("P0");
+    GameSim *gs;
+    int32_t dx, dy;
+
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT_MSG(gs != NULL, "serverSimGetGameSim returned NULL");
+    UT_ASSERT_MSG(gs->tanks[0] != NULL, "slot-0 tank not valid");
+
+    gs->rules.tank_slide_step = 200;
+    tk_arm_and_hit(gs, 64);
+    UT_ASSERT_MSG(gs->tanks[0]->bumpX == 200 * 512,
+                  "bumpX is %d after a step-200 hit east, wanted %d",
+                  (int)gs->tanks[0]->bumpX, 200 * 512);
+
+    tk_settle(gs, &dx, &dy);
+    serverSimDestroy(sim);
+
+    /* Step 200 at decay shift 2 slides roughly 200 * 4 WU. */
+    UT_ASSERT_MSG(dx > 600,
+                  "a step-200 hit fired east pushed x by %d WU, wanted well over 600",
+                  (int)dx);
+    UT_ASSERT_MSG(dy > -2 && dy < 2, "a hit fired due east drifted y by %d WU", (int)dy);
+
+    return 0;
+}
+
+/* Once a push has died out bumpX/bumpY must stay at zero, for every decay
+ * shift the rules allow. At shift 0 a sign-flipping decay swung a spent
+ * bump between +1 and -1 for ever. */
+int run_tank_knockback_settles_to_zero(void) {
+    /* Shifts above 4 slide the tank past the cleared squares, so stop
+     * there; the zero-crossing only depends on the low shifts. */
+    static const int32_t shifts[] = { 0, 1, TANK_BUMP_DECAY_SHIFT, 4 };
+    static const TURNTYPE angles[] = { 0, 64, 128, 192, 32, 160 };
+    size_t si, ai;
+    int i;
+
+    for (si = 0; si < sizeof(shifts) / sizeof(shifts[0]); si++) {
+        for (ai = 0; ai < sizeof(angles) / sizeof(angles[0]); ai++) {
+            ServerSim *sim = ut_make_running_sim("P0");
+            GameSim *gs;
+
+            UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+            gs = serverSimGetGameSim(sim);
+            UT_ASSERT_MSG(gs != NULL, "serverSimGetGameSim returned NULL");
+            UT_ASSERT_MSG(gs->tanks[0] != NULL, "slot-0 tank not valid");
+
+            gs->rules.tank_bump_decay_shift = shifts[si];
+            tk_arm_and_hit(gs, angles[ai]);
+
+            for (i = 0; i < TK_SETTLE_TICKS * 4; i++) {
+                tankUpdate(gs, &gs->tanks[0], TNONE, FALSE, FALSE);
+                if (gs->tanks[0]->bumpX == 0 && gs->tanks[0]->bumpY == 0) {
+                    break;
+                }
+            }
+            UT_ASSERT_MSG(gs->tanks[0]->bumpX == 0 && gs->tanks[0]->bumpY == 0,
+                          "shift %d, brad %d: bump still (%d, %d) after %d ticks",
+                          (int)shifts[si], (int)angles[ai],
+                          (int)gs->tanks[0]->bumpX, (int)gs->tanks[0]->bumpY, i);
+
+            for (i = 0; i < 4; i++) {
+                tankUpdate(gs, &gs->tanks[0], TNONE, FALSE, FALSE);
+                UT_ASSERT_MSG(gs->tanks[0]->bumpX == 0 && gs->tanks[0]->bumpY == 0,
+                              "shift %d, brad %d: a spent bump came back as (%d, %d)",
+                              (int)shifts[si], (int)angles[ai],
+                              (int)gs->tanks[0]->bumpX, (int)gs->tanks[0]->bumpY);
+            }
+
+            serverSimDestroy(sim);
+        }
+    }
+
     return 0;
 }
