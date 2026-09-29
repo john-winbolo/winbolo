@@ -955,7 +955,7 @@ int run_scenario_details_reload_map_script(void) {
                             "wbtest_scn_cb_reload.map"));
     UT_ASSERT(scPutBeside(mapPath, kScMapBefore));
 
-    sim = serverSimCreateCompressed(emap, 5097, "Everard Island", gameOpen,
+    sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island", gameOpen,
                                     false, 0, -1);
     UT_ASSERT(sim != NULL);
     serverSimSetLobbyEnabled(sim, true);

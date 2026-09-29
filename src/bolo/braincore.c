@@ -569,6 +569,10 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
   lua_pushinteger(L, info->trees);          lua_setfield(L, -2, "trees");
   lua_pushinteger(L, info->carriedpills);   lua_setfield(L, -2, "carried_pills");
   lua_pushinteger(L, info->carriedbases);   lua_setfield(L, -2, "carried_bases");
+  /* Bit n set: pill (base) n, 0 based, is on the map. A brain that keeps
+     its own list of items drops the ones whose bit is clear. */
+  lua_pushinteger(L, (lua_Integer)info->pills_on_map); lua_setfield(L, -2, "pills_on_map");
+  lua_pushinteger(L, (lua_Integer)info->bases_on_map); lua_setfield(L, -2, "bases_on_map");
   lua_pushinteger(L, info->gunrange);       lua_setfield(L, -2, "gunrange");
   lua_pushboolean(L, info->reload != 0);    lua_setfield(L, -2, "reload");
   lua_pushboolean(L, info->newtank != 0);   lua_setfield(L, -2, "newtank");

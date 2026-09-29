@@ -485,7 +485,7 @@ static int slList(void *ctx, const char *dir, ScnDirEntry *out, int max) {
  * lobbyClientMayEdit(sim, 0) is true — and a non-host human in slot 1. */
 static ServerSim *slLobby(SlDir *d) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097,
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN,
                                                "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) return NULL;

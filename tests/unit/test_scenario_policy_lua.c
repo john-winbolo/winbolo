@@ -226,7 +226,7 @@ static ServerSim *plaSimOfType(const char *mapPath, ScenarioHost **host,
                                gameType gt) {
     BYTE       emap[6000] = E_MAP;
     char       err[512];
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gt, false, 0, -1);
 
     *host = NULL;

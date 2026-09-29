@@ -962,7 +962,6 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/tutorial_text.c
     src/gui/ui_mode.c
     src/gui/visibility_presets.c
-    src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/gui/sdl3/dialogs/imgui_welcome.cpp
     src/gui/sdl3/dialogs/imgui_mapchooser.cpp
     src/gui/sdl3/dialogs/imgui_udpsetup.cpp
@@ -1658,7 +1657,6 @@ set(CLIENT_SOURCES
     # GIF encoder for the recap's clip export. Client only — no other target
     # exports clips, and the LogViewer already omits stb_image_write_impl.c.
     src/third_party/msf_gif/msf_gif_impl.c
-    src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/third_party/tweetnacl/tweetnacl.c
 )
 
@@ -2164,7 +2162,6 @@ set(SERVER_SOURCES
     src/gui/sdl3/luabrainshandler.c
     src/headless/cmd_stdin.c
     src/third_party/tweetnacl/tweetnacl.c
-    src/lzw/ecodlzw.c src/lzw/dcodlzw.c
 )
 
 
@@ -2582,7 +2579,6 @@ set(HEADLESS_SOURCES
     src/gui/sdl3/dns_lookups.c
     src/headless/headless_main.c src/headless/headless_frontend.c
     src/headless/cmd_stdin.c
-    src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/third_party/tweetnacl/tweetnacl.c
 )
 
@@ -2696,7 +2692,6 @@ set(GYM_SOURCES
     src/gui/sdl3/lang.c
     src/gui/sdl3/dns_lookups.c
     src/headless/headless_frontend.c
-    src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/gym/winbolonet_stub.c
     src/gym/winbolo_gym.c
 )
@@ -2823,7 +2818,6 @@ set(BRAINTEST_SOURCES
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/lang.c
     src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/gfx_settings.c
-    src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_stubs.c
     src/braintest/braintest_lifecycle_stub.c
     src/braintest/braintest_main.c src/braintest/braintest_frontend.c
@@ -2975,7 +2969,6 @@ set(MAPEDITOR_SOURCES
     src/gui/sdl3/sim_rules_phrase.c
     src/gui/sdl3/gamefront_stubs.c
     src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/gfx_settings.c
-    src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_stubs.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     # The scenario panel: the script buffer and the file handling in C, the
@@ -3099,8 +3092,6 @@ add_executable(MakeTileTestMap EXCLUDE_FROM_ALL
     tests/unit/test_stubs.c
     src/bolo/transport_udp_client.c
     src/steam/steam_wrapper_stub.c
-    src/lzw/ecodlzw.c
-    src/lzw/dcodlzw.c
     src/common/md5.c
     src/common/mp_diag_log.c)
 bolo_apply_include_rules(MakeTileTestMap mapeditor)
@@ -3536,6 +3527,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_build_select_reset.c
     tests/unit/test_shell_death_event.c
     tests/unit/test_alliance_reset.c
+    tests/unit/test_alliance_leave.c
+    tests/unit/test_round_start_owners.c
     tests/unit/test_lobby_add_bot_dispatch.c
     tests/unit/test_lobby_bot_config_memory.c
     tests/unit/test_command_queue_drain.c
@@ -3958,6 +3951,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_entity_event.c
     tests/unit/test_entity_sync.c
     tests/unit/test_entity_record.c
+    tests/unit/test_brain_removed_items.c
+    src/bolo/brain_record_walk.c
     tests/unit/test_starts_pick_incremental.c
     tests/unit/test_starts_assign_batch.c
     tests/unit/test_starts_open_ideal.c
@@ -4423,8 +4418,6 @@ set(WINBOLO_UNITTESTS_SOURCES
     # natPortMap* in src/bolo/nat_portmap.c) stay stubbed in
     # test_stubs.c — acceptRemoteClients=false keeps them off the
     # tick-time call paths.
-    src/lzw/dcodlzw.c
-    src/lzw/ecodlzw.c
     # .wbv reader gate: load the committed v1/v2 fixtures through the
     # production log-viewer reader (test_wbv_reader.c), and the on-demand
     # writer-drive that (re)generates the v2 fixture (test_wbv_v2_capture.c).
@@ -5151,6 +5144,13 @@ set(_unit_test_names
     alliance_reset_apply_keeps_owners
     alliance_reset_changed_matrix_keeps_owners
     alliance_reset_set_team_leaves_old_team
+    alliance_leave_no_ally_top_seat_empty
+    alliance_leave_no_ally_top_seat_enemy
+    alliance_leave_no_ally_leaver_is_top_seat
+    alliance_leave_hands_to_ally
+    alliance_leave_hands_to_top_seat_ally
+    round_start_owners_kept_with_lobby_team
+    round_start_owners_kept_after_manual_alliance
     treegrow_never_plants_on_deep_sea
     treegrow_reset_clears_stale_target
     pill_repair_tops_up_from_arrival_armour
@@ -5187,6 +5187,8 @@ set(_unit_test_names
     entity_record_lobby_add_republishes_counts
     entity_record_lobby_removal_replays
     entity_record_seek_lands_on_the_right_liveness
+    brain_removed_items_info_masks
+    brain_removed_items_recording_masks
     starts_pick_cluster_nearest_teammate
     starts_pick_farthest_when_solo
     starts_pick_none_when_all_taken
@@ -5544,6 +5546,7 @@ set(_unit_test_names
     map_compress_roundtrip_stock
     map_compress_capacity_refuses
     map_compress_incompressible
+    map_compress_rejects_damaged
     map_compress_roundtrip_mutated
     map_compress_rejects_null_handles
     map_checksum_ignores_mines
@@ -6742,7 +6745,7 @@ if(WB_FUZZ)
     add_executable(fuzz_wire_codec tests/fuzz/fuzz_wire_codec.c)
     bolo_apply_include_rules(fuzz_wire_codec unittests)
     target_link_libraries(fuzz_wire_codec PRIVATE bolo_static SDL3::SDL3 ${MATH_LIB} pthread)
-    # -fcommon: the bolo/lzw sources rely on tentative-definition merging that
+    # -fcommon: the bolo sources rely on tentative-definition merging that
     # Clang's default -fno-common would reject. Mirrors WinBoloUnitTests.
     target_compile_options(fuzz_wire_codec PRIVATE -fcommon)
     target_link_options(fuzz_wire_codec PRIVATE -fsanitize=fuzzer)
@@ -6753,12 +6756,12 @@ if(WB_FUZZ)
     set_tests_properties(fuzz.wire_codec PROPERTIES TIMEOUT 120)
 
     # The compressed-map loader. Every map that arrives over the network lands
-    # in mapLoadCompressedMap: three fixed-size struct memcpys for the bases,
-    # pillboxes and starts, then an LZW decode of the terrain. The struct
+    # in mapLoadCompressedMap: one zlib stream that inflates into the bases,
+    # pillboxes and starts structs and then the terrain. The struct
     # region is copied wholesale, so the file-load setters' per-field clamps
     # never run on this route and basesValidate/pillsValidate/startsValidate
     # stand in for them. Links like join_accept: bolo_static alone leaves the
-    # front-end, lang and lzw symbols the map path reaches undefined.
+    # front-end and lang symbols the map path reaches undefined.
     add_executable(fuzz_map_load
         tests/fuzz/fuzz_map_load.c
         tests/unit/test_stubs.c
@@ -6772,9 +6775,7 @@ if(WB_FUZZ)
         src/winbolonet/wbn_country_cache.c
         src/winbolonet/wbn_news_parser.cpp
         src/winbolonet/wbn_prefs_sync.c
-        src/bolo/transport_udp_client.c
-        src/lzw/dcodlzw.c
-        src/lzw/ecodlzw.c)
+        src/bolo/transport_udp_client.c)
     bolo_apply_include_rules(fuzz_map_load unittests)
     target_include_directories(fuzz_map_load PRIVATE
         src/gui/sdl3 src/server src src/winbolonet
@@ -6800,10 +6801,10 @@ if(WB_FUZZ)
                      ${WB_FUZZ_CORPUS_DIR}/map_load ${WB_FUZZ_CRASH_DIR})
     set_tests_properties(fuzz.map_load PROPERTIES TIMEOUT 120)
 
-    # The same loader, past the LZW gate. fuzz_map_load cannot reach a
-    # successful load — a mutated compressed stream almost never decodes to
-    # exactly 65536 bytes — so this one compresses fuzzer-chosen terrain with
-    # the writer's own lzwencoding and hands the result to the real
+    # The same loader, past the zlib gate. fuzz_map_load cannot reach a
+    # successful load — a mutated zlib stream almost never passes its
+    # checksum — so this one compresses fuzzer-chosen structs and terrain
+    # with zlib, as the writer does, and hands the result to the real
     # mapLoadCompressedMap. Every input therefore loads, which is what
     # exercises the field clamps and the terrain the file format cannot
     # express.
@@ -6820,9 +6821,7 @@ if(WB_FUZZ)
         src/winbolonet/wbn_country_cache.c
         src/winbolonet/wbn_news_parser.cpp
         src/winbolonet/wbn_prefs_sync.c
-        src/bolo/transport_udp_client.c
-        src/lzw/dcodlzw.c
-        src/lzw/ecodlzw.c)
+        src/bolo/transport_udp_client.c)
     bolo_apply_include_rules(fuzz_map_fields unittests)
     target_include_directories(fuzz_map_fields PRIVATE
         src/gui/sdl3 src/server src src/winbolonet
@@ -6869,8 +6868,6 @@ if(WB_FUZZ)
         src/winbolonet/wbn_news_parser.cpp
         src/winbolonet/wbn_prefs_sync.c
         src/bolo/transport_udp_client.c
-        src/lzw/dcodlzw.c
-        src/lzw/ecodlzw.c
         src/logviewer/screen.c
         src/logviewer/blocks.c
         src/logviewer/lv_attribution.c
@@ -6972,7 +6969,7 @@ if(WB_FUZZ)
     # frontend callbacks the server graph references but server_static doesn't
     # own — the same stub surface WinBoloUnitTests links.
     # The loose (non-library) sources WinBoloUnitTests compiles directly to
-    # close the link: mpDiagLog, md5*, lzw*, and the client transport
+    # close the link: mpDiagLog, md5*, and the client transport
     # (transport_udp_client.c is NOT in bolo_static — client_sim/client_net in
     # the listen-server path reference it). Matching the unit-test set verbatim
     # keeps the link closure identical to a known-good target.
@@ -6989,9 +6986,7 @@ if(WB_FUZZ)
         src/winbolonet/wbn_country_cache.c
         src/winbolonet/wbn_news_parser.cpp
         src/winbolonet/wbn_prefs_sync.c
-        src/bolo/transport_udp_client.c
-        src/lzw/dcodlzw.c
-        src/lzw/ecodlzw.c)
+        src/bolo/transport_udp_client.c)
     bolo_apply_include_rules(fuzz_server_dispatch unittests)
     # Same include set WinBoloUnitTests gives test_stubs.c (luabrainshandler.h
     # lives in src/gui/sdl3, etc.).
@@ -7038,9 +7033,7 @@ if(WB_FUZZ)
         src/winbolonet/wbn_country_cache.c
         src/winbolonet/wbn_news_parser.cpp
         src/winbolonet/wbn_prefs_sync.c
-        src/bolo/transport_udp_client.c
-        src/lzw/dcodlzw.c
-        src/lzw/ecodlzw.c)
+        src/bolo/transport_udp_client.c)
     bolo_apply_include_rules(fuzz_client_snapshot unittests)
     target_include_directories(fuzz_client_snapshot PRIVATE
         src/gui/sdl3 src/server src src/winbolonet
@@ -7081,9 +7074,7 @@ if(WB_FUZZ)
         src/winbolonet/wbn_country_cache.c
         src/winbolonet/wbn_news_parser.cpp
         src/winbolonet/wbn_prefs_sync.c
-        src/bolo/transport_udp_client.c
-        src/lzw/dcodlzw.c
-        src/lzw/ecodlzw.c)
+        src/bolo/transport_udp_client.c)
     bolo_apply_include_rules(fuzz_join_accept unittests)
     target_include_directories(fuzz_join_accept PRIVATE
         src/gui/sdl3 src/server src src/winbolonet

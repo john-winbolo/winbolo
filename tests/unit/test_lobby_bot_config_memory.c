@@ -37,7 +37,7 @@
 
 static ServerSim *make_lobby_sim(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) return NULL;
     serverSimSetLobbyEnabled(sim, true);
@@ -239,7 +239,7 @@ int run_lobby_bot_config_memory_cleared_on_return_to_lobby(void) {
     /* A map change inside the lobby session keeps the pick. The reload wants
      * a writable data/maps beside the test binary; when there isn't one it
      * returns false and this assertion is simply not made. */
-    mapChanged = serverSimReloadCompressedInMemory(sim, emap, 5097,
+    mapChanged = serverSimReloadCompressedInMemory(sim, emap, E_MAP_LEN,
                                                    "Everard Island B");
     if (mapChanged) {
         UT_ASSERT_MSG(strcmp(sim->lastBotModeKey, "survival") == 0 &&

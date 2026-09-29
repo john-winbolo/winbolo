@@ -2029,8 +2029,12 @@ void playersLeaveAlliance(GameSim *sim, players *plrs, BYTE selfPlayer, BYTE pla
   }
   count--;
 
-  basesMigrate(sim, playerNum, count);
-  pillsMigratePlanted(sim, playerNum, count);
+  /* With no ally the loop runs off the end and count is left at the top
+     seat, which is nobody the leaver chose, so nothing moves. */
+  if (found == TRUE) {
+    basesMigrate(sim, playerNum, count);
+    pillsMigratePlanted(sim, playerNum, count);
+  }
 
   playersClearAlliance(sim, plrs, selfPlayer, playerNum, isServer);
 }

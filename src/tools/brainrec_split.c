@@ -101,9 +101,10 @@ static bool gzTeeSkip(void *ctx, size_t len) {
 }
 
 static void gzTeeBind(BrainRecReader *r, GzTee *t) {
-    r->ctx  = t;
-    r->read = gzTeeRead;
-    r->skip = gzTeeSkip;
+    r->ctx     = t;
+    r->read    = gzTeeRead;
+    r->skip    = gzTeeSkip;
+    r->version = 0;   /* the preamble walk sets the file's own */
 }
 
 /* ---- Frame index -------------------------------------------------------- */
@@ -607,7 +608,7 @@ static bool indexFrames(const char *btrPath, FrameIxList *ix, char mapName[64],
 
     if (brainRecWalkPreamble(&r, mapName, legendLen) != BRAINREC_WALK_OK) {
         gzclose(g);
-        fprintf(stderr, "brainrec_split: '%s' is not a v%u brainrec.btr\n",
+        fprintf(stderr, "brainrec_split: '%s' is not a brainrec.btr this build reads (v6 to v%u)\n",
                 btrPath, (unsigned)brainRecWalkFormatVersion());
         return false;
     }
@@ -968,6 +969,10 @@ int main(int argc, char **argv) {
             tee.buf = copyBuf;
             BrainRecReader r;
             gzTeeBind(&r, &tee);
+            /* The preamble was copied as bytes, not walked, so take the
+             * file's version from the header in it: the frame tail depends
+             * on it. */
+            r.version = brainRecWalkHeaderVersion(preamble);
 
             uint32_t first = 0, last = 0;
             bool firstKf = false;

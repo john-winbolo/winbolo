@@ -95,7 +95,7 @@ static const LayoutStart k_corners[16] = {
 /* Lobby-enabled ServerSim on Everard Island; slot 0 is the host. */
 static ServerSim *make_lobby(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097,
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN,
                                                "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) return NULL;
@@ -489,7 +489,7 @@ int run_lobby_map_change_releases_off_side(void) {
 
     {
         BYTE emap[6000] = E_MAP;
-        UT_ASSERT_MSG(serverSimReloadCompressedInMemory(sim, emap, 5097,
+        UT_ASSERT_MSG(serverSimReloadCompressedInMemory(sim, emap, E_MAP_LEN,
                                                         "Everard Island") == TRUE,
                       "map reload failed");
     }

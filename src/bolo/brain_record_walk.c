@@ -36,12 +36,19 @@ uint32_t brainRecWalkFormatVersion(void) {
     return BRAINREC_VERSION;
 }
 
+uint32_t brainRecWalkHeaderVersion(const void *header) {
+    BrainRecHeader hdr;
+    memcpy(&hdr, header, sizeof hdr);
+    return hdr.version;
+}
+
 BrainRecWalkStatus brainRecWalkPreamble(BrainRecReader *r, char mapNameOut[64],
                                         uint32_t *legendLenOut) {
     BrainRecHeader hdr;
     if (!rdExact(r, &hdr, sizeof hdr)) return BRAINREC_WALK_BAD;
     if (memcmp(hdr.magic, BRAINREC_MAGIC, BRAINREC_MAGIC_LEN) != 0) return BRAINREC_WALK_BAD;
-    if (hdr.version != BRAINREC_VERSION) return BRAINREC_WALK_BAD;
+    if (!brainRecVersionReadable(&hdr)) return BRAINREC_WALK_BAD;
+    r->version = hdr.version;
     if (mapNameOut) {
         memcpy(mapNameOut, hdr.mapName, 64);
         mapNameOut[63] = '\0';
@@ -125,6 +132,14 @@ BrainRecWalkStatus brainRecWalkFrame(BrainRecReader *r, BrainRecFrameInfo *out) 
 
     /* v5 tail: one alliance bitmap per player slot, written every frame. */
     if (!r->skip(r->ctx, (size_t)MAX_TANKS * 4)) return BRAINREC_WALK_BAD;
+
+    /* v7 tail: which pills and bases are on the map. A v6 file has none, and
+     * every item in it is on the map. */
+    info.pillsOnMap = 0xFFFFFFFFu;
+    info.basesOnMap = 0xFFFFFFFFu;
+    if (r->version == 0 || r->version >= 7u) {
+        if (!rdU32(r, &info.pillsOnMap) || !rdU32(r, &info.basesOnMap)) return BRAINREC_WALK_BAD;
+    }
 
     if (out) *out = info;
     return BRAINREC_WALK_OK;
