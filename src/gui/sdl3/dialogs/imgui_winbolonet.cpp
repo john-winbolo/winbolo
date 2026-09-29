@@ -454,6 +454,18 @@ static void wbnSignOut(void) {
     gameFrontResetPrefsSyncSession();
 }
 
+/* Gap between the Steam logo and the label, in the dialog's scale. */
+static float wbnSteamIconGap(void) {
+    ImGuiViewport *vp = ImGui::GetMainViewport();
+    return 6.0f * dialogComputeScale((int)vp->Size.x, (int)vp->Size.y);
+}
+
+/* Width a Steam button needs to show its logo and whole label. */
+static float wbnSteamButtonNeedW(const char *label) {
+    return ImGui::GetTextLineHeight() + wbnSteamIconGap() +
+           ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+}
+
 /* Full-width button showing the Steam logo to the left of `label`. The
  * white-masked Steam icon is tinted to the button text colour. `id` must be
  * unique among Steam buttons on screen (the visible label is drawn separately,
@@ -467,7 +479,7 @@ static bool wbnSteamButton(const char *id, const char *label) {
 
     float lineH = ImGui::GetTextLineHeight();
     float iconSz = lineH;
-    float gap = 6.0f;
+    float gap = wbnSteamIconGap();
     float textW = ImGui::CalcTextSize(label).x;
     float contentW = (icon ? iconSz + gap : 0.0f) + textW;
     float tx = cur.x + (w - contentW) * 0.5f;
@@ -639,12 +651,26 @@ static void wbnRenderLoginPopup(void) {
         bool busy = (wbnState == WBN_LOGGING_IN);
         char persona[256];
         bool onSteam = steam_get_persona_name(persona, sizeof(persona));
-        /* Two columns and their padding stay inside the screen. */
         float colW = 290.0f * s;
-        if (colW > vp->Size.x * 0.42f) colW = vp->Size.x * 0.42f;
+        float padX = 12.0f * s;
+        /* Side by side only when both columns, their cell padding and the
+         * window padding fit on the screen and each Steam button shows its
+         * whole label. Otherwise (a small window at a large UI scale, or a
+         * long translation) the two sections stack in one wider column. */
+        bool stacked = colW * 2.0f + padX * 4.0f +
+                       ImGui::GetStyle().WindowPadding.x * 2.0f + 1.0f > vp->Size.x;
+        if (!stacked && onSteam) {
+            stacked = wbnSteamButtonNeedW(langGetText(STR_DLGWBN_SIGNIN_STEAM_BTN)) > colW ||
+                      wbnSteamButtonNeedW(langGetText(STR_DLGWBN_CREATE_BTN)) > colW;
+        }
+        if (stacked) {
+            colW = SDL_min(colW * 2.0f, vp->Size.x * 0.9f - padX * 2.0f -
+                           ImGui::GetStyle().WindowPadding.x * 2.0f);
+        }
+        float bodyW = stacked ? colW : colW * 2.0f;
 
         /* Intro spanning both columns. */
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + colW * 2.0f);
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + bodyW);
         ImGui::TextWrapped("%s", langGetText(STR_DLGWBN_SIGNIN_BLURB));
         ImGui::PopTextWrapPos();
         ImGui::Spacing();
@@ -654,8 +680,21 @@ static void wbnRenderLoginPopup(void) {
         if (busy) {
             wbnDrawSpinner(langGetText(STR_DLGWBN_SIGNINGIN));
         } else {
-            ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(12.0f * s, 4.0f * s));
-            if (ImGui::BeginTable("##wbnsignincols", 2, ImGuiTableFlags_BordersInnerV)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(padX, 4.0f * s));
+            if (stacked) {
+                /* One column: sign in above, create an account below. */
+                if (ImGui::BeginTable("##wbnsigninrows", 1, ImGuiTableFlags_BordersInnerH)) {
+                    ImGui::TableSetupColumn("##both", ImGuiTableColumnFlags_WidthFixed, colW);
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    wbnRenderSignInColumn(onSteam);
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::Spacing();
+                    wbnRenderCreateColumn(onSteam, persona);
+                    ImGui::EndTable();
+                }
+            } else if (ImGui::BeginTable("##wbnsignincols", 2, ImGuiTableFlags_BordersInnerV)) {
                 ImGui::TableSetupColumn("##signin", ImGuiTableColumnFlags_WidthFixed, colW);
                 ImGui::TableSetupColumn("##create", ImGuiTableColumnFlags_WidthFixed, colW);
                 ImGui::TableNextRow();
