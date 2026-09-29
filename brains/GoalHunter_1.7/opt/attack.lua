@@ -2834,6 +2834,34 @@ function M.human_blitz_cap_over(goal, state, now)
   return true
 end
 
+-- HUMAN ORDER GATHER CAP (C.HUMAN_ATTACK_GATHER_MAX_S, 2026-09-29).
+-- Same order test as human_blitz_cap_over, own clock: it starts on the first
+-- tick this is asked for that order, which is the first gather_trees tick
+-- (only the gather_trees handler asks).  Kept on state, keyed by oid + take
+-- tick, so a replan does not restart it.  True = end gathering now through
+-- the PPT_GATHER_TIMEOUT exit.  0 / nil = no cap; a goal the bot picked for
+-- itself always answers false.
+function M.human_gather_cap_over(goal, state, now)
+  local cap_s = C.HUMAN_ATTACK_GATHER_MAX_S
+  if not (C.BOT_COMMANDS_ENABLED and cap_s and cap_s > 0) then return false end
+  local o = state._order
+  if not (o and o.kind == "attack_pill" and goal and goal.target_id
+          and o.tid == goal.target_id) then
+    return false
+  end
+  local hc = state._hgcap
+  if not hc or hc.oid ~= o.oid or hc.since ~= o.since then
+    hc = { oid = o.oid, since = o.since, t0 = now, logged = false }
+    state._hgcap = hc
+  end
+  -- 50 ticks per second.
+  if (now - hc.t0) < cap_s * 50 then return false end
+  if not hc.logged then
+    hc.logged = true
+  end
+  return true
+end
+
 -- Commander GO verdict in blitz_wait, as a pure function (unit tests).
 --   bo_hold    squad.blitz_only(state) and C.BLITZ_ONLY_EXTEND_WAIT
 --   timed_out  READY_TIMEOUT (+ extensions) elapsed
@@ -5298,7 +5326,9 @@ function M.update_attack_substate(goal, state, world, info)
       goal._gather_last_progress = now
     end
     local stalled = (now - (goal._gather_last_progress or now)) > 250  -- ~5 s
+    -- A person's attack order also times out at HUMAN_ATTACK_GATHER_MAX_S.
     local timed_out = (now - (goal._gather_start or now)) > (C.PPT_GATHER_TIMEOUT or 1500)
+                      or M.human_gather_cap_over(goal, state, now)
     if trees_have >= trees_need then
       local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus)
       if unsafe then
