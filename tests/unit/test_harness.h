@@ -1471,6 +1471,20 @@ int run_tank_damage_overkill_destroys(void);
 int run_tank_damage_partial_survives(void);
 int run_tank_destroyed_snapshot_round_trip(void);
 
+/* Shell knockback heading symmetry (test_tank_knockback.c): the bump a
+ * surviving hit applies is a signed WORLD delta decayed by a right shift,
+ * and C's >> rounds a negative value toward -infinity, not toward zero — a
+ * push with a west or north component used to settle further than the same
+ * push east or south for the same shell. The fix shifts by magnitude and
+ * restores the sign afterwards. The bump is 32-bit so a tank_slide_step
+ * above 63 no longer wraps, and a spent bump stays at zero at every decay
+ * shift. */
+int run_tank_knockback_heading_symmetric(void);
+int run_tank_knockback_follows_shell_angle(void);
+int run_tank_knockback_speed_untouched(void);
+int run_tank_knockback_large_step(void);
+int run_tank_knockback_settles_to_zero(void);
+
 /* The destroyed state on the wire (test_tank_status_wire.c): tankStatus
  * carries TANK_STATUS_DEAD (in the respawn wait) and TANK_STATUS_DESTROYED
  * (destroyed, not yet respawned) to every recipient, and armour is a plain

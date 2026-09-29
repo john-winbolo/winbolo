@@ -3979,6 +3979,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_gunsight_reconciliation.c
     tests/unit/test_tank_alliance_unfielded.c
     tests/unit/test_tank_death_state.c
+    tests/unit/test_tank_knockback.c
     tests/unit/test_tank_status_wire.c
     tests/unit/test_voice_flags.c
     tests/unit/test_voice_talking_codec.c
@@ -5300,6 +5301,11 @@ set(_unit_test_names
     tank_damage_overkill_destroys
     tank_damage_partial_survives
     tank_destroyed_snapshot_round_trip
+    tank_knockback_heading_symmetric
+    tank_knockback_follows_shell_angle
+    tank_knockback_speed_untouched
+    tank_knockback_large_step
+    tank_knockback_settles_to_zero
     tank_status_wire_bits
     tank_status_wire_start_find_round_trip
     two_clients_full_sync_independent
