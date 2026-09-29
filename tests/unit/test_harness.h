@@ -2961,6 +2961,13 @@ int run_lobby_template_mode_unknown_key_kept(void);
 int run_lobby_template_no_mode_leaves_config(void);
 int run_lobby_template_add_bot_takes_template(void);
 
+/* A lobby map change (test_lobby_map_keeps_bots.c): the bots, their names,
+ * teams and difficulties, and the host's script list all surviving a change
+ * of map made through the lobby's own command. */
+int run_lobby_map_keeps_bots_plain(void);
+int run_lobby_map_keeps_bots_scenario(void);
+int run_lobby_map_keeps_bots_map_own_row(void);
+
 /* The scripted game type (test_scripted_game_type.c): gameScripted resolving
  * through the base game the scenario declared, at the loadout and at the
  * start, the value going with the template when a plain map is committed,
