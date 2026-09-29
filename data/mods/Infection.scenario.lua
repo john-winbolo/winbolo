@@ -457,12 +457,12 @@ finish = function(line, winner, wait)
   if over or ending then
     return
   end
-  if wait ~= nil then
+  -- A refused timer (the set is full) ends the round now instead of never.
+  if wait ~= nil and game.timer(wait, function()
+                       ending = false
+                       finish(line, winner)
+                     end) then
     ending = true
-    game.timer(wait, function()
-      ending = false
-      finish(line, winner)
-    end)
     return
   end
   over = true
