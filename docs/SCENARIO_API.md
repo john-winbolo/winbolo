@@ -834,7 +834,11 @@ end
 function can_hit(attacker, kind, n, pill)
   local from = side(attacker, pill)
   if from == game.NEUTRAL then return nil end
-  local to = (kind == "tank") and n or game.pill(n).owner
+  local to = n
+  if kind == "pill" then
+    local p = game.pill(n)
+    to = p and p.owner or game.NEUTRAL
+  end
   if to ~= game.NEUTRAL and (to == from or game.allied(from, to)) then
     return false
   end
