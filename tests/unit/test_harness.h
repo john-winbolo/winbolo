@@ -1154,6 +1154,15 @@ int run_alliance_leave_no_ally_leaver_is_top_seat(void);
 int run_alliance_leave_hands_to_ally(void);
 int run_alliance_leave_hands_to_top_seat_ally(void);
 
+/* Alliance requests at the command arms (test_alliance_request.c, #421). */
+int run_alliance_request_accept_without_request_refused(void);
+int run_alliance_request_then_accept_allies(void);
+int run_alliance_request_requester_replaced_refused(void);
+int run_alliance_request_ranked_accept_refused(void);
+int run_alliance_request_refused_in_lobby(void);
+int run_alliance_request_cleared_at_round_start(void);
+int run_alliance_request_client_drops_departed_requester(void);
+
 /* Pillbox and base owners from the map file survive a round start
  * (test_round_start_owners.c, issue #422). */
 int run_round_start_owners_kept_with_lobby_team(void);

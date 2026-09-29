@@ -3528,6 +3528,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_shell_death_event.c
     tests/unit/test_alliance_reset.c
     tests/unit/test_alliance_leave.c
+    tests/unit/test_alliance_request.c
     tests/unit/test_round_start_owners.c
     tests/unit/test_lobby_add_bot_dispatch.c
     tests/unit/test_lobby_bot_config_memory.c
@@ -5152,6 +5153,13 @@ set(_unit_test_names
     alliance_leave_no_ally_leaver_is_top_seat
     alliance_leave_hands_to_ally
     alliance_leave_hands_to_top_seat_ally
+    alliance_request_accept_without_request_refused
+    alliance_request_then_accept_allies
+    alliance_request_requester_replaced_refused
+    alliance_request_ranked_accept_refused
+    alliance_request_refused_in_lobby
+    alliance_request_cleared_at_round_start
+    alliance_request_client_drops_departed_requester
     round_start_owners_kept_with_lobby_team
     round_start_owners_kept_after_manual_alliance
     treegrow_never_plants_on_deep_sea
