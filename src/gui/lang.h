@@ -2884,8 +2884,9 @@
  * the rules the table gained after the middle stretch was numbered, and the
  * next pair are the pillmassage rules, which start again past the map
  * editor's scenario strings because everything up to them was taken.
- * The pill shell cap pair and then pill_base_defend_shape came after all of
- * those and took the next free numbers, at the end of the file. The
+ * The pill shell cap pair, pill_base_defend_shape and then the Mac Bolo
+ * shell push pair came after all of those and took the next free numbers,
+ * at the end of the file. The
  * order of the block is SIM_RULE_LIST's throughout, which is the order that
  * matters, and a hole in the numbers costs nothing: langTable is searched by
  * id rather than indexed by it. */
@@ -3039,6 +3040,8 @@
 #define STR_RULE_DESC_pill_shell_cap             2699
 #define STR_RULE_DESC_pill_max_shells_at_tank    2698
 #define STR_RULE_DESC_pill_base_defend_shape     2700
+#define STR_RULE_DESC_tank_slide_armour_bonus    2702
+#define STR_RULE_DESC_tank_slide_mac             2703
 
 /* Rule range wording */
 

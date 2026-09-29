@@ -1478,12 +1478,19 @@ int run_tank_destroyed_snapshot_round_trip(void);
  * push east or south for the same shell. The fix shifts by magnitude and
  * restores the sign afterwards. The bump is 32-bit so a tank_slide_step
  * above 63 no longer wraps, and a spent bump stays at zero at every decay
- * shift. */
+ * shift. The armour_paths, timing_drive, replaces_mines and rules_respawn
+ * tests are #380's own, run with tank_slide_mac on; mac_off_ignores_bonus
+ * checks the switch off leaves the WinBolo push alone. */
 int run_tank_knockback_heading_symmetric(void);
 int run_tank_knockback_follows_shell_angle(void);
 int run_tank_knockback_speed_untouched(void);
 int run_tank_knockback_large_step(void);
 int run_tank_knockback_settles_to_zero(void);
+int run_tank_knockback_armour_paths(void);
+int run_tank_knockback_timing_drive(void);
+int run_tank_knockback_replaces_mines(void);
+int run_tank_knockback_rules_respawn(void);
+int run_tank_knockback_mac_off_ignores_bonus(void);
 
 /* The destroyed state on the wire (test_tank_status_wire.c): tankStatus
  * carries TANK_STATUS_DEAD (in the respawn wait) and TANK_STATUS_DESTROYED
