@@ -32,6 +32,7 @@
 #include "gfx_settings.h"
 #include "tileloader.h"
 #include "util.h"
+#include "tank_diagonal_snap.h"
 
 #include <string.h>
 
@@ -335,12 +336,24 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
     /* Win32 adds 2 to px/py before computing position */
     int apx = (int)px;// + 2;
     int apy = (int)py;// + 2;
+    int sqX = (int)mx, sqY = (int)my;
+    if (mode != GFX_ANIM_SMOOTH && mode != GFX_ANIM_MATCH_PIXELATION) {
+      /* Classic draws whole game pixels. On a diagonal, cut the position
+         to the diagonal pixel lattice rather than each axis on its own, so
+         the tank steps on both axes on the same frame (see
+         tank_diagonal_snap.h). */
+      int dx = sqX * 256 + (int)wx;
+      int dy = sqY * 256 + (int)wy;
+      tankDiagonalSnap(utilGetDir((TURNTYPE)angle), &dx, &dy);
+      sqX = 0; apx = dx / 16;
+      sqY = 0; apy = dy / 16;
+    }
     float sx = originX - tileW - edgeX +
                spritePositionOffset(mode, ctx->scale, ctx->sheetScale,
-                                    (int)mx, apx, (int)wx);
+                                    sqX, apx, (int)wx);
     float sy = originY - tileH - edgeY +
                spritePositionOffset(mode, ctx->scale, ctx->sheetScale,
-                                    (int)my, apy, (int)wy);
+                                    sqY, apy, (int)wy);
 
     /* A rotating skin's tank can instead be drawn from its north sprite and
        turned here by the tank's full angle, for 256 steps rather than the

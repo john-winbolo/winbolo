@@ -1907,6 +1907,7 @@ int run_mapview_sprite_lgm_snap(void);
  * numbers sit on their square and are withheld below the minimum scale. */
 int run_mapview_overlay_gunsight(void);
 int run_mapview_overlay_tank_label(void);
+int run_mapview_overlay_tank_label_smooth(void);
 int run_mapview_overlay_cursor(void);
 int run_mapview_overlay_item_labels(void);
 
@@ -2704,6 +2705,10 @@ int run_console_say_keeps_case(void);
 /* The per-tank modifier set (test_tank_modifiers.c): the op that writes it,
  * the states it refuses, the snapshot group under the ninth presence bit, and
  * the create-clears / respawn-keeps rule for the values on the tank. */
+/* The diagonal pixel snap (test_tank_diagonal_step.c): a tank drawn on a
+ * diagonal steps on both axes in the same frame, at the same speed, and the
+ * render lerp keeps the snap from flickering. */
+int run_tank_diagonal_steps_both_axes(void);
 /* The sites that read a modifier (test_tank_modifier_sites.c): one case per
  * site, each pairing the modified run with a classic one on the same
  * square so only the modifier is under test. */
@@ -2933,6 +2938,7 @@ int run_survival_lobby_round(void);
 int run_survival_lobby_round_full(void);
 int run_survival_lobby_round_ds_order(void);
 int run_loopback_unfield_tank(void);
+int run_loopback_fine_tank_position(void);
 int run_lobby_template_return_reconciles(void);
 int run_lobby_template_return_unfields(void);
 int run_lobby_template_reset_reseats(void);

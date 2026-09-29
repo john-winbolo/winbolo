@@ -51,6 +51,7 @@
 #include "bases.h"
 #include "starts.h"
 #include "tank.h"
+#include "tank_diagonal_snap.h"
 #include "shells.h"
 #include "rubble.h"
 #include "explosions.h"
@@ -1903,15 +1904,34 @@ void clientSnapshotRenderInterp(ClientSim *cs, uint32_t nowMs,
 
     if (drew) {
       BYTE lgmMX = 0, lgmMY = 0, lgmPX = 0, lgmPY = 0, lgmFrame = 0;
-      BYTE mx = (BYTE)(interpX >> TANK_SHIFT_MAPSIZE);
-      BYTE px = (BYTE)((interpX & 0xFF) >> TANK_SHIFT_RIGHT2);
-      BYTE my = (BYTE)(interpY >> TANK_SHIFT_MAPSIZE);
-      BYTE py = (BYTE)((interpY & 0xFF) >> TANK_SHIFT_RIGHT2);
       BYTE frame = utilGetDir(interpAngle);
+      int snapX = (int)interpX;
+      int snapY = (int)interpY;
+      BYTE mx, my, px, py;
+      /* The position is cut down to a game pixel here; on a diagonal cut it
+       * on the diagonal lattice so both axes step on the same frame. */
+      tankDiagonalSnap(frame, &snapX, &snapY);
+      if (snapX < 0) {
+        snapX = 0;
+      } else if (snapX > 0xFFFF) {
+        snapX = 0xFFF0;
+      }
+      if (snapY < 0) {
+        snapY = 0;
+      } else if (snapY > 0xFFFF) {
+        snapY = 0xFFF0;
+      }
+      mx = (BYTE)(snapX >> TANK_SHIFT_MAPSIZE);
+      px = (BYTE)((snapX & 0xFF) >> TANK_SHIFT_RIGHT2);
+      my = (BYTE)(snapY >> TANK_SHIFT_MAPSIZE);
+      py = (BYTE)((snapY & 0xFF) >> TANK_SHIFT_RIGHT2);
       interpGetLgm(&cs->interpCtx, pn, &lgmMX, &lgmMY, &lgmPX, &lgmPY,
                    &lgmFrame);
       playersUpdate(&cs->sim.plyrs, pn, mx, my, px, py, frame, interpOnBoat,
                     lgmMX, lgmMY, lgmPX, lgmPY, lgmFrame);
+      /* The same position before the snap and the pixel cut, for the
+       * Smooth animation mode (clientSimSetFineTankPositions). */
+      playersSetFinePosition(&cs->sim.plyrs, pn, interpX, interpY);
     } else if (interpHasData(&cs->interpCtx, pn) &&
                (!interpIsAlive(&cs->interpCtx, pn) ||
                 interpTankHidden(&cs->interpCtx, pn))) {
