@@ -3,8 +3,9 @@
 -- Everybody starts on the same side. Ten seconds in one of them turns, and
 -- from there every tank that dies comes back infected: which side you are on
 -- is decided by who has killed you rather than by what the lobby put you on.
--- The round ends when the last survivor turns, or when six minutes are up with
--- one still standing.
+-- The round ends when the last survivor turns, or when the clock runs out (ten
+-- minutes unless the host sets another length in the lobby) with one still
+-- standing.
 --
 -- The two sides are the same tank. The one exception is the first to turn,
 -- who is half again as quick, turns and accelerates harder, and is harder to
@@ -65,7 +66,7 @@
 local SURVIVORS = 1
 local INFECTED  = 2
 
-local ROUND_SECONDS   = 360   -- the whole round
+local ROUND_SECONDS   = 600   -- the whole round; a lobby setting, in minutes
 local HEAD_START      = 10    -- before the first one turns
 local WARNING_SECONDS = 3     -- what the first one is told, and nobody else
 local HELP_EVERY      = 60    -- seconds with no infected kill before another turns
@@ -76,7 +77,7 @@ local SPAWN_GRACE     = 20    -- seconds a respawned survivor has to reach land
                               -- before the deep sea clock counts them
 local TICKS_PER_SEC   = 100   -- game.tick() counts a hundred to the second
 
--- The defaults of the two lobby settings (scenario.settings at the bottom of
+-- The defaults of two more lobby settings (scenario.settings at the bottom of
 -- the file declares them from these numbers). on_start puts the host's choice
 -- over them.
 local COMPASS_SECONDS    = 90   -- the tail of the round the horde has a compass
@@ -883,6 +884,7 @@ function on_start()
   -- The host's lobby choices, over the defaults at the top of the file.
   -- game.setting answers from inside a hook, where the host has read the
   -- scenario table at the bottom of the file, not at the top level of it.
+  ROUND_SECONDS      = game.setting("round_minutes") * 60
   COMPASS_SECONDS    = game.setting("compass_seconds")
   DEEP_WATER_SECONDS = game.setting("deep_water_seconds")
   running = true
@@ -909,8 +911,9 @@ function on_start()
   -- to play it from what the newswire tells them in the first ten seconds.
   game.message("Infection: one of you turns in ten seconds. " ..
                "Everyone they kill turns with them.")
-  game.message("Survivors: the bases, the pillboxes and the mines are yours. " ..
-               "Hold out for six minutes.")
+  game.message(string.format("Survivors: the bases, the pillboxes and the " ..
+                             "mines are yours. Hold out for %d minutes.",
+                             math.floor(ROUND_SECONDS / 60)))
   game.message("Infected: back three seconds after you die, and the first " ..
                "of you is quicker and tougher. Kill them all.")
   game.message(string.format("Survivors: stay in deep water for %d seconds " ..
@@ -1210,6 +1213,8 @@ scenario = {
   -- What the host sets in the lobby's details dialog; on_start reads them
   -- with game.setting. The defaults are the numbers at the top of the file.
   settings = {
+    { id = "round_minutes", label = "Round length (minutes)", type = "int",
+      min = 3, max = 15, step = 1, default = math.floor(ROUND_SECONDS / 60) },
     { id = "deep_water_seconds", label = "Deep water time before turning (s)",
       type = "int", min = 3, max = 60, step = 1,
       default = DEEP_WATER_SECONDS },
