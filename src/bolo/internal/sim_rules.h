@@ -159,7 +159,6 @@ typedef struct SimRules {
     int32_t pill_angry_divisor;     /* the step from normal toward min */
     float   pill_fire_length;       /* how far the shell a pill fires flies */
     int32_t pill_base_defend_range; /* map squares around a shot base */
-    int32_t pill_base_defend_shape; /* 0 a square, 1 a circle */
     int32_t pill_aim_iterations;    /* how hard a pill works to lead a target */
     int32_t pill_massage_range;     /* how near the old sloppy aim takes over */
     float   pill_massage_cosine;    /* how straight at the pill still aims true */
@@ -240,6 +239,9 @@ typedef struct SimRules {
     /* ---- Pillbox shell cap ---- last, like its rows in SIM_RULE_LIST */
     int32_t pill_shell_cap;         /* whether pill_max_shells_at_tank applies */
     int32_t pill_max_shells_at_tank; /* pill shells one tank can have coming */
+
+    /* ---- Base defence shape ---- last, like its row in SIM_RULE_LIST */
+    int32_t pill_base_defend_shape; /* 0 a square, 1 a circle */
 } SimRules;
 
 /*********************************************************

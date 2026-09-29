@@ -2977,7 +2977,6 @@
 #define STR_RULE_DESC_pill_angry_divisor         2517
 #define STR_RULE_DESC_pill_fire_length           2518
 #define STR_RULE_DESC_pill_base_defend_range     2519
-#define STR_RULE_DESC_pill_base_defend_shape     2700
 #define STR_RULE_DESC_pill_aim_iterations        2520
 #define STR_RULE_DESC_pill_massage_range         2575
 #define STR_RULE_DESC_pill_massage_cosine        2576
@@ -3036,6 +3035,7 @@
 #define STR_RULE_DESC_tree_weight_mine           2425
 #define STR_RULE_DESC_pill_shell_cap             2699
 #define STR_RULE_DESC_pill_max_shells_at_tank    2698
+#define STR_RULE_DESC_pill_base_defend_shape     2700
 
 /* Rule range wording */
 

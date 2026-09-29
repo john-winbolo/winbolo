@@ -261,7 +261,6 @@ int run_sim_rules_classic_defaults(void) {
     SR_EQ(pill_angry_divisor, PILLBOX_ANGRY_DIVISOR);
     SR_FEQ(pill_fire_length, PILLBOX_FIRE_DISTANCE);
     SR_EQ(pill_base_defend_range, PILL_BASE_HIT_RANGE);
-    SR_EQ(pill_base_defend_shape, PILL_BASE_HIT_SHAPE);
     SR_EQ(pill_aim_iterations, MAX_AIM_ITERATE);
     SR_EQ(pill_massage_range, PILLBOX_MASSAGE_RANGE);
     SR_FEQ(pill_massage_cosine, PILLBOX_MASSAGE_COSINE);
@@ -328,6 +327,9 @@ int run_sim_rules_classic_defaults(void) {
     /* Pillbox shell cap */
     SR_EQ(pill_shell_cap, PILLBOX_SHELL_CAP);
     SR_EQ(pill_max_shells_at_tank, PILLBOX_MAX_SHELLS_AT_TANK);
+
+    /* Base defence shape */
+    SR_EQ(pill_base_defend_shape, PILL_BASE_HIT_SHAPE);
 
     return 0;
 }
