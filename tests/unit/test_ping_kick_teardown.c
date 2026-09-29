@@ -114,7 +114,7 @@ int run_shells_survive_cleared_lgm_slot(void) {
      * the very next update, which is the branch that faulted in the report. */
     WORLD sx = 0, sy = 0;
     UT_ASSERT(serverSimGetTankState(sim, 0, &sx, &sy));
-    shellsAddItem(gs, &gs->shs, sx, sy, 0, 8, /*owner*/ 0, NEUTRAL, FALSE);
+    shellsAddItem(gs, &gs->shs, sx, sy, 0, 8, /*owner*/ 0, NEUTRAL, DMG_NO_PILL, FALSE);
     UT_ASSERT_MSG(gs->shs != NULL, "shell was not added");
     gs->shs->length = SHELL_DEATH;
 

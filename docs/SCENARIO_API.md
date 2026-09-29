@@ -727,6 +727,7 @@ applied around it; one bad row does not cost a scenario its other rules.
 |---|---|
 | `on_tank_spawned(p, mx, my, respawn, scripted)` | `respawn` is false the first time a seat takes the field. |
 | `on_tank_killed(victim, killer, cause, scripted)` | The victim comes first: it is the subject, and the killer is what happened to it. `cause` is `"shell"`, `"mine"`, `"deep_sea"` or `"script"`. |
+| `on_tank_hit(victim, attacker, cause, amount, pill, scripted)` | Every shell and every mine a tank takes, after the damage is worked out. `attacker` is the seat that fired the shell or laid the mine, or `game.NEUTRAL` for a pillbox's shell and a mine nobody owns. `cause` is `"shell"` or `"mine"`. `amount` is the armour the tank actually lost, which can be `0` — a hit `damage_scale` priced at nothing, or one landing on a tank already at zero. `pill` is the pillbox number that fired the shell, and `nil` for anything else. A shell `can_hit` let through never hit, so it is not reported here. A hit that kills raises this and then `on_tank_killed`. |
 | `on_lgm_died(p, killer, mx, my, scripted)` | The square is where the man died, captured before the respawn moves him. |
 | `on_lgm_landed(p, mx, my, scripted)` | The builder `on_lgm_died` reported has finished his flight back and touched down. `mx`, `my` are the square he reached — where his tank stood when he died, unless `builder_parachute` aimed him somewhere else — and he walks to the tank from there rather than arriving in it. |
 | `on_base_captured(n, old, new, scripted)` | `old` and `new` are owners: `old` is `game.NEUTRAL` for a base nobody held, and `new` is always a seat, because a base changing to nobody's raises `on_base_neutralized` below instead. Neither hook fires when a base passes to an ally or falls to nobody because its owner left — that hand-over raises no event at all. |
@@ -734,7 +735,7 @@ applied around it; one bad row does not cost a scenario its other rules.
 | `on_pill_captured(n, old, new, scripted)` | Every change of a pillbox's owner, with `game.NEUTRAL` as `new` where nobody took it. |
 | `on_pill_placed(n, p, armour, scripted)` | The pillbox first, then who placed it. Fires for every way a carried pillbox reaches the map, not only a builder finishing the job: a tank sinking or being destroyed puts its cargo down, a builder dying puts the one in his hands down, and a player leaving does both. `armour` is what tells them apart — a built pillbox arrives at the sim's cap, every other route arrives dead at `0` — so test it, not `p`, before treating one as a live gun. `p` is whoever was carrying it, which on a leave is a slot on its way out. |
 | `on_pill_picked_up(n, p, scripted)` | The same order. |
-| `on_pill_killed(n, by, scripted)` | `by` is the seat credited with the blow, or `game.NEUTRAL` where none can be: a blast that caught the pillbox, and a shell another pillbox fired, both name nobody. |
+| `on_pill_killed(n, by, scripted)` | `by` is the seat credited with the blow, or `game.NEUTRAL` where none can be: a blast that caught the pillbox, and a shell another pillbox fired, both name nobody. `can_die` and `pill_damage_scale` are told whose tank the blast came from, but nobody is credited with it, so this hook still names nobody for one. |
 | `on_built(p, action, x, y, scripted)` | `action` is `"trees"`, `"road"`, `"building"`, `"repair"` or `"boat"`. A build of kind pill on this hook is always a repair — a new pillbox going down is `on_pill_placed`. `"mine"` is a word the surface spells and this hook never sends: laying one raises `on_mine_laid` instead, so a test for it here never holds. |
 | `on_mine_laid(p, mx, my, scripted)` | `p` is the seat whose tank dropped the mine or whose builder laid it. A scenario's own `place_mine` does not reach this hook, so nothing here is `scripted`. |
 | `on_mine_explosion(mx, my, layer, scripted)` | `layer` is who laid the mine, not a layer of the map: the seat that put it down, or `game.NEUTRAL` for a mine the map came with or one whose owner has since left. It is read before the mine leaves the square, and it is kept off the wire — no client is told whose minefield it drove into. |
@@ -807,14 +808,48 @@ rather than left to misbehave quietly.
 | `can_build(p, action, x, y, n)` | Before a builder order goes ahead. `action` is the order as given — `"trees"`, `"road"`, `"building"`, `"pill"`, `"mine"` or `"boat"` — before the engine decides whether the square makes it a repair. `n` is the pillbox for a pill order and `nil` otherwise. | `false` refuses the order. Ordinary rule: yes. |
 | `can_capture(kind, n, p)` | When seat `p` would take `"pill"` or `"base"` number `n`. | `false` leaves it where it is and does not stop the tank. Ordinary rule: yes. |
 | `announce(kind, subject, actor)` | Before a newswire line is shown. `kind` is `"joined"`, `"left"`, `"base_captured"`, `"pill_captured"`, `"builder_lost"`, `"name_changed"`, `"alliance"` or `"vote"`. `subject` is the base or pillbox number for a capture and a seat otherwise; `actor` is the seat that did it. | `false` keeps the line off every client's newswire. The fact still happens. Ordinary rule: shown. |
-| `can_die(kind, n, killer, cause)` | When a blow would destroy a `"tank"`, a `"builder"` or a `"pill"`. `n` is the seat for a tank or its builder and the pillbox number for a pill. `cause` is `"shell"`, `"mine"`, `"deep_sea"` or `"script"` for a tank, `"shell"` or `"mine"` for the other two, and `nil` when the engine could not name it. | `false` leaves a tank at zero armour and alive, a builder untouched, a pillbox at one armour. Ordinary rule: yes. |
+| `can_hit(attacker, kind, n, pill)` | When a shell reaches a `"tank"` or a `"pill"` it would hit. `n` is the seat for a tank and the pillbox number for a pill. `attacker` is the seat that fired it, or `game.NEUTRAL` for a pillbox's shell, and `pill` is the pillbox that fired it, `nil` for a tank's shell — so a pillbox's side is `game.pill(pill).owner`. Pillbox shells reaching pillboxes are asked too. A shell is asked once about each target: once let through, it passes that target for the rest of its flight without asking again. | `false` lets the shell fly on as if the target were not there: no damage, no knockback, no boat lost, no angry pillbox and no hit sound, and it can still hit whatever is behind. Ordinary rule: yes. |
+| `can_die(kind, n, killer, cause, pill)` | When a blow would destroy a `"tank"`, a `"builder"` or a `"pill"`. `n` is the seat for a tank or its builder and the pillbox number for a pill. `cause` is `"shell"`, `"mine"`, `"deep_sea"` or `"script"` for a tank; `"shell"`, `"mine"` or `"explosion"` for a builder; `"shell"` or `"explosion"` for a pill; and `nil` when the engine could not name it. `"explosion"` is a dying tank's blast. `killer` is the seat that fired the shell (`game.NEUTRAL` for a pillbox's); for a builder caught by a mine it is the seat that laid it, and for a builder or a pill caught in a blast it is the seat whose tank blew up. Those two are named here and credited with nothing: `on_lgm_died` and `on_pill_killed` still name nobody for them. `pill` is the pillbox whose shell it was, and `nil` for anything else. | `false` leaves a tank at zero armour and alive, a builder untouched, a pillbox at one armour. Ordinary rule: yes. |
 | `can_ally(p, q)` | When seat `p` asks seat `q` for an alliance, and again when `q` accepts, so an answer that changed in between is the one that counts. `p` is always the seat that asked. Bots ask and accept the same way people do. A script's own `set_team`, a bot it spawns onto a team, and the seating in `scenario.lobby` are the script's decisions and are not asked. | `false` refuses the request, so `q` is never shown it, or refuses the accept. Ordinary rule: yes. |
 | `on_choose_start(p)` | When the engine is about to pick a start for seat `p`, at a spawn, a respawn or a teleport with no start named. A start the script named in the op itself is not asked about. | A start number, counted from 1 as `game.start` counts. A number that names no live start is reported and the engine picks. `nil` lets the engine pick. |
 | `spawn_loadout(p)` | When seat `p`'s tank is created, unless the op that spawned it named a `loadout` of its own. A named one outranks the policy and is taken as it is read, so the policy is not asked for that tank and the named amounts are spent on it rather than held for the seat's next life. | `"open"`, `"tournament"` or `"strict"` for that game type's loadout, or a table of all four amounts, `{ shells = , mines = , armour = , trees = }`, each 0 to 255. A table short of one is reported and the ordinary loadout stands. |
-| `damage_scale(attacker, victim, cause)` | On every hit a tank takes, with `cause` as `can_die` spells it for a tank. | A percent, 0 to 10000. 100 is the ordinary amount and 0 is a hit that costs nothing. Out of range is reported and 100 stands. |
+| `damage_scale(attacker, victim, cause, pill)` | On every hit a tank takes, with `cause` as `can_die` spells it for a tank. `attacker` is `game.NEUTRAL` for a pillbox's shell, and `pill` is that pillbox's number, `nil` for anything else. | A percent, 0 to 10000. 100 is the ordinary amount and 0 is a hit that costs nothing. Out of range is reported and 100 stands. |
+| `pill_damage_scale(attacker, n, cause, pill)` | On every blow pillbox `n` takes: a shell, with `cause` `"shell"`, and a dying tank's blast, with `cause` `"explosion"`. `attacker` is the seat that fired the shell (`game.NEUTRAL` for a pillbox's) or the seat whose tank blew up, and `pill` is the pillbox that fired the shell, `nil` for anything else. | A percent, 0 to 10000, of the armour the pillbox loses. 100 is the ordinary amount and 0 costs it nothing. Only the armour is scaled: the shell still stops there and the pillbox still turns angry. Out of range is reported and 100 stands. |
 
 `scenario.lobby.max_players` is the one decision that is a number rather than
 a function; it is applied by the lobby without asking.
+
+**Switching off friendly fire.** A pillbox's shells carry no seat, so a script
+reads the side from the pillbox that fired them:
+
+```lua
+local function side(attacker, pill)
+  if pill ~= nil then
+    local p = game.pill(pill)
+    return p and p.owner or game.NEUTRAL
+  end
+  return attacker
+end
+
+function can_hit(attacker, kind, n, pill)
+  local from = side(attacker, pill)
+  if from == game.NEUTRAL then return nil end
+  local to = (kind == "tank") and n or game.pill(n).owner
+  if to ~= game.NEUTRAL and (to == from or game.allied(from, to)) then
+    return false
+  end
+  return nil
+end
+```
+
+**What a player sees of a shell let through.** The policies run on the server
+alone. A client draws its own shells ahead of the server and stops drawing one
+where it meets another tank or a pillbox, because that is where a shell
+ordinarily ends. A shell `can_hit` lets through therefore disappears from its
+firer's screen at the tank or pillbox it passed, and the explosion where it
+really lands is drawn when the server reports it. Nobody sees a hit that did
+not happen: there is no hit sound, no damage and no knockback. Other players'
+views of the same shell pick it up again from the next update once it is past.
 
 **Which round answers.** A round's own state is booted before the round places
 anything, so `on_choose_start` and `spawn_loadout` for the seats already in the

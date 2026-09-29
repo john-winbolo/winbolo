@@ -821,6 +821,29 @@ void serverSimCbMineExploded(void *ctx, BYTE mapX, BYTE mapY, BYTE layer) {
     serverSimAddEvent(sim, &ev);
 }
 
+/* A tank took a shell or a mine. Local like the mine placing above, for a
+ * different reason: nothing a client or a bot reads needs it, and a round with
+ * shells flying would spend a slot of the tick's event buffer on every hit.
+ * It is raised only while an in-process subscriber is listening, which is the
+ * scenario host, so a round nobody scripts spends nothing on it. */
+void serverSimCbTankHit(void *ctx, BYTE victim, BYTE attacker, BYTE cause,
+                        BYTE amount, BYTE pill) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+
+    if (sim->numEventSubscribers == 0) {
+        return;
+    }
+    ev.type = EVENT_TANK_HIT;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = victim;
+    ev.data[1] = attacker;
+    ev.data[2] = cause;
+    ev.data[3] = amount;
+    ev.data[4] = pill;
+    serverSimAddEvent(sim, &ev);
+}
+
 void serverSimCbCenterTank(void *ctx) {
     (void)ctx;
     /* No-op on server */
@@ -923,7 +946,8 @@ bool serverSimCbCanRespawn(void *ctx, BYTE player) {
 /* What this blow is worth against this victim, as a percent. A hundred is
  * the classic amount and leaves the damage arithmetic exactly where it
  * was. */
-int serverSimCbDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause) {
+int serverSimCbDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause,
+                           BYTE pill) {
     ServerSim *sim = (ServerSim *)ctx;
     int pct;
 
@@ -933,9 +957,44 @@ int serverSimCbDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause) {
     }
     serverSimScenarioPolicyEnter(sim);
     pct = sim->scenarioPolicy->damageScale(sim->scenarioPolicy->ctx, attacker,
-                                           victim, cause);
+                                           victim, cause, pill);
     serverSimScenarioPolicyLeave(sim);
     return pct;
+}
+
+/* What this blow takes off a pill, as a percent of the classic amount. The
+ * same shape as the tank's price above. */
+int serverSimCbPillDamageScale(void *ctx, BYTE attacker, BYTE index,
+                               BYTE cause, BYTE pill) {
+    ServerSim *sim = (ServerSim *)ctx;
+    int pct;
+
+    if (sim->scenarioPolicy == NULL ||
+        sim->scenarioPolicy->pillDamageScale == NULL) {
+        return 100;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    pct = sim->scenarioPolicy->pillDamageScale(sim->scenarioPolicy->ctx,
+                                               attacker, index, cause, pill);
+    serverSimScenarioPolicyLeave(sim);
+    return pct;
+}
+
+/* Whether a shell may hit the tank or pill it has reached. */
+bool serverSimCbCanHit(void *ctx, BYTE attacker, BYTE kind, BYTE index,
+                       BYTE pill) {
+    ServerSim *sim = (ServerSim *)ctx;
+    bool may;
+
+    if (sim->scenarioPolicy == NULL ||
+        sim->scenarioPolicy->canHit == NULL) {
+        return TRUE;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    may = sim->scenarioPolicy->canHit(sim->scenarioPolicy->ctx, attacker, kind,
+                                      index, pill);
+    serverSimScenarioPolicyLeave(sim);
+    return may;
 }
 
 /* Whether a build order may go ahead. */
@@ -976,7 +1035,7 @@ bool serverSimCbCanCapture(void *ctx, BYTE kind, BYTE index, BYTE player) {
  * through here: they call the death bodies directly, so a script that kills
  * what it protected gets the death it asked for. */
 bool serverSimCbCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
-                       BYTE cause) {
+                       BYTE cause, BYTE pill) {
     ServerSim *sim = (ServerSim *)ctx;
     bool may;
 
@@ -986,7 +1045,7 @@ bool serverSimCbCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
     }
     serverSimScenarioPolicyEnter(sim);
     may = sim->scenarioPolicy->canDie(sim->scenarioPolicy->ctx, kind, index,
-                                      killer, cause);
+                                      killer, cause, pill);
     serverSimScenarioPolicyLeave(sim);
     return may;
 }

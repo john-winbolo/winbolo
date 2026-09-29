@@ -650,7 +650,7 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
         /* Fire at closest enemy tank */
         if ((*value)->item[count].justSeen == TRUE) {
           dir = pillsTargetTank(sim, mp, value, bs, x, y, bestTankX, bestTankY, (TURNTYPE) bestTankDir, bestTankSpeed, (tankIsOnBoat(bestTank)), tankBoatExitSpeed(sim, *bestTank));
-          shellsAddItem(sim, shs, x, y, dir, sim->rules.pill_fire_length, NEUTRAL, bestTankNum, FALSE);
+          shellsAddItem(sim, shs, x, y, dir, sim->rules.pill_fire_length, NEUTRAL, bestTankNum, count, FALSE);
           if (shellCapOn && bestTankNum < MAX_TANKS) {
             shellsAtTank[bestTankNum]++;
           }
@@ -684,20 +684,50 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
 *  yValue - Y Location
 *********************************************************/
 bool pillsIsPillHit(pillboxes *value, BYTE xValue, BYTE yValue) {
-  bool returnValue; /* Value to return */
+  return pillsHitSlot(value, xValue, yValue) != DMG_NO_PILL;
+}
+
+/*********************************************************
+*NAME:          pillsHitSlot
+*PURPOSE:
+*  The pill index of the pillbox a shell at this square
+*  would hit — a live one on the map — or DMG_NO_PILL for a
+*  square with none.
+*
+*ARGUMENTS:
+*  value  - Pointer to the pillbox structure
+*  xValue - X Location
+*  yValue - Y Location
+*********************************************************/
+BYTE pillsHitSlot(pillboxes *value, BYTE xValue, BYTE yValue) {
   BYTE count;       /* Looping Variable */
 
-  returnValue = FALSE;
   count = 0;
-  while (returnValue == FALSE && count < ((*value)->numPills)) {
+  while (count < ((*value)->numPills)) {
     if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue && ((*value)->item[count].armour >0) && (*value)->item[count].inTank == FALSE) {
       /* Pillbox has been Hit */
-      returnValue = TRUE;
+      return count;
     }
     count++;
   }
 
-  return returnValue;
+  return DMG_NO_PILL;
+}
+
+/* What a blow takes off a pill once the host has priced it, as a percent of
+   the classic amount. One rounding, half up, so a hundred leaves the classic
+   number exactly; capped at a byte, which is more than any pill can hold. */
+static BYTE pillsScaledDamage(GameSim *sim, int base, BYTE attacker, BYTE index,
+                              BYTE cause, BYTE pill) {
+  int64_t amount;
+
+  amount = ((int64_t) base *
+            gameSimPillDamageScale(sim, attacker, index, cause, pill) + 50) /
+           100;
+  if (amount > 255) {
+    amount = 255;
+  }
+  return (BYTE) amount;
 }
 
 /*********************************************************
@@ -715,8 +745,11 @@ bool pillsIsPillHit(pillboxes *value, BYTE xValue, BYTE yValue) {
 *  yValue     - Y Location
 *  wantDamage - TRUE if we just want to do damage to it
 *  wantAngry  - TRUE if we just want to make it angry
+*  owner      - Who fired the shell, NEUTRAL for a pillbox
+*  pill       - The pill index of the pillbox that fired
+*               it, DMG_NO_PILL for a tank's shell
 *********************************************************/
-bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, bool wantAngry, BYTE owner) {
+bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, bool wantAngry, BYTE owner, BYTE pill) {
   pillboxes *value = &sim->pb;
   bool isServer = sim->isServer;
   bool returnValue;  /* Value to return */
@@ -732,15 +765,19 @@ bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, boo
       done = TRUE;
       BYTE before = (*value)->item[count].armour;  /* > 0 here */
       if (wantDamage == TRUE && (*value)->item[count].armour > 0) {
+        /* What the shell takes, as the host prices it. A price of nothing
+           still stops the shell and still angers the pill below: only the
+           armour lost is the host's to scale. */
+        BYTE damage = pillsScaledDamage(sim, sim->rules.pill_shell_damage,
+                                        owner, count, DMG_SRC_SHELL, pill);
         /* Ask whether the shell takes more than is left rather than
            subtracting first and reading the wrap: what a shell takes off a
            pill and what a pill may hold are two rules now, and a table may
            put any pair of numbers here. */
-        if (sim->rules.pill_shell_damage > before) {
+        if (damage > before) {
           (*value)->item[count].armour = 0;
         } else {
-          (*value)->item[count].armour =
-              (BYTE) (before - sim->rules.pill_shell_damage);
+          (*value)->item[count].armour = (BYTE) (before - damage);
         }
         /* The blow that would finish the pill is the host's to refuse, and a
            refusal holds it at one armour, where it goes on firing. Taken back
@@ -748,7 +785,7 @@ bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, boo
            actually lost. */
         if ((*value)->item[count].armour == 0 &&
             gameSimCanDie(sim, DIE_KIND_PILL, count, owner,
-                          DMG_SRC_SHELL) == FALSE) {
+                          DMG_SRC_SHELL, pill) == FALSE) {
           (*value)->item[count].armour = 1;
         }
       }
@@ -1406,14 +1443,20 @@ BYTE pillsSetPillOwner(GameSim *sim, pillboxes *value, BYTE pillNum, BYTE owner,
 *  xValue - X Location of pillbox
 *  yValue - Y Location of pillbox
 *  amount - Amount of damage done to the pillbox
+*  owner  - The slot whose dying tank the blast came
+*           from, for the policy questions alone: the
+*           kill is still credited to nobody
 *********************************************************/
-void pillsGetDamagePos(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue, BYTE amount) {
+void pillsGetDamagePos(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue, BYTE amount, BYTE owner) {
   BYTE count;       /* Looping Variable */
 
   count = 0;
   while (count < ((*value)->numPills)) {
     if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
       BYTE before = (*value)->item[count].armour;
+      /* The blast's damage as the host prices it. */
+      amount = pillsScaledDamage(sim, amount, owner, count, DMG_SRC_EXPLOSION,
+                                 DMG_NO_PILL);
       /* Ask whether the blow takes more than is left rather than subtracting
          first and reading the wrap: a wrapped value only looks like "was
          full" while the cap and the damage are both compile-time, and a rules
@@ -1426,16 +1469,18 @@ void pillsGetDamagePos(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue,
       /* The blow that would finish the pill is the host's to refuse, and a
          refusal holds it at one armour, where it goes on firing. Asked only
          where this blow is what emptied it, so a pill already dead is left
-         dead rather than raised by an explosion landing on it. */
+         dead rather than raised by an explosion landing on it. The question
+         names the tank whose blast it was. */
       if ((*value)->item[count].armour == 0 && before > 0 &&
-          gameSimCanDie(sim, DIE_KIND_PILL, count, NEUTRAL,
-                        DMG_SRC_UNKNOWN) == FALSE) {
+          gameSimCanDie(sim, DIE_KIND_PILL, count, owner,
+                        DMG_SRC_EXPLOSION, DMG_NO_PILL) == FALSE) {
         (*value)->item[count].armour = 1;
       }
       if ((*value)->item[count].armour == 0) {
         /* Only when this blow is what emptied it — an explosion landing on a
-           pill already dead kills nothing. Nobody is named for splash, so the
-           attacker is NEUTRAL, as the death question above is asked. */
+           pill already dead kills nothing. Nobody is credited with splash, so
+           the attacker is NEUTRAL here even though the death question above
+           was told whose blast it was. */
         if (before > 0 && sim->isServer && sim->callbacks.pillKilled) {
           sim->callbacks.pillKilled(sim->callbacks.ctx, count, NEUTRAL);
         }

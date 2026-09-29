@@ -2653,6 +2653,9 @@ static const LangEntry langTable[] = {
     {2698, "The most pillbox shells that can be in the air at one tank. A pillbox whose nearest target already has this many coming fires at the next nearest instead, or holds its shot until one lands. Only read while pill_shell_cap is on."},
     {2699, "Whether pillboxes limit how many of their shells can be in the air at one tank, to pill_max_shells_at_tank. Off lets every pillbox fire at its nearest target however many shells are already on the way."},
     {2700, "How pill_base_defend_range is measured. 0 is a square, taken on each axis with its edge included, the WinBolo rule. 1 is a circle, taken as a radius with its edge left out, the Mac Bolo rule."},
+    {2701, "A tank took a shell or a mine, with the armour it actually lost."},
+    {2702, "Whether a shell may hit the tank or pillbox it has reached."},
+    {2703, "What a hit on a pillbox is worth, asked on every shell and blast it takes."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

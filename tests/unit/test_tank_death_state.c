@@ -55,7 +55,7 @@ static tankHit td_hit(GameSim *gs) {
     WORLD wy;
 
     tankGetWorld(&gs->tanks[0], &wx, &wy);
-    return tankIsTankHit(gs, &gs->tanks[0], wx, wy, 0, 1);
+    return tankIsTankHit(gs, &gs->tanks[0], wx, wy, 0, 1, DMG_NO_PILL);
 }
 
 int run_tank_damage_exact_armour_survives(void) {

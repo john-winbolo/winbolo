@@ -403,6 +403,20 @@ void pillsUpdate(struct GameSim *sim, tank tanks[], bool *connected, BYTE numTan
 bool pillsIsPillHit(pillboxes *value, BYTE xValue, BYTE yValue);
 
 /*********************************************************
+*NAME:          pillsHitSlot
+*PURPOSE:
+*  The pill index of the pillbox a shell at this square
+*  would hit — the one pillsIsPillHit answers for — or
+*  DMG_NO_PILL for a square with none.
+*
+*ARGUMENTS:
+*  value  - Pointer to the pillbox structure
+*  xValue - X Location
+*  yValue - Y Location
+*********************************************************/
+BYTE pillsHitSlot(pillboxes *value, BYTE xValue, BYTE yValue);
+
+/*********************************************************
 *NAME:          pillsDamagePos
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/3/98
@@ -417,8 +431,11 @@ bool pillsIsPillHit(pillboxes *value, BYTE xValue, BYTE yValue);
 *  yValue     - Y Location
 *  wantDamage - TRUE if we just want to do damage to it
 *  wantAngry  - TRUE if we just want to make it angry
+*  owner      - Who fired the shell, NEUTRAL for a pillbox
+*  pill       - The pill index of the pillbox that fired
+*               it, DMG_NO_PILL for a tank's shell
 *********************************************************/
-bool pillsDamagePos(struct GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, bool wantAngry, BYTE owner);
+bool pillsDamagePos(struct GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, bool wantAngry, BYTE owner, BYTE pill);
 
 /*********************************************************
 *NAME:          pillsGetScreenHealth
@@ -693,8 +710,11 @@ BYTE pillsSetPillOwner(struct GameSim *sim, pillboxes *value, BYTE pillNum, BYTE
 *  xValue - X Location of pillbox
 *  yValue - Y Location of pillbox
 *  amount - Amount of damage done to the pillbox
+*  owner  - The slot whose dying tank the blast came
+*           from, for the policy questions alone: the
+*           kill is still credited to nobody
 *********************************************************/
-void pillsGetDamagePos(struct GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue, BYTE amount);
+void pillsGetDamagePos(struct GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue, BYTE amount, BYTE owner);
 
 /*********************************************************
 *NAME:          pillsNumInRect
