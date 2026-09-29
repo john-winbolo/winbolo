@@ -2418,6 +2418,19 @@ STR_DLGLOBBY_RULES_COL_CHANGE=Alteração
 STR_DLGLOBBY_RULE_DETAIL_TITLE=Regra: {string1}
 STR_DLGLOBBY_RULES_INFO=Info
 STR_DLGLOBBY_RULES_RANGE=Intervalo
+STR_DLGLOBBY_RULES_OVERRIDDEN=Substituída por {string1}, que define {string2}
+
+# Under the rules table of a mod, on a server that has mods turned off.
+STR_DLGLOBBY_DETAILS_MODS_OFF=Os mods estão desativados neste servidor, então as regras deste mod não se aplicam.
+STR_DLGLOBBY_DETAILS_IMPLEMENTS_MOD=O que este mod implementa:
+STR_DLGLOBBY_DETAILS_IMPLEMENTS_SCENARIO=O que este cenário implementa:
+STR_DLGLOBBY_DETAILS_COL_METHOD=Método
+STR_DLGLOBBY_DETAILS_COL_TYPE=Tipo
+STR_DLGLOBBY_DETAILS_COL_OVERVIEW=Visão geral
+STR_DLGLOBBY_DETAILS_TYPE_EVENT=Evento
+STR_DLGLOBBY_DETAILS_TYPE_QUERY=Consulta
+STR_DLGLOBBY_DETAILS_TYPE_TRIGGER=Gatilho
+STR_DLGLOBBY_DETAILS_COL_NEW_VALUE=Novo valor
 
 # Rule descriptions
 STR_RULE_DESC_tank_reload_ticks=Ticks que um tanque espera entre disparos.
@@ -2515,6 +2528,8 @@ STR_RULE_DESC_pill_base_defend_shape=Como pill_base_defend_range é medido. 0 é
 STR_RULE_DESC_pill_aim_iterations=Quanto esforço um bunker faz para prever um alvo em movimento.
 STR_RULE_DESC_pill_massage_range=A que distância um tanque precisa estar para que um bunker aponte com a previsão linear original em vez do solucionador, que erra um tanque que gira em torno dele. Zero, a tabela clássica, é um bunker que sempre prevê corretamente seu alvo; 384 é uma célula e meia, a distância usada pela antiga chave definida na compilação.
 STR_RULE_DESC_pill_massage_cosine=Com que exatidão um tanque precisa estar dirigindo em direção a um bunker próximo para ainda assim ser bem visado, expresso como o cosseno do ângulo entre sua direção e a linha até o bunker. Um visa de forma imprecisa qualquer tanque dentro de pill_massage_range, zero não visa nenhum deles. Não faz nada enquanto essa regra for zero.
+STR_RULE_DESC_pill_shell_cap=Se os bunkers limitam quantos de seus projéteis podem estar no ar em direção a um tanque, a pill_max_shells_at_tank. Desligado deixa cada bunker atirar no alvo mais próximo, não importa quantos projéteis já estejam a caminho.
+STR_RULE_DESC_pill_max_shells_at_tank=O máximo de projéteis de bunker que podem estar no ar em direção a um tanque. Um bunker cujo alvo mais próximo já tem tantos a caminho atira no próximo mais próximo, ou espera até um cair. Só vale com pill_shell_cap ligado.
 STR_RULE_DESC_base_full_armour=O máximo de blindagem que uma base tem.
 STR_RULE_DESC_base_full_shells=O máximo de projéteis que uma base tem.
 STR_RULE_DESC_base_full_mines=O máximo de minas que uma base tem.
@@ -2657,6 +2672,10 @@ STR_DLGLOBBY_SCENARIO_SAVE_NOT_FOUND=O servidor não tem mais este arquivo.
 STR_DLGLOBBY_SCENARIO_SAVE_TOO_LARGE=Este arquivo é grande demais para copiar.
 STR_DLGLOBBY_SCENARIO_SAVE_NO_ANSWER=O servidor não respondeu. Tente novamente.
 STR_DLGLOBBY_SCENARIO_SAVE_WRITE=Não foi possível salvar a cópia na sua pasta Mods.
+STR_DLGLOBBY_DETAILS_SETTINGS=Configurações:
+STR_DLGLOBBY_DETAILS_SETTINGS_HOST=Apenas o anfitrião pode alterá-las.
+STR_DLGLOBBY_DETAILS_SETTINGS_OLD=Este servidor não pode alterar as configurações do script, então os padrões se aplicam.
+STR_DLGLOBBY_DETAILS_SETTING_DEFAULT={number} (padrão)
 STR_MAPEDIT_SCENARIO_WORKSHOP=Item da Oficina Steam nº {string1}, publicado por {string2}
 STR_DLGSETTINGS_WORKSHOP_HEADING=Oficina
 STR_DLGSETTINGS_WORKSHOP_SUBSCRIBED=Inscrições

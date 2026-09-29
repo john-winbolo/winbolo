@@ -3528,6 +3528,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_shell_death_event.c
     tests/unit/test_alliance_reset.c
     tests/unit/test_alliance_leave.c
+    tests/unit/test_alliance_request.c
     tests/unit/test_round_start_owners.c
     tests/unit/test_lobby_add_bot_dispatch.c
     tests/unit/test_lobby_bot_config_memory.c
@@ -4036,6 +4037,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # test_stubs.c provides here, so it compiles in without lang.c.
     tests/unit/test_sim_rules_describe.c
     src/gui/sdl3/sim_rules_phrase.c
+    # pill_shell_cap and pill_max_shells_at_tank, driven through pillsUpdate.
+    tests/unit/test_pill_shell_cap.c
     # The range behind each rule, against the validator that refuses on it.
     tests/unit/test_sim_rules_range.c
     # A description id per rule, and the range in words. The phrase file above
@@ -5152,6 +5155,13 @@ set(_unit_test_names
     alliance_leave_no_ally_leaver_is_top_seat
     alliance_leave_hands_to_ally
     alliance_leave_hands_to_top_seat_ally
+    alliance_request_accept_without_request_refused
+    alliance_request_then_accept_allies
+    alliance_request_requester_replaced_refused
+    alliance_request_ranked_accept_refused
+    alliance_request_refused_in_lobby
+    alliance_request_cleared_at_round_start
+    alliance_request_client_drops_departed_requester
     round_start_owners_kept_with_lobby_team
     round_start_owners_kept_after_manual_alliance
     treegrow_never_plants_on_deep_sea
@@ -5436,6 +5446,12 @@ set(_unit_test_names
     sim_rules_pill_shell_damage_follows
     sim_rules_pill_angry_divisor_follows
     sim_rules_pill_massage_follows
+    pill_shell_cap_off_is_no_limit
+    pill_shell_cap_retargets_next_nearest
+    pill_shell_cap_holds_then_fires_when_freed
+    pill_shell_cap_out_of_range_clears_just_seen
+    pill_shell_cap_counts_same_update_shots
+    pill_shell_cap_ignores_tank_shells
     sim_rules_tank_explosion_follows
     sim_rules_water_loss_follows
     sim_rules_pairs

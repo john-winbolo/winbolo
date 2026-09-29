@@ -2132,8 +2132,10 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_RULE_DESC_pill_massage_cosine", STR_RULE_DESC_pill_massage_cosine },
     { "STR_RULE_DESC_pill_massage_range", STR_RULE_DESC_pill_massage_range },
     { "STR_RULE_DESC_pill_max_armour", STR_RULE_DESC_pill_max_armour },
+    { "STR_RULE_DESC_pill_max_shells_at_tank", STR_RULE_DESC_pill_max_shells_at_tank },
     { "STR_RULE_DESC_pill_range", STR_RULE_DESC_pill_range },
     { "STR_RULE_DESC_pill_repair_amount", STR_RULE_DESC_pill_repair_amount },
+    { "STR_RULE_DESC_pill_shell_cap", STR_RULE_DESC_pill_shell_cap },
     { "STR_RULE_DESC_pill_shell_damage", STR_RULE_DESC_pill_shell_damage },
     { "STR_RULE_DESC_rubble_life", STR_RULE_DESC_rubble_life },
     { "STR_RULE_DESC_shell_damage", STR_RULE_DESC_shell_damage },
@@ -2376,4 +2378,4 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_YES", STR_YES },
 };
 
-#define K_LANG_NAME_TABLE_SIZE  2363
+#define K_LANG_NAME_TABLE_SIZE  2365

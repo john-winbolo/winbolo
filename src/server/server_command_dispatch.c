@@ -727,6 +727,11 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         return CMD_OK;
     }
     case CMD_ALLIANCE_REQUEST: {
+        /* Alliances are made in a running round. In the lobby, teams are how
+           sides change, and the client offers these commands in game only. */
+        if (serverSimGetState(sim) != serverStateRunning) {
+            return CMD_REJECT_BAD_STATE;
+        }
         if (serverSimGetRanked(sim)) return CMD_REJECT_BAD_STATE;
         const CmdAllianceRequest *p = &cmd->u.allianceRequest;
         if (p->toPlayer >= MAX_TANKS) return CMD_REJECT_INVALID;
@@ -738,6 +743,8 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         if (!scenarioAllowsAlliance(sim, (BYTE)senderSlot, p->toPlayer)) {
             return CMD_REJECT_BAD_STATE;
         }
+        /* Recorded so the accept can check it was asked for. */
+        sim->allianceAskedBy[p->toPlayer] |= (uint16_t)(1u << senderSlot);
         logAddEvent(log_AllyRequest, (BYTE)senderSlot, p->toPlayer,
                     0, 0, 0, NULL);
         ControlEvent reqEvt;
@@ -749,17 +756,34 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         return CMD_OK;
     }
     case CMD_ALLIANCE_ACCEPT: {
-        /* Asked again: the scenario's answer may have changed since the
-           request. The new member is the one who asked. */
-        if (!scenarioAllowsAlliance(sim, cmd->u.allianceAccept.newMember,
-                                    (BYTE)senderSlot)) {
+        BYTE newMember = cmd->u.allianceAccept.newMember;
+        uint16_t asked;
+        if (serverSimGetState(sim) != serverStateRunning) {
             return CMD_REJECT_BAD_STATE;
         }
-        serverSimAcceptAlliance(sim, (BYTE)senderSlot,
-                                cmd->u.allianceAccept.newMember);
+        if (serverSimGetRanked(sim)) return CMD_REJECT_BAD_STATE;
+        if (newMember >= MAX_TANKS) return CMD_REJECT_INVALID;
+        /* Only a request the new member made can be accepted. Checked here
+           and not in serverSimAcceptAlliance, so a scenario seating players
+           and the tests that call the sim directly are not affected. */
+        asked = (uint16_t)(1u << newMember);
+        if ((sim->allianceAskedBy[senderSlot] & asked) == 0) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        /* Asked again: the scenario's answer may have changed since the
+           request. The new member is the one who asked. A refusal leaves
+           the request in place, as a decline does. */
+        if (!scenarioAllowsAlliance(sim, newMember, (BYTE)senderSlot)) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        sim->allianceAskedBy[senderSlot] &= (uint16_t)~asked;
+        serverSimAcceptAlliance(sim, (BYTE)senderSlot, newMember);
         return CMD_OK;
     }
     case CMD_ALLIANCE_LEAVE: {
+        if (serverSimGetState(sim) != serverStateRunning) {
+            return CMD_REJECT_BAD_STATE;
+        }
         serverSimLeaveAlliance(sim, (BYTE)senderSlot);
         return CMD_OK;
     }

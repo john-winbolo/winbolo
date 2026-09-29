@@ -128,6 +128,13 @@ static inline bool    pillPosCurrentFromByte(uint8_t b) {
 #define PILLBOX_MASSAGE_RANGE  0
 #define PILLBOX_MASSAGE_COSINE 0.5
 
+/* Whether pillboxes limit the shells in the air at one tank, and the limit.
+   A pillbox whose nearest target already has that many coming at it fires at
+   the next nearest instead, or holds its shot. The classic table plays with
+   the limit off. */
+#define PILLBOX_SHELL_CAP          0
+#define PILLBOX_MAX_SHELLS_AT_TANK 12
+
 /* Brain stuff */
 /* Bases Brain stuff */
 #define PILLS_BRAIN_FRIENDLY 0

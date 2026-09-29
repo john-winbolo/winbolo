@@ -66,9 +66,9 @@ typedef enum {
  *                          entries in a weighted draw, six of them negative
  *                          and one zero — so the raw number is the answer.
  *
- * PERCENT and FLAG name no row today. They are here because the describe
- * arms that read them are here: the first rule that wants one takes the tag
- * rather than inventing a seventh. */
+ * PERCENT names no row today. It is here because the describe arm that
+ * reads it is here: the first rule that wants one takes the tag rather than
+ * inventing a seventh. */
 typedef enum {
     SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER,
     SIM_RULE_UNIT_COUNT,
@@ -300,7 +300,12 @@ typedef enum {
     X(tree_weight_road, SIM_RULE_VALUE_INT,                                  \
       SIM_RULE_UNIT_CONSTANT_BY_DESIGN)                                      \
     X(tree_weight_mine, SIM_RULE_VALUE_INT,                                  \
-      SIM_RULE_UNIT_CONSTANT_BY_DESIGN)
+      SIM_RULE_UNIT_CONSTANT_BY_DESIGN)                                      \
+    /* Pillbox shell cap. Last rather than with the other pill rules: the  \
+       index is what the wire and a recording name a rule by, so a rule  \
+       added anywhere else would move every rule after it. */            \
+    X(pill_shell_cap, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_FLAG)                \
+    X(pill_max_shells_at_tank, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)
 
 /* One member per rule, in the struct's own field order. SIM_RULE_COUNT is
  * one past the last, and an index at or above it names no rule. A rule's

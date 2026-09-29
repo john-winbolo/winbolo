@@ -309,8 +309,12 @@ int run_scenario_callbacks_over_cap(void) {
     static const char *const names[] = {
         "on_setup", "on_start", "on_tick", "on_end", "on_lobby",
         "on_player_join", "on_player_leave", "on_chat", "on_ping",
-        "on_tank_spawned",
+        "on_tank_spawned", "on_tank_killed", "on_lgm_died",
+        "on_lgm_landed", "on_team_changed", "on_base_captured",
+        "on_base_neutralized", "on_pill_captured", "on_pill_placed",
+        "on_pill_picked_up", "on_pill_killed",
     };
+    const int count = (int)(sizeof(names) / sizeof(names[0]));
     ScnDirEntry          list[4];
     ScnDirDetails        det[4];
     const ScnDirDetails *e;
@@ -329,12 +333,12 @@ int run_scenario_callbacks_over_cap(void) {
     at += (size_t)snprintf(script + at, sizeof(script) - at,
                            "scenario = { name = \"Wordy\", api = 1,\n"
                            "  callbacks = {\n");
-    for (i = 0; i < 10; i++) {
+    for (i = 0; i < count; i++) {
         at += (size_t)snprintf(script + at, sizeof(script) - at,
                                "    %s = \"%s\",\n", names[i], text);
     }
     at += (size_t)snprintf(script + at, sizeof(script) - at, "  },\n}\n");
-    for (i = 0; i < 10; i++) {
+    for (i = 0; i < count; i++) {
         at += (size_t)snprintf(script + at, sizeof(script) - at,
                                "function %s() end\n", names[i]);
     }
@@ -350,8 +354,9 @@ int run_scenario_callbacks_over_cap(void) {
     UT_ASSERT(e != NULL);
     (void)scnDetailsCallbacks(e->bytes, e->len, &cbLen);
     got = scCallbacks(e->bytes, e->len, rows, sizeof(rows));
-    /* Each row costs 2 + name + 150; five fit in 896 and ten do not. */
-    UT_ASSERT_MSG(got >= 5 && got < 10, "%d rows kept", got);
+    /* Each row costs 3 + name + 150; twelve fit in 2048 and twenty do
+       not. */
+    UT_ASSERT_MSG(got >= 12 && got < count, "%d rows kept", got);
     UT_ASSERT_MSG(cbLen <= SCN_CALLBACKS_BLOB_MAX,
                   "the kept block is %u bytes, past the %d budget",
                   (unsigned)cbLen, SCN_CALLBACKS_BLOB_MAX);

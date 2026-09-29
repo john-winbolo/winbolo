@@ -1154,6 +1154,15 @@ int run_alliance_leave_no_ally_leaver_is_top_seat(void);
 int run_alliance_leave_hands_to_ally(void);
 int run_alliance_leave_hands_to_top_seat_ally(void);
 
+/* Alliance requests at the command arms (test_alliance_request.c, #421). */
+int run_alliance_request_accept_without_request_refused(void);
+int run_alliance_request_then_accept_allies(void);
+int run_alliance_request_requester_replaced_refused(void);
+int run_alliance_request_ranked_accept_refused(void);
+int run_alliance_request_refused_in_lobby(void);
+int run_alliance_request_cleared_at_round_start(void);
+int run_alliance_request_client_drops_departed_requester(void);
+
 /* Pillbox and base owners from the map file survive a round start
  * (test_round_start_owners.c, issue #422). */
 int run_round_start_owners_kept_with_lobby_team(void);
@@ -2005,6 +2014,14 @@ int run_sim_rules_pill_empties_without_wrapping(void);
 int run_sim_rules_pill_shell_damage_follows(void);
 int run_sim_rules_pill_angry_divisor_follows(void);
 int run_sim_rules_pill_massage_follows(void);
+/* pill_shell_cap and pill_max_shells_at_tank through pillsUpdate
+ * (test_pill_shell_cap.c). */
+int run_pill_shell_cap_off_is_no_limit(void);
+int run_pill_shell_cap_retargets_next_nearest(void);
+int run_pill_shell_cap_holds_then_fires_when_freed(void);
+int run_pill_shell_cap_out_of_range_clears_just_seen(void);
+int run_pill_shell_cap_counts_same_update_shots(void);
+int run_pill_shell_cap_ignores_tank_shells(void);
 int run_sim_rules_tank_explosion_follows(void);
 int run_sim_rules_water_loss_follows(void);
 int run_sim_rules_pairs(void);

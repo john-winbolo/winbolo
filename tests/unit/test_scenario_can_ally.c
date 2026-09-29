@@ -220,6 +220,10 @@ int run_scenario_can_ally_accept(void) {
     CaCtx c;
 
     UT_ASSERT(sim != NULL);
+    /* The server only takes an accept of a request the new member made, so
+       both seats ask first, before there is a policy to refuse them. */
+    UT_ASSERT(caRequest(sim, 1, 2) == CMD_OK);
+    UT_ASSERT(caRequest(sim, 0, 3) == CMD_OK);
     caFillPolicy(&pol, &c, false);
     serverSimSetScenarioPolicy(sim, &pol);
 
@@ -458,6 +462,10 @@ int run_scenario_can_ally_lua(void) {
     /* Across the teams: refused at the request and at the accept. */
     UT_ASSERT_MSG(caRequest(sim, 0, 2) == CMD_REJECT_BAD_STATE,
                   "a request across teams must be refused by the script");
+    /* The server only takes an accept of a request it recorded. Record one
+       from 0 to 2, as if it had been made before the script said no, so the
+       accept reaches the script. */
+    sim->allianceAskedBy[2] |= (uint16_t)(1u << 0);
     UT_ASSERT_MSG(caAccept(sim, 2, 0) == CMD_REJECT_BAD_STATE,
                   "an accept across teams must be refused by the script");
     UT_ASSERT(!caAllied(sim, 0, 2));

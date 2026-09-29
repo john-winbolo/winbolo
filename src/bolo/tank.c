@@ -609,7 +609,7 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
     TURNTYPE c;
     a = (*value)->sightLen;
     c = a / b;
-    shellsAddItem(sim, shs, (*value)->x, (*value)->y, (*value)->angle, c, gameSimGetTankPlayer(sim, value), (*value)->onBoat);
+    shellsAddItem(sim, shs, (*value)->x, (*value)->y, (*value)->angle, c, gameSimGetTankPlayer(sim, value), NEUTRAL, (*value)->onBoat);
     (*value)->reload = tankReloadTicks(sim, *value);
     (*value)->shells--;
 

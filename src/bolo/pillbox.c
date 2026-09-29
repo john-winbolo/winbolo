@@ -533,7 +533,29 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
   WORLD bestTankX, bestTankY;
   BYTE bestTankDir, bestTankSpeed;
   tank *bestTank;
+  BYTE bestTankNum;
   bool foundTarget;
+
+  /* pill_shell_cap: the pill shells already in the air at each tank,
+   * counted once here rather than kept as a running total, so no path that
+   * ends a shell can leave a count behind. A shell marked dead is gone for
+   * this purpose even though the list still holds it until the next update.
+   * Every shell fired below adds to the count, so the pills that fire in this
+   * pass count against each other. */
+  uint16_t shellsAtTank[MAX_TANKS];
+  const bool shellCapOn = sim->rules.pill_shell_cap != 0;
+  bool heldByCap;
+
+  if (shellCapOn) {
+    shells q;
+
+    memset(shellsAtTank, 0, sizeof(shellsAtTank));
+    for (q = *shs; q != NULL; q = q->next) {
+      if (q->shellDead == FALSE && q->target < MAX_TANKS) {
+        shellsAtTank[q->target]++;
+      }
+    }
+  }
 
   for (count=0;count<(*value)->numPills;count++) {
     if ((*value)->active[count] == FALSE) {
@@ -566,7 +588,9 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
       /* Find the closest non-allied tank in range */
       bestDist = 999999.0;
       bestTank = NULL;
+      bestTankNum = NEUTRAL;
       foundTarget = FALSE;
+      heldByCap = FALSE;
       bestTankX = 0;
       bestTankY = 0;
       bestTankDir = 0;
@@ -599,6 +623,16 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
         }
 
         if ((utilIsItemInRange(x, y, tankX, tankY, (WORLD) sim->rules.pill_range, &amount)) == TRUE) {
+          /* A tank with as many pill shells coming as the rule allows is
+           * passed over for the next nearest. Checked only once the tank
+           * has passed every other test, so heldByCap means a target the
+           * pill could otherwise shoot: one that leaves range, hides or
+           * dies clears justSeen below the same as it always has. */
+          if (shellCapOn && t < MAX_TANKS &&
+              shellsAtTank[t] >= sim->rules.pill_max_shells_at_tank) {
+            heldByCap = TRUE;
+            continue;
+          }
           if (amount < bestDist) {
             bestDist = amount;
             bestTankX = tankX;
@@ -606,6 +640,7 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
             bestTankDir = tankGetTravelAngel(&tanks[t]);
             bestTankSpeed = tankGetSpeed(&tanks[t]);
             bestTank = &tanks[t];
+            bestTankNum = t;
             foundTarget = TRUE;
           }
         }
@@ -615,7 +650,10 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
         /* Fire at closest enemy tank */
         if ((*value)->item[count].justSeen == TRUE) {
           dir = pillsTargetTank(sim, mp, value, bs, x, y, bestTankX, bestTankY, (TURNTYPE) bestTankDir, bestTankSpeed, (tankIsOnBoat(bestTank)), tankBoatExitSpeed(sim, *bestTank));
-          shellsAddItem(sim, shs, x, y, dir, sim->rules.pill_fire_length, NEUTRAL, FALSE);
+          shellsAddItem(sim, shs, x, y, dir, sim->rules.pill_fire_length, NEUTRAL, bestTankNum, FALSE);
+          if (shellCapOn && bestTankNum < MAX_TANKS) {
+            shellsAtTank[bestTankNum]++;
+          }
           (*value)->item[count].reload = 0;
           sim->callbacks.soundDist(sim->callbacks.ctx, shootNear, (*value)->item[count].x, (*value)->item[count].y);
         } else {
@@ -623,9 +661,11 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
           (*value)->item[count].justSeen = TRUE;
           (*value)->item[count].reload = 0;
         }
-      } else {
+      } else if (heldByCap == FALSE) {
         (*value)->item[count].justSeen = FALSE;
       }
+      /* Held only by the cap: justSeen and the full reload are kept, so the
+       * pill fires on the first update a shell at its target comes free. */
     }
   }
 }
