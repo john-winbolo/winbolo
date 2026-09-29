@@ -9165,8 +9165,9 @@ end
 -- Deterministic: candidate ids are collected then table.sort-ed, so the scan
 -- order never depends on pairs(); the winner is the lowest id among the
 -- closest-to-the-enemy candidates (ties broken by id).
--- Emits one HEAT_PILL line per decision, with every factor that produced it.
-local function heat_pill_select(state, world, info, goal, target, now, tmx, tmy, los_fn)
+-- Emits one HEAT_PILL line per decision, with every factor that produced it,
+-- unless `quiet` (the heat_pill_available ask from goal selection).
+local function heat_pill_select(state, world, info, goal, target, now, tmx, tmy, los_fn, quiet)
   local pills = world.pills
   if not pills then return nil end
 
@@ -9225,7 +9226,7 @@ local function heat_pill_select(state, world, info, goal, target, now, tmx, tmy,
         if not los then reason = "no_los" end
       end
 
-      if BRAIN_DEBUG_MODE then
+      if BRAIN_DEBUG_MODE and not quiet then
         -- One line per VERDICT CHANGE, not per tick. The gate is re-asked every
         -- tick of every attack_tank fight for every friendly pill, and a bot
         -- with a pill behind it printed the same `SKIP:not_closer` 447 times in
@@ -9257,6 +9258,18 @@ local function heat_pill_select(state, world, info, goal, target, now, tmx, tmy,
     end
   end
   return best
+end
+
+-- Could this bot heat a friendly pill at enemy tank `target` right now, or is
+-- a volley already running? The same tests heat_pill_steer makes before it
+-- starts a volley (no ghost, not afloat, heat_pill_select), asked quietly.
+-- Read by goals.lua eval_attack_tank for C.ATTACK_TANK_PILL_HEAT_ONLY.
+function M.heat_pill_available(state, world, info, target, now, tmx, tmy, los_fn)
+  if not C.ATTACK_TANK_HEAT_PILL or not target or not los_fn then return false end
+  if state._heat_active then return true end
+  if target.ghost or info.inboat then return false end
+  return heat_pill_select(state, world, info, nil, target, now,
+                          tmx, tmy, los_fn, true) ~= nil
 end
 
 -- REAP AN ABANDONED VOLLEY.
