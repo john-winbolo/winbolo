@@ -241,7 +241,7 @@ int run_ping_dispatch_new_round_clears_rate_limit(void) {
 
 int run_ping_dispatch_rejects_lobby(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     UT_ASSERT_MSG(sim != NULL, "serverSimCreateCompressed returned NULL");
     serverSimSetLobbyEnabled(sim, true);

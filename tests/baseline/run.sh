@@ -164,10 +164,13 @@ diff_norm() {
 
 # Two-client lobby scenarios race at teardown in three ways that are not
 # the scenario's regression target (join + rename roster state is):
-#   1. Client disconnect — CTRL_PLAYER_LEAVE and its "<name> has left."
-#      CTRL_SERVER_TEXT. Whether one client logs the other's leave before
-#      it is itself killed varies run-to-run. Dedicated leave / shutdown
-#      scenarios cover disconnect events deterministically.
+#   1. Client disconnect — CTRL_PLAYER_LEAVE, its "<name> has left."
+#      CTRL_SERVER_TEXT, and the CTRL_ALLIANCE_LEAVE a departure publishes
+#      (serverSimRemovePlayer). Whether one client logs the other's leave
+#      before it is itself killed varies run-to-run. Dedicated leave /
+#      shutdown scenarios cover disconnect events deterministically. These
+#      scenarios ask for no alliance change, so every alliance leave in
+#      them is a departure's.
 #   2. The rename auto-unready transient — a "ready":false CTRL_LOBBY_SLOT
 #      broadcast emitted between the rename and the client re-readying.
 #      Whether it lands in the capture window before teardown is racy;
@@ -179,10 +182,10 @@ diff_norm() {
 #      capture window is racy; it can't fold because it differs in fields
 #      from the deterministic lobby settings (netStat:0) and the running
 #      settings (hasLobby:false).
-# Drop the leave/has-left and game-end-return settings lines and fold ready
+# Drop the leave/has-left/alliance-leave and game-end-return settings lines and fold ready
 # to a constant so the transients collapse, leaving the deterministic
 # join/rename roster.
-LOBBY_TEARDOWN_SED='/"type":"CTRL_PLAYER_LEAVE"/d; /"type":"CTRL_SERVER_TEXT","text":"[^"]*has left/d; /"type":"CTRL_LOBBY_SETTINGS".*"netStat":3,"hasLobby":true/d; s/"ready":(true|false)/"ready":false/g'
+LOBBY_TEARDOWN_SED='/"type":"CTRL_PLAYER_LEAVE"/d; /"type":"CTRL_ALLIANCE_LEAVE"/d; /"type":"CTRL_SERVER_TEXT","text":"[^"]*has left/d; /"type":"CTRL_LOBBY_SETTINGS".*"netStat":3,"hasLobby":true/d; s/"ready":(true|false)/"ready":false/g'
 
 diff_sorted_lobby() {
   local expected="$1"

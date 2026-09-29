@@ -2980,8 +2980,8 @@
 #define STR_RULE_DESC_pill_aim_iterations        2520
 #define STR_RULE_DESC_pill_massage_range         2575
 #define STR_RULE_DESC_pill_massage_cosine        2576
-#define STR_RULE_DESC_pill_shell_cap             2697
-#define STR_RULE_DESC_pill_max_shells_at_tank    2696
+#define STR_RULE_DESC_pill_shell_cap             2699
+#define STR_RULE_DESC_pill_max_shells_at_tank    2698
 #define STR_RULE_DESC_base_full_armour           2391
 #define STR_RULE_DESC_base_full_shells           2392
 #define STR_RULE_DESC_base_full_mines            2393
@@ -3049,8 +3049,9 @@
 /* Scenario function descriptions */
 
 /* One line per function a scenario author writes, for the list the editor
- * shows them in: the 25 hooks, then the 10 policies, in the order
- * SCN_HOOK_LIST and SCN_POLICY_LIST hold them.
+ * shows them in: the 25 hooks, then the 11 policies. The block runs in the
+ * order SCN_HOOK_LIST and SCN_POLICY_LIST hold them, except can_ally's: the
+ * number after the block is taken, so its id sits outside it.
  *
  * The tail of each symbol is the catalogue's own id column rather than the
  * function's name, because that is the token the description table pastes
@@ -3094,6 +3095,7 @@
 #define STR_SCNFN_DESC_ON_CHOOSE_START       2467
 #define STR_SCNFN_DESC_SPAWN_LOADOUT         2468
 #define STR_SCNFN_DESC_DAMAGE_SCALE          2469
+#define STR_SCNFN_DESC_CAN_ALLY              2697
 
 /* The scenario panel's kind control: what the file being edited is allowed
  * to decide. Not the same question as "Built for this map", which is which
@@ -3187,8 +3189,8 @@
  * when the manifest names an item. */
 #define STR_MAPEDIT_SCENARIO_WORKSHOP            2667
 
-/* The Workshop section of Settings */
-/* Its heading; the two buttons that switch its views; a subscribed item's
+/* The Steam Workshop tab of Settings */
+/* The tab's name; the two buttons that switch its views; a subscribed item's
  * state and the button to its Workshop page; the Update button on a row the
  * player published before; the chip on a plain map; a subscribed item still
  * downloading, whose name is not known yet ({string1} = the item id); the
@@ -3208,6 +3210,10 @@
 #define STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH    2677
 #define STR_DLGSETTINGS_WORKSHOP_PUB_HEADING     2678
 #define STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE      2679
+/* The state of a subscribed item that is installed but that the game cannot
+ * use: no content it reads, or a file name another item already holds. The
+ * Skin chip on a subscribed skin reuses STR_DLGSETTINGS_SKIN. */
+#define STR_DLGSETTINGS_WORKSHOP_UNUSABLE        2696
 
 /* The lobby's Workshop chip */
 /* The chip after a script's Mod or Scenario chip in the lobby, on a script

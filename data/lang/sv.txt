@@ -2626,6 +2626,7 @@ STR_SCNFN_DESC_CAN_DIE=Om ett slag får förstöra en tank, en byggare eller en 
 STR_SCNFN_DESC_ON_CHOOSE_START=Vilken startplats en plats tar, tillfrågad vid en spawn, en respawn, eller en teleport som inte namnger någon.
 STR_SCNFN_DESC_SPAWN_LOADOUT=Vad en spawnande tank får, om inte operationen som spawnade den namngav en utrustning.
 STR_SCNFN_DESC_DAMAGE_SCALE=Vad en träff på en tank är värd, tillfrågad vid varje träff den tar.
+STR_SCNFN_DESC_CAN_ALLY=Om en spelare får ingå en allians med en annan.
 STR_MAPEDIT_SCENARIO_KIND=Vad det får avgöra
 STR_MAPEDIT_SCENARIO_KIND_SCENARIO=Scenario — det kan avsluta omgången och säga vem som vann
 STR_MAPEDIT_SCENARIO_KIND_MOD=Modd — den ändrar hur spelet går till och lämnar segern orörd
@@ -2677,7 +2678,7 @@ STR_DLGLOBBY_DETAILS_SETTINGS_HOST=Bara värden kan ändra dessa.
 STR_DLGLOBBY_DETAILS_SETTINGS_OLD=Den här servern kan inte ändra skriptinställningar, så standardvärdena gäller.
 STR_DLGLOBBY_DETAILS_SETTING_DEFAULT={number} (standard)
 STR_MAPEDIT_SCENARIO_WORKSHOP=Workshop-objekt #{string1}, publicerat av {string2}
-STR_DLGSETTINGS_WORKSHOP_HEADING=Steam Workshop
+STR_DLGSETTINGS_WORKSHOP_HEADING=Workshop
 STR_DLGSETTINGS_WORKSHOP_SUBSCRIBED=Prenumerationer
 STR_DLGSETTINGS_WORKSHOP_PUBLISH=Publicera
 STR_DLGSETTINGS_WORKSHOP_INSTALLED=Installerat
@@ -2689,6 +2690,7 @@ STR_DLGSETTINGS_WORKSHOP_NONE_SUBSCRIBED=Du prenumererar inte på några moddar,
 STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH=Inget att publicera än. Lägg en modd eller ett scenario i din Mods-mapp, eller packa in ett scenario i en karta.
 STR_DLGSETTINGS_WORKSHOP_PUB_HEADING=Publicera den här modden eller det här scenariot till Steam Workshop
 STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE=Uppdatera det objekt den här filen kom från
+STR_DLGSETTINGS_WORKSHOP_UNUSABLE=Kan inte användas
 
 # The lobby's Workshop chip
 STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop

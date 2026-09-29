@@ -711,6 +711,15 @@ struct ServerSim {
      * so ammo appears on arrival instead of waiting for the next full-sync. */
     uint8_t      lastClosestBase[MAX_TANKS];
 
+    /* Alliance requests not yet accepted. Bit N of entry A means seat N has
+     * asked seat A. CMD_ALLIANCE_REQUEST sets it, and CMD_ALLIANCE_ACCEPT
+     * goes ahead only if it is set and clears it, so a client cannot ally
+     * itself with a seat that never asked. A seat leaving clears its entry
+     * and its bit in every other entry; serverSimResetGameWorld clears all
+     * of it. A declined request is not reported to the server and stays
+     * here until one of those happens. */
+    uint16_t     allianceAskedBy[MAX_TANKS];
+
     /* Full state sync tracking, per recipient. Each client's own per-client
      * snapshot build manages its own full-sync cadence; a scalar here let the
      * first client built each interval consume it and starve the rest. */

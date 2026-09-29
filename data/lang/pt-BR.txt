@@ -2624,6 +2624,7 @@ STR_SCNFN_DESC_CAN_DIE=Se um golpe pode destruir um tanque, um construtor ou um 
 STR_SCNFN_DESC_ON_CHOOSE_START=Qual início uma vaga ocupa, perguntado num surgimento, num reaparecimento ou num teletransporte que não indica nenhum.
 STR_SCNFN_DESC_SPAWN_LOADOUT=O que é entregue a um tanque que surge, a menos que a operação que o fez surgir tenha indicado um equipamento.
 STR_SCNFN_DESC_DAMAGE_SCALE=Quanto vale um golpe num tanque, perguntado a cada golpe que recebe.
+STR_SCNFN_DESC_CAN_ALLY=Se um jogador pode se aliar a outro.
 STR_MAPEDIT_SCENARIO_KIND=O que ele pode decidir
 STR_MAPEDIT_SCENARIO_KIND_SCENARIO=Cenário — pode terminar a rodada e dizer quem venceu
 STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — muda como a partida é jogada e não interfere em quem vence
@@ -2675,7 +2676,7 @@ STR_DLGLOBBY_DETAILS_SETTINGS_HOST=Apenas o anfitrião pode alterá-las.
 STR_DLGLOBBY_DETAILS_SETTINGS_OLD=Este servidor não pode alterar as configurações do script, então os padrões se aplicam.
 STR_DLGLOBBY_DETAILS_SETTING_DEFAULT={number} (padrão)
 STR_MAPEDIT_SCENARIO_WORKSHOP=Item da Oficina Steam nº {string1}, publicado por {string2}
-STR_DLGSETTINGS_WORKSHOP_HEADING=Oficina Steam
+STR_DLGSETTINGS_WORKSHOP_HEADING=Oficina
 STR_DLGSETTINGS_WORKSHOP_SUBSCRIBED=Inscrições
 STR_DLGSETTINGS_WORKSHOP_PUBLISH=Publicar
 STR_DLGSETTINGS_WORKSHOP_INSTALLED=Instalado
@@ -2687,6 +2688,7 @@ STR_DLGSETTINGS_WORKSHOP_NONE_SUBSCRIBED=Você não está inscrito em nenhum mod
 STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH=Nada para publicar ainda. Coloque um mod ou cenário na sua pasta Mods, ou empacote um cenário em um mapa.
 STR_DLGSETTINGS_WORKSHOP_PUB_HEADING=Publicar este mod ou cenário na Oficina Steam
 STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE=Atualizar o item de onde este arquivo veio
+STR_DLGSETTINGS_WORKSHOP_UNUSABLE=Não utilizável
 
 # The lobby's Workshop chip
 STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Oficina

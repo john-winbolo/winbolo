@@ -2624,6 +2624,7 @@ STR_SCNFN_DESC_CAN_DIE=一撃がタンク・ビルダー・トーチカを破壊
 STR_SCNFN_DESC_ON_CHOOSE_START=席がどのスタート地点を取るか。出現・リスポーン・スタート地点を指定しないテレポートの際に問われる。
 STR_SCNFN_DESC_SPAWN_LOADOUT=出現するタンクに何が渡されるか。出現させた操作がロードアウトを指定していない場合に適用される。
 STR_SCNFN_DESC_DAMAGE_SCALE=タンクへの一撃がどれだけの価値を持つか。受けるすべての一撃で問われる。
+STR_SCNFN_DESC_CAN_ALLY=あるプレイヤーが別のプレイヤーと同盟を組めるかどうか。
 STR_MAPEDIT_SCENARIO_KIND=決定してよい内容
 STR_MAPEDIT_SCENARIO_KIND_SCENARIO=シナリオ — ラウンドを終了させ、勝者を決めることができます
 STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — ゲームの進行を変えるだけで、勝敗には関与しません
@@ -2675,7 +2676,7 @@ STR_DLGLOBBY_DETAILS_SETTINGS_HOST=変更できるのはホストだけです。
 STR_DLGLOBBY_DETAILS_SETTINGS_OLD=このサーバーはスクリプトの設定を変更できないため、デフォルト値が適用されます。
 STR_DLGLOBBY_DETAILS_SETTING_DEFAULT={number}（デフォルト）
 STR_MAPEDIT_SCENARIO_WORKSHOP=ワークショップアイテム #{string1}（公開者: {string2}）
-STR_DLGSETTINGS_WORKSHOP_HEADING=Steam ワークショップ
+STR_DLGSETTINGS_WORKSHOP_HEADING=ワークショップ
 STR_DLGSETTINGS_WORKSHOP_SUBSCRIBED=サブスクライブ済み
 STR_DLGSETTINGS_WORKSHOP_PUBLISH=公開
 STR_DLGSETTINGS_WORKSHOP_INSTALLED=インストール済み
@@ -2687,6 +2688,7 @@ STR_DLGSETTINGS_WORKSHOP_NONE_SUBSCRIBED=サブスクライブしている MOD�
 STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH=まだ公開できるものがありません。MOD かシナリオを Mods フォルダーに置くか、シナリオをマップに組み込んでください。
 STR_DLGSETTINGS_WORKSHOP_PUB_HEADING=この MOD またはシナリオを Steam ワークショップに公開
 STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE=このファイルの元になったアイテムを更新
+STR_DLGSETTINGS_WORKSHOP_UNUSABLE=使用不可
 
 # The lobby's Workshop chip
 STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=ワークショップ

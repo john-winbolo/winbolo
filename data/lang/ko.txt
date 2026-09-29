@@ -2622,6 +2622,7 @@ STR_SCNFN_DESC_CAN_DIE=타격이 탱크, 건설자, 토치카를 파괴해도 �
 STR_SCNFN_DESC_ON_CHOOSE_START=좌석이 어느 시작점을 차지할지예요. 출현, 리스폰, 또는 시작점을 지정하지 않은 텔레포트 때 묻는 질문이에요.
 STR_SCNFN_DESC_SPAWN_LOADOUT=출현하는 탱크에게 무엇을 지급할지예요. 출현시킨 작업이 로드아웃을 지정하지 않은 경우에 적용돼요.
 STR_SCNFN_DESC_DAMAGE_SCALE=탱크에 대한 타격이 얼마의 가치를 갖는지예요. 탱크가 받는 모든 타격마다 묻는 질문이에요.
+STR_SCNFN_DESC_CAN_ALLY=한 플레이어가 다른 플레이어와 동맹을 맺을 수 있는지 여부.
 STR_MAPEDIT_SCENARIO_KIND=결정할 수 있는 항목
 STR_MAPEDIT_SCENARIO_KIND_SCENARIO=시나리오 — 라운드를 끝내고 승자를 정할 수 있어요
 STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — 게임 진행 방식만 바꾸고 승패에는 관여하지 않아요
@@ -2673,7 +2674,7 @@ STR_DLGLOBBY_DETAILS_SETTINGS_HOST=호스트만 이 설정을 바꿀 수 있어�
 STR_DLGLOBBY_DETAILS_SETTINGS_OLD=이 서버는 스크립트 설정을 바꿀 수 없어서 기본값이 적용돼요.
 STR_DLGLOBBY_DETAILS_SETTING_DEFAULT={number} (기본값)
 STR_MAPEDIT_SCENARIO_WORKSHOP=창작마당 아이템 #{string1}, 게시자 {string2}
-STR_DLGSETTINGS_WORKSHOP_HEADING=Steam 창작마당
+STR_DLGSETTINGS_WORKSHOP_HEADING=창작마당
 STR_DLGSETTINGS_WORKSHOP_SUBSCRIBED=구독 중
 STR_DLGSETTINGS_WORKSHOP_PUBLISH=게시
 STR_DLGSETTINGS_WORKSHOP_INSTALLED=설치됨
@@ -2685,6 +2686,7 @@ STR_DLGSETTINGS_WORKSHOP_NONE_SUBSCRIBED=구독 중인 모드, 시나리오, 맵
 STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH=아직 게시할 것이 없습니다. Mods 폴더에 모드나 시나리오를 넣거나, 시나리오를 맵에 넣어 패키징하세요.
 STR_DLGSETTINGS_WORKSHOP_PUB_HEADING=이 모드 또는 시나리오를 Steam 창작마당에 게시
 STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE=이 파일이 파생된 아이템 업데이트
+STR_DLGSETTINGS_WORKSHOP_UNUSABLE=사용할 수 없음
 
 # The lobby's Workshop chip
 STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=창작마당

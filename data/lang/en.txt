@@ -234,7 +234,7 @@ MESSAGE_CAPTURE_BASE={player} captured a Neutral Base
 MESSAGE_CAPTURE_PILL={player} captured a Neutral Pillbox
 MESSAGE_STOLE_PILL={player} just stole pillbox from {other}
 MESSAGE_STOLE_BASE={player} just stole base from {other}
-MESSAGE_LGM_DEAD={player} just lost his builder
+MESSAGE_LGM_DEAD={player} just lost their builder
 MESSAGE_SAVED_MAP={player} just saved map file
 MESSAGE_QUIT_GAME={player} has quit game
 MESSAGE_TIME_LIMIT_EXPIRED=Time Limit has expired. Game is over. Go in peace
@@ -2628,6 +2628,7 @@ STR_SCNFN_DESC_CAN_DIE=Whether a blow may destroy a tank, a builder or a pillbox
 STR_SCNFN_DESC_ON_CHOOSE_START=Which start a seat takes, asked at a spawn, a respawn or a teleport that names none.
 STR_SCNFN_DESC_SPAWN_LOADOUT=What a spawning tank is handed, unless the op that spawned it named a loadout.
 STR_SCNFN_DESC_DAMAGE_SCALE=What a hit on a tank is worth, asked on every hit it takes.
+STR_SCNFN_DESC_CAN_ALLY=Whether one player may ally with another.
 STR_MAPEDIT_SCENARIO_KIND=What it may decide
 STR_MAPEDIT_SCENARIO_KIND_SCENARIO=Scenario — it may end the round and say who won
 STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — it changes how the game plays and leaves winning alone
@@ -2669,8 +2670,8 @@ STR_DLGLOBBY_DETAILS_SETTINGS_OLD=This server cannot change script settings, so 
 STR_DLGLOBBY_DETAILS_SETTING_DEFAULT={number} (default)
 STR_MAPEDIT_SCENARIO_WORKSHOP=Workshop item #{string1}, published by {string2}
 
-# The Workshop section of Settings
-STR_DLGSETTINGS_WORKSHOP_HEADING=Steam Workshop
+# The Steam Workshop tab of Settings
+STR_DLGSETTINGS_WORKSHOP_HEADING=Workshop
 STR_DLGSETTINGS_WORKSHOP_SUBSCRIBED=Subscribed
 STR_DLGSETTINGS_WORKSHOP_PUBLISH=Publish
 STR_DLGSETTINGS_WORKSHOP_INSTALLED=Installed
@@ -2682,6 +2683,7 @@ STR_DLGSETTINGS_WORKSHOP_NONE_SUBSCRIBED=You are not subscribed to any mods, sce
 STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH=Nothing to publish yet. Put a mod or scenario in your Mods folder, or pack a scenario into a map.
 STR_DLGSETTINGS_WORKSHOP_PUB_HEADING=Publish this mod or scenario to the Steam Workshop
 STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE=Update the item this file came from
+STR_DLGSETTINGS_WORKSHOP_UNUSABLE=Not usable
 
 # The lobby's Workshop chip
 STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop

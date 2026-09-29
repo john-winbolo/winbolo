@@ -28,7 +28,7 @@
 #include "test_harness.h"
 
 /* E_MAP's compressed length, the same literal the loopback harness passes. */
-#define SHADOW_EMAP_LEN 5097
+#define SHADOW_EMAP_LEN E_MAP_LEN
 
 /* How many times the cost case builds one block, and the most a build may cost
  * before the case calls it a fault rather than a slow machine. The main view

@@ -288,6 +288,12 @@ function allow_base_win()
   return false
 end
 
+-- Two teams, red and blue, which the script picks. An alliance across them
+-- would leave a player on one team and allied with the other.
+function can_ally(p, q)
+  return false
+end
+
 -- Full armour, and nothing to shoot with. The caps are zero as well, so
 -- there is nowhere for a shell to come from later either.
 function spawn_loadout(p)
@@ -447,6 +453,7 @@ scenario = {
     can_capture = "Tanks cannot pick up the ball; touching it kicks it instead.",
     can_build = "Nothing can be built, so builders stay in the tank.",
     allow_base_win = "Holding bases does not win; only goals count.",
+    can_ally = "Players cannot ally.",
     spawn_loadout = "Tanks spawn with full armour and no shells, mines or trees.",
     on_setup = "Keeps one pillbox as the ball and removes the rest.",
     on_start = "Picks sides, puts the ball on the spot, lines teams up and starts the 5-minute clock.",

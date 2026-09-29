@@ -183,7 +183,7 @@ static void ltDropModesBrain(void) {
  * bots. */
 static ServerSim *ltLobbySim(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097,
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN,
                                                "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) return NULL;
@@ -199,7 +199,7 @@ static ServerSim *ltLobbySim(void) {
  * Those never seat a real bot, so there is no brain for this one to name. */
 static ServerSim *ltBareSim(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097,
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN,
                                                "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) return NULL;
@@ -818,7 +818,7 @@ static void ltTrimTo(ServerSim *sim, BYTE team, int n) {
  * which is why it seats the template again. */
 static bool ltPreview(ServerSim *sim, const char *name) {
     BYTE emap[6000] = E_MAP;
-    return serverSimReloadCompressedInMemory(sim, emap, 5097, name);
+    return serverSimReloadCompressedInMemory(sim, emap, E_MAP_LEN, name);
 }
 
 int run_lobby_template_cancel_keeps_trim(void) {

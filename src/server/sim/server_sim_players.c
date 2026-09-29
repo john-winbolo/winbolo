@@ -397,6 +397,17 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
         serverSimPublishControl(sim, &leaveEvt);
     }
 
+    /* The requests this player made and the ones made to them go with
+     * them, so whoever takes the seat next cannot be allied by an accept
+     * of a request they never made. */
+    {
+        BYTE k;
+        sim->allianceAskedBy[playerNum] = 0;
+        for (k = 0; k < MAX_TANKS; k++) {
+            sim->allianceAskedBy[k] &= (uint16_t)~(1u << playerNum);
+        }
+    }
+
     /* Freeze this slot's identity before the roster entry is torn down: the
      * attribution track's identity table is otherwise only filled at game over,
      * which would leave a mid-round leaver nameless in the finished log. */

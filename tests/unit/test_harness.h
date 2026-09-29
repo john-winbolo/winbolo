@@ -965,6 +965,12 @@ int run_entity_record_lobby_add_republishes_counts(void);
 int run_entity_record_lobby_removal_replays(void);
 int run_entity_record_seek_lands_on_the_right_liveness(void);
 
+/* What a brain is told about a removed pill or base
+ * (test_brain_removed_items.c): BrainInfo's on-map masks clear the removed
+ * number, and the -brain-debug recording carries the same masks per frame. */
+int run_brain_removed_items_info_masks(void);
+int run_brain_removed_items_recording_masks(void);
+
 /* The entity-sync control event (test_entity_sync.c). CTRL_ENTITY_SYNC
  * carries three 16-bit masks, one per item list, saying which indices hold
  * an item that is on the map — the part the compressed map blob leaves out,
@@ -1139,6 +1145,28 @@ int run_alliance_reset_bots_synced_after_countdown_start(void);
 int run_alliance_reset_apply_keeps_owners(void);
 int run_alliance_reset_changed_matrix_keeps_owners(void);
 int run_alliance_reset_set_team_leaves_old_team(void);
+
+/* A leave hands the leaver's planted pills and bases to an ally, and
+ * with no ally moves nothing (test_alliance_leave.c, issue #420). */
+int run_alliance_leave_no_ally_top_seat_empty(void);
+int run_alliance_leave_no_ally_top_seat_enemy(void);
+int run_alliance_leave_no_ally_leaver_is_top_seat(void);
+int run_alliance_leave_hands_to_ally(void);
+int run_alliance_leave_hands_to_top_seat_ally(void);
+
+/* Alliance requests at the command arms (test_alliance_request.c, #421). */
+int run_alliance_request_accept_without_request_refused(void);
+int run_alliance_request_then_accept_allies(void);
+int run_alliance_request_requester_replaced_refused(void);
+int run_alliance_request_ranked_accept_refused(void);
+int run_alliance_request_refused_in_lobby(void);
+int run_alliance_request_cleared_at_round_start(void);
+int run_alliance_request_client_drops_departed_requester(void);
+
+/* Pillbox and base owners from the map file survive a round start
+ * (test_round_start_owners.c, issue #422). */
+int run_round_start_owners_kept_with_lobby_team(void);
+int run_round_start_owners_kept_after_manual_alliance(void);
 
 /* Log replay round-trip (test_log_roundtrip.c). */
 int run_log_roundtrip_basic(void);
@@ -2234,6 +2262,7 @@ int run_map_resync_stale_gen_rejected(void);
 int run_map_compress_roundtrip_stock(void);
 int run_map_compress_capacity_refuses(void);
 int run_map_compress_incompressible(void);
+int run_map_compress_rejects_damaged(void);
 int run_map_compress_roundtrip_mutated(void);
 int run_map_compress_rejects_null_handles(void);
 int run_map_checksum_ignores_mines(void);
@@ -3079,6 +3108,14 @@ int run_scenario_policy_lua_damage_scale(void);
 int run_scenario_policy_lua_value_classic(void);
 int run_scenario_policy_lua_value_error_counts(void);
 int run_scenario_policy_lua_value_in_policy(void);
+
+/* The can_ally policy at the alliance request and accept arms, and the
+ * game.allied read (test_scenario_can_ally.c). */
+int run_scenario_can_ally_request(void);
+int run_scenario_can_ally_accept(void);
+int run_scenario_can_ally_script_not_asked(void);
+int run_scenario_can_ally_lua(void);
+int run_scenario_allied_read(void);
 
 /* The in-process game-event channel (test_game_event_channel.c): a subscriber
  * that asks for it hears the captures and the builder death on it rather than

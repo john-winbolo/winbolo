@@ -2624,6 +2624,7 @@ STR_SCNFN_DESC_CAN_DIE=Si un coup peut détruire un tank, un constructeur ou un 
 STR_SCNFN_DESC_ON_CHOOSE_START=Quel départ occupe une place, demandé lors d'une apparition, d'une réapparition ou d'une téléportation qui n'en désigne aucun.
 STR_SCNFN_DESC_SPAWN_LOADOUT=Ce qui est remis à un tank qui apparaît, sauf si l'opération qui l'a fait apparaître a désigné un équipement.
 STR_SCNFN_DESC_DAMAGE_SCALE=Combien vaut un coup porté à un tank, demandé à chaque coup qu'il reçoit.
+STR_SCNFN_DESC_CAN_ALLY=Si un joueur peut s'allier à un autre.
 STR_MAPEDIT_SCENARIO_KIND=Ce qu'il peut décider
 STR_MAPEDIT_SCENARIO_KIND_SCENARIO=Scénario — il peut terminer la manche et dire qui a gagné
 STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — il change la façon dont la partie se joue et n'interfère pas dans la victoire
@@ -2675,7 +2676,7 @@ STR_DLGLOBBY_DETAILS_SETTINGS_HOST=Seul l'hôte peut les modifier.
 STR_DLGLOBBY_DETAILS_SETTINGS_OLD=Ce serveur ne peut pas modifier les réglages du script, donc les valeurs par défaut s'appliquent.
 STR_DLGLOBBY_DETAILS_SETTING_DEFAULT={number} (par défaut)
 STR_MAPEDIT_SCENARIO_WORKSHOP=Objet du Workshop n° {string1}, publié par {string2}
-STR_DLGSETTINGS_WORKSHOP_HEADING=Steam Workshop
+STR_DLGSETTINGS_WORKSHOP_HEADING=Workshop
 STR_DLGSETTINGS_WORKSHOP_SUBSCRIBED=Abonnements
 STR_DLGSETTINGS_WORKSHOP_PUBLISH=Publier
 STR_DLGSETTINGS_WORKSHOP_INSTALLED=Installé
@@ -2687,6 +2688,7 @@ STR_DLGSETTINGS_WORKSHOP_NONE_SUBSCRIBED=Vous n'êtes abonné à aucun mod, scé
 STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH=Rien à publier pour l'instant. Placez un mod ou un scénario dans votre dossier Mods, ou intégrez un scénario à une carte.
 STR_DLGSETTINGS_WORKSHOP_PUB_HEADING=Publier ce mod ou ce scénario sur le Steam Workshop
 STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE=Mettre à jour l'objet dont provient ce fichier
+STR_DLGSETTINGS_WORKSHOP_UNUSABLE=Inutilisable
 
 # The lobby's Workshop chip
 STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop
