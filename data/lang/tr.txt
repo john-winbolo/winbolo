@@ -2612,6 +2612,7 @@ STR_SCNFN_DESC_CAN_DIE=Bir vuruşun bir tankı, bir inşaatçıyı veya bir bunk
 STR_SCNFN_DESC_ON_CHOOSE_START=Bir koltuğun hangi başlangıcı alacağı — bir belirmede, yeniden doğuşta veya hiçbirini adlandırmayan bir ışınlanmada sorulur.
 STR_SCNFN_DESC_SPAWN_LOADOUT=Onu oluşturan işlem bir teçhizat adlandırmadıysa, belirmekte olan bir tanka ne verildiği.
 STR_SCNFN_DESC_DAMAGE_SCALE=Bir tanka bir vuruşun neye değdiği — aldığı her vuruşta sorulur.
+STR_SCNFN_DESC_CAN_ALLY=Bir oyuncunun başka bir oyuncuyla ittifak kurup kuramayacağı.
 STR_MAPEDIT_SCENARIO_KIND=Neye karar verebilir
 STR_MAPEDIT_SCENARIO_KIND_SCENARIO=Senaryo — turu bitirebilir ve kimin kazandığını söyleyebilir
 STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — oyunun nasıl oynandığını değiştirir ve kazanmayı olduğu gibi bırakır

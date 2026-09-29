@@ -3092,6 +3092,14 @@ int run_scenario_policy_lua_value_classic(void);
 int run_scenario_policy_lua_value_error_counts(void);
 int run_scenario_policy_lua_value_in_policy(void);
 
+/* The can_ally policy at the alliance request and accept arms, and the
+ * game.allied read (test_scenario_can_ally.c). */
+int run_scenario_can_ally_request(void);
+int run_scenario_can_ally_accept(void);
+int run_scenario_can_ally_script_not_asked(void);
+int run_scenario_can_ally_lua(void);
+int run_scenario_allied_read(void);
+
 /* The in-process game-event channel (test_game_event_channel.c): a subscriber
  * that asks for it hears the captures and the builder death on it rather than
  * on the control stream, with every byte of each event — the ones past

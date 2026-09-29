@@ -2976,7 +2976,7 @@
 #define STR_RULE_DESC_pill_angry_divisor         2517
 #define STR_RULE_DESC_pill_fire_length           2518
 #define STR_RULE_DESC_pill_base_defend_range     2519
-#define STR_RULE_DESC_pill_base_defend_shape     2697
+#define STR_RULE_DESC_pill_base_defend_shape     2698
 #define STR_RULE_DESC_pill_aim_iterations        2520
 #define STR_RULE_DESC_pill_massage_range         2575
 #define STR_RULE_DESC_pill_massage_cosine        2576
@@ -3047,8 +3047,9 @@
 /* Scenario function descriptions */
 
 /* One line per function a scenario author writes, for the list the editor
- * shows them in: the 25 hooks, then the 10 policies, in the order
- * SCN_HOOK_LIST and SCN_POLICY_LIST hold them.
+ * shows them in: the 25 hooks, then the 11 policies. The block runs in the
+ * order SCN_HOOK_LIST and SCN_POLICY_LIST hold them, except can_ally's: the
+ * number after the block is taken, so its id sits outside it.
  *
  * The tail of each symbol is the catalogue's own id column rather than the
  * function's name, because that is the token the description table pastes
@@ -3092,6 +3093,7 @@
 #define STR_SCNFN_DESC_ON_CHOOSE_START       2467
 #define STR_SCNFN_DESC_SPAWN_LOADOUT         2468
 #define STR_SCNFN_DESC_DAMAGE_SCALE          2469
+#define STR_SCNFN_DESC_CAN_ALLY              2697
 
 /* The scenario panel's kind control: what the file being edited is allowed
  * to decide. Not the same question as "Built for this map", which is which

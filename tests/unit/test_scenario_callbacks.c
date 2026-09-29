@@ -695,11 +695,11 @@ static int scFetchMapScript(const char *tag, const char *map, int wantRows,
 }
 
 int run_scenario_details_fetch_survival(void) {
-    return scFetchMapScript("fetch_survival", "Survival", 8, "on_tick/E=");
+    return scFetchMapScript("fetch_survival", "Survival", 9, "on_tick/E=");
 }
 
 int run_scenario_details_fetch_soccer(void) {
-    return scFetchMapScript("fetch_soccer", "Soccer", 10, "can_capture/Q=");
+    return scFetchMapScript("fetch_soccer", "Soccer", 11, "can_capture/Q=");
 }
 
 int run_scenario_details_fetch_not_found(void) {

@@ -5040,12 +5040,13 @@ static void scnFillLobbyTemplate(const ScnManifestLobby *lob,
  * fresh one, so the lookup goes to whichever state is current. */
 
 /* How the answers of a list of scripts are read, now that every one of them
- * is asked. The ten sites below each hold the arbitration for their own row,
- * because what the answers mean differs by row:
+ * is asked. The eleven sites below each hold the arbitration for their own
+ * row, because what the answers mean differs by row:
  *
- *   the six predicates
- *     allow_extra_teams, can_respawn, can_build, can_capture, announce and
- *     can_die. Asked in list order, any false wins, and the first no stops
+ *   the seven predicates
+ *     allow_extra_teams, can_respawn, can_build, can_capture, announce,
+ *     can_die and can_ally. Asked in list order, any false wins, and the
+ *     first no stops
  *     the asking. A predicate is a veto — false takes something out of the
  *     round — so a script that says no is not something a later script may
  *     put back, and one that has already lost has nothing left to add.
@@ -5293,7 +5294,7 @@ static void scnPushWord(ScenarioHost *h, const char *word) {
  * answer. The stopping test is the loop's own condition rather than a break
  * inside it, which is what keeps the stack contract: a break taken between
  * scnPolicyBegin and scnPolicyBool would leave the pushed function on the
- * stack for ever. The five predicates below are written the same way for
+ * stack for ever. The six predicates below are written the same way for
  * the same reason. */
 static bool scnAllowExtraTeams(void *ctx) {
     ScenarioHost *h     = (ScenarioHost *)ctx;
@@ -5529,6 +5530,31 @@ static bool scnCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
                            ? scenarioLuaDeathCauseWord((int)cause)
                            : scenarioLuaDamageSourceWord((int)cause));
         may = scnPolicyBool(h, i, kScnPolicyNames[SCN_POLICY_CAN_DIE], 4,
+                            true);
+    }
+    scnLockLeave(&h->lock);
+    return may;
+}
+
+/* May player p ally with seat q? Asked when p requests the alliance and again
+ * when q accepts it, so a script whose answer changed in between is asked
+ * the question it now answers. Both are seats, which Lua does not convert. */
+static bool scnCanAlly(void *ctx, BYTE player, BYTE other) {
+    ScenarioHost *h   = (ScenarioHost *)ctx;
+    bool          may = true;
+    int           i;
+
+    if (h == NULL) {
+        return true;
+    }
+    scnLockEnter(&h->lock);
+    for (i = 0; i < h->count && may; i++) {
+        if (!scnPolicyBegin(h, i, kScnPolicyNames[SCN_POLICY_CAN_ALLY])) {
+            continue;
+        }
+        lua_pushinteger(h->L, (lua_Integer)player);
+        lua_pushinteger(h->L, (lua_Integer)other);
+        may = scnPolicyBool(h, i, kScnPolicyNames[SCN_POLICY_CAN_ALLY], 2,
                             true);
     }
     scnLockLeave(&h->lock);
@@ -8599,6 +8625,7 @@ static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
     h->policy.canCapture      = scnCanCapture;
     h->policy.announce        = scnAnnounce;
     h->policy.canDie          = scnCanDie;
+    h->policy.canAlly         = scnCanAlly;
     h->policy.chooseStart     = scnChooseStart;
     h->policy.spawnLoadout    = scnSpawnLoadout;
     h->policy.damageScale     = scnDamageScale;

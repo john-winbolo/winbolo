@@ -2612,6 +2612,7 @@ STR_SCNFN_DESC_CAN_DIE=Ob ein Treffer einen Panzer, einen Bauarbeiter oder einen
 STR_SCNFN_DESC_ON_CHOOSE_START=Welchen Startpunkt ein Platz nimmt, gefragt bei einem Spawn, einer Wiederbelebung oder einer Teleportation, die keinen benennt.
 STR_SCNFN_DESC_SPAWN_LOADOUT=Was einem entstehenden Panzer mitgegeben wird, sofern die Operation, die ihn erzeugt hat, keine Ausrüstung benannt hat.
 STR_SCNFN_DESC_DAMAGE_SCALE=Was ein Treffer auf einen Panzer wert ist, gefragt bei jedem Treffer, den er erhält.
+STR_SCNFN_DESC_CAN_ALLY=Ob ein Spieler mit einem anderen eine Allianz eingehen darf.
 STR_MAPEDIT_SCENARIO_KIND=Was es entscheiden darf
 STR_MAPEDIT_SCENARIO_KIND_SCENARIO=Szenario — es kann die Runde beenden und sagen, wer gewonnen hat
 STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — er ändert, wie das Spiel abläuft, und lässt den Sieg unberührt
