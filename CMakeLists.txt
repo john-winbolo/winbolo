@@ -6522,6 +6522,10 @@ set(_unit_test_names
     scenario_compose_compat_write_stays_local
     scenario_compose_pairs_game_complete
     scenario_compose_unsafe_keeps_sharing
+    scenario_compose_off_map_script_only
+    scenario_compose_off_plain_map_none
+    scenario_compose_on_picks_replace_map
+    scenario_compose_off_then_on
     scenario_panel_parses_each_primitive
     scenario_panel_refuses_malformed
     scenario_panel_boundaries

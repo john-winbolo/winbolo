@@ -2445,8 +2445,9 @@
  * language that brackets a number differently has to be able to say so.
  *
  * TIP_ON, TIP_OFF and TIP_NONE are the first line of the hover, one per case:
- * the mods are running, the mods are picked but the setting is off, or there
- * are none. Each is a sentence rather than a label, because the hover is the
+ * the mods are running, the scripts are picked but Mods/Scenario is off, or
+ * there are none. TIP_OFF lists every pick that will not run, the picked
+ * scenario as well as the mods. Each is a sentence rather than a label, because the hover is the
  * only place a joiner is told which of the three the round is in — the
  * checkbox that decides it is in the host-only settings panel. The names
  * follow, numbered, and need no string of their own.
@@ -2817,7 +2818,7 @@
  * that plays. */
 #define STR_DLGLOBBY_RULES_OVERRIDDEN       2622
 
-/* Under the rules table of a mod, on a server that has mods turned off. */
+/* Under the rules table of a pick, on a server with Mods/Scenario off. */
 #define STR_DLGLOBBY_DETAILS_MODS_OFF       2624
 /* The details dialog's table of what a script implements, from the
  * callbacks block of its manifest: the heading over it (one per kind of

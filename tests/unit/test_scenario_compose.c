@@ -94,6 +94,21 @@
  *       — under -allow-unsafe-scripts the scripts share one game, so the
  *       base calls the row the mod added.
  *
+ * And what the lobby's Mods/Scenario setting takes out of the list:
+ *
+ *   scenario_compose_off_map_script_only
+ *       — box off, a picked scenario and a mod on a map with its own script:
+ *       the map's own script plays alone, and the list is kept.
+ *   scenario_compose_off_plain_map_none
+ *       — box off on a plain map: nothing plays.
+ *   scenario_compose_on_picks_replace_map
+ *       — box on: the picks play and the picked scenario replaces the map's
+ *       own.
+ *   scenario_compose_off_then_on
+ *       — the list a chooser sends from the off state, without the map's
+ *       row, is taken; the one with it is two scenarios and refused; and the
+ *       box goes back on without a refusal.
+ *
  * These cases drive the real path end to end: a scratch scenarios directory
  * with real files in it, the host's own directory lister registered on the
  * sim, and the picks made by applying CMD_SET_SCRIPT_LIST. A map is named but
@@ -119,6 +134,7 @@
 
 #include "global.h"
 #include "client_command.h"        /* CMD_SET_SCRIPT_LIST */
+#include "wire_limits.h"           /* LST_MODS_OFF */
 #include "control_event.h"         /* LobbyScenarioSource */
 #include "server_sim.h"
 #include "server_sim_internal.h"   /* scenarioIdentity, lobbyPlayers, tick */
@@ -2405,4 +2421,253 @@ static int scUnsafeKeepsSharing(void) {
 
 int run_scenario_compose_unsafe_keeps_sharing(void) {
     return scUnsafeRun(scUnsafeKeepsSharing);
+}
+
+/* ── The Mods/Scenario setting ────────────────────────────────────── */
+
+/* The lobby's Mods/Scenario checkbox, through the command it sends. off is
+   the wire's sense: true keeps the host's picks out of the round. The
+   dispatch arm asks for the decision again when the setting takes, so the
+   compose these cases read afterwards is the one the box asked for. */
+static CmdResult scModsOff(ServerSim *sim, bool off) {
+    ClientCommand cmd;
+    CmdResult     r;
+
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.type   = CMD_LOBBY_SETTING;
+    cmd.cmdSeq = 1;
+    cmd.u.lobbySetting.settingType = LST_MODS_OFF;
+    cmd.u.lobbySetting.valueLen    = 1;
+    cmd.u.lobbySetting.value[0]    = off ? 1 : 0;
+    /* The setting recomposes the round, which a pick made just before it
+       would otherwise stop on its one-list-a-second cooldown. */
+    sim->scenarioPickTick = 0;
+    threadsWaitForMutex();
+    r = serverSimApplyCommand(sim, 0, &cmd);
+    threadsReleaseMutex();
+    return r;
+}
+
+/* Box off on a map that brings its own script, with a picked scenario and a
+   mod on the list: the map's own script plays alone. The picks stay on the
+   list, and the lobby is told the map's row at the front with them behind
+   it, which is the list a chooser then drafts from. */
+int run_scenario_compose_off_map_script_only(void) {
+    ServerSim         *sim;
+    const ScnDirEntry *row;
+    const char        *picks[2] = { "duel.lua", "modone.lua" };
+
+    UT_ASSERT(scMakeDir("off_map_only"));
+    UT_ASSERT(scWrite("duel.lua", kScOtherScenario));
+    UT_ASSERT(scWrite("modone.lua", kScModOne));
+    UT_ASSERT(scPutMapScript(kScMapScenario));
+    sim = scSim();
+    UT_ASSERT(sim != NULL);
+
+    scCommit(sim);
+    UT_ASSERT_MSG(scPick(sim, picks, 2) == CMD_OK,
+                  "the scenario and the mod were refused");
+    UT_ASSERT_MSG(scModsOff(sim, true) == CMD_OK,
+                  "switching Mods/Scenario off was refused");
+
+    UT_ASSERT_MSG(scSlot != NULL, "nothing attached with the box off: %s",
+                  scenarioHostLastError(scSlot));
+    UT_ASSERT_MSG(scenarioHostScriptCount(scSlot) == 1,
+                  "the round composed %d scripts with the box off, wanted "
+                  "the map's own alone",
+                  scenarioHostScriptCount(scSlot));
+    UT_ASSERT_MSG(sim->scenarioIdentity.source == lobbyScenarioMap,
+                  "the box off left the source at %d, wanted map (%d)",
+                  (int)sim->scenarioIdentity.source, (int)lobbyScenarioMap);
+    UT_ASSERT_MSG(strcmp(sim->scenarioIdentity.name, "Survival") == 0,
+                  "the box off played \"%s\", wanted the map's own",
+                  sim->scenarioIdentity.name);
+
+    /* The host's list is left as it was written. */
+    UT_ASSERT_MSG(serverSimGetScriptCount(sim) == 2,
+                  "the host's list holds %d with the box off, wanted its two",
+                  serverSimGetScriptCount(sim));
+    /* And the lobby is told three rows: the map's own first and bound, the
+       two picks behind it. */
+    UT_ASSERT_MSG(serverSimGetLobbyScriptCount(sim) == 3,
+                  "the lobby was published %d rows, wanted three",
+                  serverSimGetLobbyScriptCount(sim));
+    row = serverSimGetLobbyScript(sim, 0);
+    UT_ASSERT(row != NULL);
+    UT_ASSERT_MSG(row->bound && strcmp(row->name, "Survival") == 0,
+                  "row 0 is \"%s\" (bound %d), wanted the map's own",
+                  row->name, (int)row->bound);
+    row = serverSimGetLobbyScript(sim, 1);
+    UT_ASSERT(row != NULL && !row->bound);
+    UT_ASSERT_MSG(strcmp(row->file, "duel.lua") == 0,
+                  "row 1 is \"%s\", wanted the picked scenario", row->file);
+
+    scDestroy(sim);
+    scDropMapScript();
+    scDropDir();
+    return 0;
+}
+
+/* Box off on a plain map: the picks are all there is, and none of them
+   composes, so nothing plays. */
+int run_scenario_compose_off_plain_map_none(void) {
+    ServerSim  *sim;
+    const char *picks[2] = { "duel.lua", "modone.lua" };
+
+    UT_ASSERT(scMakeDir("off_plain_none"));
+    UT_ASSERT(scWrite("duel.lua", kScOtherScenario));
+    UT_ASSERT(scWrite("modone.lua", kScModOne));
+    /* No script beside the map, which is what makes it a plain map. */
+    scDropMapScript();
+    sim = scSim();
+    UT_ASSERT(sim != NULL);
+
+    scCommit(sim);
+    UT_ASSERT_MSG(scPick(sim, picks, 2) == CMD_OK,
+                  "the scenario and the mod were refused");
+    UT_ASSERT_MSG(scSlot != NULL && scenarioHostScriptCount(scSlot) == 2,
+                  "with the box on the plain map did not compose both picks");
+
+    UT_ASSERT_MSG(scModsOff(sim, true) == CMD_OK,
+                  "switching Mods/Scenario off was refused");
+    UT_ASSERT_MSG(scSlot == NULL,
+                  "the box off on a plain map still attached %d scripts",
+                  scenarioHostScriptCount(scSlot));
+    UT_ASSERT_MSG(sim->scenarioIdentity.source == lobbyScenarioNone,
+                  "the box off on a plain map left the source at %d, wanted "
+                  "none (%d)",
+                  (int)sim->scenarioIdentity.source, (int)lobbyScenarioNone);
+    UT_ASSERT_MSG(serverSimGetMapScript(sim) == NULL,
+                  "a plain map published a row for a script it has not got");
+
+    scDestroy(sim);
+    scDropDir();
+    return 0;
+}
+
+/* Box on, a map with its own script, and a picked scenario with a mod: the
+   picks play, and the picked scenario replaces the map's own, which is no
+   longer on the list the lobby is told. */
+int run_scenario_compose_on_picks_replace_map(void) {
+    ServerSim              *sim;
+    const ScenarioManifest *m;
+    const ScnDirEntry      *row;
+    const char             *picks[2] = { "duel.lua", "modone.lua" };
+
+    UT_ASSERT(scMakeDir("on_replace_map"));
+    UT_ASSERT(scWrite("duel.lua", kScOtherScenario));
+    UT_ASSERT(scWrite("modone.lua", kScModOne));
+    UT_ASSERT(scPutMapScript(kScMapScenario));
+    sim = scSim();
+    UT_ASSERT(sim != NULL);
+
+    scCommit(sim);
+    UT_ASSERT_MSG(!serverSimGetModsOff(sim), "a fresh sim had the box off");
+    UT_ASSERT_MSG(scPick(sim, picks, 2) == CMD_OK,
+                  "the scenario and the mod were refused");
+
+    UT_ASSERT_MSG(scSlot != NULL, "nothing attached: %s",
+                  scenarioHostLastError(scSlot));
+    UT_ASSERT_MSG(scenarioHostScriptCount(scSlot) == 2,
+                  "the round composed %d scripts, wanted the two picks",
+                  scenarioHostScriptCount(scSlot));
+    m = scenarioHostManifest(scSlot);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(strcmp(m->name, "Duel") == 0,
+                  "the composite is named \"%s\", wanted the picked scenario",
+                  m->name);
+    UT_ASSERT_MSG(!scHasRegion(m, "north"),
+                  "the map's own region is in a round it does not play");
+    UT_ASSERT_MSG(scHasRegion(m, "south"), "the mod's region is missing");
+    UT_ASSERT_MSG(serverSimGetMapScript(sim) == NULL,
+                  "the map's row outlived the scenario that replaced it");
+    UT_ASSERT_MSG(serverSimGetLobbyScriptCount(sim) == 2,
+                  "the lobby was published %d rows, wanted the two picks",
+                  serverSimGetLobbyScriptCount(sim));
+    row = serverSimGetLobbyScript(sim, 0);
+    UT_ASSERT(row != NULL && !row->bound);
+
+    scDestroy(sim);
+    scDropMapScript();
+    scDropDir();
+    return 0;
+}
+
+/* Box off and then on again, with the list a chooser sends from the off
+   state in between.
+
+   With the box off the lobby shows the map's own row in front of the picked
+   scenario. A chooser that sent every row it drafted from that list named
+   two scenarios, which CMD_SET_SCRIPT_LIST refuses — and the map's row
+   cannot be dropped in the chooser, so the host could not change the list
+   at all. The chooser now leaves the map's row off beside a picked scenario
+   (lobbyRoundBoundShadowed); the list without it is taken, and it reads as
+   the picked scenario replacing the map's own when the box goes back on. */
+int run_scenario_compose_off_then_on(void) {
+    ServerSim  *sim;
+    char        mapFile[SERVER_SCENARIO_FILE_LEN];
+    const char *picks[2]     = { "duel.lua", "modone.lua" };
+    const char *reordered[2] = { "modone.lua", "duel.lua" };
+    const char *withMap[3];
+
+    UT_ASSERT(scMakeDir("off_then_on"));
+    UT_ASSERT(scWrite("duel.lua", kScOtherScenario));
+    UT_ASSERT(scWrite("modone.lua", kScModOne));
+    UT_ASSERT(scPutMapScript(kScMapScenario));
+    sim = scSim();
+    UT_ASSERT(sim != NULL);
+
+    scCommit(sim);
+    UT_ASSERT(serverSimGetMapScript(sim) != NULL);
+    SDL_strlcpy(mapFile, serverSimGetMapScript(sim)->file, sizeof(mapFile));
+    UT_ASSERT(scPick(sim, picks, 2) == CMD_OK);
+    UT_ASSERT_MSG(scModsOff(sim, true) == CMD_OK,
+                  "switching Mods/Scenario off was refused");
+    UT_ASSERT(scSlot != NULL && scenarioHostScriptCount(scSlot) == 1);
+
+    /* The list as the lobby shows it, map's row and all, is still two
+       scenarios, and still refused. This is the list the chooser no longer
+       sends. */
+    withMap[0] = mapFile;
+    withMap[1] = "modone.lua";
+    withMap[2] = "duel.lua";
+    UT_ASSERT_MSG(scPick(sim, withMap, 3) == CMD_REJECT_INVALID,
+                  "a list naming the map's own scenario and a picked one "
+                  "was taken");
+
+    /* The list the chooser sends instead: the host's edit, the map's row
+       left off. Taken, and with the box off the map's own still plays. */
+    UT_ASSERT_MSG(scPick(sim, reordered, 2) == CMD_OK,
+                  "the chooser's list without the map's row was refused");
+    UT_ASSERT_MSG(scSlot != NULL && scenarioHostScriptCount(scSlot) == 1,
+                  "with the box off the edited list composed %d scripts, "
+                  "wanted the map's own alone",
+                  scenarioHostScriptCount(scSlot));
+    UT_ASSERT_MSG(sim->scenarioIdentity.source == lobbyScenarioMap,
+                  "with the box off the source read %d, wanted map (%d)",
+                  (int)sim->scenarioIdentity.source, (int)lobbyScenarioMap);
+    UT_ASSERT_MSG(serverSimGetLobbyScriptCount(sim) == 3,
+                  "the lobby was published %d rows, wanted the map's own and "
+                  "both picks",
+                  serverSimGetLobbyScriptCount(sim));
+
+    /* And back on: not refused, and the picks play in the edited order, the
+       picked scenario in place of the map's own. */
+    UT_ASSERT_MSG(scModsOff(sim, false) == CMD_OK,
+                  "switching Mods/Scenario back on was refused");
+    UT_ASSERT_MSG(scSlot != NULL && scenarioHostScriptCount(scSlot) == 2,
+                  "with the box back on %d scripts composed, wanted the two "
+                  "picks",
+                  scenarioHostScriptCount(scSlot));
+    UT_ASSERT_MSG(strcmp(sim->scenarioIdentity.name, "Duel") == 0,
+                  "with the box back on the round is \"%s\", wanted the "
+                  "picked scenario",
+                  sim->scenarioIdentity.name);
+    UT_ASSERT_MSG(serverSimGetMapScript(sim) == NULL,
+                  "the map's row outlived the scenario that replaced it");
+
+    scDestroy(sim);
+    scDropMapScript();
+    scDropDir();
+    return 0;
 }

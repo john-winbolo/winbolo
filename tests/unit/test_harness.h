@@ -3725,6 +3725,10 @@ int run_scenario_compose_game_nested_copy(void);
 int run_scenario_compose_compat_write_stays_local(void);
 int run_scenario_compose_pairs_game_complete(void);
 int run_scenario_compose_unsafe_keeps_sharing(void);
+int run_scenario_compose_off_map_script_only(void);
+int run_scenario_compose_off_plain_map_none(void);
+int run_scenario_compose_on_picks_replace_map(void);
+int run_scenario_compose_off_then_on(void);
 
 /* The panel's display list (test_scenario_panel.c): the byte layout
  * decoded from a hand-written list, the refusal each malformed list
