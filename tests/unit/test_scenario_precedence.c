@@ -79,8 +79,16 @@ static char spDir[256];
 static char spFiles[SP_MAX_FILES][128];
 static int  spFileCount;
 
+/* The maps a case commits, named from its tag like its directory. ctest runs
+   every case as its own process and several at once, so a name two cases
+   shared would have one deleting the other's map script mid-read. */
+static char spBoundMap[256];
+static char spPlainMap[256];
+
 static bool spMakeDir(const char *tag) {
     snprintf(spDir, sizeof(spDir), "wbtest_scn_prec_%s", tag);
+    snprintf(spBoundMap, sizeof(spBoundMap), "wbtest_scn_prec_%s_bound.map", tag);
+    snprintf(spPlainMap, sizeof(spPlainMap), "wbtest_scn_prec_%s_plain.map", tag);
     spFileCount = 0;
     /* A directory left over from a run that was killed is not a failure: the
        files below are written over whatever is in it, and the cleanup at the
@@ -229,9 +237,6 @@ static const char kSpBound[] =
     "  },\n"
     "}\n";
 
-#define SP_BOUND_MAP "wbtest_scn_prec_bound.map"
-#define SP_PLAIN_MAP "wbtest_scn_prec_plain.map"
-
 /* ── The sim ──────────────────────────────────────────────────────── */
 
 /* The scenario the decision attached, kept where the callback can reach it.
@@ -362,12 +367,12 @@ int run_scenario_precedence_mod_over_map(void) {
 
     UT_ASSERT(spMakeDir("mod_over_map"));
     UT_ASSERT(spWriteMod("fastreload.lua", kSpRulesOnly));
-    UT_ASSERT(spPutMapScript(SP_BOUND_MAP, kSpBound));
+    UT_ASSERT(spPutMapScript(spBoundMap, kSpBound));
     sim = spSim();
     UT_ASSERT(sim != NULL);
 
     /* The bound map on its own plays its own scenario. */
-    spCommit(sim, SP_BOUND_MAP);
+    spCommit(sim, spBoundMap);
     UT_ASSERT_MSG(spSource(sim) == lobbyScenarioMap,
                   "a bound map alone read source %d, wanted map (%d)",
                   (int)spSource(sim), (int)lobbyScenarioMap);
@@ -399,7 +404,7 @@ int run_scenario_precedence_mod_over_map(void) {
                   (int)sim->sim.scenarioBaseGame);
 
     spDestroy(sim);
-    spDropMapScript(SP_BOUND_MAP);
+    spDropMapScript(spBoundMap);
     spDropDir();
     return 0;
 }
@@ -411,11 +416,11 @@ int run_scenario_precedence_none_restores_map(void) {
 
     UT_ASSERT(spMakeDir("none_restores_map"));
     UT_ASSERT(spWriteMod("fastreload.lua", kSpRulesOnly));
-    UT_ASSERT(spPutMapScript(SP_BOUND_MAP, kSpBound));
+    UT_ASSERT(spPutMapScript(spBoundMap, kSpBound));
     sim = spSim();
     UT_ASSERT(sim != NULL);
 
-    spCommit(sim, SP_BOUND_MAP);
+    spCommit(sim, spBoundMap);
     UT_ASSERT(spSelect(sim, "fastreload.lua") == CMD_OK);
     UT_ASSERT(spSource(sim) == lobbyScenarioMod);
 
@@ -432,7 +437,7 @@ int run_scenario_precedence_none_restores_map(void) {
                   spSeats(sim, 2));
 
     spDestroy(sim);
-    spDropMapScript(SP_BOUND_MAP);
+    spDropMapScript(spBoundMap);
     spDropDir();
     return 0;
 }
@@ -444,19 +449,19 @@ int run_scenario_precedence_plain_map_keeps_mod(void) {
 
     UT_ASSERT(spMakeDir("plain_map_keeps_mod"));
     UT_ASSERT(spWriteMod("waves.lua", kSpWaves));
-    UT_ASSERT(spPutMapScript(SP_BOUND_MAP, kSpBound));
+    UT_ASSERT(spPutMapScript(spBoundMap, kSpBound));
     /* No script beside this one, which is what makes it a plain map. */
-    spDropMapScript(SP_PLAIN_MAP);
+    spDropMapScript(spPlainMap);
     sim = spSim();
     UT_ASSERT(sim != NULL);
 
-    spCommit(sim, SP_BOUND_MAP);
+    spCommit(sim, spBoundMap);
     UT_ASSERT(spSelect(sim, "waves.lua") == CMD_OK);
     UT_ASSERT(spSource(sim) == lobbyScenarioMod);
     UT_ASSERT(spSeats(sim, 3) == 3);
 
     /* Committing a plain map over it changes the map and not the pick. */
-    spCommit(sim, SP_PLAIN_MAP);
+    spCommit(sim, spPlainMap);
     UT_ASSERT_MSG(spSource(sim) == lobbyScenarioMod,
                   "a plain map left the source at %d, wanted mod (%d)",
                   (int)spSource(sim), (int)lobbyScenarioMod);
@@ -476,7 +481,7 @@ int run_scenario_precedence_plain_map_keeps_mod(void) {
                   spSeats(sim, 3));
 
     spDestroy(sim);
-    spDropMapScript(SP_BOUND_MAP);
+    spDropMapScript(spBoundMap);
     spDropDir();
     return 0;
 }
@@ -488,12 +493,12 @@ int run_scenario_precedence_template_seats(void) {
 
     UT_ASSERT(spMakeDir("template_seats"));
     UT_ASSERT(spWriteMod("waves.lua", kSpWaves));
-    spDropMapScript(SP_PLAIN_MAP);
+    spDropMapScript(spPlainMap);
     sim = spSim();
     UT_ASSERT(sim != NULL);
 
     /* A plain map, so every seat here is the mod's doing. */
-    spCommit(sim, SP_PLAIN_MAP);
+    spCommit(sim, spPlainMap);
     UT_ASSERT(spSelect(sim, "waves.lua") == CMD_OK);
     UT_ASSERT_MSG(spSeats(sim, 3) == 3,
                   "the mod seated %d, wanted its three", spSeats(sim, 3));
@@ -539,11 +544,11 @@ int run_scenario_precedence_reset_reapplies(void) {
 
     UT_ASSERT(spMakeDir("reset_reapplies"));
     UT_ASSERT(spWriteMod("waves.lua", kSpWaves));
-    spDropMapScript(SP_PLAIN_MAP);
+    spDropMapScript(spPlainMap);
     sim = spSim();
     UT_ASSERT(sim != NULL);
 
-    spCommit(sim, SP_PLAIN_MAP);
+    spCommit(sim, spPlainMap);
     UT_ASSERT(spSelect(sim, "waves.lua") == CMD_OK);
     UT_ASSERT(spSeats(sim, 3) == 3);
     UT_ASSERT_MSG(sim->originalLobbySettings.gameType == gameOpen,
@@ -590,11 +595,11 @@ int run_scenario_precedence_reload_reseats(void) {
 
     UT_ASSERT(spMakeDir("reload_reseats"));
     UT_ASSERT(spWriteMod("waves.lua", kSpWaves));
-    spDropMapScript(SP_PLAIN_MAP);
+    spDropMapScript(spPlainMap);
     sim = spSim();
     UT_ASSERT(sim != NULL);
 
-    spCommit(sim, SP_PLAIN_MAP);
+    spCommit(sim, spPlainMap);
     UT_ASSERT(spSelect(sim, "waves.lua") == CMD_OK);
     UT_ASSERT_MSG(spSeats(sim, 3) == 3,
                   "the mod seated %d, wanted its three", spSeats(sim, 3));
@@ -648,11 +653,11 @@ int run_scenario_precedence_no_game_plays_strict(void) {
 
     UT_ASSERT(spMakeDir("no_game_plays_strict"));
     UT_ASSERT(spWriteMod("fastreload.lua", kSpRulesOnly));
-    spDropMapScript(SP_PLAIN_MAP);
+    spDropMapScript(spPlainMap);
     sim = spSim();
     UT_ASSERT(sim != NULL);
 
-    spCommit(sim, SP_PLAIN_MAP);
+    spCommit(sim, spPlainMap);
     UT_ASSERT_MSG(gameTypeGet(&sim->sim.game) == gameOpen,
                   "setup: the lobby is on game type %d, wanted open (%d)",
                   (int)gameTypeGet(&sim->sim.game), (int)gameOpen);
@@ -680,11 +685,11 @@ int run_scenario_precedence_open_game_plays_open(void) {
 
     UT_ASSERT(spMakeDir("open_game_plays_open"));
     UT_ASSERT(spWriteMod("fastreloadopen.lua", kSpRulesOnlyOpen));
-    spDropMapScript(SP_PLAIN_MAP);
+    spDropMapScript(spPlainMap);
     sim = spSim();
     UT_ASSERT(sim != NULL);
 
-    spCommit(sim, SP_PLAIN_MAP);
+    spCommit(sim, spPlainMap);
     UT_ASSERT_MSG(spSelect(sim, "fastreloadopen.lua") == CMD_OK,
                   "the mod was refused");
     UT_ASSERT_MSG(sim->sim.scenarioBaseGame == gameOpen,
@@ -718,11 +723,11 @@ int run_scenario_precedence_reload_refuses_bound(void) {
 
     UT_ASSERT(spMakeDir("reload_refuses_bound"));
     UT_ASSERT(spWriteMod("waves.lua", kSpWaves));
-    spDropMapScript(SP_PLAIN_MAP);
+    spDropMapScript(spPlainMap);
     sim = spSim();
     UT_ASSERT(sim != NULL);
 
-    spCommit(sim, SP_PLAIN_MAP);
+    spCommit(sim, spPlainMap);
     UT_ASSERT(spSelect(sim, "waves.lua") == CMD_OK);
     UT_ASSERT_MSG(spSeats(sim, 3) == 3,
                   "the mod seated %d, wanted its three", spSeats(sim, 3));
