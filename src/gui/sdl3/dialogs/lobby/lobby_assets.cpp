@@ -586,13 +586,13 @@ static void lobbyRenderModsRow(ClientSim *cs, bool effectiveHost,
  * the other two things a host sets about the server rather than about the
  * round.
  *
- * The scenario and the mods are two lines and not one, because they are not
- * one question. The scenario decides the round; the mods change how it
- * plays. A host who picks a mod must see the scenario line unmoved, and a
- * scenario must never turn up among the mods — so each line reads its own
- * half and neither is drawn from the other's.
+ * The scenario and the mods share one row, the Mods/Scenario row, because
+ * the checkbox at its head switches the host's picked scenario as well as
+ * the mods. Each name wears its Scenario or Mod tag, so the two kinds are
+ * still told apart: the scenario decides the round, a mod changes how it
+ * plays.
  *
- * The mods line is drawn even at none, and says so. That is the bug this
+ * The row is drawn even at none, and says so. That is the bug this
  * shape fixes: the column used to fall through to a bare Choose button with
  * no label over it, so the narrowest column of the four ended in an
  * unexplained button. It is also deliberately different from the map panel,
@@ -607,21 +607,11 @@ static void lobbyRenderModsRow(ClientSim *cs, bool effectiveHost,
  * and has the preference switched off, the column says that instead, rather
  * than leaving a host wondering where the scenario went.
  *
- * The Rules button stays here and does not follow the scenario line into the
- * map panel. It is the deep view — a row per rule, each with an Info popup a
- * controller can land on — and the map panel's way to the same answer is now
- * the details dialog behind the scenario's name, which carries the rules
- * table in summary. So a host keeps the full table, a joiner gets the
- * answer, and the map panel stays text.
+ * No buttons follow the row any more. The Rules button went because the
+ * details dialog behind each script's name shows the same rules table, and
+ * the row's own Details button is the way into the chooser.
  *
- * The buttons still measure themselves before the row is built. Only two of
- * them are left and they fit side by side in English, but the column's floor
- * is set by the password box rather than by this row, so nothing forces the
- * column to be wide enough for two buttons in a language whose words are
- * longer. Measuring is what keeps a button that will not fit on a row of its
- * own instead of clipped at the column edge.
- *
- * The buttons and the name links only ask for their dialogs. Every one of those
+ * The Details button and the name links only ask for their dialogs. Every one of those
  * dialogs is drawn from the lobby's own frame, because this line is drawn
  * inside something that can stop being drawn — the settings form is a tab of
  * its own in the tabbed layout and a collapsing header on the desktop — and a

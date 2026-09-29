@@ -639,10 +639,10 @@ const char *lobbyGameTypeStr(gameType gt);
 /* What is playing, in two shapes for the two places that ask.
  *
  * Line is the settings form's Server Settings column: the Mods/Scenario row,
- * which names every script with its Mod or Scenario tag, and a host's Rules
- * button under it. The row is drawn even at none, because this is where the
- * control to change them lives. For a host who has the scripts
- * preference switched off, one line saying so and no buttons.
+ * which names every script with its Mod or Scenario tag. The row is drawn
+ * even at none, because this is where the control to change them lives. For
+ * a host who has the scripts preference switched off, one line saying so
+ * and no row.
  *
  * effectiveHost is the caller's own answer to whether this viewer may edit
  * lobby state, handed down rather than worked out again here: the mods row

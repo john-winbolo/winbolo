@@ -2794,10 +2794,12 @@
 #define STR_MAPEDIT_SCENARIO_ARG_TEXT           2573
 #define STR_MAPEDIT_SCENARIO_TEXT_ONE_LONG      2574
 
-/* The lobby's rules popup: the button on the scenario line, the window's
- * caption, and the four columns a row is drawn in — the rule, what the
- * classic game plays it at, what the scenario set it to, and what that does
- * to it in words. */
+/* A rules table: its heading, and the four columns a row is drawn in — the
+ * rule, what the classic game plays it at, what the scenario set it to, and
+ * what that does to it in words. The lobby's details dialog and the log
+ * viewer use them. RULES_TITLE was the caption of the lobby's rules popup,
+ * which was removed; it has no caller and stays defined so the translations
+ * keep their ids. */
 #define STR_DLGLOBBY_SCENARIO_RULES         2328
 #define STR_DLGLOBBY_SCENARIO_RULES_TITLE   2329
 #define STR_DLGLOBBY_RULES_COL_RULE         2330
@@ -2805,10 +2807,10 @@
 #define STR_DLGLOBBY_RULES_COL_SCENARIO     2332
 #define STR_DLGLOBBY_RULES_COL_CHANGE       2333
 
-/* The same popup's per-rule detail: the button on a row that opens it, the
- * caption naming the rule as the manifest spells it, and the one label the
- * four columns above do not already provide. The other three lines in there
- * are labelled with the column ids, which are the same words. */
+/* The removed rules popup's per-rule detail: the caption naming the rule,
+ * the button on a row that opened it, and its range label. None of the
+ * three has a caller since the popup was removed; they stay defined so the
+ * translations keep their ids. */
 #define STR_DLGLOBBY_RULE_DETAIL_TITLE      2432
 #define STR_DLGLOBBY_RULES_INFO             2433
 #define STR_DLGLOBBY_RULES_RANGE            2434
@@ -2835,8 +2837,8 @@
 #define STR_DLGLOBBY_DETAILS_TYPE_QUERY          2630
 #define STR_DLGLOBBY_DETAILS_TYPE_TRIGGER        2631
 /* The details dialog's rules table: the header over a script's own value.
- * Its own id rather than STR_DLGLOBBY_RULES_COL_SCENARIO, which the host's
- * Rules popup still uses, because the dialog shows mods too. */
+ * Its own id rather than STR_DLGLOBBY_RULES_COL_SCENARIO, which the log
+ * viewer's rules table still uses, because the dialog shows mods too. */
 #define STR_DLGLOBBY_DETAILS_COL_NEW_VALUE       2632
 
 /* The map panel's warning under the scenario and mods lines, shown only when
@@ -2877,7 +2879,7 @@
 /* Rule descriptions */
 
 /* What each simulation rule governs, one line apiece, shown wherever a rule
- * is named: the editor's rules form and the lobby's rules popup. Named for
+ * is named: the editor's rules form and the lobby's details dialog. Named for
  * the rule as SIM_RULE_LIST spells it, and in that order, so the table in
  * sim_rules_phrase.c is generated from the list rather than written out. A
  * rule's own name is not translated — it is what a manifest, a script and an
