@@ -621,9 +621,15 @@ static void wbnRenderCreateColumn(bool onSteam, const char *persona) {
  * "Sign in" on the left, "Create an account" on the right — with the error
  * line and a Cancel button spanning the full width beneath. */
 static void wbnRenderLoginPopup(void) {
-    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(620, 0), ImGuiCond_Appearing);
+    /* Sized by the same scale the host dialog's font was built at, so the
+     * columns grow with the text when the window is maximised or full
+     * screen (the scale follows the window height) or a UI scale is set.
+     * Fixed pixel widths left the larger text wrapping in narrow columns
+     * and the Steam button labels running past them. */
+    ImGuiViewport *vp = ImGui::GetMainViewport();
+    float s = dialogComputeScale((int)vp->Size.x, (int)vp->Size.y);
+    ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(620.0f * s, 0), ImGuiCond_Appearing);
 
     static float s_fadeWbnSignIn = 0.0f;
     if (ImGui::BeginPopupModal(langGetText(STR_DLGWBN_SIGNIN_TITLE), &wbnPopupOpen,
@@ -633,7 +639,9 @@ static void wbnRenderLoginPopup(void) {
         bool busy = (wbnState == WBN_LOGGING_IN);
         char persona[256];
         bool onSteam = steam_get_persona_name(persona, sizeof(persona));
-        const float colW = 290.0f;
+        /* Two columns and their padding stay inside the screen. */
+        float colW = 290.0f * s;
+        if (colW > vp->Size.x * 0.42f) colW = vp->Size.x * 0.42f;
 
         /* Intro spanning both columns. */
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + colW * 2.0f);
@@ -646,7 +654,7 @@ static void wbnRenderLoginPopup(void) {
         if (busy) {
             wbnDrawSpinner(langGetText(STR_DLGWBN_SIGNINGIN));
         } else {
-            ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(12.0f, 4.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(12.0f * s, 4.0f * s));
             if (ImGui::BeginTable("##wbnsignincols", 2, ImGuiTableFlags_BordersInnerV)) {
                 ImGui::TableSetupColumn("##signin", ImGuiTableColumnFlags_WidthFixed, colW);
                 ImGui::TableSetupColumn("##create", ImGuiTableColumnFlags_WidthFixed, colW);
@@ -681,7 +689,7 @@ static void wbnRenderLoginPopup(void) {
 
         /* Cancel — centred beneath everything. Esc also closes. */
         const char *cancel = langGetText(STR_CANCEL);
-        float bw = 120.0f;
+        float bw = 120.0f * s;
         float avail = ImGui::GetContentRegionAvail().x;
         if (avail > bw) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - bw) * 0.5f);
         if (ImGui::Button(cancel, ImVec2(bw, 0)) || WBUI::CancelKeyPressed()) {
