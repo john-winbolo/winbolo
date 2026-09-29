@@ -1670,23 +1670,13 @@ void serverSimStartGame(ServerSim *sim) {
 
     sim->gameLength = sim->originalGameLength;
 
-    /* Clear all alliances from previous round */
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (!sim->playerConnected[i]) continue;
-        playersLeaveAlliance(&sim->sim, &sim->sim.plyrs, NEUTRAL, i, TRUE);
-        {
-            ControlEvent leaveEvt;
-            memset(&leaveEvt, 0, sizeof(leaveEvt));
-            leaveEvt.type = CTRL_ALLIANCE_LEAVE;
-            leaveEvt.u.allianceLeave.playerNum = i;
-            /* The round reset clears every alliance; no player asked for it,
-               so the policy is asked with no actor. */
-            leaveEvt.u.allianceLeave.quiet =
-                serverSimAnnounce(sim, ANNOUNCE_KIND_ALLIANCE, i, NEUTRAL)
-                    ? 0 : 1;
-            serverSimPublishControl(sim, &leaveEvt);
-        }
-    }
+    /* Last round's alliances are gone here: serverSimResetGameWorld emptied
+     * every seat's through playersResetRoundState. The CTRL_ALLIANCE_RESET
+     * published below is what clears them on the clients, and it takes the
+     * bits without moving anything. There is no per-seat CTRL_ALLIANCE_LEAVE:
+     * a client still holding last round's alliances applies one by handing
+     * the seat's pillboxes and bases to its first ally, which took owners the
+     * map file gives a seat away from it. */
 
     /* Apply team alliances: players with same non-zero teamNumber become allies */
     serverSimReapplyTeamAlliances(sim);

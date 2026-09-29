@@ -364,7 +364,7 @@ int run_scenario_map_preview_truncates(void) {
                   "the fixture container could not be written");
     UT_ASSERT(mbWriteFile(mapPath, plain, mapLen, container, containerLen));
 
-    sim = serverSimCreateCompressed(emap, 5097, "Everard Island", gameOpen,
+    sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island", gameOpen,
                                     false, 0, -1);
     UT_ASSERT(sim != NULL);
     /* The virtual Uploads folder is how a sim's map resolution is pointed at
@@ -460,7 +460,7 @@ int run_scenario_map_preview_passes_plain_bytes(void) {
     UT_ASSERT(mbWriteFile(smallPath, filler, MB_FILLER_LEN, NULL, 0));
     UT_ASSERT(mbWriteFile(bigPath, filler, bigLen, NULL, 0));
 
-    sim = serverSimCreateCompressed(emap, 5097, "Everard Island", gameOpen,
+    sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island", gameOpen,
                                     false, 0, -1);
     UT_ASSERT(sim != NULL);
     serverSimSetUploadPersistDir(sim, dir);
@@ -575,7 +575,7 @@ int run_scenario_map_body_use_local_compare(void) {
     md5Compute(whole, bodyLen, clientMd5);
     md5Compute(whole, wholeLen, wholeMd5);
 
-    sim = serverSimCreateCompressed(emap, 5097, "Everard Island", gameOpen,
+    sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island", gameOpen,
                                     false, 0, -1);
     UT_ASSERT(sim != NULL);
     serverSimSetUploadPersistDir(sim, dir);
@@ -696,7 +696,7 @@ int run_scenario_map_has_script_cached(void) {
 
     /* The cache's lock is made where the lister's question is registered, as
        the scenarios directory cache's is, so this is what turns it on. */
-    sim = serverSimCreateCompressed(emap, 5097, "Everard Island", gameOpen,
+    sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island", gameOpen,
                                     false, 0, -1);
     UT_ASSERT(sim != NULL);
     scenarioHostRegisterMapScripted(sim);

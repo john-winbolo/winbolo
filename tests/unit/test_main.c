@@ -654,6 +654,9 @@ static const UnitTestEntry s_tests[] = {
                                                  run_alliance_leave_no_ally_leaver_is_top_seat },
     { "alliance_leave_hands_to_ally",            run_alliance_leave_hands_to_ally            },
     { "alliance_leave_hands_to_top_seat_ally",   run_alliance_leave_hands_to_top_seat_ally   },
+    { "round_start_owners_kept_with_lobby_team", run_round_start_owners_kept_with_lobby_team },
+    { "round_start_owners_kept_after_manual_alliance",
+                                                 run_round_start_owners_kept_after_manual_alliance },
     { "treegrow_never_plants_on_deep_sea",       run_treegrow_never_plants_on_deep_sea       },
     { "treegrow_reset_clears_stale_target",      run_treegrow_reset_clears_stale_target      },
     { "pill_repair_tops_up_from_arrival_armour", run_pill_repair_tops_up_from_arrival_armour },
@@ -693,6 +696,8 @@ static const UnitTestEntry s_tests[] = {
     { "entity_record_lobby_add_republishes_counts",
                                                  run_entity_record_lobby_add_republishes_counts },
     { "entity_record_lobby_removal_replays",     run_entity_record_lobby_removal_replays     },
+    { "brain_removed_items_info_masks",          run_brain_removed_items_info_masks          },
+    { "brain_removed_items_recording_masks",     run_brain_removed_items_recording_masks     },
     { "entity_record_seek_lands_on_the_right_liveness",
                                                  run_entity_record_seek_lands_on_the_right_liveness },
     { "starts_pick_cluster_nearest_teammate",    run_starts_pick_cluster_nearest_teammate    },
@@ -1057,6 +1062,7 @@ static const UnitTestEntry s_tests[] = {
     { "map_compress_roundtrip_stock",            run_map_compress_roundtrip_stock            },
     { "map_compress_capacity_refuses",           run_map_compress_capacity_refuses           },
     { "map_compress_incompressible",           run_map_compress_incompressible           },
+    { "map_compress_rejects_damaged",            run_map_compress_rejects_damaged            },
     { "map_compress_roundtrip_mutated",          run_map_compress_roundtrip_mutated          },
     { "map_compress_rejects_null_handles",       run_map_compress_rejects_null_handles       },
     { "map_checksum_ignores_mines",              run_map_checksum_ignores_mines              },
@@ -2177,7 +2183,7 @@ GameSim *ut_rules_only_sim(void) {
 
 ServerSim *ut_make_running_sim(const char *player_name) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097,
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN,
                                                "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) {

@@ -309,7 +309,7 @@ static long slArrayInt(lua_State *L, const char *name, int n) {
  * lobby handlers are tested against there. */
 static ServerSim *slSeatedLobbySim(void) {
     BYTE       emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) {
         return NULL;
@@ -324,7 +324,7 @@ static ServerSim *slSeatedLobbySim(void) {
  * round themselves. ut_make_running_sim is the one for the rest. */
 static ServerSim *slLobbySim(void) {
     BYTE       emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) {
         return NULL;

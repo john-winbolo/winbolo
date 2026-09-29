@@ -114,7 +114,7 @@ int run_lobby_bot_pool_join_sends_only_the_id(void) {
 
     if (!threadsCreate(TRUE)) UT_FAIL("threadsCreate failed");
     lobbyBotPoolsReset();
-    sim = serverSimCreateCompressed(emap, 5097, "Everard Island", gameOpen,
+    sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island", gameOpen,
                                     false, 0, -1);
     UT_ASSERT(sim != NULL);
     serverSimSetLobbyEnabled(sim, true);
@@ -296,7 +296,7 @@ int run_bot_pool_refresh_retakes_catalogue(void) {
 
     if (!threadsCreate(TRUE)) UT_FAIL("threadsCreate failed");
     lobbyBotPoolsReset();
-    sim = serverSimCreateCompressed(emap, 5097, "Everard Island", gameOpen,
+    sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island", gameOpen,
                                     false, 0, -1);
     UT_ASSERT(sim != NULL);
     firstId = sim->botPoolId;
