@@ -2917,6 +2917,11 @@ int run_lobby_scenario_boot_sets_type(void);
 int run_lobby_scenario_identity_strips_controls(void);
 int run_lobby_scenario_nolobby_boot_seats_template(void);
 
+/* What the sim tells WinBolo.net about the scripts a round runs
+ * (test_wbn_lobby_info_scenario.c): the scenario, its cap and the mods, none
+ * on a plain round, a mods-only round or with Mods Enabled off. */
+int run_wbn_lobby_info_scenario(void);
+
 /* The policy a server holds for scripts players send it
  * (test_script_upload_policy.c): the word it is set from and the legacy flag
  * that stands for off, the spelling a preference is written in, its byte on

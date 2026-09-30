@@ -1414,6 +1414,7 @@ static const UnitTestEntry s_tests[] = {
       run_lobby_scenario_identity_strips_controls                                            },
     { "lobby_scenario_nolobby_boot_seats_template",
       run_lobby_scenario_nolobby_boot_seats_template                                         },
+    { "wbn_lobby_info_scenario",                 run_wbn_lobby_info_scenario                 },
     { "script_upload_policy_resolve",            run_script_upload_policy_resolve            },
     { "script_upload_policy_word",               run_script_upload_policy_word               },
     { "script_upload_policy_codec",              run_script_upload_policy_codec              },
