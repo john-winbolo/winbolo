@@ -2043,11 +2043,16 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
         renderViewModeToggle(state, renderer);
         /* "Scenarios only" — a client-side filter like the plain
          * search, so a change needs no rescan. Sits right of the view
-         * toggle. Greyed out while the rows come from a server-wide
-         * search, whose reply does not say which hits have a script;
-         * ticked, it would hide every hit. */
+         * toggle, at the search options' smaller font and frame.
+         * Greyed out while the rows come from a server-wide search,
+         * whose reply does not say which hits have a script; ticked,
+         * it would hide every hit. */
         if (state->offerScenariosOnly) {
             ImGui::SameLine();
+            ImGui::PushFont(NULL, ImGui::GetStyle().FontSizeBase * 0.85f);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                ImVec2(ImGui::GetStyle().FramePadding.x,
+                       ImGui::GetStyle().FramePadding.y * 0.5f));
             bool untagged = state->searchRowsUntagged;
             if (untagged) ImGui::BeginDisabled();
             ImGui::Checkbox(langGetText(STR_MAPCHOOSER_SCENARIOSONLY),
@@ -2063,6 +2068,8 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 imguiHelpTooltip(
                     langGetText(STR_MAPCHOOSER_SCENARIOSONLY_TIP));
             }
+            ImGui::PopStyleVar();
+            ImGui::PopFont();
         }
         bool scenariosOnly = state->offerScenariosOnly
                           && state->scenariosOnly
