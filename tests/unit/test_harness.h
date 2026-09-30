@@ -2926,6 +2926,8 @@ int run_lobby_scenario_commit_sets_type(void);
 int run_lobby_scenario_reset_keeps_rules(void);
 int run_lobby_scenario_refuses_ranked(void);
 int run_lobby_scenario_refuses_ai_none(void);
+int run_lobby_scenario_no_bots_script_keeps_ai(void);
+int run_lobby_scenario_needs_bots_raises_and_gives_back(void);
 int run_lobby_scenario_refuses_game_type(void);
 int run_lobby_scenario_boot_sets_type(void);
 int run_lobby_scenario_identity_strips_controls(void);
@@ -3771,6 +3773,8 @@ int run_scenario_compose_off_plain_map_none(void);
 int run_scenario_compose_on_picks_replace_map(void);
 int run_scenario_compose_off_then_on(void);
 int run_scenario_compose_off_full_list_hides_last(void);
+int run_scenario_compose_needs_bots_any_mod(void);
+int run_scenario_compose_needs_bots_scenario_and_mod(void);
 
 /* The panel's display list (test_scenario_panel.c): the byte layout
  * decoded from a hand-written list, the refusal each malformed list

@@ -6046,6 +6046,8 @@ set(_unit_test_names
     lobby_scenario_reset_keeps_rules
     lobby_scenario_refuses_ranked
     lobby_scenario_refuses_ai_none
+    lobby_scenario_no_bots_script_keeps_ai
+    lobby_scenario_needs_bots_raises_and_gives_back
     lobby_scenario_refuses_game_type
     lobby_scenario_boot_sets_type
     lobby_scenario_identity_strips_controls
@@ -6559,6 +6561,8 @@ set(_unit_test_names
     scenario_compose_on_picks_replace_map
     scenario_compose_off_then_on
     scenario_compose_off_full_list_hides_last
+    scenario_compose_needs_bots_any_mod
+    scenario_compose_needs_bots_scenario_and_mod
     scenario_panel_parses_each_primitive
     scenario_panel_refuses_malformed
     scenario_panel_boundaries

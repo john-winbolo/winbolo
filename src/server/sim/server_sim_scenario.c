@@ -2316,10 +2316,15 @@ void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath) {
    attached, and this is the other direction — ranked already on when the
    scenario arrives.
 
-   The AI policy: a scenario fields its own bots, and aiNone empties the
-   roster of them, so a policy that allows none is moved up to the one that
-   allows them plainly. A policy that already allows bots is the operator's
-   or the host's and is left alone.
+   The AI policy: only for a list that said needs_bots. Such a script fields
+   its own bots, and aiNone empties the roster of them and refuses every
+   spawn, so a policy that allows none is moved up to the one that allows
+   them plainly. A policy that already allows bots is the operator's or the
+   host's and is left alone. A list that did not say it leaves the policy
+   alone too, whatever it is: a mod like Virus plays with the bots a host
+   adds or with none, and turning bots on for it would be the script
+   deciding something that is the host's. needsBots is the composed list's
+   answer, and it is true when any script in the list says it.
 
    Only a scenario takes the game type. A mod keeps the round's win
    condition, names no game of its own — scnModHoldsBack refuses a mod that
@@ -2328,8 +2333,11 @@ void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath) {
    on changing it. keepsWinCondition is the composed list's answer, and it is
    true only when every script in the list is a mod.
 
-   All three are remembered and all three are given back, so a lobby that was
-   ranked with no bots is ranked with no bots again once the last script goes.
+   All three are remembered and given back, so a lobby that was ranked with
+   no bots is ranked with no bots again once the last script goes. The AI
+   policy is given back only when a needs_bots list moved it
+   (preScenarioAiRaised): with any other list the host was free to change it,
+   and what the host chose stays.
    They are remembered together, on the first script of a run whether or not
    it is the kind that moves the game type: a mod turns ranked off as surely
    as a scenario does, and what it turned off has to come back the same way.
@@ -2362,19 +2370,24 @@ void serverSimScenarioApplyLobbyRules(ServerSim *sim) {
         if (serverSimGetRanked(sim)) {
             serverSimSetRanked(sim, false);
         }
-        if (serverSimGetBotAiType(sim) == aiNone) {
+        if (sim->scenarioIdentity.needsBots &&
+            serverSimGetBotAiType(sim) == aiNone) {
             serverSimSetAiPolicy(sim, (uint8_t)aiYes);
             serverSimSetBotAiType(sim, aiYes);
+            sim->preScenarioAiRaised = true;
         }
     } else if (sim->preScenarioGameType != (gameType)0) {
         serverSimSetGameType(sim, sim->preScenarioGameType);
         serverSimSetRanked(sim, sim->preScenarioRanked);
-        serverSimSetAiPolicy(sim, sim->preScenarioAiPolicy);
-        serverSimSetBotAiType(sim, sim->preScenarioAiType);
+        if (sim->preScenarioAiRaised) {
+            serverSimSetAiPolicy(sim, sim->preScenarioAiPolicy);
+            serverSimSetBotAiType(sim, sim->preScenarioAiType);
+        }
         sim->preScenarioGameType = (gameType)0;
         sim->preScenarioRanked   = false;
         sim->preScenarioAiPolicy = 0;
         sim->preScenarioAiType   = aiNone;
+        sim->preScenarioAiRaised = false;
     } else if (gameTypeGet(&sim->sim.game) == gameScripted) {
         /* On the scripted type with no script and nothing held: a lobby that
            got there without going through the arm above. There is no earlier
@@ -4616,6 +4629,7 @@ void serverSimSetScenarioIdentity(ServerSim *sim,
                                   bool extraTeams,
                                   bool keepsWinCondition,
                                   bool bound,
+                                  bool needsBots,
                                   bool unsafe) {
     if (sim == NULL) return;
     memset(&sim->scenarioIdentity, 0, sizeof(sim->scenarioIdentity));
@@ -4638,6 +4652,7 @@ void serverSimSetScenarioIdentity(ServerSim *sim,
     sim->scenarioIdentity.extraTeams        = extraTeams;
     sim->scenarioIdentity.keepsWinCondition = keepsWinCondition;
     sim->scenarioIdentity.bound             = bound;
+    sim->scenarioIdentity.needsBots         = needsBots;
     sim->scenarioIdentity.unsafe            = unsafe;
     scnCopyIdentityText(sim->scenarioIdentity.name,
                         sizeof(sim->scenarioIdentity.name), name);

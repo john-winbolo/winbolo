@@ -1177,6 +1177,12 @@ struct ServerSim {
          * changing the map. False while source is lobbyScenarioNone, for the
          * reason the flag above it is. */
         bool                bound;
+        /* True when the composed list said needs_bots: a script in it
+         * fields its own bots, so the lobby is moved off aiNone while it is
+         * attached and may not be put back on it. Carried to every client
+         * so the lobby greys the "no computer tanks" row only then. False
+         * while source is lobbyScenarioNone. */
+        bool                needsBots;
         /* True when this server runs every script with the full Lua library
          * and no limits (-allow-unsafe-scripts). The lobby carries it to
          * every client so a player can see it before they play. False while
@@ -1225,6 +1231,11 @@ struct ServerSim {
     bool                   preScenarioRanked;
     uint8_t                preScenarioAiPolicy;
     aiType                 preScenarioAiType;
+    /* True once a list that said needs_bots moved the lobby off aiNone.
+     * Only then are the two above put back: a list that never touched the
+     * AI policy leaves it the host's, including any change the host made
+     * while that list was attached. */
+    bool                   preScenarioAiRaised;
     /* The brain a seat was seeded with, so a seat held without a bot in it
      * still knows what to run when something fields it. Empty means the
      * server's own. */
