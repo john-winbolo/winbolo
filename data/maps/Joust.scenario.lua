@@ -688,37 +688,35 @@ local function credit_for(victim, killer, cause)
   return nil
 end
 
+-- The words a kill line uses, three for each way to die. A kill takes the
+-- next one in turn, by the killer's side's new score, so the lines vary and a
+-- replay shows the same words.
+local DROWN_VERBS = { "drowned", "sank", "dunked" }
+local KILL_VERBS  = { "killed", "destroyed", "blew up" }
+
 -- The announce line for a kill, never longer than TEXT_MAX. The full line is
---   "<killer>: <streak word>  killed <victim>  (<side> <kills>/<target>)"
--- with no "<streak word>  " part for a kill that is not on a streak. When
--- long names make it too long it is made shorter, one step at a time, until
--- it fits: in a Free For All the side name, which is the killer's name again,
--- goes first; then the victim's name; then the side name; then the killer's
--- name is cut. The streak word and the score always stay.
+--   "<killer> (<kills>/<target>): <streak word>  <verb> <victim> (<kills>/<target>)"
+-- with each score the one of that tank's side, and with ": <streak word>  "
+-- shortened to a space for a kill that is not on a streak. When long names
+-- make it too long, the victim's name is cut first and then the killer's.
+-- The streak word and both scores always stay.
 local function kill_line(by, victim, key, cause, word)
-  local how = (cause == "deep_sea") and "drowned" or "killed"
-  local killer = name_of(by)
-  local side = side_name(key)
-  local count = string.format("%d/%d", kills[key], target)
+  local verbs = (cause == "deep_sea") and DROWN_VERBS or KILL_VERBS
+  local how = verbs[(kills[key] - 1) % #verbs + 1]
+  local vkey = side_of(victim)
+  local mine = string.format(" (%d/%d)", kills[key], target)
+  local theirs = string.format(" (%d/%d)", kills[vkey] or 0, target)
   local lead = (word ~= nil) and (": " .. word .. "  ") or " "
-  local with_side = "(" .. side .. " " .. count .. ")"
-  local no_side = "(" .. count .. ")"
-  local tries = {}
-  local victim_part = how .. " " .. name_of(victim) .. "  "
-  local scored = (word ~= nil) and "" or "scored  "
-  tries[#tries + 1] = lead .. victim_part .. with_side
-  if key == "p" .. by then
-    tries[#tries + 1] = lead .. victim_part .. no_side
+  local fixed = mine .. lead .. how .. " " .. theirs
+  local killer, prey = name_of(by), name_of(victim)
+  local room = TEXT_MAX - #fixed
+  if #killer + #prey > room then
+    prey = cut_text(prey, math.max(room - #killer, 8))
   end
-  tries[#tries + 1] = lead .. scored .. with_side
-  tries[#tries + 1] = lead .. scored .. no_side
-  for _, rest in ipairs(tries) do
-    if #killer + #rest <= TEXT_MAX then
-      return killer .. rest
-    end
+  if #killer + #prey > room then
+    killer = cut_text(killer, math.max(room - #prey, 0))
   end
-  local rest = tries[#tries]
-  return cut_text(killer, TEXT_MAX - #rest) .. rest
+  return killer .. mine .. lead .. how .. " " .. prey .. theirs
 end
 
 function on_tank_hit(victim, attacker, cause, amount, pill, scripted)
