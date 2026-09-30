@@ -955,7 +955,10 @@ local function each_second()
   if not loose and elapsed > HEAD_START and #roll(SURVIVORS) >= 2 then
     turn_zero()
   end
-  if not compass_on and COMPASS_SECONDS > 0 and
+  -- Not before the virus is loose: a compass setting longer than the round
+  -- less the head start would otherwise tell the survivors about a horde
+  -- that does not exist yet.
+  if not compass_on and loose and COMPASS_SECONDS > 0 and
      elapsed >= ROUND_SECONDS - COMPASS_SECONDS then
     start_compass()
   end
