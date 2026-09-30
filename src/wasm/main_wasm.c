@@ -19,7 +19,6 @@
 #include <unistd.h>
 
 #include <emscripten.h>
-#include <emscripten/html5.h>
 
 #include "bolo_rand.h"
 #include "client_render.h"
@@ -795,35 +794,14 @@ void windowSetKeys(keyItems *value) { keys = *value; }
 void windowSetZoomFactor(BYTE amount)  { zoomFactor = amount; }
 BYTE windowGetZoomFactor(void)         { return zoomFactor; }
 
+/* The page sizes the canvas and the game renders at the integer zoom that
+ * covers it (Custom mode, adapted every frame), so there is no zoom to change
+ * to. Nothing calls this on the web: the Window Size menu and the Settings
+ * option are hidden, and the resize handler leaves a page-sized window alone.
+ * Kept as the symbol sdl3imgui.cpp links against. */
 void windowZoomChange(BYTE amount, bool fromDragResize) {
-  (void)fromDragResize;  /* WASM doesn't use resize detection */
-  if (amount == zoomFactor) return;
-  printf("[WASM] windowZoomChange: %d -> %d\n", zoomFactor, amount);
-  drawBusy = TRUE;
-  clientMutexWaitFor();
-  sdl3DrawCleanup();
-  sdl3DrawSetup(amount);
-  clientMutexRelease();
-  drawBusy = FALSE;
-  windowSetZoomFactor(amount);
-
-  /* Re-initialise ImGui on the new window/renderer */
-  {
-    SDL_Window *win = sdl3DrawGetWindow();
-    SDL_Renderer *ren = sdl3DrawGetRenderer();
-    if (win && ren) {
-      sdl3ImguiSetup(win, ren);
-    }
-  }
-
-  /* Force canvas buffer + CSS to match the new window size */
-  {
-    int w, h;
-    SDL_GetWindowSize(sdl3DrawGetWindow(), &w, &h);
-    emscripten_set_canvas_element_size("#canvas", w, h);
-    emscripten_set_element_css_size("#canvas", (double)w, (double)h);
-    printf("[WASM] Zoom canvas forced to %dx%d\n", w, h);
-  }
+  (void)amount;
+  (void)fromDragResize;
 }
 
 void windowSetFrameRate(int newFrameRate, bool setTimer) {
