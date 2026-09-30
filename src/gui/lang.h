@@ -3238,6 +3238,13 @@
  * STR_DLGSETTINGS_WORKSHOP_OPEN. */
 #define STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP       2680
 
+/* The game finder's scripts */
+/* The label of the details pane's row naming the mods a server runs, and the
+ * end of a row's map line when more than one runs ({number} = how many). The
+ * scenario row and the Scenario filter entry reuse STR_DLGGAMEINFO_SCRIPTED. */
+#define STR_DLGBROWSER_MODS                      2713
+#define STR_DLGBROWSER_MODS_MORE                 2714
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

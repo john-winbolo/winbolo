@@ -2664,6 +2664,8 @@ static const LangEntry langTable[] = {
     {2710, "Off (default)"},
     {2711, "Whether pillboxes use Mac Bolo aiming. Moving, unobstructed tanks within about one square make the pill aim far along their heading. Stopped or blocked tanks receive no lead. Overrides pill_massage_range, pill_massage_cosine and pill_aim_iterations."},
     {2712, "Whether tanks use Mac Bolo's direction-dependent sprite boxes and pixel nudges against walls, live pills and hostile bases. Allows closer passes beside a pill for pill massage."},
+    {2713, "Mods"},
+    {2714, "+{number} mods"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

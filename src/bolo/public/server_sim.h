@@ -1184,6 +1184,34 @@ bool serverSimIsSeatFielded(const ServerSim *sim, BYTE playerNum);
  *********************************************************/
 void serverSimRefreshWbnLobbyInfo(ServerSim *sim);
 
+/* This header does not include control_event.h, so it keeps its own copies of
+ * the lobby's figures; server_sim_round.c holds each to the one it names. */
+#define SERVER_SCRIPT_NAME_LEN 64   /* LOBBY_SCENARIO_NAME_LEN */
+#define SERVER_SCRIPT_DESC_LEN 256  /* LOBBY_SCENARIO_DESC_LEN */
+#define SERVER_SCRIPT_MODS_MAX 9    /* LOBBY_SCRIPT_LIST_MAX - 1 */
+typedef struct {
+    bool hasScenario;                          /* a scenario, not a mod, decides the round */
+    char scenarioName[SERVER_SCRIPT_NAME_LEN];
+    char scenarioDescription[SERVER_SCRIPT_DESC_LEN];
+    BYTE scenarioMaxPlayers;                   /* human cap, 0 = none */
+    BYTE modCount;
+    char modNames[SERVER_SCRIPT_MODS_MAX][SERVER_SCRIPT_NAME_LEN];
+} ServerScriptSummary;
+
+/*********************************************************
+ *NAME:          serverSimGetScriptSummary
+ *PURPOSE:
+ *  Fills *out with the scripts the round runs, as a server
+ *  advertises them: the scenario that decides the round (its
+ *  name, description and human cap) when there is one, and
+ *  the names of the mods that run, in the lobby's list
+ *  order. No mods with Mods Enabled off. Names are the
+ *  manifest's, or the file's where the manifest named none,
+ *  cut to 63 bytes on a character boundary. The WinBolo.net
+ *  lobby snapshot and the info-request reply both read it.
+ *********************************************************/
+void serverSimGetScriptSummary(const ServerSim *sim, ServerScriptSummary *out);
+
 /*********************************************************
  *NAME:          serverSimWbnLobbyUpdate
  *PURPOSE:

@@ -3739,6 +3739,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     # without one, the scripted game type a commit sets and gives back, and
     # the ranked and AI-policy settings a scenario does not go with.
     tests/unit/test_lobby_scenario_settings.c
+    # What the sim tells WinBolo.net about the scripts a round runs: the
+    # scenario, its cap and the mods, read off the stubbed lobby-info setter.
+    tests/unit/test_wbn_lobby_info_scenario.c
+    # The script bytes the reply to an info request carries after the
+    # INFO_PACKET: the writer and the reader, each against literal bytes.
+    tests/unit/test_info_script_tail.c
     # The policy a server holds for scripts players send it: the word it is
     # set from, its byte on the lobby-settings event, and the sim's and the
     # client's copies.
@@ -5008,6 +5014,7 @@ set(_unit_test_names
     wbn_serverlist_players
     wbn_serverlist_motd
     wbn_serverlist_malformed
+    wbn_serverlist_scripts
     wbn_map_parse
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
@@ -6030,6 +6037,9 @@ set(_unit_test_names
     lobby_scenario_boot_sets_type
     lobby_scenario_identity_strips_controls
     lobby_scenario_nolobby_boot_seats_template
+    wbn_lobby_info_scenario
+    info_script_tail_golden
+    info_script_tail_read
     script_upload_policy_resolve
     script_upload_policy_word
     script_upload_policy_codec
@@ -6695,6 +6705,7 @@ add_executable(WinBoloWbnTests
     tests/wbn/test_wbn_key_at_fire_time.c
     tests/wbn/test_wbn_queue_cap.c
     tests/wbn/test_wbn_forced_update_full_queue.c
+    tests/wbn/test_wbn_scenario_fields.c
     src/bolo/global.c
     src/common/prefs.c
     src/common/prefs_doc.c
@@ -6771,6 +6782,12 @@ set_tests_properties(wbn.queue_cap_refuses_posts PROPERTIES TIMEOUT 120)
 add_test(NAME wbn.forced_update_full_queue
          COMMAND $<TARGET_FILE:WinBoloWbnTests> forced_update_full_queue)
 set_tests_properties(wbn.forced_update_full_queue PROPERTIES TIMEOUT 120)
+
+# A register and four lobby_updates, none of them held, each body read for the
+# scenario, cap and mod keys.
+add_test(NAME wbn.scenario_fields
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> scenario_fields)
+set_tests_properties(wbn.scenario_fields PROPERTIES TIMEOUT 60)
 
 # ---- Include-rule check: the scenario surface is invisible to a frontend --
 # src/bolo/scenario_api/ is on the include path of scenario_host, sim_owner
