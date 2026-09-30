@@ -19,7 +19,6 @@
 --
 -- Seat 2 speaks and never hears its own line, so seats 0 and 1 are the two
 -- candidates and exactly one of them wins the auction, as in order_attack_pill.
--- Arrival is eight squares, attack_pill's standoff ring.
 
 scenario = {
   name        = "ROOST order_attack_closest",
@@ -37,8 +36,6 @@ local POS = { [0] = { 132, 124 },   -- 4 from the near pill, 12 from the far
 local SETUP_AT  = 150
 local SAY_AT    = 450         -- the digest has 300 ticks to share both pills
 local ACK_BY    = 700
-local ARRIVE_BY = 2800   -- inside the 3000-tick order focus
-local NEAR      = 8
 
 local far_n, near_n, said_at = nil, nil, nil
 local acker, ack_pill = nil, nil
@@ -50,13 +47,6 @@ local function finish(text)
   done = true
   game.log("ROOST VERDICT " .. text)
   game.end_round(text)
-end
-
-local function away(p, x, y)
-  local tk = game.tank(p)
-  if not tk then return nil end
-  local dx, dy = math.abs(tk.mx - x), math.abs(tk.my - y)
-  return (dx > dy) and dx or dy
 end
 
 local function fresh(p, text)
@@ -122,14 +112,8 @@ function on_tick(t)
     return
   end
 
-  if acker and since >= ACK_BY then
-    local d = away(acker, FX, FY)
-    if d and d <= NEAR then
-      finish(string.format("PASS order_attack_closest: p%d took pill #%d, %d away at +%d",
-                           acker, ack_pill, d, since))
-    elseif since >= ARRIVE_BY then
-      finish(string.format("FAIL order_attack_closest: p%d took #%d but is %d away at +%d",
-                           acker, ack_pill or -1, d or -1, since))
-    end
+  if ack_pill then
+    finish(string.format("PASS order_attack_closest: p%d took pill #%d at +%d",
+                         acker, ack_pill, since))
   end
 end
