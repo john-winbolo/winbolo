@@ -2239,6 +2239,16 @@ static bool scenarioTemplatesSame(const ScnLobbyTemplate *a,
     return true;
 }
 
+/* Whether a template names any team for the seating to lay out. The seating
+ * skips a team whose id is out of range, so this does too. */
+static bool scenarioTemplateHasTeams(const ScnLobbyTemplate *t) {
+    uint8_t i;
+    for (i = 0; i < t->numTeams && i < MAX_TANKS; i++) {
+        if (t->teams[i].id != 0 && t->teams[i].id < MAX_TANKS) return true;
+    }
+    return false;
+}
+
 /* Which scenario plays has been decided again. Whoever owns the scenario is
  * told first, so it can drop the one the previous selection had and look for
  * one beside the map file; the template it leaves behind is what the seating
@@ -2276,13 +2286,20 @@ void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath) {
        where Survival fields ten. A lobby this has never seated is the same
        case — whatever is in it predates the template attached now.
 
+       A template with no teams lays out no lobby, whatever else changed.
+       Every attached script hands one over, so a mod with no lobby block,
+       Rule Roulette say, arrives as a template that seats nobody. It has no
+       side a bot could be on by mistake, so the host's bots stay; the
+       seating below still takes off the seats a previous scenario left.
+
        People stay where they are; the seating below only ever takes the
        first free slots. */
     unchanged = sim->scenarioLobbyValid && sim->scenarioLobbySeated &&
                 scenarioTemplatesSame(&sim->scenarioLobby,
                                       &sim->scenarioLobbySeatedTemplate);
     if (unchanged) return;
-    if (sim->scenarioLobbyValid) {
+    if (sim->scenarioLobbyValid &&
+        scenarioTemplateHasTeams(&sim->scenarioLobby)) {
         BYTE i;
         for (i = 0; i < MAX_TANKS; i++) {
             if (serverSimIsBot(sim, i)) {
