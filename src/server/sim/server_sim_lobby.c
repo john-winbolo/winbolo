@@ -231,19 +231,44 @@ void serverSimMarkBotModeSetByHand(ServerSim *sim, BYTE slot) {
     sim->botModeSetByHand |= (uint16_t)(1u << slot);
 }
 
+const BrainModes *serverSimBrainModesCached(BrainModesCache *cache,
+                                            const char *brainPath) {
+    BrainModesCacheEntry *e;
+    int i;
+
+    if (brainPath == NULL || brainPath[0] == '\0') return NULL;
+    for (i = 0; i < cache->count; i++) {
+        if (strcmp(cache->entry[i].path, brainPath) == 0) {
+            return cache->entry[i].haveModes ? &cache->entry[i].modes : NULL;
+        }
+    }
+    /* A path that arrives with the cache full re-uses the last entry rather
+       than being refused: the answer is the same one it would get from an
+       entry of its own, and the cost is another read of modes.txt for each
+       brain a lobby names past the ones the cache holds. */
+    i = (cache->count < BRAIN_MODES_CACHED) ? cache->count++
+                                            : BRAIN_MODES_CACHED - 1;
+    e = &cache->entry[i];
+    SDL_strlcpy(e->path, brainPath, sizeof(e->path));
+    e->haveModes = brainListLoadModesForPath(brainPath, &e->modes);
+    return e->haveModes ? &e->modes : NULL;
+}
+
 void serverSimFollowGameTypeBotModes(ServerSim *sim, gameType oldType) {
-    gameType newType;
-    BYTE     slot;
+    gameType        newType;
+    BYTE            slot;
+    BrainModesCache cache;   /* one modes.txt read per brain, not per seat */
 
     if (sim == NULL) return;
     newType = serverSimGetGameType(sim);
     if ((oldType == gameOpen) == (newType == gameOpen)) return;
+    cache.count = 0;
     for (slot = 0; slot < MAX_TANKS; slot++) {
-        BrainModes      modes;
-        LobbyBotConfig *bc;
-        const char     *path;
-        int             oldStart;
-        int             newStart;
+        const BrainModes *modes;
+        LobbyBotConfig   *bc;
+        const char       *path;
+        int               oldStart;
+        int               newStart;
 
         if (!serverSimIsBot(sim, slot)) continue;
         if ((sim->botModeSetByHand & (1u << slot)) != 0) continue;
@@ -252,9 +277,10 @@ void serverSimFollowGameTypeBotModes(ServerSim *sim, gameType oldType) {
                 != NULL) continue;
         path = slotBrainPath(sim, slot);
         if (path == NULL) continue;
-        if (!brainListLoadModesForPath(path, &modes)) continue;
-        oldStart = brainModesStartMode(&modes, oldType == gameOpen);
-        newStart = brainModesStartMode(&modes, newType == gameOpen);
+        modes = serverSimBrainModesCached(&cache, path);
+        if (modes == NULL) continue;
+        oldStart = brainModesStartMode(modes, oldType == gameOpen);
+        newStart = brainModesStartMode(modes, newType == gameOpen);
         if (oldStart == newStart) continue;
         bc = &sim->botConfigs[slot];
         /* Only a bot still on the old type's starting mode follows. One that
@@ -262,7 +288,7 @@ void serverSimFollowGameTypeBotModes(ServerSim *sim, gameType oldType) {
         if ((int)bc->mode != oldStart) continue;
         serverSimSetBotConfigQuiet(
             sim, slot, (uint8_t)newStart,
-            (uint8_t)lobbyLevelAcrossModes(&modes, oldStart,
+            (uint8_t)lobbyLevelAcrossModes(modes, oldStart,
                                            (int)bc->difficulty, newStart));
     }
 }

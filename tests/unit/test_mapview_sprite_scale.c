@@ -617,6 +617,53 @@ int run_mapview_camera_split(void) {
         }
     }
 
+    /* The whole camera, as the renderer computes it (mapViewCameraAxis),
+     * for both paths and zoom 1 to 3: the view centre is moved in steps of
+     * one camera pixel from four squares inside the left/top edge to four
+     * squares past it. Map square 0 must be drawn exactly where the
+     * unclamped camera puts it, -camera * pixel, at every step. A clamp of
+     * the square added in mapViewCameraAxis fails this past the edge. */
+    static const int kViewLens[] = { 640, 641 };
+    for (int zf = 1; zf <= 3; zf++) {
+        int scaled = 16 * zf;
+        for (int v = 0; v < ARRAY_LEN(kViewLens); v++) {
+            int viewLen = kViewLens[v];
+
+            /* Classic: one game pixel is 16 world units and zf screen
+             * pixels. The centre is kept at or above 0, as a WORLD is. */
+            int half = viewLen / (2 * zf);
+            for (int cam = 4 * 16; cam >= -4 * 16; cam--) {
+                if (cam + half < 0) break;
+                int centerW = (cam + half) * 16;
+                int square = 12345, edge = 12345;
+                mapViewCameraAxis(centerW, NULL, viewLen, zf, &square, &edge);
+                UT_ASSERT_MSG(edge >= 0 && edge < scaled,
+                              "classic zf %d view %d cam %d: edge %d outside 0..%d",
+                              zf, viewLen, cam, edge, scaled - 1);
+                int drawn = -square * scaled - edge;
+                UT_ASSERT_MSG(drawn == -cam * zf,
+                              "classic zf %d view %d cam %d: square 0 drawn at %d, "
+                              "the camera puts it at %d",
+                              zf, viewLen, cam, drawn, -cam * zf);
+            }
+
+            /* Precise: one screen pixel is 16 / zf world units. */
+            for (int cam = 4 * scaled; cam >= -4 * scaled; cam--) {
+                float centerW = (float)(cam + viewLen / 2) * 16.0f / (float)zf;
+                int square = 12345, edge = 12345;
+                mapViewCameraAxis(0, &centerW, viewLen, zf, &square, &edge);
+                UT_ASSERT_MSG(edge >= 0 && edge < scaled,
+                              "precise zf %d view %d cam %d: edge %d outside 0..%d",
+                              zf, viewLen, cam, edge, scaled - 1);
+                int drawn = -square * scaled - edge;
+                UT_ASSERT_MSG(drawn == -cam,
+                              "precise zf %d view %d cam %d: square 0 drawn at %d, "
+                              "the camera puts it at %d",
+                              zf, viewLen, cam, drawn, -cam);
+            }
+        }
+    }
+
     UT_ASSERT(mapViewSquareInMap(0, 0));
     UT_ASSERT(mapViewSquareInMap(255, 255));
     UT_ASSERT(!mapViewSquareInMap(-1, 10));

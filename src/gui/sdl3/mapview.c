@@ -588,32 +588,15 @@ void mapViewRenderCentered(MapViewCtx *ctx, ServerSim *sim,
   int zf = ctx->zoomFactor;
   int scaledTile = tileSize * zf;
 
+  /* Camera square and sub-square offset (mapViewCameraAxis). With a
+     precise camera edgeX can be any 0..scaledTile-1; every sprite below is
+     placed as (pos - camMX * tileSize) * zf - edgeX, which stays right. */
   int camMX, camMY, edgeX, edgeY;
   const MapViewPreciseCam *pc = ctx->precise;
-  if (pc == NULL) {
-    /* Convert world coords to pixel centre */
-    int centerPX = ((int)centerWX * tileSize) >> 8;
-    int centerPY = ((int)centerWY * tileSize) >> 8;
-
-    /* Camera top-left in pixel space */
-    int camPX = centerPX - viewW / (2 * zf);
-    int camPY = centerPY - viewH / (2 * zf);
-
-    /* Camera tile and sub-tile offset */
-    mapViewCameraSplit(camPX, tileSize, &camMX, &edgeX);
-    mapViewCameraSplit(camPY, tileSize, &camMY, &edgeY);
-    edgeX *= zf;
-    edgeY *= zf;
-  } else {
-    /* Camera top-left in whole screen pixels (world units * zf / 16,
-       rounded), so the view moves one screen pixel at a time instead of
-       zf. edgeX can then be any 0..scaledTile-1; every sprite below is
-       placed as (pos - camMX * tileSize) * zf - edgeX, which stays right. */
-    int camSX = (int)SDL_floorf(pc->centerWX * (float)zf / 16.0f + 0.5f) - viewW / 2;
-    int camSY = (int)SDL_floorf(pc->centerWY * (float)zf / 16.0f + 0.5f) - viewH / 2;
-    mapViewCameraSplit(camSX, scaledTile, &camMX, &edgeX);
-    mapViewCameraSplit(camSY, scaledTile, &camMY, &edgeY);
-  }
+  mapViewCameraAxis((int)centerWX, pc ? &pc->centerWX : NULL, viewW, zf,
+                    &camMX, &edgeX);
+  mapViewCameraAxis((int)centerWY, pc ? &pc->centerWY : NULL, viewH, zf,
+                    &camMY, &edgeY);
 
   /* Number of tiles needed to cover the viewport */
   int tilesW = viewW / scaledTile + 3;
@@ -625,7 +608,9 @@ void mapViewRenderCentered(MapViewCtx *ctx, ServerSim *sim,
      mapViewCameraSplit): clamping camMX to 0 while keeping edgeX moved the
      view by up to a tile, and back again, each time the camera crossed a
      tile past the left or top edge. Past any edge the view scrolls on over
-     open deep sea instead (mapViewBuildTileBuffer). */
+     open deep sea instead (mapViewBuildTileBuffer). The camera_split unit
+     test checks mapViewCameraAxis's output, so a change to the camera
+     belongs in there, not here. */
   static MapViewTileBuffer tileBuf;
   mapViewBuildTileBuffer(sim, &tileBuf, camMX, camMY, tilesW, tilesH, selfPlayer);
 

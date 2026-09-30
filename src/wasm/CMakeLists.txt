@@ -444,6 +444,9 @@ target_compile_definitions(winbolo PRIVATE
     # Lights up the settings dialog's voice block, which compiles into this
     # target too.
     WINBOLO_VOICE=1
+    # The network-impairment hooks are for the loopback tests only; every
+    # shipping target keeps them compiled out.
+    WB_ENABLE_NETIMPAIR=0
 )
 target_compile_options(winbolo PRIVATE -Werror=undef -fno-common -include sys/types.h)
 target_link_options(winbolo PRIVATE "LINKER:--allow-multiple-definition")

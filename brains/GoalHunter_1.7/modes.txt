@@ -23,13 +23,13 @@
 # The brain applies the level in constants.lua (M.MODE_LEVELS[mode][level],
 # a bundle of knob overrides applied before any preset= or cfg= token):
 # hard is an empty bundle, so Hard is today's brain unchanged; medium and
-# easy hand the bot handicaps. The turtle mode's bundles are default's
-# with PILL_PLACE_TURTLE turned on.
+# easy hand the bot handicaps. The turtle mode's bundles are default's with
+# PILL_PLACE_TURTLE turned on.
 #
 # A new mode is a new section here plus its bundles in M.MODE_LEVELS. A
 # scenario that wants its bots to play differently does not need a mode:
 # it sends them per-bot tokens instead (the team's init table in its
-# lobby template, game.bot_init), the way Survival does.
+# lobby template, game.bot_init), the way Survival and Virus do.
 #
 # open_default (above the first section) names the mode a new bot starts in
 # when the game type is Open. Tournament, Strict and scripted games start

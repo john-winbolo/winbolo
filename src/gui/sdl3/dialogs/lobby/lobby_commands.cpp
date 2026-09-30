@@ -291,8 +291,9 @@ bool lobbyBotModeIsDefault(const BrainModes *modes, int mode) {
  * STR_BOT_DIFF_* blurbs describe those and nothing else — AND the mode is
  * the default one or its modes.txt section says `standard_levels = yes`
  * (brainModeUsesStandardLevels). Turtle says so: its levels are default's
- * plus one placement switch. A mode that renames or extends its levels
- * shows its own labels. */
+ * plus one placement switch. A mode that shares the three keys without
+ * the line keeps its own labels, since its levels may play differently.
+ * A mode that renames or extends its levels shows its own labels too. */
 bool lobbyBotModeUsesLangLevels(const BrainModes *modes, int mode) {
     if (!modes || mode < 0 || mode >= modes->modeCount) return true;
     return brainModeUsesStandardLevels(&modes->modes[mode]);

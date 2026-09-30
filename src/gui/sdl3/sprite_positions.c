@@ -564,6 +564,23 @@ void mapViewCameraSplit(int pos, int unit, int *outSquare, int *outEdge) {
   *outEdge = pos - square * unit;
 }
 
+void mapViewCameraAxis(int centerW, const float *preciseCenterW, int viewLen,
+                       int zf, int *outSquare, int *outEdge) {
+  if (preciseCenterW == NULL) {
+    /* Camera top-left in game pixels, split there, then scaled: the view
+       moves zf screen pixels at a time. */
+    int camP = ((centerW * TILE_SIZE_X) >> 8) - viewLen / (2 * zf);
+    mapViewCameraSplit(camP, TILE_SIZE_X, outSquare, outEdge);
+    *outEdge *= zf;
+  } else {
+    /* Camera top-left in whole screen pixels (world units * zf / 16,
+       rounded), so the view moves one screen pixel at a time instead of
+       zf. The edge can then be any 0..scaledTile-1. */
+    int camS = (int)floorf(*preciseCenterW * (float)zf / 16.0f + 0.5f) - viewLen / 2;
+    mapViewCameraSplit(camS, TILE_SIZE_X * zf, outSquare, outEdge);
+  }
+}
+
 bool mapViewSquareInMap(int mx, int my) {
   /* 256 = MAP_ARRAY_SIZE; types.h is not included here (see the .h) */
   return mx >= 0 && mx < 256 && my >= 0 && my < 256;

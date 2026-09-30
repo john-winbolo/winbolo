@@ -309,7 +309,7 @@ int run_brain_modes_open_default(void) {
         "\r\n"
         "[default]\r\n"
         "levels = easy:Easy, medium:Medium, hard:Hard\r\n"
-        "[survival]\r\n"
+        "[plain]\r\n"
         "levels = hard:Hard\r\n"
         "[turtle]\r\n"
         "levels = easy:Easy, medium:Medium, hard:Hard\r\n") == 0);
@@ -407,7 +407,7 @@ int run_brain_modes_about(void) {
  * is used for the mode keyed "default" and for a mode that declares
  * `standard_levels = yes`, and only while the levels are exactly easy,
  * medium, hard in that order. A mode that shares the three keys without the
- * line (survival's placeholders) keeps its manifest labels. */
+ * line (a mode whose three levels play alike) keeps its manifest labels. */
 int run_brain_modes_standard_levels(void) {
     BrainModes m;
 
@@ -415,7 +415,7 @@ int run_brain_modes_standard_levels(void) {
     UT_ASSERT(modes_write(
         "[default]\n"
         "levels = easy:Easy, medium:Medium, hard:Hard\n"
-        "[survival]\n"
+        "[plain]\n"
         "levels = easy:Easy, medium:Medium, hard:Hard\n"
         "[turtle]\n"
         "levels = easy:Easy, medium:Medium, hard:Hard\n"
@@ -432,7 +432,7 @@ int run_brain_modes_standard_levels(void) {
     UT_ASSERT(brainListLoadModes(modes_brain_name(), &m));
     UT_ASSERT_MSG(m.modeCount == 6, "got %d modes, expected 6", m.modeCount);
     UT_ASSERT(brainModeUsesStandardLevels(&m.modes[0]));   /* default  */
-    UT_ASSERT(!brainModeUsesStandardLevels(&m.modes[1]));  /* survival */
+    UT_ASSERT(!brainModeUsesStandardLevels(&m.modes[1]));  /* plain    */
     UT_ASSERT(brainModeUsesStandardLevels(&m.modes[2]));   /* turtle   */
     UT_ASSERT(!brainModeUsesStandardLevels(&m.modes[3]));  /* order    */
     UT_ASSERT(!brainModeUsesStandardLevels(&m.modes[4]));  /* 4 levels */

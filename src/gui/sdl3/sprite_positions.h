@@ -114,6 +114,17 @@ bool spritePositionItemLabelShown(float scale, float minScale);
    changed apart, or the whole view jumps by up to a square. */
 void mapViewCameraSplit(int pos, int unit, int *outSquare, int *outEdge);
 
+/* One axis of the menu background's camera, the whole of it:
+   mapViewRenderCentered draws every tile and sprite from these two values
+   and nothing else, so they are what the unit test checks. centerW is the
+   view centre in world units (256 per square); preciseCenterW, when not
+   NULL, is the fractional centre of a MapViewPreciseCam and is used
+   instead. viewLen is the view's width or height in screen pixels. The
+   first square drawn and the screen-pixel offset into it come back from
+   mapViewCameraSplit and are not clamped to the map. */
+void mapViewCameraAxis(int centerW, const float *preciseCenterW, int viewLen,
+                       int zf, int *outSquare, int *outEdge);
+
 /* Whether square (mx, my) is inside the 256x256 map. The camera draws the
    squares outside it as open deep sea. */
 bool mapViewSquareInMap(int mx, int my);

@@ -892,6 +892,28 @@
 #define STR_MAPCHOOSER_SCENARIOSONLY_TIP    2716
 #define STR_MAPCHOOSER_NOSCENARIOMAPS       2717
 #define STR_MAPCHOOSER_SCENARIOSONLY_NOSEARCH 2718
+/* The rest of the chooser's own words: the list/grid toggle (a text
+ * label for when its icon cannot load, and its tooltip), the search box
+ * hint and its clear button's tooltip, the two search-option checkboxes
+ * and the tooltip on the second, the list view's two column headers, the
+ * star button's two tooltips, the preview's maximise button's two
+ * tooltips, and the preview pane's line while a map downloads. */
+#define STR_MAPCHOOSER_VIEW_LIST            2719
+#define STR_MAPCHOOSER_VIEW_GRID            2720
+#define STR_MAPCHOOSER_VIEW_LIST_TIP        2721
+#define STR_MAPCHOOSER_VIEW_GRID_TIP        2722
+#define STR_MAPCHOOSER_SEARCH_HINT          2723
+#define STR_MAPCHOOSER_SEARCH_CLEAR         2724
+#define STR_MAPCHOOSER_SEARCH_SUBFOLDERS    2725
+#define STR_MAPCHOOSER_CREATED_AT           2726
+#define STR_MAPCHOOSER_CREATED_AT_TIP       2727
+#define STR_MAPCHOOSER_COL_NAME             2728
+#define STR_MAPCHOOSER_COL_CREATED          2729
+#define STR_MAPCHOOSER_UNSTAR_TIP           2730
+#define STR_MAPCHOOSER_STAR_TIP             2731
+#define STR_MAPCHOOSER_RESTORE_SIZE_TIP     2732
+#define STR_MAPCHOOSER_MAXIMIZE_TIP         2733
+#define STR_MAPCHOOSER_LOADING_PREVIEW      2734
 
 /* Tablet HUD */
 #define STR_TABLET_STATUS_TITLE             803
@@ -2804,23 +2826,13 @@
 /* A rules table: its heading, and the four columns a row is drawn in — the
  * rule, what the classic game plays it at, what the scenario set it to, and
  * what that does to it in words. The lobby's details dialog and the log
- * viewer use them. RULES_TITLE was the caption of the lobby's rules popup,
- * which was removed; it has no caller and stays defined so the translations
- * keep their ids. */
+ * viewer use them. Ids 2329 and 2432 to 2434 were the lobby's rules popup,
+ * which was removed. */
 #define STR_DLGLOBBY_SCENARIO_RULES         2328
-#define STR_DLGLOBBY_SCENARIO_RULES_TITLE   2329
 #define STR_DLGLOBBY_RULES_COL_RULE         2330
 #define STR_DLGLOBBY_RULES_COL_CLASSIC      2331
 #define STR_DLGLOBBY_RULES_COL_SCENARIO     2332
 #define STR_DLGLOBBY_RULES_COL_CHANGE       2333
-
-/* The removed rules popup's per-rule detail: the caption naming the rule,
- * the button on a row that opened it, and its range label. None of the
- * three has a caller since the popup was removed; they stay defined so the
- * translations keep their ids. */
-#define STR_DLGLOBBY_RULE_DETAIL_TITLE      2432
-#define STR_DLGLOBBY_RULES_INFO             2433
-#define STR_DLGLOBBY_RULES_RANGE            2434
 
 /* A row of a script's details table whose rule a script higher on the list
  * also sets, so this script's value does not play. {string1} = the script
@@ -3216,7 +3228,7 @@
 #define STR_DLGLOBBY_DETAILS_SETTING_OFF         2708
 #define STR_DLGLOBBY_DETAILS_SETTING_ON_DEFAULT  2709
 #define STR_DLGLOBBY_DETAILS_SETTING_OFF_DEFAULT 2710
-#define STR_DLGLOBBY_DETAILS_SETTING_CHOICE_DEFAULT 2719
+#define STR_DLGLOBBY_DETAILS_SETTING_CHOICE_DEFAULT 2735
 
 /* The map editor's metadata form: the read-only line naming the Steam
  * Workshop item a scenario was published as ({string1} = the item id) and

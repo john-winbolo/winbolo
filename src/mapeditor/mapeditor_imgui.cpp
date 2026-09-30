@@ -137,6 +137,19 @@ void mapEditorImguiInit(SDL_Window *window, SDL_Renderer *renderer) {
     ImGui_ImplSDLRenderer3_Init(renderer);
 }
 
+void mapEditorImguiRunOutside(void (*fn)(void)) {
+    ImGuiContext *editorCtx = ImGui::GetCurrentContext();
+    ImGui::SetCurrentContext(nullptr);
+    fn();
+    ImGui::SetCurrentContext(editorCtx);
+
+    ImGuiIO &io = ImGui::GetIO();
+    io.ClearInputKeys();
+    io.ClearInputMouse();
+    io.Fonts->Clear();
+    imguiLoadBoloFont(18.0f);
+}
+
 void mapEditorImguiShutdown(void) {
     /* Embedded, the window is WinBolo's and outlives the editor, so text input
      * the script view started does not stay on after the editor has gone. */
@@ -202,7 +215,7 @@ void mapEditorImguiMenuBar(MapEditorMenuAction *action,
                            bool *showInspector, bool *showObjects,
                            bool *showOverview, bool *showStats,
                            bool *showStampLibrary, bool *showScenario,
-                           bool fromMainMenu,
+                           bool fromMainMenu, bool hasSettings,
                            int zoomStepIndex, int zoomStepCount,
                            const float *zoomStepValues) {
 #ifdef __APPLE__
@@ -218,6 +231,7 @@ void mapEditorImguiMenuBar(MapEditorMenuAction *action,
     (void)showTerrain; (void)showTools; (void)showInspector;
     (void)showObjects; (void)showOverview; (void)showStats;
     (void)showStampLibrary; (void)showScenario; (void)fromMainMenu;
+    (void)hasSettings;
     (void)zoomStepIndex; (void)zoomStepCount; (void)zoomStepValues;
     return;
 #else
@@ -382,6 +396,12 @@ void mapEditorImguiMenuBar(MapEditorMenuAction *action,
             bool pillRanges = showPillRanges;
             if (ImGui::MenuItem(langGetText(STR_MAPEDIT_MENU_SHOWPILLRANGES), NULL, &pillRanges)) {
                 action->togglePillRanges = true;
+            }
+            if (hasSettings) {
+                ImGui::Separator();
+                if (ImGui::MenuItem(langGetText(STR_MENU_SETTINGS))) {
+                    action->wantSettings = true;
+                }
             }
             ImGui::EndMenu();
         }

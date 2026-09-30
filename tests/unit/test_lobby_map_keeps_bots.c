@@ -35,7 +35,9 @@
  *   lobby_script_keeps_bots_swap — a scenario with a lobby of its own, the
  *       host's bots added to it, then a mod picked beside it and then in
  *       place of it. The host's bots stay through both; the scenario's seats
- *       go with the scenario.
+ *       go with the scenario. Then the scenario picked back in place of the
+ *       mod: its template lays out teams, so the host's bots go and its four
+ *       held seats come back.
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */

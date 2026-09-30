@@ -22,9 +22,8 @@ M.LOG_STANDOFF_CANDIDATES = false  -- print every standoff candidate (very verbo
 -- file), which init.lua applies before any preset= or cfg=. A new mode also
 -- needs its bundles there; a mode with no bundle runs these constants.
 -- Modes today: default (hard = these constants, medium/easy = handicaps)
--- and turtle (default's levels plus
--- PILL_PLACE_TURTLE). They are also echoed in the init-arg log and stored
--- on state.mode / state.difficulty.
+-- and turtle (default's levels plus PILL_PLACE_TURTLE). They are also
+-- echoed in the init-arg log and stored on state.mode / state.difficulty.
 M.MODE = "default"
 M.DIFFICULTY = "hard"
 

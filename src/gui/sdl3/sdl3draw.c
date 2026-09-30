@@ -39,10 +39,6 @@
 
 #include "../../common/wb_log.h"
 
-#ifdef __EMSCRIPTEN__
-#include <emscripten/html5.h>
-#endif
-
 #include "stb_image.h"
 #include "sdl3draw.h"
 #include "sdl3draw_status.h"
@@ -1657,21 +1653,6 @@ bool sdl3DrawSetup(int zoomFactor) {
   SDL_SetHint(SDL_HINT_VIDEO_MAC_FULLSCREEN_MENU_VISIBILITY, "1");
 #endif
 
-#ifdef __EMSCRIPTEN__
-  /* Pre-size the canvas so SDL3's external_size probe sees the right
-     dimensions (it temporarily sets the canvas to 1x1 and checks CSS).
-     SDL3's Emscripten backend creates the window at the existing canvas
-     size rather than honouring the size passed to SDL_CreateWindow, so
-     this must already include the menu-bar row — otherwise the window
-     ends up 22px short and the game blits at a non-integer downscale. */
-  {
-    int cw = zoomFactor * SDL3_SCREEN_W;
-    int ch = zoomFactor * SDL3_SCREEN_H + MENU_BAR_HEIGHT;
-    emscripten_set_canvas_element_size("#canvas", cw, ch);
-    emscripten_set_element_css_size("#canvas", (double)cw, (double)ch);
-  }
-#endif
-
   /* --- Create window and renderer first, so we can compute the
          effective zoom for font sizing and tile loading. --- */
   if (uiModeIsSteamDeck()) {
@@ -1707,6 +1688,10 @@ bool sdl3DrawSetup(int zoomFactor) {
     WB_LOG_ERROR(WB_LOG_CAT_GUI, "sdl3DrawSetup: SDL_CreateWindow failed: %s", SDL_GetError());
     return FALSE;
   }
+#ifdef __EMSCRIPTEN__
+  /* The canvas covers the page and follows the browser window's size. */
+  SDL_SetWindowFillDocument(gWindow, true);
+#endif
 
   sdl3DrawSetWindowIcon(gWindow);
 
@@ -1862,9 +1847,7 @@ bool sdl3DrawSetup(int zoomFactor) {
      The game is rendered at its logical size, then blitted scaled to the
      window below the menu bar. This allows the menu to stay at 1x size
      while the game scales, and gives windowToGameCoords a defined
-     gGameDestRect so mouse clicks map back to game cells. (On Emscripten
-     the window is never resizable, so sdl3DrawAdaptRenderTarget is a
-     no-op and this target persists for the session.) Skipped on Deck —
+     gGameDestRect so mouse clicks map back to game cells. Skipped on Deck —
      logical presentation already upscales the whole layout, an extra RT
      would re-introduce a 1x rasterization step that defeats the font
      sharpness. */
@@ -1983,7 +1966,7 @@ void sdl3DrawCleanup(void) {
  * ------------------------------------------------------- */
 void sdl3DrawReconfigureZoom(int explicitZoom) {
   (void)explicitZoom;
-#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(__IPHONEOS__)
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__)
   if (!gRenderer || !gWindow) return;
   if (uiModeIsTablet()) return;
   /* Deck is fullscreen 1280x800 with logical presentation already set in
