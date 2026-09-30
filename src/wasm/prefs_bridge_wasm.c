@@ -41,6 +41,23 @@
  * join-prefs frame carries), which is exactly what the adopt outcome hands us. */
 extern void wasmApplyJoinPrefs(const char *prefsJson, int len);
 
+/* The web's own settings as a JSON snapshot, and a writer for the ones that
+ * differ between two snapshots (gamefront_wasm.c). */
+extern char *wasmPrefsSnapshot(void);
+extern void wasmPrefsWriteChanged(const char *baseline, const char *current);
+
+/* The web's settings as the page set them up, taken at the page's first sync
+ * before anything could change them. A late adopt compares against it to
+ * find what the player changed. */
+static char *s_pageStartPrefs = NULL;
+
+/* Set once this page has taken in the account's server document. The web's
+ * document starts empty on every page load, so until then it holds only what
+ * this page wrote: it must never seed an account or replace a server
+ * document it has not first taken in. Until this is set, a GET that finds no
+ * document is reported as nothing to do, and a PUT is never sent. */
+static bool s_adoptedThisPage = false;
+
 /* ---- Async transport primitives (EM_ASYNC_JS defines C-callable JS) -------
  * Each awaits the Module.wbPrefs* fetch helper in shell.html and writes a
  * malloc'd response body back through *out (pointer args arrive as addresses).
@@ -79,11 +96,21 @@ EM_ASYNC_JS(int, wbPrefsJsPut, (const char *reqBody, char **out), {
 
 /* The two symbols wbnPrefsSyncOnce pulls from http.h. bearerToken is ignored —
  * the browser attaches the session itself. Caller frees *response_out, matching
- * the libcurl contract in http.c. */
+ * the libcurl contract in http.c.
+ *
+ * Before this page has adopted a server document, a 404 (no prefs on the
+ * account) is reported as a transport error, which wbnPrefsSyncOnce answers
+ * by doing nothing, rather than seeding the account with this page's
+ * document; and a PUT is refused the same way without being sent. A GET that
+ * returns the account's document is adopted as usual, whatever the local
+ * state, because the page has no sync stamp of its own yet. */
 int wbn_prefs_get(const char *bearerToken, char **response_out) {
     (void)bearerToken;
     char *body = NULL;
     int status = wbPrefsJsGet(&body);
+    if (status == 404 && !s_adoptedThisPage) {
+        status = -1;
+    }
     *response_out = body;
     return status;
 }
@@ -91,6 +118,10 @@ int wbn_prefs_get(const char *bearerToken, char **response_out) {
 int wbn_prefs_put(const char *bearerToken, const char *json_body,
                   char **response_out) {
     (void)bearerToken;
+    *response_out = NULL;
+    if (!s_adoptedThisPage) {
+        return -1;
+    }
     char *body = NULL;
     int status = wbPrefsJsPut(json_body, &body);
     *response_out = body;
@@ -113,6 +144,9 @@ void wbPrefsSyncNow(void) {
     if (!wbPrefsHasAuth()) {
         return;
     }
+    if (!s_adoptedThisPage && s_pageStartPrefs == NULL) {
+        s_pageStartPrefs = wasmPrefsSnapshot();
+    }
     char *snapshot = prefsSerializeForUpload();
     if (snapshot == NULL) {
         return;
@@ -127,14 +161,46 @@ void wbPrefsSyncNow(void) {
     free(snapshot);
 
     switch (o.kind) {
-        case WBN_SYNC_OUT_ADOPTED:
+        case WBN_SYNC_OUT_ADOPTED: {
+            /* Adopting clears sync-dirty, so ask first, and take the
+             * settings as they are now before the adopt replaces them. */
+            char *changed = NULL;
+            if (prefsSyncDirty() && s_pageStartPrefs != NULL) {
+                changed = wasmPrefsSnapshot();
+            }
             if (o.serverPrefs != NULL &&
                 prefsAdoptServerDocument(o.serverPrefs) == PREFS_ADOPT_OK) {
                 prefsMarkSynced(o.token);
-                wasmApplyJoinPrefs(o.serverPrefs, (int)strlen(o.serverPrefs));
+                s_adoptedThisPage = true;
+                if (changed != NULL) {
+                    /* The player changed settings on this page before the
+                     * server's document arrived. Keep those, and only
+                     * those: write each setting that differs from the
+                     * page's start over the adopted document, which
+                     * dirties it again, so the next sync sends the whole
+                     * document with them on top. Then apply the merged
+                     * document, so the server's other values take effect
+                     * and the player's stay. */
+                    wasmPrefsWriteChanged(s_pageStartPrefs, changed);
+                    char *merged = prefsSerializeForUpload();
+                    if (merged != NULL) {
+                        wasmApplyJoinPrefs(merged, (int)strlen(merged));
+                        free(merged);
+                    }
+                } else {
+                    wasmApplyJoinPrefs(o.serverPrefs,
+                                       (int)strlen(o.serverPrefs));
+                }
             }
+            free(changed);
             free(o.serverPrefs);
+            if (s_adoptedThisPage) {
+                /* Every later sync starts from the server's document. */
+                free(s_pageStartPrefs);
+                s_pageStartPrefs = NULL;
+            }
             break;
+        }
         case WBN_SYNC_OUT_PUSHED:
             prefsMarkSynced(o.token);
             break;

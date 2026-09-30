@@ -579,6 +579,12 @@ static void wasmEndSinglePlayerGame(void) {
   }
   imguiLobbyFrameReset();
   tutorialOverlayReset();
+
+  /* The in-game menu's toggles change only the live settings, as on the
+   * desktop, which writes them when its game ends; do the same here, after
+   * gameFrontEnd has read the tank options back. The menu's frames upload
+   * the change. */
+  gameFrontPutPrefs(&keys);
 }
 
 /* Run one game from start to end: reset the per-game state, start the game
@@ -780,6 +786,15 @@ int main(int argc, char *argv[]) {
        * the transport check stops a second disconnect. */
       if (humanSim != NULL && clientSimHasTransport(humanSim)) {
         clientSimDisconnect(humanSim);
+      }
+
+      /* Write the in-game menu's toggles, as a single-player game end does.
+       * The page is about to go, so there are no more frames for the
+       * debounced upload to run on: send a change now. This waits on the
+       * fetch on main's stack, and is a no-op when not signed in. */
+      gameFrontPutPrefs(&keys);
+      if (prefsSyncDirty()) {
+        wbPrefsSyncNow();
       }
       emscripten_run_script("window.location.href='/'");
 

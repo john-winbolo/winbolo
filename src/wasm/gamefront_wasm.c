@@ -43,6 +43,11 @@
 #include "../gui/sdl3/sdl3imgui.h"
 #include "../gui/sdl3/dialogs/imgui_mapchooser.h"
 #include "../gui/sdl3/luabrainshandler.h"
+#include "../gui/sdl3/input_gamepad.h"
+#include "../gui/sdl3/build_cursor.h"
+#include "../gui/voice.h"
+#include "../common/prefs.h"
+#include "cJSON.h"
 #include "gamefront_wasm.h"
 
 /* Forward declaration */
@@ -270,6 +275,9 @@ extern bool showBaseLabels;
 extern bool labelSelf;
 extern labelLen labelMsg;
 extern labelLen labelTank;
+extern int soundVolume;
+extern int windowMasterVolume;
+bool windowGetShowTankMicIcons(void);
 
 /* -------------------------------------------------------
  * Default key setup
@@ -1198,12 +1206,190 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   return TRUE;
 }
 
-void gameFrontPutPrefs(keyItems *keys) {
-  (void)keys;
+/* While wasmPrefsSnapshot runs, the writers below record each value into
+ * this object instead of the prefs document. */
+static cJSON *s_wasmPrefsRecord = NULL;
+
+static void wasmPrefsPut(const char *section, const char *key,
+                         const char *value) {
+  if (s_wasmPrefsRecord != NULL) {
+    cJSON *sec = cJSON_GetObjectItemCaseSensitive(s_wasmPrefsRecord, section);
+    if (sec == NULL) {
+      sec = cJSON_CreateObject();
+      if (sec == NULL) return;
+      cJSON_AddItemToObject(s_wasmPrefsRecord, section, sec);
+    }
+    cJSON_AddStringToObject(sec, key, value);
+    return;
+  }
+  prefsSetString(section, key, value);
 }
 
-/* No prefs file in the browser — settings live only for the session. */
+/* Writers for the prefs document, in the desktop's formats (gamefront.c):
+ * integers as "%d", "Yes"/"No" for flags, "%.2f" for the float settings. */
+static void wasmPrefsSetInt(const char *section, const char *key, int value) {
+  char buff[32];
+  snprintf(buff, sizeof(buff), "%d", value);
+  wasmPrefsPut(section, key, buff);
+}
+
+static void wasmPrefsSetBool(const char *section, const char *key,
+                             bool value) {
+  wasmPrefsPut(section, key, TRUEFALSE_TO_STR(value));
+}
+
+static void wasmPrefsSetFloat(const char *section, const char *key,
+                              float value) {
+  char buff[32];
+  snprintf(buff, sizeof(buff), "%.2f", value);
+  wasmPrefsPut(section, key, buff);
+}
+
+/* Write the settings the web applies from a WinBolo.net prefs document
+ * (wasmApplyJoinPrefs in main_wasm.c), one for one: every key that function
+ * reads, this writes, under the desktop's section and name, and nothing
+ * else. The
+ * document lives on MEMFS for the page; wbPrefsPumpUpload sends it to
+ * WinBolo.net when the player is signed in. A write that changes nothing
+ * leaves the document clean, so calling this with no change uploads
+ * nothing. */
+void gameFrontPutPrefs(keyItems *keys) {
+  int i;
+
+  wasmPrefsSetInt("KEYS", "Forward",        keys->kiForward);
+  wasmPrefsSetInt("KEYS", "Backwards",      keys->kiBackward);
+  wasmPrefsSetInt("KEYS", "Left",           keys->kiLeft);
+  wasmPrefsSetInt("KEYS", "Right",          keys->kiRight);
+  wasmPrefsSetInt("KEYS", "Shoot",          keys->kiShoot);
+  wasmPrefsSetInt("KEYS", "Lay Mine",       keys->kiLayMine);
+  wasmPrefsSetInt("KEYS", "Increase Range", keys->kiGunIncrease);
+  wasmPrefsSetInt("KEYS", "Decrease Range", keys->kiGunDecrease);
+  wasmPrefsSetInt("KEYS", "Tank View",      keys->kiTankView);
+  wasmPrefsSetInt("KEYS", "Pill View",      keys->kiPillView);
+  wasmPrefsSetInt("KEYS", "Ally View",      keys->kiAllyView);
+  wasmPrefsSetInt("KEYS", "Base View",      keys->kiBaseView);
+  wasmPrefsSetInt("KEYS", "Overview Zoom",  keys->kiOverviewZoom);
+  wasmPrefsSetInt("KEYS", "Overview Follow",   keys->kiOverviewFollow);
+  wasmPrefsSetInt("KEYS", "Overview Zoom In",  keys->kiOverviewZoomIn);
+  wasmPrefsSetInt("KEYS", "Overview Zoom Out", keys->kiOverviewZoomOut);
+  wasmPrefsSetInt("KEYS", "Scroll Up",      keys->kiScrollUp);
+  wasmPrefsSetInt("KEYS", "Scroll Down",    keys->kiScrollDown);
+  wasmPrefsSetInt("KEYS", "Scroll Left",    keys->kiScrollLeft);
+  wasmPrefsSetInt("KEYS", "Scroll Right",   keys->kiScrollRight);
+  wasmPrefsSetInt("KEYS", "Quick Tree",     keys->kiQuickTree);
+  wasmPrefsSetInt("KEYS", "Quick Road",     keys->kiQuickRoad);
+  wasmPrefsSetInt("KEYS", "Quick Wall",     keys->kiQuickWall);
+  wasmPrefsSetInt("KEYS", "Quick Pillbox",  keys->kiQuickPillbox);
+  wasmPrefsSetInt("KEYS", "Quick Mine",     keys->kiQuickMine);
+  wasmPrefsSetInt("KEYS", "Ping 1",         keys->kiPing[0]);
+  wasmPrefsSetInt("KEYS", "Ping 2",         keys->kiPing[1]);
+  wasmPrefsSetInt("KEYS", "Ping 3",         keys->kiPing[2]);
+  for (i = 0; i < PING_BIND_DIRECT_SLOTS; i++) {
+    char name[32];
+    snprintf(name, sizeof(name), "Ping Direct %d", i + 1);
+    wasmPrefsSetInt("KEYS", name, keys->kiPingDirect[i]);
+  }
+
+  wasmPrefsSetBool("MENU", "Show Gunsight",   showGunsight);
+  wasmPrefsSetBool("MENU", "Sound Effects",   soundEffects);
+  wasmPrefsSetBool("MENU", "Show Newswire Messages",  showNewswireMessages);
+  wasmPrefsSetBool("MENU", "Show Assistant Messages", showAssistantMessages);
+  wasmPrefsSetBool("MENU", "Show AI Messages",        showAIMessages);
+  wasmPrefsSetBool("MENU", "Show Network Status Messages",
+                   showNetworkStatusMessages);
+  wasmPrefsSetBool("MENU", "Show Network Debug Messages",
+                   showNetworkDebugMessages);
+  wasmPrefsSetBool("MENU", "Autoscroll Enabled", autoScrollingEnabled);
+  wasmPrefsSetBool("MENU", "Show Pill Labels",   showPillLabels);
+  wasmPrefsSetBool("MENU", "Show Base Labels",   showBaseLabels);
+  wasmPrefsSetBool("MENU", "Label Own Tank",     labelSelf);
+  wasmPrefsSetInt("MENU", "Message Label Size", (int)labelMsg);
+  wasmPrefsSetInt("MENU", "Tank Label Size",    (int)labelTank);
+  wasmPrefsSetInt("MENU", "Sound Volume",       soundVolume);
+  wasmPrefsSetInt("MENU", "Master Volume",      windowMasterVolume);
+
+  wasmPrefsSetBool("GAME OPTIONS", "Auto Slowdown", useAutoslow);
+  wasmPrefsSetBool("GAME OPTIONS", "Auto Show-Hide Gunsight", useAutohide);
+
+  wasmPrefsSetFloat("SETTINGS", "Gamepad Scroll Sens",
+                    g_gamepadScrollSensitivity);
+  wasmPrefsSetFloat("SETTINGS", "Gamepad Tank Sens",
+                    g_gamepadTankSensitivity);
+  wasmPrefsSetFloat("SETTINGS", "Gamepad Build Cursor Sens",
+                    g_gamepadBuildCursorSensitivity);
+  wasmPrefsSetBool("SETTINGS", "Build Exit Executes", g_buildExitExecutes);
+  wasmPrefsSetBool("SETTINGS", "Build Exit Executes Momentary Only",
+                   g_buildExitExecutesMomentaryOnly);
+  wasmPrefsSetBool("SETTINGS", "Build Double Tap Road", g_buildDoubleTapRoad);
+  wasmPrefsSetBool("SETTINGS", "Build Hold Momentary", g_buildHoldMomentary);
+  wasmPrefsSetBool("SETTINGS", "Build Auto Close On Execute",
+                   g_buildAutoCloseOnExecute);
+
+  /* Voice is read back out of the running voice module, as the desktop
+   * does. The mode names are the desktop's (gamefront.c). */
+  wasmPrefsSetBool("VOICE", "Enabled", voiceIsEnabled());
+  {
+    VoiceMode vm = voiceGetMode();
+    wasmPrefsPut("VOICE", "Mode",
+                   vm == VOICE_MODE_OFF    ? "Off"
+                   : vm == VOICE_MODE_OPEN ? "Open Mic"
+                                           : "Push To Talk");
+  }
+  wasmPrefsSetFloat("VOICE", "Mic Gain",     voiceGetMicGain());
+  wasmPrefsSetFloat("VOICE", "Voice Volume", voiceGetOutputVolume());
+  wasmPrefsSetBool("VOICE", "Tank Icons", windowGetShowTankMicIcons());
+}
+
+/* Write the current settings, with the key bindings the game holds. */
 void gameFrontSaveCurrentPrefs(void) {
+  keyItems k;
+  windowGetKeys(&k);
+  gameFrontPutPrefs(&k);
+}
+
+/* The settings gameFrontSaveCurrentPrefs would write, as a JSON object of
+ * sections of string values, without touching the prefs document. The
+ * caller frees the result; NULL if it could not be built. */
+char *wasmPrefsSnapshot(void) {
+  keyItems k;
+  char *out;
+
+  s_wasmPrefsRecord = cJSON_CreateObject();
+  if (s_wasmPrefsRecord == NULL) return NULL;
+  windowGetKeys(&k);
+  gameFrontPutPrefs(&k);
+  out = cJSON_PrintUnformatted(s_wasmPrefsRecord);
+  cJSON_Delete(s_wasmPrefsRecord);
+  s_wasmPrefsRecord = NULL;
+  return out;
+}
+
+/* Write into the prefs document each setting whose value in current (a
+ * wasmPrefsSnapshot) differs from its value in baseline (an earlier one):
+ * the settings changed since baseline was taken. The rest of the document
+ * is left as it is. */
+void wasmPrefsWriteChanged(const char *baseline, const char *current) {
+  cJSON *base = cJSON_Parse(baseline);
+  cJSON *cur = cJSON_Parse(current);
+  cJSON *sec;
+
+  if (base != NULL && cur != NULL) {
+    cJSON_ArrayForEach(sec, cur) {
+      cJSON *baseSec = cJSON_GetObjectItemCaseSensitive(base, sec->string);
+      cJSON *item;
+      cJSON_ArrayForEach(item, sec) {
+        cJSON *was = cJSON_GetObjectItemCaseSensitive(baseSec, item->string);
+        if (!cJSON_IsString(item)) continue;
+        if (cJSON_IsString(was) &&
+            strcmp(was->valuestring, item->valuestring) == 0) {
+          continue;
+        }
+        prefsSetString(sec->string, item->string, item->valuestring);
+      }
+    }
+  }
+  cJSON_Delete(base);
+  cJSON_Delete(cur);
 }
 
 void gameFrontHandleUrlOpen(char *url) {
@@ -1241,6 +1427,7 @@ void gameFrontSaveTankPrefs(ClientSim *cs) {
     useAutoslow = clientSimGetTankAutoSlowdown(cs);
     useAutohide = clientSimGetTankAutoHideGunsight(cs);
   }
+  gameFrontSaveCurrentPrefs();
 }
 
 /* Whether the menu shows the Tutorial row. Lives for the page: finishing the
