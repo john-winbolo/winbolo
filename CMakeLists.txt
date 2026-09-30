@@ -4328,6 +4328,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_input_gate.c
     tests/unit/test_key_claims.c
     tests/unit/test_server_address_parse.c
+    # The map chooser's "Scenarios only" row test, header-only.
+    tests/unit/test_map_chooser_scenario_filter.c
     # Skin asset reads: a directory, a flat zip and a zip wrapped in one
     # top-level folder must resolve the same relative names to the same
     # bytes.

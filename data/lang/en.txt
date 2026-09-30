@@ -829,6 +829,9 @@ STR_MAPCHOOSER_NOPREVIEW=No preview available
 STR_MAPCHOOSER_STATS=Pillboxes: {number}  Bases: {number2}  Starts: {number3}
 STR_MAPCHOOSER_MAPFILES=Map Files
 STR_MAPCHOOSER_ALLFILES=All Files
+STR_MAPCHOOSER_SCENARIOSONLY=Scenarios only
+STR_MAPCHOOSER_SCENARIOSONLY_TIP=Show only the maps that carry their own scenario script.
+STR_MAPCHOOSER_NOSCENARIOMAPS=No maps with a scenario here
 
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Status

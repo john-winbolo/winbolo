@@ -1514,7 +1514,8 @@ void serverSimReplayScriptSettings(
     }
 }
 
-static void searchDirRecursive(const char *fullRoot,
+static void searchDirRecursive(const ServerSim *sim,
+                                const char *fullRoot,
                                 const char *subRel,
                                 const char *queryLower,
                                 size_t queryLen,
@@ -1558,7 +1559,7 @@ static void searchDirRecursive(const char *fullRoot,
         }
 
         if (isDir) {
-            searchDirRecursive(fullRoot, rel, queryLower, queryLen,
+            searchDirRecursive(sim, fullRoot, rel, queryLower, queryLen,
                                entries, maxEntries, count, depth + 1);
             continue;
         }
@@ -1584,9 +1585,10 @@ static void searchDirRecursive(const char *fullRoot,
         e->isFolder = false;
         e->modTime  = (int64_t)info.modify_time;
         e->size     = (int64_t)info.size;
-        /* Written rather than left alone: the caller's array is not zeroed,
-           and the search's own results do not carry the flag. */
-        e->scripted = false;
+        /* Asked the way the folder listing asks, so a search hit is tagged
+           like the same map in its folder. The in-process chooser reads it;
+           the network search reply has no byte for it. */
+        e->scripted = serverSimScenarioMapIsScripted(sim, childPath);
     }
     SDL_free(list);
 }
@@ -1612,7 +1614,7 @@ int serverSimSearchMapDir(ServerSim *sim, const char *relPath,
     queryLower[qlen] = '\0';
 
     int count = 0;
-    searchDirRecursive(fullRoot, "", queryLower, qlen,
+    searchDirRecursive(sim, fullRoot, "", queryLower, qlen,
                        entries, maxEntries, &count, 0);
 
     for (int i = 1; i < count; i++) {
