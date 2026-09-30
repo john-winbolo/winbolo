@@ -41,9 +41,9 @@
 -- place over SLIDE_TICKS, and a new line rises from the bottom (a line that
 -- was just past the last row slides in from just under it). The lines of
 -- a tank that scores, and of its team, flash for FLASH_TICKS. A tank that
--- scores again within CHAIN_SECONDS of its last kill is on a streak, and the
--- kill line says so: "Double kill", "Triple kill!", "QUADRUPLE KILL!" and on
--- up. Dying ends the streak. The panel is only sent while something on it is
+-- scores again without dying in between is on a streak, and the kill line
+-- says so: "Double kill", "Triple kill!", "QUADRUPLE KILL!" and on up. Dying
+-- ends the streak, however long ago the last kill was. The panel is only sent while something on it is
 -- changing or moving; a still panel sends nothing.
 --
 -- The leader's line (the top tank, or the top team's line in a team round)
@@ -70,7 +70,6 @@ local SCORE_GAP      = 4      -- room kept between a large name and its score
 local FRAME_SECONDS  = 0.04   -- one panel frame this often while it moves
 local SLIDE_TICKS    = 40     -- a line takes 0.4 s to reach its new place
 local FLASH_TICKS    = 50     -- a scorer's line flashes for 0.5 s
-local CHAIN_SECONDS  = 4      -- a kill this soon after the last one is a streak
 local LABEL          = "KILLS"
 
 -- The two words of the "Teams" setting, as scenario.settings declares them.
@@ -93,7 +92,7 @@ local settled    = false       -- the round's last, settled frame is drawn
 local loop_id    = nil         -- the panel frame timer, while one waits
 local row_move   = {}          -- line key -> { from, to, from_at }: its slide
 local flash_end  = {}          -- line key -> the tick its flash ends
-local streak     = {}          -- seat -> { count = kills, at = tick of last }
+local streak     = {}          -- seat -> kills since that tank last died
 local started    = false       -- on_start has run
 local start_at   = 0           -- game.tick() at on_start
 local spawned    = {}          -- seat -> true once it has taken the field
@@ -788,19 +787,14 @@ function on_tank_killed(victim, killer, cause, scripted)
   flash_end[key] = now + FLASH_TICKS
   kick()
 
-  -- The streak: this kill counts on from the last one when it came within
-  -- CHAIN_SECONDS of it, and starts again at one otherwise.
-  local run = streak[by]
-  if run ~= nil and now - run.at <= CHAIN_SECONDS * 100 then
-    run.count, run.at = run.count + 1, now
-  else
-    run = { count = 1, at = now }
-    streak[by] = run
-  end
+  -- The streak: every kill since the tank last died counts, with no time
+  -- limit between them. A death clears it (see above).
+  local run = (streak[by] or 0) + 1
+  streak[by] = run
 
   -- One announce line holds the kill and, on a streak, the streak word in
   -- front of it, so the streak never hides who was killed or the score.
-  game.announce(kill_line(by, victim, key, cause, streak_word(run.count)), 3)
+  game.announce(kill_line(by, victim, key, cause, streak_word(run)), 3)
   if kills[key] >= target then
     finish(key)
   end
