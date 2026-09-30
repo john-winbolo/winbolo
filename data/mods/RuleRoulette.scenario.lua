@@ -85,6 +85,7 @@ local over     = false
 local changes  = 0          -- how many modes this round has had
 local left     = 0          -- seconds to the next mode
 local next_at  = 0          -- game.tick() of the next mode, for the panel clock
+local mode_len = 60         -- seconds the mode in force was given, the bar's full
 local mode     = nil        -- the MODES entry in force
 local queue    = {}         -- MODES indices still to come, in order
 local last_idx = nil        -- the index of the mode in force
@@ -188,13 +189,17 @@ end
 -- number cells to a row all fit with room to spare.
 --
 --   y   0 .. 15  band: mode name (normal, left), its tag (small, right)
---   y  18        meaning (small)
---   y  29 ..     numbers that are not 100, two to a row, up to 3 rows
+--   y  17        meaning (small)
+--   y  27 ..     numbers that are not 100, two to a row, up to 3 rows
 --   then         "Next mode in" and the clock
+--   then         a bar, 4 units tall, of the time left in this mode
 --   then         a rule, and per upcoming mode its name and its meaning
 --
 -- With all six numbers changed and three upcoming modes, the last line
--- starts at y 116 and ends at 124.
+-- starts at y 119 and ends at 127.
+--
+-- The clock counts itself down on the client, but a bar is drawn at the
+-- value it is sent, so each_second sends the panel again once a second.
 
 local function tint(pct, worse_high)
   local better = (pct > 100) ~= (worse_high == true)
@@ -206,9 +211,9 @@ local function build_panel()
     { "rect", 0, 0, 128, 15, "grey_dark", true },
     { "text", 3, 2, KIND_COLOUR[mode.kind], "normal", "left", mode.name },
     { "text", 125, 4, KIND_COLOUR[mode.kind], "small", "right", KIND_TAG[mode.kind] },
-    { "text", 3, 18, "white", "small", "left", mode.mean },
+    { "text", 3, 17, "white", "small", "left", mode.mean },
   }
-  local y, col = 29, 0
+  local y, col = 27, 0
   for _, k in ipairs(MOD_KEYS) do
     local v = mode.mods[k]
     if v ~= nil and v ~= 100 then
@@ -226,10 +231,14 @@ local function build_panel()
   y = y + 2
   list[#list + 1] = { "text", 3, y, "grey", "small", "left", "Next mode in" }
   list[#list + 1] = { "timer", 125, y, "yellow", "small", "right", "down", next_at }
-  y = y + 10
+  y = y + 9
+  -- Drains from full to empty over the mode, beside the clock above it.
+  local secs = clamp(math.floor((next_at - game.tick() + 99) / 100), 0, mode_len)
+  list[#list + 1] = { "bar", 3, y, 122, 4, "yellow", secs, mode_len }
+  y = y + 7
   if preview > 0 then
     list[#list + 1] = { "line", 3, y, 124, y, "grey_dark" }
-    y = y + 3
+    y = y + 2
     for i = 1, preview do
       local m = MODES[queue[i]]
       list[#list + 1] = { "text", 3, y, KIND_COLOUR[m.kind], "small", "left",
@@ -242,11 +251,12 @@ local function build_panel()
 end
 
 -- The lowest unit a list draws on, for the log: text is 8 or 11 units tall.
+-- A rect or a bar is { name, x, y, w, h, ... }, a line { name, x0, y0, x1, y1 }.
 local function panel_bottom(list)
   local bottom = 0
   for _, it in ipairs(list) do
     local b
-    if it[1] == "rect" then
+    if it[1] == "rect" or it[1] == "bar" then
       b = it[3] + it[5]
     elseif it[1] == "line" then
       b = math.max(it[3], it[5]) + 1
@@ -258,12 +268,18 @@ local function panel_bottom(list)
   return bottom
 end
 
+-- Sends the panel. A refusal (two updates in one tick, say) is logged, and
+-- the next second's redraw in each_second sends it again.
 local function draw_panel(log_it)
   if mode == nil then
     return
   end
   local list = build_panel()
-  game.panel(0, list)
+  local ok, code, why = game.panel(0, list)
+  if not ok then
+    game.log(string.format("RuleRoulette: panel refused: %s %s",
+                           tostring(code), tostring(why)))
+  end
   if log_it then
     game.log(string.format("RuleRoulette panel: %d items, bottom %d of 128, preview %d",
                            #list, panel_bottom(list), preview))
@@ -276,6 +292,7 @@ local function start_mode(idx)
   changes  = changes + 1
   mode     = MODES[idx]
   last_idx = idx
+  mode_len = interval
   next_at  = game.tick() + interval * 100
 
   local t = full_mods(mode)
@@ -310,10 +327,13 @@ local function each_second()
   end
   left = left - 1
   if left <= 0 then
-    next_mode()
+    next_mode()   -- draws the panel itself
     left = interval
-  elseif left <= countdown then
-    game.announce(MODES[queue[1]].name .. " in " .. left, 1)
+  else
+    if left <= countdown then
+      game.announce(MODES[queue[1]].name .. " in " .. left, 1)
+    end
+    draw_panel(false)   -- the bar's new value, and a retry of a refused one
   end
   game.timer(1, each_second)
 end
@@ -328,7 +348,9 @@ end
 local function command(p, args)
   local verb, value = args:match("^(%S*)%s*(%S*)")
   verb = (verb or ""):lower()
-  local n = tonumber(value)
+  -- Digits only: tonumber would also take "nan" and "inf", and a NaN
+  -- interval stops the clock.
+  local n = value:match("^%d+$") and tonumber(value) or nil
 
   if verb == "interval" and n then
     interval = clamp(math.floor(n), INTERVAL_MIN, INTERVAL_MAX)
@@ -338,7 +360,9 @@ local function command(p, args)
     draw_panel(true)
     game.message(status_text())
   elseif verb == "next" then
-    left = 1   -- the next second changes mode
+    left    = 1   -- the next second changes mode
+    next_at = game.tick() + 100
+    draw_panel(false)
   else
     game.message(status_text(), p)
     game.message("Type !roulette interval <20-300> | preview <0-3> | next", p)
