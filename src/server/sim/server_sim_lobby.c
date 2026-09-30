@@ -189,6 +189,20 @@ static const char *slotBrainPath(const ServerSim *sim, BYTE slot) {
  * write, so an automatic one — single player's add path writing its skill
  * guess — was remembered as though the host had chosen it. */
 
+/* The index in mode `to` of the level at index `level` in mode `from`,
+ * matched by key; `to`'s own default level when it lists no such key or the
+ * index is out of range. */
+static int lobbyLevelAcrossModes(const BrainModes *modes, int from, int level,
+                                 int to) {
+    const BrainMode *fm = &modes->modes[from];
+    const BrainMode *tm = &modes->modes[to];
+    if (level >= 0 && level < fm->levelCount) {
+        int li = brainModeFindLevel(tm, fm->levels[level].key);
+        if (li >= 0) return li;
+    }
+    return tm->defaultLevel;
+}
+
 /* The attached scenario's template entry for `team`, when that team has one
  * AND it names a mode or a difficulty — the two fields that make a team's
  * bots the MAP's to configure rather than the lobby's.
@@ -209,6 +223,47 @@ static const ScnLobbyTeam *lobbyTemplateTeam(const ServerSim *sim, int team) {
         return lt;
     }
     return NULL;
+}
+
+void serverSimMarkBotModeSetByHand(ServerSim *sim, BYTE slot) {
+    if (sim == NULL || slot >= MAX_TANKS) return;
+    sim->botModeSetByHand |= (uint16_t)(1u << slot);
+}
+
+void serverSimFollowGameTypeBotModes(ServerSim *sim, gameType oldType) {
+    gameType newType;
+    BYTE     slot;
+
+    if (sim == NULL) return;
+    newType = serverSimGetGameType(sim);
+    if ((oldType == gameOpen) == (newType == gameOpen)) return;
+    for (slot = 0; slot < MAX_TANKS; slot++) {
+        BrainModes      modes;
+        LobbyBotConfig *bc;
+        const char     *path;
+        int             oldStart;
+        int             newStart;
+
+        if (!serverSimIsBot(sim, slot)) continue;
+        if ((sim->botModeSetByHand & (1u << slot)) != 0) continue;
+        /* A team the map configures owns its bots' mode. */
+        if (lobbyTemplateTeam(sim, (int)sim->lobbyPlayers[slot].teamNumber)
+                != NULL) continue;
+        path = slotBrainPath(sim, slot);
+        if (path == NULL) continue;
+        if (!brainListLoadModesForPath(path, &modes)) continue;
+        oldStart = brainModesStartMode(&modes, oldType == gameOpen);
+        newStart = brainModesStartMode(&modes, newType == gameOpen);
+        if (oldStart == newStart) continue;
+        bc = &sim->botConfigs[slot];
+        /* Only a bot still on the old type's starting mode follows. One that
+         * came in on a remembered pick of some other mode keeps it. */
+        if ((int)bc->mode != oldStart) continue;
+        serverSimSetBotConfigQuiet(
+            sim, slot, (uint8_t)newStart,
+            (uint8_t)lobbyLevelAcrossModes(&modes, oldStart,
+                                           (int)bc->difficulty, newStart));
+    }
 }
 
 void serverSimRememberManualBotPick(ServerSim *sim, BYTE slot) {
@@ -264,6 +319,19 @@ bool serverSimResolveNewBotConfig(const ServerSim *sim, int team,
     level = (int)*ioLevel;
     if (level >= modes.modes[mode].levelCount) {
         level = modes.modes[mode].defaultLevel;
+    }
+
+    /* 1b. A base of mode 0 is "the lobby default", which depends on the game
+     *     type: an Open game starts in the brain's open_default mode
+     *     (brainModesStartMode). The level moves across by KEY, so Medium in
+     *     mode 0 is Medium in the new mode when that mode lists one. */
+    if (mode == 0) {
+        int start = brainModesStartMode(
+            &modes, serverSimGetGameType(sim) == gameOpen);
+        if (start != 0) {
+            level = lobbyLevelAcrossModes(&modes, 0, level, start);
+            mode  = start;
+        }
     }
 
     /* 2. What the map requires for this side: the attached scenario's lobby
@@ -426,6 +494,7 @@ void serverSimApplyNewBotDefaults(ServerSim *sim, BYTE slot, int team,
      * bot's survival mode. */
     serverSimResolveNewBotConfig(sim, team, brainPath, honourManualPick,
                                  &mode, &level);
+    sim->botModeSetByHand &= (uint16_t)~(1u << slot);
     sim->botConfigs[slot].mode       = mode;
     sim->botConfigs[slot].difficulty = level;
     serverSimQueueBotConfigPublish(sim, slot);
@@ -889,7 +958,13 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
             /* A scripted round plays the game its scenario declared, and the
                type that says so is the map commit's to set. */
             if (lobbySettingScenarioFixes(sim, lst, value, len)) return false;
-            serverSimSetGameType(sim, (gameType)value[0]);
+            {
+                gameType was = serverSimGetGameType(sim);
+                serverSimSetGameType(sim, (gameType)value[0]);
+                /* Bots nobody set a mode for follow the new type's
+                   starting mode (Open starts in open_default). */
+                serverSimFollowGameTypeBotModes(sim, was);
+            }
             return true;
         case LST_HIDDEN_MINES:
             if (len != 1) return false;

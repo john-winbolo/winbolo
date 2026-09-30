@@ -2948,20 +2948,25 @@ int main(int argc, char **argv) {
        * flags off is the pre-manifest "hard" exactly as before. */
       BrainModes botModes;
       brainListLoadModesForPath(brainPath, &botModes);
-      uint8_t botMode = 0;
+      /* No -mode: the game type's starting mode (an Open game starts in the
+       * brain's open_default, brainModesStartMode). Read from the sim, not
+       * -gametype: an attached scenario has already put the sim on its own
+       * type. -mode always wins. */
+      uint8_t botMode = (uint8_t)brainModesStartMode(
+          &botModes, serverSimGetGameType(serverSim) == gameOpen);
       if (argExist(argc, argv, "mode") == TRUE) {
         int mArg = findArg(argc, argv, "mode");
         if (mArg != ARG_NOT_FOUND && argv[mArg][0] != '-') {
           int found = brainModesFindMode(&botModes, (const char *)argv[mArg]);
           if (found < 0) {
             fprintf(stderr, "Warning: -mode '%s' is not a mode this brain declares; using '%s'\n",
-                    (const char *)argv[mArg], botModes.modes[0].key);
+                    (const char *)argv[mArg], botModes.modes[botMode].key);
           } else {
             botMode = (uint8_t)found;
           }
         } else {
           fprintf(stderr, "Warning: -mode given with no value; using '%s'\n",
-                  botModes.modes[0].key);
+                  botModes.modes[botMode].key);
         }
       }
       /* The mode's own default level — "hard" for the default mode, which
