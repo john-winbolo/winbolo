@@ -100,13 +100,15 @@ scenario = {
       { id = 1, bots = 0,  max_bots = 6 },
       { id = 2, bots = 10, max_bots = 10, fielded = false,
         brain = "GoalHunter_1.7",
-        -- The horde's mode and difficulty, named here as well as on every
-        -- wave spawn below. This is the half the LOBBY reads: without it a
-        -- held seat carries whatever the lobby happened to give it, every
-        -- client's row says Easy because nothing ever told it otherwise, and
-        -- the row wears no mode tag. Team 1 is left alone on purpose — the
-        -- defenders keep what the host picks.
-        mode = "survival", difficulty = "hard" },
+        -- The horde's mode and difficulty. This is the half the LOBBY reads:
+        -- without it a held seat carries whatever the lobby happened to give
+        -- it, and every client's row says Easy because nothing ever told it
+        -- otherwise. The mode is the brain's ordinary one, named so that a
+        -- mode the host picked for some other bot is never carried onto the
+        -- horde; everything that makes a horde bot fight the way it does is
+        -- in its tokens (the init table below and wave_init). Team 1 is left
+        -- alone on purpose — the defenders keep what the host picks.
+        mode = "default", difficulty = "hard" },
     },
   },
 

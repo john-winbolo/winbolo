@@ -4798,9 +4798,9 @@ set(_unit_test_names
     shell_death_rejected_culls_without_impact
     # A new bot's mode/difficulty rule (test_lobby_bot_config_memory.c): the
     # base, then the host's last MANUAL pick, remembered by key so it survives
-    # a brain declaring a different list. Reads the shipped GoalHunter_1.7
-    # modes.txt beside the binary and writes nothing, so these are safe under
-    # `ctest -j`.
+    # a brain declaring a different list. Each case writes its own fixture
+    # brain, brains/ut_bcm_<case>/ in the build directory, and deletes it
+    # when it finishes, so these are safe under `ctest -j`.
     lobby_bot_config_memory_applies
     lobby_bot_config_memory_empty_is_noop
     lobby_bot_config_memory_unknown_key

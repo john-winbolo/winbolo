@@ -2639,7 +2639,7 @@ void serverSimSetCountdownTicks(ServerSim *sim, int32_t ticks);
  *      chosen level);
  *   2. what the map requires for the bot's side — the attached scenario's
  *      lobby template, read for that team; on Survival, the horde's seats
- *      are survival mode at Hard;
+ *      are the default mode at Hard;
  *   3. what a person last picked BY HAND, when the caller honours it — on a
  *      team step 2 configured, the level last chosen on a seat of that team
  *      and never the mode; on every other team, the one pair the lobby
@@ -2660,7 +2660,7 @@ bool serverSimResolveNewBotConfig(const ServerSim *sim, int team,
 /* ── A scenario's own mode and difficulty ──────────────────────────────
  *
  * A scenario names the two by KEY — the words in the brain's own modes.txt
- * ("survival", "hard") — because a script cannot know what index a brain
+ * ("default", "hard") — because a script cannot know what index a brain
  * puts them at, and the two bytes the lobby carries are indices. This turns
  * one pair of keys into that pair of indices.
  *
