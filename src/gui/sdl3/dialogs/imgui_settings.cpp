@@ -2332,7 +2332,14 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
     ImGui::TextDisabled("%s", langGetText(STR_DLGSETTINGS_HOSTING_APPLYNOTE));
 }
 
-extern "C" void imguiSettingsShow(void) {
+/* The blocking settings loop.  inEditor is the map editor's call: the editor
+ * already has the window at the size it wants and its own title in it, so the
+ * window is left alone, the background game is not drawn behind the panel, and
+ * the tutorial button is left out because the editor has no way to hand over
+ * to the tutorial. The Controls tab is left out too: its only control opens key
+ * setup, which resizes and retitles the window, and the keys it sets are the
+ * game's, not the editor's. */
+static void settingsShowLoop(bool inEditor) {
     SDL_Window *window = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
     if (!window || !renderer) return;
@@ -2347,13 +2354,15 @@ extern "C" void imguiSettingsShow(void) {
     if (screenW <= 0 || screenH <= 0) { screenW = 1024; screenH = 768; }
     float s = dialogComputeScale(screenW, screenH);
 
+    if (!inEditor) {
 #if !BOLO_MOBILE
-    /* Keep the window at the same size as the welcome dialog */
-    dialogSetWindowSize(window, 1024, 768);
-    dialogSetWindowTitle(window, langGetText(STR_DLGSETTINGS_WINTITLE));
-    SDL_SetWindowResizable(window, true);
+        /* Keep the window at the same size as the welcome dialog */
+        dialogSetWindowSize(window, 1024, 768);
+        dialogSetWindowTitle(window, langGetText(STR_DLGSETTINGS_WINTITLE));
+        SDL_SetWindowResizable(window, true);
 #endif
-    dialogRestorePosition(window);
+        dialogRestorePosition(window);
+    }
     SDL_ShowWindow(window);
     SDL_RaiseWindow(window);
 
@@ -2392,7 +2401,7 @@ extern "C" void imguiSettingsShow(void) {
     imguiSettingsSeedPlayerName();
 
     /* Background game */
-    BgGame *bg = bgGameGetShared();
+    BgGame *bg = inEditor ? nullptr : bgGameGetShared();
     bool hasBg = (bg != nullptr);
     Uint64 lastTickTime = SDL_GetTicks();
 
@@ -2537,7 +2546,7 @@ extern "C" void imguiSettingsShow(void) {
         present[STAB_HOSTING] = true;
 #endif
 #if !BOLO_MOBILE
-        present[STAB_CONTROLS] = !uiModeIsTablet();
+        present[STAB_CONTROLS] = !uiModeIsTablet() && !inEditor;
         present[STAB_LAST]     = true;
 #else
         present[STAB_CONTROLS] = false;
@@ -2569,17 +2578,19 @@ extern "C" void imguiSettingsShow(void) {
                 imguiSettingsRenderLanguagePicker(langEntries, langCount, &ctx);
 
                 /* ---- Tutorial ---- */
-                ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_TUTORIAL));
-                if (ImGui::Button(langGetText(STR_DLGSETTINGS_PLAY_TUTORIAL), ImVec2(140, 0))) {
-                    gameFrontRequestPlayTutorial();
-                    running = false;  /* Close settings; openSettings handler routes to openTutorial. */
-                }
-                imguiHandOnHover();
-                ImGui::SameLine();
-                {
-                    bool showOnMain = gameFrontGetShowTutorialButton();
-                    if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_SHOW_ON_MAIN), &showOnMain)) {
-                        gameFrontSetShowTutorialButton(showOnMain);
+                if (!inEditor) {
+                    ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_TUTORIAL));
+                    if (ImGui::Button(langGetText(STR_DLGSETTINGS_PLAY_TUTORIAL), ImVec2(140, 0))) {
+                        gameFrontRequestPlayTutorial();
+                        running = false;  /* Close settings; openSettings handler routes to openTutorial. */
+                    }
+                    imguiHandOnHover();
+                    ImGui::SameLine();
+                    {
+                        bool showOnMain = gameFrontGetShowTutorialButton();
+                        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_SHOW_ON_MAIN), &showOnMain)) {
+                            gameFrontSetShowTutorialButton(showOnMain);
+                        }
                     }
                 }
 
@@ -2614,7 +2625,7 @@ extern "C" void imguiSettingsShow(void) {
                 ImGui::EndTabItem();
             }
 #if !BOLO_MOBILE
-            if (!uiModeIsTablet()) {
+            if (present[STAB_CONTROLS]) {
                 if (ImGui::BeginTabItem(langGetText(STR_LV_WIN_CONTROLS), nullptr,
                         s_pgForceTab == STAB_CONTROLS ? ImGuiTabItemFlags_SetSelected : 0)) {
                     s_pgActiveTab = STAB_CONTROLS;
@@ -2834,8 +2845,10 @@ extern "C" void imguiSettingsShow(void) {
                Controls coming back out of key setup. */
             s_pgForceTab = s_pgActiveTab;
 
-            dialogSetWindowSize(window, 1024, 768);
-            dialogSetWindowTitle(window, langGetText(STR_DLGSETTINGS_WINTITLE));
+            if (!inEditor) {
+                dialogSetWindowSize(window, 1024, 768);
+                dialogSetWindowTitle(window, langGetText(STR_DLGSETTINGS_WINTITLE));
+            }
 
             lastTickTime = SDL_GetTicks();
         }
@@ -2880,4 +2893,12 @@ extern "C" void imguiSettingsShow(void) {
 #endif
 
     SDL_FlushEvent(SDL_EVENT_QUIT);
+}
+
+extern "C" void imguiSettingsShow(void) {
+    settingsShowLoop(false);
+}
+
+extern "C" void imguiSettingsShowInEditor(void) {
+    settingsShowLoop(true);
 }

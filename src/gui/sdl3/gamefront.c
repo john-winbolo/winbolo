@@ -95,6 +95,7 @@
 #include "../../common/prefs_doc.h"
 #include "../../steam/steam_wrapper.h"
 #include "../../mapeditor/mapeditor.h"
+#include "dialogs/imgui_settings.h"  /* imguiSettingsShowInEditor */
 #include "mapgen.h"
 /* Forward declaration only — don't include logviewer.h to avoid type conflicts
    between src/logviewer/ and src/bolo/ headers (both define map, bases, etc.) */
@@ -1365,6 +1366,7 @@ static bool gameFrontDialogs(void) {
     }
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
     case openMapEditor:
+      mapEditorSetSettingsHandler(imguiSettingsShowInEditor);
       mapEditorRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), NULL, true);
       /* The editor runs its own loop in WinBolo's window, so a quit taken
        * there stops with it.  Leaving the editor comes back to the welcome

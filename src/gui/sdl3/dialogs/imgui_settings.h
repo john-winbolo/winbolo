@@ -29,6 +29,12 @@ extern "C" {
 /* Show the pre-game settings dialog as a blocking modal loop. */
 void imguiSettingsShow(void);
 
+/* The same dialog opened from the map editor inside WinBolo.  The editor's
+ * window keeps its size and title, no background game is drawn, and the
+ * tutorial button and the Controls tab (key setup) are left out.  The caller owns the ImGui context it returns
+ * to: this makes and destroys its own. */
+void imguiSettingsShowInEditor(void);
+
 typedef struct SettingsRenderCtx {
     struct ClientSim *cs;       /* NULL pre-game; live sim in-game */
     bool inGame;                /* true = in-game overlay shell */
