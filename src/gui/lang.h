@@ -214,7 +214,6 @@
 #define STR_TUTORIAL25                      409
 #define STR_TUTORIAL_START01                410
 #define STR_TUTORIAL_START02                411
-#define STR_TUTORIAL_START03                412
 #define STR_TUTORIAL_START04                413
 
 /* Touch-mode (tablet/mobile) siblings of the tutorial strings whose
