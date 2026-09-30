@@ -2,9 +2,10 @@
  * Mods enabled: the LST_MODS_OFF path, from the lobby checkbox down to
  * the byte on the wire and back.
  *
- * The setting decides whether the round composes the mods on the lobby's
- * pick list. It does not touch the list, and it is mods only — a scenario
- * on the same list plays either way. scnDecideScenario
+ * The setting decides whether the round composes the scripts on the
+ * lobby's pick list, mods and picked scenarios alike; the lobby labels it
+ * Mods/Scenario. It does not touch the list, and the map's own script plays
+ * either way. scnDecideScenario
  * (src/scenario/scenario_host.c) is the one reader; what is pinned here is
  * everything under it, because a value that never reaches that function
  * correctly is a checkbox that does nothing.

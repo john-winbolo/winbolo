@@ -118,8 +118,8 @@ end
 -- with the `tok == "..."` tests further down; a word missing here arrives as
 -- "word=1" and is ignored there.
 local _INIT_FLAG_WORDS = {
-  ammoless = true, blitzonly = true, noammo = true, noblitz = true, noclaimdead = true,
-  normal = true, nosuicider = true, suicider = true,
+  ammoless = true, blitzonly = true, horde = true, noammo = true, noblitz = true,
+  noclaimdead = true, normal = true, nosuicider = true, suicider = true, survivor = true,
 }
 
 local function _flatten_init_table(t)
@@ -182,6 +182,11 @@ end
 --   preset= and cfg=  apply either way. They write single values into C, and
 --                     every reader of C reads it live, so a write lands on the
 --                     next tick.
+--   survivor / horde  (the side words) apply either way too. Each writes its
+--                     C.SIDE_SETTINGS list, and each list writes every setting
+--                     the other side turns on, so a second side word fully
+--                     replaces the first. The state half of the word
+--                     (state.side, never-refuel) is Brain.apply_init_tokens.
 --   mode= / difficulty=  do NOT apply at runtime. Each names a whole BUNDLE of
 --                     values out of C.MODE_LEVELS, and a bundle cannot be
 --                     unapplied: a second one would leave the first's keys
@@ -197,13 +202,16 @@ local function _apply_cfg_tokens(a, source, runtime)
   -- spawn_bot init string uses ';' and so must a command-line [..] suffix
   -- (the CLI parser eats commas).
   local presets, cfgs = {}, {}
+  local side = nil      -- the last side word in the string wins
   for tok in a:gmatch("[^,;]+") do
     tok = tok:gsub("%s", "")
     local pname = tok:match("^preset=(.+)$")
     local cname, cval = tok:match("^cfg=([%a_][%w_]*)=(.*)$")
     local dname = tok:match("^difficulty=(.*)$")
     local mname = tok:match("^mode=(.*)$")
-    if pname then
+    if tok == "survivor" or tok == "horde" then
+      side = tok
+    elseif pname then
       presets[#presets + 1] = pname
     elseif cname then
       cfgs[#cfgs + 1] = { cname, cval }
@@ -211,7 +219,7 @@ local function _apply_cfg_tokens(a, source, runtime)
       -- "mode=<key>" -- the host's per-bot lobby choice of MODE, appended
       -- to this arg by bot_manager.c at brain-create time. The key comes
       -- from this brain's own modes.txt, so the vocabulary is whatever
-      -- that file lists ("default", "survival", ...) and this side only
+      -- that file lists ("default", ...) and this side only
       -- checks the shape. Written into C.MODE RIGHT HERE (not queued into
       -- cfgs) so the level bundle below can read the chosen mode; it is
       -- type-checked and logged like every other override. Precedence:
@@ -300,6 +308,21 @@ local function _apply_cfg_tokens(a, source, runtime)
       _INIT_CFG_LOG[#_INIT_CFG_LOG + 1] =
         string.format("[preset] %s applied (%d values)", pname, n)
     end
+  end
+  -- Side word AFTER presets and BEFORE cfg=: level < preset < side < cfg. So
+  -- `survivor` beats preset=keel, and an explicit cfg= in the same table
+  -- still beats the side word.
+  local stbl = side and C.SIDE_SETTINGS and C.SIDE_SETTINGS[side]
+  if type(stbl) == "table" then
+    local keys = {}
+    for k in pairs(stbl) do keys[#keys + 1] = k end
+    table.sort(keys)
+    local n = 0
+    for _, k in ipairs(keys) do
+      if _cfg_set(k, stbl[k], "side " .. side) then n = n + 1 end
+    end
+    _INIT_CFG_LOG[#_INIT_CFG_LOG + 1] =
+      string.format("[side] %s applied (%d values)", side, n)
   end
   for _, kv in ipairs(cfgs) do
     local name, raw = kv[1], kv[2]
@@ -1287,6 +1310,17 @@ function Brain.apply_init_tokens(state, a)
         state.test_never_refuel = true
       elseif tok == "normal" then
         state.test_never_refuel = false
+      elseif tok == "horde" then
+        -- Virus's infected side. No base refuels the horde, so it never
+        -- picks one. Its C settings (C.SIDE_SETTINGS.horde) were written by
+        -- _apply_cfg_tokens.
+        state.side = "horde"
+        state.test_never_refuel = true
+      elseif tok == "survivor" then
+        -- Virus's survivor side: refuels as normal. Its C settings
+        -- (C.SIDE_SETTINGS.survivor) were written by _apply_cfg_tokens.
+        state.side = "survivor"
+        state.test_never_refuel = false
       elseif tok == "suicider" then
         state.force_pill_suicider = true
       elseif tok == "nosuicider" then
@@ -1421,7 +1455,13 @@ function Brain.on_init(t)
   -- state.test_never_refuel is deliberately NOT in this list. nil there means
   -- "roll it once for this bot" (the TEST_NEVER_REFUEL_CHANCE aid on the
   -- first think), so clearing it on every bot_init would quietly overrule a
-  -- roll the arena runs read; and nothing sends ammoless at runtime anyway.
+  -- roll the arena runs read. A scenario that changes it at runtime sends the
+  -- word both ways (Virus: horde / survivor, each sets it).
+  --
+  -- state.side is not in this list either: a table with no side word leaves
+  -- the bot on its last side. Its C settings stay written too (a side word is
+  -- the only thing that writes them back), so clearing state.side alone would
+  -- make the two disagree.
   state.blitz_disabled      = false
   state.blitz_only          = false
   state.ally_claim_dead_off = false
@@ -1655,6 +1695,12 @@ function Brain.think(info)
   --                          the random TEST_NEVER_REFUEL_CHANCE roll below)
   --   "normal"            -> force never-refuel OFF (a plain captain); read
   --                          last, so it wins if both are passed
+  --   "survivor"/"horde"  -> this bot's side (Virus). Sets state.side.
+  --                          horde: never-refuel ON; survivor: OFF. Each also
+  --                          writes its C.SIDE_SETTINGS list at chunk load and
+  --                          on a runtime bot_init (_apply_cfg_tokens), after
+  --                          preset= and before cfg=. No word = state.side nil
+  --                          and every constant as it was.
   --   "deprive=N"         -> this bot's ammo-deprivation delay = N ticks, so the
   --                          ammoless-helper/decoy kicks in sooner (100 ~= 2 s)
   --   "suicider"          -> FORCE the pill_suicider role on for this bot,

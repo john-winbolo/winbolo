@@ -662,6 +662,26 @@ STR_MAPCHOOSER_NOPREVIEW=Ingen förhandsvisning tillgänglig
 STR_MAPCHOOSER_STATS=Bunkrar: {number}  Baser: {number2}  Startplatser: {number3}
 STR_MAPCHOOSER_MAPFILES=Kartfiler
 STR_MAPCHOOSER_ALLFILES=Alla filer
+STR_MAPCHOOSER_SCENARIOSONLY=Endast scenarier
+STR_MAPCHOOSER_SCENARIOSONLY_TIP=Visa bara kartor som har ett eget scenarioskript.
+STR_MAPCHOOSER_NOSCENARIOMAPS=Inga kartor med ett scenario här
+STR_MAPCHOOSER_SCENARIOSONLY_NOSEARCH=Det här filtret fungerar inte vid en serverövergripande sökning. Servern anger inte vilka träffar som har ett scenario.
+STR_MAPCHOOSER_VIEW_LIST=Lista
+STR_MAPCHOOSER_VIEW_GRID=Rutnät
+STR_MAPCHOOSER_VIEW_LIST_TIP=Listvy
+STR_MAPCHOOSER_VIEW_GRID_TIP=Rutnätsvy
+STR_MAPCHOOSER_SEARCH_HINT=Sök...
+STR_MAPCHOOSER_SEARCH_CLEAR=Rensa sökning
+STR_MAPCHOOSER_SEARCH_SUBFOLDERS=Sök i undermappar
+STR_MAPCHOOSER_CREATED_AT=Skapad
+STR_MAPCHOOSER_CREATED_AT_TIP=Visa filernas ändringstider i en andra kolumn.
+STR_MAPCHOOSER_COL_NAME=Namn
+STR_MAPCHOOSER_COL_CREATED=Skapad
+STR_MAPCHOOSER_UNSTAR_TIP=Klicka för att ta bort stjärnmarkeringen
+STR_MAPCHOOSER_STAR_TIP=Klicka för att markera med en stjärna, så att den alltid visas överst
+STR_MAPCHOOSER_RESTORE_SIZE_TIP=Återställ standardstorlek (Esc)
+STR_MAPCHOOSER_MAXIMIZE_TIP=Maximera
+STR_MAPCHOOSER_LOADING_PREVIEW=Laddar förhandsvisning...
 
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Status
@@ -2167,13 +2187,13 @@ STR_DLGLOBBY_SCENARIO_FILTER=Filtrera efter namn
 STR_DLGLOBBY_SCENARIO_NO_MATCH=Inget här matchar det namnet.
 STR_DLGLOBBY_SCENARIO_DETAILS=Detaljer
 STR_DLGLOBBY_SCENARIO_DETAILS_TITLE=Om {string1}
-STR_DLGLOBBY_MODS_ENABLED_CB=Moddar aktiverade
-STR_DLGLOBBY_MODS_DETAILS_TIP=Öppnar väljaren, där moddar läggs till, tas bort och ordnas.
+STR_DLGLOBBY_MODS_ENABLED_CB=Moddar/Scenario aktiverade
+STR_DLGLOBBY_MODS_DETAILS_TIP=Öppnar väljaren, där scenariot och moddarna läggs till, tas bort och ordnas.
 STR_DLGLOBBY_SCENARIO_ORDER_NOTE=Ladd- och körordning: Högre upp har prioritet.
 STR_DLGLOBBY_SCENARIO_ALL_IN_ROUND=Allt den här servern erbjuder finns redan i omgången.
 STR_DLGLOBBY_MODS_HEAD_N=({number})
 STR_DLGLOBBY_MODS_TIP_ON=Dessa moddar körs den här omgången, i den här ordningen:
-STR_DLGLOBBY_MODS_TIP_OFF=Moddar är avstängda. Dessa är valda för omgången, men körs inte:
+STR_DLGLOBBY_MODS_TIP_OFF=Moddar/Scenario är avstängt. Dessa är valda för omgången, men körs inte:
 STR_DLGLOBBY_MODS_TIP_NONE=Inga moddar är laddade för den här omgången.
 STR_DLGLOBBY_MODS_OFF_NOTE=(avstängd, körs inte)
 STR_SCNPANEL_SETTINGS_TITLE=Scenariopanel
@@ -2412,18 +2432,14 @@ STR_MAPEDIT_SCENARIO_ARG_NUMBER=Tal
 STR_MAPEDIT_SCENARIO_ARG_TEXT=Text
 STR_MAPEDIT_SCENARIO_TEXT_ONE_LONG=En åtgärd bär en lång rad, och ett annat argument har den redan
 STR_DLGLOBBY_SCENARIO_RULES=Regler
-STR_DLGLOBBY_SCENARIO_RULES_TITLE=Vad {string1} ändrar
 STR_DLGLOBBY_RULES_COL_RULE=Regel
 STR_DLGLOBBY_RULES_COL_CLASSIC=Klassiskt
 STR_DLGLOBBY_RULES_COL_SCENARIO=Scenario
 STR_DLGLOBBY_RULES_COL_CHANGE=Ändring
-STR_DLGLOBBY_RULE_DETAIL_TITLE=Regel: {string1}
-STR_DLGLOBBY_RULES_INFO=Info
-STR_DLGLOBBY_RULES_RANGE=Intervall
 STR_DLGLOBBY_RULES_OVERRIDDEN=Åsidosatt av {string1}, som anger {string2}
 
 # Under the rules table of a mod, on a server that has mods turned off.
-STR_DLGLOBBY_DETAILS_MODS_OFF=Moddar är avstängda på den här servern, så den här moddens regler gäller inte.
+STR_DLGLOBBY_DETAILS_MODS_OFF=Moddar/Scenario är avstängt på den här servern, så det här skriptets regler gäller inte.
 STR_DLGLOBBY_DETAILS_IMPLEMENTS_MOD=Vad den här modden implementerar:
 STR_DLGLOBBY_DETAILS_IMPLEMENTS_SCENARIO=Vad det här scenariot implementerar:
 STR_DLGLOBBY_DETAILS_COL_METHOD=Metod
@@ -2704,3 +2720,7 @@ STR_DLGSETTINGS_WORKSHOP_UNUSABLE=Kan inte användas
 
 # The lobby's Workshop chip
 STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop
+
+# The game finder's scripts
+STR_DLGBROWSER_MODS=Moddar
+STR_DLGBROWSER_MODS_MORE=+{number} moddar

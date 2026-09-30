@@ -77,6 +77,18 @@ typedef struct {
                                        * to and including that segment. */
 } MapChooserEntry;
 
+/* Whether the "Scenarios only" tick keeps this row. With the tick off
+ * every row stays. With it on, folders and the ".." row stay, so the
+ * user can still walk to scripted maps, and a map row stays only when
+ * it has a script beside it. The inbuilt Everard row has none, so it
+ * goes. Pure, so the unit tests check it without the chooser. */
+static inline bool mapChooserEntryPassesScenarioFilter(
+    const MapChooserEntry *e, bool scenariosOnly) {
+    if (!scenariosOnly) return true;
+    if (e->isFolder || e->isParentUp) return true;
+    return e->scripted;
+}
+
 typedef struct MapChooserState_s MapChooserState;
 
 /* A "maps filesystem" plugged into the chooser. The three tabs in
@@ -265,6 +277,28 @@ struct MapChooserState_s {
      * file's mtime. Off by default to keep the list narrow; toggled by
      * a checkbox next to "Search subfolders". */
     bool            showModifiedColumn;
+
+    /* When true, the chooser offers a "Scenarios only" checkbox next to
+     * "Search subfolders". Set only by the tabs whose rows answer the
+     * `scripted` question (the lobby's Server Maps and Local Maps tabs);
+     * a tab whose rows never carry it would list nothing when ticked. */
+    bool            offerScenariosOnly;
+
+    /* The "Scenarios only" tick. While set, file rows without a script
+     * beside them are hidden, and so is the starred section, whose rows
+     * do not carry the flag. Folders and ".." stay so the user can still
+     * walk into a folder to find scripted maps. Combines with the search
+     * filter; ignored while offerScenariosOnly is false. Kept for the
+     * session with the rest of the tab's state, not saved. */
+    bool            scenariosOnly;
+
+    /* Set by a provider whose current rows never carry the `scripted`
+     * flag although the tab offers "Scenarios only" — the Server Maps
+     * tab's network recursive search, whose reply has no byte for it.
+     * While set, the tick is greyed out and filters nothing, so it
+     * cannot hide every hit. discoverMaps clears it before each
+     * enumerate, so only the provider run that fills such rows sets it. */
+    bool            searchRowsUntagged;
 
     /* Interactive preview widget — same renderer as the lobby's inline
      * preview and the modal popup. Loaded with the currently-selected

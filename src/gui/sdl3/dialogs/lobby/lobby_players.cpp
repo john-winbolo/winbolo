@@ -1650,8 +1650,8 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                     }
                     if (botModes != NULL &&
                         !lobbyBotModeIsDefault(botModes, botMode)) {
-                        /* Name the mode too, so a row in the survival scenario
-                         * says so on the row itself. */
+                        /* Name the mode too, so a bot in any mode but the
+                         * default says so on the row itself. */
                         botModeTag = botModes->modes[botMode].label;
                     }
                 }
@@ -2173,7 +2173,7 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                      * form's Codebase dropdown is the honest place for it. */
                     if (showBotDetailTags && botModeTag[0]) {
                         /* The mode, when it is not the default one — one word
-                         * ("Survival"). Its own indigo, NOT the difficulty's
+                         * ("Turtle"). Its own indigo, NOT the difficulty's
                          * amber set it used to borrow: the difficulty tag sits
                          * immediately beside it and is amber at Medium, so the
                          * two ran together (Andrew: "the mode tag orangey is
@@ -3017,8 +3017,9 @@ static void renderBotAiConfig(ClientSim *cs,
      * For the default mode that list is Easy / Medium / Hard and the
      * indices are the same 0/1/2 the wire has always carried.
      *
-     * Every mode and every level plays the same way for now; only the
-     * wording and the tokens handed to the brain differ. */
+     * The lobby only shows the wording and hands the chosen keys to the
+     * brain; what a mode or level changes is the brain's business. A mode's
+     * optional `about` line is shown under the Mode combo. */
     const BrainModes *modes = lobbyBotModesFor(cs, slot);
     int curMode = 0, curLevel = 0;
     lobbyBotModeAndLevel(cs, slot, &curMode, &curLevel);
@@ -3030,17 +3031,35 @@ static void renderBotAiConfig(ClientSim *cs,
         const float mdGroupW = ImMax(
             ImGui::CalcTextSize(langGetText(STR_DLGLOBBY_BOTCFG_MODE)).x,
             kModeComboW);
-        ImGui::SetCursorScreenPos(flowPlace(mdGroupW));
+        const ImVec2 mdPos = flowPlace(mdGroupW);
+        ImGui::SetCursorScreenPos(mdPos);
         ImGui::BeginGroup();
         ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTCFG_MODE));
-        const char *modeItems[BRAIN_MODES_MAX];
-        for (int m = 0; m < modes->modeCount; m++) {
-            modeItems[m] = modes->modes[m].label;
-        }
         int mode = curMode;
+        bool modePicked = false;
         ImGui::SetNextItemWidth(kModeComboW);
-        if (ImGui::Combo("##botmode", &mode, modeItems, modes->modeCount) &&
-            mode >= 0 && mode < modes->modeCount) {
+        if (ImGui::BeginCombo("##botmode", modes->modes[curMode].label)) {
+            for (int m = 0; m < modes->modeCount; m++) {
+                const bool sel = (m == curMode);
+                ImGui::PushID(m);
+                if (ImGui::Selectable(modes->modes[m].label, sel)) {
+                    mode = m;
+                    modePicked = (m != curMode);
+                }
+                ImGui::PopID();
+                /* Hover shows the mode's about line, when it has one. */
+                if (modes->modes[m].about[0] && ImGui::IsItemHovered()) {
+                    ImGui::BeginTooltip();
+                    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 320.0f * s);
+                    ImGui::TextUnformatted(modes->modes[m].about);
+                    ImGui::PopTextWrapPos();
+                    ImGui::EndTooltip();
+                }
+                if (sel) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        if (modePicked && mode >= 0 && mode < modes->modeCount) {
             /* A mode change carries the new mode's own default level: the
              * old index means something different (or nothing) in the new
              * mode's list, so keeping it would show a level the player
@@ -3050,6 +3069,16 @@ static void renderBotAiConfig(ClientSim *cs,
             lobbySendBotConfig(cs, (uint8_t)slot, (uint8_t)mode, lvl, curPers,
                                clientSimGetLobbySlot(cs, (BYTE)(slot))->playerName);
             gameFrontSetChosenBotModeAndLevel(nm->key, nm->levels[lvl].key);
+        }
+        /* The mode's about line from modes.txt (brain data, so untranslated),
+         * wrapped the same way as the difficulty description below. */
+        if (modeSel != NULL && modeSel->about[0]) {
+            float aboutWrapW = flowRightX - mdPos.x;
+            if (aboutWrapW > 300.0f * s) aboutWrapW = 300.0f * s;
+            if (aboutWrapW < 140.0f * s) aboutWrapW = 140.0f * s;
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + aboutWrapW);
+            ImGui::TextDisabled("%s", modeSel->about);
+            ImGui::PopTextWrapPos();
         }
         ImGui::EndGroup();
         flowPlaced();
@@ -3069,9 +3098,11 @@ static void renderBotAiConfig(ClientSim *cs,
         ImGui::SetCursorScreenPos(dfPos);
         ImGui::BeginGroup();
         ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTCFG_DIFFICULTY));
-        /* The default mode's easy / medium / hard keep their translated
-         * names; any other mode's levels are data and show their own label,
-         * because there are no lang strings for something a brain invented. */
+        /* Standard easy / medium / hard levels (the default mode, or a mode
+         * whose modes.txt says standard_levels = yes) keep their translated
+         * names and descriptions; any other mode's levels are data and show
+         * their own label, because there are no lang strings for something
+         * a brain invented. */
         const bool langLevels = lobbyBotModeUsesLangLevels(modes, curMode);
         const char *levelItems[BRAIN_LEVELS_MAX];
         for (int l = 0; l < modeSel->levelCount; l++) {

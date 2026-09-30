@@ -277,6 +277,9 @@ static void lobbyScenarioReselect(ServerSim *sim) {
        lobby that was all-ready would otherwise start on a scenario nobody
        agreed to. */
     lobbyAutoUnreadyOnChange(sim);
+    /* And the tracker's scenario and mod names follow the list, inside the
+       lobby update's usual rate limit. */
+    serverSimWbnLobbyUpdate(sim, FALSE);
 }
 
 static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
@@ -460,6 +463,11 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
                                   p->nameLen > 0 ? validatedName : NULL);
             if (p->mode != prevMode || p->difficulty != prevLevel) {
                 serverSimRememberManualBotPick(sim, p->slot);
+            }
+            /* A mode change is a person choosing the mode: the seat keeps
+               it when the host changes the game type. */
+            if (p->mode != prevMode) {
+                serverSimMarkBotModeSetByHand(sim, p->slot);
             }
         }
         return CMD_OK;

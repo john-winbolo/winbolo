@@ -662,6 +662,26 @@ STR_MAPCHOOSER_NOPREVIEW=Podgląd niedostępny
 STR_MAPCHOOSER_STATS=Bunkry: {number}  Bazy: {number2}  Starty: {number3}
 STR_MAPCHOOSER_MAPFILES=Pliki map
 STR_MAPCHOOSER_ALLFILES=Wszystkie pliki
+STR_MAPCHOOSER_SCENARIOSONLY=Tylko scenariusze
+STR_MAPCHOOSER_SCENARIOSONLY_TIP=Pokaż tylko mapy z własnym skryptem scenariusza.
+STR_MAPCHOOSER_NOSCENARIOMAPS=Brak tutaj map ze scenariuszem
+STR_MAPCHOOSER_SCENARIOSONLY_NOSEARCH=Ten filtr nie działa przy wyszukiwaniu na całym serwerze. Serwer nie podaje, które wyniki mają scenariusz.
+STR_MAPCHOOSER_VIEW_LIST=Lista
+STR_MAPCHOOSER_VIEW_GRID=Siatka
+STR_MAPCHOOSER_VIEW_LIST_TIP=Widok listy
+STR_MAPCHOOSER_VIEW_GRID_TIP=Widok siatki
+STR_MAPCHOOSER_SEARCH_HINT=Szukaj...
+STR_MAPCHOOSER_SEARCH_CLEAR=Wyczyść wyszukiwanie
+STR_MAPCHOOSER_SEARCH_SUBFOLDERS=Przeszukaj podfoldery
+STR_MAPCHOOSER_CREATED_AT=Utworzono
+STR_MAPCHOOSER_CREATED_AT_TIP=Pokaż czas modyfikacji pliku w drugiej kolumnie.
+STR_MAPCHOOSER_COL_NAME=Nazwa
+STR_MAPCHOOSER_COL_CREATED=Utworzono
+STR_MAPCHOOSER_UNSTAR_TIP=Kliknij, aby usunąć gwiazdkę
+STR_MAPCHOOSER_STAR_TIP=Kliknij, aby oznaczyć gwiazdką — zawsze będzie na górze
+STR_MAPCHOOSER_RESTORE_SIZE_TIP=Przywróć domyślny rozmiar (Esc)
+STR_MAPCHOOSER_MAXIMIZE_TIP=Maksymalizuj
+STR_MAPCHOOSER_LOADING_PREVIEW=Wczytywanie podglądu...
 
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Stan
@@ -2161,13 +2181,13 @@ STR_DLGLOBBY_SCENARIO_FILTER=Filtruj po nazwie
 STR_DLGLOBBY_SCENARIO_NO_MATCH=Nic tutaj nie pasuje do tej nazwy.
 STR_DLGLOBBY_SCENARIO_DETAILS=Szczegóły
 STR_DLGLOBBY_SCENARIO_DETAILS_TITLE=O {string1}
-STR_DLGLOBBY_MODS_ENABLED_CB=Mody włączone
-STR_DLGLOBBY_MODS_DETAILS_TIP=Otwiera wybór, w którym mody są dodawane, usuwane i porządkowane.
+STR_DLGLOBBY_MODS_ENABLED_CB=Mody/Scenariusz włączone
+STR_DLGLOBBY_MODS_DETAILS_TIP=Otwiera wybór, w którym scenariusz i mody są dodawane, usuwane i porządkowane.
 STR_DLGLOBBY_SCENARIO_ORDER_NOTE=Kolejność wczytywania i uruchamiania: to, co wyżej, ma priorytet.
 STR_DLGLOBBY_SCENARIO_ALL_IN_ROUND=Wszystko, co oferuje ten serwer, jest już w tej rundzie.
 STR_DLGLOBBY_MODS_HEAD_N=({number})
 STR_DLGLOBBY_MODS_TIP_ON=Te mody uruchomią się w tej rundzie, w tej kolejności:
-STR_DLGLOBBY_MODS_TIP_OFF=Mody są wyłączone. Te są wybrane do rundy, ale się nie uruchomią:
+STR_DLGLOBBY_MODS_TIP_OFF=Mody/Scenariusz jest wyłączony. Te są wybrane do rundy, ale się nie uruchomią:
 STR_DLGLOBBY_MODS_TIP_NONE=Dla tej rundy nie wczytano żadnych modów.
 STR_DLGLOBBY_MODS_OFF_NOTE=(wyłączone, nie uruchomi się)
 STR_SCNPANEL_SETTINGS_TITLE=Panel scenariusza
@@ -2406,18 +2426,14 @@ STR_MAPEDIT_SCENARIO_ARG_NUMBER=Liczba
 STR_MAPEDIT_SCENARIO_ARG_TEXT=Tekst
 STR_MAPEDIT_SCENARIO_TEXT_ONE_LONG=Akcja niesie jedną długą linię tekstu, którą zajął już inny argument.
 STR_DLGLOBBY_SCENARIO_RULES=Reguły
-STR_DLGLOBBY_SCENARIO_RULES_TITLE=Co zmienia {string1}
 STR_DLGLOBBY_RULES_COL_RULE=Reguła
 STR_DLGLOBBY_RULES_COL_CLASSIC=Klasyczna
 STR_DLGLOBBY_RULES_COL_SCENARIO=Scenariusz
 STR_DLGLOBBY_RULES_COL_CHANGE=Zmiana
-STR_DLGLOBBY_RULE_DETAIL_TITLE=Reguła: {string1}
-STR_DLGLOBBY_RULES_INFO=Info
-STR_DLGLOBBY_RULES_RANGE=Zakres
 STR_DLGLOBBY_RULES_OVERRIDDEN=Nadpisane przez {string1}, które ustawia {string2}
 
 # Under the rules table of a mod, on a server that has mods turned off.
-STR_DLGLOBBY_DETAILS_MODS_OFF=Mody są wyłączone na tym serwerze, więc reguły tego moda nie mają zastosowania.
+STR_DLGLOBBY_DETAILS_MODS_OFF=Mody/Scenariusz jest wyłączony na tym serwerze, więc reguły tego skryptu nie mają zastosowania.
 STR_DLGLOBBY_DETAILS_IMPLEMENTS_MOD=Co implementuje ten mod:
 STR_DLGLOBBY_DETAILS_IMPLEMENTS_SCENARIO=Co implementuje ten scenariusz:
 STR_DLGLOBBY_DETAILS_COL_METHOD=Metoda
@@ -2698,3 +2714,7 @@ STR_DLGSETTINGS_WORKSHOP_UNUSABLE=Nie do użycia
 
 # The lobby's Workshop chip
 STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Warsztat
+
+# The game finder's scripts
+STR_DLGBROWSER_MODS=Mody
+STR_DLGBROWSER_MODS_MORE=+ mody ({number})

@@ -461,7 +461,7 @@ Each team:
 | `max_bots` | number | The ceiling a host may raise `bots` to. 0 means no ceiling stated, which is not the same as no bots allowed. |
 | `fielded` | boolean | True (the default) puts a bot in the seat at the start of the round. False holds the seat without one: it is in the roster, it takes no tank, and no bot plays in it until a `spawn_bot` names it. Its runner is built ahead of the round, as the two paragraphs below this table describe. |
 | `brain` | string | The brain this team's bots run, **named**: the directory under the server's `brains/`, such as `GoalHunter_1.7`. Empty means the server's own. A name this server does not have leaves the team's seats on the server's own brain, says one line on the console, and is reported by `-validate` before a round is ever started. A value with `/` or `\` in it is a path, not a name, and is refused as such — a scenario shared with a server knows nothing of that server's layout, which is why it names the brain and lets the server find it. `package:NAME`, a brain carried inside the scenario, is still refused with `SCN_OP_NOT_FOUND`. |
-| `mode` | string | The brain mode this team's bots play in, by the key the brain's own `modes.txt` lists — `"survival"`, say. Left out, the seats keep whatever mode the lobby would have given them. |
+| `mode` | string | The brain mode this team's bots play in, by the key the brain's own `modes.txt` lists — `"default"`, say. Left out, the seats keep whatever mode the lobby would have given them. |
 | `difficulty` | string | The level inside that mode, by the key the same file lists — `"hard"`. Left out, the seats keep the lobby's level, except that a team naming a `mode` and no `difficulty` lands on that mode's own default level. |
 | `init` | table | A flat table of names to strings or numbers, handed to this team's bots when their VM is built. A `spawn_bot` that names one of these seats and carries no `init` of its own gets this one. |
 
@@ -500,8 +500,8 @@ template describes the lobby each round opens with.
 **Add Bot on one of these teams reads the template too.** A seat the host
 adds to a team the template named a `mode` or a `difficulty` on is not a
 plain lobby bot: the server resolves it the same way the seating does, so
-Survival's horde grows in survival mode however the lobby's own default is
-set. The level is the first of these that exists:
+Survival's horde grows in the mode its template names however the lobby's
+own default is set. The level is the first of these that exists:
 
 1. the most recent difficulty a **person** set on a seat of **that team**,
    through the difficulty dropdown, this lobby session;
@@ -509,11 +509,11 @@ set. The level is the first of these that exists:
 3. the default level of the mode the team named;
 4. Hard.
 
-The mode is always the template's — a host who moves one horde seat out of
-survival mode has moved that seat and nothing else, and the next Add Bot on
-that team is back in survival. A team the template does not name, or names
-neither key on, keeps the ordinary lobby rule, where the last pair a person
-chose by hand sets the mode as well as the level.
+The mode is always the template's — a host who moves one horde seat into
+another mode has moved that seat and nothing else, and the next Add Bot on
+that team is back in the template's mode. A team the template does not
+name, or names neither key on, keeps the ordinary lobby rule, where the last
+pair a person chose by hand sets the mode as well as the level.
 
 The memory is per team and lasts one lobby session. It is cleared with every
 other lobby-session memory when a round ends and when the last person leaves,
@@ -1241,7 +1241,7 @@ one does not say is gone, because the brain's table is rebuilt rather than
 merged into. Values are text and numbers, as a spawn's are, so a flag a brain
 reads as on or off is written `"1"` and `"0"` rather than `true` and `false`.
 GoalHunter treats only its known flag words that way (`noblitz`, `blitzonly`,
-`suicider`, `nosuicider`, `noclaimdead`, `normal`, `ammoless`); a valued token such as
+`suicider`, `nosuicider`, `noclaimdead`, `normal`, `ammoless`, `survivor`, `horde`); a valued token such as
 `blitzsuiciders = "1"` keeps its value.
 
 What the bot does with it is the brain's business, and there are two levels
@@ -1259,7 +1259,7 @@ to it:
 GoalHunter, the brain that ships with the server, writes one: it re-reads the
 whole token string, so `cfg=NAME=VALUE` and `preset=` change its constants
 there and then, and the bare flags (`noblitz`, `blitzonly`, `suicider`,
-`nosuicider`, `noclaimdead`, `normal`, `ammoless`) change the bot's behaviour from the next
+`nosuicider`, `noclaimdead`, `normal`, `ammoless`, `survivor`, `horde`) change the bot's behaviour from the next
 tick. `difficulty=` and `mode=` are **not** applied at runtime — those choose a
 whole bundle of values at load and a second bundle cannot unset the first — so
 the brain logs them as unsupported and leaves them. It also says one line to

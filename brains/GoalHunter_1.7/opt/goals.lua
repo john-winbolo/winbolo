@@ -2059,8 +2059,16 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
     if not local_gate and low_shells_global and not boat_sink then
       local_gate = string.format("low_shells(%d<%d)", info.shells, C.TANK_COMBAT_MIN_SHELLS)
     end
-    -- `attack <tank name>` ORDER: the min-shells gate and the pill-crossfire
-    -- gate are waived for the ONE tank the human named. No danger check.
+    -- C.ATTACK_TANK_PILL_HEAT_ONLY: this bot does not fight tanks itself, so a
+    -- tank is a candidate only while a friendly pill can be heated at it.
+    if not local_gate and C.ATTACK_TANK_PILL_HEAT_ONLY
+       and not attack.heat_pill_available(state, world, info, et, state.tick or 0,
+                                          tmx, tmy, require("steering").shot_path_clear) then
+      local_gate = "heat_only"
+    end
+    -- `attack <tank name>` ORDER: the min-shells gate, the pill-crossfire
+    -- gate and the heat_only gate are waived for the ONE tank the human
+    -- named. No danger check.
     if C.BOT_COMMANDS_ENABLED and state._order
        and state._order.kind == "attack_tank" and state._order.tid == et.id then
       local_gate = nil
@@ -2580,6 +2588,31 @@ end
 local defend_hold_tile   -- forward decl (defined with the defend evaluators
                          -- below; the follow-through bid uses the same
                          -- "where do I stand while I wait" answer defend does)
+-- Defensive turtle home (C.PILL_PLACE_TURTLE): the tile a turtling bot grows
+-- its one pill cluster around. The friendly live pill with the most friendly
+-- live pills within PILL_FIRE_RANGE; ties go to the one nearer the tank, then
+-- the lower tile id (my*256+mx), so the pick never depends on pairs() order.
+-- With no friendly pill, the nearest friendly base (fbx, fby). Answers
+-- mx, my, reason, or nil when there is neither. On M, not a module local:
+-- this chunk is at Lua's 200-local cap.
+function M.turtle_home(world, tmx, tmy, fbx, fby)
+  local best_mx, best_my, best_n, best_d, best_id
+  for _, p in pairs(world.pills) do
+    if p.owner == "friendly" and p.health > 0 then
+      local n  = count_pills_near(world, p.mx, p.my, C.PILL_FIRE_RANGE, "friendly")
+      local d  = U.mdist(tmx, tmy, p.mx, p.my)
+      local id = p.my * 256 + p.mx
+      if not best_mx or n > best_n
+         or (n == best_n and (d < best_d or (d == best_d and id < best_id))) then
+        best_mx, best_my, best_n, best_d, best_id = p.mx, p.my, n, d, id
+      end
+    end
+  end
+  if best_mx then return best_mx, best_my, "turtle_home" end
+  if fbx then return fbx, fby, "turtle_base" end
+  return nil
+end
+
 local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, ammo, only)
   if not C.STRATEGIC_PLACE_ENABLED then return nil end
 
@@ -2971,9 +3004,22 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   local spike_base = nil
   local search_reason = "base_defense"
 
-  -- 1. Pill war zone
+  -- 0. Defensive turtle (C.PILL_PLACE_TURTLE): the home cluster comes before
+  --    the whole chain, and is also the centre of the scan square below.
+  local turtle = C.PILL_PLACE_TURTLE == true
+  local scan_mx, scan_my = tmx, tmy
+  if turtle then
+    local h_mx, h_my, h_why = M.turtle_home(world, tmx, tmy, fbx, fby)
+    if h_mx then
+      search_mx, search_my, search_reason = h_mx, h_my, h_why
+      scan_mx, scan_my = h_mx, h_my
+    end
+  end
+
+  -- 1. Pill war zone (wz_mx is also the war-zone term's centre, so it is
+  --    looked up even when the turtle home already holds the centre)
   local wz_mx, wz_my = detect_pill_war_zone(world)
-  if wz_mx then
+  if wz_mx and not search_mx then
     search_mx, search_my = wz_mx, wz_my
     search_reason = "pill_war"
   end
@@ -3192,7 +3238,10 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         local cell_inf = cpf.influence_at(cx, cy)
         local cell_cat = PP.classify(cx, cy, false, true)
         local _ctgt = pf_targets[cell_cat]
-        if _ctgt and (pf_counts[cell_cat] or 0) >= _ctgt then return end
+        -- Defensive turtle: the pill-type balance does not steer the cluster
+        -- (no surplus skip, no STRICT_NEED gate, port term 0 below).
+        local turtle = C.PILL_PLACE_TURTLE == true
+        if not turtle and _ctgt and (pf_counts[cell_cat] or 0) >= _ctgt then return end
         -- HARD balance gate (STRATEGIC_PLACE_STRICT_NEED): non-panic
         -- placement fills ONLY the single most-needed category. Merely
         -- being under target isn't enough — classification drifts with
@@ -3201,10 +3250,18 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         -- back 5/1), so any slack here bleeds the portfolio out of
         -- balance. Panic/offensive_build/desperate drops bypass this scan
         -- entirely and stay exempt.
-        if (C.STRATEGIC_PLACE_STRICT_NEED ~= false)
+        if not turtle and (C.STRATEGIC_PLACE_STRICT_NEED ~= false)
            and pf_need_cat and cell_cat ~= pf_need_cat then
           return
         end
+        -- Five weights and the pill gap switch to the turtle knobs (four are
+        -- Easy's back/defensive numbers, constants.lua EASY_DEFENSIVE_PLACE).
+        local w_base  = turtle and C.PILL_PLACE_TURTLE_BASE_WEIGHT or C.STRATEGIC_PLACE_BASE_WEIGHT
+        local w_undef = turtle and C.PILL_PLACE_TURTLE_UNDERDEFENDED_BONUS or C.STRATEGIC_PLACE_UNDERDEFENDED_BONUS
+        local w_bfp   = turtle and C.PILL_PLACE_TURTLE_BEYOND_FRONT_PENALTY or C.STRATEGIC_PLACE_BEYOND_FRONT_PENALTY
+        local w_thr   = turtle and C.PILL_PLACE_TURTLE_THREAT_WEIGHT or C.STRATEGIC_PLACE_THREAT_WEIGHT
+        local w_spk   = turtle and C.PILL_PLACE_TURTLE_SPIKE_BONUS or C.STRATEGIC_PLACE_SPIKE_BONUS
+        local w_gap   = turtle and C.PILL_PLACE_TURTLE_SPACING or C.STRATEGIC_PLACE_PILL_SPACING
         local score = 0
         local sc1, sc2, sc3, sc4, sc5, sc6, sc7, sc8, sc9, sc10, sc11, sc12, sc13 = 0,0,0,0,0,0,0,0,0,0,0,0,0
         local sc_center = 0
@@ -3214,7 +3271,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         --    be placed deep. nil base_dist = no friendly base, contributes 0.)
         local _, _, base_dist = nearest_friendly_base_pos(world, cx, cy)
         if base_dist then
-          sc1 = math.max(0, C.STRATEGIC_PLACE_MAX_BASE_DIST - base_dist) * C.STRATEGIC_PLACE_BASE_WEIGHT
+          sc1 = math.max(0, C.STRATEGIC_PLACE_MAX_BASE_DIST - base_dist) * w_base
           score = score + sc1
         end
 
@@ -3231,7 +3288,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         do
           local base_pill_count = count_pills_near(world, cx, cy, C.STRATEGIC_PLACE_DEFENSE_RADIUS, "friendly")
           if base_pill_count < 2 then
-            sc2 = C.STRATEGIC_PLACE_UNDERDEFENDED_BONUS * (2 - base_pill_count)
+            sc2 = w_undef * (2 - base_pill_count)
             score = score + sc2
           end
         end
@@ -3245,7 +3302,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
           if influence < 0
              or (influence == 0 and C.FRONT_ZERO_IS_FRONT == false
                  and not PP.near_front(cx, cy, C.FRONT_NEAR_RADIUS_PLACE or 0)) then
-            score = score - C.STRATEGIC_PLACE_BEYOND_FRONT_PENALTY
+            score = score - w_bfp
           elseif influence > 0 then
             score = score + math.max(0, C.STRATEGIC_PLACE_FRONT_PROX_CAP - influence)
                    * C.STRATEGIC_PLACE_FRONT_PROX_WEIGHT
@@ -3259,8 +3316,8 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         do
           local s0 = score
           local pill_dist = nearest_friendly_pill_dist(world, cx, cy)
-          if pill_dist < C.STRATEGIC_PLACE_PILL_SPACING then
-            local deficit = C.STRATEGIC_PLACE_PILL_SPACING - pill_dist
+          if pill_dist < w_gap then
+            local deficit = w_gap - pill_dist
             local pen = C.STRATEGIC_PLACE_PILL_PENALTY_W
                       * (C.STRATEGIC_PLACE_PILL_PENALTY_BASE ^ deficit - 1)
             score = score - math.min(C.STRATEGIC_PLACE_PILL_PENALTY_CAP, pen)
@@ -3280,7 +3337,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         -- 6. Threat penalty
         do
           local thr = threat.at(cx, cy)
-          sc6 = -thr * C.STRATEGIC_PLACE_THREAT_WEIGHT
+          sc6 = -thr * w_thr
           score = score + sc6
         end
 
@@ -3294,7 +3351,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         if spike_base then
           local hb_dist = U.mdist(cx, cy, spike_base.mx, spike_base.my)
           if hb_dist <= 2 then
-            sc8 = C.STRATEGIC_PLACE_SPIKE_BONUS
+            sc8 = w_spk
             score = score + sc8
           end
         end
@@ -3331,7 +3388,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         --     beyond-front penalty (sc3) when aggro is short.
         do
           local deficit = (pf_targets[cell_cat] or 0) - (pf_counts[cell_cat] or 0)
-          sc11 = deficit * C.STRATEGIC_PLACE_PORTFOLIO_WEIGHT
+          sc11 = turtle and 0 or deficit * C.STRATEGIC_PLACE_PORTFOLIO_WEIGHT
           score = score + sc11
         end
 
@@ -3426,8 +3483,9 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
 
   for dy = -R, R do
     for dx = -R, R do
-      -- TANK-centric: scan around our position
-      local cx, cy = U.mclamp(tmx + dx), U.mclamp(tmy + dy)
+      -- TANK-centric: scan around our position (the turtle home instead,
+      -- when C.PILL_PLACE_TURTLE found one: scan_mx/scan_my above)
+      local cx, cy = U.mclamp(scan_mx + dx), U.mclamp(scan_my + dy)
       if blitz_lines and U.is_placeable(cx, cy, world)
          and squad.tile_on_blitz_line(world, blitz_lines, cx, cy, blk_now) then
         n_line_skip = n_line_skip + 1
@@ -3791,8 +3849,22 @@ function M.get_strategic_place_heatmap(state, world, info)
   local spike_base = nil
   local search_reason = "base_defense"
 
+  -- Defensive turtle: home first, and the scan square is centred on it.
+  -- (nearest_friendly_base_pos again: fbx above is the tank tile when there
+  -- is no friendly base, and turtle_home must see "no base" as nil.)
+  local turtle = C.PILL_PLACE_TURTLE == true
+  local scan_mx, scan_my = tmx, tmy
+  if turtle then
+    local rbx, rby = nearest_friendly_base_pos(world, tmx, tmy)
+    local h_mx, h_my, h_why = M.turtle_home(world, tmx, tmy, rbx, rby)
+    if h_mx then
+      search_mx, search_my, search_reason = h_mx, h_my, h_why
+      scan_mx, scan_my = h_mx, h_my
+    end
+  end
+
   local wz_mx, wz_my = detect_pill_war_zone(world)
-  if wz_mx then
+  if wz_mx and not search_mx then
     search_mx, search_my = wz_mx, wz_my
     search_reason = "pill_war"
   end
@@ -3855,13 +3927,20 @@ function M.get_strategic_place_heatmap(state, world, info)
 
   for dy = -R, R do
     for dx = -R, R do
-      local cx = U.mclamp(tmx + dx)   -- TANK-centric (matches the eval scan)
-      local cy = U.mclamp(tmy + dy)
+      local cx = U.mclamp(scan_mx + dx)   -- TANK-centric, or turtle home (matches the eval scan)
+      local cy = U.mclamp(scan_my + dy)
       if U.is_placeable(cx, cy, world) then
         -- Skip a category already at/over its projected target (no room).
+        -- Turtle: no skip (matches the eval scan).
         local cell_cat = PP.classify(cx, cy, false, true)
         local _ctgt = pf_targets[cell_cat]
-        if _ctgt and (pf_counts[cell_cat] or 0) >= _ctgt then goto skip_hm end
+        if not turtle and _ctgt and (pf_counts[cell_cat] or 0) >= _ctgt then goto skip_hm end
+        local w_base  = turtle and C.PILL_PLACE_TURTLE_BASE_WEIGHT or C.STRATEGIC_PLACE_BASE_WEIGHT
+        local w_undef = turtle and C.PILL_PLACE_TURTLE_UNDERDEFENDED_BONUS or C.STRATEGIC_PLACE_UNDERDEFENDED_BONUS
+        local w_bfp   = turtle and C.PILL_PLACE_TURTLE_BEYOND_FRONT_PENALTY or C.STRATEGIC_PLACE_BEYOND_FRONT_PENALTY
+        local w_thr   = turtle and C.PILL_PLACE_TURTLE_THREAT_WEIGHT or C.STRATEGIC_PLACE_THREAT_WEIGHT
+        local w_spk   = turtle and C.PILL_PLACE_TURTLE_SPIKE_BONUS or C.STRATEGIC_PLACE_SPIKE_BONUS
+        local w_gap   = turtle and C.PILL_PLACE_TURTLE_SPACING or C.STRATEGIC_PLACE_PILL_SPACING
         local score = 0
 
         -- Strategic-center bias.
@@ -3873,12 +3952,12 @@ function M.get_strategic_place_heatmap(state, world, info)
 
         local _, _, base_dist = nearest_friendly_base_pos(world, cx, cy)
         if base_dist then
-          score = score + math.max(0, C.STRATEGIC_PLACE_MAX_BASE_DIST - base_dist) * C.STRATEGIC_PLACE_BASE_WEIGHT
+          score = score + math.max(0, C.STRATEGIC_PLACE_MAX_BASE_DIST - base_dist) * w_base
         end
 
         do
           local bpc = count_pills_near(world, cx, cy, C.STRATEGIC_PLACE_DEFENSE_RADIUS, "friendly")
-          if bpc < 2 then score = score + C.STRATEGIC_PLACE_UNDERDEFENDED_BONUS * (2 - bpc) end
+          if bpc < 2 then score = score + w_undef * (2 - bpc) end
         end
 
         do
@@ -3888,7 +3967,7 @@ function M.get_strategic_place_heatmap(state, world, info)
           if influence < 0
              or (influence == 0 and C.FRONT_ZERO_IS_FRONT == false
                  and not PP.near_front(cx, cy, C.FRONT_NEAR_RADIUS_PLACE or 0)) then
-            score = score - C.STRATEGIC_PLACE_BEYOND_FRONT_PENALTY
+            score = score - w_bfp
           elseif influence > 0 then
             score = score + math.max(0, C.STRATEGIC_PLACE_FRONT_PROX_CAP - influence)
                    * C.STRATEGIC_PLACE_FRONT_PROX_WEIGHT
@@ -3897,8 +3976,8 @@ function M.get_strategic_place_heatmap(state, world, info)
 
         do
           local pd = nearest_friendly_pill_dist(world, cx, cy)
-          if pd < C.STRATEGIC_PLACE_PILL_SPACING then
-            local deficit = C.STRATEGIC_PLACE_PILL_SPACING - pd
+          if pd < w_gap then
+            local deficit = w_gap - pd
             local pen = C.STRATEGIC_PLACE_PILL_PENALTY_W
                       * (C.STRATEGIC_PLACE_PILL_PENALTY_BASE ^ deficit - 1)
             score = score - math.min(C.STRATEGIC_PLACE_PILL_PENALTY_CAP, pen)
@@ -3912,12 +3991,12 @@ function M.get_strategic_place_heatmap(state, world, info)
           score = score + los * C.STRATEGIC_PLACE_LOS_WEIGHT
         end
 
-        score = score - threat.at(cx, cy) * C.STRATEGIC_PLACE_THREAT_WEIGHT
+        score = score - threat.at(cx, cy) * w_thr
         score = score - U.mdist(tmx, tmy, cx, cy) * 0.5
 
         if spike_base then
           if U.mdist(cx, cy, spike_base.mx, spike_base.my) <= 2 then
-            score = score + C.STRATEGIC_PLACE_SPIKE_BONUS
+            score = score + w_spk
           end
         end
 
@@ -3945,8 +4024,11 @@ function M.get_strategic_place_heatmap(state, world, info)
         end
 
         -- 11. Portfolio deficit bias (push toward the under-target category).
-        score = score + ((pf_targets[cell_cat] or 0) - (pf_counts[cell_cat] or 0))
-                        * C.STRATEGIC_PLACE_PORTFOLIO_WEIGHT
+        -- (0 while turtling, matching the eval scan.)
+        if not turtle then
+          score = score + ((pf_targets[cell_cat] or 0) - (pf_counts[cell_cat] or 0))
+                          * C.STRATEGIC_PLACE_PORTFOLIO_WEIGHT
+        end
         -- 12. Protective coverage (friendly pills + bases in fire range).
         score = score + count_pills_near(world, cx, cy, C.PILL_FIRE_RANGE, "friendly") * C.STRATEGIC_PLACE_COVERAGE_PILL_WEIGHT
                       + count_friendly_bases_near(world, cx, cy, C.PILL_FIRE_RANGE) * C.STRATEGIC_PLACE_COVERAGE_BASE_WEIGHT

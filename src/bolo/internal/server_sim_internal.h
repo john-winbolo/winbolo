@@ -255,15 +255,16 @@ struct ServerSim {
      * when it changes mode or difficulty — and never by an automatic write
      * (a scenario seed, single player's own add path, the CLI). Otherwise
      * the game's defaults pass for the host's choice: that is how single
-     * player's skill guess used to override Survival's Hard.
+     * player's skill guess used to override the Hard that Survival's
+     * template names for its horde.
      *
      * Stored as the brain's own KEYS, not the indices that are kept in
      * botConfigs. An index only means something against one manifest: mode
-     * 1 is "survival" in GoalHunter and could be anything at all in another
-     * brain, so copying the number onto a bot running a different brain
-     * would silently pick the wrong mode. Keys are re-resolved against
-     * whatever brain the new bot actually runs, and a key that brain has
-     * never heard of is simply dropped.
+     * 1 is whatever that brain's modes.txt lists second and could be
+     * anything at all in another brain, so copying the number onto a bot
+     * running a different brain would silently pick the wrong mode. Keys
+     * are re-resolved against whatever brain the new bot actually runs, and
+     * a key that brain has never heard of is simply dropped.
      *
      * Empty strings mean "nothing chosen yet this lobby session" — bots are
      * added at the ordinary default. The lifetime is one lobby session: the
@@ -289,7 +290,7 @@ struct ServerSim {
      * pair above is the wrong memory for those teams: it would carry the
      * mode across as well, and it would carry a level chosen on the
      * defenders' team onto the horde. Survival is the shape: the horde is
-     * survival mode at whatever difficulty a human last set on a HORDE
+     * the default mode at whatever difficulty a human last set on a HORDE
      * seat, and the defenders are whatever the host picks for themselves.
      *
      * Written by the same one writer as the pair above, cleared in the same
@@ -302,6 +303,14 @@ struct ServerSim {
      * serverSimFlushBotConfigPublishes, so a scenario seed's ten bots do not
      * add ten events to the burst it already makes in one call stack. */
     uint16_t        botConfigPublishPending;
+
+    /* One bit per slot: a person changed this bot's MODE by hand (the gear
+     * popup's Mode dropdown, through CMD_LOBBY_BOT_CONFIG). A seat with the
+     * bit keeps its mode when the host changes the game type; a seat without
+     * it follows the new type's starting mode (brainModesStartMode). Set only
+     * by serverSimMarkBotModeSetByHand, cleared when the seat's player leaves
+     * (serverSimRemovePlayer) and when new-bot defaults are applied. */
+    uint16_t        botModeSetByHand;
 
     BotManager      botMgr;  /* per-sim bot manager — initialised by botManagerInitInSim */
 
@@ -444,8 +453,10 @@ struct ServerSim {
                                     * both give — has to mean pings ALLOWED,
                                     * because that is what every build before
                                     * this one did. */
-    bool     modsOff;              /* the round composes none of the mods on
-                                    * the pick list. Stored in the negative
+    bool     modsOff;              /* the round composes none of the scripts
+                                    * on the pick list, mods and picked
+                                    * scenarios alike; the map's own script
+                                    * still plays. Stored in the negative
                                     * sense for the same reason as
                                     * smartPingsOff above. The pick list is
                                     * left alone, so this is what a host turns

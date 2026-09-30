@@ -828,6 +828,26 @@ STR_MAPCHOOSER_NOPREVIEW=No preview available
 STR_MAPCHOOSER_STATS=Pillboxes: {number}  Bases: {number2}  Starts: {number3}
 STR_MAPCHOOSER_MAPFILES=Map Files
 STR_MAPCHOOSER_ALLFILES=All Files
+STR_MAPCHOOSER_SCENARIOSONLY=Scenarios only
+STR_MAPCHOOSER_SCENARIOSONLY_TIP=Show only the maps that carry their own scenario script.
+STR_MAPCHOOSER_NOSCENARIOMAPS=No maps with a scenario here
+STR_MAPCHOOSER_SCENARIOSONLY_NOSEARCH=This filter does not work on a server-wide search. The server does not say which hits have a scenario.
+STR_MAPCHOOSER_VIEW_LIST=List
+STR_MAPCHOOSER_VIEW_GRID=Grid
+STR_MAPCHOOSER_VIEW_LIST_TIP=List view
+STR_MAPCHOOSER_VIEW_GRID_TIP=Grid view
+STR_MAPCHOOSER_SEARCH_HINT=Search...
+STR_MAPCHOOSER_SEARCH_CLEAR=Clear search
+STR_MAPCHOOSER_SEARCH_SUBFOLDERS=Search subfolders
+STR_MAPCHOOSER_CREATED_AT=Created at
+STR_MAPCHOOSER_CREATED_AT_TIP=Show file modification times in a second column.
+STR_MAPCHOOSER_COL_NAME=Name
+STR_MAPCHOOSER_COL_CREATED=Created
+STR_MAPCHOOSER_UNSTAR_TIP=Click to unstar
+STR_MAPCHOOSER_STAR_TIP=Click to star to always appear at the top
+STR_MAPCHOOSER_RESTORE_SIZE_TIP=Restore default size (Esc)
+STR_MAPCHOOSER_MAXIMIZE_TIP=Maximize
+STR_MAPCHOOSER_LOADING_PREVIEW=Loading preview...
 
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Status
@@ -2206,13 +2226,13 @@ STR_DLGLOBBY_SCENARIO_FILTER=Filter by name
 STR_DLGLOBBY_SCENARIO_NO_MATCH=Nothing here matches that name.
 STR_DLGLOBBY_SCENARIO_DETAILS=Details
 STR_DLGLOBBY_SCENARIO_DETAILS_TITLE=About {string1}
-STR_DLGLOBBY_MODS_ENABLED_CB=Mods Enabled
-STR_DLGLOBBY_MODS_DETAILS_TIP=Opens the chooser, where mods are added, removed and ordered.
+STR_DLGLOBBY_MODS_ENABLED_CB=Mods/Scenario Enabled
+STR_DLGLOBBY_MODS_DETAILS_TIP=Opens the chooser, where the scenario and mods are added, removed and ordered.
 STR_DLGLOBBY_SCENARIO_ORDER_NOTE=Load and run order: Higher up has priority.
 STR_DLGLOBBY_SCENARIO_ALL_IN_ROUND=Everything this server offers is already in the round.
 STR_DLGLOBBY_MODS_HEAD_N=({number})
 STR_DLGLOBBY_MODS_TIP_ON=These mods run this round, in this order:
-STR_DLGLOBBY_MODS_TIP_OFF=Mods are switched off. These are picked for the round, but will not run:
+STR_DLGLOBBY_MODS_TIP_OFF=Mods/Scenario is switched off. These are picked for the round, but will not run:
 STR_DLGLOBBY_MODS_TIP_NONE=No mods are loaded for this round.
 STR_DLGLOBBY_MODS_OFF_NOTE=(switched off, will not run)
 STR_SCNPANEL_SETTINGS_TITLE=Scenario Panel
@@ -2398,18 +2418,14 @@ STR_MAPEDIT_SCENARIO_ARG_NUMBER=Number
 STR_MAPEDIT_SCENARIO_ARG_TEXT=Text
 STR_MAPEDIT_SCENARIO_TEXT_ONE_LONG=An action carries one long line, and another argument has it
 STR_DLGLOBBY_SCENARIO_RULES=Rules
-STR_DLGLOBBY_SCENARIO_RULES_TITLE=What {string1} changes
 STR_DLGLOBBY_RULES_COL_RULE=Rule
 STR_DLGLOBBY_RULES_COL_CLASSIC=Classic
 STR_DLGLOBBY_RULES_COL_SCENARIO=Scenario
 STR_DLGLOBBY_RULES_COL_CHANGE=Change
-STR_DLGLOBBY_RULE_DETAIL_TITLE=Rule: {string1}
-STR_DLGLOBBY_RULES_INFO=Info
-STR_DLGLOBBY_RULES_RANGE=Range
 STR_DLGLOBBY_RULES_OVERRIDDEN=Overridden by {string1}, which sets {string2}
 
-# Under the rules table of a mod, on a server that has mods turned off.
-STR_DLGLOBBY_DETAILS_MODS_OFF=Mods are turned off on this server, so this mod's rules do not apply.
+# Under the rules table of a pick, on a server with Mods/Scenario off.
+STR_DLGLOBBY_DETAILS_MODS_OFF=Mods/Scenario is turned off on this server, so this script's rules do not apply.
 STR_DLGLOBBY_DETAILS_IMPLEMENTS_MOD=What this mod implements:
 STR_DLGLOBBY_DETAILS_IMPLEMENTS_SCENARIO=What this scenario implements:
 STR_DLGLOBBY_DETAILS_COL_METHOD=Method
@@ -2529,8 +2545,8 @@ STR_RULE_DESC_pill_angry_divisor=The step a pillbox's interval takes from its no
 STR_RULE_DESC_pill_fire_length=How far the shell a pillbox fires flies.
 STR_RULE_DESC_pill_base_defend_range=How near a base has to be for shooting it to anger a pillbox.
 STR_RULE_DESC_pill_aim_iterations=How hard a pillbox works to lead a moving target.
-STR_RULE_DESC_pill_massage_range=How near a tank has to be for a pillbox to aim with the original forward prediction rather than the solver, which misses a tank circling it. Zero, the classic table, is a pillbox that always leads its target properly; 384 is a square and a half, the distance the old build-time switch used.
-STR_RULE_DESC_pill_massage_cosine=How straight at a close pillbox a tank has to be driving to be aimed at properly anyway, as the cosine of the angle between its heading and the line to the pillbox. One aims sloppily at every tank inside pill_massage_range, zero at none of them. Does nothing while that rule is zero.
+STR_RULE_DESC_pill_massage_range=How near a tank has to be for the legacy pill-massage approximation to replace the aim solver. Zero disables it; 384 is a square and a half. Ignored while pill_aim_mac is on.
+STR_RULE_DESC_pill_massage_cosine=The largest absolute cosine between a tank's heading and the line to the pill that uses the legacy massage approximation. One includes every heading; zero includes only exactly sideways movement. Does nothing when pill_massage_range is zero or pill_aim_mac is on.
 STR_RULE_DESC_base_full_armour=The most armour a base holds.
 STR_RULE_DESC_base_full_shells=The most shells a base holds.
 STR_RULE_DESC_base_full_mines=The most mines a base holds.
@@ -2589,6 +2605,8 @@ STR_RULE_DESC_pill_max_shells_at_tank=The most pillbox shells that can be in the
 STR_RULE_DESC_pill_base_defend_shape=How pill_base_defend_range is measured. 0 is a square, taken on each axis with its edge included, the WinBolo rule. 1 is a circle, taken as a radius with its edge left out, the Mac Bolo rule.
 STR_RULE_DESC_tank_slide_armour_bonus=Extra push step at zero armour, added to tank_slide_step in proportion to the armour missing before the hit. Only read while tank_slide_mac is on.
 STR_RULE_DESC_tank_slide_mac=Whether a shell hit pushes a tank the Mac Bolo way. On, the push grows as armour falls, by tank_slide_armour_bonus, and tank_slide_step and tank_bump_decay_shift are read per 40 ms, in a slide that moves every tick. Off is the WinBolo push, the same at every armour level.
+STR_RULE_DESC_pill_aim_mac=Whether pillboxes use Mac Bolo aiming. Moving, unobstructed tanks within about one square make the pill aim far along their heading. Stopped or blocked tanks receive no lead. Overrides pill_massage_range, pill_massage_cosine and pill_aim_iterations.
+STR_RULE_DESC_tank_collision_mac=Whether tanks use Mac Bolo's direction-dependent sprite boxes and pixel nudges against walls, live pills and hostile bases. Allows closer passes beside a pill for pill massage.
 
 # Rule range wording
 STR_RULE_RANGE_BETWEEN={string1} to {string2}
@@ -2697,4 +2715,8 @@ STR_DLGSETTINGS_WORKSHOP_UNUSABLE=Not usable
 
 # The lobby's Workshop chip
 STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop
+
+# The game finder's scripts
+STR_DLGBROWSER_MODS=Mods
+STR_DLGBROWSER_MODS_MORE=+{number} mods
 
