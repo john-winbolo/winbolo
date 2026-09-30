@@ -384,7 +384,7 @@ void lobbyDrawTagline(const char *tag, float wrapPosX, int difficulty) {
 
 /* Gear hover tooltip: "Configure" plus a "Currently:" line naming the bot,
  * its mode when that is not the default one, and its difficulty
- * ("GoalHunter · Survival Scenario · Hard"). The default mode adds that
+ * ("GoalHunter · Turtle · Hard"). The default mode adds that
  * difficulty's short tagline underneath with the Easy./Medium./Hard. token
  * coloured; another mode's levels have no such blurb (they are data), so
  * the line above says it all. */

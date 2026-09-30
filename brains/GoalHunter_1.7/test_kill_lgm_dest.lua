@@ -496,7 +496,7 @@ do
   local D = dofile("constants.lua")
   check("no difficulty token = C.DIFFICULTY 'hard' = feature on",
         D.DIFFICULTY == "hard" and all(D, true), D.DIFFICULTY)
-  for _, mode in ipairs({ "default", "survival" }) do
+  for _, mode in ipairs({ "default", "turtle" }) do
     local M, bad = resolve(mode, "hard")
     check(mode .. "/hard -> AIM, LIVE_PILLS, HOLD_FIRE, INTERCEPT, PASS_THROUGH on", all(M, true) and not bad, bad)
     for _, diff in ipairs({ "medium", "easy" }) do

@@ -726,7 +726,7 @@ int run_scenario_packed_map_team_init(void) {
         "  \"lobby\": {\n"
         "    \"teams\": [\n"
         "      { \"id\": 2, \"bots\": 1, \"max_bots\": 1, \"fielded\": false,\n"
-        "        \"mode\": \"survival\", \"difficulty\": \"hard\",\n"
+        "        \"mode\": \"turtle\", \"difficulty\": \"hard\",\n"
         "        \"init\": { \"waves\": \"3\", \"style\": \"rush\" } }\n"
         "    ]\n"
         "  }\n"
@@ -789,9 +789,9 @@ int run_scenario_packed_map_team_init(void) {
                plays whatever the lobby would have given it, which for a
                scenario built around one mode is the wrong game. */
             UT_ASSERT_MSG(
-                strcmp(sim->scenarioLobby.teams[i].mode, "survival") == 0,
+                strcmp(sim->scenarioLobby.teams[i].mode, "turtle") == 0,
                 "the team reached the template in mode '%s', expected "
-                "'survival'", sim->scenarioLobby.teams[i].mode);
+                "'turtle'", sim->scenarioLobby.teams[i].mode);
             UT_ASSERT_MSG(
                 strcmp(sim->scenarioLobby.teams[i].difficulty, "hard") == 0,
                 "the team reached the template at difficulty '%s', "

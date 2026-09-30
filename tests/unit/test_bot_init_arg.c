@@ -122,10 +122,10 @@ int run_bot_init_arg_mode_tokens(void) {
                                BOT_DIFFICULTY_HARD, 0);
     UT_ASSERT_MSG(strcmp(arg, "difficulty=medium;mode=default") == 0,
                   "explicit difficulty was not kept: '%s'", arg);
-    SDL_strlcpy(arg, "preset=keel;mode=survival;difficulty=easy", sizeof(arg));
+    SDL_strlcpy(arg, "preset=keel;mode=turtle;difficulty=easy", sizeof(arg));
     botInitArgAppendModeTokens(arg, sizeof(arg), &modes, 0,
                                BOT_DIFFICULTY_HARD, 0);
-    UT_ASSERT_MSG(strcmp(arg, "preset=keel;mode=survival;difficulty=easy") == 0,
+    UT_ASSERT_MSG(strcmp(arg, "preset=keel;mode=turtle;difficulty=easy") == 0,
                   "explicit mode+difficulty were not kept: '%s'", arg);
     /* A cfg= write of the constant is NOT a difficulty token: the lobby's
      * token is still appended (and, applied first, is then overridden by
@@ -148,7 +148,7 @@ int run_bot_init_arg_mode_tokens(void) {
     UT_ASSERT_MSG(strcmp(arg, "mode=default;difficulty=hard") == 0,
                   "out-of-range indices produced '%s'", arg);
 
-    /* A second mode, as brains/GoalHunter_1.7/modes.txt declares one: the
+    /* A second mode, the way a brain's modes.txt can declare one: the
      * mode key is the manifest's, not a hardcoded word. */
     {
         BrainModes two;
@@ -158,7 +158,7 @@ int run_bot_init_arg_mode_tokens(void) {
         two.modes[0].levelCount = 1;
         SDL_strlcpy(two.modes[0].levels[0].key, "hard",
                     sizeof(two.modes[0].levels[0].key));
-        SDL_strlcpy(two.modes[1].key, "survival", sizeof(two.modes[1].key));
+        SDL_strlcpy(two.modes[1].key, "turtle", sizeof(two.modes[1].key));
         two.modes[1].levelCount = 3;
         SDL_strlcpy(two.modes[1].levels[0].key, "easy",
                     sizeof(two.modes[1].levels[0].key));
@@ -170,8 +170,8 @@ int run_bot_init_arg_mode_tokens(void) {
 
         arg[0] = '\0';
         botInitArgAppendModeTokens(arg, sizeof(arg), &two, 1, 0, 0);
-        UT_ASSERT_MSG(strcmp(arg, "mode=survival;difficulty=easy") == 0,
-                      "survival pair produced '%s'", arg);
+        UT_ASSERT_MSG(strcmp(arg, "mode=turtle;difficulty=easy") == 0,
+                      "turtle pair produced '%s'", arg);
 
         /* A level index the OTHER mode has but this one does not takes the
          * mode's own default rather than reading off the end. */

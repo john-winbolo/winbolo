@@ -219,7 +219,7 @@ local function _apply_cfg_tokens(a, source, runtime)
       -- "mode=<key>" -- the host's per-bot lobby choice of MODE, appended
       -- to this arg by bot_manager.c at brain-create time. The key comes
       -- from this brain's own modes.txt, so the vocabulary is whatever
-      -- that file lists ("default", "survival", ...) and this side only
+      -- that file lists ("default", ...) and this side only
       -- checks the shape. Written into C.MODE RIGHT HERE (not queued into
       -- cfgs) so the level bundle below can read the chosen mode; it is
       -- type-checked and logged like every other override. Precedence:

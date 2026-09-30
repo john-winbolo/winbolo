@@ -10,7 +10,7 @@ M.LOG_STANDOFF_CANDIDATES = false  -- print every standoff candidate (very verbo
 -- Which mode this bot is asked to run in, and how hard it is asked to play.
 -- Both are the host's per-bot lobby choice and arrive as "mode=<key>" and
 -- "difficulty=<key>" tokens in BRAIN_INIT_ARG (see the init-arg block in
--- init.lua); both are also settable directly with cfg=MODE=survival /
+-- init.lua); both are also settable directly with cfg=MODE=<key> /
 -- cfg=DIFFICULTY=easy for a bench.
 --
 -- The MANIFEST that decides which keys exist is modes.txt beside this file:
@@ -21,8 +21,8 @@ M.LOG_STANDOFF_CANDIDATES = false  -- print every standoff candidate (very verbo
 -- The pair picks a knob bundle out of M.MODE_LEVELS (at the end of this
 -- file), which init.lua applies before any preset= or cfg=. A new mode also
 -- needs its bundles there; a mode with no bundle runs these constants.
--- Modes today: default (hard = these constants, medium/easy = handicaps),
--- survival (empty placeholders) and turtle (default's levels plus
+-- Modes today: default (hard = these constants, medium/easy = handicaps)
+-- and turtle (default's levels plus
 -- PILL_PLACE_TURTLE). They are also echoed in the init-arg log and stored
 -- on state.mode / state.difficulty.
 M.MODE = "default"
@@ -5517,15 +5517,6 @@ M.MODE_LEVELS = {
       LGM_DEST_AIM = false, LGM_DEST_LIVE_PILLS = false, LGM_DEST_HOLD_FIRE = false,
       LGM_DEST_INTERCEPT = false, LGM_DEST_PASS_THROUGH = false,
     },
-  },
-  -- survival: placeholders (see modes.txt); only the Hard-only LGM
-  -- destination aim is switched off below Hard so far, as in default.
-  survival = {
-    hard = {},
-    medium = { LGM_DEST_AIM = false, LGM_DEST_LIVE_PILLS = false, LGM_DEST_HOLD_FIRE = false,
-               LGM_DEST_INTERCEPT = false, LGM_DEST_PASS_THROUGH = false },
-    easy   = { LGM_DEST_AIM = false, LGM_DEST_LIVE_PILLS = false, LGM_DEST_HOLD_FIRE = false,
-               LGM_DEST_INTERCEPT = false, LGM_DEST_PASS_THROUGH = false },
   },
 }
 

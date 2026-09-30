@@ -12,10 +12,11 @@
  * person made it: an automatic config write must not pass for the host's
  * choice.
  *
- * The manifest used is the shipped GoalHunter one (Brains/GoalHunter_1.7/
- * modes.txt, copied next to the test binary by the build): modes "default",
- * "survival" and "turtle", each with levels easy/medium/hard defaulting to
- * hard, and open_default = turtle.
+ * The manifest used is a fixture brain's own modes.txt, written by each case
+ * (bcmMakeBrain): modes "default", "alt" and "turtle", each with levels
+ * easy/medium/hard defaulting to hard, and open_default = turtle. It is
+ * not the shipped GoalHunter manifest, so a change to that one does not
+ * move these cases.
  */
 
 #include <stdint.h>
@@ -36,9 +37,49 @@
 #include "threads.h"               /* the dispatcher asserts the mutex */
 #include "test_harness.h"
 
-#define TEST_BRAIN "Brains/GoalHunter_1.7/init.lua"
+/* The fixture brain. brain_list.c reads a brain's modes.txt by the name of
+ * the DIRECTORY holding init.lua, under brains/ of the working directory, so
+ * this is a directory and not a bare file. */
+#define TEST_BRAIN_DIR "brains/ut_bcm_modes"
+#define TEST_BRAIN     TEST_BRAIN_DIR "/init.lua"
 #define TEST_SLOT  3
 #define TEST_TEAM  1
+
+/* Write the fixture brain: an init.lua and a modes.txt with three modes.
+ * False when the working directory is not writable, which the callers
+ * report as a skip. */
+static bool bcmMakeBrain(void) {
+    FILE *f;
+
+    SDL_CreateDirectory("brains");
+    SDL_CreateDirectory(TEST_BRAIN_DIR);
+    f = fopen(TEST_BRAIN, "wb");
+    if (f == NULL) return false;
+    fputs("-- fixture\n", f);
+    fclose(f);
+    f = fopen(TEST_BRAIN_DIR "/modes.txt", "wb");
+    if (f == NULL) return false;
+    fputs("[default]\n"
+          "label = Default\n"
+          "levels = easy:Easy:1, medium:Medium:2, hard:Hard:3\n"
+          "default = hard\n"
+          "\n"
+          "[turtle]\n"
+          "label = Turtle\n"
+          "levels = easy:Easy:1, medium:Medium:2, hard:Hard:3\n"
+          "default = hard\n", f);
+    fclose(f);
+    return true;
+}
+
+static void bcmDropBrain(void) {
+    remove(TEST_BRAIN_DIR "/modes.txt");
+    remove(TEST_BRAIN);
+    SDL_RemovePath(TEST_BRAIN_DIR);
+    /* brains/ itself only when this case made it: SDL_RemovePath fails on a
+     * directory that is not empty, so a build directory's own brains/ stays. */
+    SDL_RemovePath("brains");
+}
 
 static ServerSim *make_lobby_sim_type(gameType game) {
     BYTE emap[6000] = E_MAP;
@@ -49,7 +90,7 @@ static ServerSim *make_lobby_sim_type(gameType game) {
     return sim;
 }
 
-/* A Tournament lobby: the shipped manifest starts it in mode 0, so the cases
+/* A Tournament lobby: the fixture manifest starts it in mode 0, so the cases
  * below that are about the base and the manual pick see mode 0 as the base.
  * An Open lobby starts in the manifest's open_default instead, which the
  * open-game cases at the end of the file cover. */
@@ -57,14 +98,15 @@ static ServerSim *make_lobby_sim(void) {
     return make_lobby_sim_type(gameTournament);
 }
 
-/* Index of a mode/level key pair in the test brain's own manifest, so the
- * expectations survive someone reordering modes.txt. False when the manifest
- * is missing — a test binary run from outside the build tree has no Brains/
- * beside it — which the callers report as a skip. */
+/* Index of a mode/level key pair in the fixture brain's own manifest, so
+ * the expectations are read the same way the code under test reads them.
+ * Writes the fixture first. False when it could not be written, which the
+ * callers report as a skip. */
 static bool expected_indices(const char *modeKey, const char *lvlKey,
                              int *outMode, int *outLevel) {
     BrainModes modes;
     int m;
+    if (!bcmMakeBrain()) return false;
     if (!brainListLoadModesForPath(TEST_BRAIN, &modes)) return false;
     m = brainModesFindMode(&modes, modeKey);
     if (m < 0) return false;
@@ -75,24 +117,25 @@ static bool expected_indices(const char *modeKey, const char *lvlKey,
 
 #define SKIP_NO_MANIFEST()                                                  \
     do {                                                                    \
-        fprintf(stderr, "SKIP: no GoalHunter modes.txt beside the test "    \
-                        "binary — nothing to resolve keys against\n");      \
+        fprintf(stderr, "SKIP: the fixture brain's modes.txt could not be " \
+                        "written — nothing to resolve keys against\n");      \
+        bcmDropBrain();                                                     \
         return 0;                                                           \
     } while (0)
 
-/* The host picked survival/easy by hand: the next bot added starts there. */
+/* The host picked turtle/easy by hand: the next bot added starts there. */
 int run_lobby_bot_config_memory_applies(void) {
     ServerSim *sim;
     int wantMode = 0, wantLevel = 0;
     uint8_t mode = 0, level = BOT_DIFFICULTY_HARD;
 
-    if (!expected_indices("survival", "easy", &wantMode, &wantLevel)) {
+    if (!expected_indices("turtle", "easy", &wantMode, &wantLevel)) {
         SKIP_NO_MANIFEST();
     }
     sim = make_lobby_sim();
     UT_ASSERT_MSG(sim != NULL, "serverSimCreateCompressed");
 
-    SDL_strlcpy(sim->lastBotModeKey, "survival", sizeof(sim->lastBotModeKey));
+    SDL_strlcpy(sim->lastBotModeKey, "turtle", sizeof(sim->lastBotModeKey));
     SDL_strlcpy(sim->lastBotLevelKey, "easy", sizeof(sim->lastBotLevelKey));
     UT_ASSERT(serverSimResolveNewBotConfig(sim, TEST_TEAM, TEST_BRAIN, true,
                                            &mode, &level));
@@ -100,12 +143,15 @@ int run_lobby_bot_config_memory_applies(void) {
                   "the manual pick must reach the new bot (got %d/%d, want "
                   "%d/%d)", (int)mode, (int)level, wantMode, wantLevel);
     serverSimDestroy(sim);
+    bcmDropBrain();
     return 0;
 }
 
 /* No manual pick yet this lobby: the base comes back unchanged. */
 int run_lobby_bot_config_memory_empty_is_noop(void) {
-    ServerSim *sim = make_lobby_sim();
+    ServerSim *sim;
+    if (!bcmMakeBrain()) SKIP_NO_MANIFEST();
+    sim = make_lobby_sim();
     uint8_t mode = 0, level = BOT_DIFFICULTY_HARD;
     UT_ASSERT_MSG(sim != NULL, "serverSimCreateCompressed");
 
@@ -120,13 +166,16 @@ int run_lobby_bot_config_memory_empty_is_noop(void) {
                   "no manual pick: the base must stand (got %d/%d)",
                   (int)mode, (int)level);
     serverSimDestroy(sim);
+    bcmDropBrain();
     return 0;
 }
 
 /* A mode this bot's brain does not declare is dropped, not forced; and a
  * brain with no manifest resolves nothing at all. */
 int run_lobby_bot_config_memory_unknown_key_ignored(void) {
-    ServerSim *sim = make_lobby_sim();
+    ServerSim *sim;
+    if (!bcmMakeBrain()) SKIP_NO_MANIFEST();
+    sim = make_lobby_sim();
     uint8_t mode = 0, level = BOT_DIFFICULTY_HARD;
     UT_ASSERT_MSG(sim != NULL, "serverSimCreateCompressed");
 
@@ -142,7 +191,7 @@ int run_lobby_bot_config_memory_unknown_key_ignored(void) {
 
     mode = 0;
     level = BOT_DIFFICULTY_HARD;
-    SDL_strlcpy(sim->lastBotModeKey, "survival", sizeof(sim->lastBotModeKey));
+    SDL_strlcpy(sim->lastBotModeKey, "turtle", sizeof(sim->lastBotModeKey));
     UT_ASSERT_MSG(!serverSimResolveNewBotConfig(sim, TEST_TEAM,
                                                 "brains/no_such_brain.lua",
                                                 true, &mode, &level),
@@ -150,17 +199,20 @@ int run_lobby_bot_config_memory_unknown_key_ignored(void) {
     UT_ASSERT_MSG(mode == 0 && level == BOT_DIFFICULTY_HARD,
                   "...and must leave both values untouched");
     serverSimDestroy(sim);
+    bcmDropBrain();
     return 0;
 }
 
 /* A bot that does not honour the manual pick — one first appearing on the
  * map — keeps the base whatever the host picked earlier. */
 int run_lobby_bot_config_memory_not_honoured(void) {
-    ServerSim *sim = make_lobby_sim();
+    ServerSim *sim;
+    if (!bcmMakeBrain()) SKIP_NO_MANIFEST();
+    sim = make_lobby_sim();
     uint8_t mode = 0, level = BOT_DIFFICULTY_HARD;
     UT_ASSERT_MSG(sim != NULL, "serverSimCreateCompressed");
 
-    SDL_strlcpy(sim->lastBotModeKey, "survival", sizeof(sim->lastBotModeKey));
+    SDL_strlcpy(sim->lastBotModeKey, "turtle", sizeof(sim->lastBotModeKey));
     SDL_strlcpy(sim->lastBotLevelKey, "easy", sizeof(sim->lastBotLevelKey));
     if (!serverSimResolveNewBotConfig(sim, TEST_TEAM, TEST_BRAIN, false,
                                       &mode, &level)) {
@@ -171,6 +223,7 @@ int run_lobby_bot_config_memory_not_honoured(void) {
                   "a first-appearing bot must ignore the manual pick (got "
                   "%d/%d)", (int)mode, (int)level);
     serverSimDestroy(sim);
+    bcmDropBrain();
     return 0;
 }
 
@@ -182,7 +235,7 @@ int run_lobby_bot_config_memory_manual_only(void) {
     ServerSim *sim;
     int wantMode = 0, wantLevel = 0;
 
-    if (!expected_indices("survival", "medium", &wantMode, &wantLevel)) {
+    if (!expected_indices("turtle", "medium", &wantMode, &wantLevel)) {
         SKIP_NO_MANIFEST();
     }
     sim = make_lobby_sim();
@@ -199,7 +252,7 @@ int run_lobby_bot_config_memory_manual_only(void) {
                   sim->lastBotModeKey, sim->lastBotLevelKey);
 
     serverSimRememberManualBotPick(sim, TEST_SLOT);
-    UT_ASSERT_MSG(strcmp(sim->lastBotModeKey, "survival") == 0 &&
+    UT_ASSERT_MSG(strcmp(sim->lastBotModeKey, "turtle") == 0 &&
                   strcmp(sim->lastBotLevelKey, "medium") == 0,
                   "the manual pick must be remembered as the brain's keys "
                   "(got '%s'/'%s')", sim->lastBotModeKey, sim->lastBotLevelKey);
@@ -208,6 +261,7 @@ int run_lobby_bot_config_memory_manual_only(void) {
      * thinking one has a brain. */
     sim->botMgr.bots[TEST_SLOT].brainPath[0] = '\0';
     serverSimDestroy(sim);
+    bcmDropBrain();
     return 0;
 }
 
@@ -223,7 +277,7 @@ int run_lobby_bot_config_memory_cleared_on_return_to_lobby(void) {
     uint8_t mode = 0, level = BOT_DIFFICULTY_HARD;
     bool mapChanged;
 
-    if (!expected_indices("survival", "easy", &wantMode, &wantLevel)) {
+    if (!expected_indices("turtle", "easy", &wantMode, &wantLevel)) {
         SKIP_NO_MANIFEST();
     }
     sim = make_lobby_sim();
@@ -234,14 +288,14 @@ int run_lobby_bot_config_memory_cleared_on_return_to_lobby(void) {
      * empty-lobby branch) already cleared it and is not what we are testing. */
     serverSimAddPlayer(sim, 0, "Host", false);
 
-    /* The host picks survival/easy by hand on one bot, through the same path
+    /* The host picks turtle/easy by hand on one bot, through the same path
      * the gear popup's command handler uses. */
     SDL_strlcpy(sim->botMgr.bots[TEST_SLOT].brainPath, TEST_BRAIN,
                 sizeof(sim->botMgr.bots[TEST_SLOT].brainPath));
     serverSimSetBotConfig(sim, TEST_SLOT, (uint8_t)wantMode,
                           (uint8_t)wantLevel, 0, NULL);
     serverSimRememberManualBotPick(sim, TEST_SLOT);
-    UT_ASSERT_MSG(strcmp(sim->lastBotModeKey, "survival") == 0 &&
+    UT_ASSERT_MSG(strcmp(sim->lastBotModeKey, "turtle") == 0 &&
                   strcmp(sim->lastBotLevelKey, "easy") == 0,
                   "setup: the manual pick must be remembered first (got "
                   "'%s'/'%s')", sim->lastBotModeKey, sim->lastBotLevelKey);
@@ -255,7 +309,7 @@ int run_lobby_bot_config_memory_cleared_on_return_to_lobby(void) {
     mapChanged = serverSimReloadCompressedInMemory(sim, emap, E_MAP_LEN,
                                                    "Everard Island B");
     if (mapChanged) {
-        UT_ASSERT_MSG(strcmp(sim->lastBotModeKey, "survival") == 0 &&
+        UT_ASSERT_MSG(strcmp(sim->lastBotModeKey, "turtle") == 0 &&
                       strcmp(sim->lastBotLevelKey, "easy") == 0,
                       "a map change is not a new lobby: the pick must survive "
                       "it (got '%s'/'%s')",
@@ -289,13 +343,15 @@ int run_lobby_bot_config_memory_cleared_on_return_to_lobby(void) {
                   "(got %d/%d)", (int)mode, (int)level);
 
     serverSimDestroy(sim);
+    bcmDropBrain();
     return 0;
 }
 
-/* The shipped manifest's open_default mode, or -1 when the manifest is
+/* The fixture manifest's open_default mode, or -1 when the manifest is
  * missing or names none (then the open-game cases have nothing to test). */
 static int open_default_mode(void) {
     BrainModes modes;
+    if (!bcmMakeBrain()) return -1;
     if (!brainListLoadModesForPath(TEST_BRAIN, &modes)) return -1;
     return (modes.openDefaultMode > 0) ? modes.openDefaultMode : -1;
 }
@@ -366,7 +422,7 @@ int run_lobby_bot_config_memory_open_game_start_mode(void) {
     sim->lastBotLevelKey[0] = '\0';
 
     /* A caller's base that is not mode 0 is a real choice and stands. */
-    UT_ASSERT(expected_indices("survival", "easy", &wantMode, &wantLevel));
+    UT_ASSERT(expected_indices("alt", "easy", &wantMode, &wantLevel));
     mode = (uint8_t)wantMode; level = (uint8_t)wantLevel;
     UT_ASSERT(serverSimResolveNewBotConfig(sim, TEST_TEAM, TEST_BRAIN, false,
                                            &mode, &level));
@@ -396,6 +452,7 @@ int run_lobby_bot_config_memory_open_game_start_mode(void) {
                       (int)kClosed[i], (int)mode, (int)level);
         serverSimDestroy(sim);
     }
+    bcmDropBrain();
     return 0;
 }
 
@@ -421,11 +478,11 @@ int run_lobby_bot_config_memory_game_type_change(void) {
     const BYTE follow = 2, byHand = 3, other = 4;
     ServerSim *sim;
     int openMode = open_default_mode();
-    int survMode = 0, survLevel = 0, medOpenLevel;
+    int altMode = 0, altLevel = 0, medOpenLevel;
     uint8_t v;
 
     if (openMode < 0) SKIP_NO_MANIFEST();
-    UT_ASSERT(expected_indices("survival", "easy", &survMode, &survLevel));
+    UT_ASSERT(expected_indices("alt", "easy", &altMode, &altLevel));
     medOpenLevel = open_default_level("medium");
     UT_ASSERT_MSG(medOpenLevel >= 0, "open_default lists no medium level");
 
@@ -439,7 +496,7 @@ int run_lobby_bot_config_memory_game_type_change(void) {
                           (uint8_t)medOpenLevel, 0, NULL);
     serverSimSetBotConfig(sim, byHand, (uint8_t)openMode,
                           BOT_DIFFICULTY_HARD, 0, NULL);
-    serverSimSetBotConfig(sim, other, (uint8_t)survMode, (uint8_t)survLevel,
+    serverSimSetBotConfig(sim, other, (uint8_t)altMode, (uint8_t)altLevel,
                           0, NULL);
     /* A person then set byHand's mode in the gear popup (away and back). */
     serverSimMarkBotModeSetByHand(sim, byHand);
@@ -458,7 +515,7 @@ int run_lobby_bot_config_memory_game_type_change(void) {
     UT_ASSERT_MSG((int)sim->botConfigs[byHand].mode == openMode,
                   "a mode set by hand must stick (got %u)",
                   (unsigned)sim->botConfigs[byHand].mode);
-    UT_ASSERT_MSG((int)sim->botConfigs[other].mode == survMode,
+    UT_ASSERT_MSG((int)sim->botConfigs[other].mode == altMode,
                   "a bot on another mode must keep it (got %u)",
                   (unsigned)sim->botConfigs[other].mode);
 
@@ -477,7 +534,7 @@ int run_lobby_bot_config_memory_game_type_change(void) {
                   (unsigned)sim->botConfigs[follow].mode,
                   (unsigned)sim->botConfigs[follow].difficulty);
     UT_ASSERT((int)sim->botConfigs[byHand].mode == openMode);
-    UT_ASSERT((int)sim->botConfigs[other].mode == survMode);
+    UT_ASSERT((int)sim->botConfigs[other].mode == altMode);
 
     unpretend_bot(sim, follow);
     unpretend_bot(sim, other);
@@ -487,6 +544,7 @@ int run_lobby_bot_config_memory_game_type_change(void) {
                   "the by-hand mark outlived the seat");
     unpretend_bot(sim, byHand);
     serverSimDestroy(sim);
+    bcmDropBrain();
     return 0;
 }
 
@@ -555,6 +613,7 @@ int run_lobby_bot_config_memory_map_commit_type(void) {
     unpretend_bot(sim, bot);
     unpretend_bot(sim, byHand);
     serverSimDestroy(sim);
+    bcmDropBrain();
     return 0;
 }
 
@@ -615,5 +674,6 @@ int run_lobby_bot_config_memory_dispatch_hand_mark(void) {
 
     unpretend_bot(sim, bot);
     serverSimDestroy(sim);
+    bcmDropBrain();
     return 0;
 }

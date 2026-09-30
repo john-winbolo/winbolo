@@ -132,8 +132,8 @@ static bool bnInstallModes(void) {
           "levels = easy:Easy:1, medium:Medium:2, hard:Hard:3\n"
           "default = hard\n"
           "\n"
-          "[survival]\n"
-          "label = Survival\n"
+          "[turtle]\n"
+          "label = Turtle\n"
           "levels = easy:Easy:1, medium:Medium:2, hard:Hard:3\n"
           "default = hard\n", f);
     fclose(f);
@@ -816,7 +816,7 @@ int run_scenario_brain_name_mode_falls_back(void) {
     /* A mode the server's own brain lists. The team's brain is still
        reported, because the server has not got it, and the mode is not,
        because the brain the seats will take knows it. */
-    bnTeamScriptMode(lua, sizeof(lua), missing, "survival", "hard");
+    bnTeamScriptMode(lua, sizeof(lua), missing, "turtle", "hard");
     UT_ASSERT(bnPut(kMap, lua));
 
     sim = bnRoundSim();
@@ -891,7 +891,7 @@ int run_scenario_brain_name_mode_no_brain(void) {
              "  lobby = {\n"
              "    teams = {\n"
              "      { id = %d, bots = 1, max_bots = 2, fielded = false,\n"
-             "        mode = \"survival\", difficulty = \"hard\" },\n"
+             "        mode = \"turtle\", difficulty = \"hard\" },\n"
              "    },\n"
              "  },\n"
              "}\n", BN_TEAM);
