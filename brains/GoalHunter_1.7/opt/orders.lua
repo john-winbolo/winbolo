@@ -2002,13 +2002,13 @@ function M.bot_pings_on(state)
   return C.BOT_PINGS_DEFAULT and true or false
 end
 
--- Are the bots SPEAKING their goal confirmations?  On until somebody says
--- "bot chat off", which is what the game has always done, so the knob's
--- default is true.  Read through sayg, never directly.
+-- Are the bots SPEAKING their goal confirmations?  Off until somebody says
+-- "bot chat on": the knob's default is false (2026-09-29), and "bot pings"
+-- shows the goals on the map instead.  Read through sayg, never directly.
 function M.bot_chat_on(state)
   local o = state and state.orders
   if o and o.bot_chat ~= nil then return o.bot_chat end
-  if C.BOT_CHAT_DEFAULT == nil then return true end
+  if C.BOT_CHAT_DEFAULT == nil then return false end
   return C.BOT_CHAT_DEFAULT and true or false
 end
 
@@ -3978,7 +3978,12 @@ function M.update(state, world, info, now)
       end
     elseif h.tkind == "base" and h.tid then
       local b = world.bases[h.tid]
-      if b and (h.kind == "capture_base" or h.kind == "attack_base")
+      -- No record means the base is gone (a scenario removed it): the same
+      -- "order lapsed" a pill order ends on.  Without it the order stood for
+      -- good, since only a base turned friendly ended it.
+      if not b then
+        done, why = true, "order lapsed"
+      elseif (h.kind == "capture_base" or h.kind == "attack_base")
          and b.owner == "friendly" then
         done, why = true, string.format("base #%d done", h.tid)
       end

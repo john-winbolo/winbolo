@@ -36,10 +36,11 @@
 #include "test_harness.h"
 #include "loopback_harness.h"
 #include "transport_udp_server_internal.h"
+#include "upload_policy.h"           /* UPLOAD_KIND_MAP */
 
 #define CONNECT_MAX  2000
 #define UPLOAD_MAX   4000   /* handshake + bulk transfer convergence */
-#define EMAP_LEN     5097   /* compressed length of E_MAP (matches harness) */
+#define EMAP_LEN     E_MAP_LEN   /* compressed length of E_MAP (matches harness) */
 
 static bool pred_connected(LoopbackHarness *h, void *user) {
     (void)user;
@@ -258,7 +259,13 @@ static int upload_timeout_recovery(bool lose_done, bool other_player, bool parti
     }
     transportUdpClientTestUploadTimeout(&h.cs->transport);
     UT_ASSERT(clientSimGetLobbyMapUploadStatus(h.cs) == 4);
-    UT_ASSERT(clientSimGetLobbyMapUploadRejectCode(h.cs) != 0);
+    /* No reply is not a refusal: the chooser tells the player to try again
+       rather than that the server turned the map down. */
+    UT_ASSERT_MSG(clientSimGetLobbyMapUploadRejectCode(h.cs) == LOBBY_REJECT_TIMEOUT,
+                  "a timed-out upload reported reject code %d, wanted the "
+                  "timeout code %d",
+                  (int)clientSimGetLobbyMapUploadRejectCode(h.cs),
+                  LOBBY_REJECT_TIMEOUT);
     if (partial) {
         /* After channelResetSend the sender's ackedSeq == nextSeq, i.e. the
          * boundary the retry's BEGIN will carry; the staged-but-unsent
@@ -309,4 +316,47 @@ int run_upload_lost_done_retry(void) {
 
 int run_upload_partial_timeout_retry(void) {
     return upload_timeout_recovery(false, false, true);
+}
+
+/* A BEGIN without the bulk-sequence trailer is malformed. Every client that
+ * can reach this server sends the trailer, so the server refuses a short
+ * BEGIN the way it refuses any other short one, and opens no upload. */
+int run_upload_begin_without_trailer_refused(void) {
+    LoopbackHarness h;
+    uint8_t pkt[PACKET_HEADER_SIZE + 1 + 4 + 1 + 255 + 4];
+    size_t bodyLen;
+    struct sockaddr_in from;
+    bool armed;
+    int slot;
+
+    UT_ASSERT(loopbackHarnessStart(&h, "Short", true, NULL, 0xC0FFEEu));
+    if (loopbackHarnessPumpUntil(&h, CONNECT_MAX, pred_connected, NULL) < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("client never reached CONNECTED within %d pumps", CONNECT_MAX);
+    }
+    threadsWaitForMutex();
+    serverSimSetOpenHost(h.sim, true);
+    threadsReleaseMutex();
+    slot = clientSimGetMyPlayerNum(h.cs);
+
+    packHeader(pkt, PACKET_LOBBY_MAP_UPLOAD_BEGIN, 0);
+    bodyLen = transportUdpClientBuildUploadBeginBody(
+        pkt + PACKET_HEADER_SIZE, sizeof(pkt) - PACKET_HEADER_SIZE,
+        UPLOAD_KIND_MAP, EMAP_LEN, "short.map", 0);
+    UT_ASSERT(bodyLen > 4);
+    /* The same BEGIN with its last four bytes, the trailer, cut off, handed
+       to the server as if from the client's address. */
+    threadsWaitForMutex();
+    from = udpServer.clients[slot].addr;
+    serverProcessPacket(h.sim, pkt, (int)(PACKET_HEADER_SIZE + bodyLen - 4),
+                        &from);
+    armed = udpServer.clientUploadActive[slot];
+    threadsReleaseMutex();
+
+    if (armed) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the server opened an upload for a BEGIN with no trailer");
+    }
+    loopbackHarnessStop(&h);
+    return 0;
 }

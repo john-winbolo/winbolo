@@ -7,7 +7,9 @@
  * script, a manifest or a Lua VM. That is the shape under test as much as
  * the seating is: the engine applies this without calling back out.
  *
- * Three paths apply it. A committed map seats it from scratch. A lobby
+ * Three paths apply it. A committed map that brings a different template
+ * seats it from scratch; one that brings the same template leaves the lobby
+ * as the host left it, bots and trims included. A lobby
  * coming back from a round reconciles instead: what the host changed between
  * rounds stands, a team past its ceiling is cut back, and the seats a script
  * fielded during the round go back to being held. An emptied lobby resetting
@@ -37,6 +39,9 @@
  *                                       — and never binds a bot
  * run_lobby_template_cancel_keeps_trim  — a cancelled preview gives the
  *                                         host's trim back
+ * run_lobby_template_cancel_same_template_keeps_edits
+ *                                       — a preview with the same template
+ *                                         keeps what the host did during it
  * run_lobby_template_cancel_keeps_empty_team
  *                                       — and gives an emptied team back
  *                                         empty
@@ -44,8 +49,10 @@
  *                                       — one cancel over two previews goes
  *                                         back to before the first
  * run_lobby_template_commit_keeps_new_lobby
- *                                       — a commit keeps the previewed map's
- *                                         lobby and restores nothing
+ *                                       — a commit keeps the lobby a
+ *                                         previewed map with another
+ *                                         template seated, and restores
+ *                                         nothing
  * run_lobby_template_cancel_restores_path_inmem
  *                                       — a cancel after an uploaded-map
  *                                         preview gives the map's file back
@@ -133,7 +140,15 @@ static void ltDropBrainFile(void) {
 static char ltModesDir[160];
 static char ltModesBrain[224];
 
+static bool ltMakeModesBrainWith(const char *tag, const char *header);
+
 static bool ltMakeModesBrain(const char *tag) {
+    return ltMakeModesBrainWith(tag, "");
+}
+
+/* The same fixture with `header` written above the first section, where a
+ * manifest's file-level lines (open_default) go. */
+static bool ltMakeModesBrainWith(const char *tag, const char *header) {
     char  path[288];
     FILE *f;
 
@@ -151,13 +166,14 @@ static bool ltMakeModesBrain(const char *tag) {
     SDL_snprintf(path, sizeof(path), "%s/modes.txt", ltModesDir);
     f = fopen(path, "wb");
     if (f == NULL) return false;
+    fputs(header, f);
     fputs("[default]\n"
           "label = Default\n"
           "levels = easy:Easy:1, medium:Medium:2, hard:Hard:3\n"
           "default = hard\n"
           "\n"
-          "[survival]\n"
-          "label = Survival\n"
+          "[turtle]\n"
+          "label = Turtle\n"
           "levels = easy:Easy:1, medium:Medium:2, hard:Hard:3\n"
           "default = hard\n", f);
     fclose(f);
@@ -183,7 +199,7 @@ static void ltDropModesBrain(void) {
  * bots. */
 static ServerSim *ltLobbySim(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097,
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN,
                                                "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) return NULL;
@@ -199,7 +215,7 @@ static ServerSim *ltLobbySim(void) {
  * Those never seat a real bot, so there is no brain for this one to name. */
 static ServerSim *ltBareSim(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097,
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN,
                                                "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) return NULL;
@@ -815,10 +831,11 @@ static void ltTrimTo(ServerSim *sim, BYTE team, int n) {
 }
 
 /* Show the host another map. A real preview is a map change like any other,
- * which is why it seats the template again. */
+ * which is why it seats the template again where the template is not the one
+ * already seated, and leaves the lobby alone where it is. */
 static bool ltPreview(ServerSim *sim, const char *name) {
     BYTE emap[6000] = E_MAP;
-    return serverSimReloadCompressedInMemory(sim, emap, 5097, name);
+    return serverSimReloadCompressedInMemory(sim, emap, E_MAP_LEN, name);
 }
 
 int run_lobby_template_cancel_keeps_trim(void) {
@@ -845,6 +862,12 @@ int run_lobby_template_cancel_keeps_trim(void) {
     UT_ASSERT(ltPreview(sim, "Preview"));
     UT_ASSERT_MSG(serverSimHasPreviewMap(sim),
                   "the map change left no preview to cancel");
+    /* The lobby was seated directly, as a server booting onto a scripted map
+       seats it, and this is its first map change. The template is the same,
+       so the trim stands on the previewed map too. */
+    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 3,
+                  "the first map change after a boot seating left %d seats, "
+                  "expected the host's three", ltSeats(sim, LT_RAIDER));
 
     UT_ASSERT(serverSimRevertPreview(sim));
     UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 3,
@@ -855,6 +878,65 @@ int run_lobby_template_cancel_keeps_trim(void) {
                   ltSeats(sim, LT_GUARD));
     UT_ASSERT_MSG(!serverSimHasPreviewMap(sim),
                   "the cancel left a preview pending");
+
+    serverSimDestroy(sim);
+    ltDropBrainFile();
+    return 0;
+}
+
+/* A preview that keeps the template keeps the lobby, so what the host does
+ * to the roster while looking at it is the roster a Cancel leaves: a seat
+ * trimmed during the preview stays trimmed, and a bot added during it
+ * stays. */
+int run_lobby_template_cancel_same_template_keeps_edits(void) {
+    ServerSim       *sim;
+    ScnLobbyTemplate t;
+    int              hostBot;
+
+    UT_ASSERT(ltMakeBrainFile("cancel_same_template_keeps_edits"));
+    ut_brain_stub_arm(true);
+    sim = ltLobbySim();
+    UT_ASSERT(sim != NULL);
+
+    ltTemplate(&t, 4, 4, 1, 1);
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    serverSimScenarioSeatLobby(sim);
+    ltHoldInLobby(sim);
+    UT_ASSERT(ltSeats(sim, LT_RAIDER) == 4);
+    UT_ASSERT(serverSimGetState(sim) == serverStateLobby);
+
+    UT_ASSERT(ltPreview(sim, "Preview"));
+    UT_ASSERT(ltSeats(sim, LT_RAIDER) == 4);
+
+    /* While the preview stands: one raider seat off, and a bot of the host's
+       own on a team the template says nothing about. */
+    ltTrimTo(sim, LT_RAIDER, 3);
+    hostBot = serverSimFindFreeSlot(sim, true);
+    UT_ASSERT(hostBot >= 0);
+    {
+        ServerSimBotConfig cfg;
+        memset(&cfg, 0, sizeof(cfg));
+        cfg.brainPath  = ltBrainPath;
+        cfg.brainName  = "Host Bot";
+        cfg.ai         = aiFull;
+        cfg.gameType   = gameOpen;
+        cfg.teamNumber = 2;
+        UT_ASSERT(serverSimAddBot(sim, (BYTE)hostBot, &cfg));
+    }
+
+    UT_ASSERT(serverSimRevertPreview(sim));
+    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 3,
+                  "the trim made during the preview came back as %d after a "
+                  "cancel, expected 3", ltSeats(sim, LT_RAIDER));
+    UT_ASSERT_MSG(serverSimIsBot(sim, (BYTE)hostBot) &&
+                  !sim->lobbyPlayers[hostBot].keepSeat,
+                  "the bot added during the preview went with the cancel");
+    UT_ASSERT_MSG(sim->lobbyPlayers[hostBot].teamNumber == 2,
+                  "the bot added during the preview is on team %d, not 2",
+                  (int)sim->lobbyPlayers[hostBot].teamNumber);
+    UT_ASSERT_MSG(ltSeats(sim, LT_GUARD) == 1,
+                  "the untouched team came back at %d, expected 1",
+                  ltSeats(sim, LT_GUARD));
 
     serverSimDestroy(sim);
     ltDropBrainFile();
@@ -916,9 +998,18 @@ int run_lobby_template_cancel_chain_rolls_back(void) {
     UT_ASSERT(ltSeats(sim, LT_RAIDER) == 2);
     UT_ASSERT(serverSimGetState(sim) == serverStateLobby);
 
+    /* The first map previewed carries a template of its own, which differs
+       only in its ceiling. The callback that would attach it is not
+       registered here, so it goes on by hand. */
+    ltTemplate(&t, 5, 6, 1, 1);
+    serverSimSetScenarioLobbyTemplate(sim, &t);
     UT_ASSERT(ltPreview(sim, "Preview one"));
-    /* The first preview seated the five again; the host trims to four while
-       looking at it, so four is the count in between. */
+    /* A different template, so the first preview seated the five again; the
+       host trims to four while looking at it, so four is the count in
+       between. */
+    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 5,
+                  "a preview with another template left %d seats, expected "
+                  "its five", ltSeats(sim, LT_RAIDER));
     ltTrimTo(sim, LT_RAIDER, 4);
     UT_ASSERT(ltSeats(sim, LT_RAIDER) == 4);
 
@@ -935,8 +1026,9 @@ int run_lobby_template_cancel_chain_rolls_back(void) {
     return 0;
 }
 
-/* Committing keeps the previewed map, so its lobby stands and the counts the
- * old map had are gone for good. */
+/* Committing keeps the previewed map, so where that map brought a template
+ * of its own, its lobby stands and the counts the old map had are gone for
+ * good. */
 int run_lobby_template_commit_keeps_new_lobby(void) {
     ServerSim       *sim;
     ScnLobbyTemplate t;
@@ -954,22 +1046,28 @@ int run_lobby_template_commit_keeps_new_lobby(void) {
     UT_ASSERT(ltSeats(sim, LT_RAIDER) == 1);
     UT_ASSERT(serverSimGetState(sim) == serverStateLobby);
 
+    /* The map about to be previewed carries a template of its own: five
+       raiders where the old one had four. The callback that would attach it
+       is not registered here, so it goes on by hand, as that callback
+       would put it before the decision. */
+    ltTemplate(&t, 5, 5, 1, 1);
+    serverSimSetScenarioLobbyTemplate(sim, &t);
     UT_ASSERT(ltPreview(sim, "Preview"));
     serverSimCommitPreview(sim);
     UT_ASSERT_MSG(!serverSimHasPreviewMap(sim),
                   "the commit left a preview pending");
-    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 4,
+    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 5,
                   "the committed map's lobby holds %d seats, expected the "
-                  "template's four",
+                  "new template's five",
                   ltSeats(sim, LT_RAIDER));
 
     /* And the old map's count is not waiting to be applied to a later
-       cancel: previewing again and backing out returns the four that are
+       cancel: previewing again and backing out returns the five that are
        there now. */
     UT_ASSERT(ltPreview(sim, "Preview again"));
     UT_ASSERT(serverSimRevertPreview(sim));
-    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 4,
-                  "a cancel after a commit gave back %d seats, expected 4",
+    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 5,
+                  "a cancel after a commit gave back %d seats, expected 5",
                   ltSeats(sim, LT_RAIDER));
 
     serverSimDestroy(sim);
@@ -1155,7 +1253,7 @@ int run_lobby_template_seat_carries_init(void) {
  * botManagerStageInitArg reads the pair it turns into the brain's mode= and
  * difficulty= tokens.
  *
- * The fixture brain's modes are default (mode 0) and survival (mode 1), each
+ * The fixture brain's modes are default (mode 0) and turtle (mode 1), each
  * with easy / medium / hard (levels 0 / 1 / 2) and hard as the default.
  *
  * The queued bot-config event is asserted with them. It is the whole of the
@@ -1203,7 +1301,7 @@ int run_lobby_template_seat_carries_mode(void) {
     sim = ltLobbySim();
     UT_ASSERT(sim != NULL);
 
-    ltModesTemplate(&t, "survival", "medium");
+    ltModesTemplate(&t, "turtle", "medium");
     serverSimSetScenarioLobbyTemplate(sim, &t);
     serverSimScenarioSeatLobby(sim);
     ltHoldInLobby(sim);
@@ -1215,7 +1313,7 @@ int run_lobby_template_seat_carries_mode(void) {
 
     /* Both halves of the pair, on a seat that holds no bot yet. */
     UT_ASSERT_MSG(sim->botConfigs[held].mode == 1,
-                  "held seat %d is in mode %u, expected survival (1)",
+                  "held seat %d is in mode %u, expected turtle (1)",
                   held, (unsigned)sim->botConfigs[held].mode);
     UT_ASSERT_MSG(sim->botConfigs[held].difficulty == 1,
                   "held seat %d is at level %u, expected medium (1)",
@@ -1223,7 +1321,7 @@ int run_lobby_template_seat_carries_mode(void) {
 
     /* And on one whose bot was built while the seating ran. */
     UT_ASSERT_MSG(sim->botConfigs[fielded].mode == 1,
-                  "fielded seat %d is in mode %u, expected survival (1)",
+                  "fielded seat %d is in mode %u, expected turtle (1)",
                   fielded, (unsigned)sim->botConfigs[fielded].mode);
     UT_ASSERT_MSG(sim->botConfigs[fielded].difficulty == 1,
                   "fielded seat %d is at level %u, expected medium (1)",
@@ -1281,7 +1379,7 @@ int run_lobby_template_mode_unknown_key_kept(void) {
     sim = ltLobbySim();
     UT_ASSERT(sim != NULL);
 
-    ltModesTemplate(&t, "survival", "nosuchlevel");
+    ltModesTemplate(&t, "turtle", "nosuchlevel");
     serverSimSetScenarioLobbyTemplate(sim, &t);
     serverSimScenarioSeatLobby(sim);
     ltHoldInLobby(sim);
@@ -1345,6 +1443,91 @@ int run_lobby_template_no_mode_leaves_config(void) {
                   "held seat %d queued no bot-config event", held);
     UT_ASSERT_MSG((sim->botConfigPublishPending & (1u << fielded)) != 0,
                   "fielded seat %d queued no bot-config event", fielded);
+
+    serverSimDestroy(sim);
+    ltDropModesBrain();
+    ltDropBrainFile();
+    return 0;
+}
+
+/* A seat the template makes starts from a NEW seat's config, whatever the
+ * slot's previous bot had: botConfigs is not cleared when a bot leaves, so a
+ * seat that read it would inherit a removed bot's mode. And the base is the
+ * one Add Bot resolves for the team, so on an Open game a seeded seat starts
+ * in the brain's open_default mode as an added bot does. */
+int run_lobby_template_seat_new_seat_base(void) {
+    ServerSim       *sim;
+    ScnLobbyTemplate t;
+    int              held;
+    int              fielded;
+    int              i;
+
+    /* 1. Stale configs on every slot; the fixture has no open_default. */
+    UT_ASSERT(ltMakeBrainFile("new_seat_base"));
+    UT_ASSERT(ltMakeModesBrain("new_seat_base"));
+    ut_brain_stub_arm(true);
+    sim = ltLobbySim();
+    UT_ASSERT(sim != NULL);
+    for (i = 0; i < MAX_TANKS; i++) {
+        sim->botConfigs[i].mode       = 1;
+        sim->botConfigs[i].difficulty = 0;
+    }
+
+    ltModesTemplate(&t, NULL, NULL);
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    serverSimScenarioSeatLobby(sim);
+    ltHoldInLobby(sim);
+
+    held = ltFirstSeat(sim, LT_RAIDER);
+    UT_ASSERT_MSG(held >= 0, "the held team seated nothing");
+    fielded = ltFirstSeat(sim, LT_GUARD);
+    UT_ASSERT_MSG(fielded >= 0, "the fielded team seated nothing");
+    UT_ASSERT_MSG(sim->botConfigs[held].mode == 0 &&
+                  sim->botConfigs[held].difficulty == BOT_DIFFICULTY_HARD,
+                  "held seat %d kept the slot's stale config %u/%u",
+                  held, (unsigned)sim->botConfigs[held].mode,
+                  (unsigned)sim->botConfigs[held].difficulty);
+    UT_ASSERT_MSG(sim->botConfigs[fielded].mode == 0 &&
+                  sim->botConfigs[fielded].difficulty == BOT_DIFFICULTY_HARD,
+                  "fielded seat %d kept the slot's stale config %u/%u",
+                  fielded, (unsigned)sim->botConfigs[fielded].mode,
+                  (unsigned)sim->botConfigs[fielded].difficulty);
+
+    serverSimDestroy(sim);
+    ltDropModesBrain();
+    ltDropBrainFile();
+
+    /* 2. A brain whose open_default is its second mode, on an Open game:
+          the seeded seats start there, at the lobby's Hard. */
+    UT_ASSERT(ltMakeBrainFile("new_seat_open"));
+    UT_ASSERT(ltMakeModesBrainWith("new_seat_open",
+                                   "open_default = turtle\n\n"));
+    ut_brain_stub_arm(true);
+    sim = ltLobbySim();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(serverSimGetGameType(sim) == gameOpen);
+
+    ltModesTemplate(&t, NULL, NULL);
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    serverSimScenarioSeatLobby(sim);
+    ltHoldInLobby(sim);
+
+    held = ltFirstSeat(sim, LT_RAIDER);
+    UT_ASSERT_MSG(held >= 0, "the held team seated nothing");
+    fielded = ltFirstSeat(sim, LT_GUARD);
+    UT_ASSERT_MSG(fielded >= 0, "the fielded team seated nothing");
+    UT_ASSERT_MSG(sim->botConfigs[held].mode == 1 &&
+                  sim->botConfigs[held].difficulty == BOT_DIFFICULTY_HARD,
+                  "held seat %d on an Open game is %u/%u, expected the "
+                  "open_default mode (1) at Hard", held,
+                  (unsigned)sim->botConfigs[held].mode,
+                  (unsigned)sim->botConfigs[held].difficulty);
+    UT_ASSERT_MSG(sim->botConfigs[fielded].mode == 1 &&
+                  sim->botConfigs[fielded].difficulty == BOT_DIFFICULTY_HARD,
+                  "fielded seat %d on an Open game is %u/%u, expected the "
+                  "open_default mode (1) at Hard", fielded,
+                  (unsigned)sim->botConfigs[fielded].mode,
+                  (unsigned)sim->botConfigs[fielded].difficulty);
 
     serverSimDestroy(sim);
     ltDropModesBrain();
@@ -1442,7 +1625,7 @@ int run_lobby_template_add_bot_takes_template(void) {
        ships no modes.txt and so has no mode to resolve against. */
     serverSimSetBotBrainPath(sim, ltModesBrain);
 
-    ltAddBotTemplate(&t, "survival", "hard");
+    ltAddBotTemplate(&t, "turtle", "hard");
     serverSimSetScenarioLobbyTemplate(sim, &t);
     serverSimScenarioSeatLobby(sim);
     ltHoldInLobby(sim);
@@ -1452,7 +1635,7 @@ int run_lobby_template_add_bot_takes_template(void) {
     UT_ASSERT_MSG(horde1 >= 0, "Add Bot on the templated team was refused");
     UT_ASSERT_MSG(sim->botConfigs[horde1].mode == 1,
                   "the added horde bot in seat %d is in mode %u, expected "
-                  "survival (1)", horde1,
+                  "turtle (1)", horde1,
                   (unsigned)sim->botConfigs[horde1].mode);
     UT_ASSERT_MSG(sim->botConfigs[horde1].difficulty == BOT_DIFFICULTY_HARD,
                   "the added horde bot in seat %d is at level %u, expected "
@@ -1475,14 +1658,14 @@ int run_lobby_template_add_bot_takes_template(void) {
                   BOT_DIFFICULTY_HARD);
 
     /* (b) A person turns one HORDE seat down to easy. The next Add Bot on
-           that team is survival at easy: the mode is still the template's,
+           that team is turtle at easy: the mode is still the template's,
            and the level is the one a person chose. */
-    ltHostPicks(sim, horde1, 1 /* survival */, BOT_DIFFICULTY_EASY);
+    ltHostPicks(sim, horde1, 1 /* turtle */, BOT_DIFFICULTY_EASY);
     horde2 = ltAddBot(sim, LT_GUARD);
     UT_ASSERT_MSG(horde2 >= 0, "the second Add Bot on the horde was refused");
     UT_ASSERT_MSG(sim->botConfigs[horde2].mode == 1,
                   "the second horde bot, seat %d, is in mode %u, expected "
-                  "survival (1)", horde2,
+                  "turtle (1)", horde2,
                   (unsigned)sim->botConfigs[horde2].mode);
     UT_ASSERT_MSG(sim->botConfigs[horde2].difficulty == BOT_DIFFICULTY_EASY,
                   "the second horde bot, seat %d, is at level %u, expected "
@@ -1536,7 +1719,7 @@ int run_lobby_template_add_bot_takes_template(void) {
     UT_ASSERT(sim != NULL);
     serverSimSetBotBrainPath(sim, ltModesBrain);
 
-    ltAddBotTemplate(&t, "survival", NULL);
+    ltAddBotTemplate(&t, "turtle", NULL);
     serverSimSetScenarioLobbyTemplate(sim, &t);
     serverSimScenarioSeatLobby(sim);
     ltHoldInLobby(sim);
@@ -1544,10 +1727,10 @@ int run_lobby_template_add_bot_takes_template(void) {
     horde1 = ltAddBot(sim, LT_GUARD);
     UT_ASSERT_MSG(horde1 >= 0, "Add Bot on the mode-only team was refused");
     UT_ASSERT_MSG(sim->botConfigs[horde1].mode == 1,
-                  "seat %d is in mode %u, expected survival (1)", horde1,
+                  "seat %d is in mode %u, expected turtle (1)", horde1,
                   (unsigned)sim->botConfigs[horde1].mode);
     UT_ASSERT_MSG(sim->botConfigs[horde1].difficulty == BOT_DIFFICULTY_HARD,
-                  "seat %d is at level %u, expected survival's own default, "
+                  "seat %d is at level %u, expected turtle's own default, "
                   "hard (%d)", horde1,
                   (unsigned)sim->botConfigs[horde1].difficulty,
                   BOT_DIFFICULTY_HARD);

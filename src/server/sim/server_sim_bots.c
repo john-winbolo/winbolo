@@ -356,6 +356,23 @@ void serverSimRemoveBot(ServerSim *sim, BYTE playerNum) {
     serverSimPublishLobbySlot(sim, playerNum);
 }
 
+void serverSimRemoveAllBots(ServerSim *sim) {
+    BYTE i;
+    if (sim == NULL) return;
+    /* The roster is what has to be asked, not the pool: a seat held for a
+       bot that was never fielded has no bot manager entry. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (serverSimIsBot(sim, i)) {
+            serverSimRemoveBot(sim, i);
+        }
+    }
+    /* The scenario's seats went with the rest, so the lobby no longer holds
+       what its template built. A decision that reaches the same template
+       leaves a lobby alone, which here would leave it empty; this is what
+       tells it to seat the template again. */
+    sim->scenarioLobbySeated = false;
+}
+
 void serverSimDestroyBots(ServerSim *sim) {
     botManagerDestroy(sim);
 }

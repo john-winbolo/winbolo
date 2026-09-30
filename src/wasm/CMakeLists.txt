@@ -175,9 +175,6 @@ set(SERVER_SOURCES
     ${SRC_ROOT}/server/server_stubs.c
 )
 
-# LZW compression
-file(GLOB LZW_SOURCES ${SRC_ROOT}/lzw/*.c)
-
 # Map editor sources reachable from shared dialogs (map chooser pulls in
 # the procedural generator's imgui controls; mapgen.c/mapgen_maze.c come
 # in via bolo_static).
@@ -230,7 +227,6 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_reel.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
-    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_scenario_rules.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_settings.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_keysetup.cpp
@@ -399,7 +395,6 @@ set(WASM_SOURCES
 add_executable(winbolo
     ${BOLO_SOURCES}
     ${SERVER_SOURCES}
-    ${LZW_SOURCES}
     ${WBN_SOURCES}
     ${GUI_SOURCES}
     ${MAPEDITOR_SOURCES}
@@ -449,6 +444,9 @@ target_compile_definitions(winbolo PRIVATE
     # Lights up the settings dialog's voice block, which compiles into this
     # target too.
     WINBOLO_VOICE=1
+    # The network-impairment hooks are for the loopback tests only; every
+    # shipping target keeps them compiled out.
+    WB_ENABLE_NETIMPAIR=0
 )
 target_compile_options(winbolo PRIVATE -Werror=undef -fno-common -include sys/types.h)
 target_link_options(winbolo PRIVATE "LINKER:--allow-multiple-definition")

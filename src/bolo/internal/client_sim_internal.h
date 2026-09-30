@@ -200,6 +200,11 @@ struct ClientSim {
      * discrete). */
     InterpRenderCtl interpRenderCtl;
 
+    /* Draw other tanks from their full interpolated world position rather
+     * than the game pixel (clientSimSetFineTankPositions). False from the
+     * create memset, so only a front end that asks gets it. */
+    bool fineTankPositions;
+
     /* Server shell snapshots for UDP mode */
     ShellSnapshot serverShellSnaps[MAX_SNAPSHOT_SHELLS];
     int         serverShellCount;
@@ -949,6 +954,9 @@ struct ClientSim {
      * library and no limits (-allow-unsafe-scripts). False with no script
      * attached, since the server only says so beside one. */
     bool     lobbyScenarioUnsafe;
+    /* True when the attached list fields its own bots (needs_bots), so the
+     * server refuses the AI policy that takes every bot off the roster. */
+    bool     lobbyScenarioNeedsBots;
 
     /* The lobby's ordered script list, from CTRL_LOBBY_SCRIPT_LIST. Entry 0
      * is the one the round is decided by and is the same file the identity

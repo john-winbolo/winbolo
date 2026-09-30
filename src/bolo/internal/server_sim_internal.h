@@ -255,15 +255,16 @@ struct ServerSim {
      * when it changes mode or difficulty — and never by an automatic write
      * (a scenario seed, single player's own add path, the CLI). Otherwise
      * the game's defaults pass for the host's choice: that is how single
-     * player's skill guess used to override Survival's Hard.
+     * player's skill guess used to override the Hard that Survival's
+     * template names for its horde.
      *
      * Stored as the brain's own KEYS, not the indices that are kept in
      * botConfigs. An index only means something against one manifest: mode
-     * 1 is "survival" in GoalHunter and could be anything at all in another
-     * brain, so copying the number onto a bot running a different brain
-     * would silently pick the wrong mode. Keys are re-resolved against
-     * whatever brain the new bot actually runs, and a key that brain has
-     * never heard of is simply dropped.
+     * 1 is whatever that brain's modes.txt lists second and could be
+     * anything at all in another brain, so copying the number onto a bot
+     * running a different brain would silently pick the wrong mode. Keys
+     * are re-resolved against whatever brain the new bot actually runs, and
+     * a key that brain has never heard of is simply dropped.
      *
      * Empty strings mean "nothing chosen yet this lobby session" — bots are
      * added at the ordinary default. The lifetime is one lobby session: the
@@ -289,7 +290,7 @@ struct ServerSim {
      * pair above is the wrong memory for those teams: it would carry the
      * mode across as well, and it would carry a level chosen on the
      * defenders' team onto the horde. Survival is the shape: the horde is
-     * survival mode at whatever difficulty a human last set on a HORDE
+     * the default mode at whatever difficulty a human last set on a HORDE
      * seat, and the defenders are whatever the host picks for themselves.
      *
      * Written by the same one writer as the pair above, cleared in the same
@@ -302,6 +303,14 @@ struct ServerSim {
      * serverSimFlushBotConfigPublishes, so a scenario seed's ten bots do not
      * add ten events to the burst it already makes in one call stack. */
     uint16_t        botConfigPublishPending;
+
+    /* One bit per slot: a person changed this bot's MODE by hand (the gear
+     * popup's Mode dropdown, through CMD_LOBBY_BOT_CONFIG). A seat with the
+     * bit keeps its mode when the host changes the game type; a seat without
+     * it follows the new type's starting mode (brainModesStartMode). Set only
+     * by serverSimMarkBotModeSetByHand, cleared when the seat's player leaves
+     * (serverSimRemovePlayer) and when new-bot defaults are applied. */
+    uint16_t        botModeSetByHand;
 
     BotManager      botMgr;  /* per-sim bot manager — initialised by botManagerInitInSim */
 
@@ -444,8 +453,10 @@ struct ServerSim {
                                     * both give — has to mean pings ALLOWED,
                                     * because that is what every build before
                                     * this one did. */
-    bool     modsOff;              /* the round composes none of the mods on
-                                    * the pick list. Stored in the negative
+    bool     modsOff;              /* the round composes none of the scripts
+                                    * on the pick list, mods and picked
+                                    * scenarios alike; the map's own script
+                                    * still plays. Stored in the negative
                                     * sense for the same reason as
                                     * smartPingsOff above. The pick list is
                                     * left alone, so this is what a host turns
@@ -710,6 +721,15 @@ struct ServerSim {
      * recipient's closest base changes, its current stock is pushed immediately
      * so ammo appears on arrival instead of waiting for the next full-sync. */
     uint8_t      lastClosestBase[MAX_TANKS];
+
+    /* Alliance requests not yet accepted. Bit N of entry A means seat N has
+     * asked seat A. CMD_ALLIANCE_REQUEST sets it, and CMD_ALLIANCE_ACCEPT
+     * goes ahead only if it is set and clears it, so a client cannot ally
+     * itself with a seat that never asked. A seat leaving clears its entry
+     * and its bit in every other entry; serverSimResetGameWorld clears all
+     * of it. A declined request is not reported to the server and stays
+     * here until one of those happens. */
+    uint16_t     allianceAskedBy[MAX_TANKS];
 
     /* Full state sync tracking, per recipient. Each client's own per-client
      * snapshot build manages its own full-sync cadence; a scalar here let the
@@ -1118,20 +1138,18 @@ struct ServerSim {
     ScnLobbyTemplate       scenarioLobby;
     bool                   scenarioLobbyValid;
     /* What the seats now in the lobby were built from: whether the seating
-     * ran on a template at all, the map file it ran for, and the template
-     * itself. The three are written after each seating, so holding the live
-     * template above against them says whether the bots in the lobby came
-     * from the lobby that is attached now — which is what tells a scenario
-     * picked on the map already committed, where the seats stand, from one
-     * that arrived with a new map or a new template. The path is empty where
-     * the live map has no file of its own, which is every map that came from
-     * bytes.
+     * ran on a template at all, and the template itself. The two are written
+     * by each seating, so holding the live template above against them says
+     * whether the bots in the lobby came from the lobby that is attached now
+     * — which is what tells a map change or a pick that kept the scenario's
+     * lobby, where the bots stand, from one that brought a new template.
+     * Anything that empties the lobby of its bots without seating it again
+     * clears scenarioLobbySeated, so the next decision seats it afresh.
      *
      * The template is held in full rather than as a digest because the
      * question asked of it is exact: two lobbies that differ by one seat are
      * different lobbies. */
     bool                   scenarioLobbySeated;
-    char                   scenarioLobbySeatedMap[FILENAME_MAX];
     ScnLobbyTemplate       scenarioLobbySeatedTemplate;
     /* What the attached scenario is called, where it came from, and what it
      * says about itself — the lobby's description of it, which the settings
@@ -1159,6 +1177,12 @@ struct ServerSim {
          * changing the map. False while source is lobbyScenarioNone, for the
          * reason the flag above it is. */
         bool                bound;
+        /* True when the composed list said needs_bots: a script in it
+         * fields its own bots, so the lobby is moved off aiNone while it is
+         * attached and may not be put back on it. Carried to every client
+         * so the lobby greys the "no computer tanks" row only then. False
+         * while source is lobbyScenarioNone. */
+        bool                needsBots;
         /* True when this server runs every script with the full Lua library
          * and no limits (-allow-unsafe-scripts). The lobby carries it to
          * every client so a player can see it before they play. False while
@@ -1199,14 +1223,19 @@ struct ServerSim {
     /* What the lobby was set to when a scripted map displaced it: the game
      * type gameScripted took the place of, the ranked flag a scripted round
      * cannot run under, and the AI policy and bot AI type that aiNone was
-     * moved off. A commit with no scenario puts all four back and empties
-     * them again. preScenarioGameType is the one that says whether anything
+     * moved off. A commit with no scenario puts them back and empties them
+     * again. preScenarioGameType is the one that says whether anything
      * is held: 0 is no game type, which no lobby is ever on, and is what
      * every lobby that has not had a scripted map committed into it reads. */
     gameType               preScenarioGameType;
     bool                   preScenarioRanked;
     uint8_t                preScenarioAiPolicy;
     aiType                 preScenarioAiType;
+    /* True once a list that said needs_bots moved the lobby off aiNone.
+     * The two above are taken at that raise, and put back as soon as the
+     * list stops saying needs_bots (serverSimScenarioApplyLobbyRules). A
+     * list that never touched the AI policy leaves it the host's. */
+    bool                   preScenarioAiRaised;
     /* The brain a seat was seeded with, so a seat held without a bot in it
      * still knows what to run when something fields it. Empty means the
      * server's own. */

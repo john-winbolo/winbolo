@@ -403,6 +403,16 @@ typedef struct {
      * unless the file asks for it, which leaves a map's own numbers alone. */
     bool fillToCaps;
 
+    /* True when the file needs the lobby to allow bots: it fields its own
+     * (a lobby team with bots above 0, game.spawn_bot, game.lobby_add_bot),
+     * and a lobby set to no bots would refuse every one of them. Only then
+     * does attaching it move a lobby off "no computer tanks" and keep it
+     * off while it is attached. Off unless the file asks for it, so a
+     * script that only works with the bots a host adds, or with none,
+     * leaves the host's bot setting alone. A team with bots = 0 does not
+     * say this, which is why it is a key of its own. */
+    bool needsBots;
+
     /* The Steam Workshop item this file was published as, and the account
      * that published it, written into the file once it is published
      * (scnIoSetWorkshopId in scenario_chunk.h). Both keys are written as

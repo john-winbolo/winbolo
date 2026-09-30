@@ -421,6 +421,51 @@ static bool lobbyRoundSameFiles(const LobbyRoundRow *a, int aCount,
     return true;
 }
 
+/* Whether rows[idx] is the map's own scenario with a picked scenario beside
+ * it in the same list. The server sends that list with Mods/Scenario off:
+ * the picks do not compose, so the map's own script plays and is put back at
+ * the front, while the list still holds the picked scenario for when the box
+ * goes back on.
+ *
+ * Such a row is not sent. A list naming the map's own scenario and a picked
+ * one is two scenarios, which the CMD_SET_SCRIPT_LIST arm refuses, and a list
+ * without the map's row is how a host says the picked scenario replaces it.
+ * That is also what the server does with this list while the box is off: the
+ * map's own script is put back at the front, so leaving it off loses
+ * nothing. Only a bound scenario is skipped; a map whose own script is a mod
+ * can go out beside a picked scenario. */
+static bool lobbyRoundShadowedIn(const LobbyRoundRow *rows, int count,
+                                 int idx) {
+    int i;
+
+    if (idx < 0 || idx >= count) return false;
+    if (!rows[idx].bound || rows[idx].mod) return false;
+    for (i = 0; i < count; i++) {
+        if (!rows[i].bound && !rows[i].mod) return true;
+    }
+    return false;
+}
+
+/* Two compositions as they would go out, shadowed rows left off both. This is
+ * the test OK makes before it sends: a draft that differs from the round only
+ * in where a shadowed row sits sends the same list, and the server would
+ * re-attach and unready everyone for nothing. */
+static bool lobbyRoundSameSent(const LobbyRoundRow *a, int aCount,
+                               const LobbyRoundRow *b, int bCount) {
+    int i = 0;
+    int j = 0;
+
+    for (;;) {
+        while (i < aCount && lobbyRoundShadowedIn(a, aCount, i)) i++;
+        while (j < bCount && lobbyRoundShadowedIn(b, bCount, j)) j++;
+        if (i >= aCount || j >= bCount) break;
+        if (SDL_strcmp(a[i].file, b[j].file) != 0) return false;
+        i++;
+        j++;
+    }
+    return i >= aCount && j >= bCount;
+}
+
 /* Where a file sits in the draft, and where the draft's scenario sits. Both
  * -1 for none. The scenario is found by kind and never by position: a round
  * running mods and no scenario is one a host can set up from here, and index
@@ -434,21 +479,59 @@ static int lobbyRoundIndexOfFile(const char *file) {
     return -1;
 }
 
+/* The draft's own row at idx, shadowed: see lobbyRoundShadowedIn. */
+static bool lobbyRoundBoundShadowed(int idx) {
+    return lobbyRoundShadowedIn(s_round, s_roundCount, idx);
+}
+
+/* Whether the round this draft was taken from may have lost a pick on the
+ * way here. The server publishes at most LOBBY_SCRIPT_LIST_MAX rows (the
+ * same ten as CMD_SCRIPT_LIST_MAX: see LOBBY_ROUND_MAX), and with
+ * Mods/Scenario off the map's own row takes one of them in front of the
+ * picks (serverSimGetLobbyScriptCount), so a host with a full list of picks
+ * is shown all but the last. The draft cannot name that pick, and any list
+ * sent from it would take the pick out of the round with nobody having
+ * asked. So while this holds nothing in the draft changes and nothing is
+ * sent: no add, no swap, no drop and no move.
+ *
+ * A full list with a shadowed row is the only sign of it. The same list
+ * arrives when the host has one pick fewer and nothing is hidden, and the
+ * lobby is not told which of the two it is, so both are treated as the one
+ * that loses a pick. Checking the box back on takes the map's row off the
+ * list and shows every pick, and the host can edit freely there. */
+static bool lobbyRoundLiveMayBeCut(void) {
+    int i;
+
+    if (s_liveCount < CMD_SCRIPT_LIST_MAX) return false;
+    for (i = 0; i < s_liveCount; i++) {
+        if (lobbyRoundShadowedIn(s_live, s_liveCount, i)) return true;
+    }
+    return false;
+}
+
+/* The scenario a new scenario pick replaces. A shadowed map row is passed
+ * over, so the picked scenario is the one swapped and the map-lock note does
+ * not block the add. */
 static int lobbyRoundIndexOfScenario(void) {
     int i;
 
     for (i = 0; i < s_roundCount; i++) {
-        if (!s_round[i].mod) return i;
+        if (!s_round[i].mod && !lobbyRoundBoundShadowed(i)) return i;
     }
     return -1;
 }
 
-/* How many draft rows would go into the command, which is all of them. The
- * bound row used to be left out because the server refused a list that named
- * one; it accepts the committed map's own script now, so that row takes a
- * place in CMD_SCRIPT_LIST_MAX like any other. */
+/* How many draft rows would go into the command. The bound row takes a place
+ * in CMD_SCRIPT_LIST_MAX like any other, unless it is shadowed by a picked
+ * scenario and so is not sent: see lobbyRoundBoundShadowed. */
 static int lobbyRoundSendCount(void) {
-    return s_roundCount;
+    int n = 0;
+    int i;
+
+    for (i = 0; i < s_roundCount; i++) {
+        if (!lobbyRoundBoundShadowed(i)) n++;
+    }
+    return n;
 }
 
 /* Why a catalogue row cannot move over, as the lang id that says so, or 0
@@ -464,6 +547,9 @@ static int lobbyRoundWhyNotAdd(const LobbyScenarioRow *row) {
            and this is what keeps the host from building one. */
         return STR_DLGLOBBY_SCENARIO_IN_ROUND;
     }
+    /* Ahead of the swap below, which sends a list as full as the one it
+       replaces and would lose the hidden pick the same way. */
+    if (lobbyRoundLiveMayBeCut()) return STR_DLGLOBBY_SCENARIO_ROUND_FULL;
     if (!lobbyScenarioRowIsMod(row)) {
         at = lobbyRoundIndexOfScenario();
         if (at >= 0) {
@@ -517,11 +603,19 @@ static void lobbyRoundAdd(const LobbyScenarioRow *row) {
                      row->bound, row->workshopId);
 }
 
+/* Whether the row at idx may be taken out of the draft. Not the map's own,
+ * which the map decides, and nothing while a pick may be hidden: see
+ * lobbyRoundLiveMayBeCut. */
+static bool lobbyRoundMayDrop(int idx) {
+    if (idx < 0 || idx >= s_roundCount) return false;
+    if (s_round[idx].bound) return false;
+    return !lobbyRoundLiveMayBeCut();
+}
+
 static void lobbyRoundDrop(int idx) {
     int i;
 
-    if (idx < 0 || idx >= s_roundCount) return;
-    if (s_round[idx].bound) return;
+    if (!lobbyRoundMayDrop(idx)) return;
     for (i = idx; i + 1 < s_roundCount; i++) s_round[i] = s_round[i + 1];
     s_roundCount--;
 }
@@ -544,12 +638,22 @@ static void lobbyRoundDrop(int idx) {
  * else. Both of those now do what the host says, and a region's identity no
  * longer comes from its script's position in the list, which is what made the
  * pin necessary. It still cannot be taken out of the round — that is
- * lobbyRoundDrop, and it is the map that decides it. */
+ * lobbyRoundDrop, and it is the map that decides it.
+ *
+ * A shadowed row does not move, and nothing moves past it. It is not sent
+ * (see lobbyRoundShadowedIn), so a move would change the screen and not the
+ * list, and the row would jump back to the front when the server answered.
+ *
+ * Nothing moves while a pick may be hidden: see lobbyRoundLiveMayBeCut. */
 static bool lobbyRoundMayMove(int idx, int dir) {
     int to = idx + dir;
 
     if (idx < 0 || idx >= s_roundCount) return false;
     if (to < 0 || to >= s_roundCount) return false;
+    if (lobbyRoundLiveMayBeCut()) return false;
+    if (lobbyRoundBoundShadowed(idx) || lobbyRoundBoundShadowed(to)) {
+        return false;
+    }
     return true;
 }
 
@@ -574,13 +678,23 @@ static void lobbyRoundMove(int idx, int dir) {
  * src/server/server_command_dispatch.c now makes one exception, for the
  * committed map's own script, so that row is named like the rest and lands
  * where the host put it. Every other bound file is still refused, and the
- * left column still never offers one. */
+ * left column still never offers one. The one bound row that stays home is
+ * the map's own scenario beside a picked one, which only a Mods/Scenario-off
+ * lobby shows.
+ *
+ * Nothing goes out while a pick may be hidden, whatever the draft says: see
+ * lobbyRoundLiveMayBeCut. */
 static void lobbyRoundSend(ClientSim *cs) {
     const char *files[CMD_SCRIPT_LIST_MAX];
     int         n = 0;
     int         i;
 
+    if (lobbyRoundLiveMayBeCut()) return;
+
     for (i = 0; i < s_roundCount && n < CMD_SCRIPT_LIST_MAX; i++) {
+        /* The map's own scenario beside a picked one, which the server would
+           refuse as two scenarios: see lobbyRoundBoundShadowed. */
+        if (lobbyRoundBoundShadowed(i)) continue;
         files[n++] = s_round[i].file;
     }
     clientSimNetSendSetScriptList(cs, files, n);
@@ -874,10 +988,10 @@ void lobbyScenarioDetailsOpenAttached(ClientSim *cs) {
     s_detailsWantOpen   = true;
 }
 
-/* The same dialog for one row of the lobby's ordered script list. The icons
- * beside the scenario line and the mods line both land here, each with its
- * own row, so a round running a scenario and a mod at once gives two icons
- * that describe two different scripts.
+/* The same dialog for one row of the lobby's ordered script list. Every
+ * script name the lobby lines draw as a link lands here, each with its own
+ * row, so a round running a scenario and a mod at once gives two names that
+ * describe two different scripts.
  *
  * The list carries no description: the catalogue response is what carries
  * every description, keyed by file name. So the description is taken from
@@ -1125,8 +1239,8 @@ static float lobbyScenarioDetailsMinWidth(void) {
 /* The rules table's header row, shared by both tables below. False when the
  * table did not begin and nothing more is to be drawn. The rule's name takes
  * whatever the three equal number columns leave. The value column is headed
- * "New value" for every kind of script; the host's Rules popup keeps its own
- * "Scenario" header, which is why the two ids differ. */
+ * "New value" for every kind of script; the log viewer's rules table keeps
+ * its own "Scenario" header, which is why the two ids differ. */
 static bool lobbyScenarioDetailsRulesBegin(void) {
     float w = lobbyScenarioDetailsNumberColumnWidth();
 
@@ -1198,24 +1312,24 @@ static void lobbyScenarioDetailsRuleRow(int rule, double value,
 
 /* What the script's rules table says, folded into this dialog.
  *
- * The Rules button stayed in the Server Settings column, which is the host's
- * deep view — a row per rule with an Info popup a controller can land on. It
- * is gone from the map panel, which is now text and one icon, and a joiner's
- * only real question about a scenario is what it changes. So the table comes
- * along here, read-only and without the per-rule popup: a popup over a popup
- * over a window is more stack than the answer is worth, and the rule's own
- * description is on the row's hover.
+ * This is the one place the lobby shows a script's rules. The host's Rules
+ * popup in the Server Settings column is gone, because this dialog shows the
+ * same table to everyone. The popup's per-rule Info view, with the rule's
+ * description and its range, went with it, so the description is on the
+ * row's hover only.
  *
  * The table is the file's own, as its author wrote it, for every kind of row
  * the dialog opens on. Which script's value plays where two set the same
  * rule is worked out here, against the order the host is looking at (see
  * lobbyScenarioDetailsOrder): the first script on it that sets the rule
  * wins, as the round composes it, and the rows this script loses say so. A
- * mod on a server with mods turned off loads nothing, so it neither wins a
- * rule over another script nor has its own rules play, and a note under its
- * table says so rather than the table going missing. A mod that sets no rule
- * has no table and still gets the note, because the mod does not load
- * either way. */
+ * pick on a server with Mods/Scenario turned off loads nothing, mod or
+ * picked scenario alike, so it neither wins a rule over another script nor
+ * has its own rules play, and a note under its table says so rather than the
+ * table going missing. A pick that sets no rule has no table and still gets
+ * the note, because it does not load either way. The map's own script is not
+ * a pick: it loads with the box off, and gets neither the skip nor the
+ * note. */
 static void lobbyScenarioDetailsRules(ClientSim *cs) {
     LobbyRoundRow  order[LOBBY_ROUND_MAX];
     const uint8_t *blobs[LOBBY_ROUND_MAX];
@@ -1241,7 +1355,7 @@ static void lobbyScenarioDetailsRules(ClientSim *cs) {
     for (i = 0; i < n; i++) {
         blobs[i] = NULL;
         lens[i]  = 0;
-        if (order[i].mod && !modsOn) continue;
+        if (!order[i].bound && !modsOn) continue;
         if (lobbyScenarioDetailsOfFile(cs, order[i].file, &blobs[i],
                                        &lens[i]) ==
                 CLIENT_SCN_DETAILS_WAITING &&
@@ -1273,9 +1387,10 @@ static void lobbyScenarioDetailsRules(ClientSim *cs) {
         ImGui::EndTable();
     }
 
-    /* Shown whether or not the table is: a mod on a server with mods off
-       loads nothing, rules or not, and that does not wait on any answer. */
-    if (!modsOn && s_detailsKind == 1) {
+    /* Shown whether or not the table is: a pick on a server with
+       Mods/Scenario off loads nothing, rules or not, and that does not wait
+       on any answer. */
+    if (!modsOn && !s_detailsBound) {
         lobbyScenarioRowNote(langGetText(STR_DLGLOBBY_DETAILS_MODS_OFF));
     }
 }
@@ -1378,9 +1493,38 @@ static void lobbyScenarioDetailsCallbacks(ClientSim *cs) {
     ImGui::EndTable();
 }
 
+/* How one value of setting st reads, into out: the number, or On or Off for
+ * a bool setting, marked as the default when it is st's default. */
+static void lobbyScenarioSettingText(const ScnSetting *st, int32_t v,
+                                     char *out, size_t outLen) {
+    MessageArgs args = {};
+
+    if (st->type == SCN_SETTING_TYPE_BOOL) {
+        langid id;
+
+        if (v == st->def) {
+            id = v != 0 ? STR_DLGLOBBY_DETAILS_SETTING_ON_DEFAULT
+                        : STR_DLGLOBBY_DETAILS_SETTING_OFF_DEFAULT;
+        } else {
+            id = v != 0 ? STR_DLGLOBBY_DETAILS_SETTING_ON
+                        : STR_DLGLOBBY_DETAILS_SETTING_OFF;
+        }
+        SDL_snprintf(out, outLen, "%s", langGetText(id));
+        return;
+    }
+    if (v == st->def) {
+        args.number = v;
+        SDL_snprintf(out, outLen, "%s",
+                     langGetTextFmt(STR_DLGLOBBY_DETAILS_SETTING_DEFAULT,
+                                    &args));
+    } else {
+        SDL_snprintf(out, outLen, "%ld", (long)v);
+    }
+}
+
 /* The script's own settings (scenario_settings.h): one row per setting the
  * file declares, its label and its value. The host gets a dropdown of every
- * value the declaration allows, and a pick is sent to the server at once;
+ * value the declaration allows, On and Off for a bool setting, and a pick is sent to the server at once;
  * the value shown is always the one the server last reported, so a pick the
  * server corrected shows as corrected. Everyone else sees the values as
  * text. A value the server has not reported is the declared default.
@@ -1441,18 +1585,7 @@ static void lobbyScenarioDetailsSettings(ClientSim *cs) {
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted(st->label[0] != '\0' ? st->label : st->id);
         ImGui::TableSetColumnIndex(1);
-        {
-            MessageArgs args = {};
-
-            args.number = value;
-            if (value == st->def) {
-                SDL_snprintf(shown, sizeof(shown), "%s",
-                             langGetTextFmt(
-                                 STR_DLGLOBBY_DETAILS_SETTING_DEFAULT, &args));
-            } else {
-                SDL_snprintf(shown, sizeof(shown), "%ld", (long)value);
-            }
-        }
+        lobbyScenarioSettingText(st, value, shown, sizeof(shown));
         if (!(host && live)) {
             ImGui::TextUnformatted(shown);
             continue;
@@ -1464,20 +1597,11 @@ static void lobbyScenarioDetailsSettings(ClientSim *cs) {
             int     c;
 
             for (c = 0; c < choices; c++) {
-                int32_t     v = (int32_t)((int64_t)st->min +
-                                          (int64_t)c * st->step);
-                char        item[64];
-                MessageArgs args = {};
+                int32_t v = (int32_t)((int64_t)st->min +
+                                      (int64_t)c * st->step);
+                char    item[64];
 
-                args.number = v;
-                if (v == st->def) {
-                    SDL_snprintf(item, sizeof(item), "%s",
-                                 langGetTextFmt(
-                                     STR_DLGLOBBY_DETAILS_SETTING_DEFAULT,
-                                     &args));
-                } else {
-                    SDL_snprintf(item, sizeof(item), "%ld", (long)v);
-                }
+                lobbyScenarioSettingText(st, v, item, sizeof(item));
                 if (ImGui::Selectable(item, v == value) && v != value) {
                     clientSimNetSendSetScriptSetting(cs, s_detailsFile,
                                                      st->id, v);
@@ -1542,9 +1666,21 @@ void lobbyScenarioDetailsRenderModal(ClientSim *cs, float s) {
 
     {
         ImVec2 vp = ImGui::GetMainViewport()->Size;
-        ImGui::SetNextWindowSize(ImVec2(SDL_min(560.0f, vp.x * 0.85f),
-                                        SDL_min(420.0f, vp.y * 0.85f)),
-                                 ImGuiCond_Appearing);
+        /* Three quarters of the screen each way, so the rules and callback
+           tables have room to show whole instead of scrolling in a small
+           box. Capped at 1200 x 900 at 1x so the lines stay readable on a
+           wide screen, and never less than the old 560 x 420 where the
+           screen has the room. All in the dialog's scale. */
+        float w = SDL_clamp(vp.x * 0.75f, SDL_min(560.0f * s, vp.x * 0.95f),
+                            1200.0f * s);
+        float h = SDL_clamp(vp.y * 0.75f, SDL_min(420.0f * s, vp.y * 0.95f),
+                            900.0f * s);
+        ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Appearing);
+        /* Centred on every opening too. The popup centres itself only the
+           first time, so after a switch from full screen to a window it
+           would reopen where the larger screen had it. */
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
+                                ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         /* No narrower than the rules table needs to show its three number
            columns and their headers whole, where the screen has the room. */
         ImGui::SetNextWindowSizeConstraints(
@@ -1778,6 +1914,7 @@ static const char *lobbyScenarioSendRefusal(void) {
         case 6: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_FULL);
         case 7: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN);
         case 8: return langGetText(STR_DLGLOBBY_SCRIPT_ERR_NAME_TAKEN);
+        case 9: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_TIMEOUT);
         default: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_REJECTED);
     }
 }
@@ -2470,8 +2607,8 @@ static void lobbyScenarioChooserRound(ClientSim *cs, LobbyScenarioRow *rows,
             /* No tooltip here either, for the reason the add arrow has
                none. A bound row's arrow is greyed and the row's own tag says
                it belongs to the map. */
-            if (lobbyScenarioArrow("##drop", ImGuiDir_Left, !r->bound,
-                                   NULL)) {
+            if (lobbyScenarioArrow("##drop", ImGuiDir_Left,
+                                   lobbyRoundMayDrop(i), NULL)) {
                 drop = i;
             }
             ImGui::SameLine(0.0f, inner);
@@ -2809,9 +2946,10 @@ void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
            An identical list is not free: the server detaches and re-attaches
            the script and unreadies everyone for it, so a host who opened the
            dialog to read it and pressed OK would restart the round's script
-           for nothing. */
+           for nothing. Compared as sent, shadowed rows left off both sides,
+           because that is the list the server would get. */
         if (wantSend &&
-            !lobbyRoundSameFiles(s_round, s_roundCount, s_live, s_liveCount)) {
+            !lobbyRoundSameSent(s_round, s_roundCount, s_live, s_liveCount)) {
             lobbyRoundSend(cs);
         }
     }

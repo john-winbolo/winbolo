@@ -364,6 +364,8 @@ LocalJoinResult serverSimLocalJoin(ServerSim *sim,
 void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     bool wasBot;
     if (playerNum >= MAX_TANKS) return;
+    /* The next occupant of this seat has not had its mode picked by anyone. */
+    sim->botModeSetByHand &= (uint16_t)~(1u << playerNum);
     /* Captured before any teardown so the last-human-left reset below can
      * tell a human departure from a bot one. Bot removals run through this
      * same path (botManagerRemoveBot), and the reset itself removes bots —
@@ -395,6 +397,17 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
         memset(&leaveEvt, 0, sizeof(leaveEvt));
         serverSimFillPlayerLeaveEvent(sim, playerNum, &leaveEvt);
         serverSimPublishControl(sim, &leaveEvt);
+    }
+
+    /* The requests this player made and the ones made to them go with
+     * them, so whoever takes the seat next cannot be allied by an accept
+     * of a request they never made. */
+    {
+        BYTE k;
+        sim->allianceAskedBy[playerNum] = 0;
+        for (k = 0; k < MAX_TANKS; k++) {
+            sim->allianceAskedBy[k] &= (uint16_t)~(1u << playerNum);
+        }
     }
 
     /* Freeze this slot's identity before the roster entry is torn down: the

@@ -236,7 +236,6 @@ extern "C" void imguiLobbyFrameReset(void) {
 
     lobbyChooserReset();
     lobbyScenarioChooserReset();
-    lobbyScenarioRulesReset();
 
     lobbyChatReset();
 
@@ -2376,19 +2375,14 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
            only finds a popup opened at its own scope. --- */
         lobbyChatDocsRenderModal(cs);
 
-        /* --- The scenario's rules, opened from the scenario line. Here for
-           the same reason as the docs modal above: the Rules button is drawn
-           inside the settings form's Server Settings column, and
-           BeginPopupModal only finds a popup opened at its own scope. --- */
-        lobbyScenarioRulesRenderModal(cs);
-
-        /* --- What one scenario or mod is, opened from the icon on either of
-           the two script lines or from a row of the chooser. Here because no
-           one scope sees all three: the two lines are drawn inside the
-           settings form and inside the map panel, and the chooser is a
-           top-level window of its own drawn after this window has ended, so
-           none of them can call OpenPopup where BeginPopupModal would find
-           it. Each sets a flag and this is what turns it into a popup. --- */
+        /* --- What one scenario or mod is, opened from a script name in the
+           Server Settings row or on the map panel, or from a row of the
+           chooser. Here because no one scope sees all three: the row is drawn
+           inside the settings form, the map panel's lines inside the map
+           panel, and the chooser is a top-level window of its own drawn after
+           this window has ended, so none of them can call OpenPopup where
+           BeginPopupModal would find it. Each sets a flag and this is what
+           turns it into a popup. --- */
         lobbyScenarioDetailsRenderModal(cs, s);
 
         /* --- Leave confirmation popup --- */

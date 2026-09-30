@@ -1091,6 +1091,13 @@ bool        clientSimGetLobbyScenarioBound(const ClientSim *cs);
  * sandboxed, which it was. */
 bool        clientSimGetLobbyScenarioUnsafe(const ClientSim *cs);
 
+/* True when the attached list fields its own bots (a script in it said
+ * needs_bots), so the server refuses the AI policy that takes every bot off
+ * the roster and the lobby greys that row. False with no script attached.
+ * A server that predates the field reads as true, because every such server
+ * refused that policy for any script. */
+bool        clientSimGetLobbyScenarioNeedsBots(const ClientSim *cs);
+
 /* The lobby's ordered script list: one scenario deciding the round and mods
  * behind it changing how it plays, in the order they load. Mirrored from
  * CTRL_LOBBY_SCRIPT_LIST, which the server publishes whole on every change,
@@ -1738,6 +1745,15 @@ void         clientSimCycleBuildSelect(ClientSim *cs, int delta);
  * the players table and the lobby mirror both are. False when cs is NULL,
  * when the slot is out of range, and for every seat that is on the field. */
 bool         clientSimSlotIsUnfielded(const ClientSim *cs, BYTE playerNum);
+
+/* Whether the screen tank list gives other tanks their full interpolated
+ * world position (square, pixel and world offset all from it) instead of
+ * the game pixel the players list stores. The front end turns it on for
+ * the Smooth animation mode, so other tanks glide the way the own tank
+ * does. Off by default; the players list, which brains read, is the same
+ * either way. The getter answers false when cs is NULL. */
+void         clientSimSetFineTankPositions(ClientSim *cs, bool on);
+bool         clientSimGetFineTankPositions(const ClientSim *cs);
 
 /* Alliance accessors. playerNum is 1-based (legacy screen-facade
  * convention); the function converts to 0-based internally. */

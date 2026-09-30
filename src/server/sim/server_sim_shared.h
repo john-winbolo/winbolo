@@ -81,6 +81,8 @@ void serverSimCbBuilt(void *ctx, BYTE player, BYTE action, BYTE mapX,
                       BYTE mapY);
 void serverSimCbMineLaid(void *ctx, BYTE player, BYTE mapX, BYTE mapY);
 void serverSimCbMineExploded(void *ctx, BYTE mapX, BYTE mapY, BYTE layer);
+void serverSimCbTankHit(void *ctx, BYTE victim, BYTE attacker, BYTE cause,
+                        BYTE amount, BYTE pill);
 void serverSimCbCenterTank(void *ctx);
 void serverSimCbConsoleMessage(void *ctx, char *msg);
 
@@ -91,12 +93,17 @@ bool serverSimCbChooseStart(void *ctx, BYTE player, BYTE *startIdx);
 bool serverSimCbSpawnLoadout(void *ctx, BYTE player, BYTE *shells,
                              BYTE *mines, BYTE *armour, BYTE *trees);
 bool serverSimCbCanRespawn(void *ctx, BYTE player);
-int  serverSimCbDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause);
+int  serverSimCbDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause,
+                            BYTE pill);
 bool serverSimCbCanBuild(void *ctx, BYTE player, BYTE action, BYTE mapX,
                          BYTE mapY, BYTE pillIdx);
 bool serverSimCbCanCapture(void *ctx, BYTE kind, BYTE index, BYTE player);
 bool serverSimCbCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
-                       BYTE cause);
+                       BYTE cause, BYTE pill);
+bool serverSimCbCanHit(void *ctx, BYTE attacker, BYTE kind, BYTE index,
+                       BYTE pill);
+int  serverSimCbPillDamageScale(void *ctx, BYTE attacker, BYTE index,
+                                BYTE cause, BYTE pill);
 
 /* Whether a newswire-worthy fact may be shown to players, also in
  * server_sim_callbacks.c. Unlike the queries above this one is not a GameSim
@@ -256,6 +263,56 @@ BotConfigKeyResult serverSimResolveBotConfigKeysFromModes(
         const char *levelKey,
         uint8_t *ioMode,
         uint8_t *ioLevel);
+
+/* Defined in server_sim_lobby.c — the body of serverSimResolveNewBotConfig,
+ * taking the brain's modes already loaded. NULL modes is a brain with no
+ * modes.txt and answers false, as the path form does when the read fails.
+ * The scenario's seat loops call it with their one read per brain. */
+bool serverSimResolveNewBotConfigFromModes(const ServerSim *sim, int team,
+                                           const BrainModes *modes,
+                                           bool honourManualPick,
+                                           uint8_t *ioMode,
+                                           uint8_t *ioLevel);
+
+/* ── One read of modes.txt per brain, for the length of one walk ─────────
+ *
+ * Seating a lobby, reconciling one and following a game type change all walk
+ * every seat, and the seats nearly always name the same brain. Read once per
+ * brain here and the walk costs one parse rather than one per seat.
+ *
+ * It is a local of the loop that builds it and dies with it: nothing about a
+ * brain's modes.txt is remembered from one walk to the next, so editing a
+ * manifest and reselecting the scenario still picks the edit up.
+ *
+ * A handful of entries rather than one per seat. A lobby's teams nearly
+ * always name one brain between them, and the entries here cover a server
+ * default plus a few teams that name their own; a lobby that names more
+ * distinct brains than this holds answers exactly the same and pays one
+ * extra read for the ones past the end. Size is the reason it is not wider:
+ * BrainModes is close to 4 KB on its own, and every walk is reached from the
+ * lobby command dispatcher, so this frame sits on top of that whole chain.
+ *
+ * The path is as long as a bot's brainPath (bot_manager.h) and SCN_PATH_MAX,
+ * which are the two places a path comes from. */
+#define BRAIN_MODES_CACHED 4
+
+typedef struct {
+    char       path[256];
+    BrainModes modes;
+    bool       haveModes;      /* the brain ships a modes.txt */
+} BrainModesCacheEntry;
+
+typedef struct {
+    BrainModesCacheEntry entry[BRAIN_MODES_CACHED];
+    int                  count;   /* set to 0 before the first ask */
+} BrainModesCache;
+
+/* Defined in server_sim_lobby.c. The modes for brainPath, read the first
+ * time this cache is asked for it. NULL for a brain with no modes.txt, which
+ * is what the resolver reads as "no manifest" — the same answer the seat
+ * loops get when a load fails there. */
+const BrainModes *serverSimBrainModesCached(BrainModesCache *cache,
+                                            const char *brainPath);
 
 /* Defined in server_sim.c — the entries owned by the parent rather than by a
  * source in this directory. */

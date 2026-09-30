@@ -94,8 +94,40 @@ void spritePositionTankLabel(float baseX, float baseY, float scale,
                              int mx, int my, int px, int py, float clipLeft,
                              float *outX, float *outY);
 
+/* The tank name as the overlay draws it in animation mode `mode`. In Smooth
+   the name is placed from the same world position the tank sprite is drawn
+   at (square, world offset wx/wy), so the two move together; every other
+   mode is spritePositionTankLabel, from the square and game pixel. */
+void spritePositionTankLabelAt(float baseX, float baseY, int mode, float scale,
+                               int sheetScale, int mx, int my, int px, int py,
+                               int wx, int wy, float clipLeft,
+                               float *outX, float *outY);
+
 /* Whether the pill and base numbers are drawn at this scale. */
 bool spritePositionItemLabelShown(float scale, float minScale);
+
+/* The menu background's camera (mapViewRenderCentered). A view edge at
+   `pos` pixels from the map's left or top splits into the first square it
+   shows and how far into that square it starts: pos = square * unit + edge,
+   with edge always 0..unit-1. pos can be negative (the view reaches past
+   the map's left or top edge) and square then is too; the two are never
+   changed apart, or the whole view jumps by up to a square. */
+void mapViewCameraSplit(int pos, int unit, int *outSquare, int *outEdge);
+
+/* One axis of the menu background's camera, the whole of it:
+   mapViewRenderCentered draws every tile and sprite from these two values
+   and nothing else, so they are what the unit test checks. centerW is the
+   view centre in world units (256 per square); preciseCenterW, when not
+   NULL, is the fractional centre of a MapViewPreciseCam and is used
+   instead. viewLen is the view's width or height in screen pixels. The
+   first square drawn and the screen-pixel offset into it come back from
+   mapViewCameraSplit and are not clamped to the map. */
+void mapViewCameraAxis(int centerW, const float *preciseCenterW, int viewLen,
+                       int zf, int *outSquare, int *outEdge);
+
+/* Whether square (mx, my) is inside the 256x256 map. The camera draws the
+   squares outside it as open deep sea. */
+bool mapViewSquareInMap(int mx, int my);
 
 #ifdef __cplusplus
 }

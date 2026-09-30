@@ -12,7 +12,8 @@
  *
  *  The decode is the twin of scnReadManifest in
  *  scenario_host.c: the same fields, the same defaults —
- *  api 1, bound true, fill_to_caps false, kind "scenario",
+ *  api 1, bound true, fill_to_caps false, needs_bots false,
+ *  kind "scenario",
  *  a team fielded
  *  unless it says otherwise — and the same soft reports through
  *  ScnParseReport for the same shapes, so a rule name that
@@ -1075,7 +1076,8 @@ static bool mjSettingStr(const cJSON *row, const char *field, char *dst,
 
 /* The settings array into the struct, on the terms scenarioLuaReadSettings
  * reads the Lua table on: the same fields, the same defaults (type "int",
- * step 1), the same scnSettingProblem check, duplicates and rows past
+ * step 1), a bool row with a true or false default and no min, max or step,
+ * the same scnSettingProblem check, duplicates and rows past
  * SCN_SETTINGS_MAX dropped. A dropped row is an issue, because the host
  * would otherwise be offered a dropdown the author did not mean. */
 static void mjDecodeSettings(const cJSON *root, ScenarioManifest *m,
@@ -1128,18 +1130,40 @@ static void mjDecodeSettings(const cJSON *root, ScenarioManifest *m,
         if (!mjSettingStr(row, "type", type, sizeof(type))) {
             snprintf(type, sizeof(type), "?");
         }
-        if (type[0] != '\0' && strcmp(type, "int") != 0) {
-            mjReport(rep, key,
-                     "scenario: %s has type '%s'; only \"int\" is "
-                     "supported; dropped", key, type);
-            continue;
-        }
         st.type = SCN_SETTING_TYPE_INT;
-        if (!mjSettingInt(row, "min", &st.min, &hadMin) ||
-            !mjSettingInt(row, "max", &st.max, &hadMax) ||
-            !mjSettingInt(row, "step", &st.step, &hadStep) ||
-            !mjSettingInt(row, "default", &st.def, &hadDef) ||
-            !hadMin || !hadMax || !hadDef) {
+        if (strcmp(type, "bool") == 0) {
+            const cJSON *def =
+                cJSON_GetObjectItemCaseSensitive(row, "default");
+
+            st.type = SCN_SETTING_TYPE_BOOL;
+            if (cJSON_GetObjectItemCaseSensitive(row, "min") != NULL ||
+                cJSON_GetObjectItemCaseSensitive(row, "max") != NULL ||
+                cJSON_GetObjectItemCaseSensitive(row, "step") != NULL) {
+                mjReport(rep, key,
+                         "scenario: %s is a bool setting and takes no min, "
+                         "max or step; dropped", key);
+                continue;
+            }
+            if (!cJSON_IsBool(def)) {
+                mjReport(rep, key,
+                         "scenario: %s needs true or false for default; "
+                         "dropped", key);
+                continue;
+            }
+            st.min  = 0;
+            st.max  = 1;
+            st.step = 1;
+            st.def  = cJSON_IsTrue(def) ? 1 : 0;
+        } else if (type[0] != '\0' && strcmp(type, "int") != 0) {
+            mjReport(rep, key,
+                     "scenario: %s has type '%s'; only \"int\" and "
+                     "\"bool\" are supported; dropped", key, type);
+            continue;
+        } else if (!mjSettingInt(row, "min", &st.min, &hadMin) ||
+                   !mjSettingInt(row, "max", &st.max, &hadMax) ||
+                   !mjSettingInt(row, "step", &st.step, &hadStep) ||
+                   !mjSettingInt(row, "default", &st.def, &hadDef) ||
+                   !hadMin || !hadMax || !hadDef) {
             mjReport(rep, key,
                      "scenario: %s needs whole numbers for min, max and "
                      "default (and step, if given); dropped", key);
@@ -1193,6 +1217,7 @@ static bool mjDecode(ScnManifestDoc *d, ScnParseReport *rep,
     }
     m->bound      = mjBool(d->root, "bound", true);
     m->fillToCaps = mjBool(d->root, "fill_to_caps", false);
+    m->needsBots  = mjBool(d->root, "needs_bots", false);
     m->workshopId     = mjDecodeId(d->root, "workshop_id", rep);
     m->workshopAuthor = mjDecodeId(d->root, "workshop_author", rep);
 
@@ -1367,6 +1392,17 @@ static void mjPutString(cJSON *obj, const char *key, const char *v) {
 
 static void mjPutBool(cJSON *obj, const char *key, bool v) {
     mjPut(obj, key, cJSON_CreateBool(v ? 1 : 0));
+}
+
+/* true, or no key at all for false. For a key added after manifests were
+ * already written: a manifest that does not ask for it is the text it was
+ * before the key existed, and turning it off takes the key away. */
+static void mjPutTrue(cJSON *obj, const char *key, bool v) {
+    if (!v) {
+        cJSON_DeleteItemFromObjectCaseSensitive(obj, key);
+        return;
+    }
+    mjPutBool(obj, key, true);
 }
 
 /* An id as its decimal digits, or no key at all for 0. Left out rather than
@@ -1614,6 +1650,7 @@ static void mjEmit(cJSON *root, const ScnManifestDoc *d) {
     mjPutString(root, "game", m->game);
     mjPutBool(root, "bound", m->bound);
     mjPutBool(root, "fill_to_caps", m->fillToCaps);
+    mjPutTrue(root, "needs_bots", m->needsBots);
     mjPutId(root, "workshop_id", m->workshopId);
     mjPutId(root, "workshop_author", m->workshopAuthor);
 
@@ -1686,11 +1723,16 @@ static void mjEmit(cJSON *root, const ScnManifestDoc *d) {
             }
             mjPutString(row, "id", st->id);
             mjPutString(row, "label", st->label);
-            mjPutString(row, "type", "int");
-            mjPutNumber(row, "min", (double)st->min);
-            mjPutNumber(row, "max", (double)st->max);
-            mjPutNumber(row, "step", (double)st->step);
-            mjPutNumber(row, "default", (double)st->def);
+            if (st->type == SCN_SETTING_TYPE_BOOL) {
+                mjPutString(row, "type", "bool");
+                mjPutBool(row, "default", st->def != 0);
+            } else {
+                mjPutString(row, "type", "int");
+                mjPutNumber(row, "min", (double)st->min);
+                mjPutNumber(row, "max", (double)st->max);
+                mjPutNumber(row, "step", (double)st->step);
+                mjPutNumber(row, "default", (double)st->def);
+            }
             cJSON_AddItemToArray(arr, row);
         }
     }
@@ -1945,6 +1987,13 @@ bool scnManifestAgrees(const ScenarioManifest *fromJson,
                         "script's table says %s",
                         fromJson->fillToCaps ? "true" : "false",
                         fromLua->fillToCaps ? "true" : "false");
+    }
+    if (fromJson->needsBots != fromLua->needsBots) {
+        return mjDiffer(key, keyLen, err, errLen, "needs_bots",
+                        "scenario: the manifest says needs_bots %s and the "
+                        "script's table says %s",
+                        fromJson->needsBots ? "true" : "false",
+                        fromLua->needsBots ? "true" : "false");
     }
     /* The Workshop item and its author are held to agreeing only where the
        script's table states them. Both are written into manifest.json after

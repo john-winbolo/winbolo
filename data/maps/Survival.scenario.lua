@@ -86,6 +86,9 @@ scenario = {
   -- a file that says nothing gets and this one has something to say.
   kind = "scenario",
   game = "tournament",   -- humans farm; wave bots override per spawn below
+  -- The horde is held bot seats this file fields with game.spawn_bot, and
+  -- a lobby set to no bots refuses every one, so the lobby must allow them.
+  needs_bots = true,
 
   -- The lobby, declared rather than built. Six human seats on the
   -- defenders' team, ten seats HELD for the horde: they sit in the roster
@@ -100,13 +103,15 @@ scenario = {
       { id = 1, bots = 0,  max_bots = 6 },
       { id = 2, bots = 10, max_bots = 10, fielded = false,
         brain = "GoalHunter_1.7",
-        -- The horde's mode and difficulty, named here as well as on every
-        -- wave spawn below. This is the half the LOBBY reads: without it a
-        -- held seat carries whatever the lobby happened to give it, every
-        -- client's row says Easy because nothing ever told it otherwise, and
-        -- the row wears no mode tag. Team 1 is left alone on purpose — the
-        -- defenders keep what the host picks.
-        mode = "survival", difficulty = "hard" },
+        -- The horde's mode and difficulty. This is the half the LOBBY reads:
+        -- without it a held seat carries whatever the lobby happened to give
+        -- it, and every client's row says Easy because nothing ever told it
+        -- otherwise. The mode is the brain's ordinary one, named so that a
+        -- mode the host picked for some other bot is never carried onto the
+        -- horde; everything that makes a horde bot fight the way it does is
+        -- in its tokens (the init table below and wave_init). Team 1 is left
+        -- alone on purpose — the defenders keep what the host picks.
+        mode = "default", difficulty = "hard" },
     },
   },
 
@@ -126,6 +131,7 @@ scenario = {
     spawn_loadout = "Attackers always spawn fully stocked; defenders get the normal tournament loadout.",
     allow_base_win = "Holding every base does not win; the only win is surviving every wave set in the lobby.",
     allow_extra_teams = "Keeps the round to two teams: the defenders and the horde.",
+    can_ally = "Players cannot ally.",
     announce = "Silences the newswire for a few seconds while each wave arrives and leaves.",
     on_choose_start = "Defenders start in the centre puddle; each attacker starts out at sea on its own spoke.",
     on_setup = "Gives the defenders the centre bases and pillboxes, builds the island's shallow rim and tree ring, and digs in defender bots.",
@@ -454,6 +460,13 @@ end
 -- host's own question where the old file answered a show_add_team_button
 -- one; the effect a host sees is the same.
 function allow_extra_teams()
+  return false
+end
+
+-- And no alliances players make themselves. A defender allied with a horde
+-- bot would be spared by the horde's pillboxes while this script still
+-- counted them a defender.
+function can_ally(p, q)
   return false
 end
 

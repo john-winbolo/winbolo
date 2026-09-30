@@ -246,7 +246,9 @@ void minesExpCheckFill(GameSim *sim, lgm **lgms, BYTE numLgm, BYTE mx, BYTE my, 
     sim->callbacks.soundDist(sim->callbacks.ctx, mineExplosionNear, mx, my);
     count = 1;
     while (count <= numLgm) {
-      lgmDeathCheck(sim, lgms[count-1], (WORLD) ((mx << M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), (WORLD) ((my << M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), NEUTRAL, tanks ? &tanks[count-1] : NULL);
+      /* The can_die question names the mine's layer; the kill is still
+         credited to nobody. */
+      lgmDeathCheck(sim, lgms[count-1], (WORLD) ((mx << M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), (WORLD) ((my << M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), NEUTRAL, mineLayer, DMG_SRC_MINE, DMG_NO_PILL, tanks ? &tanks[count-1] : NULL);
       count++;
     }
     /* Check mine damage against all tanks */

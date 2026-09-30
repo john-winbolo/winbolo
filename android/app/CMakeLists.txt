@@ -237,7 +237,6 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
-    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_scenario_rules.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_settings.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_keysetup.cpp
@@ -295,10 +294,6 @@ set(ANDROID_SOURCES
     # Shared map-gen controls used by the map chooser dialog (not the
     # full map editor — this file matches what the iOS build pulls in).
     ${PROJ_ROOT}/src/mapeditor/mapgen_imgui.cpp
-
-    # LZW compression
-    ${PROJ_ROOT}/src/lzw/ecodlzw.c
-    ${PROJ_ROOT}/src/lzw/dcodlzw.c
 
     # Server (for single-player). server_sim.c + servermessages.c
     # come from server_sim_static; threads.c comes from threads_static.
