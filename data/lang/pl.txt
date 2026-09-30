@@ -2407,14 +2407,10 @@ STR_MAPEDIT_SCENARIO_ARG_NUMBER=Liczba
 STR_MAPEDIT_SCENARIO_ARG_TEXT=Tekst
 STR_MAPEDIT_SCENARIO_TEXT_ONE_LONG=Akcja niesie jedną długą linię tekstu, którą zajął już inny argument.
 STR_DLGLOBBY_SCENARIO_RULES=Reguły
-STR_DLGLOBBY_SCENARIO_RULES_TITLE=Co zmienia {string1}
 STR_DLGLOBBY_RULES_COL_RULE=Reguła
 STR_DLGLOBBY_RULES_COL_CLASSIC=Klasyczna
 STR_DLGLOBBY_RULES_COL_SCENARIO=Scenariusz
 STR_DLGLOBBY_RULES_COL_CHANGE=Zmiana
-STR_DLGLOBBY_RULE_DETAIL_TITLE=Reguła: {string1}
-STR_DLGLOBBY_RULES_INFO=Info
-STR_DLGLOBBY_RULES_RANGE=Zakres
 STR_DLGLOBBY_RULES_OVERRIDDEN=Nadpisane przez {string1}, które ustawia {string2}
 
 # Under the rules table of a mod, on a server that has mods turned off.

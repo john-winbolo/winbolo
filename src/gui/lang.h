@@ -2797,23 +2797,13 @@
 /* A rules table: its heading, and the four columns a row is drawn in — the
  * rule, what the classic game plays it at, what the scenario set it to, and
  * what that does to it in words. The lobby's details dialog and the log
- * viewer use them. RULES_TITLE was the caption of the lobby's rules popup,
- * which was removed; it has no caller and stays defined so the translations
- * keep their ids. */
+ * viewer use them. Ids 2329 and 2432 to 2434 were the lobby's rules popup,
+ * which was removed. */
 #define STR_DLGLOBBY_SCENARIO_RULES         2328
-#define STR_DLGLOBBY_SCENARIO_RULES_TITLE   2329
 #define STR_DLGLOBBY_RULES_COL_RULE         2330
 #define STR_DLGLOBBY_RULES_COL_CLASSIC      2331
 #define STR_DLGLOBBY_RULES_COL_SCENARIO     2332
 #define STR_DLGLOBBY_RULES_COL_CHANGE       2333
-
-/* The removed rules popup's per-rule detail: the caption naming the rule,
- * the button on a row that opened it, and its range label. None of the
- * three has a caller since the popup was removed; they stay defined so the
- * translations keep their ids. */
-#define STR_DLGLOBBY_RULE_DETAIL_TITLE      2432
-#define STR_DLGLOBBY_RULES_INFO             2433
-#define STR_DLGLOBBY_RULES_RANGE            2434
 
 /* A row of a script's details table whose rule a script higher on the list
  * also sets, so this script's value does not play. {string1} = the script

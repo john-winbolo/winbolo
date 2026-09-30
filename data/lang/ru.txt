@@ -2411,14 +2411,10 @@ STR_MAPEDIT_SCENARIO_ARG_NUMBER=Число
 STR_MAPEDIT_SCENARIO_ARG_TEXT=Текст
 STR_MAPEDIT_SCENARIO_TEXT_ONE_LONG=Действие несёт одну длинную строку, и её уже занял другой аргумент
 STR_DLGLOBBY_SCENARIO_RULES=Правила
-STR_DLGLOBBY_SCENARIO_RULES_TITLE=Что меняет {string1}
 STR_DLGLOBBY_RULES_COL_RULE=Правило
 STR_DLGLOBBY_RULES_COL_CLASSIC=Классическое
 STR_DLGLOBBY_RULES_COL_SCENARIO=Сценарий
 STR_DLGLOBBY_RULES_COL_CHANGE=Изменение
-STR_DLGLOBBY_RULE_DETAIL_TITLE=Правило: {string1}
-STR_DLGLOBBY_RULES_INFO=Инфо
-STR_DLGLOBBY_RULES_RANGE=Диапазон
 STR_DLGLOBBY_RULES_OVERRIDDEN=Переопределено {string1}: задаёт {string2}
 
 # Under the rules table of a mod, on a server that has mods turned off.
