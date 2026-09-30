@@ -190,7 +190,7 @@ WinBolo moved from version 2 to version 3.
   Re-apply on upgrade.
 
 ### MD5 (RFC 1321 reference)
-- Location: src/bolo/md5.c, src/bolo/public/md5.h
+- Location: src/common/md5.c, src/common/md5.h
 - License: Public domain
 - https://www.rfc-editor.org/rfc/rfc1321
 - Used for the lobby map-upload MD5 handshake (integrity check only — not cryptographically safe)

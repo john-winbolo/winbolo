@@ -103,7 +103,7 @@ BEGIN
             VALUE "FileDescription", "WinBolo Log Viewer 1.01"
             VALUE "FileVersion", "1, 0, 0, 1"
             VALUE "InternalName", "Log Viewer"
-            VALUE "LegalCopyright", "Copyright � 2004-2006 John Morrison"
+            VALUE "LegalCopyright", "Copyright (c) 1998-2026 John Morrison"
             VALUE "OriginalFilename", "Log Viewer.exe"
             VALUE "ProductName", "WinBolo Log Viewer"
             VALUE "ProductVersion", "1, 0, 0, 1"
