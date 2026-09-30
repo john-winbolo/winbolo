@@ -36,14 +36,28 @@
 --
 -- There are no bases: a base is land, and a tank that drives onto it leaves
 -- its boat. A tank gets back one shell every REFILL_SECONDS instead.
+--
+-- The scoreboard moves. When the order changes, each line slides to its new
+-- place over SLIDE_TICKS, and a new line rises from the bottom. The lines of
+-- a tank that scores, and of its team, flash for FLASH_TICKS. A tank that
+-- scores again within CHAIN_SECONDS of its last kill is on a streak, and the
+-- kill line says so: "Double kill", "Triple kill!", "QUADRUPLE KILL!" and on
+-- up. Dying ends the streak. The panel is only sent while something on it is
+-- changing or moving; a still panel sends nothing.
 
 local DEFAULT_TARGET = 10
 local CREDIT_SECONDS = 10     -- how long a hit keeps its claim on a drowning
 local REFILL_SECONDS = 2      -- one shell back this often, up to full
 local OPENING_TICKS  = 200    -- first two seconds: fixed starts, not farthest
 local SHIELD_SECONDS = 1      -- a new tank cannot be hit this long
-local PANEL_SECONDS  = 0.5
 local PANEL_ROWS     = 9
+local ROW_TOP        = 30     -- panel y of the first line
+local ROW_STEP       = 10     -- panel units from one line to the next
+local ENTER_Y        = 128    -- a new line slides up from the panel's bottom
+local FRAME_SECONDS  = 0.04   -- one panel frame this often while it moves
+local SLIDE_TICKS    = 40     -- a line takes 0.4 s to reach its new place
+local FLASH_TICKS    = 50     -- a scorer's line flashes for 0.5 s
+local CHAIN_SECONDS  = 4      -- a kill this soon after the last one is a streak
 local LABEL          = "KILLS"
 
 -- The two words of the "Teams" setting, as scenario.settings declares them.
@@ -59,9 +73,13 @@ local team_mode  = nil         -- true for "Use Lobby Teams"; read on first use
 local kills      = {}          -- side key -> kills
 local own_kills  = {}          -- seat -> the kills it made itself
 local last_hit   = {}          -- seat -> { by = seat, at = tick }
-local dirty      = true
+local dirty      = true        -- the panel needs another frame
 local over       = false
 local drawn_at   = nil    -- the tick panel 0 was last sent
+local loop_id    = nil         -- the panel frame timer, while one waits
+local row_move   = {}          -- line key -> { from, to, from_at }: its slide
+local flash_end  = {}          -- line key -> the tick its flash ends
+local streak     = {}          -- seat -> { count = kills, at = tick of last }
 local started    = false       -- on_start has run
 local start_at   = 0           -- game.tick() at on_start
 local spawned    = {}          -- seat -> true once it has taken the field
@@ -371,7 +389,36 @@ local function panel_lines()
   return lines
 end
 
-local function draw_panel()
+-- A panel line's key: "t<team>" for a team's line, "p<seat>" for a tank's.
+-- A Free For All tank's line has the same key as its side.
+local function line_key(line)
+  if line.team ~= nil then
+    return "t" .. line.team
+  end
+  return "p" .. line.seat
+end
+
+-- Where a sliding line is at tick now, and whether it is still moving. The
+-- slide eases out: fast at first, slowing into its place.
+local function slide_y(m, now)
+  local f = (now - m.from_at) / SLIDE_TICKS
+  if f >= 1 then
+    return m.to, false
+  end
+  if f <= 0 then
+    return m.from, true
+  end
+  local e = 1 - (1 - f) ^ 3
+  return m.from + (m.to - m.from) * e, true
+end
+
+-- Draws one frame of the panel. Each line slides from where it was towards
+-- the place its rank gives it, and a scorer's line flashes. dirty is left
+-- set while anything is still moving or flashing, so the frame timer comes
+-- back; a frame with everything at rest clears it. settle puts every line
+-- straight in its place with no flash: the round's last frame.
+local function draw_panel(settle)
+  local now = game.tick()
   local list = {
     { "rect", 0, 0, 128, 14, "grey_dark", true },
     { "text", 64, 3, "white", "normal", "centre", "JOUST" },
@@ -379,12 +426,27 @@ local function draw_panel()
       string.format("First %s to %d", teams_on() and "team" or "tank",
                     target) },
   }
-  local leader = true
+  local busy, seen, leader = false, {}, true
   for row, line in ipairs(panel_lines()) do
     if row > PANEL_ROWS then
       break
     end
-    local y = 30 + (row - 1) * 10
+    local key = line_key(line)
+    local to = ROW_TOP + (row - 1) * ROW_STEP
+    local m = row_move[key]
+    if settle then
+      m = { from = to, to = to, from_at = now }
+    elseif m == nil then
+      m = { from = ENTER_Y, to = to, from_at = now }
+    elseif m.to ~= to then
+      m = { from = (slide_y(m, now)), to = to, from_at = now }
+    end
+    row_move[key] = m
+    seen[key] = true
+    local y, moving = slide_y(m, now)
+    y = math.floor(y + 0.5)
+    busy = busy or moving
+
     local colour = "white"
     if line.indent then
       colour = "grey"
@@ -393,6 +455,17 @@ local function draw_panel()
     end
     if not line.indent then
       leader = false
+    end
+    -- The flash: a bright bar behind the line, yellow and then orange, with
+    -- the line in black on it.
+    local ends = flash_end[key]
+    if ends ~= nil and (settle or now >= ends) then
+      flash_end[key] = nil
+    elseif ends ~= nil then
+      busy = true
+      local bar = (ends - now > FLASH_TICKS / 2) and "yellow" or "orange"
+      list[#list + 1] = { "rect", 2, y - 1, 124, ROW_STEP, bar, true }
+      colour = "black"
     end
     local x = line.indent and 12 or 4
     if line.team ~= nil then
@@ -404,23 +477,41 @@ local function draw_panel()
     list[#list + 1] = { "text", 124, y, colour, "small", "right",
                         string.format("%d", line.value) }
   end
+  -- A line that left the panel goes; if it comes back it slides in again.
+  for key in pairs(row_move) do
+    if not seen[key] then
+      row_move[key] = nil
+      flash_end[key] = nil
+    end
+  end
   game.panel(0, list)
-  drawn_at = game.tick()
+  drawn_at = now
+  dirty = busy
 end
 
--- Draws the panel when it changed, then comes back. A second update of the
--- panel in one tick is refused, so a change in the tick the panel was drawn
--- waits for the next pass. Once the round is over it draws a last time and
--- stops.
+-- Sends a panel frame when one is wanted, then comes back in FRAME_SECONDS
+-- while lines are still moving. When the panel is at rest it stops, and
+-- kick starts it again on the next change. A second update of the panel in
+-- one tick is refused, so a frame never goes out in the tick one was drawn.
 local function panel_loop()
-  if dirty and drawn_at ~= game.tick() then
-    dirty = false
-    draw_panel()
-  end
-  if over then
+  loop_id = nil
+  if over or not dirty then
     return
   end
-  game.timer(PANEL_SECONDS, panel_loop)
+  if drawn_at ~= game.tick() then
+    draw_panel(false)
+  end
+  if dirty then
+    loop_id = game.timer(FRAME_SECONDS, panel_loop)
+  end
+end
+
+-- The panel changed: send a frame soon. The loop starts at on_start.
+local function kick()
+  dirty = true
+  if started and not over and loop_id == nil then
+    loop_id = game.timer(FRAME_SECONDS, panel_loop)
+  end
 end
 
 -- One shell back every REFILL_SECONDS, up to full, for every live tank.
@@ -508,19 +599,37 @@ local function finish(key)
       game.end_round(line)
     end
   end
-  -- The final standings go through panel_loop. When the panel was already
-  -- drawn this tick that draw would be refused, so the round ends one tick
-  -- later, after the last draw. Nothing scores once over is set.
-  dirty = true
+  -- The last frame shows the final standings, every line in its place and
+  -- none flashing. When the panel was already drawn this tick that draw
+  -- would be refused, so the round ends one tick later, after the last
+  -- draw. Nothing scores once over is set.
   if drawn_at == game.tick() then
     game.timer(0.01, function()
-      panel_loop()
+      draw_panel(true)
       close()
     end)
   else
-    panel_loop()
+    draw_panel(true)
     close()
   end
+end
+
+-- What a streak of n kills is called, louder the longer it runs; nil for a
+-- single kill.
+local STREAK_WORDS = {
+  [2] = "Double kill",
+  [3] = "Triple kill!",
+  [4] = "QUADRUPLE KILL!",
+  [5] = "QUINTUPLE KILL!!",
+  [6] = "SEXTUPLE KILL!!!",
+}
+
+local function streak_word(n)
+  if n < 2 then
+    return nil
+  end
+  return STREAK_WORDS[n] or
+         ("UNSTOPPABLE" .. string.rep("!", math.min(n - 3, 10)))
 end
 
 -- Who a death is credited to, or nil for nobody.
@@ -550,6 +659,7 @@ function on_tank_hit(victim, attacker, cause, amount, pill, scripted)
 end
 
 function on_tank_killed(victim, killer, cause, scripted)
+  streak[victim] = nil        -- any death ends the tank's streak
   if over then
     return
   end
@@ -566,11 +676,38 @@ function on_tank_killed(victim, killer, cause, scripted)
   kills[key] = (kills[key] or 0) + 1
   post_seat(by)
   post_side(key)
-  dirty = true
+  local now = game.tick()
+  flash_end["p" .. by] = now + FLASH_TICKS
+  flash_end[key] = now + FLASH_TICKS
+  kick()
+
+  -- The streak: this kill counts on from the last one when it came within
+  -- CHAIN_SECONDS of it, and starts again at one otherwise.
+  local run = streak[by]
+  if run ~= nil and now - run.at <= CHAIN_SECONDS * 100 then
+    run.count, run.at = run.count + 1, now
+  else
+    run = { count = 1, at = now }
+    streak[by] = run
+  end
+
+  -- One announce line holds the kill and, on a streak, the streak word in
+  -- front of it, so the streak never hides who was killed or the score.
   local how = (cause == "deep_sea") and "drowned" or "killed"
-  game.announce(string.format("%s %s %s  (%s %d/%d)", name_of(by), how,
-                              name_of(victim), side_name(key), kills[key],
-                              target), 3)
+  local score = string.format("(%s %d/%d)", side_name(key), kills[key], target)
+  local word = streak_word(run.count)
+  local line
+  if word ~= nil then
+    line = string.format("%s: %s  %s %s  %s", name_of(by), word, how,
+                         name_of(victim), score)
+    if #line > 127 then
+      line = string.format("%s: %s  %s", name_of(by), word, score)
+    end
+  else
+    line = string.format("%s %s %s  %s", name_of(by), how, name_of(victim),
+                         score)
+  end
+  game.announce(line, 3)
   if kills[key] >= target then
     finish(key)
   end
@@ -665,7 +802,7 @@ function on_player_join(p, scripted)
   -- its lobby team, so recording its team again would lose that team.
   if started and lobby_team[p] ~= nil then
     post_seat(p)
-    dirty = true
+    kick()
     return
   end
   own_kills[p] = 0
@@ -682,7 +819,7 @@ function on_player_join(p, scripted)
     end
   end
   post_seat(p)
-  dirty = true
+  kick()
 end
 
 function on_player_leave(p, scripted)
@@ -693,7 +830,8 @@ function on_player_leave(p, scripted)
   lobby_team[p] = nil
   ffa_team[p] = nil
   kills["p" .. p] = nil       -- the seat's next player starts at nought
-  dirty = true
+  streak[p] = nil
+  kick()
 end
 
 -- The arena stays as drawn: no bridges, no boats, no walls.
@@ -747,8 +885,7 @@ function on_start()
                              "One hit sinks a boat."))
   game.log(string.format("Joust: target %d, %s", target,
                          teams_on() and "lobby teams" or "free for all"))
-  dirty = true
-  panel_loop()
+  kick()
   game.timer(REFILL_SECONDS, refill_loop)
 end
 
@@ -808,7 +945,7 @@ scenario = {
     on_start = "Reads the kill target and the Teams setting; in Free For All puts every tank on a team of its own; posts the scores and starts the shell refill.",
     on_choose_start = "Picks each tank's start: one for each place at the opening, then the start farthest from every enemy, on its own team's arc of the ring in a team round.",
     on_tank_hit = "Remembers the last enemy tank that hit each tank.",
-    on_tank_killed = "Gives the kill to the killer, or for a drowning to the last enemy hit, adds it to the killer's side, and ends the round at the target.",
+    on_tank_killed = "Credits the kill (a drowning to the last enemy hit), adds it to the side, flashes the scorer's line, calls out streaks, and ends the round at the target.",
     on_tank_spawned = "Makes sure a new tank is on its boat and starts its one-second shield.",
     can_hit = "Lets shells pass through a tank in its first second, so nobody is sunk as they arrive.",
     can_ally = "No alliances in Free For All; only lobby teammates in a team round.",
