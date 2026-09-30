@@ -7,10 +7,15 @@
 -- tank drowns: one hit kills. The first side to reach the kill count the
 -- host picked wins.
 --
--- Who is a side. When the tanks in the round sit on two or more lobby teams,
--- each team is a side and its members' kills add up. Otherwise it is every
--- tank for itself, and a tank on no team is always a side of its own. The
--- choice is made once, when the round starts.
+-- Who is a side. The host picks it in the lobby with the "Teams" setting.
+-- In "Free For All", the default, every tank is a side of its own. Tanks
+-- that share a lobby team are each put on a team of their own when the
+-- round starts, so nobody is allied with anybody, and they cannot ally
+-- during the round. Their lobby teams are put back when the round ends.
+-- In "Use Lobby Teams" each lobby team is a side: its members are allied,
+-- their kills add up to the team's score, and killing a teammate scores
+-- nothing. A tank on no team is a side of its own. Every tank also keeps a
+-- score of its own kills, which is what the scoreboard lists under its team.
 --
 -- What counts as a kill. A shell or a mine counts for the tank that fired it
 -- or laid it. A tank that drowns, or that dies to its own mine, counts for the
@@ -19,18 +24,18 @@
 --
 -- Where a tank starts. Joust.map has sixteen starts, evenly spaced on a ring
 -- four squares in from the water's edge, each facing the middle. The script
--- reads them from the map and names no squares. In a team round each team
--- takes one half of the ring, west or east. The first time a tank comes on, it takes
--- the start that matches its place (its place in its own team in a team
--- round), so no two tanks share one. After that, a tank comes back on the
--- start that is farthest from every enemy tank, and no shell can hit it for
--- its first SHIELD_SECONDS, so a shell already flying cannot sink it as it
--- arrives.
+-- reads them from the map and names no squares. In a team round the ring is
+-- cut into one arc for each team, in the order the starts go round the ring,
+-- so teammates start side by side and each team has a stretch of its own.
+-- The first time a tank comes on, it takes the start that matches its place
+-- (its place in its own team in a team round), so no two tanks share one.
+-- After that, a tank comes back on the start of its own (its team's arc in a
+-- team round) that is farthest from every enemy tank, and no shell can hit it
+-- for its first SHIELD_SECONDS, so a shell already flying cannot sink it as
+-- it arrives.
 --
 -- There are no bases: a base is land, and a tank that drives onto it leaves
 -- its boat. A tank gets back one shell every REFILL_SECONDS instead.
-
-local WEST, EAST = 1, 2
 
 local DEFAULT_TARGET = 10
 local CREDIT_SECONDS = 10     -- how long a hit keeps its claim on a drowning
@@ -38,27 +43,56 @@ local REFILL_SECONDS = 2      -- one shell back this often, up to full
 local OPENING_TICKS  = 200    -- first two seconds: fixed starts, not farthest
 local SHIELD_SECONDS = 1      -- a new tank cannot be hit this long
 local PANEL_SECONDS  = 0.5
-local PANEL_ROWS     = 8
+local PANEL_ROWS     = 9
 local LABEL          = "KILLS"
 
-local target    = DEFAULT_TARGET
-local team_mode = false
-local kills     = {}          -- side key -> kills
-local last_hit  = {}          -- seat -> { by = seat, at = tick }
-local dirty     = true
-local over      = false
-local started   = false       -- on_start has run and fixed team_mode
-local start_at  = 0           -- game.tick() at on_start
-local spawned   = {}          -- seat -> true once it has taken the field
-local shield    = {}          -- seat -> game.tick() its spawn shield ends
-local ends      = nil         -- [WEST], [EAST] and all: lists of { n, x, y }
+-- The two words of the "Teams" setting, as scenario.settings declares them.
+local FREE_FOR_ALL   = "Free For All"
+local LOBBY_TEAMS    = "Use Lobby Teams"
+
+-- LuaJIT and Lua 5.1 name the two-argument arc tangent atan2; 5.3 and later
+-- fold it into atan.
+local atan2 = math.atan2 or math.atan
+
+local target     = DEFAULT_TARGET
+local team_mode  = nil         -- true for "Use Lobby Teams"; read on first use
+local kills      = {}          -- side key -> kills
+local own_kills  = {}          -- seat -> the kills it made itself
+local last_hit   = {}          -- seat -> { by = seat, at = tick }
+local dirty      = true
+local over       = false
+local started    = false       -- on_start has run
+local start_at   = 0           -- game.tick() at on_start
+local spawned    = {}          -- seat -> true once it has taken the field
+local shield     = {}          -- seat -> game.tick() its spawn shield ends
+local ring       = nil         -- the map's starts in order round the ring
+local lobby_team = {}          -- seat -> its lobby team, kept at on_start or join
+local ffa_team   = {}          -- seat -> the team of its own this script gave it
+local team_list  = nil         -- the lobby teams in the round, lowest first,
+                               -- fixed at on_start
+
+-- The host's "Teams" choice. game.setting answers from inside a hook, where
+-- the scenario table at the bottom of the file has been read, so this is
+-- asked the first time a hook needs it rather than at the top of the file.
+local function teams_on()
+  if team_mode == nil then
+    team_mode = (game.setting("teams") == LOBBY_TEAMS)
+  end
+  return team_mode
+end
 
 local function in_round(p)
   local slot = game.lobby_slot(p)
   return slot ~= nil and slot.connected and slot.fielded
 end
 
+-- The seat's lobby team: the one kept for it once the round has started,
+-- because a Free For All round moves every seat onto a team of its own, and
+-- the one the lobby shows before that.
 local function team_of(p)
+  if lobby_team[p] ~= nil then
+    return lobby_team[p]
+  end
   local slot = game.lobby_slot(p)
   return (slot ~= nil) and slot.team or 0
 end
@@ -67,7 +101,7 @@ end
 -- on a team, "p<seat>" otherwise.
 local function side_of(p)
   local team = team_of(p)
-  if team_mode and team > 0 then
+  if teams_on() and team > 0 then
     return "t" .. team
   end
   return "p" .. p
@@ -85,17 +119,65 @@ local function name_of(p)
   return "Somebody"
 end
 
+-- A team's name on the panel and in the win line. A team with no human on
+-- it is named after the pool its bots take their names from, as the lobby
+-- names them ("Famous Painters"); any other team is "Team <n>". So is a
+-- team whose pool another team in the round shares (a server with no lobby
+-- gives every team the same pool), so no two teams read alike. A label too
+-- long for a panel row is cut short.
+local LABEL_MAX = 22
+
+-- The pool label of a team of bots only; nil when a human is on it.
+local function bot_pool(team)
+  local pool, bots = nil, false
+  for p = 0, game.max_tanks() - 1 do
+    local slot = game.lobby_slot(p)
+    if slot ~= nil and team_of(p) == team then
+      if not slot.bot then
+        return nil
+      end
+      bots = true
+      pool = pool or slot.team_pool
+    end
+  end
+  if not bots or pool == "" then
+    return nil
+  end
+  return pool
+end
+
+local teams_in_round
+
+local function team_label(team)
+  local pool = bot_pool(team)
+  if pool == nil then
+    return "Team " .. team
+  end
+  for _, other in ipairs(teams_in_round()) do
+    if other ~= team and bot_pool(other) == pool then
+      return "Team " .. team
+    end
+  end
+  if #pool > LABEL_MAX then
+    pool = pool:sub(1, LABEL_MAX - 2) .. ".."
+  end
+  return pool
+end
+
 local function side_name(key)
   local kind, n = key:sub(1, 1), tonumber(key:sub(2))
   if kind == "t" then
-    return "Team " .. n
+    return team_label(n)
   end
   return name_of(n)
 end
 
--- Which half of the ring a seat plays from in a team round. The teams take
--- the two halves in turn, lowest team number first.
-local function end_of(p)
+-- The lobby teams of the seats in the round, lowest first. Fixed at on_start;
+-- before that, during the opening, read from the lobby as it stands.
+function teams_in_round()
+  if team_list ~= nil then
+    return team_list
+  end
   local teams, seen = {}, {}
   for q = 0, game.max_tanks() - 1 do
     local t = team_of(q)
@@ -105,57 +187,80 @@ local function end_of(p)
     end
   end
   table.sort(teams)
-  for i, t in ipairs(teams) do
-    if t == team_of(p) then
-      return (i % 2 == 1) and WEST or EAST
-    end
-  end
-  return (p % 2 == 0) and WEST or EAST
+  return teams
 end
 
--- How many lobby teams the seats now in the round sit on.
-local function count_teams()
-  local teams, count = {}, 0
-  for p = 0, game.max_tanks() - 1 do
-    local t = team_of(p)
-    if in_round(p) and t > 0 and not teams[t] then
-      teams[t] = true
-      count = count + 1
-    end
+-- The map's starts in the order they go round the ring, by their angle about
+-- the middle of all of them.
+local function read_ring()
+  if ring ~= nil then
+    return ring
   end
-  return count
-end
-
--- The map's starts, split into a west and an east half at the middle of all
--- of them. "all" keeps the map's own order: west, east, west, east, and any
--- first few seats spread out round the ring.
-local function read_ends()
-  if ends ~= nil then
-    return ends
-  end
-  local list, sum = {}, 0
+  local list, sx, sy = {}, 0, 0
   for n = 1, game.num_starts() do
     local s = game.start(n)
     if s ~= nil then
       list[#list + 1] = { n = n, x = s.x, y = s.y }
-      sum = sum + s.x
+      sx, sy = sx + s.x, sy + s.y
     end
   end
-  ends = { [WEST] = {}, [EAST] = {}, all = {} }
-  local mid = (#list > 0) and (sum / #list) or 0
-  for _, s in ipairs(list) do
-    local side = (s.x < mid) and WEST or EAST
-    ends[side][#ends[side] + 1] = s
-    ends.all[#ends.all + 1] = s
+  if #list > 0 then
+    local cx, cy = sx / #list, sy / #list
+    for _, s in ipairs(list) do
+      s.angle = atan2(s.y - cy, s.x - cx)
+    end
+    table.sort(list, function(a, b)
+      if a.angle ~= b.angle then return a.angle < b.angle end
+      return a.n < b.n
+    end)
   end
-  return ends
+  ring = list
+  return ring
+end
+
+-- The starts a seat may use. A team round gives each team one arc of the
+-- ring: with N teams, team i (lowest number first) takes the i-th N-th of it.
+-- A seat on no team, and every seat in a Free For All, may use any start; its
+-- list is spread round the ring so the first few seats start well apart.
+local function starts_for(p)
+  local all = read_ring()
+  local team = team_of(p)
+  if teams_on() and team > 0 then
+    local teams = teams_in_round()
+    for i, t in ipairs(teams) do
+      if t == team then
+        local from = math.floor((i - 1) * #all / #teams) + 1
+        local to = math.floor(i * #all / #teams)
+        local arc = {}
+        for k = from, to do
+          arc[#arc + 1] = all[k]
+        end
+        if #arc > 0 then
+          return arc
+        end
+      end
+    end
+  end
+  -- Spread: halve the ring again and again, so seat 0 and seat 1 face each
+  -- other, seats 2 and 3 are a quarter round, and so on.
+  local spread, taken, step = {}, {}, #all
+  while step >= 1 and #spread < #all do
+    for k = 1, #all, step do
+      if not taken[k] then
+        taken[k] = true
+        spread[#spread + 1] = all[k]
+      end
+    end
+    step = math.floor(step / 2)
+  end
+  return spread
 end
 
 -- The seat's place among the seats in the round below it: among its own
 -- team in a team round, among every seat otherwise.
 local function place_of(p)
   local place, team = 0, team_of(p)
-  local by_team = team_mode and team > 0
+  local by_team = teams_on() and team > 0
   for q = 0, p - 1 do
     if in_round(q) and (not by_team or team_of(q) == team) then
       place = place + 1
@@ -186,12 +291,19 @@ local function start_gaps(s, p)
   return enemy, any
 end
 
-local function post_score(key)
+-- A seat's own score is its own kills. A team's score is its side's total.
+local function post_seat(p)
+  if game.lobby_slot(p) ~= nil then
+    game.score(p, own_kills[p] or 0, LABEL)
+  end
+end
+
+local function post_side(key)
   local kind, n = key:sub(1, 1), tonumber(key:sub(2))
   if kind == "t" then
     game.score({ team = n }, kills[key] or 0, LABEL)
-  elseif game.lobby_slot(n) ~= nil then
-    game.score(n, kills[key] or 0, LABEL)
+  else
+    post_seat(n)
   end
 end
 
@@ -215,27 +327,81 @@ local function standings()
   return out
 end
 
+-- The members of one team in the round, most kills of their own first.
+local function members(team)
+  local out = {}
+  for p = 0, game.max_tanks() - 1 do
+    if in_round(p) and team_of(p) == team then
+      out[#out + 1] = p
+    end
+  end
+  table.sort(out, function(a, b)
+    local ka, kb = own_kills[a] or 0, own_kills[b] or 0
+    if ka ~= kb then return ka > kb end
+    return a < b
+  end)
+  return out
+end
+
+-- The panel's lines, best first. A Free For All is one line a tank. A team
+-- round is a line for each team with its total, and under it a line for
+-- each member with the kills they made; a tank on no team is one line of its
+-- own among the teams. When that is more lines than the panel holds, the
+-- members give way first, so every team's total stays on the panel.
+local function panel_lines()
+  local lines, heads = {}, {}
+  for _, key in ipairs(standings()) do
+    local kind, n = key:sub(1, 1), tonumber(key:sub(2))
+    if kind == "t" then
+      lines[#lines + 1] = { team = n, value = kills[key] or 0 }
+      heads[#heads + 1] = lines[#lines]
+      for _, p in ipairs(members(n)) do
+        lines[#lines + 1] = { seat = p, value = own_kills[p] or 0,
+                              indent = true }
+      end
+    else
+      lines[#lines + 1] = { seat = n, value = kills[key] or 0 }
+      heads[#heads + 1] = lines[#lines]
+    end
+  end
+  if #lines > PANEL_ROWS then
+    return heads
+  end
+  return lines
+end
+
 local function draw_panel()
   local list = {
     { "rect", 0, 0, 128, 14, "grey_dark", true },
     { "text", 64, 3, "white", "normal", "centre", "JOUST" },
     { "text", 64, 18, "yellow", "small", "centre",
-      string.format("First to %d kills", target) },
+      string.format("First %s to %d", teams_on() and "team" or "tank",
+                    target) },
   }
-  for row, key in ipairs(standings()) do
+  local leader = true
+  for row, line in ipairs(panel_lines()) do
     if row > PANEL_ROWS then
       break
     end
     local y = 30 + (row - 1) * 10
-    local colour = (row == 1) and "cyan" or "white"
-    local kind, n = key:sub(1, 1), tonumber(key:sub(2))
-    if kind == "t" then
-      list[#list + 1] = { "text", 4, y, colour, "small", "left", "Team " .. n }
+    local colour = "white"
+    if line.indent then
+      colour = "grey"
+    elseif leader then
+      colour = "cyan"
+    end
+    if not line.indent then
+      leader = false
+    end
+    local x = line.indent and 12 or 4
+    if line.team ~= nil then
+      list[#list + 1] = { "text", x, y, colour, "small", "left",
+                          team_label(line.team) }
     else
-      list[#list + 1] = { "name", 4, y, colour, "small", "left", n }
+      list[#list + 1] = { "name", x, y, colour, "small", "left", line.seat }
     end
     list[#list + 1] = { "text", 124, y, colour, "small", "right",
-                        string.format("%d", kills[key] or 0) }
+                        string.format("%d", line.value) }
   end
   game.panel(0, list)
 end
@@ -267,6 +433,57 @@ local function refill_loop()
   game.timer(REFILL_SECONDS, refill_loop)
 end
 
+-- Free For All: the lowest team number no other seat in the round was given,
+-- or 0 (no team) when all fifteen are taken, which only a sixteenth seat
+-- ever meets.
+local function free_team(p)
+  local used = {}
+  for q, t in pairs(ffa_team) do
+    if q ~= p and game.lobby_slot(q) ~= nil then
+      used[t] = true
+    end
+  end
+  for t = 1, game.max_tanks() - 1 do
+    if not used[t] then
+      return t
+    end
+  end
+  return 0
+end
+
+-- Free For All: seat p goes on a team of its own. Its lobby team is kept
+-- first, for team_of and to be put back at the end.
+local function split_off(p)
+  local slot = game.lobby_slot(p)
+  if slot == nil then
+    return
+  end
+  if lobby_team[p] == nil then
+    lobby_team[p] = slot.team
+  end
+  local t = ffa_team[p] or free_team(p)
+  if slot.team ~= t and game.set_team(p, t) then
+    ffa_team[p] = t
+  elseif slot.team == t then
+    ffa_team[p] = t
+  end
+end
+
+-- Free For All: every seat back on the lobby team it came with, so the next
+-- lobby shows the teams the host set up. A roster write needs a running
+-- round, so this is done just before the round is ended, not in on_end.
+local function restore_teams()
+  if teams_on() then
+    return
+  end
+  for p, t in pairs(lobby_team) do
+    local slot = game.lobby_slot(p)
+    if slot ~= nil and slot.team ~= t then
+      game.set_team(p, t)
+    end
+  end
+end
+
 local function finish(key)
   if over then
     return
@@ -277,6 +494,7 @@ local function finish(key)
   game.message(line)
   game.announce(line, 5)
   draw_panel()
+  restore_teams()
   local kind, n = key:sub(1, 1), tonumber(key:sub(2))
   if kind == "t" then
     game.end_round(line, n)
@@ -324,8 +542,10 @@ function on_tank_killed(victim, killer, cause, scripted)
   if key == side_of(victim) then
     return                    -- own side: no point
   end
+  own_kills[by] = (own_kills[by] or 0) + 1
   kills[key] = (kills[key] or 0) + 1
-  post_score(key)
+  post_seat(by)
+  post_side(key)
   dirty = true
   local how = (cause == "deep_sea") and "drowned" or "killed"
   game.announce(string.format("%s %s %s  (%s %d/%d)", name_of(by), how,
@@ -343,23 +563,13 @@ function on_choose_start(p)
   -- The shield starts here, as the tank is placed. on_tank_spawned comes
   -- after the tick's shells have flown, too late for one that lands at once.
   shield[p] = game.tick() + SHIELD_SECONDS * 100
-  local e = read_ends()
-  if not started then
-    team_mode = count_teams() >= 2
-  end
-  local list = e.all
-  if team_mode and team_of(p) > 0 then
-    list = e[end_of(p)]
-  end
+  local list = starts_for(p)
   if #list == 0 then
     return nil
   end
   -- The opening: one start for each place, so no two tanks share a square.
-  -- A free-for-all takes the map's order, which spreads the seats round the
-  -- ring. The opening tanks are placed one at a time, and the lobby may not
-  -- show every seat and team yet, so a team round can fall back to that
-  -- order too. It alternates west and east, so seats on round-robin teams
-  -- still start on their own half.
+  -- The opening tanks are placed one at a time, and the lobby may not show
+  -- every seat and team yet, so the list is read again for each of them.
   if not spawned[p] and
      (not started or game.tick() - start_at < OPENING_TICKS) then
     return list[(place_of(p) % #list) + 1].n
@@ -403,11 +613,55 @@ function can_hit(attacker, kind, n, pill)
   return nil
 end
 
+-- Alliances follow the Teams setting: none in a Free For All, and only
+-- between members of the same lobby team in a team round.
+function can_ally(p, q)
+  if not teams_on() then
+    return false
+  end
+  local tp, tq = team_of(p), team_of(q)
+  return tp > 0 and tp == tq
+end
+
+-- The teams are the round's. A seat that changes team itself is put back:
+-- on its own team in a Free For All, on the lobby team it started on in a
+-- team round. A move this script made arrives here too and is left alone.
+function on_team_changed(p, team, scripted)
+  if scripted or not started or over then
+    return
+  end
+  local want = teams_on() and lobby_team[p] or ffa_team[p]
+  if want ~= nil and team ~= want then
+    game.set_team(p, want)
+  end
+end
+
 function on_player_join(p, scripted)
   if over then
     return
   end
-  post_score(side_of(p))
+  -- A seat on_start already recorded is not new: a bot fielded after the
+  -- start arrives here too, and by then a Free For All has moved it off
+  -- its lobby team, so recording its team again would lose that team.
+  if started and lobby_team[p] ~= nil then
+    post_seat(p)
+    dirty = true
+    return
+  end
+  own_kills[p] = 0
+  if started then
+    local slot = game.lobby_slot(p)
+    lobby_team[p] = (slot ~= nil) and slot.team or 0
+    if not teams_on() then
+      ffa_team[p] = nil
+      split_off(p)
+    elseif lobby_team[p] > 0 then
+      -- A team that was not in the round at the start gets no arc of its
+      -- own; its members use the whole ring, as a seat on no team does.
+      post_side(side_of(p))
+    end
+  end
+  post_seat(p)
   dirty = true
 end
 
@@ -415,9 +669,10 @@ function on_player_leave(p, scripted)
   last_hit[p] = nil
   spawned[p] = nil
   shield[p] = nil
-  if not team_mode or team_of(p) == 0 then
-    kills["p" .. p] = nil     -- the seat's next player starts at nought
-  end
+  own_kills[p] = nil
+  lobby_team[p] = nil
+  ffa_team[p] = nil
+  kills["p" .. p] = nil       -- the seat's next player starts at nought
   dirty = true
 end
 
@@ -438,18 +693,40 @@ function on_start()
     target = math.floor(v)
   end
 
-  team_mode = count_teams() >= 2
+  -- Every seat's lobby team is kept now. In a team round the teams in play
+  -- are fixed here too; in a Free For All every seat goes on a team of its
+  -- own. Roster writes are refused in on_setup, which is why this is here.
+  for p = 0, game.max_tanks() - 1 do
+    local slot = game.lobby_slot(p)
+    if slot ~= nil then
+      lobby_team[p] = slot.team
+    end
+  end
+  if teams_on() then
+    team_list = nil
+    team_list = teams_in_round()
+  else
+    for p = 0, game.max_tanks() - 1 do
+      split_off(p)
+    end
+  end
   started = true
   start_at = game.tick()
 
+  for p = 0, game.max_tanks() - 1 do
+    if game.lobby_slot(p) ~= nil then
+      own_kills[p] = own_kills[p] or 0
+      post_seat(p)
+    end
+  end
   for _, key in ipairs(standings()) do
-    post_score(key)
+    post_side(key)
   end
   game.message(string.format("Joust: first %s to %d kills wins. %s",
-                             team_mode and "team" or "tank", target,
+                             teams_on() and "team" or "tank", target,
                              "One hit sinks a boat."))
   game.log(string.format("Joust: target %d, %s", target,
-                         team_mode and "teams" or "free for all"))
+                         teams_on() and "lobby teams" or "free for all"))
   dirty = true
   panel_loop()
   game.timer(REFILL_SECONDS, refill_loop)
@@ -474,16 +751,19 @@ end
 scenario = {
   name        = "Joust",
   description = "A round deep-sea arena inside thick walls. Every tank is on a " ..
-                "boat, so one hit drowns it. First to the kill count wins.",
+                "boat, so one hit drowns it. First to the kill count wins, " ..
+                "every tank for itself or as lobby teams.",
   api         = 1,
   game        = "open",
 
-  -- The script splits the map's own starts into its two halves.
+  -- The script cuts the map's own starts into arcs of the ring.
   bound       = true,
 
   settings = {
     { id = "kills_to_win", label = "Kills to win", type = "int",
       min = 1, max = 50, step = 1, default = DEFAULT_TARGET },
+    { id = "teams", label = "Teams", type = "choice",
+      choices = { FREE_FOR_ALL, LOBBY_TEAMS }, default = FREE_FOR_ALL },
   },
 
   rules = {
@@ -505,14 +785,16 @@ scenario = {
   },
 
   callbacks = {
-    on_start = "Reads the kill target, decides team or free-for-all, posts the scores and starts the shell refill.",
-    on_choose_start = "Picks each tank's start: one for each place at the opening, then the start farthest from every enemy, on its own half of the ring in a team round.",
+    on_start = "Reads the kill target and the Teams setting; in Free For All puts every tank on a team of its own; posts the scores and starts the shell refill.",
+    on_choose_start = "Picks each tank's start: one for each place at the opening, then the start farthest from every enemy, on its own team's arc of the ring in a team round.",
     on_tank_hit = "Remembers the last enemy tank that hit each tank.",
-    on_tank_killed = "Gives the kill to the killer, or for a drowning to the last enemy hit, and ends the round at the target.",
+    on_tank_killed = "Gives the kill to the killer, or for a drowning to the last enemy hit, adds it to the killer's side, and ends the round at the target.",
     on_tank_spawned = "Makes sure a new tank is on its boat and starts its one-second shield.",
     can_hit = "Lets shells pass through a tank in its first second, so nobody is sunk as they arrive.",
-    on_player_join = "Shows the new player's score.",
-    on_player_leave = "Clears a leaving free-for-all player's kills.",
+    can_ally = "No alliances in Free For All; only lobby teammates in a team round.",
+    on_team_changed = "Teams are fixed for the round.",
+    on_player_join = "Shows the new player's score; in Free For All puts them on a team of their own.",
+    on_player_leave = "Clears a leaving player's own kills.",
     can_build = "Nothing can be built, so the arena stays as drawn.",
     allow_base_win = "Only kills win; the map has no bases.",
     on_end = "Writes the final standings to the server log.",
