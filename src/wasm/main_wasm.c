@@ -83,7 +83,7 @@ bool showNetworkDebugMessages = FALSE;
 bool autoScrollingEnabled = TRUE;  /* WASM default: autoscroll on unless synced prefs override */
 bool smoothScrollingEnabled = FALSE;  /* WASM: arrow-key smooth scroll inactive */
 bool letterboxBarsGray = FALSE;       /* gray vs black letterbox bars (sdl3draw) */
-BYTE zoomFactor = ZOOM_FACTOR_DOUBLE;
+BYTE zoomFactor = ZOOM_FACTOR_CUSTOM;
 
 bool showPillLabels = FALSE;
 bool showBaseLabels = FALSE;
@@ -422,7 +422,6 @@ static const char *getUrlParam(const char *name) {
 
 int main(int argc, char *argv[]) {
   const char *cmdLine = "";
-  int urlZoom = 0;
 
   (void)argc;
   (void)argv;
@@ -441,21 +440,6 @@ int main(int argc, char *argv[]) {
    * present and the canvas is under 1200px wide, as desktop browsers
    * commonly report. Touch users can still switch via Ctrl+T. */
   uiModeSet(UI_MODE_DESKTOP);
-
-  /* Parse URL query parameters: ?name=Player&zoom=2 */
-  {
-    const char *val;
-    val = getUrlParam("zoom");
-    if (val[0] != '\0') {
-      urlZoom = atoi(val);
-      if (urlZoom == 1 || urlZoom == 2 || urlZoom == 4) {
-        zoomFactor = (BYTE)urlZoom;
-        printf("[WASM] URL zoom=%d\n", urlZoom);
-      } else {
-        urlZoom = 0;
-      }
-    }
-  }
 
   if (clientMutexCreate() == FALSE) {
     printf("[WASM] Failed to create client mutex\n");
@@ -548,14 +532,6 @@ int main(int argc, char *argv[]) {
     if (win) {
       SDL_ShowWindow(win);
     }
-  }
-
-  /* Force canvas CSS display size to match the backing store. */
-  {
-    int w, h;
-    SDL_GetWindowSize(sdl3DrawGetWindow(), &w, &h);
-    emscripten_set_element_css_size("#canvas", (double)w, (double)h);
-    printf("[WASM] Canvas CSS forced to %dx%d\n", w, h);
   }
 
   guiMessageSetHandler(sdl3MessageHandler);

@@ -448,7 +448,11 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     /* Tell SDL3 to use the existing canvas element from shell.html */
     SDL_SetHint(SDL_HINT_EMSCRIPTEN_CANVAS_SELECTOR, "#canvas");
 
-    if (sdl3DrawSetup(windowGetZoomFactor()) == FALSE) {
+    /* For custom mode, use ceiling integer zoom so render target >= window.
+       sdl3DrawAdaptRenderTarget will adjust dynamically on resize. */
+    BYTE zf = windowGetZoomFactor();
+    if (zf == ZOOM_FACTOR_CUSTOM) zf = ZOOM_FACTOR_DOUBLE;
+    if (sdl3DrawSetup(zf) == FALSE) {
       printf("[WASM] sdl3DrawSetup FAILED\n");
       return FALSE;
     }

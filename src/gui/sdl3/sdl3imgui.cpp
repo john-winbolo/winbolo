@@ -5747,6 +5747,8 @@ static void renderMenuBar(ClientSim *cs) {
             ImGui::EndMenu();
         }
 
+#ifndef __EMSCRIPTEN__
+        /* The web canvas follows the page, so it has no window size to pick. */
         if (ImGui::BeginMenu(langGetText(STR_MENU_WINDOW_SIZE))) {
             /* Get display bounds to disable sizes that don't fit */
             int dispW = 99999, dispH = 99999;
@@ -5794,6 +5796,7 @@ static void renderMenuBar(ClientSim *cs) {
             if (ImGui::MenuItem(langGetText(STR_MENU_CUSTOM_RESIZABLE), nullptr, zoomFactor == ZOOM_FACTOR_CUSTOM)) s_pendingZoom = ZOOM_FACTOR_CUSTOM;
             ImGui::EndMenu();
         }
+#endif
 
         if (ImGui::MenuItem(langGetText(STR_MENU_SMOOTH_SCROLLING), nullptr, (bool)smoothScrollingEnabled)) windowSmoothScrolling_toggle();
 
@@ -7316,7 +7319,8 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                resizes the window out from under the fullscreen map.  The UI
                scale rebuild above still applies: the surface really did
                change size. */
-            if (!(SDL_GetWindowFlags(s_window) & SDL_WINDOW_FULLSCREEN)) {
+            /* A window the page sizes is never resized by the game, and its size is never saved. */
+            if (!(SDL_GetWindowFlags(s_window) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FILL_DOCUMENT))) {
                 if (s_suppressAutoCustom) {
                     /* Programmatic resize from windowZoomChange — don't auto-switch or adjust.
                        Don't clear the flag here - it gets cleared at end of frame after zoom is applied. */
