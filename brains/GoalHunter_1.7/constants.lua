@@ -16,14 +16,15 @@ M.LOG_STANDOFF_CANDIDATES = false  -- print every standoff candidate (very verbo
 -- The MANIFEST that decides which keys exist is modes.txt beside this file:
 -- it lists this brain's modes and, per mode, that mode's difficulty levels.
 -- The lobby reads it to fill its two dropdowns, so adding a mode or a level
--- is an edit to modes.txt, not to any C or Lua code.
+-- needs no C code: modes.txt, plus the mode's bundles in M.MODE_LEVELS.
 --
--- NOTHING READS EITHER OF THESE YET. Every mode and every difficulty runs
--- exactly this code, which is what "default" / "hard" mean, so those are the
--- defaults and the knobs that make the other settings differ come later.
--- They are stored (and echoed in the init-arg log, and on state.mode /
--- state.difficulty) so the plumbing can be trusted before any behaviour
--- hangs off it.
+-- The pair picks a knob bundle out of M.MODE_LEVELS (at the end of this
+-- file), which init.lua applies before any preset= or cfg=. A new mode also
+-- needs its bundles there; a mode with no bundle runs these constants.
+-- Modes today: default (hard = these constants, medium/easy = handicaps),
+-- survival (empty placeholders) and turtle (default's levels plus
+-- PILL_PLACE_TURTLE). They are also echoed in the init-arg log and stored
+-- on state.mode / state.difficulty.
 M.MODE = "default"
 M.DIFFICULTY = "hard"
 
@@ -5378,5 +5379,20 @@ M.MODE_LEVELS = {
   },
   survival = { hard = {}, medium = {}, easy = {} },  -- placeholders (see modes.txt)
 }
+
+-- Turtle mode: each level is the matching default level plus the turtle
+-- pill placement switch (PILL_PLACE_TURTLE, above). Built from the default
+-- bundles here, not copied by hand, so a change to a default level reaches
+-- turtle too. No new values: it is the same switch preset=turtle turns on.
+do
+  local turtle = {}
+  for level, bundle in pairs(M.MODE_LEVELS.default) do
+    local t = {}
+    for k, v in pairs(bundle) do t[k] = v end
+    t.PILL_PLACE_TURTLE = true
+    turtle[level] = t
+  end
+  M.MODE_LEVELS.turtle = turtle
+end
 
 return M

@@ -14,6 +14,7 @@
 # a bundle of knob overrides applied before any preset= or cfg= token):
 # hard is an empty bundle, so Hard is today's brain unchanged; medium and
 # easy hand the bot handicaps. The survival mode's bundles are still empty.
+# The turtle mode's bundles are default's with PILL_PLACE_TURTLE turned on.
 
 [default]
 label = Default
@@ -26,5 +27,14 @@ default = hard
 # row's mode tag, so it is kept to one short word.
 [survival]
 label = Survival
+levels = easy:Easy:1, medium:Medium:2, hard:Hard:3
+default = hard
+
+# Turtle. The same three levels as default; each one is default's level plus
+# PILL_PLACE_TURTLE (the bot builds one tight, defended cluster of pills
+# around its home instead of spreading them out). constants.lua builds its
+# bundles from default's, so the two cannot drift.
+[turtle]
+label = Turtle
 levels = easy:Easy:1, medium:Medium:2, hard:Hard:3
 default = hard
