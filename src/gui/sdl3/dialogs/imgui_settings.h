@@ -31,8 +31,10 @@ void imguiSettingsShow(void);
 
 /* The same dialog opened from the map editor inside WinBolo.  The editor's
  * window keeps its size and title, no background game is drawn, and the
- * tutorial button and the Controls tab (key setup) are left out.  The caller owns the ImGui context it returns
- * to: this makes and destroys its own. */
+ * tutorial button and the Controls tab (key setup) are left out.  The caller
+ * owns the ImGui context it returns to: this makes and destroys its own.  A
+ * quit taken while it is up is not acted on here; it is pushed back as
+ * SDL_EVENT_QUIT for the editor to handle. */
 void imguiSettingsShowInEditor(void);
 
 typedef struct SettingsRenderCtx {

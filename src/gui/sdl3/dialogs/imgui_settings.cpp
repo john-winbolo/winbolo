@@ -2410,6 +2410,9 @@ static void settingsShowLoop(bool inEditor) {
     imguiWinbolonetStartValidation();
 
     bool running = true;
+    /* A quit taken while the editor's settings window was up (see the event
+       loop); pushed again for the editor after the window closes. */
+    bool quitForEditor = false;
 #if !BOLO_MOBILE
     bool showKeySetup = false;
     /* Full screen pick from the Display tab, applied after Present alongside
@@ -2435,7 +2438,14 @@ static void settingsShowLoop(bool inEditor) {
             dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
             dialogHandleWindowMoveResize(window, &ev);
-            if (dialogHandleQuitEvent(window, &ev)) {
+            if (inEditor) {
+                /* The editor decides whether a quit ends the application, since
+                 * it may have an unsaved map to ask about; the quit is handed
+                 * back to it once this window has closed. */
+                DialogQuitAction qa = dialogQuitClassify(&ev, SDL_GetWindowID(window));
+                if (qa == DIALOG_QUIT_APPLICATION) quitForEditor = true;
+                if (qa != DIALOG_QUIT_NONE) running = false;
+            } else if (dialogHandleQuitEvent(window, &ev)) {
                 running = false;
             }
         }
@@ -2893,6 +2903,13 @@ static void settingsShowLoop(bool inEditor) {
 #endif
 
     SDL_FlushEvent(SDL_EVENT_QUIT);
+
+    if (quitForEditor) {
+        SDL_Event quitEv;
+        SDL_zero(quitEv);
+        quitEv.type = SDL_EVENT_QUIT;
+        SDL_PushEvent(&quitEv);
+    }
 }
 
 extern "C" void imguiSettingsShow(void) {
