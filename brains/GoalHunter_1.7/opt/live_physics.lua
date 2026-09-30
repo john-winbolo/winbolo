@@ -22,6 +22,9 @@
 -- Knobs (constants.lua): LIVE_PHYSICS is the master switch (PRESETS.keel =
 -- false). Each group below has its own LIVE_PHYSICS_<GROUP> switch.
 -- With a switch off, the group's constants go back to their base values.
+-- An entry with a fourth field also needs that knob to be true (the
+-- 2026-09-30 follow-ups: LIVE_PHYSICS_LGM_WALK, LIVE_PHYSICS_WSIM_BUILD,
+-- LIVE_PHYSICS_SHELL_LIFE, LIVE_PHYSICS_PILL_RANGE_WU).
 --
 -- Missing or zero rules fall back to the classic value, so a host that does
 -- not send info.rules gets the classic brain.
@@ -37,7 +40,7 @@ local ceil  = math.ceil
 -- The engine's classic rules (src/bolo/sim_rules.c simRulesClassic).
 local CLASSIC = {
   tank_full_armour = 40, tank_full_shells = 40, tank_reload_ticks = 13,
-  shell_damage = 5, shell_speed = 32, gunsight_max = 14,
+  shell_damage = 5, shell_speed = 32, shell_life = 8, gunsight_max = 14,
   tree_hide_distance = 768,
   speed_road = 16, speed_grass = 12, speed_forest = 6, speed_river = 3,
   speed_swamp = 3, speed_crater = 3, speed_rubble = 3, speed_boat = 16,
@@ -421,6 +424,15 @@ local function scale_cost_table(b, x)
   return out
 end
 
+-- Ticks the man needs per tile on grass (16 classic = 256 wu / 16 wu per
+-- tick). Scales with classic / live man grass speed. A man who cannot walk
+-- grass (live 0) keeps the base: there is no finite number to give.
+local function man_grass_ticks(b, x)
+  local live = x.man_speed_grass
+  if live <= 0 then return b end
+  return scale_int(b, CLASSIC.man_speed_grass, live)
+end
+
 local function road_cost_table(b, x)
   if type(b) ~= "table" or x.lgm_cost_road == CLASSIC.lgm_cost_road then return b end
   local out = {}
@@ -516,6 +528,9 @@ local ENTRIES = {
   { "PILL_FIRE_RANGE",      "PILL", ratio_f("pill_range") },
   { "ATTACK_PILL_RANGE",    "PILL", ratio_f("pill_range") },
   { "HARDLINE_ENGAGE_RANGE","PILL", ratio_f("pill_range") },
+  -- LIVE_PHYSICS_PILL_RANGE_WU: the sea-cover and shell-source tests use
+  -- the engine's pill range in world units (pillbox.h PILLBOX_RANGE).
+  { "PILLBOX_RANGE_WU",     "PILL", direct("pill_range"), "LIVE_PHYSICS_PILL_RANGE_WU" },
   -- Anger decay ~ (attack - min) x cooldown ticks (94 x 32 classic).
   { "PILL_ANGER_DECAY", "PILL",
     function(b, x)
@@ -563,6 +578,16 @@ local ENTRIES = {
   -- A dead builder flies back at helicopter speed (3 classic).
   { "ENEMY_LGM_RETURN_TICKS", "LGM",
     function(b, x) return scale_int(b, CLASSIC.lgm_helicopter_speed, x.lgm_helicopter_speed) end },
+  -- LIVE_PHYSICS_LGM_WALK: the man's walk estimates that still assumed the
+  -- classic speeds. The blessed tile walks at the refuel-base rule (lgm.c).
+  -- The C walk sim's own table is pushed in push_c.
+  { "MAN_SPEED_BLESSED",                "LGM", direct("man_speed_refuel_base"), "LIVE_PHYSICS_LGM_WALK" },
+  { "REPAIR_DEAD_GRASS_TICKS_PER_TILE", "LGM", man_grass_ticks, "LIVE_PHYSICS_LGM_WALK" },
+  { "BUILDER_POOL_GRASS_TICKS_PER_TILE","LGM", man_grass_ticks, "LIVE_PHYSICS_LGM_WALK" },
+  { "WSIM_DWELL_TICKS_PER_TILE",        "LGM", man_grass_ticks, "LIVE_PHYSICS_LGM_WALK" },
+  -- LIVE_PHYSICS_WSIM_BUILD: the world sim's pill-placement dwell stands
+  -- for lgm_build_ticks while the man builds.
+  { "WSIM_DWELL_BUILD_TICKS", "LGM", ratio_int("lgm_build_ticks"), "LIVE_PHYSICS_WSIM_BUILD" },
 
   -- Tank speed. TERRAIN_SPEED is our own top speed (rules x own speed %).
   -- MAP_SPEED models ENEMY tanks, whose modifiers we cannot see: rules only.
@@ -607,6 +632,12 @@ local ENTRIES = {
       if x.gunsight_max == 14 or type(b) ~= "number" then return b end
       return b + (x.gunsight_max - 14)
     end },
+  -- LIVE_PHYSICS_SHELL_LIFE: how long a shell flies is shell_life ticks per
+  -- map square of range (shells.c shellLifeTicks), so the shell-path steps
+  -- and the builder shell gate's horizon scale with live / classic life.
+  -- Step length already follows SHELL_SPEED above.
+  { "SHELL_MAX_STEPS",         "SHELL", ratio_int("shell_life"), "LIVE_PHYSICS_SHELL_LIFE" },
+  { "LGM_SHELL_PREDICT_TICKS", "SHELL", ratio_int("shell_life"), "LIVE_PHYSICS_SHELL_LIFE" },
 }
 M.ENTRIES = ENTRIES
 
@@ -623,6 +654,7 @@ local pushed_cpf_speed = {}
 local pushed_cpf_cost  = {}
 local pushed_wsim_speed = {}
 local pushed_wsim_rules = nil
+local pushed_cpf_man = {}   -- terrain type (-1 = blessed) -> last man speed sent
 
 --- Forget everything (Brain.open, after cpf/wsim.configure()).
 function M.reset()
@@ -631,6 +663,7 @@ function M.reset()
   for k in pairs(pushed_cpf_speed) do pushed_cpf_speed[k] = nil end
   for k in pairs(pushed_cpf_cost) do pushed_cpf_cost[k] = nil end
   for k in pairs(pushed_wsim_speed) do pushed_wsim_speed[k] = nil end
+  for k in pairs(pushed_cpf_man) do pushed_cpf_man[k] = nil end
   pushed_wsim_rules = nil
 end
 
@@ -683,6 +716,32 @@ local function push_c(x)
                pushed_cpf_speed, rawget(_G, "cpf_set_terrain_speed"))
     push_table(cpf.DEFAULTS.terrain_cost, speed_x, cost_entry,
                pushed_cpf_cost, rawget(_G, "cpf_set_terrain_cost"))
+  end
+  -- LIVE_PHYSICS_LGM_WALK: the C LGM walk sim's man speeds (brain_pathfinder.c
+  -- lgm_man_speed, classic until pushed). Sent only when a value differs from
+  -- what C holds, so classic man rules send nothing.
+  local set_man = rawget(_G, "cpf_set_man_speed")
+  if type(set_man) == "function" then
+    local walk_x = (x and group_on("LGM") and C.LIVE_PHYSICS_LGM_WALK == true) and x or nil
+    for _, tt in ipairs(TERRAINS) do
+      local rule = MAN_RULE[tt]
+      if rule then
+        local v = walk_x and walk_x[rule] or CLASSIC[rule]
+        local have = pushed_cpf_man[tt]
+        if have == nil then have = CLASSIC[rule] end
+        if v ~= have then
+          set_man(tt, v)
+          pushed_cpf_man[tt] = v
+        end
+      end
+    end
+    local bv = walk_x and walk_x.man_speed_refuel_base or CLASSIC.man_speed_refuel_base
+    local bh = pushed_cpf_man[-1]
+    if bh == nil then bh = CLASSIC.man_speed_refuel_base end
+    if bv ~= bh then
+      set_man(-1, bv)
+      pushed_cpf_man[-1] = bv
+    end
   end
   local ws = package.loaded["cworldsim"]
   if ws and ws.DEFAULTS then
@@ -757,7 +816,9 @@ function M.apply(info)
       if w == nil or cur ~= w then base[key] = cur end
       local b = base[key]
       local v = b
-      if x and group_on(e[2]) then v = e[3](b, x) end
+      if x and group_on(e[2]) and (e[4] == nil or C[e[4]] == true) then
+        v = e[3](b, x)
+      end
       if v ~= cur then C[key] = v end
       if not on then
         written[key] = nil

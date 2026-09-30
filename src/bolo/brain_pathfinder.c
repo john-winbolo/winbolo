@@ -371,6 +371,8 @@ static inline float heuristic(int x0, int y0, int x1, int y1) {
 /* Create / Destroy                                                    */
 /* ------------------------------------------------------------------ */
 
+static void lgmSeedManSpeed(BrainPathfinder *pf);
+
 BrainPathfinder *brainPathfinderCreate(void) {
   BrainPathfinder *pf = (BrainPathfinder *)calloc(1, sizeof(BrainPathfinder));
   if (!pf) return NULL;
@@ -409,6 +411,7 @@ BrainPathfinder *brainPathfinderCreate(void) {
   pf->shell_speed = classic.shell_speed;
   pf->shell_start_add = classic.shell_start_add;
   pf->gunsight_max = classic.gunsight_max;
+  lgmSeedManSpeed(pf);
 
   /* Resource drain config */
   /* A tuned A* cost, not a copy of tank_water_ticks: ~85 ticks/tile at
@@ -3825,7 +3828,25 @@ static BYTE lgmGetBrainManSpeed(BrainPathfinder *pf, BYTE mx, BYTE my) {
    * march straight into an enemy base. */
   if (pf->lgm_block[my * MAP_SIZE + mx]) return 0;
   uint8_t type = pf->map[my * MAP_SIZE + mx] & 0x0F;
-  return lgm_man_speed[type];
+  return pf->man_speed[type];
+}
+
+/* The classic walk: the table above and the refuel-base speed on the blessed
+ * tile. Called once from brainPathfinderCreate. */
+static void lgmSeedManSpeed(BrainPathfinder *pf) {
+  memcpy(pf->man_speed, lgm_man_speed, sizeof(pf->man_speed));
+  pf->man_speed_blessed = MAP_MANSPEED_TREFBASE;
+}
+
+void brainPathfinderSetManSpeed(BrainPathfinder *pf, int type, int speed) {
+  if (!pf) return;
+  if (speed < 0) speed = 0;
+  if (speed > 255) speed = 255;
+  if (type == -1) {
+    pf->man_speed_blessed = (uint8_t)speed;
+  } else if (type >= 0 && type < 16) {
+    pf->man_speed[type] = (uint8_t)speed;
+  }
 }
 
 void brainPathfinderClearLgmBlock(BrainPathfinder *pf) {
@@ -3892,7 +3913,7 @@ static int lgmTravelTicksCore(BrainPathfinder *pf,
 
     /* Speed: blessed tile gets full speed, otherwise terrain-based */
     if (bmx == localBlessX && bmy == localBlessY) {
-      speed = MAP_MANSPEED_TREFBASE;
+      speed = pf->man_speed_blessed;
     } else {
       speed = lgmGetBrainManSpeed(pf, bmx, bmy);
     }
