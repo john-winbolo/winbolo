@@ -1450,9 +1450,10 @@ static void updatePreview(MapChooserState *state, SDL_Renderer *renderer) {
 /* Select the first map row the "Scenarios only" tick lets through and
  * preview it, for a folder click. With no such row and the tick off,
  * falls back to the empty path, the inbuilt Everard marker. With the
- * tick on, Everard is hidden too, so the selection and preview are
- * cleared instead. The provider's onSelect is not called: a folder
- * click only moves the chooser's own selection. */
+ * tick on, Everard is hidden too, so only the row highlight goes: the
+ * path and preview stay on the map already picked, the same as when the
+ * tick hides the selected row. The provider's onSelect is not called: a
+ * folder click only moves the chooser's own selection. */
 static void selectFirstShownMap(MapChooserState *state,
                                 SDL_Renderer *renderer,
                                 bool scenariosOnly) {
@@ -1473,28 +1474,14 @@ static void selectFirstShownMap(MapChooserState *state,
         updatePreview(state, renderer);
         return;
     }
-    state->selectedPath[0] = '\0';
-    state->selectedName[0] = '\0';
-    if (!scenariosOnly) {
-        state->selectedIdx = 0;
-        updatePreview(state, renderer);
+    if (scenariosOnly) {
+        state->selectedIdx = -1;
         return;
     }
-    /* Nothing shown to select. A fresh preview widget has no map, so
-     * the pane goes blank rather than keep the hidden map. */
-    state->selectedIdx = -1;
-    mapPreviewPopupClose();
-    if (state->previewTex) {
-        SDL_DestroyTexture(state->previewTex);
-        state->previewTex = NULL;
-    }
-    state->previewPills  = 0;
-    state->previewBases  = 0;
-    state->previewStarts = 0;
-    if (state->previewView) {
-        mapPreviewViewDestroy(state->previewView);
-        state->previewView = mapPreviewViewCreate();
-    }
+    state->selectedIdx = 0;
+    state->selectedPath[0] = '\0';
+    state->selectedName[0] = '\0';
+    updatePreview(state, renderer);
 }
 
 /* Reentry guard for generateRandomPreview. Generation is currently
