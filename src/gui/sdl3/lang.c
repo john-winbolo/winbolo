@@ -2682,6 +2682,7 @@ static const LangEntry langTable[] = {
     {2732, "Restore default size (Esc)"},
     {2733, "Maximize"},
     {2734, "Loading preview..."},
+    {2738, "Needs bots allowed: this script adds its own bots"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

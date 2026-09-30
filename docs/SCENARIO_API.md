@@ -744,16 +744,20 @@ description with a newline in it does not take the lobby apart.
 whether a script sits beside it, and the ones that do carry a Scripted tag.
 With scripts switched off nothing is tagged.
 
-**Three settings are refused while a scenario is attached.** Any game-type
-change, ranked on, and the no-bots AI policy. All three are refused the same
-way and the host is shown the same line — *That setting is fixed by the map's
-scenario* — rather than the request failing silently.
+**Some settings are refused while a scenario is attached.** Any game-type
+change and ranked on, and — only when a script on the list says
+`needs_bots = true` — the no-bots AI policy. They are refused the same way
+and the host is shown the same line — *That setting is fixed by the map's
+scenario* — rather than the request failing silently. A mod leaves the game
+type to the host.
 
-**Committing a scripted map moves two settings out of the way**, because the
-three above cannot stand beside a scenario: ranked goes off, and an AI policy
-set to no bots moves up to one that runs them. Committing a plain map
-afterwards gives all three back — the game type, the ranked flag and the AI
-policy the lobby was on before the scenario arrived.
+**Committing a scripted map moves settings out of the way**, because the
+ones above cannot stand beside a scenario: ranked goes off, and — only when a
+script on the list says `needs_bots = true` — an AI policy set to no bots
+moves up to one that runs them. A list that does not say it leaves the AI
+policy to the host, so a lobby with no bots stays with no bots. Committing a
+plain map afterwards gives them back — the game type, the ranked flag, and
+the AI policy the lobby was on before a `needs_bots` script moved it.
 
 **A lobby everyone leaves keeps the scenario's settings.** The reset that
 empties a lobby puts the operator's own game type, ranked flag and AI policy
@@ -842,6 +846,7 @@ scenario = {
   game         = "open",
   bound        = true,
   fill_to_caps = false,
+  needs_bots   = false,
   lobby        = { ... },
   rules        = { ... },
   tags         = { ... },
@@ -861,6 +866,7 @@ scenario = {
 | `bound` | boolean | True (the default) when the scenario is tied to its map. A scenario that names tags or regions is tied to its map by definition, because tags and regions are the map's own squares and entities. A server can also offer scenarios of its own, which play over whichever map a host has committed; a scenario with `bound` true is not one of those and a host picking it is refused, because over another map its tags, its regions and its entity indices name items that are not there. |
 | `triggers` | array | What the scenario does without a line of Lua: hooks to listen on, tests against what each hook is handed, and calls to make when every test holds. A scenario may carry triggers, a script, or both. See [Triggers](#triggers). |
 | `fill_to_caps` | boolean | False by default. True starts every pillbox and base on the map at the caps your `rules` table leaves in force rather than at the numbers the map file holds. A map file states a number for each pill's armour and each base's stocks and has no way of stating "full", so a scenario that raises `base_full_armour` or `pill_max_armour` would otherwise open with the map's own smaller numbers and climb to the new ones over the round. Raising only: anything already at or above a cap is left where it is, and anything above one is brought down by the rules themselves. A pill's firing rate is not touched. |
+| `needs_bots` | boolean | False by default. True says the script needs the lobby to allow bots: it fields its own, through a `lobby` team with `bots` above 0 or with held seats, through `game.spawn_bot`, or through `game.lobby_add_bot`, and a lobby set to no computer tanks refuses every one of those. With it, attaching the script moves a lobby set to no bots up to one that runs them, the host cannot set no bots while the script is attached, and the lobby goes back to no bots once the last script goes. Without it the script leaves the host's bot setting alone, and a script that only works with the bots a host adds — retuning them with `game.bot_init`, say — does not need it. A mod may say it as well as a scenario, and a list needs bots when any script on it says so. A `lobby` team with `bots = 0` does not say it. A file that fields bots and leaves it out works in a lobby that allows bots and fails in one that does not, so `-validate` reports it and packing or publishing the file is refused: a `lobby` team with `bots` above 0, or a call to `game.spawn_bot` or `game.lobby_add_bot` anywhere in the code (a comment or a string that only names one is not a call). |
 | `callbacks` | table | What each of the script's callbacks does, one sentence each for a player, keyed by the callback's name: `callbacks = { on_start = "Lines the teams up.", can_die = "Builders cannot be killed." }`. The lobby's details dialog shows them under the rules table, headed "What this mod implements:" or "What this scenario implements:", as a table of Method (the callback's name), Type and High-level overview (the sentence). Type is Event for a hook whose return the engine ignores, Query for a policy whose answer it uses, and Trigger for a hook only a trigger's `when` defines. A script with no block shows no such section. Optional, and it changes nothing about how the round plays. At most 40 rows, each sentence cut at 159 bytes (at a UTF-8 character boundary), and 2048 bytes for the whole block packed (a type byte and two length bytes per row plus the name and the sentence, and one count byte) — about twenty lines of eighty letters. The load warns, and never refuses the file, for each callback the script defines that the block does not describe, for each name that is no callback the engine calls, and for each name the script never defines; those last two rows are dropped. The warnings go to the server console and `-validate` prints them. The names are the ones in the hook and policy tables below; a trigger's `when` counts as defining its hook. |
 | `workshop_id` | string | The Steam Workshop item the file was published as, written as a string of decimal digits (`"3301234567"`), because a Lua number cannot hold every digit of a 64-bit id. The game writes it into the file's manifest when you publish it; it is not meant to be set by hand. A script that declares its own `scenario` table need not repeat it: it is compared with the manifest only when the table states it, and a table that states a different id is refused. Anything that is not a string of digits is reported and read as none. |
 | `workshop_author` | string | The SteamID64 of the account that published the file, a string of decimal digits like `workshop_id`, and written by the game at the same time. The same rules apply: not meant to be set by hand, need not be repeated, and refused only when the table states a different one. |

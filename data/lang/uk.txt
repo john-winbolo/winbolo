@@ -683,6 +683,9 @@ STR_MAPCHOOSER_RESTORE_SIZE_TIP=Відновити розмір за замов�
 STR_MAPCHOOSER_MAXIMIZE_TIP=Розгорнути
 STR_MAPCHOOSER_LOADING_PREVIEW=Завантаження попереднього перегляду...
 
+# Map editor scenario panel
+STR_MAPEDIT_SCENARIO_NEEDS_BOTS=Потрібно дозволити ботів: цей скрипт додає власних ботів
+
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Статус
 STR_TABLET_KILLS_DEATHS=Знищень: {number}  Смертей: {number2}

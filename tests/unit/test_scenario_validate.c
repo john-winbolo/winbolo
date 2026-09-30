@@ -254,6 +254,7 @@ int run_scenario_validate_clean(void) {
         "scenario = {\n"
         "  name = \"Clean\",\n"
         "  api = 1,\n"
+        "  needs_bots = true,\n"
         "  rules = { tank_reload_ticks = 7 },\n"
         "  lobby = {\n"
         "    max_players = 8,\n"
@@ -2559,6 +2560,126 @@ int run_scenario_validate_trigger_arg_literal(void) {
     if (rc == 0 && !SV_SAYS(r, "triggers[2].actions[3][0]",
                             "sound takes text as its 'name' and this is a "
                             "number")) {
+        rc = 1;
+    }
+
+    free(r);
+    return rc;
+}
+
+/* ── needs_bots ───────────────────────────────────────────────────── */
+
+/* A file that fields its own bots and does not say needs_bots works in a
+ * lobby that allows bots and fails in one with no computer tanks, so the
+ * validator refuses it: that is what stops it being packed or published.
+ * Two ways in — a lobby team asking for bots, and a call to spawn_bot or
+ * lobby_add_bot — and a comment or a string that only names the op is not
+ * a call. The %s is where the second case writes needs_bots; empty, it
+ * leaves every line below where the first case expects it. */
+static const char kSvBotsLua[] =
+    "-- Nothing here calls game.spawn_bot: this line is a comment.\n"
+    "--[[ nor game.lobby_add_bot,\n"
+    "     which a long comment names ]]\n"
+    "local said = \"game.spawn_bot is only text here\"\n"
+    "scenario = {\n"
+    "  api = 1,\n"
+    "  %s"
+    "  lobby = { teams = { { id = 1 }, { id = 2, bots = 3, max_bots = 3 } } },\n"
+    "}\n"
+    "function on_start()\n"
+    "  local s = [==[ lobby_add_bot ]==]\n"
+    "  game.spawn_bot{ team = 2 }\n"
+    "end\n";
+
+/* Whether any issue under the key says the text. svSays reads only the
+ * first, and a team's key can carry an issue of scnCheckLobby's own ahead
+ * of this one. */
+static bool svAnySays(const ScnValidateResult *r, const char *key,
+                      const char *want) {
+    uint16_t i;
+
+    for (i = 0; i < r->count; i++) {
+        if (strcmp(r->issues[i].key, key) == 0 &&
+            strstr(r->issues[i].message, want) != NULL) {
+            return true;
+        }
+    }
+    return false;
+}
+
+int run_scenario_validate_needs_bots_missing(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    ScnValidateResult      *r;
+    const ScnValidateIssue *issue;
+    char                    lua[1024];
+    char                    seen[2048];
+    int                     rc = 0;
+
+    snprintf(lua, sizeof(lua), kSvBotsLua, "");
+    r = (ScnValidateResult *)malloc(sizeof(*r));
+    if (r == NULL) {
+        UT_FAIL("out of memory for the result");
+    }
+    UT_ASSERT_MSG(
+        !scenarioValidateSource(NULL, lua, strlen(lua), kName, NULL, r),
+        "a script that fields bots without needs_bots was accepted");
+    svList(r, seen, sizeof(seen));
+
+    /* The team that asks for bots, and not the one that asks for none. */
+    if (!svAnySays(r, "lobby.teams[2].bots", "needs_bots")) {
+        fprintf(stderr, "FAIL %s:%d: no needs_bots issue on the team that "
+                        "asks for bots: %s\n", __FILE__, __LINE__, seen);
+        rc = 1;
+    }
+    if (rc == 0 && svFind(r, "lobby.teams[1].bots") != NULL) {
+        fprintf(stderr, "FAIL %s:%d: a team with no bots was reported: %s\n",
+                __FILE__, __LINE__, seen);
+        rc = 1;
+    }
+    /* The call, once, on the line it is on rather than the comment's or the
+       string's. lobby_add_bot is named only in comments and strings in the
+       code, so the one issue under the key is spawn_bot's. */
+    if (rc == 0 && svCount(r, "needs_bots") != 1) {
+        fprintf(stderr, "FAIL %s:%d: %d issues under needs_bots, wanted the "
+                        "one for spawn_bot: %s\n", __FILE__, __LINE__,
+                svCount(r, "needs_bots"), seen);
+        rc = 1;
+    }
+    issue = svFind(r, "needs_bots");
+    if (rc == 0 && (strstr(issue->message, "spawn_bot") == NULL ||
+                    issue->line != 11)) {
+        fprintf(stderr, "FAIL %s:%d: the call was reported as [%d %s], wanted "
+                        "spawn_bot on line 11\n", __FILE__, __LINE__,
+                issue->line, issue->message);
+        rc = 1;
+    }
+
+    free(r);
+    return rc;
+}
+
+/* The same file saying needs_bots = true is accepted on all three counts. */
+int run_scenario_validate_needs_bots_declared(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    ScnValidateResult       *r;
+    char                     lua[1024];
+    char                     seen[2048];
+    int                      rc = 0;
+
+    snprintf(lua, sizeof(lua), kSvBotsLua, "needs_bots = true,\n");
+    r = (ScnValidateResult *)malloc(sizeof(*r));
+    if (r == NULL) {
+        UT_FAIL("out of memory for the result");
+    }
+    if (!scenarioValidateSource(NULL, lua, strlen(lua), kName, NULL, r)) {
+        svList(r, seen, sizeof(seen));
+        fprintf(stderr, "FAIL %s:%d: a script that says needs_bots was "
+                        "refused: %s\n", __FILE__, __LINE__, seen);
+        rc = 1;
+    }
+    if (rc == 0 && !r->manifest.needsBots) {
+        fprintf(stderr, "FAIL %s:%d: needs_bots came back false\n", __FILE__,
+                __LINE__);
         rc = 1;
     }
 

@@ -683,6 +683,9 @@ STR_MAPCHOOSER_RESTORE_SIZE_TIP=Rétablir la taille par défaut (Esc)
 STR_MAPCHOOSER_MAXIMIZE_TIP=Agrandir
 STR_MAPCHOOSER_LOADING_PREVIEW=Chargement de l'aperçu...
 
+# Map editor scenario panel
+STR_MAPEDIT_SCENARIO_NEEDS_BOTS=Nécessite que les bots soient autorisés : ce script ajoute ses propres bots
+
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=État
 STR_TABLET_KILLS_DEATHS=Frags : {number}  Morts : {number2}
