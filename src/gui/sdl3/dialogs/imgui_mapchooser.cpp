@@ -2551,8 +2551,11 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
              * nothing chosen), let the first rendered row claim default nav
              * focus so entering the list still lands on a row, not a header.
              * selectedIdx <= -2 means a starred row is selected — that row
-             * claims focus itself, so don't fall back here. */
-            bool wantFirstRowFocus = (state->selectedIdx == -1);
+             * claims focus itself, so don't fall back here, unless
+             * "Scenarios only" has hidden the starred section and that row
+             * with it. */
+            bool wantFirstRowFocus = (state->selectedIdx == -1) ||
+                                     (scenariosOnly && state->selectedIdx <= -2);
             bool firstRowFocusClaimed = false;
             for (int i = 0; i < state->numMaps; i++) {
                 const MapChooserEntry &ent = state->maps[i];
