@@ -106,6 +106,18 @@ void spritePositionTankLabelAt(float baseX, float baseY, int mode, float scale,
 /* Whether the pill and base numbers are drawn at this scale. */
 bool spritePositionItemLabelShown(float scale, float minScale);
 
+/* The menu background's camera (mapViewRenderCentered). A view edge at
+   `pos` pixels from the map's left or top splits into the first square it
+   shows and how far into that square it starts: pos = square * unit + edge,
+   with edge always 0..unit-1. pos can be negative (the view reaches past
+   the map's left or top edge) and square then is too; the two are never
+   changed apart, or the whole view jumps by up to a square. */
+void mapViewCameraSplit(int pos, int unit, int *outSquare, int *outEdge);
+
+/* Whether square (mx, my) is inside the 256x256 map. The camera draws the
+   squares outside it as open deep sea. */
+bool mapViewSquareInMap(int mx, int my);
+
 #ifdef __cplusplus
 }
 #endif

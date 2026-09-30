@@ -19,6 +19,8 @@
 
 #define WBN_MOTD_LINES     8     /* max MOTD lines kept; extras dropped */
 #define WBN_MOTD_LINE_LEN  128   /* per-line width incl NUL; longer lines truncated */
+#define WBN_SERVERLIST_NAME_LEN 64  /* WBN_SCENARIO_NAME_LEN: a script name, 63 bytes + NUL */
+#define WBN_SERVERLIST_MODS_MAX 9   /* WBN_MODS_MAX: the mods one round runs */
 
 typedef struct {
   char address[64];                          /* JSON "address" — join+ping target */
@@ -71,6 +73,10 @@ typedef struct {
   int  numBots;                              /* "num_bots" */
   char players[MAX_TANKS][PLAYER_NAME_LEN];  /* "players" usernames, blanks filtered out */
   int  numPlayerNames;                       /* count of real entries in players[] */
+  char scenarioName[WBN_SERVERLIST_NAME_LEN];   /* "scenario"; "" when absent */
+  int  scenarioMaxPlayers;                      /* "scenario_max_players" 0..255; absent = 0 */
+  int  modCount;                                /* length of "mods" as kept */
+  char modNames[WBN_SERVERLIST_MODS_MAX][WBN_SERVERLIST_NAME_LEN]; /* "mods", in order */
 } WbnServerListEntry;
 
 typedef struct {

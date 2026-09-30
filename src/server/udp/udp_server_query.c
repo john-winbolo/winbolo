@@ -12,6 +12,8 @@
  *  transport_udp_server.c.
  *    - Filling the INFO packet from the current sim state,
  *      shared by the query reply and the tracker update.
+ *    - Writing the script bytes the info-request reply
+ *      carries after the INFO packet.
  *    - Answering an info request, and recognising the
  *      old-protocol form of it.
  *    - The terrain-name helper the map-resync diagnostics
@@ -46,6 +48,8 @@
                               * view_policy.h and serverSimGetVoiceMode via
                               * server_voice_mode.h */
 #include "server_sim_lifecycle.h" /* serverSimGetPassword */
+#include "playername_validate.h" /* playerNameTruncateUtf8 — the description cut
+                                  * on a character boundary */
 
 /* Human-readable terrain name for map-resync diagnostics. Covers the terrain
  * byte stored in mapItem, including the mine range (10-15). */
@@ -167,17 +171,70 @@ void buildInfoPacket(ServerSim *sim, INFO_PACKET *pkt) {
         serverSimGetPositionalSound(sim));
 }
 
+/* One length-prefixed string of the script tail: a length byte, then that
+ * many bytes with no NUL. The summary's strings are already cut to fit. */
+static size_t infoScriptTailPutString(uint8_t *out, const char *str,
+                                      size_t maxLen) {
+    size_t len = strlen(str);
+    if (len > maxLen) {
+        len = maxLen;
+    }
+    out[0] = (uint8_t)len;
+    memcpy(out + 1, str, len);
+    return 1 + len;
+}
+
+/* Write the scripts the round runs, as the info-request reply carries them
+ * after the INFO_PACKET. The layout is described above INFO_SCRIPT_TAIL_MAX
+ * in netpacks.h and in docs/info_packet_wire.md. */
+size_t buildInfoScriptTail(ServerSim *sim, uint8_t *out, size_t cap) {
+    ServerScriptSummary scripts;
+    char                desc[SERVER_SCRIPT_DESC_LEN];
+    size_t              pos = 0;
+    BYTE                i;
+
+    if (out == NULL || cap < INFO_SCRIPT_TAIL_MAX) {
+        return 0;
+    }
+    serverSimGetScriptSummary(sim, &scripts);
+
+    /* The summary's description is the lobby's 255 bytes; the wire carries
+     * WBN_SCENARIO_DESC_MAX of it, cut on a character boundary. */
+    memcpy(desc, scripts.scenarioDescription, sizeof(desc));
+    desc[sizeof(desc) - 1] = '\0';
+    playerNameTruncateUtf8(desc, WBN_SCENARIO_DESC_MAX);
+
+    pos += infoScriptTailPutString(out + pos, scripts.scenarioName,
+                                   SERVER_SCRIPT_NAME_LEN - 1);
+    pos += infoScriptTailPutString(out + pos, desc, WBN_SCENARIO_DESC_MAX);
+    out[pos++] = scripts.scenarioMaxPlayers;
+    out[pos++] = scripts.modCount;
+    for (i = 0; i < scripts.modCount; i++) {
+        pos += infoScriptTailPutString(out + pos, scripts.modNames[i],
+                                       SERVER_SCRIPT_NAME_LEN - 1);
+    }
+    return pos;
+}
+
 /* Handle an old-protocol info request (server browser compatibility).
- * Replies to the requester with the current server advertisement. */
+ * Replies to the requester with the current server advertisement: the
+ * INFO_PACKET, then the script bytes buildInfoScriptTail writes. Only this
+ * reply carries them; the tracker update in udp_server_tracker.c sends the
+ * INFO_PACKET alone and stays sizeof(INFO_PACKET) bytes. */
 void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
                              ServerSim *sim) {
+    uint8_t buf[sizeof(INFO_PACKET) + INFO_SCRIPT_TAIL_MAX];
     INFO_PACKET pkt;
+    size_t tailLen;
     char consoleMsg[256];
 
     buildInfoPacket(sim, &pkt);
+    memcpy(buf, &pkt, sizeof(pkt));
+    tailLen = buildInfoScriptTail(sim, buf + sizeof(pkt),
+                                  sizeof(buf) - sizeof(pkt));
 
     /* wire-only: tracker / external reply (no in-process audience) */
-    srvSendTo((uint8_t *)&pkt, sizeof(pkt), fromAddr);
+    srvSendTo(buf, (int)(sizeof(pkt) + tailLen), fromAddr);
 
     {
         struct in_addr addrCopy = fromAddr->sin_addr;

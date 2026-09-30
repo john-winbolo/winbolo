@@ -106,6 +106,24 @@ typedef struct BOLO_PACK_ATTR {
 #pragma pack(pop)
 BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 113, INFO_PACKET_must_be_113_bytes);
 
+/* The scripts a round runs, appended to the reply to an info request (and to
+ * that reply only: the tracker update stays sizeof(INFO_PACKET)). The bytes
+ * start at 113, straight after the INFO_PACKET:
+ *
+ *   [scenarioNameLen 1][scenarioName][scenarioDescLen 1][scenarioDesc]
+ *   [maxPlayers 1][modCount 1][modCount x [nameLen 1][name]]
+ *
+ * Names are at most 63 bytes and the description at most
+ * WBN_SCENARIO_DESC_MAX, each cut on a UTF-8 character boundary. A round with
+ * no scenario writes a name length of 0, a description length of 0 and a cap
+ * of 0; no mods is a count of 0. No NULs are written. A reader drops a tail
+ * whose lengths run past their caps or past the packet, and ignores bytes
+ * after the last mod, so a later field can go on the end. */
+#define WBN_SCENARIO_DESC_MAX 200
+#define INFO_SCRIPT_TAIL_MAX (1 + 63 + 1 + WBN_SCENARIO_DESC_MAX + 1 + 1 + 9 * (1 + 63))
+BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) + INFO_SCRIPT_TAIL_MAX <= MAX_UDPPACKET_SIZE,
+                   INFO_PACKET_and_script_tail_fit_one_udp_packet);
+
 /* Historical INFO_PACKET wire size, before the flags/count/md5 fields were
  * appended. Servers older than those additions send this; discovery accepts
  * it and parses only the common prefix. */

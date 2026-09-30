@@ -168,8 +168,40 @@ struct ServerEntry {
      * says nothing leaves here means they are allowed — what every server
      * did before the setting existed. */
     bool smartPingsOff;
+    /* The scripts the round runs. A tracker row fills the name, cap and mods
+     * from WinBolo.net and has no description until the server's own reply
+     * arrives; a LAN row fills them from that reply. */
+    char scenarioName[DISCOVERY_SCRIPT_NAME_LEN];
+    char scenarioDescription[DISCOVERY_SCRIPT_DESC_LEN];
+    bool hasScriptReply;          /* the server's own reply has filled these */
+    int  scenarioMaxPlayers;      /* human cap, 0 = none */
+    int  modCount;
+    char modNames[DISCOVERY_SCRIPT_MODS_MAX][DISCOVERY_SCRIPT_NAME_LEN];
     std::vector<std::string> players;   /* logged-in usernames, blanks already filtered */
 };
+
+/* A tracker row's script names are copied into ServerEntry's discovery-sized
+ * buffers, so the two sets of sizes must agree. */
+static_assert(DISCOVERY_SCRIPT_NAME_LEN == WBN_SERVERLIST_NAME_LEN,
+              "a tracker script name must fit ServerEntry's name buffers");
+static_assert(DISCOVERY_SCRIPT_MODS_MAX == WBN_SERVERLIST_MODS_MAX,
+              "a tracker row's mods must fit ServerEntry's mod list");
+
+/* Copy the scripts from a server's own reply into e, replacing whatever a
+ * tracker row put there. */
+static void serverEntrySetScripts(ServerEntry &e, const DiscoveryScripts &sc) {
+    int n = sc.modCount;
+    if (n > DISCOVERY_SCRIPT_MODS_MAX) n = DISCOVERY_SCRIPT_MODS_MAX;
+    SDL_strlcpy(e.scenarioName, sc.scenarioName, sizeof(e.scenarioName));
+    SDL_strlcpy(e.scenarioDescription, sc.scenarioDescription,
+                sizeof(e.scenarioDescription));
+    e.scenarioMaxPlayers = sc.scenarioMaxPlayers;
+    e.modCount = n;
+    for (int m = 0; m < n; m++) {
+        SDL_strlcpy(e.modNames[m], sc.modNames[m], sizeof(e.modNames[m]));
+    }
+    e.hasScriptReply = true;
+}
 
 /* Compact "Views:" tag for the detail pane. Lists only the categories
  * that differ from the defaults, so a stock server shows nothing at
@@ -352,6 +384,7 @@ struct PingResult {
     bool positionalSound;
     bool hasViewInfo;
     ServerVoiceMode voiceMode;
+    DiscoveryScripts scripts;   /* hasScriptInfo false when the reply carried none */
 };
 
 /* Resolve hostname to IP (if needed) and look up country via GeoIP database */
@@ -439,6 +472,7 @@ static PingResult pingServer(const PingWork &work) {
     res.positionalSound = false;
     res.hasViewInfo = false;
     res.voiceMode = serverVoiceOn;
+    memset(&res.scripts, 0, sizeof(res.scripts));
 
     /* Reverse-DNS the address regardless of whether the UDP info-ping
      * answers, so even unresponsive servers get a hostname. */
@@ -471,6 +505,7 @@ static PingResult pingServer(const PingWork &work) {
         res.positionalSound = dpr.positionalSound;
         res.hasViewInfo     = dpr.hasViewInfo;
         res.voiceMode       = dpr.voiceMode;
+        res.scripts         = dpr.scripts;
         SDL_strlcpy(res.mapMd5, dpr.mapMd5, sizeof(res.mapMd5));
     }
     return res;
@@ -605,6 +640,11 @@ static ServerEntry serverEntryFromDiscovery(const DiscoveryServer *src) {
     e.timeLimit   = (src->timeLimit != 0);
     e.timeMinutes = (int)(src->timeLimit / (50 * 60));
     e.lobbyStatus = src->inLobby ? 1 : 0;
+    /* A reply with no script bytes (an older server, or an mDNS record)
+     * leaves the fields empty for the ping reply to fill. */
+    if (src->scripts.hasScriptInfo) {
+        serverEntrySetScripts(e, src->scripts);
+    }
 
     resolveCountryCode(e);
     return e;
@@ -919,6 +959,15 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         e.hasViewInfo = w.hasViewInfo;
                         e.voiceMode = (ServerVoiceMode)w.voiceMode;
                         e.smartPingsOff = w.smartPingsOff;
+                        /* The tracker sends no description; that and
+                         * hasScriptReply wait for the server's own reply. */
+                        SDL_strlcpy(e.scenarioName, w.scenarioName, sizeof(e.scenarioName));
+                        e.scenarioMaxPlayers = w.scenarioMaxPlayers;
+                        e.modCount = w.modCount;
+                        if (e.modCount > DISCOVERY_SCRIPT_MODS_MAX) e.modCount = DISCOVERY_SCRIPT_MODS_MAX;
+                        for (int m = 0; m < e.modCount; m++) {
+                            SDL_strlcpy(e.modNames[m], w.modNames[m], sizeof(e.modNames[m]));
+                        }
 
                         e.players.clear();
                         for (int p = 0; p < w.numPlayerNames; p++) {
@@ -1039,6 +1088,13 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         servers[pr.index].voiceMode       = pr.voiceMode;
                         servers[pr.index].lobbyStatus     = pr.inLobby ? 1 : 0;
                         SDL_strlcpy(servers[pr.index].mapMd5, pr.mapMd5, sizeof(servers[pr.index].mapMd5));
+                    }
+                    /* Outside the block above: the tracker's list carries the
+                     * scripts' names but no description, so a reply that brings
+                     * script bytes replaces the tracker's names in both modes.
+                     * A reply without them leaves the entry as it is. */
+                    if (pr.scripts.hasScriptInfo) {
+                        serverEntrySetScripts(servers[pr.index], pr.scripts);
                     }
                 }
             }
@@ -1549,14 +1605,35 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     }
                 }
 
-                /* Map line with ranked (*) / random (rnd) markers */
-                char mapLine[MAP_STR_SIZE + 32];
+                /* Map line with ranked (*) / random (rnd) markers, then the
+                 * scenario after " · " and the mods after it: one mod by
+                 * name, more as a count. Sized for the map and its markers
+                 * (MAP_STR_SIZE + 32), " · " and a 63-byte scenario name
+                 * (4 + 63), and " + " and a 63-byte mod name (3 + 63), which
+                 * also holds " " and the formatted count. */
+                char mapLine[MAP_STR_SIZE + 32 + 4 + (DISCOVERY_SCRIPT_NAME_LEN - 1)
+                             + 3 + (DISCOVERY_SCRIPT_NAME_LEN - 1)];
                 char rndMark[24] = "";
                 if (e.randomMap)
                     SDL_snprintf(rndMark, sizeof(rndMark), " (%s)",
                                  langGetText(STR_DLGBROWSER_RND_ABBR));
                 SDL_snprintf(mapLine, sizeof(mapLine), "%s%s%s", e.mapName,
                              e.ranked ? " *" : "", rndMark);
+                if (e.scenarioName[0] != '\0') {
+                    SDL_strlcat(mapLine, " · ", sizeof(mapLine));
+                    SDL_strlcat(mapLine, e.scenarioName, sizeof(mapLine));
+                }
+                if (e.modCount == 1) {
+                    SDL_strlcat(mapLine, " + ", sizeof(mapLine));
+                    SDL_strlcat(mapLine, e.modNames[0], sizeof(mapLine));
+                } else if (e.modCount > 1) {
+                    MessageArgs modArgs = {};
+                    modArgs.number = e.modCount;
+                    SDL_strlcat(mapLine, " ", sizeof(mapLine));
+                    SDL_strlcat(mapLine,
+                                langGetTextFmt(STR_DLGBROWSER_MODS_MORE, &modArgs),
+                                sizeof(mapLine));
+                }
                 browserClampText(mapLine, sizeof(mapLine),
                                  visLeft - (8.0f * s) - textX);
                 dl->AddText(ImVec2(textX, p0.y + pad + lineH),
@@ -1568,11 +1645,16 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 dl->AddText(ImVec2(pingLeft, p0.y + pad),
                             ImGui::GetColorU32(pcol), pingStr);
 
-                /* Players X/cap in the left gutter, under the flag */
+                /* Players X/cap in the left gutter, under the flag. A
+                 * scenario's human cap counts humans against it. */
                 {
                     int cap = e.maxPlayers > 0 ? e.maxPlayers : MAX_TANKS;
                     char pc[24];
-                    SDL_snprintf(pc, sizeof(pc), "%d/%d", (int)e.numPlayers, cap);
+                    if (e.scenarioMaxPlayers > 0) {
+                        SDL_snprintf(pc, sizeof(pc), "%d/%d", e.numHumans, e.scenarioMaxPlayers);
+                    } else {
+                        SDL_snprintf(pc, sizeof(pc), "%d/%d", (int)e.numPlayers, cap);
+                    }
                     dl->AddText(ImVec2(contentX, p0.y + pad + lineH),
                                 ImGui::GetColorU32(ImGuiCol_TextDisabled), pc);
                 }
@@ -1734,6 +1816,38 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGBROWSER_COL_TYPE));
                     ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(gameTypeStr(sel.game));
 
+                    /* Scenario — its name, and under it the description once
+                     * the server's own reply has brought one. A tracker row
+                     * has the name at once and shows an ellipsis until then.
+                     * The description wraps at the pane's right edge. */
+                    if (sel.scenarioName[0] != '\0') {
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGGAMEINFO_SCRIPTED));
+                        ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(sel.scenarioName);
+                        if (!sel.hasScriptReply) {
+                            ImGui::TextDisabled("…");
+                        } else if (sel.scenarioDescription[0] != '\0') {
+                            ImGui::PushTextWrapPos(ImGui::GetWindowContentRegionMax().x);
+                            ImGui::TextUnformatted(sel.scenarioDescription);
+                            ImGui::PopTextWrapPos();
+                        }
+                    }
+
+                    /* Mods — the names that run, joined and wrapped. */
+                    if (sel.modCount > 0) {
+                        std::string mods;
+                        for (int m = 0; m < sel.modCount; m++) {
+                            if (m > 0) mods += ", ";
+                            mods += sel.modNames[m];
+                        }
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGBROWSER_MODS));
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::PushTextWrapPos(ImGui::GetWindowContentRegionMax().x);
+                        ImGui::TextUnformatted(mods.c_str());
+                        ImGui::PopTextWrapPos();
+                    }
+
                     /* Version */
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGBROWSER_COL_VER));
@@ -1763,7 +1877,10 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     {
                         char pbuf[96];
                         int cap = sel.maxPlayers > 0 ? sel.maxPlayers : MAX_TANKS;
-                        int n = SDL_snprintf(pbuf, sizeof(pbuf), "%d/%d", (int)sel.numPlayers, cap);
+                        /* A scenario's human cap counts humans against it. */
+                        int n = (sel.scenarioMaxPlayers > 0)
+                                    ? SDL_snprintf(pbuf, sizeof(pbuf), "%d/%d", sel.numHumans, sel.scenarioMaxPlayers)
+                                    : SDL_snprintf(pbuf, sizeof(pbuf), "%d/%d", (int)sel.numPlayers, cap);
                         if (sel.hasRichInfo && sel.numBots > 0 &&
                             n > 0 && (size_t)n < sizeof(pbuf)) {
                             MessageArgs aiArgs = {};
@@ -1936,9 +2053,10 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 langGetText(STR_DLGGAMEINFO_OPEN),
                 langGetText(STR_DLGGAMEINFO_TOURN),
                 langGetText(STR_DLGGAMESETUP_STRICT_SHORT),
+                langGetText(STR_DLGGAMEINFO_SCRIPTED),
             };
             int gtIdx = (filterGameType < 0) ? 0 : filterGameType;
-            if (ImGui::Combo("##filterType", &gtIdx, gameTypes, 4)) {
+            if (ImGui::Combo("##filterType", &gtIdx, gameTypes, 5)) {
                 filterGameType = (gtIdx == 0) ? -1 : gtIdx;
             }
 

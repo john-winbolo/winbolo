@@ -21,7 +21,9 @@ lengths are accepted today (`src/bolo/discovery.c`):
 | 112 | `INFO_PACKET_PRE_VIEWS2_SIZE` | adds `view_policies`; predates `view_policies2` |
 | 113 | `sizeof(INFO_PACKET)` | the full layout |
 
-Any other length is dropped. A consumer that was written against the 112-byte
+Any other length is dropped, except a reply to an info request longer than 113
+bytes, which carries the script bytes described in
+[Script bytes after the packet](#script-bytes-after-the-packet). A consumer that was written against the 112-byte
 layout still reads every field it knows about out of a 113-byte packet, because
 the byte that grew the packet went on the end.
 
@@ -36,7 +38,8 @@ Every INFO_RESPONSE the server emits comes from `buildInfoPacket()` in
   — the periodic advertisement to the WinBolo.net tracker.
 
 Both send the identical 113 bytes, so a consumer can parse either the same way,
-and a field added to the layout reaches both paths at once.
+and a field added to the layout reaches both paths at once. The reply to an info
+request then adds the script bytes below; the tracker update does not.
 
 ## Byte layout
 
@@ -165,6 +168,39 @@ stock one. So compare against the back-compatibility set when deciding what an
 advertisement said, and against the stock set when deciding whether a browser row
 is worth tagging as non-standard; treating "absent" as "stock" mislabels the old
 server. `src/gui/sdl3/dialogs/imgui_gamebrowser.cpp` keeps the two apart.
+
+## Script bytes after the packet
+
+The reply to an info request carries the scripts the round runs after the 113
+bytes: the scenario that decides the round, if any, and the mods that run. The
+bytes are written by `buildInfoScriptTail()` in `src/server/udp/udp_server_query.c`
+and read by `discoveryReadScriptTail()` in `src/bolo/discovery.c`. They start at
+offset 113:
+
+| Field | Size | Notes |
+|-------|-----:|-------|
+| `scenarioNameLen` | 1 | 0..63 |
+| `scenarioName` | `scenarioNameLen` | UTF-8, no NUL |
+| `scenarioDescLen` | 1 | 0..200 (`WBN_SCENARIO_DESC_MAX`) |
+| `scenarioDesc` | `scenarioDescLen` | UTF-8, no NUL |
+| `maxPlayers` | 1 | the scenario's human cap; 0 = none |
+| `modCount` | 1 | 0..9 |
+| per mod: `nameLen` | 1 | 0..63 |
+| per mod: `name` | `nameLen` | UTF-8, no NUL |
+
+Names and the description are cut on a UTF-8 character boundary to fit their
+caps. A round with no scenario writes a name length of 0, a description length
+of 0 and a cap of 0, and no mods is a count of 0, so a plain round's bytes are
+`00 00 00 00`. The largest the bytes can be is `INFO_SCRIPT_TAIL_MAX` = 843,
+which with the 113 bytes before it (956 in all) fits `MAX_UDPPACKET_SIZE` (1024).
+
+Only the reply to an info request carries these bytes. The tracker update from
+`transportUdpServerSendTrackerUpdate()` stays at 113 bytes; WinBolo.net learns
+the scenario and mods from the server's lobby update instead.
+
+A reader drops the bytes whole if any length is over its cap or any field runs
+past the end of the packet, and reports no scripts, the same as a 113-byte
+reply. Bytes after the last mod are ignored, so a later field can go on the end.
 
 ## Endianness
 

@@ -2702,3 +2702,7 @@ STR_DLGSETTINGS_WORKSHOP_UNUSABLE=Не можна використати
 
 # The lobby's Workshop chip
 STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Майстерня
+
+# The game finder's scripts
+STR_DLGBROWSER_MODS=Моди
+STR_DLGBROWSER_MODS_MORE=+ моди ({number})
