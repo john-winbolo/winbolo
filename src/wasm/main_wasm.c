@@ -45,6 +45,7 @@
 #include "../gui/voice.h"
 #include "../gui/winbolo.h"
 #include "../gui/sdl3/sdl3draw.h"
+#include "../gui/sdl3/bg_game.h"
 #include "../gui/sdl3/sdl3imgui.h"
 #include "../gui/sdl3/input_gamepad.h"
 #include "../gui/sdl3/build_cursor.h"
@@ -580,6 +581,9 @@ static void wasmEndSinglePlayerGame(void) {
   imguiLobbyFrameReset();
   tutorialOverlayReset();
 
+  /* The menu's background game ticks again (wasmPlayGame stopped it). */
+  bgGameSetHiddenByForeground(bgGameGetShared(), FALSE);
+
   /* The in-game menu's toggles change only the live settings, as on the
    * desktop, which writes them when its game ends; do the same here, after
    * gameFrontEnd has read the tank options back. The menu's frames upload
@@ -595,6 +599,16 @@ static void wasmEndSinglePlayerGame(void) {
  * it made. */
 static bool wasmPlayGame(const char *cmdLine, const WasmLaunch *launch) {
   wasmGameStateReset();
+
+  /* Stop the menu's background game while this one runs, so its bots take
+   * no turns on the page's thread, and drop its kept scene texture, as the
+   * desktop does when it leaves the menu. wasmEndSinglePlayerGame starts
+   * it again. */
+  {
+    BgGame *bg = bgGameGetShared();
+    bgGameSetHiddenByForeground(bg, TRUE);
+    bgGameReleaseScene(bg);
+  }
 
   printf("[WASM] Starting gameFrontWasmStart...\n");
   bool started = (gameFrontWasmStart(cmdLine, &keys, launch) != FALSE);

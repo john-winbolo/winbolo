@@ -20,6 +20,7 @@
 #include <emscripten.h>
 #include <emscripten/html5.h>
 
+#include "bolo_rand.h"
 #include "client_frontend_connect.h"
 #include "client_sim.h"
 #include "control_event.h"
@@ -39,6 +40,7 @@
 #include "../gui/sound.h"
 #include "../gui/winbolo.h"
 #include "../gui/sdl3/sdl3draw.h"
+#include "../gui/sdl3/bg_game.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "../gui/sdl3/sdl3imgui.h"
 #include "../gui/sdl3/dialogs/imgui_mapchooser.h"
@@ -388,6 +390,37 @@ static bool wasmAskJoinPassword(bool wrongBefore) {
   return TRUE;
 }
 
+/* Pick a random .map file from the preloaded data/maps for the menu's
+ * background game, leaving out the same two maps the desktop's pick does
+ * (the tutorial map and Better Best Map Ever). */
+static bool wasmPickBackgroundMap(char *out, size_t outLen) {
+  const char *dir = "data/maps";
+  int count = 0;
+  int filtered = 0;
+  int i;
+  char **list = SDL_GlobDirectory(dir, "*.map", 0, &count);
+  if (list == NULL || count == 0) {
+    printf("[WASM] background game: no maps in '%s'\n", dir);
+    SDL_free(list);
+    return FALSE;
+  }
+  for (i = 0; i < count; i++) {
+    if (SDL_strcasecmp(list[i], "Inbuilt Tutorial.map") != 0 &&
+        SDL_strcasecmp(list[i], "Better Best Map Ever.map") != 0) {
+      list[filtered++] = list[i];
+    }
+  }
+  if (filtered == 0) {
+    printf("[WASM] background game: no non-tutorial maps in '%s'\n", dir);
+    SDL_free(list);
+    return FALSE;
+  }
+  SDL_snprintf(out, outLen, "%s/%s", dir,
+               list[bolo_rand_below((uint32_t)filtered)]);
+  SDL_free(list);
+  return TRUE;
+}
+
 /* -------------------------------------------------------
  * gameFrontWasmSetup — page-lifetime setup, run once per page
  * ------------------------------------------------------- */
@@ -434,6 +467,23 @@ bool gameFrontWasmSetup(keyItems *keys) {
     }
 
     brainsHandlerLoadBrains();
+
+    /* The shared background game the menu and its dialogs draw behind
+     * them, made once for the page. Not fatal when it fails: the menu is
+     * then drawn plain. main_wasm.c hides it while a game runs; the page
+     * never frees it. */
+    {
+      BgGame *bg = (BgGame *)SDL_calloc(1, sizeof(BgGame));
+      if (bg != NULL) {
+        char mapPath[512];
+        if (wasmPickBackgroundMap(mapPath, sizeof(mapPath)) &&
+            bgGameCreate(bg, mapPath, sdl3DrawGetRenderer())) {
+          bgGameSetShared(bg);
+        } else {
+          SDL_free(bg);
+        }
+      }
+    }
   }
 
   guiMessageSetHandler(sdl3MessageHandler);
