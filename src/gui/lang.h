@@ -888,10 +888,10 @@
  * tooltip, the line the list shows when the tick hides every map in the
  * folder or search, and the tooltip while a server-wide search greys the
  * tick out. */
-#define STR_MAPCHOOSER_SCENARIOSONLY        2713
-#define STR_MAPCHOOSER_SCENARIOSONLY_TIP    2714
-#define STR_MAPCHOOSER_NOSCENARIOMAPS       2715
-#define STR_MAPCHOOSER_SCENARIOSONLY_NOSEARCH 2716
+#define STR_MAPCHOOSER_SCENARIOSONLY        2715
+#define STR_MAPCHOOSER_SCENARIOSONLY_TIP    2716
+#define STR_MAPCHOOSER_NOSCENARIOMAPS       2717
+#define STR_MAPCHOOSER_SCENARIOSONLY_NOSEARCH 2718
 
 /* Tablet HUD */
 #define STR_TABLET_STATUS_TITLE             803
@@ -3245,6 +3245,13 @@
  * published to the Steam Workshop. The link beside it reuses
  * STR_DLGSETTINGS_WORKSHOP_OPEN. */
 #define STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP       2680
+
+/* The game finder's scripts */
+/* The label of the details pane's row naming the mods a server runs, and the
+ * end of a row's map line when more than one runs ({number} = how many). The
+ * scenario row and the Scenario filter entry reuse STR_DLGGAMEINFO_SCRIPTED. */
+#define STR_DLGBROWSER_MODS                      2713
+#define STR_DLGBROWSER_MODS_MORE                 2714
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

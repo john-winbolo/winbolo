@@ -277,6 +277,9 @@ static void lobbyScenarioReselect(ServerSim *sim) {
        lobby that was all-ready would otherwise start on a scenario nobody
        agreed to. */
     lobbyAutoUnreadyOnChange(sim);
+    /* And the tracker's scenario and mod names follow the list, inside the
+       lobby update's usual rate limit. */
+    serverSimWbnLobbyUpdate(sim, FALSE);
 }
 
 static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,

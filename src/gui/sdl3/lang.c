@@ -2664,10 +2664,12 @@ static const LangEntry langTable[] = {
     {2710, "Off (default)"},
     {2711, "Whether pillboxes use Mac Bolo aiming. Moving, unobstructed tanks within about one square make the pill aim far along their heading. Stopped or blocked tanks receive no lead. Overrides pill_massage_range, pill_massage_cosine and pill_aim_iterations."},
     {2712, "Whether tanks use Mac Bolo's direction-dependent sprite boxes and pixel nudges against walls, live pills and hostile bases. Allows closer passes beside a pill for pill massage."},
-    {2713, "Scenarios only"},
-    {2714, "Show only the maps that carry their own scenario script."},
-    {2715, "No maps with a scenario here"},
-    {2716, "This filter does not work on a server-wide search. The server does not say which hits have a scenario."},
+    {2713, "Mods"},
+    {2714, "+{number} mods"},
+    {2715, "Scenarios only"},
+    {2716, "Show only the maps that carry their own scenario script."},
+    {2717, "No maps with a scenario here"},
+    {2718, "This filter does not work on a server-wide search. The server does not say which hits have a scenario."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

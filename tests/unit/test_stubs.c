@@ -656,7 +656,13 @@ void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE f
   (void)mapName; (void)numBases; (void)numPills; (void)freeBases; (void)freePills;
 }
 
-void winbolonetSetLobbyInfo(const WbnLobbyInfo *info) { (void)info; }
+/* winbolonetSetLobbyInfo spy: the lobby-info fill tests read the last struct
+ * the sim handed over. */
+WbnLobbyInfo wbnStubLastLobbyInfo;
+
+void winbolonetSetLobbyInfo(const WbnLobbyInfo *info) {
+  if (info != NULL) wbnStubLastLobbyInfo = *info;
+}
 
 void winbolonetSendLobbyUpdate(void) { wbnStubLobbyUpdateCalls++; }
 

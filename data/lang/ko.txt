@@ -2700,3 +2700,7 @@ STR_DLGSETTINGS_WORKSHOP_UNUSABLE=사용할 수 없음
 
 # The lobby's Workshop chip
 STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=창작마당
+
+# The game finder's scripts
+STR_DLGBROWSER_MODS=모드
+STR_DLGBROWSER_MODS_MORE=+모드 {number}개

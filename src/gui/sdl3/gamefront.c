@@ -562,6 +562,8 @@ static void gameFrontLockToggleCallback(bool allow) {
  *   #StatusInLobbyPlural   — in a lobby with N players (uses %map%, %numplayers%)
  *   #StatusInGameSolo      — playing alone (uses %map%)
  *   #StatusInGamePlural    — playing with N players (uses %map%, %numplayers%)
+ *
+ * %map% carries "<scenario> (<map>)" while a scenario decides the round.
  * ------------------------------------------------------- */
 static void gameFrontSetConnectIfAvailable(ClientSim *cs) {
   char connect[FILENAME_MAX];
@@ -589,12 +591,44 @@ static void gameFrontSetConnectIfAvailable(ClientSim *cs) {
   }
 }
 
+/* Room for the longest scenario label (its file name, when the manifest
+ * names nothing), " (", the map name, ")" and the NUL. Each length counts
+ * its own NUL, which leaves the two bytes the ")" and the NUL take. */
+#define STEAM_PRESENCE_MAP_LEN (LOBBY_SCENARIO_FILE_LEN + 2 + MAP_STR_SIZE)
+
+/* The value %map% shows. While a scenario decides the round it is the
+ * scenario and the map, so a friend's list names the scenario; a round
+ * running only mods, or no script at all, shows the map alone as it always
+ * has. A scenario with no name falls back to its file name, as the lobby's
+ * script rows do. Empty while neither is known. */
+static void gameFrontPresenceMapValue(ClientSim *cs, char *out,
+                                      size_t outSize) {
+  const char *mapName = clientSimGetMapName(cs);
+  const char *scnName = "";
+
+  if (mapName == NULL) mapName = "";
+  if (clientSimGetLobbyScenarioSource(cs) != 0 &&
+      !clientSimGetLobbyScenarioKeepsWinCondition(cs)) {
+    scnName = clientSimGetLobbyScenarioName(cs);
+    if (scnName[0] == '\0') scnName = clientSimGetLobbyScenarioFileName(cs);
+  }
+  if (scnName[0] == '\0') {
+    snprintf(out, outSize, "%s", mapName);
+  } else if (mapName[0] == '\0') {
+    snprintf(out, outSize, "%s", scnName);
+  } else {
+    snprintf(out, outSize, "%s (%s)", scnName, mapName);
+  }
+}
+
 void gameFrontUpdateSteamPresence(ClientSim *cs) {
   if (cs == NULL) return;
   BYTE numPlayers = clientSimGetNumPlayers(cs);
   char numStr[16];
+  char mapValue[STEAM_PRESENCE_MAP_LEN];
   snprintf(numStr, sizeof(numStr), "%d", (int)numPlayers);
-  steam_set_rich_presence("map", clientSimGetMapName(cs));
+  gameFrontPresenceMapValue(cs, mapValue, sizeof(mapValue));
+  steam_set_rich_presence("map", mapValue);
   steam_set_rich_presence("numplayers", numStr);
   /* "Solo" is a property of the game *mode*, not the live player count: an
    * Internet game with one player present is still an open, joinable game
@@ -624,9 +658,10 @@ void gameFrontSetSteamPresenceLobby(ClientSim *cs) {
    * value as a delete, which would leave "%map%" literal in the rendered
    * display string while the lobby waits for the server's lobbySettings
    * packet to populate cs->mapName. */
-  const char *mapName = clientSimGetMapName(cs);
-  if (mapName != NULL && mapName[0] != '\0') {
-    steam_set_rich_presence("map", mapName);
+  char mapValue[STEAM_PRESENCE_MAP_LEN];
+  gameFrontPresenceMapValue(cs, mapValue, sizeof(mapValue));
+  if (mapValue[0] != '\0') {
+    steam_set_rich_presence("map", mapValue);
   }
   steam_set_rich_presence("numplayers", numStr);
   steam_set_rich_presence("steam_display",
