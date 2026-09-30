@@ -31,6 +31,9 @@
                                     * ReturnToLobby, ReloadCompressedInMemory */
 #include "wire_limits.h"            /* LST_GAME_TYPE */
 #include "brain_list.h"            /* BrainModes — to name the expected indices */
+#include "client_command.h"        /* CMD_LOBBY_BOT_CONFIG */
+#include "server_sim_scenario.h"   /* serverSimSetScenarioIdentity */
+#include "threads.h"               /* the dispatcher asserts the mutex */
 #include "test_harness.h"
 
 #define TEST_BRAIN "Brains/GoalHunter_1.7/init.lua"
@@ -297,6 +300,18 @@ static int open_default_mode(void) {
     return (modes.openDefaultMode > 0) ? modes.openDefaultMode : -1;
 }
 
+/* Index of level `lvlKey` inside the open_default mode, read from the
+ * manifest so the cases do not name that mode. -1 when it lists no such
+ * level. */
+static int open_default_level(const char *lvlKey) {
+    BrainModes modes;
+    int m;
+    if (!brainListLoadModesForPath(TEST_BRAIN, &modes)) return -1;
+    m = modes.openDefaultMode;
+    if (m <= 0 || m >= modes.modeCount) return -1;
+    return brainModeFindLevel(&modes.modes[m], lvlKey);
+}
+
 /* An Open game starts a new bot in the brain's open_default mode at the
  * level it would have had in mode 0; Tournament and Strict start in mode 0;
  * a mode the host picked by hand still wins on Open. */
@@ -316,7 +331,9 @@ int run_lobby_bot_config_memory_open_game_start_mode(void) {
     mode = 0; level = BOT_DIFFICULTY_HARD;
     UT_ASSERT(serverSimResolveNewBotConfig(sim, TEST_TEAM, TEST_BRAIN, true,
                                            &mode, &level));
-    UT_ASSERT(expected_indices("turtle", "hard", &wantMode, &wantLevel));
+    wantLevel = open_default_level("hard");
+    UT_ASSERT_MSG(wantLevel >= 0, "open_default mode %d lists no hard level",
+                  openMode);
     UT_ASSERT_MSG((int)mode == openMode && (int)level == wantLevel,
                   "an Open game must start in open_default at Hard (got "
                   "%d/%d, want %d/%d)", (int)mode, (int)level, openMode,
@@ -326,10 +343,27 @@ int run_lobby_bot_config_memory_open_game_start_mode(void) {
     mode = 0; level = BOT_DIFFICULTY_MEDIUM;
     UT_ASSERT(serverSimResolveNewBotConfig(sim, TEST_TEAM, TEST_BRAIN, false,
                                            &mode, &level));
-    UT_ASSERT(expected_indices("turtle", "medium", &wantMode, &wantLevel));
+    wantLevel = open_default_level("medium");
+    UT_ASSERT_MSG(wantLevel >= 0, "open_default mode %d lists no medium level",
+                  openMode);
     UT_ASSERT_MSG((int)mode == openMode && (int)level == wantLevel,
                   "Medium must stay Medium (got %d/%d)", (int)mode,
                   (int)level);
+
+    /* A remembered mode key this brain does not list is dropped, and the
+       new bot falls to the Open start mode, not to mode 0. */
+    SDL_strlcpy(sim->lastBotModeKey, "no_such_mode",
+                sizeof(sim->lastBotModeKey));
+    SDL_strlcpy(sim->lastBotLevelKey, "hard", sizeof(sim->lastBotLevelKey));
+    mode = 0; level = BOT_DIFFICULTY_HARD;
+    UT_ASSERT(serverSimResolveNewBotConfig(sim, TEST_TEAM, TEST_BRAIN, true,
+                                           &mode, &level));
+    UT_ASSERT_MSG((int)mode == openMode &&
+                  (int)level == open_default_level("hard"),
+                  "an unknown remembered mode on Open must fall to "
+                  "open_default at Hard (got %d/%d)", (int)mode, (int)level);
+    sim->lastBotModeKey[0]  = '\0';
+    sim->lastBotLevelKey[0] = '\0';
 
     /* A caller's base that is not mode 0 is a real choice and stands. */
     UT_ASSERT(expected_indices("survival", "easy", &wantMode, &wantLevel));
@@ -387,12 +421,13 @@ int run_lobby_bot_config_memory_game_type_change(void) {
     const BYTE follow = 2, byHand = 3, other = 4;
     ServerSim *sim;
     int openMode = open_default_mode();
-    int survMode = 0, survLevel = 0, medOpen = 0, medOpenLevel = 0;
+    int survMode = 0, survLevel = 0, medOpenLevel;
     uint8_t v;
 
     if (openMode < 0) SKIP_NO_MANIFEST();
     UT_ASSERT(expected_indices("survival", "easy", &survMode, &survLevel));
-    UT_ASSERT(expected_indices("turtle", "medium", &medOpen, &medOpenLevel));
+    medOpenLevel = open_default_level("medium");
+    UT_ASSERT_MSG(medOpenLevel >= 0, "open_default lists no medium level");
 
     sim = make_lobby_sim_type(gameOpen);
     UT_ASSERT_MSG(sim != NULL, "serverSimCreateCompressed");
@@ -451,6 +486,134 @@ int run_lobby_bot_config_memory_game_type_change(void) {
     UT_ASSERT_MSG((sim->botModeSetByHand & (1u << byHand)) == 0,
                   "the by-hand mark outlived the seat");
     unpretend_bot(sim, byHand);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A map commit that attaches or drops a scenario can change the game type
+ * too (serverSimScenarioApplyLobbyRules). The bots follow it there as they
+ * do when the host changes the type by hand. */
+int run_lobby_bot_config_memory_map_commit_type(void) {
+    const BYTE bot = 2, byHand = 3;
+    ServerSim *sim;
+    int openMode = open_default_mode();
+    int medOpenLevel;
+
+    if (openMode < 0) SKIP_NO_MANIFEST();
+    medOpenLevel = open_default_level("medium");
+    UT_ASSERT_MSG(medOpenLevel >= 0, "open_default lists no medium level");
+
+    /* 1. An Open lobby picks a scripted map with no lobby template. The
+          host's bots were added on Open, so they are on the Open start
+          mode. The map puts the lobby on Scripted: the bots move to mode 0
+          at the same level, and a mode set by hand stays. */
+    sim = make_lobby_sim_type(gameOpen);
+    UT_ASSERT_MSG(sim != NULL, "serverSimCreateCompressed");
+    pretend_bot(sim, bot);
+    pretend_bot(sim, byHand);
+    serverSimSetBotConfig(sim, bot, (uint8_t)openMode, (uint8_t)medOpenLevel,
+                          0, NULL);
+    serverSimSetBotConfig(sim, byHand, (uint8_t)openMode,
+                          BOT_DIFFICULTY_HARD, 0, NULL);
+    serverSimMarkBotModeSetByHand(sim, byHand);
+    serverSimSetScenarioIdentity(sim, lobbyScenarioMap, "Test", "test.lua",
+                                 "", false, false, false, false);
+    UT_ASSERT(!serverSimScenarioHasLobbyTemplate(sim));
+    sim->botConfigPublishPending = 0;
+    serverSimScenarioApplyLobbyRules(sim);
+    UT_ASSERT_MSG(serverSimGetGameType(sim) == gameScripted,
+                  "setup: the scripted map must put the lobby on Scripted "
+                  "(got %d)", (int)serverSimGetGameType(sim));
+    UT_ASSERT_MSG(sim->botConfigs[bot].mode == 0 &&
+                  sim->botConfigs[bot].difficulty == BOT_DIFFICULTY_MEDIUM,
+                  "a bot on the Open start mode must follow the scripted "
+                  "map to mode 0 at Medium (got %u/%u)",
+                  (unsigned)sim->botConfigs[bot].mode,
+                  (unsigned)sim->botConfigs[bot].difficulty);
+    UT_ASSERT_MSG((sim->botConfigPublishPending & (1u << bot)) != 0,
+                  "the moved seat queued no bot-config event");
+    UT_ASSERT_MSG((int)sim->botConfigs[byHand].mode == openMode,
+                  "a mode set by hand must stay (got %u)",
+                  (unsigned)sim->botConfigs[byHand].mode);
+
+    /* 2. The host then adds a bot on the scripted map (mode 0) and picks a
+          plain map. The lobby goes back to Open, and every bot on mode 0
+          that nobody set by hand moves to the Open start mode. */
+    serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
+                                 false, false, false, false);
+    serverSimScenarioApplyLobbyRules(sim);
+    UT_ASSERT_MSG(serverSimGetGameType(sim) == gameOpen,
+                  "setup: the plain map must give Open back (got %d)",
+                  (int)serverSimGetGameType(sim));
+    UT_ASSERT_MSG((int)sim->botConfigs[bot].mode == openMode &&
+                  (int)sim->botConfigs[bot].difficulty == medOpenLevel,
+                  "back on Open the bot must be in open_default at Medium "
+                  "(got %u/%u)", (unsigned)sim->botConfigs[bot].mode,
+                  (unsigned)sim->botConfigs[bot].difficulty);
+    UT_ASSERT((int)sim->botConfigs[byHand].mode == openMode);
+
+    unpretend_bot(sim, bot);
+    unpretend_bot(sim, byHand);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The CMD_LOBBY_BOT_CONFIG arm marks a seat's mode as set by hand only when
+ * the command changed the MODE. A difficulty change, a rename or a
+ * personality edit carries the unchanged mode and must not mark it. */
+static CmdResult apply_bot_config(ServerSim *sim, BYTE slot, uint8_t mode,
+                                  uint8_t level) {
+    ClientCommand cmd;
+    CmdResult     r;
+
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.type   = CMD_LOBBY_BOT_CONFIG;
+    cmd.cmdSeq = 1;
+    cmd.u.lobbyBotConfig.slot       = slot;
+    cmd.u.lobbyBotConfig.mode       = mode;
+    cmd.u.lobbyBotConfig.difficulty = level;
+    threadsWaitForMutex();
+    r = serverSimApplyCommand(sim, 0, &cmd);
+    threadsReleaseMutex();
+    return r;
+}
+
+int run_lobby_bot_config_memory_dispatch_hand_mark(void) {
+    const BYTE bot = 2;
+    ServerSim *sim;
+    int openMode = open_default_mode();
+
+    if (openMode < 0) SKIP_NO_MANIFEST();
+    sim = make_lobby_sim_type(gameOpen);
+    UT_ASSERT_MSG(sim != NULL, "serverSimCreateCompressed");
+    /* The host in slot 0, so the sender may edit the lobby. */
+    serverSimAddPlayer(sim, 0, "Host", false);
+    pretend_bot(sim, bot);
+    serverSimSetBotConfig(sim, bot, (uint8_t)openMode, BOT_DIFFICULTY_HARD,
+                          0, NULL);
+    sim->botModeSetByHand = 0;
+
+    /* Same mode, new level: no mark. */
+    UT_ASSERT(apply_bot_config(sim, bot, (uint8_t)openMode,
+                               BOT_DIFFICULTY_EASY) == CMD_OK);
+    UT_ASSERT_MSG(sim->botConfigs[bot].difficulty == BOT_DIFFICULTY_EASY,
+                  "setup: the level change did not land");
+    UT_ASSERT_MSG((sim->botModeSetByHand & (1u << bot)) == 0,
+                  "a level-only change marked the mode as set by hand");
+
+    /* Same pair again (a rename sends this): no mark. */
+    UT_ASSERT(apply_bot_config(sim, bot, (uint8_t)openMode,
+                               BOT_DIFFICULTY_EASY) == CMD_OK);
+    UT_ASSERT((sim->botModeSetByHand & (1u << bot)) == 0);
+
+    /* A new mode: marked. */
+    UT_ASSERT(apply_bot_config(sim, bot, 0, BOT_DIFFICULTY_EASY) == CMD_OK);
+    UT_ASSERT_MSG(sim->botConfigs[bot].mode == 0,
+                  "setup: the mode change did not land");
+    UT_ASSERT_MSG((sim->botModeSetByHand & (1u << bot)) != 0,
+                  "a mode change did not mark the mode as set by hand");
+
+    unpretend_bot(sim, bot);
     serverSimDestroy(sim);
     return 0;
 }
