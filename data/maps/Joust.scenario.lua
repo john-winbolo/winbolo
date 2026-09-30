@@ -45,6 +45,11 @@
 -- kill line says so: "Double kill", "Triple kill!", "QUADRUPLE KILL!" and on
 -- up. Dying ends the streak. The panel is only sent while something on it is
 -- changing or moving; a still panel sends nothing.
+--
+-- The leader's line (the top tank, or the top team's line in a team round)
+-- is drawn in large text on a taller first row, and the rows under it sit
+-- lower to make room. When the lead changes hands, the new leader grows and
+-- the old one shrinks at once, and both slide to their new places.
 
 local DEFAULT_TARGET = 10
 local CREDIT_SECONDS = 10     -- how long a hit keeps its claim on a drowning
@@ -53,10 +58,15 @@ local OPENING_TICKS  = 200    -- first two seconds: fixed starts, not farthest
 local SHIELD_SECONDS = 1      -- a new tank cannot be hit this long
 local PANEL_ROWS     = 9
 local ROW_TOP        = 30     -- panel y of the first line
-local ROW_STEP       = 10     -- panel units from one line to the next
+local LEAD_STEP      = 18     -- the leader's large row, 16-unit text
+local ROW_STEP       = 10     -- panel units from one small line to the next
 local ENTER_Y        = 128    -- a new line slides up from the panel's bottom
-local HIDDEN_Y       = ROW_TOP + PANEL_ROWS * ROW_STEP  -- a line past the last
-                               -- row waits here, just under it
+local HIDDEN_Y       = ROW_TOP + LEAD_STEP + (PANEL_ROWS - 1) * ROW_STEP
+                               -- a line past the last row waits here, just
+                               -- under it (128: the last row ends at 126)
+local LARGE_CHAR_W   = 10     -- a large character's width, allowed on the
+                               -- wide side (16-unit text, about 0.6 of that)
+local SCORE_GAP      = 4      -- room kept between a large name and its score
 local FRAME_SECONDS  = 0.04   -- one panel frame this often while it moves
 local SLIDE_TICKS    = 40     -- a line takes 0.4 s to reach its new place
 local FLASH_TICKS    = 50     -- a scorer's line flashes for 0.5 s
@@ -425,6 +435,22 @@ local function line_key(line)
   return "p" .. line.seat
 end
 
+-- The panel y of row n: the leader's tall row first, then the small ones.
+local function row_y(n)
+  if n == 1 then
+    return ROW_TOP
+  end
+  return ROW_TOP + LEAD_STEP + (n - 2) * ROW_STEP
+end
+
+-- A name cut to fit the leader's large row left of its score. The width is
+-- counted in bytes, which is never fewer than the characters, so a name of
+-- wide UTF-8 characters is cut shorter rather than running into the score.
+local function fit_large(s, x, score)
+  local room = 124 - #score * LARGE_CHAR_W - SCORE_GAP - x
+  return cut_text(s, math.max(math.floor(room / LARGE_CHAR_W), 2))
+end
+
 -- Where a sliding line is at tick now, and whether it is still moving. The
 -- slide eases out: fast at first, slowing into its place.
 local function slide_y(m, now)
@@ -463,7 +489,7 @@ local function draw_panel(settle)
       row_move[key] = { from = HIDDEN_Y, to = HIDDEN_Y, from_at = now }
     else
       shown[key] = true
-      local to = ROW_TOP + (row - 1) * ROW_STEP
+      local to = row_y(row)
       local m = row_move[key]
       if settle then
         m = { from = to, to = to, from_at = now }
@@ -477,11 +503,12 @@ local function draw_panel(settle)
       y = math.floor(y + 0.5)
       busy = busy or moving
 
-      local colour = "white"
+      -- The leader is the first line that is not a member's: row 1.
+      local colour, size, step = "white", "small", ROW_STEP
       if line.indent then
         colour = "grey"
       elseif leader then
-        colour = "cyan"
+        colour, size, step = "cyan", "large", LEAD_STEP
       end
       if not line.indent then
         leader = false
@@ -494,19 +521,26 @@ local function draw_panel(settle)
       elseif ends ~= nil then
         busy = true
         local bar = (ends - now > FLASH_TICKS / 2) and "yellow" or "orange"
-        list[#list + 1] = { "rect", 2, y - 1, 124, ROW_STEP, bar, true }
+        list[#list + 1] = { "rect", 2, y - 1, 124, step, bar, true }
         colour = "black"
       end
       local x = line.indent and 12 or 4
-      if line.team ~= nil then
-        list[#list + 1] = { "text", x, y, colour, "small", "left",
+      local score = string.format("%d", line.value)
+      if size == "large" then
+        -- A client draws a "name" primitive as long as the name is, so the
+        -- large line sends the name as text, cut to fit left of the score.
+        local label = line.team ~= nil and team_label(line.team)
+                      or name_of(line.seat)
+        list[#list + 1] = { "text", x, y, colour, size, "left",
+                            fit_large(label, x, score) }
+      elseif line.team ~= nil then
+        list[#list + 1] = { "text", x, y, colour, size, "left",
                             team_label(line.team) }
       else
-        list[#list + 1] = { "name", x, y, colour, "small", "left",
+        list[#list + 1] = { "name", x, y, colour, size, "left",
                             line.seat }
       end
-      list[#list + 1] = { "text", 124, y, colour, "small", "right",
-                          string.format("%d", line.value) }
+      list[#list + 1] = { "text", 124, y, colour, size, "right", score }
     end
   end
   -- A line that left the list goes; if it comes back it slides in again.
