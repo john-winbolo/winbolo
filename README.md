@@ -147,7 +147,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for how to send a pull request.
 
 ## Licence
 
-WinBolo is released under the GNU General Public License, version 2 or (at
+WinBolo is released under the GNU General Public License, version 3 or (at
 your option) any later version. See
 [LICENSE](LICENSE).
 
@@ -155,8 +155,9 @@ Steam builds also link the Steamworks SDK, which is owned by Valve, is not
 open source, and is not included in this repository. The copyright holders
 give additional permissions in [LICENSE-EXCEPTION.md](LICENSE-EXCEPTION.md)
 for linking with the Steamworks SDK and other platform SDKs, and for releasing
-WinBolo through app stores, on the condition that WinBolo's source code stays
-available under the GPL. WinBolo builds and runs without any of these SDKs.
+WinBolo through app stores and on locked devices such as phones and consoles,
+on the condition that WinBolo's source code stays available under the GPL.
+WinBolo builds and runs without any of these SDKs.
 
 The third-party libraries it uses, and their licences, are
 listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The people who have

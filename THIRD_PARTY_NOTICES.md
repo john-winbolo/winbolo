@@ -2,6 +2,13 @@
 
 WinBolo uses the following third-party libraries and code.
 
+WinBolo itself is licensed under the GNU General Public License, version 3 or
+later (see [LICENSE](LICENSE)). Every code library below is under a licence that
+can be combined with it, except the Steamworks SDK, which is covered by
+[LICENSE-EXCEPTION.md](LICENSE-EXCEPTION.md). The two under Apache 2.0, libmaxminddb and crashpad,
+can be combined with GPL version 3 but not with version 2, which is one reason
+WinBolo moved from version 2 to version 3.
+
 ## FetchContent Dependencies (downloaded at build time)
 
 ### SDL3 (Simple DirectMedia Layer)

@@ -600,7 +600,7 @@ No audio-input or file-access entitlements are requested.
 
 ## Packaging a distribution DMG (macOS)
 
-The `package_macos` target builds a single Gatekeeper-clean `WinBolo.dmg` installer containing all three apps, the `WinBoloDS` dedicated-server binary, and an `/Applications` drop-link. End users drag `WinBolo.app`, `MapEditor.app`, and `Log Viewer.app` into `Applications`; server operators copy `WinBoloDS` wherever they prefer (e.g. `/usr/local/bin`) and run it from a terminal or under launchd.
+The `package_macos` target builds a single Gatekeeper-clean `WinBolo.dmg` installer containing all three apps, the `WinBoloDS` dedicated-server binary, a `Licence` folder (`LICENSE`, `LICENSE-EXCEPTION.md` and `THIRD_PARTY_NOTICES.md`), and an `/Applications` drop-link. End users drag `WinBolo.app`, `MapEditor.app`, and `Log Viewer.app` into `Applications`; server operators copy `WinBoloDS` wherever they prefer (e.g. `/usr/local/bin`) and run it from a terminal or under launchd.
 
 ### Prerequisite
 
@@ -622,7 +622,7 @@ cmake --build build --target package_macos
 
 `package_macos` depends on `sign_macos`, so all four targets are signed first if they aren't already. The script then:
 
-1. Stages the signed apps and `WinBoloDS` into a temporary directory.
+1. Stages the signed apps, `WinBoloDS` and the `Licence` folder into a temporary directory.
 2. Runs `create-dmg` to build `WinBolo.dmg` with an icon-arranged window and `/Applications` drop-link.
 3. Signs the DMG with `codesign --timestamp`.
 4. Submits the DMG to Apple via `xcrun notarytool submit --wait`. A single notarization covers every signed binary inside, including `WinBoloDS`.

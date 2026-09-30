@@ -1,11 +1,11 @@
 # Additional permissions for platform SDKs and app stores
 
-WinBolo is licensed under the GNU General Public License, version 2 or (at
+WinBolo is licensed under the GNU General Public License, version 3 or (at
 your option) any later version, as set out in [LICENSE](LICENSE). This file
-adds three permissions to that licence. They exist so that WinBolo can be
-released on Steam, on app stores and on other platforms whose libraries or
-terms the GPL does not allow for on its own. They do not allow WinBolo, or any
-part of it, to be made closed source.
+gives four additional permissions under section 7 of that licence. They exist
+so that WinBolo can be released on Steam, on app stores, on locked devices and
+on other platforms whose libraries or terms the GPL does not allow for on its
+own. They do not allow WinBolo, or any part of it, to be made closed source.
 
 ## Definitions
 
@@ -19,6 +19,9 @@ part of it, to be made closed source.
 - **An app store** means a service that distributes software to users, such as
   the Apple App Store, TestFlight or Google Play, whose terms of distribution or
   use place restrictions on users that the GPL does not allow.
+- **A locked device** means a device, such as a phone, tablet or games console,
+  whose manufacturer or operator does not allow its users to install modified
+  versions of software on it.
 - **The WinBolo source code** means the complete source code of the version of
   WinBolo being distributed, as the GPL defines it, not including any platform
   SDK.
@@ -43,6 +46,15 @@ distribute WinBolo, alone or linked with a platform SDK under Permission 1 or
 2, through an app store, even though that app store's terms place restrictions
 on users that the GPL does not allow.
 
+## Permission 4: locked devices
+
+As a special exception, the copyright holders of WinBolo waive the requirement
+in section 6 of the GNU General Public License, version 3, to provide
+Installation Information, for a copy of WinBolo distributed for a locked
+device, or through an app store under Permission 3, where the device's
+manufacturer or operator does not allow its users to install modified
+software.
+
 ## Conditions
 
 Each permission above applies only while both of these are true:
@@ -55,8 +67,9 @@ Each permission above applies only while both of these are true:
 ## Modified versions
 
 If you modify WinBolo, you may extend these permissions to your version, but
-you are not required to. If you do not wish to do so, delete this file and any
-reference to it from your version.
+you are not required to. As section 7 of the GNU General Public License,
+version 3, allows, you may remove them from your version by deleting this file
+and any reference to it.
 
 ## Platform SDKs are not part of this source code
 

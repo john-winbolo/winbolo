@@ -152,7 +152,7 @@ report.
 
 ## Licence
 
-WinBolo is licensed under the GNU General Public License, version 2 or (at your
+WinBolo is licensed under the GNU General Public License, version 3 or (at your
 option) any later version. See [LICENSE](LICENSE).
 
 By submitting a contribution, you confirm that:
@@ -161,9 +161,9 @@ By submitting a contribution, you confirm that:
 - it does not include code, artwork or sound copied from anywhere that does
   not allow it to be distributed under the GPL; and
 - you agree that it will be distributed as part of WinBolo under the GNU
-  General Public License, version 2 or any later version, together with the
+  General Public License, version 3 or any later version, together with the
   additional permissions in [LICENSE-EXCEPTION.md](LICENSE-EXCEPTION.md) for
-  platform SDKs such as the Steamworks SDK, and for app stores.
+  platform SDKs such as the Steamworks SDK, app stores and locked devices.
 
 If your contribution includes code or assets from another project, name the
 source and its licence in the pull request, and add it to
