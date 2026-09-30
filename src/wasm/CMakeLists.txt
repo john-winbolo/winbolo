@@ -157,6 +157,11 @@ target_link_libraries(imgui_backends PUBLIC SDL3::SDL3)
 #
 add_subdirectory(${REPO_ROOT}/src/bolo ${CMAKE_BINARY_DIR}/bolo_static)
 add_subdirectory(${REPO_ROOT}/src/server ${CMAKE_BINARY_DIR}/server_static)
+# The scenario runtime, for a practice game's in-page server: it runs the mods
+# in data/mods and the script beside a scripted map in data/maps, as desktop
+# single player does. Its minizip, cJSON and Lua targets are declared above.
+add_subdirectory(${REPO_ROOT}/src/scenario_io ${CMAKE_BINARY_DIR}/scenario_io_static)
+add_subdirectory(${REPO_ROOT}/src/scenario ${CMAKE_BINARY_DIR}/scenario_static)
 add_subdirectory(${REPO_ROOT}/brains ${CMAKE_BINARY_DIR}/bot_brains_static)
 
 set(BOLO_SOURCES
@@ -452,7 +457,9 @@ target_compile_definitions(winbolo PRIVATE
 target_compile_options(winbolo PRIVATE -Werror=undef -fno-common -include sys/types.h)
 target_link_options(winbolo PRIVATE "LINKER:--allow-multiple-definition")
 
-target_link_libraries(winbolo PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
+# scenario_static ahead of server_sim_static: it calls the funnel and the
+# round-start registration, which the server library provides.
+target_link_libraries(winbolo PRIVATE bolo_static scenario_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(winbolo PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf

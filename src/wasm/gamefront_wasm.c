@@ -32,6 +32,7 @@
 #include "frontend.h"
 #include "server_sim.h"
 #include "../server/server_lifecycle.h"
+#include "../scenario/scenario_host.h"
 #include "../gui/brainsHandler.h"
 #include "../gui/clientmutex.h"
 #include "../gui/gamefront.h"
@@ -252,6 +253,10 @@ int gameFrontLineOfSight       = LINE_OF_SIGHT_STOCK;
 /* Server-authoritative state — the Transport handle itself now lives
  * inside humanSim; only high-level lifecycle gating is tracked here. */
 static ServerSim *wasmServerSim = NULL;
+/* The practice game's scenario: the script beside its map, or the mods picked
+ * in its lobby. Follows the committed map, and is detached before the sim
+ * goes. NULL for a map with no script, and always for the tutorial. */
+static ScenarioHost *wasmScenarioHost = NULL;
 static bool wasmTransportActive = FALSE;
 static SubscriberHandle wasmControlSub = SUBSCRIBER_HANDLE_INVALID;
 
@@ -448,8 +453,13 @@ static bool wasmFindBrainPath(char *out, size_t outLen) {
  * single-player bot setup): the bot's mode and difficulty go into the slot
  * before the bot is created, so its brain loads with them, and the lobby's
  * brain dropdown is pointed at the brain it runs. No bot with the AI policy
- * on none or no brain found. */
-static void wasmSeedPracticeBot(const char *brainPath) {
+ * on none or no brain found.
+ *
+ * scriptSeats is a lobby the map's script lays out itself (Survival seats its
+ * whole horde). As on desktop, no bot is made there, since it would take a
+ * slot ahead of the script's seats; the player still takes their team and the
+ * alliance pass still runs. */
+static void wasmSeedPracticeBot(const char *brainPath, bool scriptSeats) {
   const BYTE slot       = 1;
   const BYTE botTeam    = 2;
   const BYTE playerTeam = 1;
@@ -457,6 +467,12 @@ static void wasmSeedPracticeBot(const char *brainPath) {
   const BrainList *bl;
 
   if (compTanks == aiNone || brainPath[0] == '\0') return;
+
+  if (scriptSeats) {
+    clientSimNetSendTeamSet(humanSim, 0, playerTeam);
+    serverSimReapplyTeamAlliances(wasmServerSim);
+    return;
+  }
 
   spMode  = gameFrontSpBotMode(brainPath);
   spLevel = gameFrontSpBotLevel(brainPath, spMode);
@@ -804,11 +820,16 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
       printf("[WASM] starting guided tutorial\n");
     }
 
+    /* Whether the sim was built from fileName, which is the only map a
+     * script can sit beside: the built-in map has no file on disk. */
+    bool mapFromFile = FALSE;
     {
       if (fileName[0] != '\0') {
         wasmServerSim = serverSimCreate(fileName, gametype, hiddenMines, startDelay, timeLen);
         if (wasmServerSim == NULL) {
           printf("[WASM] Failed to load map '%s' into ServerSim, trying built-in\n", fileName);
+        } else {
+          mapFromFile = TRUE;
         }
       }
       if (wasmServerSim == NULL) {
@@ -820,6 +841,38 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
         clientSimDestroy(humanSim);
         return FALSE;
       }
+    }
+
+    if (!wantTutorial) {
+      /* The scenario steps desktop single player takes after it creates its
+       * sim (gamefront.c), in the same order: the scripts preferences set on
+       * the library before the attach, so the map commits that follow answer
+       * to them too; the map chooser's scripted question and the mods
+       * listing registered on the sim whatever map is hosted; the script
+       * beside this map attached; and from then on the scenario follows the
+       * committed map, which is how a scripted map or a mod picked in the
+       * lobby takes effect. The mods listed are the ones shipped in
+       * /data/mods (the preloaded data directory). There is no Workshop, no
+       * Mod Dir preference and no uploads directory here, so those are left
+       * unset. The tutorial takes none of this. */
+      scenarioHostSetEnabled(gameFrontHostingScripts);
+      scenarioHostSetUploadScriptsEnabled(
+          gameFrontHostingScriptUploadPolicy != SCRIPT_UPLOAD_OFF);
+      scenarioHostRegisterMapScripted(wasmServerSim);
+      scenarioHostRegisterScenarioLister(wasmServerSim);
+      if (mapFromFile && strncmp(fileName, "randommap:", 10) != 0) {
+        char scenarioErr[512];
+        wasmScenarioHost = scenarioHostAttach(wasmServerSim, fileName,
+                                              scenarioErr, sizeof(scenarioErr));
+        if (wasmScenarioHost != NULL) {
+          printf("[WASM] Scenario loaded: %s (from %s)\n",
+                 scenarioHostName(wasmScenarioHost),
+                 scenarioHostScriptPath(wasmScenarioHost));
+        } else if (scenarioErr[0] != '\0') {
+          printf("[WASM] %s\n", scenarioErr);
+        }
+      }
+      scenarioHostFollowMap(wasmServerSim, &wasmScenarioHost);
     }
 
     if (wantTutorial) {
@@ -866,6 +919,8 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
       }
       if (!serverInstanceStartup(wasmServerSim, &cfg)) {
         printf("[WASM] serverInstanceStartup failed\n");
+        scenarioHostDetach(wasmScenarioHost);
+        wasmScenarioHost = NULL;
         serverSimDestroy(wasmServerSim);
         wasmServerSim = NULL;
         clientSimDestroy(humanSim);
@@ -889,6 +944,8 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
     if (!connected) {
       printf("[WASM] local connect failed: %s\n",
              clientSimGetConnectErrorReason(humanSim));
+      scenarioHostDetach(wasmScenarioHost);
+      wasmScenarioHost = NULL;
       serverSimDestroy(wasmServerSim);
       wasmServerSim = NULL;
       clientSimDestroy(humanSim);
@@ -907,7 +964,17 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
       clientSimSetInLobby(humanSim, true);
       clientSimSetNetStatus(humanSim, netLobby);
       clientSimSetMapDownloadComplete(humanSim, true);
-      wasmSeedPracticeBot(spBrainPath);
+      wasmSeedPracticeBot(spBrainPath,
+                          wasmScenarioHost != NULL &&
+                              serverSimScenarioHasLobbyTemplate(wasmServerSim));
+      /* The lobby the map's scenario asks for, and its settings, as desktop
+       * single player seats them: after the player has joined, so slot 0 is
+       * theirs, and after the seeded bot, which a seat in its slot would
+       * otherwise replace. A map with no scenario seats nothing. */
+      if (wasmScenarioHost != NULL) {
+        serverSimScenarioSeatLobby(wasmServerSim);
+        serverSimScenarioApplyLobbyRules(wasmServerSim);
+      }
     }
     /* Phase 2: connect registers the auto-subscriber. Clear the
      * legacy handle so the teardown path's unregister is a no-op. */
@@ -939,6 +1006,10 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
     if (wasmServerSim != NULL) {
       serverSimUnregisterSubscriber(wasmServerSim, wasmControlSub);
       wasmControlSub = SUBSCRIBER_HANDLE_INVALID;
+      /* Before the sim goes, as desktop's shutdown does, so the next
+       * practice game starts with no scenario. */
+      scenarioHostDetach(wasmScenarioHost);
+      wasmScenarioHost = NULL;
       serverSimDestroy(wasmServerSim);
       wasmServerSim = NULL;
     }
@@ -1171,12 +1242,10 @@ void gameFrontSetScnPanelLayout(const char *scenario, int x, int y,
                                 int scale, int alpha) {
   (void)scenario; (void)x; (void)y; (void)scale; (void)alpha;
 }
-/* The map chooser tags a map that has a script beside it. The browser build
- * links no scenario library, so every map reads plain here; desktop asks the
- * library through scenarioHostMapHasScript. */
+/* The map chooser tags a map that has a script beside it, answered by the
+ * scenario library as on desktop. */
 bool mapChooserMapHasScript(const char *mapPath) {
-  (void)mapPath;
-  return false;
+  return scenarioHostMapHasScript(mapPath);
 }
 /* No WinBolo.net stats plumbing here either, so the skill guess has nothing
  * to go on: the browser build gets the same Hard every difficulty currently
@@ -1190,13 +1259,17 @@ uint8_t gameFrontSpBotLevel(const char *brainPath, uint8_t mode) {
  * into [HOSTING] as it changes; there is no prefs file in the browser, so
  * these only hold the value for the session the dialogs read it back in.
  *
- * The desktop's scripts setter also passes the answer to the scenario
- * library, which is what decides whether an attach loads a script. This
- * build links no scenario library — the browser never hosts — so there is
- * nothing here to tell and the value is held for the dialogs alone. */
+ * The two script setters also pass the answer to the scenario library, as
+ * desktop's do: the library decides whether a practice game's attach loads a
+ * script, and the map chooser's scripted tag reads it too. */
 void gameFrontSetHostingPort(unsigned short port)    { gameFrontHostingPort = port; }
 void gameFrontSetHostingAllowSpec(bool allow)        { gameFrontHostingAllowSpec = allow; }
-void gameFrontSetHostingScripts(bool allow)          { gameFrontHostingScripts = allow; }
+
+void gameFrontSetHostingScripts(bool allow) {
+  gameFrontHostingScripts = allow;
+  scenarioHostSetEnabled(allow);
+}
+
 void gameFrontSetHostingMaxSpec(int maxSpec)         { gameFrontHostingMaxSpec = maxSpec; }
 void gameFrontSetHostingUploadPolicy(int policy)     { gameFrontHostingUploadPolicy = policy; }
 void gameFrontSetHostingUploadMaxFiles(int maxFiles) { gameFrontHostingUploadMaxFiles = maxFiles; }
@@ -1215,6 +1288,7 @@ void gameFrontSetHostingUploadDir(const char *dir) {
 
 void gameFrontSetHostingScriptUploadPolicy(int policy) {
   gameFrontHostingScriptUploadPolicy = policy;
+  scenarioHostSetUploadScriptsEnabled(policy != SCRIPT_UPLOAD_OFF);
 }
 
 void gameFrontSetHostingShareScripts(bool on) {
