@@ -9,16 +9,23 @@
 -- the two bots that hear the line, in the middle of the island. A bot
 -- resolving `closest` against its own tank picks #1, which is four squares
 -- away; resolving it against the sender picks #0, which is twelve. So the
--- ack — which carries the pill number — says outright which rule ran, and the
--- bot then has to drive PAST the near pill to reach the far one.
+-- ack — which carries the pill number — says outright which rule ran.
 --
--- Both pills have to be KNOWN before the line is said: a bot answers "pill #N
--- not known yet" for one nobody has seen. The seats are laid out so each pill
--- is inside somebody's view at setup, and the order waits three hundred ticks
--- for the known-world digest to go round the team.
+-- Only the acks are read. Each bot resolves `closest` on its own, against the
+-- pills IT knows, so two bots can open two different orders and each ack its
+-- own. Every ack is recorded, keyed by seat, and any ack that names a pill
+-- other than the far one fails the test at once. At ACK_BY the test passes if
+-- at least one bot acked and every ack named the far pill, and fails if
+-- nobody acked.
+--
+-- Both pills have to be KNOWN before the line is said: a bot that knows no
+-- pill answers "no pill to take known", and one that has not seen the speaker
+-- answers "can't see you". Either line fails the test. The seats are laid out
+-- so each pill is inside somebody's view at setup, and the order waits three
+-- hundred ticks for the known-world digest to go round the team.
 --
 -- Seat 2 speaks and never hears its own line, so seats 0 and 1 are the two
--- candidates and exactly one of them wins the auction, as in order_attack_pill.
+-- bots that can ack.
 
 scenario = {
   name        = "ROOST order_attack_closest",
@@ -38,7 +45,7 @@ local SAY_AT    = 450         -- the digest has 300 ticks to share both pills
 local ACK_BY    = 700
 
 local far_n, near_n, said_at = nil, nil, nil
-local acker, ack_pill = nil, nil
+local acks, n_acks = {}, 0     -- seat -> the pill number its ack named
 local seen = {}
 local done = false
 
@@ -60,12 +67,21 @@ function on_chat(p, text, scripted)
   if scripted or done or text:sub(1, 1) == "/" then return end
   if not fresh(p, text) or not said_at then return end
   -- The ack carries the pill the bot decided on, which is the answer.
+  -- THE ACK NAMES THE PILL, so a wrong one is wrong at once.
   local n = text:match("attack_pill #(%d+)")
-  if n and not acker then
-    acker, ack_pill = p, tonumber(n)
+  if n then
+    n = tonumber(n)
+    if not acks[p] then n_acks = n_acks + 1 end
+    acks[p] = n
     game.log(string.format("order_attack_closest: p%d acked at +%d: %s",
                            p, game.tick() - said_at, text))
-  elseif text:find("not known yet", 1, true) then
+    if n ~= (far_n - 1) then
+      finish(string.format("FAIL order_attack_closest: p%d took pill #%d, wanted #%d",
+                           p, n, far_n - 1))
+    end
+  elseif text:find("no pill to take known", 1, true)
+      or text:find("can't see you", 1, true)
+      or text:find("not known yet", 1, true) then
     finish("FAIL order_attack_closest: " .. text)
   end
 end
@@ -99,21 +115,19 @@ function on_tick(t)
   if not said_at then return end
   local since = t - said_at
 
-  if since == ACK_BY and not acker then
-    finish(string.format("FAIL order_attack_closest: nobody answered in %d ticks",
-                         ACK_BY))
-    return
-  end
-
-  -- THE ACK NAMES THE PILL, so a wrong one is wrong at once.
-  if ack_pill and ack_pill ~= (far_n - 1) then
-    finish(string.format("FAIL order_attack_closest: p%d took pill #%d, wanted #%d",
-                         acker, ack_pill, far_n - 1))
-    return
-  end
-
-  if ack_pill then
-    finish(string.format("PASS order_attack_closest: p%d took pill #%d at +%d",
-                         acker, ack_pill, since))
+  -- A wrong ack has already failed in on_chat, so every ack here named the
+  -- far pill.
+  if since == ACK_BY then
+    if n_acks == 0 then
+      finish(string.format("FAIL order_attack_closest: nobody answered in %d ticks",
+                           ACK_BY))
+    else
+      local who = {}
+      for p = 0, 2 do
+        if acks[p] then who[#who + 1] = "p" .. p end
+      end
+      finish(string.format("PASS order_attack_closest: %s took pill #%d, no other pill acked in %d ticks",
+                           table.concat(who, " and "), far_n - 1, ACK_BY))
+    end
   end
 end

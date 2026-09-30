@@ -11,18 +11,14 @@
 -- are twenty-four squares west of it, and seat 2 is the speaker, so seat 1
 -- is the one bot that HEARS the order and has to decline it.
 --
--- Two things are read. One bot acked, and it was seat 0 — named by the seat
--- the line came from, which is the same number `game.lobby_slot` knows it
--- by. And seat 1 is still more than fifteen squares out well after the
--- order, so declining meant staying put rather than going anyway.
+-- Only the acks are read. At ACK_BY exactly one bot has acked, and it was
+-- seat 0 — named by the seat the line came from, which is the same number
+-- `game.lobby_slot` knows it by. Where any tank drives is not read. Seat 2
+-- never hears the order (a sender does not receive its own line).
 --
--- Seat 2 is not held to that: it never heard the order (a sender does not
--- receive its own line), so where it drives says nothing about `nearby`.
---
--- A second, DEAD pillbox is put four squares from seat 1 on purpose. A bot
--- with nothing at all to do drifts towards the only pill on the map, and
--- that drift would read as disobedience it never committed; a free pillbox
--- on its doorstep gives it its own work and leaves the reading clean.
+-- A second, DEAD pillbox is put four squares from seat 1 on purpose. It
+-- gives seat 1 its own work away from the ordered pill, so nothing pulls it
+-- towards pill #0 and its chat stays clear of a stray ack for it.
 
 scenario = {
   name        = "ROOST order_nearby",
