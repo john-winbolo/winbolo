@@ -2240,7 +2240,9 @@ static bool scenarioTemplatesSame(const ScnLobbyTemplate *a,
 }
 
 /* Whether a template names any team for the seating to lay out. The seating
- * skips a team whose id is out of range, so this does too. */
+ * skips a team whose id is out of range, so this does too. A team with
+ * bots = 0 still counts: the scenario names a side of its own, so the host's
+ * bots go even though the seating puts nobody there. */
 static bool scenarioTemplateHasTeams(const ScnLobbyTemplate *t) {
     uint8_t i;
     for (i = 0; i < t->numTeams && i < MAX_TANKS; i++) {
