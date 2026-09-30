@@ -42,7 +42,9 @@ local CLASSIC = {
   speed_road = 16, speed_grass = 12, speed_forest = 6, speed_river = 3,
   speed_swamp = 3, speed_crater = 3, speed_rubble = 3, speed_boat = 16,
   speed_deep_sea = 3, speed_refuel_base = 16,
-  turn_road = 1, turn_swamp = 0.25, turn_boat = 1,
+  turn_road = 1, turn_grass = 1, turn_forest = 0.5, turn_river = 0.25,
+  turn_swamp = 0.25, turn_crater = 0.25, turn_rubble = 0.25, turn_boat = 1,
+  turn_deep_sea = 0.5, turn_refuel_base = 1,
   tank_accel_rate = 0.25, tank_brake_rate = 0.25,
   pill_max_armour = 15, pill_attack_ticks = 100, pill_attack_min_ticks = 6,
   pill_cooldown_ticks = 32, pill_repair_amount = 4, pill_range = 2048,
@@ -92,6 +94,23 @@ local MAN_RULE = {
   [T.T_DEEPSEA] = "man_speed_deep_sea",
   [T.T_REFBASE] = "man_speed_refuel_base",
 }
+-- Terrain type -> the turn rule the engine uses on it (bolo_map.c
+-- mapGetTurnRate). A pillbox tile we stand on is a dead pill: road, as
+-- SPEED_RULE assumes. Building / unknown tiles fall back to road.
+local TURN_RULE = {
+  [T.T_ROAD] = "turn_road", [T.T_GRASS] = "turn_grass",
+  [T.T_FOREST] = "turn_forest", [T.T_RIVER] = "turn_river",
+  [T.T_SWAMP] = "turn_swamp", [T.T_CRATER] = "turn_crater",
+  [T.T_RUBBLE] = "turn_rubble", [T.T_BOAT] = "turn_boat",
+  [T.T_DEEPSEA] = "turn_deep_sea", [T.T_REFBASE] = "turn_refuel_base",
+  [T.T_PILLBOX] = "turn_road",
+}
+-- Fixed order for the "is any turn rule changed" test.
+local TURN_RULES = { "turn_road", "turn_grass", "turn_forest", "turn_river",
+  "turn_swamp", "turn_crater", "turn_rubble", "turn_boat", "turn_deep_sea",
+  "turn_refuel_base" }
+M.TURN_RULE = TURN_RULE
+
 -- Fixed iteration order for every per-terrain loop (never pairs()).
 local TERRAINS = {}
 for tt = 0, 13 do TERRAINS[#TERRAINS + 1] = tt end
@@ -148,6 +167,41 @@ function M.context(info, out)
   -- Shells to kill a full-armour tank / a full pill.
   x.tank_kill_shells = ceil(x.tank_full_armour / x.hit_dealt)
   x.pill_kill_shells = ceil(x.pill_max_armour / x.pill_shell_damage)
+  -- The turn rule the TURN entries scale by: the road rule, or with
+  -- C.STEER_TERRAIN_TURN the rule of the tile under the tank. The tile is
+  -- read only when some turn rule differs from classic; with every turn rule
+  -- classic, each terrain's live / classic ratio is 1 and the road rule gives
+  -- the same numbers.
+  x.turn_rule = "turn_road"
+  if C.STEER_TERRAIN_TURN == true and info then
+    local changed = false
+    for i = 1, #TURN_RULES do
+      local k = TURN_RULES[i]
+      if x[k] ~= CLASSIC[k] then changed = true end
+    end
+    local gt = rawget(_G, "get_terrain")
+    local mask = rawget(_G, "TERRAIN_MASK")
+    if changed and type(gt) == "function" and type(mask) == "number"
+       and type(info.tankx) == "number" and type(info.tanky) == "number" then
+      local bit = require("bitcompat")
+      local tt = bit.band(gt(bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)), mask)
+      local rule = TURN_RULE[tt]
+      if info.inboat and (tt == T.T_RIVER or tt == T.T_DEEPSEA) then
+        rule = "turn_boat"
+      end
+      if rule then x.turn_rule = rule end
+    end
+  end
+  -- C.STEER_TURN_SPEEDUP: how much faster our turn rate is than our top
+  -- speed, both as live / classic. nil unless the turn is the faster one.
+  -- Classic rules: both ratios are 1 and this stays nil.
+  x.turn_speedup = nil
+  if C.STEER_TURN_SPEEDUP == true then
+    local tr = x.turn_rule
+    local tnum = x[tr] * x.turn_pct * CLASSIC.speed_road
+    local tden = CLASSIC[tr] * x.speed_road * x.speed_pct
+    if tden > 0 and tnum > tden then x.turn_speedup = tnum / tden end
+  end
   return x
 end
 
@@ -512,24 +566,26 @@ local ENTRIES = {
 
   -- Tank speed. TERRAIN_SPEED is our own top speed (rules x own speed %).
   -- MAP_SPEED models ENEMY tanks, whose modifiers we cannot see: rules only.
+  -- (With ENEMY_SPEED_OWN_MODS the aim lead multiplies in enemy_speed_scale().)
   { "TERRAIN_SPEED",     "SPEED", function(b, x) return scale_speed_table(b, x, true) end },
   { "MAP_SPEED",         "SPEED", function(b, x) return scale_speed_table(b, x, false) end },
   { "TERRAIN_COST_LAND", "SPEED", scale_cost_table },
   { "NAV_TOP_SPEED",     "SPEED", function(b, x) return scale_speed(b, x, "speed_road", true) end },
   { "NAV_CRUISE_SPEED",  "SPEED", function(b, x) return scale_speed(b, x, "speed_road", true) end },
 
-  -- Turn times.
-  { "SWERVE_TURN_TICKS",           "TURN", function(b, x) return scale_turn(b, x, "turn_road") end },
-  { "SWERVE_DEFENSIVE_TURN_TICKS", "TURN", function(b, x) return scale_turn(b, x, "turn_road") end },
+  -- Turn times. x.turn_rule is the road rule, or with STEER_TERRAIN_TURN
+  -- the rule of the terrain under the tank (see context()).
+  { "SWERVE_TURN_TICKS",           "TURN", function(b, x) return scale_turn(b, x, x.turn_rule) end },
+  { "SWERVE_DEFENSIVE_TURN_TICKS", "TURN", function(b, x) return scale_turn(b, x, x.turn_rule) end },
   { "SQUAD_BLITZ_READY_TIMEOUT",   "TURN", function(b, x) return scale_turn(b, x, "turn_swamp") end },
   -- Turn-radius speed caps: speed / turn rate = radius.
-  { "NAV_TURN_TOP_SPEED",    "TURN", function(b, x) return scale_turn_speed(b, x, "turn_road") end },
-  { "NAV_TURN_CRUISE_SPEED", "TURN", function(b, x) return scale_turn_speed(b, x, "turn_road") end },
-  { "ORBIT_FAST_SPEED",      "TURN", function(b, x) return scale_turn_speed_int(b, x, "turn_road") end },
-  { "ORBIT_BRAKE_SPEED",     "TURN", function(b, x) return scale_turn_speed_int(b, x, "turn_road") end },
+  { "NAV_TURN_TOP_SPEED",    "TURN", function(b, x) return scale_turn_speed(b, x, x.turn_rule) end },
+  { "NAV_TURN_CRUISE_SPEED", "TURN", function(b, x) return scale_turn_speed(b, x, x.turn_rule) end },
+  { "ORBIT_FAST_SPEED",      "TURN", function(b, x) return scale_turn_speed_int(b, x, x.turn_rule) end },
+  { "ORBIT_BRAKE_SPEED",     "TURN", function(b, x) return scale_turn_speed_int(b, x, x.turn_rule) end },
   { "SEA_NOGO_SPEED_CAP",    "TURN", function(b, x) return scale_turn_speed_int(b, x, "turn_boat") end },
   { "BOAT_ALIGN_CRAWL",      "TURN", function(b, x) return scale_turn_speed_int(b, x, "turn_boat") end },
-  { "KILL_LGM_TURN_DELTA",   "TURN", function(b, x) return scale_turn_speed(b, x, "turn_road") end },
+  { "KILL_LGM_TURN_DELTA",   "TURN", function(b, x) return scale_turn_speed(b, x, x.turn_rule) end },
 
   -- Brake and look-ahead distances, brake profiles, throttle gain.
   { "NAV_BRAKE_MULT",           "ACCEL", scale_brake_dist },
@@ -660,6 +716,30 @@ local function push_c(x)
 end
 
 local X = {}   -- the reused context
+
+--- C.ENEMY_SPEED_OWN_MODS: the factor an enemy tank's terrain speed caps
+--- (C.MAP_SPEED, rules only) take so they also follow OUR speed modifier, on
+--- the assumption every tank has the same one (Rule Roulette). The brain
+--- cannot read another tank's modifiers. nil at speed 100 or a switch off.
+function M.enemy_speed_scale()
+  if C.LIVE_PHYSICS ~= true or C.ENEMY_SPEED_OWN_MODS ~= true
+     or not group_on("SPEED") then
+    return nil
+  end
+  local pct = X.speed_pct
+  if type(pct) ~= "number" or pct == 100 then return nil end
+  return pct / 100
+end
+
+--- C.STEER_TURN_SPEEDUP: the factor (> 1) our turn rate beats our top speed
+--- by this think, or nil (classic rules, a slower turn, or a switch off).
+function M.turn_speedup()
+  if C.LIVE_PHYSICS ~= true or C.STEER_TURN_SPEEDUP ~= true
+     or not group_on("TURN") then
+    return nil
+  end
+  return X.turn_speedup
+end
 
 --- Rewrite the physics constants in C from this think's info.
 function M.apply(info)
