@@ -662,6 +662,26 @@ STR_MAPCHOOSER_NOPREVIEW=Geen voorbeeld beschikbaar
 STR_MAPCHOOSER_STATS=Bunkers: {number}  Bases: {number2}  Starts: {number3}
 STR_MAPCHOOSER_MAPFILES=Kaartbestanden
 STR_MAPCHOOSER_ALLFILES=Alle bestanden
+STR_MAPCHOOSER_SCENARIOSONLY=Alleen scenario's
+STR_MAPCHOOSER_SCENARIOSONLY_TIP=Toon alleen kaarten met een eigen scenarioscript.
+STR_MAPCHOOSER_NOSCENARIOMAPS=Geen kaarten met een scenario hier
+STR_MAPCHOOSER_SCENARIOSONLY_NOSEARCH=Dit filter werkt niet bij een serverbrede zoekopdracht. De server geeft niet aan welke resultaten een scenario hebben.
+STR_MAPCHOOSER_VIEW_LIST=Lijst
+STR_MAPCHOOSER_VIEW_GRID=Raster
+STR_MAPCHOOSER_VIEW_LIST_TIP=Lijstweergave
+STR_MAPCHOOSER_VIEW_GRID_TIP=Rasterweergave
+STR_MAPCHOOSER_SEARCH_HINT=Zoeken...
+STR_MAPCHOOSER_SEARCH_CLEAR=Zoekopdracht wissen
+STR_MAPCHOOSER_SEARCH_SUBFOLDERS=Submappen doorzoeken
+STR_MAPCHOOSER_CREATED_AT=Aangemaakt op
+STR_MAPCHOOSER_CREATED_AT_TIP=Toon bestandswijzigingstijden in een tweede kolom.
+STR_MAPCHOOSER_COL_NAME=Naam
+STR_MAPCHOOSER_COL_CREATED=Aangemaakt
+STR_MAPCHOOSER_UNSTAR_TIP=Klik om de ster te verwijderen
+STR_MAPCHOOSER_STAR_TIP=Klik om een ster te geven, zodat dit altijd bovenaan staat
+STR_MAPCHOOSER_RESTORE_SIZE_TIP=Standaardgrootte herstellen (Esc)
+STR_MAPCHOOSER_MAXIMIZE_TIP=Maximaliseren
+STR_MAPCHOOSER_LOADING_PREVIEW=Voorbeeld laden...
 
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Status

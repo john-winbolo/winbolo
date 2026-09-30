@@ -662,6 +662,26 @@ STR_MAPCHOOSER_NOPREVIEW=Ingen förhandsvisning tillgänglig
 STR_MAPCHOOSER_STATS=Bunkrar: {number}  Baser: {number2}  Startplatser: {number3}
 STR_MAPCHOOSER_MAPFILES=Kartfiler
 STR_MAPCHOOSER_ALLFILES=Alla filer
+STR_MAPCHOOSER_SCENARIOSONLY=Endast scenarier
+STR_MAPCHOOSER_SCENARIOSONLY_TIP=Visa bara kartor som har ett eget scenarioskript.
+STR_MAPCHOOSER_NOSCENARIOMAPS=Inga kartor med ett scenario här
+STR_MAPCHOOSER_SCENARIOSONLY_NOSEARCH=Det här filtret fungerar inte vid en serverövergripande sökning. Servern anger inte vilka träffar som har ett scenario.
+STR_MAPCHOOSER_VIEW_LIST=Lista
+STR_MAPCHOOSER_VIEW_GRID=Rutnät
+STR_MAPCHOOSER_VIEW_LIST_TIP=Listvy
+STR_MAPCHOOSER_VIEW_GRID_TIP=Rutnätsvy
+STR_MAPCHOOSER_SEARCH_HINT=Sök...
+STR_MAPCHOOSER_SEARCH_CLEAR=Rensa sökning
+STR_MAPCHOOSER_SEARCH_SUBFOLDERS=Sök i undermappar
+STR_MAPCHOOSER_CREATED_AT=Skapad
+STR_MAPCHOOSER_CREATED_AT_TIP=Visa filernas ändringstider i en andra kolumn.
+STR_MAPCHOOSER_COL_NAME=Namn
+STR_MAPCHOOSER_COL_CREATED=Skapad
+STR_MAPCHOOSER_UNSTAR_TIP=Klicka för att ta bort stjärnmarkeringen
+STR_MAPCHOOSER_STAR_TIP=Klicka för att markera med en stjärna, så att den alltid visas överst
+STR_MAPCHOOSER_RESTORE_SIZE_TIP=Återställ standardstorlek (Esc)
+STR_MAPCHOOSER_MAXIMIZE_TIP=Maximera
+STR_MAPCHOOSER_LOADING_PREVIEW=Laddar förhandsvisning...
 
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Status

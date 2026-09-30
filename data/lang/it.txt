@@ -662,6 +662,26 @@ STR_MAPCHOOSER_NOPREVIEW=Nessuna anteprima disponibile
 STR_MAPCHOOSER_STATS=Bunker: {number}  Basi: {number2}  Partenze: {number3}
 STR_MAPCHOOSER_MAPFILES=File mappa
 STR_MAPCHOOSER_ALLFILES=Tutti i file
+STR_MAPCHOOSER_SCENARIOSONLY=Solo con scenario
+STR_MAPCHOOSER_SCENARIOSONLY_TIP=Mostra solo le mappe che hanno un proprio script di scenario.
+STR_MAPCHOOSER_NOSCENARIOMAPS=Nessuna mappa con uno scenario qui
+STR_MAPCHOOSER_SCENARIOSONLY_NOSEARCH=Questo filtro non funziona con una ricerca sull'intero server. Il server non indica quali risultati hanno uno scenario.
+STR_MAPCHOOSER_VIEW_LIST=Lista
+STR_MAPCHOOSER_VIEW_GRID=Griglia
+STR_MAPCHOOSER_VIEW_LIST_TIP=Vista lista
+STR_MAPCHOOSER_VIEW_GRID_TIP=Vista griglia
+STR_MAPCHOOSER_SEARCH_HINT=Cerca...
+STR_MAPCHOOSER_SEARCH_CLEAR=Cancella ricerca
+STR_MAPCHOOSER_SEARCH_SUBFOLDERS=Cerca nelle sottocartelle
+STR_MAPCHOOSER_CREATED_AT=Creato il
+STR_MAPCHOOSER_CREATED_AT_TIP=Mostra la data di modifica del file in una seconda colonna.
+STR_MAPCHOOSER_COL_NAME=Nome
+STR_MAPCHOOSER_COL_CREATED=Creato
+STR_MAPCHOOSER_UNSTAR_TIP=Fai clic per togliere la stella.
+STR_MAPCHOOSER_STAR_TIP=Fai clic per contrassegnarla con una stella e mostrarla sempre in cima.
+STR_MAPCHOOSER_RESTORE_SIZE_TIP=Ripristina dimensione predefinita (Esc)
+STR_MAPCHOOSER_MAXIMIZE_TIP=Ingrandisci
+STR_MAPCHOOSER_LOADING_PREVIEW=Caricamento anteprima...
 
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Stato

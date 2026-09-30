@@ -662,6 +662,26 @@ STR_MAPCHOOSER_NOPREVIEW=Предпросмотр недоступен
 STR_MAPCHOOSER_STATS=Бункеры: {number}  Базы: {number2}  Старты: {number3}
 STR_MAPCHOOSER_MAPFILES=Файлы карт
 STR_MAPCHOOSER_ALLFILES=Все файлы
+STR_MAPCHOOSER_SCENARIOSONLY=Только сценарии
+STR_MAPCHOOSER_SCENARIOSONLY_TIP=Показывать только карты с собственным сценарием.
+STR_MAPCHOOSER_NOSCENARIOMAPS=Здесь нет карт со сценарием
+STR_MAPCHOOSER_SCENARIOSONLY_NOSEARCH=Этот фильтр не работает при поиске по всему серверу. Сервер не сообщает, у каких результатов есть сценарий.
+STR_MAPCHOOSER_VIEW_LIST=Список
+STR_MAPCHOOSER_VIEW_GRID=Сетка
+STR_MAPCHOOSER_VIEW_LIST_TIP=Вид списком
+STR_MAPCHOOSER_VIEW_GRID_TIP=Вид сеткой
+STR_MAPCHOOSER_SEARCH_HINT=Поиск...
+STR_MAPCHOOSER_SEARCH_CLEAR=Очистить поиск
+STR_MAPCHOOSER_SEARCH_SUBFOLDERS=Искать в подпапках
+STR_MAPCHOOSER_CREATED_AT=Дата создания
+STR_MAPCHOOSER_CREATED_AT_TIP=Показывать время изменения файлов во втором столбце.
+STR_MAPCHOOSER_COL_NAME=Имя
+STR_MAPCHOOSER_COL_CREATED=Создано
+STR_MAPCHOOSER_UNSTAR_TIP=Нажмите, чтобы убрать из избранного
+STR_MAPCHOOSER_STAR_TIP=Нажмите, чтобы добавить в избранное — будет всегда наверху
+STR_MAPCHOOSER_RESTORE_SIZE_TIP=Восстановить размер по умолчанию (Esc)
+STR_MAPCHOOSER_MAXIMIZE_TIP=Развернуть
+STR_MAPCHOOSER_LOADING_PREVIEW=Загрузка предпросмотра...
 
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Статус

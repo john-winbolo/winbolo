@@ -662,6 +662,26 @@ STR_MAPCHOOSER_NOPREVIEW=Náhled není k dispozici
 STR_MAPCHOOSER_STATS=Bunkry: {number}  Základny: {number2}  Starty: {number3}
 STR_MAPCHOOSER_MAPFILES=Soubory map
 STR_MAPCHOOSER_ALLFILES=Všechny soubory
+STR_MAPCHOOSER_SCENARIOSONLY=Jen scénáře
+STR_MAPCHOOSER_SCENARIOSONLY_TIP=Zobrazit jen mapy s vlastním skriptem scénáře.
+STR_MAPCHOOSER_NOSCENARIOMAPS=Tady nejsou žádné mapy se scénářem
+STR_MAPCHOOSER_SCENARIOSONLY_NOSEARCH=Tento filtr nefunguje při hledání na celém serveru. Server neuvádí, které výsledky mají scénář.
+STR_MAPCHOOSER_VIEW_LIST=Seznam
+STR_MAPCHOOSER_VIEW_GRID=Mřížka
+STR_MAPCHOOSER_VIEW_LIST_TIP=Zobrazení seznamu
+STR_MAPCHOOSER_VIEW_GRID_TIP=Zobrazení mřížky
+STR_MAPCHOOSER_SEARCH_HINT=Hledat...
+STR_MAPCHOOSER_SEARCH_CLEAR=Vymazat hledání
+STR_MAPCHOOSER_SEARCH_SUBFOLDERS=Prohledat podsložky
+STR_MAPCHOOSER_CREATED_AT=Vytvořeno
+STR_MAPCHOOSER_CREATED_AT_TIP=Zobrazit časy úprav souborů ve druhém sloupci.
+STR_MAPCHOOSER_COL_NAME=Název
+STR_MAPCHOOSER_COL_CREATED=Vytvořeno
+STR_MAPCHOOSER_UNSTAR_TIP=Klikni pro odebrání hvězdičky
+STR_MAPCHOOSER_STAR_TIP=Klikni pro přidání hvězdičky, aby toto vždy bylo nahoře
+STR_MAPCHOOSER_RESTORE_SIZE_TIP=Obnovit výchozí velikost (Esc)
+STR_MAPCHOOSER_MAXIMIZE_TIP=Maximalizovat
+STR_MAPCHOOSER_LOADING_PREVIEW=Načítání náhledu...
 
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Stav

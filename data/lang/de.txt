@@ -662,6 +662,26 @@ STR_MAPCHOOSER_NOPREVIEW=Keine Vorschau verfügbar
 STR_MAPCHOOSER_STATS=Bunker: {number}  Basen: {number2}  Startpunkte: {number3}
 STR_MAPCHOOSER_MAPFILES=Kartendateien
 STR_MAPCHOOSER_ALLFILES=Alle Dateien
+STR_MAPCHOOSER_SCENARIOSONLY=Nur mit Szenario
+STR_MAPCHOOSER_SCENARIOSONLY_TIP=Zeigt nur Karten an, die ein eigenes Szenario-Skript enthalten.
+STR_MAPCHOOSER_NOSCENARIOMAPS=Keine Karten mit Szenario hier
+STR_MAPCHOOSER_SCENARIOSONLY_NOSEARCH=Dieser Filter funktioniert bei einer serverweiten Suche nicht. Der Server gibt nicht an, welche Treffer ein Szenario haben.
+STR_MAPCHOOSER_VIEW_LIST=Liste
+STR_MAPCHOOSER_VIEW_GRID=Raster
+STR_MAPCHOOSER_VIEW_LIST_TIP=Listenansicht
+STR_MAPCHOOSER_VIEW_GRID_TIP=Rasteransicht
+STR_MAPCHOOSER_SEARCH_HINT=Suchen...
+STR_MAPCHOOSER_SEARCH_CLEAR=Suche löschen
+STR_MAPCHOOSER_SEARCH_SUBFOLDERS=Unterordner durchsuchen
+STR_MAPCHOOSER_CREATED_AT=Erstellt am
+STR_MAPCHOOSER_CREATED_AT_TIP=Zeigt die Änderungszeit der Datei in einer zweiten Spalte an.
+STR_MAPCHOOSER_COL_NAME=Name
+STR_MAPCHOOSER_COL_CREATED=Erstellt
+STR_MAPCHOOSER_UNSTAR_TIP=Klicken, um die Markierung zu entfernen.
+STR_MAPCHOOSER_STAR_TIP=Klicken, um zu markieren, damit die Karte immer oben angezeigt wird.
+STR_MAPCHOOSER_RESTORE_SIZE_TIP=Standardgröße wiederherstellen (Esc)
+STR_MAPCHOOSER_MAXIMIZE_TIP=Maximieren
+STR_MAPCHOOSER_LOADING_PREVIEW=Vorschau wird geladen...
 
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Status
