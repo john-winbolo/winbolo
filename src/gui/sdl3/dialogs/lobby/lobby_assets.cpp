@@ -386,14 +386,13 @@ static bool lobbyScenarioNameLink(const char *name, const char *id) {
  *
  * withScenario is the Server Settings row's list, which is every script the
  * round carries in load order, the scenario included: the setting at the
- * head of that row switches both kinds, so the row names both. Each name the
- * setting keeps out of the round is dimmed on its own, since the map's own
- * script plays either way and dimming the whole list would say it did not.
- * Dimmed with an alpha style var and not BeginDisabled, because a disabled
- * link cannot be pressed.
+ * head of that row switches both kinds, so the row names both. Without it,
+ * the mods alone: the map panel names the scenario on the line above.
  *
- * Without it, the mods alone and nothing dimmed here: the map panel names
- * the scenario on the line above and dims its mods line as a whole. */
+ * Either way each name the setting keeps out of the round is dimmed on its
+ * own, since the map's own script plays either way, mod or scenario, and
+ * dimming the whole list would say it did not. Dimmed with an alpha style
+ * var and not BeginDisabled, because a disabled link cannot be pressed. */
 static void lobbyScenarioScriptLinks(ClientSim *cs, const char *idTag,
                                      float s, bool withScenario) {
     const ImGuiStyle &st    = ImGui::GetStyle();
@@ -419,7 +418,7 @@ static void lobbyScenarioScriptLinks(ClientSim *cs, const char *idTag,
         for (j = i + 1; j < n && !more; j++) {
             more = withScenario || lobbyScriptRowIsMod(cs, j);
         }
-        dim        = withScenario && lobbyScriptRowSwitchedOff(cs, i);
+        dim        = lobbyScriptRowSwitchedOff(cs, i);
         workshopId = lobbyScriptRowWorkshopId(cs, i);
 
         SDL_snprintf(shown, sizeof(shown), "%s%s",
@@ -675,13 +674,11 @@ void lobbyRenderScenarioLine(ClientSim *cs, bool effectiveHost, float s) {
 void lobbyRenderScenarioInfoLines(ClientSim *cs, float s) {
     const char *scenario;
     int         modCount;
-    bool        modsOn;
 
     if (cs == NULL) return;
 
     scenario = lobbyScenarioName(cs);
     modCount = lobbyScenarioModCount(cs);
-    modsOn   = clientSimGetLobbyModsEnabled(cs);
 
     /* This machine's own server runs no scripts, so the round has none and a
        chooser opened here could offer none either. Nothing is drawn at all,
@@ -749,24 +746,37 @@ void lobbyRenderScenarioInfoLines(ClientSim *cs, float s) {
            line drawn straight off that list tells a joiner mods are running
            when they are not. The note is what answers it.
 
+           Each name is dimmed on its own, by lobbyScenarioScriptLinks, and
+           not the line as a whole: a map whose own script is a mod still
+           plays it with the box off, and that name stays at full strength.
+           The label and the note are dimmed only as far as the names are —
+           the label when every mod on the line is off, the note when any is.
            Dimmed with an alpha style var and not BeginDisabled, because the
-           names below are links and a disabled link cannot be pressed. What
-           the dimming is for is the reading, and reading about a mod that is
-           switched off is exactly what somebody looking at this line wants to
-           do. Pushed and popped around the whole line with nothing that can
-           return between the two. */
-        if (!modsOn) {
-            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
-                                ImGui::GetStyle().Alpha * 0.45f);
+           names are links and a disabled link cannot be pressed. Each push
+           is popped with nothing that can return between the two. */
+        int modsOff = 0;
+
+        for (int i = 0; i < lobbyScriptRowCount(cs); i++) {
+            if (lobbyScriptRowIsMod(cs, i) &&
+                lobbyScriptRowSwitchedOff(cs, i)) {
+                modsOff++;
+            }
         }
         /* One link a mod rather than one icon for the lot of them. A round
            may run several, and an icon at the end of the line could only
            ever open the first — a host reading "No LGM Deaths" had no way to
            ask about that one in particular. */
+        if (modsOff == modCount) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                ImGui::GetStyle().Alpha * 0.45f);
+        }
         ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_MODS_LBL));
+        if (modsOff == modCount) ImGui::PopStyleVar();
         ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
         lobbyScenarioScriptLinks(cs, "modLinksMap", s, false);
-        if (!modsOn) {
+        if (modsOff > 0) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                ImGui::GetStyle().Alpha * 0.45f);
             ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_MODS_OFF_NOTE));
             ImGui::PopStyleVar();
         }
