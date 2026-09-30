@@ -772,10 +772,7 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_DLGLOBBY_RULES_COL_CLASSIC", STR_DLGLOBBY_RULES_COL_CLASSIC },
     { "STR_DLGLOBBY_RULES_COL_RULE", STR_DLGLOBBY_RULES_COL_RULE },
     { "STR_DLGLOBBY_RULES_COL_SCENARIO", STR_DLGLOBBY_RULES_COL_SCENARIO },
-    { "STR_DLGLOBBY_RULES_INFO", STR_DLGLOBBY_RULES_INFO },
     { "STR_DLGLOBBY_RULES_OVERRIDDEN", STR_DLGLOBBY_RULES_OVERRIDDEN },
-    { "STR_DLGLOBBY_RULES_RANGE", STR_DLGLOBBY_RULES_RANGE },
-    { "STR_DLGLOBBY_RULE_DETAIL_TITLE", STR_DLGLOBBY_RULE_DETAIL_TITLE },
     { "STR_DLGLOBBY_SCENARIO_ADD", STR_DLGLOBBY_SCENARIO_ADD },
     { "STR_DLGLOBBY_SCENARIO_ALL_IN_ROUND", STR_DLGLOBBY_SCENARIO_ALL_IN_ROUND },
     { "STR_DLGLOBBY_SCENARIO_BOTS", STR_DLGLOBBY_SCENARIO_BOTS },
@@ -804,7 +801,6 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_DLGLOBBY_SCENARIO_ROUND_FULL", STR_DLGLOBBY_SCENARIO_ROUND_FULL },
     { "STR_DLGLOBBY_SCENARIO_ROUND_NONE", STR_DLGLOBBY_SCENARIO_ROUND_NONE },
     { "STR_DLGLOBBY_SCENARIO_RULES", STR_DLGLOBBY_SCENARIO_RULES },
-    { "STR_DLGLOBBY_SCENARIO_RULES_TITLE", STR_DLGLOBBY_SCENARIO_RULES_TITLE },
     { "STR_DLGLOBBY_SCENARIO_SAVE", STR_DLGLOBBY_SCENARIO_SAVE },
     { "STR_DLGLOBBY_SCENARIO_SAVE_HAVE", STR_DLGLOBBY_SCENARIO_SAVE_HAVE },
     { "STR_DLGLOBBY_SCENARIO_SAVE_INFLIGHT", STR_DLGLOBBY_SCENARIO_SAVE_INFLIGHT },
@@ -2129,6 +2125,7 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_RULE_DESC_mine_fatal_divisor", STR_RULE_DESC_mine_fatal_divisor },
     { "STR_RULE_DESC_mine_fuse_ticks", STR_RULE_DESC_mine_fuse_ticks },
     { "STR_RULE_DESC_pill_aim_iterations", STR_RULE_DESC_pill_aim_iterations },
+    { "STR_RULE_DESC_pill_aim_mac", STR_RULE_DESC_pill_aim_mac },
     { "STR_RULE_DESC_pill_angry_divisor", STR_RULE_DESC_pill_angry_divisor },
     { "STR_RULE_DESC_pill_attack_min_ticks", STR_RULE_DESC_pill_attack_min_ticks },
     { "STR_RULE_DESC_pill_attack_ticks", STR_RULE_DESC_pill_attack_ticks },
@@ -2174,6 +2171,7 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_RULE_DESC_tank_brake_rate", STR_RULE_DESC_tank_brake_rate },
     { "STR_RULE_DESC_tank_bump_decay_shift", STR_RULE_DESC_tank_bump_decay_shift },
     { "STR_RULE_DESC_tank_collision_distance", STR_RULE_DESC_tank_collision_distance },
+    { "STR_RULE_DESC_tank_collision_mac", STR_RULE_DESC_tank_collision_mac },
     { "STR_RULE_DESC_tank_death_ticks", STR_RULE_DESC_tank_death_ticks },
     { "STR_RULE_DESC_tank_decel_rate", STR_RULE_DESC_tank_decel_rate },
     { "STR_RULE_DESC_tank_explosion_damage", STR_RULE_DESC_tank_explosion_damage },
@@ -2389,4 +2387,4 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_YES", STR_YES },
 };
 
-#define K_LANG_NAME_TABLE_SIZE  2376
+#define K_LANG_NAME_TABLE_SIZE  2374

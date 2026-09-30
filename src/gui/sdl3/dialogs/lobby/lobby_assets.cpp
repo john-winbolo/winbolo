@@ -127,11 +127,17 @@ void lobbyScenarioKindTag(bool mod, float s) {
     ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() +
                          (mid - h * 0.5f - ImGui::GetCursorScreenPos().y));
-    lobbyDrawNameTag(text,
-                     mod ? g_theme->modTagBg     : g_theme->scenarioTagBg,
-                     mod ? g_theme->modTagText   : g_theme->scenarioTagText,
-                     mod ? g_theme->modTagBorder : g_theme->scenarioTagBorder,
-                     s);
+    /* Through GetColorU32 so the style's alpha reaches the chip: a name
+       dimmed because it is switched off dims its chip with it, where the
+       theme's packed colours alone would stay at full strength. */
+    lobbyDrawNameTag(
+        text,
+        ImGui::GetColorU32(mod ? g_theme->modTagBg : g_theme->scenarioTagBg),
+        ImGui::GetColorU32(mod ? g_theme->modTagText
+                               : g_theme->scenarioTagText),
+        ImGui::GetColorU32(mod ? g_theme->modTagBorder
+                               : g_theme->scenarioTagBorder),
+        s);
 }
 
 /* The chip that says a script was published to the Steam Workshop, drawn
@@ -283,6 +289,24 @@ static uint64_t lobbyScriptRowWorkshopId(ClientSim *cs, int i) {
     return clientSimGetLobbyScriptWorkshopId(cs, i);
 }
 
+/* Whether a row is the committed map's own script. The fallback's single
+ * slot says the same about itself, so a client with no list yet still gets
+ * an answer. */
+static bool lobbyScriptRowBound(ClientSim *cs, int i) {
+    if (clientSimGetLobbyScriptCount(cs) > 0) {
+        return clientSimGetLobbyScriptBound(cs, i);
+    }
+    return clientSimGetLobbyScenarioBound(cs);
+}
+
+/* Whether the Mods/Scenario setting keeps a row out of the round. Off, the
+ * round composes none of the host's picks, mods and picked scenarios alike;
+ * the map's own script is the one row it leaves playing, which is the same
+ * line scnDecideScenario draws on the server. */
+static bool lobbyScriptRowSwitchedOff(ClientSim *cs, int i) {
+    return !clientSimGetLobbyModsEnabled(cs) && !lobbyScriptRowBound(cs, i);
+}
+
 /* A row's name, and its file name where it named itself nothing: a script
  * with no name in its manifest still came from a file, and a line with a
  * gap in it reads as a fault. */
@@ -300,8 +324,8 @@ static const char *lobbyScriptRowName(ClientSim *cs, int i) {
 }
 
 /* Where the first scenario row, or the first mod row, sits in that list.
- * -1 for none of that kind. The icons hand this straight to the details
- * dialog, so the dialog describes the script its icon sits beside rather
+ * -1 for none of that kind. The name links hand this straight to the details
+ * dialog, so the dialog describes the script whose name was pressed rather
  * than whatever the round has attached. */
 int lobbyScriptRowIndexOfKind(ClientSim *cs, bool mod) {
     int n = lobbyScriptRowCount(cs);
@@ -323,28 +347,6 @@ static int lobbyScenarioModCount(ClientSim *cs) {
     return mods;
 }
 
-/* Which row of the script list the idx'th mod is. The mods are a subset of
- * that list and the details dialog is opened by list row, so a line that
- * walks the mods in order needs this to say which row the name it just drew
- * came from. -1 when there is no such mod. */
-static int lobbyScenarioModRow(ClientSim *cs, int idx) {
-    int n = lobbyScriptRowCount(cs);
-    int i, seen = 0;
-
-    for (i = 0; i < n; i++) {
-        if (!lobbyScriptRowIsMod(cs, i)) continue;
-        if (seen++ == idx) return i;
-    }
-    return -1;
-}
-
-static const char *lobbyScenarioModName(ClientSim *cs, int idx) {
-    int at = lobbyScenarioModRow(cs, idx);
-
-    if (at < 0) return "";
-    return lobbyScriptRowName(cs, at);
-}
-
 /* A name that opens what it names. Every place the lobby says what is
  * running now draws the name this way: link-coloured, underlined on hover
  * and with the hand cursor on it, which is what says a word can be pressed
@@ -363,9 +365,9 @@ static bool lobbyScenarioNameLink(const char *name, const char *id) {
     return hit;
 }
 
-/* The mods, each one a link that opens its own details, laid out along the
- * line the caller is on and wrapped by hand where the next name would run
- * past the edge.
+/* The scripts, each one a link that opens its own details, laid out along
+ * the line the caller is on and wrapped by hand where the next name would
+ * run past the edge.
  *
  * By hand because these are items and not prose: TextWrapped breaks a
  * paragraph for itself, and a row of links has to be measured one name at a
@@ -376,60 +378,78 @@ static bool lobbyScenarioNameLink(const char *name, const char *id) {
  * The comma goes on the link, not between the links. A comma drawn as an
  * item of its own would be one more thing to wrap and could start a line.
  *
- * showKind is whether each name wears the Mod chip the chooser's rows wear,
- * and it is what s is carried here for: the chip is sized in scaled pixels
- * and there is no global to read the lobby's scale back from. The chip is
- * measured into the width the wrap test works with, or a name that fits on
- * its own would be put on a line its chip then hangs off the end of.
+ * Every name wears its kind chip, the Mod or Scenario tag the chooser's rows
+ * wear, and it is what s is carried here for: the chip is sized in scaled
+ * pixels and there is no global to read the lobby's scale back from. The
+ * chip is measured into the width the wrap test works with, or a name that
+ * fits on its own would be put on a line its chip then hangs off the end of.
  *
- * Off for the Server Settings column. The row there opens with a checkbox
- * reading "Mods Enabled" and a count reading "2 active", so a chip on every
- * name would be the third thing on one row to say these are mods. The map
- * panel's line names a scenario on the line above and is where the two kinds
- * have to be told apart, so that is the caller that asks for them. */
-static void lobbyScenarioModLinks(ClientSim *cs, const char *idTag, float s,
-                                  bool showKind) {
+ * withScenario is the Server Settings row's list, which is every script the
+ * round carries in load order, the scenario included: the setting at the
+ * head of that row switches both kinds, so the row names both. Without it,
+ * the mods alone: the map panel names the scenario on the line above.
+ *
+ * Either way each name the setting keeps out of the round is dimmed on its
+ * own, since the map's own script plays either way, mod or scenario, and
+ * dimming the whole list would say it did not. Dimmed with an alpha style
+ * var and not BeginDisabled, because a disabled link cannot be pressed. */
+static void lobbyScenarioScriptLinks(ClientSim *cs, const char *idTag,
+                                     float s, bool withScenario) {
     const ImGuiStyle &st    = ImGui::GetStyle();
     float             right = ImGui::GetCursorScreenPos().x +
                               ImGui::GetContentRegionAvail().x;
-    int               n     = lobbyScenarioModCount(cs);
-    float             tagW  = showKind ? lobbyScenarioKindTagWidth(true, s)
-                                       : 0.0f;
+    int               n     = lobbyScriptRowCount(cs);
+    bool              first = true;
     int               i;
 
     ImGui::PushID(idTag);
     for (i = 0; i < n; i++) {
         char     shown[96];
         float    w;
-        uint64_t workshopId = showKind
-                                  ? lobbyScriptRowWorkshopId(
-                                        cs, lobbyScenarioModRow(cs, i))
-                                  : 0;
+        bool     mod = lobbyScriptRowIsMod(cs, i);
+        bool     dim;
+        bool     more = false;
+        uint64_t workshopId;
+        int      j;
+
+        if (!mod && !withScenario) continue;
+        /* Whether another name follows this one, which is what the comma
+           says. The rows this line skips are no part of the answer. */
+        for (j = i + 1; j < n && !more; j++) {
+            more = withScenario || lobbyScriptRowIsMod(cs, j);
+        }
+        dim        = lobbyScriptRowSwitchedOff(cs, i);
+        workshopId = lobbyScriptRowWorkshopId(cs, i);
 
         SDL_snprintf(shown, sizeof(shown), "%s%s",
-                     lobbyScenarioModName(cs, i), (i + 1 < n) ? "," : "");
-        w = ImGui::CalcTextSize(shown).x + tagW +
+                     lobbyScriptRowName(cs, i), more ? "," : "");
+        w = ImGui::CalcTextSize(shown).x + lobbyScenarioKindTagWidth(mod, s) +
             lobbyScenarioWorkshopTagWidth(workshopId, s);
-        if (i > 0 &&
+        if (!first &&
             ImGui::GetItemRectMax().x + st.ItemInnerSpacing.x + w <= right) {
             ImGui::SameLine(0.0f, st.ItemInnerSpacing.x);
         }
+        first = false;
+        /* Pushed and popped around the one name and its chips, with nothing
+           that can return between the two. */
+        if (dim) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, st.Alpha * 0.45f);
+        }
         ImGui::PushID(i);
         if (ImGui::TextLink(shown)) {
-            lobbyScenarioDetailsOpenScript(cs, lobbyScenarioModRow(cs, i));
+            lobbyScenarioDetailsOpenScript(cs, i);
         }
         imguiHandOnHover();
         /* Drawn while the link is still the current item: the chip centres
            itself on whatever it follows, and anything between the two would
            be what it lined up against instead. */
-        if (showKind) lobbyScenarioKindTag(true, s);
-        /* The Workshop chip goes with the kind chip: the Server Settings
-           column, which wears neither, gets 0 above and draws nothing. The
-           word only, and no button to the item's page: this line is a
-           readout everyone sees, and the details dialog the name opens is
-           where that button is. */
+        lobbyScenarioKindTag(mod, s);
+        /* The word only, and no button to the item's page: this line is a
+           readout, and the details dialog the name opens is where that
+           button is. */
         lobbyScenarioWorkshopTag(workshopId, s);
         ImGui::PopID();
+        if (dim) ImGui::PopStyleVar();
     }
     ImGui::PopID();
 }
@@ -444,48 +464,21 @@ static const char *lobbyScenarioName(ClientSim *cs) {
     return lobbyScriptRowName(cs, i);
 }
 
-/* The icon that opens the details dialog, at the end of a line that names
- * something. An icon and not a button: both lines it sits on are prose, the
- * map panel is text with no room for a button beside it, and the Server
- * Settings column is the narrowest of the four.
+/* ── The Server Settings column's mods and scenario row ───────────
+ * One row: the checkbox, Details and the count, then the names on the line
+ * under them, each wearing its Mod or Scenario tag.
  *
- * id carries a visible "i" before its ##, because the fallback draws its
- * label and ImageButton does not — an icon that failed to load must still
- * leave something to press. */
-bool lobbyScenarioInfoButton(const char *id) {
-    SDL_Texture *icon = lobbyIcons()->info;
-    bool         clicked;
-
-    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-    if (icon != NULL) {
-        /* Sized off the text and with the frame padding taken away, so the
-           icon sits inside the line it belongs to instead of making that
-           line a button's height taller. */
-        float h = ImGui::GetTextLineHeight();
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
-        clicked = ImGui::ImageButton(id, (ImTextureID)icon, ImVec2(h, h));
-        ImGui::PopStyleVar();
-    } else {
-        clicked = ImGui::SmallButton(id);
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_SCENARIO_DETAILS));
-    }
-    imguiHandOnHover();
-    return clicked;
-}
-
-/* ── The Server Settings column's mods row ────────────────────────
- * One row: the checkbox, the summary the dash binds to it, and Details.
- *
- *   [x] Mods Enabled - 3 active (Faster Base Recharge, No LGM Deaths) [Details]
+ *   [x] Mods/Scenario Enabled [Details] 3 active:
+ *   Soccer, [Scenario] Faster Base Recharge, [Mod] No LGM Deaths [Mod]
  *
  * The checkbox is a real server setting and not a display of one. Unchecked,
- * the round composes none of the mods on the pick list; the list itself is
- * left where it is and every name comes back the moment it is checked again,
- * the same way the password box above keeps its text while the box beside it
- * is unchecked. It is mods only — a scenario on the same list plays either
- * way, which is why the summary keeps naming them while the box is off.
+ * the round composes none of the scripts the host picked, mods and picked
+ * scenarios alike; the list itself is left where it is and every name comes
+ * back the moment it is checked again, the same way the password box above
+ * keeps its text while the box beside it is unchecked. The committed map's
+ * own script is the one thing it leaves playing, because a map that brings
+ * its own rules was not picked here. The wire byte is still LST_MODS_OFF;
+ * what changed is what the server skips when it is set.
  *
  * The label is the checkbox's own and the summary is not part of it. ImGui
  * draws a checkbox's label inside the item, so a summary folded into the
@@ -496,20 +489,25 @@ bool lobbyScenarioInfoButton(const char *id) {
  * Details stays live under both, because what the round runs is still worth
  * reading when nobody here may change it — the same answer the Visibility
  * row gives. Details opens the chooser rather than the details dialog, since
- * the chooser is where mods are added, removed and ordered; the row has no
- * icon left to carry that difference, so the tooltip says it.
+ * the chooser is where scripts are added, removed and ordered; a name on the
+ * line below is the way into the details dialog, so the tooltip says which
+ * of the two this button opens.
  *
- * The summary is dimmed while the box is off. The names are still what the
- * host picked, so they stay on the row, but "3 active" beside an unchecked
- * box would say they are running when they are not.
+ * The count is of the scripts that will run: with the box off it leaves out
+ * each name the setting keeps out, and those names are dimmed. The names are
+ * still what the host picked, so they stay on the row, but counting them
+ * beside an unchecked box would say they are running when they are not. The
+ * map's own script runs either way, so it is counted either way and the
+ * count itself is never dimmed.
  *
- * Details sits next to the box and the summary comes last, which is the
- * order the row is read in: the setting, the way to change it, then what it
- * currently holds. Nothing here measures a width. The summary is the only
- * part that can outgrow the column and it wraps, so the two fixed-width
- * items keep their places whatever the column does. */
+ * Details sits next to the box and the count comes last, which is the order
+ * the row is read in: the setting, the way to change it, then what it
+ * currently holds. The names go on a line of their own under all three: with
+ * a chip beside every one of them they are the part that outgrows the
+ * column, and they wrap there by hand, so the fixed-width items above keep
+ * their places whatever the column does. */
 static void lobbyRenderModsRow(ClientSim *cs, bool effectiveHost,
-                               int modCount, float s) {
+                               int scriptCount, float s) {
     const char *cbLbl  = langGetText(STR_DLGLOBBY_MODS_ENABLED_CB);
     const char *detLbl = langGetText(STR_DLGLOBBY_SCENARIO_DETAILS);
     /* Copied out rather than held as a pointer: langGetTextFmt answers from
@@ -518,16 +516,25 @@ static void lobbyRenderModsRow(ClientSim *cs, bool effectiveHost,
     bool modsOn  = clientSimGetLobbyModsEnabled(cs);
     bool locked  = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MODS) != 0;
     bool disable = !effectiveHost || locked;
+    int  active  = 0;
+    int  i;
 
-    if (modCount == 0) {
+    /* The scripts that will run, which is every row with the box on and the
+       map's own script alone with it off. */
+    for (i = 0; i < scriptCount; i++) {
+        if (!lobbyScriptRowSwitchedOff(cs, i)) active++;
+    }
+
+    if (scriptCount == 0) {
         SDL_strlcpy(summary, langGetText(STR_DLGLOBBY_MODS_NONE),
                     sizeof(summary));
     } else {
-        /* The count only. The names follow it as links, drawn one at a time
-           by lobbyScenarioModLinks below, so nothing here has to cut a list
-           of them to a message argument's 64 bytes. */
+        /* The count only, the scenario counted with the mods because the
+           line below names both. The names follow it as links, drawn one at
+           a time by lobbyScenarioScriptLinks below, so nothing here has to
+           cut a list of them to a message argument's 64 bytes. */
         MessageArgs args = {};
-        args.number = modCount;
+        args.number = active;
         SDL_strlcpy(summary, langGetTextFmt(STR_DLGLOBBY_MODS_ACTIVE, &args),
                     sizeof(summary));
     }
@@ -561,56 +568,16 @@ static void lobbyRenderModsRow(ClientSim *cs, bool effectiveHost,
     ImGui::PopID();
 
     ImGui::SameLine();
-    /* The count is dimmed with the setting and the names are not. "2 active"
-       beside an unchecked box would say they are running when they are not,
-       which is what the dimming answers; a name is still the name of a thing
-       a host may want to read about, and a disabled link cannot be pressed
-       to read it. */
-    if (!modsOn) ImGui::BeginDisabled();
+    /* Not dimmed. The count already leaves out what the setting keeps out,
+       so it is true with the box off as well. The names below dim one at a
+       time, and only the ones the setting keeps out: a name is still the
+       name of a thing a host may want to read about, and a disabled link
+       cannot be pressed to read it. */
     ImGui::TextUnformatted(summary);
-    if (!modsOn) ImGui::EndDisabled();
-    if (modCount > 0) {
-        ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-        lobbyScenarioModLinks(cs, "modsRowLinks", s, false);
+    /* On the line after the row, not beside the count: no SameLine. */
+    if (scriptCount > 0) {
+        lobbyScenarioScriptLinks(cs, "modsRowLinks", s, true);
     }
-}
-
-/* ── The scenario line's button row ───────────────────────────────
- * The line ends in up to two SmallButtons that want to sit on one row. The
- * Server Settings column they sit in is the narrowest of the four, so the row
- * does not always have the width for all of them, and a column clips what it
- * cannot hold rather than wrapping it. There is no undoing a SameLine either,
- * so the width has to be known before the button is drawn.
- *
- * Begin records how much width this caller has — the map panel gives the line
- * more than the settings column does — and Fits answers, for the button about
- * to be drawn, whether it still fits beside the last one. It books the space
- * as it answers: true means put a SameLine in front of the button, false means
- * the button starts a row of its own and the booking restarts from it. */
-struct ScenarioButtonRow {
-    float avail;  /* width of one row */
-    float used;   /* width of the row being filled, 0 before the first button */
-};
-
-static void lobbyScenarioButtonRowBegin(ScenarioButtonRow *row) {
-    row->avail = ImGui::GetContentRegionAvail().x;
-    row->used  = 0.0f;
-}
-
-static bool lobbyScenarioButtonFits(ScenarioButtonRow *row, int stringId) {
-    /* A SmallButton is its label plus the frame padding either side — it
-       drops FramePadding.y only, not FramePadding.x. */
-    float w = ImGui::CalcTextSize(langGetText(stringId)).x
-            + ImGui::GetStyle().FramePadding.x * 2.0f;
-    if (row->used > 0.0f) {
-        float need = row->used + ImGui::GetStyle().ItemSpacing.x + w;
-        if (need <= row->avail) {
-            row->used = need;
-            return true;
-        }
-    }
-    row->used = w;
-    return false;
 }
 
 /* What is running, for the host who sets it. The foot of the settings form's
@@ -618,13 +585,13 @@ static bool lobbyScenarioButtonFits(ScenarioButtonRow *row, int stringId) {
  * the other two things a host sets about the server rather than about the
  * round.
  *
- * The scenario and the mods are two lines and not one, because they are not
- * one question. The scenario decides the round; the mods change how it
- * plays. A host who picks a mod must see the scenario line unmoved, and a
- * scenario must never turn up among the mods — so each line reads its own
- * half and neither is drawn from the other's.
+ * The scenario and the mods share one row, the Mods/Scenario row, because
+ * the checkbox at its head switches the host's picked scenario as well as
+ * the mods. Each name wears its Scenario or Mod tag, so the two kinds are
+ * still told apart: the scenario decides the round, a mod changes how it
+ * plays.
  *
- * The mods line is drawn even at none, and says so. That is the bug this
+ * The row is drawn even at none, and says so. That is the bug this
  * shape fixes: the column used to fall through to a bare Choose button with
  * no label over it, so the narrowest column of the four ended in an
  * unexplained button. It is also deliberately different from the map panel,
@@ -639,35 +606,26 @@ static bool lobbyScenarioButtonFits(ScenarioButtonRow *row, int stringId) {
  * and has the preference switched off, the column says that instead, rather
  * than leaving a host wondering where the scenario went.
  *
- * The Rules button stays here and does not follow the scenario line into the
- * map panel. It is the deep view — a row per rule, each with an Info popup a
- * controller can land on — and the map panel's way to the same answer is now
- * the details dialog behind the icon, which carries the rules table in
- * summary. So a host keeps the full table, a joiner gets the answer, and the
- * map panel stays text plus one icon.
+ * No buttons follow the row any more. The Rules button went because the
+ * details dialog behind each script's name shows the same rules table, and
+ * the row's own Details button is the way into the chooser.
  *
- * The buttons still measure themselves before the row is built. Only two of
- * them are left and they fit side by side in English, but the column's floor
- * is set by the password box rather than by this row, so nothing forces the
- * column to be wide enough for two buttons in a language whose words are
- * longer. Measuring is what keeps a button that will not fit on a row of its
- * own instead of clipped at the column edge.
- *
- * The buttons and the icons only ask for their dialogs. Every one of those
- * dialogs is drawn from the lobby's own frame, because this line is drawn
- * inside something that can stop being drawn — the settings form is a tab of
- * its own in the tabbed layout and a collapsing header on the desktop — and a
- * dialog that went away with it would be open with no way back to it. */
+ * The Details button and the name links only ask for their dialogs. Every
+ * one of those dialogs is drawn from the lobby's own frame, because this line
+ * is drawn inside something that can stop being drawn — the settings form is
+ * a tab of its own in the tabbed layout and a collapsing header on the
+ * desktop — and a dialog that went away with it would be open with no way
+ * back to it. */
 void lobbyRenderScenarioLine(ClientSim *cs, bool effectiveHost, float s) {
-    const char *scenario;
-    int         modCount;
+    int scriptCount;
 
     if (cs == NULL) return;
 
-    scenario = lobbyScenarioName(cs);
-    modCount = lobbyScenarioModCount(cs);
+    /* Every row, scenario and mods together, because the row below names
+       both and counts both. */
+    scriptCount = lobbyScriptRowCount(cs);
 
-    if (scenario == NULL && modCount == 0 &&
+    if (scriptCount == 0 &&
         !gameFrontHostingScripts && gameFrontGetServerSim() != NULL) {
         /* This machine's own server runs no scripts, so there is nothing for
            a chooser to pick that could play. Say why, and offer no button. */
@@ -677,41 +635,14 @@ void lobbyRenderScenarioLine(ClientSim *cs, bool effectiveHost, float s) {
         return;
     }
 
-    /* No scenario line here. The Game Type column names it on the Scenario
-       row it puts the round on, with the same link to the same details, and
-       this column used to say the identical thing four columns over. What
-       stays is the mods row, which is a control and not a readout: the
-       scenario is the map's and a host changes it by committing a map, where
-       the mods are picked right here.
-
-       scenario is still read above, because the guard over it decides
-       whether this column has anything at all to say. */
-    (void)scenario;
-
-    lobbyRenderModsRow(cs, effectiveHost, modCount, s);
-
-    /* The row the button below sits on, measured against the width this
-       caller has. lobbyScenarioButtonFits reports whether the next button
-       still fits beside the last one and books the space when it does. It is
-       one button now and the answer is always yes, and the row is kept
-       because a second button here is one line of code away.
-
-       Choose used to be the first of them and opened the chooser. The mods
-       row above opens the same dialog from its own Details button, so the
-       two said the same thing twice and Choose said it in a word that
-       matches no title the dialog carries. */
-    ScenarioButtonRow row;
-    lobbyScenarioButtonRowBegin(&row);
-    /* What the scenario's rules table says. A script whose whole content is
-       a rules table has nothing else to say what it does. */
-    if (lobbyScenarioRulesAvailable(cs)) {
-        if (lobbyScenarioButtonFits(&row, STR_DLGLOBBY_SCENARIO_RULES)) {
-            ImGui::SameLine();
-        }
-        if (ImGui::SmallButton(langGetText(STR_DLGLOBBY_SCENARIO_RULES))) {
-            lobbyScenarioRulesOpen();
-        }
-    }
+    /* No scenario line of its own here. The Game Type column names it on
+       the Scenario row it puts the round on, with the same link to the same
+       details. The scenario is named again on the row below, among the mods
+       and wearing its Scenario tag, because the checkbox at the head of that
+       row now switches the host's picked scenario as well as the mods, and a
+       row that switched a thing it did not name would leave the host
+       guessing what the box does. */
+    lobbyRenderModsRow(cs, effectiveHost, scriptCount, s);
 }
 
 /* The same two halves, read-only, for the map panel — under the map's name
@@ -744,13 +675,11 @@ void lobbyRenderScenarioLine(ClientSim *cs, bool effectiveHost, float s) {
 void lobbyRenderScenarioInfoLines(ClientSim *cs, float s) {
     const char *scenario;
     int         modCount;
-    bool        modsOn;
 
     if (cs == NULL) return;
 
     scenario = lobbyScenarioName(cs);
     modCount = lobbyScenarioModCount(cs);
-    modsOn   = clientSimGetLobbyModsEnabled(cs);
 
     /* This machine's own server runs no scripts, so the round has none and a
        chooser opened here could offer none either. Nothing is drawn at all,
@@ -763,12 +692,35 @@ void lobbyRenderScenarioInfoLines(ClientSim *cs, float s) {
         return;
     }
 
-    if (scenario != NULL) {
+    /* One line a scenario row. A round that plays has one such row, but
+       with Mods/Scenario off on a map that brings its own script the list
+       holds two: the map's own, which plays, and the host's picked one,
+       which the server keeps for when the box goes back on. Both are drawn,
+       so a joiner is shown the switched-off pick the same way a plain map
+       shows it. */
+    for (int scnRow = 0; scenario != NULL && scnRow < lobbyScriptRowCount(cs);
+         scnRow++) {
+        /* A scenario the host picked is kept out of the round while the
+           Mods/Scenario setting is off, the same as the mods, so it is
+           dimmed and noted the way the mods line below is. The map's own
+           script plays either way and is drawn as it always was. Pushed
+           here and popped after the note, with nothing that can return
+           between the two. */
+        bool scnOff;
+
+        if (lobbyScriptRowIsMod(cs, scnRow)) continue;
+        scnOff = lobbyScriptRowSwitchedOff(cs, scnRow);
+
+        if (scnOff) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                ImGui::GetStyle().Alpha * 0.45f);
+        }
+        ImGui::PushID(scnRow);
         ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_SCENARIO_LBL));
         ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-        if (lobbyScenarioNameLink(scenario, "scnLinkMap")) {
-            lobbyScenarioDetailsOpenScript(
-                cs, lobbyScriptRowIndexOfKind(cs, false));
+        if (lobbyScenarioNameLink(lobbyScriptRowName(cs, scnRow),
+                                  "scnLinkMap")) {
+            lobbyScenarioDetailsOpenScript(cs, scnRow);
         }
         /* The kind chip, the same one the chooser's rows wear. The two lines
            here are the only place in the lobby that names a script without
@@ -777,42 +729,55 @@ void lobbyRenderScenarioInfoLines(ClientSim *cs, float s) {
            who won, a mod may not. */
         lobbyScenarioKindTag(false, s);
         /* The word only, as on the mods line below. */
-        lobbyScenarioWorkshopTag(
-            lobbyScriptRowWorkshopId(cs, lobbyScriptRowIndexOfKind(cs, false)),
-            s);
-        /* The icon stays on the end of the link and opens the same dialog.
-           The link says the name can be pressed and the icon says what
-           pressing it gives, and a panel read at a glance can use both. */
-        if (lobbyScenarioInfoButton("i##scnInfoMap")) {
-            lobbyScenarioDetailsOpenScript(
-                cs, lobbyScriptRowIndexOfKind(cs, false));
+        lobbyScenarioWorkshopTag(lobbyScriptRowWorkshopId(cs, scnRow), s);
+        /* No info icon on the end of the link any more. It opened the same
+           dialog the name opens, and the name is drawn as a link, so the
+           icon was a second way to press the same thing. */
+        ImGui::PopID();
+        if (scnOff) {
+            ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+            ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_MODS_OFF_NOTE));
+            ImGui::PopStyleVar();
         }
     }
     if (modCount > 0) {
         /* The server keeps publishing the mods it was given whether or not
-           the Mods Enabled setting lets the round compose them — the skip is
+           the Mods/Scenario setting lets the round compose them — the skip is
            made when the round is built, not when the list goes out — so a
            line drawn straight off that list tells a joiner mods are running
            when they are not. The note is what answers it.
 
+           Each name is dimmed on its own, by lobbyScenarioScriptLinks, and
+           not the line as a whole: a map whose own script is a mod still
+           plays it with the box off, and that name stays at full strength.
+           The label and the note are dimmed only as far as the names are —
+           the label when every mod on the line is off, the note when any is.
            Dimmed with an alpha style var and not BeginDisabled, because the
-           names below are links and a disabled link cannot be pressed. What
-           the dimming is for is the reading, and reading about a mod that is
-           switched off is exactly what somebody looking at this line wants to
-           do. Pushed and popped around the whole line with nothing that can
-           return between the two. */
-        if (!modsOn) {
-            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
-                                ImGui::GetStyle().Alpha * 0.45f);
+           names are links and a disabled link cannot be pressed. Each push
+           is popped with nothing that can return between the two. */
+        int modsOff = 0;
+
+        for (int i = 0; i < lobbyScriptRowCount(cs); i++) {
+            if (lobbyScriptRowIsMod(cs, i) &&
+                lobbyScriptRowSwitchedOff(cs, i)) {
+                modsOff++;
+            }
         }
         /* One link a mod rather than one icon for the lot of them. A round
            may run several, and an icon at the end of the line could only
            ever open the first — a host reading "No LGM Deaths" had no way to
            ask about that one in particular. */
+        if (modsOff == modCount) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                ImGui::GetStyle().Alpha * 0.45f);
+        }
         ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_MODS_LBL));
+        if (modsOff == modCount) ImGui::PopStyleVar();
         ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-        lobbyScenarioModLinks(cs, "modLinksMap", s, true);
-        if (!modsOn) {
+        lobbyScenarioScriptLinks(cs, "modLinksMap", s, false);
+        if (modsOff > 0) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                ImGui::GetStyle().Alpha * 0.45f);
             ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_MODS_OFF_NOTE));
             ImGui::PopStyleVar();
         }
@@ -878,14 +843,23 @@ void lobbyRenderScenarioInfoLines(ClientSim *cs, float s) {
  * to read the whole tooltip to find the pop. */
 static void lobbyRenderModsTooltip(ClientSim *cs, bool modsOn, int modCount) {
     int n = lobbyScriptRowCount(cs);
-    int i, shown = 0;
+    int i, shown = 0, listed = modCount;
+
+    /* Off, the hover lists every pick the setting keeps out, the picked
+       scenario as well as the mods: every row that is not the map's own. */
+    if (!modsOn) {
+        listed = 0;
+        for (i = 0; i < n; i++) {
+            if (!lobbyScriptRowBound(cs, i)) listed++;
+        }
+    }
 
     ImGui::BeginTooltip();
     /* A round with no mods still gets a tooltip. The line says "No" and the
        two reasons it can say No — none loaded, or loaded and switched off —
        are a different thing to know, so the hover has to separate them
        rather than leaving a reader to guess which No this is. */
-    if (modCount == 0) {
+    if (listed == 0) {
         ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_MODS_TIP_NONE));
         ImGui::EndTooltip();
         return;
@@ -897,15 +871,20 @@ static void lobbyRenderModsTooltip(ClientSim *cs, bool modsOn, int modCount) {
 
     /* Walked over the whole script list rather than over the mods alone, so
        the numbers are the load order the server published and not an order
-       this end invented. The count beside each name is its place among the
-       mods, which is what the header's "(3)" counted; the scenario the list
-       may also carry is on the map panel's own line and is not a mod. */
+       this end invented. On, the count beside each name is its place among
+       the mods, which is what the header's "(3)" counted; the scenario the
+       list may also carry is on the map panel's own line and is not a mod.
+       Off, it is the place among the picks that will not run, and a picked
+       scenario is one of those. */
     if (!modsOn) {
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
                             ImGui::GetStyle().Alpha * 0.45f);
     }
     for (i = 0; i < n; i++) {
-        if (!lobbyScriptRowIsMod(cs, i)) continue;
+        if (modsOn ? !lobbyScriptRowIsMod(cs, i)
+                   : lobbyScriptRowBound(cs, i)) {
+            continue;
+        }
         shown++;
         ImGui::Text("%d. %s", shown, lobbyScriptRowName(cs, i));
     }

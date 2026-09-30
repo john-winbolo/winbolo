@@ -1405,15 +1405,10 @@ static void lobbySettingsVisRowParts(char *lbl, int lblSize, float *labelW,
  * comes out of the rows that can take it — the time limit and the password
  * each drop their input under the checkbox.
  *
- * The scenario line at the foot of Server Settings ended in three buttons,
- * and the Rules one had to start a row of its own. Reload script is gone
- * from that line, which took one button and one spacing off this column's
- * want. No other column gained that width: Server Settings is first in the
- * share-out order and was the column the missing width was coming out of,
- * so the saving is spent inside it, on getting Choose and Rules onto one
- * row. The floor did not move at all. The password box (180px scaled) is
- * wider than any of the three buttons was, so the window width below which
- * the form starts clipping is the same as it was. */
+ * The foot of Server Settings is the Mods/Scenario row, and no buttons follow
+ * it any more: Reload script, Choose and Rules have all gone from there. So
+ * this column measures no button row, and its floor is set by the password
+ * box (180px scaled). */
 /* What of text fits in avail, with an ellipsis where it was cut. Used by a
  * row whose text is not the lobby's own word — a scenario names itself and
  * the name can be any length, where every other label in this form is one
@@ -1502,21 +1497,6 @@ static void lobbySettingsShareColumns(float s) {
         float pwOne   = pwCheck + gap + pwBox;
         float pwTwo   = ImMax(pwCheck, pwBox);
 
-        /* The button the scenario line still draws. Reload script used to be
-           the first and the widest of three and Choose was the second; both
-           are gone from the line, so measuring either here would reserve
-           width for a button that never appears. This array is the line's own
-           row and has to be kept the same as it. */
-        const int btns[] = { STR_DLGLOBBY_SCENARIO_RULES };
-        const int btnCount = (int)(sizeof(btns) / sizeof(btns[0]));
-        float btnRow = 0.0f, btnWidest = 0.0f;
-        for (int i = 0; i < btnCount; i++) {
-            float w = ImGui::CalcTextSize(langGetText(btns[i])).x
-                    + st.FramePadding.x * 2.0f;
-            btnRow += (i > 0 ? gap : 0.0f) + w;
-            if (w > btnWidest) btnWidest = w;
-        }
-
         /* The mods row: the box and Details, which sit together on one line
            and stay together. It is the one row in this column with no second
            line to fall back on, so what it asks for is also what it will
@@ -1527,8 +1507,8 @@ static void lobbySettingsShareColumns(float s) {
                         + st.FramePadding.x * 2.0f;
         float modsRow   = modsCheck + gap + modsDet;
 
-        want[3]   = ImMax(ImMax(tlOne, pwOne), ImMax(btnRow, modsRow));
-        floorW[3] = ImMax(ImMax(tlTwo, pwTwo), ImMax(btnWidest, modsRow));
+        want[3]   = ImMax(ImMax(tlOne, pwOne), modsRow);
+        floorW[3] = ImMax(ImMax(tlTwo, pwTwo), modsRow);
     }
 
     /* Column 0 starts at the form's left edge and column 4 is its right
@@ -1551,10 +1531,10 @@ static void lobbySettingsShareColumns(float s) {
            Other second, each up to its want. In order, rather than spread
            evenly, because a column reads better for crossing one whole row's
            width than for gaining a few pixels: what there is to hand out at
-           the lobby's own size is enough to put the scenario line's two
-           buttons on one row and not nearly enough to un-stack anything
-           else. Game Type and Computer Players ask for nothing here - their
-           want is their floor. */
+           the lobby's own size is enough to widen one column a little and
+           not nearly enough to un-stack anything else. Game Type and
+           Computer Players ask for nothing here - their want is their
+           floor. */
         static const int order[4] = { 3, 2, 0, 1 };
         float slack = budget - floorSum;
         for (int i = 0; i < 4; i++) give[i] = floorW[i];
