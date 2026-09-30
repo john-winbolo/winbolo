@@ -391,6 +391,22 @@
                 if (!gameKey) { return; }
                 try { history.replaceState(null, '', '/join/' + encodeURIComponent(gameKey)); }
                 catch (e) {}
+            },
+
+            /* The screen the page is on, 'menu' or 'game'. main_wasm.c sets
+               it; only a single-player game ever sets 'game'. */
+            wbScreen: 'menu',
+
+            /* Set by the popstate handler below when Back or Forward moves
+               off a single-player game; the game loop reads and clears it. */
+            wbNavRequest: '',
+
+            /* The address of the menu. A local server serves the page as
+               /winbolo.html, where / would not reach it; everywhere else the
+               menu is /. A reload of either opens the menu again. */
+            wbMenuUrl: function() {
+                return /winbolo\.html$/.test(window.location.pathname)
+                    ? '/winbolo.html' : '/';
             }
         };
 
@@ -415,6 +431,28 @@
                 }
             }
         }, true);
+
+        /* Back and Forward between the menu and a single-player game. C owns
+           the screen: it pushes the game's history entry, sets
+           Module.wbScreen, and ends the game. This handler only records a
+           request for the game loop to take, because a function called from
+           JS must never suspend the page's single ASYNCIFY stack, and the
+           game and the menu both run on it. It never calls into the module.
+             - Moving off a running single-player game asks the game loop to
+               leave it, as Leave Game does.
+             - Forward into a game that has already ended shows the menu: the
+               entry is rewritten to the menu's address.
+           Multiplayer never sets wbScreen to 'game', so nothing here acts
+           during a join. */
+        window.addEventListener('popstate', function(e) {
+            var target = (e.state && e.state.screen) || 'menu';
+            if (Module.wbScreen === 'game' && target !== 'game') {
+                Module.wbNavRequest = 'menu';
+            } else if (Module.wbScreen === 'menu' && target === 'game') {
+                try { history.replaceState({ screen: 'menu' }, '', Module.wbMenuUrl()); }
+                catch (err) {}
+            }
+        });
 
         /* Auto-focus the canvas so keyboard events work immediately. */
         window.addEventListener('load', function() {

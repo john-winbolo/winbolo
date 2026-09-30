@@ -117,6 +117,13 @@ static bool finishedLoop = FALSE;
 static bool showAllianceReq = TRUE;
 /* Set by windowLeaveGame; wasmRunGame ends the game on it. */
 static bool s_leaveRequested = FALSE;
+/* Browser history for single player, kept by main's screen loop and not by
+ * wasmGameStateReset. s_gameEntryPushed: the game was picked from the menu,
+ * which pushed its history entry, so the menu's entry sits behind it.
+ * s_leftByHistory: the game ended because Back or Forward moved off it, so
+ * the browser is already on the menu's entry. */
+static bool s_gameEntryPushed = FALSE;
+static bool s_leftByHistory = FALSE;
 
 /* Terminal connection-failure state. Set on any unrecoverable connection
  * problem (can't reach the relay, version mismatch, used/expired join code,
@@ -424,11 +431,74 @@ EM_ASYNC_JS(void, wasmFrameWait, (void), {
     });
 });
 
+/* -------------------------------------------------------
+ * Browser history for the menu and single-player games
+ *
+ * shell.html's popstate handler never calls in here; it only records
+ * Module.wbNavRequest, which the game loop reads. None of these suspend.
+ * ------------------------------------------------------- */
+
+/* Record the screen the page is on ("menu" or "game") for the popstate
+ * handler. */
+static void wasmSetScreen(const char *screen) {
+  EM_ASM({ Module.wbScreen = UTF8ToString($0); }, screen);
+}
+
+/* Make the current history entry the menu, at the menu's address. */
+static void wasmHistoryReplaceMenu(void) {
+  EM_ASM({
+    try { history.replaceState({screen: 'menu'}, '', Module.wbMenuUrl()); }
+    catch (e) {}
+  });
+}
+
+/* Push a history entry for a game picked from the menu. Its address is the
+ * one that launches the same game directly, so a reload restarts it. */
+static void wasmHistoryPushGame(WasmGameMode mode) {
+  EM_ASM({
+    var query = $0 ? '?tutorial=1' : '?practise=1';
+    try { history.pushState({screen: 'game'}, '', Module.wbMenuUrl() + query); }
+    catch (e) {}
+  }, mode == WASM_GAME_TUTORIAL ? 1 : 0);
+}
+
+/* Mark the current entry as a game, for a game the page launched straight
+ * into. The address is left as it is. */
+static void wasmHistoryMarkGame(void) {
+  EM_ASM({
+    try { history.replaceState({screen: 'game'}, '', location.href); }
+    catch (e) {}
+  });
+}
+
+/* Step back to the menu's entry. The popstate this fires arrives once main
+ * next waits on a frame, by which time the screen is already the menu, so
+ * the handler ignores it. */
+static void wasmHistoryBack(void) {
+  EM_ASM({ history.back(); });
+}
+
+/* Take a Back or Forward request the popstate handler recorded: TRUE, and
+ * cleared, when one is waiting. */
+static bool wasmTakeNavRequest(void) {
+  int pending = EM_ASM_INT({
+    if (!Module.wbNavRequest) return 0;
+    Module.wbNavRequest = '';
+    return 1;
+  });
+  return pending != 0;
+}
+
 /* Run the current game until it ends: a game over or quit (finishedLoop) or
- * a leave request (windowLeaveGame). */
+ * a leave request (windowLeaveGame). In single player, Back or Forward off
+ * the game's history entry leaves it the same way. */
 static void wasmRunGame(void) {
   while (!finishedLoop && !s_leaveRequested) {
     main_loop_iteration();
+    if (gameFrontGetServerSim() != NULL && wasmTakeNavRequest()) {
+      s_leftByHistory = TRUE;
+      windowLeaveGame();
+    }
     wasmFrameWait();
   }
 }
@@ -658,9 +728,21 @@ int main(int argc, char *argv[]) {
 
   /* Screens: the menu, then a game, then the menu again. A launch that names
    * a game goes straight into it; a join never shows the menu. A game picked
-   * from the menu carries no join key, dev proxy or password. */
+   * from the menu carries no join key, dev proxy or password.
+   *
+   * History: the menu's entry is the page's first. A game picked from the
+   * menu pushes its own entry, so Back returns to the menu; a single-player
+   * game the page launched straight into marks its entry as the game, with
+   * no menu behind it. A join leaves the history alone. */
   WasmLaunch next = launch;
   bool menu = launch.showMenu;
+  if (launch.showMenu) {
+    wasmHistoryReplaceMenu();
+    wasmSetScreen("menu");
+  } else if (launch.mode != WASM_GAME_JOIN) {
+    wasmHistoryMarkGame();
+    s_gameEntryPushed = FALSE;
+  }
   for (;;) {
     if (menu) {
       /* The welcome dialog returns an openingStates value (gamefront.h). */
@@ -680,6 +762,15 @@ int main(int argc, char *argv[]) {
       next.gameKey[0] = '\0';
       next.devProxy[0] = '\0';
       next.password[0] = '\0';
+      wasmHistoryPushGame(next.mode);
+      s_gameEntryPushed = TRUE;
+    }
+
+    /* From here Back or Forward asks a single-player game to end. Set
+     * before the start, so a request made while it comes up, or while a
+     * failed start shows its error, is still taken below. */
+    if (next.mode != WASM_GAME_JOIN) {
+      wasmSetScreen("game");
     }
 
     if (wasmPlayGame(cmdLine, &next)) {
@@ -706,6 +797,27 @@ int main(int argc, char *argv[]) {
     /* Single player: end the game and go back to the menu, keeping every
      * setting the player changed. */
     wasmEndSinglePlayerGame();
+
+    /* Put the history on the menu's entry. A request the game loop never
+     * took (the start failed or the game ended in the same frame) still
+     * means the browser has moved off the game. Nothing between here and
+     * the menu's first frame wait suspends, so the screen is already the
+     * menu when history.back()'s popstate arrives, and the handler ignores
+     * it. */
+    if (wasmTakeNavRequest()) {
+      s_leftByHistory = TRUE;
+    }
+    if (s_leftByHistory) {
+      /* The browser is already on the menu's entry. */
+    } else if (s_gameEntryPushed) {
+      wasmHistoryBack();
+    } else {
+      /* Launched straight into the game: that entry becomes the menu. */
+      wasmHistoryReplaceMenu();
+    }
+    wasmSetScreen("menu");
+    s_gameEntryPushed = FALSE;
+    s_leftByHistory = FALSE;
     menu = TRUE;
   }
 }
