@@ -151,6 +151,7 @@ static const UnitTestEntry s_tests[] = {
     { "lobby_bot_config_memory_type_change",      run_lobby_bot_config_memory_game_type_change },
     { "lobby_bot_config_memory_map_commit_type",  run_lobby_bot_config_memory_map_commit_type },
     { "lobby_bot_config_memory_dispatch_mark",    run_lobby_bot_config_memory_dispatch_hand_mark },
+    { "lobby_bot_config_memory_saved_mode",       run_lobby_bot_config_memory_saved_mode_not_carried },
     { "lobby_add_bot_rejects_empty_brain_path",   run_lobby_add_bot_rejects_empty_brain_path   },
     { "lobby_add_bot_rejects_ai_none",            run_lobby_add_bot_rejects_ai_none            },
     { "lobby_add_bot_rejects_not_in_lobby",       run_lobby_add_bot_rejects_not_in_lobby       },

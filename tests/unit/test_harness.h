@@ -186,6 +186,7 @@ int run_lobby_bot_config_memory_open_game_start_mode(void);
 int run_lobby_bot_config_memory_game_type_change(void);
 int run_lobby_bot_config_memory_map_commit_type(void);
 int run_lobby_bot_config_memory_dispatch_hand_mark(void);
+int run_lobby_bot_config_memory_saved_mode_not_carried(void);
 int run_lobby_add_bot_rejects_empty_brain_path(void);
 int run_lobby_add_bot_rejects_ai_none(void);
 int run_lobby_add_bot_rejects_not_in_lobby(void);
