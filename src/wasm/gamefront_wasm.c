@@ -29,7 +29,6 @@
 #include "gui_message.h"
 #include "everard_map.h"
 #include "frontend.h"
-#include "playername_validate.h"
 #include "server_sim.h"
 #include "../server/server_lifecycle.h"
 #include "../gui/brainsHandler.h"
@@ -49,6 +48,7 @@
 /* Forward declaration */
 extern void sdl3MessageHandler(const char *message, const char *title);
 extern void wasmReportConnectFailure(const char *reason);  /* main_wasm.c */
+extern void wbPrefsPumpUpload(uint64_t nowMs);  /* prefs_bridge_wasm.c */
 
 /* Mint a fresh single-use join code from the reusable game_key by awaiting
  * Module.wbMintJoinCode (POST /api/join, cookie-authed) via ASYNCIFY — mirrors
@@ -381,22 +381,13 @@ static bool wasmAskJoinPassword(bool wrongBefore) {
 }
 
 /* -------------------------------------------------------
- * gameFrontWasmStart — skip all dialogs, start the launch's game
+ * gameFrontWasmSetup — page-lifetime setup, run once per page
  * ------------------------------------------------------- */
-bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
-                        const WasmLaunch *launch) {
-  isTutorial = FALSE;
-  password[0] = '\0';
-  wantRejoin = FALSE;
-
-  /* Set defaults. The real player name is chosen further down, before each
-   * mode's join (the account name or web<rand> for network play, ?name= or
-   * "Me" for single player); this seed only matters to any path that reads
-   * the name before then. */
+bool gameFrontWasmSetup(keyItems *keys) {
+  /* Seed the player name. main_wasm.c chooses the single-player name after
+   * this, and a join chooses its network name before it connects; this seed
+   * only matters to any path that reads the name before then. */
   strcpy(gameFrontName, "Me");
-  gameFrontUdpAddress[0] = '\0';
-  gameFrontMyUdp = 27500;
-  gameFrontTargetUdp = 27500;
   strcpy(gameFrontTrackerAddr, TRACKER_ADDRESS);
   gameFrontTrackerPort = TRACKER_PORT;
   gameFrontTrackerEnabled = FALSE;
@@ -405,30 +396,15 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
   gameFrontWbnUse = FALSE;
   gameFrontRemeber = FALSE;
 
-  /* Default game options */
-  gametype = gameOpen;
-  hiddenMines = FALSE;
-  compTanks = aiNone;
-  startDelay = 0;
-  timeLen = UNLIMITED_GAME_TIME;
   useAutoslow = FALSE;
   useAutohide = FALSE;
 
   /* Seed default keys. A logged-in player's stored bindings (and the rest of
-   * their synced settings) are applied afterwards by wasmApplyJoinPrefs, which
-   * runs after gameFrontWasmStart so it overrides exactly what the user
-   * synced. */
+   * their synced settings) are applied afterwards by wasmApplyJoinPrefs, and
+   * no game start seeds them again, so they last for the page. */
   gameFrontSetDefaultKeys(keys);
 
   langSetup();
-
-  /* Process command line */
-  if (cmdLine != NULL && cmdLine[0] != '\0') {
-    strncpy(fileName, cmdLine, FILENAME_MAX - 1);
-    fileName[FILENAME_MAX - 1] = '\0';
-  } else {
-    fileName[0] = '\0';
-  }
 
   /* Initialise subsystems */
   {
@@ -453,6 +429,42 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
   }
 
   guiMessageSetHandler(sdl3MessageHandler);
+  return TRUE;
+}
+
+/* -------------------------------------------------------
+ * gameFrontWasmStart — skip all dialogs, start the launch's game
+ * ------------------------------------------------------- */
+bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
+                        const WasmLaunch *launch) {
+  (void)keys;
+
+  /* Per-game state, reset for each game. */
+  isTutorial = FALSE;
+  password[0] = '\0';
+  wantRejoin = FALSE;
+  gameFrontUdpAddress[0] = '\0';
+  gameFrontMyUdp = 27500;
+  gameFrontTargetUdp = 27500;
+
+  /* Default game options */
+  gametype = gameOpen;
+  hiddenMines = FALSE;
+  compTanks = aiNone;
+  startDelay = 0;
+  timeLen = UNLIMITED_GAME_TIME;
+
+  /* Process command line */
+  if (cmdLine != NULL && cmdLine[0] != '\0') {
+    strncpy(fileName, cmdLine, FILENAME_MAX - 1);
+    fileName[FILENAME_MAX - 1] = '\0';
+  } else {
+    fileName[0] = '\0';
+  }
+
+  /* Start the tutorial step sequencer from the first step, whatever the
+   * mode, so a game never inherits the last one's step or frame count. */
+  frontEndTutorialReset();
 
   /* ---- Determine net mode from the launch ----
    * Production web play is selected by ?game_key= (the shareable
@@ -660,7 +672,6 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
       startDelay = 0;
       timeLen = UNLIMITED_GAME_TIME;
       compTanks = aiNone;
-      frontEndTutorialReset();
       isTutorial = TRUE;
       printf("[WASM] starting guided tutorial\n");
     }
@@ -713,20 +724,9 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
       }
     }
 
-    /* Single-player name: a validated ?name= wins; otherwise "Me". Chosen
-     * here because the local join below carries gameFrontName to the server;
-     * a name set after it would never reach the game. */
-    {
-      char validated[PLAYER_NAME_LEN];
-      if (launch->name[0] != '\0' &&
-          playerNameValidate(launch->name, validated, PLAYER_NAME_LEN, NULL)) {
-        gameFrontSetPlayerName(validated);
-        printf("[WASM] single player: name=%s (from URL)\n", validated);
-      } else {
-        gameFrontSetPlayerName((char *)"Me");
-        printf("[WASM] single player: default name=Me\n");
-      }
-    }
+    /* The local join below carries gameFrontName to the server. main_wasm.c
+     * chose the single-player name (a validated ?name= or "Me") before this
+     * start ran. */
 
     /* Run the 12-step join+install in one call. */
     if (!clientSimConnectLocal(humanSim, wasmServerSim,
@@ -1229,7 +1229,11 @@ void gameFrontRequestPlayTutorial(void) {
 void gameFrontSaveWindowSettings(void) {
 }
 
+/* Called every frame by the game frame (sdl3ImguiProcessEvents) and the
+ * shared dialog loops: push any setting changed this session, debounced.
+ * No-op when not signed in or when nothing is sync-dirty. */
 void gameFrontPumpDirty(void) {
+  wbPrefsPumpUpload(SDL_GetTicks());
 }
 
 void gameFrontSaveTankPrefs(ClientSim *cs) {

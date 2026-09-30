@@ -28,6 +28,7 @@
 #include "frontend.h"
 #include "client_net.h"
 #include "gui_message.h"
+#include "playername_validate.h"
 #include "../gui/brainsHandler.h"
 #include "../gui/clientmutex.h"
 #include "../gui/draw.h"
@@ -249,7 +250,6 @@ void windowLeaveGame(void);
 
 /* Cloud-prefs bridge (prefs_bridge_wasm.c). */
 void wbPrefsSyncNow(void);
-void wbPrefsPumpUpload(uint64_t nowMs);
 
 static void main_loop_iteration(void) {
   DWORD tick;
@@ -391,9 +391,8 @@ static void main_loop_iteration(void) {
   frontEndTutorialNotePresentedFrame();
   tutorialRespawnPoll();
 
-  /* Cloud prefs: push any setting changed this session, debounced. No-op when
-   * not signed in or when nothing is sync-dirty. */
-  wbPrefsPumpUpload(SDL_GetTicks());
+  /* Cloud prefs upload runs from gameFrontPumpDirty, which
+   * sdl3ImguiProcessEvents calls at the top of this frame. */
 
   if (finishedLoop) {
     emscripten_cancel_main_loop();
@@ -418,6 +417,9 @@ static const char *getUrlParam(const char *name) {
   }
   return "";
 }
+
+/* Defined with windowSetQuitting, beside the quit flags it resets. */
+static void wasmGameStateReset(void);
 
 /* Copy one URL parameter into dst. getUrlParam returns a shared static
  * buffer, so each value is copied out before the next read. */
@@ -494,6 +496,39 @@ int main(int argc, char *argv[]) {
   /* The only read of the page URL; the game mode comes from here on. */
   wasmReadLaunch(&launch);
 
+  /* Page-lifetime setup: default keys, language, window, sound, brains. */
+  if (gameFrontWasmSetup(&keys) == FALSE) {
+    printf("[WASM] gameFrontWasmSetup FAILED\n");
+    clientMutexDestroy();
+    SDL_Quit();
+    return 1;
+  }
+
+  /* Pull the account's cloud prefs and apply them over the defaults the
+   * setup seeded — keys, menu toggles, game options, gamepad sensitivities,
+   * build options and voice — before the first game starts. No game start
+   * seeds them again. There is no humanSim yet, so wasmApplyJoinPrefs only
+   * sets the globals; the game start and windowApplyMenuChecks below push
+   * them into the new game. No-op when not signed in. */
+  wbPrefsSyncNow();
+
+  /* Single-player name: a validated ?name= wins; otherwise "Me". A join
+   * chooses its own network name (the account name or web<rand>) inside
+   * gameFrontWasmStart, before it connects. */
+  if (launch.mode != WASM_GAME_JOIN) {
+    char validated[PLAYER_NAME_LEN];
+    if (launch.name[0] != '\0' &&
+        playerNameValidate(launch.name, validated, PLAYER_NAME_LEN, NULL)) {
+      gameFrontSetPlayerName(validated);
+      printf("[WASM] single player: name=%s (from URL)\n", validated);
+    } else {
+      gameFrontSetPlayerName((char *)"Me");
+      printf("[WASM] single player: default name=Me\n");
+    }
+  }
+
+  wasmGameStateReset();
+
   printf("[WASM] Starting gameFrontWasmStart...\n");
   bool started = (gameFrontWasmStart(cmdLine, &keys, &launch) != FALSE);
   if (!started && !s_connFailed) {
@@ -515,18 +550,7 @@ int main(int argc, char *argv[]) {
     /* Start the shared tick cadence from a known state (first step is a game
      * step on tick 0), mirroring the desktop run-start. */
     clientFrontTickReset();
-    /* Pull the account's cloud prefs and apply them. This runs AFTER
-     * gameFrontWasmStart (which seeds defaults and creates humanSim) so
-     * wasmApplyJoinPrefs overrides exactly what the player synced — keys, menu
-     * toggles, game options, gamepad sensitivities and build options — on the
-     * first frame. No-op for single-player (not signed in). Same apply path the
-     * relay's join-prefs frame uses. */
-    wbPrefsSyncNow();
   }
-
-  /* The player name is chosen inside gameFrontWasmStart, before its join
-   * goes out: the account name or web<rand> for network play, a validated
-   * ?name= or "Me" for single player. */
 
   isInMenu = FALSE;
   finishedLoop = FALSE;
@@ -550,6 +574,9 @@ int main(int argc, char *argv[]) {
 
   guiMessageSetHandler(sdl3MessageHandler);
 
+  /* Set again here, not only in wasmGameStateReset: a join can wait up to
+   * 30s inside gameFrontWasmStart, and the first frame should not count
+   * that as owed time. */
   oldTick = SDL_GetTicks();
   lastFrameTime = emscripten_get_now();
 
@@ -580,6 +607,31 @@ static bool quitRequested = FALSE;
 void windowSetQuitting(void) { quitRequested = TRUE; winboloQuit = TRUE; finishedLoop = TRUE; }
 bool windowIsQuitting(void)   { return quitRequested; }
 
+/* Runs before each game: put back the per-game state the last game may have
+ * left behind — the tutorial pause, the connection-failure latch, the loop
+ * and quit flags, the tick accumulator and clocks, and the timing totals.
+ * The tutorial step sequencer is reset by gameFrontWasmStart
+ * (frontEndTutorialReset). */
+static void wasmGameStateReset(void) {
+  doingTutorial = FALSE;
+  s_connFailed = FALSE;
+  s_connErrorShown = FALSE;
+  s_connReason[0] = '\0';
+  finishedLoop = FALSE;
+  winboloQuit = FALSE;
+  quitRequested = FALSE;
+  isInMenu = FALSE;
+  gameTickAccum = 0.0;
+  lastFrameTime = emscripten_get_now();
+  oldTick = SDL_GetTicks();
+  dwSysFrameTotal = 0;
+  dwSysFrame = 0;
+  dwSysGameTotal = 0;
+  dwSysGame = 0;
+  dwSysBrainTotal = 0;
+  dwSysBrain = 0;
+}
+
 /* Leave the game: navigate the hosting page back to the lobby landing. */
 void windowLeaveGame(void) { emscripten_run_script("window.location.href='/'"); }
 
@@ -606,8 +658,9 @@ void windowApplyMenuChecks(ClientSim *cs) {
  * GET (prefs_bridge_wasm.c, on adopt). Values mirror the
  * desktop INI store: "Yes"/"No" bools, stringified ints, SDL3 keycodes for
  * KEYS. Native JSON bool/number is tolerated too. Absent keys keep the
- * current (default) value. This runs after gameFrontWasmStart seeded defaults,
- * so it overrides exactly what the user has synced.
+ * current (default) value. This runs after gameFrontWasmSetup seeded defaults,
+ * so it overrides exactly what the user has synced; no game start seeds them
+ * again.
  * ------------------------------------------------------- */
 extern bool useAutoslow;   /* defined in gamefront_wasm.c */
 extern bool useAutohide;

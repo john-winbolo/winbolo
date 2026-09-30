@@ -8,7 +8,8 @@
  *
  * The page URL is read once, at page start, into a WasmLaunch (main_wasm.c),
  * and the game-start code takes its mode from that instead of reading the
- * URL itself. Included only by files under src/wasm.
+ * URL itself. The page's one-time setup and the per-game start are separate
+ * calls. Included only by files under src/wasm.
  */
 
 #ifndef GAMEFRONT_WASM_H
@@ -31,9 +32,19 @@ typedef struct {
   char name[PLAYER_NAME_LEN];     /* ?name=, unvalidated */
 } WasmLaunch;
 
+/* Set up what lasts for the life of the page, once, before any game: seed the
+ * player name, the tracker and WinBolo.net token fields, the tank options and
+ * the default keys, load the language, create the window on the page's canvas,
+ * and bring up sound, the brains list and the message handler. Settings synced
+ * or changed after this are never seeded again by a game start. Returns FALSE
+ * if the window cannot be created. */
+bool gameFrontWasmSetup(keyItems *keys);
+
 /* Start the game the launch describes: join through the relay or dev proxy,
- * the guided tutorial, or single player. Returns FALSE on an init failure or
- * a failed join; a failed join has already been reported through
+ * the guided tutorial, or single player. Resets the per-game state (game
+ * options, password, server address, map file, tutorial step) first and
+ * leaves the page-lifetime settings alone. Returns FALSE on an init failure
+ * or a failed join; a failed join has already been reported through
  * wasmReportConnectFailure. */
 bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
                         const WasmLaunch *launch);
