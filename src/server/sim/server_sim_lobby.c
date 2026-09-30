@@ -342,10 +342,10 @@ bool serverSimResolveNewBotConfigFromModes(const ServerSim *sim, int team,
      *     Medium in the new mode when that mode lists one.
      *     Single player's base is the player's saved "Chosen Mode" pref
      *     (gameFrontSpBotMode in gamefront.c), which outlives the lobby it
-     *     was picked in. Andrew: "turtle bots should only go in open OR if
-     *     the last bot you added IN THAT LOBBY was a turtle bot". So a
-     *     Turtle pick saved in an Open game must not start the next
-     *     Tournament's bots in Turtle. A mode picked in THIS lobby comes
+     *     was picked in. Turtle bots start only on Open, or when the last
+     *     bot the host added in this lobby was a Turtle bot, so a Turtle
+     *     pick saved in an Open game must not start the next Tournament's
+     *     bots in Turtle. A mode picked in THIS lobby comes
      *     back at step 3, and a scenario's at step 2. */
     {
         int start = brainModesStartMode(
