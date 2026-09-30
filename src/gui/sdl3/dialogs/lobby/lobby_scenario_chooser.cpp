@@ -57,6 +57,7 @@
  *********************************************************/
 
 #include <cfloat>   /* FLT_MAX — no upper bound on how large the host may drag it */
+#include <cstdlib>  /* free — the bytes a fetched script copy hands over */
 
 #include <SDL3/SDL.h>
 
@@ -76,6 +77,7 @@ extern "C" {
 #include "../../../../scenario/scenario_host.h"
 #endif
 #include "scenario_details.h"           /* the rules and callbacks blob the dialog reads */
+#include "scenario_settings.h"          /* ScnSetting and the settings blob the dialog reads */
 #include "sim_rules_names.h"            /* simRulesRuleName / simRulesClassicValue */
 #include "../../../sim_rules_phrase.h"  /* simRulesPhrase — the one wording */
 #include "../../../ui_mode.h"           /* uiShouldUseControllerMode — a controller has no hover */
@@ -83,6 +85,14 @@ extern "C" {
 #include "../../../gamefront.h"  /* gameFrontGetServerSim — whether the server is in this process */
 #include "../../../../server/threads.h"  /* threadsWaitForMutex / Release — the in-process read runs on the render thread */
 #include "../../../../common/wb_log.h"   /* WB_LOG_WARN / WB_LOG_CAT_GUI — a script send that did not start */
+#include "../../../../steam/steam_wrapper.h"  /* steam_workshop_open_item_page — the round rows' menu */
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+/* workshopSyncGeneration — an item Steam installed while the dialog is up.
+   The module is desktop only, as is every call into it below. */
+extern "C" {
+#include "../../workshop_sync.h"
+}
+#endif
 }
 
 /* The window's ID. The caption before ### is translated and the ID after it
@@ -131,6 +141,14 @@ static ServerScenarioEntry s_localRows[LOBBY_SCENARIO_CHOOSER_MAX];
 static int                 s_localCount = 0;
 static bool                s_localRead  = false;
 
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+/* The Workshop sync's generation as of the last listing. The Browse Workshop
+ * button sends the host to subscribe from the Steam overlay while the dialog
+ * stays up; the sync copies what Steam installs into the Workshop directory
+ * and moves its generation on, and the listings are read again when it does. */
+static uint32_t            s_syncGen    = 0;
+#endif
+
 /* The merged column: every server row and every local row no server row
  * matches. */
 #define LOBBY_SCENARIO_CHOOSER_ROWS (LOBBY_SCENARIO_CHOOSER_MAX * 2)
@@ -141,7 +159,8 @@ static bool                s_localRead  = false;
  *
  * state says where the file is. source is the server's SERVER_SCENARIO_SOURCE_*
  * for a row the server holds, and file is the local file's name for a row it
- * does not. */
+ * does not. workshopId is the Workshop item of the entry the row was filled
+ * from, the server's for a row the server holds, and 0 for none. */
 struct LobbyScenarioRow {
     const char         *file;
     const char         *name;
@@ -152,6 +171,7 @@ struct LobbyScenarioRow {
     bool                keepsWinCondition;
     LobbyScriptRowState state;
     uint8_t             source;
+    uint64_t            workshopId;
 };
 
 /* The one script this dialog has sent, and what became of it. s_sending is
@@ -181,6 +201,23 @@ static uint8_t  s_rejectReason = 0;
 static int32_t  s_rejectNumberA = 0;
 static int32_t  s_rejectNumberB = 0;
 static Uint64   s_rejectUntil = 0;
+
+#ifndef __EMSCRIPTEN__
+/* The one copy of a server's script this dialog has asked for, and what
+ * became of it. s_saving is set when the fetch is sent and cleared when the
+ * fetch reads done or failed; only the row whose file is s_saveFile draws the
+ * progress. The statics outlive the dialog, so a copy still arriving when it
+ * closes is saved by the next frame it is open again.
+ *
+ * s_saveNoteFile is the row that shows why a press saved nothing, until
+ * s_saveNoteUntil, and s_saveNoteId is the lang id that says so; the same
+ * five seconds a refused send shows its reason for. */
+static bool     s_saving = false;
+static char     s_saveFile[SERVER_SCENARIO_FILE_LEN]     = "";
+static char     s_saveNoteFile[SERVER_SCENARIO_FILE_LEN] = "";
+static int      s_saveNoteId = 0;
+static Uint64   s_saveNoteUntil = 0;
+#endif
 
 /* Whether a catalogue row is a mod. A mod keeps the round's win condition;
  * a scenario may end the round and say who won, and that is the whole of the
@@ -271,6 +308,7 @@ struct LobbyRoundRow {
     bool mod;    /* keeps the round's win condition */
     bool bound;  /* written for one map, so it is the map's and not the
                     host's — it is drawn locked and never sent */
+    uint64_t workshopId;  /* the Workshop item, 0 for none */
 };
 
 /* The host's draft, and the lobby's own answer the draft was taken from.
@@ -296,14 +334,16 @@ static int           s_liveCount  = 0;
 static bool          s_roundTaken = false;
 
 static void lobbyRoundSetRow(LobbyRoundRow *r, const char *file,
-                             const char *name, bool mod, bool bound) {
+                             const char *name, bool mod, bool bound,
+                             uint64_t workshopId) {
     SDL_snprintf(r->file, sizeof(r->file), "%s", file);
     /* A manifest that named nothing still came from a file, and a row with a
        gap where its name goes reads as a fault. */
     SDL_snprintf(r->name, sizeof(r->name), "%s",
                  name[0] != '\0' ? name : file);
-    r->mod   = mod;
-    r->bound = bound;
+    r->mod        = mod;
+    r->bound      = bound;
+    r->workshopId = workshopId;
 }
 
 /* The round as the lobby reports it, composed from the two places the answer
@@ -347,10 +387,12 @@ static int lobbyRoundLive(ClientSim *cs, LobbyRoundRow *out, int max) {
             }
         }
         if (!listed && n < max) {
+            /* The attached slot carries no Workshop id, so this row has
+               none to show. */
             lobbyRoundSetRow(&out[n++], attached,
                              clientSimGetLobbyScenarioName(cs),
                              clientSimGetLobbyScenarioKeepsWinCondition(cs),
-                             clientSimGetLobbyScenarioBound(cs));
+                             clientSimGetLobbyScenarioBound(cs), 0);
         }
     }
 
@@ -358,7 +400,8 @@ static int lobbyRoundLive(ClientSim *cs, LobbyRoundRow *out, int max) {
         lobbyRoundSetRow(&out[n++], clientSimGetLobbyScriptFile(cs, i),
                          clientSimGetLobbyScriptName(cs, i),
                          clientSimGetLobbyScriptKeepsWinCondition(cs, i),
-                         clientSimGetLobbyScriptBound(cs, i));
+                         clientSimGetLobbyScriptBound(cs, i),
+                         clientSimGetLobbyScriptWorkshopId(cs, i));
     }
     return n;
 }
@@ -471,7 +514,7 @@ static void lobbyRoundAdd(const LobbyScenarioRow *row) {
        column offers. Copied rather than hard-coded false so a row that
        reached here another way is still drawn for what it is. */
     lobbyRoundSetRow(r, row->file, row->name, lobbyScenarioRowIsMod(row),
-                     row->bound);
+                     row->bound, row->workshopId);
 }
 
 static void lobbyRoundDrop(int idx) {
@@ -567,12 +610,15 @@ static bool s_detailsBound      = false;
    fetched by file name like every other row's. */
 static bool s_detailsAttached   = false;
 static int  s_detailsKind       = -1;   /* -1 unknown, 0 scenario, 1 mod */
+/* The Workshop item, 0 for none or where the source did not carry one. */
+static uint64_t s_detailsWorkshopId = 0;
 
 void lobbyScenarioDetailsReset(void) {
     s_detailsOpen     = false;
     s_detailsWantOpen = false;
     s_detailsAttached = false;
     s_detailsKind     = -1;
+    s_detailsWorkshopId = 0;
     s_detailsFile[0]  = '\0';
     s_detailsName[0]  = '\0';
     s_detailsDesc[0]  = '\0';
@@ -595,6 +641,11 @@ void lobbyScenarioChooserReset(void) {
     s_sendFile[0] = '\0';
     s_awaitFile[0]  = '\0';
     s_rejectFile[0] = '\0';
+#ifndef __EMSCRIPTEN__
+    s_saving          = false;
+    s_saveFile[0]     = '\0';
+    s_saveNoteFile[0] = '\0';
+#endif
     s_filter[0]   = '\0';
     s_kindFilter  = 0;
     s_roundTaken  = false;
@@ -780,6 +831,7 @@ static void lobbyScenarioDetailsOpenRow(const LobbyScenarioRow *row) {
     s_detailsBound      = row->bound;
     s_detailsAttached   = false;
     s_detailsKind       = lobbyScenarioRowIsMod(row) ? 1 : 0;
+    s_detailsWorkshopId = row->workshopId;
     s_detailsOpen       = true;
     s_detailsWantOpen   = true;
 }
@@ -816,6 +868,8 @@ void lobbyScenarioDetailsOpenAttached(ClientSim *cs) {
     s_detailsBound      = clientSimGetLobbyScenarioBound(cs);
     s_detailsAttached   = true;
     s_detailsKind       = clientSimGetLobbyScenarioKeepsWinCondition(cs) ? 1 : 0;
+    /* CTRL_LOBBY_SETTINGS carries no Workshop id for the attached script. */
+    s_detailsWorkshopId = 0;
     s_detailsOpen       = true;
     s_detailsWantOpen   = true;
 }
@@ -928,6 +982,7 @@ void lobbyScenarioDetailsOpenScript(ClientSim *cs, int idx) {
     s_detailsAttached   = same;
     s_detailsKind       = clientSimGetLobbyScriptKeepsWinCondition(cs, idx)
                               ? 1 : 0;
+    s_detailsWorkshopId = clientSimGetLobbyScriptWorkshopId(cs, idx);
     s_detailsOpen       = true;
     s_detailsWantOpen   = true;
 }
@@ -984,11 +1039,24 @@ static ClientScnDetailsState lobbyScenarioDetailsOfFile(ClientSim *cs,
         uint8_t blob[SCN_DETAILS_MAX];
         int     got;
 
+        uint8_t settings[SCN_SETTINGS_BLOB_MAX];
+        int     sGot = -1;
+
         threadsWaitForMutex();
         got = serverSimScenarioDetails(sim, file, blob, sizeof(blob));
+        if (got >= 0) {
+            sGot = serverSimScenarioSettingsDecl(sim, file, settings,
+                                                 sizeof(settings));
+        }
         threadsReleaseMutex();
         clientSimLobbyScenarioDetailsPut(cs, file, got >= 0, blob,
                                          got > 0 ? (size_t)got : 0);
+        /* Put after the details, which clear it. The same block a remote
+           server sends beside them. */
+        if (got >= 0) {
+            clientSimLobbyScenarioSettingsPut(cs, file, settings,
+                                              sGot > 0 ? (size_t)sGot : 0);
+        }
     } else {
         clientSimLobbyScenarioDetailsWant(cs, file);
     }
@@ -1310,6 +1378,134 @@ static void lobbyScenarioDetailsCallbacks(ClientSim *cs) {
     ImGui::EndTable();
 }
 
+/* How one value of setting st reads, into out: the number, or On or Off for
+ * a bool setting, marked as the default when it is st's default. */
+static void lobbyScenarioSettingText(const ScnSetting *st, int32_t v,
+                                     char *out, size_t outLen) {
+    MessageArgs args = {};
+
+    if (st->type == SCN_SETTING_TYPE_BOOL) {
+        langid id;
+
+        if (v == st->def) {
+            id = v != 0 ? STR_DLGLOBBY_DETAILS_SETTING_ON_DEFAULT
+                        : STR_DLGLOBBY_DETAILS_SETTING_OFF_DEFAULT;
+        } else {
+            id = v != 0 ? STR_DLGLOBBY_DETAILS_SETTING_ON
+                        : STR_DLGLOBBY_DETAILS_SETTING_OFF;
+        }
+        SDL_snprintf(out, outLen, "%s", langGetText(id));
+        return;
+    }
+    if (v == st->def) {
+        args.number = v;
+        SDL_snprintf(out, outLen, "%s",
+                     langGetTextFmt(STR_DLGLOBBY_DETAILS_SETTING_DEFAULT,
+                                    &args));
+    } else {
+        SDL_snprintf(out, outLen, "%ld", (long)v);
+    }
+}
+
+/* The script's own settings (scenario_settings.h): one row per setting the
+ * file declares, its label and its value. The host gets a dropdown of every
+ * value the declaration allows, On and Off for a bool setting, and a pick is sent to the server at once;
+ * the value shown is always the one the server last reported, so a pick the
+ * server corrected shows as corrected. Everyone else sees the values as
+ * text. A value the server has not reported is the declared default.
+ *
+ * Nothing is drawn for a file that declares no setting, or while the
+ * server's answer has not come. A server too old to send the declarations
+ * sends none, so its scripts show no section. A server that sends them but
+ * has never reported a value cannot take a change, and the host is told so
+ * rather than given dropdowns that do nothing. */
+static void lobbyScenarioDetailsSettings(ClientSim *cs) {
+    ScnSetting     rows[SCN_SETTINGS_MAX];
+    const uint8_t *blob = NULL;
+    size_t         len  = 0;
+    bool           host;
+    bool           live;
+    float          labelW = 0.0f;
+    int            n;
+    int            i;
+
+    if (!clientSimGetLobbyScenarioSettings(cs, s_detailsFile, &blob, &len)) {
+        return;
+    }
+    n = scnSettingsBlobRead(blob, len, rows, SCN_SETTINGS_MAX);
+    if (n > SCN_SETTINGS_MAX) n = SCN_SETTINGS_MAX;
+    if (n <= 0) return;
+    host = lobbyScenarioMayChoose(cs);
+    live = clientSimLobbyScriptSettingsSupported(cs);
+
+    for (i = 0; i < n; i++) {
+        labelW = SDL_max(labelW, ImGui::CalcTextSize(rows[i].label[0] != '\0'
+                                                         ? rows[i].label
+                                                         : rows[i].id).x);
+    }
+
+    ImGui::Spacing();
+    ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_DETAILS_SETTINGS));
+    if (!ImGui::BeginTable("##detailSettings", 2,
+                           ImGuiTableFlags_RowBg |
+                               ImGuiTableFlags_BordersInnerH)) {
+        return;
+    }
+    ImGui::TableSetupColumn("##label", ImGuiTableColumnFlags_WidthFixed,
+                            labelW);
+    ImGui::TableSetupColumn("##value", ImGuiTableColumnFlags_WidthStretch);
+    for (i = 0; i < n; i++) {
+        const ScnSetting *st = &rows[i];
+        int32_t           chosen;
+        bool              held;
+        int32_t           value;
+        char              shown[64];
+
+        held  = clientSimGetLobbyScriptSetting(cs, s_detailsFile, st->id,
+                                               &chosen);
+        value = scnSettingResolve(st, held, held ? (int64_t)chosen : 0);
+
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(st->label[0] != '\0' ? st->label : st->id);
+        ImGui::TableSetColumnIndex(1);
+        lobbyScenarioSettingText(st, value, shown, sizeof(shown));
+        if (!(host && live)) {
+            ImGui::TextUnformatted(shown);
+            continue;
+        }
+        ImGui::PushID(i);
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (ImGui::BeginCombo("##setting", shown)) {
+            int     choices = (int)scnSettingChoices(st);
+            int     c;
+
+            for (c = 0; c < choices; c++) {
+                int32_t v = (int32_t)((int64_t)st->min +
+                                      (int64_t)c * st->step);
+                char    item[64];
+
+                lobbyScenarioSettingText(st, v, item, sizeof(item));
+                if (ImGui::Selectable(item, v == value) && v != value) {
+                    clientSimNetSendSetScriptSetting(cs, s_detailsFile,
+                                                     st->id, v);
+                }
+                if (v == value) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndTable();
+
+    if (host && !live) {
+        lobbyScenarioRowNote(langGetText(STR_DLGLOBBY_DETAILS_SETTINGS_OLD));
+    } else if (!host) {
+        lobbyScenarioRowNote(langGetText(STR_DLGLOBBY_DETAILS_SETTINGS_HOST));
+    }
+}
+
 /* One scenario or mod, described in full.
  *
  * Rendered from the lobby's own frame and not from any of the three places
@@ -1355,9 +1551,21 @@ void lobbyScenarioDetailsRenderModal(ClientSim *cs, float s) {
 
     {
         ImVec2 vp = ImGui::GetMainViewport()->Size;
-        ImGui::SetNextWindowSize(ImVec2(SDL_min(560.0f, vp.x * 0.85f),
-                                        SDL_min(420.0f, vp.y * 0.85f)),
-                                 ImGuiCond_Appearing);
+        /* Three quarters of the screen each way, so the rules and callback
+           tables have room to show whole instead of scrolling in a small
+           box. Capped at 1200 x 900 at 1x so the lines stay readable on a
+           wide screen, and never less than the old 560 x 420 where the
+           screen has the room. All in the dialog's scale. */
+        float w = SDL_clamp(vp.x * 0.75f, SDL_min(560.0f * s, vp.x * 0.95f),
+                            1200.0f * s);
+        float h = SDL_clamp(vp.y * 0.75f, SDL_min(420.0f * s, vp.y * 0.95f),
+                            900.0f * s);
+        ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Appearing);
+        /* Centred on every opening too. The popup centres itself only the
+           first time, so after a switch from full screen to a window it
+           would reopen where the larger screen had it. */
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
+                                ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         /* No narrower than the rules table needs to show its three number
            columns and their headers whole, where the screen has the room. */
         ImGui::SetNextWindowSizeConstraints(
@@ -1384,6 +1592,12 @@ void lobbyScenarioDetailsRenderModal(ClientSim *cs, float s) {
            from a source that did not carry it gets no tag rather than a
            guessed one. */
         if (s_detailsKind >= 0) lobbyScenarioKindTag(s_detailsKind == 1, s);
+        /* A published script's Workshop chip, and the button to its page
+           beside it. On the name's line and not in the footer, which is
+           DialogFooter's centred Close row and has no place for a second
+           kind of button. */
+        lobbyScenarioWorkshopTag(s_detailsWorkshopId, s);
+        lobbyScenarioWorkshopLink(s_detailsWorkshopId);
         /* The file under the name and quieter than it, because the name is
            what a host picked the thing by and the file is how they find it
            on disk when they want to read it. */
@@ -1426,13 +1640,15 @@ void lobbyScenarioDetailsRenderModal(ClientSim *cs, float s) {
            dialog opened. Nothing is drawn for a table whose answer has not
            come. */
         lobbyScenarioCatalogueEnsure(cs);
+        lobbyScenarioDetailsSettings(cs);
         lobbyScenarioDetailsRules(cs);
         lobbyScenarioDetailsCallbacks(cs);
     }
     ImGui::EndChild();
 
-    /* [Close] only — nothing here is edited, so there is nothing to
-       confirm and nothing to back out of. */
+    /* [Close] only. The one thing a host edits here, a script's settings,
+       is sent the moment it is picked, so there is nothing to confirm and
+       nothing to back out of. */
     if (WBUI::DialogFooter(/*cancelLabel*/ nullptr,
                            /*confirmLabel*/ langGetText(STR_CLOSE))
             != WBUI::FOOTER_NONE ||
@@ -1583,6 +1799,7 @@ static const char *lobbyScenarioSendRefusal(void) {
         case 6: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_FULL);
         case 7: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN);
         case 8: return langGetText(STR_DLGLOBBY_SCRIPT_ERR_NAME_TAKEN);
+        case 9: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_TIMEOUT);
         default: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_REJECTED);
     }
 }
@@ -1701,6 +1918,131 @@ static void lobbyScenarioSendFollow(ClientSim *cs, LobbyScenarioRow *rows,
     }
 }
 
+#ifndef __EMSCRIPTEN__
+/* ── Saving a copy of the server's script ─────────────────────────
+ * A row only the server holds, taken home to this computer's own Mods
+ * directory. The round does not need the file here, since every script runs
+ * on the server; this is for hosting it later. */
+
+/* The note under a row, shown for five seconds. */
+static void lobbyScenarioSaveNote(const char *file, int id) {
+    SDL_strlcpy(s_saveNoteFile, file, sizeof(s_saveNoteFile));
+    s_saveNoteId    = id;
+    s_saveNoteUntil = SDL_GetTicks() + LOBBY_SCENARIO_REJECT_MS;
+}
+
+/* Why the Save arrow is greyed, as the lang id that says so, or 0 when it is
+ * not. Drawn for every player whatever they may change about the round: a
+ * copy changes nothing on the server. The transport holds one fetch at a
+ * time, so a copy on its way greys every row's arrow and not only its own. */
+static int lobbyScenarioWhyNotSave(ClientSim *cs) {
+    int state = clientSimGetScriptFetchState(cs);
+
+    if (clientSimIsSpectator(cs)) return STR_DLGLOBBY_SCENARIO_SAVE_SPECTATOR;
+    if (!clientSimGetScriptSharing(cs)) {
+        return STR_DLGLOBBY_SCENARIO_SAVE_SHARING_OFF;
+    }
+    if (s_saving || state == CLIENT_SCRIPT_FETCH_WAITING ||
+        state == CLIENT_SCRIPT_FETCH_RECEIVING) {
+        return STR_DLGLOBBY_SCENARIO_SAVE_INFLIGHT;
+    }
+    return 0;
+}
+
+/* The Save arrow, pressed. A file this computer already holds under that name
+ * is not asked for: the write would refuse it anyway, and the row says so
+ * without a round trip. */
+static void lobbyScenarioSave(ClientSim *cs, const LobbyScenarioRow *row) {
+    char path[SCN_SCRIPT_PATH_MAX];
+
+    if (scenarioHostLocalScriptPath(row->file, path, sizeof(path))) {
+        lobbyScenarioSaveNote(row->file, STR_DLGLOBBY_SCENARIO_SAVE_HAVE);
+        return;
+    }
+    /* The transport refuses a send only while another copy is on its way,
+       which is the one reason the arrow can be pressed and nothing sent:
+       the row says that, not that the server did not answer. */
+    if (!clientSimNetSendLobbyScriptFetch(cs, row->file)) {
+        WB_LOG_WARN(WB_LOG_CAT_GUI, "[SCRIPTSAVE] '%s' was not asked for",
+                    row->file);
+        lobbyScenarioSaveNote(row->file, STR_DLGLOBBY_SCENARIO_SAVE_INFLIGHT);
+        return;
+    }
+    s_saving = true;
+    SDL_strlcpy(s_saveFile, row->file, sizeof(s_saveFile));
+    if (SDL_strcmp(s_saveNoteFile, row->file) == 0) s_saveNoteFile[0] = '\0';
+}
+
+/* What became of the copy, read once a frame off the fetch state. Done writes
+ * it to the Mods directory and reads this computer's scripts again, so the
+ * row turns into one both hold on the next frame; anything else leaves a note
+ * on the row. A fetch cleared under the dialog ends the watch with no note. */
+static void lobbyScenarioSaveFollow(ClientSim *cs) {
+    if (s_saving) {
+        int state = clientSimGetScriptFetchState(cs);
+
+        if (state == CLIENT_SCRIPT_FETCH_DONE) {
+            uint8_t *bytes = NULL;
+            size_t   len   = 0;
+            char     name[SERVER_SCENARIO_FILE_LEN];
+
+            if (!clientSimTakeScriptFetch(cs, &bytes, &len, name,
+                                          sizeof(name))) {
+                /* A name too long to hold, which no row could have asked
+                   for; dropped so the state does not sit at done. */
+                clientSimClearScriptFetch(cs);
+                lobbyScenarioSaveNote(s_saveFile,
+                                      STR_DLGLOBBY_SCENARIO_SAVE_WRITE);
+            } else {
+                ScenarioLocalSaveResult r =
+                    scenarioHostSaveLocalScript(name, bytes, len);
+
+                free(bytes);
+                if (r == SCENARIO_LOCAL_SAVE_OK) {
+                    s_localRead = false;
+                } else if (r == SCENARIO_LOCAL_SAVE_EXISTS) {
+                    lobbyScenarioSaveNote(s_saveFile,
+                                          STR_DLGLOBBY_SCENARIO_SAVE_HAVE);
+                } else {
+                    lobbyScenarioSaveNote(s_saveFile,
+                                          STR_DLGLOBBY_SCENARIO_SAVE_WRITE);
+                }
+            }
+            s_saving = false;
+        } else if (state == CLIENT_SCRIPT_FETCH_FAILED) {
+            int id;
+
+            switch (clientSimGetScriptFetchStatus(cs)) {
+                case CLIENT_SCRIPT_FETCH_STATUS_NOT_FOUND:
+                    id = STR_DLGLOBBY_SCENARIO_SAVE_NOT_FOUND;
+                    break;
+                case CLIENT_SCRIPT_FETCH_STATUS_DISABLED:
+                    id = STR_DLGLOBBY_SCENARIO_SAVE_SHARING_OFF;
+                    break;
+                case CLIENT_SCRIPT_FETCH_STATUS_TOO_LARGE:
+                    id = STR_DLGLOBBY_SCENARIO_SAVE_TOO_LARGE;
+                    break;
+                case CLIENT_SCRIPT_FETCH_STATUS_BUSY:
+                    id = STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN;
+                    break;
+                default:
+                    id = STR_DLGLOBBY_SCENARIO_SAVE_NO_ANSWER;
+                    break;
+            }
+            lobbyScenarioSaveNote(s_saveFile, id);
+            clientSimClearScriptFetch(cs);
+            s_saving = false;
+        } else if (state == CLIENT_SCRIPT_FETCH_IDLE) {
+            s_saving = false;
+        }
+    }
+
+    if (s_saveNoteFile[0] != '\0' && SDL_GetTicks() >= s_saveNoteUntil) {
+        s_saveNoteFile[0] = '\0';
+    }
+}
+#endif
+
 /* A tick the height of a line of text, for a row the server and this computer
  * both hold. Drawn rather than typed, because the font may have no glyph for
  * one. */
@@ -1754,8 +2096,10 @@ static void lobbyScenarioLocalRow(ClientSim *cs, const LobbyScenarioRow *row,
     float inner = ImGui::GetStyle().ItemInnerSpacing.x;
     float minW  = (ImGui::GetTextLineHeight() + inner) * 2.0f;
     float sendW = ImGui::GetFrameHeight() + inner;
-    float tagW  = lobbyScenarioKindTagWidth(lobbyScenarioRowIsMod(row), s);
-    float nameW = ImGui::GetContentRegionAvail().x - sendW - tagW;
+    float tagW  = lobbyScenarioKindTagWidth(lobbyScenarioRowIsMod(row), s) +
+                  lobbyScenarioWorkshopTagWidth(row->workshopId, s);
+    float linkW = lobbyScenarioWorkshopLinkWidth(row->workshopId);
+    float nameW = ImGui::GetContentRegionAvail().x - sendW - tagW - linkW;
     int   why   = lobbyScenarioWhyNotSend(cs, mayEdit);
     bool  mine  = SDL_strcmp(row->file, s_sendFile) == 0;
 
@@ -1763,6 +2107,9 @@ static void lobbyScenarioLocalRow(ClientSim *cs, const LobbyScenarioRow *row,
     lobbyTruncateName(row->name, nameW, nameBuf, sizeof(nameBuf));
     ImGui::TextUnformatted(nameBuf);
     lobbyScenarioKindTag(lobbyScenarioRowIsMod(row), s);
+    lobbyScenarioWorkshopTag(row->workshopId, s);
+    /* Beside the send arrow, as the server's rows carry it beside theirs. */
+    lobbyScenarioWorkshopLink(row->workshopId);
 
     ImGui::SameLine(0.0f, inner);
     if (lobbyScenarioArrow("##send", ImGuiDir_Up, why == 0,
@@ -1810,16 +2157,29 @@ static void lobbyScenarioLocalRow(ClientSim *cs, const LobbyScenarioRow *row,
  * column reads both answers.
  *
  * The rows only this computer holds are held to the same test and the same
- * two filters, and are drawn by lobbyScenarioLocalRow. */
+ * two filters, and are drawn by lobbyScenarioLocalRow. A row only a server in
+ * another process holds carries the Save arrow beside its add arrow. */
 static void lobbyScenarioChooserCatalogue(ClientSim *cs,
                                           LobbyScenarioRow *rows, int count,
                                           bool ready, bool inFlight,
-                                          bool mayEdit, float s) {
+                                          bool mayEdit, bool inProcess,
+                                          float s) {
     int  shown   = 0;
     bool focused = false;
     int  i;
 
     ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_SCENARIO_OFFERED));
+    /* The Workshop's mods and scenarios, for a host who has none of the one
+       they want: what they subscribe to in the Steam overlay joins this
+       column once Steam installs it. Only for a host, the one player who can
+       put a script in the round. */
+    if (mayEdit && steam_workshop_available()) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton(langGetText(STR_DLGSKIN_BROWSE_WORKSHOP))) {
+            steam_workshop_open_browse_page();
+        }
+        imguiHandOnHover();
+    }
 
     /* The name box over the list, not in it: it filters the rows and is not
        one of them, and a controller stepping down the list must not land in a
@@ -1882,9 +2242,10 @@ static void lobbyScenarioChooserCatalogue(ClientSim *cs,
 
     for (i = 0; i < count; i++) {
         char                 nameBuf[SERVER_SCENARIO_FILE_LEN + 4];
-        float                minW, arrowW, tagW, nameW;
+        float                minW, arrowW, saveW, tagW, linkW, nameW;
         int                  why;
         bool                 can;
+        bool                 save;
 
         if (rows[i].bound) continue;
         /* A row the round already holds is off this column for as long as
@@ -1909,6 +2270,16 @@ static void lobbyScenarioChooserCatalogue(ClientSim *cs,
 
         why = lobbyRoundWhyNotAdd(&rows[i]);
         can = mayEdit && why == 0;
+        /* A copy is offered on a row only the server holds, and only from a
+           server in another process: in process the classifier marks every
+           row the server's, because a server here reads this computer's own
+           directories and there is nothing to take home. */
+#ifndef __EMSCRIPTEN__
+        save = !inProcess && rows[i].state == LOBBY_SCRIPT_ROW_SERVER_ONLY;
+#else
+        (void)inProcess;
+        save = false;
+#endif
 
         ImGui::PushID(i);
         /* The name takes the row less the tag and the arrow, and a name
@@ -1923,8 +2294,14 @@ static void lobbyScenarioChooserCatalogue(ClientSim *cs,
         arrowW = mayEdit ? ImGui::GetFrameHeight() +
                                ImGui::GetStyle().ItemInnerSpacing.x
                          : 0.0f;
-        tagW   = lobbyScenarioKindTagWidth(lobbyScenarioRowIsMod(&rows[i]), s);
-        nameW  = ImGui::GetContentRegionAvail().x - arrowW - tagW;
+        saveW  = save ? ImGui::GetFrameHeight() +
+                            ImGui::GetStyle().ItemInnerSpacing.x
+                      : 0.0f;
+        tagW   = lobbyScenarioKindTagWidth(lobbyScenarioRowIsMod(&rows[i]), s) +
+                 lobbyScenarioWorkshopTagWidth(rows[i].workshopId, s);
+        linkW  = lobbyScenarioWorkshopLinkWidth(rows[i].workshopId);
+        nameW  = ImGui::GetContentRegionAvail().x - arrowW - saveW - tagW -
+                 linkW;
         if (nameW < minW) nameW = 0.0f;
         lobbyTruncateName(rows[i].name, nameW, nameBuf, sizeof(nameBuf));
 
@@ -1956,6 +2333,27 @@ static void lobbyScenarioChooserCatalogue(ClientSim *cs,
             focused = true;
         }
         lobbyScenarioKindTag(lobbyScenarioRowIsMod(&rows[i]), s);
+        lobbyScenarioWorkshopTag(rows[i].workshopId, s);
+        /* The item's Workshop page, next to the Save arrow on a row that has
+           one. Subscribing there is the better copy of a Workshop script:
+           Steam keeps it up to date. */
+        lobbyScenarioWorkshopLink(rows[i].workshopId);
+
+#ifndef __EMSCRIPTEN__
+        /* Down, for a file coming to this computer, as the send's arrow
+           points up for one leaving it. */
+        if (save) {
+            int whyNot = lobbyScenarioWhyNotSave(cs);
+
+            ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+            if (lobbyScenarioArrow("##save", ImGuiDir_Down, whyNot == 0,
+                                   langGetText(whyNot != 0
+                                                   ? whyNot
+                                                   : STR_DLGLOBBY_SCENARIO_SAVE))) {
+                lobbyScenarioSave(cs, &rows[i]);
+            }
+        }
+#endif
 
         if (mayEdit) {
             /* No tooltip. An arrow pointing at the other column says what it
@@ -1977,8 +2375,26 @@ static void lobbyScenarioChooserCatalogue(ClientSim *cs,
            game being set up, which is the question the list itself is being
            read to answer. Where the row is goes on the end of them. */
         ImGui::Indent();
+#ifndef __EMSCRIPTEN__
+        if (s_saving && SDL_strcmp(rows[i].file, s_saveFile) == 0) {
+            int state = clientSimGetScriptFetchState(cs);
+
+            if (state == CLIENT_SCRIPT_FETCH_WAITING ||
+                state == CLIENT_SCRIPT_FETCH_RECEIVING) {
+                ImGui::ProgressBar(
+                    (float)clientSimGetScriptFetchPercent(cs) / 100.0f,
+                    ImVec2(-1.0f, 0.0f));
+            }
+        }
+#endif
         lobbyScenarioRowWhere(&rows[i], lobbyScenarioRowCaps(rows[i].maxPlayers,
                                                              rows[i].bots));
+#ifndef __EMSCRIPTEN__
+        if (s_saveNoteFile[0] != '\0' &&
+            SDL_strcmp(rows[i].file, s_saveNoteFile) == 0) {
+            lobbyScenarioRowNote(langGetText(s_saveNoteId));
+        }
+#endif
         ImGui::Unindent();
         ImGui::PopID();
     }
@@ -2093,7 +2509,18 @@ static void lobbyScenarioChooserRound(ClientSim *cs, LobbyScenarioRow *rows,
             lobbyRoundOpenDetails(cs, r, rows, count);
         }
         imguiHandOnHover();
+        /* The Workshop page is on the name's right-click menu here. This row
+           has no width for another button: the up and down arrows hold the
+           right edge, and a name that reaches them already wraps. Asked for
+           while the name is the last item, and drawn at the end of the row. */
+        if (lobbyScenarioWorkshopLinkWidth(r->workshopId) > 0.0f) {
+            ImGui::OpenPopupOnItemClick("##workshopMenu",
+                                        ImGuiPopupFlags_MouseButtonRight);
+        }
         lobbyScenarioKindTag(r->mod, s);
+        /* After the kind chip, so the width test below, which reads the last
+           item's right edge, counts it. */
+        lobbyScenarioWorkshopTag(r->workshopId, s);
 
         if (mayEdit) {
             /* Where the last thing drawn ended, in this window's own
@@ -2135,6 +2562,13 @@ static void lobbyScenarioChooserRound(ClientSim *cs, LobbyScenarioRow *rows,
                 ImGui::Dummy(ImVec2(moveW, frameH));
             }
         }
+        if (ImGui::BeginPopup("##workshopMenu")) {
+            if (ImGui::MenuItem(langGetText(STR_DLGSETTINGS_WORKSHOP_OPEN))) {
+                steam_workshop_open_item_page(r->workshopId);
+            }
+            imguiHandOnHover();
+            ImGui::EndPopup();
+        }
         ImGui::PopID();
     }
 
@@ -2155,6 +2589,18 @@ void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
     }
 
     ServerSim *sim = gameFrontGetServerSim();
+
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+    /* Both listings of this computer's scripts read the Workshop directory:
+       a server in this process lists it among its scenarios, and this
+       computer's own column lists it beside the Mods directory. A remote
+       server's listing is its own and is left alone. */
+    if (workshopSyncGeneration() != s_syncGen) {
+        s_syncGen   = workshopSyncGeneration();
+        s_localRead = false;
+        if (sim != NULL) s_asked = false;
+    }
+#endif
 
     /* One listing per opening, obtained from here rather than from the button
        so a dialog opened again after the directory changed reads it again.
@@ -2191,7 +2637,11 @@ void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
     float lineH  = ImGui::GetTextLineHeightWithSpacing();
     float frameH = ImGui::GetFrameHeight();
     float inner  = ImGui::GetStyle().ItemInnerSpacing.x;
-    float tagW   = lobbyScenarioKindTagWidth(false, s);
+    /* The Workshop chip is counted as though every row wore one: any id but
+       0 gives its width. The button beside it is not; a row that cannot fit
+       it cuts its name shorter, and under that wraps. */
+    float tagW   = lobbyScenarioKindTagWidth(false, s) +
+                   lobbyScenarioWorkshopTagWidth(1, s);
     float chromeW;
     float nameW  = 200.0f * s;
     float winW;
@@ -2283,6 +2733,7 @@ void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
             rows[i].keepsWinCondition = e->keepsWinCondition;
             rows[i].state             = merged[i].state;
             rows[i].source            = e->source;
+            rows[i].workshopId        = e->workshopId;
         }
         /* A manifest that named nothing still came from a file. Done here
            rather than where a name is drawn, so the filter, the details
@@ -2311,6 +2762,9 @@ void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
 
         /* After the draft, which a script the server took is added to. */
         if (sim == NULL) lobbyScenarioSendFollow(cs, rows, count, mayEdit);
+#ifndef __EMSCRIPTEN__
+        if (sim == NULL) lobbyScenarioSaveFollow(cs);
+#endif
 
         /* The two columns, side by side, each scrolling on its own. The
            footer's height is reserved at the window level, the way the map
@@ -2335,7 +2789,7 @@ void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
                           ImGuiChildFlags_Borders |
                               ImGuiChildFlags_NavFlattened);
         lobbyScenarioChooserCatalogue(cs, rows, count, ready, inFlight,
-                                      mayEdit, s);
+                                      mayEdit, sim != NULL, s);
         ImGui::EndChild();
 
         ImGui::SameLine();

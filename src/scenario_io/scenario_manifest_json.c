@@ -196,6 +196,54 @@ static void mjString(const cJSON *obj, const char *key, char *dst,
     }
 }
 
+bool scnManifestParseId(const char *s, uint64_t *out) {
+    uint64_t    v = 0;
+    const char *p;
+
+    if (out != NULL) {
+        *out = 0;
+    }
+    if (s == NULL || s[0] == '\0' || out == NULL) {
+        return false;
+    }
+    for (p = s; *p != '\0'; p++) {
+        unsigned digit;
+
+        if (*p < '0' || *p > '9') {
+            return false;
+        }
+        digit = (unsigned)(*p - '0');
+        if (v > (UINT64_MAX - digit) / 10u) {
+            return false;               /* more than 64 bits hold */
+        }
+        v = v * 10u + digit;
+    }
+    *out = v;
+    return true;
+}
+
+/* workshop_id or workshop_author, read through scnManifestParseId. Absent,
+ * and null, is 0 without a word, the way an absent kind is a scenario.
+ * Anything else that does not parse is reported and read as 0 — a JSON
+ * number included, because by the time cJSON has made a double of it the
+ * low digits of a real id are already gone. */
+static uint64_t mjDecodeId(const cJSON *root, const char *key,
+                           ScnParseReport *rep) {
+    const cJSON *it = cJSON_GetObjectItemCaseSensitive(root, key);
+    uint64_t     v  = 0;
+
+    if (it == NULL || cJSON_IsNull(it)) {
+        return 0;
+    }
+    if (cJSON_IsString(it) && scnManifestParseId(it->valuestring, &v)) {
+        return v;
+    }
+    mjReport(rep, key,
+             "scenario: %s is not a string of digits naming a Steam id; 0 "
+             "used", key);
+    return 0;
+}
+
 /* One pair of a team's init table, stored the way the Lua reader stores it.
  * A string is itself; a number is its digits, because that is what
  * lua_tostring makes of a script's number before it reaches the table. JSON
@@ -979,6 +1027,168 @@ static void mjDecodeCallbacks(const cJSON *root, ScenarioManifest *m) {
     }
 }
 
+/* A field of one settings row as a whole number inside an int32. False for
+ * a field that is there and is not one; absent answers true with *had false. */
+static bool mjSettingInt(const cJSON *row, const char *field, int32_t *out,
+                         bool *had) {
+    const cJSON *it = cJSON_GetObjectItemCaseSensitive(row, field);
+    double       v;
+
+    *had = false;
+    if (it == NULL) {
+        return true;
+    }
+    if (!cJSON_IsNumber(it)) {
+        return false;
+    }
+    v = it->valuedouble;
+    if (v != v || v < -2147483648.0 || v > 2147483647.0 ||
+        v != (double)(int64_t)v) {
+        return false;
+    }
+    *out = (int32_t)(int64_t)v;
+    *had = true;
+    return true;
+}
+
+/* A string field of one settings row into dst. False for a field that is
+ * there and is not a string, or does not fit. */
+static bool mjSettingStr(const cJSON *row, const char *field, char *dst,
+                         size_t dstLen) {
+    const cJSON *it = cJSON_GetObjectItemCaseSensitive(row, field);
+    size_t       n;
+
+    dst[0] = '\0';
+    if (it == NULL) {
+        return true;
+    }
+    if (!cJSON_IsString(it) || it->valuestring == NULL) {
+        return false;
+    }
+    n = strlen(it->valuestring);
+    if (n >= dstLen) {
+        return false;
+    }
+    memcpy(dst, it->valuestring, n + 1);
+    return true;
+}
+
+/* The settings array into the struct, on the terms scenarioLuaReadSettings
+ * reads the Lua table on: the same fields, the same defaults (type "int",
+ * step 1), a bool row with a true or false default and no min, max or step,
+ * the same scnSettingProblem check, duplicates and rows past
+ * SCN_SETTINGS_MAX dropped. A dropped row is an issue, because the host
+ * would otherwise be offered a dropdown the author did not mean. */
+static void mjDecodeSettings(const cJSON *root, ScenarioManifest *m,
+                             ScnParseReport *rep) {
+    const cJSON *arr = cJSON_GetObjectItemCaseSensitive(root, "settings");
+    const cJSON *row;
+    int          at = 0;
+
+    if (arr == NULL) {
+        return;
+    }
+    if (!cJSON_IsArray(arr)) {
+        mjReport(rep, "settings",
+                 "scenario: settings is not a list of settings");
+        return;
+    }
+    cJSON_ArrayForEach(row, arr) {
+        ScnSetting  st;
+        char        key[48];
+        char        type[16];
+        bool        hadMin;
+        bool        hadMax;
+        bool        hadStep;
+        bool        hadDef;
+        const char *why;
+
+        at++;
+        snprintf(key, sizeof(key), "settings[%d]", at);
+        if (!cJSON_IsObject(row)) {
+            mjReport(rep, key, "scenario: %s is not an object; dropped", key);
+            continue;
+        }
+        memset(&st, 0, sizeof(st));
+        st.step = 1;
+        if (!mjSettingStr(row, "id", st.id, sizeof(st.id)) ||
+            st.id[0] == '\0') {
+            mjReport(rep, key,
+                     "scenario: %s has no id of up to %d characters; "
+                     "dropped", key, SCN_SETTING_ID_LEN - 1);
+            continue;
+        }
+        snprintf(key, sizeof(key), "settings.%s", st.id);
+        if (!mjSettingStr(row, "label", st.label, sizeof(st.label)) ||
+            st.label[0] == '\0') {
+            mjReport(rep, key,
+                     "scenario: %s has no label of up to %d characters; "
+                     "dropped", key, SCN_SETTING_LABEL_LEN - 1);
+            continue;
+        }
+        if (!mjSettingStr(row, "type", type, sizeof(type))) {
+            snprintf(type, sizeof(type), "?");
+        }
+        st.type = SCN_SETTING_TYPE_INT;
+        if (strcmp(type, "bool") == 0) {
+            const cJSON *def =
+                cJSON_GetObjectItemCaseSensitive(row, "default");
+
+            st.type = SCN_SETTING_TYPE_BOOL;
+            if (cJSON_GetObjectItemCaseSensitive(row, "min") != NULL ||
+                cJSON_GetObjectItemCaseSensitive(row, "max") != NULL ||
+                cJSON_GetObjectItemCaseSensitive(row, "step") != NULL) {
+                mjReport(rep, key,
+                         "scenario: %s is a bool setting and takes no min, "
+                         "max or step; dropped", key);
+                continue;
+            }
+            if (!cJSON_IsBool(def)) {
+                mjReport(rep, key,
+                         "scenario: %s needs true or false for default; "
+                         "dropped", key);
+                continue;
+            }
+            st.min  = 0;
+            st.max  = 1;
+            st.step = 1;
+            st.def  = cJSON_IsTrue(def) ? 1 : 0;
+        } else if (type[0] != '\0' && strcmp(type, "int") != 0) {
+            mjReport(rep, key,
+                     "scenario: %s has type '%s'; only \"int\" and "
+                     "\"bool\" are supported; dropped", key, type);
+            continue;
+        } else if (!mjSettingInt(row, "min", &st.min, &hadMin) ||
+                   !mjSettingInt(row, "max", &st.max, &hadMax) ||
+                   !mjSettingInt(row, "step", &st.step, &hadStep) ||
+                   !mjSettingInt(row, "default", &st.def, &hadDef) ||
+                   !hadMin || !hadMax || !hadDef) {
+            mjReport(rep, key,
+                     "scenario: %s needs whole numbers for min, max and "
+                     "default (and step, if given); dropped", key);
+            continue;
+        }
+        why = scnSettingProblem(&st);
+        if (why != NULL) {
+            mjReport(rep, key, "scenario: %s: %s; dropped", key, why);
+            continue;
+        }
+        if (scnSettingFind(m->settings, (int)m->numSettings, st.id) != NULL) {
+            mjReport(rep, key,
+                     "scenario: %s is declared twice; the second is "
+                     "dropped", key);
+            continue;
+        }
+        if (m->numSettings >= SCN_SETTINGS_MAX) {
+            mjReport(rep, key,
+                     "scenario: more than %d settings; %s dropped",
+                     SCN_SETTINGS_MAX, key);
+            continue;
+        }
+        m->settings[m->numSettings++] = st;
+    }
+}
+
 /* Everything the schema names, out of the tree and into the struct.
  *
  * triggers is read here and written back from the struct, so a key inside a
@@ -1006,6 +1216,8 @@ static bool mjDecode(ScnManifestDoc *d, ScnParseReport *rep,
     }
     m->bound      = mjBool(d->root, "bound", true);
     m->fillToCaps = mjBool(d->root, "fill_to_caps", false);
+    m->workshopId     = mjDecodeId(d->root, "workshop_id", rep);
+    m->workshopAuthor = mjDecodeId(d->root, "workshop_author", rep);
 
     mjDecodeLobby(d->root, &m->lobby, rep);
     mjDecodeRules(d->root, m, rep);
@@ -1013,6 +1225,7 @@ static bool mjDecode(ScnManifestDoc *d, ScnParseReport *rep,
     mjDecodeRegions(d->root, m, rep);
     mjDecodeTriggers(d->root, m, rep);
     mjDecodeCallbacks(d->root, m);
+    mjDecodeSettings(d->root, m, rep);
     mjDecodeBrains(d->root, d, rep);
     return true;
 }
@@ -1177,6 +1390,20 @@ static void mjPutString(cJSON *obj, const char *key, const char *v) {
 
 static void mjPutBool(cJSON *obj, const char *key, bool v) {
     mjPut(obj, key, cJSON_CreateBool(v ? 1 : 0));
+}
+
+/* An id as its decimal digits, or no key at all for 0. Left out rather than
+ * written as "0", so a manifest that names no item is the text it was before
+ * the key existed, and setting an id back to 0 takes the key away. */
+static void mjPutId(cJSON *obj, const char *key, uint64_t v) {
+    char digits[24];
+
+    if (v == 0) {
+        cJSON_DeleteItemFromObjectCaseSensitive(obj, key);
+        return;
+    }
+    snprintf(digits, sizeof(digits), "%llu", (unsigned long long)v);
+    mjPutString(obj, key, digits);
 }
 
 /* The object under key, made if it is not there and replaced if what is
@@ -1410,6 +1637,8 @@ static void mjEmit(cJSON *root, const ScnManifestDoc *d) {
     mjPutString(root, "game", m->game);
     mjPutBool(root, "bound", m->bound);
     mjPutBool(root, "fill_to_caps", m->fillToCaps);
+    mjPutId(root, "workshop_id", m->workshopId);
+    mjPutId(root, "workshop_author", m->workshopAuthor);
 
     lobby = mjObjectFor(root, "lobby");
     if (lobby != NULL) {
@@ -1463,6 +1692,37 @@ static void mjEmit(cJSON *root, const ScnManifestDoc *d) {
         }
     }
 
+    /* Written fresh from the struct like the callbacks, and left out when
+       the script declares none. */
+    cJSON_DeleteItemFromObjectCaseSensitive(root, "settings");
+    if (m->numSettings > 0) {
+        cJSON *arr = cJSON_AddArrayToObject(root, "settings");
+
+        for (i = 0; arr != NULL && i < (int)m->numSettings &&
+                    i < SCN_SETTINGS_MAX;
+             i++) {
+            const ScnSetting *st  = &m->settings[i];
+            cJSON            *row = cJSON_CreateObject();
+
+            if (row == NULL) {
+                break;
+            }
+            mjPutString(row, "id", st->id);
+            mjPutString(row, "label", st->label);
+            if (st->type == SCN_SETTING_TYPE_BOOL) {
+                mjPutString(row, "type", "bool");
+                mjPutBool(row, "default", st->def != 0);
+            } else {
+                mjPutString(row, "type", "int");
+                mjPutNumber(row, "min", (double)st->min);
+                mjPutNumber(row, "max", (double)st->max);
+                mjPutNumber(row, "step", (double)st->step);
+                mjPutNumber(row, "default", (double)st->def);
+            }
+            cJSON_AddItemToArray(arr, row);
+        }
+    }
+
     mjPutString(root, "script", d->script);
 
     brains = cJSON_CreateArray();
@@ -1503,6 +1763,14 @@ char *scnManifestWrite(const ScnManifestDoc *d, char *err, size_t errLen) {
         return NULL;
     }
     return text;
+}
+
+void scnManifestSetWorkshop(ScnManifestDoc *d, uint64_t id, uint64_t author) {
+    if (d == NULL) {
+        return;
+    }
+    d->values.workshopId     = id;
+    d->values.workshopAuthor = author;
 }
 
 /* ── The two forms against each other ─────────────────────────────── */
@@ -1705,6 +1973,52 @@ bool scnManifestAgrees(const ScenarioManifest *fromJson,
                         "script's table says %s",
                         fromJson->fillToCaps ? "true" : "false",
                         fromLua->fillToCaps ? "true" : "false");
+    }
+    /* The Workshop item and its author are held to agreeing only where the
+       script's table states them. Both are written into manifest.json after
+       the file is published, and nothing rewrites the script, so a script
+       that assigns its own scenario table reads 0 for both and could never
+       be expected to restate them. A table that does state one, and states
+       a different one, is the disagreement. */
+    if (fromLua->workshopId != 0 &&
+        fromLua->workshopId != fromJson->workshopId) {
+        return mjDiffer(key, keyLen, err, errLen, "workshop_id",
+                        "scenario: the manifest says Workshop item %llu and "
+                        "the script's table says %llu",
+                        (unsigned long long)fromJson->workshopId,
+                        (unsigned long long)fromLua->workshopId);
+    }
+    if (fromLua->workshopAuthor != 0 &&
+        fromLua->workshopAuthor != fromJson->workshopAuthor) {
+        return mjDiffer(key, keyLen, err, errLen, "workshop_author",
+                        "scenario: the manifest says it was published by "
+                        "%llu and the script's table says %llu",
+                        (unsigned long long)fromJson->workshopAuthor,
+                        (unsigned long long)fromLua->workshopAuthor);
+    }
+    /* The settings are held to agreeing, unlike the callbacks: they are
+       what the host is offered and what game.setting answers, so a package
+       whose two forms disagreed would offer one dropdown and play another. */
+    if (fromJson->numSettings != fromLua->numSettings) {
+        return mjDiffer(key, keyLen, err, errLen, "settings",
+                        "scenario: the manifest declares %d settings and "
+                        "the script's table declares %d",
+                        (int)fromJson->numSettings,
+                        (int)fromLua->numSettings);
+    }
+    for (i = 0; i < (int)fromJson->numSettings && i < SCN_SETTINGS_MAX;
+         i++) {
+        const ScnSetting *a = &fromJson->settings[i];
+        const ScnSetting *b = &fromLua->settings[i];
+
+        if (strcmp(a->id, b->id) != 0 || strcmp(a->label, b->label) != 0 ||
+            a->type != b->type || a->min != b->min || a->max != b->max ||
+            a->step != b->step || a->def != b->def) {
+            snprintf(where, sizeof(where), "settings[%d]", i + 1);
+            return mjDiffer(key, keyLen, err, errLen, where,
+                            "scenario: the manifest and the script's table "
+                            "declare setting %d differently", i + 1);
+        }
     }
 
     if (fromJson->lobby.maxPlayers != fromLua->lobby.maxPlayers) {

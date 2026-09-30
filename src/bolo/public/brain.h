@@ -106,6 +106,10 @@ A base bust have one armour unit or more to resist a shell --
 #ifdef _WIN32
 typedef unsigned char  u_char;
 typedef unsigned short u_short;
+#else
+/* u_char / u_short. glibc's socket headers pull this in; Emscripten's do
+ * not, and its libc declares them only under _GNU_SOURCE or _BSD_SOURCE. */
+#include <sys/types.h>
 #endif
 typedef u_char  NIBBLE; /* to be interpreted as four bits */
 #ifndef _GAMEID_DEFINED
@@ -446,6 +450,17 @@ typedef struct
 	BYTE    ping_kind;
 	WORLD_X ping_x;
 	WORLD_Y ping_y;
+
+	// Which pill and base numbers are on the map this tick: bit n set means
+	// pill (or base) n, 0 based, is on it. A scenario can take a pill or a
+	// base off the map for good. The slot stays, so the numbers above it do
+	// not move, but the item is not shown in objects again. A brain that
+	// remembers items it saw earlier needs these to know one has gone,
+	// because an item that is merely out of sight looks the same in objects.
+	// A carried pill is on the map for this purpose; only a removal clears
+	// the bit. Bits at or past max_pillboxes / max_refbases are always 0.
+	uint32_t pills_on_map;
+	uint32_t bases_on_map;
 
 	// This tank's own modifiers (a scenario sets them per tank, at any tick)
 	// and the reload interval they give, in ticks. brain_data.c fills both

@@ -69,6 +69,11 @@ typedef struct {
     char     file[SCN_DIR_FILE_LEN];
     uint16_t len;                      /* 0 = the file declares nothing */
     uint8_t  bytes[SCN_DETAILS_MAX];
+    /* The file's settings block (scenario_settings.h), which travels apart
+       from the details because an older client would refuse a details blob
+       with more bytes on the end. 0 = the file declares no setting. */
+    uint16_t settingsLen;
+    uint8_t  settings[SCN_SETTINGS_BLOB_MAX];
 } ScnDirDetails;
 
 /*********************************************************
@@ -119,6 +124,17 @@ bool scnDirReadPackage(const char *path, ScenarioManifest *out);
  *********************************************************/
 void scnDirEntryFromManifest(ScnDirEntry *e, const char *file,
                              const ScenarioManifest *m);
+
+/*********************************************************
+ *NAME:          scnDirSettingsFromManifest
+ *PURPOSE:
+ *  One file's settings block (scenario_settings.h), packed
+ *  from a manifest already in hand into out, which holds
+ *  cap bytes. Answers the length, 0 for a file that
+ *  declares no setting.
+ *********************************************************/
+size_t scnDirSettingsFromManifest(uint8_t *out, size_t cap,
+                                  const ScenarioManifest *m);
 
 /*********************************************************
  *NAME:          scnDirDetailsFromManifest

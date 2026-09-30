@@ -32,6 +32,7 @@
 #include "gfx_settings.h"
 #include "tileloader.h"
 #include "util.h"
+#include "tank_diagonal_snap.h"
 
 #include <string.h>
 
@@ -335,12 +336,24 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
     /* Win32 adds 2 to px/py before computing position */
     int apx = (int)px;// + 2;
     int apy = (int)py;// + 2;
+    int sqX = (int)mx, sqY = (int)my;
+    if (mode != GFX_ANIM_SMOOTH && mode != GFX_ANIM_MATCH_PIXELATION) {
+      /* Classic draws whole game pixels. On a diagonal, cut the position
+         to the diagonal pixel lattice rather than each axis on its own, so
+         the tank steps on both axes on the same frame (see
+         tank_diagonal_snap.h). */
+      int dx = sqX * 256 + (int)wx;
+      int dy = sqY * 256 + (int)wy;
+      tankDiagonalSnap(utilGetDir((TURNTYPE)angle), &dx, &dy);
+      sqX = 0; apx = dx / 16;
+      sqY = 0; apy = dy / 16;
+    }
     float sx = originX - tileW - edgeX +
                spritePositionOffset(mode, ctx->scale, ctx->sheetScale,
-                                    (int)mx, apx, (int)wx);
+                                    sqX, apx, (int)wx);
     float sy = originY - tileH - edgeY +
                spritePositionOffset(mode, ctx->scale, ctx->sheetScale,
-                                    (int)my, apy, (int)wy);
+                                    sqY, apy, (int)wy);
 
     /* A rotating skin's tank can instead be drawn from its north sprite and
        turned here by the tank's full angle, for 256 steps rather than the
@@ -564,21 +577,36 @@ void mapViewRenderCentered(MapViewCtx *ctx, ServerSim *sim,
   int zf = ctx->zoomFactor;
   int scaledTile = tileSize * zf;
 
-  /* Convert world coords to pixel centre */
-  int centerPX = ((int)centerWX * tileSize) >> 8;
-  int centerPY = ((int)centerWY * tileSize) >> 8;
+  int camMX, camMY, edgeX, edgeY;
+  const MapViewPreciseCam *pc = ctx->precise;
+  if (pc == NULL) {
+    /* Convert world coords to pixel centre */
+    int centerPX = ((int)centerWX * tileSize) >> 8;
+    int centerPY = ((int)centerWY * tileSize) >> 8;
 
-  /* Camera top-left in pixel space */
-  int camPX = centerPX - viewW / (2 * zf);
-  int camPY = centerPY - viewH / (2 * zf);
+    /* Camera top-left in pixel space */
+    int camPX = centerPX - viewW / (2 * zf);
+    int camPY = centerPY - viewH / (2 * zf);
 
-  /* Camera tile and sub-tile offset */
-  int camMX = camPX / tileSize;
-  int camMY = camPY / tileSize;
-  if (camPX < 0) camMX--;
-  if (camPY < 0) camMY--;
-  int edgeX = (camPX - camMX * tileSize) * zf;
-  int edgeY = (camPY - camMY * tileSize) * zf;
+    /* Camera tile and sub-tile offset */
+    camMX = camPX / tileSize;
+    camMY = camPY / tileSize;
+    if (camPX < 0) camMX--;
+    if (camPY < 0) camMY--;
+    edgeX = (camPX - camMX * tileSize) * zf;
+    edgeY = (camPY - camMY * tileSize) * zf;
+  } else {
+    /* Camera top-left in whole screen pixels (world units * zf / 16,
+       rounded), so the view moves one screen pixel at a time instead of
+       zf. edgeX can then be any 0..scaledTile-1; every sprite below is
+       placed as (pos - camMX * tileSize) * zf - edgeX, which stays right. */
+    int camSX = (int)SDL_floorf(pc->centerWX * (float)zf / 16.0f + 0.5f) - viewW / 2;
+    int camSY = (int)SDL_floorf(pc->centerWY * (float)zf / 16.0f + 0.5f) - viewH / 2;
+    camMX = (camSX >= 0) ? camSX / scaledTile : -((-camSX + scaledTile - 1) / scaledTile);
+    camMY = (camSY >= 0) ? camSY / scaledTile : -((-camSY + scaledTile - 1) / scaledTile);
+    edgeX = camSX - camMX * scaledTile;
+    edgeY = camSY - camMY * scaledTile;
+  }
 
   /* Number of tiles needed to cover the viewport */
   int tilesW = viewW / scaledTile + 3;
@@ -628,6 +656,16 @@ void mapViewRenderCentered(MapViewCtx *ctx, ServerSim *sim,
     int tpy = ((int)info.world_y * tileSize >> 8);
     float dx = (float)((tpx - camMX * tileSize) * zf - edgeX + originX - scaledTile / 2);
     float dy = (float)((tpy - camMY * tileSize) * zf - edgeY + originY - scaledTile / 2);
+    if (pc != NULL) {
+      /* To the whole screen pixel, from the caller's position when it gave
+         one, so the tank moves with the camera rather than against it. */
+      float twx = pc->haveTank[i] ? pc->tankWX[i] : (float)info.world_x;
+      float twy = pc->haveTank[i] ? pc->tankWY[i] : (float)info.world_y;
+      int tsx = (int)SDL_floorf(twx * (float)zf / 16.0f + 0.5f);
+      int tsy = (int)SDL_floorf(twy * (float)zf / 16.0f + 0.5f);
+      dx = (float)(tsx - camMX * scaledTile - edgeX + originX - scaledTile / 2);
+      dy = (float)(tsy - camMY * scaledTile - edgeY + originY - scaledTile / 2);
+    }
 
     /* Cull off-screen */
     if (dx + scaledTile < originX || dx > originX + viewW ||

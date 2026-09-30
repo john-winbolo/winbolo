@@ -757,6 +757,17 @@ void lobbySendTeamClear(ClientSim *cs, uint8_t teamId) {
     clientSimNetSendLobbyTeamClear(cs, teamId);
 }
 
+/* Whether a pool pick changes anything on the team row: a team not yet in
+ * use, or a pool other than the one it has. Picking the pool the team
+ * already has sends no team-meta write, because the server reads a write
+ * that repeats every field as the host picking the side the team already
+ * shows (serverSimSetTeamMeta). The bot re-roll below still runs. */
+static bool lobbyTeamPoolChanges(ClientSim *cs, uint8_t teamId,
+                                 uint8_t namingPool) {
+    return !clientSimGetLobbyTeamInUse(cs, (BYTE)(teamId)) ||
+           clientSimGetLobbyTeamPool(cs, (BYTE)(teamId)) != namingPool;
+}
+
 /* Update a team's naming pool. The team-meta write goes through the
  * wire wrapper (its local-transport branch handles SP-host). After
  * the new pool is published we re-roll every bot on the team whose
@@ -781,7 +792,9 @@ void lobbySendTeamPool(ClientSim *cs,
             color = (uint8_t)((teamId - 1) & 7);
         }
         uint8_t startSide = clientSimGetLobbyTeamStartSide(cs, (BYTE)(teamId));
-        clientSimNetSendLobbyTeamMeta(cs, teamId, color, namingPool, startSide, teamName);
+        if (lobbyTeamPoolChanges(cs, teamId, namingPool)) {
+            clientSimNetSendLobbyTeamMeta(cs, teamId, color, namingPool, startSide, teamName);
+        }
 
         /* Rename bots on this team whose names weren't overridden by
          * the host. We pick names sequentially from the new pool,
@@ -836,7 +849,9 @@ void lobbySendTeamPool(ClientSim *cs,
         /* Same read-back for the start side: the packet carries every
          * field, so send the current side rather than resetting it. */
         uint8_t startSide = clientSimGetLobbyTeamStartSide(cs, (BYTE)(teamId));
-        clientSimNetSendLobbyTeamMeta(cs, teamId, color, namingPool, startSide, teamName);
+        if (lobbyTeamPoolChanges(cs, teamId, namingPool)) {
+            clientSimNetSendLobbyTeamMeta(cs, teamId, color, namingPool, startSide, teamName);
+        }
 
         /* The server can't rename existing bots when the pool changes
          * because the per-pool name table lives only on the client

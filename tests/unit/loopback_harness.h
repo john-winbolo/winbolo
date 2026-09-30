@@ -145,6 +145,24 @@ void loopbackHarnessPumpClientOnly(LoopbackHarness *h, int n);
  * and before the first pump. No effect unless WB_ENABLE_NETIMPAIR is on. */
 void loopbackHarnessUseVirtualClock(LoopbackHarness *h, bool on);
 
+/* Drop the next `count` server->client datagrams of packetType that reach
+ * client `cs` (h->cs or h->cs2), as if they were lost on the wire. Other
+ * packet types and the other client are not touched. count 0 turns it off.
+ * DropNextLeft returns how many drops are still pending (0 once all have
+ * happened). No effect, and Left returns 0, unless WB_ENABLE_NETIMPAIR is
+ * on. */
+void loopbackHarnessDropNextToClient(LoopbackHarness *h, struct ClientSim *cs,
+                                     uint8_t packetType, int count);
+int  loopbackHarnessDropNextLeft(LoopbackHarness *h, struct ClientSim *cs);
+
+/* The same for client->server datagrams: drop the next `count` of
+ * packetType that client `cs` sends, as if they were lost on the way to the
+ * server. */
+void loopbackHarnessDropNextFromClient(LoopbackHarness *h, struct ClientSim *cs,
+                                       uint8_t packetType, int count);
+int  loopbackHarnessDropNextFromClientLeft(LoopbackHarness *h,
+                                           struct ClientSim *cs);
+
 /* Pump up to maxIters times, evaluating pred after each pump. Returns the
  * 1-based pump count at which pred first held, or -1 if it never held within
  * maxIters. A NULL pred pumps exactly maxIters times and returns maxIters. */

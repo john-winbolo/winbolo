@@ -118,8 +118,8 @@ end
 -- with the `tok == "..."` tests further down; a word missing here arrives as
 -- "word=1" and is ignored there.
 local _INIT_FLAG_WORDS = {
-  ammoless = true, noammo = true, noblitz = true, noclaimdead = true, normal = true,
-  nosuicider = true, suicider = true,
+  ammoless = true, blitzonly = true, noammo = true, noblitz = true, noclaimdead = true,
+  normal = true, nosuicider = true, suicider = true,
 }
 
 local function _flatten_init_table(t)
@@ -1323,6 +1323,10 @@ function Brain.apply_init_tokens(state, a)
       elseif tok == "noblitz" then
         -- Solo bot: no calls opened, none joined, bsu designations ignored.
         state.blitz_disabled = true
+      elseif tok == "blitzonly" then
+        -- Pills only inside a blitz: no solo pill attack (see
+        -- C.BLITZ_ONLY_PILL_ATTACKS, the same gate as a constant).
+        state.blitz_only = true
       elseif tok == "noclaimdead" then
         -- Sweeping wave: allies' claims on DEAD pills are ignored (pool 4),
         -- so several bots race the same body and draw fire on the way in.
@@ -1436,7 +1440,7 @@ function Brain.on_init(t)
   -- applied, so the table is the WHOLE statement of what this bot is now.
   --
   -- A bare flag only ever sets: apply_init_tokens has no "off" word for
-  -- noblitz or noclaimdead, because at a VM's first breath there is nothing
+  -- noblitz, blitzonly or noclaimdead, because at a VM's first breath there is nothing
   -- to turn off. A RESUMED runner breaks that assumption — its state table
   -- survives the park, so the last life's flags are still standing when the
   -- next one is told its orders. Survival is the case: wave 3 is the noblitz
@@ -1448,6 +1452,7 @@ function Brain.on_init(t)
   -- first think), so clearing it on every bot_init would quietly overrule a
   -- roll the arena runs read; and nothing sends ammoless at runtime anyway.
   state.blitz_disabled      = false
+  state.blitz_only          = false
   state.ally_claim_dead_off = false
   state.force_pill_suicider = false
 
@@ -1732,6 +1737,15 @@ function Brain.think(info)
   --                          "bsu" suicider designations. It still fights and
   --                          takes pills SOLO, exactly as if no ally were in
   --                          range. No constant — blitzing is on by default.
+  --   "blitzonly"         -> this bot attacks a LIVE pill only inside a blitz:
+  --                          as a commander whose party met the blitz MIN and
+  --                          went GO, or as a soldier of one. A pool-6 row it
+  --                          can neither join nor lead is REJECTED blitz_only; a
+  --                          take about to fire without a GO is dropped
+  --                          (BLITZ_ONLY_ABORT); no "finish it solo" shortcuts.
+  --                          capture_pill (dead pills) is unchanged. Same gate
+  --                          as C.BLITZ_ONLY_PILL_ATTACKS; either one on = on.
+  --                          "noblitz" with it means no pill attacks at all.
   --   "noclaimdead"       -> ignore allies' CLAIMS on DEAD pills: pool 4
   --                          (capture_pill) rows never take an ally_claimed
   --                          REJECT, so several bots race to scoop the same
@@ -2184,6 +2198,10 @@ function Brain.think(info)
   -- (opt.set_tick already fired at the top of think; just emit the
   -- BEGIN marker here.)
   opt("BEGIN tick=", now, " goal=", state.goal.kind, " sub=", tostring(state.goal.substate))
+  -- Last tick's squad.update budget-killed half way? Put back its per-tick
+  -- fields (squad_cmdr, squad_blitz_target, ...) before any goal logic reads
+  -- them. See the guard above M.update in squad.lua.
+  squad.recover_killed_update(state, now)
 
   -- NOTE ON PLACEMENT: this sits AFTER print2.set_tick (which clears the
   -- per-tick buffer) on purpose. It used to live beside cautious_mode, ~330
@@ -3388,8 +3406,16 @@ function Brain.think(info)
           reason = "panic_override"
         else
           local ok, why = builder.place_tile_valid(info, world, trip.mx, trip.my)
+          -- A resume is a NEW pill: refuse it on a live blitz shot line
+          -- (C.PILL_PLACE_AVOID_BLITZ_LINE; nil lines = off / no blitz).
+          local _bl = ok and squad.blitz_shot_lines(state, world, now, info.player_number)
+          local _bl_hit = _bl and squad.tile_on_blitz_line(world, _bl, trip.mx, trip.my, now)
           if not ok then
             reason = (why == "unreachable") and "unreachable" or ("invalid_" .. why)
+          elseif _bl_hit then
+            reason = "blitz_line"
+            print2(string.format("PLACE_BLITZ_LINE t=%d site=harvest_resume tile=(%d,%d) on %s line (%.2f,%.2f)->pill(%d,%d) -> no resume",
+              now, trip.mx, trip.my, _bl_hit.who, _bl_hit.fx, _bl_hit.fy, _bl_hit.pmx, _bl_hit.pmy))
           elseif trip.score_at_dispatch then
             -- Fresh re-score, TRAVEL-FREE: sc7 pinned (as before) AND the tank
             -- position pinned to where we stood when the builder was sent.
@@ -4721,6 +4747,9 @@ function Brain.think(info)
     state.squad_blitz_target      = nil
     state.squad_blitz_engage_mx   = nil
     state.squad_blitz_engage_my   = nil
+    state.squad_blitz_engage_fx   = nil
+    state.squad_blitz_engage_fy   = nil
+    state.squad_blitz_engage_deg  = nil
     state.squad_blitz_bd          = nil
     state.squad_blitz_repos       = nil
     state.squad_blitz_in_position = nil
@@ -8924,8 +8953,13 @@ function Brain.think(info)
       local eta = state._repair_dispatch_eta
         or (U.mdist(dtx, dty, build_cmd.x, build_cmd.y)
             * (C.REPAIR_DEAD_GRASS_TICKS_PER_TILE or 16))
+      -- pbox: the man goes to build or repair a PILL there. The advert
+      -- appends "P" so allies can treat the tile as a pending pill
+      -- (squad.update_pending_pills). Readers of the first 8 chars are
+      -- unchanged.
       state._lgm_dispatch = { x = build_cmd.x, y = build_cmd.y,
-                              eta_tick = now + eta, tick = now }
+                              eta_tick = now + eta, tick = now,
+                              pbox = (build_cmd.action == BUILDMODE_PBOX) or nil }
       state._repair_dispatch_eta = nil
     end
     -- Placement trip flag. ONE record per placement dispatch (harvest or
@@ -9586,6 +9620,7 @@ function Brain.think(info)
     pill_table.draw(viz, world, state, info)
     goals.draw_pill_spots(viz, state)
     goals.draw_take_cover(viz, state)
+    ORD.draw_getaway(viz, state)
     goals.draw_sea_harvest(viz, state)
     goals.draw_build_viz(viz, state, info)
     attack.draw_pill_eval_progress(viz, state)
@@ -10199,11 +10234,25 @@ function Brain.think(info)
       -- /fy), falling back to the tile center.
       if state.squad_blitz_engage_mx and state.squad_blitz_engage_my
          and ((g and g._blitz) or state.squad_negotiate_cmdr) then
+        -- Fix A (C.BLITZ_SPOT_EXACT_ORIGIN): the scan's validated float point
+        -- when one is stored, so the commander's arbiter tests the same line.
         bsi.bes = string.format("%.4f,%.4f",
-                    state.squad_blitz_engage_mx + 0.5, state.squad_blitz_engage_my + 0.5)
+                    state.squad_blitz_engage_fx or (state.squad_blitz_engage_mx + 0.5),
+                    state.squad_blitz_engage_fy or (state.squad_blitz_engage_my + 0.5))
         if g and g._blitz and g.substate == "blitz_wait" and state.squad_blitz_aimed then bsi.rdy = "1" end
       elseif state.squad_role == "c" and g and g.kind == "attack_pill"
              and (g.standoff_fx or g.standoff_mx) then
+        bsi.bes = string.format("%.4f,%.4f",
+                    g.standoff_fx or (g.standoff_mx + 0.5),
+                    g.standoff_fy or (g.standoff_my + 0.5))
+      elseif C.BLITZ_NOSPOT_RENEGOTIATE and state.squad_role ~= "c"
+             and g and g.kind == "attack_pill" and (g.standoff_fx or g.standoff_mx)
+             and (state.squad_cmdr or state.squad_negotiate_cmdr)
+             and g.target_id ~= nil
+             and g.target_id == (state.squad_blitz_target or state.squad_negotiate_pill) then
+        -- 2026-09-25 evening: a soldier on the blitz pill with no engage
+        -- spot (NO-SPOT, or its own plan_position pick) still broadcasts
+        -- the standoff it drives to, so the commander and allies see it.
         bsi.bes = string.format("%.4f,%.4f",
                     g.standoff_fx or (g.standoff_mx + 0.5),
                     g.standoff_fy or (g.standoff_my + 0.5))
@@ -10698,6 +10747,10 @@ function Brain.think(info)
       bse.lgmd = string.format("%02X%02X%04X",
                                bit.band(ld.x or 0, 0xFF),
                                bit.band(ld.y or 0, 0xFF), left)
+      -- 9th char "P" = a pill build/repair trip (pending pill for allies'
+      -- blitz spot tests). Only with C.BLITZ_SPOT_PENDING_PILLS, so KEEL
+      -- sends the old 8-char advert byte for byte.
+      if ld.pbox and C.BLITZ_SPOT_PENDING_PILLS then bse.lgmd = bse.lgmd .. "P" end
     else
       if state._lgm_dispatch and info.man_status == C.LGM_INTANK
          and (now - (state._lgm_dispatch.tick or 0)) > 2 then
@@ -10867,7 +10920,10 @@ function Brain.think(info)
       local allies = info.allies or 0
       local bots   = info.player_bots or 0
       local human_allies = bit.band(allies, bit.bnot(bots))
-      if human_allies ~= 0 then
+      -- The goal line is a goal confirmation, so "bot chat off" silences it
+      -- too (same latch as orders.lua sayg). Still cleared below, so the
+      -- cooldown bookkeeping above does not change.
+      if human_allies ~= 0 and ORD.bot_chat_on(state) then
         send_msg = state.pending_human_goal_msg
         msg_dest = human_allies
       end

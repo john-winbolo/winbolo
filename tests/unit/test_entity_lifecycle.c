@@ -139,11 +139,11 @@ int run_entity_removed_pill_is_gone_from_gameplay(void) {
         BYTE armourBefore;
         gs->pb->item[0].armour = PILLS_MAX_ARMOUR;
         armourBefore = gs->pb->item[0].armour;
-        UT_ASSERT_MSG(pillsDamagePos(gs, px, py, TRUE, TRUE, 0) == FALSE,
+        UT_ASSERT_MSG(pillsDamagePos(gs, px, py, TRUE, TRUE, 0, DMG_NO_PILL) == FALSE,
                       "a shell reported a kill on a removed pill");
         UT_ASSERT_MSG(gs->pb->item[0].armour == armourBefore,
                       "a shell took armour off a removed pill");
-        pillsGetDamagePos(gs, &gs->pb, px, py, PILLS_MAX_ARMOUR);
+        pillsGetDamagePos(gs, &gs->pb, px, py, PILLS_MAX_ARMOUR, NEUTRAL);
         UT_ASSERT_MSG(gs->pb->item[0].armour == armourBefore,
                       "an explosion took armour off a removed pill");
         gs->pb->item[0].armour = 1;

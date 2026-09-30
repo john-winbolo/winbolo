@@ -168,11 +168,12 @@ bool discoveryMdnsFillServer(const DiscoveryMdnsResolved *r, DiscoveryServer *ou
    * flags/counts/md5 keys are present in the TXT record. */
   out->hasRichInfo = true;
   /* A record with no view key means the rules an INFO packet without the
-   * view bytes reports. The memset above is that answer for six of the
-   * seven — pill always, ally always, classic off, allies in trees off,
-   * the expanded overview window, sight off — because each of those is
-   * zero. The base view is not: viewPolicyOff is 3, so it is set here.
-   * A view key in the loop below overwrites all seven. Meaning B in
+   * view bytes reports. The memset above is that answer for seven of the
+   * eight — pill always, ally always, classic off, allies in trees off,
+   * the expanded overview window, sight off, positional sound off —
+   * because each of those is zero. The base view is not: viewPolicyOff
+   * is 3, so it is set here. A view key in the loop below overwrites all
+   * eight. Meaning B in
    * view_policy.h, not the VIEW_POLICY_STOCK_* set. */
   out->baseView = viewPolicyOff;
 
@@ -256,7 +257,8 @@ bool discoveryMdnsFillServer(const DiscoveryMdnsResolved *r, DiscoveryServer *ou
                                    &out->allyView, &out->classicMode,
                                    &out->alliesInTrees);
         infoPacketReadViewPolicies2(&viewBytes, sizeof(viewBytes),
-                                    &out->overviewWindow, &out->lineOfSight);
+                                    &out->overviewWindow, &out->lineOfSight,
+                                    &out->positionalSound);
         /* A record carrying the key at all is a record that says what its
          * rules are; one without it said nothing and kept the stand-in. */
         out->hasViewInfo = true;

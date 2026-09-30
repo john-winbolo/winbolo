@@ -23,8 +23,8 @@
 -- Nobody can hurt his own side. Friendly fire would otherwise be the quickest
 -- way to end the round, and a survivor shot by a survivor would join the horde
 -- for it. What turns a survivor is the horde, or his own hand: drowning and his
--- own mine count, so the sea is not a way out of a chase, while a pillbox
--- nobody owns and a mine the map came with only kill him.
+-- own mine count once the first has turned, so the sea is not a way out of a
+-- chase, while a pillbox nobody owns and a mine the map came with only kill him.
 --
 -- A bot on the infected side is told who to chase. Left alone a brain plays the
 -- ordinary game, and the ordinary game is the one this scenario has taken off
@@ -934,7 +934,9 @@ end
 -- A death nobody caused names the dying tank as its own killer, which is how
 -- drowning and your own mine read. Those do turn you. Without that the sea is a
 -- way out of any chase the horde is winning, and a full tank of armour on the
--- other side of it.
+-- other side of it. Not in the head start, though: there is no horde yet to run
+-- from, and the first to turn is picked at twenty seconds whatever happens
+-- before it, so a man who drowns early comes back a survivor.
 function on_tank_killed(victim, killer, cause, scripted)
   if over or not running then
     return
@@ -946,7 +948,7 @@ function on_tank_killed(victim, killer, cause, scripted)
   if side[victim] == INFECTED then
     return
   end
-  if killer == victim then
+  if killer == victim and loose then
     infect(victim, nil)
   elseif side[killer] == INFECTED then
     infect(victim, killer)
@@ -1065,6 +1067,13 @@ function allow_extra_teams()
   return false
 end
 
+-- And no alliances across them. A survivor allied with an infected player
+-- would be spared by the other side's pillboxes and bases while the script
+-- still counted them a survivor.
+function can_ally(p, q)
+  return false
+end
+
 -- A survivor comes back with everything; an infected one with half a tank of
 -- armour, eight shells and nothing to build with. Asked on every respawn, and
 -- by then the seat has changed sides, so a survivor's last death is what fuels
@@ -1166,6 +1175,7 @@ scenario = {
     on_tank_spawned = "Keeps the infected quick and weak.",
     on_tank_killed = "A survivor killed by the infected turns.",
     allow_extra_teams = "Only the two sides.",
+    can_ally = "Players cannot ally.",
     allow_base_win = "Holding every base does not win.",
     can_build = "The infected cannot build.",
     can_capture = "The infected cannot take bases or pillboxes.",

@@ -234,6 +234,10 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
      * ran, and it runs inside the sync replay the spectator ring rebuilds on
      * every lobby keyframe. */
     serverSimRefreshBrainDocs(sim);
+    /* The bot-name catalogue this server hands out, taken from the pools
+     * loaded now. WinBoloDS loads -botnames or the shipped file after the
+     * sim is made and calls serverSimRefreshBotPools again once it has. */
+    serverSimRefreshBotPools(sim);
 
     sim->startDelay = startDelay;
     sim->gameLength = gameLen;
@@ -389,6 +393,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.callbacks.built = serverSimCbBuilt;
     sim->sim.callbacks.mineLaid = serverSimCbMineLaid;
     sim->sim.callbacks.mineExploded = serverSimCbMineExploded;
+    sim->sim.callbacks.tankHit = serverSimCbTankHit;
     /* The policy queries. Registered on the server alone: a ClientSim leaves
      * them NULL, which is what keeps shared code on the classic branch
      * there. */
@@ -399,6 +404,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.callbacks.canBuild = serverSimCbCanBuild;
     sim->sim.callbacks.canCapture = serverSimCbCanCapture;
     sim->sim.callbacks.canDie = serverSimCbCanDie;
+    sim->sim.callbacks.canHit = serverSimCbCanHit;
+    sim->sim.callbacks.pillDamageScale = serverSimCbPillDamageScale;
     sim->sim.callbacks.ctx = sim;
 
     for (count = 0; count < MAX_TANKS; count++) {
@@ -670,8 +677,10 @@ void serverSimDestroy(ServerSim *sim) {
      * this destroy walk an already-empty bots[] on this call. */
     botManagerDestroy(sim);
 
-    /* The brains' lobby texts (~271 KB), allocated on the first refresh. */
+    /* The brains' lobby texts, allocated on the first refresh. */
     serverSimFreeBrainDocs(sim);
+    free(sim->botPoolBlob);
+    sim->botPoolBlob = NULL;
 
     for (count = 0; count < MAX_TANKS; count++) {
         if (sim->sim.tanks[count] != NULL) {
@@ -709,6 +718,10 @@ void serverSimDestroy(ServerSim *sim) {
         sim->trackCap = 0;
         sim->trackLen = 0;
     }
+
+    /* And the scripts.json text beside it. logDestroy above has already
+     * closed any recording that could still write it. */
+    serverSimSetScenarioRecordText(sim, NULL, 0);
 
     /* Free cached map data */
     if (sim->cachedMapData != NULL) {

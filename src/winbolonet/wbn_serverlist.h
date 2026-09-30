@@ -37,6 +37,7 @@ typedef struct {
   bool alliesInTrees;                        /* "alliesintrees"; absent = off */
   int  overviewWindow;                       /* "overviewwindow"; absent = expanded */
   int  lineOfSight;                          /* "lineofsight"; absent = off */
+  bool positionalSound;                      /* "positionalsound"; absent = off */
   bool smartPingsOff;                        /* "smartpingsoff"; absent = false,
                                                 meaning smart pings ALLOWED */
   /* Whether the row said anything about its visibility rules at all.

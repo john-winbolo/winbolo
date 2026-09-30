@@ -174,6 +174,7 @@ static lua_State *slVm(ScnLuaCtx *ctx, ServerSim *sim, ScenarioManifest *m) {
     ctx->timers    = &slTimers;
     /* Running the file, not checking it: the write rows apply. */
     ctx->checkOnly = false;
+    ctx->runningEnv = 0;
     scenarioLuaInstall(L, ctx);
     return L;
 }
@@ -201,8 +202,25 @@ static lua_State *slCheckOnlyVm(ScnLuaCtx *ctx, ServerSim *sim,
     ctx->running   = m;
     ctx->timers    = NULL;
     ctx->checkOnly = true;
+    ctx->runningEnv = 0;
     scenarioLuaInstall(L, ctx);
     return L;
+}
+
+/* One declared setting, "laps", for the fixture's game.setting call: a row
+ * that answers only for an id the running script declares. */
+static void slDeclareSetting(ScenarioManifest *m) {
+    ScnSetting *s = &m->settings[0];
+
+    memset(s, 0, sizeof(*s));
+    snprintf(s->id, sizeof(s->id), "%s", "laps");
+    snprintf(s->label, sizeof(s->label), "%s", "Laps");
+    s->type        = SCN_SETTING_TYPE_INT;
+    s->min         = 1;
+    s->max         = 9;
+    s->step        = 1;
+    s->def         = 3;
+    m->numSettings = 1;
 }
 
 /* Run a chunk and leave nothing on the stack. The error, when there is one,
@@ -291,7 +309,7 @@ static long slArrayInt(lua_State *L, const char *name, int n) {
  * lobby handlers are tested against there. */
 static ServerSim *slSeatedLobbySim(void) {
     BYTE       emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) {
         return NULL;
@@ -306,7 +324,7 @@ static ServerSim *slSeatedLobbySim(void) {
  * round themselves. ut_make_running_sim is the one for the rest. */
 static ServerSim *slLobbySim(void) {
     BYTE       emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) {
         return NULL;
@@ -460,6 +478,7 @@ static const char *const kSlEveryRowCalls =
     "  tank        = function() return game.tank(0) end,\n"
     "  builder     = function() return game.builder(0) end,\n"
     "  lobby_slot  = function() return game.lobby_slot(0) end,\n"
+    "  allied      = function() return game.allied(0, 0) end,\n"
     "  rule        = function() return game.rule(\"tank_reload_ticks\") end,\n"
     "  tags        = function() return game.tags(\"pill\", 1) end,\n"
     "  tagged      = function() return game.tagged(\"keep\") end,\n"
@@ -538,6 +557,8 @@ static const char *const kSlEveryRowCalls =
     "  set_game_time = function() return game.set_game_time(1000) end,\n"
     "  add_game_time = function() return game.add_game_time(10) end,\n"
     "  set_rule    = function() return game.set_rule(\"tank_reload_ticks\", 12) end,\n"
+    /* The one setting slDeclareSetting puts in the manifest. */
+    "  setting     = function() return game.setting(\"laps\") end,\n"
     /* The test hook. Seat 9 is empty, so the row is exercised and refused
        before the three-shot detector is handed anything — which is what the
        other write rows aimed at an empty seat do, and an answer is all this
@@ -592,6 +613,7 @@ int run_scenario_lua_every_row_answers(void) {
 
     if (sim == NULL) UT_FAIL("could not build a running sim");
     memset(&m, 0, sizeof(m));
+    slDeclareSetting(&m);
     L = slVm(&ctx, sim, &m);
     UT_ASSERT(L != NULL);
 
@@ -2889,6 +2911,7 @@ int run_scenario_lua_acting_rows_refuse_a_check(void) {
     UT_ASSERT_MSG(refusal[0] != '\0', "the refusal has no name");
 
     memset(&m, 0, sizeof(m));
+    slDeclareSetting(&m);
     L = slCheckOnlyVm(&ctx, sim, &m);
     UT_ASSERT(L != NULL);
 

@@ -42,6 +42,7 @@
 #include "channel_mux.h"
 #include "voice_segment.h"
 #include "bulk_transfer.h"
+#include "lobby_bot_pools.h"   /* lobbyBotPoolsDeserializeInstall, lobbyBotPoolsCatalogId */
 #include "wbn_key_codec.h"
 #include "bolo_map_validate.h"
 #include "wire_limits.h"
@@ -425,8 +426,43 @@ typedef struct {
                                        * a witness for the no-progress timer,
                                        * never the source of the percentage   */
 
+    /* A copy of one of the server's scripts (BULK_KIND_SCRIPT_PACKAGE), pulled
+     * with PACKET_LOBBY_SCRIPT_FETCH_REQ. onBegin mallocs scriptFetchBuf sized
+     * to the stream header, status byte included, and onComplete parks it;
+     * it stays owned by this context until transportUdpClientTakeScriptFetch
+     * hands out the bytes after the status byte. */
+    uint8_t *scriptFetchBuf;
+    size_t   scriptFetchLen;          /* scriptFetchBuf's size (0 when none)  */
+    int      scriptFetchState;        /* ClientScriptFetchState (client_net.h) */
+    int      scriptFetchStatus;       /* BULK_SCRIPT_* of the last answer, or
+                                       * CLIENT_SCRIPT_FETCH_NO_ANSWER        */
+    char     scriptFetchFile[BULK_PATH_MAX + 1];  /* the name asked for    */
+    uint32_t scriptFetchReqSeq;       /* reqSeq of the outstanding request    */
+    uint32_t scriptFetchSeqCounter;   /* monotonic source for fresh reqSeqs   */
+    uint32_t scriptFetchSentTick;     /* localTick the request last went out  */
+    uint32_t scriptFetchSends;        /* requests sent since the last answer  */
+    uint32_t scriptFetchBusyRetries;  /* re-requests after a BUSY answer      */
+    uint32_t scriptFetchRetryAtTick;  /* earliest localTick to re-ask after
+                                       * BUSY (0 = none parked)              */
+    uint32_t scriptFetchProgressTick; /* localTick body bytes last advanced   */
+    uint32_t scriptFetchWatchdogBytes;/* bodyReceived at the last stall check */
+
+    /* The server's bot-name catalogue (BULK_KIND_BOT_POOL), pulled with
+     * PACKET_LOBBY_BOT_POOL_REQ when the ClientSim's lobbyPoolState is
+     * WANTED. onBegin mallocs botPoolBuf sized to the stream header, status
+     * byte included; onComplete installs the catalogue and frees it. */
+    uint8_t *botPoolBuf;
+
 #if WB_ENABLE_NETIMPAIR
     uint8_t test_drop_upload_packet;
+    /* Drop the next test_drop_next_count inbound packets of this type, as if
+     * the server's datagram was lost on the wire. 0 = off. */
+    uint8_t test_drop_next_type;
+    int     test_drop_next_count;
+    /* Drop the next test_drop_out_count outbound packets of this type, as if
+     * the client's datagram was lost on the wire. 0 = off. */
+    uint8_t test_drop_out_type;
+    int     test_drop_out_count;
 #endif
 
 #ifdef __EMSCRIPTEN__
@@ -484,6 +520,15 @@ static uint64_t udpClientVirtualNow(void) {
 
 /* Client send wrapper — tracks packet and byte counters */
 static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int len) {
+#if WB_ENABLE_NETIMPAIR
+    if (c->test_drop_out_count > 0 &&
+        getPacketType(buf, len) == c->test_drop_out_type) {
+        c->test_drop_out_count--;
+        c->packetsSentThisSec++;
+        c->bytesSentThisSec += len;
+        return;
+    }
+#endif
     /* When outbound impairment is enabled, hand the datagram to the layer
      * instead of sending directly — udpClientTick later pops the delayed
      * packets onto the wire. An oversize datagram (offer returns false)
@@ -511,7 +556,7 @@ static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int le
         locLen = (socklen_t)sizeof(localAddr);
         if (getsockname(c->sock, (struct sockaddr *)&localAddr, &locLen) == 0
             && localAddr.sin_port != 0) {
-            mpDiagLog("[cli] local socket bound at %s:%u (kernel-assigned ephemeral; SO_REUSEADDR=on) -> server %s:%u",
+            mpDiagLog("[cli] local socket bound at %s:%u (kernel-assigned ephemeral) -> server %s:%u",
                       inet_ntoa(localAddr.sin_addr),
                       (unsigned)ntohs(localAddr.sin_port),
                       inet_ntoa(c->serverAddr.sin_addr),
@@ -1105,7 +1150,13 @@ static void clientDrainVoice(TransportUdpClientCtx *c) {
 
 /* PACKET_LOBBY_MAP_PREVIEW_ERR — server couldn't read the map. Wire:
  * [header 8] [pathLen 1] [path N] [code 1]. Flags the request failed
- * so the chooser shows "no preview" instead of spinning. */
+ * so the chooser shows "no preview" instead of spinning. Code 3 is the
+ * server's bulk sender being busy: while sends are left the request stays
+ * in flight and udpClientMapPreviewTick sends it again at its timeout.
+ * Code 3 is also ignored once the request is no longer in flight: a resend
+ * that crossed the first stream is answered busy, and that reply can arrive
+ * after the preview has finished; it must not replace the finished preview
+ * with an error. */
 void udpClientHandleLobbyMapPreviewErr(ClientSim *cs,
                                        const uint8_t *buf, int len) {
     if (!cs) return;
@@ -1114,6 +1165,11 @@ void udpClientHandleLobbyMapPreviewErr(ClientSim *cs,
     if (!wireTakeU8Field(buf, len, &pos, path, sizeof(path))) return;
     if (strncmp(path, cs->lobbyMapPreviewReqPath,
                 sizeof(cs->lobbyMapPreviewReqPath)) != 0) {
+        return;
+    }
+    if (pos < len && buf[pos] == 3 &&
+        (!cs->lobbyMapPreviewInFlight ||
+         cs->lobbyMapPreviewTries < LOBBY_MAP_PREVIEW_TRIES)) {
         return;
     }
     cs->lobbyMapPreviewError    = true;
@@ -1230,6 +1286,9 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_SCN_MARKER:       return "SCN_MARKER";
     case CTRL_SCENARIO_RULES:   return "SCENARIO_RULES";
     case CTRL_LOBBY_SCRIPT_LIST: return "LOBBY_SCRIPT_LIST";
+    case CTRL_LOBBY_SCRIPT_SETTING: return "LOBBY_SCRIPT_SETTING";
+    case CTRL_LOBBY_BRAIN_ANNOUNCE: return "LOBBY_BRAIN_ANNOUNCE";
+    case CTRL_LOBBY_BOT_POOL_INFO:  return "LOBBY_BOT_POOL_INFO";
     default:                    return "<unknown>";
     }
 }
@@ -1246,6 +1305,8 @@ static const char *mpDiagCtrlName(int type) {
  * no sim semantics and must never reach clientSimApplyControl. */
 static void udpClientFreeResyncBuf(TransportUdpClientCtx *c);     /* defined below */
 static void udpClientFreeRoundLogBuf(TransportUdpClientCtx *c);   /* defined below */
+static void udpClientFreeScriptFetchBuf(TransportUdpClientCtx *c); /* defined below */
+static void udpClientFreeBotPoolBuf(TransportUdpClientCtx *c);     /* defined below */
 static void clientApplyChannelReset(TransportUdpClientCtx *c,
                                     const ControlEvent *evt) {
     static const struct { uint8_t ch; const char *name; } kChans[3] = {
@@ -1300,6 +1361,69 @@ static void clientApplyChannelReset(TransportUdpClientCtx *c,
                 c->roundLogRetries = 0;
                 c->roundLogTransientRetries = 0;
                 c->roundLogRetryAtTick = 0;
+            }
+            /* A script copy still being filled is abandoned with it, and one
+             * still waiting fails too: its answer, queued behind the old
+             * stream, is lost with it. Either ends as no answer, which the
+             * lobby reports, rather than going quiet. A copy that already
+             * completed is left alone, for the reason the round log's is. */
+            if (c->scriptFetchState == CLIENT_SCRIPT_FETCH_WAITING ||
+                c->scriptFetchState == CLIENT_SCRIPT_FETCH_RECEIVING) {
+                udpClientFreeScriptFetchBuf(c);
+                c->scriptFetchState       = CLIENT_SCRIPT_FETCH_FAILED;
+                c->scriptFetchStatus      = CLIENT_SCRIPT_FETCH_NO_ANSWER;
+                c->scriptFetchRetryAtTick = 0;
+            }
+            /* A brain docs answer or a script details answer still being
+             * filled is abandoned with it. Each is asked for again: the
+             * brain, or the slot, goes back to WANTED and its receive mark is
+             * cleared, since the tick treats a set mark as "arriving now" and
+             * would otherwise wait on the cut-off body for ever. */
+            if (c->clientSim != NULL) {
+                ClientSim *cs = c->clientSim;
+                struct ClientBrainTexts *t = cs->lobbyBrainTexts;
+                if (t != NULL && t->rxIdx > 0 && t->rxIdx <= BRAIN_LIST_MAX) {
+                    if (t->docs[t->rxIdx - 1].state == CLIENT_BRAIN_DOCS_S_ASKED) {
+                        t->docs[t->rxIdx - 1].state = CLIENT_BRAIN_DOCS_S_WANTED;
+                        t->docs[t->rxIdx - 1].tries = 0;
+                    }
+                    t->rxIdx = 0;
+                }
+                if (cs->lobbyScnDetailsRxSlot > 0 &&
+                    cs->lobbyScnDetailsRxSlot <= LOBBY_SCN_DETAILS_SLOTS) {
+                    int slot = cs->lobbyScnDetailsRxSlot - 1;
+                    if (cs->lobbyScnDetails[slot].state == LOBBY_SCN_DETAILS_ASKED) {
+                        cs->lobbyScnDetails[slot].state = LOBBY_SCN_DETAILS_WANTED;
+                        cs->lobbyScnDetails[slot].tries = 0;
+                    }
+                    cs->lobbyScnDetailsRxSlot = 0;
+                }
+            }
+            /* A bot-name catalogue still being filled is abandoned with it
+             * and asked for again: the request goes back to WANTED with its
+             * tries cleared, so the tick sends it afresh rather than waiting
+             * on the cut-off body. */
+            if (c->botPoolBuf != NULL && c->bulkRecv.dst == c->botPoolBuf) {
+                udpClientFreeBotPoolBuf(c);
+                if (c->clientSim != NULL &&
+                    c->clientSim->lobbyPoolState == CLIENT_BOT_POOL_S_ASKED) {
+                    c->clientSim->lobbyPoolState = CLIENT_BOT_POOL_S_WANTED;
+                    c->clientSim->lobbyPoolTries = 0;
+                }
+            }
+            /* A map preview still being filled is asked for again on the
+             * next tick: clearing its total puts it back under
+             * udpClientMapPreviewTick, and the back-dated stamp makes that
+             * tick send at once. */
+            if (c->clientSim != NULL &&
+                c->clientSim->lobbyMapPreviewInFlight &&
+                c->bulkRecv.dst == c->clientSim->lobbyMapPreviewBytes) {
+                ClientSim *cs = c->clientSim;
+                cs->lobbyMapPreviewTotal    = 0;
+                cs->lobbyMapPreviewReceived = 0;
+                cs->lobbyMapPreviewTries    = 0;
+                cs->lobbyMapPreviewSentTick =
+                    c->localTick - LOBBY_MAP_PREVIEW_TIMEOUT_TICKS;
             }
             bulkReceiverInit(&c->bulkRecv);
             if (c->mapResyncBuf != NULL) {
@@ -1694,7 +1818,7 @@ static void udpClientRoundLogTick(TransportUdpClientCtx *c) {
 /* Put one details request on the wire and stamp the slot ASKED. */
 static void udpClientSendScnDetailsReq(TransportUdpClientCtx *c, int slot) {
     ClientSim *cs = c->clientSim;
-    uint8_t buf[PACKET_HEADER_SIZE + 1 + 255];
+    uint8_t buf[PACKET_HEADER_SIZE + 1 + 255 + 1];
     size_t n = strlen(cs->lobbyScnDetails[slot].file);
     if (n == 0 || n > 255) {
         cs->lobbyScnDetails[slot].state = LOBBY_SCN_DETAILS_NONE;
@@ -1703,7 +1827,11 @@ static void udpClientSendScnDetailsReq(TransportUdpClientCtx *c, int slot) {
     packHeader(buf, PACKET_LOBBY_SCENARIO_DETAILS_REQ, c->outSequence++);
     buf[PACKET_HEADER_SIZE] = (uint8_t)n;
     memcpy(buf + PACKET_HEADER_SIZE + 1, cs->lobbyScnDetails[slot].file, n);
-    udpClientSendTo(c, buf, (int)(PACKET_HEADER_SIZE + 1 + n));
+    /* The flags byte after the name asks for the settings block as well. An
+       older server reads the name by its length and never looks here, so it
+       answers as it always has. */
+    buf[PACKET_HEADER_SIZE + 1 + n] = BULK_SCN_DETAILS_WANT_SETTINGS;
+    udpClientSendTo(c, buf, (int)(PACKET_HEADER_SIZE + 1 + n + 1));
     cs->lobbyScnDetails[slot].state = LOBBY_SCN_DETAILS_ASKED;
     cs->lobbyScnDetails[slot].tries++;
     cs->lobbyScnDetails[slot].sentTick = c->localTick;
@@ -1739,6 +1867,260 @@ static void udpClientScnDetailsTick(TransportUdpClientCtx *c) {
             return;
         }
     }
+}
+
+/* ---- A brain's commands.txt for the lobby's docs dialog (BULK_KIND_BRAIN_DOCS).
+ *
+ * The dialog marks the brain WANTED (clientSimLobbyBrainDocsWant); this tick
+ * asks for one brain at a time with PACKET_LOBBY_BRAIN_DOCS_REQ and the answer
+ * comes back compressed on CHANNEL_BULK. The request is a bare datagram and
+ * the server drops one it cannot start at once (its bulk sender for this
+ * client busy), so an ASKED brain with no answer after
+ * CLIENT_BRAIN_DOCS_TIMEOUT_TICKS is asked again, up to CLIENT_BRAIN_DOCS_TRIES
+ * times, and then reads FAILED until the dialog is opened again. An answer
+ * that has started arriving is never timed out; the bulk channel resends its
+ * own lost fragments. */
+
+BOLO_STATIC_ASSERT(sizeof(((struct ClientBrainTexts *)0)->rx) ==
+                       BULK_BRAIN_DOCS_BLOB_MAX,
+                   brain_docs_rx_holds_the_largest_answer);
+
+/* Put one docs request on the wire and stamp the brain ASKED. */
+static void udpClientSendBrainDocsReq(TransportUdpClientCtx *c, int idx) {
+    struct ClientBrainTexts *t = c->clientSim->lobbyBrainTexts;
+    uint8_t buf[PACKET_HEADER_SIZE + 1];
+    packHeader(buf, PACKET_LOBBY_BRAIN_DOCS_REQ, c->outSequence++);
+    buf[PACKET_HEADER_SIZE] = (uint8_t)idx;
+    udpClientSendTo(c, buf, (int)sizeof(buf));
+    t->docs[idx].state    = CLIENT_BRAIN_DOCS_S_ASKED;
+    t->docs[idx].tries++;
+    t->docs[idx].sentTick = c->localTick;
+}
+
+/* Per-tick: at most one request out at a time, so the answers never queue
+ * behind each other in the server's one bulk sender for this client. */
+static void udpClientBrainDocsTick(TransportUdpClientCtx *c) {
+    struct ClientBrainTexts *t;
+    int i;
+    if (c->clientSim == NULL) return;
+    t = c->clientSim->lobbyBrainTexts;
+    if (t == NULL) return;
+    for (i = 0; i < BRAIN_LIST_MAX; i++) {
+        if (t->docs[i].state != CLIENT_BRAIN_DOCS_S_ASKED) continue;
+        if (t->rxIdx == i + 1) return;                     /* arriving now */
+        if ((uint32_t)(c->localTick - t->docs[i].sentTick) <
+            CLIENT_BRAIN_DOCS_TIMEOUT_TICKS) {
+            return;
+        }
+        if (t->docs[i].tries < CLIENT_BRAIN_DOCS_TRIES) {
+            udpClientSendBrainDocsReq(c, i);
+        } else {
+            WB_LOG_WARN(WB_LOG_CAT_NET,
+                "no commands.txt for brain %d after %u requests",
+                i, (unsigned)t->docs[i].tries);
+            t->docs[i].state = CLIENT_BRAIN_DOCS_S_FAILED;
+        }
+        return;
+    }
+    for (i = 0; i < BRAIN_LIST_MAX; i++) {
+        if (t->docs[i].state == CLIENT_BRAIN_DOCS_S_WANTED) {
+            udpClientSendBrainDocsReq(c, i);
+            return;
+        }
+    }
+}
+
+/* The brain index a BULK_KIND_BRAIN_DOCS header's path names, or -1. */
+static int udpClientBrainDocsPathIdx(const BulkStreamHeader *h) {
+    int idx = 0, n;
+    if (h->pathLen == 0 || h->pathLen > 2) return -1;
+    for (n = 0; n < h->pathLen; n++) {
+        if (h->path[n] < '0' || h->path[n] > '9') return -1;
+        idx = idx * 10 + (h->path[n] - '0');
+    }
+    return idx < BRAIN_LIST_MAX ? idx : -1;
+}
+
+/* ---- The server's bot-name catalogue (BULK_KIND_BOT_POOL).
+ *
+ * The join names the server's catalogue by id (CTRL_LOBBY_BOT_POOL_INFO) and
+ * a client whose own pools differ marks it WANTED. This tick asks for it with
+ * PACKET_LOBBY_BOT_POOL_REQ, only once connected, so the join's map download
+ * is done and the server's bulk sender for this client is free. The request
+ * is a bare datagram, so one with no answer after
+ * CLIENT_BOT_POOL_TIMEOUT_TICKS is sent again, up to CLIENT_BOT_POOL_TRIES
+ * times, and then the client keeps its own pools. An answer that has started
+ * arriving is never timed out. A bulk re-base that cuts off an answer part
+ * way in returns the request to WANTED with its tries cleared
+ * (clientApplyChannelReset), so it is asked for again. */
+
+/* Drop the catalogue buffer: clear the receiver's dst first so the rest of a
+ * body still arriving is consumed and discarded. */
+static void udpClientFreeBotPoolBuf(TransportUdpClientCtx *c) {
+    if (c->botPoolBuf != NULL) {
+        if (c->bulkRecv.dst == c->botPoolBuf) {
+            c->bulkRecv.dst = NULL;
+        }
+        free(c->botPoolBuf);
+        c->botPoolBuf = NULL;
+    }
+}
+
+static void udpClientBotPoolTick(TransportUdpClientCtx *c) {
+    ClientSim *cs = c->clientSim;
+    uint8_t    buf[PACKET_HEADER_SIZE];
+    if (cs == NULL) return;
+    if (cs->lobbyPoolState == CLIENT_BOT_POOL_S_ASKED) {
+        if (c->botPoolBuf != NULL && c->bulkRecv.dst == c->botPoolBuf) {
+            return;                                     /* arriving now */
+        }
+        if ((uint32_t)(c->localTick - cs->lobbyPoolSentTick) <
+            CLIENT_BOT_POOL_TIMEOUT_TICKS) {
+            return;
+        }
+        if (cs->lobbyPoolTries >= CLIENT_BOT_POOL_TRIES) {
+            WB_LOG_WARN(WB_LOG_CAT_NET,
+                "no bot-name catalogue after %u requests; keeping our own "
+                "pools", (unsigned)cs->lobbyPoolTries);
+            cs->lobbyPoolState = CLIENT_BOT_POOL_S_FAILED;
+            return;
+        }
+    } else if (cs->lobbyPoolState != CLIENT_BOT_POOL_S_WANTED) {
+        return;
+    }
+    packHeader(buf, PACKET_LOBBY_BOT_POOL_REQ, c->outSequence++);
+    udpClientSendTo(c, buf, (int)sizeof(buf));
+    cs->lobbyPoolState    = CLIENT_BOT_POOL_S_ASKED;
+    cs->lobbyPoolTries++;
+    cs->lobbyPoolSentTick = c->localTick;
+}
+
+/* ---- A server map's bytes for the lobby chooser's preview (BULK_KIND_PREVIEW). */
+
+/* Put the preview request for lobbyMapPreviewReqPath on the wire and stamp
+ * the send. */
+static void udpClientSendMapPreviewReq(TransportUdpClientCtx *c) {
+    ClientSim *cs = c->clientSim;
+    uint8_t buf[PACKET_HEADER_SIZE + 1 + 256];
+    size_t n = strlen(cs->lobbyMapPreviewReqPath);
+
+    packHeader(buf, PACKET_LOBBY_MAP_PREVIEW_REQ, c->outSequence++);
+    buf[PACKET_HEADER_SIZE] = (uint8_t)n;
+    memcpy(buf + PACKET_HEADER_SIZE + 1, cs->lobbyMapPreviewReqPath, n);
+    udpClientSendTo(c, buf, (int)(PACKET_HEADER_SIZE + 1 + n));
+    cs->lobbyMapPreviewTries++;
+    cs->lobbyMapPreviewSentTick = c->localTick;
+}
+
+/* Per-tick: send an unanswered preview request again, and give up on it
+ * after LOBBY_MAP_PREVIEW_TRIES sends. A request whose stream header has
+ * arrived (lobbyMapPreviewTotal set) is left to the bulk channel. */
+static void udpClientMapPreviewTick(TransportUdpClientCtx *c) {
+    ClientSim *cs = c->clientSim;
+    if (cs == NULL || !cs->lobbyMapPreviewInFlight ||
+        cs->lobbyMapPreviewTotal != 0 ||
+        cs->lobbyMapPreviewReqPath[0] == '\0') {
+        return;
+    }
+    if ((uint32_t)(c->localTick - cs->lobbyMapPreviewSentTick) <
+        LOBBY_MAP_PREVIEW_TIMEOUT_TICKS) {
+        return;
+    }
+    if (cs->lobbyMapPreviewTries < LOBBY_MAP_PREVIEW_TRIES) {
+        udpClientSendMapPreviewReq(c);
+        return;
+    }
+    WB_LOG_WARN(WB_LOG_CAT_NET, "no preview of %s after %u requests",
+                cs->lobbyMapPreviewReqPath,
+                (unsigned)cs->lobbyMapPreviewTries);
+    cs->lobbyMapPreviewError    = true;
+    cs->lobbyMapPreviewInFlight = false;
+}
+
+/* ---- A copy of one of the server's scripts (BULK_KIND_SCRIPT_PACKAGE).
+ *
+ * The request is a bare datagram and the server drops one it cannot start at
+ * once (this client's bulk stream busy), so a request with no answer after
+ * SCRIPT_FETCH_TIMEOUT_TICKS is sent again under the same reqSeq, up to
+ * SCRIPT_FETCH_SENDS sends in all. A BUSY answer means the server's request
+ * cooldown refused it: the request goes again SCRIPT_FETCH_BUSY_RETRY_TICKS
+ * later, up to SCRIPT_FETCH_BUSY_RETRIES times. Once the answer has started
+ * arriving it is not held to elapsed time, since the bulk channel resends its
+ * own lost fragments and a 4 MiB file on a slow link makes progress the whole
+ * way; it is abandoned only after SCRIPT_FETCH_NO_PROGRESS_TICKS with no
+ * further byte received. */
+
+/* Drop the fetch buffer this context owns, the way udpClientFreeRoundLogBuf
+ * drops the round log: clear the receiver's dst first so the rest of a body
+ * still arriving is consumed and discarded. */
+static void udpClientFreeScriptFetchBuf(TransportUdpClientCtx *c) {
+    if (c->scriptFetchBuf != NULL) {
+        if (c->bulkRecv.dst == c->scriptFetchBuf) {
+            c->bulkRecv.dst = NULL;
+        }
+        free(c->scriptFetchBuf);
+        c->scriptFetchBuf = NULL;
+    }
+    c->scriptFetchLen = 0;
+}
+
+/* Put the outstanding request on the wire again, under its own reqSeq. */
+static void udpClientSendScriptFetchReq(TransportUdpClientCtx *c) {
+    uint8_t buf[PACKET_HEADER_SIZE + 4 + 1 + BULK_PATH_MAX];
+    size_t  n;
+
+    n = transportUdpClientBuildScriptFetchReqBody(
+        buf + PACKET_HEADER_SIZE, sizeof(buf) - PACKET_HEADER_SIZE,
+        c->scriptFetchReqSeq, c->scriptFetchFile);
+    if (n == 0) return;
+    packHeader(buf, PACKET_LOBBY_SCRIPT_FETCH_REQ, c->outSequence++);
+    udpClientSendTo(c, buf, (int)(PACKET_HEADER_SIZE + n));
+    c->scriptFetchSends++;
+    c->scriptFetchSentTick = c->localTick;
+}
+
+/* Per-tick deadlines for an outstanding fetch. */
+static void udpClientScriptFetchTick(TransportUdpClientCtx *c) {
+    if (c->scriptFetchState == CLIENT_SCRIPT_FETCH_RECEIVING) {
+        uint32_t have = (c->scriptFetchBuf != NULL &&
+                         c->bulkRecv.dst == c->scriptFetchBuf)
+                            ? c->bulkRecv.bodyReceived : 0u;
+        if (have != c->scriptFetchWatchdogBytes) {
+            c->scriptFetchWatchdogBytes = have;
+            c->scriptFetchProgressTick  = c->localTick;
+            return;
+        }
+        if ((uint32_t)(c->localTick - c->scriptFetchProgressTick) >=
+            SCRIPT_FETCH_NO_PROGRESS_TICKS) {
+            WB_LOG_WARN(WB_LOG_CAT_NET,
+                "copy of %s stalled at %u bytes -> abandon",
+                c->scriptFetchFile, (unsigned)have);
+            udpClientFreeScriptFetchBuf(c);
+            c->scriptFetchState  = CLIENT_SCRIPT_FETCH_FAILED;
+            c->scriptFetchStatus = CLIENT_SCRIPT_FETCH_NO_ANSWER;
+        }
+        return;
+    }
+    if (c->scriptFetchState != CLIENT_SCRIPT_FETCH_WAITING) return;
+    if (c->scriptFetchRetryAtTick != 0) {
+        if (c->localTick >= c->scriptFetchRetryAtTick) {
+            c->scriptFetchRetryAtTick = 0;
+            udpClientSendScriptFetchReq(c);
+        }
+        return;
+    }
+    if ((uint32_t)(c->localTick - c->scriptFetchSentTick) <
+        SCRIPT_FETCH_TIMEOUT_TICKS) {
+        return;
+    }
+    if (c->scriptFetchSends < SCRIPT_FETCH_SENDS) {
+        udpClientSendScriptFetchReq(c);
+        return;
+    }
+    WB_LOG_WARN(WB_LOG_CAT_NET, "no copy of %s after %u requests",
+                c->scriptFetchFile, (unsigned)c->scriptFetchSends);
+    c->scriptFetchState  = CLIENT_SCRIPT_FETCH_FAILED;
+    c->scriptFetchStatus = CLIENT_SCRIPT_FETCH_NO_ANSWER;
 }
 
 /* Bulk-receiver onBegin (CHANNEL_BULK): a full stream header parsed. Dispatch by
@@ -1875,6 +2257,61 @@ static uint8_t *clientBulkOnBegin(void *ctx, const BulkStreamHeader *h) {
         }
         return NULL;
     }
+
+    case BULK_KIND_BRAIN_DOCS: {
+        /* One brain's commands.txt, answering a PACKET_LOBBY_BRAIN_DOCS_REQ.
+         * Taken only for a brain this client is waiting on, and only for the
+         * docs generation it was told about, or a not-found answer; a late or
+         * stale answer is dropped and the request goes again. totalSize is
+         * attacker-controlled: bound it by the receive buffer. */
+        struct ClientBrainTexts *t = cs->lobbyBrainTexts;
+        int idx = udpClientBrainDocsPathIdx(h);
+        if (t == NULL || idx < 0) return NULL;
+        if (h->totalSize < 1 || h->totalSize > sizeof(t->rx)) return NULL;
+        if (t->docs[idx].state != CLIENT_BRAIN_DOCS_S_ASKED) return NULL;
+        if (h->gen != 0 && h->gen != t->docs[idx].gen) return NULL;
+        t->rxIdx = idx + 1;
+        return t->rx;
+    }
+
+    case BULK_KIND_BOT_POOL:
+        /* The server's bot-name catalogue, answering a
+         * PACKET_LOBBY_BOT_POOL_REQ. Taken only while a request is out, and
+         * only for the catalogue the join named or a none answer. totalSize
+         * is attacker-controlled: bound it by the catalogue cap before
+         * allocating. */
+        if (cs->lobbyPoolState != CLIENT_BOT_POOL_S_ASKED) return NULL;
+        if (h->gen != 0 && h->gen != cs->lobbyPoolId) return NULL;
+        if (h->totalSize < 1 ||
+            h->totalSize > 1u + LOBBY_BOT_CATALOG_WIRE_MAX) {
+            return NULL;
+        }
+        udpClientFreeBotPoolBuf(c);
+        c->botPoolBuf = (uint8_t *)malloc(h->totalSize);
+        return c->botPoolBuf;
+
+    case BULK_KIND_SCRIPT_PACKAGE:
+        /* A copy of a script, answering this client's
+         * PACKET_LOBBY_SCRIPT_FETCH_REQ. Taken only while that request is
+         * outstanding, for its reqSeq and the name it asked for. totalSize is
+         * attacker-controlled: bound it by the package cap before allocating.
+         * h->path is a label only; nothing here opens it. */
+        if (c->scriptFetchState != CLIENT_SCRIPT_FETCH_WAITING) return NULL;
+        if (h->gen != c->scriptFetchReqSeq) return NULL;
+        if (strcmp(h->path, c->scriptFetchFile) != 0) return NULL;
+        if (h->totalSize < 1 ||
+            h->totalSize > 1u + LOBBY_PACKAGE_UPLOAD_MAX_BYTES) {
+            return NULL;
+        }
+        udpClientFreeScriptFetchBuf(c);
+        c->scriptFetchBuf = (uint8_t *)malloc(h->totalSize);
+        if (c->scriptFetchBuf == NULL) return NULL;
+        c->scriptFetchLen           = (size_t)h->totalSize;
+        c->scriptFetchState         = CLIENT_SCRIPT_FETCH_RECEIVING;
+        c->scriptFetchRetryAtTick   = 0;
+        c->scriptFetchProgressTick  = c->localTick;
+        c->scriptFetchWatchdogBytes = 0;
+        return c->scriptFetchBuf;
 
     default:
         return NULL;
@@ -2058,6 +2495,59 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
             "round log received (%u bytes)", (unsigned)h->totalSize);
         break;
 
+    case BULK_KIND_BOT_POOL: {
+        /* Install the server's pools over this client's own. A none answer,
+         * or a blob that does not install, leaves the client on its own
+         * pools (FAILED). A catalogue that installs but does not come out
+         * as the id the join named is kept, since it is the server's, and
+         * logged: the two ends serialized the same pools differently. */
+        uint32_t got;
+        if (buf == NULL || buf != c->botPoolBuf) break;
+        if (cs->lobbyPoolState == CLIENT_BOT_POOL_S_ASKED) {
+            if (buf[0] != BULK_BOT_POOL_FOUND || h->totalSize < 2 ||
+                lobbyBotPoolsDeserializeInstall(buf + 1,
+                                                (int)(h->totalSize - 1),
+                                                NULL) < 0) {
+                cs->lobbyPoolState = CLIENT_BOT_POOL_S_FAILED;
+            } else {
+                cs->lobbyPoolState = CLIENT_BOT_POOL_S_HAVE;
+                got = lobbyBotPoolsCatalogId();
+                if (got != cs->lobbyPoolId) {
+                    WB_LOG_WARN(WB_LOG_CAT_NET,
+                        "bot-name catalogue installed as id %08x, the server "
+                        "named %08x", (unsigned)got,
+                        (unsigned)cs->lobbyPoolId);
+                }
+            }
+        }
+        udpClientFreeBotPoolBuf(c);
+        break;
+    }
+
+    case BULK_KIND_BRAIN_DOCS: {
+        /* The brain onBegin matched, unless a new announce or brain list
+         * moved it on meanwhile. A not-found answer, or one that does not
+         * inflate, leaves the brain FAILED, which the dialog stops waiting
+         * on; one for another generation leaves it ASKED to be asked again. */
+        struct ClientBrainTexts *t = cs->lobbyBrainTexts;
+        int idx = udpClientBrainDocsPathIdx(h);
+        if (t == NULL || idx < 0 || t->rxIdx != idx + 1) break;
+        t->rxIdx = 0;
+        if (t->docs[idx].state != CLIENT_BRAIN_DOCS_S_ASKED) break;
+        if (buf[0] != BULK_BRAIN_DOCS_FOUND) {
+            t->docs[idx].state = CLIENT_BRAIN_DOCS_S_FAILED;
+            break;
+        }
+        if (h->totalSize < 3) {
+            t->docs[idx].state = CLIENT_BRAIN_DOCS_S_FAILED;
+            break;
+        }
+        (void)clientSimLobbyBrainDocsPut(
+            cs, idx, h->gen, buf + 3, (size_t)h->totalSize - 3,
+            ((size_t)buf[1] << 8) | buf[2]);
+        break;
+    }
+
     case BULK_KIND_SCENARIO_DETAILS: {
         /* The slot onBegin matched, unless the dialog forgot it meanwhile. A
          * not-found answer, or a blob that does not parse, leaves the file
@@ -2069,9 +2559,60 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
             strcmp(cs->lobbyScnDetails[slot].file, h->path) != 0) {
             break;
         }
+        if (buf[0] == BULK_SCN_DETAILS_FOUND_V2) {
+            /* [status][detailsLen 2][details][settings]. A length past the
+               blob makes the whole answer not-found. */
+            size_t total = (size_t)h->totalSize;
+            size_t dLen  = (total >= 3) ? (((size_t)buf[1] << 8) | buf[2])
+                                        : (size_t)-1;
+            if (total < 3 || 3 + dLen > total) {
+                clientSimLobbyScenarioDetailsPut(cs, h->path, false, NULL, 0);
+                break;
+            }
+            clientSimLobbyScenarioDetailsPut(cs, h->path, true, buf + 3,
+                                             dLen);
+            clientSimLobbyScenarioSettingsPut(cs, h->path, buf + 3 + dLen,
+                                              total - 3 - dLen);
+            break;
+        }
         clientSimLobbyScenarioDetailsPut(
             cs, h->path, buf[0] == BULK_SCN_DETAILS_FOUND, buf + 1,
             (size_t)h->totalSize - 1);
+        break;
+    }
+
+    case BULK_KIND_SCRIPT_PACKAGE: {
+        /* The status byte says what came. FOUND holds the bytes behind it,
+         * which may be none; BUSY asks again a little later, up to its own
+         * count; anything else, a status this build does not know included,
+         * ends the fetch with that status for the lobby to word. */
+        uint8_t status;
+        if (c->scriptFetchState != CLIENT_SCRIPT_FETCH_RECEIVING ||
+            buf == NULL || buf != c->scriptFetchBuf) {
+            break;
+        }
+        status = buf[0];
+        c->scriptFetchStatus = status;
+        if (status == BULK_SCRIPT_FOUND) {
+            c->scriptFetchLen   = (size_t)h->totalSize;
+            c->scriptFetchState = CLIENT_SCRIPT_FETCH_DONE;
+            WB_LOG_INFO(WB_LOG_CAT_NET, "copy of %s received (%u bytes)",
+                        c->scriptFetchFile, (unsigned)(h->totalSize - 1));
+            break;
+        }
+        udpClientFreeScriptFetchBuf(c);
+        if (status == BULK_SCRIPT_BUSY &&
+            c->scriptFetchBusyRetries < SCRIPT_FETCH_BUSY_RETRIES) {
+            c->scriptFetchBusyRetries++;
+            c->scriptFetchSends       = 0;
+            c->scriptFetchState       = CLIENT_SCRIPT_FETCH_WAITING;
+            c->scriptFetchRetryAtTick =
+                c->localTick + SCRIPT_FETCH_BUSY_RETRY_TICKS;
+            break;
+        }
+        WB_LOG_INFO(WB_LOG_CAT_NET, "copy of %s refused (status %u)",
+                    c->scriptFetchFile, (unsigned)status);
+        c->scriptFetchState = CLIENT_SCRIPT_FETCH_FAILED;
         break;
     }
 
@@ -2169,6 +2710,11 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
 
 #if WB_ENABLE_NETIMPAIR
     if (pktType != 0 && pktType == c->test_drop_upload_packet) return;
+    if (pktType != 0 && pktType == c->test_drop_next_type &&
+        c->test_drop_next_count > 0) {
+        c->test_drop_next_count--;
+        return;
+    }
 #endif
 
     c->packetsRecvThisSec++;
@@ -3792,6 +4338,15 @@ static bool udpClientTick(void *ctx) {
     if (c->joinState == UDP_CLIENT_CONNECTED) {
         udpClientRoundLogTick(c);
         udpClientScnDetailsTick(c);
+        udpClientScriptFetchTick(c);
+        udpClientBotPoolTick(c);
+        udpClientMapPreviewTick(c);
+    }
+    /* A spectator in the live lobby reads the same bot announce lines, and
+     * the server answers its docs requests on its own bulk stream. */
+    if (c->joinState == UDP_CLIENT_CONNECTED ||
+        c->joinState == UDP_CLIENT_SPECTATING) {
+        udpClientBrainDocsTick(c);
     }
 
     /* Control-event acks now ride the channel-frame trailer (the per-tick
@@ -4259,6 +4814,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     c = (TransportUdpClientCtx *)malloc(sizeof(TransportUdpClientCtx));
     memset(c, 0, sizeof(TransportUdpClientCtx));
     c->clientSim = clientSim;
+    c->scriptFetchStatus = CLIENT_SCRIPT_FETCH_NO_ANSWER;
     c->outCmdNextSeq = 1;
     c->outHeadSeq = 1;
     c->outTailSeq = 1;
@@ -4468,6 +5024,12 @@ void transportUdpClientDestroy(Transport *t) {
     }
     if (c->roundLogBuf != NULL) {
         free(c->roundLogBuf);   /* round log nobody took, or a partial one */
+    }
+    if (c->scriptFetchBuf != NULL) {
+        free(c->scriptFetchBuf);   /* script copy nobody took, or a partial one */
+    }
+    if (c->botPoolBuf != NULL) {
+        free(c->botPoolBuf);       /* a catalogue still arriving */
     }
     bulkSenderReset(&c->uploadSend);
     free(c);
@@ -4923,6 +5485,125 @@ uint8_t *transportUdpClientTakeRoundLog(Transport *t, size_t *outLen) {
     return blob;
 }
 
+size_t transportUdpClientBuildScriptFetchReqBody(uint8_t *out, size_t cap,
+                                                 uint32_t reqSeq,
+                                                 const char *file) {
+    size_t n;
+
+    if (out == NULL || file == NULL) return 0;
+    n = strlen(file);
+    if (n == 0 || n > BULK_PATH_MAX) return 0;
+    if (cap < 4 + 1 + n) return 0;
+    packU32(out, reqSeq);
+    out[4] = (uint8_t)n;
+    memcpy(out + 5, file, n);
+    return 4 + 1 + n;
+}
+
+bool transportUdpClientSendScriptFetch(Transport *t, const char *file) {
+    TransportUdpClientCtx *c;
+    size_t n;
+    if (t == NULL || t->ctx == NULL || file == NULL) return false;
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (c->joinState != UDP_CLIENT_CONNECTED) return false;
+    if (c->scriptFetchState == CLIENT_SCRIPT_FETCH_WAITING ||
+        c->scriptFetchState == CLIENT_SCRIPT_FETCH_RECEIVING) {
+        return false;
+    }
+    n = strlen(file);
+    if (n == 0 || n > BULK_PATH_MAX) return false;
+    /* A finished or failed fetch nobody cleared is dropped for the new one. */
+    udpClientFreeScriptFetchBuf(c);
+    memcpy(c->scriptFetchFile, file, n + 1);
+    c->scriptFetchSeqCounter++;
+    if (c->scriptFetchSeqCounter == 0) c->scriptFetchSeqCounter = 1;
+    c->scriptFetchReqSeq      = c->scriptFetchSeqCounter;
+    c->scriptFetchState       = CLIENT_SCRIPT_FETCH_WAITING;
+    c->scriptFetchStatus      = CLIENT_SCRIPT_FETCH_NO_ANSWER;
+    c->scriptFetchSends       = 0;
+    c->scriptFetchBusyRetries = 0;
+    c->scriptFetchRetryAtTick = 0;
+    udpClientSendScriptFetchReq(c);
+    return true;
+}
+
+int transportUdpClientGetScriptFetchState(Transport *t) {
+    if (t == NULL || t->ctx == NULL) return CLIENT_SCRIPT_FETCH_IDLE;
+    return ((TransportUdpClientCtx *)t->ctx)->scriptFetchState;
+}
+
+int transportUdpClientGetScriptFetchStatus(Transport *t) {
+    if (t == NULL || t->ctx == NULL) return CLIENT_SCRIPT_FETCH_NO_ANSWER;
+    return ((TransportUdpClientCtx *)t->ctx)->scriptFetchStatus;
+}
+
+uint8_t transportUdpClientGetScriptFetchPercent(Transport *t) {
+    TransportUdpClientCtx *c;
+    uint32_t total, pct;
+    if (t == NULL || t->ctx == NULL) return 0;
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (c->scriptFetchState != CLIENT_SCRIPT_FETCH_RECEIVING) return 0;
+    /* Live from the receiver, as the round-log percent reads it. */
+    if (c->scriptFetchBuf == NULL || c->bulkRecv.dst != c->scriptFetchBuf) {
+        return 0;
+    }
+    total = c->bulkRecv.hdr.totalSize;
+    if (total == 0) return 0;
+    pct = (uint32_t)(((uint64_t)c->bulkRecv.bodyReceived * 100u) / total);
+    return pct > 100 ? 100 : (uint8_t)pct;
+}
+
+bool transportUdpClientTakeScriptFetch(Transport *t, uint8_t **outBytes,
+                                       size_t *outLen, char *nameOut,
+                                       size_t nameCap) {
+    TransportUdpClientCtx *c;
+    size_t len;
+    if (outBytes != NULL) *outBytes = NULL;
+    if (outLen != NULL) *outLen = 0;
+    if (t == NULL || t->ctx == NULL || outBytes == NULL || outLen == NULL) {
+        return false;
+    }
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (c->scriptFetchState != CLIENT_SCRIPT_FETCH_DONE ||
+        c->scriptFetchBuf == NULL || c->scriptFetchLen < 1) {
+        return false;
+    }
+    /* A name cut short would be the wrong name to save under. */
+    if (nameOut != NULL &&
+        (nameCap == 0 || strlen(c->scriptFetchFile) >= nameCap)) {
+        return false;
+    }
+    if (nameOut != NULL) {
+        memcpy(nameOut, c->scriptFetchFile, strlen(c->scriptFetchFile) + 1);
+    }
+    /* The file's bytes sit behind the status byte; move them to the front so
+     * the buffer handed out is the file and nothing else. */
+    len = c->scriptFetchLen - 1;
+    memmove(c->scriptFetchBuf, c->scriptFetchBuf + 1, len);
+    *outBytes = c->scriptFetchBuf;
+    *outLen   = len;
+    c->scriptFetchBuf         = NULL;
+    c->scriptFetchLen         = 0;
+    c->scriptFetchState       = CLIENT_SCRIPT_FETCH_IDLE;
+    c->scriptFetchReqSeq      = 0;
+    c->scriptFetchRetryAtTick = 0;
+    return true;
+}
+
+void transportUdpClientClearScriptFetch(Transport *t) {
+    TransportUdpClientCtx *c;
+    if (t == NULL || t->ctx == NULL) return;
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (c->scriptFetchState != CLIENT_SCRIPT_FETCH_DONE &&
+        c->scriptFetchState != CLIENT_SCRIPT_FETCH_FAILED) {
+        return;
+    }
+    udpClientFreeScriptFetchBuf(c);
+    c->scriptFetchState       = CLIENT_SCRIPT_FETCH_IDLE;
+    c->scriptFetchReqSeq      = 0;
+    c->scriptFetchRetryAtTick = 0;
+}
+
 void transportUdpClientSendWbnReauth(Transport *t) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
@@ -5071,31 +5752,24 @@ void transportUdpClientSendLobbyScenarioListRequest(Transport *t) {
 void transportUdpClientSendLobbyMapPreviewRequest(Transport *t,
                                                   const char *relPath) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 1 + 256];
-    int pathLen, len;
+    ClientSim *cs = c->clientSim;
+    size_t pathLen;
 
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (c->joinState != UDP_CLIENT_CONNECTED || cs == NULL) return;
     if (relPath == NULL) relPath = "";
-    pathLen = (int)strlen(relPath);
+    pathLen = strlen(relPath);
     if (pathLen == 0 || pathLen > 255) return;
 
-    packHeader(buf, PACKET_LOBBY_MAP_PREVIEW_REQ, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = (uint8_t)pathLen;
-    memcpy(buf + PACKET_HEADER_SIZE + 1, relPath, pathLen);
-    len = PACKET_HEADER_SIZE + 1 + pathLen;
-    udpClientSendTo(c, buf, len);
-
-    if (c->clientSim) {
-        ClientSim *cs = c->clientSim;
-        memset(cs->lobbyMapPreviewReqPath, 0, sizeof(cs->lobbyMapPreviewReqPath));
-        memcpy(cs->lobbyMapPreviewReqPath, relPath, (size_t)pathLen);
-        cs->lobbyMapPreviewPath[0]   = '\0';
-        cs->lobbyMapPreviewInFlight  = true;
-        cs->lobbyMapPreviewReady     = false;
-        cs->lobbyMapPreviewError     = false;
-        cs->lobbyMapPreviewTotal     = 0;
-        cs->lobbyMapPreviewReceived  = 0;
-    }
+    memset(cs->lobbyMapPreviewReqPath, 0, sizeof(cs->lobbyMapPreviewReqPath));
+    memcpy(cs->lobbyMapPreviewReqPath, relPath, pathLen);
+    cs->lobbyMapPreviewPath[0]   = '\0';
+    cs->lobbyMapPreviewInFlight  = true;
+    cs->lobbyMapPreviewReady     = false;
+    cs->lobbyMapPreviewError     = false;
+    cs->lobbyMapPreviewTotal     = 0;
+    cs->lobbyMapPreviewReceived  = 0;
+    cs->lobbyMapPreviewTries     = 0;
+    udpClientSendMapPreviewReq(c);
 }
 
 void transportUdpClientSendLobbyMapSearchRequest(Transport *t,
@@ -5410,7 +6084,9 @@ static void udpClientUploadPump(TransportUdpClientCtx *c, uint64_t now) {
     }
     if (timedOut) {
         c->clientSim->lobbyMapUploadStatus = 4;
-        c->clientSim->lobbyMapUploadRejectCode = LOBBY_REJECT_INVALID;
+        /* Nothing came back, which is not the server turning the file down:
+           the chooser tells the player to try again. */
+        c->clientSim->lobbyMapUploadRejectCode = LOBBY_REJECT_TIMEOUT;
         c->clientSim->lobbyMapUploadFinalPath[0] = '\0';
         c->clientSim->lobbyMapUseLocalNeedsFallback = false;
         channelResetSend(&c->channelMux, CHANNEL_BULK);
@@ -5480,6 +6156,37 @@ void transportUdpClientTestDropUploadReply(Transport *t, uint8_t packet_type) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     c->test_drop_upload_packet = packet_type;
 }
+
+/* True while a bot-name catalogue answer is part way in: its buffer exists
+ * and the bulk receiver is filling it. */
+bool transportUdpClientTestBotPoolArriving(Transport *t) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    return c->botPoolBuf != NULL && c->bulkRecv.dst == c->botPoolBuf;
+}
+
+void transportUdpClientTestDropNext(Transport *t, uint8_t packet_type,
+                                    int count) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    c->test_drop_next_type  = packet_type;
+    c->test_drop_next_count = count;
+}
+
+int transportUdpClientTestDropNextLeft(Transport *t) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    return c->test_drop_next_count;
+}
+
+void transportUdpClientTestDropNextOut(Transport *t, uint8_t packet_type,
+                                       int count) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    c->test_drop_out_type  = packet_type;
+    c->test_drop_out_count = count;
+}
+
+int transportUdpClientTestDropNextOutLeft(Transport *t) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    return c->test_drop_out_count;
+}
 #endif
 
 bool transportUdpClientStartLobbyMapUploadFromBytes(Transport *t,
@@ -5490,6 +6197,55 @@ bool transportUdpClientStartLobbyMapUploadFromBytes(Transport *t,
                                  UPLOAD_KIND_MAP, buf, len, mapName,
                                  /*relPath=*/NULL, /*md5=*/NULL,
                                  /*useLocalLen=*/0);
+}
+
+/* The path the USE_LOCAL pre-check names, which is where the server would
+ * find its own copy of the file. Both prefixes are accepted:
+ *   - "data/maps/Foo/Bar.map" gives "Foo/Bar.map", the scheme
+ *     PACKET_LOBBY_MAP_PREVIEW_REQ uses;
+ *   - "<workshopDir>/Bar.map" gives "Workshop/Bar.map", which the server
+ *     resolves into its own Workshop directory.
+ * The local FS provider hands us either; on Windows the separators may be
+ * backslashes. A path under neither gets no relPath, and the upload skips
+ * USE_LOCAL and goes straight to BEGIN. */
+bool transportUdpClientUseLocalRelPath(const char *localFilePath,
+                                       const char *workshopDir,
+                                       char *out, size_t outLen) {
+    char normalized[FILENAME_MAX];
+    char *p;
+    const char *kPrefix = "data/maps/";
+    const size_t kPrefixLen = 10;
+
+    if (out == NULL || outLen == 0) return false;
+    out[0] = '\0';
+    if (localFilePath == NULL) return false;
+
+    SDL_strlcpy(normalized, localFilePath, sizeof(normalized));
+    for (p = normalized; *p; p++) {
+        if (*p == '\\') *p = '/';
+    }
+    if (strncmp(normalized, kPrefix, kPrefixLen) == 0) {
+        SDL_strlcpy(out, normalized + kPrefixLen, outLen);
+    } else if (workshopDir != NULL && workshopDir[0] != '\0') {
+        char   ws[FILENAME_MAX];
+        size_t wsLen;
+        SDL_strlcpy(ws, workshopDir, sizeof(ws));
+        for (p = ws; *p; p++) {
+            if (*p == '\\') *p = '/';
+        }
+        wsLen = strlen(ws);
+        while (wsLen > 0 && ws[wsLen - 1] == '/') ws[--wsLen] = '\0';
+        if (wsLen > 0 && strncmp(normalized, ws, wsLen) == 0 &&
+            normalized[wsLen] == '/' && normalized[wsLen + 1] != '\0') {
+            /* A name too long for out is not offered at all: a cut one
+             * would name some other file. */
+            if ((size_t)SDL_snprintf(out, outLen, "Workshop/%s",
+                                     normalized + wsLen + 1) >= outLen) {
+                out[0] = '\0';
+            }
+        }
+    }
+    return out[0] != '\0';
 }
 
 bool transportUdpClientStartLobbyMapUploadFromPath(Transport *t,
@@ -5533,27 +6289,15 @@ bool transportUdpClientStartLobbyMapUploadFromPath(Transport *t,
         SDL_strlcpy(nameBuf, base, sizeof(nameBuf));
     }
 
-    /* Derive a data/maps-relative path for the USE_LOCAL pre-check.
-     * Local FS provider hands us paths like "data/maps/Foo/Bar.map";
-     * on Windows the separators may be backslashes. Strip the prefix
-     * to get a path like "Foo/Bar.map" — same scheme
-     * PACKET_LOBBY_MAP_PREVIEW_REQ uses. If the path doesn't sit
-     * under data/maps/, skip USE_LOCAL and go straight to BEGIN. */
-    relPath[0] = '\0';
-    {
-        char normalized[FILENAME_MAX];
-        char *p;
-        const char *kPrefix = "data/maps/";
-        const size_t kPrefixLen = 10;
-        SDL_strlcpy(normalized, localFilePath, sizeof(normalized));
-        for (p = normalized; *p; p++) {
-            if (*p == '\\') *p = '/';
-        }
-        if (strncmp(normalized, kPrefix, kPrefixLen) == 0) {
-            SDL_strlcpy(relPath, normalized + kPrefixLen, sizeof(relPath));
-        }
+    haveRelPath = transportUdpClientUseLocalRelPath(
+        localFilePath,
+        c->clientSim != NULL ? c->clientSim->workshopMapDir : NULL,
+        relPath, sizeof(relPath));
+    if (haveRelPath) {
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+                    "map upload: offering '%s' as USE_LOCAL '%s' before "
+                    "sending it", nameBuf, relPath);
     }
-    haveRelPath = (relPath[0] != '\0');
     /* What the pre-check asks about is the map, not the file. A packed map
        carries a scenario container after its terminator, and the server
        answers from serverSimReadMapFile, which trims there — so a whole-file

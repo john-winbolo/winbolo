@@ -51,6 +51,7 @@
 #include "bases.h"
 #include "starts.h"
 #include "tank.h"
+#include "tank_diagonal_snap.h"
 #include "shells.h"
 #include "rubble.h"
 #include "explosions.h"
@@ -558,10 +559,10 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
         }
         break;
       case EVENT_SOUND:
-        /* data: [soundId, tier, direction, sourcePlayer] — play the variant the
-         * tier names. The server measured the sound against this recipient's
-         * tank and dropped anything out of earshot, so there is no distance
-         * work left here. Sounds are server-authoritative (isPredicting
+        /* data: [soundId, pan, dist, sourcePlayer] — play the variant dist
+         * picks, panned by pan. The server measured the sound against this
+         * recipient's tank and dropped anything out of earshot, so there is
+         * no range test left here. Sounds are server-authoritative (isPredicting
          * suppresses prediction-side sounds). Bubbles and tank-sink are
          * restricted to the local player: they're tied to the player's own
          * boat/drown event and would otherwise play whenever any remote tank
@@ -571,23 +572,23 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
           sndEffects sid = (sndEffects)events[i].data[0];
           bool selfOnly = (sid == bubbles || sid == tankSinkNear || sid == tankSinkFar);
           if (!selfOnly || events[i].data[3] == csPtr->myPlayerNum) {
-            clientSoundDist(&csPtr->sim, sid, events[i].data[1], events[i].data[2]);
+            clientSoundDist(&csPtr->sim, sid, (int8_t)events[i].data[1], events[i].data[2]);
           }
         }
         break;
       case EVENT_SOUND_SHOOT:
-        /* data: [soundId, tier, direction, firingPlayer] — skip own shots (client plays shootSelf via prediction) */
+        /* data: [soundId, pan, dist, firingPlayer] — skip own shots (client plays shootSelf via prediction) */
         if (isHuman && events[i].data[3] != csPtr->myPlayerNum) {
-          clientSoundDist(&csPtr->sim, shootNear, events[i].data[1], events[i].data[2]);
+          clientSoundDist(&csPtr->sim, shootNear, (int8_t)events[i].data[1], events[i].data[2]);
         }
         break;
       case EVENT_SOUND_TANK_HIT:
-        /* data: [soundId, tier, direction, hitPlayer] */
+        /* data: [soundId, pan, dist, hitPlayer] */
         if (isHuman) {
           if (events[i].data[3] == csPtr->myPlayerNum) {
             frontEndPlaySound(csPtr, hitTankSelf);
           } else {
-            clientSoundDist(&csPtr->sim, hitTankNear, events[i].data[1], events[i].data[2]);
+            clientSoundDist(&csPtr->sim, hitTankNear, (int8_t)events[i].data[1], events[i].data[2]);
           }
         }
         break;
@@ -987,12 +988,15 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
           /* And its sound, out through the same seam the lobby sounds use:
              the frontend owns every audio decision from here on, including
              whether this kind has a sound of its own or plays the default
-             one. Not distance-attenuated — a ping is a message, not
-             something happening on the map — and the sender's own copy plays
-             too, as the confirmation that the ping went out. A replay does
-             not reach this code at all: the log viewer keeps its own ping
-             ring and plays nothing for it. */
-          frontEndPlaySound(csPtr, pingSoundEffect(kind));
+             one. It pans by the pinged square's east-west offset from this
+             player's own tank, but it is not distance-attenuated — a ping is
+             a message, not something happening on the map — and the sender's
+             own copy plays too, as the confirmation that the ping went out. A
+             replay does not reach this code at all: the log viewer keeps its
+             own ping ring and plays nothing for it. px is in world units,
+             256 to a map square. */
+          clientSoundPing(&csPtr->sim, csPtr->myPlayerNum, pingSoundEffect(kind),
+                          (BYTE)(px >> 8));
         }
         break;
       }
@@ -1900,15 +1904,34 @@ void clientSnapshotRenderInterp(ClientSim *cs, uint32_t nowMs,
 
     if (drew) {
       BYTE lgmMX = 0, lgmMY = 0, lgmPX = 0, lgmPY = 0, lgmFrame = 0;
-      BYTE mx = (BYTE)(interpX >> TANK_SHIFT_MAPSIZE);
-      BYTE px = (BYTE)((interpX & 0xFF) >> TANK_SHIFT_RIGHT2);
-      BYTE my = (BYTE)(interpY >> TANK_SHIFT_MAPSIZE);
-      BYTE py = (BYTE)((interpY & 0xFF) >> TANK_SHIFT_RIGHT2);
       BYTE frame = utilGetDir(interpAngle);
+      int snapX = (int)interpX;
+      int snapY = (int)interpY;
+      BYTE mx, my, px, py;
+      /* The position is cut down to a game pixel here; on a diagonal cut it
+       * on the diagonal lattice so both axes step on the same frame. */
+      tankDiagonalSnap(frame, &snapX, &snapY);
+      if (snapX < 0) {
+        snapX = 0;
+      } else if (snapX > 0xFFFF) {
+        snapX = 0xFFF0;
+      }
+      if (snapY < 0) {
+        snapY = 0;
+      } else if (snapY > 0xFFFF) {
+        snapY = 0xFFF0;
+      }
+      mx = (BYTE)(snapX >> TANK_SHIFT_MAPSIZE);
+      px = (BYTE)((snapX & 0xFF) >> TANK_SHIFT_RIGHT2);
+      my = (BYTE)(snapY >> TANK_SHIFT_MAPSIZE);
+      py = (BYTE)((snapY & 0xFF) >> TANK_SHIFT_RIGHT2);
       interpGetLgm(&cs->interpCtx, pn, &lgmMX, &lgmMY, &lgmPX, &lgmPY,
                    &lgmFrame);
       playersUpdate(&cs->sim.plyrs, pn, mx, my, px, py, frame, interpOnBoat,
                     lgmMX, lgmMY, lgmPX, lgmPY, lgmFrame);
+      /* The same position before the snap and the pixel cut, for the
+       * Smooth animation mode (clientSimSetFineTankPositions). */
+      playersSetFinePosition(&cs->sim.plyrs, pn, interpX, interpY);
     } else if (interpHasData(&cs->interpCtx, pn) &&
                (!interpIsAlive(&cs->interpCtx, pn) ||
                 interpTankHidden(&cs->interpCtx, pn))) {

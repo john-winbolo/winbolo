@@ -24,6 +24,7 @@
 #include "client_render.h"
 #include "input_packet.h"
 #include "client_frontend_tick.h"
+#include "client_frontend_render.h"
 #include "gui_message.h"
 #include "../../common/wb_log.h"
 #include "server_sim.h"
@@ -422,7 +423,7 @@ ios_game_start:
         tick = SDL_GetTicks();
         clientMutexWaitFor();
         if (finishedLoop == FALSE) {
-            clientSimRenderPrepare(cs, tick);
+            clientFrontRenderPrepare(cs, tick);
             clientRenderFrame(cs, redraw);
         }
         clientMutexRelease();
@@ -780,6 +781,12 @@ void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE a
 void frontEndPlaySound(ClientSim *cs, sndEffects value) {
     (void)cs;
     if (soundEffects) soundPlayEffect(value);
+}
+
+void frontEndPlaySoundPan(ClientSim *cs, sndEffects value,
+                          uint16_t gainL, uint16_t gainR) {
+    (void)gainL; (void)gainR;
+    frontEndPlaySound(cs, value);
 }
 
 void windowPlaySound(sndEffects value) {

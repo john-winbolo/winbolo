@@ -67,6 +67,17 @@ void sdl3ImguiResetFrameState(void);
 
 void sdl3ImguiPumpAndRender(struct ClientSim *cs);
 void sdl3ImguiClearNavFocus(void);
+
+/*********************************************************
+*NAME:          sdl3ImguiNewGame
+*PURPOSE:
+*  Drops what the last game left in the draw, ImGui and
+*  input state as a game view opens: the build selection
+*  and build target, an unanswered alliance request, the
+*  full screen map's camera and the tablet overlay's
+*  message and armour tracking. Runs on the main thread.
+*********************************************************/
+void sdl3ImguiNewGame(struct ClientSim *cs);
 void sdl3ImguiForwardEvent(const void *event);
 bool sdl3ImguiWantCaptureMouse(void);
 bool sdl3ImguiIsDialogOpen(void);
@@ -275,6 +286,17 @@ const char *sdl3ImguiGetPlayerName(unsigned char playerNum);
 SDL_Texture *sdl3ImguiGetSteamIcon(void);
 
 /*********************************************************
+*NAME:          sdl3ImguiSpeakerIconTexture
+*PURPOSE:
+*  Returns the speaker icon (data/ui/speaker.svg) for the
+*  active renderer, white on transparent for tinting.
+*  Loads the icons lazily on first call. Available in every
+*  build, voice or not. Returns NULL if it could not be
+*  loaded.
+*********************************************************/
+SDL_Texture *sdl3ImguiSpeakerIconTexture(void);
+
+/*********************************************************
 *NAME:          sdl3ImguiGetBotIconSurface
 *PURPOSE:
 *  Returns the chip icon — the badge shown for a computer
@@ -386,6 +408,34 @@ bool sdl3ImguiPlayerIsBot(unsigned char playerNum);
  * beside a name rides with the location: a short label is the bare name
  * for a person and a bot alike. */
 bool sdl3ImguiTankLabelsLong(void);
+
+/*********************************************************
+*NAME:          sdl3ImguiScnPanelShown
+*PURPOSE:
+*  Whether the scenario has a panel to show: a list on
+*  the ClientSim with at least one primitive in it. The
+*  desktop window and the tablet slot both draw only when
+*  this is true.
+*********************************************************/
+bool sdl3ImguiScnPanelShown(struct ClientSim *cs);
+
+/*********************************************************
+*NAME:          sdl3ImguiScnPanelDraw
+*PURPOSE:
+*  Draws the scenario panel's list into the current ImGui
+*  window, as a square of the given side with its top-left
+*  at (originX, originY) in screen pixels. The list is
+*  scaled so its 128 units fill the side.
+*
+*  alpha fades what the scenario drew, from 0 to 1. With
+*  backing set, the panel's dim backing is drawn under the
+*  list at the same alpha; the desktop window leaves it off
+*  because its window background is that backing.
+*
+*  Draws nothing when sdl3ImguiScnPanelShown is false.
+*********************************************************/
+void sdl3ImguiScnPanelDraw(struct ClientSim *cs, float originX, float originY,
+                           float side, float alpha, bool backing);
 
 /*********************************************************
 *NAME:          sdl3ImguiGetPlatformIcon

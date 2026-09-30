@@ -175,9 +175,6 @@ set(SERVER_SOURCES
     ${SRC_ROOT}/server/server_stubs.c
 )
 
-# LZW compression
-file(GLOB LZW_SOURCES ${SRC_ROOT}/lzw/*.c)
-
 # Map editor sources reachable from shared dialogs (map chooser pulls in
 # the procedural generator's imgui controls; mapgen.c/mapgen_maze.c come
 # in via bolo_static).
@@ -399,7 +396,6 @@ set(WASM_SOURCES
 add_executable(winbolo
     ${BOLO_SOURCES}
     ${SERVER_SOURCES}
-    ${LZW_SOURCES}
     ${WBN_SOURCES}
     ${GUI_SOURCES}
     ${MAPEDITOR_SOURCES}

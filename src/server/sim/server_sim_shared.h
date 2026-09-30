@@ -81,6 +81,8 @@ void serverSimCbBuilt(void *ctx, BYTE player, BYTE action, BYTE mapX,
                       BYTE mapY);
 void serverSimCbMineLaid(void *ctx, BYTE player, BYTE mapX, BYTE mapY);
 void serverSimCbMineExploded(void *ctx, BYTE mapX, BYTE mapY, BYTE layer);
+void serverSimCbTankHit(void *ctx, BYTE victim, BYTE attacker, BYTE cause,
+                        BYTE amount, BYTE pill);
 void serverSimCbCenterTank(void *ctx);
 void serverSimCbConsoleMessage(void *ctx, char *msg);
 
@@ -91,12 +93,17 @@ bool serverSimCbChooseStart(void *ctx, BYTE player, BYTE *startIdx);
 bool serverSimCbSpawnLoadout(void *ctx, BYTE player, BYTE *shells,
                              BYTE *mines, BYTE *armour, BYTE *trees);
 bool serverSimCbCanRespawn(void *ctx, BYTE player);
-int  serverSimCbDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause);
+int  serverSimCbDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause,
+                            BYTE pill);
 bool serverSimCbCanBuild(void *ctx, BYTE player, BYTE action, BYTE mapX,
                          BYTE mapY, BYTE pillIdx);
 bool serverSimCbCanCapture(void *ctx, BYTE kind, BYTE index, BYTE player);
 bool serverSimCbCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
-                       BYTE cause);
+                       BYTE cause, BYTE pill);
+bool serverSimCbCanHit(void *ctx, BYTE attacker, BYTE kind, BYTE index,
+                       BYTE pill);
+int  serverSimCbPillDamageScale(void *ctx, BYTE attacker, BYTE index,
+                                BYTE cause, BYTE pill);
 
 /* Whether a newswire-worthy fact may be shown to players, also in
  * server_sim_callbacks.c. Unlike the queries above this one is not a GameSim
@@ -133,6 +140,21 @@ int serverSimGetPills(ServerSim *sim, PillSnapshot *out, int maxOut);
  * human. */
 void serverSimResetLobbyToDefaults(ServerSim *sim);
 
+/* Defined in server_sim_lobby.c — the start sides a freshly opened lobby
+ * gets: team 1 north and team 2 south, or team 1 east and team 2 west when
+ * the map's squares that are not deep sea span more columns than rows;
+ * both marked filled-in. Run when a lobby server starts up
+ * (serverSimApplyInstanceConfig) and when the last human leaves
+ * (serverSimResetLobbyToDefaults), so a side the host chose is never
+ * written over while anyone is in the lobby. */
+void serverSimApplyDefaultTeamSides(ServerSim *sim);
+
+/* Defined in server_sim_lobby.c — on a map change, picks the default pair
+ * again for the new map when teams 1 and 2 still hold it untouched (both
+ * filled-in, in the default order), and publishes both teams. Leaves any
+ * side the host chose. Returns true when the sides changed. */
+bool serverSimRefreshDefaultTeamSides(ServerSim *sim);
+
 /* The player slot every base owner is allied to when one side has swept
  * the map, or NEUTRAL when no side has. Same predicate as
  * serverSimCheckGameWin: a base at or below base_capture_armour is dead
@@ -147,7 +169,8 @@ void serverSimCacheMapMd5FromFile(ServerSim *sim, const char *path);
 
 /* Defined in server_sim_maps.c — turns a client-facing map relPath into the
  * file it names, redirecting the virtual "Uploads" folder to the configured
- * persist directory. The listing, the search and serverSimReadMapFile go
+ * persist directory and the virtual "Workshop" folder to the directory
+ * serverSimSetWorkshopMapDir named. The listing, the search and serverSimReadMapFile go
  * through it; so do the lobby's set-map command in server_command_dispatch.c
  * and the upload preview's use-local path in udp_server_dispatch.c, which
  * would otherwise open a different file from the one the client picked.

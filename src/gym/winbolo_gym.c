@@ -49,6 +49,8 @@
 #include "server_sim.h"
 #include "game_sim.h"
 #include "brain_worldsim.h"
+#include "pillbox.h"
+#include "bases.h"
 
 /* Required by the engine — stub for library mode */
 bool isInMenu = FALSE;
@@ -191,7 +193,9 @@ static bool gymCheckGameWin(WinBoloGym *g, bool *agentWon) {
         serverSimGetBaseStats(g->serverSim, i, &shellsAmt, &minesAmt, &armourAmt);
         if (owner == NEUTRAL ||
             armourAmt <= gs->rules.base_capture_armour) return false;
-        if (i == 1) {
+        /* The first base on the map: a slot that is not on it is skipped
+           above, so base 1 may not be the first one seen. */
+        if (first == NEUTRAL) {
             first = owner;
         } else if (!playersIsAllie(&gs->plyrs, owner, first)) {
             return false;
@@ -286,6 +290,21 @@ static void gymMakeBrainInfo(WinBoloGym *g, BrainInfo *bi) {
                 carried++;
         }
         bi->carriedpills = carried;
+    }
+
+    /* Which pill and base numbers are on the map (see BrainInfo). */
+    {
+        BYTE numPb = pillsGetNumPills(&sim->pb);
+        BYTE numBs = basesGetNumBases(&sim->bs);
+        BYTE i;
+        for (i = 0; i < numPb && i < 32; i++) {
+            if (pillsIsActive(&sim->pb, (BYTE)(i + 1)))
+                bi->pills_on_map |= ((uint32_t)1u << i);
+        }
+        for (i = 0; i < numBs && i < 32; i++) {
+            if (basesIsActive(&sim->bs, (BYTE)(i + 1)))
+                bi->bases_on_map |= ((uint32_t)1u << i);
+        }
     }
 
     /* LGM */
@@ -759,20 +778,20 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
         int self_pills = 0, enemy_pills = 0, ally_pills = 0, total_pills = 0;
         int self_bases = 0, ally_bases = 0, total_bases = 0;
         np = serverSimGetPillCount(g->serverSim);
-        total_pills = np;
         for (BYTE pi = 1; pi <= np; pi++) {
             BYTE powner;
             if (!serverSimGetPill(g->serverSim, pi, NULL, NULL, &powner, NULL, NULL)) continue;
+            total_pills++;  /* pills on the map, not slots */
             if (powner == 0xFF) continue;
             if (powner == selfPlayer) self_pills++;
             else if (alliesBits & (1u << powner)) ally_pills++;
             else enemy_pills++;
         }
         nb = serverSimGetBaseCount(g->serverSim);
-        total_bases = nb;
         for (BYTE bsi = 1; bsi <= nb; bsi++) {
             BYTE bowner;
             if (!serverSimGetBase(g->serverSim, bsi, NULL, NULL, &bowner)) continue;
+            total_bases++;  /* bases on the map, not slots */
             if (bowner == 0xFF) continue;
             if (bowner == selfPlayer) self_bases++;
             else if (alliesBits & (1u << bowner)) ally_bases++;

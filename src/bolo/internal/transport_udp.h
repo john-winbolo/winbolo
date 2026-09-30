@@ -327,6 +327,14 @@ size_t transportUdpClientBuildUploadBeginBody(uint8_t *out, size_t cap,
                                               uint8_t kind, uint32_t totalLen,
                                               const char *name,
                                               uint32_t bulkStartSeq);
+/* Writes the body of PACKET_LOBBY_SCRIPT_FETCH_REQ (everything after the
+ * packet header): { reqSeq 4 BE, fileLen 1, file N }. Returns the body
+ * length, or 0 if `cap` is too small or the name is empty or longer than
+ * BULK_PATH_MAX. The client's fetch sender uses it; exposed so a unit test
+ * can hold the bytes to hand-written hex. */
+size_t transportUdpClientBuildScriptFetchReqBody(uint8_t *out, size_t cap,
+                                                 uint32_t reqSeq,
+                                                 const char *file);
 /* Pre-upload optimisation: try to skip the byte transfer if the server
  * already has an identical file at relPath (relative to data/maps/).
  * Server replies PACKET_LOBBY_MAP_UPLOAD_DONE on match, or
@@ -347,6 +355,15 @@ void transportUdpClientSendLobbyMapUseLocal(Transport *t, uint32_t totalLen,
  * progress via the lobbyMapUpload* status fields on ClientSim. */
 bool transportUdpClientStartLobbyMapUploadFromPath(Transport *t,
                                                     const char *localFilePath);
+/* The path the map upload's USE_LOCAL pre-check names for localFilePath:
+ * "data/maps/<rest>" gives "<rest>", and "<workshopDir>/<rest>" gives
+ * "Workshop/<rest>". Either separator is accepted in both arguments, and
+ * workshopDir may be NULL or "". Returns false with out "" for a path under
+ * neither, or one that does not fit. Exposed so a unit test can hold the
+ * derivation to its cases without a connected transport. */
+bool transportUdpClientUseLocalRelPath(const char *localFilePath,
+                                       const char *workshopDir,
+                                       char *out, size_t outLen);
 bool transportUdpClientStartLobbyMapUploadFromBytes(Transport *t,
                                                      const uint8_t *buf,
                                                      size_t len,
@@ -470,6 +487,32 @@ uint8_t transportUdpClientGetRoundLogPercent(Transport *t);
  * idle. NULL unless a completed blob is held. The caller then owns the buffer
  * and releases it with plain free(). */
 uint8_t *transportUdpClientTakeRoundLog(Transport *t, size_t *outLen);
+
+/* ── A copy of one of the server's scripts (BULK_KIND_SCRIPT_PACKAGE) ── */
+/* Backing calls for the clientSimNetSendLobbyScriptFetch /
+ * clientSimGetScriptFetch* / clientSimTakeScriptFetch /
+ * clientSimClearScriptFetch wrappers in public/client_net.h; the states they
+ * speak in are that header's ClientScriptFetchState. localTick runs at 100/s.
+ *
+ * A request with no answer is sent again after SCRIPT_FETCH_TIMEOUT_TICKS, up
+ * to SCRIPT_FETCH_SENDS sends in all. A BUSY answer sends it again after
+ * SCRIPT_FETCH_BUSY_RETRY_TICKS, up to SCRIPT_FETCH_BUSY_RETRIES times. An
+ * answer that has started arriving fails with no answer after
+ * SCRIPT_FETCH_NO_PROGRESS_TICKS without a further byte. */
+#define SCRIPT_FETCH_TIMEOUT_TICKS     200  /* 2s without an answer           */
+#define SCRIPT_FETCH_SENDS             3    /* sends of one request in all    */
+#define SCRIPT_FETCH_BUSY_RETRY_TICKS  100  /* 1s after a BUSY answer         */
+#define SCRIPT_FETCH_BUSY_RETRIES      3    /* re-requests after BUSY answers */
+#define SCRIPT_FETCH_NO_PROGRESS_TICKS 1000 /* 10s of a stalled transfer      */
+
+bool transportUdpClientSendScriptFetch(Transport *t, const char *file);
+int transportUdpClientGetScriptFetchState(Transport *t);
+int transportUdpClientGetScriptFetchStatus(Transport *t);
+uint8_t transportUdpClientGetScriptFetchPercent(Transport *t);
+bool transportUdpClientTakeScriptFetch(Transport *t, uint8_t **outBytes,
+                                       size_t *outLen, char *nameOut,
+                                       size_t nameCap);
+void transportUdpClientClearScriptFetch(Transport *t);
 
 
 /*********************************************************
@@ -1000,6 +1043,21 @@ void transportUdpClientTestResyncState(Transport *t, bool *resyncActive,
 #if WB_ENABLE_NETIMPAIR
 void transportUdpClientTestUploadTimeout(Transport *t);
 void transportUdpClientTestDropUploadReply(Transport *t, uint8_t packet_type);
+/* True while a bot-name catalogue answer is part way in on CHANNEL_BULK. */
+bool transportUdpClientTestBotPoolArriving(Transport *t);
+/* Drop the next `count` inbound packets of packet_type before the client
+ * processes them, as if the server's datagrams were lost on the wire. Other
+ * packet types pass. DropNextLeft reads how many drops are still pending, so
+ * a test can check the drop really happened. */
+void transportUdpClientTestDropNext(Transport *t, uint8_t packet_type,
+                                    int count);
+int  transportUdpClientTestDropNextLeft(Transport *t);
+/* The same for outbound packets: drop the next `count` datagrams of
+ * packet_type the client sends, as if they were lost on the way to the
+ * server. */
+void transportUdpClientTestDropNextOut(Transport *t, uint8_t packet_type,
+                                       int count);
+int  transportUdpClientTestDropNextOutLeft(Transport *t);
 /* Hand the client a clock of the caller's own instead of SDL_GetTicks. Two
  * things read it and they have to agree: the impairment layer's delivery
  * times, and the client's own round-trip measurement (the PING stamp and the

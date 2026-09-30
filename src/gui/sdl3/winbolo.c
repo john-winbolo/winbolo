@@ -52,6 +52,7 @@
 #include "platform_net.h"
 #include "client_render.h"
 #include "client_frontend_tick.h"
+#include "client_frontend_render.h"
 #include "client_sim.h"
 #include "frontend.h"
 #include "tutorial.h"
@@ -83,6 +84,7 @@
 #include "dialogs/dialog_quit.h"
 #include "../tiles.h"
 #include "luabrainshandler.h"
+#include "workshop_sync.h"
 #include "../../scenario/scenario_host.h"
 #include "bg_game.h"
 #include "cursor.h"
@@ -120,6 +122,8 @@ bool showGunsight = FALSE;
 
 /* Whether the sound effects are turned on or not */
 bool soundEffects = TRUE;
+/* Whether sound effects are panned by where they happen */
+bool positionalSound = TRUE;
 /* Do we play background sound */
 bool backgroundSound = TRUE;
 
@@ -483,6 +487,10 @@ int main(int argc, char *argv[]) {
     /* Auto-connect once the pre-filled join dialog opens (see callback). */
     gameFrontRequestUdpAutoJoin();
   }
+  /* Bring the Workshop directory up to date with what the player is
+     subscribed to, so the first listing already offers it. Later changes
+     arrive through workshopSyncPoll. */
+  workshopSyncRun();
   /* Steam Input (Path A): start in Menu set — game launches into the
      main menu / lobby UI.  In-game switch handled per-frame in
      sdl3ImguiPumpAndRender.  No-op when running without the SDK. */
@@ -756,10 +764,15 @@ int main(int argc, char *argv[]) {
       /* Clear any leftover ImGui nav focus so keyboard input
          reaches the game immediately (not captured by ImGui). */
       sdl3ImguiClearNavFocus();
+      /* Every game view opens here, the first and each one after a return
+         to the lobby, which keeps the ClientSim and so never reaches
+         frontEndSetActiveClientSim. */
+      sdl3ImguiNewGame(cs);
 
       while (done == FALSE) {
         sdl3ImguiProcessEvents(cs);
         steam_run_callbacks();
+        workshopSyncPoll();
         /* Steam overlay open/close (updated by steam_run_callbacks above):
            pause a single-player game — freezing both the client and the
            server tick — and rebase the wallclock on close so the catch-up
@@ -823,7 +836,7 @@ int main(int argc, char *argv[]) {
           DWORD tick = SDL_GetTicks();
           clientMutexWaitFor();
           if (finishedLoop == FALSE) {
-            clientSimRenderPrepare(cs, tick);
+            clientFrontRenderPrepare(cs, tick);
             clientRenderFrame(cs, redraw);
           }
           clientMutexRelease();
@@ -1763,6 +1776,10 @@ void windowSoundEffects_toggle(void) {
   soundEffects = !soundEffects;
 }
 
+void windowPositionalSound_toggle(void) {
+  positionalSound = !positionalSound;
+}
+
 void windowBackgroundSoundChange_toggle(void) {
   backgroundSound = !backgroundSound;
   if (soundEffects == TRUE) {
@@ -2225,9 +2242,20 @@ void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE a
 }
 
 void frontEndPlaySound(ClientSim *cs, sndEffects value) {
+  frontEndPlaySoundPan(cs, value, SOUND_GAIN_UNITY, SOUND_GAIN_UNITY);
+}
+
+void frontEndPlaySoundPan(ClientSim *cs, sndEffects value,
+                          uint16_t gainL, uint16_t gainR) {
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (soundEffects == TRUE) {
-    soundPlayEffect(value);
+    /* The player has turned positional sound off, so every sound plays
+       centred; the near/far variant is already chosen. */
+    if (!positionalSound) {
+      gainL = SOUND_GAIN_UNITY;
+      gainR = SOUND_GAIN_UNITY;
+    }
+    soundPlayEffectPan(value, gainL, gainR);
   }
 }
 

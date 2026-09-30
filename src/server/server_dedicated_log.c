@@ -363,6 +363,9 @@ static void handleLobbyEnter(ServerSim *sim) {
     logSetLobbyMode(TRUE);
     s_isLogging = logStart(s_logFileName, sim,
                            0, MAX_TANKS, sim->hasPassword);
+    /* The last round's scripts.json went into its own file at the stash, and
+     * this round has not booted: a lobby log closed before it does has none. */
+    serverSimSetScenarioRecordText(sim, NULL, 0);
     /* A freshly opened lobby log holds no round yet. Redundant with the
      * reset at the end of the stash, deliberately: the invariant then holds
      * whichever path opened this log. */

@@ -101,6 +101,7 @@
 #define LOBBY_LOCK_LINE_OF_SIGHT     (1u << 15)
 #define LOBBY_LOCK_SMART_PINGS       (1u << 16)
 #define LOBBY_LOCK_MODS              (1u << 17)
+#define LOBBY_LOCK_POSITIONAL_SOUND  (1u << 18)
 
 /* LST_TIME_MINUTES accepted range. Surfaced publicly so the lobby
  * UI can validate the user's value before sending. Authoritative
@@ -159,7 +160,7 @@ typedef enum {
                                  * this wire reads as zero when the sender
                                  * never learned it, so refusing them is the
                                  * value that has to cost a byte to say. */
-    LST_MODS_OFF          = 16  /* 1 byte bool, carried in the NEGATIVE
+    LST_MODS_OFF          = 16, /* 1 byte bool, carried in the NEGATIVE
                                  * sense for the same reason as
                                  * LST_SMART_PINGS_OFF above: non-zero means
                                  * the round composes none of the mods the
@@ -175,6 +176,13 @@ typedef enum {
                                  * not touched, so checking the box back on
                                  * brings the same mods back in the same
                                  * order. */
+    LST_POSITIONAL_SOUND  = 17  /* 1 byte bool, carried the plain way
+                                 * round: non-zero means on. When on,
+                                 * sound events tell a human which side a
+                                 * sound is on and roughly how far. Off is
+                                 * the classic behaviour, and classic mode
+                                 * forces it off and refuses an edit while
+                                 * it stays on. */
 } LobbySettingType;
 
 #endif /* WIRE_LIMITS_H */

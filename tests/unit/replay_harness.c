@@ -180,6 +180,13 @@ void replayHarnessSnapshot(ReplayHarness *h) {
     logWriteSnapshot(h->sim, TRUE);
 }
 
+uint32_t replayHarnessServerTick(const ReplayHarness *h) {
+    if (h == NULL || h->sim == NULL) {
+        return 0;
+    }
+    return serverSimGetTick(h->sim);
+}
+
 bool replayHarnessStopRecording(ReplayHarness *h) {
     if (h == NULL || h->sim == NULL || !h->recording) {
         return false;

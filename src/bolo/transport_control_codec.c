@@ -40,6 +40,7 @@
  *********************************************************/
 
 #include "transport_control_codec.h"
+#include "lobby_bot_pools.h"   /* LOBBY_BOT_CATALOG_WIRE_MAX */
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -505,11 +506,13 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
  *   [startCount 1] [mapSkipAvailable 1] [netStat 1] [hasLobby 1]
  *   [openHost 1] [autoLockOnGameStart 1] [serverLocks 4 BE]
  *   [ranked 1] [allowNewPlayers 1] [wbnAvailable 1] [uploadPolicy 1]
- *   [scriptUploadPolicy 1] [lobbyStartDelay 4 BE] [hostSlot 1]
+ *   [scriptUploadPolicy 1] [scriptSharing 1] [lobbyStartDelay 4 BE]
+ *   [hostSlot 1]
  *   [pillView 1] [baseView 1] [allyView 1]
  *   [pillDecay 2 BE] [baseDecay 2 BE] [allyDecay 2 BE]
  *   [classicMode 1] [alliesInTrees 1] [voiceMode 1]
  *   [overviewWindow 1] [lineOfSight 1] [smartPingsOff 1] [modsOff 1]
+ *   [positionalSound 1]
  *
  * A new field goes where it belongs in the layout, and every field
  * after it moves; the sender and the receiver are built from the same
@@ -521,14 +524,15 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
 #define LOBBY_SETTINGS_WIRE_PAYLOAD_BASE \
     (MAP_STR_SIZE + 1 + 1 + 1 + 4 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 4)
 /* Trailing optional tail: ranked(1) + allowNewPlayers(1) + wbnAvailable(1)
- * + uploadPolicy(1) + scriptUploadPolicy(1) + lobbyStartDelay(4)
+ * + uploadPolicy(1) + scriptUploadPolicy(1) + scriptSharing(1)
+ * + lobbyStartDelay(4)
  * + hostSlot(1) + three view
  * policies(3) + three view decay seconds(6) + classicMode(1)
  * + alliesInTrees(1) + voiceMode(1) + overviewWindow(1) + lineOfSight(1)
- * + smartPingsOff(1) + modsOff(1). */
+ * + smartPingsOff(1) + modsOff(1) + positionalSound(1). */
 #define LOBBY_SETTINGS_WIRE_PAYLOAD \
-    (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 1 + 4 + 1 + 3 + 6 + 1 + 1 + 1 + 1 \
-     + 1 + 1 + 1)
+    (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 1 + 1 + 4 + 1 + 3 + 6 + 1 + 1 + 1 \
+     + 1 + 1 + 1 + 1 + 1)
 
 /* The scenario tail, written only when the lobby has one. A lobby with no
  * scenario writes exactly LOBBY_SETTINGS_WIRE_PAYLOAD bytes and nothing
@@ -541,7 +545,7 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
  * behind what was already there so none of the offsets ahead of it move.
  *
  * Worst case measured: 1 + 1 + 64 + 128 + 256 + 1 + 1 + 1 + 1 = 454, on top
- * of LOBBY_SETTINGS_WIRE_PAYLOAD's 81, so 535 bytes against a 1021-byte
+ * of LOBBY_SETTINGS_WIRE_PAYLOAD's 83, so 537 bytes against a 1021-byte
  * segment. The two asserts behind the encoder are what hold that. */
 #define LOBBY_SETTINGS_WIRE_SCENARIO_MAX                                   \
     (1 + 1 + (1 + (LOBBY_SCENARIO_NAME_LEN - 1))                           \
@@ -598,6 +602,7 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
     buf[pos++] = evt->u.lobbySettings.lobbyWbnAvailable ? 1 : 0;
     buf[pos++] = (uint8_t)evt->u.lobbySettings.uploadPolicy;
     buf[pos++] = (uint8_t)evt->u.lobbySettings.scriptUploadPolicy;
+    buf[pos++] = evt->u.lobbySettings.scriptSharing ? 1 : 0;
     packU32(buf + pos, (uint32_t)evt->u.lobbySettings.lobbyStartDelay);
     pos += 4;
     buf[pos++] = evt->u.lobbySettings.hostSlot;
@@ -620,6 +625,8 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
     /* Negative sense again, and for the same reason: 1 means the round
      * composes none of the picked mods, 0 means it composes them all. */
     buf[pos++] = evt->u.lobbySettings.lobbyModsOff ? 1 : 0;
+    /* Plain sense: 1 means sounds carry a side and a banded distance. */
+    buf[pos++] = evt->u.lobbySettings.lobbyPositionalSound ? 1 : 0;
     /* Nothing past here for a lobby with no scenario. */
     if (hasScenario) {
         buf[pos++] = (uint8_t)evt->u.lobbySettings.scenarioSource;
@@ -1126,7 +1133,9 @@ static bool decodeStatsSeedBody(const uint8_t *buf, size_t len,
 /* PACKET_LOBBY_BOT_POOL_CHUNK wire format:
  *   [header 8] [seq 1] [count 1] [fragLen 2 BE] [frag fragLen]
  * Each fragment is one slice of the server's zlib-compressed bot-pool
- * catalog; the client reassembles seq 0..count-1 and installs. */
+ * catalog. RETIRED: nothing sends it now (CTRL_LOBBY_BOT_POOL_INFO and
+ * BULK_KIND_BOT_POOL replaced it), and the codec stays so recordings that
+ * hold it decode. */
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeLobbyBotPoolChunkBody(const ControlEvent *evt,
@@ -1149,10 +1158,9 @@ static EncodeResult encodeLobbyBotPoolChunkBody(const ControlEvent *evt,
 
 /* PACKET_LOBBY_BRAIN_DOCS_CHUNK wire format:
  *   [header 8] [brainIdx 1] [seq 1] [count 1] [fragLen 2 BE] [frag fragLen]
- * One slice of ONE brain's announce.txt + commands.txt blob. Worst case on
- * the wire is 8 + 5 + 900 = 913 bytes, well inside MAX_CONTROL_PACKET: the
- * fragment cap bounds the datagram, and the blob's own size only decides how
- * MANY fragments there are (19 at the current caps). */
+ * One slice of ONE brain's announce.txt + commands.txt blob. RETIRED:
+ * nothing sends it now (CTRL_LOBBY_BRAIN_ANNOUNCE and BULK_KIND_BRAIN_DOCS
+ * replaced it), and the codec stays so recordings that hold it decode. */
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeLobbyBrainDocsChunkBody(const ControlEvent *evt,
@@ -1204,10 +1212,77 @@ BOLO_STATIC_ASSERT(
  *   (2 + 512 + 2 + 16384 + 899) / 900 = 19 today.
  * Raising BRAIN_DOCS_MAX past about 229 KB breaks the build here rather than
  * wrapping the seq byte and reassembling two brains' texts into one. */
+/* CTRL_LOBBY_BRAIN_ANNOUNCE body:
+ *   [brainIdx 1] [docsGen 4 BE] [docsLen 2 BE] [announceLen 2 BE]
+ *   [announce announceLen]
+ * One brain's announce line and the length and generation of its
+ * commands.txt, which travels on CHANNEL_BULK when asked for. A brain with
+ * no docs says 0 for both numbers, and a body where only one of them is 0
+ * does not decode. */
+#define LOBBY_BRAIN_ANNOUNCE_FIXED 9
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeLobbyBrainAnnounceBody(const ControlEvent *evt,
+                                                 const struct UdpServerClient *recipient,
+                                                 uint8_t *buf, size_t bufCap,
+                                                 size_t *outLen) {
+    (void)recipient;
+    uint16_t al  = evt->u.lobbyBrainAnnounce.announceLen;
+    uint16_t dl  = evt->u.lobbyBrainAnnounce.docsLen;
+    uint32_t gen = evt->u.lobbyBrainAnnounce.docsGen;
+    size_t   pos = 0;
+    if (evt->u.lobbyBrainAnnounce.brainIdx >= BRAIN_LIST_MAX) return ENCODE_OVERFLOW;
+    if (al > BRAIN_ANNOUNCE_MAX || dl > BRAIN_DOCS_MAX) return ENCODE_OVERFLOW;
+    if ((gen == 0) != (dl == 0)) return ENCODE_OVERFLOW;
+    if (bufCap < (size_t)(LOBBY_BRAIN_ANNOUNCE_FIXED + al)) return ENCODE_OVERFLOW;
+    buf[pos++] = evt->u.lobbyBrainAnnounce.brainIdx;
+    buf[pos++] = (uint8_t)((gen >> 24) & 0xFF);
+    buf[pos++] = (uint8_t)((gen >> 16) & 0xFF);
+    buf[pos++] = (uint8_t)((gen >> 8) & 0xFF);
+    buf[pos++] = (uint8_t)(gen & 0xFF);
+    buf[pos++] = (uint8_t)((dl >> 8) & 0xFF);
+    buf[pos++] = (uint8_t)(dl & 0xFF);
+    buf[pos++] = (uint8_t)((al >> 8) & 0xFF);
+    buf[pos++] = (uint8_t)(al & 0xFF);
+    if (al > 0) {
+        memcpy(buf + pos, evt->u.lobbyBrainAnnounce.announce, al);
+        pos += al;
+    }
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
 BOLO_STATIC_ASSERT(
-    (LOBBY_BRAIN_DOCS_WIRE_MAX + LOBBY_BRAIN_DOCS_FRAG_MAX - 1) /
-        LOBBY_BRAIN_DOCS_FRAG_MAX <= 255,
-    brain_docs_blob_fits_255_fragments);
+    LOBBY_BRAIN_ANNOUNCE_FIXED + BRAIN_ANNOUNCE_MAX <= CONTROL_BODY_MAX,
+    brain_announce_fits_control_segment);
+
+/* docsLen travels in two bytes. */
+BOLO_STATIC_ASSERT(BRAIN_DOCS_MAX <= 0xFFFF, brain_docs_len_fits_u16);
+
+/* CTRL_LOBBY_BOT_POOL_INFO body: [id 4 BE] [len 4 BE]. Which catalogue the
+ * server holds, and the length of its compressed blob; both 0 for none. A
+ * body where only one of them is 0, or a length past
+ * LOBBY_BOT_CATALOG_WIRE_MAX, does not decode. */
+#define LOBBY_BOT_POOL_INFO_BODY_LEN 8
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeLobbyBotPoolInfoBody(const ControlEvent *evt,
+                                               const struct UdpServerClient *recipient,
+                                               uint8_t *buf, size_t bufCap,
+                                               size_t *outLen) {
+    uint32_t id  = evt->u.lobbyBotPoolInfo.id;
+    uint32_t len = evt->u.lobbyBotPoolInfo.len;
+    (void)recipient;
+    if ((id == 0) != (len == 0)) return ENCODE_OVERFLOW;
+    if (len > LOBBY_BOT_CATALOG_WIRE_MAX) return ENCODE_OVERFLOW;
+    if (bufCap < LOBBY_BOT_POOL_INFO_BODY_LEN) return ENCODE_OVERFLOW;
+    buf[0] = (uint8_t)(id >> 24);  buf[1] = (uint8_t)(id >> 16);
+    buf[2] = (uint8_t)(id >> 8);   buf[3] = (uint8_t)id;
+    buf[4] = (uint8_t)(len >> 24); buf[5] = (uint8_t)(len >> 16);
+    buf[6] = (uint8_t)(len >> 8);  buf[7] = (uint8_t)len;
+    *outLen = LOBBY_BOT_POOL_INFO_BODY_LEN;
+    return ENCODE_OK;
+}
 
 static EncodeResult encodeRoundStats(const ControlEvent *evt,
                                      const struct UdpServerClient *recipient,
@@ -1660,7 +1735,9 @@ static EncodeResult encodeSimRulesBody(const ControlEvent *evt,
                                        size_t *outLen) {
     size_t pos = 0;
     (void)recipient;
-    if (bufCap < CTRL_SIM_RULES_BODY_LEN) return ENCODE_OVERFLOW;
+    bool extended = evt->u.simRules.tank_collision_mac != 0;
+    size_t bodyLen = extended ? CTRL_SIM_RULES_BODY_LEN : CTRL_SIM_RULES_BASE_BODY_LEN;
+    if (bufCap < bodyLen) return ENCODE_OVERFLOW;
 
 #define SIM_RULES_PACK_U8(name)                                              \
     buf[pos++] = (uint8_t)evt->u.simRules.name;
@@ -1675,6 +1752,9 @@ static EncodeResult encodeSimRulesBody(const ControlEvent *evt,
     CTRL_SIM_RULES_U16_FIELDS(SIM_RULES_PACK_U16)
     CTRL_SIM_RULES_U32_FIELDS(SIM_RULES_PACK_U32)
     CTRL_SIM_RULES_F32_FIELDS(SIM_RULES_PACK_F32)
+    if (extended) {
+        CTRL_SIM_RULES_EXT_U8_FIELDS(SIM_RULES_PACK_U8)
+    }
 
 #undef SIM_RULES_PACK_U8
 #undef SIM_RULES_PACK_U16
@@ -1688,7 +1768,7 @@ static EncodeResult encodeSimRulesBody(const ControlEvent *evt,
 static bool decodeSimRulesBody(const uint8_t *buf, size_t len,
                                ControlEvent *outEvt) {
     size_t pos = 0;
-    if (len != CTRL_SIM_RULES_BODY_LEN) return false;
+    if (len != CTRL_SIM_RULES_BODY_LEN && len != CTRL_SIM_RULES_BASE_BODY_LEN) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_SIM_RULES;
 
@@ -1705,6 +1785,9 @@ static bool decodeSimRulesBody(const uint8_t *buf, size_t len,
     CTRL_SIM_RULES_U16_FIELDS(SIM_RULES_UNPACK_U16)
     CTRL_SIM_RULES_U32_FIELDS(SIM_RULES_UNPACK_U32)
     CTRL_SIM_RULES_F32_FIELDS(SIM_RULES_UNPACK_F32)
+    if (len == CTRL_SIM_RULES_BODY_LEN) {
+        CTRL_SIM_RULES_EXT_U8_FIELDS(SIM_RULES_UNPACK_U8)
+    }
 
 #undef SIM_RULES_UNPACK_U8
 #undef SIM_RULES_UNPACK_U16
@@ -2503,6 +2586,10 @@ static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
         outEvt->u.lobbySettings.scriptUploadPolicy =
             (ScriptUploadPolicy)buf[pos++];
     }
+    outEvt->u.lobbySettings.scriptSharing = true;
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.scriptSharing = buf[pos++] ? true : false;
+    }
     if (len >= pos + 4) {
         outEvt->u.lobbySettings.lobbyStartDelay = (int32_t)unpackU32(buf + pos);
         pos += 4;
@@ -2563,6 +2650,11 @@ static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
      * test below is a bounds check on a short body, not a version test. */
     if (len >= pos + 1) {
         outEvt->u.lobbySettings.lobbyModsOff = buf[pos++] ? true : false;
+    }
+    /* Positional sound, also in the fixed part ahead of the scenario tail.
+     * A short body leaves it false, which sends every sound centred. */
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.lobbyPositionalSound = buf[pos++] ? true : false;
     }
     /* The scenario tail. A body that stops here came from a lobby with no
      * scenario, and the memset above has already left every field of it
@@ -2763,6 +2855,53 @@ static bool decodeLobbyBrainDocsChunkBody(const uint8_t *buf, size_t len,
     if (pos + fl > len) return false;
     outEvt->u.lobbyBrainDocsChunk.fragLen = fl;
     if (fl > 0) memcpy(outEvt->u.lobbyBrainDocsChunk.frag, buf + pos, fl);
+    return true;
+}
+
+static bool decodeLobbyBotPoolInfoBody(const uint8_t *buf, size_t len,
+                                       ControlEvent *outEvt) {
+    uint32_t id, blobLen;
+    if (len != LOBBY_BOT_POOL_INFO_BODY_LEN) return false;
+    id      = ((uint32_t)buf[0] << 24) | ((uint32_t)buf[1] << 16) |
+              ((uint32_t)buf[2] << 8) | (uint32_t)buf[3];
+    blobLen = ((uint32_t)buf[4] << 24) | ((uint32_t)buf[5] << 16) |
+              ((uint32_t)buf[6] << 8) | (uint32_t)buf[7];
+    if ((id == 0) != (blobLen == 0)) return false;
+    if (blobLen > LOBBY_BOT_CATALOG_WIRE_MAX) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_LOBBY_BOT_POOL_INFO;
+    outEvt->u.lobbyBotPoolInfo.id  = id;
+    outEvt->u.lobbyBotPoolInfo.len = blobLen;
+    return true;
+}
+
+static bool decodeLobbyBrainAnnounceBody(const uint8_t *buf, size_t len,
+                                         ControlEvent *outEvt) {
+    /* Layout: see encodeLobbyBrainAnnounceBody. */
+    uint8_t  idx;
+    uint32_t gen;
+    uint16_t dl, al;
+    if (len < LOBBY_BRAIN_ANNOUNCE_FIXED) return false;
+    idx = buf[0];
+    gen = ((uint32_t)buf[1] << 24) | ((uint32_t)buf[2] << 16) |
+          ((uint32_t)buf[3] << 8) | (uint32_t)buf[4];
+    dl  = (uint16_t)(((uint16_t)buf[5] << 8) | buf[6]);
+    al  = (uint16_t)(((uint16_t)buf[7] << 8) | buf[8]);
+    if (idx >= BRAIN_LIST_MAX) return false;
+    if (dl > BRAIN_DOCS_MAX || al > BRAIN_ANNOUNCE_MAX) return false;
+    if ((gen == 0) != (dl == 0)) return false;
+    if (len != (size_t)LOBBY_BRAIN_ANNOUNCE_FIXED + al) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_LOBBY_BRAIN_ANNOUNCE;
+    outEvt->u.lobbyBrainAnnounce.brainIdx    = idx;
+    outEvt->u.lobbyBrainAnnounce.docsGen     = gen;
+    outEvt->u.lobbyBrainAnnounce.docsLen     = dl;
+    outEvt->u.lobbyBrainAnnounce.announceLen = al;
+    if (al > 0) {
+        memcpy(outEvt->u.lobbyBrainAnnounce.announce,
+               buf + LOBBY_BRAIN_ANNOUNCE_FIXED, al);
+    }
+    outEvt->u.lobbyBrainAnnounce.announce[al] = '\0';
     return true;
 }
 
@@ -3440,6 +3579,78 @@ static bool decodeLobbyScriptListBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CTRL_LOBBY_SCRIPT_SETTING body:
+ *   [op 1] [fileLen 1] [file N] [idLen 1] [id M] [value 4 BE]
+ *
+ * A CLEAR carries empty strings and a zero value, so every body has one
+ * shape. A length past its field is refused, as the script list's are: a
+ * name cut short would name another file's setting. */
+#define LOBBY_SCRIPT_SETTING_BODY_MAX \
+    (1 + 1 + (LOBBY_SCENARIO_FILE_LEN - 1) + 1 + (SCN_SETTING_ID_LEN - 1) + 4)
+
+BOLO_STATIC_ASSERT(LOBBY_SCRIPT_SETTING_BODY_MAX <= CONTROL_BODY_MAX,
+                   lobby_script_setting_fits_one_control_segment);
+
+BOLO_STATIC_ASSERT(
+    sizeof(((ControlEvent *)0)->u.lobbyScriptSetting) <=
+        sizeof(((ControlEvent *)0)->u.roundStats),
+    lobby_script_setting_does_not_widen_the_control_event_union);
+
+/* recipient: safe, ignored. What the host chose is as public as the list it
+   chose it for. */
+static EncodeResult encodeLobbyScriptSettingBody(
+    const ControlEvent *evt, const struct UdpServerClient *recipient,
+    uint8_t *buf, size_t bufCap, size_t *outLen) {
+    size_t fileLen;
+    size_t idLen;
+    size_t pos = 0;
+    (void)recipient;
+
+    fileLen = strnlen(evt->u.lobbyScriptSetting.file,
+                      LOBBY_SCENARIO_FILE_LEN - 1);
+    idLen   = strnlen(evt->u.lobbyScriptSetting.id, SCN_SETTING_ID_LEN - 1);
+    if (bufCap < 1 + 1 + fileLen + 1 + idLen + 4) return ENCODE_OVERFLOW;
+    buf[pos++] = evt->u.lobbyScriptSetting.op;
+    buf[pos++] = (uint8_t)fileLen;
+    memcpy(buf + pos, evt->u.lobbyScriptSetting.file, fileLen);
+    pos += fileLen;
+    buf[pos++] = (uint8_t)idLen;
+    memcpy(buf + pos, evt->u.lobbyScriptSetting.id, idLen);
+    pos += idLen;
+    packU32(buf + pos, (uint32_t)evt->u.lobbyScriptSetting.value);
+    pos += 4;
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
+static bool decodeLobbyScriptSettingBody(const uint8_t *buf, size_t len,
+                                         ControlEvent *outEvt) {
+    size_t  pos = 0;
+    uint8_t fileLen;
+    uint8_t idLen;
+
+    if (buf == NULL || outEvt == NULL || len < 1 + 1 + 1 + 4) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_LOBBY_SCRIPT_SETTING;
+    outEvt->u.lobbyScriptSetting.op = buf[pos++];
+    fileLen = buf[pos++];
+    if (fileLen > LOBBY_SCENARIO_FILE_LEN - 1 || len < pos + fileLen + 1) {
+        return false;
+    }
+    memcpy(outEvt->u.lobbyScriptSetting.file, buf + pos, fileLen);
+    outEvt->u.lobbyScriptSetting.file[fileLen] = '\0';
+    pos += fileLen;
+    idLen = buf[pos++];
+    if (idLen > SCN_SETTING_ID_LEN - 1 || len != pos + idLen + 4) {
+        return false;
+    }
+    memcpy(outEvt->u.lobbyScriptSetting.id, buf + pos, idLen);
+    outEvt->u.lobbyScriptSetting.id[idLen] = '\0';
+    pos += idLen;
+    outEvt->u.lobbyScriptSetting.value = (int32_t)unpackU32(buf + pos);
+    return true;
+}
+
 /* ================================================================
  * Encoder lookup — indexed by ControlEventType. Variants without
  * a wire form leave NULL slots (CTRL_MAP_DOWNLOAD_COMPLETE is
@@ -3540,6 +3751,9 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_SCN_MARKER]            = encodeScnMarkerBody,
     [CTRL_SCENARIO_RULES]        = encodeScenarioRulesBody,
     [CTRL_LOBBY_SCRIPT_LIST]     = encodeLobbyScriptListBody,
+    [CTRL_LOBBY_SCRIPT_SETTING]  = encodeLobbyScriptSettingBody,
+    [CTRL_LOBBY_BRAIN_ANNOUNCE]  = encodeLobbyBrainAnnounceBody,
+    [CTRL_LOBBY_BOT_POOL_INFO]   = encodeLobbyBotPoolInfoBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -3592,6 +3806,9 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_SCN_MARKER]            = decodeScnMarkerBody,
     [CTRL_SCENARIO_RULES]        = decodeScenarioRulesBody,
     [CTRL_LOBBY_SCRIPT_LIST]     = decodeLobbyScriptListBody,
+    [CTRL_LOBBY_SCRIPT_SETTING]  = decodeLobbyScriptSettingBody,
+    [CTRL_LOBBY_BRAIN_ANNOUNCE]  = decodeLobbyBrainAnnounceBody,
+    [CTRL_LOBBY_BOT_POOL_INFO]   = decodeLobbyBotPoolInfoBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {

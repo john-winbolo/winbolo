@@ -239,6 +239,16 @@ typedef struct LobbyMapPreviewState {
     int         startBboxMinX = 0, startBboxMinY = 0;
     int         startBboxMaxX = 0, startBboxMaxY = 0;
     BYTE        startCount = 0;
+    /* How many of those starts are on the map. A start the map loader took
+     * off (one in the mined border) keeps its slot with a compass id of 0. */
+    BYTE        startLiveCount = 0;
+    /* Slot and live counts of the pillboxes and bases on the same map, for
+     * the "P / B" counts the lobby shows. The loader takes one in the mined
+     * border off the map, the same as a start. */
+    BYTE        pillCount = 0;
+    BYTE        pillLiveCount = 0;
+    BYTE        baseCount = 0;
+    BYTE        baseLiveCount = 0;
 
     /* 1-based start currently hovered in a start dropdown (the combo in the
      * player list), so the inline preview can outline it. Set while a dropdown
@@ -558,6 +568,12 @@ void lobbyRebuildStartCompassCache(const BYTE *data, int len);
 /* Side mask of 1-based start k from the per-start cache; 0 (centre) when k
  * is off the cached list. */
 BYTE lobbyStartSideMask(int k);
+/* Starts on the lobby map, for the start counts the lobby shows: the cache's
+ * live count once it holds this map, otherwise the server's slot count. */
+int lobbyLiveStartCount(ClientSim *cs);
+/* The same for pillboxes and bases. */
+int lobbyLivePillCount(ClientSim *cs);
+int lobbyLiveBaseCount(ClientSim *cs);
 const char *lobbyMapTransferLine(ClientSim *cs, float *outProgress);
 int lobbyComputeStartOwners(ClientSim *cs, int myPlayerNum,
                             uint8_t *owners, int maxN, uint32_t *outSig);
@@ -620,6 +636,19 @@ float lobbyNameTagHeight(float s);
  * links measure the wrap point against it. */
 void  lobbyScenarioKindTag(bool mod, float s);
 float lobbyScenarioKindTagWidth(bool mod, float s);
+/* The "Workshop" chip a script published to the Steam Workshop wears after
+ * its kind chip, and the "Open in Workshop" button that opens its page. Each
+ * draws nothing and measures 0 for a Workshop id of 0, and the button also
+ * for a build or a run where Steam's Workshop is not available, so a caller
+ * hands them the row's id and draws and measures them on every row.
+ *
+ * The chip is placed as the kind chip is: a SameLine of its own, centred on
+ * the item before it, which is the kind chip. The button puts its own
+ * SameLine in front of itself. Both widths count the spacing in front. */
+void  lobbyScenarioWorkshopTag(uint64_t workshopId, float s);
+float lobbyScenarioWorkshopTagWidth(uint64_t workshopId, float s);
+void  lobbyScenarioWorkshopLink(uint64_t workshopId);
+float lobbyScenarioWorkshopLinkWidth(uint64_t workshopId);
 const char *lobbyGameTypeStr(gameType gt);
 /* What is playing, in two shapes for the two places that ask.
  *
@@ -754,20 +783,20 @@ void lobbyRenderSmartPingSummary(ClientSim *cs, float s);
 
 /* ── One visibility value, drawn the one way ──────────────────
  * The lobby's header line, the Details table, the server browser and the
- * in-game info panel all show the same seven settings, so they all draw a
+ * in-game info panel all show the same eight settings, so they all draw a
  * value through this: the setting's sprite and the word it is on, faint
  * together when it is off, with the seconds added under Decay.
  *
  * column runs 0..LOBBY_VIS_COLUMN_COUNT-1 in the order the Details table
  * reads: pill view, base view, allied tank view, allies in trees, the
- * overview window, line of sight. The last two have no sprite and come
- * back as the word alone. The whole thing is one item, so the caller's
- * IsItemHovered covers it.
+ * overview window, line of sight, positional sound. The overview window
+ * and line of sight have no sprite and come back as the word alone. The
+ * whole thing is one item, so the caller's IsItemHovered covers it.
  *
  * lobbyVisibilityColumnLabelId names the setting, for a caller that lays
  * out its own label — the browser's detail pane does, the header line
  * does not. */
-#define LOBBY_VIS_COLUMN_COUNT 6
+#define LOBBY_VIS_COLUMN_COUNT 7
 void lobbyRenderVisibilityColumn(const VisibilitySettings *v, int column,
                                  float s);
 int  lobbyVisibilityColumnLabelId(int column);

@@ -53,9 +53,9 @@
  * serverLifecycleSetRoundLogHooks. NULL on every other binary that
  * links server_static, so the lifecycle's stash/flush calls become
  * no-ops there. */
-/* Adapter: serverSimEmitBrainDocs hands each fragment to a deliver
+/* Adapter: serverSimEmitBrainAnnounces hands each event to a deliver
  * callback; the return-to-lobby path wants them on the broadcast bus. */
-static void serverSimPublishBrainDocsCb(void *ctx, const ControlEvent *evt) {
+static void serverSimPublishBrainAnnounceCb(void *ctx, const ControlEvent *evt) {
   serverSimPublishControl((ServerSim *)ctx, evt);
 }
 
@@ -552,6 +552,7 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
                                       cfg->scriptUploadDir);
     sim->uploadPolicy = cfg->uploadPolicy;
     serverSimSetScriptUploadPolicy(sim, cfg->scriptUploadPolicy);
+    serverSimSetScriptSharing(sim, !cfg->noScriptSharing);
     /* Same source (cfg->uploadPersistDir) as the transport copy above, so the
      * write target and the "Uploads/" resolver redirect never diverge. */
     serverSimSetUploadPersistDir(sim, cfg->uploadPersistDir);
@@ -1076,13 +1077,15 @@ void serverInstanceTick(ServerSim *sim) {
         memset(&evt, 0, sizeof(evt));
         serverSimFillLobbyBrainListEvent(sim, &evt);
         serverSimPublishControl(sim, &evt);
-        /* ... and the brains' lobby texts that go with it, so the returning
-         * lobby can announce a bot's brain the same way a fresh join does.
-         * The refresh first: this seam between rounds is where an operator
-         * would have edited a brain's announce.txt, and it is off the tick
-         * path, so a re-read costs nothing anybody feels. */
+        /* ... and the brains' announce lines that go with it, so the
+         * returning lobby can announce a bot's brain the same way a fresh
+         * join does. The refresh first: this seam between rounds is where an
+         * operator would have edited a brain's texts, and it is off the tick
+         * path, so a re-read costs nothing anybody feels. Docs that changed
+         * get a new generation here, which tells each client to drop the
+         * copy it holds. */
         serverSimRefreshBrainDocs(sim);
-        serverSimEmitBrainDocs(sim, serverSimPublishBrainDocsCb, sim);
+        serverSimEmitBrainAnnounces(sim, serverSimPublishBrainAnnounceCb, sim);
       }
       /* Republish lobby state so every client's mirror reflects the
        * fresh lobby. serverSimReturnToLobby's contract says the caller
@@ -1198,9 +1201,17 @@ void serverInstanceTick(ServerSim *sim) {
     sim->gameLength = sim->originalGameLength;
     sim->hadPlayersEver = FALSE;
     sim->emptyResetTicks = -1;
-    /* Pick next map from rotation if mapdir is configured */
+    /* Pick next map from rotation if mapdir is configured. The seats the
+     * round fielded go back to the template's own lobby, as they do in
+     * serverSimMapRotateRound (see the comment there): the server is empty,
+     * so there is no host edit to keep. Where no map loads, the lobby is
+     * the one it was and the flag goes back to what it said about it. */
     if (sim->mapDirFiles != NULL) {
-      serverSimMapDirPickRandom(sim);
+      bool wasSeated = sim->scenarioLobbySeated;
+      sim->scenarioLobbySeated = false;
+      if (!serverSimMapDirPickRandom(sim)) {
+        sim->scenarioLobbySeated = wasSeated;
+      }
     }
     /* End the WBN session, upload the round's log against the just-
      * quit key, then begin a new session for the next round. Same

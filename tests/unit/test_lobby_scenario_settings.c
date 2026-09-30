@@ -78,12 +78,12 @@
  * + pill 1 + base 1 + start 1 + mapSkip 1 + netStat 1 + hasLobby 1
  * + openHost 1 + autoLock 1 + serverLocks 4                     = 55
  * + ranked 1 + allowNew 1 + wbn 1 + uploadPolicy 1
- * + scriptUploadPolicy 1 + startDelay 4
+ * + scriptUploadPolicy 1 + scriptSharing 1 + startDelay 4
  * + hostSlot 1 + viewPolicy 3 + viewDecay 6 + classic 1
  * + alliesInTrees 1 + voice 1 + overview 1 + lineOfSight 1
- * + smartPingsOff 1 + modsOff 1                                = 26
+ * + smartPingsOff 1 + modsOff 1 + positionalSound 1            = 28
  */
-#define LS_PLAIN_BODY_LEN 81
+#define LS_PLAIN_BODY_LEN 83
 
 /* The three strings the scripted cases carry, and what each costs on the
  * wire: a one-byte length and that many bytes, no terminator. */
@@ -126,6 +126,7 @@ static void lsFillPlain(ControlEvent *evt) {
     evt->u.lobbySettings.lobbyWbnAvailable        = true;
     evt->u.lobbySettings.uploadPolicy             = (UploadPolicy)2;
     evt->u.lobbySettings.scriptUploadPolicy       = (ScriptUploadPolicy)1;
+    evt->u.lobbySettings.scriptSharing            = true;
     evt->u.lobbySettings.lobbyStartDelay          = 0x00000100;
     evt->u.lobbySettings.hostSlot                 = 5;
     evt->u.lobbySettings.viewPolicy[0]            = (ViewPolicy)1;
@@ -141,6 +142,7 @@ static void lsFillPlain(ControlEvent *evt) {
     evt->u.lobbySettings.lobbyLineOfSight         = 1;
     evt->u.lobbySettings.lobbySmartPingsOff       = true;
     evt->u.lobbySettings.lobbyModsOff             = true;
+    evt->u.lobbySettings.lobbyPositionalSound     = true;
 }
 
 /* The same bytes the fill above should produce, written out by index. Every
@@ -173,27 +175,29 @@ static void lsWantPlain(uint8_t *want) {
     want[57] = 1;                   /* wbnAvailable */
     want[58] = 2;                   /* uploadPolicy */
     want[59] = 1;                   /* scriptUploadPolicy */
-    want[60] = 0x00;                /* startDelay, big-endian */
-    want[61] = 0x00;
-    want[62] = 0x01;
-    want[63] = 0x00;
-    want[64] = 5;                   /* hostSlot */
-    want[65] = 1;                   /* viewPolicy[0] */
-    want[66] = 2;
-    want[67] = 3;
-    want[68] = 0x01;                /* viewDecaySecs[0], big-endian */
-    want[69] = 0x02;
-    want[70] = 0x03;                /* viewDecaySecs[1] */
-    want[71] = 0x04;
-    want[72] = 0x05;                /* viewDecaySecs[2] */
-    want[73] = 0x06;
-    want[74] = 1;                   /* classicMode */
-    want[75] = 1;                   /* alliesInTrees */
-    want[76] = (uint8_t)serverVoiceOff;
-    want[77] = 2;                   /* overviewWindow */
-    want[78] = 1;                   /* lineOfSight */
-    want[79] = 1;                   /* smartPingsOff */
-    want[80] = 1;                   /* modsOff */
+    want[60] = 1;                   /* scriptSharing */
+    want[61] = 0x00;                /* startDelay, big-endian */
+    want[62] = 0x00;
+    want[63] = 0x01;
+    want[64] = 0x00;
+    want[65] = 5;                   /* hostSlot */
+    want[66] = 1;                   /* viewPolicy[0] */
+    want[67] = 2;
+    want[68] = 3;
+    want[69] = 0x01;                /* viewDecaySecs[0], big-endian */
+    want[70] = 0x02;
+    want[71] = 0x03;                /* viewDecaySecs[1] */
+    want[72] = 0x04;
+    want[73] = 0x05;                /* viewDecaySecs[2] */
+    want[74] = 0x06;
+    want[75] = 1;                   /* classicMode */
+    want[76] = 1;                   /* alliesInTrees */
+    want[77] = (uint8_t)serverVoiceOff;
+    want[78] = 2;                   /* overviewWindow */
+    want[79] = 1;                   /* lineOfSight */
+    want[80] = 1;                   /* smartPingsOff */
+    want[81] = 1;                   /* modsOff */
+    want[82] = 1;                   /* positionalSound */
 }
 
 /* Where the first byte that differs is, or -1 when they match. */
@@ -282,30 +286,30 @@ int run_lobby_scenario_settings_scripted_bytes(void) {
     want[pos++] = LS_SCN_DESC_LEN;
     memcpy(want + pos, LS_SCN_DESC, LS_SCN_DESC_LEN);
     pos += LS_SCN_DESC_LEN;
-    /* 81 + source 1 + extraTeams 1 + (1 + 4) + (1 + 8) + (1 + 8) = 106. The
+    /* 83 + source 1 + extraTeams 1 + (1 + 4) + (1 + 8) + (1 + 8) = 108. The
        whole tail sits one byte later each time a byte joins the base, because
        the tail follows the base. Nothing inside the tail moved against
        anything else in it. */
-    UT_ASSERT_MSG(pos == 106,
-                  "the base game type should be at offset 106, not %u",
+    UT_ASSERT_MSG(pos == 108,
+                  "the base game type should be at offset 108, not %u",
                   (unsigned)pos);
     want[pos++] = (uint8_t)gameStrictTournament;
     /* And the kind last of all. Zero here: this event is a scenario, which
        is what a sender that predates the byte can only have been. */
-    UT_ASSERT_MSG(pos == 107,
-                  "the scenario kind should be at offset 107, not %u",
+    UT_ASSERT_MSG(pos == 109,
+                  "the scenario kind should be at offset 109, not %u",
                   (unsigned)pos);
     want[pos++] = 0;
     /* And bound behind the kind. False here: lsFillPlain leaves it clear,
        and a sender that predates the byte can only have meant false. */
-    UT_ASSERT_MSG(pos == 108,
-                  "the bound flag should be at offset 108, not %u",
+    UT_ASSERT_MSG(pos == 110,
+                  "the bound flag should be at offset 110, not %u",
                   (unsigned)pos);
     want[pos++] = 0;
     /* And the script mode behind bound: 1, since the event above says this
        server runs its scripts without the sandbox. */
-    UT_ASSERT_MSG(pos == 109,
-                  "the unsafe flag should be at offset 109, not %u",
+    UT_ASSERT_MSG(pos == 111,
+                  "the unsafe flag should be at offset 111, not %u",
                   (unsigned)pos);
     want[pos++] = 1;
     UT_ASSERT_MSG(pos == LS_SCRIPTED_BODY_LEN,
@@ -428,7 +432,7 @@ int run_lobby_scenario_settings_roundtrip(void) {
  * what the commit path reads. */
 static ServerSim *lsLobbySim(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) return NULL;
     serverSimSetLobbyEnabled(sim, true);

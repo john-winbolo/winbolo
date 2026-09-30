@@ -38,6 +38,7 @@
 #include "input_packet.h"   /* PING_SPAM_MAX_5S / PING_SPAM_MAX_30S — ping anti-spam caps */
 #include "scenario_defs.h"  /* ScenarioPolicy — the vtable pointer below */
 #include "scenario_details.h" /* SCN_DETAILS_MAX — the map script's details */
+#include "scenario_settings.h" /* SCN_SETTINGS_BLOB_MAX — its settings */
 
 /* PlayerRoundStats, NotableType, NotableEvent and NOTABLE_EVENTS_MAX are the
  * shared accumulator/timeline types, defined in round_stats.h (included above)
@@ -190,6 +191,19 @@ typedef struct {
     char    label[16];
 } ScnScoreRow;
 
+/* One map marker, as the marker op last placed it. valid is false for an id
+ * nothing has placed and for one a clear removed. The fields are the ones
+ * the CTRL_SCN_MARKER that placed it carried, destination pair included. */
+typedef struct {
+    bool    valid;
+    uint8_t kind;          /* SCN_MARKER_KIND_SQUARE or _FOLLOW */
+    uint8_t x, y;          /* the square, for SCN_MARKER_KIND_SQUARE */
+    uint8_t slot;          /* the 0-based slot, for SCN_MARKER_KIND_FOLLOW */
+    uint8_t colour;
+    uint8_t destTeam;      /* 0 = everyone, else the team */
+    uint8_t destPlayer;    /* 0xFF = everyone, else a 0-based slot */
+} ScnMarkerRow;
+
 struct ServerSim {
     GameSim      sim;    /* MUST be first member */
 
@@ -315,8 +329,9 @@ struct ServerSim {
      * never appears on the public API or the wire. */
     char            brainPaths[BRAIN_LIST_MAX][BRAIN_LIST_PATH_LEN];
 
-    /* The brains' lobby texts, read off disk ONCE and kept as the wire blob
-     * the CTRL_LOBBY_BRAIN_DOCS_CHUNK fragments are cut from.
+    /* The brains' lobby texts, read off disk ONCE: each brain's announce
+     * line, which CTRL_LOBBY_BRAIN_ANNOUNCE carries, and its commands.txt
+     * compressed, ready for a PACKET_LOBBY_BRAIN_DOCS_REQ answer.
      *
      * These used to be read at the moment they were sent. The send is inside
      * serverSimSyncSubscriber, which the delayed spectator ring's control
@@ -325,12 +340,25 @@ struct ServerSim {
      * files per brain, nine brains, both multiplied by the ring's keyframe
      * rate, on the tick thread.
      *
-     * ~271 KB, so it is allocated on first fill and freed with the sim
-     * rather than sitting in every ServerSim that never hosts a lobby.
+     * About 8 KB plus the compressed docs, allocated on first fill and
+     * freed with the sim rather than sitting in every ServerSim that never
+     * hosts a lobby.
      * serverSimRefreshBrainDocs fills it and re-reads a brain whose files
      * have a newer mtime, so an operator editing a brain's announce.txt
      * between rounds still sees the change without a restart. */
     struct ServerBrainDocsCache *brainDocs;
+
+    /* The bot-name catalogue this server hands out: lobbyBotPoolsSerialize's
+     * compressed blob of the pools loaded when the sim was made, its length,
+     * and its id (lobbyBotPoolsCatalogId). A joiner is told the id and the
+     * length (CTRL_LOBBY_BOT_POOL_INFO) and asks for the blob on
+     * CHANNEL_BULK only when its own pools differ. Kept rather than made
+     * per request so that the id a joiner was told and the blob it is then
+     * sent are always the same catalogue. NULL, 0, 0 when the pools hold no
+     * themed pool. */
+    uint8_t     *botPoolBlob;
+    uint32_t     botPoolBlobLen;
+    uint32_t     botPoolId;
 
     /* Layout A lobby flags — all persist across rounds. */
     bool     openHost;             /* anyone can edit when true */
@@ -371,6 +399,8 @@ struct ServerSim {
     char     mapMd5Hex[33];        /* mapMd5 as 32 lowercase hex chars + NUL; "" when invalid */
     UploadPolicy uploadPolicy;     /* mirrored from server-startup config */
     ScriptUploadPolicy scriptUploadPolicy;  /* mirrored from server-startup config */
+    bool               scriptSharingOff;    /* refuse copies of this server's scripts;
+                                             * negative so a zeroed sim shares */
     /* Where a script a player uploads lands under the policy in force, and
      * the lowest directory of the merged script listing. "" under OFF.
      * Resolved once by serverInstanceStartup. */
@@ -395,7 +425,11 @@ struct ServerSim {
                                     * to their allies instead of being
                                     * withheld; off is the classic
                                     * behaviour. */
-    uint8_t  overviewWindow;       /* OverviewWindow — which block of squares
+    bool     positionalSound;      /* sound events tell a human which side a
+                                    * sound is on and roughly how far; off
+                                    * sends every sound centred, which is the
+                                    * classic behaviour. */
+    uint8_t  overviewWindow;      /* OverviewWindow — which block of squares
                                     * the map overview keeps live round the
                                     * player's own tank. Expanded (0) is
                                     * today's behaviour. */
@@ -465,6 +499,7 @@ struct ServerSim {
         uint16_t   viewDecaySecs[VIEW_CATEGORY_COUNT];
         bool       classicMode;
         bool       alliesInTrees;
+        bool       positionalSound;
         uint8_t    overviewWindow;
         uint8_t    lineOfSight;
         bool       smartPingsOff;
@@ -676,6 +711,15 @@ struct ServerSim {
      * so ammo appears on arrival instead of waiting for the next full-sync. */
     uint8_t      lastClosestBase[MAX_TANKS];
 
+    /* Alliance requests not yet accepted. Bit N of entry A means seat N has
+     * asked seat A. CMD_ALLIANCE_REQUEST sets it, and CMD_ALLIANCE_ACCEPT
+     * goes ahead only if it is set and clears it, so a client cannot ally
+     * itself with a seat that never asked. A seat leaving clears its entry
+     * and its bit in every other entry; serverSimResetGameWorld clears all
+     * of it. A declined request is not reported to the server and stays
+     * here until one of those happens. */
+    uint16_t     allianceAskedBy[MAX_TANKS];
+
     /* Full state sync tracking, per recipient. Each client's own per-client
      * snapshot build manages its own full-sync cadence; a scalar here let the
      * first client built each interval consume it and starve the rest. */
@@ -820,6 +864,12 @@ struct ServerSim {
      * PERSIST-policy uploads. Empty → "<mapDirPath>/Uploads". Set from
      * ServerInstanceConfig.uploadPersistDir at startup. */
     char         uploadPersistDir[FILENAME_MAX];
+    /* Absolute directory backing the virtual "Workshop/" folder: where a
+     * desktop host copies its subscribed Workshop items. Empty → no Workshop
+     * folder, and "Workshop/<name>" resolves under the map root like any
+     * other path. Set by the host through serverSimSetWorkshopMapDir; the
+     * dedicated server never sets it. */
+    char         workshopMapDir[FILENAME_MAX];
     /* The scenarios this server offers on their own, independently of any
      * map: the -scenariodir CLI arg on the dedicated server and the
      * "Scenario Dir" preference on a desktop host. Empty → the built-in
@@ -888,6 +938,23 @@ struct ServerSim {
        by serverSimSetMapScript. */
     uint8_t      scenarioMapScriptDetails[SCN_DETAILS_MAX];
     uint16_t     scenarioMapScriptDetailsLen;
+    /* And its settings block (scenario_settings.h), for the same reason and
+       on the same terms: written by serverSimSetMapScriptSettings and
+       forgotten by serverSimSetMapScript. */
+    uint8_t      scenarioMapScriptSettings[SCN_SETTINGS_BLOB_MAX];
+    uint16_t     scenarioMapScriptSettingsLen;
+    /* The values the host chose for scripts' settings this session, keyed by
+       the script's file name and the setting's id. A value equal to the
+       declared default is not kept: a missing value is the default. Kept
+       across rounds and map changes, never saved. Written only by
+       serverSimSetScriptSetting, which checks each value against the
+       declaration first. */
+    struct {
+        char    file[LOBBY_SCENARIO_FILE_LEN];
+        char    id[SCN_SETTING_ID_LEN];
+        int32_t value;
+    }            scriptSettingValues[SERVER_SCRIPT_SETTING_VALUES_MAX];
+    int          scriptSettingValueCount;
 
     /* Random map generation (for -randommap mode) */
     bool         randomMapEnabled;       /* true when using -randommap */
@@ -978,6 +1045,12 @@ struct ServerSim {
     void                  *scenarioRoundBootCtx;
     void                 (*scenarioRoundStart)(void *ctx);
     void                  *scenarioRoundStartCtx;
+    /* The scripts.json text for this round's recording, which the host
+       builds at round boot and logStop writes into the .wbv. NULL with a
+       length of zero for a round that ran no script. malloc'd; the setter
+       frees the one it replaces and serverSimDestroy frees the last. */
+    char                  *scenarioRecordText;
+    size_t                 scenarioRecordTextLen;
     /* Asked of each map the lister finds, so an entry can say whether it is
        scripted. NULL means nothing registered and every map reads plain. */
     bool                 (*scenarioMapScripted)(void *ctx, const char *mapPath);
@@ -1002,6 +1075,21 @@ struct ServerSim {
                                                   const char *file,
                                                   uint8_t *out, size_t cap);
     void                  *scenarioDetailsReaderCtx;
+    /* Reads one directory file's raw bytes for serverSimScriptFileRead.
+       NULL means nothing registered and no file is served. */
+    ServerScriptReadResult (*scriptFileReader)(void *ctx, const char *dir,
+                                               const char *file,
+                                               uint8_t **outBytes,
+                                               uint32_t *outLen,
+                                               uint32_t cap);
+    void                  *scriptFileReaderCtx;
+    /* Reads one directory file's settings block for
+       serverSimScenarioSettingsDecl. NULL means nothing registered and only
+       the map's own script declares any. */
+    int                  (*scenarioSettingsReader)(void *ctx, const char *dir,
+                                                   const char *file,
+                                                   uint8_t *out, size_t cap);
+    void                  *scenarioSettingsReaderCtx;
     /* What a lobby host's reload request runs. NULL means no scenario is
        attached and a request answers so. */
     bool                 (*scenarioReload)(void *ctx, char *err, size_t errLen);
@@ -1039,20 +1127,18 @@ struct ServerSim {
     ScnLobbyTemplate       scenarioLobby;
     bool                   scenarioLobbyValid;
     /* What the seats now in the lobby were built from: whether the seating
-     * ran on a template at all, the map file it ran for, and the template
-     * itself. The three are written after each seating, so holding the live
-     * template above against them says whether the bots in the lobby came
-     * from the lobby that is attached now — which is what tells a scenario
-     * picked on the map already committed, where the seats stand, from one
-     * that arrived with a new map or a new template. The path is empty where
-     * the live map has no file of its own, which is every map that came from
-     * bytes.
+     * ran on a template at all, and the template itself. The two are written
+     * by each seating, so holding the live template above against them says
+     * whether the bots in the lobby came from the lobby that is attached now
+     * — which is what tells a map change or a pick that kept the scenario's
+     * lobby, where the bots stand, from one that brought a new template.
+     * Anything that empties the lobby of its bots without seating it again
+     * clears scenarioLobbySeated, so the next decision seats it afresh.
      *
      * The template is held in full rather than as a digest because the
      * question asked of it is exact: two lobbies that differ by one seat are
      * different lobbies. */
     bool                   scenarioLobbySeated;
-    char                   scenarioLobbySeatedMap[FILENAME_MAX];
     ScnLobbyTemplate       scenarioLobbySeatedTemplate;
     /* What the attached scenario is called, where it came from, and what it
      * says about itself — the lobby's description of it, which the settings
@@ -1204,12 +1290,20 @@ struct ServerSim {
     ScnPanelList           scenarioPanelScratch;
 
     /* A scenario's own score for each player slot and each team, as the
-     * score op last set it. Nothing reads these yet: the lobby's round
-     * stats are what will. Player rows are keyed by a 0-based slot, team
-     * rows by the team number, which runs 1..MAX_TANKS-1, so row 0 of the
-     * team array names no team and is never written. */
+     * score op last set it. serverSimBuildRoundStatsSummary reads them for
+     * the round's recap, and the join replay hands every valid row to a
+     * subscriber that arrives mid-round. Player rows are keyed by a 0-based
+     * slot, team rows by the team number, which runs 1..MAX_TANKS-1, so row
+     * 0 of the team array names no team and is never written. */
     ScnScoreRow            scenarioPlayerScores[MAX_TANKS];
     ScnScoreRow            scenarioTeamScores[MAX_TANKS];
+
+    /* Each map marker a scenario has up, by id, as the marker op last placed
+     * it: a place or a follow sets the row and a clear empties it. Markers
+     * have no expiry, so this is the whole of what the map shows, and the
+     * join replay hands every valid row to a subscriber that arrives
+     * mid-round. */
+    ScnMarkerRow           scenarioMarkers[SCN_MARKERS_MAX];
 
     /* Spectator roster enumerator (registered by the transport layer). Invoked
      * during sync-replay to emit one CTRL_SPECTATOR_SLOT per connected
@@ -1288,7 +1382,7 @@ void serverSimScenarioResetRoster(ServerSim *sim);
  * scenario surface: the caller is the sim's own round start. */
 void serverSimScenarioResetTickStats(ServerSim *sim);
 
-/* Forget every stored panel list and every score row. What a scenario was
+/* Forget every stored panel list, marker and score row. What a scenario was
  * presenting belongs to the round and the scenario that put it up, so both
  * the return to lobby and a detach drop the lot; a joiner arriving after
  * either is given nothing rather than the last round's panels. Called from
@@ -1312,6 +1406,21 @@ void serverSimScenarioResetPresentation(ServerSim *sim);
  * than on the scenario surface because the caller is the sim's own join
  * path, not a scenario. */
 void serverSimScenarioReplayPanels(
+    ServerSim *sim,
+    void (*deliver)(void *, const struct ControlEvent *),
+    void *ctx,
+    bool withTargeted);
+
+/* Hand the markers up and the score rows set to a joining subscriber's
+ * callback, as the events that published them: one CTRL_SCN_MARKER per
+ * marker, then one CTRL_SCN_SCORE per player row and per team row. A
+ * cleared marker is not replayed, since a joiner's markers start empty.
+ *
+ * withTargeted false leaves out the markers held to a team or a slot, for
+ * the reason serverSimScenarioReplayPanels leaves out those lists. Scores
+ * are broadcast and go either way. Called from the sync replay in
+ * server_sim_control.c, beside the panel replay. */
+void serverSimScenarioReplayMarkersAndScores(
     ServerSim *sim,
     void (*deliver)(void *, const struct ControlEvent *),
     void *ctx,
@@ -1385,14 +1494,15 @@ typedef struct {
 int  serverSimBuildViewports(ServerSim *sim, BYTE clientIdx, ViewportRect *out, int maxOut);
 bool inAnyViewport(const ViewportRect *vps, int count, int mx, int my);
 
-/* The near/far tier and the coarse compass bearing a human recipient is sent in
- * place of a sound's map square. Returns false when the sound is at or past
- * SDIST_NONE on either axis — the range cull both delivery paths apply — and
- * true when it is in range. *tier and *dir are written whatever it returns, so
- * a caller that deliberately skips the range cull (a tank hit on the recipient
- * itself) still has values to send. */
-bool soundTierAndDirection(int listenerMX, int listenerMY, int mx, int my,
-                           uint8_t *tier, uint8_t *dir);
+/* The stepped east-west pan and the banded larger-axis distance a human
+ * recipient is sent in place of a sound's map square (see Sound event payloads
+ * in input_packet.h). Returns false when the sound is at or past SDIST_NONE on
+ * either axis — the range cull both delivery paths apply — and true when it
+ * is in range. *pan and *dist are written whatever it returns, so a caller
+ * that deliberately skips the range cull (a tank hit on the recipient itself)
+ * still has values to send. */
+bool soundPanAndDist(int listenerMX, int listenerMY, int mx, int my,
+                     int8_t *pan, uint8_t *dist);
 
 /* One recipient's pick of a tick's sound events: the closest instance of
  * each sound id, already shaped for that recipient. The snapshot builder and
@@ -1417,9 +1527,13 @@ void soundPickInit(SoundPick *pick);
  * must not hear, and sounds farther than the one already held for that id are
  * left alone. listenerMX/MY is the recipient's tank square. With keepSquare
  * the held copy carries the real square; without it the middle two bytes are
- * rewritten to the tier and bearing measured from the listener. */
+ * rewritten to the pan and dist measured from the listener. positional is the
+ * lobby's positional-sound setting: when false a positioned sound is written
+ * with pan 0 and dist SDIST_SOFT (near) or SOUND_DIST_MAX (far). A sound with
+ * no square and a keepSquare recipient are the same either way. */
 void soundPickOffer(SoundPick *pick, const GameEvent *ev, BYTE recipient,
-                    int listenerMX, int listenerMY, bool keepSquare);
+                    int listenerMX, int listenerMY, bool keepSquare,
+                    bool positional);
 
 /* True when an in-process recipient is sent a sound's real map square: a
  * bot-manager bot, or a slot flagged through serverSimSetSoundSquares. */

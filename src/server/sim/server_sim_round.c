@@ -105,14 +105,10 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
         serverSimConsoleMessage(msg);
     }
 
-    /* Drop any bots the previous occupants added, seats held for a bot that
-       was never fielded included — those have no bot manager entry, so the
-       roster is what has to be asked. */
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (serverSimIsBot(sim, i)) {
-            serverSimRemoveBot(sim, i);
-        }
-    }
+    /* Drop any bots the previous occupants added, the scenario's seats
+       included, so the decision below seats the template again even where
+       it reaches the one attached already. */
+    serverSimRemoveAllBots(sim);
 
     /* Clear per-slot start reservations back to the none sentinel. */
     for (i = 0; i < MAX_TANKS; i++) {
@@ -140,6 +136,7 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
         }
         sim->classicMode         = sim->originalLobbySettings.classicMode;
         sim->alliesInTrees       = sim->originalLobbySettings.alliesInTrees;
+        sim->positionalSound     = sim->originalLobbySettings.positionalSound;
         sim->overviewWindow      = sim->originalLobbySettings.overviewWindow;
         sim->lineOfSight         = sim->originalLobbySettings.lineOfSight;
         sim->smartPingsOff       = sim->originalLobbySettings.smartPingsOff;
@@ -162,6 +159,11 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
     sim->teams[2].color      = 1;  /* blue */
     sim->teams[2].namingPool = 0;
     SDL_strlcpy(sim->teams[2].name, "Team 2", LOBBY_TEAM_NAME_LEN);
+    /* And the sides a lobby opens with, the pair for the current map's
+     * shape, so the next joiner finds teams 1 and 2 on north/south (or
+     * east/west on a wide map) whatever the last occupants chose. Before
+     * the scenario seating below, which runs against the reset teams. */
+    serverSimApplyDefaultTeamSides(sim);
     memset(sim->botConfigs, 0, sizeof(sim->botConfigs));
     /* Difficulty's default is Hard, not the memset's 0 (= Easy) — same
      * reasoning as serverSimInit: every difficulty plays like Hard for now,
@@ -629,6 +631,7 @@ void serverSimRefreshWbnLobbyInfo(ServerSim *sim) {
     info.alliesInTrees   = serverSimGetAlliesInTrees(sim);
     info.overviewWindow  = serverSimGetOverviewWindow(sim);
     info.lineOfSight     = serverSimGetLineOfSight(sim);
+    info.positionalSound = serverSimGetPositionalSound(sim);
     info.smartPingsOff   = serverSimGetSmartPingsOff(sim);
     info.pillViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryPill);
     info.baseViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryBase);
@@ -1199,6 +1202,9 @@ void serverSimResetGameWorld(ServerSim *sim) {
     sim->prevPillCount = 0;
     sim->prevBaseCount = 0;
     memset(sim->lastClosestBase, BASE_NOT_FOUND, sizeof(sim->lastClosestBase));
+    /* A request belongs to the round it was made in. This runs at round
+     * start and at the return to the lobby. */
+    memset(sim->allianceAskedBy, 0, sizeof(sim->allianceAskedBy));
 
     /* 11. Reset player connection state and per-slot round/world state.
      * Connection identity (name, country, clientType, clientFlags, bot/WBN
@@ -1663,23 +1669,13 @@ void serverSimStartGame(ServerSim *sim) {
 
     sim->gameLength = sim->originalGameLength;
 
-    /* Clear all alliances from previous round */
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (!sim->playerConnected[i]) continue;
-        playersLeaveAlliance(&sim->sim, &sim->sim.plyrs, NEUTRAL, i, TRUE);
-        {
-            ControlEvent leaveEvt;
-            memset(&leaveEvt, 0, sizeof(leaveEvt));
-            leaveEvt.type = CTRL_ALLIANCE_LEAVE;
-            leaveEvt.u.allianceLeave.playerNum = i;
-            /* The round reset clears every alliance; no player asked for it,
-               so the policy is asked with no actor. */
-            leaveEvt.u.allianceLeave.quiet =
-                serverSimAnnounce(sim, ANNOUNCE_KIND_ALLIANCE, i, NEUTRAL)
-                    ? 0 : 1;
-            serverSimPublishControl(sim, &leaveEvt);
-        }
-    }
+    /* Last round's alliances are gone here: serverSimResetGameWorld emptied
+     * every seat's through playersResetRoundState. The CTRL_ALLIANCE_RESET
+     * published below is what clears them on the clients, and it takes the
+     * bits without moving anything. There is no per-seat CTRL_ALLIANCE_LEAVE:
+     * a client still holding last round's alliances applies one by handing
+     * the seat's pillboxes and bases to its first ally, which took owners the
+     * map file gives a seat away from it. */
 
     /* Apply team alliances: players with same non-zero teamNumber become allies */
     serverSimReapplyTeamAlliances(sim);
@@ -1783,7 +1779,23 @@ void serverSimMapRotateRound(ServerSim *sim) {
      * gameOver path via serverSimReturnToLobby). */
     sim->state = serverStateLobby;
     if (sim->mapDirFiles != NULL) {
-        serverSimMapDirPickRandom(sim);
+        /* The round being left may have fielded the scenario's held seats,
+           and nobody is here to keep an edit to them, so the next round
+           opens on the template's own lobby. A decision that reaches the
+           same template leaves the seats as they stand; this is what tells
+           it to seat them again. Not serverSimScenarioReconcileLobby: that
+           takes every fielded seat of the template off the field, a team
+           the template fields from the start included, and in a round that
+           starts straight away nothing puts that team back on.
+
+           Where no map in the directory loads, the map change never runs
+           and the lobby is the one it was, so the flag goes back to what it
+           said about that lobby. */
+        bool wasSeated = sim->scenarioLobbySeated;
+        sim->scenarioLobbySeated = false;
+        if (!serverSimMapDirPickRandom(sim)) {
+            sim->scenarioLobbySeated = wasSeated;
+        }
     }
 
     /* Full world reset + tank (re)creation + state -> running. With no

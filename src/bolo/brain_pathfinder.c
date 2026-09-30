@@ -687,6 +687,7 @@ void brainPathfinderSetConfig(BrainPathfinder *pf, const char *key, float value)
   else if (strcmp(key, "min_armour") == 0)        pf->min_armour = value;
   else if (strcmp(key, "road_build_danger_max") == 0) pf->road_build_danger_max = value;
   else if (strcmp(key, "nextstep_foot_sea_rule") == 0) pf->nextstep_foot_sea_rule = value;
+  else if (strcmp(key, "nextstep_chain_veer") == 0) pf->nextstep_chain_veer = value;
 }
 
 /*********************************************************
@@ -2822,6 +2823,106 @@ static void note_sea_veto(BrainPathfinder *pf, int fx, int fy,
   pf->sea_veto_pick_y = (int16_t)py;
 }
 
+/* Hazard part of the cost of entering tile (x,y) on layer `boat`, as the
+ * slate prices it (see the normal-tile branch of the slate expansion):
+ * danger * slate danger_scale * (16/speed) + overlay + mine penalty. The
+ * terrain part (edge_cost) is left out. */
+static float tile_hazard(const BrainPathfinder *pf, const DijkstraSlate *s,
+                         int x, int y, int boat) {
+  int m = y * MAP_SIZE + x;
+  int t = pf->map[m] & 0x0F;
+  float danger = (float)pf->danger_grid[m] + (float)pf->danger_offset_grid[m];
+  float spd;
+  float h;
+  if (danger < 0.0f) danger = 0.0f;
+  spd = (boat && is_water_tile(t)) ? pf->terrain_speed_table[TT_BOAT]
+                                   : pf->terrain_speed_table[t];
+  h = danger * s->danger_scale * (16.0f / fmaxf(spd, 0.1f))
+      + (float)pf->overlay_grid[m];
+  if (pf->map[m] & 0x80) h += pf->mine_penalty;
+  return h;
+}
+
+/* Chain-rank neighbour pick for the next-step fallbacks (config key
+ * "nextstep_chain_veer"; off = never called).
+ *
+ * Why: s->g_cost is cost FROM THE SLATE ROOT. The veer and the drifted-off
+ * fallbacks below take the neighbour with the lowest g, and the lowest g is the
+ * neighbour nearest the ROOT -- behind the tank, since slates restart from the
+ * tank's own tile. 20260925_105315 bot9 t=2931-3055: tank on (147,123), chain
+ * step (147,124) inside an ally's avoid set, veer took (147,122); then, with
+ * the slate re-rooted on (147,122), the same veer at (147,123) took the root
+ * itself (g = 0). The tank drove A->B->A for 120 ticks.
+ *
+ * What: among the 8 neighbours of (sx,sy) -- not a live obstacle, legal on foot
+ * when foot_rule, reached by this slate -- take the one that is ON or NEXT TO
+ * the chain tile with the smallest index (chain[0] = destination), looking
+ * only at chain[0 .. limit-1]. Ties: on the chain beats next to it, then
+ * nearer the destination. Returns 1 and the tile, or 0 when no neighbour
+ * touches that part of the chain (the caller then keeps its old pick).
+ * Cost: 8 x limit integer compares, only on a fallback tick.
+ *
+ * Cost bound (2026-09-26): the pick used g only as reached-or-not, so a
+ * mined or pill-covered side tile could win over a safe one. The old veer
+ * ranks by g, which carries exactly those terms, so it only takes such a tile
+ * when every other neighbour is worse. Now a neighbour is skipped when the
+ * step onto it cannot be made (edge_cost COST_INF from the tank's tile), or
+ * when its hazard (tile_hazard: danger, overlay, mine) is more than the
+ * hazard of the chain tile it touches plus the plain terrain cost of the
+ * step. A tile ON the chain always passes: the path already pays it. The
+ * chain-rank order among the rest is unchanged. */
+static int chain_rank_pick(const BrainPathfinder *pf, const DijkstraSlate *s,
+                           const int *chain, int limit,
+                           int sx, int sy, int dx, int dy,
+                           const int *obstacles, int n_obstacles,
+                           int foot_rule, int *out_x, int *out_y) {
+  int best_k = limit, best_on = 0, best_d2 = 0x7FFFFFFF;
+  int bx = -1, by = -1;
+  /* The tank's layer: the cheaper one at its tile, as the fallbacks read g. */
+  float sgl = s->g_cost[node_idx(sx, sy, 0)];
+  float sgb = s->g_cost[node_idx(sx, sy, 1)];
+  int s_boat = (foot_rule || !(sgb < sgl)) ? 0 : 1;
+  int s_node = node_idx(sx, sy, s_boat);
+  for (int d = 0; d < 8; d++) {
+    int ax = sx + DX8[d], ay = sy + DY8[d];
+    if (ax < 0 || ax > 255 || ay < 0 || ay > 255) continue;
+    if (obs_contains(obstacles, n_obstacles, ax, ay)) continue;
+    if (foot_rule && !foot_step_ok(pf, sx, sy, ax, ay)) continue;
+    float gl = s->g_cost[node_idx(ax, ay, 0)];
+    float gb = s->g_cost[node_idx(ax, ay, 1)];
+    if (gl >= COST_INF && gb >= COST_INF) continue;
+    float step_ec = pf->edge_cost ? pf->edge_cost[s_node * 8 + d] : 0.0f;
+    if (step_ec >= COST_INF) continue;
+    int k_hit = -1, on = 0;
+    for (int k = 0; k < limit && k < best_k + 1; k++) {
+      int cdx = node_x(chain[k]) - ax, cdy = node_y(chain[k]) - ay;
+      if (cdx >= -1 && cdx <= 1 && cdy >= -1 && cdy <= 1) {
+        k_hit = k;
+        on = (cdx == 0 && cdy == 0);
+        break;
+      }
+    }
+    if (k_hit < 0) continue;
+    if (!on) {
+      int c_boat = (chain[k_hit] >= BOAT_OFFSET) ? 1 : 0;
+      float h_a = tile_hazard(pf, s, ax, ay, (gb < gl) ? 1 : 0);
+      float h_c = tile_hazard(pf, s, node_x(chain[k_hit]), node_y(chain[k_hit]),
+                              c_boat);
+      if (h_a > h_c + step_ec) continue;
+    }
+    int d2 = (ax - dx) * (ax - dx) + (ay - dy) * (ay - dy);
+    if (k_hit < best_k
+        || (k_hit == best_k && (on > best_on
+                                || (on == best_on && d2 < best_d2)))) {
+      best_k = k_hit; best_on = on; best_d2 = d2; bx = ax; by = ay;
+    }
+  }
+  if (bx < 0) return 0;
+  *out_x = bx;
+  *out_y = by;
+  return 1;
+}
+
 int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
                                      int sx, int sy,
                                      int dx, int dy,
@@ -2916,7 +3017,12 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
         if (need_veer) {
           float best_eff = COST_INF;
           float best_d2  = 1e30f;
-          for (int d = 0; d < 8; d++) {
+          /* Chain-rank veer: only chain tiles AHEAD of the tank (index < i). */
+          int chain_ok = (pf->nextstep_chain_veer != 0.0f)
+                         && chain_rank_pick(pf, s, chain, i, sx, sy, dx, dy,
+                                            obstacles, n_obstacles, foot_rule,
+                                            &nnx, &nny);
+          for (int d = 0; d < 8 && !chain_ok; d++) {
             int ax = sx + DX8[d], ay = sy + DY8[d];
             if (ax < 0 || ax > 255 || ay < 0 || ay > 255) continue;
             /* On foot: never veer INTO deep sea, and never cut a deep-sea
@@ -2973,6 +3079,19 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
     float my_boat = s->g_cost[node_idx(sx, sy, 1)];
     float my_g = (my_boat < my_land) ? my_boat : my_land;
     if (my_g >= COST_INF) continue; /* tank position not reached by this slate */
+
+    /* Chain-rank drift fallback: step to the neighbour that rejoins the chain
+     * furthest toward the destination, not the lowest-g one (which walks
+     * back to the slate root). No neighbour touches the chain: old pick. */
+    if (pf->nextstep_chain_veer != 0.0f) {
+      int cx = -1, cy = -1;
+      if (chain_rank_pick(pf, s, chain, chain_len, sx, sy, dx, dy,
+                          obstacles, n_obstacles, foot_rule, &cx, &cy)) {
+        if (out_next_x) *out_next_x = cx;
+        if (out_next_y) *out_next_y = cy;
+        return 1;
+      }
+    }
 
     float best_g = my_g;
     float best_d2 = 1e30f;

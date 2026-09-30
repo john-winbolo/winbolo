@@ -399,6 +399,7 @@ void serverSimSetMapScript(ServerSim *sim, const ScnDirEntry *entry) {
        row's with serverSimSetMapScriptDetails after this, so a row never
        answers with another script's details. */
     sim->scenarioMapScriptDetailsLen = 0;
+    sim->scenarioMapScriptSettingsLen = 0;
     if (entry == NULL || entry->file[0] == '\0') {
         memset(&sim->scenarioMapScript, 0, sizeof(sim->scenarioMapScript));
         /* And the place the host kept for it, which now names a script no
@@ -452,6 +453,19 @@ void serverSimSetMapScriptDetails(ServerSim *sim, const uint8_t *details,
     }
     memcpy(sim->scenarioMapScriptDetails, details, len);
     sim->scenarioMapScriptDetailsLen = (uint16_t)len;
+}
+
+void serverSimSetMapScriptSettings(ServerSim *sim, const uint8_t *settings,
+                                   size_t len) {
+    if (sim == NULL) return;
+    sim->scenarioMapScriptSettingsLen = 0;
+    if (settings == NULL || len == 0 ||
+        sim->scenarioMapScript.file[0] == '\0' ||
+        len > sizeof(sim->scenarioMapScriptSettings)) {
+        return;
+    }
+    memcpy(sim->scenarioMapScriptSettings, settings, len);
+    sim->scenarioMapScriptSettingsLen = (uint16_t)len;
 }
 
 /* The two together, which is the list the lobby is told and a chooser draws:
@@ -508,6 +522,20 @@ void serverSimSetUploadPersistDir(ServerSim *sim, const char *dir) {
     } else {
         sim->uploadPersistDir[0] = '\0';
     }
+}
+
+void serverSimSetWorkshopMapDir(ServerSim *sim, const char *dir) {
+    if (sim == NULL) return;
+    if (dir != NULL) {
+        SDL_strlcpy(sim->workshopMapDir, dir, sizeof(sim->workshopMapDir));
+    } else {
+        sim->workshopMapDir[0] = '\0';
+    }
+}
+
+const char *serverSimGetWorkshopMapDir(const ServerSim *sim) {
+    if (sim == NULL) return "";
+    return sim->workshopMapDir;
 }
 
 bool serverSimMapDirPickRandom(ServerSim *sim) {
@@ -647,8 +675,10 @@ static bool serverSimApplyRandomMapConfig(ServerSim *sim,
  *
  * Everything a Cancel needs goes in together: the bytes, the display name,
  * the file the map was read from so a script can be found beside it again,
- * and the template seats each team holds, because the cancel re-seats the
- * template from scratch and the host's trim would otherwise go with it.
+ * and the template seats each team holds, because where the previewed map
+ * brought a different template the cancel re-seats this one from scratch,
+ * and the host's trim would otherwise go with it. Where the template never
+ * changed nothing is re-seated and the counts put back are the ones there.
  * previousSeatsValid comes from serverSimScenarioSeatCounts, which answers
  * false when no template is attached — that is what keeps "no template" apart
  * from a team the host emptied on purpose.
@@ -820,10 +850,10 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
     stashCommittedMap(sim);
 
     /* Wipe the existing map/pill/base/start contents before the
-     * decoder touches them. mapLoadCompressedMap's RLE-decoder only
-     * writes cells encoded in the new blob — any tile NOT included
-     * in the new map's runs would otherwise keep the previous map's
-     * value. */
+     * decoder touches them. mapRead's run decoder, which the .map
+     * branch below reaches, only writes cells encoded in the new
+     * file — any tile NOT included in the new map's runs would
+     * otherwise keep the previous map's value. */
     {
         int x, y;
         memset((*sim->sim.mp).mapItem, DEEP_SEA,
@@ -844,7 +874,7 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
     /* The wire / upload / WBN paths all hand us a full .map file
      * (starting with the BMAPBOLO magic + version + counts header).
      * mapLoadCompressedMap expects a different on-the-wire layout
-     * (raw bases/pills/starts struct dump + LZW map), so feeding it
+     * (zlib over a bases/pills/starts struct dump + the map), so feeding it
      * the .map file bytes misaligns every field. Detect the magic
      * and route through mapRead via a temp file when it matches.
      * Fall back to the legacy mapLoadCompressedMap path for any
@@ -1060,10 +1090,12 @@ bool serverSimRevertPreview(ServerSim *sim) {
         "serverSimRevertPreview: rolled back to '%s'", sim->mapName);
     serverSimApplyMapChange(sim);
 
-    /* The map change above seated the template from scratch, which is what a
-       map the host commits wants and not what one they backed out of wants:
-       the seats are back at the template's counts and the host's trim is
-       gone. Put their counts back. */
+    /* Where the previewed map brought a different template, the map change
+       above seated this one from scratch, which is what a map the host
+       commits wants and not what one they backed out of wants: the seats are
+       back at the template's counts and the host's trim is gone. Put their
+       counts back. Where the template never changed nothing was re-seated,
+       and the trim finds every team at or under its count already. */
     if (sim->previousSeatsValid) {
         serverSimScenarioTrimSeatsTo(sim, sim->previousSeats);
     }
@@ -1107,11 +1139,17 @@ static bool relPathIsSafe(const char *p) {
     return true;
 }
 
-/* Resolve a client-facing map relPath to an absolute filesystem path. The
- * virtual "Uploads" folder (and "Uploads/<name>") redirects to the configured
- * persist directory when the sim has one set; every other path — and the unset
- * case — resolves under the map-dir root as before. relPath must already have
- * passed relPathIsSafe. out holds at least FILENAME_MAX bytes.
+/* Resolve a client-facing map relPath to an absolute filesystem path. Two
+ * virtual folders live outside the map root: "Uploads" (and "Uploads/<name>")
+ * redirects to the configured persist directory, and "Workshop" (and
+ * "Workshop/<name>") to the directory the host copies its Workshop items to.
+ * Each redirects only when the sim has that directory set; every other path —
+ * and the unset case — resolves under the map-dir root as before. "Workshop"
+ * also does not redirect when the map root holds a real folder of that name:
+ * the root listing shows that folder in place of the Workshop directory, and
+ * the lobby's chooser opens it, so the path leads to the folder that was
+ * listed. relPath must already have passed relPathIsSafe. out holds at least
+ * FILENAME_MAX bytes.
  *
  * Not static: the lobby's set-map command and the upload preview's use-local
  * path name a map by the same relPath a listing gave, and each used to build
@@ -1133,6 +1171,25 @@ void serverSimResolveMapPath(const ServerSim *sim, const char *relPath,
         }
     }
     const char *root = serverSimGetMapDirRoot(sim);
+    const char *workshop =
+        (sim && sim->workshopMapDir[0] != '\0') ? sim->workshopMapDir : NULL;
+    if (workshop != NULL && relPath != NULL &&
+        (SDL_strcmp(relPath, "Workshop") == 0 ||
+         SDL_strncmp(relPath, "Workshop/", 9) == 0)) {
+        char         realFolder[FILENAME_MAX];
+        SDL_PathInfo info;
+
+        SDL_snprintf(realFolder, sizeof(realFolder), "%s/Workshop", root);
+        if (!(SDL_GetPathInfo(realFolder, &info) &&
+              info.type == SDL_PATHTYPE_DIRECTORY)) {
+            if (relPath[8] == '\0') {
+                SDL_strlcpy(out, workshop, outSize);
+            } else {
+                SDL_snprintf(out, outSize, "%s/%s", workshop, relPath + 9);
+            }
+            return;
+        }
+    }
     if (relPath == NULL || relPath[0] == '\0') {
         SDL_strlcpy(out, root, outSize);
     } else {
@@ -1198,6 +1255,34 @@ int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
     }
     SDL_free(list);
 
+    /* The root also offers the Workshop directory as a folder, the way the
+       resolve above reaches it. Left out when the directory is not there yet
+       (nothing subscribed), when the listing is full, and when the map root
+       already holds a real folder of that name in any case, so the chooser
+       never draws two rows called Workshop. A real "Workshop" row opens the
+       real folder: the resolve does not redirect while that folder is
+       there. */
+    if ((relPath == NULL || relPath[0] == '\0') && sim != NULL &&
+        sim->workshopMapDir[0] != '\0' && count < maxEntries) {
+        SDL_PathInfo info;
+        bool present = false;
+        for (int i = 0; i < count; i++) {
+            if (SDL_strcasecmp(entries[i].name, "Workshop") == 0) {
+                present = true;
+                break;
+            }
+        }
+        if (!present && SDL_GetPathInfo(sim->workshopMapDir, &info) &&
+            info.type == SDL_PATHTYPE_DIRECTORY) {
+            ServerMapEntry *e = &entries[count++];
+            SDL_strlcpy(e->name, "Workshop", sizeof(e->name));
+            e->isFolder = true;
+            e->modTime  = (int64_t)info.modify_time;
+            e->size     = 0;
+            e->scripted = false;
+        }
+    }
+
     /* Folders first; alphabetical within each group. */
     for (int i = 1; i < count; i++) {
         ServerMapEntry cur = entries[i];
@@ -1262,6 +1347,7 @@ int serverSimEnumerateScenarioDir(ServerSim *sim,
         e->keepsWinCondition = dirRows[i].keepsWinCondition;
         e->source     = dirRows[i].source;
         e->workshopId = dirRows[i].workshopId;
+        e->workshopAuthor = dirRows[i].workshopAuthor;
     }
     free(dirRows);
     return got;
@@ -1287,6 +1373,145 @@ int serverSimScenarioDetails(ServerSim *sim, const char *file, uint8_t *out,
     return sim->scenarioDetailsReader(sim->scenarioDetailsReaderCtx,
                                       serverSimGetScenarioDir(sim), file, out,
                                       cap);
+}
+
+int serverSimScenarioSettingsDecl(ServerSim *sim, const char *file,
+                                  uint8_t *out, size_t cap) {
+    if (sim == NULL || file == NULL || file[0] == '\0' || out == NULL) {
+        return -1;
+    }
+    /* The map's own script first, for the reason serverSimScenarioDetails
+       looks there first. */
+    if (sim->scenarioMapScript.file[0] != '\0' &&
+        strcmp(sim->scenarioMapScript.file, file) == 0) {
+        if (sim->scenarioMapScriptSettingsLen > cap) return -1;
+        memcpy(out, sim->scenarioMapScriptSettings,
+               sim->scenarioMapScriptSettingsLen);
+        return (int)sim->scenarioMapScriptSettingsLen;
+    }
+    if (sim->scenarioSettingsReader == NULL) return -1;
+    return sim->scenarioSettingsReader(sim->scenarioSettingsReaderCtx,
+                                       serverSimGetScenarioDir(sim), file,
+                                       out, cap);
+}
+
+/* Where file's value for id is kept, or -1. */
+static int scriptSettingAt(const ServerSim *sim, const char *file,
+                           const char *id) {
+    int i;
+
+    for (i = 0; i < sim->scriptSettingValueCount; i++) {
+        if (strcmp(sim->scriptSettingValues[i].file, file) == 0 &&
+            strcmp(sim->scriptSettingValues[i].id, id) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+bool serverSimGetScriptSetting(const ServerSim *sim, const char *file,
+                               const char *id, int32_t *out) {
+    int at;
+
+    if (sim == NULL || file == NULL || id == NULL) return false;
+    at = scriptSettingAt(sim, file, id);
+    if (at < 0) return false;
+    if (out != NULL) *out = sim->scriptSettingValues[at].value;
+    return true;
+}
+
+bool serverSimSetScriptSetting(ServerSim *sim, const char *file,
+                               const char *id, int32_t value,
+                               int32_t *resolved) {
+    uint8_t           blob[SCN_SETTINGS_BLOB_MAX];
+    ScnSetting        rows[SCN_SETTINGS_MAX];
+    const ScnSetting *decl;
+    ControlEvent      evt;
+    int               len;
+    int               n;
+    int               at;
+    int32_t           v;
+
+    if (sim == NULL || file == NULL || id == NULL || file[0] == '\0' ||
+        strlen(file) >= LOBBY_SCENARIO_FILE_LEN || !scnSettingIdOk(id)) {
+        return false;
+    }
+    /* The declaration is read again for every change rather than trusted
+       from the client, so a value is only ever held against the file the
+       server would run. */
+    len = serverSimScenarioSettingsDecl(sim, file, blob, sizeof(blob));
+    if (len <= 0) return false;
+    n = scnSettingsBlobRead(blob, (size_t)len, rows, SCN_SETTINGS_MAX);
+    if (n <= 0) return false;
+    decl = scnSettingFind(rows, n, id);
+    if (decl == NULL) return false;
+    /* On or off has no nearest entry to clamp to: anything else is not a
+       value the host's dropdown sends. */
+    if (decl->type == SCN_SETTING_TYPE_BOOL && value != 0 && value != 1) {
+        return false;
+    }
+
+    v  = scnSettingClamp(decl, value);
+    at = scriptSettingAt(sim, file, id);
+    if (v == decl->def) {
+        /* The default is what a missing value means, so it is not kept. */
+        if (at >= 0) {
+            sim->scriptSettingValues[at] =
+                sim->scriptSettingValues[sim->scriptSettingValueCount - 1];
+            sim->scriptSettingValueCount--;
+        }
+    } else {
+        if (at < 0) {
+            if (sim->scriptSettingValueCount >=
+                SERVER_SCRIPT_SETTING_VALUES_MAX) {
+                return false;
+            }
+            at = sim->scriptSettingValueCount++;
+            SDL_strlcpy(sim->scriptSettingValues[at].file, file,
+                        sizeof(sim->scriptSettingValues[at].file));
+            SDL_strlcpy(sim->scriptSettingValues[at].id, id,
+                        sizeof(sim->scriptSettingValues[at].id));
+        }
+        sim->scriptSettingValues[at].value = v;
+    }
+    if (resolved != NULL) *resolved = v;
+
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_LOBBY_SCRIPT_SETTING;
+    evt.u.lobbyScriptSetting.op = LOBBY_SCRIPT_SETTING_SET;
+    SDL_strlcpy(evt.u.lobbyScriptSetting.file, file,
+                sizeof(evt.u.lobbyScriptSetting.file));
+    SDL_strlcpy(evt.u.lobbyScriptSetting.id, id,
+                sizeof(evt.u.lobbyScriptSetting.id));
+    evt.u.lobbyScriptSetting.value = v;
+    serverSimPublishControl(sim, &evt);
+    return true;
+}
+
+void serverSimReplayScriptSettings(
+    const ServerSim *sim, void (*deliver)(void *, const struct ControlEvent *),
+    void *ctx) {
+    ControlEvent evt;
+    int          i;
+
+    if (sim == NULL || deliver == NULL) return;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_LOBBY_SCRIPT_SETTING;
+    evt.u.lobbyScriptSetting.op = LOBBY_SCRIPT_SETTING_CLEAR;
+    deliver(ctx, &evt);
+    for (i = 0; i < sim->scriptSettingValueCount; i++) {
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_LOBBY_SCRIPT_SETTING;
+        evt.u.lobbyScriptSetting.op = LOBBY_SCRIPT_SETTING_SET;
+        SDL_strlcpy(evt.u.lobbyScriptSetting.file,
+                    sim->scriptSettingValues[i].file,
+                    sizeof(evt.u.lobbyScriptSetting.file));
+        SDL_strlcpy(evt.u.lobbyScriptSetting.id,
+                    sim->scriptSettingValues[i].id,
+                    sizeof(evt.u.lobbyScriptSetting.id));
+        evt.u.lobbyScriptSetting.value = sim->scriptSettingValues[i].value;
+        deliver(ctx, &evt);
+    }
 }
 
 static void searchDirRecursive(const char *fullRoot,
@@ -1427,6 +1652,13 @@ static void serverSimApplyMapChange(ServerSim *sim) {
        and the random regenerate: none of them reaches serverSimResetGameWorld,
        where the round starts drop theirs. */
     serverSimScenarioResetFill(sim);
+
+    /* Teams 1 and 2 still on the default pair the lobby opened with follow
+     * the new map's shape: north/south for a tall or square map, east/west
+     * for a wide one. A side the host chose is kept. Before the reconcile
+     * below, so each reservation is checked against the sides it will
+     * start on. */
+    serverSimRefreshDefaultTeamSides(sim);
 
     /* A reservation from the previous map can index past the new map's
      * start list, or sit on a side the slot's team may not use now the

@@ -236,8 +236,13 @@ struct tankObj {
   BYTE shellNearFrames;
   vectorBody vectorBodyTank; /* Holds tank's actual moving direction and component vectors (x and y axis speed) */
   vectorBody vectorBodyCollide; /* Holds physics stuff for what hit the tank */
-  int16_t bumpX;            /* X bump effect from collisions/shells (>>9 applied per tick) */
-  int16_t bumpY;            /* Y bump effect from collisions/shells (>>9 applied per tick) */
+  int32_t bumpX;            /* X bump effect from shells (>>9 applied per tick); 32 bits so tank_slide_step * 512 fits */
+  int32_t bumpY;            /* Y bump effect from shells (>>9 applied per tick) */
+  /* The Mac Bolo shell push (tank_slide_mac): displacement still to come in
+   * world units, with fractions, and the per-tick multiplier taken at the hit. */
+  double slideX;
+  double slideY;
+  double slideRetention;
   BYTE residualSpeed;       /* Accumulated sub-tick movement */
   BYTE leavingBoatTimer;    /* Ticks remaining in LeavingBoat before returning to InBoat */
   BYTE leavingBoatAxis;     /* Bank-crossing axis bitmask (1=X, 2=Y); only checked for pastGrace */
@@ -250,25 +255,19 @@ struct tankObj {
 #define MAX_STARTS 16
 #define SIZEOF_STARTS 49
 
+/* Uncompressed size of a map serialised by mapSaveCompressedMap: the
+ * bases/pills/starts structs followed by the terrain array. */
+#define MAP_UNCOMPRESSED_SIZE \
+    (SIZEOF_BASES + SIZEOF_PILLS + SIZEOF_STARTS + (MAP_ARRAY_SIZE * MAP_ARRAY_SIZE))
+
 /* Worst-case size of a map serialised by mapSaveCompressedMap, and therefore
- * the size any buffer handed to it should be.
- *
- * The RLE it uses can expand rather than compress. Its worst input is a
- * three-byte cycle of one literal byte followed by a two-byte run - ABB ABB
- * ABB ... - which the encoder spends four output bytes on: two for the
- * one-byte literal frame, two for the run. So the bound is 4/3 of the terrain
- * array, measured against the encoder rather than estimated: a 64 KiB array
- * of that shape encodes to 87382 bytes. The fixed bases/pills/starts header
- * rides in front of it.
- *
- * This is not a theoretical shape. Terrain values are small integers, and a
- * 256x256 array of randomly mixed ones encodes to about 1.05x - already past
- * the 64 KiB a map occupies uncompressed. A buffer sized to the input is
- * therefore too small for any map that does not actually compress, and
- * mapSaveCompressedMap refuses on it: safe, but silent. */
-#define MAP_COMPRESSED_MAX_SIZE                       \
-    (SIZEOF_BASES + SIZEOF_PILLS + SIZEOF_STARTS +    \
-     (((MAP_ARRAY_SIZE * MAP_ARRAY_SIZE) * 4) / 3) + 1)
+ * the size any buffer handed to it should be. This is zlib's compressBound()
+ * for MAP_UNCOMPRESSED_SIZE, written out so it can size a static array:
+ * deflate stores an input that does not compress in raw blocks, which cost a
+ * few bytes of framing on top of the input and never more than this. */
+#define MAP_COMPRESSED_MAX_SIZE                                       \
+    (MAP_UNCOMPRESSED_SIZE + (MAP_UNCOMPRESSED_SIZE >> 12) +          \
+     (MAP_UNCOMPRESSED_SIZE >> 14) + (MAP_UNCOMPRESSED_SIZE >> 25) + 13)
 
 /* Typedefs */
 

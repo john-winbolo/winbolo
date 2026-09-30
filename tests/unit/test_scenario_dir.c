@@ -34,6 +34,9 @@
  *                                        answered from the last result without
  *                                        booting a Lua state, and a file added
  *                                        to it makes the next read a fresh one
+ * run_scenario_dir_list_cached_sees_edit — a file overwritten in place, which
+ *                                        leaves the directory's time alone,
+ *                                        still makes the next read a fresh one
  * run_scenario_dir_merges_shipped_mods — the same lister also reads the mods
  *                                        shipped beside the executable, and a
  *                                        name in both directories resolves to
@@ -569,6 +572,74 @@ int run_scenario_dir_list_cached(void) {
     return 0;
 }
 
+/* The same script with another name, and a different length, so an overwrite
+ * moves the file's size even when its modify time lands in the same tick. */
+static const char kSdRemarkedScript[] =
+    "print(\"" SD_MARK "\")\n"
+    "scenario = { name = \"Remarked\", api = 1 }\n";
+
+/* A file overwritten in place leaves the directory's modify time alone, and
+ * the cache also stamps each scenario file, so the read after the overwrite
+ * is a fresh one and carries the file's new name. */
+int run_scenario_dir_list_cached_sees_edit(void) {
+    ScnDirEntry  list[8];
+    ServerSim   *sim;
+    SDL_PathInfo before;
+    SDL_PathInfo after;
+    int          n;
+
+    UT_ASSERT(sdMakeDir("cached_edit"));
+    UT_ASSERT(sdWriteText("marked.lua", kSdMarkedScript));
+
+    sim = ut_make_running_sim("Host");
+    UT_ASSERT(sim != NULL);
+    serverSimSetActive(sim);
+    serverSimSetScenarioDir(sim, sdDir);
+    scenarioHostRegisterScenarioLister(sim);
+    sdWatchConsole(sim);
+
+    n = serverSimScenarioListDir(sim, list, 8);
+    UT_ASSERT_MSG(sdFind(list, n, "marked.lua") != NULL,
+                  "the first read did not list the file in the directory");
+
+    /* Once more with nothing changed, so the cache is known to be holding
+       the listing before the file is overwritten. */
+    sdSaid[0] = '\0';
+    (void)serverSimScenarioListDir(sim, list, 8);
+    UT_ASSERT_MSG(strstr(sdSaid, SD_MARK) == NULL,
+                  "the second read was not answered from the cache, so this "
+                  "case cannot tell whether the overwrite invalidated it");
+
+    sdSaid[0] = '\0';
+    UT_ASSERT(SDL_GetPathInfo(sdDir, &before));
+    UT_ASSERT(sdWriteText("marked.lua", kSdRemarkedScript));
+    UT_ASSERT(SDL_GetPathInfo(sdDir, &after));
+    UT_ASSERT_MSG(before.modify_time == after.modify_time,
+                  "this filesystem moved the directory time, so this case "
+                  "did not exercise the file stamps");
+    /* A read inside SCN_DIR_STAMPS_REUSE_MS of the last walk is answered
+       without stamping the files again, so wait it out: this case is about
+       the stamps, not the window. */
+    SDL_Delay(SCN_DIR_STAMPS_REUSE_MS + 50);
+    memset(list, 0, sizeof(list));
+    n = serverSimScenarioListDir(sim, list, 8);
+    UT_ASSERT_MSG(sdFind(list, n, "marked.lua") != NULL,
+                  "the overwritten file fell out of the list");
+    UT_ASSERT_MSG(strcmp(sdFind(list, n, "marked.lua")->name, "Remarked") ==
+                      0,
+                  "the read after the overwrite named it '%s': the cache "
+                  "kept the row from before the file changed",
+                  sdFind(list, n, "marked.lua")->name);
+    UT_ASSERT_MSG(strstr(sdSaid, SD_MARK) != NULL,
+                  "a file overwritten in place was still answered from the "
+                  "cache");
+
+    sdUnwatchConsole(sim);
+    serverSimDestroy(sim);
+    sdCleanup();
+    return 0;
+}
+
 /* ── 6. The player's directory and the shipped one, merged ───────── */
 
 /* The lister the host registers reads two directories: the one the player
@@ -589,6 +660,7 @@ int run_scenario_dir_merges_shipped_mods(void) {
     ScnDirEntry  shipped[SD_MERGE_MAX];
     ScnDirEntry  list[SD_MERGE_MAX];
     char         shippedDir[512];
+    char         workshopDir[512];
     const char  *base;
     ServerSim   *sim;
     char         seen[1024];
@@ -624,17 +696,25 @@ int run_scenario_dir_merges_shipped_mods(void) {
        Pointed at this case's own directory, which the list then holds once,
        so what is listed is the two directories this case wrote and nothing
        the machine happens to hold. The third directory is tested on its own
-       in test_scenario_mod_dirs.c. */
+       in test_scenario_mod_dirs.c. The Workshop directory sits beside the
+       player's own and is pointed at an empty one of this case's for the
+       same reason. */
+    UT_ASSERT(utScratchPath(workshopDir, sizeof(workshopDir), "Workshop"));
+    UT_ASSERT(SDL_CreateDirectory(workshopDir));
 #ifdef _WIN32
     _putenv_s("WB_MOD_DIR_USER", sdDir);
+    _putenv_s("WB_MOD_DIR_WORKSHOP", workshopDir);
 #else
     setenv("WB_MOD_DIR_USER", sdDir, 1);
+    setenv("WB_MOD_DIR_WORKSHOP", workshopDir, 1);
 #endif
     n = serverSimScenarioListDir(sim, list, SD_MERGE_MAX);
 #ifdef _WIN32
     _putenv_s("WB_MOD_DIR_USER", "");
+    _putenv_s("WB_MOD_DIR_WORKSHOP", "");
 #else
     unsetenv("WB_MOD_DIR_USER");
+    unsetenv("WB_MOD_DIR_WORKSHOP");
 #endif
     sdNames(list, (n > 0) ? n : 0, seen, sizeof(seen));
     UT_ASSERT_MSG(sdFind(list, n, "hold.lua") != NULL,

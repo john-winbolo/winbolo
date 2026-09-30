@@ -180,6 +180,14 @@ function M.configure(opts)
   local foot_sea = opts.nextstep_foot_sea_rule
   if foot_sea == nil then foot_sea = C.PF_NEXTSTEP_FOOT_SEA_RULE end
   cpf_set_config("nextstep_foot_sea_rule", foot_sea and 1 or 0)
+
+  -- Chain-rank next-step fallbacks (C.PF_NEXTSTEP_CHAIN_VEER; PRESETS.keel =
+  -- false): veer / drift steps follow the traced chain toward the destination
+  -- instead of the lowest g (toward the slate root). Same explicit-false
+  -- handling as the rule above. An engine without the key ignores it.
+  local chain_veer = opts.nextstep_chain_veer
+  if chain_veer == nil then chain_veer = C.PF_NEXTSTEP_CHAIN_VEER end
+  cpf_set_config("nextstep_chain_veer", chain_veer and 1 or 0)
 end
 
 -- Last veto sequence number seen from the C pathfinder, so the debug print

@@ -163,6 +163,13 @@ typedef struct {
     const char             *runningFile;
     ScnTimerSet            *timers;
     bool                    checkOnly;
+    /* The registry reference of the globals a file's top level is running
+     * in, set across the chunk and 0 at every other moment. game.setting
+     * reads it where running is NULL: the chunk runs before the table is
+     * read out of those globals, so a top level that asks for a setting is
+     * answered from the settings block its own scenario table has just
+     * declared. 0 is no reference, which is what a zeroed context holds. */
+    int                     runningEnv;
 } ScnLuaCtx;
 
 /* What one parameter holds, beside the name the author writes it under. A
@@ -383,6 +390,10 @@ typedef struct {
     X(TANK_KILLED,      "on_tank_killed",      SCN_FN_EVENT_HOOK,            \
       SCN_FN_ARGS3("victim", SCN_PARAM_SLOT, "killer", SCN_PARAM_OWNER,      \
                    "cause", SCN_PARAM_WORD))                                 \
+    X(TANK_HIT,         "on_tank_hit",         SCN_FN_EVENT_HOOK,            \
+      SCN_FN_ARGS5("victim", SCN_PARAM_SLOT, "attacker", SCN_PARAM_OWNER,    \
+                   "cause", SCN_PARAM_WORD, "amount", SCN_PARAM_NUMBER,      \
+                   "pill", SCN_PARAM_PILL))                                  \
     X(LGM_DIED,         "on_lgm_died",         SCN_FN_EVENT_HOOK,            \
       SCN_FN_ARGS4("p", SCN_PARAM_SLOT, "killer", SCN_PARAM_OWNER,           \
                    "mx", SCN_PARAM_SQUARE_X, "my", SCN_PARAM_SQUARE_Y))      \
@@ -454,10 +465,18 @@ typedef struct {
       SCN_FN_ARGS3("kind", SCN_PARAM_WORD, "subject", SCN_PARAM_ITEM,        \
                    "actor", SCN_PARAM_OWNER),                                \
       "false to keep the line off every newswire")                           \
+    X(CAN_HIT,           "can_hit",                                          \
+      SCN_FN_ARGS4("attacker", SCN_PARAM_OWNER, "kind", SCN_PARAM_WORD,      \
+                   "n", SCN_PARAM_ITEM, "pill", SCN_PARAM_PILL),             \
+      "false to let the shell fly on as if nothing were there")              \
     X(CAN_DIE,           "can_die",                                          \
-      SCN_FN_ARGS4("kind", SCN_PARAM_WORD, "n", SCN_PARAM_ITEM,              \
-                   "killer", SCN_PARAM_OWNER, "cause", SCN_PARAM_WORD),      \
+      SCN_FN_ARGS5("kind", SCN_PARAM_WORD, "n", SCN_PARAM_ITEM,              \
+                   "killer", SCN_PARAM_OWNER, "cause", SCN_PARAM_WORD,       \
+                   "pill", SCN_PARAM_PILL),                                  \
       "false to leave what the blow landed on standing")                     \
+    X(CAN_ALLY,          "can_ally",                                         \
+      SCN_FN_ARGS2("p", SCN_PARAM_SLOT, "q", SCN_PARAM_SLOT),                \
+      "false to refuse the alliance")                                        \
     X(ON_CHOOSE_START,   "on_choose_start",                                  \
       SCN_FN_ARGS1("p", SCN_PARAM_SLOT),                                     \
       "a start number, counted from 1 as game.start counts")                 \
@@ -465,9 +484,13 @@ typedef struct {
       SCN_FN_ARGS1("p", SCN_PARAM_SLOT),                                     \
       "a loadout word, or a table of shells, mines, armour and trees")       \
     X(DAMAGE_SCALE,      "damage_scale",                                     \
-      SCN_FN_ARGS3("attacker", SCN_PARAM_OWNER, "victim", SCN_PARAM_SLOT,    \
-                   "cause", SCN_PARAM_WORD),                                 \
-      "a percent from 0 to 10000, where 100 is the ordinary amount")
+      SCN_FN_ARGS4("attacker", SCN_PARAM_OWNER, "victim", SCN_PARAM_SLOT,    \
+                   "cause", SCN_PARAM_WORD, "pill", SCN_PARAM_PILL),         \
+      "a percent from 0 to 10000, where 100 is the ordinary amount")         \
+    X(PILL_DAMAGE_SCALE, "pill_damage_scale",                                \
+      SCN_FN_ARGS4("attacker", SCN_PARAM_OWNER, "n", SCN_PARAM_PILL,         \
+                   "cause", SCN_PARAM_WORD, "pill", SCN_PARAM_PILL),         \
+      "a percent from 0 to 10000 of the armour the pillbox loses")
 
 /*********************************************************
  *NAME:          scenarioLuaInstall
@@ -754,6 +777,49 @@ bool scenarioLuaRegionHolds(const ScnManifestRegion *r, int mx, int my);
 uint8_t scenarioLuaRegionBit(const ScenarioManifest *m, const char *path,
                              const char *name);
 
+/* ── Settings ───────────────────────────────────────────────────────── */
+
+/* One line about a settings block, and the dotted key it is about
+ * ("settings[2].max"). A reader that has nowhere to say it passes NULL. */
+typedef void (*ScnSettingsReportFn)(void *ud, const char *key,
+                                    const char *line);
+
+/*********************************************************
+ *NAME:          scenarioLuaReadSettings
+ *PURPOSE:
+ *  The settings block of the scenario table at stack index
+ *  tbl, into out, which holds max rows. Answers how many
+ *  rows it kept.
+ *
+ *  Each row that is not a usable declaration is reported
+ *  and dropped, and the rest are kept in the order the file
+ *  wrote them: a row that is not a table, a missing id or
+ *  label, a type this build does not know, a number that is
+ *  not a whole number in the 32-bit range, a bool row that
+ *  gives min, max or step or a default that is not true or
+ *  false, a row that fails
+ *  scnSettingProblem (scenario_settings.h), an id the block
+ *  already holds, and every row past max.
+ *
+ *  The manifest read is one caller and game.setting at a
+ *  file's top level is the other, so a setting a script
+ *  reads before its table is read is held to the same rules
+ *  the table is. Raw reads throughout: no metatable runs.
+ *********************************************************/
+int scenarioLuaReadSettings(lua_State *L, int tbl, ScnSetting *out, int max,
+                            const char *path, ScnSettingsReportFn report,
+                            void *ud);
+
+/*********************************************************
+ *NAME:          scenarioLuaPushSetting
+ *PURPOSE:
+ *  Pushes v, a value of setting s, as the script reads it:
+ *  true or false for a bool setting, a whole number for an
+ *  int one. game.setting and the checker's stand-in for it
+ *  both answer through this.
+ *********************************************************/
+void scenarioLuaPushSetting(lua_State *L, const ScnSetting *s, int32_t v);
+
 /* ── Timers ─────────────────────────────────────────────────────────── */
 
 /*********************************************************
@@ -861,6 +927,14 @@ const char *scenarioLuaBuildOrderWord(int action);
 const char *scenarioLuaCaptureKindWord(int kind);
 
 /*********************************************************
+ *NAME:          scenarioLuaHitKindWord
+ *PURPOSE:
+ *  What a shell has reached, as the word can_hit is handed.
+ *  NULL for a kind the surface does not name.
+ *********************************************************/
+const char *scenarioLuaHitKindWord(int kind);
+
+/*********************************************************
  *NAME:          scenarioLuaDieKindWord
  *PURPOSE:
  *  What the blow would destroy, as the word can_die is
@@ -872,10 +946,12 @@ const char *scenarioLuaDieKindWord(int kind);
  *NAME:          scenarioLuaDamageSourceWord
  *PURPOSE:
  *  What inflicted a hit, as the word can_die is handed for a
- *  builder or a pill — a tank's cause reads through
- *  scenarioLuaDeathCauseWord instead, and the two vocabularies
- *  spell a shell and a mine the same way. NULL for a source
- *  the site could not name, DMG_SRC_UNKNOWN included.
+ *  builder or a pill and pill_damage_scale is handed always
+ *  — a tank's cause reads through scenarioLuaDeathCauseWord
+ *  instead, and the two vocabularies spell a shell and a
+ *  mine the same way. A dying tank's blast is "explosion".
+ *  NULL for a source the site could not name,
+ *  DMG_SRC_UNKNOWN included.
  *********************************************************/
 const char *scenarioLuaDamageSourceWord(int source);
 

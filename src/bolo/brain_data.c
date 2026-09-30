@@ -214,7 +214,10 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
     BYTE numPb = pillsGetNumPills(&gs->pb);
     BYTE pi;
     for (pi = 0; pi < numPb && numViewRects < BRAIN_VIEW_MAX_RECTS; pi++) {
-      if ((*gs->pb).item[pi].inTank == FALSE
+      /* A pill not on the map (removed by a scenario, or by the loader in
+       * the mined border) gives no view. */
+      if (pillsIsActive(&gs->pb, (BYTE)(pi + 1))
+          && (*gs->pb).item[pi].inTank == FALSE
           && (*gs->pb).item[pi].owner < MAX_TANKS
           && ((*gs->pb).item[pi].owner == myPN
               || playersIsAllie(&gs->plyrs, myPN, (*gs->pb).item[pi].owner) == TRUE)) {
@@ -378,6 +381,28 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
       }
     }
     value->carriedpills = carried;
+  }
+  /* Which pill and base numbers are still on the map. A removed item keeps
+   * its slot and just drops out of the object list, which a brain cannot
+   * tell apart from an item that went out of sight. */
+  {
+    uint32_t pillMask = 0;
+    uint32_t baseMask = 0;
+    BYTE numPb = pillsGetNumPills(&gs->pb);
+    BYTE numBs = basesGetNumBases(&gs->bs);
+    BYTE i;
+    for (i = 0; i < numPb && i < 32; i++) {
+      if (pillsIsActive(&gs->pb, (BYTE)(i + 1))) {
+        pillMask |= ((uint32_t)1u << i);
+      }
+    }
+    for (i = 0; i < numBs && i < 32; i++) {
+      if (basesIsActive(&gs->bs, (BYTE)(i + 1))) {
+        baseMask |= ((uint32_t)1u << i);
+      }
+    }
+    value->pills_on_map = pillMask;
+    value->bases_on_map = baseMask;
   }
   value->carriedbases = 0;
 

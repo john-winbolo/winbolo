@@ -222,6 +222,18 @@ size_t scnDirDetailsFromManifest(uint8_t *out, size_t cap,
     return len;
 }
 
+size_t scnDirSettingsFromManifest(uint8_t *out, size_t cap,
+                                  const ScenarioManifest *m) {
+    size_t  len = 0;
+    uint8_t i;
+
+    if (out == NULL || cap == 0 || m == NULL) return 0;
+    for (i = 0; i < m->numSettings && i < SCN_SETTINGS_MAX; i++) {
+        (void)scnSettingsBlobAppend(out, cap, &len, &m->settings[i]);
+    }
+    return len;
+}
+
 void scnDirEntryFromManifest(ScnDirEntry *e, const char *file,
                              const ScenarioManifest *m) {
     memset(e, 0, sizeof(*e));
@@ -236,10 +248,14 @@ void scnDirEntryFromManifest(ScnDirEntry *e, const char *file,
        loaded. The lobby script list carries this per entry: it is how a
        chooser knows which rows may sit together. */
     e->keepsWinCondition = scnManifestKeepsWinCondition(m);
-    /* The manifest has no Workshop field yet, so no file names an item. The
-       source is left to the caller: a directory read does not know which of
-       the server's directories it is reading. */
-    e->workshopId = 0;
+    /* The Workshop item the manifest names, 0 for none, which is how a
+       chooser matches a row to the item it came from. The source is left to
+       the caller: a directory read does not know which of the server's
+       directories it is reading. */
+    e->workshopId = m->workshopId;
+    /* The account that published it, for this computer's own listings; the
+       wire carries the id alone. */
+    e->workshopAuthor = m->workshopAuthor;
 }
 
 /* File-name order. Two scenarios may share a manifest name and two files in
@@ -340,6 +356,10 @@ int scnDirListDetails(const char *dir, ScnDirEntry *out,
                 details[n].len = (uint16_t)scnDirDetailsFromManifest(
                     details[n].bytes, sizeof(details[n].bytes),
                     &check->manifest);
+                details[n].settingsLen =
+                    (uint16_t)scnDirSettingsFromManifest(
+                        details[n].settings, sizeof(details[n].settings),
+                        &check->manifest);
             }
             n++;
         }

@@ -59,7 +59,7 @@
 
 static ServerSim *make_mods_sim(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097,
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN,
                                                "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) return NULL;
@@ -274,17 +274,18 @@ int run_lobby_mods_enabled_codec(void) {
     UT_ASSERT_MSG(!out.u.lobbySettings.lobbyModsOff,
                   "mods on did not survive the codec");
 
-    /* The polarity pin. A body that stops one byte short came from a
-       sender that predates the setting, and every such server composed
-       the mods it was given — so the field has to read as off, meaning
-       the mods run. If it is ever flipped to a positive sense this is the
-       assertion that fails. */
+    /* The polarity pin. A body that stops just before the mods byte came
+       from a sender that predates the setting, and every such server
+       composed the mods it was given — so the field has to read as off,
+       meaning the mods run. If it is ever flipped to a positive sense this
+       is the assertion that fails. The positional-sound byte follows the
+       mods byte, so the cut is two bytes. */
     memset(&in, 0, sizeof(in));
     in.type = CTRL_LOBBY_SETTINGS;
     in.u.lobbySettings.lobbyModsOff = true;
     UT_ASSERT(benc(&in, NULL, body, sizeof(body), &len) == ENCODE_OK);
     memset(&out, 0, sizeof(out));
-    UT_ASSERT_MSG(bdec(body, len - 1, &out),
+    UT_ASSERT_MSG(bdec(body, len - 2, &out),
                   "a body with no mods byte failed to decode");
     UT_ASSERT_MSG(!out.u.lobbySettings.lobbyModsOff,
                   "a body with no mods byte must read as mods ON");

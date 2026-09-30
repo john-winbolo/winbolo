@@ -214,6 +214,7 @@ int run_lobby_script_rows_truncated(void) {
 /* ── This computer's listing ──────────────────────────────────────── */
 
 static char lsrModDir[512];
+static char lsrWorkshopDir[512];   /* empty, so the real one is never read */
 
 static void lsrSetEnv(const char *key, const char *val) {
 #ifdef _WIN32
@@ -247,8 +248,10 @@ static int lsrList(ServerScenarioEntry *out, int max) {
     int n;
 
     lsrSetEnv("WB_MOD_DIR_USER", lsrModDir);
+    lsrSetEnv("WB_MOD_DIR_WORKSHOP", lsrWorkshopDir);
     n = scenarioHostListLocalScripts(out, max);
     lsrSetEnv("WB_MOD_DIR_USER", NULL);
+    lsrSetEnv("WB_MOD_DIR_WORKSHOP", NULL);
     return n;
 }
 
@@ -256,8 +259,10 @@ static bool lsrPath(const char *file, char *out, size_t outLen) {
     bool ok;
 
     lsrSetEnv("WB_MOD_DIR_USER", lsrModDir);
+    lsrSetEnv("WB_MOD_DIR_WORKSHOP", lsrWorkshopDir);
     ok = scenarioHostLocalScriptPath(file, out, outLen);
     lsrSetEnv("WB_MOD_DIR_USER", NULL);
+    lsrSetEnv("WB_MOD_DIR_WORKSHOP", NULL);
     return ok;
 }
 
@@ -272,6 +277,9 @@ int run_scenario_local_scripts_listed(void) {
 
     UT_ASSERT(utScratchPath(lsrModDir, sizeof(lsrModDir), "Mods"));
     UT_ASSERT(SDL_CreateDirectory(lsrModDir));
+    UT_ASSERT(utScratchPath(lsrWorkshopDir, sizeof(lsrWorkshopDir),
+                            "Workshop"));
+    UT_ASSERT(SDL_CreateDirectory(lsrWorkshopDir));
     UT_ASSERT(lsrWriteMod("mine.lua", "Mine"));
 
     n = lsrList(list, LSR_MAX);

@@ -67,6 +67,11 @@ extern "C" {
 #include "../../../../common/wb_log.h"                  /* WB_LOG_INFO / WB_LOG_WARN / WB_LOG_CAT_GUI — the [MAPPICK] trace */
 #include "../../../../server/threads.h"                 /* threadsWaitForMutex / Release — SP-host server calls */
 #include "../../../../bolo/public/client_mappreview.h"  /* MapPreview / clientMapPreviewLoadFromFile / Destroy */
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__) && !defined(__EMSCRIPTEN__)
+extern "C" {
+#include "../../../../scenario/scenario_host.h"  /* scenarioHostWorkshopDir — the Local Maps tab's Workshop folder */
+}
+#endif
 }
 
 /* ── Map chooser helpers ──────────────────────────────────────────
@@ -507,8 +512,9 @@ static bool lobbyServerMapsGeneratePreview(const char *entryPath,
             return false;
         }
         /* clientMapPreviewLoadFromBuffer expects the runtime
-         * compressed format (basesCompressData + lzw-encoded map
-         * tiles); we have the raw BMAPBOLO file bytes. mapRead is
+         * compressed format (one zlib stream over the bases/pills/
+         * starts structs and the map tiles); we have the raw
+         * BMAPBOLO file bytes. mapRead is
          * the right parser, and it only knows how to read from a
          * FILE*, so spill the bytes to a worker-private temp file
          * and call clientMapPreviewLoadFromFile. The worker is
@@ -595,8 +601,9 @@ static void lobbyServerMapsPumpPreview(ClientSim *cs, SDL_Renderer *renderer) {
      * MEMFS, and the cache directory has to be created at runtime). Both
      * failure branches were silent — no else on the fopen, none on a short
      * write — and the clear below runs either way, so a failed write
-     * dropped the blob with nothing left to re-request it: the sole
-     * PREVIEW_REQ goes out on the row click.
+     * dropped the blob with nothing left to re-request it: the PREVIEW_REQ
+     * goes out on the row click, and the transport resends it only while no
+     * stream has arrived, so nothing asks again once the blob is delivered.
      *
      * mapChooserSetSelectedMapBytes takes the same raw .map image the WBN
      * tab feeds it and needs no file at all. It does stamp a synthetic
@@ -728,7 +735,10 @@ static bool lobbyUploadGeneratePreview(const char *entryPath,
 /* onFolderJump for the Upload provider. Upload's currentDir is the
  * absolute on-disk path (e.g. "data/maps/Sub"), and the breadcrumb
  * strips "data/maps/" before rendering and prepends "Maps". Reverse
- * both. Bare "Maps" lands at data/maps itself. */
+ * both. Bare "Maps" lands at data/maps itself. The breadcrumb shows the
+ * Workshop directory as "Workshop", so "Workshop" and "Workshop/<rest>"
+ * go back to that directory, unless data/maps holds a real Workshop
+ * folder, which the root lists in its place. */
 static void lobbyUploadOnFolderJump(MapChooserState *state,
                                      const char *jumpPath, void *ctx) {
     (void)ctx;
@@ -740,7 +750,20 @@ static void lobbyUploadOnFolderJump(MapChooserState *state,
     }
     static const char kRoot[]     = "data/maps/";
     static const char kRootBare[] = "data/maps";
-    if (jp[0] == '\0') {
+    SDL_PathInfo realWorkshop;
+    if (state->workshopDir[0] != '\0' &&
+        (SDL_strcmp(jp, "Workshop") == 0 ||
+         SDL_strncmp(jp, "Workshop/", 9) == 0) &&
+        !(SDL_GetPathInfo("data/maps/Workshop", &realWorkshop) &&
+          realWorkshop.type == SDL_PATHTYPE_DIRECTORY)) {
+        if (jp[8] == '/') {
+            SDL_snprintf(state->currentDir, sizeof(state->currentDir),
+                         "%s/%s", state->workshopDir, jp + 9);
+        } else {
+            SDL_strlcpy(state->currentDir, state->workshopDir,
+                        sizeof(state->currentDir));
+        }
+    } else if (jp[0] == '\0') {
         SDL_strlcpy(state->currentDir, kRootBare, sizeof(state->currentDir));
     } else if (strncmp(jp, kRoot, sizeof(kRoot) - 1) == 0 ||
                SDL_strcasecmp(jp, kRootBare) == 0) {
@@ -852,6 +875,7 @@ static const char *lobbyGetActiveTabError(ClientSim *cs) {
                     case 5: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_DISABLED);
                     case 6: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_FULL);
                     case 7: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN);
+                    case 9: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_TIMEOUT);
                     default: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_REJECTED);
                 }
             }
@@ -869,6 +893,7 @@ static const char *lobbyGetActiveTabError(ClientSim *cs) {
                     case 5: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_DISABLED);
                     case 6: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_FULL);
                     case 7: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN);
+                    case 9: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_TIMEOUT);
                     default: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_REJECTED);
                 }
             }
@@ -919,6 +944,16 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
         s_chooserTabs.upload.provider.cacheScope           = "upload";
         SDL_strlcpy(s_chooserTabs.upload.crumbsRootLabel, "Maps",
                     sizeof(s_chooserTabs.upload.crumbsRootLabel));
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__) && !defined(__EMSCRIPTEN__)
+        /* The directory this computer copies its Workshop items to, listed
+           as a "Workshop" folder at the root. Mobile has no Workshop. */
+        {
+            char workshopDir[FILENAME_MAX];
+            if (scenarioHostWorkshopDir(workshopDir, sizeof(workshopDir))) {
+                mapChooserSetWorkshopDir(&s_chooserTabs.upload, workshopDir);
+            }
+        }
+#endif
         /* "Load from device" + "Generate Random Map" exist as dedicated
          * tabs in this window, so suppress the in-widget buttons that
          * would duplicate them. */

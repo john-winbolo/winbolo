@@ -1,8 +1,9 @@
 -- =========================================================================
 -- Survival — a scripted round on Survival.map.
 --
--- Up to 6 human defenders hold the centre of a circular island against 5
--- waves of 10 AI tanks. Humans play under tournament rules (scenario.game
+-- Up to 6 human defenders hold the centre of a circular island against
+-- waves of 10 AI tanks: 5 waves of 4 minutes unless the host sets other
+-- numbers in the lobby (scenario.settings below). Humans play under tournament rules (scenario.game
 -- forces it whatever the lobby says); wave bots always come in on the full
 -- open loadout.
 --
@@ -36,8 +37,9 @@
 --     a tick, two ops an attacker, so the whole wave is ashore inside half a
 --     second. They leave one a second, because a departure still tears a
 --     brain down where an arrival only resumes one.
---   * Wave bots respawn like ordinary play. A wave is 4 minutes of
---     constant pressure, ended only by the clock. Survive all 5 and the
+--   * Wave bots respawn like ordinary play. A wave is WAVE_LIMIT_S of
+--     constant pressure (4 minutes unless the lobby says otherwise), ended
+--     only by the clock. Survive the last of the WAVES waves and the
 --     defenders win — that is the only win, because allow_base_win turns
 --     the engine's all-bases sweep off. The only loss is the instant
 --     all-6-inner-bases check in on_tick.
@@ -73,9 +75,10 @@
 
 scenario = {
   name = "Survival",
-  description = "Co-op survival: hold the island's centre through 5 waves "
-    .. "of AI attackers storming in from the outer ring. Hold your bases, "
-    .. "grab the dead pillboxes, fort up in the forest.",
+  description = "Co-op survival: hold the island's centre through waves "
+    .. "of AI attackers storming in from the outer ring, as many waves and "
+    .. "as long as the host sets in the lobby. Hold your bases, grab the "
+    .. "dead pillboxes, fort up in the forest.",
   api  = 1,
   -- This file ends its own round, from on_tick, when the last wave is beaten
   -- or the defenders are wiped out, so it is a scenario rather than a mod.
@@ -107,17 +110,28 @@ scenario = {
     },
   },
 
+  -- What the host sets in the lobby's details dialog; read below with
+  -- game.setting. The defaults are the round as it always played: 5 waves
+  -- of 4 minutes.
+  settings = {
+    { id = "round_minutes", label = "Round length (minutes)", type = "int",
+      min = 1, max = 10, step = 1, default = 4 },
+    { id = "rounds", label = "Rounds", type = "int",
+      min = 1, max = 5, step = 1, default = 5 },
+  },
+
   -- What each callback below does, in a line a player reads: the lobby's
   -- details dialog lists these under "What this scenario implements:".
   callbacks = {
     spawn_loadout = "Attackers always spawn fully stocked; defenders get the normal tournament loadout.",
-    allow_base_win = "Holding every base does not win; the only win is surviving all 5 waves.",
+    allow_base_win = "Holding every base does not win; the only win is surviving every wave set in the lobby.",
     allow_extra_teams = "Keeps the round to two teams: the defenders and the horde.",
+    can_ally = "Players cannot ally.",
     announce = "Silences the newswire for a few seconds while each wave arrives and leaves.",
     on_choose_start = "Defenders start in the centre puddle; each attacker starts out at sea on its own spoke.",
     on_setup = "Gives the defenders the centre bases and pillboxes, builds the island's shallow rim and tree ring, and digs in defender bots.",
     on_start = "Posts the opening \"dig in\" message and notes which seats the horde will use.",
-    on_tick = "Sends 5 waves of 10 attackers, 4 minutes each with 30 s breaks; lose all 6 centre bases and you lose, outlast wave 5 and you win.",
+    on_tick = "Sends N waves of 10 attackers, M minutes each with 30 s breaks, N and M set in the lobby; lose all 6 centre bases and you lose, outlast the last wave to win.",
   },
 }
 
@@ -130,13 +144,17 @@ scenario = {
 local TICKS_PER_SECOND = 100
 local function secs(s) return math.floor(s * TICKS_PER_SECOND) end
 
-local WAVES     = 5
+-- The number of waves, and each wave's length, are the host's lobby
+-- choices (scenario.settings). "Rounds" there is waves here.
+local WAVES     = game.setting("rounds")
 local WAVE_TEAM = 2        -- the horde is team 2
 local DEF_TEAM  = 1        -- the defenders are team 1
 
 local GRACE_S      = 10    -- prep before wave 1
 local BREATHER_S   = 30    -- prep between waves
-local WAVE_LIMIT_S = 240   -- 4 min: leftover attackers vanish at this mark
+-- The lobby's round length: leftover attackers vanish at this mark. The
+-- default 4 minutes is 240 s.
+local WAVE_LIMIT_S = game.setting("round_minutes") * 60
 
 -- How often the status panel is redrawn. Once a second is enough: the only
 -- thing on it that moves faster is the countdown, and the client counts that
@@ -148,7 +166,7 @@ local PANEL_PERIOD_S = 1
 
 -- How long a flavour line stays up after the state it belongs to began. The
 -- line says the same thing for as long as the state lasts, and a wave runs
--- four minutes: past the first few seconds it is a throbbing red line the
+-- minutes: past the first few seconds it is a throbbing red line the
 -- player has already read, sitting over the map. It says its piece and goes,
 -- leaving the headline and the countdown, which do change.
 local PANEL_LINE_S = 5
@@ -238,6 +256,10 @@ local WAVE_BLITZ_MIN_SUICIDERS = 1
 local WAVE_BLITZ_MIN_SUICIDERS_BY_WAVE = { [2] = 4, [4] = 4 }
 local WAVE_NOBLITZ = { [3] = true }              -- waves that never blitz
 local WAVE_NOCLAIM = { [1] = true, [2] = true }  -- ignore allies' dead-pill claims
+-- Waves that attack pills only inside a blitz: no solo pill attacks (the
+-- brain's "blitzonly" flag). Dead-pill grabs are not affected. Empty = off;
+-- { [1] = true } makes wave 1 blitz-only.
+local WAVE_BLITZ_ONLY = {}
 
 -- Waves fielded entirely as pill suiciders. Empty on purpose: waves 2 and 4
 -- used to be, and it made those two rounds play as one long pill rush
@@ -290,6 +312,7 @@ local function wave_init(w)
   if SUICIDER_WAVES[w] then t.suicider    = "1" end
   if WAVE_NOBLITZ[w]   then t.noblitz     = "1" end
   if WAVE_NOCLAIM[w]   then t.noclaimdead = "1" end
+  if WAVE_BLITZ_ONLY[w] then t.blitzonly  = "1" end
   -- No `refuel` token. The loadout policy below is what keeps an attacker
   -- from going home, and it does it by filling the tank rather than by
   -- pricing the errand.
@@ -432,6 +455,13 @@ end
 -- host's own question where the old file answered a show_add_team_button
 -- one; the effect a host sees is the same.
 function allow_extra_teams()
+  return false
+end
+
+-- And no alliances players make themselves. A defender allied with a horde
+-- bot would be spared by the horde's pillboxes while this script still
+-- counted them a defender.
+function can_ally(p, q)
   return false
 end
 
@@ -1571,12 +1601,16 @@ end
 -- A HUMAN holding exactly one is not on the list at all. That single dead
 -- pill is the one they scoop and place themselves, and the pre-build must
 -- never take it.
-local function take_rank(p, o, holds)
+--
+-- A human's spare is counted in DEAD pills only: a pill built for an empty
+-- start (prebuild_empty_starts) is not one they can scoop and place.
+local function take_rank(p, o, holds, dead)
   if o == p then return 1 end
   if o == nil then return 2 end
-  if (holds[o] or 0) > 1 then return 3 end
   local ol = game.lobby_slot(o)
-  if ol ~= nil and ol.bot then return 4 end
+  local bot = ol ~= nil and ol.bot
+  if (bot and holds[o] or dead[o] or 0) > 1 then return 3 end
+  if bot then return 4 end
   return nil
 end
 
@@ -1596,10 +1630,12 @@ end
 -- last seconds — and the pass that ran at the setup would otherwise be
 -- the only one there ever was.
 local dug_in = {}       -- seat -> true once this round has served it
+local empty_built = {}  -- pill -> true when prebuild_empty_starts built it
 
 local function prebuild_bot_pills()
   local pills = {}
   local holds = {}      -- seat -> how many of the six it holds
+  local dead  = {}      -- seat -> how many of those are dead
   local built = {}      -- seat -> true once one of them stands
   local owed  = {}
 
@@ -1608,7 +1644,8 @@ local function prebuild_bot_pills()
     pills[n] = pi
     if pi ~= nil and pi.owner ~= nil then
       holds[pi.owner] = (holds[pi.owner] or 0) + 1
-      if pi.armour > 0 then built[pi.owner] = true end
+      if pi.armour > 0 then built[pi.owner] = true
+      else dead[pi.owner] = (dead[pi.owner] or 0) + 1 end
     end
   end
 
@@ -1633,7 +1670,7 @@ local function prebuild_bot_pills()
       for n = 1, CENTER_PILLS do
         local pi = pills[n]
         if pi ~= nil and not pi.in_tank and pi.armour == 0 then
-          local r = take_rank(p, pi.owner, holds)
+          local r = take_rank(p, pi.owner, holds, dead)
           if r ~= nil then
             local ddx, ddy = pi.x - si.x, pi.y - si.y
             local d = ddx * ddx + ddy * ddy
@@ -1641,6 +1678,27 @@ local function prebuild_bot_pills()
               best, bestr, bestd = n, r, d
             end
           end
+        end
+      end
+      -- No dead pill to take: a pill built for an empty start stands where
+      -- a late seat's station is, so the seat takes that one over as it is.
+      if best == nil then
+        for n = 1, CENTER_PILLS do
+          local pi = pills[n]
+          if empty_built[n] and pi ~= nil and not pi.in_tank
+             and pi.armour > 0 then
+            local ddx, ddy = pi.x - si.x, pi.y - si.y
+            local d = ddx * ddx + ddy * ddy
+            if bestd == nil or d < bestd then best, bestd = n, d end
+          end
+        end
+        if best ~= nil then
+          empty_built[best] = nil
+          game.set_pill_owner(best, p)
+          pills[best].owner = p
+          built[p] = true
+          dug_in[p] = true
+          best = nil
         end
       end
       if best ~= nil then
@@ -1651,13 +1709,88 @@ local function prebuild_bot_pills()
         -- same pill and a seat robbed of a spare is not robbed of it twice.
         pills[best] = { x = rx, y = ry, owner = p,
                         armour = BUILT_PILL_ARMOUR, in_tank = false }
-        if prev ~= nil then holds[prev] = (holds[prev] or 1) - 1 end
+        if prev ~= nil then
+          holds[prev] = (holds[prev] or 1) - 1
+          dead[prev]  = (dead[prev] or 1) - 1
+        end
         holds[p] = (holds[p] or 0) + 1
         built[p] = true
         dug_in[p] = true
       end
     end
   end
+end
+
+-- A short-handed keep: with fewer than six defenders on the field, the
+-- puddle starts nobody stands on get their pill already built. For each
+-- empty start, the dead pill nearest it is dug in (moved to the ring road,
+-- built, paved back to its base) and flies defender colours.
+--
+-- Runs once, after the deal and the bot pre-build, so every bot has already
+-- taken the pill at its own start. The same rule as take_rank keeps a human's
+-- pill on the ground: a pill whose human owner holds only that one is never
+-- taken, so everyone still has a dead pill to scoop and place themselves.
+-- A defender bot that reaches the field later takes one of these over
+-- (prebuild_bot_pills) when no dead pill is left for it.
+local function prebuild_empty_starts()
+  local defenders = fielded_defenders()
+  if #defenders == 0 or #defenders >= CENTER_PILLS then return end
+
+  -- The starts in use: the same rule on_choose_start places a defender by.
+  local used = {}
+  for _, p in ipairs(defenders) do
+    used[1 + ((seat_rank(p) or p) % 6)] = true
+  end
+
+  local pills = {}
+  local holds = {}
+  for n = 1, CENTER_PILLS do
+    local pi = game.pill(n)
+    pills[n] = pi
+    if pi ~= nil and pi.owner ~= nil then
+      holds[pi.owner] = (holds[pi.owner] or 0) + 1
+    end
+  end
+
+  local built = 0
+  for s = 1, CENTER_PILLS do
+    local si = game.start(s)
+    if not used[s] and si ~= nil then
+      local best, bestd
+      for n = 1, CENTER_PILLS do
+        local pi = pills[n]
+        if pi ~= nil and not pi.in_tank and pi.armour == 0 then
+          local o = pi.owner
+          local ok = o == nil or (holds[o] or 0) > 1
+          if not ok then
+            local ol = game.lobby_slot(o)
+            ok = ol ~= nil and ol.bot   -- a bot's spare; its own is built
+          end
+          if ok then
+            local ddx, ddy = pi.x - si.x, pi.y - si.y
+            local d = ddx * ddx + ddy * ddy
+            if bestd == nil or d < bestd then best, bestd = n, d end
+          end
+        end
+      end
+      if best ~= nil then
+        local pi    = pills[best]
+        local prev  = pi.owner
+        local owner = prev
+        if owner == nil or not is_defender(owner) then owner = defenders[1] end
+        local rx, ry = dig_in(owner, best, pi)
+        pills[best] = { x = rx, y = ry, owner = owner,
+                        armour = BUILT_PILL_ARMOUR, in_tank = false }
+        empty_built[best] = true
+        -- Built now, so it no longer counts as a dead pill its owner holds.
+        if prev ~= nil then holds[prev] = (holds[prev] or 1) - 1 end
+        built = built + 1
+      end
+    end
+  end
+  game.log(string.format(
+    "Survival: [pills] %d defender(s), %d empty start pill(s) built",
+    #defenders, built))
 end
 
 -- How long the arrangement waits for the whole defending side to reach the
@@ -1699,6 +1832,7 @@ local function arrange_defence()
   end
   if not deal_center() then return false end
   prebuild_bot_pills()
+  prebuild_empty_starts()
   return true
 end
 

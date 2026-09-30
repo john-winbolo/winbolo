@@ -29,6 +29,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "scenario_manifest.h" /* ScenarioManifest */
 
@@ -45,6 +46,15 @@
    the file untouched on any failure. */
 bool scnIoWriteMapChunk(const char *mapPath, const ScenarioManifest *m,
                         const char *script, size_t scriptLen,
+                        char *err, size_t errLen);
+
+/* Stamp a Workshop item id and author into a scenario file that already
+   exists: a .scenario package, or a .map carrying a scenario chunk. Only
+   manifest.json changes; every other entry and every manifest key this
+   build does not know is kept. The write goes through a temporary file and
+   a rename, so a failure leaves the file as it was. A loose .lua, a map
+   with no chunk, and anything else answer false with err set. */
+bool scnIoSetWorkshopId(const char *path, uint64_t id, uint64_t author,
                         char *err, size_t errLen);
 
 #endif /* SCENARIO_CHUNK_H */

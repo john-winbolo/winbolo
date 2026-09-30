@@ -98,42 +98,41 @@ static void clientSimLobbyTeamLabel(const ClientSim *cs, BYTE team,
     SDL_strlcpy(out, langGetTextFmt(STR_DLGLOBBY_TEAM_HEADER, &args), outLen);
 }
 
-/* Install one brain's reassembled lobby-text blob.
+/* Take one brain's CTRL_LOBBY_BRAIN_ANNOUNCE: its announce line, and the
+ * length and generation of its commands.txt. Docs of any other generation
+ * are dropped here, fetched or not, because they are not the text the
+ * server holds now; a dialog showing them asks again. The same generation
+ * again (a round handing the lobby back re-sends every announce) leaves the
+ * docs as they are, so a player does not fetch a text they already have.
  *
- * Blob layout, written by the server:
- *   [announceLen 2 BE][announce bytes][docsLen 2 BE][docs bytes]
- * Either length may be 0. A blob that does not parse leaves both strings of
- * that brain as they were, so a malformed stream cannot half-replace a text.
- *
- * The whole table is allocated on first use: almost no ClientSim ever meets a
- * brain that ships these files, and the table is ~264 KB. */
-static void clientSimInstallBrainTexts(ClientSim *cs, uint8_t brainIdx,
-                                       const uint8_t *blob, uint32_t len) {
-    uint32_t pos = 0;
-    uint16_t aLen, dLen;
-    if (cs == NULL || blob == NULL || brainIdx >= BRAIN_LIST_MAX) return;
-    if (len < 4) return;
-    aLen = (uint16_t)(((uint16_t)blob[0] << 8) | blob[1]);
-    pos = 2;
-    if (aLen > BRAIN_ANNOUNCE_MAX || pos + aLen + 2u > len) return;
-    pos += aLen;
-    dLen = (uint16_t)(((uint16_t)blob[pos] << 8) | blob[pos + 1]);
-    pos += 2;
-    if (dLen > BRAIN_DOCS_MAX || pos + dLen > len) return;
+ * The table is allocated on first use: almost no ClientSim ever meets a
+ * brain that ships these files. */
+static void clientSimApplyBrainAnnounce(ClientSim *cs, const ControlEvent *evt) {
+    struct ClientBrainTexts *t;
+    uint8_t  idx = evt->u.lobbyBrainAnnounce.brainIdx;
+    uint16_t aLen = evt->u.lobbyBrainAnnounce.announceLen;
+    uint32_t gen = evt->u.lobbyBrainAnnounce.docsGen;
 
-    if (cs->lobbyBrainTexts == NULL) {
-        cs->lobbyBrainTexts =
-            (struct ClientBrainTexts *)calloc(1, sizeof(*cs->lobbyBrainTexts));
-        if (cs->lobbyBrainTexts == NULL) return;
+    if (idx >= BRAIN_LIST_MAX || aLen > BRAIN_ANNOUNCE_MAX) return;
+    t = clientSimBrainTexts(cs);
+    if (t == NULL) return;
+    memcpy(t->announce[idx], evt->u.lobbyBrainAnnounce.announce, aLen);
+    t->announce[idx][aLen] = '\0';
+
+    if (t->docs[idx].gen != gen) {
+        free(t->docs[idx].text);
+        memset(&t->docs[idx], 0, sizeof(t->docs[idx]));
+        t->docs[idx].gen = gen;
+        t->docs[idx].len = gen != 0 ? evt->u.lobbyBrainAnnounce.docsLen : 0;
+        /* An answer for the old generation may still be arriving; its
+           completion checks the generation and drops it. */
+        if (t->rxIdx == idx + 1) t->rxIdx = 0;
     }
-    if (aLen > 0) memcpy(cs->lobbyBrainTexts->announce[brainIdx], blob + 2, aLen);
-    cs->lobbyBrainTexts->announce[brainIdx][aLen] = '\0';
-    if (dLen > 0) memcpy(cs->lobbyBrainTexts->docs[brainIdx], blob + pos, dLen);
-    cs->lobbyBrainTexts->docs[brainIdx][dLen] = '\0';
 
     WB_LOG_INFO(WB_LOG_CAT_CLIENT,
-                "brain %u lobby texts installed: announce %u B, docs %u B",
-                (unsigned)brainIdx, (unsigned)aLen, (unsigned)dLen);
+                "brain %u lobby texts announced: announce %u B, docs %u B "
+                "(gen %u)", (unsigned)idx, (unsigned)aLen,
+                (unsigned)t->docs[idx].len, (unsigned)gen);
 }
 
 void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
@@ -508,6 +507,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             (gameType)evt->u.lobbySettings.scenarioBaseGame;
         cs->uploadPolicy             = evt->u.lobbySettings.uploadPolicy;
         cs->scriptUploadPolicy       = evt->u.lobbySettings.scriptUploadPolicy;
+        cs->lobbyScriptSharingOff    = !evt->u.lobbySettings.scriptSharing;
         /* The policy byte is stored raw, with no range check. This mirror
          * drives nothing the server does not enforce for itself, so a value
          * outside the enum can only make the local display wrong, never more
@@ -522,6 +522,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         }
         cs->classicMode = evt->u.lobbySettings.lobbyClassicMode;
         cs->alliesInTrees = evt->u.lobbySettings.lobbyAlliesInTrees;
+        cs->positionalSound = evt->u.lobbySettings.lobbyPositionalSound;
         /* The server chooses what the map overview keeps live and what
          * blocks sight inside it; the keys no longer do. A byte this
          * build has no name for reads as the default rather than
@@ -603,17 +604,12 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * catalogue INDEX, and the next server's index 3 is a different
          * brain from this one's. Left standing, a reconnect to another
          * server showed the previous server's announce line under the new
-         * server's brain name. The fragments that go with the new list
+         * server's brain name. The announces that go with the new list
          * follow this event, so clearing here costs nothing that arrives.
-         * The partial-reassembly state goes too — a stream cut off by the
-         * list change must not splice onto the next one. */
-        if (cs->lobbyBrainTexts != NULL) {
-            free(cs->lobbyBrainTexts);
-            cs->lobbyBrainTexts = NULL;
-        }
-        cs->lobbyBrainDocsExpected = 0;
-        cs->lobbyBrainDocsNextSeq  = 0;
-        cs->lobbyBrainDocsBlobLen  = 0;
+         * Fetched docs and requests in flight go too: they are keyed by the
+         * same index. The table is cleared rather than freed, because a
+         * docs answer may be half-received into it. */
+        clientSimBrainTextsClear(cs);
         break;
 
     case CTRL_ROUND_STATS:
@@ -678,84 +674,79 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         break;
     }
 
-    case CTRL_LOBBY_BOT_POOL_CHUNK: {
-        /* Reassemble in-order fragments of the server's compressed
-         * bot-pool catalog; install on the final fragment so the lobby
-         * dropdown reflects the SERVER's pools. Fragments ride the
-         * reliable, ordered control channel, so seq is monotonic; any
-         * gap/mismatch aborts the in-progress reassembly. */
-        uint8_t  seq   = evt->u.lobbyBotPoolChunk.seq;
-        uint8_t  count = evt->u.lobbyBotPoolChunk.count;
-        uint16_t fl    = evt->u.lobbyBotPoolChunk.fragLen;
-        if (count == 0) break;
-        if (seq == 0) {
-            cs->lobbyPoolChunkExpected = count;
-            cs->lobbyPoolNextSeq = 0;
-            cs->lobbyPoolBlobLen = 0;
-        }
-        if (seq != cs->lobbyPoolNextSeq ||
-            count != cs->lobbyPoolChunkExpected ||
-            cs->lobbyPoolBlobLen + fl > sizeof(cs->lobbyPoolBlob)) {
-            cs->lobbyPoolChunkExpected = 0;   /* abort */
-            cs->lobbyPoolNextSeq = 0;
-            cs->lobbyPoolBlobLen = 0;
-            break;
-        }
-        if (fl > 0) {
-            memcpy(cs->lobbyPoolBlob + cs->lobbyPoolBlobLen,
-                   evt->u.lobbyBotPoolChunk.frag, fl);
-            cs->lobbyPoolBlobLen += fl;
-        }
-        cs->lobbyPoolNextSeq++;
-        if (cs->lobbyPoolNextSeq == count) {
-            lobbyBotPoolsDeserializeInstall(cs->lobbyPoolBlob,
-                                            (int)cs->lobbyPoolBlobLen, NULL);
-            cs->lobbyPoolChunkExpected = 0;
-            cs->lobbyPoolNextSeq = 0;
-            cs->lobbyPoolBlobLen = 0;
+    case CTRL_LOBBY_BOT_POOL_CHUNK:
+        /* Retired: an older server's way of sending the catalogue whole.
+         * Nothing sends it now; a recording that holds one is stepped
+         * over. */
+        break;
+
+    case CTRL_LOBBY_BOT_POOL_INFO: {
+        /* Which catalogue the server holds. The pools this client has now
+         * are its own shipped file, or the last server's until the lobby
+         * resets them on leaving; either may already be the server's, and
+         * then there is nothing to fetch. */
+        uint32_t id = evt->u.lobbyBotPoolInfo.id;
+        cs->lobbyPoolId    = id;
+        cs->lobbyPoolLen   = evt->u.lobbyBotPoolInfo.len;
+        cs->lobbyPoolTries = 0;
+        if (id == 0) {
+            cs->lobbyPoolState = CLIENT_BOT_POOL_S_NONE;
+        } else if (lobbyBotPoolsCatalogId() == id) {
+            cs->lobbyPoolState = CLIENT_BOT_POOL_S_HAVE;
+        } else {
+            cs->lobbyPoolState = CLIENT_BOT_POOL_S_WANTED;
         }
         break;
     }
 
-    case CTRL_LOBBY_BRAIN_DOCS_CHUNK: {
-        /* Reassemble ONE brain's lobby texts. Same in-order rule the bot-pool
-         * stream uses, plus the brain index: a stream is (brainIdx, seq
-         * 0..count-1), and a fragment that does not continue the one in hand
-         * throws the partial blob away rather than splicing two brains'
-         * texts together. */
-        uint8_t  idx   = evt->u.lobbyBrainDocsChunk.brainIdx;
-        uint8_t  seq   = evt->u.lobbyBrainDocsChunk.seq;
-        uint8_t  count = evt->u.lobbyBrainDocsChunk.count;
-        uint16_t fl    = evt->u.lobbyBrainDocsChunk.fragLen;
-        if (count == 0 || idx >= BRAIN_LIST_MAX) break;
-        if (seq == 0) {
-            cs->lobbyBrainDocsIdx      = idx;
-            cs->lobbyBrainDocsExpected = count;
-            cs->lobbyBrainDocsNextSeq  = 0;
-            cs->lobbyBrainDocsBlobLen  = 0;
-        }
-        if (seq != cs->lobbyBrainDocsNextSeq ||
-            count != cs->lobbyBrainDocsExpected ||
-            idx != cs->lobbyBrainDocsIdx ||
-            cs->lobbyBrainDocsBlobLen + fl > sizeof(cs->lobbyBrainDocsBlob)) {
-            cs->lobbyBrainDocsExpected = 0;   /* abort */
-            cs->lobbyBrainDocsNextSeq  = 0;
-            cs->lobbyBrainDocsBlobLen  = 0;
+    case CTRL_LOBBY_BRAIN_DOCS_CHUNK:
+        /* Retired: an older server's way of sending announce and docs
+         * together. Nothing sends it now; a recording that holds one is
+         * stepped over. */
+        break;
+
+    case CTRL_LOBBY_BRAIN_ANNOUNCE:
+        clientSimApplyBrainAnnounce(cs, evt);
+        break;
+
+    case CTRL_LOBBY_SCRIPT_SETTING: {
+        /* One value the host chose, or the CLEAR a join sync starts with.
+           Either says the server takes CMD_SET_SCRIPT_SETTING. The strings
+           are terminated here as well as by the decoder, because the
+           in-process subscriber hands the struct over undecoded. */
+        char    file[LOBBY_SCENARIO_FILE_LEN];
+        char    id[SCN_SETTING_ID_LEN];
+        int     i;
+        int     at = -1;
+
+        cs->lobbyScriptSettingsSupported = true;
+        if (evt->u.lobbyScriptSetting.op == LOBBY_SCRIPT_SETTING_CLEAR) {
+            cs->lobbyScriptSettingCount = 0;
             break;
         }
-        if (fl > 0) {
-            memcpy(cs->lobbyBrainDocsBlob + cs->lobbyBrainDocsBlobLen,
-                   evt->u.lobbyBrainDocsChunk.frag, fl);
-            cs->lobbyBrainDocsBlobLen += fl;
+        if (evt->u.lobbyScriptSetting.op != LOBBY_SCRIPT_SETTING_SET) break;
+        SDL_strlcpy(file, evt->u.lobbyScriptSetting.file, sizeof(file));
+        SDL_strlcpy(id, evt->u.lobbyScriptSetting.id, sizeof(id));
+        if (file[0] == '\0' || id[0] == '\0') break;
+        for (i = 0; i < cs->lobbyScriptSettingCount; i++) {
+            if (strcmp(cs->lobbyScriptSettings[i].file, file) == 0 &&
+                strcmp(cs->lobbyScriptSettings[i].id, id) == 0) {
+                at = i;
+                break;
+            }
         }
-        cs->lobbyBrainDocsNextSeq++;
-        if (cs->lobbyBrainDocsNextSeq == count) {
-            clientSimInstallBrainTexts(cs, idx, cs->lobbyBrainDocsBlob,
-                                       cs->lobbyBrainDocsBlobLen);
-            cs->lobbyBrainDocsExpected = 0;
-            cs->lobbyBrainDocsNextSeq  = 0;
-            cs->lobbyBrainDocsBlobLen  = 0;
+        if (at < 0) {
+            if (cs->lobbyScriptSettingCount >=
+                LOBBY_SCRIPT_SETTING_VALUES_MAX) {
+                break;
+            }
+            at = cs->lobbyScriptSettingCount++;
+            SDL_strlcpy(cs->lobbyScriptSettings[at].file, file,
+                        sizeof(cs->lobbyScriptSettings[at].file));
+            SDL_strlcpy(cs->lobbyScriptSettings[at].id, id,
+                        sizeof(cs->lobbyScriptSettings[at].id));
         }
+        cs->lobbyScriptSettings[at].value = evt->u.lobbyScriptSetting.value;
         break;
     }
 
@@ -1034,6 +1025,11 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         /* Message scroller: queued-but-unshown chat would scroll in the
          * instant the new game's ticks resume. */
         messageReset(&cs->messages);
+        /* The newswire draws from its own copy of the two lines, which only
+         * hears about a change when a character scrolls in; hand it the
+         * blanked lines now or it shows the last game's until the first
+         * message of this one. */
+        frontEndMessages(cs, cs->messages.topLine, cs->messages.bottomLine);
         /* Steam per-game achievement counters (consumed at CTRL_GAME_OVER).
          * Left un-reset, a death in any prior game permanently blocks the
          * flawless / no-LGM-loss achievements for the rest of the session. */
@@ -1058,6 +1054,9 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->pendingBuildAction = 0;
         cs->pendingBuildX = 0;
         cs->pendingBuildY = 0;
+        /* Every game starts on trees, as a new ClientSim does; the last
+         * game's pick would otherwise carry into this one. */
+        cs->currentBuildSelect = BsTrees;
         /* Reseed the death-detection edge to "alive" so the new game's first
          * snapshot doesn't register a spurious death or respawn edge against
          * the previous game's last value. */
@@ -1268,6 +1267,11 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * returned already. */
         BYTE pNum = evt->u.playerLeave.playerNum;
         char nameBuf[PACKET_MAX_PLAYER_NAME];
+        /* A request from the player who left cannot be accepted any more,
+           and an accept would go to whoever takes the seat next. */
+        if (cs->pendingAllianceRequestFrom == pNum) {
+            cs->pendingAllianceRequestFrom = 0xFF;
+        }
         memcpy(nameBuf, evt->u.playerLeave.name, sizeof(nameBuf));
         nameBuf[sizeof(nameBuf) - 1] = '\0';
         /* announce=false in the lobby: the in-game newswire is wrong there

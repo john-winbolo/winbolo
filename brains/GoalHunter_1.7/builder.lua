@@ -52,6 +52,97 @@ local M = {}
 -- judgement with better information. state._place_urgency is a DIFFERENT thing
 -- (a 0..1 search-radius scalar in goals.lua) and survives.
 
+-- New-pill tile check during and just after a blitz (2026-09-25 evening).
+-- M.place_tile_check(state, world, info, tx, ty, now, no_block_all) -> reason, detail | nil
+--   "blitz_active"  C.BLITZ_NO_BUILD_ACTIVE: squad.blitz_window is open (we
+--                   are in a blitz, or left one that is still running).
+--                   Recorded case: bot3 yielded at t=4002 (STEAL_YIELD) and
+--                   sent the man to (123,141) at t=4003; he died at t=4004.
+--   "not_behind"    C.PLACE_PILL_BEHIND_ONLY: the window is open and the tile
+--                   is on the pill's side of the tank:
+--                   dot(tile - tank, pill - tank) > 0.
+--   "man_path"      C.PLACE_PILL_MAN_PATH_SAFE: a tile on the man's straight
+--                   walk (tank tile excluded, target included) is inside
+--                   PILL_FIRE_RANGE of a live hostile/neutral pill, or a live
+--                   blitz shot line (ours or an ally's) crosses it. Every
+--                   tile counts, forest too: forest in that fire is fatal.
+--   nil             place it. All three knobs off = always nil.
+-- no_block_all = true skips the "blitz_active" test (guard_build_spot: both
+-- its callers already refuse the whole drop in a blitz window, so a
+-- per-candidate "blitz_active" would only hide the man-path / behind rejects).
+-- No new numbers: PILL_FIRE_RANGE, the shot lines, and one sample per tile
+-- (max(|dx|,|dy|) steps).
+function M.place_tile_check(state, world, info, tx, ty, now, no_block_all)
+  if not (C.BLITZ_NO_BUILD_ACTIVE or C.PLACE_PILL_BEHIND_ONLY or C.PLACE_PILL_MAN_PATH_SAFE) then
+    return nil
+  end
+  if not (state and world and info and tx and ty) then return nil end
+  now = now or state.tick or 0
+  local sq = require("squad")
+  local self_pn = info.player_number or -1
+  local win = (C.BLITZ_NO_BUILD_ACTIVE or C.PLACE_PILL_BEHIND_ONLY)
+              and sq.blitz_window(state, world, now, self_pn) or nil
+  if win and C.BLITZ_NO_BUILD_ACTIVE and not no_block_all then
+    return "blitz_active", string.format("pill=#%s cmdr=p%s %s", tostring(win.pill),
+      tostring(win.cmdr), win.live and "live" or "left")
+  end
+  local tfx, tfy = info.tankx / 256, info.tanky / 256
+  if win and C.PLACE_PILL_BEHIND_ONLY then
+    local p = world.pills and world.pills[win.pill]
+    if p and p.mx then
+      local dot = (tx + 0.5 - tfx) * (p.mx + 0.5 - tfx) + (ty + 0.5 - tfy) * (p.my + 0.5 - tfy)
+      if dot > 0 then
+        return "not_behind", string.format("pill=#%s (%d,%d) dot=%.2f", tostring(win.pill), p.mx, p.my, dot)
+      end
+    end
+  end
+  if C.PLACE_PILL_MAN_PATH_SAFE then
+    local r = C.PILL_FIRE_RANGE or 8
+    local r2 = r * r
+    -- The pill list and the shot lines are the same for every tile this
+    -- tick (a scan asks for many tiles), so build them once per tick.
+    local pc = state._ptc_cache
+    if not (pc and pc.tick == now and pc.world == world) then
+      local danger_pills = {}
+      for pid, p in pairs(world.pills or {}) do
+        if (p.owner == "hostile" or p.owner == "neutral") and not p.in_tank
+           and (p.health or 0) > 0 and p.mx then
+          danger_pills[#danger_pills + 1] = { pid, p.mx, p.my }
+        end
+      end
+      pc = { tick = now, world = world, pills = danger_pills,
+             lines = sq.blitz_shot_lines_raw(state, world, now, self_pn) }
+      state._ptc_cache = pc
+    end
+    local danger_pills, lines = pc.pills, pc.lines
+    local SMm = (lines and require("spot_margin")) or nil
+    local smx, smy = math.floor(tfx), math.floor(tfy)
+    local dx, dy = tx - smx, ty - smy
+    local n = math.max(math.abs(dx), math.abs(dy))
+    for i = 1, n do
+      local cx = smx + math.floor(dx * i / n + 0.5)
+      local cy = smy + math.floor(dy * i / n + 0.5)
+      for j = 1, #danger_pills do
+        local d = danger_pills[j]
+        local ex, ey = cx - d[2], cy - d[3]
+        if ex * ex + ey * ey <= r2 then
+          return "man_path", string.format("path tile (%d,%d) in range of pill #%s (%d,%d) dist=%.2f<=%d",
+            cx, cy, tostring(d[1]), d[2], d[3], math.sqrt(ex * ex + ey * ey), r)
+        end
+      end
+      if lines then
+        for _, ln in ipairs(lines) do
+          if SMm.seg_square_dist(ln.pmx + 0.5, ln.pmy + 0.5, ln.fx, ln.fy, cx, cy) <= 0 then
+            return "man_path", string.format("path tile (%d,%d) on %s shot line (%.2f,%.2f)->pill(%d,%d)",
+              cx, cy, ln.who, ln.fx, ln.fy, ln.pmx, ln.pmy)
+          end
+        end
+      end
+    end
+  end
+  return nil
+end
+
 -- Panic guard-pill spot search. Shared by builder's in-combat guard drop AND
 -- goals.lua's offensive_build (eval_place_pill_strategic) so the two can't drift —
 -- they were duplicated and one stayed farthest-first while the other was fixed.
@@ -146,6 +237,12 @@ function M.guard_build_spot(world, info, tmx, tmy, threat_mx, threat_my, state)
   local cands = {}
   local blocked = state and state.blocked or nil
   local now_blk = state and state.tick or 0
+  -- Live blitz shot lines (C.PILL_PLACE_AVOID_BLITZ_LINE; nil = off / no
+  -- blitz, and then nothing below changes): a guard pill must not stand on our
+  -- own or a squadmate's line to the blitz pill. squad is loaded long before
+  -- builder (attack requires it), so this require is only a table read.
+  local sq = require("squad")
+  local blitz_lines = state and sq.blitz_shot_lines(state, world, now_blk, info.player_number)
   -- slot[tier][class] = { cx, cy }
   local slot = { {}, {} }
   local n_class = { 0, 0, 0 }
@@ -159,10 +256,22 @@ function M.guard_build_spot(world, info, tmx, tmy, threat_mx, threat_my, state)
       local cy = U.mclamp(math.floor(tmy + dy * dist + 0.5))
       local rej, tier, cls = nil, nil, nil
       local blk_until = blocked and blocked[cy * C.MAP_W + cx] or nil
+      -- New-pill tile check (M.place_tile_check; nil with its knobs off).
+      local tchk = state and M.place_tile_check(state, world, info, cx, cy, now_blk, true) or nil
+      local on_line = blitz_lines and not (blk_until and now_blk < blk_until)
+                      and U.is_placeable(cx, cy, world)
+                      and sq.tile_on_blitz_line(world, blitz_lines, cx, cy, now_blk) or nil
       if blk_until and now_blk < blk_until then
         rej = "blocked"
       elseif not U.is_placeable(cx, cy, world) then
         rej = "not_placeable"
+      elseif on_line then
+        rej = "blitz_line"
+        local ln = on_line
+        print2(string.format("PLACE_BLITZ_LINE t=%d site=guard_spot tile=(%d,%d) on %s line (%.2f,%.2f)->pill(%d,%d) -> next spot",
+          now_blk, cx, cy, ln.who, ln.fx, ln.fy, ln.pmx, ln.pmy))
+      elseif tchk then
+        rej = tchk
       else
         local tt = U.ttype(cx, cy)
         if tt == C.T_GRASS or tt == C.T_ROAD then tier = 1
@@ -604,6 +713,30 @@ function M.set_mode(state, world, info, goal)
     b.mode         = "place_pill"
     b.pill_target  = { mx = rs.mx, my = rs.my }
     b.place_resume = true
+  end
+
+  -- New-pill net (2026-09-25 evening; C.BLITZ_NO_BUILD_ACTIVE,
+  -- C.PLACE_PILL_BEHIND_ONLY, C.PLACE_PILL_MAN_PATH_SAFE): every route above
+  -- that sends the man to place a NEW pill ends in b.mode = "place_pill"
+  -- (strategic dispatch, pill_place, the in-combat guard drop, harvest
+  -- resume). A blocked tile drops back to the goal's own mode. Repairs are
+  -- a different mode and are not touched. Logs on change only.
+  if b.mode == "place_pill" and b.pill_target then
+    local why, det = M.place_tile_check(state, world, info,
+                       b.pill_target.mx, b.pill_target.my, state.tick or 0)
+    if why then
+      local key = string.format("%s:%d:%d", why, b.pill_target.mx, b.pill_target.my)
+      if b._place_block_key ~= key then
+        b._place_block_key = key
+        print2(string.format("PLACE_BLOCKED t=%d goal=%s tile=(%d,%d) reason=%s %s -> no new pill",
+          state.tick or 0, tostring(kind), b.pill_target.mx, b.pill_target.my, why, det or ""))
+      end
+      b.mode         = GOAL_TO_MODE[kind] or "opportunistic"
+      b.pill_target  = nil
+      b.place_resume = nil
+    elseif b._place_block_key then
+      b._place_block_key = nil
+    end
   end
 
   if b.mode ~= "place_pill" then
@@ -1186,7 +1319,8 @@ function M.decide(state, world, info, now)
         -- it is switched on.
         if (bmx ~= tmx or bmy ~= tmy) and U.is_placeable(bmx, bmy, world)
            and U.ttype(bmx, bmy) ~= C.T_FOREST
-           and lgm_can_reach(info, bmx, bmy) then
+           and lgm_can_reach(info, bmx, bmy)
+           and not M.place_tile_check(state, world, info, bmx, bmy, now) then
           state.trail_drop_cooldown = now + C.TRAIL_DROP_COOLDOWN
           log.reason("build", { mode = "trail_drop", behind_mx = bmx, behind_my = bmy })
           return { x = bmx, y = bmy, action = BUILDMODE_PBOX }
@@ -1436,6 +1570,19 @@ function M.decide(state, world, info, now)
                        and wtt ~= C.T_FOREST
                        and can_reach
                        and safety_ok
+      -- A pillbox blocker is a NEW pill: not on a live blitz shot line
+      -- (C.PILL_PLACE_AVOID_BLITZ_LINE). The slot then falls through to the
+      -- wall build below, exactly as with no pill in hand.
+      if can_pbox then
+        local sq = require("squad")
+        local bl = sq.blitz_shot_lines(state, world, now, info.player_number)
+        local hit = bl and sq.tile_on_blitz_line(world, bl, wx, wy, now)
+        if hit then
+          can_pbox = false
+          print2(string.format("PLACE_BLITZ_LINE t=%d site=pillbox_blocker tile=(%d,%d) on %s line (%.2f,%.2f)->pill(%d,%d) -> wall instead",
+            now, wx, wy, hit.who, hit.fx, hit.fy, hit.pmx, hit.pmy))
+        end
+      end
       if can_pbox then
         -- NOTE: this is "attempts dispatched", not "blockers actually
         -- placed". If the engine refuses the action or the LGM dies

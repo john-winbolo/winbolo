@@ -214,7 +214,6 @@
 #define STR_TUTORIAL25                      409
 #define STR_TUTORIAL_START01                410
 #define STR_TUTORIAL_START02                411
-#define STR_TUTORIAL_START03                412
 #define STR_TUTORIAL_START04                413
 
 /* Touch-mode (tablet/mobile) siblings of the tutorial strings whose
@@ -1466,6 +1465,9 @@
 #define STR_DLGLOBBY_UPLOAD_ERR_FULL            1287
 #define STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN        1288
 #define STR_DLGLOBBY_UPLOAD_ERR_REJECTED        1289
+/* No reply to an upload in time (LOBBY_REJECT_TIMEOUT). The numbers after
+ * this block are taken, so its id sits outside it. */
+#define STR_DLGLOBBY_UPLOAD_ERR_TIMEOUT         2701
 #define STR_DLGLOBBY_WBN_ERR_DOWNLOAD           1290
 #define STR_DLGLOBBY_WBN_ERR_BADRESPONSE        1291
 #define STR_DLGLOBBY_WBN_ERR_NETERROR           1292
@@ -1627,6 +1629,8 @@
 #define STR_MENU_CLASSIC_MODE_TIP           2010
 #define STR_DLGLOBBY_ALLIES_TREES_CB        2011
 #define STR_DLGLOBBY_ALLIES_TREES_TIP       2012
+#define STR_DLGLOBBY_POSITIONAL_SOUND_CB    2694
+#define STR_DLGLOBBY_POSITIONAL_SOUND_TIP   2695
 /* Map overview live block, and what blocks sight inside it */
 #define STR_DLGLOBBY_OVERVIEW_WINDOW        2154
 #define STR_DLGLOBBY_OVERVIEW_WINDOW_TIP    2155
@@ -2835,6 +2839,35 @@
  * about to play under are not held to the sandbox. */
 #define STR_DLGLOBBY_SCENARIO_UNSAFE             2633
 
+/* Log viewer game info panel — scripts and rules */
+
+/* What a recording's scripts.json says the round ran. The line over the list:
+ * {string1} = the scenario's name, or its file where it has none, or the map
+ * when no scenario ran; with no mods the name is drawn alone. */
+#define STR_LV_INFO_SCENARIO_MODS_1              2681
+#define STR_LV_INFO_SCENARIO_MODS_N              2682
+/* The heading over the script list, and the word a row ends with for where
+ * the script came from: the map's own, or the server's scenarios directory. */
+#define STR_LV_INFO_SCRIPTS                      2683
+#define STR_LV_INFO_SCRIPT_SOURCE_MAP            2684
+#define STR_LV_INFO_SCRIPT_SOURCE_SERVER         2685
+/* One rule change the playhead has passed, under the Rules table.
+ * {number} = the round's tick, {string1} = the rule as scripts spell it,
+ * {string2} = what the new value does to it in words. */
+#define STR_LV_INFO_RULE_CHANGE                  2686
+/* Game Information's Scores heading, and a slot's row with no name ({number} = the slot). */
+#define STR_LV_INFO_SCORES                       2687
+#define STR_LV_INFO_SCORE_SLOT                   2688
+/* A scenario announcement on the newswire: {string1}{string2}{string3} = the line, {player} = the team or player it went to. */
+#define STR_LV_SCN_ANNOUNCE                      2689
+#define STR_LV_SCN_ANNOUNCE_TO                   2690
+/* The tooltip on the Options menu's Regions item, which outlines the recording's regions on the map. */
+#define STR_LV_REGIONS_TIP                       2691
+/* What the bot docs dialog shows while a brain's commands.txt is on its way
+ * from the server, and what it shows when the server did not send it. */
+#define STR_DLGLOBBY_BOT_DOCS_LOADING            2692
+#define STR_DLGLOBBY_BOT_DOCS_FAILED             2693
+
 /* Rule descriptions */
 
 /* What each simulation rule governs, one line apiece, shown wherever a rule
@@ -2844,12 +2877,15 @@
  * rule's own name is not translated — it is what a manifest, a script and an
  * operator line all spell — so there is no id for it here.
  *
- * The numbers run in four stretches rather than one. The first eleven rules
+ * The numbers run in five stretches rather than one. The first eleven rules
  * had 2334 to 2344, which the fog style strings took as well; moving these
  * eleven to the end was the smaller change of the two. Fifty-three more are
  * the rules the table gained after the middle stretch was numbered, and the
- * last pair are the pillmassage rules, which start again past the map
- * editor's scenario strings because everything up to them was taken. The
+ * next pair are the pillmassage rules, which start again past the map
+ * editor's scenario strings because everything up to them was taken.
+ * The pill shell cap pair, pill_base_defend_shape and then the Mac Bolo
+ * shell push pair came after all of those and took the next free numbers,
+ * at the end of the file. The
  * order of the block is SIM_RULE_LIST's throughout, which is the order that
  * matters, and a hole in the numbers costs nothing: langTable is searched by
  * id rather than indexed by it. */
@@ -3000,6 +3036,13 @@
 #define STR_RULE_DESC_tree_weight_crater         2423
 #define STR_RULE_DESC_tree_weight_road           2424
 #define STR_RULE_DESC_tree_weight_mine           2425
+#define STR_RULE_DESC_pill_shell_cap             2699
+#define STR_RULE_DESC_pill_max_shells_at_tank    2698
+#define STR_RULE_DESC_pill_base_defend_shape     2700
+#define STR_RULE_DESC_tank_slide_armour_bonus    2702
+#define STR_RULE_DESC_tank_slide_mac             2703
+#define STR_RULE_DESC_pill_aim_mac               2711
+#define STR_RULE_DESC_tank_collision_mac         2712
 
 /* Rule range wording */
 
@@ -3014,8 +3057,10 @@
 /* Scenario function descriptions */
 
 /* One line per function a scenario author writes, for the list the editor
- * shows them in: the 25 hooks, then the 10 policies, in the order
- * SCN_HOOK_LIST and SCN_POLICY_LIST hold them.
+ * shows them in: the 26 hooks, then the 13 policies. The block runs in the
+ * order SCN_HOOK_LIST and SCN_POLICY_LIST hold them, except can_ally's,
+ * on_tank_hit's, can_hit's and pill_damage_scale's: the numbers after the
+ * block are taken, so their ids sit outside it.
  *
  * The tail of each symbol is the catalogue's own id column rather than the
  * function's name, because that is the token the description table pastes
@@ -3059,6 +3104,10 @@
 #define STR_SCNFN_DESC_ON_CHOOSE_START       2467
 #define STR_SCNFN_DESC_SPAWN_LOADOUT         2468
 #define STR_SCNFN_DESC_DAMAGE_SCALE          2469
+#define STR_SCNFN_DESC_CAN_ALLY              2697
+#define STR_SCNFN_DESC_TANK_HIT              2704
+#define STR_SCNFN_DESC_CAN_HIT               2705
+#define STR_SCNFN_DESC_PILL_DAMAGE_SCALE     2706
 
 /* The scenario panel's kind control: what the file being edited is allowed
  * to decide. Not the same question as "Built for this map", which is which
@@ -3113,6 +3162,81 @@
 #define STR_DLGLOBBY_SCRIPT_ERR_API              2649
 #define STR_DLGLOBBY_SCRIPT_ERR_KIND             2650
 #define STR_DLGLOBBY_SCRIPT_ERR_BOUND            2651
+
+/* The hosting setting that lets players save a copy of this server's mods
+ * and scenarios, and its tooltip. */
+#define STR_DLGSETTINGS_HOSTING_SHARESCRIPTS     2652
+#define STR_DLGSETTINGS_HOSTING_SHARESCRIPTS_TIP 2653
+
+/* The Mods chooser's Save a copy arrow on a row only the server holds: its
+ * tooltip, the three reasons it is greyed (a spectator, a server that does
+ * not share its scripts, a copy already on its way), and the notes a row
+ * shows for five seconds after a press that saved nothing: the file is
+ * already here, the server no longer has it, it is too large, the server
+ * did not answer, or it could not be written to the Mods folder. */
+#define STR_DLGLOBBY_SCENARIO_SAVE               2654
+#define STR_DLGLOBBY_SCENARIO_SAVE_SPECTATOR     2655
+#define STR_DLGLOBBY_SCENARIO_SAVE_SHARING_OFF   2656
+#define STR_DLGLOBBY_SCENARIO_SAVE_INFLIGHT      2657
+#define STR_DLGLOBBY_SCENARIO_SAVE_HAVE          2658
+#define STR_DLGLOBBY_SCENARIO_SAVE_NOT_FOUND     2659
+#define STR_DLGLOBBY_SCENARIO_SAVE_TOO_LARGE     2660
+#define STR_DLGLOBBY_SCENARIO_SAVE_NO_ANSWER     2661
+#define STR_DLGLOBBY_SCENARIO_SAVE_WRITE         2662
+
+/* The details dialog's Settings section, for a script that declares
+ * settings in its scenario table (scenario_settings.h): the heading, the
+ * line a player who is not the host sees under it, the line a host sees
+ * on a server too old to take a change, and a dropdown entry for the
+ * declared default ({number} = the value). A bool setting's dropdown offers
+ * On and Off, with the declared one of them marked as the default. The
+ * settings' own labels are the script's text, not strings here. */
+#define STR_DLGLOBBY_DETAILS_SETTINGS            2663
+#define STR_DLGLOBBY_DETAILS_SETTINGS_HOST       2664
+#define STR_DLGLOBBY_DETAILS_SETTINGS_OLD        2665
+#define STR_DLGLOBBY_DETAILS_SETTING_DEFAULT     2666
+#define STR_DLGLOBBY_DETAILS_SETTING_ON          2707
+#define STR_DLGLOBBY_DETAILS_SETTING_OFF         2708
+#define STR_DLGLOBBY_DETAILS_SETTING_ON_DEFAULT  2709
+#define STR_DLGLOBBY_DETAILS_SETTING_OFF_DEFAULT 2710
+
+/* The map editor's metadata form: the read-only line naming the Steam
+ * Workshop item a scenario was published as ({string1} = the item id) and
+ * the account that published it ({string2} = its SteamID64). Shown only
+ * when the manifest names an item. */
+#define STR_MAPEDIT_SCENARIO_WORKSHOP            2667
+
+/* The Steam Workshop tab of Settings */
+/* The tab's name; the two buttons that switch its views; a subscribed item's
+ * state and the button to its Workshop page; the Update button on a row the
+ * player published before; the chip on a plain map; a subscribed item still
+ * downloading, whose name is not known yet ({string1} = the item id); the
+ * line each view shows when it has no rows; and the publish window's heading
+ * and "update" radio for a mod, scenario or map. Refresh, Downloading...,
+ * Publish, and the Mod and Scenario chips reuse the strings that already say
+ * them. */
+#define STR_DLGSETTINGS_WORKSHOP_HEADING         2668
+#define STR_DLGSETTINGS_WORKSHOP_SUBSCRIBED      2669
+#define STR_DLGSETTINGS_WORKSHOP_PUBLISH         2670
+#define STR_DLGSETTINGS_WORKSHOP_INSTALLED       2671
+#define STR_DLGSETTINGS_WORKSHOP_OPEN            2672
+#define STR_DLGSETTINGS_WORKSHOP_UPDATE          2673
+#define STR_DLGSETTINGS_WORKSHOP_TAG_MAP         2674
+#define STR_DLGSETTINGS_WORKSHOP_ITEM            2675
+#define STR_DLGSETTINGS_WORKSHOP_NONE_SUBSCRIBED 2676
+#define STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH    2677
+#define STR_DLGSETTINGS_WORKSHOP_PUB_HEADING     2678
+#define STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE      2679
+/* The state of a subscribed item that is installed but that the game cannot
+ * use: no content it reads, or a file name another item already holds. The
+ * Skin chip on a subscribed skin reuses STR_DLGSETTINGS_SKIN. */
+#define STR_DLGSETTINGS_WORKSHOP_UNUSABLE        2696
+
+/* The lobby's Workshop chip */
+/* The chip after a script's Mod or Scenario chip in the lobby, on a script
+ * published to the Steam Workshop. The link beside it reuses
+ * STR_DLGSETTINGS_WORKSHOP_OPEN. */
+#define STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP       2680
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

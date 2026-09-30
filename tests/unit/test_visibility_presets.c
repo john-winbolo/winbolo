@@ -1,7 +1,7 @@
 /*
  * The visibility preset table and the match over it.
  *
- * The lobby puts no preset on the wire. Every client reads the same seven
+ * The lobby puts no preset on the wire. Every client reads the same eight
  * settings and works out for itself which named set they add up to, so
  * the whole agreement between clients rests on this match being exact and
  * on every preset being reachable from it. Four things are pinned:
@@ -39,6 +39,7 @@ static void fill_classic(VisibilitySettings *v) {
     v->overviewWindow = (uint8_t)overviewWindowNone;
     v->lineOfSight    = (uint8_t)lineOfSightOff;
     v->alliesInTrees  = false;
+    v->positionalSound = false;
 }
 
 int run_visibility_preset_round_trip(void) {
@@ -83,6 +84,23 @@ int run_visibility_preset_round_trip(void) {
                       "the hand-written classic set read back as %d",
                       (int)visibilityPresetMatch(&classic));
     }
+
+    /* Positional sound per preset, spelled out: off for the two classic
+     * rows, on from Expanded upward. */
+    {
+        static const bool wantSound[VISIBILITY_PRESET_COUNT] = {
+            false, /* Classic */
+            false, /* Classic Overview */
+            true,  /* Expanded */
+            true,  /* Max View */
+            true,  /* Line of Sight */
+        };
+        for (p = 0; p < (int)VISIBILITY_PRESET_COUNT; p++) {
+            UT_ASSERT_MSG(sets[p].positionalSound == wantSound[p],
+                          "preset %d has positional sound %d, expected %d", p,
+                          (int)sets[p].positionalSound, (int)wantSound[p]);
+        }
+    }
     return 0;
 }
 
@@ -111,6 +129,14 @@ int run_visibility_preset_custom(void) {
     UT_ASSERT(visibilityPresetSettings(visibilityPresetMaxView, &v));
     v.alliesInTrees = false;
     UT_ASSERT(visibilityPresetMatch(&v) == visibilityPresetCustom);
+
+    /* Positional sound on its own as well: Expanded with it turned off
+     * is no preset. */
+    UT_ASSERT(visibilityPresetSettings(visibilityPresetExpanded, &v));
+    v.positionalSound = !v.positionalSound;
+    UT_ASSERT_MSG(visibilityPresetMatch(&v) == visibilityPresetCustom,
+                  "Expanded with positional sound flipped read back as %d",
+                  (int)visibilityPresetMatch(&v));
 
     UT_ASSERT(visibilityPresetMatch(NULL) == visibilityPresetCustom);
     return 0;
@@ -141,6 +167,10 @@ int run_visibility_preset_ignores_decay(void) {
         UT_ASSERT(visibilitySettingsEqual(&a, &b));
         b.decaySecs[viewCategoryAlly] =
             (uint16_t)(a.decaySecs[viewCategoryAlly] + 1);
+        UT_ASSERT(!visibilitySettingsEqual(&a, &b));
+        /* Positional sound alone is a difference too. */
+        b = a;
+        b.positionalSound = !a.positionalSound;
         UT_ASSERT(!visibilitySettingsEqual(&a, &b));
         UT_ASSERT(!visibilitySettingsEqual(&a, NULL));
         UT_ASSERT(visibilitySettingsEqual(NULL, NULL));

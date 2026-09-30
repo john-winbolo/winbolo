@@ -69,6 +69,7 @@
 #include "client_command.h"  /* ClientCommand, CMD_CHAT */
 #include "transport_command_codec.h" /* commandCodecDecode */
 #include "channel_mux.h"     /* channelRecvFrame */
+#include "lobby_bot_pools.h"   /* LOBBY_BOT_CATALOG_WIRE_MAX */
 #include "bulk_transfer.h"   /* BulkStreamHeader, bulkSenderBusy, bulkSenderBegin,
                               * bulkReceiverInit, BULK_KIND_PREVIEW,
                               * BULK_KIND_ROUND_LOG, BULK_PATH_MAX */
@@ -923,7 +924,7 @@ static bool lobbyScriptNameTaken(ServerSim *sim, const char *name) {
 static void handleLobbyMapUploadBegin(ServerSim *sim, uint8_t *buf, int len,
                                       struct sockaddr_in *fromAddr) {
     /* [header 8] [kind 1] [totalLen 4] [nameLen 1] [name N]
-     * [bulkStartSeq 4, optional]
+     * [bulkStartSeq 4]
      * Only host
      * / admin / openHost may push files. Per-client wire-only
      * ACK (handshake/reliability). kind is UPLOAD_KIND_MAP or
@@ -1002,7 +1003,7 @@ static void handleLobbyMapUploadBegin(ServerSim *sim, uint8_t *buf, int len,
                       : LOBBY_MAP_UPLOAD_MAX_BYTES;
     if ((kind != UPLOAD_KIND_MAP && kind != UPLOAD_KIND_SCRIPT) ||
         nameLen == 0 || nameLen > 127 ||
-        len < PACKET_HEADER_SIZE + 6 + nameLen ||
+        len < PACKET_HEADER_SIZE + 6 + nameLen + 4 ||
         totalLen == 0 || totalLen > maxLen) {
         uint8_t ack[PACKET_HEADER_SIZE + 1];
         packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
@@ -1100,13 +1101,11 @@ static void handleLobbyMapUploadBegin(ServerSim *sim, uint8_t *buf, int len,
     /* Fresh receiver for this transfer; the bulk stream that follows
      * carries the bytes (no offset reassembly). */
     bulkReceiverInit(&udpServer.bulkRecvUp[clientIdx]);
-    /* New senders append their bulk sequence boundary. An aborted upload
-     * may have left gaps in this direction; skip its tail before accepting
-     * the next stream. Older BEGIN packets retain the original layout. */
-    if (len >= PACKET_HEADER_SIZE + 6 + nameLen + 4) {
-        channelResetExpected(&udpServer.channelMux[clientIdx], CHANNEL_BULK,
-            unpackU32(buf + PACKET_HEADER_SIZE + 6 + nameLen));
-    }
+    /* The sender's bulk sequence boundary. An aborted upload may have left
+     * gaps in this direction; skip its tail before accepting the next
+     * stream. */
+    channelResetExpected(&udpServer.channelMux[clientIdx], CHANNEL_BULK,
+        unpackU32(buf + PACKET_HEADER_SIZE + 6 + nameLen));
 
     uint8_t ack[PACKET_HEADER_SIZE + 1];
     packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
@@ -1298,6 +1297,7 @@ static void handleLobbyScenarioDetailsReq(ServerSim *sim, uint8_t *buf,
     char        file[BULK_PATH_MAX + 1];
     uint8_t    *blob;
     int         got;
+    bool        wantSettings;
     BulkStreamHeader sh;
     static uint32_t s_detailsSeq = 0;
 
@@ -1309,14 +1309,36 @@ static void handleLobbyScenarioDetailsReq(ServerSim *sim, uint8_t *buf,
     file[fileLen] = '\0';
     /* A name with a NUL inside it is not a name either list could hold. */
     if (strlen(file) != fileLen) return;
+    /* A newer client ends the request with a flags byte; an older one
+       stops at the name, and is answered in the shape it can read. */
+    wantSettings = (rpos + fileLen < len) &&
+                   (buf[rpos + fileLen] & BULK_SCN_DETAILS_WANT_SETTINGS);
     if (bulkSenderBusy(&udpServer.bulkSend[clientIdx])) return;
 
-    blob = (uint8_t *)malloc(1 + SCN_DETAILS_MAX);
+    blob = (uint8_t *)malloc(BULK_SCN_DETAILS_BLOB_MAX);
     if (blob == NULL) return;
-    got = serverSimScenarioDetails(sim, file, blob + 1, SCN_DETAILS_MAX);
-    blob[0] = (got >= 0) ? BULK_SCN_DETAILS_FOUND
-                         : BULK_SCN_DETAILS_NOT_FOUND;
-    if (got < 0) got = 0;
+    if (wantSettings) {
+        int sGot;
+
+        got = serverSimScenarioDetails(sim, file, blob + 3, SCN_DETAILS_MAX);
+        if (got >= 0) {
+            sGot = serverSimScenarioSettingsDecl(
+                sim, file, blob + 3 + got, SCN_SETTINGS_BLOB_MAX);
+            if (sGot < 0) sGot = 0;
+            blob[0] = BULK_SCN_DETAILS_FOUND_V2;
+            blob[1] = (uint8_t)((unsigned)got >> 8);
+            blob[2] = (uint8_t)((unsigned)got & 0xFFu);
+            got     = 2 + got + sGot;
+        } else {
+            blob[0] = BULK_SCN_DETAILS_NOT_FOUND;
+            got     = 0;
+        }
+    } else {
+        got = serverSimScenarioDetails(sim, file, blob + 1, SCN_DETAILS_MAX);
+        blob[0] = (got >= 0) ? BULK_SCN_DETAILS_FOUND
+                             : BULK_SCN_DETAILS_NOT_FOUND;
+        if (got < 0) got = 0;
+    }
 
     memset(&sh, 0, sizeof(sh));
     sh.kind      = BULK_KIND_SCENARIO_DETAILS;
@@ -1327,6 +1349,242 @@ static void handleLobbyScenarioDetailsReq(ServerSim *sim, uint8_t *buf,
     (void)bulkSenderBegin(&udpServer.bulkSend[clientIdx], &sh, blob,
                           sh.totalSize);
     free(blob);   /* bulkSenderBegin copied it into its own buffer */
+}
+
+static void handleLobbyBrainDocsReq(ServerSim *sim, uint8_t *buf, int len,
+                                    struct sockaddr_in *fromAddr) {
+    /* [header 8] [brainIdx 1]. One brain's commands.txt, for the lobby's
+     * docs dialog, streamed back compressed over CHANNEL_BULK behind a
+     * BULK_KIND_BRAIN_DOCS stream header, or a not-found answer the client
+     * can stop waiting on.
+     *
+     * A spectator is answered too, but only while it watches the live
+     * lobby: it reads the same team chat a player does, and its bulk stream
+     * is then free of the delayed feed, which has it the rest of the time.
+     *
+     * A request that finds the bulk stream busy (the join map download, a
+     * preview) is dropped rather than answered, the same as a script
+     * details request: the client asks again when no answer comes, and a
+     * busy server is never made to hold a queue. */
+    int              clientIdx = serverFindClient(fromAddr);
+    int              brainIdx;
+    uint32_t         gen  = 0;
+    uint16_t         rawLen = 0, zLen = 0;
+    const uint8_t   *z    = NULL;
+    uint8_t         *blob;
+    uint32_t         blobLen;
+    BulkSender      *sender;
+    BulkStreamHeader sh;
+
+    if (!serverSimIsLobbyEnabled(sim) || len < PACKET_HEADER_SIZE + 1) return;
+    if (clientIdx >= 0) {
+        sender = &udpServer.bulkSend[clientIdx];
+    } else {
+        int sIdx = serverFindSpectator(fromAddr);
+        if (sIdx < 0 || !udpServer.spectators[sIdx].live) return;
+        sender = &udpServer.spectators[sIdx].bulkSend;
+    }
+    if (bulkSenderBusy(sender)) return;
+    brainIdx = buf[PACKET_HEADER_SIZE];
+
+    blob = (uint8_t *)malloc(BULK_BRAIN_DOCS_BLOB_MAX);
+    if (blob == NULL) return;
+    if (serverSimGetBrainDocs(sim, brainIdx, &gen, &rawLen, &z, &zLen) &&
+        (size_t)zLen + 3 <= BULK_BRAIN_DOCS_BLOB_MAX) {
+        blob[0] = BULK_BRAIN_DOCS_FOUND;
+        blob[1] = (uint8_t)(rawLen >> 8);
+        blob[2] = (uint8_t)(rawLen & 0xFFu);
+        memcpy(blob + 3, z, zLen);
+        blobLen = 3u + zLen;
+    } else {
+        blob[0] = BULK_BRAIN_DOCS_NOT_FOUND;
+        blobLen = 1;
+        gen     = 0;
+    }
+
+    memset(&sh, 0, sizeof(sh));
+    sh.kind      = BULK_KIND_BRAIN_DOCS;
+    sh.gen       = gen;
+    sh.totalSize = blobLen;
+    sh.pathLen   = (uint8_t)SDL_snprintf(sh.path, sizeof(sh.path), "%d",
+                                         brainIdx);
+    (void)bulkSenderBegin(sender, &sh, blob, blobLen);
+    free(blob);   /* bulkSenderBegin copied it into its own buffer */
+}
+
+static void handleLobbyBotPoolReq(ServerSim *sim, uint8_t *buf, int len,
+                                  struct sockaddr_in *fromAddr) {
+    /* [header 8]. The server's bot-name catalogue, streamed back over
+     * CHANNEL_BULK behind a BULK_KIND_BOT_POOL stream header, or an answer
+     * that says there is none. Players only: a spectator adds no bots.
+     *
+     * A request that finds this client's bulk stream busy is dropped rather
+     * than answered, the same as a brain docs request: the client asks
+     * again when no answer comes. */
+    int              clientIdx = serverFindClient(fromAddr);
+    const uint8_t   *cat = NULL;
+    uint32_t         catLen = 0, id = 0;
+    uint8_t          none = BULK_BOT_POOL_NONE;
+    uint8_t         *blob;
+    uint32_t         blobLen;
+    BulkStreamHeader sh;
+
+    (void)buf;
+    if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+        len < PACKET_HEADER_SIZE) return;
+    if (bulkSenderBusy(&udpServer.bulkSend[clientIdx])) return;
+
+    /* Size the answer to the catalogue held, usually a few kilobytes, rather
+     * than to the cap. The none answer is one byte and needs no allocation. */
+    if (serverSimGetBotPoolBlob(sim, &cat, &catLen, &id) &&
+        catLen <= LOBBY_BOT_CATALOG_WIRE_MAX) {
+        blob = (uint8_t *)malloc(1u + catLen);
+        if (blob == NULL) return;
+        blob[0] = BULK_BOT_POOL_FOUND;
+        memcpy(blob + 1, cat, catLen);
+        blobLen = 1u + catLen;
+    } else {
+        blob    = &none;
+        blobLen = 1;
+        id      = 0;
+    }
+
+    memset(&sh, 0, sizeof(sh));
+    sh.kind      = BULK_KIND_BOT_POOL;
+    sh.gen       = id;
+    sh.totalSize = blobLen;
+    sh.pathLen   = 0;
+    (void)bulkSenderBegin(&udpServer.bulkSend[clientIdx], &sh, blob, blobLen);
+    if (blob != &none) {
+        free(blob);   /* bulkSenderBegin copied it into its own buffer */
+    }
+}
+
+/* Answer a PACKET_LOBBY_SCRIPT_FETCH_REQ on this client's CHANNEL_BULK as a
+ * BULK_KIND_SCRIPT_PACKAGE blob: [status 1] then bytes, which only a
+ * BULK_SCRIPT_FOUND answer carries. gen echoes the request's reqSeq and the
+ * path is the name it asked for. */
+static void serverSendScriptPackage(int clientIdx, uint32_t reqSeq,
+                                    const char *file, int fileLen,
+                                    uint8_t status, const uint8_t *bytes,
+                                    uint32_t len) {
+    BulkStreamHeader sh;
+    uint8_t         *blob;
+
+    blob = (uint8_t *)malloc((size_t)len + 1);
+    if (blob == NULL) return;
+    blob[0] = status;
+    if (len > 0) memcpy(blob + 1, bytes, len);
+
+    memset(&sh, 0, sizeof(sh));
+    sh.kind      = BULK_KIND_SCRIPT_PACKAGE;
+    sh.gen       = reqSeq;
+    sh.totalSize = len + 1;
+    sh.pathLen   = (uint8_t)fileLen;
+    memcpy(sh.path, file, (size_t)fileLen + 1);
+    (void)bulkSenderBegin(&udpServer.bulkSend[clientIdx], &sh, blob,
+                          sh.totalSize);
+    free(blob);   /* bulkSenderBegin copied it into its own buffer */
+}
+
+static void handleLobbyScriptFetchReq(ServerSim *sim, uint8_t *buf, int len,
+                                      struct sockaddr_in *fromAddr) {
+    /* [header 8] [reqSeq 4 BE] [fileLen 1] [file N]. A copy of one of the
+     * server's script files, for a player to keep, streamed back over
+     * CHANNEL_BULK behind a BULK_KIND_SCRIPT_PACKAGE stream header. Every
+     * refusal past the drops below is answered with a status byte, so the
+     * client has something to stop waiting on.
+     *
+     * Players only. A spectator's bulk sender carries the delayed feed it
+     * connected for, and an address that is neither has no session to
+     * answer. A request that finds this client's bulk stream busy is dropped
+     * rather than answered, since the answer would queue behind the same
+     * busy sender; the client asks again when no answer comes. */
+    int                    clientIdx = serverFindClient(fromAddr);
+    int                    rpos      = PACKET_HEADER_SIZE;
+    uint32_t               reqSeq;
+    int                    fileLen;
+    char                   file[BULK_PATH_MAX + 1];
+    uint8_t               *bytes    = NULL;
+    uint32_t               bytesLen = 0;
+    ServerScriptReadResult rr;
+    uint8_t                status;
+
+    if (clientIdx < 0) return;
+    if (len < PACKET_HEADER_SIZE + 4 + 1) return;
+    reqSeq  = unpackU32(buf + rpos);
+    rpos   += 4;
+    fileLen = buf[rpos++];
+    if (fileLen == 0 || fileLen > BULK_PATH_MAX || rpos + fileLen > len) {
+        return;
+    }
+    memcpy(file, buf + rpos, (size_t)fileLen);
+    file[fileLen] = '\0';
+    /* A name with a NUL inside it is not a name any listing could hold. */
+    if (strlen(file) != (size_t)fileLen) return;
+    if (!serverSimIsLobbyEnabled(sim) ||
+        serverSimGetState(sim) != serverStateLobby) {
+        return;
+    }
+    if (bulkSenderBusy(&udpServer.bulkSend[clientIdx])) return;
+
+    /* A request inside the cooldown is answered, unlike the list requests
+     * the cooldown drops, and does not restart it. */
+    if (udpServer.clientReqCooldownTicks[clientIdx] > 0) {
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+            "script copy of %s for client %d refused: asked too soon",
+            file, clientIdx);
+        serverSendScriptPackage(clientIdx, reqSeq, file, fileLen,
+                                BULK_SCRIPT_BUSY, NULL, 0);
+        return;
+    }
+    udpServer.clientReqCooldownTicks[clientIdx] = LOBBY_REQ_COOLDOWN_TICKS;
+
+    if (!serverSimGetScriptSharing(sim)) {
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+            "script copy of %s for client %d refused: sharing is off",
+            file, clientIdx);
+        serverSendScriptPackage(clientIdx, reqSeq, file, fileLen,
+                                BULK_SCRIPT_DISABLED, NULL, 0);
+        return;
+    }
+
+    rr = serverSimScriptFileRead(sim, file, &bytes, &bytesLen);
+    switch (rr) {
+    case SERVER_SCRIPT_READ_FOUND:
+        status = BULK_SCRIPT_FOUND;
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+            "script copy of %s for client %d: %u bytes", file, clientIdx,
+            (unsigned)bytesLen);
+        break;
+    case SERVER_SCRIPT_READ_DISABLED:
+        status = BULK_SCRIPT_DISABLED;
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+            "script copy of %s for client %d refused: scripts are off",
+            file, clientIdx);
+        break;
+    case SERVER_SCRIPT_READ_TOO_LARGE:
+        status = BULK_SCRIPT_TOO_LARGE;
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+            "script copy of %s for client %d refused: too large",
+            file, clientIdx);
+        break;
+    case SERVER_SCRIPT_READ_NOT_FOUND:
+    default:
+        status = BULK_SCRIPT_NOT_FOUND;
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+            "script copy of %s for client %d refused: not found",
+            file, clientIdx);
+        break;
+    }
+    if (status != BULK_SCRIPT_FOUND) {
+        free(bytes);
+        bytes    = NULL;
+        bytesLen = 0;
+    }
+    serverSendScriptPackage(clientIdx, reqSeq, file, fileLen, status, bytes,
+                            bytesLen);
+    free(bytes);
 }
 
 static void handleRoundLogReq(ServerSim *sim, uint8_t *buf, int len,
@@ -1559,6 +1817,15 @@ void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         case PACKET_LOBBY_SCENARIO_DETAILS_REQ:
             handleLobbyScenarioDetailsReq(sim, buf, len, fromAddr);
+            break;
+        case PACKET_LOBBY_BRAIN_DOCS_REQ:
+            handleLobbyBrainDocsReq(sim, buf, len, fromAddr);
+            break;
+        case PACKET_LOBBY_BOT_POOL_REQ:
+            handleLobbyBotPoolReq(sim, buf, len, fromAddr);
+            break;
+        case PACKET_LOBBY_SCRIPT_FETCH_REQ:
+            handleLobbyScriptFetchReq(sim, buf, len, fromAddr);
             break;
         case PACKET_ROUND_LOG_REQ:
             handleRoundLogReq(sim, buf, len, fromAddr);

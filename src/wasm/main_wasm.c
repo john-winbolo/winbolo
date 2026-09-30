@@ -24,6 +24,7 @@
 #include "bolo_rand.h"
 #include "client_render.h"
 #include "client_frontend_tick.h"
+#include "client_frontend_render.h"
 #include "client_sim.h"
 #include "frontend.h"
 #include "playername_validate.h"
@@ -361,7 +362,7 @@ static void main_loop_iteration(void) {
         SDL_RenderClear(ren);
       }
     } else {
-      clientSimRenderPrepare(cs, tick);
+      clientFrontRenderPrepare(cs, tick);
       clientRenderFrame(cs, redraw);
     }
   } else if (s_connFailed) {
@@ -1073,6 +1074,12 @@ void frontEndPlaySound(ClientSim *cs, sndEffects value) {
   if (soundEffects == TRUE) soundPlayEffect(value);
 }
 
+void frontEndPlaySoundPan(ClientSim *cs, sndEffects value,
+                          uint16_t gainL, uint16_t gainR) {
+  (void)gainL; (void)gainR;
+  frontEndPlaySound(cs, value);
+}
+
 void windowPlaySound(sndEffects value) {
   if (soundEffects == TRUE) soundPlayEffect(value);
 }
@@ -1213,8 +1220,13 @@ void frontEndSetActiveClientSim(struct ClientSim *cs) {
     /* Drop the previous game's latched build target for the same reason: it
        is the square a click builds at, and it outlives the ClientSim that
        set it, so without this the first click of the next game is dispatched
-       to a tile chosen in the last one. */
-    buildCursorReset();
+       to a tile chosen in the last one. sdl3ImguiNewGame does this for a new
+       game, so only the game-ended path calls it here. */
+    if (cs != NULL) {
+      sdl3ImguiNewGame(cs);
+    } else {
+      buildCursorReset();
+    }
   }
   s_activeUiCs = cs;
 }

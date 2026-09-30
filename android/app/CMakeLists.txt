@@ -290,14 +290,11 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/sim_rules_phrase.c
     ${PROJ_ROOT}/src/gui/sdl3/sound.c
     ${PROJ_ROOT}/src/gui/sdl3/sound_variants.c
+    ${PROJ_ROOT}/src/gui/sdl3/sound_mix.c
 
     # Shared map-gen controls used by the map chooser dialog (not the
     # full map editor — this file matches what the iOS build pulls in).
     ${PROJ_ROOT}/src/mapeditor/mapgen_imgui.cpp
-
-    # LZW compression
-    ${PROJ_ROOT}/src/lzw/ecodlzw.c
-    ${PROJ_ROOT}/src/lzw/dcodlzw.c
 
     # Server (for single-player). server_sim.c + servermessages.c
     # come from server_sim_static; threads.c comes from threads_static.

@@ -80,6 +80,42 @@ static int scnStubRow(lua_State *L) {
     return 0;
 }
 
+/* game.setting on the stub: the default the file's own settings block
+ * declares, because a top level that sizes its tables from a setting (a wave
+ * count, a round length) must get a number here or it raises on arithmetic
+ * the real load would never see. No host has chosen anything under a check,
+ * so the default is the only answer there is. An id the block does not
+ * declare raises, as it does in a round, so a misspelling is reported by the
+ * check rather than found at the first round start. A file that has not
+ * assigned its scenario table yet gets nothing back, like every other row. */
+static int scnStubSetting(lua_State *L) {
+    ScnSetting        rows[SCN_SETTINGS_MAX];
+    const ScnSetting *s;
+    const char       *id = luaL_checkstring(L, 1);
+    int               n  = 0;
+
+#ifdef WINBOLO_LUAJIT
+    lua_pushvalue(L, LUA_GLOBALSINDEX);
+#else
+    lua_rawgeti(L, LUA_REGISTRYINDEX, LUA_RIDX_GLOBALS);
+#endif
+    lua_pushstring(L, "scenario");
+    lua_rawget(L, -2);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 2);
+        return 0;
+    }
+    n = scenarioLuaReadSettings(L, -1, rows, SCN_SETTINGS_MAX, NULL, NULL,
+                                NULL);
+    lua_pop(L, 2);
+    s = scnSettingFind(rows, n, id);
+    if (s == NULL) {
+        return luaL_error(L, "no setting is named '%s'", id);
+    }
+    scenarioLuaPushSetting(L, s, s->def);
+    return 1;
+}
+
 /* The shape of the game table with none of its substance. The names come off
  * the registry the real table is built from, so a row added to the surface is
  * on this table too with no second edit. */
@@ -95,7 +131,10 @@ static void scnInstallStubGame(lua_State *L) {
 
     rows = scenarioLuaRows(&n);
     for (i = 0; i < n; i++) {
-        lua_pushcclosure(L, scnStubRow, 0);
+        lua_pushcclosure(L, strcmp(rows[i].name, "setting") == 0
+                                ? scnStubSetting
+                                : scnStubRow,
+                         0);
         lua_setfield(L, -2, rows[i].name);
     }
 

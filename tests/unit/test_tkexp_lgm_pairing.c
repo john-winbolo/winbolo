@@ -52,7 +52,7 @@
 
 int run_tkexp_lgm_pairing(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     UT_ASSERT(sim != NULL);
     serverSimSetLobbyEnabled(sim, false);

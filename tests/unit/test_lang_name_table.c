@@ -10,6 +10,7 @@
  * end of the table, and dereferenced the garbage slot's name pointer
  * in strcmp — a startup SIGSEGV for any non-English user (English
  * never calls resolveName). See lang.c resolveName().
+ * It also pins that no two names share a string id.
  *
  * This TU includes the generated header directly (RC_INVOKED trims
  * lang.h to just its string-id #defines; langid is typedef'd locally
@@ -35,6 +36,25 @@ static int nameCmp(const void *a, const void *b) {
     const char          *key   = (const char *)a;
     const LangNameEntry *entry = (const LangNameEntry *)b;
     return strcmp(key, entry->name);
+}
+
+static int idCmp(const void *a, const void *b) {
+    const langid x = *(const langid *)a;
+    const langid y = *(const langid *)b;
+    return (x > y) - (x < y);
+}
+
+/* Name of the first table entry with this id, for the failure message. */
+static const char *nameForId(langid id, size_t skip) {
+    for (size_t i = 0; i < sizeof(kLangNameTable) / sizeof(kLangNameTable[0]); i++) {
+        if (kLangNameTable[i].id == id) {
+            if (skip == 0) {
+                return kLangNameTable[i].name;
+            }
+            skip--;
+        }
+    }
+    return "?";
 }
 
 int run_lang_name_table(void) {
@@ -76,6 +96,19 @@ int run_lang_name_table(void) {
         "ZZZ_NO_SUCH_STRING_ID", kLangNameTable, actual,
         sizeof(kLangNameTable[0]), nameCmp);
     UT_ASSERT_MSG(miss == NULL, "unknown name unexpectedly resolved");
+
+    /* 4. Every name has its own id. Two names on one id make the English
+     *    lookup return whichever row comes first in langTable[]. */
+    langid ids[sizeof(kLangNameTable) / sizeof(kLangNameTable[0])];
+    for (size_t i = 0; i < actual; i++) {
+        ids[i] = kLangNameTable[i].id;
+    }
+    qsort(ids, actual, sizeof(ids[0]), idCmp);
+    for (size_t i = 1; i < actual; i++) {
+        UT_ASSERT_MSG(ids[i - 1] != ids[i],
+                      "'%s' and '%s' share id %u",
+                      nameForId(ids[i], 0), nameForId(ids[i], 1), ids[i]);
+    }
 
     return 0;
 }

@@ -7,7 +7,13 @@ QUICK INFO:
    - Smart ping using BOT COMMAND on a pill, tanks, or land tile to command
      the bot.
    - Closest bot will respond (closest by ROUTE, and only a bot that is free)
-   - Keep pinging the same place to add a second bot, etc.
+   - A bot that is working on an order you gave keeps it, and a free bot
+     goes. If no bot is free, the nearest busy bot switches to the new ping
+     (a bot on a decoy hold never does). If none can, one bot says
+     "All bots busy".
+   - Ping a pill, base or tank again to add a second bot, etc. Ping the same
+     open ground again and the bot there just keeps going; if no bot is on
+     that order any more (it died or let it go), one bot is sent again.
 
 Ping "CAUTION" on a target or bot to cancel; on a bot holding nothing it
 retreats it. A ping on an ALLY BOT selects it for your next order.
@@ -55,7 +61,7 @@ capture look at the ones not ours, defend at ours.
 "bot pings on" (ping bot goals)
 "bot chat on" (bots chat their goals)
 
-Both take "off". Pings start OFF, chat starts ON. "bot chat off" silences
+Both take "off". Pings start ON, chat starts OFF. "bot chat off" silences
 the goal lines only; an answer you are owed still comes back.
 
 NOTE: Bots <= 7 tiles from a human will suicide when attacking a pill (no
@@ -167,10 +173,13 @@ TEAM SETTINGS
   bot pings on   a bot puts an ATTACK marker on the map every time it starts
                  attacking a pillbox or a tank, so you can see what the bots
                  are going for without reading chat. "botpings on" too.
-  bot pings off  stop the attack markers. This is how a game starts.
-  bot chat on    the bots say their goals: "Got it! attack_pill #5". This
-                 is how a game starts. "botchat" is the same word.
-  bot chat off   stop those lines. Only the GOAL lines go quiet.
+                 This is how a game starts.
+  bot pings off  stop the attack markers.
+  bot chat on    the bots say their goals: "Got it! attack_pill #5".
+                 "botchat" is the same word.
+  bot chat off   stop those lines. Only the GOAL lines go quiet. This is
+                 how a game starts.
+  "bot pings" and "bot chat" go back to these starting values every round.
   These settings take a subject and ignore it: they are team-wide, so
   "socrates focus bases" and "last repositioning on" do what the bare lines do.
   help           the bots say a short version of this page in chat.
@@ -209,8 +218,29 @@ TILE RULE
   empty the nearest tank in the eight around it wins.
 
 PING AGAIN TO ADD A BOT
-  A second ping on the same target, or inside its 3x3, sends one MORE bot. The
-  bots that already hold the order keep it.
+  A second ping on the same pillbox, base or tank, or inside its 3x3, sends
+  one MORE bot. The bots that already hold the order keep it. If no bot is
+  free, the nearest bot on another order switches to it (see A BOT KEEPS
+  YOUR ORDER); a bot already on this order is never counted twice.
+  A second ping on the same open ground does not add a bot. It starts the
+  order's clock again, and the bot answers "Still on it". If no bot holds
+  that order any more (it died, it let the order go, or no bot was free the
+  first time), the second ping sends one bot again, as the first ping did.
+
+A BOT KEEPS YOUR ORDER
+  A bot that holds an order from a person does not take a new ping, a new
+  three-shot order or a typed order that does not name it. That goes to a
+  free bot, however soon or late it comes.
+  If no bot is free, for a ping or a typed order the busy bot with the
+  cheapest route switches: it drops its old order and says "No free bot.
+  Leaving ... for ...". A tie goes to the lower player number. A bot on a
+  decoy hold never switches, and a bot that is busy for its own reasons
+  (man out, escaping water, and so on) does not either.
+  If no bot can switch, nobody goes: one bot says "All bots busy" and the
+  order waits for about 60 seconds: the first bot that comes free takes it.
+  A three-shot order with no free bot is dropped without a word.
+  To move a bot that is working on an order, name it ("socrates attack 5"),
+  select it with a ping, use "all" or "nearby", or cancel its order first.
 
 SELECT BY PING
   A ping on one of your own bots, or inside its 3x3, selects that bot; it
@@ -236,7 +266,7 @@ shot in that second takes it back.
 
 The bot with the cheapest route drives there and holds, out of the bots that
 were on your screen when the order went out. A bot further away than that
-does not hear you.
+does not hear you, and nor does a bot that is working on an order you gave.
 
 A place order is a hard one. The bot drops what it was doing and drives to the
 square. On the way it picks no goals of its own -- no pills, no bases, no
@@ -250,8 +280,8 @@ beside it. Its own builder carries on as usual. After the ten seconds the
 order is over, without a word, and the bot picks its own goals again.
 
 You can end it earlier with a caution ping or "cancel", or by giving it
-something else to do. A ping on open ground does the same thing as the three
-shells.
+an order that names it. A new ping somewhere else does not end it: that goes
+to a free bot. A ping on open ground does the same thing as the three shells.
 
 Forest does not count, and a shell that stops on a wall, a building, a
 pillbox, a base or a tank does not count. If no bot is in range, nothing
@@ -298,6 +328,10 @@ A bot does not take a new order while its man is out of the tank, while it is
 finishing a pillbox capture, while it is moving a pillbox it voted to move,
 while it is handing itself over to be killed, or while it is escaping water or
 a stuck spot. It answers "Busy" and says why.
+A bot that works on an order from a person does not take a new order that
+does not name it while a free bot can go (see A BOT KEEPS YOUR ORDER). When
+no bot is free and none can switch, one bot says "All bots busy". When the
+bots only say no because none of them can get there, nothing is said.
 
 
 WHAT THE BOTS SAY
@@ -315,8 +349,15 @@ WHAT THE BOTS SAY
                                 when the time is up.
   3 on pill #5                  a group order, said once by one bot.
   Still on it. attack_pill #5   you asked for something it already holds.
+  All bots busy                 no bot was free for your order and none
+                                could switch. It waits about 60 seconds for
+                                a bot to come free.
   Leaving attack_pill #5 for capture_pill #7
-                                a newer order replaced the old one.
+                                a newer order that names the bot replaced
+                                the old one.
+  No free bot. Leaving goto for attack_pill #5
+                                no bot was free, so this one, the nearest,
+                                dropped its old order for your new one.
   capture_pill #5 done          the job is finished, so the order is over.
                                 A bot does not wait out the clock: the tick
                                 the pill is yours, or is in somebody's tank,

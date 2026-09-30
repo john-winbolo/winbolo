@@ -30,6 +30,14 @@
  * run_scenario_pack_refuses_unscripted
  *      — a map with no script beside it is refused with a reason, and the file
  *        is left as it was
+ * run_scenario_pack_script_mod
+ *      — a loose mod script packs to a .scenario of its own: the container
+ *        opens, its manifest says what the table said, main.lua is the script
+ *        byte for byte, and the directory lister reads it
+ * run_scenario_pack_script_refusals
+ *      — a script with a problem, one with no scenario table and a bound one
+ *        are refused and leave nothing behind; a second pack replaces the
+ *        first
  */
 
 #include <stdint.h>
@@ -42,6 +50,7 @@
 #include "global.h"
 #include "gametype.h"              /* gameOpen */
 #include "server_sim.h"            /* serverSimCreate / serverSimDestroy */
+#include "scenario_dir.h"          /* scnDirReadPackage */
 #include "scenario_host.h"         /* SCN_SCRIPT_SUFFIX */
 #include "scenario_manifest.h"
 #include "scenario_manifest_json.h"
@@ -440,5 +449,228 @@ int run_scenario_pack_refuses_unscripted(void) {
     free(before);
     free(after);
     spClean(mapPath);
+    return 0;
+}
+
+/* ── 5. A loose script packs to a .scenario of its own ────────────── */
+
+/* A mod: kind "mod" and not bound, which is the file a player publishes
+   without a map. */
+static const char kSpModScript[] =
+    "scenario = {\n"
+    "  name = \"Packed Mod\",\n"
+    "  description = \"Packed from a loose script\",\n"
+    "  api = 1,\n"
+    "  kind = \"mod\",\n"
+    "  bound = false,\n"
+    "  rules = { tank_reload_ticks = 7 },\n"
+    "}\n";
+
+/* The same mod under another name, so a second pack can be told apart from
+   the first. */
+static const char kSpModScriptRenamed[] =
+    "scenario = {\n"
+    "  name = \"Packed Mod Again\",\n"
+    "  api = 1,\n"
+    "  kind = \"mod\",\n"
+    "  bound = false,\n"
+    "}\n";
+
+/* Lua that runs and declares no scenario table. */
+static const char kSpNoTableScript[] = "local unused = 1\n";
+
+/* A table that says it belongs to one map. */
+static const char kSpBoundScript[] =
+    "scenario = { name = \"Bound\", api = 1, bound = true }\n";
+
+static bool spExists(const char *path) {
+    return SDL_GetPathInfo(path, NULL);
+}
+
+/* The temporary file a pack of outPath writes through. */
+static void spPackingPath(const char *outPath, char *out, size_t outLen) {
+    snprintf(out, outLen, "%s.packing", outPath);
+}
+
+/* The name and kind the package at path carries in its manifest.json, read
+   straight out of the container. */
+static bool spPackageManifest(const char *path, ScenarioManifest *out) {
+    uint8_t        *file    = NULL;
+    size_t          fileLen = 0;
+    uint8_t        *json    = NULL;
+    size_t          jsonLen = 0;
+    ScnPackage     *p;
+    ScnManifestDoc *doc;
+    bool            ok = false;
+
+    if (!spReadWhole(path, &file, &fileLen)) {
+        return false;
+    }
+    p = scnPackageOpen(file, fileLen, NULL, 0);
+    if (p != NULL &&
+        scnPackageReadEntry(p, SCN_PACKAGE_MANIFEST_ENTRY,
+                            SCN_PACKAGE_MANIFEST_MAX_BYTES, &json, &jsonLen,
+                            NULL, 0)) {
+        doc = scnManifestParse(json, jsonLen, NULL, NULL, 0);
+        if (doc != NULL && scnManifestValues(doc) != NULL) {
+            *out = *scnManifestValues(doc);
+            ok   = true;
+        }
+        scnManifestFree(doc);
+    }
+    free(json);
+    scnPackageClose(p);
+    free(file);
+    return ok;
+}
+
+int run_scenario_pack_script_mod(void) {
+    char              luaPath[1024];
+    char              outPath[1024];
+    char              packing[1100];
+    char              err[512];
+    uint8_t          *file      = NULL;
+    size_t            fileLen   = 0;
+    uint8_t          *lua       = NULL;
+    size_t            luaLen    = 0;
+    uint8_t          *onDisk    = NULL;
+    size_t            onDiskLen = 0;
+    ScnPackage       *p;
+    ScenarioManifest *m;
+
+    UT_ASSERT(utScratchPath(luaPath, sizeof(luaPath), "Packed Mod.lua"));
+    UT_ASSERT(utScratchPath(outPath, sizeof(outPath), "Packed Mod.scenario"));
+    spPackingPath(outPath, packing, sizeof(packing));
+    remove(outPath);
+    remove(packing);
+    UT_ASSERT(spPutScript(luaPath, kSpModScript));
+
+    err[0] = '\0';
+    UT_ASSERT_MSG(scnPackScript(luaPath, outPath, err, sizeof(err)),
+                  "a loose mod script was not packed: %s", err);
+    UT_ASSERT_MSG(!spExists(packing), "the temporary file was left behind");
+
+    /* The file is the container on its own, and holds the two entries. */
+    UT_ASSERT(spReadWhole(outPath, &file, &fileLen));
+    p = scnPackageOpen(file, fileLen, err, sizeof(err));
+    UT_ASSERT_MSG(p != NULL, "the package does not open: %s", err);
+    UT_ASSERT_MSG(scnPackageEntryCount(p) == 2,
+                  "the package holds %d entries, expected the manifest and "
+                  "the script", scnPackageEntryCount(p));
+    UT_ASSERT(scnPackageHasEntry(p, SCN_PACKAGE_MANIFEST_ENTRY));
+    UT_ASSERT(scnPackageHasEntry(p, SCN_PACKAGE_SCRIPT_ENTRY));
+
+    /* The script went in as it is on disk, byte for byte. */
+    UT_ASSERT_MSG(scnPackageReadEntry(p, SCN_PACKAGE_SCRIPT_ENTRY,
+                                      (size_t)SCN_SCRIPT_MAX_BYTES, &lua,
+                                      &luaLen, NULL, 0),
+                  "%s could not be read back", SCN_PACKAGE_SCRIPT_ENTRY);
+    UT_ASSERT(spReadWhole(luaPath, &onDisk, &onDiskLen));
+    UT_ASSERT_MSG(luaLen == onDiskLen && memcmp(lua, onDisk, luaLen) == 0,
+                  "the packed script is not the script on disk");
+
+    /* The manifest says what the table said. */
+    m = (ScenarioManifest *)malloc(sizeof(*m));
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(spPackageManifest(outPath, m),
+                  "the packed manifest.json will not parse");
+    UT_ASSERT_MSG(strcmp(m->name, "Packed Mod") == 0,
+                  "the manifest calls this '%s'", m->name);
+    UT_ASSERT_MSG(m->kind == scnKindKeepsWinCondition,
+                  "the manifest's kind is %d, not mod", (int)m->kind);
+    UT_ASSERT(!m->bound);
+
+    /* And the directory lister reads it as it reads any .scenario. */
+    memset(m, 0, sizeof(*m));
+    UT_ASSERT_MSG(scnDirReadPackage(outPath, m),
+                  "the lister could not read the package");
+    UT_ASSERT_MSG(strcmp(m->name, "Packed Mod") == 0,
+                  "the lister calls this '%s'", m->name);
+    UT_ASSERT(m->kind == scnKindKeepsWinCondition);
+
+    free(m);
+    free(onDisk);
+    free(lua);
+    scnPackageClose(p);
+    free(file);
+    remove(outPath);
+    remove(luaPath);
+    return 0;
+}
+
+/* ── 6. What a loose script is refused for ────────────────────────── */
+
+/* One refusal: the script at luaPath holding lua is not packed, the reason
+   says `says`, and neither outPath nor the file it would have been written
+   through is there after. */
+static int spExpectRefused(const char *luaPath, const char *outPath,
+                           const char *lua, const char *what,
+                           const char *says) {
+    char packing[1100];
+    char err[512];
+
+    spPackingPath(outPath, packing, sizeof(packing));
+    UT_ASSERT(spPutScript(luaPath, lua));
+    err[0] = '\0';
+    UT_ASSERT_MSG(!scnPackScript(luaPath, outPath, err, sizeof(err)),
+                  "%s was packed anyway", what);
+    UT_ASSERT_MSG(strstr(err, says) != NULL,
+                  "the refusal of %s does not say \"%s\": %s", what, says, err);
+    UT_ASSERT_MSG(!spExists(outPath), "%s left a package behind", what);
+    UT_ASSERT_MSG(!spExists(packing), "%s left the temporary file behind",
+                  what);
+    return 0;
+}
+
+int run_scenario_pack_script_refusals(void) {
+    char             luaPath[1024];
+    char             outPath[1024];
+    char             packing[1100];
+    char             err[512];
+    ScenarioManifest *m;
+
+    UT_ASSERT(utScratchPath(luaPath, sizeof(luaPath), "Refused.lua"));
+    UT_ASSERT(utScratchPath(outPath, sizeof(outPath), "Refused.scenario"));
+    spPackingPath(outPath, packing, sizeof(packing));
+    remove(outPath);
+    remove(packing);
+
+    UT_ASSERT(spExpectRefused(luaPath, outPath, kSpBadScript,
+                              "a script with a problem", "-validate") == 0);
+    UT_ASSERT(spExpectRefused(luaPath, outPath, kSpNoTableScript,
+                              "a script with no scenario table",
+                              "no scenario table") == 0);
+    UT_ASSERT(spExpectRefused(luaPath, outPath, kSpBoundScript,
+                              "a bound script", "bound") == 0);
+
+    /* A pack over a package already there replaces it. */
+    UT_ASSERT(spPutScript(luaPath, kSpModScript));
+    err[0] = '\0';
+    UT_ASSERT_MSG(scnPackScript(luaPath, outPath, err, sizeof(err)),
+                  "the first pack was refused: %s", err);
+    UT_ASSERT(spPutScript(luaPath, kSpModScriptRenamed));
+    err[0] = '\0';
+    UT_ASSERT_MSG(scnPackScript(luaPath, outPath, err, sizeof(err)),
+                  "a pack over an existing package was refused: %s", err);
+    UT_ASSERT_MSG(!spExists(packing), "the temporary file was left behind");
+
+    m = (ScenarioManifest *)malloc(sizeof(*m));
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(spPackageManifest(outPath, m),
+                  "the replaced package will not read");
+    UT_ASSERT_MSG(strcmp(m->name, "Packed Mod Again") == 0,
+                  "the package still says '%s' after the second pack",
+                  m->name);
+
+    /* A refusal leaves the package from before alone. */
+    UT_ASSERT(spPutScript(luaPath, kSpBoundScript));
+    UT_ASSERT(!scnPackScript(luaPath, outPath, err, sizeof(err)));
+    UT_ASSERT(spPackageManifest(outPath, m));
+    UT_ASSERT_MSG(strcmp(m->name, "Packed Mod Again") == 0,
+                  "a refused pack changed the package already there");
+
+    free(m);
+    remove(outPath);
+    remove(luaPath);
     return 0;
 }

@@ -263,6 +263,7 @@ int            gameFrontHostingUploadMaxStorage = 8;
  * (<prefs path>uploads) or the user picks one. */
 char           gameFrontHostingUploadDir[FILENAME_MAX] = "";
 int            gameFrontHostingScriptUploadPolicy     = SCRIPT_UPLOAD_ALLOW;
+bool           gameFrontHostingShareScripts           = TRUE;
 int            gameFrontHostingScriptUploadMaxFiles   = 32;
 int            gameFrontHostingScriptUploadMaxStorage = 64;
 /* Persist script dir. Empty until gameFrontGetPrefs seeds the default
@@ -294,6 +295,7 @@ int gameFrontViewBaseDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 int gameFrontViewAllyDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 bool gameFrontClassicMode      = FALSE;
 bool gameFrontAlliesInTrees    = FALSE;
+bool gameFrontPositionalSound  = FALSE;
 /* Which block of squares the map overview keeps live, and what stops the
  * player seeing inside it. Ints rather than bools because each holds a
  * named value — OverviewWindow and LineOfSightMode — the way the three
@@ -516,7 +518,6 @@ void gameFrontSetServerPaused(bool paused) {
  * lives inside humanSim; these flags only track whether a UDP join
  * is active for higher-level lifecycle gating. */
 static bool udpTransportActive = FALSE;
-static BYTE udpPlayerNum = 0;
 
 /* Send callbacks for ClientSim — route through the client_net.h wrappers.
  * (The callback layer is retained for this transition; future cleanup
@@ -665,6 +666,9 @@ extern bool isTutorial;
 extern int frameRate;
 extern bool showGunsight;
 extern bool soundEffects;
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+extern bool positionalSound;
+#endif
 extern bool backgroundSound;
 extern bool useSoundKeepalive;
 extern int  soundVolume;
@@ -826,10 +830,20 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
        full screen here rather than waiting for a game. The preferences are
        already read and the window is created hidden, so the first dialog is
        the first thing drawn and there is no windowed flash. Big Picture,
-       tablet and the Deck are full screen from creation and are left alone. */
+       tablet and the Deck are full screen from creation and are left alone.
+
+       The switch is asynchronous (on macOS a Space animation of about half
+       a second), and SDL holds it for a hidden window until the window is
+       shown. So the window is shown here and SDL_SyncWindow waits for the
+       switch to finish; otherwise the first dialog frames draw at the
+       windowed size and the menu background jumps when the size changes.
+       The dialogs' own SDL_ShowWindow is then a no-op. */
     if (OKStart && gameFrontFullScreen && !uiModeIsTablet() &&
         !uiModeIsSteamDeck() && !steam_is_big_picture()) {
-      SDL_SetWindowFullscreen(sdl3DrawGetWindow(), true);
+      SDL_Window *win = sdl3DrawGetWindow();
+      SDL_SetWindowFullscreen(win, true);
+      SDL_ShowWindow(win);
+      SDL_SyncWindow(win);
     }
 #endif
 
@@ -1057,11 +1071,14 @@ static void gameFrontApplyVisibilityPrefs(ServerSim *sim) {
                          (ViewPolicy)gameFrontViewAllyPolicy,
                          (uint16_t)gameFrontViewAllyDecaySecs);
   /* After the three policies, so classic mode wins over them when both
-   * are set, and allies in trees before classic mode, which forces it
-   * back off. Both only pushed when on — off is what the sim was
-   * created with. */
+   * are set, and allies in trees and positional sound before classic
+   * mode, which forces them back off. Each only pushed when on — off is
+   * what the sim was created with. */
   if (gameFrontAlliesInTrees) {
     serverSimSetAlliesInTrees(sim, true);
+  }
+  if (gameFrontPositionalSound) {
+    serverSimSetPositionalSound(sim, true);
   }
   /* These two go on whatever they hold, not only when on: either value
    * is a real choice, and the expanded window is not what the sim was
@@ -1153,7 +1170,7 @@ static bool gameFrontDialogs(void) {
   sdl3DrawDisableLogicalPresentation();
 
   /* Retrieve the process-lifetime shared bg (created in gameFrontStart's
-   * one-shot init); mark it visible so bgGameTick runs while we're on
+   * one-shot init); mark it visible so the bg sim ticks while we're on
    * the welcome / settings dialogs. */
   BgGame *bg = bgGameGetShared();
   bool hasBg = (bg != NULL);
@@ -1471,6 +1488,11 @@ static bool gameFrontDialogs(void) {
     }
   }
 
+  /* The menu stops drawing here for every kind of game (single player,
+   * hosted or joined), so its kept scene texture is freed rather than held
+   * in GPU memory through the game. The next menu draw makes it again. */
+  if (hasBg) bgGameReleaseScene(bg);
+
   /* Restore render logical presentation for the game view (Android). */
   sdl3DrawRestoreLogicalPresentation();
 
@@ -1688,6 +1710,17 @@ bool gameFrontSetDlgState(openingStates newState) {
       bool joined = FALSE;
       humanSim = clientSimAlloc(); clientSimCreate(humanSim);
       clientSimSetIsLanOnly(humanSim, s_isLanOnly);
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__) && !defined(__EMSCRIPTEN__)
+      /* A map picked from the Workshop directory is offered to the server
+         as "Workshop/<name>" first, so a server holding the same file loads
+         its own copy rather than taking an upload. Mobile has no Workshop. */
+      {
+        char workshopDir[FILENAME_MAX];
+        if (scenarioHostWorkshopDir(workshopDir, sizeof(workshopDir))) {
+          clientSimSetWorkshopMapDir(humanSim, workshopDir);
+        }
+      }
+#endif
       frontEndSetActiveClientSim(humanSim);
       if (gameFrontRemeber) clientSimSetMyLastPlayerName(humanSim, gameFrontName);
       fprintf(stderr, "[gameFront] openUdpJoin: addr=%s port=%u myPort=%u\n",
@@ -1724,7 +1757,6 @@ bool gameFrontSetDlgState(openingStates newState) {
          * running game or entry into the server lobby — see clientFrontAwaitJoin. */
         if (clientFrontAwaitJoin(humanSim, 1500)) {
           joined = TRUE;
-          udpPlayerNum = clientSimGetServerPlayerNum(humanSim);
           udpTransportActive = TRUE;
 
           /* Store server address in ClientSim for brain info */
@@ -1871,7 +1903,7 @@ bool gameFrontSetDlgState(openingStates newState) {
           spServerSim = serverSimCreate(fileName, spGameType, spHiddenMines, spStartDelay, spTimeLen);
         } else {
           BYTE emap[6000] = E_MAP;
-          spServerSim = serverSimCreateCompressed(emap, 5097, "Everard Island", spGameType, spHiddenMines, spStartDelay, spTimeLen);
+          spServerSim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island", spGameType, spHiddenMines, spStartDelay, spTimeLen);
         }
         if (spServerSim != NULL) {
           /* Embedded server: silence its console messages (Thread Manager
@@ -1900,6 +1932,16 @@ bool gameFrontSetDlgState(openingStates newState) {
              beside it for the same reason: what the list holds has nothing to
              do with whichever map is being hosted. */
           serverSimSetScenarioDir(spServerSim, gameFrontHostingScenarioDir);
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__) && !defined(__EMSCRIPTEN__)
+          /* And where subscribed Workshop items are copied to, which the map
+             list offers as a "Workshop" folder. Mobile has no Workshop. */
+          {
+            char workshopDir[FILENAME_MAX];
+            if (scenarioHostWorkshopDir(workshopDir, sizeof(workshopDir))) {
+              serverSimSetWorkshopMapDir(spServerSim, workshopDir);
+            }
+          }
+#endif
           scenarioHostRegisterScenarioLister(spServerSim);
           if (strncmp(fileName, "randommap:", 10) != 0 && fileName[0] != '\0') {
             char scenarioErr[512];
@@ -1994,6 +2036,15 @@ bool gameFrontSetDlgState(openingStates newState) {
           humanSim = clientSimAlloc();
           clientSimCreate(humanSim);
           clientSimSetIsLanOnly(humanSim, s_isLanOnly);
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__) && !defined(__EMSCRIPTEN__)
+          /* The Workshop directory, as on the join path. */
+          {
+            char workshopDir[FILENAME_MAX];
+            if (scenarioHostWorkshopDir(workshopDir, sizeof(workshopDir))) {
+              clientSimSetWorkshopMapDir(humanSim, workshopDir);
+            }
+          }
+#endif
           frontEndSetActiveClientSim(humanSim);
 
           /* A game that skips the lobby starts its round inside the startup
@@ -2466,6 +2517,11 @@ void gameFrontSetHostingScriptUploadPolicy(int policy) {
   scenarioHostSetUploadScriptsEnabled(policy != SCRIPT_UPLOAD_OFF);
 }
 
+void gameFrontSetHostingShareScripts(bool on) {
+  gameFrontHostingShareScripts = on;
+  prefsSetString("HOSTING", "Share Scripts", TRUEFALSE_TO_STR(on));
+}
+
 void gameFrontSetHostingScriptUploadMaxFiles(int maxFiles) {
   gameFrontHostingScriptUploadMaxFiles = maxFiles;
   char buf[16];
@@ -2612,6 +2668,11 @@ void gameFrontSetAlliesInTrees(bool on) {
   prefsSetString("GAME OPTIONS", "Allies In Trees", TRUEFALSE_TO_STR(on));
 }
 
+void gameFrontSetPositionalSound(bool on) {
+  gameFrontPositionalSound = on;
+  prefsSetString("GAME OPTIONS", "Positional Sound", TRUEFALSE_TO_STR(on));
+}
+
 void gameFrontSetOverviewWindow(int window) {
   gameFrontOverviewWindow = window;
   prefsSetString("GAME OPTIONS", "Overview Window",
@@ -2641,7 +2702,7 @@ int                gameFrontVisibilityPreset = (int)visibilityPresetClassic;
 VisibilitySettings gameFrontVisibilityCustom;
 bool               gameFrontVisibilityCustomSaved = FALSE;
 
-/* The seven [GAME OPTIONS] visibility globals as one set, and back. Every
+/* The eight [GAME OPTIONS] visibility globals as one set, and back. Every
  * caller below works in the set rather than in the globals, so a setting
  * added to the struct is added in one place here. */
 void gameFrontGetVisibilitySettings(VisibilitySettings *out) {
@@ -2657,6 +2718,7 @@ void gameFrontGetVisibilitySettings(VisibilitySettings *out) {
   out->overviewWindow              = (uint8_t)gameFrontOverviewWindow;
   out->lineOfSight                 = (uint8_t)gameFrontLineOfSight;
   out->alliesInTrees               = gameFrontAlliesInTrees;
+  out->positionalSound             = gameFrontPositionalSound;
 }
 
 /* Writes a whole set through the per-setting setters above, so the keys
@@ -2671,6 +2733,7 @@ static void gameFrontPutVisibilitySettings(const VisibilitySettings *v) {
   gameFrontSetViewBaseDecaySecs((int)v->decaySecs[viewCategoryBase]);
   gameFrontSetViewAllyDecaySecs((int)v->decaySecs[viewCategoryAlly]);
   gameFrontSetAlliesInTrees(v->alliesInTrees);
+  gameFrontSetPositionalSound(v->positionalSound);
   gameFrontSetOverviewWindow((int)v->overviewWindow);
   gameFrontSetLineOfSight((int)v->lineOfSight);
   gameFrontSetClassicMode(v->classicMode);
@@ -2711,10 +2774,12 @@ void gameFrontSetVisibilityCustom(const VisibilitySettings *v) {
                  overviewWindowPrefWord((int)v->overviewWindow));
   prefsSetString("GAME OPTIONS", "Custom Line Of Sight",
                  TRUEFALSE_TO_STR(v->lineOfSight != (uint8_t)lineOfSightOff));
+  prefsSetString("GAME OPTIONS", "Custom Positional Sound",
+                 TRUEFALSE_TO_STR(v->positionalSound));
 }
 
 /* Remembers a visibility set as the host's choice. Three things move
- * together, which is why they are one call rather than three: the seven
+ * together, which is why they are one call rather than three: the eight
  * per-setting keys, so a game hosted again in this same session starts
  * there without a restart; which named set it is, so a preset that is
  * later given a different value follows the choice rather than the
@@ -3529,7 +3594,7 @@ bool gameFrontSetupServer(void) {
     spServerSim = serverSimCreate(fileName, gametype, hiddenMines, startDelay, timeLen);
   } else {
     BYTE emap[6000] = E_MAP;
-    spServerSim = serverSimCreateCompressed(emap, 5097, "Everard Island", gametype, hiddenMines, startDelay, timeLen);
+    spServerSim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island", gametype, hiddenMines, startDelay, timeLen);
   }
   if (spServerSim == NULL) {
     return FALSE;
@@ -3544,6 +3609,15 @@ bool gameFrontSetupServer(void) {
       gameFrontHostingScriptUploadPolicy != SCRIPT_UPLOAD_OFF);
   scenarioHostRegisterMapScripted(spServerSim);
   serverSimSetScenarioDir(spServerSim, gameFrontHostingScenarioDir);
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__) && !defined(__EMSCRIPTEN__)
+  /* And the Workshop map folder, as on the single-player path. */
+  {
+    char workshopDir[FILENAME_MAX];
+    if (scenarioHostWorkshopDir(workshopDir, sizeof(workshopDir))) {
+      serverSimSetWorkshopMapDir(spServerSim, workshopDir);
+    }
+  }
+#endif
   scenarioHostRegisterScenarioLister(spServerSim);
   if (strncmp(fileName, "randommap:", 10) != 0 && fileName[0] != '\0') {
     char scenarioErr[512];
@@ -3611,6 +3685,7 @@ bool gameFrontSetupServer(void) {
   }
   cfg.scriptUploadPolicy  =
       (ScriptUploadPolicy)gameFrontHostingScriptUploadPolicy;
+  cfg.noScriptSharing     = !gameFrontHostingShareScripts;
   cfg.scriptUploadMaxFiles = (uint8_t)gameFrontHostingScriptUploadMaxFiles;
   cfg.scriptUploadMaxStorageBytes =
       (uint32_t)gameFrontHostingScriptUploadMaxStorage * 1024u * 1024u;
@@ -3814,6 +3889,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     gameFrontHostingScriptUploadPolicy =
         scriptUploadPolicyResolve(NULL, !YESNO_TO_TRUEFALSE(buff[0]));
   }
+  prefsGetString("HOSTING", "Share Scripts", "Yes", buff, FILENAME_MAX);
+  gameFrontHostingShareScripts = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("HOSTING", "Max Spectators", "16", buff, FILENAME_MAX);
   {
     int m = atoi(buff);
@@ -4382,6 +4459,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     gameFrontClassicMode = YESNO_TO_TRUEFALSE(buff[0]);
     prefsGetString("GAME OPTIONS", "Allies In Trees", "No", buff, FILENAME_MAX);
     gameFrontAlliesInTrees = YESNO_TO_TRUEFALSE(buff[0]);
+    prefsGetString("GAME OPTIONS", "Positional Sound", "No", buff, FILENAME_MAX);
+    gameFrontPositionalSound = YESNO_TO_TRUEFALSE(buff[0]);
     /* Same derivation as the three above: the INI default word and the
      * fallback both come from OVERVIEW_WINDOW_STOCK. */
     prefsGetString("GAME OPTIONS", "Overview Window",
@@ -4456,10 +4535,14 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
       gameFrontVisibilityCustom.lineOfSight =
           YESNO_TO_TRUEFALSE(buff[0]) ? (uint8_t)lineOfSightBuildingsAndTrees
                                       : (uint8_t)lineOfSightOff;
+      prefsGetString("GAME OPTIONS", "Custom Positional Sound",
+                     TRUEFALSE_TO_STR(gameFrontVisibilityCustom.positionalSound),
+                     buff, FILENAME_MAX);
+      gameFrontVisibilityCustom.positionalSound = YESNO_TO_TRUEFALSE(buff[0]);
     }
 
     /* What the host last chose, which is what a game hosted from here
-     * starts on. The seven keys above have already put the last values on
+     * starts on. The eight keys above have already put the last values on
      * the globals; this writes the chosen set over them, so a preset that
      * is later given a different value follows the host's choice rather
      * than the values it happened to have when they made it. An INI with
@@ -4518,6 +4601,10 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   showGunsight = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("MENU", "Sound Effects", "Yes", buff, FILENAME_MAX);
   soundEffects = YESNO_TO_TRUEFALSE(buff[0]);
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+  prefsGetString("MENU", "Positional Sound", "Yes", buff, FILENAME_MAX);
+  positionalSound = YESNO_TO_TRUEFALSE(buff[0]);
+#endif
   prefsGetString("MENU", "Allow Background Sound", "Yes", buff, FILENAME_MAX);
   backgroundSound = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("MENU", "Sound keepalive", "No", buff, FILENAME_MAX);
@@ -4796,6 +4883,8 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("HOSTING", "Script Upload Policy",
                  scriptUploadPolicyWord(
                      (ScriptUploadPolicy)gameFrontHostingScriptUploadPolicy));
+  prefsSetString("HOSTING", "Share Scripts",
+                            TRUEFALSE_TO_STR(gameFrontHostingShareScripts));
   prefsSetString("HOSTING", "Script Upload Dir",
                  gameFrontHostingScriptUploadDir);
   intToStr(gameFrontHostingScriptUploadMaxFiles, buff, sizeof(buff));
@@ -5001,6 +5090,8 @@ void gameFrontPutPrefs(keyItems *keys) {
                  TRUEFALSE_TO_STR(gameFrontClassicMode));
   prefsSetString("GAME OPTIONS", "Allies In Trees",
                  TRUEFALSE_TO_STR(gameFrontAlliesInTrees));
+  prefsSetString("GAME OPTIONS", "Positional Sound",
+                 TRUEFALSE_TO_STR(gameFrontPositionalSound));
   prefsSetString("GAME OPTIONS", "Overview Window",
                  overviewWindowPrefWord(gameFrontOverviewWindow));
   prefsSetString("GAME OPTIONS", "Line Of Sight",
@@ -5020,6 +5111,9 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("MENU", "Frame Rate", buff);
   prefsSetString("MENU", "Show Gunsight", TRUEFALSE_TO_STR(showGunsight));
   prefsSetString("MENU", "Sound Effects", TRUEFALSE_TO_STR(soundEffects));
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+  prefsSetString("MENU", "Positional Sound", TRUEFALSE_TO_STR(positionalSound));
+#endif
   prefsSetString("MENU", "Allow Background Sound", TRUEFALSE_TO_STR(backgroundSound));
   prefsSetString("MENU", "Sound keepalive", TRUEFALSE_TO_STR(useSoundKeepalive));
   intToStr(soundVolume, buff, sizeof(buff));
@@ -5213,7 +5307,11 @@ ServerSim *gameFrontGetSinglePlayerServerSim(void) {
 }
 
 BYTE gameFrontGetPlayerNum(void) {
-  if (udpTransportActive) return udpPlayerNum;
+  /* Read the slot live from the transport, never a copy taken at join.
+   * clientFrontAwaitJoin returns once the lobby replay lands, which can be
+   * before JOIN_ACCEPT: if the first accept is lost the slot is still 0
+   * then, and the real one arrives with the server's resent accept. */
+  if (udpTransportActive) return clientSimGetServerPlayerNum(humanSim);
   return 0;
 }
 

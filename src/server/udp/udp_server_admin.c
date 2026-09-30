@@ -54,6 +54,7 @@
                                    * serverSimSetHostSlot,
                                    * serverSimSetBalanceRequestInFlight,
                                    * serverSimSetBalanceIncludeBots */
+#include "server_sim_join.h"      /* serverSimReleaseIneligibleStartsAndBackfill — after a WBN balance moves players */
 #include "control_event.h"   /* ControlEvent, CTRL_CHAT, CTRL_SERVER_TEXT,
                               * CTRL_SERVER_SHUTDOWN, CTRL_BALANCE_* */
 #include "channel_mux.h"     /* channelMuxInit, channelSend, CHANNEL_GAME */
@@ -128,13 +129,10 @@ static int balanceThreadFunc(void *data) {
             serverSimPublishControl(sim, &propEvt);
         }
         /* "Humans only" kicks every bot before applying the human-only
-         * team assignments. */
+         * team assignments. The scenario's seats go too, and the next map
+         * change seats them again. */
         if (!includeBots) {
-            for (i = 0; i < MAX_TANKS; i++) {
-                if (serverSimIsBot(sim, (BYTE)i)) {
-                    serverSimRemoveBot(sim, (BYTE)i);
-                }
-            }
+            serverSimRemoveAllBots(sim);
         }
         for (i = 0; i < MAX_TANKS; i++) {
             if (serverSimGetBalanceProposal(sim)->teamForSlot[i] != 0) {
@@ -144,6 +142,11 @@ static int balanceThreadFunc(void *data) {
             }
         }
         serverSimReapplyTeamAlliances(sim);
+        /* Re-pick the reservations the new teams' sides no longer allow —
+         * the batch left each moved slot on the start it held for its old
+         * team. A start still allowed is kept. Same as the
+         * CMD_BALANCE_APPLY arm in server_command_dispatch.c. */
+        serverSimReleaseIneligibleStartsAndBackfill(sim, 0xFF);
         serverSimClearBalanceProposal(sim);
         /* Publish the cleared proposal so balanceProposalActive flips
          * back to false on every client — keeps canBalance gating

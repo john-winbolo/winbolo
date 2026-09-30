@@ -30,6 +30,7 @@
 
 #include <assert.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <SDL3/SDL.h>
@@ -40,6 +41,7 @@
 #include "server_sim_lifecycle.h"  /* serverSimSetTeam, lobbyAutoUnreadyOnChange, serverSimEnterGameOver */
 #include "server_sim_join.h"       /* serverSimFindFreeSlot — the first free seat */
 #include "netpacks.h"      /* lobbyBotNameAcceptable — the lobby's own name check */
+#include "wire_limits.h"   /* LOBBY_PACKAGE_UPLOAD_MAX_BYTES — the most a script copy reads */
 #include "brain_list.h"    /* BrainModes, brainListLoadModesForPath — the seat loops' one read per brain */
 #include "bot_manager.h"   /* botManagerScenarioHint — the hint arm's delivery */
 #include "../../common/wb_log.h"   /* the line a dropped roster change leaves */
@@ -55,6 +57,7 @@
 #include "sim_rules.h"     /* the table the rule arm writes, and its check */
 #include "log.h"           /* logAddEvent — the arm's record */
 #include "client_command.h" /* CMD_CHAT and the team destination the say arm builds */
+#include "scripts_record.h" /* SCN_RECORD_TEXT_MAX — the recording text's cap */
 
 /* SCN_PANEL_MAX is written as a literal on the scenario surface, which
  * cannot see the channel sizes. This is where the two meet: one panel
@@ -2066,12 +2069,18 @@ static bool scenarioSeatOne(ServerSim *sim, const ScnLobbyTeam *team,
 /* Build the lobby the attached scenario asks for, from whatever is there
  * now. Every seat the previous scenario left goes first, so committing a
  * plain map over a scenario one leaves no held seats behind, and a scenario
- * with no template of its own leaves an ordinary lobby. */
+ * with no template of its own leaves an ordinary lobby.
+ *
+ * What the seats were built from is written here, at the one place they are
+ * built, so a lobby a server seated at boot or on a reload answers the next
+ * map change the same way as a lobby a map commit seated. */
 void serverSimScenarioSeatLobby(ServerSim *sim) {
     ScnBrainModesCache modesCache;
     BYTE t;
     if (sim == NULL) return;
     serverSimScenarioClearSeats(sim);
+    sim->scenarioLobbySeated         = sim->scenarioLobbyValid;
+    sim->scenarioLobbySeatedTemplate = sim->scenarioLobby;
     if (!sim->scenarioLobbyValid) return;
     modesCache.count = 0;
     for (t = 0; t < sim->scenarioLobby.numTeams; t++) {
@@ -2242,36 +2251,38 @@ static bool scenarioTemplatesSame(const ScnLobbyTemplate *a,
  * map has not changed. */
 void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath) {
     const char *path;
+    bool        unchanged;
 
     if (sim == NULL) return;
     path = (mapPath != NULL) ? mapPath : "";
     if (sim->scenarioMapChanged != NULL) {
         sim->scenarioMapChanged(sim->scenarioMapChangedCtx, sim, path);
     }
-    /* A lobby a script lays out starts from that lobby, so where the
-       template is not the one the seats already there came from, every bot
-       the lobby had goes first: a single-player game opens on the default
-       map with one seeded enemy, and a host may have added bots to a plain
-       map before choosing a scripted one. Left in, such a bot sits ahead of
-       the script's seats on a side the script never meant, an eleventh
-       attacker where Survival fields ten. A lobby this has never seated is
-       the same case — whatever is in it predates the template attached now.
+    /* A template that did not change leaves the lobby exactly as it is: the
+       bots the host added, the scenario's seats the host trimmed, and the
+       difficulty and team each of them was given. The map is not part of the
+       question. A host who adds bots to a picked scenario and then looks at
+       other maps is changing the map and nothing else, and a lobby a mod
+       change or a list reorder decides again is the same lobby. The starts
+       were already reconciled against the new map before this runs, so a bot
+       that kept its seat also has a start on the map it is now on, or none
+       where the map has fewer starts than players, as a join would.
 
-       A template that did not change keeps them, and that is the half the
-       lobby's own commands depend on: a mod brings no lobby of its own, so
-       turning mods off or reordering the list decides the same template
-       again, and the bots a host put there by hand are theirs to keep. A
-       different map file is a change in its own right even where the two
-       maps ask for the same lobby, which is what the seated map recorded
-       below is held for.
+       A template that did change lays out its own lobby, so every bot the
+       lobby had goes first: a single-player game opens on the default map
+       with one seeded enemy, and a host may have added bots to a plain map
+       before choosing a scripted one. Left in, such a bot sits ahead of the
+       script's seats on a side the script never meant, an eleventh attacker
+       where Survival fields ten. A lobby this has never seated is the same
+       case — whatever is in it predates the template attached now.
 
        People stay where they are; the seating below only ever takes the
        first free slots. */
-    if (sim->scenarioLobbyValid &&
-        (!sim->scenarioLobbySeated ||
-         strcmp(path, sim->scenarioLobbySeatedMap) != 0 ||
-         !scenarioTemplatesSame(&sim->scenarioLobby,
-                                &sim->scenarioLobbySeatedTemplate))) {
+    unchanged = sim->scenarioLobbyValid && sim->scenarioLobbySeated &&
+                scenarioTemplatesSame(&sim->scenarioLobby,
+                                      &sim->scenarioLobbySeatedTemplate);
+    if (unchanged) return;
+    if (sim->scenarioLobbyValid) {
         BYTE i;
         for (i = 0; i < MAX_TANKS; i++) {
             if (serverSimIsBot(sim, i)) {
@@ -2279,18 +2290,9 @@ void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath) {
             }
         }
     }
+    /* Which also records what the seats it leaves were built from, for the
+       next call to hold against. */
     serverSimScenarioSeatLobby(sim);
-    /* And what the lobby now holds was built from, which is the whole of
-       what the next call asks. Written after the seating rather than before
-       it, because it describes the seats the seating leaves: the template
-       reaches the sim from outside this function — a host sets it in the
-       callback above and a caller may set it before calling at all — so the
-       only moment it is known to be the one the seats came from is the
-       moment they were made from it. */
-    sim->scenarioLobbySeated         = sim->scenarioLobbyValid;
-    sim->scenarioLobbySeatedTemplate = sim->scenarioLobby;
-    SDL_strlcpy(sim->scenarioLobbySeatedMap, path,
-                sizeof(sim->scenarioLobbySeatedMap));
 }
 
 /* The lobby's own settings, brought into line with whatever scenario is
@@ -3192,11 +3194,25 @@ static ScnOpResult scenarioOpPanel(ServerSim *sim, const ScnOpPanel *p) {
     return SCN_OP_OK;
 }
 
+/* Fill the event one score row publishes as. Shared by the arm and the join
+ * replay so a late joiner is given the same event the round saw. */
+static void scenarioFillScoreEvent(ControlEvent *evt, BYTE kind, BYTE target,
+                                   int32_t score, const char *label) {
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_SCN_SCORE;
+    evt->u.scnScore.kind   = kind;
+    evt->u.scnScore.target = target;
+    evt->u.scnScore.score  = score;
+    memcpy(evt->u.scnScore.label, label, sizeof(evt->u.scnScore.label));
+    evt->u.scnScore.label[sizeof(evt->u.scnScore.label) - 1] = '\0';
+}
+
 /* Set a scenario's own score for one player or one team.
  *
  * Broadcast: the target says whose score it is, not who is meant to see it,
  * so the event carries no destination pair. The number and the label are kept
- * on the sim per slot and per team; nothing reads them yet. */
+ * on the sim per slot and per team, where serverSimBuildRoundStatsSummary
+ * reads them for the recap and the join replay hands them to a late joiner. */
 static ScnOpResult scenarioOpScore(ServerSim *sim, const ScnOpScore *p) {
     ControlEvent evt;
     ScnScoreRow *row;
@@ -3240,13 +3256,7 @@ static ScnOpResult scenarioOpScore(ServerSim *sim, const ScnOpScore *p) {
                 (BYTE)(((uint32_t)p->score >> 16) & 0xFF),
                 (unsigned short)((uint32_t)p->score & 0xFFFF), pstr);
 
-    memset(&evt, 0, sizeof(evt));
-    evt.type = CTRL_SCN_SCORE;
-    evt.u.scnScore.kind   = p->kind;
-    evt.u.scnScore.target = p->target;
-    evt.u.scnScore.score  = p->score;
-    memcpy(evt.u.scnScore.label, p->label, sizeof(evt.u.scnScore.label));
-    evt.u.scnScore.label[sizeof(evt.u.scnScore.label) - 1] = '\0';
+    scenarioFillScoreEvent(&evt, p->kind, p->target, p->score, p->label);
     serverSimPublishControl(sim, &evt);
     return SCN_OP_OK;
 }
@@ -3296,17 +3306,36 @@ static ScnOpResult scenarioOpAnnounce(ServerSim *sim, const ScnOpAnnounce *p) {
     return SCN_OP_OK;
 }
 
+/* Fill the event one marker publishes as. Shared by the arm and the join
+ * replay so a late joiner is given the same event the round saw. */
+static void scenarioFillMarkerEvent(ControlEvent *evt, BYTE id, BYTE kind,
+                                    BYTE x, BYTE y, BYTE slot, BYTE colour,
+                                    BYTE destTeam, BYTE destPlayer) {
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_SCN_MARKER;
+    evt->u.scnMarker.id         = id;
+    evt->u.scnMarker.kind       = kind;
+    evt->u.scnMarker.x          = x;
+    evt->u.scnMarker.y          = y;
+    evt->u.scnMarker.slot       = slot;
+    evt->u.scnMarker.colour     = colour;
+    evt->u.scnMarker.destTeam   = destTeam;
+    evt->u.scnMarker.destPlayer = destPlayer;
+}
+
 /* Put a mark on the map, or take one off.
  *
  * Markers are kept by id, so a second marker on the same id replaces the
  * first and the clear kind removes it. The clear reads none of the fields
  * that place a marker, which is what lets a script clear an id without
- * remembering what it put there. */
+ * remembering what it put there. The sim keeps the same store by id, which
+ * is what the join replay hands a late joiner. */
 static ScnOpResult scenarioOpMarker(ServerSim *sim, const ScnOpMarker *p) {
-    ControlEvent evt;
-    char         blob[1 + 4];
-    BYTE         destTeam, destPlayer;
-    ScnOpResult  r;
+    ControlEvent  evt;
+    char          blob[1 + 4];
+    BYTE          destTeam, destPlayer;
+    ScnOpResult   r;
+    ScnMarkerRow *row;
 
     r = scenarioTargetUnpack(p->target, &destTeam, &destPlayer);
     if (r != SCN_OP_OK) {
@@ -3342,16 +3371,24 @@ static ScnOpResult scenarioOpMarker(ServerSim *sim, const ScnOpMarker *p) {
     blob[4] = (char)p->colour;
     logAddEvent(log_ScnMarker, p->id, p->kind, destTeam, destPlayer, 0, blob);
 
-    memset(&evt, 0, sizeof(evt));
-    evt.type = CTRL_SCN_MARKER;
-    evt.u.scnMarker.id         = p->id;
-    evt.u.scnMarker.kind       = p->kind;
-    evt.u.scnMarker.x          = p->x;
-    evt.u.scnMarker.y          = p->y;
-    evt.u.scnMarker.slot       = p->slot;
-    evt.u.scnMarker.colour     = p->colour;
-    evt.u.scnMarker.destTeam   = destTeam;
-    evt.u.scnMarker.destPlayer = destPlayer;
+    /* The store is kept by id alone, as the markers are, so a clear empties
+       the row whatever the clear itself was addressed to. */
+    row = &sim->scenarioMarkers[p->id];
+    if (p->kind == SCN_MARKER_KIND_CLEAR) {
+        memset(row, 0, sizeof(*row));
+    } else {
+        row->valid      = true;
+        row->kind       = p->kind;
+        row->x          = p->x;
+        row->y          = p->y;
+        row->slot       = p->slot;
+        row->colour     = p->colour;
+        row->destTeam   = destTeam;
+        row->destPlayer = destPlayer;
+    }
+
+    scenarioFillMarkerEvent(&evt, p->id, p->kind, p->x, p->y, p->slot,
+                            p->colour, destTeam, destPlayer);
     serverSimPublishControl(sim, &evt);
     return SCN_OP_OK;
 }
@@ -3363,6 +3400,7 @@ void serverSimScenarioResetPresentation(ServerSim *sim) {
     memset(sim->scenarioPanels, 0, sizeof(sim->scenarioPanels));
     memset(sim->scenarioPlayerScores, 0, sizeof(sim->scenarioPlayerScores));
     memset(sim->scenarioTeamScores, 0, sizeof(sim->scenarioTeamScores));
+    memset(sim->scenarioMarkers, 0, sizeof(sim->scenarioMarkers));
 }
 
 void serverSimScenarioReplayPanels(
@@ -3402,6 +3440,50 @@ void serverSimScenarioReplayPanels(
             }
             scenarioFillPanelEvent(&evt, (BYTE)panel, destTeam, destPlayer,
                                    store->bytes, store->len);
+            deliver(ctx, &evt);
+        }
+    }
+}
+
+void serverSimScenarioReplayMarkersAndScores(
+    ServerSim *sim,
+    void (*deliver)(void *, const struct ControlEvent *),
+    void *ctx,
+    bool withTargeted) {
+    ControlEvent evt;
+    int          i;
+
+    if (sim == NULL || deliver == NULL) {
+        return;
+    }
+    for (i = 0; i < SCN_MARKERS_MAX; i++) {
+        const ScnMarkerRow *row = &sim->scenarioMarkers[i];
+        if (!row->valid) {
+            /* Never placed, or cleared: a joiner's markers start empty. */
+            continue;
+        }
+        if (!withTargeted && (row->destTeam != 0 || row->destPlayer != 0xFF)) {
+            continue;
+        }
+        scenarioFillMarkerEvent(&evt, (BYTE)i, row->kind, row->x, row->y,
+                                row->slot, row->colour, row->destTeam,
+                                row->destPlayer);
+        deliver(ctx, &evt);
+    }
+    for (i = 0; i < MAX_TANKS; i++) {
+        const ScnScoreRow *row = &sim->scenarioPlayerScores[i];
+        if (row->valid) {
+            scenarioFillScoreEvent(&evt, SCN_SCORE_KIND_PLAYER, (BYTE)i,
+                                   row->score, row->label);
+            deliver(ctx, &evt);
+        }
+    }
+    /* Team 0 names no team and its row is never written. */
+    for (i = 1; i < MAX_TANKS; i++) {
+        const ScnScoreRow *row = &sim->scenarioTeamScores[i];
+        if (row->valid) {
+            scenarioFillScoreEvent(&evt, SCN_SCORE_KIND_TEAM, (BYTE)i,
+                                   row->score, row->label);
             deliver(ctx, &evt);
         }
     }
@@ -4253,6 +4335,44 @@ void serverSimScenarioResetTickStats(ServerSim *sim) {
     memset(&sim->scenarioTickStats, 0, sizeof(sim->scenarioTickStats));
 }
 
+void serverSimSetScenarioRecordText(ServerSim *sim, const char *text,
+                                    size_t len) {
+    char *copy;
+
+    if (sim == NULL) return;
+    free(sim->scenarioRecordText);
+    sim->scenarioRecordText    = NULL;
+    sim->scenarioRecordTextLen = 0;
+    if (text == NULL || len == 0) {
+        return;
+    }
+    if (len > SCN_RECORD_TEXT_MAX) {
+        WB_LOG_WARN(WB_LOG_CAT_SIM,
+                    "scripts.json is %zu bytes, over the %u-byte cap, and is "
+                    "not recorded", len, (unsigned)SCN_RECORD_TEXT_MAX);
+        return;
+    }
+    copy = (char *)malloc(len);
+    if (copy == NULL) {
+        WB_LOG_WARN(WB_LOG_CAT_SIM,
+                    "no memory for %zu bytes of scripts.json, not recorded",
+                    len);
+        return;
+    }
+    memcpy(copy, text, len);
+    sim->scenarioRecordText    = copy;
+    sim->scenarioRecordTextLen = len;
+}
+
+const char *serverSimGetScenarioRecordText(const ServerSim *sim, size_t *len) {
+    if (sim == NULL || sim->scenarioRecordText == NULL) {
+        if (len != NULL) *len = 0;
+        return NULL;
+    }
+    if (len != NULL) *len = sim->scenarioRecordTextLen;
+    return sim->scenarioRecordText;
+}
+
 void serverSimSetScenarioRoundBoot(ServerSim *sim, void (*roundBoot)(void *ctx),
                                    void *ctx) {
     if (sim == NULL) return;
@@ -4320,6 +4440,50 @@ void serverSimSetScenarioDetailsReader(ServerSim *sim,
     if (sim == NULL) return;
     sim->scenarioDetailsReader = read;
     sim->scenarioDetailsReaderCtx = ctx;
+}
+
+void serverSimSetScriptFileReader(ServerSim *sim,
+                                  ServerScriptReadResult (*read)(
+                                      void *ctx, const char *dir,
+                                      const char *file, uint8_t **outBytes,
+                                      uint32_t *outLen, uint32_t cap),
+                                  void *ctx) {
+    if (sim == NULL) return;
+    sim->scriptFileReader = read;
+    sim->scriptFileReaderCtx = ctx;
+}
+
+ServerScriptReadResult serverSimScriptFileRead(ServerSim *sim,
+                                               const char *file,
+                                               uint8_t **outBytes,
+                                               uint32_t *outLen) {
+    if (outBytes != NULL) *outBytes = NULL;
+    if (outLen != NULL) *outLen = 0;
+    if (sim == NULL || file == NULL || file[0] == '\0' || outBytes == NULL ||
+        outLen == NULL) {
+        return SERVER_SCRIPT_READ_NOT_FOUND;
+    }
+    /* The map's own script is not served: its file is the map. */
+    if (strcmp(sim->scenarioMapScript.file, file) == 0) {
+        return SERVER_SCRIPT_READ_NOT_FOUND;
+    }
+    if (sim->scriptFileReader == NULL) {
+        return SERVER_SCRIPT_READ_NOT_FOUND;
+    }
+    return sim->scriptFileReader(sim->scriptFileReaderCtx,
+                                 serverSimGetScenarioDir(sim), file, outBytes,
+                                 outLen, LOBBY_PACKAGE_UPLOAD_MAX_BYTES);
+}
+
+void serverSimSetScenarioSettingsReader(ServerSim *sim,
+                                        int (*read)(void *ctx,
+                                                    const char *dir,
+                                                    const char *file,
+                                                    uint8_t *out, size_t cap),
+                                        void *ctx) {
+    if (sim == NULL) return;
+    sim->scenarioSettingsReader    = read;
+    sim->scenarioSettingsReaderCtx = ctx;
 }
 
 int serverSimScenarioListDir(const ServerSim *sim, ScnDirEntry *out, int max) {

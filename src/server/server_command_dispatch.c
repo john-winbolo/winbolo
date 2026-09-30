@@ -119,6 +119,28 @@ static bool scenarioAllowsExtraTeams(ServerSim *sim, BYTE slot, BYTE team) {
     return allow;
 }
 
+/* Whether the scenario lets player ally with other: player is the one who
+ * asked, other the seat asked. Put to the policy at the request and again at
+ * the accept, the two places a player makes an alliance. Alliances a script
+ * makes itself — set_team, spawning a bot onto a team, seating — go through
+ * other paths and are not asked. With no policy, or one with no opinion, the
+ * answer is yes. */
+static bool scenarioAllowsAlliance(ServerSim *sim, BYTE player, BYTE other) {
+    bool allow;
+
+    if (sim->scenarioPolicy == NULL || sim->scenarioPolicy->canAlly == NULL) {
+        return TRUE;
+    }
+    if (player >= MAX_TANKS || other >= MAX_TANKS) {
+        return TRUE;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    allow = sim->scenarioPolicy->canAlly(sim->scenarioPolicy->ctx, player,
+                                         other);
+    serverSimScenarioPolicyLeave(sim);
+    return allow;
+}
+
 /* The START_SIDE_* choice of a slot's team; a slot on team 0 has no side. */
 static BYTE lobbySlotStartSide(const ServerSim *sim, BYTE slot) {
     const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, slot);
@@ -224,6 +246,8 @@ BOLO_STATIC_ASSERT(CMD_SCRIPT_LIST_FILE_LEN == LOBBY_SCENARIO_FILE_LEN,
                    cmd_script_list_file_len_matches_lobby_scenario_file_len);
 BOLO_STATIC_ASSERT(SCN_DIR_FILE_LEN == LOBBY_SCENARIO_FILE_LEN,
                    scn_dir_file_len_matches_lobby_scenario_file_len);
+BOLO_STATIC_ASSERT(CMD_SCRIPT_SETTING_ID_LEN == SCN_SETTING_ID_LEN,
+                   cmd_script_setting_id_len_matches_scn_setting_id_len);
 BOLO_STATIC_ASSERT(SCN_DIR_NAME_LEN == LOBBY_SCENARIO_NAME_LEN,
                    scn_dir_name_len_matches_lobby_scenario_name_len);
 
@@ -703,12 +727,24 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         return CMD_OK;
     }
     case CMD_ALLIANCE_REQUEST: {
+        /* Alliances are made in a running round. In the lobby, teams are how
+           sides change, and the client offers these commands in game only. */
+        if (serverSimGetState(sim) != serverStateRunning) {
+            return CMD_REJECT_BAD_STATE;
+        }
         if (serverSimGetRanked(sim)) return CMD_REJECT_BAD_STATE;
         const CmdAllianceRequest *p = &cmd->u.allianceRequest;
         if (p->toPlayer >= MAX_TANKS) return CMD_REJECT_INVALID;
         if (!serverSimIsPlayerConnected(sim, p->toPlayer)) {
             return CMD_REJECT_INVALID;  /* silent on wire today; preserved */
         }
+        /* Refused here rather than at the accept alone, so nobody is shown
+           a request the scenario will not let them take. */
+        if (!scenarioAllowsAlliance(sim, (BYTE)senderSlot, p->toPlayer)) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        /* Recorded so the accept can check it was asked for. */
+        sim->allianceAskedBy[p->toPlayer] |= (uint16_t)(1u << senderSlot);
         logAddEvent(log_AllyRequest, (BYTE)senderSlot, p->toPlayer,
                     0, 0, 0, NULL);
         ControlEvent reqEvt;
@@ -720,11 +756,34 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         return CMD_OK;
     }
     case CMD_ALLIANCE_ACCEPT: {
-        serverSimAcceptAlliance(sim, (BYTE)senderSlot,
-                                cmd->u.allianceAccept.newMember);
+        BYTE newMember = cmd->u.allianceAccept.newMember;
+        uint16_t asked;
+        if (serverSimGetState(sim) != serverStateRunning) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (serverSimGetRanked(sim)) return CMD_REJECT_BAD_STATE;
+        if (newMember >= MAX_TANKS) return CMD_REJECT_INVALID;
+        /* Only a request the new member made can be accepted. Checked here
+           and not in serverSimAcceptAlliance, so a scenario seating players
+           and the tests that call the sim directly are not affected. */
+        asked = (uint16_t)(1u << newMember);
+        if ((sim->allianceAskedBy[senderSlot] & asked) == 0) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        /* Asked again: the scenario's answer may have changed since the
+           request. The new member is the one who asked. A refusal leaves
+           the request in place, as a decline does. */
+        if (!scenarioAllowsAlliance(sim, newMember, (BYTE)senderSlot)) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        sim->allianceAskedBy[senderSlot] &= (uint16_t)~asked;
+        serverSimAcceptAlliance(sim, (BYTE)senderSlot, newMember);
         return CMD_OK;
     }
     case CMD_ALLIANCE_LEAVE: {
+        if (serverSimGetState(sim) != serverStateRunning) {
+            return CMD_REJECT_BAD_STATE;
+        }
         serverSimLeaveAlliance(sim, (BYTE)senderSlot);
         return CMD_OK;
     }
@@ -1230,6 +1289,37 @@ scriptListDone:
         free(dirRows);
         return result;
     }
+    case CMD_SET_SCRIPT_SETTING: {
+        /* The host choosing a value for one of a script's own settings.
+           Lobby-only and host-only, like the list it is chosen beside: the
+           value changes how the next round plays. The script need not be on
+           the list yet, so a host can set a mod up before adding it.
+
+           Nothing from the client is trusted past the names.
+           serverSimSetScriptSetting reads the declaration for the file on
+           this server, refuses an id it does not declare and a bool
+           setting given anything but 0 or 1, and falls back to the default
+           for an int value outside the range or off the step. */
+        const CmdSetScriptSetting *s = &cmd->u.setScriptSetting;
+
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+        if (memchr(s->file, '\0', sizeof(s->file)) == NULL ||
+            memchr(s->id, '\0', sizeof(s->id)) == NULL ||
+            !lobbyScenarioNameShapeOk(s->file)) {
+            return CMD_REJECT_INVALID;
+        }
+        if (!serverSimSetScriptSetting(sim, s->file, s->id, s->value, NULL)) {
+            return CMD_REJECT_INVALID;
+        }
+        /* What the round plays by changed, so a ready player is asked to
+           look again, as a map or list change asks. */
+        lobbyAutoUnreadyOnChange(sim);
+        return CMD_OK;
+    }
     case CMD_LOBBY_RELOAD_SCENARIO: {
         /* The edit-reload-play loop the dedicated server's console already
            has, for a host with no console. Lobby-only and host-only, like
@@ -1408,13 +1498,10 @@ scriptListDone:
         if (!bp->pending) return CMD_REJECT_BAD_STATE;
         /* "Humans only" kicks every bot before applying the human-only
          * team assignments — the proposal contains no team for those
-         * slots. */
+         * slots. The scenario's seats go too, and the next map change
+         * seats them again. */
         if (!bp->includeBots) {
-            for (int i = 0; i < MAX_TANKS; i++) {
-                if (serverSimIsBot(sim, (BYTE)i)) {
-                    serverSimRemoveBot(sim, (BYTE)i);
-                }
-            }
+            serverSimRemoveAllBots(sim);
         }
         for (int i = 0; i < MAX_TANKS; i++) {
             if (bp->teamForSlot[i] != 0) {
@@ -1423,6 +1510,14 @@ scriptListDone:
             }
         }
         serverSimReapplyTeamAlliances(sim);
+        /* The batch moves teamNumber and nothing else, so a swapped slot
+         * still holds the start it picked for its old team, on its old
+         * team's side, and the round honours a reservation as it stands.
+         * Drop each reservation the new teams' sides no longer allow and
+         * pick again for those slots, the way a team change does. A start
+         * that is still allowed, one a player chose by hand included, is
+         * kept; the slots that move are republished. */
+        serverSimReleaseIneligibleStartsAndBackfill(sim, 0xFF);
         serverSimClearBalanceProposal(sim);
         /* Publish the cleared proposal so balanceProposalActive flips
          * back to false on every client — keeps canBalance gating from

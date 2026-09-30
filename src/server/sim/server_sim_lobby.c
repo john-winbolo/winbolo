@@ -89,6 +89,17 @@ void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cf
     serverSimEnterLobby(sim);
   }
 
+  /* A server that opens a lobby opens it with teams 1 and 2 on the default
+   * pair for its map's shape (north/south, or east/west for a wide map).
+   * The dedicated server sets neither flag above and is left in the
+   * lobby serverSimCreate* made, so the test is the sim's own flag, not
+   * cfg->lobbyEnabled. A skipLobby start (-nolobby, -maprotate, and the
+   * local sims of bg_game, braintest and the gym) has no lobby and keeps
+   * placing teams with no side, as it always has. */
+  if (!cfg->skipLobby && sim->lobbyEnabled) {
+    serverSimApplyDefaultTeamSides(sim);
+  }
+
   /* Snapshot the configured lobby settings now that every startup field
    * is in place — serverSimResetLobbyToDefaults restores from this when
    * the last human leaves the lobby. */
@@ -110,6 +121,7 @@ void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cf
   }
   sim->originalLobbySettings.classicMode         = sim->classicMode;
   sim->originalLobbySettings.alliesInTrees       = sim->alliesInTrees;
+  sim->originalLobbySettings.positionalSound     = sim->positionalSound;
   sim->originalLobbySettings.overviewWindow      = sim->overviewWindow;
   sim->originalLobbySettings.lineOfSight         = sim->lineOfSight;
   sim->originalLobbySettings.smartPingsOff       = sim->smartPingsOff;
@@ -605,6 +617,107 @@ static void lobbyMirrorSideToLoneOtherTeam(ServerSim *sim, BYTE teamId,
     serverSimPublishLobbyTeamMeta(sim, other);
 }
 
+/* start_sides.h repeats the deep sea terrain value; keep the two equal. */
+SDL_COMPILE_TIME_ASSERT(start_side_deep_sea,
+                        START_SIDE_TERRAIN_DEEP_SEA == DEEP_SEA);
+
+/* The sides a fresh lobby starts on, from the shape of the live map. The
+ * squares that are not deep sea are measured (startSideDefaultIsEastWest):
+ * when they span more columns than rows the pair is east/west, otherwise
+ * (a tie included) north/south. The lower team id takes the first side of
+ * the pair and the next one the second, the order the map preview's
+ * compass assigns an axis in (lobby_side_axis.h): north then south, east
+ * then west. Pills, bases and starts do not count on their own; a start on
+ * deep sea is one square and does not change the answer on a real map. A
+ * buffer that cannot be had gives north/south, the answer before the map
+ * was measured. */
+static void lobbyDefaultSidePair(const ServerSim *sim,
+                                 uint8_t *outA, uint8_t *outB) {
+    BYTE *terrain;
+    bool eastWest = false;
+    terrain = (BYTE *)SDL_malloc(SERVER_SIM_TERRAIN_BYTES);
+    if (terrain != NULL) {
+        if (serverSimGetMapTerrainBuffer(sim, terrain, SERVER_SIM_TERRAIN_BYTES)) {
+            eastWest = startSideDefaultIsEastWest(terrain, MAP_ARRAY_SIZE,
+                                                  MAP_ARRAY_SIZE, MAP_ARRAY_SIZE);
+        }
+        SDL_free(terrain);
+    }
+    if (eastWest) {
+        *outA = START_SIDE_E;
+        *outB = START_SIDE_W;
+    } else {
+        *outA = START_SIDE_N;
+        *outB = START_SIDE_S;
+    }
+}
+
+/* The sides a fresh lobby starts on: teams 1 and 2 on the pair
+ * lobbyDefaultSidePair picks for the map's shape. Every other team is left
+ * with no side, which the start rules already keep off the two chosen
+ * sides; a third team is not given the other axis, because many maps have
+ * no starts there.
+ *
+ * Both sides are marked filled-in rather than named, so the lobby treats
+ * them as the answer to the other team's side: a host who moves team 1 to
+ * another side has team 2 follow to the opposite one, and one who takes
+ * team 1 back to no side takes team 2 with it. A side the host names for a
+ * team clears the mark, and from then on it is never written over.
+ *
+ * A map with no starts on the chosen sides needs nothing here: the
+ * placement already drops a side with no valid start back to no side.
+ *
+ * Nothing is published. Both callers run with no subscribers (a server
+ * starting up, a lobby the last human has just left), and the next joiner
+ * reads the sides from the join-time replay of teams 1 and 2. */
+void serverSimApplyDefaultTeamSides(ServerSim *sim) {
+    TeamMetadata *t1;
+    TeamMetadata *t2;
+    uint8_t a;
+    uint8_t b;
+    if (sim == NULL) return;
+    t1 = serverSimGetTeamMetaMut(sim, 1);
+    t2 = serverSimGetTeamMetaMut(sim, 2);
+    if (t1 == NULL || t2 == NULL) return;
+    lobbyDefaultSidePair(sim, &a, &b);
+    t1->startSide      = a;
+    t1->sideAutoFilled = 1;
+    t2->startSide      = b;
+    t2->sideAutoFilled = 1;
+}
+
+/* The map has changed under a lobby. When teams 1 and 2 still hold the
+ * default pair untouched — both sides filled-in, north/south or east/west
+ * in the default order — the pair is picked again for the new map's shape
+ * and both teams are published. Only the default does both marks at once:
+ * a side the host names clears its mark, and the two-team mirror marks
+ * only the side it fills in, so any side the host chose is left as it is.
+ * Run before the reservations are reconciled, so the starts are re-picked
+ * against the new sides. Returns true when the sides changed. */
+bool serverSimRefreshDefaultTeamSides(ServerSim *sim) {
+    TeamMetadata *t1;
+    TeamMetadata *t2;
+    uint8_t a;
+    uint8_t b;
+    bool isDefaultPair;
+    if (sim == NULL) return false;
+    t1 = serverSimGetTeamMetaMut(sim, 1);
+    t2 = serverSimGetTeamMetaMut(sim, 2);
+    if (t1 == NULL || t2 == NULL) return false;
+    if (!t1->sideAutoFilled || !t2->sideAutoFilled) return false;
+    isDefaultPair =
+        (t1->startSide == START_SIDE_N && t2->startSide == START_SIDE_S) ||
+        (t1->startSide == START_SIDE_E && t2->startSide == START_SIDE_W);
+    if (!isDefaultPair) return false;
+    lobbyDefaultSidePair(sim, &a, &b);
+    if (t1->startSide == a && t2->startSide == b) return false;
+    t1->startSide = a;
+    t2->startSide = b;
+    serverSimPublishLobbyTeamMeta(sim, 1);
+    serverSimPublishLobbyTeamMeta(sim, 2);
+    return true;
+}
+
 void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
                            uint8_t color, uint8_t namingPool,
                            uint8_t startSide,
@@ -613,15 +726,31 @@ void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
     TeamMetadata *t = serverSimGetTeamMetaMut(sim, teamId);
     if (t == NULL) return;
     uint8_t prevSide = t->startSide;
-    t->in_use = 1;
-    t->color = color;
+    bool repeatsAll;
     /* A side outside the START_SIDE_* range means no side. */
     if (startSide >= START_SIDE_COUNT) startSide = START_SIDE_ANY;
+    /* Whether this write names every field as the team already has it.
+     * The lobby sends one of those only when the host picks the side the
+     * team already shows: a pool, colour or name edit changes that field. */
+    repeatsAll = t->in_use && prevSide == startSide &&
+                 t->color == color && t->namingPool == namingPool &&
+                 SDL_strnlen(t->name, LOBBY_TEAM_NAME_LEN) == nameLen &&
+                 (nameLen == 0 ||
+                  (name != NULL && memcmp(t->name, name, nameLen) == 0));
+    t->in_use = 1;
+    t->color = color;
     t->startSide = startSide;
-    /* This write came in for this team, so the side is the team's own choice
-     * — START_SIDE_ANY included — and the fill-in below never writes over it
-     * again. */
-    t->sideAutoFilled = 0;
+    /* A write that changes the side makes it the team's own choice —
+     * START_SIDE_ANY included — and the fill-in below never writes over it
+     * again. So does a write that repeats every field: that is the host
+     * picking the side the team already shows, and on the lobby's default
+     * pair it keeps that pair through a map change. A write that repeats
+     * the side but changes another field leaves the mark alone: the lobby
+     * sends the side it already shows with every rename, colour and pool
+     * edit, and renaming a team is not choosing its side. */
+    if (prevSide != startSide || repeatsAll) {
+        t->sideAutoFilled = 0;
+    }
     /* Per-team uniqueness on namingPool: if another in_use team
      * already owns this pool, pick the lowest pool index not
      * used by any other team. Falls back to the requested value
@@ -853,6 +982,15 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
              * is set, the same way it owns the three view policies. */
             if (sim->classicMode) return false;
             serverSimSetAlliesInTrees(sim, value[0] != 0);
+            return true;
+        }
+        case LST_POSITIONAL_SOUND: {
+            if (len != 1) return false;
+            /* Classic mode plays every sound centred and owns this value
+             * while it is set, the same as LST_ALLIES_IN_TREES. A plain
+             * bool, so any non-zero byte means on. */
+            if (sim->classicMode) return false;
+            serverSimSetPositionalSound(sim, value[0] != 0);
             return true;
         }
         case LST_OVERVIEW_WINDOW: {

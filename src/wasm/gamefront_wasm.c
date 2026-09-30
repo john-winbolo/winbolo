@@ -224,6 +224,7 @@ int            gameFrontHostingUploadMaxFiles   = 64;
 int            gameFrontHostingUploadMaxStorage = 8;
 char           gameFrontHostingUploadDir[FILENAME_MAX] = "";
 int            gameFrontHostingScriptUploadPolicy     = SCRIPT_UPLOAD_ALLOW;
+bool           gameFrontHostingShareScripts           = TRUE;
 int            gameFrontHostingScriptUploadMaxFiles   = 32;
 int            gameFrontHostingScriptUploadMaxStorage = 64;
 char           gameFrontHostingScriptUploadDir[FILENAME_MAX] = "";
@@ -243,6 +244,7 @@ int gameFrontViewBaseDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 int gameFrontViewAllyDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 bool gameFrontClassicMode      = FALSE;
 bool gameFrontAlliesInTrees    = FALSE;
+bool gameFrontPositionalSound  = FALSE;
 int gameFrontOverviewWindow    = OVERVIEW_WINDOW_STOCK;
 int gameFrontLineOfSight       = LINE_OF_SIGHT_STOCK;
 
@@ -250,7 +252,6 @@ int gameFrontLineOfSight       = LINE_OF_SIGHT_STOCK;
  * inside humanSim; only high-level lifecycle gating is tracked here. */
 static ServerSim *wasmServerSim = NULL;
 static bool wasmTransportActive = FALSE;
-static BYTE wasmPlayerNum = 0;
 static SubscriberHandle wasmControlSub = SUBSCRIBER_HANDLE_INVALID;
 
 ClientSim *humanSim = NULL;
@@ -628,7 +629,6 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     break;
     }
 
-    wasmPlayerNum = clientSimGetServerPlayerNum(humanSim);
     wasmTransportActive = TRUE;
 
     /* Store server address in ClientSim for brain info */
@@ -658,7 +658,8 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
      * and the first snapshot apply fires the viewport finalisation. The lobby
      * vs running landing (netLobby) is settled by clientFrontAwaitJoin, and the
      * mapDownloadComplete flag stays transport-driven, so nothing to do here. */
-    printf("[WASM] UDP connected as player %d\n", wasmPlayerNum);
+    printf("[WASM] UDP connected as player %d\n",
+           clientSimGetServerPlayerNum(humanSim));
   } else {
     /* ---- Single-player via ServerSim + local transport ---- */
     printf("[WASM] Setting up single-player ServerSim...\n");
@@ -688,7 +689,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       }
       if (wasmServerSim == NULL) {
         BYTE emap[6000] = E_MAP;
-        wasmServerSim = serverSimCreateCompressed(emap, 5097, "EverardIsland", gametype, hiddenMines, startDelay, timeLen);
+        wasmServerSim = serverSimCreateCompressed(emap, E_MAP_LEN, "EverardIsland", gametype, hiddenMines, startDelay, timeLen);
       }
       if (wasmServerSim == NULL) {
         printf("[WASM] Failed to create ServerSim\n");
@@ -738,7 +739,6 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       return FALSE;
     }
     wasmTransportActive = TRUE;
-    wasmPlayerNum = 0;
     /* Session-type flag for the lobby/UI (hide multiplayer-only controls).
      * The shared tick core's keys-half pump skip keys off
      * clientSimTransportTicksServer, which clientSimConnectLocal (active)
@@ -1033,6 +1033,10 @@ void gameFrontSetHostingScriptUploadPolicy(int policy) {
   gameFrontHostingScriptUploadPolicy = policy;
 }
 
+void gameFrontSetHostingShareScripts(bool on) {
+  gameFrontHostingShareScripts = on;
+}
+
 void gameFrontSetHostingScriptUploadMaxFiles(int maxFiles) {
   gameFrontHostingScriptUploadMaxFiles = maxFiles;
 }
@@ -1059,6 +1063,7 @@ void gameFrontSetViewBaseDecaySecs(int secs) { gameFrontViewBaseDecaySecs = secs
 void gameFrontSetViewAllyDecaySecs(int secs) { gameFrontViewAllyDecaySecs = secs; }
 void gameFrontSetClassicMode(bool on)        { gameFrontClassicMode = on; }
 void gameFrontSetAlliesInTrees(bool on)      { gameFrontAlliesInTrees = on; }
+void gameFrontSetPositionalSound(bool on)    { gameFrontPositionalSound = on; }
 void gameFrontSetOverviewWindow(int window)  { gameFrontOverviewWindow = window; }
 void gameFrontSetLineOfSight(int mode)       { gameFrontLineOfSight = mode; }
 
@@ -1097,6 +1102,7 @@ void gameFrontRememberVisibility(const VisibilitySettings *v,
   gameFrontViewAllyDecaySecs = (int)v->decaySecs[viewCategoryAlly];
   gameFrontClassicMode       = v->classicMode;
   gameFrontAlliesInTrees     = v->alliesInTrees;
+  gameFrontPositionalSound   = v->positionalSound;
   gameFrontOverviewWindow    = (int)v->overviewWindow;
   gameFrontLineOfSight       = (int)v->lineOfSight;
   p = visibilityPresetMatch(v);
@@ -1119,6 +1125,7 @@ void gameFrontGetVisibilitySettings(VisibilitySettings *out) {
   out->overviewWindow              = (uint8_t)gameFrontOverviewWindow;
   out->lineOfSight                 = (uint8_t)gameFrontLineOfSight;
   out->alliesInTrees               = gameFrontAlliesInTrees;
+  out->positionalSound             = gameFrontPositionalSound;
 }
 
 /* Steam rich presence — there is no Steam client behind a browser tab. */
@@ -1158,7 +1165,11 @@ ServerSim *gameFrontGetServerSim(void) {
 }
 
 BYTE gameFrontGetPlayerNum(void) {
-  return wasmPlayerNum;
+  /* Same race as the desktop gamefront.c: the join can land on the lobby
+   * replay before JOIN_ACCEPT, so the copy taken at join may still be 0.
+   * The resent accept updates the transport, so read it live. It answers 0
+   * with no sim and for the local (non-UDP) transport. */
+  return clientSimGetServerPlayerNum(humanSim);
 }
 
 bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {

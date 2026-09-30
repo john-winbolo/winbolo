@@ -47,6 +47,7 @@
 #include "../winbolonet/winbolonet_server.h"
 #include "server_sim.h"
 #include "server_sim_lifecycle.h"
+#include "server_sim_join.h"      /* serverSimRepickAllLobbyStarts — after -allybots / -teams move the bots */
 #include "mapgen.h"
 #include "log.h"
 #include "transport_udp.h"
@@ -705,10 +706,11 @@ void printArgs() {
   fprintf(stderr, "                Valid: gametype, ai, mines, timelimit (alias: limit),\n");
   fprintf(stderr, "                autolock, password, ranked, openhost, map, pillview,\n");
   fprintf(stderr, "                baseview, allyview, classicmode, alliesintrees,\n");
-  fprintf(stderr, "                overviewwindow, lineofsight, smartpings.\n");
+  fprintf(stderr, "                overviewwindow, lineofsight, smartpings,\n");
+  fprintf(stderr, "                positionalsound.\n");
   fprintf(stderr, "                Locking pillview, baseview, allyview, alliesintrees,\n");
-  fprintf(stderr, "                overviewwindow or lineofsight also locks classicmode,\n");
-  fprintf(stderr, "                which writes those values.\n");
+  fprintf(stderr, "                overviewwindow, lineofsight or positionalsound also\n");
+  fprintf(stderr, "                locks classicmode, which writes those values.\n");
   fprintf(stderr, "                e.g. -lock gametype,ranked,map\n");
   fprintf(stderr, "-maxplayers <N> - Specifies the maximum number of players that can be on this\n");
   fprintf(stderr, "                server.\n");
@@ -733,12 +735,16 @@ void printArgs() {
   fprintf(stderr, "-overviewwindow <M> - Map overview live block: expanded, classic (default), none\n");
   fprintf(stderr, "-lineofsight  - Buildings and stands of trees block sight inside the live\n");
   fprintf(stderr, "                block. Off by default, and off under -classicmode.\n");
+  fprintf(stderr, "-positionalsound- Sounds tell each player which side they are on and\n");
+  fprintf(stderr, "                roughly how far. Off by default (every sound centred),\n");
+  fprintf(stderr, "                and off under -classicmode.\n");
   fprintf(stderr, "-smartpingsoff- Refuse smart pings for the whole server. Off by default,\n");
   fprintf(stderr, "                i.e. pings are allowed. Not part of -classicmode.\n");
   fprintf(stderr, "-classicmode  - Classic Bolo view: sets pillview key, baseview off and\n");
   fprintf(stderr, "                allyview off, overriding those three switches, turns\n");
   fprintf(stderr, "                allies in trees off, sets the overview window to classic\n");
-  fprintf(stderr, "                with line of sight off, and stops the lobby changing them.\n");
+  fprintf(stderr, "                with line of sight off, turns positional sound off,\n");
+  fprintf(stderr, "                and stops the lobby changing them.\n");
 
   fprintf(stderr, "\nMap uploads (client-pushed maps in the lobby):\n");
   fprintf(stderr, "-uploadpolicy <P> - Client map-upload handling: \"off\" refuses uploads,\n");
@@ -763,6 +769,8 @@ void printArgs() {
   fprintf(stderr, "                (1-255, default 32).\n");
   fprintf(stderr, "-scriptuploadmaxstorage <MB> - Max script storage in persist mode\n");
   fprintf(stderr, "                (1-4095 MB, default 64).\n");
+  fprintf(stderr, "-noscriptsharing - Refuse players' requests for a copy of this server's\n");
+  fprintf(stderr, "                mods and scenarios. Sharing is on by default.\n");
 
   fprintf(stderr, "\nBots & AI:\n");
   fprintf(stderr, "-bots <N>     - Number of AI bot players to add (default: 0)\n");
@@ -1799,7 +1807,7 @@ int main(int argc, char **argv) {
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
-    serverSim = serverSimCreateCompressed(emap, 5097, "Everard Island", game, hiddenMines, srtDelay, gmeLen);
+    serverSim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island", game, hiddenMines, srtDelay, gmeLen);
     if (serverSim == NULL) {
       fprintf(stderr, "Error starting server simulation (inbuilt map)\n");
 #ifdef USING_SDL
@@ -2091,13 +2099,14 @@ int main(int argc, char **argv) {
         else if (strcmp(lo, "lineofsight") == 0) serverLocks |= LOBBY_LOCK_LINE_OF_SIGHT;
         else if (strcmp(lo, "smartpings") == 0) serverLocks |= LOBBY_LOCK_SMART_PINGS;
         else if (strcmp(lo, "mods") == 0)      serverLocks |= LOBBY_LOCK_MODS;
+        else if (strcmp(lo, "positionalsound") == 0) serverLocks |= LOBBY_LOCK_POSITIONAL_SOUND;
         else {
           fprintf(stderr,
                   "Warning: unknown -lock name '%s' (valid: gametype, "
                   "ai, mines, timelimit, autolock, password, ranked, "
                   "openhost, map, pillview, baseview, allyview, "
                   "classicmode, alliesintrees, overviewwindow, "
-                  "lineofsight, smartpings, mods)\n", lo);
+                  "lineofsight, smartpings, mods, positionalsound)\n", lo);
         }
       }
       /* Locking any visibility setting locks classicmode too, because
@@ -2108,7 +2117,8 @@ int main(int argc, char **argv) {
       if (implied != serverLocks) {
         fprintf(stderr,
                 "Note: -lock of pillview / baseview / allyview / "
-                "alliesintrees / overviewwindow / lineofsight also "
+                "alliesintrees / overviewwindow / lineofsight / "
+                "positionalsound also "
                 "locks classicmode, which writes those values.\n");
         serverLocks = implied;
       }
@@ -2217,12 +2227,20 @@ int main(int argc, char **argv) {
     serverSimSetLineOfSight(serverSim, (uint8_t)lineOfSightBuildingsAndTrees);
   }
 
+  /* -positionalsound: sounds carry which side they are on and a banded
+   * distance. Applied before -classicmode so classic mode wins when both
+   * are on the same command line. Only set when the flag is present — the
+   * sim default is off. */
+  if (argExist(argc, argv, "positionalsound") == TRUE) {
+    serverSimSetPositionalSound(serverSim, true);
+  }
+
   /* -smartpingsoff: the whole server refuses CMD_PING. Set here, before
    * serverInstanceStartup, so the lobby snapshot captures it — a value set
    * after that is not in originalLobbySettings and the next reset to
    * defaults would turn pings back on. Only set when the flag is present;
    * the sim default is allowed. Classic mode does not touch this: smart
-   * pings are not one of the six settings it writes. */
+   * pings are not one of the seven settings it writes. */
   if (argExist(argc, argv, "smartpingsoff") == TRUE) {
     serverSimSetSmartPingsOff(serverSim, true);
   }
@@ -2336,6 +2354,10 @@ int main(int argc, char **argv) {
       if (poolsLoaded) {
         fprintf(stderr, "Loaded %d bot name pool(s)\n", poolStats.poolsKept);
       }
+      /* The sim was made further up, before these pools were loaded, so
+       * the catalogue copy it took then holds the built-in pools. Take it
+       * again so joiners are offered the pools loaded here. */
+      serverSimRefreshBotPools(serverSim);
     }
     /* If no -brain specified but AI is enabled, auto-discover a brain path
      * so that lobby "Add Bot" requests have a brain to use. */
@@ -2543,6 +2565,8 @@ int main(int argc, char **argv) {
     instCfg.scriptUploadMaxFiles        = scriptUploadMaxFiles;
     instCfg.scriptUploadMaxStorageBytes = scriptUploadMaxStorageBytes;
     instCfg.scriptUploadDir             = scriptUploadDir;
+    instCfg.noScriptSharing             =
+        (argExist(argc, argv, "noscriptsharing") == TRUE);
     instCfg.skipLobby           = skipLobby;
     instCfg.emptyResetEnabled   = emptyResetEnabled;
     instCfg.hasPassword         = (pass[0] != '\0');
@@ -3084,6 +3108,13 @@ int main(int argc, char **argv) {
       } else {
         fprintf(stderr, "Added %d bot(s) with brain '%s'\n", numBots, brainPath);
       }
+      /* Each bot reserved a lobby start as it was added, on team 0 and so
+       * with no side; -allybots and -teams then moved it with the batch
+       * setter, which leaves that reservation where it was. Pick again for
+       * the teams the bots are on now, or a team with a side starts a bot
+       * on the other team's. Only a lobby server has reservations: a
+       * -nolobby round is already running here and this does nothing. */
+      serverSimRepickAllLobbyStarts(serverSim);
     } else if (numBots > 0) {
       fprintf(stderr, "Warning: -bots specified but no -brain path given\n");
     }

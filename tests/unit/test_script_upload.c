@@ -26,8 +26,9 @@
  *
  * Landing, with the real host callbacks registered by
  * scenarioHostRegisterScenarioLister. Every directory is a scratch one: the
- * host's own, the player's (WB_MOD_DIR_USER), the shipped one
- * (WB_MOD_DIR_SHIPPED) and the landing directory, set on the sim.
+ * host's own, the player's (WB_MOD_DIR_USER), an empty Workshop one
+ * (WB_MOD_DIR_WORKSHOP), the shipped one (WB_MOD_DIR_SHIPPED) and the
+ * landing directory, set on the sim.
  *
  *   loopback_script_upload_lands_listed
  *                                a mod .lua lands in the landing directory
@@ -287,9 +288,10 @@ static uint8_t text_byte(size_t i) {
 
 /* BEGIN built here by hand, not through the client's builder, so the server
  * is held to the layout on its own: [header 8][kind 1][totalLen 4]
- * [nameLen 1][name N], and no bulkStartSeq (the optional tail). */
+ * [nameLen 1][name N][bulkStartSeq 4]. The callers pass the server's own
+ * expected bulk sequence for the slot, so taking it changes nothing. */
 static int hand_begin(uint8_t *buf, uint8_t kind, uint32_t totalLen,
-                      const char *name) {
+                      const char *name, uint32_t bulkStartSeq) {
     size_t nameLen = strlen(name);
     int pos = PACKET_HEADER_SIZE;
     packHeader(buf, PACKET_LOBBY_MAP_UPLOAD_BEGIN, 0);
@@ -300,7 +302,9 @@ static int hand_begin(uint8_t *buf, uint8_t kind, uint32_t totalLen,
     buf[pos++] = (uint8_t)totalLen;
     buf[pos++] = (uint8_t)nameLen;
     memcpy(buf + pos, name, nameLen);
-    return pos + (int)nameLen;
+    pos += (int)nameLen;
+    packU32(buf + pos, bulkStartSeq);
+    return pos + 4;
 }
 
 /* Whether the last send_begin left the server holding an upload for the slot,
@@ -313,8 +317,9 @@ static bool lastBeginArmed;
  * approved BEGIN is cleared again so the next one starts from nothing. */
 static int send_begin(LoopbackHarness *h, int slot, uint8_t kind,
                       uint32_t totalLen, const char *name) {
-    uint8_t pkt[PACKET_HEADER_SIZE + 6 + 128];
-    int len = hand_begin(pkt, kind, totalLen, name);
+    uint8_t pkt[PACKET_HEADER_SIZE + 6 + 128 + 4];
+    int len = hand_begin(pkt, kind, totalLen, name,
+        udpServer.channelMux[slot].ch[CHANNEL_BULK].expectedSeq);
     struct sockaddr_in from;
     int code;
 
@@ -364,9 +369,10 @@ int run_script_upload_begin_refusals(void) {
     /* Accepted at the cap: the case the refusals below are measured from.
      * A heap buffer of the announced size stands behind the approval. */
     {
-        uint8_t pkt[PACKET_HEADER_SIZE + 6 + 128];
+        uint8_t pkt[PACKET_HEADER_SIZE + 6 + 128 + 4];
         int len = hand_begin(pkt, UPLOAD_KIND_SCRIPT,
-                             LOBBY_PACKAGE_UPLOAD_MAX_BYTES, "cap.scenario");
+                             LOBBY_PACKAGE_UPLOAD_MAX_BYTES, "cap.scenario",
+                             udpServer.channelMux[slot].ch[CHANNEL_BULK].expectedSeq);
         struct sockaddr_in from;
         bool active, isScript, haveBuf, freed, kindBack, cleared;
         threadsWaitForMutex();
@@ -665,12 +671,14 @@ int run_script_upload_client_refusals(void) {
 
 /* ── landing, with the host's own callbacks ──────────────────────────── */
 
-/* The four directories a landing case reads, each under the case's scratch
+/* The five directories a landing case reads, each under the case's scratch
  * directory. The landing one is not made here: the accept callback makes it,
- * and a case that needs it first makes it itself. */
+ * and a case that needs it first makes it itself. The Workshop one is made
+ * and left empty. */
 typedef struct {
     char configured[1024];
     char user[1024];
+    char workshop[1024];
     char shipped[1024];
     char landing[1024];
 } UpDirs;
@@ -678,12 +686,14 @@ typedef struct {
 static bool up_dirs(UpDirs *d, const char *landingLeaf) {
     if (!utScratchPath(d->configured, sizeof(d->configured), "configured") ||
         !utScratchPath(d->user, sizeof(d->user), "Mods") ||
+        !utScratchPath(d->workshop, sizeof(d->workshop), "Workshop") ||
         !utScratchPath(d->shipped, sizeof(d->shipped), "shipped") ||
         !utScratchPath(d->landing, sizeof(d->landing), landingLeaf)) {
         return false;
     }
     return SDL_CreateDirectory(d->configured) &&
            SDL_CreateDirectory(d->user) &&
+           SDL_CreateDirectory(d->workshop) &&
            SDL_CreateDirectory(d->shipped);
 }
 
@@ -696,16 +706,19 @@ static void up_set_env(const char *key, const char *val) {
 #endif
 }
 
-/* The player's directory and the shipped one, which SDL would otherwise name
- * in the home directory and beside the executable. Up for the whole case and
- * taken down by the runner before it returns, pass or fail. */
+/* The player's directory, the Workshop one and the shipped one, which SDL
+ * would otherwise name in the home directory and beside the executable. Up
+ * for the whole case and taken down by the runner before it returns, pass or
+ * fail. */
 static void up_env(const UpDirs *d) {
     up_set_env("WB_MOD_DIR_USER", d->user);
+    up_set_env("WB_MOD_DIR_WORKSHOP", d->workshop);
     up_set_env("WB_MOD_DIR_SHIPPED", d->shipped);
 }
 
 static void up_env_clear(void) {
     up_set_env("WB_MOD_DIR_USER", NULL);
+    up_set_env("WB_MOD_DIR_WORKSHOP", NULL);
     up_set_env("WB_MOD_DIR_SHIPPED", NULL);
 }
 

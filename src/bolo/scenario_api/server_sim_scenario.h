@@ -405,6 +405,45 @@ void serverSimSetScenarioDetailsReader(ServerSim *sim,
                                        void *ctx);
 
 /*********************************************************
+ *NAME:          serverSimSetScriptFileReader
+ *PURPOSE:
+ *  Registers the read of one directory file's raw bytes
+ *  for serverSimScriptFileRead, which a player's request
+ *  for a copy of a script is answered from. A callback for
+ *  the reason the lister above is one, and registered
+ *  beside it. The reader finds the file among the names
+ *  its listing holds, refuses one over cap before reading
+ *  it, and on SERVER_SCRIPT_READ_FOUND hands back a
+ *  malloc'd buffer the caller frees. dir is the sim's,
+ *  handed over per call as the lister's is.
+ *
+ *  NULL clears it, and with nothing registered every name
+ *  answers SERVER_SCRIPT_READ_NOT_FOUND.
+ *********************************************************/
+void serverSimSetScriptFileReader(ServerSim *sim,
+                                  ServerScriptReadResult (*read)(
+                                      void *ctx, const char *dir,
+                                      const char *file, uint8_t **outBytes,
+                                      uint32_t *outLen, uint32_t cap),
+                                  void *ctx);
+
+/*********************************************************
+ *NAME:          serverSimSetScenarioSettingsReader
+ *PURPOSE:
+ *  Registers the read of one directory file's settings
+ *  block (scenario_settings.h) for
+ *  serverSimScenarioSettingsDecl, on the terms
+ *  serverSimSetScenarioDetailsReader registers the details
+ *  read. NULL clears it.
+ *********************************************************/
+void serverSimSetScenarioSettingsReader(ServerSim *sim,
+                                        int (*read)(void *ctx,
+                                                    const char *dir,
+                                                    const char *file,
+                                                    uint8_t *out, size_t cap),
+                                        void *ctx);
+
+/*********************************************************
  *NAME:          serverSimSetScenarioLobbyTemplate
  *PURPOSE:
  *  Hands the sim the lobby a scenario asks for. The sim
@@ -668,6 +707,18 @@ const ScnDirEntry *serverSimGetMapScript(const ServerSim *sim);
  *********************************************************/
 void serverSimSetMapScriptDetails(ServerSim *sim, const uint8_t *details,
                                   size_t len);
+
+/*********************************************************
+ *NAME:          serverSimSetMapScriptSettings
+ *PURPOSE:
+ *  The settings block (scenario_settings.h) of the row
+ *  serverSimSetMapScript just recorded, on the terms
+ *  serverSimSetMapScriptDetails takes the details. Ignored
+ *  when no row is recorded, and for a blob longer than
+ *  SCN_SETTINGS_BLOB_MAX.
+ *********************************************************/
+void serverSimSetMapScriptSettings(ServerSim *sim, const uint8_t *settings,
+                                   size_t len);
 
 /*********************************************************
  *NAME:          serverSimGetLobbyScriptCount /

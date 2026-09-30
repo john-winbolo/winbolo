@@ -178,6 +178,9 @@ static OverviewWindow optOverviewWindow = OVERVIEW_WINDOW_STOCK;
 /* A bool here because the switch is on/off, so it tracks the stock mode
  * by asking whether that mode is the "nothing blocks sight" one. */
 static bool optLineOfSight = (LINE_OF_SIGHT_STOCK != lineOfSightOff);
+/* Sounds carry which side they are on and a banded distance; off sends
+ * every sound centred, which is classic. */
+static bool optPositionalSound = false;
 
 /* Binary observation format constants */
 #define BINARY_SPATIAL_SIZE 29
@@ -365,6 +368,9 @@ static const char *logEventsTypeName(int type) {
     case CTRL_SCN_MARKER:            return "CTRL_SCN_MARKER";
     case CTRL_SCENARIO_RULES:        return "CTRL_SCENARIO_RULES";
     case CTRL_LOBBY_SCRIPT_LIST:     return "CTRL_LOBBY_SCRIPT_LIST";
+    case CTRL_LOBBY_SCRIPT_SETTING:  return "CTRL_LOBBY_SCRIPT_SETTING";
+    case CTRL_LOBBY_BRAIN_ANNOUNCE:  return "CTRL_LOBBY_BRAIN_ANNOUNCE";
+    case CTRL_LOBBY_BOT_POOL_INFO:   return "CTRL_LOBBY_BOT_POOL_INFO";
     default:                         return NULL;
   }
 }
@@ -376,17 +382,22 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
 
   if (f == NULL || evt == NULL) return;
 
-  /* The server streams its bot-name pool catalog to every joiner as
-   * CTRL_LOBBY_BOT_POOL_CHUNK fragments during lobby sync. That is cosmetic
-   * lobby data, not a game/control event these baselines assert, and its
-   * fragment count tracks data/bot_names.json — so drop it from the captured
-   * stream to keep the baselines stable and content-independent. */
+  /* The server names its bot-name pool catalog to every joiner in lobby
+   * sync with CTRL_LOBBY_BOT_POOL_INFO, whose id is a CRC of
+   * data/bot_names.json's pools. That is cosmetic lobby data, not a
+   * game/control event these baselines assert, and the id moves whenever
+   * the file does — so drop it from the captured stream to keep the
+   * baselines stable and content-independent. The retired chunks it
+   * replaced are dropped too, in case a recording replays one. */
+  if (evt->type == CTRL_LOBBY_BOT_POOL_INFO) return;
   if (evt->type == CTRL_LOBBY_BOT_POOL_CHUNK) return;
 
-  /* Same story for the per-brain lobby texts (announce.txt/commands.txt):
-   * they are lobby display data whose fragment count depends on which
-   * brains exist on the machine the baseline runs on. */
+  /* Same story for the per-brain announce lines: they are lobby display
+   * data whose count depends on which brains exist on the machine the
+   * baseline runs on. The retired docs chunk is dropped too, in case a
+   * recording replays one. */
   if (evt->type == CTRL_LOBBY_BRAIN_DOCS_CHUNK) return;
+  if (evt->type == CTRL_LOBBY_BRAIN_ANNOUNCE) return;
 
   /* Tick numbers come from the ClientSim's last-server-tick counter,
    * which both modes agree on (set by snapshot ingestion in --fast
@@ -683,6 +694,8 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
       break;
 
     case CTRL_LOBBY_BRAIN_DOCS_CHUNK:
+    case CTRL_LOBBY_BRAIN_ANNOUNCE:
+    case CTRL_LOBBY_BOT_POOL_INFO:
       /* Dropped above; never reaches the body writer. */
       break;
 
@@ -747,6 +760,20 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
                 e->bound ? "true" : "false");
       }
       fputc(']', f);
+      break;
+    }
+
+    case CTRL_LOBBY_SCRIPT_SETTING: {
+      /* One value the host chose for a script's setting, or the CLEAR a
+         sync starts with. */
+      fprintf(f, ",\"op\":%u,\"file\":",
+              (unsigned)evt->u.lobbyScriptSetting.op);
+      logEventsJsonStr(f, evt->u.lobbyScriptSetting.file,
+                       sizeof(evt->u.lobbyScriptSetting.file));
+      fputs(",\"id\":", f);
+      logEventsJsonStr(f, evt->u.lobbyScriptSetting.id,
+                       sizeof(evt->u.lobbyScriptSetting.id));
+      fprintf(f, ",\"value\":%ld", (long)evt->u.lobbyScriptSetting.value);
       break;
     }
 
@@ -1222,11 +1249,15 @@ static void logStateVerbose(int tickNum) {
   fprintf(f, ",\"pillboxes\":[");
   if (fastServerSim != NULL) {
     BYTE np = serverSimGetPillCount(fastServerSim);
+    int firstPill = 1;
     for (BYTE pi = 1; pi <= np; pi++) {
       BYTE px, py, powner, parmour;
       bool pinTank;
+      /* A slot whose pill is not on the map is skipped, so the comma goes by
+         what has been written rather than by the slot number. */
       if (!serverSimGetPill(fastServerSim, pi, &px, &py, &powner, &parmour, &pinTank)) continue;
-      if (pi > 1) fprintf(f, ",");
+      if (!firstPill) fprintf(f, ",");
+      firstPill = 0;
       fprintf(f, "{\"tx\":%u,\"ty\":%u,\"owner\":\"%s\",\"armor\":%u,\"in_tank\":%s}",
         (unsigned)px, (unsigned)py,
         verboseOwnerStr(powner, selfPlayer, alliesBits),
@@ -1240,12 +1271,14 @@ static void logStateVerbose(int tickNum) {
   fprintf(f, ",\"bases\":[");
   if (fastServerSim != NULL) {
     BYTE nb = serverSimGetBaseCount(fastServerSim);
+    int firstBase = 1;
     for (BYTE bsi = 1; bsi <= nb; bsi++) {
       BYTE bx, by, bowner;
       BYTE bshells, bmines, barmour;
       if (!serverSimGetBase(fastServerSim, bsi, &bx, &by, &bowner)) continue;
       serverSimGetBaseStats(fastServerSim, bsi, &bshells, &bmines, &barmour);
-      if (bsi > 1) fprintf(f, ",");
+      if (!firstBase) fprintf(f, ",");
+      firstBase = 0;
       fprintf(f, "{\"tx\":%u,\"ty\":%u,\"owner\":\"%s\",\"armor\":%u,\"shells\":%u,\"mines\":%u}",
         (unsigned)bx, (unsigned)by,
         verboseOwnerStr(bowner, selfPlayer, alliesBits),
@@ -1552,18 +1585,22 @@ static void logChangesBuild(TextBuf *b) {
   if (fastServerSim != NULL) {
     BYTE np = serverSimGetPillCount(fastServerSim);
     BYTE pi;
+    int firstPill = 1;
     for (pi = 1; pi <= np; pi++) {
       BYTE px, py, powner, parmour, pspeed;
       bool pinTank;
+      /* A slot whose pill is not on the map is skipped, so the comma goes by
+         what has been written rather than by the slot number. */
       if (!serverSimGetPill(fastServerSim, pi, &px, &py, &powner, &parmour, &pinTank)) continue;
       if (!serverSimGetPillSpeed(fastServerSim, pi, &pspeed)) continue;
       textBufPrintf(b, "%s{\"tx\":%u,\"ty\":%u,\"owner\":\"%s\",\"armor\":%u"
                        ",\"in_tank\":%s,\"speed\":%u}",
-                    pi > 1 ? "," : "",
+                    firstPill ? "" : ",",
                     (unsigned)px, (unsigned)py,
                     verboseOwnerStr(powner, selfPlayer, alliesBits),
                     (unsigned)parmour, pinTank ? "true" : "false",
                     (unsigned)pspeed);
+      firstPill = 0;
     }
   }
   textBufPrintf(b, "]");
@@ -1572,6 +1609,7 @@ static void logChangesBuild(TextBuf *b) {
   if (fastServerSim != NULL) {
     BYTE nb = serverSimGetBaseCount(fastServerSim);
     BYTE bsi;
+    int firstBase = 1;
     for (bsi = 1; bsi <= nb; bsi++) {
       BYTE bx, by, bowner;
       BYTE bshells, bmines, barmour;
@@ -1579,10 +1617,11 @@ static void logChangesBuild(TextBuf *b) {
       serverSimGetBaseStats(fastServerSim, bsi, &bshells, &bmines, &barmour);
       textBufPrintf(b, "%s{\"tx\":%u,\"ty\":%u,\"owner\":\"%s\",\"armor\":%u"
                        ",\"shells\":%u,\"mines\":%u}",
-                    bsi > 1 ? "," : "",
+                    firstBase ? "" : ",",
                     (unsigned)bx, (unsigned)by,
                     verboseOwnerStr(bowner, selfPlayer, alliesBits),
                     (unsigned)barmour, (unsigned)bshells, (unsigned)bmines);
+      firstBase = 0;
     }
   }
   textBufPrintf(b, "]");
@@ -2129,10 +2168,14 @@ static void printUsage(const char *prog) {
     "  --lineofsight     Buildings and stands of trees block sight inside the\n"
     "                    live block (off by default, and off under\n"
     "                    --classicmode)\n"
+    "  --positionalsound Sounds tell each player which side they are on and\n"
+    "                    roughly how far (off by default, every sound\n"
+    "                    centred, and off under --classicmode)\n"
     "  --classicmode     Classic Bolo view: sets pillview key, baseview off\n"
     "                    and allyview off, overriding those three switches,\n"
-    "                    turns allies in trees off, and sets the overview\n"
-    "                    window to classic with line of sight off\n"
+    "                    turns allies in trees off, sets the overview\n"
+    "                    window to classic with line of sight off, and\n"
+    "                    turns positional sound off\n"
     "  An unknown mode word or a decay outside the range is an error here,\n"
     "  not a fallback, matching --ai and --gametype.\n",
     prog, prog);
@@ -2259,6 +2302,8 @@ static bool parseArgs(int argc, char **argv) {
       if (!parseOverviewWindowWord(argv[++i], &optOverviewWindow)) return FALSE;
     } else if (strcmp(argv[i], "--lineofsight") == 0) {
       optLineOfSight = true;
+    } else if (strcmp(argv[i], "--positionalsound") == 0) {
+      optPositionalSound = true;
     } else if (strcmp(argv[i], "--classicmode") == 0) {
       optClassicMode = true;
     } else if (strcmp(argv[i], "--noscenarios") == 0) {
@@ -2395,9 +2440,12 @@ static void applyViewPolicyOptions(ServerSim *sim) {
   if (optLineOfSight) {
     serverSimSetLineOfSight(sim, (uint8_t)lineOfSightBuildingsAndTrees);
   }
-  /* After the loop and after allies in trees, the overview window and
-   * line of sight, so classic mode wins over the three switches and over
-   * those three. */
+  if (optPositionalSound) {
+    serverSimSetPositionalSound(sim, true);
+  }
+  /* After the loop and after allies in trees, the overview window, line
+   * of sight and positional sound, so classic mode wins over the three
+   * switches and over those four. */
   if (optClassicMode) {
     serverSimSetClassicMode(sim, true);
   }

@@ -32,6 +32,7 @@ bug worth reporting.
 - [Talking to players, and ending the round](#talking-to-players-and-ending-the-round)
 - [Showing things on a client](#showing-things-on-a-client)
   - [The panel](#the-panel)
+- [Settings](#settings)
 - [Rules](#rules)
 - [Triggers](#triggers)
   - [The fields a hook offers](#the-fields-a-hook-offers)
@@ -436,7 +437,10 @@ scenario = {
 | `bound` | boolean | True (the default) when the scenario is tied to its map. A scenario that names tags or regions is tied to its map by definition, because tags and regions are the map's own squares and entities. A server can also offer scenarios of its own, which play over whichever map a host has committed; a scenario with `bound` true is not one of those and a host picking it is refused, because over another map its tags, its regions and its entity indices name items that are not there. |
 | `triggers` | array | What the scenario does without a line of Lua: hooks to listen on, tests against what each hook is handed, and calls to make when every test holds. A scenario may carry triggers, a script, or both. See [Triggers](#triggers). |
 | `fill_to_caps` | boolean | False by default. True starts every pillbox and base on the map at the caps your `rules` table leaves in force rather than at the numbers the map file holds. A map file states a number for each pill's armour and each base's stocks and has no way of stating "full", so a scenario that raises `base_full_armour` or `pill_max_armour` would otherwise open with the map's own smaller numbers and climb to the new ones over the round. Raising only: anything already at or above a cap is left where it is, and anything above one is brought down by the rules themselves. A pill's firing rate is not touched. |
-| `callbacks` | table | What each of the script's callbacks does, one sentence each for a player, keyed by the callback's name: `callbacks = { on_start = "Lines the teams up.", can_die = "Builders cannot be killed." }`. The lobby's details dialog shows them under the rules table, headed "What this mod implements:" or "What this scenario implements:", as a table of Method (the callback's name), Type and High-level overview (the sentence). Type is Event for a hook whose return the engine ignores, Query for a policy whose answer it uses, and Trigger for a hook only a trigger's `when` defines. A script with no block shows no such section. Optional, and it changes nothing about how the round plays. At most 40 rows, each sentence cut at 159 bytes (at a UTF-8 character boundary), and 896 bytes for the whole block packed (a type byte and two length bytes per row plus the name and the sentence, and one count byte) — about nine lines of eighty letters. The load warns, and never refuses the file, for each callback the script defines that the block does not describe, for each name that is no callback the engine calls, and for each name the script never defines; those last two rows are dropped. The warnings go to the server console and `-validate` prints them. The names are the ones in the hook and policy tables below; a trigger's `when` counts as defining its hook. |
+| `callbacks` | table | What each of the script's callbacks does, one sentence each for a player, keyed by the callback's name: `callbacks = { on_start = "Lines the teams up.", can_die = "Builders cannot be killed." }`. The lobby's details dialog shows them under the rules table, headed "What this mod implements:" or "What this scenario implements:", as a table of Method (the callback's name), Type and High-level overview (the sentence). Type is Event for a hook whose return the engine ignores, Query for a policy whose answer it uses, and Trigger for a hook only a trigger's `when` defines. A script with no block shows no such section. Optional, and it changes nothing about how the round plays. At most 40 rows, each sentence cut at 159 bytes (at a UTF-8 character boundary), and 2048 bytes for the whole block packed (a type byte and two length bytes per row plus the name and the sentence, and one count byte) — about twenty lines of eighty letters. The load warns, and never refuses the file, for each callback the script defines that the block does not describe, for each name that is no callback the engine calls, and for each name the script never defines; those last two rows are dropped. The warnings go to the server console and `-validate` prints them. The names are the ones in the hook and policy tables below; a trigger's `when` counts as defining its hook. |
+| `workshop_id` | string | The Steam Workshop item the file was published as, written as a string of decimal digits (`"3301234567"`), because a Lua number cannot hold every digit of a 64-bit id. The game writes it into the file's manifest when you publish it; it is not meant to be set by hand. A script that declares its own `scenario` table need not repeat it: it is compared with the manifest only when the table states it, and a table that states a different id is refused. Anything that is not a string of digits is reported and read as none. |
+| `workshop_author` | string | The SteamID64 of the account that published the file, a string of decimal digits like `workshop_id`, and written by the game at the same time. The same rules apply: not meant to be set by hand, need not be repeated, and refused only when the table states a different one. |
+| `settings` | table | Choices the host makes in the lobby details dialog, one dropdown each, read by the script with `game.setting(id)`. See [`scenario.settings`](#scenariosettings). Optional; a script with none shows no Settings section. |
 
 ### `scenario.lobby`
 
@@ -552,6 +556,43 @@ rules = {
   tank_reload_ticks = 10,
 },
 ```
+
+### `scenario.settings`
+
+Choices the host makes in the lobby, before the round, without editing the
+script. Each one is a dropdown in the script's details dialog. The script
+reads the value with [`game.setting(id)`](#settings).
+
+```lua
+settings = {
+  { id = "round_minutes", label = "Round length (minutes)", type = "int",
+    min = 1, max = 10, step = 1, default = 4 },
+  { id = "rounds", label = "Rounds", type = "int",
+    min = 1, max = 5, step = 1, default = 5 },
+  { id = "sudden_death", label = "Sudden death", type = "bool",
+    default = false },
+},
+```
+
+| Field | What it is |
+|---|---|
+| `id` | The name `game.setting` takes. 1 to 31 letters, digits and `_`, and unique in the script. |
+| `label` | What the dialog shows beside the dropdown, up to 63 bytes. This is the script's own text; it is not translated. |
+| `type` | `"int"`, a whole number, which is also what a missing type means. `"bool"`, on or off, drawn as a dropdown of On and Off. |
+| `min`, `max` | The range, both ends in it. Required for `"int"`; a `"bool"` row must not give them. |
+| `step` | The gap between entries, above 0. Optional for `"int"`, 1 when missing; a `"bool"` row must not give it. |
+| `default` | The value when the host picks nothing. Required. For `"int"`, a whole number inside the range and on the step; for `"bool"`, `true` or `false`. |
+
+A script may declare up to 16 settings, and a setting may offer up to 100
+entries (`(max - min) / step + 1`). A row that breaks a rule, a duplicate id,
+and a row past the sixteenth are reported and dropped; the rest still apply.
+`-validate` prints the same reports. A package's `manifest.json`
+carries the same list under `"settings"` with the same fields, a `"bool"`
+row's `"default"` being JSON `true` or `false`.
+
+The server reads the declaration without running the script, the same way it
+reads `rules`. A value the host picks is held for the lobby session, per
+script file.
 
 ### `scenario.tags`
 
@@ -689,6 +730,7 @@ applied around it; one bad row does not cost a scenario its other rules.
 |---|---|
 | `on_tank_spawned(p, mx, my, respawn, scripted)` | `respawn` is false the first time a seat takes the field. |
 | `on_tank_killed(victim, killer, cause, scripted)` | The victim comes first: it is the subject, and the killer is what happened to it. `cause` is `"shell"`, `"mine"`, `"deep_sea"` or `"script"`. |
+| `on_tank_hit(victim, attacker, cause, amount, pill, scripted)` | Every shell and every mine a tank takes, after the damage is worked out. `attacker` is the seat that fired the shell or laid the mine, or `game.NEUTRAL` for a pillbox's shell and a mine nobody owns. `cause` is `"shell"` or `"mine"`. `amount` is the armour the tank actually lost, which can be `0` — a hit `damage_scale` priced at nothing, or one landing on a tank already at zero. `pill` is the pillbox number that fired the shell, and `nil` for anything else. A shell `can_hit` let through never hit, so it is not reported here. A hit that kills raises this and then `on_tank_killed`. |
 | `on_lgm_died(p, killer, mx, my, scripted)` | The square is where the man died, captured before the respawn moves him. |
 | `on_lgm_landed(p, mx, my, scripted)` | The builder `on_lgm_died` reported has finished his flight back and touched down. `mx`, `my` are the square he reached — where his tank stood when he died, unless `builder_parachute` aimed him somewhere else — and he walks to the tank from there rather than arriving in it. |
 | `on_base_captured(n, old, new, scripted)` | `old` and `new` are owners: `old` is `game.NEUTRAL` for a base nobody held, and `new` is always a seat, because a base changing to nobody's raises `on_base_neutralized` below instead. Neither hook fires when a base passes to an ally or falls to nobody because its owner left — that hand-over raises no event at all. |
@@ -696,7 +738,7 @@ applied around it; one bad row does not cost a scenario its other rules.
 | `on_pill_captured(n, old, new, scripted)` | Every change of a pillbox's owner, with `game.NEUTRAL` as `new` where nobody took it. |
 | `on_pill_placed(n, p, armour, scripted)` | The pillbox first, then who placed it. Fires for every way a carried pillbox reaches the map, not only a builder finishing the job: a tank sinking or being destroyed puts its cargo down, a builder dying puts the one in his hands down, and a player leaving does both. `armour` is what tells them apart — a built pillbox arrives at the sim's cap, every other route arrives dead at `0` — so test it, not `p`, before treating one as a live gun. `p` is whoever was carrying it, which on a leave is a slot on its way out. |
 | `on_pill_picked_up(n, p, scripted)` | The same order. |
-| `on_pill_killed(n, by, scripted)` | `by` is the seat credited with the blow, or `game.NEUTRAL` where none can be: a blast that caught the pillbox, and a shell another pillbox fired, both name nobody. |
+| `on_pill_killed(n, by, scripted)` | `by` is the seat credited with the blow, or `game.NEUTRAL` where none can be: a blast that caught the pillbox, and a shell another pillbox fired, both name nobody. `can_die` and `pill_damage_scale` are told whose tank the blast came from, but nobody is credited with it, so this hook still names nobody for one. |
 | `on_built(p, action, x, y, scripted)` | `action` is `"trees"`, `"road"`, `"building"`, `"repair"` or `"boat"`. A build of kind pill on this hook is always a repair — a new pillbox going down is `on_pill_placed`. `"mine"` is a word the surface spells and this hook never sends: laying one raises `on_mine_laid` instead, so a test for it here never holds. |
 | `on_mine_laid(p, mx, my, scripted)` | `p` is the seat whose tank dropped the mine or whose builder laid it. A scenario's own `place_mine` does not reach this hook, so nothing here is `scripted`. |
 | `on_mine_explosion(mx, my, layer, scripted)` | `layer` is who laid the mine, not a layer of the map: the seat that put it down, or `game.NEUTRAL` for a mine the map came with or one whose owner has since left. It is read before the mine leaves the square, and it is kept off the wire — no client is told whose minefield it drove into. |
@@ -769,13 +811,52 @@ rather than left to misbehave quietly.
 | `can_build(p, action, x, y, n)` | Before a builder order goes ahead. `action` is the order as given — `"trees"`, `"road"`, `"building"`, `"pill"`, `"mine"` or `"boat"` — before the engine decides whether the square makes it a repair. `n` is the pillbox for a pill order and `nil` otherwise. | `false` refuses the order. Ordinary rule: yes. |
 | `can_capture(kind, n, p)` | When seat `p` would take `"pill"` or `"base"` number `n`. | `false` leaves it where it is and does not stop the tank. Ordinary rule: yes. |
 | `announce(kind, subject, actor)` | Before a newswire line is shown. `kind` is `"joined"`, `"left"`, `"base_captured"`, `"pill_captured"`, `"builder_lost"`, `"name_changed"`, `"alliance"` or `"vote"`. `subject` is the base or pillbox number for a capture and a seat otherwise; `actor` is the seat that did it. | `false` keeps the line off every client's newswire. The fact still happens. Ordinary rule: shown. |
-| `can_die(kind, n, killer, cause)` | When a blow would destroy a `"tank"`, a `"builder"` or a `"pill"`. `n` is the seat for a tank or its builder and the pillbox number for a pill. `cause` is `"shell"`, `"mine"`, `"deep_sea"` or `"script"` for a tank, `"shell"` or `"mine"` for the other two, and `nil` when the engine could not name it. | `false` leaves a tank at zero armour and alive, a builder untouched, a pillbox at one armour. Ordinary rule: yes. |
+| `can_hit(attacker, kind, n, pill)` | When a shell reaches a `"tank"` or a `"pill"` it would hit. `n` is the seat for a tank and the pillbox number for a pill. `attacker` is the seat that fired it, or `game.NEUTRAL` for a pillbox's shell, and `pill` is the pillbox that fired it, `nil` for a tank's shell — so a pillbox's side is `game.pill(pill).owner`. Pillbox shells reaching pillboxes are asked too. A shell is asked once about each target: once let through, it passes that target for the rest of its flight without asking again. | `false` lets the shell fly on as if the target were not there: no damage, no knockback, no boat lost, no angry pillbox and no hit sound, and it can still hit whatever is behind. Ordinary rule: yes. |
+| `can_die(kind, n, killer, cause, pill)` | When a blow would destroy a `"tank"`, a `"builder"` or a `"pill"`. `n` is the seat for a tank or its builder and the pillbox number for a pill. `cause` is `"shell"`, `"mine"`, `"deep_sea"` or `"script"` for a tank; `"shell"`, `"mine"` or `"explosion"` for a builder; `"shell"` or `"explosion"` for a pill; and `nil` when the engine could not name it. `"explosion"` is a dying tank's blast. `killer` is the seat that fired the shell (`game.NEUTRAL` for a pillbox's); for a builder caught by a mine it is the seat that laid it, and for a builder or a pill caught in a blast it is the seat whose tank blew up. Those two are named here and credited with nothing: `on_lgm_died` and `on_pill_killed` still name nobody for them. `pill` is the pillbox whose shell it was, and `nil` for anything else. | `false` leaves a tank at zero armour and alive, a builder untouched, a pillbox at one armour. Ordinary rule: yes. |
+| `can_ally(p, q)` | When seat `p` asks seat `q` for an alliance, and again when `q` accepts, so an answer that changed in between is the one that counts. `p` is always the seat that asked. Bots ask and accept the same way people do. A script's own `set_team`, a bot it spawns onto a team, and the seating in `scenario.lobby` are the script's decisions and are not asked. | `false` refuses the request, so `q` is never shown it, or refuses the accept. Ordinary rule: yes. |
 | `on_choose_start(p)` | When the engine is about to pick a start for seat `p`, at a spawn, a respawn or a teleport with no start named. A start the script named in the op itself is not asked about. | A start number, counted from 1 as `game.start` counts. A number that names no live start is reported and the engine picks. `nil` lets the engine pick. |
 | `spawn_loadout(p)` | When seat `p`'s tank is created, unless the op that spawned it named a `loadout` of its own. A named one outranks the policy and is taken as it is read, so the policy is not asked for that tank and the named amounts are spent on it rather than held for the seat's next life. | `"open"`, `"tournament"` or `"strict"` for that game type's loadout, or a table of all four amounts, `{ shells = , mines = , armour = , trees = }`, each 0 to 255. A table short of one is reported and the ordinary loadout stands. |
-| `damage_scale(attacker, victim, cause)` | On every hit a tank takes, with `cause` as `can_die` spells it for a tank. | A percent, 0 to 10000. 100 is the ordinary amount and 0 is a hit that costs nothing. Out of range is reported and 100 stands. |
+| `damage_scale(attacker, victim, cause, pill)` | On every hit a tank takes, with `cause` as `can_die` spells it for a tank. `attacker` is `game.NEUTRAL` for a pillbox's shell, and `pill` is that pillbox's number, `nil` for anything else. | A percent, 0 to 10000. 100 is the ordinary amount and 0 is a hit that costs nothing. Out of range is reported and 100 stands. |
+| `pill_damage_scale(attacker, n, cause, pill)` | On every blow pillbox `n` takes: a shell, with `cause` `"shell"`, and a dying tank's blast, with `cause` `"explosion"`. `attacker` is the seat that fired the shell (`game.NEUTRAL` for a pillbox's) or the seat whose tank blew up, and `pill` is the pillbox that fired the shell, `nil` for anything else. | A percent, 0 to 10000, of the armour the pillbox loses. 100 is the ordinary amount and 0 costs it nothing. Only the armour is scaled: the shell still stops there and the pillbox still turns angry. Out of range is reported and 100 stands. |
 
 `scenario.lobby.max_players` is the one decision that is a number rather than
 a function; it is applied by the lobby without asking.
+
+**Switching off friendly fire.** A pillbox's shells carry no seat, so a script
+reads the side from the pillbox that fired them:
+
+```lua
+local function side(attacker, pill)
+  if pill ~= nil then
+    local p = game.pill(pill)
+    return p and p.owner or game.NEUTRAL
+  end
+  return attacker
+end
+
+function can_hit(attacker, kind, n, pill)
+  local from = side(attacker, pill)
+  if from == game.NEUTRAL then return nil end
+  local to = n
+  if kind == "pill" then
+    local p = game.pill(n)
+    to = p and p.owner or game.NEUTRAL
+  end
+  if to ~= game.NEUTRAL and (to == from or game.allied(from, to)) then
+    return false
+  end
+  return nil
+end
+```
+
+**What a player sees of a shell let through.** The policies run on the server
+alone. A client draws its own shells ahead of the server and stops drawing one
+where it meets another tank or a pillbox, because that is where a shell
+ordinarily ends. A shell `can_hit` lets through therefore disappears from its
+firer's screen at the tank or pillbox it passed, and the explosion where it
+really lands is drawn when the server reports it. Nobody sees a hit that did
+not happen: there is no hit sound, no damage and no knockback. Other players'
+views of the same shell pick it up again from the next update once it is past.
 
 **Which round answers.** A round's own state is booted before the round places
 anything, so `on_choose_start` and `spawn_loadout` for the seats already in the
@@ -959,6 +1040,7 @@ starts comes due after about twice the seconds it asked for.
 | `game.tank(p)` | `{ mx, my, wx, wy, dir, armour, shells, mines, trees, pills, boat, dead, name, bot, kills, deaths, mods }`, or `nil` when the seat is empty or has no tank. `mx, my` are map squares and `wx, wy` world coordinates; `dir` is the full 0-255 facing, which is what `teleport` takes back. `mods` is `{ speed, accel, turn, reload, dealt, taken }`. |
 | `game.builder(p)` | `{ state, mx, my, wx, wy, job, trees, mines }`, or `nil` when the seat has none. `state` is `"in_tank"`, `"going"`, `"returning"`, `"parachuting"` or `"dead"`; `job` is an action word, or absent when he is on none. The square is tracked while he is out of the tank — in the tank he is wherever his tank is, which is why the state comes first. |
 | `game.lobby_slot(p)` | `{ connected, bot, team, name, ready, fielded, alive }`, or `nil` for an empty seat. **`fielded` is the field that tells a held seat from one on the field.** |
+| `game.allied(a, b)` | Whether seats `a` and `b` are on the same side in the game: `true` or `false`, `true` for a seat and itself, and `nil` when either seat is empty. This is the alliance table every game rule reads — who a pillbox fires at, which bases refuel whom — including alliances players made and left in play. **It can differ from `game.lobby_slot(p).team`:** two teammates where one has left the alliance share a team but are not allied, and players on different teams who allied share a side but not a team. |
 
 A seat the lobby is holding for a bot reads as connected, a bot, on its team,
 and `fielded = false`. That is how Wave Defense finds its held seats:
@@ -1158,8 +1240,8 @@ The table **replaces** the bot's, whole. What the spawn's table said and this
 one does not say is gone, because the brain's table is rebuilt rather than
 merged into. Values are text and numbers, as a spawn's are, so a flag a brain
 reads as on or off is written `"1"` and `"0"` rather than `true` and `false`.
-GoalHunter treats only its known flag words that way (`noblitz`, `suicider`,
-`nosuicider`, `noclaimdead`, `normal`, `ammoless`); a valued token such as
+GoalHunter treats only its known flag words that way (`noblitz`, `blitzonly`,
+`suicider`, `nosuicider`, `noclaimdead`, `normal`, `ammoless`); a valued token such as
 `blitzsuiciders = "1"` keeps its value.
 
 What the bot does with it is the brain's business, and there are two levels
@@ -1176,8 +1258,8 @@ to it:
 
 GoalHunter, the brain that ships with the server, writes one: it re-reads the
 whole token string, so `cfg=NAME=VALUE` and `preset=` change its constants
-there and then, and the bare flags (`noblitz`, `suicider`, `nosuicider`,
-`noclaimdead`, `normal`, `ammoless`) change the bot's behaviour from the next
+there and then, and the bare flags (`noblitz`, `blitzonly`, `suicider`,
+`nosuicider`, `noclaimdead`, `normal`, `ammoless`) change the bot's behaviour from the next
 tick. `difficulty=` and `mode=` are **not** applied at runtime — those choose a
 whole bundle of values at load and a second bundle cannot unset the first — so
 the brain logs them as unsupported and leaves them. It also says one line to
@@ -1300,6 +1382,11 @@ it, holds it for the same sixty seconds, and drops it for anything a person
 says afterwards. A player can call a scripted order off with `cancel all` or
 by naming the bot — a bare `cancel` cannot, because that one releases only
 the speaker's own order and a hint's sender is the scenario.
+
+GoalHunter 1.7 also reads `ping = "1"` on a `goto`: the order is filed as if
+a bot-command ping had given it, so a square a hostile pillbox can shoot turns
+the hold into the decoy hold. No scenario op places a ping, so this key is how
+a script reaches the decoy hold (the `decoy_getaway` ROOST test uses it).
 
 Three of the seven are as near as the brain's existing goals get. `defend` on
 a **base** stands on the base, because there is no defend-a-base goal — a base
@@ -1474,6 +1561,29 @@ gives them a colour. The names are also on the `game` table as
 
 ---
 
+## Settings
+
+| Call | What it does |
+|---|---|
+| `game.setting(id)` | The value the host picked in the lobby for one of this script's own [`settings`](#scenariosettings), or its declared default when the host picked nothing: a number for an `"int"` setting, `true` or `false` for a `"bool"` one. An id the script does not declare **raises**, for the reason an unknown rule name does. |
+
+The value is fixed for the round. Read it in `on_init`, or at the top of the
+file, and keep it in a local:
+
+```lua
+local WAVES        = game.setting("rounds")
+local WAVE_LIMIT_S = game.setting("round_minutes") * 60
+local SUDDEN_DEATH = game.setting("sudden_death")   -- true or false
+```
+
+A script reads only its own settings: the id is looked up in the declaration
+of the file that makes the call. The server checks every value the host
+sends. A value below the range becomes the lowest entry, one above it the
+highest, and one inside the range but off the step the default. A
+`"bool"` setting takes only on or off; anything else is refused. An older
+server, or a client that cannot send a pick, leaves every setting at its
+default, so a script must play correctly on its defaults alone.
+
 ## Rules
 
 Every gameplay number the simulation runs on is a named rule. `game.rule(name)`
@@ -1548,8 +1658,11 @@ square.
 | `tank_bump_decay_shift` | 2 | 0 to 31 | A right shift: a knockback loses that fraction of itself each tick, plus one. A bigger number is a slower decay, not a faster one — 2 takes off a quarter a tick, 31 takes off only the one. |
 | `tank_pill_pickup_inset` | 16 | 0 to 255 | How far off its centre a tank reaches to pick a dead pillbox up. |
 | `tank_boat_exit_inset` | 64 | 0 to 255 | How far inside the bank a boat is held when a tank leaves one. |
-| `tank_slide_step` | 32 | 0 to 255 | How far a knocked tank slides per step. |
-| `tank_wall_glide` | 0.0 | 0.0 to 1.0 | 0 slides a tank along a wall it hits; 1 lets it glide off free. |
+| `tank_slide_step` | 32 | 0 to 63 | How far a knocked tank slides per step. |
+| `tank_slide_mac` | 0 | 0 to 1 | Whether a shell hit pushes a tank the Mac Bolo way. 0, the classic table, is the WinBolo push: `tank_slide_step` at every armour level, moved and decayed by `tank_bump_decay_shift` each tick. 1 is the Mac Bolo push: `tank_slide_step` plus the armour bonus below, with the step and `tank_bump_decay_shift` read per 40 ms, so a push travels step × 2^shift in all, in a slide that moves every tick with its fractions carried. Mac Bolo plays it with a step of 28 and a shift of 2. |
+| `tank_slide_armour_bonus` | 32 | 0 to 255 | Extra push step at zero armour, added to `tank_slide_step` in proportion to the armour missing before the hit: nothing at full armour, the whole bonus at none. Only read while `tank_slide_mac` is 1. A `tank_slide_step` of 0 is no push at all, bonus included. |
+| `tank_wall_glide` | 0.0 | 0.0 to 1.0 | 0 slides a tank along a wall it hits; 1 lets it glide off free. Not read while `tank_collision_mac` is 1. |
+| `tank_collision_mac` | 0 | 0 to 1 | Whether a tank collides with walls, live pillboxes and hostile bases the Mac Bolo way. 0, the classic table, is the WinBolo circle: a tank of radius `tank_hit_radius` is pushed out of each solid square and slid along it by `tank_wall_glide`. 1 is Mac Bolo's sixteen direction-dependent tank boxes, nudged one pixel at a time, with a corner pushing on both axes and a tank wedged between opposing walls left where it is. It lets a tank pass closer beside a pillbox than the circle does, which is what puts it inside the bad-lead range of `pill_aim_mac`. |
 
 **Terrain: the cap a tank's speed clamps to.**
 
@@ -1649,10 +1762,14 @@ tolerance at or above the step lands every one of them.
 | `pill_shell_damage` | 1 | 1 and up, at most `pill_max_armour` | What one shell takes off a pillbox. Setting it to the cap is a pillbox killed by a single hit. |
 | `pill_angry_divisor` | 2 | 1 to 255 | An angered pillbox divides its firing interval by this and is held at `pill_attack_min_ticks`, so the classic 2 is the twice as fast it fires when hurt and 1 is a pillbox that never gets angry. |
 | `pill_fire_length` | 8.5 | 0.5 to 127.0 | How far a pillbox's shell flies, in half map squares, the way the gunsight rows are counted. |
-| `pill_base_defend_range` | 7 | 0 to 255 | How near a base being shot at has to be to anger an allied pillbox, as a radius in map squares measured as a circle and taken strictly: a pillbox exactly this far off is not angered. 0 is a pillbox that never answers for a base at all. |
+| `pill_base_defend_range` | 9 | 0 to 255 | How near a base being shot at has to be to anger an allied pillbox, in map squares. `pill_base_defend_shape` says how it is measured. |
+| `pill_base_defend_shape` | 0 | 0 to 1 | How `pill_base_defend_range` is measured. 0, the classic WinBolo table, is a square: a pillbox up to the range away on each axis is angered, so 0 range is a pillbox that answers only for a base on its own square. 1 is a circle, as Mac Bolo measures it: the range is a radius and a pillbox exactly that far off is not angered, so 0 range is a pillbox that never answers for a base. Mac Bolo plays it as a circle of 7. |
 | `pill_aim_iterations` | 200 | 1 to 65535 | The step budget the aim solver gets to lead a moving target. 1 is a pillbox that never leads and fires at where the target is standing now. |
-| `pill_massage_range` | 0 | 0 to 65535 | How near a tank has to be for a pillbox to aim with the original forward prediction rather than the solver, which misses a tank circling it. Zero, the classic table, is a pillbox that always leads its target properly; 384 is a square and a half, the distance the old build-time switch used. |
-| `pill_massage_cosine` | 0.5 | 0.0 to 1.0 | How straight at a close pillbox a tank has to be driving to be aimed at properly anyway, as the cosine of the angle between its heading and the line to the pillbox. One aims sloppily at every tank inside `pill_massage_range`, zero at none of them. Does nothing while that rule is zero. |
+| `pill_massage_range` | 0 | 0 to 65535 | How near a tank has to be for a pillbox to aim with the legacy forward prediction rather than the solver, an approximation of the Mac Bolo pill massage which misses a tank circling it. Zero, the classic table, is a pillbox that always leads its target properly; 384 is a square and a half, the distance the old build-time switch used. Not read while `pill_aim_mac` is 1, which replaces this approximation with the original calculation. |
+| `pill_massage_cosine` | 0.5 | 0.0 to 1.0 | How straight at a close pillbox a tank has to be driving to be aimed at properly anyway, as the cosine of the angle between its heading and the line to the pillbox. One aims sloppily at every tank inside `pill_massage_range`, zero at none of them. Does nothing while that rule is zero or `pill_aim_mac` is 1. |
+| `pill_aim_mac` | 0 | 0 to 1 | Whether a pillbox aims the Mac Bolo way. 0, the classic table, is the WinBolo solver, or the massage approximation above inside `pill_massage_range`. 1 is Mac Bolo's integer distance and lead calculation: a moving, unobstructed tank inside about one square makes the unsigned lead wrap, so the pillbox aims roughly 32 squares along the tank's heading and misses; a stopped or blocked tank is aimed at directly; beyond that distance the same formula leads normally. `pill_massage_range`, `pill_massage_cosine` and `pill_aim_iterations` are not read while this is 1. |
+| `pill_shell_cap` | 0 | 0 or 1 | Whether pillboxes limit how many of their shells can be in the air at one tank, to `pill_max_shells_at_tank`. 0, the classic table, lets every pillbox fire at its nearest target however many shells are already on the way. |
+| `pill_max_shells_at_tank` | 12 | 1 to 255 | The most pillbox shells that can be in the air at one tank. A pillbox whose nearest target already has this many coming fires at the next nearest enemy in range instead, or holds its shot until one lands. Only read while `pill_shell_cap` is 1. |
 
 **Base.**
 

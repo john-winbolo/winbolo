@@ -12,6 +12,16 @@ package.path = "./?.lua;" .. package.path
 local ORD = require("orders")
 local C   = require("constants")
 
+-- THE SHIPPED DEFAULTS of the two team settings, kept before the pin below.
+-- A game starts with the bots quiet ("bot chat" off) and the ATTACK markers
+-- on ("bot pings" on).
+local SHIPPED_BOT_CHAT_DEFAULT  = C.BOT_CHAT_DEFAULT
+local SHIPPED_BOT_PINGS_DEFAULT = C.BOT_PINGS_DEFAULT
+-- Most tests below read the SPOKEN goal lines (acks, "Released", "Still on
+-- it."), which "bot chat off" silences.  They run with bot chat ON; the
+-- sections that test the default itself put the shipped value back.
+C.BOT_CHAT_DEFAULT = true
+
 -- A roster shaped like a real lobby: one human, four bots.  Socrates and
 -- Seneca share a prefix on purpose (the ambiguity case); Bruce Lee is the
 -- multi-word name.
@@ -43,6 +53,12 @@ local function check(name, cond, got)
     print(string.format("  FAIL %s   (got %s)", name, tostring(got)))
   end
 end
+
+print("constants.lua — the team settings a game starts at")
+check("bot chat starts OFF", SHIPPED_BOT_CHAT_DEFAULT == false,
+      tostring(SHIPPED_BOT_CHAT_DEFAULT))
+check("bot pings start ON", SHIPPED_BOT_PINGS_DEFAULT == true,
+      tostring(SHIPPED_BOT_PINGS_DEFAULT))
 
 local function P(text) return ORD.parse(text, ROSTER, ALL) end
 
@@ -608,7 +624,11 @@ check("no game-start line with no human ally",
 print("orders.lua — bot chat off (the runtime path)")
 st, w, inf = ST(), W(), I()
 inf.allies = 0x17
-check("bot chat is ON before anybody says otherwise",
+C.BOT_CHAT_DEFAULT = SHIPPED_BOT_CHAT_DEFAULT
+check("bot chat is OFF before anybody says otherwise",
+      ORD.bot_chat_on(st) == false, tostring(ORD.bot_chat_on(st)))
+C.BOT_CHAT_DEFAULT = true
+check("the test pin turns it ON for the rest of this file",
       ORD.bot_chat_on(st) == true, tostring(ORD.bot_chat_on(st)))
 ORD.on_chat(st, w, inf, 0, "bot chat off", 200, true, false)
 check("bot chat off latches", ORD.bot_chat_on(st) == false, tostring(ORD.bot_chat_on(st)))
@@ -1551,11 +1571,22 @@ check("taking an order places an ON MY WAY marker on the target",
       string.format("%s %s %s", tostring(out.ping_kind), tostring(out.ping_x),
                     tostring(out.ping_y)))
 
--- ATTACK markers ride the team setting, and it is OFF until somebody says
+-- ATTACK markers ride the team setting, and it is ON until somebody says
 -- otherwise.
 st = ST()
 check("bot pings start at the knob",
       ORD.bot_pings_on(st) == (C.BOT_PINGS_DEFAULT and true or false), "?")
+check("and the knob starts them ON", ORD.bot_pings_on(st) == true,
+      tostring(ORD.bot_pings_on(st)))
+ORD.ping(st, 3, 1, 1)                 -- makes state.orders exist
+ORD.out_ping(st, {})
+ORD.attack_ping(st, { kind = "attack_pill", target_id = 5, mx = 20, my = 20 }, 100)
+check("with nobody saying anything an attack marker is placed",
+      ORD.out_ping(st, {}).ping_kind == 3, "?")
+st = ST()
+ORD.ping(st, 3, 1, 1)
+ORD.out_ping(st, {})
+st.orders.bot_pings = false
 ORD.attack_ping(st, { kind = "attack_pill", target_id = 5, mx = 20, my = 20 }, 100)
 check("with bot pings off no attack marker is placed",
       ORD.out_ping(st, {}).ping_kind == nil, "?")
@@ -2036,8 +2067,11 @@ local function settle_oids(first_low)
   end
   ORD.update(s, ww, ii, 200)
   local seen = {}
+  -- The first settle takes its order (obc).  The second one finds the bot
+  -- on that job (ORDER_HOLDER_KEEPS_JOB) and offers it back (obo); with the
+  -- knob off it takes that one too.  Either line marks a settle.
   for _, line in ipairs(s.orders.out) do
-    local id = line:match("^/info obc (%d+) ")
+    local id = line:match("^/info obc (%d+) ") or line:match("^/info obo (%d+)$")
     if id then seen[#seen + 1] = tonumber(id) end
   end
   return table.concat(seen, ",")
@@ -2811,23 +2845,54 @@ check("a decoy death CANCELS the order (obx), no hand-back to another bot",
 check("and nothing parks after the respawn",
       ORD.hold_parked(d.st, d.inf) == false and lock(d, 301) == false, "parked")
 
--- 4f. A NEW ORDER FROM A PERSON TAKES PRIORITY.
+-- 4f. A NEW PING OR CHAT AUCTION ELSEWHERE DOES NOT END THE DECOY
+-- (ORDER_HOLDER_KEEPS_JOB).  The decoy runs to its own end; a free bot
+-- would take the new order.  This bot is alone, so nobody goes, and it says
+-- "All bots busy".  An order that NAMES the bot still ends the decoy.
 d = dbot(); arrive(d, 200)
 local old_oid = d.st.orders.held.oid
+d.st.orders.say = {}
 d.inf.events = { ping(5, 0, 100, 100) }
 ORD.on_events(d.st, d.w, d.inf, 300)
 d.inf.events = {}
 settle(d, 301, 315)
-check("a new ping order replaces the decoy",
+check("a new ping elsewhere does not end the decoy",
+      d.st.orders.held ~= nil and d.st.orders.held.oid == old_oid
+      and ORD.decoy_held(d.st) ~= nil,
+      tostring(d.st.orders.held and d.st.orders.held.oid))
+check("and the lone decoy says all bots are busy",
+      said(d, "^All bots busy$"), table.concat(d.st.orders.say, " | "))
+d = dbot(); arrive(d, 200)
+ORD.on_chat(d.st, d.w, d.inf, 0, "attack 5", 300, true, false)
+settle(d, 301, 315)
+check("a new chat order (no name) does not end the decoy",
+      d.st.orders.held ~= nil and d.st.orders.held.oid == old_oid
+      and ORD.decoy_held(d.st) ~= nil,
+      tostring(d.st.orders.held and d.st.orders.held.kind))
+d = dbot(); arrive(d, 200)
+ORD.on_chat(d.st, d.w, d.inf, 0, "socrates attack 5", 300, true, false)
+settle(d, 301, 315)
+check("an order that NAMES the decoy bot replaces the decoy",
+      d.st.orders.held ~= nil and d.st.orders.held.kind == "attack_pill",
+      tostring(d.st.orders.held and d.st.orders.held.kind))
+-- Keel: the auction winner leaves its decoy for the new order, as before.
+C.ORDER_HOLDER_KEEPS_JOB = false
+d = dbot(); arrive(d, 200)
+d.inf.events = { ping(5, 0, 100, 100) }
+ORD.on_events(d.st, d.w, d.inf, 300)
+d.inf.events = {}
+settle(d, 301, 315)
+check("HOLDER_KEEPS_JOB off: a new ping order replaces the decoy",
       d.st.orders.held ~= nil and d.st.orders.held.oid ~= old_oid
       and d.st.orders.held.decoy == nil and d.st.orders.held.mx == 100,
       tostring(d.st.orders.held and d.st.orders.held.oid))
 d = dbot(); arrive(d, 200)
 ORD.on_chat(d.st, d.w, d.inf, 0, "attack 5", 300, true, false)
 settle(d, 301, 315)
-check("a new chat order replaces the decoy",
+check("HOLDER_KEEPS_JOB off: a new chat order replaces the decoy",
       d.st.orders.held ~= nil and d.st.orders.held.kind == "attack_pill",
       tostring(d.st.orders.held and d.st.orders.held.kind))
+C.ORDER_HOLDER_KEEPS_JOB = true
 
 -- 5. KNOB OFF (keel) AND CHAT ORDERS: today's soft hold, unchanged.
 C.ORDER_GOTO_DECOY = false
@@ -2934,9 +2999,35 @@ do
   check("a ping on another of our pills ends the old bonus at once",
         r.st._repair_ping == nil, tostring(r.st._repair_ping and r.st._repair_ping.tid))
   settle(r, 201, 215)
-  check("and the bot that takes the new order gets it on the new pill",
+  -- ORDER_NO_FREE_TAKES_LOWEST: the lone bot is the only one, so no free bot
+  -- exists and it switches to #11 and takes the bonus there.
+  check("no free bot: the lone defender switches to the new pill and its bonus",
+        r.st.orders.held ~= nil and r.st.orders.held.tid == 11
+        and r.st._repair_ping ~= nil and r.st._repair_ping.tid == 11,
+        tostring(r.st.orders.held and r.st.orders.held.tid))
+  -- Knob off: ORDER_HOLDER_KEEPS_JOB alone.  This bot keeps its defend order
+  -- on #9, so it does not take the new one and gets no bonus on #11 either.
+  C.ORDER_NO_FREE_TAKES_LOWEST = false
+  r = BOT(1, 10, 10)
+  r.w.pills[11] = { mx = 70, my = 70, owner = "friendly", health = 5 }
+  rtake(r, 100)
+  rping(r, 200, 70, 70)
+  settle(r, 201, 215)
+  check("a bot on a defend order keeps it on a ping on another of our pills",
+        r.st.orders.held ~= nil and r.st.orders.held.tid == 9
+        and r.st._repair_ping == nil,
+        tostring(r.st.orders.held and r.st.orders.held.tid))
+  C.ORDER_NO_FREE_TAKES_LOWEST = true
+  C.ORDER_HOLDER_KEEPS_JOB = false
+  r = BOT(1, 10, 10)
+  r.w.pills[11] = { mx = 70, my = 70, owner = "friendly", health = 5 }
+  rtake(r, 100)
+  rping(r, 200, 70, 70)
+  settle(r, 201, 215)
+  check("HOLDER_KEEPS_JOB off: the bot takes the new order and its bonus",
         r.st._repair_ping ~= nil and r.st._repair_ping.tid == 11,
         tostring(r.st._repair_ping and r.st._repair_ping.tid))
+  C.ORDER_HOLDER_KEEPS_JOB = true
   r = BOT(1, 10, 10)
   rtake(r, 100, 20, 20)
   check("an attack ping order on an ENEMY pill gives no bonus", r.st._repair_ping == nil, "?")
@@ -3166,6 +3257,246 @@ do
 end
 
 -- =========================================================================
+-- ONE SLOT, ONE BOT (ORDER_CLAIM_TIEBREAK, PR #389 review item 9).  A repeat
+-- ping adds one slot (want 2).  When its auction times out, two bots can
+-- both take that slot: three holders on a 2-bot order.  The dearest holder
+-- lets go in silence, and every bot agrees on which one it is.
+-- =========================================================================
+-- These rigs repeat-ping a GROUND square to add a slot, which only the
+-- keel ORDER_LAND_REPEAT_ADDS does (a pill ping adds a slot the same way).
+C.ORDER_LAND_REPEAT_ADDS = true
+print("orders.lua -- a repeat-ping slot taken twice")
+local function slot_rig()
+  -- A (p1) is nearest and takes the first ping.  B (p2) is nearer than C (p4).
+  local a, b, c = BOT(1, 31, 31), BOT(2, 40, 40), BOT(4, 46, 46)
+  local all = { a, b, c }
+  for _, x in ipairs(all) do gping(x, 100, 35, 35) end
+  pumpn(all, 100); upd(all, 101)
+  pumpn(all, 101); upd(all, 102)
+  pumpn(all, 102); upd(all, 103)
+  -- The repeat ping.  Its bids are lost, so B and C each settle alone.
+  for _, x in ipairs(all) do gping(x, 200, 35, 35) end
+  for _, x in ipairs(all) do
+    x.st.orders.out, x.st.orders.pings, x.st.orders.say = {}, {}, {}
+  end
+  upd(all, 201)
+  return a, b, c, all
+end
+local function holds(x, oid)
+  return x.st.orders.held ~= nil and x.st.orders.held.oid == oid
+end
+do
+  local a, b, c, all = slot_rig()
+  local oid = a.st.orders.held and a.st.orders.held.oid
+  check("setup: the repeat ping made a 2-slot order",
+        oid ~= nil and a.st.orders.anchors[oid].want == 2, "?")
+  check("setup: A, B and C all hold it (3 holders, 2 slots)",
+        holds(a, oid) and holds(b, oid) and holds(c, oid), "?")
+  check("the new takers put no marker down before the claim window",
+        #b.st.orders.pings == 0 and #c.st.orders.pings == 0,
+        tostring(#b.st.orders.pings) .. " " .. tostring(#c.st.orders.pings))
+  pumpn(all, 201)
+  upd(all, 203)
+  check("the dearest holder (C) lets go", not holds(c, oid), "held")
+  check("A and B keep the order", holds(a, oid) and holds(b, oid), "?")
+  check("C lets go with a release, not a cancel",
+        (c.st.orders.out[1] or ""):match("^/info obr " .. oid .. "$") ~= nil,
+        tostring(c.st.orders.out[1]))
+  check("C's marker is not due any more", c.st.orders.ack_due == nil, "due")
+  pumpn(all, 203)
+  upd(all, 204)
+  local ga, gb = a.st.orders.gclaims[oid] or {}, b.st.orders.gclaims[oid] or {}
+  check("A and B both count exactly A and B as holders",
+        ga[1] and ga[2] and not ga[4] and gb[1] and gb[2] and not gb[4], "?")
+  check("C's release re-opens nothing", next(a.st.orders.auctions) == nil
+        and next(b.st.orders.auctions) == nil and next(c.st.orders.auctions) == nil, "?")
+  upd(all, 212)
+  check("after the window B puts its marker down, C none",
+        #b.st.orders.pings == 1 and #c.st.orders.pings == 0,
+        tostring(#b.st.orders.pings) .. " " .. tostring(#c.st.orders.pings))
+  check("C says nothing", #c.st.orders.say == 0, tostring(c.st.orders.say[1]))
+  upd(all, 400)
+  check("C does not take the order back", not holds(c, oid), "held")
+end
+do
+  -- The claims reach the bots in the other order: the same answer.
+  local a, b, c = slot_rig()
+  local oid = a.st.orders.held.oid
+  pumpn({ c, b, a }, 201)
+  upd({ c, b, a }, 203)
+  check("reversed claim order: still C lets go, A and B keep",
+        holds(a, oid) and holds(b, oid) and not holds(c, oid), "?")
+end
+do
+  -- A holder trimmed off an attack_pill order ends its suicide run on that
+  -- pill, as the solo tiebreak's loser does.  The kept holder's run stands.
+  local a, b, c, all = slot_rig()
+  local oid = a.st.orders.held.oid
+  for _, x in ipairs(all) do
+    x.st.orders.held.kind, x.st.orders.held.tid = "attack_pill", 5
+    x.st._suicide = { tid = 5, since = 200 }
+  end
+  pumpn(all, 201)
+  upd(all, 203)
+  check("the trimmed holder's suicide run ends",
+        not holds(c, oid) and c.st._suicide == nil,
+        tostring(c.st._suicide and c.st._suicide.tid))
+  check("the kept holders' suicide runs stand",
+        a.st._suicide ~= nil and b.st._suicide ~= nil, "?")
+end
+do
+  -- A cost tie between the two new takers goes to the lower player number.
+  local a, b, c, all = slot_rig()
+  local oid = a.st.orders.held.oid
+  for _, x in ipairs({ b, c }) do
+    x.st.orders.held.claim_cost = 999
+    x.st.orders.gclaims[oid][x.pn] = 999
+    x.st.orders.out = { "/info obc " .. oid .. " 999" }
+  end
+  pumpn(all, 201)
+  upd(all, 203)
+  check("a tie on the slot keeps the lower player number (B, p2)",
+        holds(a, oid) and holds(b, oid) and not holds(c, oid), "?")
+end
+do
+  local o = { anchors = { [5] = { want = 1, names = true } },
+              gclaims = { [5] = { [1] = 3, [2] = 4 } } }
+  check("a selection order is not trimmed", ORD.slot_keepers(o, 5) == nil, "trimmed")
+  o.anchors[5].names = nil
+  local keep, n = ORD.slot_keepers(o, 5)
+  check("a ping order keeps the cheapest `want`",
+        keep ~= nil and #keep == 1 and keep[1] == 1 and n == 2, "?")
+  C.ORDER_CLAIM_TIEBREAK = false
+  check("keel: nothing is ranked", ORD.slot_keepers(o, 5) == nil, "ranked")
+  C.ORDER_CLAIM_TIEBREAK = true
+end
+do
+  -- Keel: the old behaviour exactly.  The markers go on the take, and the
+  -- two new takers both keep the added slot.
+  C.ORDER_CLAIM_TIEBREAK = false
+  local a, b, c, all = slot_rig()
+  local oid = b.st.orders.held and b.st.orders.held.oid
+  check("keel: the new takers mark at once",
+        #b.st.orders.pings == 1 and #c.st.orders.pings == 1,
+        tostring(#b.st.orders.pings) .. " " .. tostring(#c.st.orders.pings))
+  pumpn(all, 201)
+  upd(all, 203)
+  check("keel: B and C both keep the added slot",
+        oid ~= nil and holds(b, oid) and holds(c, oid), "?")
+  C.ORDER_CLAIM_TIEBREAK = true
+end
+
+-- =========================================================================
+-- TWO DECOYS ON ONE SQUARE (ORDER_GOTO_DECOY, PR #389 review item 10).  A
+-- repeat ping puts a second bot on a decoy square.  When one decoy's hold
+-- ends (death, caution, clock) it lets go of its own share only; the
+-- partner keeps decoying until its own end.  The last one out cancels.
+-- =========================================================================
+print("orders.lua -- two decoys on one square")
+local DHOLD = C.ORDER_GOTO_HOLD_TICKS or 500
+local function decoy_pair()
+  local a, b = BOT(1, 22, 30), BOT(2, 22, 34)
+  local all = { a, b }
+  for _, x in ipairs(all) do gping(x, 100, 22, 24) end
+  pumpn(all, 100); upd(all, 101)
+  pumpn(all, 101); upd(all, 102)
+  for _, x in ipairs(all) do gping(x, 150, 22, 24) end
+  pumpn(all, 150); upd(all, 151)
+  pumpn(all, 151); upd(all, 152)
+  pumpn(all, 152); upd(all, 153)
+  -- A reaches the square at 210, B beside it at 220.
+  a.inf.tankx, a.inf.tanky = 22 * 256 + 128, 24 * 256 + 128
+  upd({ a }, 210)
+  b.inf.tankx, b.inf.tanky = 23 * 256 + 128, 24 * 256 + 128
+  upd({ b }, 220)
+  pumpn(all, 220)
+  for _, x in ipairs(all) do x.st.orders.out, x.st.orders.say = {}, {} end
+  return a, b, all
+end
+do
+  local a, b, all = decoy_pair()
+  local oid = a.st.orders.held and a.st.orders.held.oid
+  check("setup: both bots decoy on the one order",
+        oid ~= nil and ORD.decoy_held(a.st) ~= nil and ORD.decoy_held(b.st) ~= nil
+        and b.st.orders.held.oid == oid, "?")
+  ORD.on_death(a.st, a.inf)
+  check("a decoy death with a partner: a release, not a cancel",
+        a.st.orders.out[1] == "/info obr " .. tostring(oid), tostring(a.st.orders.out[1]))
+  pumpn(all, 300)
+  upd({ b }, 301)
+  check("the partner keeps decoying", ORD.decoy_held(b.st) ~= nil
+        and b.st.orders.held.oid == oid, "dropped")
+  check("the partner stops counting the dead decoy",
+        (b.st.orders.gclaims[oid] or {})[1] == nil, "counted")
+  -- A respawns next to the square: it must not steal the order back.
+  a.inf.tankx, a.inf.tanky = 22 * 256 + 128, 25 * 256 + 128
+  upd({ a }, 450)
+  check("the dead decoy does not steal the order back", a.st.orders.held == nil,
+        tostring(a.st.orders.held and a.st.orders.held.oid))
+  b.st.orders.out = {}
+  upd({ b }, 220 + DHOLD)
+  check("the partner's own clock ends it, as the last holder: a cancel",
+        b.st.orders.held == nil and b.st.orders.out[1] == "/info obx " .. tostring(oid),
+        tostring(b.st.orders.out[1]))
+end
+do
+  -- A caution beside A's tank only (B is two squares off it).
+  local a, b, all = decoy_pair()
+  local oid = a.st.orders.held.oid
+  for _, x in ipairs(all) do
+    x.inf.events = { ping(1, 0, 21, 24) }
+    ORD.on_events(x.st, x.w, x.inf, 300)
+    x.inf.events = {}
+  end
+  check("a caution on one decoy releases it", a.st.orders.held == nil
+        and a.st.orders.say[1] == "Released", tostring(a.st.orders.say[1]))
+  check("with a release, not a cancel",
+        a.st.orders.out[1] == "/info obr " .. oid, tostring(a.st.orders.out[1]))
+  pumpn(all, 300)
+  upd(all, 301)
+  check("the partner keeps decoying after the caution",
+        ORD.decoy_held(b.st) ~= nil, "dropped")
+end
+do
+  -- The clock: A arrived first, so its hold ends first.
+  local a, b, all = decoy_pair()
+  local oid = a.st.orders.held.oid
+  upd(all, 210 + DHOLD)
+  check("A's clock ends A's hold", a.st.orders.held == nil, "held")
+  check("with a release, not a cancel (clock)",
+        a.st.orders.out[1] == "/info obr " .. oid, tostring(a.st.orders.out[1]))
+  pumpn(all, 210 + DHOLD)
+  upd(all, 211 + DHOLD)
+  check("B holds on to the end of its own clock", ORD.decoy_held(b.st) ~= nil, "dropped")
+  check("A does not take the order back", a.st.orders.held == nil, "held")
+end
+do
+  -- A person's cancel still reaches both.
+  local a, b, all = decoy_pair()
+  for _, x in ipairs(all) do
+    ORD.on_chat(x.st, x.w, x.inf, 0, "cancel all", 300, true, false)
+  end
+  check("'cancel all' still ends both decoys",
+        a.st.orders.held == nil and b.st.orders.held == nil, "?")
+end
+do
+  -- Without ORDER_NO_HAND_BACK an obr would hand the square on, so the
+  -- decoy's end stays the old cancel.
+  C.ORDER_NO_HAND_BACK = false
+  local a, b, all = decoy_pair()
+  local oid = a.st.orders.held.oid
+  ORD.on_death(a.st, a.inf)
+  check("no NO_HAND_BACK: a decoy death still cancels (obx)",
+        a.st.orders.out[1] == "/info obx " .. oid, tostring(a.st.orders.out[1]))
+  pumpn(all, 300)
+  upd({ b }, 301)
+  check("no NO_HAND_BACK: and the partner drops too (the old behaviour)",
+        b.st.orders.held == nil, "held")
+  C.ORDER_NO_HAND_BACK = true
+end
+C.ORDER_LAND_REPEAT_ADDS = false
+
+-- =========================================================================
 -- A NEW ORDER RETIRES EVERY OLDER ONE (ORDER_NEW_CLEARS_ALL, 2026-09-24).
 -- "I'm seeing bots go back to where I said 'go here' a while ago."
 -- =========================================================================
@@ -3177,7 +3508,9 @@ local function settle2(a, b, t)
 end
 do
   -- A takes "go here" X, then a second ping Y, which A takes too.  A lets
-  -- X go (obr).  B must not pick X up.
+  -- X go (obr).  B must not pick X up.  A switching orders is the keel
+  -- ORDER_HOLDER_KEEPS_JOB; with it on A keeps X (see the tests below).
+  C.ORDER_HOLDER_KEEPS_JOB = false
   local a, b = BOT(1, 32, 32), BOT(2, 90, 90)
   gping(a, 100, 35, 35); gping(b, 100, 35, 35)
   settle2(a, b, 100)
@@ -3204,6 +3537,7 @@ do
         tostring(b2.st.orders.held and b2.st.orders.held.oid))
   C.ORDER_NEW_CLEARS_ALL = true
   C.ORDER_NO_HAND_BACK = true
+  C.ORDER_HOLDER_KEEPS_JOB = true
 end
 do
   -- An order for somebody else leaves what this bot holds alone.
@@ -3254,6 +3588,720 @@ do
   check("and so is the second", ha ~= nil and hb ~= nil and ha ~= hb,
         tostring(ha) .. " " .. tostring(hb))
 end
+
+-- =========================================================================
+-- A BOT KEEPS THE JOB A PERSON GAVE IT (ORDER_HOLDER_KEEPS_JOB, PR #393).
+-- Ping one square, then another -- a tick later or a minute later -- and
+-- the bot on the first stays there; a FREE bot takes the second.  With
+-- nobody free, nobody goes and one bot says "All bots busy"; the order
+-- waits for a bot to come free.  An order that names a bot still switches
+-- it.  A repeat ping on plain ground refreshes the order and adds no bot
+-- (ORDER_LAND_REPEAT_ADDS false); on a pill, base or tank it adds one.
+-- =========================================================================
+print("orders.lua -- a bot keeps the job a person gave it")
+check("holder knob is on live", C.ORDER_HOLDER_KEEPS_JOB == true,
+      tostring(C.ORDER_HOLDER_KEEPS_JOB))
+check("keel: the auction winner switches",
+      C.PRESETS.keel.ORDER_HOLDER_KEEPS_JOB == false, "?")
+check("land-repeat knob is off live", C.ORDER_LAND_REPEAT_ADDS == false,
+      tostring(C.ORDER_LAND_REPEAT_ADDS))
+check("keel: a repeat ping on ground adds a bot",
+      C.PRESETS.keel.ORDER_LAND_REPEAT_ADDS == true, "?")
+local function holders_of(all)
+  local by = {}
+  for _, b in ipairs(all) do
+    local h = b.st.orders.held
+    if h then
+      by[h.oid] = by[h.oid] or {}
+      by[h.oid][#by[h.oid] + 1] = b.pn
+    end
+  end
+  local n, list = 0, {}
+  for oid, pns in pairs(by) do
+    n = n + 1
+    list[#list + 1] = string.format("%d:%s", oid, table.concat(pns, ","))
+  end
+  return by, n, table.concat(list, " ")
+end
+local function said_n(all, pat)
+  local n = 0
+  for _, b in ipairs(all) do
+    for _, l in ipairs(b.st.orders.say or {}) do
+      if l:match(pat) then n = n + 1 end
+    end
+  end
+  return n
+end
+-- Two pings `gap` ticks apart.  W (p1) is the nearest bot to both squares.
+-- Answers the bots and the first order's id.
+local function two_pings(gap, nbots)
+  local w, x, y = BOT(1, 31, 31), BOT(2, 60, 60), BOT(4, 70, 70)
+  local all = { w, x }
+  if nbots == 3 then all[3] = y end
+  for _, b in ipairs(all) do gping(b, 100, 35, 35) end
+  local first = next(w.st.orders.auctions)
+  pumpn(all, 100)
+  local t = 100
+  while t < 100 + gap - 1 do
+    t = t + 1
+    upd(all, t); pumpn(all, t)
+  end
+  for _, b in ipairs(all) do gping(b, 100 + gap, 38, 38) end
+  pumpn(all, 100 + gap)
+  for t2 = 101 + gap, 130 + gap do upd(all, t2); pumpn(all, t2) end
+  return all, first
+end
+for _, case in ipairs({ { 1, 2 }, { 5, 2 }, { 1, 3 }, { 5, 3 },
+                        { 40, 2 }, { 250, 2 }, { 250, 3 } }) do
+  local gap, nb = case[1], case[2]
+  local all, first = two_pings(gap, nb)
+  local by, n, desc = holders_of(all)
+  local one_each = n == 2
+  for _, pns in pairs(by) do if #pns ~= 1 then one_each = false end end
+  check(string.format("pings %d tick(s) apart, %d bots: two orders, one bot each",
+        gap, nb), one_each, desc)
+  local w = all[1]
+  if gap >= 5 then
+    -- W took the first order before the second came: it stays on it.
+    check(string.format("pings %d ticks apart, %d bots: W stays on the first order",
+          gap, nb), w.st.orders.held ~= nil and w.st.orders.held.oid == first, desc)
+  else
+    check(string.format("pings %d tick apart, %d bots: W holds one of them", gap, nb),
+          w.st.orders.held ~= nil, "none")
+  end
+  check(string.format("pings %d tick(s) apart, %d bots: nobody says it is leaving",
+        gap, nb), said_n(all, "^Leaving") == 0, "left")
+end
+do
+  -- A bot on a person's job answers the next auction "no".
+  local w, x = BOT(1, 31, 31), BOT(2, 60, 60)
+  local all = { w, x }
+  for _, b in ipairs(all) do gping(b, 100, 35, 35) end
+  pumpn(all, 100); upd(all, 101); pumpn(all, 101); upd(all, 102)
+  check("setup: W holds the first order", w.st.orders.held ~= nil, "none")
+  w.st.orders.out = {}
+  gping(w, 200, 38, 38)
+  local second = next(w.st.orders.auctions)
+  local no = false
+  for _, m in ipairs(w.st.orders.out) do
+    local v = second and m:match("^/info obd " .. second .. " (%-%d+)$")
+    if v and tonumber(v) <= ORD.BID_HOLD then no = true end
+  end
+  check("W, on a person's job, bids no with its switch cost on a new order", no,
+        table.concat(w.st.orders.out, " | "))
+  -- Knob off: the plain busy "no".
+  C.ORDER_NO_FREE_TAKES_LOWEST = false
+  w.st.orders.out = {}
+  gping(w, 300, 40, 40)
+  local third = nil
+  for oid in pairs(w.st.orders.auctions) do
+    if oid ~= second then third = oid end
+  end
+  no = false
+  for _, m in ipairs(w.st.orders.out) do
+    if third and m == "/info obd " .. third .. " -2" then no = true end
+  end
+  check("NO_FREE_TAKES_LOWEST off: W bids a plain -2", no,
+        table.concat(w.st.orders.out, " | "))
+  C.ORDER_NO_FREE_TAKES_LOWEST = true
+end
+do
+  -- Two pings in one auction window: W bid on both before it held either,
+  -- and wins both.  It takes one and offers the other (obo, then its "no").
+  local w, x = BOT(1, 31, 31), BOT(2, 60, 60)
+  local all = { w, x }
+  for _, b in ipairs(all) do gping(b, 100, 35, 35) end
+  pumpn(all, 100)
+  for _, b in ipairs(all) do gping(b, 101, 38, 38) end
+  pumpn(all, 101)
+  upd(all, 102)
+  local took, offer, no = 0, nil, nil
+  for _, m in ipairs(w.st.orders.out) do
+    if m:match("^/info obc ") then took = took + 1 end
+    offer = offer or m:match("^/info obo (%d+)$")
+    no = no or m:match("^/info obd (%d+) %-2$")
+  end
+  check("W won both: it takes one and offers the other (obo)",
+        took == 1 and offer ~= nil and no == offer,
+        table.concat(w.st.orders.out, " | "))
+  pumpn(all, 102); upd(all, 103); pumpn(all, 103); upd(all, 104)
+  check("X takes the offered order",
+        x.st.orders.held ~= nil and tostring(x.st.orders.held.oid) == offer,
+        tostring(x.st.orders.held and x.st.orders.held.oid))
+  -- Keel: W takes both in turn and leaves the first; nothing is offered.
+  C.ORDER_HOLDER_KEEPS_JOB = false
+  local w2, x2 = BOT(1, 31, 31), BOT(2, 60, 60)
+  local all2 = { w2, x2 }
+  for _, b in ipairs(all2) do gping(b, 100, 35, 35) end
+  pumpn(all2, 100)
+  for _, b in ipairs(all2) do gping(b, 101, 38, 38) end
+  pumpn(all2, 101)
+  upd(all2, 102)
+  local offered = false
+  for _, m in ipairs(w2.st.orders.out) do
+    if m:match("^/info obo ") then offered = true end
+  end
+  check("HOLDER_KEEPS_JOB off: no offer, W leaves one order for the other",
+        not offered and said(w2, "^Leaving"), table.concat(w2.st.orders.out, " | "))
+  C.ORDER_HOLDER_KEEPS_JOB = true
+end
+do
+  -- The same two pings, and W hears its own obo and obd, as a bot in the
+  -- game does (pumpn does not hand a bot its own lines).  W opens the
+  -- auction on the offered order with its own "no" in it, sends no second
+  -- "no", and settles it on X's bid like the other bots.
+  local w, x = BOT(1, 31, 31), BOT(2, 60, 60)
+  local all = { w, x }
+  for _, b in ipairs(all) do gping(b, 100, 35, 35) end
+  pumpn(all, 100)
+  for _, b in ipairs(all) do gping(b, 101, 38, 38) end
+  pumpn(all, 101)
+  upd(all, 102)
+  local own, offer = {}, nil
+  for i, m in ipairs(w.st.orders.out) do
+    own[i] = m
+    offer = offer or tonumber(m:match("^/info obo (%d+)$"))
+  end
+  check("setup: W offers one of the two orders", offer ~= nil, table.concat(own, " | "))
+  -- X is an active ally from here on, so W's auction waits for X's answer
+  -- instead of settling on the think it opens (the harness has no allies).
+  local AS = require("ally_state")
+  if not AS.slots[2] then AS.init() end
+  AS.set_info(2, 102, {})
+  pumpn(all, 102)
+  for _, m in ipairs(own) do ORD.rx(w.pn, m, 102, w.st) end
+  upd(all, 103)
+  local again = 0
+  for _, m in ipairs(w.st.orders.out) do
+    if offer and m:match("^/info obd " .. offer .. " ") then again = again + 1 end
+  end
+  check("W, hearing its own offer, opens the auction on it",
+        offer ~= nil and w.st.orders.auctions[offer] ~= nil, "no auction")
+  check("W sends no second 'no' for its own offer", again == 0,
+        table.concat(w.st.orders.out, " | "))
+  pumpn(all, 103); upd(all, 104)
+  local cl = offer and w.st.orders.claims[offer]
+  check("W settles its own offer on X's bid: X is the claimant",
+        cl ~= nil and cl.pn == 2, tostring(cl and cl.pn))
+  check("and W has no auction left on it",
+        offer ~= nil and w.st.orders.auctions[offer] == nil, "still open")
+  AS.clear(2)
+end
+do
+  -- Far apart, with the knob off: the winner still switches (keel).
+  C.ORDER_HOLDER_KEEPS_JOB = false
+  local all = two_pings(40, 2)
+  local _, n, desc = holders_of(all)
+  check("HOLDER_KEEPS_JOB off: pings far apart, W switches, one order held",
+        n == 1 and all[1].st.orders.held ~= nil, desc)
+  C.ORDER_HOLDER_KEEPS_JOB = true
+end
+
+-- NOBODY FREE, ORDER_NO_FREE_TAKES_LOWEST OFF (keel of that knob): nobody
+-- goes.  A holds a job, B holds a job, C is dead (it hears nothing).  The
+-- knob-on rule is tested further down (NO FREE BOT, THE CHEAPEST SWITCHES).
+C.ORDER_NO_FREE_TAKES_LOWEST = false
+local function busy_pair()
+  local a, b = BOT(1, 32, 32), BOT(2, 90, 90)
+  local all = { a, b }
+  for _, x in ipairs(all) do gping(x, 100, 35, 35) end
+  pumpn(all, 100); upd(all, 101); pumpn(all, 101); upd(all, 102); pumpn(all, 102)
+  for _, x in ipairs(all) do gping(x, 200, 86, 86) end
+  pumpn(all, 200); upd(all, 201); pumpn(all, 201); upd(all, 202); pumpn(all, 202)
+  for _, x in ipairs(all) do x.st.orders.say = {} end
+  return a, b, all
+end
+local function third_ping(all)
+  for _, x in ipairs(all) do gping(x, 300, 70, 70) end
+  local z = next(all[1].st.orders.auctions)
+  pumpn(all, 300); upd(all, 301); pumpn(all, 301); upd(all, 302); pumpn(all, 302)
+  return z
+end
+do
+  local a, b, all = busy_pair()
+  local x = a.st.orders.held and a.st.orders.held.oid
+  local y = b.st.orders.held and b.st.orders.held.oid
+  check("setup: A holds the first order, B the second",
+        x ~= nil and y ~= nil and x ~= y, tostring(x) .. " " .. tostring(y))
+  local z = third_ping(all)
+  check("nobody free: nobody goes, A and B keep their jobs",
+        z ~= nil and a.st.orders.held.oid == x and b.st.orders.held.oid == y,
+        tostring(a.st.orders.held.oid) .. " " .. tostring(b.st.orders.held.oid))
+  check("one bot says all bots are busy",
+        said_n(all, "^All bots busy$") == 1 and said(a, "^All bots busy$"),
+        table.concat(a.st.orders.say, " | ") .. " / " .. table.concat(b.st.orders.say, " | "))
+  check("the order stays known",
+        a.st.orders.known[z] ~= nil and b.st.orders.known[z] ~= nil, "forgot")
+  -- A's job ends: A is free and takes the waiting order.
+  ORD.release_held(a.st, a.inf, nil, true, true)
+  upd(all, 400)
+  check("a bot that comes free takes the waiting order",
+        a.st.orders.held ~= nil and a.st.orders.held.oid == z,
+        tostring(a.st.orders.held and a.st.orders.held.oid))
+  pumpn(all, 400); upd(all, 401)
+  check("B keeps its job and counts A on the waiting order",
+        b.st.orders.held.oid == y and (b.st.orders.gclaims[z] or {})[1] ~= nil, "?")
+  upd(all, 500)
+  check("B does not take the waiting order too", b.st.orders.held.oid == y, "took")
+end
+do
+  -- The wait is ORDER_FOCUS_TICKS long.
+  local a, b, all = busy_pair()
+  local z = third_ping(all)
+  ORD.release_held(a.st, a.inf, nil, true, true)
+  upd({ a }, 300 + (C.ORDER_FOCUS_TICKS or 3000))
+  check("after ORDER_FOCUS_TICKS a freed bot does not take the waiting order",
+        a.st.orders.held == nil, tostring(a.st.orders.held and a.st.orders.held.oid))
+  upd({ a }, 301 + (C.ORDER_FOCUS_TICKS or 3000))
+  check("and the order is forgotten", a.st.orders.known[z] == nil, "known")
+end
+do
+  -- A chat auction gets the same answer when nobody is free.
+  local a = BOT(1, 32, 32)
+  gping(a, 100, 35, 35)
+  upd({ a }, 101)
+  a.st.orders.say = {}
+  ORD.on_chat(a.st, a.w, a.inf, 0, "attack 5", 200, true, false)
+  upd({ a }, 201)
+  check("a lone bot on a job answers a chat order: all bots busy",
+        said(a, "^All bots busy$"), table.concat(a.st.orders.say, " | "))
+end
+do
+  -- "No" because nobody can get there is not "busy".  Two free bots, and
+  -- the target is out of reach for both (travel cost nil): nobody goes and
+  -- nobody says all bots are busy.
+  local real = ORD.travel_cost
+  ORD.travel_cost = function() return nil end
+  local a, b = BOT(1, 32, 32), BOT(2, 90, 90)
+  local all = { a, b }
+  local z = third_ping(all)
+  ORD.travel_cost = real
+  check("unreachable: both bots bid -1, not busy",
+        z ~= nil and a.st.orders.held == nil and b.st.orders.held == nil,
+        tostring(a.st.orders.held and a.st.orders.held.oid))
+  check("unreachable: nobody says all bots are busy",
+        said_n(all, "^All bots busy$") == 0,
+        table.concat(a.st.orders.say, " | ") .. " / " .. table.concat(b.st.orders.say, " | "))
+end
+do
+  -- One bot cannot get there (p1), the other holds a job (p2): the busy one
+  -- says it, although p1 has the lower player number.
+  local u, h = BOT(1, 32, 32), BOT(2, 90, 90)
+  local all = { u, h }
+  for _, x in ipairs(all) do gping(x, 100, 86, 86) end
+  pumpn(all, 100); upd(all, 101); pumpn(all, 101); upd(all, 102); pumpn(all, 102)
+  local y = h.st.orders.held and h.st.orders.held.oid
+  check("setup: p2 holds a job, p1 is free", y ~= nil and u.st.orders.held == nil,
+        tostring(u.st.orders.held and u.st.orders.held.oid))
+  for _, x in ipairs(all) do x.st.orders.say = {} end
+  local real = ORD.travel_cost
+  ORD.travel_cost = function(st, ...)
+    if st == u.st then return nil end
+    return real(st, ...)
+  end
+  local z = third_ping(all)
+  ORD.travel_cost = real
+  check("one unreachable, one busy: nobody goes",
+        z ~= nil and u.st.orders.held == nil and h.st.orders.held.oid == y, "went")
+  check("one unreachable, one busy: the busy bot says all bots are busy",
+        said_n(all, "^All bots busy$") == 1 and said(h, "^All bots busy$"),
+        table.concat(u.st.orders.say, " | ") .. " / " .. table.concat(h.st.orders.say, " | "))
+end
+do
+  -- Keel: the cheaper bot leaves its job for the new order.
+  C.ORDER_HOLDER_KEEPS_JOB = false
+  local a, b, all = busy_pair()
+  local y = b.st.orders.held and b.st.orders.held.oid
+  local z = third_ping(all)
+  check("HOLDER_KEEPS_JOB off: the winner leaves its job for the new order",
+        b.st.orders.held ~= nil and b.st.orders.held.oid == z and z ~= y,
+        tostring(b.st.orders.held and b.st.orders.held.oid))
+  check("HOLDER_KEEPS_JOB off: nobody says all bots are busy",
+        said_n(all, "^All bots busy$") == 0, "said")
+  C.ORDER_HOLDER_KEEPS_JOB = true
+end
+C.ORDER_NO_FREE_TAKES_LOWEST = true
+
+-- CHAT ORDERS.  An auction ("attack 5", a count) goes to a free bot.  An
+-- order that names a bot switches it, and so do `all` and `nearby`, which
+-- name every bot (or every bot near): unchanged.
+local function chat_pair()
+  local a, b = BOT(1, 32, 32), BOT(2, 90, 90)      -- A is nearer pill 5
+  local all = { a, b }
+  for _, x in ipairs(all) do gping(x, 100, 35, 35) end
+  pumpn(all, 100); upd(all, 101); pumpn(all, 101); upd(all, 102); pumpn(all, 102)
+  return a, b, all
+end
+local function chat_all(all, line, t)
+  for _, x in ipairs(all) do ORD.on_chat(x.st, x.w, x.inf, 0, line, t, true, false) end
+  pumpn(all, t); upd(all, t + 1); pumpn(all, t + 1); upd(all, t + 2)
+end
+do
+  local a, b, all = chat_pair()
+  local x = a.st.orders.held and a.st.orders.held.oid
+  chat_all(all, "attack 5", 200)
+  check("chat auction: the free bot takes it, A keeps its job",
+        a.st.orders.held.oid == x and b.st.orders.held ~= nil
+        and b.st.orders.held.kind == "attack_pill",
+        tostring(b.st.orders.held and b.st.orders.held.kind))
+  a, b, all = chat_pair()
+  chat_all(all, "socrates attack 5", 200)
+  check("an order that names A switches A",
+        a.st.orders.held ~= nil and a.st.orders.held.kind == "attack_pill"
+        and b.st.orders.held == nil, tostring(a.st.orders.held and a.st.orders.held.kind))
+  a, b, all = chat_pair()
+  chat_all(all, "all attack 5", 200)
+  check("'all' still switches A (it names every bot)",
+        a.st.orders.held ~= nil and a.st.orders.held.kind == "attack_pill"
+        and b.st.orders.held ~= nil and b.st.orders.held.kind == "attack_pill", "?")
+end
+
+-- A REPEAT PING ON PLAIN GROUND REFRESHES, ON A PILL IT ADDS A BOT.
+local function repeat_pair(mx, my)
+  local a, b = BOT(1, 32, 32), BOT(2, 45, 45)
+  local all = { a, b }
+  for _, x in ipairs(all) do gping(x, 100, mx, my) end
+  pumpn(all, 100); upd(all, 101); pumpn(all, 101); upd(all, 102); pumpn(all, 102)
+  for _, x in ipairs(all) do x.st.orders.say, x.st.orders.out = {}, {} end
+  return a, b, all
+end
+do
+  local a, b, all = repeat_pair(35, 35)
+  local x = a.st.orders.held and a.st.orders.held.oid
+  check("setup: A holds the ground order, B nothing",
+        x ~= nil and b.st.orders.held == nil, "?")
+  for _, q in ipairs(all) do gping(q, 200, 35, 35) end
+  check("a repeat ping on ground opens no auction",
+        next(a.st.orders.auctions) == nil and next(b.st.orders.auctions) == nil, "opened")
+  check("and the order stays a one-bot order", a.st.orders.anchors[x].want == 1,
+        tostring(a.st.orders.anchors[x].want))
+  check("the holder's order is refreshed",
+        a.st.orders.held.expiry == 200 + (C.ORDER_FOCUS_TICKS or 3000),
+        tostring(a.st.orders.held.expiry))
+  check("the holder answers 'Still on it'", said(a, "^Still on it"),
+        table.concat(a.st.orders.say, " | "))
+  pumpn(all, 200); upd(all, 201); pumpn(all, 201); upd(all, 202)
+  check("and no second bot goes", b.st.orders.held == nil,
+        tostring(b.st.orders.held and b.st.orders.held.oid))
+  -- Keel: the repeat adds a slot and B takes it.
+  C.ORDER_LAND_REPEAT_ADDS = true
+  a, b, all = repeat_pair(35, 35)
+  x = a.st.orders.held and a.st.orders.held.oid
+  for _, q in ipairs(all) do gping(q, 200, 35, 35) end
+  pumpn(all, 200); upd(all, 201); pumpn(all, 201); upd(all, 202)
+  check("LAND_REPEAT_ADDS on: a ground repeat adds B",
+        b.st.orders.held ~= nil and b.st.orders.held.oid == x,
+        tostring(b.st.orders.held and b.st.orders.held.oid))
+  C.ORDER_LAND_REPEAT_ADDS = false
+end
+-- A repeat ping on ground whose order nobody holds any more sends a bot
+-- again.  A takes the order, then A dies (or lets the order go).  A is back
+-- but busy, so only B can answer the repeat.  `how` is "death" or "release".
+local function ground_repeat_unmanned(how)
+  local a, b = BOT(1, 32, 32), BOT(2, 60, 60)
+  local all = { a, b }
+  for _, q in ipairs(all) do gping(q, 100, 35, 35) end
+  pumpn(all, 100); upd(all, 101); pumpn(all, 101); upd(all, 102); pumpn(all, 102)
+  local x = a.st.orders.held and a.st.orders.held.oid
+  if how == "death" then
+    ORD.on_death(a.st, a.inf)
+  else
+    ORD.release_held(a.st, a.inf, nil, true)
+  end
+  pumpn(all, 150); upd(all, 151); pumpn(all, 151); upd(all, 152)
+  a.st.stuck_for = 10000
+  for _, q in ipairs(all) do q.st.orders.say = {} end
+  for _, q in ipairs(all) do gping(q, 200, 35, 35) end
+  pumpn(all, 200); upd(all, 201); pumpn(all, 201); upd(all, 202); pumpn(all, 202)
+  upd(all, 215)
+  return a, b, all, x
+end
+for _, how in ipairs({ "death", "release" }) do
+  local a, b, all, x = ground_repeat_unmanned(how)
+  check("setup (" .. how .. "): A held the ground order and holds it no more",
+        x ~= nil and a.st.orders.held == nil,
+        tostring(a.st.orders.held and a.st.orders.held.oid))
+  check("a ground repeat after the holder's " .. how .. " sends B",
+        b.st.orders.held ~= nil and b.st.orders.held.oid == x,
+        tostring(b.st.orders.held and b.st.orders.held.oid))
+  check("and the order is still a one-bot order (" .. how .. ")",
+        b.st.orders.anchors[x] ~= nil and b.st.orders.anchors[x].want == 1,
+        tostring(b.st.orders.anchors[x] and b.st.orders.anchors[x].want))
+  check("and nobody says 'Still on it' (" .. how .. ")",
+        said_n(all, "^Still on it") == 0, "said")
+end
+do
+  -- Keel: the repeat after the holder's death adds a slot as before.
+  C.ORDER_LAND_REPEAT_ADDS = true
+  local _, b, _, x = ground_repeat_unmanned("death")
+  check("LAND_REPEAT_ADDS on: a ground repeat after a death sends B",
+        b.st.orders.held ~= nil and b.st.orders.held.oid == x,
+        tostring(b.st.orders.held and b.st.orders.held.oid))
+  check("LAND_REPEAT_ADDS on: and adds a slot (want 2)",
+        b.st.orders.anchors[x] ~= nil and b.st.orders.anchors[x].want == 2,
+        tostring(b.st.orders.anchors[x] and b.st.orders.anchors[x].want))
+  C.ORDER_LAND_REPEAT_ADDS = false
+end
+do
+  -- On a pill the repeat still adds one bot.
+  local a, b, all = repeat_pair(20, 20)
+  local x = a.st.orders.held and a.st.orders.held.oid
+  check("setup: A holds the pill order", x ~= nil and b.st.orders.held == nil, "?")
+  for _, q in ipairs(all) do gping(q, 200, 20, 20) end
+  pumpn(all, 200); upd(all, 201); pumpn(all, 201); upd(all, 202)
+  check("a repeat ping on a pill adds B to the same order",
+        b.st.orders.held ~= nil and b.st.orders.held.oid == x
+        and a.st.orders.held.oid == x, tostring(b.st.orders.held and b.st.orders.held.oid))
+  check("and the pill order is a two-bot order now", a.st.orders.anchors[x].want == 2,
+        tostring(a.st.orders.anchors[x].want))
+end
+do
+  -- A decoy that is holding: a repeat ping on its square restarts the hold
+  -- clock, not the 60 s travel focus.  The tank stands one square east of
+  -- the square and the ping lands one square west, so it does not select
+  -- the tank.
+  local d2 = dbot(); arrive(d2, 200, 23, 24)
+  d2.inf.events = { ping(5, 0, 21, 24) }
+  ORD.on_events(d2.st, d2.w, d2.inf, 300)
+  d2.inf.events = {}
+  check("a repeat ping on a holding decoy restarts its hold clock",
+        ORD.decoy_held(d2.st) ~= nil and d2.st.orders.held.expiry == 300 + HOLD,
+        tostring(d2.st.orders.held and d2.st.orders.held.expiry))
+  check("and opens no auction", next(d2.st.orders.auctions) == nil, "opened")
+end
+do
+-- =========================================================================
+-- NO FREE BOT, THE CHEAPEST BUSY ONE SWITCHES (ORDER_NO_FREE_TAKES_LOWEST,
+-- Andrew, PR #393).  When no free bot can take a ping, the bot on a person's
+-- job with the lowest cost to the new target drops its job and goes.  A tie
+-- goes to the lower player number.  A decoy never goes.  A repeat ping's
+-- extra slot goes to a bot NOT already on that order.
+-- =========================================================================
+print("orders.lua -- no free bot: the cheapest busy bot switches")
+check("no-free knob is on live", C.ORDER_NO_FREE_TAKES_LOWEST == true,
+      tostring(C.ORDER_NO_FREE_TAKES_LOWEST))
+check("keel: nobody switches", C.PRESETS.keel.ORDER_NO_FREE_TAKES_LOWEST == false, "?")
+do
+  -- The wire: BID_HOLD - cost, and note_bid reads it back.
+  local a = { bids = {}, answered = {} }
+  ORD.note_bid(a, 3, ORD.BID_HOLD - 160)
+  ORD.note_bid(a, 4, ORD.BID_BUSY)
+  ORD.note_bid(a, 5, -1)
+  check("switch bid: kept in a.hold with its cost, not in a.bids",
+        a.hold[3] == 160 and a.bids[3] == nil and a.answered[3], tostring(a.hold[3]))
+  check("switch bid: counts as busy for 'All bots busy'", a.busy[3] == true, "?")
+  check("plain -2: busy, no switch cost", a.busy[4] == true and a.hold[4] == nil, "?")
+  check("-1: neither busy nor a switch cost",
+        (a.busy[5] == nil) and a.hold[5] == nil and a.answered[5], "?")
+  check("switch bid still matches the receiver's pattern",
+        ORD.rx(3, "/info obd 7 " .. (ORD.BID_HOLD - 160), 1, BOT(1, 1, 1).st) == true, "?")
+end
+-- Give one bot its own ping order, alone (nobody else hears it).
+local function own_job(b, t, mx, my)
+  gping(b, t, mx, my)
+  settle(b, t + 1, t + 15)
+  b.st.orders.out, b.st.orders.say = {}, {}
+  return b.st.orders.held and b.st.orders.held.oid
+end
+-- Ping every bot at (mx,my) at t, carry the traffic and settle.
+local function ping_all(all, t, mx, my)
+  for _, x in ipairs(all) do gping(x, t, mx, my) end
+  local z = nil
+  for _, x in ipairs(all) do
+    for oid in pairs(x.st.orders.auctions) do z = oid end
+  end
+  pumpn(all, t); upd(all, t + 1); pumpn(all, t + 1); upd(all, t + 2); pumpn(all, t + 2)
+  return z
+end
+local function sayings(all)
+  local s = {}
+  for _, x in ipairs(all) do
+    s[#s + 1] = "p" .. x.pn .. ": " .. table.concat(x.st.orders.say or {}, " | ")
+  end
+  return table.concat(s, " / ")
+end
+do
+  -- (a) One bot on a job (A), the other busy escaping (B): A switches.
+  local a, b = BOT(1, 32, 32), BOT(2, 90, 90)
+  local x = own_job(a, 100, 35, 35)
+  b.st.stuck_for = 10000
+  local all = { a, b }
+  local z = ping_all(all, 300, 70, 70)
+  check("(a) one holder, no free bot: the holder takes the new ping",
+        a.st.orders.held ~= nil and a.st.orders.held.oid == z and z ~= x,
+        tostring(a.st.orders.held and a.st.orders.held.oid))
+  check("(a) and says it left its job because no bot was free",
+        said(a, "^No free bot%. Leaving goto for goto$"), sayings(all))
+  check("(a) its old order is dropped (cancelled everywhere, not handed back)",
+        a.st.orders.known[x] == nil and b.st.orders.known[x] == nil,
+        tostring(a.st.orders.known[x]))
+  check("(a) the busy bot does not go, nobody says all bots are busy",
+        b.st.orders.held == nil and said_n(all, "^All bots busy$") == 0, sayings(all))
+  check("(a) no order is left waiting", not (a.st.orders.known[z] or {}).unfilled
+        and not (b.st.orders.known[z] or {}).unfilled, "unfilled")
+end
+do
+  -- (b) + (f) Two holders: the cheaper one switches, and both bots name it.
+  local a, b = BOT(1, 32, 32), BOT(2, 90, 90)
+  local all = { a, b }
+  local x = own_job(a, 100, 35, 35)
+  local y = own_job(b, 100, 88, 88)
+  local z = ping_all(all, 300, 70, 70)
+  check("(b) two holders: the cheaper (B, 20+20 tiles) switches",
+        b.st.orders.held ~= nil and b.st.orders.held.oid == z and z ~= y,
+        tostring(b.st.orders.held and b.st.orders.held.oid))
+  check("(b) the dearer (A) keeps its job", a.st.orders.held ~= nil
+        and a.st.orders.held.oid == x, tostring(a.st.orders.held and a.st.orders.held.oid))
+  check("(f) A names B as the holder of the new order",
+        a.st.orders.claims[z] ~= nil and a.st.orders.claims[z].pn == 2,
+        tostring(a.st.orders.claims[z] and a.st.orders.claims[z].pn))
+  check("(b) only B says it is leaving", said(b, "^No free bot%. Leaving")
+        and said_n(all, "^No free bot") == 1, sayings(all))
+  -- Tie: A at (50,52) and B at (90,88) are both 38 tiles from (70,70).
+  a, b = BOT(1, 50, 52), BOT(2, 90, 88)
+  all = { a, b }
+  x = own_job(a, 100, 48, 48)
+  y = own_job(b, 100, 92, 92)
+  check("setup: A and B price (70,70) the same",
+        ORD.travel_cost(a.st, a.w, a.inf, { tkind = "here", mx = 70, my = 70 })
+        == ORD.travel_cost(b.st, b.w, b.inf, { tkind = "here", mx = 70, my = 70 }), "?")
+  z = ping_all(all, 300, 70, 70)
+  check("(b) a tie goes to the lower player number (A)",
+        a.st.orders.held ~= nil and a.st.orders.held.oid == z
+        and b.st.orders.held ~= nil and b.st.orders.held.oid == y,
+        tostring(a.st.orders.held and a.st.orders.held.oid))
+  check("(f) on a tie B names A too",
+        b.st.orders.claims[z] ~= nil and b.st.orders.claims[z].pn == 1,
+        tostring(b.st.orders.claims[z] and b.st.orders.claims[z].pn))
+end
+do
+  -- A free bot still wins over every holder, even a much cheaper holder.
+  local a, b = BOT(1, 68, 68), BOT(2, 10, 10)
+  local all = { a, b }
+  local x = own_job(a, 100, 66, 66)
+  local z = ping_all(all, 300, 70, 70)
+  check("a free bot far away beats a holder next door",
+        b.st.orders.held ~= nil and b.st.orders.held.oid == z
+        and a.st.orders.held.oid == x, tostring(b.st.orders.held and b.st.orders.held.oid))
+  check("and nobody says it is leaving", said_n(all, "^No free bot") == 0, sayings(all))
+end
+do
+  -- (c) A decoy is never taken.  The decoy (p1) bids a plain -2.
+  local d = dbot(); arrive(d, 200)
+  local dx = d.st.orders.held.oid
+  d.st.orders.out = {}
+  local h = BOT(2, 90, 90)
+  local all = { d, h }
+  h.st.stuck_for = 10000              -- the other bot is busy escaping
+  for _, q in ipairs(all) do gping(q, 300, 100, 100) end
+  local z = next(d.st.orders.auctions)
+  local plain = false
+  for _, m in ipairs(d.st.orders.out) do
+    if m == "/info obd " .. tostring(z) .. " -2" then plain = true end
+  end
+  check("(c) a decoy bids a plain -2 (no switch cost)", plain,
+        table.concat(d.st.orders.out, " | "))
+  pumpn(all, 300); upd(all, 301); pumpn(all, 301); upd(all, 302)
+  check("(c) decoy + busy bot: nobody goes, the decoy stays",
+        d.st.orders.held ~= nil and d.st.orders.held.oid == dx
+        and ORD.decoy_held(d.st) ~= nil and h.st.orders.held == nil, "went")
+  check("(c) one bot says all bots are busy",
+        said_n(all, "^All bots busy$") == 1, sayings(all))
+  check("(c) and the order waits for a free bot",
+        (d.st.orders.known[z] or {}).unfilled == true, "not waiting")
+  -- A decoy and a holder: the holder switches, the decoy stays.
+  d = dbot(); arrive(d, 200)
+  dx = d.st.orders.held.oid
+  h = BOT(2, 90, 90)
+  local y = own_job(h, 100, 88, 88)
+  all = { d, h }
+  z = ping_all(all, 300, 100, 100)
+  check("decoy + holder: the holder switches although the decoy is nearer",
+        h.st.orders.held ~= nil and h.st.orders.held.oid == z and z ~= y,
+        tostring(h.st.orders.held and h.st.orders.held.oid))
+  check("decoy + holder: the decoy stays", d.st.orders.held ~= nil
+        and d.st.orders.held.oid == dx and ORD.decoy_held(d.st) ~= nil, "left")
+end
+do
+  -- (d) A repeat ping on a pill with no free bot: a DIFFERENT holder joins.
+  -- A (p1) holds pill 5.  B (p2, far) and Cc (p4, nearer) hold other jobs.
+  local a, b, c = BOT(1, 18, 18), BOT(2, 90, 90), BOT(4, 70, 70)
+  local all = { a, b, c }
+  local p = ping_all(all, 100, 20, 20)
+  check("setup: A holds the pill order",
+        a.st.orders.held ~= nil and a.st.orders.held.oid == p, "?")
+  -- B and Cc take other jobs only they hear.
+  local y = own_job(b, 150, 92, 92)
+  local w = own_job(c, 150, 72, 72)
+  check("setup: B and Cc hold other jobs", y ~= nil and w ~= nil and y ~= p and w ~= p, "?")
+  for _, q in ipairs(all) do q.st.orders.out, q.st.orders.say = {}, {} end
+  ping_all(all, 200, 20, 20)
+  check("(d) the repeat puts the cheaper other holder (Cc) on the pill",
+        c.st.orders.held ~= nil and c.st.orders.held.oid == p,
+        tostring(c.st.orders.held and c.st.orders.held.oid))
+  check("(d) A stays on the pill and B keeps its job",
+        a.st.orders.held.oid == p and b.st.orders.held ~= nil and b.st.orders.held.oid == y,
+        tostring(b.st.orders.held and b.st.orders.held.oid))
+  check("(d) A never says it is leaving", not said(a, "^No free bot")
+        and not said(a, "^Leaving"), sayings(all))
+  -- B and Cc forgot the pill order when their own pings came (a newer ping
+  -- retires the orders a bot does not hold: clear_older_orders), so only A
+  -- still counts itself.  What every bot must agree on is the joiner: Cc.
+  check("(f) A counts A and Cc on the pill order, B counts Cc",
+        (a.st.orders.gclaims[p] or {})[1] ~= nil and (a.st.orders.gclaims[p] or {})[4] ~= nil
+        and (b.st.orders.gclaims[p] or {})[4] ~= nil
+        and (b.st.orders.gclaims[p] or {})[2] == nil,
+        (function()
+           local t = {}
+           for _, q in ipairs(all) do
+             local l = {}
+             for pn in pairs(q.st.orders.gclaims[p] or {}) do l[#l + 1] = pn end
+             table.sort(l)
+             t[#t + 1] = "p" .. q.pn .. "={" .. table.concat(l, ",") .. "}"
+           end
+           return table.concat(t, " ")
+         end)())
+  -- With only A on a job and the other bot busy, a repeat adds nobody.
+  local a2, b2 = BOT(1, 18, 18), BOT(2, 90, 90)
+  local all2 = { a2, b2 }
+  local p2 = ping_all(all2, 100, 20, 20)
+  b2.st.stuck_for = 10000
+  for _, q in ipairs(all2) do q.st.orders.say = {} end
+  ping_all(all2, 200, 20, 20)
+  check("(d) only the holder itself could go: nobody is added, A holds on",
+        a2.st.orders.held.oid == p2 and b2.st.orders.held == nil
+        and not said(a2, "^No free bot"), sayings(all2))
+end
+do
+  -- (e) Knob off: the two holders both keep their jobs, one says busy.
+  C.ORDER_NO_FREE_TAKES_LOWEST = false
+  local a, b = BOT(1, 32, 32), BOT(2, 90, 90)
+  local all = { a, b }
+  local x = own_job(a, 100, 35, 35)
+  local y = own_job(b, 100, 88, 88)
+  local z = ping_all(all, 300, 70, 70)
+  check("(e) NO_FREE_TAKES_LOWEST off: nobody switches",
+        a.st.orders.held.oid == x and b.st.orders.held.oid == y, "switched")
+  check("(e) NO_FREE_TAKES_LOWEST off: one bot says all bots are busy",
+        said_n(all, "^All bots busy$") == 1 and said_n(all, "^No free bot") == 0,
+        sayings(all))
+  check("(e) NO_FREE_TAKES_LOWEST off: the order waits",
+        (a.st.orders.known[z] or {}).unfilled == true, "?")
+  C.ORDER_NO_FREE_TAKES_LOWEST = true
+  -- HOLDER_KEEPS_JOB off: the knob does nothing; the plain auction winner
+  -- (the cheaper bot) switches with the old "Leaving" line.
+  C.ORDER_HOLDER_KEEPS_JOB = false
+  a, b = BOT(1, 32, 32), BOT(2, 90, 90)
+  all = { a, b }
+  x = own_job(a, 100, 35, 35)
+  y = own_job(b, 100, 88, 88)
+  z = ping_all(all, 300, 70, 70)
+  check("(e) HOLDER_KEEPS_JOB off: plain switch, no 'No free bot' line",
+        b.st.orders.held.oid == z and said(b, "^Leaving") and said_n(all, "^No free bot") == 0,
+        sayings(all))
+  C.ORDER_HOLDER_KEEPS_JOB = true
+end
+end
 _G.EVENT_PING = nil
 _G.PING_KIND_BOT_COMMAND = nil
 _G.PING_KIND_CAUTION = nil
@@ -3286,6 +4334,1211 @@ do
   check("keel: capturing is busy", b4 == true and why4 == "capturing", tostring(why4))
   C.ORDER_MAN_OUT_TAKES = true
 end
+
+-- =========================================================================
+-- DECOY GETAWAY (Andrew, 2026-09-24).  A decoy hold scores the squares
+-- around it for a way out: a chain of up to DECOY_GETAWAY_MAX_STEPS
+-- neighbouring squares, each shielded from the counted pills by a wall or
+-- one of our pills, or out of their range.  It turns to face the chain's
+-- first square, drives the chain after the first hit, and parks at its end.
+-- The terrain and the shell trace are C calls, so they are stubbed here:
+-- get_terrain reads a table (grass by default) and cpf.simulate_shot walks
+-- a straight line in 16 wu steps out to 2100 wu, one entry per tile.
+-- =========================================================================
+print("decoy_getaway.lua -- the decoy getaway")
+-- A function, not a do block: the file's top-level locals and this
+-- section's together pass Lua's 200-locals-per-function limit.
+;(function()
+  local GA = require("decoy_getaway")
+  local saved = { gt = _G.get_terrain, tm = _G.TERRAIN_MASK, mf = _G.TERRAIN_MINE_FLAG,
+                  kl = _G.KEY_TURNLEFT, kr = _G.KEY_TURNRIGHT, kf = _G.KEY_FASTER,
+                  sim = cpf.simulate_shot, block = GA.block }
+  local TMAP = {}
+  _G.TERRAIN_MASK = 0x0F
+  _G.TERRAIN_MINE_FLAG = 0x40
+  _G.EVENT_PING, _G.PING_KIND_CAUTION, _G.PING_KIND_BOT_COMMAND = 13, 1, 5
+  -- The turn uses U.aim_at_f, which needs init.lua's two-argument math.atan
+  -- (LuaJIT's own takes one); init.lua is not loaded here.
+  local atan1 = math.atan
+  if math.atan2 then
+    math.atan = function(y, x) if x == nil then return atan1(y) end return math.atan2(y, x) end
+  end
+  _G.get_terrain = function(mx, my) return TMAP[my * 256 + mx] or C.T_GRASS end
+  cpf.simulate_shot = function(ox, oy, tx, ty)
+    local dx, dy = tx - ox, ty - oy
+    local d = math.sqrt(dx * dx + dy * dy)
+    local out, seen = {}, {}
+    if d == 0 then return out end
+    for st = 0, 2100, 16 do
+      local mx = math.floor((ox + dx / d * st) / 256)
+      local my = math.floor((oy + dy / d * st) / 256)
+      local k = my * 256 + mx
+      if not seen[k] then seen[k] = true; out[#out + 1] = { mx = mx, my = my } end
+    end
+    return out
+  end
+  local function near(a, b) return a and b and math.abs(a - b) < 1e-9 end
+  local function pstr(path)
+    local t = {}
+    for i, c in ipairs(path or {}) do t[i] = c.mx .. "," .. c.my end
+    return table.concat(t, " ")
+  end
+
+  check("getaway knob is on live, off in keel",
+        C.DECOY_GETAWAY == true and C.PRESETS.keel.DECOY_GETAWAY == false, "?")
+  check("getaway knobs: 5 steps, 1 hit, last x2, 50 ticks, wall 1.0 / 0.5",
+        C.DECOY_GETAWAY_MAX_STEPS == 5 and C.DECOY_GETAWAY_HITS == 1
+        and C.DECOY_GETAWAY_LAST_WEIGHT == 2.0 and C.DECOY_GETAWAY_RESCAN_TICKS == 50
+        and C.DECOY_GETAWAY_WALL_FULL == 1.0 and C.DECOY_GETAWAY_WALL_DAMAGED == 0.5, "?")
+
+  -- 1. THE REAL BLOCK TEST.  Spot S = (30,30).  Pill A (30,24) is north,
+  -- pill B (37,30) is east.  T = (31,30) is S's east neighbour.  A wall at
+  -- (31,29) is on A's line to T (A's line to S stays in column 30); B's line
+  -- to T is open.  So block(A,T) = 1.0 (wall), block(B,T) = 0, safety 0.5.
+  local wa = { pills = {
+    [1] = { mx = 30, my = 24, owner = "hostile", health = 15 },
+    [2] = { mx = 37, my = 30, owner = "hostile", health = 15 },
+  } }
+  TMAP[29 * 256 + 31] = C.T_BUILDING
+  local P = GA.pill_set(wa, 30, 30)
+  check("both pills reach the decoy square: P = {1,2}",
+        #P == 2 and P[1].id == 1 and P[2].id == 2, tostring(#P))
+  local b1, w1, sx1, sy1 = GA.block(wa, wa.pills[1], 31, 30)
+  local b2, w2 = GA.block(wa, wa.pills[2], 31, 30)
+  check("the wall stops pill A's shell: block 1.0, wall at (31,29)",
+        b1 == 1.0 and w1 == "wall" and sx1 == 31 and sy1 == 29,
+        tostring(b1) .. " " .. tostring(w1))
+  check("pill B's shell arrives: block 0, open", b2 == 0 and w2 == "open", tostring(w2))
+  local path, score, ctx = GA.search(wa, P, 30, 30, 5, false)
+  local cT = ctx.cells[30 * 256 + 31]
+  check("the wall-shielded neighbour is a getaway square with safety 0.5",
+        cT and cT.ok == true and near(cT.s, 0.5), tostring(cT and cT.s))
+  check("the overlay text for it is the same sum",
+        GA.safety_txt(cT, 2) == "s = (1.000 + 0.000) / 2 = 0.500", GA.safety_txt(cT, 2))
+  check("the overlay names the wall per pill",
+        GA.term_txt(cT.terms[1]) == "p1 wall full @(31,29) = 1.000", GA.term_txt(cT.terms[1]))
+  TMAP[29 * 256 + 31] = C.T_HALFBUILD
+  check("a damaged wall blocks 0.5 (DECOY_GETAWAY_WALL_DAMAGED)",
+        (GA.block(wa, wa.pills[1], 31, 30)) == 0.5, "?")
+  TMAP[29 * 256 + 31] = C.T_FOREST
+  check("a tree is not cover: the shell flies over it (open)",
+        (select(2, GA.block(wa, wa.pills[1], 31, 30))) == "open", "?")
+  TMAP[29 * 256 + 31] = nil
+  local ours = { mx = 31, my = 29, owner = "friendly", health = 12 }
+  wa.pills[3] = ours
+  wa.pill_at = { [29 * 256 + 31] = { { pill = ours } } }
+  local b3, w3, _, _, hp3 = GA.block(wa, wa.pills[1], 31, 30)
+  check("our pill in the way blocks health / PILLS_MAX_HEALTH (12/15 = 0.8)",
+        near(b3, 12 / C.PILLS_MAX_HEALTH) and w3 == "pill" and hp3 == 12, tostring(b3))
+  ours.owner = "hostile"
+  check("an enemy pill in the way is not a blocker (0)",
+        (GA.block(wa, wa.pills[1], 31, 30)) == 0, "?")
+  wa.pills[3], wa.pill_at = nil, nil
+  check("out of range is 1.0 with no blocker needed",
+        (GA.block(wa, wa.pills[1], 30, 33)) == 1.0
+        and select(2, GA.block(wa, wa.pills[1], 30, 33)) == "range", "?")
+  -- A FAILED TRACE (the C call raises, or gives nothing) is not a short
+  -- shell: block 0, "error" (no cover).  goals.sea_shot_reaches says so in a
+  -- 4th value; a shell that really runs out still gives nil there.
+  ;(function()
+  local sim0 = cpf.simulate_shot
+  local G, UT0 = require("goals"), require("util")
+  cpf.simulate_shot = function() error("simulate_shot failed") end
+  local be, we = GA.block(wa, wa.pills[1], 31, 30)
+  local r4 = select(4, G.sea_shot_reaches(wa, UT0.m2w(30), UT0.m2w(24), 31, 30))
+  cpf.simulate_shot = function() return nil end
+  local bn, wn0 = GA.block(wa, wa.pills[1], 31, 30)
+  cpf.simulate_shot = function() return { { mx = 30, my = 24 }, { mx = 30, my = 25 } } end
+  local bs, ws = GA.block(wa, wa.pills[1], 31, 30)
+  local s4 = select(4, G.sea_shot_reaches(wa, UT0.m2w(30), UT0.m2w(24), 31, 30))
+  cpf.simulate_shot = sim0
+  check("a trace that raises: block 0, error (not 1.0 short); sea_shot_reaches 4th value true",
+        be == 0 and we == "error" and r4 == true, tostring(be) .. " " .. tostring(we))
+  check("a trace that gives nothing: block 0, error", bn == 0 and wn0 == "error",
+        tostring(bn) .. " " .. tostring(wn0))
+  check("a shell that really runs out is still 1.0 short, 4th value nil",
+        bs == 1.0 and ws == "short" and s4 == nil, tostring(bs) .. " " .. tostring(ws))
+  check("the error term reads 'trace error'",
+        GA.term_txt({ id = 1, b = 0, why = "error" }) == "p1 trace error = 0.000",
+        GA.term_txt({ id = 1, b = 0, why = "error" }))
+  end)()
+
+  -- 2. NO BLOCKER ANYWHERE: a pill right beside the square, open grass, so
+  -- every square within 5 steps is in range and open.
+  local wn = { pills = { [1] = { mx = 30, my = 29, owner = "hostile", health = 15 } } }
+  local pn = GA.search(wn, GA.pill_set(wn, 30, 30), 30, 30, 5, false)
+  check("no blocker anywhere: no chain", pn == nil, pstr(pn))
+  check("no counted pill: no P, no chain",
+        #GA.pill_set({ pills = {} }, 30, 30) == 0, "?")
+
+  -- 3. THE CHAIN SCORE (C2) on made-up safety values: GA.block is replaced
+  -- by a table of square -> block, and P has one pill, so safety = block.
+  local SAFE = {}
+  GA.block = function(world, p, mx, my)
+    local v = SAFE[my * 256 + mx]
+    if v then return v, "wall", mx, my - 1 end
+    return 0, "open"
+  end
+  local P1 = { { id = 1, pill = { mx = 0, my = 0 } } }
+  local wg = { pills = {} }
+  local function S(list) SAFE = {}; for _, e in ipairs(list) do SAFE[e[2] * 256 + e[1]] = e[3] end end
+  -- a longer chain beats a shorter weaker one: east 3 x 0.5 = 0.5+0.5+2x0.5
+  -- = 2.0 against west 1 x 0.5 = 2x0.5 = 1.0.
+  S({ { 49, 50, 0.5 }, { 51, 50, 0.5 }, { 52, 50, 0.5 }, { 53, 50, 0.5 } })
+  local p3, s3 = GA.search(wg, P1, 50, 50, 5, false)
+  check("a longer chain beats a shorter weaker one (2.0 vs 1.0)",
+        pstr(p3) == "51,50 52,50 53,50" and near(s3, 2.0), pstr(p3) .. " " .. tostring(s3))
+  -- one fully safe square west (2x1.0 = 2.0) against five 0.4 squares east
+  -- (4x0.4 + 2x0.4 = 2.4): the long one wins ...
+  S({ { 49, 50, 1.0 }, { 51, 50, 0.4 }, { 52, 50, 0.4 }, { 53, 50, 0.4 },
+      { 54, 50, 0.4 }, { 55, 50, 0.4 } })
+  local p4, s4 = GA.search(wg, P1, 50, 50, 5, false)
+  check("C2: five 0.4 squares (2.4) beat one safe square (2.0)",
+        pstr(p4) == "51,50 52,50 53,50 54,50 55,50" and near(s4, 2.4),
+        pstr(p4) .. " " .. tostring(s4))
+  check("the score written out is the one the code adds up",
+        GA.score_terms(p4) == "0.400 + 0.400 + 0.400 + 0.400 + 2x0.400", GA.score_terms(p4))
+  -- ... and five 0.3 squares (4x0.3 + 2x0.3 = 1.8) lose to it.
+  S({ { 49, 50, 1.0 }, { 51, 50, 0.3 }, { 52, 50, 0.3 }, { 53, 50, 0.3 },
+      { 54, 50, 0.3 }, { 55, 50, 0.3 } })
+  local p5, s5 = GA.search(wg, P1, 50, 50, 5, false)
+  check("C2: one safe square (2.0) beats five 0.3 squares (1.8)",
+        pstr(p5) == "49,50" and near(s5, 2.0), pstr(p5) .. " " .. tostring(s5))
+  -- The last square counts twice, so a weak last square is left off:
+  -- 1.0 + 2x1.0 = 3.0 beats 1.0 + 1.0 + 2x0.1 = 2.2.
+  S({ { 51, 50, 1.0 }, { 52, 50, 1.0 }, { 53, 50, 0.1 } })
+  local p6, s6 = GA.search(wg, P1, 50, 50, 5, false)
+  check("a weak last square is left off (3.0 beats 2.2)",
+        pstr(p6) == "51,50 52,50" and near(s6, 3.0), pstr(p6) .. " " .. tostring(s6))
+  -- 4. THE CAP: eight safe squares in a line north, the chain stops at 5.
+  S({ { 50, 49, 1 }, { 50, 48, 1 }, { 50, 47, 1 }, { 50, 46, 1 },
+      { 50, 45, 1 }, { 50, 44, 1 }, { 50, 43, 1 }, { 50, 42, 1 } })
+  local p7, s7 = GA.search(wg, P1, 50, 50, 5, false)
+  check("the chain is capped at 5 squares (1+1+1+1+2x1 = 6)",
+        #p7 == 5 and pstr(p7) == "50,49 50,48 50,47 50,46 50,45" and near(s7, 6.0),
+        pstr(p7))
+  -- 5. NO CORNER CUT: the only getaway square is diagonal (51,49); a wall
+  -- on either square beside the step refuses it.
+  S({ { 51, 49, 1.0 } })
+  TMAP[49 * 256 + 50] = C.T_BUILDING
+  check("a diagonal step past a wall corner is refused",
+        GA.search(wg, P1, 50, 50, 5, false) == nil, "?")
+  TMAP[49 * 256 + 50] = nil
+  TMAP[50 * 256 + 51] = C.T_HALFBUILD
+  check("... on either side", GA.search(wg, P1, 50, 50, 5, false) == nil, "?")
+  TMAP[50 * 256 + 51] = nil
+  check("with both sides drivable the diagonal step is fine",
+        pstr((GA.search(wg, P1, 50, 50, 5, false))) == "51,49", "?")
+  -- Not drivable: a mine, deep sea without a boat.
+  TMAP[49 * 256 + 51] = C.T_GRASS + 0x40
+  check("a known mine is not drivable", GA.search(wg, P1, 50, 50, 5, false) == nil, "?")
+  TMAP[49 * 256 + 51] = C.T_DEEPSEA
+  check("deep sea is not drivable without a boat",
+        GA.search(wg, P1, 50, 50, 5, false) == nil, "?")
+  check("... and is in a boat", GA.search(wg, P1, 50, 50, 5, true) ~= nil, "?")
+  TMAP[49 * 256 + 51] = nil
+  -- 6. THE SAME RESULT EVERY TIME, and a tie goes to the lower first key:
+  -- one 1.0 square north (50,49) and one south (50,51), two apart, so no
+  -- chain joins them; north has the lower key.
+  S({ { 50, 49, 1.0 }, { 50, 51, 1.0 } })
+  local a1 = pstr((GA.search(wg, P1, 50, 50, 5, false)))
+  local a2 = pstr((GA.search(wg, P1, 50, 50, 5, false)))
+  check("a tie goes to the lower first-square key, the same twice",
+        a1 == "50,49" and a2 == a1, a1 .. " / " .. a2)
+  -- A tie in score goes to the SHORTER chain: 2x1.0 = 2.0 south against
+  -- 0.5 + 0.5 + 2x0.5 = 2.0 north.  South (50,51) has the higher key, so
+  -- only the length rule picks it.
+  S({ { 50, 51, 1.0 }, { 50, 49, 0.5 }, { 50, 48, 0.5 }, { 50, 47, 0.5 } })
+  local pt = GA.search(wg, P1, 50, 50, 5, false)
+  check("a tie in score goes to the shorter chain", pstr(pt) == "50,51", pstr(pt))
+
+  -- 6b. OUTWARD ONLY.  Every step goes one ring further from the start.
+  -- Two 1.0 squares side by side on ring 1: a chain (51,50) -> (51,49)
+  -- would score 1 + 2x1 = 3, but that step is sideways (ring 1 to ring 1),
+  -- so the best is one square, 2x1 = 2, and the tie goes to the lower key.
+  S({ { 51, 50, 1.0 }, { 51, 49, 1.0 } })
+  local po, so = GA.search(wg, P1, 50, 50, 5, false)
+  check("a sideways step (same ring) is refused",
+        pstr(po) == "51,49" and near(so, 2.0), pstr(po) .. " " .. tostring(so))
+  -- A backward step: (50,49) -> (50,48) -> (49,49) would be 1 + 1 + 2x1 = 4,
+  -- but (49,49) is back on ring 1.  Outward only, the best is 1 + 2x1 = 3,
+  -- and two ways reach (50,48): from (49,49) and from (50,49).  The DP keeps
+  -- the lower first key, (49,49).
+  S({ { 50, 49, 1.0 }, { 50, 48, 1.0 }, { 49, 49, 1.0 } })
+  local pb, sb = GA.search(wg, P1, 50, 50, 5, false)
+  check("a backward step (ring 2 to ring 1) is refused",
+        #pb == 2 and near(sb, 3.0), pstr(pb) .. " " .. tostring(sb))
+  check("two ways to one square: the DP keeps the lower first key",
+        pstr(pb) == "49,49 50,48", pstr(pb))
+  -- Only reached squares are worked out: open grass all round costs ring 1.
+  GA.block = saved.block
+  local wo = { pills = { [1] = { mx = 30, my = 29, owner = "hostile", health = 15 } } }
+  local _, _, cto = GA.search(wo, GA.pill_set(wo, 30, 30), 30, 30, 5, false)
+  check("an open field is worked out on ring 1 only (8 squares)", #cto.list == 8,
+        tostring(#cto.list))
+  GA.block = function(world, p, mx, my)
+    local v = SAFE[my * 256 + mx]
+    if v then return v, "wall", mx, my - 1 end
+    return 0, "open"
+  end
+
+  -- 6c. CLOSENESS.  tile(t) = safety(t) + DECOY_GETAWAY_PROX_WEIGHT * prox,
+  -- prox = max(0, 1 - d / PILL_FIRE_RANGE), d = distance to the nearest pill.
+  check("closeness knob: 0.5 live, 0 in keel",
+        C.DECOY_GETAWAY_PROX_WEIGHT == 0.5 and C.PRESETS.keel.DECOY_GETAWAY_PROX_WEIGHT == 0, "?")
+  local PP = { { id = 1, pill = { mx = 40, my = 50 } } }
+  -- Andrew's path A: t1 safety 0.5 at d = 3, t2 safety 1.0 at d = 4.
+  -- (0.5 + 0.5x0.625) + 2x(1.0 + 0.5x0.5) = 0.8125 + 2.5 = 3.3125.
+  S({ { 43, 50, 0.5 }, { 44, 50, 1.0 } })
+  local pA, sA = GA.search(wg, PP, 42, 50, 5, false)
+  check("Andrew's path A scores (0.5+0.3125) + 2x(1.0+0.25) = 3.3125",
+        pstr(pA) == "43,50 44,50" and near(sA, 3.3125), pstr(pA) .. " " .. tostring(sA))
+  check("the score written out uses the tile values",
+        GA.score_terms(pA) == "0.812 + 2x1.250", GA.score_terms(pA))
+  check("the panel shows d, prox and weight x prox",
+        GA.prox_txt(pA[1]) == "prox: d=3.00, max(0, 1 - 3.00/8) = 0.625, x0.5 = 0.312"
+        and GA.tile_txt(pA[1]) == "tile = 0.500 + 0.312 = 0.812",
+        GA.prox_txt(pA[1]) .. " | " .. GA.tile_txt(pA[1]))
+  -- Path B's squares: d = 6 gives 0.5x0.25 = 0.125; d = 8 or more gives 0.
+  -- B = (0.5 + 0.125) + 2x(1.0 + 0) = 2.625 < 3.3125, so A wins.  (Its two
+  -- squares cannot be neighbours on the map -- one step moves d by 1.41 at
+  -- most -- so each one is checked on its own.)
+  S({ { 46, 50, 0.5 } })
+  local _, s6 = GA.search(wg, PP, 45, 50, 5, false)
+  check("d = 6: tile 0.5 + 0.125, one square scores 2x0.625 = 1.25", near(s6, 1.25), tostring(s6))
+  S({ { 48, 50, 1.0 } })
+  local _, s8 = GA.search(wg, PP, 47, 50, 5, false)
+  check("d = 8: no closeness, one square scores 2x1.0 = 2.0", near(s8, 2.0), tostring(s8))
+  check("Andrew's example: A 3.3125 beats B (0.5+0.125) + 2x(1.0+0) = 2.625",
+        sA > (0.5 + 0.125) + 2 * (1.0 + 0) + 0.5, "?")
+  -- Head to head from one start (44,50), pill (40,50).  West: (43,50) 0.5
+  -- d=3, (42,50) 1.0 d=2.  North-east: (44,49) 0.5 d=4.12, (45,48) 1.0 d=5.39.
+  -- Weight 0: both 0.5 + 2x1.0 = 2.5, and north-east wins on its lower first
+  -- key.  Weight 0.5: west is (0.5+0.3125) + 2x(1.0+0.375) = 3.5625, north-
+  -- east about 3.069, so the square closer to the pill wins.
+  S({ { 43, 50, 0.5 }, { 42, 50, 1.0 }, { 44, 49, 0.5 }, { 45, 48, 1.0 } })
+  C.DECOY_GETAWAY_PROX_WEIGHT = 0
+  local ph0, sh0 = GA.search(wg, PP, 44, 50, 5, false)
+  check("weight 0: the two paths tie at 2.5, the lower first key wins",
+        pstr(ph0) == "44,49 45,48" and near(sh0, 2.5), pstr(ph0) .. " " .. tostring(sh0))
+  C.DECOY_GETAWAY_PROX_WEIGHT = 0.5
+  local ph1, sh1 = GA.search(wg, PP, 44, 50, 5, false)
+  check("weight 0.5: the path nearer the pill wins (3.5625)",
+        pstr(ph1) == "43,50 42,50" and near(sh1, 3.5625), pstr(ph1) .. " " .. tostring(sh1))
+  -- Closeness never makes an open square usable: the pill's own neighbour
+  -- is open, so it is not a getaway square however close it is.
+  S({})
+  check("an open square next to the pill is still not a getaway square",
+        GA.search(wg, PP, 42, 50, 5, false) == nil, "?")
+
+  -- 7. THE HOLD, ONE HIT ONE STEP.  dbot's decoy square is (22,24) beside
+  -- pill 5 (20,20).  A chain of three 1.0 squares runs south: (22,25)
+  -- (22,26) (22,27).  Closeness is off here so the scores stay whole.  The
+  -- blocker step is off through section 11 (open grass: it would step on
+  -- every square); section 12 tests it.
+  C.DECOY_GETAWAY_PROX_WEIGHT = 0
+  C.DECOY_GETAWAY_BLOCKER_STEP = false
+  _G.KEY_TURNLEFT, _G.KEY_TURNRIGHT, _G.KEY_FASTER = 0x04, 0x08, 0x10
+  S({ { 22, 25, 1.0 }, { 22, 26, 1.0 }, { 22, 27, 1.0 } })
+  local d = dbot(); arrive(d, 200)
+  d.inf.direction = 64                         -- facing east
+  lock(d, 201)
+  local h = d.st.orders.held
+  check("the scan runs as the decoy starts: chain of 3, score 1+1+2x1 = 4",
+        h.ga and pstr(h.ga.path) == "22,25 22,26 22,27" and near(h.ga.score, 4.0)
+        and h.ga.phase == "wait" and h.ga.used == 0, h.ga and pstr(h.ga.path))
+  check("before the hit the hold goal stays on the decoy square",
+        d.st.goal.kind == "goto_tile" and d.st.goal.mx == 22 and d.st.goal.my == 24
+        and ORD.hold_parked(d.st, d.inf) == true, tostring(d.st.goal.mx))
+  local k1, t1 = ORD.decoy_keys(d.st, d.inf, 0x11, 0x04)
+  check("it turns to face the first square (south, from east: turn right), no throttle",
+        k1 == 0x01 + 0x08 and t1 == 0, string.format("%x %x", k1, t1))
+  d.inf.direction = 128
+  local k2 = ORD.decoy_keys(d.st, d.inf, 0x05, 0)
+  check("facing it: no turn key (and the other turn keys are cleared)", k2 == 0x01,
+        string.format("%x", k2))
+  d.st.goal = { kind = "attack_tank", target_id = 7, mx = 25, my = 26 }
+  lock(d, 202)
+  check("a fight in range still wins before the hit", d.st.goal.kind == "attack_tank", "?")
+  check("and a fight aims on its own: no getaway turn",
+        ORD.decoy_keys(d.st, d.inf, 0x05, 0) == 0x05, "?")
+  d.st.goal = ORD.decoy_goal(h)
+  -- HIT 1 on the decoy square.
+  d.inf.armour = 35
+  lock(d, 204)
+  check("one armour loss: it moves, the goal is square 1",
+        h.ga.phase == "move" and d.st.goal.mx == 22 and d.st.goal.my == 25
+        and d.st.goal._getaway == true, tostring(h.ga.phase))
+  check("moving is not parked: the throttle is left alone",
+        ORD.hold_parked(d.st, d.inf) == false and ORD.decoy_keys(d.st, d.inf, 0x11, 0) == 0x11, "?")
+  d.st.goal = { kind = "attack_tank", target_id = 7, mx = 23, my = 24 }
+  lock(d, 205)
+  check("moving: it never leaves the chain to fight",
+        d.st.goal.kind == "goto_tile" and d.st.goal.my == 25, tostring(d.st.goal.kind))
+  -- A hit ON THE WAY does not count.
+  d.inf.armour = 30
+  lock(d, 206)
+  check("a hit on the way is not counted: still moving to square 1",
+        h.ga.phase == "move" and d.st.goal.my == 25 and h.ga.hits == 1, tostring(h.ga.hits))
+  d.inf.tankx, d.inf.tanky = 22 * 256 + 128, 25 * 256 + 128
+  lock(d, 210)
+  check("on square 1: it parks there (one hit, one step)",
+        h.ga.phase == "wait" and h.ga.used == 1 and d.st.goal.mx == 22 and d.st.goal.my == 25
+        and ORD.hold_parked(d.st, d.inf) == true, tostring(h.ga.phase) .. " " .. tostring(d.st.goal.my))
+  check("the armour on arrival is the new baseline", h.ga.arm == 30 and h.ga.hits == 0,
+        tostring(h.ga.arm))
+  -- The overlay, drawn into a recorder: the header says the step, and each
+  -- chain square's panel carries the pill terms, the closeness and the tile.
+  -- draw_rec(only): only = one overlay id (nil = all six on).  Every call
+  -- is recorded with the overlay id it was drawn under.
+  local function draw_rec(only)
+    local r = { text = {}, detail = {}, circle = 0, line = 0, rect = 0, ids = {}, lines = {} }
+    local function seen(id) r.ids[id] = (r.ids[id] or 0) + 1 end
+    local V = {
+      is_on  = function(id)
+        if only then return id == only end
+        for _, x in ipairs(GA.VIZ_IDS) do if x == id then return true end end
+        return false
+      end,
+      rect   = function(id) seen(id); r.rect = r.rect + 1 end,
+      line   = function(id, x1, y1, x2, y2) seen(id); r.line = r.line + 1
+                 r.lines[#r.lines + 1] = { x1, y1, x2, y2 } end,
+      circle = function(id) seen(id); r.circle = r.circle + 1 end,
+      text   = function(id, x, y, t) seen(id); r.text[#r.text + 1] = t end,
+      detail = function(did, kind, g, label, lines) r.detail[#r.detail + 1] = { label, lines } end,
+    }
+    ORD.draw_getaway(V, d.st)
+    return r
+  end
+  local function has(list, pat)
+    for _, t in ipairs(list) do if t:find(pat, 1, true) then return true end end
+    return false
+  end
+  -- The opt/ (production) copy has every viz call stripped, so it draws
+  -- nothing; the overlay checks run on the source copy only.
+  local gsrc = debug.getinfo(GA.draw, "S").source:gsub("^@", "")
+  local gf = io.open(gsrc, "rb")
+  local drawn = gf and gf:read("*a"):find("viz.text(ID", 1, true) ~= nil
+  if gf then gf:close() end
+  if not drawn then print("  skip overlay checks: stripped copy (" .. gsrc .. ")") end
+  local r1 = drawn and draw_rec()
+  if drawn then
+  check("overlay header: on square #1, waiting for hit 1, then the score line",
+        has(r1.text, "GETAWAY step 1/3 on square #1, waiting for hit 1 of 1")
+        and has(r1.text, "score = 1.000 + 1.000 + 2x1.000 = 4.000")
+        and has(r1.text, "P=1 tiles="),
+        table.concat(r1.text, " | "))
+  -- An overlay text is cut at OVERLAY_TEXT_MAX (128) bytes by the host.
+  local longest = 0
+  for _, t in ipairs(r1.text) do if #t > longest then longest = #t end end
+  check("overlay: every text fits in 127 bytes", longest <= 127, tostring(longest))
+  check("overlay: one panel per chain square, numbered from the decoy square",
+        #r1.detail == 3 and r1.detail[2][1] == "GETAWAY #2 (22,26)", tostring(#r1.detail))
+  check("overlay panel: pill term, closeness term and tile value",
+        #r1.detail[2][2] == 4 and r1.detail[2][2][2]:find("^p5 ") ~= nil
+        and r1.detail[2][2][3]:find("^prox: d=") ~= nil
+        and r1.detail[2][2][4] == "tile = 1.000 + 0.000 = 1.000",
+        table.concat(r1.detail[2][2], " | "))
+  check("overlay: the pill in P is marked", r1.circle == 1 and has(r1.text, "P p5"), tostring(r1.circle))
+  -- SIX OVERLAYS (category Decoy): each one draws only under its own id,
+  -- and the six together draw exactly the sum of the six alone.
+  ;(function()  -- own function: main is at the 200-local cap
+  -- The blocker step is off in this rig; on here so its line is drawn.
+  local keep_blk = C.DECOY_GETAWAY_BLOCKER_STEP
+  C.DECOY_GETAWAY_BLOCKER_STEP = true
+  local r1 = draw_rec()
+  check("overlay: six decoy ids", #GA.VIZ_IDS == 6, tostring(#GA.VIZ_IDS))
+  local sum_t, sum_l, sum_r, sum_c, sum_d = 0, 0, 0, 0, 0
+  local alone = {}
+  for _, id in ipairs(GA.VIZ_IDS) do
+    local ra = draw_rec(id)
+    alone[id] = ra
+    local only_own = true
+    for k in pairs(ra.ids) do if k ~= id then only_own = false end end
+    check("overlay " .. id .. " alone: draws something, only under its own id",
+          only_own and (ra.ids[id] or 0) > 0, tostring(ra.ids[id]))
+    sum_t, sum_l, sum_r = sum_t + #ra.text, sum_l + ra.line, sum_r + ra.rect
+    sum_c, sum_d = sum_c + ra.circle, sum_d + #ra.detail
+  end
+  check("overlay: all six on = the sum of the six alone",
+        #r1.text == sum_t and r1.line == sum_l and r1.rect == sum_r
+        and r1.circle == sum_c and #r1.detail == sum_d,
+        string.format("%d/%d %d/%d %d/%d", #r1.text, sum_t, r1.line, sum_l, r1.rect, sum_r))
+  local ch = alone.decoy_chain
+  check("Decoy: chain: numbered squares, the park square, 'scan from', no score",
+        has(ch.text, "#1 hit park") and has(ch.text, "#2") and has(ch.text, "scan from")
+        and not has(ch.text, "score =") and not has(ch.text, "GETAWAY step"),
+        table.concat(ch.text, " | "))
+  local tm = alone.decoy_score_terms
+  check("Decoy: score terms: the score line and one panel per chain square",
+        has(tm.text, "score = 1.000 + 1.000 + 2x1.000 = 4.000") and #tm.detail == 3
+        and has(tm.text, "tile = 1.000 + 0.000 = 1.000") and has(tm.text, "prox: d=")
+        and has(tm.text, "x2 (last)"), table.concat(tm.text, " | "))
+  local pl = alone.decoy_pill_lines
+  check("Decoy: pill lines: the pill and one line per chain square",
+        pl.circle == 1 and has(pl.text, "P p5") and pl.line == 3, tostring(pl.line))
+  local st = alone.decoy_status
+  check("Decoy: status header: the order, the step, the scan cost",
+        has(st.text, "ORDER decoy (") and has(st.text, "GETAWAY step 1/3 on square #1")
+        and has(st.text, "P=1 tiles=") and #st.text == 3, table.concat(st.text, " | "))
+  local bl = alone.decoy_blocker_count
+  check("Decoy: blocker count: the count's state line",
+        has(bl.text, "| steps by: hit"), table.concat(bl.text, " | "))
+  local cl = alone.decoy_scan_cells
+  check("Decoy: scan cells: one text per worked-out square",
+        #cl.text == #d.st.orders.held.ga.viz.cells and not has(cl.text, "score ="),
+        tostring(#cl.text))
+  C.DECOY_GETAWAY_BLOCKER_STEP = keep_blk
+  end)()
+  end
+  d.inf.direction = 64
+  check("parked on square 1 it turns to face square 2 (south)",
+        ORD.decoy_keys(d.st, d.inf, 0x11, 0) == 0x01 + 0x08, "?")
+  d.inf.direction = 128
+  lock(d, 212); lock(d, 230)
+  check("no new hit: it stays on square 1",
+        h.ga.phase == "wait" and d.st.goal.my == 25, tostring(h.ga.phase))
+  -- HIT 2, after arrival: one more square.
+  d.inf.armour = 25
+  lock(d, 232)
+  check("a new hit after arrival: it moves to square 2",
+        h.ga.phase == "move" and d.st.goal.my == 26, tostring(d.st.goal.my))
+  if drawn then
+    check("overlay header while moving: moving to square #2",
+          has(draw_rec().text, "moving to square #2"), "?")
+    ;(function()
+    local mv = draw_rec("decoy_chain")
+    local tl = mv.lines[#mv.lines]
+    check("Decoy: chain while moving: 'MOVING to (22,26)' and a line from the tank to it",
+          has(mv.text, "MOVING to (22,26)") and not has(mv.text, "park")
+          and tl and tl[1] == d.inf.tankx / 256 and tl[2] == d.inf.tanky / 256
+          and tl[3] == 22.5 and tl[4] == 26.5, table.concat(mv.text, " | "))
+    end)()
+  end
+  d.inf.tanky = 26 * 256 + 128; lock(d, 238)
+  check("on square 2: parked, waiting", h.ga.phase == "wait" and h.ga.used == 2
+        and d.st.goal.my == 26, tostring(h.ga.phase))
+  d.inf.armour = 20; lock(d, 240)
+  d.inf.tanky = 27 * 256 + 128; lock(d, 246)
+  check("at the end of the chain: done, parked on the last square",
+        h.ga.phase == "done" and h.ga.used == 3 and d.st.goal.mx == 22 and d.st.goal.my == 27
+        and ORD.hold_parked(d.st, d.inf) == true, tostring(h.ga.phase))
+  d.inf.armour = 15; lock(d, 248)
+  check("a hit at the end changes nothing", h.ga.phase == "done" and d.st.goal.my == 27, "?")
+  check("parked at the end: no throttle, no turn",
+        ORD.decoy_keys(d.st, d.inf, 0x11, 0) == 0x01, "?")
+  d.st.goal = { kind = "attack_tank", target_id = 7, mx = 23, my = 30 }
+  check("parked at the end: a fight in range of the tank is allowed again",
+        lock(d, 249) and d.st.goal.kind == "attack_tank", tostring(d.st.goal.kind))
+  d.inf.tanky = 30 * 256 + 128
+  d.st.goal = { kind = "take_cover", mx = 3, my = 3 }
+  lock(d, 250)
+  check("pushed off the last square: the hold goal drives back to it",
+        d.st.goal.kind == "goto_tile" and d.st.goal.my == 27, tostring(d.st.goal.my))
+  d.inf.tanky = 27 * 256 + 128
+  -- The hold's endings at the end of the chain.
+  ORD.update(d.st, d.w, d.inf, 200 + HOLD - 1)
+  check("the hold stands at the chain's end until the clock", d.st.orders.held ~= nil, "ended")
+  ORD.update(d.st, d.w, d.inf, 200 + HOLD)
+  check("the 10 s clock ends it at the chain's end", d.st.orders.held == nil, "held")
+  local function at_end()
+    local b = dbot(); arrive(b, 200); b.inf.direction = 128
+    lock(b, 201)
+    local arm = b.inf.armour
+    for i, y in ipairs({ 25, 26, 27 }) do
+      arm = arm - 5; b.inf.armour = arm; lock(b, 200 + 10 * i)
+      b.inf.tanky = y * 256 + 128; lock(b, 205 + 10 * i)
+    end
+    return b
+  end
+  local e = at_end()
+  check("at_end rig is parked at the end", e.st.orders.held.ga.phase == "done", "?")
+  e.inf.events = { ping(1, 0, 23, 27) }
+  ORD.on_events(e.st, e.w, e.inf, 300)
+  e.inf.events = {}
+  check("a caution beside the tank at the chain's end releases it",
+        e.st.orders.held == nil, "held")
+  e = at_end()
+  e.w.pills[5].health = 0
+  check("pills down ends it at the chain's end",
+        lock(e, 300) == false and e.st.orders.held == nil, "held")
+  e = at_end()
+  ORD.on_chat(e.st, e.w, e.inf, 0, "cancel", 300, true, false)
+  check("cancel ends it at the chain's end", e.st.orders.held == nil, "held")
+  e = at_end()
+  ORD.on_death(e.st, e.inf)
+  check("death ends it at the chain's end", e.st.orders.held == nil, "held")
+
+  -- 7b. A RESCAN WHILE PARKED ON A CHAIN SQUARE runs from that square with
+  -- the steps that are left.  Parked on (22,25) after one step; a longer
+  -- chain south appears and a new pill counts (the change).  The fresh scan
+  -- from (22,25) has 5 - 1 = 4 steps: (22,26) .. (22,29).
+  d = dbot(); arrive(d, 200); lock(d, 201)
+  h = d.st.orders.held
+  d.inf.armour = 35; lock(d, 202)
+  d.inf.tanky = 25 * 256 + 128; lock(d, 204)
+  check("rescan rig: parked on square 1", h.ga.phase == "wait" and h.ga.used == 1, "?")
+  S({ { 22, 25, 1.0 }, { 22, 26, 1.0 }, { 22, 27, 1.0 }, { 22, 28, 1.0 },
+      { 22, 29, 1.0 }, { 22, 30, 1.0 }, { 22, 31, 1.0 } })
+  d.w.pills[6] = { mx = 26, my = 24, owner = "hostile", health = 5 }
+  lock(d, 240)
+  check("no rescan before the check interval", pstr(h.ga.path) == "22,25 22,26 22,27", pstr(h.ga.path))
+  lock(d, 260)
+  check("the rescan runs from the parked square with the steps left (4)",
+        pstr(h.ga.path) == "22,26 22,27 22,28 22,29" and h.ga.viz.sx == 22
+        and h.ga.viz.sy == 25 and h.ga.idx == 1 and h.ga.used == 1, pstr(h.ga.path))
+  S({ { 22, 25, 1.0 }, { 22, 26, 1.0 }, { 22, 27, 1.0 } })
+
+  -- 8. THE NEXT SQUARE STOPS BEING DRIVABLE while it moves: a fresh scan
+  -- from where the tank is with the steps that are left; no chain = park.
+  d = dbot(); arrive(d, 200); lock(d, 201)
+  h = d.st.orders.held
+  d.inf.armour = 35; lock(d, 202)
+  d.inf.tanky = 25 * 256 + 128; lock(d, 203)
+  d.inf.armour = 30; lock(d, 204)
+  check("walled rig: moving to square 2", h.ga.phase == "move" and d.st.goal.my == 26, "?")
+  TMAP[26 * 256 + 22] = C.T_BUILDING
+  lock(d, 205)
+  check("next square walled: fresh scan finds nothing, parks where it is",
+        h.ga.phase == "done" and h.ga.park_mx == 22 and h.ga.park_my == 25
+        and d.st.goal.my == 25, tostring(h.ga.phase))
+  TMAP[26 * 256 + 22] = nil
+
+  ;(function() -- own function: the main chunk is at its 200-local limit
+  -- 8b. A HOLD THAT ENDS AFTER A STEP takes its hold goal with it (Sep 26).
+  -- After a step the hold goal points at the chain square, not the decoy
+  -- square; every hold end must still clear it (attack.clear_attack_goal:
+  -- kind "none").  stepped(): parked on square 1 (22,25) after one hit.
+  local function stepped()
+    local b = dbot(); arrive(b, 200); lock(b, 201)
+    b.inf.armour = 35; lock(b, 202)
+    b.inf.tanky = 25 * 256 + 128; lock(b, 204)
+    return b
+  end
+  local function cleared(b)
+    return b.st.orders.held == nil and b.st.goal and b.st.goal.kind == "none"
+  end
+  local b = stepped()
+  check("stepped rig: parked on square 1, the hold goal on (22,25)",
+        b.st.orders.held.ga.phase == "wait" and b.st.goal.kind == "goto_tile"
+        and b.st.goal.mx == 22 and b.st.goal.my == 25 and b.st.goal._decoy == true,
+        tostring(b.st.goal.kind) .. " " .. tostring(b.st.goal.my))
+  check("parked on the chain square: the kept goal has no _getaway mark",
+        b.st.goal._getaway == nil, tostring(b.st.goal._getaway))
+  check("parked with no _getaway mark: no diagonal drive from the goal",
+        ORD.getaway_diagonal(b.st.goal, 21, 24, false, b.w) == nil, "?")
+  ORD.update(b.st, b.w, b.inf, 200 + HOLD)
+  check("the clock ends it after a step: no hold goal left",
+        cleared(b), tostring(b.st.goal and b.st.goal.kind))
+  b = stepped()
+  ORD.on_chat(b.st, b.w, b.inf, 0, "cancel", 300, true, false)
+  check("cancel after a step: no hold goal left",
+        cleared(b), tostring(b.st.goal and b.st.goal.kind))
+  b = stepped()
+  b.w.pills[5].health = 0
+  check("pills down after a step: no hold goal left",
+        lock(b, 300) == false and cleared(b), tostring(b.st.goal and b.st.goal.kind))
+  b = stepped()
+  b.inf.events = { ping(1, 0, 23, 25) }
+  ORD.on_events(b.st, b.w, b.inf, 300)
+  b.inf.events = {}
+  check("a caution after a step: no hold goal left",
+        cleared(b), tostring(b.st.goal and b.st.goal.kind))
+  b = stepped()
+  ORD.on_death(b.st, b.inf)
+  check("death after a step: no hold goal left",
+        cleared(b), tostring(b.st.goal and b.st.goal.kind))
+  -- While it drives to square 2 (the goal carries _getaway).
+  b = stepped()
+  b.inf.armour = 30; lock(b, 206)
+  check("moving to square 2: the goal is marked _getaway",
+        b.st.orders.held.ga.phase == "move" and b.st.goal.my == 26
+        and b.st.goal._getaway == true, tostring(b.st.goal._getaway))
+  ORD.on_chat(b.st, b.w, b.inf, 0, "cancel", 300, true, false)
+  check("cancel while moving: no hold goal left",
+        cleared(b), tostring(b.st.goal and b.st.goal.kind))
+
+  -- 8c. THE MOVE TIMEOUT (Sep 26).  A move that never reaches its square
+  -- parks where the tank is after DECOY_GETAWAY_MOVE_TICKS, counted from
+  -- when the move began.
+  local CAP = C.DECOY_GETAWAY_MOVE_TICKS or 300
+  local m = dbot(); arrive(m, 200); lock(m, 201)
+  local hm = m.st.orders.held
+  m.inf.armour = 35; lock(m, 202)
+  check("timeout rig: moving to square 1 from tick 202",
+        hm.ga.phase == "move" and hm.ga.move_tick == 202 and m.st.goal.my == 25,
+        tostring(hm.ga.phase))
+  -- Pushed to (23,25), never on (22,25).
+  m.inf.tankx, m.inf.tanky = 23 * 256 + 128, 25 * 256 + 128
+  lock(m, 202 + CAP - 1)
+  check("one tick before the cap: still moving",
+        hm.ga.phase == "move" and m.st.goal.mx == 22 and m.st.goal.my == 25,
+        tostring(hm.ga.phase))
+  lock(m, 202 + CAP)
+  check("at the cap: parked on the tank's square (23,25), one step used",
+        hm.ga.phase == "wait" and hm.ga.park_mx == 23 and hm.ga.park_my == 25
+        and hm.ga.used == 1 and m.st.goal.kind == "goto_tile"
+        and m.st.goal.mx == 23 and m.st.goal.my == 25 and m.st.goal._getaway == nil
+        and ORD.hold_parked(m.st, m.inf) == true,
+        tostring(hm.ga.phase) .. " " .. tostring(hm.ga.park_mx) .. "," .. tostring(hm.ga.park_my))
+  check("at the cap: a fresh scan from (23,25) with the steps left, new baseline",
+        pstr(hm.ga.path) == "22,26 22,27" and hm.ga.idx == 1 and hm.ga.viz.sx == 23
+        and hm.ga.viz.sy == 25 and hm.ga.viz.steps == 4 and hm.ga.hits == 0
+        and hm.ga.arm == 35, pstr(hm.ga.path))
+  m.inf.armour = 30; lock(m, 202 + CAP + 5)
+  check("after the timeout a later hit counts: it moves on to (22,26)",
+        hm.ga.hits == 1 and hm.ga.phase == "move" and m.st.goal.mx == 22
+        and m.st.goal.my == 26 and hm.ga.move_tick == 202 + CAP + 5,
+        tostring(hm.ga.hits) .. " " .. tostring(hm.ga.phase))
+  -- A tank that never left the square it began on: no step used.
+  m = dbot(); arrive(m, 200); lock(m, 201)
+  hm = m.st.orders.held
+  m.inf.armour = 35; lock(m, 202)
+  lock(m, 202 + CAP)
+  check("never left its square: parked there at the cap, no step used",
+        hm.ga.phase == "wait" and hm.ga.used == 0 and hm.ga.park_mx == 22
+        and hm.ga.park_my == 24 and pstr(hm.ga.path) == "22,25 22,26 22,27",
+        tostring(hm.ga.phase) .. " " .. tostring(hm.ga.used))
+  m.inf.armour = 30; lock(m, 202 + CAP + 1)
+  check("never left its square: a later hit moves it again",
+        hm.ga.phase == "move" and hm.ga.hits == 1 and m.st.goal.my == 25,
+        tostring(hm.ga.phase))
+  -- No chain from where it stopped: done, parked there.
+  m = dbot(); arrive(m, 200); lock(m, 201)
+  hm = m.st.orders.held
+  m.inf.armour = 35; lock(m, 202)
+  m.inf.tankx, m.inf.tanky = 23 * 256 + 128, 25 * 256 + 128
+  S({})
+  lock(m, 202 + CAP)
+  S({ { 22, 25, 1.0 }, { 22, 26, 1.0 }, { 22, 27, 1.0 } })
+  check("at the cap with no chain from there: done, parked on (23,25)",
+        hm.ga.phase == "done" and hm.ga.park_mx == 23 and hm.ga.park_my == 25
+        and m.st.goal.mx == 23 and m.st.goal.my == 25, tostring(hm.ga.phase))
+  -- A normal move that arrives is not cut off, and each move has its own
+  -- start: arrive one tick before the cap, then a new move later.
+  m = dbot(); arrive(m, 200); lock(m, 201)
+  hm = m.st.orders.held
+  m.inf.armour = 35; lock(m, 202)
+  m.inf.tanky = 25 * 256 + 128; lock(m, 202 + CAP - 1)
+  check("arrives one tick before the cap: parked on square 1",
+        hm.ga.phase == "wait" and hm.ga.used == 1 and hm.ga.park_my == 25, tostring(hm.ga.phase))
+  lock(m, 202 + 2 * CAP)
+  check("arrived: no timeout later (still parked on square 1)",
+        hm.ga.phase == "wait" and hm.ga.used == 1 and hm.ga.park_my == 25
+        and m.st.goal.my == 25, tostring(hm.ga.phase))
+  m.inf.armour = 30; lock(m, 202 + 2 * CAP + 1)
+  lock(m, 202 + 2 * CAP + 2)
+  check("a second move counts from its own start, not the first move's",
+        hm.ga.phase == "move" and hm.ga.move_tick == 202 + 2 * CAP + 1
+        and m.st.goal.my == 26, tostring(hm.ga.phase))
+  end)()
+
+  -- 9. NO CHAIN: today's hold, and a hit changes nothing.
+  S({})
+  d = dbot(); arrive(d, 200); d.inf.direction = 64; lock(d, 201)
+  h = d.st.orders.held
+  check("no chain: the scan says so", h.ga and h.ga.path == nil, "?")
+  d.inf.armour = 30; lock(d, 202)
+  check("no chain: a hit changes nothing (parked on the decoy square)",
+        h.ga.phase == "wait" and d.st.goal.mx == 22 and d.st.goal.my == 24
+        and ORD.hold_parked(d.st, d.inf) == true, tostring(h.ga.phase))
+  check("no chain: the keys are today's (no turn, no throttle)",
+        ORD.decoy_keys(d.st, d.inf, 0x11, 0) == 0x01, "?")
+  -- NO CHAIN, THEN A CHAIN: the hit taken with no way out is spent.  A
+  -- chain south appears and a new pill counts (the change); the rescan at
+  -- the check interval finds the chain.  It does not move on the old hit:
+  -- a new baseline, and the next hit moves it.
+  S({ { 22, 25, 1.0 }, { 22, 26, 1.0 }, { 22, 27, 1.0 } })
+  d.w.pills[6] = { mx = 26, my = 24, owner = "hostile", health = 5 }
+  lock(d, 252)
+  check("no chain -> a chain: the old hit is spent, it stays (new baseline, 0 hits)",
+        pstr(h.ga.path) == "22,25 22,26 22,27" and h.ga.phase == "wait"
+        and h.ga.hits == 0 and h.ga.arm == 30 and d.st.goal.my == 24,
+        pstr(h.ga.path) .. " " .. tostring(h.ga.phase) .. " " .. tostring(h.ga.hits))
+  d.inf.armour = 25; lock(d, 253)
+  check("no chain -> a chain: a fresh hit moves it to square 1",
+        h.ga.phase == "move" and d.st.goal.my == 25, tostring(h.ga.phase))
+  d.w.pills[6] = nil
+  S({})
+
+  -- 10. A RESCAN AFTER A PILL DIES.  Two pills: 5 (20,20) and 6 (26,24).
+  -- North (22,23) is shielded from pill 5 only, south (22,25) from pill 6
+  -- only: 0.5 each, a tie, north wins on the lower key.  Pill 5 dies: north
+  -- is open to pill 6 (0) and south is 1.0, so the rescan picks south --
+  -- but not before DECOY_GETAWAY_RESCAN_TICKS.
+  GA.block = function(world, p, mx, my)
+    if p.mx == 20 and mx == 22 and my == 23 then return 1.0, "wall", 22, 22 end
+    if p.mx == 26 and mx == 22 and my == 25 then return 1.0, "wall", 23, 25 end
+    return 0, "open"
+  end
+  d = dbot()
+  d.w.pills[6] = { mx = 26, my = 24, owner = "hostile", health = 5 }
+  arrive(d, 200); lock(d, 201)
+  h = d.st.orders.held
+  check("two pills: north and south tie at 0.5, north wins",
+        pstr(h.ga.path) == "22,23" and near(h.ga.score, 1.0), pstr(h.ga.path))
+  local first_scan = h.ga.scan_tick
+  lock(d, 251)
+  check("nothing changed: no rescan at the next check", h.ga.scan_tick == first_scan, "?")
+  d.w.pills[5].health = 0
+  lock(d, 261)
+  check("pill 5 dies: no rescan before the check interval",
+        pstr(h.ga.path) == "22,23", pstr(h.ga.path))
+  lock(d, 301)
+  check("pill 5 dies: the rescan picks south (shielded from pill 6)",
+        pstr(h.ga.path) == "22,25" and near(h.ga.score, 2.0) and h.ga.scan_tick == 301,
+        pstr(h.ga.path))
+  d.inf.direction = 64
+  check("and the turn follows the new first square",
+        ORD.decoy_keys(d.st, d.inf, 0, 0) == 0x08, "?")
+
+  -- 11. KNOB OFF (keel): today's hold exactly.
+  S({ { 22, 25, 1.0 }, { 22, 26, 1.0 }, { 22, 27, 1.0 } })
+  GA.block = function(world, p, mx, my)
+    local v = SAFE[my * 256 + mx]
+    if v then return v, "wall", mx, my - 1 end
+    return 0, "open"
+  end
+  C.DECOY_GETAWAY = false
+  d = dbot(); arrive(d, 200); d.inf.direction = 64; lock(d, 201)
+  h = d.st.orders.held
+  check("DECOY_GETAWAY=false: no scan", h.ga == nil, "?")
+  d.inf.armour = 30; lock(d, 202)
+  check("DECOY_GETAWAY=false: a hit changes nothing",
+        d.st.goal.mx == 22 and d.st.goal.my == 24 and ORD.hold_parked(d.st, d.inf) == true, "?")
+  check("DECOY_GETAWAY=false: keys are today's (throttle off, no turn)",
+        ORD.decoy_keys(d.st, d.inf, 0x11, 0) == 0x01, "?")
+  C.DECOY_GETAWAY = true
+  C.DECOY_GETAWAY_PROX_WEIGHT = 0.5
+  C.DECOY_GETAWAY_BLOCKER_STEP = true
+
+  ;(function() -- own function: the main chunk is at its 200-local limit
+  -- 12. THE BLOCKER STEP (Andrew, Sep 24: "2 or less shots left", "count
+  -- hits", "we don't need to count until it's the last blocker").  dbot's
+  -- chain (22,25) (22,26) (22,27), pill 5 at (20,20).  Parked on a chain
+  -- square, the closest counted pill's shell line to the tank's square is
+  -- walked.  2 or more blockers: it holds, no count.  One (the last): a
+  -- wall first seen full is 5 less the hits counted on it, one first seen
+  -- damaged is 1, our pill is ceil(armour / damage); shots left <=
+  -- DECOY_GETAWAY_BLOCKER_SHOTS (2) moves the tank on without a hit.  None:
+  -- it moves.  The line tiles are the mock trace's own, so the blockers below
+  -- sit on the line the code walks.
+  check("blocker step knobs: on live, off in keel, step at <= 2 shots, wall life 4, pill damage 1",
+        C.DECOY_GETAWAY_BLOCKER_STEP == true and C.PRESETS.keel.DECOY_GETAWAY_BLOCKER_STEP == false
+        and C.DECOY_GETAWAY_BLOCKER_SHOTS == 2 and C.PRESETS.keel.DECOY_GETAWAY_BLOCKER_SHOTS == 2
+        and C.DECOY_GETAWAY_WALL_LIFE == 4 and C.DECOY_GETAWAY_PILL_SHELL_DAMAGE == 1
+        and C.DECOY_GETAWAY_BLOCKER_MIN == nil, "?")
+  check("shots left: full wall 5, damaged wall 1 (hidden life: the smallest), pill = its armour",
+        GA.shots_left("wall") == 5 and GA.shots_left("wall_damaged") == 1
+        and GA.shots_left("pill", { health = 15 }) == 15 and GA.shots_left("pill", { health = 2 }) == 2, "?")
+  C.DECOY_GETAWAY_PROX_WEIGHT = 0
+  S({ { 22, 25, 1.0 }, { 22, 26, 1.0 }, { 22, 27, 1.0 } })
+  -- The line tiles from pill 5 to (22,25), without the pill's and the tank's
+  -- squares; only rows 21..23 are used (the decoy square (22,24) stays
+  -- clear).
+  local line = {}
+  local UT = require("util")
+  for _, st in ipairs(cpf.simulate_shot(UT.m2w(20), UT.m2w(20), UT.m2w(22), UT.m2w(25))) do
+    if st.my >= 21 and st.my <= 23 then line[#line + 1] = st end
+  end
+  check("blocker rig: the line from pill 5 to (22,25) has >= 3 tiles in rows 21..23",
+        #line >= 3, tostring(#line))
+  local W1, W2, W3 = line[1], line[2], line[3]
+  local function K(w) return w.my * 256 + w.mx end
+  local function clear() TMAP[K(W1)], TMAP[K(W2)], TMAP[K(W3)] = nil, nil, nil end
+  -- Parked on square 1 after the first hit.  The blockers go up after the
+  -- scan (they would shield the decoy square too, and the scan's P would be
+  -- empty).
+  local function on_sq1(t0)
+    clear()
+    local b = dbot(); arrive(b, t0); lock(b, t0 + 1)
+    b.inf.armour = b.inf.armour - 5; lock(b, t0 + 2)           -- hit 1: the first step
+    b.inf.tanky = 25 * 256 + 128; lock(b, t0 + 4)              -- arrives on square 1
+    return b, b.st.orders.held
+  end
+  local function moved(hb, b) return hb.ga.phase == "move" and b.st.goal.my == 26 and hb.ga.hits == 0 end
+  local function held(hb) return hb.ga.phase == "wait" and hb.ga.used == 1 end
+
+  -- THE HIT LEDGER: a wall-hit sound on a wall's square is one shell
+  -- stopped on it (M.hear).  The test sets the two globals braincore.c
+  -- gives a live brain.
+  EVENT_SOUND = EVENT_SOUND or 8
+  SND_SHOT_BUILDING_NEAR = SND_SHOT_BUILDING_NEAR or 4
+  local function hit(b, w, t)
+    b.inf.events = { { type = EVENT_SOUND, data = { SND_SHOT_BUILDING_NEAR, w.mx, w.my, 0xFF } } }
+    lock(b, t)
+    b.inf.events = nil
+  end
+  local function lastb(hb) return hb.ga.blk and hb.ga.blk.list and hb.ga.blk.list[1] end
+
+  -- A FULL WALL, the last blocker: 5 - 0 = 5 shots, it holds.
+  local b, hb = on_sq1(200)
+  check("blocker rig: parked on square 1 after the hit, trigger hit",
+        held(hb) and hb.ga.trigs[1] == "hit", tostring(hb.ga.phase))
+  TMAP[K(W1)] = C.T_BUILDING
+  lock(b, 205); lock(b, 206)
+  check("a full wall: 5 - 0 = 5 shots > 2, it holds",
+        held(hb) and hb.ga.blk and hb.ga.blk.shots == 5 and hb.ga.blk.id == 5 and hb.ga.blk.why == "last"
+        and #hb.ga.blk.list == 1 and lastb(hb).kind == "wall" and lastb(hb).start == 5 and lastb(hb).hits == 0,
+        tostring(hb.ga.blk and hb.ga.blk.shots))
+  if drawn then
+    local rb = { text = {} }
+    ORD.draw_getaway({ is_on = function() return true end, rect = function() end,
+                       line = function() end, circle = function() end,
+                       text = function(id, x, y, t) rb.text[#rb.text + 1] = t end,
+                       detail = function() end }, b.st)
+    local lng = 0
+    for _, t in ipairs(rb.text) do if #t > lng then lng = #t end end
+    check("overlay: the closest pill, the last blocker's count, the triggers, and its box",
+          has(rb.text, "closest p5 (20,20) last blocker 5-0=5 shots, step at <=2 | steps by: hit")
+          and has(rb.text, "5-0=5 shots") and lng <= 127,
+          table.concat(rb.text, " | "))
+  end
+  -- The first shell makes it a damaged wall.  No sound reached the brain
+  -- here: the full-to-damaged change is hit 1 on its own.
+  TMAP[K(W1)] = C.T_HALFBUILD
+  lock(b, 207)
+  check("a full wall with 1 hit counted (the damaged change): 5 - 1 = 4 shots, it holds",
+        held(hb) and hb.ga.blk.shots == 4 and lastb(hb).hits == 1, tostring(hb.ga.blk.shots))
+  hit(b, W1, 208)
+  check("hit 2 (a wall-hit sound on its square): 5 - 2 = 3 shots, it holds",
+        held(hb) and hb.ga.blk.shots == 3 and lastb(hb).hits == 2, tostring(hb.ga.blk.shots))
+  hit(b, { mx = W1.mx + 5, my = W1.my }, 209)
+  check("a wall-hit sound on another square is not counted",
+        held(hb) and hb.ga.blk.shots == 3, tostring(hb.ga.blk.shots))
+  hit(b, W1, 210)
+  check("a full wall with 3 hits counted: 5 - 3 = 2 shots <= 2, it moves without a hit",
+        moved(hb, b) and hb.ga.blk.shots == 2 and hb.ga.trigs[2] == "blk"
+        and GA.blk_txt(hb.ga.blk) == string.format("last(%d,%d)5-3=2", W1.mx, W1.my),
+        tostring(hb.ga.phase) .. " " .. tostring(hb.ga.blk and hb.ga.blk.shots))
+  lock(b, 211)
+  check("moving: no blocker count is kept (the overlay shows none)", hb.ga.blk == nil, "?")
+  b.inf.tanky = 26 * 256 + 128; lock(b, 212)
+  check("the blocker step keeps the arrival rule: parked on square 2 first, a new ledger",
+        hb.ga.phase == "wait" and hb.ga.used == 2 and next(hb.ga.led) == nil, tostring(hb.ga.phase))
+
+  -- THE SOUND AND THE DAMAGED CHANGE IN ONE THINK: one hit, not two.
+  b, hb = on_sq1(250)
+  TMAP[K(W1)] = C.T_BUILDING
+  lock(b, 255)
+  TMAP[K(W1)] = C.T_HALFBUILD
+  hit(b, W1, 256)
+  check("the first shell's sound and its damaged change are 1 hit: 4 shots",
+        held(hb) and hb.ga.blk.shots == 4 and lastb(hb).hits == 1, tostring(hb.ga.blk.shots))
+
+  -- A HIT IN THE THINK THE WALL BECOMES THE LAST BLOCKER: the ledger entry
+  -- is made before the sounds are heard, so the hit counts: 5 - 1 = 4.
+  b, hb = on_sq1(270)
+  TMAP[K(W1)] = C.T_BUILDING
+  hit(b, W1, 275)
+  check("a hit in the first think of the last wall counts: 5 - 1 = 4 shots",
+        held(hb) and hb.ga.blk.shots == 4 and lastb(hb).hits == 1
+        and hb.ga.led[K(W1)] and #hb.ga.led[K(W1)].ticks == 1, tostring(hb.ga.blk.shots))
+
+  -- A WALL ALREADY DAMAGED when the count starts: its life is unknown, so it
+  -- keeps 1 (the worst case).  It moves at once.
+  b, hb = on_sq1(300)
+  TMAP[K(W1)] = C.T_HALFBUILD
+  lock(b, 305)
+  check("a wall already damaged when the count starts counts 1: it moves",
+        moved(hb, b) and hb.ga.blk.shots == 1 and lastb(hb).park == "wall_damaged"
+        and GA.blk_txt(hb.ga.blk) == string.format("last(%d,%d)dmg=1", W1.mx, W1.my),
+        tostring(hb.ga.blk.shots))
+
+  -- A WALL THAT IS GONE (rubble or grass) counts 0: no blocker left, it moves.
+  b, hb = on_sq1(320)
+  TMAP[K(W1)] = C.T_BUILDING
+  lock(b, 325)
+  TMAP[K(W1)] = C.T_RUBBLE
+  lock(b, 326)
+  check("a wall that is gone counts 0: no blocker left, it moves",
+        moved(hb, b) and hb.ga.blk.shots == 0 and hb.ga.blk.why == "open", tostring(hb.ga.blk.shots))
+
+  -- TWO WALLS: only the LAST one is counted (the one nearer the pill takes
+  -- the shells first).  While both stand it holds with no count; hits on the
+  -- first wall are not the last wall's.
+  b, hb = on_sq1(340)
+  TMAP[K(W1)], TMAP[K(W2)] = C.T_BUILDING, C.T_BUILDING
+  lock(b, 345)
+  check("two walls: 2 blockers, waiting, no count, it holds",
+        held(hb) and hb.ga.blk.shots == nil and hb.ga.blk.why == "wait" and #hb.ga.blk.list == 2
+        and GA.blk_txt(hb.ga.blk) == "2 blockers, waiting", tostring(hb.ga.blk.why))
+  TMAP[K(W1)] = C.T_HALFBUILD
+  hit(b, W1, 346); hit(b, W1, 347); hit(b, W1, 348); hit(b, W1, 349)
+  check("two walls: 4 hits on the first wall, still waiting, nothing in the ledger",
+        held(hb) and hb.ga.blk.why == "wait" and next(hb.ga.led) == nil, tostring(hb.ga.blk.why))
+  TMAP[K(W1)] = C.T_RUBBLE
+  lock(b, 350)
+  check("two walls: the first is gone, the last wall is full: 5 - 0 = 5, it holds",
+        held(hb) and hb.ga.blk.why == "last" and hb.ga.blk.shots == 5
+        and lastb(hb).mx == W2.mx and lastb(hb).my == W2.my, tostring(hb.ga.blk.shots))
+  TMAP[K(W2)] = C.T_HALFBUILD
+  hit(b, W2, 351)
+  hit(b, W2, 352)
+  check("two walls: the last wall has 2 hits (the change + a sound, then a sound): 5 - 2 = 3, it holds",
+        held(hb) and hb.ga.blk.shots == 3, tostring(hb.ga.blk.shots))
+  hit(b, W2, 353)
+  check("two walls: the last wall has 3 hits: 5 - 3 = 2, it moves",
+        moved(hb, b) and hb.ga.blk.shots == 2 and hb.ga.trigs[2] == "blk", tostring(hb.ga.blk.shots))
+  -- A full wall and a damaged wall behind it: when the full one goes, the
+  -- damaged one is the last and counts 1.  It moves.
+  b, hb = on_sq1(360)
+  TMAP[K(W1)], TMAP[K(W2)] = C.T_BUILDING, C.T_HALFBUILD
+  lock(b, 365)
+  check("a full wall and a damaged wall: waiting, it holds", held(hb) and hb.ga.blk.why == "wait",
+        tostring(hb.ga.blk.why))
+  TMAP[K(W1)] = nil
+  lock(b, 366)
+  check("the full wall is gone: the last wall was damaged when the count started, 1, it moves",
+        moved(hb, b) and hb.ga.blk.shots == 1, tostring(hb.ga.blk.shots))
+  -- A wall and our pill: 2 blockers, waiting.
+  b, hb = on_sq1(380)
+  TMAP[K(W1)] = C.T_BUILDING
+  b.w.pills[8] = { mx = W3.mx, my = W3.my, owner = "friendly", health = 1 }
+  b.w.pill_at = { [K(W3)] = { { pill = b.w.pills[8] } } }
+  lock(b, 385)
+  check("a wall and our pill (armour 1): 2 blockers, waiting, it holds",
+        held(hb) and hb.ga.blk.why == "wait", tostring(hb.ga.blk.why))
+  b.w.pills[8], b.w.pill_at = nil, nil
+
+  -- NO BLOCKER (a forest only): 0 shots left, it moves.
+  b, hb = on_sq1(400)
+  TMAP[K(W1)] = C.T_FOREST
+  lock(b, 405)
+  check("no blocker (a forest only): 0 shots left, it moves",
+        moved(hb, b) and hb.ga.blk.shots == 0 and #hb.ga.blk.list == 0, tostring(hb.ga.phase))
+
+  -- OUR PILL on the line: its armour is its shots left.
+  b, hb = on_sq1(500)
+  b.w.pills[8] = { mx = W3.mx, my = W3.my, owner = "friendly", health = 15 }
+  b.w.pill_at = { [K(W3)] = { { pill = b.w.pills[8] } } }
+  lock(b, 505)
+  check("our pill with armour 15: 15 shots left, it holds",
+        held(hb) and hb.ga.blk.shots == 15 and hb.ga.blk.list[1].kind == "pill", tostring(hb.ga.blk.shots))
+  b.w.pills[8].health = 3; lock(b, 506)
+  check("our pill with armour 3: 3 shots left, it holds", held(hb) and hb.ga.blk.shots == 3,
+        tostring(hb.ga.blk.shots))
+  C.DECOY_GETAWAY_PILL_SHELL_DAMAGE = 2; lock(b, 507)
+  check("PILL_SHELL_DAMAGE 2: armour 3 is ceil(3/2) = 2 shots, it moves",
+        moved(hb, b) and hb.ga.blk.shots == 2, tostring(hb.ga.blk.shots))
+  C.DECOY_GETAWAY_PILL_SHELL_DAMAGE = 1
+  b, hb = on_sq1(520)
+  b.w.pills[8] = { mx = W3.mx, my = W3.my, owner = "allied", health = 2 }
+  b.w.pill_at = { [K(W3)] = { { pill = b.w.pills[8] } } }
+  lock(b, 525)
+  check("an ally's pill with armour 2: 2 shots left, it moves",
+        moved(hb, b) and hb.ga.blk.shots == 2, tostring(hb.ga.blk.shots))
+  b.w.pills[8], b.w.pill_at = nil, nil
+
+  -- WALL_LIFE: a building_life of 1 makes a full wall 2 shots.
+  C.DECOY_GETAWAY_WALL_LIFE = 1
+  b, hb = on_sq1(540)
+  TMAP[K(W1)] = C.T_BUILDING
+  lock(b, 545)
+  check("WALL_LIFE 1: a full wall is 2 shots, it moves", moved(hb, b) and hb.ga.blk.shots == 2,
+        tostring(hb.ga.blk.shots))
+  C.DECOY_GETAWAY_WALL_LIFE = 4
+
+  -- THE CLOSEST PILL ONLY.  A full wall on pill 5's line (d = 5.39, 5
+  -- shots); pill 6 at (22,32) (d = 7, in range) has an open line.  Only pill
+  -- 5 counts: it holds.  With pill 6 at (22,29) (d = 4, now the closest) it
+  -- moves.
+  b, hb = on_sq1(600)
+  TMAP[K(W1)] = C.T_BUILDING
+  b.w.pills[6] = { mx = 22, my = 32, owner = "hostile", health = 5 }
+  lock(b, 605)
+  check("two pills: the far pill's open line is ignored, the closest (p5, 5 shots) holds it",
+        held(hb) and hb.ga.blk.id == 5 and hb.ga.blk.shots == 5,
+        tostring(hb.ga.blk.id) .. " " .. tostring(hb.ga.blk.shots))
+  b.w.pills[6].my = 29
+  lock(b, 606)
+  check("two pills: pill 6 is now the closest, its line is open (0 shots): it moves",
+        moved(hb, b) and hb.ga.blk.id == 6 and hb.ga.blk.shots == 0
+        and hb.ga.trigs[2] == "blk", tostring(hb.ga.blk.id))
+  b.w.pills[6] = nil
+  clear()
+
+  -- KNOCKED OFF THE PARK SQUARE (Andrew, Sep 24: "It should stay counting
+  -- even if it got pushed off and head to the next spot").  The line, the
+  -- last blocker and the ledger stay the PARK square's (blk.tx/ty, and the
+  -- same wall and ledger table), not the knock square's.
+  b, hb = on_sq1(650)
+  TMAP[K(W3)] = C.T_BUILDING
+  lock(b, 655)
+  -- (21,25): its own line from pill 5 misses W3, so the old rule (the
+  -- count from the tank's square) would see no blocker and move at once.
+  local kx, ky = 21, 25
+  local _, _, kwhy = GA.blockers(b.w, b.w.pills[5], kx, ky, {})
+  check("knock rig: the knock square's own line is open (the old rule would move)",
+        kwhy == "open", tostring(kwhy))
+  local led0 = hb.ga.led
+  b.inf.tankx, b.inf.tanky = kx * 256 + 100, ky * 256 + 140
+  lock(b, 656)
+  check("knocked off square 1: the count stays on square 1's line (full wall, 5 - 0 = 5), it holds",
+        held(hb) and hb.ga.blk.why == "last" and hb.ga.blk.shots == 5
+        and hb.ga.blk.tx == 22 and hb.ga.blk.ty == 25 and hb.ga.blk.off == true
+        and lastb(hb).mx == W3.mx and lastb(hb).my == W3.my and hb.ga.led == led0
+        and b.st.goal.mx == 22 and b.st.goal.my == 25,
+        tostring(hb.ga.blk.why) .. " " .. tostring(hb.ga.blk.shots))
+  TMAP[K(W3)] = C.T_HALFBUILD
+  lock(b, 657)
+  hit(b, W3, 658)
+  check("knocked off: hits on square 1's wall still count (the change, then a sound = 2): 3 shots, it holds",
+        held(hb) and hb.ga.blk.shots == 3 and lastb(hb).hits == 2, tostring(hb.ga.blk.shots))
+  if drawn then
+    local rb = { text = {}, lines = 0 }
+    ORD.draw_getaway({ is_on = function() return true end, rect = function() end,
+                       line = function() rb.lines = rb.lines + 1 end, circle = function() end,
+                       text = function(id, x, y, t) rb.text[#rb.text + 1] = t end,
+                       detail = function() end }, b.st)
+    local dx, dy = kx * 256 + 100 - (22 * 256 + 128), ky * 256 + 140 - (25 * 256 + 128)
+    check("overlay knocked off: the count is square 1's, plus the tank-off-park label",
+          has(rb.text, "closest p5 (20,20) last blocker 5-2=3 shots, step at <=2 | steps by: hit")
+          and has(rb.text, string.format("tank off park (%d,%d wu)", dx, dy)),
+          table.concat(rb.text, " | "))
+  end
+  hit(b, W3, 659)
+  check("knocked off: hit 3 on square 1's wall: 5 - 3 = 2, it moves to square 2 from where it is",
+        moved(hb, b) and hb.ga.trigs[2] == "blk" and hb.ga.blk.shots == 2
+        and hb.ga.blk.tx == 22 and hb.ga.blk.ty == 25, tostring(hb.ga.phase))
+  lock(b, 660)
+  check("moving from the knock square: the goal is square 2, not square 1",
+        hb.ga.phase == "move" and b.st.goal.mx == 22 and b.st.goal.my == 26, tostring(b.st.goal.my))
+  b.inf.tankx, b.inf.tanky = 22 * 256 + 128, 26 * 256 + 128
+  lock(b, 661)
+  check("knocked off, then on square 2: parked there, a new ledger",
+        hb.ga.phase == "wait" and hb.ga.used == 2 and next(hb.ga.led) == nil, tostring(hb.ga.phase))
+
+  -- Knocked off with no count left to fire: it holds, and the hold goal is
+  -- still square 1 (it drives back).  A hit while off still moves it.
+  b, hb = on_sq1(670)
+  TMAP[K(W3)] = C.T_BUILDING
+  lock(b, 675)
+  b.inf.tankx, b.inf.tanky = kx * 256 + 128, ky * 256 + 128
+  lock(b, 676); lock(b, 677)
+  check("knocked off, full wall: holds, goal square 1",
+        held(hb) and hb.ga.blk.shots == 5 and b.st.goal.mx == 22 and b.st.goal.my == 25,
+        tostring(hb.ga.phase))
+  b.inf.tankx, b.inf.tanky = 22 * 256 + 128, 25 * 256 + 128
+  lock(b, 678)
+  check("back on square 1: the count and the ledger go on, off = false",
+        held(hb) and hb.ga.blk.shots == 5 and hb.ga.blk.off == false, tostring(hb.ga.phase))
+  b.inf.tankx, b.inf.tanky = kx * 256 + 128, ky * 256 + 128
+  lock(b, 679)
+  b.inf.armour = b.inf.armour - 5; lock(b, 680)
+  check("knocked off: a hit still moves it, trigger hit, goal square 2",
+        hb.ga.phase == "move" and hb.ga.trigs[2] == "hit" and b.st.goal.my == 26, tostring(hb.ga.phase))
+  -- Knocked onto the NEXT square with no trigger: not an arrival (it only
+  -- counts in the move phase), still parked on square 1.
+  b, hb = on_sq1(690)
+  TMAP[K(W3)] = C.T_BUILDING
+  lock(b, 692)
+  b.inf.tankx, b.inf.tanky = 22 * 256 + 128, 26 * 256 + 128
+  lock(b, 693); lock(b, 694)
+  check("knocked onto square 2 with no trigger: still parked on square 1, goal square 1",
+        held(hb) and hb.ga.park_my == 25 and b.st.goal.my == 25 and hb.ga.blk.ty == 25,
+        tostring(hb.ga.phase))
+  clear()
+
+  -- THE DECOY SQUARE: no blocker step there.  0 shots, no hit: it stays.
+  b = dbot(); arrive(b, 700); lock(b, 701)
+  hb = b.st.orders.held
+  lock(b, 702); lock(b, 720); lock(b, 740)
+  check("on the decoy square 0 shots left does not move it (the first step waits for a hit)",
+        hb.ga.phase == "wait" and hb.ga.used == 0 and hb.ga.blk == nil
+        and b.st.goal.my == 24, tostring(hb.ga.phase))
+  b.inf.armour = b.inf.armour - 5; lock(b, 741)
+  check("and the first hit still moves it, trigger hit",
+        hb.ga.phase == "move" and hb.ga.trigs[1] == "hit", tostring(hb.ga.phase))
+
+  -- A SHELL THAT RUNS OUT before the tank's square: no count, no step.
+  local sim = cpf.simulate_shot
+  b, hb = on_sq1(800)
+  cpf.simulate_shot = function() return { { mx = 20, my = 20 }, { mx = 20, my = 21 } } end
+  lock(b, 805)
+  cpf.simulate_shot = sim
+  check("shell short: no count, it holds", held(hb) and hb.ga.blk ~= nil
+        and hb.ga.blk.shots == nil, tostring(hb.ga.phase))
+
+  -- KNOB OFF (keel): 0 shots left on square 1, no hit: it holds (hits only).
+  C.DECOY_GETAWAY_BLOCKER_STEP = false
+  b, hb = on_sq1(900)
+  lock(b, 905); lock(b, 930)
+  check("DECOY_GETAWAY_BLOCKER_STEP=false: 0 shots left does not move it",
+        held(hb) and hb.ga.blk == nil, tostring(hb.ga.phase))
+  b.inf.armour = b.inf.armour - 5; lock(b, 931)
+  check("DECOY_GETAWAY_BLOCKER_STEP=false: a hit moves it",
+        hb.ga.phase == "move" and hb.ga.trigs[2] == "hit", tostring(hb.ga.phase))
+  C.DECOY_GETAWAY_BLOCKER_STEP = true
+
+  -- THE DIAGONAL STEP (DECOY_GETAWAY_DIAGONAL): while a getaway moves, a
+  -- diagonal next square is driven straight at (steering.cpf_path_to asks
+  -- orders.getaway_diagonal); only then, and only past drivable sides.
+  ;(function()  -- own function: main is at the 200-local cap
+  check("DECOY_GETAWAY_DIAGONAL: live on, keel off",
+        C.DECOY_GETAWAY_DIAGONAL == true and C.PRESETS.keel.DECOY_GETAWAY_DIAGONAL == false, "?")
+  local hm = { mx = 20, my = 25, decoy = true,
+               ga = { phase = "move", idx = 1, path = { { mx = 21, my = 24 } } } }
+  local gm = ORD.decoy_goal(hm)
+  local nx, ny = ORD.getaway_diagonal(gm, 20, 25, false)
+  check("diagonal: a moving getaway goes straight to the diagonal square",
+        gm._getaway == true and nx == 21 and ny == 24, tostring(nx) .. "," .. tostring(ny))
+  check("diagonal: from an orthogonal neighbour or two away, no change",
+        ORD.getaway_diagonal(gm, 21, 25, false) == nil
+        and ORD.getaway_diagonal(gm, 19, 26, false) == nil, "?")
+  check("diagonal: not in a boat", ORD.getaway_diagonal(gm, 20, 25, true) == nil, "?")
+  TMAP[24 * 256 + 20] = C.T_BUILDING
+  check("diagonal: a wall on a side square still blocks it (corner)",
+        ORD.getaway_diagonal(gm, 20, 25, false) == nil, "?")
+  TMAP[24 * 256 + 20] = nil
+  TMAP[25 * 256 + 21] = C.T_HALFBUILD
+  check("diagonal: a half wall on the other side square blocks it",
+        ORD.getaway_diagonal(gm, 20, 25, false) == nil, "?")
+  TMAP[25 * 256 + 21] = C.T_DEEPSEA
+  check("diagonal: deep sea on a side square blocks it",
+        ORD.getaway_diagonal(gm, 20, 25, false) == nil, "?")
+  TMAP[25 * 256 + 21] = C.T_FOREST
+  check("diagonal: a tree on a side square does not block it",
+        ORD.getaway_diagonal(gm, 20, 25, false) == 21, "?")
+  TMAP[25 * 256 + 21] = nil
+  -- The side squares also pass the chain search's own test (M.passable):
+  -- a known mine or a live pill on one blocks the straight drive.
+  TMAP[24 * 256 + 20] = C.T_GRASS + _G.TERRAIN_MINE_FLAG
+  check("diagonal: a known mine on a side square blocks it",
+        ORD.getaway_diagonal(gm, 20, 25, false, { pills = {} }) == nil
+        and ORD.getaway_diagonal(gm, 20, 25, false) == nil, "?")
+  TMAP[24 * 256 + 20] = nil
+  local wp = { pills = { [9] = { mx = 21, my = 25, owner = "friendly", health = 5 } } }
+  wp.pill_at = { [25 * 256 + 21] = { { pill = wp.pills[9] } } }
+  check("diagonal: a live pill on a side square blocks it (world given)",
+        ORD.getaway_diagonal(gm, 20, 25, false, wp) == nil, "?")
+  wp.pills[9].health = 0
+  check("diagonal: a dead pill there does not",
+        ORD.getaway_diagonal(gm, 20, 25, false, wp) == 21, "?")
+  local hw = { mx = 20, my = 25, decoy = true,
+               ga = { phase = "wait", idx = 1, park_mx = 20, park_my = 25,
+                      path = { { mx = 21, my = 24 } } } }
+  check("diagonal: a parked getaway (wait) is not changed",
+        ORD.getaway_diagonal(ORD.decoy_goal(hw), 20, 25, false) == nil, "?")
+  check("diagonal: any other goal is not changed",
+        ORD.getaway_diagonal({ kind = "goto_tile", mx = 21, my = 24 }, 20, 25, false) == nil
+        and ORD.getaway_diagonal({ kind = "attack_pill", mx = 21, my = 24, _decoy = true },
+                                 20, 25, false) == nil, "?")
+  C.DECOY_GETAWAY_DIAGONAL = false
+  check("DECOY_GETAWAY_DIAGONAL=false (keel): the old route (no change)",
+        ORD.getaway_diagonal(gm, 20, 25, false) == nil, "?")
+  C.DECOY_GETAWAY_DIAGONAL = true
+  end)()
+  C.DECOY_GETAWAY_PROX_WEIGHT = 0.5
+  end)()
+
+  GA.block = saved.block
+  cpf.simulate_shot = saved.sim
+  _G.get_terrain, _G.TERRAIN_MASK, _G.TERRAIN_MINE_FLAG = saved.gt, saved.tm, saved.mf
+  _G.KEY_TURNLEFT, _G.KEY_TURNRIGHT, _G.KEY_FASTER = saved.kl, saved.kr, saved.kf
+  _G.EVENT_PING, _G.PING_KIND_CAUTION, _G.PING_KIND_BOT_COMMAND = nil, nil, nil
+  math.atan = atan1
+end)()
 
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)
