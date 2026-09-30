@@ -832,6 +832,141 @@ int run_lobby_scenario_needs_bots_raises_and_gives_back(void) {
     return 0;
 }
 
+/* ── 6d. Ranked given back takes the AI policy back to aiNone ──── */
+
+/* Helpers for 6d to 6f: put one script on the lobby, or none. */
+static void lsSetVirus(ServerSim *sim) {
+    serverSimSetScenarioIdentity(sim, lobbyScenarioMod, "Virus", "virus.lua",
+                                 "", false, true, false, false, false);
+}
+
+static void lsSetSurvival(ServerSim *sim) {
+    serverSimSetScenarioIdentity(sim, lobbyScenarioMod, "Survival",
+                                 "survival.lua", "", false, false, true,
+                                 true, false);
+}
+
+static void lsSetNoScript(ServerSim *sim) {
+    serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
+                                 false, false, false, false, false);
+}
+
+/* A ranked lobby runs with aiNone. An unflagged script turns ranked off and
+ * leaves the AI alone, so the host may turn bots on. When the script goes,
+ * ranked comes back, and the AI policy must go back to aiNone with it:
+ * ranked never runs with bots allowed. */
+int run_lobby_scenario_ranked_give_back_clears_ai(void) {
+    ServerSim *sim = lsLobbySim();
+    uint8_t    v;
+
+    UT_ASSERT(sim != NULL);
+    v = 1;
+    UT_ASSERT(serverSimApplyLobbySetting(sim, LST_RANKED, &v, 1));
+    UT_ASSERT(serverSimGetRanked(sim));
+    UT_ASSERT(serverSimGetBotAiType(sim) == aiNone);
+
+    lsSetVirus(sim);
+    UT_ASSERT(lsCommitMap(sim));
+    UT_ASSERT(!serverSimGetRanked(sim));
+    UT_ASSERT(serverSimGetBotAiType(sim) == aiNone);
+
+    v = (uint8_t)aiYes;
+    UT_ASSERT_MSG(serverSimApplyLobbySetting(sim, LST_AI_POLICY, &v, 1),
+                  "aiYes was refused under an unflagged script");
+    UT_ASSERT(serverSimGetBotAiType(sim) == aiYes);
+
+    lsSetNoScript(sim);
+    UT_ASSERT(lsCommitMap(sim));
+    UT_ASSERT_MSG(serverSimGetRanked(sim), "ranked did not come back");
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) == aiNone,
+                  "ranked came back with AI type %d, wanted aiNone (%d)",
+                  (int)serverSimGetBotAiType(sim), (int)aiNone);
+    UT_ASSERT_MSG(sim->aiPolicy == (uint8_t)aiNone,
+                  "ranked came back with AI policy %d, wanted aiNone (%d)",
+                  (int)sim->aiPolicy, (int)aiNone);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 6e. The raise is undone when the list stops saying needs_bots ── */
+
+/* The flagged script goes while an unflagged one stays. The raise is undone
+ * at once. What the host then picks under the unflagged script is the
+ * host's, and it stays when the last script goes. */
+int run_lobby_scenario_needs_bots_drop_gives_back(void) {
+    ServerSim *sim = lsLobbySim();
+    uint8_t    v;
+
+    UT_ASSERT(sim != NULL);
+    v = (uint8_t)aiNone;
+    UT_ASSERT(serverSimApplyLobbySetting(sim, LST_AI_POLICY, &v, 1));
+
+    lsSetSurvival(sim);
+    UT_ASSERT(lsCommitMap(sim));
+    UT_ASSERT(serverSimGetBotAiType(sim) == aiYes);
+
+    /* The list changes to one that does not say needs_bots, without passing
+       through an empty list. */
+    lsSetVirus(sim);
+    UT_ASSERT(lsCommitMap(sim));
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) == aiNone,
+                  "the flagged script went and the AI type stayed %d, wanted "
+                  "the aiNone (%d) from before the raise",
+                  (int)serverSimGetBotAiType(sim), (int)aiNone);
+
+    /* The host turns bots on under the unflagged script. */
+    v = (uint8_t)aiFull;
+    UT_ASSERT(serverSimApplyLobbySetting(sim, LST_AI_POLICY, &v, 1));
+    UT_ASSERT(serverSimGetBotAiType(sim) == aiFull);
+
+    lsSetNoScript(sim);
+    UT_ASSERT(lsCommitMap(sim));
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) == aiFull,
+                  "the last script went and the host's aiFull became %d",
+                  (int)serverSimGetBotAiType(sim));
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 6f. The AI policy is remembered at the raise ───────────────── */
+
+/* The host is on aiFull, adds an unflagged script, then picks aiNone. A
+ * flagged script then raises the lobby. The give-back returns the aiNone
+ * from just before the raise, not the aiFull from the first script. */
+int run_lobby_scenario_needs_bots_snapshot_at_raise(void) {
+    ServerSim *sim = lsLobbySim();
+    uint8_t    v;
+
+    UT_ASSERT(sim != NULL);
+    v = (uint8_t)aiFull;
+    UT_ASSERT(serverSimApplyLobbySetting(sim, LST_AI_POLICY, &v, 1));
+
+    lsSetVirus(sim);
+    UT_ASSERT(lsCommitMap(sim));
+    UT_ASSERT(serverSimGetBotAiType(sim) == aiFull);
+
+    v = (uint8_t)aiNone;
+    UT_ASSERT(serverSimApplyLobbySetting(sim, LST_AI_POLICY, &v, 1));
+    UT_ASSERT(serverSimGetBotAiType(sim) == aiNone);
+
+    lsSetSurvival(sim);
+    UT_ASSERT(lsCommitMap(sim));
+    UT_ASSERT(serverSimGetBotAiType(sim) == aiYes);
+
+    lsSetNoScript(sim);
+    UT_ASSERT(lsCommitMap(sim));
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) == aiNone,
+                  "the give-back returned AI type %d, wanted the aiNone (%d) "
+                  "from just before the raise",
+                  (int)serverSimGetBotAiType(sim), (int)aiNone);
+    UT_ASSERT(sim->aiPolicy == (uint8_t)aiNone);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
 /* ── 7. The game type a scripted round is on ──────────────────────── */
 
 int run_lobby_scenario_refuses_game_type(void) {

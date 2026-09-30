@@ -849,6 +849,9 @@ STR_MAPCHOOSER_RESTORE_SIZE_TIP=Restore default size (Esc)
 STR_MAPCHOOSER_MAXIMIZE_TIP=Maximize
 STR_MAPCHOOSER_LOADING_PREVIEW=Loading preview...
 
+# Map editor scenario panel
+STR_MAPEDIT_SCENARIO_NEEDS_BOTS=Needs bots allowed: this script adds its own bots
+
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Status
 STR_TABLET_KILLS_DEATHS=Kills: {number}  Deaths: {number2}
@@ -2300,7 +2303,6 @@ STR_MAPEDIT_SCENARIO_GAME_NONE=None — the round plays strict tournament
 STR_MAPEDIT_SCENARIO_BOUND=Built for this map
 STR_MAPEDIT_SCENARIO_BOUND_NOTE=Untick it and the scenario is a mod: it plays over any map and keeps no tags or regions
 STR_MAPEDIT_SCENARIO_FILL_TO_CAPS=Start pills and bases at the caps these rules leave in force
-STR_MAPEDIT_SCENARIO_NEEDS_BOTS=Needs bots allowed: this script adds its own bots
 STR_MAPEDIT_SCENARIO_MAX_PLAYERS=Max players
 STR_MAPEDIT_SCENARIO_MAX_PLAYERS_ANY=0 leaves the server its own cap
 STR_MAPEDIT_SCENARIO_EXTRA_TEAMS=A host may add teams beyond these
