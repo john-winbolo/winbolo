@@ -304,6 +304,14 @@ struct ServerSim {
      * add ten events to the burst it already makes in one call stack. */
     uint16_t        botConfigPublishPending;
 
+    /* One bit per slot: a person changed this bot's MODE by hand (the gear
+     * popup's Mode dropdown, through CMD_LOBBY_BOT_CONFIG). A seat with the
+     * bit keeps its mode when the host changes the game type; a seat without
+     * it follows the new type's starting mode (brainModesStartMode). Set only
+     * by serverSimMarkBotModeSetByHand, cleared when the seat's player leaves
+     * (serverSimRemovePlayer) and when new-bot defaults are applied. */
+    uint16_t        botModeSetByHand;
+
     BotManager      botMgr;  /* per-sim bot manager — initialised by botManagerInitInSim */
 
     /* The last three expired shells of each player, for the three-shot

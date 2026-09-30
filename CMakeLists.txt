@@ -4807,6 +4807,11 @@ set(_unit_test_names
     lobby_bot_config_memory_not_honoured
     lobby_bot_config_memory_manual_only
     lobby_bot_config_memory_new_lobby
+    lobby_bot_config_memory_open_start
+    lobby_bot_config_memory_type_change
+    lobby_bot_config_memory_map_commit_type
+    lobby_bot_config_memory_dispatch_mark
+    lobby_bot_config_memory_saved_mode
     lobby_add_bot_rejects_empty_brain_path
     lobby_add_bot_rejects_ai_none
     lobby_add_bot_rejects_not_in_lobby
@@ -5030,6 +5035,9 @@ set(_unit_test_names
     brain_modes_missing_falls_back
     brain_modes_malformed_lines_skipped
     brain_modes_counts_clamped
+    brain_modes_open_default
+    brain_modes_about
+    brain_modes_standard_levels
     brain_view_data_edge_rect
     bot_init_arg_difficulty_token
     bot_init_arg_mode_tokens
@@ -6017,6 +6025,7 @@ set(_unit_test_names
     lobby_template_seat_carries_mode
     lobby_template_mode_unknown_key_kept
     lobby_template_no_mode_leaves_config
+    lobby_template_seat_new_seat_base
     lobby_template_add_bot_takes_template
     lobby_map_keeps_bots_plain
     lobby_map_keeps_bots_scenario

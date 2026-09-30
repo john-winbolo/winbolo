@@ -1918,6 +1918,10 @@ bool serverSimScenarioHasLobbyTemplate(const ServerSim *sim);
  *  Safe with no scenario attached: a lobby that never had one
  *  is left exactly as it is.
  *
+ *  When the game type changes here, the lobby's bots follow it
+ *  as they do when the host changes it by hand
+ *  (serverSimFollowGameTypeBotModes).
+ *
  *ARGUMENTS:
  *  sim - The sim whose lobby settings are being brought into
  *        line
@@ -2636,7 +2640,8 @@ void serverSimSetCountdownTicks(ServerSim *sim, int32_t ticks);
  * through serverSimResolveNewBotConfig, in this order:
  *
  *   1. the caller's base (the lobby default, or single player's own
- *      chosen level);
+ *      chosen level). The base gives the level only: the mode is the game
+ *      type's starting mode (open_default on Open, else mode 0);
  *   2. what the map requires for the bot's side — the attached scenario's
  *      lobby template, read for that team; on Survival, the horde's seats
  *      are the default mode at Hard;
@@ -2715,6 +2720,23 @@ void serverSimApplyNewBotDefaults(ServerSim *sim, BYTE slot, int team,
  * automatic config write must never call it, or the game's own defaults
  * pass for the host's choice. */
 void serverSimRememberManualBotPick(ServerSim *sim, BYTE slot);
+
+/* Record that a person changed this bot's MODE by hand. Called by the
+ * CMD_LOBBY_BOT_CONFIG arm when the mode differs from the seat's previous
+ * one. A marked seat keeps its mode through serverSimFollowGameTypeBotModes.
+ * The mark goes when the seat's player leaves, when the seat is given a new
+ * bot's defaults (serverSimApplyNewBotDefaults), and when the lobby is reset
+ * to its defaults. */
+void serverSimMarkBotModeSetByHand(ServerSim *sim, BYTE slot);
+
+/* After the game type changed from `oldType` to the current one: every bot
+ * whose brain starts in a different mode under the new type (an Open game
+ * starts in the manifest's open_default, brainModesStartMode), whose mode is
+ * still the old type's starting mode, and which nobody set a mode for by
+ * hand, moves to the new starting mode. The level moves by key. A team a
+ * scenario template configures is left alone. Queues the bot-config event
+ * for each seat it moves. */
+void serverSimFollowGameTypeBotModes(ServerSim *sim, gameType oldType);
 
 /* Bot-config events waiting to be published, a couple per lobby tick. A
  * scenario seeds its ten bots in one call stack while no client ack can be

@@ -1726,63 +1726,43 @@ static void scenarioApplyBotConfigKeys(ServerSim *sim, BYTE slot,
                                         brainPath, modeKey, levelKey);
 }
 
-/* ── One read of modes.txt per brain, for the length of one reseat ──────
+/* Give a NEW seat the mode and difficulty every new lobby bot starts from,
+ * before the template's or the op's own keys are applied on top. The base is
+ * the lobby default resolved for the team (serverSimResolveNewBotConfig,
+ * without the host's remembered pick, as for every bot a map seeds). So a
+ * seeded seat on an Open game starts in the same mode Add Bot would give it.
  *
- * Seating a lobby and reconciling one both walk every seat a template holds,
- * and every seat on a team names the same brain. Read once per brain here and
- * the walk costs one parse rather than one per seat.
- *
- * It is a local of the loop that builds it and dies with it: nothing about a
- * brain's modes.txt is remembered from one reseat to the next, so editing a
- * manifest and reselecting the scenario still picks the edit up.
- *
- * A handful of entries rather than one per seat. A lobby's teams nearly
- * always name one brain between them, and the entries here cover a server
- * default plus a few teams that name their own; a lobby that names more
- * distinct brains than this holds answers exactly the same and pays one
- * extra read for the ones past the end. Size is the reason it is not wider:
- * BrainModes is close to 4 KB on its own, and a reseat is reached from the
- * lobby command dispatcher — CMD_SET_SCRIPT_LIST through the reselect — so
- * this frame sits on top of that whole chain. */
-#define SCN_BRAIN_MODES_CACHED 4
+ * Written even when the brain has no modes.txt: botConfigs[slot] still holds
+ * what the slot's PREVIOUS bot had, and a new seat must not inherit it. Not
+ * for a seat that is already held: its config is the one its team gave it,
+ * and the spawn that fields it reads that config. */
+static void scenarioSeedBotConfigBase(ServerSim *sim, BYTE slot, int team,
+                                      const BrainModes *modes) {
+    uint8_t mode  = 0;
+    uint8_t level = BOT_DIFFICULTY_HARD;
 
-typedef struct {
-    char       path[SCN_PATH_MAX];
-    BrainModes modes;
-    bool       haveModes;      /* the brain ships a modes.txt */
-} ScnBrainModesEntry;
-
-typedef struct {
-    ScnBrainModesEntry entry[SCN_BRAIN_MODES_CACHED];
-    int                count;
-} ScnBrainModesCache;
-
-/* The modes for brainPath, read the first time this cache is asked for it.
- * NULL for a brain with no modes.txt, which is what the resolver reads as
- * "no manifest" — the same answer scenarioApplyBotConfigKeys gets when the
- * load fails there. */
-static const BrainModes *scenarioBrainModes(ScnBrainModesCache *cache,
-                                            const char *brainPath) {
-    ScnBrainModesEntry *e;
-    int i;
-
-    if (brainPath == NULL || brainPath[0] == '\0') return NULL;
-    for (i = 0; i < cache->count; i++) {
-        if (strcmp(cache->entry[i].path, brainPath) == 0) {
-            return cache->entry[i].haveModes ? &cache->entry[i].modes : NULL;
-        }
-    }
-    /* A path that arrives with the cache full re-uses the last entry rather
-       than being refused: the answer is the same one it would get from an
-       entry of its own, and the cost is another read of modes.txt for each
-       brain a lobby names past the ones the cache holds. */
-    i = (cache->count < SCN_BRAIN_MODES_CACHED) ? cache->count++
-                                                : SCN_BRAIN_MODES_CACHED - 1;
-    e = &cache->entry[i];
-    SDL_strlcpy(e->path, brainPath, sizeof(e->path));
-    e->haveModes = brainListLoadModesForPath(brainPath, &e->modes);
-    return e->haveModes ? &e->modes : NULL;
+    if (slot >= MAX_TANKS) return;
+    (void)serverSimResolveNewBotConfigFromModes(sim, team, modes, false,
+                                                &mode, &level);
+    serverSimSetBotConfigQuiet(sim, slot, mode, level);
 }
+
+/* The same, reading the brain's modes for the one seat. */
+static void scenarioSeedBotConfigBaseForPath(ServerSim *sim, BYTE slot,
+                                             int team,
+                                             const char *brainPath) {
+    BrainModes modes;
+    bool       haveModes;
+
+    haveModes = (brainPath != NULL && brainPath[0] != '\0' &&
+                 brainListLoadModesForPath(brainPath, &modes));
+    scenarioSeedBotConfigBase(sim, slot, team, haveModes ? &modes : NULL);
+}
+
+/* Seating a lobby and reconciling one both walk every seat a template holds,
+ * and every seat on a team names the same brain, so each walk reads a brain's
+ * modes.txt once through a BrainModesCache (server_sim_shared.h), the cache
+ * the game type follow in server_sim_lobby.c uses too. */
 
 /* The seat a spawn takes. 0xFF asks for the first free one, which is
  * chosen as the spawn lands and not as it is queued: ten spawns asked for
@@ -1996,7 +1976,7 @@ void serverSimScenarioClearSeats(ServerSim *sim) {
  * fielded one gets both. Answers false when there was nowhere to put it,
  * which stops the team's loop rather than spinning on a full roster. */
 static bool scenarioSeatOne(ServerSim *sim, const ScnLobbyTeam *team,
-                            ScnBrainModesCache *modesCache) {
+                            BrainModesCache *modesCache) {
     char name[PLAYER_NAME_LEN];
     int  slot;
 
@@ -2017,9 +1997,10 @@ static bool scenarioSeatOne(ServerSim *sim, const ScnLobbyTeam *team,
     {
         const char *cfgBrain = (team->brain[0] != '\0')
                              ? team->brain : serverSimGetBotBrainPath(sim);
+        const BrainModes *cfgModes = serverSimBrainModesCached(modesCache, cfgBrain);
+        scenarioSeedBotConfigBase(sim, (BYTE)slot, team->id, cfgModes);
         scenarioApplyBotConfigKeysFromModes(
-            sim, (BYTE)slot, scenarioBrainModes(modesCache, cfgBrain),
-            cfgBrain, team->mode, team->difficulty);
+            sim, (BYTE)slot, cfgModes, cfgBrain, team->mode, team->difficulty);
     }
 
     if (!team->fielded) {
@@ -2075,7 +2056,7 @@ static bool scenarioSeatOne(ServerSim *sim, const ScnLobbyTeam *team,
  * built, so a lobby a server seated at boot or on a reload answers the next
  * map change the same way as a lobby a map commit seated. */
 void serverSimScenarioSeatLobby(ServerSim *sim) {
-    ScnBrainModesCache modesCache;
+    BrainModesCache modesCache;
     BYTE t;
     if (sim == NULL) return;
     serverSimScenarioClearSeats(sim);
@@ -2108,7 +2089,7 @@ void serverSimScenarioSeatLobby(ServerSim *sim) {
  * to being held, so the next round starts from the lobby the template
  * describes rather than from wherever the last round's waves left it. */
 void serverSimScenarioReconcileLobby(ServerSim *sim) {
-    ScnBrainModesCache modesCache;
+    BrainModesCache modesCache;
     BYTE t, i;
     if (sim == NULL || !sim->scenarioLobbyValid) return;
 
@@ -2148,7 +2129,7 @@ void serverSimScenarioReconcileLobby(ServerSim *sim) {
             cfgBrain = (sim->seatBrain[i][0] != '\0')
                      ? sim->seatBrain[i] : serverSimGetBotBrainPath(sim);
             scenarioApplyBotConfigKeysFromModes(
-                sim, i, scenarioBrainModes(&modesCache, cfgBrain),
+                sim, i, serverSimBrainModesCached(&modesCache, cfgBrain),
                 cfgBrain, team->mode, team->difficulty);
             serverSimQueueBotConfigPublish(sim, i);
         }
@@ -2358,7 +2339,12 @@ void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath) {
    that type and no plain map is ever on it — so gameOpen is held instead,
    which is where such a lobby used to land anyway. */
 void serverSimScenarioApplyLobbyRules(ServerSim *sim) {
+    gameType typeBefore;
+
     if (sim == NULL) return;
+    /* Read once so the bots follow the type change below exactly as they do
+       when the host changes the type by hand (serverSimFollowGameTypeBotModes). */
+    typeBefore = gameTypeGet(&sim->sim.game);
     if (sim->scenarioIdentity.source != lobbyScenarioNone) {
         if (sim->preScenarioGameType == (gameType)0) {
             gameType was = gameTypeGet(&sim->sim.game);
@@ -2395,6 +2381,7 @@ void serverSimScenarioApplyLobbyRules(ServerSim *sim) {
            state to give back, so the type falls to open. */
         serverSimSetGameType(sim, gameOpen);
     }
+    serverSimFollowGameTypeBotModes(sim, typeBefore);
 }
 
 /* Put one change on the queue. The one past the last is refused rather than
@@ -2632,8 +2619,16 @@ static ScnOpResult scenarioOpLobbyAddBot(ServerSim *sim,
     (void)scenarioBotName(p->name, slot, name, sizeof(name));
 
     /* Into the seat's config before the brain is built with it, as the
-       template's seating does. The keys were checked above, so this only
-       writes. */
+       template's seating does: the new seat's base first, then the keys. The
+       keys were checked above, so this only writes. The base only for a free
+       seat: a seat already held keeps the config it was held with. An add
+       with no keys that fields nothing has no brain resolved yet, so its base
+       is read from the server's. */
+    if (!sim->playerConnected[slot]) {
+        scenarioSeedBotConfigBaseForPath(
+            sim, slot, p->team,
+            (brain != NULL) ? brain : serverSimGetBotBrainPath(sim));
+    }
     scenarioApplyBotConfigKeys(sim, slot, brain, p->mode, p->difficulty);
 
     if (!p->fielded) {
@@ -2736,7 +2731,12 @@ static void scenarioRosterSpawnNow(ServerSim *sim,
        before the brain is built: that is where botManagerStageInitArg reads
        the pair it turns into the brain's mode= / difficulty= tokens. Asked
        again here rather than trusted from the accept, like every other
-       question this drain re-asks — the brain may have changed since. */
+       question this drain re-asks — the brain may have changed since. A
+       spawn onto a free seat gets a new seat's base first; a spawn that
+       fields a held seat keeps the config the seat was held with. */
+    if (!sim->playerConnected[slot]) {
+        scenarioSeedBotConfigBaseForPath(sim, slot, p->team, brain);
+    }
     scenarioApplyBotConfigKeys(sim, slot, brain, p->mode, p->difficulty);
     if (!scenarioAddBotInSeat(sim, slot, brain, name, p->team, &p->init)) {
         sim->sim.scenarioStartIdx[slot] = MAX_STARTS;
