@@ -4811,6 +4811,7 @@ set(_unit_test_names
     lobby_bot_config_memory_type_change
     lobby_bot_config_memory_map_commit_type
     lobby_bot_config_memory_dispatch_mark
+    lobby_bot_config_memory_saved_mode
     lobby_add_bot_rejects_empty_brain_path
     lobby_add_bot_rejects_ai_none
     lobby_add_bot_rejects_not_in_lobby

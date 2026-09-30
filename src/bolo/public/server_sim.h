@@ -2637,7 +2637,8 @@ void serverSimSetCountdownTicks(ServerSim *sim, int32_t ticks);
  * through serverSimResolveNewBotConfig, in this order:
  *
  *   1. the caller's base (the lobby default, or single player's own
- *      chosen level);
+ *      chosen level). The base gives the level only: the mode is the game
+ *      type's starting mode (open_default on Open, else mode 0);
  *   2. what the map requires for the bot's side — the attached scenario's
  *      lobby template, read for that team; on Survival, the horde's seats
  *      are survival mode at Hard;

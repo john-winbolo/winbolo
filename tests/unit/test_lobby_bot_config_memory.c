@@ -365,13 +365,16 @@ int run_lobby_bot_config_memory_open_game_start_mode(void) {
     sim->lastBotModeKey[0]  = '\0';
     sim->lastBotLevelKey[0] = '\0';
 
-    /* A caller's base that is not mode 0 is a real choice and stands. */
+    /* A caller's base in some other mode gives only its level: the bot
+       starts in open_default at that level. */
     UT_ASSERT(expected_indices("survival", "easy", &wantMode, &wantLevel));
     mode = (uint8_t)wantMode; level = (uint8_t)wantLevel;
     UT_ASSERT(serverSimResolveNewBotConfig(sim, TEST_TEAM, TEST_BRAIN, false,
                                            &mode, &level));
-    UT_ASSERT_MSG((int)mode == wantMode && (int)level == wantLevel,
-                  "a non-default base moved to %d/%d", (int)mode, (int)level);
+    UT_ASSERT_MSG((int)mode == openMode &&
+                  (int)level == open_default_level("easy"),
+                  "a survival/easy base on Open must start in open_default "
+                  "at Easy (got %d/%d)", (int)mode, (int)level);
 
     /* The host picked Default by hand: the next Add Bot is Default. */
     SDL_strlcpy(sim->lastBotModeKey, "default", sizeof(sim->lastBotModeKey));
@@ -396,6 +399,97 @@ int run_lobby_bot_config_memory_open_game_start_mode(void) {
                       (int)kClosed[i], (int)mode, (int)level);
         serverSimDestroy(sim);
     }
+    return 0;
+}
+
+/* Andrew: "turtle bots should only go in open OR if the last bot you added
+ * IN THAT LOBBY was a turtle bot". Single player's base is the saved
+ * "Chosen Mode" pref, which outlives the lobby it was picked in, so a Turtle
+ * base must not start a Tournament bot in Turtle. The saved level is kept.
+ * A Turtle pick made by hand in THIS lobby still reaches the next Add Bot,
+ * and a new lobby has forgotten it. */
+int run_lobby_bot_config_memory_saved_mode_not_carried(void) {
+    static const gameType kClosed[2] = { gameTournament, gameStrictTournament };
+    ServerSim *sim;
+    int turtleMode = 0, turtleMedium = 0, turtleEasy = 0;
+    uint8_t mode, level;
+    int i;
+
+    if (!expected_indices("turtle", "medium", &turtleMode, &turtleMedium) ||
+        !expected_indices("turtle", "easy", &turtleMode, &turtleEasy)) {
+        SKIP_NO_MANIFEST();
+    }
+
+    for (i = 0; i < 2; i++) {
+        sim = make_lobby_sim_type(kClosed[i]);
+        UT_ASSERT_MSG(sim != NULL, "serverSimCreateCompressed");
+
+        /* A saved Turtle/Medium base, no pick in this lobby: Default at
+           Medium, for the setup bots and for Add Bot alike. */
+        mode = (uint8_t)turtleMode; level = (uint8_t)turtleMedium;
+        UT_ASSERT(serverSimResolveNewBotConfig(sim, TEST_TEAM, TEST_BRAIN,
+                                               false, &mode, &level));
+        UT_ASSERT_MSG(mode == 0 && level == BOT_DIFFICULTY_MEDIUM,
+                      "game type %d: a saved Turtle base must start a setup "
+                      "bot in Default at Medium (got %d/%d)", (int)kClosed[i],
+                      (int)mode, (int)level);
+        mode = (uint8_t)turtleMode; level = (uint8_t)turtleMedium;
+        UT_ASSERT(serverSimResolveNewBotConfig(sim, TEST_TEAM, TEST_BRAIN,
+                                               true, &mode, &level));
+        UT_ASSERT_MSG(mode == 0 && level == BOT_DIFFICULTY_MEDIUM,
+                      "game type %d: a saved Turtle base must start an Add "
+                      "Bot in Default at Medium (got %d/%d)", (int)kClosed[i],
+                      (int)mode, (int)level);
+
+        /* The host set a bot to Turtle/Easy by hand in this lobby: the next
+           Add Bot is Turtle/Easy. A setup bot does not read the pick. */
+        SDL_strlcpy(sim->lastBotModeKey, "turtle",
+                    sizeof(sim->lastBotModeKey));
+        SDL_strlcpy(sim->lastBotLevelKey, "easy",
+                    sizeof(sim->lastBotLevelKey));
+        mode = 0; level = BOT_DIFFICULTY_HARD;
+        UT_ASSERT(serverSimResolveNewBotConfig(sim, TEST_TEAM, TEST_BRAIN,
+                                               true, &mode, &level));
+        UT_ASSERT_MSG((int)mode == turtleMode && (int)level == turtleEasy,
+                      "game type %d: a Turtle pick in this lobby must reach "
+                      "the next Add Bot (got %d/%d)", (int)kClosed[i],
+                      (int)mode, (int)level);
+        mode = 0; level = BOT_DIFFICULTY_HARD;
+        UT_ASSERT(serverSimResolveNewBotConfig(sim, TEST_TEAM, TEST_BRAIN,
+                                               false, &mode, &level));
+        UT_ASSERT_MSG(mode == 0 && level == BOT_DIFFICULTY_HARD,
+                      "game type %d: a setup bot must not read the lobby's "
+                      "pick (got %d/%d)", (int)kClosed[i], (int)mode,
+                      (int)level);
+
+        /* A new game session is a new server sim, and it has no pick: Add
+           Bot is back on Default. (The return to the lobby after a round
+           clears it too: lobby_bot_config_memory_new_lobby.) */
+        serverSimDestroy(sim);
+        sim = make_lobby_sim_type(kClosed[i]);
+        UT_ASSERT_MSG(sim != NULL, "serverSimCreateCompressed");
+        mode = (uint8_t)turtleMode; level = (uint8_t)turtleMedium;
+        UT_ASSERT(serverSimResolveNewBotConfig(sim, TEST_TEAM, TEST_BRAIN,
+                                               true, &mode, &level));
+        UT_ASSERT_MSG(mode == 0 && level == BOT_DIFFICULTY_MEDIUM,
+                      "game type %d: a new lobby must not remember the "
+                      "Turtle pick (got %d/%d)", (int)kClosed[i], (int)mode,
+                      (int)level);
+        serverSimDestroy(sim);
+    }
+
+    /* Open: the same saved Turtle/Medium base is Turtle at Medium. */
+    sim = make_lobby_sim_type(gameOpen);
+    UT_ASSERT_MSG(sim != NULL, "serverSimCreateCompressed");
+    if (open_default_mode() == turtleMode) {
+        mode = (uint8_t)turtleMode; level = (uint8_t)turtleMedium;
+        UT_ASSERT(serverSimResolveNewBotConfig(sim, TEST_TEAM, TEST_BRAIN,
+                                               true, &mode, &level));
+        UT_ASSERT_MSG((int)mode == turtleMode && (int)level == turtleMedium,
+                      "an Open game must start the bot in Turtle at Medium "
+                      "(got %d/%d)", (int)mode, (int)level);
+    }
+    serverSimDestroy(sim);
     return 0;
 }
 

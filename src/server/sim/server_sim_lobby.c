@@ -170,7 +170,8 @@ static const char *slotBrainPath(const ServerSim *sim, BYTE slot) {
  * (serverSimResolveNewBotConfig) in this order:
  *
  *   1. the caller's base — the lobby default, or single player's own
- *      chosen level;
+ *      chosen level. Only its level is kept: the mode is the game type's
+ *      starting mode (open_default on Open, else mode 0);
  *   2. what the map requires for the bot's side — the attached scenario's
  *      lobby template, read for that team; on Survival the horde's seats
  *      are survival mode at Hard;
@@ -334,17 +335,23 @@ bool serverSimResolveNewBotConfigFromModes(const ServerSim *sim, int team,
         level = modes->modes[mode].defaultLevel;
     }
 
-    /* 1b. A base of mode 0 is "the lobby default", which depends on the game
-     *     type: an Open game starts in the brain's open_default mode
-     *     (brainModesStartMode). The level moves across by KEY, so Medium in
-     *     mode 0 is Medium in the new mode when that mode lists one.
-     *     Single player's "Chosen Mode = default" also arrives here as a base
-     *     of 0 (gameFrontSpBotMode in gamefront.c), so it reads as no pick. */
-    if (mode == 0) {
+    /* 1b. The base gives the level only, never the mode. The mode is the
+     *     game type's starting mode: an Open game starts in the brain's
+     *     open_default mode (brainModesStartMode), every other type in mode
+     *     0. The level moves across by KEY, so Medium in the base's mode is
+     *     Medium in the new mode when that mode lists one.
+     *     Single player's base is the player's saved "Chosen Mode" pref
+     *     (gameFrontSpBotMode in gamefront.c), which outlives the lobby it
+     *     was picked in. Andrew: "turtle bots should only go in open OR if
+     *     the last bot you added IN THAT LOBBY was a turtle bot". So a
+     *     Turtle pick saved in an Open game must not start the next
+     *     Tournament's bots in Turtle. A mode picked in THIS lobby comes
+     *     back at step 3, and a scenario's at step 2. */
+    {
         int start = brainModesStartMode(
             modes, serverSimGetGameType(sim) == gameOpen);
-        if (start != 0) {
-            level = lobbyLevelAcrossModes(modes, 0, level, start);
+        if (start != mode) {
+            level = lobbyLevelAcrossModes(modes, mode, level, start);
             mode  = start;
         }
     }
