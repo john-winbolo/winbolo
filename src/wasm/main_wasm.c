@@ -7,8 +7,10 @@
  * main_wasm.c - Emscripten/WASM entry point for WinBolo game client
  *
  * Replaces gui/sdl3/winbolo.c for the WASM build.
- * Uses emscripten_set_main_loop() instead of a blocking event loop,
- * and frame-based tick accumulation instead of SDL_AddTimer.
+ * The game runs as a blocking loop in main, paced by the browser's animation
+ * frames through ASYNCIFY (wasmFrameWait), with frame-based tick accumulation
+ * instead of SDL_AddTimer. Functions called directly from JS must never sleep:
+ * ASYNCIFY keeps one suspended stack at a time, and main's is always it.
  */
 
 #include <SDL3/SDL.h>
@@ -108,6 +110,8 @@ static bool doingTutorial = FALSE;
 static bool winboloQuit = FALSE;
 static bool finishedLoop = FALSE;
 static bool showAllianceReq = TRUE;
+/* Set by windowLeaveGame; wasmRunGame ends the game on it. */
+static bool s_leaveRequested = FALSE;
 
 /* Terminal connection-failure state. Set on any unrecoverable connection
  * problem (can't reach the relay, version mismatch, used/expired join code,
@@ -240,7 +244,7 @@ static void windowRunGameTick(ClientSim *cs) {
 }
 
 /* -------------------------------------------------------
- * main_loop_iteration — called by emscripten_set_main_loop
+ * main_loop_iteration — one game frame, called by wasmRunGame
  * ------------------------------------------------------- */
 void frontEndTutorialNotePresentedFrame(void);
 static void tutorialRespawnPoll(void);
@@ -280,13 +284,12 @@ static void main_loop_iteration(void) {
   }
 
   /* On the first frame after a terminal failure, raise the error dialog. The
-   * frozen state below keeps rendering without ticking or sending for the few
-   * frames that run before the browser unloads the page.
+   * frozen state below renders this last frame without ticking or sending.
    *
-   * Dismissing it navigates back to the page the game launched from: there is
-   * no welcome screen to fall back to in the browser build, so without this the
-   * player is left on the cleared frame with only the menu bar over it. The
-   * latch stops this branch re-arming while the navigation completes. */
+   * Dismissing it leaves the game, and main navigates back to the page the
+   * game launched from: there is no welcome screen to fall back to in the
+   * browser build, so without this the player is left on the cleared frame
+   * with only the menu bar over it. The latch stops this branch re-arming. */
   if (s_connFailed && !s_connErrorShown) {
     imguiMessageBoxEx(DIALOG_BOX_TITLE, s_connReason, IMGUI_MSG_ERROR,
                       IMGUI_MSG_OK);
@@ -393,9 +396,35 @@ static void main_loop_iteration(void) {
 
   /* Cloud prefs upload runs from gameFrontPumpDirty, which
    * sdl3ImguiProcessEvents calls at the top of this frame. */
+}
 
-  if (finishedLoop) {
-    emscripten_cancel_main_loop();
+/* Wait for the browser's next animation frame. This paces the game loop at
+ * the display's rate, one frame per requestAnimationFrame. A hidden
+ * tab stops requestAnimationFrame, so a 250 ms timeout also resolves the wait
+ * and the loop keeps advancing (the browser throttles it further); whichever
+ * fires first wins and the other is cancelled or ignored. Suspends main's
+ * stack through ASYNCIFY, so only C on that stack may call it. */
+EM_ASYNC_JS(void, wasmFrameWait, (void), {
+    await new Promise((resolve) => {
+        let done = false;
+        let timer = 0;
+        const finish = () => {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            resolve();
+        };
+        timer = setTimeout(finish, 250);
+        requestAnimationFrame(finish);
+    });
+});
+
+/* Run the current game until it ends: a game over or quit (finishedLoop) or
+ * a leave request (windowLeaveGame). */
+static void wasmRunGame(void) {
+  while (!finishedLoop && !s_leaveRequested) {
+    main_loop_iteration();
+    wasmFrameWait();
   }
 }
 
@@ -582,16 +611,26 @@ int main(int argc, char *argv[]) {
 
   fprintf(stderr, "[WASM] Starting main loop; humanSim=%p\n", (void*)humanSim);
   fflush(stderr);
-  emscripten_set_main_loop(main_loop_iteration, 0, 1);
+  wasmRunGame();
 
-  /* Cleanup (not reached with simulate_infinite_loop=1) */
-  gameFrontEnd(&keys, TRUE, TRUE);
-  clientMutexDestroy();
-  sdl3ImguiCleanup();
-  voiceCleanup();
-  sdl3DrawCleanup();
-  SDL_Quit();
-  return 0;
+  /* The game has ended. A network game that still has its connection sends
+   * the server a graceful quit (PACKET_QUIT, written to the socket before it
+   * closes); the lobby's Leave has already disconnected, so the transport
+   * check stops a second disconnect. */
+  if (gameFrontGetServerSim() == NULL && humanSim != NULL &&
+      clientSimHasTransport(humanSim)) {
+    clientSimDisconnect(humanSim);
+  }
+  emscripten_run_script("window.location.href='/'");
+
+  /* Stay on this stack until the browser unloads the page. The navigation
+   * only starts once control returns to the browser, and the page stays on
+   * screen until the next one loads, so nothing is torn down here: freeing
+   * the window or the renderer now would blank the page while it is still
+   * showing. Returning from main would leave no stack to wait on. */
+  for (;;) {
+    wasmFrameWait();
+  }
 }
 
 /* -------------------------------------------------------
@@ -620,6 +659,7 @@ static void wasmGameStateReset(void) {
   finishedLoop = FALSE;
   winboloQuit = FALSE;
   quitRequested = FALSE;
+  s_leaveRequested = FALSE;
   isInMenu = FALSE;
   gameTickAccum = 0.0;
   lastFrameTime = emscripten_get_now();
@@ -632,8 +672,10 @@ static void wasmGameStateReset(void) {
   dwSysBrain = 0;
 }
 
-/* Leave the game: navigate the hosting page back to the lobby landing. */
-void windowLeaveGame(void) { emscripten_run_script("window.location.href='/'"); }
+/* Leave the game: ask wasmRunGame to end it after the current frame. main
+ * then disconnects a network game that is still connected and navigates the
+ * hosting page back to /; single player navigates too. */
+void windowLeaveGame(void) { s_leaveRequested = TRUE; }
 
 void windowApplyMenuChecks(ClientSim *cs) {
   clientSimSetGunsight(cs, showGunsight);
@@ -1194,8 +1236,8 @@ void frontEndGameOver(ClientSim *cs) {
   finishedLoop = TRUE;
   /* Dismissing the dialog goes back to the page the game launched from: the
    * browser build has no welcome screen to rebuild through the way the desktop
-   * loop does, so the launching page is the destination. finishedLoop stops the
-   * tick for the frames that run before the browser unloads the page. */
+   * loop does, so the launching page is the destination. finishedLoop ends
+   * the game loop after this frame, and main navigates. */
   windowLeaveGame();
 }
 
