@@ -1313,14 +1313,16 @@ static void mapOverviewClose(void) {
  * to windowed only when the app full screen flag is off, because with it on
  * the window stays full screen for the lobby and the menus. The window call
  * sits outside the mode test on purpose: a flag change with no mode change
- * still has to be able to move the window. */
+ * still has to be able to move the window. A window the page sizes (the web
+ * canvas) is left alone: there the mode switches the view only, and the
+ * browser's full screen stays the player's own F11. */
 static void overviewInWindowSet(bool on) {
     SDL_Window *win = sdl3DrawGetWindow();
     if (on && !win) return;
     if (on != sdl3DrawIsOverviewInWindow()) {
         sdl3DrawSetOverviewInWindow(on);  /* hands the OS pointer back on the way out */
     }
-    if (win) {
+    if (win && !(SDL_GetWindowFlags(win) & SDL_WINDOW_FILL_DOCUMENT)) {
         SDL_SetWindowFullscreen(win, on || gameFrontFullScreen);
         /* SDL_SetWindowFullscreen is asynchronous on Wayland and X11 and the
            frame that follows reads the window geometry, so wait for the
@@ -1342,7 +1344,10 @@ static void overviewInWindowChoose(bool on) {
        Ahead of the assignment below on purpose: gameFrontFullScreen is the
        player's own preference and must survive such a server. */
     if (on && overviewSuppressed()) return;
-    gameFrontFullScreen = on;
+    SDL_Window *win = sdl3DrawGetWindow();
+    /* A window the page sizes: the flag there means browser full screen, which this mode does not touch. */
+    bool pageSized = win && (SDL_GetWindowFlags(win) & SDL_WINDOW_FILL_DOCUMENT);
+    if (!pageSized) gameFrontFullScreen = on;
     overviewInWindowSet(on);
     /* The two views of the map never share the screen, so the pop-out swaps
        with the mode. Going full screen puts it away without forgetting it;
@@ -1391,7 +1396,7 @@ static void overviewInWindowChoose(bool on) {
        windowFullScreenChoose makes for the same flag on the screens outside
        a game. The auto-exit and the cleanup path call overviewInWindowSet
        directly and deliberately never reach this. */
-    gameFrontSaveCurrentPrefs();
+    if (!pageSized) gameFrontSaveCurrentPrefs();
 }
 
 /* True while the info panels and Send Message are drawn in the main window
@@ -1404,9 +1409,11 @@ static void overviewInWindowChoose(bool on) {
  * on the Deck — no menu bar under a controller — that is the only way to
  * reach them; those are the panel's real form, not a stand-in, and the rules
  * keyed on this must leave them exactly as they were. False on the tablet /
- * mobile / web builds for the same reason: they have no pop-outs at all. */
+ * mobile builds for the same reason: they have no pop-outs at all. The web
+ * has no pop-outs either, but while its full screen map is up the panels
+ * take the same in-window rules the desktop uses. */
 static bool panelsStandInForPopOuts(void) {
-#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+#if !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
     return !uiModeIsTablet() && sdl3DrawIsOverviewInWindow();
 #else
     return false;
@@ -5722,6 +5729,18 @@ static void renderMenuBar(ClientSim *cs) {
             if (ImGui::MenuItem(langGetText(STR_DLGGAMEINFO_TITLE),    nullptr, s_showGameInfo))  s_showGameInfo  = !s_showGameInfo;
             if (ImGui::MenuItem(langGetText(STR_DLGSYSINFO_TITLE),     nullptr, s_showSysInfo))   { if (!s_showSysInfo) sysInfoGraphReset(); s_showSysInfo = !s_showSysInfo; }
             if (ImGui::MenuItem(langGetText(STR_DLGNETINFO_TITLE),     nullptr, s_showNetInfo))   { if (!s_showNetInfo) pingGraphReset(); s_showNetInfo = !s_showNetInfo; }
+#ifdef __EMSCRIPTEN__
+            /* The web has the full screen map but no map overview pop-out, so
+               only the first of the desktop pair above. */
+            ImGui::Separator();
+            if (ImGui::MenuItem(langGetText(STR_MENU_OVERVIEW_IN_WINDOW), "Alt+Enter",
+                                sdl3DrawIsOverviewInWindow(),
+                                cs != nullptr && clientSimIsRunning(cs) && !overviewSuppressed())) {
+                overviewInWindowChoose(!sdl3DrawIsOverviewInWindow());
+            }
+            if (overviewSuppressed() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("%s", langGetText(STR_MENU_CLASSIC_MODE_TIP));
+#endif
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         }
 #endif
@@ -7294,7 +7313,9 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             ev.window.windowID == SDL_GetWindowID(s_window) &&
             !uiModeIsTablet() && !uiModeIsSteamDeck()) {
             bool nowFull = (ev.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN);
-            if (!nowFull && sdl3DrawIsOverviewInWindow()) {
+            /* A window the page sizes keeps the map mode: it never took the browser full screen, so leaving it takes nothing away. */
+            bool pageSized = (SDL_GetWindowFlags(s_window) & SDL_WINDOW_FILL_DOCUMENT) != 0;
+            if (!nowFull && sdl3DrawIsOverviewInWindow() && !pageSized) {
                 overviewInWindowChoose(false);
             } else if (nowFull != (bool)gameFrontFullScreen) {
                 gameFrontFullScreen = nowFull;
@@ -8252,7 +8273,9 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             /* Only one of the two can come back, because full screen mode
                draws the map itself: the in-window view when the app is full
                screen, the pop-out on its own flag when it is not. */
-            if (gameFrontFullScreen) sdl3ImguiShowOverviewInWindow(true);
+            /* On the web the full screen map is only ever the player's request, so a game starts in the normal view whatever the browser's full screen state. */
+            bool pageSized = s_window && (SDL_GetWindowFlags(s_window) & SDL_WINDOW_FILL_DOCUMENT);
+            if (gameFrontFullScreen && !pageSized) sdl3ImguiShowOverviewInWindow(true);
             else if (gameFrontShowMapOverview) sdl3ImguiShowMapOverview(true);
         }
         s_overviewWasRunning = overviewRunning;
@@ -8569,7 +8592,7 @@ bool sdl3ImguiIsMapOverviewOpen(void) {
 /* The in-window mode is a desktop-window mode, so tablet has nothing to show
  * and nothing to report active. */
 void sdl3ImguiShowOverviewInWindow(bool active) {
-#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+#if !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
     if (!uiModeIsTablet()) {
         overviewInWindowChoose(active);
         return;
@@ -8589,7 +8612,7 @@ void sdl3ImguiToggleFullScreen(struct ClientSim *cs) {
     }
 }
 bool sdl3ImguiIsOverviewInWindowOpen(void) {
-#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+#if !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
     if (!uiModeIsTablet()) return sdl3DrawIsOverviewInWindow();
 #endif
     return false;
