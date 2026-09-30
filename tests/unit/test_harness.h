@@ -3366,6 +3366,8 @@ int run_scenario_validate_trigger_field_team(void);
 int run_scenario_validate_trigger_announce_clear(void);
 int run_scenario_validate_trigger_arg_literal(void);
 int run_scenario_validate_rule_pair_key(void);
+int run_scenario_validate_needs_bots_missing(void);
+int run_scenario_validate_needs_bots_declared(void);
 
 /* The binding table (test_scenario_lua.c): every row of the registry
  * called once, the three index rules, the nils an absent entity reads
