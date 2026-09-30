@@ -2700,3 +2700,7 @@ STR_DLGSETTINGS_WORKSHOP_UNUSABLE=無法使用
 
 # The lobby's Workshop chip
 STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=工作坊
+
+# The game finder's scripts
+STR_DLGBROWSER_MODS=模組
+STR_DLGBROWSER_MODS_MORE=+{number} 個模組

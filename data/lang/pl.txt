@@ -2698,3 +2698,7 @@ STR_DLGSETTINGS_WORKSHOP_UNUSABLE=Nie do użycia
 
 # The lobby's Workshop chip
 STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Warsztat
+
+# The game finder's scripts
+STR_DLGBROWSER_MODS=Mody
+STR_DLGBROWSER_MODS_MORE=+ mody ({number})

@@ -2702,3 +2702,7 @@ STR_DLGSETTINGS_WORKSHOP_UNUSABLE=Niet bruikbaar
 
 # The lobby's Workshop chip
 STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop
+
+# The game finder's scripts
+STR_DLGBROWSER_MODS=Mods
+STR_DLGBROWSER_MODS_MORE=+{number} mods
