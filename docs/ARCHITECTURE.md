@@ -2341,10 +2341,11 @@ events arrive through the ordinary subscriber bus; and the sim
 reaches back into the host only through registered pointers
 (`serverSimSetScenarioTick`, `serverSimSetScenarioRoundBoot`,
 `serverSimSetScenarioRoundStart`, `serverSimSetScenarioMapChanged`,
-`serverSimSetScenarioReload`, `serverSimSetScenarioMapScripted`, and
-the policy vtable), because the sim library cannot link the scenario
-library. Two things go the other way as data instead, so the sim can
-act on them with the host gone. The host hands over a
+`serverSimSetScenarioReload`, `serverSimSetScenarioMapScripted`,
+`serverSimSetScriptUploadAccept`, and the policy vtable), because the
+sim library cannot link the scenario library. Two things go the other
+way as data instead, so the sim can act on them with the host gone.
+The host hands over a
 `ScnLobbyTemplate` by value and the sim seats and reconciles it
 without calling out; it hands over the scenario's identity — the
 source, the name, the file name, the description and the extra-teams
@@ -2355,6 +2356,119 @@ the lobby-settings event. The frontend-facing header is
 `scenario_host.h`, which includes `server_sim.h` and nothing from this
 directory, so the dedicated server, the desktop host and the headless
 runner attach a scenario without seeing the funnel.
+
+**The sim and transport libraries do not call `src/scenario/`.** That
+is the rule the registered pointers exist for, stated outright:
+nothing in the sim or
+transport libraries — `server_sim_static`, `server_static`, and
+anything else linked into them — calls into `src/scenario/` or
+includes a header from it; they reach the scenario library only
+through the registered pointers above. The one file under
+`src/server/` that does include one is `servermain.c`, and it is in
+neither library: it is WinBoloDS's own `main`, built into that binary
+alone, and a host on the same footing as `headless_main.c` and
+`gamefront.c`, which attach the scenario host the way it does.
+
+**The upload accept callback.** `serverSimSetScriptUploadAccept`
+registers a `ScriptUploadAcceptFn` — `bool (*)(void *ctx, const char
+*dir, const char *name, const uint8_t *bytes, uint32_t len,
+ScriptUploadRefusal *why)` — which the transport calls through
+`serverSimScriptUploadAccept` from `serverFinishScriptUpload` once a
+script upload has arrived whole. It is a callback rather than a call
+for the reason the lister is one: reading a package and running a
+script are the scenario library's to do. The host's callback is
+`scnUploadAccept` in `src/scenario/scenario_host.c`, registered by
+`scenarioHostRegisterScenarioLister` with the sim as its context, and
+it checks in this order: that scripts are on at all; that the name
+ends in `.scenario` or `.lua`; and that no directory ahead of the
+landing one in the listing's order holds a file of that name, asked
+again of each directory with a stat because one may have been put
+there since BEGIN asked the listing. Then it writes the bytes to a dot
+file in the landing directory and reads them back the way the listing
+would — a package's `manifest.json`, a loose script's table through
+the stub VM — and refuses a file that will not read, one that asks for
+a newer `api` than the server runs, one whose `kind` the server does
+not know, and one bound to a map, which is sent as its map instead.
+Only then is the dot file renamed over `<dir>/<name>`, in one step, so
+a refusal or a failed write leaves nothing behind. A refusal fills
+`why` with a `SCRIPT_REFUSE_*` code and its numbers, which the sender
+is told in the DONE reply, and one line of text for the console. The
+persist caps — how many files and how many bytes the persist directory
+may hold — are not among those checks, and the callback never sees
+them: they are the transport's, which holds them and enforces them at
+BEGIN and again in `serverFinishScriptUpload` before the callback is
+called, since another upload may have landed in between. With no
+callback registered, BEGIN refuses a script with
+`LOBBY_REJECT_UPLOAD_DISABLED` before a byte of it is sent, as it does
+when the script upload policy is `OFF` or the sim holds no landing
+directory (`udp_server_dispatch.c`).
+
+**The landing directories are the sim's.** Where a script a player
+uploads lands is decided once, by `serverInstanceResolveScriptDirs`,
+which `serverInstanceStartup` calls first
+(`src/server/server_lifecycle.c`): nowhere under `OFF`; under
+`PERSIST` the configured directory, else `<map root>/Uploads/Scripts`;
+under `ALLOW` the configured session directory, else
+`<map root>/Uploads/Session-<port>`. The answer goes onto the sim
+through `serverSimSetScriptUploadDir`, and again through
+`serverSimSetScriptSessionDir` — but only on a host that takes remote
+clients under `ALLOW`, and as `""` everywhere else, because the
+welcome-screen sim runs startup too and on a desktop its map root is
+inside the application bundle. The session directory is the one the
+server empties, through `serverSimEmptyScriptSessionDir`: at startup,
+at shutdown (`serverInstanceShutdown`) and at the lobby reset when the
+last player leaves (`serverSimResetLobbyToDefaults`, which first takes
+the session's files off the lobby's list). The policy and sharing
+setters sit beside them on `server_sim.h` and are called from the same
+startup: `serverSimSetScriptUploadPolicy` and
+`serverSimSetScriptSharing`. The transport and the scenario host both
+read `serverSimGetScriptUploadDir` — the transport at BEGIN and when an
+upload finishes, the host when it lists the uploads directory, reads a
+file out of it and loads a pick from it — and neither works the path
+out for itself, so the directory a script is written to and the one it
+is listed and played from cannot come apart.
+
+**The script-directory change counter.**
+`serverSimNoteScriptDirsChanged` bumps, and `serverSimScriptDirsGen`
+reads, one count of the changes this process has made to a scripts
+directory, declared in `public/server_sim.h` and defined in
+`src/server/sim/server_sim_accessors.c` as an atomic. It is
+process-wide because the cache it keeps honest is: the listing cache
+in `scenario_host.c` — `SCN_DIR_CACHE_SLOTS` slots, one for each of
+the `SCN_MOD_DIRS_MAX` directories a listing merges and one spare —
+serves every sim in the process, from the tick thread and from a
+desktop's UI thread alike. A slot is keyed on the directory's path,
+its modify time, the count as it stood before the read, and the name,
+modify time and size of every script file in it, and a slot whose
+count is not the current one is read again. The count is in the key
+because the kernel stamps a directory too coarsely to see a change
+made straight after a read, and the server makes such changes itself.
+So every writer of a scripts directory bumps the count once it has
+written; a writer that does not leaves a listing that can go on
+offering a file that is gone, or missing one that has arrived. The
+writers today, by what they write:
+
+- The sim: `serverSimEmptyScriptSessionDir`
+  (`server_sim_accessors.c`), when emptying the session directory
+  removed a file — at startup, at shutdown and at the last-player
+  lobby reset.
+- The scenario library, in `scenario_host.c`: `scnUploadAccept`, once
+  an upload is renamed into the landing directory;
+  `scenarioHostSaveLocalScript`, once "Save a copy" has put a server's
+  script in `<prefpath>Mods`; and `scenarioHostPackLooseScript` twice,
+  once for the `.scenario` it packs beside the loose script and once
+  for the `.lua` it moves into `Mods/Sources`.
+- The desktop's Workshop code: `workshopSyncRunWith` in
+  `src/gui/sdl3/workshop_sync.c` at three points in
+  `<prefpath>Workshop` — removing the old file of an item whose file
+  changed its name, copying an item in, and removing the file of an
+  item no longer subscribed — and `wsRecordId` in
+  `src/gui/sdl3/dialogs/imgui_settings_workshop.cpp`, which writes a
+  published item's Workshop id into the package that was sent.
+
+The Workshop writers are `gui`-profile files, built into `WinBolo`, and
+reach the counter the ordinary T1 way, by including `server_sim.h`;
+nothing about the counter is behind `scenario_api/`.
 
 **How a round start reaches the scenario.** A start makes exactly two
 calls into it, both through `serverSimScenarioStartCall` in
@@ -2391,6 +2505,45 @@ settled before either of them runs:
   round with none of its own to write — the round after a scripted
   round, and a round whose scenario failed to boot — plays classic.
 
+#### A round's scripts
+
+A round runs an ordered list of scripts rather than one: at most one
+scenario — a script that may decide the round — and mods ahead of it
+or behind it, `SCN_SCRIPTS_MAX` (ten, `scenario_host.h`) in all, which
+a static assertion holds equal to the lobby's own list,
+`LOBBY_SCRIPT_LIST_MAX`. The list is decided in `scnDecideScenario` in
+`src/scenario/scenario_host.c`, which the sim reaches through the
+map-changed pointer on a map commit and on a pick from the lobby's
+list: the committed map's own script where the host's list names it,
+or at the front where it does not and no pick decides the round, then
+every pick in the order the host made them. A picked scenario replaces
+the map's own, and with the lobby's mods setting off (`LST_MODS_OFF`)
+no pick is loaded. `scnAttachFrom` then loads the whole list into one
+Lua state — the whole list or none of it — and `scnComposeInto` adds
+it up into the one `ScenarioManifest` every reader outside the library
+is answered from. The declarative half — the name, the game type, the
+lobby block, `fill_to_caps` — is copied from the base, the first entry
+that decides the round or entry 0 when none does (`scnBaseIndex`), and
+a second script that decides the round, or a mod that names a game
+type, declares a lobby block or asks for `fill_to_caps`, is refused by
+file and key. The rest is merged in list order, and first wins for
+rules: a rule two scripts both set keeps the earlier script's value,
+the later one goes into the conflict log rather than the round, and so
+the top of the list is where precedence is. Tags merge, regions are
+appended with a bit each of their own, and triggers are concatenated.
+The round boot composes the same list again from the scripts' bytes
+(`scnRoundBootLocked`), and a reload composes into a table of its own
+before it is seated.
+
+The composite reaches the sim as data. `scnHandLobbyOver` fills a
+`ScnLobbyTemplate` from the composite's lobby block — the base's, since
+no other script may declare one — with the base game type read from
+its `game` word, and hands it over by value through
+`serverSimSetScenarioLobbyTemplate`, with the identity and the rules
+the lobby shows beside it. The attach does that and so does a reload;
+the round boot does not. From there the sim holds the template, and
+the paths below seat and reconcile from it without calling out.
+
 **What a scenario looks like from the lobby side.** None of it comes
 through `server_sim.h`. The identity and the base game type ride the
 scenario tail of `CTRL_LOBBY_SETTINGS`, which the codec writes only
@@ -2403,11 +2556,21 @@ reads it.
 
 Two T1 calls on `server_sim.h` are the other half:
 `serverSimScenarioSeatLobby` and `serverSimScenarioApplyLobbyRules`.
-The sim reaches them itself at three points — a map being committed, a
-lobby resetting once the last player leaves, and a startup that skips
-the lobby. A boot that opens a lobby is none of the three, so a process
-booting onto a scripted map makes the calls for itself, and all three
-hosts follow the same rule.
+A template reaches a lobby by six paths, in three groups. The sim
+reaches the calls itself at three points — a map being committed
+(`serverSimApplyMapChange`, which seats through
+`serverSimScenarioOnMapChanged`), a lobby resetting once the last
+player leaves (`serverSimResetLobbyToDefaults`), and a startup that
+skips the lobby (`serverSimApplyInstanceConfig`). A boot that opens a
+lobby is none of the three, so a process booting onto a scripted map
+makes the calls for itself, and all three hosts follow the same rule:
+`gamefront.c`, `headless_main.c` and `servermain.c`. The last two paths
+repeat the calls a map commit makes, because each hands over a
+template the lobby has not seated yet: a pick from the lobby's script
+list (`lobbyScenarioReselect` in `server_command_dispatch.c`), and a
+reload while the server is in the lobby (`scenarioHostReload`, which
+seats nothing mid-round and leaves the template for the reconcile at
+the next return to the lobby).
 
 The rules are applied before a startup that will start the round: the
 round is built inside `serverInstanceStartup`, and a game type set after
@@ -2428,17 +2591,24 @@ preference is true of the process from the moment it moves rather than
 from the next hosted game.
 
 `scenarioHostSetUploadScriptsEnabled` is the narrower one beside it,
-set the same way at the same sites (`-nouploadscripts`,
-`--nouploadscripts`, and the desktop preference "Run scripts in
-uploaded maps"), and it decides whether a map a client uploaded may
-bring a script. What tells an uploaded map from an operator's own is
-its path and nothing else: the upload path writes the bytes it was
-sent under their final name and stamps nothing on the file, so the
-library asks `serverSimGetUploadsDir` — a T1 accessor answering what
-the virtual `Uploads` folder resolves to — and compares that prefix.
+and it follows the script upload policy: on unless the policy is
+`OFF`. It is set from the resolved policy at the same kind of sites —
+`-scriptuploads` on the dedicated server (`servermain.c`),
+`--scriptuploads` on the headless runner (`headless_main.c`), and on
+the desktop at both places `gamefront.c` starts a server sim and
+again whenever the "Script Upload Policy" preference changes
+(`gameFrontSetHostingScriptUploadPolicy`) — and it decides whether a
+map a client uploaded may bring a script. What tells an uploaded map
+from an operator's own is its path and nothing else: the upload path
+writes the bytes it was sent under their final name and stamps nothing
+on the file, so the library asks `serverSimGetUploadsDir` — a T1
+accessor answering what the virtual `Uploads` folder resolves to
+— and compares that prefix.
 The comparison levels separators and drops case, which can only call a
 map an upload that is not one; the mistake the other way would run a
 script the operator switched off.
+
+#### What review holds
 
 Two things the profile does not enforce, so review does. There is no
 `include_rules` CTest entry proving `scenario_host` cannot see
@@ -2571,6 +2741,20 @@ src/scenario/          — the scenario runtime; public/ + scenario_api/
 src/scenario_io/       — a scenario's files (container, manifest.json,
                          the chunk on a map); public/ alone on its path
 ```
+
+Those are the source directories. The scripts a server plays also come
+from directories that exist only at run time. Players' uploads land in
+`Uploads/Scripts` (persist) and `Uploads/Session-<port>` (allow) under
+a dedicated server's map root, and in `<prefpath>uploads/Scripts` and
+`<prefpath>uploads/Session` on a desktop host; the sim holds whichever
+one the policy picked (see `src/bolo/scenario_api/` under "Privileged
+exceptions"). A player's own mods, and the copies "Save a copy" makes,
+are in `<prefpath>Mods`, and Steam Workshop items are copied into
+`<prefpath>Workshop`. What each directory may hold, the order a
+listing merges them in and the flags that move them are in
+`SCENARIO_API.md`, under [Uploads](SCENARIO_API.md#uploads),
+[Mods](SCENARIO_API.md#mods) and
+[The Steam Workshop](SCENARIO_API.md#the-steam-workshop).
 
 External targets get `src/bolo/public/` on their include path —
 that single directory contains T1, T3, and T4 headers, so any
