@@ -2168,13 +2168,13 @@ STR_DLGLOBBY_SCENARIO_FILTER=Filtrera efter namn
 STR_DLGLOBBY_SCENARIO_NO_MATCH=Inget här matchar det namnet.
 STR_DLGLOBBY_SCENARIO_DETAILS=Detaljer
 STR_DLGLOBBY_SCENARIO_DETAILS_TITLE=Om {string1}
-STR_DLGLOBBY_MODS_ENABLED_CB=Moddar aktiverade
-STR_DLGLOBBY_MODS_DETAILS_TIP=Öppnar väljaren, där moddar läggs till, tas bort och ordnas.
+STR_DLGLOBBY_MODS_ENABLED_CB=Moddar/Scenario aktiverade
+STR_DLGLOBBY_MODS_DETAILS_TIP=Öppnar väljaren, där scenariot och moddarna läggs till, tas bort och ordnas.
 STR_DLGLOBBY_SCENARIO_ORDER_NOTE=Ladd- och körordning: Högre upp har prioritet.
 STR_DLGLOBBY_SCENARIO_ALL_IN_ROUND=Allt den här servern erbjuder finns redan i omgången.
 STR_DLGLOBBY_MODS_HEAD_N=({number})
 STR_DLGLOBBY_MODS_TIP_ON=Dessa moddar körs den här omgången, i den här ordningen:
-STR_DLGLOBBY_MODS_TIP_OFF=Moddar är avstängda. Dessa är valda för omgången, men körs inte:
+STR_DLGLOBBY_MODS_TIP_OFF=Moddar/Scenario är avstängt. Dessa är valda för omgången, men körs inte:
 STR_DLGLOBBY_MODS_TIP_NONE=Inga moddar är laddade för den här omgången.
 STR_DLGLOBBY_MODS_OFF_NOTE=(avstängd, körs inte)
 STR_SCNPANEL_SETTINGS_TITLE=Scenariopanel
@@ -2420,7 +2420,7 @@ STR_DLGLOBBY_RULES_COL_CHANGE=Ändring
 STR_DLGLOBBY_RULES_OVERRIDDEN=Åsidosatt av {string1}, som anger {string2}
 
 # Under the rules table of a mod, on a server that has mods turned off.
-STR_DLGLOBBY_DETAILS_MODS_OFF=Moddar är avstängda på den här servern, så den här moddens regler gäller inte.
+STR_DLGLOBBY_DETAILS_MODS_OFF=Moddar/Scenario är avstängt på den här servern, så det här skriptets regler gäller inte.
 STR_DLGLOBBY_DETAILS_IMPLEMENTS_MOD=Vad den här modden implementerar:
 STR_DLGLOBBY_DETAILS_IMPLEMENTS_SCENARIO=Vad det här scenariot implementerar:
 STR_DLGLOBBY_DETAILS_COL_METHOD=Metod
