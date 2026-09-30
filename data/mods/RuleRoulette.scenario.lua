@@ -243,11 +243,12 @@ local function build_panel()
   -- 0, so the bar fills over those mode_len - 1 steps: empty while the
   -- clock shows the mode's first second, full in its last.
   local secs = clamp(math.floor((next_at - game.tick() - 1) / 100), 0, mode_len - 1)
-  -- A filled rect, not a bar: a bar outlines itself, and the fill alone
-  -- reads better. Nothing is drawn while it is empty.
-  local w = math.floor(122 * (mode_len - 1 - secs) / (mode_len - 1))
+  -- Only the inside of a 122x4 bar: a bar outlines itself one unit thick
+  -- and fills inside that, so the fill alone is a 120x2 rect one unit in.
+  -- Nothing is drawn while it is empty.
+  local w = math.floor(120 * (mode_len - 1 - secs) / (mode_len - 1))
   if w > 0 then
-    list[#list + 1] = { "rect", 3, y, w, 4, "yellow", true }
+    list[#list + 1] = { "rect", 4, y + 1, w, 2, "yellow", true }
   end
   y = y + 7
   if preview > 0 then
