@@ -78,6 +78,11 @@ writes one line of flags into `<name>.args`, which replaces the list above
 rather than adding to it. `-map`, `-port` and `-ticks` are always supplied
 by the runner.
 
+The runner also adds `-bot-init 0-15=<the -brain path>[cfg=BOT_CHAT_DEFAULT=true]`,
+so every bot starts with "bot chat" on. A real game starts with the bots
+quiet, but most of these tests read the spoken acks to see that an order was
+taken. A test that gives its own `-bot-init` is left as it is.
+
 ## Two things to know before writing one
 
 **A bot only hears chat, and only the kinds a lobby-less round delivers.**
