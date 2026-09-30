@@ -440,13 +440,14 @@ void lobbyBotModeAndLevel(ClientSim *cs, int slot,
                           int *outMode, int *outLevel);
 
 /* True for the brain's default mode — the one every ordinary game uses,
- * and the only one whose levels can have hand-written lang strings. */
+ * which the row and the gear tooltip leave unnamed. */
 bool lobbyBotModeIsDefault(const BrainModes *modes, int mode);
 
-/* True when that mode's levels are still exactly easy / medium / hard, so
- * the STR_BOT_DIFF_* wording actually describes them. False for every
- * other mode, and for a default mode a manifest has renamed or extended —
- * those show the manifest's own labels. */
+/* True when that mode's levels are exactly easy / medium / hard and the
+ * mode is the default one or declares `standard_levels = yes` in modes.txt
+ * (brainModeUsesStandardLevels), so the STR_BOT_DIFF_* wording actually
+ * describes them. False for any other mode — those show the manifest's own
+ * labels. True when there is no catalogue yet. */
 bool lobbyBotModeUsesLangLevels(const BrainModes *modes, int mode);
 void lobbySendSetBotBrain(ClientSim *cs,
                           uint8_t slot, uint8_t brainIdx);

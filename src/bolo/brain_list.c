@@ -743,7 +743,9 @@ bool brainListLoadModes(const char *name, BrainModes *out) {
     brainModesSynthesizeDefault(out);
     if (!name || !name[0]) return false;
 
-    char blob[4096];
+    /* 8 KB: the file is mostly comments, and a longer file is cut off
+     * silently, which would drop its last sections. */
+    char blob[8192];
     if (!brainListReadSidecarAny(name, "modes.txt", blob, sizeof(blob))) {
         return false;
     }
@@ -826,6 +828,32 @@ bool brainListLoadModes(const char *name, BrainModes *out) {
                         SDL_strlcpy(defaultKeys[curIdx], value,
                                     sizeof(defaultKeys[curIdx]));
                     }
+                } else if (SDL_strcasecmp(field, "about") == 0) {
+                    /* Already trimmed; strlcpy cuts a long line to the
+                     * field. A cut can split a UTF-8 sequence, so a
+                     * trailing partial one is removed. */
+                    SDL_strlcpy(cur->about, value, sizeof(cur->about));
+                    size_t n = strlen(cur->about);
+                    if (n == sizeof(cur->about) - 1) {
+                        size_t k = n;
+                        while (k > 0 &&
+                               ((unsigned char)cur->about[k - 1] & 0xC0) == 0x80) {
+                            k--;
+                        }
+                        if (k > 0 &&
+                            ((unsigned char)cur->about[k - 1] & 0x80) != 0) {
+                            unsigned char lead = (unsigned char)cur->about[k - 1];
+                            size_t need = (lead >= 0xF0) ? 4
+                                        : (lead >= 0xE0) ? 3
+                                        : (lead >= 0xC0) ? 2 : 1;
+                            if (n - (k - 1) < need) cur->about[k - 1] = '\0';
+                        }
+                    }
+                } else if (SDL_strcasecmp(field, "standard_levels") == 0) {
+                    cur->standardLevels =
+                        SDL_strcasecmp(value, "yes") == 0 ||
+                        SDL_strcasecmp(value, "true") == 0 ||
+                        SDL_strcmp(value, "1") == 0;
                 }
                 /* An unknown field is ignored: a newer manifest can carry
                  * keys this build has never heard of and still load. */
@@ -866,6 +894,21 @@ bool brainListLoadModes(const char *name, BrainModes *out) {
         kept.openDefaultMode = (od >= 0) ? od : 0;
     }
     *out = kept;
+    return true;
+}
+
+bool brainModeUsesStandardLevels(const BrainMode *mode) {
+    static const char *const kStandard[3] = { "easy", "medium", "hard" };
+    if (mode == NULL) return false;
+    if (!mode->standardLevels && SDL_strcasecmp(mode->key, "default") != 0) {
+        return false;
+    }
+    if (mode->levelCount != 3) return false;
+    for (int i = 0; i < 3; i++) {
+        if (SDL_strcasecmp(mode->levels[i].key, kStandard[i]) != 0) {
+            return false;
+        }
+    }
     return true;
 }
 
