@@ -683,6 +683,9 @@ STR_MAPCHOOSER_RESTORE_SIZE_TIP=Obnovit výchozí velikost (Esc)
 STR_MAPCHOOSER_MAXIMIZE_TIP=Maximalizovat
 STR_MAPCHOOSER_LOADING_PREVIEW=Načítání náhledu...
 
+# Map editor scenario panel
+STR_MAPEDIT_SCENARIO_NEEDS_BOTS=Vyžaduje povolené boty: tento skript přidává vlastní boty
+
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Stav
 STR_TABLET_KILLS_DEATHS=Zabití: {number}  Úmrtí: {number2}

@@ -683,6 +683,9 @@ STR_MAPCHOOSER_RESTORE_SIZE_TIP=기본 크기로 복원 (Esc)
 STR_MAPCHOOSER_MAXIMIZE_TIP=최대화
 STR_MAPCHOOSER_LOADING_PREVIEW=미리보기 불러오는 중...
 
+# Map editor scenario panel
+STR_MAPEDIT_SCENARIO_NEEDS_BOTS=봇 허용이 필요해요: 이 스크립트가 자체적으로 봇을 추가해요
+
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=상태
 STR_TABLET_KILLS_DEATHS=킬: {number}  데스: {number2}
