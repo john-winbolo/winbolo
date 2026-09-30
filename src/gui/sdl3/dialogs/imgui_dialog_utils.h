@@ -558,6 +558,25 @@ static inline void imguiEndPanelTable(void) {
     ImGui::PopStyleColor(2);
 }
 
+/* A bordered box around one section of a dialog: its heading, its table and
+ * any note under it. The box is as tall as what is drawn in it and as wide
+ * as the space it is in, with the window padding inside the border. Always
+ * pair it with imguiEndPanelSection, the same as BeginChild with EndChild,
+ * whatever BeginChild returned. NavFlattened lets a gamepad move between
+ * the boxes and into their dropdowns as if no box were there. */
+static inline void imguiBeginPanelSection(const char *id) {
+    ImGui::BeginChild(id, ImVec2(0.0f, 0.0f),
+                      ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY |
+                          ImGuiChildFlags_AlwaysUseWindowPadding |
+                          ImGuiChildFlags_NavFlattened,
+                      ImGuiWindowFlags_NoScrollbar |
+                          ImGuiWindowFlags_NoScrollWithMouse);
+}
+
+static inline void imguiEndPanelSection(void) {
+    ImGui::EndChild();
+}
+
 /* Register Platform_OpenInShellFn on the current ImGui context so that
  * ImGui::TextLinkOpenURL() actually launches the system browser on click.
  * Call once per ImGui::CreateContext(), with that context current. */
