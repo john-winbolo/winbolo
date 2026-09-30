@@ -243,11 +243,12 @@ local function build_panel()
   -- 0, so the bar fills over those mode_len - 1 steps: empty while the
   -- clock shows the mode's first second, full in its last.
   local secs = clamp(math.floor((next_at - game.tick() - 1) / 100), 0, mode_len - 1)
-  list[#list + 1] = { "bar", 3, y, 122, 4, "yellow", mode_len - 1 - secs, mode_len - 1 }
-  -- A bar outlines itself in its own colour. An outlined rect at the same
-  -- operands strokes the same pixels, so drawn after the bar it gives the
-  -- bar a white border that the yellow fill stands out against.
-  list[#list + 1] = { "rect", 3, y, 122, 4, "white", false }
+  -- A filled rect, not a bar: a bar outlines itself, and the fill alone
+  -- reads better. Nothing is drawn while it is empty.
+  local w = math.floor(122 * (mode_len - 1 - secs) / (mode_len - 1))
+  if w > 0 then
+    list[#list + 1] = { "rect", 3, y, w, 4, "yellow", true }
+  end
   y = y + 7
   if preview > 0 then
     list[#list + 1] = { "line", 3, y, 124, y, "grey_dark" }
