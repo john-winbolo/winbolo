@@ -1786,9 +1786,16 @@ void serverSimMapRotateRound(ServerSim *sim) {
            it to seat them again. Not serverSimScenarioReconcileLobby: that
            takes every fielded seat of the template off the field, a team
            the template fields from the start included, and in a round that
-           starts straight away nothing puts that team back on. */
+           starts straight away nothing puts that team back on.
+
+           Where no map in the directory loads, the map change never runs
+           and the lobby is the one it was, so the flag goes back to what it
+           said about that lobby. */
+        bool wasSeated = sim->scenarioLobbySeated;
         sim->scenarioLobbySeated = false;
-        serverSimMapDirPickRandom(sim);
+        if (!serverSimMapDirPickRandom(sim)) {
+            sim->scenarioLobbySeated = wasSeated;
+        }
     }
 
     /* Full world reset + tank (re)creation + state -> running. With no

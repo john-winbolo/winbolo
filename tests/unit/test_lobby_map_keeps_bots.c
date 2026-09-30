@@ -11,7 +11,7 @@
  * test is the real one: serverSimReloadMap, the start reconcile, and the
  * scenario decision that follows it.
  *
- *   lobby_map_keeps_bots_plain — no script at all. Three bots with their own
+ *   lobby_map_keeps_bots_plain — no script at all. Six bots with their own
  *       names, teams and difficulties survive a change to a map with fewer
  *       starts than players and a change back, and every seat still holds a
  *       start or none, never one past the map's list.
