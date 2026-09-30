@@ -291,9 +291,9 @@ bool lobbyBotModeIsDefault(const BrainModes *modes, int mode) {
  * STR_BOT_DIFF_* blurbs describe those and nothing else — AND the mode is
  * the default one or its modes.txt section says `standard_levels = yes`
  * (brainModeUsesStandardLevels). Turtle says so: its levels are default's
- * plus one placement switch. Survival does not: its three levels are
- * placeholders that play alike, so the blurbs would lie there. A mode that
- * renames or extends its levels shows its own labels. */
+ * plus one placement switch. A mode that shares the three keys without
+ * the line keeps its own labels, since its levels may play differently.
+ * A mode that renames or extends its levels shows its own labels too. */
 bool lobbyBotModeUsesLangLevels(const BrainModes *modes, int mode) {
     if (!modes || mode < 0 || mode >= modes->modeCount) return true;
     return brainModeUsesStandardLevels(&modes->modes[mode]);
@@ -378,7 +378,7 @@ void lobbyDrawTagline(const char *tag, float wrapPosX, int difficulty) {
 
 /* Gear hover tooltip: "Configure" plus a "Currently:" line naming the bot,
  * its mode when that is not the default one, and its difficulty
- * ("GoalHunter · Survival Scenario · Hard"). A mode with the standard
+ * ("GoalHunter · Turtle · Hard"). A mode with the standard
  * levels (lobbyBotModeUsesLangLevels) adds that difficulty's short tagline
  * underneath with the Easy./Medium./Hard. token coloured; another mode's
  * levels have no such blurb (they are data), so the line above says it

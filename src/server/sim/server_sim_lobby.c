@@ -174,12 +174,12 @@ static const char *slotBrainPath(const ServerSim *sim, BYTE slot) {
  *      starting mode (open_default on Open, else mode 0);
  *   2. what the map requires for the bot's side — the attached scenario's
  *      lobby template, read for that team; on Survival the horde's seats
- *      are survival mode at Hard;
+ *      are the default mode at Hard;
  *   3. what a person last picked BY HAND, when the caller honours it — on a
  *      team step 2 configured, the level last chosen on a seat of THAT team
- *      and never the mode (a bot on the horde stays in survival mode, at the
- *      Medium somebody chose for the horde); on every other team, the one
- *      mode-and-level pair the lobby remembers.
+ *      and never the mode (a bot on the horde stays in the mode the template
+ *      names, at the Medium somebody chose for the horde); on every other
+ *      team, the one mode-and-level pair the lobby remembers.
  *
  * Bots that FIRST APPEAR — the scenario seed, single player's setup bots —
  * do not honour step 3, so they always come up at the map's default. The
@@ -364,9 +364,9 @@ bool serverSimResolveNewBotConfigFromModes(const ServerSim *sim, int team,
      *    seat nothing — as it does at the seating.
      *
      *    Naming a mode FIXES it: the host's pick below may then move the
-     *    level inside it and never the mode itself. That is what makes an
-     *    Add Bot on Survival's horde a survival bot whatever mode the host
-     *    left some other seat in. */
+     *    level inside it and never the mode itself. That is what keeps an
+     *    Add Bot on Survival's horde in the template's mode whatever mode the
+     *    host left some other seat in. */
     lt = lobbyTemplateTeam(sim, team);
     if (lt != NULL) {
         uint8_t m = (uint8_t)mode;
@@ -513,7 +513,7 @@ void serverSimApplyNewBotDefaults(ServerSim *sim, BYTE slot, int team,
     /* The lobby default is the base, and it is written even when the brain
      * ships no manifest: botConfigs[slot] still holds whatever the slot's
      * PREVIOUS occupant had, and a new defender must not inherit a removed
-     * bot's survival mode. */
+     * bot's mode. */
     serverSimResolveNewBotConfig(sim, team, brainPath, honourManualPick,
                                  &mode, &level);
     sim->botModeSetByHand &= (uint16_t)~(1u << slot);
@@ -1124,7 +1124,8 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
             if (len != 1) return false;
             /* A plain bool like LST_SMART_PINGS_OFF above, so any non-zero
              * byte counts. The pick list is left alone: this decides whether
-             * the mods on it compose, not whether they are on it.
+             * the mods and picked scenarios on it compose, not whether they
+             * are on it.
              *
              * Nothing is recomposed here. The caller in
              * server_command_dispatch.c asks for that through

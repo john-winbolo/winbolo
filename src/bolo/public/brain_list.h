@@ -177,8 +177,8 @@ int64_t brainListTextsMtimeForPath(const char *brainPath);
  *   levels  = easy:Easy:1, medium:Medium:2, hard:Hard:3
  *   default = hard
  *
- *   [survival]
- *   label   = Survival
+ *   [turtle]
+ *   label   = Turtle
  *   levels  = easy:Easy:1, medium:Medium:2, hard:Hard:3
  *   default = hard
  *

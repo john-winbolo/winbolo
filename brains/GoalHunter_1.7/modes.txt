@@ -23,8 +23,13 @@
 # The brain applies the level in constants.lua (M.MODE_LEVELS[mode][level],
 # a bundle of knob overrides applied before any preset= or cfg= token):
 # hard is an empty bundle, so Hard is today's brain unchanged; medium and
-# easy hand the bot handicaps. The survival mode's bundles are still empty.
-# The turtle mode's bundles are default's with PILL_PLACE_TURTLE turned on.
+# easy hand the bot handicaps. The turtle mode's bundles are default's with
+# PILL_PLACE_TURTLE turned on.
+#
+# A new mode is a new section here plus its bundles in M.MODE_LEVELS. A
+# scenario that wants its bots to play differently does not need a mode:
+# it sends them per-bot tokens instead (the team's init table in its
+# lobby template, game.bot_init), the way Survival and Virus do.
 #
 # open_default (above the first section) names the mode a new bot starts in
 # when the game type is Open. Tournament, Strict and scripted games start
@@ -35,15 +40,6 @@ open_default = turtle
 
 [default]
 label = Default
-levels = easy:Easy:1, medium:Medium:2, hard:Hard:3
-default = hard
-
-# Survival. Its real levels have not been decided — these three are
-# placeholders so the dropdown is wired end to end; edit them here and
-# nothing else has to change. The label is what the lobby shows on the
-# row's mode tag, so it is kept to one short word.
-[survival]
-label = Survival
 levels = easy:Easy:1, medium:Medium:2, hard:Hard:3
 default = hard
 

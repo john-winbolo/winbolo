@@ -2203,10 +2203,13 @@ int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
  * Each returned entry's `name` is the path relative to relPath
  * (e.g. "Subdir/Foo.map") and isFolder is always false. relPath
  * "" or NULL = search the whole library. Empty query returns 0
- * (caller wanted enumerate, not search). */
+ * (caller wanted enumerate, not search). wantScripted asks the scenario
+ * library for each hit's `scripted` flag; false leaves it false and
+ * skips the lookup (the network search reply has no byte for it). */
 int serverSimSearchMapDir(ServerSim *sim, const char *relPath,
                            const char *query,
-                           ServerMapEntry *entries, int maxEntries);
+                           ServerMapEntry *entries, int maxEntries,
+                           bool wantScripted);
 
 /* Read the on-disk .map file at data/maps/<relPath> into a heap
  * buffer. Returns true and fills outBytes (malloc'd; caller frees
@@ -2469,14 +2472,14 @@ uint8_t     serverSimGetLineOfSight(const ServerSim *sim);
 void        serverSimSetSmartPingsOff(ServerSim *sim, bool off);
 bool        serverSimGetSmartPingsOff(const ServerSim *sim);
 
-/* Mods — whether the round composes the mods on the lobby's pick list. The
- * host owns it from the lobby (LST_MODS_OFF), and scnDecideScenario
- * (src/scenario/scenario_host.c) is the one reader: it skips every pick
- * whose manifest says kind = "mod" while this is set.
+/* Mods/Scenario — whether the round composes the scripts on the lobby's
+ * pick list. The host owns it from the lobby (LST_MODS_OFF), and
+ * scnDecideScenario (src/scenario/scenario_host.c) is the one reader: it
+ * skips every pick while this is set, mods and picked scenarios alike.
  *
- * Mods only. A scenario on the pick list and the map's own script both
- * still play, because neither is a mod — the question a mod answers about
- * itself is scnManifestKeepsWinCondition, and that is the only test here.
+ * The map's own script still plays. It is not a pick, whatever place on the
+ * list it has been given, and with no picked scenario composing it comes
+ * back at the front the way it does for a list that picked none.
  *
  * The pick list is not touched. Turning the setting off is not the same as
  * emptying the list: the entries stay in the order the host put them in and
@@ -2641,7 +2644,7 @@ void serverSimSetCountdownTicks(ServerSim *sim, int32_t ticks);
  *      type's starting mode (open_default on Open, else mode 0);
  *   2. what the map requires for the bot's side — the attached scenario's
  *      lobby template, read for that team; on Survival, the horde's seats
- *      are survival mode at Hard;
+ *      are the default mode at Hard;
  *   3. what a person last picked BY HAND, when the caller honours it — on a
  *      team step 2 configured, the level last chosen on a seat of that team
  *      and never the mode; on every other team, the one pair the lobby
@@ -2662,7 +2665,7 @@ bool serverSimResolveNewBotConfig(const ServerSim *sim, int team,
 /* ── A scenario's own mode and difficulty ──────────────────────────────
  *
  * A scenario names the two by KEY — the words in the brain's own modes.txt
- * ("survival", "hard") — because a script cannot know what index a brain
+ * ("default", "hard") — because a script cannot know what index a brain
  * puts them at, and the two bytes the lobby carries are indices. This turns
  * one pair of keys into that pair of indices.
  *

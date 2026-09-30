@@ -730,7 +730,6 @@ else()
         src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
         src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
         src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
-        src/gui/sdl3/dialogs/lobby/lobby_scenario_rules.cpp
         src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
         src/gui/sdl3/wbn_map_source.cpp
         PROPERTIES COMPILE_OPTIONS "-Werror=undef;${LOBBY_MISSING_DECL_OPTION}"
@@ -983,7 +982,6 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
     src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
     src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
-    src/gui/sdl3/dialogs/lobby/lobby_scenario_rules.cpp
     src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
     src/gui/sdl3/dialogs/imgui_settings.cpp
     src/gui/sdl3/dialogs/imgui_keysetup.cpp
@@ -1595,7 +1593,7 @@ set(CLIENT_SOURCES
     src/client_frontend/client_frontend_connect.c
     src/client_frontend/client_frontend_tick.c
     src/client_frontend/client_frontend_common.c
-    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_rules.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/dialog_quit.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
+    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/dialog_quit.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/lobby_start_list.cpp
@@ -4334,6 +4332,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_input_gate.c
     tests/unit/test_key_claims.c
     tests/unit/test_server_address_parse.c
+    # The map chooser's "Scenarios only" row test, header-only.
+    tests/unit/test_map_chooser_scenario_filter.c
     # Skin asset reads: a directory, a flat zip and a zip wrapped in one
     # top-level folder must resolve the same relative names to the same
     # bytes.
@@ -4798,9 +4798,9 @@ set(_unit_test_names
     shell_death_rejected_culls_without_impact
     # A new bot's mode/difficulty rule (test_lobby_bot_config_memory.c): the
     # base, then the host's last MANUAL pick, remembered by key so it survives
-    # a brain declaring a different list. Reads the shipped GoalHunter_1.7
-    # modes.txt beside the binary and writes nothing, so these are safe under
-    # `ctest -j`.
+    # a brain declaring a different list. Each case writes its own fixture
+    # brain, brains/ut_bcm_<case>/ in the build directory, and deletes it
+    # when it finishes, so these are safe under `ctest -j`.
     lobby_bot_config_memory_applies
     lobby_bot_config_memory_empty_is_noop
     lobby_bot_config_memory_unknown_key
@@ -5441,6 +5441,7 @@ set(_unit_test_names
     mapview_sprite_ladder
     mapview_sprite_shell_tip
     mapview_sprite_lgm_snap
+    mapview_camera_split
     mapview_overlay_gunsight
     mapview_overlay_tank_label
     mapview_overlay_tank_label_smooth
@@ -5744,6 +5745,7 @@ set(_unit_test_names
     addrparse_port_bounds
     addrparse_bad_port
     addrparse_empty
+    mapchooser_scenario_filter
     bot_pool_builtin_defaults
     bot_pool_install_and_clamp
     bot_pool_install_dedup_and_drop
@@ -6029,6 +6031,8 @@ set(_unit_test_names
     lobby_map_keeps_bots_scenario
     lobby_map_keeps_bots_map_own_row
     lobby_map_rotate_holds_seats_again
+    lobby_script_keeps_bots_mod
+    lobby_script_keeps_bots_swap
     scripted_game_type_loadout_follows_base
     scripted_game_type_no_base_is_strict
     scripted_game_type_strict_ignores_base
@@ -6550,6 +6554,11 @@ set(_unit_test_names
     scenario_compose_compat_write_stays_local
     scenario_compose_pairs_game_complete
     scenario_compose_unsafe_keeps_sharing
+    scenario_compose_off_map_script_only
+    scenario_compose_off_plain_map_none
+    scenario_compose_on_picks_replace_map
+    scenario_compose_off_then_on
+    scenario_compose_off_full_list_hides_last
     scenario_panel_parses_each_primitive
     scenario_panel_refuses_malformed
     scenario_panel_boundaries

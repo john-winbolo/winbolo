@@ -1907,6 +1907,7 @@ int run_mapview_sprite_classic(void);
 int run_mapview_sprite_ladder(void);
 int run_mapview_sprite_shell_tip(void);
 int run_mapview_sprite_lgm_snap(void);
+int run_mapview_camera_split(void);
 
 /* The entity overlay's placements (test_mapview_overlay.c): the gunsight's
  * top-left is the classic view's formula at an integer scale and the
@@ -2593,6 +2594,10 @@ int run_addrparse_port_bounds(void);
 int run_addrparse_bad_port(void);
 int run_addrparse_empty(void);
 
+/* The map chooser's "Scenarios only" row test
+ * (test_map_chooser_scenario_filter.c). */
+int run_mapchooser_scenario_filter(void);
+
 /* Voice codec round-trip (test_voice_core.c): a continuous tone encoded and
  * decoded frame by frame stays inside the per-frame byte budget (the
  * constrained-VBR guarantee), decodes a full 20 ms frame every time, keeps
@@ -2992,6 +2997,10 @@ int run_lobby_map_keeps_bots_plain(void);
 int run_lobby_map_keeps_bots_scenario(void);
 int run_lobby_map_keeps_bots_map_own_row(void);
 int run_lobby_map_rotate_holds_seats_again(void);
+/* And a script pick, which keeps the host's bots unless the script lays out
+ * a lobby of its own. */
+int run_lobby_script_keeps_bots_mod(void);
+int run_lobby_script_keeps_bots_swap(void);
 
 /* The scripted game type (test_scripted_game_type.c): gameScripted resolving
  * through the base game the scenario declared, at the loadout and at the
@@ -3757,6 +3766,11 @@ int run_scenario_compose_game_nested_copy(void);
 int run_scenario_compose_compat_write_stays_local(void);
 int run_scenario_compose_pairs_game_complete(void);
 int run_scenario_compose_unsafe_keeps_sharing(void);
+int run_scenario_compose_off_map_script_only(void);
+int run_scenario_compose_off_plain_map_none(void);
+int run_scenario_compose_on_picks_replace_map(void);
+int run_scenario_compose_off_then_on(void);
+int run_scenario_compose_off_full_list_hides_last(void);
 
 /* The panel's display list (test_scenario_panel.c): the byte layout
  * decoded from a hand-written list, the refusal each malformed list

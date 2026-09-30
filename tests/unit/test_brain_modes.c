@@ -109,8 +109,9 @@ static int assert_is_synthesized_default(const BrainModes *m) {
 int run_brain_modes_manifest_parses(void) {
     BrainModes m;
 
-    /* The shape brains/GoalHunter_1.7/modes.txt actually ships in: comments,
-     * blank lines, CRLF endings and spaces around every '='. */
+    /* The shape brains/GoalHunter_1.7/modes.txt ships in, with a second mode
+     * added: comments, blank lines, CRLF endings and spaces around every
+     * '='. */
     modes_cleanup();
     UT_ASSERT(modes_write(
         "# GoalHunter modes.\r\n"
@@ -121,8 +122,8 @@ int run_brain_modes_manifest_parses(void) {
         "default = hard\r\n"
         "\r\n"
         "# Placeholder levels for now.\r\n"
-        "[survival]\r\n"
-        "label   = Survival Scenario\r\n"
+        "[turtle]\r\n"
+        "label   = Turtle\r\n"
         "levels  = easy:Easy, medium:Medium, hard:Hard\r\n"
         "default = medium\r\n") == 0);
 
@@ -140,15 +141,15 @@ int run_brain_modes_manifest_parses(void) {
                   m.modes[0].defaultLevel);
 
     /* A label may contain spaces; the key may not. */
-    UT_ASSERT(strcmp(m.modes[1].key, "survival") == 0);
-    UT_ASSERT(strcmp(m.modes[1].label, "Survival Scenario") == 0);
-    UT_ASSERT_MSG(m.modes[1].defaultLevel == 1, "survival starts at %d",
+    UT_ASSERT(strcmp(m.modes[1].key, "turtle") == 0);
+    UT_ASSERT(strcmp(m.modes[1].label, "Turtle") == 0);
+    UT_ASSERT_MSG(m.modes[1].defaultLevel == 1, "turtle starts at %d",
                   m.modes[1].defaultLevel);
 
     /* Key lookups, which is how every non-lobby caller (the -mode flag, the
      * chosen-mode preference) turns a word back into an index. */
-    UT_ASSERT(brainModesFindMode(&m, "survival") == 1);
-    UT_ASSERT(brainModesFindMode(&m, "SURVIVAL") == 1);
+    UT_ASSERT(brainModesFindMode(&m, "turtle") == 1);
+    UT_ASSERT(brainModesFindMode(&m, "TURTLE") == 1);
     UT_ASSERT(brainModesFindMode(&m, "nosuchmode") == -1);
     UT_ASSERT(brainModeFindLevel(&m.modes[1], "hard") == 2);
     UT_ASSERT(brainModeFindLevel(&m.modes[1], "brutal") == -1);
@@ -308,7 +309,7 @@ int run_brain_modes_open_default(void) {
         "\r\n"
         "[default]\r\n"
         "levels = easy:Easy, medium:Medium, hard:Hard\r\n"
-        "[survival]\r\n"
+        "[plain]\r\n"
         "levels = hard:Hard\r\n"
         "[turtle]\r\n"
         "levels = easy:Easy, medium:Medium, hard:Hard\r\n") == 0);
@@ -406,7 +407,7 @@ int run_brain_modes_about(void) {
  * is used for the mode keyed "default" and for a mode that declares
  * `standard_levels = yes`, and only while the levels are exactly easy,
  * medium, hard in that order. A mode that shares the three keys without the
- * line (survival's placeholders) keeps its manifest labels. */
+ * line (a mode whose three levels play alike) keeps its manifest labels. */
 int run_brain_modes_standard_levels(void) {
     BrainModes m;
 
@@ -414,7 +415,7 @@ int run_brain_modes_standard_levels(void) {
     UT_ASSERT(modes_write(
         "[default]\n"
         "levels = easy:Easy, medium:Medium, hard:Hard\n"
-        "[survival]\n"
+        "[plain]\n"
         "levels = easy:Easy, medium:Medium, hard:Hard\n"
         "[turtle]\n"
         "levels = easy:Easy, medium:Medium, hard:Hard\n"
@@ -431,7 +432,7 @@ int run_brain_modes_standard_levels(void) {
     UT_ASSERT(brainListLoadModes(modes_brain_name(), &m));
     UT_ASSERT_MSG(m.modeCount == 6, "got %d modes, expected 6", m.modeCount);
     UT_ASSERT(brainModeUsesStandardLevels(&m.modes[0]));   /* default  */
-    UT_ASSERT(!brainModeUsesStandardLevels(&m.modes[1]));  /* survival */
+    UT_ASSERT(!brainModeUsesStandardLevels(&m.modes[1]));  /* plain    */
     UT_ASSERT(brainModeUsesStandardLevels(&m.modes[2]));   /* turtle   */
     UT_ASSERT(!brainModeUsesStandardLevels(&m.modes[3]));  /* order    */
     UT_ASSERT(!brainModeUsesStandardLevels(&m.modes[4]));  /* 4 levels */
