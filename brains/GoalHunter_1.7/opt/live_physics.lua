@@ -42,7 +42,8 @@ local CLASSIC = {
   speed_road = 16, speed_grass = 12, speed_forest = 6, speed_river = 3,
   speed_swamp = 3, speed_crater = 3, speed_rubble = 3, speed_boat = 16,
   speed_deep_sea = 3, speed_refuel_base = 16,
-  turn_road = 1, turn_swamp = 0.25,
+  turn_road = 1, turn_swamp = 0.25, turn_boat = 1,
+  tank_accel_rate = 0.25, tank_brake_rate = 0.25,
   pill_max_armour = 15, pill_attack_ticks = 100, pill_attack_min_ticks = 6,
   pill_cooldown_ticks = 32, pill_repair_amount = 4, pill_range = 2048,
   pill_shell_damage = 1,
@@ -128,6 +129,7 @@ function M.context(info, out)
   for k in pairs(CLASSIC) do x[k] = rule_of(r, k) end
   x.speed_pct  = pct_of(m, "speed")
   x.turn_pct   = pct_of(m, "turn")
+  x.accel_pct  = pct_of(m, "accel")
   x.reload_pct = pct_of(m, "reload")
   x.dealt_pct  = pct_of(m, "dealt")
   x.taken_pct  = pct_of(m, "taken")
@@ -235,6 +237,62 @@ local function scale_turn(b, x, rule)
   if live == classic and x.turn_pct == 100 then return b end
   if type(b) ~= "number" then return b end
   return rnd(b * classic * 100 / (live * x.turn_pct))
+end
+
+-- Turn-radius speed: a turn taken at the same radius allows a speed that
+-- scales with the turn rate (live turn rule x turn %). Float.
+local function scale_turn_speed(b, x, rule)
+  local live, classic = x[rule], CLASSIC[rule]
+  if live == classic and x.turn_pct == 100 then return b end
+  if type(b) ~= "number" then return b end
+  return b * live * x.turn_pct / (classic * 100)
+end
+-- The same, rounded to a whole info.speed step and never below 1.
+local function scale_turn_speed_int(b, x, rule)
+  local v = scale_turn_speed(b, x, rule)
+  if v == b or type(v) ~= "number" then return v end
+  v = rnd(v)
+  if v < 1 then v = 1 end
+  return v
+end
+
+-- Braking. The engine's brake key takes tank_brake_rate x accel % / 100
+-- engine speed off per tick. A term that multiplies info.speed into a stop
+-- distance scales by classic brake / live brake; a brake-profile gain
+-- (desired speed per wu) scales the other way.
+local function brake_num_den(x)
+  return CLASSIC.tank_brake_rate * 100, x.tank_brake_rate * x.accel_pct
+end
+local function scale_brake_dist(b, x)
+  local num, den = brake_num_den(x)
+  return scale_f(b, num, den)
+end
+local function scale_brake_gain(b, x)
+  local num, den = brake_num_den(x)
+  return scale_f(b, den, num)
+end
+-- The longest stop (from our road top speed) grows as top speed squared
+-- over the brake rate. Used for the scan caps, which only grow: a cap is a
+-- cost bound, and shrinking it would only cut safety headroom.
+local function stop_max_ratio(x)
+  local top  = x.speed_road * x.speed_pct
+  local ctop = CLASSIC.speed_road * 100
+  local num, den = brake_num_den(x)
+  return top * top * num, ctop * ctop * den
+end
+local function scale_stop_cap(b, x)
+  local num, den = stop_max_ratio(x)
+  if num <= den then return b end
+  return scale_f(b, num, den)
+end
+local function scale_stop_cap_int(b, x)
+  local num, den = stop_max_ratio(x)
+  if num <= den then return b end
+  return scale_int(b, num, den)
+end
+-- Speed gained per tick on the throttle: tank_accel_rate x accel % / 100.
+local function scale_accel(b, x)
+  return scale_f(b, x.tank_accel_rate * x.accel_pct, CLASSIC.tank_accel_rate * 100)
 end
 
 -- -------------------------------------------------------------------------
@@ -464,6 +522,26 @@ local ENTRIES = {
   { "SWERVE_TURN_TICKS",           "TURN", function(b, x) return scale_turn(b, x, "turn_road") end },
   { "SWERVE_DEFENSIVE_TURN_TICKS", "TURN", function(b, x) return scale_turn(b, x, "turn_road") end },
   { "SQUAD_BLITZ_READY_TIMEOUT",   "TURN", function(b, x) return scale_turn(b, x, "turn_swamp") end },
+  -- Turn-radius speed caps: speed / turn rate = radius.
+  { "NAV_TURN_TOP_SPEED",    "TURN", function(b, x) return scale_turn_speed(b, x, "turn_road") end },
+  { "NAV_TURN_CRUISE_SPEED", "TURN", function(b, x) return scale_turn_speed(b, x, "turn_road") end },
+  { "ORBIT_FAST_SPEED",      "TURN", function(b, x) return scale_turn_speed_int(b, x, "turn_road") end },
+  { "ORBIT_BRAKE_SPEED",     "TURN", function(b, x) return scale_turn_speed_int(b, x, "turn_road") end },
+  { "SEA_NOGO_SPEED_CAP",    "TURN", function(b, x) return scale_turn_speed_int(b, x, "turn_boat") end },
+  { "BOAT_ALIGN_CRAWL",      "TURN", function(b, x) return scale_turn_speed_int(b, x, "turn_boat") end },
+  { "KILL_LGM_TURN_DELTA",   "TURN", function(b, x) return scale_turn_speed(b, x, "turn_road") end },
+
+  -- Brake and look-ahead distances, brake profiles, throttle gain.
+  { "NAV_BRAKE_MULT",           "ACCEL", scale_brake_dist },
+  { "NAV_BRAKE_MULT_PRECISE",   "ACCEL", scale_brake_dist },
+  { "CLIFF_NAV_LOOK_TICKS",     "ACCEL", scale_brake_dist },
+  { "INRANGE_COAST_PER_SPEED",  "ACCEL", scale_brake_dist },
+  { "NAV_BRAKE_FACTOR",         "ACCEL", scale_brake_gain },
+  { "NAV_BRAKE_FACTOR_PRECISE", "ACCEL", scale_brake_gain },
+  { "AP_BRAKE_ZONE_FACTOR",     "ACCEL", scale_brake_gain },
+  { "CLIFF_LOOK_MAX_WU",        "ACCEL", scale_stop_cap },
+  { "CLIFF_NAV_LOOK_MAX_STEPS", "ACCEL", scale_stop_cap_int },
+  { "KILL_LGM_SPEED_DELTA",     "ACCEL", scale_accel },
 
   -- Shell flight and gunsight.
   { "SHELL_SPEED",             "SHELL", ratio_f("shell_speed") },
@@ -502,7 +580,7 @@ end
 
 local GROUP_KEY = {}
 for _, g in ipairs({ "ARMOUR", "SHELLS", "RELOAD", "PILL", "BASE", "LGM",
-                     "SPEED", "TURN", "SHELL" }) do
+                     "SPEED", "TURN", "ACCEL", "SHELL" }) do
   GROUP_KEY[g] = "LIVE_PHYSICS_" .. g
 end
 

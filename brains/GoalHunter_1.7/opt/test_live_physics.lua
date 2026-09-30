@@ -10,6 +10,8 @@
 -- 2. A scaled scenario (full armour 20, taken 180%, speed 145%, full
 --    shells 8) gives the hand-computed numbers.
 -- 3. A missing info.rules, and LIVE_PHYSICS = false, change nothing.
+-- 7. Ice Rink (speed 140, accel 35, turn 55) and Juggernaut (speed 65,
+--    accel 60) scale the turn-radius caps and brake distances.
 -- =========================================================================
 
 package.path = "./?.lua;" .. package.path
@@ -115,6 +117,13 @@ local OLD = {
   SWERVE_TURN_TICKS = 35, SWERVE_DEFENSIVE_TURN_TICKS = 40,
   SQUAD_BLITZ_READY_TIMEOUT = 550,
   SHELL_SPEED = 32, TANK_COMBAT_SHELL_SPEED = 32, GUNSIGHT_MAX = 13.875,
+  NAV_TURN_TOP_SPEED = 64, NAV_TURN_CRUISE_SPEED = 48,
+  ORBIT_FAST_SPEED = 16, ORBIT_BRAKE_SPEED = 8, SEA_NOGO_SPEED_CAP = 16,
+  BOAT_ALIGN_CRAWL = 8, KILL_LGM_TURN_DELTA = 6,
+  NAV_BRAKE_MULT = 12, NAV_BRAKE_MULT_PRECISE = 24, CLIFF_NAV_LOOK_TICKS = 10,
+  INRANGE_COAST_PER_SPEED = 2, NAV_BRAKE_FACTOR = 0.08,
+  NAV_BRAKE_FACTOR_PRECISE = 0.04, AP_BRAKE_ZONE_FACTOR = 0.03,
+  CLIFF_LOOK_MAX_WU = 1280, CLIFF_NAV_LOOK_MAX_STEPS = 6, KILL_LGM_SPEED_DELTA = 2,
 }
 
 local function snapshot(C, LP)
@@ -351,6 +360,58 @@ do
   check("ARMOUR group off: ARMOUR_LOW stays 15", C.ARMOUR_LOW == 15, C.ARMOUR_LOW)
   check("ARMOUR group off: TANK_FULL_ARMOUR stays 40", C.TANK_FULL_ARMOUR == 40, C.TANK_FULL_ARMOUR)
   check("SHELLS group on: TANK_FULL_SHELLS 20", C.TANK_FULL_SHELLS == 20, C.TANK_FULL_SHELLS)
+end
+
+-- ---------------------------------------------------------------------------
+print("7. Ice Rink and Juggernaut: turn-radius caps and brake distances")
+do
+  local C, LP = fresh()
+  local m = classic_mods()
+  m.speed, m.accel, m.turn = 140, 35, 55
+  LP.apply({ rules = classic_rules(), mods = m, reload_ticks = 13 })
+  -- brake 0.25 x 35% = 0.0875 per tick: stop terms x 25/8.75, gains x 8.75/25.
+  -- Longest stop: (16*140)^2 * 25 / ((16*100)^2 * 8.75) = 5.6.
+  local E = {
+    NAV_TOP_SPEED = 64 * 1.4, NAV_CRUISE_SPEED = 48 * 1.4,
+    NAV_TURN_TOP_SPEED = 64 * 0.55, NAV_TURN_CRUISE_SPEED = 48 * 0.55,
+    ORBIT_FAST_SPEED = 9, ORBIT_BRAKE_SPEED = 4, SEA_NOGO_SPEED_CAP = 9,
+    BOAT_ALIGN_CRAWL = 4, KILL_LGM_TURN_DELTA = 6 * 0.55,
+    NAV_BRAKE_MULT = 12 * 25 / 8.75, NAV_BRAKE_MULT_PRECISE = 24 * 25 / 8.75,
+    CLIFF_NAV_LOOK_TICKS = 10 * 25 / 8.75, INRANGE_COAST_PER_SPEED = 2 * 25 / 8.75,
+    NAV_BRAKE_FACTOR = 0.08 * 8.75 / 25, NAV_BRAKE_FACTOR_PRECISE = 0.04 * 8.75 / 25,
+    AP_BRAKE_ZONE_FACTOR = 0.03 * 8.75 / 25,
+    CLIFF_LOOK_MAX_WU = 1280 * 5.6, CLIFF_NAV_LOOK_MAX_STEPS = 34,
+    KILL_LGM_SPEED_DELTA = 2 * 8.75 / 25,
+    SWERVE_TURN_TICKS = 64,   -- rnd(35 / 0.55)
+  }
+  for k, v in pairs(E) do
+    check(string.format("ice %s = %s", k, tostring(v)),
+          math.abs((C[k] or -1e9) - v) < 1e-9, C[k])
+  end
+
+  local C2, LP2 = fresh()
+  local m2 = classic_mods()
+  m2.speed, m2.accel = 65, 60
+  LP2.apply({ rules = classic_rules(), mods = m2, reload_ticks = 13 })
+  local E2 = {
+    NAV_TURN_TOP_SPEED = 64, NAV_TURN_CRUISE_SPEED = 48, ORBIT_FAST_SPEED = 16,
+    NAV_BRAKE_MULT = 12 * 25 / 15, NAV_BRAKE_FACTOR = 0.08 * 15 / 25,
+    -- longest stop 0.70 of classic: the scan caps never shrink
+    CLIFF_LOOK_MAX_WU = 1280, CLIFF_NAV_LOOK_MAX_STEPS = 6,
+    KILL_LGM_SPEED_DELTA = 2 * 15 / 25,
+  }
+  for k, v in pairs(E2) do
+    check(string.format("juggernaut %s = %s", k, tostring(v)),
+          math.abs((C2[k] or -1e9) - v) < 1e-9, C2[k])
+  end
+
+  -- ACCEL group off: brake terms stay classic, turn terms still scale.
+  local C3, LP3 = fresh()
+  C3.LIVE_PHYSICS_ACCEL = false
+  LP3.apply({ rules = classic_rules(), mods = m, reload_ticks = 13 })
+  check("ACCEL off: NAV_BRAKE_MULT stays 12", C3.NAV_BRAKE_MULT == 12, C3.NAV_BRAKE_MULT)
+  check("ACCEL off: NAV_TURN_CRUISE_SPEED still 26.4",
+        math.abs(C3.NAV_TURN_CRUISE_SPEED - 26.4) < 1e-9, C3.NAV_TURN_CRUISE_SPEED)
 end
 
 print(string.format("\n%d passed, %d failed", pass, fail))
