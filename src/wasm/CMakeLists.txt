@@ -7,7 +7,8 @@
 #   emcmake cmake -B build-wasm-game -S src/wasm
 #   cmake --build build-wasm-game
 #
-# Output: build-wasm-game/winbolo.html, winbolo.js, winbolo.wasm, winbolo.data
+# Output: build-wasm-game/winbolo.html, winbolo.js, winbolo.wasm, winbolo.data,
+# plus js/relay.js and img/ copied from web/
 #
 # Serve locally with: python3 -m http.server -d build-wasm-game
 
@@ -585,11 +586,37 @@ set_target_properties(winbolo PROPERTIES
     SUFFIX ".html"
 )
 
+# The page's own files beside winbolo.html: the relay picker the shell loads
+# from /js/relay.js, and the favicon, loading-screen logo and link-preview
+# image under /img. They keep their paths under web/, so the build directory
+# serves the same URLs the site does. One command per file, each depending
+# on its source, so editing one re-copies it on the next build.
+set(WEB_FILES_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/web")
+set(_web_files js/relay.js img/favicon.png img/wb2-logo.png img/wb2-og.jpg)
+set(_web_files_out)
+foreach(_w IN LISTS _web_files)
+    get_filename_component(_w_dir "${CMAKE_CURRENT_BINARY_DIR}/${_w}" DIRECTORY)
+    add_custom_command(
+        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${_w}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${_w_dir}
+        COMMAND ${CMAKE_COMMAND} -E copy ${WEB_FILES_SRC_DIR}/${_w}
+                ${CMAKE_CURRENT_BINARY_DIR}/${_w}
+        DEPENDS ${WEB_FILES_SRC_DIR}/${_w}
+        COMMENT "Copying web/${_w}"
+        VERBATIM)
+    list(APPEND _web_files_out "${CMAKE_CURRENT_BINARY_DIR}/${_w}")
+endforeach()
+add_custom_target(web_files DEPENDS ${_web_files_out})
+add_dependencies(winbolo web_files)
+
 # ---------------------------------------------------------------------------
 # wasm-dist: precompress the web assets (for Caddy
 # `file_server { precompressed br gzip }`) and pack everything a deploy needs
-# into wasm-dist.zip. Run explicitly — it is NOT part of the normal build, so
-# day-to-day builds don't re-brotli the data file:
+# into wasm-dist.zip: winbolo.{html,js,wasm,data}, js/relay.js, each with its
+# .br and .gz copies, and img/ as it is (PNG and JPEG are already compressed).
+# The zip keeps the js/ and img/ paths, so unzipping it into the site root is
+# the whole deploy. See docs/web-hosting.md. Run explicitly — it is NOT part
+# of the normal build, so day-to-day builds don't re-brotli the data file:
 #     cmake --build <build-dir> --target wasm-dist
 # Requires `brotli` (apt-get install brotli); gzip is already standard.
 # ---------------------------------------------------------------------------
@@ -600,7 +627,8 @@ if(BROTLI_EXE AND GZIP_EXE)
     # fallback for clients that accept neither encoding); -f overwrites stale
     # variants. CJK font subsetting brings the data file down to ~68 MB, small
     # enough to brotli every asset at -q 11.
-    set(_wasm_dist_assets winbolo.html winbolo.js winbolo.wasm winbolo.data)
+    set(_wasm_dist_assets winbolo.html winbolo.js winbolo.wasm winbolo.data
+                          js/relay.js)
     set(_wasm_dist_cmds)
     set(_wasm_dist_zip_files)
     foreach(_a IN LISTS _wasm_dist_assets)
@@ -608,6 +636,9 @@ if(BROTLI_EXE AND GZIP_EXE)
         list(APPEND _wasm_dist_cmds COMMAND ${GZIP_EXE} -f -k -9 "${_a}")
         list(APPEND _wasm_dist_zip_files "${_a}" "${_a}.br" "${_a}.gz")
     endforeach()
+    set(_wasm_dist_images ${_web_files})
+    list(FILTER _wasm_dist_images INCLUDE REGEX "^img/")
+    list(APPEND _wasm_dist_zip_files ${_wasm_dist_images})
 
     add_custom_target(wasm-dist
         ${_wasm_dist_cmds}
