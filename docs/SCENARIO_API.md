@@ -1552,8 +1552,9 @@ element is its name, with the operands after it in the order below:
 | `bar` | `{ "bar", x, y, w, h, colour, value, max }` | A horizontal bar filled to `value` over `max`, outlined. Both are 16-bit, so a bar can show a real total. |
 | `timer` | `{ "timer", x, y, colour, size, align, mode, tick }` | Minutes and seconds counting down to, or up from, a game tick. The client works it out against its own clock, so a countdown is one message rather than one a tick. |
 
-`size` is `"small"` or `"normal"`. `align` is `"left"`, `"centre"` or
-`"right"`, and says which way the text sits about its `x`. A timer's `mode` is
+`size` is `"small"`, `"normal"` or `"large"`, 8, 11 and 16 panel units high.
+A client from before `"large"` draws a large item at normal size. `align` is
+`"left"`, `"centre"` or `"right"`, and says which way the text sits about its `x`. A timer's `mode` is
 `"down"` or `"up"`, and its `tick` is a tick on `game.tick()`'s clock.
 
 ```lua
@@ -1568,11 +1569,13 @@ game.panel(0, {})            -- take it away again
 ```
 
 A list holds up to 128 primitives and is refused with `SCN_OP_TOO_BIG` past
-that, or if the whole list comes to more than the 1017 bytes one update
-carries. A primitive written wrong — a name that spells no primitive, an
+that, with each large item counted twice, or if the whole list comes to more
+than the 1017 bytes one update carries. A primitive written wrong — a name that spells no primitive, an
 operand missing, an operand that is not a number — stops the script, like any
 other call written wrong. A value the simulation will not take, such as a
-colour outside the palette, is refused as an answer the script can read.
+colour outside the palette, is refused as an answer the script can read. A
+`rect` with colour `none`, width and height 0 at `x` 2, `y` 0 is refused too:
+it draws nothing, and on the wire it is the mark that makes an item large.
 
 ### Colours
 

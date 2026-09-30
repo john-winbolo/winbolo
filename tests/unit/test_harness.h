@@ -3396,6 +3396,7 @@ int run_scenario_lua_game_type_resolves_scripted(void);
 int run_scenario_lua_panel_builds_bytes(void);
 int run_scenario_lua_panel_words_and_numbers(void);
 int run_scenario_lua_panel_refusals(void);
+int run_scenario_lua_panel_large_size(void);
 int run_scenario_lua_presentation_targets(void);
 int run_scenario_lua_score_and_announce(void);
 int run_scenario_lua_acting_rows_refuse_a_check(void);
@@ -3787,6 +3788,7 @@ int run_scenario_panel_parses_each_primitive(void);
 int run_scenario_panel_refuses_malformed(void);
 int run_scenario_panel_boundaries(void);
 int run_scenario_panel_roundtrip(void);
+int run_scenario_panel_large_size(void);
 /* And the timer primitive's text: the tick difference the drawer turns into
  * minutes and seconds, held to exact strings with no renderer behind it. */
 int run_scenario_panel_timer_text(void);

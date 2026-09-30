@@ -100,10 +100,16 @@ typedef enum {
     SCN_PANEL_COLOUR_RESERVED_14, SCN_PANEL_COLOUR_RESERVED_15
 } ScnPanelColour;
 
-/* Text height, in the frontend's own font. */
+/* Text height, in the frontend's own font.
+ *
+ * LARGE is a decoded value only. Its size byte never travels as 2: a
+ * large item goes on the wire as NORMAL followed by a size mark (see the
+ * byte layout below), because a build from before LARGE refuses a size
+ * byte past NORMAL and would drop the whole list. */
 typedef enum {
     SCN_PANEL_SIZE_SMALL  = 0,
-    SCN_PANEL_SIZE_NORMAL = 1
+    SCN_PANEL_SIZE_NORMAL = 1,
+    SCN_PANEL_SIZE_LARGE  = 2
 } ScnPanelTextSize;
 
 /* Which way text and timers sit about their x. */
@@ -159,7 +165,20 @@ typedef enum {
  * every slot, is 255.
  * tick is a game tick as serverSimGetTick answers it. A bar's value and
  * max are 16-bit so a bar can show a real total rather than one capped
- * at 255. */
+ * at 255.
+ *
+ * The size mark. A text, name or timer at SCN_PANEL_SIZE_LARGE is
+ * written with a size byte of NORMAL and followed at once by this rect:
+ *
+ *   1, x = SCN_PANEL_SIZE_LARGE, y = 0, w = 0, h = 0, colour = 0, fill = 0
+ *
+ * A build from before LARGE reads the mark as a colourless, empty rect,
+ * which it draws as nothing, so it shows the item at normal size rather
+ * than refusing the list. A build that knows LARGE folds the mark into
+ * the item before it and decodes one item. A mark anywhere else, and a
+ * size byte past NORMAL, are refused, so there is one way to write a
+ * large item. The mark counts as a primitive against
+ * SCN_PANEL_ITEMS_MAX, because an older parser counts it as one. */
 
 /* One decoded primitive. */
 typedef struct {
@@ -215,6 +234,16 @@ ScnPanelResult scnPanelParse(const uint8_t *bytes, uint16_t len, ScnPanelList *o
  * operand rules, so a list this writes is a list scnPanelParse takes
  * back unchanged. */
 uint16_t scnPanelWrite(const ScnPanelList *list, uint8_t *bytes, uint16_t cap);
+
+/* How many primitives a decoded list comes to on the wire: its items,
+ * plus one size mark for each large one. This is the count held to
+ * SCN_PANEL_ITEMS_MAX. */
+uint16_t scnPanelWireCount(const ScnPanelList *list);
+
+/* Whether a decoded rect has the size mark's shape. Such a rect is
+ * refused as an item of its own, since on the wire it would read as the
+ * mark; a list reader checks this to refuse it with a clear reason. */
+int scnPanelIsSizeMark(const ScnPanelItem *item);
 
 /* Every operand the layout spends one byte on has to fit one. */
 BOLO_STATIC_ASSERT(SCN_PANEL_UNITS <= 256, scn_panel_units_fit_a_byte);

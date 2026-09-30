@@ -385,6 +385,11 @@ with multi-byte fields big-endian. A reader hands them to `scnPanelParse`,
 which is the one function every frontend validates a list with, so a malformed
 list is refused identically wherever it arrives.
 
+A text, name or timer at the large size is stored with a size byte of normal
+and followed by a size mark: a rect with `x` 2 and every other operand 0.
+A reader from before the large size draws that rect as nothing and the item at
+normal size; `scnPanelParse` folds the mark back into the item before it.
+
 Written by the scenario funnel's panel arm
 (`src/server/sim/server_sim_scenario.c`), which parses a list before it
 publishes one, so a list in a recording is one that parses. The viewer keeps

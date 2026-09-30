@@ -1764,6 +1764,7 @@ static const ScnLuaWordSet kScnColours = {
 static const ScnLuaWord kScnSizeWords[] = {
     { "small",  (int)SCN_PANEL_SIZE_SMALL  },
     { "normal", (int)SCN_PANEL_SIZE_NORMAL },
+    { "large",  (int)SCN_PANEL_SIZE_LARGE  },
 };
 static const ScnLuaWordSet kScnSizes = {
     kScnSizeWords, sizeof(kScnSizeWords) / sizeof(kScnSizeWords[0]),
@@ -1802,7 +1803,7 @@ BOLO_STATIC_ASSERT(
     colour_words_are_the_whole_palette);
 BOLO_STATIC_ASSERT(
     (int)(sizeof(kScnSizeWords) / sizeof(kScnSizeWords[0])) ==
-        (int)SCN_PANEL_SIZE_NORMAL + 1,
+        (int)SCN_PANEL_SIZE_LARGE + 1,
     size_words_are_every_text_size);
 BOLO_STATIC_ASSERT(
     (int)(sizeof(kScnAlignWords) / sizeof(kScnAlignWords[0])) ==
@@ -3976,7 +3977,7 @@ static int scnPanelItem(lua_State *L, int listIdx, int n, ScnPanelItem *item) {
             case SCN_ARG_SIZE:
                 if (!scnPanelWord(L, entry, n, pos, name, &kScnSizes, &v[i])) {
                     return scnPanelRange(L, n, name, v[i], 0,
-                                         SCN_PANEL_SIZE_NORMAL);
+                                         SCN_PANEL_SIZE_LARGE);
                 }
                 break;
             case SCN_ARG_ALIGN:
@@ -4044,6 +4045,14 @@ static int scnPanelItem(lua_State *L, int listIdx, int n, ScnPanelItem *item) {
             item->u.rect.h      = (uint8_t)v[3];
             item->u.rect.colour = (uint8_t)v[4];
             item->u.rect.fill   = (uint8_t)v[5];
+            /* The one rect the parser turns down: on the wire it is the mark
+               that makes the item before it large. It draws nothing anyway. */
+            if (scnPanelIsSizeMark(item)) {
+                return scnRefused(L, SCN_OP_RANGE,
+                                  "list entry %d: a colourless empty rect at "
+                                  "x %d, y 0 is reserved", n,
+                                  (int)SCN_PANEL_SIZE_LARGE);
+            }
             break;
         case SCN_PANEL_OP_LINE:
             item->u.line.x0     = (uint8_t)v[0];
@@ -4129,6 +4138,14 @@ static int scnLuaPanel(lua_State *L) {
         if (refused != 0) {
             return refused;
         }
+    }
+    /* Each large item costs a second primitive on the wire, and the limit is
+       on those, since an older client counts them. */
+    if (scnPanelWireCount(&list) > SCN_PANEL_ITEMS_MAX) {
+        return scnRefused(L, SCN_OP_TOO_BIG,
+                          "the list comes to %d primitives with each large "
+                          "item counted twice, limit %d",
+                          (int)scnPanelWireCount(&list), SCN_PANEL_ITEMS_MAX);
     }
     op.type           = SCN_OP_PANEL;
     op.u.panel.target = target;

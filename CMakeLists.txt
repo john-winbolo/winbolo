@@ -6320,6 +6320,7 @@ set(_unit_test_names
     scenario_lua_panel_builds_bytes
     scenario_lua_panel_words_and_numbers
     scenario_lua_panel_refusals
+    scenario_lua_panel_large_size
     scenario_lua_presentation_targets
     scenario_lua_score_and_announce
     scenario_lua_acting_rows_refuse_a_check
@@ -6570,6 +6571,7 @@ set(_unit_test_names
     scenario_panel_refuses_malformed
     scenario_panel_boundaries
     scenario_panel_roundtrip
+    scenario_panel_large_size
     scenario_panel_timer_text
     scenario_announce_remaining
     scenario_panel_slot_rect

@@ -147,6 +147,8 @@ static float strokeWidth(const ScnPanelDrawEnv *env) {
 static float textHeight(const ScnPanelDrawEnv *env, uint8_t size) {
     float units = (size == (uint8_t)SCN_PANEL_SIZE_SMALL)
                       ? SCN_PANEL_TEXT_SMALL_UNITS
+                  : (size == (uint8_t)SCN_PANEL_SIZE_LARGE)
+                      ? SCN_PANEL_TEXT_LARGE_UNITS
                       : SCN_PANEL_TEXT_NORMAL_UNITS;
     float px = units * env->scale;
     /* ImGui rasterises nothing below a pixel or two, and a line the player
