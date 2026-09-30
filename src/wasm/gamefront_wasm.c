@@ -41,6 +41,7 @@
 #include "../gui/sdl3/sdl3draw.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "../gui/sdl3/sdl3imgui.h"
+#include "../gui/sdl3/dialogs/imgui_mapchooser.h"
 #include "../gui/sdl3/luabrainshandler.h"
 
 /* Forward declaration */
@@ -199,6 +200,15 @@ float gameFrontOverviewZoom = 1.0f;
 bool  gameFrontOverviewFollow = TRUE;
 bool  gameFrontShowMapOverview = FALSE;
 bool  gameFrontFullScreen = FALSE;
+
+/* Scenario panel position, size and opacity (-1 = never moved/resized/set;
+ * [WINDOW] section on desktop). The wasm build never persists window
+ * settings, but the shared scenario panel in sdl3imgui.cpp reads and writes
+ * the symbols. */
+int gameFrontScnPanelX = -1;
+int gameFrontScnPanelY = -1;
+int gameFrontScnPanelScale = -1;
+int gameFrontScnPanelAlpha = -1;
 
 bool isServer = FALSE;
 bool useAutoslow;
@@ -994,6 +1004,25 @@ uint8_t gameFrontSpBotMode(const char *brainPath) { (void)brainPath; return 0; }
  * lobby re-derives it from the name each session (same result every time). */
 bool gameFrontGetBotTagColor(const char *botName, uint32_t *rgb) { (void)botName; (void)rgb; return false; }
 void gameFrontSetBotTagColor(const char *botName, uint32_t rgb) { (void)botName; (void)rgb; }
+/* No per-scenario panel layout either. Window geometry stays out of the
+ * cloud-synced prefs, so no row is ever remembered and the panel keeps
+ * whatever the gameFrontScnPanel* globals hold. */
+bool gameFrontGetScnPanelLayout(const char *scenario, int *x, int *y,
+                                int *scale, int *alpha) {
+  (void)scenario; (void)x; (void)y; (void)scale; (void)alpha;
+  return false;
+}
+void gameFrontSetScnPanelLayout(const char *scenario, int x, int y,
+                                int scale, int alpha) {
+  (void)scenario; (void)x; (void)y; (void)scale; (void)alpha;
+}
+/* The map chooser tags a map that has a script beside it. The browser build
+ * links no scenario library, so every map reads plain here; desktop asks the
+ * library through scenarioHostMapHasScript. */
+bool mapChooserMapHasScript(const char *mapPath) {
+  (void)mapPath;
+  return false;
+}
 /* No WinBolo.net stats plumbing here either, so the skill guess has nothing
  * to go on: the browser build gets the same Hard every difficulty currently
  * plays like. */
