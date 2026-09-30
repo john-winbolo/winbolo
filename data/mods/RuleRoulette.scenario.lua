@@ -232,8 +232,11 @@ local function build_panel()
   list[#list + 1] = { "text", 3, y, "grey", "small", "left", "Next mode in" }
   list[#list + 1] = { "timer", 125, y, "yellow", "small", "right", "down", next_at }
   y = y + 9
-  -- Drains from full to empty over the mode, beside the clock above it.
-  local secs = clamp(math.floor((next_at - game.tick() + 99) / 100), 0, mode_len)
+  -- Shows the same whole seconds as the clock above it. The clock floors
+  -- its ticks, so from one tick after this draw it reads one second less
+  -- than the ticks left now; the bar uses that value, so the two agree
+  -- until the next redraw and the bar is empty in the mode's last second.
+  local secs = clamp(math.floor((next_at - game.tick() - 1) / 100), 0, mode_len)
   list[#list + 1] = { "bar", 3, y, 122, 4, "yellow", secs, mode_len }
   y = y + 7
   if preview > 0 then
