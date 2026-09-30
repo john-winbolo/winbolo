@@ -1444,11 +1444,11 @@ static void updatePreview(MapChooserState *state, SDL_Renderer *renderer) {
 }
 
 /* Select the first map row the "Scenarios only" tick lets through and
- * preview it, as a folder click does. With no such row and the tick off,
+ * preview it, for a folder click. With no such row and the tick off,
  * falls back to the empty path, the inbuilt Everard marker. With the
  * tick on, Everard is hidden too, so the selection and preview are
- * cleared instead. The provider's onSelect is not called: like a folder
- * click, this only moves the chooser's own selection. */
+ * cleared instead. The provider's onSelect is not called: a folder
+ * click only moves the chooser's own selection. */
 static void selectFirstShownMap(MapChooserState *state,
                                 SDL_Renderer *renderer,
                                 bool scenariosOnly) {
@@ -2043,16 +2043,24 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
         renderViewModeToggle(state, renderer);
         /* "Scenarios only" — a client-side filter like the plain
          * search, so a change needs no rescan. Sits right of the view
-         * toggle, at the search options' smaller font and frame.
+         * toggle, at the search options' smaller font and frame, or
+         * on its own line below when the list panel is too narrow.
          * Greyed out while the rows come from a server-wide search,
          * whose reply does not say which hits have a script; ticked,
          * it would hide every hit. */
         if (state->offerScenariosOnly) {
-            ImGui::SameLine();
             ImGui::PushFont(NULL, ImGui::GetStyle().FontSizeBase * 0.85f);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
                 ImVec2(ImGui::GetStyle().FramePadding.x,
                        ImGui::GetStyle().FramePadding.y * 0.5f));
+            float boxW = ImGui::GetFrameHeight()
+                       + ImGui::GetStyle().ItemInnerSpacing.x
+                       + ImGui::CalcTextSize(
+                             langGetText(STR_MAPCHOOSER_SCENARIOSONLY)).x;
+            ImGui::SameLine();
+            if (ImGui::GetContentRegionAvail().x < boxW) {
+                ImGui::NewLine();
+            }
             bool untagged = state->searchRowsUntagged;
             if (untagged) ImGui::BeginDisabled();
             ImGui::Checkbox(langGetText(STR_MAPCHOOSER_SCENARIOSONLY),
@@ -2075,15 +2083,21 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                           && state->scenariosOnly
                           && !state->searchRowsUntagged;
         /* The tick can hide the selected map (ticked just now, or the
-         * rows were replaced). Move the selection to the first map
-         * still shown so the preview does not show a hidden one. */
+         * rows were replaced). Only drop the row highlight, the same
+         * "not in the list" state a picked custom file uses. The path
+         * and preview stay on that map, because it is still the map
+         * "Use This Map" / OK will use: on the Server Maps tab the
+         * server keeps the map the last click sent it. Moving the
+         * selection to another row would show one map and commit
+         * another, and calling onSelect would send a preview to the
+         * whole lobby on a filter click. discoverMaps puts the index
+         * back by path on a refresh; this check drops it again. */
         if (scenariosOnly && state->selectedIdx >= 0 &&
             state->selectedIdx < state->numMaps) {
             const MapChooserEntry *sel = &state->maps[state->selectedIdx];
             if (SDL_strcmp(sel->path, state->selectedPath) == 0 &&
                 !mapChooserEntryPassesScenarioFilter(sel, true)) {
-                selectFirstShownMap(state, renderer, true);
-                changed = true;
+                state->selectedIdx = -1;
             }
         }
         /* Map rows the filters let through this frame, so an empty
