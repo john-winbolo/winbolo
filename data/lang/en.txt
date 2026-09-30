@@ -832,6 +832,22 @@ STR_MAPCHOOSER_SCENARIOSONLY=Scenarios only
 STR_MAPCHOOSER_SCENARIOSONLY_TIP=Show only the maps that carry their own scenario script.
 STR_MAPCHOOSER_NOSCENARIOMAPS=No maps with a scenario here
 STR_MAPCHOOSER_SCENARIOSONLY_NOSEARCH=This filter does not work on a server-wide search. The server does not say which hits have a scenario.
+STR_MAPCHOOSER_VIEW_LIST=List
+STR_MAPCHOOSER_VIEW_GRID=Grid
+STR_MAPCHOOSER_VIEW_LIST_TIP=List view
+STR_MAPCHOOSER_VIEW_GRID_TIP=Grid view
+STR_MAPCHOOSER_SEARCH_HINT=Search...
+STR_MAPCHOOSER_SEARCH_CLEAR=Clear search
+STR_MAPCHOOSER_SEARCH_SUBFOLDERS=Search subfolders
+STR_MAPCHOOSER_CREATED_AT=Created at
+STR_MAPCHOOSER_CREATED_AT_TIP=Show file modification times in a second column.
+STR_MAPCHOOSER_COL_NAME=Name
+STR_MAPCHOOSER_COL_CREATED=Created
+STR_MAPCHOOSER_UNSTAR_TIP=Click to unstar
+STR_MAPCHOOSER_STAR_TIP=Click to star to always appear at the top
+STR_MAPCHOOSER_RESTORE_SIZE_TIP=Restore default size (Esc)
+STR_MAPCHOOSER_MAXIMIZE_TIP=Maximize
+STR_MAPCHOOSER_LOADING_PREVIEW=Loading preview...
 
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Status

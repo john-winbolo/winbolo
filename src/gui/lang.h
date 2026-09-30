@@ -892,6 +892,28 @@
 #define STR_MAPCHOOSER_SCENARIOSONLY_TIP    2716
 #define STR_MAPCHOOSER_NOSCENARIOMAPS       2717
 #define STR_MAPCHOOSER_SCENARIOSONLY_NOSEARCH 2718
+/* The rest of the chooser's own words: the list/grid toggle (a text
+ * label for when its icon cannot load, and its tooltip), the search box
+ * hint and its clear button's tooltip, the two search-option checkboxes
+ * and the tooltip on the second, the list view's two column headers, the
+ * star button's two tooltips, the preview's maximise button's two
+ * tooltips, and the preview pane's line while a map downloads. */
+#define STR_MAPCHOOSER_VIEW_LIST            2719
+#define STR_MAPCHOOSER_VIEW_GRID            2720
+#define STR_MAPCHOOSER_VIEW_LIST_TIP        2721
+#define STR_MAPCHOOSER_VIEW_GRID_TIP        2722
+#define STR_MAPCHOOSER_SEARCH_HINT          2723
+#define STR_MAPCHOOSER_SEARCH_CLEAR         2724
+#define STR_MAPCHOOSER_SEARCH_SUBFOLDERS    2725
+#define STR_MAPCHOOSER_CREATED_AT           2726
+#define STR_MAPCHOOSER_CREATED_AT_TIP       2727
+#define STR_MAPCHOOSER_COL_NAME             2728
+#define STR_MAPCHOOSER_COL_CREATED          2729
+#define STR_MAPCHOOSER_UNSTAR_TIP           2730
+#define STR_MAPCHOOSER_STAR_TIP             2731
+#define STR_MAPCHOOSER_RESTORE_SIZE_TIP     2732
+#define STR_MAPCHOOSER_MAXIMIZE_TIP         2733
+#define STR_MAPCHOOSER_LOADING_PREVIEW      2734
 
 /* Tablet HUD */
 #define STR_TABLET_STATUS_TITLE             803

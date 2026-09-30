@@ -836,9 +836,13 @@ static void renderViewModeToggle(MapChooserState *state,
         if (clicked) state->viewMode = mode;
     };
 
-    drawBtn("##mcViewList", s_iconListView, "List", 0, "List view");
+    drawBtn("##mcViewList", s_iconListView,
+            langGetText(STR_MAPCHOOSER_VIEW_LIST), 0,
+            langGetText(STR_MAPCHOOSER_VIEW_LIST_TIP));
     ImGui::SameLine();
-    drawBtn("##mcViewGrid", s_iconGridView, "Grid", 1, "Grid view");
+    drawBtn("##mcViewGrid", s_iconGridView,
+            langGetText(STR_MAPCHOOSER_VIEW_GRID), 1,
+            langGetText(STR_MAPCHOOSER_VIEW_GRID_TIP));
 }
 
 /* Render a "/" -separated path as a row of clickable segment
@@ -1961,7 +1965,8 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
             float xBtnW = ImGui::GetFrameHeight();
             float gap   = ImGui::GetStyle().ItemSpacing.x;
             ImGui::SetNextItemWidth(-(xBtnW + gap));
-            ImGui::InputTextWithHint("##MapSearch", "Search...",
+            ImGui::InputTextWithHint("##MapSearch",
+                                     langGetText(STR_MAPCHOOSER_SEARCH_HINT),
                                      state->searchFilter,
                                      sizeof(state->searchFilter));
             if (SDL_strcmp(prevFilter, state->searchFilter) != 0) {
@@ -1977,7 +1982,8 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
             }
             if (emptyFilter) ImGui::EndDisabled();
             if ((ImGui::IsItemHovered() || ImGui::IsItemFocused()) && !emptyFilter) {
-                ImGui::SetTooltip("Clear search");
+                ImGui::SetTooltip("%s",
+                    langGetText(STR_MAPCHOOSER_SEARCH_CLEAR));
             }
             /* The two search-option checkboxes draw at a smaller
              * font and frame so they read as secondary to the search
@@ -1987,7 +1993,8 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 ImVec2(ImGui::GetStyle().FramePadding.x,
                        ImGui::GetStyle().FramePadding.y * 0.5f));
             bool prevRecursive = state->searchRecursive;
-            ImGui::Checkbox("Search subfolders", &state->searchRecursive);
+            ImGui::Checkbox(langGetText(STR_MAPCHOOSER_SEARCH_SUBFOLDERS),
+                            &state->searchRecursive);
             if (prevRecursive != state->searchRecursive) {
                 toggleChanged = true;
             }
@@ -1995,8 +2002,9 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
              * the Modified column. Off by default so the list stays
              * compact; hover gives a tooltip explaining the trade. */
             ImGui::SameLine();
-            ImGui::Checkbox("Created at", &state->showModifiedColumn);
-            imguiHelpTooltip("Show file modification times in a second column.");
+            ImGui::Checkbox(langGetText(STR_MAPCHOOSER_CREATED_AT),
+                            &state->showModifiedColumn);
+            imguiHelpTooltip(langGetText(STR_MAPCHOOSER_CREATED_AT_TIP));
             ImGui::PopStyleVar();
             ImGui::PopFont();
         }
@@ -2299,7 +2307,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
         const int kStarColIdx = state->showModifiedColumn ? 2 : 1;
         const float kStarColW = ImGui::GetFrameHeight() + 4.0f;
         if (ImGui::BeginTable("##MapTable", kNumCols, tableFlags)) {
-            ImGui::TableSetupColumn("Name",
+            ImGui::TableSetupColumn(langGetText(STR_MAPCHOOSER_COL_NAME),
                 ImGuiTableColumnFlags_WidthStretch
                 | ImGuiTableColumnFlags_PreferSortAscending, 1.0f,
                 0 /* user_id 0 = name column */);
@@ -2307,7 +2315,8 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
              * default font size 130 px clears the trailing minutes
              * with a touch of breathing room so nothing clips. */
             if (state->showModifiedColumn) {
-                ImGui::TableSetupColumn("Created",
+                ImGui::TableSetupColumn(
+                    langGetText(STR_MAPCHOOSER_COL_CREATED),
                     ImGuiTableColumnFlags_WidthFixed
                     | ImGuiTableColumnFlags_PreferSortDescending, 130.0f,
                     1 /* user_id 1 = modified column */);
@@ -2458,7 +2467,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                         ? ImGui::ImageButton(btnId,
                             (ImTextureID)s_iconStarFull, ImVec2(sz, sz))
                         : ImGui::SmallButton("*");
-                    imguiHelpTooltip("Click to unstar");
+                    imguiHelpTooltip(langGetText(STR_MAPCHOOSER_UNSTAR_TIP));
                     ImGui::PopStyleColor(3);
                     ImGui::PopStyleVar();
                     if (toggled) {
@@ -2743,18 +2752,18 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                             ImVec4(1, 1, 1, 0.15f));
                         toggled = ImGui::ImageButton(btnId,
                             (ImTextureID)tex, ImVec2(sz, sz));
-                        imguiHelpTooltip(isStarred
-                            ? "Click to unstar"
-                            : "Click to star to always appear at the top");
+                        imguiHelpTooltip(langGetText(isStarred
+                            ? STR_MAPCHOOSER_UNSTAR_TIP
+                            : STR_MAPCHOOSER_STAR_TIP));
                         ImGui::PopStyleColor(3);
                         ImGui::PopStyleVar();
                     } else {
                         /* Textual fallback if the SVG didn't load. */
                         toggled = ImGui::SmallButton(
                             isStarred ? "*" : "+");
-                        imguiHelpTooltip(isStarred
-                            ? "Click to unstar"
-                            : "Click to star to always appear at the top");
+                        imguiHelpTooltip(langGetText(isStarred
+                            ? STR_MAPCHOOSER_UNSTAR_TIP
+                            : STR_MAPCHOOSER_STAR_TIP));
                     }
                     if (toggled) {
                         mapStarsToggle(scope, ent.path, ent.name,
@@ -3043,9 +3052,9 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 if (clicked) {
                     *state->maximizePtr = !maxed;
                 }
-                imguiHelpTooltip(maxed
-                    ? "Restore default size (Esc)"
-                    : "Maximize");
+                imguiHelpTooltip(langGetText(maxed
+                    ? STR_MAPCHOOSER_RESTORE_SIZE_TIP
+                    : STR_MAPCHOOSER_MAXIMIZE_TIP));
                 ImGui::PopStyleColor(3);
                 ImGui::SetCursorScreenPos(saved);
                 /* Submit a zero-size dummy so ImGui re-anchors the
@@ -3072,8 +3081,8 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 double t = ImGui::GetTime() * 8.0;
                 const char *frames[] = {"|", "/", "-", "\\"};
                 int idx = ((int)t) & 3;
-                ImGui::TextDisabled("%s  Loading preview...",
-                                     frames[idx]);
+                ImGui::TextDisabled("%s  %s", frames[idx],
+                    langGetText(STR_MAPCHOOSER_LOADING_PREVIEW));
             } else {
                 ImGui::TextDisabled("%s", langGetText(STR_MAPCHOOSER_NOPREVIEW));
             }
