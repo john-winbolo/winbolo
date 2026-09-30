@@ -873,6 +873,9 @@
  * shown is decided from the window's real state, not from the preference. */
 #define STR_DLGWELCOME_SWITCH_CLASSIC       1991
 #define STR_DLGWELCOME_SWITCH_FULLSCREEN    1992
+/* The web client's label for the single-player row, which opens a practice
+ * game in the in-game lobby. */
+#define STR_DLGWELCOME_PRACTICE             2735
 /* Map Chooser dialog */
 #define STR_MAPCHOOSER_EVERARD              793
 #define STR_MAPCHOOSER_LOADMAP              794

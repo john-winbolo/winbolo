@@ -646,6 +646,7 @@ static const LangEntry langTable[] = {
     {790,  "Map Editor"},
     {791,  "Log Viewer"},
     {792,  "Internet"},
+    {2735, "Practice"},
     {793,  "Everard Island (Inbuilt)"},
     {794,  "Load a Map"},
     {795,  "Load from Device..."},

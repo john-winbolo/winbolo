@@ -421,6 +421,76 @@ static bool wasmPickBackgroundMap(char *out, size_t outLen) {
   return TRUE;
 }
 
+/* Find the brain practice bots run, trying the same paths in the same order
+ * as the desktop's single-player lookup (gamefront.c findBrainPath). The web
+ * preloads /Brains/GoalHunter_1.7, which the first path finds. */
+static bool wasmFindBrainPath(char *out, size_t outLen) {
+  const char *candidates[] = {
+    "Brains/GoalHunter_1.7/init.lua",
+    "brains/GoalHunter_1.7/init.lua",
+    "data/Brains/GoalHunter_1.7/init.lua",
+  };
+  int i;
+  for (i = 0; i < 3; i++) {
+    FILE *f = fopen(candidates[i], "r");
+    if (f) {
+      fclose(f);
+      snprintf(out, outLen, "%s", candidates[i]);
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+/* Seed the practice lobby with one enemy bot, as desktop single player does
+ * when there is no saved bot setup: the player on team 1, "Bot 1" in slot 1
+ * on team 2. The steps and their order are the desktop's (gamefront.c, the
+ * single-player bot setup): the bot's mode and difficulty go into the slot
+ * before the bot is created, so its brain loads with them, and the lobby's
+ * brain dropdown is pointed at the brain it runs. No bot with the AI policy
+ * on none or no brain found. */
+static void wasmSeedPracticeBot(const char *brainPath) {
+  const BYTE slot       = 1;
+  const BYTE botTeam    = 2;
+  const BYTE playerTeam = 1;
+  uint8_t spMode, spLevel;
+  const BrainList *bl;
+
+  if (compTanks == aiNone || brainPath[0] == '\0') return;
+
+  spMode  = gameFrontSpBotMode(brainPath);
+  spLevel = gameFrontSpBotLevel(brainPath, spMode);
+  /* Resolved through the one rule a new bot follows. A bot appearing for
+   * the first time does not take the player's remembered manual pick. */
+  serverSimResolveNewBotConfig(wasmServerSim, (int)botTeam, brainPath, false,
+                               &spMode, &spLevel);
+  serverSimSetBotConfig(wasmServerSim, slot, spMode, spLevel,
+                        0 /* personality: normal */, NULL);
+  serverSimCreateBot(wasmServerSim, slot, brainPath, "Bot 1", compTanks,
+                     gametype, hiddenMines, 0, NULL);
+  /* serverSimCreateBot leaves the lobby brain index at the 0xFF default, so
+   * the Bot Code dropdown would read "(none)". Point it at the brain's
+   * catalogue entry: an exact path match, else the brain directory's name
+   * inside the path. */
+  bl = serverSimGetBrainList(wasmServerSim);
+  if (bl != NULL) {
+    int k;
+    for (k = 0; k < bl->count; k++) {
+      const char *kp = serverSimGetBrainPathForIdx(wasmServerSim, (uint8_t)k);
+      if ((kp && SDL_strcasecmp(kp, brainPath) == 0) ||
+          strstr(brainPath, bl->entries[k].name) != NULL) {
+        serverSimSetBotBrainIdxFor(wasmServerSim, slot, (uint8_t)k);
+        break;
+      }
+    }
+  }
+  clientSimNetSendTeamSet(humanSim, slot, botTeam);
+  clientSimNetSendTeamSet(humanSim, 0, playerTeam);
+  /* The alliance pass at lobby entry saw an empty lobby; run it again now
+   * that the player and the bot have teams. */
+  serverSimReapplyTeamAlliances(wasmServerSim);
+}
+
 /* -------------------------------------------------------
  * gameFrontWasmSetup — page-lifetime setup, run once per page
  * ------------------------------------------------------- */
@@ -765,14 +835,35 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
       clientSimSetTutorial(humanSim, true);
     }
 
-    /* WASM single-player: no lobby, run immediately. acceptRemoteClients
-     * is zero-init false so the UDP / WBN / tracker bring-up is
-     * skipped; skipLobby drives the StartGameInPlace transition;
-     * viewPlayer 0 is the SP convention. */
+    /* The brain practice bots run. Resolved once for the config's bot brain
+     * and the starting bot below. */
+    char spBrainPath[FILENAME_MAX] = "";
+    if (!wantTutorial) {
+      wasmFindBrainPath(spBrainPath, sizeof(spBrainPath));
+    }
+
+    /* acceptRemoteClients, WinBolo.net, the tracker and NAT stay zero-init
+     * off, so the network bring-up is skipped. The tutorial skips the lobby
+     * and runs immediately (skipLobby drives the StartGameInPlace
+     * transition); practice opens the lobby as desktop single player does,
+     * with the desktop's no-prefs AI policy, Full Advantage. viewPlayer 0 is
+     * the SP convention. */
     {
       ServerInstanceConfig cfg;
       memset(&cfg, 0, sizeof(cfg));
-      cfg.skipLobby = true;
+      if (wantTutorial) {
+        cfg.skipLobby = true;
+      } else {
+        compTanks             = aiFull;
+        cfg.password          = password;
+        cfg.maxPlayers        = MAX_TANKS;
+        cfg.compTanks         = (BYTE)compTanks;
+        cfg.lobbyEnabled      = true;
+        cfg.emptyResetEnabled = true;
+        cfg.hasPassword       = (password[0] != '\0');
+        cfg.botBrainPath      = (spBrainPath[0] != '\0') ? spBrainPath : NULL;
+        cfg.botAiType         = (BYTE)compTanks;
+      }
       if (!serverInstanceStartup(wasmServerSim, &cfg)) {
         printf("[WASM] serverInstanceStartup failed\n");
         serverSimDestroy(wasmServerSim);
@@ -786,10 +877,17 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
      * chose the single-player name (a validated ?name= or "Me") before this
      * start ran. */
 
-    /* Run the 12-step join+install in one call. */
-    if (!clientSimConnectLocal(humanSim, wasmServerSim,
-                               gameFrontName, "", 0, 0)) {
-      printf("[WASM] clientSimConnectLocal failed: %s\n",
+    /* Run the 12-step join+install in one call. The tutorial's transport
+     * ticks the server itself; practice's is passive, as desktop single
+     * player's is, and main_wasm.c ticks the server through
+     * serverInstanceTick. */
+    bool connected = wantTutorial
+        ? clientSimConnectLocal(humanSim, wasmServerSim,
+                                gameFrontName, "", 0, 0)
+        : clientSimConnectLocalPassive(humanSim, wasmServerSim,
+                                       gameFrontName, "", 0, 0);
+    if (!connected) {
+      printf("[WASM] local connect failed: %s\n",
              clientSimGetConnectErrorReason(humanSim));
       serverSimDestroy(wasmServerSim);
       wasmServerSim = NULL;
@@ -799,9 +897,18 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
     wasmTransportActive = TRUE;
     /* Session-type flag for the lobby/UI (hide multiplayer-only controls).
      * The shared tick core's keys-half pump skip keys off
-     * clientSimTransportTicksServer, which clientSimConnectLocal (active)
-     * set above — not off this flag. */
+     * clientSimTransportTicksServer, which the connect set above — not off
+     * this flag. */
     clientSimSetIsSinglePlayer(humanSim, true);
+    if (!wantTutorial) {
+      /* Practice enters the lobby, where the player picks the map, bots
+       * and settings and presses Start. The same four flags desktop
+       * single player sets after its connect. */
+      clientSimSetInLobby(humanSim, true);
+      clientSimSetNetStatus(humanSim, netLobby);
+      clientSimSetMapDownloadComplete(humanSim, true);
+      wasmSeedPracticeBot(spBrainPath);
+    }
     /* Phase 2: connect registers the auto-subscriber. Clear the
      * legacy handle so the teardown path's unregister is a no-op. */
     wasmControlSub = SUBSCRIBER_HANDLE_INVALID;

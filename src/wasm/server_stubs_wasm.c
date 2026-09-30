@@ -33,14 +33,17 @@
  *     link. Single-player passes acceptRemoteClients=false, so the only
  *     live work startup does is serverSimApplyInstanceConfig; the
  *     transport / WBN / NAT branches are dead. Mirrors the iOS / Android
- *     / BrainTest local-only lifecycle stubs.
+ *     / BrainTest local-only lifecycle stubs. The tick runs the lobby and
+ *     round steps a local game needs (server_sim_lifecycle_local.c) for
+ *     the practice game, whose server the page ticks.
  */
 
 #include <stddef.h>
 #include <string.h>
 #include "global.h"
 #include "server_sim.h"
-#include "server_sim_lifecycle.h"  /* serverSimApplyInstanceConfig */
+#include "server_sim_lifecycle.h"  /* serverSimApplyInstanceConfig, the
+                                    * serverSimLocal* round steps */
 #include "server_lifecycle.h"
 #include "server_dedicated_log.h"
 
@@ -77,5 +80,53 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   return TRUE;
 }
 
-void serverInstanceTick(ServerSim *sim) { (void)sim; }
+/* Ticks run, counted at the top of each call the way the UDP server counts
+ * its receive passes. The lobby-slot heartbeat reads it. */
+static uint32_t s_localTickCount = 0;
+
+/* The browser client's local server tick: the same lobby and round steps as
+ * serverInstanceTick in server_lifecycle.c, in the same order and under the
+ * same conditions, without the network server around them (no UDP, no
+ * WinBolo.net, no tracker or NAT, no brain-record sessions) and without the
+ * dedicated server's options (map rotation, -mapdir, auto-close, empty
+ * reset). main_wasm.c calls it once per 20 ms tick for a game whose local
+ * transport does not tick the server itself. The web's threads are
+ * single-threaded no-ops, so there is no lock to take. */
+void serverInstanceTick(ServerSim *sim) {
+  if (sim == NULL) return;
+  s_localTickCount++;
+
+  if (serverSimGetState(sim) == serverStateRunning) {
+    ServerState preTickState;
+    serverSimLocalBotTick(sim);
+    preTickState = serverSimGetState(sim);
+    serverSimTick(sim);
+    if (preTickState == serverStateRunning &&
+        serverSimGetState(sim) == serverStateGameOver) {
+      serverSimLocalOnGameOver(sim);
+    }
+  } else {
+    /* Lobby/countdown/gameover: single tick for state machine processing */
+    ServerState preTickState = serverSimGetState(sim);
+    serverSimTick(sim);
+    serverSimLocalPublishBalanceProposal(sim);
+    if (preTickState == serverStateCountdown) {
+      if (serverSimGetState(sim) == serverStateRunning) {
+        serverSimLocalOnGameStart(sim);
+      } else {
+        serverSimLocalCountdownTick(sim);
+      }
+    }
+    if (preTickState == serverStateGameOver &&
+        serverSimGetState(sim) == serverStateLobby) {
+      serverSimLocalOnReturnToLobby(sim);
+    }
+    serverSimLocalLobbySlotHeartbeat(sim, s_localTickCount);
+    if (serverSimGetState(sim) == serverStateLobby ||
+        serverSimGetState(sim) == serverStateCountdown) {
+      serverSimFlushBotConfigPublishes(sim);
+    }
+  }
+}
+
 void serverInstanceShutdown(ServerSim *sim) { (void)sim; }

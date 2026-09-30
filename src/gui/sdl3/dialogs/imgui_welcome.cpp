@@ -417,7 +417,12 @@ extern "C" int imguiWelcomeShow(void) {
              * -Wmissing-field-initializers warnings. */
             struct { langid labelId; int code; bool show; const char* rawLabel; } miniModes[] = {
                 { STR_DLGSETTINGS_TUTORIAL, RESULT_TUTORIAL,     showTutorial,     nullptr },
+#if defined(__EMSCRIPTEN__)
+                /* The same row opens a practice game in the in-game lobby. */
+                { STR_DLGWELCOME_PRACTICE,  RESULT_SINGLEPLAYER, true,             nullptr },
+#else
                 { STR_DLGWELCOME_SINGLE,    RESULT_SINGLEPLAYER, true,             nullptr },
+#endif
                 { STR_DLGWELCOME_INTERNET,  RESULT_INTERNET,     true,             nullptr },
 #if !defined(__EMSCRIPTEN__)
                 /* A browser tab cannot host or find a game on the LAN. */

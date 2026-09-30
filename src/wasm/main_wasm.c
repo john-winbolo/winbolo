@@ -56,6 +56,7 @@
 #include "../gui/sdl3/dialogs/imgui_tutorial_overlay.h"
 #include "../gui/sdl3/dialogs/imgui_welcome.h"
 #include "server_sim.h"
+#include "../server/server_lifecycle.h"  /* serverInstanceTick */
 #include "tutorial.h"
 #include "cJSON.h"
 #include "gamefront_wasm.h"
@@ -160,6 +161,10 @@ static time_t ticks = 0;
 static double gameTickAccum = 0.0;
 static double lastFrameTime = 0.0;
 
+/* Flips on each 10 ms client step; the page ticks a practice game's server
+ * on every second one (see wasmTickLocalServer). */
+static bool s_serverTickDue = FALSE;
+
 /* -------------------------------------------------------
  * SDL message handler
  * ------------------------------------------------------- */
@@ -256,6 +261,24 @@ static void windowRunGameTick(ClientSim *cs) {
   }
 }
 
+/* Tick the local server of a game whose transport does not tick it itself
+ * (practice, connected passive). Called once per 10 ms client step, before
+ * the step, and runs serverInstanceTick on every second call: once per
+ * SERVER_TICK_LENGTH (20 ms), the rate desktop's host timer ticks its
+ * single-player server at. The step that follows then pulls the fresh
+ * snapshot. The tutorial's transport ticks the server inside its own tick,
+ * and a network game has no local server, so both return here untouched. */
+static void wasmTickLocalServer(ClientSim *cs) {
+  ServerSim *srv = gameFrontGetServerSim();
+  if (srv == NULL || clientSimTransportTicksServer(cs)) {
+    return;
+  }
+  s_serverTickDue = !s_serverTickDue;
+  if (s_serverTickDue) {
+    serverInstanceTick(srv);
+  }
+}
+
 /* -------------------------------------------------------
  * main_loop_iteration — one game frame, called by wasmRunGame
  * ------------------------------------------------------- */
@@ -345,6 +368,7 @@ static void main_loop_iteration(void) {
     int ticksThisFrame = 0;
     while (gameTickAccum >= GAME_TICK_LENGTH && ticksThisFrame < MAX_CATCHUP) {
       gameTickAccum -= GAME_TICK_LENGTH;
+      wasmTickLocalServer(cs);
       windowRunGameTick(cs);
       ticksThisFrame++;
     }
@@ -880,6 +904,7 @@ static void wasmGameStateReset(void) {
   s_leaveRequested = FALSE;
   isInMenu = FALSE;
   gameTickAccum = 0.0;
+  s_serverTickDue = FALSE;
   lastFrameTime = emscripten_get_now();
   oldTick = SDL_GetTicks();
   dwSysFrameTotal = 0;
@@ -1448,7 +1473,13 @@ void frontEndAudioReturningToLobby(bool active) {
 }
 
 void frontEndGameOver(ClientSim *cs) {
-  (void)cs;
+  /* A practice round ends in the lobby: the server holds game over, then
+   * returns to the lobby with the win message, and the player stays in the
+   * page's game loop. Only a game with no lobby leaves here. */
+  ServerSim *srv = gameFrontGetServerSim();
+  if (srv != NULL && cs != NULL && !clientSimTransportTicksServer(cs)) {
+    return;
+  }
   imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBTIMELIMIT_END),
                     IMGUI_MSG_INFO, IMGUI_MSG_OK);
   finishedLoop = TRUE;
