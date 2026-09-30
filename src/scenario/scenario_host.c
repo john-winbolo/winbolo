@@ -9773,6 +9773,22 @@ static void scnMapChanged(void *ctx, ServerSim *sim, const char *mapPath) {
     scnDecideScenario(sim, (ScenarioHost **)ctx, mapPath);
 }
 
+void scenarioHostPublishMapScript(ServerSim *sim, const ScenarioHost *h) {
+    int which = -1;
+    int i;
+
+    if (sim == NULL) return;
+    if (h != NULL) {
+        for (i = 0; i < h->count; i++) {
+            if (h->entry[i].source == lobbyScenarioMap) {
+                which = i;
+                break;
+            }
+        }
+    }
+    scnPublishMapScript(sim, h, which);
+}
+
 void scenarioHostFollowMap(ServerSim *sim, ScenarioHost **slot) {
     if (sim == NULL) return;
     if (slot == NULL) {
