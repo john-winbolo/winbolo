@@ -105,14 +105,10 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
         serverSimConsoleMessage(msg);
     }
 
-    /* Drop any bots the previous occupants added, seats held for a bot that
-       was never fielded included — those have no bot manager entry, so the
-       roster is what has to be asked. */
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (serverSimIsBot(sim, i)) {
-            serverSimRemoveBot(sim, i);
-        }
-    }
+    /* Drop any bots the previous occupants added, the scenario's seats
+       included, so the decision below seats the template again even where
+       it reaches the one attached already. */
+    serverSimRemoveAllBots(sim);
 
     /* Clear per-slot start reservations back to the none sentinel. */
     for (i = 0; i < MAX_TANKS; i++) {
@@ -1783,7 +1779,23 @@ void serverSimMapRotateRound(ServerSim *sim) {
      * gameOver path via serverSimReturnToLobby). */
     sim->state = serverStateLobby;
     if (sim->mapDirFiles != NULL) {
-        serverSimMapDirPickRandom(sim);
+        /* The round being left may have fielded the scenario's held seats,
+           and nobody is here to keep an edit to them, so the next round
+           opens on the template's own lobby. A decision that reaches the
+           same template leaves the seats as they stand; this is what tells
+           it to seat them again. Not serverSimScenarioReconcileLobby: that
+           takes every fielded seat of the template off the field, a team
+           the template fields from the start included, and in a round that
+           starts straight away nothing puts that team back on.
+
+           Where no map in the directory loads, the map change never runs
+           and the lobby is the one it was, so the flag goes back to what it
+           said about that lobby. */
+        bool wasSeated = sim->scenarioLobbySeated;
+        sim->scenarioLobbySeated = false;
+        if (!serverSimMapDirPickRandom(sim)) {
+            sim->scenarioLobbySeated = wasSeated;
+        }
     }
 
     /* Full world reset + tank (re)creation + state -> running. With no

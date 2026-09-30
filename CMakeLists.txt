@@ -3723,6 +3723,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # commit, reconciling them when a round comes back, re-seating them when
     # an emptied lobby resets, and leaving a preview and a plain map alone.
     tests/unit/test_lobby_template.c
+    # A lobby map change keeping the bots and the host's script list.
+    tests/unit/test_lobby_map_keeps_bots.c
     tests/unit/test_survival_lobby_round.c
     # What a real client draws when a held seat is taken off the field: the
     # tank has to go with it, though the roster row stays.
@@ -5996,6 +5998,7 @@ set(_unit_test_names
     lobby_template_cap_refuses_extra_human
     lobby_template_cap_never_binds_bots
     lobby_template_cancel_keeps_trim
+    lobby_template_cancel_same_template_keeps_edits
     lobby_template_cancel_keeps_empty_team
     lobby_template_cancel_chain_rolls_back
     lobby_template_commit_keeps_new_lobby
@@ -6006,6 +6009,10 @@ set(_unit_test_names
     lobby_template_mode_unknown_key_kept
     lobby_template_no_mode_leaves_config
     lobby_template_add_bot_takes_template
+    lobby_map_keeps_bots_plain
+    lobby_map_keeps_bots_scenario
+    lobby_map_keeps_bots_map_own_row
+    lobby_map_rotate_holds_seats_again
     scripted_game_type_loadout_follows_base
     scripted_game_type_no_base_is_strict
     scripted_game_type_strict_ignores_base

@@ -549,6 +549,11 @@ bool serverSimCreateBot(ServerSim *sim, BYTE playerNum,
                         BYTE team, const ScnTable *init);
 
 void serverSimRemoveBot(ServerSim *sim, BYTE playerNum);
+/* Every bot out of the roster, seats held for a bot that was never fielded
+ * included, and the scenario's seats with them. The lobby no longer holds
+ * what a template built, so the next scenario decision seats it again even
+ * where it reaches the template already attached. */
+void serverSimRemoveAllBots(ServerSim *sim);
 void serverSimDestroyBots(ServerSim *sim);
 void serverSimSetBotTeams(ServerSim *sim,
                           const BYTE *teamOf, BYTE numPlayers);
@@ -1835,7 +1840,8 @@ bool serverSimIsScenarioActing(const ServerSim *sim);
  *  lobby holds the teams and bot counts the scenario asks
  *  for.
  *
- *  A map commit reaches this through the map change. A
+ *  A map commit reaches this through the map change, where
+ *  the commit brought a different template. A
  *  process that boots straight onto a scripted map makes no
  *  commit, so it calls this itself — after the bot pool is
  *  up and the server's brain path is set, because a team the
