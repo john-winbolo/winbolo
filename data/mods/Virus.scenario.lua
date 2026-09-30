@@ -104,7 +104,7 @@ local ZERO_MODS = { speed = 145, accel = 150, turn = 125,
                     reload = 100, dealt = 100, taken = 80 }
 
 local SCORE_ALIVE  = "ALIVE"
-local SCORE_TURNED = "TURNED"
+local SCORE_INFECTED = "INFECTED"
 
 -- The panel square is 128 units on a side, origin top left.
 local TITLE_H     = 14
@@ -188,7 +188,7 @@ end
 -- which one a player is on without being told.
 local function post_score(p)
   if side[p] == INFECTED then
-    game.score(p, turned[p] or 0, SCORE_TURNED)
+    game.score(p, turned[p] or 0, SCORE_INFECTED)
   elseif side[p] == SURVIVORS then
     game.score(p, lived[p] or 0, SCORE_ALIVE)
   end
@@ -712,13 +712,13 @@ local function infect(p, by)
   -- A destroyed tank puts its cargo down as it goes, which can land after this
   -- handler has run, and a builder out with a pillbox finishes it whenever he
   -- does. Both reach on_pill_placed, which hands such a pillbox on then.
-  game.announce(name_of(p) .. " has turned", 2)
+  game.announce(name_of(p) .. " is infected", 2)
   -- And the player it happened to is told in their own words, after the line
   -- that goes to everybody so that theirs replaces it on their own screen.
   -- Turning is the one thing in the round that happens to a player rather than
   -- being done by them, and reading your own name in the third person is not
   -- being told.
-  game.announce("You have turned", 3, p)
+  game.announce("You are infected", 3, p)
   game.message("You are infected. Everyone you kill joins you.", p)
   game.sound("man_dying_near")
   -- A bot is handed the horde's word straight away rather than on the next
@@ -792,7 +792,7 @@ local function turn_zero()
     p = pick_zero()
   end
   if p == nil then
-    game.message("Virus: nobody to turn yet. It starts when somebody joins.")
+    game.message("Virus: nobody to infect yet. It starts when somebody joins.")
     return
   end
   zero = p
@@ -818,11 +818,11 @@ local function warn_zero()
   end
   zero = pick_zero()
   if zero == nil then
-    game.message("Virus needs two players. Nobody turns.")
+    game.message("Virus needs two players. Nobody is infected.")
     return
   end
-  game.announce("You turn in three seconds", WARNING_SECONDS, zero)
-  game.message("You are the first to turn. Get among them.", zero)
+  game.announce("You are infected in three seconds", WARNING_SECONDS, zero)
+  game.message("You are the first infected. Get among them.", zero)
 end
 
 -- The infected are not resupplied by anything on the map, so they are fed here:
@@ -897,7 +897,7 @@ local function watch_the_water(now)
         end
       else
         warned[p] = true
-        game.announce(string.format("Deep water! You turn in %.1f s", left),
+        game.announce(string.format("Deep water! Infected in %.1f s", left),
                       1, p)
       end
     elseif wet[p] ~= nil or warned[p] then
@@ -1007,15 +1007,15 @@ function on_start()
 
   -- Three lines, because a player who has not read the scenario has to be able
   -- to play it from what the newswire tells them in the first ten seconds.
-  game.message("Virus: one of you turns in ten seconds. " ..
-               "Everyone they kill turns with them.")
+  game.message("Virus: one of you is infected in ten seconds. " ..
+               "Everyone they kill is infected too.")
   game.message(string.format("Survivors: the bases, the pillboxes and the " ..
                              "mines are yours. Hold out for %d minutes.",
                              math.floor(ROUND_SECONDS / 60)))
   game.message("Infected: back three seconds after you die, and the first " ..
                "of you is quicker and tougher. Kill them all.")
   game.message(string.format("Survivors: stay in deep water for %d seconds " ..
-                             "and you turn.", DEEP_WATER_SECONDS))
+                             "and you are infected.", DEEP_WATER_SECONDS))
   game.timer(HEAD_START - WARNING_SECONDS, warn_zero)
   game.timer(HEAD_START, turn_zero)
   game.timer(1, each_second)
@@ -1120,7 +1120,7 @@ function on_player_join(p, scripted)
   else
     side[p] = SURVIVORS
     game.set_team(p, SURVIVORS)
-    game.message("You are a survivor. One of you turns soon.", p)
+    game.message("You are a survivor. One of you is infected soon.", p)
   end
   hand_word(p)
   -- A joiner is given the panels the round is holding, but not the scores, so
@@ -1288,9 +1288,10 @@ end
 
 scenario = {
   name        = "Virus",
-  description = "One of you turns, and everyone they kill turns with them. " ..
-                "The survivors hold the map; the horde is back in three " ..
-                "seconds, and the first to turn is quicker and tougher.",
+  description = "One of you is infected, and everyone they kill is infected " ..
+                "too. The survivors hold the map; the horde is back in " ..
+                "three seconds, and the first infected is quicker and " ..
+                "tougher.",
   api         = 1,
   kind        = "scenario",
   game        = "open",
@@ -1304,7 +1305,7 @@ scenario = {
   settings = {
     { id = "round_minutes", label = "Round length (minutes)", type = "int",
       min = 3, max = 15, step = 1, default = math.floor(ROUND_SECONDS / 60) },
-    { id = "deep_water_seconds", label = "Deep water time before turning (s)",
+    { id = "deep_water_seconds", label = "Deep water time before infection (s)",
       type = "int", min = 3, max = 60, step = 1,
       default = DEEP_WATER_SECONDS },
     { id = "compass_seconds", label = "Compass on survivors, last (s, 0 off)",
@@ -1317,19 +1318,19 @@ scenario = {
   -- What each callback below does, in a line a player reads: the lobby's
   -- details dialog lists these under "What this scenario implements:".
   callbacks = {
-    on_start = "All start as survivors; one turns after 10 s. Runs the " ..
+    on_start = "All start as survivors; one is infected after 10 s. Runs the " ..
                "deep water clock and compass.",
     on_end = "Logs how long the round ran.",
     on_player_join = "A late joiner arrives infected, or starts the " ..
                      "virus when nobody could.",
-    on_pill_placed = "A pillbox a turned survivor was still carrying " ..
+    on_pill_placed = "A pillbox a newly infected player was still carrying " ..
                      "goes to a survivor.",
     on_player_leave = "Ends the round with no survivors; restarts it " ..
                       "with no horde.",
     on_team_changed = "Players cannot change side.",
     on_tank_spawned = "Keeps the first infected strong; survivors get " ..
                       "20 s to reach land.",
-    on_tank_killed = "A survivor shot by the infected turns; their " ..
+    on_tank_killed = "A survivor the infected kill is infected; their " ..
                      "pillboxes go to a survivor.",
     allow_extra_teams = "Only the two sides.",
     can_ally = "Players cannot ally.",
