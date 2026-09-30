@@ -38,7 +38,8 @@
 -- its boat. A tank gets back one shell every REFILL_SECONDS instead.
 --
 -- The scoreboard moves. When the order changes, each line slides to its new
--- place over SLIDE_TICKS, and a new line rises from the bottom. The lines of
+-- place over SLIDE_TICKS, and a new line rises from the bottom (a line that
+-- was just past the last row slides in from just under it). The lines of
 -- a tank that scores, and of its team, flash for FLASH_TICKS. A tank that
 -- scores again within CHAIN_SECONDS of its last kill is on a streak, and the
 -- kill line says so: "Double kill", "Triple kill!", "QUADRUPLE KILL!" and on
@@ -54,6 +55,8 @@ local PANEL_ROWS     = 9
 local ROW_TOP        = 30     -- panel y of the first line
 local ROW_STEP       = 10     -- panel units from one line to the next
 local ENTER_Y        = 128    -- a new line slides up from the panel's bottom
+local HIDDEN_Y       = ROW_TOP + PANEL_ROWS * ROW_STEP  -- a line past the last
+                               -- row waits here, just under it
 local FRAME_SECONDS  = 0.04   -- one panel frame this often while it moves
 local SLIDE_TICKS    = 40     -- a line takes 0.4 s to reach its new place
 local FLASH_TICKS    = 50     -- a scorer's line flashes for 0.5 s
@@ -76,6 +79,7 @@ local last_hit   = {}          -- seat -> { by = seat, at = tick }
 local dirty      = true        -- the panel needs another frame
 local over       = false
 local drawn_at   = nil    -- the tick panel 0 was last sent
+local settled    = false       -- the round's last, settled frame is drawn
 local loop_id    = nil         -- the panel frame timer, while one waits
 local row_move   = {}          -- line key -> { from, to, from_at }: its slide
 local flash_end  = {}          -- line key -> the tick its flash ends
@@ -146,6 +150,29 @@ end
 -- long for a panel row is cut short.
 local LABEL_MAX = 22
 
+-- The longest line announce, message and end_round take, in bytes. A longer
+-- one is refused and nobody sees it.
+local TEXT_MAX = 128
+
+-- s cut to at most max bytes, ending in ".." when it was cut. The cut falls
+-- between two whole UTF-8 characters, never inside one.
+local function cut_text(s, max)
+  if #s <= max then
+    return s
+  end
+  local n = math.max(max - 2, 0)
+  -- Byte n + 1 starts the part that goes. When it is a continuation byte
+  -- (10xxxxxx), the character it belongs to started earlier, so step back.
+  while n > 0 do
+    local b = s:byte(n + 1)
+    if b < 0x80 or b >= 0xC0 then
+      break
+    end
+    n = n - 1
+  end
+  return s:sub(1, n) .. ".."
+end
+
 -- The pool label of a team of bots only; nil when a human is on it.
 local function bot_pool(team)
   local pool, bots = nil, false
@@ -177,10 +204,7 @@ local function team_label(team)
       return "Team " .. team
     end
   end
-  if #pool > LABEL_MAX then
-    pool = pool:sub(1, LABEL_MAX - 2) .. ".."
-  end
-  return pool
+  return cut_text(pool, LABEL_MAX)
 end
 
 local function side_name(key)
@@ -338,10 +362,13 @@ local function standings()
       end
     end
   end
+  -- Ties go by the number in the key, so p2 comes before p10.
   table.sort(out, function(a, b)
     local ka, kb = kills[a] or 0, kills[b] or 0
     if ka ~= kb then return ka > kb end
-    return a < b
+    local ta, tb = a:sub(1, 1), b:sub(1, 1)
+    if ta ~= tb then return ta < tb end
+    return tonumber(a:sub(2)) < tonumber(b:sub(2))
   end)
   return out
 end
@@ -426,67 +453,82 @@ local function draw_panel(settle)
       string.format("First %s to %d", teams_on() and "team" or "tank",
                     target) },
   }
-  local busy, seen, leader = false, {}, true
+  local busy, seen, shown, leader = false, {}, {}, true
   for row, line in ipairs(panel_lines()) do
-    if row > PANEL_ROWS then
-      break
-    end
     local key = line_key(line)
-    local to = ROW_TOP + (row - 1) * ROW_STEP
-    local m = row_move[key]
-    if settle then
-      m = { from = to, to = to, from_at = now }
-    elseif m == nil then
-      m = { from = ENTER_Y, to = to, from_at = now }
-    elseif m.to ~= to then
-      m = { from = (slide_y(m, now)), to = to, from_at = now }
-    end
-    row_move[key] = m
     seen[key] = true
-    local y, moving = slide_y(m, now)
-    y = math.floor(y + 0.5)
-    busy = busy or moving
-
-    local colour = "white"
-    if line.indent then
-      colour = "grey"
-    elseif leader then
-      colour = "cyan"
-    end
-    if not line.indent then
-      leader = false
-    end
-    -- The flash: a bright bar behind the line, yellow and then orange, with
-    -- the line in black on it.
-    local ends = flash_end[key]
-    if ends ~= nil and (settle or now >= ends) then
-      flash_end[key] = nil
-    elseif ends ~= nil then
-      busy = true
-      local bar = (ends - now > FLASH_TICKS / 2) and "yellow" or "orange"
-      list[#list + 1] = { "rect", 2, y - 1, 124, ROW_STEP, bar, true }
-      colour = "black"
-    end
-    local x = line.indent and 12 or 4
-    if line.team ~= nil then
-      list[#list + 1] = { "text", x, y, colour, "small", "left",
-                          team_label(line.team) }
+    if row > PANEL_ROWS then
+      -- A line past the last row is not drawn, but it keeps a place just
+      -- under the last row, so when it moves up it slides in from there.
+      row_move[key] = { from = HIDDEN_Y, to = HIDDEN_Y, from_at = now }
     else
-      list[#list + 1] = { "name", x, y, colour, "small", "left", line.seat }
+      shown[key] = true
+      local to = ROW_TOP + (row - 1) * ROW_STEP
+      local m = row_move[key]
+      if settle then
+        m = { from = to, to = to, from_at = now }
+      elseif m == nil then
+        m = { from = ENTER_Y, to = to, from_at = now }
+      elseif m.to ~= to then
+        m = { from = (slide_y(m, now)), to = to, from_at = now }
+      end
+      row_move[key] = m
+      local y, moving = slide_y(m, now)
+      y = math.floor(y + 0.5)
+      busy = busy or moving
+
+      local colour = "white"
+      if line.indent then
+        colour = "grey"
+      elseif leader then
+        colour = "cyan"
+      end
+      if not line.indent then
+        leader = false
+      end
+      -- The flash: a bright bar behind the line, yellow and then orange,
+      -- with the line in black on it.
+      local ends = flash_end[key]
+      if ends ~= nil and (settle or now >= ends) then
+        flash_end[key] = nil
+      elseif ends ~= nil then
+        busy = true
+        local bar = (ends - now > FLASH_TICKS / 2) and "yellow" or "orange"
+        list[#list + 1] = { "rect", 2, y - 1, 124, ROW_STEP, bar, true }
+        colour = "black"
+      end
+      local x = line.indent and 12 or 4
+      if line.team ~= nil then
+        list[#list + 1] = { "text", x, y, colour, "small", "left",
+                            team_label(line.team) }
+      else
+        list[#list + 1] = { "name", x, y, colour, "small", "left",
+                            line.seat }
+      end
+      list[#list + 1] = { "text", 124, y, colour, "small", "right",
+                          string.format("%d", line.value) }
     end
-    list[#list + 1] = { "text", 124, y, colour, "small", "right",
-                        string.format("%d", line.value) }
   end
-  -- A line that left the panel goes; if it comes back it slides in again.
+  -- A line that left the list goes; if it comes back it slides in again.
   for key in pairs(row_move) do
     if not seen[key] then
       row_move[key] = nil
+    end
+  end
+  -- A flash is only kept for a line drawn this frame. A kill also flashes
+  -- keys that are not drawn (a member's line when only team lines fit, a
+  -- tank past the last row); those go here rather than staying behind.
+  for key in pairs(flash_end) do
+    if not shown[key] then
       flash_end[key] = nil
     end
   end
   game.panel(0, list)
   drawn_at = now
   dirty = busy
+  if settle then
+    settled = true
+  end
 end
 
 -- Sends a panel frame when one is wanted, then comes back in FRAME_SECONDS
@@ -586,8 +628,8 @@ local function finish(key)
     return
   end
   over = true
-  local line = string.format("%s wins the joust with %d kills.",
-                             side_name(key), kills[key])
+  local tail = string.format(" wins the joust with %d kills.", kills[key])
+  local line = cut_text(side_name(key), TEXT_MAX - #tail) .. tail
   game.message(line)
   game.announce(line, 5)
   local kind, n = key:sub(1, 1), tonumber(key:sub(2))
@@ -646,6 +688,39 @@ local function credit_for(victim, killer, cause)
   return nil
 end
 
+-- The announce line for a kill, never longer than TEXT_MAX. The full line is
+--   "<killer>: <streak word>  killed <victim>  (<side> <kills>/<target>)"
+-- with no "<streak word>  " part for a kill that is not on a streak. When
+-- long names make it too long it is made shorter, one step at a time, until
+-- it fits: in a Free For All the side name, which is the killer's name again,
+-- goes first; then the victim's name; then the side name; then the killer's
+-- name is cut. The streak word and the score always stay.
+local function kill_line(by, victim, key, cause, word)
+  local how = (cause == "deep_sea") and "drowned" or "killed"
+  local killer = name_of(by)
+  local side = side_name(key)
+  local count = string.format("%d/%d", kills[key], target)
+  local lead = (word ~= nil) and (": " .. word .. "  ") or " "
+  local with_side = "(" .. side .. " " .. count .. ")"
+  local no_side = "(" .. count .. ")"
+  local tries = {}
+  local victim_part = how .. " " .. name_of(victim) .. "  "
+  local scored = (word ~= nil) and "" or "scored  "
+  tries[#tries + 1] = lead .. victim_part .. with_side
+  if key == "p" .. by then
+    tries[#tries + 1] = lead .. victim_part .. no_side
+  end
+  tries[#tries + 1] = lead .. scored .. with_side
+  tries[#tries + 1] = lead .. scored .. no_side
+  for _, rest in ipairs(tries) do
+    if #killer + #rest <= TEXT_MAX then
+      return killer .. rest
+    end
+  end
+  local rest = tries[#tries]
+  return cut_text(killer, TEXT_MAX - #rest) .. rest
+end
+
 function on_tank_hit(victim, attacker, cause, amount, pill, scripted)
   if attacker == nil or attacker == game.NEUTRAL or attacker == victim then
     return
@@ -693,21 +768,7 @@ function on_tank_killed(victim, killer, cause, scripted)
 
   -- One announce line holds the kill and, on a streak, the streak word in
   -- front of it, so the streak never hides who was killed or the score.
-  local how = (cause == "deep_sea") and "drowned" or "killed"
-  local score = string.format("(%s %d/%d)", side_name(key), kills[key], target)
-  local word = streak_word(run.count)
-  local line
-  if word ~= nil then
-    line = string.format("%s: %s  %s %s  %s", name_of(by), word, how,
-                         name_of(victim), score)
-    if #line > 127 then
-      line = string.format("%s: %s  %s", name_of(by), word, score)
-    end
-  else
-    line = string.format("%s %s %s  %s", name_of(by), how, name_of(victim),
-                         score)
-  end
-  game.announce(line, 3)
+  game.announce(kill_line(by, victim, key, cause, streak_word(run.count)), 3)
   if kills[key] >= target then
     finish(key)
   end
@@ -831,6 +892,7 @@ function on_player_leave(p, scripted)
   ffa_team[p] = nil
   kills["p" .. p] = nil       -- the seat's next player starts at nought
   streak[p] = nil
+  flash_end["p" .. p] = nil
   kick()
 end
 
@@ -891,6 +953,13 @@ end
 
 function on_end()
   over = true
+  -- A round that ends any other way than finish (the time limit, the host)
+  -- also gets the last frame, every line in its place and none flashing.
+  -- A second panel update in one tick is refused, so when a frame already
+  -- went out this tick that frame stays.
+  if not settled and drawn_at ~= game.tick() then
+    draw_panel(true)
+  end
   -- A log line holds 128 bytes, and sixteen names do not fit in one, so the
   -- standings go out a few sides to a line.
   local line = "Joust ended:"
@@ -951,9 +1020,9 @@ scenario = {
     can_ally = "No alliances in Free For All; only lobby teammates in a team round.",
     on_team_changed = "Teams are fixed for the round.",
     on_player_join = "Shows the new player's score; in Free For All puts them on a team of their own.",
-    on_player_leave = "Clears a leaving player's own kills.",
+    on_player_leave = "Clears a leaving player's own kills, streak and flash.",
     can_build = "Nothing can be built, so the arena stays as drawn.",
     allow_base_win = "Only kills win; the map has no bases.",
-    on_end = "Writes the final standings to the server log.",
+    on_end = "Draws the final scoreboard when the round ended some other way than a win, and writes the final standings to the server log.",
   },
 }
