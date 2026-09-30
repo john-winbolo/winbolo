@@ -610,11 +610,12 @@ static void lobbyRenderModsRow(ClientSim *cs, bool effectiveHost,
  * details dialog behind each script's name shows the same rules table, and
  * the row's own Details button is the way into the chooser.
  *
- * The Details button and the name links only ask for their dialogs. Every one of those
- * dialogs is drawn from the lobby's own frame, because this line is drawn
- * inside something that can stop being drawn — the settings form is a tab of
- * its own in the tabbed layout and a collapsing header on the desktop — and a
- * dialog that went away with it would be open with no way back to it. */
+ * The Details button and the name links only ask for their dialogs. Every
+ * one of those dialogs is drawn from the lobby's own frame, because this line
+ * is drawn inside something that can stop being drawn — the settings form is
+ * a tab of its own in the tabbed layout and a collapsing header on the
+ * desktop — and a dialog that went away with it would be open with no way
+ * back to it. */
 void lobbyRenderScenarioLine(ClientSim *cs, bool effectiveHost, float s) {
     int scriptCount;
 
