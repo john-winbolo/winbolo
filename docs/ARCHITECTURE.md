@@ -2523,8 +2523,9 @@ Lua state — the whole list or none of it — and `scnComposeInto` adds
 it up into the one `ScenarioManifest` every reader outside the library
 is answered from. The declarative half — the name, the game type, the
 lobby block, `fill_to_caps` — is copied from the base, the first entry
-that decides the round or entry 0 when none does (`scnBaseIndex`), and
-a second script that decides the round, or a mod that names a game
+that decides the round or entry 0 when none does (`scnBaseIndex`).
+`needs_bots` is not taken from the base alone: the composed manifest
+needs bots when any script on the list sets it. A second script that decides the round, or a mod that names a game
 type, declares a lobby block or asks for `fill_to_caps`, is refused by
 file and key. The rest is merged in list order, and first wins for
 rules: a rule two scripts both set keeps the earlier script's value,

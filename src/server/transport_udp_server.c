@@ -226,8 +226,7 @@ void transportUdpServerSetUploadConfig(UploadPolicy policy,
                                        const char *persistDir,
                                        ScriptUploadPolicy scriptPolicy,
                                        uint8_t scriptMaxFiles,
-                                       uint32_t scriptMaxStorageBytes,
-                                       const char *scriptDir) {
+                                       uint32_t scriptMaxStorageBytes) {
     udpServer.uploadPolicy = policy;
     if (maxFiles != 0) {
         udpServer.uploadMaxFiles = maxFiles;
@@ -247,12 +246,6 @@ void transportUdpServerSetUploadConfig(UploadPolicy policy,
     }
     if (scriptMaxStorageBytes != 0) {
         udpServer.scriptUploadMaxStorageBytes = scriptMaxStorageBytes;
-    }
-    if (scriptDir != NULL) {
-        SDL_strlcpy(udpServer.scriptUploadDir, scriptDir,
-                    sizeof(udpServer.scriptUploadDir));
-    } else {
-        udpServer.scriptUploadDir[0] = '\0';
     }
 }
 

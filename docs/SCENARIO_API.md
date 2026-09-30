@@ -458,7 +458,9 @@ everyone else, spectators included, the chooser is read-only.
 is the higher script's, and the details dialog marks the lower one's row
 *Overridden by …*. A region two scripts both name is kept twice, once for
 each, and each script's own lookups find its own. Tags are the union of every
-script's, and every script's triggers are kept, in list order.
+script's, and every script's triggers are kept, in list order. The round needs
+bots when any script on the list says `needs_bots`, whatever its place (see
+`needs_bots` in [The `scenario` table](#the-scenario-table)).
 
 **A picked scenario replaces the map's own.** Two scripts that can each end the
 round cannot both play, so a scenario the host picks plays in place of the

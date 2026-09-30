@@ -3916,19 +3916,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   gameFrontHostingAllowSpec = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("HOSTING", "Run Map Scripts", "Yes", buff, FILENAME_MAX);
   gameFrontHostingScripts = YESNO_TO_TRUEFALSE(buff[0]);
-  /* Script Upload Policy replaced the Yes/No "Run Upload Scripts". A file
-   * written before it has only the old key, so that is read in its place
-   * (No is Off, anything else Allow); the old key is never written again,
-   * and once the new one is saved it is not read. */
-  prefsGetString("HOSTING", "Script Upload Policy", "", buff, FILENAME_MAX);
-  if (buff[0] != '\0') {
-    gameFrontHostingScriptUploadPolicy =
-        scriptUploadPolicyResolve(buff, false);
-  } else {
-    prefsGetString("HOSTING", "Run Upload Scripts", "Yes", buff, FILENAME_MAX);
-    gameFrontHostingScriptUploadPolicy =
-        scriptUploadPolicyResolve(NULL, !YESNO_TO_TRUEFALSE(buff[0]));
-  }
+  prefsGetString("HOSTING", "Script Upload Policy", "Allow", buff, FILENAME_MAX);
+  gameFrontHostingScriptUploadPolicy = scriptUploadPolicyResolve(buff);
   prefsGetString("HOSTING", "Share Scripts", "Yes", buff, FILENAME_MAX);
   gameFrontHostingShareScripts = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("HOSTING", "Max Spectators", "16", buff, FILENAME_MAX);
