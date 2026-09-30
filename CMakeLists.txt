@@ -4885,6 +4885,7 @@ set(_unit_test_names
     round_stats_codec_rejects_bad_key
     round_stats_build_summary
     round_stats_scenario_score_filled
+    round_stats_group_rows
     round_stats_summary_highlights
     round_stats_client_ingest
     round_stats_track_records
@@ -5016,6 +5017,11 @@ set(_unit_test_names
     scenario_settings_bool_manifest_json
     scenario_settings_bool_server
     scenario_settings_bool_game_setting
+    scenario_settings_choice_blob
+    scenario_settings_choice_manifest_lua
+    scenario_settings_choice_manifest_json
+    scenario_settings_choice_server
+    scenario_settings_choice_game_setting
     script_list_client_apply
     lobby_map_search_chunked
     wbn_bearer_state
@@ -6318,6 +6324,7 @@ set(_unit_test_names
     scenario_lua_op_index_subtracts_one
     scenario_lua_script_index_adds_one
     scenario_lua_absent_reads_are_nil
+    scenario_lua_lobby_slot_team_pool
     scenario_lua_terrain_is_the_whole_map
     scenario_lua_shape_error_counts
     scenario_lua_rule_reads_the_table

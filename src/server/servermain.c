@@ -70,6 +70,7 @@
 #include "../scenario/scenario_pack.h"
 #include "../scenario_io/scenario_package.h"
 #include "../scenario/scenario_validate.h"
+#include "scenario_settings.h"
 #include "cJSON.h"
 
 /* Constants previously from backend.h */
@@ -663,6 +664,12 @@ void printArgs() {
   fprintf(stderr, "-noscenarios  - Do not load the scenario script beside a map. Every map,\n");
   fprintf(stderr, "                including one committed later, plays plainly. A map that\n");
   fprintf(stderr, "                has a script says which one was not loaded.\n");
+  fprintf(stderr, "-setting [<File>:]<id>=<value> - Choose a value for one of a scenario\n");
+  fprintf(stderr, "                script's own settings, as the lobby host would. File is the\n");
+  fprintf(stderr, "                script's file name and defaults to the map's own script.\n");
+  fprintf(stderr, "                Value is a number, true or false for a bool setting, or one\n");
+  fprintf(stderr, "                of the words of a choice setting (quote words with spaces).\n");
+  fprintf(stderr, "                May be given more than once.\n");
   fprintf(stderr, "-nouploadscripts - The old spelling of -scriptuploads off (see Script\n");
   fprintf(stderr, "                uploads below). -scriptuploads wins when both are given.\n");
   fprintf(stderr, "-allow-unsafe-scripts - Run scenario scripts with the full Lua standard\n");
@@ -940,7 +947,114 @@ void processTrackerArg(char *argItem, char *trackerAddr, unsigned short *tracker
   *trackerPort = (unsigned short)atoi(tmp);
 }
 
-#define ARG_NOT_FOUND -1 
+#define ARG_NOT_FOUND -1
+
+/* One -setting argument, "[file:]id=value", chosen on sim as the lobby
+ * host's CMD_SET_SCRIPT_SETTING would choose it. defaultFile is the map's own
+ * script, used when the argument names no file. The value is read against
+ * the setting's declaration: a number for any type, true or false (or on or
+ * off) for a bool, one of the words for a choice. Says on the console what
+ * it did, or why it did nothing. */
+static void serverApplySettingArg(ServerSim *sim, const char *arg,
+                                  const char *defaultFile) {
+  char              file[LOBBY_SCENARIO_FILE_LEN];
+  char              id[SCN_SETTING_ID_LEN];
+  char              line[512];
+  const char       *eq;
+  const char       *colon;
+  const char       *word;
+  uint8_t           blob[SCN_SETTINGS_BLOB_MAX];
+  ScnSetting        rows[SCN_SETTINGS_MAX];
+  const ScnSetting *decl = NULL;
+  int               len;
+  int               n = 0;
+  int32_t           value = 0;
+  int32_t           got = 0;
+  char             *end = NULL;
+  long              num;
+  size_t            idLen;
+
+  eq = strchr(arg, '=');
+  if (eq == NULL) {
+    snprintf(line, sizeof(line), "-setting %s: wanted [file:]id=value", arg);
+    serverMessageConsoleMessage(sim, line);
+    return;
+  }
+  colon = memchr(arg, ':', (size_t)(eq - arg));
+  if (colon != NULL) {
+    size_t fl = (size_t)(colon - arg);
+    if (fl == 0 || fl >= sizeof(file)) {
+      snprintf(line, sizeof(line), "-setting %s: bad file name", arg);
+      serverMessageConsoleMessage(sim, line);
+      return;
+    }
+    memcpy(file, arg, fl);
+    file[fl] = '\0';
+    arg = colon + 1;
+  } else {
+    if (defaultFile == NULL || defaultFile[0] == '\0') {
+      snprintf(line, sizeof(line),
+               "-setting %s: the map has no script, so name the file", arg);
+      serverMessageConsoleMessage(sim, line);
+      return;
+    }
+    snprintf(file, sizeof(file), "%s", defaultFile);
+  }
+  idLen = (size_t)(eq - arg);
+  if (idLen == 0 || idLen >= sizeof(id)) {
+    snprintf(line, sizeof(line), "-setting %s: bad setting id", arg);
+    serverMessageConsoleMessage(sim, line);
+    return;
+  }
+  memcpy(id, arg, idLen);
+  id[idLen] = '\0';
+  word = eq + 1;
+
+  len = serverSimScenarioSettingsDecl(sim, file, blob, sizeof(blob));
+  if (len > 0) {
+    n = scnSettingsBlobRead(blob, (size_t)len, rows, SCN_SETTINGS_MAX);
+  }
+  if (n > 0) {
+    decl = scnSettingFind(rows, n, id);
+  }
+  if (decl == NULL) {
+    snprintf(line, sizeof(line), "-setting: %s declares no setting '%s'",
+             file, id);
+    serverMessageConsoleMessage(sim, line);
+    return;
+  }
+  num = strtol(word, &end, 10);
+  if (word[0] != '\0' && end != NULL && *end == '\0') {
+    value = (int32_t)num;
+  } else if (decl->type == SCN_SETTING_TYPE_CHOICE &&
+             scnSettingChoiceIndex(decl, word) >= 0) {
+    value = scnSettingChoiceIndex(decl, word);
+  } else if (decl->type == SCN_SETTING_TYPE_BOOL &&
+             (strcmp(word, "true") == 0 || strcmp(word, "on") == 0)) {
+    value = 1;
+  } else if (decl->type == SCN_SETTING_TYPE_BOOL &&
+             (strcmp(word, "false") == 0 || strcmp(word, "off") == 0)) {
+    value = 0;
+  } else {
+    snprintf(line, sizeof(line), "-setting: '%s' is not a value of %s:%s",
+             word, file, id);
+    serverMessageConsoleMessage(sim, line);
+    return;
+  }
+  if (!serverSimSetScriptSetting(sim, file, id, value, &got)) {
+    snprintf(line, sizeof(line), "-setting: %s:%s refused %d", file, id,
+             (int)value);
+    serverMessageConsoleMessage(sim, line);
+    return;
+  }
+  if (decl->type == SCN_SETTING_TYPE_CHOICE) {
+    snprintf(line, sizeof(line), "Setting %s:%s = %s", file, id,
+             scnSettingChoiceText(decl, got));
+  } else {
+    snprintf(line, sizeof(line), "Setting %s:%s = %d", file, id, (int)got);
+  }
+  serverMessageConsoleMessage(sim, line);
+}
 
 int findArg(int numArgs, char **argv, const char *argname) {
   int returnValue; /* Value to return */
@@ -1944,6 +2058,32 @@ int main(int argc, char **argv) {
       serverMessageConsoleMessage(serverSim, line);
     } else if (scenarioErr[0] != '\0') {
       serverMessageConsoleMessage(serverSim, scenarioErr);
+    }
+  }
+  /* -setting: the values a lobby host would choose for scripts' own
+     settings, for a server with no lobby to choose them in. Applied before
+     any round starts, so on_setup already reads them. */
+  {
+    const char *mapScript = "";
+    int         i;
+
+    if (scenarioHost != NULL && argExist(argc, argv, "setting") == TRUE) {
+      /* The map's own script declares its settings on a row the sim is
+         handed at a map commit, and none has happened yet. */
+      scenarioHostPublishMapScript(serverSim, scenarioHost);
+    }
+    if (scenarioHost != NULL) {
+      const char *path = scenarioHostScriptPath(scenarioHost);
+      const char *p;
+      mapScript = path;
+      for (p = path; *p != '\0'; p++) {
+        if (*p == '/' || *p == '\\') mapScript = p + 1;
+      }
+    }
+    for (i = 1; i + 1 < argc; i++) {
+      if (strcmp(argv[i], "-setting") == 0) {
+        serverApplySettingArg(serverSim, argv[i + 1], mapScript);
+      }
     }
   }
   /* And from here on the sim says when a map is committed, so the scenario

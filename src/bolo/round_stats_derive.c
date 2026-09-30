@@ -1827,3 +1827,97 @@ void computeHighlights(const NotableEvent *timeline, int timelineCount,
 
     free(cands);
 }
+
+/* ── The recap's scenario table, grouped by team ─────────────────────── */
+
+bool roundStatsGroupsByTeam(const RoundStatsSummary *summary) {
+    return summary != NULL && summary->hasScenarioScore &&
+           summary->scenarioTeamScoreMask != 0 &&
+           summary->scenarioScoreMask != 0;
+}
+
+/* Whether player a sorts before player b: own scenario score first (an
+ * unscored player below every scored one), then kills, deaths and slot. */
+static bool groupPlayerBefore(const RoundStatsSummary *s,
+                              const RoundPlayerSummary *a,
+                              const RoundPlayerSummary *b) {
+    bool sa = a->slot < MAX_TANKS &&
+              (s->scenarioScoreMask & (uint16_t)(1u << a->slot)) != 0;
+    bool sb = b->slot < MAX_TANKS &&
+              (s->scenarioScoreMask & (uint16_t)(1u << b->slot)) != 0;
+    if (sa != sb) return sa;
+    if (sa) {
+        int32_t va = s->scenarioScore[a->slot];
+        int32_t vb = s->scenarioScore[b->slot];
+        if (va != vb) return va > vb;
+    }
+    if (a->kills != b->kills)   return a->kills > b->kills;
+    if (a->deaths != b->deaths) return a->deaths < b->deaths;
+    return a->slot < b->slot;
+}
+
+int roundStatsGroupRows(const RoundStatsSummary *summary,
+                        const uint8_t teamOfSlot[MAX_TANKS],
+                        RoundStatsGroupRow *out, int outCap) {
+    int     order[MAX_TANKS];
+    uint8_t teams[MAX_TANKS];
+    bool    placed[MAX_TANKS];
+    int     n, teamCount = 0, rows = 0;
+
+    if (summary == NULL || out == NULL || outCap <= 0) return 0;
+    n = summary->playerCount;
+    if (n > MAX_TANKS) n = MAX_TANKS;
+
+    /* The players in their own order, once, by insertion: sixteen at most. */
+    for (int i = 0; i < n; i++) {
+        int j = i;
+        order[i] = i;
+        while (j > 0 && groupPlayerBefore(summary, &summary->players[order[j]],
+                                          &summary->players[order[j - 1]])) {
+            int t = order[j - 1]; order[j - 1] = order[j]; order[j] = t;
+            j--;
+        }
+        placed[i] = false;
+    }
+
+    /* The scored teams, best score first, a tie to the lower number. */
+    for (int t = 1; t < MAX_TANKS; t++) {
+        if ((summary->scenarioTeamScoreMask & (uint16_t)(1u << t)) == 0) {
+            continue;
+        }
+        int j = teamCount++;
+        teams[j] = (uint8_t)t;
+        while (j > 0 && summary->scenarioTeamScore[teams[j]] >
+                            summary->scenarioTeamScore[teams[j - 1]]) {
+            uint8_t x = teams[j - 1]; teams[j - 1] = teams[j]; teams[j] = x;
+            j--;
+        }
+    }
+
+    for (int k = 0; k < teamCount && rows < outCap; k++) {
+        out[rows].kind  = ROUND_STATS_ROW_TEAM;
+        out[rows].team  = teams[k];
+        out[rows].index = 0;
+        rows++;
+        for (int r = 0; r < n && rows < outCap; r++) {
+            uint8_t slot = summary->players[order[r]].slot;
+            if (teamOfSlot == NULL || slot >= MAX_TANKS ||
+                teamOfSlot[slot] != teams[k]) {
+                continue;
+            }
+            out[rows].kind  = ROUND_STATS_ROW_PLAYER;
+            out[rows].team  = teams[k];
+            out[rows].index = (uint8_t)order[r];
+            placed[order[r]] = true;
+            rows++;
+        }
+    }
+    for (int r = 0; r < n && rows < outCap; r++) {
+        if (placed[order[r]]) continue;
+        out[rows].kind  = ROUND_STATS_ROW_PLAYER;
+        out[rows].team  = 0;
+        out[rows].index = (uint8_t)order[r];
+        rows++;
+    }
+    return rows;
+}

@@ -2670,6 +2670,7 @@ static const LangEntry langTable[] = {
     {2716, "Show only the maps that carry their own scenario script."},
     {2717, "No maps with a scenario here"},
     {2718, "This filter does not work on a server-wide search. The server does not say which hits have a scenario."},
+    {2719, "{string1} (default)"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

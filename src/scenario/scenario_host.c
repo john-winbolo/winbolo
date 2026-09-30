@@ -2588,6 +2588,24 @@ void scnPushManifestGlobal(lua_State *L, int envRef,
                 lua_setfield(L, -2, "type");
                 lua_pushboolean(L, d->def != 0);
                 lua_setfield(L, -2, "default");
+            } else if (d->type == SCN_SETTING_TYPE_CHOICE) {
+                /* A choice row is written as its words and the default
+                   word, as the file declares it. */
+                const char *dw = scnSettingChoiceText(d, d->def);
+                int         w;
+
+                lua_pushstring(L, "choice");
+                lua_setfield(L, -2, "type");
+                lua_createtable(L, (int)d->numChoices, 0);
+                for (w = 0; w < (int)d->numChoices &&
+                            w < SCN_SETTING_CHOICES_WORDS_MAX;
+                     w++) {
+                    lua_pushstring(L, d->choices[w]);
+                    lua_rawseti(L, -2, w + 1);
+                }
+                lua_setfield(L, -2, "choices");
+                lua_pushstring(L, dw != NULL ? dw : "");
+                lua_setfield(L, -2, "default");
             } else {
                 lua_pushstring(L, "int");
                 lua_setfield(L, -2, "type");
@@ -9756,6 +9774,22 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
  * arrives the same way because the question it asks is the same one. */
 static void scnMapChanged(void *ctx, ServerSim *sim, const char *mapPath) {
     scnDecideScenario(sim, (ScenarioHost **)ctx, mapPath);
+}
+
+void scenarioHostPublishMapScript(ServerSim *sim, const ScenarioHost *h) {
+    int which = -1;
+    int i;
+
+    if (sim == NULL) return;
+    if (h != NULL) {
+        for (i = 0; i < h->count; i++) {
+            if (h->entry[i].source == lobbyScenarioMap) {
+                which = i;
+                break;
+            }
+        }
+    }
+    scnPublishMapScript(sim, h, which);
 }
 
 void scenarioHostFollowMap(ServerSim *sim, ScenarioHost **slot) {
