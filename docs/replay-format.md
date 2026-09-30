@@ -158,7 +158,7 @@ Selected event types (see the `logitem` enum for the complete list):
 | 61 | `log_RuleSet` | One simulation rule a scenario changed (below) |
 | 62 | `log_ScnPanel` | One scenario panel's display list (below) |
 | 63 | `log_ScnScore` | A scenario's score for one player or one team (below) |
-| 64 | `log_ScnAnnounce` | A centre-screen line a scenario put up (below) |
+| 64 | `log_ScnAnnounce` | An announcement a scenario put up (below) |
 | 65 | `log_ScnMarker` | A scenario map marker (below) |
 | 66 | `log_ScnHint` | An order a scenario gave one bot (below) |
 | 67 | `log_ServerTick` | The server's game tick at this entry (below) |
