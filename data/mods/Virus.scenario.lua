@@ -258,24 +258,65 @@ local function glyph_em(c)
   return 0.64
 end
 
+-- The character at byte i of s: an ASCII byte, a UTF-8 lead byte with up to
+-- three continuation bytes, or, when the byte starts no sequence, that one
+-- byte on its own. Every byte of s is covered, so a name that is not UTF-8
+-- is measured no shorter than it is: a stray byte is a glyph of its own, and
+-- a run of continuation bytes past a sequence's three is more of them.
+local function char_at(s, i)
+  return s:match("^[%z\1-\127]", i)
+      or s:match("^[\194-\244][\128-\191]?[\128-\191]?[\128-\191]?", i)
+      or s:sub(i, i)
+end
+
+-- A control byte is one the panel refuses to draw, so it is shown as "?".
+local function drawable(ch)
+  if #ch == 1 then
+    local b = ch:byte()
+    if b < 0x20 or b == 0x7F then
+      return "?"
+    end
+  end
+  return ch
+end
+
 local function text_width(s)
-  local w = 0
-  for ch in s:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
-    w = w + ((#ch > 1) and 1.00 or glyph_em(ch)) * SMALL_EM
+  local w, i = 0, 1
+  while i <= #s do
+    local ch = char_at(s, i)
+    i = i + #ch
+    w = w + ((#ch > 1) and 1.00 or glyph_em(drawable(ch))) * SMALL_EM
   end
   return w
 end
 
--- s, cut at a whole character and ended with ".." when it runs past width, so a
--- long name on the left never reaches the right column.
+-- The most bytes a name is sent as. A text primitive is refused past
+-- SCN_PANEL_TEXT_MAX (48) bytes, and a refused primitive takes the whole
+-- roster with it, for everybody. The width cut below normally stops a name
+-- well short of this; this is the cap for a name of nothing but bytes the
+-- width estimate rates narrow.
+local NAME_BYTES = 40
+
+-- s with its control bytes shown as "?", cut at a whole character and ended
+-- with ".." when it runs past width or past NAME_BYTES, so a long name on
+-- the left never reaches the right column and no name is refused.
 local function fit(s, width)
-  if text_width(s) <= width then
-    return s
+  local whole, i = "", 1
+  while i <= #s do
+    local ch = char_at(s, i)
+    i = i + #ch
+    whole = whole .. drawable(ch)
   end
-  local out, w = "", text_width("..")
-  for ch in s:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
+  if text_width(whole) <= width and #whole <= NAME_BYTES then
+    return whole
+  end
+  local out, w, bytes = "", text_width(".."), NAME_BYTES - 2
+  i = 1
+  while i <= #whole do
+    local ch = char_at(whole, i)
+    i = i + #ch
     local cw = text_width(ch)
-    if w + cw > width then
+    if w + cw > width or #out + #ch > bytes then
       break
     end
     out, w = out .. ch, w + cw
@@ -504,8 +545,8 @@ end
 -- Who a survivor's pillboxes go to when they turn: the survivor whose tank is
 -- nearest theirs, not counting one waiting to respawn; when every survivor is
 -- waiting, the first survivor in seat order; when no survivor is left, nobody.
--- The same survivor is used for the drop a second later, unless they have
--- turned or gone by then.
+-- The same survivor is used for a pillbox of theirs that reaches the map
+-- later (on_pill_placed), unless they have turned or gone by then.
 local function heir_for(p)
   local h = heir_of[p]
   if h ~= nil and side[h] == SURVIVORS and in_round(h) then
@@ -669,12 +710,8 @@ local function infect(p, by)
   heir_of[p] = nil
   let_go_of(p)
   -- A destroyed tank puts its cargo down as it goes, which can land after this
-  -- handler has run, so anything it was carrying is handed on a second later.
-  game.timer(1, function()
-    if not over then
-      let_go_of(p)
-    end
-  end)
+  -- handler has run, and a builder out with a pillbox finishes it whenever he
+  -- does. Both reach on_pill_placed, which hands such a pillbox on then.
   game.announce(name_of(p) .. " has turned", 2)
   -- And the player it happened to is told in their own words, after the line
   -- that goes to everybody so that theirs replaces it on their own screen.
@@ -755,7 +792,7 @@ local function turn_zero()
     p = pick_zero()
   end
   if p == nil then
-    game.message("Virus: nobody to turn. The round runs to the clock.")
+    game.message("Virus: nobody to turn yet. It starts when somebody joins.")
     return
   end
   zero = p
@@ -912,6 +949,12 @@ local function each_second()
   -- survivor's word that landed before then would be overruled by the
   -- "horde" the last round left in it.
   hand_everybody()
+  -- The virus was to start at HEAD_START, and could not while the round held
+  -- one player: a joiner since makes two, so it starts now. The roll here is
+  -- the one pick_zero reads, so this only asks when it will find somebody.
+  if not loose and elapsed > HEAD_START and #roll(SURVIVORS) >= 2 then
+    turn_zero()
+  end
   if not compass_on and COMPASS_SECONDS > 0 and
      elapsed >= ROUND_SECONDS - COMPASS_SECONDS then
     start_compass()
@@ -1012,6 +1055,22 @@ end
 -- A survivor comes back on a start, and every start is on deep sea, so the
 -- deep sea clock leaves them alone until they reach land or SPAWN_GRACE runs
 -- out. The first one's numbers are checked here too.
+-- A pillbox reaching the map in an infected seat's name is one a survivor
+-- was still carrying when they turned: their builder out with it, who finishes
+-- the job whenever he does, or their tank's cargo put down as it went, which
+-- can land after infect has run. Either way it goes to the same survivor
+-- their other pillboxes went to. The drop in pass_carried comes through here
+-- too, and names the same heir, so it costs nothing.
+function on_pill_placed(n, p, armour, scripted)
+  if over or not running or side[p] ~= INFECTED then
+    return
+  end
+  local heir = heir_for(p)
+  if heir ~= nil then
+    game.set_pill_owner(n, heir)
+  end
+end
+
 function on_tank_spawned(p, mx, my, respawn, scripted)
   if over then
     return
@@ -1258,7 +1317,10 @@ scenario = {
     on_start = "All start as survivors; one turns after 10 s. Runs the " ..
                "deep water clock and compass.",
     on_end = "Logs how long the round ran.",
-    on_player_join = "A late joiner arrives infected.",
+    on_player_join = "A late joiner arrives infected, or starts the " ..
+                     "virus when nobody could.",
+    on_pill_placed = "A pillbox a turned survivor was still carrying " ..
+                     "goes to a survivor.",
     on_player_leave = "Ends the round with no survivors; restarts it " ..
                       "with no horde.",
     on_team_changed = "Players cannot change side.",
