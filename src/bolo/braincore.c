@@ -2424,6 +2424,18 @@ static int l_cpf_lgm_walk_path(lua_State *L) {
   return 1;
 }
 
+/* cpf_set_man_speed(type, speed) -- the man's walk speed on terrain `type`
+ * (0..15), or on his blessed tile when `type` is -1, for the LGM walk sim
+ * (cpf_lgm_travel_ticks*, cpf_lgm_walk_path). The pathfinder starts on the
+ * classic speeds, so a brain that never calls this walks the classic man. */
+static int l_cpf_set_man_speed(lua_State *L) {
+  CPF_GET(L);
+  int type  = (int)luaL_checkinteger(L, 1);
+  int speed = (int)luaL_checkinteger(L, 2);
+  brainPathfinderSetManSpeed(pf, type, speed);
+  return 0;
+}
+
 /* cpf_set_lgm_blocked(tiles) — tiles is an array of { mx, my } pairs (each a
  * 2-element table). Clears the LGM-impassable overlay, then marks each tile so
  * the LGM travel sim treats it as a wall. The bot's brain map is PURE TERRAIN
@@ -2658,6 +2670,7 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_lgm_travel_ticks_map",  l_cpf_lgm_travel_ticks_map },
     { "cpf_lgm_walk_path",         l_cpf_lgm_walk_path },
     { "cpf_set_lgm_blocked",       l_cpf_set_lgm_blocked },
+    { "cpf_set_man_speed",         l_cpf_set_man_speed },
     { "cpf_estimate_tank_travel_ticks", l_cpf_estimate_tank_travel_ticks },
     { "cpf_dijkstra_shells_at",    l_cpf_dijkstra_shells_at },
     { "cpf_astar_shells_at",       l_cpf_astar_shells_at },

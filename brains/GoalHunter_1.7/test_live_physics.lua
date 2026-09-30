@@ -36,13 +36,14 @@ end
 -- C-side stubs: record every call.
 local calls
 local function reset_calls()
-  calls = { cpf_speed = {}, cpf_cost = {}, wsim_speed = {}, wsim_rules = {} }
+  calls = { cpf_speed = {}, cpf_cost = {}, wsim_speed = {}, wsim_rules = {}, cpf_man = {} }
 end
 reset_calls()
 _G.cpf_set_terrain_speed  = function(t, v) calls.cpf_speed[#calls.cpf_speed + 1] = { t, v } end
 _G.cpf_set_terrain_cost   = function(t, v) calls.cpf_cost[#calls.cpf_cost + 1] = { t, v } end
 _G.wsim_set_terrain_speed = function(t, v) calls.wsim_speed[#calls.wsim_speed + 1] = { t, v } end
 _G.wsim_set_rules         = function(r) calls.wsim_rules[#calls.wsim_rules + 1] = r end
+_G.cpf_set_man_speed      = function(t, v) calls.cpf_man[#calls.cpf_man + 1] = { t, v } end
 
 -- Fresh modules for each section.
 local function fresh()
@@ -130,6 +131,10 @@ local OLD = {
   INRANGE_COAST_PER_SPEED = 2, NAV_BRAKE_FACTOR = 0.08,
   NAV_BRAKE_FACTOR_PRECISE = 0.04, AP_BRAKE_ZONE_FACTOR = 0.03,
   CLIFF_LOOK_MAX_WU = 1280, CLIFF_NAV_LOOK_MAX_STEPS = 6, KILL_LGM_SPEED_DELTA = 2,
+  MAN_SPEED_BLESSED = 16, REPAIR_DEAD_GRASS_TICKS_PER_TILE = 16,
+  BUILDER_POOL_GRASS_TICKS_PER_TILE = 16, WSIM_DWELL_TICKS_PER_TILE = 16,
+  WSIM_DWELL_BUILD_TICKS = 20, PILLBOX_RANGE_WU = 2048,
+  SHELL_MAX_STEPS = 64, LGM_SHELL_PREDICT_TICKS = 63,
 }
 
 local function snapshot(C, LP)
@@ -143,6 +148,7 @@ local function no_pushes(label)
   check(label .. ": no cpf cost push", #calls.cpf_cost == 0, #calls.cpf_cost)
   check(label .. ": no wsim speed push", #calls.wsim_speed == 0, #calls.wsim_speed)
   check(label .. ": no wsim rules push", #calls.wsim_rules == 0, #calls.wsim_rules)
+  check(label .. ": no cpf man speed push", #calls.cpf_man == 0, #calls.cpf_man)
 end
 
 local function unchanged(label, C, LP, before)
@@ -585,6 +591,93 @@ do
   check("knob off: enemy_speed_scale nil", U.enemy_speed_scale() == nil, U.enemy_speed_scale())
   C, LP, U = run(170, nil, false)
   check("LIVE_PHYSICS off: enemy_speed_scale nil", U.enemy_speed_scale() == nil, U.enemy_speed_scale())
+end
+
+-- ---------------------------------------------------------------------------
+print("11. man walk, world-sim build dwell, shell life, pill range in WU")
+do
+  local GRASS_TICKS = { "REPAIR_DEAD_GRASS_TICKS_PER_TILE",
+    "BUILDER_POOL_GRASS_TICKS_PER_TILE", "WSIM_DWELL_TICKS_PER_TILE" }
+  local function scaled_rules()
+    local r = classic_rules()
+    r.man_speed_grass = 12
+    r.man_speed_refuel_base = 24
+    r.lgm_build_ticks = 30
+    r.shell_life = 16
+    r.pill_range = 3072
+    return r
+  end
+  local function man_push(t)
+    local out = {}
+    for _, c in ipairs(calls.cpf_man) do if c[1] == t then out[#out + 1] = c[2] end end
+    return out
+  end
+  -- All on.
+  local C, LP = fresh()
+  LP.apply({ rules = scaled_rules(), mods = classic_mods() })
+  for _, k in ipairs(GRASS_TICKS) do
+    check("grass 12: " .. k .. " 16 -> 21", C[k] == 21, C[k])
+  end
+  check("blessed: MAN_SPEED_BLESSED = man_speed_refuel_base 24", C.MAN_SPEED_BLESSED == 24, C.MAN_SPEED_BLESSED)
+  check("build 30: WSIM_DWELL_BUILD_TICKS 30", C.WSIM_DWELL_BUILD_TICKS == 30, C.WSIM_DWELL_BUILD_TICKS)
+  check("build 30: LGM_BUILD_TIME 30", C.LGM_BUILD_TIME == 30, C.LGM_BUILD_TIME)
+  check("shell_life 16: SHELL_MAX_STEPS 128", C.SHELL_MAX_STEPS == 128, C.SHELL_MAX_STEPS)
+  check("shell_life 16: LGM_SHELL_PREDICT_TICKS 126", C.LGM_SHELL_PREDICT_TICKS == 126, C.LGM_SHELL_PREDICT_TICKS)
+  check("pill_range 3072: PILLBOX_RANGE_WU 3072", C.PILLBOX_RANGE_WU == 3072, C.PILLBOX_RANGE_WU)
+  check("man push: grass 12", #man_push(C.T_GRASS) == 1 and man_push(C.T_GRASS)[1] == 12, #calls.cpf_man)
+  check("man push: refbase tile 24", #man_push(C.T_REFBASE) == 1 and man_push(C.T_REFBASE)[1] == 24, #calls.cpf_man)
+  check("man push: blessed 24", #man_push(-1) == 1 and man_push(-1)[1] == 24, #calls.cpf_man)
+  check("man push: only the 3 changed values", #calls.cpf_man == 3, #calls.cpf_man)
+  reset_calls()
+  LP.apply({ rules = scaled_rules(), mods = classic_mods() })
+  check("repeat: no man push", #calls.cpf_man == 0, #calls.cpf_man)
+  -- Back to classic: restores the old numbers and C's classic man speeds.
+  reset_calls()
+  LP.apply({ rules = classic_rules(), mods = classic_mods() })
+  for k, v in pairs({ MAN_SPEED_BLESSED = 16, WSIM_DWELL_BUILD_TICKS = 20, SHELL_MAX_STEPS = 64,
+                      LGM_SHELL_PREDICT_TICKS = 63, PILLBOX_RANGE_WU = 2048,
+                      REPAIR_DEAD_GRASS_TICKS_PER_TILE = 16 }) do
+    check("back to classic: " .. k .. " " .. v, C[k] == v, C[k])
+  end
+  check("back to classic: grass man 16 pushed", man_push(C.T_GRASS)[1] == 16, #calls.cpf_man)
+  check("back to classic: blessed 16 pushed", man_push(-1)[1] == 16, #calls.cpf_man)
+  check("back to classic: 3 man pushes", #calls.cpf_man == 3, #calls.cpf_man)
+  -- Grass man speed 0: the man cannot walk grass; ticks-per-tile stays.
+  C, LP = fresh()
+  local r = classic_rules()
+  r.man_speed_grass = 0
+  LP.apply({ rules = r, mods = classic_mods() })
+  check("grass 0: WSIM_DWELL_TICKS_PER_TILE stays 16", C.WSIM_DWELL_TICKS_PER_TILE == 16, C.WSIM_DWELL_TICKS_PER_TILE)
+  check("grass 0: C gets grass 0", man_push(C.T_GRASS)[1] == 0, #calls.cpf_man)
+  -- Each knob off keeps its old numbers.
+  local function off(knob)
+    local C2, LP2 = fresh()
+    C2[knob] = false
+    LP2.apply({ rules = scaled_rules(), mods = classic_mods() })
+    return C2
+  end
+  C = off("LIVE_PHYSICS_LGM_WALK")
+  check("LGM_WALK off: MAN_SPEED_BLESSED 16", C.MAN_SPEED_BLESSED == 16, C.MAN_SPEED_BLESSED)
+  check("LGM_WALK off: WSIM_DWELL_TICKS_PER_TILE 16", C.WSIM_DWELL_TICKS_PER_TILE == 16, C.WSIM_DWELL_TICKS_PER_TILE)
+  check("LGM_WALK off: no man push", #calls.cpf_man == 0, #calls.cpf_man)
+  check("LGM_WALK off: LGM_BUILD_TIME still live 30", C.LGM_BUILD_TIME == 30, C.LGM_BUILD_TIME)
+  C = off("LIVE_PHYSICS_WSIM_BUILD")
+  check("WSIM_BUILD off: WSIM_DWELL_BUILD_TICKS 20", C.WSIM_DWELL_BUILD_TICKS == 20, C.WSIM_DWELL_BUILD_TICKS)
+  C = off("LIVE_PHYSICS_SHELL_LIFE")
+  check("SHELL_LIFE off: SHELL_MAX_STEPS 64", C.SHELL_MAX_STEPS == 64, C.SHELL_MAX_STEPS)
+  check("SHELL_LIFE off: LGM_SHELL_PREDICT_TICKS 63", C.LGM_SHELL_PREDICT_TICKS == 63, C.LGM_SHELL_PREDICT_TICKS)
+  C = off("LIVE_PHYSICS_PILL_RANGE_WU")
+  check("PILL_RANGE_WU off: PILLBOX_RANGE_WU 2048", C.PILLBOX_RANGE_WU == 2048, C.PILLBOX_RANGE_WU)
+  C = off("LIVE_PHYSICS_LGM")
+  check("LGM group off: no man push", #calls.cpf_man == 0, #calls.cpf_man)
+  check("LGM group off: WSIM_DWELL_BUILD_TICKS 20", C.WSIM_DWELL_BUILD_TICKS == 20, C.WSIM_DWELL_BUILD_TICKS)
+  -- PRESETS.keel turns every new knob off.
+  C = fresh()
+  for _, k in ipairs({ "LIVE_PHYSICS_LGM_WALK", "LIVE_PHYSICS_WSIM_BUILD",
+                       "LIVE_PHYSICS_SHELL_LIFE", "LIVE_PHYSICS_PILL_RANGE_WU" }) do
+    check("PRESETS.keel." .. k .. " == false", C.PRESETS.keel[k] == false, tostring(C.PRESETS.keel[k]))
+    check("default " .. k .. " == true", C[k] == true, tostring(C[k]))
+  end
 end
 
 print(string.format("\n%d passed, %d failed", pass, fail))

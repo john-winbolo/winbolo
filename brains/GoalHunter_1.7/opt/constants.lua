@@ -289,7 +289,7 @@ M.KILL_LGM_TURN_DELTA   = 6    -- kill_lgm aim search: brads per think when a tu
 -- (NAV_TOP_SPEED). Under classic rules the ratio is exactly 1: no change.
 -- PRESETS.keel = false.
 M.STEER_TURN_SPEEDUP     = true
-M.STEER_TURN_SPEEDUP_MAX = 1.25   -- AWAITING APPROVAL (Sep 30): cornering cap may rise at most 25%
+M.STEER_TURN_SPEEDUP_MAX = 1.25   -- approved by Andrew (Sep 30): cornering cap may rise at most 25%
 -- STEER_TERRAIN_TURN: the turn-radius caps, orbit speeds, swerve turn times
 -- and kill_lgm turn step follow the live/classic turn rate of the terrain
 -- the tank is on now (river/deep sea in a boat = the boat rule), not the
@@ -304,6 +304,25 @@ M.STEER_TERRAIN_TURN     = true
 -- take OUR speed modifier (Rule Roulette gives every tank the same one).
 -- Needs LIVE_PHYSICS_SPEED. Speed 100 = no change. PRESETS.keel = false.
 M.ENEMY_SPEED_OWN_MODS   = true
+-- 2026-09-30 second follow-ups: predictions that still used classic numbers.
+-- Each is an exact no-op when its rules are classic. PRESETS.keel = false.
+-- LIVE_PHYSICS_LGM_WALK (needs LIVE_PHYSICS_LGM): the man's walk follows the
+-- live man_speed_* rules in the C LGM walk sim (builder trips, rescue and
+-- return ETAs, the builder shell gate), on his blessed tile
+-- (MAN_SPEED_BLESSED = man_speed_refuel_base), and in the grass
+-- ticks-per-tile estimates (REPAIR_DEAD_GRASS_TICKS_PER_TILE,
+-- BUILDER_POOL_GRASS_TICKS_PER_TILE, WSIM_DWELL_TICKS_PER_TILE).
+M.LIVE_PHYSICS_LGM_WALK      = true
+-- LIVE_PHYSICS_WSIM_BUILD (needs LIVE_PHYSICS_LGM): the world sim's pill
+-- placement dwell builds for lgm_build_ticks (WSIM_DWELL_BUILD_TICKS).
+M.LIVE_PHYSICS_WSIM_BUILD    = true
+-- LIVE_PHYSICS_SHELL_LIFE (needs LIVE_PHYSICS_SHELL): shell-path steps
+-- (SHELL_MAX_STEPS) and the builder shell gate horizon
+-- (LGM_SHELL_PREDICT_TICKS) scale with live / classic shell_life.
+M.LIVE_PHYSICS_SHELL_LIFE    = true
+-- LIVE_PHYSICS_PILL_RANGE_WU (needs LIVE_PHYSICS_PILL): PILLBOX_RANGE_WU (sea
+-- cover, shell-source and cluster-guard range tests) = the live pill_range.
+M.LIVE_PHYSICS_PILL_RANGE_WU = true
 -- Braking distances. A stop from speed v takes v / (brake rate) ticks and
 -- v^2 / (2 x brake rate) world units. The terms below multiply info.speed, so
 -- live rules scale them by classic brake / live brake (brake rate x accel
@@ -4950,6 +4969,12 @@ M.PRESETS = {
     STEER_TURN_SPEEDUP            = false,
     STEER_TERRAIN_TURN            = false,
     ENEMY_SPEED_OWN_MODS          = false,
+    -- 2026-09-30: the man's walk, the world-sim build dwell, shell life and
+    -- the pill range in world units follow the live rules.
+    LIVE_PHYSICS_LGM_WALK         = false,
+    LIVE_PHYSICS_WSIM_BUILD       = false,
+    LIVE_PHYSICS_SHELL_LIFE       = false,
+    LIVE_PHYSICS_PILL_RANGE_WU    = false,
     -- 2026-09-08: while on capture_pill the bot now sweeps the target tile for
     -- an enemy builder rebuilding the corpse -- the kill_lgm aim solution takes
     -- the TURN keys whenever it points within CAPTURE_LGM_HUNT_TOL_BRADS of
