@@ -849,6 +849,34 @@ int run_lobby_script_keeps_bots_swap(void) {
                   sim->botMgr.bots[otherBot].active,
                   "a host's bot has nothing behind it after the swap");
 
+    /* And the scenario picked back in place of the mod. Its template lays
+       out teams, and the one seated last was the mod's empty one, so this is
+       a changed lobby: the host's bots go and the scenario's four held seats
+       on team 3 come back. */
+    UT_ASSERT_MSG(mkPick(sim, kWaves, 1) == CMD_OK,
+                  "the scenario picked again was refused");
+    UT_ASSERT_MSG(!(serverSimIsBot(sim, (BYTE)hostBot) &&
+                    !sim->lobbyPlayers[hostBot].keepSeat),
+                  "the host's bot on team 3 outlived the scenario's lobby");
+    UT_ASSERT_MSG(!(serverSimIsBot(sim, (BYTE)otherBot) &&
+                    !sim->lobbyPlayers[otherBot].keepSeat),
+                  "the host's bot on team 1 outlived the scenario's lobby");
+    {
+        int raiders = 0;
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (!sim->playerConnected[i]) continue;
+            if (serverSimIsBot(sim, i) || sim->lobbyPlayers[i].keepSeat) {
+                UT_ASSERT_MSG(sim->lobbyPlayers[i].keepSeat &&
+                              sim->lobbyPlayers[i].teamNumber == 3,
+                              "seat %d is not one of the scenario's on "
+                              "team 3", (int)i);
+                raiders++;
+            }
+        }
+        UT_ASSERT_MSG(raiders == 4, "the scenario seated %d again, expected "
+                      "its 4", raiders);
+    }
+
     mkDestroy(sim);
     return 0;
 }
