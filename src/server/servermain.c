@@ -1023,12 +1023,14 @@ static void serverApplySettingArg(ServerSim *sim, const char *arg,
     serverMessageConsoleMessage(sim, line);
     return;
   }
+  /* A choice's own words come first, so a choice whose words are numerals
+     is set by word, not read as an index. */
   num = strtol(word, &end, 10);
-  if (word[0] != '\0' && end != NULL && *end == '\0') {
-    value = (int32_t)num;
-  } else if (decl->type == SCN_SETTING_TYPE_CHOICE &&
-             scnSettingChoiceIndex(decl, word) >= 0) {
+  if (decl->type == SCN_SETTING_TYPE_CHOICE &&
+      scnSettingChoiceIndex(decl, word) >= 0) {
     value = scnSettingChoiceIndex(decl, word);
+  } else if (word[0] != '\0' && end != NULL && *end == '\0') {
+    value = (int32_t)num;
   } else if (decl->type == SCN_SETTING_TYPE_BOOL &&
              (strcmp(word, "true") == 0 || strcmp(word, "on") == 0)) {
     value = 1;
@@ -1054,6 +1056,23 @@ static void serverApplySettingArg(ServerSim *sim, const char *arg,
     snprintf(line, sizeof(line), "Setting %s:%s = %d", file, id, (int)got);
   }
   serverMessageConsoleMessage(sim, line);
+}
+
+/* Whether arg is the flag "-<name>", with argExist's rule: case does not
+   matter. */
+static bool argIsFlag(const char *arg, const char *name) {
+  if (arg[0] != '-') {
+    return FALSE;
+  }
+  arg++;
+  while (*arg != '\0' && *name != '\0') {
+    if (tolower((unsigned char)*arg) != tolower((unsigned char)*name)) {
+      return FALSE;
+    }
+    arg++;
+    name++;
+  }
+  return (*arg == '\0' && *name == '\0') ? TRUE : FALSE;
 }
 
 int findArg(int numArgs, char **argv, const char *argname) {
@@ -2081,7 +2100,7 @@ int main(int argc, char **argv) {
       }
     }
     for (i = 1; i + 1 < argc; i++) {
-      if (strcmp(argv[i], "-setting") == 0) {
+      if (argIsFlag(argv[i], "setting")) {
         serverApplySettingArg(serverSim, argv[i + 1], mapScript);
       }
     }
