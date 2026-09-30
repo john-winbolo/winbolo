@@ -157,7 +157,7 @@ static void plFillPolicy(ScenarioPolicy *pol, PlCtx *pc) {
    registering its policy, so the policy is in place for the tank create. */
 static ServerSim *plRunningSim(gameType gt) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gt, false, 0, -1);
     if (sim == NULL) return NULL;
     serverSimSetLobbyEnabled(sim, false);
@@ -195,7 +195,7 @@ static void plDropBrainFile(void) {
    needs no bot support, so this keeps the brain fixture out of its way. */
 static ServerSim *plPlainLobbySim(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) return NULL;
     serverSimSetLobbyEnabled(sim, true);

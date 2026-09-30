@@ -58,7 +58,7 @@ static const LayoutStart k_corners[16] = {
  * map's pills and bases cleared so only the layout drives placement. */
 static ServerSim *make_corner_lobby(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097,
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN,
                                                "Everard Island",
                                                gameOpen, false, 0, -1);
     GameSim *gs;
@@ -269,7 +269,7 @@ int run_starts_side_region_sweep(void) {
     for (li = 0; li < K_SWEEP_N; li++) {
         for (ci = 0; ci < K_CFG_N; ci++) {
             BYTE emap[6000] = E_MAP;
-            ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+            ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                        gameOpen, false, 0, -1);
             GameSim *gs;
             int i, t, slot, k;
@@ -407,7 +407,7 @@ static const LayoutStart k_eight[8] = {
    bases cleared, every start square deep sea. */
 static ServerSim *make_eight_start_lobby(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     GameSim *gs;
     int i;
@@ -458,7 +458,7 @@ static const LayoutStart k_five[5] = {
 
 static ServerSim *make_five_start_lobby(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     GameSim *gs;
     int i;

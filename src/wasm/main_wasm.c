@@ -24,6 +24,7 @@
 #include "bolo_rand.h"
 #include "client_render.h"
 #include "client_frontend_tick.h"
+#include "client_frontend_render.h"
 #include "client_sim.h"
 #include "frontend.h"
 #include "playername_validate.h"
@@ -362,9 +363,7 @@ static void main_loop_iteration(void) {
         SDL_RenderClear(ren);
       }
     } else {
-      /* Smooth draws other tanks from their full world position. */
-      clientSimSetFineTankPositions(cs, gfxGetAnimSmoothness() == GFX_ANIM_SMOOTH);
-      clientSimRenderPrepare(cs, tick);
+      clientFrontRenderPrepare(cs, tick);
       clientRenderFrame(cs, redraw);
     }
   } else if (s_connFailed) {

@@ -102,7 +102,7 @@ static int bdSetup(BdFixture *f) {
     int   i;
 
     memset(f, 0, sizeof(*f));
-    f->sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    f->sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                        gameOpen, false, 0, -1);
     if (f->sim == NULL) {
         fprintf(stderr, "serverSimCreateCompressed returned NULL\n");

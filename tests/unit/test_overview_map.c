@@ -788,7 +788,7 @@ int run_overview_regions(void) {
 
 /* E_MAP's compressed length — the literal ut_make_running_sim hands to
  * serverSimCreateCompressed. */
-#define OVERVIEW_EMAP_LEN 5097
+#define OVERVIEW_EMAP_LEN E_MAP_LEN
 
 /* Side of the tank block, for the tile snapshot the tank-removal arm takes. */
 #define OVERVIEW_TANK_SIDE (2 * OVERVIEW_TANK_HALF + 1)

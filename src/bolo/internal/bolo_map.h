@@ -521,8 +521,11 @@ void mapClampToRules(struct GameSim *sim);
 *CREATION DATE: 1/5/99
 *LAST MODIFIED: 1/5/99
 *PURPOSE:
-*  Saves a map to a compressed map structure. Returns 
+*  Saves a map to a compressed map structure. Returns
 *  compressed data length
+*
+*  The blob is one zlib stream over the bases, pillbox and
+*  starts structs followed by the terrain array.
 *
 *ARGUMENTS:
 *  value     - Pointer to the map data structure

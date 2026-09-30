@@ -462,9 +462,17 @@ void lgmGetScreenCoords(lgm *lgman, BYTE leftPos, BYTE topPos, BYTE *mx, BYTE *m
 *  bs     - Pointer to the bases structure
 *  wx     - X World co ord
 *  wy     - Y World co ord
-*  owner  - Who owned the firing shell (NEUTRAL for mines)
+*  owner    - Who is credited with the kill: who owned the
+*             firing shell, NEUTRAL for mines and blasts
+*  attacker - Who the can_die question names. The shell's
+*             owner for a shell; the layer for a mine and
+*             the dying tank for its blast, neither of whom
+*             is credited
+*  cause    - The DMG_SRC_* the can_die question is handed
+*  pill     - The pill index whose shell it was, or
+*             DMG_NO_PILL
 *********************************************************/
-void lgmDeathCheck(struct GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE owner, tank *tnk);
+void lgmDeathCheck(struct GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk);
 
 /*********************************************************
 *NAME:          lgmDeathCheckAtPosition
@@ -484,10 +492,15 @@ void lgmDeathCheck(struct GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE own
 *  lgmWorldY - LGM Y world position to test against
 *  wx     - X World co ord of explosion
 *  wy     - Y World co ord of explosion
-*  owner  - Who owned the firing shell (NEUTRAL for mines)
+*  owner  - Who is credited with the kill (NEUTRAL for
+*           mines and blasts)
+*  attacker - Who the can_die question names
+*  cause  - The DMG_SRC_* the can_die question is handed
+*  pill   - The pill index whose shell it was, or
+*           DMG_NO_PILL
 *  tnk    - Pointer to the tank
 *********************************************************/
-void lgmDeathCheckAtPosition(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, tank *tnk);
+void lgmDeathCheckAtPosition(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk);
 
 /*********************************************************
 *NAME:          lgmParchutingIn

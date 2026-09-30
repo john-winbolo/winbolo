@@ -432,7 +432,7 @@ static ScenarioHost *scSlot;
 
 static ServerSim *scSim(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) return NULL;
     serverSimSetLobbyEnabled(sim, true);
@@ -1146,7 +1146,8 @@ static bool scBlastKillsBuilder(ServerSim *sim, BYTE mx, BYTE my) {
     gs->lgmen[0]->isDead = FALSE;
     gs->lgmen[0]->x      = wx;
     gs->lgmen[0]->y      = wy;
-    lgmDeathCheck(gs, &gs->lgmen[0], wx, wy, NEUTRAL, &gs->tanks[0]);
+    lgmDeathCheck(gs, &gs->lgmen[0], wx, wy, NEUTRAL, NEUTRAL, DMG_SRC_UNKNOWN,
+                  DMG_NO_PILL, &gs->tanks[0]);
     return gs->lgmen[0]->isDead != FALSE;
 }
 
@@ -1327,7 +1328,7 @@ int run_scenario_compose_policy_damage_scale(void) {
     sim = scRunningSim(NULL, 0);
     UT_ASSERT(sim != NULL);
     amount = (int)tankDamageAmount(serverSimGetGameSim(sim), 100, NEUTRAL,
-                                   NEUTRAL, LAST_DEATH_BY_SHELL);
+                                   NEUTRAL, LAST_DEATH_BY_SHELL, DMG_NO_PILL);
     UT_ASSERT_MSG(amount == 100,
                   "a blow of 100 with no script on the list came to %d",
                   amount);
@@ -1338,7 +1339,7 @@ int run_scenario_compose_policy_damage_scale(void) {
     sim = scRunningSim(one, 1);
     UT_ASSERT(sim != NULL);
     amount = (int)tankDamageAmount(serverSimGetGameSim(sim), 100, NEUTRAL,
-                                   NEUTRAL, LAST_DEATH_BY_SHELL);
+                                   NEUTRAL, LAST_DEATH_BY_SHELL, DMG_NO_PILL);
     UT_ASSERT_MSG(amount == 50,
                   "one script halving a blow of 100 left %d", amount);
     scDestroy(sim);
@@ -1351,7 +1352,7 @@ int run_scenario_compose_policy_damage_scale(void) {
                   "the round composed %d scripts, wanted the base and two mods",
                   scenarioHostScriptCount(scSlot));
     amount = (int)tankDamageAmount(serverSimGetGameSim(sim), 100, NEUTRAL,
-                                   NEUTRAL, LAST_DEATH_BY_SHELL);
+                                   NEUTRAL, LAST_DEATH_BY_SHELL, DMG_NO_PILL);
     UT_ASSERT_MSG(amount == 25,
                   "two scripts halving a blow of 100 left %d, wanted a "
                   "quarter", amount);

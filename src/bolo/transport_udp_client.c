@@ -6084,7 +6084,9 @@ static void udpClientUploadPump(TransportUdpClientCtx *c, uint64_t now) {
     }
     if (timedOut) {
         c->clientSim->lobbyMapUploadStatus = 4;
-        c->clientSim->lobbyMapUploadRejectCode = LOBBY_REJECT_INVALID;
+        /* Nothing came back, which is not the server turning the file down:
+           the chooser tells the player to try again. */
+        c->clientSim->lobbyMapUploadRejectCode = LOBBY_REJECT_TIMEOUT;
         c->clientSim->lobbyMapUploadFinalPath[0] = '\0';
         c->clientSim->lobbyMapUseLocalNeedsFallback = false;
         channelResetSend(&c->channelMux, CHANNEL_BULK);

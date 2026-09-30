@@ -2056,6 +2056,12 @@ typedef struct ServerSimRosterSlot {
  * i >= MAX_TANKS or the seat is empty. */
 bool serverSimGetRosterSlot(ServerSim *sim, BYTE i, ServerSimRosterSlot *out);
 
+/* Whether seats a and b are allied in the game: the table every game rule
+ * reads, which players change in play with an alliance request, accept and
+ * leave. It can differ from the two seats' lobby teams. A seat is allied with
+ * itself. False if either seat is out of range or empty. */
+bool serverSimIsAllied(ServerSim *sim, BYTE a, BYTE b);
+
 /* Array-pointer accessors (return pointer to backing storage). */
 char *const     *serverSimGetMapDirFiles(const ServerSim *sim);
 const GameEvent *serverSimGetEvents(const ServerSim *sim);
@@ -2313,7 +2319,8 @@ bool serverSimGetScriptSetting(const ServerSim *sim, const char *file,
  *
  * Returns the value now in effect, in *resolved when it is not NULL.
  * False, and nothing changed or published, for a file with no declaration,
- * an id it does not declare, or a store that is full. */
+ * an id it does not declare, a bool setting given anything but 0 or 1, or a
+ * store that is full. */
 bool serverSimSetScriptSetting(ServerSim *sim, const char *file,
                                const char *id, int32_t value,
                                int32_t *resolved);

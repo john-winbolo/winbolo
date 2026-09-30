@@ -1233,10 +1233,14 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
     } else {
       if (isPill == FALSE && isBase == FALSE && minesExistPos(&sim->mns, &sim->mp, bmx, bmy) == FALSE && terrain != BUILDING && terrain != HALFBUILDING && terrain != RIVER && terrain != BOAT && terrain != DEEP_SEA) {
         if (isMine == TRUE) {
+          /* Whose mine he set off, read before anything below can take it off
+             the field. The can_die question names the layer; nobody is
+             credited, as with every other mine. */
+          BYTE mineLayer = minesGetOwner(&sim->mns, bmx, bmy);
           minesExpAddItem(sim, &sim->minesExplosions, mp, bmx, bmy);
           floodAddItem(&sim->ff, bmx, bmy,
                        (BYTE) sim->rules.flood_fill_ticks);
-          lgmDeathCheck(sim, lgman, (WORLD) ((bmx << M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), (WORLD) ((bmy<< M_W_SHIFT_SIZE)+MAP_SQUARE_MIDDLE), NEUTRAL, tnk);
+          lgmDeathCheck(sim, lgman, (WORLD) ((bmx << M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), (WORLD) ((bmy<< M_W_SHIFT_SIZE)+MAP_SQUARE_MIDDLE), NEUTRAL, mineLayer, DMG_SRC_MINE, DMG_NO_PILL, tnk);
           sim->callbacks.soundDist(sim->callbacks.ctx, mineExplosionNear, bmx, bmy);
           mapSetPos(sim, mp, bmx, bmy, CRATER, TRUE, FALSE);
         } else {
@@ -1470,10 +1474,17 @@ void lgmGetScreenCoords(lgm *lgman, BYTE leftPos, BYTE topPos, BYTE *mx, BYTE *m
 *  lgmWorldY - LGM Y world position to test against
 *  wx        - X World co ord of explosion
 *  wy        - Y World co ord of explosion
-*  owner     - Who owned the firing shell (NEUTRAL for mines)
+*  owner     - Who is credited with the kill (NEUTRAL for
+*              mines and blasts)
+*  attacker  - Who the can_die question names: the shell's
+*              owner, the mine's layer or the tank whose
+*              blast it was
+*  cause     - The DMG_SRC_* the can_die question is handed
+*  pill      - The pill index whose shell it was, or
+*              DMG_NO_PILL
 *  tnk       - Pointer to the tank
 *********************************************************/
-void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, tank *tnk) {
+void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk) {
   map *mp = &sim->mp;
   pillboxes *pb = &sim->pb;
   bases *bs = &sim->bs;
@@ -1516,9 +1527,11 @@ void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lg
          than inside lgmKill, because a death a script orders outright goes
          straight to lgmKill and is not the host's to reconsider. Every
          builder death in the engine comes through this test, so this covers
-         shells, mine and tank explosions and his own mine alike. */
-      if (gameSimCanDie(sim, DIE_KIND_BUILDER, (*lgman)->playerNum, owner,
-                        DMG_SRC_UNKNOWN) != FALSE) {
+         shells, mine and tank explosions and his own mine alike. The
+         question may name somebody the kill below does not credit: a mine's
+         layer and a blast's tank are asked about and credited with nothing. */
+      if (gameSimCanDie(sim, DIE_KIND_BUILDER, (*lgman)->playerNum, attacker,
+                        cause, pill) != FALSE) {
         lgmKill(sim, lgman, tnk, owner);
       }
     }
@@ -1720,9 +1733,10 @@ void lgmKill(GameSim *sim, lgm *lgman, tank *tnk, BYTE owner) {
   }
 }
 
-void lgmDeathCheck(GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE owner, tank *tnk) {
+void lgmDeathCheck(GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk) {
   if (*lgman == NULL) return;
-  lgmDeathCheckAtPosition(sim, lgman, (*lgman)->x, (*lgman)->y, wx, wy, owner, tnk);
+  lgmDeathCheckAtPosition(sim, lgman, (*lgman)->x, (*lgman)->y, wx, wy, owner,
+                          attacker, cause, pill, tnk);
 }
 
 /*********************************************************

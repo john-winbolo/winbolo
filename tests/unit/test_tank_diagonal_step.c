@@ -82,7 +82,7 @@ static int simRun(ServerSim *sim, const char *label, BYTE terrain,
     int cutOne = 0, cutBoth = 0, snapOne = 0, snapBoth = 0;
     int cx0 = 0, cy0 = 0, sx0 = 0, sy0 = 0;
     int cxFrom = 0, cyFrom = 0, sxFrom = 0, syFrom = 0;
-    int dir16 = tankDiagonalDir16((int)angle);
+    int dir16 = utilGetDir(angle);
 
     /* Half a pixel between the two axes' sub-pixel phases. */
     placeDiag(sim, terrain, 100, 100, angle, 8, 0);
@@ -254,19 +254,11 @@ int run_tank_diagonal_steps_both_axes(void) {
             tankDiagonalSnap(i, &sx, &sy);
             UT_ASSERT(sx == 3007 && sy == 1009);
         }
-        /* The facing buckets match utilGetDir. */
-        UT_ASSERT(tankDiagonalDir16(BRADIANS_NEAST) == 2);
-        UT_ASSERT(tankDiagonalDir16(BRADIANS_SEAST) == 6);
-        UT_ASSERT(tankDiagonalDir16(BRADIANS_SWEST) == 10);
-        UT_ASSERT(tankDiagonalDir16(BRADIANS_NWEST) == 14);
-        UT_ASSERT(tankDiagonalDir16(8) == 0 && tankDiagonalDir16(9) == 1);
-        UT_ASSERT(tankDiagonalDir16(248) == 15 && tankDiagonalDir16(249) == 0);
-        {
-            int a;
-            for (a = 0; a < 256; a++) {
-                UT_ASSERT(tankDiagonalDir16(a) == (int)utilGetDir((TURNTYPE)a));
-            }
-        }
+        /* The four diagonal buckets the snap keys on are utilGetDir's. */
+        UT_ASSERT(utilGetDir((TURNTYPE)BRADIANS_NEAST) == 2);
+        UT_ASSERT(utilGetDir((TURNTYPE)BRADIANS_SEAST) == 6);
+        UT_ASSERT(utilGetDir((TURNTYPE)BRADIANS_SWEST) == 10);
+        UT_ASSERT(utilGetDir((TURNTYPE)BRADIANS_NWEST) == 14);
     }
 
     /* ---- 4. Render-clock lerp on a NE run keeps x + y fixed ---- */

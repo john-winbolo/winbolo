@@ -53,17 +53,18 @@ static const langid srdDescIds[] = {
  * included. They are four rather than one because the first eleven rules'
  * numbers were taken by the fog style strings and moved to the end of the
  * file, because the rules the table gained later were numbered on from
- * there, and because the pillmassage pair start again past the map editor's
- * scenario strings. The knockback bonus follows the scenario editor and lobby strings.
- * See the block comment in lang.h. */
+ * there, because the pillmassage pair start again past the map editor's
+ * scenario strings, and because the pill shell cap pair,
+ * pill_base_defend_shape and then the Mac Bolo shell push pair took the next
+ * free numbers after everything else. See the block comment in lang.h. */
 #define SRD_FIRST_ID  2345u
 #define SRD_LAST_ID   2425u
 #define SRD_FIRST_ID2 2486u
 #define SRD_LAST_ID2  2549u
 #define SRD_FIRST_ID3 2575u
 #define SRD_LAST_ID3  2576u
-#define SRD_FIRST_ID4 2681u
-#define SRD_LAST_ID4  2681u
+#define SRD_FIRST_ID4 2698u
+#define SRD_LAST_ID4  2712u
 
 /* ── 1. A description id per rule ──────────────────────────────────────── */
 
@@ -88,8 +89,8 @@ int run_sim_rules_desc_table(void) {
                            srdDescIds[i] <= SRD_LAST_ID3) ||
                           (srdDescIds[i] >= SRD_FIRST_ID4 &&
                            srdDescIds[i] <= SRD_LAST_ID4),
-                      "%s has id %u, outside the %u..%u, %u..%u, %u..%u and %u..%u "
-                      "the descriptions were given",
+                      "%s has id %u, outside the %u..%u, %u..%u, %u..%u and "
+                      "%u..%u the descriptions were given",
                       name, srdDescIds[i], SRD_FIRST_ID, SRD_LAST_ID,
                       SRD_FIRST_ID2, SRD_LAST_ID2, SRD_FIRST_ID3,
                       SRD_LAST_ID3, SRD_FIRST_ID4, SRD_LAST_ID4);

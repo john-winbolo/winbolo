@@ -13,9 +13,6 @@
 {"tick":0,"type":"CTRL_LOBBY_SYNC_COMPLETE"}
 {"tick":4,"type":"CTRL_PLAYER_JOIN","playerNum":1,"name":"Bot 1","country":"XX","clientType":0,"clientFlags":32,"allies":[1]}
 {"tick":6,"type":"CTRL_PLAYER_JOIN","playerNum":2,"name":"Bot 2","country":"XX","clientType":0,"clientFlags":32,"allies":[2]}
-{"tick":20,"type":"CTRL_ALLIANCE_LEAVE","playerNum":0}
-{"tick":20,"type":"CTRL_ALLIANCE_LEAVE","playerNum":1}
-{"tick":20,"type":"CTRL_ALLIANCE_LEAVE","playerNum":2}
 {"tick":20,"type":"CTRL_ALLIANCE_RESET","allies":[1,2,4,0,0,0,0,0,0,0,0,0,0,0,0,0]}
 {"tick":20,"type":"CTRL_SIM_RULES"}
 {"tick":50,"type":"CTRL_ALLIANCE_REQUEST","fromPlayer":0,"toPlayer":1}

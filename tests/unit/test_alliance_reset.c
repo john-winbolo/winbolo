@@ -175,7 +175,7 @@ static void count_alliance_events(void *ctx, const ControlEvent *evt) {
 
 static ServerSim *make_lobby_sim(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097,
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN,
                                                "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) return NULL;
@@ -758,7 +758,7 @@ static bool ar_pill_targets(ServerSim *sim, BYTE owner, BYTE victim) {
 
 int run_alliance_reset_set_team_leaves_old_team(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     ScenarioOp op;
     GameSim *gs;

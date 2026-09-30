@@ -344,7 +344,7 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
          tank_diagonal_snap.h). */
       int dx = sqX * 256 + (int)wx;
       int dy = sqY * 256 + (int)wy;
-      tankDiagonalSnap(tankDiagonalDir16((int)angle), &dx, &dy);
+      tankDiagonalSnap(utilGetDir((TURNTYPE)angle), &dx, &dy);
       sqX = 0; apx = dx / 16;
       sqY = 0; apy = dy / 16;
     }

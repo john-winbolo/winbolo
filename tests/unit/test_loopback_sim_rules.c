@@ -110,6 +110,11 @@ static bool pred_client_gunsight(LoopbackHarness *h, void *user) {
     return gs != NULL && gs->rules.gunsight_max == SR_GUNSIGHT_SET;
 }
 
+static bool pred_client_mac_collision(LoopbackHarness *h, void *user) {
+    GameSim *gs = clientSimGetGameSim(h->cs);
+    return gs != NULL && gs->rules.tank_collision_mac == *(int *)user;
+}
+
 /* Counts CTRL_SIM_RULES publishes on the server's bus. */
 typedef struct {
     int count;
@@ -197,6 +202,16 @@ int run_loopback_sim_rules_change(void) {
                   "total, expected the 1 from the carried rule above",
                   pub.count);
 
+    /* The optional wire tail must apply in both directions: turning the
+     * mod off emits the old body, which must clear the client's flag. */
+    {
+        int enabled;
+        for (enabled = 1; enabled >= 0; enabled--) {
+            UT_ASSERT(srSetRule(h.sim, SCN_RULE_tank_collision_mac, enabled) == SCN_OP_OK);
+            at = loopbackHarnessPumpUntil(&h, CHANGE_MAX, pred_client_mac_collision, &enabled);
+            UT_ASSERT_MSG(at > 0, "Mac collision setting %d never reached the client", enabled);
+        }
+    }
     loopbackHarnessStop(&h);
     return 0;
 }
@@ -220,6 +235,7 @@ int run_loopback_sim_rules_join(void) {
     UT_ASSERT_MSG(srSetRule(h.sim, SCN_RULE_gunsight_max,
                             (double)SR_GUNSIGHT_SET) == SCN_OP_OK,
                   "the server refused a value inside gunsight_max' row");
+    UT_ASSERT(srSetRule(h.sim, SCN_RULE_tank_collision_mac, 1) == SCN_OP_OK);
     at = loopbackHarnessPumpUntil(&h, CHANGE_MAX, pred_client_gunsight, NULL);
     UT_ASSERT_MSG(at > 0,
                   "the first client never took the change, so the joiner "
@@ -235,6 +251,8 @@ int run_loopback_sim_rules_join(void) {
 
     cl2 = clientSimGetGameSim(h.cs2);
     UT_ASSERT_MSG(cl2 != NULL, "the second client has no GameSim");
+    UT_ASSERT_MSG(cl2->rules.tank_collision_mac == 1,
+                  "joining client did not receive Mac collision geometry");
     if (cl2->rules.gunsight_max != SR_GUNSIGHT_SET) {
         int got = (int)cl2->rules.gunsight_max;
         loopbackHarnessStop(&h);

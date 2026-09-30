@@ -40,7 +40,7 @@
 #include "everard_map.h"
 #include "test_harness.h"
 
-#define EMAP_LEN 5097 /* compressed length of E_MAP (matches the harness) */
+#define EMAP_LEN E_MAP_LEN /* compressed length of E_MAP (matches the harness) */
 
 /* Assert two maps are tile-for-tile identical across the whole 256x256 grid
  * (mapGetPos returns DEEP_SEA outside the mineable edges, so the boundary is
@@ -175,14 +175,13 @@ static int assert_tail_untouched(const BYTE *buf, int from, int to,
  *   generous capacity  -> the same length and the same bytes as always
  *   exactly enough     -> unchanged, and not one byte more
  *   one byte short     -> 0, tail untouched
- *   short of the fixed header -> 0, nothing written at all
+ *   no capacity at all -> 0, nothing written
  */
 int run_map_compress_capacity_refuses(void) {
     static BYTE emap[6000] = E_MAP;
     static BYTE reference[131072];
     static BYTE dest[131072];
     const BYTE canary = 0xA5;
-    const int headerLen = SIZEOF_BASES + SIZEOF_PILLS + SIZEOF_STARTS;
     map mp;
     pillboxes pb;
     bases bs;
@@ -201,9 +200,8 @@ int run_map_compress_capacity_refuses(void) {
      * capacity at all. */
     refLen = mapSaveCompressedMap(&mp, &pb, &bs, &ss, reference,
                                   (int)sizeof(reference));
-    UT_ASSERT_MSG(refLen > headerLen,
-                  "generous capacity produced %d bytes, expected > %d",
-                  refLen, headerLen);
+    UT_ASSERT_MSG(refLen > 0,
+                  "generous capacity produced %d bytes, expected > 0", refLen);
 
     /* Exactly enough: same length, same bytes, and the byte after the blob
      * is still the caller's. */
@@ -225,15 +223,13 @@ int run_map_compress_capacity_refuses(void) {
     UT_ASSERT(assert_tail_untouched(dest, cap, (int)sizeof(dest), canary,
                                     "one byte short") == 0);
 
-    /* Short of the fixed bases/pills/starts header: refused before the first
-     * struct copy, so the whole buffer is untouched. */
-    cap = headerLen - 1;
+    /* No room at all: refused, and the whole buffer is untouched. */
+    cap = 0;
     memset(dest, canary, sizeof(dest));
     n = mapSaveCompressedMap(&mp, &pb, &bs, &ss, dest, cap);
-    UT_ASSERT_MSG(n == 0, "a capacity of %d (header is %d) returned %d, "
-                          "expected 0", cap, headerLen, n);
+    UT_ASSERT_MSG(n == 0, "a capacity of 0 returned %d, expected 0", n);
     UT_ASSERT(assert_tail_untouched(dest, 0, (int)sizeof(dest), canary,
-                                    "short of the header") == 0);
+                                    "no capacity") == 0);
 
     mapDestroy(&mp);
     pillsDestroy(&pb);
@@ -566,15 +562,14 @@ int run_map_carried_pill_keeps_terrain(void) {
     return 0;
 }
 
-/* The bound MAP_COMPRESSED_MAX_SIZE states has to be the encoder's actual
- * worst case, not a guess, because every buffer in the tree is sized to it.
+/* The bound MAP_COMPRESSED_MAX_SIZE states has to cover the encoder's actual
+ * worst case, because every buffer in the tree is sized to it.
  *
- * The RLE expands rather than compresses on its worst input: a three-byte
- * cycle of one literal followed by a two-byte run costs four output bytes,
- * two for the one-byte literal frame and two for the run. This drives a map
- * of exactly that shape through mapSaveCompressedMap and pins three things —
- * that the expansion is real, that the constant covers it, and that a buffer
- * sized to the uncompressed map does not.
+ * zlib's worst input is one with nothing to find: random bytes, which
+ * deflate stores in raw blocks and so expands by the framing. This drives a
+ * terrain of pseudo-random bytes through mapSaveCompressedMap and pins three
+ * things — that the expansion is real, that the constant covers it, and that
+ * a buffer sized to the uncompressed terrain does not.
  *
  * The last of those is the regression this guards: sizing a destination to
  * the 64 KiB a map occupies in memory looks right and is not, and the
@@ -583,12 +578,11 @@ int run_map_carried_pill_keeps_terrain(void) {
 int run_map_compress_incompressible(void) {
     static BYTE emap[6000] = E_MAP;
     static BYTE dest[MAP_COMPRESSED_MAX_SIZE];
-    const int headerLen = SIZEOF_BASES + SIZEOF_PILLS + SIZEOF_STARTS;
-    const int terrainLen = MAP_ARRAY_SIZE * MAP_ARRAY_SIZE;
     map mp;
     pillboxes pb;
     bases bs;
     starts ss;
+    uint32_t seed = 0x2545F491u;
     int n, x, y;
 
     mapCreate(&mp);
@@ -598,48 +592,43 @@ int run_map_compress_incompressible(void) {
     UT_ASSERT_MSG(mapLoadCompressedMap(&mp, &pb, &bs, &ss, emap, EMAP_LEN),
                   "embedded Everard map failed to decode");
 
-    /* ABB ABB ABB ... laid down in the order the encoder walks the array,
-     * which is the flat mapItem order. Written straight into the array rather
-     * than through mapSetPos: this is a compressor input, not a playable map,
-     * and the point is the byte pattern. */
+    /* xorshift32 over every byte value. Written straight into the array
+     * rather than through mapSetPos: this is a compressor input, not a
+     * playable map, and the point is that nothing in it repeats. */
     for (y = 0; y < MAP_ARRAY_SIZE; y++) {
         for (x = 0; x < MAP_ARRAY_SIZE; x++) {
-            int flat = (y * MAP_ARRAY_SIZE) + x;
-            mp->mapItem[y][x] = (BYTE)((flat % 3 == 0) ? GRASS : SWAMP);
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            mp->mapItem[y][x] = (BYTE)(seed >> 24);
         }
     }
 
     /* Bigger than the terrain it came from — the case every 64 KiB buffer in
-     * the tree used to assume away. */
+     * the tree used to assume away. The struct region is mostly zeros and
+     * shrinks, so the terrain alone is the comparison. */
     n = mapSaveCompressedMap(&mp, &pb, &bs, &ss, dest, (int)sizeof(dest));
-    UT_ASSERT_MSG(n > terrainLen,
-                  "the worst-case pattern encoded to %d bytes, which is not "
-                  "larger than the %d it started as — the encoder's expansion "
-                  "behaviour has changed and the bound needs re-deriving",
-                  n, terrainLen);
+    UT_ASSERT_MSG(n > MAP_ARRAY_SIZE * MAP_ARRAY_SIZE,
+                  "random terrain encoded to %d bytes, which is not larger "
+                  "than the %d terrain bytes it started as — the encoder's "
+                  "expansion behaviour has changed and this test needs "
+                  "re-deriving", n, MAP_ARRAY_SIZE * MAP_ARRAY_SIZE);
 
-    /* And inside the bound, which is what every caller is sized to. */
-    UT_ASSERT_MSG(n <= (int)sizeof(dest),
-                  "the worst-case pattern encoded to %d bytes, past the "
+    /* And inside the bound, which is what every caller is sized to. The
+     * refusal on a too-small buffer returns 0, so a positive n is the proof. */
+    UT_ASSERT_MSG(n > 0 && n <= (int)sizeof(dest),
+                  "random terrain encoded to %d bytes against the "
                   "MAP_COMPRESSED_MAX_SIZE of %d that every buffer in the "
                   "tree is sized to", n, (int)sizeof(dest));
 
-    /* The 4/3 derivation, checked rather than trusted: the terrain half must
-     * land on the bound the constant is built from. */
-    UT_ASSERT_MSG(n - headerLen <= ((terrainLen * 4) / 3) + 1,
-                  "the terrain encoded to %d bytes, past the 4/3 bound of %d "
-                  "that MAP_COMPRESSED_MAX_SIZE is derived from",
-                  n - headerLen, ((terrainLen * 4) / 3) + 1);
-
-    /* A buffer sized to the uncompressed map is refused, not overrun. This is
-     * the sizing bug itself: it is the obvious wrong number to pick.
+    /* A buffer sized to the uncompressed terrain is refused, not overrun.
+     * This is the sizing bug itself: it is the obvious wrong number to pick.
      *
-     * Refusing is not the same as writing nothing. The header goes down
-     * before the terrain is encoded, and the encoder fills what it was given
-     * before finding it has run out, so a refused call leaves the caller's
-     * buffer partly written and returns 0 to say the contents mean nothing.
-     * What it must never do is step past the capacity, so the slack after it
-     * is what gets checked. */
+     * Refusing is not the same as writing nothing. The encoder fills what it
+     * was given before finding it has run out, so a refused call leaves the
+     * caller's buffer partly written and returns 0 to say the contents mean
+     * nothing. What it must never do is step past the capacity, so the slack
+     * after it is what gets checked. */
     {
         const int cap = MAP_ARRAY_SIZE * MAP_ARRAY_SIZE;
         static BYTE tooSmall[(MAP_ARRAY_SIZE * MAP_ARRAY_SIZE) + 1024];
@@ -647,12 +636,58 @@ int run_map_compress_incompressible(void) {
         memset(tooSmall, canary, sizeof(tooSmall));
         n = mapSaveCompressedMap(&mp, &pb, &bs, &ss, tooSmall, cap);
         UT_ASSERT_MSG(n == 0,
-                      "a buffer the size of the uncompressed map (%d) took "
+                      "a buffer the size of the uncompressed terrain (%d) took "
                       "this map in %d bytes — it should have been refused",
                       cap, n);
         UT_ASSERT(assert_tail_untouched(tooSmall, cap, (int)sizeof(tooSmall),
                                         canary, "refused at map size") == 0);
     }
+
+    mapDestroy(&mp);
+    pillsDestroy(&pb);
+    basesDestroy(&bs);
+    startsDestroy(&ss);
+    return 0;
+}
+
+/* The loader takes a map only when the blob is one whole zlib stream that
+ * inflates to exactly the struct region and the terrain. A blob cut short, a
+ * blob with bytes after the end of the stream, and a blob with a flipped byte
+ * are each refused. The intact blob loads between them, so a refusal is the
+ * damage talking and not a broken fixture. */
+int run_map_compress_rejects_damaged(void) {
+    static BYTE emap[6000] = E_MAP;
+    static BYTE blob[E_MAP_LEN + 1];
+    map mp;
+    pillboxes pb;
+    bases bs;
+    starts ss;
+
+    mapCreate(&mp);
+    pillsCreate(&pb);
+    basesCreate(&bs);
+    startsCreate(&ss);
+
+    memcpy(blob, emap, E_MAP_LEN);
+    UT_ASSERT_MSG(mapLoadCompressedMap(&mp, &pb, &bs, &ss, blob, E_MAP_LEN),
+                  "control: the intact Everard blob failed to decode");
+
+    UT_ASSERT_MSG(!mapLoadCompressedMap(&mp, &pb, &bs, &ss, blob, E_MAP_LEN - 1),
+                  "a blob one byte short was accepted");
+    UT_ASSERT_MSG(!mapLoadCompressedMap(&mp, &pb, &bs, &ss, blob, E_MAP_LEN / 2),
+                  "a blob cut in half was accepted");
+
+    blob[E_MAP_LEN] = 0;
+    UT_ASSERT_MSG(!mapLoadCompressedMap(&mp, &pb, &bs, &ss, blob, E_MAP_LEN + 1),
+                  "a blob with a byte after the end of the stream was accepted");
+
+    blob[E_MAP_LEN / 2] ^= 0x5A;
+    UT_ASSERT_MSG(!mapLoadCompressedMap(&mp, &pb, &bs, &ss, blob, E_MAP_LEN),
+                  "a blob with a flipped byte was accepted");
+    blob[E_MAP_LEN / 2] ^= 0x5A;
+
+    UT_ASSERT_MSG(mapLoadCompressedMap(&mp, &pb, &bs, &ss, blob, E_MAP_LEN),
+                  "control: the restored Everard blob failed to decode");
 
     mapDestroy(&mp);
     pillsDestroy(&pb);

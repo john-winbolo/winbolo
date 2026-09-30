@@ -2581,16 +2581,25 @@ void scnPushManifestGlobal(lua_State *L, int envRef,
             lua_setfield(L, -2, "id");
             lua_pushstring(L, d->label);
             lua_setfield(L, -2, "label");
-            lua_pushstring(L, "int");
-            lua_setfield(L, -2, "type");
-            lua_pushinteger(L, (lua_Integer)d->min);
-            lua_setfield(L, -2, "min");
-            lua_pushinteger(L, (lua_Integer)d->max);
-            lua_setfield(L, -2, "max");
-            lua_pushinteger(L, (lua_Integer)d->step);
-            lua_setfield(L, -2, "step");
-            lua_pushinteger(L, (lua_Integer)d->def);
-            lua_setfield(L, -2, "default");
+            if (d->type == SCN_SETTING_TYPE_BOOL) {
+                /* A bool row is written with no range, as the file
+                   declares it. */
+                lua_pushstring(L, "bool");
+                lua_setfield(L, -2, "type");
+                lua_pushboolean(L, d->def != 0);
+                lua_setfield(L, -2, "default");
+            } else {
+                lua_pushstring(L, "int");
+                lua_setfield(L, -2, "type");
+                lua_pushinteger(L, (lua_Integer)d->min);
+                lua_setfield(L, -2, "min");
+                lua_pushinteger(L, (lua_Integer)d->max);
+                lua_setfield(L, -2, "max");
+                lua_pushinteger(L, (lua_Integer)d->step);
+                lua_setfield(L, -2, "step");
+                lua_pushinteger(L, (lua_Integer)d->def);
+                lua_setfield(L, -2, "default");
+            }
             lua_rawseti(L, st, (int)i + 1);
         }
         lua_setfield(L, t, "settings");
@@ -4269,6 +4278,30 @@ static void scnHookTankKilled(ScenarioHost *h, const ScnQueuedEvent *e,
     scnHookCall(h, SCN_HOOK_TANK_KILLED, 4);
 }
 
+/* One hit a tank took. [victim, attacker, cause, amount, pill] — already in
+ * the hook's own order. The pill is an index and goes through the helper that
+ * adds; a shell no pillbox fired carries DMG_NO_PILL, which is no index and
+ * reaches the script as nil. */
+static void scnHookTankHit(ScenarioHost *h, const ScnQueuedEvent *e,
+                           bool scripted) {
+    const char *cause = scenarioLuaDeathCauseWord((int)e->data[2]);
+
+    if (cause == NULL || !scnHookBegin(h, SCN_HOOK_TANK_HIT)) {
+        return;
+    }
+    lua_pushinteger(h->L, (lua_Integer)e->data[0]);   /* the victim */
+    lua_pushinteger(h->L, (lua_Integer)e->data[1]);   /* the attacker */
+    lua_pushstring(h->L, cause);
+    lua_pushinteger(h->L, (lua_Integer)e->data[3]);   /* the armour lost */
+    if (e->data[4] < MAX_PILLS) {
+        lua_pushinteger(h->L, scenarioLuaIndexToScript((int)e->data[4]));
+    } else {
+        lua_pushnil(h->L);
+    }
+    lua_pushboolean(h->L, scripted ? 1 : 0);
+    scnHookCall(h, SCN_HOOK_TANK_HIT, 6);
+}
+
 /* A base changed hands. One event carries both facts and the new owner is
  * what tells them apart: a capture names who took it, a neutralisation has
  * nobody to name and says who lost it. */
@@ -4324,6 +4357,10 @@ static void scnGameEventHook(ScenarioHost *h, const ScnQueuedEvent *e,
     switch (e->type) {
         case EVENT_TANK_KILLED:
             scnHookTankKilled(h, e, scripted);
+            return;
+
+        case EVENT_TANK_HIT:
+            scnHookTankHit(h, e, scripted);
             return;
 
         case EVENT_TANK_SPAWNED:
@@ -5040,12 +5077,13 @@ static void scnFillLobbyTemplate(const ScnManifestLobby *lob,
  * fresh one, so the lookup goes to whichever state is current. */
 
 /* How the answers of a list of scripts are read, now that every one of them
- * is asked. The ten sites below each hold the arbitration for their own row,
- * because what the answers mean differs by row:
+ * is asked. The thirteen sites below each hold the arbitration for their own
+ * row, because what the answers mean differs by row:
  *
- *   the six predicates
- *     allow_extra_teams, can_respawn, can_build, can_capture, announce and
- *     can_die. Asked in list order, any false wins, and the first no stops
+ *   the eight predicates
+ *     allow_extra_teams, can_respawn, can_build, can_capture, announce,
+ *     can_hit, can_die and can_ally. Asked in list order, any false wins, and
+ *     the first no stops
  *     the asking. A predicate is a veto — false takes something out of the
  *     round — so a script that says no is not something a later script may
  *     put back, and one that has already lost has nothing left to add.
@@ -5058,7 +5096,7 @@ static void scnFillLobbyTemplate(const ScnManifestLobby *lob,
  *     chooser's buttons say "Load earlier" and "Load later" and its heading
  *     says the top has priority, so the script loaded earlier is the one
  *     meant to have the say.
- *   damage_scale
+ *   damage_scale and pill_damage_scale
  *     every script asked and the percents multiplied. Two scripts halving a
  *     blow leave a quarter of it, which is the only reading where each
  *     script's own answer still means what it says on its own.
@@ -5293,7 +5331,7 @@ static void scnPushWord(ScenarioHost *h, const char *word) {
  * answer. The stopping test is the loop's own condition rather than a break
  * inside it, which is what keeps the stack contract: a break taken between
  * scnPolicyBegin and scnPolicyBool would leave the pushed function on the
- * stack for ever. The five predicates below are written the same way for
+ * stack for ever. The six predicates below are written the same way for
  * the same reason. */
 static bool scnAllowExtraTeams(void *ctx) {
     ScenarioHost *h     = (ScenarioHost *)ctx;
@@ -5504,7 +5542,7 @@ static bool scnAnnounce(void *ctx, BYTE kind, BYTE subject, BYTE actor) {
  * a shell and a mine alike, so the script reads one set of words, and a
  * cause the site could not name reaches it as nil. */
 static bool scnCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
-                      BYTE cause) {
+                      BYTE cause, BYTE pill) {
     ScenarioHost *h    = (ScenarioHost *)ctx;
     const char   *word = scenarioLuaDieKindWord((int)kind);
     bool          may  = true;
@@ -5528,7 +5566,66 @@ static bool scnCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
         scnPushWord(h, (kind == DIE_KIND_TANK)
                            ? scenarioLuaDeathCauseWord((int)cause)
                            : scenarioLuaDamageSourceWord((int)cause));
-        may = scnPolicyBool(h, i, kScnPolicyNames[SCN_POLICY_CAN_DIE], 4,
+        scnPushItemIndex(h, pill, MAX_PILLS);
+        may = scnPolicyBool(h, i, kScnPolicyNames[SCN_POLICY_CAN_DIE], 5,
+                            true);
+    }
+    scnLockLeave(&h->lock);
+    return may;
+}
+
+/* May this shell hit the tank or pill it has reached? The attacker is the
+ * shell's owner, NEUTRAL for a pillbox's, and the pillbox that fired it is the
+ * trailing argument, nil for a tank's shell. A no lets the shell fly on. */
+static bool scnCanHit(void *ctx, BYTE attacker, BYTE kind, BYTE index,
+                      BYTE pill) {
+    ScenarioHost *h    = (ScenarioHost *)ctx;
+    const char   *word = scenarioLuaHitKindWord((int)kind);
+    bool          may  = true;
+    int           i;
+
+    if (h == NULL || word == NULL) {
+        return true;
+    }
+    scnLockEnter(&h->lock);
+    for (i = 0; i < h->count && may; i++) {
+        if (!scnPolicyBegin(h, i, kScnPolicyNames[SCN_POLICY_CAN_HIT])) {
+            continue;
+        }
+        lua_pushinteger(h->L, (lua_Integer)attacker);
+        lua_pushstring(h->L, word);
+        if (kind == HIT_KIND_PILL) {
+            scnPushItemIndex(h, index, MAX_PILLS);
+        } else {
+            lua_pushinteger(h->L, (lua_Integer)index);
+        }
+        scnPushItemIndex(h, pill, MAX_PILLS);
+        may = scnPolicyBool(h, i, kScnPolicyNames[SCN_POLICY_CAN_HIT], 4,
+                            true);
+    }
+    scnLockLeave(&h->lock);
+    return may;
+}
+
+/* May player p ally with seat q? Asked when p requests the alliance and again
+ * when q accepts it, so a script whose answer changed in between is asked
+ * the question it now answers. Both are seats, which Lua does not convert. */
+static bool scnCanAlly(void *ctx, BYTE player, BYTE other) {
+    ScenarioHost *h   = (ScenarioHost *)ctx;
+    bool          may = true;
+    int           i;
+
+    if (h == NULL) {
+        return true;
+    }
+    scnLockEnter(&h->lock);
+    for (i = 0; i < h->count && may; i++) {
+        if (!scnPolicyBegin(h, i, kScnPolicyNames[SCN_POLICY_CAN_ALLY])) {
+            continue;
+        }
+        lua_pushinteger(h->L, (lua_Integer)player);
+        lua_pushinteger(h->L, (lua_Integer)other);
+        may = scnPolicyBool(h, i, kScnPolicyNames[SCN_POLICY_CAN_ALLY], 2,
                             true);
     }
     scnLockLeave(&h->lock);
@@ -5703,7 +5800,32 @@ static bool scnSpawnLoadout(void *ctx, BYTE player, ScnLoadout *out) {
  * inside one too. An int is therefore enough for a list of any length. */
 #define SCN_DAMAGE_SCALE_MAX 10000
 
-static int scnDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause) {
+/* One script's percent, read off the top of the stack and folded into the
+ * running product the two scale rows keep. The answer is popped either way;
+ * a bad one is reported and leaves the product where it was. */
+static int scnScaleFold(ScenarioHost *h, int script, const char *name,
+                        int pct) {
+    long v = 0;
+
+    if (scnPolicyWhole(h->L, &v) && v >= 0 && v <= SCN_DAMAGE_SCALE_MAX) {
+        /* A hundred times one answer divided by a hundred is that answer,
+           so one script on the list reads exactly as it did before there
+           were lists. */
+        pct = (pct * (int)v) / 100;
+        if (pct > SCN_DAMAGE_SCALE_MAX) {
+            pct = SCN_DAMAGE_SCALE_MAX;
+        }
+        scnErrorCleared(h, script);
+    } else {
+        scnPolicyBadAnswer(h, script, name,
+                           "with no percent between 0 and a hundredfold");
+    }
+    lua_pop(h->L, 1);
+    return pct;
+}
+
+static int scnDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause,
+                          BYTE pill) {
     ScenarioHost *h    = (ScenarioHost *)ctx;
     const char   *word = scenarioLuaDeathCauseWord((int)cause);
     int           pct  = 100;
@@ -5720,26 +5842,48 @@ static int scnDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause) {
         lua_pushinteger(h->L, (lua_Integer)attacker);
         lua_pushinteger(h->L, (lua_Integer)victim);
         lua_pushstring(h->L, word);
+        scnPushItemIndex(h, pill, MAX_PILLS);
         if (scnPolicyAnswer(h, i, kScnPolicyNames[SCN_POLICY_DAMAGE_SCALE],
-                            3)) {
-            long v = 0;
-            if (scnPolicyWhole(h->L, &v) && v >= 0 &&
-                v <= SCN_DAMAGE_SCALE_MAX) {
-                /* A hundred times one answer divided by a hundred is that
-                   answer, so one script on the list reads exactly as it did
-                   before there were lists. */
-                pct = (pct * (int)v) / 100;
-                if (pct > SCN_DAMAGE_SCALE_MAX) {
-                    pct = SCN_DAMAGE_SCALE_MAX;
-                }
-                scnErrorCleared(h, i);
-            } else {
-                scnPolicyBadAnswer(h, i,
-                                   kScnPolicyNames[SCN_POLICY_DAMAGE_SCALE],
-                                   "with no percent between 0 and "
-                                   "a hundredfold");
-            }
-            lua_pop(h->L, 1);
+                            4)) {
+            pct = scnScaleFold(h, i, kScnPolicyNames[SCN_POLICY_DAMAGE_SCALE],
+                               pct);
+        }
+    }
+    scnLockLeave(&h->lock);
+    return pct;
+}
+
+/* What this blow takes off a pill, as a percent, read exactly as the tank's
+ * price above is: every script asked, the percents multiplied, and every way
+ * of saying nothing a hundred. Only the armour lost is priced — the shell
+ * that hits still stops and the pill it hits still turns angry, whatever
+ * this answers. */
+static int scnPillDamageScale(void *ctx, BYTE attacker, BYTE index,
+                              BYTE cause, BYTE pill) {
+    ScenarioHost *h    = (ScenarioHost *)ctx;
+    const char   *word = scenarioLuaDamageSourceWord((int)cause);
+    int           pct  = 100;
+    int           i;
+
+    if (h == NULL || word == NULL) {
+        return 100;
+    }
+    scnLockEnter(&h->lock);
+    for (i = 0; i < h->count; i++) {
+        if (!scnPolicyBegin(h, i,
+                            kScnPolicyNames[SCN_POLICY_PILL_DAMAGE_SCALE])) {
+            continue;
+        }
+        lua_pushinteger(h->L, (lua_Integer)attacker);
+        scnPushItemIndex(h, index, MAX_PILLS);
+        lua_pushstring(h->L, word);
+        scnPushItemIndex(h, pill, MAX_PILLS);
+        if (scnPolicyAnswer(h, i,
+                            kScnPolicyNames[SCN_POLICY_PILL_DAMAGE_SCALE],
+                            4)) {
+            pct = scnScaleFold(h, i,
+                               kScnPolicyNames[SCN_POLICY_PILL_DAMAGE_SCALE],
+                               pct);
         }
     }
     scnLockLeave(&h->lock);
@@ -8814,6 +8958,9 @@ static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
     h->policy.canCapture      = scnCanCapture;
     h->policy.announce        = scnAnnounce;
     h->policy.canDie          = scnCanDie;
+    h->policy.canHit          = scnCanHit;
+    h->policy.pillDamageScale = scnPillDamageScale;
+    h->policy.canAlly         = scnCanAlly;
     h->policy.chooseStart     = scnChooseStart;
     h->policy.spawnLoadout    = scnSpawnLoadout;
     h->policy.damageScale     = scnDamageScale;

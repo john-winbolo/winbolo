@@ -1075,7 +1075,8 @@ static bool mjSettingStr(const cJSON *row, const char *field, char *dst,
 
 /* The settings array into the struct, on the terms scenarioLuaReadSettings
  * reads the Lua table on: the same fields, the same defaults (type "int",
- * step 1), the same scnSettingProblem check, duplicates and rows past
+ * step 1), a bool row with a true or false default and no min, max or step,
+ * the same scnSettingProblem check, duplicates and rows past
  * SCN_SETTINGS_MAX dropped. A dropped row is an issue, because the host
  * would otherwise be offered a dropdown the author did not mean. */
 static void mjDecodeSettings(const cJSON *root, ScenarioManifest *m,
@@ -1128,18 +1129,40 @@ static void mjDecodeSettings(const cJSON *root, ScenarioManifest *m,
         if (!mjSettingStr(row, "type", type, sizeof(type))) {
             snprintf(type, sizeof(type), "?");
         }
-        if (type[0] != '\0' && strcmp(type, "int") != 0) {
-            mjReport(rep, key,
-                     "scenario: %s has type '%s'; only \"int\" is "
-                     "supported; dropped", key, type);
-            continue;
-        }
         st.type = SCN_SETTING_TYPE_INT;
-        if (!mjSettingInt(row, "min", &st.min, &hadMin) ||
-            !mjSettingInt(row, "max", &st.max, &hadMax) ||
-            !mjSettingInt(row, "step", &st.step, &hadStep) ||
-            !mjSettingInt(row, "default", &st.def, &hadDef) ||
-            !hadMin || !hadMax || !hadDef) {
+        if (strcmp(type, "bool") == 0) {
+            const cJSON *def =
+                cJSON_GetObjectItemCaseSensitive(row, "default");
+
+            st.type = SCN_SETTING_TYPE_BOOL;
+            if (cJSON_GetObjectItemCaseSensitive(row, "min") != NULL ||
+                cJSON_GetObjectItemCaseSensitive(row, "max") != NULL ||
+                cJSON_GetObjectItemCaseSensitive(row, "step") != NULL) {
+                mjReport(rep, key,
+                         "scenario: %s is a bool setting and takes no min, "
+                         "max or step; dropped", key);
+                continue;
+            }
+            if (!cJSON_IsBool(def)) {
+                mjReport(rep, key,
+                         "scenario: %s needs true or false for default; "
+                         "dropped", key);
+                continue;
+            }
+            st.min  = 0;
+            st.max  = 1;
+            st.step = 1;
+            st.def  = cJSON_IsTrue(def) ? 1 : 0;
+        } else if (type[0] != '\0' && strcmp(type, "int") != 0) {
+            mjReport(rep, key,
+                     "scenario: %s has type '%s'; only \"int\" and "
+                     "\"bool\" are supported; dropped", key, type);
+            continue;
+        } else if (!mjSettingInt(row, "min", &st.min, &hadMin) ||
+                   !mjSettingInt(row, "max", &st.max, &hadMax) ||
+                   !mjSettingInt(row, "step", &st.step, &hadStep) ||
+                   !mjSettingInt(row, "default", &st.def, &hadDef) ||
+                   !hadMin || !hadMax || !hadDef) {
             mjReport(rep, key,
                      "scenario: %s needs whole numbers for min, max and "
                      "default (and step, if given); dropped", key);
@@ -1686,11 +1709,16 @@ static void mjEmit(cJSON *root, const ScnManifestDoc *d) {
             }
             mjPutString(row, "id", st->id);
             mjPutString(row, "label", st->label);
-            mjPutString(row, "type", "int");
-            mjPutNumber(row, "min", (double)st->min);
-            mjPutNumber(row, "max", (double)st->max);
-            mjPutNumber(row, "step", (double)st->step);
-            mjPutNumber(row, "default", (double)st->def);
+            if (st->type == SCN_SETTING_TYPE_BOOL) {
+                mjPutString(row, "type", "bool");
+                mjPutBool(row, "default", st->def != 0);
+            } else {
+                mjPutString(row, "type", "int");
+                mjPutNumber(row, "min", (double)st->min);
+                mjPutNumber(row, "max", (double)st->max);
+                mjPutNumber(row, "step", (double)st->step);
+                mjPutNumber(row, "default", (double)st->def);
+            }
             cJSON_AddItemToArray(arr, row);
         }
     }

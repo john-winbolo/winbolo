@@ -95,7 +95,7 @@ static int mc_change_and_reconverge(LoopbackHarness *h, const char *tag) {
     int noticedAt, recoveredAt;
     uint32_t invalidatesBefore = clientSimGetMapInvalidateCount(h->cs);
 
-    if (!serverSimReloadCompressedInMemory(h->sim, emap, 5097,
+    if (!serverSimReloadCompressedInMemory(h->sim, emap, E_MAP_LEN,
                                            "Everard Island")) {
         fprintf(stderr, "  map change (%s): in-memory reload failed\n", tag);
         return 1;

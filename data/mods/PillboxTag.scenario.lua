@@ -1586,6 +1586,12 @@ function allow_base_win()
   return false
 end
 
+-- Every player chases the prize for themselves, so players cannot make
+-- alliances.
+function can_ally(p, q)
+  return false
+end
+
 function announce(kind, subject, actor)
   if kind == "base_captured" then
     return false
@@ -1706,6 +1712,7 @@ scenario = {
     can_build = "Only the holder may repair it.",
     on_team_changed = "Teams are fixed.",
     allow_base_win = "Holding every base does not win.",
+    can_ally = "Players cannot ally.",
     announce = "Base captures are not announced.",
     spawn_loadout = "Full shells, no mines; carriers get none.",
     damage_scale = "New holder takes no damage at first.",

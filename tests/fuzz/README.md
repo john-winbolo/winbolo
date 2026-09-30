@@ -30,8 +30,8 @@ is the default because it needs no external driver.
 | `fuzz_server_dispatch` (tier 2) | The full `serverProcessPacket` switch and the hand-written count-loops / chunk reassembly codegen did **not** touch (COMMAND_TICK, MAP_ACK, the reliable event loops, lobby/map handlers) — the highest remaining over-read surface. Runs socket-free and thread-free via the `WB_FUZZ`-gated seam. |
 | `fuzz_client_snapshot` | The client `PACKET_STATE_SNAPSHOT` decoder — specifically the count-driven reliable-event loop and its `unpackGameEvent` call (the suspected over-read at `transport_udp_client.c:~1550`). Input is the snapshot body; the seam frames a header and feeds it on an exact-size, ASan-guarded buffer. |
 | `fuzz_join_accept` | The client `PACKET_JOIN_ACCEPT` handler — the join handshake (server-assigned slot, mapSize/connId parsing), a path the snapshot target can't reach (it starts already CONNECTED). Input is the accept body. |
-| `fuzz_map_load` | `mapLoadCompressedMap` — the parser every map that arrives over the network lands in: three fixed-size struct memcpys for the bases, pillboxes and starts, then an LZW decode of the terrain into the 256x256 array. Input is the whole compressed blob, copied onto an exact-size heap buffer so ASan catches an over-read past `inputLen`. Covers the LZW decoder and the reject paths; it almost never reaches a successful load, because a mutated stream rarely decodes to exactly 65536 bytes. |
-| `fuzz_map_fields` | The same loader, past the LZW gate. Takes the struct region straight from the fuzzer, fills the terrain from the rest of the input, compresses it with the writer's own `lzwencoding`, and hands the result to the real `mapLoadCompressedMap`, so every input loads. This is what exercises `basesValidate` / `pillsValidate` / `startsValidate` and the terrain values the nibble-packed file format cannot express. Each input costs a full compress and decompress, so it runs far slower than `fuzz_map_load` and saturates within seconds. |
+| `fuzz_map_load` | `mapLoadCompressedMap` — the parser every map that arrives over the network lands in: one zlib stream that inflates into the bases, pillboxes and starts structs and then the 256x256 terrain array. Input is the whole compressed blob, copied onto an exact-size heap buffer so ASan catches an over-read past `inputLen`. Covers the reject paths around zlib; it almost never reaches a successful load, because a mutated stream rarely passes zlib's checksum. |
+| `fuzz_map_fields` | The same loader, past the zlib gate. Takes the struct region straight from the fuzzer, fills the terrain from the rest of the input, compresses the two with zlib as the writer does, and hands the result to the real `mapLoadCompressedMap`, so every input loads. This is what exercises `basesValidate` / `pillsValidate` / `startsValidate` and the terrain values the nibble-packed file format cannot express. Each input costs a full compress and decompress, so it runs far slower than `fuzz_map_load` and saturates within seconds. |
 | `fuzz_replay` | The log viewer loading and playing a `.wbv` — a file anyone can hand it, including the round a game server sends for the post-game reel. Input is `[u16 big-endian scriptsLen][scripts.json][log.dat]`, with `scriptsLen` clamped to what follows and 0 leaving the member out. The target stores both in a zip built in memory and hands it to `lv_screenLoadMapFromMemory`, so every input runs the viewer's zip reading, the `scripts.json` parser and the load walks (total time, game start, slot names, rule changes, presentation index, server ticks) on a plaintext log the fuzzer can mutate. It then plays at most 4096 ticks, seeks back to halfway through what it played and then to the start, and reads the server-tick lookup, the scripts holder, the rule changes and the slot names into a volatile sink. Nothing touches the disk. |
 
 ## Build
@@ -141,11 +141,11 @@ ls <repo>/tests/fuzz/crashes/
   pinned near the JOIN gate. To enrich these seeds with real post-JOIN traffic,
   capture the client→server datagrams a loopback session produces and drop them
   here as whole datagrams (the seam replays one datagram per input).
-- `corpus/map_load/` — the real Everard Island blob (the first 5097 bytes of
-  `E_MAP` in `everard_map.h`, the length every caller passes), a struct region
-  with no terrain at the exact minimum the length guard accepts, one byte under
-  that minimum, and a blob with all three counts at their maxima. Everard is
-  the only seed that loads; the rest pin the reject paths.
+- `corpus/map_load/` — the real Everard Island blob (the first `E_MAP_LEN`
+  bytes of `E_MAP` in `everard_map.h`), a zlib stream holding the struct
+  region and no terrain, one holding a byte less than the struct region, and
+  a blob with all three counts at their maxima over all-`DEEP_SEA` terrain.
+  Everard and the maxima blob load; the other two pin the reject paths.
 - `corpus/map_fields/` — struct-region-plus-terrain inputs for the compressing
   target: a plain map with no objects and uniform terrain, one with all three
   counts at their maxima and every base field set to 200 (past the owner and

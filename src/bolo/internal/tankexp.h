@@ -247,7 +247,9 @@ void tkExplosionCheckRemove(struct GameSim *sim, BYTE terrain, BYTE mx, BYTE my)
 *  moveY   - Moving Y direction (positive/Negative)
 *  lgms   - Array of lgms
 *  numLgm - Number of lgms in the array
+*  creator - The slot whose dying tank this is. The policy
+*            questions are told it; no kill is credited to it
 *********************************************************/
-void tkExplosionBigExplosion(struct GameSim *sim, BYTE mx, BYTE my, int moveX, int moveY, lgm **lgms, BYTE numLgm, tank *tanks, starts *sts);
+void tkExplosionBigExplosion(struct GameSim *sim, BYTE mx, BYTE my, int moveX, int moveY, lgm **lgms, BYTE numLgm, tank *tanks, starts *sts, BYTE creator);
 
 #endif /* TK_EXPLOSION_H */

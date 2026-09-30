@@ -88,7 +88,7 @@
  * lobby on it opens east/west. */
 static ServerSim *make_wide_sim(void) {
     BYTE emap[6000] = E_MAP;
-    return serverSimCreateCompressed(emap, 5097, "Everard Island",
+    return serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                      gameOpen, false, 0, -1);
 }
 
@@ -908,7 +908,7 @@ static bool reload_wide(ServerSim *sim) {
     BYTE emap[6000] = E_MAP;
     bool ok;
     threadsWaitForMutex();
-    ok = serverSimReloadCompressedInMemory(sim, emap, 5097, "Everard Island") ? true : false;
+    ok = serverSimReloadCompressedInMemory(sim, emap, E_MAP_LEN, "Everard Island") ? true : false;
     threadsReleaseMutex();
     return ok;
 }

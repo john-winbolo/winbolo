@@ -421,7 +421,7 @@ int run_map_shadow_seed_lifecycle(void) {
      * installed over it. */
     {
         BYTE emap[6000] = E_MAP;
-        ServerSim *lobbySim = serverSimCreateCompressed(emap, 5097,
+        ServerSim *lobbySim = serverSimCreateCompressed(emap, E_MAP_LEN,
                                                         "Everard Island",
                                                         gameOpen, false, 0, -1);
         UT_ASSERT_MSG(lobbySim != NULL, "serverSimCreateCompressed returned NULL");
@@ -435,7 +435,7 @@ int run_map_shadow_seed_lifecycle(void) {
                       "hand-dirtying every copy should leave slot 0 as the "
                       "first mismatch (got %d)", ms_first_mismatch(lobbySim));
 
-        bool ok = serverSimReloadCompressedInMemory(lobbySim, emap, 5097,
+        bool ok = serverSimReloadCompressedInMemory(lobbySim, emap, E_MAP_LEN,
                                                     "Everard Island");
         if (!ok) {
             serverSimDestroy(lobbySim);

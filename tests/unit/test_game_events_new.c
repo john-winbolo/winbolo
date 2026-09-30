@@ -434,7 +434,7 @@ int run_game_events_pill_killed(void) {
     (*gs->pb).item[0].armour = 1;
     (*gs->pb).item[0].inTank = FALSE;
     geDrain(sim, &sink);
-    UT_ASSERT(pillsDamagePos(gs, p.x, p.y, TRUE, FALSE, GE_OTHER) == TRUE);
+    UT_ASSERT(pillsDamagePos(gs, p.x, p.y, TRUE, FALSE, GE_OTHER, DMG_NO_PILL) == TRUE);
 
     UT_ASSERT_MSG(geCount(&sink, EVENT_PILL_KILLED) == 1,
                   "the shell published %d kill events",
@@ -449,7 +449,7 @@ int run_game_events_pill_killed(void) {
 
     /* A second blow on the same dead pill kills nothing twice. */
     geDrain(sim, &sink);
-    (void)pillsDamagePos(gs, p.x, p.y, TRUE, FALSE, GE_OTHER);
+    (void)pillsDamagePos(gs, p.x, p.y, TRUE, FALSE, GE_OTHER, DMG_NO_PILL);
     UT_ASSERT_MSG(geCount(&sink, EVENT_PILL_KILLED) == 0,
                   "a pill already dead was killed again");
 
@@ -459,7 +459,7 @@ int run_game_events_pill_killed(void) {
     (*gs->pb).item[np - 1].armour = 2;
     (*gs->pb).item[np - 1].inTank = FALSE;
     geDrain(sim, &sink);
-    pillsGetDamagePos(gs, &gs->pb, p.x, p.y, 5);
+    pillsGetDamagePos(gs, &gs->pb, p.x, p.y, 5, NEUTRAL);
 
     ev = geFind(&sink, EVENT_PILL_KILLED);
     UT_ASSERT_MSG(ev != NULL, "the explosion published no kill event");
@@ -471,7 +471,7 @@ int run_game_events_pill_killed(void) {
 
     /* And the splash path does not kill an already-dead pill either. */
     geDrain(sim, &sink);
-    pillsGetDamagePos(gs, &gs->pb, p.x, p.y, 5);
+    pillsGetDamagePos(gs, &gs->pb, p.x, p.y, 5, NEUTRAL);
     UT_ASSERT_MSG(geCount(&sink, EVENT_PILL_KILLED) == 0,
                   "splash on a dead pill published a kill");
 

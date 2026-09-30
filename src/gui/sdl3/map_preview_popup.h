@@ -30,7 +30,7 @@ extern "C" {
 
 /* Call after an ImGui::Image() thumbnail. If the image was clicked and
  * compressedData is non-NULL, opens the popup centered on the given bounds.
- * compressedData is the network-compressed map (bases+pills+starts+LZW). */
+ * compressedData is the network-compressed map (zlib over bases+pills+starts+terrain). */
 void mapPreviewPopupOnClick(const BYTE *compressedData, int compressedLen,
                             int boundsMinX, int boundsMinY,
                             int boundsMaxX, int boundsMaxY);

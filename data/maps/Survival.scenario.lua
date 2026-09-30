@@ -126,6 +126,7 @@ scenario = {
     spawn_loadout = "Attackers always spawn fully stocked; defenders get the normal tournament loadout.",
     allow_base_win = "Holding every base does not win; the only win is surviving every wave set in the lobby.",
     allow_extra_teams = "Keeps the round to two teams: the defenders and the horde.",
+    can_ally = "Players cannot ally.",
     announce = "Silences the newswire for a few seconds while each wave arrives and leaves.",
     on_choose_start = "Defenders start in the centre puddle; each attacker starts out at sea on its own spoke.",
     on_setup = "Gives the defenders the centre bases and pillboxes, builds the island's shallow rim and tree ring, and digs in defender bots.",
@@ -454,6 +455,13 @@ end
 -- host's own question where the old file answered a show_add_team_button
 -- one; the effect a host sees is the same.
 function allow_extra_teams()
+  return false
+end
+
+-- And no alliances players make themselves. A defender allied with a horde
+-- bot would be spared by the horde's pillboxes while this script still
+-- counted them a defender.
+function can_ally(p, q)
   return false
 end
 

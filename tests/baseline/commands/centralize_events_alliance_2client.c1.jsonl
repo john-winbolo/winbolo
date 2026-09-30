@@ -1,8 +1,13 @@
 # centralize_events_alliance_2client_udp — client 1 (slot 0).
 # Server runs with -nolobby so the game is in RUNNING phase from
-# tick 0. Client 1 (joined first, lands in slot 0) issues an
-# alliance_request → slot 1 and, after client 2's accept lands,
-# alliance_leave for itself.
-{"tick": 30, "op": "alliance_request", "from": 0, "to": 1}
-{"tick": 70, "op": "alliance_leave",   "slot": 0}
+# tick 0. Client 1 joins first and lands in slot 0. It accepts
+# client 2's alliance request, then sends alliance_leave for itself.
+# The request comes from client 2 because client 2 joins later
+# (around client 1's tick 82-112), and the server only records a
+# request to a seat that is connected; a request from client 1 at
+# tick 30 was refused, and the server takes no accept without one.
+# Accept at 200 leaves room for the request, sent at client 2's
+# tick 30, to arrive first.
+{"tick": 200, "op": "alliance_accept", "from": 0, "to": 1}
+{"tick": 220, "op": "alliance_leave",  "slot": 0}
 {"tick": 250, "op": "exit"}

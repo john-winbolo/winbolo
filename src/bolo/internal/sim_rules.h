@@ -75,10 +75,10 @@ typedef struct SimRules {
     int32_t tank_nudge_threshold;    /* which axis a shove takes */
     int32_t tank_nudge_amount;       /* how far one shove moves a tank */
     int32_t tank_nudge_iterations;   /* shoves tried in a tick */
-    int32_t tank_bump_decay_shift;   /* decay fraction 2^-shift per reference 40 ms */
+    int32_t tank_bump_decay_shift;   /* how fast a bump dies away */
     int32_t tank_pill_pickup_inset;  /* the reach a tank picks a pill up from */
     int32_t tank_boat_exit_inset;    /* how far inside a bank a boat is held */
-    int32_t tank_slide_step;         /* reference 40 ms knockback step at full armour, WU */
+    int32_t tank_slide_step;         /* world units a knocked tank slides */
     float   tank_wall_glide;         /* 0 slides along a wall, 1 glides free */
 
     /* ---- Terrain: the cap a tank's speed clamps to ----
@@ -158,7 +158,7 @@ typedef struct SimRules {
     int32_t pill_shell_damage;      /* what one shell takes off a pill */
     int32_t pill_angry_divisor;     /* the step from normal toward min */
     float   pill_fire_length;       /* how far the shell a pill fires flies */
-    int32_t pill_base_defend_range; /* exclusive radius in map squares around a shot base */
+    int32_t pill_base_defend_range; /* map squares around a shot base */
     int32_t pill_aim_iterations;    /* how hard a pill works to lead a target */
     int32_t pill_massage_range;     /* how near the old sloppy aim takes over */
     float   pill_massage_cosine;    /* how straight at the pill still aims true */
@@ -236,8 +236,20 @@ typedef struct SimRules {
     int32_t tree_weight_road;
     int32_t tree_weight_mine;
 
-    /* Appended to preserve existing scenario rule indices. */
-    int32_t tank_slide_armour_bonus; /* extra initial WU at zero armour */
+    /* ---- Pillbox shell cap ---- last, like its rows in SIM_RULE_LIST */
+    int32_t pill_shell_cap;         /* whether pill_max_shells_at_tank applies */
+    int32_t pill_max_shells_at_tank; /* pill shells one tank can have coming */
+
+    /* ---- Base defence shape ---- last, like its row in SIM_RULE_LIST */
+    int32_t pill_base_defend_shape; /* 0 a square, 1 a circle */
+
+    /* ---- Mac Bolo shell push ---- last, like their rows in SIM_RULE_LIST */
+    int32_t tank_slide_mac;          /* whether a shell hit pushes the Mac Bolo way */
+    int32_t tank_slide_armour_bonus; /* extra Mac Bolo push at zero armour */
+
+    /* ---- Mac Bolo pill aiming ---- appended to preserve rule indices */
+    int32_t pill_aim_mac;            /* Mac Bolo lead, including pill massage */
+    int32_t tank_collision_mac;      /* Mac sprite boxes and solid-tile nudges */
 } SimRules;
 
 /*********************************************************

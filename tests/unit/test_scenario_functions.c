@@ -539,7 +539,7 @@ static void sfnDrop(const char *mapPath) {
 
 static ServerSim *sfnSim(void) {
     BYTE       emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) {
         return NULL;
@@ -666,6 +666,8 @@ typedef struct {
 static const SfnGameCase kSfnGame[] = {
     /* [killer, killed, cause, carriedPills, trees, mapX, mapY] */
     { EVENT_TANK_KILLED,   { 5, 2, LAST_DEATH_BY_SHELL, 1, 0, 40, 41 }, 7 },
+    /* [victim, attacker, cause, amount, pill] */
+    { EVENT_TANK_HIT,      { 2, 5, LAST_DEATH_BY_SHELL, 5, DMG_NO_PILL }, 5 },
     /* [player, mx, my, respawn] */
     { EVENT_TANK_SPAWNED,  { 3, 44, 45, 1 }, 4 },
     /* [sender, kind, xHi, xLo, yHi, yLo] — the two positions are world

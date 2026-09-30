@@ -1903,7 +1903,7 @@ bool gameFrontSetDlgState(openingStates newState) {
           spServerSim = serverSimCreate(fileName, spGameType, spHiddenMines, spStartDelay, spTimeLen);
         } else {
           BYTE emap[6000] = E_MAP;
-          spServerSim = serverSimCreateCompressed(emap, 5097, "Everard Island", spGameType, spHiddenMines, spStartDelay, spTimeLen);
+          spServerSim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island", spGameType, spHiddenMines, spStartDelay, spTimeLen);
         }
         if (spServerSim != NULL) {
           /* Embedded server: silence its console messages (Thread Manager
@@ -3594,7 +3594,7 @@ bool gameFrontSetupServer(void) {
     spServerSim = serverSimCreate(fileName, gametype, hiddenMines, startDelay, timeLen);
   } else {
     BYTE emap[6000] = E_MAP;
-    spServerSim = serverSimCreateCompressed(emap, 5097, "Everard Island", gametype, hiddenMines, startDelay, timeLen);
+    spServerSim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island", gametype, hiddenMines, startDelay, timeLen);
   }
   if (spServerSim == NULL) {
     return FALSE;

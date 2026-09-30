@@ -237,7 +237,7 @@ static void bnTeamScriptMode(char *out, size_t outLen, const char *brain,
  * a sim does not make it the active one. */
 static ServerSim *bnLobbySim(void) {
     BYTE       emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
 
     if (sim == NULL) {
@@ -254,7 +254,7 @@ static ServerSim *bnLobbySim(void) {
 /* A sim with no lobby, ready to be attached to and then started. */
 static ServerSim *bnRoundSim(void) {
     BYTE       emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
 
     if (sim == NULL) {

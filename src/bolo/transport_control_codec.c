@@ -1735,7 +1735,9 @@ static EncodeResult encodeSimRulesBody(const ControlEvent *evt,
                                        size_t *outLen) {
     size_t pos = 0;
     (void)recipient;
-    if (bufCap < CTRL_SIM_RULES_BODY_LEN) return ENCODE_OVERFLOW;
+    bool extended = evt->u.simRules.tank_collision_mac != 0;
+    size_t bodyLen = extended ? CTRL_SIM_RULES_BODY_LEN : CTRL_SIM_RULES_BASE_BODY_LEN;
+    if (bufCap < bodyLen) return ENCODE_OVERFLOW;
 
 #define SIM_RULES_PACK_U8(name)                                              \
     buf[pos++] = (uint8_t)evt->u.simRules.name;
@@ -1750,6 +1752,9 @@ static EncodeResult encodeSimRulesBody(const ControlEvent *evt,
     CTRL_SIM_RULES_U16_FIELDS(SIM_RULES_PACK_U16)
     CTRL_SIM_RULES_U32_FIELDS(SIM_RULES_PACK_U32)
     CTRL_SIM_RULES_F32_FIELDS(SIM_RULES_PACK_F32)
+    if (extended) {
+        CTRL_SIM_RULES_EXT_U8_FIELDS(SIM_RULES_PACK_U8)
+    }
 
 #undef SIM_RULES_PACK_U8
 #undef SIM_RULES_PACK_U16
@@ -1763,7 +1768,7 @@ static EncodeResult encodeSimRulesBody(const ControlEvent *evt,
 static bool decodeSimRulesBody(const uint8_t *buf, size_t len,
                                ControlEvent *outEvt) {
     size_t pos = 0;
-    if (len != CTRL_SIM_RULES_BODY_LEN) return false;
+    if (len != CTRL_SIM_RULES_BODY_LEN && len != CTRL_SIM_RULES_BASE_BODY_LEN) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_SIM_RULES;
 
@@ -1780,6 +1785,9 @@ static bool decodeSimRulesBody(const uint8_t *buf, size_t len,
     CTRL_SIM_RULES_U16_FIELDS(SIM_RULES_UNPACK_U16)
     CTRL_SIM_RULES_U32_FIELDS(SIM_RULES_UNPACK_U32)
     CTRL_SIM_RULES_F32_FIELDS(SIM_RULES_UNPACK_F32)
+    if (len == CTRL_SIM_RULES_BODY_LEN) {
+        CTRL_SIM_RULES_EXT_U8_FIELDS(SIM_RULES_UNPACK_U8)
+    }
 
 #undef SIM_RULES_UNPACK_U8
 #undef SIM_RULES_UNPACK_U16

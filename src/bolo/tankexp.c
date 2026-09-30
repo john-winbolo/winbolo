@@ -319,14 +319,17 @@ void tkExplosionUpdate(GameSim *sim, lgm **lgms, BYTE numLgm, tank *tank, starts
            * tank explosion. */
           count = 1;
           while (count <= numLgm) {
+            /* The can_die question names the tank whose blast it is; the
+               kill is still credited to nobody. */
             lgmDeathCheck(sim, lgms[count-1], position->x, position->y, NEUTRAL,
+                          position->creator, DMG_SRC_EXPLOSION, DMG_NO_PILL,
                           tank ? &tank[count-1] : NULL);
             count++;
           }
         }
         if (!sim->isServer) { sim->callbacks.soundDist(sim->callbacks.ctx, mineExplosionNear, mx, my); }
       } else {
-        tkExplosionBigExplosion(sim, mx, my, moveX, moveY, lgms, numLgm, tank, sts);
+        tkExplosionBigExplosion(sim, mx, my, moveX, moveY, lgms, numLgm, tank, sts, position->creator);
       }
       tkExplosionDeleteItem(tke, &position);
     }
@@ -503,8 +506,10 @@ void tkExplosionCheckRemove(GameSim *sim, BYTE terrain, BYTE mx, BYTE my) {
 *  moveY   - Moving Y direction (positive/Negative)
 *  lgms   - Array of lgms
 *  numLgm - Number of lgms in the array
+*  creator - The slot whose dying tank this is. The policy
+*            questions are told it; no kill is credited to it
 *********************************************************/
-void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int moveY, lgm **lgms, BYTE numLgm, tank *tanks, starts *sts) {
+void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int moveY, lgm **lgms, BYTE numLgm, tank *tanks, starts *sts, BYTE creator) {
   map *mp = &sim->mp;
   pillboxes *pb = &sim->pb;
   bases *bs = &sim->bs;
@@ -525,7 +530,7 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
   currentPos = mapGetPos(mp, (BYTE) (mx+moveX), (BYTE) (my+moveY));
   tkExplosionCheckRemove(sim, currentPos, (BYTE) (mx + moveX), (BYTE) (my +moveY));
   if (sim->isServer && pillsExistPos(pb, (BYTE) (mx+moveX), (BYTE) (my + moveY))) {
-    pillsGetDamagePos(sim, pb, (BYTE) (mx+moveX), (BYTE) (my+moveY), (BYTE) sim->rules.tank_explosion_damage);
+    pillsGetDamagePos(sim, pb, (BYTE) (mx+moveX), (BYTE) (my+moveY), (BYTE) sim->rules.tank_explosion_damage, creator);
   } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA &&
              basesExistPos(bs, (BYTE) (mx+moveX), (BYTE) (my+moveY)) == FALSE &&
              pillsExistPos(pb, (BYTE) (mx+moveX), (BYTE) (my+moveY)) == FALSE) {
@@ -537,7 +542,7 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
   if (sim->isServer) {
     count = 1;
     while (count <= numLgm) {
-      lgmDeathCheck(sim, lgms[count-1], (WORLD) (((WORLD) (mx+moveX) << M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), (WORLD) (((WORLD) (my + moveY)<< M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), NEUTRAL, tanks ? &tanks[count-1] : NULL);
+      lgmDeathCheck(sim, lgms[count-1], (WORLD) (((WORLD) (mx+moveX) << M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), (WORLD) (((WORLD) (my + moveY)<< M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), NEUTRAL, creator, DMG_SRC_EXPLOSION, DMG_NO_PILL, tanks ? &tanks[count-1] : NULL);
       count++;
     }
   }
@@ -546,7 +551,7 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
   currentPos = mapGetPos(mp, (BYTE) (mx+moveX), my);
   tkExplosionCheckRemove(sim, currentPos, (BYTE) (mx + moveX), my);
   if (sim->isServer && pillsExistPos(pb, (BYTE) (mx+moveX), my)) {
-    pillsGetDamagePos(sim, pb, (BYTE) (mx+moveX), my, (BYTE) sim->rules.tank_explosion_damage);
+    pillsGetDamagePos(sim, pb, (BYTE) (mx+moveX), my, (BYTE) sim->rules.tank_explosion_damage, creator);
   } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA &&
              basesExistPos(bs, (BYTE) (mx+moveX), my) == FALSE &&
              pillsExistPos(pb, (BYTE) (mx+moveX), my) == FALSE) {
@@ -557,7 +562,7 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
   if (sim->isServer) {
     count = 1;
     while (count <= numLgm) {
-      lgmDeathCheck(sim, lgms[count-1], (WORLD) (((WORLD) (mx+moveX) << M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), (WORLD) ((my<< M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), NEUTRAL, tanks ? &tanks[count-1] : NULL);
+      lgmDeathCheck(sim, lgms[count-1], (WORLD) (((WORLD) (mx+moveX) << M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), (WORLD) ((my<< M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), NEUTRAL, creator, DMG_SRC_EXPLOSION, DMG_NO_PILL, tanks ? &tanks[count-1] : NULL);
       count++;
     }
   }
@@ -566,7 +571,7 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
   currentPos = mapGetPos(mp, mx, (BYTE) (my+moveY));
   tkExplosionCheckRemove(sim, currentPos, mx, (BYTE) (my +moveY));
   if (sim->isServer && pillsExistPos(pb, mx, (BYTE) (my + moveY))) {
-    pillsGetDamagePos(sim, pb, mx, (BYTE) (my + moveY), (BYTE) sim->rules.tank_explosion_damage);
+    pillsGetDamagePos(sim, pb, mx, (BYTE) (my + moveY), (BYTE) sim->rules.tank_explosion_damage, creator);
   } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA &&
              basesExistPos(bs, mx, (BYTE) (my+moveY)) == FALSE &&
              pillsExistPos(pb, mx, (BYTE) (my+moveY)) == FALSE) {
@@ -578,7 +583,7 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
   if (sim->isServer) {
     count = 1;
     while (count <= numLgm) {
-      lgmDeathCheck(sim, lgms[count-1], (WORLD) ((mx<< M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), (WORLD) (((my+moveY)<< M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), NEUTRAL, tanks ? &tanks[count-1] : NULL);
+      lgmDeathCheck(sim, lgms[count-1], (WORLD) ((mx<< M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), (WORLD) (((my+moveY)<< M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), NEUTRAL, creator, DMG_SRC_EXPLOSION, DMG_NO_PILL, tanks ? &tanks[count-1] : NULL);
       count++;
     }
   }
@@ -587,7 +592,7 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
   if (sim->isServer) {
     count = 1;
     while (count <= numLgm) {
-      lgmDeathCheck(sim, lgms[count-1], (WORLD) ((WORLD) (mx << M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), (WORLD) ((WORLD) (my << M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), NEUTRAL, tanks ? &tanks[count-1] : NULL);
+      lgmDeathCheck(sim, lgms[count-1], (WORLD) ((WORLD) (mx << M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), (WORLD) ((WORLD) (my << M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), NEUTRAL, creator, DMG_SRC_EXPLOSION, DMG_NO_PILL, tanks ? &tanks[count-1] : NULL);
       count++;
     }
   }
@@ -595,7 +600,7 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
   currentPos = mapGetPos(mp, mx, my);
   tkExplosionCheckRemove(sim, currentPos, mx, my);
   if (sim->isServer && pillsExistPos(pb, mx, my)) {
-    pillsGetDamagePos(sim, pb, mx, my, (BYTE) sim->rules.tank_explosion_damage);
+    pillsGetDamagePos(sim, pb, mx, my, (BYTE) sim->rules.tank_explosion_damage, creator);
   } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA &&
              basesExistPos(bs, mx, my) == FALSE &&
              pillsExistPos(pb, mx, my) == FALSE) {

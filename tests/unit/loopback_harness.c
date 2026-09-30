@@ -33,7 +33,7 @@
 
 /* E_MAP compressed length — the same literal ut_make_running_sim passes to
  * serverSimCreateCompressed. */
-#define LOOPBACK_EMAP_LEN 5097
+#define LOOPBACK_EMAP_LEN E_MAP_LEN
 
 /* Virtual impairment clock. The transport hands net_impair.c whatever clock
  * transportUdpClientSetVirtualClock installed, and the module is pure — it

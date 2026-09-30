@@ -20,7 +20,7 @@
 #include "server_sim_lifecycle.h"  /* serverSimSetAllowNewPlayers */
 #include "everard_map.h"           /* E_MAP — same map the loopback harness uses */
 
-#define FUZZ_EMAP_LEN 5097
+#define FUZZ_EMAP_LEN E_MAP_LEN
 
 /* Seam exported by src/server/udp/udp_server_test_hooks.c only under
  * -DWB_FUZZ. */

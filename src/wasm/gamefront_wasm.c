@@ -689,7 +689,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       }
       if (wasmServerSim == NULL) {
         BYTE emap[6000] = E_MAP;
-        wasmServerSim = serverSimCreateCompressed(emap, 5097, "EverardIsland", gametype, hiddenMines, startDelay, timeLen);
+        wasmServerSim = serverSimCreateCompressed(emap, E_MAP_LEN, "EverardIsland", gametype, hiddenMines, startDelay, timeLen);
       }
       if (wasmServerSim == NULL) {
         printf("[WASM] Failed to create ServerSim\n");

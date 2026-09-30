@@ -1,10 +1,13 @@
 # centralize_events_chat_alliance_3client_udp — client 1 (slot 0).
 # Same shape as the unicast scenario but with an alliance handshake
-# in front: c1 requests alliance with slot 2 (c3), c3 accepts on its
-# side, then both exchange unicast chats. The chat path itself is
-# unicast-only on the wire (no allies-only destination), so the
-# alliance ceremony is what bakes the request/accept event variants
-# into the baseline. c2 (passive witness) should see the alliance
-# broadcast events but zero CTRL_CHAT events.
-{"tick": 100, "op": "alliance_request", "from": 0, "to": 2}
-{"tick": 300, "op": "chat", "dest": 2, "body": "hi ally c3 from c1"}
+# in front: c3 requests an alliance with slot 0 (c1), c1 accepts,
+# then both exchange unicast chats. The request comes from c3
+# because c3 joins last (around c1's tick 112), and the server only
+# records a request to a seat that is connected and takes no accept
+# without one. The chat path itself is unicast-only on the wire (no
+# allies-only destination), so the alliance ceremony is what bakes
+# the request/accept event variants into the baseline. c2 (passive
+# witness) should see the alliance broadcast events but zero
+# CTRL_CHAT events.
+{"tick": 250, "op": "alliance_accept", "from": 0, "to": 2}
+{"tick": 350, "op": "chat", "dest": 2, "body": "hi ally c3 from c1"}

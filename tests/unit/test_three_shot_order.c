@@ -241,7 +241,7 @@ static void tsFireShell(TsFixture *f, uint32_t fireTick) {
     serverSimGetTankState(f->sim, TS_SHOOTER, &wx, &wy);
     gs->fireInputTick = fireTick;
     shellsAddItem(gs, &gs->shs, wx, wy, (TURNTYPE)0.0,
-                  (TURNTYPE)TS_SHELL_MAX_LEN, TS_SHOOTER, FALSE);
+                  (TURNTYPE)TS_SHELL_MAX_LEN, TS_SHOOTER, NEUTRAL, DMG_NO_PILL, FALSE);
     gs->fireInputTick = 0;
 }
 
@@ -262,7 +262,7 @@ static uint32_t tsFireShellAs(TsFixture *f, uint32_t serverTick,
     serverSimGetTankState(f->sim, TS_SHOOTER, &wx, &wy);
     gs->fireInputTick = clientFireTick;
     shellsAddItem(gs, &gs->shs, wx, wy, (TURNTYPE)0.0, (TURNTYPE)len,
-                  TS_SHOOTER, FALSE);
+                  TS_SHOOTER, NEUTRAL, DMG_NO_PILL, FALSE);
     gs->fireInputTick = 0;
     return (gs->shs != NULL) ? gs->shs->serverFireTick : 0u;
 }

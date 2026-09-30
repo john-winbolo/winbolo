@@ -81,6 +81,8 @@ void serverSimCbBuilt(void *ctx, BYTE player, BYTE action, BYTE mapX,
                       BYTE mapY);
 void serverSimCbMineLaid(void *ctx, BYTE player, BYTE mapX, BYTE mapY);
 void serverSimCbMineExploded(void *ctx, BYTE mapX, BYTE mapY, BYTE layer);
+void serverSimCbTankHit(void *ctx, BYTE victim, BYTE attacker, BYTE cause,
+                        BYTE amount, BYTE pill);
 void serverSimCbCenterTank(void *ctx);
 void serverSimCbConsoleMessage(void *ctx, char *msg);
 
@@ -91,12 +93,17 @@ bool serverSimCbChooseStart(void *ctx, BYTE player, BYTE *startIdx);
 bool serverSimCbSpawnLoadout(void *ctx, BYTE player, BYTE *shells,
                              BYTE *mines, BYTE *armour, BYTE *trees);
 bool serverSimCbCanRespawn(void *ctx, BYTE player);
-int  serverSimCbDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause);
+int  serverSimCbDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause,
+                            BYTE pill);
 bool serverSimCbCanBuild(void *ctx, BYTE player, BYTE action, BYTE mapX,
                          BYTE mapY, BYTE pillIdx);
 bool serverSimCbCanCapture(void *ctx, BYTE kind, BYTE index, BYTE player);
 bool serverSimCbCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
-                       BYTE cause);
+                       BYTE cause, BYTE pill);
+bool serverSimCbCanHit(void *ctx, BYTE attacker, BYTE kind, BYTE index,
+                       BYTE pill);
+int  serverSimCbPillDamageScale(void *ctx, BYTE attacker, BYTE index,
+                                BYTE cause, BYTE pill);
 
 /* Whether a newswire-worthy fact may be shown to players, also in
  * server_sim_callbacks.c. Unlike the queries above this one is not a GameSim

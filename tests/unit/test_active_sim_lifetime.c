@@ -79,7 +79,7 @@ int run_active_sim_armed_on_lobby_tick(void) {
 
     /* A freshly created sim sits in serverStateLobby — the state the
      * host/SP startup path ticks in before the countdown. */
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     UT_ASSERT_MSG(sim != NULL, "serverSimCreateCompressed returned NULL");
     UT_ASSERT_MSG(serverSimGetState(sim) == serverStateLobby,

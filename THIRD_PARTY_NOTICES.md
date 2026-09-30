@@ -203,11 +203,6 @@ WinBolo uses the following third-party libraries and code.
 - https://github.com/be5invis/Sarasa-Gothic
 - Author: belleve invis (Renzhi Li)
 
-### LZW/RLE Compression
-- Location: src/lzw/
-- Original author: David Bourgin (1994-1995)
-- Modified for WinBolo; distributed under GPL v2+
-
 ## Audio
 
 ### Universal UI/Menu Soundpack
