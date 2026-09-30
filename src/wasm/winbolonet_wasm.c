@@ -10,9 +10,15 @@
  * winbolonetevents.c, winbolonetthread.c).  WinBolo.net requires
  * libcurl which is not available in Emscripten, so all functions
  * are safe no-ops.
+ *
+ * Also holds the web's own account helpers. The page learns who is
+ * signed in from /api/v1/me (shell.html), and signing in and out
+ * happens on www.winbolo.net, so the account block reads the page's
+ * state and navigates rather than calling the WinBolo.net API.
  */
 
 #include <string.h>
+#include <emscripten.h>
 #include "global.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "../winbolonet/winbolonet_server.h"
@@ -183,3 +189,57 @@ void newsPrefSetAutoShow(const char *value) {
   strncpy(s_newsAutoShow, value, sizeof(s_newsAutoShow) - 1);
   s_newsAutoShow[sizeof(s_newsAutoShow) - 1] = '\0';
 }
+
+/* -------------------------------------------------------
+ * The web's WinBolo.net account, read from the page
+ *
+ * shell.html fetches /api/v1/me at load and, once it comes back,
+ * sets WB_PREFS_AUTH and WB_PREFS_NAME. WB_PREFS_AUTH starts out
+ * true so the prefs sync still downloads a signed-in player's prefs
+ * when main() runs first; WB_PREFS_NAME stays undefined until the
+ * fetch comes back, which is what tells a pending check from a
+ * finished one. The account block calls these once per frame, so
+ * none of them waits on anything.
+ * ------------------------------------------------------- */
+
+/* 1 until the /api/v1/me fetch has come back. A fetch that fails
+ * outright never sets the name, so the caller bounds the wait. */
+EM_JS(int, wbAccountPendingJs, (void), {
+  return (typeof window.WB_PREFS_NAME === 'undefined') ? 1 : 0;
+});
+
+/* Signed in only with a name, so the optimistic WB_PREFS_AUTH the
+ * page starts with never reads as signed in on its own. */
+EM_JS(int, wbAccountSignedInJs, (void), {
+  var name = window.WB_PREFS_NAME;
+  return (window.WB_PREFS_AUTH === true &&
+          typeof name === 'string' && name.length > 0) ? 1 : 0;
+});
+
+EM_JS(void, wbAccountNameJs, (char *out, int outSize), {
+  var name = window.WB_PREFS_NAME;
+  stringToUTF8((typeof name === 'string') ? name : '', out, outSize);
+});
+
+/* Same tab: the site's login returns the player to this page, which
+ * then fetches /api/v1/me again and finds them signed in. */
+EM_JS(void, wbAccountSignInJs, (void), {
+  window.location.href = 'https://www.winbolo.net/login?return=' +
+                         encodeURIComponent(window.location.href);
+});
+
+EM_JS(void, wbAccountSignOutJs, (void), {
+  window.location.href = 'https://www.winbolo.net/logout';
+});
+
+bool wasmAccountPending(void)  { return wbAccountPendingJs() != 0; }
+bool wasmAccountSignedIn(void) { return wbAccountSignedInJs() != 0; }
+
+void wasmAccountName(char *out, size_t outSize) {
+  if (out == NULL || outSize == 0) return;
+  out[0] = '\0';
+  wbAccountNameJs(out, (int)outSize);
+}
+
+void wasmAccountSignIn(void)  { wbAccountSignInJs(); }
+void wasmAccountSignOut(void) { wbAccountSignOutJs(); }
