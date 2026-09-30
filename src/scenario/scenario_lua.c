@@ -4174,6 +4174,15 @@ static int scnLuaAnnounce(lua_State *L) {
     if (!lua_isnoneornil(L, 4)) {
         place = scnArgWord(L, 4, "place", &kScnAnnouncePlaces);
     }
+    /* A client older than the place drops a placed line past this, so it is
+       refused here, the way every line past its limit is (see
+       SCN_ANNOUNCE_PLACED_TEXT_MAX). */
+    if (place != (int)SCN_ANNOUNCE_PLACE_TOP &&
+        len > SCN_ANNOUNCE_PLACED_TEXT_MAX) {
+        return scnRefused(L, SCN_OP_TOO_BIG,
+                          "text is %d bytes, limit %d for a line not at the "
+                          "top", (int)len, (int)SCN_ANNOUNCE_PLACED_TEXT_MAX);
+    }
     /* Negated, so a NaN is refused rather than converting to something. */
     if (!(seconds >= 0)) {
         return scnRefused(L, SCN_OP_RANGE,
@@ -4243,8 +4252,11 @@ static int scnLuaStatus(lua_State *L) {
     memset(&op, 0, sizeof(op));
     op.type            = SCN_OP_STATUS;
     op.u.status.target = target;
-    op.u.status.endsAt = timed ? (uint32_t)scnWhole(endsAt)
-                               : SCN_STATUS_NO_COUNTDOWN;
+    /* Converted here and not by scnWhole, which clamps to the int32 range
+       and would turn every tick past 2147483647 into that one. The test
+       above already holds endsAt to 0 .. 4294967294, so the cast truncates
+       the fraction and nothing more. */
+    op.u.status.endsAt = timed ? (uint32_t)endsAt : SCN_STATUS_NO_COUNTDOWN;
     memcpy(op.u.status.text, text, len + 1);
     if (!timed) {
         return scnDone(L, &op, "%d bytes", (int)len);

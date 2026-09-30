@@ -40,6 +40,7 @@
 #include "client_sim_control.h"
 #include "control_event.h"
 #include "scenario_panel.h"
+#include "scenario_defs.h"   /* SCN_ANNOUNCE_PLACED_TEXT_MAX */
 #include "transport_control_codec.h"
 #include "test_harness.h"
 
@@ -599,6 +600,49 @@ int run_scn_status_codec_and_client(void) {
         UT_ASSERT(decodeBody(CTRL_SCN_ANNOUNCE, buf, sizeof(buf), &back));
         UT_ASSERT(back.u.scnAnnounce.place == SCN_ANNOUNCE_PLACE_TOP);
         UT_ASSERT(strcmp(back.u.scnAnnounce.text, "Hi") == 0);
+    }
+
+    /* The upper edges. A top line of the full 128 bytes, a placed line of
+       126 (the longest an older client also takes, and the script layer's
+       limit for a placed line), and a placed line of 128, which this build
+       takes although an older one would drop it. */
+    {
+        uint8_t buf[2 + PACKET_MAX_CHAT_MESSAGE + 2];
+        size_t  n;
+        size_t  textLens[2] = { (size_t)PACKET_MAX_CHAT_MESSAGE - 2,
+                                (size_t)PACKET_MAX_CHAT_MESSAGE };
+        buf[0] = 0x00;
+        buf[1] = 0x64;                 /* ticks 100 */
+        for (i = 0; i < (size_t)PACKET_MAX_CHAT_MESSAGE; i++) {
+            buf[2 + i] = 'x';
+        }
+        UT_ASSERT(decodeBody(CTRL_SCN_ANNOUNCE, buf,
+                             2 + (size_t)PACKET_MAX_CHAT_MESSAGE, &back));
+        UT_ASSERT_MSG(strlen(back.u.scnAnnounce.text) ==
+                          (size_t)PACKET_MAX_CHAT_MESSAGE,
+                      "a 128-byte top line decoded as %u bytes",
+                      (unsigned)strlen(back.u.scnAnnounce.text));
+        UT_ASSERT(back.u.scnAnnounce.place == SCN_ANNOUNCE_PLACE_TOP);
+        UT_ASSERT(back.u.scnAnnounce.ticks == 100);
+
+        for (n = 0; n < 2; n++) {
+            size_t len = textLens[n];
+            memset(buf + 2, 'x', len);
+            buf[2 + len]     = 0x00;
+            buf[2 + len + 1] = (uint8_t)SCN_ANNOUNCE_PLACE_UPPER;
+            memset(&back, 0xAB, sizeof(back));
+            UT_ASSERT_MSG(decodeBody(CTRL_SCN_ANNOUNCE, buf, 2 + len + 2,
+                                     &back),
+                          "a %u-byte placed line was refused",
+                          (unsigned)len);
+            UT_ASSERT_MSG(strlen(back.u.scnAnnounce.text) == len,
+                          "a %u-byte placed line decoded as %u bytes",
+                          (unsigned)len,
+                          (unsigned)strlen(back.u.scnAnnounce.text));
+            UT_ASSERT(back.u.scnAnnounce.place == SCN_ANNOUNCE_PLACE_UPPER);
+        }
+        /* The script layer's limit is exactly the older decoder's. */
+        UT_ASSERT(SCN_ANNOUNCE_PLACED_TEXT_MAX == PACKET_MAX_CHAT_MESSAGE - 2);
     }
 
     /* The clear carries no place, whatever the event says. */

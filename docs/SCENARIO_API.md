@@ -1490,21 +1490,30 @@ top of the view, as every announcement did before there was a choice. When a
 status line is up, a top announcement sits just below it and never over it.
 `"upper"` starts the line a quarter of the way down the view, for the bigger
 news of a round, and it still moves down to keep clear of the panel. Any
-other word stops the script. A client older than the place draws every line
-at the top; it drops a placed line longer than 126 bytes and shows nothing.
+other word stops the script. A line at the top is up to 128 bytes. A line
+placed anywhere else is up to 126 bytes, and a longer one is refused with
+`SCN_OP_TOO_BIG`: a client older than the place draws every line at the top,
+and it drops a placed line longer than 126 bytes and shows nothing. Both
+lines are drawn on the desktop view, on the full screen map and in tablet
+mode. On the main view a line never moves down onto the player's own tank; the
+full screen map has no tank in a fixed place, so there a line may move down as
+far as the map goes.
 
 **The status line.** `game.status` holds one line at the top of the view for
 as long as the round wants it, such as "Wave 3/10". With `countdown_to`, the
 client adds the time left to that tick, in minutes and seconds, four spaces
 after the text ("Wave 3/10    2:44"), and counts it down on its own clock, so
 a countdown is one call and not one a second. It stops at 0:00. The text is
-up to 128 bytes. Calling it again with the same text, countdown and target
-sends nothing, so a script can restate its line every second without cost.
-A late joiner is given the line that is up when it arrives, and a replay
-shows it. A player sees the last line written to them, whether it went to
-everyone, to their team or to their seat, and an empty line to any of those
-takes it away. A
-`countdown_to` below 0 or past 4294967294 is refused with `SCN_OP_RANGE`.
+up to 128 bytes, and a longer one is refused with `SCN_OP_TOO_BIG`. A player
+sees the last line written to them, whether it went to everyone, to their team
+or to their seat, and an empty line to any of those takes it away. Calling it
+again with the same text, countdown and target sends nothing when no later
+line was written to any of those players, so a script can restate its line
+every second without cost. A late joiner is given the lines in the order they
+were written, so it ends on the last line written to it, the same line the
+players around it see. A replay shows it too. A `countdown_to` below 0 or
+past 4294967294, or a seat or team outside the game, is refused with
+`SCN_OP_RANGE`.
 
 ```lua
 game.status(string.format("Wave %d/%d", wave, waves), wave_ends_at)

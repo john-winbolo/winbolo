@@ -2225,7 +2225,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
     case log_ScnAnnounce:
     case log_ScnMarker:
     case log_ScnStatus:
-      /* A scenario panel's display list, a score row, the centre-screen
+      /* A scenario panel's display list, a score row, the announcement
          line, a map marker or a status line, stored for the playhead. On a loaded file this
          leaves the stores as a rebuild at this time would; on a live feed,
          which has no walk, it is the only way they fill, and the record is
@@ -3357,12 +3357,27 @@ static int walkSkipEventBody(BYTE code) {
          id, its kind and its own destination, and the marker's blob is always
          the four bytes of a placement; both are walked the way a text
          record's are. Only a v2 log can carry either; the v1 walker is given
-         the cases anyway, for the reason it is given one for log_Ping. */
+         the cases anyway, for the reason it is given one for log_Ping.
+         Note: an announcement not at the top has one more byte, its place,
+         after the string (log.c writes it only when it is not 0). Nothing in
+         the unframed bytes says whether that byte is there, so only the
+         framed length can size a placed line. This case walks the top form,
+         which is the only form an unframed stream could hold. */
       { BYTE b[4]; if (logReadBytes(b, 4) != 4) return -1; }
       if (logReadBytes(&lenByte, 1) != 1) return -1;
       { BYTE buf[256]; rc = lenByte ? logReadBytes(buf, lenByte) : 0;
         if (rc != lenByte) return -1; }
       return 5 + lenByte;
+    case log_ScnStatus:
+      /* The destination pair + the countdown's end tick as four big-endian
+         bytes, then the line as a pascal string. Only a v2 log can carry
+         one; the v1 walker is given the case anyway, for the reason it is
+         given one for log_Ping. */
+      { BYTE b[6]; if (logReadBytes(b, 6) != 6) return -1; }
+      if (logReadBytes(&lenByte, 1) != 1) return -1;
+      { BYTE buf[256]; rc = lenByte ? logReadBytes(buf, lenByte) : 0;
+        if (rc != lenByte) return -1; }
+      return 7 + lenByte;
     case log_ScnScore:
       /* kind + target + the score as four big-endian bytes, then the label as
          a pascal string. */

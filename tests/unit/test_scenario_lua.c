@@ -2644,6 +2644,30 @@ int run_scenario_lua_score_and_announce(void) {
                   "an unknown place was taken");
     UT_ASSERT(cap.announces == 3);
 
+    /* A line not at the top is held to 126 bytes, because a client older
+       than the place drops a longer one. A line at the top keeps 128. */
+    UT_ASSERT(slRun(L,
+                    "res, code, detail = game.announce(string.rep(\"x\", 127),"
+                    " 2, nil, \"upper\")\n", err, sizeof(err)));
+    UT_ASSERT_MSG(slGlobalIsNil(L, "res"), "a 127-byte upper line was taken");
+    slGlobalStr(L, "code", code, sizeof(code));
+    UT_ASSERT_MSG(strcmp(code, scenarioLuaResultName(SCN_OP_TOO_BIG)) == 0,
+                  "a 127-byte upper line answered '%s'", code);
+    slGlobalStr(L, "detail", detail, sizeof(detail));
+    UT_ASSERT_MSG(strstr(detail, "126") != NULL,
+                  "the refusal does not name the limit: %s", detail);
+    UT_ASSERT(cap.announces == 3);
+    UT_ASSERT(slRun(L,
+                    "ok = game.announce(string.rep(\"x\", 126), 2, nil, "
+                    "\"upper\")\n", err, sizeof(err)));
+    UT_ASSERT_MSG(slGlobalBool(L, "ok"), "a 126-byte upper line was refused");
+    UT_ASSERT(cap.announces == 4);
+    UT_ASSERT(slRun(L,
+                    "ok = game.announce(string.rep(\"x\", 128), 2, nil, "
+                    "\"top\")\n", err, sizeof(err)));
+    UT_ASSERT_MSG(slGlobalBool(L, "ok"), "a 128-byte top line was refused");
+    UT_ASSERT(cap.announces == 5);
+
     /* The status line: a line alone, then with a countdown to a tick. */
     UT_ASSERT_MSG(slRun(L, "ok = game.status(\"Wave 1/5 over\")\n", err,
                         sizeof(err)),
@@ -2686,10 +2710,52 @@ int run_scenario_lua_score_and_announce(void) {
     UT_ASSERT_MSG(strcmp(code, scenarioLuaResultName(SCN_OP_RANGE)) == 0,
                   "a negative countdown answered '%s'", code);
 
+    /* The other refusals the docs list: a text of 129 bytes, a countdown
+       on the no-countdown word 4294967295, and a seat or a team outside the
+       roster. None of them reaches the arm. */
+    UT_ASSERT(slRun(L, "res, code = game.status(string.rep(\"x\", 129))\n",
+                    err, sizeof(err)));
+    UT_ASSERT_MSG(slGlobalIsNil(L, "res"), "a 129-byte status line was taken");
+    slGlobalStr(L, "code", code, sizeof(code));
+    UT_ASSERT_MSG(strcmp(code, scenarioLuaResultName(SCN_OP_TOO_BIG)) == 0,
+                  "a 129-byte status line answered '%s'", code);
+    UT_ASSERT(slRun(L, "ok = game.status(string.rep(\"x\", 128))\n", err,
+                    sizeof(err)));
+    UT_ASSERT_MSG(slGlobalBool(L, "ok"), "a 128-byte status line was refused");
+    UT_ASSERT(cap.statuses == 4);
+
+    UT_ASSERT(slRun(L, "res, code = game.status(\"x\", 4294967295)\n", err,
+                    sizeof(err)));
+    UT_ASSERT_MSG(slGlobalIsNil(L, "res"),
+                  "a countdown to tick 4294967295 was taken");
+    slGlobalStr(L, "code", code, sizeof(code));
+    UT_ASSERT_MSG(strcmp(code, scenarioLuaResultName(SCN_OP_RANGE)) == 0,
+                  "a countdown to tick 4294967295 answered '%s'", code);
+    UT_ASSERT(slRun(L, "ok = game.status(\"x\", 4294967294)\n", err,
+                    sizeof(err)));
+    UT_ASSERT_MSG(slGlobalBool(L, "ok"),
+                  "a countdown to tick 4294967294 was refused");
+    UT_ASSERT(cap.statuses == 5);
+    UT_ASSERT(cap.status.u.scnStatus.endsAt == 4294967294u);
+
+    UT_ASSERT(slRun(L, "res, code = game.status(\"x\", nil, 200)\n", err,
+                    sizeof(err)));
+    UT_ASSERT_MSG(slGlobalIsNil(L, "res"), "seat 200 was taken as a target");
+    slGlobalStr(L, "code", code, sizeof(code));
+    UT_ASSERT_MSG(strcmp(code, scenarioLuaResultName(SCN_OP_RANGE)) == 0,
+                  "seat 200 answered '%s'", code);
+    UT_ASSERT(slRun(L, "res, code = game.status(\"x\", nil, { team = 0 })\n",
+                    err, sizeof(err)));
+    UT_ASSERT_MSG(slGlobalIsNil(L, "res"), "team 0 was taken as a target");
+    slGlobalStr(L, "code", code, sizeof(code));
+    UT_ASSERT_MSG(strcmp(code, scenarioLuaResultName(SCN_OP_RANGE)) == 0,
+                  "team 0 answered '%s'", code);
+    UT_ASSERT(cap.statuses == 5);
+
     /* The empty line clears it. */
     UT_ASSERT(slRun(L, "ok = game.status(\"\")\n", err, sizeof(err)));
     UT_ASSERT(slGlobalBool(L, "ok"));
-    UT_ASSERT(cap.statuses == 4);
+    UT_ASSERT(cap.statuses == 6);
     UT_ASSERT(cap.status.u.scnStatus.text[0] == '\0');
 
     lua_close(L);

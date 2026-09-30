@@ -4694,10 +4694,19 @@ static void renderScenarioPanel(ClientSim *cs) {
  * there: the scenario panel wherever the player left it,
  * the vote widgets and alliance request beside the view,
  * and the HUD column and build strip when the full screen
- * map owns the window. It never moves down onto the
- * player's own tank; when there is no room above the tank
- * it stays on the top row, over the panel (scnAnnouncePlace
- * has the rule).
+ * map owns the window. On the main view it never moves
+ * down onto the player's own tank; when there is no room
+ * above the tank it stays on the top row, over the panel
+ * (scnAnnouncePlace has the rule). The full screen map has
+ * no tank in a fixed place, so there the line may go as
+ * far down as the map.
+ *
+ * Tablet mode draws both lines too, over its own game view
+ * (the fixed viewport sdl3draw centres on the screen), and
+ * keeps them clear of the scenario square that tablet mode
+ * pins in that view's top-right corner. Its buttons and
+ * bars sit in the gutters beside the view, so nothing else
+ * is in the way at the top.
  *
  * Drawn on the foreground draw list and not in a window at
  * all. A window across the middle of the screen would take
@@ -4803,7 +4812,7 @@ static void scnDrawOutlinedLine(ImDrawList *dl, ImFont *font, float height,
    things at the top of the view they both keep clear of, and are drawn
    together so the announcement can keep clear of the status line too. */
 static void renderScenarioAnnounce(ClientSim *cs) {
-    if (cs == nullptr || uiModeIsTablet()) return;
+    if (cs == nullptr) return;
 
     const uint32_t now = clientSimGetLastServerTick(cs);
 
@@ -4825,23 +4834,43 @@ static void renderScenarioAnnounce(ClientSim *cs) {
     if (!haveStatus && !haveAnnounce) return;
 
     /* The same zoom the panel window scales by, so the two agree about what
-       one unit is worth on this screen. */
-    int rawZoom = sdl3DrawGetZoomFactor();
-    if (rawZoom < 1) rawZoom = 1;
-    float gameScale = 1.0f;
-    sdl3DrawGetGameRect(nullptr, nullptr, nullptr, nullptr, &gameScale);
-    if (gameScale <= 0.0f) gameScale = 1.0f;
-    const float scale = (float)rawZoom * gameScale;
+       one unit is worth on this screen. Tablet mode draws the game view at
+       its own zoom, in the same coordinates ImGui uses. */
+    float scale = 1.0f;
+    int   tvX = 0, tvY = 0, tvW = 0, tvH = 0, tvZoom = 0;
+    const bool tablet = uiModeIsTablet();
+    if (tablet) {
+        sdl3DrawGetTabletViewport(&tvX, &tvY, &tvW, &tvH, &tvZoom);
+        if (tvW <= 0 || tvH <= 0) return;   /* no view drawn yet */
+        scale = (float)((tvZoom < 1) ? 1 : tvZoom);
+    } else {
+        int rawZoom = sdl3DrawGetZoomFactor();
+        if (rawZoom < 1) rawZoom = 1;
+        float gameScale = 1.0f;
+        sdl3DrawGetGameRect(nullptr, nullptr, nullptr, nullptr, &gameScale);
+        if (gameScale <= 0.0f) gameScale = 1.0f;
+        scale = (float)rawZoom * gameScale;
+    }
 
     /* The game view in render coordinates, and the things at its top the
        lines have to keep clear of. The full screen map is the view when it
        owns the window, with its HUD column down the right and its build
-       strip on the left. One slot is kept back for the status line. */
+       strip on the left. One slot is kept back for the status line.
+       tankView is false on the full screen map, where the tank is wherever
+       it is on the map and not in the middle square. */
     ScnAnnounceRect view;
     ScnAnnounceRect obstacles[SCN_ANNOUNCE_MAX_OBSTACLES + 1];
-    int             count = 0;
+    int             count    = 0;
+    bool            tankView = true;
     float mapX = 0.0f, mapY = 0.0f, mapW = 0.0f, mapH = 0.0f;
-    if (sdl3DrawGetOverviewInWindowRect(&mapX, &mapY, &mapW, &mapH)) {
+    if (tablet) {
+        view.x0 = (float)tvX;
+        view.y0 = (float)tvY;
+        view.x1 = (float)(tvX + tvW);
+        view.y1 = (float)(tvY + tvH);
+        scnAnnounceAddWindow("##ScenarioSlot", obstacles, &count);
+    } else if (sdl3DrawGetOverviewInWindowRect(&mapX, &mapY, &mapW, &mapH)) {
+        tankView = false;
         view.x0 = mapX;
         view.y0 = mapY;
         view.x1 = mapX + mapW;
@@ -4878,10 +4907,14 @@ static void renderScenarioAnnounce(ClientSim *cs) {
        box that has to stay clear is that much bigger than the letters. */
     const float o = (scale > 1.0f) ? scale : 1.0f;
     const float inset = SCN_ANNOUNCE_INSET_UNITS * scale;
-    /* The player's tank sits in the middle square of the view, and no line
-       is moved down onto it: the floor is the top of that square. */
-    const float floorY = (view.y0 + view.y1) * 0.5f -
-                         (view.y1 - view.y0) / (float)MAIN_SCREEN_SIZE_Y * 0.5f;
+    /* On the main view the player's tank sits in the middle square, and no
+       line is moved down onto it: the floor is the top of that square. The
+       full screen map has no such square, so there the floor is the bottom
+       of the map. */
+    const float floorY =
+        tankView ? (view.y0 + view.y1) * 0.5f -
+                       (view.y1 - view.y0) / (float)MAIN_SCREEN_SIZE_Y * 0.5f
+                 : view.y1;
 
     /* The status line first, as high on the view as it goes, moved sideways
        or down only by the same things the announcement keeps clear of. Its

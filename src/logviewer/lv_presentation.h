@@ -62,7 +62,7 @@ typedef struct {
   char    label[LV_PRES_LABEL_LEN];   /* always terminated */
 } LvPresScore;
 
-/* The centre-screen line. ms is the absolute log time the record landed at
+/* The announcement line. ms is the absolute log time the record landed at
    and ticks how long the server held it up for. */
 typedef struct {
   bool     set;

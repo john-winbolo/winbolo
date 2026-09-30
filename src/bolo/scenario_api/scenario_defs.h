@@ -38,6 +38,15 @@
  * truncated. */
 #define SCN_TEXT_MAX (PACKET_MAX_CHAT_MESSAGE + 1)
 
+/* The longest announcement that may go anywhere but the top. A placed line
+ * rides as text, a 0x00 and the place byte in the announce body. A client
+ * older than the place reads all of that as the text and drops a body past
+ * PACKET_MAX_CHAT_MESSAGE, so a placed text of 127 or 128 bytes would show
+ * nothing there. The script layer refuses a placed line past this, as it
+ * refuses every other line past its limit, rather than cutting it. A line at
+ * the top keeps the full SCN_TEXT_MAX - 1. */
+#define SCN_ANNOUNCE_PLACED_TEXT_MAX (PACKET_MAX_CHAT_MESSAGE - 2)
+
 /* SCN_PANEL_MAX, the byte capacity of one panel display list, comes in
  * from scenario_panel.h with the rest of the panel's public types. It
  * moved there when the control event that delivers a list needed the
