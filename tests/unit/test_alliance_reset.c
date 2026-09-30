@@ -725,7 +725,7 @@ int run_alliance_reset_changed_matrix_keeps_owners(void) {
  *
  * The server used to re-accept on top of what it had, and an accept
  * merges both players' whole ally lists, so the moved player kept his
- * old allies and brought them into the new team. In Infection, which
+ * old allies and brought them into the new team. In Virus, which
  * starts everyone on one team and moves them with game.set_team, that
  * left every player allied with every other after the first turn, and
  * no player's pillbox fired at anyone. Driven through the scenario op
