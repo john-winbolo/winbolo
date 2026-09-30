@@ -771,6 +771,9 @@ static int scnLuaLobbySlot(lua_State *L) {
     scnSetBool(L, "ready", slot.ready);
     scnSetBool(L, "fielded", slot.fielded);
     scnSetBool(L, "alive", slot.alive);
+    if (slot.team_pool[0] != '\0') {
+        scnSetStr(L, "team_pool", slot.team_pool);
+    }
     return 1;
 }
 

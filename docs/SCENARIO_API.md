@@ -1052,7 +1052,7 @@ starts comes due after about twice the seconds it asked for.
 |---|---|
 | `game.tank(p)` | `{ mx, my, wx, wy, dir, armour, shells, mines, trees, pills, boat, dead, name, bot, kills, deaths, mods }`, or `nil` when the seat is empty or has no tank. `mx, my` are map squares and `wx, wy` world coordinates; `dir` is the full 0-255 facing, which is what `teleport` takes back. `mods` is `{ speed, accel, turn, reload, dealt, taken }`. |
 | `game.builder(p)` | `{ state, mx, my, wx, wy, job, trees, mines }`, or `nil` when the seat has none. `state` is `"in_tank"`, `"going"`, `"returning"`, `"parachuting"` or `"dead"`; `job` is an action word, or absent when he is on none. The square is tracked while he is out of the tank — in the tank he is wherever his tank is, which is why the state comes first. |
-| `game.lobby_slot(p)` | `{ connected, bot, team, name, ready, fielded, alive }`, or `nil` for an empty seat. **`fielded` is the field that tells a held seat from one on the field.** |
+| `game.lobby_slot(p)` | `{ connected, bot, team, name, ready, fielded, alive, team_pool }`, or `nil` for an empty seat. **`fielded` is the field that tells a held seat from one on the field.** `team_pool` is the label of the bot naming pool the seat's team draws bot names from, such as `"Famous Painters"`: the name the lobby shows in that team's pool dropdown. It is absent when the seat is on no team (0) or the team has no pool. The label comes from the server's own pools, so every client reads the same word. A script can label a team of bots only by it (see below). |
 | `game.allied(a, b)` | Whether seats `a` and `b` are on the same side in the game: `true` or `false`, `true` for a seat and itself, and `nil` when either seat is empty. This is the alliance table every game rule reads — who a pillbox fires at, which bases refuel whom — including alliances players made and left in play. **It can differ from `game.lobby_slot(p).team`:** two teammates where one has left the alliance share a team but are not allied, and players on different teams who allied share a side but not a team. |
 
 A seat the lobby is holding for a bot reads as connected, a bot, on its team,
@@ -1064,6 +1064,23 @@ for p = 0, game.max_tanks() - 1 do
   if slot and slot.bot and slot.team == RAIDERS then
     out[#out + 1] = p
   end
+end
+```
+
+A team with no human on it can be named after its bots' pool, as Joust and
+Pillbox Tag do on their panels:
+
+```lua
+local function team_label(t)
+  local pool, human = nil, false
+  for p = 0, game.max_tanks() - 1 do
+    local slot = game.lobby_slot(p)
+    if slot and slot.team == t then
+      pool = pool or slot.team_pool
+      human = human or not slot.bot
+    end
+  end
+  return (not human and pool) or ("Team " .. t)
 end
 ```
 

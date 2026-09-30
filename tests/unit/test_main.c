@@ -1782,6 +1782,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_lua_op_index_subtracts_one",        run_scenario_lua_op_index_subtracts_one        },
     { "scenario_lua_script_index_adds_one",         run_scenario_lua_script_index_adds_one         },
     { "scenario_lua_absent_reads_are_nil",          run_scenario_lua_absent_reads_are_nil          },
+    { "scenario_lua_lobby_slot_team_pool",          run_scenario_lua_lobby_slot_team_pool          },
     { "scenario_lua_terrain_is_the_whole_map",      run_scenario_lua_terrain_is_the_whole_map      },
     { "scenario_lua_shape_error_counts",            run_scenario_lua_shape_error_counts            },
     { "scenario_lua_rule_reads_the_table",          run_scenario_lua_rule_reads_the_table          },

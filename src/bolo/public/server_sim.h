@@ -2044,6 +2044,11 @@ typedef struct ServerSimRosterSlot {
                            False for a seat held in the roster with no bot,
                            no ClientSim and no tank behind it. */
     bool    alive;      /* Has a tank in the world and is not in death-wait */
+    /* Label of the bot naming pool the seat's team draws from (e.g. "Famous
+       Painters"), NUL-terminated; empty when the seat has no team (0) or the
+       team has no pool (metadata not in use, or an index outside the loaded
+       pools). The label comes from the server's own pool table. */
+    char    team_pool[49]; /* LOBBY_BOT_POOL_MAX_LABEL_BYTES + 1 */
 } ServerSimRosterSlot;
 
 /* Populate *out for seat i. Returns false (without touching *out) if

@@ -3336,6 +3336,7 @@ int run_scenario_lua_read_index_passes_through(void);
 int run_scenario_lua_op_index_subtracts_one(void);
 int run_scenario_lua_script_index_adds_one(void);
 int run_scenario_lua_absent_reads_are_nil(void);
+int run_scenario_lua_lobby_slot_team_pool(void);
 int run_scenario_lua_terrain_is_the_whole_map(void);
 int run_scenario_lua_shape_error_counts(void);
 int run_scenario_lua_rule_reads_the_table(void);
