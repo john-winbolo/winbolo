@@ -350,9 +350,8 @@ static void lobbyRoundSetRow(LobbyRoundRow *r, const char *file,
  * lives, and written into out in load order.
  *
  * Two places because the committed map's own scenario is attached without
- * ever entering the script list: only CMD_LOBBY_SET_SCRIPT_LIST and
- * CMD_LOBBY_SET_SCENARIO write that list, and a map sidecar goes through
- * neither. So a scripted map with no host picks reports
+ * ever entering the script list: only CMD_SET_SCRIPT_LIST writes that list,
+ * and a map sidecar does not go through it. So a scripted map with no host picks reports
  * clientSimGetLobbyScriptCount 0 while CTRL_LOBBY_SETTINGS separately reports
  * an attached scenario with bound set. Reading the list alone would leave the
  * column empty under a map that is plainly running something.

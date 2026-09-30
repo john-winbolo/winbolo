@@ -887,10 +887,10 @@ const char *serverSimGetWorkshopMapDir(const ServerSim *sim);
  *  decide what plays: a pick beats the committed map's own
  *  script, and none hands the map its own back. Changing it
  *  is the sim's own business and lives on
- *  server_sim_lifecycle.h — a frontend that wants a
- *  different scenario sends CMD_LOBBY_SET_SCENARIO, which is
- *  what asks for that decision again and publishes the
- *  result.
+ *  server_sim_internal.h (serverSimSetScriptList) — a
+ *  frontend that wants a different scenario sends
+ *  CMD_SET_SCRIPT_LIST, which is what asks for that decision
+ *  again and publishes the result.
  *
  *ARGUMENTS:
  *  sim  - Pointer to the ServerSim

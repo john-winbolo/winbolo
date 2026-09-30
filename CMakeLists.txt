@@ -3896,9 +3896,6 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The lobby's reload request: who may ask, when, and what a lobby with
     # no scenario answers.
     tests/unit/test_lobby_reload_scenario.c
-    # The lobby's scenario pick: who may pick, when, and which names the
-    # scenarios directory makes good.
-    tests/unit/test_lobby_set_scenario.c
     # The lobby's ordered script list: the chunked control event, the
     # whole-list command, the dispatcher's gates and the client's reassembly.
     tests/unit/test_lobby_script_list.c
@@ -4978,17 +4975,13 @@ set(_unit_test_names
     lobby_reload_scenario_no_scenario
     lobby_reload_scenario_calls_back
     lobby_reload_scenario_cooldown
-    lobby_set_scenario_selects
-    lobby_set_scenario_none
-    lobby_set_scenario_refuses_unknown
-    lobby_set_scenario_refuses_shape
-    lobby_set_scenario_refuses_bound
-    lobby_set_scenario_cooldown
-    lobby_set_scenario_unreadies
     script_list_control_codec
     script_list_command_codec
     script_list_dispatch
     script_list_lists_once
+    script_list_no_lister
+    script_list_refuses_shape
+    script_list_unreadies
     scenario_settings_blob
     scenario_settings_manifest_lua
     scenario_settings_manifest_json

@@ -313,24 +313,6 @@ const char *serverSimGetScenarioDir(const ServerSim *sim) {
     return "data/scenarios";
 }
 
-/* The pick, kept as the first entry of the script list. A caller with only
-   a file name to give is every caller this has: the command arm that knows
-   more than the name calls serverSimSetScriptList instead, and what this one
-   writes leaves the manifest's name and the two flags empty, which is
-   honest — it has not read the directory and does not know them. */
-void serverSimSetSelectedScenario(ServerSim *sim, const char *file) {
-    ScnDirEntry entry;
-
-    if (sim == NULL) return;
-    if (file == NULL || file[0] == '\0') {
-        serverSimSetScriptList(sim, NULL, 0);
-        return;
-    }
-    memset(&entry, 0, sizeof(entry));
-    SDL_strlcpy(entry.file, file, sizeof(entry.file));
-    serverSimSetScriptList(sim, &entry, 1);
-}
-
 /* Entry 0 and not the whole list, because what this answers is the one
    question it has always answered: which script the round is decided by.
    The entries behind it are mods, and whoever loads them reads the list.

@@ -1315,8 +1315,9 @@ uint32_t    clientSimGetLobbyMapListSeq(const ClientSim *cs);
  * template asks for. Bound says it is tied to the map it was written against,
  * so a chooser can say why one it can see is not one it may pick.
  *
- * Nothing selects a scenario yet; this is what is on offer. "" / 0 / false
- * for a NULL cs or an index out of range. */
+ * This is what is on offer; a host picks from it with CMD_SET_SCRIPT_LIST,
+ * and the clientSimGetLobbyScript* accessors answer what was picked. "" / 0 /
+ * false for a NULL cs or an index out of range. */
 int         clientSimGetLobbyScenarioListCount(const ClientSim *cs);
 const char *clientSimGetLobbyScenarioListFile(const ClientSim *cs, int idx);
 const char *clientSimGetLobbyScenarioListName(const ClientSim *cs, int idx);

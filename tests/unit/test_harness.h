@@ -441,17 +441,6 @@ int run_lobby_reload_scenario_no_scenario(void);
 int run_lobby_reload_scenario_calls_back(void);
 int run_lobby_reload_scenario_cooldown(void);
 
-/* The lobby's scenario pick (test_lobby_set_scenario.c): who may pick, when,
- * which names are accepted, that a refusal leaves the previous pick alone,
- * and the tick gap between one pick and the next. */
-int run_lobby_set_scenario_selects(void);
-int run_lobby_set_scenario_none(void);
-int run_lobby_set_scenario_refuses_unknown(void);
-int run_lobby_set_scenario_refuses_shape(void);
-int run_lobby_set_scenario_refuses_bound(void);
-int run_lobby_set_scenario_cooldown(void);
-int run_lobby_set_scenario_unreadies(void);
-
 /* The lobby's ordered script list (test_lobby_script_list.c): one scenario
  * deciding the round and mods behind it. The chunked control event and the
  * whole-list command against hand-written bytes, the dispatcher's gates, and
@@ -460,6 +449,9 @@ int run_script_list_control_codec(void);
 int run_script_list_command_codec(void);
 int run_script_list_dispatch(void);
 int run_script_list_lists_once(void);
+int run_script_list_no_lister(void);
+int run_script_list_refuses_shape(void);
+int run_script_list_unreadies(void);
 
 /* test_scenario_settings.c: a script's own lobby settings, from the
  * declaration through the wire to game.setting and Survival. */

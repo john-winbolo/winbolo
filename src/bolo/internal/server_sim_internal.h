@@ -890,7 +890,7 @@ struct ServerSim {
     char         scenarioDirPath[FILENAME_MAX];
     /* Which of the scenarios in that directory the host has picked, by the
        file name the lister reported; empty means none. Written by the
-       CMD_LOBBY_SET_SCENARIO case and read back through
+       CMD_SET_SCRIPT_LIST case and read back through
        serverSimGetSelectedScenario, which is what whoever owns the scenario
        asks when it decides what plays: a pick here beats the committed map's
        own script, and empty hands the map its own back. Survives a lobby
@@ -913,8 +913,8 @@ struct ServerSim {
        compose reads the map through it instead of the directory, and the
        lobby list stops prepending the map's row when it finds it here.
 
-       Written only by serverSimSetScriptList and serverSimSetSelectedScenario
-       in server_sim_maps.c, so there is one place that holds the count and
+       Written only by serverSimSetScriptList in server_sim_maps.c, so there
+       is one place that holds the count and
        the rows in step — and by serverSimSetMapScript, which keeps that one
        bound row agreeing with the row below it. */
     ScnDirEntry  scenarioScripts[LOBBY_SCRIPT_LIST_MAX];
@@ -1457,8 +1457,8 @@ void serverSimFillScenarioRulesEvent(const ServerSim *sim, uint8_t seq,
  * serverSimSetScriptList replaces the whole list. count is held at
  * LOBBY_SCRIPT_LIST_MAX and a NULL entries pointer clears it. It records
  * only — the caller asks for the decision about what plays again and
- * publishes the result, as the CMD_LOBBY_SET_SCENARIO case does around
- * serverSimSetSelectedScenario.
+ * publishes the result, as the CMD_SET_SCRIPT_LIST case does through
+ * lobbyScenarioReselect.
  *
  * serverSimPublishScriptList sends the list as the chunks it needs, in order
  * and back to back, which is what lets the reader do without a fragment

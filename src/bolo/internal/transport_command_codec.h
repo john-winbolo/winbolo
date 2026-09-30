@@ -40,9 +40,8 @@
  * encoding. The largest variant is CMD_SET_SCRIPT_LIST, which carries a
  * whole script list: header(8) + cmdSeq(4) + count(1) +
  * CMD_SCRIPT_LIST_MAX * (1 + CMD_SCRIPT_LIST_FILE_LEN - 1) =
- * 13 + 10 * 128 = 1293. Behind it are CMD_LOBBY_SET_MAP and
- * CMD_LOBBY_SET_SCENARIO (header + 1 + 256 = 265) and CMD_CHAT
- * (header + 1 + 128 = 137).
+ * 13 + 10 * 128 = 1293. Behind it are CMD_LOBBY_SET_MAP (header + 1 +
+ * 256 = 265) and CMD_CHAT (header + 1 + 128 = 137).
  *
  * 1400 rather than 1293 so this stays one number a reader can hold against
  * the datagram cap, which is also 1400. The queue drain in
