@@ -349,3 +349,105 @@ int run_brain_modes_open_default(void) {
     UT_ASSERT(brainModesStartMode(&m, true) == 0);
     return 0;
 }
+
+/* The per-section `about` line: trimmed, cut to BRAIN_MODE_ABOUT_LEN-1
+ * bytes, empty when absent, and only read inside a section (above the first
+ * section it is an unknown file-level setting and ignored). */
+int run_brain_modes_about(void) {
+    BrainModes m;
+    char longLine[400];
+    char file[600];
+
+    modes_cleanup();
+    UT_ASSERT(modes_write(
+        "about = file level, ignored\n"
+        "[default]\n"
+        "levels = easy:Easy, medium:Medium, hard:Hard\n"
+        "[turtle]\n"
+        "about =   Builds one cluster.  \t # trailing comment\r\n"
+        "levels = easy:Easy, medium:Medium, hard:Hard\n") == 0);
+    UT_ASSERT(brainListLoadModes(modes_brain_name(), &m));
+    UT_ASSERT_MSG(m.modeCount == 2, "got %d modes, expected 2", m.modeCount);
+    UT_ASSERT_MSG(m.modes[0].about[0] == '\0',
+                  "default got about \"%s\" from a file-level line",
+                  m.modes[0].about);
+    UT_ASSERT_MSG(strcmp(m.modes[1].about, "Builds one cluster.") == 0,
+                  "turtle about = \"%s\"", m.modes[1].about);
+
+    /* A long line is cut to the field, NUL-terminated. */
+    memset(longLine, 'x', sizeof(longLine) - 1);
+    longLine[sizeof(longLine) - 1] = '\0';
+    SDL_snprintf(file, sizeof(file), "[default]\nabout = %s\n", longLine);
+    UT_ASSERT(modes_write(file) == 0);
+    UT_ASSERT(brainListLoadModes(modes_brain_name(), &m));
+    UT_ASSERT_MSG(strlen(m.modes[0].about) == BRAIN_MODE_ABOUT_LEN - 1,
+                  "long about kept %d bytes", (int)strlen(m.modes[0].about));
+
+    /* A cut that lands inside a UTF-8 sequence drops the partial one:
+     * 158 ASCII bytes then a 2-byte "é" would need 160 bytes of room. */
+    memset(longLine, 'y', 158);
+    longLine[158] = (char)0xC3;
+    longLine[159] = (char)0xA9;
+    longLine[160] = '\0';
+    SDL_snprintf(file, sizeof(file), "[default]\nabout = %s\n", longLine);
+    UT_ASSERT(modes_write(file) == 0);
+    UT_ASSERT(brainListLoadModes(modes_brain_name(), &m));
+    UT_ASSERT_MSG(strlen(m.modes[0].about) == 158,
+                  "partial UTF-8 cut kept %d bytes", (int)strlen(m.modes[0].about));
+
+    /* No manifest: the synthesized default has no about line. */
+    modes_cleanup();
+    brainListLoadModes(modes_brain_name(), &m);
+    UT_ASSERT(m.modes[0].about[0] == '\0');
+    return 0;
+}
+
+/* brainModeUsesStandardLevels: the lobby's own Easy / Medium / Hard wording
+ * is used for the mode keyed "default" and for a mode that declares
+ * `standard_levels = yes`, and only while the levels are exactly easy,
+ * medium, hard in that order. A mode that shares the three keys without the
+ * line (survival's placeholders) keeps its manifest labels. */
+int run_brain_modes_standard_levels(void) {
+    BrainModes m;
+
+    modes_cleanup();
+    UT_ASSERT(modes_write(
+        "[default]\n"
+        "levels = easy:Easy, medium:Medium, hard:Hard\n"
+        "[survival]\n"
+        "levels = easy:Easy, medium:Medium, hard:Hard\n"
+        "[turtle]\n"
+        "levels = easy:Easy, medium:Medium, hard:Hard\n"
+        "standard_levels = Yes\n"
+        "[odd]\n"
+        "levels = easy:Easy, hard:Hard, medium:Medium\n"
+        "standard_levels = yes\n"
+        "[four]\n"
+        "levels = easy:Easy, medium:Medium, hard:Hard, brutal:Brutal:3\n"
+        "standard_levels = yes\n"
+        "[no]\n"
+        "levels = easy:Easy, medium:Medium, hard:Hard\n"
+        "standard_levels = no\n") == 0);
+    UT_ASSERT(brainListLoadModes(modes_brain_name(), &m));
+    UT_ASSERT_MSG(m.modeCount == 6, "got %d modes, expected 6", m.modeCount);
+    UT_ASSERT(brainModeUsesStandardLevels(&m.modes[0]));   /* default  */
+    UT_ASSERT(!brainModeUsesStandardLevels(&m.modes[1]));  /* survival */
+    UT_ASSERT(brainModeUsesStandardLevels(&m.modes[2]));   /* turtle   */
+    UT_ASSERT(!brainModeUsesStandardLevels(&m.modes[3]));  /* order    */
+    UT_ASSERT(!brainModeUsesStandardLevels(&m.modes[4]));  /* 4 levels */
+    UT_ASSERT(!brainModeUsesStandardLevels(&m.modes[5]));  /* "no"     */
+    UT_ASSERT(!brainModeUsesStandardLevels(NULL));
+
+    /* A default mode whose levels were renamed loses the wording too. */
+    UT_ASSERT(modes_write(
+        "[default]\n"
+        "levels = rookie:Rookie, pro:Pro\n") == 0);
+    UT_ASSERT(brainListLoadModes(modes_brain_name(), &m));
+    UT_ASSERT(!brainModeUsesStandardLevels(&m.modes[0]));
+
+    /* No manifest: the synthesized default uses the wording. */
+    modes_cleanup();
+    brainListLoadModes(modes_brain_name(), &m);
+    UT_ASSERT(brainModeUsesStandardLevels(&m.modes[0]));
+    return 0;
+}

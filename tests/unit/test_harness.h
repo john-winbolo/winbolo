@@ -520,6 +520,8 @@ int run_brain_modes_missing_falls_back(void);
 int run_brain_modes_malformed_lines_skipped(void);
 int run_brain_modes_counts_clamped(void);
 int run_brain_modes_open_default(void);
+int run_brain_modes_about(void);
+int run_brain_modes_standard_levels(void);
 
 /* The brain's terrain window at the map edge (test_brain_view_data.c): the
  * rect brainDataMakeInfo builds is inclusive, so a tank on row or column 240

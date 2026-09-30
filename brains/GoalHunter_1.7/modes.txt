@@ -10,6 +10,16 @@
 # ordinary game uses. "levels" is a comma-separated list of key:Label, and
 # "default" names the level key a freshly added bot starts at.
 #
+# Two optional lines per section:
+#   about = <one line>   shown under the lobby's Mode combo and as the combo
+#                        item's hover text. Plain text, not translated, cut
+#                        to 159 bytes. No line = nothing shown. A "#"
+#                        in it starts a comment.
+#   standard_levels = yes   this mode's easy/medium/hard mean the same as
+#                        default's, so the lobby shows its own translated
+#                        Easy/Medium/Hard names and descriptions for them.
+#                        Without it only [default] gets that wording.
+#
 # The brain applies the level in constants.lua (M.MODE_LEVELS[mode][level],
 # a bundle of knob overrides applied before any preset= or cfg= token):
 # hard is an empty bundle, so Hard is today's brain unchanged; medium and
@@ -40,8 +50,11 @@ default = hard
 # Turtle. The same three levels as default; each one is default's level plus
 # PILL_PLACE_TURTLE (the bot builds one tight, defended cluster of pills
 # around its home instead of spreading them out). constants.lua builds its
-# bundles from default's, so the two cannot drift.
+# bundles from default's, so the two cannot drift, and standard_levels
+# lets the lobby describe them in default's words.
 [turtle]
 label = Turtle
+about = Builds its pillboxes close together in one cluster at home instead of spreading them out. Otherwise it plays like Default.
 levels = easy:Easy:1, medium:Medium:2, hard:Hard:3
 default = hard
+standard_levels = yes

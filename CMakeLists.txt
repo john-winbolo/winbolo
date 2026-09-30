@@ -5012,6 +5012,8 @@ set(_unit_test_names
     brain_modes_malformed_lines_skipped
     brain_modes_counts_clamped
     brain_modes_open_default
+    brain_modes_about
+    brain_modes_standard_levels
     brain_view_data_edge_rect
     bot_init_arg_difficulty_token
     bot_init_arg_mode_tokens
