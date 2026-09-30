@@ -192,7 +192,7 @@ end
 --   y  17        meaning (small)
 --   y  27 ..     numbers that are not 100, two to a row, up to 3 rows
 --   then         "Next mode in" and the clock
---   then         a bar, 4 units tall, of the time left in this mode
+--   then         a bar, 4 units tall, filling as this mode runs
 --   then         a rule, and per upcoming mode its name and its meaning
 --
 -- With all six numbers changed and three upcoming modes, the last line
@@ -232,12 +232,17 @@ local function build_panel()
   list[#list + 1] = { "text", 3, y, "grey", "small", "left", "Next mode in" }
   list[#list + 1] = { "timer", 125, y, "yellow", "small", "right", "down", next_at }
   y = y + 9
-  -- Shows the same whole seconds as the clock above it. The clock floors
-  -- its ticks, so from one tick after this draw it reads one second less
-  -- than the ticks left now; the bar uses that value, so the two agree
-  -- until the next redraw and the bar is empty in the mode's last second.
-  local secs = clamp(math.floor((next_at - game.tick() - 1) / 100), 0, mode_len)
-  list[#list + 1] = { "bar", 3, y, 122, 4, "yellow", secs, mode_len }
+  -- Fills as the mode runs, in step with the clock above it. The clock
+  -- floors its ticks, so from one tick after this draw it reads one second
+  -- less than the ticks left now. Over a mode it shows mode_len - 1 down to
+  -- 0, so the bar fills over those mode_len - 1 steps: empty while the
+  -- clock shows the mode's first second, full in its last.
+  local secs = clamp(math.floor((next_at - game.tick() - 1) / 100), 0, mode_len - 1)
+  list[#list + 1] = { "bar", 3, y, 122, 4, "yellow", mode_len - 1 - secs, mode_len - 1 }
+  -- A bar outlines itself in its own colour. An outlined rect at the same
+  -- operands strokes the same pixels, so drawn after the bar it gives the
+  -- bar a white border that the yellow fill stands out against.
+  list[#list + 1] = { "rect", 3, y, 122, 4, "white", false }
   y = y + 7
   if preview > 0 then
     list[#list + 1] = { "line", 3, y, 124, y, "grey_dark" }
