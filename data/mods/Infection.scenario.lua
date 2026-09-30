@@ -1224,10 +1224,30 @@ function damage_scale(attacker, victim, cause)
   return nil
 end
 
+-- True when a live survivor pillbox stands within start_pill_range of the
+-- start, by the same square count the engine's own start choice uses. Every
+-- start is on deep sea, and any hit on a tank on a boat there sinks it, so a
+-- horde tank sent back under a survivor pill drowns a second after it lands.
+local function survivor_pill_covers(s)
+  local range = game.rule("start_pill_range")
+  for n = 1, game.num_pills() do
+    local pb = game.pill(n)
+    if pb ~= nil and not pb.in_tank and pb.armour > 0 and
+       side[pb.owner] == SURVIVORS then
+      local dx, dy = math.abs(pb.x - s.x), math.abs(pb.y - s.y)
+      if math.max(dx, dy) <= range then
+        return true
+      end
+    end
+  end
+  return false
+end
+
 -- The horde comes back at the start nearest to where it fell, so a fight that
--- was won is a fight that is about to happen again in the same place. Survivors
--- are left to the engine, including one who respawns after any death but an
--- infected shell.
+-- was won is a fight that is about to happen again in the same place. A start
+-- a survivor pillbox covers is passed over, and when they all are, the engine
+-- picks. Survivors are left to the engine, including one who respawns after
+-- any death but an infected shell.
 function on_choose_start(p)
   if side[p] ~= INFECTED then
     return nil
@@ -1239,7 +1259,7 @@ function on_choose_start(p)
   local best, best_d = nil, nil
   for n = 1, game.num_starts() do
     local s = game.start(n)
-    if s ~= nil then
+    if s ~= nil and not survivor_pill_covers(s) then
       local dx, dy = s.x - at.x, s.y - at.y
       local d = dx * dx + dy * dy
       if best_d == nil or d < best_d then
