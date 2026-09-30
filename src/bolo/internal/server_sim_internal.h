@@ -205,9 +205,14 @@ typedef struct {
 } ScnMarkerRow;
 
 /* One destination's status line, as the status op last set it. valid is
- * false for a destination nothing has set and for one a clear emptied. */
+ * false for a destination nothing has set and for one a clear emptied.
+ * seq is the write order: 0 for a row never written, else the value of
+ * ServerSim.scenarioStatusSeq when the row was last set or cleared. A client
+ * keeps the newest line addressed to it, so the store needs the order to
+ * know what each seat shows. */
 typedef struct {
     bool     valid;
+    uint32_t seq;
     uint32_t endsAt;       /* SCN_STATUS_NO_COUNTDOWN for none */
     char     text[PACKET_MAX_CHAT_MESSAGE + 1];
 } ScnStatusRow;
@@ -1328,6 +1333,8 @@ struct ServerSim {
      * panel store is (SCN_PANEL_TARGETS rows: everyone, the teams, the
      * slots), so a joiner is handed the line the round is showing. */
     ScnStatusRow           scenarioStatus[SCN_PANEL_TARGETS];
+    /* The last write order handed to a status row. 0 = nothing written. */
+    uint32_t               scenarioStatusSeq;
 
     /* Spectator roster enumerator (registered by the transport layer). Invoked
      * during sync-replay to emit one CTRL_SPECTATOR_SLOT per connected

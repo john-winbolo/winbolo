@@ -2190,6 +2190,7 @@ static const UnitTestEntry s_tests[] = {
     { "scn_arm_panel_snapshot_bounded",                  run_scn_arm_panel_snapshot_bounded                  },
     { "scn_arm_score_announce_marker",                   run_scn_arm_score_announce_marker                   },
     { "scn_arm_status_and_place",                        run_scn_arm_status_and_place                        },
+    { "scn_arm_status_overlap",                          run_scn_arm_status_overlap                          },
     { "scn_arm_markers_scores_replayed_to_joiner",       run_scn_arm_markers_scores_replayed_to_joiner       },
     { "scn_arm_markers_scores_snapshot",                 run_scn_arm_markers_scores_snapshot                 },
     { "scn_arm_markers_scores_reset",                    run_scn_arm_markers_scores_reset                    },

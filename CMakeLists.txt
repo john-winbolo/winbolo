@@ -6569,6 +6569,7 @@ set(_unit_test_names
     scenario_status_line
     scn_status_codec_and_client
     scn_arm_status_and_place
+    scn_arm_status_overlap
     scenario_panel_slot_rect
     lv_rule_names_and_panel_parse
     lv_scripted_game_type_header

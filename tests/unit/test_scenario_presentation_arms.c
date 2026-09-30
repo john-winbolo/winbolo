@@ -1380,9 +1380,9 @@ int run_scn_arm_status_and_place(void) {
 
     replayHarnessStop(&h);
 
-    /* ── the joiner replay ── a line for everyone and one held to the
-       joiner's team: the team's line is the narrower and is the one kept;
-       a joiner on another team keeps everyone's. */
+    /* ── the joiner replay ── a line for everyone and then one held to the
+       joiner's team: the team's line is the newer and is the one kept; a
+       joiner on another team keeps everyone's. */
     {
         ServerSim        *js = paMakeMarkerScoreSim();
         ClientSim        *onTeam;
@@ -1438,6 +1438,125 @@ int run_scn_arm_status_and_place(void) {
         clientSimDestroy(offTeam);
         clientSimDestroy(onTeam);
         serverSimDestroy(js);
+    }
+    return 0;
+}
+
+/* ================================================================
+ * 9c. Overlapping status targets. A client keeps the newest line addressed
+ *     to it, so the server's no-change rule and the joiner replay must go
+ *     by write order across everyone, the teams and the seats.
+ * ================================================================ */
+int run_scn_arm_status_overlap(void) {
+    PaStatusCapture  st;
+    SubscriberHandle stHandle;
+
+    /* ── 1. everyone "A", then an empty line to one team: the clear must
+       go out, although that team's own row was never set. ── */
+    {
+        ServerSim *sim = paMakeMarkerScoreSim();
+        UT_ASSERT_MSG(sim != NULL, "the fixture's ops were refused");
+        memset(&st, 0, sizeof(st));
+        stHandle = serverSimRegisterSubscriber(sim, paStatusCb, &st);
+        memset(&st, 0, sizeof(st));
+        UT_ASSERT(paStatus(sim, 0, SCN_STATUS_NO_COUNTDOWN, "A") == SCN_OP_OK);
+        UT_ASSERT(st.count == 1);
+        UT_ASSERT(paStatus(sim, PA_JOIN_TEAM, 0, "") == SCN_OP_OK);
+        UT_ASSERT_MSG(st.count == 2,
+                      "the clear to team %d over everyone's line sent %d "
+                      "event(s), expected 1", PA_JOIN_TEAM, st.count - 1);
+        UT_ASSERT(st.last.u.scnStatus.text[0] == '\0');
+        UT_ASSERT(st.last.u.scnStatus.destTeam == PA_JOIN_TEAM);
+        /* That team now shows nothing, so a second clear sends nothing. */
+        UT_ASSERT(paStatus(sim, PA_JOIN_TEAM, 0, "") == SCN_OP_OK);
+        UT_ASSERT(st.count == 2);
+
+        /* A seat on that team joins now: it is given the clear after
+           everyone's line, so it shows nothing, like its team. The seat on
+           the other team shows "A". */
+        {
+            ClientSim        *onTeam;
+            ClientSim        *offTeam;
+            SubscriberHandle  onHandle;
+            SubscriberHandle  offHandle;
+            const char       *line;
+            onTeam = paJoin(sim, PA_SLOT_HOST, &onHandle);
+            UT_ASSERT(onTeam != NULL);
+            line = clientSimGetScnStatus(onTeam, NULL);
+            UT_ASSERT_MSG(line == NULL || line[0] == '\0',
+                          "the joiner on the cleared team shows \"%s\"",
+                          line ? line : "");
+            offTeam = paJoin(sim, PA_SLOT_OTHER, &offHandle);
+            UT_ASSERT(offTeam != NULL);
+            line = clientSimGetScnStatus(offTeam, NULL);
+            UT_ASSERT(line != NULL && strcmp(line, "A") == 0);
+            serverSimUnregisterSubscriber(sim, offHandle);
+            serverSimUnregisterSubscriber(sim, onHandle);
+            clientSimDestroy(offTeam);
+            clientSimDestroy(onTeam);
+        }
+        serverSimUnregisterSubscriber(sim, stHandle);
+        serverSimDestroy(sim);
+    }
+
+    /* ── 2. "A", then team "B", then "A" again: the last must go out, as
+       the team is showing "B". ── */
+    {
+        ServerSim *sim = paMakeMarkerScoreSim();
+        UT_ASSERT_MSG(sim != NULL, "the fixture's ops were refused");
+        memset(&st, 0, sizeof(st));
+        stHandle = serverSimRegisterSubscriber(sim, paStatusCb, &st);
+        memset(&st, 0, sizeof(st));
+        UT_ASSERT(paStatus(sim, 0, SCN_STATUS_NO_COUNTDOWN, "A") == SCN_OP_OK);
+        UT_ASSERT(paStatus(sim, PA_JOIN_TEAM, SCN_STATUS_NO_COUNTDOWN, "B") ==
+                  SCN_OP_OK);
+        UT_ASSERT(st.count == 2);
+        UT_ASSERT(paStatus(sim, 0, SCN_STATUS_NO_COUNTDOWN, "A") == SCN_OP_OK);
+        UT_ASSERT_MSG(st.count == 3,
+                      "restating everyone's \"A\" over team %d's \"B\" sent "
+                      "%d event(s), expected 1", PA_JOIN_TEAM, st.count - 2);
+        UT_ASSERT(strcmp(st.last.u.scnStatus.text, "A") == 0);
+        UT_ASSERT(st.last.u.scnStatus.destTeam == 0);
+        /* Now everyone's line is the newest, so the same line is skipped. */
+        UT_ASSERT(paStatus(sim, 0, SCN_STATUS_NO_COUNTDOWN, "A") == SCN_OP_OK);
+        UT_ASSERT(st.count == 3);
+        /* A line to another team does not stop the skip on this one. */
+        UT_ASSERT(paStatus(sim, PA_TEAM, SCN_STATUS_NO_COUNTDOWN, "C") ==
+                  SCN_OP_OK);
+        UT_ASSERT(paStatus(sim, PA_JOIN_TEAM, SCN_STATUS_NO_COUNTDOWN, "D") ==
+                  SCN_OP_OK);
+        UT_ASSERT(st.count == 5);
+        UT_ASSERT(paStatus(sim, PA_JOIN_TEAM, SCN_STATUS_NO_COUNTDOWN, "D") ==
+                  SCN_OP_OK);
+        UT_ASSERT(paStatus(sim, PA_TEAM, SCN_STATUS_NO_COUNTDOWN, "C") ==
+                  SCN_OP_OK);
+        UT_ASSERT_MSG(st.count == 5,
+                      "restating two teams' own lines sent %d event(s)",
+                      st.count - 5);
+        serverSimUnregisterSubscriber(sim, stHandle);
+        serverSimDestroy(sim);
+    }
+
+    /* ── 3. seat 3 "A", then everyone "B", then seat 3 joins again: it
+       must show "B", like everyone around it. ── */
+    {
+        ServerSim        *sim = paMakeMarkerScoreSim();
+        ClientSim        *seat;
+        SubscriberHandle  seatHandle;
+        const char       *line;
+        UT_ASSERT_MSG(sim != NULL, "the fixture's ops were refused");
+        UT_ASSERT(paStatus(sim, PA_TARGET_PLAYER(PA_SLOT_OTHER),
+                           SCN_STATUS_NO_COUNTDOWN, "A") == SCN_OP_OK);
+        UT_ASSERT(paStatus(sim, 0, SCN_STATUS_NO_COUNTDOWN, "B") == SCN_OP_OK);
+        seat = paJoin(sim, PA_SLOT_OTHER, &seatHandle);
+        UT_ASSERT(seat != NULL);
+        line = clientSimGetScnStatus(seat, NULL);
+        UT_ASSERT_MSG(line != NULL && strcmp(line, "B") == 0,
+                      "the rejoined seat %d shows \"%s\", expected \"B\"",
+                      PA_SLOT_OTHER, line ? line : "(none)");
+        serverSimUnregisterSubscriber(sim, seatHandle);
+        clientSimDestroy(seat);
+        serverSimDestroy(sim);
     }
     return 0;
 }

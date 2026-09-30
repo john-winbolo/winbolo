@@ -3895,6 +3895,7 @@ int run_scn_arm_panel_replayed_to_joiner(void);
 int run_scn_arm_panel_snapshot_bounded(void);
 int run_scn_arm_score_announce_marker(void);
 int run_scn_arm_status_and_place(void);
+int run_scn_arm_status_overlap(void);
 int run_scn_arm_markers_scores_replayed_to_joiner(void);
 int run_scn_arm_markers_scores_snapshot(void);
 int run_scn_arm_markers_scores_reset(void);

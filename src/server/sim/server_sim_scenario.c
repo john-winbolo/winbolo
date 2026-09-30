@@ -3346,19 +3346,61 @@ static void scenarioFillStatusEvent(ControlEvent *evt, const char *text,
     evt->u.scnStatus.destPlayer = destPlayer;
 }
 
+/* True when a status row can reach some seat that row `dest` reaches. Both
+ * are indexes into the status store. Everyone's row reaches every seat. A
+ * team's row and a seat's row may share a seat, because the store does not
+ * track who is on which team. Two different teams, or two different seats,
+ * never share one. */
+static bool scenarioStatusRowsOverlap(int dest, int other) {
+    bool destTeam  = dest > 0 && dest < MAX_TANKS;
+    bool destSeat  = dest >= MAX_TANKS;
+    bool otherTeam = other > 0 && other < MAX_TANKS;
+    bool otherSeat = other >= MAX_TANKS;
+    if (dest == other || dest == 0 || other == 0) {
+        return true;
+    }
+    if ((destTeam && otherTeam) || (destSeat && otherSeat)) {
+        return false;   /* two different teams, or two different seats */
+    }
+    return true;        /* a team and a seat */
+}
+
+/* True when row `dest` is the newest write of all the rows that can reach
+ * its seats, so every seat it reaches shows what that row holds. A row never
+ * written counts as newest only when no row that can reach its seats was
+ * written either. */
+static bool scenarioStatusRowIsNewest(const ServerSim *sim, int dest) {
+    uint32_t mine = sim->scenarioStatus[dest].seq;
+    int      i;
+    for (i = 0; i < SCN_PANEL_TARGETS; i++) {
+        if (i != dest && sim->scenarioStatus[i].seq > mine &&
+            scenarioStatusRowsOverlap(dest, i)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 /* Set the status line at the top of the view, or clear it.
  *
  * The line is kept per destination, the way a panel's list is, so a joiner
  * is handed what the round is showing. An empty line is the clear, and its
- * countdown is not read. A call that says exactly what the destination is
- * already showing sends nothing and writes nothing to the recording: a
- * script may restate its line every second and pay for the changes only. */
+ * countdown is not read.
+ *
+ * A client keeps the newest line addressed to it, from everyone, its team or
+ * its seat. So a write is skipped only when every seat it reaches already
+ * shows exactly that: the row it hits holds the same thing (or is empty, for
+ * a clear) and no newer row reaches any of those seats. A script may restate
+ * its line every second and pay for the changes only. Each write that is
+ * sent stamps its row with the next write order, which the join replay sorts
+ * by. */
 static ScnOpResult scenarioOpStatus(ServerSim *sim, const ScnOpStatus *p) {
     ControlEvent  evt;
     char          pstr[1 + SCN_TEXT_MAX];
     BYTE          destTeam, destPlayer;
     size_t        len;
     uint32_t      endsAt;
+    int           index;
     ScnStatusRow *row;
     ScnOpResult   r;
 
@@ -3375,19 +3417,23 @@ static ScnOpResult scenarioOpStatus(ServerSim *sim, const ScnOpStatus *p) {
     }
     endsAt = (len > 0) ? p->endsAt : SCN_STATUS_NO_COUNTDOWN;
 
-    row = &sim->scenarioStatus[scenarioPanelTargetIndex(destTeam, destPlayer)];
-    if (len == 0) {
-        if (!row->valid) {
+    index = scenarioPanelTargetIndex(destTeam, destPlayer);
+    row   = &sim->scenarioStatus[index];
+    if (scenarioStatusRowIsNewest(sim, index)) {
+        if (len == 0 && !row->valid) {
             return SCN_OP_OK;   /* nothing up, so nothing to take down */
         }
+        if (len > 0 && row->valid && row->endsAt == endsAt &&
+            strcmp(row->text, p->text) == 0) {
+            return SCN_OP_OK;   /* already showing exactly this */
+        }
+    }
+    row->seq = ++sim->scenarioStatusSeq;
+    if (len == 0) {
         row->valid   = false;
         row->endsAt  = SCN_STATUS_NO_COUNTDOWN;
         row->text[0] = '\0';
     } else {
-        if (row->valid && row->endsAt == endsAt &&
-            strcmp(row->text, p->text) == 0) {
-            return SCN_OP_OK;   /* already showing exactly this */
-        }
         row->valid  = true;
         row->endsAt = endsAt;
         SDL_strlcpy(row->text, p->text, sizeof(row->text));
@@ -3502,6 +3548,7 @@ void serverSimScenarioResetPresentation(ServerSim *sim) {
     memset(sim->scenarioTeamScores, 0, sizeof(sim->scenarioTeamScores));
     memset(sim->scenarioMarkers, 0, sizeof(sim->scenarioMarkers));
     memset(sim->scenarioStatus, 0, sizeof(sim->scenarioStatus));
+    sim->scenarioStatusSeq = 0;
 }
 
 void serverSimScenarioReplayPanels(
@@ -3588,27 +3635,52 @@ void serverSimScenarioReplayMarkersAndScores(
             deliver(ctx, &evt);
         }
     }
-    /* The status lines: everyone's first, then the teams', then the slots',
-       so the narrowest line addressed to a joiner is the last it is given
-       and the one it keeps, the way the panel rows go. Without withTargeted
-       only everyone's line goes, for the reason the markers above are cut. */
-    for (i = 0; i < (withTargeted ? SCN_PANEL_TARGETS : 1); i++) {
-        const ScnStatusRow *row = &sim->scenarioStatus[i];
-        BYTE destTeam;
-        BYTE destPlayer;
-        if (!row->valid) {
-            continue;
+    /* The status lines, oldest write first. A client keeps the newest line
+       addressed to it, so the joiner ends on the line the round last wrote
+       to it, the one its neighbours show. A cleared row is sent as the
+       empty line, since it may have taken down an older line that reaches
+       the same seat; a clear older than every line still up is left out.
+       Without withTargeted only everyone's line goes, for the reason the
+       markers above are cut. */
+    {
+        int  order[SCN_PANEL_TARGETS];
+        int  count = 0;
+        int  limit = withTargeted ? SCN_PANEL_TARGETS : 1;
+        bool sentLine = false;
+        for (i = 0; i < limit; i++) {
+            int j;
+            if (sim->scenarioStatus[i].seq == 0) {
+                continue;
+            }
+            /* Insertion sort by write order; at most SCN_PANEL_TARGETS. */
+            for (j = count; j > 0 &&
+                            sim->scenarioStatus[order[j - 1]].seq >
+                                sim->scenarioStatus[i].seq;
+                 j--) {
+                order[j] = order[j - 1];
+            }
+            order[j] = i;
+            count++;
         }
-        if (i < MAX_TANKS) {
-            destTeam   = (BYTE)i;   /* 0 = everyone, else the team */
-            destPlayer = 0xFF;
-        } else {
-            destTeam   = 0;
-            destPlayer = (BYTE)(i - MAX_TANKS);
+        for (i = 0; i < count; i++) {
+            const ScnStatusRow *row = &sim->scenarioStatus[order[i]];
+            BYTE destTeam;
+            BYTE destPlayer;
+            if (!row->valid && !sentLine) {
+                continue;
+            }
+            if (order[i] < MAX_TANKS) {
+                destTeam   = (BYTE)order[i];   /* 0 = everyone, else the team */
+                destPlayer = 0xFF;
+            } else {
+                destTeam   = 0;
+                destPlayer = (BYTE)(order[i] - MAX_TANKS);
+            }
+            scenarioFillStatusEvent(&evt, row->text, row->endsAt, destTeam,
+                                    destPlayer);
+            deliver(ctx, &evt);
+            sentLine = sentLine || row->valid;
         }
-        scenarioFillStatusEvent(&evt, row->text, row->endsAt, destTeam,
-                                destPlayer);
-        deliver(ctx, &evt);
     }
 }
 
