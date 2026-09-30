@@ -3729,6 +3729,7 @@ int run_scenario_compose_off_map_script_only(void);
 int run_scenario_compose_off_plain_map_none(void);
 int run_scenario_compose_on_picks_replace_map(void);
 int run_scenario_compose_off_then_on(void);
+int run_scenario_compose_off_full_list_hides_last(void);
 
 /* The panel's display list (test_scenario_panel.c): the byte layout
  * decoded from a hand-written list, the refusal each malformed list

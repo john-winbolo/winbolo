@@ -6524,6 +6524,7 @@ set(_unit_test_names
     scenario_compose_off_plain_map_none
     scenario_compose_on_picks_replace_map
     scenario_compose_off_then_on
+    scenario_compose_off_full_list_hides_last
     scenario_panel_parses_each_primitive
     scenario_panel_refuses_malformed
     scenario_panel_boundaries

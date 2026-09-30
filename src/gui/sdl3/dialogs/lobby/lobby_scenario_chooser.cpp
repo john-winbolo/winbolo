@@ -484,6 +484,31 @@ static bool lobbyRoundBoundShadowed(int idx) {
     return lobbyRoundShadowedIn(s_round, s_roundCount, idx);
 }
 
+/* Whether the round this draft was taken from may have lost a pick on the
+ * way here. The server publishes at most LOBBY_SCRIPT_LIST_MAX rows (the
+ * same ten as CMD_SCRIPT_LIST_MAX: see LOBBY_ROUND_MAX), and with
+ * Mods/Scenario off the map's own row takes one of them in front of the
+ * picks (serverSimGetLobbyScriptCount), so a host with a full list of picks
+ * is shown all but the last. The draft cannot name that pick, and any list
+ * sent from it would take the pick out of the round with nobody having
+ * asked. So while this holds nothing in the draft changes and nothing is
+ * sent: no add, no swap, no drop and no move.
+ *
+ * A full list with a shadowed row is the only sign of it. The same list
+ * arrives when the host has one pick fewer and nothing is hidden, and the
+ * lobby is not told which of the two it is, so both are treated as the one
+ * that loses a pick. Checking the box back on takes the map's row off the
+ * list and shows every pick, and the host can edit freely there. */
+static bool lobbyRoundLiveMayBeCut(void) {
+    int i;
+
+    if (s_liveCount < CMD_SCRIPT_LIST_MAX) return false;
+    for (i = 0; i < s_liveCount; i++) {
+        if (lobbyRoundShadowedIn(s_live, s_liveCount, i)) return true;
+    }
+    return false;
+}
+
 /* The scenario a new scenario pick replaces. A shadowed map row is passed
  * over, so the picked scenario is the one swapped and the map-lock note does
  * not block the add. */
@@ -522,6 +547,9 @@ static int lobbyRoundWhyNotAdd(const LobbyScenarioRow *row) {
            and this is what keeps the host from building one. */
         return STR_DLGLOBBY_SCENARIO_IN_ROUND;
     }
+    /* Ahead of the swap below, which sends a list as full as the one it
+       replaces and would lose the hidden pick the same way. */
+    if (lobbyRoundLiveMayBeCut()) return STR_DLGLOBBY_SCENARIO_ROUND_FULL;
     if (!lobbyScenarioRowIsMod(row)) {
         at = lobbyRoundIndexOfScenario();
         if (at >= 0) {
@@ -536,18 +564,6 @@ static int lobbyRoundWhyNotAdd(const LobbyScenarioRow *row) {
     }
     if (lobbyRoundSendCount() >= CMD_SCRIPT_LIST_MAX) {
         return STR_DLGLOBBY_SCENARIO_ROUND_FULL;
-    }
-    /* A draft with a shadowed row is full at CMD_SCRIPT_LIST_MAX rows, not
-       sent rows. The server publishes at most LOBBY_SCRIPT_LIST_MAX rows and
-       the map's row takes one of them, so with a full list of picks the last
-       pick is not in the list this draft was built from. One more pick here
-       would send a full list without that hidden pick, and it would leave
-       the round with nobody having asked. */
-    for (int i = 0; i < s_roundCount; i++) {
-        if (lobbyRoundBoundShadowed(i) &&
-            s_roundCount >= CMD_SCRIPT_LIST_MAX) {
-            return STR_DLGLOBBY_SCENARIO_ROUND_FULL;
-        }
     }
     return 0;
 }
@@ -587,11 +603,19 @@ static void lobbyRoundAdd(const LobbyScenarioRow *row) {
                      row->bound, row->workshopId);
 }
 
+/* Whether the row at idx may be taken out of the draft. Not the map's own,
+ * which the map decides, and nothing while a pick may be hidden: see
+ * lobbyRoundLiveMayBeCut. */
+static bool lobbyRoundMayDrop(int idx) {
+    if (idx < 0 || idx >= s_roundCount) return false;
+    if (s_round[idx].bound) return false;
+    return !lobbyRoundLiveMayBeCut();
+}
+
 static void lobbyRoundDrop(int idx) {
     int i;
 
-    if (idx < 0 || idx >= s_roundCount) return;
-    if (s_round[idx].bound) return;
+    if (!lobbyRoundMayDrop(idx)) return;
     for (i = idx; i + 1 < s_roundCount; i++) s_round[i] = s_round[i + 1];
     s_roundCount--;
 }
@@ -618,12 +642,15 @@ static void lobbyRoundDrop(int idx) {
  *
  * A shadowed row does not move, and nothing moves past it. It is not sent
  * (see lobbyRoundShadowedIn), so a move would change the screen and not the
- * list, and the row would jump back to the front when the server answered. */
+ * list, and the row would jump back to the front when the server answered.
+ *
+ * Nothing moves while a pick may be hidden: see lobbyRoundLiveMayBeCut. */
 static bool lobbyRoundMayMove(int idx, int dir) {
     int to = idx + dir;
 
     if (idx < 0 || idx >= s_roundCount) return false;
     if (to < 0 || to >= s_roundCount) return false;
+    if (lobbyRoundLiveMayBeCut()) return false;
     if (lobbyRoundBoundShadowed(idx) || lobbyRoundBoundShadowed(to)) {
         return false;
     }
@@ -653,11 +680,16 @@ static void lobbyRoundMove(int idx, int dir) {
  * where the host put it. Every other bound file is still refused, and the
  * left column still never offers one. The one bound row that stays home is
  * the map's own scenario beside a picked one, which only a Mods/Scenario-off
- * lobby shows. */
+ * lobby shows.
+ *
+ * Nothing goes out while a pick may be hidden, whatever the draft says: see
+ * lobbyRoundLiveMayBeCut. */
 static void lobbyRoundSend(ClientSim *cs) {
     const char *files[CMD_SCRIPT_LIST_MAX];
     int         n = 0;
     int         i;
+
+    if (lobbyRoundLiveMayBeCut()) return;
 
     for (i = 0; i < s_roundCount && n < CMD_SCRIPT_LIST_MAX; i++) {
         /* The map's own scenario beside a picked one, which the server would
@@ -2563,8 +2595,8 @@ static void lobbyScenarioChooserRound(ClientSim *cs, LobbyScenarioRow *rows,
             /* No tooltip here either, for the reason the add arrow has
                none. A bound row's arrow is greyed and the row's own tag says
                it belongs to the map. */
-            if (lobbyScenarioArrow("##drop", ImGuiDir_Left, !r->bound,
-                                   NULL)) {
+            if (lobbyScenarioArrow("##drop", ImGuiDir_Left,
+                                   lobbyRoundMayDrop(i), NULL)) {
                 drop = i;
             }
             ImGui::SameLine(0.0f, inner);

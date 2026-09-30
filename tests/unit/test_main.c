@@ -2099,6 +2099,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_compose_off_plain_map_none",             run_scenario_compose_off_plain_map_none             },
     { "scenario_compose_on_picks_replace_map",           run_scenario_compose_on_picks_replace_map           },
     { "scenario_compose_off_then_on",                    run_scenario_compose_off_then_on                    },
+    { "scenario_compose_off_full_list_hides_last",       run_scenario_compose_off_full_list_hides_last       },
     { "scenario_panel_parses_each_primitive",            run_scenario_panel_parses_each_primitive            },
     { "scenario_panel_refuses_malformed",                run_scenario_panel_refuses_malformed                },
     { "scenario_panel_boundaries",                       run_scenario_panel_boundaries                       },
