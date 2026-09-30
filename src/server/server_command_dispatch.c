@@ -277,6 +277,9 @@ static void lobbyScenarioReselect(ServerSim *sim) {
        lobby that was all-ready would otherwise start on a scenario nobody
        agreed to. */
     lobbyAutoUnreadyOnChange(sim);
+    /* And the tracker's scenario and mod names follow the list, inside the
+       lobby update's usual rate limit. */
+    serverSimWbnLobbyUpdate(sim, FALSE);
 }
 
 static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
@@ -1498,13 +1501,10 @@ scriptListDone:
         if (!bp->pending) return CMD_REJECT_BAD_STATE;
         /* "Humans only" kicks every bot before applying the human-only
          * team assignments — the proposal contains no team for those
-         * slots. */
+         * slots. The scenario's seats go too, and the next map change
+         * seats them again. */
         if (!bp->includeBots) {
-            for (int i = 0; i < MAX_TANKS; i++) {
-                if (serverSimIsBot(sim, (BYTE)i)) {
-                    serverSimRemoveBot(sim, (BYTE)i);
-                }
-            }
+            serverSimRemoveAllBots(sim);
         }
         for (int i = 0; i < MAX_TANKS; i++) {
             if (bp->teamForSlot[i] != 0) {

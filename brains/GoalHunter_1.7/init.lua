@@ -10914,7 +10914,10 @@ function Brain.think(info)
       local allies = info.allies or 0
       local bots   = info.player_bots or 0
       local human_allies = bit.band(allies, bit.bnot(bots))
-      if human_allies ~= 0 then
+      -- The goal line is a goal confirmation, so "bot chat off" silences it
+      -- too (same latch as orders.lua sayg). Still cleared below, so the
+      -- cooldown bookkeeping above does not change.
+      if human_allies ~= 0 and ORD.bot_chat_on(state) then
         send_msg = state.pending_human_goal_msg
         msg_dest = human_allies
       end

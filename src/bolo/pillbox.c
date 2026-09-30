@@ -637,7 +637,11 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
             bestDist = amount;
             bestTankX = tankX;
             bestTankY = tankY;
-            bestTankDir = tankGetTravelAngel(&tanks[t]);
+            /* Let the Mac solver round the original heading itself.
+             * WinBolo's travel-angle helper rounds half-sectors downward,
+             * so pre-rounding here changes Mac aim at 8, 24, ... 248. */
+            bestTankDir = sim->rules.pill_aim_mac ? tankGet256Dir(&tanks[t]) :
+                tankGetTravelAngel(&tanks[t]);
             bestTankSpeed = tankGetSpeed(&tanks[t]);
             bestTank = &tanks[t];
             bestTankNum = t;
@@ -649,7 +653,7 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
       if (foundTarget) {
         /* Fire at closest enemy tank */
         if ((*value)->item[count].justSeen == TRUE) {
-          dir = pillsTargetTank(sim, mp, value, bs, x, y, bestTankX, bestTankY, (TURNTYPE) bestTankDir, bestTankSpeed, (tankIsOnBoat(bestTank)), tankBoatExitSpeed(sim, *bestTank));
+          dir = pillsTargetTank(sim, mp, value, bs, x, y, bestTankX, bestTankY, (TURNTYPE) bestTankDir, bestTankSpeed, (tankIsOnBoat(bestTank)), tankBoatExitSpeed(sim, *bestTank), tankIsObstructed(bestTank));
           shellsAddItem(sim, shs, x, y, dir, sim->rules.pill_fire_length, NEUTRAL, bestTankNum, count, FALSE);
           if (shellCapOn && bestTankNum < MAX_TANKS) {
             shellsAtTank[bestTankNum]++;
@@ -929,6 +933,80 @@ BYTE pillsGetScreenHealth(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yVal
   return returnValue;
 }
 
+/* Mac Bolo 0.99.7's quarter-wave table: trunc(128*sin(b*pi/128)),
+ * clipped to 127. Used by both its lead vector and its integer aim search. */
+static const BYTE pillMacSine[65] = {
+  0, 3, 6, 9, 12, 15, 18, 21, 24, 28, 31, 34, 37, 40, 43, 46,
+  48, 51, 54, 57, 60, 63, 65, 68, 71, 73, 76, 78, 81, 83, 85, 88,
+  90, 92, 94, 96, 98, 100, 102, 104, 106, 108, 109, 111, 112, 114,
+  115, 117, 118, 119, 120, 121, 122, 123, 124, 124, 125, 126,
+  126, 127, 127, 127, 127, 127, 127
+};
+
+static int pillsMacSin(int angle) {
+  int half = angle & 127;
+  int value = pillMacSine[half > 64 ? 128 - half : half];
+  return (angle & 128) ? -value : value;
+}
+
+/* Arithmetic right shift, including floor rounding for negative products. */
+static int32_t pillsMacShift(int32_t value, int bits) {
+  int32_t divisor = (int32_t)1 << bits;
+  return value >= 0 ? value / divisor : -((-value + divisor - 1) / divisor);
+}
+
+static int32_t pillsMacPixelDelta(WORLD a, WORLD b) {
+  int32_t delta = (uint16_t)(a - b);
+  if (delta >= 32768) delta -= 65536;
+  return pillsMacShift(delta, 4);
+}
+
+static int pillsMacRange(WORLD px, WORLD py, WORLD tx, WORLD ty) {
+  int32_t dx = pillsMacPixelDelta(px, tx);
+  int32_t dy = pillsMacPixelDelta(py, ty);
+  int32_t squared = dx * dx + dy * dy;
+  /* Equivalent to Mac's floor(sqrt(256*i)) lookup table and its three
+   * buckets. The input to sqrt is an exact integer no larger than 65280. */
+  if (squared > 0xFFFFF) return 0x7FFF;
+  if (squared > 0xFFFF) return (int)sqrt((double)((squared >> 12) * 256)) * 4;
+  if (squared > 0xFFF) return (int)sqrt((double)((squared >> 8) * 256));
+  return (int)sqrt((double)((squared >> 4) * 256)) / 4;
+}
+
+static TURNTYPE pillsMacAim(int32_t x, int32_t y) {
+  bool negativeX = x < 0, negativeY = y < 0;
+  int angle, delta;
+  if (negativeX) x = -x;
+  if (negativeY) y = -y;
+  angle = x < y ? 16 : 48;
+  for (delta = 8; delta != 0; delta >>= 1) {
+    if (y * pillMacSine[angle] - x * pillMacSine[64 - angle] < 0) {
+      angle += delta;
+    } else {
+      angle -= delta;
+    }
+  }
+  if (!negativeY) angle = -128 - angle;
+  if (negativeX) angle = -angle;
+  return (TURNTYPE)(uint8_t)angle;
+}
+
+static TURNTYPE pillsTargetTankMac(WORLD px, WORLD py, WORLD tx, WORLD ty,
+                                  TURNTYPE heading, BYTE speed, bool obstructed) {
+  int distance = pillsMacRange(px, py, tx, ty);
+  int direction = ((int)(heading + 8) & 255) & 240;
+  /* WinBolo moves speed WU per 20 ms; Mac moves speed*127/256 WU
+   * per 40 ms. Its road speed 64 corresponds to WinBolo's 16. Preserve
+   * the Mac byte's range for scenarios with unusually high speeds. */
+  int macSpeed = speed > 63 ? 255 : speed * 4;
+  uint16_t lead = obstructed ? 0 : (uint16_t)((distance - 16) * macSpeed) >> 2;
+  /* Keep these signed and wider than WORLD: wrapping the distant aim point
+   * at a map edge would reverse shots. The original only wraps the lead. */
+  int32_t x = (int32_t)tx - pillsMacShift(lead * -pillsMacSin(direction), 8) - px;
+  int32_t y = (int32_t)ty - pillsMacShift(lead * pillsMacSin(direction + 64), 8) - py;
+  return pillsMacAim(x, y);
+}
+
 /*********************************************************
 *NAME:          pillsTargetTank
 *AUTHOR:        John Morrison
@@ -949,10 +1027,14 @@ BYTE pillsGetScreenHealth(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yVal
 *  speed  - The speed of the tank
 *  onBoat - Is the tank on a boat
 *  boatExitSpeed - Speed at which that tank leaves a boat
+*  obstructed - Whether the target's last move was blocked
 *********************************************************/
-TURNTYPE pillsTargetTank(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD xValue, WORLD yValue, WORLD tankX, WORLD tankY, TURNTYPE angle, BYTE speed, bool onBoat, BYTE boatExitSpeed) {
+TURNTYPE pillsTargetTank(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD xValue, WORLD yValue, WORLD tankX, WORLD tankY, TURNTYPE angle, BYTE speed, bool onBoat, BYTE boatExitSpeed, bool obstructed) {
   TURNTYPE returnValue; /* Value to return */
 
+  if (sim->rules.pill_aim_mac != 0) {
+    return pillsTargetTankMac(xValue, yValue, tankX, tankY, angle, speed, obstructed);
+  }
   if (speed == 0) {
     returnValue = utilCalcAngle(xValue, yValue, tankX, tankY);
   } else if (sim->rules.pill_massage_range <= 0) {

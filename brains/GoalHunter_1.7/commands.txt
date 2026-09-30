@@ -61,7 +61,7 @@ capture look at the ones not ours, defend at ours.
 "bot pings on" (ping bot goals)
 "bot chat on" (bots chat their goals)
 
-Both take "off". Pings start OFF, chat starts ON. "bot chat off" silences
+Both take "off". Pings start ON, chat starts OFF. "bot chat off" silences
 the goal lines only; an answer you are owed still comes back.
 
 NOTE: Bots <= 7 tiles from a human will suicide when attacking a pill (no
@@ -173,10 +173,13 @@ TEAM SETTINGS
   bot pings on   a bot puts an ATTACK marker on the map every time it starts
                  attacking a pillbox or a tank, so you can see what the bots
                  are going for without reading chat. "botpings on" too.
-  bot pings off  stop the attack markers. This is how a game starts.
-  bot chat on    the bots say their goals: "Got it! attack_pill #5". This
-                 is how a game starts. "botchat" is the same word.
-  bot chat off   stop those lines. Only the GOAL lines go quiet.
+                 This is how a game starts.
+  bot pings off  stop the attack markers.
+  bot chat on    the bots say their goals: "Got it! attack_pill #5".
+                 "botchat" is the same word.
+  bot chat off   stop those lines. Only the GOAL lines go quiet. This is
+                 how a game starts.
+  "bot pings" and "bot chat" go back to these starting values every round.
   These settings take a subject and ignore it: they are team-wide, so
   "socrates focus bases" and "last repositioning on" do what the bare lines do.
   help           the bots say a short version of this page in chat.

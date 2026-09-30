@@ -214,7 +214,6 @@
 #define STR_TUTORIAL25                      409
 #define STR_TUTORIAL_START01                410
 #define STR_TUTORIAL_START02                411
-#define STR_TUTORIAL_START03                412
 #define STR_TUTORIAL_START04                413
 
 /* Touch-mode (tablet/mobile) siblings of the tutorial strings whose
@@ -3039,6 +3038,8 @@
 #define STR_RULE_DESC_pill_base_defend_shape     2700
 #define STR_RULE_DESC_tank_slide_armour_bonus    2702
 #define STR_RULE_DESC_tank_slide_mac             2703
+#define STR_RULE_DESC_pill_aim_mac               2711
+#define STR_RULE_DESC_tank_collision_mac         2712
 
 /* Rule range wording */
 
@@ -3233,6 +3234,13 @@
  * published to the Steam Workshop. The link beside it reuses
  * STR_DLGSETTINGS_WORKSHOP_OPEN. */
 #define STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP       2680
+
+/* The game finder's scripts */
+/* The label of the details pane's row naming the mods a server runs, and the
+ * end of a row's map line when more than one runs ({number} = how many). The
+ * scenario row and the Scenario filter entry reuse STR_DLGGAMEINFO_SCRIPTED. */
+#define STR_DLGBROWSER_MODS                      2713
+#define STR_DLGBROWSER_MODS_MORE                 2714
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

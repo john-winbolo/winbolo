@@ -3721,6 +3721,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # commit, reconciling them when a round comes back, re-seating them when
     # an emptied lobby resets, and leaving a preview and a plain map alone.
     tests/unit/test_lobby_template.c
+    # A lobby map change keeping the bots and the host's script list.
+    tests/unit/test_lobby_map_keeps_bots.c
     tests/unit/test_survival_lobby_round.c
     # What a real client draws when a held seat is taken off the field: the
     # tank has to go with it, though the roster row stays.
@@ -3735,6 +3737,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     # without one, the scripted game type a commit sets and gives back, and
     # the ranked and AI-policy settings a scenario does not go with.
     tests/unit/test_lobby_scenario_settings.c
+    # What the sim tells WinBolo.net about the scripts a round runs: the
+    # scenario, its cap and the mods, read off the stubbed lobby-info setter.
+    tests/unit/test_wbn_lobby_info_scenario.c
+    # The script bytes the reply to an info request carries after the
+    # INFO_PACKET: the writer and the reader, each against literal bytes.
+    tests/unit/test_info_script_tail.c
     # The policy a server holds for scripts players send it: the word it is
     # set from, its byte on the lobby-settings event, and the sim's and the
     # client's copies.
@@ -5004,6 +5012,7 @@ set(_unit_test_names
     wbn_serverlist_players
     wbn_serverlist_motd
     wbn_serverlist_malformed
+    wbn_serverlist_scripts
     wbn_map_parse
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
@@ -5470,6 +5479,8 @@ set(_unit_test_names
     sim_rules_pill_shell_damage_follows
     sim_rules_pill_angry_divisor_follows
     sim_rules_pill_massage_follows
+    sim_rules_pill_aim_mac
+    sim_rules_tank_collision_mac
     pill_shell_cap_off_is_no_limit
     pill_shell_cap_retargets_next_nearest
     pill_shell_cap_holds_then_fires_when_freed
@@ -5992,6 +6003,7 @@ set(_unit_test_names
     lobby_template_cap_refuses_extra_human
     lobby_template_cap_never_binds_bots
     lobby_template_cancel_keeps_trim
+    lobby_template_cancel_same_template_keeps_edits
     lobby_template_cancel_keeps_empty_team
     lobby_template_cancel_chain_rolls_back
     lobby_template_commit_keeps_new_lobby
@@ -6002,6 +6014,10 @@ set(_unit_test_names
     lobby_template_mode_unknown_key_kept
     lobby_template_no_mode_leaves_config
     lobby_template_add_bot_takes_template
+    lobby_map_keeps_bots_plain
+    lobby_map_keeps_bots_scenario
+    lobby_map_keeps_bots_map_own_row
+    lobby_map_rotate_holds_seats_again
     scripted_game_type_loadout_follows_base
     scripted_game_type_no_base_is_strict
     scripted_game_type_strict_ignores_base
@@ -6019,6 +6035,9 @@ set(_unit_test_names
     lobby_scenario_boot_sets_type
     lobby_scenario_identity_strips_controls
     lobby_scenario_nolobby_boot_seats_template
+    wbn_lobby_info_scenario
+    info_script_tail_golden
+    info_script_tail_read
     script_upload_policy_resolve
     script_upload_policy_word
     script_upload_policy_codec
@@ -6689,6 +6708,7 @@ add_executable(WinBoloWbnTests
     tests/wbn/test_wbn_key_at_fire_time.c
     tests/wbn/test_wbn_queue_cap.c
     tests/wbn/test_wbn_forced_update_full_queue.c
+    tests/wbn/test_wbn_scenario_fields.c
     src/bolo/global.c
     src/common/prefs.c
     src/common/prefs_doc.c
@@ -6765,6 +6785,12 @@ set_tests_properties(wbn.queue_cap_refuses_posts PROPERTIES TIMEOUT 120)
 add_test(NAME wbn.forced_update_full_queue
          COMMAND $<TARGET_FILE:WinBoloWbnTests> forced_update_full_queue)
 set_tests_properties(wbn.forced_update_full_queue PROPERTIES TIMEOUT 120)
+
+# A register and four lobby_updates, none of them held, each body read for the
+# scenario, cap and mod keys.
+add_test(NAME wbn.scenario_fields
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> scenario_fields)
+set_tests_properties(wbn.scenario_fields PROPERTIES TIMEOUT 60)
 
 # ---- Include-rule check: the scenario surface is invisible to a frontend --
 # src/bolo/scenario_api/ is on the include path of scenario_host, sim_owner
