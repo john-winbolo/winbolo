@@ -1501,7 +1501,7 @@ int run_lobby_template_seat_new_seat_base(void) {
           the seeded seats start there, at the lobby's Hard. */
     UT_ASSERT(ltMakeBrainFile("new_seat_open"));
     UT_ASSERT(ltMakeModesBrainWith("new_seat_open",
-                                   "open_default = survival\n\n"));
+                                   "open_default = turtle\n\n"));
     ut_brain_stub_arm(true);
     sim = ltLobbySim();
     UT_ASSERT(sim != NULL);
