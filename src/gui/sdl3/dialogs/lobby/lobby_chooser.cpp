@@ -175,9 +175,13 @@ static void lobbyServerMapsListProvider(MapChooserState *state,
             got = serverSimSearchMapDir(spSim,
                 inSub ? relPath : NULL,
                 state->searchFilter,
-                hits, MAP_CHOOSER_MAX_MAPS);
+                hits, MAP_CHOOSER_MAX_MAPS, true);
             if (got < 0) got = 0;
         } else if (cs && clientSimHasTransport(cs)) {
+            /* The search reply carries no scripted byte, so these rows
+             * are never tagged; the chooser greys out "Scenarios only"
+             * rather than let it hide every hit. */
+            state->searchRowsUntagged = true;
             const char *want    = inSub ? relPath : "";
             const char *cachedP = clientSimGetLobbyMapSearchPath(cs);
             const char *cachedQ = clientSimGetLobbyMapSearchQuery(cs);
@@ -204,8 +208,6 @@ static void lobbyServerMapsListProvider(MapChooserState *state,
                         clientSimGetLobbyMapSearchIsFolder(cs, i);
                     hits[got].modTime =
                         clientSimGetLobbyMapSearchModTime(cs, i);
-                    /* The search reply carries no scripted byte, so a
-                     * network client's search rows are never tagged. */
                     hits[got].scripted = false;
                     got++;
                 }
