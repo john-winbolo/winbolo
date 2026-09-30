@@ -485,3 +485,55 @@ int run_scn_presentation_client_filters(void) {
     clientSimDestroy(cs);
     return 0;
 }
+
+/* The client keeps one panel list per script. The panel byte on the wire
+ * holds the panel id in the low four bits and the sending script's list
+ * position in the high four. clientSimGetScnPanel answers the lowest
+ * script that has a list, which is the round's own scenario when it has
+ * one; clientSimGetScnPanelOf answers one script. */
+int run_client_scn_panel_owners(void) {
+    ControlEvent evt;
+    ClientSim   *cs = scnClientOnTeam(2, 1);
+    UT_ASSERT(cs != NULL);
+
+    /* A mod, list position 2, draws first. */
+    scnPanelEventFor(&evt, 0, 0xFF);
+    evt.u.scnPanel.panel = SCN_PANEL_WIRE(0, 2);
+    evt.u.scnPanel.bytes[3] = 7;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(clientSimGetScnPanelOf(cs, 0, 2) != NULL);
+    UT_ASSERT(clientSimGetScnPanelOf(cs, 0, 2)->items[0].u.sprite.tile == 7);
+    UT_ASSERT(clientSimGetScnPanelOf(cs, 0, 0) == NULL);
+    UT_ASSERT(clientSimGetScnPanel(cs, 0) == clientSimGetScnPanelOf(cs, 0, 2));
+
+    /* The scenario, list position 0, draws next. The mod's list stays. */
+    scnPanelEventFor(&evt, 0, 0xFF);
+    evt.u.scnPanel.bytes[3] = 9;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(clientSimGetScnPanelOf(cs, 0, 0) != NULL);
+    UT_ASSERT(clientSimGetScnPanelOf(cs, 0, 0)->items[0].u.sprite.tile == 9);
+    UT_ASSERT_MSG(clientSimGetScnPanelOf(cs, 0, 2) != NULL &&
+                  clientSimGetScnPanelOf(cs, 0, 2)->items[0].u.sprite.tile == 7,
+                  "the scenario's list overwrote the mod's");
+    UT_ASSERT(clientSimGetScnPanel(cs, 0) == clientSimGetScnPanelOf(cs, 0, 0));
+
+    /* Out of range asks answer nothing. */
+    UT_ASSERT(clientSimGetScnPanelOf(cs, 0, SCN_PANEL_OWNERS) == NULL);
+    UT_ASSERT(clientSimGetScnPanelOf(cs, SCN_PANEL_IDS, 0) == NULL);
+
+    /* A panel byte naming an owner past the list is dropped. */
+    scnPanelEventFor(&evt, 0, 0xFF);
+    evt.u.scnPanel.panel = SCN_PANEL_WIRE(0, 15);
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(clientSimGetScnPanelOf(cs, 0, 0)->items[0].u.sprite.tile == 9);
+
+    /* The return to lobby drops every script's list. */
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_GAME_PHASE_LOBBY;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(clientSimGetScnPanelOf(cs, 0, 0) == NULL);
+    UT_ASSERT(clientSimGetScnPanelOf(cs, 0, 2) == NULL);
+
+    clientSimDestroy(cs);
+    return 0;
+}

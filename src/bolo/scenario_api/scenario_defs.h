@@ -595,7 +595,11 @@ typedef struct {
 
 typedef struct {
     BYTE     target;
-    BYTE     panel;                 /* 0..3 */
+    BYTE     panel;                 /* 0..SCN_PANEL_IDS-1 */
+    /* The calling script's position on the round's list, 0 for the first
+       and for a call no script made. Filled by the host, never by the
+       script, and packed with the panel id by SCN_PANEL_WIRE. */
+    BYTE     owner;
     uint16_t len;
     uint8_t  bytes[SCN_PANEL_MAX];
 } ScnOpPanel;
