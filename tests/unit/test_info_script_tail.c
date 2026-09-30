@@ -35,6 +35,7 @@
 #include "netpacks.h"               /* INFO_SCRIPT_TAIL_MAX, WBN_SCENARIO_DESC_MAX */
 #include "server_sim.h"
 #include "server_sim_internal.h"    /* serverSimSetScriptList */
+#include "server_sim_lifecycle.h"   /* serverSimSetLobbyEnabled */
 #include "server_sim_scenario.h"    /* serverSimSetScenarioIdentity,
                                        serverSimSetScenarioLobbyTemplate */
 #include "scenario_defs.h"          /* ScnDirEntry, ScnLobbyTemplate */

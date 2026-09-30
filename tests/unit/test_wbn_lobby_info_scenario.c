@@ -28,6 +28,7 @@
 #include "control_event.h"          /* lobbyScenarioMod, lobbyScenarioNone */
 #include "server_sim.h"
 #include "server_sim_internal.h"    /* serverSimSetScriptList */
+#include "server_sim_lifecycle.h"   /* serverSimSetLobbyEnabled */
 #include "server_sim_scenario.h"    /* serverSimSetScenarioIdentity,
                                        serverSimSetScenarioLobbyTemplate */
 #include "scenario_defs.h"          /* ScnDirEntry, ScnLobbyTemplate */
