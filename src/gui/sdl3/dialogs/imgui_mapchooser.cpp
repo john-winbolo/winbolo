@@ -809,9 +809,8 @@ SDL_Texture *mapChooserGetMaximizeIcon(void) {
 }
 
 /* Render the list/grid view-mode toggle as two SVG icon buttons.
- * Mutates state->viewMode. The grid view isn't implemented yet —
- * the click is captured but the row layout still draws as a list.
- * Falls back to text labels when the SVG files can't be loaded. */
+ * Mutates state->viewMode. Falls back to text labels when the SVG
+ * files can't be loaded. */
 static void renderViewModeToggle(MapChooserState *state,
                                   SDL_Renderer *renderer) {
     const int iconPx = (int)(ImGui::GetFrameHeight() - 6.0f);
@@ -839,8 +838,7 @@ static void renderViewModeToggle(MapChooserState *state,
 
     drawBtn("##mcViewList", s_iconListView, "List", 0, "List view");
     ImGui::SameLine();
-    drawBtn("##mcViewGrid", s_iconGridView, "Grid", 1,
-            "Grid view (coming soon)");
+    drawBtn("##mcViewGrid", s_iconGridView, "Grid", 1, "Grid view");
 }
 
 /* Render a "/" -separated path as a row of clickable segment
@@ -1355,6 +1353,7 @@ void mapChooserRefresh(MapChooserState *state);
 
 static void discoverMaps(MapChooserState *state) {
     state->numMaps = 0;
+    state->searchRowsUntagged = false;
     if (state->provider.enumerate) {
         state->provider.enumerate(state, state->currentDir,
                                    state->provider.ctx);
@@ -1441,6 +1440,56 @@ static void updatePreview(MapChooserState *state, SDL_Renderer *renderer) {
         mapPreviewViewSetInitialBounds(state->previewView,
             state->previewBoundsMinX, state->previewBoundsMinY,
             state->previewBoundsMaxX, state->previewBoundsMaxY);
+    }
+}
+
+/* Select the first map row the "Scenarios only" tick lets through and
+ * preview it, as a folder click does. With no such row and the tick off,
+ * falls back to the empty path, the inbuilt Everard marker. With the
+ * tick on, Everard is hidden too, so the selection and preview are
+ * cleared instead. The provider's onSelect is not called: like a folder
+ * click, this only moves the chooser's own selection. */
+static void selectFirstShownMap(MapChooserState *state,
+                                SDL_Renderer *renderer,
+                                bool scenariosOnly) {
+    int firstFile = -1;
+    for (int j = 0; j < state->numMaps; j++) {
+        if (!state->maps[j].isFolder &&
+            mapChooserEntryPassesScenarioFilter(&state->maps[j],
+                                                scenariosOnly)) {
+            firstFile = j; break;
+        }
+    }
+    if (firstFile >= 0) {
+        state->selectedIdx = firstFile;
+        SDL_strlcpy(state->selectedPath, state->maps[firstFile].path,
+                    sizeof(state->selectedPath));
+        SDL_strlcpy(state->selectedName, state->maps[firstFile].name,
+                    sizeof(state->selectedName));
+        updatePreview(state, renderer);
+        return;
+    }
+    state->selectedPath[0] = '\0';
+    state->selectedName[0] = '\0';
+    if (!scenariosOnly) {
+        state->selectedIdx = 0;
+        updatePreview(state, renderer);
+        return;
+    }
+    /* Nothing shown to select. A fresh preview widget has no map, so
+     * the pane goes blank rather than keep the hidden map. */
+    state->selectedIdx = -1;
+    mapPreviewPopupClose();
+    if (state->previewTex) {
+        SDL_DestroyTexture(state->previewTex);
+        state->previewTex = NULL;
+    }
+    state->previewPills  = 0;
+    state->previewBases  = 0;
+    state->previewStarts = 0;
+    if (state->previewView) {
+        mapPreviewViewDestroy(state->previewView);
+        state->previewView = mapPreviewViewCreate();
     }
 }
 
@@ -1930,6 +1979,13 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
             if ((ImGui::IsItemHovered() || ImGui::IsItemFocused()) && !emptyFilter) {
                 ImGui::SetTooltip("Clear search");
             }
+            /* The two search-option checkboxes draw at a smaller
+             * font and frame so they read as secondary to the search
+             * box above them. */
+            ImGui::PushFont(NULL, ImGui::GetStyle().FontSizeBase * 0.85f);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                ImVec2(ImGui::GetStyle().FramePadding.x,
+                       ImGui::GetStyle().FramePadding.y * 0.5f));
             bool prevRecursive = state->searchRecursive;
             ImGui::Checkbox("Search subfolders", &state->searchRecursive);
             if (prevRecursive != state->searchRecursive) {
@@ -1941,32 +1997,9 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
             ImGui::SameLine();
             ImGui::Checkbox("Created at", &state->showModifiedColumn);
             imguiHelpTooltip("Show file modification times in a second column.");
-            /* "Scenarios only" — a client-side filter like the plain
-             * search, so a change needs no rescan. Goes on the same
-             * line when it fits in the narrow list panel, else on its
-             * own line below. */
-            if (state->offerScenariosOnly) {
-                const char *label =
-                    langGetText(STR_MAPCHOOSER_SCENARIOSONLY);
-                ImGuiStyle &st = ImGui::GetStyle();
-                float boxW = ImGui::GetFrameHeight()
-                           + st.ItemInnerSpacing.x
-                           + ImGui::CalcTextSize(label).x;
-                ImGui::SameLine();
-                if (ImGui::GetContentRegionAvail().x < boxW) {
-                    ImGui::NewLine();
-                }
-                ImGui::Checkbox(label, &state->scenariosOnly);
-                imguiHelpTooltip(
-                    langGetText(STR_MAPCHOOSER_SCENARIOSONLY_TIP));
-            }
+            ImGui::PopStyleVar();
+            ImGui::PopFont();
         }
-        bool scenariosOnly = state->offerScenariosOnly
-                          && state->scenariosOnly;
-        /* Map rows the filters let through this frame, so an empty
-         * "Scenarios only" result can say so instead of leaving a
-         * blank list. */
-        int shownMapRows = 0;
         /* Stale-state safety net: in non-recursive mode the legacy
          * enumerate populates state->maps with basenames only — no
          * path separators. If any entry's name contains "/" or "\"
@@ -2008,6 +2041,48 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
         /* List / grid view-mode toggle, directly above the
          * list/grid area. */
         renderViewModeToggle(state, renderer);
+        /* "Scenarios only" — a client-side filter like the plain
+         * search, so a change needs no rescan. Sits right of the view
+         * toggle. Greyed out while the rows come from a server-wide
+         * search, whose reply does not say which hits have a script;
+         * ticked, it would hide every hit. */
+        if (state->offerScenariosOnly) {
+            ImGui::SameLine();
+            bool untagged = state->searchRowsUntagged;
+            if (untagged) ImGui::BeginDisabled();
+            ImGui::Checkbox(langGetText(STR_MAPCHOOSER_SCENARIOSONLY),
+                            &state->scenariosOnly);
+            if (untagged) ImGui::EndDisabled();
+            if (untagged) {
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip |
+                                         ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    ImGui::SetTooltip("%s", langGetText(
+                        STR_MAPCHOOSER_SCENARIOSONLY_NOSEARCH));
+                }
+            } else {
+                imguiHelpTooltip(
+                    langGetText(STR_MAPCHOOSER_SCENARIOSONLY_TIP));
+            }
+        }
+        bool scenariosOnly = state->offerScenariosOnly
+                          && state->scenariosOnly
+                          && !state->searchRowsUntagged;
+        /* The tick can hide the selected map (ticked just now, or the
+         * rows were replaced). Move the selection to the first map
+         * still shown so the preview does not show a hidden one. */
+        if (scenariosOnly && state->selectedIdx >= 0 &&
+            state->selectedIdx < state->numMaps) {
+            const MapChooserEntry *sel = &state->maps[state->selectedIdx];
+            if (SDL_strcmp(sel->path, state->selectedPath) == 0 &&
+                !mapChooserEntryPassesScenarioFilter(sel, true)) {
+                selectFirstShownMap(state, renderer, true);
+                changed = true;
+            }
+        }
+        /* Map rows the filters let through this frame, so an empty
+         * "Scenarios only" result can say so instead of leaving a
+         * blank list. */
+        int shownMapRows = 0;
 
         /* Grid view branches off here entirely — a flowable
          * thumbnail layout. List view continues into the table
@@ -2171,25 +2246,8 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                                     sizeof(state->currentDir));
                         discoverMaps(state);
                         state->searchFilter[0] = '\0';
-                        int firstFile = -1;
-                        for (int j = 0; j < state->numMaps; j++) {
-                            if (!state->maps[j].isFolder) {
-                                firstFile = j; break;
-                            }
-                        }
-                        state->selectedIdx = (firstFile >= 0) ? firstFile : 0;
-                        if (firstFile >= 0) {
-                            SDL_strlcpy(state->selectedPath,
-                                state->maps[firstFile].path,
-                                sizeof(state->selectedPath));
-                            SDL_strlcpy(state->selectedName,
-                                state->maps[firstFile].name,
-                                sizeof(state->selectedName));
-                        } else {
-                            state->selectedPath[0] = '\0';
-                            state->selectedName[0] = '\0';
-                        }
-                        updatePreview(state, renderer);
+                        selectFirstShownMap(state, renderer,
+                                            scenariosOnly);
                         changed = true;
                     } else if (state->selectedIdx != i) {
                         state->selectedIdx = i;
@@ -2209,7 +2267,6 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 curX += kCellW + gap;
             }
             if (scenariosOnly && shownMapRows == 0) {
-                if (curX > 0.0f) ImGui::NewLine();
                 ImGui::TextDisabled("%s",
                     langGetText(STR_MAPCHOOSER_NOSCENARIOMAPS));
             }
@@ -2690,25 +2747,8 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                                     sizeof(state->currentDir));
                         discoverMaps(state);
                         state->searchFilter[0] = '\0';
-                        int firstFile = -1;
-                        for (int j = 0; j < state->numMaps; j++) {
-                            if (!state->maps[j].isFolder) {
-                                firstFile = j; break;
-                            }
-                        }
-                        state->selectedIdx = (firstFile >= 0) ? firstFile : 0;
-                        if (firstFile >= 0) {
-                            SDL_strlcpy(state->selectedPath,
-                                        state->maps[firstFile].path,
-                                        sizeof(state->selectedPath));
-                            SDL_strlcpy(state->selectedName,
-                                        state->maps[firstFile].name,
-                                        sizeof(state->selectedName));
-                        } else {
-                            state->selectedPath[0] = '\0';
-                            state->selectedName[0] = '\0';
-                        }
-                        updatePreview(state, renderer);
+                        selectFirstShownMap(state, renderer,
+                                            scenariosOnly);
                         changed = true;
                     } else if (state->selectedIdx != i) {
                         state->selectedIdx = i;

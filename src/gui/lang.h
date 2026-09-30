@@ -884,12 +884,14 @@
 #define STR_MAPCHOOSER_STATS                800
 #define STR_MAPCHOOSER_MAPFILES             801
 #define STR_MAPCHOOSER_ALLFILES             802
-/* The "Scenarios only" checkbox under the chooser's search box, its
- * tooltip, and the line the list shows when the tick hides every map in
- * the folder or search. */
+/* The "Scenarios only" checkbox beside the chooser's view toggle, its
+ * tooltip, the line the list shows when the tick hides every map in the
+ * folder or search, and the tooltip while a server-wide search greys the
+ * tick out. */
 #define STR_MAPCHOOSER_SCENARIOSONLY        2713
 #define STR_MAPCHOOSER_SCENARIOSONLY_TIP    2714
 #define STR_MAPCHOOSER_NOSCENARIOMAPS       2715
+#define STR_MAPCHOOSER_SCENARIOSONLY_NOSEARCH 2716
 
 /* Tablet HUD */
 #define STR_TABLET_STATUS_TITLE             803

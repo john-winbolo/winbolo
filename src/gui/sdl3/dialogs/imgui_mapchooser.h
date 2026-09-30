@@ -292,6 +292,14 @@ struct MapChooserState_s {
      * session with the rest of the tab's state, not saved. */
     bool            scenariosOnly;
 
+    /* Set by a provider whose current rows never carry the `scripted`
+     * flag although the tab offers "Scenarios only" — the Server Maps
+     * tab's network recursive search, whose reply has no byte for it.
+     * While set, the tick is greyed out and filters nothing, so it
+     * cannot hide every hit. discoverMaps clears it before each
+     * enumerate, so only the provider run that fills such rows sets it. */
+    bool            searchRowsUntagged;
+
     /* Interactive preview widget — same renderer as the lobby's inline
      * preview and the modal popup. Loaded with the currently-selected
      * map's data; provides wheel-zoom / drag-pan / minimap-mode
