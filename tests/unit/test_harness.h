@@ -511,6 +511,8 @@ int run_wbn_serverlist_scripts(void);
 int run_wbn_map_parse(void);
 int run_brain_crash_log_writes_file(void);
 int run_brain_crash_log_falls_back_to_luaptr(void);
+int run_brain_msgh_budget_kill_no_traceback(void);
+int run_brain_msgh_real_error_keeps_traceback(void);
 int run_brain_inbox_push_peek_fifo(void);
 int run_brain_inbox_overflow_drops_oldest(void);
 int run_brain_inbox_legacy_drain_fifo(void);

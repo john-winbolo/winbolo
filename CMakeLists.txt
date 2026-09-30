@@ -5029,6 +5029,8 @@ set(_unit_test_names
     wbn_map_parse
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
+    brain_msgh_budget_kill_no_traceback
+    brain_msgh_real_error_keeps_traceback
     brain_inbox_push_peek_fifo
     brain_inbox_overflow_drops_oldest
     brain_inbox_legacy_drain_fifo
