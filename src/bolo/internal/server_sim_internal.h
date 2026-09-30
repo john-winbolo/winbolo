@@ -1223,8 +1223,8 @@ struct ServerSim {
     /* What the lobby was set to when a scripted map displaced it: the game
      * type gameScripted took the place of, the ranked flag a scripted round
      * cannot run under, and the AI policy and bot AI type that aiNone was
-     * moved off. A commit with no scenario puts all four back and empties
-     * them again. preScenarioGameType is the one that says whether anything
+     * moved off. A commit with no scenario puts them back and empties them
+     * again. preScenarioGameType is the one that says whether anything
      * is held: 0 is no game type, which no lobby is ever on, and is what
      * every lobby that has not had a scripted map committed into it reads. */
     gameType               preScenarioGameType;
@@ -1232,9 +1232,9 @@ struct ServerSim {
     uint8_t                preScenarioAiPolicy;
     aiType                 preScenarioAiType;
     /* True once a list that said needs_bots moved the lobby off aiNone.
-     * Only then are the two above put back: a list that never touched the
-     * AI policy leaves it the host's, including any change the host made
-     * while that list was attached. */
+     * The two above are taken at that raise, and put back as soon as the
+     * list stops saying needs_bots (serverSimScenarioApplyLobbyRules). A
+     * list that never touched the AI policy leaves it the host's. */
     bool                   preScenarioAiRaised;
     /* The brain a seat was seeded with, so a seat held without a bot in it
      * still knows what to run when something fields it. Empty means the

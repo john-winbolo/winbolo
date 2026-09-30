@@ -2295,6 +2295,16 @@ void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath) {
     serverSimScenarioSeatLobby(sim);
 }
 
+/* Put back the AI policy a needs_bots list moved the lobby off, and hold
+   nothing more. */
+static void scenarioGiveBackAi(ServerSim *sim) {
+    serverSimSetAiPolicy(sim, sim->preScenarioAiPolicy);
+    serverSimSetBotAiType(sim, sim->preScenarioAiType);
+    sim->preScenarioAiPolicy = 0;
+    sim->preScenarioAiType   = aiNone;
+    sim->preScenarioAiRaised = false;
+}
+
 /* The lobby's own settings, brought into line with whatever scenario is
    attached now. Both points a lobby first learns its scenario need this: a
    map commit, which calls it straight after the map change above, and a
@@ -2333,19 +2343,33 @@ void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath) {
    on changing it. keepsWinCondition is the composed list's answer, and it is
    true only when every script in the list is a mod.
 
-   All three are remembered and given back, so a lobby that was ranked with
-   no bots is ranked with no bots again once the last script goes. The AI
-   policy is given back only when a needs_bots list moved it
-   (preScenarioAiRaised): with any other list the host was free to change it,
-   and what the host chose stays.
-   They are remembered together, on the first script of a run whether or not
-   it is the kind that moves the game type: a mod turns ranked off as surely
-   as a scenario does, and what it turned off has to come back the same way.
+   The game type and ranked are remembered and given back, so a lobby that
+   was ranked with no bots is ranked with no bots again once the last script
+   goes. They are remembered together, on the first script of a run whether
+   or not it is the kind that moves the game type: a mod turns ranked off as
+   surely as a scenario does, and what it turned off has to come back the
+   same way.
+
    preScenarioGameType holds nothing until then, which is what says whether
    there is anything to give back. A lobby already on gameScripted when that
    first script arrives has no earlier type worth keeping — no host can pick
    that type and no plain map is ever on it — so gameOpen is held instead,
-   which is where such a lobby used to land anyway. */
+   which is where such a lobby used to land anyway.
+
+   The AI policy follows its own rule, because only a needs_bots list moves
+   it:
+   - It is remembered at the raise, not at the first script, so what comes
+     back is what the lobby was on just before the raise. A change the host
+     made under an unflagged script before that is kept.
+   - It is given back as soon as the list stops saying needs_bots: when the
+     last script goes, or when the list changes to one that does not say it
+     (the flagged script dropped while an unflagged one stays). After that
+     nothing of the server's is held, so a policy the host picks under the
+     unflagged list is the host's and stays when the last script goes.
+   - When ranked is given back, the AI policy goes to aiNone with it. The
+     settings handler never lets ranked run with bots allowed (turning ranked
+     on sets aiNone, and ranked refuses any other policy), and a host may
+     have turned bots on while the script held ranked off. */
 void serverSimScenarioApplyLobbyRules(ServerSim *sim) {
     gameType typeBefore;
 
@@ -2360,8 +2384,6 @@ void serverSimScenarioApplyLobbyRules(ServerSim *sim) {
             sim->preScenarioGameType =
                 (was == gameScripted) ? gameOpen : was;
             sim->preScenarioRanked   = serverSimGetRanked(sim);
-            sim->preScenarioAiPolicy = sim->aiPolicy;
-            sim->preScenarioAiType   = serverSimGetBotAiType(sim);
         }
         if (!sim->scenarioIdentity.keepsWinCondition &&
             gameTypeGet(&sim->sim.game) != gameScripted) {
@@ -2370,18 +2392,31 @@ void serverSimScenarioApplyLobbyRules(ServerSim *sim) {
         if (serverSimGetRanked(sim)) {
             serverSimSetRanked(sim, false);
         }
-        if (sim->scenarioIdentity.needsBots &&
-            serverSimGetBotAiType(sim) == aiNone) {
-            serverSimSetAiPolicy(sim, (uint8_t)aiYes);
-            serverSimSetBotAiType(sim, aiYes);
-            sim->preScenarioAiRaised = true;
+        if (sim->scenarioIdentity.needsBots) {
+            if (serverSimGetBotAiType(sim) == aiNone) {
+                /* Remembered here, just before the raise, not at the first
+                   script: see the comment above. */
+                sim->preScenarioAiPolicy = sim->aiPolicy;
+                sim->preScenarioAiType   = serverSimGetBotAiType(sim);
+                serverSimSetAiPolicy(sim, (uint8_t)aiYes);
+                serverSimSetBotAiType(sim, aiYes);
+                sim->preScenarioAiRaised = true;
+            }
+        } else if (sim->preScenarioAiRaised) {
+            /* The list no longer says needs_bots, so the raise is undone now.
+               What the host picks from here on is the host's. */
+            scenarioGiveBackAi(sim);
         }
     } else if (sim->preScenarioGameType != (gameType)0) {
         serverSimSetGameType(sim, sim->preScenarioGameType);
         serverSimSetRanked(sim, sim->preScenarioRanked);
-        if (sim->preScenarioAiRaised) {
-            serverSimSetAiPolicy(sim, sim->preScenarioAiPolicy);
-            serverSimSetBotAiType(sim, sim->preScenarioAiType);
+        if (sim->preScenarioRanked) {
+            /* Ranked never runs with bots allowed. */
+            serverSimSetAiPolicy(sim, (uint8_t)aiNone);
+            serverSimSetBotAiType(sim, aiNone);
+            sim->preScenarioAiRaised = false;
+        } else if (sim->preScenarioAiRaised) {
+            scenarioGiveBackAi(sim);
         }
         sim->preScenarioGameType = (gameType)0;
         sim->preScenarioRanked   = false;
