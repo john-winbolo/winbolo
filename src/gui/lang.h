@@ -2505,6 +2505,19 @@
 #define STR_SCNPANEL_OPACITY_LINE1          2620
 #define STR_SCNPANEL_OPACITY_LINE2          2621
 
+/* One item per script with a panel goes under Brains > INFO_OVERLAY, a
+ * checkbox that shows or hides that script's panel. POP_OUT and POP_IN are
+ * the buttons in the panel's settings that move it into an OS window of its
+ * own and back. CLOSE_TITLE and CLOSE_BODY are the confirm the X on a panel
+ * opens: {string1} in the title = the script's name; in the body {string1} =
+ * the Brains menu's name and {string2} = the Info Overlay item's name, so
+ * the body names the menu path in the player's own language. */
+#define STR_MENU_INFO_OVERLAY               2740
+#define STR_SCNPANEL_POP_OUT                2741
+#define STR_SCNPANEL_POP_IN                 2742
+#define STR_SCNPANEL_CLOSE_TITLE            2743
+#define STR_SCNPANEL_CLOSE_BODY             2744
+
 /* The two-column chooser. OFFERED heads the catalogue on the left and ROUND
  * heads the round's own list on the right, so the two columns say what they
  * are rather than leaving a host to work it out from what is in them.

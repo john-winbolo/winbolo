@@ -145,6 +145,12 @@ BOLO_STATIC_ASSERT(SCN_SCRIPTS_MAX == LOBBY_SCRIPT_LIST_MAX,
 BOLO_STATIC_ASSERT(SCN_SCRIPTS_MAX == SCN_RECORD_SCRIPTS_MAX,
                    record_describes_every_script_a_round_composes);
 
+/* A panel carries its script's position in four bits and a client keeps a
+ * list for SCN_PANEL_OWNERS of them (scenario_panel.h), so every script a
+ * host can compose has to fit both. */
+BOLO_STATIC_ASSERT(SCN_SCRIPTS_MAX <= SCN_PANEL_OWNERS && SCN_PANEL_OWNERS <= 16,
+                   every_script_can_own_a_panel);
+
 /* A team's brain becomes the path a spawn carries, and the manifest sizes the
  * name without seeing the op. Held against the op's own length here, because
  * the template below writes the resolved path into a field of that width. */

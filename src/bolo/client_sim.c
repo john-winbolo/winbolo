@@ -2207,9 +2207,21 @@ const ClientSpectatorSlot *clientSimGetSpectatorSlot(const ClientSim *cs, uint8_
 }
 
 const ScnPanelList *clientSimGetScnPanel(const ClientSim *cs, uint8_t id) {
+  uint8_t owner;
   if (cs == NULL || id >= SCN_PANEL_IDS) return NULL;
-  if (!cs->scnPanelValid[id]) return NULL;
-  return &cs->scnPanels[id];
+  for (owner = 0; owner < SCN_PANEL_OWNERS; owner++) {
+    if (cs->scnPanelValid[id][owner]) return &cs->scnPanels[id][owner];
+  }
+  return NULL;
+}
+
+const ScnPanelList *clientSimGetScnPanelOf(const ClientSim *cs, uint8_t id,
+                                           uint8_t owner) {
+  if (cs == NULL || id >= SCN_PANEL_IDS || owner >= SCN_PANEL_OWNERS) {
+    return NULL;
+  }
+  if (!cs->scnPanelValid[id][owner]) return NULL;
+  return &cs->scnPanels[id][owner];
 }
 
 uint32_t clientSimGetScnPanelRejectCount(const ClientSim *cs) {

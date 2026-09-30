@@ -735,6 +735,13 @@ typedef struct {
  * a caller draws from it rather than holding it across frames. */
 const ScnPanelList *clientSimGetScnPanel(const ClientSim *cs, uint8_t id);
 
+/* The same, for the one script of the round's list that sent it. owner is
+ * that script's position on the list, the index clientSimGetLobbyScript*
+ * takes. clientSimGetScnPanel above answers with the lowest owner that has
+ * a list, which is the one panel a frontend with room for only one shows. */
+const ScnPanelList *clientSimGetScnPanelOf(const ClientSim *cs, uint8_t id,
+                                           uint8_t owner);
+
 /* How many arriving panel lists scnPanelParse refused, and this client
  * therefore dropped instead of drawing. */
 uint32_t clientSimGetScnPanelRejectCount(const ClientSim *cs);

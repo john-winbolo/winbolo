@@ -3191,12 +3191,24 @@ static ScnOpResult scenarioOpPanel(ServerSim *sim, const ScnOpPanel *p) {
     /* valid is what makes tick 0 a tick like any other: a store that has
        never held a list reads tick 0 too, and without the flag the first
        update of a round would look like the second. */
-    if (store->valid && store->tick == sim->tick) {
+    /* The limit is per script: two scripts that each update their own panel
+       in the same tick both reach the client, which keeps one list per
+       script. Only a second update from the same script is the one that
+       could never be seen. */
+    if (p->owner >= SCN_PANEL_OWNERS) {
+        return SCN_OP_RANGE;
+    }
+    if (!store->valid || store->tick != sim->tick) {
+        store->sentThisTick = 0;
+    }
+    if ((store->sentThisTick & (1u << p->owner)) != 0) {
         return SCN_OP_RATE;
     }
 
+    store->sentThisTick = (uint16_t)(store->sentThisTick | (1u << p->owner));
     store->valid = true;
     store->tick  = sim->tick;
+    store->owner = p->owner;
     store->len   = p->len;
     if (p->len > 0) {
         memcpy(store->bytes, p->bytes, p->len);
@@ -3204,11 +3216,11 @@ static ScnOpResult scenarioOpPanel(ServerSim *sim, const ScnOpPanel *p) {
 
     /* Recorded from the store, which holds the same bytes and is not const,
        so the record costs no second copy. */
-    logAddEvent(log_ScnPanel, p->panel, destTeam, destPlayer, 0, p->len,
-                (char *)store->bytes);
+    logAddEvent(log_ScnPanel, SCN_PANEL_WIRE(p->panel, p->owner), destTeam,
+                destPlayer, 0, p->len, (char *)store->bytes);
 
-    scenarioFillPanelEvent(&evt, p->panel, destTeam, destPlayer, p->bytes,
-                           p->len);
+    scenarioFillPanelEvent(&evt, SCN_PANEL_WIRE(p->panel, p->owner), destTeam,
+                           destPlayer, p->bytes, p->len);
     serverSimPublishControl(sim, &evt);
     return SCN_OP_OK;
 }
@@ -3457,8 +3469,9 @@ void serverSimScenarioReplayPanels(
                 destTeam   = 0;
                 destPlayer = (BYTE)(target - MAX_TANKS);   /* a 0-based slot */
             }
-            scenarioFillPanelEvent(&evt, (BYTE)panel, destTeam, destPlayer,
-                                   store->bytes, store->len);
+            scenarioFillPanelEvent(&evt, SCN_PANEL_WIRE(panel, store->owner),
+                                   destTeam, destPlayer, store->bytes,
+                                   store->len);
             deliver(ctx, &evt);
         }
     }

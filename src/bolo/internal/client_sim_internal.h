@@ -1137,12 +1137,15 @@ struct ClientSim {
      * rule. All of it is dropped on the return to lobby, in the
      * CTRL_GAME_PHASE_LOBBY arm beside the rest of that reset. */
 
-    /* One display list per panel id, already decoded. scnPanelValid
-     * says a list has arrived at all: a panel nothing has sent to is
-     * not the same as one sent an empty list to clear it, and only the
-     * first of those should leave the frontend's slot unbuilt. */
-    ScnPanelList scnPanels[SCN_PANEL_IDS];
-    bool         scnPanelValid[SCN_PANEL_IDS];
+    /* One display list per panel id per script of the round's list,
+     * already decoded. The second index is the owner the panel byte
+     * carries (SCN_PANEL_WIRE_OWNER), so each script's panel is kept
+     * apart from the others'. scnPanelValid says a list has arrived at
+     * all: a panel nothing has sent to is not the same as one sent an
+     * empty list to clear it, and only the first of those should leave
+     * the frontend's slot unbuilt. */
+    ScnPanelList scnPanels[SCN_PANEL_IDS][SCN_PANEL_OWNERS];
+    bool         scnPanelValid[SCN_PANEL_IDS][SCN_PANEL_OWNERS];
     /* Arriving lists scnPanelParse refused: dropped rather than drawn,
      * and counted so a malformed list is visible to whoever wrote it
      * instead of silently showing nothing. */

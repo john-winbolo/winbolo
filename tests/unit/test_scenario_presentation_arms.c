@@ -1338,3 +1338,62 @@ int run_scn_markers_scores_loopback_late_join(void) {
     loopbackHarnessStop(&h);
     return 0;
 }
+
+/* ================================================================
+ * Each script of the round's list owns its own panel. Two scripts may
+ * update the same panel for the same target in one tick, and the live
+ * event says which script sent it; one script still gets one update
+ * per tick, even when another script's update comes between its two.
+ * ================================================================ */
+static ScnOpResult paPanelFrom(ServerSim *sim, BYTE owner, BYTE target,
+                               const uint8_t *bytes, uint16_t len) {
+    ScenarioOp op;
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_PANEL;
+    op.u.panel.target = target;
+    op.u.panel.panel  = 0;
+    op.u.panel.owner  = owner;
+    op.u.panel.len    = len;
+    memcpy(op.u.panel.bytes, bytes, len);
+    return serverSimApplyScenarioOp(sim, &op, NULL);
+}
+
+int run_scn_arm_panel_owners(void) {
+    ServerSim *sim = paMakeLobbySim();
+    PaCapture  cap;
+    uint8_t    list[SCN_PANEL_MAX];
+    uint16_t   listLen;
+
+    UT_ASSERT(sim != NULL);
+    paSubscribe(sim, &cap);
+    listLen = paSpriteList(list, 32);
+
+    UT_ASSERT(paPanelFrom(sim, 0, 0, list, listLen) == SCN_OP_OK);
+    UT_ASSERT(cap.lastPanel.u.scnPanel.panel == SCN_PANEL_WIRE(0, 0));
+    UT_ASSERT_MSG(paPanelFrom(sim, 3, 0, list, listLen) == SCN_OP_OK,
+                  "a second script's panel in the same tick was refused");
+    UT_ASSERT_MSG(cap.lastPanel.u.scnPanel.panel == SCN_PANEL_WIRE(0, 3),
+                  "the event carries panel byte 0x%02X, expected 0x%02X",
+                  (unsigned)cap.lastPanel.u.scnPanel.panel,
+                  (unsigned)SCN_PANEL_WIRE(0, 3));
+    UT_ASSERT(SCN_PANEL_WIRE_ID(cap.lastPanel.u.scnPanel.panel) == 0);
+    UT_ASSERT(SCN_PANEL_WIRE_OWNER(cap.lastPanel.u.scnPanel.panel) == 3);
+
+    /* Script 0 again in the same tick: refused, although script 3 wrote
+       the shared row after it. */
+    UT_ASSERT_MSG(paPanelFrom(sim, 0, 0, list, listLen) == SCN_OP_RATE,
+                  "a script got two updates in one tick");
+    UT_ASSERT(paPanelFrom(sim, 3, 0, list, listLen) == SCN_OP_RATE);
+    UT_ASSERT(cap.panelCount == 2);
+
+    /* An owner past the list is not a script. */
+    UT_ASSERT(paPanelFrom(sim, SCN_PANEL_OWNERS, 0, list, listLen) ==
+              SCN_OP_RANGE);
+
+    sim->tick++;
+    UT_ASSERT(paPanelFrom(sim, 0, 0, list, listLen) == SCN_OP_OK);
+    UT_ASSERT(paPanelFrom(sim, 3, 0, list, listLen) == SCN_OP_OK);
+
+    serverSimDestroy(sim);
+    return 0;
+}

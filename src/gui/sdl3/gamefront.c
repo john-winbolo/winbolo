@@ -56,6 +56,7 @@
 #include "discovery.h"
 #include "global.h"
 #include "util.h"
+#include "../scn_panel_prefs.h"
 #include "gui_message.h"
 #include "frontend.h"
 #include "../brainsHandler.h"
@@ -389,6 +390,7 @@ int   gameFrontScnPanelX = -1;
 int   gameFrontScnPanelY = -1;
 int   gameFrontScnPanelScale = -1;
 int   gameFrontScnPanelAlpha = -1;
+bool  gameFrontScnPanelCloseAsk = TRUE;
 float gameFrontOverviewZoom = 2.0f;
 bool  gameFrontOverviewFollow = TRUE;
 bool  gameFrontShowMapOverview = FALSE;
@@ -3559,6 +3561,65 @@ void gameFrontSetScnPanelLayout(const char *scenario, int x, int y,
   prefsSetString("SCENARIO PANEL", key, val);
 }
 
+/* The script's shown flag and pop-out row live in sections of their own
+ * rather than as more numbers on the layout row: an old client reading a
+ * five- or six-number layout row would drop the whole row. Same key rule
+ * as the layout row, so the three rows of one script line up by eye. */
+bool gameFrontGetScnPanelShown(const char *script) {
+  char key[SCN_PANEL_SCENARIO_LEN], buff[16];
+  if (!script || !script[0]) return TRUE;
+  gameFrontScnPanelLayoutKey(script, key, sizeof(key));
+  prefsGetString("SCENARIO PANEL SHOWN", key, "", buff, sizeof(buff));
+  return scnPanelYesNoParse(buff, true) ? TRUE : FALSE;
+}
+
+void gameFrontSetScnPanelShown(const char *script, bool shown) {
+  char key[SCN_PANEL_SCENARIO_LEN];
+  if (!script || !script[0]) return;
+  gameFrontScnPanelLayoutKey(script, key, sizeof(key));
+  prefsSetString("SCENARIO PANEL SHOWN", key, scnPanelYesNoWord(shown));
+}
+
+/* The pop-out row's key: the script's layout key and the panel id, so a
+   script that ever draws a second panel keeps one row per panel. */
+static void gameFrontScnPanelPopoutKey(const char *script, int panel,
+                                       char *key, size_t keySz) {
+  char base[SCN_PANEL_SCENARIO_LEN];
+  gameFrontScnPanelLayoutKey(script, base, sizeof(base));
+  SDL_snprintf(key, keySz, "%s#%d", base, panel);
+}
+
+bool gameFrontGetScnPanelPopout(const char *script, int panel, bool *open,
+                                int *x, int *y, int *w, int *h) {
+  char key[SCN_PANEL_SCENARIO_LEN + 8], buff[80];
+  ScnPanelPopout row;
+  if (!script || !script[0] || !open || !x || !y || !w || !h) return false;
+  gameFrontScnPanelPopoutKey(script, panel, key, sizeof(key));
+  prefsGetString("SCENARIO PANEL POPOUT", key, "", buff, sizeof(buff));
+  if (!scnPanelPopoutParse(buff, &row)) return false;
+  *open = row.open;
+  *x = row.x;
+  *y = row.y;
+  *w = row.w;
+  *h = row.h;
+  return true;
+}
+
+void gameFrontSetScnPanelPopout(const char *script, int panel, bool open,
+                                int x, int y, int w, int h) {
+  char key[SCN_PANEL_SCENARIO_LEN + 8], val[80];
+  ScnPanelPopout row;
+  if (!script || !script[0]) return;
+  gameFrontScnPanelPopoutKey(script, panel, key, sizeof(key));
+  row.open = open;
+  row.x = x;
+  row.y = y;
+  row.w = w;
+  row.h = h;
+  scnPanelPopoutFormat(&row, val, sizeof(val));
+  prefsSetString("SCENARIO PANEL POPOUT", key, val);
+}
+
 bool gameFrontGetChosenBotDifficulty(uint8_t *out) {
   char buff[32];
   if (!out) return false;
@@ -4681,6 +4742,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   labelSelf = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("MENU", "Show Map Overview", "No", buff, FILENAME_MAX);
   gameFrontShowMapOverview = YESNO_TO_TRUEFALSE(buff[0]);
+  prefsGetString("MENU", "Scenario Panel Close Ask", "Yes", buff, FILENAME_MAX);
+  gameFrontScnPanelCloseAsk = scnPanelYesNoParse(buff, true) ? TRUE : FALSE;
   /* The key keeps the name it has always had so settings in existing player
      files carry over; what it feeds now drives full screen for the whole app,
      not just the in-window map view a game opens with. */
@@ -5173,6 +5236,8 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("MENU", "Label Own Tank", TRUEFALSE_TO_STR(labelSelf));
   prefsSetString("MENU", "Show Map Overview",
                  TRUEFALSE_TO_STR(gameFrontShowMapOverview));
+  prefsSetString("MENU", "Scenario Panel Close Ask",
+                 scnPanelYesNoWord(gameFrontScnPanelCloseAsk));
   prefsSetString("MENU", "Show Full Screen Map",
                  TRUEFALSE_TO_STR(gameFrontFullScreen));
   /* The full screen map's HUD panels. */

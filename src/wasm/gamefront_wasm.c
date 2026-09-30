@@ -209,6 +209,7 @@ int gameFrontScnPanelX = -1;
 int gameFrontScnPanelY = -1;
 int gameFrontScnPanelScale = -1;
 int gameFrontScnPanelAlpha = -1;
+bool gameFrontScnPanelCloseAsk = TRUE;
 
 bool isServer = FALSE;
 bool useAutoslow;
@@ -1009,6 +1010,20 @@ bool gameFrontGetScnPanelLayout(const char *scenario, int *x, int *y,
 void gameFrontSetScnPanelLayout(const char *scenario, int x, int y,
                                 int scale, int alpha) {
   (void)scenario; (void)x; (void)y; (void)scale; (void)alpha;
+}
+/* Nor a per-script shown flag or pop-out: the browser has one window. */
+bool gameFrontGetScnPanelShown(const char *script) { (void)script; return true; }
+void gameFrontSetScnPanelShown(const char *script, bool shown) {
+  (void)script; (void)shown;
+}
+bool gameFrontGetScnPanelPopout(const char *script, int panel, bool *open,
+                                int *x, int *y, int *w, int *h) {
+  (void)script; (void)panel; (void)open; (void)x; (void)y; (void)w; (void)h;
+  return false;
+}
+void gameFrontSetScnPanelPopout(const char *script, int panel, bool open,
+                                int x, int y, int w, int h) {
+  (void)script; (void)panel; (void)open; (void)x; (void)y; (void)w; (void)h;
 }
 /* The map chooser tags a map that has a script beside it. The browser build
  * links no scenario library, so every map reads plain here; desktop asks the

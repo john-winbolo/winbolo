@@ -173,13 +173,17 @@ typedef struct {
  * MAX_TANKS + slot is that 0-based player slot. Thirty-two in all. */
 #define SCN_PANEL_TARGETS (2 * MAX_TANKS)
 
-/* One panel's last list for one destination. bytes sits last and the three
- * fields ahead of it total seven, so the struct is exactly 1024 bytes and
- * the array of them carries no padding between entries. */
+/* One panel's last list for one destination, and which script of the
+ * round's list sent it. Two scripts that write the same panel for the same
+ * destination share this row: the live event carries each one's owner, so a
+ * client keeps both, but a late joiner is replayed only the last one until
+ * the other script next updates its panel. */
 typedef struct {
     uint32_t tick;                  /* the sim tick the list was stored at */
     uint16_t len;                   /* bytes of the list, 0 for a cleared panel */
     bool     valid;                 /* a list has been stored for this key */
+    uint8_t  owner;                 /* the sending script's list position */
+    uint16_t sentThisTick;          /* bit per owner that sent at tick */
     uint8_t  bytes[SCN_PANEL_MAX];
 } ScnPanelStore;
 
