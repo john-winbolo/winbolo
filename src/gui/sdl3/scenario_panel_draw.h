@@ -148,6 +148,140 @@ static inline bool scnAnnounceRemaining(const char *text, uint32_t arrivedTick,
     return true;
 }
 
+/* A rectangle in screen pixels, x0/y0 the top-left corner and x1/y1 the
+ * bottom-right one. */
+typedef struct ScnAnnounceRect {
+    float x0, y0, x1, y1;
+} ScnAnnounceRect;
+
+/*********************************************************
+ *NAME:          scnAnnouncePlace
+ *PURPOSE:
+ *  Where the announcement's top-left corner goes: at the
+ *  top of the game view, centred over it, and clear of the
+ *  things already drawn up there (the scenario panel, the
+ *  vote widgets, the HUD column of the full screen map).
+ *
+ *  The line stays on the top row when it can. If a thing
+ *  is in the way it moves sideways, as little as it has
+ *  to, into the free space beside it. If the line does not
+ *  fit beside it, the line drops to just below it and the
+ *  same search runs again on that row. The line never
+ *  drops past floorY, which the caller puts just above the
+ *  player's own tank in the middle of the view: a line
+ *  over the tank is worse than a line over a panel. When
+ *  no row above the floor fits, the line goes centred on
+ *  the top row, over whatever is there.
+ *
+ *  A line wider than the view is centred over the view and
+ *  runs out past both of its edges, the same as it always
+ *  has.
+ *
+ *ARGUMENTS:
+ *  view      - the game view
+ *  textW     - the line's width, outline included
+ *  textH     - the line's height, outline included
+ *  inset     - the space above the line on the top row
+ *  gap       - the space kept between the line and a thing
+ *  floorY    - the lowest the line's bottom edge may go
+ *  obstacles - the things to keep clear of; may be NULL
+ *  count     - how many there are
+ *  outX/outY - receive the line's top-left corner
+ *********************************************************/
+static inline void scnAnnouncePlace(ScnAnnounceRect view, float textW,
+                                    float textH, float inset, float gap,
+                                    float floorY,
+                                    const ScnAnnounceRect *obstacles,
+                                    int count, float *outX, float *outY) {
+    const float centreX = (view.x0 + view.x1) * 0.5f;
+    const float topY    = view.y0 + inset;
+    float spanX0 = view.x0;
+    float spanX1 = view.x1;
+    float lowestY;
+    float y;
+    int   pass;
+
+    if (textW > spanX1 - spanX0) {
+        spanX0 = centreX - textW * 0.5f;
+        spanX1 = centreX + textW * 0.5f;
+    }
+    lowestY = view.y1 - textH;
+    if (floorY - textH < lowestY) lowestY = floorY - textH;
+    if (lowestY < topY) lowestY = topY;
+    if (obstacles == NULL) count = 0;
+
+    y = topY;
+    /* Each pass either places the line or drops below one more thing, so
+     * one pass more than there are things always finishes. */
+    for (pass = 0; pass <= count && y <= lowestY; pass++) {
+        float bestX    = 0.0f;
+        float bestDist = -1.0f;
+        float nextY    = 0.0f;
+        bool  haveNext = false;
+        int   c;
+        int   i;
+
+        /* The places the line could go on this row: centred, and just
+         * either side of each thing. */
+        for (c = -1; c < 2 * count; c++) {
+            float x;
+            float dist;
+            bool  clear = true;
+
+            if (c < 0) {
+                x = centreX - textW * 0.5f;
+            } else if ((c & 1) == 0) {
+                x = obstacles[c / 2].x0 - gap - textW;
+            } else {
+                x = obstacles[c / 2].x1 + gap;
+            }
+            if (x < spanX0) x = spanX0;
+            if (x > spanX1 - textW) x = spanX1 - textW;
+
+            for (i = 0; i < count; i++) {
+                const ScnAnnounceRect *o = &obstacles[i];
+                if (x < o->x1 + gap && x + textW > o->x0 - gap &&
+                    y < o->y1 + gap && y + textH > o->y0 - gap) {
+                    clear = false;
+                    break;
+                }
+            }
+            if (!clear) continue;
+
+            dist = (x + textW * 0.5f) - centreX;
+            if (dist < 0.0f) dist = -dist;
+            if (bestDist < 0.0f || dist < bestDist) {
+                bestDist = dist;
+                bestX    = x;
+            }
+        }
+
+        if (bestDist >= 0.0f) {
+            if (outX != NULL) *outX = bestX;
+            if (outY != NULL) *outY = y;
+            return;
+        }
+
+        /* Nothing fits on this row: drop to just below the highest bottom
+         * edge of the things on it. */
+        for (i = 0; i < count; i++) {
+            const ScnAnnounceRect *o = &obstacles[i];
+            if (y < o->y1 + gap && y + textH > o->y0 - gap) {
+                const float below = o->y1 + gap;
+                if (!haveNext || below < nextY) {
+                    nextY    = below;
+                    haveNext = true;
+                }
+            }
+        }
+        if (!haveNext || nextY <= y) break;
+        y = nextY;
+    }
+
+    if (outX != NULL) *outX = centreX - textW * 0.5f;
+    if (outY != NULL) *outY = topY;
+}
+
 /*********************************************************
  *NAME:          scnPanelColourRGBA
  *PURPOSE:
