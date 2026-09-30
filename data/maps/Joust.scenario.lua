@@ -61,6 +61,7 @@ local own_kills  = {}          -- seat -> the kills it made itself
 local last_hit   = {}          -- seat -> { by = seat, at = tick }
 local dirty      = true
 local over       = false
+local drawn_at   = nil    -- the tick panel 0 was last sent
 local started    = false       -- on_start has run
 local start_at   = 0           -- game.tick() at on_start
 local spawned    = {}          -- seat -> true once it has taken the field
@@ -404,15 +405,20 @@ local function draw_panel()
                         string.format("%d", line.value) }
   end
   game.panel(0, list)
+  drawn_at = game.tick()
 end
 
+-- Draws the panel when it changed, then comes back. A second update of the
+-- panel in one tick is refused, so a change in the tick the panel was drawn
+-- waits for the next pass. Once the round is over it draws a last time and
+-- stops.
 local function panel_loop()
-  if over then
-    return
-  end
-  if dirty then
+  if dirty and drawn_at ~= game.tick() then
     dirty = false
     draw_panel()
+  end
+  if over then
+    return
   end
   game.timer(PANEL_SECONDS, panel_loop)
 end
@@ -493,13 +499,27 @@ local function finish(key)
                              side_name(key), kills[key])
   game.message(line)
   game.announce(line, 5)
-  draw_panel()
-  restore_teams()
   local kind, n = key:sub(1, 1), tonumber(key:sub(2))
-  if kind == "t" then
-    game.end_round(line, n)
+  local function close()
+    restore_teams()
+    if kind == "t" then
+      game.end_round(line, n)
+    else
+      game.end_round(line)
+    end
+  end
+  -- The final standings go through panel_loop. When the panel was already
+  -- drawn this tick that draw would be refused, so the round ends one tick
+  -- later, after the last draw. Nothing scores once over is set.
+  dirty = true
+  if drawn_at == game.tick() then
+    game.timer(0.01, function()
+      panel_loop()
+      close()
+    end)
   else
-    game.end_round(line)
+    panel_loop()
+    close()
   end
 end
 

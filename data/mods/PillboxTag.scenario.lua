@@ -391,6 +391,29 @@ local function teams_in_round()
   return teams
 end
 
+-- A team round posts a score for every team in it, 0 until one of its
+-- holders scores, so the recap lists every team with its members under it.
+-- A seat not yet fielded is counted too: bots are fielded just after the
+-- start.
+local function post_team_scores(also)
+  if not teams_on() then
+    return
+  end
+  local seen = {}
+  local function post(t)
+    if t ~= nil and t > 0 and not seen[t] then
+      seen[t] = true
+      game.score({ team = t }, team_seconds[t] or 0, SCORE_LABEL)
+    end
+  end
+  for q = 0, game.max_tanks() - 1 do
+    if game.lobby_slot(q) ~= nil then
+      post(lobby_team_of(q))
+    end
+  end
+  post(also)
+end
+
 -- The pool label of a team of bots only; nil when a human is on it.
 local function bot_pool(team)
   local pool, bots = nil, false
@@ -1446,6 +1469,7 @@ function on_start()
     end
   end
   sort_teams()
+  post_team_scores()
   game.log("Pillbox Tag: " .. (teams_on() and "lobby teams" or "free for all"))
 
   -- How close a tank in a wood has to be before it can be seen, in squares.
@@ -1787,6 +1811,8 @@ function on_player_join(p, scripted)
       game.score(q, seconds[q], SCORE_LABEL)
     end
   end
+  -- A team that was not in the round at the start gets its 0 now.
+  post_team_scores(lobby_team_of(p))
   tune(p)
 end
 
