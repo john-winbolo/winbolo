@@ -44,6 +44,10 @@ bool tutorialOverlayIsOpen(void);
  * frame from the main render path, on the main thread. */
 void tutorialOverlayRender(struct ClientSim *cs);
 
+/* Drop any message left showing or queued, and its completion callback, so
+ * the next tutorial starts with the overlay closed. */
+void tutorialOverlayReset(void);
+
 #ifdef __cplusplus
 }
 #endif

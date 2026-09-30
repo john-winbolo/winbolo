@@ -569,6 +569,9 @@ target_link_options(winbolo PRIVATE
     "SHELL:--shell-file ${CMAKE_CURRENT_SOURCE_DIR}/shell.html"
     -sFORCE_FILESYSTEM=1
     -sASYNCIFY=1
+    # The menus nest deeper blocking loops (menu -> settings -> key setup)
+    # than the default 4096-byte ASYNCIFY stack holds.
+    "-sASYNCIFY_STACK_SIZE=65536"
     -lwebsocket.js
 )
 

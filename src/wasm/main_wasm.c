@@ -9,7 +9,9 @@
  * Replaces gui/sdl3/winbolo.c for the WASM build.
  * The game runs as a blocking loop in main, paced by the browser's animation
  * frames through ASYNCIFY (wasmFrameWait), with frame-based tick accumulation
- * instead of SDL_AddTimer. Functions called directly from JS must never sleep:
+ * instead of SDL_AddTimer. The menu and the dialogs it opens run their own
+ * blocking loops on the same stack, between games, paced the same way through
+ * dialogFrameCapEnd. Functions called directly from JS must never sleep:
  * ASYNCIFY keeps one suspended stack at a time, and main's is always it.
  */
 
@@ -47,8 +49,11 @@
 #include "../gui/sdl3/input_gamepad.h"
 #include "../gui/sdl3/build_cursor.h"
 #include "../gui/sdl3/luabrainshandler.h"
+#include "../gui/sdl3/dialogs/imgui_lobby.h"
 #include "../gui/sdl3/dialogs/imgui_messagebox.h"
+#include "../gui/sdl3/dialogs/imgui_settings.h"
 #include "../gui/sdl3/dialogs/imgui_tutorial_overlay.h"
+#include "../gui/sdl3/dialogs/imgui_welcome.h"
 #include "server_sim.h"
 #include "tutorial.h"
 #include "cJSON.h"
@@ -286,10 +291,10 @@ static void main_loop_iteration(void) {
   /* On the first frame after a terminal failure, raise the error dialog. The
    * frozen state below renders this last frame without ticking or sending.
    *
-   * Dismissing it leaves the game, and main navigates back to the page the
-   * game launched from: there is no welcome screen to fall back to in the
-   * browser build, so without this the player is left on the cleared frame
-   * with only the menu bar over it. The latch stops this branch re-arming. */
+   * Dismissing it leaves the game, and main navigates back to /: a network
+   * game does not return to the menu in the same page, so without this the
+   * player is left on the cleared frame with only the menu bar over it. The
+   * latch stops this branch re-arming. */
   if (s_connFailed && !s_connErrorShown) {
     imguiMessageBoxEx(DIALOG_BOX_TITLE, s_connReason, IMGUI_MSG_ERROR,
                       IMGUI_MSG_OK);
@@ -459,13 +464,15 @@ static void wasmCopyUrlParam(const char *name, char *dst, size_t dstSize) {
 
 /* Read how the page was launched. This is the only place the URL is read;
  * everything after page start takes its mode from the WasmLaunch. A game_key
- * (/join/<key>) or proxyURL joins a game; otherwise tutorial (/tutorial)
- * starts the tutorial; otherwise single player. practise (/practise) is read
- * as well so / and /practise can be told apart, but both start single player
- * for now. */
+ * (/join/<key>) or proxyURL joins a game and never shows the menu; otherwise
+ * tutorial (/tutorial) goes straight into the tutorial and practise
+ * (/practise) straight into single player. A page with none of these (/)
+ * opens on the menu. finder (/?finder=1) opens the menu as well for now,
+ * until the game finder exists. */
 static void wasmReadLaunch(WasmLaunch *out) {
   char tutorial[8];
   char practise[8];
+  char finder[8];
 
   memset(out, 0, sizeof(*out));
   wasmCopyUrlParam("game_key", out->gameKey, sizeof(out->gameKey));
@@ -474,6 +481,7 @@ static void wasmReadLaunch(WasmLaunch *out) {
   wasmCopyUrlParam("name", out->name, sizeof(out->name));
   wasmCopyUrlParam("tutorial", tutorial, sizeof(tutorial));
   wasmCopyUrlParam("practise", practise, sizeof(practise));
+  wasmCopyUrlParam("finder", finder, sizeof(finder));
 
   if (out->gameKey[0] != '\0' || out->devProxy[0] != '\0') {
     out->mode = WASM_GAME_JOIN;
@@ -482,6 +490,98 @@ static void wasmReadLaunch(WasmLaunch *out) {
   } else {
     out->mode = WASM_GAME_PRACTICE;
   }
+  out->showMenu = (out->mode != WASM_GAME_JOIN &&
+                   (finder[0] != '\0' ||
+                    (out->mode == WASM_GAME_PRACTICE && practise[0] == '\0')));
+}
+
+/* End a single-player game (practice or tutorial) so the menu, and then
+ * another game, can follow in the same page. The first three run in the
+ * order the desktop's game end runs them (winbolo.c): the voice talkers go
+ * with their game, then the game's ImGui context, then the sims. The lobby
+ * and tutorial overlay state is per-game too and is dropped last. */
+static void wasmEndSinglePlayerGame(void) {
+  voiceReset();
+  sdl3ImguiCleanup();
+  /* A start that failed has already freed its sims (humanSim is NULL). */
+  if (humanSim != NULL) {
+    gameFrontEnd(&keys, TRUE, FALSE);
+  }
+  imguiLobbyFrameReset();
+  tutorialOverlayReset();
+}
+
+/* Run one game from start to end: reset the per-game state, start the game
+ * the launch describes, set up its UI and run the loop until it ends.
+ * Returns TRUE for a network game (no local server sim), whose end the
+ * caller finishes by navigating away; FALSE for single player, including a
+ * single-player start that failed, which has shown its error and freed what
+ * it made. */
+static bool wasmPlayGame(const char *cmdLine, const WasmLaunch *launch) {
+  wasmGameStateReset();
+
+  printf("[WASM] Starting gameFrontWasmStart...\n");
+  bool started = (gameFrontWasmStart(cmdLine, &keys, launch) != FALSE);
+  if (!started && !s_connFailed) {
+    /* A single-player start that failed (the server sim or the local join
+     * would not come up). The start freed humanSim without clearing it, so
+     * clear it and the player panel's owner here, show the error the
+     * desktop shows for the same failure, and go back to the menu. */
+    printf("[WASM] gameFrontWasmStart FAILED\n");
+    humanSim = NULL;
+    frontEndSetActiveClientSim(NULL);
+    imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                      langGetText(STR_GAMEFRONTERR_STARTSERVER),
+                      IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+    return FALSE;
+  }
+  /* From here either we connected, or the connection failed but
+   * gameFrontWasmStart kept humanSim alive in its error state — we still set
+   * up ImGui and enter the loop so the error dialog can draw (never a blank
+   * screen). */
+  fprintf(stderr, "[WASM] gameFrontWasmStart %s; humanSim=%p\n",
+          started ? "OK" : "CONNECT FAILED", (void*)humanSim);
+  fflush(stderr);
+
+  if (started) {
+    /* Start the shared tick cadence from a known state (first step is a game
+     * step on tick 0), mirroring the desktop run-start. */
+    clientFrontTickReset();
+  }
+
+  isInMenu = FALSE;
+  finishedLoop = FALSE;
+  windowApplyMenuChecks(humanSim);
+
+  if (soundEffects == TRUE) {
+    soundKeepalive(useSoundKeepalive);
+  }
+
+  /* Set up ImGui */
+  {
+    SDL_Window *win = sdl3DrawGetWindow();
+    SDL_Renderer *ren = sdl3DrawGetRenderer();
+    if (win && ren) {
+      sdl3ImguiSetup(win, ren);
+    }
+    if (win) {
+      SDL_ShowWindow(win);
+    }
+  }
+
+  guiMessageSetHandler(sdl3MessageHandler);
+
+  /* Set again here, not only in wasmGameStateReset: a join can wait up to
+   * 30s inside gameFrontWasmStart, and the first frame should not count
+   * that as owed time. */
+  oldTick = SDL_GetTicks();
+  lastFrameTime = emscripten_get_now();
+
+  fprintf(stderr, "[WASM] Starting main loop; humanSim=%p\n", (void*)humanSim);
+  fflush(stderr);
+  wasmRunGame();
+
+  return gameFrontGetServerSim() == NULL;
 }
 
 int main(int argc, char *argv[]) {
@@ -556,80 +656,57 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  wasmGameStateReset();
-
-  printf("[WASM] Starting gameFrontWasmStart...\n");
-  bool started = (gameFrontWasmStart(cmdLine, &keys, &launch) != FALSE);
-  if (!started && !s_connFailed) {
-    /* A genuine init failure (not a connection problem) — nothing to show. */
-    printf("[WASM] gameFrontWasmStart FAILED\n");
-    clientMutexDestroy();
-    SDL_Quit();
-    return 1;
-  }
-  /* From here either we connected, or the connection failed but
-   * gameFrontWasmStart kept humanSim alive in its error state — we still set
-   * up ImGui and enter the loop so the error dialog can draw (never a blank
-   * screen). */
-  fprintf(stderr, "[WASM] gameFrontWasmStart %s; humanSim=%p\n",
-          started ? "OK" : "CONNECT FAILED", (void*)humanSim);
-  fflush(stderr);
-
-  if (started) {
-    /* Start the shared tick cadence from a known state (first step is a game
-     * step on tick 0), mirroring the desktop run-start. */
-    clientFrontTickReset();
-  }
-
-  isInMenu = FALSE;
-  finishedLoop = FALSE;
-  windowApplyMenuChecks(humanSim);
-
-  if (soundEffects == TRUE) {
-    soundKeepalive(useSoundKeepalive);
-  }
-
-  /* Set up ImGui */
-  {
-    SDL_Window *win = sdl3DrawGetWindow();
-    SDL_Renderer *ren = sdl3DrawGetRenderer();
-    if (win && ren) {
-      sdl3ImguiSetup(win, ren);
-    }
-    if (win) {
-      SDL_ShowWindow(win);
-    }
-  }
-
-  guiMessageSetHandler(sdl3MessageHandler);
-
-  /* Set again here, not only in wasmGameStateReset: a join can wait up to
-   * 30s inside gameFrontWasmStart, and the first frame should not count
-   * that as owed time. */
-  oldTick = SDL_GetTicks();
-  lastFrameTime = emscripten_get_now();
-
-  fprintf(stderr, "[WASM] Starting main loop; humanSim=%p\n", (void*)humanSim);
-  fflush(stderr);
-  wasmRunGame();
-
-  /* The game has ended. A network game that still has its connection sends
-   * the server a graceful quit (PACKET_QUIT, written to the socket before it
-   * closes); the lobby's Leave has already disconnected, so the transport
-   * check stops a second disconnect. */
-  if (gameFrontGetServerSim() == NULL && humanSim != NULL &&
-      clientSimHasTransport(humanSim)) {
-    clientSimDisconnect(humanSim);
-  }
-  emscripten_run_script("window.location.href='/'");
-
-  /* Stay on this stack until the browser unloads the page. The navigation
-   * only starts once control returns to the browser, and the page stays on
-   * screen until the next one loads, so nothing is torn down here: freeing
-   * the window or the renderer now would blank the page while it is still
-   * showing. Returning from main would leave no stack to wait on. */
+  /* Screens: the menu, then a game, then the menu again. A launch that names
+   * a game goes straight into it; a join never shows the menu. A game picked
+   * from the menu carries no join key, dev proxy or password. */
+  WasmLaunch next = launch;
+  bool menu = launch.showMenu;
   for (;;) {
-    wasmFrameWait();
+    if (menu) {
+      /* The welcome dialog returns an openingStates value (gamefront.h). */
+      int r = imguiWelcomeShow();
+      if (r == openSetup) {
+        next.mode = WASM_GAME_PRACTICE;
+      } else if (r == openTutorial) {
+        next.mode = WASM_GAME_TUTORIAL;
+      } else {
+        if (r == openSettings) {
+          imguiSettingsShow();
+        }
+        /* Settings closed, or a row with nothing behind it on the web
+         * (Internet, Local, Quit): show the menu again. */
+        continue;
+      }
+      next.gameKey[0] = '\0';
+      next.devProxy[0] = '\0';
+      next.password[0] = '\0';
+    }
+
+    if (wasmPlayGame(cmdLine, &next)) {
+      /* A network game has ended. One that still has its connection sends
+       * the server a graceful quit (PACKET_QUIT, written to the socket
+       * before it closes); the lobby's Leave has already disconnected, so
+       * the transport check stops a second disconnect. */
+      if (humanSim != NULL && clientSimHasTransport(humanSim)) {
+        clientSimDisconnect(humanSim);
+      }
+      emscripten_run_script("window.location.href='/'");
+
+      /* Stay on this stack until the browser unloads the page. The
+       * navigation only starts once control returns to the browser, and the
+       * page stays on screen until the next one loads, so nothing is torn
+       * down here: freeing the window or the renderer now would blank the
+       * page while it is still showing. Returning from main would leave no
+       * stack to wait on. */
+      for (;;) {
+        wasmFrameWait();
+      }
+    }
+
+    /* Single player: end the game and go back to the menu, keeping every
+     * setting the player changed. */
+    wasmEndSinglePlayerGame();
+    menu = TRUE;
   }
 }
 
@@ -674,7 +751,7 @@ static void wasmGameStateReset(void) {
 
 /* Leave the game: ask wasmRunGame to end it after the current frame. main
  * then disconnects a network game that is still connected and navigates the
- * hosting page back to /; single player navigates too. */
+ * hosting page back to /; single player goes back to the menu. */
 void windowLeaveGame(void) { s_leaveRequested = TRUE; }
 
 void windowApplyMenuChecks(ClientSim *cs) {
@@ -1234,10 +1311,9 @@ void frontEndGameOver(ClientSim *cs) {
   imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBTIMELIMIT_END),
                     IMGUI_MSG_INFO, IMGUI_MSG_OK);
   finishedLoop = TRUE;
-  /* Dismissing the dialog goes back to the page the game launched from: the
-   * browser build has no welcome screen to rebuild through the way the desktop
-   * loop does, so the launching page is the destination. finishedLoop ends
-   * the game loop after this frame, and main navigates. */
+  /* Dismissing the dialog leaves the game. finishedLoop ends the game loop
+   * after this frame; main then returns single player to the menu and
+   * navigates a network game back to /. */
   windowLeaveGame();
 }
 

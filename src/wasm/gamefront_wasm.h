@@ -30,6 +30,8 @@ typedef struct {
   char devProxy[1024];            /* ?proxyURL=, empty when absent */
   char password[MAP_STR_SIZE];    /* ?password=, seeds the join password */
   char name[PLAYER_NAME_LEN];     /* ?name=, unvalidated */
+  bool showMenu;                  /* true when the page should open on the
+                                     menu rather than go straight into mode */
 } WasmLaunch;
 
 /* Set up what lasts for the life of the page, once, before any game: seed the

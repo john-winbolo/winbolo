@@ -6,7 +6,7 @@
 /*
  * winbolonet_wasm.c - No-op WinBolo.net stubs for WASM build
  *
- * Replaces all of winbolonet/*.c (winbolonet.c, http.c,
+ * Replaces all of winbolonet/ *.c (winbolonet.c, http.c,
  * winbolonetevents.c, winbolonetthread.c).  WinBolo.net requires
  * libcurl which is not available in Emscripten, so all functions
  * are safe no-ops.
@@ -172,3 +172,14 @@ void newsPopupKickFetch(void)                                      { }
 void newsPopupTick(void)                                           { }
 void newsPopupOpenManual(void)                                     { }
 void newsPopupShutdown(void)                                       { }
+
+/* The settings dialog's news auto-show checkbox. There is no news popup on
+ * the web, so the choice is only held for the page to keep the checkbox
+ * consistent. */
+static char s_newsAutoShow[16] = "unset";
+const char *newsPrefGetAutoShow(void)                              { return s_newsAutoShow; }
+void newsPrefSetAutoShow(const char *value) {
+  if (value == NULL) return;
+  strncpy(s_newsAutoShow, value, sizeof(s_newsAutoShow) - 1);
+  s_newsAutoShow[sizeof(s_newsAutoShow) - 1] = '\0';
+}

@@ -53,6 +53,16 @@ bool tutorialOverlayIsOpen(void) {
     return s_open || s_pendingOpen;
 }
 
+/* Clears the per-run state without running the callback. */
+void tutorialOverlayReset(void) {
+    s_count       = 0;
+    s_idx         = 0;
+    s_open        = false;
+    s_pendingOpen = false;
+    s_focusFirst  = false;
+    s_onComplete  = nullptr;
+}
+
 void tutorialOverlayRender(struct ClientSim *cs) {
     (void)cs;
     if (s_pendingOpen) {

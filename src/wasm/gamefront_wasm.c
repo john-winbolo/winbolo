@@ -1243,10 +1243,14 @@ void gameFrontSaveTankPrefs(ClientSim *cs) {
   }
 }
 
+/* Whether the menu shows the Tutorial row. Lives for the page: finishing the
+ * tutorial clears it, as on the desktop, and a reload brings it back. */
+static bool wasmShowTutorialButton = TRUE;
+
 bool gameFrontGetShowTutorialButton(void) {
-  return FALSE;
+  return wasmShowTutorialButton;
 }
 
 void gameFrontSetShowTutorialButton(bool show) {
-  (void)show;
+  wasmShowTutorialButton = show;
 }

@@ -714,6 +714,19 @@ static inline void dialogFrameCapEnd(Uint64 frameStart) {
         SDL_Delay((Uint32)(DIALOG_FRAME_CAP_MS - elapsed));
     }
 }
+#elif defined(__EMSCRIPTEN__)
+/* Browser: wait for the next animation frame (main_wasm.c), which paces the
+ * dialog loops and yields to the browser between frames. */
+#ifdef __cplusplus
+extern "C"
+#endif
+void wasmFrameWait(void);
+
+static inline Uint64 dialogFrameCapBegin(void) { return 0; }
+static inline void dialogFrameCapEnd(Uint64 frameStart) {
+    (void)frameStart;
+    wasmFrameWait();
+}
 #else
 static inline Uint64 dialogFrameCapBegin(void) { return 0; }
 static inline void dialogFrameCapEnd(Uint64 frameStart) { (void)frameStart; }
