@@ -2861,8 +2861,8 @@
 #define STR_DLGLOBBY_DETAILS_COL_NEW_VALUE       2632
 /* The details dialog's settings table: its two column headers, so it is
  * headed the way the rules and callbacks tables above it are. */
-#define STR_DLGLOBBY_DETAILS_COL_SETTING         2735
-#define STR_DLGLOBBY_DETAILS_COL_VALUE           2736
+#define STR_DLGLOBBY_DETAILS_COL_SETTING         2736
+#define STR_DLGLOBBY_DETAILS_COL_VALUE           2737
 
 /* The map panel's warning under the scenario and mods lines, shown only when
  * the server was started with -allow-unsafe-scripts. A sentence rather than a
