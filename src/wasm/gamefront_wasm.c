@@ -1409,7 +1409,11 @@ void gameFrontSetLanguageCode(const char *code) {
   (void)code;
 }
 
+/* Settings' Play Tutorial button. Settings closes after the click and main's
+ * screen loop shows the menu again, which takes this request on its first
+ * frame and returns openTutorial, so the loop starts the tutorial. */
 void gameFrontRequestPlayTutorial(void) {
+  gameFrontRequestTransition(openTutorial);
 }
 
 void gameFrontSaveWindowSettings(void) {

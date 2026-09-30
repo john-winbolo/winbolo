@@ -419,7 +419,10 @@ extern "C" int imguiWelcomeShow(void) {
                 { STR_DLGSETTINGS_TUTORIAL, RESULT_TUTORIAL,     showTutorial,     nullptr },
                 { STR_DLGWELCOME_SINGLE,    RESULT_SINGLEPLAYER, true,             nullptr },
                 { STR_DLGWELCOME_INTERNET,  RESULT_INTERNET,     true,             nullptr },
+#if !defined(__EMSCRIPTEN__)
+                /* A browser tab cannot host or find a game on the LAN. */
                 { STR_DLGWELCOME_LOCAL,     RESULT_LAN,          true,             nullptr },
+#endif
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
                 { STR_DLGWELCOME_MAPEDITOR, RESULT_MAPEDITOR,    showDesktopTools, nullptr },
                 { STR_DLGWELCOME_LOGVIEWER, RESULT_LOGVIEWER,    showDesktopTools, nullptr },
@@ -431,6 +434,9 @@ extern "C" int imguiWelcomeShow(void) {
 #endif
 #if !BOLO_MOBILE
                 { STR_DLGWELCOME_NEWS,      0,                   true,             "News" },
+#endif
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+                /* A page has nothing to quit to; the player closes the tab. */
                 { STR_DLGOPENING_BUTTON2,   RESULT_QUIT,         true,             nullptr },
 #endif
             };
@@ -465,7 +471,14 @@ extern "C" int imguiWelcomeShow(void) {
                     } else
 #endif
                     if (miniModes[i].rawLabel && SDL_strcmp(miniModes[i].rawLabel, "News") == 0) {
+#ifdef __EMSCRIPTEN__
+                        /* No news popup in the browser: open the WinBolo.net
+                           news forum in a new tab (window.open, still inside
+                           the click's user activation). */
+                        SDL_OpenURL("https://www.winbolo.net/forums/13");
+#else
                         newsPopupOpenManual();
+#endif
                     } else
 #endif
                     {
@@ -497,8 +510,14 @@ extern "C" int imguiWelcomeShow(void) {
                     ImGui::PopStyleColor();
                 }
                 btnY += miniBtnH + miniBtnGap;
-                /* Small visual gap after Local and after Settings */
-                if (miniModes[i].code == RESULT_LAN || miniModes[i].code == RESULT_SETTINGS) {
+                /* Small visual gap after the ways to play (Local, or Internet
+                   where there is no Local) and after Settings */
+#ifdef __EMSCRIPTEN__
+                const int lastPlayRow = RESULT_INTERNET;
+#else
+                const int lastPlayRow = RESULT_LAN;
+#endif
+                if (miniModes[i].code == lastPlayRow || miniModes[i].code == RESULT_SETTINGS) {
                     btnY += miniBtnH * 0.4f;
                 }
             }
