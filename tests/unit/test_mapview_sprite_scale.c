@@ -578,3 +578,50 @@ int run_mapview_sprite_lgm_snap(void) {
 
     return 0;
 }
+
+/* camera_split: the menu background's camera (mapViewRenderCentered) is a
+ * view edge `pos` pixels from the map's left or top, split into the first
+ * square drawn and how far into it the view starts. Every square is then
+ * drawn at (square_index - firstSquare) * unit - edge, so the map's own
+ * square 0 lands at -pos exactly when square * unit + edge == pos. Swept
+ * across the left/top edge (pos below 0) and well inside it, at the unit
+ * sizes of zoom 1 to 3: the edge stays in 0..unit-1 and square 0 moves one
+ * pixel for each pixel the camera moves, never a tile. The old clamp set
+ * the square to 0 below the edge and kept the edge, so square 0 went to
+ * -edge instead: a sawtooth of up to a tile, the jitter this pins out.
+ *
+ * Out-of-map squares are drawn as open deep sea; mapViewSquareInMap is
+ * the test for that, checked at the four edges of the 256x256 map. */
+int run_mapview_camera_split(void) {
+    static const int kUnits[] = { 16, 32, 48 };
+    for (int u = 0; u < ARRAY_LEN(kUnits); u++) {
+        int unit = kUnits[u];
+        int prevDrawn = 0;
+        for (int pos = 4 * unit; pos >= -4 * unit; pos--) {
+            int square = 12345, edge = 12345;
+            mapViewCameraSplit(pos, unit, &square, &edge);
+            UT_ASSERT_MSG(edge >= 0 && edge < unit,
+                          "unit %d pos %d: edge %d outside 0..%d",
+                          unit, pos, edge, unit - 1);
+            UT_ASSERT_MSG(square * unit + edge == pos,
+                          "unit %d pos %d: square %d edge %d is position %d",
+                          unit, pos, square, edge, square * unit + edge);
+            int drawn = (0 - square) * unit - edge;   /* map square 0's x */
+            if (pos != 4 * unit) {
+                UT_ASSERT_MSG(drawn == prevDrawn + 1,
+                              "unit %d pos %d: square 0 drawn at %d after %d, "
+                              "a jump of %d pixels for a 1 pixel camera move",
+                              unit, pos, drawn, prevDrawn, drawn - prevDrawn);
+            }
+            prevDrawn = drawn;
+        }
+    }
+
+    UT_ASSERT(mapViewSquareInMap(0, 0));
+    UT_ASSERT(mapViewSquareInMap(255, 255));
+    UT_ASSERT(!mapViewSquareInMap(-1, 10));
+    UT_ASSERT(!mapViewSquareInMap(10, -1));
+    UT_ASSERT(!mapViewSquareInMap(256, 10));
+    UT_ASSERT(!mapViewSquareInMap(10, 256));
+    return 0;
+}

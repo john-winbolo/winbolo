@@ -557,3 +557,14 @@ void spritePositionTankLabelAt(float baseX, float baseY, int mode, float scale,
 bool spritePositionItemLabelShown(float scale, float minScale) {
   return scale >= minScale;
 }
+
+void mapViewCameraSplit(int pos, int unit, int *outSquare, int *outEdge) {
+  int square = (pos >= 0) ? pos / unit : -((-pos + unit - 1) / unit);
+  *outSquare = square;
+  *outEdge = pos - square * unit;
+}
+
+bool mapViewSquareInMap(int mx, int my) {
+  /* 256 = MAP_ARRAY_SIZE; types.h is not included here (see the .h) */
+  return mx >= 0 && mx < 256 && my >= 0 && my < 256;
+}

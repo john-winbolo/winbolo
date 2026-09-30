@@ -549,15 +549,26 @@ typedef struct {
   bool mines[MAPVIEW_MAX_TILES_W][MAPVIEW_MAX_TILES_H];
 } MapViewTileBuffer;
 
+/* camMX/camMY can be off the map (the view reaches past an edge). A
+ * square outside the 256x256 map is drawn as open deep sea, the same as
+ * the map's own border squares, rather than the square the BYTE wrap would
+ * land on at the far side. */
 static void mapViewBuildTileBuffer(ServerSim *sim, MapViewTileBuffer *buf,
-                                   BYTE camMX, BYTE camMY,
+                                   int camMX, int camMY,
                                    int tilesW, int tilesH, BYTE selfPlayer) {
+  const BYTE openSea = screenCalcDeepSea(DEEP_SEA, DEEP_SEA, DEEP_SEA, DEEP_SEA,
+                                         DEEP_SEA, DEEP_SEA, DEEP_SEA, DEEP_SEA);
   for (int x = 0; x < tilesW; x++) {
     for (int y = 0; y < tilesH; y++) {
       bool isMine = false;
-      BYTE mapX = (BYTE)(camMX + x);
-      BYTE mapY = (BYTE)(camMY + y);
-      buf->tiles[x][y] = mapViewCalcSquare(sim, mapX, mapY, &isMine, selfPlayer);
+      int mapX = camMX + x;
+      int mapY = camMY + y;
+      if (mapViewSquareInMap(mapX, mapY)) {
+        buf->tiles[x][y] = mapViewCalcSquare(sim, (BYTE)mapX, (BYTE)mapY,
+                                             &isMine, selfPlayer);
+      } else {
+        buf->tiles[x][y] = openSea;
+      }
       buf->mines[x][y] = isMine;
     }
   }
@@ -589,12 +600,10 @@ void mapViewRenderCentered(MapViewCtx *ctx, ServerSim *sim,
     int camPY = centerPY - viewH / (2 * zf);
 
     /* Camera tile and sub-tile offset */
-    camMX = camPX / tileSize;
-    camMY = camPY / tileSize;
-    if (camPX < 0) camMX--;
-    if (camPY < 0) camMY--;
-    edgeX = (camPX - camMX * tileSize) * zf;
-    edgeY = (camPY - camMY * tileSize) * zf;
+    mapViewCameraSplit(camPX, tileSize, &camMX, &edgeX);
+    mapViewCameraSplit(camPY, tileSize, &camMY, &edgeY);
+    edgeX *= zf;
+    edgeY *= zf;
   } else {
     /* Camera top-left in whole screen pixels (world units * zf / 16,
        rounded), so the view moves one screen pixel at a time instead of
@@ -602,10 +611,8 @@ void mapViewRenderCentered(MapViewCtx *ctx, ServerSim *sim,
        placed as (pos - camMX * tileSize) * zf - edgeX, which stays right. */
     int camSX = (int)SDL_floorf(pc->centerWX * (float)zf / 16.0f + 0.5f) - viewW / 2;
     int camSY = (int)SDL_floorf(pc->centerWY * (float)zf / 16.0f + 0.5f) - viewH / 2;
-    camMX = (camSX >= 0) ? camSX / scaledTile : -((-camSX + scaledTile - 1) / scaledTile);
-    camMY = (camSY >= 0) ? camSY / scaledTile : -((-camSY + scaledTile - 1) / scaledTile);
-    edgeX = camSX - camMX * scaledTile;
-    edgeY = camSY - camMY * scaledTile;
+    mapViewCameraSplit(camSX, scaledTile, &camMX, &edgeX);
+    mapViewCameraSplit(camSY, scaledTile, &camMY, &edgeY);
   }
 
   /* Number of tiles needed to cover the viewport */
@@ -614,13 +621,13 @@ void mapViewRenderCentered(MapViewCtx *ctx, ServerSim *sim,
   if (tilesW > MAPVIEW_MAX_TILES_W) tilesW = MAPVIEW_MAX_TILES_W;
   if (tilesH > MAPVIEW_MAX_TILES_H) tilesH = MAPVIEW_MAX_TILES_H;
 
-  /* Clamp camera to valid map range */
-  if (camMX < 0) camMX = 0;
-  if (camMY < 0) camMY = 0;
-
-  /* Build tile buffer */
+  /* No clamp to the map here. camMX and edgeX are one position (see
+     mapViewCameraSplit): clamping camMX to 0 while keeping edgeX moved the
+     view by up to a tile, and back again, each time the camera crossed a
+     tile past the left or top edge. Past any edge the view scrolls on over
+     open deep sea instead (mapViewBuildTileBuffer). */
   static MapViewTileBuffer tileBuf;
-  mapViewBuildTileBuffer(sim, &tileBuf, (BYTE)camMX, (BYTE)camMY, tilesW, tilesH, selfPlayer);
+  mapViewBuildTileBuffer(sim, &tileBuf, camMX, camMY, tilesW, tilesH, selfPlayer);
 
   /* Draw tiles */
   int ss = ctx->sheetScale;
