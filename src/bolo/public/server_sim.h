@@ -2468,14 +2468,14 @@ uint8_t     serverSimGetLineOfSight(const ServerSim *sim);
 void        serverSimSetSmartPingsOff(ServerSim *sim, bool off);
 bool        serverSimGetSmartPingsOff(const ServerSim *sim);
 
-/* Mods — whether the round composes the mods on the lobby's pick list. The
- * host owns it from the lobby (LST_MODS_OFF), and scnDecideScenario
- * (src/scenario/scenario_host.c) is the one reader: it skips every pick
- * whose manifest says kind = "mod" while this is set.
+/* Mods/Scenario — whether the round composes the scripts on the lobby's
+ * pick list. The host owns it from the lobby (LST_MODS_OFF), and
+ * scnDecideScenario (src/scenario/scenario_host.c) is the one reader: it
+ * skips every pick while this is set, mods and picked scenarios alike.
  *
- * Mods only. A scenario on the pick list and the map's own script both
- * still play, because neither is a mod — the question a mod answers about
- * itself is scnManifestKeepsWinCondition, and that is the only test here.
+ * The map's own script still plays. It is not a pick, whatever place on the
+ * list it has been given, and with no picked scenario composing it comes
+ * back at the front the way it does for a list that picked none.
  *
  * The pick list is not touched. Turning the setting off is not the same as
  * emptying the list: the entries stay in the order the host put them in and

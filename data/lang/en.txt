@@ -2210,13 +2210,13 @@ STR_DLGLOBBY_SCENARIO_FILTER=Filter by name
 STR_DLGLOBBY_SCENARIO_NO_MATCH=Nothing here matches that name.
 STR_DLGLOBBY_SCENARIO_DETAILS=Details
 STR_DLGLOBBY_SCENARIO_DETAILS_TITLE=About {string1}
-STR_DLGLOBBY_MODS_ENABLED_CB=Mods Enabled
-STR_DLGLOBBY_MODS_DETAILS_TIP=Opens the chooser, where mods are added, removed and ordered.
+STR_DLGLOBBY_MODS_ENABLED_CB=Mods/Scenario Enabled
+STR_DLGLOBBY_MODS_DETAILS_TIP=Opens the chooser, where the scenario and mods are added, removed and ordered.
 STR_DLGLOBBY_SCENARIO_ORDER_NOTE=Load and run order: Higher up has priority.
 STR_DLGLOBBY_SCENARIO_ALL_IN_ROUND=Everything this server offers is already in the round.
 STR_DLGLOBBY_MODS_HEAD_N=({number})
 STR_DLGLOBBY_MODS_TIP_ON=These mods run this round, in this order:
-STR_DLGLOBBY_MODS_TIP_OFF=Mods are switched off. These are picked for the round, but will not run:
+STR_DLGLOBBY_MODS_TIP_OFF=Mods/Scenario is switched off. These are picked for the round, but will not run:
 STR_DLGLOBBY_MODS_TIP_NONE=No mods are loaded for this round.
 STR_DLGLOBBY_MODS_OFF_NOTE=(switched off, will not run)
 STR_SCNPANEL_SETTINGS_TITLE=Scenario Panel
@@ -2402,18 +2402,14 @@ STR_MAPEDIT_SCENARIO_ARG_NUMBER=Number
 STR_MAPEDIT_SCENARIO_ARG_TEXT=Text
 STR_MAPEDIT_SCENARIO_TEXT_ONE_LONG=An action carries one long line, and another argument has it
 STR_DLGLOBBY_SCENARIO_RULES=Rules
-STR_DLGLOBBY_SCENARIO_RULES_TITLE=What {string1} changes
 STR_DLGLOBBY_RULES_COL_RULE=Rule
 STR_DLGLOBBY_RULES_COL_CLASSIC=Classic
 STR_DLGLOBBY_RULES_COL_SCENARIO=Scenario
 STR_DLGLOBBY_RULES_COL_CHANGE=Change
-STR_DLGLOBBY_RULE_DETAIL_TITLE=Rule: {string1}
-STR_DLGLOBBY_RULES_INFO=Info
-STR_DLGLOBBY_RULES_RANGE=Range
 STR_DLGLOBBY_RULES_OVERRIDDEN=Overridden by {string1}, which sets {string2}
 
-# Under the rules table of a mod, on a server that has mods turned off.
-STR_DLGLOBBY_DETAILS_MODS_OFF=Mods are turned off on this server, so this mod's rules do not apply.
+# Under the rules table of a pick, on a server with Mods/Scenario off.
+STR_DLGLOBBY_DETAILS_MODS_OFF=Mods/Scenario is turned off on this server, so this script's rules do not apply.
 STR_DLGLOBBY_DETAILS_IMPLEMENTS_MOD=What this mod implements:
 STR_DLGLOBBY_DETAILS_IMPLEMENTS_SCENARIO=What this scenario implements:
 STR_DLGLOBBY_DETAILS_COL_METHOD=Method

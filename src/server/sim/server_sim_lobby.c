@@ -1027,7 +1027,8 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
             if (len != 1) return false;
             /* A plain bool like LST_SMART_PINGS_OFF above, so any non-zero
              * byte counts. The pick list is left alone: this decides whether
-             * the mods on it compose, not whether they are on it.
+             * the mods and picked scenarios on it compose, not whether they
+             * are on it.
              *
              * Nothing is recomposed here. The caller in
              * server_command_dispatch.c asks for that through
