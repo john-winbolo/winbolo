@@ -368,8 +368,17 @@ function M.nav_turn_speed(corr, speed, max_speed, min_speed)
   elseif abs_corr > 80 then
     if speed > min_speed then keys = bit.bor(keys, KEY_SLOWER) end
   else
+    -- The ramp sets the speed a turn is taken at, so the nav caps give way to
+    -- the turn-radius caps when our turn rate is slower than our top speed
+    -- (live_physics.lua scales both; under classic rules they are equal).
+    local ramp_max = max_speed
+    if max_speed == C.NAV_CRUISE_SPEED then
+      ramp_max = math.min(max_speed, C.NAV_TURN_CRUISE_SPEED)
+    elseif max_speed == C.NAV_TOP_SPEED then
+      ramp_max = math.min(max_speed, C.NAV_TURN_TOP_SPEED)
+    end
     local factor = 1.0 - (abs_corr - 16) / 64.0
-    local desired = math.max(min_speed, math.floor(factor * max_speed))
+    local desired = math.max(min_speed, math.floor(factor * ramp_max))
     if speed > desired + 4 then
       keys = bit.bor(keys, KEY_SLOWER)
     elseif speed < desired then
