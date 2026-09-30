@@ -831,6 +831,8 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
     }
 
 #ifndef __ANDROID__
+    /* The web canvas follows the page, so it has no window size to pick. */
+#ifndef __EMSCRIPTEN__
     /* ---- Window size — desktop, in-game only ---- */
     if (ctx->inGame && !uiModeIsTablet()) {
         const char *zoomLabels[] = {
@@ -858,6 +860,7 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
             ImGui::EndCombo();
         }
     }
+#endif
 
     /* ---- UI scale — desktop, in-game only, not Steam Deck ---- */
     if (ctx->inGame && !uiModeIsTablet() && !uiModeIsSteamDeck()) {
