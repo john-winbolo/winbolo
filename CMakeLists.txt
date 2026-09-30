@@ -5433,6 +5433,7 @@ set(_unit_test_names
     mapview_sprite_ladder
     mapview_sprite_shell_tip
     mapview_sprite_lgm_snap
+    mapview_camera_split
     mapview_overlay_gunsight
     mapview_overlay_tank_label
     mapview_overlay_tank_label_smooth

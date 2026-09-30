@@ -1899,6 +1899,7 @@ int run_mapview_sprite_classic(void);
 int run_mapview_sprite_ladder(void);
 int run_mapview_sprite_shell_tip(void);
 int run_mapview_sprite_lgm_snap(void);
+int run_mapview_camera_split(void);
 
 /* The entity overlay's placements (test_mapview_overlay.c): the gunsight's
  * top-left is the classic view's formula at an integer scale and the

@@ -939,6 +939,7 @@ static const UnitTestEntry s_tests[] = {
     { "mapview_sprite_ladder",                   run_mapview_sprite_ladder                   },
     { "mapview_sprite_shell_tip",                run_mapview_sprite_shell_tip                },
     { "mapview_sprite_lgm_snap",                 run_mapview_sprite_lgm_snap                 },
+    { "mapview_camera_split",                    run_mapview_camera_split                    },
     { "mapview_overlay_gunsight",                run_mapview_overlay_gunsight                },
     { "mapview_overlay_tank_label",              run_mapview_overlay_tank_label              },
     { "mapview_overlay_tank_label_smooth",       run_mapview_overlay_tank_label_smooth       },
