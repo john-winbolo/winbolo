@@ -81,14 +81,19 @@ by the runner.
 The runner also adds `-bot-init 0-15=<the -brain path>[cfg=BOT_CHAT_DEFAULT=true]`,
 so every bot starts with "bot chat" on. A real game starts with the bots
 quiet, but most of these tests read the spoken acks to see that an order was
-taken. A test that gives its own `-bot-init` keeps it, and the runner adds
+taken. An `.args` file with no `-brain` gets the same spec for
+`brains/GoalHunter_1.7/init.lua`, the brain the server runs when none is
+named. A test that gives its own `-bot-init` keeps it, and the runner adds
 `;cfg=BOT_CHAT_DEFAULT=true` inside the `[...]` of each of its specs (or adds
 `[cfg=BOT_CHAT_DEFAULT=true]` to a spec with no brackets). Tokens apply in
 order and the last one wins, so chat is on for those bots too. The runner
 also puts the plain `0-15=<the -brain path>[cfg=BOT_CHAT_DEFAULT=true]` spec
 in front of the test's own specs, so the ids they do not name get chat on
-as well (a later spec for the same id replaces an earlier one). A test that
-needs chat off says `bot chat off` in its script.
+as well (a later spec for the same id replaces an earlier one). A spec that
+already carries a `cfg=BOT_CHAT_DEFAULT=` token is left alone, so a test
+that wants some bots quiet from the start writes
+`cfg=BOT_CHAT_DEFAULT=false` in their spec. A test that wants every bot
+quiet can instead say `bot chat off` in its script.
 
 ## Two things to know before writing one
 
