@@ -108,6 +108,12 @@
  *       — the list a chooser sends from the off state, without the map's
  *       row, is taken; the one with it is two scenarios and refused; and the
  *       box goes back on without a refusal.
+ *   scenario_compose_off_full_list_hides_last
+ *       — box off, a map with its own script and ten picks: the lobby is
+ *       told the map's row and nine picks, and a list sent from what it was
+ *       told loses the tenth. Nine picks look the same to the lobby, which
+ *       is why a chooser refuses every edit in that state. Box on shows all
+ *       ten.
  *
  * These cases drive the real path end to end: a scratch scenarios directory
  * with real files in it, the host's own directory lister registered on the
@@ -164,7 +170,7 @@
 
 /* ── The scenarios directory ──────────────────────────────────────── */
 
-#define SC_MAX_FILES 8
+#define SC_MAX_FILES 12
 
 static char scDir[256];
 static char scFiles[SC_MAX_FILES][128];
@@ -359,6 +365,16 @@ static const char kScOtherScenario[] =
     "  api = 1,\n"
     "  bound = false,\n"
     "  game = \"tournament\",\n"
+    "}\n";
+
+/* A mod with nothing in it but its name, so any number of copies under
+ * different file names compose side by side without a clash. */
+static const char kScModPlain[] =
+    "scenario = {\n"
+    "  name = \"Plain\",\n"
+    "  api = 1,\n"
+    "  kind = \"mod\",\n"
+    "  bound = false,\n"
     "}\n";
 
 /* ── What a script says ───────────────────────────────────────────── */
@@ -2665,6 +2681,103 @@ int run_scenario_compose_off_then_on(void) {
                   sim->scenarioIdentity.name);
     UT_ASSERT_MSG(serverSimGetMapScript(sim) == NULL,
                   "the map's row outlived the scenario that replaced it");
+
+    scDestroy(sim);
+    scDropMapScript();
+    scDropDir();
+    return 0;
+}
+
+/* Box off, a map that brings its own script, and a full list of ten picks.
+
+   The lobby list is held at LOBBY_SCRIPT_LIST_MAX, and with the box off the
+   map's own row goes in front of the picks, so the last pick is not
+   published (serverSimGetLobbyScriptCount). A chooser drafts from what was
+   published, and a list sent from that draft names nine picks: the tenth
+   leaves the round although the host never took it out. Nine picks publish
+   exactly the same shape, so a chooser cannot tell the two apart, and it
+   refuses every edit while the list it was told is full with the map's row
+   in it (lobbyRoundLiveMayBeCut in lobby_scenario_chooser.cpp). With the box
+   on the map's row goes and all ten are shown. */
+int run_scenario_compose_off_full_list_hides_last(void) {
+    ServerSim         *sim;
+    const ScnDirEntry *row;
+    char               names[9][16];
+    const char        *picks[10];
+    const char        *shown[9];
+    int                i;
+
+    UT_ASSERT(scMakeDir("off_full_hides_last"));
+    UT_ASSERT(scWrite("duel.lua", kScOtherScenario));
+    picks[0] = "duel.lua";
+    for (i = 0; i < 9; i++) {
+        snprintf(names[i], sizeof(names[i]), "mod%d.lua", i + 1);
+        UT_ASSERT(scWrite(names[i], kScModPlain));
+        picks[i + 1] = names[i];
+    }
+    UT_ASSERT(scPutMapScript(kScMapScenario));
+    sim = scSim();
+    UT_ASSERT(sim != NULL);
+
+    scCommit(sim);
+    UT_ASSERT_MSG(scModsOff(sim, true) == CMD_OK,
+                  "switching Mods/Scenario off was refused");
+    UT_ASSERT_MSG(scPick(sim, picks, 10) == CMD_OK,
+                  "a list of ten picks was refused");
+    UT_ASSERT_MSG(serverSimGetScriptCount(sim) == 10,
+                  "the host's list holds %d, wanted all ten",
+                  serverSimGetScriptCount(sim));
+
+    /* The map's row and nine picks: the tenth is not published. */
+    UT_ASSERT_MSG(serverSimGetLobbyScriptCount(sim) == LOBBY_SCRIPT_LIST_MAX,
+                  "the lobby was published %d rows, wanted the cap of %d",
+                  serverSimGetLobbyScriptCount(sim), LOBBY_SCRIPT_LIST_MAX);
+    row = serverSimGetLobbyScript(sim, 0);
+    UT_ASSERT(row != NULL);
+    UT_ASSERT_MSG(row->bound, "row 0 is \"%s\", wanted the map's own",
+                  row->file);
+    row = serverSimGetLobbyScript(sim, LOBBY_SCRIPT_LIST_MAX - 1);
+    UT_ASSERT(row != NULL);
+    UT_ASSERT_MSG(strcmp(row->file, "mod8.lua") == 0,
+                  "the last published row is \"%s\", wanted the ninth pick",
+                  row->file);
+
+    /* The list a chooser would send from those rows, the map's row left off
+       as it always is beside a picked scenario. The tenth pick goes. */
+    for (i = 0; i < 9; i++) {
+        shown[i] = serverSimGetLobbyScript(sim, i + 1)->file;
+    }
+    UT_ASSERT(scPick(sim, shown, 9) == CMD_OK);
+    UT_ASSERT_MSG(serverSimGetScriptCount(sim) == 9,
+                  "the host's list holds %d after a send of what was shown, "
+                  "wanted nine",
+                  serverSimGetScriptCount(sim));
+
+    /* And nine picks publish the same shape as ten did, which is what keeps
+       a chooser from knowing whether a pick is hidden. */
+    UT_ASSERT_MSG(serverSimGetLobbyScriptCount(sim) == LOBBY_SCRIPT_LIST_MAX,
+                  "nine picks published %d rows, wanted the cap of %d",
+                  serverSimGetLobbyScriptCount(sim), LOBBY_SCRIPT_LIST_MAX);
+    row = serverSimGetLobbyScript(sim, 0);
+    UT_ASSERT(row != NULL && row->bound);
+
+    /* Box on, with all ten picked again: the map's row goes and every pick
+       is published. */
+    UT_ASSERT(scPick(sim, picks, 10) == CMD_OK);
+    UT_ASSERT_MSG(scModsOff(sim, false) == CMD_OK,
+                  "switching Mods/Scenario back on was refused");
+    UT_ASSERT_MSG(serverSimGetMapScript(sim) == NULL,
+                  "the map's row outlived the scenario that replaced it");
+    UT_ASSERT_MSG(serverSimGetLobbyScriptCount(sim) == 10,
+                  "with the box on the lobby was published %d rows, wanted "
+                  "all ten picks",
+                  serverSimGetLobbyScriptCount(sim));
+    row = serverSimGetLobbyScript(sim, 9);
+    UT_ASSERT(row != NULL);
+    UT_ASSERT_MSG(strcmp(row->file, "mod9.lua") == 0 && !row->bound,
+                  "with the box on the last row is \"%s\", wanted the tenth "
+                  "pick",
+                  row->file);
 
     scDestroy(sim);
     scDropMapScript();
