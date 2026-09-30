@@ -488,6 +488,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             evt->u.lobbySettings.scenarioKeepsWinCondition;
         cs->lobbyScenarioBound = evt->u.lobbySettings.scenarioBound;
         cs->lobbyScenarioUnsafe = evt->u.lobbySettings.scenarioUnsafe;
+        cs->lobbyScenarioNeedsBots = evt->u.lobbySettings.scenarioNeedsBots;
         SDL_strlcpy(cs->lobbyScenarioName, evt->u.lobbySettings.scenarioName,
                     sizeof(cs->lobbyScenarioName));
         SDL_strlcpy(cs->lobbyScenarioFileName,

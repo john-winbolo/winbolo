@@ -706,6 +706,174 @@ static void scnCheckBound(const ScenarioManifest *m, ScnValidateResult *out) {
     }
 }
 
+/* ── needs_bots ───────────────────────────────────────────────────── */
+
+/* The level of a Lua long bracket opening at src[i] — [[ is 0, [=[ is 1 and
+ * so on — or -1 where src[i] opens none. */
+static int scnLongBracketLevel(const char *src, size_t srcLen, size_t i) {
+    size_t j = i + 1;
+
+    if (i >= srcLen || src[i] != '[') {
+        return -1;
+    }
+    while (j < srcLen && src[j] == '=') {
+        j++;
+    }
+    return (j < srcLen && src[j] == '[') ? (int)(j - i - 1) : -1;
+}
+
+/* Past the close of a long bracket of the given level, counting the lines it
+ * crosses. i is just past the opening. An unclosed one runs to the end, which
+ * is where Lua's own load would already have stopped the file. */
+static size_t scnSkipLongBracket(const char *src, size_t srcLen, size_t i,
+                                 int level, int *line) {
+    for (; i < srcLen; i++) {
+        if (src[i] == '\n') {
+            (*line)++;
+        } else if (src[i] == ']') {
+            size_t j = i + 1;
+            int    n = 0;
+
+            while (j < srcLen && src[j] == '=') {
+                j++;
+                n++;
+            }
+            if (n == level && j < srcLen && src[j] == ']') {
+                return j + 1;
+            }
+        }
+    }
+    return srcLen;
+}
+
+/* The 1-based line a name first appears on as Lua code, or 0 where it does
+ * not. Unlike scnLineOfWord this reads past comments and string literals, so
+ * a comment that says "we never call game.spawn_bot" is not a call. It is a
+ * scan of the words and not a parse: game.spawn_bot, a local alias of it and
+ * a trigger router's name for it all count, which is what an author asking
+ * "does this file field bots" wants. */
+static int scnLineOfCodeName(const char *src, size_t srcLen,
+                             const char *word) {
+    size_t wordLen = strlen(word);
+    size_t i       = 0;
+    int    line    = 1;
+
+    while (i < srcLen) {
+        char c = src[i];
+        int  level;
+
+        if (c == '\n') {
+            line++;
+            i++;
+        } else if (c == '-' && i + 1 < srcLen && src[i + 1] == '-') {
+            level = scnLongBracketLevel(src, srcLen, i + 2);
+            if (level >= 0) {
+                i = scnSkipLongBracket(src, srcLen, i + 2 + (size_t)level + 2,
+                                       level, &line);
+            } else {
+                while (i < srcLen && src[i] != '\n') {
+                    i++;
+                }
+            }
+        } else if (c == '"' || c == '\'') {
+            i++;
+            while (i < srcLen && src[i] != c && src[i] != '\n') {
+                if (src[i] == '\\' && i + 1 < srcLen) {
+                    if (src[i + 1] == '\n') {
+                        line++;
+                    }
+                    i++;
+                }
+                i++;
+            }
+            i++;
+        } else if ((level = scnLongBracketLevel(src, srcLen, i)) >= 0) {
+            i = scnSkipLongBracket(src, srcLen, i + (size_t)level + 2, level,
+                                   &line);
+        } else if (scnIsWordChar(c)) {
+            size_t start = i;
+
+            while (i < srcLen && scnIsWordChar(src[i])) {
+                i++;
+            }
+            if (i - start == wordLen &&
+                memcmp(src + start, word, wordLen) == 0) {
+                return line;
+            }
+        } else {
+            i++;
+        }
+    }
+    return 0;
+}
+
+/* Add one issue on a line of the author's file. Only where the add took: a
+ * full list drops the issue, and stamping the line on the count would put
+ * it on whatever unrelated issue is last. */
+static void scnIssueAtLine(ScnValidateResult *out, int line, const char *key,
+                           const char *what) {
+    size_t before = out->count;
+
+    scnIssueAdd(out, key, "%s", what);
+    if (out->count > before && line > 0) {
+        out->issues[out->count - 1].line = line;
+    }
+}
+
+/* A file that fields its own bots and does not say needs_bots. It works in a
+ * lobby that allows bots and fails in one set to no computer tanks, where
+ * the lobby template seats none and every spawn is refused — so an author
+ * testing with bots on would never see it. Refused here, which is what
+ * -validate, packing a map and publishing to the Workshop all read, so a
+ * file like that cannot ship. Two ways a file fields bots: a lobby team
+ * asking for them, and a call to either op that adds one. A trigger cannot
+ * name either op as an action, since both take a table, so a trigger that
+ * adds a bot does it through a call into the file's own Lua, which the scan
+ * of the source finds. A team's max_bots is not a way in: it is only the
+ * ceiling a host may raise it to. */
+static void scnCheckNeedsBots(const ScenarioManifest *m, const char *src,
+                              size_t srcLen, ScnValidateResult *out) {
+    static const char *const kBotOps[] = { "spawn_bot", "lobby_add_bot" };
+    char                     what[SCN_VALIDATE_LINE_LEN];
+    char                     key[SCN_VALIDATE_KEY_LEN];
+    uint8_t                  i;
+    size_t                   k;
+
+    if (m->needsBots) {
+        return;
+    }
+    for (i = 0; i < m->lobby.numTeams; i++) {
+        if (m->lobby.teams[i].bots == 0) {
+            continue;
+        }
+        /* 1-based over the teams the file lists, as scnCheckLobby's are. */
+        snprintf(key, sizeof(key), "lobby.teams[%u].bots", (unsigned)i + 1);
+        scnIssueAdd(out, key,
+                    "team %u asks for %u bots and the table does not say "
+                    "needs_bots = true, so a lobby with no computer tanks "
+                    "seats none of them",
+                    (unsigned)m->lobby.teams[i].id,
+                    (unsigned)m->lobby.teams[i].bots);
+    }
+    for (k = 0; k < sizeof(kBotOps) / sizeof(kBotOps[0]); k++) {
+        int line;
+
+        if (src == NULL) {
+            break;
+        }
+        line = scnLineOfCodeName(src, srcLen, kBotOps[k]);
+        if (line == 0) {
+            continue;
+        }
+        snprintf(what, sizeof(what),
+                 "the script calls game.%s and the table does not say "
+                 "needs_bots = true, so a lobby with no computer tanks "
+                 "refuses every bot it adds",
+                 kBotOps[k]);
+        scnIssueAtLine(out, line, "needs_bots", what);
+    }
+}
+
 /* ── Triggers ─────────────────────────────────────────────────────── */
 
 /* Every field one catalogue row can earn. Five parameters is the widest the
@@ -1380,6 +1548,7 @@ static bool scnValidateSource(const ServerSim *sim, const char *src,
     }
     scnCheckRegions(&out->manifest, out);
     scnCheckBound(&out->manifest, out);
+    scnCheckNeedsBots(&out->manifest, src, srcLen, out);
     /* The triggers read no map either: a hook, a field, an operator, an op
        and an argument count are the catalogue's business, and a tag a test
        names is the table's own. Last of the checks because a

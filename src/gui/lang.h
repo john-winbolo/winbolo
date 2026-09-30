@@ -914,6 +914,8 @@
 #define STR_MAPCHOOSER_RESTORE_SIZE_TIP     2732
 #define STR_MAPCHOOSER_MAXIMIZE_TIP         2733
 #define STR_MAPCHOOSER_LOADING_PREVIEW      2734
+/* Map editor scenario panel */
+#define STR_MAPEDIT_SCENARIO_NEEDS_BOTS     2738
 
 /* Tablet HUD */
 #define STR_TABLET_STATUS_TITLE             803
