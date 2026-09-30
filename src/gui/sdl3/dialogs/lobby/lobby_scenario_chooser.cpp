@@ -1378,11 +1378,28 @@ static void lobbyScenarioDetailsCallbacks(ClientSim *cs) {
     ImGui::EndTable();
 }
 
-/* How one value of setting st reads, into out: the number, or On or Off for
- * a bool setting, marked as the default when it is st's default. */
+/* How one value of setting st reads, into out: the number, On or Off for a
+ * bool setting, or the script's word for a choice setting, marked as the
+ * default when it is st's default. */
 static void lobbyScenarioSettingText(const ScnSetting *st, int32_t v,
                                      char *out, size_t outLen) {
     MessageArgs args = {};
+
+    if (st->type == SCN_SETTING_TYPE_CHOICE) {
+        const char *w = scnSettingChoiceText(st, v);
+
+        if (w == NULL) w = "";
+        if (v == st->def) {
+            SDL_strlcpy(args.string1, w, sizeof(args.string1));
+            SDL_snprintf(out, outLen, "%s",
+                         langGetTextFmt(
+                             STR_DLGLOBBY_DETAILS_SETTING_CHOICE_DEFAULT,
+                             &args));
+        } else {
+            SDL_snprintf(out, outLen, "%s", w);
+        }
+        return;
+    }
 
     if (st->type == SCN_SETTING_TYPE_BOOL) {
         langid id;
@@ -1409,7 +1426,8 @@ static void lobbyScenarioSettingText(const ScnSetting *st, int32_t v,
 
 /* The script's own settings (scenario_settings.h): one row per setting the
  * file declares, its label and its value. The host gets a dropdown of every
- * value the declaration allows, On and Off for a bool setting, and a pick is sent to the server at once;
+ * value the declaration allows, On and Off for a bool setting and the words
+ * for a choice setting, and a pick is sent to the server at once;
  * the value shown is always the one the server last reported, so a pick the
  * server corrected shows as corrected. Everyone else sees the values as
  * text. A value the server has not reported is the declared default.

@@ -2313,7 +2313,8 @@ bool serverSimGetScriptSetting(const ServerSim *sim, const char *file,
  *
  * Returns the value now in effect, in *resolved when it is not NULL.
  * False, and nothing changed or published, for a file with no declaration,
- * an id it does not declare, a bool setting given anything but 0 or 1, or a
+ * an id it does not declare, a bool setting given anything but 0 or 1, a
+ * choice setting given anything but the index of one of its words, or a
  * store that is full. */
 bool serverSimSetScriptSetting(ServerSim *sim, const char *file,
                                const char *id, int32_t value,

@@ -3188,8 +3188,10 @@
  * line a player who is not the host sees under it, the line a host sees
  * on a server too old to take a change, and a dropdown entry for the
  * declared default ({number} = the value). A bool setting's dropdown offers
- * On and Off, with the declared one of them marked as the default. The
- * settings' own labels are the script's text, not strings here. */
+ * On and Off, with the declared one of them marked as the default. A choice
+ * setting's dropdown offers the script's own words, the default one marked
+ * ({string1} = the word). The settings' own labels are the script's text,
+ * not strings here. */
 #define STR_DLGLOBBY_DETAILS_SETTINGS            2663
 #define STR_DLGLOBBY_DETAILS_SETTINGS_HOST       2664
 #define STR_DLGLOBBY_DETAILS_SETTINGS_OLD        2665
@@ -3198,6 +3200,7 @@
 #define STR_DLGLOBBY_DETAILS_SETTING_OFF         2708
 #define STR_DLGLOBBY_DETAILS_SETTING_ON_DEFAULT  2709
 #define STR_DLGLOBBY_DETAILS_SETTING_OFF_DEFAULT 2710
+#define STR_DLGLOBBY_DETAILS_SETTING_CHOICE_DEFAULT 2711
 
 /* The map editor's metadata form: the read-only line naming the Steam
  * Workshop item a scenario was published as ({string1} = the item id) and

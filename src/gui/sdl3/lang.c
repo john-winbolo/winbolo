@@ -2663,6 +2663,7 @@ static const LangEntry langTable[] = {
     {2708, "Off"},
     {2709, "On (default)"},
     {2710, "Off (default)"},
+    {2711, "{string1} (default)"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

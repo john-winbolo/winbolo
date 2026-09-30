@@ -2588,6 +2588,24 @@ void scnPushManifestGlobal(lua_State *L, int envRef,
                 lua_setfield(L, -2, "type");
                 lua_pushboolean(L, d->def != 0);
                 lua_setfield(L, -2, "default");
+            } else if (d->type == SCN_SETTING_TYPE_CHOICE) {
+                /* A choice row is written as its words and the default
+                   word, as the file declares it. */
+                const char *dw = scnSettingChoiceText(d, d->def);
+                int         w;
+
+                lua_pushstring(L, "choice");
+                lua_setfield(L, -2, "type");
+                lua_createtable(L, (int)d->numChoices, 0);
+                for (w = 0; w < (int)d->numChoices &&
+                            w < SCN_SETTING_CHOICES_WORDS_MAX;
+                     w++) {
+                    lua_pushstring(L, d->choices[w]);
+                    lua_rawseti(L, -2, w + 1);
+                }
+                lua_setfield(L, -2, "choices");
+                lua_pushstring(L, dw != NULL ? dw : "");
+                lua_setfield(L, -2, "default");
             } else {
                 lua_pushstring(L, "int");
                 lua_setfield(L, -2, "type");

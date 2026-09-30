@@ -891,6 +891,67 @@ static bool scnSettingsBool(lua_State *L, int row, int32_t *out) {
     return ok;
 }
 
+/* A choice row's words and its default, into s: choices must be a list of
+ * strings and default one of them. NULL when they read, else the reason for
+ * the report. The count and the words are checked again, with the range, by
+ * scnSettingProblem. */
+static const char *scnSettingsChoices(lua_State *L, int row, ScnSetting *s) {
+    const char *why = NULL;
+    int         total;
+    int         i;
+
+    lua_pushstring(L, "choices");
+    lua_rawget(L, row);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        return "needs a list of words for choices";
+    }
+    total = (int)lua_rawlen(L, -1);
+    if (total < SCN_SETTING_CHOICES_MIN ||
+        total > SCN_SETTING_CHOICES_WORDS_MAX) {
+        lua_pop(L, 1);
+        return "a choice setting needs 2 to 8 choices";
+    }
+    for (i = 1; i <= total && why == NULL; i++) {
+        lua_rawgeti(L, -1, i);
+        if (lua_type(L, -1) != LUA_TSTRING) {
+            why = "every choice must be a string";
+        } else {
+            size_t      n;
+            const char *w = lua_tolstring(L, -1, &n);
+            if (n == 0 || n >= SCN_SETTING_CHOICE_LEN || strlen(w) != n) {
+                why = "each choice must be 1 to 31 characters";
+            } else {
+                memcpy(s->choices[i - 1], w, n + 1);
+            }
+        }
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1); /* choices */
+    if (why != NULL) {
+        return why;
+    }
+    s->numChoices = (uint8_t)total;
+    s->min        = 0;
+    s->max        = total - 1;
+    s->step       = 1;
+
+    lua_pushstring(L, "default");
+    lua_rawget(L, row);
+    if (lua_type(L, -1) != LUA_TSTRING) {
+        why = "needs one of its choices, as a string, for default";
+    } else {
+        int at = scnSettingChoiceIndex(s, lua_tostring(L, -1));
+        if (at < 0) {
+            why = "default is not one of its choices";
+        } else {
+            s->def = at;
+        }
+    }
+    lua_pop(L, 1);
+    return why;
+}
+
 /* A string field of the row into dst. False for a value that is there but is
  * not a string, or does not fit. Absent answers true and leaves dst "". */
 static bool scnSettingsStr(lua_State *L, int row, const char *field,
@@ -997,15 +1058,35 @@ int scenarioLuaReadSettings(lua_State *L, int tbl, ScnSetting *out, int max,
             s.type = SCN_SETTING_TYPE_INT;
         } else if (strcmp(type, "bool") == 0) {
             s.type = SCN_SETTING_TYPE_BOOL;
+        } else if (strcmp(type, "choice") == 0) {
+            s.type = SCN_SETTING_TYPE_CHOICE;
         } else {
             scnSettingsSay(report, ud, key,
-                           "scenario: %s: %s has type '%s'; only \"int\" and "
-                           "\"bool\" are supported; dropped", path, key,
-                           type);
+                           "scenario: %s: %s has type '%s'; only \"int\", "
+                           "\"bool\" and \"choice\" are supported; dropped",
+                           path, key, type);
             lua_pop(L, 1);
             continue;
         }
-        if (s.type == SCN_SETTING_TYPE_BOOL) {
+        if (s.type == SCN_SETTING_TYPE_CHOICE) {
+            /* The words are the range, so a min, max or step on a choice
+               row is a mistake in the row, as it is on a bool row. */
+            const char *bad = NULL;
+
+            if (scnSettingsHas(L, row, "min") ||
+                scnSettingsHas(L, row, "max") ||
+                scnSettingsHas(L, row, "step")) {
+                bad = "is a choice setting and takes no min, max or step";
+            } else {
+                bad = scnSettingsChoices(L, row, &s);
+            }
+            if (bad != NULL) {
+                scnSettingsSay(report, ud, key, "scenario: %s: %s %s; dropped",
+                               path, key, bad);
+                lua_pop(L, 1);
+                continue;
+            }
+        } else if (s.type == SCN_SETTING_TYPE_BOOL) {
             /* On or off has a fixed range, so a min, max or step on a
                bool row is a mistake in the row. */
             if (scnSettingsHas(L, row, "min") ||
@@ -1070,6 +1151,14 @@ int scenarioLuaReadSettings(lua_State *L, int tbl, ScnSetting *out, int max,
 void scenarioLuaPushSetting(lua_State *L, const ScnSetting *s, int32_t v) {
     if (s != NULL && s->type == SCN_SETTING_TYPE_BOOL) {
         lua_pushboolean(L, v != 0);
+    } else if (s != NULL && s->type == SCN_SETTING_TYPE_CHOICE) {
+        /* The word, never the index: the script compares against the words
+           it wrote. A value that names no word is the default word. */
+        const char *w = scnSettingChoiceText(s, v);
+        if (w == NULL) {
+            w = scnSettingChoiceText(s, s->def);
+        }
+        lua_pushstring(L, w != NULL ? w : "");
     } else {
         lua_pushinteger(L, (lua_Integer)v);
     }
@@ -5157,9 +5246,9 @@ static const ScnLuaRow kScnLuaRows[] = {
       SCN_OP_PARAMS(rule), SCN_OP_READS },
     { "setting", scnLuaSetting,
       "setting(id) — the value the host chose in the lobby for one of "
-      "this script's own settings, or its declared default: a number, or "
-      "true or false for a bool setting; an id the script never declared "
-      "raises.",
+      "this script's own settings, or its declared default: a number, "
+      "true or false for a bool setting, or the chosen word for a choice "
+      "setting; an id the script never declared raises.",
       SCN_OP_PARAMS(setting), SCN_OP_READS },
     { "tags", scnLuaTags,
       "tags(kind, n) — the tags the scenario put on a \"pill\", \"base\" or "

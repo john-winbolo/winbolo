@@ -797,7 +797,9 @@ typedef void (*ScnSettingsReportFn)(void *ud, const char *key,
  *  label, a type this build does not know, a number that is
  *  not a whole number in the 32-bit range, a bool row that
  *  gives min, max or step or a default that is not true or
- *  false, a row that fails
+ *  false, a choice row that gives min, max or step, has no
+ *  list of 2 to 8 words for choices or a default that is not
+ *  one of them, a row that fails
  *  scnSettingProblem (scenario_settings.h), an id the block
  *  already holds, and every row past max.
  *
@@ -814,8 +816,9 @@ int scenarioLuaReadSettings(lua_State *L, int tbl, ScnSetting *out, int max,
  *NAME:          scenarioLuaPushSetting
  *PURPOSE:
  *  Pushes v, a value of setting s, as the script reads it:
- *  true or false for a bool setting, a whole number for an
- *  int one. game.setting and the checker's stand-in for it
+ *  true or false for a bool setting, the word at index v for
+ *  a choice one (the default word for an index it lacks), a
+ *  whole number for an int one. game.setting and the checker's stand-in for it
  *  both answer through this.
  *********************************************************/
 void scenarioLuaPushSetting(lua_State *L, const ScnSetting *s, int32_t v);
