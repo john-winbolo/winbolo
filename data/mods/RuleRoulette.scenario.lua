@@ -65,7 +65,9 @@ local KIND_COLOUR = { good = "green", bad = "red", trade = "yellow" }
 
 local MOD_KEYS   = { "speed", "accel", "turn", "reload", "dealt", "taken" }
 local MOD_LABEL  = { speed = "Speed", accel = "Accel", turn = "Turn",
-                     reload = "Reload", dealt = "Dealt", taken = "Taken" }
+                     reload = "Reload", dealt = "Dealt (Tanks)", taken = "Taken" }
+-- Labels too wide for half the panel; each takes a whole line.
+local WIDE_LABEL = { dealt = true }
 -- For these a higher percentage hurts the tank that has it.
 local WORSE_HIGH = { reload = true, taken = true }
 
@@ -192,7 +194,7 @@ end
 --   y  17        meaning (small)
 --   y  27 ..     numbers that are not 100, two to a row, up to 3 rows
 --   then         "Next mode in" and the clock
---   then         a bar, 4 units tall, of the time left in this mode
+--   then         a bar, 4 units tall, filling as this mode runs
 --   then         a rule, and per upcoming mode its name and its meaning
 --
 -- With all six numbers changed and three upcoming modes, the last line
@@ -217,9 +219,12 @@ local function build_panel()
   for _, k in ipairs(MOD_KEYS) do
     local v = mode.mods[k]
     if v ~= nil and v ~= 100 then
+      if WIDE_LABEL[k] and col ~= 0 then
+        col, y = 0, y + 9
+      end
       list[#list + 1] = { "text", col == 0 and 3 or 65, y, tint(v, WORSE_HIGH[k]),
                           "small", "left", MOD_LABEL[k] .. " " .. v .. "%" }
-      col = col + 1
+      col = WIDE_LABEL[k] and 2 or col + 1
       if col == 2 then
         col, y = 0, y + 9
       end
@@ -232,14 +237,25 @@ local function build_panel()
   list[#list + 1] = { "text", 3, y, "grey", "small", "left", "Next mode in" }
   list[#list + 1] = { "timer", 125, y, "yellow", "small", "right", "down", next_at }
   y = y + 9
-  -- Drains from full to empty over the mode, beside the clock above it.
-  local secs = clamp(math.floor((next_at - game.tick() + 99) / 100), 0, mode_len)
-  list[#list + 1] = { "bar", 3, y, 122, 4, "yellow", secs, mode_len }
+  -- Fills as the mode runs, in step with the clock above it. The clock
+  -- floors its ticks, so from one tick after this draw it reads one second
+  -- less than the ticks left now. Over a mode it shows mode_len - 1 down to
+  -- 0, so the bar fills over those mode_len - 1 steps: empty while the
+  -- clock shows the mode's first second, full in its last.
+  local secs = clamp(math.floor((next_at - game.tick() - 1) / 100), 0, mode_len - 1)
+  list[#list + 1] = { "bar", 3, y, 122, 4, "yellow", mode_len - 1 - secs, mode_len - 1 }
+  -- A bar outlines itself in its own colour. An outlined rect at the same
+  -- operands strokes the same pixels, so drawn after the bar it gives the
+  -- bar a white border that the yellow fill stands out against.
+  list[#list + 1] = { "rect", 3, y, 122, 4, "white", false }
   y = y + 7
   if preview > 0 then
     list[#list + 1] = { "line", 3, y, 124, y, "grey_dark" }
     y = y + 2
     for i = 1, preview do
+      -- A mode with every number and a whole-line label leaves room for
+      -- fewer upcoming modes; drop the ones that would run off the panel.
+      if y + 17 > 128 then break end
       local m = MODES[queue[i]]
       list[#list + 1] = { "text", 3, y, KIND_COLOUR[m.kind], "small", "left",
                           (i == 1 and "Next: " or "Then: ") .. m.name }
