@@ -3494,30 +3494,14 @@ void gameFrontSetBotTagColor(const char *botName, uint32_t rgb) {
  * the scenario is the whole key so a player scanning the section sees the
  * scenarios they have played by name.
  *
- * The key is copied a character at a time rather than with SDL_snprintf
- * because a control character in a scenario's name would reach the
- * preferences file as an escape and make the row impossible to match up by
- * eye. Anything below a space becomes an underscore here, and it does so in
- * the read and the write alike, so both still name the same row. A byte
- * above 0x7F is left as it is: those are the middle of a UTF-8 character in
- * a name somebody chose, not a control code. */
-static void gameFrontScnPanelLayoutKey(const char *scenario, char *key,
-                                       size_t keySz) {
-  size_t i = 0;
-  if (keySz == 0) return;
-  while (scenario[i] != '\0' && i + 1 < keySz) {
-    key[i] = ((unsigned char)scenario[i] >= 0x20) ? scenario[i] : '_';
-    i++;
-  }
-  key[i] = '\0';
-}
-
+ * The key rule (scnPanelPrefsKey) turns a control character into an
+ * underscore, and the read and the write share it. */
 bool gameFrontGetScnPanelLayout(const char *scenario, int *x, int *y,
                                 int *scale, int *alpha) {
   char key[SCN_PANEL_SCENARIO_LEN], buff[64];
   int rx, ry, rscale, ralpha;
   if (!scenario || !scenario[0] || !x || !y || !scale || !alpha) return false;
-  gameFrontScnPanelLayoutKey(scenario, key, sizeof(key));
+  scnPanelPrefsKey(scenario, key, sizeof(key));
   prefsGetString("SCENARIO PANEL", key, "", buff, sizeof(buff));
   /* All four or none: a half-written row says nothing about where the panel
      belongs, and the caller's fallback is a whole layout of its own rather
@@ -3556,7 +3540,7 @@ void gameFrontSetScnPanelLayout(const char *scenario, int x, int y,
                                 int scale, int alpha) {
   char key[SCN_PANEL_SCENARIO_LEN], val[64];
   if (!scenario || !scenario[0]) return;
-  gameFrontScnPanelLayoutKey(scenario, key, sizeof(key));
+  scnPanelPrefsKey(scenario, key, sizeof(key));
   SDL_snprintf(val, sizeof(val), "%d,%d,%d,%d", x, y, scale, alpha);
   prefsSetString("SCENARIO PANEL", key, val);
 }
@@ -3568,25 +3552,16 @@ void gameFrontSetScnPanelLayout(const char *scenario, int x, int y,
 bool gameFrontGetScnPanelShown(const char *script) {
   char key[SCN_PANEL_SCENARIO_LEN], buff[16];
   if (!script || !script[0]) return TRUE;
-  gameFrontScnPanelLayoutKey(script, key, sizeof(key));
-  prefsGetString("SCENARIO PANEL SHOWN", key, "", buff, sizeof(buff));
+  scnPanelPrefsKey(script, key, sizeof(key));
+  prefsGetString(SCN_PANEL_PREFS_SHOWN_SECTION, key, "", buff, sizeof(buff));
   return scnPanelYesNoParse(buff, true) ? TRUE : FALSE;
 }
 
 void gameFrontSetScnPanelShown(const char *script, bool shown) {
   char key[SCN_PANEL_SCENARIO_LEN];
   if (!script || !script[0]) return;
-  gameFrontScnPanelLayoutKey(script, key, sizeof(key));
-  prefsSetString("SCENARIO PANEL SHOWN", key, scnPanelYesNoWord(shown));
-}
-
-/* The pop-out row's key: the script's layout key and the panel id, so a
-   script that ever draws a second panel keeps one row per panel. */
-static void gameFrontScnPanelPopoutKey(const char *script, int panel,
-                                       char *key, size_t keySz) {
-  char base[SCN_PANEL_SCENARIO_LEN];
-  gameFrontScnPanelLayoutKey(script, base, sizeof(base));
-  SDL_snprintf(key, keySz, "%s#%d", base, panel);
+  scnPanelPrefsKey(script, key, sizeof(key));
+  prefsSetString(SCN_PANEL_PREFS_SHOWN_SECTION, key, scnPanelYesNoWord(shown));
 }
 
 bool gameFrontGetScnPanelPopout(const char *script, int panel, bool *open,
@@ -3594,8 +3569,8 @@ bool gameFrontGetScnPanelPopout(const char *script, int panel, bool *open,
   char key[SCN_PANEL_SCENARIO_LEN + 8], buff[80];
   ScnPanelPopout row;
   if (!script || !script[0] || !open || !x || !y || !w || !h) return false;
-  gameFrontScnPanelPopoutKey(script, panel, key, sizeof(key));
-  prefsGetString("SCENARIO PANEL POPOUT", key, "", buff, sizeof(buff));
+  scnPanelPrefsPopoutKey(script, panel, key, sizeof(key));
+  prefsGetString(SCN_PANEL_PREFS_POPOUT_SECTION, key, "", buff, sizeof(buff));
   if (!scnPanelPopoutParse(buff, &row)) return false;
   *open = row.open;
   *x = row.x;
@@ -3610,14 +3585,14 @@ void gameFrontSetScnPanelPopout(const char *script, int panel, bool open,
   char key[SCN_PANEL_SCENARIO_LEN + 8], val[80];
   ScnPanelPopout row;
   if (!script || !script[0]) return;
-  gameFrontScnPanelPopoutKey(script, panel, key, sizeof(key));
+  scnPanelPrefsPopoutKey(script, panel, key, sizeof(key));
   row.open = open;
   row.x = x;
   row.y = y;
   row.w = w;
   row.h = h;
   scnPanelPopoutFormat(&row, val, sizeof(val));
-  prefsSetString("SCENARIO PANEL POPOUT", key, val);
+  prefsSetString(SCN_PANEL_PREFS_POPOUT_SECTION, key, val);
 }
 
 bool gameFrontGetChosenBotDifficulty(uint8_t *out) {

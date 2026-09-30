@@ -68,6 +68,36 @@ bool scnPanelYesNoParse(const char *word, bool fallback) {
 
 const char *scnPanelYesNoWord(bool yes) { return yes ? "Yes" : "No"; }
 
+/* Copied a character at a time rather than with snprintf because a control
+   character in a script's name would reach the preferences file as an
+   escape and make the row impossible to match up by eye. The read and the
+   write both come through here, so both still name the same row. A byte
+   above 0x7F is left as it is: those are the middle of a UTF-8 character
+   in a name somebody chose, not a control code. */
+void scnPanelPrefsKey(const char *script, char *key, size_t keySz) {
+    size_t i = 0;
+    if (key == NULL || keySz == 0) return;
+    if (script != NULL) {
+        while (script[i] != '\0' && i + 1 < keySz) {
+            key[i] = ((unsigned char)script[i] >= 0x20) ? script[i] : '_';
+            i++;
+        }
+    }
+    key[i] = '\0';
+}
+
+void scnPanelPrefsPopoutKey(const char *script, int panel, char *key,
+                            size_t keySz) {
+    size_t len;
+    if (key == NULL || keySz == 0) return;
+    /* The name is cut where the other rows' key cuts it, 8 short of this
+       buffer, so the three rows of one long-named script still match. */
+    scnPanelPrefsKey(script, key, keySz > 8 ? keySz - 8 : keySz);
+    len = 0;
+    while (key[len] != '\0') len++;
+    snprintf(key + len, keySz - len, "#%d", panel);
+}
+
 /* How far two spans [a0, a0+aw) and [b0, b0+bw) overlap, 0 for not at all. */
 static int scnOverlap(int a0, int aw, int b0, int bw) {
     long lo = (a0 > b0) ? a0 : b0;

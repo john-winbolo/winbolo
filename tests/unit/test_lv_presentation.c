@@ -962,6 +962,85 @@ int run_lv_presentation_panel_choice(void) {
     return 0;
 }
 
+/* ── 6b. A panel record with owner bits ────────────────────────────── */
+
+/* The panel record's id byte carries the sending script's list position in
+ * its high four bits. The viewer masks them off, keeps one list per
+ * audience, and shows whichever script wrote to it last.
+ *
+ *   tick 0      everyone's panel from owner 0, list A           20 ms
+ *   tick 1      everyone's panel from owner 3 (0x30), list B    40 ms
+ *   tick 2      owner 3's panel 1 (0x31), list A: refused       60 ms
+ *   ticks 3-6   NOEVENTS 3
+ *   tick 7      LOG_QUIT                                       160 ms */
+static const uint8_t kLvpOwnerStream[] = {
+    0x03, 0x01, 0x3E, 0x00, 0x0C,
+        0x00, 0x00, 0xFF, 0x00, 0x07,
+        0x01, 0x01, 0x02, 0x03, 0x04, 0x05, 0x00,
+    0x03, 0x01, 0x3E, 0x00, 0x0B,
+        0x30, 0x00, 0xFF, 0x00, 0x06,
+        0x02, 0x00, 0x00, 0x7F, 0x7F, 0x02,
+    0x03, 0x01, 0x3E, 0x00, 0x0C,
+        0x31, 0x00, 0xFF, 0x00, 0x07,
+        0x01, 0x01, 0x02, 0x03, 0x04, 0x05, 0x00,
+    0x01, 0x03,
+    0x00,
+};
+
+int run_lv_presentation_panel_owner(void) {
+    const char     *path = "lv_presentation_owner.wbv";
+    static LvpLog   b;
+    LogViewerState *lv;
+    const char     *why = NULL;
+
+    UT_ASSERT(SCN_PANEL_WIRE(0, 3) == 0x30 && SCN_PANEL_WIRE(1, 3) == 0x31);
+    memset(&b, 0, sizeof(b));
+    lvpPutOpening(&b);
+    lvpPut(&b, kLvpOwnerStream, sizeof(kLvpOwnerStream));
+    lv = lvpOpen(&b, path);
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the hand-built log could not be loaded");
+    }
+
+    /* Played through: owner 3's list replaced owner 0's, and the record
+       naming panel 1 changed nothing. */
+    if (!lvpPlayToEnd()) {
+        why = "playback did not reach end-of-log";
+    } else if (!lvpRowHolds(lv_screenGetPanelRow(0, 0xFF), kLvpListB,
+                            sizeof(kLvpListB))) {
+        why = "at the end, everyone's panel is not owner 3's list B";
+    }
+
+    /* The rebuild after a seek reads the same records the same way. */
+    if (why == NULL) {
+        lv_screenSeekToTimeMs(20);
+        if (!lvpRowHolds(lv_screenGetPanelRow(0, 0xFF), kLvpListA,
+                         sizeof(kLvpListA))) {
+            why = "at 20 ms, everyone's panel is not owner 0's list A";
+        }
+    }
+    if (why == NULL) {
+        lv_screenSeekToTimeMs(40);
+        if (!lvpRowHolds(lv_screenGetPanelRow(0, 0xFF), kLvpListB,
+                         sizeof(kLvpListB))) {
+            why = "at 40 ms, everyone's panel is not owner 3's list B";
+        }
+    }
+    if (why == NULL) {
+        lv_screenSeekToTimeMs(160);
+        if (!lvpRowHolds(lv_screenGetPanelRow(0, 0xFF), kLvpListB,
+                         sizeof(kLvpListB))) {
+            why = "after seeking to the end, the panel 1 record replaced "
+                  "list B";
+        }
+    }
+    lv_decoderDestroy(lv);
+    remove(path);
+    UT_ASSERT_MSG(why == NULL, "%s", why);
+    return 0;
+}
+
 /* ── 7. A slot's team from log_TeamSet ─────────────────────────────── */
 
 /* Every line lv_messageAdd posts, counted by test_logviewer_stubs.c. */

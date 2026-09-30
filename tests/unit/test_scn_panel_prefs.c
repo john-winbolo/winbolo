@@ -14,13 +14,23 @@
  *   run_scn_panel_rescue
  *       a window on a display stays where it is; a window whose display
  *       has gone, or that shows too little of its top strip, moves onto
- *       the primary display's usable area, centred and cut to fit.
+ *       the primary display's usable area, centred and cut to fit. The
+ *       caller hands in usable bounds, so a window whose top strip sits
+ *       in the taskbar band is lost.
+ *
+ *   run_scn_panel_prefs_sections
+ *       the shown flag and the pop-out row go through the real
+ *       preferences file under their sections and keys, survive a
+ *       reload, and only the shown flag is put in the cloud upload.
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "scn_panel_prefs.h"
+#include "common/prefs.h"
+#include "common/prefs_doc.h"
 #include "test_harness.h"
 
 int run_scn_panel_popout_row(void) {
@@ -144,8 +154,117 @@ int run_scn_panel_rescue(void) {
         UT_ASSERT(out.x == 2560 + 540 && out.y == 30 + 397);
     }
 
+    /* What the caller really passes: each display's usable bounds. The
+       primary's taskbar is the bottom 40 px. A window whose top strip
+       sits in that band shows 35 px of it on the full display, which
+       would count as found, but the taskbar covers it: lost, and moved
+       onto the usable area. */
+    {
+        ScnPanelRect usableTwo[2] = { { 0, 0, 1920, 1040 },
+                                      { -1920, 0, 1920, 1080 } };
+        win.x = 100; win.y = 1045; win.w = 300; win.h = 300;
+        UT_ASSERT_MSG(!scnPanelRescueRect(&win, two, 2, &usable, &out),
+                      "full bounds should see 35 px of the strip");
+        UT_ASSERT_MSG(scnPanelRescueRect(&win, usableTwo, 2, &usable, &out),
+                      "a title bar under the taskbar was counted as found");
+        UT_ASSERT_MSG(out.x == 810 && out.y == 370, "moved to %d,%d", out.x,
+                      out.y);
+        /* Half the strip above the band: found. */
+        win.y = 1040 - SCN_PANEL_RESCUE_MIN_PX / 2;
+        UT_ASSERT(!scnPanelRescueRect(&win, usableTwo, 2, &usable, &out));
+        win.y = 1040 - SCN_PANEL_RESCUE_MIN_PX / 2 + 1;
+        UT_ASSERT(scnPanelRescueRect(&win, usableTwo, 2, &usable, &out));
+    }
+
     /* No displays reported: nothing to check against, left alone. */
     win.x = 99999;
     UT_ASSERT(!scnPanelRescueRect(&win, two, 0, &usable, &out));
+    return 0;
+}
+
+int run_scn_panel_prefs_sections(void) {
+    char           jsonPath[1024];
+    char           corrupt[1100];
+    char           key[128];
+    char           popKey[128 + 8];
+    char           longName[200];
+    char           buf[128];
+    char          *body;
+    PrefsDoc      *up;
+    ScnPanelPopout in, got;
+
+    UT_ASSERT(utScratchPath(jsonPath, sizeof(jsonPath),
+                            "scn_panel_prefs.json"));
+    snprintf(corrupt, sizeof(corrupt), "%s.corrupt", jsonPath);
+    remove(jsonPath);
+    remove(corrupt);
+    prefsInit(jsonPath);
+
+    /* The keys: the script's name, a control byte made readable, and the
+       panel id after a '#'. */
+    scnPanelPrefsKey("Survival.scenario.lua", key, sizeof(key));
+    UT_ASSERT(strcmp(key, "Survival.scenario.lua") == 0);
+    scnPanelPrefsPopoutKey("Survival.scenario.lua", 0, popKey, sizeof(popKey));
+    UT_ASSERT_MSG(strcmp(popKey, "Survival.scenario.lua#0") == 0,
+                  "pop-out key is '%s'", popKey);
+    scnPanelPrefsKey("Bad\tName.lua", buf, sizeof(buf));
+    UT_ASSERT(strcmp(buf, "Bad_Name.lua") == 0);
+
+    /* A long name is cut at the same place in both keys, so the rows of
+       one script still line up. */
+    memset(longName, 'a', sizeof(longName) - 1);
+    longName[sizeof(longName) - 1] = '\0';
+    scnPanelPrefsKey(longName, key, sizeof(key));
+    scnPanelPrefsPopoutKey(longName, 0, popKey, sizeof(popKey));
+    UT_ASSERT(strlen(key) == sizeof(key) - 1);
+    UT_ASSERT(strncmp(popKey, key, strlen(key)) == 0);
+    UT_ASSERT(strcmp(popKey + strlen(key), "#0") == 0);
+
+    /* Write both rows the way gamefront.c does. */
+    scnPanelPrefsKey("Survival.scenario.lua", key, sizeof(key));
+    scnPanelPrefsPopoutKey("Survival.scenario.lua", 0, popKey, sizeof(popKey));
+    UT_ASSERT(prefsSetString(SCN_PANEL_PREFS_SHOWN_SECTION, key,
+                             scnPanelYesNoWord(false)));
+    in.open = true;
+    in.x = -1500;
+    in.y = 60;
+    in.w = 320;
+    in.h = 280;
+    scnPanelPopoutFormat(&in, buf, sizeof(buf));
+    UT_ASSERT(prefsSetString(SCN_PANEL_PREFS_POPOUT_SECTION, popKey, buf));
+    prefsShutdown();
+
+    /* Reload and read them back. */
+    prefsInit(jsonPath);
+    prefsGetString(SCN_PANEL_PREFS_SHOWN_SECTION, key, "", buf, sizeof(buf));
+    UT_ASSERT_MSG(scnPanelYesNoParse(buf, true) == false,
+                  "shown row reads '%s' after a reload", buf);
+    prefsGetString(SCN_PANEL_PREFS_POPOUT_SECTION, popKey, "", buf,
+                   sizeof(buf));
+    memset(&got, 0, sizeof(got));
+    UT_ASSERT_MSG(scnPanelPopoutParse(buf, &got),
+                  "pop-out row '%s' did not read after a reload", buf);
+    UT_ASSERT(got.open && got.x == -1500 && got.y == 60 && got.w == 320 &&
+              got.h == 280);
+
+    /* The upload carries the shown flag and never the desktop position. */
+    body = prefsSerializeForUpload();
+    UT_ASSERT(body != NULL);
+    up = prefsDocParseJson(body);
+    free(body);
+    UT_ASSERT(up != NULL);
+    prefsDocGetString(up, SCN_PANEL_PREFS_SHOWN_SECTION, key, "<absent>", buf,
+                      sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "No") == 0,
+                  "the shown flag is not in the upload: '%s'", buf);
+    prefsDocGetString(up, SCN_PANEL_PREFS_POPOUT_SECTION, popKey, "<absent>",
+                      buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "<absent>") == 0,
+                  "the pop-out position leaked into the upload: '%s'", buf);
+    prefsDocFree(up);
+
+    prefsShutdown();
+    remove(jsonPath);
+    remove(corrupt);
     return 0;
 }

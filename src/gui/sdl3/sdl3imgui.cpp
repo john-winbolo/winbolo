@@ -1151,7 +1151,7 @@ static void popOutDestroy(PopOutWindow *pw) {
  * SDL_Renderer + ImGui context alive. See popOutCreate for why we must not
  * call SDL_DestroyRenderer while the app (and the Steam overlay) keeps
  * presenting the main window. */
-static void popOutHide(PopOutWindow *pw) {
+static void popOutHideEx(PopOutWindow *pw, bool raiseMain) {
     if (!pw->window || !pw->open) return;
     pw->open = false;
     /* A pop-out the player took full screen owns a macOS Space of its own,
@@ -1167,16 +1167,33 @@ static void popOutHide(PopOutWindow *pw) {
     /* Hiding the pop-out leaves keyboard focus orphaned (notably on macOS,
      * where the OS does not auto-return key status to the main window), so
      * explicitly raise the main game window back to the front/focus. */
-    if (s_window) SDL_RaiseWindow(s_window);
+    if (raiseMain && s_window) SDL_RaiseWindow(s_window);
 }
 
-/* True while the window manager owns the pop-out's size and position — full
- * screen or zoomed. Neither is geometry the player chose, so neither is
- * remembered. */
+static void popOutHide(PopOutWindow *pw) { popOutHideEx(pw, true); }
+
+/* A hide the player did not ask for: a scenario panel's pop-out put away
+ * at round end, on disconnect, or because its script's list went. The
+ * player may be in another program by then, so the game window is not
+ * raised over it. The one exception is a pop-out that holds keyboard
+ * focus, which the raise is there to hand back; a scenario pop-out is
+ * made not focusable, so that should never happen. */
+static void popOutHideQuiet(PopOutWindow *pw) {
+    if (!pw->window || !pw->open) return;
+    popOutHideEx(pw, SDL_GetKeyboardFocus() == pw->window);
+}
+
+/* The window states whose size and position belong to the window manager:
+ * full screen, zoomed and minimised. None is geometry the player chose (a
+ * minimised window on Windows sits at -32000,-32000), so none is
+ * remembered, and none is moved by the lost-window rescue. */
+#define POPOUT_OS_MANAGED_FLAGS \
+    (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED | SDL_WINDOW_MINIMIZED)
+
+/* True while the window manager owns the pop-out's size and position. */
 static bool popOutGeometryIsOsManaged(const PopOutWindow *pw) {
     if (!pw->window) return false;
-    return (SDL_GetWindowFlags(pw->window) &
-            (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED)) != 0;
+    return (SDL_GetWindowFlags(pw->window) & POPOUT_OS_MANAGED_FLAGS) != 0;
 }
 
 /* Whether a remembered overview rect can still be handed back. A rect saved
@@ -1205,8 +1222,10 @@ static bool overviewSavedGeometryUsable(int x, int y, int w, int h) {
  * display's usable area, centred, and cut down to fit it.
  *
  * Run when a pop-out opens and on every display added, removed or moved. A
- * window the OS owns the geometry of (full screen or maximised) is left
- * alone, and so is everything when SDL reports no displays.
+ * window the OS owns the geometry of (full screen, maximised or minimised)
+ * is left alone, and so is everything when SDL reports no displays. The
+ * displays handed to the rule are their usable bounds, falling back to the
+ * full bounds only when SDL has no usable bounds for one.
  *
  * The rect checked includes the window's frame, so a window whose client
  * area is on screen but whose title bar is under the top of the display or
@@ -1214,7 +1233,7 @@ static bool overviewSavedGeometryUsable(int x, int y, int w, int h) {
 #define POPOUT_RESCUE_DISPLAYS_MAX 16
 static bool popOutRescueWindow(SDL_Window *w) {
     if (w == nullptr) return false;
-    if (SDL_GetWindowFlags(w) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED)) {
+    if (SDL_GetWindowFlags(w) & POPOUT_OS_MANAGED_FLAGS) {
         return false;
     }
 
@@ -4340,7 +4359,7 @@ static void scnPanelSavePopout(int owner) {
    pop-out is hidden, not destroyed (see popOutHide), and the popped row is
    left as it is, so the script's panel comes back popped out next time. */
 static void scnPanelViewRetire(int owner) {
-    if (s_popScnPanel[owner].open) popOutHide(&s_popScnPanel[owner]);
+    if (s_popScnPanel[owner].open) popOutHideQuiet(&s_popScnPanel[owner]);
     if (s_scnCloseAskOwner == owner) s_scnCloseAskCancel = true;
     s_scnPopInReq[owner] = false;
     s_scnHideReq[owner]  = false;
@@ -4494,14 +4513,15 @@ static void scnPanelPopIn(int owner) {
    the map overview has focus, so a panel window holding it would stop the
    tank. */
 static void scnPanelShowWithoutFocus(SDL_Window *w) {
-    char saved[16] = "";
+    /* A copy of the whole value, whatever its length, since the set below
+       may free the string SDL_GetHint returned. */
     const char *prev = SDL_GetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN);
-    const bool had = (prev != nullptr);
-    if (had) SDL_strlcpy(saved, prev, sizeof(saved));
+    char *saved = (prev != nullptr) ? SDL_strdup(prev) : nullptr;
     SDL_SetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, "0");
     SDL_ShowWindow(w);
-    if (had) {
+    if (saved != nullptr) {
         SDL_SetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, saved);
+        SDL_free(saved);
     } else {
         SDL_ResetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN);
     }
@@ -4736,7 +4756,11 @@ static void renderScnPanelCloseConfirm(bool inPopout, int ctxOwner) {
                             ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f), ds);
 
-    static float s_fadeScnClose = 0.0f;
+    /* One fade per ImGui context: the game window's, and each pop-out's,
+       so two confirms never share a counter. */
+    static float s_fadeScnClose[SCN_PANEL_OWNERS + 1] = {};
+    const int fadeIdx = (inPopout && ctxOwner >= 0 &&
+                         ctxOwner < SCN_PANEL_OWNERS) ? ctxOwner + 1 : 0;
     bool keep = true;
     bool began = ImGui::BeginPopupModal(title, &keep,
                                         ImGuiWindowFlags_AlwaysAutoResize |
@@ -4752,7 +4776,7 @@ static void renderScnPanelCloseConfirm(bool inPopout, int ctxOwner) {
             return;
         }
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
-                            imguiPopupFadeAlpha(&s_fadeScnClose));
+                            imguiPopupFadeAlpha(&s_fadeScnClose[fadeIdx]));
 
         const float pad   = ImGui::GetStyle().WindowPadding.x;
         const float wrapW = ImMin(ds.x - pad * 4.0f,
@@ -5175,7 +5199,10 @@ static void renderScenarioPanels(ClientSim *cs) {
                 scnPanelSavePopout(i);
             }
         } else if (!wantPop && pw->open) {
-            popOutHide(pw);
+            /* Every player hide (menu, X, Pop in) has already closed the
+               window by now, so what reaches here is automatic: the list
+               went, tablet mode, or the pop-out became unavailable. */
+            popOutHideQuiet(pw);
         }
 
         /* In the game window, only while there is something to draw, which
@@ -5308,9 +5335,9 @@ static void scnPanelViewsCleanup(void) {
 
 /* Brains > Info Overlay: one checkbox per script that has a panel this
    round, labelled with the script's name. */
-static void renderScnPanelMenuItems(void) {
+static void renderScnPanelMenuItems(bool afterBrains) {
     if (!scnPanelAnyListed() || !scnPanelCanReopen()) return;
-    ImGui::Separator();
+    if (afterBrains) ImGui::Separator();
     if (ImGui::BeginMenu(langGetText(STR_MENU_INFO_OVERLAY))) {
         for (int i = 0; i < SCN_PANEL_OWNERS; i++) {
             const ScnPanelView &v = s_scnViews[i];
@@ -6922,63 +6949,64 @@ static void renderMenuBar(ClientSim *cs) {
     /* ---- Brains -------------------------------------- */
     /* Brains also holds Info Overlay, the scenario panel toggles, so it is
        open to a game with a panel even where the server allows no brains.
-       The brain items are greyed out then, as the whole menu was. */
+       The brain items are left out then: a list of brains nobody may pick
+       is noise. */
     scnPanelViewsSync(cs);
     const bool aiAllowed = clientSimGetAiType(cs) != aiNone;
     if (ImGui::BeginMenu(langGetText(STR_MENU_BRAINS),
                          aiAllowed || (scnPanelAnyListed() && scnPanelCanReopen()))) {
-        ImGui::BeginDisabled(!aiAllowed);
-        bool running = luaBrainIsRunning() != 0;
-        int  runIdx  = luaBrainGetRunningIndex();
+        if (aiAllowed) {
+            bool running = luaBrainIsRunning() != 0;
+            int  runIdx  = luaBrainGetRunningIndex();
 
-        /* Manual (stop brain) entry — checked when no brain is active */
-        if (ImGui::MenuItem(langGetText(STR_MENU_MANUAL), nullptr, !running)) {
-            if (running) {
-                luaBrainStop();
-                mlBrainStopSingleton();
+            /* Manual (stop brain) entry — checked when no brain is active */
+            if (ImGui::MenuItem(langGetText(STR_MENU_MANUAL), nullptr, !running)) {
+                if (running) {
+                    luaBrainStop();
+                    mlBrainStopSingleton();
+                }
             }
-        }
 
-        /* One entry per discovered brain */
-        int numBrains = luaBrainGetNum();
-        if (numBrains > 0) {
-            ImGui::Separator();
-            for (int bi = 0; bi < numBrains; bi++) {
-                const char *name = luaBrainGetName(bi);
-                bool isActive    = running && (bi == runIdx);
-                if (ImGui::MenuItem(name ? name : "?", nullptr, isActive)) {
-                    if (!isActive) {
-                        const char *path = luaBrainGetPath(bi);
-                        if (path) {
-                            if (luaBrainGetType(bi) == BRAIN_TYPE_ONNX) {
-                                mlBrainStartSingleton(path, name ? name : "", cs);
-                            } else {
-                                luaBrainStart(path, name ? name : "", cs);
+            /* One entry per discovered brain */
+            int numBrains = luaBrainGetNum();
+            if (numBrains > 0) {
+                ImGui::Separator();
+                for (int bi = 0; bi < numBrains; bi++) {
+                    const char *name = luaBrainGetName(bi);
+                    bool isActive    = running && (bi == runIdx);
+                    if (ImGui::MenuItem(name ? name : "?", nullptr, isActive)) {
+                        if (!isActive) {
+                            const char *path = luaBrainGetPath(bi);
+                            if (path) {
+                                if (luaBrainGetType(bi) == BRAIN_TYPE_ONNX) {
+                                    mlBrainStartSingleton(path, name ? name : "", cs);
+                                } else {
+                                    luaBrainStart(path, name ? name : "", cs);
+                                }
+                                /* Refresh settings descriptor for the new brain */
+                                luaBrainFreeSettings(s_brainSettings);
+                                s_brainSettings      = nullptr;
+                                s_brainSettingsCount = 0;
+                                s_brainSettingsOpen  = false;
                             }
-                            /* Refresh settings descriptor for the new brain */
-                            luaBrainFreeSettings(s_brainSettings);
-                            s_brainSettings      = nullptr;
-                            s_brainSettingsCount = 0;
-                            s_brainSettingsOpen  = false;
                         }
                     }
                 }
             }
-        }
 
-        /* Settings entry — only when a Lua brain is running (ONNX has no settings) */
-        if (running && !mlBrainSingletonIsRunning()) {
-            ImGui::Separator();
-            if (ImGui::MenuItem(langGetText(STR_MENU_SETTINGS))) {
-                /* Re-fetch on every open so values are current */
-                luaBrainFreeSettings(s_brainSettings);
-                s_brainSettings      = luaBrainGetSettings(&s_brainSettingsCount);
-                s_brainSettingsOpen  = true;
+            /* Settings entry — only when a Lua brain is running (ONNX has no settings) */
+            if (running && !mlBrainSingletonIsRunning()) {
+                ImGui::Separator();
+                if (ImGui::MenuItem(langGetText(STR_MENU_SETTINGS))) {
+                    /* Re-fetch on every open so values are current */
+                    luaBrainFreeSettings(s_brainSettings);
+                    s_brainSettings      = luaBrainGetSettings(&s_brainSettingsCount);
+                    s_brainSettingsOpen  = true;
+                }
             }
         }
-        ImGui::EndDisabled();
 
-        renderScnPanelMenuItems();
+        renderScnPanelMenuItems(aiAllowed);
 
         ImGui::EndMenu();
     }

@@ -489,8 +489,8 @@ int run_scn_presentation_client_filters(void) {
 /* The client keeps one panel list per script. The panel byte on the wire
  * holds the panel id in the low four bits and the sending script's list
  * position in the high four. clientSimGetScnPanel answers the lowest
- * script that has a list, which is the round's own scenario when it has
- * one; clientSimGetScnPanelOf answers one script. */
+ * script whose list has something in it, which is the round's own
+ * scenario when it is drawing; clientSimGetScnPanelOf answers one script. */
 int run_client_scn_panel_owners(void) {
     ControlEvent evt;
     ClientSim   *cs = scnClientOnTeam(2, 1);
@@ -526,6 +526,26 @@ int run_client_scn_panel_owners(void) {
     evt.u.scnPanel.panel = SCN_PANEL_WIRE(0, 15);
     clientSimApplyControl(cs, &evt);
     UT_ASSERT(clientSimGetScnPanelOf(cs, 0, 0)->items[0].u.sprite.tile == 9);
+
+    /* The scenario clears its panel. The one-slot reader moves on to the
+       mod's list, which still has something in it. */
+    scnPanelEventFor(&evt, 0, 0xFF);
+    evt.u.scnPanel.len = 0;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(clientSimGetScnPanelOf(cs, 0, 0) != NULL);
+    UT_ASSERT(clientSimGetScnPanelOf(cs, 0, 0)->count == 0);
+    UT_ASSERT_MSG(clientSimGetScnPanel(cs, 0) ==
+                  clientSimGetScnPanelOf(cs, 0, 2),
+                  "a cleared scenario panel hid the mod's list");
+
+    /* The mod clears too: the reader answers the lowest cleared list, so a
+       cleared panel still reads apart from one never sent. */
+    scnPanelEventFor(&evt, 0, 0xFF);
+    evt.u.scnPanel.panel = SCN_PANEL_WIRE(0, 2);
+    evt.u.scnPanel.len = 0;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(clientSimGetScnPanel(cs, 0) == clientSimGetScnPanelOf(cs, 0, 0));
+    UT_ASSERT(clientSimGetScnPanel(cs, 0)->count == 0);
 
     /* The return to lobby drops every script's list. */
     memset(&evt, 0, sizeof(evt));

@@ -23,7 +23,8 @@
  *  when the display it was left on has gone.
  *
  *  No SDL and no preferences file here, so the unit tests can
- *  drive every case. gamefront.c reads and writes the rows;
+ *  drive every case. gamefront.c reads and writes the rows,
+ *  under the section names and keys defined here;
  *  sdl3imgui.cpp asks SDL for the displays and hands them in.
  *********************************************************/
 #ifndef SCN_PANEL_PREFS_H
@@ -49,6 +50,13 @@ typedef struct {
     bool open;
     int  x, y, w, h;
 } ScnPanelPopout;
+
+/* The preferences sections a script's shown flag and pop-out rows live in.
+ * The shown flag is a choice and syncs with the player's other machines.
+ * The pop-out row holds this machine's desktop coordinates, so prefs.c
+ * lists its section as device-local, the way it lists WINDOW. */
+#define SCN_PANEL_PREFS_SHOWN_SECTION  "SCENARIO PANEL SHOWN"
+#define SCN_PANEL_PREFS_POPOUT_SECTION "SCENARIO PANEL POPOUT"
 
 /* The smallest pop-out side the row may ask for, and the largest. Below the
  * floor the window has no room for the gear and the close button; above the
@@ -83,6 +91,28 @@ bool scnPanelPopoutParse(const char *row, ScnPanelPopout *out);
 void scnPanelPopoutFormat(const ScnPanelPopout *in, char *buf, size_t bufSz);
 
 /*********************************************************
+ *NAME:          scnPanelPrefsKey
+ *PURPOSE:
+ *  The key a script's layout and shown rows are kept under:
+ *  the script's name, with any byte below a space turned
+ *  into an underscore so the row stays readable in the
+ *  file. A longer name is cut to fit keySz.
+ *********************************************************/
+void scnPanelPrefsKey(const char *script, char *key, size_t keySz);
+
+/*********************************************************
+ *NAME:          scnPanelPrefsPopoutKey
+ *PURPOSE:
+ *  The key one panel's pop-out row is kept under: the
+ *  script's key, "#" and the panel id, so a script with a
+ *  second panel keeps one row per panel. Pass a buffer 8
+ *  bytes larger than the one scnPanelPrefsKey is given: the
+ *  name is cut 8 short of keySz, where that key cuts it.
+ *********************************************************/
+void scnPanelPrefsPopoutKey(const char *script, int panel, char *key,
+                            size_t keySz);
+
+/*********************************************************
  *NAME:          scnPanelYesNoParse / scnPanelYesNoWord
  *PURPOSE:
  *  The words the panel's yes/no settings are written as,
@@ -113,9 +143,13 @@ const char *scnPanelYesNoWord(bool yes);
  *  With no displays at all (n == 0) nothing can be checked
  *  and the window is left alone.
  *
+ *  The caller passes each display's usable bounds (the
+ *  display less its taskbar or dock), so a window whose
+ *  title bar sits under the taskbar counts as lost.
+ *
  *ARGUMENTS:
  *  win           - the window, in desktop coordinates
- *  displays      - each display's full bounds
+ *  displays      - each display's usable bounds
  *  n             - how many displays
  *  primaryUsable - the primary display's usable bounds
  *  out           - the moved rectangle, when lost
