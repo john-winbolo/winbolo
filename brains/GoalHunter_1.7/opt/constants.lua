@@ -4733,22 +4733,24 @@ M.ORDER_LATCH_REBROADCAST_TICKS = 1500   -- keel 1500 (moot; master off) 30 s
 
 -- BOT PINGS.  When a team turns this on, a bot puts an ATTACK marker on the
 -- map every time it takes an attack_pill or attack_tank goal, so the team can
--- see what the bots are going for without reading chat.  OFF by default: it
--- is map clutter until somebody asks for it.  The team setting is
+-- see what the bots are going for without reading chat.  ON by default
+-- (2026-09-29): the markers show the team what the bots do while the bots
+-- stay quiet in chat (BOT_CHAT_DEFAULT below).  The team setting is
 -- "bot pings on" / "bot pings off"; this is the value a game starts at.
 --
 -- The ON_MY_WAY marker a bot places when it takes an ORDER is NOT covered by
 -- this switch.  That one answers a person who just gave the order, so it is
 -- always sent.
-M.BOT_PINGS_DEFAULT      = false  -- keel false
+M.BOT_PINGS_DEFAULT      = true   -- keel false (2026-09-29: pings on by default)
 -- DO THE BOTS SPEAK THEIR GOAL CONFIRMATIONS?  The team setting is "bot chat
--- on" / "bot chat off"; this is the value a game starts at, and it is TRUE
--- because speaking is what the bots have always done.  Off silences the goal
+-- on" / "bot chat off"; this is the value a game starts at, and it is FALSE
+-- (2026-09-29): the bots are quiet until a team says "bot chat on", and
+-- "bot pings" (ON by default) shows their goals on the map.  Off silences the goal
 -- lines only -- the ack, the group ack, "Still on it.", "holding 10s",
 -- "Released", "Refuelling, coming back".  An answer a person is owed for a
 -- line they just typed (help, "didn't understand", "Busy", the setting
 -- confirmations) is never silenced: see sayg in orders.lua.
-M.BOT_CHAT_DEFAULT       = true   -- keel true (moot; master off)
+M.BOT_CHAT_DEFAULT       = false  -- keel true (moot; master off)
 -- Shortest gap between two ATTACK markers from the SAME bot about the SAME
 -- target.  A bot re-plans the same goal often, and without this every replan
 -- would put another marker on the same pill.  1500 ticks is 30 s.
