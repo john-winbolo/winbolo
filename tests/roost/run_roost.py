@@ -82,8 +82,28 @@ def args_for(name):
     """
     override = HERE / (name + ".args")
     if override.exists():
-        return override.read_text(encoding="utf-8").split()
-    return list(DEFAULT_ARGS)
+        args = override.read_text(encoding="utf-8").split()
+    else:
+        args = list(DEFAULT_ARGS)
+    return with_bot_chat_on(args)
+
+
+def with_bot_chat_on(args):
+    """Start every bot with "bot chat" ON.
+
+    A game starts with the bots quiet (BOT_CHAT_DEFAULT is false in
+    constants.lua), but most of these tests read the spoken acks to see that
+    an order was taken.  So every bot on the test's -brain gets
+    cfg=BOT_CHAT_DEFAULT=true through -bot-init.  A test that names its own
+    -bot-init is left alone.
+    """
+    if "-bot-init" in args or "-brain" not in args:
+        return args
+    i = args.index("-brain")
+    if i + 1 >= len(args):
+        return args
+    brain = args[i + 1]
+    return args + ["-bot-init", "0-15=%s[cfg=BOT_CHAT_DEFAULT=true]" % brain]
 
 
 def run_one(name, exe, port, ticks, timeout, keep_output):
