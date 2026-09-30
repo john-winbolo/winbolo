@@ -959,6 +959,15 @@ static SDL_Renderer *s_overviewCrosshairRenderer = nullptr;
 /* Last frame's running state, so the start of a game can be told from the
    middle of one — see the auto-hide/reopen in sdl3ImguiPumpAndRender. */
 static bool          s_overviewWasRunning    = false;
+#ifdef __EMSCRIPTEN__
+/* The web has no pop-outs, so the overview is an ImGui window in the main
+   context instead, drawn from a view rendered on the main renderer. The size
+   is the window's content region as of the last frame, which is what the
+   next frame's offscreen render is made at. */
+static bool          s_showMapOverviewPanel  = false;
+static int           s_mapOverviewPanelW     = 0;
+static int           s_mapOverviewPanelH     = 0;
+#endif
 
 /* Whether the windows the player drives from (main window + Map Overview)
    held keyboard focus as of the end of the last event poll, and whether any
@@ -1247,6 +1256,15 @@ static bool overviewSuppressed(void) { return s_noOverview; }
  * it, so a monitor that has been unplugged since the last run cannot strand
  * the window off-screen. Same test the main window does in winbolo.c. */
 static void mapOverviewOpen(void) {
+#ifdef __EMSCRIPTEN__
+    /* The window inside the canvas. The app flag means browser full screen
+       here, which the full screen map never follows, so the test is the map
+       mode itself: a game never starts in it on the web, so the game-start
+       reopen cannot run ahead of it. */
+    if (sdl3DrawIsOverviewInWindow() || overviewSuppressed()) return;
+    s_showMapOverviewPanel   = true;
+    gameFrontShowMapOverview = true;
+#else
     /* Full screen mode owns the whole window and draws the same map itself,
        so the pop-out never opens while it is on — in a game, in the lobby or
        in the menus. The test is the app flag rather than the in-window view
@@ -1289,6 +1307,7 @@ static void mapOverviewOpen(void) {
         SDL_RaiseWindow(s_popMapOverview.window);
     }
     gameFrontShowMapOverview = true;
+#endif
 }
 
 /* Every path that takes the overview off screen comes through here, so the
@@ -1296,7 +1315,11 @@ static void mapOverviewOpen(void) {
  * back. overviewViewHandleInput only restores it when the pointer leaves the
  * map, which never happens when the window goes away underneath it. */
 static void mapOverviewHide(void) {
+#ifdef __EMSCRIPTEN__
+    s_showMapOverviewPanel = false;
+#else
     if (s_popMapOverview.open) popOutHide(&s_popMapOverview);
+#endif
     overviewViewReleaseCursor(s_overviewView);
 }
 
@@ -2335,6 +2358,84 @@ static void renderMapOverviewContent(ClientSim *cs) {
                     IM_COL32(230, 230, 230, 255), status);
     }
 }
+
+#ifdef __EMSCRIPTEN__
+/* True while the web's overview window is on screen: asked for, a game
+   running, and the full screen map not up — that draws the same map itself. */
+static bool mapOverviewPanelShown(ClientSim *cs) {
+    return s_showMapOverviewPanel && !sdl3DrawIsOverviewInWindow() &&
+           cs != nullptr && clientSimIsRunning(cs);
+}
+
+/* Draw the map into the view's offscreen on the main renderer, at the size
+   the window's content region had last frame. Called before the main ImGui
+   frame is built, for the reason the pop-out's render gives: the target
+   switch does not belong in the middle of a draw list. The tile sheet and
+   crosshair are the main renderer's own, and the target found on entry is
+   put back, since the view's render always leaves the window's. */
+static void mapOverviewPanelRenderOffscreen(ClientSim *cs) {
+    if (!mapOverviewPanelShown(cs)) return;
+    if (s_mapOverviewPanelW <= 0 || s_mapOverviewPanelH <= 0) return;
+    if (!s_overviewView) {
+        s_overviewView = overviewViewCreate();
+        /* Same one-off camera restore as the pop-out's. */
+        OverviewCamera *cam = overviewViewCamera(s_overviewView);
+        if (cam) {
+            overviewCameraSetZoomScale(cam, gameFrontOverviewZoom);
+            cam->follow = gameFrontOverviewFollow;
+        }
+    }
+    if (!s_overviewSnapshot) {
+        s_overviewSnapshot = overviewSnapshotCreate();
+    }
+    SDL_Texture *ovCross = overviewEnsureCrosshair(s_renderer);
+    /* Only the fill under the lock, as for the pop-out. */
+    clientMutexWaitFor();
+    clientSimFillOverviewSnapshot(cs, s_overviewSnapshot);
+    clientMutexRelease();
+    SDL_Texture *prevTarget = SDL_GetRenderTarget(s_renderer);
+    overviewViewRenderOffscreen(s_overviewView, s_renderer,
+                                sdl3DrawGetTilesTexture(),
+                                sdl3DrawGetSheetScale(), ovCross,
+                                s_mapOverviewPanelW, s_mapOverviewPanelH,
+                                s_overviewSnapshot, false);
+    SDL_SetRenderTarget(s_renderer, prevTarget);
+}
+
+/* The overview window inside the canvas. Movable and resizable; the close
+   box is an explicit close, so it stays shut for the next game. Neither the
+   position nor the size is saved. No scrolling: while the window is being
+   resized the image is a frame behind the content region, and the wheel
+   belongs to the map. */
+static void renderMapOverviewPanel(ClientSim *cs) {
+    if (!mapOverviewPanelShown(cs)) return;
+    ImGuiIO &io = ImGui::GetIO();
+    float w = (float)gameFrontOverviewW;
+    float h = (float)gameFrontOverviewH;
+    if (w > io.DisplaySize.x * 0.6f) w = io.DisplaySize.x * 0.6f;
+    if (h > io.DisplaySize.y * 0.6f) h = io.DisplaySize.y * 0.6f;
+    ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_FirstUseEver);
+    char title[128];
+    SDL_snprintf(title, sizeof(title), "%s###mapoverview",
+                 langGetText(STR_MENU_MAP_OVERVIEW));
+    bool open = true;
+    /* The map fills the window edge to edge, as in the pop-out. */
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    bool visible = ImGui::Begin(title, &open,
+                                ImGuiWindowFlags_NoCollapse |
+                                ImGuiWindowFlags_NoScrollbar |
+                                ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PopStyleVar();
+    if (visible) {
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        s_mapOverviewPanelW = (int)avail.x;
+        s_mapOverviewPanelH = (int)avail.y;
+        renderMapOverviewContent(cs);
+    }
+    ImGui::End();
+    if (!open) mapOverviewClose();
+}
+#endif
 
 /* -------------------------------------------------------
  * In-window Map Overview
@@ -5730,9 +5831,17 @@ static void renderMenuBar(ClientSim *cs) {
             if (ImGui::MenuItem(langGetText(STR_DLGSYSINFO_TITLE),     nullptr, s_showSysInfo))   { if (!s_showSysInfo) sysInfoGraphReset(); s_showSysInfo = !s_showSysInfo; }
             if (ImGui::MenuItem(langGetText(STR_DLGNETINFO_TITLE),     nullptr, s_showNetInfo))   { if (!s_showNetInfo) pingGraphReset(); s_showNetInfo = !s_showNetInfo; }
 #ifdef __EMSCRIPTEN__
-            /* The web has the full screen map but no map overview pop-out, so
-               only the first of the desktop pair above. */
+            /* The desktop pair above, with the overview as a window inside
+               the canvas. Greyed out while the full screen map is up rather
+               than on the app flag, which means browser full screen here. */
             ImGui::Separator();
+            if (ImGui::MenuItem(langGetText(STR_MENU_MAP_OVERVIEW), KMOD_PRIMARY_LABEL "O", s_showMapOverviewPanel,
+                                cs != nullptr && clientSimIsRunning(cs) && !sdl3DrawIsOverviewInWindow() &&
+                                !overviewSuppressed())) {
+                if (s_showMapOverviewPanel) mapOverviewClose(); else mapOverviewOpen();
+            }
+            if (overviewSuppressed() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("%s", langGetText(STR_MENU_CLASSIC_MODE_TIP));
             if (ImGui::MenuItem(langGetText(STR_MENU_OVERVIEW_IN_WINDOW), "Alt+Enter",
                                 sdl3DrawIsOverviewInWindow(),
                                 cs != nullptr && clientSimIsRunning(cs) && !overviewSuppressed())) {
@@ -7757,6 +7866,14 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         gameFrontReloadSkins();
     }
 
+#ifdef __EMSCRIPTEN__
+    /* The overview window's map, while nothing of this frame's ImGui draw
+       list exists yet and after a skin reload has rebuilt the tile sheet. The
+       game view and the full screen map were drawn before this call, so the
+       target switch lands between whole draws, as theirs does. */
+    mapOverviewPanelRenderOffscreen(cs);
+#endif
+
     /* Build the ImGui frame */
     ImGui_ImplSDLRenderer3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
@@ -8127,6 +8244,9 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     renderSysInfoPanel();
     renderNetInfoPanel(cs);
     renderGameInfoPanel(cs);
+#ifdef __EMSCRIPTEN__
+    renderMapOverviewPanel(cs);
+#endif
     renderSendMsgPanel(cs);
     renderPlayersPanel(cs);
     renderScenarioPanel(cs);
@@ -8573,9 +8693,10 @@ bool sdl3ImguiIsSendMsgOpen(void) {
     return s_showSendMsg;
 }
 /* The overview has no in-window twin, so in tablet mode there is nothing to
- * show and nothing to report open. */
+ * show and nothing to report open. On the web mapOverviewOpen and
+ * mapOverviewClose act on the window inside the canvas. */
 void sdl3ImguiShowMapOverview(bool open) {
-#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+#if !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
     if (!uiModeIsTablet()) {
         if (open) mapOverviewOpen(); else mapOverviewClose();
         return;
@@ -8584,7 +8705,9 @@ void sdl3ImguiShowMapOverview(bool open) {
     (void)open;
 }
 bool sdl3ImguiIsMapOverviewOpen(void) {
-#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+#ifdef __EMSCRIPTEN__
+    if (!uiModeIsTablet()) return s_showMapOverviewPanel;
+#elif !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
     if (!uiModeIsTablet()) return s_popMapOverview.open;
 #endif
     return false;
