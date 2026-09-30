@@ -649,3 +649,96 @@ int run_scenario_announce_place(void) {
 
     return 0;
 }
+
+/* The status line's text, and where it and the announcement go together.
+ *
+ * The text is the script's line, and with a countdown four spaces and the
+ * time left as a panel countdown shows it. The status line takes the top
+ * row; the game view then treats its row as a band the width of the view,
+ * so an announcement at the top drops below it. An announcement placed
+ * "upper" starts a quarter of the way down and keeps the same rules from
+ * there. Same classic view as run_scenario_announce_place. */
+int run_scenario_status_line(void) {
+    const ScnAnnounceRect view = { 81.0f, 18.0f, 321.0f, 258.0f };
+    const float floorY = 130.0f;
+    char  out[SCN_STATUS_LINE_MAX];
+    float x = -1.0f;
+    float y = -1.0f;
+
+    /* With a countdown: 2:44 left. */
+    UT_ASSERT(scnStatusLineText("Wave 3/10", 1000 + 164 * TICKS_PER_SEC, 1000,
+                                out, sizeof(out)));
+    UT_ASSERT(strcmp(out, "Wave 3/10    2:44") == 0);
+
+    /* The countdown stops at 0:00 rather than wrapping. */
+    UT_ASSERT(scnStatusLineText("Wave 3/10", 1000, 5000, out, sizeof(out)));
+    UT_ASSERT(strcmp(out, "Wave 3/10    0:00") == 0);
+
+    /* No countdown: the line alone. */
+    UT_ASSERT(scnStatusLineText("Wave 1/5 over", SCN_STATUS_NO_COUNTDOWN, 1000,
+                                out, sizeof(out)));
+    UT_ASSERT(strcmp(out, "Wave 1/5 over") == 0);
+
+    /* Nothing to draw. */
+    out[0] = 'x';
+    UT_ASSERT(!scnStatusLineText(NULL, 5, 0, out, sizeof(out)));
+    UT_ASSERT(out[0] == '\0');
+    UT_ASSERT(!scnStatusLineText("", 5, 0, out, sizeof(out)));
+    UT_ASSERT(!scnStatusLineText("x", 5, 0, NULL, 16));
+
+    /* A line the length of the field with a countdown still fits. */
+    {
+        char big[PACKET_MAX_CHAT_MESSAGE + 1];
+        memset(big, 'w', sizeof(big) - 1);
+        big[sizeof(big) - 1] = '\0';
+        UT_ASSERT(scnStatusLineText(big, 90 * 60 * TICKS_PER_SEC, 0, out,
+                                    sizeof(out)));
+        UT_ASSERT(strlen(out) == sizeof(big) - 1 + 4 + 5);
+        UT_ASSERT(strcmp(out + sizeof(big) - 1, "    90:00") == 0);
+    }
+
+    /* The status line on the top row, one unit (here 1 px) below the top. */
+    scnAnnouncePlace(view, 100.0f, 20.0f, 1.0f, 4.0f, floorY, NULL, 0, &x, &y);
+    UT_ASSERT(x == 151.0f);
+    UT_ASSERT(y == 19.0f);
+
+    /* Its row as a band: an announcement at the top drops one gap below. */
+    {
+        const ScnAnnounceRect band[1] = { { 81.0f, 19.0f, 321.0f, 39.0f } };
+        scnAnnouncePlace(view, 100.0f, 20.0f, 4.0f, 4.0f, floorY, band, 1,
+                         &x, &y);
+        UT_ASSERT(x == 151.0f);
+        UT_ASSERT(y == 43.0f);
+
+        /* Placed "upper": centred on the line a quarter of the way down
+           (18 + 240 / 4 = 78), so its top is at 68, clear of the band. */
+        scnAnnouncePlaceFrom(view, 100.0f, 20.0f, 68.0f, 4.0f, floorY, band, 1,
+                             &x, &y);
+        UT_ASSERT(x == 151.0f);
+        UT_ASSERT(y == 68.0f);
+    }
+
+    /* Something at the quarter line pushes an upper line down below it, and
+       never past the floor: with no room it goes back to its start row. */
+    {
+        const ScnAnnounceRect thing[1] = { { 81.0f, 60.0f, 321.0f, 90.0f } };
+        scnAnnouncePlaceFrom(view, 100.0f, 20.0f, 68.0f, 4.0f, floorY, thing, 1,
+                             &x, &y);
+        UT_ASSERT(x == 151.0f);
+        UT_ASSERT(y == 94.0f);
+    }
+    {
+        const ScnAnnounceRect thing[1] = { { 81.0f, 60.0f, 321.0f, 125.0f } };
+        scnAnnouncePlaceFrom(view, 100.0f, 20.0f, 68.0f, 4.0f, floorY, thing, 1,
+                             &x, &y);
+        UT_ASSERT(x == 151.0f);
+        UT_ASSERT(y == 68.0f);
+    }
+
+    /* A start above the view starts at the top of it. */
+    scnAnnouncePlaceFrom(view, 100.0f, 20.0f, 0.0f, 4.0f, floorY, NULL, 0, &x,
+                         &y);
+    UT_ASSERT(y == 18.0f);
+
+    return 0;
+}

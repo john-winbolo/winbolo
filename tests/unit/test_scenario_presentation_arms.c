@@ -1222,6 +1222,227 @@ int run_scn_arm_markers_scores_reset(void) {
 }
 
 /* ================================================================
+ * 9b. The status line and the announcement's place: what the arms publish
+ *     and record, the status line's no-change rule, the joiner replay,
+ *     the ring snapshot and the reset.
+ * ================================================================ */
+
+static ScnOpResult paStatus(ServerSim *sim, BYTE target, uint32_t endsAt,
+                            const char *text) {
+    ScenarioOp op;
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_STATUS;
+    op.u.status.target = target;
+    op.u.status.endsAt = endsAt;
+    SDL_strlcpy(op.u.status.text, text, sizeof(op.u.status.text));
+    return serverSimApplyScenarioOp(sim, &op, NULL);
+}
+
+typedef struct {
+    int          count;
+    ControlEvent last;
+} PaStatusCapture;
+
+static void paStatusCb(void *ctx, const ControlEvent *evt) {
+    PaStatusCapture *c = (PaStatusCapture *)ctx;
+    if (evt->type == CTRL_SCN_STATUS) {
+        c->count++;
+        c->last = *evt;
+    }
+}
+
+/* Count the CTRL_SCN_STATUS records in a control snapshot, or -1 when the
+   framing does not close. */
+static int paSnapshotStatus(const uint8_t *snap, int snapLen) {
+    int pos = 0;
+    int found = 0;
+    while (pos < snapLen) {
+        uint16_t type;
+        uint16_t bodyLen;
+        if (pos + 4 > snapLen) return -1;
+        type    = (uint16_t)((snap[pos] << 8) | snap[pos + 1]);
+        bodyLen = (uint16_t)((snap[pos + 2] << 8) | snap[pos + 3]);
+        if (pos + 4 + (int)bodyLen > snapLen) return -1;
+        if (type == (uint16_t)CTRL_SCN_STATUS) found++;
+        pos += 4 + (int)bodyLen;
+    }
+    return found;
+}
+
+int run_scn_arm_status_and_place(void) {
+    ReplayHarness     h;
+    ServerSim        *sim;
+    PaStatusCapture   st;
+    PaCapture         cap;
+    PaLogHits         hits;
+    SubscriberHandle  stHandle;
+    ScenarioOp        op;
+
+    memset(&h, 0, sizeof(h));
+    UT_ASSERT_MSG(replayHarnessStartRecording(&h, "scnStatusArms", "Panelist"),
+                  "could not start recording");
+    sim = h.sim;
+    replayHarnessTick(&h, 4);
+    paSubscribe(sim, &cap);
+    memset(&st, 0, sizeof(st));
+    stHandle = serverSimRegisterSubscriber(sim, paStatusCb, &st);
+    memset(&st, 0, sizeof(st));
+
+    /* ── status ── set, for everyone, with a countdown. */
+    UT_ASSERT(paStatus(sim, 0, 123456, "Wave 3/10") == SCN_OP_OK);
+    UT_ASSERT(st.count == 1);
+    UT_ASSERT(strcmp(st.last.u.scnStatus.text, "Wave 3/10") == 0);
+    UT_ASSERT(st.last.u.scnStatus.endsAt == 123456);
+    UT_ASSERT(st.last.u.scnStatus.destTeam == 0);
+    UT_ASSERT(st.last.u.scnStatus.destPlayer == 0xFF);
+
+    /* The same line again sends nothing: a script may restate it. */
+    UT_ASSERT(paStatus(sim, 0, 123456, "Wave 3/10") == SCN_OP_OK);
+    UT_ASSERT_MSG(st.count == 1,
+                  "restating the same line sent %d event(s)", st.count - 1);
+
+    /* A new countdown with the same text is a change. */
+    UT_ASSERT(paStatus(sim, 0, 200000, "Wave 3/10") == SCN_OP_OK);
+    UT_ASSERT(st.count == 2);
+    UT_ASSERT(st.last.u.scnStatus.endsAt == 200000);
+
+    /* Held to one team, and without a countdown. */
+    UT_ASSERT(paStatus(sim, PA_TEAM, SCN_STATUS_NO_COUNTDOWN, "Hold") ==
+              SCN_OP_OK);
+    UT_ASSERT(st.count == 3);
+    UT_ASSERT(st.last.u.scnStatus.destTeam == PA_TEAM);
+    UT_ASSERT(st.last.u.scnStatus.endsAt == SCN_STATUS_NO_COUNTDOWN);
+
+    /* The clear, and a second clear that has nothing to take down. The
+       countdown of a clear is not read. */
+    UT_ASSERT(paStatus(sim, PA_TEAM, 55, "") == SCN_OP_OK);
+    UT_ASSERT(st.count == 4);
+    UT_ASSERT(st.last.u.scnStatus.text[0] == '\0');
+    UT_ASSERT(st.last.u.scnStatus.endsAt == SCN_STATUS_NO_COUNTDOWN);
+    UT_ASSERT(paStatus(sim, PA_TEAM, 55, "") == SCN_OP_OK);
+    UT_ASSERT(st.count == 4);
+
+    /* A target past the roster is refused. */
+    UT_ASSERT(paStatus(sim, 0xFF, 0, "x") != SCN_OP_OK);
+    UT_ASSERT(st.count == 4);
+
+    /* ── announce place ── upper, then the top. */
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_ANNOUNCE;
+    op.u.announce.ticks = 300;
+    op.u.announce.place = SCN_ANNOUNCE_PLACE_UPPER;
+    SDL_strlcpy(op.u.announce.text, "News", sizeof(op.u.announce.text));
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_OK);
+    UT_ASSERT(cap.announceCount == 1);
+    UT_ASSERT(cap.lastAnnounce.u.scnAnnounce.place == SCN_ANNOUNCE_PLACE_UPPER);
+    UT_ASSERT(paAnnounce(sim, 0, 300, "Top") == SCN_OP_OK);
+    UT_ASSERT(cap.announceCount == 2);
+    UT_ASSERT(cap.lastAnnounce.u.scnAnnounce.place == SCN_ANNOUNCE_PLACE_TOP);
+    /* A place past the set is refused. */
+    op.u.announce.place = SCN_ANNOUNCE_PLACE_COUNT;
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_RANGE);
+    UT_ASSERT(cap.announceCount == 2);
+
+    serverSimUnregisterSubscriber(sim, stHandle);
+    replayHarnessTick(&h, 4);
+    UT_ASSERT_MSG(replayHarnessStopRecording(&h), "could not stop recording");
+
+    /* ── the records ── one per change, none for the restatement or the
+       second clear: destTeam, destPlayer, endsAt as a big-endian u32, then
+       the line as a pascal string. */
+    UT_ASSERT_MSG(paFindLogged(h.path, (uint8_t)log_ScnStatus, &hits),
+                  "the recording did not end on a clean quit: %s", h.path);
+    UT_ASSERT_MSG(hits.count == 4,
+                  "the recording holds %d log_ScnStatus record(s), expected 4",
+                  hits.count);
+    UT_ASSERT(hits.payloadLen[0] == 7 + 9);
+    UT_ASSERT(hits.payload[0][0] == 0);
+    UT_ASSERT(hits.payload[0][1] == 0xFF);
+    UT_ASSERT(((uint32_t)hits.payload[0][2] << 24 |
+               (uint32_t)hits.payload[0][3] << 16 |
+               (uint32_t)hits.payload[0][4] << 8 |
+               (uint32_t)hits.payload[0][5]) == 123456u);
+    UT_ASSERT(hits.payload[0][6] == 9);
+    UT_ASSERT(memcmp(hits.payload[0] + 7, "Wave 3/10", 9) == 0);
+    UT_ASSERT(hits.payload[2][0] == PA_TEAM);
+    UT_ASSERT(hits.payload[2][2] == 0xFF && hits.payload[2][5] == 0xFF);
+    UT_ASSERT(hits.payloadLen[3] == 7);            /* the clear */
+    UT_ASSERT(hits.payload[3][6] == 0);
+
+    /* The upper announcement carries its place after the text; the top one
+       is recorded as it always was. */
+    UT_ASSERT(paFindLogged(h.path, (uint8_t)log_ScnAnnounce, &hits));
+    UT_ASSERT(hits.count == 2);
+    UT_ASSERT_MSG(hits.payloadLen[0] == 5 + 4 + 1,
+                  "the upper line's record is %d bytes", hits.payloadLen[0]);
+    UT_ASSERT(hits.payload[0][5 + 4] == SCN_ANNOUNCE_PLACE_UPPER);
+    UT_ASSERT(hits.payloadLen[1] == 5 + 3);
+
+    replayHarnessStop(&h);
+
+    /* ── the joiner replay ── a line for everyone and one held to the
+       joiner's team: the team's line is the narrower and is the one kept;
+       a joiner on another team keeps everyone's. */
+    {
+        ServerSim        *js = paMakeMarkerScoreSim();
+        ClientSim        *onTeam;
+        ClientSim        *offTeam;
+        SubscriberHandle  onHandle;
+        SubscriberHandle  offHandle;
+        uint32_t          endsAt = 0;
+        uint8_t          *snap;
+        int               snapLen;
+
+        UT_ASSERT_MSG(js != NULL, "the fixture's ops were refused");
+        UT_ASSERT(paStatus(js, 0, 9000, "Everyone") == SCN_OP_OK);
+        UT_ASSERT(paStatus(js, PA_JOIN_TEAM, 7000, "Team line") == SCN_OP_OK);
+
+        onTeam = paJoin(js, PA_SLOT_HOST, &onHandle);
+        UT_ASSERT(onTeam != NULL);
+        UT_ASSERT_MSG(clientSimGetScnStatus(onTeam, &endsAt) != NULL,
+                      "the joiner was not given a status line");
+        UT_ASSERT_MSG(strcmp(clientSimGetScnStatus(onTeam, NULL),
+                             "Team line") == 0,
+                      "the joiner on team %d keeps \"%s\"", PA_JOIN_TEAM,
+                      clientSimGetScnStatus(onTeam, NULL));
+        UT_ASSERT(endsAt == 7000);
+
+        offTeam = paJoin(js, PA_SLOT_OTHER, &offHandle);
+        UT_ASSERT(offTeam != NULL);
+        UT_ASSERT(clientSimGetScnStatus(offTeam, &endsAt) != NULL);
+        UT_ASSERT(strcmp(clientSimGetScnStatus(offTeam, NULL), "Everyone") == 0);
+        UT_ASSERT(endsAt == 9000);
+
+        /* The ring's snapshot takes everyone's line and not the team's. */
+        snap = (uint8_t *)malloc(LOG_CONTROL_SNAPSHOT_MAX);
+        UT_ASSERT(snap != NULL);
+        snapLen = serverSimSerializeControlSnapshot(js, snap,
+                                                    LOG_CONTROL_SNAPSHOT_MAX);
+        UT_ASSERT(snapLen > 0);
+        UT_ASSERT_MSG(paSnapshotStatus(snap, snapLen) == 1,
+                      "the snapshot holds %d status record(s), expected 1",
+                      paSnapshotStatus(snap, snapLen));
+        free(snap);
+
+        /* After the reset a joiner is given none. */
+        serverSimScenarioResetPresentation(js);
+        memset(&st, 0, sizeof(st));
+        stHandle = serverSimRegisterSubscriber(js, paStatusCb, &st);
+        UT_ASSERT_MSG(st.count == 0,
+                      "a joiner after the reset was sent %d CTRL_SCN_STATUS",
+                      st.count);
+        serverSimUnregisterSubscriber(js, stHandle);
+
+        serverSimUnregisterSubscriber(js, offHandle);
+        serverSimUnregisterSubscriber(js, onHandle);
+        clientSimDestroy(offTeam);
+        clientSimDestroy(onTeam);
+        serverSimDestroy(js);
+    }
+    return 0;
+}
+
+/* ================================================================
  * 10. Over the real transport: a second client joining a running round
  *     after the markers and scores were set ends up holding them.
  * ================================================================ */

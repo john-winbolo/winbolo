@@ -551,6 +551,7 @@ static const char *const kSlEveryRowCalls =
     "  panel       = function() return game.panel(0, {}) end,\n"
     "  score       = function() return game.score(0, 1, \"pts\") end,\n"
     "  announce    = function() return game.announce(\"hello\", 1) end,\n"
+    "  status      = function() return game.status(\"hello\", 100) end,\n"
     "  marker      = function() return game.marker(0, 100, 100) end,\n"
     "  marker_follow = function() return game.marker_follow(1, 0) end,\n"
     "  clear_marker = function() return game.clear_marker(0) end,\n"
@@ -2174,10 +2175,12 @@ typedef struct {
     int          scores;
     int          announces;
     int          markers;
+    int          statuses;
     ControlEvent panel;
     ControlEvent score;
     ControlEvent announce;
     ControlEvent marker;
+    ControlEvent status;
 } SlCapture;
 
 static void slCaptureCb(void *ctx, const ControlEvent *evt) {
@@ -2188,6 +2191,7 @@ static void slCaptureCb(void *ctx, const ControlEvent *evt) {
         case CTRL_SCN_SCORE:    c->scores++;    c->score = *evt;    break;
         case CTRL_SCN_ANNOUNCE: c->announces++; c->announce = *evt; break;
         case CTRL_SCN_MARKER:   c->markers++;   c->marker = *evt;   break;
+        case CTRL_SCN_STATUS:   c->statuses++;  c->status = *evt;   break;
         default: break;
     }
 }
@@ -2623,6 +2627,70 @@ int run_scenario_lua_score_and_announce(void) {
     slGlobalStr(L, "code", code, sizeof(code));
     UT_ASSERT_MSG(strcmp(code, scenarioLuaResultName(SCN_OP_RANGE)) == 0,
                   "the zero-second line answered '%s'", code);
+
+    /* The place: left out is the top, "upper" is a quarter of the way down,
+       and a word outside the set is the call written wrong. */
+    UT_ASSERT(cap.announce.u.scnAnnounce.place == SCN_ANNOUNCE_PLACE_TOP);
+    UT_ASSERT_MSG(slRun(L, "ok = game.announce(\"news\", 2, nil, \"upper\")\n",
+                        err, sizeof(err)),
+                  "the upper line would not run: %s", err);
+    UT_ASSERT_MSG(slGlobalBool(L, "ok"), "an upper line was not taken");
+    UT_ASSERT(cap.announces == 3);
+    UT_ASSERT_MSG(cap.announce.u.scnAnnounce.place == SCN_ANNOUNCE_PLACE_UPPER,
+                  "the upper line reached the arm with place %u",
+                  (unsigned)cap.announce.u.scnAnnounce.place);
+    UT_ASSERT_MSG(!slRun(L, "game.announce(\"x\", 2, nil, \"sideways\")\n", err,
+                         sizeof(err)),
+                  "an unknown place was taken");
+    UT_ASSERT(cap.announces == 3);
+
+    /* The status line: a line alone, then with a countdown to a tick. */
+    UT_ASSERT_MSG(slRun(L, "ok = game.status(\"Wave 1/5 over\")\n", err,
+                        sizeof(err)),
+                  "the status line would not run: %s", err);
+    UT_ASSERT_MSG(slGlobalBool(L, "ok"), "a status line was not taken");
+    UT_ASSERT(cap.statuses == 1);
+    UT_ASSERT(strcmp(cap.status.u.scnStatus.text, "Wave 1/5 over") == 0);
+    UT_ASSERT(cap.status.u.scnStatus.endsAt == SCN_STATUS_NO_COUNTDOWN);
+
+    UT_ASSERT_MSG(slRun(L, "ok = game.status(\"Wave 3/10\", 16400)\n", err,
+                        sizeof(err)),
+                  "the counted status line would not run: %s", err);
+    UT_ASSERT(slGlobalBool(L, "ok"));
+    UT_ASSERT(cap.statuses == 2);
+    UT_ASSERT(strcmp(cap.status.u.scnStatus.text, "Wave 3/10") == 0);
+    UT_ASSERT_MSG(cap.status.u.scnStatus.endsAt == 16400,
+                  "the countdown reached the arm as tick %u",
+                  (unsigned)cap.status.u.scnStatus.endsAt);
+    UT_ASSERT(cap.status.u.scnStatus.destTeam == 0);
+    UT_ASSERT(cap.status.u.scnStatus.destPlayer == 0xFF);
+
+    /* Saying it again is taken and sends nothing. */
+    UT_ASSERT(slRun(L, "ok = game.status(\"Wave 3/10\", 16400)\n", err,
+                    sizeof(err)));
+    UT_ASSERT(slGlobalBool(L, "ok"));
+    UT_ASSERT(cap.statuses == 2);
+
+    /* Held to a team. */
+    UT_ASSERT(slRun(L, "ok = game.status(\"Hold\", nil, { team = 2 })\n", err,
+                    sizeof(err)));
+    UT_ASSERT(slGlobalBool(L, "ok"));
+    UT_ASSERT(cap.statuses == 3);
+    UT_ASSERT(cap.status.u.scnStatus.destTeam == 2);
+
+    /* A negative tick is refused as out of range. */
+    UT_ASSERT(slRun(L, "res, code = game.status(\"x\", -1)\n", err,
+                    sizeof(err)));
+    UT_ASSERT(slGlobalIsNil(L, "res"));
+    slGlobalStr(L, "code", code, sizeof(code));
+    UT_ASSERT_MSG(strcmp(code, scenarioLuaResultName(SCN_OP_RANGE)) == 0,
+                  "a negative countdown answered '%s'", code);
+
+    /* The empty line clears it. */
+    UT_ASSERT(slRun(L, "ok = game.status(\"\")\n", err, sizeof(err)));
+    UT_ASSERT(slGlobalBool(L, "ok"));
+    UT_ASSERT(cap.statuses == 4);
+    UT_ASSERT(cap.status.u.scnStatus.text[0] == '\0');
 
     lua_close(L);
     serverSimDestroy(sim);

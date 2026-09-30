@@ -162,6 +162,7 @@ Selected event types (see the `logitem` enum for the complete list):
 | 65 | `log_ScnMarker` | A scenario map marker (below) |
 | 66 | `log_ScnHint` | An order a scenario gave one bot (below) |
 | 67 | `log_ServerTick` | The server's game tick at this entry (below) |
+| 68 | `log_ScnStatus` | A scenario's status line at the top of the view (below) |
 
 ### `log_GameSettings` payload
 
@@ -431,6 +432,13 @@ then the line as a Pascal string:
 | 2–3 | Ticks | Big-endian; how long the line stays up |
 | 4 | Text length | 0–128 |
 | 5… | Text | That many bytes |
+| after the text | Place | Only when the line is not at the top: 1 = upper, a quarter of the way down the view (`ScnAnnouncePlace`) |
+
+The place byte is written only for a line that is not at the top, so a line
+at the top is recorded byte for byte as it was before the place existed. A
+reader takes it when the framed length has one byte left after the text, and
+a viewer that predates it skips it by the framed length. A place it does not
+know is drawn at the top.
 
 A text length of 0 is the clear: the scenario took the line down, and the
 ticks alongside it were not read. A line with something in it is never
@@ -444,6 +452,39 @@ past 128 bytes is consumed and ignored. Playback also posts each line to the
 viewer's newswire once, whatever its destination, prefixed "[Team N]" or
 "[name]" when it went to a team or a player; a clear posts nothing, and a
 seek's rebuild posts nothing.
+
+### `log_ScnStatus` payload
+
+A scenario's status line: one line at the top of the game view that stays up
+until the scenario changes or clears it. Six header bytes, then the line as a
+Pascal string:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0 | `destTeam` | 0 = everyone, otherwise the team number the line was held to. Teams run 1–15 |
+| 1 | `destPlayer` | 0xFF = everyone, otherwise the 0-based player slot |
+| 2–5 | Countdown end | Big-endian `u32`: the server tick (`log_ServerTick`'s clock) the countdown runs to. 0xFFFFFFFF = no countdown |
+| 6 | Text length | 0–128 |
+| 7… | Text | That many bytes |
+
+A text length of 0 is the clear: the scenario took the line down for that
+destination, and the countdown alongside it is 0xFFFFFFFF.
+
+Written by the scenario funnel's status arm, only when the line changes: a
+call that restates the line a destination already holds, with the same
+countdown, writes nothing. The viewer keeps one line for each destination,
+with the time it landed, and rebuilds them at the playhead after a seek. It
+shows the followed player the latest of the lines to everyone, to that
+player's team and to that player's slot, and draws the countdown against the
+tick at the playhead. A record with a destination out of range or a text past
+128 bytes is consumed and ignored. A viewer that predates the record skips it
+by its framed length.
+
+On the wire the same line travels as `CTRL_SCN_STATUS` on the control
+channel: the countdown end as a big-endian `u32`, then the text with no
+length byte, running to the end of the body or to a 0x00. Bytes after a 0x00
+are room for later fields and a reader skips them. A client that predates the
+event skips it as an unknown control type.
 
 ### `log_ScnMarker` payload
 

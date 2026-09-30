@@ -1463,7 +1463,8 @@ exist.
 |---|---|
 | `game.panel(id, list[, target])` | Draws panel `id` from a list of primitives. An empty list clears it. |
 | `game.score(target, value[, label])` | The scenario's own score for one seat with a number, or for a team with `{ team = t }`. `label` is the short word shown beside it, up to 15 bytes. |
-| `game.announce(text[, seconds[, target]])` | A line across the top of the game view, centred, for that many seconds. It moves aside or down to keep clear of the scenario panel. Empty text takes the line away. |
+| `game.announce(text[, seconds[, target[, place]]])` | A line across the game view, centred, for that many seconds. `place` says where it goes: `"top"` (the default) or `"upper"`, a quarter of the way down. It moves aside or down to keep clear of the scenario panel and the status line. Empty text takes the line away. |
+| `game.status(text[, countdown_to[, target]])` | The status line: one line at the very top of the game view, centred, that stays until it is changed or cleared. `countdown_to` is a tick on `game.tick()`'s clock; the client shows the time left to it after the text. Empty text takes the line away. |
 | `game.marker(id, x, y[, colour[, target]])` | Puts mark `id` on a map square. |
 | `game.marker_follow(id, p[, colour[, target]])` | Puts mark `id` on seat `p`, where it rides the tank rather than the ground. |
 | `game.clear_marker(id[, target])` | Takes mark `id` off the map. |
@@ -1484,7 +1485,34 @@ neither. In the lobby the clock moves at half that
 rate, so a line put up before the round starts stays up about twice as long as
 it asked for.
 
-**Who sees it.** The last argument of `panel`, `announce` and the three marker
+**Where an announcement goes.** Left out, or `"top"`, the line goes along the
+top of the view, as every announcement did before there was a choice. When a
+status line is up, a top announcement sits just below it and never over it.
+`"upper"` starts the line a quarter of the way down the view, for the bigger
+news of a round, and it still moves down to keep clear of the panel. Any
+other word stops the script. A client older than the place draws every line
+at the top; it drops a placed line longer than 126 bytes and shows nothing.
+
+**The status line.** `game.status` holds one line at the top of the view for
+as long as the round wants it, such as "Wave 3/10". With `countdown_to`, the
+client adds the time left to that tick, in minutes and seconds, four spaces
+after the text ("Wave 3/10    2:44"), and counts it down on its own clock, so
+a countdown is one call and not one a second. It stops at 0:00. The text is
+up to 128 bytes. Calling it again with the same text, countdown and target
+sends nothing, so a script can restate its line every second without cost.
+A late joiner is given the line that is up when it arrives, and a replay
+shows it. A player sees the last line written to them, whether it went to
+everyone, to their team or to their seat, and an empty line to any of those
+takes it away. A
+`countdown_to` below 0 or past 4294967294 is refused with `SCN_OP_RANGE`.
+
+```lua
+game.status(string.format("Wave %d/%d", wave, waves), wave_ends_at)
+game.announce("Wave 3 - they come from the north", 5, nil, "upper")
+game.status("")              -- take the status line away
+```
+
+**Who sees it.** The last argument of `panel`, `status`, `announce` and the three marker
 calls is the same target every other call takes: left out, or `"all"`, for
 everyone; a number for one seat; `{ team = t }` for one team. A late joiner is
 given whatever the panels hold at the moment it arrives, so a panel put up in

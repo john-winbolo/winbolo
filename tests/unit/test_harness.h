@@ -3788,6 +3788,7 @@ int run_scenario_panel_timer_text(void);
  * in it. */
 int run_scenario_announce_remaining(void);
 int run_scenario_announce_place(void);
+int run_scenario_status_line(void);
 /* The tablet UI's scenario panel square (test_scenario_panel_slot.c): a
  * quarter of the screen's shorter side in the game view's top-right, on a
  * phone, a tablet, and views too small for the full side. */
@@ -3853,6 +3854,7 @@ int run_lv_presentation_plain_round(void);
 int run_lv_presentation_panel_choice(void);
 int run_lv_presentation_slot_team(void);
 int run_lv_presentation_announce_posts(void);
+int run_lv_presentation_status_line(void);
 int run_lv_presentation_marker_visible(void);
 int run_lv_presentation_live_seek(void);
 int run_lv_presentation_live_fast_forward(void);
@@ -3878,6 +3880,7 @@ int run_scn_presentation_codec_bodies(void);
 int run_scn_presentation_codec_refuses_short(void);
 int run_scn_presentation_decoder_sets_broadcast(void);
 int run_scn_presentation_client_filters(void);
+int run_scn_status_codec_and_client(void);
 
 /* The four presentation ops (test_scenario_presentation_arms.c): the panel
  * list published, recorded, replayed to a joiner and pared back to the
@@ -3891,6 +3894,7 @@ int run_scn_arm_panel_one_update_per_tick(void);
 int run_scn_arm_panel_replayed_to_joiner(void);
 int run_scn_arm_panel_snapshot_bounded(void);
 int run_scn_arm_score_announce_marker(void);
+int run_scn_arm_status_and_place(void);
 int run_scn_arm_markers_scores_replayed_to_joiner(void);
 int run_scn_arm_markers_scores_snapshot(void);
 int run_scn_arm_markers_scores_reset(void);
