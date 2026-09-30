@@ -96,6 +96,22 @@ struct shellsObj {
   TURNTYPE angle;   /* The angle the shell is firing */
   BYTE length;      /* Number of map squares for the shell to fire */
   BYTE owner;       /* Who owns the shell */
+  BYTE target;      /* The player a pillbox fired this shell at, NEUTRAL for
+                       a tank's shell. Server only and never sent: it is
+                       what pill_max_shells_at_tank counts. */
+  BYTE pill;        /* The pill index of the pillbox that fired this shell,
+                       DMG_NO_PILL for a tank's shell. Server only and never
+                       sent: the combat questions are handed it, because
+                       owner is NEUTRAL for every pillbox. */
+  uint16_t passedTanks; /* One bit per tank slot the can_hit question let
+                       this shell pass through, and one per pill index in
+                       the field below. Server only and never sent. A target
+                       is asked once per shell: once let through it is left
+                       alone for the rest of the shell's flight, so the
+                       answer holds for as long as the two overlap and a
+                       shell sitting inside a tank for several ticks does
+                       not ask the question on each of them. */
+  uint16_t passedPills;
   bool onBoat;      /* Was the shell launched from a boat */
   bool packSent;    /* Has this shell been included in a network packet yet */
   BYTE creator;     /* Creator machines player Number */
@@ -169,9 +185,13 @@ shells shellsCreate(void);
 *  angle  - angle of the shot
 *  len    - Length in map units of the item
 *  owner  - Who fired the shell
+*  target - The player a pillbox is firing at, NEUTRAL
+*           for a tank's shell
+*  pill   - The pill index of the pillbox firing it,
+*           DMG_NO_PILL for a tank's shell
 *  onBoat - Was the shell launched from a boat
 *********************************************************/
-void shellsAddItem(struct GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle, TURNTYPE len, BYTE owner, bool onBoat);
+void shellsAddItem(struct GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle, TURNTYPE len, BYTE owner, BYTE target, BYTE pill, bool onBoat);
 
 /* Pure shell-physics primitives — no game-state mutation. Used by
  * both the live engine (shellsUpdate / shellsAddItem) and the brain's
@@ -307,16 +327,15 @@ void shellsCalcScreenBullets(shells *value, screenBullets *sBullets, BYTE leftPo
 *  bs       - Pointer to the bases structure
 *  xValue   - X position
 *  yValue   - Y position
-*  angle    - The angle the shell is travelling
-*  owner    - Who fired the shell
-*  onBoat   - Was the shell launched from a boat
+*  shell    - The shell, for its angle, owner, boat flag,
+*             lag compensation, firing pill and the
+*             targets can_hit has already let it pass
 *  numTanks - Number of tanks in the array
-*  isServer - TRUE if we are a server
 *  outOutcome - NULL-tolerant out-param; on a collision, set to the
 *               SHELL_OUTCOME_* describing what was hit (TANK_HIT /
 *               TANK_KILL / IMPACT). Untouched when no collision occurs.
 *********************************************************/
-bool shellsCalcCollision(struct GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, TURNTYPE angle, BYTE owner, bool onBoat, BYTE numTanks, uint8_t compensationTicks, uint8_t *outOutcome);
+bool shellsCalcCollision(struct GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, shells shell, BYTE numTanks, uint8_t *outOutcome);
 
 /*********************************************************
 *NAME:          shellsCheckRoad

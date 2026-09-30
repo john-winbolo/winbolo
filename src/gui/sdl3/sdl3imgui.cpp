@@ -8848,6 +8848,13 @@ void sdl3ImguiClearPlayer(unsigned char playerNum) {
     s_playerPing[playerNum] = 0;
     s_playerClientType[playerNum] = CLIENT_TYPE_UNKNOWN;
     s_playerFlags[playerNum] = 0;
+    /* An alliance request from the player who just left goes with them.
+       Left open, Accept would go to whoever takes the seat next. */
+    if ((s_allianceVisible || s_showAllianceOpen) &&
+        s_alliancePlayerNum == playerNum) {
+        s_allianceVisible  = false;
+        s_showAllianceOpen = false;
+    }
 }
 
 void sdl3ImguiUpdatePlayerMeta(unsigned char playerNum, uint16_t ping,

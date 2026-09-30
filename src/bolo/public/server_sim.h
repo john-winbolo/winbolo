@@ -2044,11 +2044,22 @@ typedef struct ServerSimRosterSlot {
                            False for a seat held in the roster with no bot,
                            no ClientSim and no tank behind it. */
     bool    alive;      /* Has a tank in the world and is not in death-wait */
+    /* Label of the bot naming pool the seat's team draws from (e.g. "Famous
+       Painters"), NUL-terminated; empty when the seat has no team (0) or the
+       team has no pool (metadata not in use, or an index outside the loaded
+       pools). The label comes from the server's own pool table. */
+    char    team_pool[49]; /* LOBBY_BOT_POOL_MAX_LABEL_BYTES + 1 */
 } ServerSimRosterSlot;
 
 /* Populate *out for seat i. Returns false (without touching *out) if
  * i >= MAX_TANKS or the seat is empty. */
 bool serverSimGetRosterSlot(ServerSim *sim, BYTE i, ServerSimRosterSlot *out);
+
+/* Whether seats a and b are allied in the game: the table every game rule
+ * reads, which players change in play with an alliance request, accept and
+ * leave. It can differ from the two seats' lobby teams. A seat is allied with
+ * itself. False if either seat is out of range or empty. */
+bool serverSimIsAllied(ServerSim *sim, BYTE a, BYTE b);
 
 /* Array-pointer accessors (return pointer to backing storage). */
 char *const     *serverSimGetMapDirFiles(const ServerSim *sim);
@@ -2307,7 +2318,9 @@ bool serverSimGetScriptSetting(const ServerSim *sim, const char *file,
  *
  * Returns the value now in effect, in *resolved when it is not NULL.
  * False, and nothing changed or published, for a file with no declaration,
- * an id it does not declare, or a store that is full. */
+ * an id it does not declare, a bool setting given anything but 0 or 1, a
+ * choice setting given anything but the index of one of its words, or a
+ * store that is full. */
 bool serverSimSetScriptSetting(ServerSim *sim, const char *file,
                                const char *id, int32_t value,
                                int32_t *resolved);

@@ -56,6 +56,27 @@ typedef struct ClientSim ClientSim;
 #include "shells.h"
 #include "util.h"
 
+/* A bump component's move this tick: its magnitude >> 9 with the sign put
+ * back. C's >> on a negative value rounds toward -infinity, so shifting
+ * the signed value moved a push with a west or north component one world
+ * unit further per tick than the same push east or south. */
+static int32_t tankBumpStep(int32_t bump) {
+  return bump >= 0 ? (bump >> 9) : -((-bump) >> 9);
+}
+
+/* A bump component after one tick's decay: its magnitude loses
+ * (magnitude >> shift) + 1 and stops at zero, so the decay is the same in
+ * every direction and a push that has died out stays at zero. */
+static int32_t tankBumpDecay(int32_t bump, int32_t shift) {
+  int32_t mag = bump >= 0 ? bump : -bump;
+
+  mag -= (mag >> shift) + 1;
+  if (mag <= 0) {
+    return 0;
+  }
+  return bump >= 0 ? mag : -mag;
+}
+
 /* Forward declarations */
 static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
                             tankButton tb, bool inBrain);
@@ -484,6 +505,9 @@ void tankCreate(GameSim *sim, tank *value) {
   }
   (*value)->bumpX = 0;
   (*value)->bumpY = 0;
+  (*value)->slideX = 0;
+  (*value)->slideY = 0;
+  (*value)->slideRetention = 0;
   (*value)->residualSpeed = 0;
   /* The only place the modifiers are cleared. A respawn reuses the tank
      object and leaves them alone; the lobby return destroys every tank, so
@@ -609,7 +633,7 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
     TURNTYPE c;
     a = (*value)->sightLen;
     c = a / b;
-    shellsAddItem(sim, shs, (*value)->x, (*value)->y, (*value)->angle, c, gameSimGetTankPlayer(sim, value), (*value)->onBoat);
+    shellsAddItem(sim, shs, (*value)->x, (*value)->y, (*value)->angle, c, gameSimGetTankPlayer(sim, value), NEUTRAL, DMG_NO_PILL, (*value)->onBoat);
     (*value)->reload = tankReloadTicks(sim, *value);
     (*value)->shells--;
 
@@ -659,7 +683,7 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
          once a tick; the square is tested again next tick. */
       BYTE drownedPlayer = gameSimGetTankPlayer(sim, value);
       if (gameSimCanDie(sim, DIE_KIND_TANK, drownedPlayer, drownedPlayer,
-                        LAST_DEATH_BY_DEEPSEA) != FALSE) {
+                        LAST_DEATH_BY_DEEPSEA, DMG_NO_PILL) != FALSE) {
         tankSetLastTankDeath(value,LAST_DEATH_BY_DEEPSEA);
         /* Forced vs unforced drowning (observation only).  shellNearFrames is
          * non-zero when a shell passed within TANK_SHELL_NEAR_WU of this tank,
@@ -896,13 +920,15 @@ void tankSetDestroyed(tank *value, bool destroyed) {
 *  damage - Amount of damage to apply
 *  killer - Slot that dealt the blow, or NEUTRAL
 *  cause  - A LAST_DEATH_BY_* value naming the blow
+*  pill   - The pill index whose shell it was, or
+*           DMG_NO_PILL
 *********************************************************/
 static bool tankApplyDamage(GameSim *sim, tank *value, BYTE damage,
-                            BYTE killer, BYTE cause) {
+                            BYTE killer, BYTE cause, BYTE pill) {
   if (damage > (*value)->armour) {
     (*value)->armour = 0;
     if (gameSimCanDie(sim, DIE_KIND_TANK, gameSimGetTankPlayer(sim, value),
-                      killer, cause) == FALSE) {
+                      killer, cause, pill) == FALSE) {
       return FALSE;
     }
     (*value)->destroyed = TRUE;
@@ -1386,6 +1412,71 @@ void tankSetWorld(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angle, b
   }
 }
 
+/* Moves the Mac Bolo push one tick along an axis and returns the world
+ * units to move. The displacement still to come is kept with its
+ * fractions, and subtracting rounded endpoints carries those fractions
+ * between ticks without directional bias or losing distance to repeated
+ * rounding. */
+static int tankStepSlide(double *remaining, double retention) {
+  double before = *remaining;
+  double after = before * retention;
+
+  /* Less than half a world unit cannot produce any more rounded movement. */
+  if (fabs(after) < 0.5) after = 0;
+  *remaining = after;
+  /* round() returns double: slow-decay rules can make the remaining
+   * distance exceed INT32_MAX, though a single step still fits an int. */
+  return (int)(round(before) - round(after));
+}
+
+/* Sets the push a surviving shell hit gives a tank, along the shell's
+ * angle. A new hit replaces the previous push.
+ *
+ * With tank_slide_mac off this is the WinBolo push: tank_slide_step,
+ * whatever the armour, moved and decayed by tankBumpStep/tankBumpDecay.
+ *
+ * With it on this is the Mac Bolo push. It grows linearly with the armour
+ * missing BEFORE the hit, by up to tank_slide_armour_bonus; tank_slide_step
+ * and tank_bump_decay_shift are read per 40 ms rather than per tick, so a
+ * push travels step * 2^shift in all, moved every tick. A zero
+ * tank_slide_step is no push at all, bonus included. */
+static void tankShellKnockback(GameSim *sim, tank *value, TURNTYPE angle,
+                               BYTE armourBefore) {
+  int step = (int) sim->rules.tank_slide_step;
+  int newX, newY;
+
+  if (!sim->rules.tank_slide_mac) {
+    utilCalcDistance(&newX, &newY, angle, step);
+    (*value)->bumpX = newX * 512;
+    (*value)->bumpY = newY * 512;
+    (*value)->slideX = 0;
+    (*value)->slideY = 0;
+    (*value)->slideRetention = 0;
+    return;
+  }
+
+  {
+    int capacity = (int) sim->rules.tank_full_armour;
+    int missing = capacity > armourBefore ? capacity - armourBefore : 0;
+
+    if (step > 0) {
+      step += capacity > 0
+          ? (int) sim->rules.tank_slide_armour_bonus * missing / capacity
+          : (int) sim->rules.tank_slide_armour_bonus;
+    }
+  }
+  utilCalcDistance(&newX, &newY, angle, step);
+  (*value)->bumpX = 0;
+  (*value)->bumpY = 0;
+  /* A 40 ms step with decay fraction 2^-shift travels step * 2^shift in
+   * total. Keep that distance while applying smaller steps every tick. */
+  (*value)->slideX = ldexp((double)newX, sim->rules.tank_bump_decay_shift);
+  (*value)->slideY = ldexp((double)newY, sim->rules.tank_bump_decay_shift);
+  /* Take the decay with the push: a later rule change affects the next
+   * hit, rather than suddenly using up a long push's remaining distance. */
+  (*value)->slideRetention = sqrt(1.0 - ldexp(1.0, -sim->rules.tank_bump_decay_shift));
+}
+
 /*********************************************************
 *NAME:          tankIsTankHit
 *AUTHOR:        John Morrison
@@ -1405,101 +1496,58 @@ void tankSetWorld(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angle, b
 *  y      - Y co-ord of shell
 *  angle  - The direction the shell came from
 *  owner  - Shells owner
+*  pill   - The pill index of the pillbox that fired it,
+*           DMG_NO_PILL for a tank's shell
 *********************************************************/
-tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angle, BYTE owner) {
-	bool isServer = sim->isServer;
-	tankHit returnValue; /* Value to return */
-	int newX;            /* Amount to add because the tank has been hit */
-	int newY;
-
-
-	returnValue = TH_MISSED;
-
+tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angle, BYTE owner, BYTE pill) {
 	/* If no tank was passed, it missed. */
 	if (*value == NULL) {
 		return TH_MISSED;
 	}
+	return tankIsTankHitAtPosition(sim, value, (*value)->x, (*value)->y, x, y,
+	                               angle, owner, pill);
+}
 
-	if (!isServer) {
-		if (owner == gameSimGetTankPlayer(sim, value)) {
-			return TH_MISSED;
-		}
+/*********************************************************
+*NAME:          tankShellInHitZone
+*PURPOSE:
+*  Whether a shell at shellX, shellY lands on this tank if
+*  the tank stood at tankX, tankY: the shell is inside the
+*  hit zone and the tank is alive. The test
+*  tankIsTankHitAtPosition makes before it does any damage,
+*  on its own, so a caller can ask about a hit before one is
+*  dealt.
+*
+*ARGUMENTS:
+*  sim    - The game the tank belongs to
+*  value  - Pointer to the tank structure
+*  tankX  - Tank X co-ord to test against
+*  tankY  - Tank Y co-ord to test against
+*  shellX - X co-ord of shell
+*  shellY - Y co-ord of shell
+*********************************************************/
+bool tankShellInHitZone(GameSim *sim, tank *value, WORLD tankX, WORLD tankY,
+                        WORLD shellX, WORLD shellY) {
+	if (*value == NULL || (*value)->destroyed) {
+		return FALSE;
 	}
-
-	returnValue = TH_MISSED;
-
 	/* Shell hit-zone test — circle by default (see tank_hit_radius in
 	 * internal/tank.h). The tank's WORLD coordinates are its centre, so a
 	 * hit is a shell centre within tank_hit_radius of it. */
 #ifdef BOLO_LEGACY_SQUARE_COLLISION
-	bool inHitZone = (abs((*value)->x - x) < 128 && abs((*value)->y - y) < 128);
+	return (abs(tankX - shellX) < 128 && abs(tankY - shellY) < 128);
 #else
-	int hitDX = (int)(*value)->x - (int)x;
-	int hitDY = (int)(*value)->y - (int)y;
+	int hitDX = (int)tankX - (int)shellX;
+	int hitDY = (int)tankY - (int)shellY;
 	/* Bounding-box pre-test before squaring: every point inside the radius
 	 * circle is also inside this box, so it never rejects a real hit — it
 	 * just bounds hitDX/hitDY to < tank_hit_radius so hitDX*hitDX can't
 	 * overflow int for far-apart shell/tank pairs (the per-shell loop tests
 	 * every tank regardless of distance). */
 	const int hitR = (int) sim->rules.tank_hit_radius;
-	bool inHitZone = (abs(hitDX) < hitR && abs(hitDY) < hitR &&
-	                  (hitDX * hitDX + hitDY * hitDY) < hitR * hitR);
+	return (abs(hitDX) < hitR && abs(hitDY) < hitR &&
+	        (hitDX * hitDX + hitDY * hitDY) < hitR * hitR);
 #endif
-	if (inHitZone && !(*value)->destroyed) {
-		returnValue = TH_HIT;
-		BYTE armourBefore = (*value)->armour;
-		BYTE amount = tankDamageAmount(sim, (BYTE) sim->rules.shell_damage, owner, gameSimGetTankPlayer(sim, value), LAST_DEATH_BY_SHELL);
-		bool wasDestroyed = tankApplyDamage(sim, value, amount, owner, LAST_DEATH_BY_SHELL);
-		if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
-			uint16_t eff = (armourBefore >= amount) ? amount : armourBefore;
-			sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK,
-			                            gameSimGetTankPlayer(sim, value), DMG_SRC_SHELL, eff, false,
-			                            (BYTE)((*value)->x >> TANK_SHIFT_MAPSIZE),
-			                            (BYTE)((*value)->y >> TANK_SHIFT_MAPSIZE));
-		}
-		if ((*value)->onBoat == TRUE) {
-			(*value)->onBoat = FALSE;
-			(*value)->boatState = BoatState_NotOnBoat;
-			(*value)->speed = 0;
-			/* Shot while afloat.  If the tank is over deep sea it drowns on
-			 * the next tankUpdate, and that drowning is forced by definition
-			 * -- stamp the near-shell memory here so the drowning site cannot
-			 * classify it as unforced even if the shell's own proximity scan
-			 * missed the frame.  Observation only. */
-			(*value)->shellNearFrames = TANK_SHELL_NEAR_MEMORY_FRAMES;
-			if (!isServer) {
-				clientSimRecalc((struct ClientSim *)sim);
-			}
-		}
-
-		if (wasDestroyed) {
-			if (((*value)->shells + (*value)->mines) > sim->rules.big_explosion_threshold) {
-				returnValue = TH_KILL_BIG;
-			} else {
-				returnValue = TH_KILL_SMALL;
-			}
-
-			tankSetLastTankDeath(value,LAST_DEATH_BY_SHELL);
-			/* Observation only: a pill fires with owner == NEUTRAL, a tank with
-			 * its own player number, so the two shell causes split cleanly here. */
-			(*value)->pendingDeathCause = (owner == NEUTRAL) ? DEATH_CAUSE_SHELL_PILL : DEATH_CAUSE_SHELL_TANK;
-			(*value)->deathWait = (uint16_t) sim->rules.tank_death_ticks;
-
-			/*      netSendNow = TRUE; */
-			tankDropPills(sim, value);
-		} else {
-			/* Tank was hit and survived — set bump for gradual knockback */
-			utilCalcDistance(&newX, &newY, angle, (TURNTYPE) sim->rules.tank_slide_step);
-			(*value)->bumpX = newX * 512;
-			(*value)->bumpY = newY * 512;
-		}
-		if (!isServer) {
-			frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
-		}
-	} else if (inHitZone && (*value)->destroyed) {
-		/* Do crazy shit here */
-	}
-	return returnValue;
 }
 
 
@@ -1652,6 +1700,9 @@ void tankDeath(GameSim *sim, tank *value) {
     (*value)->speed = 0;
     (*value)->bumpX = 0;
     (*value)->bumpY = 0;
+    (*value)->slideX = 0;
+    (*value)->slideY = 0;
+    (*value)->slideRetention = 0;
     (*value)->residualSpeed = 0;
     (*value)->waterCount = 0;
     /* Get the start position */
@@ -1709,6 +1760,9 @@ void tankDeath(GameSim *sim, tank *value) {
     (*value)->speed = 0;
     (*value)->bumpX = 0;
     (*value)->bumpY = 0;
+    (*value)->slideX = 0;
+    (*value)->slideY = 0;
+    (*value)->slideRetention = 0;
     (*value)->residualSpeed = 0;
     (*value)->waterCount = 0;
     if (sim->isTutorial && sim->tutorialStartIdx == 1) {
@@ -1876,11 +1930,24 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
   }
 
   /* Step 3 — Apply bump effect (shell knockback with decay) */
-  (*value)->x += (*value)->bumpX >> 9;
-  (*value)->y += (*value)->bumpY >> 9;
+  (*value)->x += tankBumpStep((*value)->bumpX);
+  (*value)->y += tankBumpStep((*value)->bumpY);
   if (!(*value)->destroyed) {
-    (*value)->bumpX -= ((*value)->bumpX >> sim->rules.tank_bump_decay_shift) + ((*value)->bumpX > 0 ? 1 : 0);
-    (*value)->bumpY -= ((*value)->bumpY >> sim->rules.tank_bump_decay_shift) + ((*value)->bumpY > 0 ? 1 : 0);
+    (*value)->bumpX = tankBumpDecay((*value)->bumpX, sim->rules.tank_bump_decay_shift);
+    (*value)->bumpY = tankBumpDecay((*value)->bumpY, sim->rules.tank_bump_decay_shift);
+  }
+  /* The Mac Bolo push (tank_slide_mac) moves every tick. Its rules keep
+   * their 40 ms scale: two ticks of this multiplier give the configured
+   * decay (sqrt(0.75) per tick with the default shift). */
+  if ((*value)->slideX != 0 || (*value)->slideY != 0) {
+    double retention = (*value)->slideRetention;
+    /* tankObj is packed; use aligned locals for the in/out arguments. */
+    double slideX = (*value)->slideX;
+    double slideY = (*value)->slideY;
+    (*value)->x += tankStepSlide(&slideX, retention);
+    (*value)->y += tankStepSlide(&slideY, retention);
+    (*value)->slideX = slideX;
+    (*value)->slideY = slideY;
   }
 
   /* Step 4 — Building nudge */
@@ -3063,20 +3130,27 @@ void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my, BYTE owner) {
   if (diffX < sim->rules.mine_damage_range &&
       diffY < sim->rules.mine_damage_range && !(*value)->destroyed) {
     BYTE armourBefore = (*value)->armour;
-    BYTE amount = tankDamageAmount(sim, (BYTE) sim->rules.mine_damage, owner, gameSimGetTankPlayer(sim, value), LAST_DEATH_BY_MINES);
+    BYTE amount = tankDamageAmount(sim, (BYTE) sim->rules.mine_damage, owner, gameSimGetTankPlayer(sim, value), LAST_DEATH_BY_MINES, DMG_NO_PILL);
     /* Mac Bolo: three hits unless fatal, then two (which may still kill).
      * Apply this after modifiers, rounding up to preserve nonzero damage.
      * Exactly emptying the armour is survivable, hence the strict check. */
     if (amount > armourBefore) {
       amount -= (BYTE) (amount / sim->rules.mine_fatal_divisor);
     }
-    bool wasDestroyed = tankApplyDamage(sim, value, amount, owner, LAST_DEATH_BY_MINES);
+    bool wasDestroyed = tankApplyDamage(sim, value, amount, owner, LAST_DEATH_BY_MINES, DMG_NO_PILL);
     if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
       uint16_t eff = (armourBefore >= amount) ? amount : armourBefore;
       sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK,
                                   gameSimGetTankPlayer(sim, value), DMG_SRC_MINE, eff, false,
                                   (BYTE)((*value)->x >> TANK_SHIFT_MAPSIZE),
                                   (BYTE)((*value)->y >> TANK_SHIFT_MAPSIZE));
+    }
+    /* What the armour actually lost. Server only: NULL on the client. */
+    if (sim->callbacks.tankHit) {
+      sim->callbacks.tankHit(sim->callbacks.ctx, gameSimGetTankPlayer(sim, value),
+                             owner, LAST_DEATH_BY_MINES,
+                             (BYTE) (armourBefore - (*value)->armour),
+                             DMG_NO_PILL);
     }
     if (wasDestroyed) {
       BYTE dyingPlayer = gameSimGetTankPlayer(sim, value);
@@ -3720,9 +3794,11 @@ BYTE tankReloadTicks(GameSim *sim, tank value) {
 *  owner  - Slot that dealt it, or NEUTRAL
 *  victim - Slot taking it
 *  cause  - A LAST_DEATH_BY_* value naming the blow
+*  pill   - The pill index whose shell it was, or
+*           DMG_NO_PILL
 *********************************************************/
 BYTE tankDamageAmount(GameSim *sim, BYTE base, BYTE owner, BYTE victim,
-                      BYTE cause) {
+                      BYTE cause, BYTE pill) {
   int dealt = 100;  /* An environmental blow deals the classic amount */
   int taken = 100;
   int scale;
@@ -3739,7 +3815,7 @@ BYTE tankDamageAmount(GameSim *sim, BYTE base, BYTE owner, BYTE victim,
   /* The host's say on this pairing, and the last factor. Every shell and
      every mine in the game is priced here, so a scale of zero is what makes
      a tank take no damage at all rather than a little. */
-  scale = gameSimDamageScale(sim, owner, victim, cause);
+  scale = gameSimDamageScale(sim, owner, victim, cause, pill);
 
   /* One rounding at the end, so the three factors compose without each
      losing a fraction. A scale of a hundred divides out exactly, leaving
@@ -4011,15 +4087,15 @@ void tankSnapToServer(tank dst, tank src) {
 *  supplied tankX/tankY instead of the tank's current
 *  position. Used for lag-compensated (rewound) hits.
 *  Damage/knockback still applies at the tank's real pos.
+*  pill is the pill index of the pillbox that fired the
+*  shell, DMG_NO_PILL for a tank's shell.
 *********************************************************/
 tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
                                  WORLD tankX, WORLD tankY,
                                  WORLD shellX, WORLD shellY,
-                                 TURNTYPE angle, BYTE owner) {
+                                 TURNTYPE angle, BYTE owner, BYTE pill) {
 	bool isServer = sim->isServer;
 	tankHit returnValue; /* Value to return */
-	int newX;            /* Amount to add because the tank has been hit */
-	int newY;
 
 
 	returnValue = TH_MISSED;
@@ -4035,31 +4111,26 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 		}
 	}
 
-	returnValue = TH_MISSED;
-
-	/* Shell hit-zone test — circle by default (see tank_hit_radius). */
-#ifdef BOLO_LEGACY_SQUARE_COLLISION
-	bool inHitZone = (abs(tankX - shellX) < 128 && abs(tankY - shellY) < 128);
-#else
-	int hitDX = (int)tankX - (int)shellX;
-	int hitDY = (int)tankY - (int)shellY;
-	/* Bounding-box pre-test bounds hitDX/hitDY before squaring; see the note
-	 * in tankIsTankHit. Never rejects a real hit, prevents int overflow. */
-	const int hitR = (int) sim->rules.tank_hit_radius;
-	bool inHitZone = (abs(hitDX) < hitR && abs(hitDY) < hitR &&
-	                  (hitDX * hitDX + hitDY * hitDY) < hitR * hitR);
-#endif
-	if (inHitZone && !(*value)->destroyed) {
+	if (tankShellInHitZone(sim, value, tankX, tankY, shellX, shellY)) {
+		BYTE victim = gameSimGetTankPlayer(sim, value);
 		returnValue = TH_HIT;
 		BYTE armourBefore = (*value)->armour;
-		BYTE amount = tankDamageAmount(sim, (BYTE) sim->rules.shell_damage, owner, gameSimGetTankPlayer(sim, value), LAST_DEATH_BY_SHELL);
-		bool wasDestroyed = tankApplyDamage(sim, value, amount, owner, LAST_DEATH_BY_SHELL);
-		if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
+		BYTE amount = tankDamageAmount(sim, (BYTE) sim->rules.shell_damage, owner, victim, LAST_DEATH_BY_SHELL, pill);
+		bool wasDestroyed = tankApplyDamage(sim, value, amount, owner, LAST_DEATH_BY_SHELL, pill);
+		if (sim->callbacks.recordDamage && owner != victim) {
 			uint16_t eff = (armourBefore >= amount) ? amount : armourBefore;
 			sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK,
-			                            gameSimGetTankPlayer(sim, value), DMG_SRC_SHELL, eff, false,
+			                            victim, DMG_SRC_SHELL, eff, false,
 			                            (BYTE)((*value)->x >> TANK_SHIFT_MAPSIZE),
 			                            (BYTE)((*value)->y >> TANK_SHIFT_MAPSIZE));
+		}
+		/* What the armour actually lost, which a refused death leaves short
+		   of the blow's price. Server only: NULL on the client. */
+		if (sim->callbacks.tankHit) {
+			sim->callbacks.tankHit(sim->callbacks.ctx, victim, owner,
+			                       LAST_DEATH_BY_SHELL,
+			                       (BYTE) (armourBefore - (*value)->armour),
+			                       pill);
 		}
 		if ((*value)->onBoat == TRUE) {
 			(*value)->onBoat = FALSE;
@@ -4092,15 +4163,11 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 			tankDropPills(sim, value);
 		} else {
 			/* Tank was hit and survived — set bump for gradual knockback */
-			utilCalcDistance(&newX, &newY, angle, (TURNTYPE) sim->rules.tank_slide_step);
-			(*value)->bumpX = newX * 512;
-			(*value)->bumpY = newY * 512;
+			tankShellKnockback(sim, value, angle, armourBefore);
 		}
 		if (!isServer) {
 			frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
 		}
-	} else if (inHitZone && (*value)->destroyed) {
-		/* Do crazy shit here */
 	}
 	return returnValue;
 }

@@ -182,7 +182,7 @@ int run_script_upload_policy_event(void) {
     ClientSim   *cs;
     ControlEvent evt;
 
-    sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                     gameOpen, false, 0, -1);
     UT_ASSERT(sim != NULL);
     serverSimSetLobbyEnabled(sim, true);
@@ -313,7 +313,7 @@ int run_script_sharing_sim(void) {
     ServerSim   *sim;
     ControlEvent evt;
 
-    sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                     gameOpen, false, 0, -1);
     UT_ASSERT(sim != NULL);
     serverSimSetLobbyEnabled(sim, true);

@@ -490,8 +490,7 @@ void transportUdpServerOnLobbyMapChange(ServerSim *sim) {
     int i;
     int mapLen;
     uint8_t notifyBuf[PACKET_HEADER_SIZE];
-    /* Compress into a local oversized scratch buffer first — the map
-     * RLE encoder has no internal output-bound check, and an
+    /* Compress into a local buffer sized to the worst case first — an
      * incompressible map can encode slightly larger than its 64KB
      * input. Validate the result fits the wire size before copying. */
     BYTE scratchMap[MAP_COMPRESSED_MAX_SIZE];

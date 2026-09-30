@@ -1059,6 +1059,9 @@ static inline bool lobbyBotNameAcceptable(
 #define LOBBY_REJECT_COOLDOWN          7   /* per-client request cooldown active */
 #define LOBBY_REJECT_NAME_TAKEN        8   /* a script of that name is in a
                                             * higher-precedence directory */
+#define LOBBY_REJECT_TIMEOUT           9   /* client-side only: no reply from
+                                            * the server in time; retrying is
+                                            * the fix, not a different file */
 
 /* Alliance update event types */
 #define ALLIANCE_EVENT_REQUEST  0
@@ -1080,7 +1083,7 @@ static inline bool lobbyBotNameAcceptable(
 /* PACKET_MAX_PLAYER_NAME lives in public/wire_limits.h (included above
  * via the file-top include list) alongside PACKET_MAX_CHAT_MESSAGE. */
 
-/* Maximum compressed map size (256x256 LZW + bases + pills + starts). The map
+/* Maximum compressed map size (zlib over bases + pills + starts + 256x256). The map
  * streams on CHANNEL_BULK (no per-chunk packet), but this still bounds the blob
  * the sender stages and the receiver allocates. */
 #define MAP_DOWNLOAD_MAX_SIZE 65536

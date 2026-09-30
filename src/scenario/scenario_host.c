@@ -2581,16 +2581,43 @@ void scnPushManifestGlobal(lua_State *L, int envRef,
             lua_setfield(L, -2, "id");
             lua_pushstring(L, d->label);
             lua_setfield(L, -2, "label");
-            lua_pushstring(L, "int");
-            lua_setfield(L, -2, "type");
-            lua_pushinteger(L, (lua_Integer)d->min);
-            lua_setfield(L, -2, "min");
-            lua_pushinteger(L, (lua_Integer)d->max);
-            lua_setfield(L, -2, "max");
-            lua_pushinteger(L, (lua_Integer)d->step);
-            lua_setfield(L, -2, "step");
-            lua_pushinteger(L, (lua_Integer)d->def);
-            lua_setfield(L, -2, "default");
+            if (d->type == SCN_SETTING_TYPE_BOOL) {
+                /* A bool row is written with no range, as the file
+                   declares it. */
+                lua_pushstring(L, "bool");
+                lua_setfield(L, -2, "type");
+                lua_pushboolean(L, d->def != 0);
+                lua_setfield(L, -2, "default");
+            } else if (d->type == SCN_SETTING_TYPE_CHOICE) {
+                /* A choice row is written as its words and the default
+                   word, as the file declares it. */
+                const char *dw = scnSettingChoiceText(d, d->def);
+                int         w;
+
+                lua_pushstring(L, "choice");
+                lua_setfield(L, -2, "type");
+                lua_createtable(L, (int)d->numChoices, 0);
+                for (w = 0; w < (int)d->numChoices &&
+                            w < SCN_SETTING_CHOICES_WORDS_MAX;
+                     w++) {
+                    lua_pushstring(L, d->choices[w]);
+                    lua_rawseti(L, -2, w + 1);
+                }
+                lua_setfield(L, -2, "choices");
+                lua_pushstring(L, dw != NULL ? dw : "");
+                lua_setfield(L, -2, "default");
+            } else {
+                lua_pushstring(L, "int");
+                lua_setfield(L, -2, "type");
+                lua_pushinteger(L, (lua_Integer)d->min);
+                lua_setfield(L, -2, "min");
+                lua_pushinteger(L, (lua_Integer)d->max);
+                lua_setfield(L, -2, "max");
+                lua_pushinteger(L, (lua_Integer)d->step);
+                lua_setfield(L, -2, "step");
+                lua_pushinteger(L, (lua_Integer)d->def);
+                lua_setfield(L, -2, "default");
+            }
             lua_rawseti(L, st, (int)i + 1);
         }
         lua_setfield(L, t, "settings");
@@ -4269,6 +4296,30 @@ static void scnHookTankKilled(ScenarioHost *h, const ScnQueuedEvent *e,
     scnHookCall(h, SCN_HOOK_TANK_KILLED, 4);
 }
 
+/* One hit a tank took. [victim, attacker, cause, amount, pill] — already in
+ * the hook's own order. The pill is an index and goes through the helper that
+ * adds; a shell no pillbox fired carries DMG_NO_PILL, which is no index and
+ * reaches the script as nil. */
+static void scnHookTankHit(ScenarioHost *h, const ScnQueuedEvent *e,
+                           bool scripted) {
+    const char *cause = scenarioLuaDeathCauseWord((int)e->data[2]);
+
+    if (cause == NULL || !scnHookBegin(h, SCN_HOOK_TANK_HIT)) {
+        return;
+    }
+    lua_pushinteger(h->L, (lua_Integer)e->data[0]);   /* the victim */
+    lua_pushinteger(h->L, (lua_Integer)e->data[1]);   /* the attacker */
+    lua_pushstring(h->L, cause);
+    lua_pushinteger(h->L, (lua_Integer)e->data[3]);   /* the armour lost */
+    if (e->data[4] < MAX_PILLS) {
+        lua_pushinteger(h->L, scenarioLuaIndexToScript((int)e->data[4]));
+    } else {
+        lua_pushnil(h->L);
+    }
+    lua_pushboolean(h->L, scripted ? 1 : 0);
+    scnHookCall(h, SCN_HOOK_TANK_HIT, 6);
+}
+
 /* A base changed hands. One event carries both facts and the new owner is
  * what tells them apart: a capture names who took it, a neutralisation has
  * nobody to name and says who lost it. */
@@ -4324,6 +4375,10 @@ static void scnGameEventHook(ScenarioHost *h, const ScnQueuedEvent *e,
     switch (e->type) {
         case EVENT_TANK_KILLED:
             scnHookTankKilled(h, e, scripted);
+            return;
+
+        case EVENT_TANK_HIT:
+            scnHookTankHit(h, e, scripted);
             return;
 
         case EVENT_TANK_SPAWNED:
@@ -5040,12 +5095,13 @@ static void scnFillLobbyTemplate(const ScnManifestLobby *lob,
  * fresh one, so the lookup goes to whichever state is current. */
 
 /* How the answers of a list of scripts are read, now that every one of them
- * is asked. The ten sites below each hold the arbitration for their own row,
- * because what the answers mean differs by row:
+ * is asked. The thirteen sites below each hold the arbitration for their own
+ * row, because what the answers mean differs by row:
  *
- *   the six predicates
- *     allow_extra_teams, can_respawn, can_build, can_capture, announce and
- *     can_die. Asked in list order, any false wins, and the first no stops
+ *   the eight predicates
+ *     allow_extra_teams, can_respawn, can_build, can_capture, announce,
+ *     can_hit, can_die and can_ally. Asked in list order, any false wins, and
+ *     the first no stops
  *     the asking. A predicate is a veto — false takes something out of the
  *     round — so a script that says no is not something a later script may
  *     put back, and one that has already lost has nothing left to add.
@@ -5058,7 +5114,7 @@ static void scnFillLobbyTemplate(const ScnManifestLobby *lob,
  *     chooser's buttons say "Load earlier" and "Load later" and its heading
  *     says the top has priority, so the script loaded earlier is the one
  *     meant to have the say.
- *   damage_scale
+ *   damage_scale and pill_damage_scale
  *     every script asked and the percents multiplied. Two scripts halving a
  *     blow leave a quarter of it, which is the only reading where each
  *     script's own answer still means what it says on its own.
@@ -5293,7 +5349,7 @@ static void scnPushWord(ScenarioHost *h, const char *word) {
  * answer. The stopping test is the loop's own condition rather than a break
  * inside it, which is what keeps the stack contract: a break taken between
  * scnPolicyBegin and scnPolicyBool would leave the pushed function on the
- * stack for ever. The five predicates below are written the same way for
+ * stack for ever. The six predicates below are written the same way for
  * the same reason. */
 static bool scnAllowExtraTeams(void *ctx) {
     ScenarioHost *h     = (ScenarioHost *)ctx;
@@ -5504,7 +5560,7 @@ static bool scnAnnounce(void *ctx, BYTE kind, BYTE subject, BYTE actor) {
  * a shell and a mine alike, so the script reads one set of words, and a
  * cause the site could not name reaches it as nil. */
 static bool scnCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
-                      BYTE cause) {
+                      BYTE cause, BYTE pill) {
     ScenarioHost *h    = (ScenarioHost *)ctx;
     const char   *word = scenarioLuaDieKindWord((int)kind);
     bool          may  = true;
@@ -5528,7 +5584,66 @@ static bool scnCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
         scnPushWord(h, (kind == DIE_KIND_TANK)
                            ? scenarioLuaDeathCauseWord((int)cause)
                            : scenarioLuaDamageSourceWord((int)cause));
-        may = scnPolicyBool(h, i, kScnPolicyNames[SCN_POLICY_CAN_DIE], 4,
+        scnPushItemIndex(h, pill, MAX_PILLS);
+        may = scnPolicyBool(h, i, kScnPolicyNames[SCN_POLICY_CAN_DIE], 5,
+                            true);
+    }
+    scnLockLeave(&h->lock);
+    return may;
+}
+
+/* May this shell hit the tank or pill it has reached? The attacker is the
+ * shell's owner, NEUTRAL for a pillbox's, and the pillbox that fired it is the
+ * trailing argument, nil for a tank's shell. A no lets the shell fly on. */
+static bool scnCanHit(void *ctx, BYTE attacker, BYTE kind, BYTE index,
+                      BYTE pill) {
+    ScenarioHost *h    = (ScenarioHost *)ctx;
+    const char   *word = scenarioLuaHitKindWord((int)kind);
+    bool          may  = true;
+    int           i;
+
+    if (h == NULL || word == NULL) {
+        return true;
+    }
+    scnLockEnter(&h->lock);
+    for (i = 0; i < h->count && may; i++) {
+        if (!scnPolicyBegin(h, i, kScnPolicyNames[SCN_POLICY_CAN_HIT])) {
+            continue;
+        }
+        lua_pushinteger(h->L, (lua_Integer)attacker);
+        lua_pushstring(h->L, word);
+        if (kind == HIT_KIND_PILL) {
+            scnPushItemIndex(h, index, MAX_PILLS);
+        } else {
+            lua_pushinteger(h->L, (lua_Integer)index);
+        }
+        scnPushItemIndex(h, pill, MAX_PILLS);
+        may = scnPolicyBool(h, i, kScnPolicyNames[SCN_POLICY_CAN_HIT], 4,
+                            true);
+    }
+    scnLockLeave(&h->lock);
+    return may;
+}
+
+/* May player p ally with seat q? Asked when p requests the alliance and again
+ * when q accepts it, so a script whose answer changed in between is asked
+ * the question it now answers. Both are seats, which Lua does not convert. */
+static bool scnCanAlly(void *ctx, BYTE player, BYTE other) {
+    ScenarioHost *h   = (ScenarioHost *)ctx;
+    bool          may = true;
+    int           i;
+
+    if (h == NULL) {
+        return true;
+    }
+    scnLockEnter(&h->lock);
+    for (i = 0; i < h->count && may; i++) {
+        if (!scnPolicyBegin(h, i, kScnPolicyNames[SCN_POLICY_CAN_ALLY])) {
+            continue;
+        }
+        lua_pushinteger(h->L, (lua_Integer)player);
+        lua_pushinteger(h->L, (lua_Integer)other);
+        may = scnPolicyBool(h, i, kScnPolicyNames[SCN_POLICY_CAN_ALLY], 2,
                             true);
     }
     scnLockLeave(&h->lock);
@@ -5703,7 +5818,32 @@ static bool scnSpawnLoadout(void *ctx, BYTE player, ScnLoadout *out) {
  * inside one too. An int is therefore enough for a list of any length. */
 #define SCN_DAMAGE_SCALE_MAX 10000
 
-static int scnDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause) {
+/* One script's percent, read off the top of the stack and folded into the
+ * running product the two scale rows keep. The answer is popped either way;
+ * a bad one is reported and leaves the product where it was. */
+static int scnScaleFold(ScenarioHost *h, int script, const char *name,
+                        int pct) {
+    long v = 0;
+
+    if (scnPolicyWhole(h->L, &v) && v >= 0 && v <= SCN_DAMAGE_SCALE_MAX) {
+        /* A hundred times one answer divided by a hundred is that answer,
+           so one script on the list reads exactly as it did before there
+           were lists. */
+        pct = (pct * (int)v) / 100;
+        if (pct > SCN_DAMAGE_SCALE_MAX) {
+            pct = SCN_DAMAGE_SCALE_MAX;
+        }
+        scnErrorCleared(h, script);
+    } else {
+        scnPolicyBadAnswer(h, script, name,
+                           "with no percent between 0 and a hundredfold");
+    }
+    lua_pop(h->L, 1);
+    return pct;
+}
+
+static int scnDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause,
+                          BYTE pill) {
     ScenarioHost *h    = (ScenarioHost *)ctx;
     const char   *word = scenarioLuaDeathCauseWord((int)cause);
     int           pct  = 100;
@@ -5720,26 +5860,48 @@ static int scnDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause) {
         lua_pushinteger(h->L, (lua_Integer)attacker);
         lua_pushinteger(h->L, (lua_Integer)victim);
         lua_pushstring(h->L, word);
+        scnPushItemIndex(h, pill, MAX_PILLS);
         if (scnPolicyAnswer(h, i, kScnPolicyNames[SCN_POLICY_DAMAGE_SCALE],
-                            3)) {
-            long v = 0;
-            if (scnPolicyWhole(h->L, &v) && v >= 0 &&
-                v <= SCN_DAMAGE_SCALE_MAX) {
-                /* A hundred times one answer divided by a hundred is that
-                   answer, so one script on the list reads exactly as it did
-                   before there were lists. */
-                pct = (pct * (int)v) / 100;
-                if (pct > SCN_DAMAGE_SCALE_MAX) {
-                    pct = SCN_DAMAGE_SCALE_MAX;
-                }
-                scnErrorCleared(h, i);
-            } else {
-                scnPolicyBadAnswer(h, i,
-                                   kScnPolicyNames[SCN_POLICY_DAMAGE_SCALE],
-                                   "with no percent between 0 and "
-                                   "a hundredfold");
-            }
-            lua_pop(h->L, 1);
+                            4)) {
+            pct = scnScaleFold(h, i, kScnPolicyNames[SCN_POLICY_DAMAGE_SCALE],
+                               pct);
+        }
+    }
+    scnLockLeave(&h->lock);
+    return pct;
+}
+
+/* What this blow takes off a pill, as a percent, read exactly as the tank's
+ * price above is: every script asked, the percents multiplied, and every way
+ * of saying nothing a hundred. Only the armour lost is priced — the shell
+ * that hits still stops and the pill it hits still turns angry, whatever
+ * this answers. */
+static int scnPillDamageScale(void *ctx, BYTE attacker, BYTE index,
+                              BYTE cause, BYTE pill) {
+    ScenarioHost *h    = (ScenarioHost *)ctx;
+    const char   *word = scenarioLuaDamageSourceWord((int)cause);
+    int           pct  = 100;
+    int           i;
+
+    if (h == NULL || word == NULL) {
+        return 100;
+    }
+    scnLockEnter(&h->lock);
+    for (i = 0; i < h->count; i++) {
+        if (!scnPolicyBegin(h, i,
+                            kScnPolicyNames[SCN_POLICY_PILL_DAMAGE_SCALE])) {
+            continue;
+        }
+        lua_pushinteger(h->L, (lua_Integer)attacker);
+        scnPushItemIndex(h, index, MAX_PILLS);
+        lua_pushstring(h->L, word);
+        scnPushItemIndex(h, pill, MAX_PILLS);
+        if (scnPolicyAnswer(h, i,
+                            kScnPolicyNames[SCN_POLICY_PILL_DAMAGE_SCALE],
+                            4)) {
+            pct = scnScaleFold(h, i,
+                               kScnPolicyNames[SCN_POLICY_PILL_DAMAGE_SCALE],
+                               pct);
         }
     }
     scnLockLeave(&h->lock);
@@ -6516,17 +6678,37 @@ void scenarioHostRegisterMapScripted(ServerSim *sim) {
  * request.
  *
  * Invalidation: the cache answers only when the directory is the same path as
- * last time and SDL_GetPathInfo reports the same modify time on it. A file
- * added to the directory, removed from it or renamed in it moves that time, so
- * the next read is a fresh one. A file edited in place does not — the
- * directory itself is untouched — so a scenario whose text changed keeps the
- * row it had until something else in the directory moves or the server is
- * restarted. That is the bargain the attach already makes with a script: read
- * once, and read again when something asks.
+ * last time, SDL_GetPathInfo reports the same modify time on it, and every
+ * scenario file in it (each .scenario and .lua the read would open) has the
+ * same modify time and size it had. A file added to the directory, removed
+ * from it or renamed in it moves the directory's time, so the next read is a
+ * fresh one. A file edited in place leaves the directory's time alone but
+ * moves its own, so a scenario whose text changed is read again as well — a
+ * new setting or callback reaches the lobby's details dialog without a server
+ * restart. The files are stamped rather than only the rows, because a file
+ * whose manifest did not parse has no row, and fixing it in place has to be
+ * seen too.
  *
- * The stamp is as fine as the kernel writes it, which is a few milliseconds on
- * an ordinary Linux filesystem rather than a nanosecond, so a change inside the
- * same tick as the read that kept the listing leaves the stamp alone. The
+ * Stamping the files costs one directory walk and one SDL_GetPathInfo per
+ * scenario file. A mods directory holds a handful of files, so that is a few
+ * stat calls against a VM boot per file, and it is made before the lock is
+ * taken, so a slow disk holds up only its own caller. A walk made less than
+ * SCN_DIR_STAMPS_REUSE_MS ago stands for a new one when the directory's time
+ * and the change count are unmoved: the lobby's details dialog asks once per
+ * file, each ask reads the file twice (its details, then its settings) and
+ * every read asks each mod directory in turn, so without it a client could
+ * make the server walk every directory several times a packet. An edit in
+ * place is seen that much later at most. A directory with more scenario
+ * files than SCN_DIR_STAMPS_MAX is read every time rather than kept.
+ *
+ * A file replaced in place with its modify time and its size both kept — an
+ * unzip or rsync that preserves times, writing a file of the same length —
+ * moves nothing this looks at, and is not seen until something else changes.
+ *
+ * The stamps are as fine as the kernel writes them, which is a few
+ * milliseconds on an ordinary Linux filesystem rather than a nanosecond, so a
+ * change inside the same tick as the read that kept the listing leaves the
+ * time alone (a file's size still moves if its length changed). The
  * server now changes these directories itself — an upload put in place, the
  * session directory emptied — and lists them straight after, so each slot also
  * keeps the change count serverSimScriptDirsGen answered when it was read, and
@@ -6556,6 +6738,17 @@ void scenarioHostRegisterMapScripted(ServerSim *sim) {
    shipped one, and the uploads directory. */
 #define SCN_MOD_DIRS_MAX 5
 
+/* One scenario file's modify time and size, which is what an edit in place
+   moves when the directory's own time does not. */
+typedef struct {
+    char     file[SCN_DIR_FILE_LEN];
+    SDL_Time modified;
+    Uint64   size;
+} ScnDirStamp;
+
+/* More scenario files than this in one directory and it is not kept. */
+#define SCN_DIR_STAMPS_MAX 256
+
 typedef struct {
     bool         valid;
     char         dir[SCN_SCRIPT_PATH_MAX];
@@ -6568,6 +6761,11 @@ typedef struct {
        and keeping them is what spares that ask a VM boot per file. */
     ScnDirDetails *details;
     int          count;
+    /* Every scenario file's stamp as it stood before the read, sorted by
+       name (scnDirStampsRead). */
+    ScnDirStamp *stamps;
+    int          stampCount;
+    Uint64       stampTicks; /* SDL_GetTicks() when stamps were walked */
 } ScnDirCache;
 
 #define SCN_DIR_CACHE_SLOTS (SCN_MOD_DIRS_MAX + 1)
@@ -6579,11 +6777,136 @@ static ScnDirCache scnDirCache[SCN_DIR_CACHE_SLOTS];
 static void scnDirCacheDrop(ScnDirCache *c) {
     free(c->rows);
     free(c->details);
+    free(c->stamps);
     c->rows   = NULL;
     c->details = NULL;
+    c->stamps = NULL;
     c->count  = 0;
+    c->stampCount = 0;
+    c->stampTicks = 0;
     c->valid  = false;
     c->dir[0] = '\0';
+}
+
+/* Does name end with ext, ignoring case? Defined with the script readers,
+   after scnPackagedScript. */
+static bool scnHasExt(const char *name, const char *ext);
+
+static int scnDirStampCmp(const void *a, const void *b) {
+    return strcmp(((const ScnDirStamp *)a)->file,
+                  ((const ScnDirStamp *)b)->file);
+}
+
+/* The stamp of every file in dir that scnDirListDetails would open, sorted
+   by name, into an array the caller frees. The same names it takes: a plain
+   file in this directory, not hidden, short enough for a row, ending in
+   .scenario or .lua. False when the directory cannot be walked, holds more
+   than SCN_DIR_STAMPS_MAX of them, or the array cannot be had; the caller
+   then reads without the cache. Called without the lock. */
+static bool scnDirStampsRead(const char *dir, ScnDirStamp **outStamps,
+                             int *outCount) {
+    char       **files;
+    ScnDirStamp *stamps;
+    int          fileCount = 0;
+    int          cap;
+    int          n         = 0;
+    int          i;
+    bool         ok        = true;
+
+    *outStamps = NULL;
+    *outCount  = 0;
+    files = SDL_GlobDirectory(dir, "*", 0, &fileCount);
+    if (files == NULL) {
+        return false;
+    }
+    /* No more than the cap is ever filled: one file past it and the walk
+       gives up. */
+    cap = fileCount < SCN_DIR_STAMPS_MAX ? fileCount : SCN_DIR_STAMPS_MAX;
+    stamps = (ScnDirStamp *)malloc((size_t)(cap > 0 ? cap : 1) *
+                                   sizeof(*stamps));
+    if (stamps == NULL) {
+        SDL_free(files);
+        return false;
+    }
+    for (i = 0; i < fileCount; i++) {
+        const char  *name = files[i];
+        char         path[1024];
+        SDL_PathInfo info;
+
+        if (name == NULL || name[0] == '\0' || name[0] == '.' ||
+            strchr(name, '/') != NULL || strchr(name, '\\') != NULL ||
+            strlen(name) >= SCN_DIR_FILE_LEN ||
+            (!scnHasExt(name, SCN_SCENARIO_PACKAGE_EXT) &&
+             !scnHasExt(name, SCN_SCENARIO_SCRIPT_EXT))) {
+            continue;
+        }
+        snprintf(path, sizeof(path), "%s/%s", dir, name);
+        if (!SDL_GetPathInfo(path, &info) || info.type != SDL_PATHTYPE_FILE) {
+            continue;
+        }
+        /* After the file check, so a directory named x.lua does not count. */
+        if (n >= cap) {
+            ok = false;
+            break;
+        }
+        /* Zeroed first so the bytes past the name's end compare equal in
+           scnDirCacheFresh's memcmp. */
+        memset(&stamps[n], 0, sizeof(stamps[n]));
+        snprintf(stamps[n].file, sizeof(stamps[n].file), "%s", name);
+        stamps[n].modified = info.modify_time;
+        stamps[n].size     = info.size;
+        n++;
+    }
+    SDL_free(files);
+    if (!ok) {
+        free(stamps);
+        return false;
+    }
+    if (n > 1) {
+        qsort(stamps, (size_t)n, sizeof(stamps[0]), scnDirStampCmp);
+    }
+    *outStamps = stamps;
+    *outCount  = n;
+    return true;
+}
+
+/* Does the slot hold what the directory holds now: its path, its modify
+   time, this process's change count, and every file's stamp? Called with
+   the lock held. */
+static bool scnDirCacheFresh(const ScnDirCache *c, const char *dir,
+                             SDL_Time modified, uint32_t gen,
+                             const ScnDirStamp *stamps, int stampCount) {
+    return c->valid && c->modified == modified && c->gen == gen &&
+           strcmp(c->dir, dir) == 0 && c->stampCount == stampCount &&
+           (stampCount == 0 ||
+            memcmp(c->stamps, stamps,
+                   (size_t)stampCount * sizeof(stamps[0])) == 0);
+}
+
+/* Is the slot fresh without a new walk: its path, its modify time and this
+   process's change count match, and its stamps were walked less than
+   SCN_DIR_STAMPS_REUSE_MS before now? Called with the lock held. */
+static bool scnDirCacheRecent(const ScnDirCache *c, const char *dir,
+                              SDL_Time modified, uint32_t gen, Uint64 now) {
+    return c->valid && c->modified == modified && c->gen == gen &&
+           strcmp(c->dir, dir) == 0 &&
+           now - c->stampTicks < SCN_DIR_STAMPS_REUSE_MS;
+}
+
+/* The slot's rows, and its details when details is not NULL, into the
+   caller's arrays; answers how many. Called with the lock held, on a slot
+   found fresh whose count fits the caller's arrays. */
+static int scnDirCacheCopyRows(const ScnDirCache *c, ScnDirEntry *out,
+                               ScnDirDetails *details) {
+    int n = c->count;
+
+    if (n > 0) {
+        memcpy(out, c->rows, (size_t)n * sizeof(out[0]));
+        if (details != NULL) {
+            memcpy(details, c->details, (size_t)n * sizeof(details[0]));
+        }
+    }
+    return n;
 }
 
 /* Which slot this directory is kept in: its own if it has one, otherwise an
@@ -6613,7 +6936,10 @@ static int scnDirListCached(const char *dir, ScnDirEntry *out,
     SDL_PathInfo   info;
     ScnDirCache   *c;
     ScnDirDetails *read;
+    ScnDirStamp   *stamps     = NULL;
+    int            stampCount = 0;
     int            n;
+    Uint64         now;
     /* Taken before the read for the reason the modify time is: a change this
        process makes while the read runs leaves the count newer than this, so
        the next call reads again. */
@@ -6628,18 +6954,32 @@ static int scnDirListCached(const char *dir, ScnDirEntry *out,
         return scnDirListDetails(dir, out, details, max);
     }
 
+    /* Walked a moment ago and nothing since: answered without a walk. */
+    now = SDL_GetTicks();
     scnLockEnter(&scnDirCacheLock);
     c = scnDirCacheSlot(dir);
-    if (c->valid && c->count <= max && c->modified == info.modify_time &&
-        c->gen == gen && strcmp(c->dir, dir) == 0) {
-        n = c->count;
-        if (n > 0) {
-            memcpy(out, c->rows, (size_t)n * sizeof(out[0]));
-            if (details != NULL) {
-                memcpy(details, c->details, (size_t)n * sizeof(details[0]));
-            }
-        }
+    if (c->count <= max &&
+        scnDirCacheRecent(c, dir, info.modify_time, gen, now)) {
+        n = scnDirCacheCopyRows(c, out, details);
         scnLockLeave(&scnDirCacheLock);
+        return n;
+    }
+    scnLockLeave(&scnDirCacheLock);
+
+    /* The file stamps are taken here, before the lock and before the read,
+       for the reason the directory's time is. */
+    if (!scnDirStampsRead(dir, &stamps, &stampCount)) {
+        return scnDirListDetails(dir, out, details, max);
+    }
+
+    scnLockEnter(&scnDirCacheLock);
+    c = scnDirCacheSlot(dir);
+    if (c->count <= max &&
+        scnDirCacheFresh(c, dir, info.modify_time, gen, stamps, stampCount)) {
+        c->stampTicks = now;
+        n = scnDirCacheCopyRows(c, out, details);
+        scnLockLeave(&scnDirCacheLock);
+        free(stamps);
         return n;
     }
 
@@ -6671,13 +7011,20 @@ static int scnDirListCached(const char *dir, ScnDirEntry *out,
                file that landed while the read was running leaves the directory
                newer than this, so the next call reads again rather than
                keeping an answer that missed it. */
-            c->modified = info.modify_time;
-            c->gen      = gen;
-            c->count    = n;
-            c->valid    = true;
+            c->modified   = info.modify_time;
+            c->gen        = gen;
+            c->count      = n;
+            /* The slot takes the stamps, taken before the read for the
+               same reason as the time above. */
+            c->stamps     = stamps;
+            c->stampCount = stampCount;
+            c->stampTicks = now;
+            stamps        = NULL;
+            c->valid      = true;
         }
     }
     scnLockLeave(&scnDirCacheLock);
+    free(stamps);
     if (read != details) {
         free(read);
     }
@@ -7001,9 +7348,11 @@ typedef enum {
 /* One file's details out of the kept read of dir, copying that one record
    and nothing else. The same tests scnDirListCached makes before it answers
    from the cache: the lock exists, the directory is still a directory, and
-   its time and this process's change count are the ones the kept read was
-   made at. Anything else answers SCN_DIR_ONE_UNKNOWN and the caller reads
-   the directory through scnDirListCached, which also refills the cache.
+   its time, this process's change count and every scenario file's modify
+   time and size are the ones the kept read was made at, the files' stamps
+   being walked again only once the last walk is SCN_DIR_STAMPS_REUSE_MS
+   old. Anything else answers SCN_DIR_ONE_UNKNOWN and the caller reads the
+   directory through scnDirListCached, which also refills the cache.
 
    On SCN_DIR_ONE_FOUND, *got is the length copied into out, or -1 when the
    details do not fit in cap.
@@ -7022,14 +7371,32 @@ static int scnDirRecordCopy(const ScnDirDetails *d, bool settings,
     return (int)len;
 }
 
+/* The file's record in a slot found fresh: FOUND with *got set as
+   scnDirRecordCopy answers, or ABSENT. Called with the lock held. */
+static ScnDirOne scnDirCacheFind(const ScnDirCache *c, const char *file,
+                                 bool settings, uint8_t *out, size_t cap,
+                                 int *got) {
+    int i;
+
+    for (i = 0; i < c->count; i++) {
+        if (strcmp(c->details[i].file, file) == 0) {
+            *got = scnDirRecordCopy(&c->details[i], settings, out, cap);
+            return SCN_DIR_ONE_FOUND;
+        }
+    }
+    return SCN_DIR_ONE_ABSENT;
+}
+
 static ScnDirOne scnDirDetailsOneCached(const char *dir, const char *file,
                                         int max, bool settings, uint8_t *out,
                                         size_t cap, int *got) {
     SDL_PathInfo info;
     ScnDirCache *c;
     ScnDirOne    result = SCN_DIR_ONE_UNKNOWN;
-    int          i;
-    uint32_t     gen = serverSimScriptDirsGen();
+    ScnDirStamp *stamps     = NULL;
+    int          stampCount = 0;
+    uint32_t     gen        = serverSimScriptDirsGen();
+    Uint64       now;
 
     *got = -1;
     if (scnDirCacheLock.m == NULL || dir == NULL || dir[0] == '\0' ||
@@ -7039,21 +7406,33 @@ static ScnDirOne scnDirDetailsOneCached(const char *dir, const char *file,
         return SCN_DIR_ONE_UNKNOWN;
     }
 
+    /* Walked a moment ago and nothing since: answered without a walk, which
+       is what keeps a burst of details asks from walking every directory
+       for each one. */
+    now = SDL_GetTicks();
     scnLockEnter(&scnDirCacheLock);
     c = scnDirCacheSlot(dir);
-    if (c->valid && c->count <= max && c->modified == info.modify_time &&
-        c->gen == gen && strcmp(c->dir, dir) == 0) {
-        result = SCN_DIR_ONE_ABSENT;
-        for (i = 0; i < c->count; i++) {
-            if (strcmp(c->details[i].file, file) != 0) {
-                continue;
-            }
-            *got   = scnDirRecordCopy(&c->details[i], settings, out, cap);
-            result = SCN_DIR_ONE_FOUND;
-            break;
-        }
+    if (c->count <= max &&
+        scnDirCacheRecent(c, dir, info.modify_time, gen, now)) {
+        result = scnDirCacheFind(c, file, settings, out, cap, got);
     }
     scnLockLeave(&scnDirCacheLock);
+    if (result != SCN_DIR_ONE_UNKNOWN) {
+        return result;
+    }
+
+    if (!scnDirStampsRead(dir, &stamps, &stampCount)) {
+        return SCN_DIR_ONE_UNKNOWN;
+    }
+    scnLockEnter(&scnDirCacheLock);
+    c = scnDirCacheSlot(dir);
+    if (c->count <= max &&
+        scnDirCacheFresh(c, dir, info.modify_time, gen, stamps, stampCount)) {
+        c->stampTicks = now;
+        result = scnDirCacheFind(c, file, settings, out, cap, got);
+    }
+    scnLockLeave(&scnDirCacheLock);
+    free(stamps);
     return result;
 }
 
@@ -7265,8 +7644,6 @@ static ServerScriptReadResult scnDirReadCb(void *ctx, const char *dir,
 /* What an upload is written through before it takes its own name. The
    leading dot keeps it out of every listing while it is there. */
 #define SCN_UPLOAD_TEMP_PREFIX ".upload-"
-
-static bool scnHasExt(const char *name, const char *ext);
 
 /* One refusal: the code and its numbers for the sender, who says it in their
    own language, and the line to the operator with the file named. The line
@@ -8599,6 +8976,9 @@ static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
     h->policy.canCapture      = scnCanCapture;
     h->policy.announce        = scnAnnounce;
     h->policy.canDie          = scnCanDie;
+    h->policy.canHit          = scnCanHit;
+    h->policy.pillDamageScale = scnPillDamageScale;
+    h->policy.canAlly         = scnCanAlly;
     h->policy.chooseStart     = scnChooseStart;
     h->policy.spawnLoadout    = scnSpawnLoadout;
     h->policy.damageScale     = scnDamageScale;
@@ -9391,6 +9771,22 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
  * arrives the same way because the question it asks is the same one. */
 static void scnMapChanged(void *ctx, ServerSim *sim, const char *mapPath) {
     scnDecideScenario(sim, (ScenarioHost **)ctx, mapPath);
+}
+
+void scenarioHostPublishMapScript(ServerSim *sim, const ScenarioHost *h) {
+    int which = -1;
+    int i;
+
+    if (sim == NULL) return;
+    if (h != NULL) {
+        for (i = 0; i < h->count; i++) {
+            if (h->entry[i].source == lobbyScenarioMap) {
+                which = i;
+                break;
+            }
+        }
+    }
+    scnPublishMapScript(sim, h, which);
 }
 
 void scenarioHostFollowMap(ServerSim *sim, ScenarioHost **slot) {

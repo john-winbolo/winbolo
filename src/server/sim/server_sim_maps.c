@@ -848,10 +848,10 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
     stashCommittedMap(sim);
 
     /* Wipe the existing map/pill/base/start contents before the
-     * decoder touches them. mapLoadCompressedMap's RLE-decoder only
-     * writes cells encoded in the new blob — any tile NOT included
-     * in the new map's runs would otherwise keep the previous map's
-     * value. */
+     * decoder touches them. mapRead's run decoder, which the .map
+     * branch below reaches, only writes cells encoded in the new
+     * file — any tile NOT included in the new map's runs would
+     * otherwise keep the previous map's value. */
     {
         int x, y;
         memset((*sim->sim.mp).mapItem, DEEP_SEA,
@@ -872,7 +872,7 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
     /* The wire / upload / WBN paths all hand us a full .map file
      * (starting with the BMAPBOLO magic + version + counts header).
      * mapLoadCompressedMap expects a different on-the-wire layout
-     * (raw bases/pills/starts struct dump + LZW map), so feeding it
+     * (zlib over a bases/pills/starts struct dump + the map), so feeding it
      * the .map file bytes misaligns every field. Detect the magic
      * and route through mapRead via a temp file when it matches.
      * Fall back to the legacy mapLoadCompressedMap path for any
@@ -1441,6 +1441,17 @@ bool serverSimSetScriptSetting(ServerSim *sim, const char *file,
     if (n <= 0) return false;
     decl = scnSettingFind(rows, n, id);
     if (decl == NULL) return false;
+    /* On or off has no nearest entry to clamp to: anything else is not a
+       value the host's dropdown sends. */
+    if (decl->type == SCN_SETTING_TYPE_BOOL && value != 0 && value != 1) {
+        return false;
+    }
+    /* Nor has a list of words: a choice takes the index of one of its
+       words and nothing else. */
+    if (decl->type == SCN_SETTING_TYPE_CHOICE &&
+        scnSettingChoiceText(decl, value) == NULL) {
+        return false;
+    }
 
     v  = scnSettingClamp(decl, value);
     at = scriptSettingAt(sim, file, id);

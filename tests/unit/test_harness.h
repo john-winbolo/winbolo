@@ -275,6 +275,7 @@ int run_round_stats_codec_worstcase(void);
 int run_round_stats_scenario_score_codec(void);
 int run_round_stats_build_summary(void);
 int run_round_stats_scenario_score_filled(void);
+int run_round_stats_group_rows(void);
 int run_round_stats_summary_highlights(void);
 int run_round_stats_client_ingest(void);
 int run_round_stats_track_records(void);
@@ -388,6 +389,7 @@ int run_upload_lost_ack_retry(void);
 int run_upload_timeout_releases_other_player(void);
 int run_upload_lost_done_retry(void);
 int run_upload_partial_timeout_retry(void);
+int run_upload_begin_without_trailer_refused(void);
 int run_upload_filename_safe(void);
 int run_upload_filename_safe_script(void);
 int run_lobby_time_minutes_valid(void);
@@ -467,6 +469,16 @@ int run_scenario_settings_game_setting(void);
 int run_scenario_settings_wire(void);
 int run_scenario_settings_survival_decl(void);
 int run_scenario_settings_survival_short(void);
+int run_scenario_settings_bool_blob(void);
+int run_scenario_settings_bool_manifest_lua(void);
+int run_scenario_settings_bool_manifest_json(void);
+int run_scenario_settings_bool_server(void);
+int run_scenario_settings_bool_game_setting(void);
+int run_scenario_settings_choice_blob(void);
+int run_scenario_settings_choice_manifest_lua(void);
+int run_scenario_settings_choice_manifest_json(void);
+int run_scenario_settings_choice_server(void);
+int run_scenario_settings_choice_game_setting(void);
 int run_script_list_client_apply(void);
 int run_lobby_map_search_chunked(void);
 int run_wbn_bearer_state(void);
@@ -965,6 +977,12 @@ int run_entity_record_lobby_add_republishes_counts(void);
 int run_entity_record_lobby_removal_replays(void);
 int run_entity_record_seek_lands_on_the_right_liveness(void);
 
+/* What a brain is told about a removed pill or base
+ * (test_brain_removed_items.c): BrainInfo's on-map masks clear the removed
+ * number, and the -brain-debug recording carries the same masks per frame. */
+int run_brain_removed_items_info_masks(void);
+int run_brain_removed_items_recording_masks(void);
+
 /* The entity-sync control event (test_entity_sync.c). CTRL_ENTITY_SYNC
  * carries three 16-bit masks, one per item list, saying which indices hold
  * an item that is on the map — the part the compressed map blob leaves out,
@@ -1139,6 +1157,28 @@ int run_alliance_reset_bots_synced_after_countdown_start(void);
 int run_alliance_reset_apply_keeps_owners(void);
 int run_alliance_reset_changed_matrix_keeps_owners(void);
 int run_alliance_reset_set_team_leaves_old_team(void);
+
+/* A leave hands the leaver's planted pills and bases to an ally, and
+ * with no ally moves nothing (test_alliance_leave.c, issue #420). */
+int run_alliance_leave_no_ally_top_seat_empty(void);
+int run_alliance_leave_no_ally_top_seat_enemy(void);
+int run_alliance_leave_no_ally_leaver_is_top_seat(void);
+int run_alliance_leave_hands_to_ally(void);
+int run_alliance_leave_hands_to_top_seat_ally(void);
+
+/* Alliance requests at the command arms (test_alliance_request.c, #421). */
+int run_alliance_request_accept_without_request_refused(void);
+int run_alliance_request_then_accept_allies(void);
+int run_alliance_request_requester_replaced_refused(void);
+int run_alliance_request_ranked_accept_refused(void);
+int run_alliance_request_refused_in_lobby(void);
+int run_alliance_request_cleared_at_round_start(void);
+int run_alliance_request_client_drops_departed_requester(void);
+
+/* Pillbox and base owners from the map file survive a round start
+ * (test_round_start_owners.c, issue #422). */
+int run_round_start_owners_kept_with_lobby_team(void);
+int run_round_start_owners_kept_after_manual_alliance(void);
 
 /* Log replay round-trip (test_log_roundtrip.c). */
 int run_log_roundtrip_basic(void);
@@ -1441,6 +1481,28 @@ int run_tank_damage_exact_armour_survives(void);
 int run_tank_damage_overkill_destroys(void);
 int run_tank_damage_partial_survives(void);
 int run_tank_destroyed_snapshot_round_trip(void);
+
+/* Shell knockback heading symmetry (test_tank_knockback.c): the bump a
+ * surviving hit applies is a signed WORLD delta decayed by a right shift,
+ * and C's >> rounds a negative value toward -infinity, not toward zero — a
+ * push with a west or north component used to settle further than the same
+ * push east or south for the same shell. The fix shifts by magnitude and
+ * restores the sign afterwards. The largest tank_slide_step the rules
+ * allow (63) pushes the full distance the right way, and a spent bump stays
+ * at zero at every decay shift. The armour_paths, timing_drive,
+ * replaces_mines and rules_respawn tests are #380's own, run with
+ * tank_slide_mac on; mac_off_ignores_bonus checks the switch off leaves the
+ * WinBolo push alone. */
+int run_tank_knockback_heading_symmetric(void);
+int run_tank_knockback_follows_shell_angle(void);
+int run_tank_knockback_speed_untouched(void);
+int run_tank_knockback_large_step(void);
+int run_tank_knockback_settles_to_zero(void);
+int run_tank_knockback_armour_paths(void);
+int run_tank_knockback_timing_drive(void);
+int run_tank_knockback_replaces_mines(void);
+int run_tank_knockback_rules_respawn(void);
+int run_tank_knockback_mac_off_ignores_bonus(void);
 
 /* The destroyed state on the wire (test_tank_status_wire.c): tankStatus
  * carries TANK_STATUS_DEAD (in the respawn wait) and TANK_STATUS_DESTROYED
@@ -1851,6 +1913,7 @@ int run_mapview_sprite_lgm_snap(void);
  * numbers sit on their square and are withheld below the minimum scale. */
 int run_mapview_overlay_gunsight(void);
 int run_mapview_overlay_tank_label(void);
+int run_mapview_overlay_tank_label_smooth(void);
 int run_mapview_overlay_cursor(void);
 int run_mapview_overlay_item_labels(void);
 
@@ -1986,6 +2049,14 @@ int run_sim_rules_pill_empties_without_wrapping(void);
 int run_sim_rules_pill_shell_damage_follows(void);
 int run_sim_rules_pill_angry_divisor_follows(void);
 int run_sim_rules_pill_massage_follows(void);
+/* pill_shell_cap and pill_max_shells_at_tank through pillsUpdate
+ * (test_pill_shell_cap.c). */
+int run_pill_shell_cap_off_is_no_limit(void);
+int run_pill_shell_cap_retargets_next_nearest(void);
+int run_pill_shell_cap_holds_then_fires_when_freed(void);
+int run_pill_shell_cap_out_of_range_clears_just_seen(void);
+int run_pill_shell_cap_counts_same_update_shots(void);
+int run_pill_shell_cap_ignores_tank_shells(void);
 int run_sim_rules_tank_explosion_follows(void);
 int run_sim_rules_water_loss_follows(void);
 int run_sim_rules_pairs(void);
@@ -2226,6 +2297,7 @@ int run_map_resync_stale_gen_rejected(void);
 int run_map_compress_roundtrip_stock(void);
 int run_map_compress_capacity_refuses(void);
 int run_map_compress_incompressible(void);
+int run_map_compress_rejects_damaged(void);
 int run_map_compress_roundtrip_mutated(void);
 int run_map_compress_rejects_null_handles(void);
 int run_map_checksum_ignores_mines(void);
@@ -2639,6 +2711,10 @@ int run_console_say_keeps_case(void);
 /* The per-tank modifier set (test_tank_modifiers.c): the op that writes it,
  * the states it refuses, the snapshot group under the ninth presence bit, and
  * the create-clears / respawn-keeps rule for the values on the tank. */
+/* The diagonal pixel snap (test_tank_diagonal_step.c): a tank drawn on a
+ * diagonal steps on both axes in the same frame, at the same speed, and the
+ * render lerp keeps the snap from flickering. */
+int run_tank_diagonal_steps_both_axes(void);
 /* The sites that read a modifier (test_tank_modifier_sites.c): one case per
  * site, each pairing the modified run with a classic one on the same
  * square so only the modifier is under test. */
@@ -2868,6 +2944,7 @@ int run_survival_lobby_round(void);
 int run_survival_lobby_round_full(void);
 int run_survival_lobby_round_ds_order(void);
 int run_loopback_unfield_tank(void);
+int run_loopback_fine_tank_position(void);
 int run_lobby_template_return_reconciles(void);
 int run_lobby_template_return_unfields(void);
 int run_lobby_template_reset_reseats(void);
@@ -3072,6 +3149,25 @@ int run_scenario_policy_lua_value_classic(void);
 int run_scenario_policy_lua_value_error_counts(void);
 int run_scenario_policy_lua_value_in_policy(void);
 
+/* The can_ally policy at the alliance request and accept arms, and the
+ * game.allied read (test_scenario_can_ally.c). */
+int run_scenario_can_ally_request(void);
+int run_scenario_can_ally_accept(void);
+int run_scenario_can_ally_script_not_asked(void);
+int run_scenario_can_ally_lua(void);
+int run_scenario_allied_read(void);
+
+/* The questions a script needs to switch friendly fire off — can_hit,
+ * pill_damage_scale and the pillbox and blast arguments of damage_scale and
+ * can_die — and the on_tank_hit event (test_scenario_friendly_fire.c). */
+int run_scenario_can_hit_tank(void);
+int run_scenario_can_hit_pill(void);
+int run_scenario_pill_shell_names_pill(void);
+int run_scenario_pill_damage_scale(void);
+int run_scenario_blast_names_tank(void);
+int run_scenario_mine_names_layer(void);
+int run_scenario_on_tank_hit(void);
+
 /* The in-process game-event channel (test_game_event_channel.c): a subscriber
  * that asks for it hears the captures and the builder death on it rather than
  * on the control stream, with every byte of each event — the ones past
@@ -3241,6 +3337,7 @@ int run_scenario_lua_read_index_passes_through(void);
 int run_scenario_lua_op_index_subtracts_one(void);
 int run_scenario_lua_script_index_adds_one(void);
 int run_scenario_lua_absent_reads_are_nil(void);
+int run_scenario_lua_lobby_slot_team_pool(void);
 int run_scenario_lua_terrain_is_the_whole_map(void);
 int run_scenario_lua_shape_error_counts(void);
 int run_scenario_lua_rule_reads_the_table(void);
@@ -3496,6 +3593,7 @@ int run_scenario_dir_lists_loose_script(void);
 int run_scenario_dir_skips_junk(void);
 int run_scenario_dir_skips_subdirectory(void);
 int run_scenario_dir_list_cached(void);
+int run_scenario_dir_list_cached_sees_edit(void);
 int run_scenario_dir_merges_shipped_mods(void);
 int run_scenario_dir_entry_roundtrip(void);
 int run_scenario_dir_chunk_not_in_flight(void);

@@ -35,10 +35,23 @@
 -- empties the gun again in the same frame. Nobody but the holder may repair it,
 -- and a dead one lying on the ground is repaired by nobody.
 --
--- Everybody starts on one team. The holder is moved to a team of his own
--- the moment he takes the prize and back when he loses it, so every other
--- tank is his enemy and an ally of the rest: the bots go after him and
--- leave each other alone, and a built prize fires at everybody but him.
+-- Who plays with whom. The host picks it in the lobby with the "Teams"
+-- setting. In "Free For All", the default, every tank is on a team of its
+-- own from the round start, whatever the lobby teams were, so nobody is
+-- allied with anybody and nobody can ally: the holder is against everybody,
+-- and a built prize fires at everybody but him. The lobby teams are put
+-- back when the round ends. In "Use Lobby Teams" the lobby teams play as
+-- teams: teammates are allied, every second the holder carries the prize
+-- scores for his team as well as for him, a built prize spares his
+-- teammates, and the team with the most seconds wins. The bots on the
+-- holder's team are not sent after him.
+--
+-- The scores under the compass: in Free For All one row a tank; in a team
+-- round a row for each team with its total and, under it, a row for each
+-- member with the seconds they carried. When that is more rows than there
+-- is room for, every team's row stays and the player's own row goes under
+-- their team. A team of bots only is named after the pool its bots take
+-- their names from, as the lobby names them.
 --
 -- The compass is the panel. A script cannot draw on the edge of the game view,
 -- so the square over the view is a compass rose instead: the needle points at
@@ -92,8 +105,11 @@ local BUILT_ARMOUR      = 3     -- the most armour the prize holds when built. A
                                 -- prize is drawn as a pillbox shot twelve
                                 -- times. A build is set down to this in
                                 -- on_pill_placed and a repair in on_built.
-local HUNTERS           = 1     -- the team everybody but the holder is on
-local HOLDER_TEAM       = 2     -- the holder's team, on his own
+
+-- The two words of the "Teams" setting, as scenario.settings declares them.
+local FREE_FOR_ALL      = "Free For All"
+local LOBBY_TEAMS       = "Use Lobby Teams"
+local LABEL_MAX         = 22    -- the longest team name a score row shows
 
 -- How much of each ground's speed the holder loses, as a percentage of the
 -- distance a classic tank covers there at full speed, when SPEED_PENALTY_PCT
@@ -154,6 +170,9 @@ local hide_at     = 3           -- squares off a tank in forest stops being seen
 local board       = {}          -- the leaderboard, rebuilt once a second
 local drawn       = {}          -- seat -> what its panel last showed, as a short key
 local team_of     = {}          -- seat -> the team this script last put it on
+local lobby_team  = {}          -- seat -> its lobby team, kept at on_start or join
+local team_mode   = nil         -- true for "Use Lobby Teams"; read on first use
+local team_seconds = {}         -- lobby team -> seconds its holders carried
 local boost_from  = nil         -- the game.tick() the holder took the prize on,
                                 -- or nil when there is no boost to run
 local invuln_seat = nil         -- the seat damage_scale spares, or nil
@@ -197,6 +216,36 @@ local function read_settings()
   INVULN_SECONDS      = game.setting("invuln_seconds")
   DEEP_WATER_SECONDS  = game.setting("deep_water_seconds")
   work_out_shares()
+end
+
+-- The host's "Teams" choice, asked the first time a hook needs it, for the
+-- same reason read_settings is not run at the top of the file.
+local function teams_on()
+  if team_mode == nil then
+    team_mode = (game.setting("teams") == LOBBY_TEAMS)
+  end
+  return team_mode
+end
+
+-- The seat's lobby team: the one kept for it once the round has started,
+-- because a Free For All moves every seat onto a team of its own, and the
+-- one the lobby shows before that.
+local function lobby_team_of(p)
+  if lobby_team[p] ~= nil then
+    return lobby_team[p]
+  end
+  local slot = game.lobby_slot(p)
+  return (slot ~= nil) and slot.team or 0
+end
+
+-- The team seat p scores for in a team round, or nil: a seat on no team, and
+-- every seat in a Free For All, scores for nobody but itself.
+local function scoring_team(p)
+  if p == nil or not teams_on() then
+    return nil
+  end
+  local t = lobby_team_of(p)
+  return (t > 0) and t or nil
 end
 
 -- The rose, built once. It never moves and it is the same for everybody, so it
@@ -326,6 +375,98 @@ local function name_of(p)
          (slot ~= nil and slot.name ~= "" and slot.name) or "Somebody"
 end
 
+-- The lobby teams of the seats in the round, lowest first.
+local function teams_in_round()
+  local teams, seen = {}, {}
+  for p = 0, game.max_tanks() - 1 do
+    local slot = game.lobby_slot(p)
+    local t = lobby_team_of(p)
+    if slot ~= nil and slot.connected and slot.fielded and t > 0 and
+       not seen[t] then
+      seen[t] = true
+      teams[#teams + 1] = t
+    end
+  end
+  table.sort(teams)
+  return teams
+end
+
+-- The pool label of a team of bots only; nil when a human is on it.
+local function bot_pool(team)
+  local pool, bots = nil, false
+  for p = 0, game.max_tanks() - 1 do
+    local slot = game.lobby_slot(p)
+    if slot ~= nil and lobby_team_of(p) == team then
+      if not slot.bot then
+        return nil
+      end
+      bots = true
+      pool = pool or slot.team_pool
+    end
+  end
+  if not bots or pool == "" then
+    return nil
+  end
+  return pool
+end
+
+-- A team's name on the scores and in the last line. A team with no human on
+-- it is named after the pool its bots take their names from, as the lobby
+-- names them ("Famous Painters"); any other team is "Team <n>". So is a team
+-- whose pool another team in the round shares (a server with no lobby gives
+-- every team the same pool), so no two teams read alike. A label too long for
+-- a score row is cut short.
+local function team_label(team)
+  local pool = bot_pool(team)
+  if pool == nil then
+    return "Team " .. team
+  end
+  for _, other in ipairs(teams_in_round()) do
+    if other ~= team and bot_pool(other) == pool then
+      return "Team " .. team
+    end
+  end
+  if #pool > LABEL_MAX then
+    pool = pool:sub(1, LABEL_MAX - 2) .. ".."
+  end
+  return pool
+end
+
+-- The team round's scores, best first: a row for each team with its total,
+-- and under it a row for each member with the seconds they carried
+-- themselves. A seat on no team is a row of its own among the teams.
+local function team_board(rows)
+  local sides, by_team = {}, {}
+  for _, row in ipairs(rows) do
+    local t = scoring_team(row.slot)
+    if t == nil then
+      sides[#sides + 1] = { slot = row.slot, score = row.score }
+    else
+      if by_team[t] == nil then
+        by_team[t] = { team = t, score = team_seconds[t] or 0, members = {} }
+        sides[#sides + 1] = by_team[t]
+      end
+      local m = by_team[t].members
+      m[#m + 1] = { slot = row.slot, score = row.score, indent = true }
+    end
+  end
+  table.sort(sides, function(a, b)
+    if a.score ~= b.score then
+      return a.score > b.score
+    end
+    local ka = a.team and (a.team * 100) or (10000 + a.slot)
+    local kb = b.team and (b.team * 100) or (10000 + b.slot)
+    return ka < kb
+  end)
+  local out = {}
+  for _, side in ipairs(sides) do
+    out[#out + 1] = side
+    for _, m in ipairs(side.members or {}) do
+      out[#out + 1] = m
+    end
+  end
+  return out
+end
 -- Takes the deep sea count off: the clock starts again the next time the
 -- holder takes the prize onto deep sea, and the warning comes off the screen
 -- it was on.
@@ -450,13 +591,20 @@ local function compass(p, me, tx, ty, what, colour, carrier, rows, rows_key)
     end
     local y = BOARD_Y + (i - 1) * BOARD_STEP
     local shade = "grey"
-    if row.slot == carrier then
+    if row.team ~= nil then
+      shade = (row.team == scoring_team(carrier)) and "yellow" or "white"
+    elseif row.slot == carrier then
       shade = "yellow"
     elseif row.slot == p then
       shade = "white"
     end
     n = n + 1
-    list[n] = { "name", 4, y, shade, "small", "left", row.slot }
+    if row.team ~= nil then
+      list[n] = { "text", 4, y, shade, "small", "left", team_label(row.team) }
+    else
+      list[n] = { "name", row.indent and 12 or 4, y, shade, "small", "left",
+                  row.slot }
+    end
     n = n + 1
     list[n] = { "text", 124, y, shade, "small", "right",
                 string.format("%d", row.score) }
@@ -473,9 +621,42 @@ local function board_key(rows)
     if row == nil then
       break
     end
-    parts[i] = row.slot .. ":" .. row.score
+    parts[i] = (row.team and ("t" .. row.team) or row.slot) .. ":" ..
+               row.score
   end
   return table.concat(parts, ",")
+end
+
+-- The rows one player's panel shows. When there are more than BOARD_ROWS,
+-- a team round keeps every team's row and puts the player's own row under
+-- their team's; a Free For All shows the best BOARD_ROWS.
+local function rows_for(p, rows)
+  if #rows <= BOARD_ROWS or not teams_on() then
+    return rows
+  end
+  local out, mine = {}, scoring_team(p)
+  for _, row in ipairs(rows) do
+    if not row.indent then
+      out[#out + 1] = row
+      if row.team ~= nil and row.team == mine then
+        for _, m in ipairs(rows) do
+          if m.indent and m.slot == p then
+            out[#out + 1] = m
+          end
+        end
+      end
+    end
+  end
+  return out
+end
+
+-- The scores as the panel shows them: one row a tank, or grouped by team.
+local function panel_board()
+  local rows = leaderboard()
+  if teams_on() then
+    return team_board(rows)
+  end
+  return rows
 end
 
 -- Five times a second: the deep sea clock, and one panel each. Every player's
@@ -489,12 +670,11 @@ local function refresh()
   end
   local tx, ty, what, colour, carrier = prize()
   watch_the_water(what, carrier)
-  local rows = board
-  local rows_key = board_key(rows)
   for p = 0, game.max_tanks() - 1 do
     local t = game.tank(p)
     if t ~= nil then
-      compass(p, t, tx, ty, what, colour, carrier, rows, rows_key)
+      local rows = rows_for(p, board)
+      compass(p, t, tx, ty, what, colour, carrier, rows, board_key(rows))
       -- A seat that somehow kept the holder's legs without the pillbox gets
       -- them back here. The hooks below are what normally clears them; this
       -- is the net under those.
@@ -896,6 +1076,11 @@ local function aim_one(p)
   if p == holder or pill == nil or not is_bot(p) or not in_round(p) then
     return
   end
+  -- In a team round the holder's teammates are not sent after him.
+  local held_by = scoring_team(holder)
+  if held_by ~= nil and scoring_team(p) == held_by then
+    return
+  end
   local t = game.tank(p)
   if t == nil or t.dead then
     return
@@ -985,16 +1170,59 @@ local function hold_down_the_prize()
   end
 end
 
--- The team seat p belongs on: the holder on his own, everybody else together.
--- A seat is only moved when that differs from where this script last put it,
--- because each move sends every client the whole alliance table again.
+-- Free For All: the lowest team number no other seat was given, or 0 (no
+-- team) when all fifteen are taken, which only a sixteenth seat ever meets.
+local function free_team(p)
+  local used = {}
+  for q, t in pairs(team_of) do
+    if q ~= p and game.lobby_slot(q) ~= nil then
+      used[t] = true
+    end
+  end
+  for t = 1, game.max_tanks() - 1 do
+    if not used[t] then
+      return t
+    end
+  end
+  return 0
+end
+
+-- The team seat p belongs on for the round: its lobby team in a team round,
+-- and a team of its own in a Free For All, whoever holds the prize. The
+-- lobby team is kept first, to score for and to be put back at the end. A
+-- seat is only moved when it is not already there, because each move sends
+-- every client the whole alliance table again.
 local function sort_team(p)
-  if over or not in_round(p) then
+  local slot = game.lobby_slot(p)
+  if over or slot == nil then
     return
   end
-  local want = (p == holder) and HOLDER_TEAM or HUNTERS
-  if team_of[p] ~= want and game.set_team(p, want) then
+  if lobby_team[p] == nil then
+    lobby_team[p] = slot.team
+  end
+  local want
+  if teams_on() then
+    want = lobby_team[p]
+  else
+    want = team_of[p] or free_team(p)
+  end
+  if slot.team == want or game.set_team(p, want) then
     team_of[p] = want
+  end
+end
+
+-- Free For All: every seat back on the lobby team it came with, so the next
+-- lobby shows the teams the host set up. A roster write needs a running
+-- round, so this is done just before the round is ended, not in on_end.
+local function restore_teams()
+  if teams_on() then
+    return
+  end
+  for p, t in pairs(lobby_team) do
+    local slot = game.lobby_slot(p)
+    if slot ~= nil and slot.team ~= t then
+      game.set_team(p, t)
+    end
   end
 end
 
@@ -1030,11 +1258,16 @@ local function each_second()
   if holder ~= nil and not standing(game.pill(pill)) then
     seconds[holder] = (seconds[holder] or 0) + 1
     game.score(holder, seconds[holder], SCORE_LABEL)
+    local team = scoring_team(holder)
+    if team ~= nil then
+      team_seconds[team] = (team_seconds[team] or 0) + 1
+      game.score({ team = team }, team_seconds[team], SCORE_LABEL)
+    end
   end
-  board = leaderboard()
+  board = panel_board()
 
   -- The nets under the hooks: a standing prize is held at BUILT_ARMOUR, and
-  -- every seat is on the team its part puts it on. Neither does anything
+  -- every seat is on the team the round puts it on. Neither does anything
   -- when that is already so.
   hold_down_the_prize()
   sort_teams()
@@ -1081,15 +1314,21 @@ finish = function()
   end
   over = true
 
-  local rows = leaderboard()
-  local best = rows[1]
-  local line
+  -- The sides: every tank in a Free For All; in a team round every team,
+  -- and every tank on no team.
+  local sides = {}
+  for _, row in ipairs(panel_board()) do
+    if not row.indent then
+      sides[#sides + 1] = row
+    end
+  end
+  local best = sides[1]
+  local line, winner = nil, nil
   if best == nil or best.score == 0 then
     line = "Nobody held the pillbox."
   else
-    local who = name_of(best.slot)
     local tied = 0
-    for _, row in ipairs(rows) do
+    for _, row in ipairs(sides) do
       if row.score == best.score then
         tied = tied + 1
       end
@@ -1097,12 +1336,19 @@ finish = function()
     if tied > 1 then
       line = string.format("A %d-second draw, %d ways.", best.score, tied)
     else
+      local who = best.team and team_label(best.team) or name_of(best.slot)
       line = string.format("%s held the pillbox for %d seconds.", who,
                            best.score)
+      winner = best.team
     end
   end
   game.message(line)
-  game.end_round(line)
+  restore_teams()
+  if winner ~= nil then
+    game.end_round(line, winner)
+  else
+    game.end_round(line)
+  end
 end
 
 -- A base that has been used goes back on the map neutral, with full armour and
@@ -1189,16 +1435,24 @@ function on_start()
       minutes, (minutes == 1) and "" or "s"))
   end
 
-  -- Whatever the lobby put people on, they start together: nobody holds the
-  -- prize yet, so everybody is a hunter. Roster writes are refused during the
-  -- setup that opens a round, which is why this is here and not in on_setup.
+  -- Every seat's lobby team is kept now. In a Free For All every seat then
+  -- goes on a team of its own, whatever the lobby put people on; in a team
+  -- round the lobby teams stay. Roster writes are refused during the setup
+  -- that opens a round, which is why this is here and not in on_setup.
+  for p = 0, game.max_tanks() - 1 do
+    local slot = game.lobby_slot(p)
+    if slot ~= nil then
+      lobby_team[p] = slot.team
+    end
+  end
   sort_teams()
+  game.log("Pillbox Tag: " .. (teams_on() and "lobby teams" or "free for all"))
 
   -- How close a tank in a wood has to be before it can be seen, in squares.
   hide_at = math.floor(game.rule("tree_hide_distance") / 256)
   tune_everybody()
 
-  board = leaderboard()
+  board = panel_board()
   game.timer(1, each_second)
   refresh()
 end
@@ -1351,8 +1605,8 @@ local function take_the_prize(p)
       invuln_seat = nil
     end
   end
-  -- On a team of their own before anybody is told to go after them, so a bot
-  -- handed the order to attack them is attacking an enemy.
+  -- The teams do not change with the prize: in a Free For All the holder is
+  -- already on a team of his own, and in a team round he stays on his.
   sort_team(p)
   carry_start()
   local t = game.tank(p)
@@ -1378,7 +1632,6 @@ lose_the_prize = function(p)
   if p ~= nil then
     game.set_modifiers(p, {})
     tune(p)
-    -- Back with everybody else. A seat on its way out is left alone.
     sort_team(p)
   end
 end
@@ -1520,10 +1773,14 @@ function on_player_join(p, scripted)
     return
   end
   -- A new player in a seat starts from nothing, not from the last one's time,
-  -- and is sent a whole panel of their own.
-  seconds[p] = 0
+  -- and is sent a whole panel of their own. A seat on_start already kept is
+  -- not new: a bot fielded just after the start arrives here too, and by
+  -- then a Free For All has moved it off its lobby team.
+  if lobby_team[p] == nil then
+    seconds[p] = 0
+    team_of[p] = nil
+  end
   drawn[p]   = nil
-  team_of[p] = nil
   sort_team(p)
   for q = 0, game.max_tanks() - 1 do
     if seconds[q] ~= nil and game.lobby_slot(q) ~= nil then
@@ -1567,16 +1824,17 @@ function on_player_leave(p, scripted)
   tuned[p]   = nil
   touched[p] = nil
   team_of[p] = nil
+  lobby_team[p] = nil
 end
 
 -- The teams are the round's, not the players'. A seat that changes team
--- itself is put back on the one its part says; a move this script made
--- arrives here too, a tick later, and is left alone.
+-- itself is put back: on its own team in a Free For All, on its lobby team
+-- in a team round. A move this script made arrives here too, a tick later,
+-- and is left alone.
 function on_team_changed(p, team, scripted)
   if scripted or not running or over then
     return
   end
-  team_of[p] = team
   sort_team(p)
 end
 
@@ -1584,6 +1842,16 @@ end
 -- stops changing hands is not news.
 function allow_base_win()
   return false
+end
+
+-- In a Free For All every player chases the prize for themselves, so
+-- players cannot make alliances. In a team round only lobby teammates ally.
+function can_ally(p, q)
+  if not teams_on() then
+    return false
+  end
+  local tp, tq = lobby_team_of(p), lobby_team_of(q)
+  return tp > 0 and tp == tq
 end
 
 function announce(kind, subject, actor)
@@ -1685,6 +1953,8 @@ scenario = {
     { id = "deep_water_seconds", label = "Holder deep water time (seconds)",
       type = "int", min = 3, max = 60, step = 1,
       default = DEEP_WATER_SECONDS },
+    { id = "teams", label = "Teams", type = "choice",
+      choices = { FREE_FOR_ALL, LOBBY_TEAMS }, default = FREE_FOR_ALL },
   },
 
   -- What each callback below does, in a line a player reads: the lobby's
@@ -1692,20 +1962,21 @@ scenario = {
   callbacks = {
     on_setup = "One pillbox is the prize, the rest go; bases start " ..
                "neutral.",
-    on_start = "Clock, compass, holder's sea timer.",
+    on_start = "Clock, compass, sea timer; Free For All: own teams.",
     on_end = "Logs how long the round ran.",
     on_tick = "Holder speed by terrain, plus boost.",
     on_player_join = "A joiner hunts, on 0 points.",
     on_player_leave = "A leaving holder's built prize dies.",
     on_base_captured = "A base: half armour, then gone 30 s.",
     on_pill_placed = "Built: 3 armour, no score. Dropped: dead.",
-    on_pill_picked_up = "Holder: own team, 1 point/s, slow, unarmed.",
+    on_pill_picked_up = "Holder: 1 point/s (and team), slow, unarmed.",
     on_pill_killed = "A shot-down prize is anybody's.",
     on_pill_captured = "Only the holder may own a built prize.",
     on_built = "A repair stops at 3 armour.",
     can_build = "Only the holder may repair it.",
-    on_team_changed = "Teams are fixed.",
+    on_team_changed = "Teams are fixed for the round.",
     allow_base_win = "Holding every base does not win.",
+    can_ally = "No alliances in Free For All; teammates in a team round.",
     announce = "Base captures are not announced.",
     spawn_loadout = "Full shells, no mines; carriers get none.",
     damage_scale = "New holder takes no damage at first.",

@@ -4527,6 +4527,16 @@ void clientSimCycleBuildSelect(ClientSim *cs, int delta) {
   clientSimSetCurrentBuildSelect(cs, order[idx]);
 }
 
+/* Draw other tanks from their full world position (the Smooth mode). */
+void clientSimSetFineTankPositions(ClientSim *cs, bool on) {
+  if (cs == NULL) return;
+  cs->fineTankPositions = on;
+}
+
+bool clientSimGetFineTankPositions(const ClientSim *cs) {
+  return cs != NULL && cs->fineTankPositions;
+}
+
 /* Alliance accessors. */
 
 /* A seat the roster is holding with nobody on the field — a held seat

@@ -124,6 +124,14 @@ typedef struct {
  * read, because at that size it is not a script. */
 #define SCN_SCRIPT_MAX_BYTES (1024 * 1024)
 
+/* How long, in milliseconds, one walk of a mods directory's file stamps
+ * stands for the next read of it. A read inside this window, with the
+ * directory's own time and this process's change count unmoved, is answered
+ * from the kept listing without stamping each file again, so a file edited
+ * in place is seen up to this much later. Here rather than in scenario_host.c
+ * so a test can wait it out. */
+#define SCN_DIR_STAMPS_REUSE_MS 250
+
 /* How many hook or policy calls may raise in a row before the scenario is
  * switched off for the rest of the round. Any call that returns normally
  * puts the count back to zero, so this counts a script that is failing
@@ -638,6 +646,18 @@ ScenarioLocalSaveResult scenarioHostSaveLocalScript(const char *file,
  *********************************************************/
 ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
                                  char *err, size_t errLen);
+
+/*********************************************************
+ *NAME:          scenarioHostPublishMapScript
+ *PURPOSE:
+ *  Hands the sim the row, details and settings declaration of
+ *  the map's own script that h plays, as a map commit does. A
+ *  server that attached at start-up with scenarioHostAttach
+ *  calls this when it needs the declaration before any commit
+ *  (WinBoloDS -setting). h NULL, or a host with no map script,
+ *  clears the row.
+ *********************************************************/
+void scenarioHostPublishMapScript(ServerSim *sim, const ScenarioHost *h);
 
 /*********************************************************
  *NAME:          scenarioHostAttachMod

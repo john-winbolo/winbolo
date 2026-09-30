@@ -296,10 +296,6 @@ set(ANDROID_SOURCES
     # full map editor — this file matches what the iOS build pulls in).
     ${PROJ_ROOT}/src/mapeditor/mapgen_imgui.cpp
 
-    # LZW compression
-    ${PROJ_ROOT}/src/lzw/ecodlzw.c
-    ${PROJ_ROOT}/src/lzw/dcodlzw.c
-
     # Server (for single-player). server_sim.c + servermessages.c
     # come from server_sim_static; threads.c comes from threads_static.
     ${PROJ_ROOT}/src/server/geolookup.c

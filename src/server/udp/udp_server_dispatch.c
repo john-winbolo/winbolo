@@ -924,7 +924,7 @@ static bool lobbyScriptNameTaken(ServerSim *sim, const char *name) {
 static void handleLobbyMapUploadBegin(ServerSim *sim, uint8_t *buf, int len,
                                       struct sockaddr_in *fromAddr) {
     /* [header 8] [kind 1] [totalLen 4] [nameLen 1] [name N]
-     * [bulkStartSeq 4, optional]
+     * [bulkStartSeq 4]
      * Only host
      * / admin / openHost may push files. Per-client wire-only
      * ACK (handshake/reliability). kind is UPLOAD_KIND_MAP or
@@ -1003,7 +1003,7 @@ static void handleLobbyMapUploadBegin(ServerSim *sim, uint8_t *buf, int len,
                       : LOBBY_MAP_UPLOAD_MAX_BYTES;
     if ((kind != UPLOAD_KIND_MAP && kind != UPLOAD_KIND_SCRIPT) ||
         nameLen == 0 || nameLen > 127 ||
-        len < PACKET_HEADER_SIZE + 6 + nameLen ||
+        len < PACKET_HEADER_SIZE + 6 + nameLen + 4 ||
         totalLen == 0 || totalLen > maxLen) {
         uint8_t ack[PACKET_HEADER_SIZE + 1];
         packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
@@ -1101,13 +1101,11 @@ static void handleLobbyMapUploadBegin(ServerSim *sim, uint8_t *buf, int len,
     /* Fresh receiver for this transfer; the bulk stream that follows
      * carries the bytes (no offset reassembly). */
     bulkReceiverInit(&udpServer.bulkRecvUp[clientIdx]);
-    /* New senders append their bulk sequence boundary. An aborted upload
-     * may have left gaps in this direction; skip its tail before accepting
-     * the next stream. Older BEGIN packets retain the original layout. */
-    if (len >= PACKET_HEADER_SIZE + 6 + nameLen + 4) {
-        channelResetExpected(&udpServer.channelMux[clientIdx], CHANNEL_BULK,
-            unpackU32(buf + PACKET_HEADER_SIZE + 6 + nameLen));
-    }
+    /* The sender's bulk sequence boundary. An aborted upload may have left
+     * gaps in this direction; skip its tail before accepting the next
+     * stream. */
+    channelResetExpected(&udpServer.channelMux[clientIdx], CHANNEL_BULK,
+        unpackU32(buf + PACKET_HEADER_SIZE + 6 + nameLen));
 
     uint8_t ack[PACKET_HEADER_SIZE + 1];
     packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);

@@ -119,6 +119,28 @@ static bool scenarioAllowsExtraTeams(ServerSim *sim, BYTE slot, BYTE team) {
     return allow;
 }
 
+/* Whether the scenario lets player ally with other: player is the one who
+ * asked, other the seat asked. Put to the policy at the request and again at
+ * the accept, the two places a player makes an alliance. Alliances a script
+ * makes itself — set_team, spawning a bot onto a team, seating — go through
+ * other paths and are not asked. With no policy, or one with no opinion, the
+ * answer is yes. */
+static bool scenarioAllowsAlliance(ServerSim *sim, BYTE player, BYTE other) {
+    bool allow;
+
+    if (sim->scenarioPolicy == NULL || sim->scenarioPolicy->canAlly == NULL) {
+        return TRUE;
+    }
+    if (player >= MAX_TANKS || other >= MAX_TANKS) {
+        return TRUE;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    allow = sim->scenarioPolicy->canAlly(sim->scenarioPolicy->ctx, player,
+                                         other);
+    serverSimScenarioPolicyLeave(sim);
+    return allow;
+}
+
 /* The START_SIDE_* choice of a slot's team; a slot on team 0 has no side. */
 static BYTE lobbySlotStartSide(const ServerSim *sim, BYTE slot) {
     const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, slot);
@@ -705,12 +727,24 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         return CMD_OK;
     }
     case CMD_ALLIANCE_REQUEST: {
+        /* Alliances are made in a running round. In the lobby, teams are how
+           sides change, and the client offers these commands in game only. */
+        if (serverSimGetState(sim) != serverStateRunning) {
+            return CMD_REJECT_BAD_STATE;
+        }
         if (serverSimGetRanked(sim)) return CMD_REJECT_BAD_STATE;
         const CmdAllianceRequest *p = &cmd->u.allianceRequest;
         if (p->toPlayer >= MAX_TANKS) return CMD_REJECT_INVALID;
         if (!serverSimIsPlayerConnected(sim, p->toPlayer)) {
             return CMD_REJECT_INVALID;  /* silent on wire today; preserved */
         }
+        /* Refused here rather than at the accept alone, so nobody is shown
+           a request the scenario will not let them take. */
+        if (!scenarioAllowsAlliance(sim, (BYTE)senderSlot, p->toPlayer)) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        /* Recorded so the accept can check it was asked for. */
+        sim->allianceAskedBy[p->toPlayer] |= (uint16_t)(1u << senderSlot);
         logAddEvent(log_AllyRequest, (BYTE)senderSlot, p->toPlayer,
                     0, 0, 0, NULL);
         ControlEvent reqEvt;
@@ -722,11 +756,34 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         return CMD_OK;
     }
     case CMD_ALLIANCE_ACCEPT: {
-        serverSimAcceptAlliance(sim, (BYTE)senderSlot,
-                                cmd->u.allianceAccept.newMember);
+        BYTE newMember = cmd->u.allianceAccept.newMember;
+        uint16_t asked;
+        if (serverSimGetState(sim) != serverStateRunning) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (serverSimGetRanked(sim)) return CMD_REJECT_BAD_STATE;
+        if (newMember >= MAX_TANKS) return CMD_REJECT_INVALID;
+        /* Only a request the new member made can be accepted. Checked here
+           and not in serverSimAcceptAlliance, so a scenario seating players
+           and the tests that call the sim directly are not affected. */
+        asked = (uint16_t)(1u << newMember);
+        if ((sim->allianceAskedBy[senderSlot] & asked) == 0) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        /* Asked again: the scenario's answer may have changed since the
+           request. The new member is the one who asked. A refusal leaves
+           the request in place, as a decline does. */
+        if (!scenarioAllowsAlliance(sim, newMember, (BYTE)senderSlot)) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        sim->allianceAskedBy[senderSlot] &= (uint16_t)~asked;
+        serverSimAcceptAlliance(sim, (BYTE)senderSlot, newMember);
         return CMD_OK;
     }
     case CMD_ALLIANCE_LEAVE: {
+        if (serverSimGetState(sim) != serverStateRunning) {
+            return CMD_REJECT_BAD_STATE;
+        }
         serverSimLeaveAlliance(sim, (BYTE)senderSlot);
         return CMD_OK;
     }
@@ -1240,8 +1297,10 @@ scriptListDone:
 
            Nothing from the client is trusted past the names.
            serverSimSetScriptSetting reads the declaration for the file on
-           this server, refuses an id it does not declare, and falls back to
-           the default for a value outside the range or off the step. */
+           this server, refuses an id it does not declare, a bool setting
+           given anything but 0 or 1 and a choice given anything but the
+           index of one of its words, and falls back to the default
+           for an int value outside the range or off the step. */
         const CmdSetScriptSetting *s = &cmd->u.setScriptSetting;
 
         if (!serverSimIsLobbyEnabled(sim) ||

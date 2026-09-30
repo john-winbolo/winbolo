@@ -23,24 +23,53 @@
  *  which answers the declared default for any id the host
  *  has not chosen a value for.
  *
- *  Only "int" exists today and is drawn as a dropdown. The
- *  type is a byte on the wire and every row carries its own
- *  length, so a reader skips a type it does not know and a
- *  "bool" or a "choice" can be added later without breaking
- *  the readers already out there.
+ *  Three types exist. "int" is a whole number drawn as a
+ *  dropdown of every value on the step. "bool" is on or off,
+ *  declared with a true or false default and no range:
+ *
+ *      { id = "fog", label = "Fog", type = "bool",
+ *        default = true },
+ *
+ *  It is held as a range of 0..1 step 1, so the value checks
+ *  and the body below serve it unchanged, is drawn as an On
+ *  and Off dropdown, and game.setting answers true or false
+ *  for it. "choice" is one of a list of words, declared with
+ *  the list and the word that is the default:
+ *
+ *      { id = "teams", label = "Teams", type = "choice",
+ *        choices = { "Free For All", "Use Lobby Teams" },
+ *        default = "Free For All" },
+ *
+ *  It is held as a range of 0..count-1 step 1, the index of
+ *  the word, so the server keeps, checks, persists and
+ *  replays an index like any other value. It is drawn as a
+ *  dropdown of the words, and game.setting answers the word
+ *  itself. The type is a byte on the wire and every row
+ *  carries its own length, so a reader skips a type it does
+ *  not know: a build from before a type sees no row for it.
  *
  *  The blob is one script's whole block:
  *
  *    [count 1] then count rows of
  *    [type 1][bodyLen 1][body]
  *
- *  and for SCN_SETTING_TYPE_INT the body is
+ *  and for SCN_SETTING_TYPE_INT and SCN_SETTING_TYPE_BOOL the
+ *  body is
  *
  *    [idLen 1][id][labelLen 1][label]
  *    [min 4][max 4][step 4][default 4]
  *
- *  with each number a signed 32-bit value, big-endian. A
- *  script that declares nothing is no bytes at all.
+ *  with each number a signed 32-bit value, big-endian. For
+ *  SCN_SETTING_TYPE_CHOICE the body is
+ *
+ *    [idLen 1][id][labelLen 1][label]
+ *    [count 1][default 1] then count words of [len 1][word]
+ *
+ *  with default the index of the default word. A choice body
+ *  is never longer than the widest int body, so a blob of
+ *  sixteen rows of any mix still fits SCN_SETTINGS_BLOB_MAX,
+ *  which a build from before choices checks a blob against.
+ *  A script that declares nothing is no bytes at all.
  *
  *  Here in public/ for the reason scenario_callbacks.h is:
  *  the manifest readers, the scenario directory, the server
@@ -78,10 +107,24 @@
 
 /* What kind of value a row holds. A byte on the wire, so the numbers are
  * fixed. SCN_SETTING_TYPE_COUNT is how many this build can read. */
-#define SCN_SETTING_TYPE_INT   0
-#define SCN_SETTING_TYPE_COUNT 1
+#define SCN_SETTING_TYPE_INT    0
+#define SCN_SETTING_TYPE_BOOL   1
+#define SCN_SETTING_TYPE_CHOICE 2
+#define SCN_SETTING_TYPE_COUNT  3
 
-/* One declared setting. def is the default: "default" is a C keyword. */
+/* The fewest and the most words a choice setting offers. One word is not a
+ * choice, and eight words are already more than the row's byte budget
+ * (SCN_SETTING_INT_BODY_MAX) holds unless they are short. */
+#define SCN_SETTING_CHOICES_MIN 2
+#define SCN_SETTING_CHOICES_WORDS_MAX 8
+
+/* One word of a choice and its terminator. */
+#define SCN_SETTING_CHOICE_LEN 32
+
+/* One declared setting. def is the default: "default" is a C keyword. A
+ * choice row keeps its words in choices[0..numChoices-1] and is otherwise
+ * the range 0..numChoices-1 step 1, def being the default word's index.
+ * Every other type has numChoices 0. */
 typedef struct {
     char    id[SCN_SETTING_ID_LEN];
     char    label[SCN_SETTING_LABEL_LEN];
@@ -90,6 +133,8 @@ typedef struct {
     int32_t max;
     int32_t step;
     int32_t def;
+    uint8_t numChoices;
+    char    choices[SCN_SETTING_CHOICES_WORDS_MAX][SCN_SETTING_CHOICE_LEN];
 } ScnSetting;
 
 /* The body of one int row at its widest, and the whole blob at its largest. */
@@ -135,6 +180,84 @@ static inline bool scnSettingValueOk(const ScnSetting *s, int64_t v) {
     return ((v - (int64_t)s->min) % (int64_t)s->step) == 0;
 }
 
+/* The length of a word held in a choice slot, up to its whole slot. */
+static inline size_t scnSettingWordLen(const char *w) {
+    size_t n = 0;
+
+    while (n < SCN_SETTING_CHOICE_LEN && w[n] != '\0') n++;
+    return n;
+}
+
+/* The bytes a row's body takes on the wire: the int body for int and bool,
+ * the word list for a choice. */
+static inline size_t scnSettingBodyLen(const ScnSetting *s) {
+    size_t n;
+    int    i;
+
+    n = 1 + strlen(s->id) + 1 + strlen(s->label);
+    if (s->type != SCN_SETTING_TYPE_CHOICE) return n + 16;
+    n += 2;
+    for (i = 0; i < (int)s->numChoices && i < SCN_SETTING_CHOICES_WORDS_MAX;
+         i++) {
+        n += 1 + scnSettingWordLen(s->choices[i]);
+    }
+    return n;
+}
+
+/* The word at index i of a choice setting, or NULL for an index it does not
+ * have or a row that is not a choice. */
+static inline const char *scnSettingChoiceText(const ScnSetting *s,
+                                               int64_t i) {
+    if (s == NULL || s->type != SCN_SETTING_TYPE_CHOICE || i < 0 ||
+        i >= (int64_t)s->numChoices || i >= SCN_SETTING_CHOICES_WORDS_MAX) {
+        return NULL;
+    }
+    return s->choices[i];
+}
+
+/* The index of word w among a choice setting's words, or -1. */
+static inline int scnSettingChoiceIndex(const ScnSetting *s, const char *w) {
+    int i;
+
+    if (s == NULL || w == NULL || s->type != SCN_SETTING_TYPE_CHOICE) {
+        return -1;
+    }
+    for (i = 0; i < (int)s->numChoices && i < SCN_SETTING_CHOICES_WORDS_MAX;
+         i++) {
+        if (strcmp(s->choices[i], w) == 0) return i;
+    }
+    return -1;
+}
+
+/* NULL when a choice row's words and range are usable, else the reason. */
+static inline const char *scnSettingChoiceProblem(const ScnSetting *s) {
+    int i;
+    int j;
+
+    if (s->numChoices < SCN_SETTING_CHOICES_MIN ||
+        s->numChoices > SCN_SETTING_CHOICES_WORDS_MAX) {
+        return "a choice setting needs 2 to 8 choices";
+    }
+    for (i = 0; i < (int)s->numChoices; i++) {
+        size_t n = scnSettingWordLen(s->choices[i]);
+        if (n == 0 || n >= SCN_SETTING_CHOICE_LEN) {
+            return "each choice must be 1 to 31 characters";
+        }
+        for (j = 0; j < i; j++) {
+            if (strcmp(s->choices[i], s->choices[j]) == 0) {
+                return "a choice is listed twice";
+            }
+        }
+    }
+    if (s->min != 0 || s->max != (int32_t)s->numChoices - 1 || s->step != 1) {
+        return "a choice setting takes no min, max or step";
+    }
+    if (scnSettingBodyLen(s) > SCN_SETTING_INT_BODY_MAX) {
+        return "the id, label and choices are too long together";
+    }
+    return NULL;
+}
+
 /* NULL when s is a declaration this build can use, else the reason in a few
  * words for a report. Both manifest readers ask this, so a Lua table and a
  * package's manifest.json are held to the same rules. */
@@ -144,7 +267,19 @@ static inline const char *scnSettingProblem(const ScnSetting *s) {
         return "id must be 1 to 31 letters, digits or '_'";
     }
     if (s->label[0] == '\0') return "label is empty";
-    if (s->type >= SCN_SETTING_TYPE_COUNT) return "type is not \"int\"";
+    if (s->type >= SCN_SETTING_TYPE_COUNT) {
+        return "type is not \"int\", \"bool\" or \"choice\"";
+    }
+    if (s->type == SCN_SETTING_TYPE_BOOL &&
+        (s->min != 0 || s->max != 1 || s->step != 1)) {
+        return "a bool setting takes no min, max or step";
+    }
+    if (s->type == SCN_SETTING_TYPE_CHOICE) {
+        const char *why = scnSettingChoiceProblem(s);
+        if (why != NULL) return why;
+    } else if (s->numChoices != 0) {
+        return "only a choice setting takes choices";
+    }
     if (s->step <= 0) return "step must be greater than 0";
     if (s->min > s->max) return "min is greater than max";
     if (s->def < s->min || s->def > s->max) {
@@ -225,7 +360,7 @@ static inline bool scnSettingsBlobAppend(uint8_t *blob, size_t cap,
     idLen    = strlen(s->id);
     labelLen = strlen(s->label);
     if (labelLen >= SCN_SETTING_LABEL_LEN) return false;
-    body = 1 + idLen + 1 + labelLen + 16;
+    body = scnSettingBodyLen(s);
     at   = (*len == 0) ? 1u : *len;
     if (at + 2 + body > cap || (*len > 0 && blob[0] >= SCN_SETTINGS_MAX)) {
         return false;
@@ -239,19 +374,33 @@ static inline bool scnSettingsBlobAppend(uint8_t *blob, size_t cap,
     blob[at++] = (uint8_t)labelLen;
     memcpy(blob + at, s->label, labelLen);
     at += labelLen;
-    scnSettingsPutI32(blob + at, s->min);
-    scnSettingsPutI32(blob + at + 4, s->max);
-    scnSettingsPutI32(blob + at + 8, s->step);
-    scnSettingsPutI32(blob + at + 12, s->def);
-    at += 16;
+    if (s->type == SCN_SETTING_TYPE_CHOICE) {
+        int i;
+
+        blob[at++] = s->numChoices;
+        blob[at++] = (uint8_t)s->def;
+        for (i = 0; i < (int)s->numChoices; i++) {
+            size_t n = scnSettingWordLen(s->choices[i]);
+            blob[at++] = (uint8_t)n;
+            memcpy(blob + at, s->choices[i], n);
+            at += n;
+        }
+    } else {
+        scnSettingsPutI32(blob + at, s->min);
+        scnSettingsPutI32(blob + at + 4, s->max);
+        scnSettingsPutI32(blob + at + 8, s->step);
+        scnSettingsPutI32(blob + at + 12, s->def);
+        at += 16;
+    }
     blob[0]++;
     *len = at;
     return true;
 }
 
-/* One int row's body into *out. False for a body that is not one. */
+/* One int or bool row's body into *out, as a row of that type. False for a
+ * body that is not one. */
 static inline bool scnSettingsReadIntBody(const uint8_t *b, size_t n,
-                                          ScnSetting *out) {
+                                          uint8_t type, ScnSetting *out) {
     size_t  pos = 0;
     uint8_t idLen;
     uint8_t labelLen;
@@ -273,13 +422,68 @@ static inline bool scnSettingsReadIntBody(const uint8_t *b, size_t n,
     memcpy(out->label, b + pos, labelLen);
     out->label[labelLen] = '\0';
     pos += labelLen;
-    out->type = SCN_SETTING_TYPE_INT;
+    out->type = type;
     out->min  = scnSettingsGetI32(b + pos);
     out->max  = scnSettingsGetI32(b + pos + 4);
     out->step = scnSettingsGetI32(b + pos + 8);
     out->def  = scnSettingsGetI32(b + pos + 12);
     /* A NUL inside either string, or numbers that do not make a usable row,
        and the row is not one. */
+    return strlen(out->id) == idLen && strlen(out->label) == labelLen &&
+           scnSettingProblem(out) == NULL;
+}
+
+/* One choice row's body into *out. False for a body that is not one. */
+static inline bool scnSettingsReadChoiceBody(const uint8_t *b, size_t n,
+                                             ScnSetting *out) {
+    size_t  pos = 0;
+    uint8_t idLen;
+    uint8_t labelLen;
+    uint8_t count;
+    uint8_t i;
+
+    memset(out, 0, sizeof(*out));
+    if (n < 1) return false;
+    idLen = b[pos++];
+    if (idLen == 0 || idLen >= SCN_SETTING_ID_LEN || pos + idLen + 1 > n) {
+        return false;
+    }
+    memcpy(out->id, b + pos, idLen);
+    out->id[idLen] = '\0';
+    pos += idLen;
+    labelLen = b[pos++];
+    if (labelLen == 0 || labelLen >= SCN_SETTING_LABEL_LEN ||
+        pos + labelLen + 2 > n) {
+        return false;
+    }
+    memcpy(out->label, b + pos, labelLen);
+    out->label[labelLen] = '\0';
+    pos += labelLen;
+    count    = b[pos++];
+    out->def = b[pos++];
+    if (count < SCN_SETTING_CHOICES_MIN ||
+        count > SCN_SETTING_CHOICES_WORDS_MAX) {
+        return false;
+    }
+    for (i = 0; i < count; i++) {
+        uint8_t len;
+
+        if (pos + 1 > n) return false;
+        len = b[pos++];
+        if (len == 0 || len >= SCN_SETTING_CHOICE_LEN || pos + len > n) {
+            return false;
+        }
+        memcpy(out->choices[i], b + pos, len);
+        out->choices[i][len] = '\0';
+        if (strlen(out->choices[i]) != len) return false;
+        pos += len;
+    }
+    if (pos != n) return false;
+    out->type       = SCN_SETTING_TYPE_CHOICE;
+    out->numChoices = count;
+    out->min        = 0;
+    out->max        = (int32_t)count - 1;
+    out->step       = 1;
     return strlen(out->id) == idLen && strlen(out->label) == labelLen &&
            scnSettingProblem(out) == NULL;
 }
@@ -310,9 +514,18 @@ static inline int scnSettingsBlobRead(const uint8_t *blob, size_t len,
         body = blob[pos + 1];
         pos += 2;
         if (pos + body > len) return -1;
-        if (type == SCN_SETTING_TYPE_INT) {
+        if (type == SCN_SETTING_TYPE_INT || type == SCN_SETTING_TYPE_BOOL) {
             ScnSetting row;
-            if (!scnSettingsReadIntBody(blob + pos, body, &row)) return -1;
+            if (!scnSettingsReadIntBody(blob + pos, body, type, &row)) {
+                return -1;
+            }
+            if (out != NULL && n < max) out[n] = row;
+            n++;
+        } else if (type == SCN_SETTING_TYPE_CHOICE) {
+            ScnSetting row;
+            if (!scnSettingsReadChoiceBody(blob + pos, body, &row)) {
+                return -1;
+            }
             if (out != NULL && n < max) out[n] = row;
             n++;
         }

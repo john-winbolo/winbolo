@@ -17,13 +17,13 @@
  * Coordinates need no clamp and are deliberately not asserted here: x and y
  * are BYTE against a 256x256 map, so every value they can hold is in range.
  *
- * The blob these tests build has a hostile struct region and no valid terrain,
- * so mapLoadCompressedMap returns FALSE. That is fine and is the point: the
- * clamps run before the terrain decode, and the assertions are about the
- * structs, not the return.
+ * The blob these tests build is a hostile struct region over an all-DEEP_SEA
+ * terrain, compressed the way mapSaveCompressedMap does it, so the load goes
+ * all the way through. The assertions are about the structs, not the return.
  */
 #include <stdint.h>
 #include <string.h>
+#include <zlib.h>
 
 #include "global.h"
 #include "types.h"
@@ -34,13 +34,12 @@
 #include "game_sim.h"
 #include "test_harness.h"
 
-/* bases | pillboxes | starts | terrain */
+/* bases | pillboxes | starts | terrain, before compression */
 #define BLOB_STRUCTS (SIZEOF_BASES + SIZEOF_PILLS + SIZEOF_STARTS)
-#define BLOB_LEN     (BLOB_STRUCTS + 64)
 
 /* Build the blob the way the loader reads it: *SetCompressData memcpys
- * SIZEOF_* bytes straight over the object struct, so the blob region is that
- * struct's leading bytes. Populating real objects and copying them out keeps
+ * SIZEOF_* bytes straight over the object struct, so the struct region is
+ * that struct's leading bytes. Populating real objects and copying them out keeps
  * this symmetric with the loader instead of guessing field offsets, which the
  * mixed pack(4)/pack(1) regions in types.h would make brittle.
  *
@@ -49,13 +48,14 @@
 #define HOSTILE_OWNER 200
 #define HOSTILE_DIR   99
 
-static void build_hostile_blob(BYTE *blob) {
+static void build_hostile_raw(BYTE *blob) {
     bases      bsSrc;
     pillboxes  pbSrc;
     starts     ssSrc;
     BYTE i;
 
-    memset(blob, 0, BLOB_LEN);
+    memset(blob, 0, BLOB_STRUCTS);
+    memset(blob + BLOB_STRUCTS, DEEP_SEA, MAP_UNCOMPRESSED_SIZE - BLOB_STRUCTS);
 
     basesCreate(&bsSrc);
     basesSetNumBases(&bsSrc, MAX_BASES);
@@ -94,15 +94,18 @@ static void build_hostile_blob(BYTE *blob) {
 }
 
 static int load_hostile(map *mp, pillboxes *pb, bases *bs, starts *ss) {
-    static BYTE blob[BLOB_LEN];
-    build_hostile_blob(blob);
+    static BYTE raw[MAP_UNCOMPRESSED_SIZE];
+    static BYTE blob[MAP_COMPRESSED_MAX_SIZE];
+    uLongf blobLen = sizeof(blob);
     mapCreate(mp);
     pillsCreate(pb);
     basesCreate(bs);
     startsCreate(ss);
-    /* Return deliberately ignored: the terrain is garbage, so this is FALSE.
-     * The clamps run before the terrain decode. */
-    (void)mapLoadCompressedMap(mp, pb, bs, ss, blob, BLOB_LEN);
+    build_hostile_raw(raw);
+    UT_ASSERT_MSG(compress(blob, &blobLen, raw, sizeof(raw)) == Z_OK,
+                  "could not compress the hostile blob");
+    UT_ASSERT_MSG(mapLoadCompressedMap(mp, pb, bs, ss, blob, (int)blobLen),
+                  "the hostile blob did not load");
     /* The second half, the one a sim does for itself. These lists are local
      * rather than a sim's, so the two halves of mapClampToRules are called
      * on them directly. */
@@ -122,7 +125,7 @@ int run_map_load_clamps_base_fields(void) {
     map mp; pillboxes pb; bases bs; starts ss;
     BYTE i, n;
 
-    load_hostile(&mp, &pb, &bs, &ss);
+    UT_ASSERT(load_hostile(&mp, &pb, &bs, &ss) == 0);
     n = basesGetNumBases(&bs);
     UT_ASSERT_MSG(n <= MAX_BASES, "numBases %u exceeds MAX_BASES", (unsigned)n);
     for (i = 0; i < n; i++) {
@@ -145,7 +148,7 @@ int run_map_load_clamps_pill_fields(void) {
     map mp; pillboxes pb; bases bs; starts ss;
     BYTE i, n;
 
-    load_hostile(&mp, &pb, &bs, &ss);
+    UT_ASSERT(load_hostile(&mp, &pb, &bs, &ss) == 0);
     n = pillsGetNumPills(&pb);
     UT_ASSERT_MSG(n <= MAX_PILLS, "numPills %u exceeds MAX_PILLS", (unsigned)n);
     for (i = 0; i < n; i++) {
@@ -167,7 +170,7 @@ int run_map_load_clamps_start_dir(void) {
     map mp; pillboxes pb; bases bs; starts ss;
     BYTE i, n;
 
-    load_hostile(&mp, &pb, &bs, &ss);
+    UT_ASSERT(load_hostile(&mp, &pb, &bs, &ss) == 0);
     n = startsGetNumStarts(&ss);
     UT_ASSERT_MSG(n <= MAX_STARTS, "numStarts %u exceeds MAX_STARTS", (unsigned)n);
     for (i = 0; i < n; i++) {

@@ -89,8 +89,10 @@ typedef struct {
     BYTE lastBuildPlayer;
 } PcCtx;
 
-static int pcDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause) {
+static int pcDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause,
+                         BYTE pill) {
     PcCtx *p = (PcCtx *)ctx;
+    (void)pill;
     p->scaleAsks++;
     p->lastScaleAttacker = attacker;
     p->lastScaleVictim = victim;
@@ -120,8 +122,9 @@ static bool pcCanCapture(void *ctx, BYTE kind, BYTE index, BYTE player) {
 }
 
 static bool pcCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
-                     BYTE cause) {
+                     BYTE cause, BYTE pill) {
     PcCtx *p = (PcCtx *)ctx;
+    (void)pill;
     p->dieAsks++;
     p->lastDieKind = kind;
     p->lastDieIndex = index;
@@ -268,7 +271,7 @@ static void pcShoot(ServerSim *sim) {
     WORLD tx, ty;
     tankGetWorld(&sim->sim.tanks[PC_TARGET], &tx, &ty);
     tankIsTankHit(&sim->sim, &sim->sim.tanks[PC_TARGET], tx, ty, (TURNTYPE)0,
-                  PC_SHOOTER);
+                  PC_SHOOTER, DMG_NO_PILL);
 }
 
 /* Shells until the slot-1 tank is destroyed, capped so a tank that never
@@ -338,8 +341,8 @@ static bool pcBuilderOut(ServerSim *sim, BYTE *ox, BYTE *oy) {
    the engine comes down to. */
 static void pcBlastBuilder(ServerSim *sim) {
     lgm *l = &sim->sim.lgmen[PC_SHOOTER];
-    lgmDeathCheck(&sim->sim, l, (*l)->x, (*l)->y, NEUTRAL,
-                  &sim->sim.tanks[PC_SHOOTER]);
+    lgmDeathCheck(&sim->sim, l, (*l)->x, (*l)->y, NEUTRAL, NEUTRAL,
+                  DMG_SRC_UNKNOWN, DMG_NO_PILL, &sim->sim.tanks[PC_SHOOTER]);
 }
 
 /* The first live pill on the map with room to be driven onto, by index.
@@ -427,10 +430,10 @@ int run_scenario_policy_damage_scale(void) {
     pcFillPolicy(&pol, &pc);
     serverSimSetScenarioPolicy(sim, &pol);
     UT_ASSERT_MSG(tankDamageAmount(gs, DAMAGE, PC_SHOOTER, PC_TARGET,
-                                   LAST_DEATH_BY_SHELL) == DAMAGE,
+                                   LAST_DEATH_BY_SHELL, DMG_NO_PILL) == DAMAGE,
                   "a scale of a hundred gave %d, expected the classic %d",
                   (int)tankDamageAmount(gs, DAMAGE, PC_SHOOTER, PC_TARGET,
-                                        LAST_DEATH_BY_SHELL),
+                                        LAST_DEATH_BY_SHELL, DMG_NO_PILL),
                   DAMAGE);
     UT_ASSERT_MSG(pc.scaleAsks > 0, "the scale must actually be asked");
     UT_ASSERT_MSG(pc.lastScaleAttacker == PC_SHOOTER &&
@@ -453,10 +456,10 @@ int run_scenario_policy_damage_scale(void) {
     pc.scalePct = 50;
     serverSimSetScenarioPolicy(sim, &pol);
     UT_ASSERT_MSG(tankDamageAmount(gs, DAMAGE, PC_SHOOTER, PC_TARGET,
-                                   LAST_DEATH_BY_SHELL) == 3,
+                                   LAST_DEATH_BY_SHELL, DMG_NO_PILL) == 3,
                   "a scale of fifty gave %d, expected 3",
                   (int)tankDamageAmount(gs, DAMAGE, PC_SHOOTER, PC_TARGET,
-                                        LAST_DEATH_BY_SHELL));
+                                        LAST_DEATH_BY_SHELL, DMG_NO_PILL));
     bossHits = pcHitsToDestroy(sim);
     UT_ASSERT_MSG(bossHits > classicHits,
                   "the boss took %d hits, classic took %d",
@@ -471,10 +474,10 @@ int run_scenario_policy_damage_scale(void) {
     pc.scalePct = 0;
     serverSimSetScenarioPolicy(sim, &pol);
     UT_ASSERT_MSG(tankDamageAmount(gs, DAMAGE, PC_SHOOTER, PC_TARGET,
-                                   LAST_DEATH_BY_SHELL) == 0,
+                                   LAST_DEATH_BY_SHELL, DMG_NO_PILL) == 0,
                   "a scale of zero must price a shell at nothing");
     UT_ASSERT_MSG(tankDamageAmount(gs, MINE_DAMAGE, PC_SHOOTER, PC_TARGET,
-                                   LAST_DEATH_BY_MINES) == 0,
+                                   LAST_DEATH_BY_MINES, DMG_NO_PILL) == 0,
                   "a scale of zero must price a mine at nothing");
 
     armourBefore = tankGetArmour(&gs->tanks[PC_TARGET]);
@@ -651,7 +654,7 @@ int run_scenario_policy_protected_pill(void) {
 
     /* pillsDamagePos: the last point of armour a shell would take. */
     (*sim->sim.pb).item[idx].armour = 1;
-    pillsDamagePos(&sim->sim, px, py, TRUE, TRUE, PC_SHOOTER);
+    pillsDamagePos(&sim->sim, px, py, TRUE, TRUE, PC_SHOOTER, DMG_NO_PILL);
     UT_ASSERT_MSG((*sim->sim.pb).item[idx].armour == 1,
                   "a shell finished a protected pill, armour is %u",
                   (unsigned)(*sim->sim.pb).item[idx].armour);
@@ -665,14 +668,14 @@ int run_scenario_policy_protected_pill(void) {
 
     /* pillsGetDamagePos: an explosion carrying more than the pill has left. */
     (*sim->sim.pb).item[idx].armour = 3;
-    pillsGetDamagePos(&sim->sim, &sim->sim.pb, px, py, TK_DAMAGE);
+    pillsGetDamagePos(&sim->sim, &sim->sim.pb, px, py, TK_DAMAGE, NEUTRAL);
     UT_ASSERT_MSG((*sim->sim.pb).item[idx].armour == 1,
                   "an explosion finished a protected pill, armour is %u",
                   (unsigned)(*sim->sim.pb).item[idx].armour);
 
     /* A pill already at zero is not dying, so neither site raises it. */
     (*sim->sim.pb).item[idx].armour = 0;
-    pillsGetDamagePos(&sim->sim, &sim->sim.pb, px, py, TK_DAMAGE);
+    pillsGetDamagePos(&sim->sim, &sim->sim.pb, px, py, TK_DAMAGE, NEUTRAL);
     UT_ASSERT_MSG((*sim->sim.pb).item[idx].armour == 0,
                   "a dead pill was raised to %u by a refusal",
                   (unsigned)(*sim->sim.pb).item[idx].armour);
@@ -680,11 +683,11 @@ int run_scenario_policy_protected_pill(void) {
     /* Both sites again with the answer turned round. */
     pc.die = true;
     (*sim->sim.pb).item[idx].armour = 1;
-    pillsDamagePos(&sim->sim, px, py, TRUE, TRUE, PC_SHOOTER);
+    pillsDamagePos(&sim->sim, px, py, TRUE, TRUE, PC_SHOOTER, DMG_NO_PILL);
     UT_ASSERT_MSG((*sim->sim.pb).item[idx].armour == 0,
                   "a shell must finish the pill once the host allows it");
     (*sim->sim.pb).item[idx].armour = 3;
-    pillsGetDamagePos(&sim->sim, &sim->sim.pb, px, py, TK_DAMAGE);
+    pillsGetDamagePos(&sim->sim, &sim->sim.pb, px, py, TK_DAMAGE, NEUTRAL);
     UT_ASSERT_MSG((*sim->sim.pb).item[idx].armour == 0,
                   "an explosion must finish the pill once the host allows it");
 
@@ -966,10 +969,10 @@ int run_scenario_policy_combat_null_is_classic(void) {
 
     /* The damage a blow does is the classic amount, both kinds. */
     UT_ASSERT_MSG(tankDamageAmount(gs, DAMAGE, PC_SHOOTER, PC_TARGET,
-                                   LAST_DEATH_BY_SHELL) == DAMAGE,
+                                   LAST_DEATH_BY_SHELL, DMG_NO_PILL) == DAMAGE,
                   "a shell must still do %d", DAMAGE);
     UT_ASSERT_MSG(tankDamageAmount(gs, MINE_DAMAGE, PC_SHOOTER, PC_TARGET,
-                                   LAST_DEATH_BY_MINES) == MINE_DAMAGE,
+                                   LAST_DEATH_BY_MINES, DMG_NO_PILL) == MINE_DAMAGE,
                   "a mine must still do %d", MINE_DAMAGE);
 
     /* A build order on a square that can take it still can. */
@@ -1005,7 +1008,7 @@ int run_scenario_policy_combat_null_is_classic(void) {
     px = (*gs->pb).item[pillIdx].x;
     py = (*gs->pb).item[pillIdx].y;
     (*gs->pb).item[pillIdx].armour = 1;
-    pillsDamagePos(gs, px, py, TRUE, TRUE, PC_SHOOTER);
+    pillsDamagePos(gs, px, py, TRUE, TRUE, PC_SHOOTER, DMG_NO_PILL);
     UT_ASSERT_MSG((*gs->pb).item[pillIdx].armour == 0,
                   "a shell must still finish a pill at one armour");
 

@@ -324,6 +324,17 @@ int run_sim_rules_classic_defaults(void) {
     SR_EQ(tree_weight_road, TREE_GROW_ROAD);
     SR_EQ(tree_weight_mine, TREE_GROW_MINE);
 
+    /* Pillbox shell cap */
+    SR_EQ(pill_shell_cap, PILLBOX_SHELL_CAP);
+    SR_EQ(pill_max_shells_at_tank, PILLBOX_MAX_SHELLS_AT_TANK);
+
+    /* Base defence shape */
+    SR_EQ(pill_base_defend_shape, PILL_BASE_HIT_SHAPE);
+
+    /* Mac Bolo shell push */
+    SR_EQ(tank_slide_mac, TANK_SLIDE_MAC);
+    SR_EQ(tank_slide_armour_bonus, TANK_SLIDE_ARMOUR_BONUS);
+
     return 0;
 }
 
@@ -444,6 +455,7 @@ int run_sim_rules_validate_ranges(void) {
     SR_RANGE_INT(just_fired_ticks, 0, 255);
     SR_RANGE_INT(tank_min_move, 0, 255);
     SR_RANGE_INT(shell_speed, 1, 255);
+    SR_RANGE_INT(tank_slide_step, 0, 63);
 
     /* The gunsight ends and the two shell numbers the budget is built from
        all sit in one arithmetic, so each bound needs the others brought
@@ -982,7 +994,7 @@ int run_sim_rules_pill_empties_without_wrapping(void) {
 
     /* Armour to spare: exactly the splash comes off. */
     gs->pb->item[0].armour = (BYTE) (TK_DAMAGE + 3);
-    pillsGetDamagePos(gs, &gs->pb, px, py, TK_DAMAGE);
+    pillsGetDamagePos(gs, &gs->pb, px, py, TK_DAMAGE, NEUTRAL);
     UT_ASSERT_MSG(gs->pb->item[0].armour == 3,
                   "a hit with armour to spare left %u, expected 3",
                   (unsigned) gs->pb->item[0].armour);
@@ -990,7 +1002,7 @@ int run_sim_rules_pill_empties_without_wrapping(void) {
     /* Less left than the splash takes: empty, not a wrap. */
     for (armour = 1; armour < TK_DAMAGE; armour++) {
         gs->pb->item[0].armour = (BYTE) armour;
-        pillsGetDamagePos(gs, &gs->pb, px, py, TK_DAMAGE);
+        pillsGetDamagePos(gs, &gs->pb, px, py, TK_DAMAGE, NEUTRAL);
         UT_ASSERT_MSG(gs->pb->item[0].armour == 0,
                       "a pill at %d armour hit for %d read back %u, expected 0",
                       armour, TK_DAMAGE, (unsigned) gs->pb->item[0].armour);
@@ -999,7 +1011,7 @@ int run_sim_rules_pill_empties_without_wrapping(void) {
     /* Exactly emptied is zero too, and the pill reads as dead on the ground
        rather than as one still worth shooting. */
     gs->pb->item[0].armour = (BYTE) TK_DAMAGE;
-    pillsGetDamagePos(gs, &gs->pb, px, py, TK_DAMAGE);
+    pillsGetDamagePos(gs, &gs->pb, px, py, TK_DAMAGE, NEUTRAL);
     UT_ASSERT_MSG(gs->pb->item[0].armour == 0,
                   "a pill emptied exactly read back %u, expected 0",
                   (unsigned) gs->pb->item[0].armour);
@@ -1010,7 +1022,7 @@ int run_sim_rules_pill_empties_without_wrapping(void) {
        back down into the living range, so the old shape left the pill alive
        on the hit that should have finished it. */
     gs->pb->item[0].armour = 1;
-    pillsGetDamagePos(gs, &gs->pb, px, py, 255);
+    pillsGetDamagePos(gs, &gs->pb, px, py, 255, NEUTRAL);
     UT_ASSERT_MSG(gs->pb->item[0].armour == 0,
                   "a pill at 1 armour hit for 255 read back %u, expected 0",
                   (unsigned) gs->pb->item[0].armour);
@@ -1018,7 +1030,7 @@ int run_sim_rules_pill_empties_without_wrapping(void) {
     /* An explosion landing on a pill already dead leaves it dead rather than
        raising it, which the same wrap used to do. */
     gs->pb->item[0].armour = 0;
-    pillsGetDamagePos(gs, &gs->pb, px, py, 255);
+    pillsGetDamagePos(gs, &gs->pb, px, py, 255, NEUTRAL);
     UT_ASSERT_MSG(gs->pb->item[0].armour == 0,
                   "an explosion on a dead pill left it at %u, expected 0",
                   (unsigned) gs->pb->item[0].armour);
@@ -1054,7 +1066,7 @@ int run_sim_rules_pill_shell_damage_follows(void) {
                   "a running sim starts at pill_shell_damage %ld, expected %d",
                   (long) gs->rules.pill_shell_damage, PILLBOX_SHELL_DAMAGE);
     gs->pb->item[0].armour = 10;
-    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL);
+    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL, DMG_NO_PILL);
     UT_ASSERT_MSG(gs->pb->item[0].armour == 9,
                   "a classic shell left the pill at %u, expected 9",
                   (unsigned) gs->pb->item[0].armour);
@@ -1062,14 +1074,14 @@ int run_sim_rules_pill_shell_damage_follows(void) {
     /* Moved, and the shell takes the rule rather than one. */
     gs->rules.pill_shell_damage = 4;
     gs->pb->item[0].armour = 10;
-    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL);
+    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL, DMG_NO_PILL);
     UT_ASSERT_MSG(gs->pb->item[0].armour == 6,
                   "a shell taking 4 left the pill at %u, expected 6",
                   (unsigned) gs->pb->item[0].armour);
 
     /* Less left than the shell takes: empty, not a wrap. */
     gs->pb->item[0].armour = 2;
-    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL);
+    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL, DMG_NO_PILL);
     UT_ASSERT_MSG(gs->pb->item[0].armour == 0,
                   "a pill at 2 armour hit for 4 read back %u, expected 0",
                   (unsigned) gs->pb->item[0].armour);
@@ -1080,7 +1092,7 @@ int run_sim_rules_pill_shell_damage_follows(void) {
        range check allows and which the path has to actually carry out. */
     gs->rules.pill_shell_damage = gs->rules.pill_max_armour;
     gs->pb->item[0].armour = (BYTE) gs->rules.pill_max_armour;
-    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL);
+    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL, DMG_NO_PILL);
     UT_ASSERT_MSG(gs->pb->item[0].armour == 0,
                   "a full pill hit for the whole cap read back %u, expected 0",
                   (unsigned) gs->pb->item[0].armour);
@@ -1117,7 +1129,7 @@ int run_sim_rules_pill_angry_divisor_follows(void) {
     /* Classic: one hit halves the interval. */
     gs->pb->item[0].armour = 10;
     gs->pb->item[0].speed = (BYTE) gs->rules.pill_attack_ticks;
-    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL);
+    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL, DMG_NO_PILL);
     UT_ASSERT_MSG(gs->pb->item[0].speed ==
                       (BYTE) (gs->rules.pill_attack_ticks / 2),
                   "a classic hit left the interval at %u, expected %ld",
@@ -1128,7 +1140,7 @@ int run_sim_rules_pill_angry_divisor_follows(void) {
     gs->rules.pill_angry_divisor = 1;
     gs->pb->item[0].armour = 10;
     gs->pb->item[0].speed = (BYTE) gs->rules.pill_attack_ticks;
-    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL);
+    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL, DMG_NO_PILL);
     UT_ASSERT_MSG(gs->pb->item[0].speed ==
                       (BYTE) gs->rules.pill_attack_ticks,
                   "a divisor of one moved the interval to %u, expected %ld",
@@ -1140,7 +1152,7 @@ int run_sim_rules_pill_angry_divisor_follows(void) {
     gs->rules.pill_angry_divisor = 255;
     gs->pb->item[0].armour = 10;
     gs->pb->item[0].speed = (BYTE) gs->rules.pill_attack_ticks;
-    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL);
+    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL, DMG_NO_PILL);
     UT_ASSERT_MSG(gs->pb->item[0].speed ==
                       (BYTE) gs->rules.pill_attack_min_ticks,
                   "a divisor of 255 left the interval at %u, expected the "
@@ -1278,7 +1290,7 @@ int run_sim_rules_tank_explosion_follows(void) {
     gs->rules.tank_explosion_damage = 2;
     gs->pb->item[0].armour = 10;
     pillsGetDamagePos(gs, &gs->pb, px, py,
-                      (BYTE) gs->rules.tank_explosion_damage);
+                      (BYTE) gs->rules.tank_explosion_damage, NEUTRAL);
     UT_ASSERT_MSG(gs->pb->item[0].armour == 8,
                   "a splash of 2 left the pill at %u, expected 8",
                   (unsigned) gs->pb->item[0].armour);
@@ -1287,7 +1299,7 @@ int run_sim_rules_tank_explosion_follows(void) {
     gs->rules.tank_explosion_damage = 0;
     gs->pb->item[0].armour = 10;
     pillsGetDamagePos(gs, &gs->pb, px, py,
-                      (BYTE) gs->rules.tank_explosion_damage);
+                      (BYTE) gs->rules.tank_explosion_damage, NEUTRAL);
     UT_ASSERT_MSG(gs->pb->item[0].armour == 10,
                   "a splash of 0 moved the pill to %u, expected 10",
                   (unsigned) gs->pb->item[0].armour);
@@ -1653,7 +1665,7 @@ int run_sim_rules_shell_flight_follows(void) {
 
     /* Fired east, so the whole step lands on X and the comparison is the
        speed itself, in 24.8 fixed point. */
-    shellsAddItem(gs, &gs->shs, 10000, 20000, east, len, 0, FALSE);
+    shellsAddItem(gs, &gs->shs, 10000, 20000, east, len, 0, NEUTRAL, DMG_NO_PILL, FALSE);
     UT_ASSERT_MSG(gs->shs != NULL, "the classic shot produced no shell");
     classicStep = gs->shs->xStep;
     classicLen = gs->shs->length;
@@ -1669,7 +1681,7 @@ int run_sim_rules_shell_flight_follows(void) {
 
     /* Double the speed and the next shell steps twice as far per tick. */
     gs->rules.shell_speed *= 2;
-    shellsAddItem(gs, &gs->shs, 10000, 20000, east, len, 0, FALSE);
+    shellsAddItem(gs, &gs->shs, 10000, 20000, east, len, 0, NEUTRAL, DMG_NO_PILL, FALSE);
     fastStep = gs->shs->xStep;
     UT_ASSERT_MSG(fastStep == classicStep * 2,
                   "doubling shell_speed gave a step of %ld, not %ld",
@@ -1678,7 +1690,7 @@ int run_sim_rules_shell_flight_follows(void) {
     /* And a longer life is a longer budget, on the same gunsight. */
     gs->rules.shell_speed /= 2;
     gs->rules.shell_life *= 2;
-    shellsAddItem(gs, &gs->shs, 10000, 20000, east, len, 0, FALSE);
+    shellsAddItem(gs, &gs->shs, 10000, 20000, east, len, 0, NEUTRAL, DMG_NO_PILL, FALSE);
     longLen = gs->shs->length;
     UT_ASSERT_MSG(longLen > classicLen,
                   "doubling shell_life left the shell living %u ticks, not "
@@ -1823,7 +1835,7 @@ int run_sim_rules_are_classic(void) {
 
     /* The last field, so the walk is not stopping short of the end. */
     simRulesClassic(&r);
-    r.tree_weight_mine = r.tree_weight_mine + 1;
+    r.pill_max_shells_at_tank = r.pill_max_shells_at_tank + 1;
     UT_ASSERT_MSG(!simRulesAreClassic(&r),
                   "a table with its last field moved is reported classic");
 

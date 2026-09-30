@@ -135,6 +135,8 @@
 #include "scenario_host.h"
 #include "scenario_manifest.h"
 #include "scenario_lua.h"
+#include "lobby_bot_pools.h"
+#include "start_sides.h"
 #include "test_harness.h"
 
 /* ── A state with the table on it ─────────────────────────────────── */
@@ -309,7 +311,7 @@ static long slArrayInt(lua_State *L, const char *name, int n) {
  * lobby handlers are tested against there. */
 static ServerSim *slSeatedLobbySim(void) {
     BYTE       emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) {
         return NULL;
@@ -324,7 +326,7 @@ static ServerSim *slSeatedLobbySim(void) {
  * round themselves. ut_make_running_sim is the one for the rest. */
 static ServerSim *slLobbySim(void) {
     BYTE       emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) {
         return NULL;
@@ -478,6 +480,7 @@ static const char *const kSlEveryRowCalls =
     "  tank        = function() return game.tank(0) end,\n"
     "  builder     = function() return game.builder(0) end,\n"
     "  lobby_slot  = function() return game.lobby_slot(0) end,\n"
+    "  allied      = function() return game.allied(0, 0) end,\n"
     "  rule        = function() return game.rule(\"tank_reload_ticks\") end,\n"
     "  tags        = function() return game.tags(\"pill\", 1) end,\n"
     "  tagged      = function() return game.tagged(\"keep\") end,\n"
@@ -894,6 +897,54 @@ int run_scenario_lua_absent_reads_are_nil(void) {
         lua_pop(L, 1);
         UT_ASSERT_MSG(table1, "pill 1 went with the removal of pill 2");
     }
+
+    lua_close(L);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 5b. The team's bot naming pool ───────────────────────────────── */
+
+/* game.lobby_slot(p).team_pool is the label of the pool the seat's team
+   names its bots from, the one lobbyBotPoolLabel gives for the team's
+   namingPool, and it is absent for a seat on no team and for a team
+   whose metadata is not in use. */
+int run_scenario_lua_lobby_slot_team_pool(void) {
+    ServerSim        *sim = ut_make_running_sim("Seat0");
+    ScenarioManifest  m;
+    ScnLuaCtx         ctx;
+    lua_State        *L;
+    char              err[512];
+    char              got[64];
+    const char       *chunk = "s = game.lobby_slot(0)\n"
+                              "pool = s.team_pool\n"
+                              "has_pool = pool ~= nil\n";
+
+    if (sim == NULL) UT_FAIL("could not build a running sim");
+    memset(&m, 0, sizeof(m));
+    L = slVm(&ctx, sim, &m);
+    UT_ASSERT(L != NULL);
+    UT_ASSERT_MSG(lobbyBotPoolCount() >= 2, "only %d pools",
+                  lobbyBotPoolCount());
+
+    /* Team 5 has no metadata: no pool. */
+    serverSimSetTeam(sim, 0, 5);
+    UT_ASSERT_MSG(slRun(L, chunk, err, sizeof(err)), "chunk: %s", err);
+    UT_ASSERT_MSG(slGlobalIsNil(L, "pool"),
+                  "a team with no metadata answered a pool");
+
+    /* The host picks pool 1 for team 5. */
+    serverSimSetTeamMeta(sim, 5, 0, 1, START_SIDE_ANY, NULL, 0);
+    UT_ASSERT_MSG(slRun(L, chunk, err, sizeof(err)), "chunk: %s", err);
+    slGlobalStr(L, "pool", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, lobbyBotPoolLabel(1)) == 0,
+                  "team 5 read pool '%s', wanted '%s'", got,
+                  lobbyBotPoolLabel(1));
+
+    /* A seat on no team has no pool. */
+    serverSimSetTeam(sim, 0, 0);
+    UT_ASSERT_MSG(slRun(L, chunk, err, sizeof(err)), "chunk: %s", err);
+    UT_ASSERT_MSG(slGlobalIsNil(L, "pool"), "team 0 answered a pool");
 
     lua_close(L);
     serverSimDestroy(sim);

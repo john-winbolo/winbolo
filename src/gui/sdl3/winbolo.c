@@ -52,6 +52,7 @@
 #include "platform_net.h"
 #include "client_render.h"
 #include "client_frontend_tick.h"
+#include "client_frontend_render.h"
 #include "client_sim.h"
 #include "frontend.h"
 #include "tutorial.h"
@@ -835,7 +836,7 @@ int main(int argc, char *argv[]) {
           DWORD tick = SDL_GetTicks();
           clientMutexWaitFor();
           if (finishedLoop == FALSE) {
-            clientSimRenderPrepare(cs, tick);
+            clientFrontRenderPrepare(cs, tick);
             clientRenderFrame(cs, redraw);
           }
           clientMutexRelease();

@@ -142,10 +142,11 @@ int run_sim_rules_describe_names(void) {
 
     /* The last row, which is where a list one short of the struct shows. */
     UT_ASSERT_MSG(srdSame(simRulesClassicValue((int)SIM_RULE_COUNT - 1),
-                          (double)classic.tree_weight_mine),
-                  "the last rule reads %.4f and tree_weight_mine holds %ld",
+                          (double)classic.tank_slide_armour_bonus),
+                  "the last rule reads %.4f and tank_slide_armour_bonus "
+                  "holds %ld",
                   simRulesClassicValue((int)SIM_RULE_COUNT - 1),
-                  (long)classic.tree_weight_mine);
+                  (long)classic.tank_slide_armour_bonus);
 
     /* The tags and widths the list carries, on one row of each width. */
     UT_ASSERT_MSG(simRulesRuleValueKind(SIM_RULE_tank_reload_ticks) ==
@@ -246,15 +247,21 @@ int run_sim_rules_describe_ratios(void) {
 int run_sim_rules_describe_units(void) {
     int i;
 
-    /* A flag and a percentage name no rule today, so they are asked of the
-       arm directly — the first rule that wants one of the two tags finds
-       the arm already answering. */
+    /* The flag arm, asked directly and then through the one rule that
+       carries the tag. A percentage names no rule today, so it is asked of
+       the arm directly — the first rule that wants the tag finds the arm
+       already answering. */
     SRD_EXPECT(simRulesDescribeValue(SIM_RULE_UNIT_FLAG, 0.0, 1.0),
                SIM_RULE_CHANGE_ON, 0.0, "a flag turned on");
     SRD_EXPECT(simRulesDescribeValue(SIM_RULE_UNIT_FLAG, 0.0, 0.0),
                SIM_RULE_CHANGE_UNCHANGED, 0.0, "a flag left off");
     SRD_EXPECT(simRulesDescribeValue(SIM_RULE_UNIT_FLAG, 1.0, 0.0),
                SIM_RULE_CHANGE_OFF, 0.0, "a flag turned off");
+    UT_ASSERT_MSG(simRulesRuleUnit(SIM_RULE_pill_shell_cap) ==
+                      SIM_RULE_UNIT_FLAG,
+                  "pill_shell_cap is not tagged as a flag");
+    SRD_EXPECT(simRulesDescribeChange(SIM_RULE_pill_shell_cap, 1.0),
+               SIM_RULE_CHANGE_ON, 0.0, "the pill shell cap turned on");
 
     SRD_EXPECT(simRulesDescribeValue(SIM_RULE_UNIT_PERCENT, 50.0, 100.0),
                SIM_RULE_CHANGE_MORE, 2.0, "a percentage doubled");

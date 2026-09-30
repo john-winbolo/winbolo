@@ -420,6 +420,14 @@ const char *scenarioLuaCaptureKindWord(int kind) {
     }
 }
 
+const char *scenarioLuaHitKindWord(int kind) {
+    switch (kind) {
+        case HIT_KIND_TANK: return "tank";
+        case HIT_KIND_PILL: return "pill";
+        default:            return NULL;
+    }
+}
+
 const char *scenarioLuaDieKindWord(int kind) {
     switch (kind) {
         case DIE_KIND_TANK:    return "tank";
@@ -430,14 +438,17 @@ const char *scenarioLuaDieKindWord(int kind) {
 }
 
 /* A shell and a mine are spelled here as a tank's cause spells them, so a
-   script reads one vocabulary across the three kinds a death comes in.
+   script reads one vocabulary across the three kinds a death comes in. A
+   dying tank's blast is "explosion", a word only a builder or a pill is
+   handed: a tank takes no damage from one.
    DMG_SRC_UNKNOWN has no word on purpose: what the script is handed for it is
    nil, which says what the value says. */
 const char *scenarioLuaDamageSourceWord(int source) {
     switch (source) {
-        case DMG_SRC_SHELL: return "shell";
-        case DMG_SRC_MINE:  return "mine";
-        default:            return NULL;
+        case DMG_SRC_SHELL:     return "shell";
+        case DMG_SRC_MINE:      return "mine";
+        case DMG_SRC_EXPLOSION: return "explosion";
+        default:                return NULL;
     }
 }
 
@@ -760,6 +771,28 @@ static int scnLuaLobbySlot(lua_State *L) {
     scnSetBool(L, "ready", slot.ready);
     scnSetBool(L, "fielded", slot.fielded);
     scnSetBool(L, "alive", slot.alive);
+    if (slot.team_pool[0] != '\0') {
+        scnSetStr(L, "team_pool", slot.team_pool);
+    }
+    return 1;
+}
+
+/* The sim's own alliance table, which is what every game rule reads. It is
+ * not worked out from the two seats' teams: players ally and split in play,
+ * and the table is where that shows. A seat nobody holds answers nil, as
+ * lobby_slot does for it, and a seat is always on its own side. */
+static int scnLuaAllied(lua_State *L) {
+    const ScnLuaCtx *c = scnCtx(L);
+    BYTE             a;
+    BYTE             b;
+
+    if (!scnSlotOf(L, 1, "a", &a) || !scnSlotOf(L, 2, "b", &b) ||
+        !serverSimIsPlayerConnected(c->sim, a) ||
+        !serverSimIsPlayerConnected(c->sim, b)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushboolean(L, serverSimIsAllied(c->sim, a, b));
     return 1;
 }
 
@@ -833,6 +866,93 @@ static bool scnSettingsInt(lua_State *L, int row, const char *field,
     }
     lua_pop(L, 1);
     return ok;
+}
+
+/* Whether the row gives field at all, whatever its value. */
+static bool scnSettingsHas(lua_State *L, int row, const char *field) {
+    bool has;
+
+    lua_pushstring(L, field);
+    lua_rawget(L, row);
+    has = !lua_isnil(L, -1);
+    lua_pop(L, 1);
+    return has;
+}
+
+/* A bool row's default, true or false, into *out as 1 or 0. False for a
+ * default that is absent or is not a Lua boolean. */
+static bool scnSettingsBool(lua_State *L, int row, int32_t *out) {
+    bool ok;
+
+    lua_pushstring(L, "default");
+    lua_rawget(L, row);
+    ok = lua_isboolean(L, -1);
+    if (ok) {
+        *out = lua_toboolean(L, -1) ? 1 : 0;
+    }
+    lua_pop(L, 1);
+    return ok;
+}
+
+/* A choice row's words and its default, into s: choices must be a list of
+ * strings and default one of them. NULL when they read, else the reason for
+ * the report. The count and the words are checked again, with the range, by
+ * scnSettingProblem. */
+static const char *scnSettingsChoices(lua_State *L, int row, ScnSetting *s) {
+    const char *why = NULL;
+    int         total;
+    int         i;
+
+    lua_pushstring(L, "choices");
+    lua_rawget(L, row);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        return "needs a list of words for choices";
+    }
+    total = (int)lua_rawlen(L, -1);
+    if (total < SCN_SETTING_CHOICES_MIN ||
+        total > SCN_SETTING_CHOICES_WORDS_MAX) {
+        lua_pop(L, 1);
+        return "a choice setting needs 2 to 8 choices";
+    }
+    for (i = 1; i <= total && why == NULL; i++) {
+        lua_rawgeti(L, -1, i);
+        if (lua_type(L, -1) != LUA_TSTRING) {
+            why = "every choice must be a string";
+        } else {
+            size_t      n;
+            const char *w = lua_tolstring(L, -1, &n);
+            if (n == 0 || n >= SCN_SETTING_CHOICE_LEN || strlen(w) != n) {
+                why = "each choice must be 1 to 31 characters";
+            } else {
+                memcpy(s->choices[i - 1], w, n + 1);
+            }
+        }
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1); /* choices */
+    if (why != NULL) {
+        return why;
+    }
+    s->numChoices = (uint8_t)total;
+    s->min        = 0;
+    s->max        = total - 1;
+    s->step       = 1;
+
+    lua_pushstring(L, "default");
+    lua_rawget(L, row);
+    if (lua_type(L, -1) != LUA_TSTRING) {
+        why = "needs one of its choices, as a string, for default";
+    } else {
+        int at = scnSettingChoiceIndex(s, lua_tostring(L, -1));
+        if (at < 0) {
+            why = "default is not one of its choices";
+        } else {
+            s->def = at;
+        }
+    }
+    lua_pop(L, 1);
+    return why;
 }
 
 /* A string field of the row into dst. False for a value that is there but is
@@ -939,18 +1059,63 @@ int scenarioLuaReadSettings(lua_State *L, int tbl, ScnSetting *out, int max,
         }
         if (type[0] == '\0' || strcmp(type, "int") == 0) {
             s.type = SCN_SETTING_TYPE_INT;
+        } else if (strcmp(type, "bool") == 0) {
+            s.type = SCN_SETTING_TYPE_BOOL;
+        } else if (strcmp(type, "choice") == 0) {
+            s.type = SCN_SETTING_TYPE_CHOICE;
         } else {
             scnSettingsSay(report, ud, key,
-                           "scenario: %s: %s has type '%s'; only \"int\" is "
-                           "supported; dropped", path, key, type);
+                           "scenario: %s: %s has type '%s'; only \"int\", "
+                           "\"bool\" and \"choice\" are supported; dropped",
+                           path, key, type);
             lua_pop(L, 1);
             continue;
         }
-        if (!scnSettingsInt(L, row, "min", &s.min, &hadMin) ||
-            !scnSettingsInt(L, row, "max", &s.max, &hadMax) ||
-            !scnSettingsInt(L, row, "step", &s.step, &hadStep) ||
-            !scnSettingsInt(L, row, "default", &s.def, &hadDef) ||
-            !hadMin || !hadMax || !hadDef) {
+        if (s.type == SCN_SETTING_TYPE_CHOICE) {
+            /* The words are the range, so a min, max or step on a choice
+               row is a mistake in the row, as it is on a bool row. */
+            const char *bad = NULL;
+
+            if (scnSettingsHas(L, row, "min") ||
+                scnSettingsHas(L, row, "max") ||
+                scnSettingsHas(L, row, "step")) {
+                bad = "is a choice setting and takes no min, max or step";
+            } else {
+                bad = scnSettingsChoices(L, row, &s);
+            }
+            if (bad != NULL) {
+                scnSettingsSay(report, ud, key, "scenario: %s: %s %s; dropped",
+                               path, key, bad);
+                lua_pop(L, 1);
+                continue;
+            }
+        } else if (s.type == SCN_SETTING_TYPE_BOOL) {
+            /* On or off has a fixed range, so a min, max or step on a
+               bool row is a mistake in the row. */
+            if (scnSettingsHas(L, row, "min") ||
+                scnSettingsHas(L, row, "max") ||
+                scnSettingsHas(L, row, "step")) {
+                scnSettingsSay(report, ud, key,
+                               "scenario: %s: %s is a bool setting and takes "
+                               "no min, max or step; dropped", path, key);
+                lua_pop(L, 1);
+                continue;
+            }
+            if (!scnSettingsBool(L, row, &s.def)) {
+                scnSettingsSay(report, ud, key,
+                               "scenario: %s: %s needs true or false for "
+                               "default; dropped", path, key);
+                lua_pop(L, 1);
+                continue;
+            }
+            s.min  = 0;
+            s.max  = 1;
+            s.step = 1;
+        } else if (!scnSettingsInt(L, row, "min", &s.min, &hadMin) ||
+                   !scnSettingsInt(L, row, "max", &s.max, &hadMax) ||
+                   !scnSettingsInt(L, row, "step", &s.step, &hadStep) ||
+                   !scnSettingsInt(L, row, "default", &s.def, &hadDef) ||
+                   !hadMin || !hadMax || !hadDef) {
             scnSettingsSay(report, ud, key,
                            "scenario: %s: %s needs whole numbers for min, "
                            "max and default (and step, if given); dropped",
@@ -984,6 +1149,22 @@ int scenarioLuaReadSettings(lua_State *L, int tbl, ScnSetting *out, int max,
     }
     lua_pop(L, 1); /* settings */
     return n;
+}
+
+void scenarioLuaPushSetting(lua_State *L, const ScnSetting *s, int32_t v) {
+    if (s != NULL && s->type == SCN_SETTING_TYPE_BOOL) {
+        lua_pushboolean(L, v != 0);
+    } else if (s != NULL && s->type == SCN_SETTING_TYPE_CHOICE) {
+        /* The word, never the index: the script compares against the words
+           it wrote. A value that names no word is the default word. */
+        const char *w = scnSettingChoiceText(s, v);
+        if (w == NULL) {
+            w = scnSettingChoiceText(s, s->def);
+        }
+        lua_pushstring(L, w != NULL ? w : "");
+    } else {
+        lua_pushinteger(L, (lua_Integer)v);
+    }
 }
 
 /* The declared settings of the script that is calling, into rows. While a
@@ -1062,7 +1243,7 @@ static int scnLuaSetting(lua_State *L) {
         chosen = serverSimGetScriptSetting(
             c->sim, scnLuaSettingFile(c->runningFile), id, &v);
     }
-    lua_pushinteger(L, (lua_Integer)scnSettingResolve(s, chosen, v));
+    scenarioLuaPushSetting(L, s, scnSettingResolve(s, chosen, v));
     return 1;
 }
 
@@ -4706,6 +4887,10 @@ static const ScnLuaOpParam kScnOpArgs_builder[] = {
 static const ScnLuaOpParam kScnOpArgs_lobby_slot[] = {
     { "p", SCN_PARAM_SLOT, false }, SCN_OP_ARG_END
 };
+static const ScnLuaOpParam kScnOpArgs_allied[] = {
+    { "a", SCN_PARAM_SLOT, false }, { "b", SCN_PARAM_SLOT, false },
+    SCN_OP_ARG_END
+};
 /* A rule name is matched against the rules table and a name that spells none
    raises, so it is a word out of a fixed set rather than free text. */
 static const ScnLuaOpParam kScnOpArgs_rule[] = {
@@ -5052,14 +5237,21 @@ static const ScnLuaRow kScnLuaRows[] = {
       "lobby_slot(p) — seat p as { connected, bot, team, name, ready, "
       "fielded, alive }, or nil for an empty seat.",
       SCN_OP_PARAMS(lobby_slot), SCN_OP_READS },
+    { "allied", scnLuaAllied,
+      "allied(a, b) — whether seats a and b are on the same side in the "
+      "game, including alliances players made in play, which can differ "
+      "from their lobby teams; true for a seat and itself, nil when either "
+      "seat is empty.",
+      SCN_OP_PARAMS(allied), SCN_OP_READS },
     { "rule", scnLuaRule,
       "rule(name) — what a gameplay rule is set to; a name that spells no "
       "rule raises.",
       SCN_OP_PARAMS(rule), SCN_OP_READS },
     { "setting", scnLuaSetting,
       "setting(id) — the value the host chose in the lobby for one of "
-      "this script's own settings, or its declared default; an id the "
-      "script never declared raises.",
+      "this script's own settings, or its declared default: a number, "
+      "true or false for a bool setting, or the chosen word for a choice "
+      "setting; an id the script never declared raises.",
       SCN_OP_PARAMS(setting), SCN_OP_READS },
     { "tags", scnLuaTags,
       "tags(kind, n) — the tags the scenario put on a \"pill\", \"base\" or "
@@ -5482,12 +5674,16 @@ static void scnFnFieldAdd(ScnLuaFnField *out, size_t outMax, size_t *count,
  * The derived names follow the parameters rather than sitting beside them,
  * so the first paramCount fields are always the function's own arguments in
  * the order it takes them. _team is prefixed with the parameter's name
- * because a function may take more than one seat; tag and region are bare
- * because no function in the catalogue takes two items or two squares. */
+ * because a function may take more than one seat. region is bare because no
+ * function in the catalogue takes two squares, and tag is bare for the first
+ * pillbox or base a row takes; pill_damage_scale takes two pillboxes, the one
+ * hit and the one whose shell hit it, and the second's is prefixed with its
+ * name the way a team is. */
 size_t scenarioLuaFnFields(size_t row, ScnLuaFnField *out, size_t outMax) {
     const ScnLuaFnRow *r;
-    size_t             count = 0;
+    size_t             count  = 0;
     size_t             i;
+    bool               tagged = false;
 
     if (row >= sizeof(kScnLuaFunctions) / sizeof(kScnLuaFunctions[0])) {
         return 0;
@@ -5512,8 +5708,16 @@ size_t scenarioLuaFnFields(size_t row, ScnLuaFnField *out, size_t outMax) {
 
             case SCN_PARAM_PILL:
             case SCN_PARAM_BASE:
-                scnFnFieldAdd(out, outMax, &count, "tag", SCN_PARAM_TAG, i,
-                              true);
+                if (tagged) {
+                    snprintf(derived, sizeof(derived), "%s_tag",
+                             r->params[i].name);
+                    scnFnFieldAdd(out, outMax, &count, derived,
+                                  SCN_PARAM_TAG, i, true);
+                } else {
+                    scnFnFieldAdd(out, outMax, &count, "tag", SCN_PARAM_TAG,
+                                  i, true);
+                    tagged = true;
+                }
                 break;
 
             case SCN_PARAM_SQUARE_X:

@@ -212,7 +212,7 @@ int run_reauth_result_after_slot_reuse_discarded(void) {
     uint8_t flagsBefore;
     uint8_t flagsAfter;
 
-    sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                     gameOpen, false, 0, -1);
     UT_ASSERT(sim != NULL);
     serverSimSetLobbyEnabled(sim, true);
