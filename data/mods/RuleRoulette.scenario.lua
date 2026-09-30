@@ -25,8 +25,8 @@
 -- bound = false: it names no square, pill or base, so it plays on any map.
 --
 -- The scenario API has no settings table a lobby can show, so the settings
--- are the table below. A human can also change them during a round with chat
--- commands; type "!roulette" for the list.
+-- are the table below. With `chat` set to true, a human can also change them
+-- during a round with chat commands; type "!roulette" for the list.
 -- =========================================================================
 
 local SETTINGS = {
@@ -36,6 +36,7 @@ local SETTINGS = {
   rules     = false,    -- also roll a few game rules (see ROLLED_RULES)
   countdown = 5,        -- seconds of "New roll in N" before each roll; 0 for none
   panel     = true,     -- keep the current numbers on panel 0
+  chat      = false,    -- let humans change these with "!roulette" in chat
   -- Which modifiers roll. One set to false stays at the classic 100.
   roll = { speed = true, accel = true, turn = true,
            reload = true, dealt = true, taken = true },
@@ -407,7 +408,7 @@ function on_start()
   read_base_rules()
   left = SETTINGS.interval
   game.message("Rule Roulette: tank numbers re-roll every " .. SETTINGS.interval ..
-               " s. Type !roulette for the settings.")
+               " s." .. (SETTINGS.chat and " Type !roulette for the settings." or ""))
   do_roll()
   game.timer(1, each_second)
 end
@@ -449,7 +450,7 @@ function on_player_leave(p, scripted)
 end
 
 function on_chat(p, text, scripted)
-  if scripted or not running then
+  if not SETTINGS.chat or scripted or not running then
     return
   end
   local args = text:match("^!roulette%s*(.-)%s*$")
@@ -466,9 +467,7 @@ end
 scenario = {
   name        = "Rule Roulette",
   description = "Every tank's speed, accel, turn, reload, dealt and taken are " ..
-                "re-rolled every 60 s (wild, 40 to 250 %, the same for everyone). " ..
-                "Type !roulette in chat to change the interval, mode, intensity " ..
-                "or to roll rules too.",
+                "re-rolled every 60 s (wild, 40 to 250 %, the same for everyone).",
   api         = 1,
   kind        = "mod",
   bound       = false,
@@ -478,6 +477,7 @@ scenario = {
     on_end = "Logs how many rolls the round had.",
     on_tank_spawned = "A new or respawned tank gets the numbers in force.",
     on_player_leave = "Forgets a leaver's own roll.",
-    on_chat = "!roulette changes the interval, mode, intensity and rules.",
+    on_chat = "With chat commands on, !roulette changes the interval, " ..
+              "mode, intensity and rules.",
   },
 }
