@@ -12,6 +12,16 @@ package.path = "./?.lua;" .. package.path
 local ORD = require("orders")
 local C   = require("constants")
 
+-- THE SHIPPED DEFAULTS of the two team settings, kept before the pin below.
+-- A game starts with the bots quiet ("bot chat" off) and the ATTACK markers
+-- on ("bot pings" on).
+local SHIPPED_BOT_CHAT_DEFAULT  = C.BOT_CHAT_DEFAULT
+local SHIPPED_BOT_PINGS_DEFAULT = C.BOT_PINGS_DEFAULT
+-- Most tests below read the SPOKEN goal lines (acks, "Released", "Still on
+-- it."), which "bot chat off" silences.  They run with bot chat ON; the
+-- sections that test the default itself put the shipped value back.
+C.BOT_CHAT_DEFAULT = true
+
 -- A roster shaped like a real lobby: one human, four bots.  Socrates and
 -- Seneca share a prefix on purpose (the ambiguity case); Bruce Lee is the
 -- multi-word name.
@@ -43,6 +53,12 @@ local function check(name, cond, got)
     print(string.format("  FAIL %s   (got %s)", name, tostring(got)))
   end
 end
+
+print("constants.lua — the team settings a game starts at")
+check("bot chat starts OFF", SHIPPED_BOT_CHAT_DEFAULT == false,
+      tostring(SHIPPED_BOT_CHAT_DEFAULT))
+check("bot pings start ON", SHIPPED_BOT_PINGS_DEFAULT == true,
+      tostring(SHIPPED_BOT_PINGS_DEFAULT))
 
 local function P(text) return ORD.parse(text, ROSTER, ALL) end
 
@@ -608,7 +624,11 @@ check("no game-start line with no human ally",
 print("orders.lua — bot chat off (the runtime path)")
 st, w, inf = ST(), W(), I()
 inf.allies = 0x17
-check("bot chat is ON before anybody says otherwise",
+C.BOT_CHAT_DEFAULT = SHIPPED_BOT_CHAT_DEFAULT
+check("bot chat is OFF before anybody says otherwise",
+      ORD.bot_chat_on(st) == false, tostring(ORD.bot_chat_on(st)))
+C.BOT_CHAT_DEFAULT = true
+check("the test pin turns it ON for the rest of this file",
       ORD.bot_chat_on(st) == true, tostring(ORD.bot_chat_on(st)))
 ORD.on_chat(st, w, inf, 0, "bot chat off", 200, true, false)
 check("bot chat off latches", ORD.bot_chat_on(st) == false, tostring(ORD.bot_chat_on(st)))
@@ -1551,11 +1571,22 @@ check("taking an order places an ON MY WAY marker on the target",
       string.format("%s %s %s", tostring(out.ping_kind), tostring(out.ping_x),
                     tostring(out.ping_y)))
 
--- ATTACK markers ride the team setting, and it is OFF until somebody says
+-- ATTACK markers ride the team setting, and it is ON until somebody says
 -- otherwise.
 st = ST()
 check("bot pings start at the knob",
       ORD.bot_pings_on(st) == (C.BOT_PINGS_DEFAULT and true or false), "?")
+check("and the knob starts them ON", ORD.bot_pings_on(st) == true,
+      tostring(ORD.bot_pings_on(st)))
+ORD.ping(st, 3, 1, 1)                 -- makes state.orders exist
+ORD.out_ping(st, {})
+ORD.attack_ping(st, { kind = "attack_pill", target_id = 5, mx = 20, my = 20 }, 100)
+check("with nobody saying anything an attack marker is placed",
+      ORD.out_ping(st, {}).ping_kind == 3, "?")
+st = ST()
+ORD.ping(st, 3, 1, 1)
+ORD.out_ping(st, {})
+st.orders.bot_pings = false
 ORD.attack_ping(st, { kind = "attack_pill", target_id = 5, mx = 20, my = 20 }, 100)
 check("with bot pings off no attack marker is placed",
       ORD.out_ping(st, {}).ping_kind == nil, "?")

@@ -394,6 +394,8 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_DLGBROWSER_LOCK_NONEWPLAYERS", STR_DLGBROWSER_LOCK_NONEWPLAYERS },
     { "STR_DLGBROWSER_LOCK_PASSWORD", STR_DLGBROWSER_LOCK_PASSWORD },
     { "STR_DLGBROWSER_MANUAL", STR_DLGBROWSER_MANUAL },
+    { "STR_DLGBROWSER_MODS", STR_DLGBROWSER_MODS },
+    { "STR_DLGBROWSER_MODS_MORE", STR_DLGBROWSER_MODS_MORE },
     { "STR_DLGBROWSER_NEWGAME", STR_DLGBROWSER_NEWGAME },
     { "STR_DLGBROWSER_NEWGAME_PORTFWD_TIP", STR_DLGBROWSER_NEWGAME_PORTFWD_TIP },
     { "STR_DLGBROWSER_NO_GAMES", STR_DLGBROWSER_NO_GAMES },
@@ -2128,6 +2130,7 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_RULE_DESC_mine_fatal_divisor", STR_RULE_DESC_mine_fatal_divisor },
     { "STR_RULE_DESC_mine_fuse_ticks", STR_RULE_DESC_mine_fuse_ticks },
     { "STR_RULE_DESC_pill_aim_iterations", STR_RULE_DESC_pill_aim_iterations },
+    { "STR_RULE_DESC_pill_aim_mac", STR_RULE_DESC_pill_aim_mac },
     { "STR_RULE_DESC_pill_angry_divisor", STR_RULE_DESC_pill_angry_divisor },
     { "STR_RULE_DESC_pill_attack_min_ticks", STR_RULE_DESC_pill_attack_min_ticks },
     { "STR_RULE_DESC_pill_attack_ticks", STR_RULE_DESC_pill_attack_ticks },
@@ -2173,6 +2176,7 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_RULE_DESC_tank_brake_rate", STR_RULE_DESC_tank_brake_rate },
     { "STR_RULE_DESC_tank_bump_decay_shift", STR_RULE_DESC_tank_bump_decay_shift },
     { "STR_RULE_DESC_tank_collision_distance", STR_RULE_DESC_tank_collision_distance },
+    { "STR_RULE_DESC_tank_collision_mac", STR_RULE_DESC_tank_collision_mac },
     { "STR_RULE_DESC_tank_death_ticks", STR_RULE_DESC_tank_death_ticks },
     { "STR_RULE_DESC_tank_decel_rate", STR_RULE_DESC_tank_decel_rate },
     { "STR_RULE_DESC_tank_explosion_damage", STR_RULE_DESC_tank_explosion_damage },
@@ -2363,7 +2367,6 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_TUTORIAL_START01", STR_TUTORIAL_START01 },
     { "STR_TUTORIAL_START01_TOUCH", STR_TUTORIAL_START01_TOUCH },
     { "STR_TUTORIAL_START02", STR_TUTORIAL_START02 },
-    { "STR_TUTORIAL_START03", STR_TUTORIAL_START03 },
     { "STR_TUTORIAL_START04", STR_TUTORIAL_START04 },
     { "STR_TUTORIAL_START04_CTRL", STR_TUTORIAL_START04_CTRL },
     { "STR_TUTORIAL_START04_TOUCH", STR_TUTORIAL_START04_TOUCH },
@@ -2389,4 +2392,4 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_YES", STR_YES },
 };
 
-#define K_LANG_NAME_TABLE_SIZE  2376
+#define K_LANG_NAME_TABLE_SIZE  2379

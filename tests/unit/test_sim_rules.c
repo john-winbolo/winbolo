@@ -334,6 +334,8 @@ int run_sim_rules_classic_defaults(void) {
     /* Mac Bolo shell push */
     SR_EQ(tank_slide_mac, TANK_SLIDE_MAC);
     SR_EQ(tank_slide_armour_bonus, TANK_SLIDE_ARMOUR_BONUS);
+    SR_EQ(pill_aim_mac, 0);
+    SR_EQ(tank_collision_mac, 0);
 
     return 0;
 }
@@ -1164,8 +1166,227 @@ int run_sim_rules_pill_angry_divisor_follows(void) {
     return 0;
 }
 
+int run_sim_rules_tank_collision_mac(void) {
+    /* Mac Bolo reference positions at speed 32: the 16-WU
+     * displacement matches one WinBolo tick at speed 16. Obstruction and
+     * aim use the actual 20/40 ms speed conversion, not that probe speed.
+     * In particular, row 3 must keep leading during a 15-WU wall slide. */
+    static const struct {
+        int x, y, heading, speed, endX, endY, blocked, shot;
+    } cases[] = {
+        {-32,-240,64,16, -16,-240,0,63},
+        {-32,-240,80,16, -17,-234,0,79},
+        {-32,-193,64,16, -16,-193,0,63},
+        {-32,-193,80,16, -17,-193,0,79},
+        {0,-225,128,16, 0,-225,1,1},
+        {-210,-210,96,16, -209,-209,1,223},
+        {-210,-210,0,0, -210,-210,0,223},
+        {-32,-240,72,16, -17,-234,0,79},
+        {-32,-240,248,16, -32,-256,0,251},
+    };
+    /* Mac's stationary-box probe, north of a pill, for all 16 sectors. */
+    static const int boxY[16] = {
+        -225,-241,-241,-225,-225,-225,-225,-225,
+        -225,-225,-225,-225,-225,-225,-241,-241
+    };
+    ServerSim *sim = ut_make_running_sim("Mac movement");
+    GameSim *gs;
+    tank target;
+    struct tankObj initial;
+    pillbox *pill;
+    bool connected[MAX_TANKS] = {false};
+    int x, y, prediction;
+    size_t i;
+    const int centre = 100 * 256 + 128;
+    UT_ASSERT(sim != NULL);
+    gs = serverSimGetGameSim(sim);
+    target = gs->tanks[0];
+    UT_ASSERT(target != NULL && gs->pb->numPills > 0);
+    for (x = 98; x <= 102; x++) for (y = 98; y <= 102; y++) {
+        mapSetPos(gs, &gs->mp, (BYTE)x, (BYTE)y, ROAD, FALSE, FALSE);
+    }
+    for (i = 0; i < gs->pb->numPills; i++) gs->pb->active[i] = FALSE;
+    gs->pb->active[0] = TRUE;
+    pill = &gs->pb->item[0];
+    pill->x = pill->y = 100;
+    pill->owner = NEUTRAL;
+    pill->armour = 15;
+    pill->inTank = FALSE;
+    target->autoSlowdown = FALSE;
+    target->destroyed = FALSE;
+    target->onBoat = FALSE;
+    target->boatState = BoatState_NotOnBoat;
+    target->deathWait = 0;
+    initial = *target;
+    gs->rules.pill_aim_mac = 1;
+    gs->rules.tank_collision_mac = 1;
+    connected[0] = true;
+    for (prediction = 0; prediction <= 1; prediction++) {
+        gs->isPredicting = prediction != 0;
+        for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+            *target = initial;
+            target->x = (WORLD)(centre + cases[i].x);
+            target->y = (WORLD)(centre + cases[i].y);
+            target->angle = (TURNTYPE)cases[i].heading;
+            target->speed = (SPEEDTYPE)cases[i].speed;
+            tankUpdate(gs, &gs->tanks[0], 0, FALSE, FALSE);
+            UT_ASSERT_MSG(target->x == centre + cases[i].endX &&
+                          target->y == centre + cases[i].endY,
+                "Mac move %u (prediction %d): (%d,%d), expected (%d,%d)",
+                (unsigned)i, prediction, target->x - centre, target->y - centre,
+                cases[i].endX, cases[i].endY);
+            UT_ASSERT_MSG(target->obstructed == (cases[i].blocked != 0),
+                "Mac move %u (prediction %d): blocked=%d", (unsigned)i,
+                prediction, target->obstructed);
+            if (!prediction) {
+                shellsDestroy(&gs->shs);
+                pill->reload = pill->speed;
+                pill->justSeen = TRUE;
+                pillsUpdate(gs, gs->tanks, connected, MAX_TANKS);
+                UT_ASSERT(gs->shs != NULL);
+                UT_ASSERT_MSG(gs->shs->angle == cases[i].shot,
+                    "pill after move %u: shot=%f, expected %d", (unsigned)i,
+                    (double)gs->shs->angle, cases[i].shot);
+            }
+        }
+        for (i = 0; i < 16; i++) {
+            *target = initial;
+            target->x = (WORLD)centre;
+            target->y = (WORLD)(centre - 225);
+            target->angle = (TURNTYPE)(i * 16);
+            target->speed = 0;
+            tankUpdate(gs, &gs->tanks[0], 0, FALSE, FALSE);
+            UT_ASSERT_MSG(target->x == centre && target->y == centre + boxY[i],
+                "Mac box sector %u: (%d,%d)", (unsigned)i,
+                target->x - centre, target->y - centre);
+        }
+    }
+    /* Turning the mod off restores the circle's 240-WU clearance. */
+    gs->isPredicting = FALSE;
+    gs->rules.tank_collision_mac = 0;
+    *target = initial;
+    target->x = (WORLD)(centre - 32);
+    target->y = (WORLD)(centre - 193);
+    target->angle = 64;
+    target->speed = 16;
+    tankUpdate(gs, &gs->tanks[0], 0, FALSE, FALSE);
+    UT_ASSERT(target->x == centre - 16 && target->y == centre - 240);
+    /* A circle sliding into a wall also compares with its pre-move cell. */
+    *target = initial;
+    target->x = (WORLD)(centre - 24);
+    target->y = (WORLD)(centre - 240);
+    target->angle = 80;
+    target->speed = 16;
+    tankUpdate(gs, &gs->tanks[0], 0, FALSE, FALSE);
+    UT_ASSERT(target->x == centre - 9 && target->y == centre - 240);
+    UT_ASSERT(!target->obstructed);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+int run_sim_rules_pill_aim_mac(void) {
+    /* Mac Bolo reference shell directions, with WinBolo speeds multiplied
+     * by four. The first three rows cover moving, stopped and obstructed
+     * tanks at close range. The rest cover
+     * the asymmetric pixel boundary, all 16 headings, diagonal distance,
+     * slow motion and normal leading out to eight squares. */
+    static const struct {
+        int dx, dy, heading, speed, obstructed, expected;
+    } cases[] = {
+        {0, -200, 64, 4, 0, 63},
+        {0, -200, 64, 0, 0, 1},
+        {0, -200, 64, 4, 1, 1},
+        {0, -300, 64, 16, 0, 1},
+        {0, -256, 64, 16, 0, 1},
+        {0, -255, 64, 16, 0, 63},
+        {0, 255, 64, 16, 0, 127},
+        {0, -384, 64, 16, 0, 7},
+        {0, -200, 64, 1, 0, 63},
+        {0, -200, 64, 3, 0, 63},
+        {0, -200, 64, 6, 0, 63},
+        {0, -200, 64, 12, 0, 63},
+        {0, -200, 0, 16, 0, 1},
+        {0, -200, 32, 16, 0, 31},
+        {0, -200, 128, 16, 0, 127},
+        {176, -176, 48, 16, 0, 47},
+        {192, -192, 48, 16, 0, 33},
+        {200, 0, 128, 16, 0, 127},
+        {-200, 0, 0, 16, 0, 255},
+        {200, 200, 240, 16, 0, 95},
+        {0, -2048, 64, 16, 0, 17},
+        {0, -200, 80, 16, 0, 79},
+        {0, -200, 96, 16, 0, 95},
+        {0, -200, 112, 16, 0, 111},
+        {0, -200, 144, 16, 0, 145},
+        {0, -200, 160, 16, 0, 161},
+        {0, -200, 176, 16, 0, 177},
+        {0, -200, 192, 16, 0, 193},
+        {0, -200, 208, 16, 0, 209},
+        {0, -200, 224, 16, 0, 225},
+        {0, -200, 16, 16, 0, 15},
+        {0, -200, 48, 16, 0, 47},
+    };
+    ServerSim *sim = ut_make_running_sim("Mac aim");
+    GameSim *gs;
+    size_t i;
+    int origin;
+    UT_ASSERT(sim != NULL);
+    gs = serverSimGetGameSim(sim);
+    gs->rules.pill_aim_mac = 1;
+    /* The legacy approximation must not influence this mode. */
+    gs->rules.pill_massage_range = 65535;
+    gs->rules.pill_massage_cosine = 0.0f;
+    /* Near either map edge the distant aim point must not wrap WORLD. */
+    for (origin = 4096; origin <= 61440; origin += 28672) {
+        for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+            TURNTYPE aimed = pillsTargetTank(gs, &gs->mp, &gs->pb, &gs->bs,
+                (WORLD)origin, (WORLD)origin,
+                (WORLD)(origin + cases[i].dx), (WORLD)(origin + cases[i].dy),
+                (TURNTYPE)cases[i].heading, (BYTE)cases[i].speed,
+                FALSE, 0, cases[i].obstructed != 0);
+            UT_ASSERT_MSG(aimed == cases[i].expected,
+                "Mac aim row %u at %d: got %f, expected %d",
+                (unsigned)i, origin, (double)aimed, cases[i].expected);
+        }
+    }
+    /* Exercise the firing path too: the target's obstructed flag must reach
+     * the aim calculation even while its requested speed remains nonzero. */
+    {
+        bool connected[MAX_TANKS] = {false};
+        tank target = gs->tanks[0];
+        pillbox *pill = &gs->pb->item[0];
+        int blocked;
+        UT_ASSERT(target != NULL && gs->pb->numPills > 0);
+        for (i = 0; i < gs->pb->numPills; i++) gs->pb->active[i] = FALSE;
+        gs->pb->active[0] = TRUE;
+        pill->x = pill->y = 100;
+        pill->owner = NEUTRAL;
+        pill->armour = 15;
+        pill->inTank = FALSE;
+        target->x = 100 * 256 + 128;
+        target->y = target->x - 200;
+        target->angle = 64;
+        target->speed = 4;
+        target->destroyed = FALSE;
+        connected[0] = true;
+        for (blocked = 0; blocked <= 1; blocked++) {
+            shellsDestroy(&gs->shs);
+            pill->reload = pill->speed;
+            pill->justSeen = TRUE;
+            target->obstructed = blocked != 0;
+            pillsUpdate(gs, gs->tanks, connected, MAX_TANKS);
+            UT_ASSERT(gs->shs != NULL);
+            UT_ASSERT_MSG(gs->shs->angle == (blocked ? 1 : 63),
+                "firing at a %s tank aimed at %f", blocked ? "blocked" : "moving",
+                (double)gs->shs->angle);
+        }
+    }
+    serverSimDestroy(sim);
+    return 0;
+}
+
 /* The "pillmassage" aim, which was a build-time switch and is now two rules.
- * pill_massage_range is the distance the original forward prediction takes
+ * pill_massage_range is the distance the legacy forward prediction takes
  * over from the solver inside, and zero — what the classic table holds — is
  * what takes it out altogether. pill_massage_cosine is how straight at the
  * pillbox a tank has to be driving to be led properly anyway.
@@ -1204,7 +1425,7 @@ int run_sim_rules_pill_massage_follows(void) {
                   "a running sim starts at pill_massage_range %ld, expected %d",
                   (long) gs->rules.pill_massage_range, PILLBOX_MASSAGE_RANGE);
     aimed = pillsTargetTank(gs, &gs->mp, &gs->pb, &gs->bs, px, py, tankX, tankY,
-                            0.0f, 16, FALSE, 0);
+                            0.0f, 16, FALSE, 0, FALSE);
     UT_ASSERT_MSG(aimed == solved,
                   "the classic table aimed at %f, expected the solver's %f",
                   (double) aimed, (double) solved);
@@ -1214,7 +1435,7 @@ int run_sim_rules_pill_massage_follows(void) {
     gs->rules.pill_massage_range  = 384;
     gs->rules.pill_massage_cosine = 1.0f;
     aimed = pillsTargetTank(gs, &gs->mp, &gs->pb, &gs->bs, px, py, tankX, tankY,
-                            0.0f, 16, FALSE, 0);
+                            0.0f, 16, FALSE, 0, FALSE);
     UT_ASSERT_MSG(aimed != solved,
                   "a massaged pillbox aimed at the solver's %f",
                   (double) solved);
@@ -1223,7 +1444,7 @@ int run_sim_rules_pill_massage_follows(void) {
        pillbox to be led properly. */
     gs->rules.pill_massage_cosine = (float) PILLBOX_MASSAGE_COSINE;
     aimed = pillsTargetTank(gs, &gs->mp, &gs->pb, &gs->bs, px, py, tankX, tankY,
-                            0.0f, 16, FALSE, 0);
+                            0.0f, 16, FALSE, 0, FALSE);
     UT_ASSERT_MSG(aimed == solved,
                   "a tank at 45 degrees aimed at %f, expected the solver's %f",
                   (double) aimed, (double) solved);
@@ -1233,7 +1454,7 @@ int run_sim_rules_pill_massage_follows(void) {
     gs->rules.pill_massage_range  = 200;
     gs->rules.pill_massage_cosine = 1.0f;
     aimed = pillsTargetTank(gs, &gs->mp, &gs->pb, &gs->bs, px, py, tankX, tankY,
-                            0.0f, 16, FALSE, 0);
+                            0.0f, 16, FALSE, 0, FALSE);
     UT_ASSERT_MSG(aimed == solved,
                   "a tank outside the range aimed at %f, expected the "
                   "solver's %f",
@@ -1835,7 +2056,7 @@ int run_sim_rules_are_classic(void) {
 
     /* The last field, so the walk is not stopping short of the end. */
     simRulesClassic(&r);
-    r.pill_max_shells_at_tank = r.pill_max_shells_at_tank + 1;
+    r.tank_collision_mac = 1;
     UT_ASSERT_MSG(!simRulesAreClassic(&r),
                   "a table with its last field moved is reported classic");
 

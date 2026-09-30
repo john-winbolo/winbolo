@@ -160,7 +160,7 @@ STR_WBTIMELIMIT_END=Časový limit vypršel. Hra skončila.
 STR_WBERR_SAVEMAP=Chyba při ukládání mapy (Plný disk?)
 
 # Tutorial strings
-STR_TUTORIAL01=Před tebou je krátká řeka vedoucí do vnitrozemí.\nPřidrž klávesu {ACCEL} a dojed lodí na konec řeky.\n\nAž tam dojedeš, drž {ACCEL} dál. Tank vystoupí z lodě\na loď zůstane uvázána na konci řeky
+STR_TUTORIAL01=Před tebou je krátká řeka vedoucí do vnitrozemí.\nPřidrž klávesu {ACCEL} a dojed lodí na konec řeky.\n\nAž tam dojedeš, drž {ACCEL} dál. Tank vystoupí z lodě\na loď zůstane uvázána na konci řeky.
 STR_TUTORIAL02=Jsi teď na trávě. Na trávě se tank pohybuje\ndocela rychle.\n\n\nPokračuj v mačkání {ACCEL} a jeď dál do lesa.
 STR_TUTORIAL03=Jsi teď v lese. V lese se tank pohybuje pomaleji\nnež na trávě.\n\n\nPokračuj v mačkání {ACCEL} a jeď dál do bažiny.
 STR_TUTORIAL04=Jsi teď v bažině. V bažině se tank pohybuje velmi\npomalu. Naštěstí je před tebou silnice.\n\n\nPokračuj v mačkání {ACCEL} a jeď dál na silnici.
@@ -184,12 +184,11 @@ STR_TUTORIAL21=Pro překročení této řeky budeš muset postavit loď.\nLodě 
 STR_TUTORIAL22=Před tebou je bunkr a několik zásobovacích základen,\nkteré ti dodají munici. Vezmi si granáty ze zásobovací\nzákladny a zaútoč na bunkr.\n\n\nBunkr bude oplácet palbou, ale pokud tvůj tank bude\nzasažen, můžeš se snadno vrátit na zásobovací\nzákladnu a opravit pancíř na plnou sílu.
 STR_TUTORIAL23=S trpělivostí a opatrností by ses měl zvládnout\nzničit tento bunkr. Využij dovednosti, které ses\nnaučil, aby to bylo snazší:\n\n\nSkryj se v lese, aby tě bunkr neviděl, kácí stromy,\nstav silnice aby se tvůj tank pohyboval rychleji\na stav budovy jako kryt před střelami bunkru.
 STR_TUTORIAL24=Po zničení tohoto bunkru je tvou závěrečnou\nvýzvou kurzu zlikvidovat dva bunkry střežící\nvýchod, postavit loď a uniknout.\n\n\nDávej zvláštní pozor na úroveň pancíře tanku —\npokud bude tank zničen, dostaneš nový tank\nv blízkosti, abys mohl zkusit štěstí znovu.
-STR_TUTORIAL25=Gratulace. Dokončil jsi výukový kurz WinBolo.\n\n\n\nTeď si sezvoni přátele ke hře a zjisti, jaké to je\nzávodit s chytrými lidskými soupeři místo\nnehybných bezmyšlenkovitých cílů.\n\nPokud chceš kurz zopakovat, můžeš ho\nspustit znovu z nabídky Nastavení.
+STR_TUTORIAL25=Gratulace. Dokončil jsi výukový kurz WinBolo.\n\n\n\nJsi připraven hrát. Připoj se ke hře online, založ\nhru pro své přátele, nebo si zahraj proti botům.\n\nPokud chceš kurz zopakovat, můžeš ho\nspustit znovu z nabídky Nastavení.
 STR_TUTORIAL_START01=Vítej ve výukovém kurzu WinBolo. Tento ostrov\ntě seznámí se základními principy WinBolo a provede\ntě jimi postupně. Každý nový princip bude popsán\nv okně jako je toto.\n\nPo přečtení každé zprávy\nstiskni {DISMISS} pro pokračování.
 STR_TUTORIAL_START02=WinBolo je jedinou autorizovanou kopií klasické macintoshové síťové hry Bolo Stuarta Cheshira.\nStrategické tipy a další informace najdeš na oficiálních webových stránkách:\n\nhttps://www.winbolo.com\n\nNebo se k nám přidej na Redditu a Discordu\n
-STR_TUTORIAL_START03=Rychlá poznámka o hraní přes internet.\n\nPokud se připojíš k online hře a vyskytne se hodně\nsíťových chyb, opusť hru ihned,\naby ses nevykazoval ostatním hráčům.
-STR_TUTORIAL_START04=Ovládáš tank, který je právě na lodi na moři.\nStiskni {ACCEL} pro pohyb tanku (a lodě) dopředu\na {BRAKE} pro zpomalení a zastavení.\n\nNemačkej klávesy jako při psaní — přidrž je,\ndokud tank nedosáhne požadované rychlosti,\na pak je pusť. Stiskni teď {ACCEL} pro pohyb\nlodě směrem k pevnině.\n(Nejdřív stiskni {DISMISS} pro zavření okna)
-STR_TUTORIAL01_TOUCH=Před tebou je krátká řeka vedoucí do vnitrozemí.\nPosuň páčku dopředu a dojed lodí na konec řeky.\n\nAž tam dojedeš, drž páčku posunutou dopředu.\nTank vystoupí z lodě a loď zůstane uvázána\nna konci řeky
+STR_TUTORIAL_START04=Ovládáš tank, který je právě na lodi na moři.\nStiskni {ACCEL} pro pohyb tanku (a lodě) dopředu\na {BRAKE} pro zpomalení a zastavení.\n\nPřidrž klávesy, dokud tank nedosáhne požadované\nrychlosti, a pak je pusť. Stiskni teď {ACCEL} pro\npohyb lodě směrem k pevnině.\n(Nejdřív stiskni {DISMISS} pro zavření okna)
+STR_TUTORIAL01_TOUCH=Před tebou je krátká řeka vedoucí do vnitrozemí.\nPosuň páčku dopředu a dojed lodí na konec řeky.\n\nAž tam dojedeš, drž páčku posunutou dopředu.\nTank vystoupí z lodě a loď zůstane uvázána\nna konci řeky.
 STR_TUTORIAL02_TOUCH=Jsi teď na trávě. Na trávě se tank pohybuje\ndocela rychle.\n\n\nDrž páčku posunutou dopředu a jeď dál do lesa.
 STR_TUTORIAL03_TOUCH=Jsi teď v lese. V lese se tank pohybuje pomaleji\nnež na trávě.\n\n\nDrž páčku posunutou dopředu a jeď dál do bažiny.
 STR_TUTORIAL04_TOUCH=Jsi teď v bažině. V bažině se tank pohybuje\nvery pomalu. Naštěstí je před tebou silnice.\n\n\nDrž páčku posunutou dopředu a jeď dál na silnici.
@@ -203,7 +202,7 @@ STR_TUTORIAL19_TOUCH=Po pokácení stromů vyber nástroj silnice/most\n(druhé 
 STR_TUTORIAL21_TOUCH=Pro překročení této řeky budeš muset postavit loď.\nLodě vyžadují pět stromů, takže klepni na pět\nstromů aby se pokácely. Pak vyber nástroj zeď/loď\n(třetí tlačítko shora) a klepni na vodu pro stavbu lodě.\n\nPokud klepneš na pevninu, postavíš zeď\na budeš muset pokácet více stromů pro stavbu lodě.\nNajeď na loď a přepleť na druhou stranu.
 STR_TUTORIAL_START01_TOUCH=Vítej ve výukovém kurzu WinBolo. Tento ostrov\ntě seznámí se základními principy WinBolo a provede\ntě jimi postupně. Každý nový princip bude popsán\nv okně jako je toto.\n\nPo přečtení každé zprávy můžeš pokračovat\nklepnutím na tlačítko „OK".
 STR_TUTORIAL_START04_TOUCH=Ovládáš tank, který je právě na lodi na moři.\nPoužij páčku na levé straně obrazovky pro řízení:\npotlač ji dopředu pro zrychlení, potáhni zpět\npro zpomalení a zastavení.\n\nČím dál páčku posuneš, tím rychleji tank jede.\nPosuň páčku dopředu pro pohyb lodě směrem\nk pevnině.\n(Nejdřív klepni na OK pro zavření okna)
-STR_TUTORIAL01_CTRL=Před tebou je krátká řeka vedoucí do vnitrozemí.\nPosuň levou páčku dopředu a dojed lodí na konec řeky.\n\nAž tam dojedeš, drž páčku posunutou dopředu.\nTank vystoupí z lodě a loď zůstane uvázána\nna konci řeky
+STR_TUTORIAL01_CTRL=Před tebou je krátká řeka vedoucí do vnitrozemí.\nPosuň levou páčku dopředu a dojed lodí na konec řeky.\n\nAž tam dojedeš, drž páčku posunutou dopředu.\nTank vystoupí z lodě a loď zůstane uvázána\nna konci řeky.
 STR_TUTORIAL02_CTRL=Jsi teď na trávě. Na trávě se tank pohybuje\ndocela rychle.\n\n\nDrž levou páčku posunutou dopředu a jeď dál do lesa.
 STR_TUTORIAL03_CTRL=Jsi teď v lese. V lese se tank pohybuje pomaleji\nnež na trávě.\n\n\nDrž levou páčku posunutou dopředu a jeď dál do bažiny.
 STR_TUTORIAL04_CTRL=Jsi teď v bažině. V bažině se tank pohybuje\nvery pomalu. Naštěstí je před tebou silnice.\n\n\nDrž levou páčku posunutou dopředu a jeď dál na silnici.
@@ -2702,3 +2701,7 @@ STR_DLGSETTINGS_WORKSHOP_UNUSABLE=Nepoužitelné
 
 # The lobby's Workshop chip
 STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop
+
+# The game finder's scripts
+STR_DLGBROWSER_MODS=Mody
+STR_DLGBROWSER_MODS_MORE=+ mody ({number})

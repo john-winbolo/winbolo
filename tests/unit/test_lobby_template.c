@@ -7,7 +7,9 @@
  * script, a manifest or a Lua VM. That is the shape under test as much as
  * the seating is: the engine applies this without calling back out.
  *
- * Three paths apply it. A committed map seats it from scratch. A lobby
+ * Three paths apply it. A committed map that brings a different template
+ * seats it from scratch; one that brings the same template leaves the lobby
+ * as the host left it, bots and trims included. A lobby
  * coming back from a round reconciles instead: what the host changed between
  * rounds stands, a team past its ceiling is cut back, and the seats a script
  * fielded during the round go back to being held. An emptied lobby resetting
@@ -37,6 +39,9 @@
  *                                       — and never binds a bot
  * run_lobby_template_cancel_keeps_trim  — a cancelled preview gives the
  *                                         host's trim back
+ * run_lobby_template_cancel_same_template_keeps_edits
+ *                                       — a preview with the same template
+ *                                         keeps what the host did during it
  * run_lobby_template_cancel_keeps_empty_team
  *                                       — and gives an emptied team back
  *                                         empty
@@ -44,8 +49,10 @@
  *                                       — one cancel over two previews goes
  *                                         back to before the first
  * run_lobby_template_commit_keeps_new_lobby
- *                                       — a commit keeps the previewed map's
- *                                         lobby and restores nothing
+ *                                       — a commit keeps the lobby a
+ *                                         previewed map with another
+ *                                         template seated, and restores
+ *                                         nothing
  * run_lobby_template_cancel_restores_path_inmem
  *                                       — a cancel after an uploaded-map
  *                                         preview gives the map's file back
@@ -815,7 +822,8 @@ static void ltTrimTo(ServerSim *sim, BYTE team, int n) {
 }
 
 /* Show the host another map. A real preview is a map change like any other,
- * which is why it seats the template again. */
+ * which is why it seats the template again where the template is not the one
+ * already seated, and leaves the lobby alone where it is. */
 static bool ltPreview(ServerSim *sim, const char *name) {
     BYTE emap[6000] = E_MAP;
     return serverSimReloadCompressedInMemory(sim, emap, E_MAP_LEN, name);
@@ -845,6 +853,12 @@ int run_lobby_template_cancel_keeps_trim(void) {
     UT_ASSERT(ltPreview(sim, "Preview"));
     UT_ASSERT_MSG(serverSimHasPreviewMap(sim),
                   "the map change left no preview to cancel");
+    /* The lobby was seated directly, as a server booting onto a scripted map
+       seats it, and this is its first map change. The template is the same,
+       so the trim stands on the previewed map too. */
+    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 3,
+                  "the first map change after a boot seating left %d seats, "
+                  "expected the host's three", ltSeats(sim, LT_RAIDER));
 
     UT_ASSERT(serverSimRevertPreview(sim));
     UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 3,
@@ -855,6 +869,65 @@ int run_lobby_template_cancel_keeps_trim(void) {
                   ltSeats(sim, LT_GUARD));
     UT_ASSERT_MSG(!serverSimHasPreviewMap(sim),
                   "the cancel left a preview pending");
+
+    serverSimDestroy(sim);
+    ltDropBrainFile();
+    return 0;
+}
+
+/* A preview that keeps the template keeps the lobby, so what the host does
+ * to the roster while looking at it is the roster a Cancel leaves: a seat
+ * trimmed during the preview stays trimmed, and a bot added during it
+ * stays. */
+int run_lobby_template_cancel_same_template_keeps_edits(void) {
+    ServerSim       *sim;
+    ScnLobbyTemplate t;
+    int              hostBot;
+
+    UT_ASSERT(ltMakeBrainFile("cancel_same_template_keeps_edits"));
+    ut_brain_stub_arm(true);
+    sim = ltLobbySim();
+    UT_ASSERT(sim != NULL);
+
+    ltTemplate(&t, 4, 4, 1, 1);
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    serverSimScenarioSeatLobby(sim);
+    ltHoldInLobby(sim);
+    UT_ASSERT(ltSeats(sim, LT_RAIDER) == 4);
+    UT_ASSERT(serverSimGetState(sim) == serverStateLobby);
+
+    UT_ASSERT(ltPreview(sim, "Preview"));
+    UT_ASSERT(ltSeats(sim, LT_RAIDER) == 4);
+
+    /* While the preview stands: one raider seat off, and a bot of the host's
+       own on a team the template says nothing about. */
+    ltTrimTo(sim, LT_RAIDER, 3);
+    hostBot = serverSimFindFreeSlot(sim, true);
+    UT_ASSERT(hostBot >= 0);
+    {
+        ServerSimBotConfig cfg;
+        memset(&cfg, 0, sizeof(cfg));
+        cfg.brainPath  = ltBrainPath;
+        cfg.brainName  = "Host Bot";
+        cfg.ai         = aiFull;
+        cfg.gameType   = gameOpen;
+        cfg.teamNumber = 2;
+        UT_ASSERT(serverSimAddBot(sim, (BYTE)hostBot, &cfg));
+    }
+
+    UT_ASSERT(serverSimRevertPreview(sim));
+    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 3,
+                  "the trim made during the preview came back as %d after a "
+                  "cancel, expected 3", ltSeats(sim, LT_RAIDER));
+    UT_ASSERT_MSG(serverSimIsBot(sim, (BYTE)hostBot) &&
+                  !sim->lobbyPlayers[hostBot].keepSeat,
+                  "the bot added during the preview went with the cancel");
+    UT_ASSERT_MSG(sim->lobbyPlayers[hostBot].teamNumber == 2,
+                  "the bot added during the preview is on team %d, not 2",
+                  (int)sim->lobbyPlayers[hostBot].teamNumber);
+    UT_ASSERT_MSG(ltSeats(sim, LT_GUARD) == 1,
+                  "the untouched team came back at %d, expected 1",
+                  ltSeats(sim, LT_GUARD));
 
     serverSimDestroy(sim);
     ltDropBrainFile();
@@ -916,9 +989,18 @@ int run_lobby_template_cancel_chain_rolls_back(void) {
     UT_ASSERT(ltSeats(sim, LT_RAIDER) == 2);
     UT_ASSERT(serverSimGetState(sim) == serverStateLobby);
 
+    /* The first map previewed carries a template of its own, which differs
+       only in its ceiling. The callback that would attach it is not
+       registered here, so it goes on by hand. */
+    ltTemplate(&t, 5, 6, 1, 1);
+    serverSimSetScenarioLobbyTemplate(sim, &t);
     UT_ASSERT(ltPreview(sim, "Preview one"));
-    /* The first preview seated the five again; the host trims to four while
-       looking at it, so four is the count in between. */
+    /* A different template, so the first preview seated the five again; the
+       host trims to four while looking at it, so four is the count in
+       between. */
+    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 5,
+                  "a preview with another template left %d seats, expected "
+                  "its five", ltSeats(sim, LT_RAIDER));
     ltTrimTo(sim, LT_RAIDER, 4);
     UT_ASSERT(ltSeats(sim, LT_RAIDER) == 4);
 
@@ -935,8 +1017,9 @@ int run_lobby_template_cancel_chain_rolls_back(void) {
     return 0;
 }
 
-/* Committing keeps the previewed map, so its lobby stands and the counts the
- * old map had are gone for good. */
+/* Committing keeps the previewed map, so where that map brought a template
+ * of its own, its lobby stands and the counts the old map had are gone for
+ * good. */
 int run_lobby_template_commit_keeps_new_lobby(void) {
     ServerSim       *sim;
     ScnLobbyTemplate t;
@@ -954,22 +1037,28 @@ int run_lobby_template_commit_keeps_new_lobby(void) {
     UT_ASSERT(ltSeats(sim, LT_RAIDER) == 1);
     UT_ASSERT(serverSimGetState(sim) == serverStateLobby);
 
+    /* The map about to be previewed carries a template of its own: five
+       raiders where the old one had four. The callback that would attach it
+       is not registered here, so it goes on by hand, as that callback
+       would put it before the decision. */
+    ltTemplate(&t, 5, 5, 1, 1);
+    serverSimSetScenarioLobbyTemplate(sim, &t);
     UT_ASSERT(ltPreview(sim, "Preview"));
     serverSimCommitPreview(sim);
     UT_ASSERT_MSG(!serverSimHasPreviewMap(sim),
                   "the commit left a preview pending");
-    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 4,
+    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 5,
                   "the committed map's lobby holds %d seats, expected the "
-                  "template's four",
+                  "new template's five",
                   ltSeats(sim, LT_RAIDER));
 
     /* And the old map's count is not waiting to be applied to a later
-       cancel: previewing again and backing out returns the four that are
+       cancel: previewing again and backing out returns the five that are
        there now. */
     UT_ASSERT(ltPreview(sim, "Preview again"));
     UT_ASSERT(serverSimRevertPreview(sim));
-    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 4,
-                  "a cancel after a commit gave back %d seats, expected 4",
+    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 5,
+                  "a cancel after a commit gave back %d seats, expected 5",
                   ltSeats(sim, LT_RAIDER));
 
     serverSimDestroy(sim);

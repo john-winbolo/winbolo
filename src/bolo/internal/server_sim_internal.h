@@ -1127,20 +1127,18 @@ struct ServerSim {
     ScnLobbyTemplate       scenarioLobby;
     bool                   scenarioLobbyValid;
     /* What the seats now in the lobby were built from: whether the seating
-     * ran on a template at all, the map file it ran for, and the template
-     * itself. The three are written after each seating, so holding the live
-     * template above against them says whether the bots in the lobby came
-     * from the lobby that is attached now — which is what tells a scenario
-     * picked on the map already committed, where the seats stand, from one
-     * that arrived with a new map or a new template. The path is empty where
-     * the live map has no file of its own, which is every map that came from
-     * bytes.
+     * ran on a template at all, and the template itself. The two are written
+     * by each seating, so holding the live template above against them says
+     * whether the bots in the lobby came from the lobby that is attached now
+     * — which is what tells a map change or a pick that kept the scenario's
+     * lobby, where the bots stand, from one that brought a new template.
+     * Anything that empties the lobby of its bots without seating it again
+     * clears scenarioLobbySeated, so the next decision seats it afresh.
      *
      * The template is held in full rather than as a digest because the
      * question asked of it is exact: two lobbies that differ by one seat are
      * different lobbies. */
     bool                   scenarioLobbySeated;
-    char                   scenarioLobbySeatedMap[FILENAME_MAX];
     ScnLobbyTemplate       scenarioLobbySeatedTemplate;
     /* What the attached scenario is called, where it came from, and what it
      * says about itself — the lobby's description of it, which the settings

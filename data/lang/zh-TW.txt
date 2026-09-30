@@ -184,11 +184,10 @@ STR_TUTORIAL21=要渡過這條河，您需要建造一艘船。船\n需要五棵
 STR_TUTORIAL22=前方有一個碉堡，還有幾個補給基地\n為您提供彈藥。從補給基地補充砲彈，\n然後攻擊碉堡。\n\n\n它會反擊，但如果您的坦克被擊中，\n您可以輕鬆返回補給基地修復裝甲至滿格。
 STR_TUTORIAL23=憑藉耐心和謹慎，您應該能夠摧毀這個\n碉堡。使用您學到的技能讓任務更容易：\n\n\n躲在森林中使碉堡看不見您，\n採集樹木，建造道路讓坦克移動更快，\n建造建築物作為碉堡砲彈的掩護。
 STR_TUTORIAL24=成功摧毀這個碉堡後，您的最終\n教學挑戰是消滅守衛出口的兩個\n碉堡，建造船隻並逃脫。\n\n\n特別注意您坦克的裝甲等級 —\n如果坦克被摧毀，您將在附近獲得一輛新坦克，\n讓您可以再次嘗試。
-STR_TUTORIAL25=恭喜！您已完成 WinBolo\n教學。\n\n\n\n現在召集一些朋友一起玩，體驗\n與聰明的人類對手對戰的感覺，\n而不是面對靜止不動的目標。\n\n若您日後想重新進行教學，\n可從設定選單中再次啟動。
+STR_TUTORIAL25=恭喜！您已完成 WinBolo\n教學。\n\n\n\n您已經準備好開始遊戲了。加入線上對戰，\n為朋友主持一場遊戲，或與電腦對手練習。\n\n若您日後想重新進行教學，\n可從設定選單中再次啟動。
 STR_TUTORIAL_START01=歡迎來到 WinBolo 教學。這座小島介紹\nWinBolo 的基本原則，並逐一引導您\n了解它們。每個新原則將在\n像這樣的視窗中說明。\n\n閱讀每條訊息後，\n按 {DISMISS} 繼續。
 STR_TUTORIAL_START02=WinBolo 是 Stuart Cheshire 經典 Macintosh 網路遊戲 Bolo 的唯一授權重製版。\n您可以在官方網站找到策略提示和其他資訊：\n\nhttps://www.winbolo.com\n\n歡迎加入我們的 Reddit 和 Discord\n
-STR_TUTORIAL_START03=關於網際網路遊戲的一點說明。\n\n如果您加入線上遊戲時遇到大量網路錯誤，\n請立即離開遊戲，\n以免影響其他玩家的體驗。
-STR_TUTORIAL_START04=您正在控制一輛坦克，目前在\n海上的船隻上。按 {ACCEL} 使坦克（和船隻）\n向前行駛，按 {BRAKE} 減速並停止。\n\n不要像打字一樣輕點按鍵 —\n按住按鍵直到坦克達到您想要的速度\n再放開。現在按 {ACCEL} 讓\n船隻向前駛向陸地。\n（先按 {DISMISS} 關閉視窗）
+STR_TUTORIAL_START04=您正在控制一輛坦克，目前在\n海上的船隻上。按 {ACCEL} 使坦克（和船隻）\n向前行駛，按 {BRAKE} 減速並停止。\n\n按住按鍵直到坦克達到您想要的速度\n再放開。現在按 {ACCEL} 讓\n船隻向前駛向陸地。\n（先按 {DISMISS} 關閉視窗）
 STR_TUTORIAL01_TOUCH=前方有一條通往內陸的短河。\n向前推動搖桿將您的船駛到\n河的盡頭。\n\n到達後，繼續向前推動搖桿。\n坦克將從船上下船，\n船將停泊在河的盡頭。
 STR_TUTORIAL02_TOUCH=您現在在草地上。坦克在草地上\n移動速度相當快。\n\n\n繼續向前推動搖桿前進到森林。
 STR_TUTORIAL03_TOUCH=您現在在森林中。坦克在森林中的移動速度\n比在草地上慢。\n\n\n繼續向前推動搖桿前進到沼澤。
@@ -2702,3 +2701,7 @@ STR_DLGSETTINGS_WORKSHOP_UNUSABLE=無法使用
 
 # The lobby's Workshop chip
 STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=工作坊
+
+# The game finder's scripts
+STR_DLGBROWSER_MODS=模組
+STR_DLGBROWSER_MODS_MORE=+{number} 個模組

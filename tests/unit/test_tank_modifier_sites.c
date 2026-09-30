@@ -489,10 +489,10 @@ int run_tank_mod_pill_leads_half_speed_boat(void) {
 
     classicThreshold = pillsTargetTank(&sim->sim, &sim->sim.mp, &sim->sim.pb,
                                        &sim->sim.bs, px, py, tx, ty,
-                                       (TURNTYPE)0, 8, TRUE, MAP_SPEED_TBOAT);
+                                       (TURNTYPE)0, 8, TRUE, MAP_SPEED_TBOAT, FALSE);
     ownThreshold = pillsTargetTank(&sim->sim, &sim->sim.mp, &sim->sim.pb,
                                    &sim->sim.bs, px, py, tx, ty,
-                                   (TURNTYPE)0, 8, TRUE, 8);
+                                   (TURNTYPE)0, 8, TRUE, 8, FALSE);
 
     /* Both answers are angles. The threshold is now the helper's own
        parameter rather than a constant, which is what lets a half-speed

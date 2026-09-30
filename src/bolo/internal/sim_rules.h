@@ -246,6 +246,10 @@ typedef struct SimRules {
     /* ---- Mac Bolo shell push ---- last, like their rows in SIM_RULE_LIST */
     int32_t tank_slide_mac;          /* whether a shell hit pushes the Mac Bolo way */
     int32_t tank_slide_armour_bonus; /* extra Mac Bolo push at zero armour */
+
+    /* ---- Mac Bolo pill aiming ---- appended to preserve rule indices */
+    int32_t pill_aim_mac;            /* Mac Bolo lead, including pill massage */
+    int32_t tank_collision_mac;      /* Mac sprite boxes and solid-tile nudges */
 } SimRules;
 
 /*********************************************************

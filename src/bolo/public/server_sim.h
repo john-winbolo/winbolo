@@ -549,6 +549,11 @@ bool serverSimCreateBot(ServerSim *sim, BYTE playerNum,
                         BYTE team, const ScnTable *init);
 
 void serverSimRemoveBot(ServerSim *sim, BYTE playerNum);
+/* Every bot out of the roster, seats held for a bot that was never fielded
+ * included, and the scenario's seats with them. The lobby no longer holds
+ * what a template built, so the next scenario decision seats it again even
+ * where it reaches the template already attached. */
+void serverSimRemoveAllBots(ServerSim *sim);
 void serverSimDestroyBots(ServerSim *sim);
 void serverSimSetBotTeams(ServerSim *sim,
                           const BYTE *teamOf, BYTE numPlayers);
@@ -1178,6 +1183,34 @@ bool serverSimIsSeatFielded(const ServerSim *sim, BYTE playerNum);
  *  map, settings and human/bot counts.
  *********************************************************/
 void serverSimRefreshWbnLobbyInfo(ServerSim *sim);
+
+/* This header does not include control_event.h, so it keeps its own copies of
+ * the lobby's figures; server_sim_round.c holds each to the one it names. */
+#define SERVER_SCRIPT_NAME_LEN 64   /* LOBBY_SCENARIO_NAME_LEN */
+#define SERVER_SCRIPT_DESC_LEN 256  /* LOBBY_SCENARIO_DESC_LEN */
+#define SERVER_SCRIPT_MODS_MAX 9    /* LOBBY_SCRIPT_LIST_MAX - 1 */
+typedef struct {
+    bool hasScenario;                          /* a scenario, not a mod, decides the round */
+    char scenarioName[SERVER_SCRIPT_NAME_LEN];
+    char scenarioDescription[SERVER_SCRIPT_DESC_LEN];
+    BYTE scenarioMaxPlayers;                   /* human cap, 0 = none */
+    BYTE modCount;
+    char modNames[SERVER_SCRIPT_MODS_MAX][SERVER_SCRIPT_NAME_LEN];
+} ServerScriptSummary;
+
+/*********************************************************
+ *NAME:          serverSimGetScriptSummary
+ *PURPOSE:
+ *  Fills *out with the scripts the round runs, as a server
+ *  advertises them: the scenario that decides the round (its
+ *  name, description and human cap) when there is one, and
+ *  the names of the mods that run, in the lobby's list
+ *  order. No mods with Mods Enabled off. Names are the
+ *  manifest's, or the file's where the manifest named none,
+ *  cut to 63 bytes on a character boundary. The WinBolo.net
+ *  lobby snapshot and the info-request reply both read it.
+ *********************************************************/
+void serverSimGetScriptSummary(const ServerSim *sim, ServerScriptSummary *out);
 
 /*********************************************************
  *NAME:          serverSimWbnLobbyUpdate
@@ -1835,7 +1868,8 @@ bool serverSimIsScenarioActing(const ServerSim *sim);
  *  lobby holds the teams and bot counts the scenario asks
  *  for.
  *
- *  A map commit reaches this through the map change. A
+ *  A map commit reaches this through the map change, where
+ *  the commit brought a different template. A
  *  process that boots straight onto a scripted map makes no
  *  commit, so it calls this itself — after the bot pool is
  *  up and the server's brain path is set, because a team the

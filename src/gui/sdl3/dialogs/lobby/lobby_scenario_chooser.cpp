@@ -1569,9 +1569,21 @@ void lobbyScenarioDetailsRenderModal(ClientSim *cs, float s) {
 
     {
         ImVec2 vp = ImGui::GetMainViewport()->Size;
-        ImGui::SetNextWindowSize(ImVec2(SDL_min(560.0f, vp.x * 0.85f),
-                                        SDL_min(420.0f, vp.y * 0.85f)),
-                                 ImGuiCond_Appearing);
+        /* Three quarters of the screen each way, so the rules and callback
+           tables have room to show whole instead of scrolling in a small
+           box. Capped at 1200 x 900 at 1x so the lines stay readable on a
+           wide screen, and never less than the old 560 x 420 where the
+           screen has the room. All in the dialog's scale. */
+        float w = SDL_clamp(vp.x * 0.75f, SDL_min(560.0f * s, vp.x * 0.95f),
+                            1200.0f * s);
+        float h = SDL_clamp(vp.y * 0.75f, SDL_min(420.0f * s, vp.y * 0.95f),
+                            900.0f * s);
+        ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Appearing);
+        /* Centred on every opening too. The popup centres itself only the
+           first time, so after a switch from full screen to a window it
+           would reopen where the larger screen had it. */
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
+                                ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         /* No narrower than the rules table needs to show its three number
            columns and their headers whole, where the screen has the room. */
         ImGui::SetNextWindowSizeConstraints(

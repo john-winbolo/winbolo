@@ -102,12 +102,13 @@ int run_sim_rules_codec_roundtrip(void) {
 
     UT_ASSERT_MSG(enc != NULL, "no body encoder registered for CTRL_SIM_RULES");
     UT_ASSERT_MSG(dec != NULL, "no body decoder registered for CTRL_SIM_RULES");
-    UT_ASSERT_MSG(CTRL_SIM_RULES_BODY_LEN == SR_EXPECTED_BODY_LEN,
+    UT_ASSERT_MSG(CTRL_SIM_RULES_BASE_BODY_LEN == SR_EXPECTED_BODY_LEN,
                   "the body is %u bytes, expected %d — a rule has been added "
                   "or its width has changed",
                   (unsigned)CTRL_SIM_RULES_BODY_LEN, SR_EXPECTED_BODY_LEN);
 
     srFillCounted(&in);
+    in.u.simRules.tank_collision_mac = 1;
     UT_ASSERT_MSG(enc(&in, NULL, buf, sizeof(buf), &outLen) == ENCODE_OK,
                   "the encoder refused a table that fits");
     UT_ASSERT_MSG(outLen == CTRL_SIM_RULES_BODY_LEN,
@@ -135,6 +136,7 @@ int run_sim_rules_codec_roundtrip(void) {
     CTRL_SIM_RULES_U16_FIELDS(SR_CHECK_INT)
     CTRL_SIM_RULES_U32_FIELDS(SR_CHECK_INT)
     CTRL_SIM_RULES_F32_FIELDS(SR_CHECK_FLT)
+    CTRL_SIM_RULES_EXT_U8_FIELDS(SR_CHECK_INT)
 
 #undef SR_CHECK_INT
 #undef SR_CHECK_FLT
@@ -146,12 +148,15 @@ int run_sim_rules_codec_roundtrip(void) {
                   "in — the rate is being scaled rather than carried",
                   (double)out.u.simRules.tank_accel_rate);
 
-    /* A body of any other length is refused rather than read short. */
+    /* The original body remains readable, with the new setting off. */
     {
         ControlEvent shortOut;
         memset(&shortOut, 0, sizeof(shortOut));
-        UT_ASSERT_MSG(!dec(buf, CTRL_SIM_RULES_BODY_LEN - 1, &shortOut),
-                      "the decoder accepted a body one byte short");
+        UT_ASSERT(dec(buf, CTRL_SIM_RULES_BASE_BODY_LEN, &shortOut));
+        UT_ASSERT(shortOut.u.simRules.tank_collision_mac == 0);
+        UT_ASSERT_MSG(!dec(buf, CTRL_SIM_RULES_BASE_BODY_LEN - 1, &shortOut),
+                      "the decoder accepted a truncated base body");
+        UT_ASSERT(!dec(buf, CTRL_SIM_RULES_BODY_LEN + 1, &shortOut));
         UT_ASSERT_MSG(!dec(buf, 0, &shortOut),
                       "the decoder accepted an empty body");
     }
@@ -159,7 +164,7 @@ int run_sim_rules_codec_roundtrip(void) {
     /* And a buffer too small to hold the body is refused rather than
        overrun. */
     {
-        uint8_t tiny[SR_EXPECTED_BODY_LEN - 1];
+        uint8_t tiny[SR_EXPECTED_BODY_LEN];
         size_t  tinyLen = 0;
         UT_ASSERT_MSG(enc(&in, NULL, tiny, sizeof(tiny), &tinyLen) ==
                           ENCODE_OVERFLOW,
@@ -349,6 +354,15 @@ int run_sim_rules_codec_golden(void) {
     UT_ASSERT_MSG(out.u.simRules.turn_refuel_base == 2.5f,
                   "the golden body decoded the last rate as %.9g, expected 2.5",
                   (double)out.u.simRules.turn_refuel_base);
+
+    UT_ASSERT(out.u.simRules.tank_collision_mac == 0);
+    in.u.simRules.tank_collision_mac = 1;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &outLen) == ENCODE_OK);
+    UT_ASSERT(outLen == sizeof(kSrGolden) + 1);
+    UT_ASSERT(memcmp(buf, kSrGolden, sizeof(kSrGolden)) == 0);
+    UT_ASSERT(buf[sizeof(kSrGolden)] == 1);
+    UT_ASSERT(dec(buf, outLen, &out));
+    UT_ASSERT(out.u.simRules.tank_collision_mac == 1);
 
     return 0;
 }

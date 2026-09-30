@@ -160,7 +160,7 @@ STR_WBTIMELIMIT_END=Zaman sınırı doldu. Oyun sona erdi.
 STR_WBERR_SAVEMAP=Harita Kaydetme Hatası (Disk dolu mu?)
 
 # Tutorial strings
-STR_TUTORIAL01=Önünüzde kıyıya uzanan kısa bir nehir var. Teknenizi\nnehrin sonuna kadar sürmek için {ACCEL} tuşunu basılı\ntutun.\n\nOraya ulaştığınızda {ACCEL}'ı basmaya devam edin. Tank\ntekneyi terk edecek ve tekne nehrin sonunda\nbağlı kalacak
+STR_TUTORIAL01=Önünüzde kıyıya uzanan kısa bir nehir var. Teknenizi\nnehrin sonuna kadar sürmek için {ACCEL} tuşunu basılı\ntutun.\n\nOraya ulaştığınızda {ACCEL}'ı basmaya devam edin. Tank\ntekneyi terk edecek ve tekne nehrin sonunda\nbağlı kalacak.
 STR_TUTORIAL02=Artık çimendeysiniz. Tank çimende oldukça\nhızlı hareket eder.\n\n\nOrmana doğru ilerlemek için {ACCEL}'a basmaya devam edin.
 STR_TUTORIAL03=Artık ormandayısınız. Tank ormanda çimenden\ndaha yavaş hareket eder.\n\n\nBataklığa doğru ilerlemek için {ACCEL}'a basmaya devam edin.
 STR_TUTORIAL04=Artık bataklıktasınız. Tank bataklıkta çok\nyavaş hareket eder. Neyse ki ileride bir yol var.\n\n\nYola doğru ilerlemek için {ACCEL}'a basmaya devam edin.
@@ -184,12 +184,11 @@ STR_TUTORIAL21=Bu nehri geçmek için tekne yapmanız gerekecek. Tekneler\nbeş 
 STR_TUTORIAL22=İleride bir bunker ve cephane sağlayan ikmal üsleri var.\nİkmal üssünden mermileri toplayın ve bunkera saldırın.\n\n\nBunker ateş edecek, ama tankınız vurulursa ikmal üssüne\nkolayca dönüp zırhınızı tekrar tam kapasiteye\ntamirletebilirsiniz.
 STR_TUTORIAL23=Sabır ve dikkatle bu bunkeri yok edebilirsiniz.\nİşi kolaylaştırmak için öğrendiklerinizi kullanın:\n\n\nBunker sizi göremesin diye ormana saklanın,\nağaç toplayın, tankın daha hızlı hareket etmesi için\nyollar inşa edin ve bunker atışlarına karşı siper\nolması için binalar yapın.
 STR_TUTORIAL24=Bu bunkeri yenmeyi başardıktan sonra eğitimin\nson görevi: çıkışı koruyan iki bunkeri temizlemek,\nbir tekne inşa etmek ve kaçmak.\n\n\nTankınızın zırh seviyesine özellikle dikkat edin;\ntankınız tahrip olursa yakınınıza yeni bir tank\nverilecek ve tekrar deneyebileceksiniz.
-STR_TUTORIAL25=Tebrikler. WinBolo\neğitimini tamamladınız.\n\n\n\nŞimdi birlikte oynayacak arkadaşlar bulun ve\nhareketsiz düşünemeyen hedefler yerine zeki insan\nrakipler karşısında oynamanın nasıl bir şey olduğunu\nkeşfedin.\n\nEğitimi daha sonra tekrar oynamak isterseniz\nAyarlar menüsünden başlatabilirsiniz.
+STR_TUTORIAL25=Tebrikler. WinBolo\neğitimini tamamladınız.\n\n\n\nArtık oynamaya hazırsınız. Çevrimiçi bir oyuna\nkatılın, arkadaşlarınız için bir oyun kurun ya da\nbotlara karşı pratik yapın.\n\nEğitimi daha sonra tekrar oynamak isterseniz\nAyarlar menüsünden başlatabilirsiniz.
 STR_TUTORIAL_START01=WinBolo eğitimine hoş geldiniz. Bu ada WinBolo'nun\ntemel ilkelerini tanıtıyor ve bunları teker teker\nöğretiyor. Her yeni ilke bu pencere gibi\nbir pencerede açıklanacak.\n\nHer mesajı okuduktan sonra\ndevam etmek için {DISMISS}'a basın.
 STR_TUTORIAL_START02=WinBolo, Stuart Cheshire'in klasik Macintosh ağ oyunu Bolo'nun tek yetkili klonudur.\nStrateji ipuçlarını ve diğer bilgileri resmi web sitesinde bulabilirsiniz:\n\nhttps://www.winbolo.com\n\nReddit ve Discord'da bize katılabilirsiniz\n
-STR_TUTORIAL_START03=İnternet oyunu hakkında kısa bir not.\n\nÇevrimiçi bir oyuna katılırsanız ve çok fazla ağ hatası varsa\ndiğer oyuncuların oyununu bozmamak için\nhemen oyundan çıkın.
-STR_TUTORIAL_START04=Şu anda denizde bir tekne üzerinde bulunan bir tankı\nkontrol ediyorsunuz. Tankı (ve tekneyi) ileri götürmek\niçin {ACCEL}'a, yavaşlatmak ve durdurmak için\n{BRAKE}'e basın.\n\nTuşlara harf yazar gibi vurmayın;\ntank istediğiniz hızda olana kadar\nbasılı tutun, sonra bırakın. Tekneyi karaya doğru sürmek\niçin şimdi {ACCEL}'a basın.\n(Pencereyi kapatmak için önce {DISMISS}'a basın)
-STR_TUTORIAL01_TOUCH=Önünüzde kıyıya uzanan kısa bir nehir var. Tekneyi\nnehrin sonuna kadar sürmek için joystick'i ileri itin.\n\nOraya ulaştığınızda joystick'i ileri itmeye\ndevam edin. Tank tekneyi terk edecek ve tekne\nnehrin sonunda bağlı kalacak
+STR_TUTORIAL_START04=Şu anda denizde bir tekne üzerinde bulunan bir tankı\nkontrol ediyorsunuz. Tankı (ve tekneyi) ileri götürmek\niçin {ACCEL}'a, yavaşlatmak ve durdurmak için\n{BRAKE}'e basın.\n\nTuşları tank istediğiniz hıza ulaşana kadar basılı\ntutun, sonra bırakın. Tekneyi karaya doğru sürmek\niçin şimdi {ACCEL}'a basın.\n(Pencereyi kapatmak için önce {DISMISS}'a basın)
+STR_TUTORIAL01_TOUCH=Önünüzde kıyıya uzanan kısa bir nehir var. Tekneyi\nnehrin sonuna kadar sürmek için joystick'i ileri itin.\n\nOraya ulaştığınızda joystick'i ileri itmeye\ndevam edin. Tank tekneyi terk edecek ve tekne\nnehrin sonunda bağlı kalacak.
 STR_TUTORIAL02_TOUCH=Artık çimendeysiniz. Tank çimende oldukça\nhızlı hareket eder.\n\n\nOrmana doğru ilerlemek için joystick'i ileri itmeye devam edin.
 STR_TUTORIAL03_TOUCH=Artık ormandayısınız. Tank ormanda çimenden\ndaha yavaş hareket eder.\n\n\nBataklığa doğru ilerlemek için joystick'i ileri itmeye devam edin.
 STR_TUTORIAL04_TOUCH=Artık bataklıktasınız. Tank bataklıkta çok\nyavaş hareket eder. Neyse ki ileride bir yol var.\n\n\nYola doğru ilerlemek için joystick'i ileri itmeye devam edin.
@@ -203,7 +202,7 @@ STR_TUTORIAL19_TOUCH=Birkaç ağaç topladıktan sonra yol/köprü aracını\n(�
 STR_TUTORIAL21_TOUCH=Bu nehri geçmek için tekne yapmanız gerekecek. Tekneler\nbeş ağaç gerektirir; beş ağaca dokunarak toplayın.\nArdından duvar/tekne aracını (üstten üçüncü düğme)\nseçin ve tekne yapmak için suya dokunun.\n\nKaraya dokunursanız tekne yerine duvar yaparsınız\nve tekne için daha fazla ağaç toplamanız gerekir.\nTekneye binip nehrin karşı tarafına geçin.
 STR_TUTORIAL_START01_TOUCH=WinBolo eğitimine hoş geldiniz. Bu ada WinBolo'nun\ntemel ilkelerini tanıtıyor ve bunları teker teker\nöğretiyor. Her yeni ilke bu pencere gibi\nbir pencerede açıklanacak.\n\nHer mesajı okuduktan sonra "Tamam" düğmesine\ndokunarak devam edebilirsiniz.
 STR_TUTORIAL_START04_TOUCH=Şu anda denizde bir tekne üzerinde bulunan bir tankı\nkontrol ediyorsunuz. Ekranın sol tarafındaki joystick\nile sürün: ileri itmek hızlandırır, geri çekmek\nyavaşlatır ve durdurur.\n\nJoystick'i ne kadar ileri iterseniz tank o kadar hızlanır.\nTekneyi karaya doğru sürmek için şimdi joystick'i\nileri itin.\n(Bu pencereyi kapatmak için önce Tamam'a dokunun)
-STR_TUTORIAL01_CTRL=Önünüzde kıyıya uzanan kısa bir nehir var. Tekneyi\nnehrin sonuna kadar sürmek için sol çubuğu\nileri itin.\n\nOraya ulaştığınızda çubuğu ileri itmeye devam edin.\nTank tekneyi terk edecek ve tekne nehrin\nsonunda bağlı kalacak
+STR_TUTORIAL01_CTRL=Önünüzde kıyıya uzanan kısa bir nehir var. Tekneyi\nnehrin sonuna kadar sürmek için sol çubuğu\nileri itin.\n\nOraya ulaştığınızda çubuğu ileri itmeye devam edin.\nTank tekneyi terk edecek ve tekne nehrin\nsonunda bağlı kalacak.
 STR_TUTORIAL02_CTRL=Artık çimendeysiniz. Tank çimende oldukça\nhızlı hareket eder.\n\n\nOrmana doğru ilerlemek için sol çubuğu ileri itmeye\ndevam edin.
 STR_TUTORIAL03_CTRL=Artık ormandayısınız. Tank ormanda çimenden\ndaha yavaş hareket eder.\n\n\nBataklığa doğru ilerlemek için sol çubuğu ileri itmeye\ndevam edin.
 STR_TUTORIAL04_CTRL=Artık bataklıktasınız. Tank bataklıkta çok\nyavaş hareket eder. Neyse ki ileride bir yol var.\n\n\nYola doğru ilerlemek için sol çubuğu ileri itmeye\ndevam edin.
@@ -2704,3 +2703,7 @@ STR_DLGSETTINGS_WORKSHOP_UNUSABLE=Kullanılamaz
 
 # The lobby's Workshop chip
 STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Atölye
+
+# The game finder's scripts
+STR_DLGBROWSER_MODS=Modlar
+STR_DLGBROWSER_MODS_MORE=+{number} mod
