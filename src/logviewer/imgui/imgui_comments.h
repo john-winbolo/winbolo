@@ -2,7 +2,7 @@
  * imgui_comments.h - ImGui WinBolo.net comments window for Log Viewer
  *
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 #ifndef LV_IMGUI_COMMENTS_H

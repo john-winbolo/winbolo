@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /*
  * About modal: WinBolo version, copyright, web links, and "Third Party
  * Notices" / "Authors" markdown popups.
