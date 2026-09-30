@@ -662,6 +662,26 @@ STR_MAPCHOOSER_NOPREVIEW=Önizleme mevcut değil
 STR_MAPCHOOSER_STATS=Bunkerlar: {number}  Üsler: {number2}  Başlangıçlar: {number3}
 STR_MAPCHOOSER_MAPFILES=Harita Dosyaları
 STR_MAPCHOOSER_ALLFILES=Tüm Dosyalar
+STR_MAPCHOOSER_SCENARIOSONLY=Sadece Senaryolar
+STR_MAPCHOOSER_SCENARIOSONLY_TIP=Yalnızca kendi senaryo betiğine sahip haritaları gösterir.
+STR_MAPCHOOSER_NOSCENARIOMAPS=Burada senaryolu harita yok
+STR_MAPCHOOSER_SCENARIOSONLY_NOSEARCH=Bu filtre sunucu genelinde aramada çalışmaz. Sunucu hangi sonuçların senaryolu olduğunu belirtmez.
+STR_MAPCHOOSER_VIEW_LIST=Liste
+STR_MAPCHOOSER_VIEW_GRID=Izgara
+STR_MAPCHOOSER_VIEW_LIST_TIP=Liste Görünümü
+STR_MAPCHOOSER_VIEW_GRID_TIP=Izgara Görünümü
+STR_MAPCHOOSER_SEARCH_HINT=Ara...
+STR_MAPCHOOSER_SEARCH_CLEAR=Aramayı Temizle
+STR_MAPCHOOSER_SEARCH_SUBFOLDERS=Alt Klasörlerde Ara
+STR_MAPCHOOSER_CREATED_AT=Oluşturulma Tarihi
+STR_MAPCHOOSER_CREATED_AT_TIP=Dosya değiştirilme zamanlarını ikinci bir sütunda gösterir.
+STR_MAPCHOOSER_COL_NAME=Ad
+STR_MAPCHOOSER_COL_CREATED=Oluşturulma
+STR_MAPCHOOSER_UNSTAR_TIP=Yıldızı kaldırmak için tıklayın
+STR_MAPCHOOSER_STAR_TIP=Yıldızlamak için tıklayın — her zaman üstte görünür
+STR_MAPCHOOSER_RESTORE_SIZE_TIP=Varsayılan Boyutu Geri Yükle (Esc)
+STR_MAPCHOOSER_MAXIMIZE_TIP=Büyüt
+STR_MAPCHOOSER_LOADING_PREVIEW=Önizleme yükleniyor...
 
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Durum

@@ -1213,6 +1213,7 @@ static const UnitTestEntry s_tests[] = {
     { "addrparse_port_bounds",                   run_addrparse_port_bounds                   },
     { "addrparse_bad_port",                      run_addrparse_bad_port                      },
     { "addrparse_empty",                         run_addrparse_empty                         },
+    { "mapchooser_scenario_filter",              run_mapchooser_scenario_filter              },
     { "voice_core_roundtrip",                    run_voice_core_roundtrip                    },
     { "voice_device_resolve",                    run_voice_device_resolve                    },
     { "voice_peak",                              run_voice_peak                              },

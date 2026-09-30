@@ -2586,6 +2586,10 @@ int run_addrparse_port_bounds(void);
 int run_addrparse_bad_port(void);
 int run_addrparse_empty(void);
 
+/* The map chooser's "Scenarios only" row test
+ * (test_map_chooser_scenario_filter.c). */
+int run_mapchooser_scenario_filter(void);
+
 /* Voice codec round-trip (test_voice_core.c): a continuous tone encoded and
  * decoded frame by frame stays inside the per-frame byte budget (the
  * constrained-VBR guarantee), decodes a full 20 ms frame every time, keeps

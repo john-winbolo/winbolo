@@ -2199,10 +2199,13 @@ int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
  * Each returned entry's `name` is the path relative to relPath
  * (e.g. "Subdir/Foo.map") and isFolder is always false. relPath
  * "" or NULL = search the whole library. Empty query returns 0
- * (caller wanted enumerate, not search). */
+ * (caller wanted enumerate, not search). wantScripted asks the scenario
+ * library for each hit's `scripted` flag; false leaves it false and
+ * skips the lookup (the network search reply has no byte for it). */
 int serverSimSearchMapDir(ServerSim *sim, const char *relPath,
                            const char *query,
-                           ServerMapEntry *entries, int maxEntries);
+                           ServerMapEntry *entries, int maxEntries,
+                           bool wantScripted);
 
 /* Read the on-disk .map file at data/maps/<relPath> into a heap
  * buffer. Returns true and fills outBytes (malloc'd; caller frees
