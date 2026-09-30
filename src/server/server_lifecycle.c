@@ -854,16 +854,7 @@ void serverInstanceTick(ServerSim *sim) {
      * (deferred from startup so lobby/countdown time is excluded and the
      * timeline anchors at this game's tick 0). Runs before serverSimBotTick so
      * DEBUG_SESSION_DIR is set before any bot thinks / brainRecordTick fires. */
-    /* A session dir the host already named wins, and the block machinery stays
-     * out of its way entirely. winbolods never sets one before this point —
-     * serverLifecycleOpenBraindbgBlock below is the only caller of
-     * brainRecordSetSessionDir it has — so this only holds off for a host that
-     * picked its own dir, such as a test recording one run into a named
-     * session. Naming the dir means owning the blocks and the low-disk stop
-     * as well; without this the first running tick renamed the session out
-     * from under such a host and its dir was left empty. */
-    if (brainRecordIsEnabled() && !s_braindbgSessionOpen &&
-        brainRecordGetSessionDir() == NULL) {
+    if (brainRecordIsEnabled() && !s_braindbgSessionOpen) {
       /* First running tick of this game → open recording block 1, unless the
        * disk is already below the floor. */
       if (serverLifecycleFreeDiskBytes() < BRAINDBG_DISK_FLOOR_BYTES) {
@@ -1213,10 +1204,14 @@ void serverInstanceTick(ServerSim *sim) {
     /* Pick next map from rotation if mapdir is configured. The seats the
      * round fielded go back to the template's own lobby, as they do in
      * serverSimMapRotateRound (see the comment there): the server is empty,
-     * so there is no host edit to keep. */
+     * so there is no host edit to keep. Where no map loads, the lobby is
+     * the one it was and the flag goes back to what it said about it. */
     if (sim->mapDirFiles != NULL) {
+      bool wasSeated = sim->scenarioLobbySeated;
       sim->scenarioLobbySeated = false;
-      serverSimMapDirPickRandom(sim);
+      if (!serverSimMapDirPickRandom(sim)) {
+        sim->scenarioLobbySeated = wasSeated;
+      }
     }
     /* End the WBN session, upload the round's log against the just-
      * quit key, then begin a new session for the next round. Same

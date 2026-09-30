@@ -180,7 +180,6 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
     sim->lastBotLevelKey[0] = '\0';
     memset(sim->lastTeamBotLevelKey, 0, sizeof(sim->lastTeamBotLevelKey));
     sim->botConfigPublishPending = 0;
-    sim->botModeSetByHand        = 0;
 
     /* Unlock the lobby to new players: clear both the host-toggled
      * allow-new-players gate and the transport-level admin lock. */
@@ -886,8 +885,8 @@ void serverSimReturnToLobby(ServerSim *sim) {
     /* Forget the host's manual bot mode/difficulty pick on EVERY return to
      * the lobby, whether or not anyone stayed. The pick belongs to one lobby
      * session — from entering the lobby until the game starts — and a round
-     * ending starts a new one, so the host who set a bot to some other mode
-     * last game does not find the next lobby's Add Bot already in it. The
+     * ending starts a new one, so the host who set a bot to Survival last
+     * game does not find the next lobby's Add Bot already in Survival. The
      * empty-lobby branch below calls serverSimResetLobbyToDefaults, which
      * clears these again; clearing twice costs nothing and keeps the two
      * paths honest on their own.
@@ -1787,9 +1786,16 @@ void serverSimMapRotateRound(ServerSim *sim) {
            it to seat them again. Not serverSimScenarioReconcileLobby: that
            takes every fielded seat of the template off the field, a team
            the template fields from the start included, and in a round that
-           starts straight away nothing puts that team back on. */
+           starts straight away nothing puts that team back on.
+
+           Where no map in the directory loads, the map change never runs
+           and the lobby is the one it was, so the flag goes back to what it
+           said about that lobby. */
+        bool wasSeated = sim->scenarioLobbySeated;
         sim->scenarioLobbySeated = false;
-        serverSimMapDirPickRandom(sim);
+        if (!serverSimMapDirPickRandom(sim)) {
+            sim->scenarioLobbySeated = wasSeated;
+        }
     }
 
     /* Full world reset + tank (re)creation + state -> running. With no

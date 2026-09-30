@@ -11,7 +11,7 @@
  * test is the real one: serverSimReloadMap, the start reconcile, and the
  * scenario decision that follows it.
  *
- *   lobby_map_keeps_bots_plain — no script at all. Three bots with their own
+ *   lobby_map_keeps_bots_plain — no script at all. Six bots with their own
  *       names, teams and difficulties survive a change to a map with fewer
  *       starts than players and a change back, and every seat still holds a
  *       start or none, never one past the map's list.
@@ -171,7 +171,7 @@ static ScenarioHost *mkSlot;
    up. */
 static ServerSim *mkSim(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097,
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN,
                                                "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) return NULL;
@@ -621,7 +621,7 @@ int run_lobby_map_rotate_holds_seats_again(void) {
 
     UT_ASSERT(mkSetUp());
     ut_brain_stub_arm(true);
-    sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                     gameOpen, false, 0, -1);
     UT_ASSERT(sim != NULL);
     serverSimSetLobbyEnabled(sim, false);

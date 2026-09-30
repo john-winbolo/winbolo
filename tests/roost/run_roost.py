@@ -38,6 +38,11 @@ VERDICT_PREFIX = "ROOST VERDICT "
 #   -ai yes    without it the server refuses to seat a brain at all.
 #   -asap      ticks back to back; the simulation is unchanged.
 #   -seed      one seed, so a test that passes passes again.
+# The brain the server runs when no -brain is given (servermain.c looks for
+# this path first), so an .args file that leaves -brain out still gets the
+# chat-on spec below for the brain it will actually run.
+DEFAULT_BRAIN = "brains/GoalHunter_1.7/init.lua"
+
 DEFAULT_ARGS = [
     "-gametype", "tournament",
     "-ai", "yes",
@@ -49,7 +54,7 @@ DEFAULT_ARGS = [
     "-bots", "2",
     "-allybots", "1",
     "-threads", "4",
-    "-brain", "brains/GoalHunter_1.7/init.lua",
+    "-brain", DEFAULT_BRAIN,
     "-seed", "42",
     "-asap",
 ]
@@ -98,47 +103,54 @@ def with_bot_chat_on(args):
 
     A test that names its own -bot-init keeps its specs, and each one gets
     ;cfg=BOT_CHAT_DEFAULT=true added inside its [...] (or a new bracket when
-    it has none).  The brain applies the tokens in order and the last one
-    wins, so chat is on for those bots too.  Ids the test's specs do not name
-    would run the plain -brain, so a 0-15 spec for the -brain goes in front
-    of the test's own specs (a later spec for the same id replaces it).
+    it has none) unless the spec already sets BOT_CHAT_DEFAULT itself: a
+    test that wrote the token chose the value on purpose, so it is kept, the
+    way botInitArgAppendModeTokens keeps an explicit difficulty= token.  The
+    brain applies the tokens in order and the last one wins, so chat is on
+    for the other bots.  Ids the test's specs do not name would run the
+    plain -brain (or the server's default brain when the args have no
+    -brain), so a 0-15 spec for that brain goes in front of the test's own
+    specs (a later spec for the same id replaces it).
     """
-    brain = None
+    brain = DEFAULT_BRAIN
     if "-brain" in args:
         i = args.index("-brain")
         if i + 1 < len(args):
             brain = args[i + 1]
+    chat_on = "0-15=%s[%s]" % (brain, CHAT_ON_TOKEN)
 
     if "-bot-init" not in args:
-        if brain is None:
-            return args
-        return args + ["-bot-init", "0-15=%s[%s]" % (brain, CHAT_ON_TOKEN)]
+        return args + ["-bot-init", chat_on]
 
     out = list(args)
     for i, a in enumerate(out):
         if a == "-bot-init" and i + 1 < len(out):
             specs = [chat_on_spec(s) for s in out[i + 1].split(",") if s.strip()]
-            if brain is not None:
-                specs.insert(0, "0-15=%s[%s]" % (brain, CHAT_ON_TOKEN))
-            out[i + 1] = ",".join(specs)
+            out[i + 1] = ",".join([chat_on] + specs)
     return out
 
 
 CHAT_ON_TOKEN = "cfg=BOT_CHAT_DEFAULT=true"
+CHAT_KEY = "cfg=BOT_CHAT_DEFAULT="
 
 
 def chat_on_spec(spec):
-    """Add the chat-on token to one 'range=path[arg]' spec, as its last token."""
+    """Add the chat-on token to one 'range=path[arg]' spec, as its last token.
+
+    A spec that already carries a cfg=BOT_CHAT_DEFAULT= token is returned as
+    it is.  The match is case-sensitive because the brain's cfg=NAME=VALUE
+    parser matches NAME case-sensitively.
+    """
     lb = spec.find("[")
     if lb < 0:
         return "%s[%s]" % (spec, CHAT_ON_TOKEN)
     rb = spec.find("]", lb + 1)
     inner = spec[lb + 1:rb] if rb >= 0 else spec[lb + 1:]
-    if inner.strip():
-        inner = inner + ";" + CHAT_ON_TOKEN
-    else:
-        inner = CHAT_ON_TOKEN
-    return "%s[%s]" % (spec[:lb], inner)
+    tokens = [t.strip() for t in inner.split(";") if t.strip()]
+    if any(t.startswith(CHAT_KEY) for t in tokens):
+        return spec
+    tokens.append(CHAT_ON_TOKEN)
+    return "%s[%s]" % (spec[:lb], ";".join(tokens))
 
 
 def run_one(name, exe, port, ticks, timeout, keep_output):

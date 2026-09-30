@@ -14,7 +14,7 @@ const TutorialStep tutorialSteps[] = {
     /* Intro: fires once at game start regardless of tank position. */
     { TUTORIAL_POS_ANY,
         { STR_TUTORIAL_START01, STR_TUTORIAL_START02,
-          STR_TUTORIAL_START03, STR_TUTORIAL_START04 } },
+          STR_TUTORIAL_START04, 0 } },
     /* Positional steps. */
     { 210, { STR_TUTORIAL01, 0,              0,              0 } },
     { 199, { STR_TUTORIAL02, 0,              0,              0 } },
