@@ -72,11 +72,10 @@
  * read holds a block to. The block travels in pieces as part of the details
  * blob, so no datagram binds it; the cap keeps a directory entry, which
  * carries the blob inline, and the lobby's per-row copy of it small. A row
- * costs its type and two length bytes plus its name and text, so 896 is about
- * nine
- * callbacks at a line of eighty letters each, which is more than any script
- * shipped with the game describes. */
-#define SCN_CALLBACKS_BLOB_MAX 896
+ * costs its type and two length bytes plus its name and text, so 2048 is
+ * about twenty callbacks at a line of eighty letters each. The details reply
+ * gives the whole details blob a two-byte length, which is far above this. */
+#define SCN_CALLBACKS_BLOB_MAX 2048
 
 /* What one row adds to a blob. The count byte is paid once, by the first. */
 static inline size_t scnCallbacksRowCost(size_t nameLen, size_t textLen) {

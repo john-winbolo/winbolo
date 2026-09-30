@@ -4558,6 +4558,24 @@ M.ORDER_CLAIM_TIEBREAK = true  -- keel false
 -- holder, but no bot re-bids the order and nobody else is sent.  Group
 -- partners keep their share.  false = the next cheapest bot takes it over.
 M.ORDER_NO_HAND_BACK = true    -- keel false
+-- 2026-09-28: A PERSON'S ATTACK ORDER DOES NOT WAIT LONG FOR A BLITZ (Andrew:
+-- "when a human gives that command it's important that they actually follow
+-- it in a timely manner").  Seconds, counted from the first tick the bot runs
+-- the attack_pill goal for a held order on that pill.  Once they are up,
+-- every wait for blitz partners on that take ends and the bot goes in: the
+-- commander's blitz_wait GO (no READY_TIMEOUT wait, no blitz-only extension,
+-- no short-handed abandon), the soldier's wait for the commander's GO, the
+-- plan_position hold for a blitz accept, and the plan_position hold for the
+-- man to get back in.  An attack the bot picked for itself is not touched.
+-- 0 = no cap (the old waits).
+M.HUMAN_ATTACK_BLITZ_WAIT_MAX_S = 5   -- keel 0
+-- 2026-09-29: A PERSON'S ATTACK ORDER DOES NOT GATHER TREES LONG either.
+-- Seconds, counted from the first tick the bot gathers trees (the protected
+-- take's gather_trees pre-flight) for a held order on that pill.  Once they
+-- are up, gathering ends the way PPT_GATHER_TIMEOUT ends it: the take drops
+-- the walls and goes in unshielded.  An attack the bot picked for itself
+-- keeps the full PPT_GATHER_TIMEOUT.  0 = no cap (the old wait).
+M.HUMAN_ATTACK_GATHER_MAX_S = 5   -- keel 0
 -- 2026-09-24: a bot whose man is out of the tank is NOT busy for an order
 -- (Andrew: "the man is out of the tank should not stop the interrupt").
 -- It takes the order and drives off; the builder walks back to the tank.
@@ -4775,22 +4793,24 @@ M.ORDER_LATCH_REBROADCAST_TICKS = 1500   -- keel 1500 (moot; master off) 30 s
 
 -- BOT PINGS.  When a team turns this on, a bot puts an ATTACK marker on the
 -- map every time it takes an attack_pill or attack_tank goal, so the team can
--- see what the bots are going for without reading chat.  OFF by default: it
--- is map clutter until somebody asks for it.  The team setting is
+-- see what the bots are going for without reading chat.  ON by default
+-- (2026-09-29): the markers show the team what the bots do while the bots
+-- stay quiet in chat (BOT_CHAT_DEFAULT below).  The team setting is
 -- "bot pings on" / "bot pings off"; this is the value a game starts at.
 --
 -- The ON_MY_WAY marker a bot places when it takes an ORDER is NOT covered by
 -- this switch.  That one answers a person who just gave the order, so it is
 -- always sent.
-M.BOT_PINGS_DEFAULT      = false  -- keel false
+M.BOT_PINGS_DEFAULT      = true   -- keel false (2026-09-29: pings on by default)
 -- DO THE BOTS SPEAK THEIR GOAL CONFIRMATIONS?  The team setting is "bot chat
--- on" / "bot chat off"; this is the value a game starts at, and it is TRUE
--- because speaking is what the bots have always done.  Off silences the goal
+-- on" / "bot chat off"; this is the value a game starts at, and it is FALSE
+-- (2026-09-29): the bots are quiet until a team says "bot chat on", and
+-- "bot pings" (ON by default) shows their goals on the map.  Off silences the goal
 -- lines only -- the ack, the group ack, "Still on it.", "holding 10s",
 -- "Released", "Refuelling, coming back".  An answer a person is owed for a
 -- line they just typed (help, "didn't understand", "Busy", the setting
 -- confirmations) is never silenced: see sayg in orders.lua.
-M.BOT_CHAT_DEFAULT       = true   -- keel true (moot; master off)
+M.BOT_CHAT_DEFAULT       = false  -- keel true (moot; master off)
 -- Shortest gap between two ATTACK markers from the SAME bot about the SAME
 -- target.  A bot re-plans the same goal often, and without this every replan
 -- would put another marker on the same pill.  1500 ticks is 30 s.
@@ -5207,6 +5227,12 @@ M.PRESETS = {
     ORDER_NEW_CLEARS_ALL         = false,
     ORDER_CLAIM_TIEBREAK          = false,
     ORDER_NO_HAND_BACK            = false,
+    --   2026-09-28: an attacking bot on a person's order waits at most
+    --   HUMAN_ATTACK_BLITZ_WAIT_MAX_S for blitz partners.  KEEL: no cap.
+    HUMAN_ATTACK_BLITZ_WAIT_MAX_S = 0,
+    --   2026-09-29: an attacking bot on a person's order gathers trees for
+    --   at most HUMAN_ATTACK_GATHER_MAX_S.  KEEL: no cap.
+    HUMAN_ATTACK_GATHER_MAX_S     = 0,
     ORDER_MAN_OUT_TAKES           = false,
     --   2026-09-25: a bot holding a person's order keeps it against a new
     --   ping, and a repeat ping on plain ground adds no bot.  KEEL: the

@@ -131,6 +131,54 @@ local function rebuild_index(world)
   world.base_at = base_at
 end
 
+-- REMOVED ITEMS.  A scenario can take a pill or a base off the map for good
+-- (game.remove_pill / game.remove_base).  The slot stays, so the ids above it
+-- do not move, but the item never shows in the object scan again -- and from
+-- the object scan alone that looks exactly like an item that went out of
+-- sight.  The engine says which ids are still on the map in
+-- info.pills_on_map / info.bases_on_map (bit n = id n).  Both are nil from an
+-- engine that predates them, and then every id counts as on the map.
+local function id_on_map(mask, id)
+  if mask == nil or type(id) ~= "number" or id < 0 or id > 31 then return true end
+  return bit.band(mask, bit.lshift(1, id)) ~= 0
+end
+
+-- Take the masks from this think's info.  Called by both per-tick entry
+-- points (process_events runs first) so every path below reads the same
+-- masks.
+local function note_on_map(world, info)
+  world._pills_on_map = info.pills_on_map
+  world._bases_on_map = info.bases_on_map
+end
+
+-- Drop every record of a pill or base that is no longer on the map, with its
+-- tile index entry.  Every goal and order that names the id then finds no
+-- record and lets go, the way it does for any target that is gone.
+local function purge_removed(world)
+  local pm, bm = world._pills_on_map, world._bases_on_map
+  if pm ~= nil then
+    for id in pairs(world.pills) do
+      if not id_on_map(pm, id) then
+        pill_unindex(world, id)
+        world.pills[id] = nil
+        if world._ally_carry_ids then world._ally_carry_ids[id] = nil end
+        print2(string.format("WORLD_REMOVED t=%d pill#%d is off the map", world.tick or 0, id))
+      end
+    end
+  end
+  if bm ~= nil then
+    for id, b in pairs(world.bases) do
+      if not id_on_map(bm, id) then
+        local k = mkey(b.mx, b.my)
+        local e = world.base_at[k]
+        if e and e.id == id then world.base_at[k] = nil end
+        world.bases[id] = nil
+        print2(string.format("WORLD_REMOVED t=%d base#%d is off the map", world.tick or 0, id))
+      end
+    end
+  end
+end
+
 -- Fold allies' advertised carried-pill ids (comms `carry=` field) into the
 -- pill table as allied/in-tank entries. In-tank pills are dropped by the C
 -- per-tick pill scan (pillsGetBrainPillsInRect requires inTank==FALSE) and the
@@ -145,6 +193,9 @@ function M.sync_ally_carried(world, ally_carry, now)
   local cur = nil
   for id, pn in pairs(ally_carry) do
     local p = world.pills[id]
+    -- An ally's advert can name a pill that has since been removed from the
+    -- map; never bring its record back.
+    if not id_on_map(world._pills_on_map, id) then goto continue_carry end
     -- Never clobber first-hand knowledge refreshed THIS tick by a real event
     -- (last_seen == now) — the in-view truth always wins over the advert.
     if not (p and (p.last_seen or 0) >= now) then
@@ -163,6 +214,7 @@ function M.sync_ally_carried(world, ally_carry, now)
       pill_reindex(world, id, p)   -- now carried → pull it off the tile index
     end
     cur = cur or {}; cur[id] = true
+    ::continue_carry::
   end
   -- Evict phantom carries no longer advertised (carrier deployed / left view /
   -- died): a purely-synthesized in-tank ghost would otherwise linger forever.
@@ -185,6 +237,7 @@ end
 
 function M.update(world, info, tick)
   world.tick = tick  -- store for staleness reporting
+  note_on_map(world, info)
 
   local obj_count = 0
   local t0 = clock_us()
@@ -409,6 +462,8 @@ function M.update(world, info, tick)
       b._kw_ally   = nil
     end
   end
+  -- Last, so nothing above can bring a removed item's record back.
+  purge_removed(world)
   local t1 = clock_us()
 
   metrics.set("us_world_update_objects", t1 - t0)
@@ -423,6 +478,7 @@ end
 -- Events provide instant updates before the normal object-scan in M.update().
 -- ---------------------------------------------------------------------------
 function M.process_events(world, info, state)
+  note_on_map(world, info)
   local events = info.events
   if not events or #events == 0 then return end
   local tick = state.tick
@@ -444,6 +500,9 @@ function M.process_events(world, info, state)
       -- now rather than the last one we were given. d[6] is the armour, in a
       -- byte of its own.
       local idx = d[1]
+      -- A pill that is off the map gets no record here; M.update drops any
+      -- record it still has.
+      if idx and not id_on_map(world._pills_on_map, idx) then idx = nil end
       if idx then
         local flags      = d[5] or 0
         local new_health = d[6] or 0
@@ -556,6 +615,7 @@ function M.process_events(world, info, state)
     elseif ev.type == EVENT_BASE_UPDATE and d then
       -- data: [baseIndex, owner, armour, shells, mines]
       local idx = d[1]
+      if idx and not id_on_map(world._bases_on_map, idx) then idx = nil end
       if idx then
         local owner_val = d[2] or 0xFF
         local new_health = d[3] or 0
@@ -878,6 +938,13 @@ function M.sync_ally_world(world, recs, now, my_pn)
   for _, r in ipairs(recs) do
     local owner = r.cls and KW_CHAR_OWNER[r.cls]
     local from  = r.from or "?"
+    -- An ally's record can name an item that has since been removed from
+    -- the map; never bring its record back.
+    if owner and r.id and r.kind == "b" and not id_on_map(world._bases_on_map, r.id) then
+      owner = nil
+    elseif owner and r.id and r.kind == "p" and not id_on_map(world._pills_on_map, r.id) then
+      owner = nil
+    end
     if owner and r.id and r.tick and r.mx and r.my then
       if r.kind == "b" then
         local b = world.bases[r.id]

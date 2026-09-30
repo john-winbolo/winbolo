@@ -94,6 +94,15 @@ void spritePositionTankLabel(float baseX, float baseY, float scale,
                              int mx, int my, int px, int py, float clipLeft,
                              float *outX, float *outY);
 
+/* The tank name as the overlay draws it in animation mode `mode`. In Smooth
+   the name is placed from the same world position the tank sprite is drawn
+   at (square, world offset wx/wy), so the two move together; every other
+   mode is spritePositionTankLabel, from the square and game pixel. */
+void spritePositionTankLabelAt(float baseX, float baseY, int mode, float scale,
+                               int sheetScale, int mx, int my, int px, int py,
+                               int wx, int wy, float clipLeft,
+                               float *outX, float *outY);
+
 /* Whether the pill and base numbers are drawn at this scale. */
 bool spritePositionItemLabelShown(float scale, float minScale);
 

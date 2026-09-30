@@ -275,6 +275,8 @@ typedef struct {
 #define TANK_MIN_MOVE_SPEED       6      /* Minimum residual speed before movement occurs */
 #define TANK_MAX_NUDGE_ITERATIONS 5      /* Max building nudge correction passes per tick */
 #define TANK_BUMP_DECAY_SHIFT     2      /* Bump decay rate: >>2 = 25% reduction per tick */
+#define TANK_SLIDE_MAC            0      /* 0 the WinBolo shell push, 1 the Mac Bolo one */
+#define TANK_SLIDE_ARMOUR_BONUS   32     /* Extra Mac Bolo push step at zero armour */
 #define TANK_PILL_PICKUP_INSET    16     /* Pill-pickup reach from tank centre in WORLD units (16 = 1 pixel tolerance past the centre tile) */
 
 typedef enum {
@@ -737,8 +739,10 @@ void tankSetWorld(struct GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE a
 *  y      - Y co-ord of shell
 *  angle  - The direction the shell came from
 *  owner  - Shells owner
+*  pill   - The pill index of the pillbox that fired it,
+*           DMG_NO_PILL for a tank's shell
 *********************************************************/
-tankHit tankIsTankHit(struct GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angle, BYTE owner);
+tankHit tankIsTankHit(struct GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angle, BYTE owner, BYTE pill);
 
 /*********************************************************
 *NAME:          tankIsTankHitAtPosition
@@ -756,11 +760,31 @@ tankHit tankIsTankHit(struct GameSim *sim, tank *value, WORLD x, WORLD y, TURNTY
 *  shellY - Y co-ord of shell
 *  angle  - The direction the shell came from
 *  owner  - Shells owner
+*  pill   - The pill index of the pillbox that fired it,
+*           DMG_NO_PILL for a tank's shell
 *********************************************************/
 tankHit tankIsTankHitAtPosition(struct GameSim *sim, tank *value,
                                  WORLD tankX, WORLD tankY,
                                  WORLD shellX, WORLD shellY,
-                                 TURNTYPE angle, BYTE owner);
+                                 TURNTYPE angle, BYTE owner, BYTE pill);
+
+/*********************************************************
+*NAME:          tankShellInHitZone
+*PURPOSE:
+*  Whether a shell at shellX, shellY lands on this tank if
+*  the tank stood at tankX, tankY: inside the hit zone and
+*  the tank alive. The test the two above make before they
+*  deal any damage, asked on its own.
+*
+*ARGUMENTS:
+*  value  - Pointer to the tank structure
+*  tankX  - Tank X position to check against
+*  tankY  - Tank Y position to check against
+*  shellX - X co-ord of shell
+*  shellY - Y co-ord of shell
+*********************************************************/
+bool tankShellInHitZone(struct GameSim *sim, tank *value, WORLD tankX,
+                        WORLD tankY, WORLD shellX, WORLD shellY);
 
 /*********************************************************
 *NAME:          tankNetTankHit
@@ -1580,9 +1604,11 @@ BYTE tankReloadTicks(struct GameSim *sim, tank value);
 *  owner  - Slot that dealt it, or NEUTRAL
 *  victim - Slot taking it
 *  cause  - A LAST_DEATH_BY_* value naming the blow
+*  pill   - The pill index whose shell it was, or
+*           DMG_NO_PILL
 *********************************************************/
 BYTE tankDamageAmount(struct GameSim *sim, BYTE base, BYTE owner, BYTE victim,
-                      BYTE cause);
+                      BYTE cause, BYTE pill);
 
 /*********************************************************
 *NAME:          tankBoatExitSpeed

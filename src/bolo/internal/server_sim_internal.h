@@ -719,6 +719,15 @@ struct ServerSim {
      * so ammo appears on arrival instead of waiting for the next full-sync. */
     uint8_t      lastClosestBase[MAX_TANKS];
 
+    /* Alliance requests not yet accepted. Bit N of entry A means seat N has
+     * asked seat A. CMD_ALLIANCE_REQUEST sets it, and CMD_ALLIANCE_ACCEPT
+     * goes ahead only if it is set and clears it, so a client cannot ally
+     * itself with a seat that never asked. A seat leaving clears its entry
+     * and its bit in every other entry; serverSimResetGameWorld clears all
+     * of it. A declined request is not reported to the server and stays
+     * here until one of those happens. */
+    uint16_t     allianceAskedBy[MAX_TANKS];
+
     /* Full state sync tracking, per recipient. Each client's own per-client
      * snapshot build manages its own full-sync cadence; a scalar here let the
      * first client built each interval consume it and starve the rest. */
@@ -1126,20 +1135,18 @@ struct ServerSim {
     ScnLobbyTemplate       scenarioLobby;
     bool                   scenarioLobbyValid;
     /* What the seats now in the lobby were built from: whether the seating
-     * ran on a template at all, the map file it ran for, and the template
-     * itself. The three are written after each seating, so holding the live
-     * template above against them says whether the bots in the lobby came
-     * from the lobby that is attached now — which is what tells a scenario
-     * picked on the map already committed, where the seats stand, from one
-     * that arrived with a new map or a new template. The path is empty where
-     * the live map has no file of its own, which is every map that came from
-     * bytes.
+     * ran on a template at all, and the template itself. The two are written
+     * by each seating, so holding the live template above against them says
+     * whether the bots in the lobby came from the lobby that is attached now
+     * — which is what tells a map change or a pick that kept the scenario's
+     * lobby, where the bots stand, from one that brought a new template.
+     * Anything that empties the lobby of its bots without seating it again
+     * clears scenarioLobbySeated, so the next decision seats it afresh.
      *
      * The template is held in full rather than as a digest because the
      * question asked of it is exact: two lobbies that differ by one seat are
      * different lobbies. */
     bool                   scenarioLobbySeated;
-    char                   scenarioLobbySeatedMap[FILENAME_MAX];
     ScnLobbyTemplate       scenarioLobbySeatedTemplate;
     /* What the attached scenario is called, where it came from, and what it
      * says about itself — the lobby's description of it, which the settings

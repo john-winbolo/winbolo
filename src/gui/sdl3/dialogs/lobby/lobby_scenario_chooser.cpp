@@ -1378,9 +1378,38 @@ static void lobbyScenarioDetailsCallbacks(ClientSim *cs) {
     ImGui::EndTable();
 }
 
+/* How one value of setting st reads, into out: the number, or On or Off for
+ * a bool setting, marked as the default when it is st's default. */
+static void lobbyScenarioSettingText(const ScnSetting *st, int32_t v,
+                                     char *out, size_t outLen) {
+    MessageArgs args = {};
+
+    if (st->type == SCN_SETTING_TYPE_BOOL) {
+        langid id;
+
+        if (v == st->def) {
+            id = v != 0 ? STR_DLGLOBBY_DETAILS_SETTING_ON_DEFAULT
+                        : STR_DLGLOBBY_DETAILS_SETTING_OFF_DEFAULT;
+        } else {
+            id = v != 0 ? STR_DLGLOBBY_DETAILS_SETTING_ON
+                        : STR_DLGLOBBY_DETAILS_SETTING_OFF;
+        }
+        SDL_snprintf(out, outLen, "%s", langGetText(id));
+        return;
+    }
+    if (v == st->def) {
+        args.number = v;
+        SDL_snprintf(out, outLen, "%s",
+                     langGetTextFmt(STR_DLGLOBBY_DETAILS_SETTING_DEFAULT,
+                                    &args));
+    } else {
+        SDL_snprintf(out, outLen, "%ld", (long)v);
+    }
+}
+
 /* The script's own settings (scenario_settings.h): one row per setting the
  * file declares, its label and its value. The host gets a dropdown of every
- * value the declaration allows, and a pick is sent to the server at once;
+ * value the declaration allows, On and Off for a bool setting, and a pick is sent to the server at once;
  * the value shown is always the one the server last reported, so a pick the
  * server corrected shows as corrected. Everyone else sees the values as
  * text. A value the server has not reported is the declared default.
@@ -1441,18 +1470,7 @@ static void lobbyScenarioDetailsSettings(ClientSim *cs) {
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted(st->label[0] != '\0' ? st->label : st->id);
         ImGui::TableSetColumnIndex(1);
-        {
-            MessageArgs args = {};
-
-            args.number = value;
-            if (value == st->def) {
-                SDL_snprintf(shown, sizeof(shown), "%s",
-                             langGetTextFmt(
-                                 STR_DLGLOBBY_DETAILS_SETTING_DEFAULT, &args));
-            } else {
-                SDL_snprintf(shown, sizeof(shown), "%ld", (long)value);
-            }
-        }
+        lobbyScenarioSettingText(st, value, shown, sizeof(shown));
         if (!(host && live)) {
             ImGui::TextUnformatted(shown);
             continue;
@@ -1464,20 +1482,11 @@ static void lobbyScenarioDetailsSettings(ClientSim *cs) {
             int     c;
 
             for (c = 0; c < choices; c++) {
-                int32_t     v = (int32_t)((int64_t)st->min +
-                                          (int64_t)c * st->step);
-                char        item[64];
-                MessageArgs args = {};
+                int32_t v = (int32_t)((int64_t)st->min +
+                                      (int64_t)c * st->step);
+                char    item[64];
 
-                args.number = v;
-                if (v == st->def) {
-                    SDL_snprintf(item, sizeof(item), "%s",
-                                 langGetTextFmt(
-                                     STR_DLGLOBBY_DETAILS_SETTING_DEFAULT,
-                                     &args));
-                } else {
-                    SDL_snprintf(item, sizeof(item), "%ld", (long)v);
-                }
+                lobbyScenarioSettingText(st, v, item, sizeof(item));
                 if (ImGui::Selectable(item, v == value) && v != value) {
                     clientSimNetSendSetScriptSetting(cs, s_detailsFile,
                                                      st->id, v);
@@ -1542,9 +1551,21 @@ void lobbyScenarioDetailsRenderModal(ClientSim *cs, float s) {
 
     {
         ImVec2 vp = ImGui::GetMainViewport()->Size;
-        ImGui::SetNextWindowSize(ImVec2(SDL_min(560.0f, vp.x * 0.85f),
-                                        SDL_min(420.0f, vp.y * 0.85f)),
-                                 ImGuiCond_Appearing);
+        /* Three quarters of the screen each way, so the rules and callback
+           tables have room to show whole instead of scrolling in a small
+           box. Capped at 1200 x 900 at 1x so the lines stay readable on a
+           wide screen, and never less than the old 560 x 420 where the
+           screen has the room. All in the dialog's scale. */
+        float w = SDL_clamp(vp.x * 0.75f, SDL_min(560.0f * s, vp.x * 0.95f),
+                            1200.0f * s);
+        float h = SDL_clamp(vp.y * 0.75f, SDL_min(420.0f * s, vp.y * 0.95f),
+                            900.0f * s);
+        ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Appearing);
+        /* Centred on every opening too. The popup centres itself only the
+           first time, so after a switch from full screen to a window it
+           would reopen where the larger screen had it. */
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
+                                ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         /* No narrower than the rules table needs to show its three number
            columns and their headers whole, where the screen has the room. */
         ImGui::SetNextWindowSizeConstraints(
@@ -1778,6 +1799,7 @@ static const char *lobbyScenarioSendRefusal(void) {
         case 6: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_FULL);
         case 7: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN);
         case 8: return langGetText(STR_DLGLOBBY_SCRIPT_ERR_NAME_TAKEN);
+        case 9: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_TIMEOUT);
         default: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_REJECTED);
     }
 }

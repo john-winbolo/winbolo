@@ -3,9 +3,8 @@
  * mapLoadCompressedMap is the parser for every map that arrives over the
  * network: the bulk transfer reassembles the download and installCompressedMap
  * hands it straight here, so every byte is chosen by whatever server the
- * player joined. It is also hand-written throughout — three fixed-size struct
- * memcpys for the bases, pillboxes and starts, then an LZW decode of the
- * terrain into a 256x256 array.
+ * player joined. One zlib stream inflates into the bases, pillboxes and
+ * starts structs and then the 256x256 terrain array.
  *
  * The reason it earns a target: the struct region is copied wholesale, so the
  * per-field clamps the file-load setters apply never run on this route. The

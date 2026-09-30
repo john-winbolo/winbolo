@@ -1267,6 +1267,11 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * returned already. */
         BYTE pNum = evt->u.playerLeave.playerNum;
         char nameBuf[PACKET_MAX_PLAYER_NAME];
+        /* A request from the player who left cannot be accepted any more,
+           and an accept would go to whoever takes the seat next. */
+        if (cs->pendingAllianceRequestFrom == pNum) {
+            cs->pendingAllianceRequestFrom = 0xFF;
+        }
         memcpy(nameBuf, evt->u.playerLeave.name, sizeof(nameBuf));
         nameBuf[sizeof(nameBuf) - 1] = '\0';
         /* announce=false in the lobby: the in-game newswire is wrong there

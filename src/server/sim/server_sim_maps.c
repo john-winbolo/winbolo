@@ -675,8 +675,10 @@ static bool serverSimApplyRandomMapConfig(ServerSim *sim,
  *
  * Everything a Cancel needs goes in together: the bytes, the display name,
  * the file the map was read from so a script can be found beside it again,
- * and the template seats each team holds, because the cancel re-seats the
- * template from scratch and the host's trim would otherwise go with it.
+ * and the template seats each team holds, because where the previewed map
+ * brought a different template the cancel re-seats this one from scratch,
+ * and the host's trim would otherwise go with it. Where the template never
+ * changed nothing is re-seated and the counts put back are the ones there.
  * previousSeatsValid comes from serverSimScenarioSeatCounts, which answers
  * false when no template is attached — that is what keeps "no template" apart
  * from a team the host emptied on purpose.
@@ -848,10 +850,10 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
     stashCommittedMap(sim);
 
     /* Wipe the existing map/pill/base/start contents before the
-     * decoder touches them. mapLoadCompressedMap's RLE-decoder only
-     * writes cells encoded in the new blob — any tile NOT included
-     * in the new map's runs would otherwise keep the previous map's
-     * value. */
+     * decoder touches them. mapRead's run decoder, which the .map
+     * branch below reaches, only writes cells encoded in the new
+     * file — any tile NOT included in the new map's runs would
+     * otherwise keep the previous map's value. */
     {
         int x, y;
         memset((*sim->sim.mp).mapItem, DEEP_SEA,
@@ -872,7 +874,7 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
     /* The wire / upload / WBN paths all hand us a full .map file
      * (starting with the BMAPBOLO magic + version + counts header).
      * mapLoadCompressedMap expects a different on-the-wire layout
-     * (raw bases/pills/starts struct dump + LZW map), so feeding it
+     * (zlib over a bases/pills/starts struct dump + the map), so feeding it
      * the .map file bytes misaligns every field. Detect the magic
      * and route through mapRead via a temp file when it matches.
      * Fall back to the legacy mapLoadCompressedMap path for any
@@ -1088,10 +1090,12 @@ bool serverSimRevertPreview(ServerSim *sim) {
         "serverSimRevertPreview: rolled back to '%s'", sim->mapName);
     serverSimApplyMapChange(sim);
 
-    /* The map change above seated the template from scratch, which is what a
-       map the host commits wants and not what one they backed out of wants:
-       the seats are back at the template's counts and the host's trim is
-       gone. Put their counts back. */
+    /* Where the previewed map brought a different template, the map change
+       above seated this one from scratch, which is what a map the host
+       commits wants and not what one they backed out of wants: the seats are
+       back at the template's counts and the host's trim is gone. Put their
+       counts back. Where the template never changed nothing was re-seated,
+       and the trim finds every team at or under its count already. */
     if (sim->previousSeatsValid) {
         serverSimScenarioTrimSeatsTo(sim, sim->previousSeats);
     }
@@ -1441,6 +1445,11 @@ bool serverSimSetScriptSetting(ServerSim *sim, const char *file,
     if (n <= 0) return false;
     decl = scnSettingFind(rows, n, id);
     if (decl == NULL) return false;
+    /* On or off has no nearest entry to clamp to: anything else is not a
+       value the host's dropdown sends. */
+    if (decl->type == SCN_SETTING_TYPE_BOOL && value != 0 && value != 1) {
+        return false;
+    }
 
     v  = scnSettingClamp(decl, value);
     at = scriptSettingAt(sim, file, id);

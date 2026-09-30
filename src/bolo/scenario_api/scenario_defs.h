@@ -801,14 +801,30 @@ typedef struct {
 #define CAPTURE_KIND_PILL 0
 #define CAPTURE_KIND_BASE 1
 
+/* canHit kind — what a shell has reached. index is the tank slot for a tank
+ * and the pill index for a pill. */
+#define HIT_KIND_TANK 0
+#define HIT_KIND_PILL 1
+
 /* What inflicted a hit. Mirrors ATTR_SRC_* on-disk. The stats funnel records
  * one of these with every blow, and canDie is handed one as the cause of a
  * builder's or a pill's death — a tank's cause is a LAST_DEATH_BY_* instead.
  * Here rather than beside DMG_TARGET_* in game_sim.h because the policy
- * surface hands them out and the host cannot see internal/. */
-#define DMG_SRC_UNKNOWN 0
-#define DMG_SRC_SHELL   1
-#define DMG_SRC_MINE    2
+ * surface hands them out and the host cannot see internal/.
+ *
+ * DMG_SRC_EXPLOSION is a dying tank's blast. It is only ever put to the
+ * policy questions and is never recorded: the blast's damage to a pill has
+ * never been a stats record, so there is no ATTR_SRC_* beside it. */
+#define DMG_SRC_UNKNOWN   0
+#define DMG_SRC_SHELL     1
+#define DMG_SRC_MINE      2
+#define DMG_SRC_EXPLOSION 3
+
+/* The pill argument every combat question carries: the pill index of the
+ * pillbox whose shell dealt the blow, or this for a blow no pillbox's shell
+ * dealt. The attacker beside it is NEUTRAL for a pillbox's shell either way,
+ * so this is what says which pillbox it was. */
+#define DMG_NO_PILL 0xFF
 
 /* announce kind — which newswire-worthy fact is being put to the policy.
  * The values are the policy's own vocabulary and never reach the wire; what
@@ -840,9 +856,23 @@ typedef struct ScenarioPolicy {
                         * answer "open" or {shells, mines, armour,
                         * trees} */
     bool (*canRespawn)(void *ctx, BYTE player);    /* tickets, elimination */
-    int  (*damageScale)(void *ctx, BYTE attacker, BYTE victim, BYTE cause);
+    int  (*damageScale)(void *ctx, BYTE attacker, BYTE victim, BYTE cause,
+                        BYTE pill);
                        /* percent: boss armour, handicaps, friendly fire
-                        * off, an invulnerable escort */
+                        * off, an invulnerable escort. pill is the
+                        * pillbox whose shell it was, DMG_NO_PILL
+                        * otherwise */
+    bool (*canHit)(void *ctx, BYTE attacker, BYTE kind, BYTE index,
+                   BYTE pill);
+                       /* may this shell hit the tank or pill it has
+                        * reached? kind is a HIT_KIND_*. NULL = always.
+                        * false lets the shell fly on as if the target
+                        * were not there */
+    int  (*pillDamageScale)(void *ctx, BYTE attacker, BYTE index, BYTE cause,
+                            BYTE pill);
+                       /* percent of the armour a blow takes off pill
+                        * index; cause is DMG_SRC_SHELL or
+                        * DMG_SRC_EXPLOSION. NULL = 100 */
     bool (*canBuild)(void *ctx, BYTE player, BYTE action, BYTE x, BYTE y,
                      BYTE idx);
                        /* tutorials, protected zones; idx is the pill
@@ -857,14 +887,23 @@ typedef struct ScenarioPolicy {
                         * every client line site reads before it writes a
                         * line; a vote line, which the server writes as
                         * text, is simply not sent. NULL = always */
-    bool (*canDie)(void *ctx, BYTE kind, BYTE index, BYTE killer, BYTE cause);
+    bool (*canDie)(void *ctx, BYTE kind, BYTE index, BYTE killer, BYTE cause,
+                   BYTE pill);
                        /* may this tank, builder or pill be destroyed
                         * by this blow? kind: tank, builder, pill;
                         * index: the slot or the pill index; cause: a
                         * LAST_DEATH_BY_* value for a tank, the damage
-                        * source otherwise. NULL = always. false leaves
-                        * a tank at zero armour and alive, a builder
-                        * untouched, a pill at one armour */
+                        * source otherwise; pill: the pillbox whose
+                        * shell it was, DMG_NO_PILL otherwise. NULL =
+                        * always. false leaves a tank at zero armour and
+                        * alive, a builder untouched, a pill at one
+                        * armour */
+    bool (*canAlly)(void *ctx, BYTE player, BYTE other);
+                       /* may player ally with other? Asked when player
+                        * requests the alliance and again when other
+                        * accepts it. NULL = always. false refuses the
+                        * request or the accept; alliances a script makes
+                        * through set_team or seating are not asked */
     void *ctx;
 } ScenarioPolicy;
 

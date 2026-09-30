@@ -285,7 +285,7 @@ static int hitsToDestroy(ServerSim *sim) {
     while (hits < 512 && !tankIsDestroyed(&sim->sim.tanks[1])) {
         WORLD tx, ty;
         tankGetWorld(&sim->sim.tanks[1], &tx, &ty);
-        tankIsTankHit(&sim->sim, &sim->sim.tanks[1], tx, ty, (TURNTYPE)0, 0);
+        tankIsTankHit(&sim->sim, &sim->sim.tanks[1], tx, ty, (TURNTYPE)0, 0, DMG_NO_PILL);
         hits++;
     }
     return hits;
@@ -303,7 +303,7 @@ int run_tank_mod_dealt_kills_in_half_the_hits(void) {
     int classicHits, doubledHits;
     UT_ASSERT(sim != NULL && sim->sim.tanks[0] != NULL && sim->sim.tanks[1] != NULL);
 
-    UT_ASSERT_MSG(tankDamageAmount(&sim->sim, DAMAGE, 0, 1, LAST_DEATH_BY_SHELL) == DAMAGE,
+    UT_ASSERT_MSG(tankDamageAmount(&sim->sim, DAMAGE, 0, 1, LAST_DEATH_BY_SHELL, DMG_NO_PILL) == DAMAGE,
                   "unmodified tanks must trade the classic amount");
     classicHits = hitsToDestroy(sim);
 
@@ -311,7 +311,7 @@ int run_tank_mod_dealt_kills_in_half_the_hits(void) {
     sim = makeTwoTankSim();
     UT_ASSERT(sim != NULL && sim->sim.tanks[0] != NULL && sim->sim.tanks[1] != NULL);
     setMods(sim, 0, 0, 0, 0, 200, 0);
-    UT_ASSERT_MSG(tankDamageAmount(&sim->sim, DAMAGE, 0, 1, LAST_DEATH_BY_SHELL) == 2 * DAMAGE,
+    UT_ASSERT_MSG(tankDamageAmount(&sim->sim, DAMAGE, 0, 1, LAST_DEATH_BY_SHELL, DMG_NO_PILL) == 2 * DAMAGE,
                   "dealt 200 should double the blow");
     doubledHits = hitsToDestroy(sim);
 
@@ -338,9 +338,9 @@ int run_tank_mod_taken_takes_more_hits(void) {
     m.taken = 50;
     tankSetModifiers(sim->sim.tanks[1], &m);
     /* 5 * 50 / 100 is 2.5, rounded up. */
-    UT_ASSERT_MSG(tankDamageAmount(&sim->sim, DAMAGE, 0, 1, LAST_DEATH_BY_SHELL) == 3,
+    UT_ASSERT_MSG(tankDamageAmount(&sim->sim, DAMAGE, 0, 1, LAST_DEATH_BY_SHELL, DMG_NO_PILL) == 3,
                   "taken 50 gave %d from a base of %d, expected 3",
-                  (int)tankDamageAmount(&sim->sim, DAMAGE, 0, 1, LAST_DEATH_BY_SHELL), DAMAGE);
+                  (int)tankDamageAmount(&sim->sim, DAMAGE, 0, 1, LAST_DEATH_BY_SHELL, DMG_NO_PILL), DAMAGE);
     halvedHits = hitsToDestroy(sim);
 
     UT_ASSERT_MSG(halvedHits > classicHits,
@@ -357,7 +357,7 @@ int run_tank_mod_mine_damage_scales_with_layer(void) {
     BYTE before, afterClassic, afterDoubled;
     UT_ASSERT(sim != NULL && sim->sim.tanks[0] != NULL && sim->sim.tanks[1] != NULL);
 
-    UT_ASSERT(tankDamageAmount(&sim->sim, MINE_DAMAGE, 0, 1, LAST_DEATH_BY_MINES) == MINE_DAMAGE);
+    UT_ASSERT(tankDamageAmount(&sim->sim, MINE_DAMAGE, 0, 1, LAST_DEATH_BY_MINES, DMG_NO_PILL) == MINE_DAMAGE);
     before = tankGetArmour(&sim->sim.tanks[1]);
     tankMineDamage(&sim->sim, &sim->sim.tanks[1],
                    tankGetMX(&sim->sim.tanks[1]), tankGetMY(&sim->sim.tanks[1]), 0);
@@ -369,7 +369,7 @@ int run_tank_mod_mine_damage_scales_with_layer(void) {
     /* Keep this hit nonfatal so it tests scaling without the fatal-hit reduction. */
     tankSetArmour(&sim->sim.tanks[1], TANK_FULL_ARMOUR);
     setMods(sim, 0, 0, 0, 0, 200, 0);
-    UT_ASSERT_MSG(tankDamageAmount(&sim->sim, MINE_DAMAGE, 0, 1, LAST_DEATH_BY_MINES) == 2 * MINE_DAMAGE,
+    UT_ASSERT_MSG(tankDamageAmount(&sim->sim, MINE_DAMAGE, 0, 1, LAST_DEATH_BY_MINES, DMG_NO_PILL) == 2 * MINE_DAMAGE,
                   "a mine from a 200-dealt layer should do double");
     before = tankGetArmour(&sim->sim.tanks[1]);
     tankMineDamage(&sim->sim, &sim->sim.tanks[1],
@@ -432,7 +432,7 @@ int run_tank_mod_neutral_owner_deals_classic(void) {
     ServerSim *sim = makeTwoTankSim();
     UT_ASSERT(sim != NULL);
     setMods(sim, 0, 0, 0, 0, 200, 0);
-    UT_ASSERT_MSG(tankDamageAmount(&sim->sim, DAMAGE, NEUTRAL, 1, LAST_DEATH_BY_SHELL) == DAMAGE,
+    UT_ASSERT_MSG(tankDamageAmount(&sim->sim, DAMAGE, NEUTRAL, 1, LAST_DEATH_BY_SHELL, DMG_NO_PILL) == DAMAGE,
                   "an ownerless blow must deal the classic amount");
     serverSimDestroy(sim);
     return 0;
@@ -489,10 +489,10 @@ int run_tank_mod_pill_leads_half_speed_boat(void) {
 
     classicThreshold = pillsTargetTank(&sim->sim, &sim->sim.mp, &sim->sim.pb,
                                        &sim->sim.bs, px, py, tx, ty,
-                                       (TURNTYPE)0, 8, TRUE, MAP_SPEED_TBOAT);
+                                       (TURNTYPE)0, 8, TRUE, MAP_SPEED_TBOAT, FALSE);
     ownThreshold = pillsTargetTank(&sim->sim, &sim->sim.mp, &sim->sim.pb,
                                    &sim->sim.bs, px, py, tx, ty,
-                                   (TURNTYPE)0, 8, TRUE, 8);
+                                   (TURNTYPE)0, 8, TRUE, 8, FALSE);
 
     /* Both answers are angles. The threshold is now the helper's own
        parameter rather than a constant, which is what lets a half-speed

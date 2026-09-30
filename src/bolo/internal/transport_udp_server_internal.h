@@ -502,6 +502,10 @@ void serverHandlePing(const uint8_t *buf, int len,
  * buildInfoPacket, which the reply above also shares. */
 const char *resyncTerrainName(BYTE t);
 void buildInfoPacket(struct ServerSim *sim, INFO_PACKET *pkt);
+/* The script bytes the info-request reply carries after the INFO_PACKET, laid
+ * out as netpacks.h describes above INFO_SCRIPT_TAIL_MAX. Returns the bytes
+ * written, or 0 with nothing written when cap < INFO_SCRIPT_TAIL_MAX. */
+size_t buildInfoScriptTail(struct ServerSim *sim, uint8_t *out, size_t cap);
 void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
                              struct ServerSim *sim);
 bool isOldProtocolInfoRequest(const uint8_t *buf, int len);

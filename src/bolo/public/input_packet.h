@@ -309,6 +309,10 @@ typedef struct {
 #define EVENT_PILL_KILLED    25 /* data: [index, attacker] — attacker NEUTRAL when nobody is named */
 #define EVENT_BUILT          26 /* data: [player, action, mx, my] — see BUILT action below */
 #define EVENT_MINE_EXPLODED  27 /* data: [mx, my, layer] — layer NEUTRAL when the mine had no owner */
+#define EVENT_TANK_HIT       28 /* data: [victim, attacker, cause, amount, pill] — local-only, see
+                                 * gameEventIsLocal. cause is a LAST_DEATH_BY_* value, amount the
+                                 * armour the tank actually lost and pill the pill index whose
+                                 * shell it was, DMG_NO_PILL otherwise. */
 
 /* EVENT_BUILT's action byte is the builder's own request code, which is the
  * same number BuilderJob uses in server_sim.h — the two are already pinned
@@ -451,11 +455,14 @@ static inline bool gameEventIsReliable(uint8_t type) {
  * would hand every recipient a map of the minefield. The host hears it through
  * the in-process subscriber channel, which is not the wire, and the god-view
  * recording build keeps it; every per-client build and the UDP drain drop it.
+ * EVENT_TANK_HIT is local because nothing on a client reads it: a client
+ * learns a tank's armour from its snapshot, and the event is there for the
+ * scenario host's on_tank_hit.
  *
  * A local-only event still needs a gameEventDataSize row: the recording packs
  * it, and the brain event table is sized from the same function. */
 static inline bool gameEventIsLocal(uint8_t type) {
-    return type == EVENT_MINE_PLACED;
+    return type == EVENT_MINE_PLACED || type == EVENT_TANK_HIT;
 }
 
 /* Assistant message IDs for EVENT_ASSISTANT_MSG */
@@ -501,6 +508,7 @@ static inline int gameEventDataSize(uint8_t type) {
     case EVENT_PILL_KILLED:    return 2;
     case EVENT_BUILT:          return 4;
     case EVENT_MINE_EXPLODED:  return 2;   /* the layer stays behind the wire */
+    case EVENT_TANK_HIT:       return 5;
     default:                   return GAME_EVENT_MAX_DATA;
     }
 }

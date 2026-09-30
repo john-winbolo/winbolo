@@ -309,7 +309,7 @@ static long slArrayInt(lua_State *L, const char *name, int n) {
  * lobby handlers are tested against there. */
 static ServerSim *slSeatedLobbySim(void) {
     BYTE       emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) {
         return NULL;
@@ -324,7 +324,7 @@ static ServerSim *slSeatedLobbySim(void) {
  * round themselves. ut_make_running_sim is the one for the rest. */
 static ServerSim *slLobbySim(void) {
     BYTE       emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) {
         return NULL;
@@ -478,6 +478,7 @@ static const char *const kSlEveryRowCalls =
     "  tank        = function() return game.tank(0) end,\n"
     "  builder     = function() return game.builder(0) end,\n"
     "  lobby_slot  = function() return game.lobby_slot(0) end,\n"
+    "  allied      = function() return game.allied(0, 0) end,\n"
     "  rule        = function() return game.rule(\"tank_reload_ticks\") end,\n"
     "  tags        = function() return game.tags(\"pill\", 1) end,\n"
     "  tagged      = function() return game.tagged(\"keep\") end,\n"

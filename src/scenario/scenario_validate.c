@@ -112,7 +112,7 @@ static int scnStubSetting(lua_State *L) {
     if (s == NULL) {
         return luaL_error(L, "no setting is named '%s'", id);
     }
-    lua_pushinteger(L, (lua_Integer)s->def);
+    scenarioLuaPushSetting(L, s, s->def);
     return 1;
 }
 

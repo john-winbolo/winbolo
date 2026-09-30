@@ -49,7 +49,7 @@ static const AwardResult *find_award(const AwardResult *res, int n, int id) {
 
 static ServerSim *make_sim_running(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097,
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN,
                                                "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) return NULL;
@@ -482,7 +482,7 @@ int run_round_stats_attribution_callbacks(void) {
  * current-position and lag-compensated hit functions. */
 int run_round_stats_direct_damage(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     UT_ASSERT(sim != NULL);
     serverSimSetLobbyEnabled(sim, false);
@@ -496,12 +496,12 @@ int run_round_stats_direct_damage(void) {
     WORLD wx = 0, wy = 0;
     UT_ASSERT(serverSimGetTankState(sim, 1, &wx, &wy));
 
-    tankIsTankHit(&sim->sim, &sim->sim.tanks[1], wx, wy, 0, 0);
+    tankIsTankHit(&sim->sim, &sim->sim.tanks[1], wx, wy, 0, 0, DMG_NO_PILL);
     UT_ASSERT_MSG(serverSimGetRoundStats(sim, 0)->dmgToPlayers == DAMAGE,
                   "current-position hit credits one DAMAGE, got %llu",
                   (unsigned long long)serverSimGetRoundStats(sim, 0)->dmgToPlayers);
 
-    tankIsTankHitAtPosition(&sim->sim, &sim->sim.tanks[1], wx, wy, wx, wy, 0, 0);
+    tankIsTankHitAtPosition(&sim->sim, &sim->sim.tanks[1], wx, wy, wx, wy, 0, 0, DMG_NO_PILL);
     UT_ASSERT_MSG(serverSimGetRoundStats(sim, 0)->dmgToPlayers == 2 * DAMAGE,
                   "lag-compensated hit credits a second DAMAGE, got %llu",
                   (unsigned long long)serverSimGetRoundStats(sim, 0)->dmgToPlayers);
@@ -547,7 +547,7 @@ int run_round_stats_mine_owner_api(void) {
 /* A mine detonation credits effective tank damage to the player who laid it. */
 int run_round_stats_mine_damage(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     UT_ASSERT(sim != NULL);
     serverSimSetLobbyEnabled(sim, false);
@@ -573,7 +573,7 @@ int run_round_stats_mine_damage(void) {
 /* A player removed mid-round has their mine cells released. */
 int run_round_stats_leaver_clears_mines(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     UT_ASSERT(sim != NULL);
     serverSimSetLobbyEnabled(sim, false);
