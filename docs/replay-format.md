@@ -421,7 +421,7 @@ and ignored.
 
 ### `log_ScnAnnounce` payload
 
-A line a scenario put across the centre of the screen. Four header bytes,
+A line a scenario put across the top of the game view. Four header bytes,
 then the line as a Pascal string:
 
 | Bytes | Field | Notes |

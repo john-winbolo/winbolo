@@ -4689,9 +4689,15 @@ static void renderScenarioPanel(ClientSim *cs) {
  * The scenario announcement
  *
  * One line across the game view, for the few seconds a
- * scenario asked for. It sits in the view's upper third
- * rather than dead centre, which is where the player's own
- * tank is.
+ * scenario asked for. It sits at the top of the view,
+ * centred, and keeps clear of what is already drawn up
+ * there: the scenario panel wherever the player left it,
+ * the vote widgets and alliance request beside the view,
+ * and the HUD column and build strip when the full screen
+ * map owns the window. It never moves down onto the
+ * player's own tank; when there is no room above the tank
+ * it stays on the top row, over the panel (scnAnnouncePlace
+ * has the rule).
  *
  * Drawn on the foreground draw list and not in a window at
  * all. A window across the middle of the screen would take
@@ -4711,8 +4717,46 @@ static void renderScenarioPanel(ClientSim *cs) {
    same way the panel's own text does. */
 #define SCN_ANNOUNCE_UNITS 20.0f
 
-/* How far down the game view the line sits, as a fraction of its height. */
-#define SCN_ANNOUNCE_DOWN 0.28f
+/* The space above the line on the top row, and the space it keeps from
+   anything it has to move clear of, in panel units. The panel's own inset
+   from the view's corner, so the two line up when they sit side by side. */
+#define SCN_ANNOUNCE_INSET_UNITS SCN_PANEL_DEFAULT_INSET
+
+/* The most things the line is kept clear of at once: the panel, two vote
+   widgets, the alliance request, and the full screen map's HUD column and
+   build strip. */
+#define SCN_ANNOUNCE_MAX_OBSTACLES 8
+
+/* Adds a window's last known rect to the things the line keeps clear of.
+   Active is this frame, for a window already submitted (the panel); WasActive
+   is the last one, for a window submitted after the line (the vote widgets
+   and the alliance request), which sit still from frame to frame. */
+static void scnAnnounceAddWindow(const char *name, ScnAnnounceRect *obstacles,
+                                 int *count) {
+    if (*count >= SCN_ANNOUNCE_MAX_OBSTACLES) return;
+    ImGuiWindow *w = ImGui::FindWindowByName(name);
+    if (w == nullptr || !(w->Active || w->WasActive) || w->Hidden) return;
+    if (w->Size.x <= 0.0f || w->Size.y <= 0.0f) return;
+    obstacles[*count].x0 = w->Pos.x;
+    obstacles[*count].y0 = w->Pos.y;
+    obstacles[*count].x1 = w->Pos.x + w->Size.x;
+    obstacles[*count].y1 = w->Pos.y + w->Size.y;
+    (*count)++;
+}
+
+/* Adds one of the full screen map's HUD rects, which are kept relative to
+   the map rect at (mapX, mapY). */
+static void scnAnnounceAddHudRect(float mapX, float mapY, float x, float y,
+                                  float w, float h,
+                                  ScnAnnounceRect *obstacles, int *count) {
+    if (*count >= SCN_ANNOUNCE_MAX_OBSTACLES) return;
+    if (w <= 0.0f || h <= 0.0f) return;
+    obstacles[*count].x0 = mapX + x;
+    obstacles[*count].y0 = mapY + y;
+    obstacles[*count].x1 = mapX + x + w;
+    obstacles[*count].y1 = mapY + y + h;
+    (*count)++;
+}
 
 /* The last of an announcement's life spent fading, in ticks. Long enough to
    read as going rather than as cut off; ticks run at a hundred a second, so
@@ -4740,10 +4784,38 @@ static void renderScenarioAnnounce(ClientSim *cs) {
     if (gameScale <= 0.0f) gameScale = 1.0f;
     const float scale = (float)rawZoom * gameScale;
 
-    float gx, gy, gw, gh, gtw, gth, rx0, ry0, rx1, ry1;
-    if (!sdl3DrawGetMainViewGameRect(&gx, &gy, &gw, &gh, &gtw, &gth)) return;
-    if (!sdl3DrawGameToRenderCoords(gx, gy, &rx0, &ry0)) return;
-    if (!sdl3DrawGameToRenderCoords(gx + gw, gy + gh, &rx1, &ry1)) return;
+    /* The game view in render coordinates, and the things at its top the
+       line has to keep clear of. The full screen map is the view when it
+       owns the window, with its HUD column down the right and its build
+       strip on the left. */
+    ScnAnnounceRect view;
+    ScnAnnounceRect obstacles[SCN_ANNOUNCE_MAX_OBSTACLES];
+    int             count = 0;
+    float mapX = 0.0f, mapY = 0.0f, mapW = 0.0f, mapH = 0.0f;
+    if (sdl3DrawGetOverviewInWindowRect(&mapX, &mapY, &mapW, &mapH)) {
+        view.x0 = mapX;
+        view.y0 = mapY;
+        view.x1 = mapX + mapW;
+        view.y1 = mapY + mapH;
+        OverviewHudLayout hud;
+        if (sdl3DrawGetOverviewHudLayout(&hud)) {
+            scnAnnounceAddHudRect(mapX, mapY, hud.columnX, hud.columnY,
+                                  hud.columnW, hud.columnH, obstacles, &count);
+            scnAnnounceAddHudRect(mapX, mapY, hud.buildX, hud.buildY,
+                                  hud.buildW, hud.buildH, obstacles, &count);
+        }
+    } else {
+        float gx, gy, gw, gh, gtw, gth;
+        if (!sdl3DrawGetMainViewGameRect(&gx, &gy, &gw, &gh, &gtw, &gth)) return;
+        if (!sdl3DrawGameToRenderCoords(gx, gy, &view.x0, &view.y0)) return;
+        if (!sdl3DrawGameToRenderCoords(gx + gw, gy + gh, &view.x1, &view.y1)) {
+            return;
+        }
+    }
+    scnAnnounceAddWindow("##scenariopanel", obstacles, &count);
+    scnAnnounceAddWindow("###gamevote_1", obstacles, &count);
+    scnAnnounceAddWindow("###gamevote_2", obstacles, &count);
+    scnAnnounceAddWindow("###alliancereq", obstacles, &count);
 
     ImFont *font = ImGui::GetFont();
     if (font == nullptr) return;
@@ -4752,8 +4824,19 @@ static void renderScenarioAnnounce(ClientSim *cs) {
     if (height < 8.0f) height = 8.0f;
     const ImVec2 measured = font->CalcTextSizeA(height, FLT_MAX, 0.0f, text);
 
-    const float px = (rx0 + rx1) * 0.5f - measured.x * 0.5f;
-    const float py = ry0 + (ry1 - ry0) * SCN_ANNOUNCE_DOWN;
+    /* The outline reaches one stroke past the letters on every side, so the
+       box that has to stay clear is that much bigger than the letters. */
+    const float o = (scale > 1.0f) ? scale : 1.0f;
+    const float inset = SCN_ANNOUNCE_INSET_UNITS * scale;
+    /* The player's tank sits in the middle square of the view, and the line
+       is never moved down onto it: the floor is the top of that square. */
+    const float floorY = (view.y0 + view.y1) * 0.5f -
+                         (view.y1 - view.y0) / (float)MAIN_SCREEN_SIZE_Y * 0.5f;
+    float boxX = 0.0f, boxY = 0.0f;
+    scnAnnouncePlace(view, measured.x + 2.0f * o, measured.y + 2.0f * o,
+                     inset, inset, floorY, obstacles, count, &boxX, &boxY);
+    const float px = boxX + o;
+    const float py = boxY + o;
 
     /* Full strength until the last stretch, then out. */
     float fade = 1.0f;
@@ -4770,7 +4853,6 @@ static void renderScenarioAnnounce(ClientSim *cs) {
        eight directions, so the letters keep an edge whichever way the terrain
        under them happens to run. */
     const ImU32 edge = IM_COL32(0, 0, 0, alpha);
-    const float o    = (scale > 1.0f) ? scale : 1.0f;
     for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {
             if (dx == 0 && dy == 0) continue;
