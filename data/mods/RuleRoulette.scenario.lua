@@ -65,7 +65,9 @@ local KIND_COLOUR = { good = "green", bad = "red", trade = "yellow" }
 
 local MOD_KEYS   = { "speed", "accel", "turn", "reload", "dealt", "taken" }
 local MOD_LABEL  = { speed = "Speed", accel = "Accel", turn = "Turn",
-                     reload = "Reload", dealt = "Dealt", taken = "Taken" }
+                     reload = "Reload", dealt = "Dealt (Tanks)", taken = "Taken" }
+-- Labels too wide for half the panel; each takes a whole line.
+local WIDE_LABEL = { dealt = true }
 -- For these a higher percentage hurts the tank that has it.
 local WORSE_HIGH = { reload = true, taken = true }
 
@@ -217,9 +219,12 @@ local function build_panel()
   for _, k in ipairs(MOD_KEYS) do
     local v = mode.mods[k]
     if v ~= nil and v ~= 100 then
+      if WIDE_LABEL[k] and col ~= 0 then
+        col, y = 0, y + 9
+      end
       list[#list + 1] = { "text", col == 0 and 3 or 65, y, tint(v, WORSE_HIGH[k]),
                           "small", "left", MOD_LABEL[k] .. " " .. v .. "%" }
-      col = col + 1
+      col = WIDE_LABEL[k] and 2 or col + 1
       if col == 2 then
         col, y = 0, y + 9
       end
@@ -248,6 +253,9 @@ local function build_panel()
     list[#list + 1] = { "line", 3, y, 124, y, "grey_dark" }
     y = y + 2
     for i = 1, preview do
+      -- A mode with every number and a whole-line label leaves room for
+      -- fewer upcoming modes; drop the ones that would run off the panel.
+      if y + 17 > 128 then break end
       local m = MODES[queue[i]]
       list[#list + 1] = { "text", 3, y, KIND_COLOUR[m.kind], "small", "left",
                           (i == 1 and "Next: " or "Then: ") .. m.name }
