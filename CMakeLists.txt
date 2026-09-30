@@ -6565,6 +6565,10 @@ set(_unit_test_names
     scenario_panel_roundtrip
     scenario_panel_timer_text
     scenario_announce_remaining
+    scenario_announce_place
+    scenario_status_line
+    scn_status_codec_and_client
+    scn_arm_status_and_place
     scenario_panel_slot_rect
     lv_rule_names_and_panel_parse
     lv_scripted_game_type_header
@@ -6598,6 +6602,7 @@ set(_unit_test_names
     lv_presentation_panel_choice
     lv_presentation_slot_team
     lv_presentation_announce_posts
+    lv_presentation_status_line
     lv_presentation_marker_visible
     lv_presentation_live_seek
     lv_presentation_live_fast_forward
