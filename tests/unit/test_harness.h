@@ -2988,6 +2988,10 @@ int run_lobby_map_keeps_bots_plain(void);
 int run_lobby_map_keeps_bots_scenario(void);
 int run_lobby_map_keeps_bots_map_own_row(void);
 int run_lobby_map_rotate_holds_seats_again(void);
+/* And a script pick, which keeps the host's bots unless the script lays out
+ * a lobby of its own. */
+int run_lobby_script_keeps_bots_mod(void);
+int run_lobby_script_keeps_bots_swap(void);
 
 /* The scripted game type (test_scripted_game_type.c): gameScripted resolving
  * through the base game the scenario declared, at the loadout and at the
