@@ -4860,6 +4860,7 @@ set(_unit_test_names
     round_stats_codec_rejects_bad_key
     round_stats_build_summary
     round_stats_scenario_score_filled
+    round_stats_group_rows
     round_stats_summary_highlights
     round_stats_client_ingest
     round_stats_track_records

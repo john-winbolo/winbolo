@@ -223,6 +223,7 @@ static const UnitTestEntry s_tests[] = {
     { "round_stats_scenario_score_codec",           run_round_stats_scenario_score_codec           },
     { "round_stats_build_summary",                  run_round_stats_build_summary                  },
     { "round_stats_scenario_score_filled",          run_round_stats_scenario_score_filled          },
+    { "round_stats_group_rows",                     run_round_stats_group_rows                     },
     { "round_stats_summary_highlights",             run_round_stats_summary_highlights             },
     { "round_stats_client_ingest",                  run_round_stats_client_ingest                  },
     { "round_stats_track_records",                  run_round_stats_track_records                  },

@@ -275,6 +275,7 @@ int run_round_stats_codec_worstcase(void);
 int run_round_stats_scenario_score_codec(void);
 int run_round_stats_build_summary(void);
 int run_round_stats_scenario_score_filled(void);
+int run_round_stats_group_rows(void);
 int run_round_stats_summary_highlights(void);
 int run_round_stats_client_ingest(void);
 int run_round_stats_track_records(void);

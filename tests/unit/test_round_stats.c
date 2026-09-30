@@ -1561,6 +1561,59 @@ int run_round_stats_scenario_score_filled(void) {
     return 0;
 }
 
+/* The recap's grouped table: teams by team score, members under their team by
+ * their own score, the rest after, and no grouping unless a scenario scored
+ * both teams and players. */
+int run_round_stats_group_rows(void) {
+    RoundStatsSummary st;
+    memset(&st, 0, sizeof(st));
+    st.playerCount = 5;
+    for (int i = 0; i < 5; i++) st.players[i].slot = (uint8_t)i;
+    uint8_t teamOf[MAX_TANKS] = {0};
+    teamOf[0] = 1; teamOf[1] = 2; teamOf[2] = 1; teamOf[3] = 2; teamOf[4] = 0;
+
+    UT_ASSERT_MSG(!roundStatsGroupsByTeam(&st), "empty summary grouped");
+    st.hasScenarioScore = true;
+    st.scenarioScoreMask = 0x0F;           /* slot 4 never scored */
+    st.scenarioScore[0] = 2; st.scenarioScore[1] = 5;
+    st.scenarioScore[2] = 7; st.scenarioScore[3] = 1;
+    UT_ASSERT_MSG(!roundStatsGroupsByTeam(&st), "players only grouped");
+    st.scenarioTeamScoreMask = (uint16_t)((1u << 1) | (1u << 2));
+    st.scenarioTeamScore[1] = 9;
+    st.scenarioTeamScore[2] = 6;
+    UT_ASSERT_MSG(roundStatsGroupsByTeam(&st), "teams and players not grouped");
+
+    RoundStatsGroupRow rows[2 * MAX_TANKS];
+    int n = roundStatsGroupRows(&st, teamOf, rows, 2 * MAX_TANKS);
+    UT_ASSERT_MSG(n == 7, "row count");
+    /* Team 1 (9): slot 2 (7), slot 0 (2). Team 2 (6): slot 1 (5), slot 3 (1).
+     * Then slot 4 on no scored team. */
+    const uint8_t kind[7] = { 1, 2, 2, 1, 2, 2, 2 };
+    const uint8_t team[7] = { 1, 1, 1, 2, 2, 2, 0 };
+    const uint8_t idx[7]  = { 0, 2, 0, 0, 1, 3, 4 };
+    for (int r = 0; r < 7; r++) {
+        UT_ASSERT_MSG(rows[r].kind == kind[r] && rows[r].team == team[r] &&
+                          rows[r].index == idx[r],
+                      "row order");
+    }
+
+    /* Team 2 overtakes; a tie goes to the lower team number. */
+    st.scenarioTeamScore[2] = 9;
+    n = roundStatsGroupRows(&st, teamOf, rows, 2 * MAX_TANKS);
+    UT_ASSERT_MSG(n == 7 && rows[0].team == 1 && rows[3].team == 2,
+                  "team tie order");
+    st.scenarioTeamScore[2] = 10;
+    n = roundStatsGroupRows(&st, teamOf, rows, 2 * MAX_TANKS);
+    UT_ASSERT_MSG(n == 7 && rows[0].team == 2 && rows[1].index == 1 &&
+                      rows[3].team == 1,
+                  "better team first");
+
+    /* The cap is kept. */
+    n = roundStatsGroupRows(&st, teamOf, rows, 3);
+    UT_ASSERT_MSG(n == 3, "cap");
+    return 0;
+}
+
 /* The summary also carries the round's highlight clips, scored from the live
  * accumulator and notable timeline. Two clusters of kills, far enough apart in
  * time and space to be separate fights, yield at least one clip. */
