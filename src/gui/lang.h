@@ -2864,6 +2864,11 @@
 #define STR_DLGLOBBY_DETAILS_COL_SETTING         2736
 #define STR_DLGLOBBY_DETAILS_COL_VALUE           2737
 
+/* The details dialog's heading over the rules table, with the colon the
+ * Settings and implements headings have. The log viewer keeps
+ * STR_DLGLOBBY_SCENARIO_RULES as a separator title with no colon. */
+#define STR_DLGLOBBY_DETAILS_RULES               2739
+
 /* The map panel's warning under the scenario and mods lines, shown only when
  * the server was started with -allow-unsafe-scripts. A sentence rather than a
  * tag, because it is the one place a joiner is told that the scripts they are

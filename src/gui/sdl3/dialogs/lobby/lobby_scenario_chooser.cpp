@@ -1232,7 +1232,7 @@ static float lobbyScenarioDetailsMinWidth(void) {
 
     return ImGui::CalcTextSize("tank_full_shells").x +
            3.0f * lobbyScenarioDetailsNumberColumnWidth() +
-           8.0f * st.CellPadding.x + 2.0f * st.WindowPadding.x +
+           8.0f * st.CellPadding.x + 4.0f * st.WindowPadding.x +
            st.ScrollbarSize + 2.0f * st.ItemSpacing.x;
 }
 
@@ -1245,8 +1245,10 @@ static bool lobbyScenarioDetailsRulesBegin(void) {
     float w = lobbyScenarioDetailsNumberColumnWidth();
 
     ImGui::Spacing();
-    ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_SCENARIO_RULES));
+    imguiBeginPanelSection("##detailRulesBox");
+    ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_DETAILS_RULES));
     if (!imguiBeginPanelTable("##detailRules", 4)) {
+        imguiEndPanelSection();
         return false;
     }
     ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_RULES_COL_RULE),
@@ -1383,6 +1385,7 @@ static void lobbyScenarioDetailsRules(ClientSim *cs) {
                 winning);
         }
         imguiEndPanelTable();
+        imguiEndPanelSection();
     }
 
     /* Shown whether or not the table is: a pick on a server with
@@ -1455,11 +1458,13 @@ static void lobbyScenarioDetailsCallbacks(ClientSim *cs) {
     }
 
     ImGui::Spacing();
+    imguiBeginPanelSection("##detailCallbacksBox");
     ImGui::TextUnformatted(
         langGetText(s_detailsKind == 1
                         ? STR_DLGLOBBY_DETAILS_IMPLEMENTS_MOD
                         : STR_DLGLOBBY_DETAILS_IMPLEMENTS_SCENARIO));
     if (!imguiBeginPanelTable("##detailCallbacks", 3)) {
+        imguiEndPanelSection();
         return;
     }
     ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_DETAILS_COL_METHOD),
@@ -1487,6 +1492,7 @@ static void lobbyScenarioDetailsCallbacks(ClientSim *cs) {
         ImGui::TextWrapped("%s", text);
     }
     imguiEndPanelTable();
+    imguiEndPanelSection();
 }
 
 /* How one value of setting st reads, into out: the number, or On or Off for
@@ -1559,8 +1565,10 @@ static void lobbyScenarioDetailsSettings(ClientSim *cs) {
     }
 
     ImGui::Spacing();
+    imguiBeginPanelSection("##detailSettingsBox");
     ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_DETAILS_SETTINGS));
     if (!imguiBeginPanelTable("##detailSettings", 2)) {
+        imguiEndPanelSection();
         return;
     }
     /* Headed like the rules and callbacks tables above it, so all three
@@ -1620,6 +1628,7 @@ static void lobbyScenarioDetailsSettings(ClientSim *cs) {
     } else if (!host) {
         lobbyScenarioRowNote(langGetText(STR_DLGLOBBY_DETAILS_SETTINGS_HOST));
     }
+    imguiEndPanelSection();
 }
 
 /* One scenario or mod, described in full.
