@@ -4963,6 +4963,7 @@ set(_unit_test_names
     scn_panel_popout_row
     scn_panel_yes_no
     scn_panel_rescue
+    scn_panel_prefs_sections
     client_scn_panel_owners
     scn_arm_panel_owners
     info_packet_preset_round_trip
@@ -6649,6 +6650,7 @@ set(_unit_test_names
     lv_presentation_rebuild_many
     lv_presentation_plain_round
     lv_presentation_panel_choice
+    lv_presentation_panel_owner
     lv_presentation_slot_team
     lv_presentation_announce_posts
     lv_presentation_status_line

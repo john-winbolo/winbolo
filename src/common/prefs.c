@@ -25,15 +25,18 @@ static PrefsDoc *g_doc;
 static char g_path[FILENAME_MAX];
 
 /* Sections held only on this device and never uploaded: WINBOLO.NET (auth
- * token/expiry), DEVICE (sync bookkeeping) and VOICE.DEVICE (the chosen
+ * token/expiry), DEVICE (sync bookkeeping), VOICE.DEVICE (the chosen
  * microphone and speakers, which are named per machine — the rest of VOICE
- * does sync). This
+ * does sync) and SCENARIO PANEL POPOUT (where each popped-out scenario
+ * panel's window sat, in this machine's desktop coordinates, as WINDOW is).
+ * SCENARIO PANEL SHOWN is a choice, not a place, so it syncs. This
  * array is the single source of truth for "never synced" — both the upload
  * serializer and the sync-dirty trigger consult it. */
 static const char *const kDeviceLocalSections[] = { "WINBOLO.NET", "DEVICE",
                                                     "MAPEDITOR", "LOGVIEWER",
                                                     "WINDOW", "HOSTING",
-                                                    "VOICE.DEVICE" };
+                                                    "VOICE.DEVICE",
+                                                    "SCENARIO PANEL POPOUT" };
 #define PREFS_DEVICE_LOCAL_COUNT \
     (sizeof(kDeviceLocalSections) / sizeof(kDeviceLocalSections[0]))
 

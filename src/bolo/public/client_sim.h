@@ -737,8 +737,10 @@ const ScnPanelList *clientSimGetScnPanel(const ClientSim *cs, uint8_t id);
 
 /* The same, for the one script of the round's list that sent it. owner is
  * that script's position on the list, the index clientSimGetLobbyScript*
- * takes. clientSimGetScnPanel above answers with the lowest owner that has
- * a list, which is the one panel a frontend with room for only one shows. */
+ * takes. clientSimGetScnPanel above answers with the lowest owner whose
+ * list has something in it (or, when every list is empty, the lowest owner
+ * with a list at all), which is the one panel a frontend with room for
+ * only one shows. */
 const ScnPanelList *clientSimGetScnPanelOf(const ClientSim *cs, uint8_t id,
                                            uint8_t owner);
 

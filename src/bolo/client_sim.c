@@ -2209,6 +2209,15 @@ const ClientSpectatorSlot *clientSimGetSpectatorSlot(const ClientSim *cs, uint8_
 const ScnPanelList *clientSimGetScnPanel(const ClientSim *cs, uint8_t id) {
   uint8_t owner;
   if (cs == NULL || id >= SCN_PANEL_IDS) return NULL;
+  /* The lowest script whose list has something in it, so a scenario that
+     cleared its panel does not hide a mod's that is still drawing. */
+  for (owner = 0; owner < SCN_PANEL_OWNERS; owner++) {
+    if (cs->scnPanelValid[id][owner] && cs->scnPanels[id][owner].count > 0) {
+      return &cs->scnPanels[id][owner];
+    }
+  }
+  /* Every list is empty: the lowest cleared one, so a caller still tells a
+     cleared panel from one nothing has sent. */
   for (owner = 0; owner < SCN_PANEL_OWNERS; owner++) {
     if (cs->scnPanelValid[id][owner]) return &cs->scnPanels[id][owner];
   }
