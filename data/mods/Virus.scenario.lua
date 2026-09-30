@@ -1,4 +1,4 @@
--- Infection
+-- Virus
 --
 -- Everybody starts on the same side. Ten seconds in one of them turns, and
 -- from there every tank that dies comes back infected: which side you are on
@@ -14,7 +14,7 @@
 -- than eight, and a gun as good as anybody's. They keep it all round long and
 -- on every life, and nobody else is given it while they are in the horde, not
 -- even if they leave. The one time it moves is when the whole horde has left:
--- the infection starts again, and the new first one to turn is given it. Every
+-- the virus starts again, and the new first one to turn is given it. Every
 -- other infected tank is the classic tank with a full tank of armour, and
 -- the last survivor is the classic tank too. The infected come back three
 -- seconds after they die, which is what makes the horde a horde: a survivor
@@ -196,7 +196,7 @@ end
 
 -- Hands the first one to turn their numbers once they are infected, and takes them
 -- off any seat that held them and is not the first one any more, which is the
--- old first one when the infection starts again. The engine keeps a tank's
+-- old first one when the virus starts again. The engine keeps a tank's
 -- modifiers across a respawn and only clears them when the tank is made new,
 -- on a join or a new round, so this is called when zero changes and on a turn,
 -- and does nothing when nothing has changed. Only this function and the net
@@ -287,7 +287,7 @@ end
 local function panel_head()
   return {
     { "rect",  0, 0, 128, TITLE_H, "grey_dark", true },
-    { "text",  64, 3, "white", "normal", "centre", "INFECTION" },
+    { "text",  64, 3, "white", "normal", "centre", "VIRUS" },
     { "timer", 64, CLOCK_Y, "yellow", "normal", "centre", "down", ends_at },
   }
 end
@@ -488,7 +488,7 @@ local function check_the_end(shot)
   end
   local left = roll(SURVIVORS)
   if #left == 0 then
-    finish("The infection took everyone.", INFECTED,
+    finish("The virus took everyone.", INFECTED,
            shot and BOOM_SECONDS or nil)
     return
   end
@@ -587,7 +587,7 @@ end
 --
 -- "horde": the bot never picks a base to refuel at. A base refuels nobody on
 -- the horde, and a brain that was not told so would drive to one and sit on
--- it. The horde is not out of shells: Infection feeds each infected tank a
+-- it. The horde is not out of shells: Virus feeds each infected tank a
 -- shell every SHELL_EVERY seconds up to half a full tank, and a point of
 -- armour every FEED_EVERY seconds up to a full tank. The word also turns off
 -- the two survivor settings below.
@@ -740,7 +740,7 @@ local function help_the_horde()
     return
   end
   local p = pool[math.random(#pool)]
-  game.message("No kills for a minute. The infection takes " ..
+  game.message("No kills for a minute. The virus takes " ..
                name_of(p) .. ".")
   infect(p, nil)
   helper = game.timer(HELP_EVERY, help_the_horde)
@@ -755,12 +755,12 @@ local function turn_zero()
     p = pick_zero()
   end
   if p == nil then
-    game.message("Infection: nobody to turn. The round runs to the clock.")
+    game.message("Virus: nobody to turn. The round runs to the clock.")
     return
   end
   zero = p
   loose = true
-  game.announce("The infection is loose", 3)
+  game.announce("The virus is loose", 3)
   infect(p, nil)
   -- A restart after the whole horde has walked out is a fresh horde, and it is
   -- helped the same way, so the clock is started over rather than doubled.
@@ -781,7 +781,7 @@ local function warn_zero()
   end
   zero = pick_zero()
   if zero == nil then
-    game.message("Infection needs two players. Nobody turns.")
+    game.message("Virus needs two players. Nobody turns.")
     return
   end
   game.announce("You turn in three seconds", WARNING_SECONDS, zero)
@@ -828,7 +828,7 @@ local function start_compass()
 end
 
 -- The deep sea clock. It only runs once the first one has turned: before that
--- there is nobody to hide from, and a turn would start the infection before
+-- there is nobody to hide from, and a turn would start the virus before
 -- its time. It only counts survivors, and only while their tank is alive and
 -- on a deep sea square. A survivor who has just respawned on a start is not
 -- counted until they first reach land or SPAWN_GRACE runs out. Their screen
@@ -961,7 +961,7 @@ function on_start()
 
   -- Three lines, because a player who has not read the scenario has to be able
   -- to play it from what the newswire tells them in the first ten seconds.
-  game.message("Infection: one of you turns in ten seconds. " ..
+  game.message("Virus: one of you turns in ten seconds. " ..
                "Everyone they kill turns with them.")
   game.message(string.format("Survivors: the bases, the pillboxes and the " ..
                              "mines are yours. Hold out for %d minutes.",
@@ -1100,7 +1100,7 @@ function on_player_leave(p, scripted)
     check_the_end()
   elseif was == INFECTED and #roll(INFECTED) == 0 then
     -- The horde walked out. Rather than running the clock down with nothing
-    -- hunting, the infection starts again, and the old first one, if they are
+    -- hunting, the virus starts again, and the old first one, if they are
     -- still on a seat, goes back to the classic tank before a new one is
     -- picked and given the first one's numbers.
     zero = nil
@@ -1123,7 +1123,7 @@ end
 
 function on_end()
   over = true
-  game.log(string.format("Infection ended after %d seconds, %d still alive",
+  game.log(string.format("Virus ended after %d seconds, %d still alive",
                          elapsed, #roll(SURVIVORS)))
 end
 
@@ -1218,7 +1218,7 @@ function damage_scale(attacker, victim, cause)
 end
 
 scenario = {
-  name        = "Infection",
+  name        = "Virus",
   description = "One of you turns, and everyone they kill turns with them. " ..
                 "The survivors hold the map; the horde is back in three " ..
                 "seconds, and the first to turn is quicker and tougher.",

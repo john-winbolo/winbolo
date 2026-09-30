@@ -1308,13 +1308,13 @@ function Brain.apply_init_tokens(state, a)
       elseif tok == "normal" then
         state.test_never_refuel = false
       elseif tok == "horde" then
-        -- Infection's infected side. No base refuels the horde, so it never
+        -- Virus's infected side. No base refuels the horde, so it never
         -- picks one. Its C settings (C.SIDE_SETTINGS.horde) were written by
         -- _apply_cfg_tokens.
         state.side = "horde"
         state.test_never_refuel = true
       elseif tok == "survivor" then
-        -- Infection's survivor side: refuels as normal. Its C settings
+        -- Virus's survivor side: refuels as normal. Its C settings
         -- (C.SIDE_SETTINGS.survivor) were written by _apply_cfg_tokens.
         state.side = "survivor"
         state.test_never_refuel = false
@@ -1453,7 +1453,7 @@ function Brain.on_init(t)
   -- "roll it once for this bot" (the TEST_NEVER_REFUEL_CHANCE aid on the
   -- first think), so clearing it on every bot_init would quietly overrule a
   -- roll the arena runs read. A scenario that changes it at runtime sends the
-  -- word both ways (Infection: horde / survivor, each sets it).
+  -- word both ways (Virus: horde / survivor, each sets it).
   --
   -- state.side is not in this list either: a table with no side word leaves
   -- the bot on its last side. Its C settings stay written too (a side word is
@@ -1689,7 +1689,7 @@ function Brain.think(info)
   --                          the random TEST_NEVER_REFUEL_CHANCE roll below)
   --   "normal"            -> force never-refuel OFF (a plain captain); read
   --                          last, so it wins if both are passed
-  --   "survivor"/"horde"  -> this bot's side (Infection). Sets state.side.
+  --   "survivor"/"horde"  -> this bot's side (Virus). Sets state.side.
   --                          horde: never-refuel ON; survivor: OFF. Each also
   --                          writes its C.SIDE_SETTINGS list at chunk load and
   --                          on a runtime bot_init (_apply_cfg_tokens), after

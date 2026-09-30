@@ -1870,7 +1870,7 @@ M.KILL_PICKUP_PAIR_MIN_SQUAD = 3   -- default 3; KEEL 0 (off)
 M.STRATEGIC_PLACE_CENTER_BIAS_CAP    = 16   -- tiles; beyond this the center bias is 0
 M.STRATEGIC_PLACE_CENTER_BIAS_WEIGHT = 4    -- score per tile closer to the strategic center
 
--- ── Defensive turtle placement (2026-09-29, Andrew; Infection survivors) ──
+-- ── Defensive turtle placement (2026-09-29, Andrew; Virus survivors) ──
 -- PILL_PLACE_TURTLE is the one master switch. Off (default) = the strategic
 -- placement scan is exactly today's. On, the scan (goals.lua
 -- eval_place_pill_strategic, and its heatmap mirror) builds ONE defended
@@ -1893,7 +1893,7 @@ M.STRATEGIC_PLACE_CENTER_BIAS_WEIGHT = 4    -- score per tile closer to the stra
 -- Any difficulty can turn it on: `preset=turtle` or
 -- `cfg=PILL_PLACE_TURTLE=true`, or the `survivor` init word (M.SIDE_SETTINGS).
 -- A runtime cfg=PILL_PLACE_TURTLE=false or `horde` turns it off again
--- (Infection sends `horde` when a survivor turns); the tunables are read only
+-- (Virus sends `horde` when a survivor turns); the tunables are read only
 -- while the switch is on.
 M.PILL_PLACE_TURTLE = false
 -- Easy's back/defensive placement weights. MODE_LEVELS.default.easy reads
@@ -1977,7 +1977,7 @@ M.TANK_COMBAT_OPPORTUNISTIC_AIM = 8     -- bolo angle units (~11??) aim toleranc
 --     shots_needed = HEAT_MAX_HITS - round(anger / PILL_ANGER_BUMP), then capped
 -- by the pill's health via attack.lua heat_allowed_shots (see MIN_HP below).
 M.ATTACK_TANK_HEAT_PILL         = true  -- master: heat a friendly pill during attack_tank
--- Heat-only attack_tank (2026-09-29, Andrew; Infection survivors get it from
+-- Heat-only attack_tank (2026-09-29, Andrew; Virus survivors get it from
 -- the `survivor` init word, M.SIDE_SETTINGS): the bot never closes on or
 -- shoots an enemy tank itself. An attack_tank row stands only while a friendly pill can be heated at that
 -- tank (goals.lua eval_attack_tank, gate "heat_only"), and the fight loop
@@ -5239,7 +5239,7 @@ M.PRESETS = {
   -- turtle: the "Defensive Turtle" placement on any difficulty (2026-09-29).
   -- Only the master switch; its tunables (PILL_PLACE_TURTLE_*) sit beside it.
   -- preset= is applied after the difficulty bundle, so this works at every
-  -- level. Infection sends the `survivor` / `horde` word instead (see
+  -- level. Virus sends the `survivor` / `horde` word instead (see
   -- M.SIDE_SETTINGS below), because a preset cannot be taken back at runtime
   -- and a side word can.
   turtle = {
@@ -5247,7 +5247,7 @@ M.PRESETS = {
   },
 }
 
--- ── SIDE SETTINGS (2026-09-29, Andrew; Infection) ─────────────────────────
+-- ── SIDE SETTINGS (2026-09-29, Andrew; Virus) ─────────────────────────
 -- What the init words `survivor` and `horde` write into C (init.lua
 -- _apply_cfg_tokens). Each word also sets state.side, and the never-refuel
 -- flag (init.lua Brain.apply_init_tokens): horde never refuels, survivor does.
