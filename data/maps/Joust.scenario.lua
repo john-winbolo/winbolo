@@ -1,8 +1,10 @@
 -- Joust
 --
--- A road lane over deep sea, a grass ring in the middle of it and a grass pad
--- at each end. Every tank comes back on its own pad, off its boat, facing the
--- other end. The first side to reach the kill count the host picked wins.
+-- A deep-sea arena, 28 by 28 squares, inside a wall of buildings three
+-- squares thick. There is no land inside it. Every tank starts and comes
+-- back on a boat, and any hit on a tank on a boat sinks the boat, so the
+-- tank drowns: one hit kills. The first side to reach the kill count the
+-- host picked wins.
 --
 -- Who is a side. When the tanks in the round sit on two or more lobby teams,
 -- each team is a side and its members' kills add up. Otherwise it is every
@@ -14,22 +16,25 @@
 -- last enemy tank that hit it in the last CREDIT_SECONDS, and for nobody when
 -- no enemy did. Killing a tank on your own side scores nothing.
 --
--- The map is Joust.map and the squares below are that map's. Change one and
--- change both.
+-- Where a tank starts. Joust.map has sixteen starts, eight at each end of the
+-- arena. The script reads them from the map and names no squares. In a team
+-- round each team takes one end. The first time a tank comes on, it takes
+-- the start that matches its place (its place in its own team in a team
+-- round), so no two tanks share one. After that, a tank comes back on the
+-- start that is farthest from every enemy tank, and no shell can hit it for
+-- its first SHIELD_SECONDS, so a shell already flying cannot sink it as it
+-- arrives.
+--
+-- There are no bases: a base is land, and a tank that drives onto it leaves
+-- its boat. A tank gets back one shell every REFILL_SECONDS instead.
 
 local WEST, EAST = 1, 2
-local FACING = { [WEST] = 64, [EAST] = 192 }   -- full 0-255 heading
-
--- Where a tank comes back, in map squares, on its own end's pad.
-local SPOTS = {
-  [WEST] = { { 112, 126 }, { 112, 124 }, { 112, 128 }, { 113, 125 },
-             { 113, 127 }, { 111, 124 }, { 111, 128 }, { 114, 126 } },
-  [EAST] = { { 140, 126 }, { 140, 128 }, { 140, 124 }, { 139, 127 },
-             { 139, 125 }, { 141, 128 }, { 141, 124 }, { 138, 126 } },
-}
 
 local DEFAULT_TARGET = 10
 local CREDIT_SECONDS = 10     -- how long a hit keeps its claim on a drowning
+local REFILL_SECONDS = 2      -- one shell back this often, up to full
+local OPENING_TICKS  = 200    -- first two seconds: fixed starts, not farthest
+local SHIELD_SECONDS = 1      -- a new tank cannot be hit this long
 local PANEL_SECONDS  = 0.5
 local PANEL_ROWS     = 8
 local LABEL          = "KILLS"
@@ -40,6 +45,11 @@ local kills     = {}          -- side key -> kills
 local last_hit  = {}          -- seat -> { by = seat, at = tick }
 local dirty     = true
 local over      = false
+local started   = false       -- on_start has run and fixed team_mode
+local start_at  = 0           -- game.tick() at on_start
+local spawned   = {}          -- seat -> true once it has taken the field
+local shield    = {}          -- seat -> game.tick() its spawn shield ends
+local ends      = nil         -- [WEST], [EAST] and all: lists of { n, x, y }
 
 local function in_round(p)
   local slot = game.lobby_slot(p)
@@ -81,26 +91,96 @@ local function side_name(key)
   return name_of(n)
 end
 
--- Which end a seat plays from. In a team round the teams take the two ends in
--- turn, lowest team number first; otherwise the seats do, by seat number.
+-- Which end a seat plays from in a team round. The teams take the two ends
+-- in turn, lowest team number first.
 local function end_of(p)
-  if team_mode and team_of(p) > 0 then
-    local teams, seen = {}, {}
-    for q = 0, game.max_tanks() - 1 do
-      local t = team_of(q)
-      if t > 0 and not seen[t] and in_round(q) then
-        seen[t] = true
-        teams[#teams + 1] = t
-      end
+  local teams, seen = {}, {}
+  for q = 0, game.max_tanks() - 1 do
+    local t = team_of(q)
+    if t > 0 and not seen[t] and in_round(q) then
+      seen[t] = true
+      teams[#teams + 1] = t
     end
-    table.sort(teams)
-    for i, t in ipairs(teams) do
-      if t == team_of(p) then
-        return (i % 2 == 1) and WEST or EAST
-      end
+  end
+  table.sort(teams)
+  for i, t in ipairs(teams) do
+    if t == team_of(p) then
+      return (i % 2 == 1) and WEST or EAST
     end
   end
   return (p % 2 == 0) and WEST or EAST
+end
+
+-- How many lobby teams the seats now in the round sit on.
+local function count_teams()
+  local teams, count = {}, 0
+  for p = 0, game.max_tanks() - 1 do
+    local t = team_of(p)
+    if in_round(p) and t > 0 and not teams[t] then
+      teams[t] = true
+      count = count + 1
+    end
+  end
+  return count
+end
+
+-- The map's starts, split into the two ends at the middle of all of them.
+-- "all" keeps the map's own order, which takes the two ends in turn.
+local function read_ends()
+  if ends ~= nil then
+    return ends
+  end
+  local list, sum = {}, 0
+  for n = 1, game.num_starts() do
+    local s = game.start(n)
+    if s ~= nil then
+      list[#list + 1] = { n = n, x = s.x, y = s.y }
+      sum = sum + s.x
+    end
+  end
+  ends = { [WEST] = {}, [EAST] = {}, all = {} }
+  local mid = (#list > 0) and (sum / #list) or 0
+  for _, s in ipairs(list) do
+    local side = (s.x < mid) and WEST or EAST
+    ends[side][#ends[side] + 1] = s
+    ends.all[#ends.all + 1] = s
+  end
+  return ends
+end
+
+-- The seat's place among the seats in the round below it: among its own
+-- team in a team round, among every seat otherwise.
+local function place_of(p)
+  local place, team = 0, team_of(p)
+  local by_team = team_mode and team > 0
+  for q = 0, p - 1 do
+    if in_round(q) and (not by_team or team_of(q) == team) then
+      place = place + 1
+    end
+  end
+  return place
+end
+
+-- How far a start is from the nearest live enemy tank, and from the nearest
+-- live tank of any side, in squares. 999 when there is none.
+local function start_gaps(s, p)
+  local enemy, any = 999, 999
+  local mine = side_of(p)
+  for q = 0, game.max_tanks() - 1 do
+    if q ~= p then
+      local t = game.tank(q)
+      if t ~= nil and not t.dead then
+        local gap = math.max(math.abs(s.x - t.mx), math.abs(s.y - t.my))
+        if gap < any then
+          any = gap
+        end
+        if side_of(q) ~= mine and gap < enemy then
+          enemy = gap
+        end
+      end
+    end
+  end
+  return enemy, any
 end
 
 local function post_score(key)
@@ -168,6 +248,22 @@ local function panel_loop()
   game.timer(PANEL_SECONDS, panel_loop)
 end
 
+-- One shell back every REFILL_SECONDS, up to full, for every live tank.
+-- There are no bases, and a tank with no shells could never score again.
+local function refill_loop()
+  if over then
+    return
+  end
+  local full = game.rule("tank_full_shells")
+  for p = 0, game.max_tanks() - 1 do
+    local t = game.tank(p)
+    if t ~= nil and not t.dead and t.shells < full then
+      game.set_stocks(p, { shells = t.shells + 1 })
+    end
+  end
+  game.timer(REFILL_SECONDS, refill_loop)
+end
+
 local function finish(key)
   if over then
     return
@@ -205,7 +301,7 @@ function on_tank_hit(victim, attacker, cause, amount, pill, scripted)
     return
   end
   -- A teammate's hit is not kept: it would take the drowning from the enemy
-  -- who knocked the tank in, and then score for nobody.
+  -- who hit the tank first, and then score for nobody.
   if side_of(attacker) == side_of(victim) then
     return
   end
@@ -237,30 +333,68 @@ function on_tank_killed(victim, killer, cause, scripted)
   end
 end
 
--- A tank arrives on a start out in the water, on a boat. Take it off the boat
--- and put it on its own pad, facing the other end.
+-- Which start a tank comes on. The engine then puts it on the nearest deep
+-- sea square that is clear of other tanks, and a tank on deep sea is on a
+-- boat.
+function on_choose_start(p)
+  -- The shield starts here, as the tank is placed. on_tank_spawned comes
+  -- after the tick's shells have flown, too late for one that lands at once.
+  shield[p] = game.tick() + SHIELD_SECONDS * 100
+  local e = read_ends()
+  if not started then
+    team_mode = count_teams() >= 2
+  end
+  local list = e.all
+  if team_mode and team_of(p) > 0 then
+    list = e[end_of(p)]
+  end
+  if #list == 0 then
+    return nil
+  end
+  -- The opening: one start for each place, so no two tanks share a square.
+  -- A free-for-all takes the map's order, which puts the seats at the two
+  -- ends in turn.
+  if not spawned[p] and
+     (not started or game.tick() - start_at < OPENING_TICKS) then
+    return list[(place_of(p) % #list) + 1].n
+  end
+  -- Later: the start farthest from every enemy tank, then from every tank.
+  local best, best_enemy, best_any = list[1], -1, -1
+  for _, s in ipairs(list) do
+    local enemy, any = start_gaps(s, p)
+    if enemy > best_enemy or (enemy == best_enemy and any > best_any) then
+      best, best_enemy, best_any = s, enemy, any
+    end
+  end
+  return best.n
+end
+
+-- A tank arrives on a start out in the deep sea, on a boat.
 function on_tank_spawned(p, mx, my, respawn, scripted)
+  spawned[p] = true
+  last_hit[p] = nil
+  -- A start a script op named skips on_choose_start, so start the shield
+  -- here when that did not.
+  if shield[p] == nil or shield[p] <= game.tick() then
+    shield[p] = game.tick() + SHIELD_SECONDS * 100
+  end
   if over then
     return
   end
-  local side = end_of(p)
-  local spots = SPOTS[side]
-  -- Free-for-all splits seats by parity, so every second seat shares an end.
-  -- A team round puts the whole team on one end, so count the seat's place
-  -- among its own team instead, or teammates would land on the same square.
-  local slot = math.floor(p / 2)
-  if team_mode and team_of(p) > 0 then
-    slot = 0
-    for q = 0, p - 1 do
-      if team_of(q) == team_of(p) and in_round(q) then
-        slot = slot + 1
-      end
-    end
+  -- The engine gives every new tank a boat. This only guards the rule the
+  -- whole game stands on.
+  local t = game.tank(p)
+  if t ~= nil and not t.boat then
+    game.set_boat(p, true)
   end
-  local at = spots[(slot % #spots) + 1]
-  game.set_boat(p, false)
-  game.teleport(p, at[1], at[2], FACING[side])
-  last_hit[p] = nil
+end
+
+-- A shell passes through a tank in its first SHIELD_SECONDS.
+function can_hit(attacker, kind, n, pill)
+  if kind == "tank" and shield[n] ~= nil and game.tick() < shield[n] then
+    return false
+  end
+  return nil
 end
 
 function on_player_join(p, scripted)
@@ -273,18 +407,21 @@ end
 
 function on_player_leave(p, scripted)
   last_hit[p] = nil
+  spawned[p] = nil
+  shield[p] = nil
   if not team_mode or team_of(p) == 0 then
     kills["p" .. p] = nil     -- the seat's next player starts at nought
   end
   dirty = true
 end
 
--- The lane stays as drawn: no bridges, no boats, no walls.
+-- The arena stays as drawn: no bridges, no boats, no walls.
 function can_build(p, action, x, y, n)
   return false
 end
 
--- Two bases, one each end. Owning both does not end a joust.
+-- The map has no bases. This keeps a round with no bases from counting as
+-- one side holding them all.
 function allow_base_win()
   return false
 end
@@ -295,45 +432,47 @@ function on_start()
     target = math.floor(v)
   end
 
-  local teams, count = {}, 0
-  for p = 0, game.max_tanks() - 1 do
-    local t = team_of(p)
-    if in_round(p) and t > 0 and not teams[t] then
-      teams[t] = true
-      count = count + 1
-    end
-  end
-  team_mode = count >= 2
+  team_mode = count_teams() >= 2
+  started = true
+  start_at = game.tick()
 
   for _, key in ipairs(standings()) do
     post_score(key)
   end
   game.message(string.format("Joust: first %s to %d kills wins. %s",
                              team_mode and "team" or "tank", target,
-                             "Knock them into the sea."))
+                             "One hit sinks a boat."))
   game.log(string.format("Joust: target %d, %s", target,
                          team_mode and "teams" or "free for all"))
   dirty = true
   panel_loop()
+  game.timer(REFILL_SECONDS, refill_loop)
 end
 
 function on_end()
   over = true
-  local parts = {}
+  -- A log line holds 128 bytes, and sixteen names do not fit in one, so the
+  -- standings go out a few sides to a line.
+  local line = "Joust ended:"
   for _, key in ipairs(standings()) do
-    parts[#parts + 1] = string.format("%s %d", side_name(key), kills[key] or 0)
+    local part = string.format(" %s %d", side_name(key), kills[key] or 0)
+    if #line + #part > 100 then
+      game.log(line)
+      line = "Joust ended (more):"
+    end
+    line = line .. part
   end
-  game.log("Joust ended: " .. table.concat(parts, ", "))
+  game.log(line)
 end
 
 scenario = {
   name        = "Joust",
-  description = "A road lane over deep sea. First to the kill count wins; " ..
-                "a tank knocked into the sea counts for whoever hit it last.",
+  description = "A deep-sea arena inside thick walls. Every tank is on a " ..
+                "boat, so one hit drowns it. First to the kill count wins.",
   api         = 1,
   game        = "open",
 
-  -- The pads and spawn squares above are this map's.
+  -- The script splits the map's own starts into its two ends.
   bound       = true,
 
   settings = {
@@ -342,24 +481,34 @@ scenario = {
   },
 
   rules = {
-    -- Trees never grow, so the lane and the ring stay open. The rule has no
-    -- off, so this is the longest wait it will take.
+    -- Trees never grow, so no land ever shows up in the arena. The rule has
+    -- no off, so this is the longest wait it will take.
     tree_grow_ticks         = 2000000000,
     tree_grow_initial_ticks = 2000000000,
 
-    -- Back on the pad after about three seconds.
+    -- A wall square takes 256 shells to turn to rubble, not 5, so the wall
+    -- holds for the whole round and nobody shoots a way out.
+    building_life = 255,
+
+    -- A dying tank never makes the big blast that flattens the squares
+    -- round it, so a tank that dies at the wall cannot open it.
+    big_explosion_threshold = 510,
+
+    -- Back on a boat after about three seconds.
     tank_death_ticks = 150,
   },
 
   callbacks = {
-    on_start = "Reads the kill target, decides team or free-for-all and posts the scores.",
+    on_start = "Reads the kill target, decides team or free-for-all, posts the scores and starts the shell refill.",
+    on_choose_start = "Picks each tank's start: one for each place at the opening, then the start farthest from every enemy, at its own end in a team round.",
     on_tank_hit = "Remembers the last enemy tank that hit each tank.",
     on_tank_killed = "Gives the kill to the killer, or for a drowning to the last enemy hit, and ends the round at the target.",
-    on_tank_spawned = "Takes a new tank off its boat and puts it on its own end's pad.",
+    on_tank_spawned = "Makes sure a new tank is on its boat and starts its one-second shield.",
+    can_hit = "Lets shells pass through a tank in its first second, so nobody is sunk as they arrive.",
     on_player_join = "Shows the new player's score.",
     on_player_leave = "Clears a leaving free-for-all player's kills.",
-    can_build = "Nothing can be built, so the lane stays as drawn.",
-    allow_base_win = "Holding both bases does not win; only kills count.",
+    can_build = "Nothing can be built, so the arena stays as drawn.",
+    allow_base_win = "Only kills win; the map has no bases.",
     on_end = "Writes the final standings to the server log.",
   },
 }
