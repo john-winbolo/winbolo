@@ -451,11 +451,6 @@ typedef struct
 	WORLD_X ping_x;
 	WORLD_Y ping_y;
 
-	// This tank's own modifiers (a scenario sets them per tank, at any tick)
-	// and the reload interval they give, in ticks. brain_data.c fills both
-	// once per tick. Appended, like everything else here.
-	BrainTankMods mods;
-	BYTE    reload_ticks;
 	// Which pill and base numbers are on the map this tick: bit n set means
 	// pill (or base) n, 0 based, is on it. A scenario can take a pill or a
 	// base off the map for good. The slot stays, so the numbers above it do
@@ -466,6 +461,12 @@ typedef struct
 	// the bit. Bits at or past max_pillboxes / max_refbases are always 0.
 	uint32_t pills_on_map;
 	uint32_t bases_on_map;
+
+	// This tank's own modifiers (a scenario sets them per tank, at any tick)
+	// and the reload interval they give, in ticks. brain_data.c fills both
+	// once per tick. Appended, like everything else here.
+	BrainTankMods mods;
+	BYTE    reload_ticks;
 
 	} BrainInfo;
 

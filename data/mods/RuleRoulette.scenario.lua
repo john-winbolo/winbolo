@@ -1,55 +1,67 @@
 -- =========================================================================
--- Rule Roulette — a mod that re-rolls every tank's numbers on a clock.
+-- Rule Roulette — a mod that changes every tank's numbers on a clock, one
+-- named mode at a time.
 --
--- Every so often (a minute by default) each tank's six modifiers are rolled
--- again: speed, accel, turn, reload, dealt and taken, as percentages of the
--- classic tank. Humans and bots get the same roll unless the host asks for
--- one roll per tank. A short countdown comes first, and the new numbers go up
--- on the centre of the screen, on the newswire and on a small panel that
--- stays up until the next roll.
+-- There are eight modes. Each one is a fixed set of the six tank modifiers
+-- (speed, accel, turn, reload, dealt and taken, as percentages of the
+-- classic tank), the same for every tank:
 --
--- It exists to play-test bots that read the live rules and their own
--- modifiers: the numbers change under them every minute, so a bot that plans
--- with the classic values shows it quickly.
+--   Good for everyone: Overdrive, Turbo, Iron Hide.
+--   Bad for everyone:  Rust Bucket.
+--   A trade-off:       Glass Cannon, Juggernaut, Machine Gun, Ice Rink.
+--
+-- Every `interval` seconds the next mode starts. The order is a shuffle of
+-- the eight from the scenario's own math.random, so a seed and a replay give
+-- the same order. When all eight have played they are shuffled again, and a
+-- mode never follows itself across that seam. A short countdown names the
+-- mode that is coming; the new mode goes up on the centre of the screen and
+-- on the newswire, and panel 0 shows it, what it means, the numbers it
+-- changes, the time left and the modes that come next.
+--
+-- It exists to play-test bots that read their own modifiers: the numbers
+-- change under them every minute, so a bot that plans with the classic
+-- values shows it quickly.
 --
 -- Reload is the time between shots, so 160 is a gun that fires less often.
 -- Taken prices every blow the tank takes, so 160 is armour that gives way
 -- sooner. For those two a higher number is worse; for the other four it is
 -- better.
 --
--- With "also roll rules" on, a few game rules are rolled as well, the same
--- for everybody: shell damage, pillbox range, the gap between a pillbox's
--- shots, the road, grass and forest speed caps, and the builder's build time.
+-- The host sets the interval, how many upcoming modes the panel shows, the
+-- countdown and the chat commands in the lobby (scenario.settings below).
+-- With chat commands on, a human can change the interval and the preview
+-- and skip to the next mode during a round; type "!roulette" for the list.
 --
 -- kind = "mod": the win condition is left to the map and the lobby.
 -- bound = false: it names no square, pill or base, so it plays on any map.
---
--- The scenario API has no settings table a lobby can show, so the settings
--- are the table below. With `chat` set to true, a human can also change them
--- during a round with chat commands; type "!roulette" for the list.
 -- =========================================================================
 
-local SETTINGS = {
-  interval  = 60,       -- seconds between rolls, 20 to 300
-  mode      = "same",   -- "same": one roll for every tank; "each": each tank its own
-  intensity = "wild",   -- "mild": 70 to 140 %; "wild": 40 to 250 %
-  rules     = false,    -- also roll a few game rules (see ROLLED_RULES)
-  countdown = 5,        -- seconds of "New roll in N" before each roll; 0 for none
-  panel     = true,     -- keep the current numbers on panel 0
-  chat      = false,    -- let humans change these with "!roulette" in chat
-  -- Which modifiers roll. One set to false stays at the classic 100.
-  roll = { speed = true, accel = true, turn = true,
-           reload = true, dealt = true, taken = true },
+-- ── The modes ───────────────────────────────────────────────────────
+
+-- `kind` is "good" (every number better), "bad" (every number worse) or
+-- "trade" (some better, some worse). `mean` is what the mode feels like, in
+-- one line the panel can show whole. A modifier left out is 100.
+local MODES = {
+  { name = "Overdrive",    kind = "good",  mean = "Faster, tougher, hits harder.",
+    mods = { speed = 150, accel = 160, turn = 140, reload = 60, dealt = 150, taken = 60 } },
+  { name = "Turbo",        kind = "good",  mean = "Pure speed: fast and nimble.",
+    mods = { speed = 170, accel = 180, turn = 150 } },
+  { name = "Iron Hide",    kind = "good",  mean = "Tough as nails, quick reload.",
+    mods = { taken = 40, reload = 80 } },
+  { name = "Rust Bucket",  kind = "bad",   mean = "Slow, fragile, weak shots.",
+    mods = { speed = 60, accel = 50, turn = 70, reload = 160, dealt = 70, taken = 150 } },
+  { name = "Glass Cannon", kind = "trade", mean = "Hit hard, break fast.",
+    mods = { dealt = 250, taken = 250 } },
+  { name = "Juggernaut",   kind = "trade", mean = "Slow and very tough.",
+    mods = { speed = 65, accel = 60, reload = 130, taken = 40 } },
+  { name = "Machine Gun",  kind = "trade", mean = "Rapid fire, weak shells.",
+    mods = { reload = 35, dealt = 45 } },
+  { name = "Ice Rink",     kind = "trade", mean = "Hard to stop, hard to steer.",
+    mods = { speed = 140, accel = 35, turn = 55 } },
 }
 
-local INTERVAL_MIN = 20
-local INTERVAL_MAX = 300
-
--- Modifier range in percent, and the factor range a rolled rule is scaled by.
-local INTENSITY = {
-  mild = { lo = 70, hi = 140, rlo = 0.80, rhi = 1.25 },
-  wild = { lo = 40, hi = 250, rlo = 0.60, rhi = 1.60 },
-}
+local KIND_TAG    = { good = "GOOD FOR ALL", bad = "BAD FOR ALL", trade = "TRADE-OFF" }
+local KIND_COLOUR = { good = "green", bad = "red", trade = "yellow" }
 
 local MOD_KEYS   = { "speed", "accel", "turn", "reload", "dealt", "taken" }
 local MOD_LABEL  = { speed = "Speed", accel = "Accel", turn = "Turn",
@@ -57,46 +69,32 @@ local MOD_LABEL  = { speed = "Speed", accel = "Accel", turn = "Turn",
 -- For these a higher percentage hurts the tank that has it.
 local WORSE_HIGH = { reload = true, taken = true }
 
--- The rules "also roll rules" touches. Each group is scaled by one factor
--- from the classic (or scenario-set) value read at the round start. `low`
--- and `high` are the rule's bounds; `whole` rounds to an integer. A group's
--- `worse_high` says whether a higher factor hurts the tanks.
-local ROLLED_RULES = {
-  { label = "Shell damage", worse_high = true,
-    rules = { { name = "shell_damage", low = 1, high = 255, whole = true } } },
-  { label = "Pill range", worse_high = true,
-    rules = { { name = "pill_range", low = 256, high = 65535, whole = true },
-              { name = "pill_fire_length", low = 0.5, high = 127, whole = false } } },
-  { label = "Pill shot gap", worse_high = false,
-    -- The floor is pill_attack_min_ticks, filled in at the round start.
-    rules = { { name = "pill_attack_ticks", low = 1, high = 255, whole = true } } },
-  { label = "Terrain speed", worse_high = false,
-    rules = { { name = "speed_road",   low = 1, high = 63, whole = true },
-              { name = "speed_grass",  low = 1, high = 63, whole = true },
-              { name = "speed_forest", low = 1, high = 63, whole = true } } },
-  { label = "Build time", worse_high = true,
-    rules = { { name = "lgm_build_ticks", low = 1, high = 255, whole = true } } },
-}
+local INTERVAL_MIN = 20
+local INTERVAL_MAX = 300
+local PREVIEW_MAX  = 3     -- the most upcoming modes the panel has room for
+
+-- ── State ───────────────────────────────────────────────────────────
+
+local interval  = 60       -- the lobby settings, read in on_start
+local preview   = 1
+local countdown = 5
+local chat      = false
 
 local running  = false
 local over     = false
-local rolls    = 0          -- how many rolls this round
-local left     = 0          -- seconds to the next roll
-local next_at  = 0          -- game.tick() of the next roll, for the panel clock
-local shared   = nil        -- the "same" roll, as a modifier table
-local current  = {}         -- seat -> the modifier table it was last given
-local base     = {}         -- rule name -> its value at the round start
-local factor   = {}         -- group index -> the factor last rolled, or nil
+local changes  = 0          -- how many modes this round has had
+local left     = 0          -- seconds to the next mode
+local next_at  = 0          -- game.tick() of the next mode, for the panel clock
+local mode     = nil        -- the MODES entry in force
+local queue    = {}         -- MODES indices still to come, in order
+local last_idx = nil        -- the index of the mode in force
 
 -- ── Small helpers ───────────────────────────────────────────────────
 
+-- A seat with a tank on the field. A held seat has none, and
+-- set_modifiers needs one.
 local function in_round(p)
-  local slot = game.lobby_slot(p)
-  return slot ~= nil and slot.connected and slot.fielded
-end
-
-local function round_to(v, step)
-  return math.floor(v / step + 0.5) * step
+  return game.tank(p) ~= nil
 end
 
 local function clamp(v, lo, hi)
@@ -105,248 +103,205 @@ local function clamp(v, lo, hi)
   return v
 end
 
--- Log-uniform between lo and hi, so going up and going down are equally
--- likely: with 40 to 250 the middle of the draw is 100, not 145.
-local function log_uniform(lo, hi)
-  return lo * (hi / lo) ^ math.random()
+-- The full six-field table set_modifiers takes: a missing one is 100.
+local function full_mods(m)
+  local t = {}
+  for _, k in ipairs(MOD_KEYS) do
+    t[k] = m.mods[k] or 100
+  end
+  return t
 end
 
-local function band()
-  return INTENSITY[SETTINGS.intensity] or INTENSITY.wild
+-- Kept short: a log line over 128 bytes is refused.
+local function mods_text(t)
+  return string.format("s%d a%d t%d r%d d%d k%d",
+                       t.speed, t.accel, t.turn, t.reload, t.dealt, t.taken)
+end
+
+-- "Now: Glass Cannon - hit hard, break fast."
+local function now_text(m)
+  return "Now: " .. m.name .. " - " .. m.mean:sub(1, 1):lower() .. m.mean:sub(2)
+end
+
+-- ── The order ───────────────────────────────────────────────────────
+
+-- Adds one shuffled round of all eight to the queue. The first of the new
+-- round is never the mode just before it, so no mode plays twice in a row.
+local function add_round()
+  local bag = {}
+  for i = 1, #MODES do
+    bag[i] = i
+  end
+  for i = #bag, 2, -1 do
+    local j = math.random(i)
+    bag[i], bag[j] = bag[j], bag[i]
+  end
+  local before = queue[#queue] or last_idx
+  if bag[1] == before then
+    local j = math.random(2, #bag)
+    bag[1], bag[j] = bag[j], bag[1]
+  end
+  for _, i in ipairs(bag) do
+    queue[#queue + 1] = i
+  end
+end
+
+-- Keeps enough modes queued for the panel to show `preview` of them.
+local function fill_queue()
+  while #queue < PREVIEW_MAX + 1 do
+    add_round()
+  end
 end
 
 -- ── Modifiers ───────────────────────────────────────────────────────
 
-local function roll_mods()
-  local b = band()
-  local m = {}
-  for _, k in ipairs(MOD_KEYS) do
-    if SETTINGS.roll[k] then
-      m[k] = clamp(round_to(log_uniform(b.lo, b.hi), 5), b.lo, b.hi)
-    else
-      m[k] = 100
-    end
-  end
-  return m
-end
-
-local function mods_text(m)
-  return string.format("speed %d%% accel %d%% turn %d%% reload %d%% dealt %d%% taken %d%%",
-                       m.speed, m.accel, m.turn, m.reload, m.dealt, m.taken)
-end
-
-local function mods_short(m)
-  return string.format("Speed %d  Accel %d  Turn %d  Reload %d  Dealt %d  Taken %d",
-                       m.speed, m.accel, m.turn, m.reload, m.dealt, m.taken)
-end
-
-local function apply_mods(p, m)
-  local ok, code, why = game.set_modifiers(p, m)
+local function apply_mods(p, t)
+  local ok, code, why = game.set_modifiers(p, t)
   if not ok then
     game.log(string.format("RuleRoulette: set_modifiers(%d) refused: %s %s",
                            p, tostring(code), tostring(why)))
   end
-  current[p] = m
 end
 
 -- Whether a tank already carries these numbers. A respawn keeps them, and
 -- this saves the write when it has.
-local function has_mods(p, m)
-  local t = game.tank(p)
-  if t == nil or t.mods == nil then
+local function has_mods(p, t)
+  local tk = game.tank(p)
+  if tk == nil or tk.mods == nil then
     return false
   end
   for _, k in ipairs(MOD_KEYS) do
-    if t.mods[k] ~= m[k] then
+    if tk.mods[k] ~= t[k] then
       return false
     end
   end
   return true
 end
 
--- ── Rules ───────────────────────────────────────────────────────────
-
-local function read_base_rules()
-  for _, g in ipairs(ROLLED_RULES) do
-    for _, r in ipairs(g.rules) do
-      base[r.name] = game.rule(r.name)
-    end
-  end
-  -- A pillbox's shot gap may not fall under its angry floor.
-  local floor = game.rule("pill_attack_min_ticks")
-  for _, g in ipairs(ROLLED_RULES) do
-    for _, r in ipairs(g.rules) do
-      if r.name == "pill_attack_ticks" then
-        r.low = math.max(r.low, floor)
-      end
-    end
-  end
-end
-
-local function write_rule(name, value)
-  local ok, code, why = game.set_rule(name, value)
-  if not ok then
-    game.log(string.format("RuleRoulette: set_rule(%s, %s) refused: %s %s",
-                           name, tostring(value), tostring(code), tostring(why)))
-  end
-end
-
-local function set_group(g, f)
-  for _, r in ipairs(g.rules) do
-    local v = base[r.name] * f
-    if r.whole then
-      v = math.floor(v + 0.5)
-    end
-    write_rule(r.name, clamp(v, r.low, r.high))
-  end
-end
-
-local function roll_rules()
-  local b = band()
-  for i, g in ipairs(ROLLED_RULES) do
-    local f = clamp(round_to(log_uniform(b.rlo, b.rhi), 0.05), b.rlo, b.rhi)
-    factor[i] = f
-    set_group(g, f)
-  end
-end
-
-local function restore_rules()
-  for i, g in ipairs(ROLLED_RULES) do
-    if factor[i] ~= nil then
-      set_group(g, 1)
-      factor[i] = nil
-    end
-  end
-end
-
--- What a group is set to now, as a percent of its round-start value. Read
--- back from the first rule, so rounding shows (shell damage 5 * 1.1 is 6,
--- which is 120 %).
-local function group_pct(g)
-  local r = g.rules[1]
-  if base[r.name] == nil or base[r.name] == 0 then
-    return 100
-  end
-  return math.floor(game.rule(r.name) * 100 / base[r.name] + 0.5)
-end
-
-local function rules_text()
-  local parts = {}
-  for i, g in ipairs(ROLLED_RULES) do
-    if factor[i] ~= nil then
-      parts[#parts + 1] = string.format("%s %d%%", g.label:lower(), group_pct(g))
-    end
-  end
-  return table.concat(parts, ", ")
-end
-
 -- ── Panel ───────────────────────────────────────────────────────────
+--
+-- 128 x 128 units. Text heights are the frontend's: "small" is 8 units and
+-- "normal" 11, in Inter. The widest strings below, measured from that font:
+-- a mode name in normal, "Glass Cannon", 60 units; a tag in small, "GOOD FOR
+-- ALL", 49; a meaning in small, "Tough as nails, quick reload.", 90; a number
+-- cell, "Reload 160%", 41. So the header, a meaning on one line and two
+-- number cells to a row all fit with room to spare.
+--
+--   y   0 .. 15  band: mode name (normal, left), its tag (small, right)
+--   y  18        meaning (small)
+--   y  29 ..     numbers that are not 100, two to a row, up to 3 rows
+--   then         "Next mode in" and the clock
+--   then         a rule, and per upcoming mode its name and its meaning
+--
+-- With all six numbers changed and three upcoming modes, the last line
+-- starts at y 116 and ends at 124.
 
 local function tint(pct, worse_high)
-  if pct == 100 then return "white" end
   local better = (pct > 100) ~= (worse_high == true)
   return better and "green" or "red"
 end
 
-local function draw_panel(m, target)
-  if not SETTINGS.panel then
-    return
-  end
+local function build_panel()
   local list = {
-    { "rect", 0, 0, 128, 12, "grey_dark", true },
-    { "text", 64, 2, "white", "small", "centre", "Rule Roulette" },
-    { "text", 3, 15, "grey", "small", "left", "Next roll" },
-    { "timer", 125, 15, "yellow", "small", "right", "down", next_at },
+    { "rect", 0, 0, 128, 15, "grey_dark", true },
+    { "text", 3, 2, KIND_COLOUR[mode.kind], "normal", "left", mode.name },
+    { "text", 125, 4, KIND_COLOUR[mode.kind], "small", "right", KIND_TAG[mode.kind] },
+    { "text", 3, 18, "white", "small", "left", mode.mean },
   }
-  local y = 27
+  local y, col = 29, 0
   for _, k in ipairs(MOD_KEYS) do
-    list[#list + 1] = { "text", 3, y, "white", "small", "left", MOD_LABEL[k] }
-    list[#list + 1] = { "text", 125, y, tint(m[k], WORSE_HIGH[k]), "small", "right",
-                        m[k] .. "%" }
+    local v = mode.mods[k]
+    if v ~= nil and v ~= 100 then
+      list[#list + 1] = { "text", col == 0 and 3 or 65, y, tint(v, WORSE_HIGH[k]),
+                          "small", "left", MOD_LABEL[k] .. " " .. v .. "%" }
+      col = col + 1
+      if col == 2 then
+        col, y = 0, y + 9
+      end
+    end
+  end
+  if col ~= 0 then
     y = y + 9
   end
-  if SETTINGS.rules then
-    y = y + 2
-    for i, g in ipairs(ROLLED_RULES) do
-      if factor[i] ~= nil then
-        local pct = group_pct(g)
-        list[#list + 1] = { "text", 3, y, "white", "small", "left", g.label }
-        list[#list + 1] = { "text", 125, y, tint(pct, g.worse_high), "small", "right",
-                            pct .. "%" }
-        y = y + 9
-      end
+  y = y + 2
+  list[#list + 1] = { "text", 3, y, "grey", "small", "left", "Next mode in" }
+  list[#list + 1] = { "timer", 125, y, "yellow", "small", "right", "down", next_at }
+  y = y + 10
+  if preview > 0 then
+    list[#list + 1] = { "line", 3, y, 124, y, "grey_dark" }
+    y = y + 3
+    for i = 1, preview do
+      local m = MODES[queue[i]]
+      list[#list + 1] = { "text", 3, y, KIND_COLOUR[m.kind], "small", "left",
+                          (i == 1 and "Next: " or "Then: ") .. m.name }
+      list[#list + 1] = { "text", 9, y + 9, "grey", "small", "left", m.mean }
+      y = y + 18
     end
   end
-  game.panel(0, list, target)
+  return list
 end
 
-local function draw_all_panels()
-  if not SETTINGS.panel then
+-- The lowest unit a list draws on, for the log: text is 8 or 11 units tall.
+local function panel_bottom(list)
+  local bottom = 0
+  for _, it in ipairs(list) do
+    local b
+    if it[1] == "rect" then
+      b = it[3] + it[5]
+    elseif it[1] == "line" then
+      b = math.max(it[3], it[5]) + 1
+    else
+      b = it[3] + (it[5] == "normal" and 11 or 8)
+    end
+    bottom = math.max(bottom, b)
+  end
+  return bottom
+end
+
+local function draw_panel(log_it)
+  if mode == nil then
     return
   end
-  if SETTINGS.mode == "each" then
-    for p = 0, game.max_tanks() - 1 do
-      if current[p] ~= nil and in_round(p) then
-        draw_panel(current[p], p)
-      end
-    end
-  elseif shared ~= nil then
-    draw_panel(shared)
+  local list = build_panel()
+  game.panel(0, list)
+  if log_it then
+    game.log(string.format("RuleRoulette panel: %d items, bottom %d of 128, preview %d",
+                           #list, panel_bottom(list), preview))
   end
 end
 
--- ── The roll ────────────────────────────────────────────────────────
+-- ── Changing mode ───────────────────────────────────────────────────
 
-local function do_roll()
-  rolls = rolls + 1
-  next_at = game.tick() + SETTINGS.interval * 100
+local function start_mode(idx)
+  changes  = changes + 1
+  mode     = MODES[idx]
+  last_idx = idx
+  next_at  = game.tick() + interval * 100
 
-  if SETTINGS.rules then
-    roll_rules()
-  else
-    restore_rules()
-  end
-
-  if SETTINGS.mode == "each" then
-    shared = nil
-    for p = 0, game.max_tanks() - 1 do
-      if in_round(p) then
-        local m = roll_mods()
-        apply_mods(p, m)
-        game.announce(mods_short(m), 5, p)
-        game.log(string.format("RuleRoulette roll %d tick %d seat %d: %s%s",
-                               rolls, game.tick(), p, mods_text(m),
-                               has_mods(p, m) and "" or " (NOT read back)"))
+  local t = full_mods(mode)
+  local tanks, landed = 0, 0
+  for p = 0, game.max_tanks() - 1 do
+    if in_round(p) then
+      apply_mods(p, t)
+      tanks = tanks + 1
+      -- Read back, so the log says the numbers reached the tanks.
+      if has_mods(p, t) then
+        landed = landed + 1
       end
     end
-    game.message(string.format("Rule Roulette #%d: every tank rolled its own numbers.",
-                               rolls))
-  else
-    shared = roll_mods()
-    local tanks, landed = 0, 0
-    for p = 0, game.max_tanks() - 1 do
-      if in_round(p) then
-        apply_mods(p, shared)
-        tanks = tanks + 1
-        -- Read back, so the log says the numbers reached the tanks.
-        if has_mods(p, shared) then
-          landed = landed + 1
-        end
-      end
-    end
-    game.announce(mods_short(shared), 5)
-    game.message(string.format("Rule Roulette #%d: %s", rolls, mods_text(shared)))
-    game.log(string.format("RuleRoulette roll %d tick %d all: %s (read back on %d of %d tanks)",
-                           rolls, game.tick(), mods_text(shared), landed, tanks))
   end
+  game.announce(now_text(mode), 5)
+  game.message("Rule Roulette: " .. now_text(mode))
+  game.log(string.format("RuleRoulette mode %d tick %d: %s (%s) on %d of %d tanks",
+                         changes, game.tick(), mode.name, mods_text(t), landed, tanks))
+  fill_queue()
+  draw_panel(true)
+end
 
-  if SETTINGS.rules then
-    local rt = rules_text()
-    game.message("Rules: " .. rt)
-    game.log(string.format("RuleRoulette roll %d tick %d rules: %s", rolls, game.tick(), rt))
-  end
-
-  draw_all_panels()
+local function next_mode()
+  fill_queue()
+  local idx = table.remove(queue, 1)
+  start_mode(idx)
 end
 
 local function each_second()
@@ -355,102 +310,74 @@ local function each_second()
   end
   left = left - 1
   if left <= 0 then
-    do_roll()
-    left = SETTINGS.interval
-  elseif left <= SETTINGS.countdown then
-    game.announce("New roll in " .. left, 1)
+    next_mode()
+    left = interval
+  elseif left <= countdown then
+    game.announce(MODES[queue[1]].name .. " in " .. left, 1)
   end
   game.timer(1, each_second)
 end
 
 -- ── Chat commands ───────────────────────────────────────────────────
 
-local function settings_text()
-  return string.format("Rule Roulette: interval %d s, mode %s, intensity %s, rules %s",
-                       SETTINGS.interval, SETTINGS.mode, SETTINGS.intensity,
-                       SETTINGS.rules and "on" or "off")
+local function status_text()
+  return string.format("Rule Roulette: %s, next mode in %d s, interval %d s, preview %d",
+                       mode and mode.name or "-", left, interval, preview)
 end
 
 local function command(p, args)
   local verb, value = args:match("^(%S*)%s*(%S*)")
   verb = (verb or ""):lower()
-  value = (value or ""):lower()
+  local n = tonumber(value)
 
-  if verb == "interval" and tonumber(value) then
-    SETTINGS.interval = clamp(math.floor(tonumber(value)), INTERVAL_MIN, INTERVAL_MAX)
-    game.message(settings_text() .. " (from the next roll)")
-  elseif verb == "mode" and (value == "same" or value == "each") then
-    SETTINGS.mode = value
-    game.message(settings_text() .. " (from the next roll)")
-  elseif verb == "intensity" and INTENSITY[value] then
-    SETTINGS.intensity = value
-    game.message(settings_text() .. " (from the next roll)")
-  elseif verb == "rules" and (value == "on" or value == "off") then
-    SETTINGS.rules = (value == "on")
-    if not SETTINGS.rules then
-      restore_rules()
-      draw_all_panels()
-    end
-    game.message(settings_text() .. (SETTINGS.rules and " (from the next roll)" or ""))
-  elseif verb == "now" then
-    left = 1   -- the next second rolls
+  if verb == "interval" and n then
+    interval = clamp(math.floor(n), INTERVAL_MIN, INTERVAL_MAX)
+    game.message(status_text() .. " (the interval counts from the next mode)")
+  elseif verb == "preview" and n then
+    preview = clamp(math.floor(n), 0, PREVIEW_MAX)
+    draw_panel(true)
+    game.message(status_text())
+  elseif verb == "next" then
+    left = 1   -- the next second changes mode
   else
-    game.message(settings_text(), p)
-    game.message("Type !roulette interval <20-300> | mode same|each | " ..
-                 "intensity mild|wild | rules on|off | now", p)
+    game.message(status_text(), p)
+    game.message("Type !roulette interval <20-300> | preview <0-3> | next", p)
   end
 end
 
 -- ── Hooks ───────────────────────────────────────────────────────────
 
 function on_start()
-  running = true
-  read_base_rules()
-  left = SETTINGS.interval
-  game.message("Rule Roulette: tank numbers re-roll every " .. SETTINGS.interval ..
-               " s." .. (SETTINGS.chat and " Type !roulette for the settings." or ""))
-  do_roll()
+  interval  = clamp(game.setting("interval"), INTERVAL_MIN, INTERVAL_MAX)
+  preview   = clamp(game.setting("preview"), 0, PREVIEW_MAX)
+  countdown = game.setting("countdown")
+  chat      = game.setting("chat")
+  running   = true
+  left      = interval
+  game.message("Rule Roulette: a new mode every " .. interval .. " s." ..
+               (chat and " Type !roulette for the commands." or ""))
+  next_mode()
   game.timer(1, each_second)
 end
 
 function on_end()
   over = true
-  game.log(string.format("RuleRoulette ended after %d rolls", rolls))
+  game.log(string.format("RuleRoulette ended after %d modes", changes))
 end
 
--- A tank that takes the field gets the numbers in force: the shared roll,
--- or in "each" mode its own, rolled now if it has none yet.
+-- A tank that takes the field gets the mode in force.
 function on_tank_spawned(p, mx, my, respawn, scripted)
-  if not running or over then
+  if not running or over or mode == nil then
     return
   end
-  local m = shared
-  if SETTINGS.mode == "each" then
-    m = current[p]
-    if m == nil then
-      m = roll_mods()
-      game.log(string.format("RuleRoulette join tick %d seat %d: %s",
-                             game.tick(), p, mods_text(m)))
-    end
+  local t = full_mods(mode)
+  if not has_mods(p, t) then
+    apply_mods(p, t)
   end
-  if m == nil then
-    return
-  end
-  if not has_mods(p, m) then
-    apply_mods(p, m)
-  end
-  current[p] = m
-  if SETTINGS.mode == "each" then
-    draw_panel(m, p)
-  end
-end
-
-function on_player_leave(p, scripted)
-  current[p] = nil
 end
 
 function on_chat(p, text, scripted)
-  if not SETTINGS.chat or scripted or not running then
+  if not chat or scripted or not running then
     return
   end
   local args = text:match("^!roulette%s*(.-)%s*$")
@@ -466,18 +393,29 @@ end
 
 scenario = {
   name        = "Rule Roulette",
-  description = "Every tank's speed, accel, turn, reload, dealt and taken are " ..
-                "re-rolled every 60 s (wild, 40 to 250 %, the same for everyone).",
+  description = "Eight named modes take turns, the same for every tank: good ones " ..
+                "(Overdrive, Turbo, Iron Hide), a bad one (Rust Bucket) and " ..
+                "trade-offs (Glass Cannon, Juggernaut, Machine Gun, Ice Rink).",
   api         = 1,
   kind        = "mod",
   bound       = false,
 
+  settings = {
+    { id = "interval", label = "Seconds per mode", type = "int",
+      min = 20, max = 300, step = 10, default = 60 },
+    { id = "preview", label = "Upcoming modes shown", type = "int",
+      min = 0, max = 3, step = 1, default = 1 },
+    { id = "countdown", label = "Countdown before a change (seconds)", type = "int",
+      min = 0, max = 10, step = 1, default = 5 },
+    { id = "chat", label = "!roulette chat commands", type = "bool",
+      default = false },
+  },
+
   callbacks = {
-    on_start = "Rolls the first set of numbers and starts the clock.",
-    on_end = "Logs how many rolls the round had.",
-    on_tank_spawned = "A new or respawned tank gets the numbers in force.",
-    on_player_leave = "Forgets a leaver's own roll.",
-    on_chat = "With chat commands on, !roulette changes the interval, " ..
-              "mode, intensity and rules.",
+    on_start = "Starts the first mode and the clock.",
+    on_end = "Logs how many modes the round had.",
+    on_tank_spawned = "A new or respawned tank gets the mode in force.",
+    on_chat = "With chat commands on, !roulette changes the interval and the " ..
+              "preview, or skips to the next mode.",
   },
 }
