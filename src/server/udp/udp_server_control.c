@@ -140,6 +140,7 @@ const char *mpDiagCtrlName(int type) {
     case CTRL_SCN_SCORE:        return "SCN_SCORE";
     case CTRL_SCN_ANNOUNCE:     return "SCN_ANNOUNCE";
     case CTRL_SCN_MARKER:       return "SCN_MARKER";
+    case CTRL_SCN_STATUS:       return "SCN_STATUS";
     case CTRL_SCENARIO_RULES:   return "SCENARIO_RULES";
     case CTRL_LOBBY_SCRIPT_LIST: return "LOBBY_SCRIPT_LIST";
     case CTRL_LOBBY_SCRIPT_SETTING: return "LOBBY_SCRIPT_SETTING";
@@ -269,7 +270,7 @@ void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
         }
     }
     if (evt->type == CTRL_SCN_PANEL || evt->type == CTRL_SCN_ANNOUNCE ||
-        evt->type == CTRL_SCN_MARKER) {
+        evt->type == CTRL_SCN_MARKER || evt->type == CTRL_SCN_STATUS) {
         /* A scenario's presentation, addressed the way server text is:
          * destTeam 0 means everyone, destPlayer 0xFF means everyone.
          * CTRL_SCN_SCORE is deliberately not here — it is broadcast, and
@@ -284,6 +285,10 @@ void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
         case CTRL_SCN_ANNOUNCE:
             destTeam   = evt->u.scnAnnounce.destTeam;
             destPlayer = evt->u.scnAnnounce.destPlayer;
+            break;
+        case CTRL_SCN_STATUS:
+            destTeam   = evt->u.scnStatus.destTeam;
+            destPlayer = evt->u.scnStatus.destPlayer;
             break;
         default:
             destTeam   = evt->u.scnMarker.destTeam;

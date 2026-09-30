@@ -297,6 +297,7 @@ typedef enum {
     SCN_OP_SCORE,
     SCN_OP_ANNOUNCE,
     SCN_OP_MARKER,
+    SCN_OP_STATUS,
 
     /* Flow */
     SCN_OP_END_ROUND,
@@ -610,8 +611,20 @@ typedef struct {
 typedef struct {
     BYTE     target;
     uint16_t ticks;
+    BYTE     place;                 /* a ScnAnnouncePlace (scenario_panel.h) */
     char     text[SCN_TEXT_MAX];
 } ScnOpAnnounce;
+
+/* The status line: a line at the very top of the game view that stays until
+ * the script changes it or clears it. endsAt is a server tick, on the clock
+ * game.tick() answers, that the client counts down to and shows beside the
+ * text as M:SS; SCN_STATUS_NO_COUNTDOWN (scenario_panel.h) is no countdown.
+ * Empty text is the clear. */
+typedef struct {
+    BYTE     target;
+    uint32_t endsAt;
+    char     text[SCN_TEXT_MAX];
+} ScnOpStatus;
 
 typedef struct {
     BYTE target;
@@ -753,6 +766,7 @@ typedef struct {
         ScnOpScore             score;
         ScnOpAnnounce          announce;
         ScnOpMarker            marker;
+        ScnOpStatus            status;
         ScnOpEndRound          endRound;
         ScnOpSetGameTime       setGameTime;
         ScnOpSetRule           setRule;

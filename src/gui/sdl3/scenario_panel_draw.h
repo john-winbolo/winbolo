@@ -35,6 +35,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "wire_limits.h"    /* PACKET_MAX_CHAT_MESSAGE, the status line's cap */
 #include "scenario_panel.h" /* the decoded list, and GAME_NUMTOTALTICKS_SEC
                              * by way of global.h */
 
@@ -102,6 +103,46 @@ static inline void scnPanelTimerText(uint32_t now, uint32_t target,
     mins    = (unsigned int)(seconds / 60u);
     secs    = (unsigned int)(seconds % 60u);
     snprintf(out, outSize, "%u:%02u", mins, secs);
+}
+
+/* The most bytes the status line's full text can hold: the script's line,
+ * the gap before the countdown, and the countdown. */
+#define SCN_STATUS_LINE_MAX (PACKET_MAX_CHAT_MESSAGE + 1 + 4 + \
+                             SCN_PANEL_TIMER_TEXT_MAX)
+
+/*********************************************************
+ *NAME:          scnStatusLineText
+ *PURPOSE:
+ *  The status line as it is drawn: the script's text, and
+ *  when it asked for a countdown, four spaces and the time
+ *  left until that tick as a panel countdown shows it
+ *  ("Wave 3/10    2:44"). The countdown stops at 0:00.
+ *
+ *  False, with out empty, when there is no line to draw.
+ *
+ *ARGUMENTS:
+ *  text    - the script's line, or NULL
+ *  endsAt  - the tick counted to, or SCN_STATUS_NO_COUNTDOWN
+ *  now     - the tick the viewer is on
+ *  out     - receives the text, always terminated
+ *  outSize - bytes of out, including the terminator
+ *********************************************************/
+static inline bool scnStatusLineText(const char *text, uint32_t endsAt,
+                                     uint32_t now, char *out,
+                                     size_t outSize) {
+    char timer[SCN_PANEL_TIMER_TEXT_MAX];
+
+    if (out == NULL || outSize == 0) return false;
+    out[0] = '\0';
+    if (text == NULL || text[0] == '\0') return false;
+    if (endsAt == SCN_STATUS_NO_COUNTDOWN) {
+        snprintf(out, outSize, "%s", text);
+        return true;
+    }
+    scnPanelTimerText(now, endsAt, (uint8_t)SCN_PANEL_TIMER_DOWN, timer,
+                      sizeof(timer));
+    snprintf(out, outSize, "%s    %s", text, timer);
+    return true;
 }
 
 /*********************************************************
@@ -188,13 +229,41 @@ typedef struct ScnAnnounceRect {
  *  count     - how many there are
  *  outX/outY - receive the line's top-left corner
  *********************************************************/
+static inline void scnAnnouncePlaceFrom(ScnAnnounceRect view, float textW,
+                                        float textH, float startY, float gap,
+                                        float floorY,
+                                        const ScnAnnounceRect *obstacles,
+                                        int count, float *outX, float *outY);
+
 static inline void scnAnnouncePlace(ScnAnnounceRect view, float textW,
                                     float textH, float inset, float gap,
                                     float floorY,
                                     const ScnAnnounceRect *obstacles,
                                     int count, float *outX, float *outY) {
+    scnAnnouncePlaceFrom(view, textW, textH, view.y0 + inset, gap, floorY,
+                         obstacles, count, outX, outY);
+}
+
+/*********************************************************
+ *NAME:          scnAnnouncePlaceFrom
+ *PURPOSE:
+ *  scnAnnouncePlace with the first row the search tries
+ *  given as a y rather than as an inset from the top of
+ *  the view. An announcement placed "upper" starts a
+ *  quarter of the way down the view, and the rule from
+ *  there on is the same: sideways first, then down below
+ *  the thing in the way, never past floorY, and back to
+ *  the first row centred when nothing fits.
+ *
+ *  A startY above the view's top starts at the top.
+ *********************************************************/
+static inline void scnAnnouncePlaceFrom(ScnAnnounceRect view, float textW,
+                                        float textH, float startY, float gap,
+                                        float floorY,
+                                        const ScnAnnounceRect *obstacles,
+                                        int count, float *outX, float *outY) {
     const float centreX = (view.x0 + view.x1) * 0.5f;
-    const float topY    = view.y0 + inset;
+    const float topY    = (startY > view.y0) ? startY : view.y0;
     float spanX0 = view.x0;
     float spanX1 = view.x1;
     float lowestY;

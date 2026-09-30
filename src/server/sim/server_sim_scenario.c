@@ -3309,18 +3309,99 @@ static ScnOpResult scenarioOpAnnounce(ServerSim *sim, const ScnOpAnnounce *p) {
     if (len > 0 && p->ticks == 0) {
         return SCN_OP_RANGE;
     }
+    if (p->place >= (BYTE)SCN_ANNOUNCE_PLACE_COUNT) {
+        return SCN_OP_RANGE;
+    }
 
+    /* The place rides in opt3; the writer puts it after the text only when
+       it is not the top, so a line at the top is recorded as it always
+       was. */
     pstr[0] = (char)len;
     memcpy(pstr + 1, p->text, len);
-    logAddEvent(log_ScnAnnounce, destTeam, destPlayer, 0, 0, p->ticks, pstr);
+    logAddEvent(log_ScnAnnounce, destTeam, destPlayer, p->place, 0, p->ticks,
+                pstr);
 
     memset(&evt, 0, sizeof(evt));
     evt.type = CTRL_SCN_ANNOUNCE;
     SDL_strlcpy(evt.u.scnAnnounce.text, p->text,
                 sizeof(evt.u.scnAnnounce.text));
     evt.u.scnAnnounce.ticks      = p->ticks;
+    evt.u.scnAnnounce.place      = p->place;
     evt.u.scnAnnounce.destTeam   = destTeam;
     evt.u.scnAnnounce.destPlayer = destPlayer;
+    serverSimPublishControl(sim, &evt);
+    return SCN_OP_OK;
+}
+
+/* Fill the event one status row publishes as. Shared by the arm and the join
+ * replay so a late joiner is given the same event the round saw. */
+static void scenarioFillStatusEvent(ControlEvent *evt, const char *text,
+                                    uint32_t endsAt, BYTE destTeam,
+                                    BYTE destPlayer) {
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_SCN_STATUS;
+    SDL_strlcpy(evt->u.scnStatus.text, text, sizeof(evt->u.scnStatus.text));
+    evt->u.scnStatus.endsAt     = endsAt;
+    evt->u.scnStatus.destTeam   = destTeam;
+    evt->u.scnStatus.destPlayer = destPlayer;
+}
+
+/* Set the status line at the top of the view, or clear it.
+ *
+ * The line is kept per destination, the way a panel's list is, so a joiner
+ * is handed what the round is showing. An empty line is the clear, and its
+ * countdown is not read. A call that says exactly what the destination is
+ * already showing sends nothing and writes nothing to the recording: a
+ * script may restate its line every second and pay for the changes only. */
+static ScnOpResult scenarioOpStatus(ServerSim *sim, const ScnOpStatus *p) {
+    ControlEvent  evt;
+    char          pstr[1 + SCN_TEXT_MAX];
+    BYTE          destTeam, destPlayer;
+    size_t        len;
+    uint32_t      endsAt;
+    ScnStatusRow *row;
+    ScnOpResult   r;
+
+    r = scenarioTargetUnpack(p->target, &destTeam, &destPlayer);
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+    if (memchr(p->text, '\0', sizeof(p->text)) == NULL) {
+        return SCN_OP_TOO_BIG;
+    }
+    len = strlen(p->text);
+    if (len >= sizeof(evt.u.scnStatus.text)) {
+        return SCN_OP_TOO_BIG;
+    }
+    endsAt = (len > 0) ? p->endsAt : SCN_STATUS_NO_COUNTDOWN;
+
+    row = &sim->scenarioStatus[scenarioPanelTargetIndex(destTeam, destPlayer)];
+    if (len == 0) {
+        if (!row->valid) {
+            return SCN_OP_OK;   /* nothing up, so nothing to take down */
+        }
+        row->valid   = false;
+        row->endsAt  = SCN_STATUS_NO_COUNTDOWN;
+        row->text[0] = '\0';
+    } else {
+        if (row->valid && row->endsAt == endsAt &&
+            strcmp(row->text, p->text) == 0) {
+            return SCN_OP_OK;   /* already showing exactly this */
+        }
+        row->valid  = true;
+        row->endsAt = endsAt;
+        SDL_strlcpy(row->text, p->text, sizeof(row->text));
+    }
+
+    /* The countdown's tick rides as a big-endian u32 across opt3, opt4 and
+       the short. */
+    pstr[0] = (char)len;
+    memcpy(pstr + 1, p->text, len);
+    logAddEvent(log_ScnStatus, destTeam, destPlayer,
+                (BYTE)((endsAt >> 24) & 0xFF), (BYTE)((endsAt >> 16) & 0xFF),
+                (unsigned short)(endsAt & 0xFFFF), pstr);
+
+    scenarioFillStatusEvent(&evt, p->text, endsAt, destTeam, destPlayer);
     serverSimPublishControl(sim, &evt);
     return SCN_OP_OK;
 }
@@ -3420,6 +3501,7 @@ void serverSimScenarioResetPresentation(ServerSim *sim) {
     memset(sim->scenarioPlayerScores, 0, sizeof(sim->scenarioPlayerScores));
     memset(sim->scenarioTeamScores, 0, sizeof(sim->scenarioTeamScores));
     memset(sim->scenarioMarkers, 0, sizeof(sim->scenarioMarkers));
+    memset(sim->scenarioStatus, 0, sizeof(sim->scenarioStatus));
 }
 
 void serverSimScenarioReplayPanels(
@@ -3505,6 +3587,28 @@ void serverSimScenarioReplayMarkersAndScores(
                                    row->score, row->label);
             deliver(ctx, &evt);
         }
+    }
+    /* The status lines: everyone's first, then the teams', then the slots',
+       so the narrowest line addressed to a joiner is the last it is given
+       and the one it keeps, the way the panel rows go. Without withTargeted
+       only everyone's line goes, for the reason the markers above are cut. */
+    for (i = 0; i < (withTargeted ? SCN_PANEL_TARGETS : 1); i++) {
+        const ScnStatusRow *row = &sim->scenarioStatus[i];
+        BYTE destTeam;
+        BYTE destPlayer;
+        if (!row->valid) {
+            continue;
+        }
+        if (i < MAX_TANKS) {
+            destTeam   = (BYTE)i;   /* 0 = everyone, else the team */
+            destPlayer = 0xFF;
+        } else {
+            destTeam   = 0;
+            destPlayer = (BYTE)(i - MAX_TANKS);
+        }
+        scenarioFillStatusEvent(&evt, row->text, row->endsAt, destTeam,
+                                destPlayer);
+        deliver(ctx, &evt);
     }
 }
 
@@ -4245,6 +4349,8 @@ static ScnOpResult scenarioApplyOp(ServerSim *sim, const ScenarioOp *op,
             return scenarioOpAnnounce(sim, &op->u.announce);
         case SCN_OP_MARKER:
             return scenarioOpMarker(sim, &op->u.marker);
+        case SCN_OP_STATUS:
+            return scenarioOpStatus(sim, &op->u.status);
         case SCN_OP_END_ROUND:
             return scenarioOpEndRound(sim, &op->u.endRound);
         case SCN_OP_SET_GAME_TIME:

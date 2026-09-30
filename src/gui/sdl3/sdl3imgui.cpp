@@ -4709,6 +4709,13 @@ static void renderScenarioPanel(ClientSim *cs) {
  * whatever terrain happens to be under it, and one colour
  * against grass is a line somebody cannot read.
  *
+ * The status line is drawn the same way and sits above it:
+ * the one line a scenario keeps up for as long as it likes,
+ * as high on the view as it goes, with a countdown this
+ * client works out from the tick the script named. An
+ * announcement at the top goes below the status line; one
+ * placed "upper" is centred a quarter of the way down.
+ *
  * The bytes are the script's own and are not localised, so
  * nothing on this path goes near the language table.
  * ------------------------------------------------------- */
@@ -4763,17 +4770,59 @@ static void scnAnnounceAddHudRect(float mapX, float mapY, float x, float y,
    this is a third of one. */
 #define SCN_ANNOUNCE_FADE_TICKS 33u
 
+/* The space above the status line, in panel units. Smaller than the
+   announcement's inset: the status line is meant to sit as high on the view
+   as it can and still keep its outline inside it. */
+#define SCN_STATUS_INSET_UNITS 1.0f
+
+/* How far down the view an announcement placed "upper" is centred, as a
+   share of the view's height: a quarter of the way down, clear of the status
+   line and well above the player's own tank. */
+#define SCN_ANNOUNCE_UPPER_SHARE 0.25f
+
+/* Draws one outlined line at (px, py): the line in near-black one stroke out
+   in each of the eight directions, so the letters keep an edge whichever way
+   the terrain under them happens to run, then the line in white. */
+static void scnDrawOutlinedLine(ImDrawList *dl, ImFont *font, float height,
+                                float px, float py, float o, int alpha,
+                                const char *text) {
+    const ImU32 edge = IM_COL32(0, 0, 0, alpha);
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dy == 0) continue;
+            dl->AddText(font, height,
+                        ImVec2(px + (float)dx * o, py + (float)dy * o),
+                        edge, text);
+        }
+    }
+    dl->AddText(font, height, ImVec2(px, py),
+                IM_COL32(255, 255, 255, alpha), text);
+}
+
+/* The status line and the announcement share a view, a scale, a font and the
+   things at the top of the view they both keep clear of, and are drawn
+   together so the announcement can keep clear of the status line too. */
 static void renderScenarioAnnounce(ClientSim *cs) {
     if (cs == nullptr || uiModeIsTablet()) return;
+
+    const uint32_t now = clientSimGetLastServerTick(cs);
+
+    /* The status line, with its countdown worked out on this client's own
+       clock. */
+    uint32_t    statusEndsAt = SCN_STATUS_NO_COUNTDOWN;
+    const char *statusRaw    = clientSimGetScnStatus(cs, &statusEndsAt);
+    char        status[SCN_STATUS_LINE_MAX];
+    const bool  haveStatus =
+        scnStatusLineText(statusRaw, statusEndsAt, now, status,
+                          sizeof(status));
 
     uint16_t    ticks       = 0;
     uint32_t    arrivedTick = 0;
     const char *text        = clientSimGetScnAnnounce(cs, &ticks, &arrivedTick);
     uint32_t    left        = 0;
-    if (!scnAnnounceRemaining(text, arrivedTick, ticks,
-                              clientSimGetLastServerTick(cs), &left)) {
-        return;
-    }
+    const bool  haveAnnounce =
+        scnAnnounceRemaining(text, arrivedTick, ticks, now, &left);
+    if (!haveStatus && !haveAnnounce) return;
 
     /* The same zoom the panel window scales by, so the two agree about what
        one unit is worth on this screen. */
@@ -4785,11 +4834,11 @@ static void renderScenarioAnnounce(ClientSim *cs) {
     const float scale = (float)rawZoom * gameScale;
 
     /* The game view in render coordinates, and the things at its top the
-       line has to keep clear of. The full screen map is the view when it
+       lines have to keep clear of. The full screen map is the view when it
        owns the window, with its HUD column down the right and its build
-       strip on the left. */
+       strip on the left. One slot is kept back for the status line. */
     ScnAnnounceRect view;
-    ScnAnnounceRect obstacles[SCN_ANNOUNCE_MAX_OBSTACLES];
+    ScnAnnounceRect obstacles[SCN_ANNOUNCE_MAX_OBSTACLES + 1];
     int             count = 0;
     float mapX = 0.0f, mapY = 0.0f, mapW = 0.0f, mapH = 0.0f;
     if (sdl3DrawGetOverviewInWindowRect(&mapX, &mapY, &mapW, &mapH)) {
@@ -4819,24 +4868,60 @@ static void renderScenarioAnnounce(ClientSim *cs) {
 
     ImFont *font = ImGui::GetFont();
     if (font == nullptr) return;
+    ImDrawList *dl = ImGui::GetForegroundDrawList();
+    if (dl == nullptr) return;
 
     float height = SCN_ANNOUNCE_UNITS * scale;
     if (height < 8.0f) height = 8.0f;
-    const ImVec2 measured = font->CalcTextSizeA(height, FLT_MAX, 0.0f, text);
 
     /* The outline reaches one stroke past the letters on every side, so the
        box that has to stay clear is that much bigger than the letters. */
     const float o = (scale > 1.0f) ? scale : 1.0f;
     const float inset = SCN_ANNOUNCE_INSET_UNITS * scale;
-    /* The player's tank sits in the middle square of the view, and the line
-       is never moved down onto it: the floor is the top of that square. */
+    /* The player's tank sits in the middle square of the view, and no line
+       is moved down onto it: the floor is the top of that square. */
     const float floorY = (view.y0 + view.y1) * 0.5f -
                          (view.y1 - view.y0) / (float)MAIN_SCREEN_SIZE_Y * 0.5f;
+
+    /* The status line first, as high on the view as it goes, moved sideways
+       or down only by the same things the announcement keeps clear of. Its
+       row then becomes a band the width of the view, so an announcement at
+       the top drops below it rather than sharing its row. */
+    if (haveStatus) {
+        const ImVec2 measured =
+            font->CalcTextSizeA(height, FLT_MAX, 0.0f, status);
+        const float boxW = measured.x + 2.0f * o;
+        const float boxH = measured.y + 2.0f * o;
+        float boxX = 0.0f, boxY = 0.0f;
+        scnAnnouncePlace(view, boxW, boxH, SCN_STATUS_INSET_UNITS * scale,
+                         inset, floorY, obstacles, count, &boxX, &boxY);
+        scnDrawOutlinedLine(dl, font, height, boxX + o, boxY + o, o, 255,
+                            status);
+        obstacles[count].x0 = view.x0;
+        obstacles[count].y0 = boxY;
+        obstacles[count].x1 = view.x1;
+        obstacles[count].y1 = boxY + boxH;
+        count++;
+    }
+
+    if (!haveAnnounce) return;
+
+    const ImVec2 measured = font->CalcTextSizeA(height, FLT_MAX, 0.0f, text);
+    const float  boxW     = measured.x + 2.0f * o;
+    const float  boxH     = measured.y + 2.0f * o;
     float boxX = 0.0f, boxY = 0.0f;
-    scnAnnouncePlace(view, measured.x + 2.0f * o, measured.y + 2.0f * o,
-                     inset, inset, floorY, obstacles, count, &boxX, &boxY);
-    const float px = boxX + o;
-    const float py = boxY + o;
+    if (clientSimGetScnAnnouncePlace(cs) ==
+        (uint8_t)SCN_ANNOUNCE_PLACE_UPPER) {
+        /* Centred on the line a quarter of the way down the view. */
+        const float startY = view.y0 +
+                             (view.y1 - view.y0) * SCN_ANNOUNCE_UPPER_SHARE -
+                             boxH * 0.5f;
+        scnAnnouncePlaceFrom(view, boxW, boxH, startY, inset, floorY,
+                             obstacles, count, &boxX, &boxY);
+    } else {
+        scnAnnouncePlace(view, boxW, boxH, inset, inset, floorY, obstacles,
+                         count, &boxX, &boxY);
+    }
 
     /* Full strength until the last stretch, then out. */
     float fade = 1.0f;
@@ -4846,23 +4931,7 @@ static void renderScenarioAnnounce(ClientSim *cs) {
     const int alpha = (int)(255.0f * fade);
     if (alpha <= 0) return;
 
-    ImDrawList *dl = ImGui::GetForegroundDrawList();
-    if (dl == nullptr) return;
-
-    /* The outline: the same line in near-black, one stroke out in each of the
-       eight directions, so the letters keep an edge whichever way the terrain
-       under them happens to run. */
-    const ImU32 edge = IM_COL32(0, 0, 0, alpha);
-    for (int dy = -1; dy <= 1; dy++) {
-        for (int dx = -1; dx <= 1; dx++) {
-            if (dx == 0 && dy == 0) continue;
-            dl->AddText(font, height,
-                        ImVec2(px + (float)dx * o, py + (float)dy * o),
-                        edge, text);
-        }
-    }
-    dl->AddText(font, height, ImVec2(px, py),
-                IM_COL32(255, 255, 255, alpha), text);
+    scnDrawOutlinedLine(dl, font, height, boxX + o, boxY + o, o, alpha, text);
 }
 
 /* About modal + linked markdown popups live in dialogs/imgui_about.cpp so

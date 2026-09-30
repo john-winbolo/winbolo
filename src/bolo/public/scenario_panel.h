@@ -121,6 +121,22 @@ typedef enum {
     SCN_PANEL_TIMER_UP   = 1
 } ScnPanelTimerMode;
 
+/* Where an announcement sits in the game view. Top is the top row, and is
+ * what every announcement got before there was a choice. Upper is about a
+ * quarter of the way down the view, for the bigger lines a round says about
+ * what is happening. The values ride the wire and the recording, so a new
+ * place goes on the end, and a reader draws a value it does not know at the
+ * top. */
+typedef enum {
+    SCN_ANNOUNCE_PLACE_TOP   = 0,
+    SCN_ANNOUNCE_PLACE_UPPER = 1,
+    SCN_ANNOUNCE_PLACE_COUNT
+} ScnAnnouncePlace;
+
+/* The status line's endsAt when it has no countdown. A countdown's target is
+ * a server tick, and this one is never reached. */
+#define SCN_STATUS_NO_COUNTDOWN 0xFFFFFFFFu
+
 /* A map marker's shape. SQUARE marks a map square, FOLLOW rides a
  * player slot, and CLEAR removes the id the event names. These sit
  * beside the panel's own enums because a frontend draws both from the

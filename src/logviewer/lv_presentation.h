@@ -73,6 +73,20 @@ typedef struct {
   char     text[LV_PRES_ANNOUNCE_MAX + 1];   /* always terminated */
 } LvPresAnnounce;
 
+/* One destination's status line, kept per destination the way the panel
+   rows are and chosen between the same way: set is false for a row no record
+   has filled and for one a record cleared, written is true once any record
+   has landed on the row, and ms is the log time the last one landed at.
+   endsAt is the server tick the countdown runs to, or
+   SCN_STATUS_NO_COUNTDOWN for none. */
+typedef struct {
+  bool     set;
+  bool     written;
+  uint32_t ms;
+  uint32_t endsAt;
+  char     text[LV_PRES_ANNOUNCE_MAX + 1];   /* always terminated */
+} LvPresStatus;
+
 /* One map marker, kept by id. kind is SCN_MARKER_KIND_SQUARE, which reads x
    and y, or SCN_MARKER_KIND_FOLLOW, which reads slot. A marker stays until a
    record clears its id. */
@@ -90,6 +104,7 @@ typedef struct LvPresentation {
   LvPresScore    teamScores[LV_PRES_TEAMS];   /* [0] is never valid */
   LvPresAnnounce announce;
   LvPresMarker   markers[SCN_MARKERS_MAX];
+  LvPresStatus   status[LV_PRES_PANEL_ROWS];   /* rows as the panels' */
   /* Each slot's lobby team as log_TeamSet last set it, 0 for no team. A
      slot no record has named is not known, and the team panels are then
      never drawn for it. This is the team a scenario addresses, which is not
@@ -110,6 +125,15 @@ const LvPresPanelRow *lv_screenGetPanelRow(BYTE destTeam, BYTE destPlayer);
 const LvPresScore    *lv_screenGetScore(BYTE kind, BYTE target);
 const LvPresAnnounce *lv_screenGetAnnounce(void);
 const LvPresMarker   *lv_screenGetMarker(BYTE id);
+
+/* The status line row for a destination pair, taken the way
+ * lv_screenGetPanelRow takes one. */
+const LvPresStatus   *lv_screenGetStatusRow(BYTE destTeam, BYTE destPlayer);
+
+/* The status line to draw for the followed player at the playhead, chosen
+ * from the everyone row, their team's row and their slot's row by the rule
+ * lv_screenChoosePanelRow follows. NULL when there is nothing to draw. */
+const LvPresStatus   *lv_screenFollowedStatus(void);
 
 /* A slot's lobby team at the playhead, 0 for no team. False, with *team
  * left alone, for a slot out of range or one no log_TeamSet has named. */

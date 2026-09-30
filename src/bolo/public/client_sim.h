@@ -746,6 +746,16 @@ uint32_t clientSimGetScnPanelRejectCount(const ClientSim *cs);
 const char *clientSimGetScnAnnounce(const ClientSim *cs, uint16_t *outTicks,
                                     uint32_t *outArrivedTick);
 
+/* Where the announcement on screen sits, a ScnAnnouncePlace; the top (0)
+ * when there is none. */
+uint8_t clientSimGetScnAnnouncePlace(const ClientSim *cs);
+
+/* The status line on screen, or NULL when there is none. outEndsAt gets
+ * the server tick its countdown runs to, on clientSimGetLastServerTick's
+ * clock, or SCN_STATUS_NO_COUNTDOWN when it has none. outEndsAt may be
+ * NULL. */
+const char *clientSimGetScnStatus(const ClientSim *cs, uint32_t *outEndsAt);
+
 /* Marker `id`; out-of-range id returns NULL. */
 const ClientScnMarker *clientSimGetScnMarker(const ClientSim *cs, uint8_t id);
 

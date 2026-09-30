@@ -204,6 +204,14 @@ typedef struct {
     uint8_t destPlayer;    /* 0xFF = everyone, else a 0-based slot */
 } ScnMarkerRow;
 
+/* One destination's status line, as the status op last set it. valid is
+ * false for a destination nothing has set and for one a clear emptied. */
+typedef struct {
+    bool     valid;
+    uint32_t endsAt;       /* SCN_STATUS_NO_COUNTDOWN for none */
+    char     text[PACKET_MAX_CHAT_MESSAGE + 1];
+} ScnStatusRow;
+
 struct ServerSim {
     GameSim      sim;    /* MUST be first member */
 
@@ -1315,6 +1323,11 @@ struct ServerSim {
      * join replay hands every valid row to a subscriber that arrives
      * mid-round. */
     ScnMarkerRow           scenarioMarkers[SCN_MARKERS_MAX];
+
+    /* The status line each destination was last given, keyed the way the
+     * panel store is (SCN_PANEL_TARGETS rows: everyone, the teams, the
+     * slots), so a joiner is handed the line the round is showing. */
+    ScnStatusRow           scenarioStatus[SCN_PANEL_TARGETS];
 
     /* Spectator roster enumerator (registered by the transport layer). Invoked
      * during sync-replay to emit one CTRL_SPECTATOR_SLOT per connected
