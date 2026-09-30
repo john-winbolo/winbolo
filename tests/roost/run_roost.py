@@ -94,16 +94,51 @@ def with_bot_chat_on(args):
     A game starts with the bots quiet (BOT_CHAT_DEFAULT is false in
     constants.lua), but most of these tests read the spoken acks to see that
     an order was taken.  So every bot on the test's -brain gets
-    cfg=BOT_CHAT_DEFAULT=true through -bot-init.  A test that names its own
-    -bot-init is left alone.
+    cfg=BOT_CHAT_DEFAULT=true through -bot-init.
+
+    A test that names its own -bot-init keeps its specs, and each one gets
+    ;cfg=BOT_CHAT_DEFAULT=true added inside its [...] (or a new bracket when
+    it has none).  The brain applies the tokens in order and the last one
+    wins, so chat is on for those bots too.  Ids the test's specs do not name
+    would run the plain -brain, so a 0-15 spec for the -brain goes in front
+    of the test's own specs (a later spec for the same id replaces it).
     """
-    if "-bot-init" in args or "-brain" not in args:
-        return args
-    i = args.index("-brain")
-    if i + 1 >= len(args):
-        return args
-    brain = args[i + 1]
-    return args + ["-bot-init", "0-15=%s[cfg=BOT_CHAT_DEFAULT=true]" % brain]
+    brain = None
+    if "-brain" in args:
+        i = args.index("-brain")
+        if i + 1 < len(args):
+            brain = args[i + 1]
+
+    if "-bot-init" not in args:
+        if brain is None:
+            return args
+        return args + ["-bot-init", "0-15=%s[%s]" % (brain, CHAT_ON_TOKEN)]
+
+    out = list(args)
+    for i, a in enumerate(out):
+        if a == "-bot-init" and i + 1 < len(out):
+            specs = [chat_on_spec(s) for s in out[i + 1].split(",") if s.strip()]
+            if brain is not None:
+                specs.insert(0, "0-15=%s[%s]" % (brain, CHAT_ON_TOKEN))
+            out[i + 1] = ",".join(specs)
+    return out
+
+
+CHAT_ON_TOKEN = "cfg=BOT_CHAT_DEFAULT=true"
+
+
+def chat_on_spec(spec):
+    """Add the chat-on token to one 'range=path[arg]' spec, as its last token."""
+    lb = spec.find("[")
+    if lb < 0:
+        return "%s[%s]" % (spec, CHAT_ON_TOKEN)
+    rb = spec.find("]", lb + 1)
+    inner = spec[lb + 1:rb] if rb >= 0 else spec[lb + 1:]
+    if inner.strip():
+        inner = inner + ";" + CHAT_ON_TOKEN
+    else:
+        inner = CHAT_ON_TOKEN
+    return "%s[%s]" % (spec[:lb], inner)
 
 
 def run_one(name, exe, port, ticks, timeout, keep_output):

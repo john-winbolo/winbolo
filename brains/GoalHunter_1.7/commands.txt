@@ -179,6 +179,7 @@ TEAM SETTINGS
                  "botchat" is the same word.
   bot chat off   stop those lines. Only the GOAL lines go quiet. This is
                  how a game starts.
+  "bot pings" and "bot chat" go back to these starting values every round.
   These settings take a subject and ignore it: they are team-wide, so
   "socrates focus bases" and "last repositioning on" do what the bare lines do.
   help           the bots say a short version of this page in chat.
