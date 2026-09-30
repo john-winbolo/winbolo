@@ -1246,9 +1246,7 @@ static bool lobbyScenarioDetailsRulesBegin(void) {
 
     ImGui::Spacing();
     ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_SCENARIO_RULES));
-    if (!ImGui::BeginTable("##detailRules", 4,
-                           ImGuiTableFlags_RowBg |
-                               ImGuiTableFlags_BordersInnerH)) {
+    if (!imguiBeginPanelTable("##detailRules", 4)) {
         return false;
     }
     ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_RULES_COL_RULE),
@@ -1384,7 +1382,7 @@ static void lobbyScenarioDetailsRules(ClientSim *cs) {
                 rule, value, winner >= 0 ? order[winner].name : NULL,
                 winning);
         }
-        ImGui::EndTable();
+        imguiEndPanelTable();
     }
 
     /* Shown whether or not the table is: a pick on a server with
@@ -1461,9 +1459,7 @@ static void lobbyScenarioDetailsCallbacks(ClientSim *cs) {
         langGetText(s_detailsKind == 1
                         ? STR_DLGLOBBY_DETAILS_IMPLEMENTS_MOD
                         : STR_DLGLOBBY_DETAILS_IMPLEMENTS_SCENARIO));
-    if (!ImGui::BeginTable("##detailCallbacks", 3,
-                           ImGuiTableFlags_RowBg |
-                               ImGuiTableFlags_BordersInnerH)) {
+    if (!imguiBeginPanelTable("##detailCallbacks", 3)) {
         return;
     }
     ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_DETAILS_COL_METHOD),
@@ -1490,7 +1486,7 @@ static void lobbyScenarioDetailsCallbacks(ClientSim *cs) {
         ImGui::TableSetColumnIndex(2);
         ImGui::TextWrapped("%s", text);
     }
-    ImGui::EndTable();
+    imguiEndPanelTable();
 }
 
 /* How one value of setting st reads, into out: the number, or On or Off for
@@ -1553,6 +1549,9 @@ static void lobbyScenarioDetailsSettings(ClientSim *cs) {
     host = lobbyScenarioMayChoose(cs);
     live = clientSimLobbyScriptSettingsSupported(cs);
 
+    /* The label column fits its header as well as every label under it. */
+    labelW = ImGui::CalcTextSize(
+                 langGetText(STR_DLGLOBBY_DETAILS_COL_SETTING)).x;
     for (i = 0; i < n; i++) {
         labelW = SDL_max(labelW, ImGui::CalcTextSize(rows[i].label[0] != '\0'
                                                          ? rows[i].label
@@ -1561,14 +1560,16 @@ static void lobbyScenarioDetailsSettings(ClientSim *cs) {
 
     ImGui::Spacing();
     ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_DETAILS_SETTINGS));
-    if (!ImGui::BeginTable("##detailSettings", 2,
-                           ImGuiTableFlags_RowBg |
-                               ImGuiTableFlags_BordersInnerH)) {
+    if (!imguiBeginPanelTable("##detailSettings", 2)) {
         return;
     }
-    ImGui::TableSetupColumn("##label", ImGuiTableColumnFlags_WidthFixed,
-                            labelW);
-    ImGui::TableSetupColumn("##value", ImGuiTableColumnFlags_WidthStretch);
+    /* Headed like the rules and callbacks tables above it, so all three
+       tables in the dialog start with the same highlighted row. */
+    ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_DETAILS_COL_SETTING),
+                            ImGuiTableColumnFlags_WidthFixed, labelW);
+    ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_DETAILS_COL_VALUE),
+                            ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableHeadersRow();
     for (i = 0; i < n; i++) {
         const ScnSetting *st = &rows[i];
         int32_t           chosen;
@@ -1612,7 +1613,7 @@ static void lobbyScenarioDetailsSettings(ClientSim *cs) {
         }
         ImGui::PopID();
     }
-    ImGui::EndTable();
+    imguiEndPanelTable();
 
     if (host && !live) {
         lobbyScenarioRowNote(langGetText(STR_DLGLOBBY_DETAILS_SETTINGS_OLD));
