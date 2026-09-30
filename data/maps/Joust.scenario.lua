@@ -1,8 +1,8 @@
 -- Joust
 --
--- A round deep-sea arena, 38 squares across (1176 squares of water), inside
--- a wall of buildings at least five squares thick. There is no land inside
--- it. Every tank starts and comes
+-- A round deep-sea arena, 38 squares across (1176 squares of water). Every
+-- other square of the map is a building, out to the mined border. There is
+-- no land inside it. Every tank starts and comes
 -- back on a boat, and any hit on a tank on a boat sinks the boat, so the
 -- tank drowns: one hit kills. The first side to reach the kill count the
 -- host picked wins.
