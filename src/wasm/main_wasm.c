@@ -447,7 +447,7 @@ static void wasmSetScreen(const char *screen) {
 /* Make the current history entry the menu, at the menu's address. */
 static void wasmHistoryReplaceMenu(void) {
   EM_ASM({
-    try { history.replaceState({screen: 'menu'}, '', Module.wbMenuUrl()); }
+    try { history.replaceState({screen: "menu"}, "", Module.wbMenuUrl()); }
     catch (e) {}
   });
 }
@@ -456,8 +456,8 @@ static void wasmHistoryReplaceMenu(void) {
  * one that launches the same game directly, so a reload restarts it. */
 static void wasmHistoryPushGame(WasmGameMode mode) {
   EM_ASM({
-    var query = $0 ? '?tutorial=1' : '?practise=1';
-    try { history.pushState({screen: 'game'}, '', Module.wbMenuUrl() + query); }
+    var query = $0 ? "?tutorial=1" : "?practise=1";
+    try { history.pushState({screen: "game"}, "", Module.wbMenuUrl() + query); }
     catch (e) {}
   }, mode == WASM_GAME_TUTORIAL ? 1 : 0);
 }
@@ -466,7 +466,7 @@ static void wasmHistoryPushGame(WasmGameMode mode) {
  * into. The address is left as it is. */
 static void wasmHistoryMarkGame(void) {
   EM_ASM({
-    try { history.replaceState({screen: 'game'}, '', location.href); }
+    try { history.replaceState({screen: "game"}, "", location.href); }
     catch (e) {}
   });
 }
@@ -483,7 +483,7 @@ static void wasmHistoryBack(void) {
 static bool wasmTakeNavRequest(void) {
   int pending = EM_ASM_INT({
     if (!Module.wbNavRequest) return 0;
-    Module.wbNavRequest = '';
+    Module.wbNavRequest = "";
     return 1;
   });
   return pending != 0;
