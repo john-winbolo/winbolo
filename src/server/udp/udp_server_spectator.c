@@ -235,7 +235,7 @@ static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
          * playerNum. */
         allow = (evt->u.chat.destPlayer == 0xFF);
         break;
-    /* A scenario's presentation, for the three that carry a recipient
+    /* A scenario's presentation, for the four that carry a recipient
      * pair: a viewer sees what is addressed to everyone and nothing
      * narrower. A spectator belongs to no team and holds no slot, so a
      * team- or player-addressed one never qualifies — the same reasoning
@@ -252,6 +252,10 @@ static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
     case CTRL_SCN_MARKER:
         allow = (evt->u.scnMarker.destTeam == 0 &&
                  evt->u.scnMarker.destPlayer == 0xFF);
+        break;
+    case CTRL_SCN_STATUS:
+        allow = (evt->u.scnStatus.destTeam == 0 &&
+                 evt->u.scnStatus.destPlayer == 0xFF);
         break;
     /* Scores are broadcast — a viewer reading a scenario's panel and
      * markers with a blank scoreboard beside them looks broken, the

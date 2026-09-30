@@ -366,6 +366,7 @@ static const char *logEventsTypeName(int type) {
     case CTRL_SCN_SCORE:             return "CTRL_SCN_SCORE";
     case CTRL_SCN_ANNOUNCE:          return "CTRL_SCN_ANNOUNCE";
     case CTRL_SCN_MARKER:            return "CTRL_SCN_MARKER";
+    case CTRL_SCN_STATUS:            return "CTRL_SCN_STATUS";
     case CTRL_SCENARIO_RULES:        return "CTRL_SCENARIO_RULES";
     case CTRL_LOBBY_SCRIPT_LIST:     return "CTRL_LOBBY_SCRIPT_LIST";
     case CTRL_LOBBY_SCRIPT_SETTING:  return "CTRL_LOBBY_SCRIPT_SETTING";

@@ -937,6 +937,28 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
     wordsLen = (unsigned short)((BYTE)words[0]) + 1;
     memcpy(out + off, words, wordsLen);
     off += wordsLen;
+    /* Where on the view the line goes, from opt3. It follows the text only
+       when it is not the top, so a line at the top is recorded byte for
+       byte as it was before the place existed, and a viewer that predates
+       it skips the trailing byte by the framed length. */
+    if (opt3 != 0) {
+      out[off++] = opt3;
+    }
+    break;
+  case log_ScnStatus:
+    /* The destination, the countdown's end tick as a big-endian u32 across
+       opt3, opt4 and the short (0xFFFFFFFF = no countdown), then the line.
+       An empty line is the clear. */
+    out[off++] = log_ScnStatus;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    out[off++] = opt4;
+    out[off++] = (BYTE)((short1 >> 8) & 0xFF);
+    out[off++] = (BYTE)(short1 & 0xFF);
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
     break;
   case log_ScnMarker:
     /* The marker's id, its kind and the destination, then x, y, slot and

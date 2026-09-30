@@ -1168,6 +1168,79 @@ int run_lv_presentation_announce_posts(void) {
     return 0;
 }
 
+/* ── 8b. The status line, and a placed announcement ───────────────── */
+
+/* After the opening:
+ *   tick 0   status "Wave 1/5" to everyone, counting to tick 4096   20 ms
+ *   tick 1   "Hi" to everyone for 100 ticks, placed upper: the one
+ *            place byte after the text                              40 ms
+ *   tick 2   the status line cleared                                60 ms
+ *   ticks 3-6 NOEVENTS 3
+ *   tick 7   LOG_QUIT                                              160 ms */
+static const uint8_t kLvpStatusStream[] = {
+    0x03, 0x01, 0x44, 0x00, 0x0F,
+        0x00, 0xFF, 0x00, 0x00, 0x10, 0x00,
+        0x08, 0x57, 0x61, 0x76, 0x65, 0x20, 0x31, 0x2F, 0x35,
+    0x03, 0x01, 0x40, 0x00, 0x08,
+        0x00, 0xFF, 0x00, 0x64, 0x02, 0x48, 0x69, 0x01,
+    0x03, 0x01, 0x44, 0x00, 0x07,
+        0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00,
+    0x01, 0x03,
+    0x00,
+};
+
+int run_lv_presentation_status_line(void) {
+    const char          *path = "lv_presentation_status.wbv";
+    static LvpLog        b;
+    LogViewerState      *lv;
+    const LvPresStatus  *st;
+    bool                 upAt40, heldText, heldEnds, annAt40, goneAt120;
+    bool                 backAt40, rowSet;
+
+    UT_ASSERT(log_ScnStatus == 0x44);
+
+    lvpPutOpening(&b);
+    lvpPut(&b, kLvpStatusStream, sizeof(kLvpStatusStream));
+    lv = lvpOpen(&b, path);
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the hand-built log could not be loaded");
+    }
+
+    lv_screenSeekToTimeMs(40);
+    st       = lv_screenFollowedStatus();
+    upAt40   = (st != NULL);
+    heldText = (st != NULL && strcmp(st->text, "Wave 1/5") == 0);
+    heldEnds = (st != NULL && st->endsAt == 4096u);
+    rowSet   = (lv_screenGetStatusRow(0, 0xFF) != NULL &&
+                lv_screenGetStatusRow(0, 0xFF)->set);
+    /* The placed announcement is read past its place byte. */
+    annAt40  = (lv_screenGetAnnounce()->set &&
+                strcmp(lv_screenGetAnnounce()->text, "Hi") == 0);
+
+    lv_screenSeekToTimeMs(120);
+    goneAt120 = (lv_screenFollowedStatus() == NULL);
+
+    lv_screenSeekToTimeMs(40);
+    backAt40 = (lv_screenFollowedStatus() != NULL);
+
+    /* Played through to the end from the start: nothing refused. */
+    lv_screenSeekToTimeMs(0);
+    UT_ASSERT_MSG(lvpPlayToEnd(), "playback did not reach the end");
+
+    lv_decoderDestroy(lv);
+    remove(path);
+
+    UT_ASSERT_MSG(upAt40, "no status line at 40 ms");
+    UT_ASSERT_MSG(rowSet, "everyone's status row is not set at 40 ms");
+    UT_ASSERT_MSG(heldText, "the status line holds the wrong text");
+    UT_ASSERT_MSG(heldEnds, "the status line counts to the wrong tick");
+    UT_ASSERT_MSG(annAt40, "the placed announcement was not read");
+    UT_ASSERT_MSG(goneAt120, "the status line is still up after its clear");
+    UT_ASSERT_MSG(backAt40, "a seek back did not rebuild the status line");
+    return 0;
+}
+
 /* ── 9. Which markers the followed player sees ─────────────────────── */
 
 /* A marker as a record would have left it. */

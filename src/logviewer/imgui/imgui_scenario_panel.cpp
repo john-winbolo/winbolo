@@ -13,6 +13,10 @@
  * up to the shorter side of the viewport. The row is chosen by
  * lv_screenFollowedPanelRow and the timer counts on the server's tick at the
  * playhead, which is the clock the scenario set its targets on.
+ *
+ * The status line is drawn here too, since it is the same kind of thing: the
+ * followed player's line, along the top of the viewport, with its countdown
+ * on the same clock.
  */
 
 #include "imgui_scenario_panel.h"
@@ -23,6 +27,7 @@
 #include "../lv_presentation.h"
 #include "../../gui/sdl3/scenario_panel_draw.h"
 
+#include <cfloat>
 #include <cstdio>
 #include <cstring>
 
@@ -207,4 +212,50 @@ void lv_imgui_scenario_panel_window(bool logLoaded) {
         }
     }
     ImGui::End();
+}
+
+void lv_imgui_scenario_status(bool logLoaded) {
+    char     line[SCN_STATUS_LINE_MAX];
+    bool     have = false;
+
+    if (!logLoaded) {
+        return;
+    }
+    /* Copied out under the playback lock, as the panel row is. */
+    lv_clientMutexWaitFor();
+    {
+        const LvPresStatus *row = lv_screenFollowedStatus();
+        if (row != NULL) {
+            uint32_t tick = lv_screenServerTickAt(lv_screenGetTimeRunning());
+            have = scnStatusLineText(row->text, row->endsAt, tick, line,
+                                     sizeof(line));
+        }
+    }
+    lv_clientMutexRelease();
+    if (!have) {
+        return;
+    }
+
+    ImDrawList *dl   = ImGui::GetForegroundDrawList();
+    ImFont     *font = ImGui::GetFont();
+    if (dl == nullptr || font == nullptr) {
+        return;
+    }
+    const ImGuiViewport *vp = ImGui::GetMainViewport();
+    /* Half again the interface's text, and just under the menu bar, which
+       is where the top of the game view starts. */
+    const float  height = ImGui::GetFontSize() * 1.5f;
+    const ImVec2 size   = font->CalcTextSizeA(height, FLT_MAX, 0.0f, line);
+    const float  px     = vp->Pos.x + (vp->Size.x - size.x) * 0.5f;
+    const float  py     = vp->Pos.y + ImGui::GetFrameHeight() + 4.0f;
+    const ImU32  edge   = IM_COL32(0, 0, 0, 255);
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dy == 0) continue;
+            dl->AddText(font, height, ImVec2(px + (float)dx, py + (float)dy),
+                        edge, line);
+        }
+    }
+    dl->AddText(font, height, ImVec2(px, py), IM_COL32(255, 255, 255, 255),
+                line);
 }
