@@ -3742,6 +3742,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # What the sim tells WinBolo.net about the scripts a round runs: the
     # scenario, its cap and the mods, read off the stubbed lobby-info setter.
     tests/unit/test_wbn_lobby_info_scenario.c
+    # The script bytes the reply to an info request carries after the
+    # INFO_PACKET: the writer and the reader, each against literal bytes.
+    tests/unit/test_info_script_tail.c
     # The policy a server holds for scripts players send it: the word it is
     # set from, its byte on the lobby-settings event, and the sim's and the
     # client's copies.
@@ -5011,6 +5014,7 @@ set(_unit_test_names
     wbn_serverlist_players
     wbn_serverlist_motd
     wbn_serverlist_malformed
+    wbn_serverlist_scripts
     wbn_map_parse
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
@@ -6034,6 +6038,8 @@ set(_unit_test_names
     lobby_scenario_identity_strips_controls
     lobby_scenario_nolobby_boot_seats_template
     wbn_lobby_info_scenario
+    info_script_tail_golden
+    info_script_tail_read
     script_upload_policy_resolve
     script_upload_policy_word
     script_upload_policy_codec

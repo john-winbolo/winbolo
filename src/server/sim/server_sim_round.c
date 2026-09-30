@@ -604,6 +604,19 @@ BOLO_STATIC_ASSERT(WBN_SCENARIO_NAME_LEN == LOBBY_SCENARIO_NAME_LEN,
                    wbn_scenario_name_len_matches_lobby_scenario_name_len);
 BOLO_STATIC_ASSERT(WBN_MODS_MAX == LOBBY_SCRIPT_LIST_MAX - 1,
                    wbn_mods_max_matches_lobby_script_list_max);
+/* server_sim.h keeps its own copies of the same three figures for the script
+   summary, for the same reason; the summary is copied field for field into the
+   tracker's struct and the info reply, so all three sets move together. */
+BOLO_STATIC_ASSERT(SERVER_SCRIPT_NAME_LEN == LOBBY_SCENARIO_NAME_LEN,
+                   server_script_name_len_matches_lobby_scenario_name_len);
+BOLO_STATIC_ASSERT(SERVER_SCRIPT_DESC_LEN == LOBBY_SCENARIO_DESC_LEN,
+                   server_script_desc_len_matches_lobby_scenario_desc_len);
+BOLO_STATIC_ASSERT(SERVER_SCRIPT_MODS_MAX == LOBBY_SCRIPT_LIST_MAX - 1,
+                   server_script_mods_max_matches_lobby_script_list_max);
+BOLO_STATIC_ASSERT(SERVER_SCRIPT_NAME_LEN == WBN_SCENARIO_NAME_LEN,
+                   server_script_name_len_matches_wbn_scenario_name_len);
+BOLO_STATIC_ASSERT(SERVER_SCRIPT_MODS_MAX == WBN_MODS_MAX,
+                   server_script_mods_max_matches_wbn_mods_max);
 
 /* A script's name for the tracker: the manifest's, or the file's where the
    manifest named nothing, as the lobby draws it. Cut to fit on a character
@@ -619,10 +632,42 @@ static void serverSimWbnCopyName(char *dst, const char *name,
     memcpy(dst, tmp, len + 1);
 }
 
+void serverSimGetScriptSummary(const ServerSim *sim, ServerScriptSummary *out) {
+    int count;
+    int i;
+    if (out == NULL) return;
+    memset(out, 0, sizeof(*out));
+    if (sim == NULL) return;
+    /* The scenario only when one decides the round: a mod attached as the
+       identity leaves winning alone, so the round reads as plain. */
+    out->hasScenario = sim->scenarioIdentity.source != lobbyScenarioNone &&
+                       !sim->scenarioIdentity.keepsWinCondition;
+    if (out->hasScenario) {
+        serverSimWbnCopyName(out->scenarioName, sim->scenarioIdentity.name,
+                             sim->scenarioIdentity.fileName);
+        snprintf(out->scenarioDescription, sizeof(out->scenarioDescription),
+                 "%s", sim->scenarioIdentity.description);
+        out->scenarioMaxPlayers = sim->scenarioLobby.maxPlayers;
+    }
+    /* The mods that run, in the lobby's list order. None with Mods Enabled
+       off, whatever the list still names. */
+    out->modCount = 0;
+    if (!serverSimGetModsOff(sim)) {
+        count = serverSimGetLobbyScriptCount(sim);
+        for (i = 0; i < count && out->modCount < SERVER_SCRIPT_MODS_MAX; i++) {
+            const ScnDirEntry *row = serverSimGetLobbyScript(sim, i);
+            if (row == NULL || !row->keepsWinCondition) continue;
+            serverSimWbnCopyName(out->modNames[out->modCount], row->name,
+                                 row->file);
+            out->modCount++;
+        }
+    }
+}
+
 void serverSimRefreshWbnLobbyInfo(ServerSim *sim) {
-    WbnLobbyInfo info;
-    int          count;
-    int          i;
+    WbnLobbyInfo        info;
+    ServerScriptSummary scripts;
+    BYTE                i;
     if (sim == NULL) return;
     memset(&info, 0, sizeof(info));
     snprintf(info.map, sizeof(info.map), "%s", sim->mapName);
@@ -664,27 +709,13 @@ void serverSimRefreshWbnLobbyInfo(ServerSim *sim) {
     info.baseViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryBase);
     info.allyViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryAlly);
     info.voiceMode       = serverSimGetVoiceMode(sim);
-    /* The scenario only when one decides the round: a mod attached as the
-       identity leaves winning alone, so the round reads as plain. */
-    info.hasScenario = sim->scenarioIdentity.source != lobbyScenarioNone &&
-                       !sim->scenarioIdentity.keepsWinCondition;
-    if (info.hasScenario) {
-        serverSimWbnCopyName(info.scenarioName, sim->scenarioIdentity.name,
-                             sim->scenarioIdentity.fileName);
-        info.scenarioMaxPlayers = sim->scenarioLobby.maxPlayers;
-    }
-    /* The mods that run, in the lobby's list order. None with Mods Enabled
-       off, whatever the list still names. */
-    info.modCount = 0;
-    if (!serverSimGetModsOff(sim)) {
-        count = serverSimGetLobbyScriptCount(sim);
-        for (i = 0; i < count && info.modCount < WBN_MODS_MAX; i++) {
-            const ScnDirEntry *row = serverSimGetLobbyScript(sim, i);
-            if (row == NULL || !row->keepsWinCondition) continue;
-            serverSimWbnCopyName(info.modNames[info.modCount], row->name,
-                                 row->file);
-            info.modCount++;
-        }
+    serverSimGetScriptSummary(sim, &scripts);
+    info.hasScenario        = scripts.hasScenario;
+    info.scenarioMaxPlayers = scripts.scenarioMaxPlayers;
+    memcpy(info.scenarioName, scripts.scenarioName, sizeof(info.scenarioName));
+    info.modCount = scripts.modCount;
+    for (i = 0; i < scripts.modCount; i++) {
+        memcpy(info.modNames[i], scripts.modNames[i], sizeof(info.modNames[i]));
     }
     winbolonetSetLobbyInfo(&info);
 }

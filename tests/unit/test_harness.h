@@ -496,6 +496,7 @@ int run_wbn_serverlist_parse(void);
 int run_wbn_serverlist_players(void);
 int run_wbn_serverlist_motd(void);
 int run_wbn_serverlist_malformed(void);
+int run_wbn_serverlist_scripts(void);
 int run_wbn_map_parse(void);
 int run_brain_crash_log_writes_file(void);
 int run_brain_crash_log_falls_back_to_luaptr(void);
@@ -2921,6 +2922,12 @@ int run_lobby_scenario_nolobby_boot_seats_template(void);
  * (test_wbn_lobby_info_scenario.c): the scenario, its cap and the mods, none
  * on a plain round, a mods-only round or with Mods Enabled off. */
 int run_wbn_lobby_info_scenario(void);
+
+/* The script bytes the reply to an info request carries after the
+ * INFO_PACKET (test_info_script_tail.c): the writer against literal bytes,
+ * and the reader against literal buffers, well-formed and not. */
+int run_info_script_tail_golden(void);
+int run_info_script_tail_read(void);
 
 /* The policy a server holds for scripts players send it
  * (test_script_upload_policy.c): the word it is set from and the legacy flag
