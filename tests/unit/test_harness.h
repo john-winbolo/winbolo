@@ -184,6 +184,8 @@ int run_lobby_bot_config_memory_manual_only(void);
 int run_lobby_bot_config_memory_cleared_on_return_to_lobby(void);
 int run_lobby_bot_config_memory_open_game_start_mode(void);
 int run_lobby_bot_config_memory_game_type_change(void);
+int run_lobby_bot_config_memory_map_commit_type(void);
+int run_lobby_bot_config_memory_dispatch_hand_mark(void);
 int run_lobby_add_bot_rejects_empty_brain_path(void);
 int run_lobby_add_bot_rejects_ai_none(void);
 int run_lobby_add_bot_rejects_not_in_lobby(void);
@@ -2891,6 +2893,7 @@ int run_lobby_template_seat_carries_init(void);
 int run_lobby_template_seat_carries_mode(void);
 int run_lobby_template_mode_unknown_key_kept(void);
 int run_lobby_template_no_mode_leaves_config(void);
+int run_lobby_template_seat_new_seat_base(void);
 int run_lobby_template_add_bot_takes_template(void);
 
 /* The scripted game type (test_scripted_game_type.c): gameScripted resolving

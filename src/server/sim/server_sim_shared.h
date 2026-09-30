@@ -257,6 +257,16 @@ BotConfigKeyResult serverSimResolveBotConfigKeysFromModes(
         uint8_t *ioMode,
         uint8_t *ioLevel);
 
+/* Defined in server_sim_lobby.c — the body of serverSimResolveNewBotConfig,
+ * taking the brain's modes already loaded. NULL modes is a brain with no
+ * modes.txt and answers false, as the path form does when the read fails.
+ * The scenario's seat loops call it with their one read per brain. */
+bool serverSimResolveNewBotConfigFromModes(const ServerSim *sim, int team,
+                                           const BrainModes *modes,
+                                           bool honourManualPick,
+                                           uint8_t *ioMode,
+                                           uint8_t *ioLevel);
+
 /* Defined in server_sim.c — the entries owned by the parent rather than by a
  * source in this directory. */
 

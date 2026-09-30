@@ -4793,6 +4793,8 @@ set(_unit_test_names
     lobby_bot_config_memory_new_lobby
     lobby_bot_config_memory_open_start
     lobby_bot_config_memory_type_change
+    lobby_bot_config_memory_map_commit_type
+    lobby_bot_config_memory_dispatch_mark
     lobby_add_bot_rejects_empty_brain_path
     lobby_add_bot_rejects_ai_none
     lobby_add_bot_rejects_not_in_lobby
@@ -5956,6 +5958,7 @@ set(_unit_test_names
     lobby_template_seat_carries_mode
     lobby_template_mode_unknown_key_kept
     lobby_template_no_mode_leaves_config
+    lobby_template_seat_new_seat_base
     lobby_template_add_bot_takes_template
     scripted_game_type_loadout_follows_base
     scripted_game_type_no_base_is_strict

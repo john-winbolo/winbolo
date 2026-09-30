@@ -1884,6 +1884,10 @@ bool serverSimScenarioHasLobbyTemplate(const ServerSim *sim);
  *  Safe with no scenario attached: a lobby that never had one
  *  is left exactly as it is.
  *
+ *  When the game type changes here, the lobby's bots follow it
+ *  as they do when the host changes it by hand
+ *  (serverSimFollowGameTypeBotModes).
+ *
  *ARGUMENTS:
  *  sim - The sim whose lobby settings are being brought into
  *        line
@@ -2675,7 +2679,9 @@ void serverSimRememberManualBotPick(ServerSim *sim, BYTE slot);
 /* Record that a person changed this bot's MODE by hand. Called by the
  * CMD_LOBBY_BOT_CONFIG arm when the mode differs from the seat's previous
  * one. A marked seat keeps its mode through serverSimFollowGameTypeBotModes.
- * The mark goes when the seat's player leaves. */
+ * The mark goes when the seat's player leaves, when the seat is given a new
+ * bot's defaults (serverSimApplyNewBotDefaults), and when the lobby is reset
+ * to its defaults. */
 void serverSimMarkBotModeSetByHand(ServerSim *sim, BYTE slot);
 
 /* After the game type changed from `oldType` to the current one: every bot

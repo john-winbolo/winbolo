@@ -302,34 +302,49 @@ bool serverSimResolveNewBotConfig(const ServerSim *sim, int team,
                                   bool honourManualPick,
                                   uint8_t *ioMode, uint8_t *ioLevel) {
     BrainModes modes;
-    int mode;
-    int level;
-    const ScnLobbyTeam *lt;
 
     if (sim == NULL || ioMode == NULL || ioLevel == NULL) return false;
     if (brainPath == NULL || brainPath[0] == '\0') return false;
     /* A brain with no manifest reads no mode=/difficulty= token at all
      * (botManagerStageInitArg), so there is nothing to resolve. */
     if (!brainListLoadModesForPath(brainPath, &modes)) return false;
+    return serverSimResolveNewBotConfigFromModes(sim, team, &modes,
+                                                 honourManualPick,
+                                                 ioMode, ioLevel);
+}
+
+bool serverSimResolveNewBotConfigFromModes(const ServerSim *sim, int team,
+                                           const BrainModes *modes,
+                                           bool honourManualPick,
+                                           uint8_t *ioMode,
+                                           uint8_t *ioLevel) {
+    int mode;
+    int level;
+    const ScnLobbyTeam *lt;
+
+    if (sim == NULL || ioMode == NULL || ioLevel == NULL) return false;
+    if (modes == NULL) return false;
 
     /* 1. The base, clamped into this brain's own lists the same way
      *    botInitArgAppendModeTokens clamps it. */
     mode = (int)*ioMode;
-    if (mode >= modes.modeCount) mode = 0;
+    if (mode >= modes->modeCount) mode = 0;
     level = (int)*ioLevel;
-    if (level >= modes.modes[mode].levelCount) {
-        level = modes.modes[mode].defaultLevel;
+    if (level >= modes->modes[mode].levelCount) {
+        level = modes->modes[mode].defaultLevel;
     }
 
     /* 1b. A base of mode 0 is "the lobby default", which depends on the game
      *     type: an Open game starts in the brain's open_default mode
      *     (brainModesStartMode). The level moves across by KEY, so Medium in
-     *     mode 0 is Medium in the new mode when that mode lists one. */
+     *     mode 0 is Medium in the new mode when that mode lists one.
+     *     Single player's "Chosen Mode = default" also arrives here as a base
+     *     of 0 (gameFrontSpBotMode in gamefront.c), so it reads as no pick. */
     if (mode == 0) {
         int start = brainModesStartMode(
-            &modes, serverSimGetGameType(sim) == gameOpen);
+            modes, serverSimGetGameType(sim) == gameOpen);
         if (start != 0) {
-            level = lobbyLevelAcrossModes(&modes, 0, level, start);
+            level = lobbyLevelAcrossModes(modes, 0, level, start);
             mode  = start;
         }
     }
@@ -349,10 +364,10 @@ bool serverSimResolveNewBotConfig(const ServerSim *sim, int team,
     if (lt != NULL) {
         uint8_t m = (uint8_t)mode;
         uint8_t l = (uint8_t)level;
-        /* This brain's modes are already in hand from the load above, so the
+        /* This brain's modes are already in hand from the caller, so the
          * template's pair is resolved against them rather than reading
          * modes.txt a second time for the same brain. */
-        if (serverSimResolveBotConfigKeysFromModes(&modes, lt->mode,
+        if (serverSimResolveBotConfigKeysFromModes(modes, lt->mode,
                                                    lt->difficulty, &m, &l)
                 == BOT_CFG_KEYS_OK) {
             mode  = (int)m;
@@ -373,17 +388,17 @@ bool serverSimResolveNewBotConfig(const ServerSim *sim, int team,
     if (honourManualPick && lt != NULL) {
         const char *key = sim->lastTeamBotLevelKey[team];
         if (key[0] != '\0') {
-            int li = brainModeFindLevel(&modes.modes[mode], key);
+            int li = brainModeFindLevel(&modes->modes[mode], key);
             if (li >= 0) level = li;
         }
     } else if (honourManualPick && sim->lastBotLevelKey[0] != '\0' &&
                sim->lastBotModeKey[0] != '\0') {
-        int mi = brainModesFindMode(&modes, sim->lastBotModeKey);
+        int mi = brainModesFindMode(modes, sim->lastBotModeKey);
         if (mi >= 0) {
-            int li = brainModeFindLevel(&modes.modes[mi],
+            int li = brainModeFindLevel(&modes->modes[mi],
                                         sim->lastBotLevelKey);
             mode  = mi;
-            level = (li >= 0) ? li : modes.modes[mi].defaultLevel;
+            level = (li >= 0) ? li : modes->modes[mi].defaultLevel;
         }
     }
 

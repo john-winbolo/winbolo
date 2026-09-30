@@ -184,6 +184,7 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
     sim->lastBotLevelKey[0] = '\0';
     memset(sim->lastTeamBotLevelKey, 0, sizeof(sim->lastTeamBotLevelKey));
     sim->botConfigPublishPending = 0;
+    sim->botModeSetByHand        = 0;
 
     /* Unlock the lobby to new players: clear both the host-toggled
      * allow-new-players gate and the transport-level admin lock. */

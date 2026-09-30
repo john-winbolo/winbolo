@@ -133,7 +133,15 @@ static void ltDropBrainFile(void) {
 static char ltModesDir[160];
 static char ltModesBrain[224];
 
+static bool ltMakeModesBrainWith(const char *tag, const char *header);
+
 static bool ltMakeModesBrain(const char *tag) {
+    return ltMakeModesBrainWith(tag, "");
+}
+
+/* The same fixture with `header` written above the first section, where a
+ * manifest's file-level lines (open_default) go. */
+static bool ltMakeModesBrainWith(const char *tag, const char *header) {
     char  path[288];
     FILE *f;
 
@@ -151,6 +159,7 @@ static bool ltMakeModesBrain(const char *tag) {
     SDL_snprintf(path, sizeof(path), "%s/modes.txt", ltModesDir);
     f = fopen(path, "wb");
     if (f == NULL) return false;
+    fputs(header, f);
     fputs("[default]\n"
           "label = Default\n"
           "levels = easy:Easy:1, medium:Medium:2, hard:Hard:3\n"
@@ -1345,6 +1354,91 @@ int run_lobby_template_no_mode_leaves_config(void) {
                   "held seat %d queued no bot-config event", held);
     UT_ASSERT_MSG((sim->botConfigPublishPending & (1u << fielded)) != 0,
                   "fielded seat %d queued no bot-config event", fielded);
+
+    serverSimDestroy(sim);
+    ltDropModesBrain();
+    ltDropBrainFile();
+    return 0;
+}
+
+/* A seat the template makes starts from a NEW seat's config, whatever the
+ * slot's previous bot had: botConfigs is not cleared when a bot leaves, so a
+ * seat that read it would inherit a removed bot's mode. And the base is the
+ * one Add Bot resolves for the team, so on an Open game a seeded seat starts
+ * in the brain's open_default mode as an added bot does. */
+int run_lobby_template_seat_new_seat_base(void) {
+    ServerSim       *sim;
+    ScnLobbyTemplate t;
+    int              held;
+    int              fielded;
+    int              i;
+
+    /* 1. Stale configs on every slot; the fixture has no open_default. */
+    UT_ASSERT(ltMakeBrainFile("new_seat_base"));
+    UT_ASSERT(ltMakeModesBrain("new_seat_base"));
+    ut_brain_stub_arm(true);
+    sim = ltLobbySim();
+    UT_ASSERT(sim != NULL);
+    for (i = 0; i < MAX_TANKS; i++) {
+        sim->botConfigs[i].mode       = 1;
+        sim->botConfigs[i].difficulty = 0;
+    }
+
+    ltModesTemplate(&t, NULL, NULL);
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    serverSimScenarioSeatLobby(sim);
+    ltHoldInLobby(sim);
+
+    held = ltFirstSeat(sim, LT_RAIDER);
+    UT_ASSERT_MSG(held >= 0, "the held team seated nothing");
+    fielded = ltFirstSeat(sim, LT_GUARD);
+    UT_ASSERT_MSG(fielded >= 0, "the fielded team seated nothing");
+    UT_ASSERT_MSG(sim->botConfigs[held].mode == 0 &&
+                  sim->botConfigs[held].difficulty == BOT_DIFFICULTY_HARD,
+                  "held seat %d kept the slot's stale config %u/%u",
+                  held, (unsigned)sim->botConfigs[held].mode,
+                  (unsigned)sim->botConfigs[held].difficulty);
+    UT_ASSERT_MSG(sim->botConfigs[fielded].mode == 0 &&
+                  sim->botConfigs[fielded].difficulty == BOT_DIFFICULTY_HARD,
+                  "fielded seat %d kept the slot's stale config %u/%u",
+                  fielded, (unsigned)sim->botConfigs[fielded].mode,
+                  (unsigned)sim->botConfigs[fielded].difficulty);
+
+    serverSimDestroy(sim);
+    ltDropModesBrain();
+    ltDropBrainFile();
+
+    /* 2. A brain whose open_default is its second mode, on an Open game:
+          the seeded seats start there, at the lobby's Hard. */
+    UT_ASSERT(ltMakeBrainFile("new_seat_open"));
+    UT_ASSERT(ltMakeModesBrainWith("new_seat_open",
+                                   "open_default = survival\n\n"));
+    ut_brain_stub_arm(true);
+    sim = ltLobbySim();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(serverSimGetGameType(sim) == gameOpen);
+
+    ltModesTemplate(&t, NULL, NULL);
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    serverSimScenarioSeatLobby(sim);
+    ltHoldInLobby(sim);
+
+    held = ltFirstSeat(sim, LT_RAIDER);
+    UT_ASSERT_MSG(held >= 0, "the held team seated nothing");
+    fielded = ltFirstSeat(sim, LT_GUARD);
+    UT_ASSERT_MSG(fielded >= 0, "the fielded team seated nothing");
+    UT_ASSERT_MSG(sim->botConfigs[held].mode == 1 &&
+                  sim->botConfigs[held].difficulty == BOT_DIFFICULTY_HARD,
+                  "held seat %d on an Open game is %u/%u, expected the "
+                  "open_default mode (1) at Hard", held,
+                  (unsigned)sim->botConfigs[held].mode,
+                  (unsigned)sim->botConfigs[held].difficulty);
+    UT_ASSERT_MSG(sim->botConfigs[fielded].mode == 1 &&
+                  sim->botConfigs[fielded].difficulty == BOT_DIFFICULTY_HARD,
+                  "fielded seat %d on an Open game is %u/%u, expected the "
+                  "open_default mode (1) at Hard", fielded,
+                  (unsigned)sim->botConfigs[fielded].mode,
+                  (unsigned)sim->botConfigs[fielded].difficulty);
 
     serverSimDestroy(sim);
     ltDropModesBrain();
