@@ -237,6 +237,12 @@ int run_manual_vote_countdown_survives_lost_base(void);
 int run_surrender_credits_the_opposing_team(void);
 int run_win_during_manual_countdown_resolves_as_vote(void);
 int run_abandoned_round_reports_nothing(void);
+/* The returning lobby's win message (test_lobby_return_win_message.c).
+ * serverSimLocalOnReturnToLobby sends a pending win message once, to
+ * everyone, clears it and republishes the lobby; a message over the wire's
+ * cap is cut on a character boundary and ends in "...". */
+int run_lobby_return_sends_win_message(void);
+int run_lobby_return_cuts_long_win_message(void);
 int run_round_stats_zeroed_on_fresh_sim(void);
 int run_round_stats_kill_basic(void);
 int run_round_stats_drown_not_suicide(void);

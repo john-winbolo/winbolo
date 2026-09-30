@@ -53,12 +53,6 @@
  * serverLifecycleSetRoundLogHooks. NULL on every other binary that
  * links server_static, so the lifecycle's stash/flush calls become
  * no-ops there. */
-/* Adapter: serverSimEmitBrainAnnounces hands each event to a deliver
- * callback; the return-to-lobby path wants them on the broadcast bus. */
-static void serverSimPublishBrainAnnounceCb(void *ctx, const ControlEvent *evt) {
-  serverSimPublishControl((ServerSim *)ctx, evt);
-}
-
 static void (*s_roundLogStash)(void) = NULL;
 static void (*s_roundLogFlush)(void) = NULL;
 
@@ -890,9 +884,7 @@ void serverInstanceTick(ServerSim *sim) {
       }
     }
     /* Run brain AI bots — queues two InputPackets per bot (keys + game) */
-    if (serverSimGetNumBots(sim) > 0) {
-      serverSimBotTick(sim, sim->botAiType);
-    }
+    serverSimLocalBotTick(sim);
     /* Advance the sim by one 20ms frame.  serverSimTick internally runs
      * the keys-tick + game-tick pair and accumulates events from both
      * half-steps into a single frame's worth of state, so the prior
@@ -911,31 +903,9 @@ void serverInstanceTick(ServerSim *sim) {
         brainRecordEndGame();
         s_braindbgSessionOpen = false;
       }
-      /* Decide the win/exit message and WBN crediting. The policy lives in
-       * the sim core (serverSimResolveGameOver) so the dedicated server and
-       * the in-process SP/host both resolve a game over identically. */
-      serverSimResolveGameOver(sim);
-      {
-        ControlEvent phaseEvt;
-        ControlEvent overEvt;
-        memset(&phaseEvt, 0, sizeof(phaseEvt));
-        phaseEvt.type = CTRL_GAME_PHASE_GAME_OVER;
-        serverSimPublishControl(sim, &phaseEvt);
-        memset(&overEvt, 0, sizeof(overEvt));
-        overEvt.type = CTRL_GAME_OVER;
-        serverSimPublishControl(sim, &overEvt);
-      }
-      /* Ship the round's scoreboard + awards while the accumulator is still
-       * intact (returnToLobby clears it later). This path runs only for a
-       * round that actually reached game-over. */
-#if POSTGAME_STATS_ENABLED
-      {
-        ControlEvent rsEvt;
-        rsEvt.type = CTRL_ROUND_STATS;
-        serverSimBuildRoundStatsSummary(sim, &rsEvt.u.roundStats);
-        serverSimPublishControl(sim, &rsEvt);
-      }
-#endif
+      /* Resolve the game over, publish the game-over phase and event, and
+       * ship the round's scoreboard + awards. */
+      serverSimLocalOnGameOver(sim);
       /* No-lobby map rotation: a win boots everyone and restarts a fresh
        * round here, inside the tick, so sim->state leaves gameOver before
        * the main loop's exit check observes it — the server never quits. */
@@ -963,15 +933,7 @@ void serverInstanceTick(ServerSim *sim) {
     serverSimTick(sim);
 
     /* Check if a balance proposal just completed */
-    if (sim->balanceProposal.broadcastNeeded) {
-      ControlEvent evt;
-      memset(&evt, 0, sizeof(evt));
-      evt.type = CTRL_BALANCE_PROPOSAL;
-      memcpy(evt.u.balanceProposal.teamForSlot,
-             sim->balanceProposal.teamForSlot, MAX_TANKS);
-      serverSimPublishControl(sim, &evt);
-      sim->balanceProposal.broadcastNeeded = false;
-    }
+    serverSimLocalPublishBalanceProposal(sim);
 
     /* Handle state transitions */
     if (preTickState == serverStateCountdown) {
@@ -981,25 +943,9 @@ void serverInstanceTick(ServerSim *sim) {
          * transition so the codec encodes PACKET_GAME_START against
          * fresh queues. */
         transportUdpServerOnGameStart(sim);
-        {
-          ControlEvent evt;
-          memset(&evt, 0, sizeof(evt));
-          evt.type = CTRL_GAME_PHASE_RUNNING;
-          serverSimPublishControl(sim, &evt);
-        }
-        /* The table this round runs on has already been stated: the tick
-         * that ended the countdown ran serverSimStartGame, which publishes
-         * it at the end of every start. */
-        if (serverSimGetNumBots(sim) > 0) {
-          botManagerOnGameStart(sim);
-        }
-        /* Re-assert team alliances now that (a) the reliable queues were
-         * reset above — discarding the CTRL_ALLIANCE_RESET the start
-         * sequence published, which left remote clients rendering their
-         * own teammates as enemies — and (b) botManagerOnGameStart just
-         * rebuilt the bot ClientSims, whose alliance matrices start
-         * empty. One republish + direct bot sync fixes both sides. */
-        serverSimReapplyTeamAlliances(sim);
+        /* Publish RUNNING, wire the bots into the round and re-assert
+         * team alliances over the queues just reset. */
+        serverSimLocalOnGameStart(sim);
         /* Notify WBN that we are now in-game */
         winbolonetSendLobbyStatus(FALSE);
         /* Send EVENT_PLAYER_JOIN for each connected WBN player */
@@ -1027,16 +973,9 @@ void serverInstanceTick(ServerSim *sim) {
         if (instanceAcceptRemoteClients) {
           transportUdpServerSend(sim);
         }
-      } else if (sim->state == serverStateCountdown &&
-                 sim->countdownTicks > 0 &&
-                 sim->countdownTicks % 50 == 0) {
+      } else {
         /* Broadcast countdown tick (once per second) */
-        uint8_t secs = (uint8_t)((sim->countdownTicks + 49) / 50);
-        ControlEvent evt;
-        memset(&evt, 0, sizeof(evt));
-        evt.type = CTRL_GAME_PHASE_COUNTDOWN;
-        evt.u.gamePhase.countdownSeconds = secs;
-        serverSimPublishControl(sim, &evt);
+        serverSimLocalCountdownTick(sim);
       }
     }
     if (preTickState == serverStateGameOver &&
@@ -1067,54 +1006,10 @@ void serverInstanceTick(ServerSim *sim) {
        * still out from the previous round defers all three until it
        * answers. */
       serverLifecycleQueueRotation(sim);
-      /* Republish the bot brain catalogue.  Mid-game joiners were gated
-       * out of the BrainList during their sync replay (see
-       * serverSimSyncSubscriber), so they need it now before the lobby
-       * UI's AiConfig combobox appears.  In-lobby clients get it as a
-       * (cheap) refresh. */
-      {
-        ControlEvent evt;
-        memset(&evt, 0, sizeof(evt));
-        serverSimFillLobbyBrainListEvent(sim, &evt);
-        serverSimPublishControl(sim, &evt);
-        /* ... and the brains' announce lines that go with it, so the
-         * returning lobby can announce a bot's brain the same way a fresh
-         * join does. The refresh first: this seam between rounds is where an
-         * operator would have edited a brain's texts, and it is off the tick
-         * path, so a re-read costs nothing anybody feels. Docs that changed
-         * get a new generation here, which tells each client to drop the
-         * copy it holds. */
-        serverSimRefreshBrainDocs(sim);
-        serverSimEmitBrainAnnounces(sim, serverSimPublishBrainAnnounceCb, sim);
-      }
-      /* Republish lobby state so every client's mirror reflects the
-       * fresh lobby. serverSimReturnToLobby's contract says the caller
-       * does this fan-out; CTRL_GAME_PHASE_LOBBY alone doesn't carry
-       * the inLobby flag or per-slot data, so without these the host's
-       * own UDP loopback ClientSim leaves cs->inLobby false and never
-       * opens the lobby dialog — the window looks frozen because there
-       * is no game view either. */
-      serverSimPublishLobbySettings(sim);
-      {
-        BYTE pi;
-        /* Republish EVERY slot, not just connected ones. A player who
-         * left mid-round had their CTRL_LOBBY_SLOT suppressed — the
-         * leave-time publish is gated to lobby/countdown state
-         * (transport_udp_server.c PACKET_QUIT), so a running-state quit
-         * never told clients to clear that slot. The client's lobbySlots
-         * mirror is only mutated by CTRL_LOBBY_SLOT (CTRL_PLAYER_LEAVE is
-         * chat-only), so without this the departed player lingers as a
-         * ghost in the returning lobby. A vacant slot fills as
-         * connected=false (serverSimFillLobbySlotEvent), which clears it. */
-        for (pi = 0; pi < MAX_TANKS; pi++) {
-          serverSimPublishLobbySlot(sim, pi);
-        }
-      }
-      /* Send the win message now that players are back in the lobby */
-      if (sim->pendingWinMessage[0] != '\0') {
-        transportUdpServerSendServerMessage(sim->pendingWinMessage);
-        sim->pendingWinMessage[0] = '\0';
-      }
+      /* Republish the brain catalogue, the lobby settings and every slot,
+       * then send the pending win message now that players are back in
+       * the lobby. */
+      serverSimLocalOnReturnToLobby(sim);
     }
 
     /* Periodic lobby-slot republish so the ping column in the lobby
@@ -1125,16 +1020,7 @@ void serverInstanceTick(ServerSim *sim) {
      * at 50 Hz is ~5 s, well under the perceptible-staleness window
      * and far below the wire cost the queue can absorb. Skipped in
      * running state — snapshots already carry pingMs per tick there. */
-    if (transportUdpServerGetTickCount() % 250 == 0 &&
-        (sim->state == serverStateLobby ||
-         sim->state == serverStateCountdown)) {
-      BYTE pi;
-      for (pi = 0; pi < MAX_TANKS; pi++) {
-        if (sim->playerConnected[pi]) {
-          serverSimPublishLobbySlot(sim, pi);
-        }
-      }
-    }
+    serverSimLocalLobbySlotHeartbeat(sim, transportUdpServerGetTickCount());
 
     /* Bot-config events queued by serverSimApplyNewBotDefaults — a freshly
      * added or seeded bot's mode and difficulty — sent a couple per tick

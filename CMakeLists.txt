@@ -3543,6 +3543,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # swept round names its winner, a passed vote credits nobody, a surrender
     # credits the opposing team, an abandoned round reports nothing.
     tests/unit/test_base_win_resolve.c
+    # The returning lobby's win message: serverSimLocalOnReturnToLobby sends
+    # it once to everyone and clears it, and an over-long one is cut on a
+    # character boundary with "...".
+    tests/unit/test_lobby_return_win_message.c
     # Surrender-vote privacy: the team-scoped CTRL_GAME_VOTE_STATE is withheld
     # from non-members on the wire, its newswire lines are suppressed on the
     # in-process bus, and a team-scoped (base-monopoly) back-to-lobby vote
@@ -4838,6 +4842,8 @@ set(_unit_test_names
     surrender_credits_the_opposing_team
     win_during_manual_countdown_resolves_as_vote
     abandoned_round_reports_nothing
+    lobby_return_sends_win_message
+    lobby_return_cuts_long_win_message
     round_stats_zeroed_on_fresh_sim
     round_stats_kill_basic
     round_stats_drown_not_suicide

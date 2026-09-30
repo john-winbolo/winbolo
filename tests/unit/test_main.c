@@ -193,6 +193,8 @@ static const UnitTestEntry s_tests[] = {
     { "surrender_credits_the_opposing_team",            run_surrender_credits_the_opposing_team            },
     { "win_during_manual_countdown_resolves_as_vote",   run_win_during_manual_countdown_resolves_as_vote   },
     { "abandoned_round_reports_nothing",                run_abandoned_round_reports_nothing                },
+    { "lobby_return_sends_win_message",                 run_lobby_return_sends_win_message                 },
+    { "lobby_return_cuts_long_win_message",             run_lobby_return_cuts_long_win_message             },
     { "round_stats_zeroed_on_fresh_sim",            run_round_stats_zeroed_on_fresh_sim            },
     { "round_stats_kill_basic",                     run_round_stats_kill_basic                     },
     { "round_stats_drown_not_suicide",              run_round_stats_drown_not_suicide              },

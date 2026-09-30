@@ -217,4 +217,28 @@ void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
  * clientSimNetSendLobbyTeamClear). */
 void serverSimClearTeamMeta(ServerSim *sim, BYTE teamId);
 
+/* The lobby and round steps of the server's tick that a game with no
+ * remote clients still needs. Defined in server_sim_lifecycle_local.c.
+ * serverInstanceTick calls each at its point in the tick, between the
+ * network work around it, and the browser client's local tick calls the
+ * same functions. None takes a lock: the caller's lock covers them.
+ *
+ * BotTick runs the bots for a running round, before the sim tick.
+ * OnGameOver is the running -> game-over edge (resolve, the game-over
+ * publishes, the round stats). PublishBalanceProposal sends a finished
+ * team-balance proposal after a non-running sim tick. OnGameStart is the
+ * countdown -> running edge (the running publish, the bots' game start,
+ * the alliance re-assert). CountdownTick publishes the seconds left once a
+ * second during the countdown. OnReturnToLobby is the game-over -> lobby
+ * edge (brain list and announces, lobby settings, every slot, the pending
+ * win message). LobbySlotHeartbeat republishes the connected slots every
+ * 250th tick of the caller's tickCount in the lobby or countdown. */
+void serverSimLocalBotTick(ServerSim *sim);
+void serverSimLocalOnGameOver(ServerSim *sim);
+void serverSimLocalPublishBalanceProposal(ServerSim *sim);
+void serverSimLocalOnGameStart(ServerSim *sim);
+void serverSimLocalCountdownTick(ServerSim *sim);
+void serverSimLocalOnReturnToLobby(ServerSim *sim);
+void serverSimLocalLobbySlotHeartbeat(ServerSim *sim, uint32_t tickCount);
+
 #endif
