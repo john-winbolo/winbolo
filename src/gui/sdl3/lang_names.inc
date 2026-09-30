@@ -1518,7 +1518,10 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_MAPCHOOSER_LOADMAP", STR_MAPCHOOSER_LOADMAP },
     { "STR_MAPCHOOSER_MAPFILES", STR_MAPCHOOSER_MAPFILES },
     { "STR_MAPCHOOSER_NOPREVIEW", STR_MAPCHOOSER_NOPREVIEW },
+    { "STR_MAPCHOOSER_NOSCENARIOMAPS", STR_MAPCHOOSER_NOSCENARIOMAPS },
     { "STR_MAPCHOOSER_RANDOMMAP", STR_MAPCHOOSER_RANDOMMAP },
+    { "STR_MAPCHOOSER_SCENARIOSONLY", STR_MAPCHOOSER_SCENARIOSONLY },
+    { "STR_MAPCHOOSER_SCENARIOSONLY_TIP", STR_MAPCHOOSER_SCENARIOSONLY_TIP },
     { "STR_MAPCHOOSER_STATS", STR_MAPCHOOSER_STATS },
     { "STR_MAPEDIT_ALGORITHM", STR_MAPEDIT_ALGORITHM },
     { "STR_MAPEDIT_ALGO_LABYRINTH", STR_MAPEDIT_ALGO_LABYRINTH },
@@ -2127,6 +2130,7 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_RULE_DESC_mine_fatal_divisor", STR_RULE_DESC_mine_fatal_divisor },
     { "STR_RULE_DESC_mine_fuse_ticks", STR_RULE_DESC_mine_fuse_ticks },
     { "STR_RULE_DESC_pill_aim_iterations", STR_RULE_DESC_pill_aim_iterations },
+    { "STR_RULE_DESC_pill_aim_mac", STR_RULE_DESC_pill_aim_mac },
     { "STR_RULE_DESC_pill_angry_divisor", STR_RULE_DESC_pill_angry_divisor },
     { "STR_RULE_DESC_pill_attack_min_ticks", STR_RULE_DESC_pill_attack_min_ticks },
     { "STR_RULE_DESC_pill_attack_ticks", STR_RULE_DESC_pill_attack_ticks },
@@ -2172,6 +2176,7 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_RULE_DESC_tank_brake_rate", STR_RULE_DESC_tank_brake_rate },
     { "STR_RULE_DESC_tank_bump_decay_shift", STR_RULE_DESC_tank_bump_decay_shift },
     { "STR_RULE_DESC_tank_collision_distance", STR_RULE_DESC_tank_collision_distance },
+    { "STR_RULE_DESC_tank_collision_mac", STR_RULE_DESC_tank_collision_mac },
     { "STR_RULE_DESC_tank_death_ticks", STR_RULE_DESC_tank_death_ticks },
     { "STR_RULE_DESC_tank_decel_rate", STR_RULE_DESC_tank_decel_rate },
     { "STR_RULE_DESC_tank_explosion_damage", STR_RULE_DESC_tank_explosion_damage },
@@ -2387,4 +2392,4 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_YES", STR_YES },
 };
 
-#define K_LANG_NAME_TABLE_SIZE  2374
+#define K_LANG_NAME_TABLE_SIZE  2379

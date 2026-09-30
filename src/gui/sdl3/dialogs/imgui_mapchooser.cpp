@@ -1941,7 +1941,32 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
             ImGui::SameLine();
             ImGui::Checkbox("Created at", &state->showModifiedColumn);
             imguiHelpTooltip("Show file modification times in a second column.");
+            /* "Scenarios only" — a client-side filter like the plain
+             * search, so a change needs no rescan. Goes on the same
+             * line when it fits in the narrow list panel, else on its
+             * own line below. */
+            if (state->offerScenariosOnly) {
+                const char *label =
+                    langGetText(STR_MAPCHOOSER_SCENARIOSONLY);
+                ImGuiStyle &st = ImGui::GetStyle();
+                float boxW = ImGui::GetFrameHeight()
+                           + st.ItemInnerSpacing.x
+                           + ImGui::CalcTextSize(label).x;
+                ImGui::SameLine();
+                if (ImGui::GetContentRegionAvail().x < boxW) {
+                    ImGui::NewLine();
+                }
+                ImGui::Checkbox(label, &state->scenariosOnly);
+                imguiHelpTooltip(
+                    langGetText(STR_MAPCHOOSER_SCENARIOSONLY_TIP));
+            }
         }
+        bool scenariosOnly = state->offerScenariosOnly
+                          && state->scenariosOnly;
+        /* Map rows the filters let through this frame, so an empty
+         * "Scenarios only" result can say so instead of leaving a
+         * blank list. */
+        int shownMapRows = 0;
         /* Stale-state safety net: in non-recursive mode the legacy
          * enumerate populates state->maps with basenames only — no
          * path separators. If any entry's name contains "/" or "\"
@@ -2027,6 +2052,11 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                     if (SDL_strchr(ent.name, '/') ||
                         SDL_strchr(ent.name, '\\')) continue;
                 }
+                if (!mapChooserEntryPassesScenarioFilter(&ent,
+                                                         scenariosOnly)) {
+                    continue;
+                }
+                if (!ent.isFolder && !ent.isParentUp) shownMapRows++;
 
                 /* Wrap to a new row when the next cell would
                  * overflow horizontally. curX == 0 means we're
@@ -2177,6 +2207,11 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 }
 
                 curX += kCellW + gap;
+            }
+            if (scenariosOnly && shownMapRows == 0) {
+                if (curX > 0.0f) ImGui::NewLine();
+                ImGui::TextDisabled("%s",
+                    langGetText(STR_MAPCHOOSER_NOSCENARIOMAPS));
             }
             ImGui::EndChild();
         } else
@@ -2399,8 +2434,11 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 return true;
             };
             int starredRowsRendered = 0;
+            /* Starred rows do not carry the scripted flag, so the
+             * "Scenarios only" tick hides the section the way a
+             * recursive search does. */
             if (!(state->searchRecursive &&
-                  state->searchFilter[0] != '\0')) {
+                  state->searchFilter[0] != '\0') && !scenariosOnly) {
                 const char *scope = state->provider.cacheScope
                                      ? state->provider.cacheScope : "";
                 StarRenderCtx ctx{ state, renderer, &changed,
@@ -2462,6 +2500,11 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                     }
                     if (!match) continue;
                 }
+                if (!mapChooserEntryPassesScenarioFilter(&ent,
+                                                         scenariosOnly)) {
+                    continue;
+                }
+                if (!ent.isFolder && !ent.isParentUp) shownMapRows++;
 
                 /* List view rows are name-only; preview lives in
                  * the hover tooltip below, and the grid view (a
@@ -2685,6 +2728,14 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                         }
                     }
                 }
+            }
+            /* One dim row instead of a blank list when the tick hides
+             * every map here. Folder rows above it still show. */
+            if (scenariosOnly && shownMapRows == 0) {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextDisabled("%s",
+                    langGetText(STR_MAPCHOOSER_NOSCENARIOMAPS));
             }
             ImGui::EndTable();
         }

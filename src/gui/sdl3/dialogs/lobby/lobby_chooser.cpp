@@ -204,6 +204,9 @@ static void lobbyServerMapsListProvider(MapChooserState *state,
                         clientSimGetLobbyMapSearchIsFolder(cs, i);
                     hits[got].modTime =
                         clientSimGetLobbyMapSearchModTime(cs, i);
+                    /* The search reply carries no scripted byte, so a
+                     * network client's search rows are never tagged. */
+                    hits[got].scripted = false;
                     got++;
                 }
             }
@@ -213,6 +216,7 @@ static void lobbyServerMapsListProvider(MapChooserState *state,
             memset(e, 0, sizeof(*e));
             e->isFolder = hits[i].isFolder;
             e->modTime  = hits[i].modTime;
+            e->scripted = hits[i].scripted;
             /* Split the hit's relative path into folder + basename. The
              * row shows just the basename; the enclosing folder lives
              * in crumbsPath so the hover tooltip + preview breadcrumb
@@ -964,6 +968,11 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
          * off disk. In multiplayer the whole tab is gated on uploads
          * being enabled, so the button only appears when it can act. */
         s_chooserTabs.upload.showDeviceLoad = true;
+        /* Both tabs' rows say whether a map has a script beside it, so
+         * both offer the "Scenarios only" filter. Winbolo.net rows never
+         * say, so that tab does not. */
+        s_chooserTabs.server.offerScenariosOnly = true;
+        s_chooserTabs.upload.offerScenariosOnly = true;
         /* Random tab — third chooser instance, runs in randomTabOnly
          * mode so the widget renders generator controls on the left
          * and the procedural preview on the right. */
