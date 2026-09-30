@@ -10,7 +10,7 @@ M.LOG_STANDOFF_CANDIDATES = false  -- print every standoff candidate (very verbo
 -- Which mode this bot is asked to run in, and how hard it is asked to play.
 -- Both are the host's per-bot lobby choice and arrive as "mode=<key>" and
 -- "difficulty=<key>" tokens in BRAIN_INIT_ARG (see the init-arg block in
--- init.lua); both are also settable directly with cfg=MODE=survival /
+-- init.lua); both are also settable directly with cfg=MODE=<key> /
 -- cfg=DIFFICULTY=easy for a bench.
 --
 -- The MANIFEST that decides which keys exist is modes.txt beside this file:
@@ -5297,7 +5297,6 @@ M.MODE_LEVELS = {
       ARMOUR_LOW = 22, SHELLS_LOW = 24, ARMOUR_COMBAT = 36, SHELLS_COMBAT = 36,
     },
   },
-  survival = { hard = {}, medium = {}, easy = {} },  -- placeholders (see modes.txt)
 }
 
 return M

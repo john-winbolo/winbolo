@@ -1650,8 +1650,8 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                     }
                     if (botModes != NULL &&
                         !lobbyBotModeIsDefault(botModes, botMode)) {
-                        /* Name the mode too, so a row in the survival scenario
-                         * says so on the row itself. */
+                        /* Name the mode too, so a bot in any mode but the
+                         * default says so on the row itself. */
                         botModeTag = botModes->modes[botMode].label;
                     }
                 }
@@ -2173,7 +2173,7 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                      * form's Codebase dropdown is the honest place for it. */
                     if (showBotDetailTags && botModeTag[0]) {
                         /* The mode, when it is not the default one — one word
-                         * ("Survival"). Its own indigo, NOT the difficulty's
+                         * ("Turtle"). Its own indigo, NOT the difficulty's
                          * amber set it used to borrow: the difficulty tag sits
                          * immediately beside it and is amber at Medium, so the
                          * two ran together (Andrew: "the mode tag orangey is

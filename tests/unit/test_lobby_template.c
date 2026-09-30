@@ -156,8 +156,8 @@ static bool ltMakeModesBrain(const char *tag) {
           "levels = easy:Easy:1, medium:Medium:2, hard:Hard:3\n"
           "default = hard\n"
           "\n"
-          "[survival]\n"
-          "label = Survival\n"
+          "[turtle]\n"
+          "label = Turtle\n"
           "levels = easy:Easy:1, medium:Medium:2, hard:Hard:3\n"
           "default = hard\n", f);
     fclose(f);
@@ -1155,7 +1155,7 @@ int run_lobby_template_seat_carries_init(void) {
  * botManagerStageInitArg reads the pair it turns into the brain's mode= and
  * difficulty= tokens.
  *
- * The fixture brain's modes are default (mode 0) and survival (mode 1), each
+ * The fixture brain's modes are default (mode 0) and turtle (mode 1), each
  * with easy / medium / hard (levels 0 / 1 / 2) and hard as the default.
  *
  * The queued bot-config event is asserted with them. It is the whole of the
@@ -1203,7 +1203,7 @@ int run_lobby_template_seat_carries_mode(void) {
     sim = ltLobbySim();
     UT_ASSERT(sim != NULL);
 
-    ltModesTemplate(&t, "survival", "medium");
+    ltModesTemplate(&t, "turtle", "medium");
     serverSimSetScenarioLobbyTemplate(sim, &t);
     serverSimScenarioSeatLobby(sim);
     ltHoldInLobby(sim);
@@ -1215,7 +1215,7 @@ int run_lobby_template_seat_carries_mode(void) {
 
     /* Both halves of the pair, on a seat that holds no bot yet. */
     UT_ASSERT_MSG(sim->botConfigs[held].mode == 1,
-                  "held seat %d is in mode %u, expected survival (1)",
+                  "held seat %d is in mode %u, expected turtle (1)",
                   held, (unsigned)sim->botConfigs[held].mode);
     UT_ASSERT_MSG(sim->botConfigs[held].difficulty == 1,
                   "held seat %d is at level %u, expected medium (1)",
@@ -1223,7 +1223,7 @@ int run_lobby_template_seat_carries_mode(void) {
 
     /* And on one whose bot was built while the seating ran. */
     UT_ASSERT_MSG(sim->botConfigs[fielded].mode == 1,
-                  "fielded seat %d is in mode %u, expected survival (1)",
+                  "fielded seat %d is in mode %u, expected turtle (1)",
                   fielded, (unsigned)sim->botConfigs[fielded].mode);
     UT_ASSERT_MSG(sim->botConfigs[fielded].difficulty == 1,
                   "fielded seat %d is at level %u, expected medium (1)",
@@ -1281,7 +1281,7 @@ int run_lobby_template_mode_unknown_key_kept(void) {
     sim = ltLobbySim();
     UT_ASSERT(sim != NULL);
 
-    ltModesTemplate(&t, "survival", "nosuchlevel");
+    ltModesTemplate(&t, "turtle", "nosuchlevel");
     serverSimSetScenarioLobbyTemplate(sim, &t);
     serverSimScenarioSeatLobby(sim);
     ltHoldInLobby(sim);
@@ -1442,7 +1442,7 @@ int run_lobby_template_add_bot_takes_template(void) {
        ships no modes.txt and so has no mode to resolve against. */
     serverSimSetBotBrainPath(sim, ltModesBrain);
 
-    ltAddBotTemplate(&t, "survival", "hard");
+    ltAddBotTemplate(&t, "turtle", "hard");
     serverSimSetScenarioLobbyTemplate(sim, &t);
     serverSimScenarioSeatLobby(sim);
     ltHoldInLobby(sim);
@@ -1452,7 +1452,7 @@ int run_lobby_template_add_bot_takes_template(void) {
     UT_ASSERT_MSG(horde1 >= 0, "Add Bot on the templated team was refused");
     UT_ASSERT_MSG(sim->botConfigs[horde1].mode == 1,
                   "the added horde bot in seat %d is in mode %u, expected "
-                  "survival (1)", horde1,
+                  "turtle (1)", horde1,
                   (unsigned)sim->botConfigs[horde1].mode);
     UT_ASSERT_MSG(sim->botConfigs[horde1].difficulty == BOT_DIFFICULTY_HARD,
                   "the added horde bot in seat %d is at level %u, expected "
@@ -1475,14 +1475,14 @@ int run_lobby_template_add_bot_takes_template(void) {
                   BOT_DIFFICULTY_HARD);
 
     /* (b) A person turns one HORDE seat down to easy. The next Add Bot on
-           that team is survival at easy: the mode is still the template's,
+           that team is turtle at easy: the mode is still the template's,
            and the level is the one a person chose. */
-    ltHostPicks(sim, horde1, 1 /* survival */, BOT_DIFFICULTY_EASY);
+    ltHostPicks(sim, horde1, 1 /* turtle */, BOT_DIFFICULTY_EASY);
     horde2 = ltAddBot(sim, LT_GUARD);
     UT_ASSERT_MSG(horde2 >= 0, "the second Add Bot on the horde was refused");
     UT_ASSERT_MSG(sim->botConfigs[horde2].mode == 1,
                   "the second horde bot, seat %d, is in mode %u, expected "
-                  "survival (1)", horde2,
+                  "turtle (1)", horde2,
                   (unsigned)sim->botConfigs[horde2].mode);
     UT_ASSERT_MSG(sim->botConfigs[horde2].difficulty == BOT_DIFFICULTY_EASY,
                   "the second horde bot, seat %d, is at level %u, expected "
@@ -1536,7 +1536,7 @@ int run_lobby_template_add_bot_takes_template(void) {
     UT_ASSERT(sim != NULL);
     serverSimSetBotBrainPath(sim, ltModesBrain);
 
-    ltAddBotTemplate(&t, "survival", NULL);
+    ltAddBotTemplate(&t, "turtle", NULL);
     serverSimSetScenarioLobbyTemplate(sim, &t);
     serverSimScenarioSeatLobby(sim);
     ltHoldInLobby(sim);
@@ -1544,10 +1544,10 @@ int run_lobby_template_add_bot_takes_template(void) {
     horde1 = ltAddBot(sim, LT_GUARD);
     UT_ASSERT_MSG(horde1 >= 0, "Add Bot on the mode-only team was refused");
     UT_ASSERT_MSG(sim->botConfigs[horde1].mode == 1,
-                  "seat %d is in mode %u, expected survival (1)", horde1,
+                  "seat %d is in mode %u, expected turtle (1)", horde1,
                   (unsigned)sim->botConfigs[horde1].mode);
     UT_ASSERT_MSG(sim->botConfigs[horde1].difficulty == BOT_DIFFICULTY_HARD,
-                  "seat %d is at level %u, expected survival's own default, "
+                  "seat %d is at level %u, expected turtle's own default, "
                   "hard (%d)", horde1,
                   (unsigned)sim->botConfigs[horde1].difficulty,
                   BOT_DIFFICULTY_HARD);
