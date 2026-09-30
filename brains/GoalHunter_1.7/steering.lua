@@ -2440,7 +2440,7 @@ local function attack_pill_steer(state, world, info, goal)
         end
         viz.text("approach_dist", twx + 1.0, twy + 0.4,
           string.format("in_range: %s  sdist=%d gap=%+d stop=%d",
-                        branch, sdist, gap, stop_dist_now),
+                        branch, sdist, gap, math.floor(stop_dist_now)),
           "topleft", r, g, b, 255, 0.4)
         viz.text("approach_dist", twx + 1.0, twy + 1.0,
           string.format("stuck=%d/8t prev_sd=%d",
@@ -5654,7 +5654,7 @@ local function steer_core(state, world, info, goal)
         "topleft", 120, 220, 255, 230)
       viz.hud_text("hud_throttle", 10, 168,
         string.format("  spd=%d  abs_corr=%d  eff_dist=%d  brake_dist=%d",
-                      info.speed, abs_corr, eff_dist, brake_dist),
+                      info.speed, abs_corr, eff_dist, math.floor(brake_dist)),
         "topleft", 180, 200, 220, 200)
       viz.hud_text("hud_throttle", 10, 180,
         string.format("  flags: boat_exit=%s  inboat=%s  cliff=%s  facing_away=%s  orbit=%s  ap_brake=%s  ap_sdist=%d",
