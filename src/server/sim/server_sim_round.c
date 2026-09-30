@@ -182,6 +182,7 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
     sim->lastBotLevelKey[0] = '\0';
     memset(sim->lastTeamBotLevelKey, 0, sizeof(sim->lastTeamBotLevelKey));
     sim->botConfigPublishPending = 0;
+    sim->botModeSetByHand        = 0;
 
     /* Unlock the lobby to new players: clear both the host-toggled
      * allow-new-players gate and the transport-level admin lock. */
@@ -965,8 +966,8 @@ void serverSimReturnToLobby(ServerSim *sim) {
     /* Forget the host's manual bot mode/difficulty pick on EVERY return to
      * the lobby, whether or not anyone stayed. The pick belongs to one lobby
      * session — from entering the lobby until the game starts — and a round
-     * ending starts a new one, so the host who set a bot to Survival last
-     * game does not find the next lobby's Add Bot already in Survival. The
+     * ending starts a new one, so the host who set a bot to some other mode
+     * last game does not find the next lobby's Add Bot already in it. The
      * empty-lobby branch below calls serverSimResetLobbyToDefaults, which
      * clears these again; clearing twice costs nothing and keeps the two
      * paths honest on their own.

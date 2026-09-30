@@ -182,6 +182,11 @@ int run_lobby_bot_config_memory_unknown_key_ignored(void);
 int run_lobby_bot_config_memory_not_honoured(void);
 int run_lobby_bot_config_memory_manual_only(void);
 int run_lobby_bot_config_memory_cleared_on_return_to_lobby(void);
+int run_lobby_bot_config_memory_open_game_start_mode(void);
+int run_lobby_bot_config_memory_game_type_change(void);
+int run_lobby_bot_config_memory_map_commit_type(void);
+int run_lobby_bot_config_memory_dispatch_hand_mark(void);
+int run_lobby_bot_config_memory_saved_mode_not_carried(void);
 int run_lobby_add_bot_rejects_empty_brain_path(void);
 int run_lobby_add_bot_rejects_ai_none(void);
 int run_lobby_add_bot_rejects_not_in_lobby(void);
@@ -528,6 +533,9 @@ int run_brain_modes_manifest_parses(void);
 int run_brain_modes_missing_falls_back(void);
 int run_brain_modes_malformed_lines_skipped(void);
 int run_brain_modes_counts_clamped(void);
+int run_brain_modes_open_default(void);
+int run_brain_modes_about(void);
+int run_brain_modes_standard_levels(void);
 
 /* The brain's terrain window at the map edge (test_brain_view_data.c): the
  * rect brainDataMakeInfo builds is inclusive, so a tank on row or column 240
@@ -1905,6 +1913,7 @@ int run_mapview_sprite_classic(void);
 int run_mapview_sprite_ladder(void);
 int run_mapview_sprite_shell_tip(void);
 int run_mapview_sprite_lgm_snap(void);
+int run_mapview_camera_split(void);
 
 /* The entity overlay's placements (test_mapview_overlay.c): the gunsight's
  * top-left is the classic view's formula at an integer scale and the
@@ -2591,6 +2600,10 @@ int run_addrparse_port_bounds(void);
 int run_addrparse_bad_port(void);
 int run_addrparse_empty(void);
 
+/* The map chooser's "Scenarios only" row test
+ * (test_map_chooser_scenario_filter.c). */
+int run_mapchooser_scenario_filter(void);
+
 /* Voice codec round-trip (test_voice_core.c): a continuous tone encoded and
  * decoded frame by frame stays inside the per-frame byte budget (the
  * constrained-VBR guarantee), decodes a full 20 ms frame every time, keeps
@@ -2980,6 +2993,7 @@ int run_lobby_template_seat_carries_init(void);
 int run_lobby_template_seat_carries_mode(void);
 int run_lobby_template_mode_unknown_key_kept(void);
 int run_lobby_template_no_mode_leaves_config(void);
+int run_lobby_template_seat_new_seat_base(void);
 int run_lobby_template_add_bot_takes_template(void);
 
 /* A lobby map change (test_lobby_map_keeps_bots.c): the bots, their names,
@@ -2989,6 +3003,10 @@ int run_lobby_map_keeps_bots_plain(void);
 int run_lobby_map_keeps_bots_scenario(void);
 int run_lobby_map_keeps_bots_map_own_row(void);
 int run_lobby_map_rotate_holds_seats_again(void);
+/* And a script pick, which keeps the host's bots unless the script lays out
+ * a lobby of its own. */
+int run_lobby_script_keeps_bots_mod(void);
+int run_lobby_script_keeps_bots_swap(void);
 
 /* The scripted game type (test_scripted_game_type.c): gameScripted resolving
  * through the base game the scenario declared, at the loadout and at the
@@ -3755,6 +3773,11 @@ int run_scenario_compose_game_nested_copy(void);
 int run_scenario_compose_compat_write_stays_local(void);
 int run_scenario_compose_pairs_game_complete(void);
 int run_scenario_compose_unsafe_keeps_sharing(void);
+int run_scenario_compose_off_map_script_only(void);
+int run_scenario_compose_off_plain_map_none(void);
+int run_scenario_compose_on_picks_replace_map(void);
+int run_scenario_compose_off_then_on(void);
+int run_scenario_compose_off_full_list_hides_last(void);
 
 /* The panel's display list (test_scenario_panel.c): the byte layout
  * decoded from a hand-written list, the refusal each malformed list

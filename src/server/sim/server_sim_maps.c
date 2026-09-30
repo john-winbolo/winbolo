@@ -1520,7 +1520,9 @@ void serverSimReplayScriptSettings(
     }
 }
 
-static void searchDirRecursive(const char *fullRoot,
+static void searchDirRecursive(const ServerSim *sim,
+                                bool wantScripted,
+                                const char *fullRoot,
                                 const char *subRel,
                                 const char *queryLower,
                                 size_t queryLen,
@@ -1564,7 +1566,8 @@ static void searchDirRecursive(const char *fullRoot,
         }
 
         if (isDir) {
-            searchDirRecursive(fullRoot, rel, queryLower, queryLen,
+            searchDirRecursive(sim, wantScripted, fullRoot, rel,
+                               queryLower, queryLen,
                                entries, maxEntries, count, depth + 1);
             continue;
         }
@@ -1590,16 +1593,20 @@ static void searchDirRecursive(const char *fullRoot,
         e->isFolder = false;
         e->modTime  = (int64_t)info.modify_time;
         e->size     = (int64_t)info.size;
-        /* Written rather than left alone: the caller's array is not zeroed,
-           and the search's own results do not carry the flag. */
-        e->scripted = false;
+        /* Asked the way the folder listing asks, so a search hit is tagged
+           like the same map in its folder. Only the in-process chooser
+           wants it; the network search reply has no byte for it, so that
+           caller skips the lookup. */
+        e->scripted = wantScripted
+                    && serverSimScenarioMapIsScripted(sim, childPath);
     }
     SDL_free(list);
 }
 
 int serverSimSearchMapDir(ServerSim *sim, const char *relPath,
                            const char *query,
-                           ServerMapEntry *entries, int maxEntries) {
+                           ServerMapEntry *entries, int maxEntries,
+                           bool wantScripted) {
     if (!entries || maxEntries <= 0) return -1;
     if (!query || query[0] == '\0') return 0;
     if (!relPathIsSafe(relPath)) return -1;
@@ -1618,7 +1625,7 @@ int serverSimSearchMapDir(ServerSim *sim, const char *relPath,
     queryLower[qlen] = '\0';
 
     int count = 0;
-    searchDirRecursive(fullRoot, "", queryLower, qlen,
+    searchDirRecursive(sim, wantScripted, fullRoot, "", queryLower, qlen,
                        entries, maxEntries, &count, 0);
 
     for (int i = 1; i < count; i++) {

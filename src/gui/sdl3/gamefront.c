@@ -95,6 +95,7 @@
 #include "../../common/prefs_doc.h"
 #include "../../steam/steam_wrapper.h"
 #include "../../mapeditor/mapeditor.h"
+#include "dialogs/imgui_settings.h"  /* imguiSettingsShowInEditor */
 #include "mapgen.h"
 /* Forward declaration only — don't include logviewer.h to avoid type conflicts
    between src/logviewer/ and src/bolo/ headers (both define map, bases, etc.) */
@@ -1365,6 +1366,7 @@ static bool gameFrontDialogs(void) {
     }
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
     case openMapEditor:
+      mapEditorSetSettingsHandler(imguiSettingsShowInEditor);
       mapEditorRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), NULL, true);
       /* The editor runs its own loop in WinBolo's window, so a quit taken
        * there stops with it.  Leaving the editor comes back to the welcome
@@ -3416,9 +3418,12 @@ bool gameFrontGetChosenBotLevelKey(char *out, size_t outSz) {
   return true;
 }
 
-/* Which of a brain's modes a single-player bot is created in: the player's
- * chosen mode when the brain still declares it, else mode 0 (the default
- * mode every ordinary game uses). */
+/* The mode that goes with the player's saved level: the player's chosen
+ * mode when the brain still declares it, else mode 0 (the default mode
+ * every ordinary game uses). It only says which mode's list the saved level
+ * is read from. serverSimResolveNewBotConfig keeps the level and puts the
+ * bot in the game type's own starting mode, so a mode saved in one lobby
+ * never starts bots in the next one. */
 uint8_t gameFrontSpBotMode(const char *brainPath) {
   char key[BRAIN_MODE_KEY_LEN];
   BrainModes modes;

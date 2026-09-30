@@ -10,20 +10,20 @@ M.LOG_STANDOFF_CANDIDATES = false  -- print every standoff candidate (very verbo
 -- Which mode this bot is asked to run in, and how hard it is asked to play.
 -- Both are the host's per-bot lobby choice and arrive as "mode=<key>" and
 -- "difficulty=<key>" tokens in BRAIN_INIT_ARG (see the init-arg block in
--- init.lua); both are also settable directly with cfg=MODE=survival /
+-- init.lua); both are also settable directly with cfg=MODE=<key> /
 -- cfg=DIFFICULTY=easy for a bench.
 --
 -- The MANIFEST that decides which keys exist is modes.txt beside this file:
 -- it lists this brain's modes and, per mode, that mode's difficulty levels.
 -- The lobby reads it to fill its two dropdowns, so adding a mode or a level
--- is an edit to modes.txt, not to any C or Lua code.
+-- needs no C code: modes.txt, plus the mode's bundles in M.MODE_LEVELS.
 --
--- NOTHING READS EITHER OF THESE YET. Every mode and every difficulty runs
--- exactly this code, which is what "default" / "hard" mean, so those are the
--- defaults and the knobs that make the other settings differ come later.
--- They are stored (and echoed in the init-arg log, and on state.mode /
--- state.difficulty) so the plumbing can be trusted before any behaviour
--- hangs off it.
+-- The pair picks a knob bundle out of M.MODE_LEVELS (at the end of this
+-- file), which init.lua applies before any preset= or cfg=. A new mode also
+-- needs its bundles there; a mode with no bundle runs these constants.
+-- Modes today: default (hard = these constants, medium/easy = handicaps)
+-- and turtle (default's levels plus PILL_PLACE_TURTLE). They are also
+-- echoed in the init-arg log and stored on state.mode / state.difficulty.
 M.MODE = "default"
 M.DIFFICULTY = "hard"
 
@@ -1869,6 +1869,56 @@ M.KILL_PICKUP_PAIR_MIN_SQUAD = 3   -- default 3; KEEL 0 (off)
 M.STRATEGIC_PLACE_CENTER_BIAS_CAP    = 16   -- tiles; beyond this the center bias is 0
 M.STRATEGIC_PLACE_CENTER_BIAS_WEIGHT = 4    -- score per tile closer to the strategic center
 
+-- ── Defensive turtle placement (2026-09-29, Andrew; Virus survivors) ──
+-- PILL_PLACE_TURTLE is the one master switch. Off (default) = the strategic
+-- placement scan is exactly today's. On, the scan (goals.lua
+-- eval_place_pill_strategic, and its heatmap mirror) builds ONE defended
+-- cluster instead of spreading pills out:
+--   * home: the friendly pill with the most friendly pills within
+--     PILL_FIRE_RANGE (ties: nearer the tank, then lower tile id); with no
+--     friendly pill yet, the nearest friendly base. The home is the
+--     strategic-center bias (existing CENTER_BIAS_CAP / _WEIGHT) AND the
+--     centre of the scan square, so a far tank still finds spots at home.
+--     No home at all = the normal centre chain and tank-centric scan.
+--   * the pill-spacing term uses PILL_PLACE_TURTLE_SPACING, not
+--     STRATEGIC_PLACE_PILL_SPACING, so pills may stand close together;
+--   * the pill-type balance does not steer it: no surplus skip, no
+--     STRICT_NEED gate, and the portfolio term (port) is 0;
+--   * four weights come from Easy's "back / defensive" placement bundle
+--     (MODE_LEVELS.default.easy), below, through one shared table;
+--   * the under-defended bonus (bdef) is PILL_PLACE_TURTLE_UNDERDEFENDED_BONUS
+--     (0), not Easy's 80: it pays for FEW friendly pills near the candidate
+--     tile, which pushes a new pill out of the cluster.
+-- Any difficulty can turn it on: `preset=turtle` or
+-- `cfg=PILL_PLACE_TURTLE=true`, or the `survivor` init word (M.SIDE_SETTINGS).
+-- A runtime cfg=PILL_PLACE_TURTLE=false or `horde` turns it off again
+-- (Virus sends `horde` when a survivor turns); the tunables are read only
+-- while the switch is on.
+M.PILL_PLACE_TURTLE = false
+-- Easy's back/defensive placement weights. MODE_LEVELS.default.easy reads
+-- the same table, so Easy and turtle share one set of numbers.
+local EASY_DEFENSIVE_PLACE = {
+  base_weight          = 4.0,   -- STRATEGIC_PLACE_BASE_WEIGHT (default 2.0)
+  threat_weight        = 3.0,   -- STRATEGIC_PLACE_THREAT_WEIGHT (default 1.5)
+  beyond_front_penalty = 250,   -- STRATEGIC_PLACE_BEYOND_FRONT_PENALTY (default 100)
+  spike_bonus          = 0,     -- STRATEGIC_PLACE_SPIKE_BONUS (default 80)
+}
+M.PILL_PLACE_TURTLE_BASE_WEIGHT          = EASY_DEFENSIVE_PLACE.base_weight
+M.PILL_PLACE_TURTLE_THREAT_WEIGHT        = EASY_DEFENSIVE_PLACE.threat_weight
+M.PILL_PLACE_TURTLE_BEYOND_FRONT_PENALTY = EASY_DEFENSIVE_PLACE.beyond_front_penalty
+M.PILL_PLACE_TURTLE_SPIKE_BONUS          = EASY_DEFENSIVE_PLACE.spike_bonus
+-- Under-defended bonus per missing defender (target 2) while turtling
+-- (default STRATEGIC_PLACE_UNDERDEFENDED_BONUS = 50, Easy 80). It counts
+-- friendly pills within DEFENSE_RADIUS of the CANDIDATE tile, so any value
+-- above 0 scores a tile higher the fewer pills stand near it: the opposite
+-- of a cluster. 0 = that term is silent while turtling.
+M.PILL_PLACE_TURTLE_UNDERDEFENDED_BONUS  = 0
+-- Target minimum tile gap between friendly pills while turtling (default
+-- STRATEGIC_PLACE_PILL_SPACING = 5). 2 = only a tile right next to a pill
+-- pays the clustering penalty (PENALTY_W x (BASE^1 - 1) = 25); from 2 tiles
+-- out the existing spacing bonus (+15 up to SPACING_BONUS_MAX) applies.
+M.PILL_PLACE_TURTLE_SPACING = 2
+
 -- Tank combat
 M.TANK_COMBAT_ENABLED           = true
 M.TANK_COMBAT_MIN_SHELLS        = 10    -- don't engage with fewer shells
@@ -1926,6 +1976,15 @@ M.TANK_COMBAT_OPPORTUNISTIC_AIM = 8     -- bolo angle units (~11??) aim toleranc
 --     shots_needed = HEAT_MAX_HITS - round(anger / PILL_ANGER_BUMP), then capped
 -- by the pill's health via attack.lua heat_allowed_shots (see MIN_HP below).
 M.ATTACK_TANK_HEAT_PILL         = true  -- master: heat a friendly pill during attack_tank
+-- Heat-only attack_tank (2026-09-29, Andrew; Virus survivors get it from
+-- the `survivor` init word, M.SIDE_SETTINGS): the bot never closes on or
+-- shoots an enemy tank itself. An attack_tank row stands only while a friendly pill can be heated at that
+-- tank (goals.lua eval_attack_tank, gate "heat_only"), and the fight loop
+-- holds still instead of close/engage (steering.lua tank_combat_steer).
+-- Not touched: a human's `attack <tank>` order, a "kill me" delivery, and the
+-- opportunistic shot on other goals (init.lua). Needs ATTACK_TANK_HEAT_PILL;
+-- with that off, attack_tank only ever runs on an order.
+M.ATTACK_TANK_PILL_HEAT_ONLY    = false
 M.ATTACK_TANK_HEAT_MIN_HP       = 5     -- health floor of the volley cap: a pill at or below this
                                         -- affords no heat shells at all. The cap scales linearly to
                                         -- PILLS_MAX_HEALTH (15 -> all 4 halvings): hp 15/13/10/7/6
@@ -4861,6 +4920,12 @@ M.PRESETS = {
     -- and fights the tank alongside us. KEEL never shoots its own pills, so
     -- attack_tank goes straight from the disengage checks to close/engage.
     ATTACK_TANK_HEAT_PILL         = false,
+    -- 2026-09-29: heat-only attack_tank (no tank fighting of its own). KEEL
+    -- fights every tank it picks.
+    ATTACK_TANK_PILL_HEAT_ONLY    = false,
+    -- 2026-09-29: defensive turtle placement (one pill cluster at home).
+    -- KEEL spreads its pills by the normal placement scan.
+    PILL_PLACE_TURTLE             = false,
     -- 2026-09-06: the MAIN defend_pill evaluator is now ALARM MODE (see the
     -- DEFEND_ALARM_* block above): defend_pill is REJECTED unless a hostile
     -- tank is visible within 11 tiles of the pill RIGHT NOW, something enemy
@@ -5196,6 +5261,40 @@ M.PRESETS = {
     CAPTURE_BASE_NO_LGM_DANGER_MULT = 0,
     KILL_ME_ENABLED                 = false,
   },
+  -- turtle: the "Defensive Turtle" placement on any difficulty (2026-09-29).
+  -- Only the master switch; its tunables (PILL_PLACE_TURTLE_*) sit beside it.
+  -- preset= is applied after the difficulty bundle, so this works at every
+  -- level. Virus sends the `survivor` / `horde` word instead (see
+  -- M.SIDE_SETTINGS below), because a preset cannot be taken back at runtime
+  -- and a side word can.
+  turtle = {
+    PILL_PLACE_TURTLE = true,
+  },
+}
+
+-- ── SIDE SETTINGS (2026-09-29, Andrew; Virus) ─────────────────────────
+-- What the init words `survivor` and `horde` write into C (init.lua
+-- _apply_cfg_tokens). Each word also sets state.side, and the never-refuel
+-- flag (init.lua Brain.apply_init_tokens): horde never refuels, survivor does.
+--
+-- Unlike a preset, a side can be taken back at runtime: every setting one
+-- side turns on, the other side writes back to its default. So a survivor who
+-- is handed `horde` mid-round loses all of them. A new survivor or horde
+-- setting goes here, in BOTH tables.
+--
+-- Precedence: level < preset < side < cfg. A side word beats preset=keel, and
+-- an explicit cfg= in the same init table still beats the side word.
+-- With no side word nothing here is applied, so every other game plays as
+-- before.
+M.SIDE_SETTINGS = {
+  survivor = {
+    ATTACK_TANK_PILL_HEAT_ONLY = true,
+    PILL_PLACE_TURTLE          = true,
+  },
+  horde = {
+    ATTACK_TANK_PILL_HEAT_ONLY = false,
+    PILL_PLACE_TURTLE          = false,
+  },
 }
 
 -- ── PER-(MODE, DIFFICULTY) LEVEL BUNDLES ──────────────────────────────────
@@ -5282,10 +5381,14 @@ M.MODE_LEVELS = {
       -- Steady / predictable (goal hysteresis)
       GOAL_SWITCH_PENALTY = 60, GOAL_SWITCH_RATIO = 0.5, GOAL_COMMITMENT_CAP = 150,
       GOAL_MIN_COMMIT_TICKS = 75, REFUEL_LOCK_IN = true, ATTACK_PILL_COMMITMENT_BONUS = 120,
-      -- Placement: back / defensive
-      STRATEGIC_PLACE_FRONT_WEIGHT = 1.0, STRATEGIC_PLACE_BASE_WEIGHT = 4.0,
-      STRATEGIC_PLACE_THREAT_WEIGHT = 3.0, STRATEGIC_PLACE_BEYOND_FRONT_PENALTY = 250,
-      STRATEGIC_PLACE_SPIKE_BONUS = 0, STRATEGIC_PLACE_UNDERDEFENDED_BONUS = 80,
+      -- Placement: back / defensive. Four of these come from
+      -- EASY_DEFENSIVE_PLACE (the same numbers PILL_PLACE_TURTLE uses).
+      STRATEGIC_PLACE_FRONT_WEIGHT = 1.0,
+      STRATEGIC_PLACE_BASE_WEIGHT = EASY_DEFENSIVE_PLACE.base_weight,
+      STRATEGIC_PLACE_THREAT_WEIGHT = EASY_DEFENSIVE_PLACE.threat_weight,
+      STRATEGIC_PLACE_BEYOND_FRONT_PENALTY = EASY_DEFENSIVE_PLACE.beyond_front_penalty,
+      STRATEGIC_PLACE_SPIKE_BONUS = EASY_DEFENSIVE_PLACE.spike_bonus,
+      STRATEGIC_PLACE_UNDERDEFENDED_BONUS = 80,
       -- Defend slow / loaded ambush target
       DEFEND_ALARM_BASE_COST = 220,             -- ENEMY_TILES unchanged at 11 ("defends its own")
       KILL_ME_ENABLED = false,
@@ -5299,7 +5402,21 @@ M.MODE_LEVELS = {
       ARMOUR_LOW = 22, SHELLS_LOW = 24, ARMOUR_COMBAT = 36, SHELLS_COMBAT = 36,
     },
   },
-  survival = { hard = {}, medium = {}, easy = {} },  -- placeholders (see modes.txt)
 }
+
+-- Turtle mode: each level is the matching default level plus the turtle
+-- pill placement switch (PILL_PLACE_TURTLE, above). Built from the default
+-- bundles here, not copied by hand, so a change to a default level reaches
+-- turtle too. No new values: it is the same switch preset=turtle turns on.
+do
+  local turtle = {}
+  for level, bundle in pairs(M.MODE_LEVELS.default) do
+    local t = {}
+    for k, v in pairs(bundle) do t[k] = v end
+    t.PILL_PLACE_TURTLE = true
+    turtle[level] = t
+  end
+  M.MODE_LEVELS.turtle = turtle
+end
 
 return M

@@ -464,6 +464,11 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             if (p->mode != prevMode || p->difficulty != prevLevel) {
                 serverSimRememberManualBotPick(sim, p->slot);
             }
+            /* A mode change is a person choosing the mode: the seat keeps
+               it when the host changes the game type. */
+            if (p->mode != prevMode) {
+                serverSimMarkBotModeSetByHand(sim, p->slot);
+            }
         }
         return CMD_OK;
     }

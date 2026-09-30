@@ -9637,7 +9637,10 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
         }
         if (row->bound) {
             listed = true;
-        } else if (!row->keepsWinCondition) {
+        } else if (!row->keepsWinCondition && !serverSimGetModsOff(sim)) {
+            /* Not while the Mods/Scenario setting is off: the loop below
+               composes no pick then, and a picked scenario that will not play
+               must not take the map's own script off with it. */
             picked = true;
         }
     }
@@ -9664,20 +9667,20 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
             continue;
         }
         own = row->bound;
-        /* Mods off, so the round composes none of them. The row already
-           carries the kind its manifest declared, which is the same question
-           the picked loop above asks, so no file is read to answer it. A
-           scenario on the list is not a mod and still composes, and the list
-           itself is left as the host wrote it: checking the box back on
-           brings the same mods back in the same order.
+        /* Mods/Scenario off, so the round composes none of the host's picks:
+           no mod and no picked scenario. The list itself is left as the host
+           wrote it, so checking the box back on brings the same scripts back
+           in the same order.
 
-           The map's own script is never what this takes off. It did not
-           become a mod by being given a place on the list, and a switch for
-           the mods a host stacked on top of a map has never decided whether
-           that map plays by its own rules.
+           The map's own script is never what this takes off. It is not a
+           pick, whatever place on the list it has been given, and a switch
+           for the scripts a host chose has never decided whether the map
+           plays by its own rules. With no picked scenario composing, picked
+           above stays false and the map's own script comes back at the front
+           where the list does not name it.
 
            The setting is LST_MODS_OFF, src/bolo/public/wire_limits.h. */
-        if (!own && row->keepsWinCondition && serverSimGetModsOff(sim)) {
+        if (!own && serverSimGetModsOff(sim)) {
             continue;
         }
         /* Ten is what a round composes and ten is what the lobby list

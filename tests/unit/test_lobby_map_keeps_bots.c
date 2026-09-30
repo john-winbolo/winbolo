@@ -28,6 +28,16 @@
  *       rotates maps. A seat the script fielded in one round is held again
  *       in the next, though the template is the same, because nobody is
  *       there between rounds to keep an edit.
+ *   lobby_script_keeps_bots_mod — bots the host added, then a mod with
+ *       settings and no lobby of its own picked over them, as Rule Roulette
+ *       is. The bots stay through the pick, a map change, a second mod on the
+ *       list, a swap to the other mod alone and the list emptied again.
+ *   lobby_script_keeps_bots_swap — a scenario with a lobby of its own, the
+ *       host's bots added to it, then a mod picked beside it and then in
+ *       place of it. The host's bots stay through both; the scenario's seats
+ *       go with the scenario. Then the scenario picked back in place of the
+ *       mod: its template lays out teams, so the host's bots go and its four
+ *       held seats come back.
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
@@ -151,6 +161,21 @@ static const char kMkMod[] =
     "  api = 1,\n"
     "  kind = \"mod\",\n"
     "  bound = false,\n"
+    "}\n";
+
+/* A mod with settings of its own and no lobby, as Rule Roulette is. */
+static const char kMkRoulette[] =
+    "scenario = {\n"
+    "  name = \"Rule Roulette\",\n"
+    "  api = 1,\n"
+    "  kind = \"mod\",\n"
+    "  bound = false,\n"
+    "  settings = {\n"
+    "    { id = \"interval\", label = \"Seconds per mode\", type = \"int\",\n"
+    "      min = 20, max = 300, step = 10, default = 60 },\n"
+    "    { id = \"chat\", label = \"Chat commands\", type = \"bool\",\n"
+    "      default = false },\n"
+    "  },\n"
     "}\n";
 
 /* A map's own script, with no lobby of its own. */
@@ -688,5 +713,172 @@ int run_lobby_map_rotate_holds_seats_again(void) {
                   "seats, expected 2", held);
 
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── A mod with no lobby, picked over the host's bots ─────────────── */
+
+/* Four bots with their own names and teams, added before any script is
+   picked. */
+static void mkAddFour(ServerSim *sim, int *slots) {
+    static const char *const kNames[] = { "Alpha", "Bravo", "Charlie",
+                                          "Delta" };
+    static const BYTE kTeams[] = { 1, 2, 2, 1 };
+    int i;
+
+    for (i = 0; i < 4; i++) {
+        slots[i] = mkAddBot(sim, kNames[i], kTeams[i]);
+    }
+}
+
+int run_lobby_script_keeps_bots_mod(void) {
+    static const char *const kRoulette[] = { "roulette.lua" };
+    static const char *const kBoth[]     = { "roulette.lua",
+                                             "fastreload.lua" };
+    static const char *const kFast[]     = { "fastreload.lua" };
+    ServerSim *sim;
+    MkSeat     was[MAX_TANKS], now[MAX_TANKS];
+    int        slots[4];
+    int        i, held;
+
+    UT_ASSERT(mkSetUp());
+    UT_ASSERT(mkPut(mkScripts, "roulette.lua", kMkRoulette));
+    UT_ASSERT(mkPut(mkScripts, "fastreload.lua", kMkMod));
+    ut_brain_stub_arm(true);
+    sim = mkSim();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(mkSetMap(sim, MK_BIG_MAP) == CMD_OK);
+
+    mkAddFour(sim, slots);
+    for (i = 0; i < 4; i++) {
+        UT_ASSERT_MSG(slots[i] > 0, "Add Bot %d was refused", i);
+    }
+    UT_ASSERT(mkSetDifficulty(sim, (BYTE)slots[0], 0) == CMD_OK);
+    UT_ASSERT(mkSetDifficulty(sim, (BYTE)slots[2], 1) == CMD_OK);
+    mkSnapshot(sim, was);
+
+    /* The mod lays out no seats, so it has nothing to put in place of the
+       host's bots, and every one of them stays as it was. */
+    UT_ASSERT_MSG(mkPick(sim, kRoulette, 1) == CMD_OK,
+                  "the mod was refused");
+    UT_ASSERT_MSG(strcmp(sim->scenarioIdentity.fileName, "roulette.lua") == 0,
+                  "the script playing is \"%s\", not the mod",
+                  sim->scenarioIdentity.fileName);
+    mkSnapshot(sim, now);
+    if (mkSameRoster(was, now, "picking the mod") != 0) return 1;
+
+    /* Then the orders a host goes on in: a map change, a second mod, a swap
+       to the other mod alone, and the list emptied again. */
+    UT_ASSERT(mkSetMap(sim, MK_SMALL_MAP) == CMD_OK);
+    mkSnapshot(sim, now);
+    if (mkSameRoster(was, now, "the mod onto the small map") != 0) return 1;
+    if (mkStartsValid(sim, &held, "the mod onto the small map") != 0) {
+        return 1;
+    }
+    UT_ASSERT(mkSetMap(sim, MK_BIG_MAP) == CMD_OK);
+
+    UT_ASSERT_MSG(mkPick(sim, kBoth, 2) == CMD_OK, "two mods were refused");
+    mkSnapshot(sim, now);
+    if (mkSameRoster(was, now, "a second mod") != 0) return 1;
+
+    UT_ASSERT_MSG(mkPick(sim, kFast, 1) == CMD_OK,
+                  "the other mod alone was refused");
+    mkSnapshot(sim, now);
+    if (mkSameRoster(was, now, "a swap to the other mod") != 0) return 1;
+
+    UT_ASSERT(mkPick(sim, NULL, 0) == CMD_OK);
+    mkSnapshot(sim, now);
+    if (mkSameRoster(was, now, "the list emptied") != 0) return 1;
+
+    for (i = 0; i < 4; i++) {
+        UT_ASSERT_MSG(sim->botMgr.bots[slots[i]].active,
+                      "the bot in seat %d has nothing behind it", slots[i]);
+    }
+
+    mkDestroy(sim);
+    return 0;
+}
+
+/* ── A scenario's lobby, then a mod beside it and in place of it ──── */
+
+int run_lobby_script_keeps_bots_swap(void) {
+    static const char *const kWaves[]    = { "waves.lua" };
+    static const char *const kWavesMod[] = { "waves.lua", "roulette.lua" };
+    static const char *const kRoulette[] = { "roulette.lua" };
+    ServerSim *sim;
+    MkSeat     was[MAX_TANKS], now[MAX_TANKS];
+    int        hostBot, otherBot;
+    BYTE       i;
+
+    UT_ASSERT(mkSetUp());
+    UT_ASSERT(mkPut(mkScripts, "waves.lua", kMkWaves));
+    UT_ASSERT(mkPut(mkScripts, "roulette.lua", kMkRoulette));
+    ut_brain_stub_arm(true);
+    sim = mkSim();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(mkSetMap(sim, MK_BIG_MAP) == CMD_OK);
+
+    UT_ASSERT(mkPick(sim, kWaves, 1) == CMD_OK);
+    hostBot  = mkAddBot(sim, "Raider Extra", 3);
+    otherBot = mkAddBot(sim, "Lone Wolf", 1);
+    UT_ASSERT(hostBot > 0 && otherBot > 0);
+    UT_ASSERT(mkSetDifficulty(sim, (BYTE)otherBot, 0) == CMD_OK);
+    mkSnapshot(sim, was);
+
+    /* A mod beside the scenario: the same lobby, so every seat stays. */
+    UT_ASSERT_MSG(mkPick(sim, kWavesMod, 2) == CMD_OK,
+                  "the scenario and the mod were refused");
+    mkSnapshot(sim, now);
+    if (mkSameRoster(was, now, "a mod beside the scenario") != 0) return 1;
+
+    /* The mod in place of the scenario: its seats go with it, and the two
+       bots the host added stay as the host left them. Every seat but the
+       host's two is compared against what it holds now, so the check below
+       is on those two alone. */
+    UT_ASSERT_MSG(mkPick(sim, kRoulette, 1) == CMD_OK,
+                  "the mod alone was refused");
+    mkSnapshot(sim, now);
+    for (i = 0; i < MAX_TANKS; i++) {
+        UT_ASSERT_MSG(!(now[i].connected && now[i].keepSeat),
+                      "seat %d of the scenario outlived it", (int)i);
+        if ((int)i == hostBot || (int)i == otherBot) continue;
+        was[i] = now[i];
+    }
+    if (mkSameRoster(was, now, "the mod in place of the scenario") != 0) {
+        return 1;
+    }
+    UT_ASSERT_MSG(sim->botMgr.bots[hostBot].active &&
+                  sim->botMgr.bots[otherBot].active,
+                  "a host's bot has nothing behind it after the swap");
+
+    /* And the scenario picked back in place of the mod. Its template lays
+       out teams, and the one seated last was the mod's empty one, so this is
+       a changed lobby: the host's bots go and the scenario's four held seats
+       on team 3 come back. */
+    UT_ASSERT_MSG(mkPick(sim, kWaves, 1) == CMD_OK,
+                  "the scenario picked again was refused");
+    UT_ASSERT_MSG(!(serverSimIsBot(sim, (BYTE)hostBot) &&
+                    !sim->lobbyPlayers[hostBot].keepSeat),
+                  "the host's bot on team 3 outlived the scenario's lobby");
+    UT_ASSERT_MSG(!(serverSimIsBot(sim, (BYTE)otherBot) &&
+                    !sim->lobbyPlayers[otherBot].keepSeat),
+                  "the host's bot on team 1 outlived the scenario's lobby");
+    {
+        int raiders = 0;
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (!sim->playerConnected[i]) continue;
+            if (serverSimIsBot(sim, i) || sim->lobbyPlayers[i].keepSeat) {
+                UT_ASSERT_MSG(sim->lobbyPlayers[i].keepSeat &&
+                              sim->lobbyPlayers[i].teamNumber == 3,
+                              "seat %d is not one of the scenario's on "
+                              "team 3", (int)i);
+                raiders++;
+            }
+        }
+        UT_ASSERT_MSG(raiders == 4, "the scenario seated %d again, expected "
+                      "its 4", raiders);
+    }
+
+    mkDestroy(sim);
     return 0;
 }

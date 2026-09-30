@@ -85,7 +85,7 @@ static const char kFullManifest[] =
     "    \"teams\": [\n"
     "      { \"id\": 2, \"bots\": 10, \"max_bots\": 12, \"fielded\": false,\n"
     "        \"brain\": \"package:raiders\",\n"
-    "        \"mode\": \"survival\", \"difficulty\": \"hard\",\n"
+    "        \"mode\": \"turtle\", \"difficulty\": \"hard\",\n"
     "        \"init\": { \"stance\": \"hold\", \"deprive\": 100 } },\n"
     "      { \"id\": 3, \"bots\": 1, \"max_bots\": 4, \"fielded\": true,\n"
     "        \"brain\": \"\" }\n"
@@ -168,7 +168,7 @@ static int fullManifestIsRight(const ScnManifestDoc *d) {
     UT_ASSERT(m->lobby.teams[0].maxBots == 12);
     UT_ASSERT(!m->lobby.teams[0].fielded);
     UT_ASSERT(strcmp(m->lobby.teams[0].brain, "package:raiders") == 0);
-    UT_ASSERT(strcmp(m->lobby.teams[0].mode, "survival") == 0);
+    UT_ASSERT(strcmp(m->lobby.teams[0].mode, "turtle") == 0);
     UT_ASSERT(strcmp(m->lobby.teams[0].difficulty, "hard") == 0);
     UT_ASSERT_MSG(m->lobby.teams[0].init.count == 2, "team 0 holds %d pairs",
                   (int)m->lobby.teams[0].init.count);
@@ -382,7 +382,7 @@ static void fillBase(ScenarioManifest *m) {
     snprintf(m->lobby.teams[0].brain, sizeof(m->lobby.teams[0].brain),
              "package:raiders");
     snprintf(m->lobby.teams[0].mode, sizeof(m->lobby.teams[0].mode),
-             "survival");
+             "turtle");
     snprintf(m->lobby.teams[0].difficulty,
              sizeof(m->lobby.teams[0].difficulty), "hard");
     scnTableSet(&m->lobby.teams[0].init, "stance", "hold");

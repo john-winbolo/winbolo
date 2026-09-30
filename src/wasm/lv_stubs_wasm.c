@@ -45,6 +45,11 @@
 #include "../logviewer/imgui/imgui_events.h"
 #include "../logviewer/imgui/imgui_main_menu.h"
 
+/* Read by draw.c's script-region overlay, which also returns early in embed
+ * mode. The real flag lives in imgui_main_menu.cpp, which this build does not
+ * compile, and the embed has no menu to turn it on. */
+bool lv_g_show_regions = false;
+
 /* Start-of-log notification. Empty in logviewer.c too — the viewer's controls
  * panel reads isLoaded each frame instead. */
 void lv_startOfLog(void) {
