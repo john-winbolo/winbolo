@@ -72,7 +72,6 @@
 #include "server_sim_join.h"       /* serverSimFindFreeSlot */
 #include "tank.h"                 /* tankKillNow: an attacker dies mid-wave */
 #include "control_event.h"
-#include "scenario_panel.h"        /* SCN_ANNOUNCE_PLACE_*, SCN_STATUS_NO_COUNTDOWN */
 #include "scenario_host.h"
 #include "game_sim.h"
 #include "players.h"
@@ -104,15 +103,15 @@
    CTRL_LOBBY_SLOT carries a seat going on or off the field, which is where
    the start of a wave is read off. The script used to announce every wave
    on the newswire ("Wave 1/5: 10 attackers inbound!") and this watched for
-   that line; the round now has a status line along the top of the view that
-   shows the wave number and a live countdown all the time, so the newswire
-   line is gone and only an operator-log line is left.
+   that line; the round now has a 128x128 status panel that shows the wave
+   number and a live countdown all the time, so the announcement is gone and
+   only an operator-log line is left, which a unit test cannot see.
 
    The roster event was picked over the two other ways of spotting a wave.
-   The status event (CTRL_SCN_STATUS) says "Wave 1/5" in as many words and
-   is checked below, but it marks the wave being called, not the first
-   attacker landing, and every "how fast did the wave land" measurement
-   below is about the landing. Polling the roster would work too, but
+   The panel event (CTRL_SCN_PANEL) says "WAVE 1/5" in as many words, but it
+   is only redrawn once a second, so the tick it arrives on is up to 100
+   ticks after the wave was called and every "how fast did the wave land"
+   measurement below would go slack. Polling the roster would work too, but
    these two cases tick the sim from eighteen places and every one of them
    would have to carry the same poll. A wave's seats are HELD until the wave
    fields them, so the first CTRL_LOBBY_SLOT that says a horde seat is on the
@@ -120,15 +119,6 @@
 typedef struct {
     uint32_t digInTick;
     uint32_t waveTick;     /* the tick the wave's first attacker was fielded */
-    /* The round's presentation. Survival has no panel any more: the wave
-       number and its countdown are the status line along the top, and the
-       big news is an announcement placed "upper". */
-    int      panels;        /* CTRL_SCN_PANEL events: must stay 0 */
-    int      upperAnnounces;
-    int      topAnnounces;
-    bool     graceStatus;   /* "Next wave 1/5" with a countdown */
-    bool     waveStatus;    /* "Wave 1/5" with a countdown */
-    uint32_t waveStatusEndsAt;
 } SlrSeen;
 
 static ServerSim *slrSim  = NULL;
@@ -145,33 +135,6 @@ static void slrWatchCb(void *ctx, const ControlEvent *evt) {
             evt->u.lobbySlot.slot.fielded &&
             slrSeen->waveTick == SLR_NO_TICK) {
             slrSeen->waveTick = slrSim != NULL ? slrSim->tick : 0;
-        }
-        return;
-    }
-    if (evt->type == CTRL_SCN_PANEL) {
-        slrSeen->panels++;
-        return;
-    }
-    if (evt->type == CTRL_SCN_ANNOUNCE) {
-        if (evt->u.scnAnnounce.text[0] != '\0') {
-            if (evt->u.scnAnnounce.place == (uint8_t)SCN_ANNOUNCE_PLACE_UPPER) {
-                slrSeen->upperAnnounces++;
-            } else {
-                slrSeen->topAnnounces++;
-            }
-        }
-        return;
-    }
-    if (evt->type == CTRL_SCN_STATUS) {
-        if (strcmp(evt->u.scnStatus.text, "Next wave 1/5") == 0 &&
-            evt->u.scnStatus.endsAt != SCN_STATUS_NO_COUNTDOWN) {
-            slrSeen->graceStatus = true;
-        }
-        if (strcmp(evt->u.scnStatus.text, "Wave 1/5") == 0 &&
-            evt->u.scnStatus.endsAt != SCN_STATUS_NO_COUNTDOWN &&
-            !slrSeen->waveStatus) {
-            slrSeen->waveStatus       = true;
-            slrSeen->waveStatusEndsAt = evt->u.scnStatus.endsAt;
         }
         return;
     }
@@ -483,32 +446,6 @@ static int slrRound(int bots, bool inPlace) {
     UT_ASSERT_MSG(serverSimGetNumFielded(sim) > fieldedAtStart,
                   "no attacker had taken the field by tick %u, 4 s past the "
                   "grace", (unsigned)sim->tick);
-
-    /* (f) The round speaks through the status line and upper announcements,
-           never a panel. The grace counted down to wave 1, and the wave's
-           own line counts down to the end of the wave, WAVE_LIMIT_S out. */
-    UT_ASSERT_MSG(seen.panels == 0,
-                  "Survival sent %d panel event(s); its panel is gone",
-                  seen.panels);
-    UT_ASSERT_MSG(seen.graceStatus,
-                  "no \"Next wave 1/5\" status line with a countdown during "
-                  "the grace");
-    UT_ASSERT_MSG(seen.waveStatus,
-                  "no \"Wave 1/5\" status line with a countdown once wave 1 "
-                  "landed");
-    UT_ASSERT_MSG(seen.waveStatusEndsAt >= graceFrom + SLR_GRACE_TICKS +
-                                               SLR_WAVE_TICKS &&
-                  seen.waveStatusEndsAt <= graceFrom + SLR_GRACE_TICKS +
-                                               SLR_WAVE_TICKS + 200,
-                  "wave 1's status line counts to tick %u, not about %u",
-                  (unsigned)seen.waveStatusEndsAt,
-                  (unsigned)(graceFrom + SLR_GRACE_TICKS + SLR_WAVE_TICKS));
-    UT_ASSERT_MSG(seen.upperAnnounces >= 2,
-                  "only %d upper announcement(s) by wave 1 (the opener and "
-                  "the wave's own line expected)", seen.upperAnnounces);
-    UT_ASSERT_MSG(seen.topAnnounces == 0,
-                  "Survival put %d announcement(s) at the top, where its "
-                  "status line is", seen.topAnnounces);
 
     /* THE WARMED RUNNERS WERE USED. A round started through the countdown
        builds one held seat's runner per countdown tick, so by the time wave
@@ -1038,7 +975,7 @@ int run_survival_lobby_round_ds_order(void) {
        (x,y)" line per attacker on the newswire, and this case counted them:
        a recording of the owner's own server carried no position at all, so a
        wave that came ashore in the wrong place could only be argued about.
-       That line is an operator-log line now — the status line is what a player
+       That line is an operator-log line now — the panel is what a player
        reads, and a square and a start number is nothing a defender acts on —
        and a unit test cannot see the log. The roster is the better source
        anyway: the loop below reads each attacker's real position and holds
