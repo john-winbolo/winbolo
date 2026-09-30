@@ -83,6 +83,44 @@ static bool panelTextByteOk(uint8_t c) {
     return c >= 0x20 && c != 0x7F;
 }
 
+/* The size mark's bytes, opcode included (see scenario_panel.h). */
+#define PANEL_MARK_BYTES 7
+
+int scnPanelIsSizeMark(const ScnPanelItem *item) {
+    return item != NULL && item->op == SCN_PANEL_OP_RECT &&
+           item->u.rect.x == SCN_PANEL_SIZE_LARGE && item->u.rect.y == 0 &&
+           item->u.rect.w == 0 && item->u.rect.h == 0 &&
+           item->u.rect.colour == SCN_PANEL_COLOUR_NONE &&
+           item->u.rect.fill == 0;
+}
+
+/* Whether the bytes at off are a size mark. */
+static bool panelMarkAt(const uint8_t *bytes, uint16_t len, uint16_t off) {
+    if (off >= len || (uint16_t)(len - off) < PANEL_MARK_BYTES) {
+        return false;
+    }
+    return bytes[off] == SCN_PANEL_OP_RECT &&
+           bytes[off + 1] == SCN_PANEL_SIZE_LARGE && bytes[off + 2] == 0 &&
+           bytes[off + 3] == 0 && bytes[off + 4] == 0 &&
+           bytes[off + 5] == SCN_PANEL_COLOUR_NONE && bytes[off + 6] == 0;
+}
+
+/* The size field of a text, name or timer, or NULL for a primitive that
+ * has none. */
+static uint8_t *panelItemSize(ScnPanelItem *item) {
+    switch (item->op) {
+    case SCN_PANEL_OP_TEXT:  return &item->u.text.size;
+    case SCN_PANEL_OP_NAME:  return &item->u.name.size;
+    case SCN_PANEL_OP_TIMER: return &item->u.timer.size;
+    default:                 return NULL;
+    }
+}
+
+static bool panelItemIsLarge(const ScnPanelItem *item) {
+    const uint8_t *size = panelItemSize((ScnPanelItem *)item);
+    return size != NULL && *size == SCN_PANEL_SIZE_LARGE;
+}
+
 /* The operand rules, in one place because both directions answer to
  * them. Coordinates, widths, heights and tile ids are deliberately not
  * here: a rect may start inside the square and run past its edge, and
@@ -93,6 +131,9 @@ static ScnPanelResult panelItemCheck(const ScnPanelItem *item) {
     case SCN_PANEL_OP_RECT:
         if (item->u.rect.colour >= SCN_PANEL_COLOURS) return SCN_PANEL_ERR_RANGE;
         if (item->u.rect.fill > 1)                    return SCN_PANEL_ERR_RANGE;
+        /* On the wire this rect is the size mark, so as an item of its own
+         * it would come back as a large flag on its neighbour. */
+        if (scnPanelIsSizeMark(item))                 return SCN_PANEL_ERR_RANGE;
         return SCN_PANEL_OK;
     case SCN_PANEL_OP_LINE:
         if (item->u.line.colour >= SCN_PANEL_COLOURS) return SCN_PANEL_ERR_RANGE;
@@ -100,7 +141,7 @@ static ScnPanelResult panelItemCheck(const ScnPanelItem *item) {
     case SCN_PANEL_OP_TEXT: {
         uint8_t i;
         if (item->u.text.colour >= SCN_PANEL_COLOURS)      return SCN_PANEL_ERR_RANGE;
-        if (item->u.text.size > SCN_PANEL_SIZE_NORMAL)     return SCN_PANEL_ERR_RANGE;
+        if (item->u.text.size > SCN_PANEL_SIZE_LARGE)      return SCN_PANEL_ERR_RANGE;
         if (item->u.text.align > SCN_PANEL_ALIGN_RIGHT)    return SCN_PANEL_ERR_RANGE;
         if (item->u.text.len > SCN_PANEL_TEXT_MAX)         return SCN_PANEL_ERR_TEXT;
         for (i = 0; i < item->u.text.len; i++) {
@@ -112,7 +153,7 @@ static ScnPanelResult panelItemCheck(const ScnPanelItem *item) {
     }
     case SCN_PANEL_OP_NAME:
         if (item->u.name.colour >= SCN_PANEL_COLOURS)   return SCN_PANEL_ERR_RANGE;
-        if (item->u.name.size > SCN_PANEL_SIZE_NORMAL)  return SCN_PANEL_ERR_RANGE;
+        if (item->u.name.size > SCN_PANEL_SIZE_LARGE)   return SCN_PANEL_ERR_RANGE;
         if (item->u.name.align > SCN_PANEL_ALIGN_RIGHT) return SCN_PANEL_ERR_RANGE;
         if (item->u.name.slot >= MAX_TANKS)             return SCN_PANEL_ERR_RANGE;
         return SCN_PANEL_OK;
@@ -123,7 +164,7 @@ static ScnPanelResult panelItemCheck(const ScnPanelItem *item) {
         return SCN_PANEL_OK;
     case SCN_PANEL_OP_TIMER:
         if (item->u.timer.colour >= SCN_PANEL_COLOURS)   return SCN_PANEL_ERR_RANGE;
-        if (item->u.timer.size > SCN_PANEL_SIZE_NORMAL)  return SCN_PANEL_ERR_RANGE;
+        if (item->u.timer.size > SCN_PANEL_SIZE_LARGE)   return SCN_PANEL_ERR_RANGE;
         if (item->u.timer.align > SCN_PANEL_ALIGN_RIGHT) return SCN_PANEL_ERR_RANGE;
         if (item->u.timer.mode > SCN_PANEL_TIMER_UP)     return SCN_PANEL_ERR_RANGE;
         return SCN_PANEL_OK;
@@ -140,9 +181,11 @@ static uint16_t panelItemBytes(const ScnPanelItem *item) {
     }
     if (item->op == SCN_PANEL_OP_TEXT) {
         return (uint16_t)(1 + kPanelOperandBytes[SCN_PANEL_OP_TEXT] +
-                          item->u.text.len);
+                          item->u.text.len +
+                          (panelItemIsLarge(item) ? PANEL_MARK_BYTES : 0));
     }
-    return (uint16_t)(1 + kPanelOperandBytes[item->op]);
+    return (uint16_t)(1 + kPanelOperandBytes[item->op] +
+                      (panelItemIsLarge(item) ? PANEL_MARK_BYTES : 0));
 }
 
 /* Decode the primitive at *off, advancing *off past it on success. The
@@ -243,6 +286,14 @@ static ScnPanelResult panelItemParse(const uint8_t *bytes, uint16_t len,
         return SCN_PANEL_ERR_OPCODE;   /* unreachable: the opcode was bounded above */
     }
 
+    /* A size byte travels as small or normal only; large rides as normal
+     * plus the size mark, which panelWireNext folds in. */
+    {
+        const uint8_t *size = panelItemSize(item);
+        if (size != NULL && *size > SCN_PANEL_SIZE_NORMAL) {
+            return SCN_PANEL_ERR_RANGE;
+        }
+    }
     {
         ScnPanelResult r = panelItemCheck(item);
         if (r != SCN_PANEL_OK) {
@@ -253,10 +304,48 @@ static ScnPanelResult panelItemParse(const uint8_t *bytes, uint16_t len,
     return SCN_PANEL_OK;
 }
 
+/* One decoded item off the wire: a primitive, and the size mark after it
+ * when there is one. *wire is how many wire primitives that took, 1 or 2.
+ * A mark after anything but a normal text, name or timer is not folded,
+ * and panelItemParse then refuses it as a rect of its own. */
+static ScnPanelResult panelWireNext(const uint8_t *bytes, uint16_t len,
+                                    uint16_t *off, ScnPanelItem *item,
+                                    uint16_t *wire) {
+    ScnPanelResult r = panelItemParse(bytes, len, off, item);
+    uint8_t *size;
+
+    *wire = 1;
+    if (r != SCN_PANEL_OK) {
+        return r;
+    }
+    size = panelItemSize(item);
+    if (size != NULL && *size == SCN_PANEL_SIZE_NORMAL &&
+        panelMarkAt(bytes, len, *off)) {
+        *size = SCN_PANEL_SIZE_LARGE;
+        *off  = (uint16_t)(*off + PANEL_MARK_BYTES);
+        *wire = 2;
+    }
+    return SCN_PANEL_OK;
+}
+
+uint16_t scnPanelWireCount(const ScnPanelList *list) {
+    uint16_t n = 0;
+    uint16_t i;
+
+    if (list == NULL) {
+        return 0;
+    }
+    for (i = 0; i < list->count && i < SCN_PANEL_ITEMS_MAX; i++) {
+        n = (uint16_t)(n + (panelItemIsLarge(&list->items[i]) ? 2 : 1));
+    }
+    return n;
+}
+
 ScnPanelResult scnPanelParse(const uint8_t *bytes, uint16_t len, ScnPanelList *out) {
     ScnPanelItem item;
     uint16_t off;
     uint16_t count = 0;
+    uint16_t wireCount = 0;
     uint16_t i;
 
     if (out == NULL) {
@@ -272,29 +361,46 @@ ScnPanelResult scnPanelParse(const uint8_t *bytes, uint16_t len, ScnPanelList *o
 
     /* Two walks. The first refuses the whole list without touching
      * *out, so a caller's list is left alone when any byte in the
-     * stream is bad; the second decodes what the first proved good. */
+     * stream is bad; the second decodes what the first proved good.
+     *
+     * The limit is on wire primitives, a size mark counting as one, since
+     * that is what an older parser counts; the decoded count is never more. */
     off = 0;
     while (off < len) {
         ScnPanelResult r;
-        if (count == SCN_PANEL_ITEMS_MAX) {
+        uint16_t       wire;
+        if (wireCount >= SCN_PANEL_ITEMS_MAX) {
             return SCN_PANEL_ERR_TOO_MANY;
         }
-        r = panelItemParse(bytes, len, &off, &item);
+        r = panelWireNext(bytes, len, &off, &item, &wire);
         if (r != SCN_PANEL_OK) {
             return r;
+        }
+        wireCount = (uint16_t)(wireCount + wire);
+        if (wireCount > SCN_PANEL_ITEMS_MAX) {
+            return SCN_PANEL_ERR_TOO_MANY;
         }
         count++;
     }
 
     off = 0;
     for (i = 0; i < count; i++) {
-        ScnPanelResult r = panelItemParse(bytes, len, &off, &out->items[i]);
+        uint16_t       wire;
+        ScnPanelResult r = panelWireNext(bytes, len, &off, &out->items[i],
+                                         &wire);
         if (r != SCN_PANEL_OK) {
             return r;   /* unreachable: the first walk took this list whole */
         }
     }
     out->count = (uint8_t)count;
     return SCN_PANEL_OK;
+}
+
+/* The size byte an item travels with: large goes out as normal, and the
+ * size mark after it says the rest. */
+static uint8_t panelWireSize(uint8_t size) {
+    return (size == SCN_PANEL_SIZE_LARGE) ? (uint8_t)SCN_PANEL_SIZE_NORMAL
+                                          : size;
 }
 
 uint16_t scnPanelWrite(const ScnPanelList *list, uint8_t *bytes, uint16_t cap) {
@@ -304,7 +410,8 @@ uint16_t scnPanelWrite(const ScnPanelList *list, uint8_t *bytes, uint16_t cap) {
     if (list == NULL || bytes == NULL) {
         return 0;
     }
-    if (list->count > SCN_PANEL_ITEMS_MAX) {
+    if (list->count > SCN_PANEL_ITEMS_MAX ||
+        scnPanelWireCount(list) > SCN_PANEL_ITEMS_MAX) {
         return 0;
     }
 
@@ -342,7 +449,7 @@ uint16_t scnPanelWrite(const ScnPanelList *list, uint8_t *bytes, uint16_t cap) {
             p[0] = item->u.text.x;
             p[1] = item->u.text.y;
             p[2] = item->u.text.colour;
-            p[3] = item->u.text.size;
+            p[3] = panelWireSize(item->u.text.size);
             p[4] = item->u.text.align;
             p[5] = item->u.text.len;
             memcpy(p + 6, item->u.text.text, item->u.text.len);
@@ -351,7 +458,7 @@ uint16_t scnPanelWrite(const ScnPanelList *list, uint8_t *bytes, uint16_t cap) {
             p[0] = item->u.name.x;
             p[1] = item->u.name.y;
             p[2] = item->u.name.colour;
-            p[3] = item->u.name.size;
+            p[3] = panelWireSize(item->u.name.size);
             p[4] = item->u.name.align;
             p[5] = item->u.name.slot;
             break;
@@ -373,13 +480,24 @@ uint16_t scnPanelWrite(const ScnPanelList *list, uint8_t *bytes, uint16_t cap) {
             p[0] = item->u.timer.x;
             p[1] = item->u.timer.y;
             p[2] = item->u.timer.colour;
-            p[3] = item->u.timer.size;
+            p[3] = panelWireSize(item->u.timer.size);
             p[4] = item->u.timer.align;
             p[5] = item->u.timer.mode;
             panelWriteU32(p + 6, item->u.timer.tick);
             break;
         default:
             return 0;   /* unreachable: panelItemBytes answered 0 for these */
+        }
+        if (panelItemIsLarge(item)) {
+            /* The size mark, the last of the bytes need counted. */
+            uint8_t *m = bytes + off + need - PANEL_MARK_BYTES;
+            m[0] = SCN_PANEL_OP_RECT;
+            m[1] = SCN_PANEL_SIZE_LARGE;
+            m[2] = 0;
+            m[3] = 0;
+            m[4] = 0;
+            m[5] = SCN_PANEL_COLOUR_NONE;
+            m[6] = 0;
         }
         off = (uint16_t)(off + need);
     }

@@ -43,12 +43,13 @@
 extern "C" {
 #endif
 
-/* Text height, in panel units, for the two sizes a text, name or timer
- * primitive asks for. Units rather than pixels because the square scales
+/* Text height, in panel units, for the three sizes a text, name or timer
+ * primitive asks for. Large is double small. Units rather than pixels because the square scales
  * with the game's zoom and the writing in it has to scale with the square:
  * a script that fits a line across the panel at one zoom fits it at every
  * other. */
 #define SCN_PANEL_TEXT_NORMAL_UNITS 11.0f
+#define SCN_PANEL_TEXT_LARGE_UNITS  16.0f
 #define SCN_PANEL_TEXT_SMALL_UNITS   8.0f
 
 /* Longest string a timer renders, "M:SS" with the minutes unbounded, plus

@@ -442,6 +442,165 @@ int run_scenario_panel_roundtrip(void) {
     return 0;
 }
 
+/* The large size, and how it travels.
+ *
+ * A large item goes on the wire as a normal one followed by the size mark,
+ * a colourless empty rect at x 2, so a build from before the large size
+ * draws it at normal size instead of refusing the list. The bytes are
+ * written out by hand, so the layout is pinned from outside the writer. */
+int run_scenario_panel_large_size(void) {
+    static const uint8_t kLarge[] = {
+        /* text: x=4, y=30, colour=CYAN(10), size byte NORMAL(1), align=LEFT,
+         *       len=2, "Hi" ... */
+        0x03, 0x04, 0x1E, 0x0A, 0x01, 0x00, 0x02, 'H', 'i',
+        /* ... and the size mark that makes it large */
+        0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00,
+        /* name: x=4, y=50, colour=CYAN, size byte NORMAL, align=LEFT, slot=2,
+         *       then the mark */
+        0x04, 0x04, 0x32, 0x0A, 0x01, 0x00, 0x02,
+        0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00,
+        /* timer: x=124, y=50, colour=WHITE, size byte NORMAL, align=RIGHT,
+         *        mode=DOWN, tick=1000, then the mark */
+        0x07, 0x7C, 0x32, 0x02, 0x01, 0x02, 0x00, 0x00, 0x00, 0x03, 0xE8,
+        0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00,
+        /* a plain normal text after them, with no mark */
+        0x03, 0x04, 0x46, 0x02, 0x01, 0x00, 0x01, 'x'
+    };
+    ScnPanelList out;
+    ScnPanelList back;
+    uint8_t      buf[SCN_PANEL_MAX];
+    uint8_t      bad[32];
+    uint16_t     written;
+    uint16_t     off;
+    int          i;
+
+    memset(&out, 0, sizeof(out));
+    out.count = 4;
+    out.items[0].op = SCN_PANEL_OP_TEXT;
+    out.items[0].u.text.x = 4;
+    out.items[0].u.text.y = 30;
+    out.items[0].u.text.colour = SCN_PANEL_COLOUR_CYAN;
+    out.items[0].u.text.size = SCN_PANEL_SIZE_LARGE;
+    out.items[0].u.text.align = SCN_PANEL_ALIGN_LEFT;
+    out.items[0].u.text.len = 2;
+    memcpy(out.items[0].u.text.text, "Hi", 3);
+    out.items[1].op = SCN_PANEL_OP_NAME;
+    out.items[1].u.name.x = 4;
+    out.items[1].u.name.y = 50;
+    out.items[1].u.name.colour = SCN_PANEL_COLOUR_CYAN;
+    out.items[1].u.name.size = SCN_PANEL_SIZE_LARGE;
+    out.items[1].u.name.align = SCN_PANEL_ALIGN_LEFT;
+    out.items[1].u.name.slot = 2;
+    out.items[2].op = SCN_PANEL_OP_TIMER;
+    out.items[2].u.timer.x = 124;
+    out.items[2].u.timer.y = 50;
+    out.items[2].u.timer.colour = SCN_PANEL_COLOUR_WHITE;
+    out.items[2].u.timer.size = SCN_PANEL_SIZE_LARGE;
+    out.items[2].u.timer.align = SCN_PANEL_ALIGN_RIGHT;
+    out.items[2].u.timer.mode = SCN_PANEL_TIMER_DOWN;
+    out.items[2].u.timer.tick = 1000u;
+    out.items[3].op = SCN_PANEL_OP_TEXT;
+    out.items[3].u.text.x = 4;
+    out.items[3].u.text.y = 70;
+    out.items[3].u.text.colour = SCN_PANEL_COLOUR_WHITE;
+    out.items[3].u.text.size = SCN_PANEL_SIZE_NORMAL;
+    out.items[3].u.text.align = SCN_PANEL_ALIGN_LEFT;
+    out.items[3].u.text.len = 1;
+    memcpy(out.items[3].u.text.text, "x", 2);
+
+    UT_ASSERT(scnPanelWireCount(&out) == 7);
+    written = scnPanelWrite(&out, buf, (uint16_t)sizeof(buf));
+    UT_ASSERT_MSG(written == sizeof(kLarge), "wrote %u bytes, expected %u",
+                  (unsigned)written, (unsigned)sizeof(kLarge));
+    UT_ASSERT(memcmp(buf, kLarge, sizeof(kLarge)) == 0);
+
+    /* Back apart: four items, the mark folded into each large one. */
+    memset(&back, 0, sizeof(back));
+    UT_ASSERT(scnPanelParse(kLarge, (uint16_t)sizeof(kLarge), &back) ==
+              SCN_PANEL_OK);
+    UT_ASSERT_MSG(back.count == 4, "decoded %u items", (unsigned)back.count);
+    UT_ASSERT(back.items[0].op == SCN_PANEL_OP_TEXT &&
+              back.items[0].u.text.size == SCN_PANEL_SIZE_LARGE &&
+              strcmp(back.items[0].u.text.text, "Hi") == 0);
+    UT_ASSERT(back.items[1].op == SCN_PANEL_OP_NAME &&
+              back.items[1].u.name.size == SCN_PANEL_SIZE_LARGE &&
+              back.items[1].u.name.slot == 2);
+    UT_ASSERT(back.items[2].op == SCN_PANEL_OP_TIMER &&
+              back.items[2].u.timer.size == SCN_PANEL_SIZE_LARGE &&
+              back.items[2].u.timer.tick == 1000u);
+    UT_ASSERT(back.items[3].op == SCN_PANEL_OP_TEXT &&
+              back.items[3].u.text.size == SCN_PANEL_SIZE_NORMAL);
+
+    /* A size byte of 2 on the wire is refused: large has one spelling. */
+    off = 0;
+    bad[off++] = 0x03; bad[off++] = 4; bad[off++] = 4; bad[off++] = 2;
+    bad[off++] = SCN_PANEL_SIZE_LARGE; bad[off++] = 0; bad[off++] = 1;
+    bad[off++] = 'a';
+    UT_ASSERT(scnPanelParse(bad, off, &back) == SCN_PANEL_ERR_RANGE);
+    /* And a size past large is refused on the wire and by the writer. */
+    bad[4] = 3;
+    UT_ASSERT(scnPanelParse(bad, off, &back) == SCN_PANEL_ERR_RANGE);
+    out.items[0].u.text.size = 3;
+    UT_ASSERT(scnPanelWrite(&out, buf, (uint16_t)sizeof(buf)) == 0);
+    out.items[0].u.text.size = SCN_PANEL_SIZE_LARGE;
+
+    /* A mark on its own, after a rect, and after a small text: refused. */
+    UT_ASSERT(scnPanelParse(kLarge + 9, 7, &back) == SCN_PANEL_ERR_RANGE);
+    off = 0;
+    bad[off++] = 0x01; bad[off++] = 1; bad[off++] = 1; bad[off++] = 4;
+    bad[off++] = 4; bad[off++] = 2; bad[off++] = 1;
+    memcpy(bad + off, kLarge + 9, 7);
+    off = (uint16_t)(off + 7);
+    UT_ASSERT(scnPanelParse(bad, off, &back) == SCN_PANEL_ERR_RANGE);
+    memcpy(bad, kLarge, 16);
+    bad[4] = SCN_PANEL_SIZE_SMALL;
+    UT_ASSERT(scnPanelParse(bad, 16, &back) == SCN_PANEL_ERR_RANGE);
+    /* Two marks after one item: the second follows a large item, which is
+       not a normal one, so it is refused as a rect. */
+    memcpy(bad, kLarge, 16);
+    memcpy(bad + 16, kLarge + 9, 7);
+    UT_ASSERT(scnPanelParse(bad, 23, &back) == SCN_PANEL_ERR_RANGE);
+
+    /* The writer will not emit a mark-shaped rect as an item of its own. */
+    UT_ASSERT(scnPanelParse(kLarge, 16, &back) == SCN_PANEL_OK);
+    back.count = 2;
+    back.items[1].op = SCN_PANEL_OP_RECT;
+    memset(&back.items[1].u, 0, sizeof(back.items[1].u));
+    back.items[1].u.rect.x = SCN_PANEL_SIZE_LARGE;
+    UT_ASSERT(scnPanelIsSizeMark(&back.items[1]));
+    UT_ASSERT(scnPanelWrite(&back, buf, (uint16_t)sizeof(buf)) == 0);
+    /* Any other colourless empty rect is still an ordinary rect. */
+    back.items[1].u.rect.x = 3;
+    UT_ASSERT(!scnPanelIsSizeMark(&back.items[1]));
+    UT_ASSERT(scnPanelWrite(&back, buf, (uint16_t)sizeof(buf)) == 23);
+
+    /* The item limit counts wire primitives: 64 large texts are 128 on the
+       wire and fit, 65 do not, in either direction. */
+    memset(&out, 0, sizeof(out));
+    for (i = 0; i < 65; i++) {
+        out.items[i].op = SCN_PANEL_OP_TEXT;
+        out.items[i].u.text.colour = SCN_PANEL_COLOUR_WHITE;
+        out.items[i].u.text.size = SCN_PANEL_SIZE_LARGE;
+    }
+    out.count = 64;
+    written = scnPanelWrite(&out, buf, (uint16_t)sizeof(buf));
+    UT_ASSERT(written == 64 * 14);
+    UT_ASSERT(scnPanelParse(buf, written, &back) == SCN_PANEL_OK);
+    UT_ASSERT(back.count == 64);
+    out.count = 65;
+    UT_ASSERT(scnPanelWireCount(&out) == 130);
+    UT_ASSERT(scnPanelWrite(&out, buf, (uint16_t)sizeof(buf)) == 0);
+    for (i = 0; i < 65; i++) {
+        memcpy(buf + i * 14, kLarge, 7);    /* a text with a normal byte */
+        buf[i * 14 + 6] = 0;                /* and no string */
+        memcpy(buf + i * 14 + 7, kLarge + 9, 7);
+    }
+    UT_ASSERT(scnPanelParse(buf, (uint16_t)(65 * 14), &back) ==
+              SCN_PANEL_ERR_TOO_MANY);
+
+    return 0;
+}
+
 /* The timer primitive's text.
  *
  * A timer carries one tick and a direction, and every client works the
