@@ -158,20 +158,19 @@ local BREATHER_S   = 30    -- prep between waves
 -- default 4 minutes is 240 s.
 local WAVE_LIMIT_S = game.setting("round_minutes") * 60
 
--- How often the status panel is redrawn. Once a second is enough: the only
--- thing on it that moves faster is the countdown, and the client counts that
--- down itself off one `timer` primitive. The surface refuses a second update
--- to the same panel in the same tick, so this is a floor as well as a rate.
--- It is also the rate the threat line throbs at, so shortening it makes that
--- a flicker.
-local PANEL_PERIOD_S = 1
+-- How often the status line is restated. The client counts its countdown
+-- down itself, and the server sends the line on only when it changes, so a
+-- restatement that says the same thing costs nothing. The line is also set
+-- the moment the round changes state; this is the safety net under that.
+local STATUS_PERIOD_S = 1
 
--- How long a flavour line stays up after the state it belongs to began. The
--- line says the same thing for as long as the state lasts, and a wave runs
--- minutes: past the first few seconds it is a throbbing red line the
--- player has already read, sitting over the map. It says its piece and goes,
--- leaving the headline and the countdown, which do change.
-local PANEL_LINE_S = 5
+-- How long a big announcement stays up. It says its piece and goes, leaving
+-- the status line, which is the part that changes.
+local ANNOUNCE_S = 5
+
+-- How long the round's last announcement stays up: long enough to read over
+-- the end-of-round screen.
+local ANNOUNCE_END_S = 10
 
 -- Wave bots arrive one at a time and leave one at a time, this far apart.
 --
@@ -194,8 +193,8 @@ local VANISH_SPACING_S = 0
 
 -- Newswire mute window around wave churn. A wave arriving or leaving fires
 -- ten join or quit lines in a row and buries everything else, so the
--- newswire is silenced for the whole of it. The status panel keeps drawing
--- through the mute: it is its own channel, not a newswire line, so a player
+-- newswire is silenced for the whole of it. The status line and the
+-- announcements are their own channels, not newswire lines, so a player
 -- still reads the wave number and the countdown while the churn is hidden.
 local MUTE_LEAD_S = 2      -- silence before the churn
 local MUTE_TAIL_S = 2      -- silence after it
@@ -537,7 +536,7 @@ end
 -- engine's real ceiling instead of what we asked for.
 --
 -- The console rather than the newswire. This is an operator's line: a player
--- reads where the round is off the status panel, and a restock count is not
+-- reads where the round is off the status line, and a restock count is not
 -- something they can act on.
 local function restock_report(probe, n, what)
   local bi = game.base(probe)
@@ -825,150 +824,71 @@ local function defender_pills()
 end
 
 -- ---------------------------------------------------------------------
--- The status panel.
+-- The status line and the announcements.
 --
--- Everything this round says otherwise goes out as newswire lines, which
--- scroll away: a player who was looking at their tank when the last wave
--- died has no way to find out how long the quiet lasts. The panel is the
--- standing answer to "where am I" -- which wave, what the horde is doing,
--- and how long until it does it again.
+-- Everything else this round says goes out as newswire lines, which scroll
+-- away: a player who was looking at their tank when the last wave died has
+-- no way to find out how long the quiet lasts. The status line along the top
+-- of the view is the standing answer: which wave, and how long until the
+-- next thing happens. The countdown is one tick handed to the client, which
+-- counts it down against its own clock, so a four-minute wave costs one
+-- message instead of two hundred and forty.
 --
--- It is a square of 128 logical units, origin top-left, and the frontend
--- decides where that square goes and how big it is drawn. Nothing here is a
--- pixel. Normal text is 11 units tall and small text is 8, which is what the
--- row positions below are spaced against.
---
--- The countdown is one `timer` primitive rather than a number this script
--- rewrites: the client works it out against its own clock, so a five-minute
--- wave costs one message instead of three hundred.
+-- The bigger news -- a wave landing, a wave leaving, a wave survived, pills
+-- seized -- goes up as an announcement a quarter of the way down the view,
+-- for ANNOUNCE_S, and then goes.
 
--- What the panel says in each of its four states. The wave-numbered tables
--- are indexed by wave, so the line a player reads is fixed by which wave it
--- is and not by chance -- nothing here touches math.random, which the round
--- shares with the spawner and the seizure.
---
--- Every line is upper case and short on purpose. Small text is 8 units tall
--- in a proportional font, so about 26 characters fit across the square, and
--- a line past that is clipped by the frontend rather than wrapped.
-local PANEL_LINE_GRACE = "SOMETHING IS IN THE WATER"
-
-local PANEL_LINE_WAVE = {
-  "THEY CAME ASHORE",
-  "MORE OF THEM THIS TIME",
-  "THE SHORE KEEPS GIVING",
-  "THEY ARE NOT TIRED",
-  "THE LAST OF THEM. PROBABLY",
+-- The flavour on each wave's announcement. Indexed by wave, so the line a
+-- player reads is fixed by which wave it is and not by chance -- nothing here
+-- touches math.random, which the round shares with the spawner and the
+-- seizure.
+local WAVE_FLAVOUR = {
+  "They came ashore",
+  "More of them this time",
+  "The shore keeps giving",
+  "They are not tired",
+  "The last of them. Probably",
 }
 
--- Said while the wave that just ended walks back into the sea, one attacker
--- at a time.
-local PANEL_LINE_LEAVING = "ONE BY ONE"
-
--- And said through the breather, about the wave that was just survived.
-local PANEL_LINE_BREATHER = {
-  "THAT WAS THE POLITE ONE",
-  "THEY WENT TO GET FRIENDS",
-  "COUNT YOUR PILLBOXES",
-  "THEY KNOW THE MAP NOW",
+-- And the flavour on the announcement that a wave was survived.
+local BREATHER_FLAVOUR = {
+  "That was the polite one",
+  "They went to get friends",
+  "Count your pillboxes",
+  "They know the map now",
 }
 
-local panel_next_at = nil
--- Flipped on every redraw. The threat lines sit on it and change colour once
--- a second, which reads as a slow throb rather than a flicker -- the panel is
--- only redrawn at PANEL_PERIOD_S, so this cannot go faster than that.
-local panel_pulse   = false
+local status_next_at = nil
 
--- Which state the last redraw was in, and the tick it began on. A flavour
--- line is shown for PANEL_LINE_S from that tick and not afterwards, so the
--- key has to name the wave as well as the state: wave 2 is a state of its
--- own and puts its own line up, rather than inheriting a clock that ran out
--- during wave 1.
-local panel_state    = nil
-local panel_state_at = nil
+-- The warning about the seizure that opens the next wave, held back until
+-- the "survived" announcement has had its time up. nil while none is due.
+local seize_warn_at = nil
 
-local function panel_draw(tick)
-  panel_pulse = not panel_pulse
+-- One big line, a quarter of the way down the view, to everyone.
+local function announce_upper(text, seconds)
+  game.announce(text, seconds or ANNOUNCE_S, nil, "upper")
+end
 
-  -- No backing bar behind the title. The frontend draws its own bar across
-  -- the top of the panel while the pointer is on it, to drag the panel by
-  -- and to reach its settings, and a grey band painted there by the round
-  -- itself sat under that one for the whole game for no reason.
-  local list = {
-    { "text", 64, 3, "white", "normal", "centre", "SURVIVAL" },
-  }
-
-  -- The four states, and the two flags that tell them apart. next_wave_at is
-  -- set exactly while no wave is live; wave_ends_at is set exactly while one
-  -- is running. Neither is set in the window between the wave clock running
-  -- out and the last attacker actually being gone.
-  --
-  -- `wave == 0` is asked first rather than `next_wave_at ~= nil and
-  -- wave == 0`, because on_tick draws the panel before it arms the grace
-  -- clock: on the round's very first tick both flags are nil, and a test on
-  -- next_wave_at would drop that tick into the leaving branch and open the
-  -- round on "THEY ARE LEAVING" for a whole second. A nil target just leaves
-  -- the countdown off until the clock is armed.
-  local head, head_colour, line1, line2, line_colour, label, target, state
+-- The status line for where the round is now. next_wave_at is set exactly
+-- while no wave is live; wave_ends_at is set exactly while one is running.
+-- Neither is set in the window between the wave clock running out and the
+-- last attacker actually being gone.
+--
+-- `wave == 0` is asked first, because on the round's very first tick both
+-- flags are nil, and a test on next_wave_at alone would open the round on
+-- "over". A nil countdown just leaves the countdown off until the clock is
+-- armed, which is the same tick.
+local function status_draw()
   if wave == 0 then
-    state       = "grace"
-    head        = "GET READY!"
-    head_colour = "yellow"
-    line1       = PANEL_LINE_GRACE
-    line_colour = panel_pulse and "red" or "orange"
-    label       = "FIRST WAVE IN"
-    target      = next_wave_at
+    game.status(string.format("Next wave 1/%d", WAVES), next_wave_at)
   elseif next_wave_at ~= nil then
-    state       = "breather"
-    head        = string.format("WAVE %d/%d SURVIVED", wave, WAVES)
-    head_colour = "green"
-    line1       = PANEL_LINE_BREATHER[wave] or "THEY ARE STILL OUT THERE"
-    -- The seizure that opens the next wave is the one thing a player can
-    -- still do something about while the field is empty, so it is on the
-    -- panel and not only in the newswire line that scrolls away.
-    line2       = string.format("UP TO %d PILLS WILL TURN", wave + 1)
-    line_colour = "grey"
-    label       = "THE HORDE RETURNS IN"
-    target      = next_wave_at
+    game.status(string.format("Next wave %d/%d", wave + 1, WAVES),
+                next_wave_at)
   elseif wave_ends_at ~= nil then
-    state       = "wave"
-    head        = string.format("WAVE %d/%d", wave, WAVES)
-    head_colour = "red"
-    line1       = PANEL_LINE_WAVE[wave] or "THEY KEEP COMING"
-    line_colour = panel_pulse and "red" or "orange"
-    label       = "WAVE ENDS IN"
-    target      = wave_ends_at
+    game.status(string.format("Wave %d/%d", wave, WAVES), wave_ends_at)
   else
-    state       = "leaving"
-    head        = "THEY ARE LEAVING"
-    head_colour = "yellow"
-    line1       = PANEL_LINE_LEAVING
-    line_colour = "grey"
+    game.status(string.format("Wave %d/%d over", wave, WAVES))
   end
-
-  list[#list + 1] = { "text", 64, 26, head_colour, "normal", "centre", head }
-
-  -- The flavour, for the first PANEL_LINE_S of the state and no longer. The
-  -- key carries the wave, so every wave and every breather puts its own line
-  -- up again rather than the clock running once for the whole round.
-  local key = string.format("%s%d", state, wave)
-  if panel_state ~= key then
-    panel_state    = key
-    panel_state_at = tick
-  end
-  if tick - panel_state_at < secs(PANEL_LINE_S) then
-    list[#list + 1] = { "text", 64, 48, line_colour, "small", "centre", line1 }
-    if line2 ~= nil then
-      list[#list + 1] =
-        { "text", 64, 59, line_colour, "small", "centre", line2 }
-    end
-  end
-  if target ~= nil then
-    list[#list + 1] = { "text", 64, 86, "grey", "small", "centre", label }
-    list[#list + 1] =
-      { "timer", 64, 98, "white", "normal", "centre", "down", target }
-  end
-
-  game.panel(0, list)
 end
 
 -- Once the whole wave is ashore: seize up to `wave` defender pills,
@@ -997,10 +917,14 @@ local function seize_defender_pills()
     game.message(string.format(
       "*** The horde seized %d of your pillboxes! You hold %d. ***",
       seized, left))
+    announce_upper(string.format(
+      "The horde seized %d of your pillboxes! You hold %d.", seized, left))
   else
     game.message(string.format(
       "*** The horde seized nothing: you hold %d (floor %d). ***",
       left, floor))
+    announce_upper(string.format(
+      "The horde seized nothing: you hold %d.", left))
   end
 end
 
@@ -1158,10 +1082,13 @@ local function spawn_wave()
   seen_fielded = {}
   ashore_said  = {}
 
-  -- The console and nothing else. The panel puts "WAVE n/5" up with a
-  -- countdown to the end of it the moment the wave starts, so a player is
-  -- already told which wave it is and how long it runs; the tick numbers
-  -- here are for an operator reading a round back afterwards.
+  -- The player's side: the status line turns to "Wave n/5" with the
+  -- countdown to the end of the wave, and the wave's own announcement goes
+  -- up. The tick numbers in the log are for an operator reading a round back
+  -- afterwards.
+  status_draw()
+  announce_upper(string.format("Wave %d/%d - %s", wave, WAVES,
+                               WAVE_FLAVOUR[wave] or "They keep coming"))
   game.log(string.format(
     "Survival: [wave] %d: clock started at tick %d, ends at tick %d (%d s) at %s",
     wave, game.tick(), wave_ends_at, WAVE_LIMIT_S, os.date("%H:%M:%S")))
@@ -1181,9 +1108,8 @@ end
 -- The departure queue.
 
 -- Line every wave bot up to be removed, one per VANISH_SPACING_S. The
--- players are told nothing here: the panel drops to "THEY ARE LEAVING" on
--- its next redraw, which is the same second, and it keeps saying it until
--- the last tank is actually gone.
+-- status line says "Wave n/5 over" until the last tank is actually gone, and
+-- an announcement says they are leaving.
 --
 -- A wave that is still arriving must not race its own departure, so the
 -- arrival queue is dropped here first.
@@ -1222,6 +1148,8 @@ local function vanish_wave(tick)
     "Survival: [wave] %d over at tick %d: %d of %d spawned queued to leave: %s",
     wave, tick, #vanish_queue, #spawned, table.concat(vanish_queue, " ")))
   vanishing = true
+  status_draw()
+  announce_upper("They are leaving - one by one")
   -- The first removal waits out MUTE_LEAD_S so the newswire is already
   -- silent before the first attacker disappears; the caller mutes on this
   -- tick.
@@ -1313,8 +1241,8 @@ local function prune_wave_bots()
           -- The console, so an operator watching a headless round reads it
           -- as it happens. It used to go on the newswire as well, and does
           -- not any more: a square and a start number is not something a
-          -- defender acts on, and the panel is where a player now reads what
-          -- the horde is doing.
+          -- defender acts on, and the status line and the announcements are
+          -- where a player now reads what the horde is doing.
           game.log("Survival: " .. line)
         end
       end
@@ -1329,11 +1257,12 @@ local function prune_wave_bots()
   end
 end
 
--- Start the clock on the next wave, `gap` ticks from `tick`. The panel reads
--- next_wave_at straight off and hands the client a countdown to it, so there
--- is nothing else to set up here: the client runs the clock down itself.
+-- Start the clock on the next wave, `gap` ticks from `tick`. The status line
+-- hands the client a countdown to next_wave_at, and the client runs the
+-- clock down itself.
 local function arm_next_wave(tick, gap)
   next_wave_at = tick + gap
+  status_draw()
 end
 
 -- ---------------------------------------------------------------------
@@ -1863,11 +1792,12 @@ function on_start()
       seats[#seats + 1] = p
     end
   end
-  -- The one line the round opens with. It carries no wave count and no
-  -- seconds: the panel is up from the round's first tick with "GET READY!",
+  -- The one newswire line the round opens with. It carries no wave count
+  -- and no seconds: the status line is up from the round's first tick with
   -- the first wave's countdown and which of the five is coming, and a
   -- newswire line saying the same thing scrolls away within the minute.
   game.message("*** SURVIVAL: dig in! ***")
+  announce_upper("Get ready! Something is in the water")
   -- The operator's own line. game.message reaches players and not the
   -- console, so an operator watching a headless run sees the round open
   -- here and nowhere else.
@@ -1922,6 +1852,7 @@ function on_tick(tick)
       ended = true
       newswire_unmute_at = nil
       set_newswire_mute(false)
+      announce_upper("The centre has fallen!", ANNOUNCE_END_S)
       game.end_round(
         "*** The centre has fallen -- the attackers take the island! ***",
         WAVE_TEAM)
@@ -1929,13 +1860,13 @@ function on_tick(tick)
     end
   end
 
-  -- The status panel, on the same footing as the tree ring below: ahead of
+  -- The status line, on the same footing as the tree ring below: ahead of
   -- every early return, so it keeps its cadence whatever the round is doing,
-  -- and after the loss check, so a fallen centre does not draw one last
-  -- frame on its way out.
-  if panel_next_at == nil or tick >= panel_next_at then
-    panel_next_at = tick + secs(PANEL_PERIOD_S)
-    panel_draw(tick)
+  -- and after the loss check, so a fallen centre does not restate it on its
+  -- way out.
+  if status_next_at == nil or tick >= status_next_at then
+    status_next_at = tick + secs(STATUS_PERIOD_S)
+    status_draw()
   end
 
   -- The tree ring, on its own steady clock. Ahead of every early return
@@ -1956,18 +1887,24 @@ function on_tick(tick)
 
   if next_wave_at ~= nil then
     -- Newswire off MUTE_LEAD_S before the wave lands, so the ten join lines
-    -- the staggered arrival would write never appear. The panel keeps
-    -- drawing through the mute, so a player still has the countdown.
+    -- the staggered arrival would write never appear. The status line is not
+    -- a newswire line, so a player still has the countdown.
     if tick >= next_wave_at - secs(MUTE_LEAD_S) then
       newswire_unmute_at = nil
       set_newswire_mute(true)
     end
-    -- There is no spoken countdown any more. The panel hands the client one
-    -- `timer` primitive aimed at next_wave_at and the client runs it down
-    -- itself, which is the same information every second instead of at two
-    -- marks, and it costs one message a second rather than one a mark.
+    -- The seizure warning, once the "survived" announcement has had its
+    -- time up.
+    if seize_warn_at ~= nil and tick >= seize_warn_at then
+      seize_warn_at = nil
+      announce_upper(string.format("Up to %d pills will turn when they land",
+                                   wave + 1))
+    end
+    -- There is no spoken countdown. The status line hands the client one
+    -- tick, next_wave_at, and the client runs it down itself.
     if tick >= next_wave_at then
       next_wave_at = nil
+      seize_warn_at = nil
       spawn_wave()
       pump_spawn_queue(tick)    -- the first attacker lands on the wave tick
     end
@@ -1981,10 +1918,10 @@ function on_tick(tick)
   pump_spawn_queue(tick)
   prune_wave_bots()
 
-  -- The wave's own clock. Nothing is said on the way down: the panel's
-  -- "WAVE ENDS IN" timer counts the same clock off wave_ends_at every
-  -- second, which is what the half-minute and per-minute lines used to do
-  -- twice and five times a wave.
+  -- The wave's own clock. Nothing is said on the way down: the status
+  -- line's countdown counts the same clock off wave_ends_at, which is what
+  -- the half-minute and per-minute lines used to do twice and five times a
+  -- wave.
   if wave_ends_at ~= nil and tick >= wave_ends_at then
     game.log(string.format("Survival: [wave] %d clock ran out at tick %d at %s",
       wave, tick, os.date("%H:%M:%S")))
@@ -2009,6 +1946,8 @@ function on_tick(tick)
       ended = true
       newswire_unmute_at = nil
       set_newswire_mute(false)
+      announce_upper(string.format("All %d waves survived!", WAVES),
+                     ANNOUNCE_END_S)
       game.end_round(string.format(
         "*** All %d waves survived -- the defenders win! ***", WAVES),
         DEF_TEAM)
@@ -2020,13 +1959,14 @@ function on_tick(tick)
       -- against the horde's guns, standing on the ground the last wave left
       -- them on.
       --
-      -- Nothing is said here either. The panel's breather state puts up
-      -- "WAVE n/5 SURVIVED", the countdown to the next one, and the
-      -- "UP TO n PILLS WILL TURN" warning about the seizure that opens it —
-      -- which is the whole of what the two lines that used to sit here said,
-      -- and it stays on screen for the length of the breather instead of
-      -- scrolling away.
+      -- The status line counts down to the next wave. The announcement says
+      -- this one was survived, and ANNOUNCE_S later a second one warns about
+      -- the seizure that opens the next.
       arm_next_wave(tick, secs(BREATHER_S))
+      announce_upper(string.format("Wave %d/%d survived! %s", wave, WAVES,
+                                   BREATHER_FLAVOUR[wave] or
+                                   "They are still out there"))
+      seize_warn_at = tick + secs(ANNOUNCE_S)
     end
   end
 end
