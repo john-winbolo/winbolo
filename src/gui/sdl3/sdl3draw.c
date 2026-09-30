@@ -39,10 +39,6 @@
 
 #include "../../common/wb_log.h"
 
-#ifdef __EMSCRIPTEN__
-#include <emscripten/html5.h>
-#endif
-
 #include "stb_image.h"
 #include "sdl3draw.h"
 #include "sdl3draw_status.h"

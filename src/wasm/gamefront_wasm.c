@@ -458,16 +458,6 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     }
     printf("[WASM] sdl3DrawSetup OK\n");
 
-    /* SDL3's Emscripten backend resets the canvas element size during probing.
-       Force both the canvas buffer and SDL window to the desired resolution. */
-    {
-      SDL_Window *win = sdl3DrawGetWindow();
-      int w, h;
-      SDL_GetWindowSize(win, &w, &h);
-      emscripten_set_canvas_element_size("#canvas", w, h);
-      printf("[WASM] Forced canvas to: %d x %d\n", w, h);
-    }
-
     if (soundSetup() == FALSE) {
       soundEffects = FALSE;
     }

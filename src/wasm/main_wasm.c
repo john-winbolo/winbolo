@@ -438,7 +438,7 @@ int main(int argc, char *argv[]) {
    * build. uiModeDetect would otherwise flip to the touch layout —
    * which omits the background bitmap — whenever a touch device is
    * present and the canvas is under 1200px wide, as desktop browsers
-   * commonly report. Touch users can still switch via Ctrl+T. */
+   * commonly report. */
   uiModeSet(UI_MODE_DESKTOP);
 
   if (clientMutexCreate() == FALSE) {

@@ -10,9 +10,8 @@
     <link rel="icon" type="image/png" href="/img/favicon.png">
     <style>
         :root {
-            --bg:#13150e; --surface:#1e221a; --surface2:#262b1f; --border:#39402e;
-            --text:#e9e8de; --muted:#9aa086; --chrome:#0e110a;
-            --link:#52bdba; --accent:#ef8430; --gold:#d8b454;
+            --bg:#13150e; --surface2:#262b1f; --border:#39402e;
+            --text:#e9e8de; --muted:#9aa086; --accent:#ef8430;
         }
         * { margin: 0; padding: 0; box-sizing: border-box; }
         html, body { height: 100%; }
@@ -24,8 +23,6 @@
             flex-direction: column;
             min-height: 100vh;
         }
-        a { color: var(--link); text-decoration: none; }
-        a:hover { text-decoration: underline; }
 
         /* Stage holds the canvas + loading overlay */
         .stage {
@@ -394,8 +391,11 @@
         document.addEventListener('keydown', function(e) {
             if (e.ctrlKey && !e.altKey && !e.metaKey) {
                 var k = e.key.toLowerCase();
-                /* Keys used by sdl3imgui.cpp shortcuts */
-                if ('mksga123pbhr'.indexOf(k) !== -1) {
+                /* The sdl3imgui.cpp Ctrl shortcuts, plus the keys pressed while
+                   Left Ctrl is held as the default overview zoom modifier:
+                   driving on E/D/S/F and zooming on = and - (Ctrl++ arrives
+                   as '='). */
+                if ('mksga123pbro,def=-'.indexOf(k) !== -1) {
                     e.preventDefault();
                 }
             }
