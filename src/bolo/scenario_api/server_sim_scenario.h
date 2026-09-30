@@ -497,6 +497,11 @@ void serverSimSetScenarioLobbyTemplate(ServerSim *sim,
  *                bound script off on its own: changing it means
  *                changing the map, which is what a chooser reads
  *                this to know.
+ *  needsBots   - True when the script, or any script composed
+ *                with it, said needs_bots: it fields its own
+ *                bots, so the lobby must allow them while it is
+ *                attached. False leaves the host's bot setting
+ *                alone.
  *  unsafe      - True when this server runs every script with
  *                the full Lua library and no limits
  *                (-allow-unsafe-scripts). The sim cannot ask the
@@ -510,6 +515,7 @@ void serverSimSetScenarioIdentity(ServerSim *sim,
                                   bool extraTeams,
                                   bool keepsWinCondition,
                                   bool bound,
+                                  bool needsBots,
                                   bool unsafe);
 
 /*********************************************************

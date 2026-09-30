@@ -2685,6 +2685,7 @@ static const LangEntry langTable[] = {
     {2735, "{string1} (default)"},
     {2736, "Setting"},
     {2737, "Value"},
+    {2738, "Needs bots allowed: this script adds its own bots"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

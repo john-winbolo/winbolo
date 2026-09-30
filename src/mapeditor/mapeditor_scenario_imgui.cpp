@@ -813,6 +813,13 @@ static void meScnMetadataBody(MEScenarioForm *f, MEScenarioState *st,
         f->dirty = true;
     }
 
+    /* needs_bots: the script fields its own bots, so the lobby must allow
+       them. A mod may say it too, so the box is on both forms. */
+    if (ImGui::Checkbox(langGetText(STR_MAPEDIT_SCENARIO_NEEDS_BOTS),
+                        &m->needsBots)) {
+        f->dirty = true;
+    }
+
     meScnSaveRow(f, st, mapPath, wantPack, wantSaveMod);
 }
 

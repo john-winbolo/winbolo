@@ -206,6 +206,9 @@ scenario = {
   api         = 1,
   game        = "open",
   bound       = true,
+  -- The raiders are held bot seats fielded with game.spawn_bot, which a
+  -- lobby set to no bots refuses.
+  needs_bots  = true,
 
   -- The lobby this map opens with. The team's seats are held rather than
   -- filled: they are in the roster from the start, where a host can see and

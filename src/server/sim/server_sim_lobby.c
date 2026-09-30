@@ -955,7 +955,8 @@ void serverSimPublishLobbySettings(ServerSim *sim) {
 
 /* Whether this write is one the attached scenario fixes: the game type it
  * declared, the ranked flag a scripted round cannot be measured under, and
- * the AI policy that would take every bot it fields off the roster. The
+ * — for a list that said needs_bots — the AI policy that would take every
+ * bot it fields off the roster. The
  * three arms below refuse through this, and the reject code the dispatcher
  * sends back reads the same answer — so the reason a host is shown cannot
  * drift from the test that produced the refusal.
@@ -978,7 +979,10 @@ static bool lobbySettingScenarioFixes(const ServerSim *sim, uint8_t lst,
             if (sim->scenarioIdentity.keepsWinCondition) return false;
             return value[0] >= 1 && value[0] <= 3;
         case LST_RANKED:    return value[0] != 0;
-        case LST_AI_POLICY: return (aiType)value[0] == aiNone;
+        /* Only a list that fields its own bots needs them allowed. Any
+           other script leaves the policy the host's, aiNone included. */
+        case LST_AI_POLICY: return sim->scenarioIdentity.needsBots &&
+                                   (aiType)value[0] == aiNone;
         default:            return false;
     }
 }
@@ -1022,9 +1026,9 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
             if (len != 1 || value[0] > 3) return false;
             if (serverSimGetRanked(sim) &&
                 (aiType)value[0] != aiNone) return false;
-            /* A scenario fields its own bots, and this is the setting that
-               takes every bot off the roster, so a scripted lobby cannot be
-               put into it. */
+            /* A script that said needs_bots fields its own bots, and this
+               is the setting that takes every bot off the roster, so a lobby
+               running one cannot be put into it. */
             if (lobbySettingScenarioFixes(sim, lst, value, len)) return false;
             serverSimSetAiPolicy(sim, value[0]);
             serverSimSetBotAiType(sim, (aiType)value[0]);

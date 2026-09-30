@@ -171,6 +171,7 @@ static void epFillManifest(ScenarioManifest *m) {
     snprintf(m->game, sizeof(m->game), "%s", EP_GAME);
     m->bound      = true;
     m->fillToCaps = true;
+    m->needsBots  = true;
 
     m->lobby.maxPlayers = EP_MAX_PLAYERS;
     m->lobby.extraTeams = false;
@@ -236,6 +237,7 @@ static int epAssertValues(const ScenarioManifest *m, bool bound) {
     UT_ASSERT_MSG(m->bound == bound, "bound came back as %s",
                   m->bound ? "true" : "false");
     UT_ASSERT_MSG(m->fillToCaps, "fill_to_caps came back off");
+    UT_ASSERT_MSG(m->needsBots, "needs_bots came back off");
 
     UT_ASSERT_MSG(m->lobby.maxPlayers == EP_MAX_PLAYERS,
                   "the lobby seats %d players", (int)m->lobby.maxPlayers);

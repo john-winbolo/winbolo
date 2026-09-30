@@ -377,6 +377,26 @@ static const char kScModPlain[] =
     "  bound = false,\n"
     "}\n";
 
+/* A mod that fields its own bots and says so. */
+static const char kScModNeedsBots[] =
+    "scenario = {\n"
+    "  name = \"Horde\",\n"
+    "  api = 1,\n"
+    "  kind = \"mod\",\n"
+    "  bound = false,\n"
+    "  needs_bots = true,\n"
+    "}\n";
+
+/* A map's own scenario that fields its own bots and says so. */
+static const char kScScenarioNeedsBots[] =
+    "scenario = {\n"
+    "  name = \"Waves\",\n"
+    "  api = 1,\n"
+    "  bound = true,\n"
+    "  game = \"tournament\",\n"
+    "  needs_bots = true,\n"
+    "}\n";
+
 /* ── What a script says ───────────────────────────────────────────── */
 
 /* The mark in front of every line a script of these cases prints, so the
@@ -2781,6 +2801,114 @@ int run_scenario_compose_off_full_list_hides_last(void) {
 
     scDestroy(sim);
     scDropMapScript();
+    scDropDir();
+    return 0;
+}
+
+/* ── needs_bots: any script on the list ──────────────────────────── */
+
+/* Put the lobby on "no computer tanks", the setting a needs_bots list moves
+   it off. */
+static void scNoBots(ServerSim *sim) {
+    serverSimSetAiPolicy(sim, (uint8_t)aiNone);
+    serverSimSetBotAiType(sim, aiNone);
+}
+
+/* A mod without needs_bots leaves the lobby on aiNone. A second mod that says
+   it moves the lobby off aiNone, because the list needs bots when any script
+   on it does. Taking every script off gives aiNone back. */
+int run_scenario_compose_needs_bots_any_mod(void) {
+    ServerSim              *sim;
+    const ScenarioManifest *m;
+    const char             *plain[1] = { "plain.lua" };
+    const char             *both[2]  = { "plain.lua", "horde.lua" };
+
+    UT_ASSERT(scMakeDir("needs_bots_any_mod"));
+    UT_ASSERT(scWrite("plain.lua", kScModPlain));
+    UT_ASSERT(scWrite("horde.lua", kScModNeedsBots));
+    scDropMapScript();
+    sim = scSim();
+    UT_ASSERT(sim != NULL);
+    scNoBots(sim);
+    scCommit(sim);
+
+    UT_ASSERT_MSG(scPick(sim, plain, 1) == CMD_OK, "the plain mod was refused");
+    UT_ASSERT_MSG(scSlot != NULL, "nothing attached: %s",
+                  scenarioHostLastError(scSlot));
+    m = scenarioHostManifest(scSlot);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(!m->needsBots,
+                  "a list of one mod without needs_bots composed as needing "
+                  "bots");
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) == aiNone,
+                  "a mod without needs_bots moved the AI policy to %d",
+                  (int)serverSimGetBotAiType(sim));
+
+    UT_ASSERT_MSG(scPick(sim, both, 2) == CMD_OK, "the two mods were refused");
+    m = scenarioHostManifest(scSlot);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->needsBots,
+                  "a list with one needs_bots mod composed as not needing "
+                  "bots");
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) == aiYes,
+                  "a list with a needs_bots mod left the AI policy at %d, "
+                  "wanted aiYes (%d)", (int)serverSimGetBotAiType(sim),
+                  (int)aiYes);
+
+    UT_ASSERT_MSG(scPick(sim, NULL, 0) == CMD_OK,
+                  "clearing the list was refused");
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) == aiNone,
+                  "the last script going left the AI policy at %d, wanted the "
+                  "aiNone (%d) the lobby was on",
+                  (int)serverSimGetBotAiType(sim), (int)aiNone);
+
+    scDestroy(sim);
+    scDropDir();
+    return 0;
+}
+
+/* A map's own scenario that says needs_bots, with a mod behind it that does
+   not, moves the lobby off aiNone; a plain map committed after it gives
+   aiNone back. */
+int run_scenario_compose_needs_bots_scenario_and_mod(void) {
+    ServerSim              *sim;
+    const ScenarioManifest *m;
+    const char             *picks[1] = { "plain.lua" };
+
+    UT_ASSERT(scMakeDir("needs_bots_scenario_and_mod"));
+    UT_ASSERT(scWrite("plain.lua", kScModPlain));
+    UT_ASSERT(scPutMapScript(kScScenarioNeedsBots));
+    sim = scSim();
+    UT_ASSERT(sim != NULL);
+    scNoBots(sim);
+
+    scCommit(sim);
+    UT_ASSERT_MSG(scPick(sim, picks, 1) == CMD_OK, "the mod was refused");
+    UT_ASSERT_MSG(scSlot != NULL, "nothing attached: %s",
+                  scenarioHostLastError(scSlot));
+    UT_ASSERT_MSG(scenarioHostScriptCount(scSlot) == 2,
+                  "the round composed %d scripts, wanted the map's and the "
+                  "mod", scenarioHostScriptCount(scSlot));
+    m = scenarioHostManifest(scSlot);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->needsBots,
+                  "a needs_bots scenario with a plain mod composed as not "
+                  "needing bots");
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) == aiYes,
+                  "a needs_bots scenario and a mod left the AI policy at %d, "
+                  "wanted aiYes (%d)", (int)serverSimGetBotAiType(sim),
+                  (int)aiYes);
+
+    /* The map's script goes with the map, and the pick goes too. */
+    scDropMapScript();
+    UT_ASSERT(scPick(sim, NULL, 0) == CMD_OK);
+    scCommit(sim);
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) == aiNone,
+                  "a plain map after the needs_bots scenario left the AI "
+                  "policy at %d, wanted aiNone (%d)",
+                  (int)serverSimGetBotAiType(sim), (int)aiNone);
+
+    scDestroy(sim);
     scDropDir();
     return 0;
 }

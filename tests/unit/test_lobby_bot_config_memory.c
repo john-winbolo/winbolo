@@ -750,7 +750,7 @@ static int bcm_map_commit_type(const char *brain) {
                           BOT_DIFFICULTY_HARD, 0, NULL);
     serverSimMarkBotModeSetByHand(sim, byHand);
     serverSimSetScenarioIdentity(sim, lobbyScenarioMap, "Test", "test.lua",
-                                 "", false, false, false, false);
+                                 "", false, false, false, false, false);
     UT_ASSERT(!serverSimScenarioHasLobbyTemplate(sim));
     sim->botConfigPublishPending = 0;
     serverSimScenarioApplyLobbyRules(sim);
@@ -773,7 +773,7 @@ static int bcm_map_commit_type(const char *brain) {
           plain map. The lobby goes back to Open, and every bot on mode 0
           that nobody set by hand moves to the Open start mode. */
     serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
-                                 false, false, false, false);
+                                 false, false, false, false, false);
     serverSimScenarioApplyLobbyRules(sim);
     UT_ASSERT_MSG(serverSimGetGameType(sim) == gameOpen,
                   "setup: the plain map must give Open back (got %d)",

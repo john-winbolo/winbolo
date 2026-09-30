@@ -833,6 +833,14 @@ typedef struct ControlEvent {
              * as sandboxed, which every server that predates this field
              * was. */
             bool     scenarioUnsafe;
+            /* True when the attached list said needs_bots, so the server
+             * refuses the AI policy that takes every bot off the roster.
+             * Appended behind scenarioUnsafe. Unlike the bytes above, a
+             * decoder that finds this byte missing sets it TRUE: every
+             * server that predates it refused that policy for any script,
+             * and a lobby that offers a row the server turns down is worse
+             * than one that greys a row the server would take. */
+            bool     scenarioNeedsBots;
         } lobbySettings;
 
         /* CTRL_LOBBY_MAP_CHANGE — no payload fields needed */
