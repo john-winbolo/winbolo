@@ -27,6 +27,9 @@
 -- sooner. For those two a higher number is worse; for the other four it is
 -- better.
 --
+-- For the whole round, bases also rebuild their own stock 50% faster than
+-- the classic rate (scenario.rules below).
+--
 -- The host sets the interval, how many upcoming modes the panel shows, the
 -- countdown and the chat commands in the lobby (scenario.settings below).
 -- With chat commands on, a human can change the interval and the preview
@@ -437,10 +440,17 @@ scenario = {
   name        = "Rule Roulette",
   description = "Eight named modes take turns, the same for every tank: good ones " ..
                 "(Overdrive, Turbo, Iron Hide), a bad one (Rust Bucket) and " ..
-                "trade-offs (Glass Cannon, Juggernaut, Machine Gun, Ice Rink).",
+                "trade-offs (Glass Cannon, Juggernaut, Machine Gun, Ice Rink). " ..
+                "Bases rebuild their stock 50% faster all round.",
   api         = 1,
   kind        = "mod",
   bound       = false,
+
+  -- Bases rebuild their stock of armour, shells and mines 50% faster for the
+  -- whole round: one lot every 667 ticks, not the classic 1000.
+  rules = {
+    base_regen_ticks = 667,
+  },
 
   settings = {
     { id = "interval", label = "Seconds per mode", type = "int",
