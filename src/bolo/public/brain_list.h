@@ -182,6 +182,14 @@ int64_t brainListTextsMtimeForPath(const char *brainPath);
  *   levels  = easy:Easy:1, medium:Medium:2, hard:Hard:3
  *   default = hard
  *
+ * One optional line may sit ABOVE the first section:
+ *
+ *   open_default = turtle
+ *
+ * It names the mode a new bot starts in when the game type is Open
+ * (brainModesStartMode). Other game types, and a brain without the line,
+ * start in mode 0. An unknown key, or the line inside a section, is ignored.
+ *
  * The section header is the mode KEY, one `levels` entry is
  * `key:Label:chips`, and `default` names the level key a freshly added bot
  * starts at. The FIRST section is mode 0 — the mode every ordinary game
@@ -235,6 +243,11 @@ typedef struct {
 typedef struct {
     int       modeCount;                       /* 1..BRAIN_MODES_MAX  */
     BrainMode modes[BRAIN_MODES_MAX];
+    /* The mode a new bot starts in when the game type is Open. Set by an
+     * `open_default = <mode key>` line ABOVE the first section; 0 (the first
+     * section) when the line is absent or names a mode the file does not
+     * declare. See brainModesStartMode. */
+    int       openDefaultMode;                 /* index into modes[]  */
 } BrainModes;
 
 /* Load a brain's mode manifest by its catalogue name ("GoalHunter_1.7"),
@@ -255,6 +268,13 @@ bool brainListLoadModesForPath(const char *brainPath, BrainModes *out);
  * key instead of silently running a different mode. */
 int brainModesFindMode(const BrainModes *modes, const char *key);
 int brainModeFindLevel(const BrainMode *mode, const char *key);
+
+/* The mode a freshly added bot starts in: the manifest's `open_default` mode
+ * when openGame is true, else mode 0. A brain with no `open_default` line (or
+ * no modes.txt) answers 0 for both. 0 when modes is NULL. This is only the
+ * STARTING mode: a scenario template's mode and a mode a person picked still
+ * win over it (serverSimResolveNewBotConfig). */
+int brainModesStartMode(const BrainModes *modes, bool openGame);
 
 /* Split "Name_<ver>" into base ("Name") + numeric version (1.7). No trailing
  * _<digit> suffix → version 0 and the whole name as base. Used to sort the

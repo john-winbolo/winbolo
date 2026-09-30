@@ -15,6 +15,12 @@
 # hard is an empty bundle, so Hard is today's brain unchanged; medium and
 # easy hand the bot handicaps. The survival mode's bundles are still empty.
 # The turtle mode's bundles are default's with PILL_PLACE_TURTLE turned on.
+#
+# open_default (above the first section) names the mode a new bot starts in
+# when the game type is Open. Tournament and Strict games start in mode 0.
+# A mode picked by hand in the lobby, and a scenario's own mode, still win.
+
+open_default = turtle
 
 [default]
 label = Default

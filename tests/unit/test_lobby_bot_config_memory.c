@@ -13,8 +13,9 @@
  * choice.
  *
  * The manifest used is the shipped GoalHunter one (Brains/GoalHunter_1.7/
- * modes.txt, copied next to the test binary by the build): modes "default"
- * and "survival", each with levels easy/medium/hard defaulting to hard.
+ * modes.txt, copied next to the test binary by the build): modes "default",
+ * "survival" and "turtle", each with levels easy/medium/hard defaulting to
+ * hard, and open_default = turtle.
  */
 
 #include <stdint.h>
@@ -28,6 +29,7 @@
                                     * is entirely about them */
 #include "server_sim_lifecycle.h"  /* serverSimSetLobbyEnabled, StartGame,
                                     * ReturnToLobby, ReloadCompressedInMemory */
+#include "wire_limits.h"            /* LST_GAME_TYPE */
 #include "brain_list.h"            /* BrainModes — to name the expected indices */
 #include "test_harness.h"
 
@@ -35,13 +37,21 @@
 #define TEST_SLOT  3
 #define TEST_TEAM  1
 
-static ServerSim *make_lobby_sim(void) {
+static ServerSim *make_lobby_sim_type(gameType game) {
     BYTE emap[6000] = E_MAP;
     ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
-                                               gameOpen, false, 0, -1);
+                                               game, false, 0, -1);
     if (sim == NULL) return NULL;
     serverSimSetLobbyEnabled(sim, true);
     return sim;
+}
+
+/* A Tournament lobby: the shipped manifest starts it in mode 0, so the cases
+ * below that are about the base and the manual pick see mode 0 as the base.
+ * An Open lobby starts in the manifest's open_default instead, which the
+ * open-game cases at the end of the file cover. */
+static ServerSim *make_lobby_sim(void) {
+    return make_lobby_sim_type(gameTournament);
 }
 
 /* Index of a mode/level key pair in the test brain's own manifest, so the
@@ -275,6 +285,172 @@ int run_lobby_bot_config_memory_cleared_on_return_to_lobby(void) {
                   "the first bot of the new lobby must start at the defaults "
                   "(got %d/%d)", (int)mode, (int)level);
 
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The shipped manifest's open_default mode, or -1 when the manifest is
+ * missing or names none (then the open-game cases have nothing to test). */
+static int open_default_mode(void) {
+    BrainModes modes;
+    if (!brainListLoadModesForPath(TEST_BRAIN, &modes)) return -1;
+    return (modes.openDefaultMode > 0) ? modes.openDefaultMode : -1;
+}
+
+/* An Open game starts a new bot in the brain's open_default mode at the
+ * level it would have had in mode 0; Tournament and Strict start in mode 0;
+ * a mode the host picked by hand still wins on Open. */
+int run_lobby_bot_config_memory_open_game_start_mode(void) {
+    static const gameType kClosed[2] = { gameTournament, gameStrictTournament };
+    ServerSim *sim;
+    int openMode = open_default_mode();
+    int wantMode = 0, wantLevel = 0;
+    uint8_t mode, level;
+    int i;
+
+    if (openMode < 0) SKIP_NO_MANIFEST();
+
+    /* Open, no pick: open_default at Hard. */
+    sim = make_lobby_sim_type(gameOpen);
+    UT_ASSERT_MSG(sim != NULL, "serverSimCreateCompressed");
+    mode = 0; level = BOT_DIFFICULTY_HARD;
+    UT_ASSERT(serverSimResolveNewBotConfig(sim, TEST_TEAM, TEST_BRAIN, true,
+                                           &mode, &level));
+    UT_ASSERT(expected_indices("turtle", "hard", &wantMode, &wantLevel));
+    UT_ASSERT_MSG((int)mode == openMode && (int)level == wantLevel,
+                  "an Open game must start in open_default at Hard (got "
+                  "%d/%d, want %d/%d)", (int)mode, (int)level, openMode,
+                  wantLevel);
+
+    /* The level moves by key: Medium in mode 0 is Medium in the new mode. */
+    mode = 0; level = BOT_DIFFICULTY_MEDIUM;
+    UT_ASSERT(serverSimResolveNewBotConfig(sim, TEST_TEAM, TEST_BRAIN, false,
+                                           &mode, &level));
+    UT_ASSERT(expected_indices("turtle", "medium", &wantMode, &wantLevel));
+    UT_ASSERT_MSG((int)mode == openMode && (int)level == wantLevel,
+                  "Medium must stay Medium (got %d/%d)", (int)mode,
+                  (int)level);
+
+    /* A caller's base that is not mode 0 is a real choice and stands. */
+    UT_ASSERT(expected_indices("survival", "easy", &wantMode, &wantLevel));
+    mode = (uint8_t)wantMode; level = (uint8_t)wantLevel;
+    UT_ASSERT(serverSimResolveNewBotConfig(sim, TEST_TEAM, TEST_BRAIN, false,
+                                           &mode, &level));
+    UT_ASSERT_MSG((int)mode == wantMode && (int)level == wantLevel,
+                  "a non-default base moved to %d/%d", (int)mode, (int)level);
+
+    /* The host picked Default by hand: the next Add Bot is Default. */
+    SDL_strlcpy(sim->lastBotModeKey, "default", sizeof(sim->lastBotModeKey));
+    SDL_strlcpy(sim->lastBotLevelKey, "easy", sizeof(sim->lastBotLevelKey));
+    mode = 0; level = BOT_DIFFICULTY_HARD;
+    UT_ASSERT(serverSimResolveNewBotConfig(sim, TEST_TEAM, TEST_BRAIN, true,
+                                           &mode, &level));
+    UT_ASSERT_MSG(mode == 0 && level == BOT_DIFFICULTY_EASY,
+                  "a manual Default pick must win on Open (got %d/%d)",
+                  (int)mode, (int)level);
+    serverSimDestroy(sim);
+
+    /* Tournament and Strict: mode 0 at Hard. */
+    for (i = 0; i < 2; i++) {
+        sim = make_lobby_sim_type(kClosed[i]);
+        UT_ASSERT_MSG(sim != NULL, "serverSimCreateCompressed");
+        mode = 0; level = BOT_DIFFICULTY_HARD;
+        UT_ASSERT(serverSimResolveNewBotConfig(sim, TEST_TEAM, TEST_BRAIN,
+                                               true, &mode, &level));
+        UT_ASSERT_MSG(mode == 0 && level == BOT_DIFFICULTY_HARD,
+                      "game type %d must start in mode 0 (got %d/%d)",
+                      (int)kClosed[i], (int)mode, (int)level);
+        serverSimDestroy(sim);
+    }
+    return 0;
+}
+
+/* Seat a pretend bot in `slot` on the test brain: enough for serverSimIsBot
+ * and for the brain path the follow reads. No brain is built. */
+static void pretend_bot(ServerSim *sim, BYTE slot) {
+    sim->playerConnected[slot]    = true;
+    sim->lobbyPlayers[slot].isBot = true;
+    SDL_strlcpy(sim->botMgr.bots[slot].brainPath, TEST_BRAIN,
+                sizeof(sim->botMgr.bots[slot].brainPath));
+}
+
+static void unpretend_bot(ServerSim *sim, BYTE slot) {
+    sim->playerConnected[slot]    = false;
+    sim->lobbyPlayers[slot].isBot = false;
+    sim->botMgr.bots[slot].brainPath[0] = '\0';
+}
+
+/* The host changes the game type: bots still on the old type's starting
+ * mode follow the new one, with their level carried by key; a bot whose mode
+ * a person set by hand keeps it; a bot on some other mode keeps it. */
+int run_lobby_bot_config_memory_game_type_change(void) {
+    const BYTE follow = 2, byHand = 3, other = 4;
+    ServerSim *sim;
+    int openMode = open_default_mode();
+    int survMode = 0, survLevel = 0, medOpen = 0, medOpenLevel = 0;
+    uint8_t v;
+
+    if (openMode < 0) SKIP_NO_MANIFEST();
+    UT_ASSERT(expected_indices("survival", "easy", &survMode, &survLevel));
+    UT_ASSERT(expected_indices("turtle", "medium", &medOpen, &medOpenLevel));
+
+    sim = make_lobby_sim_type(gameOpen);
+    UT_ASSERT_MSG(sim != NULL, "serverSimCreateCompressed");
+    pretend_bot(sim, follow);
+    pretend_bot(sim, byHand);
+    pretend_bot(sim, other);
+    /* All three came in as new bots on Open. */
+    serverSimSetBotConfig(sim, follow, (uint8_t)openMode,
+                          (uint8_t)medOpenLevel, 0, NULL);
+    serverSimSetBotConfig(sim, byHand, (uint8_t)openMode,
+                          BOT_DIFFICULTY_HARD, 0, NULL);
+    serverSimSetBotConfig(sim, other, (uint8_t)survMode, (uint8_t)survLevel,
+                          0, NULL);
+    /* A person then set byHand's mode in the gear popup (away and back). */
+    serverSimMarkBotModeSetByHand(sim, byHand);
+
+    v = (uint8_t)gameTournament;
+    sim->botConfigPublishPending = 0;
+    UT_ASSERT(serverSimApplyLobbySetting(sim, LST_GAME_TYPE, &v, 1));
+    UT_ASSERT_MSG(sim->botConfigs[follow].mode == 0 &&
+                  sim->botConfigs[follow].difficulty == BOT_DIFFICULTY_MEDIUM,
+                  "a bot on the Open start mode must follow to Tournament's "
+                  "mode 0 at Medium (got %u/%u)",
+                  (unsigned)sim->botConfigs[follow].mode,
+                  (unsigned)sim->botConfigs[follow].difficulty);
+    UT_ASSERT_MSG((sim->botConfigPublishPending & (1u << follow)) != 0,
+                  "the moved seat queued no bot-config event");
+    UT_ASSERT_MSG((int)sim->botConfigs[byHand].mode == openMode,
+                  "a mode set by hand must stick (got %u)",
+                  (unsigned)sim->botConfigs[byHand].mode);
+    UT_ASSERT_MSG((int)sim->botConfigs[other].mode == survMode,
+                  "a bot on another mode must keep it (got %u)",
+                  (unsigned)sim->botConfigs[other].mode);
+
+    /* Tournament to Strict: both start in mode 0, so nothing moves. */
+    v = (uint8_t)gameStrictTournament;
+    UT_ASSERT(serverSimApplyLobbySetting(sim, LST_GAME_TYPE, &v, 1));
+    UT_ASSERT(sim->botConfigs[follow].mode == 0);
+
+    /* And back to Open: the follower returns to open_default. */
+    v = (uint8_t)gameOpen;
+    UT_ASSERT(serverSimApplyLobbySetting(sim, LST_GAME_TYPE, &v, 1));
+    UT_ASSERT_MSG((int)sim->botConfigs[follow].mode == openMode &&
+                  (int)sim->botConfigs[follow].difficulty == medOpenLevel,
+                  "back on Open the follower must be in open_default at "
+                  "Medium (got %u/%u)",
+                  (unsigned)sim->botConfigs[follow].mode,
+                  (unsigned)sim->botConfigs[follow].difficulty);
+    UT_ASSERT((int)sim->botConfigs[byHand].mode == openMode);
+    UT_ASSERT((int)sim->botConfigs[other].mode == survMode);
+
+    unpretend_bot(sim, follow);
+    unpretend_bot(sim, other);
+    /* The seat's player leaving takes the by-hand mark with it. */
+    serverSimRemovePlayer(sim, byHand);
+    UT_ASSERT_MSG((sim->botModeSetByHand & (1u << byHand)) == 0,
+                  "the by-hand mark outlived the seat");
+    unpretend_bot(sim, byHand);
     serverSimDestroy(sim);
     return 0;
 }

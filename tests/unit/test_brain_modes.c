@@ -293,3 +293,59 @@ int run_brain_modes_counts_clamped(void) {
     modes_cleanup();
     return 0;
 }
+
+/* The file-level open_default line: above the first section it names the
+ * mode a new bot starts in on an Open game (brainModesStartMode); every other
+ * game type, and a brain without the line, starts in mode 0. The line inside
+ * a section, or naming a mode the file does not declare, is ignored. */
+int run_brain_modes_open_default(void) {
+    BrainModes m;
+
+    modes_cleanup();
+    UT_ASSERT(modes_write(
+        "# comment\r\n"
+        "open_default = Turtle   # case folds like a section key\r\n"
+        "\r\n"
+        "[default]\r\n"
+        "levels = easy:Easy, medium:Medium, hard:Hard\r\n"
+        "[survival]\r\n"
+        "levels = hard:Hard\r\n"
+        "[turtle]\r\n"
+        "levels = easy:Easy, medium:Medium, hard:Hard\r\n") == 0);
+    UT_ASSERT(brainListLoadModes(modes_brain_name(), &m));
+    UT_ASSERT_MSG(m.modeCount == 3, "got %d modes, expected 3", m.modeCount);
+    UT_ASSERT_MSG(m.openDefaultMode == 2, "open_default resolved to %d, "
+                  "expected turtle (2)", m.openDefaultMode);
+    UT_ASSERT(brainModesStartMode(&m, true) == 2);
+    UT_ASSERT(brainModesStartMode(&m, false) == 0);
+    UT_ASSERT(brainModesStartMode(NULL, true) == 0);
+
+    /* Inside a section the line is an unknown mode field: ignored. */
+    UT_ASSERT(modes_write(
+        "[default]\n"
+        "open_default = turtle\n"
+        "[turtle]\n") == 0);
+    UT_ASSERT(brainListLoadModes(modes_brain_name(), &m));
+    UT_ASSERT_MSG(m.openDefaultMode == 0, "a section's open_default moved "
+                  "the start to %d", m.openDefaultMode);
+    UT_ASSERT(brainModesStartMode(&m, true) == 0);
+
+    /* A key the file does not declare starts Open games in mode 0. */
+    UT_ASSERT(modes_write(
+        "open_default = nosuchmode\n"
+        "[default]\n"
+        "[turtle]\n") == 0);
+    UT_ASSERT(brainListLoadModes(modes_brain_name(), &m));
+    UT_ASSERT(brainModesStartMode(&m, true) == 0);
+
+    /* No line: mode 0 for both. */
+    UT_ASSERT(modes_write("[default]\n[turtle]\n") == 0);
+    UT_ASSERT(brainListLoadModes(modes_brain_name(), &m));
+    UT_ASSERT(brainModesStartMode(&m, true) == 0);
+
+    /* No manifest: the synthesized default, which starts Open in mode 0. */
+    modes_cleanup();
+    brainListLoadModes(modes_brain_name(), &m);
+    UT_ASSERT(brainModesStartMode(&m, true) == 0);
+    return 0;
+}

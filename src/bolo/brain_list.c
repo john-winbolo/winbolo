@@ -760,6 +760,11 @@ bool brainListLoadModes(const char *name, BrainModes *out) {
 
     BrainMode *cur = NULL;       /* mode the current section writes into */
     int        curIdx = -1;
+    /* A header line seen yet? Lines above the first section are the file's
+     * own settings (open_default); below it they belong to a mode. */
+    bool       sawSection = false;
+    char       openDefaultKey[BRAIN_MODE_KEY_LEN];
+    openDefaultKey[0] = '\0';
     char      *line = blob;
     while (line != NULL && *line != '\0') {
         char *eol = strchr(line, '\n');
@@ -775,6 +780,7 @@ bool brainListLoadModes(const char *name, BrainModes *out) {
         if (s[0] == '[') {
             /* New section: "[key]". */
             cur = NULL;
+            sawSection = true;
             char *close = strchr(s, ']');
             if (close) {
                 *close = '\0';
@@ -788,6 +794,19 @@ bool brainListLoadModes(const char *name, BrainModes *out) {
                     /* Until a label line says otherwise the key IS the
                      * label, so a terse manifest still renders. */
                     SDL_strlcpy(cur->label, key, sizeof(cur->label));
+                }
+            }
+        } else if (s[0] != '\0' && !sawSection) {
+            /* A file-level setting. Only open_default exists; anything else
+             * here is ignored, as an unknown field in a section is. */
+            char *eq = strchr(s, '=');
+            if (eq) {
+                *eq = '\0';
+                char *field = brainModesTrim(s);
+                char *value = brainModesTrim(eq + 1);
+                if (SDL_strcasecmp(field, "open_default") == 0 &&
+                    brainModesKeyOk(value)) {
+                    SDL_strlcpy(openDefaultKey, value, sizeof(openDefaultKey));
                 }
             }
         } else if (s[0] != '\0' && cur != NULL) {
@@ -840,8 +859,21 @@ bool brainListLoadModes(const char *name, BrainModes *out) {
                         : (m->levelCount > 0 ? m->levelCount - 1 : 0);
     }
     if (kept.modeCount <= 0) return false;   /* out keeps the fallback */
+    /* kept holds the modes in the same order as parsed, so a key resolves to
+     * the same index in both. An unknown key starts Open games in mode 0. */
+    {
+        int od = brainModesFindMode(&kept, openDefaultKey);
+        kept.openDefaultMode = (od >= 0) ? od : 0;
+    }
     *out = kept;
     return true;
+}
+
+int brainModesStartMode(const BrainModes *modes, bool openGame) {
+    if (!modes || !openGame) return 0;
+    if (modes->openDefaultMode < 0 ||
+        modes->openDefaultMode >= modes->modeCount) return 0;
+    return modes->openDefaultMode;
 }
 
 /* Recover a brain's directory name from its init.lua path — the same

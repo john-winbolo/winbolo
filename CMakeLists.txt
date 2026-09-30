@@ -4791,6 +4791,8 @@ set(_unit_test_names
     lobby_bot_config_memory_not_honoured
     lobby_bot_config_memory_manual_only
     lobby_bot_config_memory_new_lobby
+    lobby_bot_config_memory_open_start
+    lobby_bot_config_memory_type_change
     lobby_add_bot_rejects_empty_brain_path
     lobby_add_bot_rejects_ai_none
     lobby_add_bot_rejects_not_in_lobby
@@ -5007,6 +5009,7 @@ set(_unit_test_names
     brain_modes_missing_falls_back
     brain_modes_malformed_lines_skipped
     brain_modes_counts_clamped
+    brain_modes_open_default
     brain_view_data_edge_rect
     bot_init_arg_difficulty_token
     bot_init_arg_mode_tokens

@@ -182,6 +182,8 @@ int run_lobby_bot_config_memory_unknown_key_ignored(void);
 int run_lobby_bot_config_memory_not_honoured(void);
 int run_lobby_bot_config_memory_manual_only(void);
 int run_lobby_bot_config_memory_cleared_on_return_to_lobby(void);
+int run_lobby_bot_config_memory_open_game_start_mode(void);
+int run_lobby_bot_config_memory_game_type_change(void);
 int run_lobby_add_bot_rejects_empty_brain_path(void);
 int run_lobby_add_bot_rejects_ai_none(void);
 int run_lobby_add_bot_rejects_not_in_lobby(void);
@@ -515,6 +517,7 @@ int run_brain_modes_manifest_parses(void);
 int run_brain_modes_missing_falls_back(void);
 int run_brain_modes_malformed_lines_skipped(void);
 int run_brain_modes_counts_clamped(void);
+int run_brain_modes_open_default(void);
 
 /* The brain's terrain window at the map edge (test_brain_view_data.c): the
  * rect brainDataMakeInfo builds is inclusive, so a tank on row or column 240
