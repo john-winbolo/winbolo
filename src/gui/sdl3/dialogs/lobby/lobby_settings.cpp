@@ -1532,8 +1532,9 @@ static void lobbySettingsShareColumns(float s) {
            evenly, because a column reads better for crossing one whole row's
            width than for gaining a few pixels: what there is to hand out at
            the lobby's own size is enough to widen one column a little and
-           not nearly enough to un-stack anything else. Game Type and Computer Players ask for nothing here - their
-           want is their floor. */
+           not nearly enough to un-stack anything else. Game Type and
+           Computer Players ask for nothing here - their want is their
+           floor. */
         static const int order[4] = { 3, 2, 0, 1 };
         float slack = budget - floorSum;
         for (int i = 0; i < 4; i++) give[i] = floorW[i];

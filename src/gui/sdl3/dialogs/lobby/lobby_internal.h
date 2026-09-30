@@ -493,11 +493,11 @@ void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
  *
  * OpenScript describes one row of the lobby's ordered script list, which is
  * what the lobby lines are drawn from: each name opens its own row, so the
- * names on a round running several scripts each describe their own. OpenAttached is the
- * same dialog for the one attached script, for a client whose server has
- * sent no list. The chooser's rows open it on a listing entry instead, which
- * it snapshots. The modal must be rendered at the lobby window's own id
- * scope, the way the rules and the bot docs dialogs are: none of the buttons
+ * names on a round running several scripts each describe their own.
+ * OpenAttached is the same dialog for the one attached script, for a client
+ * whose server has sent no list. The chooser's rows open it on a listing
+ * entry instead, which it snapshots. The modal must be rendered at the lobby
+ * window's own id scope, the way the bot docs dialog is: none of the buttons
  * that open it is at that scope, so the ask is a flag and this call is what
  * turns it into an OpenPopup.
  *
