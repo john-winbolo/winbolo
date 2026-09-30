@@ -29,6 +29,7 @@
 #include "gui_message.h"
 #include "everard_map.h"
 #include "frontend.h"
+#include "playername_validate.h"
 #include "server_sim.h"
 #include "../server/server_lifecycle.h"
 #include "../gui/brainsHandler.h"
@@ -43,6 +44,7 @@
 #include "../gui/sdl3/sdl3imgui.h"
 #include "../gui/sdl3/dialogs/imgui_mapchooser.h"
 #include "../gui/sdl3/luabrainshandler.h"
+#include "gamefront_wasm.h"
 
 /* Forward declaration */
 extern void sdl3MessageHandler(const char *message, const char *title);
@@ -85,24 +87,6 @@ static const char *gameFrontMintFailReason(int status) {
   }
 }
 
-
-/* -------------------------------------------------------
- * URL parameter helper (WASM only)
- * ------------------------------------------------------- */
-static const char *gameFrontGetUrlParam(const char *name) {
-  static char buf[512];
-  char js[640];
-  snprintf(js, sizeof(js),
-    "(function(){ var p = new URLSearchParams(window.location.search).get('%s');"
-    " return p ? p : ''; })()", name);
-  const char *result = emscripten_run_script_string(js);
-  if (result) {
-    strncpy(buf, result, sizeof(buf) - 1);
-    buf[sizeof(buf) - 1] = '\0';
-    return buf;
-  }
-  return "";
-}
 
 /* Parse "server=host:port" from a proxy URL query string.
  * Fills serverHost (up to hostSize bytes) and *serverPort. */
@@ -397,16 +381,18 @@ static bool wasmAskJoinPassword(bool wrongBefore) {
 }
 
 /* -------------------------------------------------------
- * gameFrontStart — skip all dialogs, start practice game
+ * gameFrontWasmStart — skip all dialogs, start the launch's game
  * ------------------------------------------------------- */
-bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSim **out_cs) {
+bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
+                        const WasmLaunch *launch) {
   isTutorial = FALSE;
   password[0] = '\0';
   wantRejoin = FALSE;
 
-  /* Set defaults. The real player name is chosen in main_wasm.c after this
-   * returns (web<rand> for join-code play, ?name= or "Me" for single player);
-   * this seed only matters to any path that reads the name before then. */
+  /* Set defaults. The real player name is chosen further down, before each
+   * mode's join (the account name or web<rand> for network play, ?name= or
+   * "Me" for single player); this seed only matters to any path that reads
+   * the name before then. */
   strcpy(gameFrontName, "Me");
   gameFrontUdpAddress[0] = '\0';
   gameFrontMyUdp = 27500;
@@ -430,7 +416,8 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
 
   /* Seed default keys. A logged-in player's stored bindings (and the rest of
    * their synced settings) are applied afterwards by wasmApplyJoinPrefs, which
-   * runs after gameFrontStart so it overrides exactly what the user synced. */
+   * runs after gameFrontWasmStart so it overrides exactly what the user
+   * synced. */
   gameFrontSetDefaultKeys(keys);
 
   langSetup();
@@ -444,7 +431,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   }
 
   /* Initialise subsystems */
-  if (isLoaded == FALSE) {
+  {
     /* Tell SDL3 to use the existing canvas element from shell.html */
     SDL_SetHint(SDL_HINT_EMSCRIPTEN_CANVAS_SELECTOR, "#canvas");
 
@@ -467,24 +454,19 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
 
   guiMessageSetHandler(sdl3MessageHandler);
 
-  /* ---- Determine net mode from URL params ----
+  /* ---- Determine net mode from the launch ----
    * Production web play is selected by ?game_key= (the shareable
    * play.winbolo.net/join/<game_key> link). A dev/LAN run may instead pass an
    * explicit ?proxyURL=. Either selects UDP-over-WebSocket mode. The single-use
    * join code is minted from the game_key at connect time (JS POST /api/join),
    * not carried in the URL. shell.html points Module.websocket.url at the real
    * relay, so the host:port handed to the transport here is an ignored
-   * sentinel — routing lives in the minted join code (or the dev proxy URL). */
+   * sentinel — routing lives in the minted join code (or the dev proxy URL).
+   * main_wasm.c read these from the URL once, at page start. */
   netType urlNetType = netSingle;
-  /* gameFrontGetUrlParam returns a shared static buffer, so copy each value
-   * out before the next call overwrites it. */
-  char gameKey[128];
-  strncpy(gameKey, gameFrontGetUrlParam("game_key"), sizeof(gameKey) - 1);
-  gameKey[sizeof(gameKey) - 1] = '\0';
-  char devProxy[1024];
-  strncpy(devProxy, gameFrontGetUrlParam("proxyURL"), sizeof(devProxy) - 1);
-  devProxy[sizeof(devProxy) - 1] = '\0';
-  bool wantTutorial = (gameFrontGetUrlParam("tutorial")[0] != '\0');
+  const char *gameKey = launch->gameKey;
+  const char *devProxy = launch->devProxy;
+  bool wantTutorial = (launch->mode == WASM_GAME_TUTORIAL);
   bool haveGameKey = (gameKey[0] != '\0');
   if (haveGameKey || devProxy[0] != '\0') {
     urlNetType = netUdp;
@@ -554,8 +536,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
      * incorrect-password reject below asks through the browser and retries.
      * The loop only repeats for that retry. */
     {
-      const char *urlPw = gameFrontGetUrlParam("password");
-      strncpy(password, urlPw, sizeof(password) - 1);
+      strncpy(password, launch->password, sizeof(password) - 1);
       password[sizeof(password) - 1] = '\0';
     }
     for (;;) {
@@ -729,6 +710,21 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
         wasmServerSim = NULL;
         clientSimDestroy(humanSim);
         return FALSE;
+      }
+    }
+
+    /* Single-player name: a validated ?name= wins; otherwise "Me". Chosen
+     * here because the local join below carries gameFrontName to the server;
+     * a name set after it would never reach the game. */
+    {
+      char validated[PLAYER_NAME_LEN];
+      if (launch->name[0] != '\0' &&
+          playerNameValidate(launch->name, validated, PLAYER_NAME_LEN, NULL)) {
+        gameFrontSetPlayerName(validated);
+        printf("[WASM] single player: name=%s (from URL)\n", validated);
+      } else {
+        gameFrontSetPlayerName((char *)"Me");
+        printf("[WASM] single player: default name=Me\n");
       }
     }
 

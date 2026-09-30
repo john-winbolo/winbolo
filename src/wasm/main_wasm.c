@@ -26,7 +26,6 @@
 #include "client_frontend_render.h"
 #include "client_sim.h"
 #include "frontend.h"
-#include "playername_validate.h"
 #include "client_net.h"
 #include "gui_message.h"
 #include "../gui/brainsHandler.h"
@@ -50,6 +49,7 @@
 #include "server_sim.h"
 #include "tutorial.h"
 #include "cJSON.h"
+#include "gamefront_wasm.h"
 
 #include <sys/stat.h>
 
@@ -260,7 +260,7 @@ static void main_loop_iteration(void) {
 
   /* Detect a mid-game terminal disconnect (server shutdown / dropped /
    * unrecoverable error). The initial-connect failure path sets s_connFailed
-   * directly from gameFrontStart, so this only needs to catch failures that
+   * directly from gameFrontWasmStart, so this only needs to catch failures that
    * arise while running. */
   if (!s_connFailed && cs != NULL && clientSimHasTransport(cs) &&
       gameFrontGetServerSim() == NULL) {  /* UDP only — not local single-player */
@@ -405,8 +405,8 @@ static void main_loop_iteration(void) {
  * ------------------------------------------------------- */
 /* Read a URL query parameter. Returns "" if not found. */
 static const char *getUrlParam(const char *name) {
-  static char buf[256];
-  char js[512];
+  static char buf[512];
+  char js[640];
   snprintf(js, sizeof(js),
     "(function(){ var p = new URLSearchParams(window.location.search).get('%s');"
     " return p ? p : ''; })()", name);
@@ -419,8 +419,43 @@ static const char *getUrlParam(const char *name) {
   return "";
 }
 
+/* Copy one URL parameter into dst. getUrlParam returns a shared static
+ * buffer, so each value is copied out before the next read. */
+static void wasmCopyUrlParam(const char *name, char *dst, size_t dstSize) {
+  strncpy(dst, getUrlParam(name), dstSize - 1);
+  dst[dstSize - 1] = '\0';
+}
+
+/* Read how the page was launched. This is the only place the URL is read;
+ * everything after page start takes its mode from the WasmLaunch. A game_key
+ * (/join/<key>) or proxyURL joins a game; otherwise tutorial (/tutorial)
+ * starts the tutorial; otherwise single player. practise (/practise) is read
+ * as well so / and /practise can be told apart, but both start single player
+ * for now. */
+static void wasmReadLaunch(WasmLaunch *out) {
+  char tutorial[8];
+  char practise[8];
+
+  memset(out, 0, sizeof(*out));
+  wasmCopyUrlParam("game_key", out->gameKey, sizeof(out->gameKey));
+  wasmCopyUrlParam("proxyURL", out->devProxy, sizeof(out->devProxy));
+  wasmCopyUrlParam("password", out->password, sizeof(out->password));
+  wasmCopyUrlParam("name", out->name, sizeof(out->name));
+  wasmCopyUrlParam("tutorial", tutorial, sizeof(tutorial));
+  wasmCopyUrlParam("practise", practise, sizeof(practise));
+
+  if (out->gameKey[0] != '\0' || out->devProxy[0] != '\0') {
+    out->mode = WASM_GAME_JOIN;
+  } else if (tutorial[0] != '\0') {
+    out->mode = WASM_GAME_TUTORIAL;
+  } else {
+    out->mode = WASM_GAME_PRACTICE;
+  }
+}
+
 int main(int argc, char *argv[]) {
   const char *cmdLine = "";
+  WasmLaunch launch;
 
   (void)argc;
   (void)argv;
@@ -451,24 +486,28 @@ int main(int argc, char *argv[]) {
   prefsInit("/WinBolo.json");
 
   /* Voice runs for the life of the process. It comes up before
-   * gameFrontStart, as on desktop. This platform has no capture or playback
-   * device yet (voice_wasm.c), so this only brings the codec up — every
-   * device-facing entry point declines. */
+   * gameFrontWasmStart, as on desktop. This platform has no capture or
+   * playback device yet (voice_wasm.c), so this only brings the codec up —
+   * every device-facing entry point declines. */
   voiceInit();
 
-  printf("[WASM] Starting gameFrontStart...\n");
-  bool started = (gameFrontStart(cmdLine, &keys, FALSE, NULL) != FALSE);
+  /* The only read of the page URL; the game mode comes from here on. */
+  wasmReadLaunch(&launch);
+
+  printf("[WASM] Starting gameFrontWasmStart...\n");
+  bool started = (gameFrontWasmStart(cmdLine, &keys, &launch) != FALSE);
   if (!started && !s_connFailed) {
     /* A genuine init failure (not a connection problem) — nothing to show. */
-    printf("[WASM] gameFrontStart FAILED\n");
+    printf("[WASM] gameFrontWasmStart FAILED\n");
     clientMutexDestroy();
     SDL_Quit();
     return 1;
   }
-  /* From here either we connected, or the connection failed but gameFrontStart
-   * kept humanSim alive in its error state — we still set up ImGui and enter
-   * the loop so the error dialog can draw (never a blank screen). */
-  fprintf(stderr, "[WASM] gameFrontStart %s; humanSim=%p\n",
+  /* From here either we connected, or the connection failed but
+   * gameFrontWasmStart kept humanSim alive in its error state — we still set
+   * up ImGui and enter the loop so the error dialog can draw (never a blank
+   * screen). */
+  fprintf(stderr, "[WASM] gameFrontWasmStart %s; humanSim=%p\n",
           started ? "OK" : "CONNECT FAILED", (void*)humanSim);
   fflush(stderr);
 
@@ -477,7 +516,7 @@ int main(int argc, char *argv[]) {
      * step on tick 0), mirroring the desktop run-start. */
     clientFrontTickReset();
     /* Pull the account's cloud prefs and apply them. This runs AFTER
-     * gameFrontStart (which seeds defaults and creates humanSim) so
+     * gameFrontWasmStart (which seeds defaults and creates humanSim) so
      * wasmApplyJoinPrefs overrides exactly what the player synced — keys, menu
      * toggles, game options, gamepad sensitivities and build options — on the
      * first frame. No-op for single-player (not signed in). Same apply path the
@@ -485,33 +524,9 @@ int main(int argc, char *argv[]) {
     wbPrefsSyncNow();
   }
 
-  /* Single-player name selection. Network play (?game_key=) already set its
-   * join name inside gameFrontStart, before the JOIN went out (the account
-   * name from /api/v1/me, or a web<rand> fallback) — so there's nothing to do
-   * for the network case here. Setting it now would be too late (the JOIN has
-   * already been sent) and would only clobber the local copy.
-   *
-   * Single player: a validated ?name= wins; otherwise default to "Me". */
-  {
-    const char *gameKey = getUrlParam("game_key");
-    if (gameKey[0] != '\0') {
-      /* network play: name handled in gameFrontStart before JOIN */
-    } else {
-      /* Single player: a validated ?name= wins; otherwise default to "Me".
-       * The WASM build re-seeds gameFrontName on every launch, so there is
-       * no persisted user name to preserve here. */
-      const char *urlName = getUrlParam("name");
-      char validated[PLAYER_NAME_LEN];
-      if (urlName[0] != '\0' &&
-          playerNameValidate(urlName, validated, PLAYER_NAME_LEN, NULL)) {
-        gameFrontSetPlayerName(validated);
-        printf("[WASM] single player: name=%s (from URL)\n", validated);
-      } else {
-        gameFrontSetPlayerName((char *)"Me");
-        printf("[WASM] single player: default name=Me\n");
-      }
-    }
-  }
+  /* The player name is chosen inside gameFrontWasmStart, before its join
+   * goes out: the account name or web<rand> for network play, a validated
+   * ?name= or "Me" for single player. */
 
   isInMenu = FALSE;
   finishedLoop = FALSE;
@@ -591,7 +606,7 @@ void windowApplyMenuChecks(ClientSim *cs) {
  * GET (prefs_bridge_wasm.c, on adopt). Values mirror the
  * desktop INI store: "Yes"/"No" bools, stringified ints, SDL3 keycodes for
  * KEYS. Native JSON bool/number is tolerated too. Absent keys keep the
- * current (default) value. This runs after gameFrontStart seeded defaults,
+ * current (default) value. This runs after gameFrontWasmStart seeded defaults,
  * so it overrides exactly what the user has synced.
  * ------------------------------------------------------- */
 extern bool useAutoslow;   /* defined in gamefront_wasm.c */

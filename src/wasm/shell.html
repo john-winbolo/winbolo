@@ -96,10 +96,13 @@
         var injected = {}, m;
         if (path === '/tutorial') {
             injected.tutorial = '1';
+        } else if (path === '/practise') {
+            injected.practise = '1';
         } else if ((m = path.match(/^\/join\/(.+)$/))) {
             injected.game_key = m[1];
         }
-        // /practise and / fall through to single-player (no params).
+        // / injects nothing; the game tells it apart from /practise by the
+        // practise param. Both start single player for now.
         if (Object.keys(injected).length === 0) return;
 
         var Native = window.URLSearchParams;
