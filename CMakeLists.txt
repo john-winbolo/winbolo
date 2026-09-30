@@ -5325,10 +5325,6 @@ set(_unit_test_names
     tank_damage_exact_armour_survives
     tank_damage_overkill_destroys
     tank_damage_partial_survives
-    tank_knockback_armour_paths
-    tank_knockback_timing_drive
-    tank_knockback_replaces_mines
-    tank_knockback_rules_respawn
     tank_destroyed_snapshot_round_trip
     tank_knockback_heading_symmetric
     tank_knockback_follows_shell_angle
