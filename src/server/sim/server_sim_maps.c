@@ -32,7 +32,9 @@
 #include "server_sim_internal.h"
 #include "server_sim_lifecycle.h"   /* lobbyAutoUnreadyOnChange */
 #include "server_sim_join.h"        /* serverSimAssignLobbyStartOnJoin — start reconcile after a map change */
+#include "server_sim_scenario.h"    /* serverSimScenarioListDir — what the public scenario enumeration copies from */
 #include "bolo_rand.h"              /* bolo_rand_below — the rotation's random pick */
+#include "bolo_map_validate.h"      /* boloMapBodyLength — where the preview's read stops */
 #include "client_sim.h"             /* clientSimGetGameSim — the in-process client map reload */
 #include "../../common/md5.h"       /* the compressed-map hash the preview paths compare */
 #include "../../common/mp_diag_log.h"
@@ -295,6 +297,224 @@ const char *serverSimGetMapDirRoot(const ServerSim *sim) {
     return "data/maps";
 }
 
+void serverSimSetScenarioDir(ServerSim *sim, const char *dir) {
+    if (sim == NULL) return;
+    if (dir != NULL) {
+        SDL_strlcpy(sim->scenarioDirPath, dir, sizeof(sim->scenarioDirPath));
+    } else {
+        sim->scenarioDirPath[0] = '\0';
+    }
+}
+
+const char *serverSimGetScenarioDir(const ServerSim *sim) {
+    if (sim != NULL && sim->scenarioDirPath[0] != '\0') {
+        return sim->scenarioDirPath;
+    }
+    return "data/scenarios";
+}
+
+/* The pick, kept as the first entry of the script list. A caller with only
+   a file name to give is every caller this has: the command arm that knows
+   more than the name calls serverSimSetScriptList instead, and what this one
+   writes leaves the manifest's name and the two flags empty, which is
+   honest — it has not read the directory and does not know them. */
+void serverSimSetSelectedScenario(ServerSim *sim, const char *file) {
+    ScnDirEntry entry;
+
+    if (sim == NULL) return;
+    if (file == NULL || file[0] == '\0') {
+        serverSimSetScriptList(sim, NULL, 0);
+        return;
+    }
+    memset(&entry, 0, sizeof(entry));
+    SDL_strlcpy(entry.file, file, sizeof(entry.file));
+    serverSimSetScriptList(sim, &entry, 1);
+}
+
+/* Entry 0 and not the whole list, because what this answers is the one
+   question it has always answered: which script the round is decided by.
+   The entries behind it are mods, and whoever loads them reads the list.
+
+   Entry 0 may now be the committed map's own script, where the host has put
+   that row at the front of the list rather than leaving it off. That is the
+   same answer said a different way — the map's script is what decides that
+   round — and it is still a file name a caller can print or compare. */
+const char *serverSimGetSelectedScenario(const ServerSim *sim) {
+    if (sim == NULL || sim->scenarioScriptCount <= 0) return "";
+    return sim->scenarioScripts[0].file;
+}
+
+void serverSimSetScriptList(ServerSim *sim, const ScnDirEntry *entries,
+                            int count) {
+    int i;
+
+    if (sim == NULL) return;
+    if (entries == NULL || count <= 0) {
+        count = 0;
+    } else if (count > LOBBY_SCRIPT_LIST_MAX) {
+        count = LOBBY_SCRIPT_LIST_MAX;
+    }
+    /* The whole array and not the rows in use: a shorter list must not leave
+       the tail of a longer one behind it, since anything reading past the
+       count would then find a script nobody picked. */
+    memset(sim->scenarioScripts, 0, sizeof(sim->scenarioScripts));
+    for (i = 0; i < count; i++) {
+        sim->scenarioScripts[i] = entries[i];
+    }
+    sim->scenarioScriptCount = count;
+}
+
+int serverSimGetScriptCount(const ServerSim *sim) {
+    if (sim == NULL) return 0;
+    return sim->scenarioScriptCount;
+}
+
+const ScnDirEntry *serverSimGetScript(const ServerSim *sim, int i) {
+    if (sim == NULL || i < 0 || i >= sim->scenarioScriptCount) return NULL;
+    return &sim->scenarioScripts[i];
+}
+
+/* Where the picks hold the map's own row, or -1 for a list that does not.
+   bound is what says so and nothing else does: every pick is a file out of
+   the scenarios directory and the command bus refuses a bound one, so the one
+   bound row a list can carry is the row the map brought. A host who leaves it
+   on the list is saying where on the list the map's own script goes; a host
+   who takes it off is saying the map's script plays ahead of the picks, which
+   is where it has always played. */
+static int scriptListMapOwnAt(const ServerSim *sim) {
+    int i;
+
+    for (i = 0; i < sim->scenarioScriptCount; i++) {
+        if (sim->scenarioScripts[i].bound) return i;
+    }
+    return -1;
+}
+
+void serverSimSetMapScript(ServerSim *sim, const ScnDirEntry *entry) {
+    int at;
+
+    if (sim == NULL) return;
+    at = scriptListMapOwnAt(sim);
+    /* The details belonged to the row this replaces. The caller sets the new
+       row's with serverSimSetMapScriptDetails after this, so a row never
+       answers with another script's details. */
+    sim->scenarioMapScriptDetailsLen = 0;
+    sim->scenarioMapScriptSettingsLen = 0;
+    if (entry == NULL || entry->file[0] == '\0') {
+        memset(&sim->scenarioMapScript, 0, sizeof(sim->scenarioMapScript));
+        /* And the place the host kept for it, which now names a script no
+           map brings. A row that stayed would draw the last map's scenario
+           in the lobby list and would be handed to the compose again at the
+           next pick, so the position goes with the script. The rows behind
+           it close up, which keeps the order of everything the host chose
+           for itself. */
+        if (at >= 0) {
+            int i;
+
+            for (i = at; i + 1 < sim->scenarioScriptCount; i++) {
+                sim->scenarioScripts[i] = sim->scenarioScripts[i + 1];
+            }
+            sim->scenarioScriptCount--;
+            memset(&sim->scenarioScripts[sim->scenarioScriptCount], 0,
+                   sizeof(sim->scenarioScripts[0]));
+        }
+        return;
+    }
+    sim->scenarioMapScript = *entry;
+    /* Whatever the manifest said. A script that came with the map is tied to
+       it in the one sense the lobby cares about: the host cannot take it off
+       without changing the map, which is what a chooser reads this to know.
+       An unbound script that happens to sit beside a map is still that map's
+       for as long as the map is committed. */
+    sim->scenarioMapScript.bound = true;
+    /* And the list's own copy of the row, where the host gave the map's
+       script a place. The two are one row said twice and they have to agree:
+       a commit of another scripted map would otherwise leave the lobby
+       drawing the old map's name at that position, and the next pick would
+       hand the compose a row naming a file that is no longer anybody's. The
+       place is the host's and stays; only what sits in it is replaced. */
+    if (at >= 0) {
+        sim->scenarioScripts[at] = sim->scenarioMapScript;
+    }
+}
+
+const ScnDirEntry *serverSimGetMapScript(const ServerSim *sim) {
+    if (sim == NULL || sim->scenarioMapScript.file[0] == '\0') return NULL;
+    return &sim->scenarioMapScript;
+}
+
+void serverSimSetMapScriptDetails(ServerSim *sim, const uint8_t *details,
+                                  size_t len) {
+    if (sim == NULL) return;
+    sim->scenarioMapScriptDetailsLen = 0;
+    if (details == NULL || len == 0 || sim->scenarioMapScript.file[0] == '\0' ||
+        len > sizeof(sim->scenarioMapScriptDetails)) {
+        return;
+    }
+    memcpy(sim->scenarioMapScriptDetails, details, len);
+    sim->scenarioMapScriptDetailsLen = (uint16_t)len;
+}
+
+void serverSimSetMapScriptSettings(ServerSim *sim, const uint8_t *settings,
+                                   size_t len) {
+    if (sim == NULL) return;
+    sim->scenarioMapScriptSettingsLen = 0;
+    if (settings == NULL || len == 0 ||
+        sim->scenarioMapScript.file[0] == '\0' ||
+        len > sizeof(sim->scenarioMapScriptSettings)) {
+        return;
+    }
+    memcpy(sim->scenarioMapScriptSettings, settings, len);
+    sim->scenarioMapScriptSettingsLen = (uint16_t)len;
+}
+
+/* The two together, which is the list the lobby is told and a chooser draws:
+   the map's own row where it belongs, then the picks in order.
+
+   Where it belongs is the host's answer where the host has given one. A list
+   that carries the map's row has already said where that row goes, and the
+   picks alone are the whole of the list — prepending a second copy would draw
+   the same script twice and a chooser would offer to remove one of them. A
+   list that does not carry it gets it at the front, which is where the round
+   composes it for a host who never said otherwise and is what every list
+   built before the row could be moved looks like.
+
+   The front, rather than the back, because that is where the round loads it:
+   a chooser draws the rows in the order it is given them and the order is
+   load order.
+
+   Held at LOBBY_SCRIPT_LIST_MAX, which is what a client can take: one that is
+   sent more rows than that keeps the list it had. The picks are what the cap
+   takes off, because the map's row is not the host's to lose. A host who has
+   picked the full ten and then commits a map with a script of its own
+   therefore sees the last pick drop out of the list, and the round composes
+   the same ten. */
+int serverSimGetLobbyScriptCount(const ServerSim *sim) {
+    int n;
+
+    if (sim == NULL) return 0;
+    n = sim->scenarioScriptCount;
+    if (sim->scenarioMapScript.file[0] != '\0' &&
+        scriptListMapOwnAt(sim) < 0) {
+        n++;
+    }
+    if (n > LOBBY_SCRIPT_LIST_MAX) n = LOBBY_SCRIPT_LIST_MAX;
+    return n;
+}
+
+const ScnDirEntry *serverSimGetLobbyScript(const ServerSim *sim, int i) {
+    if (sim == NULL || i < 0 || i >= serverSimGetLobbyScriptCount(sim)) {
+        return NULL;
+    }
+    if (sim->scenarioMapScript.file[0] != '\0' &&
+        scriptListMapOwnAt(sim) < 0) {
+        if (i == 0) return &sim->scenarioMapScript;
+        i--;
+    }
+    if (i >= sim->scenarioScriptCount) return NULL;
+    return &sim->scenarioScripts[i];
+}
+
 void serverSimSetUploadPersistDir(ServerSim *sim, const char *dir) {
     if (sim == NULL) return;
     if (dir != NULL) {
@@ -302,6 +522,20 @@ void serverSimSetUploadPersistDir(ServerSim *sim, const char *dir) {
     } else {
         sim->uploadPersistDir[0] = '\0';
     }
+}
+
+void serverSimSetWorkshopMapDir(ServerSim *sim, const char *dir) {
+    if (sim == NULL) return;
+    if (dir != NULL) {
+        SDL_strlcpy(sim->workshopMapDir, dir, sizeof(sim->workshopMapDir));
+    } else {
+        sim->workshopMapDir[0] = '\0';
+    }
+}
+
+const char *serverSimGetWorkshopMapDir(const ServerSim *sim) {
+    if (sim == NULL) return "";
+    return sim->workshopMapDir;
 }
 
 bool serverSimMapDirPickRandom(ServerSim *sim) {
@@ -441,8 +675,10 @@ static bool serverSimApplyRandomMapConfig(ServerSim *sim,
  *
  * Everything a Cancel needs goes in together: the bytes, the display name,
  * the file the map was read from so a script can be found beside it again,
- * and the template seats each team holds, because the cancel re-seats the
- * template from scratch and the host's trim would otherwise go with it.
+ * and the template seats each team holds, because where the previewed map
+ * brought a different template the cancel re-seats this one from scratch,
+ * and the host's trim would otherwise go with it. Where the template never
+ * changed nothing is re-seated and the counts put back are the ones there.
  * previousSeatsValid comes from serverSimScenarioSeatCounts, which answers
  * false when no template is attached — that is what keeps "no template" apart
  * from a team the host emptied on purpose.
@@ -614,10 +850,10 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
     stashCommittedMap(sim);
 
     /* Wipe the existing map/pill/base/start contents before the
-     * decoder touches them. mapLoadCompressedMap's RLE-decoder only
-     * writes cells encoded in the new blob — any tile NOT included
-     * in the new map's runs would otherwise keep the previous map's
-     * value. */
+     * decoder touches them. mapRead's run decoder, which the .map
+     * branch below reaches, only writes cells encoded in the new
+     * file — any tile NOT included in the new map's runs would
+     * otherwise keep the previous map's value. */
     {
         int x, y;
         memset((*sim->sim.mp).mapItem, DEEP_SEA,
@@ -638,7 +874,7 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
     /* The wire / upload / WBN paths all hand us a full .map file
      * (starting with the BMAPBOLO magic + version + counts header).
      * mapLoadCompressedMap expects a different on-the-wire layout
-     * (raw bases/pills/starts struct dump + LZW map), so feeding it
+     * (zlib over a bases/pills/starts struct dump + the map), so feeding it
      * the .map file bytes misaligns every field. Detect the magic
      * and route through mapRead via a temp file when it matches.
      * Fall back to the legacy mapLoadCompressedMap path for any
@@ -854,10 +1090,12 @@ bool serverSimRevertPreview(ServerSim *sim) {
         "serverSimRevertPreview: rolled back to '%s'", sim->mapName);
     serverSimApplyMapChange(sim);
 
-    /* The map change above seated the template from scratch, which is what a
-       map the host commits wants and not what one they backed out of wants:
-       the seats are back at the template's counts and the host's trim is
-       gone. Put their counts back. */
+    /* Where the previewed map brought a different template, the map change
+       above seated this one from scratch, which is what a map the host
+       commits wants and not what one they backed out of wants: the seats are
+       back at the template's counts and the host's trim is gone. Put their
+       counts back. Where the template never changed nothing was re-seated,
+       and the trim finds every team at or under its count already. */
     if (sim->previousSeatsValid) {
         serverSimScenarioTrimSeatsTo(sim, sim->previousSeats);
     }
@@ -901,13 +1139,25 @@ static bool relPathIsSafe(const char *p) {
     return true;
 }
 
-/* Resolve a client-facing map relPath to an absolute filesystem path. The
- * virtual "Uploads" folder (and "Uploads/<name>") redirects to the configured
- * persist directory when the sim has one set; every other path — and the unset
- * case — resolves under the map-dir root as before. relPath must already have
- * passed relPathIsSafe. out holds at least FILENAME_MAX bytes. */
-static void serverSimResolveMapPath(const ServerSim *sim, const char *relPath,
-                                     char *out, size_t outSize) {
+/* Resolve a client-facing map relPath to an absolute filesystem path. Two
+ * virtual folders live outside the map root: "Uploads" (and "Uploads/<name>")
+ * redirects to the configured persist directory, and "Workshop" (and
+ * "Workshop/<name>") to the directory the host copies its Workshop items to.
+ * Each redirects only when the sim has that directory set; every other path —
+ * and the unset case — resolves under the map-dir root as before. "Workshop"
+ * also does not redirect when the map root holds a real folder of that name:
+ * the root listing shows that folder in place of the Workshop directory, and
+ * the lobby's chooser opens it, so the path leads to the folder that was
+ * listed. relPath must already have passed relPathIsSafe. out holds at least
+ * FILENAME_MAX bytes.
+ *
+ * Not static: the lobby's set-map command and the upload preview's use-local
+ * path name a map by the same relPath a listing gave, and each used to build
+ * "<map root>/<relPath>" for itself. With a persist directory configured that
+ * opens a different file from the one the client picked, so both come through
+ * here instead. Declared in server_sim_shared.h. */
+void serverSimResolveMapPath(const ServerSim *sim, const char *relPath,
+                             char *out, size_t outSize) {
     const char *persist =
         (sim && sim->uploadPersistDir[0] != '\0') ? sim->uploadPersistDir : NULL;
     if (persist != NULL && relPath != NULL) {
@@ -921,11 +1171,44 @@ static void serverSimResolveMapPath(const ServerSim *sim, const char *relPath,
         }
     }
     const char *root = serverSimGetMapDirRoot(sim);
+    const char *workshop =
+        (sim && sim->workshopMapDir[0] != '\0') ? sim->workshopMapDir : NULL;
+    if (workshop != NULL && relPath != NULL &&
+        (SDL_strcmp(relPath, "Workshop") == 0 ||
+         SDL_strncmp(relPath, "Workshop/", 9) == 0)) {
+        char         realFolder[FILENAME_MAX];
+        SDL_PathInfo info;
+
+        SDL_snprintf(realFolder, sizeof(realFolder), "%s/Workshop", root);
+        if (!(SDL_GetPathInfo(realFolder, &info) &&
+              info.type == SDL_PATHTYPE_DIRECTORY)) {
+            if (relPath[8] == '\0') {
+                SDL_strlcpy(out, workshop, outSize);
+            } else {
+                SDL_snprintf(out, outSize, "%s/%s", workshop, relPath + 9);
+            }
+            return;
+        }
+    }
     if (relPath == NULL || relPath[0] == '\0') {
         SDL_strlcpy(out, root, outSize);
     } else {
         SDL_snprintf(out, outSize, "%s/%s", root, relPath);
     }
+}
+
+void serverSimGetUploadsDir(const ServerSim *sim, char *out, size_t outLen) {
+    if (out == NULL || outLen == 0) {
+        return;
+    }
+    out[0] = '\0';
+    if (sim == NULL) {
+        return;
+    }
+    /* The virtual folder's own name, resolved the way any map path under it
+       is, so the prefix a caller compares against is the one the resolve
+       would have produced. */
+    serverSimResolveMapPath(sim, "Uploads", out, outLen);
 }
 
 int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
@@ -972,6 +1255,34 @@ int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
     }
     SDL_free(list);
 
+    /* The root also offers the Workshop directory as a folder, the way the
+       resolve above reaches it. Left out when the directory is not there yet
+       (nothing subscribed), when the listing is full, and when the map root
+       already holds a real folder of that name in any case, so the chooser
+       never draws two rows called Workshop. A real "Workshop" row opens the
+       real folder: the resolve does not redirect while that folder is
+       there. */
+    if ((relPath == NULL || relPath[0] == '\0') && sim != NULL &&
+        sim->workshopMapDir[0] != '\0' && count < maxEntries) {
+        SDL_PathInfo info;
+        bool present = false;
+        for (int i = 0; i < count; i++) {
+            if (SDL_strcasecmp(entries[i].name, "Workshop") == 0) {
+                present = true;
+                break;
+            }
+        }
+        if (!present && SDL_GetPathInfo(sim->workshopMapDir, &info) &&
+            info.type == SDL_PATHTYPE_DIRECTORY) {
+            ServerMapEntry *e = &entries[count++];
+            SDL_strlcpy(e->name, "Workshop", sizeof(e->name));
+            e->isFolder = true;
+            e->modTime  = (int64_t)info.modify_time;
+            e->size     = 0;
+            e->scripted = false;
+        }
+    }
+
     /* Folders first; alphabetical within each group. */
     for (int i = 1; i < count; i++) {
         ServerMapEntry cur = entries[i];
@@ -991,7 +1302,221 @@ int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
     return count;
 }
 
-static void searchDirRecursive(const char *fullRoot,
+/* The public entry and the scenario library's hold the same three lengths.
+   They are stated twice because a gui translation unit reads public/ and
+   cannot reach scenario_api/; this file sees both, and is where a change to
+   one without the other fails to build. */
+BOLO_STATIC_ASSERT(SERVER_SCENARIO_FILE_LEN == SCN_DIR_FILE_LEN,
+                   server_scenario_file_matches_the_directory_entry);
+BOLO_STATIC_ASSERT(SERVER_SCENARIO_NAME_LEN == SCN_DIR_NAME_LEN,
+                   server_scenario_name_matches_the_directory_entry);
+BOLO_STATIC_ASSERT(SERVER_SCENARIO_DESC_LEN == SCN_DIR_DESC_LEN,
+                   server_scenario_description_matches_the_directory_entry);
+BOLO_STATIC_ASSERT(SERVER_SCENARIO_SOURCE_SERVER == SCN_DIR_SOURCE_SERVER,
+                   server_scenario_source_server_matches_the_directory_entry);
+BOLO_STATIC_ASSERT(SERVER_SCENARIO_SOURCE_UPLOAD == SCN_DIR_SOURCE_UPLOAD,
+                   server_scenario_source_upload_matches_the_directory_entry);
+BOLO_STATIC_ASSERT(SERVER_SCENARIO_SOURCE_WORKSHOP == SCN_DIR_SOURCE_WORKSHOP,
+                   server_scenario_source_workshop_matches_the_directory_entry);
+
+int serverSimEnumerateScenarioDir(ServerSim *sim,
+                                  ServerScenarioEntry *entries,
+                                  int maxEntries) {
+    ScnDirEntry *dirRows;
+    int          got;
+    int          i;
+
+    if (entries == NULL || maxEntries <= 0) return 0;
+
+    /* Read into heap rather than a stack array: an entry carries a
+       description, so a full listing runs to tens of kilobytes and this is
+       called from a UI thread as readily as a server one. */
+    dirRows = (ScnDirEntry *)calloc((size_t)maxEntries, sizeof(*dirRows));
+    if (dirRows == NULL) return 0;
+
+    got = serverSimScenarioListDir(sim, dirRows, maxEntries);
+    for (i = 0; i < got; i++) {
+        ServerScenarioEntry *e = &entries[i];
+        SDL_strlcpy(e->file, dirRows[i].file, sizeof(e->file));
+        SDL_strlcpy(e->name, dirRows[i].name, sizeof(e->name));
+        SDL_strlcpy(e->description, dirRows[i].description,
+                    sizeof(e->description));
+        e->maxPlayers = dirRows[i].maxPlayers;
+        e->bots       = dirRows[i].bots;
+        e->bound      = dirRows[i].bound;
+        e->keepsWinCondition = dirRows[i].keepsWinCondition;
+        e->source     = dirRows[i].source;
+        e->workshopId = dirRows[i].workshopId;
+        e->workshopAuthor = dirRows[i].workshopAuthor;
+    }
+    free(dirRows);
+    return got;
+}
+
+int serverSimScenarioDetails(ServerSim *sim, const char *file, uint8_t *out,
+                             size_t cap) {
+    if (sim == NULL || file == NULL || file[0] == '\0' || out == NULL) {
+        return -1;
+    }
+    /* The map's own script first. It is not in the scenarios directory, so
+       the row the attach published is the only place that knows it, and the
+       name matched is the one that row gives it: the same name the lobby's
+       script list carries for it. */
+    if (sim->scenarioMapScript.file[0] != '\0' &&
+        strcmp(sim->scenarioMapScript.file, file) == 0) {
+        if (sim->scenarioMapScriptDetailsLen > cap) return -1;
+        memcpy(out, sim->scenarioMapScriptDetails,
+               sim->scenarioMapScriptDetailsLen);
+        return (int)sim->scenarioMapScriptDetailsLen;
+    }
+    if (sim->scenarioDetailsReader == NULL) return -1;
+    return sim->scenarioDetailsReader(sim->scenarioDetailsReaderCtx,
+                                      serverSimGetScenarioDir(sim), file, out,
+                                      cap);
+}
+
+int serverSimScenarioSettingsDecl(ServerSim *sim, const char *file,
+                                  uint8_t *out, size_t cap) {
+    if (sim == NULL || file == NULL || file[0] == '\0' || out == NULL) {
+        return -1;
+    }
+    /* The map's own script first, for the reason serverSimScenarioDetails
+       looks there first. */
+    if (sim->scenarioMapScript.file[0] != '\0' &&
+        strcmp(sim->scenarioMapScript.file, file) == 0) {
+        if (sim->scenarioMapScriptSettingsLen > cap) return -1;
+        memcpy(out, sim->scenarioMapScriptSettings,
+               sim->scenarioMapScriptSettingsLen);
+        return (int)sim->scenarioMapScriptSettingsLen;
+    }
+    if (sim->scenarioSettingsReader == NULL) return -1;
+    return sim->scenarioSettingsReader(sim->scenarioSettingsReaderCtx,
+                                       serverSimGetScenarioDir(sim), file,
+                                       out, cap);
+}
+
+/* Where file's value for id is kept, or -1. */
+static int scriptSettingAt(const ServerSim *sim, const char *file,
+                           const char *id) {
+    int i;
+
+    for (i = 0; i < sim->scriptSettingValueCount; i++) {
+        if (strcmp(sim->scriptSettingValues[i].file, file) == 0 &&
+            strcmp(sim->scriptSettingValues[i].id, id) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+bool serverSimGetScriptSetting(const ServerSim *sim, const char *file,
+                               const char *id, int32_t *out) {
+    int at;
+
+    if (sim == NULL || file == NULL || id == NULL) return false;
+    at = scriptSettingAt(sim, file, id);
+    if (at < 0) return false;
+    if (out != NULL) *out = sim->scriptSettingValues[at].value;
+    return true;
+}
+
+bool serverSimSetScriptSetting(ServerSim *sim, const char *file,
+                               const char *id, int32_t value,
+                               int32_t *resolved) {
+    uint8_t           blob[SCN_SETTINGS_BLOB_MAX];
+    ScnSetting        rows[SCN_SETTINGS_MAX];
+    const ScnSetting *decl;
+    ControlEvent      evt;
+    int               len;
+    int               n;
+    int               at;
+    int32_t           v;
+
+    if (sim == NULL || file == NULL || id == NULL || file[0] == '\0' ||
+        strlen(file) >= LOBBY_SCENARIO_FILE_LEN || !scnSettingIdOk(id)) {
+        return false;
+    }
+    /* The declaration is read again for every change rather than trusted
+       from the client, so a value is only ever held against the file the
+       server would run. */
+    len = serverSimScenarioSettingsDecl(sim, file, blob, sizeof(blob));
+    if (len <= 0) return false;
+    n = scnSettingsBlobRead(blob, (size_t)len, rows, SCN_SETTINGS_MAX);
+    if (n <= 0) return false;
+    decl = scnSettingFind(rows, n, id);
+    if (decl == NULL) return false;
+    /* On or off has no nearest entry to clamp to: anything else is not a
+       value the host's dropdown sends. */
+    if (decl->type == SCN_SETTING_TYPE_BOOL && value != 0 && value != 1) {
+        return false;
+    }
+
+    v  = scnSettingClamp(decl, value);
+    at = scriptSettingAt(sim, file, id);
+    if (v == decl->def) {
+        /* The default is what a missing value means, so it is not kept. */
+        if (at >= 0) {
+            sim->scriptSettingValues[at] =
+                sim->scriptSettingValues[sim->scriptSettingValueCount - 1];
+            sim->scriptSettingValueCount--;
+        }
+    } else {
+        if (at < 0) {
+            if (sim->scriptSettingValueCount >=
+                SERVER_SCRIPT_SETTING_VALUES_MAX) {
+                return false;
+            }
+            at = sim->scriptSettingValueCount++;
+            SDL_strlcpy(sim->scriptSettingValues[at].file, file,
+                        sizeof(sim->scriptSettingValues[at].file));
+            SDL_strlcpy(sim->scriptSettingValues[at].id, id,
+                        sizeof(sim->scriptSettingValues[at].id));
+        }
+        sim->scriptSettingValues[at].value = v;
+    }
+    if (resolved != NULL) *resolved = v;
+
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_LOBBY_SCRIPT_SETTING;
+    evt.u.lobbyScriptSetting.op = LOBBY_SCRIPT_SETTING_SET;
+    SDL_strlcpy(evt.u.lobbyScriptSetting.file, file,
+                sizeof(evt.u.lobbyScriptSetting.file));
+    SDL_strlcpy(evt.u.lobbyScriptSetting.id, id,
+                sizeof(evt.u.lobbyScriptSetting.id));
+    evt.u.lobbyScriptSetting.value = v;
+    serverSimPublishControl(sim, &evt);
+    return true;
+}
+
+void serverSimReplayScriptSettings(
+    const ServerSim *sim, void (*deliver)(void *, const struct ControlEvent *),
+    void *ctx) {
+    ControlEvent evt;
+    int          i;
+
+    if (sim == NULL || deliver == NULL) return;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_LOBBY_SCRIPT_SETTING;
+    evt.u.lobbyScriptSetting.op = LOBBY_SCRIPT_SETTING_CLEAR;
+    deliver(ctx, &evt);
+    for (i = 0; i < sim->scriptSettingValueCount; i++) {
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_LOBBY_SCRIPT_SETTING;
+        evt.u.lobbyScriptSetting.op = LOBBY_SCRIPT_SETTING_SET;
+        SDL_strlcpy(evt.u.lobbyScriptSetting.file,
+                    sim->scriptSettingValues[i].file,
+                    sizeof(evt.u.lobbyScriptSetting.file));
+        SDL_strlcpy(evt.u.lobbyScriptSetting.id,
+                    sim->scriptSettingValues[i].id,
+                    sizeof(evt.u.lobbyScriptSetting.id));
+        evt.u.lobbyScriptSetting.value = sim->scriptSettingValues[i].value;
+        deliver(ctx, &evt);
+    }
+}
+
+static void searchDirRecursive(const ServerSim *sim,
+                                bool wantScripted,
+                                const char *fullRoot,
                                 const char *subRel,
                                 const char *queryLower,
                                 size_t queryLen,
@@ -1035,7 +1560,8 @@ static void searchDirRecursive(const char *fullRoot,
         }
 
         if (isDir) {
-            searchDirRecursive(fullRoot, rel, queryLower, queryLen,
+            searchDirRecursive(sim, wantScripted, fullRoot, rel,
+                               queryLower, queryLen,
                                entries, maxEntries, count, depth + 1);
             continue;
         }
@@ -1061,16 +1587,20 @@ static void searchDirRecursive(const char *fullRoot,
         e->isFolder = false;
         e->modTime  = (int64_t)info.modify_time;
         e->size     = (int64_t)info.size;
-        /* Written rather than left alone: the caller's array is not zeroed,
-           and the search's own results do not carry the flag. */
-        e->scripted = false;
+        /* Asked the way the folder listing asks, so a search hit is tagged
+           like the same map in its folder. Only the in-process chooser
+           wants it; the network search reply has no byte for it, so that
+           caller skips the lookup. */
+        e->scripted = wantScripted
+                    && serverSimScenarioMapIsScripted(sim, childPath);
     }
     SDL_free(list);
 }
 
 int serverSimSearchMapDir(ServerSim *sim, const char *relPath,
                            const char *query,
-                           ServerMapEntry *entries, int maxEntries) {
+                           ServerMapEntry *entries, int maxEntries,
+                           bool wantScripted) {
     if (!entries || maxEntries <= 0) return -1;
     if (!query || query[0] == '\0') return 0;
     if (!relPathIsSafe(relPath)) return -1;
@@ -1089,7 +1619,7 @@ int serverSimSearchMapDir(ServerSim *sim, const char *relPath,
     queryLower[qlen] = '\0';
 
     int count = 0;
-    searchDirRecursive(fullRoot, "", queryLower, qlen,
+    searchDirRecursive(sim, wantScripted, fullRoot, "", queryLower, qlen,
                        entries, maxEntries, &count, 0);
 
     for (int i = 1; i < count; i++) {
@@ -1129,6 +1659,13 @@ static void serverSimApplyMapChange(ServerSim *sim) {
        and the random regenerate: none of them reaches serverSimResetGameWorld,
        where the round starts drop theirs. */
     serverSimScenarioResetFill(sim);
+
+    /* Teams 1 and 2 still on the default pair the lobby opened with follow
+     * the new map's shape: north/south for a tall or square map, east/west
+     * for a wide one. A side the host chose is kept. Before the reconcile
+     * below, so each reservation is checked against the sides it will
+     * start on. */
+    serverSimRefreshDefaultTeamSides(sim);
 
     /* A reservation from the previous map can index past the new map's
      * start list, or sit on a side the slot's team may not use now the
@@ -1177,6 +1714,12 @@ static void serverSimApplyMapChange(ServerSim *sim) {
        template they leave; the settings publish below then carries a lobby
        that is already the new map's. */
     serverSimScenarioOnMapChanged(sim, sim->mapFilePath);
+    /* And the list the lobby draws, because the map commit has just changed
+       it: the row for the map's own script is the committed map's, and the
+       decision above is what set or cleared it. The picks are untouched by a
+       commit, so until the list carried the map's own row there was nothing
+       here for a commit to publish. */
+    serverSimPublishScriptList(sim);
 
     /* Whoever owns the scenario has just attached the new map's or let the
        previous one go, so the identity above is the new map's and this is
@@ -1215,14 +1758,46 @@ bool serverSimReadMapFile(ServerSim *sim, const char *relPath,
     if (!fp) return false;
     if (fseek(fp, 0, SEEK_END) != 0) { fclose(fp); return false; }
     long sz = ftell(fp);
-    if (sz <= 0 || (size_t)sz > LOBBY_MAP_UPLOAD_MAX_BYTES) { fclose(fp); return false; }
+    if (sz <= 0) { fclose(fp); return false; }
     if (fseek(fp, 0, SEEK_SET) != 0) { fclose(fp); return false; }
-    uint8_t *buf = (uint8_t *)malloc((size_t)sz);
+
+    /* A file inside the cap is read whole; one over it is read as a prefix
+       that large. A whole plain map fits inside the cap, so the front of an
+       over-cap file still holds its map however large whatever follows it
+       is — which is how a map with a scenario chunk appended gets read at
+       all, where sizing the read off the file would refuse it outright. */
+    bool   overCap = (size_t)sz > LOBBY_MAP_UPLOAD_MAX_BYTES;
+    size_t want    = overCap ? (size_t)LOBBY_MAP_UPLOAD_MAX_BYTES : (size_t)sz;
+
+    uint8_t *buf = (uint8_t *)malloc(want);
     if (!buf) { fclose(fp); return false; }
-    size_t got = fread(buf, 1, (size_t)sz, fp);
+    size_t got = fread(buf, 1, want, fp);
     fclose(fp);
-    if (got != (size_t)sz) { free(buf); return false; }
+    if (got != want) { free(buf); return false; }
+
+    /* Where the map stops is where this read stops: a chunk appended after a
+       map is the server's business rather than a client's, and the preview
+       only ever wants the map.
+
+       What is not a map is handed back as it was read. This function reads
+       bytes for a caller and does not judge them, and a file that does not
+       parse is a file with no chunk in it to keep back. The one exception is
+       the over-cap file, which only ever got this far because its front
+       might have been a map: with no map in it there is nothing to trim it
+       to, so it is refused, as an over-cap file always has been. */
+    size_t bodyLen = 0;
+    if (boloMapBodyLength(buf, got, &bodyLen)) {
+        if (bodyLen < got) {
+            uint8_t *trimmed = (uint8_t *)realloc(buf, bodyLen);
+            if (trimmed != NULL) buf = trimmed;
+        }
+        got = bodyLen;
+    } else if (overCap) {
+        free(buf);
+        return false;
+    }
+
     *outBytes = buf;
-    *outLen   = (size_t)sz;
+    *outLen   = got;
     return true;
 }

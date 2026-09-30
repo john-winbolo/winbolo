@@ -23,6 +23,7 @@
 #include "frontend.h"                      /* frontEndApplyLocalTankPrefs */
 #include "transport.h"
 #include "transport_udp.h"
+#include "bulk_transfer.h"                 /* BULK_SCRIPT_* — the public status values mirror them */
 #include "client_snapshot.h"                /* clientSnapshotRenderInterp */
 #include "interpolation.h"                  /* interpRenderControl */
 #include "netpacks.h"                      /* MAP_DOWNLOAD_MAX_SIZE, lobbyBotNameAcceptable */
@@ -111,6 +112,7 @@ static void clientSimRenderLocalJoinReject(ClientSim *cs, LocalJoinResult res) {
   }
   rendered = langGetText(id);
   clientSimSetConnectErrorReason(cs, rendered ? rendered : "Connection rejected");
+  clientSimSetConnectErrorId(cs, id);
 }
 
 /* Shared body for the active / passive local-connect paths. Runs the
@@ -379,6 +381,11 @@ const char *clientSimGetConnectErrorReason(const ClientSim *cs) {
   return cs->connectErrorReason;
 }
 
+langid clientSimGetConnectErrorLangId(const ClientSim *cs) {
+  if (cs == NULL || cs->connectErrorReason[0] == '\0') return 0;
+  return cs->connectErrorId;
+}
+
 BYTE clientSimGetServerPlayerNum(const ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return 0;
   return transportUdpClientGetPlayerNum((Transport *)&cs->transport);
@@ -618,6 +625,68 @@ void clientSimNetSendLobbySetMap(ClientSim *cs, const char *mapRelPath) {
   clientSimSubmitCommand(cs, &cmd);
 }
 
+void clientSimNetSendLobbySetScenario(ClientSim *cs, const char *relPath) {
+  if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
+  if (relPath == NULL) return;
+  size_t pl = strlen(relPath);
+  if (pl > 255) return;
+  /* An empty path is a message and not a caller's mistake: it is how the
+     host selects no scenario, so it goes out where the map wrapper above
+     would return. */
+  ClientCommand cmd = { .type = CMD_LOBBY_SET_SCENARIO };
+  cmd.u.lobbySetScenario.relPathLen = (uint8_t)pl;
+  if (pl > 0) memcpy(cmd.u.lobbySetScenario.relPath, relPath, pl);
+  clientSimSubmitCommand(cs, &cmd);
+}
+
+void clientSimNetSendSetScriptList(ClientSim *cs,
+                                   const char *const *files, int count) {
+  int i;
+  if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
+  if (count < 0 || count > CMD_SCRIPT_LIST_MAX) return;
+  if (count > 0 && files == NULL) return;
+  /* Nothing here asks the server anything: the command carries the whole
+     list, and every name in it is checked against the scenarios directory in
+     the dispatcher, which is the only side that can. What this does refuse is
+     what would not survive the trip: a name longer than the field, which
+     would arrive cut and name a different file. An empty list is a message
+     and not a mistake — it is how a host clears the list — so count 0 goes
+     out where a caller's mistake would return. */
+  ClientCommand cmd = { .type = CMD_SET_SCRIPT_LIST };
+  cmd.u.setScriptList.count = (uint8_t)count;
+  for (i = 0; i < count; i++) {
+    size_t fl;
+    if (files[i] == NULL) return;
+    fl = strlen(files[i]);
+    if (fl == 0 || fl >= CMD_SCRIPT_LIST_FILE_LEN) return;
+    memcpy(cmd.u.setScriptList.files[i], files[i], fl + 1);
+  }
+  clientSimSubmitCommand(cs, &cmd);
+}
+
+void clientSimNetSendSetScriptSetting(ClientSim *cs, const char *file,
+                                      const char *id, int32_t value) {
+  size_t fl;
+  size_t il;
+  if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
+  /* An older server cannot decode the command, and one it cannot decode
+     stalls this client's whole command stream behind it. */
+  if (!clientSimLobbyScriptSettingsSupported(cs)) return;
+  if (file == NULL || id == NULL) return;
+  fl = strlen(file);
+  il = strlen(id);
+  if (fl == 0 || fl >= CMD_SCRIPT_LIST_FILE_LEN) return;
+  if (il == 0 || il >= CMD_SCRIPT_SETTING_ID_LEN) return;
+  ClientCommand cmd = { .type = CMD_SET_SCRIPT_SETTING };
+  memcpy(cmd.u.setScriptSetting.file, file, fl + 1);
+  memcpy(cmd.u.setScriptSetting.id, id, il + 1);
+  cmd.u.setScriptSetting.value = value;
+  clientSimSubmitCommand(cs, &cmd);
+}
+
 void clientSimNetSendLobbyPreviewCancel(ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport) return;
   if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
@@ -655,6 +724,11 @@ void clientSimNetSendLobbyMapListRequest(ClientSim *cs,
                                          const char *relPath) {
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
   transportUdpClientSendLobbyMapListRequest(&cs->transport, relPath);
+}
+
+void clientSimNetSendLobbyScenarioListRequest(ClientSim *cs) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbyScenarioListRequest(&cs->transport);
 }
 
 void clientSimNetSendLobbyMapPreviewRequest(ClientSim *cs,
@@ -707,6 +781,14 @@ bool clientSimNetSendLobbyMapUploadBytes(ClientSim *cs,
   return ok;
 }
 
+bool clientSimNetSendLobbyScriptUpload(ClientSim *cs, const char *localFilePath) {
+  /* UDP only: an in-process host has the file already and never sends. */
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return false;
+  if (clientSimIsSpectator(cs)) return false;  /* viewer is read-only */
+  return transportUdpClientStartLobbyScriptUpload(&cs->transport,
+                                                  localFilePath);
+}
+
 uint8_t clientSimGetLobbyMapUploadProgressPercent(const ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return 0;
   return transportUdpClientGetLobbyMapUploadProgressPercent(
@@ -736,6 +818,60 @@ uint8_t *clientSimTakeRoundLog(ClientSim *cs, size_t *outLen) {
   if (outLen != NULL) *outLen = 0;
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return NULL;
   return transportUdpClientTakeRoundLog(&cs->transport, outLen);
+}
+
+/* === A copy of one of the server's scripts === */
+
+/* client_net.h states the status values as plain numbers, because the client
+ * frontends cannot see bulk_transfer.h. This translation unit sees both, so a
+ * wire value that moves without its public name fails to compile here. */
+BOLO_STATIC_ASSERT(CLIENT_SCRIPT_FETCH_STATUS_FOUND == BULK_SCRIPT_FOUND,
+                   script_fetch_status_found_drift);
+BOLO_STATIC_ASSERT(CLIENT_SCRIPT_FETCH_STATUS_NOT_FOUND == BULK_SCRIPT_NOT_FOUND,
+                   script_fetch_status_not_found_drift);
+BOLO_STATIC_ASSERT(CLIENT_SCRIPT_FETCH_STATUS_DISABLED == BULK_SCRIPT_DISABLED,
+                   script_fetch_status_disabled_drift);
+BOLO_STATIC_ASSERT(CLIENT_SCRIPT_FETCH_STATUS_TOO_LARGE == BULK_SCRIPT_TOO_LARGE,
+                   script_fetch_status_too_large_drift);
+BOLO_STATIC_ASSERT(CLIENT_SCRIPT_FETCH_STATUS_BUSY == BULK_SCRIPT_BUSY,
+                   script_fetch_status_busy_drift);
+
+bool clientSimNetSendLobbyScriptFetch(ClientSim *cs, const char *file) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return false;
+  return transportUdpClientSendScriptFetch(&cs->transport, file);
+}
+
+int clientSimGetScriptFetchState(const ClientSim *cs) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) {
+    return CLIENT_SCRIPT_FETCH_IDLE;
+  }
+  return transportUdpClientGetScriptFetchState((Transport *)&cs->transport);
+}
+
+uint8_t clientSimGetScriptFetchPercent(const ClientSim *cs) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return 0;
+  return transportUdpClientGetScriptFetchPercent((Transport *)&cs->transport);
+}
+
+int clientSimGetScriptFetchStatus(const ClientSim *cs) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) {
+    return CLIENT_SCRIPT_FETCH_NO_ANSWER;
+  }
+  return transportUdpClientGetScriptFetchStatus((Transport *)&cs->transport);
+}
+
+bool clientSimTakeScriptFetch(ClientSim *cs, uint8_t **outBytes,
+                              size_t *outLen, char *nameOut, size_t nameCap) {
+  if (outBytes != NULL) *outBytes = NULL;
+  if (outLen != NULL) *outLen = 0;
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return false;
+  return transportUdpClientTakeScriptFetch(&cs->transport, outBytes, outLen,
+                                           nameOut, nameCap);
+}
+
+void clientSimClearScriptFetch(ClientSim *cs) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientClearScriptFetch(&cs->transport);
 }
 
 void clientSimNetSendLobbyMapUseLocal(ClientSim *cs,

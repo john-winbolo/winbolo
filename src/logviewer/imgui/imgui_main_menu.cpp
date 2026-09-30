@@ -9,6 +9,7 @@
  */
 
 #include "imgui_main_menu.h"
+#include "imgui_scenario_panel.h"
 #include "imgui_dialogs.h"
 #include "imgui.h"
 #include "platform_config.h"
@@ -95,7 +96,13 @@ bool lv_g_show_game_info_window = true;
 bool lv_g_show_events_window = true;
 bool lv_g_show_item_info_window = true;
 bool lv_g_show_comments_window = false;  /* Opt-in: WBN comments are noisy if you don't want them */
+/* The scenario panel only draws while a recording has a list for it, so a
+   plain recording never shows it whatever this says. */
+bool lv_g_show_scenario_panel_window = true;
 bool lv_g_reset_window_positions = false;
+/* Off until asked for: the outlines sit over the map a recording is watched
+   for. */
+bool lv_g_show_regions = false;
 
 /* Options state */
 static bool s_tank_centred = false;
@@ -138,6 +145,24 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
 
     lv_platform_config_get_string("LOGVIEWER", "Window.Comments.Visible", "No", val, sizeof(val));
     lv_g_show_comments_window = (val[0] == 'Y' || val[0] == 'y');
+
+    lv_platform_config_get_string("LOGVIEWER", "Window.ScenarioPanel.Visible", "Yes", val, sizeof(val));
+    lv_g_show_scenario_panel_window = (val[0] == 'Y' || val[0] == 'y');
+
+    /* The panel's side in whole pixels. A value that is not a whole number
+       keeps the default; the panel raises one under its smallest side and
+       keeps one past the screen inside it. */
+    lv_platform_config_get_string("LOGVIEWER", "Window.ScenarioPanel.Size", "", val, sizeof(val));
+    {
+        char *end = NULL;
+        long side = strtol(val, &end, 10);
+        if (end != val && *end == '\0' && side > 0 && side <= 65535) {
+            lv_imgui_scenario_panel_set_side((int)side);
+        }
+    }
+
+    lv_platform_config_get_string("LOGVIEWER", "Show Regions", "No", val, sizeof(val));
+    lv_g_show_regions = (val[0] == 'Y' || val[0] == 'y');
 }
 
 void lv_imgui_main_menu_save(void) {
@@ -151,6 +176,13 @@ void lv_imgui_main_menu_save(void) {
     lv_platform_config_set_string("LOGVIEWER", "Window.GameInformation.Visible", lv_g_show_game_info_window ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.ItemInformation.Visible", lv_g_show_item_info_window ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.Comments.Visible", lv_g_show_comments_window ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Window.ScenarioPanel.Visible", lv_g_show_scenario_panel_window ? "Yes" : "No");
+    {
+        char side[16];
+        snprintf(side, sizeof(side), "%d", lv_imgui_scenario_panel_side());
+        lv_platform_config_set_string("LOGVIEWER", "Window.ScenarioPanel.Size", side);
+    }
+    lv_platform_config_set_string("LOGVIEWER", "Show Regions", lv_g_show_regions ? "Yes" : "No");
 }
 
 static void zoom_at_center(int stepIndex) {
@@ -176,6 +208,21 @@ void lv_imgui_toggle_tank_centred(void) {
  * playhead, so the menu always reads the live value back. */
 void lv_imgui_toggle_hide_lobby(void) {
     lv_screenSetHideLobby(lv_screenGetHideLobby() ? 0 : 1);
+}
+
+int lv_imgui_has_regions(void) {
+    const LvScripts *scripts = lv_screenGetScripts();
+    return (scripts != NULL && scripts->regionCount > 0) ? 1 : 0;
+}
+
+/* The overview keeps its render target between frames and repaints only the
+ * squares marked for it, so turning the outlines off repaints the whole map,
+ * and asks for the frame now rather than at the next tick of a paused
+ * replay. */
+void lv_imgui_toggle_regions(void) {
+    lv_g_show_regions = !lv_g_show_regions;
+    lv_drawDirtyScreen();
+    lv_windowNeedRedraw();
 }
 
 int lv_imgui_get_dns_lookups(void) { return s_dns_lookups ? 1 : 0; }
@@ -295,10 +342,7 @@ int lv_imgui_main_menu_bar(void) {
                 }
             } else {
                 if (ImGui::MenuItem(langGetText(STR_MENU_EXIT))) {
-                    SDL_Event quit_event;
-                    SDL_zero(quit_event);
-                    quit_event.type = SDL_EVENT_QUIT;
-                    SDL_PushEvent(&quit_event);
+                    logViewerRequestAppQuit();
                     clicked = 1;
                 }
             }
@@ -391,6 +435,15 @@ int lv_imgui_main_menu_bar(void) {
                 lv_imgui_toggle_hide_lobby();
                 clicked = 1;
             }
+            if (ImGui::MenuItem(langGetText(STR_MAPEDIT_SCENARIO_REGIONS), NULL,
+                                lv_g_show_regions,
+                                lv_imgui_has_regions() != 0)) {
+                lv_imgui_toggle_regions();
+                clicked = 1;
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("%s", langGetText(STR_LV_REGIONS_TIP));
+            }
             if (ImGui::MenuItem(langGetText(STR_MENU_SOUND_EFFECTS), NULL, s_lv->isSoundsPlaying != 0)) {
                 s_lv->isSoundsPlaying = s_lv->isSoundsPlaying ? 0 : 1;
                 clicked = 1;
@@ -449,6 +502,10 @@ int lv_imgui_main_menu_bar(void) {
             }
             if (ImGui::MenuItem(langGetText(STR_LV_WIN_COMMENTS), "Ctrl+5", lv_g_show_comments_window)) {
                 lv_g_show_comments_window = !lv_g_show_comments_window;
+                clicked = 1;
+            }
+            if (ImGui::MenuItem(langGetText(STR_SCNPANEL_SETTINGS_TITLE), NULL, lv_g_show_scenario_panel_window)) {
+                lv_g_show_scenario_panel_window = !lv_g_show_scenario_panel_window;
                 clicked = 1;
             }
             ImGui::Separator();

@@ -77,6 +77,18 @@ typedef struct {
                                        * to and including that segment. */
 } MapChooserEntry;
 
+/* Whether the "Scenarios only" tick keeps this row. With the tick off
+ * every row stays. With it on, folders and the ".." row stay, so the
+ * user can still walk to scripted maps, and a map row stays only when
+ * it has a script beside it. The inbuilt Everard row has none, so it
+ * goes. Pure, so the unit tests check it without the chooser. */
+static inline bool mapChooserEntryPassesScenarioFilter(
+    const MapChooserEntry *e, bool scenariosOnly) {
+    if (!scenariosOnly) return true;
+    if (e->isFolder || e->isParentUp) return true;
+    return e->scripted;
+}
+
 typedef struct MapChooserState_s MapChooserState;
 
 /* A "maps filesystem" plugged into the chooser. The three tabs in
@@ -199,6 +211,13 @@ struct MapChooserState_s {
      * this and re-runs discoverMaps. */
     char            currentDir[FILENAME_MAX];
 
+    /* The directory mapChooserLocalFsEnumerate lists as a "Workshop"
+     * folder at its root, with '/' separators and no trailing one. ""
+     * for none, which every tab but the lobby's Local Maps tab keeps.
+     * Its rows carry absolute paths under it, and the breadcrumbs show
+     * those as "Workshop/...". Set through mapChooserSetWorkshopDir. */
+    char            workshopDir[FILENAME_MAX];
+
     /* When true, the widget hides its "Load from device" and "Generate
      * Random Map" buttons. The lobby's map chooser surfaces those
      * features as separate tabs, so they'd be duplicated here. */
@@ -258,6 +277,28 @@ struct MapChooserState_s {
      * file's mtime. Off by default to keep the list narrow; toggled by
      * a checkbox next to "Search subfolders". */
     bool            showModifiedColumn;
+
+    /* When true, the chooser offers a "Scenarios only" checkbox next to
+     * "Search subfolders". Set only by the tabs whose rows answer the
+     * `scripted` question (the lobby's Server Maps and Local Maps tabs);
+     * a tab whose rows never carry it would list nothing when ticked. */
+    bool            offerScenariosOnly;
+
+    /* The "Scenarios only" tick. While set, file rows without a script
+     * beside them are hidden, and so is the starred section, whose rows
+     * do not carry the flag. Folders and ".." stay so the user can still
+     * walk into a folder to find scripted maps. Combines with the search
+     * filter; ignored while offerScenariosOnly is false. Kept for the
+     * session with the rest of the tab's state, not saved. */
+    bool            scenariosOnly;
+
+    /* Set by a provider whose current rows never carry the `scripted`
+     * flag although the tab offers "Scenarios only" — the Server Maps
+     * tab's network recursive search, whose reply has no byte for it.
+     * While set, the tick is greyed out and filters nothing, so it
+     * cannot hide every hit. discoverMaps clears it before each
+     * enumerate, so only the provider run that fills such rows sets it. */
+    bool            searchRowsUntagged;
 
     /* Interactive preview widget — same renderer as the lobby's inline
      * preview and the modal popup. Loaded with the currently-selected
@@ -392,6 +433,13 @@ void mapChooserRefresh(MapChooserState *state);
  * compatibility). */
 void mapChooserLocalFsEnumerate(MapChooserState *state,
                                  const char *relPath, void *ctx);
+
+/* Names the directory mapChooserLocalFsEnumerate offers as a "Workshop"
+ * folder at its root. The folder is listed only while the directory
+ * exists, and not when data/maps already holds a folder of that name.
+ * Backslashes become '/' and a trailing separator is dropped. "" or NULL
+ * clears it. Call before the next refresh. */
+void mapChooserSetWorkshopDir(MapChooserState *state, const char *dir);
 
 /* Post-pass for listProviders running a recursive search. The provider
  * appends matching file rows with their enclosing folder path in

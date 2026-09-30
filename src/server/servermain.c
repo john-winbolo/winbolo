@@ -47,6 +47,7 @@
 #include "../winbolonet/winbolonet_server.h"
 #include "server_sim.h"
 #include "server_sim_lifecycle.h"
+#include "server_sim_join.h"      /* serverSimRepickAllLobbyStarts — after -allybots / -teams move the bots */
 #include "mapgen.h"
 #include "log.h"
 #include "transport_udp.h"
@@ -66,6 +67,8 @@
 #include "server_console.h"
 #include "wire_limits.h"
 #include "../scenario/scenario_host.h"
+#include "../scenario/scenario_pack.h"
+#include "../scenario_io/scenario_package.h"
 #include "../scenario/scenario_validate.h"
 #include "cJSON.h"
 
@@ -519,6 +522,18 @@ static void processCmdStdin(CmdStdin *cs) {
     }
 }
 
+/* One owed tick for serverTickCatchUp. Answering the shutdown flag here is
+ * what used to be the `if (...) break;` at the top of the catch-up loop, so
+ * g_serverShuttingDown stays private to this file. */
+static bool serverTickStep(void *ctx) {
+  (void)ctx;
+  if (SDL_GetAtomicInt(&g_serverShuttingDown)) {
+    return false;
+  }
+  serverInstanceTick(serverSim);
+  return true;
+}
+
 /*********************************************************
 *NAME:          serverGameTimer
 *AUTHOR:        John Morrison
@@ -551,12 +566,11 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
     SDL_LockMutex(g_serverTickLock);
     if (!SDL_GetAtomicInt(&g_serverShuttingDown) &&
         (tick - oldTick) > SERVER_TICK_LENGTH) {
-      while ((tick - oldTick) > SERVER_TICK_LENGTH) {
-        if (SDL_GetAtomicInt(&g_serverShuttingDown)) break;
-        serverInstanceTick(serverSim);
-        ticks++;
-        oldTick += SERVER_TICK_LENGTH;
-      }
+      /* `ticks` is a time_t, so the burst counts into a uint32_t of its own
+       * and is added on afterwards. Nothing reads the global mid-burst. */
+      uint32_t ran = 0;
+      (void)serverTickCatchUp(tick, &oldTick, &ran, serverTickStep, NULL);
+      ticks += (time_t)ran;
     }
     SDL_UnlockMutex(g_serverTickLock);
   }
@@ -640,13 +654,33 @@ void printArgs() {
   fprintf(stderr, "                -randommap <seed> — reproduce a specific map from its seed.\n");
   fprintf(stderr, "                -randommap tournament <seed> — type with specific seed.\n");
   fprintf(stderr, "                Map name shown as 'rand_<seed>' in server info.\n");
+  fprintf(stderr, "-moddir <Dir> - Directory of mods and scenarios this server offers on their\n");
+  fprintf(stderr, "                own, independently of any map: .scenario packages and loose\n");
+  fprintf(stderr, "                .lua scripts. Read on top of the mods that ship with the\n");
+  fprintf(stderr, "                build, which are always offered. A directory that is not\n");
+  fprintf(stderr, "                there means the server offers none of its own, which is not\n");
+  fprintf(stderr, "                an error. -scenariodir is the old name for this argument.\n");
   fprintf(stderr, "-noscenarios  - Do not load the scenario script beside a map. Every map,\n");
   fprintf(stderr, "                including one committed later, plays plainly. A map that\n");
   fprintf(stderr, "                has a script says which one was not loaded.\n");
+  fprintf(stderr, "-nouploadscripts - The old spelling of -scriptuploads off (see Script\n");
+  fprintf(stderr, "                uploads below). -scriptuploads wins when both are given.\n");
+  fprintf(stderr, "-allow-unsafe-scripts - Run scenario scripts with the full Lua standard\n");
+  fprintf(stderr, "                library, no memory cap, no time limits and precompiled chunks\n");
+  fprintf(stderr, "                accepted. Reaches uploaded maps' scripts and -validate too;\n");
+  fprintf(stderr, "                -scriptuploads off still refuses uploads. A script a player\n");
+  fprintf(stderr, "                sends runs its top level the moment it lands, before any host\n");
+  fprintf(stderr, "                picks it. Only for trusted content.\n");
   fprintf(stderr, "-validate <File> - Check the scenario script beside a map and exit without\n");
   fprintf(stderr, "                starting a server. Each problem is printed as\n");
   fprintf(stderr, "                file:line: key: message. Exits 0 when the map is\n");
   fprintf(stderr, "                playable, 1 when it is not.\n");
+  fprintf(stderr, "-pack <File>  - Write the scenario script beside a map into the map file\n");
+  fprintf(stderr, "                itself and exit without starting a server. The manifest\n");
+  fprintf(stderr, "                comes from the script's own scenario table, and a\n");
+  fprintf(stderr, "                container already on the map is replaced. A script with\n");
+  fprintf(stderr, "                problems against it is not packed. Exits 0 when the map\n");
+  fprintf(stderr, "                was packed, 1 when it was not.\n");
 
   fprintf(stderr, "\nGame rules:\n");
   fprintf(stderr, "-gametype <T> - Specifies the game type: \"Open\" or \"Tournament\" or \"Strict\"\n");
@@ -672,10 +706,11 @@ void printArgs() {
   fprintf(stderr, "                Valid: gametype, ai, mines, timelimit (alias: limit),\n");
   fprintf(stderr, "                autolock, password, ranked, openhost, map, pillview,\n");
   fprintf(stderr, "                baseview, allyview, classicmode, alliesintrees,\n");
-  fprintf(stderr, "                overviewwindow, lineofsight, smartpings.\n");
+  fprintf(stderr, "                overviewwindow, lineofsight, smartpings,\n");
+  fprintf(stderr, "                positionalsound.\n");
   fprintf(stderr, "                Locking pillview, baseview, allyview, alliesintrees,\n");
-  fprintf(stderr, "                overviewwindow or lineofsight also locks classicmode,\n");
-  fprintf(stderr, "                which writes those values.\n");
+  fprintf(stderr, "                overviewwindow, lineofsight or positionalsound also\n");
+  fprintf(stderr, "                locks classicmode, which writes those values.\n");
   fprintf(stderr, "                e.g. -lock gametype,ranked,map\n");
   fprintf(stderr, "-maxplayers <N> - Specifies the maximum number of players that can be on this\n");
   fprintf(stderr, "                server.\n");
@@ -700,22 +735,42 @@ void printArgs() {
   fprintf(stderr, "-overviewwindow <M> - Map overview live block: expanded, classic (default), none\n");
   fprintf(stderr, "-lineofsight  - Buildings and stands of trees block sight inside the live\n");
   fprintf(stderr, "                block. Off by default, and off under -classicmode.\n");
+  fprintf(stderr, "-positionalsound- Sounds tell each player which side they are on and\n");
+  fprintf(stderr, "                roughly how far. Off by default (every sound centred),\n");
+  fprintf(stderr, "                and off under -classicmode.\n");
   fprintf(stderr, "-smartpingsoff- Refuse smart pings for the whole server. Off by default,\n");
   fprintf(stderr, "                i.e. pings are allowed. Not part of -classicmode.\n");
   fprintf(stderr, "-classicmode  - Classic Bolo view: sets pillview key, baseview off and\n");
   fprintf(stderr, "                allyview off, overriding those three switches, turns\n");
   fprintf(stderr, "                allies in trees off, sets the overview window to classic\n");
-  fprintf(stderr, "                with line of sight off, and stops the lobby changing them.\n");
+  fprintf(stderr, "                with line of sight off, turns positional sound off,\n");
+  fprintf(stderr, "                and stops the lobby changing them.\n");
 
   fprintf(stderr, "\nMap uploads (client-pushed maps in the lobby):\n");
   fprintf(stderr, "-uploadpolicy <P> - Client map-upload handling: \"off\" refuses uploads,\n");
   fprintf(stderr, "                \"allow\" plays the upload in memory and drops it on the next\n");
   fprintf(stderr, "                map change (default), \"persist\" also saves it to\n");
-  fprintf(stderr, "                data/maps/Uploads/.\n");
+  fprintf(stderr, "                <map root>/Uploads/, or the -uploaddir directory.\n");
+  fprintf(stderr, "-uploaddir <Dir> - Directory persisted maps are written to, used with\n");
+  fprintf(stderr, "                -uploadpolicy persist (default <map root>/Uploads).\n");
   fprintf(stderr, "-uploadmaxfiles <N> - Max stored upload files in persist mode (1-255,\n");
   fprintf(stderr, "                default 64).\n");
-  fprintf(stderr, "-uploadmaxstorage <MB> - Max upload storage in persist mode (1-4096 MB,\n");
+  fprintf(stderr, "-uploadmaxstorage <MB> - Max upload storage in persist mode (1-4095 MB,\n");
   fprintf(stderr, "                default 8).\n");
+
+  fprintf(stderr, "\nScript uploads (scripts players send in the lobby):\n");
+  fprintf(stderr, "-scriptuploads <P> - Player script handling: \"off\" refuses script uploads\n");
+  fprintf(stderr, "                and does not run a script carried by a map a client\n");
+  fprintf(stderr, "                uploaded (those maps play plainly, and each script turned\n");
+  fprintf(stderr, "                down is named), \"allow\" keeps them for the session\n");
+  fprintf(stderr, "                (default), \"persist\" keeps them for good.\n");
+  fprintf(stderr, "-scriptuploaddir <Dir> - Directory persisted scripts are written to.\n");
+  fprintf(stderr, "-scriptuploadmaxfiles <N> - Max stored script files in persist mode\n");
+  fprintf(stderr, "                (1-255, default 32).\n");
+  fprintf(stderr, "-scriptuploadmaxstorage <MB> - Max script storage in persist mode\n");
+  fprintf(stderr, "                (1-4095 MB, default 64).\n");
+  fprintf(stderr, "-noscriptsharing - Refuse players' requests for a copy of this server's\n");
+  fprintf(stderr, "                mods and scenarios. Sharing is on by default.\n");
 
   fprintf(stderr, "\nBots & AI:\n");
   fprintf(stderr, "-bots <N>     - Number of AI bot players to add (default: 0)\n");
@@ -1334,7 +1389,7 @@ static const char *overviewWindowArgWord(OverviewWindow window) {
    nothing it does starts anything. */
 static int validateMapAndReport(char *mapPath) {
   ServerSim *sim;
-  ScnValidateResult result;
+  ScnValidateResult *result;
   char script[SCN_SCRIPT_PATH_MAX];
   bool ok;
   uint16_t i;
@@ -1362,10 +1417,19 @@ static int validateMapAndReport(char *mapPath) {
     return 1;
   }
 
-  ok = scenarioValidateMap(sim, mapPath, &result);
+  /* On the heap rather than the stack: a result carries the whole manifest and
+     the issue list with it, which is more than this frame should hold. */
+  result = (ScnValidateResult *)malloc(sizeof(*result));
+  if (result == NULL) {
+    fprintf(stderr, "%s: out of memory reading the script\n", mapPath);
+    serverSimDestroy(sim);
+    return 1;
+  }
 
-  for (i = 0; i < result.count; i++) {
-    const ScnValidateIssue *issue = &result.issues[i];
+  ok = scenarioValidateMap(sim, mapPath, result);
+
+  for (i = 0; i < result->count; i++) {
+    const ScnValidateIssue *issue = &result->issues[i];
     if (issue->line > 0) {
       fprintf(stderr, "%s:%d: %s: %s\n", script, issue->line, issue->key,
               issue->message);
@@ -1374,20 +1438,94 @@ static int validateMapAndReport(char *mapPath) {
     }
   }
 
-  if (result.haveManifest == FALSE && result.count == 0) {
+  if (result->haveManifest == FALSE && result->count == 0) {
     fprintf(stderr, "%s: no scenario script beside it\n", mapPath);
   } else if (ok == TRUE) {
     fprintf(stderr, "%s: no problems\n", script);
-  } else if (result.dropped > 0) {
+  } else if (result->dropped > 0) {
     fprintf(stderr, "%s: %u problems, and %u more than the list holds\n",
-            script, (unsigned)result.count, (unsigned)result.dropped);
+            script, (unsigned)result->count, (unsigned)result->dropped);
   } else {
-    fprintf(stderr, "%s: %u problem%s\n", script, (unsigned)result.count,
-            (result.count == 1) ? "" : "s");
+    fprintf(stderr, "%s: %u problem%s\n", script, (unsigned)result->count,
+            (result->count == 1) ? "" : "s");
   }
 
+  free(result);
   serverSimDestroy(sim);
   return (ok == TRUE) ? 0 : 1;
+}
+
+/* How many bytes of the container -pack just wrote, read back off the file so
+   the line below says what landed rather than what was meant to. 0 when the
+   file cannot be read again, which is not a reason to call a pack that
+   succeeded a failure. */
+static size_t packedContainerLen(char *mapPath) {
+  FILE *fp;
+  long size;
+  uint8_t *buf;
+  size_t got;
+  const uint8_t *chunk = NULL;
+  size_t chunkLen = 0;
+
+  fp = fopen(mapPath, "rb");
+  if (fp == NULL) {
+    return 0;
+  }
+  if (fseek(fp, 0, SEEK_END) != 0 || (size = ftell(fp)) <= 0 ||
+      fseek(fp, 0, SEEK_SET) != 0) {
+    fclose(fp);
+    return 0;
+  }
+  buf = (uint8_t *)malloc((size_t)size);
+  if (buf == NULL) {
+    fclose(fp);
+    return 0;
+  }
+  got = fread(buf, 1, (size_t)size, fp);
+  fclose(fp);
+  if (got != (size_t)size ||
+      scnPackageFindInMap(buf, got, &chunk, &chunkLen) == FALSE) {
+    chunkLen = 0;
+  }
+  free(buf);
+  return chunkLen;
+}
+
+/* One map's scenario written into the map, for -pack. Returns what the process
+   exits with: 0 for a map that was packed, 1 for one that was not. Nothing
+   else in the server is running by the time this is called, and nothing it
+   does starts anything. */
+static int packMapAndReport(char *mapPath) {
+  char err[512];
+  size_t containerLen;
+
+#ifdef USING_SDL
+  /* The sim the pack reads the map through builds its locks through SDL.
+     Nothing here needs a subsystem. */
+  if (!SDL_Init(0)) {
+    fprintf(stderr, "Error starting SDL - %s\n", SDL_GetError());
+    return 1;
+  }
+#endif
+  /* The debug file the server opens is a server's; a pack writes nothing to
+     it. */
+  setWriteToDebugFileStream(-1);
+
+  err[0] = '\0';
+  if (scnPackMap(mapPath, err, sizeof(err)) == FALSE) {
+    fprintf(stderr, "%s\n",
+            (err[0] != '\0') ? err : "the map could not be packed");
+    return 1;
+  }
+
+  containerLen = packedContainerLen(mapPath);
+  if (containerLen > 0) {
+    fprintf(stderr, "%s: packed, %lu bytes of scenario on the end of it\n",
+            mapPath, (unsigned long)containerLen);
+  } else {
+    fprintf(stderr, "%s: packed\n", mapPath);
+  }
+  return 0;
 }
 
 int main(int argc, char **argv) {
@@ -1403,14 +1541,33 @@ int main(int argc, char **argv) {
   wb_log_init("WinBolo", "WinBoloDS", "winbolods.log");
   atexit(wb_log_shutdown);
 
-  /* -validate <map> checks a map's scenario script and exits. It is answered
-     here, ahead of the argument checks a server start needs, so a map can be
-     checked without a port and a game type to go with it — and before any of
+  /* -allow-unsafe-scripts: scenario scripts run with the full Lua library and
+     no memory or time limits, uploaded maps' scripts included. Set ahead of
+     -validate and -pack below, because the check they make boots a state as
+     well and reads the same switch. Said loudly, as -allow-unsafe-brains is. */
+  if ((argExist(argc, argv, "allow-unsafe-scripts") == TRUE) ||
+      (argExist(argc, argv, "-allow-unsafe-scripts") == TRUE)) {
+    scenarioHostSetUnsafeScripts(true);
+    fprintf(stderr,
+            "Note: -allow-unsafe-scripts — scenario scripts, including those "
+            "in uploaded maps, now run with the full Lua library and no memory "
+            "or time limits. Only run a server this way with content you "
+            "trust.\n");
+  }
+
+  /* -validate <map> checks a map's scenario script and exits, and -pack <map>
+     writes that script into the map file and exits. Both are answered here,
+     ahead of the argument checks a server start needs, so a map can be checked
+     or packed without a port and a game type to go with it — and before any of
      the network, the tracker, mDNS or a window is brought up. */
   {
     int validateArg = findArg(argc, argv, "validate");
+    int packArg = findArg(argc, argv, "pack");
     if (validateArg != ARG_NOT_FOUND) {
       return validateMapAndReport((char *) argv[validateArg]);
+    }
+    if (packArg != ARG_NOT_FOUND) {
+      return packMapAndReport((char *) argv[packArg]);
     }
   }
 
@@ -1650,7 +1807,7 @@ int main(int argc, char **argv) {
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
-    serverSim = serverSimCreateCompressed(emap, 5097, "Everard Island", game, hiddenMines, srtDelay, gmeLen);
+    serverSim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island", game, hiddenMines, srtDelay, gmeLen);
     if (serverSim == NULL) {
       fprintf(stderr, "Error starting server simulation (inbuilt map)\n");
 #ifdef USING_SDL
@@ -1729,12 +1886,47 @@ int main(int argc, char **argv) {
   if (argExist(argc, argv, "noscenarios") == TRUE) {
     scenarioHostSetEnabled(false);
   }
+  /* -scriptuploads: the narrower one. Under off a map a client sent plays
+     plainly whatever it carries, and the operator's own maps are untouched.
+     -nouploadscripts is the old spelling of off, used when no word is given.
+     Resolved here rather than beside the map-upload flags below because the
+     host switch has to be set before the first attach, for the same reason
+     as -noscenarios; the same value goes into the instance config below. */
+  const int scriptPolicyArg = findArg(argc, argv, "scriptuploads");
+  const ScriptUploadPolicy scriptUploadPolicy = scriptUploadPolicyResolve(
+      scriptPolicyArg != ARG_NOT_FOUND ? (char *)argv[scriptPolicyArg] : NULL,
+      argExist(argc, argv, "nouploadscripts") == TRUE);
+  scenarioHostSetUploadScriptsEnabled(scriptUploadPolicy != SCRIPT_UPLOAD_OFF);
   /* And the question the map lister asks of every map it finds, so the list
      a player picks from says which maps are scripted. Registered here rather
      than at the attach below: an attach answers NULL for a map with no
      script, so a server whose own map is plain would report every scripted
      map in its directory as plain. */
   scenarioHostRegisterMapScripted(serverSim);
+  /* And the read of the scenarios directory, so a client asking what this
+     server offers on its own is answered. Registered in the same place and
+     for the same reason: what the list holds has nothing to do with whichever
+     map is loaded.
+
+     -moddir names that directory; without it the sim's own default,
+     data/scenarios, stands. Either way the mods that ship with the build are
+     read behind it, so a server that names nothing still offers those. A
+     directory that is not there is not an error — it means this server
+     offers none of its own, which is the ordinary case.
+
+     -scenariodir is what this argument was called before mods and scenarios
+     were one directory. Still taken, so a startup script written against it
+     keeps working; -moddir wins when both are given. */
+  {
+    int argNum = findArg(argc, argv, "moddir");
+    if (argNum == ARG_NOT_FOUND) {
+      argNum = findArg(argc, argv, "scenariodir");
+    }
+    if (argNum != ARG_NOT_FOUND) {
+      serverSimSetScenarioDir(serverSim, argv[argNum]);
+    }
+  }
+  scenarioHostRegisterScenarioLister(serverSim);
 
   /* A scenario script beside the map, when the map came from a file and one
      is there. No script is the ordinary case and says nothing; a script
@@ -1906,13 +2098,15 @@ int main(int argc, char **argv) {
         else if (strcmp(lo, "overviewwindow") == 0) serverLocks |= LOBBY_LOCK_OVERVIEW_WINDOW;
         else if (strcmp(lo, "lineofsight") == 0) serverLocks |= LOBBY_LOCK_LINE_OF_SIGHT;
         else if (strcmp(lo, "smartpings") == 0) serverLocks |= LOBBY_LOCK_SMART_PINGS;
+        else if (strcmp(lo, "mods") == 0)      serverLocks |= LOBBY_LOCK_MODS;
+        else if (strcmp(lo, "positionalsound") == 0) serverLocks |= LOBBY_LOCK_POSITIONAL_SOUND;
         else {
           fprintf(stderr,
                   "Warning: unknown -lock name '%s' (valid: gametype, "
                   "ai, mines, timelimit, autolock, password, ranked, "
                   "openhost, map, pillview, baseview, allyview, "
                   "classicmode, alliesintrees, overviewwindow, "
-                  "lineofsight, smartpings)\n", lo);
+                  "lineofsight, smartpings, mods, positionalsound)\n", lo);
         }
       }
       /* Locking any visibility setting locks classicmode too, because
@@ -1923,7 +2117,8 @@ int main(int argc, char **argv) {
       if (implied != serverLocks) {
         fprintf(stderr,
                 "Note: -lock of pillview / baseview / allyview / "
-                "alliesintrees / overviewwindow / lineofsight also "
+                "alliesintrees / overviewwindow / lineofsight / "
+                "positionalsound also "
                 "locks classicmode, which writes those values.\n");
         serverLocks = implied;
       }
@@ -2032,12 +2227,20 @@ int main(int argc, char **argv) {
     serverSimSetLineOfSight(serverSim, (uint8_t)lineOfSightBuildingsAndTrees);
   }
 
+  /* -positionalsound: sounds carry which side they are on and a banded
+   * distance. Applied before -classicmode so classic mode wins when both
+   * are on the same command line. Only set when the flag is present — the
+   * sim default is off. */
+  if (argExist(argc, argv, "positionalsound") == TRUE) {
+    serverSimSetPositionalSound(serverSim, true);
+  }
+
   /* -smartpingsoff: the whole server refuses CMD_PING. Set here, before
    * serverInstanceStartup, so the lobby snapshot captures it — a value set
    * after that is not in originalLobbySettings and the next reset to
    * defaults would turn pings back on. Only set when the flag is present;
    * the sim default is allowed. Classic mode does not touch this: smart
-   * pings are not one of the six settings it writes. */
+   * pings are not one of the seven settings it writes. */
   if (argExist(argc, argv, "smartpingsoff") == TRUE) {
     serverSimSetSmartPingsOff(serverSim, true);
   }
@@ -2151,6 +2354,10 @@ int main(int argc, char **argv) {
       if (poolsLoaded) {
         fprintf(stderr, "Loaded %d bot name pool(s)\n", poolStats.poolsKept);
       }
+      /* The sim was made further up, before these pools were loaded, so
+       * the catalogue copy it took then holds the built-in pools. Take it
+       * again so joiners are offered the pools loaded here. */
+      serverSimRefreshBotPools(serverSim);
     }
     /* If no -brain specified but AI is enabled, auto-discover a brain path
      * so that lobby "Add Bot" requests have a brain to use. */
@@ -2239,6 +2446,10 @@ int main(int argc, char **argv) {
     UploadPolicy uploadPolicy = UPLOAD_POLICY_ALLOW;
     uint8_t      uploadMaxFiles = 0;        /* 0 = leave transport default */
     uint32_t     uploadMaxStorageBytes = 0; /* 0 = leave transport default */
+    const char  *uploadDir = NULL;          /* NULL = <map root>/Uploads */
+    uint8_t     scriptUploadMaxFiles = 0;        /* 0 = leave transport default */
+    uint32_t     scriptUploadMaxStorageBytes = 0; /* 0 = leave transport default */
+    const char  *scriptUploadDir = NULL;
 
     {
       int policyArg = findArg(argc, argv, "uploadpolicy");
@@ -2274,17 +2485,61 @@ int main(int argc, char **argv) {
       }
     }
     {
+      /* 4095, not 4096: the cap is held as bytes in a uint32_t, and 4096 MB
+         is 2^32, which wraps to 0 and would read as "keep the default". */
       int storageArg = findArg(argc, argv, "uploadmaxstorage");
       if (storageArg != ARG_NOT_FOUND) {
         int v = atoi((char *)argv[storageArg]);
         if (v < 1) {
           fprintf(stderr, "-uploadmaxstorage %d out of range; clamping to 1\n", v);
           v = 1;
-        } else if (v > 4096) {
-          fprintf(stderr, "-uploadmaxstorage %d out of range; clamping to 4096\n", v);
-          v = 4096;
+        } else if (v > 4095) {
+          fprintf(stderr, "-uploadmaxstorage %d out of range; clamping to 4095\n", v);
+          v = 4095;
         }
         uploadMaxStorageBytes = (uint32_t)v * 1024u * 1024u;
+      }
+    }
+    {
+      int dirArg = findArg(argc, argv, "uploaddir");
+      if (dirArg != ARG_NOT_FOUND) {
+        uploadDir = (const char *)argv[dirArg];
+      }
+    }
+    {
+      int dirArg = findArg(argc, argv, "scriptuploaddir");
+      if (dirArg != ARG_NOT_FOUND) {
+        scriptUploadDir = (const char *)argv[dirArg];
+      }
+    }
+    {
+      int filesArg = findArg(argc, argv, "scriptuploadmaxfiles");
+      if (filesArg != ARG_NOT_FOUND) {
+        int v = atoi((char *)argv[filesArg]);
+        if (v < 1) {
+          fprintf(stderr, "-scriptuploadmaxfiles %d out of range; clamping to 1\n", v);
+          v = 1;
+        } else if (v > 255) {
+          fprintf(stderr, "-scriptuploadmaxfiles %d out of range; clamping to 255\n", v);
+          v = 255;
+        }
+        scriptUploadMaxFiles = (uint8_t)v;
+      }
+    }
+    {
+      /* 4095, not 4096: the cap is held as bytes in a uint32_t, and 4096 MB
+         is 2^32, which wraps to 0 and would read as "keep the default". */
+      int storageArg = findArg(argc, argv, "scriptuploadmaxstorage");
+      if (storageArg != ARG_NOT_FOUND) {
+        int v = atoi((char *)argv[storageArg]);
+        if (v < 1) {
+          fprintf(stderr, "-scriptuploadmaxstorage %d out of range; clamping to 1\n", v);
+          v = 1;
+        } else if (v > 4095) {
+          fprintf(stderr, "-scriptuploadmaxstorage %d out of range; clamping to 4095\n", v);
+          v = 4095;
+        }
+        scriptUploadMaxStorageBytes = (uint32_t)v * 1024u * 1024u;
       }
     }
 
@@ -2305,6 +2560,13 @@ int main(int argc, char **argv) {
     instCfg.uploadPolicy          = uploadPolicy;
     instCfg.uploadMaxFiles        = uploadMaxFiles;
     instCfg.uploadMaxStorageBytes = uploadMaxStorageBytes;
+    instCfg.uploadPersistDir      = uploadDir;
+    instCfg.scriptUploadPolicy          = scriptUploadPolicy;
+    instCfg.scriptUploadMaxFiles        = scriptUploadMaxFiles;
+    instCfg.scriptUploadMaxStorageBytes = scriptUploadMaxStorageBytes;
+    instCfg.scriptUploadDir             = scriptUploadDir;
+    instCfg.noScriptSharing             =
+        (argExist(argc, argv, "noscriptsharing") == TRUE);
     instCfg.skipLobby           = skipLobby;
     instCfg.emptyResetEnabled   = emptyResetEnabled;
     instCfg.hasPassword         = (pass[0] != '\0');
@@ -2435,8 +2697,8 @@ int main(int argc, char **argv) {
      Before the operator's -bots, which take the seats above these.
 
      The headless makes the same call after its own player has joined: that
-     binary plays as well as hosts and its player has to hold slot 0, which a
-     horde seated first would take. Nobody plays from here — every
+     binary plays as well as hosts and its player has to hold slot 0, which
+     bots seated first would take. Nobody plays from here — every
      participant joins over the wire — so there is no slot to keep back.
 
      Not on a server that skipped the lobby: its round started inside the
@@ -2686,20 +2948,25 @@ int main(int argc, char **argv) {
        * flags off is the pre-manifest "hard" exactly as before. */
       BrainModes botModes;
       brainListLoadModesForPath(brainPath, &botModes);
-      uint8_t botMode = 0;
+      /* No -mode: the game type's starting mode (an Open game starts in the
+       * brain's open_default, brainModesStartMode). Read from the sim, not
+       * -gametype: an attached scenario has already put the sim on its own
+       * type. -mode always wins. */
+      uint8_t botMode = (uint8_t)brainModesStartMode(
+          &botModes, serverSimGetGameType(serverSim) == gameOpen);
       if (argExist(argc, argv, "mode") == TRUE) {
         int mArg = findArg(argc, argv, "mode");
         if (mArg != ARG_NOT_FOUND && argv[mArg][0] != '-') {
           int found = brainModesFindMode(&botModes, (const char *)argv[mArg]);
           if (found < 0) {
             fprintf(stderr, "Warning: -mode '%s' is not a mode this brain declares; using '%s'\n",
-                    (const char *)argv[mArg], botModes.modes[0].key);
+                    (const char *)argv[mArg], botModes.modes[botMode].key);
           } else {
             botMode = (uint8_t)found;
           }
         } else {
           fprintf(stderr, "Warning: -mode given with no value; using '%s'\n",
-                  botModes.modes[0].key);
+                  botModes.modes[botMode].key);
         }
       }
       /* The mode's own default level — "hard" for the default mode, which
@@ -2846,6 +3113,13 @@ int main(int argc, char **argv) {
       } else {
         fprintf(stderr, "Added %d bot(s) with brain '%s'\n", numBots, brainPath);
       }
+      /* Each bot reserved a lobby start as it was added, on team 0 and so
+       * with no side; -allybots and -teams then moved it with the batch
+       * setter, which leaves that reservation where it was. Pick again for
+       * the teams the bots are on now, or a team with a side starts a bot
+       * on the other team's. Only a lobby server has reservations: a
+       * -nolobby round is already running here and this does nothing. */
+      serverSimRepickAllLobbyStarts(serverSim);
     } else if (numBots > 0) {
       fprintf(stderr, "Warning: -bots specified but no -brain path given\n");
     }

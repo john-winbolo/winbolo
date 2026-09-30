@@ -95,10 +95,11 @@ struct GameSim;
  * though the tank doesn't physically occupy those corners; the circle rejects
  * those corner cases.
  *
- * Used by tank.c (tankIsTankHit / tankIsTankHitAtPosition and the circle
- * building resolver), util.c (utilIsTankHit, used by pillbox AI shell
- * prediction) and client_sim.c (predicted-shell visual-block sweep). Keep
- * these in sync. */
+ * This is the classic default of the tank_hit_radius rule, which is what
+ * tank.c (tankIsTankHit / tankIsTankHitAtPosition and the circle building
+ * resolver) and client_sim.c (predicted-shell visual-block sweep) read.
+ * util.c's utilIsTankHit, used by pillbox aim prediction, is handed the
+ * same number by its caller. */
 #define TANK_HIT_RADIUS         112   /* one-tile mid-radius (128) − 16 wu (1 game unit) */
 #define TANK_HIT_RADIUS_SQUARED (TANK_HIT_RADIUS * TANK_HIT_RADIUS)
 
@@ -178,7 +179,7 @@ based on my testing.
 #define GUNSIGHT_MIN 2
 #define GUNSIGHT_MAX 14
 
-/* It takes 10 game ticks for the tank to reload */
+/* It takes 13 game ticks for the tank to reload */
 #define TANK_RELOAD_TIME 13
 
 /* Game ticks the `justFired` flag stays non-zero after firing a shell.
@@ -204,12 +205,24 @@ based on my testing.
 /* Shells + mines must be greater then 20 for a big explosion */
 #define TANK_BIG_EXPLOSION_THRESHOLD 20
 
-/* Amount of damage a mine does to the tank */
-#define MINE_DAMAGE 10
+/* Normal mine damage; a fatal hit is reduced to two-thirds in tankMineDamage. */
+#define MINE_DAMAGE 15
 
-/* Number of map squares around the tank postion that a mine can hurt a tank */
-#define MINE_DAMAGE_DISTANCE_LEFT 0 /* was -1 */
-#define MINE_DAMAGE_DISTANCE_RIGHT 0 /* Was 1 */
+/* How far from a mine's centre, on each axis in world units, a tank is
+   still hurt by it. Mac Bolo: less than one map square. Replaces the two
+   MINE_DAMAGE_DISTANCE_* constants, which nothing read - the test was a
+   bare 256 in tankMineDamage. */
+#define MINE_DAMAGE_RANGE 256
+
+/* What a fatal mine hit is divided down by. Mac Bolo: three hits unless
+   fatal, then two, so a blow bigger than the armour left has a third of
+   itself taken off. One leaves a fatal hit at full strength. */
+#define MINE_FATAL_DIVISOR 3
+
+/* What a tank loses to the water each time it has been wading for
+   TANK_WATER_TIME. */
+#define TANK_WATER_LOSS_SHELLS 1
+#define TANK_WATER_LOSS_MINES 1
 
 /* Tank slows down a speed unit if it hits a wall */
 #define TANK_WALL_SLOW_DOWN 1
@@ -262,6 +275,8 @@ typedef struct {
 #define TANK_MIN_MOVE_SPEED       6      /* Minimum residual speed before movement occurs */
 #define TANK_MAX_NUDGE_ITERATIONS 5      /* Max building nudge correction passes per tick */
 #define TANK_BUMP_DECAY_SHIFT     2      /* Bump decay rate: >>2 = 25% reduction per tick */
+#define TANK_SLIDE_MAC            0      /* 0 the WinBolo shell push, 1 the Mac Bolo one */
+#define TANK_SLIDE_ARMOUR_BONUS   32     /* Extra Mac Bolo push step at zero armour */
 #define TANK_PILL_PICKUP_INSET    16     /* Pill-pickup reach from tank centre in WORLD units (16 = 1 pixel tolerance past the centre tile) */
 
 typedef enum {
@@ -724,8 +739,10 @@ void tankSetWorld(struct GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE a
 *  y      - Y co-ord of shell
 *  angle  - The direction the shell came from
 *  owner  - Shells owner
+*  pill   - The pill index of the pillbox that fired it,
+*           DMG_NO_PILL for a tank's shell
 *********************************************************/
-tankHit tankIsTankHit(struct GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angle, BYTE owner);
+tankHit tankIsTankHit(struct GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angle, BYTE owner, BYTE pill);
 
 /*********************************************************
 *NAME:          tankIsTankHitAtPosition
@@ -743,11 +760,31 @@ tankHit tankIsTankHit(struct GameSim *sim, tank *value, WORLD x, WORLD y, TURNTY
 *  shellY - Y co-ord of shell
 *  angle  - The direction the shell came from
 *  owner  - Shells owner
+*  pill   - The pill index of the pillbox that fired it,
+*           DMG_NO_PILL for a tank's shell
 *********************************************************/
 tankHit tankIsTankHitAtPosition(struct GameSim *sim, tank *value,
                                  WORLD tankX, WORLD tankY,
                                  WORLD shellX, WORLD shellY,
-                                 TURNTYPE angle, BYTE owner);
+                                 TURNTYPE angle, BYTE owner, BYTE pill);
+
+/*********************************************************
+*NAME:          tankShellInHitZone
+*PURPOSE:
+*  Whether a shell at shellX, shellY lands on this tank if
+*  the tank stood at tankX, tankY: inside the hit zone and
+*  the tank alive. The test the two above make before they
+*  deal any damage, asked on its own.
+*
+*ARGUMENTS:
+*  value  - Pointer to the tank structure
+*  tankX  - Tank X position to check against
+*  tankY  - Tank Y position to check against
+*  shellX - X co-ord of shell
+*  shellY - Y co-ord of shell
+*********************************************************/
+bool tankShellInHitZone(struct GameSim *sim, tank *value, WORLD tankX,
+                        WORLD tankY, WORLD shellX, WORLD shellY);
 
 /*********************************************************
 *NAME:          tankNetTankHit
@@ -1567,9 +1604,11 @@ BYTE tankReloadTicks(struct GameSim *sim, tank value);
 *  owner  - Slot that dealt it, or NEUTRAL
 *  victim - Slot taking it
 *  cause  - A LAST_DEATH_BY_* value naming the blow
+*  pill   - The pill index whose shell it was, or
+*           DMG_NO_PILL
 *********************************************************/
 BYTE tankDamageAmount(struct GameSim *sim, BYTE base, BYTE owner, BYTE victim,
-                      BYTE cause);
+                      BYTE cause, BYTE pill);
 
 /*********************************************************
 *NAME:          tankBoatExitSpeed

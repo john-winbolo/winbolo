@@ -52,6 +52,7 @@
 #include "platform_net.h"
 #include "client_render.h"
 #include "client_frontend_tick.h"
+#include "client_frontend_render.h"
 #include "client_sim.h"
 #include "frontend.h"
 #include "tutorial.h"
@@ -80,8 +81,11 @@
 #include "../winbolo.h"
 #include "sdl3draw.h"
 #include "sdl3imgui.h"
+#include "dialogs/dialog_quit.h"
 #include "../tiles.h"
 #include "luabrainshandler.h"
+#include "workshop_sync.h"
+#include "../../scenario/scenario_host.h"
 #include "bg_game.h"
 #include "cursor.h"
 
@@ -118,6 +122,8 @@ bool showGunsight = FALSE;
 
 /* Whether the sound effects are turned on or not */
 bool soundEffects = TRUE;
+/* Whether sound effects are panned by where they happen */
+bool positionalSound = TRUE;
 /* Do we play background sound */
 bool backgroundSound = TRUE;
 
@@ -193,6 +199,8 @@ static bool doingTutorial = FALSE;
 
 /* Time to quit */
 static bool winboloQuit = FALSE;
+/* Raised only by windowSetQuitting — see windowIsQuitting below. */
+static bool quitRequested = FALSE;
 static bool finishedLoop = FALSE;
 
 /* Set on SDL_EVENT_WILL_ENTER_BACKGROUND, cleared by
@@ -353,6 +361,12 @@ int main(int argc, char *argv[]) {
    * Process exit reclaims it; no matching cleanup needed. */
   bolo_net_init();
 
+  /* Every dialog runs its own event loop; this is what a quit seen in one of
+   * them does.  Registered rather than called directly because the same
+   * dialogs are linked into the standalone Log Viewer and Map Editor, which
+   * have no main loop to end. */
+  dialogSetQuitHandler(windowSetQuitting);
+
   /* Steam launches a "join game" / "connect to server" as a fresh process
    * with the rich-presence connect string on the command line:
    *     winbolo +connect host:port
@@ -378,6 +392,20 @@ int main(int argc, char *argv[]) {
     if (strcmp(argv[i], "--allow-unsafe-brains") == 0 ||
         strcmp(argv[i], "-allow-unsafe-brains") == 0) {
       luaBrainsSetAllowUnsafe(1);
+      continue;
+    }
+    /* The same opt-out for the scenario scripts a game this client hosts
+     * runs: the full Lua library and no memory or time limits, uploaded maps'
+     * scripts included. One answer for the process, set here before any game
+     * is hosted. */
+    if (strcmp(argv[i], "--allow-unsafe-scripts") == 0 ||
+        strcmp(argv[i], "-allow-unsafe-scripts") == 0) {
+      scenarioHostSetUnsafeScripts(true);
+      fprintf(stderr,
+              "Note: --allow-unsafe-scripts — scenario scripts, including those "
+              "in uploaded maps, now run with the full Lua library and no "
+              "memory or time limits. Only run a server this way with content "
+              "you trust.\n");
       continue;
     }
     /* The voice capture-chain recorder. Both switches take a value, and both
@@ -459,6 +487,10 @@ int main(int argc, char *argv[]) {
     /* Auto-connect once the pre-filled join dialog opens (see callback). */
     gameFrontRequestUdpAutoJoin();
   }
+  /* Bring the Workshop directory up to date with what the player is
+     subscribed to, so the first listing already offers it. Later changes
+     arrive through workshopSyncPoll. */
+  workshopSyncRun();
   /* Steam Input (Path A): start in Menu set — game launches into the
      main menu / lobby UI.  In-game switch handled per-frame in
      sdl3ImguiPumpAndRender.  No-op when running without the SDK. */
@@ -551,6 +583,14 @@ int main(int argc, char *argv[]) {
       const DialogBackend *db = dialogBackendGet();
       int lobbyResult = db->lobbyShow(cs);
       if (lobbyResult == 0) {
+        /* The lobby closes the same way whether the player left the game or
+         * quit the application, so ask which it was before the line below
+         * overwrites the answer.  A quit skips the restart and tears the
+         * session down for good. */
+        if (windowIsQuitting()) {
+          gameFrontEnd(&keys, FALSE, TRUE);
+          break;
+        }
         /* Player chose to leave — fall through to normal cleanup.
          * gamePlayed=FALSE because no tank exists during lobby. */
         winboloQuit = FALSE;  /* Signal that we want to return to menu */
@@ -724,10 +764,15 @@ int main(int argc, char *argv[]) {
       /* Clear any leftover ImGui nav focus so keyboard input
          reaches the game immediately (not captured by ImGui). */
       sdl3ImguiClearNavFocus();
+      /* Every game view opens here, the first and each one after a return
+         to the lobby, which keeps the ClientSim and so never reaches
+         frontEndSetActiveClientSim. */
+      sdl3ImguiNewGame(cs);
 
       while (done == FALSE) {
         sdl3ImguiProcessEvents(cs);
         steam_run_callbacks();
+        workshopSyncPoll();
         /* Steam overlay open/close (updated by steam_run_callbacks above):
            pause a single-player game — freezing both the client and the
            server tick — and rebase the wallclock on close so the catch-up
@@ -791,7 +836,7 @@ int main(int argc, char *argv[]) {
           DWORD tick = SDL_GetTicks();
           clientMutexWaitFor();
           if (finishedLoop == FALSE) {
-            clientSimRenderPrepare(cs, tick);
+            clientFrontRenderPrepare(cs, tick);
             clientRenderFrame(cs, redraw);
           }
           clientMutexRelease();
@@ -854,8 +899,10 @@ int main(int argc, char *argv[]) {
     timerFrameID = 0;
 
     /* If returning to lobby after game-over, skip full teardown
-     * and loop back to show the lobby dialog again. */
-    if (returnToLobby) {
+     * and loop back to show the lobby dialog again.  Not if the player quit:
+     * the round can drain to the lobby in the same frame the quit arrives,
+     * and the line below would answer winboloQuit for them. */
+    if (returnToLobby && !windowIsQuitting()) {
       gameFrontSaveTankPrefs(cs);
       sdl3ImguiCleanup();
       winboloQuit = FALSE;
@@ -975,7 +1022,9 @@ static void windowRunGameTick(ClientSim *cs) {
                                "Returning to menu.",
                       IMGUI_MSG_ERROR, IMGUI_MSG_OK);
     finishedLoop = TRUE;
-    winboloQuit = FALSE;
+    /* The message box above runs a loop of its own, so the player can quit
+     * from it.  Returning to the menu is only the answer if they didn't. */
+    if (!quitRequested) winboloQuit = FALSE;
     return;
   }
 
@@ -1065,8 +1114,22 @@ void *windowWnd(void) {
  * windowSetQuitting — signal the main loop to exit
  * ------------------------------------------------------- */
 void windowSetQuitting(void) {
+  quitRequested = TRUE;
   winboloQuit = TRUE;
   finishedLoop = TRUE;
+}
+
+/* -------------------------------------------------------
+ * windowIsQuitting — did the player ask to quit?
+ *
+ * Not the same question as winboloQuit, which the game loop
+ * sets TRUE on the way in as its default answer: a loop that
+ * ends with nobody saying otherwise ends the application.
+ * quitRequested is only ever raised by windowSetQuitting, so
+ * it still means what it says while a game is running.
+ * ------------------------------------------------------- */
+bool windowIsQuitting(void) {
+  return quitRequested;
 }
 
 /* -------------------------------------------------------
@@ -1123,7 +1186,7 @@ void windowResumeForeground(ClientSim *cs) {
                       "Returning to menu.",
                       IMGUI_MSG_ERROR, IMGUI_MSG_OK);
     finishedLoop = TRUE;
-    winboloQuit = FALSE;
+    if (!quitRequested) winboloQuit = FALSE;
   } else {
     /* Single-player / tutorial / main menu: reset the catchup-loop
        wallclock baseline so the while ((ttick - oldTick) > GAME_TICK_LENGTH)
@@ -1713,6 +1776,10 @@ void windowSoundEffects_toggle(void) {
   soundEffects = !soundEffects;
 }
 
+void windowPositionalSound_toggle(void) {
+  positionalSound = !positionalSound;
+}
+
 void windowBackgroundSoundChange_toggle(void) {
   backgroundSound = !backgroundSound;
   if (soundEffects == TRUE) {
@@ -2175,9 +2242,20 @@ void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE a
 }
 
 void frontEndPlaySound(ClientSim *cs, sndEffects value) {
+  frontEndPlaySoundPan(cs, value, SOUND_GAIN_UNITY, SOUND_GAIN_UNITY);
+}
+
+void frontEndPlaySoundPan(ClientSim *cs, sndEffects value,
+                          uint16_t gainL, uint16_t gainR) {
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (soundEffects == TRUE) {
-    soundPlayEffect(value);
+    /* The player has turned positional sound off, so every sound plays
+       centred; the near/far variant is already chosen. */
+    if (!positionalSound) {
+      gainL = SOUND_GAIN_UNITY;
+      gainR = SOUND_GAIN_UNITY;
+    }
+    soundPlayEffectPan(value, gainL, gainR);
   }
 }
 

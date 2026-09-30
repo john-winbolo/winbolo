@@ -11,9 +11,14 @@ the simulation.
 
 ## Container
 
-A `.wbv` file is a standard **ZIP archive** (DEFLATE) containing a single member
+A `.wbv` file is a standard **ZIP archive** (DEFLATE) whose main member is
 named `log.dat`. Because it is ordinary ZIP, the payload can be extracted with
 any unzip tool.
+
+A logged round also carries `attribution.trk`
+(`src/bolo/public/attribution_track.h`), and a round that ran scripts
+carries `scripts.json`, described below. Both are written by `logStop`
+after `log.dat` is closed.
 
 Files are named `<timestamp>_<mapname>.wbv`, e.g.
 `20260609t015459_DH-Oil_Rig.wbv`.
@@ -23,6 +28,57 @@ Files are named `<timestamp>_<mapname>.wbv`, e.g.
 | Writing | `src/bolo/log.c` (`logStart`, `logWriteSnapshot`, `logAddEvent`, `logWriteTick`) |
 | Reading | `src/logviewer/blocks.c` (ZIP open + decompress), `src/logviewer/screen.c` (`lv_logLoad`, `lv_screenProcessLog`) |
 | Constants | `src/bolo/public/log.h`, `src/logviewer/lv_log.h` |
+
+### `scripts.json`
+
+What the scripts of a scripted round were. The scenario host builds the
+text at the end of a round boot that loaded its scripts and hands it to
+the sim (`serverSimSetScenarioRecordText`); `logStop` writes it as this
+member. A round that ran no script has no text, so a plain round's
+archive has no `scripts.json` — including a plain round that follows a
+scripted one on the same server, and a lobby-only log. Text over
+`SCN_RECORD_TEXT_MAX` (256 KiB, `src/bolo/public/scripts_record.h`) is
+not stored and so not written.
+
+The log viewer reads the member when it opens the recording, alongside
+`attribution.trk` (`src/logviewer/blocks.c`), into `LvScripts` on its state
+(`src/logviewer/logviewer.h`). A member that is absent, over the cap, not
+JSON or of another version leaves the viewer without one, and the recording
+plays as it would have without it.
+
+With Options → Regions on, the viewer outlines each of the member's `regions`
+on the map with its name; a region a script defines while the round runs is
+not in the member and is not drawn.
+
+```json
+{
+  "version": 1,
+  "map": "Survival.map",
+  "mods_enabled": true,
+  "rules": { "tank_reload_ticks": 8 },
+  "regions": [ { "name": "keep", "x": 100, "y": 100, "w": 12, "h": 12,
+                 "file": "Survival.map" } ],
+  "scripts": [
+    { "file": "Survival.map", "source": "map", "kind": "scenario",
+      "manifest": { "...": "..." } },
+    { "file": "NoLgmDeaths.scenario.lua", "source": "server", "kind": "mod",
+      "manifest": { "...": "..." } }
+  ]
+}
+```
+
+| Key | Meaning |
+|---|---|
+| `version` | `1` |
+| `map` | The committed map's file name |
+| `mods_enabled` | Whether the lobby's mods switch was on |
+| `rules` | The composed rules table the round opened on, keyed by rule name; a whole-number value is written as an integer |
+| `regions` | The composed regions, each with `file`, the name of the script that declared it |
+| `scripts` | One row per script in load order. Mods switched off did not run and are not listed |
+| `scripts[].file` | The script's file name, not its path. A script packed into a map has the map's name |
+| `scripts[].source` | `map` for the committed map's own script, `server` for a script from the server's scenarios directory |
+| `scripts[].kind` | `mod` for a script whose manifest says `kind = "mod"`, otherwise `scenario` |
+| `scripts[].manifest` | That script's own manifest as `manifest.json` writes it, rebuilt from the table the round loaded, so its `rules` are what that one file set |
 
 ## Header
 
@@ -34,7 +90,7 @@ by the first `LOG_EVENT_SNAPSHOT` record.
 | Magic | 8 | Literal `WBOLOMOV`                                              |
 | Version | 1 | `0`, `1`, `2`, or `3` (current)                                 |
 | Map name | 1 + N | Length byte + UTF-8 name                                        |
-| Game type | 1 | From `gameTypeGet()`                                            |
+| Game type | 1 | From `gameTypeGet()` — 1 open, 2 tournament, 3 strict, 4 scripted |
 | Allow hidden mines | 1 | Boolean                                                         |
 | AI type | 1 | `aiType` — whether brains are allowed, not a bot difficulty     |
 | Password | 1 | Boolean (game is password-protected)                            |
@@ -100,6 +156,12 @@ Selected event types (see the `logitem` enum for the complete list):
 | 59 | `log_ServerText` | A server line a scenario wrote: `destTeam:u8` (0 = everyone), `destPlayer:u8` (0xFF = everyone), Pascal text |
 | 60 | `log_GameTimeSet` | The round's game time after a scenario changed it: `ticks:i32` big-endian |
 | 61 | `log_RuleSet` | One simulation rule a scenario changed (below) |
+| 62 | `log_ScnPanel` | One scenario panel's display list (below) |
+| 63 | `log_ScnScore` | A scenario's score for one player or one team (below) |
+| 64 | `log_ScnAnnounce` | A centre-screen line a scenario put up (below) |
+| 65 | `log_ScnMarker` | A scenario map marker (below) |
+| 66 | `log_ScnHint` | An order a scenario gave one bot (below) |
+| 67 | `log_ServerTick` | The server's game tick at this entry (below) |
 
 ### `log_GameSettings` payload
 
@@ -116,13 +178,13 @@ is the value each later field had before it was recorded.
 | 1–2 | Pill view decay | Big-endian seconds; meaningful only when the pill policy is `decay` |
 | 3–4 | Base view decay | Big-endian seconds; same condition |
 | 5–6 | Ally view decay | Big-endian seconds; same condition |
-| 7 | Game type | `gameType` — 1 open, 2 tournament, 3 strict |
+| 7 | Game type | `gameType` — 1 open, 2 tournament, 3 strict, 4 scripted |
 | 8 | AI policy | `aiType` — 0 `aiNone`, 1 `aiYes`, 2 `aiYesAdvantage`, 3 `aiFull` |
 | 9 | Flags | bit0 hidden mines, bit1 time limit on, bit2 auto-lock on game start, bit3 ranked, bit4 password set, bit5 allow new players, bit6 overview window is classic, bit7 line of sight is not off |
 | 10–11 | Time minutes | Big-endian; meaningless when the time-limit bit is clear |
 | 12–13 | Lobby locks, low half | Big-endian — bits 0–15 of the `LOBBY_LOCK_*` mask (`src/bolo/public/wire_limits.h`), which settings the host was allowed to change |
 | 14–15 | Lobby locks, high half | Big-endian — bits 16–31 of the same mask. Absent in a recording older than the field, where it reads as zero |
-| 16 | Settings flags | bit0 smart pings banned. Absent in a recording older than the byte, where it reads as zero — smart pings allowed, which is what those servers did |
+| 16 | Settings flags | bit0 smart pings banned (`LOG_SETTINGS_FLAG_SMART_PINGS_OFF`); bit1 positional sound on (`LOG_SETTINGS_FLAG_POSITIONAL_SOUND`), where sounds tell each player which side they are on and a banded distance. Absent in a recording older than the byte, where it reads as zero — smart pings allowed and every sound centred, which is what those servers did |
 
 Bit 4 of the flags says only that a password is set; the password itself is
 never recorded.
@@ -131,7 +193,8 @@ The flags byte at offset 9 is **full**. Bits 6 and 7 are one bit each because
 the overview window and the line-of-sight mode have two values apiece today
 (`OverviewWindow` and `LineOfSightMode` in `src/bolo/public/view_policy.h`); a
 third value in either setting has nowhere to go in that byte. Byte 16 is where
-a new flag belongs: it was added for smart pings and has seven bits free.
+a new flag belongs: it was added for smart pings, carries positional sound in
+bit 1, and has six bits free.
 
 The lock mask is carried **whole**, as a `uint32_t`, but in two pieces: bytes
 12–13 hold its low half and bytes 14–15 its high half. The split is not a
@@ -287,9 +350,214 @@ was refused writes no record at all, because a refused change leaves the
 table exactly as it was.
 
 Written by the scenario funnel's set-rule arm
-(`src/server/sim/server_sim_scenario.c`). The viewer consumes the record to
-keep its place in the stream and does not yet show it; showing a rule needs
-the recording's rules manifest, which states the table a round opened with.
+(`src/server/sim/server_sim_scenario.c`). The viewer collects every change
+when it loads the recording, with the time playback reaches it, and shows each
+rule's value at the playhead: the last change at or before it, else the value
+`scripts.json` says the round opened on, else the classic value. A record
+whose length is not 8, whose rule index names no rule or whose value is not
+finite is consumed and ignored. A live feed has no file to walk, so there the
+changes are collected as playback reaches them.
+
+### `log_ScnPanel` payload
+
+One scenario panel's display list, as the panel op published it. Every update
+replaces the whole list, so a record states a panel's entire contents and a
+reader needs no history:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0 | Panel id | Always 0, the in-game square, which is the only panel there is. It rides as a byte, so a second panel would need no change to this record |
+| 1 | `destTeam` | 0 = everyone, otherwise the team number the list was held to. Teams run 1–15 |
+| 2 | `destPlayer` | 0xFF = everyone, otherwise the 0-based player slot the list was held to |
+| 3–4 | List length | Big-endian; 0 for a list that cleared the panel |
+| 5… | List | That many bytes of display-list primitives |
+
+The length is a big-endian `u16` rather than a Pascal string's single byte
+because a list runs to `SCN_PANEL_MAX` (1017) bytes, well past what one byte
+counts. This is the longest record the format carries, and the constant every
+single-event buffer is sized by (`LOG_EVENT_MAX_BYTES`,
+`src/bolo/public/log.h`) is worked out from it.
+
+The list's own bytes are the drawing primitives described in
+`src/bolo/public/scenario_panel.h` — rectangles, lines, text, a player's name,
+a sprite, a bar and a timer, each an opcode byte followed by fixed operands
+with multi-byte fields big-endian. A reader hands them to `scnPanelParse`,
+which is the one function every frontend validates a list with, so a malformed
+list is refused identically wherever it arrives.
+
+Written by the scenario funnel's panel arm
+(`src/server/sim/server_sim_scenario.c`), which parses a list before it
+publishes one, so a list in a recording is one that parses. The viewer keeps
+the list for its destination, checking it with `scnPanelParse` first, and
+rebuilds every panel at the playhead after a seek. A record with a panel id
+other than 0, a destination out of range, a length past `SCN_PANEL_MAX` or a
+list that does not parse is consumed and ignored.
+
+### `log_ScnScore` payload
+
+A scenario's own score for one player or one team. Two header bytes, then the
+number and its label:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0 | Kind | 0 = a player's score, 1 = a team's (`ScnScoreKind`) |
+| 1 | Target | Under the player kind, the 0-based player slot; under the team kind, the team number, which runs 1–15 |
+| 2–5 | Score | Big-endian signed `int32` |
+| 6 | Label length | 0–15 |
+| 7… | Label | That many bytes, the label the scenario gave the row |
+
+The label is capped one below its sixteen-byte field so that what is recorded
+and what the control event's body carries are the same string: the field has
+no room for a terminator past its last byte.
+
+The record is broadcast in the same sense the control event is — the target
+says whose score it is, not who was meant to see it — so there is no
+destination pair here.
+
+Written by the scenario funnel's score arm. The viewer keeps the score for its
+slot or team and rebuilds the scores at the playhead after a seek. A record
+with another kind, a target out of range or a label past 15 bytes is consumed
+and ignored.
+
+### `log_ScnAnnounce` payload
+
+A line a scenario put across the centre of the screen. Four header bytes,
+then the line as a Pascal string:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0 | `destTeam` | 0 = everyone, otherwise the team number the line was held to. Teams run 1–15 |
+| 1 | `destPlayer` | 0xFF = everyone, otherwise the 0-based player slot |
+| 2–3 | Ticks | Big-endian; how long the line stays up |
+| 4 | Text length | 0–128 |
+| 5… | Text | That many bytes |
+
+A text length of 0 is the clear: the scenario took the line down, and the
+ticks alongside it were not read. A line with something in it is never
+recorded with a tick count of 0 — the arm refuses that rather than putting a
+line up for no time.
+
+Written by the scenario funnel's announce arm. The viewer keeps the last line,
+with the time it landed, until a clear replaces it, and rebuilds it at the
+playhead after a seek. A record with a destination out of range or a text
+past 128 bytes is consumed and ignored. Playback also posts each line to the
+viewer's newswire once, whatever its destination, prefixed "[Team N]" or
+"[name]" when it went to a team or a player; a clear posts nothing, and a
+seek's rebuild posts nothing.
+
+### `log_ScnMarker` payload
+
+One scenario map marker, kept by id. Four header bytes, then the placement as
+a Pascal form: a 1-byte length followed by that many binary bytes:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0 | Marker id | 0–15 |
+| 1 | Kind | 0 = a map square, 1 = follow a player, 2 = clear the id (`ScnMarkerKind`) |
+| 2 | `destTeam` | 0 = everyone, otherwise the team number. Teams run 1–15 |
+| 3 | `destPlayer` | 0xFF = everyone, otherwise the 0-based player slot |
+| 4 | Placement length | Always 4 |
+| 5 | x | Map square, under the square kind |
+| 6 | y | Map square, under the square kind |
+| 7 | Slot | The 0-based player slot, under the follow kind |
+| 8 | Colour | A palette index, 0–15 (`ScnPanelColour`) |
+
+The clear kind reads none of the four placement bytes; they are written
+whatever the kind so that every marker record is the same length.
+
+Written by the scenario funnel's marker arm. The viewer keeps each marker by
+id until a clear removes it — the record has no expiry — and rebuilds the
+markers at the playhead after a seek. A record with an id past 15, a kind past
+2, a destination out of range, a placement that is not four bytes, a colour
+past 15 or a follow slot past the last slot is consumed and ignored. The
+viewer draws the markers the followed player would see on its map — one to
+everyone, one to that player's slot, or one to the team log_TeamSet last put
+that slot on — a follow marker on its slot's tank while that tank is on the
+map.
+
+### `log_ScnHint` payload
+
+One order a scenario gave one bot. The bot's seat, then the verb the order
+led with as a Pascal string:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0 | Slot | The 0-based seat the hint was for |
+| 1 | Verb length | 0–63 |
+| 2… | Verb | That many bytes |
+
+The rest of the hint's pairs are not recorded. What a key means is a contract
+between the script and the brain it was written for, so nothing outside that
+brain can read them; what a replay can say is which seat was given which
+order, and that is what goes down.
+
+Written by the scenario funnel's hint arm. The viewer consumes the record and
+shows nothing for it.
+
+### `log_ServerTick` payload
+
+The server's game tick — `sim->tick`, a hundred a second and reset to 0 at
+each round's start — for the entry the record sits in:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0–3 | Tick | Big-endian `u32` |
+
+A scenario counts in this tick: a panel's timer target and an announcement's
+arrival are both stated in it. Playback time is not, so without this record a
+reader cannot tell what a timer read at a given moment.
+
+Written by the server's per-tick log pass (`serverSimLogTick`,
+`src/server/sim/server_sim_tick.c`) in a running round, queued just before
+the tick's `logWriteTick`, so it lands in that tick's own `LOG_EVENT` block. It
+is written at the round's first entry, at every entry where a snapshot was
+written (`logSnapshotWrittenThisTick`), and at every entry whose tick is a
+multiple of `FULL_SYNC_INTERVAL` (250) whether or not a snapshot was written
+there. A tick that meets more than one of these still carries one record.
+
+The interval is for a live spectator of a server that is not recording to a
+file. Such a server writes no snapshot into the stream it feeds spectators:
+`logWriteSnapshot` returns before noting one when no `.wbv` is open, and the
+spectator ring's keyframes do not note theirs. Without the interval that feed
+would carry the round's first anchor and no other. On a recording server the
+interval ticks are the ones the periodic snapshot is written at, so the
+interval adds a record to a file only where that snapshot was skipped.
+
+The server writes one entry every other game tick, and the decoder spends
+20 ms on every record it reads, so playback time and entries drift apart: a
+`LOG_NOEVENTS` run, a snapshot and the entity-mask block each cost playback
+20 ms with no entry behind them. The viewer therefore counts entries rather
+than milliseconds. At load it walks the file and counts, record by record:
+
+| Record | Entries |
+|---|---|
+| `LOG_NOEVENTS` / `_LONG` of n | n, one on each waiting step |
+| `LOG_EVENT` / `_LONG` | 1 |
+| `LOG_EVENT_SNAPSHOT` | 0 |
+| The block holding `log_EntityMasks` after a snapshot | 0 |
+| The block of events a snapshot flushes ahead of itself | 0 |
+
+The last row is the block `logWriteSnapshot` writes when its tick had queued
+events before the snapshot; the tick itself is counted later, by
+`logWriteTick`. It is the block straight before a snapshot, but so is the
+previous tick's own block when the snapshot's tick had queued nothing, and the
+two are written alike. The viewer counts it as a flush and lets the next
+record settle it: two records say how many entries passed between them, and a
+count one short means the block was the previous tick's. A block holding
+`log_ServerTick` is never a flush.
+
+Each record becomes an anchor, and the tick at any playback time is the last
+anchor's tick plus two for every entry counted since it. Before the first
+anchor the viewer counts back from it, and not below 0. A later record with a
+lower tick starts a new round's run and is kept like any other. A record whose
+length is not 4 is consumed and ignored.
+
+A live feed has no file to walk. Its records come from the spectator ring,
+one per entry, so each counts one — a keyframe snapshot included — and the
+viewer counts them and collects the anchors as playback first reads them.
+
+A recording made before this record existed has no anchors, and the viewer
+falls back to playback time: `ms / 10`.
 
 ## Snapshot body
 

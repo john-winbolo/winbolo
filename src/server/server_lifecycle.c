@@ -39,7 +39,9 @@
 #include "brain_record.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "../common/mp_diag_log.h"
+#include "../common/wb_log.h"
 #include "../winbolonet/winbolonet_server.h"
+#include "../winbolonet/winbolonetthread.h"
 #include "threads.h"
 #include "server_sim_internal.h"
 #include "server_sim_lifecycle.h"
@@ -51,6 +53,12 @@
  * serverLifecycleSetRoundLogHooks. NULL on every other binary that
  * links server_static, so the lifecycle's stash/flush calls become
  * no-ops there. */
+/* Adapter: serverSimEmitBrainAnnounces hands each event to a deliver
+ * callback; the return-to-lobby path wants them on the broadcast bus. */
+static void serverSimPublishBrainAnnounceCb(void *ctx, const ControlEvent *evt) {
+  serverSimPublishControl((ServerSim *)ctx, evt);
+}
+
 static void (*s_roundLogStash)(void) = NULL;
 static void (*s_roundLogFlush)(void) = NULL;
 
@@ -66,6 +74,203 @@ static void roundLogStash(void) {
 
 static void roundLogFlush(void) {
   if (s_roundLogFlush != NULL) s_roundLogFlush();
+}
+
+/*********************************************************
+*NAME:          serverLifecycleRegisterTail
+*PURPOSE:
+* The work that follows a successful server/register, on the
+* tick: close the rotation window, push the lobby change
+* that was held dirty while it was open, hand every
+* WBN-participating client the new key, and tell the new
+* session about the lock the old one was told about.
+*
+* Run from the register's result handler for a queued
+* register, and straight after the call for a synchronous
+* one.
+*********************************************************/
+static void serverLifecycleRegisterTail(ServerSim *sim) {
+  /* First: everything below reads the key through the window. */
+  sim->wbnSessionRotating = FALSE;
+  serverSimWbnLobbyTick(sim);
+  transportUdpServerBroadcastWbnRekey(sim);
+  /* The new session knows nothing about the lock the old one was told
+   * about. An idempotent state push, and it carries no player key. */
+  winboloNetSendLock(transportUdpServerGetLock());
+}
+
+/*********************************************************
+*NAME:          serverLifecycleQueueRotation
+*PURPOSE:
+* Queues one WinBolo.net session rotation for the worker:
+* server/quit for the round that ended, the round-log
+* upload, then server/register for the next round, in that
+* order, which is the order the tracker needs. The three
+* sites that end a round call this; none of them sends
+* anything on the tick.
+*
+* Only one register may be outstanding. If the last one has
+* not answered yet, nothing is queued and the rotation is
+* marked deferred: serverLifecycleWbnResult runs it when that
+* result lands, so the quit names the session the result
+* installs rather than the one before it, and the upload sits
+* between that quit and the next register. The stash the
+* caller made stays pending until then.
+*
+* With WinBolo.net off, the upload flush still runs (it is a
+* no-op with nothing pending) and the window closes here,
+* since no result is coming.
+*
+* When the worker refuses the quit it is not running at all
+* (winbolonetThreadCreate failed at boot, and nothing
+* recreates it), so the register behind it would be refused
+* too and the round would end with no quit, no upload and no
+* register - the finished session listed on WinBolo.net for
+* good. The three then go out on this thread instead, in the
+* same order. That is the blocking round transition this
+* server otherwise never does, and it is the lesser cost:
+* with no worker there is no later moment to send them.
+*********************************************************/
+static void serverLifecycleQueueRotation(ServerSim *sim) {
+  uint32_t registerJob = 0;
+
+  if (winbolonetIsRunning() && sim->wbnRegisterJob != 0) {
+    sim->wbnRotateDeferred = TRUE;
+    WB_LOG_WARN(WB_LOG_CAT_NET,
+                "WinBolo.net rotation deferred: register job %u is still "
+                "outstanding", (unsigned)sim->wbnRegisterJob);
+    return;
+  }
+
+  if (!winbolonetIsRunning()) {
+    /* Nothing to rotate. The flush is a no-op with nothing pending, and
+     * with WinBolo.net off it goes nowhere in any case. */
+    roundLogFlush();
+    sim->wbnRegisterJob = 0;
+    sim->wbnSessionRotating = FALSE;
+    return;
+  }
+
+  if (winbolonetQueueEndSession() != TRUE) {
+    WB_LOG_WARN(WB_LOG_CAT_NET,
+                "WinBolo.net worker refused the session quit; sending the "
+                "round transition on this thread");
+    /* The quit first, so the upload that follows is accepted: WinBolo.net
+     * refuses a round log for a session that is still live. The flush hook
+     * is the queued one, and its own enqueue is refused the same way, so it
+     * posts the log from here as well. */
+    winbolonetEndSession(/*drainMaxMs*/ 0);
+    roundLogFlush();
+    serverSimRefreshWbnLobbyInfo(sim);
+    sim->wbnRegisterJob = 0;
+    if (winbolonetBeginSession(
+          sim->mapName, sim->serverPort,
+          (BYTE)gameTypeGet(&sim->sim.game),
+          (BYTE)sim->botAiType,
+          (BYTE)sim->sim.hiddenMines,
+          sim->hasPassword,
+          basesGetNumActive(&sim->sim.bs),
+          pillsGetNumActive(&sim->sim.pb),
+          serverSimGetNumNeutralBases(sim),
+          serverSimGetNumNeutralPills(sim),
+          serverSimGetNumPlayers(sim)) == TRUE) {
+      serverLifecycleRegisterTail(sim);
+    } else {
+      /* winbolonetBeginSession has switched WinBolo.net off and cleared the
+       * bearer, as a failed queued register does. Close the window anyway. */
+      sim->wbnSessionRotating = FALSE;
+    }
+    return;
+  }
+
+  roundLogFlush();
+  serverSimRefreshWbnLobbyInfo(sim);
+  registerJob = winbolonetQueueBeginSession(
+    sim->mapName, sim->serverPort,
+    (BYTE)gameTypeGet(&sim->sim.game),
+    (BYTE)sim->botAiType,
+    (BYTE)sim->sim.hiddenMines,
+    sim->hasPassword,
+    basesGetNumActive(&sim->sim.bs),
+    pillsGetNumActive(&sim->sim.pb),
+    serverSimGetNumNeutralBases(sim),
+    serverSimGetNumNeutralPills(sim),
+    serverSimGetNumPlayers(sim));
+  sim->wbnRegisterJob = registerJob;
+  if (registerJob == 0) {
+    sim->wbnSessionRotating = FALSE;
+  }
+}
+
+/*********************************************************
+*NAME:          serverLifecycleWbnResult
+*PURPOSE:
+* Handles one WinBolo.net job result, on the tick thread,
+* out of winbolonetThreadDrainResults. Two kinds have a
+* result: the round transition's server/register, handled
+* below, and a re-authenticating client's client/verify,
+* which the server transport places by job id.
+*
+* The register tail here is what the tick used to run
+* straight after winbolonetBeginSession returned. It waits
+* for the register because all of it depends on the new
+* session key: the held lobby_update would name the finished
+* round, and the rekey would hand clients a key that is about
+* to be replaced.
+*********************************************************/
+static void serverLifecycleWbnResult(uint32_t id, uint8_t kind, int status,
+                                     const char *response, void *ctx) {
+  ServerSim *sim = (ServerSim *)ctx;
+
+  if (sim == NULL) {
+    return;
+  }
+
+  if (kind == WBN_JOB_VERIFY) {
+    udpServerApplyReauthResult(sim, id, status, response);
+    return;
+  }
+
+  if (kind != WBN_JOB_REGISTER) {
+    return;
+  }
+
+  if (sim->wbnRegisterJob != 0 && id != sim->wbnRegisterJob) {
+    /* Not the register this server is waiting on. Only one is ever out,
+     * so this is a result from before a restart of the transport; the key
+     * it carries is not the one the next rotation quits. */
+    WB_LOG_WARN(WB_LOG_CAT_NET,
+                "WinBolo.net register result %u ignored: waiting on %u",
+                (unsigned)id, (unsigned)sim->wbnRegisterJob);
+    return;
+  }
+  sim->wbnRegisterJob = 0;
+
+  if (winbolonetApplyRegisterResult(status, response) == TRUE) {
+    if (sim->wbnRotateDeferred) {
+      /* A round ended while this register was out. Its session is the one
+       * just installed, so quit it now, upload that round's log, and
+       * register the round the server is on. The window stays open until
+       * that register answers; the rekey and the lock re-send below are
+       * for a key that would be replaced straight away. */
+      sim->wbnRotateDeferred = FALSE;
+      serverLifecycleQueueRotation(sim);
+      if (sim->wbnRegisterJob != 0) {
+        return;
+      }
+    }
+    /* New key and bearer are installed: close the window, push the held
+     * lobby change, rekey every participating client and re-send the lock. */
+    serverLifecycleRegisterTail(sim);
+  } else {
+    /* The register failed, so winbolonetApplyRegisterResult has switched
+     * WinBolo.net off and cleared the bearer. Close the window anyway — a
+     * server stuck rotating holds every later lobby change dirty forever,
+     * which is worse than one with WBN off. A deferred rotation has
+     * nothing to register against any more. */
+    sim->wbnRotateDeferred = FALSE;
+    sim->wbnSessionRotating = FALSE;
+  }
 }
 
 static char  instanceTrackerAddr[FILENAME_MAX] = "";
@@ -112,6 +317,16 @@ static double s_lastTickMs = 0.0;
 static double s_tickMsEwma = 0.0;
 static const  double kTickAlpha = 0.1;
 
+/* The worst tick recorded since the last reset, and how many ticks cost at
+ * least the SERVER_TICK_LENGTH ms the loop has to serve one in. The EWMA
+ * above answers "is the server keeping up right now" and decays a spike by an
+ * order of magnitude in roughly 22 ticks, so a burst that lasts a handful of
+ * frames is back at baseline before an operator can type a console command.
+ * These two hold their values until serverLifecycleResetTickPeak clears them
+ * at the next round start, so the cost of a burst can be read afterwards. */
+static double       s_peakTickMs      = 0.0;
+static unsigned int s_ticksOverBudget = 0;
+
 /* Wall-clock cost (ms) of the two serverSimTick calls combined for the
  * most recent tick, plus its EWMA. Same seeding rule as above. */
 static double s_lastSimMs = 0.0;
@@ -124,11 +339,73 @@ void serverLifecycleRecordTickMs(double ms) {
   } else {
     s_tickMsEwma = kTickAlpha * ms + (1.0 - kTickAlpha) * s_tickMsEwma;
   }
+  if (ms > s_peakTickMs) {
+    s_peakTickMs = ms;
+  }
+  /* A tick that exactly spends its budget has nothing left for the next one,
+   * so the count is of ticks at or above it, not strictly over. */
+  if (ms >= (double)SERVER_TICK_LENGTH) {
+    s_ticksOverBudget++;
+  }
 }
 
 void serverLifecycleGetTickStats(double *outLastMs, double *outEwmaMs) {
   if (outLastMs)  *outLastMs  = s_lastTickMs;
   if (outEwmaMs)  *outEwmaMs  = s_tickMsEwma;
+}
+
+void serverLifecycleGetTickPeak(double *outPeakMs,
+                                unsigned int *outOverBudget) {
+  if (outPeakMs)     *outPeakMs     = s_peakTickMs;
+  if (outOverBudget) *outOverBudget = s_ticksOverBudget;
+}
+
+void serverLifecycleResetTickPeak(void) {
+  s_peakTickMs      = 0.0;
+  s_ticksOverBudget = 0;
+}
+
+uint32_t serverTickCatchUp(uint32_t nowMs, uint32_t *oldTick, uint32_t *ticks,
+                           ServerTickStepFn step, void *ctx) {
+  if (oldTick == NULL || step == NULL) {
+    return 0;
+  }
+
+  /* The debt as it stood on entry, so the warning reports what the callback
+   * was handed rather than the remainder it left behind. */
+  uint32_t debtMs   = nowMs - *oldTick;
+  uint32_t ran      = 0;
+  uint32_t worstMs  = 0;
+
+  while ((nowMs - *oldTick) > SERVER_TICK_LENGTH) {
+    Uint64 stepStart = SDL_GetTicks();
+    uint32_t stepMs;
+    /* The step answers the shutdown flag before it runs anything, so a
+     * teardown raised mid-burst stops here with neither the counter nor
+     * oldTick moved for a tick that did not happen. */
+    if (!step(ctx)) {
+      break;
+    }
+    stepMs = (uint32_t)(SDL_GetTicks() - stepStart);
+    if (stepMs > worstMs) {
+      worstMs = stepMs;
+    }
+    ran++;
+    if (ticks != NULL) {
+      (*ticks)++;
+    }
+    *oldTick += SERVER_TICK_LENGTH;
+  }
+
+  /* One line for the whole burst, outside the loop: a hitch must not turn
+   * into a per-tick write that costs more than the hitch it reports. */
+  if (ran > SERVER_HITCH_WARN_TICKS) {
+    WB_LOG_WARN(WB_LOG_CAT_NET,
+                "tick catch-up: debt %u ms, ran %u ticks, slowest tick %u ms",
+                (unsigned)debtMs, (unsigned)ran, (unsigned)worstMs);
+  }
+
+  return ran;
 }
 
 static void serverLifecycleRecordSimMs(double ms) {
@@ -194,12 +471,57 @@ SpectatorRing *serverInstanceGetSpectatorRing(void) {
   return s_spectatorRing;
 }
 
+/* Where a script a player uploads lands, decided once here so the transport
+ * and the scenario host read the same directory: none under OFF, the persist
+ * directory under PERSIST (the configured one, else <map root>/Uploads/Scripts)
+ * and the session directory under ALLOW (the configured one, else
+ * <map root>/Uploads/Session-<port>). The map root is already known: the map
+ * directory is installed on the sim before startup. The port is in the
+ * session directory's name because the session directory is emptied, at
+ * startup and whenever the lobby empties: two dedicated servers on one map
+ * root would otherwise each throw away the other's session. Two servers on
+ * one machine have two ports, and a desktop host names its own directory
+ * under its prefs path.
+ *
+ * The session directory is recorded, and emptied, only on a host that takes
+ * remote clients. The welcome-screen sim runs startup too, and on a desktop
+ * its map root is inside the application bundle. */
+static void serverInstanceResolveScriptDirs(ServerSim *sim,
+                                            const ServerInstanceConfig *cfg) {
+  char dir[FILENAME_MAX];
+  const char *root = serverSimGetMapDirRoot(sim);
+
+  dir[0] = '\0';
+  if (cfg->scriptUploadPolicy == SCRIPT_UPLOAD_PERSIST) {
+    if (cfg->scriptUploadDir != NULL && cfg->scriptUploadDir[0] != '\0') {
+      SDL_strlcpy(dir, cfg->scriptUploadDir, sizeof(dir));
+    } else {
+      SDL_snprintf(dir, sizeof(dir), "%s/Uploads/Scripts", root);
+    }
+  } else if (cfg->scriptUploadPolicy == SCRIPT_UPLOAD_ALLOW) {
+    if (cfg->scriptSessionDir != NULL && cfg->scriptSessionDir[0] != '\0') {
+      SDL_strlcpy(dir, cfg->scriptSessionDir, sizeof(dir));
+    } else {
+      SDL_snprintf(dir, sizeof(dir), "%s/Uploads/Session-%u", root,
+                   (unsigned)cfg->udpPort);
+    }
+  }
+  serverSimSetScriptUploadDir(sim, dir);
+  serverSimSetScriptSessionDir(
+      sim, (cfg->acceptRemoteClients &&
+            cfg->scriptUploadPolicy == SCRIPT_UPLOAD_ALLOW) ? dir : "");
+  /* Whatever the last session left, gone before anything lists it. */
+  serverSimEmptyScriptSessionDir(sim);
+}
+
 bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   const char *bindAddr = (cfg->bindAddr != NULL) ? cfg->bindAddr : "";
   const char *password = (cfg->password != NULL) ? cfg->password : "";
   unsigned short boundPort = cfg->udpPort;
 
   instanceAcceptRemoteClients = cfg->acceptRemoteClients;
+
+  serverInstanceResolveScriptDirs(sim, cfg);
 
   /* Gate the MP diagnostic log on acceptRemoteClients so bg_game's own
    * ServerSim (which also runs serverInstanceStartup at welcome-screen
@@ -223,8 +545,14 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
     transportUdpServerSetUploadConfig(cfg->uploadPolicy,
                                       cfg->uploadMaxFiles,
                                       cfg->uploadMaxStorageBytes,
-                                      cfg->uploadPersistDir);
+                                      cfg->uploadPersistDir,
+                                      cfg->scriptUploadPolicy,
+                                      cfg->scriptUploadMaxFiles,
+                                      cfg->scriptUploadMaxStorageBytes,
+                                      cfg->scriptUploadDir);
     sim->uploadPolicy = cfg->uploadPolicy;
+    serverSimSetScriptUploadPolicy(sim, cfg->scriptUploadPolicy);
+    serverSimSetScriptSharing(sim, !cfg->noScriptSharing);
     /* Same source (cfg->uploadPersistDir) as the transport copy above, so the
      * write target and the "Uploads/" resolver redirect never diverge. */
     serverSimSetUploadPersistDir(sim, cfg->uploadPersistDir);
@@ -345,8 +673,10 @@ static void serverLifecycleRotateRound(ServerSim *sim) {
    * key, flush the upload, then register the next round's session — which
    * overwrites winboloNetServerKey with the freshly-picked map's key. Same
    * sandwich as the gameOver->lobby and empty-reset sites. Done after
-   * serverSimMapRotateRound so BeginSession reports the new map / base / pill
-   * counts, not the round that just ended. */
+   * serverSimMapRotateRound so the register reports the new map / base / pill
+   * counts, not the round that just ended. All three are queued, not sent
+   * here — see the gameOver->lobby site for what that means for the rotation
+   * window. */
   if (winbolonetIsRunning()) {
     /* Flush any WBN events still queued from the finished round (win
      * crediting, final kills) against the live key before tearing the
@@ -356,29 +686,8 @@ static void serverLifecycleRotateRound(ServerSim *sim) {
     winbolonetServerUpdate(serverSimGetNumPlayers(sim),
                            serverSimGetNumNeutralBases(sim),
                            serverSimGetNumNeutralPills(sim), TRUE);
-    winbolonetEndSession();
   }
-  roundLogFlush();
-  if (winbolonetIsRunning()) {
-    serverSimRefreshWbnLobbyInfo(sim);
-    winbolonetBeginSession(
-      sim->mapName, sim->serverPort,
-      (BYTE)gameTypeGet(&sim->sim.game),
-      (BYTE)sim->botAiType,
-      (BYTE)sim->sim.hiddenMines,
-      sim->hasPassword,
-      basesGetNumActive(&sim->sim.bs),
-      pillsGetNumActive(&sim->sim.pb),
-      serverSimGetNumNeutralBases(sim),
-      serverSimGetNumNeutralPills(sim),
-      serverSimGetNumPlayers(sim));
-    /* Clients were just booted, so this is a no-op here; kept for symmetry
-     * with the other rotation sites (gated inside on connected clients). */
-    transportUdpServerBroadcastWbnRekey(sim);
-  }
-  /* New key installed (or WBN off) — close the rotation window so any deferred
-   * lobby_update flushes against the right session on the next WBN tick. */
-  sim->wbnSessionRotating = FALSE;
+  serverLifecycleQueueRotation(sim);
 
   /* Start the next round's log and push the fresh map to any in-process
    * subscriber (SP host loopback, replay-log writer). serverSimMapRotateRound
@@ -534,6 +843,11 @@ void serverInstanceTick(ServerSim *sim) {
    * queue overflow). Done here, after recv processing and outside any
    * publish, so serverSimRemovePlayer can safely fan its events out. */
   transportUdpServerDrainPendingRemovals(sim);
+
+  /* Hand back whatever the WinBolo.net worker finished since the last tick.
+   * Alongside the removal drain above for the same reason: deferred work
+   * that has to run on this thread, before the sim does. */
+  winbolonetThreadDrainResults(serverLifecycleWbnResult, sim);
 
   if (sim->state == serverStateRunning) {
     /* First running tick of this game → open a fresh recording session
@@ -746,40 +1060,22 @@ void serverInstanceTick(ServerSim *sim) {
       }
       /* End the round's WBN session, upload the round log against the
        * just-quit key (WBN rejects uploads to an active session), then
-       * register a fresh session for the next round. The upload has to
-       * sit between End and Begin — End sends server/quit so WBN will
-       * accept the upload, Begin overwrites winboloNetServerKey with
-       * the new round's key. handleGameOver already stashed the
-       * round's filename when the GAME_OVER phase fired; Flush is a
-       * no-op when there's nothing pending or when WBN is offline. */
-      if (winbolonetIsRunning()) {
-        winbolonetEndSession();
-      }
-      roundLogFlush();
-      if (winbolonetIsRunning()) {
-        serverSimRefreshWbnLobbyInfo(sim);
-        winbolonetBeginSession(
-          sim->mapName, sim->serverPort,
-          (BYTE)gameTypeGet(&sim->sim.game),
-          (BYTE)sim->botAiType,
-          (BYTE)sim->sim.hiddenMines,
-          sim->hasPassword,
-          basesGetNumActive(&sim->sim.bs),
-          pillsGetNumActive(&sim->sim.pb),
-          serverSimGetNumNeutralBases(sim),
-          serverSimGetNumNeutralPills(sim),
-          serverSimGetNumPlayers(sim));
-        /* Push the freshly rotated server_key to every WBN-participating
-         * client so they can mint a new player_key and re-auth.  Gated
-         * inside; no-op when WBN isn't running. */
-        transportUdpServerBroadcastWbnRekey(sim);
-      }
-      /* Close the rotation window: the new session's server_key is now
-       * installed, so the deferred lobby_update (held dirty by
-       * serverSimReturnToLobby's map pick) flushes against the right
-       * key on the next WBN tick. Cleared unconditionally so a WBN-off
-       * run doesn't leave the flag stuck. */
-      sim->wbnSessionRotating = FALSE;
+       * register a fresh session for the next round. handleGameOver already
+       * stashed the round's filename when the GAME_OVER phase fired; the
+       * flush is a no-op when there's nothing pending or when WBN is offline.
+       *
+       * All three are queued for the worker rather than sent here. It sends
+       * them in the order they were queued, which is the order WinBolo.net
+       * needs — quit before the upload, upload before the key swap — and
+       * none of the three costs this tick anything.
+       *
+       * The rotation window stays open. serverLifecycleWbnResult closes it
+       * when the register result lands, and does the rekey broadcast and the
+       * lock re-send there too. With no register queued there is no result
+       * coming, so the window closes in the helper instead. A register
+       * still out from the previous round defers all three until it
+       * answers. */
+      serverLifecycleQueueRotation(sim);
       /* Republish the bot brain catalogue.  Mid-game joiners were gated
        * out of the BrainList during their sync replay (see
        * serverSimSyncSubscriber), so they need it now before the lobby
@@ -790,6 +1086,15 @@ void serverInstanceTick(ServerSim *sim) {
         memset(&evt, 0, sizeof(evt));
         serverSimFillLobbyBrainListEvent(sim, &evt);
         serverSimPublishControl(sim, &evt);
+        /* ... and the brains' announce lines that go with it, so the
+         * returning lobby can announce a bot's brain the same way a fresh
+         * join does. The refresh first: this seam between rounds is where an
+         * operator would have edited a brain's texts, and it is off the tick
+         * path, so a re-read costs nothing anybody feels. Docs that changed
+         * get a new generation here, which tells each client to drop the
+         * copy it holds. */
+        serverSimRefreshBrainDocs(sim);
+        serverSimEmitBrainAnnounces(sim, serverSimPublishBrainAnnounceCb, sim);
       }
       /* Republish lobby state so every client's mirror reflects the
        * fresh lobby. serverSimReturnToLobby's contract says the caller
@@ -856,12 +1161,17 @@ void serverInstanceTick(ServerSim *sim) {
     transportUdpServerCheckTimeouts(sim);
   }
 
-  /* Auto-close / empty-rotation check — works in any state. The shared
-   * serverSimCheckAutoClose latches hadPlayersEver and fires once the server
-   * empties after having had players. In map-rotation mode an empty server
-   * rotates to a fresh round instead of shutting down; otherwise -autoclose
-   * forces a no-lobby shutdown (no players to return to a lobby for). */
-  if ((sim->autoCloseOnEmpty || serverSimIsMapRotateEnabled(sim)) &&
+  /* Auto-close / empty-rotation check — works in any state but game over.
+   * The shared serverSimCheckAutoClose latches hadPlayersEver and fires once
+   * the server empties after having had players. In map-rotation mode an empty
+   * server rotates to a fresh round instead of shutting down; otherwise
+   * -autoclose forces a no-lobby shutdown (no players to return to a lobby
+   * for). Skipped in game over because the shutdown this triggers is already
+   * under way: the console loop only notices serverSimIsTerminalGameOver on
+   * its next poll, and without the skip every tick until then re-enters
+   * serverSimEnterGameOver and repeats its message. */
+  if (sim->state != serverStateGameOver &&
+      (sim->autoCloseOnEmpty || serverSimIsMapRotateEnabled(sim)) &&
       serverSimCheckAutoClose(sim)) {
     if (serverSimIsMapRotateEnabled(sim)) {
       serverSimConsoleMessage("Server empty - rotating to a new round.");
@@ -891,39 +1201,33 @@ void serverInstanceTick(ServerSim *sim) {
      * GAME_OVER, so handleGameOver never stashed the in-flight round.
      * Do it here so the upload below picks it up. */
     roundLogStash();
+    /* Empty-reset bypasses serverSimReturnToLobby, so the release of the
+     * round's parked runners is this path's to make. A parked brain keeps
+     * its state table, and the round it remembers is the one ending here. */
+    botManagerReleaseParkedRunners(sim);
     serverSimResetGameWorld(sim);
     sim->state = serverStateLobby;
     sim->gameLength = sim->originalGameLength;
     sim->hadPlayersEver = FALSE;
     sim->emptyResetTicks = -1;
-    /* Pick next map from rotation if mapdir is configured */
+    /* Pick next map from rotation if mapdir is configured. The seats the
+     * round fielded go back to the template's own lobby, as they do in
+     * serverSimMapRotateRound (see the comment there): the server is empty,
+     * so there is no host edit to keep. Where no map loads, the lobby is
+     * the one it was and the flag goes back to what it said about it. */
     if (sim->mapDirFiles != NULL) {
-      serverSimMapDirPickRandom(sim);
+      bool wasSeated = sim->scenarioLobbySeated;
+      sim->scenarioLobbySeated = false;
+      if (!serverSimMapDirPickRandom(sim)) {
+        sim->scenarioLobbySeated = wasSeated;
+      }
     }
     /* End the WBN session, upload the round's log against the just-
      * quit key, then begin a new session for the next round. Same
      * sandwich as the game-over → lobby site (see comment there). */
-    if (winbolonetIsRunning()) {
-      winbolonetEndSession();
-    }
-    roundLogFlush();
-    if (winbolonetIsRunning()) {
-      winbolonetBeginSession(
-        sim->mapName, sim->serverPort,
-        (BYTE)gameTypeGet(&sim->sim.game),
-        (BYTE)sim->botAiType,
-        (BYTE)sim->sim.hiddenMines,
-        sim->hasPassword,
-        basesGetNumActive(&sim->sim.bs),
-        pillsGetNumActive(&sim->sim.pb),
-        serverSimGetNumNeutralBases(sim),
-        serverSimGetNumNeutralPills(sim),
-        serverSimGetNumPlayers(sim));
-      /* Same rotation push as the game-over → lobby site. */
-      transportUdpServerBroadcastWbnRekey(sim);
-    }
-    /* Close the rotation window — new key installed (or WBN off). */
-    sim->wbnSessionRotating = FALSE;
+    /* Same queued rotation as the game-over → lobby site (see the comment
+     * there). */
+    serverLifecycleQueueRotation(sim);
     /* Empty-reset bypasses serverSimReturnToLobby, so the lobby phase
      * event is never published from the state machine. Publish it
      * explicitly so handleLobbyEnter fires and starts a fresh log for
@@ -1046,6 +1350,9 @@ void serverInstanceShutdown(ServerSim *sim) {
   if (instanceAcceptRemoteClients) {
     transportUdpServerStopMdnsAdvertiser();
     transportUdpServerDestroy();
+    /* The session's uploaded scripts go with the session. After the
+     * transport, so no upload can land behind the emptying. */
+    serverSimEmptyScriptSessionDir(sim);
   }
   botManagerDestroy(sim);
   instanceAcceptRemoteClients = FALSE;

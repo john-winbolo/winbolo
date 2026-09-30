@@ -158,6 +158,16 @@ struct BrainPathfinder {
    * cut, as its next step. Set from Lua via
    * cpf_set_config("nextstep_foot_sea_rule", 1). */
   float nextstep_foot_sea_rule;
+  /* nextstep_chain_veer: 0 = off (historical behaviour), non-zero = on.
+   * The slate's g_cost is cost FROM THE SLATE ROOT, so the two fallbacks in
+   * brainPathfinderDijkstraNextStep (veer round a live obstacle, and "tank
+   * drifted off the traced chain") that take the lowest-g neighbour step
+   * TOWARD THE ROOT -- back to the tile the tank just left. When on, both
+   * fallbacks first take the neighbour that touches the traced chain furthest
+   * toward the destination, and use the old pick only when no neighbour
+   * touches the chain ahead. Set from Lua via
+   * cpf_set_config("nextstep_chain_veer", 1). */
+  float nextstep_chain_veer;
 
   /* Last tile the rule above vetoed, for the brain's debug print only.
    * sea_veto_seq increments on every veto, so the Lua wrapper can tell a

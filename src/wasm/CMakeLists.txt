@@ -175,9 +175,6 @@ set(SERVER_SOURCES
     ${SRC_ROOT}/server/server_stubs.c
 )
 
-# LZW compression
-file(GLOB LZW_SOURCES ${SRC_ROOT}/lzw/*.c)
-
 # Map editor sources reachable from shared dialogs (map chooser pulls in
 # the procedural generator's imgui controls; mapgen.c/mapgen_maze.c come
 # in via bolo_static).
@@ -195,6 +192,13 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/sdl3imgui.cpp
     ${SRC_ROOT}/gui/sdl3/imgui_steam_nav.cpp
     ${SRC_ROOT}/gui/sdl3/sdl3imgui_tablet.cpp
+    # The scenario panel's display list and a scenario's map markers.
+    # sdl3imgui.cpp above calls the drawer, and sdl3draw.c and
+    # overview_view.cpp below both call the marker, so this target needs
+    # them to link whether or not it has a slot of its own to draw the
+    # panel in yet.
+    ${SRC_ROOT}/gui/sdl3/scenario_panel_draw.cpp
+    ${SRC_ROOT}/gui/sdl3/scenario_marker.c
     ${SRC_ROOT}/gui/sdl3/luabrainshandler.c
     ${SRC_ROOT}/gui/sdl3/minimap_render.c
     ${SRC_ROOT}/gui/sdl3/cursor.c
@@ -222,6 +226,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_recap.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_reel.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_settings.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_keysetup.cpp
@@ -230,6 +235,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_quickchat.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_about.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/dialog_footer.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/dialog_quit.cpp
     ${SRC_ROOT}/gui/sdl3/map_preview_popup.cpp
     ${SRC_ROOT}/gui/sdl3/lobby_start_list.cpp
     ${SRC_ROOT}/gui/sdl3/map_preview_view.cpp
@@ -242,6 +248,13 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/bg_game.c
     ${SRC_ROOT}/gui/sdl3/mapview.c
     ${SRC_ROOT}/gui/sdl3/mapview_overlay.c
+    # The colours a square is filled with once it is drawn too small for its
+    # sprite, and the shapes drawn on top of them. minimap_render.c,
+    # map_preview_view.cpp, overview_view.cpp and mapview_overlay.c above all
+    # call into these. map_markers.c builds its disc from ring_band.c, which
+    # this target already has.
+    ${SRC_ROOT}/gui/sdl3/map_colours.c
+    ${SRC_ROOT}/gui/sdl3/map_markers.c
     ${SRC_ROOT}/gui/sdl3/sprite_positions.c
     ${SRC_ROOT}/gui/sdl3/tileloader.c
     ${SRC_ROOT}/gui/sdl3/skin_source.c
@@ -264,6 +277,8 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/build_cursor.c
     ${SRC_ROOT}/gui/sdl3/tutorial_text.c
     ${SRC_ROOT}/gui/sdl3/lang.c
+    # The words the lobby's rules popup describes a rule's value in.
+    ${SRC_ROOT}/gui/sdl3/sim_rules_phrase.c
 )
 
 # Log viewer sources — the .wbv decoder, its block-grid renderer and the
@@ -380,7 +395,6 @@ set(WASM_SOURCES
 add_executable(winbolo
     ${BOLO_SOURCES}
     ${SERVER_SOURCES}
-    ${LZW_SOURCES}
     ${WBN_SOURCES}
     ${GUI_SOURCES}
     ${MAPEDITOR_SOURCES}
@@ -430,6 +444,9 @@ target_compile_definitions(winbolo PRIVATE
     # Lights up the settings dialog's voice block, which compiles into this
     # target too.
     WINBOLO_VOICE=1
+    # The network-impairment hooks are for the loopback tests only; every
+    # shipping target keeps them compiled out.
+    WB_ENABLE_NETIMPAIR=0
 )
 target_compile_options(winbolo PRIVATE -Werror=undef -fno-common -include sys/types.h)
 target_link_options(winbolo PRIVATE "LINKER:--allow-multiple-definition")

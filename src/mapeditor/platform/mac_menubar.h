@@ -38,6 +38,7 @@ struct MeMenuState {
     bool showOverview;
     bool showStats;
     bool showStampLibrary;
+    bool showScenario;
     /* Recent files — paths are borrowed; the shim copies only what it
      * needs each frame (basename for the label, full path for tooltip). */
     int  numRecent;
@@ -63,8 +64,13 @@ struct MeMenuState {
  *
  * `win` is the editor's SDL_Window — currently unused but accepted so
  * the API matches the WinBolo / Log Viewer shims and future menu items
- * that need an NSWindow can grab it via SDL_GetProperty. */
-void me_mac_menubar_install(struct SDL_Window *win);
+ * that need an NSWindow can grab it via SDL_GetProperty.
+ *
+ * hasSettings puts a Preferences… (⌘,) item in the app menu that opens the
+ * host's settings window. Embedded, the host's own Preferences item is taken
+ * over for the editor's run if it has one, and one is added if it has not;
+ * uninstall puts the host's app menu back as it was. */
+void me_mac_menubar_install(struct SDL_Window *win, bool hasSettings);
 
 /* Restore the previously saved NSApp.mainMenu. Symmetric with install.
  * After this returns, NSApp's menu bar is whatever it was before the
@@ -82,6 +88,9 @@ void me_mac_menubar_refresh(const struct MeMenuState *s);
  * window version does the same) then ORs/sets any clicks captured
  * between the previous frame and now. NULL is a no-op. */
 void me_mac_menubar_consume_actions(MapEditorMenuAction *action);
+
+/* Forget a Preferences pick made while the settings window was already up. */
+void me_mac_menubar_drop_settings_request(void);
 
 #ifdef __cplusplus
 }

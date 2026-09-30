@@ -66,7 +66,7 @@ bool scrollGetSubTilePrecision(void) { return g_scrollSubTilePrecision; }
 void scrollSetSubTilePrecision(bool on) { g_scrollSubTilePrecision = on; }
 
 /* Sub-tile arithmetic. The view position is tracked in 1/256-tile units
- * internally; the BYTE *xValue/*yValue exposed to engine code is the
+ * internally; the BYTE *xValue / *yValue exposed to engine code is the
  * tile-aligned floor, with the fractional remainder in ScrollState's
  * subPosX/Y for the renderer to apply as a sub-pixel drag offset. */
 #define AUTOSCROLL_SUB_PER_TILE     256
@@ -1115,7 +1115,7 @@ bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue,
   g_autoscrollTick++;
 
   /* Manual freelook: arrow keys (clientRenderFrame) set autoScrollOverRide
-   * to TRUE after nudging *xValue/*yValue. The camera stays where the
+   * to TRUE after nudging *xValue / *yValue. The camera stays where the
    * player put it for as long as the tank is parked or driving safely
    * inside the view. Autoscroll re-engages automatically the moment the
    * player is driving AND the tank reaches within NO_SCROLL_EDGE tiles
@@ -1318,7 +1318,7 @@ bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue,
    * offset to both), so tank and camera move together — a reconciliation
    * correction slides the world under a fixed-relative tank rather than
    * shearing the hull against the camera. With the offset at zero this is
-   * the raw tank position. Decompose into the tile-aligned *xValue/*yValue
+   * the raw tank position. Decompose into the tile-aligned *xValue / *yValue
    * (what engine code reads) plus subPosX/Y for the renderer to fold into
    * its sub-pixel drag offset. */
   {

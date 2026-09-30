@@ -118,6 +118,108 @@ void brainCoreSetInitTable(lua_State *L, const ScnTable *init) {
   lua_setglobal(L, "BRAIN_INIT");
 }
 
+/* The same table, handed to a brain that is already running.
+
+   Two steps, and the first of them always happens: BRAIN_INIT is rebuilt, so
+   a brain that reads the global anywhere reads the new pairs from here on.
+   Then, if the brain has written a Brain.on_init, it is called with that same
+   table, which is how a brain acts on the change rather than waiting to be
+   asked for the global again.
+
+   A brain without one is not a fault: the global is the contract and on_init
+   is the invitation. A brain whose on_init raises is not the caller's fault
+   either — the error is reported and the round carries on, because a scenario
+   handing a bot new orders must not be able to kill it.
+
+   Answers whether on_init ran to completion, which is what a caller that
+   wants to log the difference reads. Everything else — no state, no Brain
+   table, an on_init that is not a function — answers false with the global
+   written all the same. */
+bool brainCoreUpdateInitTable(lua_State *L, const ScnTable *init,
+                              char *why, size_t whyLen) {
+  int top;
+
+  if (why != NULL && whyLen > 0) why[0] = '\0';
+  if (L == NULL) return false;
+
+  brainCoreSetInitTable(L, init);
+
+  /* The brain's own table is the global 'brain', which the loader sets from
+     what the brain's chunk returned — the same global brainCoreCallThink
+     reads think off. A brain file usually calls its own table Brain; that
+     name is a local of the file and is not here. */
+  top = lua_gettop(L);
+  lua_getglobal(L, "brain");
+  if (!lua_istable(L, -1)) {
+    lua_settop(L, top);
+    return false;
+  }
+  lua_getfield(L, -1, "on_init");
+  if (!lua_isfunction(L, -1)) {
+    lua_settop(L, top);
+    return false;
+  }
+  /* The argument is the global just written rather than a second build of the
+     same pairs, so what the brain is handed and what it reads back off
+     BRAIN_INIT are one table. */
+  lua_getglobal(L, "BRAIN_INIT");
+  if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+    if (why != NULL && whyLen > 0) {
+      const char *msg = lua_tostring(L, -1);
+      snprintf(why, whyLen, "%s", msg != NULL ? msg : "unknown error");
+    }
+    lua_settop(L, top);
+    return false;
+  }
+  lua_settop(L, top);
+  return true;
+}
+
+/* ------------------------------------------------------------------ */
+/* The hint table, and the handler it is handed to                     */
+/* ------------------------------------------------------------------ */
+
+BrainHintResult brainCoreCallScenarioHint(lua_State *L, const ScnTable *hint,
+                                          char *err, size_t errCap) {
+  int n = (hint != NULL) ? (int)hint->count : 0;
+  int i;
+
+  if (err != NULL && errCap > 0) err[0] = '\0';
+  if (L == NULL) return BRAIN_HINT_NO_HANDLER;
+  if (n > SCN_TABLE_MAX) n = SCN_TABLE_MAX;
+
+  lua_getglobal(L, "on_scenario_hint");
+  if (!lua_isfunction(L, -1)) {
+    /* A brain that does not take hints. The scenario named a seat, not a
+       brain, and it cannot know which brains a server runs, so this is
+       nothing happening rather than something going wrong. */
+    lua_pop(L, 1);
+    return BRAIN_HINT_NO_HANDLER;
+  }
+
+  /* The pairs go onto the stack one at a time and the handler is called with
+     the table they built. Never as a source chunk: the keys and the values
+     are a scenario author's bytes, and composing Lua out of them would be
+     running an author's text as code inside the brain's VM. It is also the
+     reason brainCoreSetInitTable above builds its table this way. */
+  lua_createtable(L, 0, n);
+  for (i = 0; i < n; i++) {
+    if (hint->kv[i].key[0] == '\0') continue;
+    lua_pushstring(L, hint->kv[i].value);
+    lua_setfield(L, -2, hint->kv[i].key);
+  }
+
+  if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+    if (err != NULL && errCap > 0) {
+      const char *msg = lua_tostring(L, -1);
+      snprintf(err, errCap, "%s", (msg != NULL) ? msg : "(no message)");
+    }
+    lua_pop(L, 1);
+    return BRAIN_HINT_ERROR;
+  }
+  return BRAIN_HINT_DELIVERED;
+}
+
 /* ------------------------------------------------------------------ */
 /* Constant registration                                               */
 /* ------------------------------------------------------------------ */
@@ -467,6 +569,10 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
   lua_pushinteger(L, info->trees);          lua_setfield(L, -2, "trees");
   lua_pushinteger(L, info->carriedpills);   lua_setfield(L, -2, "carried_pills");
   lua_pushinteger(L, info->carriedbases);   lua_setfield(L, -2, "carried_bases");
+  /* Bit n set: pill (base) n, 0 based, is on the map. A brain that keeps
+     its own list of items drops the ones whose bit is clear. */
+  lua_pushinteger(L, (lua_Integer)info->pills_on_map); lua_setfield(L, -2, "pills_on_map");
+  lua_pushinteger(L, (lua_Integer)info->bases_on_map); lua_setfield(L, -2, "bases_on_map");
   lua_pushinteger(L, info->gunrange);       lua_setfield(L, -2, "gunrange");
   lua_pushboolean(L, info->reload != 0);    lua_setfield(L, -2, "reload");
   lua_pushboolean(L, info->newtank != 0);   lua_setfield(L, -2, "newtank");
@@ -768,6 +874,36 @@ void brainCoreExtractOutput(lua_State *L, BrainInfo *info) {
     }
   }
   lua_pop(L, 1);
+
+  /* ping_kind / ping_x / ping_y — one smart ping the brain wants on the
+   * map this think. All three must be integers for the request to count,
+   * which is why the pending flag is set here rather than derived from the
+   * kind: PING_KIND_STANDARD is 0, so a kind of zero is a real kind and
+   * cannot double as "no ping". ping_pending was cleared when the engine
+   * built this BrainInfo, so a brain that says nothing places nothing. */
+  {
+    lua_Integer pk = 0, px = 0, py = 0;
+    int haveKind, haveX, haveY;
+    lua_getfield(L, -1, "ping_kind");
+    haveKind = lua_isinteger(L, -1);
+    if (haveKind) pk = lua_tointeger(L, -1);
+    lua_pop(L, 1);
+    lua_getfield(L, -1, "ping_x");
+    haveX = lua_isinteger(L, -1);
+    if (haveX) px = lua_tointeger(L, -1);
+    lua_pop(L, 1);
+    lua_getfield(L, -1, "ping_y");
+    haveY = lua_isinteger(L, -1);
+    if (haveY) py = lua_tointeger(L, -1);
+    lua_pop(L, 1);
+    if (haveKind && haveX && haveY && pk >= 0 && pk < 256 &&
+        px >= 0 && px <= 0xFFFF && py >= 0 && py <= 0xFFFF) {
+      info->ping_pending = 1;
+      info->ping_kind    = (BYTE)pk;
+      info->ping_x       = (WORLD_X)px;
+      info->ping_y       = (WORLD_Y)py;
+    }
+  }
 }
 
 /* ------------------------------------------------------------------ */

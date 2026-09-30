@@ -96,9 +96,31 @@ typedef struct GameSimCallbacks {
      * unicast CTRL_SHELL_DEATH so the firing client can match fireTick to
      * its predicted shell, cull the ghost, and draw the impact at
      * (impactWX, impactWY). NULL on the client (not authoritative over
-     * shell death). outcome is a SHELL_OUTCOME_* (shells.h). */
-    void (*shellDeath)(void *ctx, uint32_t fireTick, BYTE owner,
-                       WORLD impactWX, WORLD impactWY, uint8_t outcome);
+     * shell death). outcome is a SHELL_OUTCOME_* (shells.h).
+     *
+     * TWO ticks, and they are not the same number. fireTick is the CLIENT's
+     * own input-tick counter, which only the client it came from can make
+     * sense of — it goes straight back out on the wire and nothing else.
+     * serverFireTick is the server's tick at the moment the shell was
+     * created (shells.h serverFireTick), and it is the only one any
+     * server-side rule may be measured on. */
+    void (*shellDeath)(void *ctx, uint32_t fireTick, uint32_t serverFireTick,
+                       BYTE owner, WORLD impactWX, WORLD impactWY,
+                       uint8_t outcome);
+    /* Server-only: a shell owned by `owner` LEFT THE GUN. NULL on the
+     * client. shellDeath above is the first the server would otherwise hear
+     * of a shell, and a full-range shell is 104 server ticks in the air
+     * (shells.c shellsAddItem), which is longer than the three-shot order
+     * detector's quiet second: a shell still flying was simply absent from
+     * the fire log. This says so at the moment the shell is created, inside
+     * the sim tick, so the log is complete without waiting for a landing.
+     *
+     * RETURNS the SERVER tick the fire was recorded on. shellsAddItem
+     * stamps it on the shell as serverFireTick so the death-time call can
+     * name the same tick, and so no server-side rule ever has to read a
+     * number a client chose. Pillbox shells fire with owner NEUTRAL and are
+     * dropped by the handler, which still answers with the tick. */
+    uint32_t (*shellFired)(void *ctx, BYTE owner);
     /* Server-only stats attribution; NULL on the client (call sites null-check).
      * recordDamage: `attacker` dealt `dealt` effective armour damage to a target
      * of `targetKind` identified by `targetIndex` (the tank slot, or pill/base
@@ -147,7 +169,14 @@ typedef struct GameSimCallbacks {
      * back from a death.
      * lgmLanded: `player`'s builder finished the flight back and is standing
      * at mapX/mapY — the square he actually reached, not the one he left.
-     * pillPlaced: `player`'s builder put a carried pill down as pill `index`.
+     * pillPlaced: a carried pillbox `index` reached the map at mapX/mapY,
+     * carried there by `player`, with `armour` on it. Every route raises it,
+     * not only a builder finishing the job: the tank sinking or being
+     * destroyed puts its cargo down, the builder dying puts the one in his
+     * hands down, and a player leaving does both. `armour` is what separates
+     * them — a built pillbox lands at the sim's cap, every other route lands
+     * it dead at 0 — so it is read, rather than the player, to tell whether a
+     * live gun just appeared.
      * pillKilled: pill `index` lost its last armour. attacker is the slot
      * credited, or NEUTRAL where the blow names nobody.
      * built: `player`'s builder finished a job. action is the builder's own
@@ -160,11 +189,18 @@ typedef struct GameSimCallbacks {
                         bool respawn);
     void (*lgmLanded)(void *ctx, BYTE player, BYTE mapX, BYTE mapY);
     void (*pillPlaced)(void *ctx, BYTE player, BYTE index, BYTE mapX,
-                       BYTE mapY);
+                       BYTE mapY, BYTE armour);
     void (*pillKilled)(void *ctx, BYTE index, BYTE attacker);
     void (*built)(void *ctx, BYTE player, BYTE action, BYTE mapX, BYTE mapY);
     void (*mineLaid)(void *ctx, BYTE player, BYTE mapX, BYTE mapY);
     void (*mineExploded)(void *ctx, BYTE mapX, BYTE mapY, BYTE layer);
+    /* tankHit: `victim` took a shell or a mine, dealt by `attacker` (NEUTRAL
+     * for a pillbox's shell or a mine nobody laid), and lost `amount` armour,
+     * which may be 0. cause is a LAST_DEATH_BY_* value and pill the pill
+     * index whose shell it was, DMG_NO_PILL otherwise. Raised after the
+     * damage is worked out, so amount is what the armour actually lost. */
+    void (*tankHit)(void *ctx, BYTE victim, BYTE attacker, BYTE cause,
+                    BYTE amount, BYTE pill);
     /* Policy queries — the members that return an answer rather than
      * announcing something. Each asks the host a decision the sim would
      * otherwise make alone; the server's implementation is the only place
@@ -189,6 +225,15 @@ typedef struct GameSimCallbacks {
      * objective where it is; it does not block the tank.
      * canDie: whether this blow may destroy what it landed on. False leaves a
      * tank at zero armour and alive, a builder untouched and a pill at one.
+     * canHit: whether a shell may hit the tank or pill it has reached. kind
+     * is a HIT_KIND_*. False lets the shell fly on as if nothing were there.
+     * pillDamageScale: the percent of the armour one blow takes off a pill,
+     * 100 being the classic amount. cause is DMG_SRC_SHELL or
+     * DMG_SRC_EXPLOSION.
+     *
+     * The combat questions all end in pill: the pill index whose shell dealt
+     * the blow, or DMG_NO_PILL. The attacker is NEUTRAL for a pillbox's shell
+     * whatever pill says.
      *
      * Ask these through the gameSim* helpers below rather than through the
      * member, so the NULL answer is written once. */
@@ -196,11 +241,17 @@ typedef struct GameSimCallbacks {
     bool (*spawnLoadout)(void *ctx, BYTE player, BYTE *shells, BYTE *mines,
                          BYTE *armour, BYTE *trees);
     bool (*canRespawn)(void *ctx, BYTE player);
-    int  (*damageScale)(void *ctx, BYTE attacker, BYTE victim, BYTE cause);
+    int  (*damageScale)(void *ctx, BYTE attacker, BYTE victim, BYTE cause,
+                        BYTE pill);
     bool (*canBuild)(void *ctx, BYTE player, BYTE action, BYTE mapX,
                      BYTE mapY, BYTE pillIdx);
     bool (*canCapture)(void *ctx, BYTE kind, BYTE index, BYTE player);
-    bool (*canDie)(void *ctx, BYTE kind, BYTE index, BYTE killer, BYTE cause);
+    bool (*canDie)(void *ctx, BYTE kind, BYTE index, BYTE killer, BYTE cause,
+                   BYTE pill);
+    bool (*canHit)(void *ctx, BYTE attacker, BYTE kind, BYTE index,
+                   BYTE pill);
+    int  (*pillDamageScale)(void *ctx, BYTE attacker, BYTE index, BYTE cause,
+                            BYTE pill);
     void *ctx;  /* opaque pointer: ClientSim* or ServerSim* */
 } GameSimCallbacks;
 
@@ -366,9 +417,9 @@ struct GameSim {
     /* The base game type a scenario declared, 0 for no scenario or none
        declared. game being gameScripted sends every site that picks
        behaviour from the game type here instead, through gameTypeResolve,
-       and 0 there reads as gameOpen. The server writes it from the lobby
-       template the host hands over; a client is handed no template and
-       writes it from the scenario tail of the lobby settings instead, so
+       and 0 there reads as gameStrictTournament. The server writes it from
+       the lobby template the host hands over; a client is handed no template
+       and writes it from the scenario tail of the lobby settings instead, so
        both resolve a scripted round the same way. */
     gameType    scenarioBaseGame;
     /* Tutorial respawn start index. While sim->isTutorial, startsGetStart
@@ -415,14 +466,39 @@ static inline BYTE gameSimGetTankPlayer(GameSim *sim, tank *value) {
 /* The percent one blow does. Negative is read as nothing at all; the caller
    caps the top end where it multiplies. */
 static inline int gameSimDamageScale(GameSim *sim, BYTE attacker, BYTE victim,
-                                     BYTE cause) {
+                                     BYTE cause, BYTE pill) {
   int pct;
 
   if (sim == NULL || sim->callbacks.damageScale == NULL) {
     return 100;
   }
-  pct = sim->callbacks.damageScale(sim->callbacks.ctx, attacker, victim, cause);
+  pct = sim->callbacks.damageScale(sim->callbacks.ctx, attacker, victim, cause,
+                                   pill);
   return (pct < 0) ? 0 : pct;
+}
+
+/* The percent of the armour one blow takes off a pill, read the same way as
+   the tank's: negative is nothing, and the caller caps the top end. */
+static inline int gameSimPillDamageScale(GameSim *sim, BYTE attacker,
+                                         BYTE index, BYTE cause, BYTE pill) {
+  int pct;
+
+  if (sim == NULL || sim->callbacks.pillDamageScale == NULL) {
+    return 100;
+  }
+  pct = sim->callbacks.pillDamageScale(sim->callbacks.ctx, attacker, index,
+                                       cause, pill);
+  return (pct < 0) ? 0 : pct;
+}
+
+/* Whether a shell may hit the tank or pill it has reached. */
+static inline bool gameSimCanHit(GameSim *sim, BYTE attacker, BYTE kind,
+                                 BYTE index, BYTE pill) {
+  if (sim == NULL || sim->callbacks.canHit == NULL) {
+    return TRUE;
+  }
+  return sim->callbacks.canHit(sim->callbacks.ctx, attacker, kind, index,
+                               pill);
 }
 
 /* The start the host names for a player, or FALSE for the engine's pick. */
@@ -469,11 +545,12 @@ static inline bool gameSimCanCapture(GameSim *sim, BYTE kind, BYTE index,
 }
 
 static inline bool gameSimCanDie(GameSim *sim, BYTE kind, BYTE index,
-                                 BYTE killer, BYTE cause) {
+                                 BYTE killer, BYTE cause, BYTE pill) {
   if (sim->callbacks.canDie == NULL) {
     return TRUE;
   }
-  return sim->callbacks.canDie(sim->callbacks.ctx, kind, index, killer, cause);
+  return sim->callbacks.canDie(sim->callbacks.ctx, kind, index, killer, cause,
+                               pill);
 }
 
 static inline bool gameSimCheckTankRange(GameSim *sim, BYTE x, BYTE y, BYTE playerNum, double distance) {

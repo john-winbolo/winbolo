@@ -38,6 +38,7 @@
 #include <SDL3/SDL.h>
 
 #include <cctype>   /* toupper — country-code normalization */
+#include <cmath>    /* lroundf, fabsf — the scenario panel's resize drag */
 #include <cstdlib>  /* bsearch — country-name lookup */
 #include <cstring>  /* strcmp — bsearch comparator */
 
@@ -80,6 +81,7 @@ extern "C" {
 #include "flags.h"
 #include "glyphs.h"
 #include "ping_overlay.h"
+#include "scenario_panel_draw.h" /* the shared drawer behind the scenario panel */
 #include "dialogs/imgui_keycap.h"
 /* The lobby's visibility value renderer and the preset table, so the
  * in-game info panel names a server's rules in the same words and
@@ -97,11 +99,13 @@ extern "C" {
 /* Include input.h for keyItems — SDL3 already included, safe here */
 extern "C" {
 #include "input.h"
+#include "build_cursor.h"
 #include "input_touch.h"
 #include "input_gamepad.h"
 #include "input_source.h"
 #include "../ui_mode.h"
 #include "../../steam/steam_input_actions.h"
+#include "../../steam/steam_wrapper.h"  /* steam_workshop_available — the Workshop tab */
 }
 
 #include "sdl3imgui_tablet.h"
@@ -119,6 +123,8 @@ extern "C" {
 #include "dialogs/dialog_footer.h"
 #include "dialogs/imgui_keysetup.h"
 #include "dialogs/imgui_settings.h"
+#include "dialogs/imgui_settings_workshop.h"  /* declarations only; the call is
+                                                 desktop-only, like the module */
 #include "dialogs/imgui_about.h"
 #include "dialogs/imgui_nav_outline.h"
 #include "dialogs/imgui_lobby.h"
@@ -366,13 +372,11 @@ static SDL_Texture *s_iconBotChipGreen[ICON_SLOT_COUNT] = {};
 static SDL_Texture *s_iconBotChipRed[ICON_SLOT_COUNT]   = {};
 /* Large chip rasterization used for tank-label overlays, kept as a surface
  * because the label textures it per renderer (main window, pop-out
- * overview). The small s_iconBotChip is rasterized at WBN_ICON_SIZE for the
- * player-popup / renderPlayerName paths; sized up to a tank-label height
- * (~16-48 px depending on zoom) the small one looks soft because the SVG's
- * vector edges were already baked into a 14-px bitmap.
- * WBN_ICON_TANK_LABEL_SIZE rasterizes the same SVG at a height that covers
- * the realistic zoom range so the label-side blit is a (sharp) downscale
- * rather than an upscale. */
+ * overview). The small s_iconBotChip is rasterized at WBN_ICON_RASTER_PX for
+ * the player-popup / renderPlayerName paths, and the tank label asks for a
+ * height the zoom decides (~16-48 px). Kept separate because the label needs
+ * a renderer-free surface, not because of the size — both rasterize past the
+ * size they are drawn at so the blit is a (sharp) downscale. */
 static SDL_Surface *s_iconBotChipSurfGreen = nullptr;
 static SDL_Surface *s_iconBotChipSurfRed   = nullptr;
 
@@ -401,9 +405,21 @@ static SDL_Texture *s_iconSkull[ICON_SLOT_COUNT] = {};
  * Loaded here as white alpha masks through imguiLoadSvgIconWhite, not through
  * pingIconTexture: that cache rasterises for the map at the view's own scale
  * and hands back the kind table's colour, where this cell needs one icon at
- * WBN_ICON_SIZE that it tints itself, dim or red, from the mute state. */
+ * the badge run's size that it tints itself, dim or red, from the mute
+ * state. */
 static SDL_Texture *s_iconPing[ICON_SLOT_COUNT]      = {};
 static SDL_Texture *s_iconPingMuted[ICON_SLOT_COUNT] = {};
+/* The gear in the scenario panel's top-right corner, which opens that
+ * panel's settings window. data/ui/settings.svg, the same gear the tablet
+ * frontend puts on its settings tab, so one build does not say "settings"
+ * with two different shapes. A white alpha mask like the skull, because the
+ * corner grips tint themselves dim or bright from whether the pointer is on
+ * them and a tint multiplier cannot brighten an authored colour. */
+static SDL_Texture *s_iconScnPanelGear[ICON_SLOT_COUNT] = {};
+/* The speaker. Outside the voice guard because the lobby's visibility table
+ * draws it for the positional sound column in every build; the players
+ * panel's voice states below use it too. */
+static SDL_Texture *s_iconSpeaker[ICON_SLOT_COUNT]      = {};
 #if defined(WINBOLO_VOICE)
 /* Voice state icons for the players panel. Which shape is drawn says which
  * end the state belongs to: a speaker for the states about playback here —
@@ -415,7 +431,6 @@ static SDL_Texture *s_iconPingMuted[ICON_SLOT_COUNT] = {};
 static SDL_Texture *s_iconMic[ICON_SLOT_COUNT]          = {};
 static SDL_Texture *s_iconMicMuted[ICON_SLOT_COUNT]     = {};
 static SDL_Texture *s_iconMicOff[ICON_SLOT_COUNT]       = {};
-static SDL_Texture *s_iconSpeaker[ICON_SLOT_COUNT]      = {};
 static SDL_Texture *s_iconSpeakerMuted[ICON_SLOT_COUNT] = {};
 /* The local player's slot, read once a frame in sdl3ImguiPumpAndRender — the
  * only place here with a ClientSim to ask. PLAYER_SELF_UNKNOWN rather than 0
@@ -454,15 +469,43 @@ static const float MIC_PULSE_FLOOR      = 0.35f;
 #define MIC_ICON_MAX_PX 256
 #endif
 static bool s_wbnIconsLoaded[ICON_SLOT_COUNT] = {};
-#define WBN_ICON_SIZE 14
+/* The badge run beside a player name — platform, WBN shield, Steam, the bot
+ * chip, the smart-ping mute cell, the mic cell and the country flag — has two
+ * sizes, and they are not the same number.
+ *
+ * WBN_ICON_DRAW_PX is what a badge is drawn at: one font size, which is what
+ * the config cog beside it and the tank badge in front of it already use, so
+ * the run lands the same height as everything else on the row. It was a flat
+ * 14 px, and that is where the lobby's mic reading small next to the cog came
+ * from: the row's font is 18 px at 1x and grows with the UI scale, where the
+ * badge stayed 14 whatever the scale was.
+ *
+ * WBN_ICON_RASTER_PX is what the SVGs are rasterised at — past the largest
+ * size the run is ever drawn at (the dialog font tops out at 20 * 2.5), so a
+ * draw is a sharp downscale rather than a blurred upscale. flags.c (44) and
+ * WBN_ICON_TANK_LABEL_SIZE below already size their art this way.
+ *
+ * WBN_ICON_BASE_PX is only an aspect reference now: the country flag keeps
+ * the proportion it had against a 14 px badge, since a flag is wider than it
+ * is tall and should not become a square. */
+#define WBN_ICON_BASE_PX 14
+#define WBN_ICON_RASTER_PX 64
 #define WBN_ICON_TANK_LABEL_SIZE 48
+
+float sdl3ImguiWbnIconPx(void) { return ImGui::GetFontSize(); }
+
+void sdl3ImguiFlagSize(float *outW, float *outH) {
+    const float k = sdl3ImguiWbnIconPx() / (float)WBN_ICON_BASE_PX;
+    if (outW) *outW = (float)FLAG_WIDTH * k;
+    if (outH) *outH = (float)FLAG_HEIGHT * k;
+}
 
 static void ensureWbnIconsLoaded(void) {
     int slot = activeIconSlot();
     if (s_wbnIconsLoaded[slot]) return;
     s_wbnIconsLoaded[slot] = true;
     SDL_Renderer *r = activeRenderer();
-    s_iconSteam[slot]   = imguiLoadSvgIconWhite(r, "data/ui/steam.svg", WBN_ICON_SIZE);
+    s_iconSteam[slot]   = imguiLoadSvgIconWhite(r, "data/ui/steam.svg", WBN_ICON_RASTER_PX);
     /* The bot badge in a player row: the same two chips the lobby marks its
      * bot rows with (lobby_assets.cpp loads the same pair), so one game does
      * not say "computer player" with a chip in one list and a brain in
@@ -476,23 +519,30 @@ static void ensureWbnIconsLoaded(void) {
      * the silhouette green or red gives a solid blob rather than the chip
      * the lobby draws. Two files, drawn as authored, is what the art is for.  */
     s_iconBotChipGreen[slot] = imguiLoadSvgIcon(r, "data/ui/bot-cpu-green.svg",
-                                                WBN_ICON_SIZE);
+                                                WBN_ICON_RASTER_PX);
     s_iconBotChipRed[slot]   = imguiLoadSvgIcon(r, "data/ui/bot-cpu-red.svg",
-                                                WBN_ICON_SIZE);
+                                                WBN_ICON_RASTER_PX);
     /* Outside the voice test below: the counter columns that draw this are
      * not a voice feature and ship in -DWINBOLO_VOICE=OFF builds too. */
-    s_iconSkull[slot]   = imguiLoadSvgIconWhite(r, "data/ui/skull.svg", WBN_ICON_SIZE);
+    s_iconSkull[slot]   = imguiLoadSvgIconWhite(r, "data/ui/skull.svg", WBN_ICON_RASTER_PX);
     /* Ping-mute toggle, outside the voice test with the skull. */
     s_iconPing[slot]      = imguiLoadSvgIconWhite(r, "data/ui/ping/standard.svg",
-                                                  WBN_ICON_SIZE);
+                                                  WBN_ICON_RASTER_PX);
     s_iconPingMuted[slot] = imguiLoadSvgIconWhite(r, "data/ui/ping/standard-muted.svg",
-                                                  WBN_ICON_SIZE);
+                                                  WBN_ICON_RASTER_PX);
+    /* The scenario panel's settings grip, outside the voice guard with the
+     * skull and the ping for the same reason: a scenario panel is drawn in
+     * every build. */
+    s_iconScnPanelGear[slot] = imguiLoadSvgIconWhite(r, "data/ui/settings.svg",
+                                                     WBN_ICON_RASTER_PX);
+    /* The speaker, outside the voice guard: the lobby's visibility table
+     * draws it in every build. */
+    s_iconSpeaker[slot]      = imguiLoadSvgIconWhite(r, "data/ui/speaker.svg",       WBN_ICON_RASTER_PX);
 #if defined(WINBOLO_VOICE)
-    s_iconMic[slot]          = imguiLoadSvgIconWhite(r, "data/ui/mic.svg",           WBN_ICON_SIZE);
-    s_iconMicMuted[slot]     = imguiLoadSvgIconWhite(r, "data/ui/mic-muted.svg",     WBN_ICON_SIZE);
-    s_iconMicOff[slot]       = imguiLoadSvgIconWhite(r, "data/ui/mic-off.svg",       WBN_ICON_SIZE);
-    s_iconSpeaker[slot]      = imguiLoadSvgIconWhite(r, "data/ui/speaker.svg",       WBN_ICON_SIZE);
-    s_iconSpeakerMuted[slot] = imguiLoadSvgIconWhite(r, "data/ui/speaker-muted.svg", WBN_ICON_SIZE);
+    s_iconMic[slot]          = imguiLoadSvgIconWhite(r, "data/ui/mic.svg",           WBN_ICON_RASTER_PX);
+    s_iconMicMuted[slot]     = imguiLoadSvgIconWhite(r, "data/ui/mic-muted.svg",     WBN_ICON_RASTER_PX);
+    s_iconMicOff[slot]       = imguiLoadSvgIconWhite(r, "data/ui/mic-off.svg",       WBN_ICON_RASTER_PX);
+    s_iconSpeakerMuted[slot] = imguiLoadSvgIconWhite(r, "data/ui/speaker-muted.svg", WBN_ICON_RASTER_PX);
 #endif
     /* Renderer-free, so they are loaded once for every slot rather than
      * rasterized again per renderer. */
@@ -686,13 +736,13 @@ static void ensurePlatformIconsLoaded(void) {
     /* Force white so platform icons read against the dark ImGui background
      * regardless of each SVG's authored fill (mac.svg=#888, windows.svg=#000…). */
     s_iconPlatform[slot][CLIENT_TYPE_UNKNOWN]   = nullptr;
-    s_iconPlatform[slot][CLIENT_TYPE_WINDOWS]   = imguiLoadSvgIconWhite(r, "data/ui/windows.svg",    WBN_ICON_SIZE);
-    s_iconPlatform[slot][CLIENT_TYPE_LINUX]     = imguiLoadSvgIconWhite(r, "data/ui/linux.svg",      WBN_ICON_SIZE);
-    s_iconPlatform[slot][CLIENT_TYPE_MACOS]     = imguiLoadSvgIconWhite(r, "data/ui/mac.svg",        WBN_ICON_SIZE);
-    s_iconPlatform[slot][CLIENT_TYPE_IOS]       = imguiLoadSvgIconWhite(r, "data/ui/ios.svg",        WBN_ICON_SIZE);
-    s_iconPlatform[slot][CLIENT_TYPE_ANDROID]   = imguiLoadSvgIconWhite(r, "data/ui/android.svg",    WBN_ICON_SIZE);
-    s_iconPlatform[slot][CLIENT_TYPE_STEAMDECK] = imguiLoadSvgIconWhite(r, "data/ui/steam-deck.svg", WBN_ICON_SIZE);
-    s_iconPlatform[slot][CLIENT_TYPE_WEB]       = imguiLoadSvgIconWhite(r, "data/ui/globe.svg",      WBN_ICON_SIZE);
+    s_iconPlatform[slot][CLIENT_TYPE_WINDOWS]   = imguiLoadSvgIconWhite(r, "data/ui/windows.svg",    WBN_ICON_RASTER_PX);
+    s_iconPlatform[slot][CLIENT_TYPE_LINUX]     = imguiLoadSvgIconWhite(r, "data/ui/linux.svg",      WBN_ICON_RASTER_PX);
+    s_iconPlatform[slot][CLIENT_TYPE_MACOS]     = imguiLoadSvgIconWhite(r, "data/ui/mac.svg",        WBN_ICON_RASTER_PX);
+    s_iconPlatform[slot][CLIENT_TYPE_IOS]       = imguiLoadSvgIconWhite(r, "data/ui/ios.svg",        WBN_ICON_RASTER_PX);
+    s_iconPlatform[slot][CLIENT_TYPE_ANDROID]   = imguiLoadSvgIconWhite(r, "data/ui/android.svg",    WBN_ICON_RASTER_PX);
+    s_iconPlatform[slot][CLIENT_TYPE_STEAMDECK] = imguiLoadSvgIconWhite(r, "data/ui/steam-deck.svg", WBN_ICON_RASTER_PX);
+    s_iconPlatform[slot][CLIENT_TYPE_WEB]       = imguiLoadSvgIconWhite(r, "data/ui/globe.svg",      WBN_ICON_RASTER_PX);
 }
 
 /* Free one renderer's copies of every icon and let them be loaded again.
@@ -707,11 +757,14 @@ static void destroyIconSlot(int slot) {
      * every build too. */
     if (s_iconPing[slot]) { SDL_DestroyTexture(s_iconPing[slot]); s_iconPing[slot] = nullptr; }
     if (s_iconPingMuted[slot]) { SDL_DestroyTexture(s_iconPingMuted[slot]); s_iconPingMuted[slot] = nullptr; }
+    if (s_iconScnPanelGear[slot]) { SDL_DestroyTexture(s_iconScnPanelGear[slot]); s_iconScnPanelGear[slot] = nullptr; }
+    /* Outside the voice guard: the lobby's visibility table draws the speaker
+     * in every build. */
+    if (s_iconSpeaker[slot]) { SDL_DestroyTexture(s_iconSpeaker[slot]); s_iconSpeaker[slot] = nullptr; }
 #if defined(WINBOLO_VOICE)
     if (s_iconMic[slot]) { SDL_DestroyTexture(s_iconMic[slot]); s_iconMic[slot] = nullptr; }
     if (s_iconMicMuted[slot]) { SDL_DestroyTexture(s_iconMicMuted[slot]); s_iconMicMuted[slot] = nullptr; }
     if (s_iconMicOff[slot]) { SDL_DestroyTexture(s_iconMicOff[slot]); s_iconMicOff[slot] = nullptr; }
-    if (s_iconSpeaker[slot]) { SDL_DestroyTexture(s_iconSpeaker[slot]); s_iconSpeaker[slot] = nullptr; }
     if (s_iconSpeakerMuted[slot]) { SDL_DestroyTexture(s_iconSpeakerMuted[slot]); s_iconSpeakerMuted[slot] = nullptr; }
 #endif
     s_wbnIconsLoaded[slot] = false;
@@ -756,9 +809,6 @@ static bool alliancePendingGet(const char **nameOut, BYTE *numOut) {
     return true;
 }
 static void allianceClearPending(void) { s_allianceVisible = false; }
-
-static bool s_showPasswordOpen   = false;
-static char s_passwordBuf[36]    = "";  /* MAP_STR_SIZE = 36 */
 
 /* "Join Game?" confirmation when a winbolo:// URL is received mid-game */
 static bool s_showJoinConfirm       = false;
@@ -909,6 +959,15 @@ static SDL_Renderer *s_overviewCrosshairRenderer = nullptr;
 /* Last frame's running state, so the start of a game can be told from the
    middle of one — see the auto-hide/reopen in sdl3ImguiPumpAndRender. */
 static bool          s_overviewWasRunning    = false;
+#ifdef __EMSCRIPTEN__
+/* The web has no pop-outs, so the overview is an ImGui window in the main
+   context instead, drawn from a view rendered on the main renderer. The size
+   is the window's content region as of the last frame, which is what the
+   next frame's offscreen render is made at. */
+static bool          s_showMapOverviewPanel  = false;
+static int           s_mapOverviewPanelW     = 0;
+static int           s_mapOverviewPanelH     = 0;
+#endif
 
 /* Whether the windows the player drives from (main window + Map Overview)
    held keyboard focus as of the end of the last event poll, and whether any
@@ -1197,6 +1256,15 @@ static bool overviewSuppressed(void) { return s_noOverview; }
  * it, so a monitor that has been unplugged since the last run cannot strand
  * the window off-screen. Same test the main window does in winbolo.c. */
 static void mapOverviewOpen(void) {
+#ifdef __EMSCRIPTEN__
+    /* The window inside the canvas. The app flag means browser full screen
+       here, which the full screen map never follows, so the test is the map
+       mode itself: a game never starts in it on the web, so the game-start
+       reopen cannot run ahead of it. */
+    if (sdl3DrawIsOverviewInWindow() || overviewSuppressed()) return;
+    s_showMapOverviewPanel   = true;
+    gameFrontShowMapOverview = true;
+#else
     /* Full screen mode owns the whole window and draws the same map itself,
        so the pop-out never opens while it is on — in a game, in the lobby or
        in the menus. The test is the app flag rather than the in-window view
@@ -1239,6 +1307,7 @@ static void mapOverviewOpen(void) {
         SDL_RaiseWindow(s_popMapOverview.window);
     }
     gameFrontShowMapOverview = true;
+#endif
 }
 
 /* Every path that takes the overview off screen comes through here, so the
@@ -1246,7 +1315,11 @@ static void mapOverviewOpen(void) {
  * back. overviewViewHandleInput only restores it when the pointer leaves the
  * map, which never happens when the window goes away underneath it. */
 static void mapOverviewHide(void) {
+#ifdef __EMSCRIPTEN__
+    s_showMapOverviewPanel = false;
+#else
     if (s_popMapOverview.open) popOutHide(&s_popMapOverview);
+#endif
     overviewViewReleaseCursor(s_overviewView);
 }
 
@@ -1263,14 +1336,16 @@ static void mapOverviewClose(void) {
  * to windowed only when the app full screen flag is off, because with it on
  * the window stays full screen for the lobby and the menus. The window call
  * sits outside the mode test on purpose: a flag change with no mode change
- * still has to be able to move the window. */
+ * still has to be able to move the window. A window the page sizes (the web
+ * canvas) is left alone: there the mode switches the view only, and the
+ * browser's full screen stays the player's own F11. */
 static void overviewInWindowSet(bool on) {
     SDL_Window *win = sdl3DrawGetWindow();
     if (on && !win) return;
     if (on != sdl3DrawIsOverviewInWindow()) {
         sdl3DrawSetOverviewInWindow(on);  /* hands the OS pointer back on the way out */
     }
-    if (win) {
+    if (win && !(SDL_GetWindowFlags(win) & SDL_WINDOW_FILL_DOCUMENT)) {
         SDL_SetWindowFullscreen(win, on || gameFrontFullScreen);
         /* SDL_SetWindowFullscreen is asynchronous on Wayland and X11 and the
            frame that follows reads the window geometry, so wait for the
@@ -1292,7 +1367,10 @@ static void overviewInWindowChoose(bool on) {
        Ahead of the assignment below on purpose: gameFrontFullScreen is the
        player's own preference and must survive such a server. */
     if (on && overviewSuppressed()) return;
-    gameFrontFullScreen = on;
+    SDL_Window *win = sdl3DrawGetWindow();
+    /* A window the page sizes: the flag there means browser full screen, which this mode does not touch. */
+    bool pageSized = win && (SDL_GetWindowFlags(win) & SDL_WINDOW_FILL_DOCUMENT);
+    if (!pageSized) gameFrontFullScreen = on;
     overviewInWindowSet(on);
     /* The two views of the map never share the screen, so the pop-out swaps
        with the mode. Going full screen puts it away without forgetting it;
@@ -1303,11 +1381,45 @@ static void overviewInWindowChoose(bool on) {
        next game reads. */
     if (on) mapOverviewHide();
     else if (gameFrontShowMapOverview && s_overviewWasRunning) mapOverviewOpen();
+    /* The other five — Send Message, Players, and the three Session Info
+     * panels — each have TWO forms, and which one is real depends on the mode
+     * this call just changed. In classic mode each is a pop-out, a separate OS
+     * window; while the overview owns the window each is drawn in-window
+     * instead, because a pop-out would land behind a map that is now full
+     * screen. Nothing was closing the form the player is leaving behind, and
+     * the two forms do not coexist — each panel refuses to draw in-window
+     * while its own pop-out is open (renderSendMsgPanel and its four
+     * siblings).
+     *
+     * So a pop-out opened in classic mode and still open at the switch left
+     * the panel unable to draw AND the pop-out unreachable behind the full
+     * screen window: Send Message could not be brought back by the shortcut or
+     * by Players > Send Message, and neither could the other four. The
+     * mirror leaves an in-window panel drawn over the classic view that the
+     * menu reports as closed, since there it reads the pop-out's flag.
+     *
+     * Closing the outgoing form settles both. The panel belongs to the mode it
+     * was opened in and does not follow the player across; asking for it again
+     * in the new mode opens the form that mode actually uses. The map overview
+     * above is the one that DOES follow, because it is the mode. */
+    if (on) {
+        if (s_popSysInfo.open)  popOutHide(&s_popSysInfo);
+        if (s_popNetInfo.open)  popOutHide(&s_popNetInfo);
+        if (s_popGameInfo.open) popOutHide(&s_popGameInfo);
+        if (s_popSendMsg.open)  popOutHide(&s_popSendMsg);
+        if (s_popPlayers.open)  popOutHide(&s_popPlayers);
+    } else {
+        s_showSysInfo      = false;
+        s_showNetInfo      = false;
+        s_showGameInfo     = false;
+        s_showSendMsg      = false;
+        s_showPlayersPanel = false;
+    }
     /* The player's own choice, so it survives the run — the same save
        windowFullScreenChoose makes for the same flag on the screens outside
        a game. The auto-exit and the cleanup path call overviewInWindowSet
        directly and deliberately never reach this. */
-    gameFrontSaveCurrentPrefs();
+    if (!pageSized) gameFrontSaveCurrentPrefs();
 }
 
 /* True while the info panels and Send Message are drawn in the main window
@@ -1320,9 +1432,11 @@ static void overviewInWindowChoose(bool on) {
  * on the Deck — no menu bar under a controller — that is the only way to
  * reach them; those are the panel's real form, not a stand-in, and the rules
  * keyed on this must leave them exactly as they were. False on the tablet /
- * mobile / web builds for the same reason: they have no pop-outs at all. */
+ * mobile builds for the same reason: they have no pop-outs at all. The web
+ * has no pop-outs either, but while its full screen map is up the panels
+ * take the same in-window rules the desktop uses. */
 static bool panelsStandInForPopOuts(void) {
-#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+#if !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
     return !uiModeIsTablet() && sdl3DrawIsOverviewInWindow();
 #else
     return false;
@@ -1813,6 +1927,7 @@ static void renderGameInfoContent(ClientSim *cs) {
         vis.overviewWindow = clientSimGetOverviewWindow(cs);
         vis.lineOfSight    = clientSimGetLineOfSight(cs);
         vis.alliesInTrees  = clientSimGetAlliesInTrees(cs);
+        vis.positionalSound = clientSimGetPositionalSound(cs);
 
         VisibilityPreset preset = visibilityPresetMatch(&vis);
         ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_VISIBILITY_LBL),
@@ -2244,6 +2359,84 @@ static void renderMapOverviewContent(ClientSim *cs) {
     }
 }
 
+#ifdef __EMSCRIPTEN__
+/* True while the web's overview window is on screen: asked for, a game
+   running, and the full screen map not up — that draws the same map itself. */
+static bool mapOverviewPanelShown(ClientSim *cs) {
+    return s_showMapOverviewPanel && !sdl3DrawIsOverviewInWindow() &&
+           cs != nullptr && clientSimIsRunning(cs);
+}
+
+/* Draw the map into the view's offscreen on the main renderer, at the size
+   the window's content region had last frame. Called before the main ImGui
+   frame is built, for the reason the pop-out's render gives: the target
+   switch does not belong in the middle of a draw list. The tile sheet and
+   crosshair are the main renderer's own, and the target found on entry is
+   put back, since the view's render always leaves the window's. */
+static void mapOverviewPanelRenderOffscreen(ClientSim *cs) {
+    if (!mapOverviewPanelShown(cs)) return;
+    if (s_mapOverviewPanelW <= 0 || s_mapOverviewPanelH <= 0) return;
+    if (!s_overviewView) {
+        s_overviewView = overviewViewCreate();
+        /* Same one-off camera restore as the pop-out's. */
+        OverviewCamera *cam = overviewViewCamera(s_overviewView);
+        if (cam) {
+            overviewCameraSetZoomScale(cam, gameFrontOverviewZoom);
+            cam->follow = gameFrontOverviewFollow;
+        }
+    }
+    if (!s_overviewSnapshot) {
+        s_overviewSnapshot = overviewSnapshotCreate();
+    }
+    SDL_Texture *ovCross = overviewEnsureCrosshair(s_renderer);
+    /* Only the fill under the lock, as for the pop-out. */
+    clientMutexWaitFor();
+    clientSimFillOverviewSnapshot(cs, s_overviewSnapshot);
+    clientMutexRelease();
+    SDL_Texture *prevTarget = SDL_GetRenderTarget(s_renderer);
+    overviewViewRenderOffscreen(s_overviewView, s_renderer,
+                                sdl3DrawGetTilesTexture(),
+                                sdl3DrawGetSheetScale(), ovCross,
+                                s_mapOverviewPanelW, s_mapOverviewPanelH,
+                                s_overviewSnapshot, false);
+    SDL_SetRenderTarget(s_renderer, prevTarget);
+}
+
+/* The overview window inside the canvas. Movable and resizable; the close
+   box is an explicit close, so it stays shut for the next game. Neither the
+   position nor the size is saved. No scrolling: while the window is being
+   resized the image is a frame behind the content region, and the wheel
+   belongs to the map. */
+static void renderMapOverviewPanel(ClientSim *cs) {
+    if (!mapOverviewPanelShown(cs)) return;
+    ImGuiIO &io = ImGui::GetIO();
+    float w = (float)gameFrontOverviewW;
+    float h = (float)gameFrontOverviewH;
+    if (w > io.DisplaySize.x * 0.6f) w = io.DisplaySize.x * 0.6f;
+    if (h > io.DisplaySize.y * 0.6f) h = io.DisplaySize.y * 0.6f;
+    ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_FirstUseEver);
+    char title[128];
+    SDL_snprintf(title, sizeof(title), "%s###mapoverview",
+                 langGetText(STR_MENU_MAP_OVERVIEW));
+    bool open = true;
+    /* The map fills the window edge to edge, as in the pop-out. */
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    bool visible = ImGui::Begin(title, &open,
+                                ImGuiWindowFlags_NoCollapse |
+                                ImGuiWindowFlags_NoScrollbar |
+                                ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PopStyleVar();
+    if (visible) {
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        s_mapOverviewPanelW = (int)avail.x;
+        s_mapOverviewPanelH = (int)avail.y;
+        renderMapOverviewContent(cs);
+    }
+    ImGui::End();
+    if (!open) mapOverviewClose();
+}
+#endif
+
 /* -------------------------------------------------------
  * In-window Map Overview
  * ------------------------------------------------------- */
@@ -2352,9 +2545,10 @@ static void renderOverviewInWindow(ClientSim *cs) {
                                  hovered && overNews);
 
         /* The build items are the only interactive part of the HUD; a click
-           anywhere else on it is simply swallowed. Same trio the classic
-           hit-test in sdl3DrawHandleEvent runs, so the indent drawn into the
-           HUD slice follows the new selection. */
+           anywhere else on it is simply swallowed. Only the sim is told, as
+           the classic hit-test in sdl3DrawHandleEvent does; sdl3DrawMainScreen
+           reads the selection back from it on the next frame, so the indent
+           drawn into the HUD slice follows the new selection. */
         if (overBuild && cs && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             for (int i = 0; i <= (int)BsMine; i++) {
                 float ix = 0.0f, iy = 0.0f, iw = 0.0f, ih = 0.0f;
@@ -2362,8 +2556,6 @@ static void renderOverviewInWindow(ClientSim *cs) {
                 if (!overviewHudRectHit(mouse, rx, ry, ix, iy, iw, ih)) continue;
                 buildSelect picked = (buildSelect)i;
                 if (picked != clientSimGetCurrentBuildSelect(cs)) {
-                    sdl3DrawSelectIndentsOff(clientSimGetCurrentBuildSelect(cs), 0, 0);
-                    sdl3DrawSelectIndentsOn(picked, 0, 0);
                     clientMutexWaitFor();
                     clientSimSetCurrentBuildSelect(cs, picked);
                     clientMutexRelease();
@@ -2813,23 +3005,24 @@ static void renderPlayersContent(ClientSim *cs) {
      * The candidates, each read from the code that draws it:
      *   checkbox                ImGui draws it GetFrameHeight() square
      *   platform / WBN / Steam / brain icons, the mic cell, and the
-     *   smart-ping mute cell    WBN_ICON_SIZE, 14 — the ping cell draws an
+     *   smart-ping mute cell    sdl3ImguiWbnIconPx() — the ping cell draws an
      *                           ImageButton of exactly the size this panel
      *                           hands renderPlayerPingMuteCell
-     *   country flag            FLAG_HEIGHT, 11 (flags.h; drawn at 7131)
+     *   country flag            sdl3ImguiFlagSize, shorter than a badge
      *   volume slider           GetTextLineHeight() — it is pushed with
      *                           zero FramePadding, so it is a frame with
      *                           its padding taken out, and an empty label
      *                           measures one font size tall
      *   alliance mark, name, counters, ping
      *                           GetTextLineHeight()
-     * The flag is never the tallest, 11 being under 14, and a frame with no
-     * padding is never taller than one with it, so the max is over the other
-     * three. Computed once for the panel rather than per row: nothing in it
-     * depends on which player the row is for, and the blank rows the desktop
-     * list draws for departed players have to come out the same height. */
+     * The flag is never the tallest — it keeps its 11-against-14 proportion
+     * against a badge — and a frame with no padding is never taller than one
+     * with it, so the max is over the other three. Computed once for the
+     * panel rather than per row: nothing in it depends on which player the
+     * row is for, and the blank rows the desktop list draws for departed
+     * players have to come out the same height. */
     const float panelRowH = ImMax(ImGui::GetFrameHeight(),
-                                  ImMax((float)WBN_ICON_SIZE,
+                                  ImMax(sdl3ImguiWbnIconPx(),
                                         ImGui::GetTextLineHeight()));
 
     /* Render a single player row */
@@ -2987,14 +3180,16 @@ static void renderPlayersContent(ClientSim *cs) {
         /* Flag icon — skipped for bots (no real country; renderPlayerName
          * below shows a brain icon in the platform-icon slot instead). */
         if (!(s_playerFlags[i] & PLAYER_FLAG_BOT) && s_playerCountry[i][0] != '\0') {
-            cyAbs((float)FLAG_HEIGHT);
+            float flagH = 0.0f;
+            sdl3ImguiFlagSize(NULL, &flagH);
+            cyAbs(flagH);
             if (drawCountryFlagWithTip(s_playerCountry[i])) {
                 ImGui::SameLine();
             }
         }
 
         /* Platform / WBN / Steam icons (brain icon for bots). Every icon in
-         * that run is WBN_ICON_SIZE tall, so one placement covers the run:
+         * that run is sdl3ImguiWbnIconPx() tall, so one placement covers it:
          * keepIconY holds the y this call starts at across the run's own
          * SameLine calls, which would otherwise drop icons two and three
          * back onto the line's top.
@@ -3003,7 +3198,7 @@ static void renderPlayersContent(ClientSim *cs) {
          * mark in front of the name, so the row says whose side it is on
          * twice over rather than showing a neutral glyph beside a coloured
          * star. Your own row can hold no bot, so the self case never arises. */
-        cyAbs((float)WBN_ICON_SIZE);
+        cyAbs(sdl3ImguiWbnIconPx());
         RenderPlayerNameOpts nameOpts = { isAlly[i], true };
         renderPlayerNameEx(NULL, s_playerFlags[i], s_playerClientType[i], "",
                            false, &nameOpts);
@@ -3029,13 +3224,12 @@ static void renderPlayersContent(ClientSim *cs) {
          * on the local row so the name still starts at the same x there. */
         /* One icon square, the size the mic cell beside it takes and the size
          * the lobby already passes this helper. It was GetFrameHeight() while
-         * the cell was a lettered button, which is larger; the SVG rasterises
-         * at WBN_ICON_SIZE, so drawing it at a frame height would upscale a
-         * 14 px mask and blur it. */
-        float pingMuteWidth  = (float)WBN_ICON_SIZE;
+         * the cell was a lettered button, which is larger; a frame height is
+         * the padding plus the font, and this run sits at the font itself. */
+        float pingMuteWidth  = sdl3ImguiWbnIconPx();
 #if defined(WINBOLO_VOICE)
         /* The mic cell is one icon square. */
-        float micWidth = (float)WBN_ICON_SIZE;
+        float micWidth = sdl3ImguiWbnIconPx();
         /* Room the per-player volume slider takes. Held on the local
          * player's row too, which draws a blank there, or the name would
          * start at a different x on that one row. Read before the zero
@@ -3104,7 +3298,7 @@ static void renderPlayersContent(ClientSim *cs) {
              * opaque, so a dimmed frame turns translucent and takes the
              * colour of the row behind it — which means the same disabled
              * slider is one grey on a striped row and another on a bare one.
-             * With every row a bot, as a horde game is, that reads as the
+             * With every row a bot, as an all-bot game is, that reads as the
              * zebra leaking into the controls. The frame is a control's
              * outline and should not move with the row it sits on; the grab
              * is what has to say the control is dead. */
@@ -3177,10 +3371,28 @@ static void renderPlayersContent(ClientSim *cs) {
         const float  nameTextY = rowTopScreenY +
                                  (rowH - ImGui::GetTextLineHeight()) * 0.5f -
                                  ImGui::GetFontSize() * 0.12f;
+        /* A seat that is in the roster with nobody on the field — a seat held
+         * between waves — is drawn at the lobby's own 45%, for the reason the
+         * lobby gives: so a player can tell the seats being held from the bots
+         * playing this round. The name only, as there. The counters beside it
+         * are this seat's score for the round and stay true while it is off
+         * the field, and the cells after them — the ping pin, the mic, the
+         * volume — are already dead on a bot row, which every held seat is.
+         *
+         * RenderTextClipped takes its colour through GetColorU32, so the
+         * pushed alpha reaches it. */
+        const bool rowUnfielded = clientSimSlotIsUnfielded(cs, (BYTE)i);
+        if (rowUnfielded) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                ImGui::GetStyle().Alpha * 0.45f);
+        }
         ImGui::RenderTextClipped(ImVec2(nameCell.x, nameTextY),
                                  ImVec2(nameCell.x + nameW,
                                         rowTopScreenY + rowH),
                                  label, NULL, NULL, ImVec2(0.0f, 0.0f));
+        if (rowUnfielded) {
+            ImGui::PopStyleVar();
+        }
         ImGui::Dummy(ImVec2(nameW, 1.0f));
 
         /* Live counters, centred in their columns under the marks that name
@@ -3708,6 +3920,867 @@ static void renderPlayersPanel(ClientSim *cs) {
     }
     renderPlayersContent(cs);
     ImGui::End();
+}
+
+/* -------------------------------------------------------
+ * The scenario panel
+ *
+ * A scenario puts information in front of players by
+ * sending a display list, and this is where panel 0 — the
+ * in-game square — lands: a small window over the game
+ * view, one panel unit to one pixel at zoom 1 and scaled
+ * with the game's zoom from there.
+ *
+ * It is not one of the status panels. Those are a fixed
+ * column at the positions src/gui/positions.h names and
+ * cannot be dragged. This one is the player's to put where
+ * they like, and where they put it is kept in the
+ * preferences.
+ *
+ * Drawn only while panel 0 holds a list with something in
+ * it. An empty list is a scenario taking the panel away, so
+ * an empty frame left sitting on the map would be showing
+ * the player something the scenario had just removed.
+ *
+ * Panel 0 is the only panel there is, so this is the only
+ * place a display list is drawn.
+ * ------------------------------------------------------- */
+
+/* How far in from the top-right corner of the game view the panel sits the
+   first time it is shown, in panel units so the inset scales with it. */
+#define SCN_PANEL_DEFAULT_INSET 4.0f
+
+/* The smallest the panel is ever drawn, in screen pixels. Small enough to
+   tuck out of the way in a corner, large enough that the two corner handles
+   are still something a pointer can be put on: below this the handles, which
+   are a quarter of the side each, stop being separable. */
+#define SCN_PANEL_MIN_PX 32.0f
+
+/* How close the resize drag has to come to a cardinal size before the panel
+   jumps to it, in screen pixels. Three is about one step of a pointer being
+   moved deliberately, so a drag travelling past a cardinal at speed is not
+   caught by it and a drag being eased onto one lands on it. */
+#define SCN_PANEL_SNAP_PX 3.0f
+
+/* The resize grip at the bottom right, in screen pixels. Never more than a
+   quarter of the side, so a panel shrunk to SCN_PANEL_MIN_PX is not simply
+   handles with no panel between them. */
+#define SCN_PANEL_HANDLE_PX 14.0f
+
+/* The title bar across the top of the panel, in screen pixels. It is where
+   the panel is dragged from and it carries the settings button at its right
+   end, which is what a title bar on any other window does. Clamped to a
+   quarter of the side for the reason the resize grip is, so a panel taken
+   down to SCN_PANEL_MIN_PX still has panel under its bar. */
+#define SCN_PANEL_BAR_PX 20.0f
+
+/* The panel's opacity for a player who has never opened the settings window,
+   as a percent. 43 percent of 255 is 110, which is the alpha the backing was
+   drawn with before the setting existed.
+
+   The percent is a multiplier over the panel's own look rather than a
+   replacement for it, which is what lets the default be a hundred and still
+   be the panel everybody already had. The backing has always been dim and
+   the writing on it has always been full strength; at a hundred both are
+   exactly that, and the slider takes the pair of them down together. */
+#define SCN_PANEL_ALPHA_DEFAULT 100
+
+/* The backing's own alpha at full opacity, out of 255. This is the value the
+   panel was drawn with before there was a slider: dim enough that the map
+   under it stays readable, solid enough that the writing on it has something
+   to sit on. The slider scales it; it does not replace it, so a panel left
+   alone looks the way it always did. */
+#define SCN_PANEL_BACKING_ALPHA 110
+
+/* How far off the gear the settings window first appears, in screen pixels.
+   Clear of the panel rather than on top of it: the whole point of the window
+   is to watch the panel change while the opacity slider moves, and a window
+   sitting over the square would hide the thing being adjusted. */
+#define SCN_PANEL_DIALOG_GAP 6.0f
+
+/* How wide the opacity slider is drawn, in screen pixels. Set rather than
+   left to ImGui, which gives an auto-resizing window's item the whole
+   remaining content width: with one short row that comes out as a stubby
+   grab that is hard to place a percent with. */
+#define SCN_PANEL_DIALOG_SLIDER_W 160.0f
+
+/* The sizes the resize drag snaps to, as percents of the size the game's own
+   zoom gives the panel. A hundred is that size exactly, which is the size
+   every scenario was laid out against and the one worth being able to get
+   back to by feel. */
+static const int scnPanelCardinals[] = {25, 50, 75, 100, 125, 150, 200, 300};
+
+/* The name a seat is playing under, for the list's name primitive. NULL for
+   a seat nobody holds, which is what makes that primitive draw nothing. */
+static const char *scnPanelPlayerName(void *ctx, uint8_t slot) {
+    const char *name;
+    (void)ctx;
+    name = sdl3ImguiGetPlayerName((unsigned char)slot);
+    if (name == nullptr || name[0] == '\0') return nullptr;
+    return name;
+}
+
+/* The list the scenario panel shows, or NULL when there is nothing to show:
+   no ClientSim, no list, or a list the scenario cleared. */
+static const ScnPanelList *scnPanelShownList(ClientSim *cs) {
+    const ScnPanelList *list =
+        (cs != nullptr) ? clientSimGetScnPanel(cs, 0) : nullptr;
+    if (list == nullptr || list->count == 0) return nullptr;
+    return list;
+}
+
+bool sdl3ImguiScnPanelShown(struct ClientSim *cs) {
+    return scnPanelShownList(cs) != nullptr;
+}
+
+void sdl3ImguiScnPanelDraw(struct ClientSim *cs, float originX, float originY,
+                           float side, float alpha, bool backing) {
+    const ScnPanelList *list = scnPanelShownList(cs);
+    if (list == nullptr || side <= 0.0f) return;
+
+    if (backing) {
+        ImGui::GetWindowDrawList()->AddRectFilled(
+            ImVec2(originX, originY), ImVec2(originX + side, originY + side),
+            IM_COL32(0, 0, 0,
+                     (int)lroundf(alpha * (float)SCN_PANEL_BACKING_ALPHA)));
+    }
+
+    ScnPanelDrawEnv env;
+    env.playerName = scnPanelPlayerName;
+    env.ctx        = nullptr;
+    /* The tick a ClientSim last heard from the server — the clock the
+       scenario counted its timer's tick on. */
+    env.tick       = clientSimGetLastServerTick(cs);
+    /* The scale the square is really being drawn at, which is the side it
+       is on screen over the 128 units a list is written in. The game's zoom
+       on its own would leave a resized window's drawing at the size it was. */
+    env.scale      = side / (float)SCN_PANEL_UNITS;
+    env.alpha      = alpha;
+    env.tiles      = (void *)sdl3DrawGetTilesTexture();
+    scnPanelDraw(list, originX, originY, &env);
+}
+
+/* The scenario the panel on screen is laid out for, which is the row its
+   position, size and opacity are kept under. Empty until a panel with a
+   scenario behind it is drawn, and empty again for one without: that panel
+   uses the [WINDOW] numbers and writes no row of its own.
+
+   At file scope rather than inside the panel because the settings window
+   below is a function of its own and writes the opacity through the same
+   path. */
+static char s_scnPanelScenario[SCN_PANEL_SCENARIO_LEN] = "";
+
+/* The one place the panel's four numbers reach the preferences file, called
+   as each of the three gestures that change them ends.
+
+   Two rows are written, not one. The scenario's own row is what its panel
+   opens from the next time it is played, and the [WINDOW] pair is what a
+   scenario nobody has laid out yet inherits, so it has to keep following
+   whichever panel was touched last. */
+static void scnPanelPersistLayout(void) {
+    gameFrontSaveWindowSettings();
+    if (s_scnPanelScenario[0] != '\0') {
+        gameFrontSetScnPanelLayout(s_scnPanelScenario, gameFrontScnPanelX,
+                                   gameFrontScnPanelY, gameFrontScnPanelScale,
+                                   gameFrontScnPanelAlpha);
+    }
+}
+
+/* The scenario panel's settings window, and the alpha percent it edits.
+   Opened by the gear in the panel's top-right corner and closed by that gear
+   again or by its own close button, so `open` is owned by the caller and
+   written back through the pointer.
+
+   A window rather than a popup, because a popup closes the moment the
+   pointer goes anywhere else and the whole point of an opacity control is to
+   watch the panel while it moves. Submitted after the panel's End for the
+   plain reason that one ImGui window cannot be opened inside another.
+
+   The panel reads alphaPct every frame, for its backing and for the alpha
+   it hands the list drawer, so the slider is live: the square behind the
+   window fades as the grab is dragged, and only the value the drag finishes
+   on reaches the preferences file. */
+static void renderScenarioPanelSettings(bool *open, float gearX, float gearY,
+                                        int *alphaPct) {
+    if (!*open) return;
+
+    /* Beside the gear the first time it is opened, and the player's to move
+       after that, which is what Appearing rather than Always buys. */
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowPos(ImVec2(gearX + SCN_PANEL_DIALOG_GAP,
+                                   gearY + SCN_PANEL_DIALOG_GAP),
+                            ImGuiCond_Appearing);
+
+    char title[128];
+    snprintf(title, sizeof(title), "%s###scnpanelsettings",
+             langGetText(STR_SCNPANEL_SETTINGS_TITLE));
+
+    /* AlwaysAutoResize because there is one row in it and a window sized to
+       its contents needs no resize grip of its own to argue with the panel's.
+       NoSavedSettings because this is a transient thing opened off a grip:
+       remembering where it sat in a previous session would put it somewhere
+       with no relation to where the panel is now. */
+    if (ImGui::Begin(title, open,
+                     ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoDocking |
+                     ImGuiWindowFlags_NoCollapse)) {
+        /* Held inside the main window, for the reason the panel itself is:
+           a window whose title bar is off screen has nothing left to grab to
+           drag it back. Clamped here rather than before Begin because the
+           window sizes itself to its contents and its size is not known
+           until it has been laid out, and clamped every frame rather than
+           only on the first because the gear can be near an edge, the main
+           window can be made smaller, and ImGui re-clamps neither. */
+        const ImVec2 winPos  = ImGui::GetWindowPos();
+        const ImVec2 winSize = ImGui::GetWindowSize();
+        float keepX = winPos.x, keepY = winPos.y;
+        if (keepX > display.x - winSize.x) keepX = display.x - winSize.x;
+        if (keepY > display.y - winSize.y) keepY = display.y - winSize.y;
+        if (keepX < 0.0f) keepX = 0.0f;
+        if (keepY < 0.0f) keepY = 0.0f;
+        if (keepX != winPos.x || keepY != winPos.y) {
+            ImGui::SetWindowPos(ImVec2(keepX, keepY));
+        }
+
+        char sliderLbl[128];
+        snprintf(sliderLbl, sizeof(sliderLbl), "%s###scnAlpha",
+                 langGetText(STR_SCNPANEL_OPACITY_LBL));
+        ImGui::SetNextItemWidth(SCN_PANEL_DIALOG_SLIDER_W);
+        ImGui::SliderInt(sliderLbl, alphaPct, 0, 100, "%d%%");
+        /* Written when the grab is let go and not on every frame it moves,
+           the same as the panel's position and size: a drag is a burst of
+           values and only the one it ends on is worth a preferences write.
+           DeactivatedAfterEdit rather than Deactivated, so a click that
+           lands on the slider and changes nothing writes nothing. */
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            if (*alphaPct < 0) *alphaPct = 0;
+            if (*alphaPct > 100) *alphaPct = 100;
+            if (*alphaPct != gameFrontScnPanelAlpha) {
+                gameFrontScnPanelAlpha = *alphaPct;
+                scnPanelPersistLayout();
+            }
+        }
+        /* What the number means, because "opacity" alone does not say what
+           it is the opacity of. It is everything the panel puts on screen,
+           its backing and the scenario's drawing together, and it is nothing
+           else: the square's empty parts stay as clear as they are now, and
+           the border, the title bar and the resize grip keep their own alpha
+           so a panel taken to zero can still be found and turned back up. */
+        ImGui::TextDisabled("%s", langGetText(STR_SCNPANEL_OPACITY_LINE1));
+        ImGui::TextDisabled("%s", langGetText(STR_SCNPANEL_OPACITY_LINE2));
+    }
+    ImGui::End();
+}
+
+static void renderScenarioPanel(ClientSim *cs) {
+    /* Whether ImGui is already holding a position for the window. Cleared
+       whenever the panel is not drawn, so the next list to arrive places it
+       again from what was saved rather than from wherever the last one that
+       shared this window id happened to sit. */
+    static bool s_scnPanelPlaced = false;
+
+    /* The side the resize drag is really on, before the snap. The snap is
+       applied to what is shown and to what is stored, never back into this:
+       a value that has been pulled onto a cardinal cannot leave it without
+       the pointer covering the snap distance twice, which feels like the
+       panel is stuck. Accumulate raw, show snapped. */
+    static float s_scnPanelRawSide = 0.0f;
+
+    /* Whether the resize handle was being dragged on the frame before this
+       one. The window's size has to be set before Begin, so a drag read
+       inside the window lands on the next frame and this is what carries it
+       across. */
+    static bool s_scnPanelResizing = false;
+
+    /* Whether the settings window the gear opens is up, and the opacity
+       percent it edits.
+
+       The percent is taken from the preference once, the first time a panel
+       is drawn, and belongs to the settings window after that. Re-reading the
+       preference every frame would be wrong now that the edit happens in a
+       window submitted later in the same frame: the read at the top would
+       stamp the stored value back over the live one before the player had
+       seen a single frame of what they were dragging. */
+    static bool s_scnPanelSettingsOpen = false;
+    static bool s_scnPanelAlphaSeeded  = false;
+    static int  s_scnPanelAlphaPct     = SCN_PANEL_ALPHA_DEFAULT;
+
+    const bool shown = sdl3ImguiScnPanelShown(cs);
+
+    /* Tablet mode is the mobile frontends. They map the square into a slot
+       of their own rather than into a window the player drags, so this one
+       stays out of their way, grips and settings window and all.
+
+       The settings window is closed on the way out rather than left standing.
+       It is the panel's own window and there is no panel: left open it would
+       be a stray box with a slider in it, adjusting something that is not on
+       screen and with no gear anywhere to shut it again. */
+    if (cs == nullptr || uiModeIsTablet() || !shown) {
+        s_scnPanelPlaced        = false;
+        s_scnPanelResizing      = false;
+        s_scnPanelSettingsOpen  = false;
+        return;
+    }
+
+    /* Which scenario's panel this is, and so which row its layout comes out
+       of. The file name is the identity to key on: it is what the host
+       actually loaded, and two scenarios can carry the same display name.
+       The display name is there for one that arrived without a file name,
+       and both empty is a game with no scenario behind the panel at all —
+       that one keeps the [WINDOW] numbers and never writes a row.
+
+       Truncated into a buffer of the same size as the one it is compared
+       against, so a name too long to hold is cut the same way on both sides.
+       A name that compared unequal every frame would re-place the panel
+       every frame, and a panel being placed cannot be dragged. */
+    char scnKey[SCN_PANEL_SCENARIO_LEN];
+    {
+        const char *scnName = clientSimGetLobbyScenarioFileName(cs);
+        if (scnName[0] == '\0') scnName = clientSimGetLobbyScenarioName(cs);
+        SDL_snprintf(scnKey, sizeof(scnKey), "%s", scnName);
+    }
+
+    if (strcmp(scnKey, s_scnPanelScenario) != 0) {
+        SDL_snprintf(s_scnPanelScenario, sizeof(s_scnPanelScenario), "%s",
+                     scnKey);
+        /* A scenario with no row of its own leaves the globals holding
+           whatever the last panel left there, which is deliberate: it is the
+           layout the player last chose, and it is a better guess at what
+           they want than the top-right corner at full size. */
+        int savedX, savedY, savedScale, savedAlpha;
+        if (gameFrontGetScnPanelLayout(s_scnPanelScenario, &savedX, &savedY,
+                                       &savedScale, &savedAlpha)) {
+            gameFrontScnPanelX     = savedX;
+            gameFrontScnPanelY     = savedY;
+            gameFrontScnPanelScale = savedScale;
+            gameFrontScnPanelAlpha = savedAlpha;
+        }
+        /* Lay the panel out again from those numbers instead of leaving it
+           where the last scenario's panel sat. The position is only pushed
+           at ImGui while Placed is down and the opacity is only taken from
+           the preference while Seeded is, so both have to come down here. A
+           drag cannot cross the change either: the grip it started on
+           belongs to a panel that is gone. */
+        s_scnPanelPlaced      = false;
+        s_scnPanelAlphaSeeded = false;
+        s_scnPanelResizing    = false;
+        s_scnPanelRawSide     = 0.0f;
+    }
+
+    /* The gear's artwork, through the same per-renderer icon slots every
+       other SVG badge here uses. */
+    ensureWbnIconsLoaded();
+
+    if (!s_scnPanelAlphaSeeded) {
+        s_scnPanelAlphaSeeded = true;
+        s_scnPanelAlphaPct    = (gameFrontScnPanelAlpha >= 0)
+                                    ? gameFrontScnPanelAlpha
+                                    : SCN_PANEL_ALPHA_DEFAULT;
+        if (s_scnPanelAlphaPct < 0) s_scnPanelAlphaPct = 0;
+        if (s_scnPanelAlphaPct > 100) s_scnPanelAlphaPct = 100;
+    }
+
+    /* The game's own zoom, as the pixels it actually comes out at on screen:
+       in Custom zoom the game is drawn into a render target at the integer
+       zoom and then blitted at a fractional scale, so the two multiply. The
+       same number the vote widgets anchor themselves with. */
+    int rawZoom = sdl3DrawGetZoomFactor();
+    if (rawZoom < 1) rawZoom = 1;
+    float gameScale = 1.0f;
+    sdl3DrawGetGameRect(nullptr, nullptr, nullptr, nullptr, &gameScale);
+    if (gameScale <= 0.0f) gameScale = 1.0f;
+    const float scale = (float)rawZoom * gameScale;
+
+    /* The size the zoom alone gives the panel, which is what the player's own
+       scale is a percent of. */
+    const float baseSide = (float)SCN_PANEL_UNITS * scale;
+
+    /* The main window, which is what everything below is kept inside: the
+       size the panel may grow to and the positions it may be left at. */
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+
+    /* What the drag is allowed to reach. The floor and the ceiling are the
+       tighter of two things each: the panel must stay big enough to hold its
+       handles and small enough to fit the shorter side of the display, and it
+       must also stay inside the percent range the preference is stored in, or
+       letting go of the drag would jerk the panel back to the nearest percent
+       the file can hold. A display small enough to put the ceiling under the
+       floor gets the ceiling for both. */
+    float sideMin = ImMax(SCN_PANEL_MIN_PX,
+                          baseSide * (float)SCN_PANEL_SCALE_MIN / 100.0f);
+    float sideMax = ImMin(ImMin(display.x, display.y),
+                          baseSide * (float)SCN_PANEL_SCALE_MAX / 100.0f);
+    if (sideMax < SCN_PANEL_MIN_PX) sideMax = SCN_PANEL_MIN_PX;
+    if (sideMin > sideMax) sideMin = sideMax;
+
+    /* The size the player has dialled in. -1 is a player who has never
+       resized it, which is the size the zoom alone gives, the size the panel
+       had before it could be resized at all. */
+    const float percent = (gameFrontScnPanelScale >= 0)
+                              ? (float)gameFrontScnPanelScale
+                              : 100.0f;
+    float side = baseSide * percent / 100.0f;
+
+    /* True while the resize drag is sitting on a cardinal size. Nothing about
+       the panel says what size it is, so the snap would be invisible without
+       something to show it, and this is what the border reads. */
+    bool snapped = false;
+
+    if (s_scnPanelResizing) {
+        /* Mid-drag the accumulated raw side is the size, snapped on the way
+           to the screen and no further. */
+        side = s_scnPanelRawSide;
+        for (size_t i = 0; i < sizeof(scnPanelCardinals) / sizeof(int); i++) {
+            const float cardinal =
+                baseSide * (float)scnPanelCardinals[i] / 100.0f;
+            if (fabsf(side - cardinal) <= SCN_PANEL_SNAP_PX) {
+                side    = cardinal;
+                snapped = true;
+                break;
+            }
+        }
+    }
+    if (side < sideMin) side = sideMin;
+    if (side > sideMax) side = sideMax;
+
+    /* Where it goes when nothing has been saved: the top-right of the game
+       view, inset a little. Render coordinates, which is what ImGui draws
+       in and what the smart-ping overlay pins itself with. */
+    float defX = SCN_PANEL_DEFAULT_INSET * scale;
+    float defY = SCN_PANEL_DEFAULT_INSET * scale;
+    {
+        float gx, gy, gw, gh, gtw, gth, rx0, ry0, rx1, ry1;
+        if (sdl3DrawGetMainViewGameRect(&gx, &gy, &gw, &gh, &gtw, &gth) &&
+            sdl3DrawGameToRenderCoords(gx, gy, &rx0, &ry0) &&
+            sdl3DrawGameToRenderCoords(gx + gw, gy + gh, &rx1, &ry1)) {
+            defX = rx1 - side - SCN_PANEL_DEFAULT_INSET * scale;
+            defY = ry0 + SCN_PANEL_DEFAULT_INSET * scale;
+        }
+    }
+
+    /* A position saved on a larger display would put the panel off screen,
+       where there is nothing to grab to drag it back, so a restored one is
+       brought inside the window it is restored into. Against the side the
+       panel is at now, not the side the zoom alone would give it: a panel
+       that has been resized next to an edge has to be free to come away from
+       where the old boundary was. */
+    float wantX = (gameFrontScnPanelX >= 0) ? (float)gameFrontScnPanelX : defX;
+    float wantY = (gameFrontScnPanelY >= 0) ? (float)gameFrontScnPanelY : defY;
+    if (wantX > display.x - side) wantX = display.x - side;
+    if (wantY > display.y - side) wantY = display.y - side;
+    if (wantX < 0.0f) wantX = 0.0f;
+    if (wantY < 0.0f) wantY = 0.0f;
+
+    if (!s_scnPanelPlaced) {
+        ImGui::SetNextWindowPos(ImVec2(wantX, wantY), ImGuiCond_Always);
+        s_scnPanelPlaced = true;
+    }
+    ImGui::SetNextWindowSize(ImVec2(side, side), ImGuiCond_Always);
+
+    /* Where the gear ended up, read again after the panel window has been
+       closed so the settings window can open beside it. The settings window
+       is a window of its own and one ImGui window cannot be submitted inside
+       another, so it goes after the End below. */
+    float gearX = 0.0f;
+    float gearY = 0.0f;
+
+    /* No padding, so the window's own rect is the square the list is drawn
+       in and one panel unit is one pixel at zoom 1. The backing is dim
+       rather than opaque: the map under the panel stays readable, and what
+       the script draws reads on top of it. How dim is the player's, through
+       the opacity slider in the settings window, which scales the backing's
+       own SCN_PANEL_BACKING_ALPHA rather than standing in for it — a hundred
+       percent is the backing the panel has always had, not a black box.
+
+       The same percent goes to the backing here and to env.alpha below, so
+       the slider fades the whole of the panel's drawing at once and not the
+       backing out from under writing that stayed. It never reaches a pixel
+       nothing was drawn on: a square the script left empty is as clear at
+       ten percent as it is at a hundred. */
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    /* No window border either. The theme gives every window a one pixel one,
+       and ImGui clips a window's draw list to the inside of that border, so
+       the panel's own border below would be clipped away by the border it is
+       replacing. The hand-drawn one is the one that changes colour on a
+       snap, and it has to be at the very edge of the square. */
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleColor(
+        ImGuiCol_WindowBg,
+        IM_COL32(0, 0, 0,
+                 (int)lroundf((float)s_scnPanelAlphaPct *
+                              (float)SCN_PANEL_BACKING_ALPHA / 100.0f)));
+    /* NoMove as well as NoResize: the whole body used to be a drag area,
+       and a scenario draws to the edges of its square, so every pixel of what
+       it drew was also a place a stray drag picked the panel up. The two
+       corner handles below are the only things that move or resize it now. */
+    const bool open = ImGui::Begin("##scenariopanel", nullptr,
+                                   ImGuiWindowFlags_NoTitleBar |
+                                   ImGuiWindowFlags_NoResize |
+                                   ImGuiWindowFlags_NoMove |
+                                   ImGuiWindowFlags_NoScrollbar |
+                                   ImGuiWindowFlags_NoScrollWithMouse |
+                                   ImGuiWindowFlags_NoCollapse |
+                                   ImGuiWindowFlags_NoSavedSettings |
+                                   ImGuiWindowFlags_NoFocusOnAppearing |
+                                   ImGuiWindowFlags_NoDocking |
+                                   ImGuiWindowFlags_NoNav);
+    if (open) {
+        const ImVec2 pos = ImGui::GetWindowPos();
+        ImDrawList *dl   = ImGui::GetWindowDrawList();
+
+        /* A quarter of the side at most each, so the bar and the resize grip
+           never meet in the middle of a panel that has been shrunk right
+           down. */
+        const float handle = ImMin(SCN_PANEL_HANDLE_PX, side * 0.25f);
+        const float bar    = ImMin(SCN_PANEL_BAR_PX, side * 0.25f);
+
+        /* The bar and both grips are submitted on every frame whether or not
+           they are drawn. An invisible button that stops being submitted
+           stops being the active item, so a drag that wanders off the panel
+           — which every resize that shrinks it does — would die halfway
+           through the gesture. Drawing them is the part that waits for the
+           pointer.
+
+           The title bar: the full width of the panel bar the square the
+           settings button takes at its right end. The two do not overlap, so
+           which one the pointer is on never depends on the order they are
+           submitted in. */
+        ImGui::SetCursorScreenPos(pos);
+        ImGui::InvisibleButton("##scnpanelmove", ImVec2(side - bar, bar));
+        const bool moveHot    = ImGui::IsItemHovered();
+        const bool moveActive = ImGui::IsItemActive();
+        if (moveHot || moveActive) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+        }
+        if (moveActive) {
+            const ImVec2 drag = ImGui::GetIO().MouseDelta;
+            if (drag.x != 0.0f || drag.y != 0.0f) {
+                ImGui::SetWindowPos(ImVec2(pos.x + drag.x, pos.y + drag.y));
+            }
+        }
+
+        /* The settings button, on the right end of the bar, where the button
+           that opens a window's settings sits on any other window. A click
+           toggles: the gear that opened the window closes it again, which is
+           what a player who has lost the window behind something else will
+           try first. */
+        gearX = pos.x + side - bar;
+        gearY = pos.y;
+        ImGui::SetCursorScreenPos(ImVec2(gearX, gearY));
+        ImGui::InvisibleButton("##scnpanelsettings", ImVec2(bar, bar));
+        const bool gearHot = ImGui::IsItemHovered();
+        if (gearHot || ImGui::IsItemActive()) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        }
+        if (ImGui::IsItemClicked()) {
+            s_scnPanelSettingsOpen = !s_scnPanelSettingsOpen;
+        }
+
+        ImGui::SetCursorScreenPos(
+            ImVec2(pos.x + side - handle, pos.y + side - handle));
+        ImGui::InvisibleButton("##scnpanelresize", ImVec2(handle, handle));
+        const bool resizeHot    = ImGui::IsItemHovered();
+        const bool resizeActive = ImGui::IsItemActive();
+        if (resizeHot || resizeActive) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE);
+        }
+        if (ImGui::IsItemActivated()) {
+            /* Start the raw side from what is on screen, snap and all, so
+               the panel does not jump on the first pixel of the drag. */
+            s_scnPanelRawSide = side;
+        }
+        if (resizeActive) {
+            /* The square stays square, so one number has to come out of a
+               two-axis drag: whichever axis moved further, with its sign
+               kept. Down and right grow it, up and left shrink it, which is
+               what a corner grip on anything else does. */
+            const ImVec2 drag = ImGui::GetIO().MouseDelta;
+            s_scnPanelRawSide +=
+                (fabsf(drag.x) >= fabsf(drag.y)) ? drag.x : drag.y;
+            if (s_scnPanelRawSide < sideMin) s_scnPanelRawSide = sideMin;
+            if (s_scnPanelRawSide > sideMax) s_scnPanelRawSide = sideMax;
+        }
+        if (ImGui::IsItemDeactivated()) {
+            /* Let go: the size that was on screen, which is the snapped one,
+               becomes the size that is kept. Written here and not on every
+               frame of the drag, the way the position is. */
+            int pct = (int)lroundf(side / baseSide * 100.0f);
+            if (pct < SCN_PANEL_SCALE_MIN) pct = SCN_PANEL_SCALE_MIN;
+            if (pct > SCN_PANEL_SCALE_MAX) pct = SCN_PANEL_SCALE_MAX;
+            if (pct != gameFrontScnPanelScale) {
+                gameFrontScnPanelScale = pct;
+                scnPanelPersistLayout();
+            }
+        }
+        s_scnPanelResizing = resizeActive;
+
+        /* The bar and the resize grip appear only while the pointer is on
+           the panel, while one of them is being dragged, or while the
+           settings window is up. The bar covers the top of what the scenario
+           drew while it is up, which is the price of having it only when it
+           is wanted: a bar that was always there would cost those pixels for
+           the whole round.
+
+           That last case matters: with the settings window open the panel is
+           being worked on, and chrome that vanished the moment the pointer
+           left the square to reach the slider would make the panel look
+           inert while its own settings are on screen, with no lit gear to
+           say where the window came from.
+
+           AllowWhenBlockedByActiveItem, or the moment a grip becomes the
+           active item the window stops counting as hovered and the thing
+           being dragged disappears from under the pointer. */
+        const bool handlesVisible =
+            ImGui::IsWindowHovered(
+                ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) ||
+            moveActive || resizeActive || s_scnPanelSettingsOpen;
+
+        /* Where the window is after the move handle has had this frame's
+           drag. Clamped again here for the main window having been made
+           smaller since the panel was placed, which ImGui does not do on its
+           own, and against the side the panel is at now. The clamp, and the
+           move with it, lands on the next frame — the background was
+           submitted at pos already, and the list is drawn on top of that
+           background rather than half a frame ahead of it. */
+        const ImVec2 moved = ImGui::GetWindowPos();
+        float keepX = moved.x, keepY = moved.y;
+        if (keepX > display.x - side) keepX = display.x - side;
+        if (keepY > display.y - side) keepY = display.y - side;
+        if (keepX < 0.0f) keepX = 0.0f;
+        if (keepY < 0.0f) keepY = 0.0f;
+        if (keepX != moved.x || keepY != moved.y) {
+            ImGui::SetWindowPos(ImVec2(keepX, keepY));
+        }
+
+        /* Saved through the debounced window-settings path, the way the map
+           overview's geometry is: a drag is a burst of positions and only
+           the one it ends on is worth a write. */
+        if ((int)keepX != gameFrontScnPanelX ||
+            (int)keepY != gameFrontScnPanelY) {
+            gameFrontScnPanelX = (int)keepX;
+            gameFrontScnPanelY = (int)keepY;
+            scnPanelPersistLayout();
+        }
+
+        /* Drawn at the side the player has dragged the square to, so the
+           drawing resizes with the window.
+
+           The opacity slider, on what the scenario drew. The same percent
+           the backing is pushed through ImGuiCol_WindowBg at above, so the
+           two fade together and the panel stays one object rather than
+           writing that floats over a backing that has left without it.
+
+           The border, the title bar and the resize grip below are drawn
+           after this at their own alpha and are deliberately not on this
+           list: they are the frontend's chrome. A panel at nothing has to
+           keep a gear to click and a bar to grab, or there is no way back
+           from it.
+
+           No backing from the drawer: the window background pushed above is
+           this panel's backing. */
+        sdl3ImguiScnPanelDraw(cs, pos.x, pos.y, side,
+                              (float)s_scnPanelAlphaPct / 100.0f, false);
+
+        /* The border, and the grips on top of it, drawn after the list so
+           that a scenario filling its square does not bury them.
+
+           The border goes on every frame and not only while the pointer is
+           there: it is the only thing that says where the panel ends when the
+           script has drawn nothing near an edge. While a resize drag is
+           sitting on a cardinal size it goes a shade brighter and cooler,
+           which is the only sign there is that the snap happened. A colour
+           change and nothing else — a thicker line would push the content
+           about under it.
+
+           A pixel in from the far corner, the same as the resize grip below.
+           A window's draw list is clipped to the window's own rect, and a
+           line drawn at pos + side sits on that boundary: the top and the
+           left survive it and the right and the bottom are clipped away,
+           leaving a border down two sides of the square. */
+        dl->AddRect(pos, ImVec2(pos.x + side - 1.0f, pos.y + side - 1.0f),
+                    snapped ? IM_COL32(140, 220, 255, 110)
+                            : IM_COL32(255, 255, 255, 40));
+
+        if (handlesVisible) {
+            /* The title bar, grey, right across the top of the panel. It is
+               the whole drag area: a bar reads as something to take hold of
+               at a glance, where a small mark in a corner has to be found
+               first. Solid rather than translucent, so what it covers does
+               not show through it and read as a smear over the scenario's
+               own drawing.
+
+               A pixel in on the right for the reason the border is: the
+               window's draw list is clipped to the window's own rect, so a
+               fill that reached pos.x + side would lose its last column. */
+            const ImU32 barCol = (moveHot || moveActive)
+                                     ? IM_COL32(150, 150, 150, 235)
+                                     : IM_COL32(112, 112, 112, 205);
+            dl->AddRectFilled(pos, ImVec2(pos.x + side - 1.0f, pos.y + bar),
+                              barCol);
+            /* A line under it, so the bar has an edge against whatever the
+               scenario drew below it rather than fading into it. */
+            dl->AddLine(ImVec2(pos.x, pos.y + bar),
+                        ImVec2(pos.x + side - 1.0f, pos.y + bar),
+                        IM_COL32(0, 0, 0, 90));
+
+            /* The settings button: the gear, on the right end of the bar,
+               dim until the pointer is on it and brought forward while the
+               window it opens is up so the panel says where that window came
+               from. It is drawn straight on the bar with no plate of its own
+               — the bar is the plate.
+
+               Inset by a pixel on the far side for the reason the border is:
+               the window's draw list is clipped to the window's own rect, and
+               art that reached pos.x + side would lose its right-hand column.
+
+               The gear is an asset and an asset can be missing, so there is a
+               fallback. It has to be drawn, not skipped: the invisible button
+               under it is submitted whatever happens, and a corner that takes
+               clicks while showing nothing is worse than a crude glyph. Three
+               short bars, a sliders shape, which is the other thing a settings
+               control is drawn as. */
+            const ImU32 gearCol = (gearHot || s_scnPanelSettingsOpen)
+                                      ? IM_COL32(255, 255, 255, 245)
+                                      : IM_COL32(235, 235, 235, 170);
+            SDL_Texture *gearTex = s_iconScnPanelGear[activeIconSlot()];
+            const float gx1 = pos.x + side - 1.0f;
+            if (gearTex != nullptr) {
+                dl->AddImage((ImTextureID)gearTex, ImVec2(gx1 - bar, pos.y),
+                             ImVec2(gx1, pos.y + bar), ImVec2(0.0f, 0.0f),
+                             ImVec2(1.0f, 1.0f), gearCol);
+            } else {
+                const float tickH = ImMax(1.0f, bar * 0.12f);
+                const float tickW = bar * 0.62f;
+                const float tickX = gx1 - bar * 0.5f - tickW * 0.5f;
+                for (int i = 0; i < 3; i++) {
+                    const float tickY =
+                        pos.y + bar * (0.28f + 0.22f * (float)i) -
+                        tickH * 0.5f;
+                    dl->AddRectFilled(ImVec2(tickX, tickY),
+                                      ImVec2(tickX + tickW, tickY + tickH),
+                                      gearCol);
+                }
+            }
+
+            /* The resize grip: three diagonals stepping out of the corner,
+               which is the grip every other window in the world uses. */
+            const ImU32 resizeCol = (resizeHot || resizeActive)
+                                        ? IM_COL32(255, 255, 255, 200)
+                                        : IM_COL32(255, 255, 255, 110);
+            const float brX = pos.x + side - 1.0f;
+            const float brY = pos.y + side - 1.0f;
+            for (int i = 1; i <= 3; i++) {
+                const float off = handle * (float)i / 3.5f;
+                dl->AddLine(ImVec2(brX - off, brY), ImVec2(brX, brY - off),
+                            resizeCol);
+            }
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+
+    renderScenarioPanelSettings(&s_scnPanelSettingsOpen, gearX, gearY,
+                                &s_scnPanelAlphaPct);
+}
+
+/* -------------------------------------------------------
+ * The scenario announcement
+ *
+ * One line across the game view, for the few seconds a
+ * scenario asked for. It sits in the view's upper third
+ * rather than dead centre, which is where the player's own
+ * tank is.
+ *
+ * Drawn on the foreground draw list and not in a window at
+ * all. A window across the middle of the screen would take
+ * the mouse with it and stop the player firing under it,
+ * and a draw list has no hit test to turn off — there is
+ * nothing there to click on.
+ *
+ * Outlined rather than merely coloured: the line lands over
+ * whatever terrain happens to be under it, and one colour
+ * against grass is a line somebody cannot read.
+ *
+ * The bytes are the script's own and are not localised, so
+ * nothing on this path goes near the language table.
+ * ------------------------------------------------------- */
+
+/* The line's height in panel units, so it scales with the game's zoom the
+   same way the panel's own text does. */
+#define SCN_ANNOUNCE_UNITS 20.0f
+
+/* How far down the game view the line sits, as a fraction of its height. */
+#define SCN_ANNOUNCE_DOWN 0.28f
+
+/* The last of an announcement's life spent fading, in ticks. Long enough to
+   read as going rather than as cut off; ticks run at a hundred a second, so
+   this is a third of one. */
+#define SCN_ANNOUNCE_FADE_TICKS 33u
+
+static void renderScenarioAnnounce(ClientSim *cs) {
+    if (cs == nullptr || uiModeIsTablet()) return;
+
+    uint16_t    ticks       = 0;
+    uint32_t    arrivedTick = 0;
+    const char *text        = clientSimGetScnAnnounce(cs, &ticks, &arrivedTick);
+    uint32_t    left        = 0;
+    if (!scnAnnounceRemaining(text, arrivedTick, ticks,
+                              clientSimGetLastServerTick(cs), &left)) {
+        return;
+    }
+
+    /* The same zoom the panel window scales by, so the two agree about what
+       one unit is worth on this screen. */
+    int rawZoom = sdl3DrawGetZoomFactor();
+    if (rawZoom < 1) rawZoom = 1;
+    float gameScale = 1.0f;
+    sdl3DrawGetGameRect(nullptr, nullptr, nullptr, nullptr, &gameScale);
+    if (gameScale <= 0.0f) gameScale = 1.0f;
+    const float scale = (float)rawZoom * gameScale;
+
+    float gx, gy, gw, gh, gtw, gth, rx0, ry0, rx1, ry1;
+    if (!sdl3DrawGetMainViewGameRect(&gx, &gy, &gw, &gh, &gtw, &gth)) return;
+    if (!sdl3DrawGameToRenderCoords(gx, gy, &rx0, &ry0)) return;
+    if (!sdl3DrawGameToRenderCoords(gx + gw, gy + gh, &rx1, &ry1)) return;
+
+    ImFont *font = ImGui::GetFont();
+    if (font == nullptr) return;
+
+    float height = SCN_ANNOUNCE_UNITS * scale;
+    if (height < 8.0f) height = 8.0f;
+    const ImVec2 measured = font->CalcTextSizeA(height, FLT_MAX, 0.0f, text);
+
+    const float px = (rx0 + rx1) * 0.5f - measured.x * 0.5f;
+    const float py = ry0 + (ry1 - ry0) * SCN_ANNOUNCE_DOWN;
+
+    /* Full strength until the last stretch, then out. */
+    float fade = 1.0f;
+    if (left < SCN_ANNOUNCE_FADE_TICKS) {
+        fade = (float)left / (float)SCN_ANNOUNCE_FADE_TICKS;
+    }
+    const int alpha = (int)(255.0f * fade);
+    if (alpha <= 0) return;
+
+    ImDrawList *dl = ImGui::GetForegroundDrawList();
+    if (dl == nullptr) return;
+
+    /* The outline: the same line in near-black, one stroke out in each of the
+       eight directions, so the letters keep an edge whichever way the terrain
+       under them happens to run. */
+    const ImU32 edge = IM_COL32(0, 0, 0, alpha);
+    const float o    = (scale > 1.0f) ? scale : 1.0f;
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dy == 0) continue;
+            dl->AddText(font, height,
+                        ImVec2(px + (float)dx * o, py + (float)dy * o),
+                        edge, text);
+        }
+    }
+    dl->AddText(font, height, ImVec2(px, py),
+                IM_COL32(255, 255, 255, alpha), text);
 }
 
 /* About modal + linked markdown popups live in dialogs/imgui_about.cpp so
@@ -4260,50 +5333,6 @@ static void renderAllianceRequest(ClientSim *cs) {
 }
 
 /* -------------------------------------------------------
- * Password modal — shown when joining a protected game
- * ------------------------------------------------------- */
-static void renderPasswordModal(void) {
-    char title[128];
-    snprintf(title, sizeof(title), "%s###passwordreq", langGetText(STR_DLGPASSWORD_TITLE));
-    if (s_showPasswordOpen) {
-        ImGui::OpenPopup(title);
-        s_showPasswordOpen  = false;
-        s_passwordBuf[0]   = '\0';
-    }
-    static float s_fadePassword = 0.0f;
-    bool passOpen = true;
-    ImGuiIO &io = ImGui::GetIO();
-    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
-                            ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    if (ImGui::BeginPopupModal(title, &passOpen,
-                               ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
-                            imguiPopupFadeAlpha(&s_fadePassword));
-        if (s_closeAllPopups) { ImGui::PopStyleVar(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
-        ImGui::TextUnformatted(langGetText(STR_DLGPASSWORD_BLURB));
-        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(0);
-        ImGui::SetNextItemWidth(270);
-        bool enter = ImGui::InputText("##pass", s_passwordBuf,
-                                      sizeof(s_passwordBuf),
-                                      ImGuiInputTextFlags_Password |
-                                      ImGuiInputTextFlags_EnterReturnsTrue);
-        int f = WBUI::DialogFooter(langGetText(STR_CANCEL),
-                                   langGetText(STR_OK),
-                                   /*enterConfirms*/ true);
-        if (f == WBUI::FOOTER_CONFIRM || enter) {
-            /* gameOpen=1, aiNone=0, justPass=TRUE */
-            gameFrontSetGameOptions(s_passwordBuf, (gameType)1, false, (aiType)0, 0, 0, true);
-            ImGui::CloseCurrentPopup();
-        } else if (f == WBUI::FOOTER_CANCEL) {
-            /* Abort the join attempt. */
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::PopStyleVar();
-        ImGui::EndPopup();
-    }
-}
-
-/* -------------------------------------------------------
  * Gamepad binding helpers — orphaned from their original host
  * popup (renderKeySetupModal, removed when main moved the in-game
  * Key Setup popup to imgui_keysetup.cpp:imguiKeySetupRenderInGamePopup).
@@ -4464,9 +5493,14 @@ static void renderSettingsPanel(ClientSim *cs) {
     } else {
         /* Scale the panel with the UI scale — the font and style sizes are
            bumped on Deck (1.5x) and high-DPI desktop, so a fixed 520px window
-           clips the wider translated labels and combos. */
-        ImGui::SetNextWindowSize(ImVec2(680 * s_uiScale, 580 * s_uiScale),
-                                 ImGuiCond_FirstUseEver);
+           clips the wider translated labels and combos.  It opens 80% of the
+           screen wide, between 680px and 900px, as the pre-game panel does,
+           so the tab names fit. */
+        ImGui::SetNextWindowSize(
+            ImVec2(SDL_clamp(ImGui::GetIO().DisplaySize.x * 0.8f,
+                             680 * s_uiScale, 900 * s_uiScale),
+                   580 * s_uiScale),
+            ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSizeConstraints(ImVec2(280 * s_uiScale, 200 * s_uiScale),
                                             ImVec2(FLT_MAX, FLT_MAX));
     }
@@ -4488,8 +5522,9 @@ static void renderSettingsPanel(ClientSim *cs) {
     /* Controller tab cycling: shoulder buttons (or the Steam menu-tab actions
        where the pad is hidden from SDL) step through the tabs, wrapping at the
        ends.  Every in-game tab is present except Hosting in the web build,
-       where a browser tab can't listen for connections. */
-    enum { STAB_GENERAL, STAB_DISPLAY, STAB_SOUND, STAB_CONTROLS, STAB_GAMEHUD, STAB_HOSTING, STAB_LAST, STAB_COUNT };
+       where a browser tab can't listen for connections, and Steam Workshop
+       anywhere Steam's Workshop is not running. */
+    enum { STAB_GENERAL, STAB_DISPLAY, STAB_SOUND, STAB_CONTROLS, STAB_GAMEHUD, STAB_HOSTING, STAB_WORKSHOP, STAB_LAST, STAB_COUNT };
     static int s_igActiveTab = STAB_GENERAL;
     static int s_igForceTab  = -1;
     bool present[STAB_COUNT];
@@ -4502,6 +5537,12 @@ static void renderSettingsPanel(ClientSim *cs) {
     present[STAB_HOSTING]  = false;
 #else
     present[STAB_HOSTING]  = true;
+#endif
+    /* The Workshop's module is desktop only, and the tab needs Steam. */
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+    present[STAB_WORKSHOP] = steam_workshop_available();
+#else
+    present[STAB_WORKSHOP] = false;
 #endif
     present[STAB_LAST]     = true;
     {
@@ -4592,6 +5633,17 @@ static void renderSettingsPanel(ClientSim *cs) {
             s_igActiveTab = STAB_HOSTING;
             ImGui::BeginChild("##hostingPanelIG", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
             imguiSettingsRenderHostingTab(&ctx);
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+#endif
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+        if (present[STAB_WORKSHOP] &&
+            ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_WORKSHOP_HEADING), nullptr,
+                s_igForceTab == STAB_WORKSHOP ? ImGuiTabItemFlags_SetSelected : 0)) {
+            s_igActiveTab = STAB_WORKSHOP;
+            ImGui::BeginChild("##workshopPanelIG", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
+            imguiSettingsWorkshopSection();
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
@@ -4778,6 +5830,26 @@ static void renderMenuBar(ClientSim *cs) {
             if (ImGui::MenuItem(langGetText(STR_DLGGAMEINFO_TITLE),    nullptr, s_showGameInfo))  s_showGameInfo  = !s_showGameInfo;
             if (ImGui::MenuItem(langGetText(STR_DLGSYSINFO_TITLE),     nullptr, s_showSysInfo))   { if (!s_showSysInfo) sysInfoGraphReset(); s_showSysInfo = !s_showSysInfo; }
             if (ImGui::MenuItem(langGetText(STR_DLGNETINFO_TITLE),     nullptr, s_showNetInfo))   { if (!s_showNetInfo) pingGraphReset(); s_showNetInfo = !s_showNetInfo; }
+#ifdef __EMSCRIPTEN__
+            /* The desktop pair above, with the overview as a window inside
+               the canvas. Greyed out while the full screen map is up rather
+               than on the app flag, which means browser full screen here. */
+            ImGui::Separator();
+            if (ImGui::MenuItem(langGetText(STR_MENU_MAP_OVERVIEW), KMOD_PRIMARY_LABEL "O", s_showMapOverviewPanel,
+                                cs != nullptr && clientSimIsRunning(cs) && !sdl3DrawIsOverviewInWindow() &&
+                                !overviewSuppressed())) {
+                if (s_showMapOverviewPanel) mapOverviewClose(); else mapOverviewOpen();
+            }
+            if (overviewSuppressed() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("%s", langGetText(STR_MENU_CLASSIC_MODE_TIP));
+            if (ImGui::MenuItem(langGetText(STR_MENU_OVERVIEW_IN_WINDOW), "Alt+Enter",
+                                sdl3DrawIsOverviewInWindow(),
+                                cs != nullptr && clientSimIsRunning(cs) && !overviewSuppressed())) {
+                overviewInWindowChoose(!sdl3DrawIsOverviewInWindow());
+            }
+            if (overviewSuppressed() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("%s", langGetText(STR_MENU_CLASSIC_MODE_TIP));
+#endif
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         }
 #endif
@@ -4803,6 +5875,8 @@ static void renderMenuBar(ClientSim *cs) {
             ImGui::EndMenu();
         }
 
+#ifndef __EMSCRIPTEN__
+        /* The web canvas follows the page, so it has no window size to pick. */
         if (ImGui::BeginMenu(langGetText(STR_MENU_WINDOW_SIZE))) {
             /* Get display bounds to disable sizes that don't fit */
             int dispW = 99999, dispH = 99999;
@@ -4850,6 +5924,7 @@ static void renderMenuBar(ClientSim *cs) {
             if (ImGui::MenuItem(langGetText(STR_MENU_CUSTOM_RESIZABLE), nullptr, zoomFactor == ZOOM_FACTOR_CUSTOM)) s_pendingZoom = ZOOM_FACTOR_CUSTOM;
             ImGui::EndMenu();
         }
+#endif
 
         if (ImGui::MenuItem(langGetText(STR_MENU_SMOOTH_SCROLLING), nullptr, (bool)smoothScrollingEnabled)) windowSmoothScrolling_toggle();
 
@@ -4918,7 +5993,7 @@ static void renderMenuBar(ClientSim *cs) {
         }
 
         ImGui::Separator();
-        if (ImGui::MenuItem(langGetText(STR_MENU_SETTINGS)))                                                  sdl3ImguiShowSettings();
+        if (ImGui::MenuItem(langGetText(STR_MENU_SETTINGS),        KMOD_PRIMARY_LABEL ","))                   sdl3ImguiShowSettings();
         ImGui::EndMenu();
     }
 
@@ -5070,9 +6145,22 @@ static void renderMenuBar(ClientSim *cs) {
                 /* Selectable player name (fills the slot between icons and ping). */
                 char selectLabel[64];
                 snprintf(selectLabel, sizeof(selectLabel), "%s##sel%d", label, i);
+                /* Off the field, and drawn at the same 45% the lobby and the
+                 * players panel use for it. Here the name is the item's own
+                 * label rather than text over it, so the row's hover tint
+                 * fades with the name — the row stays clickable, and ticking
+                 * a seat between waves still does what it did. */
+                const bool mUnfielded = clientSimSlotIsUnfielded(cs, (BYTE)i);
+                if (mUnfielded) {
+                    ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                        ImGui::GetStyle().Alpha * 0.45f);
+                }
                 if (ImGui::Selectable(selectLabel, false, ImGuiSelectableFlags_DontClosePopups,
                                       ImVec2(nameWidth, 0))) {
                     clientSimTogglePlayerCheckState(cs, (BYTE)i);
+                }
+                if (mUnfielded) {
+                    ImGui::PopStyleVar();
                 }
                 imguiHandOnHover();
 
@@ -5645,6 +6733,18 @@ static bool eventBelongsToMainWindow(const SDL_Event *ev) {
     }
 }
 
+/* True while the tick core samples the keys (client_frontend_tick.c): a
+   running game with no brain driving, past the lobby and countdown, which
+   return before inputGetKeys. A tap queued outside this would replay as a
+   nudge once sampling resumed. */
+static bool turnTapsAccepted(ClientSim *cs) {
+    if (cs == nullptr || !clientSimIsRunning(cs) || luaBrainIsRunning()) {
+        return false;
+    }
+    netStatus ns = clientSimGetNetStatus(cs);
+    return ns != netLobby && ns != netLobbyCountdown;
+}
+
 void sdl3ImguiProcessEvents(ClientSim *cs) {
     if (!s_window) return;
 #ifdef __APPLE__
@@ -5790,8 +6890,56 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                     ImGuiContext *savedCtx = ImGui::GetCurrentContext();
                     ImGui::SetCurrentContext(pw->imguiCtx);
                     ImGui_ImplSDL3_ProcessEvent(&ev);
+                    bool popWantsKeys = ImGui::GetIO().WantTextInput;
                     ImGui::SetCurrentContext(savedCtx);
                     consumedByPopOut = true;
+
+                    /* Tap-style key actions from the Map Overview pop-out.
+                       Tank View is the only one that travels by event rather
+                       than by polling, and this block swallows this window's
+                       key events, so it was the one view key that did nothing
+                       from the overview while Pill, Base and Allied View all
+                       worked — those are polled in itemViewInputStep, and
+                       SDL_GetKeyboardState does not care which window has
+                       focus.
+
+                       The overview is a window the player drives the game
+                       from: input.c's appHasFocus names this same pair, which
+                       is why the polled keys work here at all. So the event
+                       path has to name it too, and it does it here rather than
+                       at the dispatch further down, which this consume never
+                       reaches. Key Setup learning a chord is skipped for the
+                       reason the main window's site is placed after its
+                       capture hook: that press is meant to become the binding,
+                       not to fire the action it is being bound to. */
+                    if (pw == &s_popMapOverview &&
+                        ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat &&
+                        !popWantsKeys && !imguiKeySetupIsCapturingInGameKey()) {
+                        windowKeyPressed(cs, (int)ev.key.scancode);
+                    }
+
+                    /* The same goes for the event-driven key state: a press
+                       and release that both land here between two samples is
+                       invisible to the poll, so the overview forwards them as
+                       the main window does at its own site further down. The
+                       release always goes through, so the tracked physical
+                       state cannot stick down when a press made in the main
+                       window is let go over the overview. Every key goes
+                       through, not only the turn keys: inputButtonInput also
+                       tracks the mine key by event, so this is what lets a
+                       mine be laid while the overview has focus and stops a
+                       mine key released over the overview staying down. */
+                    if (pw == &s_popMapOverview &&
+                        (ev.type == SDL_EVENT_KEY_DOWN ||
+                         ev.type == SDL_EVENT_KEY_UP)) {
+                        keyItems ki;
+                        windowGetKeys(&ki);
+                        inputButtonInput(&ki, ev.key.scancode,
+                                         ev.type == SDL_EVENT_KEY_DOWN,
+                                         ev.key.repeat,
+                                         turnTapsAccepted(cs) && !popWantsKeys &&
+                                             !imguiKeySetupIsCapturingInGameKey());
+                    }
 
                     /* Track the current size of a resizable pop-out. The main
                        window's resize handler further down only ever looks at
@@ -5948,6 +7096,10 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat &&
             ev.key.windowID == SDL_GetWindowID(s_window) &&
             (ev.key.mod & KMOD_PRIMARY) != 0) {
+            /* Set by every case below that acts; cleared by default, so the
+               tail can tell a shortcut that ran from a chord this switch has
+               nothing for. */
+            bool shortcutTook = true;
             switch (ev.key.scancode) {
             case SDL_SCANCODE_M:
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
@@ -5972,46 +7124,62 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
                 }
 #endif
-                continue;
+                break;
             case SDL_SCANCODE_K:
                 sdl3ImguiShowKeySetup();
-                continue;
+                break;
+            case SDL_SCANCODE_COMMA:
+                /* Ctrl+, opens Settings, the shortcut most desktop apps use. */
+                sdl3ImguiShowSettings();
+                break;
             case SDL_SCANCODE_S:
                 windowSaveMap(cs);
-                continue;
+                break;
             case SDL_SCANCODE_G:
                 windowShowGunsight_toggle(cs);
-                continue;
+                break;
             case SDL_SCANCODE_A:
                 windowAutomaticScrolling_toggle(cs);
-                continue;
+                break;
             case SDL_SCANCODE_1:
                 windowSetTankLabelLen(cs, lblNone);
-                continue;
+                break;
             case SDL_SCANCODE_2:
                 windowSetTankLabelLen(cs, lblShort);
-                continue;
+                break;
             case SDL_SCANCODE_3:
                 windowSetTankLabelLen(cs, lblLong);
-                continue;
+                break;
             case SDL_SCANCODE_P:
                 /* This switch gates on KMOD_PRIMARY only, so the shift-modified
                    form has to be separated here rather than by its own case. */
                 if (ev.key.mod & SDL_KMOD_SHIFT) sdl3ImguiShowPlayersPanel(true);
                 else                             windowShowPillLabels_toggle(cs);
-                continue;
+                break;
             case SDL_SCANCODE_B:
                 windowShowBaseLabels_toggle(cs);
-                continue;
+                break;
             case SDL_SCANCODE_R:
                 clientSimRequestAllianceSelected(cs);
-                continue;
+                break;
             case SDL_SCANCODE_O:
                 /* Same running-game condition as the File menu item. */
                 if (cs != nullptr && clientSimIsRunning(cs)) sdl3ImguiShowMapOverview(true);
-                continue;
-            default:
                 break;
+            default:
+                shortcutTook = false;
+                break;
+            }
+            if (shortcutTook) {
+                /* The letter is bound in the game as well, and on the defaults
+                   four of them are: M is Base View, S turns left, G is Pill
+                   View and 1/2/3 are the quick builds. Dropping this event is
+                   not enough on its own — a binding is not read from the event
+                   but polled out of SDL's keyboard state, where the letter is
+                   still down — so the key is marked and reads as up to the
+                   game until the player lets go of it. */
+                inputSwallowKeyUntilRelease((int)ev.key.scancode);
+                continue;
             }
         }
 #endif
@@ -6095,12 +7263,16 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             continue;
         }
 
-        /* Forward key events to input system for event-driven mine key tracking.
-         * Must happen before the ImGui swallow so key-up events are never lost. */
+        /* Forward key events for mine tracking and short turn-tap capture.
+         * Must happen before the ImGui swallow so key-up events are never lost.
+         * A tap is only accepted while the tick core samples the keys: in the
+         * lobby and countdown it returns before inputGetKeys, so a tap queued
+         * there would replay as a nudge once the game started. */
         if (ev.type == SDL_EVENT_KEY_DOWN || ev.type == SDL_EVENT_KEY_UP) {
             keyItems ki;
             windowGetKeys(&ki);
-            inputButtonInput(&ki, ev.key.scancode, (ev.type == SDL_EVENT_KEY_DOWN));
+            inputButtonInput(&ki, ev.key.scancode, (ev.type == SDL_EVENT_KEY_DOWN),
+                             ev.key.repeat, turnTapsAccepted(cs));
         }
 
         /* Gamepad capture for the Key Setup modal — intercept button-down
@@ -6250,7 +7422,9 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             ev.window.windowID == SDL_GetWindowID(s_window) &&
             !uiModeIsTablet() && !uiModeIsSteamDeck()) {
             bool nowFull = (ev.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN);
-            if (!nowFull && sdl3DrawIsOverviewInWindow()) {
+            /* A window the page sizes keeps the map mode: it never took the browser full screen, so leaving it takes nothing away. */
+            bool pageSized = (SDL_GetWindowFlags(s_window) & SDL_WINDOW_FILL_DOCUMENT) != 0;
+            if (!nowFull && sdl3DrawIsOverviewInWindow() && !pageSized) {
                 overviewInWindowChoose(false);
             } else if (nowFull != (bool)gameFrontFullScreen) {
                 gameFrontFullScreen = nowFull;
@@ -6275,7 +7449,8 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                resizes the window out from under the fullscreen map.  The UI
                scale rebuild above still applies: the surface really did
                change size. */
-            if (!(SDL_GetWindowFlags(s_window) & SDL_WINDOW_FULLSCREEN)) {
+            /* A window the page sizes is never resized by the game, and its size is never saved. */
+            if (!(SDL_GetWindowFlags(s_window) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FILL_DOCUMENT))) {
                 if (s_suppressAutoCustom) {
                     /* Programmatic resize from windowZoomChange — don't auto-switch or adjust.
                        Don't clear the flag here - it gets cleared at end of frame after zoom is applied. */
@@ -6691,6 +7866,14 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         gameFrontReloadSkins();
     }
 
+#ifdef __EMSCRIPTEN__
+    /* The overview window's map, while nothing of this frame's ImGui draw
+       list exists yet and after a skin reload has rebuilt the tile sheet. The
+       game view and the full screen map were drawn before this call, so the
+       target switch lands between whole draws, as theirs does. */
+    mapOverviewPanelRenderOffscreen(cs);
+#endif
+
     /* Build the ImGui frame */
     ImGui_ImplSDLRenderer3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
@@ -6768,6 +7951,9 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         bool nowInLobby = (cs && clientSimIsInLobby(cs));
         if (s_wasInLobby && !nowInLobby) {
             imguiLobbyFrameReset();
+            /* The desktop loop does this as it opens the game view; here the
+               ClientSim outlives the round the same way. */
+            if (cs) sdl3ImguiNewGame(cs);
             /* Lobby → running edge: play the game-start jingle, mirroring
                the desktop blocking loop's netRunning break. A Leave or a
                dropped connection exits the lobby too, but not into
@@ -7058,8 +8244,13 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     renderSysInfoPanel();
     renderNetInfoPanel(cs);
     renderGameInfoPanel(cs);
+#ifdef __EMSCRIPTEN__
+    renderMapOverviewPanel(cs);
+#endif
     renderSendMsgPanel(cs);
     renderPlayersPanel(cs);
+    renderScenarioPanel(cs);
+    renderScenarioAnnounce(cs);
 
     /* Modal dialogs */
     aboutPopupRender();
@@ -7073,7 +8264,6 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     /* Surface in-game CMD_REJECT_NAME_* rejects through the message
      * overlay. The lobby toast handles the in-lobby case. */
     drainInGameNameReject(cs);
-    renderPasswordModal();
     imguiKeySetupRenderInGamePopup(cs);
     renderJoinConfirmModal();
 
@@ -7203,7 +8393,9 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             /* Only one of the two can come back, because full screen mode
                draws the map itself: the in-window view when the app is full
                screen, the pop-out on its own flag when it is not. */
-            if (gameFrontFullScreen) sdl3ImguiShowOverviewInWindow(true);
+            /* On the web the full screen map is only ever the player's request, so a game starts in the normal view whatever the browser's full screen state. */
+            bool pageSized = s_window && (SDL_GetWindowFlags(s_window) & SDL_WINDOW_FILL_DOCUMENT);
+            if (gameFrontFullScreen && !pageSized) sdl3ImguiShowOverviewInWindow(true);
             else if (gameFrontShowMapOverview) sdl3ImguiShowMapOverview(true);
         }
         s_overviewWasRunning = overviewRunning;
@@ -7501,9 +8693,10 @@ bool sdl3ImguiIsSendMsgOpen(void) {
     return s_showSendMsg;
 }
 /* The overview has no in-window twin, so in tablet mode there is nothing to
- * show and nothing to report open. */
+ * show and nothing to report open. On the web mapOverviewOpen and
+ * mapOverviewClose act on the window inside the canvas. */
 void sdl3ImguiShowMapOverview(bool open) {
-#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+#if !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
     if (!uiModeIsTablet()) {
         if (open) mapOverviewOpen(); else mapOverviewClose();
         return;
@@ -7512,7 +8705,9 @@ void sdl3ImguiShowMapOverview(bool open) {
     (void)open;
 }
 bool sdl3ImguiIsMapOverviewOpen(void) {
-#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+#ifdef __EMSCRIPTEN__
+    if (!uiModeIsTablet()) return s_showMapOverviewPanel;
+#elif !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
     if (!uiModeIsTablet()) return s_popMapOverview.open;
 #endif
     return false;
@@ -7520,7 +8715,7 @@ bool sdl3ImguiIsMapOverviewOpen(void) {
 /* The in-window mode is a desktop-window mode, so tablet has nothing to show
  * and nothing to report active. */
 void sdl3ImguiShowOverviewInWindow(bool active) {
-#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+#if !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
     if (!uiModeIsTablet()) {
         overviewInWindowChoose(active);
         return;
@@ -7540,7 +8735,7 @@ void sdl3ImguiToggleFullScreen(struct ClientSim *cs) {
     }
 }
 bool sdl3ImguiIsOverviewInWindowOpen(void) {
-#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+#if !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
     if (!uiModeIsTablet()) return sdl3DrawIsOverviewInWindow();
 #endif
     return false;
@@ -7731,15 +8926,24 @@ void sdl3ImguiClearNavFocus(void) {
     s_clearNavFocus = true;
 }
 
+void sdl3ImguiNewGame(ClientSim *cs) {
+    /* An alliance request still open when the last round ended would come
+       back up in this one, and Accept would go to whatever player holds that
+       slot now. */
+    s_showAllianceOpen = false;
+    s_allianceVisible  = false;
+    /* The build target is the square a click or Build Now sends the man to,
+       and cursor mode may have been left on. */
+    buildCursorReset();
+    sdl3ImguiTabletNewGame();
+    sdl3DrawNewGame(clientSimGetCurrentBuildSelect(cs));
+}
+
 void sdl3ImguiShowAllianceRequest(const char *playerName, unsigned char playerNum) {
     strncpy(s_alliancePlayerName, playerName, sizeof(s_alliancePlayerName) - 1);
     s_alliancePlayerName[sizeof(s_alliancePlayerName) - 1] = '\0';
     s_alliancePlayerNum  = playerNum;
     s_showAllianceOpen   = true;
-}
-
-void sdl3ImguiShowPassword(void) {
-    s_showPasswordOpen = true;
 }
 
 void sdl3ImguiSetPlayer(unsigned char playerNum, const char *name, const char *countryCode) {
@@ -7794,6 +8998,13 @@ void sdl3ImguiClearPlayer(unsigned char playerNum) {
     s_playerPing[playerNum] = 0;
     s_playerClientType[playerNum] = CLIENT_TYPE_UNKNOWN;
     s_playerFlags[playerNum] = 0;
+    /* An alliance request from the player who just left goes with them.
+       Left open, Accept would go to whoever takes the seat next. */
+    if ((s_allianceVisible || s_showAllianceOpen) &&
+        s_alliancePlayerNum == playerNum) {
+        s_allianceVisible  = false;
+        s_showAllianceOpen = false;
+    }
 }
 
 void sdl3ImguiUpdatePlayerMeta(unsigned char playerNum, uint16_t ping,
@@ -7819,6 +9030,11 @@ void sdl3ImguiUpdatePlayerPing(unsigned char playerNum, uint16_t ping) {
 SDL_Texture *sdl3ImguiGetSteamIcon(void) {
     ensureWbnIconsLoaded();
     return s_iconSteam[activeIconSlot()];
+}
+
+SDL_Texture *sdl3ImguiSpeakerIconTexture(void) {
+    ensureWbnIconsLoaded();
+    return s_iconSpeaker[activeIconSlot()];
 }
 
 SDL_Surface *sdl3ImguiGetBotIconSurface(bool isAlly) {
@@ -7872,6 +9088,10 @@ bool sdl3ImguiPlayerIsAlly(unsigned char playerNum) {
     return s_playerIsAlly[playerNum];
 }
 
+bool sdl3ImguiTankLabelsLong(void) {
+    return labelTank == lblLong;
+}
+
 bool sdl3ImguiPlayerIsBot(unsigned char playerNum) {
     if (playerNum >= MAX_PLAYERS) return false;
     return (s_playerFlags[playerNum] & PLAYER_FLAG_BOT) != 0;
@@ -7909,7 +9129,9 @@ bool drawCountryFlagWithTip(const char *countryCode) {
     if (up[0] == 'X' && up[1] == 'X') return false;        /* sentinel */
     SDL_Texture *flagTex = flagsGetTextureFor(activeRenderer(), countryCode);
     if (!flagTex) return false;
-    ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
+    float flagW = 0.0f, flagH = 0.0f;
+    sdl3ImguiFlagSize(&flagW, &flagH);
+    ImGui::Image((ImTextureID)flagTex, ImVec2(flagW, flagH));
     if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) {
         const CountryNameEntry *e = (const CountryNameEntry *)bsearch(
             up, kCountryNames, K_COUNTRY_NAMES_SIZE,
@@ -7932,7 +9154,10 @@ void renderPlayerNameEx(const char *name, uint8_t flags, uint8_t clientType,
                         const RenderPlayerNameOpts *opts) {
     ensurePlatformIconsLoaded();
     ensureWbnIconsLoaded();
-    const int iconSlot = activeIconSlot();
+    const int   iconSlot = activeIconSlot();
+    /* One size for every badge in the run, read once so the platform icon,
+     * the shield and the Steam mark cannot drift apart. */
+    const float iconPx   = sdl3ImguiWbnIconPx();
     /* opts is optional, so read both choices once here and let the rest of
      * the function work from plain locals. */
     const bool botIsAlly = opts && opts->botIsAlly;
@@ -7965,7 +9190,7 @@ void renderPlayerNameEx(const char *name, uint8_t flags, uint8_t clientType,
         /* Drawn as authored, with no tint: these two files carry their own
          * colours and the green and red ones are separate artwork, not one
          * shape recoloured. */
-        ImGui::Image((ImTextureID)botChip, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+        ImGui::Image((ImTextureID)botChip, ImVec2(iconPx, iconPx));
         imguiHelpTooltip(langGetText(STR_PLAYER_TIP_AI));
         sameLineKeepY();
     } else {
@@ -7975,7 +9200,7 @@ void renderPlayerNameEx(const char *name, uint8_t flags, uint8_t clientType,
             /* ImGui 1.91.9+ removed tint_col from Image(); ImageWithBg takes
              * (size, uv0, uv1, bg_col, tint_col) - bg transparent. */
             ImGui::ImageWithBg((ImTextureID)platTex,
-                               ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE),
+                               ImVec2(iconPx, iconPx),
                                ImVec2(0, 0), ImVec2(1, 1),
                                ImVec4(0, 0, 0, 0), tint);
             if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) {
@@ -7995,14 +9220,14 @@ void renderPlayerNameEx(const char *name, uint8_t flags, uint8_t clientType,
             /* Vector shield (crisp at this size); gold for supporters, white
              * otherwise — same scheme as the platform icon above. */
             ImVec4 tint = (flags & PLAYER_FLAG_SUPPORTER) ? SUPPORTER_TINT : NO_TINT;
-            imguiShieldBadge(WBN_ICON_SIZE, ImGui::GetColorU32(tint));
+            imguiShieldBadge(iconPx, ImGui::GetColorU32(tint));
             imguiHelpTooltip(langGetText(STR_PLAYER_TIP_WBN_VERIFIED));
             sameLineKeepY();
         }
         if ((flags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam[iconSlot]) {
             ImVec4 tint = (flags & PLAYER_FLAG_SUPPORTER) ? SUPPORTER_TINT : NO_TINT;
             ImGui::ImageWithBg((ImTextureID)s_iconSteam[iconSlot],
-                               ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE),
+                               ImVec2(iconPx, iconPx),
                                ImVec2(0, 0), ImVec2(1, 1),
                                ImVec4(0, 0, 0, 0), tint);
             imguiHelpTooltip(langGetText((flags & PLAYER_FLAG_WBN_STEAM_LINKED)
@@ -8268,8 +9493,8 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
  * silences rather than against a letter. Muted draws standard-muted.svg, the
  * same pin slashed the way mic-muted.svg slashes the microphone, so the two
  * muted states in one row say it the same way. Colour carries it as well as
- * shape, dim when pings are shown and red when they are not, because at
- * WBN_ICON_SIZE a diagonal bar is a few pixels and should not be the only
+ * shape, dim when pings are shown and red when they are not, because at a
+ * badge's size a diagonal bar is a few pixels and should not be the only
  * thing separating the two. A tooltip names the state either way. */
 void renderPlayerPingMuteCell(struct ClientSim *cs, int playerNum, bool isSelf,
                               float size) {
@@ -8346,6 +9571,20 @@ void sdl3ImguiCleanup(void) {
        Left latched, the second game of a session came up windowed-view inside
        a still-full-screen window, and the pop-out did not come back either. */
     s_overviewWasRunning = false;
+    /* The five two-form panels go with the game as well. popOutDestroy below
+       clears the pop-out half, but the in-window half is a plain flag that
+       nothing here was resetting, and this path reaches overviewInWindowSet
+       directly rather than through overviewInWindowChoose, which is where the
+       mode switch clears them. Left set, a game played full screen with Send
+       Message open came back to the NEXT game — classic mode by then — with
+       the in-window panel drawn over the classic view and Players > Send
+       Message reporting it closed, because in classic mode the menu reads the
+       pop-out's flag. */
+    s_showSysInfo      = false;
+    s_showNetInfo      = false;
+    s_showGameInfo     = false;
+    s_showSendMsg      = false;
+    s_showPlayersPanel = false;
     inputGamepadShutdown();
     /* Before the loop: all of these were made on the Map Overview pop-out's
        renderer, which popOutDestroy tears down. */

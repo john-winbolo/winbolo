@@ -534,6 +534,54 @@ void spritePositionTankLabel(float baseX, float baseY, float scale,
   *outY = sy;
 }
 
+void spritePositionTankLabelAt(float baseX, float baseY, int mode, float scale,
+                               int sheetScale, int mx, int my, int px, int py,
+                               int wx, int wy, float clipLeft,
+                               float *outX, float *outY) {
+  float sx, sy;
+  if (mode != GFX_ANIM_SMOOTH) {
+    spritePositionTankLabel(baseX, baseY, scale, mx, my, px, py, clipLeft,
+                            outX, outY);
+    return;
+  }
+  /* Smooth: the tank sprite's own top-left (mapViewDrawTanks' formula),
+     then one square across, so the name glides with the tank. */
+  sx = baseX + spritePositionOffset(mode, scale, sheetScale, mx, px, wx) +
+       (float)TILE_SIZE_X * scale;
+  sy = baseY + spritePositionOffset(mode, scale, sheetScale, my, py, wy);
+  if (sx < clipLeft) sx = clipLeft;
+  *outX = sx;
+  *outY = sy;
+}
+
 bool spritePositionItemLabelShown(float scale, float minScale) {
   return scale >= minScale;
+}
+
+void mapViewCameraSplit(int pos, int unit, int *outSquare, int *outEdge) {
+  int square = (pos >= 0) ? pos / unit : -((-pos + unit - 1) / unit);
+  *outSquare = square;
+  *outEdge = pos - square * unit;
+}
+
+void mapViewCameraAxis(int centerW, const float *preciseCenterW, int viewLen,
+                       int zf, int *outSquare, int *outEdge) {
+  if (preciseCenterW == NULL) {
+    /* Camera top-left in game pixels, split there, then scaled: the view
+       moves zf screen pixels at a time. */
+    int camP = ((centerW * TILE_SIZE_X) >> 8) - viewLen / (2 * zf);
+    mapViewCameraSplit(camP, TILE_SIZE_X, outSquare, outEdge);
+    *outEdge *= zf;
+  } else {
+    /* Camera top-left in whole screen pixels (world units * zf / 16,
+       rounded), so the view moves one screen pixel at a time instead of
+       zf. The edge can then be any 0..scaledTile-1. */
+    int camS = (int)floorf(*preciseCenterW * (float)zf / 16.0f + 0.5f) - viewLen / 2;
+    mapViewCameraSplit(camS, TILE_SIZE_X * zf, outSquare, outEdge);
+  }
+}
+
+bool mapViewSquareInMap(int mx, int my) {
+  /* 256 = MAP_ARRAY_SIZE; types.h is not included here (see the .h) */
+  return mx >= 0 && mx < 256 && my >= 0 && my < 256;
 }

@@ -278,31 +278,25 @@ void lobbyBotModeAndLevel(ClientSim *cs, int slot,
     if (outLevel) *outLevel = level;
 }
 
-/* Is this the brain's DEFAULT mode — the one every ordinary game uses, and
- * the only one whose three levels have hand-written lang strings? Judged by
- * the mode's key rather than its index so a brain whose first section is
- * named something else does not borrow the Easy/Medium/Hard wording. */
+/* Is this the brain's DEFAULT mode — the one every ordinary game uses, so
+ * the row and the gear tooltip need not name it? Judged by the mode's key
+ * rather than its index. */
 bool lobbyBotModeIsDefault(const BrainModes *modes, int mode) {
     if (!modes || mode < 0 || mode >= modes->modeCount) return true;
     return SDL_strcasecmp(modes->modes[mode].key, "default") == 0;
 }
 
-/* May this mode's levels be WORDED from the lang strings? Only when it is
- * the default mode AND its levels are still exactly easy / medium / hard in
- * that order — the three STR_BOT_DIFF_* blurbs describe those and nothing
- * else. A modes.txt that renames or extends the default mode's levels gets
- * its own labels shown instead of three strings that would quietly lie. */
+/* May this mode's levels be WORDED from the lang strings? Only when its
+ * levels are exactly easy / medium / hard in that order — the three
+ * STR_BOT_DIFF_* blurbs describe those and nothing else — AND the mode is
+ * the default one or its modes.txt section says `standard_levels = yes`
+ * (brainModeUsesStandardLevels). Turtle says so: its levels are default's
+ * plus one placement switch. A mode that shares the three keys without
+ * the line keeps its own labels, since its levels may play differently.
+ * A mode that renames or extends its levels shows its own labels too. */
 bool lobbyBotModeUsesLangLevels(const BrainModes *modes, int mode) {
-    if (!lobbyBotModeIsDefault(modes, mode)) return false;
     if (!modes || mode < 0 || mode >= modes->modeCount) return true;
-    const BrainMode *m = &modes->modes[mode];
-    if (m->levelCount != BOT_DIFFICULTY_MAX + 1) return false;
-    for (int i = 0; i <= BOT_DIFFICULTY_MAX; i++) {
-        if (SDL_strcasecmp(m->levels[i].key, botDifficultyName((uint8_t)i)) != 0) {
-            return false;
-        }
-    }
-    return true;
+    return brainModeUsesStandardLevels(&modes->modes[mode]);
 }
 
 /* ── Bot difficulty presentation ─────────────────────────────────────
@@ -384,10 +378,11 @@ void lobbyDrawTagline(const char *tag, float wrapPosX, int difficulty) {
 
 /* Gear hover tooltip: "Configure" plus a "Currently:" line naming the bot,
  * its mode when that is not the default one, and its difficulty
- * ("GoalHunter · Survival Scenario · Hard"). The default mode adds that
- * difficulty's short tagline underneath with the Easy./Medium./Hard. token
- * coloured; another mode's levels have no such blurb (they are data), so
- * the line above says it all. */
+ * ("GoalHunter · Turtle · Hard"). A mode with the standard
+ * levels (lobbyBotModeUsesLangLevels) adds that difficulty's short tagline
+ * underneath with the Easy./Medium./Hard. token coloured; another mode's
+ * levels have no such blurb (they are data), so the line above says it
+ * all. */
 void lobbyGearTooltip(ClientSim *cs, int slot, float s) {
     ImGui::BeginTooltip();
     ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_TOOLTIP_CONFIG));
@@ -505,9 +500,20 @@ static void lobbySendAddBot(ClientSim *cs,
          * no harder than one the game gave them. */
         {
           const char *spBrain = serverSimGetBotBrainPath(sim);
-          uint8_t spMode = gameFrontSpBotMode(spBrain);
-          serverSimSetBotConfig(sim, slot, spMode,
-                                gameFrontSpBotLevel(spBrain, spMode),
+          uint8_t spMode  = gameFrontSpBotMode(spBrain);
+          uint8_t spLevel = gameFrontSpBotLevel(spBrain, spMode);
+          /* The player's own choice is only the BASE. Where the map
+           * configures the team this bot is joining — a scenario lobby
+           * template naming a mode or a difficulty — the server's rule
+           * overrides it, so the brain is BUILT in the right mode rather
+           * than moved into it a moment later by the block below. Asked of
+           * the same resolver the networked Add Bot asks, which is what
+           * keeps the two paths on one answer. */
+          if (teamNumber > 0 && teamNumber < MAX_TANKS) {
+            (void)serverSimResolveNewBotConfig(sim, (int)teamNumber, spBrain,
+                                               true, &spMode, &spLevel);
+          }
+          serverSimSetBotConfig(sim, slot, spMode, spLevel,
                                 0 /* personality: normal */, NULL);
         }
         serverSimCreateBot(sim, slot, serverSimGetBotBrainPath(sim), botName,
@@ -530,10 +536,10 @@ static void lobbySendAddBot(ClientSim *cs,
          * requires for the bot's side, then what the player last picked by
          * hand. Before this, single player's add wrote only the base and
          * skipped the map and the manual pick altogether — which is why a bot
-         * added to the Survival horde came up at the player's skill guess
-         * instead of Hard. The team is the header's when it named one (that
-         * is applied asynchronously below), else the one the add just gave
-         * the slot. The brain reloads from this config at round start, so
+         * added to the Survival team's seats came up at the player's skill
+         * guess instead of Hard. The team is the header's when it named one
+         * (that is applied asynchronously below), else the one the add just
+         * gave the slot. The brain reloads from this config at round start, so
          * setting it after the create is enough. */
         {
             const char *botBrain = (stickyBrainIdx != 0xFF)
@@ -746,6 +752,17 @@ void lobbySendTeamClear(ClientSim *cs, uint8_t teamId) {
     clientSimNetSendLobbyTeamClear(cs, teamId);
 }
 
+/* Whether a pool pick changes anything on the team row: a team not yet in
+ * use, or a pool other than the one it has. Picking the pool the team
+ * already has sends no team-meta write, because the server reads a write
+ * that repeats every field as the host picking the side the team already
+ * shows (serverSimSetTeamMeta). The bot re-roll below still runs. */
+static bool lobbyTeamPoolChanges(ClientSim *cs, uint8_t teamId,
+                                 uint8_t namingPool) {
+    return !clientSimGetLobbyTeamInUse(cs, (BYTE)(teamId)) ||
+           clientSimGetLobbyTeamPool(cs, (BYTE)(teamId)) != namingPool;
+}
+
 /* Update a team's naming pool. The team-meta write goes through the
  * wire wrapper (its local-transport branch handles SP-host). After
  * the new pool is published we re-roll every bot on the team whose
@@ -770,7 +787,9 @@ void lobbySendTeamPool(ClientSim *cs,
             color = (uint8_t)((teamId - 1) & 7);
         }
         uint8_t startSide = clientSimGetLobbyTeamStartSide(cs, (BYTE)(teamId));
-        clientSimNetSendLobbyTeamMeta(cs, teamId, color, namingPool, startSide, teamName);
+        if (lobbyTeamPoolChanges(cs, teamId, namingPool)) {
+            clientSimNetSendLobbyTeamMeta(cs, teamId, color, namingPool, startSide, teamName);
+        }
 
         /* Rename bots on this team whose names weren't overridden by
          * the host. We pick names sequentially from the new pool,
@@ -825,7 +844,9 @@ void lobbySendTeamPool(ClientSim *cs,
         /* Same read-back for the start side: the packet carries every
          * field, so send the current side rather than resetting it. */
         uint8_t startSide = clientSimGetLobbyTeamStartSide(cs, (BYTE)(teamId));
-        clientSimNetSendLobbyTeamMeta(cs, teamId, color, namingPool, startSide, teamName);
+        if (lobbyTeamPoolChanges(cs, teamId, namingPool)) {
+            clientSimNetSendLobbyTeamMeta(cs, teamId, color, namingPool, startSide, teamName);
+        }
 
         /* The server can't rename existing bots when the pool changes
          * because the per-pool name table lives only on the client

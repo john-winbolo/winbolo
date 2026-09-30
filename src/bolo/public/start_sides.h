@@ -82,6 +82,22 @@ static inline bool startSideIsCentre(BYTE mask) {
     return mask == 0;
 }
 
+/* The bits facing the ones in mask: north against south, east against
+ * west. Used to point a team with no side at the far side of the map from
+ * the sides the other teams chose. Being off a chosen side is not on its
+ * own the other side of the map: on a map whose starts ring the island,
+ * everything but the east is a horseshoe running west, north and south
+ * that comes back to meet the east at both ends, and a team spread over
+ * the whole of it puts somebody next to the team it is playing. */
+static inline BYTE startSideOppositeBits(BYTE mask) {
+    BYTE out = 0;
+    if (mask & START_SIDE_BIT_N) out |= START_SIDE_BIT_S;
+    if (mask & START_SIDE_BIT_S) out |= START_SIDE_BIT_N;
+    if (mask & START_SIDE_BIT_E) out |= START_SIDE_BIT_W;
+    if (mask & START_SIDE_BIT_W) out |= START_SIDE_BIT_E;
+    return out;
+}
+
 /* Whether a start with this mask is on a team's chosen side. A team with
  * no side takes any start; a centre start is open to every team. */
 static inline bool startSideAccepts(BYTE mask, BYTE side) {
@@ -105,6 +121,66 @@ static inline bool startSideEligible(BYTE mask, BYTE side, BYTE closedMask) {
         return startSideAccepts(mask, side);
     }
     return (mask & closedMask) == 0;
+}
+
+/* The terrain byte for deep sea, the same value as DEEP_SEA in global.h.
+ * Repeated here so this header needs nothing but BYTE. */
+#define START_SIDE_TERRAIN_DEEP_SEA 0xFF
+
+/* The bounding box of every square that is not deep sea, in a row-major
+ * terrain grid: terrain[(y * stride) + x] is the square at (x, y), for x in
+ * 0..width-1 and y in 0..height-1. Every other terrain counts, mined squares
+ * and boats included. Returns false, and leaves the outputs alone, when the
+ * grid has no square that is not deep sea. */
+static inline bool startSideLandBounds(const BYTE *terrain, int width,
+                                       int height, int stride,
+                                       int *outMinX, int *outMinY,
+                                       int *outMaxX, int *outMaxY) {
+    int minX = width;
+    int minY = height;
+    int maxX = -1;
+    int maxY = -1;
+    int x;
+    int y;
+    if (terrain == 0 || width <= 0 || height <= 0 || stride < width) {
+        return false;
+    }
+    for (y = 0; y < height; y++) {
+        const BYTE *row = terrain + ((long)y * stride);
+        for (x = 0; x < width; x++) {
+            if (row[x] == START_SIDE_TERRAIN_DEEP_SEA) continue;
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+        }
+    }
+    if (maxX < 0) {
+        return false;
+    }
+    if (outMinX) *outMinX = minX;
+    if (outMinY) *outMinY = minY;
+    if (outMaxX) *outMaxX = maxX;
+    if (outMaxY) *outMaxY = maxY;
+    return true;
+}
+
+/* Whether a fresh lobby puts teams 1 and 2 on east and west rather than on
+ * north and south: true when the squares that are not deep sea span more
+ * columns than rows. A tie, and a grid that is all deep sea, give false, so
+ * north/south stays the default for a square or an empty map. Same grid
+ * layout as startSideLandBounds. */
+static inline bool startSideDefaultIsEastWest(const BYTE *terrain, int width,
+                                              int height, int stride) {
+    int minX;
+    int minY;
+    int maxX;
+    int maxY;
+    if (!startSideLandBounds(terrain, width, height, stride,
+                             &minX, &minY, &maxX, &maxY)) {
+        return false;
+    }
+    return (maxX - minX) > (maxY - minY);
 }
 
 #endif /* START_SIDES_H */

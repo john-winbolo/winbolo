@@ -24,6 +24,7 @@
  *  or drives the sim.
  *********************************************************/
 
+#include <stdio.h>
 #include <string.h>
 #include <SDL3/SDL.h>
 
@@ -306,6 +307,13 @@ bool serverSimGetRosterSlot(ServerSim *sim, BYTE i, ServerSimRosterSlot *out) {
     return true;
 }
 
+bool serverSimIsAllied(ServerSim *sim, BYTE a, BYTE b) {
+    if (sim == NULL || a >= MAX_TANKS || b >= MAX_TANKS) return false;
+    if (!sim->playerConnected[a] || !sim->playerConnected[b]) return false;
+    if (a == b) return true;
+    return playersIsAllie(&sim->sim.plyrs, a, b) == TRUE;
+}
+
 BYTE serverSimGetNumFielded(ServerSim *sim) {
     BYTE count;
     BYTE num = 0;
@@ -424,6 +432,7 @@ bool serverSimGetPill(ServerSim *sim, BYTE i,
     pillbox p;
     BYTE n = pillsGetNumPills(&sim->sim.pb);
     if (i == 0 || i > n) return false;
+    if (!pillsIsActive(&sim->sim.pb, i)) return false;
     pillsGetPill(&sim->sim.pb, &p, i);
     if (x)      *x      = p.x;
     if (y)      *y      = p.y;
@@ -440,6 +449,7 @@ bool serverSimGetPillSpeed(ServerSim *sim, BYTE i, BYTE *speed) {
     pillbox p;
     BYTE n = pillsGetNumPills(&sim->sim.pb);
     if (i == 0 || i > n) return false;
+    if (!pillsIsActive(&sim->sim.pb, i)) return false;
     pillsGetPill(&sim->sim.pb, &p, i);
     if (speed) *speed = p.speed;
     return true;
@@ -470,6 +480,7 @@ bool serverSimGetBase(ServerSim *sim, BYTE i,
     base b;
     BYTE n = basesGetNumBases(&sim->sim.bs);
     if (i == 0 || i > n) return false;
+    if (!basesIsActive(&sim->sim.bs, i)) return false;
     basesGetBase(&sim->sim.bs, &b, i);
     if (x)     *x     = b.x;
     if (y)     *y     = b.y;
@@ -481,6 +492,7 @@ bool serverSimGetBaseStats(ServerSim *sim, BYTE i,
                            BYTE *shells, BYTE *mines, BYTE *armour) {
     BYTE n = basesGetNumBases(&sim->sim.bs);
     if (i == 0 || i > n) return false;
+    if (!basesIsActive(&sim->sim.bs, i)) return false;
     basesGetStats(&sim->sim.bs, i, shells, mines, armour);
     return true;
 }
@@ -801,6 +813,8 @@ uint32_t serverSimGetSettingLockBit(uint8_t lstSettingType) {
         case LST_OVERVIEW_WINDOW:   return LOBBY_LOCK_OVERVIEW_WINDOW;
         case LST_LINE_OF_SIGHT:     return LOBBY_LOCK_LINE_OF_SIGHT;
         case LST_SMART_PINGS_OFF:   return LOBBY_LOCK_SMART_PINGS;
+        case LST_MODS_OFF:          return LOBBY_LOCK_MODS;
+        case LST_POSITIONAL_SOUND:  return LOBBY_LOCK_POSITIONAL_SOUND;
         default:                    return 0xFFFFFFFFu;  /* unknown setting */
     }
 }
@@ -814,12 +828,12 @@ bool serverSimIsSettingLocked(const ServerSim *sim, uint8_t lstSettingType) {
 
 uint32_t serverSimAddImpliedLocks(uint32_t locks) {
     /* Turning classic mode on writes the three view policies, allies in
-     * trees, the overview window and line of sight
+     * trees, the overview window, line of sight and positional sound
      * (serverSimSetClassicMode), so leaving the checkbox editable while
-     * any of those six is locked would let a host change a locked value
+     * any of those seven is locked would let a host change a locked value
      * with one tick — and the value does not come back, because turning
-     * classic mode off leaves all six where classic mode put them.
-     * Locking any of the six locks classic mode too.
+     * classic mode off leaves all seven where classic mode put them.
+     * Locking any of the seven locks classic mode too.
      *
      * Deliberately decided from the mask alone rather than from the
      * current values: the mask is fixed at startup, so the host sees a
@@ -827,7 +841,8 @@ uint32_t serverSimAddImpliedLocks(uint32_t locks) {
      * than one that appears and disappears as other settings move. */
     if (locks & (LOBBY_LOCK_PILL_VIEW | LOBBY_LOCK_BASE_VIEW |
                  LOBBY_LOCK_ALLY_VIEW | LOBBY_LOCK_ALLIES_IN_TREES |
-                 LOBBY_LOCK_OVERVIEW_WINDOW | LOBBY_LOCK_LINE_OF_SIGHT)) {
+                 LOBBY_LOCK_OVERVIEW_WINDOW | LOBBY_LOCK_LINE_OF_SIGHT |
+                 LOBBY_LOCK_POSITIONAL_SOUND)) {
         locks |= LOBBY_LOCK_CLASSIC_MODE;
     }
     return locks;
@@ -879,6 +894,8 @@ void serverSimSetClassicMode(ServerSim *sim, bool on) {
                                sim->viewDecaySecs[viewCategoryAlly]);
         /* Classic mode hides allies in trees, so it owns this value too. */
         serverSimSetAlliesInTrees(sim, false);
+        /* Classic mode plays every sound centred, so it owns this too. */
+        serverSimSetPositionalSound(sim, false);
         /* Classic mode offers no overview at all - no pop-out map and no
          * full screen map - with nothing blocking sight in the framed view
          * it leaves the player. */
@@ -898,6 +915,15 @@ void serverSimSetAlliesInTrees(ServerSim *sim, bool on) {
 
 bool serverSimGetAlliesInTrees(const ServerSim *sim) {
     return sim ? sim->alliesInTrees : false;
+}
+
+void serverSimSetPositionalSound(ServerSim *sim, bool on) {
+    if (sim == NULL) return;
+    sim->positionalSound = on;
+}
+
+bool serverSimGetPositionalSound(const ServerSim *sim) {
+    return sim ? sim->positionalSound : false;
 }
 
 void serverSimSetOverviewWindow(ServerSim *sim, uint8_t window) {
@@ -928,6 +954,117 @@ void serverSimSetVoiceMode(ServerSim *sim, ServerVoiceMode mode) {
 
 ServerVoiceMode serverSimGetVoiceMode(const ServerSim *sim) {
     return sim ? sim->voiceMode : serverVoiceOn;
+}
+
+void serverSimSetScriptUploadPolicy(ServerSim *sim, ScriptUploadPolicy p) {
+    if (sim == NULL) return;
+    sim->scriptUploadPolicy = p;
+}
+
+ScriptUploadPolicy serverSimGetScriptUploadPolicy(const ServerSim *sim) {
+    return sim ? sim->scriptUploadPolicy : SCRIPT_UPLOAD_ALLOW;
+}
+
+void serverSimSetScriptSharing(ServerSim *sim, bool on) {
+    if (sim == NULL) return;
+    sim->scriptSharingOff = !on;
+}
+
+bool serverSimGetScriptSharing(const ServerSim *sim) {
+    return sim ? !sim->scriptSharingOff : true;
+}
+
+void serverSimSetScriptUploadDir(ServerSim *sim, const char *dir) {
+    if (sim == NULL) return;
+    SDL_strlcpy(sim->scriptUploadDir, dir != NULL ? dir : "",
+                sizeof(sim->scriptUploadDir));
+}
+
+const char *serverSimGetScriptUploadDir(const ServerSim *sim) {
+    return sim ? sim->scriptUploadDir : "";
+}
+
+void serverSimSetScriptSessionDir(ServerSim *sim, const char *dir) {
+    if (sim == NULL) return;
+    SDL_strlcpy(sim->scriptSessionDir, dir != NULL ? dir : "",
+                sizeof(sim->scriptSessionDir));
+}
+
+const char *serverSimGetScriptSessionDir(const ServerSim *sim) {
+    return sim ? sim->scriptSessionDir : "";
+}
+
+/* Process-wide rather than on a sim, because the listing cache it keeps
+   honest is process-wide: one cache serves every sim in the process. Atomic
+   because the tick thread bumps it and a client hosting in process lists from
+   the UI thread through serverSimEnumerateScenarioDir. */
+static SDL_AtomicInt scriptDirsGen;
+
+void serverSimNoteScriptDirsChanged(void) {
+    (void)SDL_AddAtomicInt(&scriptDirsGen, 1);
+}
+
+uint32_t serverSimScriptDirsGen(void) {
+    return (uint32_t)SDL_GetAtomicInt(&scriptDirsGen);
+}
+
+int serverSimEmptyScriptSessionDir(ServerSim *sim) {
+    char **names;
+    int    count   = 0;
+    int    removed = 0;
+    int    i;
+
+    if (sim == NULL || sim->scriptSessionDir[0] == '\0') return 0;
+    /* "*" rather than NULL: a NULL pattern walks into subdirectories, and
+       only the files the uploads put here are this call's to take. */
+    names = SDL_GlobDirectory(sim->scriptSessionDir, "*", 0, &count);
+    if (names == NULL) return 0;
+    for (i = 0; i < count; i++) {
+        const char  *name = names[i];
+        char         path[FILENAME_MAX];
+        SDL_PathInfo info;
+
+        if (name == NULL || name[0] == '\0' ||
+            SDL_strchr(name, '/') != NULL || SDL_strchr(name, '\\') != NULL) {
+            continue;
+        }
+        SDL_snprintf(path, sizeof(path), "%s/%s", sim->scriptSessionDir, name);
+        if (!SDL_GetPathInfo(path, &info) ||
+            info.type != SDL_PATHTYPE_FILE) {
+            continue;
+        }
+        if (SDL_RemovePath(path)) {
+            removed++;
+        } else {
+            fprintf(stderr, "Warning: could not remove session script '%s': "
+                            "%s\n", path, SDL_GetError());
+        }
+    }
+    SDL_free(names);
+    if (removed > 0) {
+        serverSimNoteScriptDirsChanged();
+    }
+    return removed;
+}
+
+ScriptUploadPolicy scriptUploadPolicyResolve(const char *word, bool legacyOff) {
+    if (word == NULL || word[0] == '\0') {
+        return legacyOff ? SCRIPT_UPLOAD_OFF : SCRIPT_UPLOAD_ALLOW;
+    }
+    if (SDL_strcasecmp(word, "off") == 0)     return SCRIPT_UPLOAD_OFF;
+    if (SDL_strcasecmp(word, "allow") == 0)   return SCRIPT_UPLOAD_ALLOW;
+    if (SDL_strcasecmp(word, "persist") == 0) return SCRIPT_UPLOAD_PERSIST;
+    fprintf(stderr, "Warning: unknown script upload policy '%s', using allow\n",
+            word);
+    return SCRIPT_UPLOAD_ALLOW;
+}
+
+const char *scriptUploadPolicyWord(ScriptUploadPolicy p) {
+    switch (p) {
+        case SCRIPT_UPLOAD_OFF:     return "Off";
+        case SCRIPT_UPLOAD_PERSIST: return "Persist";
+        default:                    return "Allow";
+    }
 }
 
 uint16_t serverSimGetViewDecaySecs(const ServerSim *sim, ViewCategory cat) {
@@ -994,6 +1131,24 @@ void serverSimSetSmartPingsOff(ServerSim *sim, bool off) {
 
 bool serverSimGetSmartPingsOff(const ServerSim *sim) {
     return sim ? sim->smartPingsOff : false;
+}
+
+/* Negative sense throughout as well — see the field in
+ * server_sim_internal.h. false is "the mods run", which is what a sim
+ * nobody has configured holds and what a NULL sim answers.
+ *
+ * The setter does not recompose. Which scripts play is decided in
+ * scnDecideScenario and the lobby asks for that decision again through
+ * lobbyScenarioReselect (src/server/server_command_dispatch.c), which is
+ * where the pick paths already ask for it — a setter that recomposed would
+ * do it twice for a host click and once for every test that only wanted the
+ * value set. */
+void serverSimSetModsOff(ServerSim *sim, bool off) {
+    if (sim) sim->modsOff = off;
+}
+
+bool serverSimGetModsOff(const ServerSim *sim) {
+    return sim ? sim->modsOff : false;
 }
 
 void serverSimSetState(ServerSim *sim, ServerState s) {

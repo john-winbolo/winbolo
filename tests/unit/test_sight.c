@@ -48,7 +48,8 @@ static OverviewRect sightBlock(int left, int top, int right, int bottom) {
  * builder did not write reads as neither seen nor hidden. */
 static void sightRun(BYTE originX, BYTE originY, const OverviewRect *block) {
     memset(visBuf, SIGHT_GUARD_FILL, sizeof(visBuf));
-    sightBuildMask(&sightMap, originX, originY, block, visBuf);
+    sightBuildMask(&sightMap, NULL, originX, originY, SIGHT_SUB_CENTRE,
+                   SIGHT_SUB_CENTRE, block, visBuf);
 }
 
 static bool sightSeen(const OverviewRect *block, int x, int y) {

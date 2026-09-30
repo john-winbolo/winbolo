@@ -1,4 +1,5 @@
--- round_reset_count.lua -- probe brain for tests/round_reset_test.py.
+-- round_reset_count.lua -- a brain that counts its own thinks, so a test can
+-- see whether a round boundary rebuilt the bot's Lua state.
 --
 -- Counts its own thinks and appends the count to round_reset_count.out
 -- next to this file (a brain may write inside its own directory; print()

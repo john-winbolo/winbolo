@@ -214,7 +214,10 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
     BYTE numPb = pillsGetNumPills(&gs->pb);
     BYTE pi;
     for (pi = 0; pi < numPb && numViewRects < BRAIN_VIEW_MAX_RECTS; pi++) {
-      if ((*gs->pb).item[pi].inTank == FALSE
+      /* A pill not on the map (removed by a scenario, or by the loader in
+       * the mined border) gives no view. */
+      if (pillsIsActive(&gs->pb, (BYTE)(pi + 1))
+          && (*gs->pb).item[pi].inTank == FALSE
           && (*gs->pb).item[pi].owner < MAX_TANKS
           && ((*gs->pb).item[pi].owner == myPN
               || playersIsAllie(&gs->plyrs, myPN, (*gs->pb).item[pi].owner) == TRUE)) {
@@ -331,6 +334,28 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
       }
     }
     value->carriedpills = carried;
+  }
+  /* Which pill and base numbers are still on the map. A removed item keeps
+   * its slot and just drops out of the object list, which a brain cannot
+   * tell apart from an item that went out of sight. */
+  {
+    uint32_t pillMask = 0;
+    uint32_t baseMask = 0;
+    BYTE numPb = pillsGetNumPills(&gs->pb);
+    BYTE numBs = basesGetNumBases(&gs->bs);
+    BYTE i;
+    for (i = 0; i < numPb && i < 32; i++) {
+      if (pillsIsActive(&gs->pb, (BYTE)(i + 1))) {
+        pillMask |= ((uint32_t)1u << i);
+      }
+    }
+    for (i = 0; i < numBs && i < 32; i++) {
+      if (basesIsActive(&gs->bs, (BYTE)(i + 1))) {
+        baseMask |= ((uint32_t)1u << i);
+      }
+    }
+    value->pills_on_map = pillMask;
+    value->bases_on_map = baseMask;
   }
   value->carriedbases = 0;
 
@@ -662,6 +687,13 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
   *clientSimGetBrainsWantAllies(csPtr) = *(value->allies);
   value->wantallies = clientSimGetBrainsWantAllies(csPtr);
 
+  /* Smart ping request. Cleared on every think, so a brain that returns no
+   * ping fields places nothing and last think's request cannot fire twice. */
+  value->ping_pending = 0;
+  value->ping_kind = 0;
+  value->ping_x = 0;
+  value->ping_y = 0;
+
   /* Message Sending */
   value->messagedest = clientSimGetBrainsMessageDest(csPtr);
   clientSimGetBrainsMessage(csPtr)[0] = '\0';
@@ -824,6 +856,24 @@ void brainDataExtractInfo(ClientSim *csPtr, BrainInfo *value) {
       playersSendAiMessage(csPtr, gs, &gs->plyrs, *(value->messagedest), msg);
     }
     clientSimGetBrainsMessage(csPtr)[0] = '\0';
+  }
+
+  /* Smart ping. The brain asks; the engine places it from the brain's own
+   * player slot, so allies see it on the map, the team filter is the one
+   * every ping goes through, and a replay keeps it. Queued rather than
+   * applied: this runs on a bot worker thread during the parallel think
+   * stage, and serverSimApplyCommand belongs to the producer thread, which
+   * drains the queue in Stage 3 of botManagerTick. Same deferral the bot's
+   * chat takes, for the same reason. A local brain in a human's Brains menu
+   * has no bound ServerSim and no player slot of its own to ping from, so
+   * its request is dropped. */
+  if (value->ping_pending != 0) {
+    struct ServerSim *bound = clientSimGetBoundServerSim(csPtr);
+    if (bound != NULL) {
+      botManagerQueuePing(bound, clientSimGetMyPlayerNum(csPtr),
+                          value->ping_kind, value->ping_x, value->ping_y);
+    }
+    value->ping_pending = 0;
   }
 }
 /*********************************************************

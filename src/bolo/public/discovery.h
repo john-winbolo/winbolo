@@ -31,6 +31,30 @@
 #include "view_policy.h"   /* ViewPolicy — the advertised visibility rules */
 #include "server_voice_mode.h"  /* ServerVoiceMode — the advertised voice mode */
 
+/* The scripts a server says its round runs, read from the bytes its reply to
+ * an info request carries after the INFO_PACKET. The sizes are netpacks.h's
+ * caps plus a NUL, held to them in discovery.c; this header does not include
+ * netpacks.h. */
+#define DISCOVERY_SCRIPT_NAME_LEN 64
+#define DISCOVERY_SCRIPT_DESC_LEN 201   /* WBN_SCENARIO_DESC_MAX + 1 */
+#define DISCOVERY_SCRIPT_MODS_MAX 9
+typedef struct {
+  bool hasScriptInfo;      /* the reply carried the script bytes, whole and well-formed */
+  char scenarioName[DISCOVERY_SCRIPT_NAME_LEN];   /* "" when no scenario */
+  char scenarioDescription[DISCOVERY_SCRIPT_DESC_LEN];
+  BYTE scenarioMaxPlayers;                        /* 0 = no cap */
+  BYTE modCount;
+  char modNames[DISCOVERY_SCRIPT_MODS_MAX][DISCOVERY_SCRIPT_NAME_LEN];
+} DiscoveryScripts;
+
+/* Read the script bytes that follow the INFO_PACKET in an info reply. tail
+ * points at the first byte after the INFO_PACKET and len is how many bytes
+ * follow it. Always zeroes *out first. Returns false, leaving *out zeroed,
+ * when a length is over its cap or a field runs past len; on success sets
+ * hasScriptInfo and NUL-terminates every string. Bytes after the last mod are
+ * ignored, so a later field can be appended. */
+bool discoveryReadScriptTail(const uint8_t *tail, size_t len, DiscoveryScripts *out);
+
 /* Result of a single discoveryPingServer() call. rttMs is the round-trip
  * time in milliseconds when the function returns true; the rest of the
  * fields carry the server-reported counts. The version triple is the
@@ -59,6 +83,8 @@ typedef struct {
   BYTE numBots;
   BYTE maxPlayers;  /* server's join-slot cap; MAX_TANKS when unset */
   int32_t timeLimit;
+  bool password;     /* server requires a join password; carried in the
+                      * legacy 76-byte INFO so every server reports it */
   bool hasRichInfo;  /* true when the rich INFO (flags/counts/md5) was
                       * received; false for legacy 76-byte servers — consumers
                       * hide the rich fields when false. */
@@ -73,7 +99,8 @@ typedef struct {
    * view_policies byte reports the defaults (pill always, base off,
    * ally always) with classic mode and allies in trees both off, and one
    * whose INFO predates view_policies2 reports the expanded overview
-   * window with nothing blocking sight inside it. */
+   * window with nothing blocking sight inside it and positional sound
+   * off. */
   ViewPolicy pillView;
   ViewPolicy baseView;
   ViewPolicy allyView;
@@ -81,9 +108,13 @@ typedef struct {
   bool alliesInTrees;
   uint8_t overviewWindow;  /* OverviewWindow the server advertises */
   uint8_t lineOfSight;     /* LineOfSightMode the server advertises */
+  bool positionalSound;    /* sounds panned by position; absent = false */
   /* Voice the server forwards. A server whose INFO predates the flag bits
    * reports serverVoiceOn, which is what it does. */
   ServerVoiceMode voiceMode;
+  /* The scripts the round runs. Zeroed, with hasScriptInfo false, when the
+   * reply stopped at the INFO_PACKET or its script bytes were malformed. */
+  DiscoveryScripts scripts;
 } DiscoveryPingResult;
 
 /* A server discovered via LAN broadcast. Plain data — no wire-format
@@ -133,7 +164,8 @@ typedef struct {
    * view_policies byte reports the defaults (pill always, base off,
    * ally always) with classic mode and allies in trees both off, and one
    * whose INFO predates view_policies2 reports the expanded overview
-   * window with nothing blocking sight inside it. */
+   * window with nothing blocking sight inside it and positional sound
+   * off. */
   ViewPolicy     pillView;
   ViewPolicy     baseView;
   ViewPolicy     allyView;
@@ -141,6 +173,7 @@ typedef struct {
   bool           alliesInTrees;
   uint8_t        overviewWindow;  /* OverviewWindow the server advertises */
   uint8_t        lineOfSight;     /* LineOfSightMode the server advertises */
+  bool           positionalSound; /* sounds panned by position; absent = false */
   /* Voice the server forwards. A server whose INFO predates the flag bits
    * reports serverVoiceOn, which is what it does. */
   ServerVoiceMode voiceMode;
@@ -149,6 +182,11 @@ typedef struct {
    * Negative sense, so false — what both an old record and a server that
    * never mentions it give — means smart pings are ALLOWED. */
   bool           smartPingsOff;
+  /* The scripts the round runs, from the bytes after the INFO_PACKET in a
+   * broadcast reply. Zeroed, with hasScriptInfo false, when the reply stopped
+   * at the INFO_PACKET or its script bytes were malformed, and always for a
+   * server found over mDNS, whose record does not carry them. */
+  DiscoveryScripts scripts;
 } DiscoveryServer;
 
 /* Callback delivered for each LAN server that responds to a broadcast

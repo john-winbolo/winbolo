@@ -21,7 +21,9 @@ lengths are accepted today (`src/bolo/discovery.c`):
 | 112 | `INFO_PACKET_PRE_VIEWS2_SIZE` | adds `view_policies`; predates `view_policies2` |
 | 113 | `sizeof(INFO_PACKET)` | the full layout |
 
-Any other length is dropped. A consumer that was written against the 112-byte
+Any other length is dropped, except a reply to an info request longer than 113
+bytes, which carries the script bytes described in
+[Script bytes after the packet](#script-bytes-after-the-packet). A consumer that was written against the 112-byte
 layout still reads every field it knows about out of a 113-byte packet, because
 the byte that grew the packet went on the end.
 
@@ -36,7 +38,8 @@ Every INFO_RESPONSE the server emits comes from `buildInfoPacket()` in
   — the periodic advertisement to the WinBolo.net tracker.
 
 Both send the identical 113 bytes, so a consumer can parse either the same way,
-and a field added to the layout reaches both paths at once.
+and a field added to the layout reaches both paths at once. The reply to an info
+request then adds the script bytes below; the tracker update does not.
 
 ## Byte layout
 
@@ -68,7 +71,7 @@ and a field added to the layout reaches both paths at once.
 | 78 | 1 | u8 | max_players | server join-slot cap (16 unless configured lower) |
 | 79 | 32 | char[32] | map_md5 | 32 lowercase hex chars, no NUL; see below |
 | 111 | 1 | u8 | view_policies | 2 bits per visibility category plus the classic-mode and allies-in-trees bits, see below |
-| 112 | 1 | u8 | view_policies2 | overview window and line of sight, 2 bits each, see below |
+| 112 | 1 | u8 | view_policies2 | overview window and line of sight, 2 bits each, and the positional-sound bit, see below |
 
 Total: **113 bytes**.
 
@@ -127,12 +130,14 @@ so read it — only the two settings in `view_policies2` fall back at that lengt
 
 ## `view_policies2` byte (offset 112)
 
-Two bits per setting, low bits first:
+Two bits for each of the first two settings and one for the third, low bits
+first:
 
 ```
 bits 0-1  overview window   0 = expanded, 1 = classic
 bits 2-3  line of sight     0 = off, 1 = blocked by buildings and trees
-bits 4-7  spare — always clear
+bit  4    positional sound  0 = off, 1 = sounds panned by where they happen
+bits 5-7  spare — always clear
 ```
 
 The values are `OverviewWindow` and `LineOfSightMode` in
@@ -147,13 +152,15 @@ Two bits can hold a value neither enum names. Read such a value as the enum's
 zero — the expanded window, sight off — rather than reporting a mode you cannot
 name; `infoPacketReadViewPolicies2()` range-checks both fields against
 `OVERVIEW_WINDOW_COUNT` and `LINE_OF_SIGHT_COUNT` and does exactly that. A packet
-shorter than 113 bytes predates the byte and reads the same way.
+shorter than 113 bytes predates the byte and reads the same way, with positional
+sound off. A packet from a server that predates bit 4 sends it clear, so it also
+reads as off.
 
 ## What the view defaults mean
 
-The seven values a short packet reports — pill `always`, base `off`, ally
+The eight values a short packet reports — pill `always`, base `off`, ally
 `always`, classic mode off, allies in trees off, the expanded window, sight
-`off` — are the rules a server ran before each byte existed. They are
+`off`, positional sound off — are the rules a server ran before each byte existed. They are
 deliberately **not** the settings an unconfigured current server runs, which are
 pill `key`, base `off`, ally `off`, the **classic** window and sight `off`. A
 server old enough to leave the bytes out really does play differently from a
@@ -161,6 +168,39 @@ stock one. So compare against the back-compatibility set when deciding what an
 advertisement said, and against the stock set when deciding whether a browser row
 is worth tagging as non-standard; treating "absent" as "stock" mislabels the old
 server. `src/gui/sdl3/dialogs/imgui_gamebrowser.cpp` keeps the two apart.
+
+## Script bytes after the packet
+
+The reply to an info request carries the scripts the round runs after the 113
+bytes: the scenario that decides the round, if any, and the mods that run. The
+bytes are written by `buildInfoScriptTail()` in `src/server/udp/udp_server_query.c`
+and read by `discoveryReadScriptTail()` in `src/bolo/discovery.c`. They start at
+offset 113:
+
+| Field | Size | Notes |
+|-------|-----:|-------|
+| `scenarioNameLen` | 1 | 0..63 |
+| `scenarioName` | `scenarioNameLen` | UTF-8, no NUL |
+| `scenarioDescLen` | 1 | 0..200 (`WBN_SCENARIO_DESC_MAX`) |
+| `scenarioDesc` | `scenarioDescLen` | UTF-8, no NUL |
+| `maxPlayers` | 1 | the scenario's human cap; 0 = none |
+| `modCount` | 1 | 0..9 |
+| per mod: `nameLen` | 1 | 0..63 |
+| per mod: `name` | `nameLen` | UTF-8, no NUL |
+
+Names and the description are cut on a UTF-8 character boundary to fit their
+caps. A round with no scenario writes a name length of 0, a description length
+of 0 and a cap of 0, and no mods is a count of 0, so a plain round's bytes are
+`00 00 00 00`. The largest the bytes can be is `INFO_SCRIPT_TAIL_MAX` = 843,
+which with the 113 bytes before it (956 in all) fits `MAX_UDPPACKET_SIZE` (1024).
+
+Only the reply to an info request carries these bytes. The tracker update from
+`transportUdpServerSendTrackerUpdate()` stays at 113 bytes; WinBolo.net learns
+the scenario and mods from the server's lobby update instead.
+
+A reader drops the bytes whole if any length is over its cap or any field runs
+past the end of the packet, and reports no scripts, the same as a 113-byte
+reply. Bytes after the last mod are ignored, so a later field can go on the end.
 
 ## Endianness
 
@@ -228,9 +268,10 @@ reads as.
 
 A value that does not parse as two hex bytes leaves the defaults in place, and so
 does a record with no `view` key: pill `always`, base `off`, ally `always`,
-classic mode off, allies in trees off, the expanded window and sight `off` — the
-same set a 111-byte packet gets, with the same caveat that it is not what a stock
-server runs.
+classic mode off, allies in trees off, the expanded window, sight `off` and
+positional sound off — the same set a 111-byte packet gets, with the same caveat
+that it is not what a stock server runs. Positional sound is bit 4 of the second
+byte, so a record from a server that predates the bit reads as off.
 
 TXT values are text — the md5 is the hex string, never raw bytes, and `view` is
 hex text rather than the two raw bytes.

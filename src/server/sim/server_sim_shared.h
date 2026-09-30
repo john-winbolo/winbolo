@@ -41,9 +41,11 @@ void serverSimCbSoundDistShoot(void *ctx, BYTE mx, BYTE my, BYTE owner);
 void serverSimCbSoundDistTankHit(void *ctx, BYTE mx, BYTE my, BYTE hitPlayer);
 void serverSimCbMineVisible(void *ctx, BYTE mx, BYTE my, BYTE sourcePlayer);
 void serverSimCbExplosion(void *ctx, BYTE mx, BYTE my, BYTE px, BYTE py);
-void serverSimCbShellDeath(void *ctx, uint32_t fireTick, BYTE owner,
+void serverSimCbShellDeath(void *ctx, uint32_t fireTick,
+                           uint32_t serverFireTick, BYTE owner,
                            WORLD impactWX, WORLD impactWY,
                            uint8_t outcome);
+uint32_t serverSimCbShellFired(void *ctx, BYTE owner);
 void serverSimCbTkExplosion(void *ctx, WORLD x, WORLD y,
                             TURNTYPE angle, BYTE length,
                             BYTE explodeType, BYTE creator);
@@ -73,12 +75,14 @@ void serverSimCbTankSpawned(void *ctx, BYTE player, BYTE mapX, BYTE mapY,
                             bool respawn);
 void serverSimCbLgmLanded(void *ctx, BYTE player, BYTE mapX, BYTE mapY);
 void serverSimCbPillPlaced(void *ctx, BYTE player, BYTE index, BYTE mapX,
-                           BYTE mapY);
+                           BYTE mapY, BYTE armour);
 void serverSimCbPillKilled(void *ctx, BYTE index, BYTE attacker);
 void serverSimCbBuilt(void *ctx, BYTE player, BYTE action, BYTE mapX,
                       BYTE mapY);
 void serverSimCbMineLaid(void *ctx, BYTE player, BYTE mapX, BYTE mapY);
 void serverSimCbMineExploded(void *ctx, BYTE mapX, BYTE mapY, BYTE layer);
+void serverSimCbTankHit(void *ctx, BYTE victim, BYTE attacker, BYTE cause,
+                        BYTE amount, BYTE pill);
 void serverSimCbCenterTank(void *ctx);
 void serverSimCbConsoleMessage(void *ctx, char *msg);
 
@@ -89,12 +93,17 @@ bool serverSimCbChooseStart(void *ctx, BYTE player, BYTE *startIdx);
 bool serverSimCbSpawnLoadout(void *ctx, BYTE player, BYTE *shells,
                              BYTE *mines, BYTE *armour, BYTE *trees);
 bool serverSimCbCanRespawn(void *ctx, BYTE player);
-int  serverSimCbDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause);
+int  serverSimCbDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause,
+                            BYTE pill);
 bool serverSimCbCanBuild(void *ctx, BYTE player, BYTE action, BYTE mapX,
                          BYTE mapY, BYTE pillIdx);
 bool serverSimCbCanCapture(void *ctx, BYTE kind, BYTE index, BYTE player);
 bool serverSimCbCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
-                       BYTE cause);
+                       BYTE cause, BYTE pill);
+bool serverSimCbCanHit(void *ctx, BYTE attacker, BYTE kind, BYTE index,
+                       BYTE pill);
+int  serverSimCbPillDamageScale(void *ctx, BYTE attacker, BYTE index,
+                                BYTE cause, BYTE pill);
 
 /* Whether a newswire-worthy fact may be shown to players, also in
  * server_sim_callbacks.c. Unlike the queries above this one is not a GameSim
@@ -131,6 +140,21 @@ int serverSimGetPills(ServerSim *sim, PillSnapshot *out, int maxOut);
  * human. */
 void serverSimResetLobbyToDefaults(ServerSim *sim);
 
+/* Defined in server_sim_lobby.c — the start sides a freshly opened lobby
+ * gets: team 1 north and team 2 south, or team 1 east and team 2 west when
+ * the map's squares that are not deep sea span more columns than rows;
+ * both marked filled-in. Run when a lobby server starts up
+ * (serverSimApplyInstanceConfig) and when the last human leaves
+ * (serverSimResetLobbyToDefaults), so a side the host chose is never
+ * written over while anyone is in the lobby. */
+void serverSimApplyDefaultTeamSides(ServerSim *sim);
+
+/* Defined in server_sim_lobby.c — on a map change, picks the default pair
+ * again for the new map when teams 1 and 2 still hold it untouched (both
+ * filled-in, in the default order), and publishes both teams. Leaves any
+ * side the host chose. Returns true when the sides changed. */
+bool serverSimRefreshDefaultTeamSides(ServerSim *sim);
+
 /* The player slot every base owner is allied to when one side has swept
  * the map, or NEUTRAL when no side has. Same predicate as
  * serverSimCheckGameWin: a base at or below base_capture_armour is dead
@@ -142,6 +166,18 @@ BYTE serverSimWinningOwner(ServerSim *sim);
  * its library. Called by serverSimCreate in server_sim.c and the map-reload
  * path in server_sim_maps.c, and by serverSimChangeMap alongside it. */
 void serverSimCacheMapMd5FromFile(ServerSim *sim, const char *path);
+
+/* Defined in server_sim_maps.c — turns a client-facing map relPath into the
+ * file it names, redirecting the virtual "Uploads" folder to the configured
+ * persist directory and the virtual "Workshop" folder to the directory
+ * serverSimSetWorkshopMapDir named. The listing, the search and serverSimReadMapFile go
+ * through it; so do the lobby's set-map command in server_command_dispatch.c
+ * and the upload preview's use-local path in udp_server_dispatch.c, which
+ * would otherwise open a different file from the one the client picked.
+ * relPath must already have passed the caller's path-safety check, and out
+ * holds at least FILENAME_MAX bytes. */
+void serverSimResolveMapPath(const ServerSim *sim, const char *relPath,
+                             char *out, size_t outSize);
 
 /* Defined in server_sim_vote.c — the two publish helpers that were file-local
  * to server_sim.c until their definitions moved out. Each still has a caller
@@ -170,6 +206,113 @@ void publishServerMessageToTeam(ServerSim *sim, const char *message,
  * publishMapSkipState in server_sim_vote.c calls it; the encoding itself sits
  * with the other control-event fillers in server_sim_control.c. */
 void serverSimFillMapSkipStateEvent(const ServerSim *sim, ControlEvent *evt);
+
+/* Defined in server_sim_callbacks.c — the three-shot order detector.
+ *
+ * One of `owner`'s shells left the gun on SERVER tick `fireTick`. EVERY
+ * shell counts, whatever it went on to hit, because the two quiet seconds
+ * around the three shots ask what the player fired and not what it struck.
+ * It also cancels an armed order, which is the "no fourth shot" half of the
+ * rule.
+ *
+ * A SERVER tick. Never the client input tick a shell also carries: that one
+ * is the client's own counter, it starts near zero on a mid-round joiner
+ * and a modified client can send any value at all.
+ *
+ * serverSimCbShellFired calls it the moment shellsAddItem creates the
+ * shell, with sim->tick, which is what keeps a shell that is still in the
+ * air out of nobody's way. serverSimCbShellDeath calls it again on the
+ * death with the shell's stamped serverFireTick, and the scenario funnel's
+ * shell_expired arm calls it too; both are harmless repeats, because a tick
+ * already in the log is ignored. */
+void serverSimShotOrderShotFired(ServerSim *sim, BYTE owner, uint32_t fireTick);
+
+/* One of `owner`'s shells, fired on SERVER tick `fireTick`, ran its full
+ * range and died at (wx, wy) with nothing hit. Three of them on the SAME
+ * open square, fired inside SHOT_ORDER_WINDOW_TICKS of each other and with a
+ * quiet second in front of the first, ARM an order; serverSimShotOrderTick
+ * sends it a quiet second after the third shot. serverSimCbShellDeath calls
+ * this on the expiry outcome with the shell's serverFireTick, and the
+ * scenario funnel's shell_expired arm calls it so a scripted round can post
+ * the three shells without aiming a gun. */
+void serverSimShotOrderNote(ServerSim *sim, BYTE owner, uint32_t fireTick,
+                            WORLD wx, WORLD wy);
+
+/* Sends any armed order whose quiet second has run out, and drops any whose
+ * quiet second was broken. Called once per tick from serverSimTick. */
+void serverSimShotOrderTick(ServerSim *sim);
+
+/* Forgets every shot a player has in flight toward an order, and any order
+ * already armed. Called when a player joins or leaves and when a round
+ * starts. */
+void serverSimShotOrderClear(ServerSim *sim, BYTE playerNum);
+
+/* Defined in server_sim_lobby.c — the body of serverSimResolveBotConfigKeys,
+ * taking the brain's modes already loaded instead of a path to read them
+ * from. The public path form is the wrapper around this one and answers
+ * exactly the same; NULL modes is what a brain with no modes.txt looks like
+ * here, and gives BOT_CFG_KEYS_NO_MANIFEST as the load failing does.
+ *
+ * It exists so a caller applying several seats on one brain reads modes.txt
+ * once for the lot: the scenario reseat in server_sim_scenario.c walks every
+ * seat a template holds, and the lobby's own Add Bot already has the modes in
+ * hand by the time it asks. */
+BotConfigKeyResult serverSimResolveBotConfigKeysFromModes(
+        const BrainModes *modes,
+        const char *modeKey,
+        const char *levelKey,
+        uint8_t *ioMode,
+        uint8_t *ioLevel);
+
+/* Defined in server_sim_lobby.c — the body of serverSimResolveNewBotConfig,
+ * taking the brain's modes already loaded. NULL modes is a brain with no
+ * modes.txt and answers false, as the path form does when the read fails.
+ * The scenario's seat loops call it with their one read per brain. */
+bool serverSimResolveNewBotConfigFromModes(const ServerSim *sim, int team,
+                                           const BrainModes *modes,
+                                           bool honourManualPick,
+                                           uint8_t *ioMode,
+                                           uint8_t *ioLevel);
+
+/* ── One read of modes.txt per brain, for the length of one walk ─────────
+ *
+ * Seating a lobby, reconciling one and following a game type change all walk
+ * every seat, and the seats nearly always name the same brain. Read once per
+ * brain here and the walk costs one parse rather than one per seat.
+ *
+ * It is a local of the loop that builds it and dies with it: nothing about a
+ * brain's modes.txt is remembered from one walk to the next, so editing a
+ * manifest and reselecting the scenario still picks the edit up.
+ *
+ * A handful of entries rather than one per seat. A lobby's teams nearly
+ * always name one brain between them, and the entries here cover a server
+ * default plus a few teams that name their own; a lobby that names more
+ * distinct brains than this holds answers exactly the same and pays one
+ * extra read for the ones past the end. Size is the reason it is not wider:
+ * BrainModes is close to 4 KB on its own, and every walk is reached from the
+ * lobby command dispatcher, so this frame sits on top of that whole chain.
+ *
+ * The path is as long as a bot's brainPath (bot_manager.h) and SCN_PATH_MAX,
+ * which are the two places a path comes from. */
+#define BRAIN_MODES_CACHED 4
+
+typedef struct {
+    char       path[256];
+    BrainModes modes;
+    bool       haveModes;      /* the brain ships a modes.txt */
+} BrainModesCacheEntry;
+
+typedef struct {
+    BrainModesCacheEntry entry[BRAIN_MODES_CACHED];
+    int                  count;   /* set to 0 before the first ask */
+} BrainModesCache;
+
+/* Defined in server_sim_lobby.c. The modes for brainPath, read the first
+ * time this cache is asked for it. NULL for a brain with no modes.txt, which
+ * is what the resolver reads as "no manifest" — the same answer the seat
+ * loops get when a load fails there. */
+const BrainModes *serverSimBrainModesCached(BrainModesCache *cache,
+                                            const char *brainPath);
 
 /* Defined in server_sim.c — the entries owned by the parent rather than by a
  * source in this directory. */

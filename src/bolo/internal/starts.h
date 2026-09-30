@@ -33,6 +33,21 @@
 #include "global.h"
 #include "types.h"
 
+/* Spawn safety. Each of these is the classic default of a start_* rule;
+ * startsGetStart and the calls under it read the rule, not the constant.
+ * Here rather than in starts.c so simRulesClassic can see them. */
+
+/* Distance thresholds in map squares */
+#define START_TANK_RANGE 1
+#define START_PILL_RANGE 9
+#define START_BASE_RANGE 9
+/* Minimum distance a scattered spawn keeps from another live tank */
+#define START_SPAWN_SEPARATION 2
+/* Maximum spiral search steps */
+#define START_SCATTER_MAX 1000
+/* Fraction of neutral bases before we treat neutral same as own */
+#define START_NEUTRAL_THRESHOLD_PCT 20
+
 #define START_TIMES_16 16
 #define START0 0
 #define START1 1
@@ -325,6 +340,69 @@ void startsAssignBatch(struct GameSim *sim, starts *value,
                        BYTE *outStartIdx, const BYTE *reservedStartIdx0,
                        const BYTE *teamStartSide);
 
+/* One anchor per team, indexed by team number 1..MAX_TANKS (entry 0
+ * unused). An anchor is the point on the map a team is placed around, and
+ * it is what gives a team a region of its own rather than whatever the
+ * other teams left over. A side names a region directly; a team with no
+ * side is given the part of the map farthest from every team already
+ * anchored, so three teams where only one named a side still get three
+ * separate regions instead of sharing one.
+ *
+ * inUse is FALSE when no team named a side at all. Sides are what put a
+ * team anywhere in particular, so with none in play there is nothing to
+ * anchor against and both placement paths keep the behaviour they have
+ * when no side is chosen: teams cluster where the map's own regions put
+ * them. */
+typedef struct {
+    bool inUse;
+    bool present[MAX_TANKS + 1];
+    int  x[MAX_TANKS + 1];
+    int  y[MAX_TANKS + 1];
+} StartsTeamAnchors;
+
+/*********************************************************
+*NAME:          startsComputeTeamAnchors
+*PURPOSE:
+*  Works out where each present team belongs on the map and
+*  writes it to out. teamSide and teamPresent are indexed by
+*  team number 1..MAX_TANKS, entry 0 unused.
+*
+*  A team that named a side anchors at the centroid of the
+*  usable starts that side accepts, falling back to the
+*  centre band and then the bounding box centre. A team with
+*  no side anchors at the usable start, among those the
+*  chosen sides leave open to it, farthest from every anchor
+*  already placed; teams are anchored in team-number order so
+*  every peer computes the same answer.
+*
+*  Returns out->inUse: FALSE when no present team named a
+*  side, and then no anchor is written and the caller keeps
+*  its own behaviour.
+*
+*ARGUMENTS:
+*  sim         - Game simulation, for start validity
+*  value       - Starts structure
+*  teamSide    - [MAX_TANKS + 1] START_SIDE_* per team
+*  teamPresent - [MAX_TANKS + 1] whether the team has players
+*  out         - Receives the anchors
+*********************************************************/
+bool startsComputeTeamAnchors(struct GameSim *sim, starts *value,
+                              const BYTE *teamSide, const bool *teamPresent,
+                              StartsTeamAnchors *out);
+
+/*********************************************************
+*NAME:          startsAnchorOwns
+*PURPOSE:
+*  Whether the start at 0-based idx falls in team tn's
+*  region: that is, whether tn's anchor is the nearest of
+*  every present team's. Ties go to the lower team number so
+*  the answer is the same on every peer. Always TRUE when the
+*  anchors are not in use, so a caller can rank by region
+*  without testing inUse itself.
+*********************************************************/
+bool startsAnchorOwns(starts *value, const StartsTeamAnchors *anchors,
+                      BYTE tn, BYTE idx);
+
 /*********************************************************
 *NAME:          startsPickIncremental
 *PURPOSE:
@@ -332,6 +410,15 @@ void startsAssignBatch(struct GameSim *sim, starts *value,
 *  taken[] is 0-based per start (TRUE = already reserved).
 *  teammateStarts0[] lists the 0-based start indices reserved
 *  by the joiner's teammates (teammateCount may be 0).
+*
+*  anchors (optional, may be NULL) gives every present team a
+*  region of its own and myTeam names the joiner's. Starts in
+*  the joiner's own region come before the rest, above the
+*  tiers below: that is what keeps two teams sharing a side,
+*  or two teams left the same part of the map, off each
+*  other's ground, which eligibility cannot do because it
+*  hands both of them the same set. NULL, or anchors not in
+*  use, leaves every start in the first pass.
 *
 *  side is the joiner's team START_SIDE_*; closedMask is the
 *  union of the START_SIDE_BIT_* the other teams chose. Only
@@ -351,7 +438,8 @@ void startsAssignBatch(struct GameSim *sim, starts *value,
 BYTE startsPickIncremental(struct GameSim *sim, starts *value,
                            const bool *taken,
                            const BYTE *teammateStarts0, int teammateCount,
-                           BYTE side, BYTE closedMask);
+                           BYTE side, BYTE closedMask,
+                           const StartsTeamAnchors *anchors, BYTE myTeam);
 
 /*********************************************************
 *NAME:          startsGetRandStart
@@ -449,6 +537,10 @@ void startsMoveAll(starts *value, int moveX, int moveY);
 void startsSetStartCompressData(starts *value, BYTE *buff, int dataLen);
 /* Clamps every start field a map can supply. See basesValidate. */
 void startsValidate(starts *value);
+
+/* Takes off the map every start in the mined border, unless no start is
+ * inside it. Returns how many were taken off. See starts.c. */
+BYTE startsRemoveBorderStarts(starts *value);
 
 
 #endif /* STARTS_H */

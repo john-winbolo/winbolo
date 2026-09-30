@@ -33,9 +33,14 @@
 #include "client_sim.h"   /* ClientLobbySlot */
 #include "brain_list.h"   /* BrainList for CTRL_LOBBY_BRAIN_LIST */
 #include "round_stats.h"  /* RoundStatsSummary for CTRL_ROUND_STATS */
-#include "upload_policy.h" /* UploadPolicy in lobbySettings */
+#include "scenario_settings.h" /* SCN_SETTING_ID_LEN for
+                                  CTRL_LOBBY_SCRIPT_SETTING */
+#include "upload_policy.h" /* UploadPolicy, ScriptUploadPolicy in lobbySettings */
 #include "view_policy.h"   /* ViewPolicy / VIEW_CATEGORY_COUNT in lobbySettings */
 #include "server_voice_mode.h" /* ServerVoiceMode in lobbySettings */
+#include "scenario_panel.h" /* SCN_PANEL_MAX for the panel event's byte list */
+#include "sim_rules_names.h" /* SIM_RULE_COUNT — the scenario rules event's
+                             * row cap, taken from the rule list itself */
 
 #ifndef LOBBY_TEAM_NAME_LEN
 #define LOBBY_TEAM_NAME_LEN 32
@@ -67,10 +72,11 @@ typedef enum {
     CTRL_LOBBY_BOT_CONFIG,
     CTRL_LOBBY_BOT_BRAIN,
     CTRL_LOBBY_BRAIN_LIST,
-    /* CTRL_LOBBY_BOT_POOL_CHUNK — one fragment of the server's bot
-     * naming-pool catalog (a zlib-compressed blob), streamed during
-     * join sync so clients render/pick from the SERVER's pools. The
-     * client reassembles fragments seq 0..count-1, then installs. */
+    /* CTRL_LOBBY_BOT_POOL_CHUNK — RETIRED. One fragment of the server's
+     * bot naming-pool catalog. Nothing sends it any more and a client
+     * ignores it: CTRL_LOBBY_BOT_POOL_INFO names the catalogue, and a
+     * client that does not hold it fetches it on CHANNEL_BULK. The type
+     * and its codec stay so recordings made before still decode. */
     CTRL_LOBBY_BOT_POOL_CHUNK,
     CTRL_GAME_VOTE_STATE,
     CTRL_SERVER_TEXT,
@@ -201,8 +207,198 @@ typedef enum {
      * and replayed into a joining client's sync so it arrives with the
      * table the round is already using. */
     CTRL_SIM_RULES,
+    /* CTRL_LOBBY_BRAIN_DOCS_CHUNK — RETIRED. One fragment of ONE brain's
+     * announce.txt and commands.txt together. Nothing sends it any more and
+     * a client ignores it: CTRL_LOBBY_BRAIN_ANNOUNCE carries the announce
+     * line, and the docs go on CHANNEL_BULK when a client asks for them.
+     * The type and its codec stay, because recordings made before hold it
+     * by this number and a reader must still be able to step over it.
+     *
+     * Appended at the END of this enum on purpose: the tables in
+     * transport_control_codec.c are indexed by it, so a new type goes
+     * last rather than shifting the ones already there. */
+    CTRL_LOBBY_BRAIN_DOCS_CHUNK,
+    /* The four a scenario presents with. Each is body-only on
+     * CHANNEL_CONTROL, as CTRL_ENTITY_SYNC and CTRL_SIM_RULES are:
+     * there is no full-packet wrapper and no PACKET_* type.
+     *
+     * The codecs are recipient-agnostic. Three of the four carry a
+     * destTeam/destPlayer pair that never travels; udpClientDeliverControl
+     * filters on it the way it filters CTRL_SERVER_TEXT, and
+     * client_sim_control.c applies the same test for in-process
+     * subscribers. CTRL_SCN_SCORE has no pair: it is broadcast, and its
+     * target says whose score it is, not who receives it.
+     *
+     * Appended at the END, like CTRL_LOBBY_BRAIN_DOCS_CHUNK above: the
+     * tables in transport_control_codec.c are indexed by this enum, so
+     * a new type goes last rather than shifting the ones already there. */
+    CTRL_SCN_PANEL,
+    CTRL_SCN_SCORE,
+    CTRL_SCN_ANNOUNCE,
+    CTRL_SCN_MARKER,
+    /* CTRL_SCENARIO_RULES — the rules a scenario's own manifest sets, so a
+     * host can answer "what do these mods change?" without opening the file.
+     * The author's table rather than the table the round is running on: a
+     * scenario changing a rule mid-round moves the second and not this one,
+     * and CTRL_SIM_RULES is what says what the simulation is reading now.
+     *
+     * Published beside the identity, so a scenario that attaches states its
+     * set and one that detaches states an empty one. A map that has never
+     * had a scenario publishes neither: an empty set says a scenario has
+     * just gone, and a map with none never had one to go.
+     *
+     * Broadcast and body-only on CHANNEL_CONTROL, as CTRL_SIM_RULES is:
+     * the manifest is as public as the name and the description the lobby
+     * settings event already carries. Replayed into a joining client's sync
+     * while a scenario is attached, so a mid-lobby joiner reads the same
+     * table the host does.
+     *
+     * Carried in fragments, like CTRL_LOBBY_BOT_POOL_CHUNK and
+     * CTRL_LOBBY_BRAIN_DOCS_CHUNK: a whole set outgrew one control segment
+     * once the rule list passed 113 rows, so each event is `seq` of
+     * `fragCount` and a reader installs the set on the last of them. An
+     * empty set is still one fragment, because an empty set is an answer.
+     *
+     * Appended at the END, like the four above: the tables in
+     * transport_control_codec.c are indexed by this enum. */
+    CTRL_SCENARIO_RULES,
+    /* CTRL_LOBBY_SCRIPT_LIST — the ordered list of scripts this lobby will
+     * run: number one first and highest priority, at most one of them a
+     * scenario and the rest mods.
+     *
+     * Its own event rather than more of the CTRL_LOBBY_SETTINGS tail, and
+     * that is a measurement rather than a preference. A whole list at the
+     * cap is 2 + 10 * 202 = 2022 body bytes, which is past the 1021 a
+     * control segment carries, so it has to be chunked whichever event it
+     * rides. Chunking the settings tail would put a fragment number on every
+     * lobby change, and the settings variant would have to hold the widest
+     * fragment by value: at LOBBY_CHAT_BUFFER_MAX ControlEvents per sim,
+     * growing that union member is paid two hundred times over on every sim.
+     * This variant is 1048 bytes, under the 1108 the round-stats member
+     * already spends, so the union does not grow at all and the settings
+     * event is left the size it was.
+     *
+     * Chunked as { final, count, entries }, the shape
+     * PACKET_LOBBY_SCENARIO_LIST_RSP uses for the same kind of list. The
+     * reader appends each chunk and installs the list when one arrives with
+     * final set; the control channel is reliable and ordered, so the chunks
+     * of one list cannot interleave with another's, and an empty list is one
+     * chunk with count 0 and final set.
+     *
+     * Broadcast and body-only on CHANNEL_CONTROL, as CTRL_SCENARIO_RULES is:
+     * what a lobby is about to run is as public as the scenario name the
+     * settings event already carries. Replayed into a joining client's sync
+     * beside the settings, so a mid-lobby joiner reads the same list.
+     *
+     * Appended at the END, like every type above it: the tables in
+     * transport_control_codec.c are indexed by this enum. */
+    CTRL_LOBBY_SCRIPT_LIST,
+    /* CTRL_LOBBY_SCRIPT_SETTING — one value the host chose for one of a
+     * script's own settings (scenario_settings.h), or the order to forget
+     * every value held.
+     *
+     * op LOBBY_SCRIPT_SETTING_CLEAR comes first in every join sync, even
+     * when no value is held, and is followed by one
+     * LOBBY_SCRIPT_SETTING_SET per value. A live change is one SET. A
+     * client reads any event of this type as proof that the server takes
+     * CMD_SET_SCRIPT_SETTING: an older server never sends one, and a client
+     * that sent it that command anyway would stall its command stream on a
+     * command the server cannot decode.
+     *
+     * The value is the one the server resolved against the declaration, so
+     * what a client shows is what game.setting will answer. A value equal to
+     * the default is still sent, so the dialog of every client moves when
+     * the host picks the default back.
+     *
+     * Broadcast and body-only on CHANNEL_CONTROL, as CTRL_LOBBY_SCRIPT_LIST
+     * is. An older client does not know the type and skips it, so it plays
+     * with the values and cannot see them.
+     *
+     * Appended at the END, like every type above it: the tables in
+     * transport_control_codec.c are indexed by this enum. */
+    CTRL_LOBBY_SCRIPT_SETTING,
+    /* CTRL_LOBBY_BRAIN_ANNOUNCE — ONE brain's announce.txt, and what the
+     * server holds of its commands.txt: the length and a generation number,
+     * but not the text. One event per brain that ships either file, sent
+     * beside the brain list in a joiner's sync and again when a round hands
+     * the lobby back.
+     *
+     * The announce line has to be here because the lobby drops it into team
+     * chat by itself, the moment a bot running the brain joins the reader's
+     * team. The docs do not: they are read only when a player clicks that
+     * line, so the client asks for them then (PACKET_LOBBY_BRAIN_DOCS_REQ)
+     * and they come back compressed on CHANNEL_BULK (BULK_KIND_BRAIN_DOCS).
+     * docsLen 0 says the brain ships no commands.txt and there is nothing to
+     * ask for. docsGen names the text the server holds now; the bulk answer
+     * carries it, so a client can tell an answer for older docs from one
+     * for the docs it was told about, and a new generation here makes a
+     * client drop the docs it already has for the brain.
+     *
+     * One control segment at most: 9 + BRAIN_ANNOUNCE_MAX = 521 bytes.
+     * Body-only on CHANNEL_CONTROL, as CTRL_SIM_RULES is. Like the chunk it
+     * replaces, it is left out of the delayed spectator ring's control
+     * snapshot.
+     *
+     * Appended at the END, like every type above it: the tables in
+     * transport_control_codec.c are indexed by this enum. */
+    CTRL_LOBBY_BRAIN_ANNOUNCE,
+    /* CTRL_LOBBY_BOT_POOL_INFO — which bot naming-pool catalogue the server
+     * holds: its id (lobbyBotPoolsCatalogId, a CRC-32 of the uncompressed
+     * pools) and the length of its compressed blob. id 0 and len 0 say the
+     * server has no themed pools, and the client keeps its own.
+     *
+     * Sent in a joiner's lobby sync where the catalogue itself used to be,
+     * up to 78 chunks of it. Most servers run the shipped bot_names.json,
+     * which the client holds already, so a client whose own pools have the
+     * same id does nothing. One with another id asks for the blob
+     * (PACKET_LOBBY_BOT_POOL_REQ) once it is connected, and it comes back
+     * on CHANNEL_BULK (BULK_KIND_BOT_POOL).
+     *
+     * Body-only on CHANNEL_CONTROL, 8 bytes. Players only: spectators add
+     * no bots and the allowlist leaves it out, and it is left out of the
+     * spectator ring's control snapshot.
+     *
+     * Appended at the END, like every type above it: the tables in
+     * transport_control_codec.c are indexed by this enum. */
+    CTRL_LOBBY_BOT_POOL_INFO,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
+
+/* How many rows a whole scenario rules set can hold: one per rule there is,
+ * taken from SIM_RULE_LIST rather than written out, so a rule added to that
+ * list cannot overflow the set. A manifest names each rule at most once, so
+ * a set can hold every rule and no more.
+ *
+ * Each row's rule index travels as one byte, which is what the assertion
+ * below holds the list to. */
+#define CTRL_SCENARIO_RULES_MAX SIM_RULE_COUNT
+BOLO_STATIC_ASSERT(CTRL_SCENARIO_RULES_MAX <= 255,
+                   ctrl_scenario_rules_index_fits_a_byte);
+
+/* Rows in ONE fragment, and the number of fragments a whole set needs.
+ *
+ * A row is 9 bytes on the wire ([rule 1][value 8]) and a fragment spends 3
+ * more on seq, fragCount and its own row count, so 64 rows is a 579-byte
+ * body. One control event is one channel segment, and a segment carries
+ * CHANNEL_CONTROL_SEG (1024) bytes less the channel frame's type(1) and
+ * bodyLen(2) — 1021. 579 sits well inside that, the way the 900-byte
+ * fragments of the other two chunked events do; transport_control_codec.c
+ * pins it against the segment, which it can see and this public header
+ * cannot.
+ *
+ * The row cap is a number of its own rather than the rule count because a
+ * fragment has to stay a fixed, modest size while the rule list grows: at
+ * 64 rows the variant is 584 bytes and stays well under the round-stats
+ * member that sets the union's size, and a ServerSim holds 200
+ * ControlEvents in its lobby chat buffer, so every byte the union grows by
+ * is paid two hundred times over on every sim.
+ *
+ * seq and fragCount travel as one byte each, which the assertion holds. */
+#define SCN_RULES_FRAG_ROWS 64
+#define CTRL_SCENARIO_RULES_FRAGS_MAX \
+    ((CTRL_SCENARIO_RULES_MAX + SCN_RULES_FRAG_ROWS - 1) / SCN_RULES_FRAG_ROWS)
+BOLO_STATIC_ASSERT(CTRL_SCENARIO_RULES_FRAGS_MAX <= 255,
+                   ctrl_scenario_rules_seq_and_frag_count_fit_a_byte);
 
 /* Body capacity for CTRL_CHAT.  Worst case is the localized server
  * message: 2 langid + 1 argCount + 4 * (1 lenByte + (PLAYER_NAME_LEN-1)
@@ -210,11 +406,15 @@ typedef enum {
  * destPlayer are separate struct fields, not part of body[]. */
 #define CHAT_BODY_MAX 272
 
-/* Per-fragment payload cap for CTRL_LOBBY_BOT_POOL_CHUNK. Sized so one
+/* Per-fragment payload cap for the retired CTRL_LOBBY_BOT_POOL_CHUNK. Sized so one
  * fragment plus its header fits a single control datagram (well under
  * MAX_CONTROL_PACKET). A 64 KiB catalog therefore needs at most
  * ceil(65536/900) ≈ 73 fragments (< 255, the seq/count cap). */
 #define LOBBY_BOT_POOL_CHUNK_FRAG_MAX 900
+
+/* Per-fragment payload cap for the retired CTRL_LOBBY_BRAIN_DOCS_CHUNK,
+ * kept so a recording that holds one still decodes. */
+#define LOBBY_BRAIN_DOCS_FRAG_MAX 900
 
 /* Which of the three item lists a CTRL_ENTITY_CHANGE names. The values
  * ride the wire, so they are written out rather than left to the order
@@ -228,9 +428,9 @@ typedef enum {
 /* Where the lobby's scenario came from. The values ride the wire, so they
  * are written out. None is 0, so a lobby with no scenario is the zeroed
  * event and writes no scenario bytes at all. A scenario read from beside
- * the map is lobbyScenarioMap; lobbyScenarioMod is a scenario the host
- * picked for itself, which nothing selects yet — it is named here so the
- * wire form does not move when something does. */
+ * the map is lobbyScenarioMap; lobbyScenarioMod is one the host picked from
+ * the server's scenarios directory, which plays over whichever map is
+ * committed and stands in place of that map's own scenario. */
 typedef enum {
     lobbyScenarioNone = 0,
     lobbyScenarioMap  = 1,
@@ -242,10 +442,100 @@ typedef enum {
  * and chosen to match them: the name and the description are the manifest's,
  * and the file name is a name rather than a path, so a server's disk layout
  * does not travel. Longer text is truncated where the sim is told, not on
- * the wire. */
+ * the wire.
+ *
+ * The file length is the scenarios directory's own (SCN_DIR_FILE_LEN, 128),
+ * so a file name that a listing shows in full is the same name this event
+ * carries in full rather than one cut to fit. It costs no wire bytes to hold
+ * the wider figure: the tail is written only when a scenario is attached, and
+ * each of the three strings is a length byte and that many bytes, so a
+ * 20-character file name travels as 21 bytes either way.
+ *
+ * transport_udp_client.c is where the three file lengths — this one, the
+ * client list accumulator's LOBBY_SCENARIO_LIST_FILE_LEN and the public
+ * SERVER_SCENARIO_FILE_LEN the directory entry is copied through — are held
+ * against each other, because it is the translation unit that sees all
+ * three. */
 #define LOBBY_SCENARIO_NAME_LEN 64
-#define LOBBY_SCENARIO_FILE_LEN 64
+#define LOBBY_SCENARIO_FILE_LEN 128
 #define LOBBY_SCENARIO_DESC_LEN 256
+
+/* How many scripts one lobby may run at once.
+ *
+ * Independent of the scenario host's own SCN_SCRIPTS_MAX for the reason the
+ * three lengths above are independent of the scenarios directory's: a public
+ * header cannot reach into src/scenario/. The two are held against each
+ * other in scenario_host.c, which is the translation unit that sees both, so
+ * one moving without the other is a build failure rather than a list the
+ * host truncates in silence.
+ *
+ * Ten, which is Andrew's number: one scenario deciding the round and nine
+ * mods changing how it plays. Nothing on the wire binds it — the event that
+ * carries the list is chunked, and the command that sets it was measured
+ * against COMMAND_MAX_WIRE_BYTES and fits at ten with room over. What it
+ * does bind is memory: the command's in-union buffer is
+ * LOBBY_SCRIPT_LIST_MAX * LOBBY_SCENARIO_FILE_LEN bytes, which is 1280 at
+ * ten. See CmdSetScriptList in client_command.h for what that costs. */
+#define LOBBY_SCRIPT_LIST_MAX 10
+
+/* How many entries one CTRL_LOBBY_SCRIPT_LIST chunk carries, and this is
+ * measured rather than chosen.
+ *
+ * One entry is at worst [flags 1][fileLen 1][file 127][nameLen 1][name 63]
+ * [source 1][workshopId 8] = 193 + 9 = 202 bytes, and a body spends 2 more
+ * on final and count. The flags byte is a byte and not a bool, so the two
+ * flags an entry carries — keeps the win condition, bound to a map — are
+ * bits in it and the entry does not widen when a third one arrives. A
+ * control event is one channel segment, which is CHANNEL_CONTROL_SEG (1024)
+ * less the channel frame's type(1) and bodyLen(2) — 1021 bytes. So:
+ *
+ *   5 entries: 2 + 5 * 202 = 1012   fits, 9 bytes spare
+ *   6 entries: 2 + 6 * 202 = 1214   193 over, and a body past the segment is
+ *                                   logged and dropped with nothing visible
+ *                                   to the client
+ *
+ * Five it is. transport_control_codec.c pins it against the segment, which
+ * it can see and this public header cannot. A whole list at
+ * LOBBY_SCRIPT_LIST_MAX is therefore two chunks. */
+#define LOBBY_SCRIPT_LIST_CHUNK 5
+
+/* What a CTRL_LOBBY_SCRIPT_SETTING says. */
+#define LOBBY_SCRIPT_SETTING_CLEAR 0 /* forget every value held */
+#define LOBBY_SCRIPT_SETTING_SET   1 /* file's setting id is now value */
+
+/* One script on the list, as CTRL_LOBBY_SCRIPT_LIST carries it and as a
+ * client holds it afterwards.
+ *
+ * No description. One would be 257 bytes on top of the 202 here and would
+ * cut a chunk to two entries, and a client already has every description it
+ * needs: PACKET_LOBBY_SCENARIO_LIST_RSP carries them for the whole
+ * directory and the chooser already fetches it, keyed by this same file
+ * name. A second request/response pair for text a client is holding would
+ * be bytes nobody reads. */
+typedef struct LobbyScriptEntry {
+    char file[LOBBY_SCENARIO_FILE_LEN];  /* the name in the directory */
+    char name[LOBBY_SCENARIO_NAME_LEN];  /* the manifest's */
+    /* Whether this script leaves the win condition alone, which is the kind
+     * split read as a flag: true is a mod, false is a scenario. Held this
+     * way round rather than as "isScenario" so it matches
+     * scenarioManifestKeepsWinCondition, which is what the server reads it
+     * from, and so a zeroed entry does not claim to be a mod. */
+    bool keepsWinCondition;
+    /* Whether the script is tied to one particular map, which is the
+     * manifest's own bound flag. A bound script is not something a chooser
+     * removes on its own: the map decides it, so changing it means changing
+     * the map. An unbound one is added and dropped freely. Carried per entry
+     * rather than looked up from the directory listing because a list may
+     * name a file the listing no longer holds, and a row that cannot say
+     * whether it is removable is worse than one row of wire. */
+    bool bound;
+    /* Where the server got the file: SCN_DIR_SOURCE_SERVER, _UPLOAD or
+     * _WORKSHOP (scenario_defs.h; SERVER_SCENARIO_SOURCE_* in server_sim.h
+     * for a gui reader). The map's own script reads SERVER. */
+    uint8_t  source;
+    /* The Workshop item the file came from, 0 for none. */
+    uint64_t workshopId;
+} LobbyScriptEntry;
 
 /* Which rules CTRL_SIM_RULES carries, and how wide each one goes.
  *
@@ -274,32 +564,41 @@ typedef enum {
  * variant's members, the encoder, the decoder, the server's fill and the
  * client's apply are all written from these lists, so a rule cannot be
  * encoded and not decoded, or sent and not applied. */
-#define CTRL_SIM_RULES_U8_FIELDS(F)                                          \
-    F(tank_reload_ticks) F(tank_full_shells) F(tank_full_mines)              \
-    F(tank_full_trees) F(tank_full_armour) F(tank_water_ticks)               \
-    F(shell_damage) F(mine_damage) F(just_fired_ticks)                       \
-    F(gunsight_min) F(gunsight_max) F(tank_min_move)                         \
-    F(speed_road) F(speed_grass) F(speed_forest) F(speed_river)              \
-    F(speed_swamp) F(speed_crater) F(speed_rubble) F(speed_boat)             \
-    F(speed_deep_sea) F(speed_refuel_base)                                   \
-    F(shell_life) F(shell_speed)                                             \
-    F(pill_max_armour) F(pill_attack_ticks) F(pill_attack_min_ticks)         \
-    F(pill_cooldown_ticks)                                                   \
-    F(base_full_armour) F(base_full_shells) F(base_full_mines)               \
-    F(base_capture_armour) F(base_hit_armour)
+#define CTRL_SIM_RULES_U8_FIELDS(F)                                      \
+    F(tank_reload_ticks) F(tank_full_shells) F(tank_full_mines)          \
+    F(tank_full_trees) F(tank_full_armour) F(tank_water_ticks)           \
+    F(shell_damage) F(mine_damage) F(mine_fatal_divisor)                 \
+    F(water_loss_shells) F(water_loss_mines) F(just_fired_ticks)         \
+    F(gunsight_min) F(gunsight_max) F(tank_min_move) F(tank_hit_radius)  \
+    F(tank_nudge_amount) F(tank_nudge_iterations)                        \
+    F(tank_bump_decay_shift) F(tank_pill_pickup_inset)                   \
+    F(tank_boat_exit_inset) F(tank_slide_step) F(speed_road)             \
+    F(speed_grass) F(speed_forest) F(speed_river) F(speed_swamp)         \
+    F(speed_crater) F(speed_rubble) F(speed_boat) F(speed_deep_sea)      \
+    F(speed_refuel_base) F(shell_life) F(shell_speed) F(pill_max_armour) \
+    F(pill_attack_ticks) F(pill_attack_min_ticks) F(pill_cooldown_ticks) \
+    F(base_full_armour) F(base_full_shells) F(base_full_mines)           \
+    F(base_capture_armour) F(base_hit_armour) F(sound_soft_range)        \
+    F(sound_none_range)
 
-#define CTRL_SIM_RULES_U16_FIELDS(F)                                         \
-    F(tank_death_ticks)
+#define CTRL_SIM_RULES_U16_FIELDS(F)                                     \
+    F(tank_death_ticks) F(mine_damage_range) F(tree_hide_distance)       \
+    F(tank_collision_distance) F(tank_nudge_threshold)                   \
+    F(base_status_range) F(base_reveal_range)
 
 #define CTRL_SIM_RULES_U32_FIELDS(F)                                         \
     F(shell_start_add) F(base_regen_ticks) F(tree_grow_initial_ticks)
 
 #define CTRL_SIM_RULES_F32_FIELDS(F)                                         \
     F(tank_accel_rate) F(tank_decel_rate) F(tank_brake_rate)                 \
-    F(tank_autoslow_rate)                                                    \
+    F(tank_autoslow_rate) F(tank_wall_glide)                                 \
     F(turn_road) F(turn_grass) F(turn_forest) F(turn_river) F(turn_swamp)    \
     F(turn_crater) F(turn_rubble) F(turn_boat) F(turn_deep_sea)              \
     F(turn_refuel_base)
+
+/* Optional tail after the original 131-byte body. Omitted when zero so
+ * classic games keep their wire format; old recordings decode as zero. */
+#define CTRL_SIM_RULES_EXT_U8_FIELDS(F) F(tank_collision_mac)
 
 /* Every carried rule, whatever its width, for the callers that do not care
  * how wide one goes — the check for whether a changed rule is one this
@@ -308,7 +607,8 @@ typedef enum {
     CTRL_SIM_RULES_U8_FIELDS(F)                                              \
     CTRL_SIM_RULES_U16_FIELDS(F)                                             \
     CTRL_SIM_RULES_U32_FIELDS(F)                                             \
-    CTRL_SIM_RULES_F32_FIELDS(F)
+    CTRL_SIM_RULES_F32_FIELDS(F)                                             \
+    CTRL_SIM_RULES_EXT_U8_FIELDS(F)
 
 /* The member each list entry becomes. Integer rules keep the int32_t
  * SimRules declares them as whatever width they travel in, so reading one
@@ -319,11 +619,14 @@ typedef enum {
 /* Body size, so the encoder and the decoder agree on it by construction
  * rather than by counting: one byte, two, four and four per entry. */
 #define CTRL_SIM_RULES_COUNT_ONE(name) + 1
-#define CTRL_SIM_RULES_BODY_LEN                                              \
+#define CTRL_SIM_RULES_BASE_BODY_LEN                                         \
     ((size_t)((0 CTRL_SIM_RULES_U8_FIELDS(CTRL_SIM_RULES_COUNT_ONE)) * 1 +   \
               (0 CTRL_SIM_RULES_U16_FIELDS(CTRL_SIM_RULES_COUNT_ONE)) * 2 +  \
               (0 CTRL_SIM_RULES_U32_FIELDS(CTRL_SIM_RULES_COUNT_ONE)) * 4 +  \
               (0 CTRL_SIM_RULES_F32_FIELDS(CTRL_SIM_RULES_COUNT_ONE)) * 4))
+#define CTRL_SIM_RULES_BODY_LEN                                              \
+    (CTRL_SIM_RULES_BASE_BODY_LEN +                                         \
+     (size_t)(0 CTRL_SIM_RULES_EXT_U8_FIELDS(CTRL_SIM_RULES_COUNT_ONE)))
 
 /* `quiet` on the five variants that carry one is the announce policy's
  * answer, stamped by the server where it built the event: 0 to announce the
@@ -440,6 +743,9 @@ typedef struct ControlEvent {
                                           * from WBN) on remote clients */
             uint32_t lobbyServerLocks;
             UploadPolicy uploadPolicy;
+            ScriptUploadPolicy scriptUploadPolicy;
+            bool     scriptSharing;  /* 1 = players may save a copy of this
+                                      * server's mods and scenarios */
             uint8_t  hostSlot;   /* current lobby host's player slot */
             /* Visibility rules, indexed by ViewCategory. */
             ViewPolicy viewPolicy[VIEW_CATEGORY_COUNT];
@@ -459,6 +765,27 @@ typedef struct ControlEvent {
                                             * reads as "pings allowed" — what
                                             * every server did before the field
                                             * existed. */
+            bool     lobbyModsOff;         /* the round composes none of the
+                                            * picked mods or scenarios. Held
+                                            * in the negative sense for the
+                                            * same reason as
+                                            * lobbySmartPingsOff above, and read
+                                            * back through the positive accessor
+                                            * clientSimGetLobbyModsEnabled.
+                                            *
+                                            * Its byte is in the fixed part of
+                                            * the settings body, ahead of the
+                                            * scenario tail: adding it grew the
+                                            * fixed part and moved that tail
+                                            * down, so a body written by a build
+                                            * without the byte does not decode
+                                            * against one that has it. Nothing
+                                            * here tries to read one. */
+            bool     lobbyPositionalSound; /* sound events to a human carry a
+                                            * side and a banded distance. Its
+                                            * byte follows modsOff in the fixed
+                                            * part; a body without it reads as
+                                            * off, every sound centred. */
             /* The scenario this lobby is running, if any. scenarioSource
              * none means there is none and the five fields below are empty:
              * a lobby with no scenario writes none of these bytes, so a
@@ -477,6 +804,35 @@ typedef struct ControlEvent {
              * client needs it to predict its first life's loadout and its
              * start before the first snapshot lands. */
             uint8_t  scenarioBaseGame;
+            /* True when the script says it is a mod: it changes how the game
+             * plays and leaves the win condition alone, so the ops that end
+             * or decide a round raise when it calls them. False for a
+             * scenario and false when there is no script at all, so a reader
+             * telling those two apart tests scenarioSource first. Held this
+             * way round rather than the other because the tail is
+             * append-only and a decoder leaves zero for a byte the sender
+             * never wrote: every server that predates this field sent
+             * scenarios, and false is what a scenario reads as. */
+            bool     scenarioKeepsWinCondition;
+            /* True when the attached script is tied to one particular map.
+             * The catalogue rows already carry this — PACKET_LOBBY_SCENARIO_
+             * LIST_RSP packs a bound byte per entry — but the attached script
+             * is not a catalogue row, and a lobby has to know whether the one
+             * it is running may be taken off or only replaced by changing the
+             * map. Appended behind the byte above for the same reason that
+             * one was: the tail is append-only and a decoder leaves zero for
+             * a byte the sender never wrote, and false is what every script
+             * that predates this field should read as, since an unbound
+             * script is the one a host can still remove. */
+            bool     scenarioBound;
+            /* True when this server runs every scenario script with the full
+             * Lua library and no limits (-allow-unsafe-scripts), so a player
+             * can see that before they play. Appended behind scenarioBound
+             * for the same reason: the tail is append-only and a decoder
+             * leaves zero for a byte the sender never wrote, and zero reads
+             * as sandboxed, which every server that predates this field
+             * was. */
+            bool     scenarioUnsafe;
         } lobbySettings;
 
         /* CTRL_LOBBY_MAP_CHANGE — no payload fields needed */
@@ -577,6 +933,17 @@ typedef struct ControlEvent {
             uint16_t fragLen;
             uint8_t  frag[LOBBY_BOT_POOL_CHUNK_FRAG_MAX];
         } lobbyBotPoolChunk;
+
+        /* CTRL_LOBBY_BRAIN_DOCS_CHUNK — retired; see the enum. Fragment
+         * `seq` of `count` of the lobby texts belonging to brain
+         * `brainIdx`. fragLen bytes live in frag[]. */
+        struct {
+            uint8_t  brainIdx;
+            uint8_t  seq;
+            uint8_t  count;
+            uint16_t fragLen;
+            uint8_t  frag[LOBBY_BRAIN_DOCS_FRAG_MAX];
+        } lobbyBrainDocsChunk;
 
         /* CTRL_SERVER_TEXT — server-originated chat broadcast.
          * Mirrors what UDP clients receive as
@@ -768,7 +1135,142 @@ typedef struct ControlEvent {
             CTRL_SIM_RULES_U16_FIELDS(CTRL_SIM_RULES_INT_MEMBER)
             CTRL_SIM_RULES_U32_FIELDS(CTRL_SIM_RULES_INT_MEMBER)
             CTRL_SIM_RULES_F32_FIELDS(CTRL_SIM_RULES_FLT_MEMBER)
+            CTRL_SIM_RULES_EXT_U8_FIELDS(CTRL_SIM_RULES_INT_MEMBER)
         } simRules;
+
+        /* CTRL_SCN_PANEL — one panel's display list, replacing whatever
+         * that panel held. An empty list clears it. The bytes are the
+         * primitives scenario_panel.h describes; nothing on this path
+         * parses them, because the arm validates a list on the way out
+         * and the drawer does on the way in. */
+        struct {
+            uint8_t  panel;      /* 0..3 */
+            uint16_t len;
+            uint8_t  bytes[SCN_PANEL_MAX];
+            uint8_t  destTeam;   /* 0 = everyone; 1..15 = only that team. Server-side
+                                    recipient filter; not sent on the wire. */
+            uint8_t  destPlayer; /* 0xFF = everyone; otherwise only that slot. Same,
+                                    and 0 is a real slot, so every producer — the
+                                    publishers and the body decoder — sets 0xFF. */
+        } scnPanel;
+
+        /* CTRL_SCN_SCORE — a scenario's own score for one slot or one
+         * team. Broadcast: target is whose score it is, not who
+         * receives it, so this variant carries no recipient pair. */
+        struct {
+            uint8_t kind;        /* a slot's score, or a team's */
+            uint8_t target;      /* the slot, or the team */
+            int32_t score;
+            char    label[16];
+        } scnScore;
+
+        /* CTRL_SCN_ANNOUNCE — a line drawn across the centre of the screen. */
+        struct {
+            char     text[PACKET_MAX_CHAT_MESSAGE + 1];
+            uint16_t ticks;      /* how long it stays up */
+            uint8_t  destTeam;
+            uint8_t  destPlayer;
+        } scnAnnounce;
+
+        /* CTRL_SCN_MARKER — a mark on the map, kept by id. */
+        struct {
+            uint8_t id;
+            uint8_t kind;        /* square, follow a player, or clear */
+            uint8_t x, y;        /* square kind */
+            uint8_t slot;        /* follow-player kind */
+            uint8_t colour;
+            uint8_t destTeam;
+            uint8_t destPlayer;
+        } scnMarker;
+
+        /* CTRL_SCENARIO_RULES — fragment `seq` of `fragCount` of the rules a
+         * scenario's own manifest sets, as its author wrote them. Empty when
+         * no scenario is attached, and an empty set is one fragment with no
+         * rows rather than no event.
+         *
+         * count is the rows in THIS fragment, never the whole set: a reader
+         * appends each fragment's rows in order and has the set once it has
+         * taken seq == fragCount - 1. The fragments of one set run 0..
+         * fragCount-1 with no gaps, on a reliable ordered channel, so a
+         * fragment that does not continue the one in hand means the stream
+         * was interrupted and the partial set is thrown away rather than
+         * spliced.
+         *
+         * rule[i] is a SimRuleIndex, which is the index every other side of
+         * the fence names a rule by, and value[i] is what the manifest set
+         * that rule to — a double because sixteen of the rules are
+         * float-valued and the rest are whole numbers a double carries
+         * exactly. Entries at or above count name no rule and read zero.
+         *
+         * Two arrays rather than one array of {rule, value} pairs, and it
+         * has to stay two: a pair pads to sixteen bytes to carry one byte of
+         * index and eight of value, which would make this variant 1032 bytes
+         * instead of 584. A ServerSim holds 200 ControlEvents in its lobby
+         * chat buffer, so every byte the union grows by is paid two hundred
+         * times over on every sim. Split, the union's size stays the one the
+         * round stats summary sets and the sim pays nothing for this event.
+         *
+         * The wire form is the same either way: the body is seq, fragCount,
+         * a row count and then a [rule][value] row per entry, which the
+         * encoder builds by walking the two arrays together. */
+        struct {
+            uint8_t seq;        /* which fragment, 0-based */
+            uint8_t fragCount;  /* how many make the whole set; never 0 */
+            uint8_t count;      /* rows in THIS fragment */
+            uint8_t rule[SCN_RULES_FRAG_ROWS];   /* a SimRuleIndex per row */
+            double  value[SCN_RULES_FRAG_ROWS];  /* the value at the same index */
+        } scenarioRules;
+
+        /* CTRL_LOBBY_SCRIPT_LIST — one chunk of the lobby's ordered script
+         * list, entries[0..count) in list order.
+         *
+         * count is the entries in THIS chunk and never the whole list; a
+         * reader appends them and installs the list when it takes a chunk
+         * with final set. final is on the last chunk of a list and on that
+         * one alone, so an empty list arrives as one chunk with count 0 and
+         * final 1 rather than as no event at all — a host clearing the list
+         * has something to say and a client has to hear it.
+         *
+         * No seq/fragCount pair, unlike CTRL_SCENARIO_RULES beside it. That
+         * pair exists there so a reader can tell a continuation from a
+         * restart on a stream it may join partway; this list is published as
+         * a back-to-back run inside one call under the sim mutex, on a
+         * reliable ordered channel, so the chunk after a final one is always
+         * the start of the next list. The reader still throws away a partial
+         * list that would overrun LOBBY_SCRIPT_LIST_MAX, which is the only
+         * way the two could ever disagree. */
+        struct {
+            uint8_t          final;  /* 1 on the last chunk of a list */
+            uint8_t          count;  /* entries in THIS chunk */
+            LobbyScriptEntry entries[LOBBY_SCRIPT_LIST_CHUNK];
+        } lobbyScriptList;
+
+        /* CTRL_LOBBY_SCRIPT_SETTING — see the enum. file and id are empty
+         * on a CLEAR. */
+        struct {
+            uint8_t op;                            /* LOBBY_SCRIPT_SETTING_* */
+            char    file[LOBBY_SCENARIO_FILE_LEN]; /* the script's file name */
+            char    id[SCN_SETTING_ID_LEN];        /* the setting's id */
+            int32_t value;
+        } lobbyScriptSetting;
+
+        /* CTRL_LOBBY_BRAIN_ANNOUNCE — see the enum. announce holds
+         * announceLen bytes and a NUL. docsLen is commands.txt's length in
+         * bytes, 0 for none; docsGen is 0 exactly when docsLen is. */
+        struct {
+            uint8_t  brainIdx;       /* index into CTRL_LOBBY_BRAIN_LIST */
+            uint32_t docsGen;
+            uint16_t docsLen;
+            uint16_t announceLen;
+            char     announce[BRAIN_ANNOUNCE_MAX + 1];
+        } lobbyBrainAnnounce;
+
+        /* CTRL_LOBBY_BOT_POOL_INFO — see the enum. id is 0 exactly when len
+         * is. */
+        struct {
+            uint32_t id;
+            uint32_t len;    /* compressed blob bytes, <= LOBBY_BOT_CATALOG_WIRE_MAX */
+        } lobbyBotPoolInfo;
     } u;
 } ControlEvent;
 

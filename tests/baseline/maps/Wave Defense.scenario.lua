@@ -10,9 +10,9 @@
 -- something happens. A scenario that polls the world each tick is doing work
 -- the server has already done.
 --
--- The horde is a team of seats rather than a team of bots. The lobby block
+-- The raiders are a team of seats rather than a team of bots. The lobby block
 -- below asks for six seats on team 2 with fielded = false, so a host opening
--- this map sees the horde in the roster and can trim it, and no brain loads
+-- this map sees the seats in the roster and can trim them, and no brain loads
 -- until a wave fields a seat. game.spawn_bot names one of those seats, which
 -- puts a raider in it; game.remove_bot hands the seat back, and the next wave
 -- uses it again.
@@ -20,7 +20,7 @@
 local DEFENDERS = 1
 local RAIDERS   = 2
 
--- How many raiders each wave fields, in order. The horde's seats are the
+-- How many raiders each wave fields, in order. The team's seats are the
 -- ceiling: a wave asking for more than the lobby holds fields what is there.
 local WAVES = { 2, 4, 6 }
 
@@ -33,13 +33,13 @@ local HELD = "The keep held."
 
 local wave       = 0      -- which wave is on the field, 0 before the first
 local standing   = 0      -- raiders this wave has on the field
-local seats      = {}     -- the horde's seats, in seat order
+local seats      = {}     -- the team's seats, in seat order
 local wave_timer = nil    -- the timer that ends the wave on time
 local over       = false  -- the round has been decided
 
--- The seats the lobby is holding for the horde. Read once, at the start: a
+-- The seats the lobby is holding for the raiders. Read once, at the start: a
 -- seat that a wave fields and hands back is the same seat, so the list keeps.
-local function horde_seats()
+local function held_seats()
   local out = {}
   for p = 0, game.max_tanks() - 1 do
     local slot = game.lobby_slot(p)
@@ -148,7 +148,7 @@ end
 -- The round's first tick. Everything that reads the roster waits for this:
 -- the tanks exist, and the seats say who is on which side.
 function on_start()
-  seats = horde_seats()
+  seats = held_seats()
   hand_over_the_keep(enlist_the_defenders())
   game.message(string.format("Wave Defense: hold the keep through %d waves.",
                              #WAVES))
@@ -207,7 +207,7 @@ scenario = {
   game        = "open",
   bound       = true,
 
-  -- The lobby this map opens with. The horde's seats are held rather than
+  -- The lobby this map opens with. The team's seats are held rather than
   -- filled: they are in the roster from the start, where a host can see and
   -- trim them, and each of them takes a brain only when a wave fields it.
   lobby = {

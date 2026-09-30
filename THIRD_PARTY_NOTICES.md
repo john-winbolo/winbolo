@@ -141,11 +141,38 @@ WinBolo uses the following third-party libraries and code.
 - https://github.com/mjansson/mdns
 - Author: Mattias Jansson
 
+### ImGuiColorTextEdit
+- Location: src/third_party/ImGuiColorTextEdit/
+- Commit: 264bee49ddc3c789b05d928d09c628649458da47 (2025-10-11)
+- License: MIT
+- https://github.com/santaclose/ImGuiColorTextEdit
+- Authors: BalazsJako (original), santaclose
+- The map editor's scenario script pane - a text editor with Lua syntax
+  highlighting. Only TextEditor.h, TextEditor.cpp, LanguageDefinitions.cpp
+  and LICENSE are taken; the demo panel and tests are not.
+- Modified for WinBolo: GetLineCount casts mLines.size() to int, and
+  SetPalette gives palletteBase a starting value ahead of its switch, so
+  MSVC's /W4 /WX /sdl build accepts the header and the sources.
+  Re-apply on upgrade.
+
 ### MD5 (RFC 1321 reference)
 - Location: src/bolo/md5.c, src/bolo/public/md5.h
 - License: Public domain
 - https://www.rfc-editor.org/rfc/rfc1321
 - Used for the lobby map-upload MD5 handshake (integrity check only — not cryptographically safe)
+
+### Lua 5.4 pattern matcher
+- Location: src/scenario/scenario_pattern.c
+- Version: 5.4.7 (the PATTERN MATCHING section of lstrlib.c)
+- License: MIT
+- https://www.lua.org
+- Authors: R. Ierusalimschy, L. H. de Figueiredo, W. Celes (Lua.org, PUC-Rio)
+- Serves string.find, string.match, string.gmatch and string.gsub to
+  scenario scripts, with 5.4's behaviour on LuaJIT hosts as well
+- Modified for WinBolo: every matcher step is counted and charged to the
+  scenario instruction budgets, gmatch's iterator resets its recursion depth
+  on each call, and the few 5.4 API calls LuaJIT lacks are shimmed. Lua's
+  notice is kept at the top of the file. Re-apply on upgrade.
 
 ## Controller Glyphs
 
@@ -175,11 +202,6 @@ WinBolo uses the following third-party libraries and code.
 - License: SIL Open Font License 1.1 (data/fonts/LICENSE)
 - https://github.com/be5invis/Sarasa-Gothic
 - Author: belleve invis (Renzhi Li)
-
-### LZW/RLE Compression
-- Location: src/lzw/
-- Original author: David Bourgin (1994-1995)
-- Modified for WinBolo; distributed under GPL v2+
 
 ## Audio
 

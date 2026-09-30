@@ -29,6 +29,7 @@
 #include "client_sim_control.h"
 #include "control_event.h"
 #include "brain_list.h"
+#include "lobby_bot_pools.h"
 #include "transport_control_codec.h"
 #include "transport_udp_internal.h"  /* PACKET_HEADER_SIZE */
 #include "netpacks.h"                /* PACKET_LOBBY_* IDs */
@@ -108,6 +109,7 @@ int run_lobby_settings_codec_and_apply(void) {
     in.u.lobbySettings.lobbyLineOfSight                =
         (uint8_t)lineOfSightBuildingsAndTrees;
     in.u.lobbySettings.lobbySmartPingsOff              = true;
+    in.u.lobbySettings.lobbyModsOff                    = true;
 
     UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_SETTINGS, &in, &out) == 0,
                   "codec_roundtrip failed");
@@ -167,14 +169,16 @@ int run_lobby_settings_codec_and_apply(void) {
                   (unsigned)out.u.lobbySettings.lobbyLineOfSight);
     UT_ASSERT_MSG(out.u.lobbySettings.lobbySmartPingsOff == true,
                   "smart-pings-off did not survive codec round-trip");
+    UT_ASSERT_MSG(out.u.lobbySettings.lobbyModsOff == true,
+                  "mods-off did not survive codec round-trip");
 
     /* A sender that stops before the view tail (the payload shape from
      * before these fields existed) must still decode, leaving the view
      * fields at their zero-init values rather than reading past the
      * buffer. Encode a full event, then hand the decoder a body length
-     * that is fifteen bytes shorter (3 policies + 3 u16 decay values +
+     * that is seventeen bytes shorter (3 policies + 3 u16 decay values +
      * classic mode + allies in trees + voice mode + overview window +
-     * line of sight + smart pings off). */
+     * line of sight + smart pings off + mods off + positional sound). */
     {
         uint8_t buf[MAX_CONTROL_PACKET];
         size_t encLen = 0;
@@ -185,7 +189,7 @@ int run_lobby_settings_codec_and_apply(void) {
         UT_ASSERT(dec != NULL);
 
         ControlEvent shortOut;
-        size_t shortBody = encLen - PACKET_HEADER_SIZE - 15;
+        size_t shortBody = encLen - PACKET_HEADER_SIZE - 17;
         UT_ASSERT_MSG(dec(buf + PACKET_HEADER_SIZE, shortBody, &shortOut),
                       "short lobby-settings payload failed to decode");
         UT_ASSERT_MSG(shortOut.u.lobbySettings.hostSlot == 3,
@@ -219,6 +223,12 @@ int run_lobby_settings_codec_and_apply(void) {
         UT_ASSERT_MSG(shortOut.u.lobbySettings.lobbySmartPingsOff == false,
                       "a payload with no smart-ping byte must read as "
                       "pings ALLOWED");
+        /* The same pin for the mods byte. The event that was encoded had the
+         * mods OFF; a sender that stops before the byte must still read as
+         * composing them, because that is what every server did before the
+         * setting existed. */
+        UT_ASSERT_MSG(shortOut.u.lobbySettings.lobbyModsOff == false,
+                      "a payload with no mods byte must read as mods ON");
     }
 
     /* The voice mode over the body tables, which is what the reliable
@@ -246,9 +256,10 @@ int run_lobby_settings_codec_and_apply(void) {
                           "body round-trip lost voice mode %d (got %d)",
                           (int)modes[m], (int)bout.u.lobbySettings.voiceMode);
 
-            /* The mode is the fourth byte from the end: the overview
-             * window, line of sight and smart-pings-off follow it. */
-            body[bodyLen - 4] = 0x7F;
+            /* The mode is the sixth byte from the end: the overview window,
+             * line of sight, smart-pings-off, mods-off and positional sound
+             * follow it. */
+            body[bodyLen - 6] = 0x7F;
             memset(&bout, 0, sizeof(bout));
             UT_ASSERT(bdec(body, bodyLen, &bout));
             UT_ASSERT_MSG(bout.u.lobbySettings.voiceMode == serverVoiceOn,
@@ -473,6 +484,70 @@ int run_lobby_settings_scenario_apply(void) {
                       "wanted %d",
                       (int)clientSimGetGameSim(wireCs)->scenarioBaseGame,
                       (int)gameStrictTournament);
+        clientSimDestroy(wireCs);
+    }
+
+    clientSimDestroy(cs);
+    return 0;
+}
+
+/* ================================================================
+ * CTRL_LOBBY_SETTINGS — whether the server runs its scenario scripts
+ * without the sandbox, from the event onto the ClientSim and out
+ * through clientSimGetLobbyScenarioUnsafe.
+ *
+ * True first, since false is what a fresh ClientSim already holds.
+ * Then a plain map, which carries no scenario tail and so no mode
+ * byte, has to take it back to false: a lobby that went on warning
+ * after the script left would be warning about nothing. And once
+ * through the codec, so the byte the encoder writes is the one the
+ * mirror ends up holding.
+ * ================================================================ */
+int run_lobby_settings_scenario_unsafe_apply(void) {
+    ControlEvent in;
+    ClientSim   *cs;
+
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_SETTINGS;
+    strncpy(in.u.lobbySettings.mapName, "ScriptedMap",
+            sizeof(in.u.lobbySettings.mapName) - 1);
+    in.u.lobbySettings.lobbyGameType  = gameScripted;
+    in.u.lobbySettings.scenarioSource = lobbyScenarioMap;
+    strncpy(in.u.lobbySettings.scenarioFileName, "wave.lua",
+            sizeof(in.u.lobbySettings.scenarioFileName) - 1);
+    in.u.lobbySettings.scenarioUnsafe = true;
+
+    cs = fresh_client_sim();
+    UT_ASSERT(cs != NULL);
+    UT_ASSERT_MSG(!clientSimGetLobbyScenarioUnsafe(cs),
+                  "setup: a fresh client already reads the server as unsafe");
+    clientSimApplyControl(cs, &in);
+    UT_ASSERT_MSG(clientSimGetLobbyScenarioUnsafe(cs),
+                  "the unsafe flag did not reach the client");
+
+    {
+        ControlEvent plain;
+        memset(&plain, 0, sizeof(plain));
+        plain.type = CTRL_LOBBY_SETTINGS;
+        strncpy(plain.u.lobbySettings.mapName, "PlainMap",
+                sizeof(plain.u.lobbySettings.mapName) - 1);
+        plain.u.lobbySettings.lobbyGameType = gameTournament;
+        clientSimApplyControl(cs, &plain);
+        UT_ASSERT_MSG(!clientSimGetLobbyScenarioUnsafe(cs),
+                      "a plain map left the unsafe flag set");
+    }
+
+    {
+        ControlEvent out;
+        ClientSim   *wireCs;
+        memset(&out, 0, sizeof(out));
+        UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_SETTINGS, &in, &out) == 0,
+                      "the unsafe settings event did not survive the codec");
+        wireCs = fresh_client_sim();
+        UT_ASSERT(wireCs != NULL);
+        clientSimApplyControl(wireCs, &out);
+        UT_ASSERT_MSG(clientSimGetLobbyScenarioUnsafe(wireCs),
+                      "the unsafe flag off the wire did not reach the client");
         clientSimDestroy(wireCs);
     }
 
@@ -729,6 +804,81 @@ int run_lobby_brain_list_codec_and_apply(void) {
 }
 
 /* ================================================================
+ * CTRL_LOBBY_BRAIN_DOCS_CHUNK — one fragment of one brain's lobby
+ * texts. The fragment carries a brain index as well as the seq/count
+ * pair, because the server streams a separate run of fragments for
+ * each brain that ships announce.txt / commands.txt.
+ * ================================================================ */
+int run_lobby_brain_docs_chunk_codec_roundtrip(void) {
+    ControlEvent in, out;
+    int i;
+
+    /* A middle fragment at the maximum payload, with a byte pattern that
+     * would show up any off-by-one in the length field. */
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_BRAIN_DOCS_CHUNK;
+    in.u.lobbyBrainDocsChunk.brainIdx = BRAIN_LIST_MAX - 1;
+    in.u.lobbyBrainDocsChunk.seq      = 3;
+    in.u.lobbyBrainDocsChunk.count    = 19;
+    in.u.lobbyBrainDocsChunk.fragLen  = LOBBY_BRAIN_DOCS_FRAG_MAX;
+    for (i = 0; i < LOBBY_BRAIN_DOCS_FRAG_MAX; i++) {
+        in.u.lobbyBrainDocsChunk.frag[i] = (uint8_t)(i & 0xFF);
+    }
+    UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_BRAIN_DOCS_CHUNK, &in, &out) == 0,
+                  "codec_roundtrip failed (full fragment)");
+    UT_ASSERT(out.type == CTRL_LOBBY_BRAIN_DOCS_CHUNK);
+    UT_ASSERT(out.u.lobbyBrainDocsChunk.brainIdx == BRAIN_LIST_MAX - 1);
+    UT_ASSERT(out.u.lobbyBrainDocsChunk.seq   == 3);
+    UT_ASSERT(out.u.lobbyBrainDocsChunk.count == 19);
+    UT_ASSERT_MSG(out.u.lobbyBrainDocsChunk.fragLen == LOBBY_BRAIN_DOCS_FRAG_MAX,
+                  "fragLen %u", (unsigned)out.u.lobbyBrainDocsChunk.fragLen);
+    UT_ASSERT(memcmp(out.u.lobbyBrainDocsChunk.frag,
+                     in.u.lobbyBrainDocsChunk.frag,
+                     LOBBY_BRAIN_DOCS_FRAG_MAX) == 0);
+
+    /* A single short fragment — the common case for a brain whose two
+     * texts together fit one datagram. */
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_BRAIN_DOCS_CHUNK;
+    in.u.lobbyBrainDocsChunk.brainIdx = 0;
+    in.u.lobbyBrainDocsChunk.seq      = 0;
+    in.u.lobbyBrainDocsChunk.count    = 1;
+    in.u.lobbyBrainDocsChunk.fragLen  = 5;
+    memcpy(in.u.lobbyBrainDocsChunk.frag, "hello", 5);
+    UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_BRAIN_DOCS_CHUNK, &in, &out) == 0,
+                  "codec_roundtrip failed (short fragment)");
+    UT_ASSERT(out.u.lobbyBrainDocsChunk.fragLen == 5);
+    UT_ASSERT(memcmp(out.u.lobbyBrainDocsChunk.frag, "hello", 5) == 0);
+
+    /* The type is retired: nothing sends it, and a client that meets one
+     * (an old recording) steps over it rather than installing texts from
+     * it. A whole blob in one fragment would have installed under the old
+     * reader, so an empty table afterwards is the check. */
+    {
+        static const uint8_t kBlob[] = { 0, 5, 'h', 'e', 'l', 'l', 'o',
+                                         0, 3, 'a', 'b', 'c' };
+        ClientSim *cs = fresh_client_sim();
+        UT_ASSERT(cs != NULL);
+        memset(&in, 0, sizeof(in));
+        in.type = CTRL_LOBBY_BRAIN_DOCS_CHUNK;
+        in.u.lobbyBrainDocsChunk.brainIdx = 2;
+        in.u.lobbyBrainDocsChunk.seq      = 0;
+        in.u.lobbyBrainDocsChunk.count    = 1;
+        in.u.lobbyBrainDocsChunk.fragLen  = (uint16_t)sizeof(kBlob);
+        memcpy(in.u.lobbyBrainDocsChunk.frag, kBlob, sizeof(kBlob));
+        UT_ASSERT(codec_roundtrip(CTRL_LOBBY_BRAIN_DOCS_CHUNK, &in, &out) == 0);
+        clientSimApplyControl(cs, &out);
+        UT_ASSERT_MSG(clientSimGetLobbyBrainAnnounce(cs, 2)[0] == '\0',
+                      "a retired docs chunk installed an announce line: '%s'",
+                      clientSimGetLobbyBrainAnnounce(cs, 2));
+        UT_ASSERT(clientSimGetLobbyBrainDocs(cs, 2)[0] == '\0');
+        UT_ASSERT(!clientSimLobbyBrainHasDocs(cs, 2));
+        clientSimDestroy(cs);
+    }
+    return 0;
+}
+
+/* ================================================================
  * CTRL_LOBBY_SYNC_COMPLETE — header-only marker the server delivers
  * as the final event of the join sync replay. No payload, so the
  * round-trip just confirms the type survives encode/decode.
@@ -797,5 +947,580 @@ int run_lobby_rating_posted_codec_roundtrip(void) {
     memset(&out, 0, sizeof(out));
     UT_ASSERT_MSG(!dec(buf, outLen - 1, &out),
                   "decoder must reject a short body");
+    return 0;
+}
+
+/* ================================================================
+ * CTRL_LOBBY_BRAIN_DOCS_CHUNK — the LENGTH the two encoders answer
+ * with.
+ *
+ * codec_roundtrip above proves the bytes survive the trip, but it
+ * reads the length back out of the same variable the encoder was
+ * asked to fill: an encoder that never writes *outLen leaves the
+ * caller's own number standing, and a caller that zeroed it first
+ * sends an empty datagram while every field still "round-trips".
+ * Nothing but the number is checked here, against the wire format
+ * the file's comment states:
+ *
+ *   body   = brainIdx 1 + seq 1 + count 1 + fragLen 2 + frag
+ *   packet = PACKET_HEADER_SIZE + body
+ *
+ * Both ends of the fragment range, because a zero-length fragment is
+ * the one case where a forgotten write and a correct one could agree.
+ * ================================================================ */
+int run_lobby_brain_docs_chunk_len_is_exact(void) {
+    ControlEncodeFn     enc = transportControlCodecEncoder(CTRL_LOBBY_BRAIN_DOCS_CHUNK);
+    ControlEncodeBodyFn bodyEnc =
+        transportControlCodecBodyEncoder(CTRL_LOBBY_BRAIN_DOCS_CHUNK);
+    ControlDecodeBodyFn bodyDec =
+        transportControlCodecBodyDecoder(CTRL_LOBBY_BRAIN_DOCS_CHUNK);
+    ControlEvent in, out;
+    uint8_t      buf[MAX_CONTROL_PACKET];
+    size_t       len;
+    int          i;
+
+    UT_ASSERT_MSG(enc != NULL, "no packet encoder");
+    UT_ASSERT_MSG(bodyEnc != NULL, "no body encoder");
+    UT_ASSERT_MSG(bodyDec != NULL, "no body decoder");
+
+    /* A full fragment — the largest datagram this packet ever sends. */
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_BRAIN_DOCS_CHUNK;
+    in.u.lobbyBrainDocsChunk.brainIdx = BRAIN_LIST_MAX - 1;
+    in.u.lobbyBrainDocsChunk.seq      = 18;
+    in.u.lobbyBrainDocsChunk.count    = 19;
+    in.u.lobbyBrainDocsChunk.fragLen  = LOBBY_BRAIN_DOCS_FRAG_MAX;
+    for (i = 0; i < LOBBY_BRAIN_DOCS_FRAG_MAX; i++) {
+        in.u.lobbyBrainDocsChunk.frag[i] = (uint8_t)((i * 7) & 0xFF);
+    }
+
+    /* The number the caller already held must be overwritten, not left. */
+    len = 12345;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT_MSG(len == (size_t)(PACKET_HEADER_SIZE + 5 +
+                                  LOBBY_BRAIN_DOCS_FRAG_MAX),
+                  "the packet encoder answered %zu bytes, expected %zu",
+                  len, (size_t)(PACKET_HEADER_SIZE + 5 +
+                                LOBBY_BRAIN_DOCS_FRAG_MAX));
+    UT_ASSERT_MSG(buf[2] == PACKET_LOBBY_BRAIN_DOCS_CHUNK,
+                  "the header names packet type %u", (unsigned)buf[2]);
+
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(bodyDec(buf + PACKET_HEADER_SIZE, len - PACKET_HEADER_SIZE,
+                          &out),
+                  "the body the packet encoder wrote would not decode");
+    UT_ASSERT(out.u.lobbyBrainDocsChunk.brainIdx == BRAIN_LIST_MAX - 1);
+    UT_ASSERT(out.u.lobbyBrainDocsChunk.seq   == 18);
+    UT_ASSERT(out.u.lobbyBrainDocsChunk.count == 19);
+    UT_ASSERT(out.u.lobbyBrainDocsChunk.fragLen == LOBBY_BRAIN_DOCS_FRAG_MAX);
+    UT_ASSERT(memcmp(out.u.lobbyBrainDocsChunk.frag,
+                     in.u.lobbyBrainDocsChunk.frag,
+                     LOBBY_BRAIN_DOCS_FRAG_MAX) == 0);
+
+    /* The body encoder on its own answers the body length alone. */
+    len = 12345;
+    UT_ASSERT(bodyEnc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT_MSG(len == (size_t)(5 + LOBBY_BRAIN_DOCS_FRAG_MAX),
+                  "the body encoder answered %zu bytes, expected %zu",
+                  len, (size_t)(5 + LOBBY_BRAIN_DOCS_FRAG_MAX));
+
+    /* A zero-length fragment: five bytes of body and nothing after it. */
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_BRAIN_DOCS_CHUNK;
+    in.u.lobbyBrainDocsChunk.brainIdx = 0;
+    in.u.lobbyBrainDocsChunk.seq      = 0;
+    in.u.lobbyBrainDocsChunk.count    = 1;
+    in.u.lobbyBrainDocsChunk.fragLen  = 0;
+
+    len = 12345;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT_MSG(len == (size_t)(PACKET_HEADER_SIZE + 5),
+                  "an empty fragment made a %zu-byte packet, expected %zu",
+                  len, (size_t)(PACKET_HEADER_SIZE + 5));
+
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT(bodyDec(buf + PACKET_HEADER_SIZE, len - PACKET_HEADER_SIZE,
+                      &out));
+    UT_ASSERT(out.u.lobbyBrainDocsChunk.brainIdx == 0);
+    UT_ASSERT(out.u.lobbyBrainDocsChunk.count    == 1);
+    UT_ASSERT_MSG(out.u.lobbyBrainDocsChunk.fragLen == 0,
+                  "fragLen came back %u",
+                  (unsigned)out.u.lobbyBrainDocsChunk.fragLen);
+
+    len = 12345;
+    UT_ASSERT(bodyEnc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT_MSG(len == 5, "an empty fragment made a %zu-byte body, "
+                  "expected 5", len);
+    return 0;
+}
+
+/* A body-only round trip for the announce event, through the tables the
+ * live path uses. */
+static int announce_roundtrip(const ControlEvent *in, ControlEvent *out,
+                              size_t *outLen) {
+    ControlEncodeBodyFn enc =
+        transportControlCodecBodyEncoder(CTRL_LOBBY_BRAIN_ANNOUNCE);
+    ControlDecodeBodyFn dec =
+        transportControlCodecBodyDecoder(CTRL_LOBBY_BRAIN_ANNOUNCE);
+    uint8_t buf[MAX_CONTROL_PACKET];
+    size_t  len = 12345;
+    if (enc == NULL || dec == NULL) return 1;
+    if (enc(in, NULL, buf, sizeof(buf), &len) != ENCODE_OK) return 2;
+    if (outLen != NULL) *outLen = len;
+    memset(out, 0, sizeof(*out));
+    if (!dec(buf, len, out)) return 3;
+    return 0;
+}
+
+/* Build one brain's announce event. */
+static void announce_event(ControlEvent *evt, uint8_t idx, const char *text,
+                           uint32_t gen, uint16_t docsLen) {
+    size_t n = strlen(text);
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_LOBBY_BRAIN_ANNOUNCE;
+    evt->u.lobbyBrainAnnounce.brainIdx    = idx;
+    evt->u.lobbyBrainAnnounce.docsGen     = gen;
+    evt->u.lobbyBrainAnnounce.docsLen     = docsLen;
+    evt->u.lobbyBrainAnnounce.announceLen = (uint16_t)n;
+    memcpy(evt->u.lobbyBrainAnnounce.announce, text, n + 1);
+}
+
+/* ================================================================
+ * CTRL_LOBBY_BRAIN_ANNOUNCE — one brain's announce line, and the length
+ * and generation of its commands.txt without the text.
+ *
+ * The codec half: a full-size announce survives, the body is exactly
+ * 9 + announceLen bytes, and each body a sender could not have written
+ * is refused — a brain index past the table, a docs length past the
+ * cap, a generation of 0 with docs or docs of 0 with a generation, and
+ * a body with a byte missing or a byte left over.
+ *
+ * The apply half: the line installs, the brain reads as having docs
+ * while none have been fetched, and a brain with no docs reads as
+ * having none.
+ * ================================================================ */
+int run_lobby_brain_announce_codec_and_apply(void) {
+    ControlEncodeBodyFn enc =
+        transportControlCodecBodyEncoder(CTRL_LOBBY_BRAIN_ANNOUNCE);
+    ControlDecodeBodyFn dec =
+        transportControlCodecBodyDecoder(CTRL_LOBBY_BRAIN_ANNOUNCE);
+    ControlEvent in, out;
+    uint8_t      buf[MAX_CONTROL_PACKET];
+    size_t       len;
+    char         big[BRAIN_ANNOUNCE_MAX + 1];
+    ClientSim   *cs;
+    int          i;
+
+    UT_ASSERT_MSG(enc != NULL && dec != NULL,
+                  "CTRL_LOBBY_BRAIN_ANNOUNCE has no body codec");
+
+    /* The largest body this event ever sends. */
+    for (i = 0; i < BRAIN_ANNOUNCE_MAX; i++) big[i] = (char)('A' + (i % 26));
+    big[BRAIN_ANNOUNCE_MAX] = '\0';
+    announce_event(&in, BRAIN_LIST_MAX - 1, big, 0xDEADBEEFu, BRAIN_DOCS_MAX);
+    UT_ASSERT(announce_roundtrip(&in, &out, &len) == 0);
+    UT_ASSERT_MSG(len == (size_t)(9 + BRAIN_ANNOUNCE_MAX),
+                  "the body is %zu bytes, expected %d", len,
+                  9 + BRAIN_ANNOUNCE_MAX);
+    UT_ASSERT(out.type == CTRL_LOBBY_BRAIN_ANNOUNCE);
+    UT_ASSERT(out.u.lobbyBrainAnnounce.brainIdx == BRAIN_LIST_MAX - 1);
+    UT_ASSERT(out.u.lobbyBrainAnnounce.docsGen == 0xDEADBEEFu);
+    UT_ASSERT(out.u.lobbyBrainAnnounce.docsLen == BRAIN_DOCS_MAX);
+    UT_ASSERT(out.u.lobbyBrainAnnounce.announceLen == BRAIN_ANNOUNCE_MAX);
+    UT_ASSERT(strcmp(out.u.lobbyBrainAnnounce.announce, big) == 0);
+
+    /* A brain with an announce line and no docs, and one with docs and no
+     * announce line. */
+    announce_event(&in, 0, "hello", 0, 0);
+    UT_ASSERT(announce_roundtrip(&in, &out, &len) == 0);
+    UT_ASSERT(len == 9 + 5);
+    UT_ASSERT(out.u.lobbyBrainAnnounce.docsGen == 0 &&
+              out.u.lobbyBrainAnnounce.docsLen == 0);
+    announce_event(&in, 3, "", 7, 100);
+    UT_ASSERT(announce_roundtrip(&in, &out, &len) == 0);
+    UT_ASSERT(len == 9 && out.u.lobbyBrainAnnounce.announce[0] == '\0');
+
+    /* What a sender cannot have written is not encoded ... */
+    announce_event(&in, BRAIN_LIST_MAX, "x", 1, 1);
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) != ENCODE_OK);
+    announce_event(&in, 0, "x", 0, 10);
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) != ENCODE_OK);
+    announce_event(&in, 0, "x", 10, 0);
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) != ENCODE_OK);
+
+    /* ... nor decoded. Start from a good body and spoil one thing at a time. */
+    announce_event(&in, 1, "abc", 9, 40);
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT(len == 12);
+    UT_ASSERT_MSG(!dec(buf, len - 1, &out), "a body a byte short decoded");
+    UT_ASSERT_MSG(!dec(buf, len + 1, &out), "a body a byte long decoded");
+    buf[0] = BRAIN_LIST_MAX;
+    UT_ASSERT_MSG(!dec(buf, len, &out), "a brain index past the table decoded");
+    buf[0] = 1;
+    buf[5] = 0xFF; buf[6] = 0xFF;                     /* docsLen 65535 */
+    UT_ASSERT_MSG(!dec(buf, len, &out), "a docs length past the cap decoded");
+    buf[5] = 0; buf[6] = 0;                           /* docsLen 0, gen 9 */
+    UT_ASSERT_MSG(!dec(buf, len, &out),
+                  "a generation with no docs decoded");
+    buf[6] = 40;
+    UT_ASSERT(dec(buf, len, &out));
+
+    /* APPLY. */
+    cs = fresh_client_sim();
+    UT_ASSERT(cs != NULL);
+    announce_event(&in, 2, "Line one.\n\nLine two, after a gap.", 9, 40);
+    UT_ASSERT(announce_roundtrip(&in, &out, NULL) == 0);
+    clientSimApplyControl(cs, &out);
+    announce_event(&in, 4, "No docs here.", 0, 0);
+    UT_ASSERT(announce_roundtrip(&in, &out, NULL) == 0);
+    clientSimApplyControl(cs, &out);
+
+    UT_ASSERT(strcmp(clientSimGetLobbyBrainAnnounce(cs, 2),
+                     "Line one.\n\nLine two, after a gap.") == 0);
+    UT_ASSERT_MSG(clientSimLobbyBrainHasDocs(cs, 2),
+                  "a brain announced with docs does not say it has them");
+    UT_ASSERT_MSG(clientSimGetLobbyBrainDocs(cs, 2)[0] == '\0',
+                  "docs appeared that nobody sent");
+    UT_ASSERT(clientSimGetLobbyBrainDocsState(cs, 2) == CLIENT_BRAIN_DOCS_WAITING);
+    UT_ASSERT(strcmp(clientSimGetLobbyBrainAnnounce(cs, 4), "No docs here.") == 0);
+    UT_ASSERT(!clientSimLobbyBrainHasDocs(cs, 4));
+    UT_ASSERT(clientSimGetLobbyBrainDocsState(cs, 4) == CLIENT_BRAIN_DOCS_NONE);
+    /* Asking for docs a brain does not have does nothing. */
+    clientSimLobbyBrainDocsWant(cs, 4, true);
+    UT_ASSERT(clientSimGetLobbyBrainDocsState(cs, 4) == CLIENT_BRAIN_DOCS_NONE);
+
+    /* A brain nobody announced reads as empty, never NULL, and so does an
+     * index past the table. */
+    UT_ASSERT(clientSimGetLobbyBrainAnnounce(cs, 0)[0] == '\0');
+    UT_ASSERT(clientSimGetLobbyBrainDocs(cs, 0)[0] == '\0');
+    UT_ASSERT(clientSimGetLobbyBrainAnnounce(cs, -1)[0] == '\0');
+    UT_ASSERT(clientSimGetLobbyBrainDocs(cs, BRAIN_LIST_MAX)[0] == '\0');
+    UT_ASSERT(!clientSimLobbyBrainHasDocs(cs, BRAIN_LIST_MAX));
+    clientSimDestroy(cs);
+    return 0;
+}
+
+/* ================================================================
+ * CTRL_LOBBY_BOT_POOL_INFO — which bot-name catalogue the server holds.
+ *
+ * The codec half: 8 bytes exactly, and the bodies a sender could not have
+ * written are refused (an id with no length, a length with no id, a length
+ * past LOBBY_BOT_CATALOG_WIRE_MAX).
+ *
+ * The apply half: a client whose own pools have the id is done, one whose
+ * pools differ wants the catalogue, and a server with none leaves the client
+ * on its own. The retired chunk event changes nothing.
+ * ================================================================ */
+int run_lobby_bot_pool_info_codec_and_apply(void) {
+    ControlEncodeBodyFn enc =
+        transportControlCodecBodyEncoder(CTRL_LOBBY_BOT_POOL_INFO);
+    ControlDecodeBodyFn dec =
+        transportControlCodecBodyDecoder(CTRL_LOBBY_BOT_POOL_INFO);
+    ControlEvent in, out;
+    uint8_t      buf[MAX_CONTROL_PACKET];
+    size_t       len = 12345;
+    ClientSim   *cs;
+    uint32_t     ownId;
+
+    UT_ASSERT_MSG(enc != NULL && dec != NULL,
+                  "CTRL_LOBBY_BOT_POOL_INFO has no body codec");
+
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_BOT_POOL_INFO;
+    in.u.lobbyBotPoolInfo.id  = 0xCAFEF00Du;
+    in.u.lobbyBotPoolInfo.len = LOBBY_BOT_CATALOG_WIRE_MAX;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT_MSG(len == 8, "the body is %zu bytes, expected 8", len);
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT(dec(buf, len, &out));
+    UT_ASSERT(out.type == CTRL_LOBBY_BOT_POOL_INFO);
+    UT_ASSERT(out.u.lobbyBotPoolInfo.id == 0xCAFEF00Du);
+    UT_ASSERT(out.u.lobbyBotPoolInfo.len == LOBBY_BOT_CATALOG_WIRE_MAX);
+    UT_ASSERT(!dec(buf, len - 1, &out));
+    UT_ASSERT(!dec(buf, len + 1, &out));
+
+    /* None at all: both 0. */
+    in.u.lobbyBotPoolInfo.id  = 0;
+    in.u.lobbyBotPoolInfo.len = 0;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT(dec(buf, len, &out) && out.u.lobbyBotPoolInfo.id == 0);
+
+    /* Refused both ways. */
+    in.u.lobbyBotPoolInfo.id  = 5;
+    in.u.lobbyBotPoolInfo.len = 0;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) != ENCODE_OK);
+    in.u.lobbyBotPoolInfo.id  = 0;
+    in.u.lobbyBotPoolInfo.len = 5;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) != ENCODE_OK);
+    in.u.lobbyBotPoolInfo.id  = 5;
+    in.u.lobbyBotPoolInfo.len = LOBBY_BOT_CATALOG_WIRE_MAX + 1;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) != ENCODE_OK);
+    memset(buf, 0, 8);
+    buf[3] = 5;                                          /* id 5, len 0 */
+    UT_ASSERT_MSG(!dec(buf, 8, &out), "an id with no length decoded");
+    buf[3] = 0; buf[7] = 5;                              /* id 0, len 5 */
+    UT_ASSERT_MSG(!dec(buf, 8, &out), "a length with no id decoded");
+    buf[3] = 5; buf[4] = 0xFF;                           /* len past the cap */
+    UT_ASSERT_MSG(!dec(buf, 8, &out), "a length past the cap decoded");
+
+    /* APPLY. */
+    lobbyBotPoolsReset();
+    ownId = lobbyBotPoolsCatalogId();
+    UT_ASSERT(ownId != 0);
+    cs = fresh_client_sim();
+    UT_ASSERT(cs != NULL);
+
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_BOT_POOL_INFO;
+    in.u.lobbyBotPoolInfo.id  = ownId;
+    in.u.lobbyBotPoolInfo.len = 100;
+    clientSimApplyControl(cs, &in);
+    UT_ASSERT_MSG(cs->lobbyPoolState == CLIENT_BOT_POOL_S_HAVE,
+                  "a client holding the server's pools wants them anyway "
+                  "(state %u)", (unsigned)cs->lobbyPoolState);
+
+    in.u.lobbyBotPoolInfo.id = ownId ^ 0x1u;
+    clientSimApplyControl(cs, &in);
+    UT_ASSERT(cs->lobbyPoolState == CLIENT_BOT_POOL_S_WANTED);
+    UT_ASSERT(cs->lobbyPoolId == (ownId ^ 0x1u) && cs->lobbyPoolLen == 100);
+
+    in.u.lobbyBotPoolInfo.id  = 0;
+    in.u.lobbyBotPoolInfo.len = 0;
+    clientSimApplyControl(cs, &in);
+    UT_ASSERT(cs->lobbyPoolState == CLIENT_BOT_POOL_S_NONE);
+
+    /* The retired chunk: nothing moves, and the pools stay the client's. */
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_BOT_POOL_CHUNK;
+    in.u.lobbyBotPoolChunk.seq     = 0;
+    in.u.lobbyBotPoolChunk.count   = 1;
+    in.u.lobbyBotPoolChunk.fragLen = 4;
+    clientSimApplyControl(cs, &in);
+    UT_ASSERT(cs->lobbyPoolState == CLIENT_BOT_POOL_S_NONE);
+    UT_ASSERT(lobbyBotPoolsCatalogId() == ownId);
+
+    clientSimDestroy(cs);
+    return 0;
+}
+
+/* THE DOCS A CLIENT SHOWS ARE THE GENERATION IT WAS TOLD ABOUT.
+ *
+ * The announce says which generation of a brain's commands.txt the server
+ * holds, and the docs arrive later on another channel. Between the two the
+ * server can re-read the file (a round handing the lobby back re-reads any
+ * brain whose files changed), so an answer can be for a generation the
+ * client no longer expects. This pins what the client does with each case:
+ *
+ *   - docs for another generation, or another length, are not installed;
+ *   - the right ones are, whole;
+ *   - the same generation announced again keeps them, so a round ending
+ *     does not make every player fetch the text again;
+ *   - a new generation drops them, so a player never reads docs the
+ *     server has replaced;
+ *   - bytes that do not inflate leave the brain FAILED, which a plain Want
+ *     leaves alone and a Want that asks for a retry does not. */
+int run_lobby_brain_docs_put_follows_generation(void) {
+    ControlEvent in, out;
+    ClientSim   *cs = fresh_client_sim();
+    static char  docs[3000];
+    static uint8_t z[BRAIN_DOCS_Z_MAX];
+    size_t       zLen;
+    int          i;
+
+    UT_ASSERT(cs != NULL);
+    for (i = 0; i < (int)sizeof(docs) - 1; i++) {
+        docs[i] = "fire at will\n"[i % 13];
+    }
+    docs[sizeof(docs) - 1] = '\0';
+    zLen = brainDocsCompress(docs, sizeof(docs) - 1, z, sizeof(z));
+    UT_ASSERT(zLen > 0);
+
+    announce_event(&in, 5, "hi", 7, (uint16_t)(sizeof(docs) - 1));
+    UT_ASSERT(announce_roundtrip(&in, &out, NULL) == 0);
+    clientSimApplyControl(cs, &out);
+
+    UT_ASSERT_MSG(!clientSimLobbyBrainDocsPut(cs, 5, 6, z, zLen,
+                                              sizeof(docs) - 1),
+                  "docs of generation 6 installed for a brain announced at 7");
+    UT_ASSERT(!clientSimLobbyBrainDocsPut(cs, 5, 7, z, zLen, sizeof(docs) - 2));
+    UT_ASSERT(clientSimGetLobbyBrainDocs(cs, 5)[0] == '\0');
+    UT_ASSERT(clientSimGetLobbyBrainDocsState(cs, 5) == CLIENT_BRAIN_DOCS_WAITING);
+
+    UT_ASSERT(clientSimLobbyBrainDocsPut(cs, 5, 7, z, zLen, sizeof(docs) - 1));
+    UT_ASSERT(clientSimGetLobbyBrainDocsState(cs, 5) == CLIENT_BRAIN_DOCS_READY);
+    UT_ASSERT(strcmp(clientSimGetLobbyBrainDocs(cs, 5), docs) == 0);
+
+    /* The same generation again: kept. */
+    clientSimApplyControl(cs, &out);
+    UT_ASSERT_MSG(strcmp(clientSimGetLobbyBrainDocs(cs, 5), docs) == 0,
+                  "re-announcing the same generation dropped the docs");
+    /* Asking again for docs already held does nothing either. */
+    clientSimLobbyBrainDocsWant(cs, 5, true);
+    UT_ASSERT(clientSimGetLobbyBrainDocsState(cs, 5) == CLIENT_BRAIN_DOCS_READY);
+
+    /* A new generation: dropped, and the brain waits for the new text. */
+    announce_event(&in, 5, "hi", 8, (uint16_t)(sizeof(docs) - 1));
+    UT_ASSERT(announce_roundtrip(&in, &out, NULL) == 0);
+    clientSimApplyControl(cs, &out);
+    UT_ASSERT_MSG(clientSimGetLobbyBrainDocs(cs, 5)[0] == '\0',
+                  "docs of generation 7 survived an announce of generation 8");
+    UT_ASSERT(clientSimGetLobbyBrainDocsState(cs, 5) == CLIENT_BRAIN_DOCS_WAITING);
+
+    /* Bytes that do not inflate: FAILED. */
+    memset(z, 0x5A, 32);
+    UT_ASSERT(!clientSimLobbyBrainDocsPut(cs, 5, 8, z, 32, sizeof(docs) - 1));
+    UT_ASSERT(clientSimGetLobbyBrainDocsState(cs, 5) == CLIENT_BRAIN_DOCS_FAILED);
+    clientSimLobbyBrainDocsWant(cs, 5, false);
+    UT_ASSERT_MSG(clientSimGetLobbyBrainDocsState(cs, 5) == CLIENT_BRAIN_DOCS_FAILED,
+                  "a plain Want re-armed a brain that failed, which the dialog "
+                  "calls every frame and would ask forever");
+    clientSimLobbyBrainDocsWant(cs, 5, true);
+    UT_ASSERT(clientSimGetLobbyBrainDocsState(cs, 5) == CLIENT_BRAIN_DOCS_WAITING);
+
+    clientSimDestroy(cs);
+    return 0;
+}
+
+/* A NEW BRAIN LIST THROWS THE OLD TEXTS AWAY.
+ *
+ * The texts are held by catalogue INDEX, not by brain name: entry 2's
+ * announce line is "whatever brain 2 is". Reconnect to a different server and
+ * its entry 2 is a different brain — but the table still held the previous
+ * server's text, so the lobby showed one server's announce line under another
+ * server's brain name, and clicking it opened the wrong docs.
+ *
+ * CTRL_LOBBY_BRAIN_LIST is the event that makes the old indices meaningless,
+ * so it is where the table is cleared. The announces for the new list follow
+ * it in the same sync replay, so nothing that is still wanted is lost.
+ *
+ * Fetched docs go with it: they are keyed by the same index. */
+int run_lobby_brain_list_clears_stale_texts(void) {
+    ControlEvent in, out;
+    ClientSim   *cs = fresh_client_sim();
+    static const char kAnnounce[] = "Server one's brain 2 speaking";
+    static const char kDocs[] = "server one's commands";
+    uint8_t      z[256];
+    size_t       zLen;
+
+    UT_ASSERT(cs != NULL);
+    zLen = brainDocsCompress(kDocs, strlen(kDocs), z, sizeof(z));
+    UT_ASSERT(zLen > 0);
+
+    announce_event(&in, 2, kAnnounce, 3, (uint16_t)strlen(kDocs));
+    UT_ASSERT(announce_roundtrip(&in, &out, NULL) == 0);
+    clientSimApplyControl(cs, &out);
+    UT_ASSERT(clientSimLobbyBrainDocsPut(cs, 2, 3, z, zLen, strlen(kDocs)));
+
+    UT_ASSERT_MSG(strcmp(clientSimGetLobbyBrainAnnounce(cs, 2), kAnnounce) == 0,
+                  "the fixture did not install the texts in the first place: "
+                  "'%s'", clientSimGetLobbyBrainAnnounce(cs, 2));
+    UT_ASSERT(strcmp(clientSimGetLobbyBrainDocs(cs, 2), kDocs) == 0);
+
+    /* Now a different server's catalogue arrives. */
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_BRAIN_LIST;
+    in.u.lobbyBrainList.list.count = 3;
+    snprintf(in.u.lobbyBrainList.list.entries[0].name,
+             BRAIN_LIST_NAME_LEN, "%s", "OtherA");
+    snprintf(in.u.lobbyBrainList.list.entries[1].name,
+             BRAIN_LIST_NAME_LEN, "%s", "OtherB");
+    snprintf(in.u.lobbyBrainList.list.entries[2].name,
+             BRAIN_LIST_NAME_LEN, "%s", "OtherC");
+    UT_ASSERT(codec_roundtrip(CTRL_LOBBY_BRAIN_LIST, &in, &out) == 0);
+    clientSimApplyControl(cs, &out);
+
+    UT_ASSERT_MSG(clientSimGetLobbyBrainAnnounce(cs, 2)[0] == '\0',
+                  "the previous server's announce line survived a new brain "
+                  "list: '%s'. Index 2 is a different brain now",
+                  clientSimGetLobbyBrainAnnounce(cs, 2));
+    UT_ASSERT_MSG(clientSimGetLobbyBrainDocs(cs, 2)[0] == '\0',
+                  "the previous server's commands.txt survived a new brain "
+                  "list");
+    UT_ASSERT_MSG(!clientSimLobbyBrainHasDocs(cs, 2),
+                  "a new brain list left the old server's docs generation");
+
+    /* The new server's own announce still installs, even at the same
+       generation number the old server used: the clear drops what is stale,
+       not the channel. */
+    announce_event(&in, 2, "Server two", 3, (uint16_t)strlen(kDocs));
+    UT_ASSERT(announce_roundtrip(&in, &out, NULL) == 0);
+    clientSimApplyControl(cs, &out);
+    UT_ASSERT(strcmp(clientSimGetLobbyBrainAnnounce(cs, 2), "Server two") == 0);
+    UT_ASSERT_MSG(clientSimGetLobbyBrainDocs(cs, 2)[0] == '\0',
+                  "the old server's docs came back under the new announce");
+
+    clientSimDestroy(cs);
+    return 0;
+}
+
+/* ONE FUNCTION OWNS THE "name: text" LINE.
+ *
+ * The lobby's bot-announce poll appends a line to team chat and then searches
+ * the history for it, because a chat buffer near full drops an append without
+ * a word and only what actually landed may have the brain's docs hung off it.
+ * That search only works while the searcher spells the line exactly as the
+ * append did — and the two used to build it separately, one with strcat in
+ * client_sim.c and one with an SDL_snprintf("%s: %s") in imgui_lobby.cpp.
+ * Nothing tied them together, so a change to either spelling would have
+ * turned the search into a permanent miss and no bot would ever have carried
+ * its docs again.
+ *
+ * clientSimFormatLobbyChatLine is now that one spelling. This case checks
+ * what both sides depend on: the formatter's output is what the append
+ * actually writes, so a search for the former finds the latter. */
+int run_lobby_chat_line_format_is_what_is_appended(void) {
+    ClientSim  *cs = fresh_client_sim();
+    char        line[LOBBY_CHAT_LINE_MAX];
+    const char *history;
+    int         n;
+
+    UT_ASSERT(cs != NULL);
+
+    n = clientSimFormatLobbyChatLine(line, sizeof(line), "Bot1",
+                                     "I fetch pills and hold ground");
+    UT_ASSERT_MSG(n > 0, "the formatter refused an ordinary line (%d)", n);
+    UT_ASSERT_MSG(strcmp(line, "Bot1: I fetch pills and hold ground") == 0,
+                  "the line reads \"%s\"", line);
+    UT_ASSERT_MSG(n == (int)strlen(line),
+                  "the formatter returned %d for a %d-character line",
+                  n, (int)strlen(line));
+
+    /* Team chat: exactly what the lobby's announce poll does. */
+    clientSimAppendLobbyTeamChat(cs, "Bot1", "I fetch pills and hold ground");
+    history = clientSimGetLobbyTeamChatHistory(cs);
+    UT_ASSERT_MSG(history != NULL && strstr(history, line) != NULL,
+                  "the appended team-chat line is not the formatted one: "
+                  "history \"%s\" does not contain \"%s\"",
+                  history ? history : "(null)", line);
+
+    /* And the broadcast log, which is the same shape. */
+    clientSimAppendLobbyChat(cs, "Bot1", "I fetch pills and hold ground");
+    history = clientSimGetLobbyChatHistory(cs);
+    UT_ASSERT_MSG(history != NULL && strstr(history, line) != NULL,
+                  "the appended broadcast line is not the formatted one");
+
+    /* A second line is newline-separated, so the search for the first still
+       matches and the two do not run together. */
+    clientSimAppendLobbyTeamChat(cs, "Bot2", "and I mine");
+    history = clientSimGetLobbyTeamChatHistory(cs);
+    UT_ASSERT_MSG(strstr(history, line) != NULL,
+                  "the first line stopped matching once a second was added");
+    UT_ASSERT_MSG(strstr(history, "\nBot2: and I mine") != NULL,
+                  "the second line did not start on a line of its own: "
+                  "\"%s\"", history);
+
+    /* No room means no line, and the caller is told so rather than being
+       handed a half-written one to search for. */
+    {
+        char tiny[8];
+        UT_ASSERT_MSG(clientSimFormatLobbyChatLine(tiny, sizeof(tiny),
+                                                   "AVeryLongBotName",
+                                                   "and a long announce") < 0,
+                      "a line that cannot fit was reported as written");
+        UT_ASSERT_MSG(tiny[0] == '\0',
+                      "a refused line left \"%s\" in the buffer", tiny);
+    }
+
+    clientSimDestroy(cs);
     return 0;
 }

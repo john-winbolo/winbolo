@@ -47,6 +47,18 @@ struct ClientSim;
 #define PILLBOX_COOLDOWN_TIME 32
 #define PILLBOX_MAX_FIRERATE 6 /* 6 */
 
+/* What a shell takes off a pillbox. A shell takes shell_damage off a tank
+ * and off a base; against a pill it has always taken one, which is why this
+ * is its own number rather than the same one. */
+#define PILLBOX_SHELL_DAMAGE 1
+
+/* What a hurt pillbox divides its firing interval by. The interval starts at
+ * PILLBOX_ATTACK_NORMAL and is floored at PILLBOX_MAX_FIRERATE; this is the
+ * step it takes between the two each time it is hit, so 1 is a pill that
+ * never angers and a number above the whole span is one that angers fully on
+ * the first shell. */
+#define PILLBOX_ANGRY_DIVISOR 2
+
 #define PILLS_MAX_ARMOUR 15
 
 /* A pill's flags byte. Armour travels in a byte of its own; this byte carries
@@ -90,11 +102,17 @@ static inline bool    pillPosCurrentFromByte(uint8_t b) {
 /* Pillbox not found return Value */
 #define PILL_NOT_FOUND 254
 
-/* A pillbox has to be within 9 squares of a base to get angry if it is shot */
-#define PILL_BASE_HIT_LEFT -9
-#define PILL_BASE_HIT_RIGHT 9
-#define PILL_BASE_HIT_TOP -9
-#define PILL_BASE_HIT_BOTTOM 9
+/* How far from a shot base, in map squares, an allied pillbox gets angry.
+   Read by the shape below: 9 across a square is the WinBolo rule, and 7 as
+   a circle is the Mac Bolo one. */
+#define PILL_BASE_HIT_RANGE 9
+
+/* The two shapes pill_base_defend_shape can take. A square takes the range
+   on each axis and includes its edge; a circle takes it as a radius and a
+   pillbox exactly that far off is not angered. */
+#define PILL_BASE_HIT_SQUARE 0
+#define PILL_BASE_HIT_CIRCLE 1
+#define PILL_BASE_HIT_SHAPE  PILL_BASE_HIT_SQUARE
 
 /* Amount of damage each tree unit repairs */
 #define PILL_REPAIR_AMOUNT 4
@@ -102,6 +120,20 @@ static inline bool    pillPosCurrentFromByte(uint8_t b) {
 /* The maximum amount of time we will iterate to aim a shell to hit a tank */
 /* Added to fix the rare tank run away bug so the shell will never hit the tank */
 #define MAX_AIM_ITERATE 200
+
+/* How near a tank has to be for a pillbox to aim with the original forward
+   prediction rather than the solver, and how straight at the pillbox that
+   tank has to be driving to be aimed at properly anyway. Zero is a pillbox
+   that always uses the solver, which is what the classic table plays. */
+#define PILLBOX_MASSAGE_RANGE  0
+#define PILLBOX_MASSAGE_COSINE 0.5
+
+/* Whether pillboxes limit the shells in the air at one tank, and the limit.
+   A pillbox whose nearest target already has that many coming at it fires at
+   the next nearest instead, or holds its shot. The classic table plays with
+   the limit off. */
+#define PILLBOX_SHELL_CAP          0
+#define PILLBOX_MAX_SHELLS_AT_TANK 12
 
 /* Brain stuff */
 /* Bases Brain stuff */
@@ -371,6 +403,20 @@ void pillsUpdate(struct GameSim *sim, tank tanks[], bool *connected, BYTE numTan
 bool pillsIsPillHit(pillboxes *value, BYTE xValue, BYTE yValue);
 
 /*********************************************************
+*NAME:          pillsHitSlot
+*PURPOSE:
+*  The pill index of the pillbox a shell at this square
+*  would hit — the one pillsIsPillHit answers for — or
+*  DMG_NO_PILL for a square with none.
+*
+*ARGUMENTS:
+*  value  - Pointer to the pillbox structure
+*  xValue - X Location
+*  yValue - Y Location
+*********************************************************/
+BYTE pillsHitSlot(pillboxes *value, BYTE xValue, BYTE yValue);
+
+/*********************************************************
 *NAME:          pillsDamagePos
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/3/98
@@ -385,8 +431,11 @@ bool pillsIsPillHit(pillboxes *value, BYTE xValue, BYTE yValue);
 *  yValue     - Y Location
 *  wantDamage - TRUE if we just want to do damage to it
 *  wantAngry  - TRUE if we just want to make it angry
+*  owner      - Who fired the shell, NEUTRAL for a pillbox
+*  pill       - The pill index of the pillbox that fired
+*               it, DMG_NO_PILL for a tank's shell
 *********************************************************/
-bool pillsDamagePos(struct GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, bool wantAngry, BYTE owner);
+bool pillsDamagePos(struct GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, bool wantAngry, BYTE owner, BYTE pill);
 
 /*********************************************************
 *NAME:          pillsGetScreenHealth
@@ -423,7 +472,8 @@ BYTE pillsGetScreenHealth(struct GameSim *sim, pillboxes *value, BYTE xValue, BY
 *  speed  - The speed of the tank
 *  onBoat - Is the tank on a boat
 *********************************************************/
-TURNTYPE pillsTargetTank(struct GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD xValue, WORLD yValue, WORLD tankX, WORLD tankY, TURNTYPE angle, BYTE speed, bool onBoat, BYTE boatExitSpeed);
+/* obstructed suppresses the lead in Mac aiming mode, even at nonzero speed. */
+TURNTYPE pillsTargetTank(struct GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD xValue, WORLD yValue, WORLD tankX, WORLD tankY, TURNTYPE angle, BYTE speed, bool onBoat, BYTE boatExitSpeed, bool obstructed);
 
 /*********************************************************
 *NAME:          pillsTargetTankMove
@@ -661,8 +711,11 @@ BYTE pillsSetPillOwner(struct GameSim *sim, pillboxes *value, BYTE pillNum, BYTE
 *  xValue - X Location of pillbox
 *  yValue - Y Location of pillbox
 *  amount - Amount of damage done to the pillbox
+*  owner  - The slot whose dying tank the blast came
+*           from, for the policy questions alone: the
+*           kill is still credited to nobody
 *********************************************************/
-void pillsGetDamagePos(struct GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue, BYTE amount);
+void pillsGetDamagePos(struct GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue, BYTE amount, BYTE owner);
 
 /*********************************************************
 *NAME:          pillsNumInRect
@@ -1034,9 +1087,18 @@ void pillsSetPillCompressData(pillboxes *value, BYTE *buff, int dataLen);
 /* Clamps the pillbox fields a map cannot be trusted on whatever the rules
    say — the count and each owner. See basesValidate. */
 void pillsValidate(pillboxes *value);
+
+/* Takes off the map every pillbox on the ground in the mined border, unless
+ * no pillbox on the ground is inside it. Returns how many were taken off.
+ * See pillbox.c. */
+BYTE pillsRemoveBorderPills(pillboxes *value);
 /* Clamps every pillbox against the sim's gameplay caps. Called by
    mapClampToRules once a sim owns the records; see bolo_map.h. */
 void pillsClampToRules(struct GameSim *sim, pillboxes *value);
+/* Raises every pillbox to the sim's armour cap — the same walk the other way
+   round, for a scenario that raises the cap and asks for the map to start at
+   it. Called by serverSimScenarioFillWorldToRules, which writes the records. */
+void pillsFillToRules(struct GameSim *sim, pillboxes *value);
 
 
 #endif /* PILLBOX_H */

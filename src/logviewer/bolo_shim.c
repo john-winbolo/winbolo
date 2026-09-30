@@ -364,6 +364,12 @@ bool sdl3ImguiPlayerIsBot(unsigned char playerNum) {
   return false;
 }
 
+/* The viewer has no label-length setting; the bot branch never fires here
+ * anyway (see sdl3ImguiPlayerIsBot above). */
+bool sdl3ImguiTankLabelsLong(void) {
+  return true;
+}
+
 /* The log viewer compiles tank_label.c, which asks this to pick a bot's chip.
  * There are no alliances to report when replaying a recording, and the bot
  * branch above never fires here anyway, so the red chip is the answer. */

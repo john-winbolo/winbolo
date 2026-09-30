@@ -102,123 +102,241 @@ local function _cfg_set(name, value, source)
   return true
 end
 
-do
-  local a = rawget(_G, "BRAIN_INIT_ARG")
-  if type(a) == "string" and a ~= "" then
-    -- Same token split as the tick-1 block: ',' or ';'. A scenario's
-    -- spawn_bot init string uses ';' and so must a command-line [..] suffix
-    -- (the CLI parser eats commas).
-    local presets, cfgs = {}, {}
-    for tok in a:gmatch("[^,;]+") do
-      tok = tok:gsub("%s", "")
-      local pname = tok:match("^preset=(.+)$")
-      local cname, cval = tok:match("^cfg=([%a_][%w_]*)=(.*)$")
-      local dname = tok:match("^difficulty=(.*)$")
-      local mname = tok:match("^mode=(.*)$")
-      if pname then
-        presets[#presets + 1] = pname
-      elseif cname then
-        cfgs[#cfgs + 1] = { cname, cval }
-      elseif mname then
-        -- "mode=<key>" -- the host's per-bot lobby choice of MODE, appended
-        -- to this arg by bot_manager.c at brain-create time. The key comes
-        -- from this brain's own modes.txt, so the vocabulary is whatever
-        -- that file lists ("default", "survival", ...) and this side only
-        -- checks the shape. Written into C.MODE RIGHT HERE (not queued into
-        -- cfgs) so the level bundle below can read the chosen mode; it is
-        -- type-checked and logged like every other override. Precedence:
-        -- level < preset < cfg (a later cfg=MODE= would still win).
-        mname = mname:lower()
-        if mname:match("^[a-z0-9_]+$") then
-          _cfg_set("MODE", mname, "mode")
-        else
-          _cfg_warn_add("[mode] BAD TOKEN '%s' -- want mode=<key> of [a-z0-9_]; IGNORED.", tok)
-        end
-      elseif dname then
-        -- "difficulty=<key>" -- the host's per-bot lobby choice of LEVEL
-        -- inside that mode, likewise appended by bot_manager.c. modes.txt
-        -- defines which keys a mode has, so any [a-z0-9_] key is accepted
-        -- here rather than the three the default mode happens to use.
-        -- Written into C.DIFFICULTY RIGHT HERE (not queued) so the level
-        -- bundle below reads it; MODE_LEVELS[C.MODE][C.DIFFICULTY] then
-        -- applies BEFORE any preset=. "normal" is the old name for medium;
-        -- the C side never sends it, but a hand-written arg might.
-        dname = dname:lower()
-        if dname == "normal" then dname = "medium" end
-        if dname:match("^[a-z0-9_]+$") then
-          _cfg_set("DIFFICULTY", dname, "difficulty")
-        else
-          _cfg_warn_add("[difficulty] BAD TOKEN '%s' -- want difficulty=<key> of [a-z0-9_]; IGNORED.", tok)
-        end
-      elseif tok:sub(1, 4) == "cfg=" then
-        _cfg_warn_add("[cfg] BAD TOKEN '%s' -- want cfg=NAME=VALUE; IGNORED.", tok)
-      end
-      -- Everything else is one of the tick-1 tokens; not our business.
-    end
-    -- LEVEL BUNDLE (lowest precedence, applied BEFORE presets): the per-(mode,
-    -- difficulty) scalar overrides from C.MODE_LEVELS, pushed through the same
-    -- _cfg_set path so its type/table refusals and logging apply with no new
-    -- validation. MODE and DIFFICULTY were resolved inline above. A missing
-    -- mode/difficulty key (or hard = {}) simply applies nothing.
+-- John's scenario host hands a bot its `spawn_bot{ init = {...} }` table as the
+-- global BRAIN_INIT (flat, string values). This brain reads tokens from the
+-- string global BRAIN_INIT_ARG ("k=v;k=v"), so a table has to be flattened into
+-- that form before either parse block reads it. Keys are sorted so every bot
+-- builds the same string from the same table (determinism).
+--
+-- ONE flattener, two callers: the chunk-load block below (the spawn's table)
+-- and Brain.on_init (a table game.bot_init hands a bot that is already
+-- playing). Andrew, 2026-09-15: bots must take per-spawn data from the
+-- scenario, and then be able to be told something new while they run.
+--
+-- Answers the token string, or "" when the table names nothing.
+-- The bare flag words the tick-1 block matches by exact name. Keep in step
+-- with the `tok == "..."` tests further down; a word missing here arrives as
+-- "word=1" and is ignored there.
+local _INIT_FLAG_WORDS = {
+  ammoless = true, blitzonly = true, horde = true, noammo = true, noblitz = true,
+  noclaimdead = true, normal = true, nosuicider = true, suicider = true, survivor = true,
+}
+
+local function _flatten_init_table(t)
+  if type(t) ~= "table" then return "" end
+  local keys = {}
+  for k, v in pairs(t) do
+    if type(k) == "string" and k ~= "" and v ~= nil then keys[#keys + 1] = k end
+  end
+  table.sort(keys)
+  local toks = {}
+  for _, k in ipairs(keys) do
+    local v = t[k]
+    if type(v) ~= "boolean" then v = tostring(v) end
+    -- The tick-1 block matches bare flag tokens by exact name ("noblitz",
+    -- "suicider", "noclaimdead", ...), never as "noblitz=1". So a flag the
+    -- scenario writes as noblitz = true / "1" / "" becomes the bare word,
+    -- a flag written false / "0" is dropped (absent = off), and everything
+    -- else stays a k=v pair (difficulty=hard, portfolio=..., cfg=...).
     --
-    -- The level is selected by the difficulty= (and mode=) TOKEN only. A later
-    -- cfg=DIFFICULTY= changes the label C.DIFFICULTY but does NOT apply a
-    -- different bundle -- the bundle was already chosen when this block ran.
-    -- That is intended: cfg= is a single-knob override, not a level selector,
-    -- so bench a level with difficulty=<level>, not cfg=DIFFICULTY=<level>.
-    -- Every bundle value is FIRST-PASS, to be benched preset=keel vs
-    -- difficulty=<level> per the approve-values rule; hard = {} is empty by
-    -- design so a default game is bit-for-bit today's brain.
-    do
-      local mode, diff = C.MODE, C.DIFFICULTY
-      local mtbl = C.MODE_LEVELS and C.MODE_LEVELS[mode]
-      local ltbl = mtbl and mtbl[diff]
-      if type(ltbl) == "table" then
-        -- Sorted so the log reads the same on every run (see the preset loop).
-        local keys = {}
-        for k in pairs(ltbl) do keys[#keys + 1] = k end
-        table.sort(keys)
-        local n = 0
-        for _, k in ipairs(keys) do
-          if _cfg_set(k, ltbl[k], "level " .. tostring(mode) .. "/" .. tostring(diff)) then n = n + 1 end
-        end
-        _INIT_CFG_LOG[#_INIT_CFG_LOG + 1] =
-          string.format("[level] %s/%s applied (%d values)", tostring(mode), tostring(diff), n)
-      end
-    end
-    -- Presets FIRST, so an explicit cfg= wins wherever it sits in the list.
-    for _, pname in ipairs(presets) do
-      local tbl = C.PRESETS and C.PRESETS[pname]
-      if type(tbl) ~= "table" then
-        local known = {}
-        if C.PRESETS then for k in pairs(C.PRESETS) do known[#known + 1] = k end end
-        table.sort(known)
-        _cfg_warn_add("[preset] UNKNOWN PRESET '%s' -- known: %s; IGNORED.",
-                      tostring(pname), table.concat(known, " "))
+    -- Only a key the parser knows as a FLAG is treated that way. A valued
+    -- token whose value happens to be 1 (Survival's blitzsuiciders=1 on
+    -- waves 1, 3 and 5) must stay k=v, or the parser drops it on the floor
+    -- and the wave plays with the default. Found on the first wave, Sep 15.
+    if _INIT_FLAG_WORDS[k] then
+      if v == true or v == "1" or v == "" then
+        toks[#toks + 1] = k
+      elseif v == false or v == "0" then
+        -- off: no token
       else
-        -- Sorted so the log reads the same on every run (pairs() order is not
-        -- reproducible, and these lines are compared between runs).
-        local keys = {}
-        for k in pairs(tbl) do keys[#keys + 1] = k end
-        table.sort(keys)
-        local n = 0
-        for _, k in ipairs(keys) do
-          if _cfg_set(k, tbl[k], "preset " .. pname) then n = n + 1 end
-        end
-        _INIT_CFG_LOG[#_INIT_CFG_LOG + 1] =
-          string.format("[preset] %s applied (%d values)", pname, n)
+        toks[#toks + 1] = k .. "=" .. v
       end
-    end
-    for _, kv in ipairs(cfgs) do
-      local name, raw = kv[1], kv[2]
-      local v
-      if raw == "true" then v = true
-      elseif raw == "false" then v = false
-      elseif tonumber(raw) then v = tonumber(raw)
-      else v = raw end
-      _cfg_set(name, v, "init_arg")
+    elseif v == false then
+      -- a non-flag written false: nothing to say
+    else
+      toks[#toks + 1] = k .. "=" .. v
     end
   end
+  return table.concat(toks, ";")
+end
+
+do
+  local flat = _flatten_init_table(rawget(_G, "BRAIN_INIT"))
+  if flat ~= "" then
+    -- A string already in BRAIN_INIT_ARG (the command-line path) keeps its
+    -- place; the table's tokens are appended after it.
+    local a = rawget(_G, "BRAIN_INIT_ARG")
+    if type(a) == "string" and a ~= "" then flat = a .. ";" .. flat end
+    rawset(_G, "BRAIN_INIT_ARG", flat)
+  end
+end
+
+-- The tokens that write CONSTANTS: preset=, cfg=NAME=VALUE, and the mode= /
+-- difficulty= pair that choose a bundle out of C.MODE_LEVELS.
+--
+-- ONE parser, two callers. At chunk load it reads the string the spawn's table
+-- and the command line built between them. At runtime Brain.on_init calls it
+-- again with the tokens game.bot_init just handed the bot, and `runtime` is
+-- what tells the two apart:
+--
+--   preset= and cfg=  apply either way. They write single values into C, and
+--                     every reader of C reads it live, so a write lands on the
+--                     next tick.
+--   survivor / horde  (the side words) apply either way too. Each writes its
+--                     C.SIDE_SETTINGS list, and each list writes every setting
+--                     the other side turns on, so a second side word fully
+--                     replaces the first. The state half of the word
+--                     (state.side, never-refuel) is Brain.apply_init_tokens.
+--   mode= / difficulty=  do NOT apply at runtime. Each names a whole BUNDLE of
+--                     values out of C.MODE_LEVELS, and a bundle cannot be
+--                     unapplied: a second one would leave the first's keys
+--                     standing wherever it does not name them, so the bot
+--                     would end up on neither level. Logged as unsupported and
+--                     left, rather than half-applied.
+--
+-- `source` is the word that lands in the [cfg] log line beside each value, so
+-- a log says where an override came from.
+local function _apply_cfg_tokens(a, source, runtime)
+  if type(a) ~= "string" or a == "" then return end
+  -- Same token split as the tick-1 block: ',' or ';'. A scenario's
+  -- spawn_bot init string uses ';' and so must a command-line [..] suffix
+  -- (the CLI parser eats commas).
+  local presets, cfgs = {}, {}
+  local side = nil      -- the last side word in the string wins
+  for tok in a:gmatch("[^,;]+") do
+    tok = tok:gsub("%s", "")
+    local pname = tok:match("^preset=(.+)$")
+    local cname, cval = tok:match("^cfg=([%a_][%w_]*)=(.*)$")
+    local dname = tok:match("^difficulty=(.*)$")
+    local mname = tok:match("^mode=(.*)$")
+    if tok == "survivor" or tok == "horde" then
+      side = tok
+    elseif pname then
+      presets[#presets + 1] = pname
+    elseif cname then
+      cfgs[#cfgs + 1] = { cname, cval }
+    elseif mname then
+      -- "mode=<key>" -- the host's per-bot lobby choice of MODE, appended
+      -- to this arg by bot_manager.c at brain-create time. The key comes
+      -- from this brain's own modes.txt, so the vocabulary is whatever
+      -- that file lists ("default", ...) and this side only
+      -- checks the shape. Written into C.MODE RIGHT HERE (not queued into
+      -- cfgs) so the level bundle below can read the chosen mode; it is
+      -- type-checked and logged like every other override. Precedence:
+      -- level < preset < cfg (a later cfg=MODE= would still win).
+      mname = mname:lower()
+      if runtime then
+        _cfg_warn_add("[mode] '%s' is unsupported at runtime -- a mode names a whole level bundle and a second bundle cannot unset the first; IGNORED.", tok)
+      elseif mname:match("^[a-z0-9_]+$") then
+        _cfg_set("MODE", mname, "mode")
+      else
+        _cfg_warn_add("[mode] BAD TOKEN '%s' -- want mode=<key> of [a-z0-9_]; IGNORED.", tok)
+      end
+    elseif dname then
+      -- "difficulty=<key>" -- the host's per-bot lobby choice of LEVEL
+      -- inside that mode, likewise appended by bot_manager.c. modes.txt
+      -- defines which keys a mode has, so any [a-z0-9_] key is accepted
+      -- here rather than the three the default mode happens to use.
+      -- Written into C.DIFFICULTY RIGHT HERE (not queued) so the level
+      -- bundle below reads it; MODE_LEVELS[C.MODE][C.DIFFICULTY] then
+      -- applies BEFORE any preset=. "normal" is the old name for medium;
+      -- the C side never sends it, but a hand-written arg might.
+      dname = dname:lower()
+      if dname == "normal" then dname = "medium" end
+      if runtime then
+        _cfg_warn_add("[difficulty] '%s' is unsupported at runtime -- a level names a whole bundle and a second bundle cannot unset the first; IGNORED.", tok)
+      elseif dname:match("^[a-z0-9_]+$") then
+        _cfg_set("DIFFICULTY", dname, "difficulty")
+      else
+        _cfg_warn_add("[difficulty] BAD TOKEN '%s' -- want difficulty=<key> of [a-z0-9_]; IGNORED.", tok)
+      end
+    elseif tok:sub(1, 4) == "cfg=" then
+      _cfg_warn_add("[cfg] BAD TOKEN '%s' -- want cfg=NAME=VALUE; IGNORED.", tok)
+    end
+    -- Everything else is one of the tick-1 tokens; not our business.
+  end
+  -- LEVEL BUNDLE (lowest precedence, applied BEFORE presets): the per-(mode,
+  -- difficulty) scalar overrides from C.MODE_LEVELS, pushed through the same
+  -- _cfg_set path so its type/table refusals and logging apply with no new
+  -- validation. MODE and DIFFICULTY were resolved inline above. A missing
+  -- mode/difficulty key (or hard = {}) simply applies nothing.
+  --
+  -- The level is selected by the difficulty= (and mode=) TOKEN only. A later
+  -- cfg=DIFFICULTY= changes the label C.DIFFICULTY but does NOT apply a
+  -- different bundle -- the bundle was already chosen when this block ran.
+  -- That is intended: cfg= is a single-knob override, not a level selector,
+  -- so bench a level with difficulty=<level>, not cfg=DIFFICULTY=<level>.
+  -- Every bundle value is FIRST-PASS, to be benched preset=keel vs
+  -- difficulty=<level> per the approve-values rule; hard = {} is empty by
+  -- design so a default game is bit-for-bit today's brain.
+  do
+    local mode, diff = C.MODE, C.DIFFICULTY
+    local mtbl = (not runtime) and C.MODE_LEVELS and C.MODE_LEVELS[mode]
+    local ltbl = mtbl and mtbl[diff]
+    if type(ltbl) == "table" then
+      -- Sorted so the log reads the same on every run (see the preset loop).
+      local keys = {}
+      for k in pairs(ltbl) do keys[#keys + 1] = k end
+      table.sort(keys)
+      local n = 0
+      for _, k in ipairs(keys) do
+        if _cfg_set(k, ltbl[k], "level " .. tostring(mode) .. "/" .. tostring(diff)) then n = n + 1 end
+      end
+      _INIT_CFG_LOG[#_INIT_CFG_LOG + 1] =
+        string.format("[level] %s/%s applied (%d values)", tostring(mode), tostring(diff), n)
+    end
+  end
+  -- Presets FIRST, so an explicit cfg= wins wherever it sits in the list.
+  for _, pname in ipairs(presets) do
+    local tbl = C.PRESETS and C.PRESETS[pname]
+    if type(tbl) ~= "table" then
+      local known = {}
+      if C.PRESETS then for k in pairs(C.PRESETS) do known[#known + 1] = k end end
+      table.sort(known)
+      _cfg_warn_add("[preset] UNKNOWN PRESET '%s' -- known: %s; IGNORED.",
+                    tostring(pname), table.concat(known, " "))
+    else
+      -- Sorted so the log reads the same on every run (pairs() order is not
+      -- reproducible, and these lines are compared between runs).
+      local keys = {}
+      for k in pairs(tbl) do keys[#keys + 1] = k end
+      table.sort(keys)
+      local n = 0
+      for _, k in ipairs(keys) do
+        if _cfg_set(k, tbl[k], "preset " .. pname) then n = n + 1 end
+      end
+      _INIT_CFG_LOG[#_INIT_CFG_LOG + 1] =
+        string.format("[preset] %s applied (%d values)", pname, n)
+    end
+  end
+  -- Side word AFTER presets and BEFORE cfg=: level < preset < side < cfg. So
+  -- `survivor` beats preset=keel, and an explicit cfg= in the same table
+  -- still beats the side word.
+  local stbl = side and C.SIDE_SETTINGS and C.SIDE_SETTINGS[side]
+  if type(stbl) == "table" then
+    local keys = {}
+    for k in pairs(stbl) do keys[#keys + 1] = k end
+    table.sort(keys)
+    local n = 0
+    for _, k in ipairs(keys) do
+      if _cfg_set(k, stbl[k], "side " .. side) then n = n + 1 end
+    end
+    _INIT_CFG_LOG[#_INIT_CFG_LOG + 1] =
+      string.format("[side] %s applied (%d values)", side, n)
+  end
+  for _, kv in ipairs(cfgs) do
+    local name, raw = kv[1], kv[2]
+    local v
+    if raw == "true" then v = true
+    elseif raw == "false" then v = false
+    elseif tonumber(raw) then v = tonumber(raw)
+    else v = raw end
+    _cfg_set(name, v, source)
+  end
+end
+
+do
+  _apply_cfg_tokens(rawget(_G, "BRAIN_INIT_ARG"), "init_arg", false)
 end
 
 local TAG     = "[" .. C.BRAIN_NAME .. "]"
@@ -269,6 +387,10 @@ local pill_table = require("pill_table")
 local PP = require("pill_portfolio")
 local lgm_registry = require("lgm_registry")
 local circles = require("circles")
+-- Chat orders (bot commands). ONE table name for the whole feature: Brain.think
+-- is a couple of slots off Lua's 60-upvalue cap, so everything hangs off this
+-- module and off state.orders. See orders.lua.
+local ORD = require("orders")
 lgm_registry.init()
 
 local Brain = {}
@@ -1153,6 +1275,215 @@ local function draw_shell_hitbox_viz(info)
 end
 
 -- =========================================================================
+-- INIT TOKENS
+-- =========================================================================
+
+-- The tokens that write STATE rather than constants: the bare flags and the
+-- k=v pairs that call a setter (PP.set_targets, squad.set_blitz_size,
+-- goals.set_refuel_mult). Lifted out of Brain.think's tick-1 block so the two
+-- ways a bot is told something read the same tokens through the same code:
+--
+--   tick 1        -- what the spawn's init table and the -bot-init suffix said
+--   Brain.on_init -- what game.bot_init has just handed a bot that is playing
+--
+-- A field on Brain rather than a file-local, because Brain.think calls it and
+-- think is at Lua's hard 60-upvalue limit: a new file-local read from inside
+-- think is a new upvalue and the brain then fails to load. `Brain` is already
+-- one of think's upvalues, so a field on it costs nothing.
+--
+-- `state` is a parameter rather than the file-local of the same name, so the
+-- function reads as what it does: write these tokens onto this bot's state.
+-- Every reader of the fields it writes reads them live, later in the same
+-- think, so a change is in force from the next tick with nothing to refresh.
+function Brain.apply_init_tokens(state, a)
+  if type(a) ~= "string" or a == "" then return 0 end
+  local n = 0
+  for _ in a:gmatch("[^,;]+") do n = n + 1 end
+    -- ';' or ',' separated. -bot-init splits its spec on ',' so the [arg]
+    -- passed on the command line must use ';' (e.g. [ammoless;deprive=100]).
+    for tok in a:gmatch("[^,;]+") do
+      tok = tok:gsub("%s", "")
+      if tok == "ammoless" or tok == "noammo" then
+        state.test_never_refuel = true
+      elseif tok == "normal" then
+        state.test_never_refuel = false
+      elseif tok == "horde" then
+        -- Virus's infected side. No base refuels the horde, so it never
+        -- picks one. Its C settings (C.SIDE_SETTINGS.horde) were written by
+        -- _apply_cfg_tokens.
+        state.side = "horde"
+        state.test_never_refuel = true
+      elseif tok == "survivor" then
+        -- Virus's survivor side: refuels as normal. Its C settings
+        -- (C.SIDE_SETTINGS.survivor) were written by _apply_cfg_tokens.
+        state.side = "survivor"
+        state.test_never_refuel = false
+      elseif tok == "suicider" then
+        state.force_pill_suicider = true
+      elseif tok == "nosuicider" then
+        state.force_pill_suicider = false
+      elseif tok == "noblitz" then
+        -- Solo bot: no calls opened, none joined, bsu designations ignored.
+        state.blitz_disabled = true
+      elseif tok == "blitzonly" then
+        -- Pills only inside a blitz: no solo pill attack (see
+        -- C.BLITZ_ONLY_PILL_ATTACKS, the same gate as a constant).
+        state.blitz_only = true
+      elseif tok == "noclaimdead" then
+        -- Sweeping wave: allies' claims on DEAD pills are ignored (pool 4),
+        -- so several bots race the same body and draw fire on the way in.
+        state.ally_claim_dead_off = true
+      elseif tok:sub(1, 10) == "portfolio=" then
+        -- Integer percents, '/' separated: B/F/A or B/F/A/U.
+        -- Complaints are LATCHED into state._cfg_warn, not printed here: this
+        -- runs on the bot's first think, a pre-game tick whose print2 output
+        -- never reaches the session's log file (same trap as TEST_ROLE). The
+        -- captured-tick window below re-emits them.
+        local nums, bad, extra = {}, false, false
+        for part in tok:sub(11):gmatch("[^/]+") do
+          if #nums >= 4 then extra = true
+          elseif part:match("^%d+$") then nums[#nums + 1] = tonumber(part)
+          else bad = true end
+        end
+        local b, f, ag, u = nums[1], nums[2], nums[3], nums[4]
+        if bad or extra or #nums < 3 then
+          state._cfg_warn = (state._cfg_warn or "") .. string.format(
+            "[portfolio] BAD TOKEN '%s' -- want portfolio=B/F/A[/U] as integer percents; IGNORED. ", tok)
+        elseif (b + f + ag) > 100 then
+          state._cfg_warn = (state._cfg_warn or "") .. string.format(
+            "[portfolio] BAD TOKEN '%s' -- back+front+aggro=%d > 100; IGNORED. ", tok, b + f + ag)
+        else
+          -- No explicit U -> it takes whatever is left (>=0 by the check above),
+          -- so the four always sum to exactly 100 in that form.
+          if not u then u = 100 - (b + f + ag) end
+          local sum = b + f + ag + u
+          if sum <= 0 then
+            state._cfg_warn = (state._cfg_warn or "") .. string.format(
+              "[portfolio] BAD TOKEN '%s' -- shares sum to 0; IGNORED. ", tok)
+          else
+            if sum ~= 100 then
+              state._cfg_warn = (state._cfg_warn or "") .. string.format(
+                "[portfolio] WARNING '%s' sums to %d, not 100 -- normalising proportionally. ", tok, sum)
+            end
+            PP.set_targets(b / sum, f / sum, ag / sum, u / sum, "init_arg")
+          end
+        end
+      elseif tok:sub(1, 6) == "blitz=" then
+        -- Party size in tanks INCLUDING the commander: MIN or MIN/MAX.
+        -- Complaints latch into state._cfg_warn for the same reason as above.
+        local nums, bad, extra = {}, false, false
+        for part in tok:sub(7):gmatch("[^/]+") do
+          if #nums >= 2 then extra = true
+          elseif part:match("^%d+$") then nums[#nums + 1] = tonumber(part)
+          else bad = true end
+        end
+        local mn, mx = nums[1], nums[2]
+        if bad or extra or #nums < 1 or mn < 1 then
+          state._cfg_warn = (state._cfg_warn or "") .. string.format(
+            "[blitz] BAD TOKEN '%s' -- want blitz=MIN[/MAX], integers >= 1; IGNORED. ", tok)
+        elseif mx and mx < mn then
+          state._cfg_warn = (state._cfg_warn or "") .. string.format(
+            "[blitz] BAD TOKEN '%s' -- MAX %d < MIN %d; IGNORED. ", tok, mx, mn)
+        else
+          squad.set_blitz_size(mn, mx, "init_arg")
+        end
+      elseif tok:sub(1, 7) == "refuel=" then
+        -- Float multiplier on the refuel GOAL_GROUP. Complaints latch, as above.
+        local x = tonumber(tok:sub(8))
+        if x and x > 0 then
+          goals.set_refuel_mult(x, "init_arg")
+        else
+          state._cfg_warn = (state._cfg_warn or "") .. string.format(
+            "[refuel] BAD TOKEN '%s' -- want refuel=X, a number > 0; IGNORED. ", tok)
+        end
+      elseif tok:sub(1, 15) == "blitzsuiciders=" then
+        -- Minimum suiciders per blitz. Complaints latch, as above.
+        local n = tok:match("^blitzsuiciders=(%d+)$")
+        if n then
+          squad.set_blitz_min_suiciders(tonumber(n), "init_arg")
+        else
+          state._cfg_warn = (state._cfg_warn or "") .. string.format(
+            "[blitz] BAD TOKEN '%s' -- want blitzsuiciders=N, integer >= 0; IGNORED. ", tok)
+        end
+      else
+        local n = tok:match("^deprive=(%d+)$")
+        if n then state.test_deprive_ticks = tonumber(n) end
+      end
+    end
+  return n
+end
+
+-- New data for a bot that is already playing.
+--
+-- The server calls this from game.bot_init(p, t): the bot's BRAIN_INIT global
+-- has just been rebuilt from `t`, and `t` is that same table. It runs on the
+-- producer thread between ticks, never inside a think, so writing state and
+-- constants here is safe.
+--
+-- Three things happen, in the order a later token has to beat an earlier one:
+-- the table is flattened into the token string the rest of this file reads,
+-- the constant tokens are applied (preset= and cfg= live; mode= and
+-- difficulty= refused as unsupported at runtime -- see _apply_cfg_tokens), and
+-- then the state tokens are applied through the same function tick 1 uses.
+--
+-- BRAIN_INIT_ARG is deliberately NOT rewritten. It is the record of what this
+-- brain was STARTED with, the tick-1 block has long since read it, and a fresh
+-- VM (a brain swap, the next round) is built from BRAIN_INIT, which the server
+-- has already replaced.
+--
+-- The team hears one line about it. A scenario handing a bot new orders is a
+-- thing a human on that side should be able to see happen, and it is the only
+-- way anything outside the bot can observe that the change landed.
+function Brain.on_init(t)
+  local flat = _flatten_init_table(t)
+  local nlog, nwarn = #_INIT_CFG_LOG, (_INIT_CFG_WARN or "")
+
+  -- The bare flags this file owns, back to their defaults before the table is
+  -- applied, so the table is the WHOLE statement of what this bot is now.
+  --
+  -- A bare flag only ever sets: apply_init_tokens has no "off" word for
+  -- noblitz, blitzonly or noclaimdead, because at a VM's first breath there is nothing
+  -- to turn off. A RESUMED runner breaks that assumption — its state table
+  -- survives the park, so the last life's flags are still standing when the
+  -- next one is told its orders. Survival is the case: wave 3 is the noblitz
+  -- wave and wave 4 is not, wave 2 is a noclaimdead wave and wave 3 is not,
+  -- and without this the bot goes on fighting wave 4 with wave 3's orders.
+  --
+  -- state.test_never_refuel is deliberately NOT in this list. nil there means
+  -- "roll it once for this bot" (the TEST_NEVER_REFUEL_CHANCE aid on the
+  -- first think), so clearing it on every bot_init would quietly overrule a
+  -- roll the arena runs read. A scenario that changes it at runtime sends the
+  -- word both ways (Virus: horde / survivor, each sets it).
+  --
+  -- state.side is not in this list either: a table with no side word leaves
+  -- the bot on its last side. Its C settings stay written too (a side word is
+  -- the only thing that writes them back), so clearing state.side alone would
+  -- make the two disagree.
+  state.blitz_disabled      = false
+  state.blitz_only          = false
+  state.ally_claim_dead_off = false
+  state.force_pill_suicider = false
+
+  _apply_cfg_tokens(flat, "on_init", true)
+  local n = Brain.apply_init_tokens(state, flat)
+
+  -- ORDER-style line, so a session log says what a bot was told and when.
+  -- Whatever the constant parse latched, said here rather than left in the
+  -- chunk-load latches, which were emitted at startup and are never read
+  -- again.
+  -- One call per line, so the strip takes every one of them out of opt/ and
+  -- the production brain pays nothing for any of this.
+  for i = nlog + 1, #_INIT_CFG_LOG do
+  end
+  local warn = _INIT_CFG_WARN or ""
+  if #warn > #nwarn then
+  end
+
+  state.pending_init_msg =
+    string.format("%s: init updated: %d tokens", C.BRAIN_NAME, n)
+end
+
+-- =========================================================================
 -- THINK
 -- =========================================================================
 
@@ -1358,6 +1689,12 @@ function Brain.think(info)
   --                          the random TEST_NEVER_REFUEL_CHANCE roll below)
   --   "normal"            -> force never-refuel OFF (a plain captain); read
   --                          last, so it wins if both are passed
+  --   "survivor"/"horde"  -> this bot's side (Virus). Sets state.side.
+  --                          horde: never-refuel ON; survivor: OFF. Each also
+  --                          writes its C.SIDE_SETTINGS list at chunk load and
+  --                          on a runtime bot_init (_apply_cfg_tokens), after
+  --                          preset= and before cfg=. No word = state.side nil
+  --                          and every constant as it was.
   --   "deprive=N"         -> this bot's ammo-deprivation delay = N ticks, so the
   --                          ammoless-helper/decoy kicks in sooner (100 ~= 2 s)
   --   "suicider"          -> FORCE the pill_suicider role on for this bot,
@@ -1396,6 +1733,15 @@ function Brain.think(info)
   --                          "bsu" suicider designations. It still fights and
   --                          takes pills SOLO, exactly as if no ally were in
   --                          range. No constant — blitzing is on by default.
+  --   "blitzonly"         -> this bot attacks a LIVE pill only inside a blitz:
+  --                          as a commander whose party met the blitz MIN and
+  --                          went GO, or as a soldier of one. A pool-6 row it
+  --                          can neither join nor lead is REJECTED blitz_only; a
+  --                          take about to fire without a GO is dropped
+  --                          (BLITZ_ONLY_ABORT); no "finish it solo" shortcuts.
+  --                          capture_pill (dead pills) is unchanged. Same gate
+  --                          as C.BLITZ_ONLY_PILL_ATTACKS; either one on = on.
+  --                          "noblitz" with it means no pill attacks at all.
   --   "noclaimdead"       -> ignore allies' CLAIMS on DEAD pills: pool 4
   --                          (capture_pill) rows never take an ally_claimed
   --                          REJECT, so several bots race to scoop the same
@@ -1424,105 +1770,7 @@ function Brain.think(info)
     -- which modes and levels exist. Nothing reads either yet -- plumbing.
     state.mode = C.MODE
     state.difficulty = C.DIFFICULTY
-    local a = rawget(_G, "BRAIN_INIT_ARG")
-    if type(a) == "string" and a ~= "" then
-      -- ';' or ',' separated. -bot-init splits its spec on ',' so the [arg]
-      -- passed on the command line must use ';' (e.g. [ammoless;deprive=100]).
-      for tok in a:gmatch("[^,;]+") do
-        tok = tok:gsub("%s", "")
-        if tok == "ammoless" or tok == "noammo" then
-          state.test_never_refuel = true
-        elseif tok == "normal" then
-          state.test_never_refuel = false
-        elseif tok == "suicider" then
-          state.force_pill_suicider = true
-        elseif tok == "nosuicider" then
-          state.force_pill_suicider = false
-        elseif tok == "noblitz" then
-          -- Solo bot: no calls opened, none joined, bsu designations ignored.
-          state.blitz_disabled = true
-        elseif tok == "noclaimdead" then
-          -- Sweeping wave: allies' claims on DEAD pills are ignored (pool 4),
-          -- so several bots race the same body and draw fire on the way in.
-          state.ally_claim_dead_off = true
-        elseif tok:sub(1, 10) == "portfolio=" then
-          -- Integer percents, '/' separated: B/F/A or B/F/A/U.
-          -- Complaints are LATCHED into state._cfg_warn, not printed here: this
-          -- runs on the bot's first think, a pre-game tick whose print2 output
-          -- never reaches the session's log file (same trap as TEST_ROLE). The
-          -- captured-tick window below re-emits them.
-          local nums, bad, extra = {}, false, false
-          for part in tok:sub(11):gmatch("[^/]+") do
-            if #nums >= 4 then extra = true
-            elseif part:match("^%d+$") then nums[#nums + 1] = tonumber(part)
-            else bad = true end
-          end
-          local b, f, ag, u = nums[1], nums[2], nums[3], nums[4]
-          if bad or extra or #nums < 3 then
-            state._cfg_warn = (state._cfg_warn or "") .. string.format(
-              "[portfolio] BAD TOKEN '%s' -- want portfolio=B/F/A[/U] as integer percents; IGNORED. ", tok)
-          elseif (b + f + ag) > 100 then
-            state._cfg_warn = (state._cfg_warn or "") .. string.format(
-              "[portfolio] BAD TOKEN '%s' -- back+front+aggro=%d > 100; IGNORED. ", tok, b + f + ag)
-          else
-            -- No explicit U -> it takes whatever is left (>=0 by the check above),
-            -- so the four always sum to exactly 100 in that form.
-            if not u then u = 100 - (b + f + ag) end
-            local sum = b + f + ag + u
-            if sum <= 0 then
-              state._cfg_warn = (state._cfg_warn or "") .. string.format(
-                "[portfolio] BAD TOKEN '%s' -- shares sum to 0; IGNORED. ", tok)
-            else
-              if sum ~= 100 then
-                state._cfg_warn = (state._cfg_warn or "") .. string.format(
-                  "[portfolio] WARNING '%s' sums to %d, not 100 -- normalising proportionally. ", tok, sum)
-              end
-              PP.set_targets(b / sum, f / sum, ag / sum, u / sum, "init_arg")
-            end
-          end
-        elseif tok:sub(1, 6) == "blitz=" then
-          -- Party size in tanks INCLUDING the commander: MIN or MIN/MAX.
-          -- Complaints latch into state._cfg_warn for the same reason as above.
-          local nums, bad, extra = {}, false, false
-          for part in tok:sub(7):gmatch("[^/]+") do
-            if #nums >= 2 then extra = true
-            elseif part:match("^%d+$") then nums[#nums + 1] = tonumber(part)
-            else bad = true end
-          end
-          local mn, mx = nums[1], nums[2]
-          if bad or extra or #nums < 1 or mn < 1 then
-            state._cfg_warn = (state._cfg_warn or "") .. string.format(
-              "[blitz] BAD TOKEN '%s' -- want blitz=MIN[/MAX], integers >= 1; IGNORED. ", tok)
-          elseif mx and mx < mn then
-            state._cfg_warn = (state._cfg_warn or "") .. string.format(
-              "[blitz] BAD TOKEN '%s' -- MAX %d < MIN %d; IGNORED. ", tok, mx, mn)
-          else
-            squad.set_blitz_size(mn, mx, "init_arg")
-          end
-        elseif tok:sub(1, 7) == "refuel=" then
-          -- Float multiplier on the refuel GOAL_GROUP. Complaints latch, as above.
-          local x = tonumber(tok:sub(8))
-          if x and x > 0 then
-            goals.set_refuel_mult(x, "init_arg")
-          else
-            state._cfg_warn = (state._cfg_warn or "") .. string.format(
-              "[refuel] BAD TOKEN '%s' -- want refuel=X, a number > 0; IGNORED. ", tok)
-          end
-        elseif tok:sub(1, 15) == "blitzsuiciders=" then
-          -- Minimum suiciders per blitz. Complaints latch, as above.
-          local n = tok:match("^blitzsuiciders=(%d+)$")
-          if n then
-            squad.set_blitz_min_suiciders(tonumber(n), "init_arg")
-          else
-            state._cfg_warn = (state._cfg_warn or "") .. string.format(
-              "[blitz] BAD TOKEN '%s' -- want blitzsuiciders=N, integer >= 0; IGNORED. ", tok)
-          end
-        else
-          local n = tok:match("^deprive=(%d+)$")
-          if n then state.test_deprive_ticks = tonumber(n) end
-        end
-      end
-    end
+    Brain.apply_init_tokens(state, rawget(_G, "BRAIN_INIT_ARG"))
   end
 
   -- TEST AID: roll the never-refuel flag once per bot (see
@@ -1767,6 +2015,10 @@ function Brain.think(info)
   -- (opt.set_tick already fired at the top of think; just emit the
   -- BEGIN marker here.)
   opt("BEGIN tick=", now, " goal=", state.goal.kind, " sub=", tostring(state.goal.substate))
+  -- Last tick's squad.update budget-killed half way? Put back its per-tick
+  -- fields (squad_cmdr, squad_blitz_target, ...) before any goal logic reads
+  -- them. See the guard above M.update in squad.lua.
+  squad.recover_killed_update(state, now)
 
   -- NOTE ON PLACEMENT: this sits AFTER print2.set_tick (which clears the
   -- per-tick buffer) on purpose. It used to live beside cautious_mode, ~330
@@ -1908,6 +2160,18 @@ function Brain.think(info)
     -- block on purpose: the resets below wipe state.goal, and the whole point
     -- of the line is to name the goal we died pursuing.
     state.goal = { kind = "none", mx = 0, my = 0, wx = 0, wy = 0 }
+    -- HAND THE CHAT ORDER BACK.  This block returns before ORD.update is ever
+    -- reached, so nothing cleared the order slot on a death: a bot killed
+    -- while holding a "go there and hold" came back with the hold flag still
+    -- set and stood parked on its RESPAWN square for the rest of the hold,
+    -- doing nothing at all (Andrew's peer review, Sep 16). ORD.on_death also
+    -- ends a suicide run, and releases the order: the obr goes out with the
+    -- first message slot after we respawn. Under ORDER_NO_HAND_BACK (the
+    -- default) nobody re-bids on it, so the job ends with this bot; with it
+    -- off (keel) the next cheapest bot takes it. A decoy's order is cancelled
+    -- instead. It also drops the goto lock, so the command goal cannot
+    -- survive the death either.
+    if C.BOT_COMMANDS_ENABLED then ORD.on_death(state, info) end
     -- Wipe EVERY blitz/squad coordination field (negotiation, offers, rejects,
     -- roster, watchdog, broadcast latches, and the call registry) so we respawn
     -- with a clean slate instead of resuming a dead life's blitz. The registry
@@ -2379,8 +2643,14 @@ function Brain.think(info)
           reason = "panic_override"
         else
           local ok, why = builder.place_tile_valid(info, world, trip.mx, trip.my)
+          -- A resume is a NEW pill: refuse it on a live blitz shot line
+          -- (C.PILL_PLACE_AVOID_BLITZ_LINE; nil lines = off / no blitz).
+          local _bl = ok and squad.blitz_shot_lines(state, world, now, info.player_number)
+          local _bl_hit = _bl and squad.tile_on_blitz_line(world, _bl, trip.mx, trip.my, now)
           if not ok then
             reason = (why == "unreachable") and "unreachable" or ("invalid_" .. why)
+          elseif _bl_hit then
+            reason = "blitz_line"
           elseif trip.score_at_dispatch then
             -- Fresh re-score, TRAVEL-FREE: sc7 pinned (as before) AND the tank
             -- position pinned to where we stood when the builder was sent.
@@ -3269,7 +3539,7 @@ function Brain.think(info)
 
   local open_msg_this_tick = false
   if state.send_open_msg then
-    send_msg = state.paused and C.BRAIN_NAME .. " loaded (PAUSED — use 'start' to begin)."
+    send_msg = state.paused and C.BRAIN_NAME .. " loaded (PAUSED — use '!start' to begin)."
                              or C.BRAIN_NAME .. " loaded."
     msg_dest = bit.lshift(1, state.player_number)
     state.send_open_msg = false
@@ -3301,7 +3571,28 @@ function Brain.think(info)
           comms.process_message(m.sender, m.text, now, state)
         end
 
-        local cmd = cmds.parse(m.text)
+        -- Chat ORDERS first ("attack 5", "all defend 3", "socrates
+        -- retreat"). The old operator commands below now need a leading "!"
+        -- too, and orders.lua hands any "!" line it has no verb for straight
+        -- through, so the two parsers cannot both claim a line. The TEAM
+        -- CHECK is _from_ally: an enemy typing
+        -- "attack 5" in all chat is ignored in silence.
+        local _ord_took = false
+        if C.BOT_COMMANDS_ENABLED then
+          _ord_took = ORD.on_chat(state, world, info, m.sender, m.text, now,
+                                  _from_ally,
+                                  bit.band(info.player_bots or 0,
+                                           bit.lshift(1, (m.sender or 0))) ~= 0)
+        end
+
+        -- THE OLD OPERATOR COMMANDS ARE ALLY-ONLY TOO.  This call sat outside
+        -- the _from_ally test that guards everything else on this path, so an
+        -- ENEMY typing "!stop" in all chat would have frozen the whole team --
+        -- the one hard lock in the brain, handed to the other side (Andrew's
+        -- peer review, Sep 16).  An operator command is a harder order than a
+        -- chat order, so it gets the same team check, and the check itself
+        -- lives in cmds.parse beside the parse it guards.
+        local cmd = (not _ord_took) and cmds.parse(m.text, _from_ally) or nil
         if cmd then
           log.event("cmd_recv", m.text)
           local reply = cmds.execute(cmd, state, world)
@@ -3353,6 +3644,34 @@ function Brain.think(info)
       state._kw_resync_cd = now + (C.KW_RESYNC_COOLDOWN or 150)
     end
   end
+
+  -- Bot-command PINGS. The engine hands a teammate's smart ping to the brain
+  -- as an EVENT_PING in info.events (the same array world.process_events and
+  -- hearing.lua read); this is the one call that turns the BOT COMMAND kind
+  -- into an order and the CAUTION kind into a cancel or a retreat. It runs
+  -- before ORD.update so a ping's bid goes out on the same tick.
+  ORD.on_events(state, world, info, now)
+
+  -- Scenario hints. The orders a script gave this seat since the last think,
+  -- in the order they were given, and then one step of whatever standing
+  -- instruction is running (a patrol advancing, an escort re-aiming). Beside
+  -- the ping call for the same reason: an order either of them raises goes
+  -- out on this tick's bid rather than the next one.
+  if C.BOT_COMMANDS_ENABLED then
+    local q = state.scenario_hints
+    if q and #q > 0 then
+      for i = 1, #q do
+        ORD.on_scenario_hint(state, world, info, q[i], now)
+      end
+      state.scenario_hints = nil
+    end
+    ORD.hint_update(state, world, info, now)
+  end
+
+  -- Chat orders: drain the inbound bids/claims/releases, settle any auction
+  -- that is due, expire a finished order, and publish the live slot on
+  -- state._order. Runs BEFORE goal selection so the pool sees it this tick.
+  ORD.update(state, world, info, now)
   W.collect_kw_changes(world, now)
 
   -- Paused: accept commands but do nothing else
@@ -3360,14 +3679,17 @@ function Brain.think(info)
     log.log_tick(state, info, state.goal, 0, 0, nil)
     if state._instr_prof_on then prof.stop(state.server_tick or state.tick or 0) end
     state._think_attempt = nil   -- reached an exit: this think was not killed
-    return {
+    -- ORD.out_ping adds this think's one smart ping, if the bot queued one.
+    -- A paused bot still answers an order, so its "on my way" marker has to
+    -- leave on this path too.
+    return ORD.out_ping(state, {
       holdkeys    = 0,
       tapkeys     = 0,
       build       = nil,
       wantallies  = info.allies,
       messagedest = msg_dest,
       sendmessage = send_msg,
-    }
+    })
   end
 
   -- Pick up deferred arrival reply
@@ -3409,6 +3731,11 @@ function Brain.think(info)
     state.stuck_for = 0
     state._kw_send_query = true   -- re-acquire team's known world after respawn
     state._tank_track = nil   -- drop pre-death ghosts (fallback if info.dead was missed)
+    -- The order slot, for the same reason and as the same fallback: a death
+    -- whose info.dead tick we never ran (GC pause, a long think, a Lua error)
+    -- would otherwise leave a held order -- and a held "go there and hold" in
+    -- its hold phase -- pointing at a life that is over.
+    if C.BOT_COMMANDS_ENABLED then ORD.on_death(state, info) end
     -- Full blitz/squad wipe + registry re-discover. Fallback for when the
     -- info.dead death-tick reset was missed (GC pause / long think / Lua error):
     -- its distances are off the pre-death-rooted slate, so far calls look cheap
@@ -3512,6 +3839,9 @@ function Brain.think(info)
     state.squad_blitz_target      = nil
     state.squad_blitz_engage_mx   = nil
     state.squad_blitz_engage_my   = nil
+    state.squad_blitz_engage_fx   = nil
+    state.squad_blitz_engage_fy   = nil
+    state.squad_blitz_engage_deg  = nil
     state.squad_blitz_bd          = nil
     state.squad_blitz_repos       = nil
     state.squad_blitz_in_position = nil
@@ -3593,6 +3923,22 @@ function Brain.think(info)
     -- kill_me_wait parks for the same reason: standing still on an advertised
     -- tile IS the goal, so the stuck detector must not read it as wedged.
     or state.goal.kind == "kill_me_wait"
+    -- goto_tile is a place order ("go there and hold"). Once the tank is on
+    -- the square it stands there until the order ends, so the hold must not
+    -- read as a wedge either.
+    or (state.goal.kind == "goto_tile"
+        and U.mdist(cur_mx, cur_my, state.goal.mx or -99, state.goal.my or -99) <= 1)
+    -- The HOLD phase of that same place order: the tank is parked by
+    -- steering.M.steer while it shoots whatever came to it, so standing still
+    -- with an attack_tank or a kill_lgm goal is deliberate too.
+    or (C.BOT_COMMANDS_ENABLED and state._order and state._order.hold
+        and state._order.kind == "goto_tile"
+        and (C.ORDER_HOLD_PARK_KINDS or {})[state.goal.kind] ~= nil)
+    -- A DECOY hold (orders.lua) parks on the square whatever goal the think
+    -- is holding this moment -- the decoy lock puts the hold goal back before
+    -- steering -- so standing still there is never a wedge: no stuck flee,
+    -- no give-up, no stuck_for to make M.busy say "escaping".
+    or (state._order and state._order.decoy and ORD.hold_parked(state, info))
   local attack_at_standoff = intentionally_stationary
 
   -- Long-term desperation: track total ticks at the same tile.
@@ -3756,7 +4102,14 @@ function Brain.think(info)
             C.BRAIN_NAME .. ": STUCK trying to reach %s #%d at (%d,%d) -- giving up",
             state.command_goal.kind, state.command_goal.id,
             state.command_goal.mx, state.command_goal.my)
+          local was_goto = (state.command_goal.kind == "goto_tile")
           state.command_goal = nil
+          -- A PLACE ORDER that cannot be reached is OVER. The command goal is
+          -- re-asserted from the order slot every think, so dropping the goal
+          -- alone would put it straight back and the bot would grind here for
+          -- the whole 60 s. The give-up line above is said once; the release
+          -- is quiet so there is no second line.
+          if was_goto then ORD.release_held(state, info, nil, true) end
         end
         attack.clear_attack_goal(state, "stuck (nav)")
       end
@@ -5674,6 +6027,12 @@ function Brain.think(info)
         end
         state.goal = new_goal
         state.goal_set_tick = now
+        -- ATTACK MARKER. This is the one point where the goal takes a new
+        -- kind or a new target, whether the bot was ordered to it or picked
+        -- it for itself, so it is the one place the marker belongs. The
+        -- "bot pings" team setting and the per-target repeat gap are both
+        -- inside the call; it does nothing when the team has not asked.
+        ORD.attack_ping(state, new_goal, now)
         state.pf.status = "idle"
         state.pf_fail_logged = false
         state.pf_fail_count = 0
@@ -5762,6 +6121,22 @@ function Brain.think(info)
 
   -- Per-tick attack substate machine (runs every tick, not just on replan)
   local t_as0 = BRAIN_PROFILE and clock_us() or 0
+  -- PING SUICIDE RUN lock (orders.lua): whatever replaced the run's goal
+  -- this tick (stuck flee, water escape, PF-failed flee, pill drop, a clear),
+  -- put the suicide goal back before the substate machine and steering see
+  -- it. Ends the run instead when the pill is dead.
+  -- A human ally within ORDER_HUMAN_NEAR_SUICIDE_TILES turns an ORDERED
+  -- attack_pill goal (the bot holds an attack_pill order on that pill) into
+  -- the same run.
+  -- The GO-THERE DECOY lock (orders.lua) runs first, on the same terms:
+  -- whatever replaced the hold goal this tick (refuel, take_cover, a flee,
+  -- a water escape, a stuck handler, an attack_pill) goes back to the hold
+  -- goal; only attack_tank / kill_lgm in gun range stay.  First, so an
+  -- attack_pill it undoes cannot turn into a human-near suicide run below.
+  -- Called through ORD: think() is at the 60-upvalue cap.
+  ORD.decoy_lock(state, world, info, now)
+  if not state._suicide then ORD.human_near_suicide(state, world, info, now) end
+  if state._suicide then ORD.suicide_lock(state, world, info, now) end
   attack.update_attack_substate(state.goal, state, world, info)
   local t_as1 = BRAIN_PROFILE and clock_us() or 0
   if BRAIN_PROFILE then
@@ -7075,8 +7450,13 @@ function Brain.think(info)
       local eta = state._repair_dispatch_eta
         or (U.mdist(dtx, dty, build_cmd.x, build_cmd.y)
             * (C.REPAIR_DEAD_GRASS_TICKS_PER_TILE or 16))
+      -- pbox: the man goes to build or repair a PILL there. The advert
+      -- appends "P" so allies can treat the tile as a pending pill
+      -- (squad.update_pending_pills). Readers of the first 8 chars are
+      -- unchanged.
       state._lgm_dispatch = { x = build_cmd.x, y = build_cmd.y,
-                              eta_tick = now + eta, tick = now }
+                              eta_tick = now + eta, tick = now,
+                              pbox = (build_cmd.action == BUILDMODE_PBOX) or nil }
       state._repair_dispatch_eta = nil
     end
     -- Placement trip flag. ONE record per placement dispatch (harvest or
@@ -7633,11 +8013,25 @@ function Brain.think(info)
       -- /fy), falling back to the tile center.
       if state.squad_blitz_engage_mx and state.squad_blitz_engage_my
          and ((g and g._blitz) or state.squad_negotiate_cmdr) then
+        -- Fix A (C.BLITZ_SPOT_EXACT_ORIGIN): the scan's validated float point
+        -- when one is stored, so the commander's arbiter tests the same line.
         bsi.bes = string.format("%.4f,%.4f",
-                    state.squad_blitz_engage_mx + 0.5, state.squad_blitz_engage_my + 0.5)
+                    state.squad_blitz_engage_fx or (state.squad_blitz_engage_mx + 0.5),
+                    state.squad_blitz_engage_fy or (state.squad_blitz_engage_my + 0.5))
         if g and g._blitz and g.substate == "blitz_wait" and state.squad_blitz_aimed then bsi.rdy = "1" end
       elseif state.squad_role == "c" and g and g.kind == "attack_pill"
              and (g.standoff_fx or g.standoff_mx) then
+        bsi.bes = string.format("%.4f,%.4f",
+                    g.standoff_fx or (g.standoff_mx + 0.5),
+                    g.standoff_fy or (g.standoff_my + 0.5))
+      elseif C.BLITZ_NOSPOT_RENEGOTIATE and state.squad_role ~= "c"
+             and g and g.kind == "attack_pill" and (g.standoff_fx or g.standoff_mx)
+             and (state.squad_cmdr or state.squad_negotiate_cmdr)
+             and g.target_id ~= nil
+             and g.target_id == (state.squad_blitz_target or state.squad_negotiate_pill) then
+        -- 2026-09-25 evening: a soldier on the blitz pill with no engage
+        -- spot (NO-SPOT, or its own plan_position pick) still broadcasts
+        -- the standoff it drives to, so the commander and allies see it.
         bsi.bes = string.format("%.4f,%.4f",
                     g.standoff_fx or (g.standoff_mx + 0.5),
                     g.standoff_fy or (g.standoff_my + 0.5))
@@ -7798,6 +8192,50 @@ function Brain.think(info)
     -- state._repo_outbox, drained into the batch below.
     reposition_vote.update(state, world, info, now)
 
+    -- ── Who owns this think's one chat slot: the human or the bots? ──
+    -- A brain says at most one thing per think. The internal channel (the
+    -- /info state slate, the known-world digest, the vote and blitz verbs)
+    -- used to take that slot every think on a busy map, so an order ack and
+    -- the "Leaving pill 5 for pill 7" line queued in state.orders.say never
+    -- got out for the rest of the round: the brain log showed the order
+    -- taken and released, and the player heard nothing. The design asks for
+    -- one line per order, so the human line goes first.
+    --
+    -- Deferring the internal traffic is safe because every producer below
+    -- only clears its "needs send" flag when try_send accepts, so a refusal
+    -- costs it a think and nothing else. One sender still outranks a say
+    -- line: an order VERB (obd/obc/obr) queued this think. The auction those
+    -- verbs run is what makes the ack correct, so they keep their place and
+    -- the say line waits a think.
+    --
+    -- The deferral is ONE think, never two in a row: a think that pushed the
+    -- internal traffic aside sets _chat_yielded_internal, and the next think
+    -- hands the slot straight back. So no internal send is ever more than a
+    -- think (2 ticks) later than it would have been, which is what keeps the
+    -- deadlines intact:
+    --   * the 30 s slate heartbeat fires at 1500 ticks and an ally only drops
+    --     our slot at SQUAD_ALLY_MAX_AGE (1750), so 2 ticks spends 2 of a
+    --     250-tick margin;
+    --   * the reposition vote closes its window at 10 ticks
+    --     (C.REPOSITION_VOTE_WINDOW_TICKS), so a ballot held 2 ticks still
+    --     lands inside it — where a six-line burst draining one line per
+    --     think would have held it 12 ticks and let a bad reposition pass
+    --     unopposed.
+    -- A burst therefore alternates: say line, internal traffic, say line.
+    local _say_first = false
+    local _internal_deferred = false
+    do
+      local _ord     = state.orders
+      local _ord_out = _ord and _ord.out
+      local _ord_say = _ord and _ord.say
+      if (not send_msg)
+         and _ord_say and #_ord_say > 0 and (info.allies or 0) ~= 0
+         and not (_ord_out and #_ord_out > 0)
+         and not state._chat_yielded_internal then
+        _say_first = true
+      end
+    end
+
     local _batch, _batch_used = {}, 0
     local _BATCH_MAX = C.MSG_BATCH_MAX or 124
     local function try_send(msg, dest)
@@ -7810,6 +8248,10 @@ function Brain.think(info)
         send_msg = msg; msg_dest = dest
         return true
       end
+      -- A human-facing order line owns the slot this think (see _say_first).
+      -- Refusing here is what defers the internal traffic: every caller keeps
+      -- its payload and offers it again next think.
+      if _say_first then _internal_deferred = true; return false end
       local sep = (#_batch > 0) and #comms.MSG_SEP or 0
       -- The FIRST message is always accepted, even if it alone exceeds the cap
       -- (matches pre-batch behavior — the wire truncates and the *_OVERFLOW
@@ -7838,6 +8280,20 @@ function Brain.think(info)
         end
       end
       state._repo_outbox = kept
+    end
+
+    -- Bot-command order verbs (obd/obc/obr) queued by ORD.update / ORD.on_chat.
+    -- Same keep-and-retry rule as the vote ballots: a dropped bid would leave
+    -- an auction waiting on an ally that already answered.
+    if state.orders and state.orders.out and #state.orders.out > 0 then
+      local kept
+      for _, m in ipairs(state.orders.out) do
+        if try_send(m, 0) then
+        else
+          kept = kept or {}; kept[#kept + 1] = m
+        end
+      end
+      state.orders.out = kept or {}
     end
 
     -- Steal-negotiation verbs (stq/sta/str) queued by the ally-claimed sync
@@ -8055,6 +8511,10 @@ function Brain.think(info)
       bse.lgmd = string.format("%02X%02X%04X",
                                bit.band(ld.x or 0, 0xFF),
                                bit.band(ld.y or 0, 0xFF), left)
+      -- 9th char "P" = a pill build/repair trip (pending pill for allies'
+      -- blitz spot tests). Only with C.BLITZ_SPOT_PENDING_PILLS, so KEEL
+      -- sends the old 8-char advert byte for byte.
+      if ld.pbox and C.BLITZ_SPOT_PENDING_PILLS then bse.lgmd = bse.lgmd .. "P" end
     else
       if state._lgm_dispatch and info.man_status == C.LGM_INTANK
          and (now - (state._lgm_dispatch.tick or 0)) > 2 then
@@ -8157,16 +8617,23 @@ function Brain.think(info)
     -- build_kw_message DRAINS the entries it packs, so only build it when the
     -- batch is empty (it'll definitely fit as the first message) — otherwise a
     -- failed try_send would silently lose the drained changes.
+    -- Same reason we skip it when a say line owns the slot (_say_first): the
+    -- try_send would refuse and the drained changes would be gone.
     if world._kw_dirty and next(world._kw_dirty) ~= nil then
-      if #_batch == 0 then
+      if #_batch == 0 and not _say_first then
         local kwmsg = W.build_kw_message(world)
         if kwmsg and try_send(kwmsg, 0) then
           local rem = 0; for _ in pairs(world._kw_dirty) do rem = rem + 1 end
         end
       else
+        if _say_first then _internal_deferred = true end
         local pend = 0; for _ in pairs(world._kw_dirty) do pend = pend + 1 end
       end
     end
+
+    -- Record whether we pushed internal traffic aside, so the next think
+    -- hands the slot back to it (see _say_first above).
+    state._chat_yielded_internal = _internal_deferred
 
     -- Finalize the internal-channel batch into the single outbound buffer.
     -- Anything that didn't fit left its producer's "needs send" flag set and
@@ -8196,11 +8663,26 @@ function Brain.think(info)
     -- info.allies leaves humans on our team. If a busy tick prevents
     -- the announcement going out, we defer; the next tick's slate
     -- heartbeat is at most 30 s away so the slot frees up quickly.
+    -- Order acks / status lines. Sent to the ALLIES mask (humans AND bots)
+    -- rather than the internal channel so a human -- or a test seat -- sees
+    -- them. ONE per think, always: _say_first above only clears the slot for
+    -- the line, it does not let a second one out. The rest wait for the next
+    -- think (the list is short and holds at most 6 entries, see orders.lua
+    -- say(), which now drops the OLDEST line when it overflows).
+    if not send_msg and state.orders and state.orders.say
+       and #state.orders.say > 0 and (info.allies or 0) ~= 0 then
+      send_msg = table.remove(state.orders.say, 1)
+      msg_dest = info.allies
+    end
+
     if not send_msg and state.pending_human_goal_msg then
       local allies = info.allies or 0
       local bots   = info.player_bots or 0
       local human_allies = bit.band(allies, bit.bnot(bots))
-      if human_allies ~= 0 then
+      -- The goal line is a goal confirmation, so "bot chat off" silences it
+      -- too (same latch as orders.lua sayg). Still cleared below, so the
+      -- cooldown bookkeeping above does not change.
+      if human_allies ~= 0 and ORD.bot_chat_on(state) then
         send_msg = state.pending_human_goal_msg
         msg_dest = human_allies
       end
@@ -8209,6 +8691,24 @@ function Brain.think(info)
       -- across ticks. A future ally join produces its own change.
       state.pending_human_goal_msg = nil
     end
+  end
+
+  -- Init-update line -- one team line saying a scenario just handed this bot
+  -- new data (Brain.on_init staged it). Outside the comms block above, so it
+  -- is not gated on whatever that block is gated on: this is a one-shot
+  -- announcement rather than part of the /info bus, and it has to go out.
+  --
+  -- The slate and the extras keep first dibs, as the human goal line does, so
+  -- a busy tick defers it rather than displacing traffic the squad needs.
+  -- Dropped once said, and dropped unheard when nobody is on our team: a
+  -- queue that grows across ticks is worse than a line nobody needed.
+  if not send_msg and state.pending_init_msg then
+    local allies = info.allies or 0
+    if allies ~= 0 then
+      send_msg = state.pending_init_msg
+      msg_dest = allies
+    end
+    state.pending_init_msg = nil
   end
 
   -- Capture outbound for the chat_log overlay (debug-only).
@@ -8326,15 +8826,22 @@ function Brain.think(info)
   -- Anything still set at the next think's top means that think was killed.
   state._think_attempt = nil
 
-  -- Output
-  return {
+  -- Output. ORD.out_ping takes ONE queued smart ping off state.orders and
+  -- writes ping_kind / ping_x / ping_y into this table; the engine turns it
+  -- into a CMD_PING from this bot's own player slot. It is written as a call
+  -- around the table so think needs no extra local and no extra upvalue.
+  -- ORD.decoy_keys takes the throttle off a DECOY hold standing on its
+  -- square, after everything that could have put it back (the kill_lgm
+  -- crosshair search picks KEY_FASTER as one of its moves).
+  keys, taps = ORD.decoy_keys(state, info, keys, taps)
+  return ORD.out_ping(state, {
     holdkeys    = keys,
     tapkeys     = taps,
     build       = build_cmd,
     wantallies  = info.allies,
     messagedest = msg_dest,
     sendmessage = send_msg,
-  }
+  })
 end
 
 
@@ -8357,8 +8864,9 @@ function Brain.debug_info()
   local amy = g.approach_my or -1
   local swx, swy = smx * 256 + 128, smy * 256 + 128
   local sdist = math.sqrt((i.tankx - swx)^2 + (i.tanky - swy)^2)
-  return string.format("sub=%s tank=(%d,%d) standoff=(%d,%d) approach=(%d,%d) sdist=%.0f",
-    tostring(g.substate), tmx, tmy, smx, smy, amx, amy, sdist)
+  return string.format("sub=%s tank=(%d,%d) standoff=(%d,%d) approach=(%d,%d) sdist=%.0f%s",
+    tostring(g.substate), tmx, tmy, smx, smy, amx, amy, sdist,
+    ORD.panel_line(state, i))
 end
 
 function Brain.set_manual_mode(on)
@@ -8510,6 +9018,28 @@ function Brain.close(info)
   state.blocked      = nil
   world.bases        = nil
   world.pills        = nil
+end
+
+-- =========================================================================
+-- SCENARIO HINTS
+-- =========================================================================
+-- The server calls this global on a bot's VM when a scenario script hands
+-- that seat an order: one flat table, a `verb` and whatever other keys the
+-- script wrote, every value text.  It is called from the server's own tick
+-- and NOT from inside a think, so `world` and `info` are last think's and
+-- there is no engine tick to act on.  So the table is only queued here and
+-- the think drains it, where both are fresh and an order raised on the spot
+-- bids on that tick.
+--
+-- The queue is capped and drops the OLDEST when it overflows: a later hint
+-- is the script's newer word about this bot, and it must not be kept out by
+-- a backlog of orders nobody could act on.
+function on_scenario_hint(t)
+  if type(t) ~= "table" then return end
+  local q = state.scenario_hints
+  if not q then q = {} state.scenario_hints = q end
+  q[#q + 1] = t
+  while #q > 8 do table.remove(q, 1) end
 end
 
 -- Register Brain.think with debugger so it can snapshot upvalues from C

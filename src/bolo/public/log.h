@@ -31,6 +31,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "global.h"
+#include "scenario_panel.h" /* SCN_PANEL_MAX — the longest payload a record carries */
 #include "server_sim.h"
 
 /* Log items */
@@ -62,6 +63,19 @@
 
 /* Memory buffer for writing events */
 #define LOG_MEMORY_BUFFER_SIZE (64 *1024)
+
+/* The most bytes one serialized event can occupy, framing included. Every
+ * buffer a single event is written into is this size, and the memory
+ * buffer keeps this much room free before it takes another one.
+ *
+ * The longest record is log_ScnPanel: the framing spends the type byte and
+ * the two-byte payload length, and its payload spends the panel id, the two
+ * destination bytes and the list's own two-byte length ahead of a list
+ * capped at SCN_PANEL_MAX:
+ *   1 + 2 + 1 + 1 + 1 + 2 + 1017 = 1025
+ * Every other record is shorter. The widest of them spends six header bytes
+ * and a 255-byte pascal string with its length byte, which is 264. */
+#define LOG_EVENT_MAX_BYTES (3 + 5 + SCN_PANEL_MAX)
 
 /* The events we record in our log file */
 typedef enum {
@@ -125,7 +139,13 @@ log_EntityChange,    // opt1=kind (ENTITY_KIND_*), opt2=index (0 based), opt3=on
 log_EntityMasks,     // which indices are on the map, as three big-endian u16: pills in opt1/opt2, bases in opt3/opt4, starts in short1. Written after every snapshot (layout in docs/replay-format.md)
 log_ServerText,      // a server line a scenario wrote: opt1=destTeam (0 = everyone), opt2=destPlayer (0xFF = everyone), then the text as a pascal string
 log_GameTimeSet,     // the round's game time after a scenario changed it, as a big-endian int32 of ticks across opt1..opt4
-log_RuleSet          // one simulation rule a scenario changed: short1=rule index, then the value the field ended up holding as an 8-byte pascal blob (layout in docs/replay-format.md)
+log_RuleSet,         // one simulation rule a scenario changed: short1=rule index, then the value the field ended up holding as an 8-byte pascal blob (layout in docs/replay-format.md)
+log_ScnPanel,        // one scenario panel's display list: opt1=panel id, opt2=destTeam (0 = everyone), opt3=destPlayer (0xFF = everyone), short1=the list's byte length, then that many bytes (layout in docs/replay-format.md)
+log_ScnScore,        // a scenario's score row: opt1=kind, opt2=target, then the score as a big-endian int32 and the label as a pascal string (layout in docs/replay-format.md)
+log_ScnAnnounce,     // a centre-screen line a scenario put up: opt1=destTeam, opt2=destPlayer, short1=ticks it stays up, then the text as a pascal string
+log_ScnMarker,       // a scenario map marker: opt1=id, opt2=kind, opt3=destTeam, opt4=destPlayer, then x, y, slot and colour as a four-byte pascal blob
+log_ScnHint,         // an order a scenario gave one bot: opt1=slot, then the hint's verb as a pascal string. The rest of the hint's pairs are the bot's brain's business and are not recorded
+log_ServerTick       // the server's game tick at this entry, as a big-endian u32 across opt1..opt4. Written at the round's first entry, at every entry that carries a snapshot and every FULL_SYNC_INTERVAL ticks (layout in docs/replay-format.md)
 } logitem;
 
 typedef struct {
@@ -281,6 +301,19 @@ bool logStart(char *fileName, ServerSim *ssim, BYTE ai, BYTE maxPlayers, bool us
 * check - Whether to check if running or not
 *********************************************************/
 bool logWriteSnapshot(ServerSim *ssim, bool check);
+
+/*********************************************************
+*NAME:          logSnapshotWrittenThisTick
+*PURPOSE:
+* Whether logWriteSnapshot has put a snapshot into the log
+* since the last logWriteTick finished. A call that skips
+* its snapshot, because nothing was recorded since the last
+* one, does not count.
+*
+*ARGUMENTS:
+*
+*********************************************************/
+bool logSnapshotWrittenThisTick(void);
 
 /*********************************************************
 *NAME:          logSetLobbyMode

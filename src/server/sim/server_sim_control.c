@@ -29,8 +29,10 @@
 
 #include "server_sim_shared.h"      /* serverSimTrackAppend, serverSimSetActive, and the serverSimFillMapSkipStateEvent declaration */
 #include "server_sim_internal.h"
+#include "server_sim_scenario.h"   /* serverSimGetLobbyScript — the list as the lobby is told it */
 #include "round_stats_derive.h"     /* roundStatsApplyRecord — serverSimAddEvent's per-round stats funnel */
 #include "lobby_bot_pools.h"        /* lobbyBotPoolsSerialize — the bot-pool catalog streamed during sync */
+#include "brain_list.h"            /* brainListLoadTextsForPath — the brains' lobby texts */
 #include "client_sim_control.h"     /* clientSimApplyControl — the in-process subscriber's deliver */
 #include "transport_control_codec.h"   /* the body encoders the ring keyframe's control snapshot writes */
 #include "log_internal.h"           /* serverSimSerializeControlSnapshot prototype */
@@ -290,6 +292,8 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbySettings.lobbyWbnAvailable        = winbolonetIsRunning();
     evt->u.lobbySettings.lobbyServerLocks         = sim->serverLocks;
     evt->u.lobbySettings.uploadPolicy             = sim->uploadPolicy;
+    evt->u.lobbySettings.scriptUploadPolicy       = sim->scriptUploadPolicy;
+    evt->u.lobbySettings.scriptSharing            = !sim->scriptSharingOff;
     for (int vc = 0; vc < VIEW_CATEGORY_COUNT; vc++) {
         evt->u.lobbySettings.viewPolicy[vc]    = sim->viewPolicy[vc];
         evt->u.lobbySettings.viewDecaySecs[vc] = sim->viewDecaySecs[vc];
@@ -300,6 +304,8 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbySettings.lobbyOverviewWindow = sim->overviewWindow;
     evt->u.lobbySettings.lobbyLineOfSight    = sim->lineOfSight;
     evt->u.lobbySettings.lobbySmartPingsOff  = sim->smartPingsOff;
+    evt->u.lobbySettings.lobbyModsOff        = sim->modsOff;
+    evt->u.lobbySettings.lobbyPositionalSound = sim->positionalSound;
     /* What the lobby's scenario is, straight off what whoever attached it
        told the sim. A lobby with none leaves the source at lobbyScenarioNone
        and the strings empty, which is what keeps those bytes off the wire. */
@@ -319,6 +325,83 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
        such a round, and a client that only had that would predict its first
        life as open. */
     evt->u.lobbySettings.scenarioBaseGame = (uint8_t)sim->sim.scenarioBaseGame;
+    /* And what kind of script it is, so a client can say what the round's
+       script may do. False with no script attached, which is the same thing
+       the source beside it already says. */
+    evt->u.lobbySettings.scenarioKeepsWinCondition =
+        sim->scenarioIdentity.keepsWinCondition;
+    /* And whether the map decides it. A chooser reads this to know whether
+       the running script is one it may offer to remove; the catalogue rows
+       carry the same flag, but the attached script is not a catalogue row
+       and may not be in the directory at all. */
+    evt->u.lobbySettings.scenarioBound = sim->scenarioIdentity.bound;
+    /* And whether this server runs its scripts without the sandbox, so a
+       joiner sees it before they play. */
+    evt->u.lobbySettings.scenarioUnsafe = sim->scenarioIdentity.unsafe;
+}
+
+/* How many CTRL_LOBBY_SCRIPT_LIST chunks the list needs. Never 0: an empty
+   list is one chunk carrying no entries, because a host that has cleared its
+   list has something to say and a client that hears nothing would go on
+   showing the old one.
+
+   The list as the lobby is told it, which is the map's own script and then
+   the picks. The picks alone are what the host may edit and are asked for
+   somewhere else; what goes out here is what plays. */
+uint8_t serverSimScriptListChunkCount(const ServerSim *sim) {
+    int count = serverSimGetLobbyScriptCount(sim);
+
+    if (count <= 0) return 1;
+    return (uint8_t)((count + LOBBY_SCRIPT_LIST_CHUNK - 1) /
+                     LOBBY_SCRIPT_LIST_CHUNK);
+}
+
+void serverSimFillScriptListEvent(const ServerSim *sim, uint8_t chunk,
+                                  ControlEvent *evt) {
+    int total = serverSimGetLobbyScriptCount(sim);
+    int first = (int)chunk * LOBBY_SCRIPT_LIST_CHUNK;
+    int n     = total - first;
+    int i;
+
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_LOBBY_SCRIPT_LIST;
+    if (n < 0) n = 0;
+    if (n > LOBBY_SCRIPT_LIST_CHUNK) n = LOBBY_SCRIPT_LIST_CHUNK;
+    evt->u.lobbyScriptList.count = (uint8_t)n;
+    evt->u.lobbyScriptList.final =
+        (chunk + 1 >= serverSimScriptListChunkCount(sim)) ? 1 : 0;
+    for (i = 0; i < n; i++) {
+        const ScnDirEntry *src = serverSimGetLobbyScript(sim, first + i);
+        LobbyScriptEntry  *dst = &evt->u.lobbyScriptList.entries[i];
+        if (src == NULL) continue;
+        /* snprintf and not a straight copy: the two widths are held equal by
+           the asserts in server_command_dispatch.c, and a truncation here
+           would be a name that no longer matches the directory. */
+        snprintf(dst->file, sizeof(dst->file), "%s", src->file);
+        snprintf(dst->name, sizeof(dst->name), "%s", src->name);
+        dst->keepsWinCondition = src->keepsWinCondition;
+        dst->bound             = src->bound;
+        dst->source            = src->source;
+        dst->workshopId        = src->workshopId;
+    }
+}
+
+/* The whole list, as the chunks it needs, in order and back to back. That
+   run is what lets the reader do without a fragment number: it installs the
+   list when it takes a chunk with final set, and the next chunk it sees
+   after that one starts a new list. Published under the sim's own lock by
+   every caller, so nothing can interleave between the chunks. */
+void serverSimPublishScriptList(ServerSim *sim) {
+    ControlEvent evt;
+    uint8_t      chunks;
+    uint8_t      i;
+
+    if (sim == NULL) return;
+    chunks = serverSimScriptListChunkCount(sim);
+    for (i = 0; i < chunks; i++) {
+        serverSimFillScriptListEvent(sim, i, &evt);
+        serverSimPublishControl(sim, &evt);
+    }
 }
 
 void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
@@ -445,6 +528,230 @@ void serverSimFillLobbyBrainListEvent(const ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbyBrainList.list = sim->brainList;
 }
 
+/* ── The brains' lobby texts ─────────────────────────────────────────
+ *
+ * Unlike about.txt these DO travel: the server chooses the brain, so a client
+ * that does not have it installed would otherwise have nothing to show.
+ *
+ * They travel two ways. announce.txt is one short line the lobby drops into
+ * team chat without being asked, so every joiner is sent it, one
+ * CTRL_LOBBY_BRAIN_ANNOUNCE per brain that ships either file. commands.txt
+ * can be tens of kilobytes and is read only when a player clicks that line,
+ * so a joiner is sent its length and generation and nothing more; the client
+ * asks for the text (PACKET_LOBBY_BRAIN_DOCS_REQ) and it goes back
+ * compressed on CHANNEL_BULK. Sixteen brains' docs used to go to every
+ * joiner in the control channel's join burst, which is what
+ * CHANNEL_CONTROL_BACKLOG was sized for.
+ *
+ * READ ONCE, NOT PER SEND. The announce events are sent from inside
+ * serverSimSyncSubscriber, and the delayed spectator ring rebuilds a whole
+ * control snapshot through that same function on every lobby keyframe — with
+ * WinBoloDS defaulting to 16 spectator slots and the log writer running in
+ * lobby state, reading the files there opened up to two files per brain per
+ * keyframe on the tick thread.
+ *
+ * So the texts are read where the brains are scanned and kept here, the docs
+ * already compressed so a request costs no work but the copy.
+ * serverSimRefreshBrainDocs re-reads a brain whose files have a newer mtime,
+ * which keeps the "operator edits a brain between rounds" case, and gives the
+ * new docs a new generation. The cache is allocated on the first refresh
+ * rather than in every ServerSim. */
+struct ServerBrainDocsEntry {
+    bool     read;       /* this entry has been built at least once */
+    bool     have;       /* this brain ships at least one of the two files */
+    int64_t  mtime;      /* newest of the two when the entry was built; 0 = none */
+    uint16_t announceLen;
+    char     announce[BRAIN_ANNOUNCE_MAX + 1];
+    uint32_t docsGen;    /* 0 when the brain ships no commands.txt */
+    uint16_t docsLen;    /* commands.txt bytes before compression */
+    uint16_t docsZLen;   /* bytes at docsZ */
+    uint8_t *docsZ;      /* malloc'd zlib stream, NULL when docsLen is 0 */
+};
+
+struct ServerBrainDocsCache {
+    uint32_t lastGen;    /* the last generation handed out; 0 is never used */
+    struct ServerBrainDocsEntry entry[BRAIN_LIST_MAX];
+};
+
+/* Build brain `i`'s entry in `e` from disk. Leaves e->have false when the
+ * brain ships neither file. */
+static void serverSimBuildBrainDocsEntry(const ServerSim *sim, int i,
+                                         struct ServerBrainDocsCache *c,
+                                         struct ServerBrainDocsEntry *e,
+                                         char *docs, uint8_t *z) {
+    bool   truncated = false;
+    size_t dLen, zLen;
+
+    free(e->docsZ);
+    memset(e, 0, sizeof(*e));
+    e->read  = true;
+    e->mtime = brainListTextsMtimeForPath(sim->brainPaths[i]);
+
+    if (!brainListLoadTextsForPath(sim->brainPaths[i],
+                                   e->announce, sizeof(e->announce),
+                                   docs, (size_t)BRAIN_DOCS_MAX + 1,
+                                   &truncated)) {
+        return;                            /* this brain ships neither file */
+    }
+    if (truncated) {
+        WB_LOG_WARN(WB_LOG_CAT_SERVER,
+                       "brain '%s': announce.txt/commands.txt is longer "
+                       "than the wire allows (%d / %d bytes) and was cut",
+                       sim->brainList.entries[i].name,
+                       BRAIN_ANNOUNCE_MAX, BRAIN_DOCS_MAX);
+    }
+    e->have        = true;
+    e->announceLen = (uint16_t)strlen(e->announce);
+
+    dLen = strlen(docs);
+    if (dLen == 0) return;
+    zLen = brainDocsCompress(docs, dLen, z, BRAIN_DOCS_Z_MAX);
+    if (zLen == 0) {
+        WB_LOG_WARN(WB_LOG_CAT_SERVER,
+                    "brain '%s': commands.txt would not compress; the lobby "
+                    "will not offer it", sim->brainList.entries[i].name);
+        return;
+    }
+    e->docsZ = (uint8_t *)malloc(zLen);
+    if (e->docsZ == NULL) return;
+    memcpy(e->docsZ, z, zLen);
+    e->docsZLen = (uint16_t)zLen;
+    e->docsLen  = (uint16_t)dLen;
+    if (++c->lastGen == 0) c->lastGen = 1;
+    e->docsGen  = c->lastGen;
+}
+
+void serverSimRefreshBrainDocs(ServerSim *sim) {
+    char    *docs = NULL;
+    uint8_t *z    = NULL;
+    int      i;
+
+    if (sim == NULL || sim->brainList.count <= 0) return;
+    if (sim->brainDocs == NULL) {
+        sim->brainDocs = (struct ServerBrainDocsCache *)
+            calloc(1, sizeof(*sim->brainDocs));
+        if (sim->brainDocs == NULL) return;
+    }
+
+    docs = (char *)malloc(BRAIN_DOCS_MAX + 1);
+    z    = (uint8_t *)malloc(BRAIN_DOCS_Z_MAX);
+    if (docs == NULL || z == NULL) {
+        free(docs); free(z);
+        return;
+    }
+
+    for (i = 0; i < sim->brainList.count && i < BRAIN_LIST_MAX; i++) {
+        struct ServerBrainDocsEntry *e = &sim->brainDocs->entry[i];
+        int64_t now = brainListTextsMtimeForPath(sim->brainPaths[i]);
+        /* A brain already read whose files have not moved is left alone. A
+         * mtime of 0 means "ships neither file", and asking for that costs
+         * two path probes rather than two whole file reads. */
+        if (e->read && e->mtime == now) continue;
+        serverSimBuildBrainDocsEntry(sim, i, sim->brainDocs, e, docs, z);
+    }
+
+    free(docs);
+    free(z);
+}
+
+void serverSimFreeBrainDocs(ServerSim *sim) {
+    int i;
+    if (sim == NULL || sim->brainDocs == NULL) return;
+    for (i = 0; i < BRAIN_LIST_MAX; i++) {
+        free(sim->brainDocs->entry[i].docsZ);
+    }
+    free(sim->brainDocs);
+    sim->brainDocs = NULL;
+}
+
+void serverSimEmitBrainAnnounces(const ServerSim *sim,
+                                 void (*deliver)(void *, const struct ControlEvent *),
+                                 void *ctx) {
+    int i;
+    if (sim == NULL || deliver == NULL) return;
+    if (sim->brainList.count <= 0 || sim->brainDocs == NULL) return;
+
+    for (i = 0; i < sim->brainList.count && i < BRAIN_LIST_MAX; i++) {
+        const struct ServerBrainDocsEntry *e = &sim->brainDocs->entry[i];
+        ControlEvent evt;
+
+        if (!e->have) continue;
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_LOBBY_BRAIN_ANNOUNCE;
+        evt.u.lobbyBrainAnnounce.brainIdx    = (uint8_t)i;
+        evt.u.lobbyBrainAnnounce.docsGen     = e->docsGen;
+        evt.u.lobbyBrainAnnounce.docsLen     = e->docsLen;
+        evt.u.lobbyBrainAnnounce.announceLen = e->announceLen;
+        memcpy(evt.u.lobbyBrainAnnounce.announce, e->announce,
+               (size_t)e->announceLen + 1);
+        deliver(ctx, &evt);
+    }
+}
+
+bool serverSimGetBrainDocs(const ServerSim *sim, int brainIdx,
+                           uint32_t *outGen, uint16_t *outLen,
+                           const uint8_t **outZ, uint16_t *outZLen) {
+    const struct ServerBrainDocsEntry *e;
+    if (sim == NULL || sim->brainDocs == NULL) return false;
+    if (brainIdx < 0 || brainIdx >= sim->brainList.count ||
+        brainIdx >= BRAIN_LIST_MAX) {
+        return false;
+    }
+    e = &sim->brainDocs->entry[brainIdx];
+    if (e->docsGen == 0 || e->docsZ == NULL) return false;
+    if (outGen)  *outGen  = e->docsGen;
+    if (outLen)  *outLen  = e->docsLen;
+    if (outZ)    *outZ    = e->docsZ;
+    if (outZLen) *outZLen = e->docsZLen;
+    return true;
+}
+
+void serverSimRefreshBotPools(ServerSim *sim) {
+    uint8_t *blob;
+    int      len;
+    uint32_t id = 0;
+
+    if (sim == NULL) return;
+    free(sim->botPoolBlob);
+    sim->botPoolBlob    = NULL;
+    sim->botPoolBlobLen = 0;
+    sim->botPoolId      = 0;
+
+    blob = (uint8_t *)malloc(LOBBY_BOT_CATALOG_WIRE_MAX);
+    if (blob == NULL) return;
+    len = lobbyBotPoolsSerializeWithId(blob, (int)LOBBY_BOT_CATALOG_WIRE_MAX,
+                                       &id);
+    if (len <= 0 || id == 0) {
+        free(blob);
+        return;
+    }
+    /* Keep only what the blob uses: usually a few kilobytes of the 68 KiB. */
+    sim->botPoolBlob = (uint8_t *)realloc(blob, (size_t)len);
+    if (sim->botPoolBlob == NULL) {
+        free(blob);
+        return;
+    }
+    sim->botPoolBlobLen = (uint32_t)len;
+    sim->botPoolId      = id;
+}
+
+void serverSimFillBotPoolInfoEvent(const ServerSim *sim, ControlEvent *evt) {
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_LOBBY_BOT_POOL_INFO;
+    if (sim == NULL || sim->botPoolBlob == NULL) return;
+    evt->u.lobbyBotPoolInfo.id  = sim->botPoolId;
+    evt->u.lobbyBotPoolInfo.len = sim->botPoolBlobLen;
+}
+
+bool serverSimGetBotPoolBlob(const ServerSim *sim, const uint8_t **outBlob,
+                             uint32_t *outLen, uint32_t *outId) {
+    if (sim == NULL || sim->botPoolBlob == NULL) return false;
+    if (outBlob) *outBlob = sim->botPoolBlob;
+    if (outLen)  *outLen  = sim->botPoolBlobLen;
+    if (outId)   *outId   = sim->botPoolId;
+    return true;
+}
+
 /* Fill a CTRL_GAME_VOTE_STATE event for the given vote kind. Returns false
  * if there's no snapshot (caller must not deliver). Mirrors the inline
  * publish at publishGameVoteState. */
@@ -547,6 +854,51 @@ void serverSimFillSimRulesEvent(const ServerSim *sim, ControlEvent *evt) {
 #undef SIM_RULES_FILL_FIELD
 }
 
+/* How many fragments the stored set needs. An empty set still needs one, so
+ * that a detach has a fragment to say it on. */
+uint8_t serverSimScenarioRulesFragCount(const ServerSim *sim) {
+    uint8_t rows;
+
+    if (sim == NULL) return 1;
+    rows = sim->scenarioRulesCount;
+    if (rows == 0) return 1;
+    return (uint8_t)((rows + SCN_RULES_FRAG_ROWS - 1) / SCN_RULES_FRAG_ROWS);
+}
+
+/* Fill fragment `seq` of a CTRL_SCENARIO_RULES from the set the attached
+ * scenario's manifest holds. The rows are copied as they were given: this
+ * event says what the author wrote, so a value the sim later refused or
+ * clamped is still the value the table asked for.
+ *
+ * A seq past the last fragment fills an empty one rather than reading off
+ * the end of the stored set; every caller walks the count above, so that is
+ * a guard and not a path. */
+void serverSimFillScenarioRulesEvent(const ServerSim *sim, uint8_t seq,
+                                     ControlEvent *evt) {
+    uint8_t fragCount;
+    uint8_t first;
+    uint8_t rows;
+    uint8_t i;
+
+    if (sim == NULL || evt == NULL) return;
+    fragCount = serverSimScenarioRulesFragCount(sim);
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_SCENARIO_RULES;
+    evt->u.scenarioRules.seq       = seq;
+    evt->u.scenarioRules.fragCount = fragCount;
+    if (seq >= fragCount) return;   /* names no fragment — carries no rows */
+
+    first = (uint8_t)(seq * SCN_RULES_FRAG_ROWS);
+    rows  = (uint8_t)(sim->scenarioRulesCount - first);
+    if (rows > SCN_RULES_FRAG_ROWS) rows = SCN_RULES_FRAG_ROWS;
+    evt->u.scenarioRules.count = rows;
+    for (i = 0; i < rows; i++) {
+        evt->u.scenarioRules.rule[i] =
+            (uint8_t)sim->scenarioRules[first + i].rule;
+        evt->u.scenarioRules.value[i] = sim->scenarioRules[first + i].value;
+    }
+}
+
 void serverSimPublishSimRules(ServerSim *sim) {
     ControlEvent evt;
     if (sim == NULL) return;
@@ -595,10 +947,33 @@ static void serverSimSyncOrderingDeliver(void *ctx,
     check->inner(check->innerCtx, evt);
 }
 
+/* `fullReplay` says who is being replayed to. TRUE for a real client's (or
+ * spectator's) join sync, which happens once and is addressed to one
+ * recipient the delivery path can filter for. FALSE for the delayed
+ * spectator ring's control snapshot, which is rebuilt on every keyframe into
+ * a buffer of LOG_CONTROL_SNAPSHOT_MAX bytes, and which is written once for
+ * every spectator rather than for one of them.
+ *
+ * Two things are left out of the snapshot, both for the same reason: they
+ * cost the keyframe bytes it cannot spare and reach nobody on that path.
+ *
+ * The brains' announce lines. They once carried every brain's commands.txt
+ * as well, which overran LOG_CONTROL_SNAPSHOT_MAX so the whole keyframe was
+ * dropped without a word; the docs have left the control channel since, but
+ * the snapshot's size cap still does not count the announces.
+ *
+ * The panel lists held to one team or one player. A spectator belongs to no
+ * team and holds no slot, so serverSpectatorDeliverControl admits a panel
+ * only when it is addressed to everyone; a snapshot carrying the targeted
+ * ones would spend up to 127 further records on lists that reach nobody. The
+ * everyone-addressed lists still go, which is every list a spectator can
+ * see. The scenario markers held to one team or one player are left out on
+ * the same terms. */
 static void serverSimSyncSubscriber(
     ServerSim *sim,
     void (*deliver)(void *, const struct ControlEvent *),
-    void *ctx) {
+    void *ctx,
+    bool fullReplay) {
     ControlEvent evt;
     BYTE i;
     SyncOrderingCheck check;
@@ -636,6 +1011,30 @@ static void serverSimSyncSubscriber(
     serverSimFillLobbySettingsEvent(sim, &evt);
     deliver(ctx, &evt);
 
+    /* The lobby's script list, straight behind the settings that name its
+     * first entry. Always sent, even when the list is empty: a joiner has
+     * nothing of its own to fall back on, so one chunk saying there are no
+     * scripts is the answer and no event at all is a different one. Walked
+     * here rather than published because a replay delivers to the one
+     * joining subscriber. */
+    {
+        uint8_t chunks = serverSimScriptListChunkCount(sim);
+        uint8_t chunk;
+        for (chunk = 0; chunk < chunks; chunk++) {
+            serverSimFillScriptListEvent(sim, chunk, &evt);
+            deliver(ctx, &evt);
+        }
+    }
+
+    /* The values the host chose for scripts' settings, as a CLEAR and one
+     * SET each. Sent even when none is held, because the CLEAR is also how
+     * a client learns this server takes CMD_SET_SCRIPT_SETTING. Only to a
+     * real joiner: the ring's snapshot reaches spectators, who hold no
+     * lobby dialog. */
+    if (fullReplay) {
+        serverSimReplayScriptSettings(sim, deliver, ctx);
+    }
+
     /* The gameplay numbers this sim is running on. A joiner's own table
      * starts classic, and the round it is joining may not be on the classic
      * one — a scenario can have changed a rule before it arrived. Replayed
@@ -654,39 +1053,26 @@ static void serverSimSyncSubscriber(
         serverSimFillLobbyBrainListEvent(sim, &evt);
         deliver(ctx, &evt);
 
-        /* Bot-pool catalog: the server's themed naming pools (loaded from
-         * -botnames / data/bot_names.json), zlib-compressed and streamed
-         * as CTRL_LOBBY_BOT_POOL_CHUNK fragments so the joiner renders and
-         * picks from the SERVER's pools rather than its own shipped file.
-         * Same lobby-only gate as the brain list. */
-        {
-            unsigned char *blob =
-                (unsigned char *)malloc(LOBBY_BOT_CATALOG_WIRE_MAX);
-            if (blob) {
-                int blen = lobbyBotPoolsSerialize(blob,
-                                                  (int)LOBBY_BOT_CATALOG_WIRE_MAX);
-                if (blen > 0) {
-                    int frag = LOBBY_BOT_POOL_CHUNK_FRAG_MAX;
-                    int nChunks = (blen + frag - 1) / frag;
-                    int off = 0, ci;
-                    if (nChunks <= 255) {
-                        for (ci = 0; ci < nChunks; ci++) {
-                            int fl = blen - off;
-                            if (fl > frag) fl = frag;
-                            memset(&evt, 0, sizeof(evt));
-                            evt.type = CTRL_LOBBY_BOT_POOL_CHUNK;
-                            evt.u.lobbyBotPoolChunk.seq     = (uint8_t)ci;
-                            evt.u.lobbyBotPoolChunk.count   = (uint8_t)nChunks;
-                            evt.u.lobbyBotPoolChunk.fragLen = (uint16_t)fl;
-                            memcpy(evt.u.lobbyBotPoolChunk.frag, blob + off,
-                                   (size_t)fl);
-                            deliver(ctx, &evt);
-                            off += fl;
-                        }
-                    }
-                }
-                free(blob);
-            }
+        /* The brains' announce lines, straight after the list they index
+         * into: the lobby turns a bot's announce line into team chat and
+         * hangs the brain's commands docs off it, which the client asks for
+         * on CHANNEL_BULK when they are opened. Same lobby-only gate. Only
+         * to a real joiner: LOG_CONTROL_SNAPSHOT_MAX does not count these,
+         * and the ring's spectators hold no lobby chat to put them in. */
+        if (fullReplay) {
+            serverSimEmitBrainAnnounces(sim, deliver, ctx);
+        }
+
+        /* Which bot-name catalogue this server holds (-botnames or
+         * data/bot_names.json), so the joiner renders and picks from the
+         * SERVER's pools rather than its own shipped file. Only the id and
+         * the length: a joiner whose pools differ fetches the blob on
+         * CHANNEL_BULK once connected. Same lobby-only gate as the brain
+         * list, and only to a real joiner — the ring's spectators add no
+         * bots. */
+        if (fullReplay) {
+            serverSimFillBotPoolInfoEvent(sim, &evt);
+            deliver(ctx, &evt);
         }
     }
 
@@ -766,6 +1152,43 @@ static void serverSimSyncSubscriber(
      * join. */
     if (serverSimFillEntitySyncEvent(sim, &evt)) {
         deliver(ctx, &evt);
+    }
+
+    /* What each scenario panel is showing. Every update replaces the whole
+     * list, so the last one the sim stored is the whole of a panel's state
+     * and a joiner needs no history. Replayed as it was published, recipient
+     * pair and all: the delivery path filters a replayed event the way it
+     * filters a live one, so a list held to one team or one player reaches
+     * the joiner only if it is addressed to them. The ring's snapshot takes
+     * the everyone-addressed lists alone, for the reason above the function.
+     *
+     * Then the markers up and the score rows set, the same way. A marker is
+     * kept by id and a score row by slot or team, so the last event for each
+     * is the whole of its state; a cleared marker is left out, since a
+     * joiner's markers start empty. The markers carry their recipient pair
+     * and are filtered on delivery like the panels, and the ring's snapshot
+     * takes only the everyone-addressed ones. Scores are broadcast and go to
+     * both.
+     *
+     * Both placed ahead of the player-join roster for the reason the entity
+     * sync is — the ordering check refuses a non-join event after the first
+     * join. */
+    serverSimScenarioReplayPanels(sim, deliver, ctx, fullReplay);
+    serverSimScenarioReplayMarkersAndScores(sim, deliver, ctx, fullReplay);
+
+    /* What the attached scenario's own manifest sets, so a client that joins
+     * after the attach reads the same table the lobby's popup draws from.
+     * Only while one is attached: an empty set says a scenario has just
+     * detached, and a map that never had one has nothing to say. Placed
+     * ahead of the player-join roster for the reason the two above are — the
+     * ordering check refuses a non-join event after the first join. */
+    if (sim->scenarioIdentity.source != lobbyScenarioNone) {
+        uint8_t frags = serverSimScenarioRulesFragCount(sim);
+        uint8_t seq;
+        for (seq = 0; seq < frags; seq++) {
+            serverSimFillScenarioRulesEvent(sim, seq, &evt);
+            deliver(ctx, &evt);
+        }
     }
 
     for (i = 0; i < MAX_TANKS; i++) {
@@ -870,7 +1293,7 @@ int serverSimSerializeControlSnapshot(ServerSim *sim, BYTE *out, int cap) {
     sink.cap      = cap;
     sink.len      = 0;
     sink.overflow = false;
-    serverSimSyncSubscriber(sim, serverSimControlSnapshotDeliver, &sink);
+    serverSimSyncSubscriber(sim, serverSimControlSnapshotDeliver, &sink, false);
     return sink.overflow ? -1 : sink.len;
 }
 
@@ -931,7 +1354,7 @@ SubscriberHandle serverSimRegisterSubscriber(
      * this point — for the wire transport that means
      * udpServer.clients[slot] is fully populated before the caller
      * invokes serverSimRegisterSubscriber. */
-    serverSimSyncSubscriber(sim, deliver, ctx);
+    serverSimSyncSubscriber(sim, deliver, ctx, true);
 
     sim->subscribers[slot].deliver      = deliver;
     /* Control events only until the caller asks for the second channel. */

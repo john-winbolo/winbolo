@@ -40,6 +40,7 @@
 #include "log.h"
 #include "server_sim.h"
 #include "pillbox.h"
+#include "bolo_map.h"
 #include "game_sim.h"
 #include "client_sim.h"
 #include "client_sim_internal.h"
@@ -532,7 +533,29 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
   WORLD bestTankX, bestTankY;
   BYTE bestTankDir, bestTankSpeed;
   tank *bestTank;
+  BYTE bestTankNum;
   bool foundTarget;
+
+  /* pill_shell_cap: the pill shells already in the air at each tank,
+   * counted once here rather than kept as a running total, so no path that
+   * ends a shell can leave a count behind. A shell marked dead is gone for
+   * this purpose even though the list still holds it until the next update.
+   * Every shell fired below adds to the count, so the pills that fire in this
+   * pass count against each other. */
+  uint16_t shellsAtTank[MAX_TANKS];
+  const bool shellCapOn = sim->rules.pill_shell_cap != 0;
+  bool heldByCap;
+
+  if (shellCapOn) {
+    shells q;
+
+    memset(shellsAtTank, 0, sizeof(shellsAtTank));
+    for (q = *shs; q != NULL; q = q->next) {
+      if (q->shellDead == FALSE && q->target < MAX_TANKS) {
+        shellsAtTank[q->target]++;
+      }
+    }
+  }
 
   for (count=0;count<(*value)->numPills;count++) {
     if ((*value)->active[count] == FALSE) {
@@ -565,7 +588,9 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
       /* Find the closest non-allied tank in range */
       bestDist = 999999.0;
       bestTank = NULL;
+      bestTankNum = NEUTRAL;
       foundTarget = FALSE;
+      heldByCap = FALSE;
       bestTankX = 0;
       bestTankY = 0;
       bestTankDir = 0;
@@ -592,18 +617,34 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
         }
 
         /* Check visibility: not hidden in trees (unless very close or just fired) */
-        if ((utilIsTankInTrees(mp, value, bs, tankX, tankY)) == TRUE && (diffX >= MIN_TREEHIDE_DIST || diffY >= MIN_TREEHIDE_DIST) && tankJustFired(&tanks[t]) == FALSE) {
+        if ((utilIsTankInTrees(mp, value, bs, tankX, tankY)) == TRUE && (diffX >= sim->rules.tree_hide_distance ||
+             diffY >= sim->rules.tree_hide_distance) && tankJustFired(&tanks[t]) == FALSE) {
           continue;
         }
 
         if ((utilIsItemInRange(x, y, tankX, tankY, (WORLD) sim->rules.pill_range, &amount)) == TRUE) {
+          /* A tank with as many pill shells coming as the rule allows is
+           * passed over for the next nearest. Checked only once the tank
+           * has passed every other test, so heldByCap means a target the
+           * pill could otherwise shoot: one that leaves range, hides or
+           * dies clears justSeen below the same as it always has. */
+          if (shellCapOn && t < MAX_TANKS &&
+              shellsAtTank[t] >= sim->rules.pill_max_shells_at_tank) {
+            heldByCap = TRUE;
+            continue;
+          }
           if (amount < bestDist) {
             bestDist = amount;
             bestTankX = tankX;
             bestTankY = tankY;
-            bestTankDir = tankGetTravelAngel(&tanks[t]);
+            /* Let the Mac solver round the original heading itself.
+             * WinBolo's travel-angle helper rounds half-sectors downward,
+             * so pre-rounding here changes Mac aim at 8, 24, ... 248. */
+            bestTankDir = sim->rules.pill_aim_mac ? tankGet256Dir(&tanks[t]) :
+                tankGetTravelAngel(&tanks[t]);
             bestTankSpeed = tankGetSpeed(&tanks[t]);
             bestTank = &tanks[t];
+            bestTankNum = t;
             foundTarget = TRUE;
           }
         }
@@ -612,8 +653,11 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
       if (foundTarget) {
         /* Fire at closest enemy tank */
         if ((*value)->item[count].justSeen == TRUE) {
-          dir = pillsTargetTank(sim, mp, value, bs, x, y, bestTankX, bestTankY, (TURNTYPE) bestTankDir, bestTankSpeed, (tankIsOnBoat(bestTank)), tankBoatExitSpeed(sim, *bestTank));
-          shellsAddItem(sim, shs, x, y, dir, (float) (PILLBOX_FIRE_DISTANCE), NEUTRAL, FALSE);
+          dir = pillsTargetTank(sim, mp, value, bs, x, y, bestTankX, bestTankY, (TURNTYPE) bestTankDir, bestTankSpeed, (tankIsOnBoat(bestTank)), tankBoatExitSpeed(sim, *bestTank), tankIsObstructed(bestTank));
+          shellsAddItem(sim, shs, x, y, dir, sim->rules.pill_fire_length, NEUTRAL, bestTankNum, count, FALSE);
+          if (shellCapOn && bestTankNum < MAX_TANKS) {
+            shellsAtTank[bestTankNum]++;
+          }
           (*value)->item[count].reload = 0;
           sim->callbacks.soundDist(sim->callbacks.ctx, shootNear, (*value)->item[count].x, (*value)->item[count].y);
         } else {
@@ -621,9 +665,11 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
           (*value)->item[count].justSeen = TRUE;
           (*value)->item[count].reload = 0;
         }
-      } else {
+      } else if (heldByCap == FALSE) {
         (*value)->item[count].justSeen = FALSE;
       }
+      /* Held only by the cap: justSeen and the full reload are kept, so the
+       * pill fires on the first update a shell at its target comes free. */
     }
   }
 }
@@ -642,20 +688,50 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
 *  yValue - Y Location
 *********************************************************/
 bool pillsIsPillHit(pillboxes *value, BYTE xValue, BYTE yValue) {
-  bool returnValue; /* Value to return */
+  return pillsHitSlot(value, xValue, yValue) != DMG_NO_PILL;
+}
+
+/*********************************************************
+*NAME:          pillsHitSlot
+*PURPOSE:
+*  The pill index of the pillbox a shell at this square
+*  would hit — a live one on the map — or DMG_NO_PILL for a
+*  square with none.
+*
+*ARGUMENTS:
+*  value  - Pointer to the pillbox structure
+*  xValue - X Location
+*  yValue - Y Location
+*********************************************************/
+BYTE pillsHitSlot(pillboxes *value, BYTE xValue, BYTE yValue) {
   BYTE count;       /* Looping Variable */
 
-  returnValue = FALSE;
   count = 0;
-  while (returnValue == FALSE && count < ((*value)->numPills)) {
+  while (count < ((*value)->numPills)) {
     if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue && ((*value)->item[count].armour >0) && (*value)->item[count].inTank == FALSE) {
       /* Pillbox has been Hit */
-      returnValue = TRUE;
+      return count;
     }
     count++;
   }
 
-  return returnValue;
+  return DMG_NO_PILL;
+}
+
+/* What a blow takes off a pill once the host has priced it, as a percent of
+   the classic amount. One rounding, half up, so a hundred leaves the classic
+   number exactly; capped at a byte, which is more than any pill can hold. */
+static BYTE pillsScaledDamage(GameSim *sim, int base, BYTE attacker, BYTE index,
+                              BYTE cause, BYTE pill) {
+  int64_t amount;
+
+  amount = ((int64_t) base *
+            gameSimPillDamageScale(sim, attacker, index, cause, pill) + 50) /
+           100;
+  if (amount > 255) {
+    amount = 255;
+  }
+  return (BYTE) amount;
 }
 
 /*********************************************************
@@ -673,8 +749,11 @@ bool pillsIsPillHit(pillboxes *value, BYTE xValue, BYTE yValue) {
 *  yValue     - Y Location
 *  wantDamage - TRUE if we just want to do damage to it
 *  wantAngry  - TRUE if we just want to make it angry
+*  owner      - Who fired the shell, NEUTRAL for a pillbox
+*  pill       - The pill index of the pillbox that fired
+*               it, DMG_NO_PILL for a tank's shell
 *********************************************************/
-bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, bool wantAngry, BYTE owner) {
+bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, bool wantAngry, BYTE owner, BYTE pill) {
   pillboxes *value = &sim->pb;
   bool isServer = sim->isServer;
   bool returnValue;  /* Value to return */
@@ -690,14 +769,27 @@ bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, boo
       done = TRUE;
       BYTE before = (*value)->item[count].armour;  /* > 0 here */
       if (wantDamage == TRUE && (*value)->item[count].armour > 0) {
-        (*value)->item[count].armour--;
+        /* What the shell takes, as the host prices it. A price of nothing
+           still stops the shell and still angers the pill below: only the
+           armour lost is the host's to scale. */
+        BYTE damage = pillsScaledDamage(sim, sim->rules.pill_shell_damage,
+                                        owner, count, DMG_SRC_SHELL, pill);
+        /* Ask whether the shell takes more than is left rather than
+           subtracting first and reading the wrap: what a shell takes off a
+           pill and what a pill may hold are two rules now, and a table may
+           put any pair of numbers here. */
+        if (damage > before) {
+          (*value)->item[count].armour = 0;
+        } else {
+          (*value)->item[count].armour = (BYTE) (before - damage);
+        }
         /* The blow that would finish the pill is the host's to refuse, and a
            refusal holds it at one armour, where it goes on firing. Taken back
            before the damage is recorded, so the record says what the pill
            actually lost. */
         if ((*value)->item[count].armour == 0 &&
             gameSimCanDie(sim, DIE_KIND_PILL, count, owner,
-                          DMG_SRC_SHELL) == FALSE) {
+                          DMG_SRC_SHELL, pill) == FALSE) {
           (*value)->item[count].armour = 1;
         }
       }
@@ -723,7 +815,7 @@ bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, boo
       } else if (wantDamage == TRUE) {
         (*value)->item[count].coolDown = (BYTE) sim->rules.pill_cooldown_ticks;
         if ((*value)->item[count].speed > sim->rules.pill_attack_min_ticks) {
-          (*value)->item[count].speed /=2;
+          (*value)->item[count].speed /= (BYTE) sim->rules.pill_angry_divisor;
           if ((*value)->item[count].speed < sim->rules.pill_attack_min_ticks) {
             (*value)->item[count].speed = (BYTE) sim->rules.pill_attack_min_ticks;
           }
@@ -841,6 +933,80 @@ BYTE pillsGetScreenHealth(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yVal
   return returnValue;
 }
 
+/* Mac Bolo 0.99.7's quarter-wave table: trunc(128*sin(b*pi/128)),
+ * clipped to 127. Used by both its lead vector and its integer aim search. */
+static const BYTE pillMacSine[65] = {
+  0, 3, 6, 9, 12, 15, 18, 21, 24, 28, 31, 34, 37, 40, 43, 46,
+  48, 51, 54, 57, 60, 63, 65, 68, 71, 73, 76, 78, 81, 83, 85, 88,
+  90, 92, 94, 96, 98, 100, 102, 104, 106, 108, 109, 111, 112, 114,
+  115, 117, 118, 119, 120, 121, 122, 123, 124, 124, 125, 126,
+  126, 127, 127, 127, 127, 127, 127
+};
+
+static int pillsMacSin(int angle) {
+  int half = angle & 127;
+  int value = pillMacSine[half > 64 ? 128 - half : half];
+  return (angle & 128) ? -value : value;
+}
+
+/* Arithmetic right shift, including floor rounding for negative products. */
+static int32_t pillsMacShift(int32_t value, int bits) {
+  int32_t divisor = (int32_t)1 << bits;
+  return value >= 0 ? value / divisor : -((-value + divisor - 1) / divisor);
+}
+
+static int32_t pillsMacPixelDelta(WORLD a, WORLD b) {
+  int32_t delta = (uint16_t)(a - b);
+  if (delta >= 32768) delta -= 65536;
+  return pillsMacShift(delta, 4);
+}
+
+static int pillsMacRange(WORLD px, WORLD py, WORLD tx, WORLD ty) {
+  int32_t dx = pillsMacPixelDelta(px, tx);
+  int32_t dy = pillsMacPixelDelta(py, ty);
+  int32_t squared = dx * dx + dy * dy;
+  /* Equivalent to Mac's floor(sqrt(256*i)) lookup table and its three
+   * buckets. The input to sqrt is an exact integer no larger than 65280. */
+  if (squared > 0xFFFFF) return 0x7FFF;
+  if (squared > 0xFFFF) return (int)sqrt((double)((squared >> 12) * 256)) * 4;
+  if (squared > 0xFFF) return (int)sqrt((double)((squared >> 8) * 256));
+  return (int)sqrt((double)((squared >> 4) * 256)) / 4;
+}
+
+static TURNTYPE pillsMacAim(int32_t x, int32_t y) {
+  bool negativeX = x < 0, negativeY = y < 0;
+  int angle, delta;
+  if (negativeX) x = -x;
+  if (negativeY) y = -y;
+  angle = x < y ? 16 : 48;
+  for (delta = 8; delta != 0; delta >>= 1) {
+    if (y * pillMacSine[angle] - x * pillMacSine[64 - angle] < 0) {
+      angle += delta;
+    } else {
+      angle -= delta;
+    }
+  }
+  if (!negativeY) angle = -128 - angle;
+  if (negativeX) angle = -angle;
+  return (TURNTYPE)(uint8_t)angle;
+}
+
+static TURNTYPE pillsTargetTankMac(WORLD px, WORLD py, WORLD tx, WORLD ty,
+                                  TURNTYPE heading, BYTE speed, bool obstructed) {
+  int distance = pillsMacRange(px, py, tx, ty);
+  int direction = ((int)(heading + 8) & 255) & 240;
+  /* WinBolo moves speed WU per 20 ms; Mac moves speed*127/256 WU
+   * per 40 ms. Its road speed 64 corresponds to WinBolo's 16. Preserve
+   * the Mac byte's range for scenarios with unusually high speeds. */
+  int macSpeed = speed > 63 ? 255 : speed * 4;
+  uint16_t lead = obstructed ? 0 : (uint16_t)((distance - 16) * macSpeed) >> 2;
+  /* Keep these signed and wider than WORLD: wrapping the distant aim point
+   * at a map edge would reverse shots. The original only wraps the lead. */
+  int32_t x = (int32_t)tx - pillsMacShift(lead * -pillsMacSin(direction), 8) - px;
+  int32_t y = (int32_t)ty - pillsMacShift(lead * pillsMacSin(direction + 64), 8) - py;
+  return pillsMacAim(x, y);
+}
+
 /*********************************************************
 *NAME:          pillsTargetTank
 *AUTHOR:        John Morrison
@@ -861,54 +1027,51 @@ BYTE pillsGetScreenHealth(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yVal
 *  speed  - The speed of the tank
 *  onBoat - Is the tank on a boat
 *  boatExitSpeed - Speed at which that tank leaves a boat
+*  obstructed - Whether the target's last move was blocked
 *********************************************************/
-TURNTYPE pillsTargetTank(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD xValue, WORLD yValue, WORLD tankX, WORLD tankY, TURNTYPE angle, BYTE speed, bool onBoat, BYTE boatExitSpeed) {
+TURNTYPE pillsTargetTank(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD xValue, WORLD yValue, WORLD tankX, WORLD tankY, TURNTYPE angle, BYTE speed, bool onBoat, BYTE boatExitSpeed, bool obstructed) {
   TURNTYPE returnValue; /* Value to return */
 
+  if (sim->rules.pill_aim_mac != 0) {
+    return pillsTargetTankMac(xValue, yValue, tankX, tankY, angle, speed, obstructed);
+  }
   if (speed == 0) {
     returnValue = utilCalcAngle(xValue, yValue, tankX, tankY);
-  } else {
-#ifdef ENABLE_PILLMASSAGE_BUG
-    /* Classic Bolo "pillmassage" bug: at close range the original forward
-       prediction formula (tank_steps = speed * (dist-16) >> 2) produces
-       wildly inaccurate aim, allowing tanks to circle pillboxes without
-       being hit.  Beyond the threshold we fall back to the accurate
-       iterative prediction. */
-    {
-      long diffX = (long)tankX - (long)xValue;
-      long diffY = (long)tankY - (long)yValue;
-      double dist = sqrt((double)(diffX * diffX + diffY * diffY));
-
-      /* 1.5 tiles — 384 WORLD units */
-      if (dist < 384.0) {
-        int tankDirX, tankDirY;
-        utilCalcDistance(&tankDirX, &tankDirY, angle, speed);
-
-        /* Dot product of tank velocity with tank-to-pill vector.
-           If the tank is driving straight at (or away from) the pill
-           the dot product magnitude is large.  The bug only applies
-           when moving tangentially (sliding around the pill). */
-        double dot = (double)tankDirX * (-diffX) + (double)tankDirY * (-diffY);
-        double dirMag = sqrt((double)(tankDirX * tankDirX + tankDirY * tankDirY));
-        double cosAngle = (dirMag > 0.0 && dist > 0.0) ? dot / (dirMag * dist) : 1.0;
-
-        /* Threshold: if |cos| > 0.5 (~60 degrees) the tank is heading
-           roughly toward/away from the pill — use accurate aiming. */
-        if (fabs(cosAngle) > 0.5) {
-          returnValue = pillsTargetTankMove(sim, mp, pb, bs, xValue, yValue, tankX, tankY, angle, speed, onBoat, boatExitSpeed);
-        } else {
-          long tank_steps = ((long)speed * ((long)(dist + 0.5) - 16)) >> 2;
-          long predictedX = (long)tankX + tank_steps * (long)tankDirX;
-          long predictedY = (long)tankY + tank_steps * (long)tankDirY;
-          returnValue = utilCalcAngle(xValue, yValue, (WORLD)predictedX, (WORLD)predictedY);
-        }
-      } else {
-        returnValue = pillsTargetTankMove(sim, mp, pb, bs, xValue, yValue, tankX, tankY, angle, speed, onBoat, boatExitSpeed);
-      }
-    }
-#else
+  } else if (sim->rules.pill_massage_range <= 0) {
     returnValue = pillsTargetTankMove(sim, mp, pb, bs, xValue, yValue, tankX, tankY, angle, speed, onBoat, boatExitSpeed);
-#endif
+  } else {
+    /* The "pillmassage" aim. Inside pill_massage_range the forward
+       prediction the original formula makes (tank_steps = speed *
+       (dist-16) >> 2) is wide enough of the tank that it can circle the
+       pillbox without being hit. It only applies to a tank sliding past:
+       one driving at or away from the pillbox is led by the solver as
+       usual. Beyond that range every tank is. */
+    long diffX = (long)tankX - (long)xValue;
+    long diffY = (long)tankY - (long)yValue;
+    double dist = sqrt((double)(diffX * diffX + diffY * diffY));
+
+    if (dist < (double)sim->rules.pill_massage_range) {
+      int tankDirX, tankDirY;
+      utilCalcDistance(&tankDirX, &tankDirY, angle, speed);
+
+      /* Dot product of tank velocity with tank-to-pill vector.
+         If the tank is driving straight at (or away from) the pill
+         the dot product magnitude is large. */
+      double dot = (double)tankDirX * (-diffX) + (double)tankDirY * (-diffY);
+      double dirMag = sqrt((double)(tankDirX * tankDirX + tankDirY * tankDirY));
+      double cosAngle = (dirMag > 0.0 && dist > 0.0) ? dot / (dirMag * dist) : 1.0;
+
+      if (fabs(cosAngle) > (double)sim->rules.pill_massage_cosine) {
+        returnValue = pillsTargetTankMove(sim, mp, pb, bs, xValue, yValue, tankX, tankY, angle, speed, onBoat, boatExitSpeed);
+      } else {
+        long tank_steps = ((long)speed * ((long)(dist + 0.5) - 16)) >> 2;
+        long predictedX = (long)tankX + tank_steps * (long)tankDirX;
+        long predictedY = (long)tankY + tank_steps * (long)tankDirY;
+        returnValue = utilCalcAngle(xValue, yValue, (WORLD)predictedX, (WORLD)predictedY);
+      }
+    } else {
+      returnValue = pillsTargetTankMove(sim, mp, pb, bs, xValue, yValue, tankX, tankY, angle, speed, onBoat, boatExitSpeed);
+    }
   }
 
   return returnValue;
@@ -970,8 +1133,9 @@ TURNTYPE pillsTargetTankMove(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WO
   shellX = (WORLD) (xValue + shellAddX);
   shellY = (WORLD) (yValue + shellAddY);
   
-  while (found == FALSE && count < MAX_AIM_ITERATE) {
-    if ((utilIsTankHit(tankX, tankY, angle, shellX, shellY, estimate)) == TRUE  ) {
+  while (found == FALSE && count < sim->rules.pill_aim_iterations) {
+    if ((utilIsTankHit(tankX, tankY, angle, shellX, shellY, estimate,
+                       (WORLD) sim->rules.tank_hit_radius)) == TRUE  ) {
       found = TRUE;
       returnValue = estimate;
     }
@@ -1361,14 +1525,20 @@ BYTE pillsSetPillOwner(GameSim *sim, pillboxes *value, BYTE pillNum, BYTE owner,
 *  xValue - X Location of pillbox
 *  yValue - Y Location of pillbox
 *  amount - Amount of damage done to the pillbox
+*  owner  - The slot whose dying tank the blast came
+*           from, for the policy questions alone: the
+*           kill is still credited to nobody
 *********************************************************/
-void pillsGetDamagePos(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue, BYTE amount) {
+void pillsGetDamagePos(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue, BYTE amount, BYTE owner) {
   BYTE count;       /* Looping Variable */
 
   count = 0;
   while (count < ((*value)->numPills)) {
     if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
       BYTE before = (*value)->item[count].armour;
+      /* The blast's damage as the host prices it. */
+      amount = pillsScaledDamage(sim, amount, owner, count, DMG_SRC_EXPLOSION,
+                                 DMG_NO_PILL);
       /* Ask whether the blow takes more than is left rather than subtracting
          first and reading the wrap: a wrapped value only looks like "was
          full" while the cap and the damage are both compile-time, and a rules
@@ -1381,16 +1551,18 @@ void pillsGetDamagePos(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue,
       /* The blow that would finish the pill is the host's to refuse, and a
          refusal holds it at one armour, where it goes on firing. Asked only
          where this blow is what emptied it, so a pill already dead is left
-         dead rather than raised by an explosion landing on it. */
+         dead rather than raised by an explosion landing on it. The question
+         names the tank whose blast it was. */
       if ((*value)->item[count].armour == 0 && before > 0 &&
-          gameSimCanDie(sim, DIE_KIND_PILL, count, NEUTRAL,
-                        DMG_SRC_UNKNOWN) == FALSE) {
+          gameSimCanDie(sim, DIE_KIND_PILL, count, owner,
+                        DMG_SRC_EXPLOSION, DMG_NO_PILL) == FALSE) {
         (*value)->item[count].armour = 1;
       }
       if ((*value)->item[count].armour == 0) {
         /* Only when this blow is what emptied it — an explosion landing on a
-           pill already dead kills nothing. Nobody is named for splash, so the
-           attacker is NEUTRAL, as the death question above is asked. */
+           pill already dead kills nothing. Nobody is credited with splash, so
+           the attacker is NEUTRAL here even though the death question above
+           was told whose blast it was. */
         if (before > 0 && sim->isServer && sim->callbacks.pillKilled) {
           sim->callbacks.pillKilled(sim->callbacks.ctx, count, NEUTRAL);
         }
@@ -1725,15 +1897,24 @@ void pillsBaseHit(GameSim *sim, pillboxes *value, BYTE mx, BYTE my, BYTE baseOwn
   BYTE count; /* Looping variable */
   int xDist;  /* x distance from the base */
   int yDist;  /* y distance from the base */
+  int range;  /* pill_base_defend_range */
+  bool inRange;
 
+  range = sim->rules.pill_base_defend_range;
   for (count=0;count<(*value)->numPills;count++) {
     xDist = ((*value)->item[count].x) - mx;
     yDist = ((*value)->item[count].y) - my;
-    if ((*value)->active[count] != FALSE && xDist >= PILL_BASE_HIT_LEFT && xDist <= PILL_BASE_HIT_RIGHT && yDist >= PILL_BASE_HIT_TOP && yDist <= PILL_BASE_HIT_BOTTOM && (*value)->item[count].owner != NEUTRAL && (playersIsAllie(&sim->plyrs, baseOwner, (*value)->item[count].owner) == TRUE) && (*value)->item[count].armour > 0) {
+    if (sim->rules.pill_base_defend_shape == PILL_BASE_HIT_CIRCLE) {
+      inRange = (xDist * xDist + yDist * yDist < range * range);
+    } else {
+      inRange = (xDist >= -range && xDist <= range && yDist >= -range && yDist <= range);
+    }
+    if ((*value)->active[count] != FALSE && inRange &&
+        (*value)->item[count].owner != NEUTRAL && (playersIsAllie(&sim->plyrs, baseOwner, (*value)->item[count].owner) == TRUE) && (*value)->item[count].armour > 0) {
       /* It is in range make it angry */
       (*value)->item[count].coolDown = (BYTE) sim->rules.pill_cooldown_ticks;
       if ((*value)->item[count].speed > sim->rules.pill_attack_min_ticks) {
-        (*value)->item[count].speed /=2;
+        (*value)->item[count].speed /= (BYTE) sim->rules.pill_angry_divisor;
         if ((*value)->item[count].speed < sim->rules.pill_attack_min_ticks) {
           (*value)->item[count].speed = (BYTE) sim->rules.pill_attack_min_ticks;
         }
@@ -1836,6 +2017,39 @@ void pillsClampToRules(GameSim *sim, pillboxes *value) {
        its countdown, so a map installed mid-game does not restart it. */
     if (item->speed != sim->rules.pill_attack_ticks && item->coolDown == 0) {
       item->coolDown = (BYTE) sim->rules.pill_cooldown_ticks;
+    }
+  }
+}
+
+/*********************************************************
+*NAME:          pillsFillToRules
+*PURPOSE:
+*  Brings every pillbox up to the armour cap this sim runs
+*  on. The other direction from pillsClampToRules above, for
+*  a scenario that raises the cap and asks for the map to
+*  start at it: a map file holds a number and has no way of
+*  saying "full", so without this a raised cap leaves every
+*  pillbox where the file put it.
+*
+*  Armour only. Speed is an attack interval rather than a
+*  stock, so filling it would leave every pillbox firing at
+*  the slowest rate the table allows. Idempotent, and a pill
+*  already at the cap is left alone.
+*
+*ARGUMENTS:
+*  sim   - Pointer to the game sim
+*  value - Pointer to the pillboxes structure
+*********************************************************/
+void pillsFillToRules(GameSim *sim, pillboxes *value) {
+  BYTE count;
+
+  if (sim == NULL || value == NULL || *value == NULL) {
+    return;
+  }
+  for (count = 0; count < (*value)->numPills; count++) {
+    pillbox *item = &((*value)->item[count]);
+    if (item->armour < sim->rules.pill_max_armour) {
+      item->armour = (BYTE) sim->rules.pill_max_armour;
     }
   }
 }
@@ -2374,4 +2588,50 @@ BYTE pillsGetNumActive(pillboxes *value) {
     }
   }
   return live;
+}
+
+/*********************************************************
+*NAME:          pillsRemoveBorderPills
+*PURPOSE:
+*  Takes off the map every live pillbox that sits in the
+*  mined border round the edge, the same rule as
+*  startsRemoveBorderStarts. No tank can reach a pillbox
+*  out there, so it could never be shot or picked up, yet it
+*  was counted, drawn and handed to the bots. A pillbox in a
+*  tank is not on a square and is left alone: its square is
+*  only where it was picked up. Nothing is changed when no
+*  live pillbox on the ground is inside the border, so such
+*  a map still plays as it does today. Slot numbers do not
+*  change. Returns how many pillboxes were taken off.
+*
+*ARGUMENTS:
+*  value - Pointer to the pillbox structure
+*********************************************************/
+BYTE pillsRemoveBorderPills(pillboxes *value) {
+  BYTE count;
+  BYTE inside = 0;
+  BYTE removed = 0;
+
+  if (value == NULL || *value == NULL) {
+    return 0;
+  }
+  for (count = 0; count < (*value)->numPills && count < MAX_PILLS; count++) {
+    if ((*value)->active[count] != FALSE &&
+        (*value)->item[count].inTank == FALSE &&
+        mapPosInBounds((*value)->item[count].x, (*value)->item[count].y)) {
+      inside++;
+    }
+  }
+  if (inside == 0) {
+    return 0;
+  }
+  for (count = 0; count < (*value)->numPills && count < MAX_PILLS; count++) {
+    if ((*value)->active[count] != FALSE &&
+        (*value)->item[count].inTank == FALSE &&
+        !mapPosInBounds((*value)->item[count].x, (*value)->item[count].y)) {
+      (*value)->active[count] = FALSE;
+      removed++;
+    }
+  }
+  return removed;
 }

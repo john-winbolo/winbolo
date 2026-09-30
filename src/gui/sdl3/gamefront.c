@@ -95,6 +95,7 @@
 #include "../../common/prefs_doc.h"
 #include "../../steam/steam_wrapper.h"
 #include "../../mapeditor/mapeditor.h"
+#include "dialogs/imgui_settings.h"  /* imguiSettingsShowInEditor */
 #include "mapgen.h"
 /* Forward declaration only — don't include logviewer.h to avoid type conflicts
    between src/logviewer/ and src/bolo/ headers (both define map, bases, etc.) */
@@ -102,6 +103,7 @@ void logViewerRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   const char *logPath, bool fromMainMenu);
 void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *renderer,
                             uint8_t *zipData, size_t zipLen, bool fromMainMenu);
+bool logViewerAppQuitRequested(void);
 bool spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   void *cs, const char *serverHost, uint16_t serverPort);
 
@@ -261,10 +263,20 @@ int            gameFrontHostingUploadMaxStorage = 8;
 /* Persist upload dir. Empty until gameFrontGetPrefs seeds the default
  * (<prefs path>uploads) or the user picks one. */
 char           gameFrontHostingUploadDir[FILENAME_MAX] = "";
+int            gameFrontHostingScriptUploadPolicy     = SCRIPT_UPLOAD_ALLOW;
+bool           gameFrontHostingShareScripts           = TRUE;
+int            gameFrontHostingScriptUploadMaxFiles   = 32;
+int            gameFrontHostingScriptUploadMaxStorage = 64;
+/* Persist script dir. Empty until gameFrontGetPrefs seeds the default
+ * (<prefs path>uploads/Scripts) or the user picks one. */
+char           gameFrontHostingScriptUploadDir[FILENAME_MAX] = "";
 bool           gameFrontHostingLogging         = TRUE;
 /* Round-log dir. Empty until gameFrontGetPrefs seeds the default
  * (the prefs path) or the user picks one. */
 char           gameFrontHostingLogDir[FILENAME_MAX] = "";
+/* The scenarios this host offers on their own, independently of any map.
+ * Empty until gameFrontGetPrefs seeds the default (<prefs path>scenarios). */
+char           gameFrontHostingScenarioDir[FILENAME_MAX] = "";
 bool           gameFrontHostingServeReplays   = TRUE;
 /* How the hosted server handles the voice its clients send it. Holds a
  * ServerVoiceMode; serverVoiceOn is what a client host did before this
@@ -284,6 +296,7 @@ int gameFrontViewBaseDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 int gameFrontViewAllyDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 bool gameFrontClassicMode      = FALSE;
 bool gameFrontAlliesInTrees    = FALSE;
+bool gameFrontPositionalSound  = FALSE;
 /* Which block of squares the map overview keeps live, and what stops the
  * player seeing inside it. Ints rather than bools because each holds a
  * named value — OverviewWindow and LineOfSightMode — the way the three
@@ -372,6 +385,10 @@ int   gameFrontOverviewW = 640;
 int   gameFrontOverviewH = 640;
 int   gameFrontOverviewX = -1;
 int   gameFrontOverviewY = -1;
+int   gameFrontScnPanelX = -1;
+int   gameFrontScnPanelY = -1;
+int   gameFrontScnPanelScale = -1;
+int   gameFrontScnPanelAlpha = -1;
 float gameFrontOverviewZoom = 2.0f;
 bool  gameFrontOverviewFollow = TRUE;
 bool  gameFrontShowMapOverview = FALSE;
@@ -421,6 +438,32 @@ static bool s_isLanOnly = FALSE;
  * they can pick a different game / tweak their name. Cleared the
  * moment the outer loop notices it. */
 static bool s_joinAttemptFailed = FALSE;
+
+/* Ask the player for the password of the game being joined and store it in
+ * the password global that clientSimConnectUdp sends. wrongBefore adds the
+ * incorrect-password line above the request, for a retry after the server
+ * rejected the previous entry. Returns FALSE when the player cancelled, in
+ * which case the global is left as it was. Runs before any in-game frame
+ * loop exists, so it uses the blocking prompt beside imguiMessageBoxEx
+ * rather than an in-frame modal. */
+static bool gameFrontAskJoinPassword(bool wrongBefore) {
+  char msg[512];
+  char entry[MAP_STR_SIZE];
+  if (wrongBefore) {
+    SDL_snprintf(msg, sizeof(msg), "%s\n\n%s",
+                 langGetText(NETERR_PASSWORDWRONG),
+                 langGetText(STR_DLGPASSWORD_BLURB));
+  } else {
+    SDL_strlcpy(msg, langGetText(STR_DLGPASSWORD_BLURB), sizeof(msg));
+  }
+  entry[0] = '\0';
+  if (imguiPasswordPrompt(langGetText(STR_DLGPASSWORD_TITLE), msg,
+                          entry, sizeof(entry)) != IMGUI_MSG_RESULT_OK) {
+    return FALSE;
+  }
+  SDL_strlcpy(password, entry, sizeof(password));
+  return TRUE;
+}
 
 /* Server-authoritative single-player state */
 static ServerSim *spServerSim = NULL;
@@ -476,7 +519,6 @@ void gameFrontSetServerPaused(bool paused) {
  * lives inside humanSim; these flags only track whether a UDP join
  * is active for higher-level lifecycle gating. */
 static bool udpTransportActive = FALSE;
-static BYTE udpPlayerNum = 0;
 
 /* Send callbacks for ClientSim — route through the client_net.h wrappers.
  * (The callback layer is retained for this transition; future cleanup
@@ -521,6 +563,8 @@ static void gameFrontLockToggleCallback(bool allow) {
  *   #StatusInLobbyPlural   — in a lobby with N players (uses %map%, %numplayers%)
  *   #StatusInGameSolo      — playing alone (uses %map%)
  *   #StatusInGamePlural    — playing with N players (uses %map%, %numplayers%)
+ *
+ * %map% carries "<scenario> (<map>)" while a scenario decides the round.
  * ------------------------------------------------------- */
 static void gameFrontSetConnectIfAvailable(ClientSim *cs) {
   char connect[FILENAME_MAX];
@@ -548,12 +592,44 @@ static void gameFrontSetConnectIfAvailable(ClientSim *cs) {
   }
 }
 
+/* Room for the longest scenario label (its file name, when the manifest
+ * names nothing), " (", the map name, ")" and the NUL. Each length counts
+ * its own NUL, which leaves the two bytes the ")" and the NUL take. */
+#define STEAM_PRESENCE_MAP_LEN (LOBBY_SCENARIO_FILE_LEN + 2 + MAP_STR_SIZE)
+
+/* The value %map% shows. While a scenario decides the round it is the
+ * scenario and the map, so a friend's list names the scenario; a round
+ * running only mods, or no script at all, shows the map alone as it always
+ * has. A scenario with no name falls back to its file name, as the lobby's
+ * script rows do. Empty while neither is known. */
+static void gameFrontPresenceMapValue(ClientSim *cs, char *out,
+                                      size_t outSize) {
+  const char *mapName = clientSimGetMapName(cs);
+  const char *scnName = "";
+
+  if (mapName == NULL) mapName = "";
+  if (clientSimGetLobbyScenarioSource(cs) != 0 &&
+      !clientSimGetLobbyScenarioKeepsWinCondition(cs)) {
+    scnName = clientSimGetLobbyScenarioName(cs);
+    if (scnName[0] == '\0') scnName = clientSimGetLobbyScenarioFileName(cs);
+  }
+  if (scnName[0] == '\0') {
+    snprintf(out, outSize, "%s", mapName);
+  } else if (mapName[0] == '\0') {
+    snprintf(out, outSize, "%s", scnName);
+  } else {
+    snprintf(out, outSize, "%s (%s)", scnName, mapName);
+  }
+}
+
 void gameFrontUpdateSteamPresence(ClientSim *cs) {
   if (cs == NULL) return;
   BYTE numPlayers = clientSimGetNumPlayers(cs);
   char numStr[16];
+  char mapValue[STEAM_PRESENCE_MAP_LEN];
   snprintf(numStr, sizeof(numStr), "%d", (int)numPlayers);
-  steam_set_rich_presence("map", clientSimGetMapName(cs));
+  gameFrontPresenceMapValue(cs, mapValue, sizeof(mapValue));
+  steam_set_rich_presence("map", mapValue);
   steam_set_rich_presence("numplayers", numStr);
   /* "Solo" is a property of the game *mode*, not the live player count: an
    * Internet game with one player present is still an open, joinable game
@@ -583,9 +659,10 @@ void gameFrontSetSteamPresenceLobby(ClientSim *cs) {
    * value as a delete, which would leave "%map%" literal in the rendered
    * display string while the lobby waits for the server's lobbySettings
    * packet to populate cs->mapName. */
-  const char *mapName = clientSimGetMapName(cs);
-  if (mapName != NULL && mapName[0] != '\0') {
-    steam_set_rich_presence("map", mapName);
+  char mapValue[STEAM_PRESENCE_MAP_LEN];
+  gameFrontPresenceMapValue(cs, mapValue, sizeof(mapValue));
+  if (mapValue[0] != '\0') {
+    steam_set_rich_presence("map", mapValue);
   }
   steam_set_rich_presence("numplayers", numStr);
   steam_set_rich_presence("steam_display",
@@ -625,6 +702,9 @@ extern bool isTutorial;
 extern int frameRate;
 extern bool showGunsight;
 extern bool soundEffects;
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+extern bool positionalSound;
+#endif
 extern bool backgroundSound;
 extern bool useSoundKeepalive;
 extern int  soundVolume;
@@ -786,10 +866,20 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
        full screen here rather than waiting for a game. The preferences are
        already read and the window is created hidden, so the first dialog is
        the first thing drawn and there is no windowed flash. Big Picture,
-       tablet and the Deck are full screen from creation and are left alone. */
+       tablet and the Deck are full screen from creation and are left alone.
+
+       The switch is asynchronous (on macOS a Space animation of about half
+       a second), and SDL holds it for a hidden window until the window is
+       shown. So the window is shown here and SDL_SyncWindow waits for the
+       switch to finish; otherwise the first dialog frames draw at the
+       windowed size and the menu background jumps when the size changes.
+       The dialogs' own SDL_ShowWindow is then a no-op. */
     if (OKStart && gameFrontFullScreen && !uiModeIsTablet() &&
         !uiModeIsSteamDeck() && !steam_is_big_picture()) {
-      SDL_SetWindowFullscreen(sdl3DrawGetWindow(), true);
+      SDL_Window *win = sdl3DrawGetWindow();
+      SDL_SetWindowFullscreen(win, true);
+      SDL_ShowWindow(win);
+      SDL_SyncWindow(win);
     }
 #endif
 
@@ -857,7 +947,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     return FALSE;
   }
 
-  clientSimSetAiType(humanSim, compTanks);
+  clientSimSetAiType(humanSim, isTutorial ? aiNone : compTanks);
 
   if (isTutorial == FALSE) {
     clientMutexWaitFor();
@@ -973,6 +1063,69 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
   clientMutexRelease();
 }
 
+/* Where scripts players upload under Allow land for the session:
+ * <prefs path>uploads/Session, beside the Upload Dir default and for the same
+ * reason — the prefs path is writable and the app's own maps directory is
+ * inside the read-only bundle. SDL_GetPrefPath returns a trailing separator.
+ * Both paths that start a server set it. */
+static void gameFrontScriptSessionDir(char *out, size_t outLen) {
+  const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+  if (prefDir) {
+    snprintf(out, outLen, "%suploads/Session", prefDir);
+    SDL_free((void *)prefDir);
+  } else {
+    snprintf(out, outLen, "%s", "uploads/Session");
+  }
+}
+
+/* The visibility rules a game this machine hosts starts on, taken from the
+ * [GAME OPTIONS] prefs and pushed onto the sim after create. They do not
+ * travel in ServerInstanceConfig, which has no field for them.
+ *
+ * Every path here that creates a server calls this: the listen server in
+ * gameFrontSetupServer and the single-player game in the dialog state
+ * machine below. Both open a lobby with the Visibility dropdown in it, and
+ * both have to open it on whatever this player last chose. The
+ * single-player path had no push of its own, so it always opened on the
+ * values serverSimCreate left, whatever the prefs said and whatever the
+ * player had picked in the lobby the game before.
+ *
+ * Call it before serverInstanceStartup. That is where
+ * serverSimApplyInstanceConfig takes the snapshot
+ * serverSimResetLobbyToDefaults restores from, so a push made after it
+ * would leave the snapshot holding the created values and hand an emptied
+ * lobby back to them. */
+static void gameFrontApplyVisibilityPrefs(ServerSim *sim) {
+  if (sim == NULL) return;
+  serverSimSetViewPolicy(sim, viewCategoryPill,
+                         (ViewPolicy)gameFrontViewPillPolicy,
+                         (uint16_t)gameFrontViewPillDecaySecs);
+  serverSimSetViewPolicy(sim, viewCategoryBase,
+                         (ViewPolicy)gameFrontViewBasePolicy,
+                         (uint16_t)gameFrontViewBaseDecaySecs);
+  serverSimSetViewPolicy(sim, viewCategoryAlly,
+                         (ViewPolicy)gameFrontViewAllyPolicy,
+                         (uint16_t)gameFrontViewAllyDecaySecs);
+  /* After the three policies, so classic mode wins over them when both
+   * are set, and allies in trees and positional sound before classic
+   * mode, which forces them back off. Each only pushed when on — off is
+   * what the sim was created with. */
+  if (gameFrontAlliesInTrees) {
+    serverSimSetAlliesInTrees(sim, true);
+  }
+  if (gameFrontPositionalSound) {
+    serverSimSetPositionalSound(sim, true);
+  }
+  /* These two go on whatever they hold, not only when on: either value
+   * is a real choice, and the expanded window is not what the sim was
+   * created with. Still before classic mode, which writes both. */
+  serverSimSetOverviewWindow(sim, (uint8_t)gameFrontOverviewWindow);
+  serverSimSetLineOfSight(sim, (uint8_t)gameFrontLineOfSight);
+  if (gameFrontClassicMode) {
+    serverSimSetClassicMode(sim, true);
+  }
+}
+
 /* -------------------------------------------------------
  * gameFrontDialogs — setup dialog state machine
  * ------------------------------------------------------- */
@@ -1053,7 +1206,7 @@ static bool gameFrontDialogs(void) {
   sdl3DrawDisableLogicalPresentation();
 
   /* Retrieve the process-lifetime shared bg (created in gameFrontStart's
-   * one-shot init); mark it visible so bgGameTick runs while we're on
+   * one-shot init); mark it visible so the bg sim ticks while we're on
    * the welcome / settings dialogs. */
   BgGame *bg = bgGameGetShared();
   bool hasBg = (bg != NULL);
@@ -1073,6 +1226,15 @@ static bool gameFrontDialogs(void) {
   }
 
   while (done == FALSE) {
+    /* A dialog closes on a quit the same way it closes on Cancel, and most
+     * of them steer back to the welcome screen as they go.  Asked here,
+     * once, so the unwinding stops at the first screen to notice rather
+     * than walking the player back up the menus one dialog at a time. */
+    if (windowIsQuitting()) {
+      done = TRUE;
+      userQuit = TRUE;
+      break;
+    }
     switch (dlgState) {
     case openStart:
       dlgState = openWelcome;
@@ -1169,11 +1331,11 @@ static bool gameFrontDialogs(void) {
        * the same way as a normal single-player game. */
       strncpy(fileName, "data/maps/Inbuilt Tutorial.map", FILENAME_MAX - 1);
       fileName[FILENAME_MAX - 1] = '\0';
-      gametype = gameStrictTournament;
-      hiddenMines = FALSE;
-      startDelay = 0;
-      timeLen = UNLIMITED_GAME_TIME;
-      compTanks = aiNone;
+      /* The tutorial's own type, mines, timing and AI are chosen where the
+       * single-player path builds the server, off isTutorial. They are not
+       * written into the globals here: those are saved on exit as what the
+       * next hosted game opens on, and a tutorial would replace the
+       * player's picks with its own. */
       gameFrontBotSetupData.count = 0;
       /* Raise the client UI flag before setup runs so the very first
        * tick (which may already place the tank on a trigger row) is
@@ -1204,7 +1366,12 @@ static bool gameFrontDialogs(void) {
     }
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
     case openMapEditor:
+      mapEditorSetSettingsHandler(imguiSettingsShowInEditor);
       mapEditorRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), NULL, true);
+      /* The editor runs its own loop in WinBolo's window, so a quit taken
+       * there stops with it.  Leaving the editor comes back to the welcome
+       * screen; quitting carries on out. */
+      if (mapEditorAppQuitRequested()) windowSetQuitting();
       dlgState = openWelcome;
       break;
     case openLogViewer: {
@@ -1228,6 +1395,8 @@ static bool gameFrontDialogs(void) {
       default:
         break;
       }
+      /* Same as the editor above: the viewer owns the loop while it is up. */
+      if (logViewerAppQuitRequested()) windowSetQuitting();
       dlgState = openWelcome;
       break;
     }
@@ -1247,74 +1416,102 @@ static bool gameFrontDialogs(void) {
        * the Spectate button fired (same path Join uses). The tracker is
        * gated like a join (Internet uses it for NAT traversal, LAN doesn't);
        * no WBN token — a spectator registers no identity. */
-      ClientSim *spectatorSim = clientSimAlloc();
-      clientSimCreate(spectatorSim);
-      clientSimConnectUdp(spectatorSim, gameFrontUdpAddress, gameFrontTargetUdp,
-                          gameFrontName, winbolonetGetCountryCode(), password,
-                          "", "", FALSE,
-                          !s_isLanOnly ? gameFrontTrackerAddr : "",
-                          gameFrontTrackerPort,
-                          /*spectator*/ TRUE);
-      if (clientSimGetConnectState(spectatorSim) == CLIENT_CONNECT_ERROR) {
-        const char *reason = clientSimGetConnectErrorReason(spectatorSim);
-        imguiMessageBoxEx(DIALOG_BOX_TITLE,
-                          (reason && reason[0]) ? reason
-                                                : langGetText(NETERR_SERVERCONNECT),
-                          IMGUI_MSG_ERROR, IMGUI_MSG_OK);
-      } else {
-        /* clientSimConnectUdp only fires the JOIN; the spectator accept — which
-         * carries the initial live/delayed mode byte — lands on a later
-         * transport tick. Pump until the handshake reaches SPECTATING (so the
-         * mode bit is known before the first view is chosen) or it fails, the
-         * same wait the join path runs before entering the lobby. */
-        int specWaitTicks = 0;
-        while (specWaitTicks < 1500) {  /* 30 second timeout */
-          ClientConnectState ss = clientSimGetConnectState(spectatorSim);
-          if (ss == CLIENT_CONNECT_SPECTATING) break;
-          if (ss == CLIENT_CONNECT_ERROR ||
-              ss == CLIENT_CONNECT_SERVER_SHUTDOWN ||
-              ss == CLIENT_CONNECT_KICKED) {
-            break;
-          }
-          clientSimNetTick(spectatorSim);
-          SDL_Delay(20);
-          specWaitTicks++;
-        }
-
-        if (clientSimGetConnectState(spectatorSim) != CLIENT_CONNECT_SPECTATING) {
+      /* A spectator passes the server's password check like a player. The
+       * browser's Spectate button runs no INFO pre-flight, so the first
+       * request goes out with an empty password and the incorrect-password
+       * reject is what asks for one; a wrong entry asks again. A spectator
+       * is never the host, so the global always starts empty here. */
+      password[0] = '\0';
+      ClientSim *spectatorSim;
+      for (;;) {
+        spectatorSim = clientSimAlloc();
+        clientSimCreate(spectatorSim);
+        clientSimConnectUdp(spectatorSim, gameFrontUdpAddress, gameFrontTargetUdp,
+                            gameFrontName, winbolonetGetCountryCode(), password,
+                            "", "", FALSE,
+                            !s_isLanOnly ? gameFrontTrackerAddr : "",
+                            gameFrontTrackerPort,
+                            /*spectator*/ TRUE);
+        if (clientSimGetConnectState(spectatorSim) == CLIENT_CONNECT_ERROR) {
           const char *reason = clientSimGetConnectErrorReason(spectatorSim);
           imguiMessageBoxEx(DIALOG_BOX_TITLE,
                             (reason && reason[0]) ? reason
                                                   : langGetText(NETERR_SERVERCONNECT),
                             IMGUI_MSG_ERROR, IMGUI_MSG_OK);
         } else {
-          /* Dual-mode session: the live read-only lobby while the server is in
-           * lobby/countdown, the delayed game once it starts. The mode follows
-           * which feed is arriving (clientSimSpectatorIsLiveLobby — seeded from
-           * the accept byte, flipped by the feeding channel). imguiLobbyShow
-           * returns 1 when the delayed feed begins at game start (a spectator
-           * never reaches the RUNNING phase the player path keys on, since the
-           * server unsubscribes it before that publish); spectatorRun returns
-           * true when live lobby control resumes after the delayed game drains.
-           * Any other return (user left / lost connection / quit) ends it. */
-          for (;;) {
-            if (clientSimSpectatorIsLiveLobby(spectatorSim)) {
-              if (imguiLobbyShow(spectatorSim) != 1) break;
-            } else if (!spectatorRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(),
-                                     spectatorSim, gameFrontUdpAddress,
-                                     gameFrontTargetUdp)) {
+          /* clientSimConnectUdp only fires the JOIN; the spectator accept — which
+           * carries the initial live/delayed mode byte — lands on a later
+           * transport tick. Pump until the handshake reaches SPECTATING (so the
+           * mode bit is known before the first view is chosen) or it fails, the
+           * same wait the join path runs before entering the lobby. */
+          int specWaitTicks = 0;
+          while (specWaitTicks < 1500) {  /* 30 second timeout */
+            ClientConnectState ss = clientSimGetConnectState(spectatorSim);
+            if (ss == CLIENT_CONNECT_SPECTATING) break;
+            if (ss == CLIENT_CONNECT_ERROR ||
+                ss == CLIENT_CONNECT_SERVER_SHUTDOWN ||
+                ss == CLIENT_CONNECT_KICKED) {
               break;
             }
+            clientSimNetTick(spectatorSim);
+            SDL_Delay(20);
+            specWaitTicks++;
           }
-          /* spectatorRun retitles the borrowed window for the live session;
-           * restore the normal app title now that the session has ended. */
-          SDL_SetWindowTitle(sdl3DrawGetWindow(), WIND_TITLE);
+
+          if (clientSimGetConnectState(spectatorSim) != CLIENT_CONNECT_SPECTATING) {
+            const char *reason = clientSimGetConnectErrorReason(spectatorSim);
+            if (clientSimGetConnectErrorLangId(spectatorSim) == STR_REJECT_INCORRECT_PASSWORD) {
+              /* First reject means "this game has a password"; a later one
+               * means the entry was wrong. Cancel falls out with no box. */
+              bool wrongBefore = (password[0] != '\0');
+              clientSimDisconnect(spectatorSim);
+              clientSimDestroy(spectatorSim);
+              if (gameFrontAskJoinPassword(wrongBefore)) continue;
+              spectatorSim = NULL;
+            } else {
+              imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                                (reason && reason[0]) ? reason
+                                                      : langGetText(NETERR_SERVERCONNECT),
+                                IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+            }
+          } else {
+            /* Dual-mode session: the live read-only lobby while the server is in
+             * lobby/countdown, the delayed game once it starts. The mode follows
+             * which feed is arriving (clientSimSpectatorIsLiveLobby — seeded from
+             * the accept byte, flipped by the feeding channel). imguiLobbyShow
+             * returns 1 when the delayed feed begins at game start (a spectator
+             * never reaches the RUNNING phase the player path keys on, since the
+             * server unsubscribes it before that publish); spectatorRun returns
+             * true when live lobby control resumes after the delayed game drains.
+             * Any other return (user left / lost connection / quit) ends it. */
+            for (;;) {
+              if (clientSimSpectatorIsLiveLobby(spectatorSim)) {
+                if (imguiLobbyShow(spectatorSim) != 1) break;
+              } else if (!spectatorRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(),
+                                       spectatorSim, gameFrontUdpAddress,
+                                       gameFrontTargetUdp)) {
+                break;
+              }
+            }
+            /* spectatorRun retitles the borrowed window for the live session;
+             * restore the normal app title now that the session has ended. */
+            SDL_SetWindowTitle(sdl3DrawGetWindow(), WIND_TITLE);
+          }
         }
+        break;
       }
       /* Caller owns the ClientSim lifetime (spectatorRun never disconnects):
-       * tear it down so the socket/transport is released before returning. */
-      clientSimDisconnect(spectatorSim);
-      clientSimDestroy(spectatorSim);
+       * tear it down so the socket/transport is released before returning.
+       * NULL when the password prompt was cancelled: that path already
+       * tore its ClientSim down before asking. */
+      if (spectatorSim != NULL) {
+        clientSimDisconnect(spectatorSim);
+        clientSimDestroy(spectatorSim);
+      }
+      /* Same as the editor and the viewer above: spectatorRun owns the loop
+       * while it is up, so a quit taken there stops with it.  Asked after the
+       * disconnect so the socket is released either way. */
+      if (logViewerAppQuitRequested()) windowSetQuitting();
       dlgState = openWelcome;
       break;
     }
@@ -1327,6 +1524,11 @@ static bool gameFrontDialogs(void) {
       break;
     }
   }
+
+  /* The menu stops drawing here for every kind of game (single player,
+   * hosted or joined), so its kept scene texture is freed rather than held
+   * in GPU memory through the game. The next menu draw makes it again. */
+  if (hasBg) bgGameReleaseScene(bg);
 
   /* Restore render logical presentation for the game view (Android). */
   sdl3DrawRestoreLogicalPresentation();
@@ -1517,117 +1719,158 @@ bool gameFrontSetDlgState(openingStates newState) {
         s_joinAttemptFailed = TRUE;
         return FALSE;
       }
+      /* The password global is only meaningful for a host joining its own
+       * server (set by the game setup dialog and sent with the server
+       * config). For a remote join it starts empty, so a password entered
+       * for an earlier host or join never rides this JOIN_REQUEST. The
+       * same INFO reply that carried the version says whether the server
+       * wants a password: ask now, before the join, rather than sending an
+       * empty one and reading the reject. Cancel ends the attempt quietly,
+       * like the version and reachability failures above but with no
+       * error box. */
+      password[0] = '\0';
+      if (dpr.password && !gameFrontAskJoinPassword(FALSE)) {
+        gameFrontShutdownServer();
+        dlgState = prevState;
+        s_joinAttemptFailed = TRUE;
+        return FALSE;
+      }
     }
 
     prefsFlush();
     gameFrontValidateWbnBeforeJoin();
-    humanSim = clientSimAlloc(); clientSimCreate(humanSim);
-    clientSimSetIsLanOnly(humanSim, s_isLanOnly);
-    frontEndSetActiveClientSim(humanSim);
-    if (gameFrontRemeber) clientSimSetMyLastPlayerName(humanSim, gameFrontName);
-    fprintf(stderr, "[gameFront] openUdpJoin: addr=%s port=%u myPort=%u\n",
-            gameFrontUdpAddress, (unsigned)gameFrontTargetUdp, (unsigned)gameFrontMyUdp);
-    fflush(stderr);
+    /* One pass per join attempt. The loop only repeats when the server
+     * rejected the password and the player typed another one; every other
+     * outcome leaves through a break. */
+    for (;;) {
+      const char *failFallback = NULL;
+      bool joined = FALSE;
+      humanSim = clientSimAlloc(); clientSimCreate(humanSim);
+      clientSimSetIsLanOnly(humanSim, s_isLanOnly);
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__) && !defined(__EMSCRIPTEN__)
+      /* A map picked from the Workshop directory is offered to the server
+         as "Workshop/<name>" first, so a server holding the same file loads
+         its own copy rather than taking an upload. Mobile has no Workshop. */
+      {
+        char workshopDir[FILENAME_MAX];
+        if (scenarioHostWorkshopDir(workshopDir, sizeof(workshopDir))) {
+          clientSimSetWorkshopMapDir(humanSim, workshopDir);
+        }
+      }
+#endif
+      frontEndSetActiveClientSim(humanSim);
+      if (gameFrontRemeber) clientSimSetMyLastPlayerName(humanSim, gameFrontName);
+      fprintf(stderr, "[gameFront] openUdpJoin: addr=%s port=%u myPort=%u\n",
+              gameFrontUdpAddress, (unsigned)gameFrontTargetUdp, (unsigned)gameFrontMyUdp);
+      fflush(stderr);
 
-    /* Create UDP client transport. The transport drives the JOIN
-     * handshake, map download + install, and inline snapshot apply
-     * by itself — the frontend only ticks it until the join state
-     * settles or inLobby flips true. */
-    /* Match the Internet-host config in gameFrontSetupServer: an Internet
-     * join turns the tracker on (NAT traversal + external-address
-     * resolution) and, if the player is signed in, sends the WBN identity
-     * token. LAN joins and SP/tutorial stay private — no tracker, no WBN.
-     * Gated on s_isLanOnly (false only for Internet games), not on the old
-     * buried default-off "Use Tracker" checkbox. WBN from the join side
-     * carries only the player's own identity — there is no server being
-     * registered here — so it follows the sign-in state. */
-    clientSimConnectUdp(humanSim, gameFrontUdpAddress,
-                        gameFrontTargetUdp,
-                        gameFrontName,
-                        winbolonetGetCountryCode(),
-                        password,
-                        (!s_isLanOnly && gameFrontWbnUse) ? gameFrontWbnToken : "",
-                        "",
-                        wantRejoin,
-                        !s_isLanOnly ? gameFrontTrackerAddr : "",
-                        gameFrontTrackerPort,
-                        /*spectator*/ false);
-    if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_ERROR) {
-      const char *reason = clientSimGetConnectErrorReason(humanSim);
-      imguiMessageBoxEx(DIALOG_BOX_TITLE,
-                        (reason && reason[0]) ? reason : langGetText(STR_GAMEFRONTERR_JOINGAME),
-                        IMGUI_MSG_ERROR, IMGUI_MSG_OK);
-      clientSimDestroy(humanSim);
-      humanSim = NULL;
+      /* Create UDP client transport. The transport drives the JOIN
+       * handshake, map download + install, and inline snapshot apply
+       * by itself — the frontend only ticks it until the join state
+       * settles or inLobby flips true. */
+      /* Match the Internet-host config in gameFrontSetupServer: an Internet
+       * join turns the tracker on (NAT traversal + external-address
+       * resolution) and, if the player is signed in, sends the WBN identity
+       * token. LAN joins and SP/tutorial stay private — no tracker, no WBN.
+       * Gated on s_isLanOnly (false only for Internet games), not on the old
+       * buried default-off "Use Tracker" checkbox. WBN from the join side
+       * carries only the player's own identity — there is no server being
+       * registered here — so it follows the sign-in state. */
+      clientSimConnectUdp(humanSim, gameFrontUdpAddress,
+                          gameFrontTargetUdp,
+                          gameFrontName,
+                          winbolonetGetCountryCode(),
+                          password,
+                          (!s_isLanOnly && gameFrontWbnUse) ? gameFrontWbnToken : "",
+                          "",
+                          wantRejoin,
+                          !s_isLanOnly ? gameFrontTrackerAddr : "",
+                          gameFrontTrackerPort,
+                          /*spectator*/ false);
+      if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_ERROR) {
+        failFallback = langGetText(STR_GAMEFRONTERR_JOINGAME);
+      } else {
+        /* Wait for the join handshake (30s timeout). Landing accepts either a
+         * running game or entry into the server lobby — see clientFrontAwaitJoin. */
+        if (clientFrontAwaitJoin(humanSim, 1500)) {
+          joined = TRUE;
+          udpTransportActive = TRUE;
+
+          /* Store server address in ClientSim for brain info */
+          {
+            struct sockaddr_in saddr;
+            memset(&saddr, 0, sizeof(saddr));
+            saddr.sin_family = AF_INET;
+            saddr.sin_addr.s_addr = inet_addr(gameFrontUdpAddress);
+            if (saddr.sin_addr.s_addr == INADDR_NONE) {
+              bolo_resolve_ipv4(gameFrontUdpAddress, &saddr.sin_addr);
+            }
+            clientSimSetServerAddress(humanSim, saddr.sin_addr);
+            clientSimSetServerPort(humanSim, gameFrontTargetUdp);
+          }
+
+          clientSimSetChatSendFunc(humanSim, gameFrontChatSendCallback);
+          clientSimSetNameChangeSendFunc(humanSim, gameFrontNameChangeSendCallback);
+          clientSimSetAllianceRequestFunc(humanSim, gameFrontAllianceRequestCallback);
+          clientSimSetAllianceAcceptFunc(humanSim, gameFrontAllianceAcceptCallback);
+          clientSimSetAllianceLeaveFunc(humanSim, gameFrontAllianceLeaveCallback);
+          clientSimSetLockToggleSendFunc(humanSim, gameFrontLockToggleCallback);
+
+          /* The lobby landing (netLobby — lobby UI, map downloads in the
+           * background, ready button gated on the real mapDownloadComplete) is
+           * settled inside clientFrontAwaitJoin. Only the no-lobby path has extra
+           * work: the transport already installed the map inline on MAP_DOWNLOAD
+           * completion, and the first snapshot apply fires the viewport
+           * finalisation — update Steam presence now that we're in a game. */
+          if (!clientSimIsInLobby(humanSim)) {
+            gameFrontUpdateSteamPresence(humanSim);
+          }
+          /* Hosting our own game on a map with a scenario: seat the lobby the
+           * scenario asks for, now that the host's own join has landed. Its
+           * template reached the sim at the attach in gameFrontSetupServer,
+           * and the settings that go with it were applied there; the seating
+           * waits until here because a seat takes the first free slot and the
+           * host has to hold slot 0 — the lobby's host role starts there, and
+           * a seat sitting in it would leave the host unable to change a
+           * setting or start the game. spServerSimActive tells a host joining
+           * its own server from somebody joining another one — a single-player
+           * game sets it too, but never comes through openUdpJoin. Under the
+           * mutex: the host timer is already ticking the sim. */
+          if (spServerSimActive && spScenarioHost != NULL) {
+            threadsWaitForMutex();
+            serverSimScenarioSeatLobby(spServerSim);
+            threadsReleaseMutex();
+          }
+          dlgState = openFinished;
+        } else {
+          failFallback = langGetText(NETERR_SERVERCONNECT);
+        }
+      }
+      if (joined) break;
+
+      /* The join failed. An incorrect-password reject on a remote join asks
+       * again and retries with a fresh ClientSim; the host joining its own
+       * server sent the password it configured, so a reject there is an
+       * error like any other. Cancel at the prompt ends the attempt without
+       * an error box: the player already knows why. */
+      if (!spServerSimActive &&
+          clientSimGetConnectErrorLangId(humanSim) == STR_REJECT_INCORRECT_PASSWORD) {
+        clientSimDestroy(humanSim);
+        humanSim = NULL;
+        if (gameFrontAskJoinPassword(TRUE)) continue;
+      } else {
+        const char *reason = clientSimGetConnectErrorReason(humanSim);
+        imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                          (reason && reason[0]) ? reason : failFallback,
+                          IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+        clientSimDestroy(humanSim);
+        humanSim = NULL;
+      }
       gameFrontShutdownServer();
       dlgState = prevState;
       s_joinAttemptFailed = TRUE;
       returnValue = FALSE;
-    } else {
-      /* Wait for the join handshake (30s timeout). Landing accepts either a
-       * running game or entry into the server lobby — see clientFrontAwaitJoin. */
-      if (clientFrontAwaitJoin(humanSim, 1500)) {
-        udpPlayerNum = clientSimGetServerPlayerNum(humanSim);
-        udpTransportActive = TRUE;
-
-        /* Store server address in ClientSim for brain info */
-        {
-          struct sockaddr_in saddr;
-          memset(&saddr, 0, sizeof(saddr));
-          saddr.sin_family = AF_INET;
-          saddr.sin_addr.s_addr = inet_addr(gameFrontUdpAddress);
-          if (saddr.sin_addr.s_addr == INADDR_NONE) {
-            bolo_resolve_ipv4(gameFrontUdpAddress, &saddr.sin_addr);
-          }
-          clientSimSetServerAddress(humanSim, saddr.sin_addr);
-          clientSimSetServerPort(humanSim, gameFrontTargetUdp);
-        }
-
-        clientSimSetChatSendFunc(humanSim, gameFrontChatSendCallback);
-        clientSimSetNameChangeSendFunc(humanSim, gameFrontNameChangeSendCallback);
-        clientSimSetAllianceRequestFunc(humanSim, gameFrontAllianceRequestCallback);
-        clientSimSetAllianceAcceptFunc(humanSim, gameFrontAllianceAcceptCallback);
-        clientSimSetAllianceLeaveFunc(humanSim, gameFrontAllianceLeaveCallback);
-        clientSimSetLockToggleSendFunc(humanSim, gameFrontLockToggleCallback);
-
-        /* The lobby landing (netLobby — lobby UI, map downloads in the
-         * background, ready button gated on the real mapDownloadComplete) is
-         * settled inside clientFrontAwaitJoin. Only the no-lobby path has extra
-         * work: the transport already installed the map inline on MAP_DOWNLOAD
-         * completion, and the first snapshot apply fires the viewport
-         * finalisation — update Steam presence now that we're in a game. */
-        if (!clientSimIsInLobby(humanSim)) {
-          gameFrontUpdateSteamPresence(humanSim);
-        }
-        /* Hosting our own game on a map with a scenario: seat the lobby the
-         * scenario asks for, now that the host's own join has landed. Its
-         * template reached the sim at the attach in gameFrontSetupServer,
-         * and the settings that go with it were applied there; the seating
-         * waits until here because a seat takes the first free slot and the
-         * host has to hold slot 0 — the lobby's host role starts there, and
-         * a seat sitting in it would leave the host unable to change a
-         * setting or start the game. spServerSimActive tells a host joining
-         * its own server from somebody joining another one — a single-player
-         * game sets it too, but never comes through openUdpJoin. Under the
-         * mutex: the host timer is already ticking the sim. */
-        if (spServerSimActive && spScenarioHost != NULL) {
-          threadsWaitForMutex();
-          serverSimScenarioSeatLobby(spServerSim);
-          threadsReleaseMutex();
-        }
-        dlgState = openFinished;
-      } else {
-        const char *reason = clientSimGetConnectErrorReason(humanSim);
-        imguiMessageBoxEx(DIALOG_BOX_TITLE,
-                          (reason && reason[0]) ? reason : langGetText(NETERR_SERVERCONNECT),
-                          IMGUI_MSG_ERROR, IMGUI_MSG_OK);
-        clientSimDestroy(humanSim);
-        humanSim = NULL;
-        gameFrontShutdownServer();
-        dlgState = prevState;
-        s_joinAttemptFailed = TRUE;
-        returnValue = FALSE;
-      }
+      break;
     }
   } else if ((dlgState == openInternetManual || dlgState == openInternetSetup) &&
              newState == openWelcome) {
@@ -1661,18 +1904,22 @@ bool gameFrontSetDlgState(openingStates newState) {
      * Create the server sim, then load the map on the client side
      * using the same compressed data the UDP path uses. */
     {
-        /* Single-player opens the lobby at sensible defaults the host can
-         * still change inline before Start: Open game, Full Advantage AI,
-         * and one enemy bot. Held in SP-local values so the host-game path
-         * (gameFrontSetupServer) keeps its own settings. The tutorial forces
-         * a solo strict-tournament game with no AI, ignoring any SP-lobby
-         * settings left over from earlier in the session. */
-        gameType spGameType = isTutorial ? gameStrictTournament : gameOpen;
-        aiType   spAiPolicy = isTutorial ? aiNone : aiFull;
+        /* Single-player opens the lobby on the game type, computer tanks and
+         * hidden mines the player last picked in a lobby they hosted, the
+         * same saved values Internet New and LAN New open on. A player who
+         * has never picked gets an Open game with Full Advantage AI. The
+         * tutorial forces a solo strict-tournament game with no AI and no
+         * time limit, ignoring every saved value. */
+        gameType spGameType    = isTutorial ? gameStrictTournament : gametype;
+        aiType   spAiPolicy    = isTutorial ? aiNone : compTanks;
+        bool     spHiddenMines = isTutorial ? FALSE : hiddenMines;
+        int32_t  spStartDelay  = isTutorial ? 0 : startDelay;
+        int32_t  spTimeLen     = isTutorial ? UNLIMITED_GAME_TIME : timeLen;
         /* Seed one enemy bot when the launch carried no bot setup: human
          * on team 1, the bot on team 2 so they oppose each other. A setup
-         * the user already configured (count > 0) is left untouched. */
-                if (!isTutorial && gameFrontBotSetupData.count == 0) {
+         * the user already configured (count > 0) is left untouched. With
+         * the saved AI policy on none, the bot loop below makes nothing. */
+        if (!isTutorial && gameFrontBotSetupData.count == 0) {
           memset(&gameFrontBotSetupData, 0, sizeof(gameFrontBotSetupData));
           gameFrontBotSetupData.count              = 1;
           gameFrontBotSetupData.playerTeamNumber   = 1;
@@ -1688,12 +1935,12 @@ bool gameFrontSetDlgState(openingStates newState) {
           }
           cfg.x1 = MAP_MINE_EDGE_LEFT + 1; cfg.y1 = MAP_MINE_EDGE_TOP + 1;
           cfg.x2 = MAP_MINE_EDGE_RIGHT - 1; cfg.y2 = MAP_MINE_EDGE_BOTTOM - 1;
-          spServerSim = serverSimCreateRandomMap(&cfg, spGameType, hiddenMines, startDelay, timeLen);
+          spServerSim = serverSimCreateRandomMap(&cfg, spGameType, spHiddenMines, spStartDelay, spTimeLen);
         } else if (strcmp(fileName, "") != 0) {
-          spServerSim = serverSimCreate(fileName, spGameType, hiddenMines, startDelay, timeLen);
+          spServerSim = serverSimCreate(fileName, spGameType, spHiddenMines, spStartDelay, spTimeLen);
         } else {
           BYTE emap[6000] = E_MAP;
-          spServerSim = serverSimCreateCompressed(emap, 5097, "Everard Island", spGameType, hiddenMines, startDelay, timeLen);
+          spServerSim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island", spGameType, spHiddenMines, spStartDelay, spTimeLen);
         }
         if (spServerSim != NULL) {
           /* Embedded server: silence its console messages (Thread Manager
@@ -1709,11 +1956,30 @@ bool gameFrontSetDlgState(openingStates newState) {
              ways, because unlike a command-line switch this can be turned
              back on without restarting. */
           scenarioHostSetEnabled(gameFrontHostingScripts);
+          /* And the narrower one beside it, applied at the same point: a map
+             this host took as an upload plays plainly with it off. */
+          scenarioHostSetUploadScriptsEnabled(
+              gameFrontHostingScriptUploadPolicy != SCRIPT_UPLOAD_OFF);
           /* And the question the map chooser's server list asks of each map,
              registered beside the switch rather than at the attach: an attach
              answers NULL for a map with no script, so hosting a plain map
              would report every scripted map in the directory as plain. */
           scenarioHostRegisterMapScripted(spServerSim);
+          /* And the read of this host's scenarios directory, registered
+             beside it for the same reason: what the list holds has nothing to
+             do with whichever map is being hosted. */
+          serverSimSetScenarioDir(spServerSim, gameFrontHostingScenarioDir);
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__) && !defined(__EMSCRIPTEN__)
+          /* And where subscribed Workshop items are copied to, which the map
+             list offers as a "Workshop" folder. Mobile has no Workshop. */
+          {
+            char workshopDir[FILENAME_MAX];
+            if (scenarioHostWorkshopDir(workshopDir, sizeof(workshopDir))) {
+              serverSimSetWorkshopMapDir(spServerSim, workshopDir);
+            }
+          }
+#endif
+          scenarioHostRegisterScenarioLister(spServerSim);
           if (strncmp(fileName, "randommap:", 10) != 0 && fileName[0] != '\0') {
             char scenarioErr[512];
             spScenarioHost = scenarioHostAttach(spServerSim, fileName,
@@ -1729,6 +1995,21 @@ bool gameFrontSetDlgState(openingStates newState) {
           }
           /* And from here on the scenario follows the committed map. */
           scenarioHostFollowMap(spServerSim, &spScenarioHost);
+          /* The visibility rules this player last chose, from the [GAME
+             OPTIONS] prefs, the same push the listen server makes. A
+             single-player game opens a lobby with the Visibility dropdown
+             in it, so it has to open on the set the player left the last
+             lobby on rather than on the stock set serverSimCreate made.
+             Before gameFrontStartServerSim, so the lobby snapshot behind
+             serverSimResetLobbyToDefaults is taken from these values.
+
+             Not for the tutorial. That runs with skipLobby, so it never
+             shows the dropdown and nobody can change what it plays on;
+             it keeps the plain view it has always had, the same way it
+             ignores every other setting left over from an earlier game. */
+          if (!isTutorial) {
+            gameFrontApplyVisibilityPrefs(spServerSim);
+          }
           /* Tutorial: mark the freshly-created sim authoritative-tutorial and
              reset the respawn start to 0 (sea) BEFORE the host player is added
              in gameFrontStartServerSim below.  startsGetStart only takes the
@@ -1764,7 +2045,7 @@ bool gameFrontSetDlgState(openingStates newState) {
           cfg.maxPlayers          = MAX_TANKS;
           cfg.acceptRemoteClients = false;
           cfg.useWbn              = false;
-          cfg.compTanks           = (BYTE)compTanks;
+          cfg.compTanks           = (BYTE)spAiPolicy;
           cfg.useTracker          = false;
           cfg.trackerAddr         = gameFrontTrackerAddr;
           cfg.trackerPort         = gameFrontTrackerPort;
@@ -1779,12 +2060,28 @@ bool gameFrontSetDlgState(openingStates newState) {
           }
           cfg.botBrainPath = (spBrainPath[0] != '\0') ? spBrainPath : NULL;
           cfg.botAiType    = (BYTE)spAiPolicy;
+          /* No player can upload here, but the uploads directory is the last
+           * one the script list reads, and it belongs under the prefs path
+           * rather than inside the bundle. */
+          char spScriptSessionDir[FILENAME_MAX];
+          gameFrontScriptSessionDir(spScriptSessionDir,
+                                    sizeof(spScriptSessionDir));
+          cfg.scriptSessionDir = spScriptSessionDir;
 
           /* Build the ClientSim first — clientSimConnectLocalPassive
            * runs the full join+install body against an alive ClientSim. */
           humanSim = clientSimAlloc();
           clientSimCreate(humanSim);
           clientSimSetIsLanOnly(humanSim, s_isLanOnly);
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__) && !defined(__EMSCRIPTEN__)
+          /* The Workshop directory, as on the join path. */
+          {
+            char workshopDir[FILENAME_MAX];
+            if (scenarioHostWorkshopDir(workshopDir, sizeof(workshopDir))) {
+              clientSimSetWorkshopMapDir(humanSim, workshopDir);
+            }
+          }
+#endif
           frontEndSetActiveClientSim(humanSim);
 
           /* A game that skips the lobby starts its round inside the startup
@@ -1922,8 +2219,20 @@ bool gameFrontSetDlgState(openingStates newState) {
              * sim via cfg above; here we only need brainPath as a
              * per-bot default for the serverSimCreateBot loop. */
             bool haveBrain = (spBrainPath[0] != '\0');
-                        if (spAiPolicy != aiNone && gameFrontBotSetupData.count > 0 && haveBrain) {
-              for (int bi = 0; bi < gameFrontBotSetupData.count && bi < MAX_BOT_SLOTS; bi++) {
+            /* No setup bot at all in a lobby the map's script lays out
+             * itself (Survival seats its whole horde): the script says who
+             * sits in that lobby, and a bot made here, the seeded enemy or
+             * one from the player's own settings, takes a slot ahead of the
+             * script's seats and lands on a side the script never meant.
+             * The player adds their own team's bots in the lobby by hand,
+             * which is a different path and untouched. Only the bot loop
+             * is skipped: the human's own team and the alliance pass below
+             * still run, so the player lands on the defenders' side. */
+            bool scriptSeats = (spScenarioHost != NULL) &&
+                               serverSimScenarioHasLobbyTemplate(spServerSim);
+            int botsToMake = scriptSeats ? 0 : gameFrontBotSetupData.count;
+            if (spAiPolicy != aiNone && gameFrontBotSetupData.count > 0 && haveBrain) {
+              for (int bi = 0; bi < botsToMake && bi < MAX_BOT_SLOTS; bi++) {
                 BYTE slot = (BYTE)(bi + 1);
                 char botName[32];
                 snprintf(botName, sizeof(botName), "Bot %d", slot);
@@ -1951,7 +2260,7 @@ bool gameFrontSetDlgState(openingStates newState) {
                  * placed by the alliance pass below, and their config comes
                  * from the slot config set just above. */
                 serverSimCreateBot(spServerSim, slot, botBrain, botName, spAiPolicy,
-                                   spGameType, hiddenMines, 0, NULL);
+                                   spGameType, spHiddenMines, 0, NULL);
                 /* serverSimCreateBot loads the brain from the path but leaves
                  * the lobby brain-INDEX at the 0xFF "default" sentinel, so the
                  * lobby Bot Code dropdown renders "(none)". Resolve the index
@@ -2121,14 +2430,6 @@ void gameFrontSetUdpOptions(char *pn, char *add, unsigned short theirUdp, unsign
   gameFrontTargetUdp = theirUdp;
 }
 
-void gameFrontGetPassword(char *pword) {
-  password[0] = '\0';
-  sdl3ImguiShowPassword();
-  /* TODO: this needs to block until the ImGui modal returns.
-   * For now just return the current password. */
-  strcpy(pword, password);
-}
-
 void gameFrontGetPlayerName(char *pn) {
   strcpy(pn, gameFrontName);
 }
@@ -2137,12 +2438,17 @@ void gameFrontSetPlayerName(char *pn) {
   strcpy(gameFrontName, pn);
 }
 
+/* The AI type of the game being joined. It goes to the client sim and
+ * the brains menu only. compTanks is left alone: it holds the computer
+ * tanks pick the next game this machine hosts opens on, and a joined
+ * game's setting is not that pick. Writing it here made a single-player
+ * game started after joining a no-bots game open with no computer
+ * tanks and no enemy bot. */
 void gameFrontSetAIType(aiType ait) {
-  compTanks = ait;
   if (humanSim != NULL) {
-    clientSimSetAiType(humanSim, compTanks);
+    clientSimSetAiType(humanSim, ait);
   }
-  if (compTanks == aiNone) {
+  if (ait == aiNone) {
     brainsHandlerSet(FALSE);
   } else {
     brainsHandlerSet(TRUE);
@@ -2237,6 +2543,43 @@ void gameFrontSetHostingUploadDir(const char *dir) {
   prefsSetString("HOSTING", "Upload Dir", gameFrontHostingUploadDir);
 }
 
+void gameFrontSetHostingScriptUploadPolicy(int policy) {
+  gameFrontHostingScriptUploadPolicy = policy;
+  prefsSetString("HOSTING", "Script Upload Policy",
+                 scriptUploadPolicyWord((ScriptUploadPolicy)policy));
+  /* And the library, for the reason gameFrontSetHostingScripts sets it: the
+     preference is true of the process the moment it moves rather than from
+     the next hosted game, and the map chooser's scripted tag reads it too,
+     so an uploaded map stops being tagged as soon as this goes to Off. */
+  scenarioHostSetUploadScriptsEnabled(policy != SCRIPT_UPLOAD_OFF);
+}
+
+void gameFrontSetHostingShareScripts(bool on) {
+  gameFrontHostingShareScripts = on;
+  prefsSetString("HOSTING", "Share Scripts", TRUEFALSE_TO_STR(on));
+}
+
+void gameFrontSetHostingScriptUploadMaxFiles(int maxFiles) {
+  gameFrontHostingScriptUploadMaxFiles = maxFiles;
+  char buf[16];
+  intToStr(maxFiles, buf, sizeof(buf));
+  prefsSetString("HOSTING", "Script Upload Max Files", buf);
+}
+
+void gameFrontSetHostingScriptUploadMaxStorage(int maxStorageMb) {
+  gameFrontHostingScriptUploadMaxStorage = maxStorageMb;
+  char buf[16];
+  intToStr(maxStorageMb, buf, sizeof(buf));
+  prefsSetString("HOSTING", "Script Upload Max Storage", buf);
+}
+
+void gameFrontSetHostingScriptUploadDir(const char *dir) {
+  SDL_strlcpy(gameFrontHostingScriptUploadDir, dir ? dir : "",
+              sizeof(gameFrontHostingScriptUploadDir));
+  prefsSetString("HOSTING", "Script Upload Dir",
+                 gameFrontHostingScriptUploadDir);
+}
+
 void gameFrontSetHostingLogging(bool logging) {
   gameFrontHostingLogging = logging;
   prefsSetString("HOSTING", "Logging", TRUEFALSE_TO_STR(logging));
@@ -2246,6 +2589,15 @@ void gameFrontSetHostingLogDir(const char *dir) {
   SDL_strlcpy(gameFrontHostingLogDir, dir ? dir : "",
               sizeof(gameFrontHostingLogDir));
   prefsSetString("HOSTING", "Log Dir", gameFrontHostingLogDir);
+}
+
+/* The scenarios directory is read at the two hosting-start paths, which pass
+   it to serverSimSetScenarioDir, so a change made here is picked up by the
+   next hosted game rather than by the one already running. */
+void gameFrontSetHostingScenarioDir(const char *dir) {
+  SDL_strlcpy(gameFrontHostingScenarioDir, dir ? dir : "",
+              sizeof(gameFrontHostingScenarioDir));
+  prefsSetString("HOSTING", "Mod Dir", gameFrontHostingScenarioDir);
 }
 
 void gameFrontSetHostingServeReplays(bool serve) {
@@ -2353,6 +2705,11 @@ void gameFrontSetAlliesInTrees(bool on) {
   prefsSetString("GAME OPTIONS", "Allies In Trees", TRUEFALSE_TO_STR(on));
 }
 
+void gameFrontSetPositionalSound(bool on) {
+  gameFrontPositionalSound = on;
+  prefsSetString("GAME OPTIONS", "Positional Sound", TRUEFALSE_TO_STR(on));
+}
+
 void gameFrontSetOverviewWindow(int window) {
   gameFrontOverviewWindow = window;
   prefsSetString("GAME OPTIONS", "Overview Window",
@@ -2372,13 +2729,17 @@ void gameFrontSetLineOfSight(int mode) {
  * the whole hand-made set, kept under its own keys so picking a preset
  * and picking Custom back again lands where the host left it.
  *
- * The custom set is only written while the host is actually on Custom, so
- * it survives a trip through the presets and through a restart. */
+ * The custom set is written only where the player made it by hand: the
+ * hosting settings dialog, and an edit or a Custom pick in the lobby. It
+ * is not written from what the settings happen to be on, because a preset
+ * arrives one setting at a time and the half-applied mixes on the way
+ * match no named set. That is what lets the set survive a trip through
+ * the presets, and a restart. */
 int                gameFrontVisibilityPreset = (int)visibilityPresetClassic;
 VisibilitySettings gameFrontVisibilityCustom;
 bool               gameFrontVisibilityCustomSaved = FALSE;
 
-/* The seven [GAME OPTIONS] visibility globals as one set, and back. Every
+/* The eight [GAME OPTIONS] visibility globals as one set, and back. Every
  * caller below works in the set rather than in the globals, so a setting
  * added to the struct is added in one place here. */
 void gameFrontGetVisibilitySettings(VisibilitySettings *out) {
@@ -2394,6 +2755,7 @@ void gameFrontGetVisibilitySettings(VisibilitySettings *out) {
   out->overviewWindow              = (uint8_t)gameFrontOverviewWindow;
   out->lineOfSight                 = (uint8_t)gameFrontLineOfSight;
   out->alliesInTrees               = gameFrontAlliesInTrees;
+  out->positionalSound             = gameFrontPositionalSound;
 }
 
 /* Writes a whole set through the per-setting setters above, so the keys
@@ -2408,6 +2770,7 @@ static void gameFrontPutVisibilitySettings(const VisibilitySettings *v) {
   gameFrontSetViewBaseDecaySecs((int)v->decaySecs[viewCategoryBase]);
   gameFrontSetViewAllyDecaySecs((int)v->decaySecs[viewCategoryAlly]);
   gameFrontSetAlliesInTrees(v->alliesInTrees);
+  gameFrontSetPositionalSound(v->positionalSound);
   gameFrontSetOverviewWindow((int)v->overviewWindow);
   gameFrontSetLineOfSight((int)v->lineOfSight);
   gameFrontSetClassicMode(v->classicMode);
@@ -2448,20 +2811,32 @@ void gameFrontSetVisibilityCustom(const VisibilitySettings *v) {
                  overviewWindowPrefWord((int)v->overviewWindow));
   prefsSetString("GAME OPTIONS", "Custom Line Of Sight",
                  TRUEFALSE_TO_STR(v->lineOfSight != (uint8_t)lineOfSightOff));
+  prefsSetString("GAME OPTIONS", "Custom Positional Sound",
+                 TRUEFALSE_TO_STR(v->positionalSound));
 }
 
 /* Remembers a visibility set as the host's choice. Three things move
- * together, which is why they are one call rather than three: the seven
+ * together, which is why they are one call rather than three: the eight
  * per-setting keys, so a game hosted again in this same session starts
  * there without a restart; which named set it is, so a preset that is
  * later given a different value follows the choice rather than the
- * values; and, when it is none of them, the set itself.
+ * values; and, when saveCustom is true and it is none of them, the set
+ * itself.
  *
  * Called from every place a host changes visibility — the hosting
  * settings dialog, which edits these globals, and the lobby, which reads
  * the live settings off its own client. Each write only touches the INI
- * when the value moves, so calling it per frame costs a compare. */
-void gameFrontRememberVisibility(const VisibilitySettings *v) {
+ * when the value moves, so calling it per frame costs a compare.
+ *
+ * The lobby passes false for saveCustom. It calls this every frame, and a
+ * preset reaches the lobby one setting at a time, so the values it reads
+ * pass through mixes that match no named set on the way. Saving those
+ * would replace the player's hand-made set with a half-applied preset.
+ * The lobby writes that set itself instead, with
+ * gameFrontSetVisibilityCustom, when the player edits or picks something
+ * on this machine. The hosting settings dialog passes true: the seven
+ * controls there are edited by hand and nothing else writes them. */
+void gameFrontRememberVisibility(const VisibilitySettings *v, bool saveCustom) {
   VisibilitySettings cur;
   VisibilityPreset   p;
 
@@ -2474,11 +2849,35 @@ void gameFrontRememberVisibility(const VisibilitySettings *v) {
   if ((int)p != gameFrontVisibilityPreset) {
     gameFrontSetVisibilityPreset((int)p);
   }
-  if (p == visibilityPresetCustom &&
+  if (saveCustom && p == visibilityPresetCustom &&
       (!gameFrontVisibilityCustomSaved ||
        !visibilitySettingsEqual(v, &gameFrontVisibilityCustom))) {
     gameFrontSetVisibilityCustom(v);
   }
+}
+
+void gameFrontRememberGameType(gameType gt) {
+  char buff[16];
+
+  if ((int)gt < (int)gameOpen || (int)gt > (int)gameStrictTournament) return;
+  gametype = gt;
+  intToStr(gametype, buff, sizeof(buff));
+  prefsSetString("GAME OPTIONS", "New Game Type", buff);
+}
+
+void gameFrontRememberAiPolicy(aiType ai) {
+  char buff[16];
+
+  if ((int)ai < (int)aiNone || (int)ai > (int)aiFull) return;
+  compTanks = ai;
+  intToStr(compTanks, buff, sizeof(buff));
+  prefsSetString("GAME OPTIONS", "New Game Computer Tanks", buff);
+}
+
+void gameFrontRememberHiddenMines(bool hm) {
+  hiddenMines = hm;
+  prefsSetString("GAME OPTIONS", "New Game Hidden Mines",
+                 TRUEFALSE_TO_STR(hiddenMines));
 }
 
 void gameFrontGetLanguageCode(char *out, int outSize) {
@@ -2928,7 +3327,10 @@ void gameFrontShutdownServer(void) {
    * stalling the leave. serverInstanceShutdown's own quit follows harmlessly. */
   serverDedicatedLogStashCurrentRound();
   if (serverDedicatedLogHasPendingUpload() && winbolonetIsRunning()) {
-    winbolonetEndSession();
+    /* A bounded drain: the host is waiting on this leave, and an
+     * unreachable WinBolo.net would otherwise hold it for as long as the
+     * queue is deep. Whatever is left rides the next session. */
+    winbolonetEndSession(/*drainMaxMs*/ 2000);
     httpSetLogUploadTimeout(10);
     serverDedicatedLogFlushPendingUpload();
     httpSetLogUploadTimeout(0);
@@ -3016,9 +3418,12 @@ bool gameFrontGetChosenBotLevelKey(char *out, size_t outSz) {
   return true;
 }
 
-/* Which of a brain's modes a single-player bot is created in: the player's
- * chosen mode when the brain still declares it, else mode 0 (the default
- * mode every ordinary game uses). */
+/* The mode that goes with the player's saved level: the player's chosen
+ * mode when the brain still declares it, else mode 0 (the default mode
+ * every ordinary game uses). It only says which mode's list the saved level
+ * is read from. serverSimResolveNewBotConfig keeps the level and puts the
+ * bot in the game type's own starting mode, so a mode saved in one lobby
+ * never starts bots in the next one. */
 uint8_t gameFrontSpBotMode(const char *brainPath) {
   char key[BRAIN_MODE_KEY_LEN];
   BrainModes modes;
@@ -3081,6 +3486,79 @@ void gameFrontSetBotTagColor(const char *botName, uint32_t rgb) {
   prefsSetString("BOT", key, val);
 }
 
+/* Per-scenario scenario-panel layout, kept under "SCENARIO PANEL" / the
+ * scenario as one "x,y,scale,alpha" row. One row rather than four keys keeps
+ * a scenario's numbers together and keeps the file short enough to read, and
+ * the scenario is the whole key so a player scanning the section sees the
+ * scenarios they have played by name.
+ *
+ * The key is copied a character at a time rather than with SDL_snprintf
+ * because a control character in a scenario's name would reach the
+ * preferences file as an escape and make the row impossible to match up by
+ * eye. Anything below a space becomes an underscore here, and it does so in
+ * the read and the write alike, so both still name the same row. A byte
+ * above 0x7F is left as it is: those are the middle of a UTF-8 character in
+ * a name somebody chose, not a control code. */
+static void gameFrontScnPanelLayoutKey(const char *scenario, char *key,
+                                       size_t keySz) {
+  size_t i = 0;
+  if (keySz == 0) return;
+  while (scenario[i] != '\0' && i + 1 < keySz) {
+    key[i] = ((unsigned char)scenario[i] >= 0x20) ? scenario[i] : '_';
+    i++;
+  }
+  key[i] = '\0';
+}
+
+bool gameFrontGetScnPanelLayout(const char *scenario, int *x, int *y,
+                                int *scale, int *alpha) {
+  char key[SCN_PANEL_SCENARIO_LEN], buff[64];
+  int rx, ry, rscale, ralpha;
+  if (!scenario || !scenario[0] || !x || !y || !scale || !alpha) return false;
+  gameFrontScnPanelLayoutKey(scenario, key, sizeof(key));
+  prefsGetString("SCENARIO PANEL", key, "", buff, sizeof(buff));
+  /* All four or none: a half-written row says nothing about where the panel
+     belongs, and the caller's fallback is a whole layout of its own rather
+     than something to fill the gaps in this one with. */
+  if (SDL_sscanf(buff, "%d,%d,%d,%d", &rx, &ry, &rscale, &ralpha) != 4) {
+    return false;
+  }
+  /* Clamped the way the [WINDOW] load clamps, and for the same reason: a
+     scale out of range would open the panel bigger than the screen or too
+     small to get a pointer onto a corner of. -1 is not a size or an opacity,
+     it is "never touched", so it passes through. The coordinates pass
+     through too — the panel clamps a position against the window it is
+     restored into, which is the only place the screen size is known. */
+  if (rscale != -1) {
+    if (rscale < SCN_PANEL_SCALE_MIN) {
+      rscale = SCN_PANEL_SCALE_MIN;
+    } else if (rscale > SCN_PANEL_SCALE_MAX) {
+      rscale = SCN_PANEL_SCALE_MAX;
+    }
+  }
+  if (ralpha != -1) {
+    if (ralpha < 0) {
+      ralpha = 0;
+    } else if (ralpha > 100) {
+      ralpha = 100;
+    }
+  }
+  *x = rx;
+  *y = ry;
+  *scale = rscale;
+  *alpha = ralpha;
+  return true;
+}
+
+void gameFrontSetScnPanelLayout(const char *scenario, int x, int y,
+                                int scale, int alpha) {
+  char key[SCN_PANEL_SCENARIO_LEN], val[64];
+  if (!scenario || !scenario[0]) return;
+  gameFrontScnPanelLayoutKey(scenario, key, sizeof(key));
+  SDL_snprintf(val, sizeof(val), "%d,%d,%d,%d", x, y, scale, alpha);
+  prefsSetString("SCENARIO PANEL", key, val);
+}
+
 bool gameFrontGetChosenBotDifficulty(uint8_t *out) {
   char buff[32];
   if (!out) return false;
@@ -3129,6 +3607,7 @@ BOLO_STATIC_ASSERT(serverVoiceOn == 0, server_voice_default_is_on);
 
 bool gameFrontSetupServer(void) {
   ServerInstanceConfig cfg;
+  char scriptSessionDir[FILENAME_MAX];
 
   /* Idempotently clear any prior host session. Backing out of the
    * lobby to the LAN/Internet game finder doesn't fire shutdown on
@@ -3155,7 +3634,7 @@ bool gameFrontSetupServer(void) {
     spServerSim = serverSimCreate(fileName, gametype, hiddenMines, startDelay, timeLen);
   } else {
     BYTE emap[6000] = E_MAP;
-    spServerSim = serverSimCreateCompressed(emap, 5097, "Everard Island", gametype, hiddenMines, startDelay, timeLen);
+    spServerSim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island", gametype, hiddenMines, startDelay, timeLen);
   }
   if (spServerSim == NULL) {
     return FALSE;
@@ -3166,7 +3645,20 @@ bool gameFrontSetupServer(void) {
   /* A scenario script beside the map, as on the single-player path, and the
      same host preference deciding whether it runs at all. */
   scenarioHostSetEnabled(gameFrontHostingScripts);
+  scenarioHostSetUploadScriptsEnabled(
+      gameFrontHostingScriptUploadPolicy != SCRIPT_UPLOAD_OFF);
   scenarioHostRegisterMapScripted(spServerSim);
+  serverSimSetScenarioDir(spServerSim, gameFrontHostingScenarioDir);
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__) && !defined(__EMSCRIPTEN__)
+  /* And the Workshop map folder, as on the single-player path. */
+  {
+    char workshopDir[FILENAME_MAX];
+    if (scenarioHostWorkshopDir(workshopDir, sizeof(workshopDir))) {
+      serverSimSetWorkshopMapDir(spServerSim, workshopDir);
+    }
+  }
+#endif
+  scenarioHostRegisterScenarioLister(spServerSim);
   if (strncmp(fileName, "randommap:", 10) != 0 && fileName[0] != '\0') {
     char scenarioErr[512];
     spScenarioHost = scenarioHostAttach(spServerSim, fileName,
@@ -3182,32 +3674,10 @@ bool gameFrontSetupServer(void) {
   /* And from here on the scenario follows the committed map. */
   scenarioHostFollowMap(spServerSim, &spScenarioHost);
 
-  /* Visibility rules from the [GAME OPTIONS] prefs, pushed onto the sim
-   * after create rather than through ServerInstanceConfig. */
-  serverSimSetViewPolicy(spServerSim, viewCategoryPill,
-                         (ViewPolicy)gameFrontViewPillPolicy,
-                         (uint16_t)gameFrontViewPillDecaySecs);
-  serverSimSetViewPolicy(spServerSim, viewCategoryBase,
-                         (ViewPolicy)gameFrontViewBasePolicy,
-                         (uint16_t)gameFrontViewBaseDecaySecs);
-  serverSimSetViewPolicy(spServerSim, viewCategoryAlly,
-                         (ViewPolicy)gameFrontViewAllyPolicy,
-                         (uint16_t)gameFrontViewAllyDecaySecs);
-  /* After the three policies, so classic mode wins over them when both
-   * are set, and allies in trees before classic mode, which forces it
-   * back off. Both only pushed when on — off is what the sim was
-   * created with. */
-  if (gameFrontAlliesInTrees) {
-    serverSimSetAlliesInTrees(spServerSim, true);
-  }
-  /* These two go on whatever they hold, not only when on: either value
-   * is a real choice, and the expanded window is not what the sim was
-   * created with. Still before classic mode, which writes both. */
-  serverSimSetOverviewWindow(spServerSim, (uint8_t)gameFrontOverviewWindow);
-  serverSimSetLineOfSight(spServerSim, (uint8_t)gameFrontLineOfSight);
-  if (gameFrontClassicMode) {
-    serverSimSetClassicMode(spServerSim, true);
-  }
+  /* The visibility rules this host last chose, from the [GAME OPTIONS]
+   * prefs. Shared with the single-player path, which opens the same
+   * lobby and has to open it on the same settings. */
+  gameFrontApplyVisibilityPrefs(spServerSim);
 
   /* Resolve a brain path so the lobby's "Add Bot" works regardless of
    * whether the host set compTanks at startup. The AI Policy can be
@@ -3253,6 +3723,21 @@ bool gameFrontSetupServer(void) {
     }
     cfg.uploadPersistDir  = gameFrontHostingUploadDir;
   }
+  cfg.scriptUploadPolicy  =
+      (ScriptUploadPolicy)gameFrontHostingScriptUploadPolicy;
+  cfg.noScriptSharing     = !gameFrontHostingShareScripts;
+  cfg.scriptUploadMaxFiles = (uint8_t)gameFrontHostingScriptUploadMaxFiles;
+  cfg.scriptUploadMaxStorageBytes =
+      (uint32_t)gameFrontHostingScriptUploadMaxStorage * 1024u * 1024u;
+  /* Only Persist keeps scripts on disk, so only Persist names a directory.
+   * Off and Allow leave scriptUploadDir NULL (memset-zero). */
+  if (gameFrontHostingScriptUploadPolicy == SCRIPT_UPLOAD_PERSIST) {
+    cfg.scriptUploadDir   = gameFrontHostingScriptUploadDir;
+  }
+  /* Allow keeps them for the session, under the prefs path. Set whatever the
+   * policy, since the server only reads it under Allow. */
+  gameFrontScriptSessionDir(scriptSessionDir, sizeof(scriptSessionDir));
+  cfg.scriptSessionDir    = scriptSessionDir;
   /* Round logging writes .wbv files into the chosen directory. Create it on
    * use and refuse to host if that fails — no silent fallback. Done here,
    * before the server starts, so the failure unwind is the simple pre-start
@@ -3431,6 +3916,21 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   gameFrontHostingAllowSpec = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("HOSTING", "Run Map Scripts", "Yes", buff, FILENAME_MAX);
   gameFrontHostingScripts = YESNO_TO_TRUEFALSE(buff[0]);
+  /* Script Upload Policy replaced the Yes/No "Run Upload Scripts". A file
+   * written before it has only the old key, so that is read in its place
+   * (No is Off, anything else Allow); the old key is never written again,
+   * and once the new one is saved it is not read. */
+  prefsGetString("HOSTING", "Script Upload Policy", "", buff, FILENAME_MAX);
+  if (buff[0] != '\0') {
+    gameFrontHostingScriptUploadPolicy =
+        scriptUploadPolicyResolve(buff, false);
+  } else {
+    prefsGetString("HOSTING", "Run Upload Scripts", "Yes", buff, FILENAME_MAX);
+    gameFrontHostingScriptUploadPolicy =
+        scriptUploadPolicyResolve(NULL, !YESNO_TO_TRUEFALSE(buff[0]));
+  }
+  prefsGetString("HOSTING", "Share Scripts", "Yes", buff, FILENAME_MAX);
+  gameFrontHostingShareScripts = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("HOSTING", "Max Spectators", "16", buff, FILENAME_MAX);
   {
     int m = atoi(buff);
@@ -3473,6 +3973,79 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     }
     prefsGetString("HOSTING", "Upload Dir", def, gameFrontHostingUploadDir,
                    FILENAME_MAX);
+  }
+  prefsGetString("HOSTING", "Script Upload Max Files", "32", buff, FILENAME_MAX);
+  {
+    int f = atoi(buff);
+    if (f < 1) f = 1;
+    if (f > 255) f = 255;
+    gameFrontHostingScriptUploadMaxFiles = f;
+  }
+  prefsGetString("HOSTING", "Script Upload Max Storage", "64", buff, FILENAME_MAX);
+  {
+    int st = atoi(buff);
+    if (st < 1) st = 1;
+    if (st > 4095) st = 4095;
+    gameFrontHostingScriptUploadMaxStorage = st;
+  }
+  /* Script Upload Dir defaults under the upload dir's default, for the same
+   * reason: the prefs path is writable and the bundle is not. */
+  {
+    const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    if (prefDir) {
+      snprintf(def, FILENAME_MAX, "%suploads/Scripts", prefDir);
+      SDL_free((void *)prefDir);
+    } else {
+      snprintf(def, FILENAME_MAX, "%s", "uploads/Scripts");
+    }
+    prefsGetString("HOSTING", "Script Upload Dir", def,
+                   gameFrontHostingScriptUploadDir, FILENAME_MAX);
+  }
+  /* The mod directory, defaulted under the writable prefs path for the
+   * reason the upload dir is: the app's own data directory is inside the
+   * read-only bundle, and this is a place a player drops files into.
+   * SDL_GetPrefPath returns a trailing separator, so append "Mods" directly,
+   * spelled the way brain_list.c spells Brains beside it. A directory that
+   * is not there is not an error — the host is still offered the mods that
+   * ship with the build.
+   *
+   * This is the same directory scnModDirs reads on its own, so leaving the
+   * preference alone changes nothing about what a host is offered. It is
+   * still a preference because a player who keeps their mods somewhere else
+   * — a shared drive, a checkout — has to be able to say so.
+   *
+   * "Mod Dir" and not the "Scenario Dir" this key was called before. A
+   * settings file written by an older build still has the old key, so it is
+   * what the new one defaults to: a player who had pointed it somewhere
+   * keeps pointing there, and the value moves to the new key the next time
+   * the settings are written. The old key stays in the file and is never
+   * read again once "Mod Dir" is there, because it is only ever consulted as
+   * that key's default. */
+  {
+    const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    char        old[FILENAME_MAX];
+
+    if (prefDir) {
+      snprintf(def, FILENAME_MAX, "%sMods", prefDir);
+      SDL_free((void *)prefDir);
+    } else {
+      snprintf(def, FILENAME_MAX, "%s", "Mods");
+    }
+    prefsGetString("HOSTING", "Scenario Dir", def, old, FILENAME_MAX);
+    prefsGetString("HOSTING", "Mod Dir", old,
+                   gameFrontHostingScenarioDir, FILENAME_MAX);
+    /* Made if it is not there, unlike the directories above it: this is the
+     * one a player is told to drop files into, and a folder that has to be
+     * created before it can be used is a folder most players never find. It
+     * succeeding is not required — a read-only home directory means no mods
+     * of their own, which the listing already says nothing about.
+     *
+     * The one the preference settled on, and after the reads rather than
+     * before them: a player who keeps their mods on a shared drive named it
+     * here, and making the default under the prefs path as well would leave
+     * an empty Mods folder they never asked for in their home directory
+     * every time the settings are read. */
+    (void)SDL_CreateDirectory(gameFrontHostingScenarioDir);
   }
   prefsGetString("HOSTING", "Logging", "Yes", buff, FILENAME_MAX);
   gameFrontHostingLogging = YESNO_TO_TRUEFALSE(buff[0]);
@@ -3542,9 +4115,6 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   intToStr(DEFAULT_ALLYVIEW, def, sizeof(def));
   prefsGetString("KEYS", "Ally View", def, buff, FILENAME_MAX);
   keys->kiAllyView = atoi(buff);
-  intToStr(DEFAULT_LGMVIEW, def, sizeof(def));
-  prefsGetString("KEYS", "LGM View", def, buff, FILENAME_MAX);
-  keys->kiLGMView = atoi(buff);
   intToStr(DEFAULT_BASEVIEW, def, sizeof(def));
   prefsGetString("KEYS", "Base View", def, buff, FILENAME_MAX);
   keys->kiBaseView = atoi(buff);
@@ -3724,6 +4294,29 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     if (v < (int)GFX_FILTER_NEAREST || v > (int)GFX_FILTER_PIXELART) v = 0;
     gfxSetTextureFilter((GfxTextureFilter)v);
   }
+  /* The simplified view, and whether it is held to the Map Overview window.
+     On by default, since that is how the zoomed-out map is meant to look;
+     the sub-option off, so it applies to the full screen map as well.  The
+     log viewer reads these same two keys out of the same prefs document. */
+  prefsGetString("SETTINGS", "SimplifiedZoomOut", "Yes", buff, FILENAME_MAX);
+  gfxSetSimplifiedZoomOut(YESNO_TO_TRUEFALSE(buff[0]));
+  prefsGetString("SETTINGS", "SimplifiedOverviewOnly", "No", buff, FILENAME_MAX);
+  gfxSetSimplifiedOverviewOnly(YESNO_TO_TRUEFALSE(buff[0]));
+
+  /* Fog of war look: 0 Grey / 1 Darker / 2 Darker with fog edge / 3 None.
+     The fallback is "-1" rather than a style number so that a missing key and
+     an unreadable one take the same road out - both fail the range check below
+     and land on FOG_STYLE_DEFAULT, which is the one place the default is
+     written down.  A player who has picked keeps their pick: only an absent or
+     out-of-range value is replaced. */
+  prefsGetString("SETTINGS", "FogStyle", "-1", buff, FILENAME_MAX);
+  {
+    int v = atoi(buff);
+    if (v < (int)FOG_STYLE_GREY || v >= FOG_STYLE_COUNT) {
+      v = (int)FOG_STYLE_DEFAULT;
+    }
+    gfxSetFogStyle((FogStyle)v);
+  }
 
   /* Gamepad — Path B rebindable action table.  Start from defaults so
      missing prefs keys leave each action at its historical mapping;
@@ -3828,13 +4421,29 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
                           gameFrontLanguageCode,
                           (DWORD)sizeof(gameFrontLanguageCode));
 
-  /* Game Options */
-  prefsGetString("GAME OPTIONS", "Hidden Mines", "No", buff, FILENAME_MAX);
+  /* Game Options. The type, computer tanks and hidden mines a hosted game
+   * opens on are the ones last picked in a lobby this machine ran, under
+   * keys of their own. The older "Game Type", "Allow Computer Tanks" and
+   * "Hidden Mines" keys were written on every exit although nothing let a
+   * player set them, so they cannot tell a pick from the stock value and
+   * are no longer read. A player who has not picked gets an Open game
+   * with Full Advantage computer tanks. Clamped on read so a hand-edited
+   * value cannot open a lobby on a type or policy it does not offer. */
+  prefsGetString("GAME OPTIONS", "New Game Hidden Mines", "No", buff, FILENAME_MAX);
   hiddenMines = YESNO_TO_TRUEFALSE(buff[0]);
-  prefsGetString("GAME OPTIONS", "Allow Computer Tanks", "0", buff, FILENAME_MAX);
-  compTanks = atoi(buff);
-  prefsGetString("GAME OPTIONS", "Game Type", "1", buff, FILENAME_MAX);
-  gametype = atoi(buff);
+  intToStr(aiFull, def, sizeof(def));
+  prefsGetString("GAME OPTIONS", "New Game Computer Tanks", def, buff, FILENAME_MAX);
+  {
+    int ai = atoi(buff);
+    compTanks = (ai < (int)aiNone || ai > (int)aiFull) ? aiFull : (aiType)ai;
+  }
+  intToStr(gameOpen, def, sizeof(def));
+  prefsGetString("GAME OPTIONS", "New Game Type", def, buff, FILENAME_MAX);
+  {
+    int gt = atoi(buff);
+    gametype = (gt < (int)gameOpen || gt > (int)gameStrictTournament)
+                 ? gameOpen : (gameType)gt;
+  }
   prefsGetString("GAME OPTIONS", "Start Delay", "0", buff, FILENAME_MAX);
   startDelay = atoi(buff);
   longToStr(UNLIMITED_GAME_TIME, def, sizeof(def));
@@ -3890,6 +4499,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     gameFrontClassicMode = YESNO_TO_TRUEFALSE(buff[0]);
     prefsGetString("GAME OPTIONS", "Allies In Trees", "No", buff, FILENAME_MAX);
     gameFrontAlliesInTrees = YESNO_TO_TRUEFALSE(buff[0]);
+    prefsGetString("GAME OPTIONS", "Positional Sound", "No", buff, FILENAME_MAX);
+    gameFrontPositionalSound = YESNO_TO_TRUEFALSE(buff[0]);
     /* Same derivation as the three above: the INI default word and the
      * fallback both come from OVERVIEW_WINDOW_STOCK. */
     prefsGetString("GAME OPTIONS", "Overview Window",
@@ -3964,10 +4575,14 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
       gameFrontVisibilityCustom.lineOfSight =
           YESNO_TO_TRUEFALSE(buff[0]) ? (uint8_t)lineOfSightBuildingsAndTrees
                                       : (uint8_t)lineOfSightOff;
+      prefsGetString("GAME OPTIONS", "Custom Positional Sound",
+                     TRUEFALSE_TO_STR(gameFrontVisibilityCustom.positionalSound),
+                     buff, FILENAME_MAX);
+      gameFrontVisibilityCustom.positionalSound = YESNO_TO_TRUEFALSE(buff[0]);
     }
 
     /* What the host last chose, which is what a game hosted from here
-     * starts on. The seven keys above have already put the last values on
+     * starts on. The eight keys above have already put the last values on
      * the globals; this writes the chosen set over them, so a preset that
      * is later given a different value follows the host's choice rather
      * than the values it happened to have when they made it. An INI with
@@ -4026,6 +4641,10 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   showGunsight = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("MENU", "Sound Effects", "Yes", buff, FILENAME_MAX);
   soundEffects = YESNO_TO_TRUEFALSE(buff[0]);
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+  prefsGetString("MENU", "Positional Sound", "Yes", buff, FILENAME_MAX);
+  positionalSound = YESNO_TO_TRUEFALSE(buff[0]);
+#endif
   prefsGetString("MENU", "Allow Background Sound", "Yes", buff, FILENAME_MAX);
   backgroundSound = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("MENU", "Sound keepalive", "No", buff, FILENAME_MAX);
@@ -4154,6 +4773,41 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   prefsGetString("WINDOW", "Overview Follow", "Yes", buff, FILENAME_MAX);
   gameFrontOverviewFollow = YESNO_TO_TRUEFALSE(buff[0]);
 
+  /* The scenario panel's place inside the main window, the size the player
+     has dragged it to and how opaque its backing is. -1 for either
+     coordinate means it has never been moved, so it opens at the top-right
+     of the game view; -1 for the scale or the alpha means that one has never
+     been touched, so the panel opens at the size the game's zoom alone gives
+     it and at the backing it has always had.
+
+     The scale and the alpha are clamped here and not only on the drag that
+     writes them. The preferences file is a text file a player can edit, and a
+     scale out of range would open the panel bigger than the screen or too
+     small to get a pointer onto a corner of, neither of which leaves anything
+     to drag it back with. */
+  prefsGetString("WINDOW", "Scenario Panel X", "-1", buff, FILENAME_MAX);
+  gameFrontScnPanelX = atoi(buff);
+  prefsGetString("WINDOW", "Scenario Panel Y", "-1", buff, FILENAME_MAX);
+  gameFrontScnPanelY = atoi(buff);
+  prefsGetString("WINDOW", "Scenario Panel Scale", "-1", buff, FILENAME_MAX);
+  gameFrontScnPanelScale = atoi(buff);
+  if (gameFrontScnPanelScale != -1) {
+    if (gameFrontScnPanelScale < SCN_PANEL_SCALE_MIN) {
+      gameFrontScnPanelScale = SCN_PANEL_SCALE_MIN;
+    } else if (gameFrontScnPanelScale > SCN_PANEL_SCALE_MAX) {
+      gameFrontScnPanelScale = SCN_PANEL_SCALE_MAX;
+    }
+  }
+  prefsGetString("WINDOW", "Scenario Panel Alpha", "-1", buff, FILENAME_MAX);
+  gameFrontScnPanelAlpha = atoi(buff);
+  if (gameFrontScnPanelAlpha != -1) {
+    if (gameFrontScnPanelAlpha < 0) {
+      gameFrontScnPanelAlpha = 0;
+    } else if (gameFrontScnPanelAlpha > 100) {
+      gameFrontScnPanelAlpha = 100;
+    }
+  }
+
   prefsGetString("MENU", "Message Label Size", "1", buff, FILENAME_MAX);
   labelMsg = atoi(buff);
   prefsGetString("MENU", "Tank Label Size", "1", buff, FILENAME_MAX);
@@ -4266,6 +4920,18 @@ void gameFrontPutPrefs(keyItems *keys) {
   intToStr(gameFrontHostingUploadMaxStorage, buff, sizeof(buff));
   prefsSetString("HOSTING", "Upload Max Storage", buff);
   prefsSetString("HOSTING", "Upload Dir", gameFrontHostingUploadDir);
+  prefsSetString("HOSTING", "Script Upload Policy",
+                 scriptUploadPolicyWord(
+                     (ScriptUploadPolicy)gameFrontHostingScriptUploadPolicy));
+  prefsSetString("HOSTING", "Share Scripts",
+                            TRUEFALSE_TO_STR(gameFrontHostingShareScripts));
+  prefsSetString("HOSTING", "Script Upload Dir",
+                 gameFrontHostingScriptUploadDir);
+  intToStr(gameFrontHostingScriptUploadMaxFiles, buff, sizeof(buff));
+  prefsSetString("HOSTING", "Script Upload Max Files", buff);
+  intToStr(gameFrontHostingScriptUploadMaxStorage, buff, sizeof(buff));
+  prefsSetString("HOSTING", "Script Upload Max Storage", buff);
+  prefsSetString("HOSTING", "Mod Dir", gameFrontHostingScenarioDir);
   prefsSetString("HOSTING", "Logging",
                             TRUEFALSE_TO_STR(gameFrontHostingLogging));
   prefsSetString("HOSTING", "Log Dir", gameFrontHostingLogDir);
@@ -4307,8 +4973,6 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("KEYS", "Pill View", buff);
   intToStr(keys->kiAllyView, buff, sizeof(buff));
   prefsSetString("KEYS", "Ally View", buff);
-  intToStr(keys->kiLGMView, buff, sizeof(buff));
-  prefsSetString("KEYS", "LGM View", buff);
   intToStr(keys->kiBaseView, buff, sizeof(buff));
   prefsSetString("KEYS", "Base View", buff);
   intToStr(keys->kiOverviewZoom, buff, sizeof(buff));
@@ -4392,7 +5056,7 @@ void gameFrontPutPrefs(keyItems *keys) {
      what loaded: a skin that cannot be read right now stays saved. */
   prefsSetString("SETTINGS", "Skin", skinGetRequested());
 
-  /* Graphics settings.  Same four keys the loader reads. */
+  /* Graphics settings.  Same keys the loader reads. */
   intToStr((int)gfxGetTileDetail(), buff, sizeof(buff));
   prefsSetString("SETTINGS", "TileDetail", buff);
   intToStr((int)gfxGetAnimSmoothness(), buff, sizeof(buff));
@@ -4400,6 +5064,12 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("SETTINGS", "SmoothShells", TRUEFALSE_TO_STR(gfxGetSmoothShells()));
   intToStr((int)gfxGetTextureFilter(), buff, sizeof(buff));
   prefsSetString("SETTINGS", "TextureFilter", buff);
+  prefsSetString("SETTINGS", "SimplifiedZoomOut",
+                 TRUEFALSE_TO_STR(gfxGetSimplifiedZoomOut()));
+  prefsSetString("SETTINGS", "SimplifiedOverviewOnly",
+                 TRUEFALSE_TO_STR(gfxGetSimplifiedOverviewOnly()));
+  intToStr((int)gfxGetFogStyle(), buff, sizeof(buff));
+  prefsSetString("SETTINGS", "FogStyle", buff);
 
   /* Gamepad — Path B rebindable action table.  Four keys per action:
      gpb_<name>_pri_{kind,code} and gpb_<name>_sec_{kind,code} where
@@ -4434,12 +5104,10 @@ void gameFrontPutPrefs(keyItems *keys) {
   /* Remember */
   prefsSetString("SETTINGS", "Remember Player Name", TRUEFALSE_TO_STR(gameFrontRemeber));
 
-  /* Options */
-  prefsSetString("GAME OPTIONS", "Hidden Mines", TRUEFALSE_TO_STR(hiddenMines));
-  intToStr(compTanks, buff, sizeof(buff));
-  prefsSetString("GAME OPTIONS", "Allow Computer Tanks", buff);
-  intToStr(gametype, buff, sizeof(buff));
-  prefsSetString("GAME OPTIONS", "Game Type", buff);
+  /* Options. The game type, computer tanks and hidden mines are not
+   * written here: gameFrontRememberGameType and its two siblings write
+   * them when the host picks one, so a player who never picked keeps no
+   * key and goes on getting the current stock value. */
   intToStr(startDelay, buff, sizeof(buff));
   prefsSetString("GAME OPTIONS", "Start Delay", buff);
   intToStr(timeLen, buff, sizeof(buff));
@@ -4462,6 +5130,8 @@ void gameFrontPutPrefs(keyItems *keys) {
                  TRUEFALSE_TO_STR(gameFrontClassicMode));
   prefsSetString("GAME OPTIONS", "Allies In Trees",
                  TRUEFALSE_TO_STR(gameFrontAlliesInTrees));
+  prefsSetString("GAME OPTIONS", "Positional Sound",
+                 TRUEFALSE_TO_STR(gameFrontPositionalSound));
   prefsSetString("GAME OPTIONS", "Overview Window",
                  overviewWindowPrefWord(gameFrontOverviewWindow));
   prefsSetString("GAME OPTIONS", "Line Of Sight",
@@ -4481,6 +5151,9 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("MENU", "Frame Rate", buff);
   prefsSetString("MENU", "Show Gunsight", TRUEFALSE_TO_STR(showGunsight));
   prefsSetString("MENU", "Sound Effects", TRUEFALSE_TO_STR(soundEffects));
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+  prefsSetString("MENU", "Positional Sound", TRUEFALSE_TO_STR(positionalSound));
+#endif
   prefsSetString("MENU", "Allow Background Sound", TRUEFALSE_TO_STR(backgroundSound));
   prefsSetString("MENU", "Sound keepalive", TRUEFALSE_TO_STR(useSoundKeepalive));
   intToStr(soundVolume, buff, sizeof(buff));
@@ -4625,6 +5298,15 @@ void gameFrontFlushWindowSettings(void) {
   prefsSetString("WINDOW", "Overview Follow",
                  TRUEFALSE_TO_STR(gameFrontOverviewFollow));
 
+  intToStr(gameFrontScnPanelX, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Scenario Panel X", buff);
+  intToStr(gameFrontScnPanelY, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Scenario Panel Y", buff);
+  intToStr(gameFrontScnPanelScale, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Scenario Panel Scale", buff);
+  intToStr(gameFrontScnPanelAlpha, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Scenario Panel Alpha", buff);
+
   s_windowSettingsDirty = false;
 }
 
@@ -4665,7 +5347,11 @@ ServerSim *gameFrontGetSinglePlayerServerSim(void) {
 }
 
 BYTE gameFrontGetPlayerNum(void) {
-  if (udpTransportActive) return udpPlayerNum;
+  /* Read the slot live from the transport, never a copy taken at join.
+   * clientFrontAwaitJoin returns once the lobby replay lands, which can be
+   * before JOIN_ACCEPT: if the first accept is lost the slot is still 0
+   * then, and the real one arrives with the server's resent accept. */
+  if (udpTransportActive) return clientSimGetServerPlayerNum(humanSim);
   return 0;
 }
 

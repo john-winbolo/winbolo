@@ -552,8 +552,14 @@ void lobbyRenderAllowNewPlayersRow(ClientSim *cs,
 
 /* Copy src into out, truncating with a trailing "..." if it's wider than
  * maxW pixels. Keeps long player names from overflowing the name column and
- * pushing the start dropdown into the Ready button on small windows. */
-static void lobbyTruncateName(const char *src, float maxW, char *out, size_t outSz) {
+ * pushing the start dropdown into the Ready button on small windows.
+ *
+ * Shared with the Mods dialog, whose rows have the same problem for the same
+ * reason: a name, a tag and an arrow on one row, and a name long enough to
+ * push the other two off it. Its rows used to be Selectables, which clip
+ * their own label; they are links now, and a link draws whatever it is
+ * given. */
+void lobbyTruncateName(const char *src, float maxW, char *out, size_t outSz) {
     if (outSz == 0) return;
     if (!src) { out[0] = '\0'; return; }
     if (maxW <= 1.0f || ImGui::CalcTextSize(src).x <= maxW) {
@@ -1264,6 +1270,12 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
          * divider dragged left does, and scaled by s throughout so it lands
          * the same at any DPI. */
         const float kColTankW    = 60.0f * s;
+        /* The tank badge, and the bot difficulty chips that are drawn at the
+         * same size so the two kinds of row line up. Declared here because
+         * the icons column is measured against the chip run below, and read
+         * again by the row that draws them. */
+        const float kTankBadgePx = 18.0f * s;
+        const float kBotChipGap  = 2.0f * s;
         /* The gear's own width. BOTH gears live in the icons column — a bot's
          * config gear beside its bot-cpu badge, and (in a voice build) the
          * local player's voice gear after the mic — so this is needed in
@@ -1274,29 +1286,57 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                                  ? ImGui::CalcTextSize(">").x
                                    + ImGui::GetStyle().FramePadding.x * 2.0f
                                  : ImGui::GetFontSize();
+        /* One badge's size, and the flag's, read once for the whole table:
+         * the column is measured against them here and the rows draw at them
+         * below, so the reserve and the run cannot drift apart. */
+        const float kIconPx      = sdl3ImguiWbnIconPx();
+        float kFlagW = 0.0f;
+        sdl3ImguiFlagSize(&kFlagW, NULL);
+        const float kSpacingX    = ImGui::GetStyle().ItemSpacing.x;
+        /* What the identity run itself takes, up to the ping-mute cell.
+         *
+         * A human row draws a country flag and up to three badges — the
+         * platform icon, the WBN shield and the Steam mark — each followed by
+         * one spacing. A bot row draws three difficulty chips at the tank
+         * badge's size, with kBotChipGap between them, and no flag. The
+         * column holds whichever is wider: both kinds of row share it.
+         *
+         * Derived from what actually draws rather than from one tuned number,
+         * because the run is sized off the font now — it was a flat 14 px per
+         * badge, which left the mic reading small beside the font-sized cog
+         * and left the whole run pinned at 14 however far the UI scaled. */
+        const float kHumanRunW   = kFlagW + kIconPx * 3.0f + kSpacingX * 3.0f;
+        const float kBotRunW     = kTankBadgePx * 3.0f + kBotChipGap * 2.0f
+                                 + kSpacingX;
+        const float kColBadgesW  = ImMax(kHumanRunW, kBotRunW);
 #if defined(WINBOLO_VOICE)
         /* The microphone cell follows the badge run, so the icons column
-         * carries one more LOBBY_WBN_ICON_SIZE icon plus the spacing before
-         * it, and the local player's row carries the voice gear after that,
-         * with a spacing of its own. That raises needIconsCol, so the column
-         * sheds at a slightly wider window than it does without voice — the
-         * wider run needs the room, and the whole column still goes at once.
-         * The gear draws on one row, but every team's table takes the width:
-         * the team panels are stacked, so a column one width in your team
-         * and another in the rest would not line up.
+         * carries one more badge plus the spacing before it, and the local
+         * player's row carries the voice gear after that, with a spacing of
+         * its own. That raises needIconsCol, so the column sheds at a slightly
+         * wider window than it does without voice — the wider run needs the
+         * room, and the whole column still goes at once. The gear draws on one
+         * row, but every team's table takes the width: the team panels are
+         * stacked, so a column one width in your team and another in the rest
+         * would not line up.
          *
          * Sized for the form that will draw, which is known here: the
          * SmallButton in controller mode, the font-sized icon otherwise. */
-        const float kColIconsW   = 96.0f * s + (float)LOBBY_WBN_ICON_SIZE * s
-                                 + ImGui::GetStyle().ItemSpacing.x
+        const float kColIconsW   = kColBadgesW
+                                 + kIconPx      /* smart-ping mute cell */
+                                 + kSpacingX
+                                 + kIconPx      /* mic / speaker cell */
+                                 + kSpacingX
                                  + kColGearW
-                                 + ImGui::GetStyle().ItemSpacing.x;
+                                 + kSpacingX;
 #else
         /* No voice build, but a BOT row still puts its config gear in this
          * column beside the bot-cpu badge, so the gear's width is kept here
-         * either way. */
-        const float kColIconsW   = 96.0f * s
-                                 + ImGui::GetStyle().ItemSpacing.x
+         * either way. The smart-ping mute cell is not a voice feature and
+         * draws in this build too. */
+        const float kColIconsW   = kColBadgesW
+                                 + kIconPx      /* smart-ping mute cell */
+                                 + kSpacingX
                                  + kColGearW;
 #endif
         const float kColPingW    = 50.0f * s;
@@ -1396,9 +1436,9 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                 bool isMe   = (!spectator && i == myPlayerNum);
                 bool isBot  = clientSimGetLobbySlot(cs, (BYTE)(i))->isBot;
                 /* A seat held for a bot that is not on the field draws faded,
-                 * so a host can tell the horde it has seated apart from the
+                 * so a host can tell the seats it is holding apart from the
                  * bots that are playing this round. */
-                bool unfielded = !clientSimGetLobbySlot(cs, (BYTE)(i))->fielded;
+                bool unfielded = clientSimSlotIsUnfielded(cs, (BYTE)(i));
                 bool isSelf = isMe;
                 bool isAlly = (myTeam != 0 && clientSimGetLobbySlot(cs, (BYTE)(i))->teamNumber == myTeam);
 
@@ -1407,7 +1447,7 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                  * are positioned per-cell via absolute Y so each one
                  * is centered on the row's vertical midline regardless
                  * of its own height. */
-                const float tankSz  = 18.0f * s;
+                const float tankSz  = kTankBadgePx;
                 const float closeSz = ImGui::GetFontSize();
                 const float rowH    = ImMax(ImGui::GetFrameHeight(),
                                             ImMax(tankSz, 22.0f * s));
@@ -1610,8 +1650,8 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                     }
                     if (botModes != NULL &&
                         !lobbyBotModeIsDefault(botModes, botMode)) {
-                        /* Name the mode too, so a row in the survival scenario
-                         * says so on the row itself. */
+                        /* Name the mode too, so a bot in any mode but the
+                         * default says so on the row itself. */
                         botModeTag = botModes->modes[botMode].label;
                     }
                 }
@@ -1727,7 +1767,7 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                          * badge it has always been. */
                         SDL_Texture *dimTex = lobbyIcons()->botCpuGrey;
                         const int   chipN   = (botDiffChips > 0) ? 3 : 1;
-                        const float chipGap = 2.0f * s;
+                        const float chipGap = kBotChipGap;
                         const float runW    = tankSz * (float)chipN
                                             + chipGap * (float)(chipN - 1);
                         cyAbs(tankSz);
@@ -1889,14 +1929,16 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                     const float iconBiasY = 2.0f;
                     const char *cc = clientSimGetLobbySlot(cs, (BYTE)(i))->countryCode;
                     if (cc[0] != '\0' && !(cc[0] == 'X' && cc[1] == 'X') && flagsGetTexture(cc)) {
-                        cyAbs((float)FLAG_HEIGHT);
+                        float flagH = 0.0f;
+                        sdl3ImguiFlagSize(NULL, &flagH);
+                        cyAbs(flagH);
                         ImGui::SetCursorPosY(ImGui::GetCursorPosY() - iconBiasY);
                         drawCountryFlagWithTip(cc);
                         ImGui::SameLine();
                     }
                     /* All WBN/Steam/platform icons in renderPlayerName are
-                     * LOBBY_WBN_ICON_SIZE tall — center them as one block. */
-                    cyAbs((float)LOBBY_WBN_ICON_SIZE);
+                     * one badge tall — center them as one block. */
+                    cyAbs(kIconPx);
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() - iconBiasY);
                     {
                         /* Hide the WBN globe in local-only sessions —
@@ -1919,8 +1961,7 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                          * keeps the next item on the row is unconditional to
                          * match — without it, a non-voice build would wrap the
                          * name onto the next row. */
-                        renderPlayerPingMuteCell(cs, i, isSelf,
-                                                 (float)LOBBY_WBN_ICON_SIZE);
+                        renderPlayerPingMuteCell(cs, i, isSelf, kIconPx);
                         ImGui::SameLine();
 #if defined(WINBOLO_VOICE)
                         /* Voice state and the mute toggle. Lobby voice
@@ -1933,8 +1974,7 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                          * knowing they cannot talk matters. */
                         renderPlayerMicCell(cs, i,
                                             clientSimGetLobbySlot(cs, (BYTE)(i))->clientFlags,
-                                            talkingMap, isSelf,
-                                            (float)LOBBY_WBN_ICON_SIZE, true);
+                                            talkingMap, isSelf, kIconPx, true);
                         /* Gear beside your own microphone, expanding the
                          * voice sub-row below. Your row only: nobody else's
                          * microphone is yours to change. Controller mode
@@ -2069,44 +2109,25 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                 }
 
 
-                /* Inline tag pills after the name. Drawn via
-                 * WindowDrawList so we can size them tightly and
-                 * tint each one independently (HOST = yellow,
-                 * BOT = muted blue-gray). Same pill recipe as the
-                 * READY/NOT READY badge but at 70% font size. */
+                /* Inline tag pills after the name, tinted one at a time
+                 * (HOST = yellow, BOT = muted blue-gray).
+                 *
+                 * The chip itself is lobbyDrawNameTag (lobby_assets.cpp),
+                 * shared with the Mods dialog's Mod / Scenario tags so the
+                 * two cannot become two different chips. What is left here is
+                 * this row's placing of it, which is the half the Mods dialog
+                 * does differently: the gap before it, and the row-centred y
+                 * a Mods row has no row height to compute. */
                 auto drawNameTag = [&](const char *lbl, ImU32 bg, ImU32 fg,
                                        ImU32 border = 0) {
-                    const float tagScale = 0.70f;
-                    float tagFontSz = ImGui::GetFontSize() * tagScale;
-                    ImVec2 baseSz = ImGui::CalcTextSize(lbl);
-                    ImVec2 textSz(baseSz.x * tagScale, tagFontSz);
-                    float padX = 6.0f * s;
-                    float padY = 2.0f * s;
-                    float pillW = textSz.x + padX * 2.0f;
-                    float pillH = textSz.y + padY * 2.0f;
                     ImGui::SameLine(0.0f, 6.0f * s);
-                    cyAbs(pillH);
+                    cyAbs(lobbyNameTagHeight(s));
                     /* Nudge HOST / BOT / ADMIN name-tags up 1px so
                      * they sit a touch above the row centerline,
                      * which lines them up better with the cap-height
                      * of the player name. */
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 1.0f);
-                    ImVec2 pos = ImGui::GetCursorScreenPos();
-                    ImDrawList *dl = ImGui::GetWindowDrawList();
-                    /* Square corners on the name tags so they read as
-                     * "labels", not status pills like READY. */
-                    dl->AddRectFilled(pos,
-                                      ImVec2(pos.x + pillW, pos.y + pillH),
-                                      bg, 0.0f);
-                    if (border != 0) {
-                        dl->AddRect(pos,
-                                    ImVec2(pos.x + pillW, pos.y + pillH),
-                                    border, 0.0f, 0, 1.0f);
-                    }
-                    dl->AddText(ImGui::GetFont(), tagFontSz,
-                                ImVec2(pos.x + padX, pos.y + padY),
-                                fg, lbl);
-                    ImGui::Dummy(ImVec2(pillW, pillH));
+                    lobbyDrawNameTag(lbl, bg, fg, border, s);
                 };
                 /* A tag's hover: an ordinary tooltip. The row's bot tags are
                  * abbreviations — "GH", three chips, a one-word mode — so the
@@ -2152,7 +2173,7 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                      * form's Codebase dropdown is the honest place for it. */
                     if (showBotDetailTags && botModeTag[0]) {
                         /* The mode, when it is not the default one — one word
-                         * ("Survival"). Its own indigo, NOT the difficulty's
+                         * ("Turtle"). Its own indigo, NOT the difficulty's
                          * amber set it used to borrow: the difficulty tag sits
                          * immediately beside it and is amber at Medium, so the
                          * two ran together (Andrew: "the mode tag orangey is
@@ -2996,8 +3017,9 @@ static void renderBotAiConfig(ClientSim *cs,
      * For the default mode that list is Easy / Medium / Hard and the
      * indices are the same 0/1/2 the wire has always carried.
      *
-     * Every mode and every level plays the same way for now; only the
-     * wording and the tokens handed to the brain differ. */
+     * The lobby only shows the wording and hands the chosen keys to the
+     * brain; what a mode or level changes is the brain's business. A mode's
+     * optional `about` line is shown under the Mode combo. */
     const BrainModes *modes = lobbyBotModesFor(cs, slot);
     int curMode = 0, curLevel = 0;
     lobbyBotModeAndLevel(cs, slot, &curMode, &curLevel);
@@ -3009,17 +3031,35 @@ static void renderBotAiConfig(ClientSim *cs,
         const float mdGroupW = ImMax(
             ImGui::CalcTextSize(langGetText(STR_DLGLOBBY_BOTCFG_MODE)).x,
             kModeComboW);
-        ImGui::SetCursorScreenPos(flowPlace(mdGroupW));
+        const ImVec2 mdPos = flowPlace(mdGroupW);
+        ImGui::SetCursorScreenPos(mdPos);
         ImGui::BeginGroup();
         ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTCFG_MODE));
-        const char *modeItems[BRAIN_MODES_MAX];
-        for (int m = 0; m < modes->modeCount; m++) {
-            modeItems[m] = modes->modes[m].label;
-        }
         int mode = curMode;
+        bool modePicked = false;
         ImGui::SetNextItemWidth(kModeComboW);
-        if (ImGui::Combo("##botmode", &mode, modeItems, modes->modeCount) &&
-            mode >= 0 && mode < modes->modeCount) {
+        if (ImGui::BeginCombo("##botmode", modes->modes[curMode].label)) {
+            for (int m = 0; m < modes->modeCount; m++) {
+                const bool sel = (m == curMode);
+                ImGui::PushID(m);
+                if (ImGui::Selectable(modes->modes[m].label, sel)) {
+                    mode = m;
+                    modePicked = (m != curMode);
+                }
+                ImGui::PopID();
+                /* Hover shows the mode's about line, when it has one. */
+                if (modes->modes[m].about[0] && ImGui::IsItemHovered()) {
+                    ImGui::BeginTooltip();
+                    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 320.0f * s);
+                    ImGui::TextUnformatted(modes->modes[m].about);
+                    ImGui::PopTextWrapPos();
+                    ImGui::EndTooltip();
+                }
+                if (sel) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        if (modePicked && mode >= 0 && mode < modes->modeCount) {
             /* A mode change carries the new mode's own default level: the
              * old index means something different (or nothing) in the new
              * mode's list, so keeping it would show a level the player
@@ -3029,6 +3069,16 @@ static void renderBotAiConfig(ClientSim *cs,
             lobbySendBotConfig(cs, (uint8_t)slot, (uint8_t)mode, lvl, curPers,
                                clientSimGetLobbySlot(cs, (BYTE)(slot))->playerName);
             gameFrontSetChosenBotModeAndLevel(nm->key, nm->levels[lvl].key);
+        }
+        /* The mode's about line from modes.txt (brain data, so untranslated),
+         * wrapped the same way as the difficulty description below. */
+        if (modeSel != NULL && modeSel->about[0]) {
+            float aboutWrapW = flowRightX - mdPos.x;
+            if (aboutWrapW > 300.0f * s) aboutWrapW = 300.0f * s;
+            if (aboutWrapW < 140.0f * s) aboutWrapW = 140.0f * s;
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + aboutWrapW);
+            ImGui::TextDisabled("%s", modeSel->about);
+            ImGui::PopTextWrapPos();
         }
         ImGui::EndGroup();
         flowPlaced();
@@ -3048,9 +3098,11 @@ static void renderBotAiConfig(ClientSim *cs,
         ImGui::SetCursorScreenPos(dfPos);
         ImGui::BeginGroup();
         ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTCFG_DIFFICULTY));
-        /* The default mode's easy / medium / hard keep their translated
-         * names; any other mode's levels are data and show their own label,
-         * because there are no lang strings for something a brain invented. */
+        /* Standard easy / medium / hard levels (the default mode, or a mode
+         * whose modes.txt says standard_levels = yes) keep their translated
+         * names and descriptions; any other mode's levels are data and show
+         * their own label, because there are no lang strings for something
+         * a brain invented. */
         const bool langLevels = lobbyBotModeUsesLangLevels(modes, curMode);
         const char *levelItems[BRAIN_LEVELS_MAX];
         for (int l = 0; l < modeSel->levelCount; l++) {

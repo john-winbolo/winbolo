@@ -31,34 +31,86 @@
 
 #include "server_sim_shared.h"
 #include "server_sim_internal.h"
-#include "server_sim_lifecycle.h"   /* lobbyAutoUnreadyOnChange, and serverLifecycleGet*Stats via server_lifecycle.h */
+#include "server_sim_lifecycle.h"   /* lobbyAutoUnreadyOnChange, and the serverLifecycle tick timing (stats, peak, reset) via server_lifecycle.h */
 #include "treegrow.h"               /* treeGrowReset — the world reset's tree state */
 #include "sim_rules.h"              /* simRulesClassic — the table a round starts from */
 #include "start_sides.h"            /* START_SIDE_ANY — the per-team side table handed to startsAssignBatch */
+#include "server_sim_scenario.h"    /* serverSimGetLobbyScriptCount / serverSimGetLobbyScript — the mods WinBolo.net is told */
+#include "playername_validate.h"    /* playerNameTruncateUtf8 — the names cut on a character boundary */
 #include "../../winbolonet/winbolonet_core.h"     /* winbolonetAddEvent, WINBOLO_NET_EVENT_WIN */
 #include "../../winbolonet/winbolonet_server.h"   /* WbnLobbyInfo, winbolonetSetLobbyInfo, winbolonetSendLobbyUpdate */
 #include "../../common/md5.h"       /* the BMAPBOLO map hash WinBolo.net matches against */
 #include "../../common/wb_log.h"    /* WB_LOG_INFO — the lobby-reset trace */
 
+/* The picks whose file is in the session directory, taken off the list with
+ * the rest closing up behind them in order, and then the directory emptied.
+ * The group that brought those files is the session, and it has gone; a pick
+ * left behind would name a file the next decision cannot read. The map's own
+ * row is never one of them: it is read off the map, not out of a directory.
+ * Answers how many rows went. */
+static int serverSimDropSessionScripts(ServerSim *sim) {
+    const char *dir = sim->scriptSessionDir;
+    int         kept    = 0;
+    int         dropped = 0;
+    int         i;
+
+    if (dir[0] == '\0') return 0;
+    for (i = 0; i < sim->scenarioScriptCount; i++) {
+        const ScnDirEntry *row = &sim->scenarioScripts[i];
+        bool               inSession = false;
+
+        if (!row->bound && row->file[0] != '\0') {
+            char         path[FILENAME_MAX];
+            SDL_PathInfo info;
+
+            SDL_snprintf(path, sizeof(path), "%s/%s", dir, row->file);
+            inSession = SDL_GetPathInfo(path, &info) &&
+                        info.type == SDL_PATHTYPE_FILE;
+        }
+        if (inSession) {
+            dropped++;
+            continue;
+        }
+        if (kept != i) {
+            sim->scenarioScripts[kept] = sim->scenarioScripts[i];
+        }
+        kept++;
+    }
+    for (i = kept; i < sim->scenarioScriptCount; i++) {
+        memset(&sim->scenarioScripts[i], 0, sizeof(sim->scenarioScripts[i]));
+    }
+    sim->scenarioScriptCount = kept;
+    serverSimEmptyScriptSessionDir(sim);
+    return dropped;
+}
+
 /* Return an emptied lobby to the operator's startup configuration. Called
  * from serverSimRemovePlayer when the last human leaves while in the lobby:
  * remove every bot, restore the captured settings snapshot, reset team and
- * bot-slot metadata to creation defaults, and unlock the lobby to joiners. */
+ * bot-slot metadata to creation defaults, and unlock the lobby to joiners.
+ * The session's uploaded scripts go too, and the picks that named them. */
 void serverSimResetLobbyToDefaults(ServerSim *sim) {
     BYTE i;
+    int  droppedScripts;
     if (sim == NULL) return;
 
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "Lobby empty — resetting to startup defaults");
 
-    /* Drop any bots the previous occupants added, seats held for a bot that
-       was never fielded included — those have no bot manager entry, so the
-       roster is what has to be asked. */
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (serverSimIsBot(sim, i)) {
-            serverSimRemoveBot(sim, i);
-        }
+    droppedScripts = serverSimDropSessionScripts(sim);
+    if (droppedScripts > 0) {
+        char msg[128];
+        SDL_snprintf(msg, sizeof(msg),
+                     "Lobby reset: %d uploaded script%s dropped from the "
+                     "round's list", droppedScripts,
+                     droppedScripts == 1 ? "" : "s");
+        serverSimConsoleMessage(msg);
     }
+
+    /* Drop any bots the previous occupants added, the scenario's seats
+       included, so the decision below seats the template again even where
+       it reaches the one attached already. */
+    serverSimRemoveAllBots(sim);
 
     /* Clear per-slot start reservations back to the none sentinel. */
     for (i = 0; i < MAX_TANKS; i++) {
@@ -86,9 +138,11 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
         }
         sim->classicMode         = sim->originalLobbySettings.classicMode;
         sim->alliesInTrees       = sim->originalLobbySettings.alliesInTrees;
+        sim->positionalSound     = sim->originalLobbySettings.positionalSound;
         sim->overviewWindow      = sim->originalLobbySettings.overviewWindow;
         sim->lineOfSight         = sim->originalLobbySettings.lineOfSight;
         sim->smartPingsOff       = sim->originalLobbySettings.smartPingsOff;
+        sim->modsOff             = sim->originalLobbySettings.modsOff;
     }
 
     /* A fresh lobby always starts with slot 0 as host, regardless of who
@@ -107,6 +161,11 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
     sim->teams[2].color      = 1;  /* blue */
     sim->teams[2].namingPool = 0;
     SDL_strlcpy(sim->teams[2].name, "Team 2", LOBBY_TEAM_NAME_LEN);
+    /* And the sides a lobby opens with, the pair for the current map's
+     * shape, so the next joiner finds teams 1 and 2 on north/south (or
+     * east/west on a wide map) whatever the last occupants chose. Before
+     * the scenario seating below, which runs against the reset teams. */
+    serverSimApplyDefaultTeamSides(sim);
     memset(sim->botConfigs, 0, sizeof(sim->botConfigs));
     /* Difficulty's default is Hard, not the memset's 0 (= Easy) — same
      * reasoning as serverSimInit: every difficulty plays like Hard for now,
@@ -121,7 +180,9 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
      * occupants inherit nothing from the last ones. */
     sim->lastBotModeKey[0]  = '\0';
     sim->lastBotLevelKey[0] = '\0';
+    memset(sim->lastTeamBotLevelKey, 0, sizeof(sim->lastTeamBotLevelKey));
     sim->botConfigPublishPending = 0;
+    sim->botModeSetByHand        = 0;
 
     /* Unlock the lobby to new players: clear both the host-toggled
      * allow-new-players gate and the transport-level admin lock. */
@@ -136,8 +197,16 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
     /* The reset above emptied the lobby, seats a scenario put there
        included. Seat them again at the end of it, so the next joiner opens
        the map's own lobby rather than a bare one — the scenario is still
-       attached, only its lobby was swept. */
-    serverSimScenarioSeatLobby(sim);
+       attached, only its lobby was swept.
+
+       A list that lost uploaded picks above is decided again first, the way
+       a pick is: what is attached still holds those scripts, and their files
+       are gone. The decision seats the lobby itself. */
+    if (droppedScripts > 0) {
+        serverSimScenarioOnMapChanged(sim, sim->mapFilePath);
+    } else {
+        serverSimScenarioSeatLobby(sim);
+    }
 
     /* And the settings the scenario asks for, in the order a map commit does
        the two. The restore above put the operator's game type, ranked flag
@@ -203,11 +272,30 @@ void serverSimInformation(ServerSim *sim, bool locked) {
              * nobody reads network variance into it. */
             BotInfo bi;
             bool isBotSlot = botManagerGetBotInfo(sim, count, &bi);
-            if (isBotSlot) {
-                fprintf(stdout, "%s - (P:%d B:%d)\n",
+            /* A seat the roster is holding for a bot that is not on the field
+               — a held seat between waves. It owns nothing and has no tank,
+               and the marker is what tells it from a slot whose bot is out
+               there playing. Printed in the shape a bot slot gets rather than
+               the one below it: the ping, the buffer depth and the address the
+               other branch prints are for a real connection, and a held seat
+               has none, so they would read as a human sitting at 0ms. The
+               marker also says whether the seat has a runner parked behind it,
+               because the two cost very different things: a seat with one
+               fields its bot by resuming, a seat without one has to build a
+               ClientSim and a brain VM at the moment a wave asks for it. */
+            bool heldSeat = !isBotSlot && !sim->lobbyPlayers[count].fielded;
+            if (isBotSlot || heldSeat) {
+                const char *seatMark = "";
+                if (heldSeat) {
+                    seatMark = botManagerHasRunner(sim, count)
+                                   ? " [off the field, runner ready]"
+                                   : " [off the field]";
+                }
+                fprintf(stdout, "%s - (P:%d B:%d)%s\n",
                         name,
                         pillsGetNumberOwnedByPlayer(&sim->sim.pb, count),
-                        basesGetNumberOwnedByPlayer(&sim->sim.bs, count));
+                        basesGetNumberOwnedByPlayer(&sim->sim.bs, count),
+                        seatMark);
             } else {
                 /* Remote players carry their source ip:port; the in-process
                  * host has no UDP client, so the getter reports false and we
@@ -262,19 +350,47 @@ void serverSimInformation(ServerSim *sim, bool locked) {
         serverLifecycleGetTickStats(&tickLast, &tickEwma);
         double simLast = 0.0, simEwma = 0.0;
         serverLifecycleGetSimStats(&simLast, &simEwma);
+        double tickPeak = 0.0;
+        unsigned int tickOverBudget = 0;
+        serverLifecycleGetTickPeak(&tickPeak, &tickOverBudget);
 
         if (tickLast > 0.0 || simLast > 0.0) {
             fprintf(stdout, "Server timing:\n");
         }
+        /* peak= is the worst tick this round and "over budget" counts the
+         * ticks that reached 20ms (both reset at round start). The EWMA
+         * decays a spike away within about 22 ticks, so a handful of
+         * expensive frames — a wave transition, say — leaves no trace in
+         * last= or the average by the time this command is typed. */
         if (tickLast > 0.0) {
             fprintf(stdout,
-                    "  %-11s last=%.1fms  EWMA=%.1fms  (budget=20ms)\n",
-                    "Tick:", tickLast, tickEwma);
+                    "  %-11s last=%.1fms  EWMA=%.1fms  peak=%.1fms  "
+                    "over budget=%u (budget=20ms)\n",
+                    "Tick:", tickLast, tickEwma, tickPeak, tickOverBudget);
         }
         if (simLast > 0.0) {
             fprintf(stdout,
                     "  %-11s last=%.1fms  EWMA=%.1fms\n",
                     "Simulation:", simLast, simEwma);
+        }
+        /* What the attached scenario's own work cost, inside the tick the
+         * lines above time. The instructions are in thousands against the
+         * total one tick's script calls may spend, and trips counts the ticks
+         * that ran out of it this round. Printed only under the header above,
+         * and only with a scenario attached. */
+        if ((tickLast > 0.0 || simLast > 0.0) &&
+            sim->scenarioIdentity.source != lobbyScenarioNone) {
+            fprintf(stdout,
+                    "  %-11s last=%.1fms  EWMA=%.1fms  peak=%.1fms  "
+                    "instr last=%uk  peak=%uk of %uk  trips=%u\n",
+                    "Scenario:",
+                    sim->scenarioTickStats.lastMs,
+                    sim->scenarioTickStats.ewmaMs,
+                    sim->scenarioTickStats.peakMs,
+                    (unsigned)(sim->scenarioTickStats.lastInstr / 1000u),
+                    (unsigned)(sim->scenarioTickStats.peakInstr / 1000u),
+                    (unsigned)(sim->scenarioTickStats.budget / 1000u),
+                    (unsigned)sim->scenarioTickStats.trips);
         }
     }
 
@@ -481,8 +597,78 @@ void serverSimCacheMapMd5FromFile(ServerSim *sim, const char *path) {
  * edits (e.g. time-limit slider) coalesce into one send per window. */
 #define WBN_LOBBY_UPDATE_INTERVAL 30
 
+/* winbolonet_server.h keeps its own copies of the name length and the mod
+   cap because it does not include control_event.h. This translation unit sees
+   both, so one moving without the other is a build failure here rather than a
+   name or a list cut short on the way to the tracker. */
+BOLO_STATIC_ASSERT(WBN_SCENARIO_NAME_LEN == LOBBY_SCENARIO_NAME_LEN,
+                   wbn_scenario_name_len_matches_lobby_scenario_name_len);
+BOLO_STATIC_ASSERT(WBN_MODS_MAX == LOBBY_SCRIPT_LIST_MAX - 1,
+                   wbn_mods_max_matches_lobby_script_list_max);
+/* server_sim.h keeps its own copies of the same three figures for the script
+   summary, for the same reason; the summary is copied field for field into the
+   tracker's struct and the info reply, so all three sets move together. */
+BOLO_STATIC_ASSERT(SERVER_SCRIPT_NAME_LEN == LOBBY_SCENARIO_NAME_LEN,
+                   server_script_name_len_matches_lobby_scenario_name_len);
+BOLO_STATIC_ASSERT(SERVER_SCRIPT_DESC_LEN == LOBBY_SCENARIO_DESC_LEN,
+                   server_script_desc_len_matches_lobby_scenario_desc_len);
+BOLO_STATIC_ASSERT(SERVER_SCRIPT_MODS_MAX == LOBBY_SCRIPT_LIST_MAX - 1,
+                   server_script_mods_max_matches_lobby_script_list_max);
+BOLO_STATIC_ASSERT(SERVER_SCRIPT_NAME_LEN == WBN_SCENARIO_NAME_LEN,
+                   server_script_name_len_matches_wbn_scenario_name_len);
+BOLO_STATIC_ASSERT(SERVER_SCRIPT_MODS_MAX == WBN_MODS_MAX,
+                   server_script_mods_max_matches_wbn_mods_max);
+
+/* A script's name for the tracker: the manifest's, or the file's where the
+   manifest named nothing, as the lobby draws it. Cut to fit on a character
+   boundary; the file name is the longer of the two and can run past the
+   buffer. */
+static void serverSimWbnCopyName(char *dst, const char *name,
+                                 const char *file) {
+    char   tmp[LOBBY_SCENARIO_FILE_LEN];
+    size_t len;
+
+    snprintf(tmp, sizeof(tmp), "%s", name[0] != '\0' ? name : file);
+    len = playerNameTruncateUtf8(tmp, WBN_SCENARIO_NAME_LEN - 1);
+    memcpy(dst, tmp, len + 1);
+}
+
+void serverSimGetScriptSummary(const ServerSim *sim, ServerScriptSummary *out) {
+    int count;
+    int i;
+    if (out == NULL) return;
+    memset(out, 0, sizeof(*out));
+    if (sim == NULL) return;
+    /* The scenario only when one decides the round: a mod attached as the
+       identity leaves winning alone, so the round reads as plain. */
+    out->hasScenario = sim->scenarioIdentity.source != lobbyScenarioNone &&
+                       !sim->scenarioIdentity.keepsWinCondition;
+    if (out->hasScenario) {
+        serverSimWbnCopyName(out->scenarioName, sim->scenarioIdentity.name,
+                             sim->scenarioIdentity.fileName);
+        snprintf(out->scenarioDescription, sizeof(out->scenarioDescription),
+                 "%s", sim->scenarioIdentity.description);
+        out->scenarioMaxPlayers = sim->scenarioLobby.maxPlayers;
+    }
+    /* The mods that run, in the lobby's list order. None with Mods Enabled
+       off, whatever the list still names. */
+    out->modCount = 0;
+    if (!serverSimGetModsOff(sim)) {
+        count = serverSimGetLobbyScriptCount(sim);
+        for (i = 0; i < count && out->modCount < SERVER_SCRIPT_MODS_MAX; i++) {
+            const ScnDirEntry *row = serverSimGetLobbyScript(sim, i);
+            if (row == NULL || !row->keepsWinCondition) continue;
+            serverSimWbnCopyName(out->modNames[out->modCount], row->name,
+                                 row->file);
+            out->modCount++;
+        }
+    }
+}
+
 void serverSimRefreshWbnLobbyInfo(ServerSim *sim) {
-    WbnLobbyInfo info;
+    WbnLobbyInfo        info;
+    ServerScriptSummary scripts;
+    BYTE                i;
     if (sim == NULL) return;
     memset(&info, 0, sizeof(info));
     snprintf(info.map, sizeof(info.map), "%s", sim->mapName);
@@ -518,11 +704,20 @@ void serverSimRefreshWbnLobbyInfo(ServerSim *sim) {
     info.alliesInTrees   = serverSimGetAlliesInTrees(sim);
     info.overviewWindow  = serverSimGetOverviewWindow(sim);
     info.lineOfSight     = serverSimGetLineOfSight(sim);
+    info.positionalSound = serverSimGetPositionalSound(sim);
     info.smartPingsOff   = serverSimGetSmartPingsOff(sim);
     info.pillViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryPill);
     info.baseViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryBase);
     info.allyViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryAlly);
     info.voiceMode       = serverSimGetVoiceMode(sim);
+    serverSimGetScriptSummary(sim, &scripts);
+    info.hasScenario        = scripts.hasScenario;
+    info.scenarioMaxPlayers = scripts.scenarioMaxPlayers;
+    memcpy(info.scenarioName, scripts.scenarioName, sizeof(info.scenarioName));
+    info.modCount = scripts.modCount;
+    for (i = 0; i < scripts.modCount; i++) {
+        memcpy(info.modNames[i], scripts.modNames[i], sizeof(info.modNames[i]));
+    }
     winbolonetSetLobbyInfo(&info);
 }
 
@@ -567,6 +762,12 @@ BYTE serverSimGetNumNeutralPills(ServerSim *sim) {
 }
 
 void serverSimAbortCountdown(ServerSim *sim) {
+    /* The runners this countdown built belong to the round it was leading to,
+     * and that round is not happening. Left parked they would sit in the lobby
+     * for as long as it lasts and then be handed to a later round, each brain
+     * having read the lobby as it stood at this countdown. The next countdown
+     * builds them again against the lobby as it stands then. */
+    botManagerReleaseParkedRunners(sim);
     sim->state = serverStateLobby;
     sim->countdownTicks = 0;
     /* Tell every subscriber the countdown is over — without this the
@@ -719,6 +920,15 @@ void serverSimReturnToLobby(ServerSim *sim) {
        the next round starts where the last one did. */
     serverSimScenarioReconcileLobby(sim);
 
+    /* The round is over, so every parked runner goes. A parked brain keeps
+       its state table, which is what makes a resume worth having inside a
+       round and wrong across one: the brain would open the next round still
+       remembering this one's goal and owners. After the reconcile above and
+       not before it — that call takes a seat the script still had on the
+       field off it, which parks its runner, so a release before it would
+       leave exactly those behind. */
+    botManagerReleaseParkedRunners(sim);
+
     /* Reconcile the players table against the restored connection state:
      * clear any slot still marked inUse but no longer connected. The leave
      * path (serverSimRemovePlayer -> playersClearSlot) already does this per
@@ -756,8 +966,8 @@ void serverSimReturnToLobby(ServerSim *sim) {
     /* Forget the host's manual bot mode/difficulty pick on EVERY return to
      * the lobby, whether or not anyone stayed. The pick belongs to one lobby
      * session — from entering the lobby until the game starts — and a round
-     * ending starts a new one, so the host who set a bot to Survival last
-     * game does not find the next lobby's Add Bot already in Survival. The
+     * ending starts a new one, so the host who set a bot to some other mode
+     * last game does not find the next lobby's Add Bot already in it. The
      * empty-lobby branch below calls serverSimResetLobbyToDefaults, which
      * clears these again; clearing twice costs nothing and keeps the two
      * paths honest on their own.
@@ -767,11 +977,14 @@ void serverSimReturnToLobby(ServerSim *sim) {
      * by picking a difficulty, not a constraint — clear it in
      * serverSimApplyMapChange too if it turns out hosts expect otherwise.
      *
-     * The map's own rule — a scenario that fixes a team's mode — is applied
-     * by serverSimResolveNewBotConfig regardless of what is remembered here,
-     * so it is unaffected either way. */
+     * The map's own rule — a scenario template that names a team's mode — is
+     * applied by serverSimResolveNewBotConfig regardless of what is
+     * remembered here, so the next lobby's Add Bot on that team is back at
+     * the template's own difficulty, not at the one somebody set last
+     * round. The per-team memory goes with the pair for the same reason. */
     sim->lastBotModeKey[0]  = '\0';
     sim->lastBotLevelKey[0] = '\0';
+    memset(sim->lastTeamBotLevelKey, 0, sizeof(sim->lastTeamBotLevelKey));
 
     /* Auto-lock only closes the server while a round is running, so coming
      * back to the lobby must lift it. When a round that had human players ends
@@ -891,6 +1104,10 @@ void serverSimLobbyCheckAllReady(ServerSim *sim) {
         serverSimWbnLobbyUpdate(sim, TRUE);
         sim->state = serverStateCountdown;
         sim->countdownTicks = LOBBY_COUNTDOWN_TICKS;
+        /* The countdown is the window the held seats' runners are built in
+           (serverSimWarmOneHeldSeat). A seat it refuses is named once per
+           countdown, so the record of what it refused starts empty here. */
+        sim->warmSkippedSlots = 0;
         serverSimConsoleMessage("All players ready! Starting countdown...");
         {
             ControlEvent evt;
@@ -985,9 +1202,12 @@ void serverSimResetGameWorld(ServerSim *sim) {
     /* And any fill a scenario still had squares owing on. Its rectangle was
        aimed at the map that has just been replaced above, so carrying it on
        would paint the reloaded one. The roster changes it had queued name
-       seats in the round that is ending, so they go the same way. */
+       seats in the round that is ending, so they go the same way, and so do
+       the panels and scores it was presenting: a client joining the lobby
+       after this must not be handed the last round's panel. */
     serverSimScenarioResetFill(sim);
     serverSimScenarioResetRoster(sim);
+    serverSimScenarioResetPresentation(sim);
     /* Drop any ping accepted but not yet buffered, so it can't leak a stale
      * marker into the next round's first running tick — and the rate limiter
      * with it, because sim->tick is rewound to 0 below and last round's tick
@@ -1010,6 +1230,10 @@ void serverSimResetGameWorld(ServerSim *sim) {
 
     /* 7. Reset tick */
     sim->tick = 0;
+    /* The three-shot order detector measures in sim->tick, so its shots go
+     * with it: a shell from the last round must not pair with one from this
+     * one. */
+    memset(sim->shotOrder, 0, sizeof(sim->shotOrder));
     /* Re-arm the latch with it: the next round's log segment starts wherever
      * its first written tick lands, not where the last one did. */
     sim->roundLogStartTick = ROUND_LOG_START_UNSET;
@@ -1019,6 +1243,8 @@ void serverSimResetGameWorld(ServerSim *sim) {
         sim->inputQueueHead[i] = 0;
         sim->inputQueueTail[i] = 0;
         sim->lastProcessedInput[i] = 0;
+        sim->newestInputTick[i] = 0;
+        sim->newestDequeuedTick[i] = 0;
         sim->lastInputButtons[i] = 0;
         sim->lastActionAppliedTick[i] = 0;
         sim->pendingHarvestActions[i] = 0;
@@ -1057,6 +1283,9 @@ void serverSimResetGameWorld(ServerSim *sim) {
     sim->prevPillCount = 0;
     sim->prevBaseCount = 0;
     memset(sim->lastClosestBase, BASE_NOT_FOUND, sizeof(sim->lastClosestBase));
+    /* A request belongs to the round it was made in. This runs at round
+     * start and at the return to the lobby. */
+    memset(sim->allianceAskedBy, 0, sizeof(sim->allianceAskedBy));
 
     /* 11. Reset player connection state and per-slot round/world state.
      * Connection identity (name, country, clientType, clientFlags, bot/WBN
@@ -1094,6 +1323,18 @@ void serverSimReapplyTeamAlliances(ServerSim *sim) {
 
     memset(&evt, 0, sizeof(evt));
     evt.type = CTRL_ALLIANCE_RESET;
+
+    /* Clear before re-accepting, the way the client applies this event.
+     * playersAcceptAlliance merges the two players' whole ally lists, so
+     * without the clear a player moved by set_team keeps every ally from
+     * the team he left and brings them into the new one: after one move
+     * in a scenario that starts everyone on one team, the server had
+     * every player allied with every other, and no player's pillbox would
+     * fire at anyone. Clients showed the right matrix the whole time.
+     * playersClearAlliance takes the bits only; ownership stays put. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        playersClearAlliance(&sim->sim, &sim->sim.plyrs, NEUTRAL, i, TRUE);
+    }
 
     for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i]) continue;
@@ -1306,6 +1547,13 @@ void serverSimStartGameInPlace(ServerSim *sim) {
      * once a human is seen this round. */
     sim->roundHadHuman = false;
 
+    /* The tick loop's peak and its over-budget count reset here for the same
+     * reason the per-bot ones do in botManagerOnGameStart: they describe the
+     * current game, not an accumulation across map rotations. Both of the
+     * authoritative starts do it — serverSimStartGame has the twin. The
+     * scenario's own tick costs start again with them. */
+    serverLifecycleResetTickPeak();
+    serverSimScenarioResetTickStats(sim);
 
     /* Flush any game-events queued during the lobby before the first
      * running snapshot goes out. The sim doesn't tick in the lobby, so the
@@ -1469,6 +1717,12 @@ void serverSimStartGame(ServerSim *sim) {
     /* Arms the last-human-left return-to-lobby check from a clean slate. */
     sim->roundHadHuman = false;
 
+    /* The twin of the reset in serverSimStartGameInPlace: the round's worst
+     * tick and its over-budget count start empty here too, and so do the
+     * scenario's own tick costs. */
+    serverLifecycleResetTickPeak();
+    serverSimScenarioResetTickStats(sim);
+
     /* Reset the game world (map, world systems, queues, tick) */
     serverSimResetGameWorld(sim);
 
@@ -1496,23 +1750,13 @@ void serverSimStartGame(ServerSim *sim) {
 
     sim->gameLength = sim->originalGameLength;
 
-    /* Clear all alliances from previous round */
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (!sim->playerConnected[i]) continue;
-        playersLeaveAlliance(&sim->sim, &sim->sim.plyrs, NEUTRAL, i, TRUE);
-        {
-            ControlEvent leaveEvt;
-            memset(&leaveEvt, 0, sizeof(leaveEvt));
-            leaveEvt.type = CTRL_ALLIANCE_LEAVE;
-            leaveEvt.u.allianceLeave.playerNum = i;
-            /* The round reset clears every alliance; no player asked for it,
-               so the policy is asked with no actor. */
-            leaveEvt.u.allianceLeave.quiet =
-                serverSimAnnounce(sim, ANNOUNCE_KIND_ALLIANCE, i, NEUTRAL)
-                    ? 0 : 1;
-            serverSimPublishControl(sim, &leaveEvt);
-        }
-    }
+    /* Last round's alliances are gone here: serverSimResetGameWorld emptied
+     * every seat's through playersResetRoundState. The CTRL_ALLIANCE_RESET
+     * published below is what clears them on the clients, and it takes the
+     * bits without moving anything. There is no per-seat CTRL_ALLIANCE_LEAVE:
+     * a client still holding last round's alliances applies one by handing
+     * the seat's pillboxes and bases to its first ally, which took owners the
+     * map file gives a seat away from it. */
 
     /* Apply team alliances: players with same non-zero teamNumber become allies */
     serverSimReapplyTeamAlliances(sim);
@@ -1603,6 +1847,12 @@ void serverSimMapRotateRound(ServerSim *sim) {
     serverSimGameVoteResetAll(sim);
     serverSimMapSkipVotesReset(sim);
 
+    /* And every parked runner, for the same reason and with the same rule as
+       the gameOver->lobby end: a parked brain carries its state table, and
+       the round it remembers is the one being left. This is the end of that
+       round — the start below is the next one's. */
+    botManagerReleaseParkedRunners(sim);
+
     /* serverSimChangeMap (reached via serverSimMapDirPickRandom) only runs
      * in lobby state, so drop into it for the pick. serverSimStartGame
      * below moves us back to running. Both existing rotation sites do the
@@ -1610,7 +1860,23 @@ void serverSimMapRotateRound(ServerSim *sim) {
      * gameOver path via serverSimReturnToLobby). */
     sim->state = serverStateLobby;
     if (sim->mapDirFiles != NULL) {
-        serverSimMapDirPickRandom(sim);
+        /* The round being left may have fielded the scenario's held seats,
+           and nobody is here to keep an edit to them, so the next round
+           opens on the template's own lobby. A decision that reaches the
+           same template leaves the seats as they stand; this is what tells
+           it to seat them again. Not serverSimScenarioReconcileLobby: that
+           takes every fielded seat of the template off the field, a team
+           the template fields from the start included, and in a round that
+           starts straight away nothing puts that team back on.
+
+           Where no map in the directory loads, the map change never runs
+           and the lobby is the one it was, so the flag goes back to what it
+           said about that lobby. */
+        bool wasSeated = sim->scenarioLobbySeated;
+        sim->scenarioLobbySeated = false;
+        if (!serverSimMapDirPickRandom(sim)) {
+            sim->scenarioLobbySeated = wasSeated;
+        }
     }
 
     /* Full world reset + tank (re)creation + state -> running. With no

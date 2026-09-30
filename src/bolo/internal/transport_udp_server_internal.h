@@ -28,11 +28,12 @@
 #include "lang_message.h"   /* langid — the localized server->client sends */
 #include "platform_net.h"   /* SOCKET, struct sockaddr_in */
 #include "netpacks.h"       /* MAP_DOWNLOAD_MAX_SIZE, PACKET_MAX_PLAYER_NAME */
+#include "scenario_defs.h"  /* ScnDirEntry — the scenario list chunk's input */
 #include "transport_udp.h"  /* UdpServerClient, MAX_SPECTATORS, SubscriberHandle */
 #include "transport_udp_internal.h" /* ClientEventQueue, UDP_MAX_PAYLOAD */
 #include "channel_mux.h"    /* ChannelMux */
 #include "bulk_transfer.h"  /* BulkSender, BulkReceiver */
-#include "upload_policy.h"  /* UploadPolicy */
+#include "upload_policy.h"  /* UploadPolicy, ScriptUploadPolicy */
 #include "net_impair.h"     /* NetImpair */
 #include "../../winbolonet/winbolonet_core.h" /* WINBOLONET_KEY_LEN */
 
@@ -49,6 +50,21 @@
  * (direct-IP / not signed in / WBN unreachable).  ~5 s @ 50 Hz. */
 #define WBN_JOIN_REGISTER_GRACE_TICKS 250
 
+/* Ceiling on how long the anonymous fallback above defers to an outstanding
+ * client/verify.  The verify runs on the WinBolo.net worker, and
+ * wbn_api_post_impl caps one call at 30 s of transfer; after that the worker
+ * pushes a result either way and the next drain delivers it.  1750 ticks is
+ * 35 s @ 50 Hz: the 30 s cap, plus five for the worker to wake on a queued
+ * job, connect, and for the tick to drain the result.
+ *
+ * It is a backstop, not a proof that no result arrives later — the worker is
+ * single-threaded and oldest-first, so a verify queued behind another slow
+ * post can take longer.  What it guarantees is that a result which is lost or
+ * arbitrarily delayed cannot take the announcement with it: past here the
+ * join is announced un-keyed, which is what would have happened with no hold
+ * at all. */
+#define WBN_REAUTH_HOLD_TICKS 1750
+
 /* Standalone PACKET_CHANNEL frames a downloading client gets per tick while
  * snapshots are gated (no snapshot trailer to carry the bulk stream). One
  * frame carries ~5 segments under the datagram budget, so this clears a full
@@ -60,6 +76,18 @@
  * src/server/transport_udp_server.c, and by the spectator carrier in
  * src/server/udp/udp_server_spectator.c. */
 #define MAP_DOWNLOAD_FRAMES_PER_TICK 24
+
+/* Standalone PACKET_CHANNEL frames a running client gets after its snapshot,
+ * on top of the one frame the snapshot trailer carries. The trailer takes
+ * whatever is left of the datagram once the snapshot is packed, which on a
+ * busy tick is a few dozen bytes; these carry what did not fit. Reliable
+ * channels were never lost to that budget — they stay queued — but the
+ * best-effort effect and voice rings are shallow and drop what they cannot
+ * hand over, so a burst of sounds, explosions or voice was thrown away on the
+ * tick it happened.
+ *
+ * Read by serverSendSnapshot in src/server/udp/udp_server_send.c. */
+#define SNAPSHOT_EXTRA_CHANNEL_FRAMES 3
 
 typedef struct {
     uint8_t data[UDP_MAX_PAYLOAD];
@@ -321,11 +349,19 @@ typedef struct UdpServerState {
      * PACKET_LOBBY_MAP_UPLOAD_BEGIN and the final write-out at
      * MAP_UPLOAD_DONE. clientUploadTotal is the approved byte count the
      * incoming bulk transfer must match. clientUploadBuf is a fixed slot of
-     * UPLOAD_MAX_BYTES the bulk receiver reassembles into. */
+     * UPLOAD_MAX_BYTES the bulk receiver reassembles a map into. */
     bool     clientUploadActive[MAX_TANKS];
     uint32_t clientUploadTotal[MAX_TANKS];
     uint64_t upload_last_progress_ms[MAX_TANKS];
     uint8_t  clientUploadBuf[MAX_TANKS][UPLOAD_MAX_BYTES];
+    /* What the slot's upload carries: UPLOAD_KIND_MAP or UPLOAD_KIND_SCRIPT,
+     * from BEGIN's first byte. Back to MAP whenever the slot clears. */
+    uint8_t  clientUploadKind[MAX_TANKS];
+    /* A script upload's receive buffer, malloc'd at BEGIN for totalLen (up to
+     * LOBBY_PACKAGE_UPLOAD_MAX_BYTES, too big for a static slot per client).
+     * NULL when none. Freed at completion, idle expiry, clear/disconnect and
+     * transport destroy, always after bulkRecvUp[i].dst stops pointing at it. */
+    uint8_t *clientScriptUploadBuf[MAX_TANKS];
     char     clientUploadName[MAX_TANKS][128];
     uint8_t  clientReqCooldownTicks[MAX_TANKS];
 
@@ -337,6 +373,15 @@ typedef struct UdpServerState {
      * writes fall back to "<mapDirRoot>/Uploads". Kept in lock-step with the
      * sim's copy (both set from cfg->uploadPersistDir in serverInstanceStartup). */
     char         uploadPersistDir[FILENAME_MAX];
+    /* The same for player-uploaded scripts. Zero-init = ALLOW; the caps
+     * default to 32 files / 64 MiB. Empty scriptUploadDir = unset. It is the
+     * operator's setting as given; where a script lands is the directory the
+     * sim resolved (serverSimGetScriptUploadDir), which is what the caps
+     * count and the accept callback writes to. */
+    ScriptUploadPolicy scriptUploadPolicy;
+    uint8_t      scriptUploadMaxFiles;
+    uint32_t     scriptUploadMaxStorageBytes;
+    char         scriptUploadDir[FILENAME_MAX];
 
     /* LRU token buckets for the per-source-IP JOIN rate limit. A zeroed
      * table reads as all-empty (srcAddr 0), so the existing
@@ -457,6 +502,10 @@ void serverHandlePing(const uint8_t *buf, int len,
  * buildInfoPacket, which the reply above also shares. */
 const char *resyncTerrainName(BYTE t);
 void buildInfoPacket(struct ServerSim *sim, INFO_PACKET *pkt);
+/* The script bytes the info-request reply carries after the INFO_PACKET, laid
+ * out as netpacks.h describes above INFO_SCRIPT_TAIL_MAX. Returns the bytes
+ * written, or 0 with nothing written when cap < INFO_SCRIPT_TAIL_MAX. */
+size_t buildInfoScriptTail(struct ServerSim *sim, uint8_t *out, size_t cap);
 void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
                              struct ServerSim *sim);
 bool isOldProtocolInfoRequest(const uint8_t *buf, int len);
@@ -580,7 +629,34 @@ void serverRebaseBulkAndRearmDownload(int i);
 void serverServiceMapTransfer(struct ServerSim *sim, int slot);
 void udpServerClearClientUploadState(int idx);
 void udpServerExpireUploads(uint64_t now_ms);
+void udpServerFreeScriptUploadBufs(void);
 void udpServerResetMapReaskLimit(int idx);
+/* Whether one more script upload, name at len bytes, fits the persist caps
+ * (scriptUploadMaxFiles, scriptUploadMaxStorageBytes) counted over the
+ * .scenario and .lua files directly in dir. A file already there under name
+ * counts by its change in size, not as one more file. Asked at BEGIN and
+ * again when the bytes are in. */
+bool udpServerScriptUploadFitsCaps(const char *dir, const char *name,
+                                   uint32_t len);
+
+/* One PACKET_LOBBY_SCENARIO_LIST_RSP chunk, written into the caller's buffer.
+ * Owned by src/server/udp/udp_server_dispatch.c, where the request handler
+ * calls it in a loop and sends what it returns.
+ *
+ * Packs entries from `first` until the next will not fit in bufLen, stamps the
+ * count and the final flag, and leaves *next at the first entry it did not
+ * write — equal to count when this was the last chunk. Returns the chunk's
+ * length in bytes, or 0 for a buffer too small to hold even an empty chunk.
+ * A count of 0 is a whole answer: one chunk, final set, no entries.
+ *
+ * Non-static, and takes a buffer rather than a socket, so the unit tests can
+ * hold what the server would send against committed golden bytes and feed the
+ * same bytes back through the client's accumulator. The map list's encoder is
+ * inline in its handler and needs a socket, which is why
+ * test_lobby_map_list_chunked.c has to hand-roll the bytes it checks. */
+int udpServerPackScenarioListChunk(uint8_t *buf, int bufLen,
+                                   const ScnDirEntry *entries, int count,
+                                   int first, int *next);
 
 /* Tankless spectator support. Owned by
  * src/server/udp/udp_server_spectator.c.
@@ -628,5 +704,36 @@ void serverSendRoundLogErr(uint32_t reqSeq, uint8_t code,
                            const struct sockaddr_in *toAddr);
 void transportUdpServerSendWbnRekey(UdpServerClient *c);
 void udpServerResetRoundLogLimits(int idx);
+
+/* Is a client/verify still outstanding for this slot, as of nowTick?
+ *
+ * The grace sweep's anonymous PLAYER_JOIN and the keyed one a verify result
+ * publishes are not the same event.  winbolonetAddEvent resolves the slot's
+ * key when it is called, and winbolonetServerUpdate leaves player_a out when
+ * that key is empty, so the sweep announces an unidentified join and the
+ * result announces the account's.  Exactly one of the two may go out, and
+ * while a verify can still answer, the announcement is the verify's to make:
+ * publishing the sweep's would leave the account with keyed kills, wins and a
+ * leave against no join.
+ *
+ * The verify used to run on the tick, so nowTick could not advance while one
+ * was outstanding and the sweep could not reach a slot waiting on one.  This
+ * states that rule rather than leaving it to depend on the call blocking.
+ *
+ * nowTick bounds the deference: past WBN_REAUTH_HOLD_TICKS the hold lapses
+ * and the sweep announces as it otherwise would.  The sweep asks; it does not
+ * read the table. */
+bool udpServerReauthVerifyOutstanding(BYTE slot, uint32_t nowTick);
+
+/* Drop any outstanding verify recorded for this slot, releasing the hold
+ * above.  The disconnect path runs it beside wbnJoinClear: the slot is about
+ * to be handed to somebody else, and a stale entry would defer the new
+ * occupant's announcement. */
+void udpServerClearReauthPending(BYTE slot);
+
+/* Same, for every slot.  transportUdpServerCreate runs it: tickCount restarts
+ * at 0 there, so an entry left by an earlier server on this process would
+ * carry a deadline the new tick counter cannot reach for a long time. */
+void udpServerClearAllReauthPending(void);
 
 #endif /* TRANSPORT_UDP_SERVER_INTERNAL_H */

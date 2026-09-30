@@ -39,6 +39,7 @@
 #include "../gui/winbolo.h"
 #include "../gui/sdl3/sdl3draw.h"
 #include "../gui/sdl3/sdl3imgui.h"
+#include "client_frontend_render.h"
 #include "../gui/sdl3/luabrainshandler.h"
 #include "../gui/sdl3/dialog_backend.h"
 #include "touch_input.h"
@@ -459,7 +460,7 @@ int main(int argc, char *argv[]) {
     tick = SDL_GetTicks();
     clientMutexWaitFor();
     if (finishedLoop == FALSE) {
-      clientSimRenderPrepare(cs, tick);
+      clientFrontRenderPrepare(cs, tick);
       clientRenderFrame(cs, redraw);
     }
     clientMutexRelease();

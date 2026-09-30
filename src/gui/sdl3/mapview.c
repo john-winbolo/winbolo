@@ -24,6 +24,7 @@
 
 #include "mapview.h"
 #include "fog_look.h"
+#include "fog_roads_draw.h"
 #include "../tiles.h"
 #include "tilenum.h"
 #include "screencalc.h"
@@ -31,6 +32,7 @@
 #include "gfx_settings.h"
 #include "tileloader.h"
 #include "util.h"
+#include "tank_diagonal_snap.h"
 
 #include <string.h>
 
@@ -50,6 +52,13 @@ void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
                       int edgeX, int edgeY) {
   int ss = ctx->sheetScale;
   bool haveHidden = (hiddenView != NULL && *hiddenView != NULL);
+  /* What the player has asked fog to look like. Read once: it cannot change
+     part way through a frame, and the edge pass below has to agree with the
+     wash about which look is being drawn. */
+  FogStyle fogStyle = gfxGetFogStyle();
+  BYTE fogR = 0, fogG = 0, fogB = 0;
+  bool fogWashes = fogLookColour(fogStyle, &fogR, &fogG, &fogB) != 0;
+  bool fogEdge = fogLookDrawsFogEdge(fogStyle) != 0;
   /* The hidden squares, kept as the tiles go down and washed over in one call
      once they are all down. Collected rather than drawn a square at a time so
      the tile blits stay one run the renderer can batch, and because the wash
@@ -58,6 +67,14 @@ void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
      walk below can mark. */
   SDL_FRect fog[MAIN_BACK_BUFFER_SIZE_X * MAIN_BACK_BUFFER_SIZE_Y];
   int fogCount = 0;
+  /* The tiles themselves, and which of them are hidden, for the fog edge pass.
+     Only the Darker with fog edge look needs them, so they are only filled for it:
+     that look has to know what is beside a square as well as what is on it,
+     which the blit loop does not otherwise ask. The hidden flags are the same
+     ones the wash above is drawn from, so the band lands exactly on the line
+     the wash draws. Row-major, the way fogEdgeMasks wants it. */
+  BYTE edgeTiles[MAIN_BACK_BUFFER_SIZE_X * MAIN_BACK_BUFFER_SIZE_Y];
+  BYTE edgeHidden[MAIN_BACK_BUFFER_SIZE_X * MAIN_BACK_BUFFER_SIZE_Y];
   BYTE x = 0, y = 0;
   bool done = FALSE;
   while (!done) {
@@ -81,6 +98,11 @@ void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
       SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &mineSrc, &dest);
     }
     if (hidden) fog[fogCount++] = dest;
+    if (fogEdge) {
+      int slot = (int)y * MAIN_BACK_BUFFER_SIZE_X + (int)x;
+      edgeTiles[slot] = pos;
+      edgeHidden[slot] = (BYTE)(hidden ? 1 : 0);
+    }
 
     x++;
     if (x == MAIN_BACK_BUFFER_SIZE_X) {
@@ -91,15 +113,43 @@ void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
 
   /* The blend mode is put back rather than left on: the callers that draw
      rectangles after this one set the colour they want but not always the
-     mode, and one of them runs with blending off. */
-  if (fogCount > 0) {
+     mode, and one of them runs with blending off. Nothing is drawn at all
+     under the None look, which leaves remembered ground reading exactly like
+     ground in plain sight. */
+  if (fogCount > 0 && fogWashes) {
     SDL_BlendMode was = SDL_BLENDMODE_NONE;
     SDL_GetRenderDrawBlendMode(ctx->renderer, &was);
     SDL_SetRenderDrawBlendMode(ctx->renderer, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(ctx->renderer, FOG_LOOK_R, FOG_LOOK_G, FOG_LOOK_B,
-                           FOG_LOOK_ALPHA);
+    SDL_SetRenderDrawColor(ctx->renderer, fogR, fogG, fogB, FOG_LOOK_ALPHA);
     SDL_RenderFillRects(ctx->renderer, fog, fogCount);
     SDL_SetRenderDrawBlendMode(ctx->renderer, was);
+  }
+
+  /* The fog line itself, after the wash so the wash cannot take it back down.
+     Only the hidden square right against a square in plain sight is banded,
+     and the band is inside the hidden one: that is the line the darkening
+     swallows over road, and firms up over everything else. fogEdgeMasks reads
+     the hidden flags collected above, so the pass below only has to place the
+     squares. */
+  if (fogCount > 0 && fogEdge) {
+    BYTE edges[MAIN_BACK_BUFFER_SIZE_X * MAIN_BACK_BUFFER_SIZE_Y];
+    FogRoadPainter painter;
+    int gx, gy; /* Looping variables */
+
+    fogEdgeMasks(edgeTiles, edgeHidden, MAIN_BACK_BUFFER_SIZE_X,
+                 MAIN_BACK_BUFFER_SIZE_Y, edges);
+    fogRoadPainterBegin(&painter, ctx->renderer);
+    for (gy = 0; gy < MAIN_BACK_BUFFER_SIZE_Y; gy++) {
+      for (gx = 0; gx < MAIN_BACK_BUFFER_SIZE_X; gx++) {
+        int slot = gy * MAIN_BACK_BUFFER_SIZE_X + gx;
+        if (edges[slot] == 0) continue;
+        fogRoadPainterSquare(&painter, edges[slot],
+                             (float)(originX + (gx - 1) * tileW - edgeX),
+                             (float)(originY + (gy - 1) * tileH - edgeY),
+                             (float)tileW, (float)tileH);
+      }
+    }
+    fogRoadPainterEnd(&painter);
   }
 }
 
@@ -286,12 +336,24 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
     /* Win32 adds 2 to px/py before computing position */
     int apx = (int)px;// + 2;
     int apy = (int)py;// + 2;
+    int sqX = (int)mx, sqY = (int)my;
+    if (mode != GFX_ANIM_SMOOTH && mode != GFX_ANIM_MATCH_PIXELATION) {
+      /* Classic draws whole game pixels. On a diagonal, cut the position
+         to the diagonal pixel lattice rather than each axis on its own, so
+         the tank steps on both axes on the same frame (see
+         tank_diagonal_snap.h). */
+      int dx = sqX * 256 + (int)wx;
+      int dy = sqY * 256 + (int)wy;
+      tankDiagonalSnap(utilGetDir((TURNTYPE)angle), &dx, &dy);
+      sqX = 0; apx = dx / 16;
+      sqY = 0; apy = dy / 16;
+    }
     float sx = originX - tileW - edgeX +
                spritePositionOffset(mode, ctx->scale, ctx->sheetScale,
-                                    (int)mx, apx, (int)wx);
+                                    sqX, apx, (int)wx);
     float sy = originY - tileH - edgeY +
                spritePositionOffset(mode, ctx->scale, ctx->sheetScale,
-                                    (int)my, apy, (int)wy);
+                                    sqY, apy, (int)wy);
 
     /* A rotating skin's tank can instead be drawn from its north sprite and
        turned here by the tank's full angle, for 256 steps rather than the
@@ -487,15 +549,26 @@ typedef struct {
   bool mines[MAPVIEW_MAX_TILES_W][MAPVIEW_MAX_TILES_H];
 } MapViewTileBuffer;
 
+/* camMX/camMY can be off the map (the view reaches past an edge). A
+ * square outside the 256x256 map is drawn as open deep sea, the same as
+ * the map's own border squares, rather than the square the BYTE wrap would
+ * land on at the far side. */
 static void mapViewBuildTileBuffer(ServerSim *sim, MapViewTileBuffer *buf,
-                                   BYTE camMX, BYTE camMY,
+                                   int camMX, int camMY,
                                    int tilesW, int tilesH, BYTE selfPlayer) {
+  const BYTE openSea = screenCalcDeepSea(DEEP_SEA, DEEP_SEA, DEEP_SEA, DEEP_SEA,
+                                         DEEP_SEA, DEEP_SEA, DEEP_SEA, DEEP_SEA);
   for (int x = 0; x < tilesW; x++) {
     for (int y = 0; y < tilesH; y++) {
       bool isMine = false;
-      BYTE mapX = (BYTE)(camMX + x);
-      BYTE mapY = (BYTE)(camMY + y);
-      buf->tiles[x][y] = mapViewCalcSquare(sim, mapX, mapY, &isMine, selfPlayer);
+      int mapX = camMX + x;
+      int mapY = camMY + y;
+      if (mapViewSquareInMap(mapX, mapY)) {
+        buf->tiles[x][y] = mapViewCalcSquare(sim, (BYTE)mapX, (BYTE)mapY,
+                                             &isMine, selfPlayer);
+      } else {
+        buf->tiles[x][y] = openSea;
+      }
       buf->mines[x][y] = isMine;
     }
   }
@@ -515,21 +588,15 @@ void mapViewRenderCentered(MapViewCtx *ctx, ServerSim *sim,
   int zf = ctx->zoomFactor;
   int scaledTile = tileSize * zf;
 
-  /* Convert world coords to pixel centre */
-  int centerPX = ((int)centerWX * tileSize) >> 8;
-  int centerPY = ((int)centerWY * tileSize) >> 8;
-
-  /* Camera top-left in pixel space */
-  int camPX = centerPX - viewW / (2 * zf);
-  int camPY = centerPY - viewH / (2 * zf);
-
-  /* Camera tile and sub-tile offset */
-  int camMX = camPX / tileSize;
-  int camMY = camPY / tileSize;
-  if (camPX < 0) camMX--;
-  if (camPY < 0) camMY--;
-  int edgeX = (camPX - camMX * tileSize) * zf;
-  int edgeY = (camPY - camMY * tileSize) * zf;
+  /* Camera square and sub-square offset (mapViewCameraAxis). With a
+     precise camera edgeX can be any 0..scaledTile-1; every sprite below is
+     placed as (pos - camMX * tileSize) * zf - edgeX, which stays right. */
+  int camMX, camMY, edgeX, edgeY;
+  const MapViewPreciseCam *pc = ctx->precise;
+  mapViewCameraAxis((int)centerWX, pc ? &pc->centerWX : NULL, viewW, zf,
+                    &camMX, &edgeX);
+  mapViewCameraAxis((int)centerWY, pc ? &pc->centerWY : NULL, viewH, zf,
+                    &camMY, &edgeY);
 
   /* Number of tiles needed to cover the viewport */
   int tilesW = viewW / scaledTile + 3;
@@ -537,13 +604,15 @@ void mapViewRenderCentered(MapViewCtx *ctx, ServerSim *sim,
   if (tilesW > MAPVIEW_MAX_TILES_W) tilesW = MAPVIEW_MAX_TILES_W;
   if (tilesH > MAPVIEW_MAX_TILES_H) tilesH = MAPVIEW_MAX_TILES_H;
 
-  /* Clamp camera to valid map range */
-  if (camMX < 0) camMX = 0;
-  if (camMY < 0) camMY = 0;
-
-  /* Build tile buffer */
+  /* No clamp to the map here. camMX and edgeX are one position (see
+     mapViewCameraSplit): clamping camMX to 0 while keeping edgeX moved the
+     view by up to a tile, and back again, each time the camera crossed a
+     tile past the left or top edge. Past any edge the view scrolls on over
+     open deep sea instead (mapViewBuildTileBuffer). The camera_split unit
+     test checks mapViewCameraAxis's output, so a change to the camera
+     belongs in there, not here. */
   static MapViewTileBuffer tileBuf;
-  mapViewBuildTileBuffer(sim, &tileBuf, (BYTE)camMX, (BYTE)camMY, tilesW, tilesH, selfPlayer);
+  mapViewBuildTileBuffer(sim, &tileBuf, camMX, camMY, tilesW, tilesH, selfPlayer);
 
   /* Draw tiles */
   int ss = ctx->sheetScale;
@@ -579,6 +648,16 @@ void mapViewRenderCentered(MapViewCtx *ctx, ServerSim *sim,
     int tpy = ((int)info.world_y * tileSize >> 8);
     float dx = (float)((tpx - camMX * tileSize) * zf - edgeX + originX - scaledTile / 2);
     float dy = (float)((tpy - camMY * tileSize) * zf - edgeY + originY - scaledTile / 2);
+    if (pc != NULL) {
+      /* To the whole screen pixel, from the caller's position when it gave
+         one, so the tank moves with the camera rather than against it. */
+      float twx = pc->haveTank[i] ? pc->tankWX[i] : (float)info.world_x;
+      float twy = pc->haveTank[i] ? pc->tankWY[i] : (float)info.world_y;
+      int tsx = (int)SDL_floorf(twx * (float)zf / 16.0f + 0.5f);
+      int tsy = (int)SDL_floorf(twy * (float)zf / 16.0f + 0.5f);
+      dx = (float)(tsx - camMX * scaledTile - edgeX + originX - scaledTile / 2);
+      dy = (float)(tsy - camMY * scaledTile - edgeY + originY - scaledTile / 2);
+    }
 
     /* Cull off-screen */
     if (dx + scaledTile < originX || dx > originX + viewW ||

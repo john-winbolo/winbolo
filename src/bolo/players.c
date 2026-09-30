@@ -401,6 +401,7 @@ void playersSetPlayer(ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE p
     (*plrs)->item[playerNum].mapY = my;
     (*plrs)->item[playerNum].pixelX = px;
     (*plrs)->item[playerNum].pixelY = py;
+    (*plrs)->item[playerNum].fineSet = FALSE;
     (*plrs)->item[playerNum].frame = frame;
     (*plrs)->item[playerNum].onBoat = onBoat;
     (*plrs)->item[playerNum].allie = allienceCreate();
@@ -451,7 +452,23 @@ void playersSetPlayer(ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE p
                         (*plrs)->item[playerNum].ping,
                         playersGetClientType(plrs, playerNum),
                         playersGetClientFlags(plrs, playerNum));
-      frontEndStatusTank(csParam, (BYTE) (playerNum+1), playersScreenAllience(plrs, selfPlayer, playerNum));
+      /* The status tile this seat shows. The alliance still comes from the
+         table with the selfPlayer this call was handed, not from
+         clientSimGetTankAlliance, which reads the local player off the
+         ClientSim instead: a spectator arrives here with 0xFF so the
+         self-branch cannot swallow a real slot-0 join, and that has to
+         survive. The held-seat rule is the part both routes have to agree
+         on, so that is what is asked for — a seat with no tank shows none,
+         here as in the per-frame accessor. playerNum is 0-based in this
+         function and the predicate takes it 0-based; the +1 above is
+         frontEndStatusTank's own 1-based convention. csParam is NULL on the
+         server paths, where the predicate answers false and the tile is
+         whatever the table said, as before. */
+      tankAlliance statusTank = playersScreenAllience(plrs, selfPlayer, playerNum);
+      if (clientSimSlotIsUnfielded(csParam, playerNum)) {
+        statusTank = tankNone;
+      }
+      frontEndStatusTank(csParam, (BYTE) (playerNum+1), statusTank);
       frontEndRedrawAll(csParam);
     }
   }
@@ -509,6 +526,7 @@ void playersUpdate(players *plrs, BYTE playerNum, BYTE mx, BYTE my, BYTE px, BYT
     (*plrs)->item[playerNum].mapY = my;
     (*plrs)->item[playerNum].pixelX = px;
     (*plrs)->item[playerNum].pixelY = py;
+    (*plrs)->item[playerNum].fineSet = FALSE;
     (*plrs)->item[playerNum].frame = frame;
     (*plrs)->item[playerNum].onBoat = onBoat;
     (*plrs)->item[playerNum].lgmMapX = lgmMX;
@@ -516,6 +534,14 @@ void playersUpdate(players *plrs, BYTE playerNum, BYTE mx, BYTE my, BYTE px, BYT
     (*plrs)->item[playerNum].lgmPixelX = lgmPX;
     (*plrs)->item[playerNum].lgmPixelY = lgmPY;
     (*plrs)->item[playerNum].lgmFrame = lgmFrame;
+  }
+}
+
+void playersSetFinePosition(players *plrs, BYTE playerNum, WORLD worldX, WORLD worldY) {
+  if (playerNum < MAX_TANKS && (*plrs)->item[playerNum].inUse == TRUE) {
+    (*plrs)->item[playerNum].fineX = worldX;
+    (*plrs)->item[playerNum].fineY = worldY;
+    (*plrs)->item[playerNum].fineSet = TRUE;
   }
 }
 
@@ -1057,6 +1083,12 @@ void playersMakeScreenTanks(ClientSim *cs, GameSim *sim, players *plrs, screenTa
   BYTE my;
   BYTE px;
   BYTE py;
+  BYTE subX;                     /* World offsets inside the square */
+  BYTE subY;
+  WORLD fineX = 0;               /* Full world position, less TANK_SUBTRACT */
+  WORLD fineY = 0;
+  bool useFine;
+  bool fine = clientSimGetFineTankPositions(cs);
 
 /* FIXME: This function could use some optimisation I think */
   {
@@ -1065,7 +1097,21 @@ void playersMakeScreenTanks(ClientSim *cs, GameSim *sim, players *plrs, screenTa
   }
 
   for (count=0;count<MAX_TANKS;count++) {
-    if ((*plrs)->item[count].inUse == TRUE && count != clientSimGetMyPlayerNum(cs)) {
+    /* A seat the roster HOLDS with nobody on the field has no tank to draw.
+       Its players-table row stays in use — the name, the team and the
+       alliance are the seat's and outlive the bot that was on it — and the
+       row still carries wherever that bot last was, so without this test the
+       tank goes on being drawn at the spot it was taken off the field at:
+       frozen, and with nothing behind it on the server, so shells pass
+       through it. That is what a wave's departures left on the screen.
+
+       The same question the status strip asks (playersSetPlayer and
+       clientSimGetTankAlliance both ask it), so the world and the strip
+       agree about what a held seat is. csParam is NULL on the server paths,
+       where the predicate answers false and every in-use row is drawn as
+       before. */
+    if ((*plrs)->item[count].inUse == TRUE && count != clientSimGetMyPlayerNum(cs)
+        && !clientSimSlotIsUnfielded(cs, count)) {
       playerName[0] = EMPTY_CHAR;
       /* Extract fixed map co-ordinates */
       conv = (*plrs)->item[count].mapX;
@@ -1084,6 +1130,16 @@ void playersMakeScreenTanks(ClientSim *cs, GameSim *sim, players *plrs, screenTa
       conv -= TANK_SUBTRACT;
       conv >>= TANK_SHIFT_MAPSIZE;
       my = (BYTE) conv;
+      /* Smooth drawing asks for the full world position the render
+         interpolation kept, where there is one; mx/px then come from it
+         too, so the square, pixel and world offset agree. */
+      useFine = fine && (*plrs)->item[count].fineSet;
+      if (useFine) {
+        fineX = (WORLD) ((*plrs)->item[count].fineX - TANK_SUBTRACT);
+        fineY = (WORLD) ((*plrs)->item[count].fineY - TANK_SUBTRACT);
+        mx = (BYTE) (fineX >> TANK_SHIFT_MAPSIZE);
+        my = (BYTE) (fineY >> TANK_SHIFT_MAPSIZE);
+      }
 
       if (mx >= leftPos && mx <= rightPos && my >= top && my <= bottom) {
         /* Extract fixed pixel co-ordinates */
@@ -1106,6 +1162,14 @@ void playersMakeScreenTanks(ClientSim *cs, GameSim *sim, players *plrs, screenTa
         conv <<= TANK_SHIFT_MAPSIZE;
         conv >>= TANK_SHIFT_PIXELSIZE;
         py = (BYTE) conv;
+        subX = (BYTE) (px << TANK_SHIFT_RIGHT2);
+        subY = (BYTE) (py << TANK_SHIFT_RIGHT2);
+        if (useFine) {
+          subX = (BYTE) fineX;
+          subY = (BYTE) fineY;
+          px = (BYTE) (subX >> TANK_SHIFT_RIGHT2);
+          py = (BYTE) (subY >> TANK_SHIFT_RIGHT2);
+        }
         /* Extract player screen name */
         playersMakeScreenName(cs, plrs, clientSimGetMyPlayerNum(cs), count, playerName);
         frame = (*plrs)->item[count].frame;
@@ -1117,12 +1181,13 @@ void playersMakeScreenTanks(ClientSim *cs, GameSim *sim, players *plrs, screenTa
         } else {
           frame += TANK_EVIL_ADD;
         }
-        /* The wire carries a 4 bit pixel offset and a 16 step facing,
-           so the sub-square offsets and the angle are those values
-           scaled back up to world units and to 0-255. */
+        /* The players list holds a 4 bit pixel offset and a 16 step
+           facing, so the sub-square offsets and the angle are those values
+           scaled back up to world units and to 0-255 -- unless the full
+           world position is in use, which gives the offsets directly. */
         screenTanksAddItem(value,(BYTE) (mx - leftPos), (BYTE) (my - top), px, py, frame, count, playerName,
-                           (BYTE) (px << TANK_SHIFT_RIGHT2), (BYTE) (py << TANK_SHIFT_RIGHT2),
-                           (BYTE) ((*plrs)->item[count].frame << 4)); 
+                           subX, subY,
+                           (BYTE) ((*plrs)->item[count].frame << 4));
       }
     }
   }
@@ -1177,7 +1242,8 @@ void playersMakeScreenLgm(ClientSim *cs, players *plrs, screenLgm *value, BYTE l
            in from a spawn, or out building — so the client still tests the
            LGM's own square. An ally's LGM follows the ally: shown while the
            server's allies-in-trees option is on. */
-        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || playersIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST) ||
+        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || playersIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (conv < clientSimGetGameSim(cs)->rules.tree_hide_distance &&
+             conv2 < clientSimGetGameSim(cs)->rules.tree_hide_distance) ||
             (clientSimGetAlliesInTrees(cs) == TRUE && allienceExist(&((*plrs)->item[count].allie), clientSimGetMyPlayerNum(cs)) == TRUE)) {
           screenLgmAddItem(value,(BYTE) ((*plrs)->item[count].lgmMapX - leftPos), (BYTE) ((*plrs)->item[count].lgmMapY - top), (*plrs)->item[count].lgmPixelX, (*plrs)->item[count].lgmPixelY, (*plrs)->item[count].lgmFrame, (BYTE) wx, (BYTE) wy);
         }
@@ -1998,8 +2064,12 @@ void playersLeaveAlliance(GameSim *sim, players *plrs, BYTE selfPlayer, BYTE pla
   }
   count--;
 
-  basesMigrate(sim, playerNum, count);
-  pillsMigratePlanted(sim, playerNum, count);
+  /* With no ally the loop runs off the end and count is left at the top
+     seat, which is nobody the leaver chose, so nothing moves. */
+  if (found == TRUE) {
+    basesMigrate(sim, playerNum, count);
+    pillsMigratePlanted(sim, playerNum, count);
+  }
 
   playersClearAlliance(sim, plrs, selfPlayer, playerNum, isServer);
 }
@@ -2310,7 +2380,8 @@ void playersGetBrainLgmsInRect(ClientSim *cs, players *plrs, BYTE leftPos, BYTE 
            in from a spawn, or out building — so the client still tests the
            LGM's own square. An ally's LGM follows the ally: shown while the
            server's allies-in-trees option is on. */
-        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || (playersIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST)) ||
+        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || (playersIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (conv < clientSimGetGameSim(cs)->rules.tree_hide_distance &&
+             conv2 < clientSimGetGameSim(cs)->rules.tree_hide_distance)) ||
             (clientSimGetAlliesInTrees(cs) == TRUE && allienceExist(&((*plrs)->item[count].allie), clientSimGetMyPlayerNum(cs)) == TRUE)) {
           /* In the rectangle */
           /* Object Type */
@@ -2492,6 +2563,7 @@ void playersCheckUpdate(players *plrs, BYTE playerNum) {
   if ((*plrs)->item[playerNum].inUse == TRUE) {
     (*plrs)->item[playerNum].mapX = 0;
     (*plrs)->item[playerNum].mapY = 0;
+    (*plrs)->item[playerNum].fineSet = FALSE;
     (*plrs)->item[playerNum].needUpdate = TRUE;
   }
 }

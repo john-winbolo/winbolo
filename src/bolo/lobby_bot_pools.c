@@ -461,12 +461,22 @@ static int serializeRaw(unsigned char *raw) {
     return pos;
 }
 
-int lobbyBotPoolsSerialize(unsigned char *out, int outCap) {
+/* The id of an uncompressed catalogue: its CRC-32, never 0 (0 means "no
+ * catalogue"). Taken over the payload rather than the compressed blob, so two
+ * builds whose zlib compresses differently still agree on the same pools. */
+static uint32_t catalogIdOf(const unsigned char *raw, int rawLen) {
+    uint32_t id = (uint32_t)crc32(0L, raw, (uInt)rawLen);
+    return id != 0 ? id : 1u;
+}
+
+int lobbyBotPoolsSerializeWithId(unsigned char *out, int outCap,
+                                 uint32_t *outId) {
     unsigned char *raw;
     int rawLen;
     uLongf compCap, compLen;
     int total;
 
+    if (outId) *outId = 0;
     if (!out || outCap <= 4) return -1;
     if (themedCount() <= 0) return 0;
 
@@ -483,10 +493,29 @@ int lobbyBotPoolsSerialize(unsigned char *out, int outCap) {
         return -1;
     }
     putU32BE(out, (unsigned long)rawLen);
+    if (outId) *outId = catalogIdOf(raw, rawLen);
     free(raw);
 
     total = 4 + (int)compLen;
     return total;
+}
+
+int lobbyBotPoolsSerialize(unsigned char *out, int outCap) {
+    return lobbyBotPoolsSerializeWithId(out, outCap, NULL);
+}
+
+uint32_t lobbyBotPoolsCatalogId(void) {
+    unsigned char *raw;
+    int rawLen;
+    uint32_t id;
+
+    if (themedCount() <= 0) return 0;
+    raw = (unsigned char *)malloc(LOBBY_BOT_CATALOG_MAX_BYTES);
+    if (!raw) return 0;
+    rawLen = serializeRaw(raw);
+    id = (rawLen > 1) ? catalogIdOf(raw, rawLen) : 0;
+    free(raw);
+    return id;
 }
 
 /* Parse an uncompressed payload into LobbyBotPoolDef[] backed by heap

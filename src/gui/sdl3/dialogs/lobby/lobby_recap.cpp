@@ -403,9 +403,12 @@ void lobbyRenderLastRoundBody(ClientSim *cs, float s) {
         if (a->deaths != b->deaths) return a->deaths < b->deaths;
         return a->slot < b->slot;
     };
-    /* Every column but the name counts something, so one unsigned reads them
-     * all. Column 0 sorts by name and never reaches this. */
-    auto colValue = [](const RoundPlayerSummary *p, int col) -> unsigned {
+    /* Every column but the name counts something, so one number reads them
+     * all. Column 0 sorts by name and never reaches this. Signed and wide
+     * enough to hold every column: a scenario's own score is the one that can
+     * go below zero, and reading it as an unsigned would sort the negatives
+     * to the top. */
+    auto colValue = [st](const RoundPlayerSummary *p, int col) -> long long {
         switch (col) {
             case 1:  return p->kills;
             case 2:  return p->deaths;
@@ -415,8 +418,29 @@ void lobbyRenderLastRoundBody(ClientSim *cs, float s) {
             case 6:  return p->builds;
             case 7:  return p->lgmKills;
             case 8:  return p->lgmDeaths;
+            case 9:  return (p->slot < MAX_TANKS) ? st->scenarioScore[p->slot] : 0;
             default: return 0;
         }
+    };
+
+    /* A scenario's own scoreboard column, shown only when a scenario set at
+     * least one score this round. The title is the scenario's own — whatever
+     * its score op wrote — and falls back to a plain word when a scenario
+     * scored without naming the column. */
+    const bool  hasScn = st->hasScenarioScore;
+    const char *scnTitle =
+        (hasScn && st->scenarioScoreLabel[0] != '\0')
+            ? st->scenarioScoreLabel
+            : langGetText(STR_DLGLOBBY_LASTROUND_COL_SCNSCORE);
+    const int   colCount = hasScn ? 10 : 9;
+
+    /* Whether a scenario wrote this seat's row at all. A row it scored zero
+     * and a row it never touched both read 0, so the mask is the only thing
+     * that tells them apart: a cleared bit means there is no number to show,
+     * not a number that happens to be nothing. */
+    auto scnScored = [st](uint8_t slot) {
+        return slot < MAX_TANKS &&
+               (st->scenarioScoreMask & (uint16_t)(1u << slot)) != 0;
     };
 
     /* awardId (1..AWARD_COUNT) → index into awards[], -1 when unwon. */
@@ -472,7 +496,8 @@ void lobbyRenderLastRoundBody(ClientSim *cs, float s) {
     const float kRecapStatColW = 75.0f * s;
     const float kRecapNameMinW = 120.0f * s;
     const bool  statColsStatic =
-        ImGui::GetContentRegionAvail().x >= kRecapNameMinW + kRecapStatColW * 8.0f;
+        ImGui::GetContentRegionAvail().x >=
+        kRecapNameMinW + kRecapStatColW * (float)(colCount - 1);
 
     auto iconColWidth = [&](int col, float iconExtent) {
         char buf[16];
@@ -493,6 +518,27 @@ void lobbyRenderLastRoundBody(ClientSim *cs, float s) {
         return w;
     };
 
+    /* The scenario column has no sprite to head it, so it has to hold its
+     * title as well as its numbers, and its numbers are signed. Measured the
+     * same way as the others otherwise — widest thing it prints this round,
+     * plus the sort arrow and the cell padding. Only the scored rows are
+     * measured: an unscored row prints nothing, so its number is not one of
+     * the widths this column has to cover. */
+    auto scnColWidth = [&]() {
+        char buf[16];
+        float w = ImGui::CalcTextSize(scnTitle).x;
+        for (int i = 0; i < n; i++) {
+            uint8_t slot = st->players[i].slot;
+            if (!scnScored(slot)) continue;
+            SDL_snprintf(buf, sizeof(buf), "%d", (int)st->scenarioScore[slot]);
+            float cw = ImGui::CalcTextSize(buf).x;
+            if (cw > w) w = cw;
+        }
+        w += arrowW + sty.CellPadding.x * 2.0f + 1.0f;
+        if (statColsStatic && w < kRecapStatColW) w = kRecapStatColW;
+        return w;
+    };
+
     /* Sortable: a click sorts on that column, a second click reverses it. The
      * counting columns lead with their biggest, which is the answer anyone
      * clicking them is after; names lead A→Z. Kills is where the table starts,
@@ -500,7 +546,7 @@ void lobbyRenderLastRoundBody(ClientSim *cs, float s) {
     const ImGuiTableColumnFlags statCol = ImGuiTableColumnFlags_WidthFixed |
                                           ImGuiTableColumnFlags_PreferSortDescending;
     if (n > 0 &&
-        ImGui::BeginTable("##lastRoundScore", 9,
+        ImGui::BeginTable("##lastRoundScore", colCount,
                           ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
                               ImGuiTableFlags_NoHostExtendX |
                               ImGuiTableFlags_Sortable)) {
@@ -525,6 +571,9 @@ void lobbyRenderLastRoundBody(ClientSim *cs, float s) {
                                 statCol,
                                 iconColWidth(8, lgmW + sty.ItemInnerSpacing.x +
                                                 iconH));
+        if (hasScn) {
+            ImGui::TableSetupColumn(scnTitle, statCol, scnColWidth());
+        }
 
         /* Header row drawn by hand: every column that counts something the
          * map draws is headed by that sprite instead of a word, with the
@@ -536,9 +585,11 @@ void lobbyRenderLastRoundBody(ClientSim *cs, float s) {
          * every column, with an empty label where the icon speaks, so the
          * cell keeps its header background, hover, sort click and id path;
          * the id comes from the column index the way TableHeadersRow does
-         * it. */
+         * it. The scenario column is the exception among the counting
+         * columns: no sprite says what a scenario counts, so it keeps its
+         * written title the way Name does. */
         ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
-        for (int c = 0; c < 9; c++) {
+        for (int c = 0; c < colCount; c++) {
             ImGui::TableSetColumnIndex(c);
             const char *label = ImGui::TableGetColumnName(c);
             bool drewIcon = false;
@@ -612,7 +663,15 @@ void lobbyRenderLastRoundBody(ClientSim *cs, float s) {
                                        lastRoundSlotName(cs, b->slot));
                 if (c != 0) return sortAsc ? (c < 0) : (c > 0);
             } else {
-                unsigned va = colValue(a, sortCol), vb = colValue(b, sortCol);
+                /* The scenario column is the one with rows that hold no
+                 * number at all. They sort below every scored row whichever
+                 * way the arrow points, so reversing the column reverses the
+                 * scores instead of bringing the blank cells to the top. */
+                if (sortCol == 9) {
+                    bool sa = scnScored(a->slot), sb = scnScored(b->slot);
+                    if (sa != sb) return sa;
+                }
+                long long va = colValue(a, sortCol), vb = colValue(b, sortCol);
                 if (va != vb) return sortAsc ? (va < vb) : (va > vb);
             }
             return scoreBefore(a, b);
@@ -672,8 +731,45 @@ void lobbyRenderLastRoundBody(ClientSim *cs, float s) {
             ImGui::TableSetColumnIndex(6); ImGui::Text("%u", (unsigned)p->builds);
             ImGui::TableSetColumnIndex(7); ImGui::Text("%u", (unsigned)p->lgmKills);
             ImGui::TableSetColumnIndex(8); ImGui::Text("%u", (unsigned)p->lgmDeaths);
+            if (hasScn && scnScored(p->slot)) {
+                ImGui::TableSetColumnIndex(9);
+                ImGui::Text("%d", (int)st->scenarioScore[p->slot]);
+            }
         }
         ImGui::EndTable();
+    }
+
+    /* ── The scenario's team scores ──────────────────────────────── */
+    /* The table above has a row per player and no team summary row to hang a
+     * team's score on, so the teams a scenario scored are listed under it,
+     * tinted the way the roster tints a team. Team numbers run from 1, and
+     * the mask says which of them the scenario wrote — a team it put on zero
+     * gets its line like any other, because zero is a score and the mask is
+     * what says so. */
+    if (hasScn) {
+        bool anyTeam = false;
+        for (int team = 1; team < MAX_TANKS; team++) {
+            if ((st->scenarioTeamScoreMask & (uint16_t)(1u << team)) == 0) {
+                continue;
+            }
+            if (!anyTeam) {
+                ImGui::Separator();
+                ImGui::TextUnformatted(scnTitle);
+                anyTeam = true;
+            }
+            MessageArgs args = {};
+            args.number = team;
+            char teamName[64];
+            SDL_strlcpy(teamName, langGetTextFmt(STR_DLGLOBBY_TEAM_HEADER, &args),
+                        sizeof(teamName));
+            ImGui::Bullet();
+            ImGui::PushStyleColor(ImGuiCol_Text,
+                                  lastRoundTeamTint(cs, (uint8_t)team));
+            ImGui::TextUnformatted(teamName);
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+            ImGui::Text("%d", (int)st->scenarioTeamScore[team]);
+        }
     }
 
     /* ── Awards ribbon ───────────────────────────────────────────── */

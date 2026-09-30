@@ -45,6 +45,8 @@
 #include "players.h"                 /* playersIsAllie */
 #include "pillbox.h"                 /* the owners a reset must not move */
 #include "bases.h"
+#include "tank.h"                    /* tankGetWorld, for the pill check */
+#include "server_sim_scenario.h"     /* serverSimApplyScenarioOp */
 #include "everard_map.h"
 #include "test_harness.h"
 
@@ -173,7 +175,7 @@ static void count_alliance_events(void *ctx, const ControlEvent *evt) {
 
 static ServerSim *make_lobby_sim(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097,
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN,
                                                "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) return NULL;
@@ -714,5 +716,92 @@ int run_alliance_reset_changed_matrix_keeps_owners(void) {
     }
 
     clientSimDestroy(cs);
+    return 0;
+}
+
+/* ================================================================
+ * 9. A set_team mid-game takes the moved player out of his old
+ *    team's alliances on the server, not only on the clients.
+ *
+ * The server used to re-accept on top of what it had, and an accept
+ * merges both players' whole ally lists, so the moved player kept his
+ * old allies and brought them into the new team. In Virus, which
+ * starts everyone on one team and moves them with game.set_team, that
+ * left every player allied with every other after the first turn, and
+ * no player's pillbox fired at anyone. Driven through the scenario op
+ * scnLuaSetTeam builds, and checked on the pillbox as well as the bits.
+ * ================================================================ */
+
+/* Put pill 0 beside tank victim, owned by owner and ready to fire, and
+ * run one pillsUpdate with only the victim connected. True if the pill
+ * picked it as a target. */
+static bool ar_pill_targets(ServerSim *sim, BYTE owner, BYTE victim) {
+    GameSim *gs = &sim->sim;
+    WORLD tx, ty;
+    bool conn[MAX_TANKS];
+
+    tankGetWorld(&gs->tanks[victim], &tx, &ty);
+    gs->pb->item[0].x        = (BYTE)((tx >> TANK_SHIFT_MAPSIZE) + 1);
+    gs->pb->item[0].y        = (BYTE)(ty >> TANK_SHIFT_MAPSIZE);
+    gs->pb->item[0].owner    = owner;
+    gs->pb->item[0].armour   = 15;
+    gs->pb->item[0].inTank   = FALSE;
+    gs->pb->item[0].reload   = gs->pb->item[0].speed;
+    gs->pb->item[0].justSeen = FALSE;
+    gs->pb->active[0]        = TRUE;
+    for (BYTE t = 0; t < MAX_TANKS; t++) {
+        conn[t] = (t == victim);
+    }
+    pillsUpdate(gs, gs->tanks, conn, MAX_TANKS);
+    return gs->pb->item[0].justSeen == TRUE;
+}
+
+int run_alliance_reset_set_team_leaves_old_team(void) {
+    BYTE emap[6000] = E_MAP;
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
+                                               gameOpen, false, 0, -1);
+    ScenarioOp op;
+    GameSim *gs;
+
+    UT_ASSERT(sim != NULL);
+    serverSimSetLobbyEnabled(sim, true);
+    serverSimAddPlayer(sim, 0, "Survivor", false);
+    serverSimAddPlayer(sim, 1, "Turned", false);
+    serverSimAddPlayer(sim, 2, "Horde", false);
+    serverSimSetTeamBatch(sim, 0, 1);
+    serverSimSetTeamBatch(sim, 1, 1);
+    serverSimSetTeamBatch(sim, 2, 2);
+    serverSimStartGameInPlace(sim);
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT(sim->state == serverStateRunning);
+    UT_ASSERT(gs->tanks[0] != NULL && gs->tanks[1] != NULL &&
+              gs->tanks[2] != NULL);
+    UT_ASSERT(playersIsAllie(&gs->plyrs, 0, 1));
+    UT_ASSERT(!playersIsAllie(&gs->plyrs, 0, 2));
+
+    /* game.set_team(1, 2), as scnLuaSetTeam hands it to the sim. */
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_ROSTER_SET_TEAM;
+    op.u.rosterSetTeam.slot = 1;
+    op.u.rosterSetTeam.team = 2;
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_OK);
+    UT_ASSERT(sim->lobbyPlayers[1].teamNumber == 2);
+
+    UT_ASSERT_MSG(!playersIsAllie(&gs->plyrs, 0, 1),
+                  "after set_team: 0 is still allied with the player "
+                  "who left his team");
+    UT_ASSERT_MSG(playersIsAllie(&gs->plyrs, 1, 2),
+                  "after set_team: 1 is not allied with his new team");
+    UT_ASSERT_MSG(!playersIsAllie(&gs->plyrs, 0, 2),
+                  "after set_team: the move allied 0 with the other team");
+
+    UT_ASSERT_MSG(ar_pill_targets(sim, 0, 1),
+                  "0's pill does not fire at the player who left 0's team");
+    UT_ASSERT_MSG(ar_pill_targets(sim, 2, 0),
+                  "2's pill does not fire at the other team");
+    UT_ASSERT_MSG(!ar_pill_targets(sim, 2, 1),
+                  "2's pill fires at 2's new teammate");
+
+    serverSimDestroy(sim);
     return 0;
 }

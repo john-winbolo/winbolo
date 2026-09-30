@@ -36,11 +36,15 @@
 #include "positions.h"
 #include "draw.h"
 #include "logviewer.h"
+#include "lv_region_rect.h"
 #include "game_view.h"
 #include "imgui/imgui_main_menu.h"
 #include "../gui/sdl3/sdl_bmp.h"
 #include "../gui/sdl3/sprite_positions.h"
 #include "../gui/sdl3/tileloader.h"
+#include "../gui/sdl3/map_colours.h"   /* the zoomed-out ground colours */
+#include "../gui/sdl3/gfx_settings.h"  /* the simplified view setting */
+#include "../gui/sdl3/map_markers.h"   /* the shapes a thing becomes when small */
 #include "../third_party/stb/stb_image.h"
 
 /* Must be included after global.h to avoid bool type conflict */
@@ -88,6 +92,225 @@ static const float g_zoomSteps[] = {
 
 static int   g_zoomStepIndex = ZOOM_STEP_1X;
 static float g_zoomLevel     = 1.0f;
+
+/* Whether the last frame drew map colours instead of tile sprites. The
+ * per-square cache below keys on the tile number alone, so a square whose
+ * tile has not changed is left alone - which would leave half the map in the
+ * old style when the answer flips. A zoom change already asks for a full
+ * redraw; this covers any other way the answer can change. */
+static bool  g_lastSimple    = false;
+
+/* The simplified view. Tiles are drawn at their native 16 px into the render
+ * target and the blit downscales the lot, so below 1x a square lands on the
+ * window as eight to fourteen pixels and the sprite in it is a smudge: the
+ * ground goes to one map colour a square and the things standing on it to
+ * marker shapes. The setting is the game's, out of the prefs document both
+ * apps share (loadPreferences).
+ *
+ * Asked here by the ground pass and the tank pass alike, so the two cannot
+ * end up in different styles on the same frame. */
+static bool lvSimpleView(void) {
+    return gfxGetSimplifiedZoomOut() && g_zoomLevel < 1.0f;
+}
+
+/* A pillbox or base met during the ground pass, held back so its marker goes
+ * on after the ground: a marker runs a little past its square, and the next
+ * square's fill would clip it. The map holds at most MAX_PILLS + MAX_BASES of
+ * them and the viewport shows a window onto that, so the list cannot fill -
+ * but it is flushed and restarted if it ever does rather than trusted. */
+typedef struct {
+    int        mx, my;
+    bool       isBase;
+    SDL_FColor colour;
+} LvItemMarker;
+
+#define LV_ITEM_MARKER_MAX 32
+
+/* The blend mode belongs here rather than at the call sites: a marker's
+ * outline layer is translucent, and drawn without it the outline comes out
+ * opaque black and the markers gain a hard border. map_markers.h asks a
+ * caller drawing a run of markers to set it once round the lot, and this is
+ * that caller - both the overflow flush inside the ground pass and the batch
+ * after it come through here, so neither can be the one that forgets. */
+static void lvDrawItemMarkers(const LvItemMarker *hits, int count,
+                              BYTE zoomFactor) {
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
+    int i;
+
+    if (count <= 0) return;
+    SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
+    for (i = 0; i < count; i++) {
+        float side = (float)(zoomFactor * TILE_SIZE_X);
+        float cx = (float)(zoomFactor * (hits[i].mx * TILE_SIZE_X)) + side / 2.0f;
+        float cy = (float)(zoomFactor * (hits[i].my * TILE_SIZE_Y)) + side / 2.0f;
+        /* The same fractions of a square the overview uses, so an item is the
+           same size relative to its square in both. */
+        if (hits[i].isBase) {
+            mapMarkerBase(sdlRenderer, cx, cy,
+                          SDL_max(2.5f, side * 0.42f), hits[i].colour);
+        } else {
+            mapMarkerPill(sdlRenderer, cx, cy,
+                          SDL_max(2.0f, side * 0.36f), hits[i].colour);
+        }
+    }
+    SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
+}
+
+/* --- Scenario map markers ---------------------------------------------
+ * The game draws these through scnMarkerDraw (src/gui/sdl3/scenario_marker.c),
+ * whose header brings in the game's screentank.h; its screenTanks is not the
+ * viewer's, so no viewer file can include it. This is the same drawing, with
+ * the same numbers, over the same palette. A change to how the game's marker
+ * looks is a change here too. */
+
+/* The scenario palette, from scenario_panel_draw.cpp. Declared here rather
+   than through scenario_panel_draw.h: that header's timer needs the game's
+   global.h, and lv_global.h shares its include guard, so in this file the
+   game's one is never read. */
+bool scnPanelColourRGBA(uint8_t index, uint8_t *r, uint8_t *g, uint8_t *b,
+                        uint8_t *a);
+
+/* How much of the colour shows at the bottom and the top of a breath, and one
+   breath in milliseconds. */
+#define LV_SCN_MARKER_ALPHA_LOW  0.45f
+#define LV_SCN_MARKER_ALPHA_HIGH 0.95f
+#define LV_SCN_MARKER_BREATH_MS  1600.0f
+
+/* The outline's thickness, and the pointer's height, width and gap above the
+   square, as fractions of a map square. */
+#define LV_SCN_MARKER_STROKE    0.10f
+#define LV_SCN_MARKER_POINT_H   0.38f
+#define LV_SCN_MARKER_POINT_W   0.30f
+#define LV_SCN_MARKER_POINT_GAP 0.12f
+
+void lv_drawScnMarker(SDL_Renderer *renderer, BYTE colour,
+                      float cx, float cy, float tileW, float tileH,
+                      uint32_t nowMs) {
+    uint8_t r = 0, g = 0, b = 0, a = 0;
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
+    float phase, breath, halfW, halfH, stroke, height, halfPoint, tipY;
+    Uint8 ca;
+    int steps, rows, i;
+
+    if (renderer == NULL || tileW <= 0.0f || tileH <= 0.0f) return;
+    if (!scnPanelColourRGBA(colour, &r, &g, &b, &a)) return;
+
+    /* A cosine, so the turn at each end breathes rather than ticks. */
+    phase  = fmodf((float)nowMs, LV_SCN_MARKER_BREATH_MS) /
+             LV_SCN_MARKER_BREATH_MS;
+    breath = 0.5f - 0.5f * cosf(phase * 6.2831853f);
+    ca = (Uint8)((float)a * (LV_SCN_MARKER_ALPHA_LOW +
+                 (LV_SCN_MARKER_ALPHA_HIGH - LV_SCN_MARKER_ALPHA_LOW) * breath));
+
+    SDL_GetRenderDrawBlendMode(renderer, &oldBlend);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer, r, g, b, ca);
+
+    /* The outline, as nested one-pixel rects: SDL has no stroke width. */
+    halfW  = tileW * 0.5f;
+    halfH  = tileH * 0.5f;
+    stroke = tileH * LV_SCN_MARKER_STROKE;
+    steps  = (int)(stroke + 0.5f);
+    if (steps < 1) steps = 1;
+    for (i = 0; i < steps; i++) {
+        SDL_FRect rect;
+        rect.x = cx - halfW + (float)i;
+        rect.y = cy - halfH + (float)i;
+        rect.w = tileW - (float)(2 * i);
+        rect.h = tileH - (float)(2 * i);
+        if (rect.w <= 0.0f || rect.h <= 0.0f) break;
+        SDL_RenderRect(renderer, &rect);
+    }
+
+    /* The pointer above it, tip down, filled a row at a time. */
+    height    = tileH * LV_SCN_MARKER_POINT_H;
+    halfPoint = tileW * LV_SCN_MARKER_POINT_W * 0.5f;
+    tipY      = cy - halfH - tileH * LV_SCN_MARKER_POINT_GAP;
+    rows      = (int)(height + 0.5f);
+    if (rows < 1) rows = 1;
+    for (i = 0; i < rows; i++) {
+        float t = (float)i / (float)rows;
+        float w = halfPoint * (1.0f - t);
+        float y = tipY - height + (float)i;
+        SDL_RenderLine(renderer, cx - w, y, cx + w, y);
+    }
+
+    SDL_SetRenderDrawBlendMode(renderer, oldBlend);
+}
+
+/* --- Declared regions -------------------------------------------------
+ * The regions a recording's scripts.json declares, outlined with their names
+ * while Options -> Regions is on. The colour and stroke are in
+ * lv_region_rect.h, beside the placement both views share. */
+
+SDL_Texture *lv_drawRegionName(SDL_Renderer *renderer, TTF_Font *font,
+                               const char *name, int *outW, int *outH) {
+    SDL_Color colour = { LV_REGION_COLOUR_R, LV_REGION_COLOUR_G,
+                         LV_REGION_COLOUR_B, 255 };
+    SDL_Surface *surface;
+    SDL_Texture *texture;
+
+    if (outW != NULL) *outW = 0;
+    if (outH != NULL) *outH = 0;
+    if (renderer == NULL || font == NULL || name == NULL || name[0] == '\0') {
+        return NULL;
+    }
+    surface = TTF_RenderText_Blended(font, name, 0, colour);
+    if (surface == NULL) return NULL;
+    texture = SDL_CreateTextureFromSurface(renderer, surface);
+    if (texture != NULL) {
+        if (outW != NULL) *outW = surface->w;
+        if (outH != NULL) *outH = surface->h;
+    }
+    SDL_DestroySurface(surface);
+    return texture;
+}
+
+void lv_drawRegion(SDL_Renderer *renderer, float x, float y, float w, float h,
+                   float tileH, SDL_Texture *name, int nameW, int nameH) {
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
+    int steps, i;
+
+    if (renderer == NULL || w <= 0.0f || h <= 0.0f) return;
+
+    /* The outline, as nested one-pixel rects inside the region's squares:
+       SDL has no stroke width. */
+    steps = (int)(tileH * LV_REGION_STROKE + 0.5f);
+    if (steps < 1) steps = 1;
+    SDL_GetRenderDrawBlendMode(renderer, &oldBlend);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer, LV_REGION_COLOUR_R, LV_REGION_COLOUR_G,
+                           LV_REGION_COLOUR_B, 255);
+    for (i = 0; i < steps; i++) {
+        SDL_FRect rect;
+        rect.x = x + (float)i;
+        rect.y = y + (float)i;
+        rect.w = w - (float)(2 * i);
+        rect.h = h - (float)(2 * i);
+        if (rect.w <= 0.0f || rect.h <= 0.0f) break;
+        SDL_RenderRect(renderer, &rect);
+    }
+
+    /* The name just inside the corner, on a dark box so it reads over any
+       ground. A long name runs past a narrow region rather than being cut to
+       nothing; the view's own edge is what clips it. */
+    if (name != NULL && nameW > 0 && nameH > 0) {
+        SDL_FRect back, dst;
+        dst.x = x + (float)steps + 1.0f;
+        dst.y = y + (float)steps;
+        dst.w = (float)nameW;
+        dst.h = (float)nameH;
+        back.x = dst.x - 1.0f;
+        back.y = dst.y;
+        back.w = dst.w + 2.0f;
+        back.h = dst.h;
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, LV_REGION_LABEL_BACK);
+        SDL_RenderFillRect(renderer, &back);
+        SDL_RenderTexture(renderer, name, NULL, &dst);
+    }
+    SDL_SetRenderDrawBlendMode(renderer, oldBlend);
+}
 
 /* Embed mode: a host that already owns an ImGui frame draws the world
  * texture itself, so the two framebuffer blits must not run, the viewer's
@@ -589,7 +812,12 @@ BYTE lv_drawSetup(void) {
     return TRUE;
 }
 
+static void lvFlushRegionNames(void);
+
 void lv_drawCleanup(void) {
+    /* First, while the renderer the names were made on and the font they
+       were made from are both still there. */
+    lvFlushRegionNames();
     if (textureTiles) { SDL_DestroyTexture(textureTiles); textureTiles = NULL; }
     if (textureTanks) { SDL_DestroyTexture(textureTanks); textureTanks = NULL; }
     if (textureBoats) { SDL_DestroyTexture(textureBoats); textureBoats = NULL; }
@@ -728,6 +956,153 @@ static void drawRenderTexture(SDL_Texture *texture, int srcX, int srcY, int srcW
     SDL_RenderTexture(sdlRenderer, texture, &srcRect, &dstRect);
 }
 
+/* The markers the followed player would see, into the overview's render
+ * target, whose square (0, 0) is the viewport's top-left. A marker's square
+ * and the one above it, where the pointer sits, are marked for redraw the
+ * way a tank's are, so the next frame repaints the ground under them before
+ * drawing them again and a marker that has moved or gone leaves nothing. The
+ * target is only redrawn when the replay moves or the view does, so a paused
+ * replay holds its markers still. */
+static void lvDrawScnMarkers(BYTE zoomFactor) {
+    LogViewerState *lv = lv_screenGetState();
+    float side = (float)(zoomFactor * TILE_SIZE_X);
+    uint32_t now = (uint32_t)SDL_GetTicks();
+    BYTE id;
+
+    for (id = 0; id < SCN_MARKERS_MAX; id++) {
+        BYTE mx, my, colour;
+        int sx, sy;
+
+        if (!lv_screenMarkerPlace(id, &mx, &my, &colour)) continue;
+        sx = (int)mx - (int)lv->xOffset;
+        sy = (int)my - (int)lv->yOffset;
+        if (sx < 0 || sy < 0 || sx > lv_screenGetSizeX() ||
+            sy > lv_screenGetSizeY()) {
+            continue;
+        }
+        lv_drawScnMarker(sdlRenderer, colour,
+                         (float)sx * side + side / 2.0f,
+                         (float)sy * side + side / 2.0f, side, side, now);
+        lv_drawLast[sx][sy] = 10000;
+        if (sy > 0) lv_drawLast[sx][sy - 1] = 10000;
+    }
+}
+
+/* Mark the viewport squares from (x0, y0) to (x1, y1) inclusive for redraw,
+ * clipped to the render target's sizeX+1 by sizeY+1 squares. */
+static void lvMarkSquares(int x0, int y0, int x1, int y1) {
+    int lastX = (int)lv_screenGetSizeX();
+    int lastY = (int)lv_screenGetSizeY();
+    int x, y;
+
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > lastX) x1 = lastX;
+    if (y1 > lastY) y1 = lastY;
+    for (y = y0; y <= y1; y++) {
+        for (x = x0; x <= x1; x++) {
+            lv_drawLast[x][y] = 10000;
+        }
+    }
+}
+
+/* The declared regions' names as the overview draws them, rendered once and
+ * kept: the overview repaints often while playing, and a region's name does
+ * not change. An entry is good while its name matches the region at its
+ * index. The overview draws with one font at one size whatever the zoom, so
+ * the name is the whole key. Every entry is freed by lv_drawCleanup, which is
+ * where the font and the renderer they were made with go; a recording loaded
+ * or closed in between leaves entries whose names still describe the
+ * textures they hold, so they are kept for a region of the same name. */
+typedef struct {
+    SDL_Texture *tex;
+    int          w, h;
+    char         name[LV_SCRIPTS_REGION_NAME_LEN];
+} LvRegionName;
+
+static LvRegionName lvRegionNames[LV_SCRIPTS_REGIONS_MAX];
+
+static void lvFlushRegionNames(void) {
+    int i;
+
+    for (i = 0; i < LV_SCRIPTS_REGIONS_MAX; i++) {
+        if (lvRegionNames[i].tex != NULL) {
+            SDL_DestroyTexture(lvRegionNames[i].tex);
+        }
+        lvRegionNames[i].tex     = NULL;
+        lvRegionNames[i].w       = 0;
+        lvRegionNames[i].h       = 0;
+        lvRegionNames[i].name[0] = '\0';
+    }
+}
+
+/* The recording's declared regions, into the overview's render target, while
+ * Options -> Regions is on. The outline lies inside the region's border
+ * squares and the name inside the squares at its top-left, and every one of
+ * those is marked for redraw the way a marker's are: the next frame repaints
+ * the ground under them before drawing them again, so a region that has gone -
+ * the toggle off, or another recording loaded - leaves nothing. The toggle
+ * also repaints the whole map (lv_imgui_toggle_regions). Not in the lobby's
+ * reel, which draws a recording as background and has no menu to turn this
+ * off from. */
+static void lvDrawRegions(BYTE zoomFactor) {
+    const LvScripts *scripts = lv_screenGetScripts();
+    LogViewerState *lv = lv_screenGetState();
+    float side = (float)(zoomFactor * TILE_SIZE_X);
+    LvRegionView view;
+    int count, i;
+
+    if (!lv_g_show_regions || g_embedded || scripts == NULL) return;
+    count = scripts->regionCount;
+    if (count > LV_SCRIPTS_REGIONS_MAX) count = LV_SCRIPTS_REGIONS_MAX;
+    if (count <= 0) return;
+
+    view.mapX  = -(float)lv->xOffset * side;
+    view.mapY  = -(float)lv->yOffset * side;
+    view.tileW = side;
+    view.tileH = side;
+    view.viewX = 0.0f;
+    view.viewY = 0.0f;
+    view.viewW = (float)(lv_screenGetSizeX() + 1) * side;
+    view.viewH = (float)(lv_screenGetSizeY() + 1) * side;
+
+    for (i = 0; i < count; i++) {
+        const LvScriptRegion *r = &scripts->regions[i];
+        LvRegionName *label = &lvRegionNames[i];
+        LvRegionRect rect;
+        int nameW, nameH;
+        int x0, y0, x1, y1;
+
+        if (!lvRegionScreenRect(&view, r->x, r->y, r->w, r->h, &rect)) continue;
+        if (label->tex == NULL || SDL_strcmp(label->name, r->name) != 0) {
+            if (label->tex != NULL) SDL_DestroyTexture(label->tex);
+            label->tex = lv_drawRegionName(sdlRenderer, labelFont, r->name,
+                                           &label->w, &label->h);
+            SDL_strlcpy(label->name, r->name, sizeof(label->name));
+        }
+        nameW = label->w;
+        nameH = label->h;
+        lv_drawRegion(sdlRenderer, rect.x, rect.y, rect.w, rect.h, side,
+                      label->tex, nameW, nameH);
+
+        /* The four sides, then the name with a square to spare for its
+           inset. */
+        x0 = (int)r->x - (int)lv->xOffset;
+        y0 = (int)r->y - (int)lv->yOffset;
+        x1 = x0 + (int)r->w - 1;
+        y1 = y0 + (int)r->h - 1;
+        lvMarkSquares(x0, y0, x1, y0);
+        lvMarkSquares(x0, y1, x1, y1);
+        lvMarkSquares(x0, y0, x0, y1);
+        lvMarkSquares(x1, y0, x1, y1);
+        if (nameW > 0) {
+            lvMarkSquares(x0, y0,
+                          x0 + (int)((float)nameW / side) + 1,
+                          y0 + (int)((float)nameH / side) + 1);
+        }
+    }
+}
+
 void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, screenGunsight *gs, screenBullets *sBullets, screenLgm *lgms, BYTE showPillLabels, BYTE showBaseLabels, int32_t srtDelay, BYTE isPillView, int edgeX, int edgeY, BYTE useCursor, BYTE cursorLeft, BYTE cursorTop) {
     bool done, isPill, isBase, shouldDraw;
     /* x/y must be wider than BYTE: the loop runs to lv_screenGetSizeX()/Y(),
@@ -754,6 +1129,25 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
     }
 
     zoomFactor = lv_windowGetZoomFactor();
+
+    /* The simplified view. Tiles are drawn at their native 16 px into the
+       target and the blit downscales the lot, so below 1x a square lands on
+       the window as eight to fourteen pixels and the sprite in it is a
+       smudge; one flat map colour reads instead. The setting is the game's,
+       out of the prefs document both apps share (loadPreferences).
+
+       Only the ground. Tanks, pillboxes and bases keep their sprites,
+       because this viewer colours them by team and the game's marker palette
+       has two sides and a neutral - it cannot say which of sixteen teams
+       owns a pillbox, which is most of what a recording is watched for. */
+    bool simple = lvSimpleView();
+    LvItemMarker itemHits[LV_ITEM_MARKER_MAX];
+    int          itemHitCount = 0;
+    if (simple != g_lastSimple) {
+        g_lastSimple = simple;
+        lv_drawDirtyScreen();
+    }
+
     /* Save the caller's target rather than assuming the framebuffer: the
      * embedded host calls this from inside its own frame, which may already
      * be rendering to a target of its own. */
@@ -779,7 +1173,57 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
                 lv_drawLast[x][y] = 10000;
             }
             
-            if (isPill && lv->useTeamColours) {
+            if (simple) {
+                /* The ground under everything, an item square included: a
+                   pillbox or base answers with the ground beneath it, and its
+                   marker goes on after the pass. */
+                SDL_Color ground;
+                if (mapColourTerrain(pos, &ground)) {
+                    SDL_FRect square = {
+                        (float)(zoomFactor * (x * TILE_SIZE_X)),
+                        (float)(zoomFactor * (y * TILE_SIZE_Y)),
+                        (float)(zoomFactor * TILE_SIZE_X),
+                        (float)(zoomFactor * TILE_SIZE_Y)
+                    };
+                    SDL_SetRenderDrawColor(sdlRenderer, ground.r, ground.g,
+                                           ground.b, ground.a);
+                    SDL_RenderFillRect(sdlRenderer, &square);
+                } else {
+                    outputX = mapViewPosX[pos];
+                    outputY = mapViewPosY[pos];
+                    drawRenderTexture(textureTiles, outputX, outputY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y,
+                        zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
+                }
+
+                if (isPill || isBase) {
+                    if (itemHitCount == LV_ITEM_MARKER_MAX) {
+                        lvDrawItemMarkers(itemHits, itemHitCount, zoomFactor);
+                        itemHitCount = 0;
+                    }
+                    itemHits[itemHitCount].mx     = x;
+                    itemHits[itemHitCount].my     = y;
+                    itemHits[itemHitCount].isBase = (isBase != FALSE);
+                    /* Team colours name the owner, which is what a recording
+                       is watched for; without them the tile itself says which
+                       side holds it, the way the game's markers do. */
+                    if (lv->useTeamColours) {
+                        itc = isBase ? lv_screenGetBaseTeam(x, y)
+                                     : lv_screenGetPillTeam(x, y, &pillHealth);
+                        itemHits[itemHitCount].colour = mapColourTeam(lv->tc[itc]);
+                    } else {
+                        MapColourItem kind = mapColourItemKind(pos);
+                        if (kind == MAP_COLOUR_ITEM_PILL_GOOD ||
+                            kind == MAP_COLOUR_ITEM_BASE_GOOD) {
+                            itemHits[itemHitCount].colour = mapColourMarkerGood();
+                        } else if (kind == MAP_COLOUR_ITEM_BASE_NEUTRAL) {
+                            itemHits[itemHitCount].colour = mapColourMarkerNeutral();
+                        } else {
+                            itemHits[itemHitCount].colour = mapColourMarkerEvil();
+                        }
+                    }
+                    itemHitCount++;
+                }
+            } else if (isPill && lv->useTeamColours) {
                 itc = lv_screenGetPillTeam(x, y, &pillHealth);
                 drawRenderTexture(textureItems, pillHealth * zoomFactor * TILE_SIZE_X, lv->tc[itc] * zoomFactor * TILE_SIZE_Y,
                     zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
@@ -807,6 +1251,18 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
         if (++x > lv_screenGetSizeX()) { x = 0; y++; if (y > lv_screenGetSizeY()) done = TRUE; }
     }
     
+    /* The markers, on top of the finished ground. */
+    if (simple) {
+        lvDrawItemMarkers(itemHits, itemHitCount, zoomFactor);
+    }
+
+    /* A scenario's markers: on the ground, under everything that moves, as
+       the game view draws them. */
+    lvDrawScnMarkers(zoomFactor);
+
+    /* The declared regions, on the ground beside the markers. */
+    lvDrawRegions(zoomFactor);
+
     lv_drawShells(sBullets);
     lv_drawTanks(tks);
     lv_drawLGMs(lgms);
@@ -905,12 +1361,27 @@ static BYTE lv_drawTankAllyRow(BYTE frame) {
 void lv_drawTanks(screenTanks *tks) {
     int x, y, srcX, srcY;
     BYTE count, total, px, py, mx, my, team, zoomFactor, dir, frame;
-    bool onBoat;
+    bool onBoat, simple, allyRead;
     char playerName[PLAYER_NAME_LEN];
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
     LogViewerState *lv = lv_screenGetState();
 
     total = lv_screenTanksGetNumEntries(tks);
     zoomFactor = lv_windowGetZoomFactor();
+
+    /* The same answer the ground pass used this frame, so the tanks and the
+       squares under them cannot end up in different styles. */
+    simple = lvSimpleView();
+    if (simple) {
+        SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
+        SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
+    }
+
+    /* Which reading the tanks take. The reel's ally colours and team colours
+       switched off both want the game's own self / ally / enemy sides; only
+       the team palette says which player is which, which is the one thing
+       that reading cannot. */
+    allyRead = lv->allyColours || !lv->useTeamColours;
 
     for (count = 1; count <= total; count++) {
         lv_screenTanksGetItem(tks, count, &mx, &my, &px, &py, &frame, &team, &dir, &onBoat, playerName);
@@ -918,16 +1389,30 @@ void lv_drawTanks(screenTanks *tks) {
         x = mx * (zoomFactor * TILE_SIZE_X) + (zoomFactor * px);
         y = my * (zoomFactor * TILE_SIZE_Y) + (zoomFactor * py);
 
-        if (lv->allyColours) {
+        if (simple) {
+            /* A triangle pointing the way it faces, in whichever reading the
+               sprites would have used, so the two cannot disagree. A tank on
+               a boat is still a tank. */
+            SDL_FColor colour;
+            if (allyRead) {
+                BYTE row = lv_drawTankAllyRow(frame);
+                colour = (row == TANK_ROW_SELF) ? mapColourMarkerSelf()
+                       : (row == TANK_ROW_GOOD) ? mapColourMarkerGood()
+                                                : mapColourMarkerEvil();
+            } else {
+                colour = mapColourTeam(lv->tc[team]);
+            }
+            {
+                float side = (float)(zoomFactor * TILE_SIZE_X);
+                mapMarkerTank(sdlRenderer,
+                              (float)x + side / 2.0f, (float)y + side / 2.0f,
+                              SDL_max(3.0f, side * 0.45f), (int)dir, colour);
+            }
+        } else if (allyRead) {
             srcX = zoomFactor * TILE_SIZE_X * dir;
             srcY = zoomFactor * TILE_SIZE_Y * lv_drawTankAllyRow(frame);
             drawRenderTexture(onBoat ? textureBoats : textureTanks, srcX, srcY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, x, y);
-        } else if (lv->useTeamColours) {
-            srcX = zoomFactor * TILE_SIZE_X * dir;
-            srcY = zoomFactor * TILE_SIZE_Y * lv->tc[team];
-            drawRenderTexture(onBoat ? textureBoats : textureTanks, srcX, srcY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, x, y);
         } else {
-            /* Simplified: use direction-based sprite selection for non-team mode */
             srcX = zoomFactor * TILE_SIZE_X * dir;
             srcY = zoomFactor * TILE_SIZE_Y * lv->tc[team];
             drawRenderTexture(onBoat ? textureBoats : textureTanks, srcX, srcY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, x, y);
@@ -935,6 +1420,8 @@ void lv_drawTanks(screenTanks *tks) {
         lv_drawTankLabel(playerName, mx, my, px, py);
         lv_drawMarkRedraw(mx, my, px, py, 0);
     }
+
+    if (simple) SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
 }
 
 void lv_drawLGMs(screenLgm *lgms) {

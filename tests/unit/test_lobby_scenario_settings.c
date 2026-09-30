@@ -77,12 +77,13 @@
  * + gameType 1 + hiddenMines 1 + aiType 1 + timeLimit 4
  * + pill 1 + base 1 + start 1 + mapSkip 1 + netStat 1 + hasLobby 1
  * + openHost 1 + autoLock 1 + serverLocks 4                     = 55
- * + ranked 1 + allowNew 1 + wbn 1 + uploadPolicy 1 + startDelay 4
+ * + ranked 1 + allowNew 1 + wbn 1 + uploadPolicy 1
+ * + scriptUploadPolicy 1 + scriptSharing 1 + startDelay 4
  * + hostSlot 1 + viewPolicy 3 + viewDecay 6 + classic 1
  * + alliesInTrees 1 + voice 1 + overview 1 + lineOfSight 1
- * + smartPingsOff 1                                            = 24
+ * + smartPingsOff 1 + modsOff 1 + positionalSound 1            = 28
  */
-#define LS_PLAIN_BODY_LEN 79
+#define LS_PLAIN_BODY_LEN 83
 
 /* The three strings the scripted cases carry, and what each costs on the
  * wire: a one-byte length and that many bytes, no terminator. */
@@ -92,11 +93,11 @@
 #define LS_SCN_NAME_LEN 4
 #define LS_SCN_FILE_LEN 8
 #define LS_SCN_DESC_LEN 8
-/* source(1) + extraTeams(1), the three strings, and the base game type(1)
- * behind them. */
+/* source(1) + extraTeams(1), the three strings, and behind them the base
+ * game type(1), the kind(1), bound(1) and unsafe(1). */
 #define LS_SCRIPTED_BODY_LEN                                                \
     (LS_PLAIN_BODY_LEN + 1 + 1 + (1 + LS_SCN_NAME_LEN)                      \
-     + (1 + LS_SCN_FILE_LEN) + (1 + LS_SCN_DESC_LEN) + 1)
+     + (1 + LS_SCN_FILE_LEN) + (1 + LS_SCN_DESC_LEN) + 1 + 1 + 1 + 1)
 
 /* Distinct values throughout, so a pair of fields swapped between the event
  * and the bytes shows up as two mismatches rather than cancelling out. The
@@ -124,6 +125,8 @@ static void lsFillPlain(ControlEvent *evt) {
     evt->u.lobbySettings.lobbyAllowNewPlayers     = true;
     evt->u.lobbySettings.lobbyWbnAvailable        = true;
     evt->u.lobbySettings.uploadPolicy             = (UploadPolicy)2;
+    evt->u.lobbySettings.scriptUploadPolicy       = (ScriptUploadPolicy)1;
+    evt->u.lobbySettings.scriptSharing            = true;
     evt->u.lobbySettings.lobbyStartDelay          = 0x00000100;
     evt->u.lobbySettings.hostSlot                 = 5;
     evt->u.lobbySettings.viewPolicy[0]            = (ViewPolicy)1;
@@ -138,6 +141,8 @@ static void lsFillPlain(ControlEvent *evt) {
     evt->u.lobbySettings.lobbyOverviewWindow      = 2;
     evt->u.lobbySettings.lobbyLineOfSight         = 1;
     evt->u.lobbySettings.lobbySmartPingsOff       = true;
+    evt->u.lobbySettings.lobbyModsOff             = true;
+    evt->u.lobbySettings.lobbyPositionalSound     = true;
 }
 
 /* The same bytes the fill above should produce, written out by index. Every
@@ -169,26 +174,30 @@ static void lsWantPlain(uint8_t *want) {
     want[56] = 1;                   /* allowNewPlayers */
     want[57] = 1;                   /* wbnAvailable */
     want[58] = 2;                   /* uploadPolicy */
-    want[59] = 0x00;                /* startDelay, big-endian */
-    want[60] = 0x00;
-    want[61] = 0x01;
+    want[59] = 1;                   /* scriptUploadPolicy */
+    want[60] = 1;                   /* scriptSharing */
+    want[61] = 0x00;                /* startDelay, big-endian */
     want[62] = 0x00;
-    want[63] = 5;                   /* hostSlot */
-    want[64] = 1;                   /* viewPolicy[0] */
-    want[65] = 2;
-    want[66] = 3;
-    want[67] = 0x01;                /* viewDecaySecs[0], big-endian */
-    want[68] = 0x02;
-    want[69] = 0x03;                /* viewDecaySecs[1] */
-    want[70] = 0x04;
-    want[71] = 0x05;                /* viewDecaySecs[2] */
-    want[72] = 0x06;
-    want[73] = 1;                   /* classicMode */
-    want[74] = 1;                   /* alliesInTrees */
-    want[75] = (uint8_t)serverVoiceOff;
-    want[76] = 2;                   /* overviewWindow */
-    want[77] = 1;                   /* lineOfSight */
-    want[78] = 1;                   /* smartPingsOff */
+    want[63] = 0x01;
+    want[64] = 0x00;
+    want[65] = 5;                   /* hostSlot */
+    want[66] = 1;                   /* viewPolicy[0] */
+    want[67] = 2;
+    want[68] = 3;
+    want[69] = 0x01;                /* viewDecaySecs[0], big-endian */
+    want[70] = 0x02;
+    want[71] = 0x03;                /* viewDecaySecs[1] */
+    want[72] = 0x04;
+    want[73] = 0x05;                /* viewDecaySecs[2] */
+    want[74] = 0x06;
+    want[75] = 1;                   /* classicMode */
+    want[76] = 1;                   /* alliesInTrees */
+    want[77] = (uint8_t)serverVoiceOff;
+    want[78] = 2;                   /* overviewWindow */
+    want[79] = 1;                   /* lineOfSight */
+    want[80] = 1;                   /* smartPingsOff */
+    want[81] = 1;                   /* modsOff */
+    want[82] = 1;                   /* positionalSound */
 }
 
 /* Where the first byte that differs is, or -1 when they match. */
@@ -253,6 +262,9 @@ int run_lobby_scenario_settings_scripted_bytes(void) {
              sizeof(in.u.lobbySettings.scenarioDescription), "%s", LS_SCN_DESC);
     in.u.lobbySettings.scenarioExtraTeams = true;
     in.u.lobbySettings.scenarioBaseGame   = (uint8_t)gameStrictTournament;
+    /* True, so its byte is a 1 among the zeros of the two flags before it
+       and a byte written in the wrong place shows. */
+    in.u.lobbySettings.scenarioUnsafe     = true;
 
     UT_ASSERT(benc(&in, NULL, got, sizeof(got), &gotLen) == ENCODE_OK);
     UT_ASSERT_MSG(gotLen == LS_SCRIPTED_BODY_LEN,
@@ -274,13 +286,32 @@ int run_lobby_scenario_settings_scripted_bytes(void) {
     want[pos++] = LS_SCN_DESC_LEN;
     memcpy(want + pos, LS_SCN_DESC, LS_SCN_DESC_LEN);
     pos += LS_SCN_DESC_LEN;
-    /* 79 + source 1 + extraTeams 1 + (1 + 4) + (1 + 8) + (1 + 8) = 104: the
-       base game type is last of the tail, so nothing ahead of it moved when
-       it was added. */
-    UT_ASSERT_MSG(pos == 104,
-                  "the base game type should be at offset 104, not %u",
+    /* 83 + source 1 + extraTeams 1 + (1 + 4) + (1 + 8) + (1 + 8) = 108. The
+       whole tail sits one byte later each time a byte joins the base, because
+       the tail follows the base. Nothing inside the tail moved against
+       anything else in it. */
+    UT_ASSERT_MSG(pos == 108,
+                  "the base game type should be at offset 108, not %u",
                   (unsigned)pos);
     want[pos++] = (uint8_t)gameStrictTournament;
+    /* And the kind last of all. Zero here: this event is a scenario, which
+       is what a sender that predates the byte can only have been. */
+    UT_ASSERT_MSG(pos == 109,
+                  "the scenario kind should be at offset 109, not %u",
+                  (unsigned)pos);
+    want[pos++] = 0;
+    /* And bound behind the kind. False here: lsFillPlain leaves it clear,
+       and a sender that predates the byte can only have meant false. */
+    UT_ASSERT_MSG(pos == 110,
+                  "the bound flag should be at offset 110, not %u",
+                  (unsigned)pos);
+    want[pos++] = 0;
+    /* And the script mode behind bound: 1, since the event above says this
+       server runs its scripts without the sandbox. */
+    UT_ASSERT_MSG(pos == 111,
+                  "the unsafe flag should be at offset 111, not %u",
+                  (unsigned)pos);
+    want[pos++] = 1;
     UT_ASSERT_MSG(pos == LS_SCRIPTED_BODY_LEN,
                   "the case's own expected bytes came to %u, not %d",
                   (unsigned)pos, LS_SCRIPTED_BODY_LEN);
@@ -313,6 +344,12 @@ int run_lobby_scenario_settings_roundtrip(void) {
              sizeof(in.u.lobbySettings.scenarioDescription), "%s", LS_SCN_DESC);
     in.u.lobbySettings.scenarioExtraTeams = true;
     in.u.lobbySettings.scenarioBaseGame   = (uint8_t)gameStrictTournament;
+    /* True, so the trip is made with the value that is not the one an absent
+       byte leaves behind: a byte nobody wrote reads as a scenario, and this
+       case has to fail if the encoder stopped writing it. */
+    in.u.lobbySettings.scenarioKeepsWinCondition = true;
+    /* True for the same reason: a byte nobody wrote reads as sandboxed. */
+    in.u.lobbySettings.scenarioUnsafe = true;
 
     UT_ASSERT(benc(&in, NULL, body, sizeof(body), &bodyLen) == ENCODE_OK);
     memset(&out, 0, sizeof(out));
@@ -338,9 +375,32 @@ int run_lobby_scenario_settings_roundtrip(void) {
                   "the base game type came back as %u, wanted %u",
                   (unsigned)out.u.lobbySettings.scenarioBaseGame,
                   (unsigned)gameStrictTournament);
+    UT_ASSERT_MSG(out.u.lobbySettings.scenarioKeepsWinCondition,
+                  "the scenario kind did not survive: the mod flag came back "
+                  "false");
+    UT_ASSERT_MSG(out.u.lobbySettings.scenarioUnsafe,
+                  "the script mode did not survive: the unsafe flag came back "
+                  "false");
+
+    /* The same body one byte short, as a sender that predates the unsafe
+       byte writes it. Everything up to bound still decodes, and the mode
+       reads as sandboxed. */
+    {
+        ControlEvent shortOut;
+        memset(&shortOut, 0, sizeof(shortOut));
+        UT_ASSERT_MSG(bdec(body, bodyLen - 1, &shortOut),
+                      "a body without the unsafe byte did not decode");
+        UT_ASSERT_MSG(!shortOut.u.lobbySettings.scenarioUnsafe,
+                      "a body without the unsafe byte decoded as unsafe");
+        UT_ASSERT_MSG(shortOut.u.lobbySettings.scenarioKeepsWinCondition,
+                      "a body without the unsafe byte lost the scenario kind "
+                      "ahead of it");
+    }
+
     /* And the fields ahead of the tail are still themselves. */
     UT_ASSERT(out.u.lobbySettings.lobbyLineOfSight == 1);
     UT_ASSERT(out.u.lobbySettings.lobbySmartPingsOff == true);
+    UT_ASSERT(out.u.lobbySettings.lobbyModsOff == true);
     UT_ASSERT(out.u.lobbySettings.voiceMode == serverVoiceOff);
     UT_ASSERT(out.u.lobbySettings.lobbyServerLocks == 0xAABBCCDDu);
 
@@ -372,7 +432,7 @@ int run_lobby_scenario_settings_roundtrip(void) {
  * what the commit path reads. */
 static ServerSim *lsLobbySim(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) return NULL;
     serverSimSetLobbyEnabled(sim, true);
@@ -381,7 +441,8 @@ static ServerSim *lsLobbySim(void) {
 
 static void lsAttachIdentity(ServerSim *sim) {
     serverSimSetScenarioIdentity(sim, lobbyScenarioMap, LS_SCN_NAME,
-                                 LS_SCN_FILE, LS_SCN_DESC, true);
+                                 LS_SCN_FILE, LS_SCN_DESC, true,
+                                 false, false, false);
 }
 
 /* Commit a map. Which map does not matter here — what matters is that the
@@ -435,7 +496,7 @@ int run_lobby_scenario_commit_sets_type(void) {
     UT_ASSERT(serverSimGetGameType(sim) == gameScripted);
 
     serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
-                                 false);
+                                 false, false, false, false);
     UT_ASSERT_MSG(lsCommitMap(sim), "the plain commit was refused");
     UT_ASSERT_MSG(serverSimGetGameType(sim) == gameTournament,
                   "a plain map gave back game type %d, wanted the host's "
@@ -518,7 +579,7 @@ int run_lobby_scenario_reset_keeps_rules(void) {
     /* And what the reset remembered as displaced is the operator's own type,
        which is what a plain map committed from here gives back. */
     serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
-                                 false);
+                                 false, false, false, false);
     UT_ASSERT_MSG(lsCommitMap(sim), "the plain commit was refused");
     UT_ASSERT_MSG(serverSimGetGameType(sim) == gameTournament,
                   "a plain map after the reset gave back game type %d, wanted "
@@ -573,7 +634,7 @@ int run_lobby_scenario_refuses_ranked(void) {
 
     /* With the scenario gone it is the host's again. */
     serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
-                                 false);
+                                 false, false, false, false);
     UT_ASSERT_MSG(serverSimApplyLobbySetting(sim, LST_RANKED, &on, 1),
                   "ranked stayed refused after the scenario went");
     UT_ASSERT(serverSimGetRanked(sim));
@@ -702,7 +763,7 @@ int run_lobby_scenario_refuses_game_type(void) {
 
     /* With the scenario gone the type is the host's again. */
     serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
-                                 false);
+                                 false, false, false, false);
     UT_ASSERT_MSG(serverSimApplyLobbySetting(sim, LST_GAME_TYPE, &types[1], 1),
                   "the game type stayed refused after the scenario went");
     UT_ASSERT(serverSimGetGameType(sim) == gameTournament);
@@ -743,7 +804,7 @@ int run_lobby_scenario_boot_sets_type(void) {
 
     /* And the give-back works from here as it does after a commit. */
     serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
-                                 false);
+                                 false, false, false, false);
     UT_ASSERT_MSG(lsCommitMap(sim), "the plain commit was refused");
     UT_ASSERT_MSG(serverSimGetGameType(sim) == gameTournament,
                   "a plain commit after a boot gave back game type %d, "
@@ -791,7 +852,8 @@ int run_lobby_scenario_identity_strips_controls(void) {
                   "setup: the two fixtures must be the same length");
 
     serverSimSetScenarioIdentity(sim, lobbyScenarioMap, "Wave\tDefense",
-                                 "wave\vdefense.lua", kDesc, true);
+                                 "wave\vdefense.lua", kDesc, true, false,
+                                 false, false);
     memset(&evt, 0, sizeof(evt));
     serverSimFillLobbySettingsEvent(sim, &evt);
 

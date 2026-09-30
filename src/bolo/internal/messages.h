@@ -205,8 +205,11 @@ BYTE messageGetNewMessage(MessageState *ms, char *dest, uint32_t **playerBitmap)
 *  the brain ever reads it — the root cause of why
 *  aIndy-style ally coordination is fragile under load.
 *
-*  Producers (clientMessageAdd's playerNMessage paths)
-*  call messageInboxPush; the brain drains the entire ring
+*  Producers (clientMessageAdd's playerNMessage paths on
+*  both builds, and botManagerDeliverInternalMessage) all
+*  go through messageInboxPushLine, which is the one place
+*  a line is clamped and Pascal-stringified; the brain
+*  drains the entire ring
 *  each tick via messageInboxCount + messageInboxPeek (or
 *  brainDataMakeInfo which does the drain centrally and
 *  populates BrainInfo.messages).
@@ -216,10 +219,26 @@ BYTE messageGetNewMessage(MessageState *ms, char *dest, uint32_t **playerBitmap)
 *  the legacy newMessage buffer convention.
 *********************************************************/
 
+/* Every body below lives in src/bolo/message_inbox.c, which every build
+ * links — including the dedicated server, which cannot link messages.c
+ * because that file draws the message HUD. Before the split the server's
+ * stub file carried a hand-copied second ring and a third copy of the push,
+ * which is the asymmetric-runtime bug class docs/ARCHITECTURE.md exists to
+ * prevent; it had already bitten once, when the stubs were no-ops and every
+ * hosted bot's inbox silently stayed empty. */
+
 /* Append one (sender, Pascal-string) pair to the inbox. When the
  * ring is full, drops the OLDEST entry. text must already be in
  * Pascal-string form (byte 0 = length). */
 void messageInboxPush(MessageState *ms, BYTE from, const char *pascalText);
+
+/* THE one way a line of ordinary text becomes an inbox entry: clamps it to
+ * what a slot holds, puts the length byte on the front, and pushes. Every
+ * producer goes through this — clientMessageAdd's playerNMessage arms in
+ * messages.c, the same arm in the dedicated server's stub file, and
+ * botManagerDeliverInternalMessage, which used to Pascal-stringify by hand.
+ * `from` is the SENDER's slot, which is what a brain's team check reads. */
+void messageInboxPushLine(MessageState *ms, BYTE from, const char *text);
 
 /* Returns current population (0..BRAIN_INBOX_CAP). */
 int  messageInboxCount(const MessageState *ms);

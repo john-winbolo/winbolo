@@ -20,6 +20,13 @@ static NSMenu       *s_me_savedMainMenu = nil;
  * detach occurred and need to be reattached by uninstall. */
 static NSMenuItem   *s_me_hostAppItem    = nil;
 static NSMenu       *s_me_hostAppSubmenu = nil;
+/* The app menu's Preferences item while the editor is up. Taken over from
+ * the host: the item plus the target and action to hand back. Added by the
+ * editor: the item alone, removed again by uninstall. */
+static NSMenuItem   *s_me_prefsItem       = nil;
+static id            s_me_prefsHostTarget = nil;
+static SEL           s_me_prefsHostAction = NULL;
+static BOOL          s_me_prefsAdded      = NO;
 /* Standalone-only state used by the File menu's accelerator-resolution
  * step in refresh. */
 static BOOL          s_me_embedded       = NO;
@@ -68,6 +75,7 @@ static NSMenuItem *s_me_winObjectsItem    = nil;
 static NSMenuItem *s_me_winOverviewItem   = nil;
 static NSMenuItem *s_me_winStatsItem      = nil;
 static NSMenuItem *s_me_winStampLibItem   = nil;
+static NSMenuItem *s_me_winScenarioItem   = nil;
 static NSMenu     *s_me_recentMenu        = nil;
 static NSMenuItem *s_me_recentRootItem    = nil;
 static NSMenu     *s_me_zoomMenu          = nil;
@@ -126,10 +134,18 @@ static int s_me_lastScopeIsSelection = -1; /* -1 forces first refresh */
 - (void)onToggleOverview:(id)sender;
 - (void)onToggleStats:(id)sender;
 - (void)onToggleStampLibrary:(id)sender;
+- (void)onToggleScenario:(id)sender;
+- (void)onSettings:(id)sender;
 @end
 
 @implementation MEMenuBridge
-- (void)onQuit:(id)sender { (void)sender; s_me_pending.wantExit = true; }
+- (void)onQuit:(id)sender {
+    (void)sender;
+    /* Quit and Return to Menu both leave the editor; only this one goes on to
+     * end the application. */
+    s_me_pending.wantExit = true;
+    s_me_pending.wantQuitApp = true;
+}
 - (void)onNew:(id)sender { (void)sender; s_me_pending.wantNew = true; }
 - (void)onOpen:(id)sender { (void)sender; s_me_pending.wantOpen = true; }
 #ifdef MAPEDITOR_WBN_OPEN
@@ -175,6 +191,8 @@ static int s_me_lastScopeIsSelection = -1; /* -1 forces first refresh */
 - (void)onToggleOverview:(id)sender { (void)sender; s_me_pending.wantToggleOverview = true; }
 - (void)onToggleStats:(id)sender { (void)sender; s_me_pending.wantToggleStats = true; }
 - (void)onToggleStampLibrary:(id)sender { (void)sender; s_me_pending.wantToggleStampLibrary = true; }
+- (void)onToggleScenario:(id)sender { (void)sender; s_me_pending.wantToggleScenario = true; }
+- (void)onSettings:(id)sender { (void)sender; s_me_pending.wantSettings = true; }
 @end
 
 /* ----------------------------------------------------------------------------
@@ -251,10 +269,54 @@ static void me_reuseHostAppMenu(NSMenu *mainMenu, NSMenu *hostMain) {
     }
 }
 
+/* Point the app menu's Preferences item at the editor. WinBolo's own item
+ * (onPreferences:) opens the in-game settings overlay, which the editor does
+ * not draw, so it is taken over for the editor's run. Before a game has
+ * started WinBolo's menu bar is not installed yet and the app menu is SDL's,
+ * which has no such item, so one is added. */
+static void me_attachSettingsItem(NSMenu *appMenu) {
+    if (appMenu == nil) return;
+    for (NSMenuItem *it in [appMenu itemArray]) {
+        if ([it action] == NSSelectorFromString(@"onPreferences:")) {
+            s_me_prefsItem       = it;
+            s_me_prefsHostTarget = [it target];
+            s_me_prefsHostAction = [it action];
+            s_me_prefsAdded      = NO;
+            [it setTarget:s_me_bridge];
+            [it setAction:@selector(onSettings:)];
+            return;
+        }
+    }
+    NSMenuItem *prefsItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_MENU_PREFERENCES)
+        action:@selector(onSettings:)
+        keyEquivalent:@","];
+    [prefsItem setTarget:s_me_bridge];
+    /* After About when there is one, as in WinBolo's own app menu. */
+    NSInteger at = ([appMenu numberOfItems] > 0) ? 1 : 0;
+    [appMenu insertItem:prefsItem atIndex:at];
+    s_me_prefsItem  = prefsItem;
+    s_me_prefsAdded = YES;
+}
+
+static void me_detachSettingsItem(void) {
+    if (s_me_prefsItem == nil) return;
+    if (s_me_prefsAdded) {
+        [[s_me_prefsItem menu] removeItem:s_me_prefsItem];
+    } else {
+        [s_me_prefsItem setTarget:s_me_prefsHostTarget];
+        [s_me_prefsItem setAction:s_me_prefsHostAction];
+    }
+    s_me_prefsItem       = nil;
+    s_me_prefsHostTarget = nil;
+    s_me_prefsHostAction = NULL;
+    s_me_prefsAdded      = NO;
+}
+
 /* ----------------------------------------------------------------------------
  * me_mac_menubar_install — build and install.
  * ---------------------------------------------------------------------------- */
-void me_mac_menubar_install(struct SDL_Window *win) {
+void me_mac_menubar_install(struct SDL_Window *win, bool hasSettings) {
     (void)win;
 
     if (s_me_bridge == nil) {
@@ -274,6 +336,9 @@ void me_mac_menubar_install(struct SDL_Window *win) {
         me_reuseHostAppMenu(mainMenu, previousMain);
     } else {
         me_buildStandaloneAppMenu(mainMenu);
+    }
+    if (hasSettings) {
+        me_attachSettingsItem([[mainMenu itemAtIndex:0] submenu]);
     }
 
     /* ------------------------------------------------------------------
@@ -642,6 +707,14 @@ void me_mac_menubar_install(struct SDL_Window *win) {
     [windowMenu addItem:winStats];
     s_me_winStatsItem = winStats;
 
+    NSMenuItem *winScenario = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_MAPEDIT_SCENARIO_TITLE)
+        action:@selector(onToggleScenario:)
+        keyEquivalent:@"8"];
+    [winScenario setTarget:s_me_bridge];
+    [windowMenu addItem:winScenario];
+    s_me_winScenarioItem = winScenario;
+
     /* Force first-refresh rebuilds for the dynamic submenus. */
     s_me_lastRecentCount      = -1;
     s_me_lastZoomCount        = -1;
@@ -654,6 +727,10 @@ void me_mac_menubar_install(struct SDL_Window *win) {
  * me_mac_menubar_uninstall — restore.
  * ---------------------------------------------------------------------------- */
 void me_mac_menubar_uninstall(void) {
+    /* Before the app menu goes back to the host, while the item is still
+     * where it was found or put. */
+    me_detachSettingsItem();
+
     /* Reattach the host's app submenu to its original NSMenuItem so
      * the host gets its app menu back as soon as NSApp swaps mainMenu. */
     if (s_me_hostAppItem && s_me_hostAppSubmenu) {
@@ -695,6 +772,7 @@ void me_mac_menubar_uninstall(void) {
     s_me_winOverviewItem   = nil;
     s_me_winStatsItem      = nil;
     s_me_winStampLibItem   = nil;
+    s_me_winScenarioItem   = nil;
     s_me_recentMenu        = nil;
     s_me_recentRootItem    = nil;
     s_me_zoomMenu          = nil;
@@ -782,6 +860,8 @@ void me_mac_menubar_refresh(const struct MeMenuState *s) {
         [s_me_winStatsItem setState:(s->showStats ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_me_winStampLibItem)
         [s_me_winStampLibItem setState:(s->showStampLibrary ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_me_winScenarioItem)
+        [s_me_winScenarioItem setState:(s->showScenario ? NSControlStateValueOn : NSControlStateValueOff)];
 
     /* Recent Files — rebuild whenever the count changes. The slot's
      * title shows just the basename; the full path goes into the
@@ -876,6 +956,7 @@ void me_mac_menubar_consume_actions(MapEditorMenuAction *action) {
 
     /* Boolean flags — straight copies (pending was reset to false). */
     action->wantExit            = s_me_pending.wantExit;
+    action->wantQuitApp         = s_me_pending.wantQuitApp;
     action->wantNew             = s_me_pending.wantNew;
     action->wantOpen            = s_me_pending.wantOpen;
     action->wantOpenWbn         = s_me_pending.wantOpenWbn;
@@ -910,6 +991,8 @@ void me_mac_menubar_consume_actions(MapEditorMenuAction *action) {
     action->wantToggleOverview  = s_me_pending.wantToggleOverview;
     action->wantToggleStats     = s_me_pending.wantToggleStats;
     action->wantToggleStampLibrary = s_me_pending.wantToggleStampLibrary;
+    action->wantToggleScenario  = s_me_pending.wantToggleScenario;
+    action->wantSettings        = s_me_pending.wantSettings;
 
     if (s_me_pending.wantZoomSet) {
         action->zoomSetIndex = s_me_pending.zoomSetIndex;
@@ -919,4 +1002,8 @@ void me_mac_menubar_consume_actions(MapEditorMenuAction *action) {
     }
 
     me_pending_reset();
+}
+
+void me_mac_menubar_drop_settings_request(void) {
+    s_me_pending.wantSettings = false;
 }

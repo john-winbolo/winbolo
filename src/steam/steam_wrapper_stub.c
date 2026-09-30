@@ -76,6 +76,11 @@ bool steam_workshop_item(int idx, uint64_t *id, char *folder,
   return false;
 }
 
+bool steam_workshop_item_disabled(uint64_t id) {
+  (void)id;
+  return false;
+}
+
 void steam_workshop_request_download(uint64_t id) {
   (void)id;
 }
@@ -86,12 +91,13 @@ void steam_workshop_open_browse_page(void) {}
 
 bool steam_workshop_publish_begin(const char *contentFolder, const char *title,
                                   const char *description, const char *previewPng,
-                                  uint64_t existingId) {
+                                  uint64_t existingId, const char *tag) {
   (void)contentFolder;
   (void)title;
   (void)description;
   (void)previewPng;
   (void)existingId;
+  (void)tag;
   return false;
 }
 

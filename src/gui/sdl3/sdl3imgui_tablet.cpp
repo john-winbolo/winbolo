@@ -52,6 +52,7 @@ extern "C" {
 #include "input_touch.h"
 #include "sdl3draw.h"
 #include "build_cursor.h"
+#include "scenario_panel_slot.h"
 }
 
 #include "sdl3imgui.h"
@@ -292,6 +293,11 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   if (cfg->scrollJoyOuterRadius > gutterW * 0.30f) cfg->scrollJoyOuterRadius = gutterW * 0.30f;
   if (cfg->scrollJoyOuterRadius < 20.0f * pixelScale) cfg->scrollJoyOuterRadius = 20.0f * pixelScale;
   cfg->scrollJoyInnerRadius = cfg->scrollJoyOuterRadius * 0.42f;
+
+  /* --- Scenario panel — top-right of the game view, left of the gutter --- */
+  scnPanelSlotRect(screenW, screenH, (float)viewportX, (float)viewportY,
+                   (float)viewportW, (float)viewportH, pad,
+                   &cfg->scnSlotX, &cfg->scnSlotY, &cfg->scnSlotSide);
 }
 
 /* Drop the view buttons whose category the server turned off and stack the
@@ -1428,6 +1434,53 @@ static void registerTouchButtons(void) {
 }
 
 /* -------------------------------------------------------
+ * Scenario panel — the square a scenario draws in, fixed
+ * in the game view's top-right corner. The desktop's
+ * movable window is not drawn in tablet mode; this takes
+ * its place, with no title, grip or settings.
+ * ------------------------------------------------------- */
+
+static void renderScenarioSlot(ClientSim *cs) {
+  if (s_cfg.scnSlotSide <= 0.0f || !sdl3ImguiScnPanelShown(cs)) return;
+
+  float side = s_cfg.scnSlotSide;
+  ImGui::SetNextWindowPos(ImVec2(s_cfg.scnSlotX, s_cfg.scnSlotY));
+  ImGui::SetNextWindowSize(ImVec2(side, side));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+
+  /* NoInputs so the window is never hovered: a tap on the square falls
+     through to the map under it, to build or scroll there as it would with
+     no panel. NoBackground because the backing is drawn with the list.
+     NoBringToFrontOnFocus keeps it behind every other window. */
+  if (ImGui::Begin("##ScenarioSlot", nullptr,
+                   ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                   ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                   ImGuiWindowFlags_NoScrollWithMouse |
+                   ImGuiWindowFlags_NoCollapse |
+                   ImGuiWindowFlags_NoSavedSettings |
+                   ImGuiWindowFlags_NoBackground |
+                   ImGuiWindowFlags_NoInputs |
+                   ImGuiWindowFlags_NoFocusOnAppearing |
+                   ImGuiWindowFlags_NoBringToFrontOnFocus |
+                   ImGuiWindowFlags_NoDocking)) {
+    ImVec2 pos = ImGui::GetWindowPos();
+    sdl3ImguiScnPanelDraw(cs, pos.x, pos.y, side, 1.0f, true);
+  }
+  ImGui::End();
+  ImGui::PopStyleVar(2);
+}
+
+void sdl3ImguiTabletNewGame(void) {
+  s_lastMsgTop[0] = '\0';
+  s_lastMsgBottom[0] = '\0';
+  s_msgLastChangeTime = 0;
+  s_msgTimerInitialized = false;
+  s_prevArmour = 0;
+  s_armourInitialized = false;
+}
+
+/* -------------------------------------------------------
  * Main overlay entry point
  * ------------------------------------------------------- */
 
@@ -1503,6 +1556,7 @@ void sdl3ImguiTabletOverlay(ClientSim *cs) {
     }
   }
 
+  renderScenarioSlot(cs);
   renderJoystickOverlay();
   renderScrollJoystickOverlay();
   renderFireMineButtons();

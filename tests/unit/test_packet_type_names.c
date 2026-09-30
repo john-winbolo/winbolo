@@ -6,6 +6,8 @@
  * accidental edit to the production table is caught here. An undefined
  * type id must fall through to "UNKNOWN".
  */
+#include <stddef.h>
+#include <stdint.h>
 #include <string.h>
 
 #include "transport_udp_internal.h"  /* packetTypeName */
@@ -61,6 +63,9 @@
     X(PACKET_LOBBY_BOT_BRAIN_CHG, "LOBBY_BOT_BRAIN_CHG") \
     X(PACKET_LOBBY_BRAIN_LIST, "LOBBY_BRAIN_LIST") \
     X(PACKET_LOBBY_SET_MAP, "LOBBY_SET_MAP") \
+    X(PACKET_LOBBY_SET_SCENARIO, "LOBBY_SET_SCENARIO") \
+    X(PACKET_SET_SCRIPT_LIST, "SET_SCRIPT_LIST") \
+    X(PACKET_SET_SCRIPT_SETTING, "SET_SCRIPT_SETTING") \
     X(PACKET_LOBBY_SET_PASSWORD, "LOBBY_SET_PASSWORD") \
     X(PACKET_LOBBY_MAP_LIST_REQ, "LOBBY_MAP_LIST_REQ") \
     X(PACKET_LOBBY_MAP_LIST_RSP, "LOBBY_MAP_LIST_RSP") \
@@ -75,6 +80,12 @@
     X(PACKET_LOBBY_MAP_PREVIEW_ERR, "LOBBY_MAP_PREVIEW_ERR") \
     X(PACKET_LOBBY_PREVIEW_CANCEL, "LOBBY_PREVIEW_CANCEL") \
     X(PACKET_LOBBY_RELOAD_SCENARIO, "LOBBY_RELOAD_SCENARIO") \
+    X(PACKET_LOBBY_SCENARIO_LIST_REQ, "LOBBY_SCENARIO_LIST_REQ") \
+    X(PACKET_LOBBY_SCENARIO_LIST_RSP, "LOBBY_SCENARIO_LIST_RSP") \
+    X(PACKET_LOBBY_SCENARIO_DETAILS_REQ, "LOBBY_SCENARIO_DETAILS_REQ") \
+    X(PACKET_LOBBY_BRAIN_DOCS_REQ, "LOBBY_BRAIN_DOCS_REQ") \
+    X(PACKET_LOBBY_BOT_POOL_REQ, "LOBBY_BOT_POOL_REQ") \
+    X(PACKET_LOBBY_SCRIPT_FETCH_REQ, "LOBBY_SCRIPT_FETCH_REQ") \
     X(PACKET_LOBBY_PREVIEW_COMMIT, "LOBBY_PREVIEW_COMMIT") \
     X(PACKET_LOBBY_PREVIEW_RANDOM, "LOBBY_PREVIEW_RANDOM") \
     X(PACKET_LOBBY_CLAIM_START, "LOBBY_CLAIM_START") \
@@ -102,7 +113,10 @@
     X(PACKET_COMMAND_REJECTED, "COMMAND_REJECTED") \
     X(PACKET_BALANCE_FAILED, "BALANCE_FAILED") \
     X(PACKET_MAP_DL_READY, "MAP_DL_READY") \
-    X(PACKET_MAP_PING, "MAP_PING")
+    X(PACKET_PLAYER_MUTE, "PLAYER_MUTE") \
+    X(PACKET_VOICE_STATE, "VOICE_STATE") \
+    X(PACKET_MAP_PING, "MAP_PING") \
+    X(PACKET_PLAYER_PING_MUTE, "PLAYER_PING_MUTE")
 
 int run_packet_type_names(void) {
     /* Every mapped type returns its exact name. */
@@ -112,8 +126,39 @@ int run_packet_type_names(void) {
     PACKET_NAME_TABLE(X)
 #undef X
 
-    /* 250 is not a defined PACKET_* (ids top out at 204), so it resolves to
-     * the default arm. */
+    /* And the other direction, which is what makes this an oracle rather
+     * than a subset: every id the production table names has a row in the
+     * copy above. Without it an entry added there and not here passes,
+     * because the loop above only walks what this copy holds. */
+    {
+        static const struct {
+            uint8_t     id;
+            const char *name;
+        } kRows[] = {
+#define X(sym, str) { (uint8_t)(sym), (str) },
+            PACKET_NAME_TABLE(X)
+#undef X
+        };
+        const size_t kRowCount = sizeof(kRows) / sizeof(kRows[0]);
+        int          id;
+
+        for (id = 0; id <= 255; id++) {
+            const char *prod = packetTypeName((uint8_t)id);
+            size_t      i;
+            int         held = 0;
+
+            if (strcmp(prod, "UNKNOWN") == 0) continue;
+            for (i = 0; i < kRowCount; i++) {
+                if (kRows[i].id == (uint8_t)id) { held = 1; break; }
+            }
+            UT_ASSERT_MSG(held,
+                          "packet id %d is \"%s\" in the production table "
+                          "and has no row in this test's copy", id, prod);
+        }
+    }
+
+    /* 250 is not a defined PACKET_* (the ids in use top out at 227), so it
+     * resolves to the default case. */
     UT_ASSERT_MSG(strcmp(packetTypeName(250), "UNKNOWN") == 0,
                   "unmapped packet type should be UNKNOWN");
     return 0;

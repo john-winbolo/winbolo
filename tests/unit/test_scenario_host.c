@@ -21,7 +21,14 @@
  * run_scenario_host_api_too_new       — an api above this server's is
  *                                       refused; equal and below are not
  * run_scenario_host_no_script        — no script is not an error
+ * run_scenario_host_trigger_manifest — the triggers a script's table states,
+ *                                      filling the struct with what the same
+ *                                      two fill from manifest.json
  * run_scenario_host_manifest_roundtrip— tags, regions and several teams
+ * run_scenario_host_team_init_read    — a team's init table reaches the
+ *                                       manifest and the sim's template, and
+ *                                       a pair that will not fit costs that
+ *                                       pair and is named on the team
  * run_scenario_host_seed_reproducible — math.random is seeded from the
  *                                       process PRNG state, reproducibly
  * run_scenario_host_edit_after_attach — the script is read once, so an
@@ -92,6 +99,20 @@
  *                                       own top level issued reaches the
  *                                       round's hook at the first drain
  *
+ * and what a file that declared itself a mod may not do:
+ *
+ * run_scenario_host_mod_round_op_raises
+ *                                     — a mod calling one of the ops that
+ *                                       decide the round raises, naming the
+ *                                       op; a scenario calling the same ones
+ *                                       does not
+ * run_scenario_host_mod_load_refusals — a mod whose trigger action names one
+ *                                       of them, and a mod naming a game
+ *                                       type, are refused as the file loads
+ * run_scenario_host_kind_word         — the four things kind can say: the
+ *                                       two words, nothing at all, and a
+ *                                       word that is neither
+ *
  * and the switch that decides whether a script is loaded at all:
  *
  * run_scenario_host_disabled_refuses_script
@@ -129,6 +150,12 @@
 
 #include <SDL3/SDL.h>
 
+/* The three cases at the bottom drive the load primitives straight, with two
+ * scripts in one state, because a host loads one script until the list can be
+ * selected. */
+#include <lua.h>
+#include <lauxlib.h>
+
 #include "global.h"
 #include "bolo_rand.h"             /* bolo_srand — the seeding case */
 #include "server_sim.h"
@@ -148,6 +175,9 @@
                                            * through */
 #include "scenario_host.h"
 #include "scenario_manifest.h"
+#include "scenario_manifest_json.h" /* scnManifestParse — the other form of
+                                     * the table the trigger case reads */
+#include "scenario_validate.h"    /* scenarioHostManifest */
 #include "test_harness.h"
 
 /* ── Fixtures ─────────────────────────────────────────────────────── */
@@ -183,7 +213,7 @@ static void shDrop(const char *mapPath) {
 /* A sim that has not started, ready to be attached to and then started. */
 static ServerSim *shSim(void) {
     BYTE       emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) {
         return NULL;
@@ -369,7 +399,7 @@ int run_scenario_host_metadata(void) {
         "    max_players = 6,\n"
         "    extra_teams = false,\n"
         "    teams = { { id = 2, bots = 10, max_bots = 12, fielded = false,\n"
-        "                brain = \"package:horde\" } },\n"
+        "                brain = \"package:raider\" } },\n"
         "  },\n"
         "}\n";
     ServerSim              *sim;
@@ -407,7 +437,7 @@ int run_scenario_host_metadata(void) {
     UT_ASSERT_MSG(m->lobby.teams[0].maxBots == 12, "max_bots read as %u",
                   (unsigned)m->lobby.teams[0].maxBots);
     UT_ASSERT_MSG(!m->lobby.teams[0].fielded, "fielded read as true");
-    UT_ASSERT_MSG(strcmp(m->lobby.teams[0].brain, "package:horde") == 0,
+    UT_ASSERT_MSG(strcmp(m->lobby.teams[0].brain, "package:raider") == 0,
                   "brain read as '%s'", m->lobby.teams[0].brain);
 
     scenarioHostDetach(h);
@@ -685,7 +715,7 @@ int run_scenario_host_manifest_roundtrip(void) {
         "    max_players = 8, extra_teams = true,\n"
         "    teams = {\n"
         "      { id = 2, bots = 3, max_bots = 5, fielded = false,\n"
-        "        brain = \"package:horde\" },\n"
+        "        brain = \"package:raider\" },\n"
         "      { id = 3, bots = 1, max_bots = 2, fielded = true,\n"
         "        brain = \"brains/idle.lua\" },\n"
         "    },\n"
@@ -777,6 +807,731 @@ int run_scenario_host_manifest_roundtrip(void) {
                       reg->h == 40,
                   "'moat' read as x %u y %u w %u h %u", (unsigned)reg->x,
                   (unsigned)reg->y, (unsigned)reg->w, (unsigned)reg->h);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
+/* ── 7a2. Triggers, in both forms ─────────────────────────────────── */
+
+/* The line an announce carries, past SCN_TRIGGER_NAME_LEN so that it lands
+   on the action's own text rather than in the argument slot. */
+static const char kShLongLine[] =
+    "The ring holds and the wave is turned back short of the keep";
+
+/* The same two triggers written both ways: the scenario table a script
+   declares, and the manifest.json a package carries. Between them they hold
+   all four value kinds, an in and an eq, and the long line.
+
+   The point of the case is that the two spellings mean one thing, so both
+   are stated here rather than one being reached for across files. */
+static const char *const kShTriggerLua =
+    "scenario = {\n"
+    "  name = \"Trigger trial\", api = 1,\n"
+    "  triggers = {\n"
+    "    { when = \"on_base_captured\",\n"
+    "      where = { { \"new_team\", \"eq\", 1 },\n"
+    "                { \"tag\", \"in\", \"outer_base\" } },\n"
+    "      actions = { { \"announce\",\n"
+    "                    \"The ring holds and the wave is turned back short "
+    "of the keep\",\n"
+    "                    5 },\n"
+    "                  { \"set_score\", { field = \"new\" }, 10 } } },\n"
+    "    { when = \"on_tick\",\n"
+    "      where = { { \"scripted\", \"eq\", false } },\n"
+    "      actions = { { \"log\", \"tick\" } } },\n"
+    "  },\n"
+    "}\n";
+
+static const char kShTriggerJson[] =
+    "{\n"
+    "  \"manifest\": 1,\n"
+    "  \"api\": 1,\n"
+    "  \"name\": \"Trigger trial\",\n"
+    "  \"triggers\": [\n"
+    "    { \"when\": \"on_base_captured\",\n"
+    "      \"where\": [ [\"new_team\", \"eq\", 1],\n"
+    "                   [\"tag\", \"in\", \"outer_base\"] ],\n"
+    "      \"actions\": [ [\"announce\",\n"
+    "                      \"The ring holds and the wave is turned back short "
+    "of the keep\", 5],\n"
+    "                     [\"set_score\", { \"field\": \"new\" }, 10] ] },\n"
+    "    { \"when\": \"on_tick\",\n"
+    "      \"where\": [ [\"scripted\", \"eq\", false] ],\n"
+    "      \"actions\": [ [\"log\", \"tick\"] ] }\n"
+    "  ]\n"
+    "}\n";
+
+int run_scenario_host_trigger_manifest(void) {
+    static const char *const kMap = "scnhost_triggers.map";
+    ServerSim               *sim;
+    ScenarioHost            *h;
+    const ScenarioManifest  *m;
+    const ScnTrigger        *t;
+    const ScnTrigAct        *a;
+    ScnManifestDoc          *doc;
+    char                     err[512];
+
+    UT_ASSERT(shPut(kMap, kShTriggerLua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+
+    UT_ASSERT_MSG(m->numTriggers == 2, "%u triggers, expected 2",
+                  (unsigned)m->numTriggers);
+
+    /* The first: a number against eq, a short string against in. */
+    t = &m->triggers[0];
+    UT_ASSERT_MSG(strcmp(t->when, "on_base_captured") == 0,
+                  "the first trigger runs on '%s'", t->when);
+    UT_ASSERT_MSG(t->numWhere == 2, "the first trigger holds %u tests",
+                  (unsigned)t->numWhere);
+    UT_ASSERT(strcmp(t->where[0].field, "new_team") == 0);
+    UT_ASSERT(t->where[0].op == SCN_TRIG_CMP_EQ);
+    UT_ASSERT(t->where[0].value.kind == SCN_TRIG_VAL_NUMBER);
+    UT_ASSERT_MSG(t->where[0].value.num == 1.0, "new_team read as %g",
+                  t->where[0].value.num);
+    UT_ASSERT(strcmp(t->where[1].field, "tag") == 0);
+    UT_ASSERT_MSG(t->where[1].op == SCN_TRIG_CMP_IN, "tag is tested with %d",
+                  (int)t->where[1].op);
+    UT_ASSERT(t->where[1].value.kind == SCN_TRIG_VAL_STRING);
+    UT_ASSERT(!t->where[1].value.inText);
+    UT_ASSERT(strcmp(t->where[1].value.text, "outer_base") == 0);
+
+    /* The long line is on the action and the slot says so rather than
+       carrying the bytes, which is the rule manifest.json reads by. */
+    UT_ASSERT_MSG(t->numActions == 2, "the first trigger holds %u actions",
+                  (unsigned)t->numActions);
+    a = &t->actions[0];
+    UT_ASSERT(strcmp(a->op, "announce") == 0);
+    UT_ASSERT_MSG(a->numArgs == 2, "announce took %u arguments",
+                  (unsigned)a->numArgs);
+    UT_ASSERT(a->args[0].kind == SCN_TRIG_VAL_STRING);
+    UT_ASSERT_MSG(a->args[0].inText,
+                  "the long line was not moved to the action's text");
+    UT_ASSERT(a->args[0].text[0] == '\0');
+    UT_ASSERT_MSG(strcmp(a->text, kShLongLine) == 0,
+                  "the action's text is '%s'", a->text);
+    UT_ASSERT(a->args[1].kind == SCN_TRIG_VAL_NUMBER);
+    UT_ASSERT(a->args[1].num == 5.0);
+
+    /* A field reference: { field = "new" } is the Lua spelling of the
+       manifest's {"field": "new"}. */
+    a = &t->actions[1];
+    UT_ASSERT(strcmp(a->op, "set_score") == 0);
+    UT_ASSERT_MSG(a->numArgs == 2, "set_score took %u arguments",
+                  (unsigned)a->numArgs);
+    UT_ASSERT(a->args[0].kind == SCN_TRIG_VAL_FIELD);
+    UT_ASSERT(strcmp(a->args[0].text, "new") == 0);
+    UT_ASSERT(a->args[1].kind == SCN_TRIG_VAL_NUMBER);
+    UT_ASSERT(a->args[1].num == 10.0);
+    UT_ASSERT_MSG(a->text[0] == '\0',
+                  "an action with no long string carries '%s'", a->text);
+
+    /* And a boolean. */
+    t = &m->triggers[1];
+    UT_ASSERT(strcmp(t->when, "on_tick") == 0);
+    UT_ASSERT_MSG(t->numWhere == 1, "the second trigger holds %u tests",
+                  (unsigned)t->numWhere);
+    UT_ASSERT(strcmp(t->where[0].field, "scripted") == 0);
+    UT_ASSERT(t->where[0].value.kind == SCN_TRIG_VAL_BOOL);
+    UT_ASSERT_MSG(t->where[0].value.num == 0.0, "false read as %g",
+                  t->where[0].value.num);
+    UT_ASSERT_MSG(t->numActions == 1, "the second trigger holds %u actions",
+                  (unsigned)t->numActions);
+    UT_ASSERT(strcmp(t->actions[0].op, "log") == 0);
+    UT_ASSERT(t->actions[0].args[0].kind == SCN_TRIG_VAL_STRING);
+    UT_ASSERT(strcmp(t->actions[0].args[0].text, "tick") == 0);
+
+    /* The whole array against what the same two triggers fill from JSON.
+       Both readers clear a trigger before filling it, so the padding
+       compares clean and a difference is a difference in the content. */
+    doc = scnManifestParse((const uint8_t *)kShTriggerJson,
+                           strlen(kShTriggerJson), NULL, err, sizeof(err));
+    if (doc == NULL) {
+        scenarioHostDetach(h);
+        serverSimDestroy(sim);
+        shDrop(kMap);
+        UT_FAIL("the manifest form was refused: %s", err);
+    }
+    if (scnManifestValues(doc)->numTriggers != m->numTriggers ||
+        memcmp(scnManifestValues(doc)->triggers, m->triggers,
+               sizeof(ScnTrigger) * m->numTriggers) != 0) {
+        scnManifestFree(doc);
+        scenarioHostDetach(h);
+        serverSimDestroy(sim);
+        shDrop(kMap);
+        UT_FAIL("the script's table and manifest.json fill the triggers "
+                "differently");
+    }
+    scnManifestFree(doc);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
+/* ── 7a3. A where the reader cannot take ──────────────────────────── */
+
+/* A trigger holding no tests runs on every occurrence of its hook, so a
+ * where that is there and is not an array cannot leave the trigger
+ * standing: what the script wrote as a conditional would run
+ * unconditionally. The trigger goes with its tests, and the report names
+ * the position.
+ *
+ * Three triggers: a bad one, a sound one, and a bad one. The sound one is
+ * what says the drop costs that trigger and no more. The second bad one is
+ * what says which number the report carries — with the first already gone
+ * it sits in slot 1 and at position 2, so the two possible keys are
+ * different numbers and the case can tell them apart. A file whose only
+ * bad trigger is the first cannot: both are 0. */
+int run_scenario_host_trigger_where_type(void) {
+    static const char *const kMap = "scnhost_where_type.map";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  name = \"Bad where\",\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { when = \"on_tick\", where = \"x\",\n"
+        "      actions = { { \"log\", \"never\" } } },\n"
+        "    { when = \"on_player_join\",\n"
+        "      actions = { { \"log\", \"kept\" } } },\n"
+        "    { when = \"on_tick\", where = \"y\",\n"
+        "      actions = { { \"log\", \"nor this\" } } },\n"
+        "  },\n"
+        "}\n";
+    ServerSim              *sim;
+    ScenarioHost           *h;
+    const ScenarioManifest *m;
+    char                    err[512];
+
+    UT_ASSERT(shPut(kMap, kLua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "one bad where cost the whole script: %s", err);
+
+    /* The last of the two drops, which is the third trigger the file wrote.
+       By then the first has already gone, so the slot it would have landed
+       in is 1 and the position the file wrote it at is 2. Naming it
+       triggers[2] is what says the key is the position; naming it
+       triggers[1] would say the key had quietly become the slot.
+
+       Only the last line is readable here — the soft report holds one at a
+       time — so the drop of the first trigger is asserted in the manifest
+       count below rather than in a report of its own. */
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "triggers[2]") != NULL,
+                  "the report does not name the file position: '%s'",
+                  scenarioHostLastError(h));
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "triggers[1]") == NULL,
+                  "the report is keyed off the slot rather than the "
+                  "position: '%s'", scenarioHostLastError(h));
+
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->numTriggers == 1,
+                  "%u triggers kept, expected the 1 whose where reads",
+                  (unsigned)m->numTriggers);
+    UT_ASSERT_MSG(strcmp(m->triggers[0].when, "on_player_join") == 0,
+                  "the trigger kept runs on '%s'", m->triggers[0].when);
+    UT_ASSERT_MSG(m->triggers[0].numActions == 1,
+                  "the trigger kept holds %u actions",
+                  (unsigned)m->triggers[0].numActions);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
+/* ── 7a4. An action that names no op ──────────────────────────────── */
+
+/* The editor makes room for an action before the author has said what it
+ * does, and a pack made before they say it writes the empty name out. An
+ * empty name is a string, so the reader took it and said nothing, and
+ * scnCheckTrigAct leaves an action naming no op to this report — between
+ * them a row reached a server unmentioned and did nothing there.
+ *
+ * Two actions on the one trigger: one naming an op and one naming none. The
+ * first is what says the report costs that row and not the trigger, and the
+ * key is what says which of the two it is about. */
+int run_scenario_host_trigger_action_no_op(void) {
+    static const char *const kMap = "scnhost_no_op.map";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  name = \"No op\",\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { when = \"on_tick\",\n"
+        "      actions = { { \"log\", \"kept\" }, { \"\", \"unsaid\" } } },\n"
+        "  },\n"
+        "}\n";
+    ServerSim              *sim;
+    ScenarioHost           *h;
+    const ScenarioManifest *m;
+    char                    err[512];
+
+    UT_ASSERT(shPut(kMap, kLua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL,
+                  "an action naming no op cost the whole script: %s", err);
+
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "names no op") != NULL,
+                  "an empty op was taken without a word: '%s'",
+                  scenarioHostLastError(h));
+    UT_ASSERT_MSG(
+        strstr(scenarioHostLastError(h), "triggers[0].actions[1]") != NULL,
+        "the report does not name the action: '%s'", scenarioHostLastError(h));
+
+    /* The row is kept, empty name and all. A report is not a refusal: the
+       trigger stands and the action beside it still runs. */
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->numTriggers == 1, "%u triggers kept",
+                  (unsigned)m->numTriggers);
+    UT_ASSERT_MSG(m->triggers[0].numActions == 2, "%u actions kept",
+                  (unsigned)m->triggers[0].numActions);
+    UT_ASSERT(strcmp(m->triggers[0].actions[0].op, "log") == 0);
+    UT_ASSERT_MSG(m->triggers[0].actions[1].op[0] == '\0',
+                  "the action came back naming '%s'",
+                  m->triggers[0].actions[1].op);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
+/* ── 7a5. A where-row that names no field ─────────────────────────── */
+
+/* The same shape one row over. The editor makes room for a test before the
+ * author has said what it looks at, and a pack made before they say it
+ * writes the empty name out. An empty name is a string, so the reader took
+ * it and said nothing, and scnCheckTrigCond leaves a row naming no field to
+ * this report — between them a test reached a server unmentioned and never
+ * held.
+ *
+ * Two rows on the one trigger: one naming a field and one naming none. The
+ * first is what says the report costs that row and not the trigger, and the
+ * key is what says which of the two it is about. */
+int run_scenario_host_trigger_where_no_field(void) {
+    static const char *const kMap = "scnhost_no_field.map";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  name = \"No field\",\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { when = \"on_tick\",\n"
+        "      where = { { \"tick\", \"eq\", 1 }, { \"\", \"eq\", 1 } },\n"
+        "      actions = { { \"log\", \"kept\" } } },\n"
+        "  },\n"
+        "}\n";
+    ServerSim              *sim;
+    ScenarioHost           *h;
+    const ScenarioManifest *m;
+    char                    err[512];
+
+    UT_ASSERT(shPut(kMap, kLua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL,
+                  "a test naming no field cost the whole script: %s", err);
+
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "names no field") != NULL,
+                  "an empty field name was taken without a word: '%s'",
+                  scenarioHostLastError(h));
+    UT_ASSERT_MSG(
+        strstr(scenarioHostLastError(h), "triggers[0].where[1]") != NULL,
+        "the report does not name the row: '%s'", scenarioHostLastError(h));
+
+    /* The row is kept, empty name and all. A report is not a refusal: the
+       trigger stands and the test beside it still holds. */
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->numTriggers == 1, "%u triggers kept",
+                  (unsigned)m->numTriggers);
+    UT_ASSERT_MSG(m->triggers[0].numWhere == 2, "%u tests kept",
+                  (unsigned)m->triggers[0].numWhere);
+    UT_ASSERT(strcmp(m->triggers[0].where[0].field, "tick") == 0);
+    UT_ASSERT_MSG(m->triggers[0].where[1].field[0] == '\0',
+                  "the row came back naming '%s'",
+                  m->triggers[0].where[1].field);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
+/* ── 7a6. A line too long for the action's text ───────────────────── */
+
+/* An argument past the argument slot goes on the action's own text, which is
+ * wider but is still a fixed width. A line past that width was cut with
+ * nothing said, so a script could reach a server holding a shorter line than
+ * its author wrote and no word anywhere about where the rest went.
+ *
+ * It is the same fault as a name past the argument slot and says the same
+ * sentence, with the other number in it. manifest.json's reader is held to
+ * that wording under the same key by a case of its own: a package whose two
+ * forms were cut differently would not survive scnManifestAgrees.
+ *
+ * The line is built rather than typed, so the cap it is measured against is
+ * the one the build holds. */
+int run_scenario_host_trigger_text_cut(void) {
+    static const char *const kMap = "scnhost_text_cut.map";
+    char                     line[SCN_TRIGGER_TEXT_LEN + 32];
+    char                     lua[SCN_TRIGGER_TEXT_LEN + 256];
+    ServerSim               *sim;
+    ScenarioHost            *h;
+    const ScenarioManifest  *m;
+    char                     err[512];
+
+    memset(line, 'x', sizeof(line) - 1);
+    line[sizeof(line) - 1] = '\0';
+    UT_ASSERT(strlen(line) >= SCN_TRIGGER_TEXT_LEN);
+
+    snprintf(lua, sizeof(lua),
+             "scenario = {\n"
+             "  name = \"Long line\",\n"
+             "  api = 1,\n"
+             "  triggers = {\n"
+             "    { when = \"on_tick\",\n"
+             "      actions = { { \"log\", \"%s\" } } },\n"
+             "  },\n"
+             "}\n", line);
+
+    UT_ASSERT(shPut(kMap, lua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "a line past the action's text cost the whole "
+                             "script: %s", err);
+
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "is cut to fit") != NULL,
+                  "a line past the action's text was cut without a word: "
+                  "'%s'", scenarioHostLastError(h));
+    UT_ASSERT_MSG(
+        strstr(scenarioHostLastError(h), "triggers[0].actions[0][0]") != NULL,
+        "the report does not name the argument: '%s'",
+        scenarioHostLastError(h));
+
+    /* Cut and kept, not dropped: the action still runs, with as much of the
+       line as there is room for. */
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->numTriggers == 1 && m->triggers[0].numActions == 1,
+                  "%u triggers and %u actions kept",
+                  (unsigned)m->numTriggers,
+                  (unsigned)m->triggers[0].numActions);
+    UT_ASSERT(m->triggers[0].actions[0].args[0].inText);
+    UT_ASSERT_MSG(
+        strlen(m->triggers[0].actions[0].text) == SCN_TRIGGER_TEXT_LEN - 1,
+        "the action's text holds %d bytes",
+        (int)strlen(m->triggers[0].actions[0].text));
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
+/* ── 7a7. An empty slot inside a trigger's arrays ─────────────────── */
+
+/* Every array inside a trigger is read from 1 to the first empty slot, the
+ * way the trigger array itself is. lua_rawlen used to say how far to go, and
+ * over a table with a hole in it lua_rawlen may answer any of several
+ * borders, so the same file could read as two different scenarios on two
+ * builds. Stopping at the empty slot is one answer everywhere.
+ *
+ * All three arrays at once: the tests, the actions, and one action's
+ * arguments. Each holds something, then an empty slot, then something more,
+ * so what is kept says where the walk stopped and what is missing says it
+ * did not carry on past it.
+ *
+ * What is not asserted is the report. scnReportTrigTail says something only
+ * when lua_rawlen answers a border past the stop, which for these tables is
+ * the interpreter's business rather than this build's; asserting it would be
+ * asserting something the case cannot know. The walk is the part that has to
+ * be the same everywhere, and the walk is what is held here. */
+int run_scenario_host_trigger_array_hole(void) {
+    static const char *const kMap = "scnhost_array_hole.map";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  name = \"Hole\",\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { when = \"on_tick\",\n"
+        "      where = { { \"tick\", \"eq\", 1 }, nil,\n"
+        "                { \"tick\", \"eq\", 2 } },\n"
+        "      actions = { { \"log\", \"a\", nil, \"c\" }, nil,\n"
+        "                  { \"log\", \"b\" } } },\n"
+        "  },\n"
+        "}\n";
+    ServerSim              *sim;
+    ScenarioHost           *h;
+    const ScenarioManifest *m;
+    char                    err[512];
+
+    UT_ASSERT(shPut(kMap, kLua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "an array with an empty slot cost the whole "
+                             "script: %s", err);
+
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->numTriggers == 1, "%u triggers kept",
+                  (unsigned)m->numTriggers);
+
+    /* The tests: the one before the empty slot, and not the one after. */
+    UT_ASSERT_MSG(m->triggers[0].numWhere == 1, "%u tests kept",
+                  (unsigned)m->triggers[0].numWhere);
+    UT_ASSERT_MSG(strcmp(m->triggers[0].where[0].field, "tick") == 0,
+                  "the test kept reads '%s'", m->triggers[0].where[0].field);
+    UT_ASSERT_MSG(m->triggers[0].where[0].value.num == 1.0,
+                  "the test kept is the one past the empty slot");
+
+    /* The actions, the same way. */
+    UT_ASSERT_MSG(m->triggers[0].numActions == 1, "%u actions kept",
+                  (unsigned)m->triggers[0].numActions);
+    UT_ASSERT(strcmp(m->triggers[0].actions[0].op, "log") == 0);
+
+    /* And that action's own arguments, where the empty slot is third. */
+    UT_ASSERT_MSG(m->triggers[0].actions[0].numArgs == 1, "%u arguments kept",
+                  (unsigned)m->triggers[0].actions[0].numArgs);
+    UT_ASSERT_MSG(
+        strcmp(m->triggers[0].actions[0].args[0].text, "a") == 0,
+        "the argument kept holds '%s'",
+        m->triggers[0].actions[0].args[0].text);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
+/* ── 7a8. A trigger that names no hook ────────────────────────────── */
+
+/* A trigger is put on the router by the hook it names, so one naming none is
+ * never reached: keeping it spends a slot against the trigger cap and writes
+ * a dead entry into every pack made from the table afterwards. The trigger
+ * goes, and the report names the position.
+ *
+ * Both spellings of naming none: a trigger with no when at all, and one whose
+ * when is a string with nothing in it. The editor writes neither — it only
+ * ever gives a trigger a hook the catalogue carries — so both arrive from a
+ * script written by hand.
+ *
+ * Three triggers: a bad one, a sound one, and a bad one. The sound one is
+ * what says the drop costs that trigger and no more. The second bad one is
+ * what says which number the report carries — with the first already gone it
+ * sits in slot 1 and at position 2, so the two possible keys are different
+ * numbers and the case can tell them apart. */
+int run_scenario_host_trigger_no_when(void) {
+    static const char *const kMap = "scnhost_no_when.map";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  name = \"No when\",\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { actions = { { \"log\", \"never\" } } },\n"
+        "    { when = \"on_player_join\",\n"
+        "      actions = { { \"log\", \"kept\" } } },\n"
+        "    { when = \"\", actions = { { \"log\", \"nor this\" } } },\n"
+        "  },\n"
+        "}\n";
+    ServerSim              *sim;
+    ScenarioHost           *h;
+    const ScenarioManifest *m;
+    char                    err[512];
+
+    UT_ASSERT(shPut(kMap, kLua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "a trigger naming no hook cost the whole script: "
+                             "%s", err);
+
+    /* The last of the two drops, which is the third trigger the file wrote.
+       By then the first has already gone, so the slot it would have landed
+       in is 1 and the position the file wrote it at is 2. Naming it
+       triggers[2] is what says the key is the position.
+
+       Only the last line is readable here — the soft report holds one at a
+       time — so the drop of the first trigger is asserted in the manifest
+       count below rather than in a report of its own. */
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "names no hook") != NULL,
+                  "the drop does not say what was wrong: '%s'",
+                  scenarioHostLastError(h));
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "triggers[2]") != NULL,
+                  "the report does not name the file position: '%s'",
+                  scenarioHostLastError(h));
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "triggers[1]") == NULL,
+                  "the report is keyed off the slot rather than the "
+                  "position: '%s'", scenarioHostLastError(h));
+
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->numTriggers == 1,
+                  "%u triggers kept, expected the 1 that names a hook",
+                  (unsigned)m->numTriggers);
+    UT_ASSERT_MSG(strcmp(m->triggers[0].when, "on_player_join") == 0,
+                  "the trigger kept runs on '%s'", m->triggers[0].when);
+    UT_ASSERT_MSG(m->triggers[0].numActions == 1,
+                  "the trigger kept holds %u actions",
+                  (unsigned)m->triggers[0].numActions);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
+/* ── 7b. A team's init table ──────────────────────────────────────── */
+
+/* The team block's `init` is the table this team's bots are built with, and
+ * it is read through the one reader spawn_bot's own `init` goes through.
+ *
+ * Three teams: one whose table is taken whole, one asking for a seventeenth
+ * pair, and one whose only value is longer than a value may be. The last two
+ * are what says a bad pair costs that pair and no more — the pairs read
+ * before it stay and the team still has its init, the way a rules table
+ * survives a key that names no rule.
+ *
+ * Both arrays walked here are 0-based: team 1 in the file is lobby.teams[0]
+ * in the manifest and teams[0] in the sim's template. The pairs inside a
+ * table are looked up by name rather than by position, because the order a
+ * Lua table walks in is the table's business and not the script's; which pair
+ * a seventeen-pair table stops on is the same question, so the case asks that
+ * the key it stopped on is one the table does not hold rather than naming
+ * it. */
+int run_scenario_host_team_init_read(void) {
+    static const char *const kMap = "scnhost_team_init.map";
+    char                    lua[2048];
+    char                    pairs[512];
+    char                    longValue[SCN_TABLE_VALUE_LEN + 8];
+    ServerSim              *sim;
+    ScenarioHost           *h;
+    const ScenarioManifest *m;
+    const ScnTable         *tbl;
+    const char             *v;
+    char                    err[512];
+    size_t                  at = 0;
+    int                     i;
+
+    /* One pair more than a table holds, named k01 up. */
+    pairs[0] = '\0';
+    for (i = 1; i <= SCN_TABLE_MAX + 1; i++) {
+        at += (size_t)snprintf(pairs + at, sizeof(pairs) - at,
+                               "k%02d = \"v\", ", i);
+    }
+    /* A value six bytes longer than the longest one that fits. */
+    memset(longValue, 'x', SCN_TABLE_VALUE_LEN + 6);
+    longValue[SCN_TABLE_VALUE_LEN + 6] = '\0';
+
+    snprintf(lua, sizeof(lua),
+             "scenario = {\n"
+             "  name = \"Init\", api = 1,\n"
+             "  lobby = {\n"
+             "    teams = {\n"
+             "      { id = 1, bots = 1, fielded = false,\n"
+             "        init = { role = \"guard\", tier = 3 } },\n"
+             "      { id = 2, bots = 1, fielded = false,\n"
+             "        init = { %s } },\n"
+             "      { id = 3, bots = 1, fielded = false,\n"
+             "        init = { toolong = \"%s\" } },\n"
+             "    },\n"
+             "  },\n"
+             "}\n", pairs, longValue);
+
+    UT_ASSERT(shPut(kMap, lua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->lobby.numTeams == 3, "%u teams read, expected 3",
+                  (unsigned)m->lobby.numTeams);
+
+    /* The first team, whole. A number is written out as the text of itself,
+       because that is what a brain reads, so tier is the string "3". */
+    tbl = &m->lobby.teams[0].init;
+    UT_ASSERT_MSG(tbl->count == 2,
+                  "the first team's init holds %u pairs, expected 2",
+                  (unsigned)tbl->count);
+    v = scnTableGet(tbl, "role");
+    UT_ASSERT_MSG(v != NULL && strcmp(v, "guard") == 0,
+                  "the first team's init has role '%s', expected 'guard'",
+                  (v != NULL) ? v : "(absent)");
+    v = scnTableGet(tbl, "tier");
+    UT_ASSERT_MSG(v != NULL && strcmp(v, "3") == 0,
+                  "the first team's init has tier '%s', expected the text "
+                  "'3'", (v != NULL) ? v : "(absent)");
+    UT_ASSERT_MSG(m->lobby.teams[0].initBadKey[0] == '\0',
+                  "a table that fits named '%s' as a pair that did not",
+                  m->lobby.teams[0].initBadKey);
+
+    /* And the same table on the sim, which is what the seating reads. */
+    UT_ASSERT_MSG(sim->scenarioLobbyValid,
+                  "the attach left the sim no lobby template");
+    UT_ASSERT_MSG(sim->scenarioLobby.numTeams == 3,
+                  "the sim's template holds %u teams, expected 3",
+                  (unsigned)sim->scenarioLobby.numTeams);
+    tbl = &sim->scenarioLobby.teams[0].init;
+    UT_ASSERT_MSG(tbl->count == 2,
+                  "the sim's first team holds %u init pairs, expected 2",
+                  (unsigned)tbl->count);
+    v = scnTableGet(tbl, "role");
+    UT_ASSERT_MSG(v != NULL && strcmp(v, "guard") == 0,
+                  "the sim's first team has role '%s', expected 'guard'",
+                  (v != NULL) ? v : "(absent)");
+    v = scnTableGet(tbl, "tier");
+    UT_ASSERT_MSG(v != NULL && strcmp(v, "3") == 0,
+                  "the sim's first team has tier '%s', expected the text '3'",
+                  (v != NULL) ? v : "(absent)");
+
+    /* The second team asked for one pair too many: the table holds as many as
+       it can and the pair that was left out is named. */
+    tbl = &m->lobby.teams[1].init;
+    UT_ASSERT_MSG(tbl->count == SCN_TABLE_MAX,
+                  "a table of %d pairs left %u of them, expected the %d a "
+                  "table holds", SCN_TABLE_MAX + 1, (unsigned)tbl->count,
+                  SCN_TABLE_MAX);
+    UT_ASSERT_MSG(m->lobby.teams[1].initBadKey[0] != '\0',
+                  "a table of %d pairs named none of them as the one that "
+                  "did not fit", SCN_TABLE_MAX + 1);
+    UT_ASSERT_MSG(scnTableGet(tbl, m->lobby.teams[1].initBadKey) == NULL,
+                  "'%s' is named as the pair that did not fit and is in the "
+                  "table all the same", m->lobby.teams[1].initBadKey);
+
+    /* The third asked for a value longer than a value may be, and it was its
+       only pair, so it is left with none. */
+    tbl = &m->lobby.teams[2].init;
+    UT_ASSERT_MSG(tbl->count == 0,
+                  "a %d-byte value was stored: the team holds %u pairs, "
+                  "expected 0", (int)strlen(longValue), (unsigned)tbl->count);
+    UT_ASSERT_MSG(strcmp(m->lobby.teams[2].initBadKey, "toolong") == 0,
+                  "the pair that did not fit is named '%s', expected "
+                  "'toolong'", m->lobby.teams[2].initBadKey);
 
     scenarioHostDetach(h);
     serverSimDestroy(sim);
@@ -2256,7 +3011,7 @@ int run_scenario_host_round_answers_its_own_start(void) {
     static const char *const kMap  = "scnhost_own_start.map";
     static const char *const kBody =
         "scenario = { name = \"Own Start\", api = 1 }\n"
-        "note(\"run\\n\")\n"
+        "note(\"run\")\n"
         "local pick = (game.num_players() == 0) and 1 or game.num_starts()\n"
         "function on_choose_start(p) return pick end\n";
     char          lua[2048];
@@ -2286,7 +3041,7 @@ int run_scenario_host_round_answers_its_own_start(void) {
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
     UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     shRead(got, sizeof(got));
-    UT_ASSERT_MSG(strcmp(got, "run\n") == 0,
+    UT_ASSERT_MSG(strcmp(got, "run") == 0,
                   "the attach recorded '%s', expected one run of the chunk",
                   got);
 
@@ -2296,7 +3051,7 @@ int run_scenario_host_round_answers_its_own_start(void) {
 
     serverSimStartGame(sim);
     shRead(got, sizeof(got));
-    UT_ASSERT_MSG(strcmp(got, "run\nrun\n") == 0,
+    UT_ASSERT_MSG(strcmp(got, "runrun") == 0,
                   "the round recorded '%s', expected the chunk run twice — "
                   "once at the attach and once for the round", got);
 
@@ -2619,5 +3374,743 @@ int run_scenario_host_chunk_events_reach_hooks(void) {
     serverSimDestroy(sim);
     shDrop(kMap);
     shNoteReset();
+    return 0;
+}
+
+/* ── 30. A mod calling a row that decides the round ───────────────── */
+
+/* The refusal is a raise and not an answer, so the script sees it the way it
+ * sees a misspelled rule name: as an error with a line number on it. That is
+ * what pcall here is for. It catches the raise and hands back the sentence,
+ * which is both how the case reads the wording and the proof that the
+ * wording arrives as an error at all: a row that answered nil would leave
+ * pcall saying the call went fine.
+ *
+ * The second half is the same four calls from a file that said nothing about
+ * its kind. Those calls may well fail for reasons of their own, on a seat
+ * that is not playing or a clock the round does not keep, so what is asserted
+ * there is the narrow thing: whatever they say, none of them says this. */
+int run_scenario_host_mod_round_op_raises(void) {
+    static const char *const kModMap = "scnhost_mod_ops.map";
+    static const char *const kScnMap = "scnhost_scn_ops.map";
+    /* One body, with the kind line written in by the case. Four calls, one
+       per row the runtime holds a mod back from, each caught and recorded as
+       the row's name, how it went, and what came of it. */
+    static const char *const kBodyFmt =
+        "scenario = { name = \"Row test\", api = 1%s }\n"
+        "local function try(what, f)\n"
+        "  local ok, e = pcall(f)\n"
+        "  note(what .. \"=\" .. tostring(ok) .. \" [\" .. tostring(e)\n"
+        "       .. \"] \")\n"
+        "end\n"
+        "function on_start()\n"
+        "  try(\"end_round\", function() game.end_round() end)\n"
+        "  try(\"set_game_time\", function() game.set_game_time(600) end)\n"
+        "  try(\"add_game_time\", function() game.add_game_time(60) end)\n"
+        "  try(\"score\", function() game.score(0, 1) end)\n"
+        "end\n";
+    static const char *const kOps[] = { "end_round", "set_game_time",
+                                        "add_game_time", "score" };
+    char          body[2048];
+    char          lua[2048];
+    char          got[4096];
+    char          needle[128];
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          err[512];
+    size_t        i;
+
+    /* The mod: every one of the four raises, and says which row it was. */
+    shNoteReset();
+    snprintf(body, sizeof(body), kBodyFmt, ", kind = \"mod\"");
+    shScript(lua, sizeof(lua), body);
+    UT_ASSERT(shPut(kModMap, lua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+    shWatchConsole(sim, shNoteLine);
+    h = scenarioHostAttach(sim, kModMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the mod was refused: %s", err);
+
+    serverSimStartGame(sim);
+    serverSimTick(sim);
+    shRead(got, sizeof(got));
+
+    for (i = 0; i < sizeof(kOps) / sizeof(kOps[0]); i++) {
+        /* The row's name and then false, which is the shape the record takes
+           when pcall caught something. */
+        snprintf(needle, sizeof(needle), "%s=false", kOps[i]);
+        UT_ASSERT_MSG(strstr(got, needle) != NULL,
+                      "game.%s did not raise for a mod; the round recorded "
+                      "'%s'", kOps[i], got);
+        snprintf(needle, sizeof(needle), "game.%s decides the round", kOps[i]);
+        UT_ASSERT_MSG(strstr(got, needle) != NULL,
+                      "the raise does not name game.%s as the row that "
+                      "decides the round: '%s'", kOps[i], got);
+    }
+    UT_ASSERT_MSG(strstr(got, "this file is a mod") != NULL,
+                  "the raise does not say what a mod is: '%s'", got);
+    UT_ASSERT_MSG(strstr(got, "scenario.kind = \"scenario\"") != NULL,
+                  "the raise does not give the one line to write to change "
+                  "it: '%s'", got);
+
+    shUnwatchConsole(sim);
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kModMap);
+
+    /* And the same four from a file that did not say it is a mod. */
+    shNoteReset();
+    snprintf(body, sizeof(body), kBodyFmt, "");
+    shScript(lua, sizeof(lua), body);
+    UT_ASSERT(shPut(kScnMap, lua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+    shWatchConsole(sim, shNoteLine);
+    h = scenarioHostAttach(sim, kScnMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the scenario was refused: %s", err);
+
+    serverSimStartGame(sim);
+    serverSimTick(sim);
+    shRead(got, sizeof(got));
+
+    UT_ASSERT_MSG(strstr(got, "decides the round") == NULL,
+                  "a file that said nothing about its kind was held back "
+                  "from a row a scenario may call: '%s'", got);
+    UT_ASSERT_MSG(strstr(got, "end_round=true") != NULL,
+                  "game.end_round did not go through for a scenario: '%s'",
+                  got);
+
+    shUnwatchConsole(sim);
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kScnMap);
+    shNoteReset();
+    return 0;
+}
+
+/* ── 31. A mod that wrote down what only a scenario may ───────────── */
+
+/* Both of these are on the page before anything runs, so both are refused as
+ * the file loads rather than at the tick that would have reached them. A
+ * trigger states the row it calls as text, and the game type is the one
+ * choice between open, tournament and strict, which is the win condition
+ * under another name.
+ *
+ * Refused and not quietly dropped: the author wrote the line meaning the
+ * round to go a particular way, and a file that loaded with the line taken
+ * out would play as neither what they wrote nor what they would have
+ * written.
+ *
+ * The third part is the same trigger in a file that did not say it is a mod,
+ * which loads, so what the refusal turns on is the kind and not the
+ * trigger. */
+int run_scenario_host_mod_load_refusals(void) {
+    static const char *const kTrigMap = "scnhost_mod_trigger.map";
+    static const char *const kGameMap = "scnhost_mod_game.map";
+    static const char *const kOkMap   = "scnhost_scn_trigger.map";
+    static const char *const kTrigFmt =
+        "scenario = {\n"
+        "  name = \"Timer\",\n"
+        "  api = 1,%s\n"
+        "  triggers = {\n"
+        "    { when = \"on_tick\",\n"
+        "      actions = { { \"log\", \"tick\" },\n"
+        "                  { \"end_round\", \"over\" } } },\n"
+        "  },\n"
+        "}\n";
+    static const char *const kGameLua =
+        "scenario = { name = \"Typed\", api = 1, kind = \"mod\",\n"
+        "             game = \"tournament\" }\n";
+    char          lua[1024];
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          err[512];
+
+    /* A mod whose declared action calls a row that ends the round. */
+    snprintf(lua, sizeof(lua), kTrigFmt, " kind = \"mod\",");
+    UT_ASSERT(shPut(kTrigMap, lua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+    err[0] = '\0';
+    h      = scenarioHostAttach(sim, kTrigMap, err, sizeof(err));
+    UT_ASSERT_MSG(h == NULL,
+                  "a mod declaring a round-ending action loaded anyway");
+    UT_ASSERT_MSG(strstr(err, "triggers[0].actions[1]") != NULL,
+                  "the refusal does not name the action: %s", err);
+    UT_ASSERT_MSG(strstr(err, "end_round") != NULL,
+                  "the refusal does not name the row: %s", err);
+    UT_ASSERT_MSG(strstr(err, "scenario.kind = \"scenario\"") != NULL,
+                  "the refusal does not give the one line to write to change "
+                  "it: %s", err);
+    serverSimDestroy(sim);
+    shDrop(kTrigMap);
+
+    /* A mod that names the game type. */
+    UT_ASSERT(shPut(kGameMap, kGameLua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+    err[0] = '\0';
+    h      = scenarioHostAttach(sim, kGameMap, err, sizeof(err));
+    UT_ASSERT_MSG(h == NULL, "a mod naming the game type loaded anyway");
+    UT_ASSERT_MSG(strstr(err, "tournament") != NULL,
+                  "the refusal does not quote the type that was written: %s",
+                  err);
+    UT_ASSERT_MSG(strstr(err, "game type") != NULL,
+                  "the refusal does not say what the line was: %s", err);
+    serverSimDestroy(sim);
+    shDrop(kGameMap);
+
+    /* And the same trigger in a file that said nothing about its kind. */
+    snprintf(lua, sizeof(lua), kTrigFmt, "");
+    UT_ASSERT(shPut(kOkMap, lua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+    h = scenarioHostAttach(sim, kOkMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL,
+                  "a scenario was refused a round-ending action: %s", err);
+    UT_ASSERT(scenarioHostManifest(h) != NULL);
+    UT_ASSERT_MSG(scenarioHostManifest(h)->numTriggers == 1,
+                  "%u triggers kept",
+                  (unsigned)scenarioHostManifest(h)->numTriggers);
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kOkMap);
+    return 0;
+}
+
+/* ── 32. The four things kind can say ─────────────────────────────── */
+
+/* Two words, nothing at all, and something that is neither.
+ *
+ * Nothing at all is the case that matters most: every scenario written
+ * before the key existed says nothing, and all of them have to go on loading
+ * as what they have always been. A word that is neither is reported and read
+ * as a scenario rather than refused, for the same reason. A file whose kind
+ * the server cannot read is a file whose author meant something by it, and
+ * reading it as the stricter of the two would stop a round that has been
+ * running for a year. */
+int run_scenario_host_kind_word(void) {
+    static const char *const kQuietMap = "scnhost_kind_quiet.map";
+    static const char *const kModMap   = "scnhost_kind_mod.map";
+    static const char *const kOddMap   = "scnhost_kind_odd.map";
+    static const char *const kNumMap   = "scnhost_kind_number.map";
+    ServerSim              *sim;
+    ScenarioHost           *h;
+    const ScenarioManifest *m;
+    char                    err[512];
+
+    /* Nothing at all. */
+    UT_ASSERT(shPut(kQuietMap, "scenario = { name = \"Quiet\", api = 1 }\n"));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+    h = scenarioHostAttach(sim, kQuietMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->kind == scnKindScenario,
+                  "a file that said nothing read as kind %d, expected the "
+                  "scenario it has always been", (int)m->kind);
+    UT_ASSERT_MSG(!scnManifestKeepsWinCondition(m),
+                  "a file that said nothing was held back from the win "
+                  "condition");
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "kind") == NULL,
+                  "saying nothing was reported: '%s'",
+                  scenarioHostLastError(h));
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kQuietMap);
+
+    /* The other word. */
+    UT_ASSERT(shPut(kModMap, "scenario = { name = \"Quiet\", api = 1, "
+                             "kind = \"mod\" }\n"));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+    h = scenarioHostAttach(sim, kModMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the mod was refused: %s", err);
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->kind == scnKindKeepsWinCondition,
+                  "a mod read as kind %d", (int)m->kind);
+    UT_ASSERT(scnManifestKeepsWinCondition(m));
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kModMap);
+
+    /* A word that is neither: reported, and read as a scenario. */
+    UT_ASSERT(shPut(kOddMap, "scenario = { name = \"Odd\", api = 1, "
+                             "kind = \"banana\" }\n"));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+    h = scenarioHostAttach(sim, kOddMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "an unreadable kind cost the whole script: %s",
+                  err);
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->kind == scnKindScenario,
+                  "a kind of 'banana' read as %d, expected a scenario",
+                  (int)m->kind);
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "banana") != NULL,
+                  "the report does not quote what was written: '%s'",
+                  scenarioHostLastError(h));
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kOddMap);
+
+    /* And a kind that is not a word at all. */
+    UT_ASSERT(shPut(kNumMap, "scenario = { name = \"Number\", api = 1, "
+                             "kind = 7 }\n"));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+    h = scenarioHostAttach(sim, kNumMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL,
+                  "a kind that is not a word cost the whole script: %s", err);
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->kind == scnKindScenario,
+                  "a kind of 7 read as %d, expected a scenario",
+                  (int)m->kind);
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "not a word") != NULL,
+                  "the report does not say what was wrong with it: '%s'",
+                  scenarioHostLastError(h));
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kNumMap);
+    return 0;
+}
+
+/* ── 28. One script's globals are its own ─────────────────────────── */
+
+/* The host gives each script on its list a table of its own to run in, so
+ * two scripts in one state cannot meet each other's globals and neither of
+ * them writes into the state's real globals.
+ *
+ * Driven straight at the load primitives rather than through an attach,
+ * because a host loads one script until the list can be selected and this
+ * has to be shown with two. A round's own load is the same calls in the same
+ * order on the same kind of table, so what holds here holds there: scnEnvNew
+ * for the table, scnRunChunk to run a chunk in it, and a read of that table
+ * afterwards.
+ *
+ * With a longer list the case becomes the host's to make, and this one stays
+ * as the statement of what the tables have to do. */
+int run_scenario_host_script_env_is_its_own(void) {
+    static const char *const kA =
+        "scenario = { name = \"A\", api = 1 }\n"
+        "mine = \"from A\"\n"
+        "function on_start() end\n";
+    static const char *const kB =
+        "scenario = { name = \"B\", api = 1 }\n"
+        "assert(mine == nil, \"B read the other script's global\")\n"
+        "assert(rawget(_G, \"on_start\") == nil,\n"
+        "       \"B read the other script's hook\")\n"
+        "mine = \"from B\"\n";
+    lua_State *L;
+    char       err[512];
+    int        a;
+    int        b;
+
+    L = scnNewVm();
+    UT_ASSERT(L != NULL);
+
+    a = scnEnvNew(L);
+    b = scnEnvNew(L);
+    UT_ASSERT_MSG(a != LUA_NOREF && b != LUA_NOREF, "no table for a script");
+    UT_ASSERT_MSG(a != b, "both scripts were handed the same table");
+
+    err[0] = '\0';
+    UT_ASSERT_MSG(scnRunChunk(L, a, kA, strlen(kA), "@a.lua", err,
+                              sizeof(err)),
+                  "the first script would not load: %s", err);
+    err[0] = '\0';
+    UT_ASSERT_MSG(scnRunChunk(L, b, kB, strlen(kB), "@b.lua", err,
+                              sizeof(err)),
+                  "the second script would not load: %s", err);
+
+    /* Each one's global is in its own table and says what that script
+       wrote. */
+    lua_rawgeti(L, LUA_REGISTRYINDEX, a);
+    lua_getfield(L, -1, "mine");
+    UT_ASSERT_MSG(lua_isstring(L, -1) &&
+                      strcmp(lua_tostring(L, -1), "from A") == 0,
+                  "the first script's own table does not hold its global");
+    lua_pop(L, 2);
+
+    lua_rawgeti(L, LUA_REGISTRYINDEX, b);
+    lua_getfield(L, -1, "mine");
+    UT_ASSERT_MSG(lua_isstring(L, -1) &&
+                      strcmp(lua_tostring(L, -1), "from B") == 0,
+                  "the second script's own table does not hold its global");
+    lua_pop(L, 2);
+
+    /* And the state's real globals hold none of it. */
+    lua_getglobal(L, "mine");
+    UT_ASSERT_MSG(lua_isnil(L, -1),
+                  "a script's global reached the state's real globals");
+    lua_pop(L, 1);
+    lua_getglobal(L, "on_start");
+    UT_ASSERT_MSG(lua_isnil(L, -1),
+                  "a script's hook reached the state's real globals");
+    lua_pop(L, 1);
+    lua_getglobal(L, "scenario");
+    UT_ASSERT_MSG(lua_isnil(L, -1),
+                  "a script's table reached the state's real globals");
+    lua_pop(L, 1);
+
+    /* The sandbox is still reachable by name from inside each of them,
+       which is what makes the table a set of globals rather than a box. */
+    lua_rawgeti(L, LUA_REGISTRYINDEX, a);
+    lua_getfield(L, -1, "tostring");
+    UT_ASSERT_MSG(lua_isfunction(L, -1),
+                  "the sandbox is not reachable from a script's own table");
+    lua_pop(L, 2);
+
+    luaL_unref(L, LUA_REGISTRYINDEX, a);
+    luaL_unref(L, LUA_REGISTRYINDEX, b);
+    scnCloseVm(L);
+    return 0;
+}
+
+/* ── 29. The table read back is the one that chunk declared ───────── */
+
+/* Two scripts in one state, each declaring a scenario table of its own. The
+ * read of either has to answer what that chunk wrote and not what the chunk
+ * after it wrote, which is why the read takes the script's own table rather
+ * than the state's globals.
+ *
+ * The host's package check is what this protects. It holds the table a chunk
+ * left behind against the container's, and a read that answered the last
+ * chunk's table would hold the wrong one against it. */
+int run_scenario_host_manifest_read_from_its_own_env(void) {
+    static const char *const kA =
+        "scenario = { name = \"First\", api = 1 }\n";
+    static const char *const kB =
+        "scenario = { name = \"Second\", api = 1 }\n";
+    lua_State        *L;
+    ScenarioManifest *ma;
+    ScenarioManifest *mb;
+    ScnParseReport    rep;
+    char              err[512];
+    int               a;
+    int               b;
+
+    ma = (ScenarioManifest *)calloc(1, sizeof(*ma));
+    mb = (ScenarioManifest *)calloc(1, sizeof(*mb));
+    UT_ASSERT(ma != NULL && mb != NULL);
+
+    L = scnNewVm();
+    UT_ASSERT(L != NULL);
+    a = scnEnvNew(L);
+    b = scnEnvNew(L);
+    UT_ASSERT(a != LUA_NOREF && b != LUA_NOREF);
+
+    rep.soft    = NULL;
+    rep.softLen = 0;
+    rep.sink    = NULL;
+
+    err[0] = '\0';
+    UT_ASSERT_MSG(scnRunChunk(L, a, kA, strlen(kA), "@a.lua", err,
+                              sizeof(err)),
+                  "the first script would not load: %s", err);
+    err[0] = '\0';
+    UT_ASSERT_MSG(scnRunChunk(L, b, kB, strlen(kB), "@b.lua", err,
+                              sizeof(err)),
+                  "the second script would not load: %s", err);
+
+    /* Read in the other order, so a read answering whatever ran last would
+       answer the wrong table for both of them. */
+    err[0] = '\0';
+    UT_ASSERT_MSG(scnReadManifest(L, b, mb, "b.lua", err, sizeof(err), &rep),
+                  "the second script's table would not read: %s", err);
+    err[0] = '\0';
+    UT_ASSERT_MSG(scnReadManifest(L, a, ma, "a.lua", err, sizeof(err), &rep),
+                  "the first script's table would not read: %s", err);
+
+    UT_ASSERT_MSG(strcmp(ma->name, "First") == 0,
+                  "the first script's table read back as '%s'", ma->name);
+    UT_ASSERT_MSG(strcmp(mb->name, "Second") == 0,
+                  "the second script's table read back as '%s'", mb->name);
+
+    luaL_unref(L, LUA_REGISTRYINDEX, a);
+    luaL_unref(L, LUA_REGISTRYINDEX, b);
+    scnCloseVm(L);
+    free(ma);
+    free(mb);
+    return 0;
+}
+
+/* ── 29a. The Workshop item a script's table names ────────────────── */
+
+/* workshop_id and workshop_author read out of a script's own table as digit
+ * strings, past 2^53 without losing a digit, the way the JSON reader reads
+ * them out of manifest.json. A Lua number there is reported and read as 0,
+ * since it is a double by the time the read sees it. And a package's ids
+ * pushed as the scenario global come back out of a script that assigns no
+ * table of its own. */
+int run_scenario_host_manifest_reads_workshop(void) {
+    static const char *const kStrings =
+        "scenario = { name = \"Published\", api = 1,\n"
+        "  workshop_id = \"76561198000000001\",\n"
+        "  workshop_author = \"76561198000000123\" }\n";
+    static const char *const kNumber =
+        "scenario = { name = \"Published\", api = 1,\n"
+        "  workshop_id = 76561198000000001 }\n";
+    static const char *const kNothing = "local unused = 1\n";
+    lua_State        *L;
+    ScenarioManifest *m;
+    ScenarioManifest *pushed;
+    ScnParseReport    rep;
+    char              err[512];
+    char              soft[512];
+    int               a;
+    int               b;
+    int               c;
+
+    m      = (ScenarioManifest *)calloc(1, sizeof(*m));
+    pushed = (ScenarioManifest *)calloc(1, sizeof(*pushed));
+    UT_ASSERT(m != NULL && pushed != NULL);
+
+    L = scnNewVm();
+    UT_ASSERT(L != NULL);
+    a = scnEnvNew(L);
+    b = scnEnvNew(L);
+    c = scnEnvNew(L);
+    UT_ASSERT(a != LUA_NOREF && b != LUA_NOREF && c != LUA_NOREF);
+
+    soft[0]     = '\0';
+    rep.soft    = soft;
+    rep.softLen = sizeof(soft);
+    rep.sink    = NULL;
+
+    err[0] = '\0';
+    UT_ASSERT_MSG(scnRunChunk(L, a, kStrings, strlen(kStrings), "@a.lua", err,
+                              sizeof(err)),
+                  "the script would not load: %s", err);
+    UT_ASSERT_MSG(scnReadManifest(L, a, m, "a.lua", err, sizeof(err), &rep),
+                  "the table would not read: %s", err);
+    UT_ASSERT_MSG(m->workshopId == 76561198000000001ULL,
+                  "workshop_id read as %llu",
+                  (unsigned long long)m->workshopId);
+    UT_ASSERT_MSG(m->workshopAuthor == 76561198000000123ULL,
+                  "workshop_author read as %llu",
+                  (unsigned long long)m->workshopAuthor);
+    UT_ASSERT_MSG(soft[0] == '\0', "the strings were reported: %s", soft);
+
+    err[0] = '\0';
+    UT_ASSERT_MSG(scnRunChunk(L, b, kNumber, strlen(kNumber), "@b.lua", err,
+                              sizeof(err)),
+                  "the script would not load: %s", err);
+    UT_ASSERT_MSG(scnReadManifest(L, b, m, "b.lua", err, sizeof(err), &rep),
+                  "the table would not read: %s", err);
+    UT_ASSERT_MSG(m->workshopId == 0, "a Lua number read as %llu",
+                  (unsigned long long)m->workshopId);
+    UT_ASSERT_MSG(strstr(soft, "workshop_id") != NULL,
+                  "a Lua number was not reported: '%s'", soft);
+
+    pushed->api            = 1;
+    pushed->bound          = true;
+    pushed->workshopId     = 76561198000000001ULL;
+    pushed->workshopAuthor = 76561198000000123ULL;
+    snprintf(pushed->name, sizeof(pushed->name), "Published");
+    scnPushManifestGlobal(L, c, pushed);
+    err[0] = '\0';
+    UT_ASSERT_MSG(scnRunChunk(L, c, kNothing, strlen(kNothing), "@c.lua", err,
+                              sizeof(err)),
+                  "the script would not load: %s", err);
+    UT_ASSERT_MSG(scnReadManifest(L, c, m, "c.lua", err, sizeof(err), &rep),
+                  "the pushed table would not read: %s", err);
+    UT_ASSERT_MSG(m->workshopId == pushed->workshopId &&
+                      m->workshopAuthor == pushed->workshopAuthor,
+                  "the pushed ids came back as %llu / %llu",
+                  (unsigned long long)m->workshopId,
+                  (unsigned long long)m->workshopAuthor);
+
+    luaL_unref(L, LUA_REGISTRYINDEX, a);
+    luaL_unref(L, LUA_REGISTRYINDEX, b);
+    luaL_unref(L, LUA_REGISTRYINDEX, c);
+    scnCloseVm(L);
+    free(m);
+    free(pushed);
+    return 0;
+}
+
+/* ── 30. The error count belongs to the script ────────────────────── */
+
+/* Errors in a row are counted against the script that raised them rather
+ * than against the round, so one script's successes cannot put another's
+ * failures back to zero and a script failing every call it makes cannot sit
+ * below the limit for ever.
+ *
+ * With a list of one there is one count to read and the case walks the list
+ * to read it. A longer list adds a second script that raises while this one
+ * returns, and the walk is already written for it. What the case pins today
+ * is that the count is on the script and not on the host: every entry a
+ * round loads opens with a count of its own at zero, the count rises with
+ * that script's own errors and is cleared by that script's own success. */
+int run_scenario_host_errors_counted_per_script(void) {
+    static const char *const kMap = "scnhost_per_script_errors.map";
+    static const char *const kLua =
+        "scenario = { name = \"Counts\", api = 1 }\n"
+        "fail = true\n"
+        "function allow_extra_teams()\n"
+        "  if fail then error(\"boom\") end\n"
+        "  return true\n"
+        "end\n"
+        "function on_start() fail = false end\n";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          err[512];
+    int           i;
+    int           n;
+
+    UT_ASSERT(shPut(kMap, kLua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+
+    n = scenarioHostScriptCount(h);
+    UT_ASSERT_MSG(n == 1, "the attach loaded %d scripts, expected one", n);
+
+    serverSimStartGame(sim);
+    n = scenarioHostScriptCount(h);
+    UT_ASSERT_MSG(n >= 1, "the round loaded no script");
+    for (i = 0; i < n; i++) {
+        unsigned errors   = 1;
+        bool     disabled = true;
+        UT_ASSERT_MSG(scenarioHostScriptErrors(h, i, &errors, &disabled),
+                      "script %d of %d has no count of its own", i, n);
+        UT_ASSERT_MSG(errors == 0,
+                      "script %d opened the round on %u errors", i, errors);
+        UT_ASSERT_MSG(!disabled, "script %d opened the round switched off", i);
+    }
+
+    /* A slot past the end of the list has no count to read, which is what
+       keeps a walk of it honest. */
+    UT_ASSERT_MSG(!scenarioHostScriptErrors(h, n, NULL, NULL),
+                  "a slot past the end of the list answered a count");
+
+    /* Three raises from the one script the round is playing, counted
+       against that script. */
+    for (i = 0; i < 3; i++) {
+        UT_ASSERT_MSG(shAskExtraTeams(sim),
+                      "a raising policy did not fall back to the classic "
+                      "answer");
+    }
+    {
+        unsigned errors   = 0;
+        bool     disabled = true;
+        UT_ASSERT(scenarioHostScriptErrors(h, 0, &errors, &disabled));
+        UT_ASSERT_MSG(errors == 3,
+                      "three raises left the script on %u errors", errors);
+        UT_ASSERT_MSG(!disabled,
+                      "three raises switched the script off, and the limit "
+                      "is %d", SCN_ERROR_LIMIT);
+    }
+
+    /* And that script's own success is what clears that script's own count.
+       The first running tick calls on_start, which stops the raising. */
+    serverSimTick(sim);
+    UT_ASSERT(shAskExtraTeams(sim));
+    {
+        unsigned errors = 1;
+        UT_ASSERT(scenarioHostScriptErrors(h, 0, &errors, NULL));
+        UT_ASSERT_MSG(errors == 0,
+                      "the script answered and was left on %u errors",
+                      errors);
+    }
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
+/* ── A rules table longer than one tick's allowance ───────────────── */
+
+/* The host applies a script's rules table itself, at the round start, and
+ * those are its own ops rather than the script's: a table of more rules than
+ * a script may send in a tick still applies in full.
+ *
+ * Seventy rules, each at its classic value — the classic table stands, so no
+ * value here can break a pair — except tank_death_ticks, which is moved so
+ * that reading it back says the table was applied at all. The table's order
+ * is Lua's hash order, so which rules come last is not something the case can
+ * arrange; a refusal of any of them is a console line, and there must be
+ * none. */
+#define SH_MANY_RULES 70
+
+static int shRefusedLines;
+
+static void shCountRefused(const char *msg) {
+    if (strstr(msg, "refused") != NULL) {
+        shRefusedLines++;
+    }
+}
+
+int run_scenario_host_many_rules_all_applied(void) {
+    static const char *const kMap = "scnhost_manyrules.map";
+    static char              lua[8192];
+    ServerSim              *sim;
+    ScenarioHost           *h;
+    const ScenarioManifest *m;
+    char                    err[512];
+    int                     death = simRulesRuleIndex("tank_death_ticks");
+    size_t                  used;
+    int                     i;
+
+    UT_ASSERT_MSG(simRulesRuleCount() >= SH_MANY_RULES,
+                  "only %d rules exist, fewer than the %d this case declares",
+                  simRulesRuleCount(), SH_MANY_RULES);
+    UT_ASSERT_MSG(death >= 0, "no rule is named tank_death_ticks");
+
+    used = (size_t)snprintf(lua, sizeof(lua),
+                            "scenario = {\n"
+                            "  name = \"Many Rules\",\n"
+                            "  api = 1,\n"
+                            "  rules = {\n");
+    for (i = 0; i < SH_MANY_RULES; i++) {
+        double value = (i == death) ? (double)SH_DEATH_SET
+                                    : simRulesClassicValue(i);
+        used += (size_t)snprintf(lua + used, sizeof(lua) - used,
+                                 "    %s = %.17g,\n", simRulesRuleName(i),
+                                 value);
+        UT_ASSERT_MSG(used < sizeof(lua), "the script outgrew its buffer");
+    }
+    if (death >= SH_MANY_RULES) {
+        used += (size_t)snprintf(lua + used, sizeof(lua) - used,
+                                 "    tank_death_ticks = %d,\n", SH_DEATH_SET);
+    }
+    used += (size_t)snprintf(lua + used, sizeof(lua) - used, "  },\n}\n");
+    UT_ASSERT_MSG(used < sizeof(lua), "the script outgrew its buffer");
+
+    UT_ASSERT(shPut(kMap, lua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->numRules >= SH_MANY_RULES,
+                  "the table read %u rules, expected at least %d",
+                  (unsigned)m->numRules, SH_MANY_RULES);
+
+    shRefusedLines = 0;
+    shWatchConsole(sim, shCountRefused);
+    serverSimStartGame(sim);
+    shUnwatchConsole(sim);
+
+    UT_ASSERT_MSG(shRefusedLines == 0,
+                  "%d console lines said a rule was refused at the round "
+                  "start; every one of the %u should have applied",
+                  shRefusedLines, (unsigned)m->numRules);
+    UT_ASSERT_MSG(sim->sim.rules.tank_death_ticks == SH_DEATH_SET,
+                  "tank_death_ticks reads %ld after the start, expected the "
+                  "table's %d — the table was not applied",
+                  (long)sim->sim.rules.tank_death_ticks, SH_DEATH_SET);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
     return 0;
 }

@@ -38,6 +38,7 @@
 #include "log.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "bases.h"
+#include "bolo_map.h"
 #include "game_sim.h"
 #include "client_sim.h"
 #include "client_sim_internal.h"
@@ -909,6 +910,9 @@ BYTE basesSetOwner(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner, BYTE migr
         (*value)->item[count].owner = owner;
         done = TRUE;
       } else if (owner == NEUTRAL) {
+        /* Nothing is reported: the callback below is for a base being taken
+           and there is no taker here. basesSetBaseOwner is the entry that
+           does report a base going neutral. */
         (*value)->item[count].owner = owner;
         done = TRUE;
       } else if ((*value)->item[count].owner != owner) {
@@ -922,7 +926,8 @@ BYTE basesSetOwner(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner, BYTE migr
         (*value)->item[count].owner = owner;
         logAddEvent(log_BaseSetOwner, count, owner, migrate, 0, 0, NULL);
         /* Report the change, which is what clients get the message from. A
-           base going neutral is reported the same way. */
+           base taken from nobody is reported the same way as one stolen from
+           a player; the class beside it is what tells the two apart. */
         if (migrate == FALSE && sim->isServer) {
           if (sim->callbacks.baseOwnerChanged) {
             BYTE captureClass;
@@ -1262,7 +1267,8 @@ void basesRefueling(GameSim *sim, tank *tnk, BYTE baseNum) {
 *  yValue - Y Map Location of the tank
 *********************************************************/
 BYTE basesGetClosest(GameSim *sim, WORLD tankX, WORLD tankY) {
-  return basesGetClosestForPlayer(sim, sim->viewPlayer, tankX, tankY, BASE_STATUS_RANGE);
+  return basesGetClosestForPlayer(sim, sim->viewPlayer, tankX, tankY,
+                                  (WORLD) sim->rules.base_status_range);
 }
 
 /*********************************************************
@@ -1545,11 +1551,13 @@ bool basesArmourVisibleToPlayer(GameSim *sim, BYTE baseIdx, BYTE player) {
   gapY = abs((int)tankY - baseY);
   /* Bound both axes before squaring so the multiply cannot overflow on a
      full-size map; never rejects a base that is genuinely in range. */
-  if (gapX >= BASE_PREDICT_REVEAL_RANGE || gapY >= BASE_PREDICT_REVEAL_RANGE) {
+  if (gapX >= sim->rules.base_reveal_range ||
+      gapY >= sim->rules.base_reveal_range) {
     return FALSE;
   }
   return (gapX * gapX + gapY * gapY) <
-         (BASE_PREDICT_REVEAL_RANGE * BASE_PREDICT_REVEAL_RANGE);
+         ((int64_t) sim->rules.base_reveal_range *
+          sim->rules.base_reveal_range);
 }
 
 /*********************************************************
@@ -1703,6 +1711,42 @@ void basesClampToRules(GameSim *sim, bases *value) {
       item->shells = (BYTE) sim->rules.base_full_shells;
     }
     if (item->mines > sim->rules.base_full_mines) {
+      item->mines = (BYTE) sim->rules.base_full_mines;
+    }
+  }
+}
+
+/*********************************************************
+*NAME:          basesFillToRules
+*PURPOSE:
+*  Brings every base up to the stock caps this sim runs on.
+*  The other direction from basesClampToRules above, for a
+*  scenario that raises a cap and asks for the map to start
+*  at it: a map file holds a number and has no way of saying
+*  "full", so without this a raised cap leaves every base
+*  where the file put it.
+*
+*  Idempotent, and a base already at a cap is left alone.
+*
+*ARGUMENTS:
+*  sim   - Pointer to the game sim
+*  value - Pointer to the bases structure
+*********************************************************/
+void basesFillToRules(GameSim *sim, bases *value) {
+  BYTE count;
+
+  if (sim == NULL || value == NULL || *value == NULL) {
+    return;
+  }
+  for (count = 0; count < (*value)->numBases; count++) {
+    base *item = &((*value)->item[count]);
+    if (item->armour < sim->rules.base_full_armour) {
+      item->armour = (BYTE) sim->rules.base_full_armour;
+    }
+    if (item->shells < sim->rules.base_full_shells) {
+      item->shells = (BYTE) sim->rules.base_full_shells;
+    }
+    if (item->mines < sim->rules.base_full_mines) {
       item->mines = (BYTE) sim->rules.base_full_mines;
     }
   }
@@ -2383,4 +2427,46 @@ BYTE basesGetNumActive(bases *value) {
     }
   }
   return live;
+}
+
+/*********************************************************
+*NAME:          basesRemoveBorderBases
+*PURPOSE:
+*  Takes off the map every live base that sits in the mined
+*  border round the edge, the same rule as
+*  startsRemoveBorderStarts. No tank can reach a base out
+*  there, so it could never be captured or used, yet it was
+*  counted, drawn and handed to the bots. Nothing is changed
+*  when no live base is inside the border, so such a map
+*  still plays as it does today. Slot numbers do not change.
+*  Returns how many bases were taken off.
+*
+*ARGUMENTS:
+*  value - Pointer to the bases structure
+*********************************************************/
+BYTE basesRemoveBorderBases(bases *value) {
+  BYTE count;
+  BYTE inside = 0;
+  BYTE removed = 0;
+
+  if (value == NULL || *value == NULL) {
+    return 0;
+  }
+  for (count = 0; count < (*value)->numBases && count < MAX_BASES; count++) {
+    if ((*value)->active[count] != FALSE &&
+        mapPosInBounds((*value)->item[count].x, (*value)->item[count].y)) {
+      inside++;
+    }
+  }
+  if (inside == 0) {
+    return 0;
+  }
+  for (count = 0; count < (*value)->numBases && count < MAX_BASES; count++) {
+    if ((*value)->active[count] != FALSE &&
+        !mapPosInBounds((*value)->item[count].x, (*value)->item[count].y)) {
+      (*value)->active[count] = FALSE;
+      removed++;
+    }
+  }
+  return removed;
 }

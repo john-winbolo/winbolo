@@ -117,6 +117,9 @@ bool transportUdpServerCreate(unsigned short port,
     (void)sim; /* Used later during tick */
 
     bolo_net_init();
+    /* The memset below would lose any script buffer a server that was never
+     * destroyed still holds. */
+    udpServerFreeScriptUploadBufs();
     memset(&udpServer, 0, sizeof(udpServer));
     memset(punchQueue, 0, sizeof(punchQueue));
 
@@ -178,6 +181,8 @@ bool transportUdpServerCreate(unsigned short port,
     udpServer.tickCount = 0;
     udpServer.uploadMaxFiles        = 64;
     udpServer.uploadMaxStorageBytes = 8u * 1024u * 1024u;
+    udpServer.scriptUploadMaxFiles        = 32;
+    udpServer.scriptUploadMaxStorageBytes = 64u * 1024u * 1024u;
     serverSimSetServerPort(sim, port);
     WB_LOG_INFO(WB_LOG_CAT_NET,
         "server created: port=%u bindAddr=%s maxPlayers=%u password=%s",
@@ -186,6 +191,10 @@ bool transportUdpServerCreate(unsigned short port,
         (unsigned)serverSimGetMaxPlayers(sim),
         (password && *password) ? "yes" : "no");
     udpServer.compressedMapSize = 0;
+    /* tickCount restarted at 0 above, so any verify hold an earlier server on
+     * this process left behind names a deadline this counter will not reach
+     * for a long time. */
+    udpServerClearAllReauthPending();
 
     for (i = 0; i < MAX_TANKS; i++) {
         udpServer.clients[i].connected = false;
@@ -214,7 +223,11 @@ bool transportUdpServerCreate(unsigned short port,
 void transportUdpServerSetUploadConfig(UploadPolicy policy,
                                        uint8_t maxFiles,
                                        uint32_t maxStorageBytes,
-                                       const char *persistDir) {
+                                       const char *persistDir,
+                                       ScriptUploadPolicy scriptPolicy,
+                                       uint8_t scriptMaxFiles,
+                                       uint32_t scriptMaxStorageBytes,
+                                       const char *scriptDir) {
     udpServer.uploadPolicy = policy;
     if (maxFiles != 0) {
         udpServer.uploadMaxFiles = maxFiles;
@@ -227,6 +240,19 @@ void transportUdpServerSetUploadConfig(UploadPolicy policy,
                     sizeof(udpServer.uploadPersistDir));
     } else {
         udpServer.uploadPersistDir[0] = '\0';
+    }
+    udpServer.scriptUploadPolicy = scriptPolicy;
+    if (scriptMaxFiles != 0) {
+        udpServer.scriptUploadMaxFiles = scriptMaxFiles;
+    }
+    if (scriptMaxStorageBytes != 0) {
+        udpServer.scriptUploadMaxStorageBytes = scriptMaxStorageBytes;
+    }
+    if (scriptDir != NULL) {
+        SDL_strlcpy(udpServer.scriptUploadDir, scriptDir,
+                    sizeof(udpServer.scriptUploadDir));
+    } else {
+        udpServer.scriptUploadDir[0] = '\0';
     }
 }
 
@@ -274,7 +300,13 @@ void transportUdpServerDestroy(void) {
             serverCleanupMapDownload(i);
         }
     }
+    udpServerFreeScriptUploadBufs();
     udpServer.running = false;
+    /* Drop any verify still waiting on a result. The slots it names are gone
+     * with this transport, and a later server on this process starts its
+     * tick counter at 0 again, so a leftover hold would name a deadline that
+     * counter will not reach for a long time. */
+    udpServerClearAllReauthPending();
 
     udpServerPublicIp[0] = '\0';
     udpServerPublicPort  = 0;
@@ -348,8 +380,9 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
          * game/map event left in flight dedup-drops in the new game. The
          * baselines are this client's own channel state — the control encoder
          * stays recipient-agnostic, so the per-client value lives in the event,
-         * not the encoder. A full control window defers the disconnect off this
-         * path (mirrors the deliver-callback overflow). */
+         * not the encoder. A full control backlog (the queue behind the window)
+         * defers the disconnect off this path (mirrors the deliver-callback
+         * overflow). */
         if (udpServer.clients[i].connected) {
             uint32_t b0 = channelResetSend(&udpServer.channelMux[i], CHANNEL_GAME);
             uint32_t b1 = channelResetSend(&udpServer.channelMux[i], CHANNEL_MAP);
@@ -385,17 +418,19 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
         udpServerResetRoundLogLimits(i);
         udpServerResetMapReaskLimit(i);
 
-        /* A round-log transfer is a lobby/game-over affair and must not bleed
-         * into the round starting now: CHANNEL_BULK is deliberately not
-         * re-based above, so an unfinished one would keep streaming into the
-         * new game's map downloads. Abort it with the same triple the map
-         * change uses — drop the staged blob, collapse the send window, and
-         * carry the new bulk baseline so the client abandons its partial.
-         * Gating on the sender's kind is what leaves every other in-flight
-         * transfer (a join download, a resync) undisturbed. */
+        /* A round-log transfer and a script copy are lobby/game-over affairs
+         * and must not bleed into the round starting now: CHANNEL_BULK is
+         * deliberately not re-based above, so an unfinished one (either can
+         * be several MiB) would keep streaming into the new game's map
+         * downloads. Abort it with the same triple the map change uses —
+         * drop the staged blob, collapse the send window, and carry the new
+         * bulk baseline so the client abandons its partial. Checking the
+         * sender's kind is what leaves every other in-flight transfer (a
+         * join download, a resync) undisturbed. */
         if (udpServer.clients[i].connected &&
             bulkSenderBusy(&udpServer.bulkSend[i]) &&
-            udpServer.bulkSend[i].kind == BULK_KIND_ROUND_LOG) {
+            (udpServer.bulkSend[i].kind == BULK_KIND_ROUND_LOG ||
+             udpServer.bulkSend[i].kind == BULK_KIND_SCRIPT_PACKAGE)) {
             uint32_t b3;
             ControlEvent resetEvt;
             ControlEncodeBodyFn enc =
@@ -455,8 +490,7 @@ void transportUdpServerOnLobbyMapChange(ServerSim *sim) {
     int i;
     int mapLen;
     uint8_t notifyBuf[PACKET_HEADER_SIZE];
-    /* Compress into a local oversized scratch buffer first — the map
-     * RLE encoder has no internal output-bound check, and an
+    /* Compress into a local buffer sized to the worst case first — an
      * incompressible map can encode slightly larger than its 64KB
      * input. Validate the result fits the wire size before copying. */
     BYTE scratchMap[MAP_COMPRESSED_MAX_SIZE];
@@ -563,8 +597,8 @@ uint64_t transportUdpServerGetClientConnId(BYTE playerNum) {
  * being cleared at the start of the next tick.
  * The three sound events are culled against SDIST_NONE measured from the
  * recipient's own tank and deduplicated per sound type — only the closest
- * instance of each type is sent, and it goes out carrying a near/far tier and
- * a compass bearing in place of the map square it was raised at. */
+ * instance of each type is sent, and it goes out carrying an east-west pan and
+ * a banded distance in place of the map square it was raised at. */
 void transportUdpServerDrainEvents(ServerSim *sim) {
     int i, c;
 
@@ -609,6 +643,7 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
         BYTE clientMX = 0, clientMY = 0;
         bool hasPos;
         bool culled;
+        bool positional;
 
         if (!udpServer.clients[c].connected) continue;
 
@@ -705,6 +740,7 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
             clientMX = (BYTE)(cwx >> 8);
             clientMY = (BYTE)(cwy >> 8);
         }
+        positional = serverSimGetPositionalSound(sim);
 
         /* Client's closest neutral/allied base drives the arrival push; the
          * per-base stock cull below keeps stock for every neutral/allied base
@@ -736,7 +772,7 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
          * what a recipient hears. */
 
         /* Pass 1: the closest sound of each type for this client, shaped as
-         * a tier and a bearing. soundPickOffer holds every rule about who
+         * a pan and a dist. soundPickOffer holds every rule about who
          * hears what, shared with the snapshot builder. keepSquare is false
          * here whatever the slot is flagged: a wire recipient is never trusted
          * with the square. */
@@ -746,7 +782,7 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
         if (hasPos) {
             for (i = 0; i < (int)serverSimGetEventCount(sim); i++) {
                 soundPickOffer(&pick, &serverSimGetEvents(sim)[i], (BYTE)c,
-                               clientMX, clientMY, false);
+                               clientMX, clientMY, false, positional);
             }
         }
 
@@ -921,8 +957,16 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
 
         /* Anonymous-fallback for a deferred WBN PLAYER_JOIN: the joiner's
          * reauth never landed within the grace window (direct-IP, not
-         * signed in, or WBN unreachable), so announce the join un-keyed. */
-        if (wbnJoinOnTick(&udpServer.clients[i].wbnJoin, udpServer.tickCount)) {
+         * signed in, or WBN unreachable), so announce the join un-keyed.
+         *
+         * Not while that slot's client/verify is still outstanding. The two
+         * announcements differ: this one carries no player_a, and the one the
+         * verify result publishes carries the account's key, so publishing
+         * both credits the account with a round it never joined. While a
+         * verify can still answer, the announcement is its to make; the query
+         * lapses the deference so a lost result cannot hold it for good. */
+        if (!udpServerReauthVerifyOutstanding((BYTE)i, udpServer.tickCount) &&
+            wbnJoinOnTick(&udpServer.clients[i].wbnJoin, udpServer.tickCount)) {
             winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
                                (BYTE)i, WINBOLO_NET_NO_PLAYER, FALSE, FALSE);
         }

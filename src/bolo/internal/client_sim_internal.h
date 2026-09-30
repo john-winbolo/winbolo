@@ -37,7 +37,8 @@
 #include "scroll.h"
 #include "brain_list.h"
 #include "round_stats.h"   /* RoundStatsSummary — lastRoundStats store */
-#include "lobby_bot_pools.h" /* LOBBY_BOT_CATALOG_WIRE_MAX */
+#include "lobby_bot_pools.h" /* lobbyBotPoolsCatalogId, for the CTRL_LOBBY_BOT_POOL_INFO apply */
+#include "control_event.h"  /* LOBBY_BRAIN_DOCS_WIRE_MAX */
 #include "upload_policy.h"
 #include "view_policy.h"   /* ViewPolicy / VIEW_CATEGORY_COUNT — server view-rule mirror */
 #include "ping_display.h"  /* PingDisplay — per-slot ping readout smoothing */
@@ -45,6 +46,7 @@
 #include "transport_udp.h" /* MAX_SPECTATORS */
 #include "input_packet.h"  /* PING_SPAM_MAX_30S — client render backstop ring */
 #include "control_event.h" /* LOBBY_SCENARIO_*_LEN — the scenario mirror below */
+#include "scenario_details.h" /* SCN_DETAILS_MAX — the details cache below */
 
 /* Internal helpers relocated from client_sim.h during the public-header
  * transitive-leak cleanup. These need GameSim's full layout, so they
@@ -134,6 +136,55 @@ typedef struct {
     bool                  liveLobby;
 } ClientSpectatorFeed;
 
+/* A brain's commands.txt, as far as this client has got with it.
+ * EMPTY has not been asked for; WANTED is waiting its turn; ASKED has a
+ * request out; HAVE holds the text; FAILED is a brain the server had no docs
+ * for, or one given up on after CLIENT_BRAIN_DOCS_TRIES requests. */
+#define CLIENT_BRAIN_DOCS_S_EMPTY   0
+#define CLIENT_BRAIN_DOCS_S_WANTED  1
+#define CLIENT_BRAIN_DOCS_S_ASKED   2
+#define CLIENT_BRAIN_DOCS_S_HAVE    3
+#define CLIENT_BRAIN_DOCS_S_FAILED  4
+/* A request with no answer in this many transport ticks is sent again, up to
+ * CLIENT_BRAIN_DOCS_TRIES times. The server drops a request that finds this
+ * client's bulk stream busy, and the join's map download is the usual reason,
+ * so the tries cover a few seconds rather than one lost datagram. */
+#define CLIENT_BRAIN_DOCS_TIMEOUT_TICKS  150   /* 1.5 s at the 100/s tick */
+#define CLIENT_BRAIN_DOCS_TRIES          8
+
+/* Per-brain lobby texts, held on the heap and hung off ClientSim.
+ * Indexed exactly like lobbyBrainList.entries[]. See lobbyBrainTexts. */
+struct ClientBrainTexts {
+    char announce[BRAIN_LIST_MAX][BRAIN_ANNOUNCE_MAX + 1];
+    struct {
+        uint32_t gen;       /* CTRL_LOBBY_BRAIN_ANNOUNCE's docsGen; 0 = none */
+        uint16_t len;       /* its docsLen: the text's length in bytes */
+        uint8_t  state;     /* CLIENT_BRAIN_DOCS_S_* above */
+        uint8_t  tries;     /* requests sent for this generation */
+        uint32_t sentTick;  /* transport localTick of the last request */
+        char    *text;      /* len + 1 bytes, malloc'd once HAVE */
+    } docs[BRAIN_LIST_MAX];
+    /* The bulk receiver's landing buffer for one BULK_KIND_BRAIN_DOCS
+     * answer: [status 1][rawLen 2 BE][compressed bytes]. rxIdx is one more
+     * than the brain it is filling, and 0 for none. The buffer lives as long
+     * as this struct does, which is why a new brain list clears the struct
+     * rather than freeing it: an answer can be half-received when the list
+     * changes, and the receiver keeps writing where onBegin pointed it. */
+    int      rxIdx;
+    uint8_t  rx[1 + 2 + BRAIN_DOCS_Z_MAX];
+};
+
+/* The struct above, allocated on first use. NULL only when that allocation
+ * fails. */
+struct ClientBrainTexts *clientSimBrainTexts(ClientSim *cs);
+
+/* Forget every brain's announce line and docs, keeping the allocation (see
+ * rx above). A no-op when nothing was ever allocated. */
+void clientSimBrainTextsClear(ClientSim *cs);
+
+/* Free the struct and every docs text in it. clientSimDestroy calls it. */
+void clientSimBrainTextsFree(ClientSim *cs);
+
 struct ClientSim {
     GameSim     sim;    /* MUST be first member */
     BYTE        myPlayerNum; /* Server-assigned player number; tanks[myPlayerNum] is our tank */
@@ -148,6 +199,11 @@ struct ClientSim {
      * Zero-initialised by the clientSimCreate memset (depth 1, first frame
      * discrete). */
     InterpRenderCtl interpRenderCtl;
+
+    /* Draw other tanks from their full interpolated world position rather
+     * than the game pixel (clientSimSetFineTankPositions). False from the
+     * create memset, so only a front end that asks gets it. */
+    bool fineTankPositions;
 
     /* Server shell snapshots for UDP mode */
     ShellSnapshot serverShellSnaps[MAX_SNAPSHOT_SHELLS];
@@ -167,6 +223,30 @@ struct ClientSim {
     /* Min-over-window RTT the transport stamps in each PONG; the snapshot
      * path anchors forward-projection to it rather than the display ping. */
     uint16_t    projectionPingMs;
+
+    /* Forward offset added to every input tick this client produces. A
+     * producer whose counter has fallen behind the server's consumption
+     * adopts the jump once and keeps it, so it catches up in one round trip
+     * rather than one snapshot. Only ever grows. */
+    uint32_t    inputTickOffset;
+/* Half-steps of headroom past the server's last-processed tick when the
+ * offset is set, so the jump lands ahead of where the server will be when
+ * the packet arrives rather than exactly on it.
+ *
+ * Held above the server's gap-fill window (the `gap < 8` test in
+ * serverSimApplyOneInput). The server stall-advances through roughly the
+ * round trip while the jumped packet is in flight, so what is left when it
+ * is applied is this margin - and a gap inside that window is filled, half
+ * a step at a time, with the buttons the client held before the hitch. The
+ * client never predicted that movement, so each jump cost a position
+ * correction. A margin past the window is applied as the jump it is. The
+ * two constants are a pair: move one and read the other. */
+#define CLIENT_INPUT_JUMP_MARGIN_HALFSTEPS 10
+/* Cap on the round-trip contribution to the jump. CLIENT_INPUT_HISTORY_SIZE
+ * is 256, so an uncapped ping would let one jump approach the ring's length
+ * and the replay would skip almost everything in it. 64 half-steps is 640ms,
+ * past any playable ping and far short of the ring. */
+#define CLIENT_INPUT_JUMP_MAX_RTT_HALFSTEPS 64
 
     /* Per-slot conditioning for the ping the player rows render — smoothing,
      * repaint deadband and colour-band hysteresis over the raw RTT each
@@ -357,6 +437,8 @@ struct ClientSim {
     uint8_t          lobbyBaseCount;
     uint8_t          lobbyStartCount;
     UploadPolicy     uploadPolicy;      /* server map-upload policy; ALLOW until first event */
+    ScriptUploadPolicy scriptUploadPolicy; /* server script-upload policy; ALLOW until first event */
+    bool lobbyScriptSharingOff; /* server refuses script copies; false (sharing) until first event */
     /* Server visibility rules, indexed by ViewCategory. Raw mirror of the
      * lobby-settings event; until one lands these hold the same three a
      * server starts with (clientSimCreate), so what the overview draws
@@ -370,7 +452,12 @@ struct ClientSim {
                                      * to their allies; raw mirror of the
                                      * lobby-settings event, false until the
                                      * first one lands */
-    uint8_t          overviewWindow;  /* OverviewWindow the server asked for */
+    bool             positionalSound; /* server sends sounds with a side and a
+                                     * banded distance; raw mirror of the
+                                     * lobby-settings event, false until the
+                                     * first one lands, which plays every
+                                     * sound centred */
+    uint8_t          overviewWindow; /* OverviewWindow the server asked for */
     uint8_t          lineOfSight;     /* LineOfSightMode the server asked for */
     bool             lobbySmartPingsOff; /* the server refuses smart pings; raw
                                      * mirror of the lobby-settings event. Held
@@ -382,6 +469,20 @@ struct ClientSim {
                                      * "pings allowed", never "pings banned".
                                      * Read it through the positive accessor
                                      * clientSimIsLobbyAllowSmartPings. */
+    bool             lobbyModsOff;  /* the round composes none of the mods on
+                                     * the lobby's pick list; raw mirror of the
+                                     * lobby-settings event. Held in the
+                                     * NEGATIVE sense for the same reason as
+                                     * lobbySmartPingsOff above, and read
+                                     * through the positive accessor
+                                     * clientSimGetLobbyModsEnabled.
+                                     *
+                                     * Its byte went into the fixed part of
+                                     * the settings body, ahead of the
+                                     * scenario tail, so adding it moved that
+                                     * tail down: a body written without the
+                                     * byte is not readable by a build that
+                                     * has it, and nothing attempts that. */
     ServerVoiceMode  serverVoiceMode; /* what the server does with the voice
                                        * its clients send it; raw mirror of
                                        * the lobby-settings event. Zero is
@@ -496,6 +597,29 @@ struct ClientSim {
      * AiConfig "Bot Code" combo. */
     BrainList lobbyBrainList;
 
+    /* Per-brain LOBBY TEXTS, indexed exactly like lobbyBrainList.entries[]:
+     * the brain's announce.txt (the one line the lobby drops into team chat
+     * when a bot running it joins your team) and its commands.txt (the docs
+     * that line opens). The announce line arrives as a
+     * CTRL_LOBBY_BRAIN_ANNOUNCE beside the brain list, one per brain, with
+     * the length and generation of the docs. The docs themselves are asked
+     * for when the lobby opens them (clientSimLobbyBrainDocsWant) and arrive
+     * compressed on CHANNEL_BULK. An empty announce and a docs generation of
+     * 0 mean the brain ships no such file — that is the normal case, and the
+     * lobby then says nothing for that brain.
+     *
+     * They come over the wire rather than being read off the local disk the
+     * way about.txt is, because the SERVER chooses the brain and a client
+     * need not have that brain installed at all.
+     *
+     * Heap-held rather than inline: the table and its receive buffer are
+     * ~41 KB and almost every ClientSim ever made (headless runs, unit
+     * tests, the recorder) never sees a brain that ships the files. The
+     * pointer is allocated on the first text that arrives, survives
+     * clientSimCreate's memset the way lobbyBrainList does, and is freed in
+     * clientSimDestroy. */
+    struct ClientBrainTexts *lobbyBrainTexts;
+
     /* Last finished round's scoreboard + awards, received via
      * CTRL_ROUND_STATS at game over. Round-only: cleared when the next
      * countdown starts. lastRoundStatsValid gates whether the panel shows. */
@@ -508,16 +632,31 @@ struct ClientSim {
      * ratings and comments; the value itself carries no meaning. */
     uint32_t          ratingPostedSeq;
 
-    /* Reassembly of the server's bot-pool catalog, streamed as
-     * CTRL_LOBBY_BOT_POOL_CHUNK fragments during join sync. Fragments
-     * arrive in order on the reliable control channel; on the final
-     * fragment the assembled blob is installed via
-     * lobbyBotPoolsDeserializeInstall (replacing the process-global pool
-     * table so the lobby dropdown shows the SERVER's pools). */
-    uint8_t  lobbyPoolChunkExpected;   /* total fragment count; 0 = idle */
-    uint8_t  lobbyPoolNextSeq;         /* next in-order fragment expected */
-    uint32_t lobbyPoolBlobLen;         /* bytes assembled so far */
-    uint8_t  lobbyPoolBlob[LOBBY_BOT_CATALOG_WIRE_MAX];
+    /* The server's bot-name catalogue, as far as this client has got with
+     * it. CTRL_LOBBY_BOT_POOL_INFO names it by id and length; a client
+     * whose own pools have that id already is done (HAVE). Otherwise it is
+     * WANTED, and the transport's tick asks for it with
+     * PACKET_LOBBY_BOT_POOL_REQ once connected, again every
+     * CLIENT_BOT_POOL_TIMEOUT_TICKS up to CLIENT_BOT_POOL_TRIES times. The
+     * answer lands from CHANNEL_BULK and is installed with
+     * lobbyBotPoolsDeserializeInstall, replacing the process-global pool
+     * table so the lobby dropdown shows the SERVER's pools. NONE is a
+     * server with no themed pools, and FAILED one that never answered;
+     * both leave this client on its own pools, which only mislabels the
+     * dropdown, since bot names travel as strings. A zeroed ClientSim is
+     * NONE. */
+#define CLIENT_BOT_POOL_S_NONE    0
+#define CLIENT_BOT_POOL_S_WANTED  1
+#define CLIENT_BOT_POOL_S_ASKED   2
+#define CLIENT_BOT_POOL_S_HAVE    3
+#define CLIENT_BOT_POOL_S_FAILED  4
+#define CLIENT_BOT_POOL_TIMEOUT_TICKS  150   /* 1.5 s at the 100/s tick */
+#define CLIENT_BOT_POOL_TRIES          8
+    uint8_t  lobbyPoolState;
+    uint8_t  lobbyPoolTries;       /* requests sent for this id */
+    uint32_t lobbyPoolSentTick;    /* transport localTick of the last request */
+    uint32_t lobbyPoolId;          /* the id the server named */
+    uint32_t lobbyPoolLen;         /* its compressed blob's length */
 
     /* Server-side map directory listing — populated from
      * PACKET_LOBBY_MAP_LIST_RSP. The chooser's listProvider sends a
@@ -558,6 +697,68 @@ struct ClientSim {
      * differ, instead of re-enumerating on every frame. */
     uint32_t lobbyMapListSeq;
 
+    /* The scenarios the server offers on their own, independently of any map
+     * — populated from PACKET_LOBBY_SCENARIO_LIST_RSP after the client sends a
+     * PACKET_LOBBY_SCENARIO_LIST_REQ. The directory is flat, unlike the map
+     * chooser's tree, so there is no path to echo and so nothing to recognise
+     * a stale response by: a response is for the request that is in flight.
+     *
+     * The row lengths mirror SCN_DIR_FILE_LEN / _NAME_LEN / _DESC_LEN in
+     * src/bolo/scenario_api/scenario_defs.h, which this header does not
+     * include because a client build need not see the scenario contract. They
+     * are the receiving buffers, so a string longer than one arrives cut
+     * rather than overrunning it.
+     *
+     * Only the file length is declared here, under a name of its own. The
+     * other two are LOBBY_SCENARIO_NAME_LEN and LOBBY_SCENARIO_DESC_LEN from
+     * control_event.h, which this header includes and which already hold the
+     * same figures; declaring them again here would be two spellings of one
+     * length waiting to drift. The file length gets the LIST_ name because it
+     * is a different length from the settings event's for as long as anybody
+     * wants it to be: this one sizes a row of the directory listing, that one
+     * sizes the name of the scenario in play. transport_udp_client.c holds
+     * the two against each other.
+     *
+     * Per-ClientSim cost at 128: ~58 KB. A quarter of the map list's count for
+     * about the same memory — an entry here carries a description, so it runs
+     * to ~450 bytes against a map entry's ~150. */
+#define LOBBY_SCENARIO_LIST_MAX      128
+#define LOBBY_SCENARIO_LIST_FILE_LEN 128
+    int      lobbyScenarioListCount;
+    char     lobbyScenarioListFiles[LOBBY_SCENARIO_LIST_MAX]
+                                   [LOBBY_SCENARIO_LIST_FILE_LEN];
+    char     lobbyScenarioListNames[LOBBY_SCENARIO_LIST_MAX]
+                                   [LOBBY_SCENARIO_NAME_LEN];
+    char     lobbyScenarioListDescs[LOBBY_SCENARIO_LIST_MAX]
+                                   [LOBBY_SCENARIO_DESC_LEN];
+    uint8_t  lobbyScenarioListMaxPlayers[LOBBY_SCENARIO_LIST_MAX];
+    uint8_t  lobbyScenarioListBots[LOBBY_SCENARIO_LIST_MAX];
+    /* Tied to the map it was written against, so no use as a mod. Carried so
+       a chooser can say why a scenario it can see is not one it may pick. */
+    bool     lobbyScenarioListBound[LOBBY_SCENARIO_LIST_MAX];
+    /* The script keeps the round's win condition, which is what a mod does
+       and what a scenario does not. bound does not answer this: a mod and an
+       unbound scenario are both unbound, and a chooser that sorts the two
+       into different columns needs the kind as well. */
+    bool     lobbyScenarioListKeepsWin[LOBBY_SCENARIO_LIST_MAX];
+    /* Where the server got the file (SERVER_SCENARIO_SOURCE_*), and the
+       Workshop item it came from, 0 for none. */
+    uint8_t  lobbyScenarioListSource[LOBBY_SCENARIO_LIST_MAX];
+    uint64_t lobbyScenarioListWorkshopId[LOBBY_SCENARIO_LIST_MAX];
+    bool     lobbyScenarioListReady;    /* true once a response arrives */
+    bool     lobbyScenarioListInFlight; /* true after send, false on response */
+    /* False until the first chunk of the response in flight lands, which is
+       where the accumulator is cleared. Clearing at send time instead left a
+       list that a duplicated chunk could append to twice. */
+    bool     lobbyScenarioListStarted;
+    /* Client ticks since the request went out, while one is in flight. A
+       response that never comes would otherwise leave the request in flight
+       for good and the chooser with no way to ask again. */
+    uint16_t lobbyScenarioListWaited;
+    /* Ticked on each completed response, so a chooser can re-read without
+       polling the list itself, exactly as lobbyMapListSeq is used. */
+    uint32_t lobbyScenarioListSeq;
+
     /* Monotonic counter incremented whenever the client receives a
      * PACKET_LOBBY_MAP_CHANGE (i.e. the server told us to invalidate
      * and re-download the map). UI poll-and-compare against a cached
@@ -594,7 +795,16 @@ struct ClientSim {
      * once complete, the same way the WBN tab handles its async
      * download. lobbyMapPreviewReqPath is the path we asked for;
      * lobbyMapPreviewPath echoes the path the completed bytes belong
-     * to so the GUI can ignore a stale response after navigating. */
+     * to so the GUI can ignore a stale response after navigating.
+     *
+     * The request is a bare datagram, so the transport's tick sends it again
+     * when no stream header has arrived LOBBY_MAP_PREVIEW_TIMEOUT_TICKS after
+     * the last send, up to LOBBY_MAP_PREVIEW_TRIES sends in all, and then
+     * sets lobbyMapPreviewError. A busy refusal (_ERR code 3) is retried the
+     * same way. Once the header has arrived the bulk channel resends its own
+     * lost fragments, so the answer is never timed out. */
+#define LOBBY_MAP_PREVIEW_TIMEOUT_TICKS  100   /* 1 s at the 100/s tick */
+#define LOBBY_MAP_PREVIEW_TRIES          6
     char     lobbyMapPreviewReqPath[256];
     char     lobbyMapPreviewPath[256];
     bool     lobbyMapPreviewInFlight;
@@ -602,7 +812,58 @@ struct ClientSim {
     bool     lobbyMapPreviewError;   /* server replied _ERR */
     uint32_t lobbyMapPreviewTotal;   /* expected total bytes from the stream header */
     uint32_t lobbyMapPreviewReceived;/* bytes accumulated so far */
+    uint8_t  lobbyMapPreviewTries;   /* requests sent for lobbyMapPreviewReqPath */
+    uint32_t lobbyMapPreviewSentTick;/* transport localTick of the last request */
     uint8_t  lobbyMapPreviewBytes[LOBBY_MAP_UPLOAD_MAX_BYTES];
+
+    /* Script details (scenario_details.h) the lobby's details dialog asked
+     * for, kept per file name. The dialog names a file with
+     * clientSimLobbyScenarioDetailsWant; the transport's tick asks the
+     * server for one WANTED file at a time with
+     * PACKET_LOBBY_SCENARIO_DETAILS_REQ, and the answer lands here from
+     * CHANNEL_BULK (BULK_KIND_SCENARIO_DETAILS), found or not found. A
+     * request with no answer in LOBBY_SCN_DETAILS_TIMEOUT_TICKS is sent
+     * again, up to LOBBY_SCN_DETAILS_TRIES times, and then the slot gives
+     * up until the dialog forgets it on its next open. A server in this
+     * process has no transport: the dialog reads it directly and puts the
+     * answer here with clientSimLobbyScenarioDetailsPut.
+     *
+     * Enough slots for the file the dialog describes and every script on
+     * the longest list it judges overrides against, with room to spare. */
+#define LOBBY_SCN_DETAILS_SLOTS          24
+#define LOBBY_SCN_DETAILS_TIMEOUT_TICKS  150   /* 1.5 s at the 100/s tick */
+#define LOBBY_SCN_DETAILS_TRIES          5
+/* A slot's state. EMPTY holds no file; WANTED is named and not yet asked
+   for; ASKED has a request out; FOUND holds the details; NONE is a file the
+   server does not know, or one given up on. */
+#define LOBBY_SCN_DETAILS_EMPTY  0
+#define LOBBY_SCN_DETAILS_WANTED 1
+#define LOBBY_SCN_DETAILS_ASKED  2
+#define LOBBY_SCN_DETAILS_FOUND  3
+#define LOBBY_SCN_DETAILS_NONE   4
+    struct {
+        char     file[LOBBY_SCENARIO_FILE_LEN];
+        uint8_t  state;     /* LOBBY_SCN_DETAILS_* above */
+        uint8_t  tries;     /* requests sent for this file */
+        uint32_t sentTick;  /* transport localTick of the last request */
+        uint16_t len;       /* bytes of details once found */
+        uint8_t  bytes[SCN_DETAILS_MAX];
+        /* The file's settings block (scenario_settings.h), which only a
+           server that knows settings sends. settingsKnown false is a
+           server that did not say, which the dialog reads as no settings
+           it can draw. */
+        bool     settingsKnown;
+        uint16_t settingsLen;
+        uint8_t  settings[SCN_SETTINGS_BLOB_MAX];
+    } lobbyScnDetails[LOBBY_SCN_DETAILS_SLOTS];
+    /* The bulk receiver's landing buffer for one answer: the status byte,
+     * then the details, or for BULK_SCN_DETAILS_FOUND_V2 a details length,
+     * the details and the settings block. rxSlot is one more than the slot
+     * it is filling, and 0 for none, so a zeroed ClientSim starts with
+     * none. */
+    uint8_t  lobbyScnDetailsRx[1 + 2 + SCN_DETAILS_MAX +
+                               SCN_SETTINGS_BLOB_MAX];
+    int      lobbyScnDetailsRxSlot;
 
     /* Upload progress — driven by the Upload tab and the
      * PACKET_LOBBY_MAP_UPLOAD_ACK/DONE handlers. status: 0=idle,
@@ -610,12 +871,28 @@ struct ClientSim {
      * 4=rejected. */
     uint8_t  lobbyMapUploadStatus;
     uint8_t  lobbyMapUploadRejectCode; /* server's reject byte, if any */
-    char     lobbyMapUploadFinalPath[256]; /* server-relative path */
+    char     lobbyMapUploadFinalPath[256]; /* server-relative path, or the
+                                            * server's reason on a refused
+                                            * script */
+    /* UPLOAD_KIND_MAP / _SCRIPT: which upload the three fields above
+     * describe. Set when an upload starts; zero (MAP) before any. */
+    uint8_t  lobbyUploadKind;
+    /* Why the server refused a script (SCRIPT_REFUSE_*) and the two numbers
+     * that reason carries, off the DONE reply. NONE and zeros while an
+     * upload runs, after one the server took, and for a map. */
+    uint8_t  lobbyScriptRefuseReason;
+    int32_t  lobbyScriptRefuseA;
+    int32_t  lobbyScriptRefuseB;
     /* Set by the PACKET_LOBBY_MAP_USE_LOCAL_NACK handler when the
      * server can't fulfil the MD5-skip-upload shortcut. The Upload
      * tab's pump loop notices this on the next frame and falls back
      * to the regular PACKET_LOBBY_MAP_UPLOAD_BEGIN / CHUNK flow. */
     bool     lobbyMapUseLocalNeedsFallback;
+    /* The directory this computer copies its Workshop items to, or "" for
+     * none. A map picked from under it is offered to the server as
+     * "Workshop/<name>" before it is uploaded. Set by the frontend through
+     * clientSimSetWorkshopMapDir. */
+    char     workshopMapDir[FILENAME_MAX];
 
     /* Winbolo.net preview result — driven by
      * PACKET_LOBBY_PREVIEW_WBN_DONE. status: 0=idle,
@@ -662,6 +939,87 @@ struct ClientSim {
     char     lobbyScenarioFileName[LOBBY_SCENARIO_FILE_LEN];
     char     lobbyScenarioDescription[LOBBY_SCENARIO_DESC_LEN];
     bool     lobbyScenarioExtraTeams;
+    /* True when that script declared itself a mod, so the round is not its
+     * to end. False for a scenario and false when lobbyScenarioSource says
+     * there is no script at all, which is why a reader telling those two
+     * apart reads the source first. */
+    bool     lobbyScenarioKeepsWinCondition;
+    /* True when that script is tied to the one map it was written against,
+     * so a chooser may not offer to take it off: changing it means changing
+     * the map. The catalogue rows carry the same flag in
+     * lobbyScenarioListBound, but the attached script is not a catalogue row
+     * and need not be in the directory at all. */
+    bool     lobbyScenarioBound;
+    /* True when the server runs its scenario scripts with the full Lua
+     * library and no limits (-allow-unsafe-scripts). False with no script
+     * attached, since the server only says so beside one. */
+    bool     lobbyScenarioUnsafe;
+
+    /* The lobby's ordered script list, from CTRL_LOBBY_SCRIPT_LIST. Entry 0
+     * is the one the round is decided by and is the same file the identity
+     * above names; the rest are mods behind it.
+     *
+     * Two copies: `pending` is what the chunks of the list now arriving are
+     * appended to, and `lobbyScript*` is the last whole list, which is what
+     * the accessors answer. A list installed a chunk at a time would leave a
+     * chooser drawing half of one list and half of the next every time a
+     * host edited it. Sized by the wire's own cap, so a list that would
+     * overrun it is thrown away rather than cut. */
+    int      lobbyScriptCount;
+    char     lobbyScriptFiles[LOBBY_SCRIPT_LIST_MAX][LOBBY_SCENARIO_FILE_LEN];
+    char     lobbyScriptNames[LOBBY_SCRIPT_LIST_MAX][LOBBY_SCENARIO_NAME_LEN];
+    bool     lobbyScriptKeepsWin[LOBBY_SCRIPT_LIST_MAX];
+    bool     lobbyScriptBound[LOBBY_SCRIPT_LIST_MAX];
+    uint8_t  lobbyScriptSource[LOBBY_SCRIPT_LIST_MAX];
+    uint64_t lobbyScriptWorkshopId[LOBBY_SCRIPT_LIST_MAX];
+    int      lobbyScriptPendingCount;
+    LobbyScriptEntry lobbyScriptPending[LOBBY_SCRIPT_LIST_MAX];
+    /* The values the host chose for scripts' settings, from
+     * CTRL_LOBBY_SCRIPT_SETTING, keyed like the server's store. Supported
+     * is set by the first such event, which only a server that takes
+     * CMD_SET_SCRIPT_SETTING sends; the dialog lets the host change a
+     * value only once it is set. */
+    bool     lobbyScriptSettingsSupported;
+    int      lobbyScriptSettingCount;
+    struct {
+        char    file[LOBBY_SCENARIO_FILE_LEN];
+        char    id[SCN_SETTING_ID_LEN];
+        int32_t value;
+    }        lobbyScriptSettings[LOBBY_SCRIPT_SETTING_VALUES_MAX];
+    /* Set when a run of chunks is thrown away for overrunning the cap, and
+     * held until that run's last chunk. Zeroing the pending count is not
+     * enough on its own: zero is exactly where a fresh list starts, so the
+     * chunks behind the dropped one would append from there and the one
+     * carrying final would install a piece of the list as though it were the
+     * whole of it. Cleared on the chunk with final set, because the list is
+     * published as a back-to-back run on a reliable ordered channel and the
+     * chunk after a final one is always the start of the next list. */
+    bool     lobbyScriptPendingDropped;
+    /* Ticked on each whole list installed, so a chooser can re-read without
+     * comparing the rows itself, the way lobbyScenarioListSeq is used. */
+    uint32_t lobbyScriptSeq;
+
+    /* The rules that scenario's own manifest sets, from CTRL_SCENARIO_RULES.
+     * Here beside the identity rather than with the presentation below: a
+     * scenario stays attached across the return to lobby, which is where the
+     * presentation is dropped and where this set is read most — the lobby's
+     * popup is the only thing that says what a rules-only mod does. Each
+     * set replaces the whole of the last one, and the empty one a detach
+     * publishes is what empties it, so nothing else clears it. */
+    uint8_t  scenarioRulesCount;
+    uint8_t  scenarioRuleIndex[CTRL_SCENARIO_RULES_MAX];
+    double   scenarioRuleValue[CTRL_SCENARIO_RULES_MAX];
+
+    /* Where the fragments of the set being taken now are put down, until the
+     * last one lands and the three fields above are replaced in one step.
+     * Staged rather than written straight into them for the reason the
+     * bot-pool and brain-docs blobs are: a reader between two fragments would
+     * otherwise be handed half of the new set under the old set's count. */
+    uint8_t  scenarioRulesStageCount;
+    uint8_t  scenarioRulesExpected;   /* fragCount of the set in hand; 0 = none */
+    uint8_t  scenarioRulesNextSeq;
+    uint8_t  scenarioRuleStageIndex[CTRL_SCENARIO_RULES_MAX];
+    double   scenarioRuleStageValue[CTRL_SCENARIO_RULES_MAX];
 
     /* Most recent server reject — surfaced via toast/log when set.
      * lobbyLastRejectPacket is set to 0 when no pending message. */
@@ -733,6 +1091,12 @@ struct ClientSim {
      * directly here; UDP JOIN_REJECT mirrors its reason here too. The
      * clientSimGetConnectErrorReason accessor reads from this field. */
     char      connectErrorReason[256];
+    /* The langid the reason above was rendered from, or 0 when the reason
+     * came as plain text. Lets a frontend tell an incorrect-password reject
+     * from every other reject without comparing rendered strings. Cleared
+     * by clientSimSetConnectErrorReason; set by clientSimSetConnectErrorId
+     * straight after it. */
+    unsigned int connectErrorId;
 
     SubscriberHandle autoSubHandle;    /* Returned by serverSimRegisterClientSubscriber
                                         * inside clientSimConnectLocal{,Passive}; cleared
@@ -766,6 +1130,41 @@ struct ClientSim {
      * with clientSimClearPendingAllianceRequest after popping the
      * dialog (or auto-rejecting). */
     BYTE pendingAllianceRequestFrom;
+
+    /* ── What a scenario is presenting ───────────────────────────────
+     * Where the four CTRL_SCN_* events land. The control arms only
+     * store; the per-frame render pass reads, per the renderer thread
+     * rule. All of it is dropped on the return to lobby, in the
+     * CTRL_GAME_PHASE_LOBBY arm beside the rest of that reset. */
+
+    /* One display list per panel id, already decoded. scnPanelValid
+     * says a list has arrived at all: a panel nothing has sent to is
+     * not the same as one sent an empty list to clear it, and only the
+     * first of those should leave the frontend's slot unbuilt. */
+    ScnPanelList scnPanels[SCN_PANEL_IDS];
+    bool         scnPanelValid[SCN_PANEL_IDS];
+    /* Arriving lists scnPanelParse refused: dropped rather than drawn,
+     * and counted so a malformed list is visible to whoever wrote it
+     * instead of silently showing nothing. */
+    uint32_t     scnPanelRejects;
+
+    /* The announcement on screen; text[0] == '\0' is none.
+     * scnAnnounceArrivedTick is lastServerTick as it stood when the
+     * line landed, so a drawer works out what is left of
+     * scnAnnounceTicks against the same clock the scenario counted in
+     * rather than against wall time. */
+    char         scnAnnounceText[PACKET_MAX_CHAT_MESSAGE + 1];
+    uint16_t     scnAnnounceTicks;
+    uint32_t     scnAnnounceArrivedTick;
+
+    /* Markers by id. SCN_MARKER_KIND_CLEAR turns one off rather than
+     * storing a third kind, so a stored marker is always drawable. */
+    ClientScnMarker scnMarkers[SCN_MARKERS_MAX];
+
+    /* A scenario's own scores. Teams run 1..MAX_TANKS-1, so index 0 of
+     * the team rows is unused and stays invalid. */
+    ClientScnScore scnPlayerScores[MAX_TANKS];
+    ClientScnScore scnTeamScores[MAX_TANKS];
 };
 
 BOLO_STATIC_ASSERT(offsetof(struct ClientSim, sim) == 0,
@@ -780,6 +1179,7 @@ BOLO_STATIC_ASSERT(offsetof(struct ClientSim, sim) == 0,
 void                    clientSimSetBoundServerSim(ClientSim *cs, struct ServerSim *sim);
 struct ServerSim       *clientSimGetBoundServerSim(const ClientSim *cs);
 void                    clientSimSetConnectErrorReason(ClientSim *cs, const char *str);
+void                    clientSimSetConnectErrorId(ClientSim *cs, unsigned int id);
 
 /* One bit per player slot: the remote tanks this client currently believes
  * are alive. The client holds no tanks[] object for anyone but itself, so a

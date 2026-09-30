@@ -931,19 +931,47 @@ end
 --
 -- The multiply is deliberate on negative rows too: 1.2 x "not worth the walk"
 -- is further from the bar, not closer to it.
+--
+-- A HUMAN'S PING (BUILDER_POOL_PING_PILL_BONUS, 2.0): a bot that took a
+-- human's defend ping order on one of our pills (state._repair_ping, set and
+-- ended in orders.lua) weights that pill the same way, whatever its goal is.  When
+-- both apply the LARGER one is used, never the product.  The second return
+-- value names which one it was ("goal" / "ping") for the goal_w segment.
 function M.goal_weight(state, row)
-  local w = C.BUILDER_POOL_GOAL_PILL_BONUS or 1.0
-  if w == 1.0 or row.type == "farm" then return 1.0 end
+  if row.type == "farm" then return 1.0, nil end
+  local w, src = 1.0, nil
+  local gb = C.BUILDER_POOL_GOAL_PILL_BONUS or 1.0
   local g = state.goal
-  if not g or not g.target_id then return 1.0 end
-  if g.kind ~= "defend_pill" and g.kind ~= "repair_pill" then return 1.0 end
-  if row.id ~= g.target_id then return 1.0 end
-  return w
+  if gb ~= 1.0 and g and g.target_id
+     and (g.kind == "defend_pill" or g.kind == "repair_pill")
+     and row.id == g.target_id then
+    w, src = gb, "goal"
+  end
+  local pb = C.BUILDER_POOL_PING_PILL_BONUS or 1.0
+  local rp = state._repair_ping
+  if pb ~= 1.0 and rp and rp.tid == row.id and pb > w then
+    w, src = pb, "ping"
+  end
+  return w, src
 end
 
 local function apply_goal_weight(state, row)
-  local w = M.goal_weight(state, row)
+  -- A FORCED row (PING_DEFEND_REPAIR) is not weighted: its score gets the
+  -- flat PING_DEFEND_REPAIR_BONUS instead (M.apply_force_bonus), and one
+  -- adjustment per row keeps the printed chain a two-step sum.
+  if row.forced then
+    row.goal_w, row.goal_src, row.ping_by, row.ping_until = 1.0, nil, nil, nil
+    row.raw_score, row.goal_kind = nil, nil
+    return
+  end
+  local w, src = M.goal_weight(state, row)
   row.goal_w = w
+  row.goal_src = src
+  -- The ping's sender and end tick, for the goal_w segment (row_formula has
+  -- no state to read them from).
+  local rp = (src == "ping") and state._repair_ping or nil
+  row.ping_by    = rp and rp.sender or nil
+  row.ping_until = rp and rp.until_tick or nil
   -- Never on the no-route sentinel: -1e9 is an ordering device, not a score,
   -- and scaling it would print arithmetic nobody can check.
   if w ~= 1.0 and row.trip then
@@ -1055,7 +1083,11 @@ function M.gate_row(state, world, info, now, row, ctx)
   if not reject then
     local have = info.trees or 0
     local need = row.trees_need or 0
-    if row.type ~= "farm" and (have - ctx.reserve) < need then
+    if row.forced == "repair" and have < need then
+      -- The forced repair asks for its own one tree and nothing more; with
+      -- none, ping_force's step is "harvest" and a farm row goes first.
+      reject = string.format("no_wood(have %d < need %d)", have, need)
+    elseif row.type ~= "farm" and (have - ctx.reserve) < need then
       reject = string.format("tree_reserve(%d,%d,%d)", ctx.reserve, have, need)
     end
   end
@@ -1110,7 +1142,11 @@ function M.gate_row(state, world, info, now, row, ctx)
       reject = "path_unsafe"
     end
   end
-  if not reject and row.score < (C.BUILDER_POOL_MIN_SCORE or 20) then
+  -- ctx.waive_min: the PING_DEFEND_REPAIR force (the forced repair row, and
+  -- the farm rows while its step is "harvest"). The human's order is the
+  -- reason to go; "not worth the man's time" does not apply to it.
+  if not reject and not ctx.waive_min
+     and row.score < (C.BUILDER_POOL_MIN_SCORE or 20) then
     reject = string.format("below_min_score(%.0f < %d)", row.score,
                            C.BUILDER_POOL_MIN_SCORE or 20)
   end
@@ -1185,6 +1221,31 @@ local function goal_chips(row)
   return string.format(" = bp_raw{%.0f} x goal_w{%.2f}", row.raw_score or 0, w)
 end
 
+-- The PING_DEFEND_REPAIR force, as the last link of the chain: the arithmetic
+-- above it produces bp_raw{}, and bp_raw + ping_force is the bp_score{} at the
+-- head of the line. forced{} names the step (repair / harvest). Absent on
+-- every row that is not forced, and on every row with the knob off.
+local function force_chips(row)
+  if not row.forced then return "" end
+  if not row.force_bonus then
+    return string.format(" forced{%s}", row.forced)
+  end
+  return string.format(" = bp_raw{%.0f} + ping_force{%.0f} forced{%s}",
+                       row.raw_score or 0, row.force_bonus, row.forced)
+end
+
+-- Adds PING_DEFEND_REPAIR_BONUS to a forced row's finished score. Never on
+-- the no-route sentinel (-1e9 is an ordering device, not a score).
+function M.apply_force_bonus(row)
+  if row.trip then
+    row.raw_score = row.score
+    row.force_bonus = C.PING_DEFEND_REPAIR_BONUS or 1000
+    row.score = row.score + row.force_bonus
+  else
+    row.force_bonus = nil
+  end
+end
+
 function M.score_terms(row)
   -- Every chip is word{value}: BrainTest's pool-grid detail popup parses
   -- exactly that shape (pool_grid.cpp) into its term table, so the same
@@ -1194,22 +1255,22 @@ function M.score_terms(row)
   if row.linear then
     return string.format(
       "bp_score{%s} = hp_w{%d} x missing{%d} = value{%.0f}"
-      .. " - trip_w{%.2f} x trip{%st} = tripcost{%.0f}%s%s",
+      .. " - trip_w{%.2f} x trip{%st} = tripcost{%.0f}%s%s%s",
       score_str, row.v_hp_w or (C.BUILDER_POOL_REPAIR_HP_W or 30),
       row.missing or 0, row.value or 0,
       C.BUILDER_POOL_REPAIR_TRIP_W or 0.25, tostring(row.trip or "-"),
-      row.c_trip or 0, goal_chips(row), leg_chips(row))
+      row.c_trip or 0, goal_chips(row), force_chips(row), leg_chips(row))
   end
   local urg_name = (row.type == "farm") and "urg" or "topup_hp"
   return string.format(
     "bp_score{%s} = bp_base{%.0f} + %s{%.0f} + front{%.0f} = value{%.0f}"
     .. " - trip_w{%.2f} x trip{%st} = tripcost{%.0f}"
-    .. " - danger_w{%.2f} x bp_danger{%.0f} = dangercost{%.0f}%s%s",
+    .. " - danger_w{%.2f} x bp_danger{%.0f} = dangercost{%.0f}%s%s%s",
     score_str, row.v_base or 0, urg_name, row.v_hp or 0, row.v_front or 0,
     row.value or 0,
     C.BUILDER_POOL_TRIP_W or 0.5, tostring(row.trip or "-"), row.c_trip or 0,
     C.BUILDER_POOL_DANGER_W or 1.5, row.danger or 0, row.c_danger or 0,
-    goal_chips(row), leg_chips(row))
+    goal_chips(row), force_chips(row), leg_chips(row))
 end
 
 -- -------------------------------------------------------------------------
@@ -1251,6 +1312,9 @@ function M.row_formula(row)
   if gw ~= 1.0 then
     chain = string.format("bp_raw(%.0f) x goal_w(%.2f) = %s",
                           row.raw_score or 0, gw, score_str)
+  elseif row.force_bonus then
+    chain = string.format("bp_raw(%.0f) + ping_force(%.0f) = %s",
+                          row.raw_score or 0, row.force_bonus, score_str)
   end
   local short = string.format("%s %s%s", label, M.score_terms(row),
                               reject and (" REJECT " .. reject) or "")
@@ -1333,9 +1397,13 @@ function M.row_formula(row)
     .. " 'all' = BUILDER_POOL_FARM_SECTORS is 1 (one row, nearest anywhere).",
     C.BUILDER_POOL_LEASH or 8) or nil
   local tail = string.format(
-    " Fires only if score >= BUILDER_POOL_MIN_SCORE(%d) and no gate rejects."
-    .. " trees need %d, have %d, reserved %d. leash %d, dist %d, front_dist %d.%s",
-    MIN, row.trees_need or 0, row.f_trees or 0, row.f_reserve or 0,
+    " %s trees need %d, have %d, reserved %d. leash %d, dist %d, front_dist %d.%s",
+    row.forced
+      and "FORCED (PING_DEFEND_REPAIR): MIN_SCORE, leash, tree reserve,"
+          .. " reserve_eta and mode_owned are waived; the safety gates still apply."
+      or string.format("Fires only if score >= BUILDER_POOL_MIN_SCORE(%d) and no"
+                       .. " gate rejects.", MIN),
+    row.trees_need or 0, row.f_trees or 0, row.f_reserve or 0,
     row.leash or C.BUILDER_POOL_LEASH or 8, row.dist or -1, fd,
     reject and (" REJECTED: " .. reject) or " ACCEPTED.")
   local segs
@@ -1410,14 +1478,57 @@ function M.row_formula(row)
       "bp_raw:the score BEFORE the goal-pill bonus -- value(%.0f) minus the"
       .. " costs above = %.0f. bp_raw x goal_w is the bp_score at the head of"
       .. " the line.", row.value or 0, row.raw_score or 0)
+    if row.goal_src == "ping" then
+      segs[#segs + 1] = string.format(
+        "goal_w:BUILDER_POOL_PING_PILL_BONUS(%.2f) -- a human (p%s) bot-command"
+        .. " pinged this row's pill (#%s) and this bot took the order, so its whole score is multiplied by"
+        .. " it until t=%s, the pill is dead or fully repaired, or another of"
+        .. " our pills is pinged: %.0f x %.2f = %s. It replaces the goal-pill"
+        .. " bonus (the larger one is used, never both).",
+        gw, tostring(row.ping_by or "?"), tostring(row.id or "?"),
+        tostring(row.ping_until or "?"),
+        row.raw_score or 0, gw, score_str)
+    else
+      segs[#segs + 1] = string.format(
+        "goal_w:BUILDER_POOL_GOAL_PILL_BONUS(%.2f) -- this row's pill (#%s) IS"
+        .. " the tank goal's own target (%s target_id=%s), so its whole score is"
+        .. " multiplied by it: %.0f x %.2f = %s. The chip is absent on every"
+        .. " other row, and on every row when the bonus is 1.0 (preset=keel).",
+        gw, tostring(row.id or "?"),
+        tostring(row.goal_kind or "goal"), tostring(row.id or "?"),
+        row.raw_score or 0, gw, score_str)
+    end
+  end
+  -- The PING_DEFEND_REPAIR force's own segments, one per chip it prints.
+  if row.forced then
+    if row.force_bonus then
+      segs[#segs + 1] = string.format(
+        "bp_raw:the score BEFORE the ping force -- value(%.0f) minus the costs"
+        .. " above = %.0f. bp_raw + ping_force is the bp_score at the head of"
+        .. " the line.", row.value or 0, row.raw_score or 0)
+      segs[#segs + 1] = string.format(
+        "ping_force:PING_DEFEND_REPAIR_BONUS(%.0f) added to the score: %.0f +"
+        .. " %.0f = %s. It only lifts the row to the top of the panel; the"
+        .. " sort puts a forced row first whatever the numbers.",
+        row.force_bonus, row.raw_score or 0, row.force_bonus, score_str)
+    end
     segs[#segs + 1] = string.format(
-      "goal_w:BUILDER_POOL_GOAL_PILL_BONUS(%.2f) -- this row's pill (#%s) IS"
-      .. " the tank goal's own target (%s target_id=%s), so its whole score is"
-      .. " multiplied by it: %.0f x %.2f = %s. The chip is absent on every"
-      .. " other row, and on every row when the bonus is 1.0 (preset=keel).",
-      gw, tostring(row.id or "?"),
-      tostring(row.goal_kind or "goal"), tostring(row.id or "?"),
-      row.raw_score or 0, gw, score_str)
+      "forced:%s -- this bot holds a human (p%s) bot-command PING defend order"
+      .. " on our pill #%s (hp %s/%d), and the tank is %.1f tiles from it"
+      .. " (straight line) <= PING_DEFEND_REPAIR_RANGE(%d). %s The row ignores"
+      .. " the ping / goal-pill weight. It ends when the order ends, the pill is"
+      .. " full, dead or lost, or the tank is beyond the range.",
+      tostring(row.forced), tostring(row.force_by or "?"),
+      tostring(row.force_tid or "?"), tostring(row.force_hp or "?"),
+      C.PILLS_MAX_HEALTH or 15, row.force_dist or 0,
+      C.PING_DEFEND_REPAIR_RANGE or 10,
+      (row.forced == "harvest")
+        and "We carry no trees, so step 1 is this harvest: of the farm rows"
+            .. " that pass their own gates (path safety kept), the one with"
+            .. " the shortest walk out (out{}) is forced; the repair follows"
+            .. " when the man is home with wood."
+        or "Needs 1 tree (engine lgm_cost_pill_repair); the man takes a full"
+           .. " load and the engine spends only what the damage needs.")
   end
   if wedge_seg then segs[#segs + 1] = wedge_seg end
   return short .. "||" .. table.concat(segs, "|")
@@ -1443,6 +1554,12 @@ end
 local function order_rows(rows)
   local seed_first = not C.BUILDER_POOL_SEEDED_COMPETES
   table.sort(rows, function(a, b)
+    -- A FORCED row (PING_DEFEND_REPAIR) sorts ahead of everything, whatever
+    -- the scores say: its bonus already puts it on top, and this key makes
+    -- "100% sure" not depend on the size of the bonus. At most two rows carry
+    -- it (the repair and, with no wood, the harvest); the scores order them.
+    local fa, fb = a.forced and 1 or 0, b.forced and 1 or 0
+    if fa ~= fb then return fa > fb end
     if seed_first then
       local sa, sb = a.seeded and 1 or 0, b.seeded and 1 or 0
       if sa ~= sb then return sa > sb end
@@ -1717,6 +1834,107 @@ function M.repair_feeder(state, world, info, now)
 end
 
 -- -------------------------------------------------------------------------
+-- ping_force — THE PING DEFEND REPAIR (C.PING_DEFEND_REPAIR, 2026-09-26).
+--
+-- Is this bot holding a human's bot-command PING defend order on one of our
+-- pills that needs armour, with the tank close enough to send the man?  (The
+-- repair feeder's seed is not enough: the order-injected defend goal never
+-- carries goal.repair, the pool's own defend_pill row carries it only when
+-- its repair handoff fires, and a seeded dispatch clears the defend goal.)
+-- Then that pill's row is FORCED (see the constants.lua note for the full
+-- list of what it waives and keeps).  Read off state._order -- the held order --
+-- and NOT off state.goal: the ordered defend goal is an alarm goal, which
+-- init.lua's validity hook drops inside 9 tiles and the order re-injects, so
+-- the goal kind flickers while the order does not.
+--
+-- Returns force, why, dist:
+--   force  nil, or { tid, mx, my, hp, missing, sender, dist, range, step }
+--          where step is "repair" (we carry >= 1 tree) or "harvest" (none);
+--   why    the reason it is off (nil when on), for PING_REPAIR_FORCE_END and
+--          the panel header;
+--   dist   straight-line tiles tank -> pill when a pill was found.
+-- -------------------------------------------------------------------------
+function M.ping_force(state, world, info, now)
+  if not C.PING_DEFEND_REPAIR then return nil, "knob_off" end
+  local o = state._order
+  if not (C.BOT_COMMANDS_ENABLED and o and o.kind == "defend_pill"
+          and o.ping and o.tid) then
+    return nil, "no_ping_defend_order"
+  end
+  local p = world.pills and world.pills[o.tid]
+  if not p then return nil, "pill_gone" end
+  if p.owner ~= "friendly" or p.in_tank or p.carrier then
+    return nil, "not_ours"
+  end
+  local hp = p.health or 0
+  if hp <= 0 then return nil, "pill_dead" end
+  local maxhp = C.PILLS_MAX_HEALTH or 15
+  if hp >= maxhp then return nil, "full_health" end
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
+  local dx, dy = tmx - p.mx, tmy - p.my
+  local dist = math.sqrt(dx * dx + dy * dy)
+  -- The order is PAUSED at critical armour (goals.lua override 3c); the tank
+  -- is about to run, and a man sent out now walks home to an empty tile.
+  if (info.armour or 0) <= (C.ARMOUR_CRITICAL or 0) then
+    return nil, "order_paused_armour", dist
+  end
+  -- The tank's live goal is a flee / resupply run. Both kinds are REACTIVE
+  -- (C.ORDER_REACTIVE_KINDS), so the order pass does not reject them, and a
+  -- defend order needs shells, so ORDER_REFUEL_SKIP_NO_SHELLS does not reject
+  -- refuel_at_base either: at low armour or shells it outbids the order and
+  -- the tank drives to a base. A man sent out now would be left behind.
+  -- (The dynamic flee threshold in goals.lua only applies in an attack_pill /
+  -- pill_place fight, never under a defend order; flee_pill likewise only
+  -- comes from those two goals.)
+  local gk = state.goal and state.goal.kind
+  if gk == "refuel_at_base" or gk == "flee_to_base" then
+    return nil, "tank_fleeing", dist
+  end
+  local range = C.PING_DEFEND_REPAIR_RANGE or 10
+  if dist > range then return nil, "out_of_range", dist end
+  return {
+    tid = o.tid, mx = p.mx, my = p.my, hp = hp, missing = maxhp - hp,
+    sender = o.sender, dist = dist, range = range,
+    -- The engine refuses a pill repair below lgm_cost_pill_repair (1) trees
+    -- (lgm.c LGM_PILL_REQUEST) and spends only what the damage needs, so one
+    -- tree is enough to go; none means the man harvests first.
+    step = ((info.trees or 0) >= 1) and "repair" or "harvest",
+  }, nil, dist
+end
+
+-- Mark a row FORCED. `step` is "repair" (the pill's own row; the default) or
+-- "harvest" (the farm row picked while we carry no wood). The repair row drops
+-- the discovery guards (take_blocker / friendly_fire / blocked / repos) and
+-- the leash, and asks for exactly one tree.
+function M.mark_forced(row, force, step)
+  row.forced     = step or "repair"
+  row.force_by   = force.sender
+  row.force_tid  = force.tid
+  row.force_dist = force.dist
+  row.force_hp   = force.hp
+  if row.forced == "repair" then
+    row.hard, row.out_of_leash, row.seeded = nil, nil, nil
+    row.trees_need = 1
+  end
+end
+
+-- PING_REPAIR_FORCE (start, and each step change) / PING_REPAIR_FORCE_END
+-- (with the reason). Edge-triggered on (pill, step), so a force that holds
+-- for a minute is one line.
+function M.log_force(state, info, now, force, why, dist)
+  local prev = state._ping_force_key
+  if force then
+    local key = string.format("%d:%s", force.tid, force.step)
+    if prev ~= key then
+      state._ping_force_key = key
+    end
+  elseif prev then
+    state._ping_force_key = nil
+  end
+end
+
+-- -------------------------------------------------------------------------
 -- builder_can_repair — the repair_pill split, asked from the TANK pool.
 --
 -- "Is this pill something the man can already walk to from where the tank
@@ -1783,6 +2001,10 @@ function M.update(state, world, info, now)
   local goal = state.goal or {}
   local reserve, r_base, r_pills, r_goal, r_sea = M.tree_reserve(state, info, b)
   local ok, reason, d = M.eligibility(state, world, info, now)
+  -- THE PING DEFEND REPAIR (PING_DEFEND_REPAIR): nil with the knob off, so
+  -- everything below that reads `force` is skipped and the pool is unchanged.
+  local force, force_why, force_dist = M.ping_force(state, world, info, now)
+  M.log_force(state, info, now, force, force_why, force_dist)
 
   local bp = {
     tick = now,
@@ -1799,6 +2021,7 @@ function M.update(state, world, info, now)
     inboat = info.inboat,
     job = state._bp_job,
     rows = {}, dispatch = nil,
+    force = force, force_why = force_why, force_dist = force_dist,
   }
   state._builder_pool = bp
 
@@ -1879,11 +2102,35 @@ function M.update(state, world, info, now)
                      reserve = 0,
                      reserve_eta = nil }
 
+  -- The FORCED row's context (PING_DEFEND_REPAIR). Like the seed's, it keeps
+  -- the man-safety half of the eligibility stack -- the tank's under-fire
+  -- clock AND a fire_exchange substate (shells flying either way) -- and drops
+  -- the rest: the mode_owned gate, the tree reserve (the row asks for its own
+  -- one tree), the goal's reserve_eta and MIN_SCORE. The farm rows get it too
+  -- while the force's step is "harvest", so the harvest can be forced.
+  local force_ctx = nil
+  if force then
+    local fok, freason = d.fire_ok, d.fire_reason
+    if d.mode_reason and string.find(d.mode_reason, "^fire_exchange") then
+      fok, freason = false, d.mode_reason
+    end
+    force_ctx = { ok = fok, reason = freason, reserve = 0,
+                  reserve_eta = nil, waive_min = true }
+  end
+
   local rows = M.discover(state, world, info)
   local seed_seen = false
+  local force_seen = false
   for _, row in ipairs(rows) do
     local rctx = ctx
-    if seed and row.mx == seed.mx and row.my == seed.my then
+    if force and row.type ~= "farm" and row.id == force.tid then
+      -- The forced pill. It replaces a seed on the same tile (the seed would
+      -- clear the defend goal on dispatch; the order must keep running).
+      M.mark_forced(row, force)
+      force_seen = true
+      if seed and row.mx == seed.mx and row.my == seed.my then seed_seen = true end
+      rctx = force_ctx
+    elseif seed and row.mx == seed.mx and row.my == seed.my then
       row.seeded = seed.src
       row.out_of_leash = nil
       row.hard = nil
@@ -1891,6 +2138,25 @@ function M.update(state, world, info, now)
       rctx = seed_ctx
     end
     M.score_row(state, world, info, now, row, rctx)
+    if row.forced then M.apply_force_bonus(row) end
+  end
+  -- The forced pill was not offered by discovery: it is missing less than
+  -- BUILDER_POOL_TOPUP_MIN_MISSING. (Discovery reaches 2 x the repair leash,
+  -- 22 tiles Manhattan, and 10 tiles straight line is at most 14 Manhattan,
+  -- so "beyond discovery" can only happen if PING_DEFEND_REPAIR_RANGE is
+  -- raised above 15.) Synthesise its row, the way a seed's is synthesised.
+  if force and not force_seen then
+    local row = {
+      type = "topup", id = force.tid, mx = force.mx, my = force.my,
+      dist = U.mdist(bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8),
+                     force.mx, force.my),
+      hp = force.hp, missing = force.missing, own = "friendly",
+    }
+    M.mark_forced(row, force)
+    M.score_row(state, world, info, now, row, force_ctx)
+    M.apply_force_bonus(row)
+    rows[#rows + 1] = row
+    if seed and seed.mx == force.mx and seed.my == force.my then seed_seen = true end
   end
   if seed and not seed_seen then
     -- The feeder named a tile ordinary discovery does not offer. The common
@@ -1931,6 +2197,36 @@ function M.update(state, world, info, now)
     end
   end
   if seed_seen then state._bp_seed_drop_key = nil end
+  -- NO WOOD: step 1 of the force is a harvest. The farm rows were scored
+  -- with the normal ctx above, so every row the panel shows keeps the verdict
+  -- the pool gives it without the force. Here each farm row is gated AGAIN,
+  -- on a copy, with force_ctx (MIN_SCORE, mode_owned and reserve_eta waived;
+  -- the farm path-safety gate and the man-safety gates kept). Of the copies
+  -- that pass, the one with the shortest walk out -- the nearest forest the
+  -- man can actually reach -- ties by tile key, replaces its row and is
+  -- forced. No trip is walked twice: gate_row reuses the row's trip.
+  if force and force.step == "harvest" then
+    local best, best_i = nil, nil
+    for i, r in ipairs(rows) do
+      if r.type == "farm" and r.out_ticks then
+        local fr = {}
+        for k, v in pairs(r) do fr[k] = v end
+        M.gate_row(state, world, info, now, fr, force_ctx)
+        if not fr.reject
+           and (not best or fr.out_ticks < best.out_ticks
+                or (fr.out_ticks == best.out_ticks
+                    and (fr.my * 256 + fr.mx) < (best.my * 256 + best.mx))) then
+          best, best_i = fr, i
+        end
+      end
+    end
+    if best then
+      rows[best_i] = best
+      M.mark_forced(best, force, "harvest")
+      M.apply_force_bonus(best)
+    end
+    bp.force_harvest = best
+  end
   order_rows(rows)
   bp.rows = rows
 
@@ -1968,12 +2264,50 @@ function M.update(state, world, info, now)
             -- walk the gate actually simulated. Copied only in a debug build:
             -- it is a ~126-number table and it buys nothing at play time.
           end
+          -- A FORCED row that is only waiting out a shell HOLDS the man: the
+          -- next candidate would be a whole trip somewhere else, and the
+          -- forced job goes the first tick the shell is gone.
+          if row.forced then
+            bp.force_hold = "shell_will_hit"
+            break
+          end
         else
           winner = row
           break
         end
       end
     end
+  end
+  -- The force is on but its row is not the one going out this tick: say why,
+  -- once per reason (edge-triggered), so a long wait is one line.
+  if force and not (winner and winner.forced) then
+    local why
+    if not can_send then
+      local job = state._bp_job
+      if job then why = "man_out_on_" .. tostring(job.type)
+      elseif info.man_status == C.LGM_DEAD then why = "man_dead"
+      elseif info.inboat then why = "afloat"
+      else why = "man_not_in_tank" end
+    elseif bp.force_hold then
+      why = bp.force_hold
+    elseif force.step == "harvest" and not bp.force_harvest then
+      why = "no_farm_row_ok"
+    else
+      local fr = nil
+      for _, r in ipairs(rows) do
+        if r.forced then fr = r; break end
+      end
+      why = fr and fr.reject and (fr.reject_key or fr.reject:match("^[a-z_]+"))
+            or "none"
+      if winner then why = why .. "+other_job_goes" end
+    end
+    bp.force_wait = why
+    local wkey = string.format("%s:%s:%s", tostring(force.tid), force.step, why)
+    if state._ping_force_wait ~= wkey then
+      state._ping_force_wait = wkey
+    end
+  else
+    state._ping_force_wait = nil
   end
 
   -- One verdict line per tick. Not throttled: it is the single line that
@@ -2041,7 +2375,10 @@ function M.rung(state, world, info, now)
     trees_at_dispatch = info.trees or 0,
     hp_at_dispatch = row.hp or 0,
     seeded = row.seeded,
+    forced = row.forced,
   }
+  if row.forced then
+  end
   bp.job = state._bp_job
   bp.dispatch = nil
   local seed = state._bp_seed
@@ -2133,6 +2470,24 @@ function M.panel_section(state)
                         last.type, last.mx, last.my, last.outcome, last.tick,
                         last.lgm_dead and ", LGM killed" or "")
       or "active: none"
+  end
+  -- The PING_DEFEND_REPAIR force, when a ping defend order is held (the
+  -- panel's fourth and last header line; pool_grid.cpp keeps four).
+  local f = bp.force
+  if f then
+    hdr[#hdr + 1] = string.format(
+      "PING REPAIR FORCED: pill #%d @(%d,%d) hp %d/%d from p%s, tank %.1f <= %d"
+      .. " tiles, step=%s%s",
+      f.tid, f.mx, f.my, f.hp, C.PILLS_MAX_HEALTH or 15, tostring(f.sender),
+      f.dist, f.range, f.step,
+      bp.force_wait and (", waiting: " .. bp.force_wait) or "")
+  elseif bp.force_why and bp.force_why ~= "no_ping_defend_order"
+         and bp.force_why ~= "knob_off" then
+    hdr[#hdr + 1] = string.format(
+      "ping repair: not forced (%s%s)", bp.force_why,
+      bp.force_dist and string.format(", tank %.1f tiles, range %d",
+                                      bp.force_dist,
+                                      C.PING_DEFEND_REPAIR_RANGE or 10) or "")
   end
 
   local rows = {}

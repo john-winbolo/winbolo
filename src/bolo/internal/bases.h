@@ -1025,9 +1025,18 @@ void basesSetBaseCompressData(bases *value, BYTE *buff, int dataLen);
  * wholesale and reaches neither this nor basesSetBase's owner clamp, so it
  * must call this afterwards. */
 void basesValidate(bases *value);
+
+/* Takes off the map every base in the mined border, unless no base is inside
+ * it. Returns how many were taken off. See bases.c. */
+BYTE basesRemoveBorderBases(bases *value);
 /* Clamps every base's stocks against the sim's gameplay caps. Called by
  * mapClampToRules once a sim owns the records; see bolo_map.h. */
 void basesClampToRules(struct GameSim *sim, bases *value);
+/* Raises every base's stocks to the sim's caps — the same walk the other way
+ * round, for a scenario that raises a cap and asks for the map to start at
+ * it. Called by serverSimScenarioFillWorldToRules, which writes the
+ * records. */
+void basesFillToRules(struct GameSim *sim, bases *value);
 
 
 #endif /* BASES_H */

@@ -304,6 +304,9 @@ void transportUdpClientSubmitCommand(Transport *t,
 
 /* ── Layout A lobby commands — Client → Server ───────────────────── */
 void transportUdpClientSendLobbyMapListRequest(Transport *t, const char *relPath);
+/* No argument: the scenarios directory is flat, so there is no path to ask
+ * about. */
+void transportUdpClientSendLobbyScenarioListRequest(Transport *t);
 void transportUdpClientSendLobbyMapSearchRequest(Transport *t,
                                                  const char *relPath,
                                                  const char *query);
@@ -314,6 +317,24 @@ void transportUdpClientSendLobbyMapPreviewRequest(Transport *t,
                                                   const char *relPath);
 void transportUdpClientSendLobbyMapUploadBegin(Transport *t, uint32_t totalLen,
                                                const char *name);
+/* Writes the body of PACKET_LOBBY_MAP_UPLOAD_BEGIN (everything after the
+ * packet header): { kind 1, totalLen 4, nameLen 1, name N,
+ * bulkStartSeq 4 }. A name over 255 bytes is cut to 255. Returns the
+ * body length, or 0 if `cap` is too small. The client's BEGIN sender
+ * uses it; exposed so a unit test can hold the bytes to hand-written
+ * hex. */
+size_t transportUdpClientBuildUploadBeginBody(uint8_t *out, size_t cap,
+                                              uint8_t kind, uint32_t totalLen,
+                                              const char *name,
+                                              uint32_t bulkStartSeq);
+/* Writes the body of PACKET_LOBBY_SCRIPT_FETCH_REQ (everything after the
+ * packet header): { reqSeq 4 BE, fileLen 1, file N }. Returns the body
+ * length, or 0 if `cap` is too small or the name is empty or longer than
+ * BULK_PATH_MAX. The client's fetch sender uses it; exposed so a unit test
+ * can hold the bytes to hand-written hex. */
+size_t transportUdpClientBuildScriptFetchReqBody(uint8_t *out, size_t cap,
+                                                 uint32_t reqSeq,
+                                                 const char *file);
 /* Pre-upload optimisation: try to skip the byte transfer if the server
  * already has an identical file at relPath (relative to data/maps/).
  * Server replies PACKET_LOBBY_MAP_UPLOAD_DONE on match, or
@@ -334,19 +355,36 @@ void transportUdpClientSendLobbyMapUseLocal(Transport *t, uint32_t totalLen,
  * progress via the lobbyMapUpload* status fields on ClientSim. */
 bool transportUdpClientStartLobbyMapUploadFromPath(Transport *t,
                                                     const char *localFilePath);
+/* The path the map upload's USE_LOCAL pre-check names for localFilePath:
+ * "data/maps/<rest>" gives "<rest>", and "<workshopDir>/<rest>" gives
+ * "Workshop/<rest>". Either separator is accepted in both arguments, and
+ * workshopDir may be NULL or "". Returns false with out "" for a path under
+ * neither, or one that does not fit. Exposed so a unit test can hold the
+ * derivation to its cases without a connected transport. */
+bool transportUdpClientUseLocalRelPath(const char *localFilePath,
+                                       const char *workshopDir,
+                                       char *out, size_t outLen);
 bool transportUdpClientStartLobbyMapUploadFromBytes(Transport *t,
                                                      const uint8_t *buf,
                                                      size_t len,
                                                      const char *mapName);
+/* The same for a .scenario or .lua (UPLOAD_KIND_SCRIPT). Returns false,
+ * sending nothing, when the file is missing, empty, over
+ * LOBBY_PACKAGE_UPLOAD_MAX_BYTES, or not named .scenario / .lua. No
+ * USE_LOCAL step: a script has no data/maps twin. The server applies
+ * the full name rule. */
+bool transportUdpClientStartLobbyScriptUpload(Transport *t,
+                                              const char *localFilePath);
 
 /* Current upload progress as 0..100 (bytesSent / fileLen * 100). */
 uint8_t transportUdpClientGetLobbyMapUploadProgressPercent(Transport *t);
 
 /* Server-side: validates a length-prefixed upload filename against the
- * reserved-name / control-char / suffix-cap rules. Exposed for unit
- * coverage of the validation matrix; production callers live inside
- * transport_udp_server.c. */
-bool uploadFilenameIsSafe(const char *name, size_t nameLen);
+ * reserved-name / control-char / suffix-cap rules for the upload's kind
+ * (UPLOAD_KIND_MAP: .map; UPLOAD_KIND_SCRIPT: .scenario or .lua).
+ * Exposed for unit coverage of the validation matrix; production
+ * callers live in the server transport. */
+bool uploadFilenameIsSafe(uint8_t kind, const char *name, size_t nameLen);
 
 /* Client-side: parsers for the chunked MAP_LIST_RSP / MAP_SEARCH_RSP
  * responses. The dispatcher in transport_udp_client.c calls these per
@@ -358,6 +396,12 @@ void udpClientHandleLobbyMapListRsp(struct ClientSim *cs,
                                     const uint8_t *buf, int len);
 void udpClientHandleLobbyMapSearchRsp(struct ClientSim *cs,
                                       const uint8_t *buf, int len);
+
+/* The same, for the chunked SCENARIO_LIST_RSP. No path in this one: the
+ * scenarios directory is flat, so a response belongs to the request that is
+ * in flight and there is nothing to recognise a stale one by. */
+void udpClientHandleLobbyScenarioListRsp(struct ClientSim *cs,
+                                         const uint8_t *buf, int len);
 /* Client-side handler for a failed MAP_PREVIEW request. The map bytes
  * themselves now arrive over CHANNEL_BULK and are reassembled by the
  * transport's bulk receiver; ERR flags the request failed. `buf` includes
@@ -443,6 +487,32 @@ uint8_t transportUdpClientGetRoundLogPercent(Transport *t);
  * idle. NULL unless a completed blob is held. The caller then owns the buffer
  * and releases it with plain free(). */
 uint8_t *transportUdpClientTakeRoundLog(Transport *t, size_t *outLen);
+
+/* ── A copy of one of the server's scripts (BULK_KIND_SCRIPT_PACKAGE) ── */
+/* Backing calls for the clientSimNetSendLobbyScriptFetch /
+ * clientSimGetScriptFetch* / clientSimTakeScriptFetch /
+ * clientSimClearScriptFetch wrappers in public/client_net.h; the states they
+ * speak in are that header's ClientScriptFetchState. localTick runs at 100/s.
+ *
+ * A request with no answer is sent again after SCRIPT_FETCH_TIMEOUT_TICKS, up
+ * to SCRIPT_FETCH_SENDS sends in all. A BUSY answer sends it again after
+ * SCRIPT_FETCH_BUSY_RETRY_TICKS, up to SCRIPT_FETCH_BUSY_RETRIES times. An
+ * answer that has started arriving fails with no answer after
+ * SCRIPT_FETCH_NO_PROGRESS_TICKS without a further byte. */
+#define SCRIPT_FETCH_TIMEOUT_TICKS     200  /* 2s without an answer           */
+#define SCRIPT_FETCH_SENDS             3    /* sends of one request in all    */
+#define SCRIPT_FETCH_BUSY_RETRY_TICKS  100  /* 1s after a BUSY answer         */
+#define SCRIPT_FETCH_BUSY_RETRIES      3    /* re-requests after BUSY answers */
+#define SCRIPT_FETCH_NO_PROGRESS_TICKS 1000 /* 10s of a stalled transfer      */
+
+bool transportUdpClientSendScriptFetch(Transport *t, const char *file);
+int transportUdpClientGetScriptFetchState(Transport *t);
+int transportUdpClientGetScriptFetchStatus(Transport *t);
+uint8_t transportUdpClientGetScriptFetchPercent(Transport *t);
+bool transportUdpClientTakeScriptFetch(Transport *t, uint8_t **outBytes,
+                                       size_t *outLen, char *nameOut,
+                                       size_t nameCap);
+void transportUdpClientClearScriptFetch(Transport *t);
 
 
 /*********************************************************
@@ -604,6 +674,11 @@ uint16_t transportUdpServerGetClientPing(BYTE playerNum);
  * written by the PONG handler. No-op for an out-of-range or unconnected slot. */
 void transportUdpServerSetClientPingForTest(BYTE playerNum, uint16_t pingMs);
 
+/* Age an outstanding verify's hold on the anonymous PLAYER_JOIN fallback to
+ * this tick, so the sweep stops deferring to it. Lets a case reach the
+ * lapsed-hold path without running WBN_REAUTH_HOLD_TICKS ticks of clock. */
+void transportUdpServerExpireReauthHoldForTest(BYTE playerNum);
+
 /* Test seam: read a slot's high-ping enforcement tally. Deliberately NOT gated
  * on the slot being connected — the thing worth asserting is that a freed slot
  * carries no strikes into its next occupant. Any out pointer may be NULL.
@@ -638,6 +713,16 @@ bool transportUdpServerStartBalanceRequest(struct ServerSim *sim,
 void transportUdpServerHandleWbnReauth(struct ServerSim *sim,
                                        BYTE slot,
                                        const char *token);
+
+/* The tail of the above, once its client/verify comes back off the
+ * WinBolo.net worker. Runs on the tick thread out of
+ * winbolonetThreadDrainResults, for a result whose kind is
+ * WBN_JOB_VERIFY. id names the job the reauth was queued as; the slot
+ * and connection it was queued for are held in the server transport and
+ * looked up from it. A result whose slot has since been freed or reused
+ * is dropped. */
+void udpServerApplyReauthResult(struct ServerSim *sim, uint32_t id,
+                                int status, const char *response);
 
 /* Lock/unlock the game to prevent new players from joining.
  * Broadcasts a server message event to all clients. */
@@ -906,6 +991,13 @@ uint32_t transportUdpServerTestMapQueueOutstanding(int slot);
  * (e.g. one left unacked across game start). False on a bad slot/event or a
  * full window. */
 bool transportUdpServerTestAddGameEvent(int slot, const GameEvent *ev);
+/* Queue one whole game event on a slot's best-effort effect channel
+ * (CHANNEL_GAME_EFFECT), as the real producer does for an ephemeral event —
+ * lets a test stage the sound/explosion burst a busy tick raises. Returns what
+ * the enqueue reported: false on a bad slot/event or an oversized segment. A
+ * full ring still returns true (the oldest pending segment is dropped to make
+ * room), so read channelGetBestEffortStats for that loss. */
+bool transportUdpServerTestAddEffectEvent(int slot, const GameEvent *ev);
 /* Fabricate a connected slot with a fresh channel mux so a server unit test can
  * drive transportUdpServerOnGameStart over two distinct slots without sockets. */
 void transportUdpServerTestForceConnect(int slot, BYTE playerNum);
@@ -951,6 +1043,33 @@ void transportUdpClientTestResyncState(Transport *t, bool *resyncActive,
 #if WB_ENABLE_NETIMPAIR
 void transportUdpClientTestUploadTimeout(Transport *t);
 void transportUdpClientTestDropUploadReply(Transport *t, uint8_t packet_type);
+/* True while a bot-name catalogue answer is part way in on CHANNEL_BULK. */
+bool transportUdpClientTestBotPoolArriving(Transport *t);
+/* Drop the next `count` inbound packets of packet_type before the client
+ * processes them, as if the server's datagrams were lost on the wire. Other
+ * packet types pass. DropNextLeft reads how many drops are still pending, so
+ * a test can check the drop really happened. */
+void transportUdpClientTestDropNext(Transport *t, uint8_t packet_type,
+                                    int count);
+int  transportUdpClientTestDropNextLeft(Transport *t);
+/* The same for outbound packets: drop the next `count` datagrams of
+ * packet_type the client sends, as if they were lost on the way to the
+ * server. */
+void transportUdpClientTestDropNextOut(Transport *t, uint8_t packet_type,
+                                       int count);
+int  transportUdpClientTestDropNextOutLeft(Transport *t);
+/* Hand the client a clock of the caller's own instead of SDL_GetTicks. Two
+ * things read it and they have to agree: the impairment layer's delivery
+ * times, and the client's own round-trip measurement (the PING stamp and the
+ * PONG that subtracts it). net_impair.c takes nowMs as a parameter and reads
+ * no clock itself, so a caller that advances a counter a fixed amount per
+ * tick makes a delay= spec deliver on an exact tick count, cost no real time,
+ * and be the round trip the client then measures across it. Process wide, and
+ * it covers both directions (impairIn and impairOut) on every client in the
+ * process. NULL restores the wall clock. Nothing else moves — join retries,
+ * the lobby-alone timer, the command queue and the upload pump keep
+ * SDL_GetTicks. */
+void transportUdpClientSetVirtualClock(uint64_t (*fn)(void));
 #endif
 /* Read a connected spectator's armed seed blob (the spectator-owned copy of the
  * delayed ring keyframe). Returns the blob pointer with *outLen set to its

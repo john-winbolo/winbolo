@@ -29,6 +29,7 @@
  *********************************************************/
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <SDL3/SDL.h>
 #include "client_sim_control.h"
@@ -49,6 +50,39 @@
 #include "../common/wb_log.h"
 #include "../common/mp_diag_log.h"
 
+/* The recipient test the three targeted CTRL_SCN_* events share with
+ * CTRL_SERVER_TEXT: destTeam 0 means everyone, destPlayer 0xFF means
+ * everyone. In-process subscribers (SP-host, bots) receive every
+ * publish, so the comparison has to happen here; the wire path was
+ * already filtered by udpClientDeliverControl and arrives addressed to
+ * this client. 0 is a real slot, which is why 0xFF rather than 0 is
+ * what means "everybody". */
+static bool clientSimScnAddressedToMe(const ClientSim *cs, uint8_t destTeam,
+                                      uint8_t destPlayer) {
+    BYTE myPN = clientSimGetMyPlayerNum(cs);
+    if (destTeam != 0) {
+        const ClientLobbySlot *ms = clientSimGetLobbySlot(cs, myPN);
+        if (ms == NULL || ms->teamNumber != destTeam) return false;
+    }
+    if (destPlayer != 0xFF && myPN != destPlayer) return false;
+    return true;
+}
+
+/* Drop everything a scenario was presenting. Called from the
+ * CTRL_GAME_PHASE_LOBBY arm, beside the rest of that reset: a panel,
+ * announcement, marker or score belongs to the round it was sent in. */
+static void clientSimScnClearPresentation(ClientSim *cs) {
+    memset(cs->scnPanels, 0, sizeof(cs->scnPanels));
+    memset(cs->scnPanelValid, 0, sizeof(cs->scnPanelValid));
+    cs->scnPanelRejects = 0;
+    cs->scnAnnounceText[0] = '\0';
+    cs->scnAnnounceTicks = 0;
+    cs->scnAnnounceArrivedTick = 0;
+    memset(cs->scnMarkers, 0, sizeof(cs->scnMarkers));
+    memset(cs->scnPlayerScores, 0, sizeof(cs->scnPlayerScores));
+    memset(cs->scnTeamScores, 0, sizeof(cs->scnTeamScores));
+}
+
 /* Localized lobby team label: the host-assigned team name, or "Team N"
  * when the team is unnamed (matching the lobby roster header). */
 static void clientSimLobbyTeamLabel(const ClientSim *cs, BYTE team,
@@ -62,6 +96,43 @@ static void clientSimLobbyTeamLabel(const ClientSim *cs, BYTE team,
     memset(&args, 0, sizeof(args));
     args.number = team;
     SDL_strlcpy(out, langGetTextFmt(STR_DLGLOBBY_TEAM_HEADER, &args), outLen);
+}
+
+/* Take one brain's CTRL_LOBBY_BRAIN_ANNOUNCE: its announce line, and the
+ * length and generation of its commands.txt. Docs of any other generation
+ * are dropped here, fetched or not, because they are not the text the
+ * server holds now; a dialog showing them asks again. The same generation
+ * again (a round handing the lobby back re-sends every announce) leaves the
+ * docs as they are, so a player does not fetch a text they already have.
+ *
+ * The table is allocated on first use: almost no ClientSim ever meets a
+ * brain that ships these files. */
+static void clientSimApplyBrainAnnounce(ClientSim *cs, const ControlEvent *evt) {
+    struct ClientBrainTexts *t;
+    uint8_t  idx = evt->u.lobbyBrainAnnounce.brainIdx;
+    uint16_t aLen = evt->u.lobbyBrainAnnounce.announceLen;
+    uint32_t gen = evt->u.lobbyBrainAnnounce.docsGen;
+
+    if (idx >= BRAIN_LIST_MAX || aLen > BRAIN_ANNOUNCE_MAX) return;
+    t = clientSimBrainTexts(cs);
+    if (t == NULL) return;
+    memcpy(t->announce[idx], evt->u.lobbyBrainAnnounce.announce, aLen);
+    t->announce[idx][aLen] = '\0';
+
+    if (t->docs[idx].gen != gen) {
+        free(t->docs[idx].text);
+        memset(&t->docs[idx], 0, sizeof(t->docs[idx]));
+        t->docs[idx].gen = gen;
+        t->docs[idx].len = gen != 0 ? evt->u.lobbyBrainAnnounce.docsLen : 0;
+        /* An answer for the old generation may still be arriving; its
+           completion checks the generation and drops it. */
+        if (t->rxIdx == idx + 1) t->rxIdx = 0;
+    }
+
+    WB_LOG_INFO(WB_LOG_CAT_CLIENT,
+                "brain %u lobby texts announced: announce %u B, docs %u B "
+                "(gen %u)", (unsigned)idx, (unsigned)aLen,
+                (unsigned)t->docs[idx].len, (unsigned)gen);
 }
 
 void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
@@ -413,6 +484,10 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * a plain lobby needs no branch. */
         cs->lobbyScenarioSource = (uint8_t)evt->u.lobbySettings.scenarioSource;
         cs->lobbyScenarioExtraTeams = evt->u.lobbySettings.scenarioExtraTeams;
+        cs->lobbyScenarioKeepsWinCondition =
+            evt->u.lobbySettings.scenarioKeepsWinCondition;
+        cs->lobbyScenarioBound = evt->u.lobbySettings.scenarioBound;
+        cs->lobbyScenarioUnsafe = evt->u.lobbySettings.scenarioUnsafe;
         SDL_strlcpy(cs->lobbyScenarioName, evt->u.lobbySettings.scenarioName,
                     sizeof(cs->lobbyScenarioName));
         SDL_strlcpy(cs->lobbyScenarioFileName,
@@ -425,10 +500,14 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * because that is where gameTypeResolve reads it — the loadout this
          * client predicts its first life with, the start it predicts, and
          * the tournament stat block at game over all go through there. A
-         * plain lobby leaves 0, which resolves as open. */
+         * plain lobby leaves 0, and 0 is read only while the lobby type says
+         * scripted: a scripted round whose scenario declared no game plays
+         * strict tournament, the same answer the server resolves. */
         cs->sim.scenarioBaseGame =
             (gameType)evt->u.lobbySettings.scenarioBaseGame;
         cs->uploadPolicy             = evt->u.lobbySettings.uploadPolicy;
+        cs->scriptUploadPolicy       = evt->u.lobbySettings.scriptUploadPolicy;
+        cs->lobbyScriptSharingOff    = !evt->u.lobbySettings.scriptSharing;
         /* The policy byte is stored raw, with no range check. This mirror
          * drives nothing the server does not enforce for itself, so a value
          * outside the enum can only make the local display wrong, never more
@@ -443,6 +522,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         }
         cs->classicMode = evt->u.lobbySettings.lobbyClassicMode;
         cs->alliesInTrees = evt->u.lobbySettings.lobbyAlliesInTrees;
+        cs->positionalSound = evt->u.lobbySettings.lobbyPositionalSound;
         /* The server chooses what the map overview keeps live and what
          * blocks sight inside it; the keys no longer do. A byte this
          * build has no name for reads as the default rather than
@@ -456,6 +536,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                               ? evt->u.lobbySettings.lobbyLineOfSight
                               : (uint8_t)lineOfSightOff;
         cs->lobbySmartPingsOff = evt->u.lobbySettings.lobbySmartPingsOff;
+        cs->lobbyModsOff       = evt->u.lobbySettings.lobbyModsOff;
         cs->serverVoiceMode = evt->u.lobbySettings.voiceMode;
         /* Adopt the server's authoritative game-timing settings. The
          * server's lobbyTimeLimit field carries its current remaining
@@ -519,6 +600,16 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
 
     case CTRL_LOBBY_BRAIN_LIST:
         cs->lobbyBrainList = evt->u.lobbyBrainList.list;
+        /* A NEW list means the old texts belong to nobody: they are held by
+         * catalogue INDEX, and the next server's index 3 is a different
+         * brain from this one's. Left standing, a reconnect to another
+         * server showed the previous server's announce line under the new
+         * server's brain name. The announces that go with the new list
+         * follow this event, so clearing here costs nothing that arrives.
+         * Fetched docs and requests in flight go too: they are keyed by the
+         * same index. The table is cleared rather than freed, because a
+         * docs answer may be half-received into it. */
+        clientSimBrainTextsClear(cs);
         break;
 
     case CTRL_ROUND_STATS:
@@ -583,41 +674,146 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         break;
     }
 
-    case CTRL_LOBBY_BOT_POOL_CHUNK: {
-        /* Reassemble in-order fragments of the server's compressed
-         * bot-pool catalog; install on the final fragment so the lobby
-         * dropdown reflects the SERVER's pools. Fragments ride the
-         * reliable, ordered control channel, so seq is monotonic; any
-         * gap/mismatch aborts the in-progress reassembly. */
-        uint8_t  seq   = evt->u.lobbyBotPoolChunk.seq;
-        uint8_t  count = evt->u.lobbyBotPoolChunk.count;
-        uint16_t fl    = evt->u.lobbyBotPoolChunk.fragLen;
-        if (count == 0) break;
-        if (seq == 0) {
-            cs->lobbyPoolChunkExpected = count;
-            cs->lobbyPoolNextSeq = 0;
-            cs->lobbyPoolBlobLen = 0;
+    case CTRL_LOBBY_BOT_POOL_CHUNK:
+        /* Retired: an older server's way of sending the catalogue whole.
+         * Nothing sends it now; a recording that holds one is stepped
+         * over. */
+        break;
+
+    case CTRL_LOBBY_BOT_POOL_INFO: {
+        /* Which catalogue the server holds. The pools this client has now
+         * are its own shipped file, or the last server's until the lobby
+         * resets them on leaving; either may already be the server's, and
+         * then there is nothing to fetch. */
+        uint32_t id = evt->u.lobbyBotPoolInfo.id;
+        cs->lobbyPoolId    = id;
+        cs->lobbyPoolLen   = evt->u.lobbyBotPoolInfo.len;
+        cs->lobbyPoolTries = 0;
+        if (id == 0) {
+            cs->lobbyPoolState = CLIENT_BOT_POOL_S_NONE;
+        } else if (lobbyBotPoolsCatalogId() == id) {
+            cs->lobbyPoolState = CLIENT_BOT_POOL_S_HAVE;
+        } else {
+            cs->lobbyPoolState = CLIENT_BOT_POOL_S_WANTED;
         }
-        if (seq != cs->lobbyPoolNextSeq ||
-            count != cs->lobbyPoolChunkExpected ||
-            cs->lobbyPoolBlobLen + fl > sizeof(cs->lobbyPoolBlob)) {
-            cs->lobbyPoolChunkExpected = 0;   /* abort */
-            cs->lobbyPoolNextSeq = 0;
-            cs->lobbyPoolBlobLen = 0;
+        break;
+    }
+
+    case CTRL_LOBBY_BRAIN_DOCS_CHUNK:
+        /* Retired: an older server's way of sending announce and docs
+         * together. Nothing sends it now; a recording that holds one is
+         * stepped over. */
+        break;
+
+    case CTRL_LOBBY_BRAIN_ANNOUNCE:
+        clientSimApplyBrainAnnounce(cs, evt);
+        break;
+
+    case CTRL_LOBBY_SCRIPT_SETTING: {
+        /* One value the host chose, or the CLEAR a join sync starts with.
+           Either says the server takes CMD_SET_SCRIPT_SETTING. The strings
+           are terminated here as well as by the decoder, because the
+           in-process subscriber hands the struct over undecoded. */
+        char    file[LOBBY_SCENARIO_FILE_LEN];
+        char    id[SCN_SETTING_ID_LEN];
+        int     i;
+        int     at = -1;
+
+        cs->lobbyScriptSettingsSupported = true;
+        if (evt->u.lobbyScriptSetting.op == LOBBY_SCRIPT_SETTING_CLEAR) {
+            cs->lobbyScriptSettingCount = 0;
             break;
         }
-        if (fl > 0) {
-            memcpy(cs->lobbyPoolBlob + cs->lobbyPoolBlobLen,
-                   evt->u.lobbyBotPoolChunk.frag, fl);
-            cs->lobbyPoolBlobLen += fl;
+        if (evt->u.lobbyScriptSetting.op != LOBBY_SCRIPT_SETTING_SET) break;
+        SDL_strlcpy(file, evt->u.lobbyScriptSetting.file, sizeof(file));
+        SDL_strlcpy(id, evt->u.lobbyScriptSetting.id, sizeof(id));
+        if (file[0] == '\0' || id[0] == '\0') break;
+        for (i = 0; i < cs->lobbyScriptSettingCount; i++) {
+            if (strcmp(cs->lobbyScriptSettings[i].file, file) == 0 &&
+                strcmp(cs->lobbyScriptSettings[i].id, id) == 0) {
+                at = i;
+                break;
+            }
         }
-        cs->lobbyPoolNextSeq++;
-        if (cs->lobbyPoolNextSeq == count) {
-            lobbyBotPoolsDeserializeInstall(cs->lobbyPoolBlob,
-                                            (int)cs->lobbyPoolBlobLen, NULL);
-            cs->lobbyPoolChunkExpected = 0;
-            cs->lobbyPoolNextSeq = 0;
-            cs->lobbyPoolBlobLen = 0;
+        if (at < 0) {
+            if (cs->lobbyScriptSettingCount >=
+                LOBBY_SCRIPT_SETTING_VALUES_MAX) {
+                break;
+            }
+            at = cs->lobbyScriptSettingCount++;
+            SDL_strlcpy(cs->lobbyScriptSettings[at].file, file,
+                        sizeof(cs->lobbyScriptSettings[at].file));
+            SDL_strlcpy(cs->lobbyScriptSettings[at].id, id,
+                        sizeof(cs->lobbyScriptSettings[at].id));
+        }
+        cs->lobbyScriptSettings[at].value = evt->u.lobbyScriptSetting.value;
+        break;
+    }
+
+    case CTRL_LOBBY_SCRIPT_LIST: {
+        /* One chunk of the lobby's script list. The chunks of a list arrive
+           in order and back to back on the reliable control channel — the
+           list is published as one run inside one call under the sim mutex —
+           so the chunk after a final one is always the start of the next
+           list and there is no fragment number to check; what is checked is
+           the total, because a run that would overrun the cap is the one way
+           a sender and this reader could disagree about the list at all.
+
+           Installed only on the chunk with final set, so a chooser never
+           draws half of one list and half of the next.
+
+           count is bounded by the entries array before it is used. A chunk
+           decoded off the wire cannot claim more than
+           LOBBY_SCRIPT_LIST_CHUNK — transport_control_codec.c refuses such a
+           body outright — but the in-process subscriber hands this event
+           over as a struct and nothing decodes it, so the bound is this
+           reader's to apply.
+
+           A run that overruns the cap is dropped whole, and
+           lobbyScriptPendingDropped is what makes the drop stick: zeroing
+           the pending count alone leaves exactly the state a fresh list
+           starts from, so the rest of the same run would append from there
+           and its final chunk would install a piece of the list as though it
+           were the whole of it. The flag clears on the chunk carrying final,
+           which is where the run ends by the same ordering above. The last
+           whole list stands untouched throughout. */
+        uint8_t n = evt->u.lobbyScriptList.count;
+        int     i;
+
+        if (n > LOBBY_SCRIPT_LIST_CHUNK) {
+            n = (uint8_t)LOBBY_SCRIPT_LIST_CHUNK;
+        }
+
+        if (cs->lobbyScriptPendingDropped ||
+            cs->lobbyScriptPendingCount + (int)n > LOBBY_SCRIPT_LIST_MAX) {
+            /* Abort, keep the last list. */
+            cs->lobbyScriptPendingCount   = 0;
+            cs->lobbyScriptPendingDropped = !evt->u.lobbyScriptList.final;
+            break;
+        }
+        for (i = 0; i < (int)n; i++) {
+            cs->lobbyScriptPending[cs->lobbyScriptPendingCount + i] =
+                evt->u.lobbyScriptList.entries[i];
+        }
+        cs->lobbyScriptPendingCount += (int)n;
+        if (evt->u.lobbyScriptList.final) {
+            cs->lobbyScriptCount = cs->lobbyScriptPendingCount;
+            for (i = 0; i < cs->lobbyScriptCount; i++) {
+                SDL_strlcpy(cs->lobbyScriptFiles[i],
+                            cs->lobbyScriptPending[i].file,
+                            sizeof(cs->lobbyScriptFiles[i]));
+                SDL_strlcpy(cs->lobbyScriptNames[i],
+                            cs->lobbyScriptPending[i].name,
+                            sizeof(cs->lobbyScriptNames[i]));
+                cs->lobbyScriptKeepsWin[i] =
+                    cs->lobbyScriptPending[i].keepsWinCondition;
+                cs->lobbyScriptBound[i] = cs->lobbyScriptPending[i].bound;
+                cs->lobbyScriptSource[i] = cs->lobbyScriptPending[i].source;
+                cs->lobbyScriptWorkshopId[i] =
+                    cs->lobbyScriptPending[i].workshopId;
+            }
+            cs->lobbyScriptPendingCount = 0;
+            cs->lobbyScriptSeq++;
         }
         break;
     }
@@ -789,6 +985,10 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * CTRL_LOBBY_MAP_CHANGE path, not here. Runs identically on SP,
          * host, and remote clients since it hangs off this one event. */
         clientSimResetWorld(cs);
+        /* And whatever the scenario was presenting over it: a panel,
+         * announcement, marker or score belongs to the round that has
+         * just ended, and the next one states its own. */
+        clientSimScnClearPresentation(cs);
         break;
     case CTRL_GAME_PHASE_COUNTDOWN:
         cs->netStat = netLobbyCountdown;
@@ -825,6 +1025,11 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         /* Message scroller: queued-but-unshown chat would scroll in the
          * instant the new game's ticks resume. */
         messageReset(&cs->messages);
+        /* The newswire draws from its own copy of the two lines, which only
+         * hears about a change when a character scrolls in; hand it the
+         * blanked lines now or it shows the last game's until the first
+         * message of this one. */
+        frontEndMessages(cs, cs->messages.topLine, cs->messages.bottomLine);
         /* Steam per-game achievement counters (consumed at CTRL_GAME_OVER).
          * Left un-reset, a death in any prior game permanently blocks the
          * flawless / no-LGM-loss achievements for the rest of the session. */
@@ -849,6 +1054,9 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->pendingBuildAction = 0;
         cs->pendingBuildX = 0;
         cs->pendingBuildY = 0;
+        /* Every game starts on trees, as a new ClientSim does; the last
+         * game's pick would otherwise carry into this one. */
+        cs->currentBuildSelect = BsTrees;
         /* Reseed the death-detection edge to "alive" so the new game's first
          * snapshot doesn't register a spurious death or respawn edge against
          * the previous game's last value. */
@@ -1033,7 +1241,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                 clientSimAppendLobbyTeamChat(
                     cs, clientSimGetLobbySlot(cs, fromPlayer)->playerName, msg);
             } else {
-                clientSimIncomingMessage(cs, fromPlayer, msg);
+                clientSimIncomingMessage(cs, fromPlayer, destPlayer, msg);
             }
             /* One play for both lobby sub-branches; in-game chat (not in
              * lobby) stays silent, and the join replay burst is gated out. */
@@ -1059,6 +1267,11 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * returned already. */
         BYTE pNum = evt->u.playerLeave.playerNum;
         char nameBuf[PACKET_MAX_PLAYER_NAME];
+        /* A request from the player who left cannot be accepted any more,
+           and an accept would go to whoever takes the seat next. */
+        if (cs->pendingAllianceRequestFrom == pNum) {
+            cs->pendingAllianceRequestFrom = 0xFF;
+        }
         memcpy(nameBuf, evt->u.playerLeave.name, sizeof(nameBuf));
         nameBuf[sizeof(nameBuf) - 1] = '\0';
         /* announce=false in the lobby: the in-game newswire is wrong there
@@ -1261,6 +1474,159 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
            is the same question asked the other way round, and it is
            idempotent, so records already inside the new caps are untouched. */
         mapClampToRules(&cs->sim);
+        break;
+    }
+
+    case CTRL_SCN_PANEL: {
+        uint8_t panel = evt->u.scnPanel.panel;
+        if (!clientSimScnAddressedToMe(cs, evt->u.scnPanel.destTeam,
+                                       evt->u.scnPanel.destPlayer)) {
+            break;
+        }
+        if (panel >= SCN_PANEL_IDS) break;
+        /* Parsed straight into the stored list: scnPanelParse writes its
+           output only when it takes a list whole, so a list this client
+           cannot read leaves the panel showing exactly what it had. The
+           refusal is counted rather than logged per event — a scenario
+           sending a bad list usually sends it every time it updates. */
+        if (scnPanelParse(evt->u.scnPanel.bytes, evt->u.scnPanel.len,
+                          &cs->scnPanels[panel]) != SCN_PANEL_OK) {
+            cs->scnPanelRejects++;
+            break;
+        }
+        cs->scnPanelValid[panel] = true;
+        break;
+    }
+
+    case CTRL_SCN_SCORE: {
+        /* Broadcast, so no recipient test: target says whose score this
+           is, not who is meant to see it. */
+        ClientScnScore *row;
+        if (evt->u.scnScore.target >= MAX_TANKS) break;
+        if (evt->u.scnScore.kind == SCN_SCORE_KIND_PLAYER) {
+            row = &cs->scnPlayerScores[evt->u.scnScore.target];
+        } else if (evt->u.scnScore.kind == SCN_SCORE_KIND_TEAM) {
+            row = &cs->scnTeamScores[evt->u.scnScore.target];
+        } else {
+            break;   /* a kind this build does not keep a row for */
+        }
+        row->valid = true;
+        row->score = evt->u.scnScore.score;
+        memcpy(row->label, evt->u.scnScore.label, sizeof(row->label));
+        row->label[sizeof(row->label) - 1] = '\0';
+        break;
+    }
+
+    case CTRL_SCN_ANNOUNCE:
+        if (!clientSimScnAddressedToMe(cs, evt->u.scnAnnounce.destTeam,
+                                       evt->u.scnAnnounce.destPlayer)) {
+            break;
+        }
+        SDL_strlcpy(cs->scnAnnounceText, evt->u.scnAnnounce.text,
+                    sizeof(cs->scnAnnounceText));
+        cs->scnAnnounceTicks = evt->u.scnAnnounce.ticks;
+        /* The tick this client was last told about, so the drawer counts
+           the line down against the clock the scenario set it by rather
+           than against wall time. */
+        cs->scnAnnounceArrivedTick = cs->lastServerTick;
+        break;
+
+    case CTRL_SCN_MARKER: {
+        ClientScnMarker *m;
+        if (!clientSimScnAddressedToMe(cs, evt->u.scnMarker.destTeam,
+                                       evt->u.scnMarker.destPlayer)) {
+            break;
+        }
+        if (evt->u.scnMarker.id >= SCN_MARKERS_MAX) break;
+        m = &cs->scnMarkers[evt->u.scnMarker.id];
+        if (evt->u.scnMarker.kind == SCN_MARKER_KIND_CLEAR) {
+            memset(m, 0, sizeof(*m));   /* active false: the id is gone */
+            break;
+        }
+        if (evt->u.scnMarker.kind != SCN_MARKER_KIND_SQUARE &&
+            evt->u.scnMarker.kind != SCN_MARKER_KIND_FOLLOW) {
+            break;   /* a kind this build has no way to draw */
+        }
+        if (evt->u.scnMarker.kind == SCN_MARKER_KIND_FOLLOW &&
+            evt->u.scnMarker.slot >= MAX_TANKS) {
+            break;   /* nothing to follow */
+        }
+        m->active = true;
+        m->kind   = evt->u.scnMarker.kind;
+        m->x      = evt->u.scnMarker.x;
+        m->y      = evt->u.scnMarker.y;
+        m->slot   = evt->u.scnMarker.slot;
+        m->colour = evt->u.scnMarker.colour;
+        break;
+    }
+
+    case CTRL_SCENARIO_RULES: {
+        /* Broadcast: a scenario's own rules table is as public as the name
+           and the description the lobby settings event already carries.
+           The whole set is replaced, so a row the new set does not name is
+           gone rather than left behind, and the empty set a detach sends
+           leaves the lobby with nothing to show.
+
+           Reassembled from in-order fragments, the way the bot-pool and
+           brain-docs streams are: the set lands in the staging arrays and
+           replaces the live one on the last fragment, so a reader between
+           two fragments is handed the old set whole rather than the new one
+           half-built. Fragments ride the reliable, ordered control channel,
+           so seq is monotonic; any gap or mismatch throws the partial set
+           away rather than splicing two sets together. */
+        uint8_t seq   = evt->u.scenarioRules.seq;
+        uint8_t frags = evt->u.scenarioRules.fragCount;
+        uint8_t n     = evt->u.scenarioRules.count;
+        uint8_t i;
+
+        if (frags == 0) break;   /* no set has no fragments */
+        if (n > (uint8_t)SCN_RULES_FRAG_ROWS) {
+            n = (uint8_t)SCN_RULES_FRAG_ROWS;
+        }
+        if (seq == 0) {
+            cs->scenarioRulesExpected  = frags;
+            cs->scenarioRulesNextSeq   = 0;
+            cs->scenarioRulesStageCount = 0;
+        }
+        if (seq != cs->scenarioRulesNextSeq ||
+            frags != cs->scenarioRulesExpected ||
+            (int)cs->scenarioRulesStageCount + (int)n >
+                (int)CTRL_SCENARIO_RULES_MAX) {
+            cs->scenarioRulesExpected   = 0;   /* abort */
+            cs->scenarioRulesNextSeq    = 0;
+            cs->scenarioRulesStageCount = 0;
+            break;
+        }
+        for (i = 0; i < n; i++) {
+            /* A row naming no rule is dropped rather than kept, so every
+               row a reader is handed names one. The wire decoder refuses
+               such a body outright; an in-process publish does not go
+               through it, which is why this asks as well. */
+            if (evt->u.scenarioRules.rule[i] >=
+                (uint8_t)CTRL_SCENARIO_RULES_MAX) {
+                continue;
+            }
+            cs->scenarioRuleStageIndex[cs->scenarioRulesStageCount] =
+                evt->u.scenarioRules.rule[i];
+            cs->scenarioRuleStageValue[cs->scenarioRulesStageCount] =
+                evt->u.scenarioRules.value[i];
+            cs->scenarioRulesStageCount++;
+        }
+        cs->scenarioRulesNextSeq++;
+        if (cs->scenarioRulesNextSeq == frags) {
+            memset(cs->scenarioRuleIndex, 0, sizeof(cs->scenarioRuleIndex));
+            memset(cs->scenarioRuleValue, 0, sizeof(cs->scenarioRuleValue));
+            memcpy(cs->scenarioRuleIndex, cs->scenarioRuleStageIndex,
+                   cs->scenarioRulesStageCount *
+                       sizeof(cs->scenarioRuleIndex[0]));
+            memcpy(cs->scenarioRuleValue, cs->scenarioRuleStageValue,
+                   cs->scenarioRulesStageCount *
+                       sizeof(cs->scenarioRuleValue[0]));
+            cs->scenarioRulesCount      = cs->scenarioRulesStageCount;
+            cs->scenarioRulesExpected   = 0;
+            cs->scenarioRulesNextSeq    = 0;
+            cs->scenarioRulesStageCount = 0;
+        }
         break;
     }
     }

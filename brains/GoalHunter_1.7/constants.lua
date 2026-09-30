@@ -10,20 +10,20 @@ M.LOG_STANDOFF_CANDIDATES = false  -- print every standoff candidate (very verbo
 -- Which mode this bot is asked to run in, and how hard it is asked to play.
 -- Both are the host's per-bot lobby choice and arrive as "mode=<key>" and
 -- "difficulty=<key>" tokens in BRAIN_INIT_ARG (see the init-arg block in
--- init.lua); both are also settable directly with cfg=MODE=survival /
+-- init.lua); both are also settable directly with cfg=MODE=<key> /
 -- cfg=DIFFICULTY=easy for a bench.
 --
 -- The MANIFEST that decides which keys exist is modes.txt beside this file:
 -- it lists this brain's modes and, per mode, that mode's difficulty levels.
 -- The lobby reads it to fill its two dropdowns, so adding a mode or a level
--- is an edit to modes.txt, not to any C or Lua code.
+-- needs no C code: modes.txt, plus the mode's bundles in M.MODE_LEVELS.
 --
--- NOTHING READS EITHER OF THESE YET. Every mode and every difficulty runs
--- exactly this code, which is what "default" / "hard" mean, so those are the
--- defaults and the knobs that make the other settings differ come later.
--- They are stored (and echoed in the init-arg log, and on state.mode /
--- state.difficulty) so the plumbing can be trusted before any behaviour
--- hangs off it.
+-- The pair picks a knob bundle out of M.MODE_LEVELS (at the end of this
+-- file), which init.lua applies before any preset= or cfg=. A new mode also
+-- needs its bundles there; a mode with no bundle runs these constants.
+-- Modes today: default (hard = these constants, medium/easy = handicaps)
+-- and turtle (default's levels plus PILL_PLACE_TURTLE). They are also
+-- echoed in the init-arg log and stored on state.mode / state.difficulty.
 M.MODE = "default"
 M.DIFFICULTY = "hard"
 
@@ -1012,6 +1012,46 @@ M.DEFEND_ATTACK_BUILD_COMMITMENT = 40  -- moderate commitment defend_pill pays t
 M.ATTACK_BASE_COMMITMENT_BONUS  = 250  -- extra commitment when mid-attack on a base ??? applied while we still have >=1 shell. Once you start a base, follow through; the ONLY non-urgent reason to break off is literally running out of shells (0). Critical-armour flee still preempts via the urgent goal-override path.
 M.CAPTURE_BASE_COMMITMENT_BONUS = 250  -- extra commitment when mid-CAPTURE of a base (driving onto a neutral/ground-down base). Comparable to ATTACK_BASE: if you did the work to grind a base down, follow through and actually take it ??? don't let a normal-cost goal (another base/pill, non-critical refuel) steal it. No shell gate (capturing needs no ammo). Critical-armour flee still preempts via the urgent goal-override path.
 M.BLITZ_STANDOFF_SCORE_BUCKET   = 50   -- soldier blitz-standoff pick: ellipse spots are bucketed into score bands this wide; all spots in the best spot's band are the "best pool", and the soldier offers the one CLOSEST to its tank (least travel for ~equal shield quality) instead of the globally-top-scored far spot.
+-- Blitz spot line-of-sight margin (tiles), 2026-09-24. A blitz spot's shot line
+-- fails when a wall, live pill (any owner) or base comes closer to it than
+-- MARGIN * d / L (d = distance from the aim point along the line, L = line
+-- length; distance measured to the blocker's tile square). A tank that stops
+-- off its spot swings the line about the aim point, so the margin tapers to 0
+-- at the pill. Used by the soldier's spot pick, the soldier's replan, the
+-- commander's arbiter and the blitz GO gate (spot_margin.lua). Solo takes never
+-- read it. 0 = check off. KEEL 0.
+M.BLITZ_SPOT_LOS_MARGIN         = 0.5
+-- Blitz spot exact origin (fix A), 2026-09-24. true => the soldier keeps the
+-- scan's validated FLOAT point and angle for its spot (standoff_fx/fy, bes,
+-- goal._chosen_deg), so the commit, arbiter, GO gate and steering all use the
+-- line the scan tested, a blocked replan can ban the angle, and a replanned
+-- soldier re-broadcasts its new spot and avoids the commander's. false = the
+-- tile centre and no angle, as before. KEEL false.
+M.BLITZ_SPOT_EXACT_ORIGIN       = true
+-- Blitz GO gate from the standoff (fix C), 2026-09-24. true => a blitz SOLDIER
+-- waiting at its SETUP point runs the GO-time shot check from its planned
+-- standoff float point (where the charge fires from), not from where it waits,
+-- 2.25 tiles further out. false = the live tank position. KEEL false.
+M.BLITZ_GO_GATE_FROM_STANDOFF   = true
+-- Blitz spot pending pills, 2026-09-25. true => a tile where a pill WILL stand
+-- soon blocks a blitz shot line like a live pill: our man is out on a pill
+-- build/repair trip, our place_pill_strategic target while we carry a pill, or
+-- an ally's man on a pill trip (its lgmd advert ends in "P"; only sent with
+-- this knob on). Read by the spot pick, the arbiter, blitz_clear_aim and the
+-- standoff sanity check (squad.update_pending_pills fills
+-- world.pending_pill_at). false = only live pills block. KEEL false.
+M.BLITZ_SPOT_PENDING_PILLS      = true
+-- Pill placement avoids blitz shot lines, 2026-09-25. true => while a blitz is
+-- live (negotiating, committed, approach, blitz_wait, charge) every NEW pill
+-- placement pick refuses a tile that would block a blitz shot line: our own
+-- spot -> target pill, and each squadmate's broadcast spot (bes) -> the same
+-- pill. "Would block" = the arbiter's own spot test (squad
+-- blitz_spot_shot_blocked) passes without the tile and fails with a pill on it.
+-- Covers the offensive/panic guard spot (builder.guard_build_spot), the
+-- strategic scan (eval_place_pill_strategic), HARVEST_RESUME and the
+-- pillbox-as-wall-blocker. Repairs are not affected (a pill cannot move).
+-- false = the old picks. KEEL false.
+M.PILL_PLACE_AVOID_BLITZ_LINE   = true
 M.EARLY_CAPTURE_BASE_HYST_EXEMPT = true -- opening phase: capture_base skips ALL hysteresis (switch + commit + history), same as capture_pill
 M.REFUEL_URGENCY_MIN       = 0.37  -- minimum urgency multiplier for refuel cost
 -- Critical-armour need floor, expressed in the "need" convention used across
@@ -1477,6 +1517,30 @@ M.DIJKSTRA_SHORT_RESTART_DIST   = 2     -- tank-moved threshold for short-range 
 -- what a tank may ENTER, not about which layer priced it. Plumbed to the C
 -- pathfinder in cpathfinder.lua's M.configure as "nextstep_foot_sea_rule".
 M.PF_NEXTSTEP_FOOT_SEA_RULE     = true  -- boatless tank is never handed a deep-sea next step (KEEL: false)
+-- Dijkstra next step, 2026-09-25. The slate's g-cost is cost FROM THE SLATE
+-- ROOT, so the two next-step fallbacks (veer round a live obstacle tile, and
+-- "tank drifted off the traced chain") picked the neighbour with the LOWEST g,
+-- which is the neighbour nearest the root: the tank turned back to the tile it
+-- had just left (20260925_105315 bot9 t=2931-3055, A->B->A round p0's avoid
+-- tiles). true => both fallbacks first pick the neighbour that touches the
+-- traced chain furthest toward the destination; the old pick only when no
+-- neighbour touches the chain ahead. Needs the engine to know the config key
+-- "nextstep_chain_veer" (an older engine ignores it). KEEL false.
+M.PF_NEXTSTEP_CHAIN_VEER        = true
+-- Path flip guard, 2026-09-25. true => when the next path step is the tile
+-- the tank just left (A->B->A) and not the destination, steering runs a fresh
+-- A* from the current tile instead of the Dijkstra step, while the tank stays
+-- on that tile, for at most PF_FLIP_FRESH_ASTAR_TICKS path calls. The A* gets
+-- the same ally avoid tiles as the Dijkstra step (added to the cost overlay
+-- for that one call). The test is one tile compare per path call; the cost is
+-- a full A* on every path call while the hold is on, which is why it is
+-- capped. KEEL false.
+M.PF_FLIP_FRESH_ASTAR           = true
+-- 2026-09-26: cap on the flip hold above, in path calls (about one per tick
+-- while driving). At the cap the hold is spent: Dijkstra steps again on that
+-- tile and no new hold starts until the tank moves. Before it the hold had no
+-- cap. KEEL 60 (unused there: PF_FLIP_FRESH_ASTAR is false).
+M.PF_FLIP_FRESH_ASTAR_TICKS     = 60
 M.DIJKSTRA_USE_FOR_GOALS        = true  -- replace cost_to in step_eval_queue with dijkstra
                                         -- lookup_by_kind. Pill pools use kind=1 (low-danger
                                         -- slate), other pools use kind=0 (normal-danger slate).
@@ -1786,11 +1850,74 @@ M.KILL_PICKUP_HANDOFF = true   -- defer the pickup to the blitz member with the
 -- bodies; this backstops the reachable-but-slow case. ~10 s. A body you just
 -- killed is normally a few tiles away, so a real grab finishes well inside it.
 M.KILL_PICKUP_MAX_TICKS = 500
+-- Pair pickup (2026-09-25). When the blitz that killed the pill had at least
+-- this many tanks, the TWO best claimers keep their claims (rank 1 and rank 2
+-- under the handoff rule: lower kc, tie -> lower player number); rank 3+ stand
+-- down as before. A smaller blitz keeps only the best claimer. Blitz size is
+-- recorded on the claim when it is made (state.kill_pickup.squad_n, attack.lua
+-- mark_kill_pickup): the largest count of committed tanks on that pill (self +
+-- allies on attack_pill for it, past negotiation, not dead) that this bot saw
+-- during the take; 1 when the take was not a blitz. Each claimer uses ITS OWN
+-- recorded size (they normally agree; a bot that missed a joiner can disagree).
+-- While on (> 0), our own cost is rounded like the kc broadcast (%.0f) before
+-- the compare, so both claimers compare the same numbers.
+-- 0 = OFF (single grabber, unrounded compare, exactly the KEEL behaviour).
+M.KILL_PICKUP_PAIR_MIN_SQUAD = 3   -- default 3; KEEL 0 (off)
 -- Strategic-center bias: the placement scan is tank-centric, but spots near the
 -- chosen strategic center (war zone / base-vs-threat / contested pill) score
 -- higher. Bonus = max(0, CAP - dist_to_center) * WEIGHT. Optional (0 if no center).
 M.STRATEGIC_PLACE_CENTER_BIAS_CAP    = 16   -- tiles; beyond this the center bias is 0
 M.STRATEGIC_PLACE_CENTER_BIAS_WEIGHT = 4    -- score per tile closer to the strategic center
+
+-- ── Defensive turtle placement (2026-09-29, Andrew; Virus survivors) ──
+-- PILL_PLACE_TURTLE is the one master switch. Off (default) = the strategic
+-- placement scan is exactly today's. On, the scan (goals.lua
+-- eval_place_pill_strategic, and its heatmap mirror) builds ONE defended
+-- cluster instead of spreading pills out:
+--   * home: the friendly pill with the most friendly pills within
+--     PILL_FIRE_RANGE (ties: nearer the tank, then lower tile id); with no
+--     friendly pill yet, the nearest friendly base. The home is the
+--     strategic-center bias (existing CENTER_BIAS_CAP / _WEIGHT) AND the
+--     centre of the scan square, so a far tank still finds spots at home.
+--     No home at all = the normal centre chain and tank-centric scan.
+--   * the pill-spacing term uses PILL_PLACE_TURTLE_SPACING, not
+--     STRATEGIC_PLACE_PILL_SPACING, so pills may stand close together;
+--   * the pill-type balance does not steer it: no surplus skip, no
+--     STRICT_NEED gate, and the portfolio term (port) is 0;
+--   * four weights come from Easy's "back / defensive" placement bundle
+--     (MODE_LEVELS.default.easy), below, through one shared table;
+--   * the under-defended bonus (bdef) is PILL_PLACE_TURTLE_UNDERDEFENDED_BONUS
+--     (0), not Easy's 80: it pays for FEW friendly pills near the candidate
+--     tile, which pushes a new pill out of the cluster.
+-- Any difficulty can turn it on: `preset=turtle` or
+-- `cfg=PILL_PLACE_TURTLE=true`, or the `survivor` init word (M.SIDE_SETTINGS).
+-- A runtime cfg=PILL_PLACE_TURTLE=false or `horde` turns it off again
+-- (Virus sends `horde` when a survivor turns); the tunables are read only
+-- while the switch is on.
+M.PILL_PLACE_TURTLE = false
+-- Easy's back/defensive placement weights. MODE_LEVELS.default.easy reads
+-- the same table, so Easy and turtle share one set of numbers.
+local EASY_DEFENSIVE_PLACE = {
+  base_weight          = 4.0,   -- STRATEGIC_PLACE_BASE_WEIGHT (default 2.0)
+  threat_weight        = 3.0,   -- STRATEGIC_PLACE_THREAT_WEIGHT (default 1.5)
+  beyond_front_penalty = 250,   -- STRATEGIC_PLACE_BEYOND_FRONT_PENALTY (default 100)
+  spike_bonus          = 0,     -- STRATEGIC_PLACE_SPIKE_BONUS (default 80)
+}
+M.PILL_PLACE_TURTLE_BASE_WEIGHT          = EASY_DEFENSIVE_PLACE.base_weight
+M.PILL_PLACE_TURTLE_THREAT_WEIGHT        = EASY_DEFENSIVE_PLACE.threat_weight
+M.PILL_PLACE_TURTLE_BEYOND_FRONT_PENALTY = EASY_DEFENSIVE_PLACE.beyond_front_penalty
+M.PILL_PLACE_TURTLE_SPIKE_BONUS          = EASY_DEFENSIVE_PLACE.spike_bonus
+-- Under-defended bonus per missing defender (target 2) while turtling
+-- (default STRATEGIC_PLACE_UNDERDEFENDED_BONUS = 50, Easy 80). It counts
+-- friendly pills within DEFENSE_RADIUS of the CANDIDATE tile, so any value
+-- above 0 scores a tile higher the fewer pills stand near it: the opposite
+-- of a cluster. 0 = that term is silent while turtling.
+M.PILL_PLACE_TURTLE_UNDERDEFENDED_BONUS  = 0
+-- Target minimum tile gap between friendly pills while turtling (default
+-- STRATEGIC_PLACE_PILL_SPACING = 5). 2 = only a tile right next to a pill
+-- pays the clustering penalty (PENALTY_W x (BASE^1 - 1) = 25); from 2 tiles
+-- out the existing spacing bonus (+15 up to SPACING_BONUS_MAX) applies.
+M.PILL_PLACE_TURTLE_SPACING = 2
 
 -- Tank combat
 M.TANK_COMBAT_ENABLED           = true
@@ -1849,6 +1976,15 @@ M.TANK_COMBAT_OPPORTUNISTIC_AIM = 8     -- bolo angle units (~11??) aim toleranc
 --     shots_needed = HEAT_MAX_HITS - round(anger / PILL_ANGER_BUMP), then capped
 -- by the pill's health via attack.lua heat_allowed_shots (see MIN_HP below).
 M.ATTACK_TANK_HEAT_PILL         = true  -- master: heat a friendly pill during attack_tank
+-- Heat-only attack_tank (2026-09-29, Andrew; Virus survivors get it from
+-- the `survivor` init word, M.SIDE_SETTINGS): the bot never closes on or
+-- shoots an enemy tank itself. An attack_tank row stands only while a friendly pill can be heated at that
+-- tank (goals.lua eval_attack_tank, gate "heat_only"), and the fight loop
+-- holds still instead of close/engage (steering.lua tank_combat_steer).
+-- Not touched: a human's `attack <tank>` order, a "kill me" delivery, and the
+-- opportunistic shot on other goals (init.lua). Needs ATTACK_TANK_HEAT_PILL;
+-- with that off, attack_tank only ever runs on an order.
+M.ATTACK_TANK_PILL_HEAT_ONLY    = false
 M.ATTACK_TANK_HEAT_MIN_HP       = 5     -- health floor of the volley cap: a pill at or below this
                                         -- affords no heat shells at all. The cap scales linearly to
                                         -- PILLS_MAX_HEALTH (15 -> all 4 halvings): hp 15/13/10/7/6
@@ -2817,6 +2953,38 @@ M.HARASSER_TRAVEL_MULT = 0.2
 -- the map file's BASENAME with no directory and no ".map" extension
 -- (server_sim.c strips both), e.g. "data/maps/Survival.map" -> "Survival".
 M.PILL_SUICIDER_MAPS = { ["Survival"] = true }
+-- A HUMAN TEAM-MATE CLOSE BY MAKES THE BOT A SUICIDER FOR THIS PILL.
+--
+-- The lobby docs promise it in one line: "Bots <= 7 tiles from a human will
+-- suicide when attacking a pill (no wall blockers built, for brevity)". The
+-- reason is what a person sees, not what the bot scores: building a wall
+-- shield takes trees, a gather detour and a slow shielded creep, and a human
+-- standing next to the bot is watching it do nothing for half a minute. Close
+-- to a person the bot goes straight in.
+--
+-- WHAT THE DISTANCE DOES ON ITS OWN is exactly what state.is_pill_suicider
+-- already does to a take: it forces _is_ppt off, so the shield scan, the
+-- gather_trees pre-flight and the build_walls substate are all skipped and
+-- the take runs down the plain standoff/charge path. On its own it does NOT
+-- make the bot a suicider anywhere else -- no goal-cost surcharge, no armour
+-- check waived, no swerve change -- because the promise is about blockers,
+-- not about the bot's life.
+--
+-- That wall skip applies to an ORDERED attack and one the bot chose itself,
+-- because the decision point is shared (attack.update_attack_substate).
+--
+-- Chebyshev tiles from the BOT's own tank, measured against allied tanks the
+-- bot can SEE (util.human_ally_near). 0 turns off the wall skip and the run
+-- below.
+M.ORDER_HUMAN_NEAR_SUICIDE_TILES = 7   -- keel 0 (off)
+-- 2026-09-24: for an ORDERED attack only, the human-near rule also starts the
+-- FULL ping suicide run (orders.human_near_suicide): no refuel, no shell or
+-- armour checks, stay on the pill until the tank or the pill dies.  "Ordered"
+-- means the bot holds an attack_pill order (o.held) on that same pill; an
+-- attack_pill goal the bot chose for itself gets only the wall skip above.
+-- Needs PING_SUICIDE_ENABLED and ORDER_HUMAN_NEAR_SUICIDE_TILES > 0.  The
+-- human is the run's sender, so a bare "cancel" from them ends it.
+M.ORDER_HUMAN_NEAR_SUICIDE_RUN = true   -- keel false
 -- Suicider goal-cost surcharge. User's spec, verbatim: "instead of doing
 -- attack_pill 0.33, do everything but refuel 3x cost" ??? plus the addendum
 -- "defend_pill specifically is x6, not x3". Applied at ONE choke point
@@ -2894,7 +3062,159 @@ M.BLITZ_ENABLED   = true   -- false => this bot never OPENS or JOINS a blitz (so
                            -- takes only). Reuses the tested state.blitz_disabled
                            -- "noblitz" path at every gate; the noblitz token still
                            -- wins. Easy = false.
-M.AHEAD_PILL_FRAC = 0      -- team is "ahead" when state.strength (pill lead ratio)
+M.BLITZ_ONLY_PILL_ATTACKS = false -- true => this bot attacks a LIVE pill ONLY
+                           -- inside a blitz: as a commander whose party met the
+                           -- blitz MIN and went GO, or as a soldier of one. No
+                           -- solo pill attack at all: the pool-6 row of a pill it
+                           -- can neither join nor lead is REJECTED "blitz_only";
+                           -- a take that would start firing without a GO is
+                           -- dropped (BLITZ_ONLY_ABORT); a pill under
+                           -- HARD_TAKE_MIN_HP is still blitzed (no "finish it
+                           -- solo" shortcut) and a commander with nobody joined
+                           -- never goes GO alone: it waits out READY_TIMEOUT
+                           -- (plus up to BLITZ_ONLY_EXTEND_MAX extensions when
+                           -- BLITZ_ONLY_EXTEND_WAIT is on) and then gives the
+                           -- take up. Dead-pill grabs
+                           -- (capture_pill, pool 4) are NOT pill attacks and are
+                           -- unchanged. The "blitzonly" init flag
+                           -- (state.blitz_only) turns the same gate on per bot
+                           -- and is what a scenario uses; either one on = on.
+                           -- Read through squad.blitz_only(state). KEEL false.
+M.BLITZ_ONLY_EXTEND_WAIT = true -- true => under blitz-only (flag or knob
+                           -- above) a blitz COMMANDER goes GO only when the
+                           -- PARKED set (itself + soldiers at their spots in
+                           -- a ready substate) reaches squad.blitz_min(). At
+                           -- READY_TIMEOUT with fewer parked it neither
+                           -- charges nor abandons: it adds another
+                           -- SQUAD_BLITZ_READY_TIMEOUT to the wait
+                           -- (BLITZ_WAIT_EXTEND in print2), at most
+                           -- BLITZ_ONLY_EXTEND_MAX times; after that a
+                           -- timeout short of the parked set gives the take
+                           -- up (BLITZ_ABANDON_SHORT). false = the old GO
+                           -- rules. No effect without blitz-only. KEEL false.
+M.BLITZ_ONLY_EXTEND_MAX = 3 -- 2026-09-26: cap on the BLITZ_ONLY_EXTEND_WAIT
+                           -- extensions per take. Before it there was no cap:
+                           -- a commander nobody joined extended forever, its
+                           -- soldiers followed it (BLITZ_SOLDIER_WAIT_FOLLOW
+                           -- _CMDR) and BLITZ_NO_BUILD_ACTIVE kept pill
+                           -- building off all that time. At the cap the
+                           -- commander clears the goal; that closes the call
+                           -- (bcc) and its soldiers leave blitz_wait when its
+                           -- broadcast goal changes. Only read with
+                           -- BLITZ_ONLY_EXTEND_WAIT on. KEEL 3 (unused there).
+M.BLITZ_ONLY_CMDR_NEEDS_FREE = true -- true => under blitz-only a bot may
+                           -- START a new take as commander (a pill with no
+                           -- blitz of ours, no negotiation and no open call)
+                           -- only when itself + its FREE live allies >=
+                           -- squad.blitz_min(). Free = alive and in no blitz:
+                           -- no open call of its own, not a commander on a
+                           -- take (sqst "blitz"), not answering a commander
+                           -- (cmdr set, sqst "nego"/"join") and not in any
+                           -- commander's bac list (squad.free_ally_count).
+                           -- A blocked row is REJECTED "blitz_only"
+                           -- (BLITZ_CMDR_GATE in print2), so the bot falls
+                           -- through to its other goals, including joining a
+                           -- short open blitz. Joins, a take we already lead
+                           -- and our availability to recruiters are not
+                           -- touched. Also: a soldier answers the call on its
+                           -- goal pill, not just the nearest call. false =
+                           -- old rules. No effect without blitz-only. KEEL
+                           -- false.
+M.BLITZ_SOLDIER_WAIT_FOLLOW_CMDR = true -- true => under blitz-only with
+                           -- BLITZ_ONLY_EXTEND_WAIT, a soldier in blitz_wait
+                           -- restarts its SQUAD_BLITZ_WAIT_TIMEOUT backstop
+                           -- from the commander's last message while that
+                           -- commander still has the call open on our pill
+                           -- and still names us in bac. So the soldier waits
+                           -- as long as the commander extends
+                           -- (BLITZ_WAIT_FOLLOW in print2). A commander that
+                           -- goes silent, closes the call or drops us from
+                           -- bac stops the restarts, and the old 1500-tick
+                           -- backstop runs from that point; dead / retarget
+                           -- still abort at once. false = the backstop counts
+                           -- from blitz_wait entry (20260925_134920 bot2
+                           -- t=3044: p2 timed out while C3 was at extension
+                           -- 2). KEEL false.
+M.BLITZ_NOSPOT_RENEGOTIATE = true -- true => (1) clear_attack_goal also drops
+                           -- squad_blitz_accepted, and a committed soldier
+                           -- whose negotiated engage spot is gone
+                           -- ("BLITZ_COMMIT NO-SPOT") drops it too, so the
+                           -- soldier negotiates again and the commander's
+                           -- arbiter re-checks the new spot
+                           -- (BLITZ_ACCEPT_DROP in print2). (2) A blitz
+                           -- soldier's own plan_position pick skips every
+                           -- spot within SQUAD_BLITZ_CLASH_TILES of the
+                           -- commander's or a squadmate's bes
+                           -- (BLITZ_ALLY_SPOT_SKIP); all skipped = the attack
+                           -- goal clears and the soldier negotiates. (3) A
+                           -- blitz soldier with a goal standoff but no engage
+                           -- spot broadcasts that standoff as bes, so the
+                           -- arbiter sees it. false = the old rules: the
+                           -- accept outlives the goal, the soldier re-commits
+                           -- with no spot and self-scans unchecked and silent
+                           -- (20260925_134920 bot2 t=3079: spot 0.25 tile
+                           -- from C3's). KEEL false.
+M.BLITZ_GO_ACCEPTED_ONLY = true -- true => the commander's GO counts
+                           -- (squad.blitz_ready_status inwait/ready, used by
+                           -- blitz_wait GO and the en-route GO) and the
+                           -- suicider pick (squad.blitz_members) take only
+                           -- soldiers in its own accept list (bac). The
+                           -- committed total (abandon rule) is unchanged.
+                           -- false = any soldier broadcasting cmdr=us on our
+                           -- pill counts (20260925_134920 bot3 t=3889:
+                           -- set_inwait=3 with p2 not accepted). KEEL false.
+M.BLITZ_LINES_AFTER_LEAVE = true -- true => squad.blitz_shot_lines keeps the
+                           -- lines of a blitz we just left (yield, steal,
+                           -- switch, goal cleared) until that blitz ends:
+                           -- the pill dies / is taken / leaves the map, no
+                           -- ally is on attack_pill on it and no call is
+                           -- open on it, or SQUAD_BLITZ_WAIT_TIMEOUT ticks
+                           -- since we were last in it (squad.blitz_window,
+                           -- BLITZ_WINDOW in print2). Lines then = every
+                           -- live ally's bes on that pill; our own old spot
+                           -- is not a line. false = the lines stop the tick
+                           -- our goal leaves the blitz (20260925_134920 bot3
+                           -- t=4003). KEEL false.
+M.BLITZ_NO_BUILD_ACTIVE = true -- true => no NEW pill build while this bot
+                           -- is in a live blitz or inside the blitz window
+                           -- above: set_mode will not dispatch place_pill
+                           -- (strategic, guard drop, harvest resume,
+                           -- pill_place), the strategic scan and the
+                           -- OFF_BUILD panic drop skip, trail drops skip.
+                           -- Repairs, walls and the take's own shield /
+                           -- pillbox blockers are not affected
+                           -- (PLACE_BLOCKED in print2, on change only).
+                           -- false = the old rules (20260925_134920 bot3
+                           -- t=4003: man sent out 1 tick after STEAL_YIELD,
+                           -- dead at t=4004). KEEL false.
+M.PLACE_PILL_MAN_PATH_SAFE = false -- true => refuse a NEW pill tile when the
+                           -- tile or any tile on the man's straight line
+                           -- from the tank (the line lgm_path_safe_enhanced
+                           -- samples, taken at every tile) is within
+                           -- PILL_FIRE_RANGE (euclidean) of a live hostile
+                           -- or neutral pill, or lies on a live blitz / ally
+                           -- shot line (squad blitz lines, spot -> pill,
+                           -- line crosses the tile square). A forest tile in
+                           -- that fire is covered by the same refusal: a
+                           -- shell stops on forest and its blast kills a man
+                           -- within half a tile. Applied in the strategic
+                           -- scan, the guard-spot search and at dispatch.
+                           -- false = no path test (the place_pill danger gate
+                           -- stays off). KEEL false.
+M.PLACE_PILL_BEHIND_ONLY = false -- true => inside a live blitz window a NEW
+                           -- pill tile must be on the far side of the tank
+                           -- from the blitz pill: dot(tile - tank,
+                           -- pill - tank) <= 0. Same three sites as above.
+                           -- No effect outside a blitz window. false = any
+                           -- side. KEEL false.
+M.SQUAD_KILL_RECOVER = true -- true => squad.update snapshots its per-tick
+                           -- outputs (squad_cmdr, squad_blitz_target, ...) and,
+                           -- when a budget kill cut it short, the next tick
+                           -- puts them back before any goal logic reads them
+                           -- (SQUAD_UPDATE_KILLED in print2). false = no
+                           -- snapshot, no restore (a killed update leaves them
+                           -- nil). KEEL false.
+M.AHEAD_PILL_FRAC = 0     -- team is "ahead" when state.strength (pill lead ratio)
                            -- >= this. 0 => always ahead => no downstream change.
 M.AHEAD_BASE_FRAC = 0      -- ...OR state.base_strength (base lead ratio) >= this.
 M.BEHIND_ATTACK_MULT = 1.0 -- when NOT state.team_ahead, multiply attack_pill /
@@ -3746,6 +4066,49 @@ M.BUILDER_POOL_SEEDED_COMPETES = true   -- false = seeded sorts first, mode gate
                                         -- closes the pool behind it (pre-2026-09-06)
 M.BUILDER_POOL_GOAL_PILL_BONUS = 1.2    -- x score for the tank goal's own pill;
                                         -- 1.0 = no bonus (the chip is not printed)
+-- A HUMAN'S BOT-COMMAND PING ON ONE OF OUR LIVE PILLS (Andrew, 2026-09-24):
+-- the bot(s) that TAKE that defend order multiply the pill's builder-pool
+-- repair row by this, whatever their goal is afterwards.  It lasts BUILDER_POOL_PING_PILL_TICKS, or until the pill
+-- is dead, fully repaired (PILLS_MAX_HEALTH), no longer ours, or a bot-command
+-- ping lands on another of our pills (which takes over).  Where the goal-pill
+-- bonus above also applies, the larger of the two is used, never both.
+M.BUILDER_POOL_PING_PILL_BONUS = 2.0    -- keel 1.0 (KEEL had no ping bonus)
+M.BUILDER_POOL_PING_PILL_TICKS = 500    -- keel 500 (10 s; moot with the bonus at 1.0)
+-- THE PING DEFEND REPAIR (Andrew, 2026-09-26: "a bot ping on a friendly
+-- pillbox to be defend but ALSO a 100% sure REPAIR once the tank is within say
+-- 10 tiles of it").  The bonus above is only a weight on a 10 s clock, and the
+-- repair feeder seeds only now and then: the ORDER INJECTED defend goal
+-- (goals.order_goal, alarm mode) never carries goal.repair, and the pool's
+-- own defend_pill row for the pill carries it only when defend_pill_score
+-- picks its repair handoff (shelling quiet REPAIR_QUIET_TICKS, man aboard,
+-- trees, no ally repair inbound) and the order pass keeps that row as the
+-- held one.  A seeded dispatch then clears the defend goal.  With this on,
+-- a bot that HOLDS a human's bot-command
+-- ping defend order on one of our pills that is damaged (0 < hp < max) and
+-- whose tank is within PING_DEFEND_REPAIR_RANGE tiles (straight line, the
+-- DEFEND_ARRIVE_RADIUS metric) FORCES the pill's builder-pool row
+-- (builder_pool.ping_force):
+--   * it is sorted first, whatever any other row scores, and its printed score
+--     is bp_raw + PING_DEFEND_REPAIR_BONUS so the panel shows it on top;
+--   * it waives the leash, TOPUP_MIN_MISSING, the tree reserve (it needs one
+--     tree, the engine's lgm_cost_pill_repair), the goal's reserve_eta, the
+--     mode_owned gate, MIN_SCORE, the ping / goal-pill weight and the
+--     take_blocker / friendly_fire / blocked / repos discovery guards;
+--   * it KEEPS the man-safety gates: fire_exchange, under_fire (the tank hit
+--     inside BUILDER_POOL_UNDER_FIRE_TICKS) and the shell gate (a shell-gated
+--     forced row holds the man; no other job takes him), plus ally_repairing
+--     and unreachable.  Armour at ARMOUR_CRITICAL (the order is paused) ends it,
+--     and so does a live flee_to_base / refuel_at_base goal (reactive, so it
+--     outbids the order: the tank is driving away and must not leave the man
+--     behind on a job).
+--   * NO WOOD (0 trees): step 1 is a forced harvest -- the farm row with the
+--     shortest walk out is forced the same way (its path-safety gate kept);
+--     the repair follows when the man is home with wood.
+-- It lasts while the order holds, not on a clock, and repeats until full.
+M.PING_DEFEND_REPAIR       = true   -- keel false (KEEL only had the weight)
+M.PING_DEFEND_REPAIR_RANGE = 10     -- tiles, straight line; keel 10 (moot, master off)
+M.PING_DEFEND_REPAIR_BONUS = 1000   -- points added to the forced row's printed
+                                    -- score; keel 1000 (moot, master off)
 
 -- ── Eligibility ──────────────────────────────────────────────────────────
 -- Under-fire: NOT a single-tick test. perc.under_fire is "the danger field at
@@ -3914,7 +4277,8 @@ M.BUILDER_POOL_CLAIM_TYPES = { rebuild = 1, topup = 2, farm = 3 }
 --             replaced wholesale by set_info, so "latest" is all there is.
 --   SILENCE   the ally stopped talking altogether (killed, kicked, removed).
 --             The block then expires TTL ticks after its last advert of ANY
---             kind. BRAIN ticks: 25 = 1 s (measured 2026-09-05: 1000 engine ticks = 500 thinks), so 175 = 7 s.
+--             kind. BRAIN ticks: 50 = 1 s (the brain thinks every second
+--             100-a-second engine tick), so 350 = 7 s.
 --
 -- The age is measured against slot.last_tick (the ally's last message of any
 -- kind), NOT slot.state_tick (its last full /info state). /info state is
@@ -4122,6 +4486,363 @@ M.KILL_ME_EXECUTE_TILES = 12
 M.ALLY_CLAIMED_STEAL_FRAC_KILLME = 0.10
 
 -- ══════════════════════════════════════════════════════════════════════════
+-- BOT COMMANDS (chat orders) — stage 1
+-- ══════════════════════════════════════════════════════════════════════════
+-- A human ally types "attack 5", "all defend 3", "socrates retreat" in
+-- team (or all) chat.  Every bot on the team hears the same line, prices the
+-- trip and the cheapest one takes the job; while it holds the order every
+-- OTHER strategic goal is stamped REJECTED in the pool (chip "order") so the
+-- pool visualizer still shows what lost and why.  Reactive goals (kill_lgm,
+-- take_cover, refuel, escape) keep bidding, so an order never stops the bot
+-- defending itself.  See orders.lua for the wire protocol and the auction.
+--
+-- MASTER SWITCH.  With it false nothing in this block is read: no chat line
+-- is parsed, no /info ob* verb is sent, no pool row is rejected.
+M.BOT_COMMANDS_ENABLED  = true   -- keel false
+-- How long one order holds the bot before goal selection is free again.
+-- 3000 ticks = 60 s at 50 ticks/s.  A repeat of the same line refreshes it.
+M.ORDER_FOCUS_TICKS     = 3000   -- keel 3000 (moot; master off)
+-- A GO-THERE ORDER HOLDS FOR THIS LONG AFTER IT ARRIVES (Andrew, Sep 15).
+-- The 60 s focus above is the TRAVEL budget: it bounds the drive, and an
+-- order that never gets there lapses on it the way it always did.  The moment
+-- the tank is on (or beside) the square the clock is replaced by this one, so
+-- "go there" means about ten seconds of standing on the spot rather than
+-- whatever is left of a minute.  500 ticks = 10 s at 50 ticks/s.  The bot
+-- says the number when it arrives, so this knob is what it promises.
+M.ORDER_GOTO_HOLD_TICKS = 500    -- keel 500 (moot; master off)
+-- THE HOLD PHASE STILL FIGHTS.  While the hold runs the hard goto lock comes
+-- off and goal selection runs again, so attack_tank and kill_lgm can win --
+-- but the tank must not DRIVE anywhere: it was sent to that square.  These
+-- are the goal kinds M.steer parks on (no throttle, turning and shooting
+-- only) and the two stuck detectors read as deliberate.  A goal that only
+-- works by moving (take_cover, escape_water, a flee) is NOT in here, so
+-- survival still drives.  A table, so it is not a preset entry; the master
+-- switch already turns the whole feature off.
+M.ORDER_HOLD_PARK_KINDS = {
+  goto_tile = true, attack_tank = true, kill_lgm = true, none = true,
+}
+-- GO-THERE DECOY HARD HOLD (Andrew, 2026-09-24).  A bot-command PING on open
+-- ground is "go there and hold"; with this on, the arrival decides what the
+-- hold is.  No enemy (or neutral) pill within PILL_FIRE_RANGE of the pinged
+-- square: the order ends on arrival, in silence.  One or more: a HARD hold,
+-- "decoying 10s" -- the tank parks on the square and never drives, shoots
+-- only enemy tanks and builders in gun range, and nothing it would decide
+-- for itself (refuel, take_cover, a flee, a water escape, a stuck handler)
+-- takes it off.  It ends when those pills are down, after
+-- ORDER_GOTO_HOLD_TICKS, on a caution ping beside the tank, a cancel, the
+-- tank's death, or a new order that names the bot (a new ping elsewhere
+-- goes to a free bot: ORDER_HOLDER_KEEPS_JOB).  Chat "!goto" and scenario hints keep the
+-- soft hold.  false = every ping hold is the soft hold above, as before.
+-- See orders.lua (GO-THERE DECOY HARD HOLD) for the whole rule.
+-- 2026-09-24: a new order from a person (chat or bot-command ping) makes
+-- every bot forget every older order it does not hold, so a replaced, dead
+-- or stuck holder's old job is never handed back and re-taken
+-- (orders.clear_older_orders).  Bots the new order is not for keep what they
+-- hold.  Scenario hints are kept.  false = the old hand-back behaviour.
+M.ORDER_NEW_CLEARS_ALL = true   -- keel false
+-- 2026-09-24: ONE PING, ONE BOT.  Andrew pinged "go here" once and two bots
+-- both said "on my way" (the Sep 24 single-player replay: p1 and p2 acked
+-- the same solo order in the same frame).  When two bots both take a solo
+-- order their claims cross, and each dropped the order on the other's claim,
+-- so often NOBODY went.  With this on: the cheaper claim keeps the order
+-- (ties to the lower player number) and only the other one drops it; the
+-- solo ack and ON_MY_WAY marker wait ORDER_AUCTION_TICKS for that, so the
+-- bot that drops it never says it was coming; and a bid that arrives before
+-- this bot's own auction on that order is open is kept, not thrown away.
+-- false = both drop, the ack is at once, an early bid is lost (as before).
+M.ORDER_CLAIM_TIEBREAK = true  -- keel false
+-- 2026-09-24: "Don't pass the order back" (Andrew).  A bot that lets an
+-- order go without finishing it -- it died, or a newer order replaced it --
+-- still says so on the wire (obr), so every bot stops counting it as a
+-- holder, but no bot re-bids the order and nobody else is sent.  Group
+-- partners keep their share.  false = the next cheapest bot takes it over.
+M.ORDER_NO_HAND_BACK = true    -- keel false
+-- 2026-09-28: A PERSON'S ATTACK ORDER DOES NOT WAIT LONG FOR A BLITZ (Andrew:
+-- "when a human gives that command it's important that they actually follow
+-- it in a timely manner").  Seconds, counted from the first tick the bot runs
+-- the attack_pill goal for a held order on that pill.  Once they are up,
+-- every wait for blitz partners on that take ends and the bot goes in: the
+-- commander's blitz_wait GO (no READY_TIMEOUT wait, no blitz-only extension,
+-- no short-handed abandon), the soldier's wait for the commander's GO, the
+-- plan_position hold for a blitz accept, and the plan_position hold for the
+-- man to get back in.  An attack the bot picked for itself is not touched.
+-- 0 = no cap (the old waits).
+M.HUMAN_ATTACK_BLITZ_WAIT_MAX_S = 5   -- keel 0
+-- 2026-09-29: A PERSON'S ATTACK ORDER DOES NOT GATHER TREES LONG either.
+-- Seconds, counted from the first tick the bot gathers trees (the protected
+-- take's gather_trees pre-flight) for a held order on that pill.  Once they
+-- are up, gathering ends the way PPT_GATHER_TIMEOUT ends it: the take drops
+-- the walls and goes in unshielded.  An attack the bot picked for itself
+-- keeps the full PPT_GATHER_TIMEOUT.  0 = no cap (the old wait).
+M.HUMAN_ATTACK_GATHER_MAX_S = 5   -- keel 0
+-- 2026-09-24: a bot whose man is out of the tank is NOT busy for an order
+-- (Andrew: "the man is out of the tank should not stop the interrupt").
+-- It takes the order and drives off; the builder walks back to the tank.
+-- A capture_pill with the man sent to the pill is not busy either.
+-- false = the bot answers "Busy (man_out)" / "Busy (capturing)" and keeps
+-- its goal.
+M.ORDER_MAN_OUT_TAKES = true   -- keel false
+M.ORDER_GOTO_DECOY = true        -- keel false (2026-09-24: KEEL had the soft hold only)
+-- 2026-09-25: A BOT KEEPS THE JOB A PERSON GAVE IT (Andrew, PR #393).  Ping
+-- pill 1, then ping pill 2, however long after: the bot on pill 1 stays on
+-- pill 1 and a FREE bot takes pill 2.  A bot that holds an order from a
+-- person (a ping or a chat line; not a scenario hint) answers every auction
+-- "no", the way a busy bot does, and if it wins an auction it bid on before
+-- it held anything, it offers that order to the others (obo) instead of
+-- taking it.  A decoy hold is such an order too, so a ping elsewhere no
+-- longer ends it.  An order that NAMES the bot ("socrates attack 5", a
+-- selection, all, nearby) still switches it.  With every bot holding a job
+-- the auction finds nobody: one bot says "All bots busy", and the order
+-- stays known, so a bot that comes free inside ORDER_FOCUS_TICKS takes it
+-- (with ORDER_NO_FREE_TAKES_LOWEST on, the cheapest holder switches instead).
+-- false = the auction winner leaves its old order for the new one.
+M.ORDER_HOLDER_KEEPS_JOB = true   -- keel false
+-- 2026-09-25: a repeat ping on the same PILL, BASE or TANK adds one bot per
+-- ping.  On plain ground ("go there") it did too; Andrew: it should only
+-- refresh the first bot's order.  false = a repeat ping on a ground square
+-- refreshes the order and adds no bot while a bot holds it; with no bot on
+-- the order (the holder died or let it go, or nobody was free) it sends one
+-- bot again and the order stays a one-bot order.  true = every repeat adds
+-- one (keel).
+M.ORDER_LAND_REPEAT_ADDS = false  -- keel true
+-- 2026-09-25: NO FREE BOT, THE CHEAPEST BUSY ONE SWITCHES (Andrew, PR #393).
+-- Only used with ORDER_HOLDER_KEEPS_JOB on.  A ping or chat auction that no
+-- free bot can take goes to the bot on a person's job with the lowest cost
+-- to the new target (a tie goes to the lower player number).  It drops its
+-- old order and says "No free bot. Leaving ... for ...".  A bot on a decoy
+-- hold is never taken.  The same goes for each slot a repeat ping adds, but
+-- never to a bot that already holds that order.  false = nobody goes: one
+-- bot says "All bots busy" and the order waits for a bot to come free.
+M.ORDER_NO_FREE_TAKES_LOWEST = true  -- keel false
+-- DECOY GETAWAY (Andrew, 2026-09-24).  A decoy hold (ORDER_GOTO_DECOY) looks
+-- for a way out the moment it starts: a chain of up to
+-- DECOY_GETAWAY_MAX_STEPS squares, each one ring further out from the start
+-- square than the one before (never sideways or back: the walls behind are
+-- shot away by then), each one shielded from the counted pills by a wall or
+-- one of our own pills, or out of their range.
+-- A square's SAFETY is the mean over those pills of how well it is shielded
+-- from each one: a full wall DECOY_GETAWAY_WALL_FULL, a damaged wall
+-- DECOY_GETAWAY_WALL_DAMAGED, our pill health / PILLS_MAX_HEALTH, out of
+-- range 1.0, open 0.  A tree or a boat is not cover.  A chain scores the sum
+-- of its squares' safety with the LAST square counted
+-- DECOY_GETAWAY_LAST_WEIGHT times.  The bot parks facing the next square of
+-- the chain; DECOY_GETAWAY_HITS armour losses taken while parked (counted
+-- from its arrival on that square) move it ONE square.  Hits on the way do
+-- not count.  At the last square it parks and the hold ends the way it
+-- always does.  It looks again at most every DECOY_GETAWAY_RESCAN_TICKS, and
+-- only when a pill or a shield changed.  See decoy_getaway.lua.  false = the
+-- hold never moves (as before).
+M.DECOY_GETAWAY              = true   -- keel false
+M.DECOY_GETAWAY_MAX_STEPS    = 5      -- keel 5 (moot; master off)
+M.DECOY_GETAWAY_HITS         = 1      -- keel 1 (moot)
+M.DECOY_GETAWAY_LAST_WEIGHT  = 2.0    -- keel 2.0 (moot)
+M.DECOY_GETAWAY_RESCAN_TICKS = 50     -- keel 50 (moot)
+-- 2026-09-26: THE MOVE TIMEOUT.  A getaway move that has not reached its
+-- square after this many ticks (the square still drivable, but an enemy tank
+-- on it or a long pathfinder detour) parks on the square the tank is on and
+-- scans again from there.  Before the cap the tank drove about under fire for
+-- the rest of the hold, hits not counted and fights refused.
+M.DECOY_GETAWAY_MOVE_TICKS   = 300    -- keel 300 (moot)
+M.DECOY_GETAWAY_WALL_FULL    = 1.0    -- keel 1.0 (moot)
+M.DECOY_GETAWAY_WALL_DAMAGED = 0.5    -- keel 0.5 (moot)
+-- CLOSENESS (Andrew: "we should favor tiles that are closer to the pillbox.
+-- Decoying is easier when the decoyer is close to the pillbox").  A square's
+-- value in the chain score is safety + DECOY_GETAWAY_PROX_WEIGHT * prox,
+-- prox = max(0, 1 - d / PILL_FIRE_RANGE), d = the straight-line distance in
+-- tiles to the nearest counted pill.  It never makes an open square usable.
+-- 0 = safety alone.
+M.DECOY_GETAWAY_PROX_WEIGHT  = 0.5    -- keel 0
+-- 2026-09-24: THE BLOCKER STEP (Andrew: consider ONLY the CLOSEST hostile
+-- pill; move on when the blocker has "2 or less shots left").  Parked on a
+-- chain square (never the decoy square), the shell line from the counted
+-- pill closest to the PARK square, to the park square (not to the tank: a
+-- knock off the square keeps the same line), is walked for blockers: walls
+-- (full or damaged) and live pills of ours or an ally's.  With two or more
+-- blockers on it the tank waits.  With one, that LAST blocker alone is
+-- counted: the pill shells it still stops are the shots left.  With none,
+-- shots left is 0.  Shots left <= DECOY_GETAWAY_BLOCKER_SHOTS moves the tank
+-- on without waiting for a hit.  A hit still moves it.  A shell that stops
+-- short of the park square: no count.  (Comment corrected 2026-09-26: it
+-- used to say the line ran to the tank and the shots of every blocker were
+-- summed.)  false = hits only.
+M.DECOY_GETAWAY_BLOCKER_STEP  = true  -- keel false
+M.DECOY_GETAWAY_BLOCKER_SHOTS = 2     -- keel 2 (not used: the step is off)
+-- The engine rules the shots left are worked out from.  The brain cannot
+-- read them, so these are the engine defaults: building_life
+-- (BUILDING_LIFE, src/bolo/internal/building.h) and pill_shell_damage
+-- (PILLBOX_SHELL_DAMAGE, src/bolo/internal/pillbox.h).  A full wall stops
+-- WALL_LIFE + 1 shells; a damaged wall's life left is hidden, so it counts
+-- 1; a pill stops ceil(armour / PILL_SHELL_DAMAGE).
+M.DECOY_GETAWAY_WALL_LIFE     = 4     -- keel 4
+M.DECOY_GETAWAY_PILL_SHELL_DAMAGE = 1 -- keel 1
+-- 2026-09-24 (Andrew): the diagonal step.  When the next chain square is
+-- diagonal to the tank's square, the nav Dijkstra often goes round by a
+-- side square: a diagonal edge costs DMUL8 1.41 x the WHOLE step cost,
+-- danger included (brain_pathfinder.c, slate expand, new_g = g + tc *
+-- DMUL8[d]), so a side square with less pill danger is cheaper.  Under
+-- fire that is two slow turns.  true = while a getaway MOVES, drive
+-- straight at a diagonal next square when both side squares and the
+-- square itself are drivable (no wall, pill or deep sea: the same corner
+-- rule the pathfinder uses).  Other goals are not changed.
+M.DECOY_GETAWAY_DIAGONAL      = true  -- keel false
+-- Auction window.  The design said 6 ticks; a brain thinks every 2 game
+-- ticks and a bid is seen on the ally's NEXT think, so 6 is tight -- 10
+-- gives every ally one full round trip.  The auction still ends EARLY the
+-- moment every active ally has answered, so the window is only a cap.
+M.ORDER_AUCTION_TICKS   = 10     -- keel 10 (moot; master off)
+-- Steal hysteresis: a free bot takes a live order off its holder only when
+-- its own travel price is lower by BOTH of these, and only after the holder
+-- has had the job for ORDER_STEAL_HOLD_TICKS.
+M.ORDER_STEAL_PCT       = 0.20   -- keel 0.20 (moot; master off)
+M.ORDER_STEAL_MIN_TILES = 2      -- keel 2 (moot; master off)
+M.ORDER_STEAL_HOLD_TICKS = 100   -- keel 100 (moot; master off)
+-- Bids are Dijkstra COST units, not tiles, so the min-tiles rule above is
+-- converted with this "what one plain tile costs" scale.
+M.ORDER_TILE_COST       = 4      -- keel 4 (moot; master off)
+-- `nearby <verb> <target>`: every bot within this many tiles OF THE TARGET
+-- (never of the sender -- distance is always measured to the target so every
+-- bot computes the same answer).
+M.ORDER_NEARBY_TILES    = 10     -- keel 10 (moot; master off)
+-- THREE SHOTS = COME HERE.  The server's "!goto <mx> <my> <sx> <sy>" line
+-- carries the SHOOTER's tile, and only a bot inside the shooter's screen
+-- takes the order: this is how far that reaches, measured the way a screen
+-- is (the larger of the two axes), so 14 is the 29x29 view.  A "!goto x y"
+-- with no shooter tile -- a human typing it -- keeps ORDER_NEARBY_TILES.
+M.ORDER_SHOT_VIEW_TILES = 14     -- keel 14 (moot; master off)
+-- A line of only bot names SELECTS them; the sender's next order goes to the
+-- selected set with no auction.  The selection lapses after this.
+M.ORDER_SELECT_TICKS    = 500    -- keel 500 (moot; master off)
+-- The same order said again to a bot that already holds it refreshes the
+-- focus AND gets one "Still on it." line back.  This is the floor between
+-- two of those lines, so a key held down cannot fill the chat with them.
+-- 50 ticks = 1 s.
+M.ORDER_REPEAT_ACK_TICKS = 50    -- keel 50 (moot; master off)
+-- `attack <tank name>`: how long the named tank may be missing before the
+-- order ends.  From inside the brain a dead tank and one that drove out of
+-- sight look the same -- it drops out of the object scan and its remembered
+-- ghost ages out -- so one timer covers both.  Long enough that a blink
+-- behind a forest is not the end of the job.  500 ticks = 10 s.
+M.ORDER_TANK_LOST_TICKS = 500    -- keel 500 (moot; master off)
+-- Price of an ordered goal the pools did not offer this tick (a defend_pill
+-- with no alarm, a take_cover with no trigger, an attack_tank out of engage
+-- range).  Low enough to beat the rejected strategic field, high enough that
+-- a real emergency (flee at critical armour, a builder in reach) still wins.
+M.ORDER_INJECT_COST     = 20     -- keel 20 (moot; master off)
+-- Orders that do NOT need shells (sweeping a dead pill, retreating, taking a
+-- neutral base) send the bot straight there: the refuel row is rejected too
+-- while armour is above the escape line.  false = refuel competes as usual.
+M.ORDER_REFUEL_SKIP_NO_SHELLS = true   -- keel false
+-- Goal kinds that keep bidding under an order.  Everything NOT in here is
+-- STRATEGIC and gets the "order" reject while the slot is live.  A knob so
+-- the split can be retuned without touching goal selection.
+-- NOT in PRESETS.keel: a preset entry must be a scalar (_cfg_set refuses
+-- tables), and the master switch above already turns the whole feature off.
+M.ORDER_REACTIVE_KINDS = {
+  attack_tank = true, kill_lgm = true, take_cover = true,
+  refuel_at_base = true, flee_to_base = true, flee_pill = true,
+  escape_water = true, rescue_lgm = true, kill_me_wait = true,
+  mine_crater = true, none = true,
+}
+-- "A stuck escape in progress" for busy().  The old test read
+-- state._stuck_escape_count, which counts CONSECUTIVE stuck recoveries at one
+-- tile and is only ever zeroed when it reaches its own hard-escape threshold
+-- or on respawn -- so one stuck moment early in a game left the bot "busy"
+-- for the rest of it and it could never take an order.  state.stuck_for is
+-- the live counter (zeroed the moment the tank moves or fires), and 150 is
+-- the same tile-stuck limit steering.lua uses to fire its escape.
+M.ORDER_STUCK_BUSY_TICKS = 150   -- keel 150 (moot; master off)
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- BOT COMMANDS — stage 2 (pings, focus, reposition switch, the speaking bot)
+-- ══════════════════════════════════════════════════════════════════════════
+-- PINGS.  The engine already delivers a teammate's smart ping to the brain as
+-- an EVENT_PING; orders.lua turns the BOT COMMAND kind into an order and the
+-- CAUTION kind into a cancel/retreat.  The tile the ping lands on picks the
+-- verb (enemy live pill -> attack, dead pill -> sweep, enemy/neutral base ->
+-- capture, our own pill/base -> defend, an ally bot -> select it, an enemy
+-- tank -> attack_tank, open ground -> go there and hold).
+-- A ping resolves to whatever sits on the EXACT tile; only when that tile is
+-- empty is the 3x3 ring searched, and then the nearer candidate wins (ties on
+-- player number).  This is the ring radius, in tiles.
+M.ORDER_PING_RING = 1            -- keel 1 (moot; master off)
+-- How long a ping order's anchor tile stays matchable, so a repeat ping in
+-- the same 3x3 ADDS a bot to the same order instead of opening a new one.
+-- Same clock as the focus timer.
+M.ORDER_PING_MATCH_TICKS = 3000  -- keel 3000 (moot; master off)
+
+-- FOCUS.  "focus bases" / "take bases" / "focus pills" / "take pills" /
+-- "focus off" in chat.  Team-wide, for the whole game or until changed, and
+-- `cancel all` does not touch it.  It works by PRICING, not by rejecting: the
+-- OTHER class pays this multiplier and the focused class keeps its real price,
+-- so a pill never becomes artificially cheap next to attack_tank, refuel,
+-- escape or take_cover and survival still wins when it should.
+--   focus bases -> every PILL goal pays it
+--                  (attack_pill, capture_pill, defend_pill, repair_pill,
+--                   reposition, place_pill_strategic)
+--   focus pills -> every BASE goal pays it (capture_base, attack_base)
+-- Applied at ONE choke point, the assembled-pool pass in goal_selection right
+-- beside the pill-suicider surcharge, and shown in every affected row's term
+-- breakdown as "|focus: x3.0 (bases)" so the panel stays hand-computable.
+M.FOCUS_OTHER_COST_MULT = 3.0    -- keel 1.0 (no focus factor at all)
+-- The speaking bot re-broadcasts the team's focus and reposition settings on
+-- this period so a bot that joined or respawned late latches the same values.
+-- The settings ride their own /info verbs (obf / obp) rather than the state
+-- slate, which is already close to the 124-byte batch budget.
+M.ORDER_LATCH_REBROADCAST_TICKS = 1500   -- keel 1500 (moot; master off) 30 s
+
+-- BOT PINGS.  When a team turns this on, a bot puts an ATTACK marker on the
+-- map every time it takes an attack_pill or attack_tank goal, so the team can
+-- see what the bots are going for without reading chat.  ON by default
+-- (2026-09-29): the markers show the team what the bots do while the bots
+-- stay quiet in chat (BOT_CHAT_DEFAULT below).  The team setting is
+-- "bot pings on" / "bot pings off"; this is the value a game starts at.
+--
+-- The ON_MY_WAY marker a bot places when it takes an ORDER is NOT covered by
+-- this switch.  That one answers a person who just gave the order, so it is
+-- always sent.
+M.BOT_PINGS_DEFAULT      = true   -- keel false (2026-09-29: pings on by default)
+-- DO THE BOTS SPEAK THEIR GOAL CONFIRMATIONS?  The team setting is "bot chat
+-- on" / "bot chat off"; this is the value a game starts at, and it is FALSE
+-- (2026-09-29): the bots are quiet until a team says "bot chat on", and
+-- "bot pings" (ON by default) shows their goals on the map.  Off silences the goal
+-- lines only -- the ack, the group ack, "Still on it.", "holding 10s",
+-- "Released", "Refuelling, coming back".  An answer a person is owed for a
+-- line they just typed (help, "didn't understand", "Busy", the setting
+-- confirmations) is never silenced: see sayg in orders.lua.
+M.BOT_CHAT_DEFAULT       = false  -- keel true (moot; master off)
+-- Shortest gap between two ATTACK markers from the SAME bot about the SAME
+-- target.  A bot re-plans the same goal often, and without this every replan
+-- would put another marker on the same pill.  1500 ticks is 30 s.
+M.ORDER_PING_REPEAT_TICKS = 1500  -- keel 1500 (moot; master off) 30 s
+
+-- PING SUICIDE RUN (Andrew, 2026-09-24).  A person puts a BOT COMMAND ping
+-- on an enemy pill and then, within PING_SUICIDE_WINDOW_TICKS, an ATTACK ping
+-- on the SAME pill.  Every allied bot whose goal is attack_pill on that pill
+-- (the bots the bot command sent, and any bot that was already attacking it)
+-- goes on a SUICIDE RUN: straight at the pill, firing, with nothing allowed
+-- to stop it -- no refuel, no flee, no take_cover, no shell or armour gate,
+-- no LGM rescue.  It holds until the tank dies or the pill is dead (armour 0,
+-- ours, carried, or gone).  A "cancel" line or a caution ping is the one
+-- escape hatch.  See orders.lua (PING SUICIDE RUN) for the whole rule.
+-- The window is in BRAIN ticks: the brain thinks every second engine tick,
+-- so 50 brain ticks = 1 s.  The order is bot command FIRST, attack SECOND.
+M.PING_SUICIDE_ENABLED      = true   -- keel false (2026-09-24: KEEL had no suicide run)
+M.PING_SUICIDE_WINDOW_TICKS = 50     -- keel 50 (moot; PING_SUICIDE_ENABLED off)
+-- When no square beside the pill can be reached, the run does not end: it
+-- forgets which squares failed and tries them all again after this long.
+M.PING_SUICIDE_RETRY_TICKS  = 50     -- keel 50 (moot; PING_SUICIDE_ENABLED off)
+
+-- How far the seat a bot is escorting may drift from where the bot was last
+-- sent before the escort re-aims.  A hint may name its own `distance`; this
+-- is what one that does not gets.  Three squares keeps the pair together
+-- without re-running the order every think as the escorted tank rolls.
+--
+-- NO `keel` ENTRY.  Scenario hints did not exist in the keel baseline, so
+-- there is no pre-change value for a keel bot to reproduce: it is never
+-- hinted and never reads this.
+M.ORDER_HINT_ESCORT_TILES = 3
+
+-- ══════════════════════════════════════════════════════════════════════════
 -- PRESETS — named bundles of constant overrides, applied per bot
 -- ══════════════════════════════════════════════════════════════════════════
 -- A bot given the BRAIN_INIT_ARG token "preset=NAME" has every entry of
@@ -4199,6 +4920,12 @@ M.PRESETS = {
     -- and fights the tank alongside us. KEEL never shoots its own pills, so
     -- attack_tank goes straight from the disengage checks to close/engage.
     ATTACK_TANK_HEAT_PILL         = false,
+    -- 2026-09-29: heat-only attack_tank (no tank fighting of its own). KEEL
+    -- fights every tank it picks.
+    ATTACK_TANK_PILL_HEAT_ONLY    = false,
+    -- 2026-09-29: defensive turtle placement (one pill cluster at home).
+    -- KEEL spreads its pills by the normal placement scan.
+    PILL_PLACE_TURTLE             = false,
     -- 2026-09-06: the MAIN defend_pill evaluator is now ALARM MODE (see the
     -- DEFEND_ALARM_* block above): defend_pill is REJECTED unless a hostile
     -- tank is visible within 11 tiles of the pill RIGHT NOW, something enemy
@@ -4217,6 +4944,81 @@ M.PRESETS = {
     -- pinned at its default so it's neutral even if the boolean were flipped on.
     BLITZ_SWERVE_ONLY_WHEN_HIT    = false,
     BLITZ_ONLY_WHEN_HIT_MIN       = 3,
+    -- 2026-09-24: blitz-only pill attacks (no solo takes). Default is already
+    -- off; pinned so a later default flip cannot leak into the baseline.
+    BLITZ_ONLY_PILL_ATTACKS       = false,
+    -- 2026-09-24: a budget-killed squad.update no longer leaves squad_cmdr /
+    -- squad_blitz_target nil for the next tick's goal logic. KEEL had no
+    -- snapshot or restore.
+    SQUAD_KILL_RECOVER            = false,
+    -- 2026-09-24: blitz spots (soldier pick + replan, commander arbiter, GO
+    -- gate) must keep a tapering distance (0.5 * d / L) from walls, pills and
+    -- bases on the shot line. KEEL had no margin: shell test only.
+    BLITZ_SPOT_LOS_MARGIN         = 0,
+    -- 2026-09-24: the soldier keeps the scan's float spot point + angle (bes,
+    -- standoff, _chosen_deg) and re-broadcasts after a replan. KEEL used the
+    -- tile centre and set no angle.
+    BLITZ_SPOT_EXACT_ORIGIN       = false,
+    -- 2026-09-24: the blitz soldier's GO gate tests from its standoff. KEEL
+    -- tested from the live tank at its SETUP point.
+    BLITZ_GO_GATE_FROM_STANDOFF   = false,
+    -- 2026-09-25: a 3+ blitz kill keeps TWO capture_pill claimers (rank 1 and
+    -- 2), and our own cost is rounded like kc before the handoff compare. KEEL
+    -- kept one grabber and compared the unrounded cost. 0 = off.
+    KILL_PICKUP_PAIR_MIN_SQUAD    = 0,
+    -- 2026-09-25: under blitz-only, the commander goes GO only with
+    -- blitz_min tanks PARKED; at timeout it extends the wait. KEEL went GO at
+    -- READY_TIMEOUT with whoever was committed (or abandoned if short).
+    BLITZ_ONLY_EXTEND_WAIT        = false,
+    -- 2026-09-26: cap on those extensions. KEEL never extended, so the cap
+    -- is never read there; same value as the default.
+    BLITZ_ONLY_EXTEND_MAX         = 3,
+    -- 2026-09-25: under blitz-only, a new commander take needs itself + free
+    -- allies >= blitz_min, and a soldier answers the call on its goal pill.
+    -- KEEL opened a take with nobody free to join it and answered the
+    -- nearest call only.
+    BLITZ_ONLY_CMDR_NEEDS_FREE    = false,
+    -- 2026-09-25 (evening): under blitz-only a blitz_wait soldier restarts its
+    -- wait backstop while the commander keeps the call open and names it in
+    -- bac. KEEL timed out 1500 ticks after entering blitz_wait.
+    BLITZ_SOLDIER_WAIT_FOLLOW_CMDR = false,
+    -- 2026-09-25 (evening): a cleared goal / NO-SPOT commit drops the blitz
+    -- accept and renegotiates; a soldier's own spot pick keeps the clash
+    -- distance from the commander's and squadmates' bes; a soldier with only
+    -- a goal standoff broadcasts it as bes. KEEL kept the stale accept,
+    -- self-scanned unchecked and sent no bes.
+    BLITZ_NOSPOT_RENEGOTIATE      = false,
+    -- 2026-09-25 (evening): GO parked/ready counts and the suicider pick take
+    -- only soldiers in the commander's accept list. KEEL counted any soldier
+    -- naming it as cmdr.
+    BLITZ_GO_ACCEPTED_ONLY        = false,
+    -- 2026-09-25 (evening): blitz shot lines stay live after we leave a blitz
+    -- until it ends. KEEL dropped them with the goal.
+    BLITZ_LINES_AFTER_LEAVE       = false,
+    -- 2026-09-25 (evening): no new pill build in a live blitz or its window.
+    -- KEEL built whenever the goal allowed it.
+    BLITZ_NO_BUILD_ACTIVE         = false,
+    -- 2026-09-25 (evening): refuse a new pill tile whose man path crosses
+    -- pill fire or a blitz line. Default false = KEEL; listed so an A/B
+    -- that turns it on has one place to look.
+    PLACE_PILL_MAN_PATH_SAFE      = false,
+    -- 2026-09-25 (evening): in a blitz window, new pill tiles only behind
+    -- the tank. Default false = KEEL; listed for the same reason.
+    PLACE_PILL_BEHIND_ONLY        = false,
+    -- 2026-09-25: a pill our man or an ally's man is walking to build blocks a
+    -- blitz spot's shot line like a live pill. KEEL: only live pills block.
+    BLITZ_SPOT_PENDING_PILLS      = false,
+    -- 2026-09-25: new pill placements refuse a tile on a live blitz shot line.
+    -- KEEL placed anywhere.
+    PILL_PLACE_AVOID_BLITZ_LINE   = false,
+    -- 2026-09-25: the Dijkstra next-step fallbacks follow the traced chain
+    -- toward the destination. KEEL took the lowest g (toward the slate root).
+    PF_NEXTSTEP_CHAIN_VEER        = false,
+    -- 2026-09-25: an A->B->A next step forces a fresh A*. KEEL kept the step.
+    PF_FLIP_FRESH_ASTAR           = false,
+    -- 2026-09-26: cap on that hold. Unused with the guard off; same value as
+    -- the default.
+    PF_FLIP_FRESH_ASTAR_TICKS     = 60,
     -- 2026-09-05 (evening): BLITZ_CONTESTED_ALL_SUICIDERS had an entry here and
     -- no longer needs one -- the bench sent it back and its DEFAULT is now
     -- false, which is already the KEEL value. A knob whose default equals its
@@ -4325,6 +5127,16 @@ M.PRESETS = {
     -- KEEL has no such bonus -- under KEEL that pill was first by seeding
     -- instead, so 1.0 is the value that reproduces it.
     BUILDER_POOL_GOAL_PILL_BONUS = 1.0,
+    -- 2026-09-24: a human's bot-command ping on one of our pills doubles that
+    -- pill's builder-pool repair row for 10 s.  KEEL had no such bonus.
+    BUILDER_POOL_PING_PILL_BONUS = 1.0,
+    BUILDER_POOL_PING_PILL_TICKS = 500,
+    -- 2026-09-26: a bot holding a human's ping defend order on a damaged pill
+    -- of ours, with its tank within 10 tiles, forces the man to repair it
+    -- (harvesting first with no wood).  KEEL had only the weight above.
+    PING_DEFEND_REPAIR = false,
+    PING_DEFEND_REPAIR_RANGE = 10,
+    PING_DEFEND_REPAIR_BONUS = 1000,
     -- 2026-09-08: the "loaded, builder-less" state (>= 3 pills aboard and the
     -- man dead or more than 20 s of walking away).  Six knobs, one per thing
     -- that changes inside it; every one of these values is what the brain did
@@ -4351,6 +5163,89 @@ M.PRESETS = {
     --   fight loop.  This one flag turns the whole feature off; every other
     --   KILL_ME_* knob is unread while it is false.
     KILL_ME_ENABLED               = false,
+    --   and there were no chat orders at all: no line was parsed, no /info
+    --   ob* verb went out, no pool row carried an "order" reject.  This one
+    --   flag turns the whole feature off; the rest are pinned at their
+    --   defaults only so a later tweak to one cannot leak into the baseline.
+    --   ORDER_REACTIVE_KINDS is a TABLE and cannot ride a preset, but it is
+    --   unread while the master is false.
+    BOT_COMMANDS_ENABLED          = false,
+    ORDER_FOCUS_TICKS             = 3000,
+    ORDER_GOTO_HOLD_TICKS         = 500,
+    ORDER_AUCTION_TICKS           = 10,
+    ORDER_STEAL_PCT               = 0.20,
+    ORDER_STEAL_MIN_TILES         = 2,
+    ORDER_STEAL_HOLD_TICKS        = 100,
+    ORDER_TILE_COST               = 4,
+    ORDER_NEARBY_TILES            = 10,
+    ORDER_SHOT_VIEW_TILES         = 14,
+    ORDER_SELECT_TICKS            = 500,
+    ORDER_REPEAT_ACK_TICKS        = 50,
+    ORDER_TANK_LOST_TICKS         = 500,
+    ORDER_INJECT_COST             = 20,
+    ORDER_REFUEL_SKIP_NO_SHELLS   = false,
+    ORDER_STUCK_BUSY_TICKS        = 150,
+    ORDER_PING_RING               = 1,
+    ORDER_PING_MATCH_TICKS        = 3000,
+    ORDER_LATCH_REBROADCAST_TICKS = 1500,
+    BOT_PINGS_DEFAULT             = false,
+    BOT_CHAT_DEFAULT              = true,
+    --   2026-09-17: a bot attacking a pill with a HUMAN team-mate within 7
+    --   tiles now skips the wall shield and goes straight in (the lobby docs
+    --   promise it). KEEL never looked at where the humans were: 0 = off, so
+    --   only a designated pill_suicider skips the blockers, as before.
+    ORDER_HUMAN_NEAR_SUICIDE_TILES = 0,
+    ORDER_HUMAN_NEAR_SUICIDE_RUN   = false,
+    ORDER_PING_REPEAT_TICKS       = 1500,
+    --   2026-09-24: bot command ping + attack ping on the same pill within
+    --   1 s sends every bot on that pill on a suicide run. KEEL had no such
+    --   gesture: off, and the two tuning knobs pinned at their defaults.
+    PING_SUICIDE_ENABLED          = false,
+    PING_SUICIDE_WINDOW_TICKS     = 50,
+    PING_SUICIDE_RETRY_TICKS      = 50,
+    --   2026-09-24: a ping "go there" next to an enemy pill is a HARD decoy
+    --   hold, and one with no pill in range ends on arrival. KEEL had only
+    --   the soft 10 s hold that any reactive goal could drive away from.
+    ORDER_GOTO_DECOY              = false,
+    --   2026-09-24: a decoy hold turns to face a chain of shielded squares
+    --   and drives it after the first hit. KEEL's hold never moved.
+    DECOY_GETAWAY                 = false,
+    DECOY_GETAWAY_MAX_STEPS       = 5,
+    DECOY_GETAWAY_HITS            = 1,
+    DECOY_GETAWAY_LAST_WEIGHT     = 2.0,
+    DECOY_GETAWAY_RESCAN_TICKS    = 50,
+    DECOY_GETAWAY_MOVE_TICKS      = 300,
+    DECOY_GETAWAY_WALL_FULL       = 1.0,
+    DECOY_GETAWAY_WALL_DAMAGED    = 0.5,
+    DECOY_GETAWAY_PROX_WEIGHT     = 0,
+    DECOY_GETAWAY_BLOCKER_STEP    = false,
+    DECOY_GETAWAY_BLOCKER_SHOTS   = 2,
+    DECOY_GETAWAY_WALL_LIFE       = 4,
+    DECOY_GETAWAY_PILL_SHELL_DAMAGE = 1,
+    DECOY_GETAWAY_DIAGONAL        = false,
+    ORDER_NEW_CLEARS_ALL         = false,
+    ORDER_CLAIM_TIEBREAK          = false,
+    ORDER_NO_HAND_BACK            = false,
+    --   2026-09-28: an attacking bot on a person's order waits at most
+    --   HUMAN_ATTACK_BLITZ_WAIT_MAX_S for blitz partners.  KEEL: no cap.
+    HUMAN_ATTACK_BLITZ_WAIT_MAX_S = 0,
+    --   2026-09-29: an attacking bot on a person's order gathers trees for
+    --   at most HUMAN_ATTACK_GATHER_MAX_S.  KEEL: no cap.
+    HUMAN_ATTACK_GATHER_MAX_S     = 0,
+    ORDER_MAN_OUT_TAKES           = false,
+    --   2026-09-25: a bot holding a person's order keeps it against a new
+    --   ping, and a repeat ping on plain ground adds no bot.  KEEL: the
+    --   auction winner switched, and every repeat ping added a bot.
+    ORDER_HOLDER_KEEPS_JOB        = false,
+    ORDER_LAND_REPEAT_ADDS        = true,
+    --   2026-09-25: with no free bot, the cheapest bot on a person's job
+    --   switched to the new order.  KEEL: holders never bid.
+    ORDER_NO_FREE_TAKES_LOWEST    = false,
+    --   FOCUS_OTHER_COST_MULT is the one stage-2 knob that is NOT covered by
+    --   the master switch: the focus multiplier sits inside the cost
+    --   competition, so its keel value has to be the identity, 1.0, for the
+    --   baseline pool numbers to come out unchanged.
+    FOCUS_OTHER_COST_MULT         = 1.0,
   },
   -- nolgm_off: RUDDER as it stood BEFORE the loaded, builder-less work
   -- (2026-09-08) -- every knob that work added, at its pre-change value, and
@@ -4365,6 +5260,40 @@ M.PRESETS = {
     CAPTURE_NO_LGM_ROUTE_STRICT     = false,
     CAPTURE_BASE_NO_LGM_DANGER_MULT = 0,
     KILL_ME_ENABLED                 = false,
+  },
+  -- turtle: the "Defensive Turtle" placement on any difficulty (2026-09-29).
+  -- Only the master switch; its tunables (PILL_PLACE_TURTLE_*) sit beside it.
+  -- preset= is applied after the difficulty bundle, so this works at every
+  -- level. Virus sends the `survivor` / `horde` word instead (see
+  -- M.SIDE_SETTINGS below), because a preset cannot be taken back at runtime
+  -- and a side word can.
+  turtle = {
+    PILL_PLACE_TURTLE = true,
+  },
+}
+
+-- ── SIDE SETTINGS (2026-09-29, Andrew; Virus) ─────────────────────────
+-- What the init words `survivor` and `horde` write into C (init.lua
+-- _apply_cfg_tokens). Each word also sets state.side, and the never-refuel
+-- flag (init.lua Brain.apply_init_tokens): horde never refuels, survivor does.
+--
+-- Unlike a preset, a side can be taken back at runtime: every setting one
+-- side turns on, the other side writes back to its default. So a survivor who
+-- is handed `horde` mid-round loses all of them. A new survivor or horde
+-- setting goes here, in BOTH tables.
+--
+-- Precedence: level < preset < side < cfg. A side word beats preset=keel, and
+-- an explicit cfg= in the same init table still beats the side word.
+-- With no side word nothing here is applied, so every other game plays as
+-- before.
+M.SIDE_SETTINGS = {
+  survivor = {
+    ATTACK_TANK_PILL_HEAT_ONLY = true,
+    PILL_PLACE_TURTLE          = true,
+  },
+  horde = {
+    ATTACK_TANK_PILL_HEAT_ONLY = false,
+    PILL_PLACE_TURTLE          = false,
   },
 }
 
@@ -4452,10 +5381,14 @@ M.MODE_LEVELS = {
       -- Steady / predictable (goal hysteresis)
       GOAL_SWITCH_PENALTY = 60, GOAL_SWITCH_RATIO = 0.5, GOAL_COMMITMENT_CAP = 150,
       GOAL_MIN_COMMIT_TICKS = 75, REFUEL_LOCK_IN = true, ATTACK_PILL_COMMITMENT_BONUS = 120,
-      -- Placement: back / defensive
-      STRATEGIC_PLACE_FRONT_WEIGHT = 1.0, STRATEGIC_PLACE_BASE_WEIGHT = 4.0,
-      STRATEGIC_PLACE_THREAT_WEIGHT = 3.0, STRATEGIC_PLACE_BEYOND_FRONT_PENALTY = 250,
-      STRATEGIC_PLACE_SPIKE_BONUS = 0, STRATEGIC_PLACE_UNDERDEFENDED_BONUS = 80,
+      -- Placement: back / defensive. Four of these come from
+      -- EASY_DEFENSIVE_PLACE (the same numbers PILL_PLACE_TURTLE uses).
+      STRATEGIC_PLACE_FRONT_WEIGHT = 1.0,
+      STRATEGIC_PLACE_BASE_WEIGHT = EASY_DEFENSIVE_PLACE.base_weight,
+      STRATEGIC_PLACE_THREAT_WEIGHT = EASY_DEFENSIVE_PLACE.threat_weight,
+      STRATEGIC_PLACE_BEYOND_FRONT_PENALTY = EASY_DEFENSIVE_PLACE.beyond_front_penalty,
+      STRATEGIC_PLACE_SPIKE_BONUS = EASY_DEFENSIVE_PLACE.spike_bonus,
+      STRATEGIC_PLACE_UNDERDEFENDED_BONUS = 80,
       -- Defend slow / loaded ambush target
       DEFEND_ALARM_BASE_COST = 220,             -- ENEMY_TILES unchanged at 11 ("defends its own")
       KILL_ME_ENABLED = false,
@@ -4469,7 +5402,21 @@ M.MODE_LEVELS = {
       ARMOUR_LOW = 22, SHELLS_LOW = 24, ARMOUR_COMBAT = 36, SHELLS_COMBAT = 36,
     },
   },
-  survival = { hard = {}, medium = {}, easy = {} },  -- placeholders (see modes.txt)
 }
+
+-- Turtle mode: each level is the matching default level plus the turtle
+-- pill placement switch (PILL_PLACE_TURTLE, above). Built from the default
+-- bundles here, not copied by hand, so a change to a default level reaches
+-- turtle too. No new values: it is the same switch preset=turtle turns on.
+do
+  local turtle = {}
+  for level, bundle in pairs(M.MODE_LEVELS.default) do
+    local t = {}
+    for k, v in pairs(bundle) do t[k] = v end
+    t.PILL_PLACE_TURTLE = true
+    turtle[level] = t
+  end
+  M.MODE_LEVELS.turtle = turtle
+end
 
 return M

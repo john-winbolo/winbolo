@@ -62,6 +62,77 @@ void discoveryAbortBroadcastSearch(void) {
   SDL_SetAtomicInt(&s_broadcastAbort, 1);
 }
 
+/* discovery.h keeps its own sizes for the script fields because it does not
+ * include netpacks.h; each is a netpacks.h cap plus a NUL. */
+BOLO_STATIC_ASSERT(DISCOVERY_SCRIPT_NAME_LEN == 63 + 1,
+                   discovery_script_name_len_matches_the_wire_name_cap);
+BOLO_STATIC_ASSERT(DISCOVERY_SCRIPT_DESC_LEN == WBN_SCENARIO_DESC_MAX + 1,
+                   discovery_script_desc_len_matches_wbn_scenario_desc_max);
+BOLO_STATIC_ASSERT(DISCOVERY_SCRIPT_MODS_MAX == 9,
+                   discovery_script_mods_max_matches_the_wire_mod_cap);
+
+/* One length-prefixed string of the script tail into a NUL-terminated
+ * buffer. False when the length is over maxLen or the bytes run past len. */
+static bool discoveryReadTailString(const uint8_t *tail, size_t len,
+                                    size_t *pos, size_t maxLen, char *dst) {
+  size_t strLen;
+  if (*pos >= len) {
+    return false;
+  }
+  strLen = tail[*pos];
+  (*pos)++;
+  if (strLen > maxLen || strLen > len - *pos) {
+    return false;
+  }
+  memcpy(dst, tail + *pos, strLen);
+  dst[strLen] = '\0';
+  *pos += strLen;
+  return true;
+}
+
+bool discoveryReadScriptTail(const uint8_t *tail, size_t len, DiscoveryScripts *out) {
+  DiscoveryScripts scripts;
+  size_t pos = 0;
+  BYTE i;
+
+  if (out == NULL) {
+    return false;
+  }
+  memset(out, 0, sizeof(*out));
+  if (tail == NULL) {
+    return false;
+  }
+  /* Read into a local copy so a tail that fails part-way leaves *out
+   * zeroed rather than half filled. */
+  memset(&scripts, 0, sizeof(scripts));
+  if (!discoveryReadTailString(tail, len, &pos, DISCOVERY_SCRIPT_NAME_LEN - 1,
+                               scripts.scenarioName)) {
+    return false;
+  }
+  if (!discoveryReadTailString(tail, len, &pos, DISCOVERY_SCRIPT_DESC_LEN - 1,
+                               scripts.scenarioDescription)) {
+    return false;
+  }
+  if (len - pos < 2) {
+    return false;
+  }
+  scripts.scenarioMaxPlayers = tail[pos++];
+  scripts.modCount = tail[pos++];
+  if (scripts.modCount > DISCOVERY_SCRIPT_MODS_MAX) {
+    return false;
+  }
+  for (i = 0; i < scripts.modCount; i++) {
+    if (!discoveryReadTailString(tail, len, &pos, DISCOVERY_SCRIPT_NAME_LEN - 1,
+                                 scripts.modNames[i])) {
+      return false;
+    }
+  }
+  /* Bytes past the last mod are left for a later field. */
+  scripts.hasScriptInfo = true;
+  *out = scripts;
+  return true;
+}
+
 /* Translate an INFO_PACKET (wire format) into the public DiscoveryServer
  * POD. addr is the source address from recvfrom — used as a fallback
  * when the packet's gameid.serveraddress is unset. `len` is the number
@@ -135,11 +206,19 @@ static void discoveryFillServerFromInfoPacket(const INFO_PACKET *info, const str
                              &out->pillView, &out->baseView, &out->allyView,
                              &out->classicMode, &out->alliesInTrees);
   infoPacketReadViewPolicies2(info, len,
-                              &out->overviewWindow, &out->lineOfSight);
+                              &out->overviewWindow, &out->lineOfSight,
+                              &out->positionalSound);
   /* Same tier: a packet that reaches the view byte said something about
    * the rules, and a shorter one said nothing and took the stand-in. */
   out->hasViewInfo = (len >= (size_t)INFO_PACKET_PRE_VIEWS2_SIZE);
   out->hasRichInfo = rich;
+  /* The script bytes follow the INFO_PACKET in a reply to an info request.
+   * A reply that stops at the INFO_PACKET leaves scripts as the memset above
+   * left it. */
+  if (len > sizeof(INFO_PACKET)) {
+    discoveryReadScriptTail((const uint8_t *)info + sizeof(INFO_PACKET),
+                            len - sizeof(INFO_PACKET), &out->scripts);
+  }
 }
 
 static void gameFinderProcessBroadcast(INFO_PACKET *info, struct in_addr *pack, DiscoveryServerCallback callback, void *userData, bool rich, size_t len) {
@@ -310,13 +389,15 @@ bool discoveryFindBroadcastGamesAsync(DiscoveryServerCallback callback, void *us
       if (len == (int)INFO_PACKET_LEGACY_SIZE ||
           len == (int)INFO_PACKET_PRE_VIEWS_SIZE ||
           len == (int)INFO_PACKET_PRE_VIEWS2_SIZE ||
-          len == (int) sizeof(INFO_PACKET)) {
+          len >= (int) sizeof(INFO_PACKET)) {
         /* Magic + type only — the INFO_RESPONSE is the universal
          * version-negotiation primitive, so we deliver mixed-version
          * servers up to the UI; the caller pre-flights versions before
          * attempting a join. Legacy 76-byte servers parse the common
          * prefix only (rich fields gated off), and a packet that stops
-         * before the view-policy byte gets the view defaults. */
+         * before the view-policy byte gets the view defaults. A reply
+         * longer than the INFO_PACKET carries the script bytes after it;
+         * buff is MAX_UDPPACKET_SIZE, so the whole reply is here. */
         if (strncmp(buff, BOLO_SIGNITURE, BOLO_SIGNITURE_SIZE) == 0 && buff[BOLOPACKET_REQUEST_TYPEPOS] == BOLOPACKET_INFORESPONSE) {
           bool rich = (len >= (int)INFO_PACKET_PRE_VIEWS_SIZE);
           WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: Valid INFO_PACKET response, adding server");
@@ -379,8 +460,12 @@ bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPing
   out->numBots = 0;
   out->maxPlayers = 0;
   out->timeLimit = 0;
+  out->password = false;
   out->hasRichInfo = false;
   out->hasViewInfo = false;
+  /* Zeroed on every path: a failed ping, and a reply with no script bytes
+   * or malformed ones, report no scripts. */
+  memset(&out->scripts, 0, sizeof(out->scripts));
 
   if (bolo_net_init() != 0) {
     return FALSE;
@@ -459,6 +544,9 @@ bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPing
     out->versionMinor = info->h.versionMinor;
     out->versionRevision = info->h.versionRevision;
     out->timeLimit       = info->time_limit;
+    /* has_password sits inside the legacy 76-byte prefix, so it is read
+     * unconditionally, the same as discoveryFillServerFromInfoPacket. */
+    out->password        = (info->has_password != 0);
     /* map_md5 is 32 fixed-width hex chars with no NUL on the wire; a leading
      * '\0' means "no md5" (random/unknown map). This path does not zero out,
      * so NUL-init before the conditional copy. */
@@ -488,10 +576,17 @@ bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPing
                                &out->pillView, &out->baseView, &out->allyView,
                                &out->classicMode, &out->alliesInTrees);
     infoPacketReadViewPolicies2(info, (size_t)len,
-                                &out->overviewWindow, &out->lineOfSight);
+                                &out->overviewWindow, &out->lineOfSight,
+                                &out->positionalSound);
     /* Same tier - see discoveryFillServerFromInfoPacket. */
     out->hasViewInfo = ((size_t)len >= (size_t)INFO_PACKET_PRE_VIEWS2_SIZE);
     out->hasRichInfo = rich;
+    /* Same as discoveryFillServerFromInfoPacket: the script bytes follow the
+     * INFO_PACKET, and scripts stays zeroed from above without them. */
+    if (len > (int)sizeof(INFO_PACKET)) {
+      discoveryReadScriptTail(buff + sizeof(INFO_PACKET),
+                              (size_t)len - sizeof(INFO_PACKET), &out->scripts);
+    }
     WB_LOG_TRACE(WB_LOG_CAT_NET, "ping: %s:%u responded in %dms, v%u.%u.%u, players=%u",
                  address, port, out->rttMs,
                  (unsigned)out->versionMajor, (unsigned)out->versionMinor,

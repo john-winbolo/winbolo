@@ -39,10 +39,6 @@
 
 #include "../../common/wb_log.h"
 
-#ifdef __EMSCRIPTEN__
-#include <emscripten/html5.h>
-#endif
-
 #include "stb_image.h"
 #include "sdl3draw.h"
 #include "sdl3draw_status.h"
@@ -65,6 +61,7 @@
 #include "glyphs.h"
 #include "ping_overlay.h"
 #include "ping_marker.h"    /* pingMarkerDraw — the on-map ping pass */
+#include "scenario_marker.h" /* scnMarkerDraw — a scenario's marks, beside it */
 #include "../ping_kinds.h"  /* pingDisplayAlpha */
 #include "global.h"
 #include "client_sim.h"
@@ -1386,8 +1383,6 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
             newSelect = BsMine;
           }
           if (newSelect != NO_SELECT && newSelect != clientSimGetCurrentBuildSelect(cs)) {
-            sdl3DrawSelectIndentsOff(clientSimGetCurrentBuildSelect(cs), 0, 0);
-            sdl3DrawSelectIndentsOn(newSelect, 0, 0);
             clientSimSetCurrentBuildSelect(cs, newSelect);
           }
         }
@@ -1658,21 +1653,6 @@ bool sdl3DrawSetup(int zoomFactor) {
   SDL_SetHint(SDL_HINT_VIDEO_MAC_FULLSCREEN_MENU_VISIBILITY, "1");
 #endif
 
-#ifdef __EMSCRIPTEN__
-  /* Pre-size the canvas so SDL3's external_size probe sees the right
-     dimensions (it temporarily sets the canvas to 1x1 and checks CSS).
-     SDL3's Emscripten backend creates the window at the existing canvas
-     size rather than honouring the size passed to SDL_CreateWindow, so
-     this must already include the menu-bar row — otherwise the window
-     ends up 22px short and the game blits at a non-integer downscale. */
-  {
-    int cw = zoomFactor * SDL3_SCREEN_W;
-    int ch = zoomFactor * SDL3_SCREEN_H + MENU_BAR_HEIGHT;
-    emscripten_set_canvas_element_size("#canvas", cw, ch);
-    emscripten_set_element_css_size("#canvas", (double)cw, (double)ch);
-  }
-#endif
-
   /* --- Create window and renderer first, so we can compute the
          effective zoom for font sizing and tile loading. --- */
   if (uiModeIsSteamDeck()) {
@@ -1708,6 +1688,10 @@ bool sdl3DrawSetup(int zoomFactor) {
     WB_LOG_ERROR(WB_LOG_CAT_GUI, "sdl3DrawSetup: SDL_CreateWindow failed: %s", SDL_GetError());
     return FALSE;
   }
+#ifdef __EMSCRIPTEN__
+  /* The canvas covers the page and follows the browser window's size. */
+  SDL_SetWindowFillDocument(gWindow, true);
+#endif
 
   sdl3DrawSetWindowIcon(gWindow);
 
@@ -1863,9 +1847,7 @@ bool sdl3DrawSetup(int zoomFactor) {
      The game is rendered at its logical size, then blitted scaled to the
      window below the menu bar. This allows the menu to stay at 1x size
      while the game scales, and gives windowToGameCoords a defined
-     gGameDestRect so mouse clicks map back to game cells. (On Emscripten
-     the window is never resizable, so sdl3DrawAdaptRenderTarget is a
-     no-op and this target persists for the session.) Skipped on Deck —
+     gGameDestRect so mouse clicks map back to game cells. Skipped on Deck —
      logical presentation already upscales the whole layout, an extra RT
      would re-introduce a 1x rasterization step that defeats the font
      sharpness. */
@@ -1984,7 +1966,7 @@ void sdl3DrawCleanup(void) {
  * ------------------------------------------------------- */
 void sdl3DrawReconfigureZoom(int explicitZoom) {
   (void)explicitZoom;
-#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(__IPHONEOS__)
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__)
   if (!gRenderer || !gWindow) return;
   if (uiModeIsTablet()) return;
   /* Deck is fullscreen 1280x800 with logical presentation already set in
@@ -2726,6 +2708,11 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
 
   sdl3DrawAssertTilesSampler();
 
+  /* The sim owns the build selection; the panel and the full screen map's
+     build strip draw from gCurrentBuildSelect, so bring it up to date every
+     frame whichever way the selection was changed. */
+  sdl3DrawSelectIndentsOn(clientSimGetCurrentBuildSelect(cs), 0, 0);
+
   /* Held for the returning-to-lobby frame, which redraws the map with no
      arguments of its own. */
   gLastPillLabels = showPillLabels;
@@ -3048,6 +3035,44 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
         }
       }
 
+      /* A scenario's map markers, beside the pings and on the same footing:
+         marks on the ground, so after the terrain and under every sprite,
+         placed with the same offset and edge arithmetic. A marker on a
+         square the view does not reach is not drawn at all — one square of
+         slack each way, because the pointer stands above its square and a
+         marker just off the top edge still has something worth showing. */
+      {
+        Uint32 nowMs = (Uint32)SDL_GetTicks();
+        BYTE   mi;
+        for (mi = 0; mi < SCN_MARKERS_MAX; mi++) {
+          const ClientScnMarker *m = clientSimGetScnMarker(cs, mi);
+          uint8_t sqX = 0, sqY = 0;
+          int vx, vy;
+          float cx, cy;
+          if (m == NULL || !m->active) continue;
+          if (m->kind == SCN_MARKER_KIND_FOLLOW) {
+            /* Rides the tank in its slot, out of the very list the tank
+               sprites are drawn from below, so a slot with nothing on
+               screen — dead, never joined, or scrolled away — draws
+               nothing and leaves no mark behind. */
+            if (!scnMarkerTankSquare(tks, m->slot, &sqX, &sqY)) continue;
+          } else {
+            sqX = m->x;
+            sqY = m->y;
+          }
+          vx = (int)sqX - (int)(clientSimGetXOffset(cs) + 1);
+          vy = (int)sqY - (int)(clientSimGetYOffset(cs) + 1);
+          if (vx < -1 || vx > MAIN_SCREEN_SIZE_X) continue;
+          if (vy < -1 || vy > MAIN_SCREEN_SIZE_Y) continue;
+          cx = (float)originX + ((float)vx + 0.5f) * (float)tileW
+             - (float)edgeX;
+          cy = (float)originY + ((float)vy + 0.5f) * (float)tileH
+             - (float)edgeY;
+          scnMarkerDraw(gRenderer, m->colour, cx, cy,
+                        (float)tileW, (float)tileH, (unsigned int)nowMs);
+        }
+      }
+
       /* The pill and base numbers, from the 17x17 screen buffer: a square
          showing a pill or base tile asks the sim which one it is. The
          shared pass below draws them. */
@@ -3317,6 +3342,9 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
 void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
                        bool showPillsStatus, bool showBasesStatus) {
   (void)rcWindow;
+  /* The build selection is read from the sim by sdl3DrawMainScreen, which
+     every platform that calls this also draws through each frame. */
+  (void)value;
   if (gRenderer == NULL) return;
 
   sdl3DrawAssertTilesSampler();
@@ -3335,8 +3363,6 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
   if (useRenderTarget) {
     SDL_SetRenderTarget(gRenderer, gGameRenderTarget);
   }
-
-  sdl3DrawSelectIndentsOn(value, 0, 0);
 
   /* Clear and draw background first so that status draws go on top */
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
@@ -3892,17 +3918,33 @@ void sdl3DrawCopyManStatus(int x, int y) {
 
 void sdl3DrawSelectIndentsOn(buildSelect value, int x, int y) {
   (void)x; (void)y;
-  /* Every way of changing the selection comes through here — the keys, the
-     click on the strip, the classic panel's own hit-test, the D-pad cycle —
-     so this is where the full screen map's build strip is told to come up and
-     show the new one. Only on an actual change: the redraw paths call this
-     with the selection already showing, and holding the strip up for those
-     would leave it up for the whole game. */
+  /* sdl3DrawMainScreen calls this every frame with the sim's selection, so
+     however it was changed — the keys, the click on the strip, the classic
+     panel's own hit-test, the D-pad cycle, the tablet bar — this is where the
+     full screen map's build strip is told to come up and show the new one.
+     Only on an actual change: holding the strip up for the calls that find
+     the selection already showing would leave it up for the whole game. */
   if (value != gCurrentBuildSelect) {
     gOverviewHudHoldUntil[OVERVIEW_HUD_PANEL_BUILD] =
         SDL_GetTicks() + OVERVIEW_HUD_HOLD_MS;
   }
   gCurrentBuildSelect = value;
+}
+
+void sdl3DrawNewGame(buildSelect value) {
+  /* The new game's selection, taken without the change bringing the build
+     strip up: the player did not pick it. The hold is dropped as well,
+     because on wasm, iOS and Android the frame that starts the round draws
+     sdl3DrawMainScreen before this runs; its per-frame sync has already seen
+     the new selection against the old one and set the hold. */
+  gCurrentBuildSelect = value;
+  gOverviewHudHoldUntil[OVERVIEW_HUD_PANEL_BUILD] = 0;
+  /* The full screen map's view keeps its camera spot, follow flag and last
+     alive state, and would start the next round parked where the last one
+     was left, or playing a respawn for a tank that died as it ended. It is
+     made again on the first full screen frame. */
+  overviewViewDestroy(gOverviewView);
+  gOverviewView = NULL;
 }
 
 void sdl3DrawSelectIndentsOff(buildSelect value, int x, int y) {

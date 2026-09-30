@@ -88,13 +88,18 @@ gameType gameTypeResolve(GameSim *sim, gameType value) {
   if (value != gameScripted) {
     return value;
   }
-  base = (sim != NULL) ? sim->scenarioBaseGame : gameOpen;
-  if (base == gameTournament || base == gameStrictTournament) {
+  base = (sim != NULL) ? sim->scenarioBaseGame : (gameType)0;
+  if (base == gameOpen || base == gameTournament ||
+      base == gameStrictTournament) {
     return base;
   }
   /* Nothing declared, or a word the engine has no behaviour for: the round
-     plays open. */
-  return gameOpen;
+     plays strict tournament. An author who wants an open round writes
+     game = "open" in the manifest, so an empty or misspelt game is a
+     scenario that said nothing about how the round is played rather than
+     one that asked for the loosest rules. Nothing is assumed on the
+     author's behalf. */
+  return gameStrictTournament;
 }
 
 /*********************************************************

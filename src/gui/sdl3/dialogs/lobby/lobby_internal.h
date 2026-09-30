@@ -103,9 +103,9 @@ extern "C" {
 #endif
 
 /* Sizes shared between the cluster that owns the widget and the ones that
- * measure against it: the WinBolo.net row icon the player list draws, and the
- * chat input buffer the reel's timestamp helper appends into. */
-#define LOBBY_WBN_ICON_SIZE 14
+ * measure against it. The player row's badge run used to be here as a flat
+ * 14 px; it is sdl3ImguiWbnIconPx() now (sdl3imgui.h), so it comes out the
+ * same height as the cog beside it at every UI scale. */
 #define LOBBY_CHAT_INPUT_SIZE 129  /* 128 chars + null terminator */
 
 /* ── Shared types ─────────────────────────────────────────────────
@@ -239,6 +239,16 @@ typedef struct LobbyMapPreviewState {
     int         startBboxMinX = 0, startBboxMinY = 0;
     int         startBboxMaxX = 0, startBboxMaxY = 0;
     BYTE        startCount = 0;
+    /* How many of those starts are on the map. A start the map loader took
+     * off (one in the mined border) keeps its slot with a compass id of 0. */
+    BYTE        startLiveCount = 0;
+    /* Slot and live counts of the pillboxes and bases on the same map, for
+     * the "P / B" counts the lobby shows. The loader takes one in the mined
+     * border off the map, the same as a start. */
+    BYTE        pillCount = 0;
+    BYTE        pillLiveCount = 0;
+    BYTE        baseCount = 0;
+    BYTE        baseLiveCount = 0;
 
     /* 1-based start currently hovered in a start dropdown (the combo in the
      * player list), so the inline preview can outline it. Set while a dropdown
@@ -430,13 +440,14 @@ void lobbyBotModeAndLevel(ClientSim *cs, int slot,
                           int *outMode, int *outLevel);
 
 /* True for the brain's default mode — the one every ordinary game uses,
- * and the only one whose levels can have hand-written lang strings. */
+ * which the row and the gear tooltip leave unnamed. */
 bool lobbyBotModeIsDefault(const BrainModes *modes, int mode);
 
-/* True when that mode's levels are still exactly easy / medium / hard, so
- * the STR_BOT_DIFF_* wording actually describes them. False for every
- * other mode, and for a default mode a manifest has renamed or extended —
- * those show the manifest's own labels. */
+/* True when that mode's levels are exactly easy / medium / hard and the
+ * mode is the default one or declares `standard_levels = yes` in modes.txt
+ * (brainModeUsesStandardLevels), so the STR_BOT_DIFF_* wording actually
+ * describes them. False for any other mode — those show the manifest's own
+ * labels. True when there is no catalogue yet. */
 bool lobbyBotModeUsesLangLevels(const BrainModes *modes, int mode);
 void lobbySendSetBotBrain(ClientSim *cs,
                           uint8_t slot, uint8_t brainIdx);
@@ -455,9 +466,74 @@ void lobbyChooseMapOpen(ClientSim *cs, SDL_Renderer *renderer);
 void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                                 float s, int screenW, int screenH);
 
+/* scenariochooser — the dialog behind the two Details buttons on the lobby's
+ * script lines: what the server offers on its own, and the round's own list.
+ *
+ * Open is what either button calls — the mods row's, in the host-only Server
+ * Settings column, and the map panel's, which everybody is shown. The dialog
+ * asks lobbyScenarioMayChoose whether this client may reorder the list and
+ * draws itself read-only when it may not, which is what lets the second
+ * button exist at all.
+ *
+ * The window is drawn from the lobby's own frame, beside the map chooser's,
+ * rather than from either line that opens it: both lines are drawn inside
+ * something that can stop being drawn, and a dialog that stopped being drawn
+ * when the player changed tab would be open with no way back to it. IsOpen is
+ * what the lobby reads so its Esc and its controller tab cycle stand aside
+ * while the dialog is up. */
+void lobbyScenarioChooserReset(void);
+void lobbyScenarioChooserOpen(void);
+bool lobbyScenarioChooserIsOpen(void);
+void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
+                                      int screenW, int screenH);
+
+/* scenariodetails — what one scenario or mod is, behind every script name
+ * the lobby draws as a link: the map panel's lines, the Server Settings
+ * column's row and every row of the chooser.
+ * One dialog for all three, because the question is the same one.
+ *
+ * OpenScript describes one row of the lobby's ordered script list, which is
+ * what the lobby lines are drawn from: each name opens its own row, so the
+ * names on a round running several scripts each describe their own.
+ * OpenAttached is the same dialog for the one attached script, for a client
+ * whose server has sent no list. The chooser's rows open it on a listing
+ * entry instead, which it snapshots. The modal must be rendered at the lobby
+ * window's own id scope, the way the bot docs dialog is: none of the buttons
+ * that open it is at that scope, so the ask is a flag and this call is what
+ * turns it into an OpenPopup.
+ *
+ * IsOpen is what the lobby reads so its own Escape stands aside. */
+void lobbyScenarioDetailsReset(void);
+void lobbyScenarioDetailsOpenAttached(ClientSim *cs);
+void lobbyScenarioDetailsOpenScript(ClientSim *cs, int idx);
+
+/* Which row of that list is the scenario, and which the first mod. -1 for
+ * none of that kind. Lives beside the two renderers that classify the list,
+ * in lobby_assets.cpp, so the lines and the links agree about which row is
+ * which. */
+int  lobbyScriptRowIndexOfKind(ClientSim *cs, bool mod);
+bool lobbyScenarioDetailsIsOpen(void);
+/* s is the lobby's own dialog scale, needed because the header's kind tag is
+ * the same chip the chooser's rows draw and that chip is sized in scaled
+ * pixels. The modal is rendered from the lobby's frame, which is where that
+ * scale is, so it is handed down rather than worked out again here. */
+void lobbyScenarioDetailsRenderModal(ClientSim *cs, float s);
+
 /* chat */
 void lobbyChatReset(void);
 void lobbyRenderChatHistory(const char *blob);
+/* A bot's announce line in team chat, and the docs dialog behind it. The
+ * announce text is registered as the exact block that was appended to the
+ * chat blob; lobbyRenderChatHistory matches it back out and draws it as a
+ * link. The modal must be rendered at the lobby window's own id scope. */
+/* Longest announce block the chat can carry: a bot name, ": ", and the
+ * brain's whole announce.txt (BRAIN_ANNOUNCE_MAX). */
+#define LOBBY_CHAT_DOCS_LINE_MAX 640
+void lobbyChatDocsReset(void);
+int  lobbyChatDocsCount(void);
+void lobbyChatDocsRegister(int brainIdx, const char *brainName,
+                           const char *text);
+void lobbyChatDocsRenderModal(ClientSim *cs);
 void lobbyRenderChatInputAndSend(ClientSim *cs, char *chatInput,
                                  BYTE myPlayerNum, bool hasTransport,
                                  float s, BYTE destPlayer);
@@ -479,6 +555,12 @@ void lobbyRebuildStartCompassCache(const BYTE *data, int len);
 /* Side mask of 1-based start k from the per-start cache; 0 (centre) when k
  * is off the cached list. */
 BYTE lobbyStartSideMask(int k);
+/* Starts on the lobby map, for the start counts the lobby shows: the cache's
+ * live count once it holds this map, otherwise the server's slot count. */
+int lobbyLiveStartCount(ClientSim *cs);
+/* The same for pillboxes and bases. */
+int lobbyLivePillCount(ClientSim *cs);
+int lobbyLiveBaseCount(ClientSim *cs);
 const char *lobbyMapTransferLine(ClientSim *cs, float *outProgress);
 int lobbyComputeStartOwners(ClientSim *cs, int myPlayerNum,
                             uint8_t *owners, int maxN, uint32_t *outSig);
@@ -506,11 +588,99 @@ SDL_Texture *lobbyBuildMapPreview(SDL_Renderer *renderer,
                                   const uint8_t *startOwners, int ownerCount);
 
 /* assets */
+/* One name tag: a square chip with a themed fill, an optional 1px border and
+ * its label at 70% of the font size. The player list wears these beside a
+ * name as HOST / ADMIN / BOT and the Mods dialog wears them on every row as
+ * Mod / Scenario, so the geometry lives here and neither of them owns a copy
+ * of it.
+ *
+ * It places nothing of its own. The caller does its SameLine and its vertical
+ * nudge first, because the two callers centre the chip on different things —
+ * a player row on the row's midline, a Mods row on the name beside it — and
+ * a SameLine inside here would undo whichever of the two ran before it. The
+ * chip is drawn at the cursor and its space booked with a Dummy, so whatever
+ * follows starts after it. A border of 0 draws none. s is the caller's own
+ * dialog scale, the same one every other `X * s` in that dialog uses.
+ *
+ * The two measurements are that same geometry read without drawing it, for a
+ * caller that has to lay out the room around the chip before either is
+ * drawn. */
+void  lobbyDrawNameTag(const char *label, ImU32 bg, ImU32 text, ImU32 border,
+                       float s);
+float lobbyNameTagWidth(const char *label, float s);
+float lobbyNameTagHeight(float s);
+/* That chip filled in with the one word that says which of the two kinds a
+ * script is — Mod or Scenario, in the two colours the theme keeps for them.
+ * Worn by every row of the chooser, by the details dialog's header and by
+ * the map panel's script links, so it lives here rather than in whichever of
+ * the three was written first.
+ *
+ * It puts its own SameLine in front of itself and centres on the item it
+ * follows, so the caller draws the name and then calls this with nothing in
+ * between. Width is the same geometry read without drawing it, the leading
+ * spacing included, for a caller laying out the room around the chip first —
+ * the chooser's rows measure the name against it, and the map panel's mod
+ * links measure the wrap point against it. */
+void  lobbyScenarioKindTag(bool mod, float s);
+float lobbyScenarioKindTagWidth(bool mod, float s);
+/* The "Workshop" chip a script published to the Steam Workshop wears after
+ * its kind chip, and the "Open in Workshop" button that opens its page. Each
+ * draws nothing and measures 0 for a Workshop id of 0, and the button also
+ * for a build or a run where Steam's Workshop is not available, so a caller
+ * hands them the row's id and draws and measures them on every row.
+ *
+ * The chip is placed as the kind chip is: a SameLine of its own, centred on
+ * the item before it, which is the kind chip. The button puts its own
+ * SameLine in front of itself. Both widths count the spacing in front. */
+void  lobbyScenarioWorkshopTag(uint64_t workshopId, float s);
+float lobbyScenarioWorkshopTagWidth(uint64_t workshopId, float s);
+void  lobbyScenarioWorkshopLink(uint64_t workshopId);
+float lobbyScenarioWorkshopLinkWidth(uint64_t workshopId);
 const char *lobbyGameTypeStr(gameType gt);
-/* The map's scenario — its name and its description — or, for a host who
- * has the scripts preference switched off, a line saying so. Draws nothing
- * for a joiner on a map with no scenario. */
-void lobbyRenderScenarioLine(ClientSim *cs);
+/* What is playing, in two shapes for the two places that ask.
+ *
+ * Line is the settings form's Server Settings column: the Mods/Scenario row,
+ * which names every script with its Mod or Scenario tag. The row is drawn
+ * even at none, because this is where the control to change them lives. For
+ * a host who has the scripts preference switched off, one line saying so
+ * and no row.
+ *
+ * effectiveHost is the caller's own answer to whether this viewer may edit
+ * lobby state, handed down rather than worked out again here: the mods row
+ * holds a real setting and its checkbox has to be disabled on the same test
+ * as the time-limit and password rows beside it in that column.
+ *
+ * InfoLines is the map panel, for everyone: the same two facts read-only,
+ * each line dropped where it has nothing to name, the scenario's name and
+ * each mod's name a link that opens the details dialog, and a Details button
+ * under them that opens the chooser. That button is the only way into the
+ * chooser a joiner or a spectator has — the column Line draws in is host-only
+ * — and the chooser has always known how to draw itself read-only.
+ *
+ * Two renderers rather than one with a flag: they word the same facts
+ * differently and disagree about the empty case on purpose. Both only ask
+ * for their dialogs; the lobby's own frame is what draws them.
+ *
+ * s is the caller's own dialog scale, needed by both because the kind chip
+ * beside each script name is sized in scaled pixels. */
+void lobbyRenderScenarioLine(ClientSim *cs, bool effectiveHost, float s);
+void lobbyRenderScenarioInfoLines(ClientSim *cs, float s);
+/* Whether the round runs mods, for the lobby's header line: "Mods: Yes (3)"
+ * or "Mods: No", with the names on the hover in the order the server
+ * published them. Yes only when the setting is on and the round carries at
+ * least one, since either half alone means nothing runs.
+ *
+ * On that line for the reason the visibility and smart-ping summaries are:
+ * the checkbox and the list of names are both in the host-only settings
+ * column, so this is where everybody else is told. */
+void lobbyRenderModsSummary(ClientSim *cs, float s);
+/* Whether this client may change which scripts play: the host slot, an admin,
+ * or anybody at all while Open Host is on — and never a spectator. The same
+ * answer lobbyClientMayEdit gives on the server, minus that last term, so a
+ * client is never shown arrows the server would refuse and never refused
+ * arrows the server would take. Shared with the chooser, which is where the
+ * controls it gates actually are. */
+bool lobbyScenarioMayChoose(ClientSim *cs);
 const char *lobbyAiTypeStr(uint8_t ai);
 void lobbyFormatTimeLimit(int32_t ticks, char *buf, int bufSize);
 SDL_Texture *lobbyGetTankSelf04Texture(SDL_Renderer *renderer);
@@ -524,6 +694,9 @@ void lobbyLoadStatusIconsOnce(SDL_Renderer *renderer, float scale);
 
 /* players */
 void lobbyPlayersReset(void);
+/* src into out, cut short with a trailing "..." where it is wider than maxW
+ * pixels. A maxW of 1 or less is "no limit" and copies the lot. */
+void lobbyTruncateName(const char *src, float maxW, char *out, size_t outSz);
 LobbyRankedEligibility lobbyComputeRankedEligibility(ClientSim *cs);
 void lobbyRankedShapeTooltip(const LobbyRankedEligibility &r);
 bool lobbyIsHost(ClientSim *cs, int myPlayerNum);
@@ -590,20 +763,20 @@ void lobbyRenderSmartPingSummary(ClientSim *cs, float s);
 
 /* ── One visibility value, drawn the one way ──────────────────
  * The lobby's header line, the Details table, the server browser and the
- * in-game info panel all show the same seven settings, so they all draw a
+ * in-game info panel all show the same eight settings, so they all draw a
  * value through this: the setting's sprite and the word it is on, faint
  * together when it is off, with the seconds added under Decay.
  *
  * column runs 0..LOBBY_VIS_COLUMN_COUNT-1 in the order the Details table
  * reads: pill view, base view, allied tank view, allies in trees, the
- * overview window, line of sight. The last two have no sprite and come
- * back as the word alone. The whole thing is one item, so the caller's
- * IsItemHovered covers it.
+ * overview window, line of sight, positional sound. The overview window
+ * and line of sight have no sprite and come back as the word alone. The
+ * whole thing is one item, so the caller's IsItemHovered covers it.
  *
  * lobbyVisibilityColumnLabelId names the setting, for a caller that lays
  * out its own label — the browser's detail pane does, the header line
  * does not. */
-#define LOBBY_VIS_COLUMN_COUNT 6
+#define LOBBY_VIS_COLUMN_COUNT 7
 void lobbyRenderVisibilityColumn(const VisibilitySettings *v, int column,
                                  float s);
 int  lobbyVisibilityColumnLabelId(int column);

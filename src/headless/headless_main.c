@@ -143,6 +143,14 @@ static char optMap[512] = "";
 static bool optStdin = FALSE;
 /* Run the map plainly, whatever script sits beside it. */
 static bool optNoScenarios = false;
+/* Run a map that came from an upload plainly, whatever it carries. The old
+   spelling of --scriptuploads off, used when no word is given. */
+static bool optNoUploadScripts = false;
+/* The --scriptuploads word as typed, and the policy it resolves to. */
+static char optScriptUploads[16] = "";
+static ScriptUploadPolicy optScriptUploadPolicy = SCRIPT_UPLOAD_ALLOW;
+/* Run every scenario script with the full Lua library and no limits. */
+static bool optUnsafeScripts = false;
 static bool optLogBinary = FALSE;
 static uint64_t optSeed = 0;
 static bool optSeedSet = FALSE;
@@ -170,6 +178,9 @@ static OverviewWindow optOverviewWindow = OVERVIEW_WINDOW_STOCK;
 /* A bool here because the switch is on/off, so it tracks the stock mode
  * by asking whether that mode is the "nothing blocks sight" one. */
 static bool optLineOfSight = (LINE_OF_SIGHT_STOCK != lineOfSightOff);
+/* Sounds carry which side they are on and a banded distance; off sends
+ * every sound centred, which is classic. */
+static bool optPositionalSound = false;
 
 /* Binary observation format constants */
 #define BINARY_SPATIAL_SIZE 29
@@ -339,6 +350,7 @@ static const char *logEventsTypeName(int type) {
     case CTRL_LOBBY_BOT_CONFIG:      return "CTRL_LOBBY_BOT_CONFIG";
     case CTRL_LOBBY_BOT_BRAIN:       return "CTRL_LOBBY_BOT_BRAIN";
     case CTRL_LOBBY_BRAIN_LIST:      return "CTRL_LOBBY_BRAIN_LIST";
+    case CTRL_LOBBY_BRAIN_DOCS_CHUNK: return "CTRL_LOBBY_BRAIN_DOCS_CHUNK";
     case CTRL_GAME_VOTE_STATE:       return "CTRL_GAME_VOTE_STATE";
     case CTRL_SERVER_TEXT:           return "CTRL_SERVER_TEXT";
     case CTRL_COMMAND_REJECTED:      return "CTRL_COMMAND_REJECTED";
@@ -350,6 +362,15 @@ static const char *logEventsTypeName(int type) {
     case CTRL_ENTITY_CHANGE:         return "CTRL_ENTITY_CHANGE";
     case CTRL_ENTITY_SYNC:           return "CTRL_ENTITY_SYNC";
     case CTRL_SIM_RULES:             return "CTRL_SIM_RULES";
+    case CTRL_SCN_PANEL:             return "CTRL_SCN_PANEL";
+    case CTRL_SCN_SCORE:             return "CTRL_SCN_SCORE";
+    case CTRL_SCN_ANNOUNCE:          return "CTRL_SCN_ANNOUNCE";
+    case CTRL_SCN_MARKER:            return "CTRL_SCN_MARKER";
+    case CTRL_SCENARIO_RULES:        return "CTRL_SCENARIO_RULES";
+    case CTRL_LOBBY_SCRIPT_LIST:     return "CTRL_LOBBY_SCRIPT_LIST";
+    case CTRL_LOBBY_SCRIPT_SETTING:  return "CTRL_LOBBY_SCRIPT_SETTING";
+    case CTRL_LOBBY_BRAIN_ANNOUNCE:  return "CTRL_LOBBY_BRAIN_ANNOUNCE";
+    case CTRL_LOBBY_BOT_POOL_INFO:   return "CTRL_LOBBY_BOT_POOL_INFO";
     default:                         return NULL;
   }
 }
@@ -361,12 +382,22 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
 
   if (f == NULL || evt == NULL) return;
 
-  /* The server streams its bot-name pool catalog to every joiner as
-   * CTRL_LOBBY_BOT_POOL_CHUNK fragments during lobby sync. That is cosmetic
-   * lobby data, not a game/control event these baselines assert, and its
-   * fragment count tracks data/bot_names.json — so drop it from the captured
-   * stream to keep the baselines stable and content-independent. */
+  /* The server names its bot-name pool catalog to every joiner in lobby
+   * sync with CTRL_LOBBY_BOT_POOL_INFO, whose id is a CRC of
+   * data/bot_names.json's pools. That is cosmetic lobby data, not a
+   * game/control event these baselines assert, and the id moves whenever
+   * the file does — so drop it from the captured stream to keep the
+   * baselines stable and content-independent. The retired chunks it
+   * replaced are dropped too, in case a recording replays one. */
+  if (evt->type == CTRL_LOBBY_BOT_POOL_INFO) return;
   if (evt->type == CTRL_LOBBY_BOT_POOL_CHUNK) return;
+
+  /* Same story for the per-brain announce lines: they are lobby display
+   * data whose count depends on which brains exist on the machine the
+   * baseline runs on. The retired docs chunk is dropped too, in case a
+   * recording replays one. */
+  if (evt->type == CTRL_LOBBY_BRAIN_DOCS_CHUNK) return;
+  if (evt->type == CTRL_LOBBY_BRAIN_ANNOUNCE) return;
 
   /* Tick numbers come from the ClientSim's last-server-tick counter,
    * which both modes agree on (set by snapshot ingestion in --fast
@@ -662,8 +693,98 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
               (unsigned)evt->u.voiceTalking.talking);
       break;
 
+    case CTRL_LOBBY_BRAIN_DOCS_CHUNK:
+    case CTRL_LOBBY_BRAIN_ANNOUNCE:
+    case CTRL_LOBBY_BOT_POOL_INFO:
+      /* Dropped above; never reaches the body writer. */
+      break;
+
+    case CTRL_SCENARIO_RULES: {
+      /* One fragment of the rules a scenario's own manifest set. Written out
+         in full: a run over a scripted map is exactly where a reader wants to
+         see which rules the script asked for. A plain map never publishes
+         this event, so a recording of one carries no line of it at all.
+
+         seq and frags go out with the rows so a reader can put a split set
+         back together, and so a recording of one that was cut short shows it
+         rather than reading as a short set. */
+      unsigned k;
+      fprintf(f, ",\"seq\":%u,\"frags\":%u,\"count\":%u,\"rules\":[",
+              (unsigned)evt->u.scenarioRules.seq,
+              (unsigned)evt->u.scenarioRules.fragCount,
+              (unsigned)evt->u.scenarioRules.count);
+      for (k = 0; k < (unsigned)evt->u.scenarioRules.count; k++) {
+        fprintf(f, "%s{\"rule\":%u,\"value\":%g}", (k == 0) ? "" : ",",
+                (unsigned)evt->u.scenarioRules.rule[k],
+                evt->u.scenarioRules.value[k]);
+      }
+      fputc(']', f);
+      break;
+    }
+
+    case CTRL_LOBBY_SCRIPT_LIST: {
+      /* One chunk of the lobby's ordered script list. Written out in full,
+         in list order: the order is the message, so a recording that showed
+         only how many scripts there were would not say what the round is
+         about to run.
+
+         final goes out with the rows because a list arrives in chunks and a
+         reader has no other way to tell a whole list from the front of one.
+         There is no seq to write: the channel is reliable and ordered, so
+         the chunk after a final one starts the next list.
+
+         The rows are bounded by the entries array rather than by the count
+         byte. A chunk decoded off the wire cannot claim more than
+         LOBBY_SCRIPT_LIST_CHUNK — transport_control_codec.c refuses such a
+         body outright — but in --fast mode the event comes straight from the
+         in-process subscriber and nothing decodes it, so the bound is this
+         dumper's to apply. count is written out as it arrived rather than
+         clamped: a chunk claiming more rows than it can hold then shows up
+         in the log as the mismatch it is. */
+      unsigned k;
+      unsigned n = (unsigned)evt->u.lobbyScriptList.count;
+      if (n > (unsigned)LOBBY_SCRIPT_LIST_CHUNK) {
+        n = (unsigned)LOBBY_SCRIPT_LIST_CHUNK;
+      }
+      fprintf(f, ",\"final\":%s,\"count\":%u,\"entries\":[",
+              evt->u.lobbyScriptList.final ? "true" : "false",
+              (unsigned)evt->u.lobbyScriptList.count);
+      for (k = 0; k < n; k++) {
+        const LobbyScriptEntry *e = &evt->u.lobbyScriptList.entries[k];
+        fprintf(f, "%s{\"file\":", (k == 0) ? "" : ",");
+        logEventsJsonStr(f, e->file, sizeof(e->file));
+        fputs(",\"name\":", f);
+        logEventsJsonStr(f, e->name, sizeof(e->name));
+        fprintf(f, ",\"keepsWinCondition\":%s,\"bound\":%s}",
+                e->keepsWinCondition ? "true" : "false",
+                e->bound ? "true" : "false");
+      }
+      fputc(']', f);
+      break;
+    }
+
+    case CTRL_LOBBY_SCRIPT_SETTING: {
+      /* One value the host chose for a script's setting, or the CLEAR a
+         sync starts with. */
+      fprintf(f, ",\"op\":%u,\"file\":",
+              (unsigned)evt->u.lobbyScriptSetting.op);
+      logEventsJsonStr(f, evt->u.lobbyScriptSetting.file,
+                       sizeof(evt->u.lobbyScriptSetting.file));
+      fputs(",\"id\":", f);
+      logEventsJsonStr(f, evt->u.lobbyScriptSetting.id,
+                       sizeof(evt->u.lobbyScriptSetting.id));
+      fprintf(f, ",\"value\":%ld", (long)evt->u.lobbyScriptSetting.value);
+      break;
+    }
+
     case CTRL_EVENT_TYPE_COUNT:
       /* Sentinel — never actually delivered. */
+      break;
+
+    default:
+      /* Event types carrying no payload this dumper reports. The header
+         written above already gives tick and type, and an unrecognised
+         type falls back to "UNKNOWN" plus the raw value. */
       break;
   }
 
@@ -1128,11 +1249,15 @@ static void logStateVerbose(int tickNum) {
   fprintf(f, ",\"pillboxes\":[");
   if (fastServerSim != NULL) {
     BYTE np = serverSimGetPillCount(fastServerSim);
+    int firstPill = 1;
     for (BYTE pi = 1; pi <= np; pi++) {
       BYTE px, py, powner, parmour;
       bool pinTank;
+      /* A slot whose pill is not on the map is skipped, so the comma goes by
+         what has been written rather than by the slot number. */
       if (!serverSimGetPill(fastServerSim, pi, &px, &py, &powner, &parmour, &pinTank)) continue;
-      if (pi > 1) fprintf(f, ",");
+      if (!firstPill) fprintf(f, ",");
+      firstPill = 0;
       fprintf(f, "{\"tx\":%u,\"ty\":%u,\"owner\":\"%s\",\"armor\":%u,\"in_tank\":%s}",
         (unsigned)px, (unsigned)py,
         verboseOwnerStr(powner, selfPlayer, alliesBits),
@@ -1146,12 +1271,14 @@ static void logStateVerbose(int tickNum) {
   fprintf(f, ",\"bases\":[");
   if (fastServerSim != NULL) {
     BYTE nb = serverSimGetBaseCount(fastServerSim);
+    int firstBase = 1;
     for (BYTE bsi = 1; bsi <= nb; bsi++) {
       BYTE bx, by, bowner;
       BYTE bshells, bmines, barmour;
       if (!serverSimGetBase(fastServerSim, bsi, &bx, &by, &bowner)) continue;
       serverSimGetBaseStats(fastServerSim, bsi, &bshells, &bmines, &barmour);
-      if (bsi > 1) fprintf(f, ",");
+      if (!firstBase) fprintf(f, ",");
+      firstBase = 0;
       fprintf(f, "{\"tx\":%u,\"ty\":%u,\"owner\":\"%s\",\"armor\":%u,\"shells\":%u,\"mines\":%u}",
         (unsigned)bx, (unsigned)by,
         verboseOwnerStr(bowner, selfPlayer, alliesBits),
@@ -1347,11 +1474,11 @@ static void logChangesClose(void) {
 
 /* Game events the server produced since the last record was built. The
  * sim keeps one frame's events in a buffer it clears at the top of every
- * serverSimTick, and the fast loop runs a server frame on its keys pass
- * as well as its game pass, so the buffer is copied out after each pass;
- * reading it at record time alone would miss the keys pass's frame. Two
- * frames' worth is the most one record can span. */
-#define LOG_CHANGES_MAX_EVENTS (2 * MAX_SNAPSHOT_EVENTS)
+ * serverSimTick. The fast loop runs one server frame per game tick, on its
+ * game pass, and copies the buffer out straight after it. The keys pass
+ * runs no frame, so it must not copy the buffer: that would add the game
+ * pass's events a second time. */
+#define LOG_CHANGES_MAX_EVENTS MAX_SNAPSHOT_EVENTS
 static GameEvent logChangesEvents[LOG_CHANGES_MAX_EVENTS];
 static int       logChangesEventCount = 0;
 
@@ -1458,18 +1585,22 @@ static void logChangesBuild(TextBuf *b) {
   if (fastServerSim != NULL) {
     BYTE np = serverSimGetPillCount(fastServerSim);
     BYTE pi;
+    int firstPill = 1;
     for (pi = 1; pi <= np; pi++) {
       BYTE px, py, powner, parmour, pspeed;
       bool pinTank;
+      /* A slot whose pill is not on the map is skipped, so the comma goes by
+         what has been written rather than by the slot number. */
       if (!serverSimGetPill(fastServerSim, pi, &px, &py, &powner, &parmour, &pinTank)) continue;
       if (!serverSimGetPillSpeed(fastServerSim, pi, &pspeed)) continue;
       textBufPrintf(b, "%s{\"tx\":%u,\"ty\":%u,\"owner\":\"%s\",\"armor\":%u"
                        ",\"in_tank\":%s,\"speed\":%u}",
-                    pi > 1 ? "," : "",
+                    firstPill ? "" : ",",
                     (unsigned)px, (unsigned)py,
                     verboseOwnerStr(powner, selfPlayer, alliesBits),
                     (unsigned)parmour, pinTank ? "true" : "false",
                     (unsigned)pspeed);
+      firstPill = 0;
     }
   }
   textBufPrintf(b, "]");
@@ -1478,6 +1609,7 @@ static void logChangesBuild(TextBuf *b) {
   if (fastServerSim != NULL) {
     BYTE nb = serverSimGetBaseCount(fastServerSim);
     BYTE bsi;
+    int firstBase = 1;
     for (bsi = 1; bsi <= nb; bsi++) {
       BYTE bx, by, bowner;
       BYTE bshells, bmines, barmour;
@@ -1485,10 +1617,11 @@ static void logChangesBuild(TextBuf *b) {
       serverSimGetBaseStats(fastServerSim, bsi, &bshells, &bmines, &barmour);
       textBufPrintf(b, "%s{\"tx\":%u,\"ty\":%u,\"owner\":\"%s\",\"armor\":%u"
                        ",\"shells\":%u,\"mines\":%u}",
-                    bsi > 1 ? "," : "",
+                    firstBase ? "" : ",",
                     (unsigned)bx, (unsigned)by,
                     verboseOwnerStr(bowner, selfPlayer, alliesBits),
                     (unsigned)barmour, (unsigned)bshells, (unsigned)bmines);
+      firstBase = 0;
     }
   }
   textBufPrintf(b, "]");
@@ -2003,6 +2136,21 @@ static void printUsage(const char *prog) {
     "  --noscenarios     Do not load the scenario script beside the map. Every\n"
     "                    map, including one committed later, plays plainly. A map\n"
     "                    that has a script says which one was not loaded\n"
+    "  --scriptuploads P Player script handling: off refuses script uploads and\n"
+    "                    does not run a script carried by a map a client\n"
+    "                    uploaded (those maps play plainly, whether the script\n"
+    "                    is packed into the file or sits beside it; every other\n"
+    "                    map is unaffected), allow keeps them for the session\n"
+    "                    (default), persist keeps them for good\n"
+    "  --nouploadscripts The old spelling of --scriptuploads off; --scriptuploads\n"
+    "                    wins when both are given\n"
+    "  --allow-unsafe-scripts\n"
+    "                    Run scenario scripts with the full Lua standard\n"
+    "                    library, no memory cap, no time limits and precompiled\n"
+    "                    chunks accepted, uploaded maps' scripts included;\n"
+    "                    --scriptuploads off still refuses uploads. A script a\n"
+    "                    player sends runs its top level the moment it lands,\n"
+    "                    before any host picks it. Only for trusted content\n"
     "\n"
     "Visibility options (apply to the fast-mode server sim):\n"
     "  --pillview MODE   Pillbox visibility: always, key (default), decay, off\n"
@@ -2020,10 +2168,14 @@ static void printUsage(const char *prog) {
     "  --lineofsight     Buildings and stands of trees block sight inside the\n"
     "                    live block (off by default, and off under\n"
     "                    --classicmode)\n"
+    "  --positionalsound Sounds tell each player which side they are on and\n"
+    "                    roughly how far (off by default, every sound\n"
+    "                    centred, and off under --classicmode)\n"
     "  --classicmode     Classic Bolo view: sets pillview key, baseview off\n"
     "                    and allyview off, overriding those three switches,\n"
-    "                    turns allies in trees off, and sets the overview\n"
-    "                    window to classic with line of sight off\n"
+    "                    turns allies in trees off, sets the overview\n"
+    "                    window to classic with line of sight off, and\n"
+    "                    turns positional sound off\n"
     "  An unknown mode word or a decay outside the range is an error here,\n"
     "  not a fallback, matching --ai and --gametype.\n",
     prog, prog);
@@ -2150,10 +2302,19 @@ static bool parseArgs(int argc, char **argv) {
       if (!parseOverviewWindowWord(argv[++i], &optOverviewWindow)) return FALSE;
     } else if (strcmp(argv[i], "--lineofsight") == 0) {
       optLineOfSight = true;
+    } else if (strcmp(argv[i], "--positionalsound") == 0) {
+      optPositionalSound = true;
     } else if (strcmp(argv[i], "--classicmode") == 0) {
       optClassicMode = true;
     } else if (strcmp(argv[i], "--noscenarios") == 0) {
       optNoScenarios = true;
+    } else if (strcmp(argv[i], "--nouploadscripts") == 0) {
+      optNoUploadScripts = true;
+    } else if (strcmp(argv[i], "--scriptuploads") == 0 && i + 1 < argc) {
+      strncpy(optScriptUploads, argv[++i], sizeof(optScriptUploads) - 1);
+    } else if (strcmp(argv[i], "--allow-unsafe-scripts") == 0 ||
+               strcmp(argv[i], "-allow-unsafe-scripts") == 0) {
+      optUnsafeScripts = true;
     } else if (strcmp(argv[i], "--map") == 0 && i + 1 < argc) {
       strncpy(optMap, argv[++i], sizeof(optMap) - 1);
     } else if (strcmp(argv[i], "-nocrashreporting") == 0) {
@@ -2219,10 +2380,6 @@ static bool parseArgs(int argc, char **argv) {
 
 /* These are called by the network module during join — kept as stubs
  * since the new transport doesn't use the old network.c callbacks. */
-void gameFrontGetPassword(char *pword) {
-  strcpy(pword, optPassword);
-}
-
 void gameFrontGetPlayerName(char *pn) {
   strcpy(pn, optName);
 }
@@ -2283,9 +2440,12 @@ static void applyViewPolicyOptions(ServerSim *sim) {
   if (optLineOfSight) {
     serverSimSetLineOfSight(sim, (uint8_t)lineOfSightBuildingsAndTrees);
   }
-  /* After the loop and after allies in trees, the overview window and
-   * line of sight, so classic mode wins over the three switches and over
-   * those three. */
+  if (optPositionalSound) {
+    serverSimSetPositionalSound(sim, true);
+  }
+  /* After the loop and after allies in trees, the overview window, line
+   * of sight and positional sound, so classic mode wins over the three
+   * switches and over those four. */
   if (optClassicMode) {
     serverSimSetClassicMode(sim, true);
   }
@@ -2314,6 +2474,7 @@ static bool fastModeSetupGame(bool withBotBrain) {
     ServerInstanceConfig cfg;
     memset(&cfg, 0, sizeof(cfg));
     cfg.acceptRemoteClients = false;
+    cfg.scriptUploadPolicy  = optScriptUploadPolicy;
     if (skipLobby) {
       cfg.skipLobby    = true;
     } else {
@@ -2370,9 +2531,9 @@ static bool fastModeSetupGame(bool withBotBrain) {
    * and stays there, so a reset seats it again as the first setup did.
    *
    * After the local player joins, not before: a seat is taken from the first
-   * free slot, so seating a horde first would put it in slot 0 and leave this
-   * process's own player somewhere above it. A map with no scenario has no
-   * template, and this seats nothing.
+   * free slot, so seating the bots first would put one in slot 0 and leave
+   * this process's own player somewhere above it. A map with no scenario has
+   * no template, and this seats nothing.
    *
    * Not on a run that skipped the lobby: its round started inside the startup
    * above, and the startup seated the template itself on the way in so the
@@ -2459,11 +2620,33 @@ static int runFastMode(void) {
   if (optNoScenarios) {
     scenarioHostSetEnabled(false);
   }
+  /* --scriptuploads: the narrower one. Under off a map a client sent plays
+     plainly whatever it carries, and the operator's own maps are untouched.
+     The policy also goes into the instance config fastModeSetupGame builds. */
+  optScriptUploadPolicy =
+      scriptUploadPolicyResolve(optScriptUploads, optNoUploadScripts);
+  scenarioHostSetUploadScriptsEnabled(optScriptUploadPolicy != SCRIPT_UPLOAD_OFF);
+  /* --allow-unsafe-scripts: the other way. Every script runs with the full
+     Lua library and no limits, uploaded ones included, and it is said
+     loudly. Set before the first attach for the same reason. */
+  if (optUnsafeScripts) {
+    scenarioHostSetUnsafeScripts(true);
+    fprintf(stderr,
+            "Note: --allow-unsafe-scripts — scenario scripts, including those "
+            "in uploaded maps, now run with the full Lua library and no memory "
+            "or time limits. Only run a server this way with content you "
+            "trust.\n");
+  }
   /* And the question the map lister asks, registered here rather than at the
      attach below: an attach answers nothing for a map with no script, so a
      run on a plain map would report every scripted map in the directory as
      plain. */
   scenarioHostRegisterMapScripted(fastServerSim);
+  /* And the read of the scenarios directory, for the same reason: what a
+     server offers on its own has nothing to do with the map it is running.
+     The headless run takes the built-in default, having no switch of its
+     own. */
+  scenarioHostRegisterScenarioLister(fastServerSim);
   {
     char scenarioErr[512];
     scenarioHost = scenarioHostAttach(fastServerSim, optMap,
@@ -2569,9 +2752,13 @@ static int runFastMode(void) {
         clientBuildInputPacket(humanSim, &pkt, 0, FALSE, FALSE, brainRunning, FALSE, playerNum, simTickCounter);
       }
       clientSimKeysTick(humanSim, &pkt);
-      clientSimNetSendInput(humanSim, &pkt);
-      clientSimNetTick(humanSim);  /* localTick pulls + applies the snapshot */
-      logChangesCollectEvents();
+      /* Queue the keys input without pumping the transport. The local
+       * transport runs serverSimTick inside tick(), and one server frame
+       * runs both half-steps, so pumping here as well would run two frames
+       * per game tick against two inputs. The server then went dry on half
+       * its half-steps and held the tank still through them. The game pass
+       * below pumps once, the same as client_frontend_tick.c. */
+      clientSimNetRecordInput(humanSim, &pkt);
       simTickCounter++;
       justKeys = FALSE;
     } else {

@@ -200,7 +200,18 @@ static void lobbyFrameInitState(ClientSim *cs) {
     s_lf.awaitingFrames          = 0;
     s_lf.lastMapChangeSeq        = clientSimGetLobbyMapChangeSeq(cs);
 
-    s_lf.focusReadyPending = uiShouldUseControllerMode();
+    /* Seed the keyboard focus onto Ready / Start. Not controller-only any
+     * more: with nothing seeded, ImGui's nav init picks the first item in the
+     * window, and that is the little back arrow at the top left — so Enter in
+     * the lobby asked to leave for the main menu rather than readying up.
+     * Enter is the keyboard equivalent of the primary action, and here that is
+     * Ready. Escape still leaves, which is the pair it belongs in.
+     *
+     * Applied once, on the first frame Ready is actually enabled — see the two
+     * sites that consume this. SetKeyboardFocusHere carries
+     * ImGuiNavMoveFlags_NoSetNavCursorVisible, so this seeds what Enter hits
+     * without lighting a focus ring the player did not ask for. */
+    s_lf.focusReadyPending = true;
     s_lf.prevCountdown     = clientSimGetCountdownSeconds(cs);
 }
 
@@ -212,6 +223,9 @@ static void lobbyFrameInitState(ClientSim *cs) {
  * MapChooserState caches stay populated (next open re-uses the discovered
  * map list / preview view); only the visibility / focus / pending-action
  * flags reset. */
+/* Defined below, beside the poll that uses the same two records. */
+static void lobbyBotAnnounceReset(void);
+
 extern "C" void imguiLobbyFrameReset(void) {
     if (s_lf.mapPreviewTex) {
         SDL_DestroyTexture(s_lf.mapPreviewTex);
@@ -221,6 +235,7 @@ extern "C" void imguiLobbyFrameReset(void) {
     mapPreviewPopupDestroy();
 
     lobbyChooserReset();
+    lobbyScenarioChooserReset();
 
     lobbyChatReset();
 
@@ -257,6 +272,10 @@ extern "C" void imguiLobbyFrameReset(void) {
     lobbyPlayersReset();
 
     lobbyCommandReset();
+
+    /* A new lobby is a new audience: every bot's brain announces itself
+       again. lobbyChatReset above already dropped the clickable blocks. */
+    lobbyBotAnnounceReset();
 
     s_lf.active = false;
 }
@@ -296,6 +315,107 @@ static void lobbyVoiceHintPoll(ClientSim *cs) {
 }
 #endif
 
+/* ── A bot's announce line in team chat ───────────────────────────────
+ *
+ * A brain may ship an announce.txt. When a bot running it is on YOUR team in
+ * the lobby, that text goes into the TEAM chat as a line from the bot, and
+ * the line opens the brain's commands.txt when clicked (lobby_chat.cpp).
+ *
+ * Said ONCE PER BRAIN, not once per bot: a four-bot team all on GoalHunter is
+ * one message, not four. The per-slot record below is what makes that a
+ * decision and not an accident — a slot is only looked at on the frame its
+ * (bot, team, brain) shape changes, so the poll does no work at all on a
+ * settled lobby, and a bot removed and re-added is looked at again.
+ *
+ * File-statics rather than prefs: a lobby re-entered is a fresh audience, and
+ * lobbyChatDocsReset (through lobbyChatReset) clears the registry with them. */
+static uint8_t s_announceSeen[MAX_TANKS];     /* brainIdx + 1, 0 = not seen */
+static bool    s_announceBrain[BRAIN_LIST_MAX];
+
+static void lobbyBotAnnounceReset(void) {
+    memset(s_announceSeen, 0, sizeof(s_announceSeen));
+    memset(s_announceBrain, 0, sizeof(s_announceBrain));
+}
+
+static void lobbyBotAnnouncePoll(ClientSim *cs) {
+    if (cs == NULL || !clientSimIsInLobby(cs)) return;
+    /* A spectator holds no slot, so it is on nobody's team and is told
+     * nothing; team 0 is "unassigned" and is not a team either. */
+    if (clientSimIsSpectator(cs)) return;
+
+    const ClientLobbySlot *mine =
+        clientSimGetLobbySlot(cs, clientSimGetMyPlayerNum(cs));
+    if (mine == NULL || !mine->connected || mine->teamNumber == 0) return;
+
+    const BrainList *bl = clientSimGetLobbyBrainList(cs);
+    if (bl == NULL || bl->count <= 0) return;
+
+    for (BYTE slot = 0; slot < MAX_TANKS; slot++) {
+        const ClientLobbySlot *s = clientSimGetLobbySlot(cs, slot);
+        uint8_t idx;
+        uint8_t stamp;
+
+        if (s == NULL || !s->connected || !s->isBot ||
+            s->teamNumber != mine->teamNumber) {
+            s_announceSeen[slot] = 0;      /* gone, or not ours any more */
+            continue;
+        }
+        idx = clientSimGetLobbyBotBrain(cs, slot);
+        if (idx == 0xFF || idx >= bl->count) idx = 0;   /* server default */
+        stamp = (uint8_t)(idx + 1);
+        if (s_announceSeen[slot] == stamp) continue;    /* already looked at */
+        s_announceSeen[slot] = stamp;
+
+        if (s_announceBrain[idx]) continue;             /* this brain spoke */
+        {
+            const char *announce = clientSimGetLobbyBrainAnnounce(cs, idx);
+            char        base[BRAIN_LIST_NAME_LEN];
+            char        line[LOBBY_CHAT_LINE_MAX];
+            const char *history;
+            bool        landed;
+
+            if (announce == NULL || announce[0] == '\0') continue;
+
+            /* The name on the line is the BOT's, so it reads like the bot
+             * talking; the dialog is titled after the BRAIN, because the docs
+             * belong to the brain and not to one bot. */
+            brainListSplitVersion(bl->entries[idx].name, base, sizeof(base));
+            if (clientSimFormatLobbyChatLine(line, sizeof(line),
+                                             s->playerName, announce) < 0) {
+                s_announceSeen[slot] = 0;               /* try again later */
+                continue;
+            }
+
+            clientSimAppendLobbyTeamChat(cs, s->playerName, announce);
+
+            /* Did it actually land? A chat buffer near full drops the append
+             * without a word. The line is built by the same function the
+             * append builds it with (client_sim.c), so the search cannot miss
+             * for want of agreeing on the format. */
+            history = clientSimGetLobbyTeamChatHistory(cs);
+            landed  = (history != NULL && SDL_strstr(history, line) != NULL);
+
+            if (!landed) {
+                /* Nothing was said, so this brain has NOT spoken: leave the
+                 * latch alone and un-stamp the slot, and the next frame says
+                 * it again. Latching here was the bug — one dropped append
+                 * and the brain's announce was gone for the whole lobby. */
+                s_announceSeen[slot] = 0;
+                continue;
+            }
+            s_announceBrain[idx] = true;
+
+            /* Registering text that is not in the blob would simply never
+             * match, so this waits on the same answer. The docs themselves
+             * are not here yet: the server sends them when the line is
+             * clicked, so the test is whether it has any to send. */
+            if (clientSimLobbyBrainHasDocs(cs, idx)) {
+                lobbyChatDocsRegister((int)idx, base, line);
+            }
+        }
+    }
+}
+
 /* Build the lobby UI into the currently-active ImGui frame. See
  * imgui_lobby.h for the host contract. Returns LOBBY_FRAME_LEFT once the
  * player confirms leaving, otherwise LOBBY_FRAME_CONTINUE. */
@@ -313,6 +433,10 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
        function, so one call covers the blocking lobby and the in-game seam. */
     lobbyVoiceHintPoll(cs);
 #endif
+
+    /* Same place, same reason: a bot that has just joined your team says what
+       its brain can do, once, in team chat. */
+    lobbyBotAnnouncePoll(cs);
 
     SDL_Window   *window   = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
@@ -677,6 +801,11 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             lobbyRenderSmartPingSummary(cs, s);
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_AI_LBL), lobbyAiTypeStr(clientSimGetLobbyAiType(cs)));
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_TIME_LBL), timeStr);
+            /* Own line again, and in the same place in the run as on the
+             * desktop: whether the round runs mods is a host-only setting
+             * everywhere else, so this is where a joiner or spectator is
+             * told, and the hover is where the names are. */
+            lobbyRenderModsSummary(cs, s);
             /* Own line, like the labels above it — the view policies are
              * the one part of the settings a joiner or spectator can see. */
             lobbyRenderVisibilitySummary(cs, s);
@@ -705,7 +834,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 }
             }
             if (leaveClicked ||
-                (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !mapPreviewPopupIsOpen() && !lobbyChooser()->open && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
+                (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !mapPreviewPopupIsOpen() && !lobbyChooser()->open && !lobbyScenarioChooserIsOpen() && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
                   (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
 #ifdef __APPLE__
                   || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
@@ -736,6 +865,13 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_AI_LBL), lobbyAiTypeStr(clientSimGetLobbyAiType(cs)));
             ImGui::SameLine(0, 16);
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_TIME_LBL), timeStr);
+            /* Whether the round runs mods, on the same terms as the two
+             * entries either side of it: the Mods Enabled checkbox and the
+             * row that lists the names are both in the host-only settings
+             * column, so everybody else reads the answer here and gets the
+             * names off the hover. */
+            ImGui::SameLine(0, 16);
+            lobbyRenderModsSummary(cs, s);
             /* The view policies belong on this line because it is the one
              * place a joiner or spectator sees the host's settings — the
              * settings panel below is host-only. Before the connectivity
@@ -844,7 +980,18 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             /* The recap tab exists only while a stored end-of-round
              * summary does (set at game over, cleared on countdown). */
             const bool haveLastRound = lobbyShowLastRound;
-            if (!lobbyChooser()->open) {
+            /* Also stood down while the scenario chooser is up, for the same
+               reason as the Choose Map window above: a trigger press belongs
+               to the dialog in front of the player, not to the tabs behind it.
+               Losing the dialog is not the risk — it is drawn from the lobby's
+               own frame rather than from any one tab's body, so it survives a
+               tab change. The risk is the press going somewhere the player is
+               not looking. */
+            /* And while the details dialog is up. It is a modal, so it holds
+               the pointer and the keyboard on its own, but a shoulder button
+               is read here as a raw key and would cycle the tabs behind it. */
+            if (!lobbyChooser()->open && !lobbyScenarioChooserIsOpen() &&
+                !lobbyScenarioDetailsIsOpen()) {
                 const ClientLobbySlot *myTabSlot =
                     clientSimGetLobbySlot(cs, myPlayerNum);
                 bool onTeam = !spectator && myTabSlot && myTabSlot->teamNumber != 0;
@@ -1031,6 +1178,11 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         *lobbyPlayersForceTab() == 1 ? ImGuiTabItemFlags_SetSelected : 0)) {
                     activeTab = 1;
                     float tabH = ImGui::GetContentRegionAvail().y - btnAreaH;
+                    /* Last frame's height of everything drawn under the
+                     * preview, and where that block starts this frame
+                     * (below 0 when no preview is drawn). */
+                    static float tabMapBelowH = 0.0f;
+                    float tabMapBelowTopY = -1.0f;
 
                     /* "Choose Map" — opens the separate chooser window.
                      * Host / admin / openHost-allowed only; non-privileged
@@ -1088,7 +1240,18 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         ImVec2 uv0((float)bx0 / MAP_PREVIEW_SIZE, (float)by0 / MAP_PREVIEW_SIZE);
                         ImVec2 uv1((float)(bx1 + 1) / MAP_PREVIEW_SIZE, (float)(by1 + 1) / MAP_PREVIEW_SIZE);
 
-                        float infoH = ImGui::GetTextLineHeightWithSpacing() * 2;
+                        /* The height of what sits under the preview is
+                         * measured on the previous frame rather than
+                         * counted here: the scenario, mods and unsafe
+                         * lines depend on what the round carries and wrap
+                         * at the tab's width, and a count that falls
+                         * short overflows the tab, whose scrollbar then
+                         * narrows the width the preview is bound by and
+                         * flips the layout every frame. The count is used
+                         * only until there is a measurement. */
+                        float infoH = tabMapBelowH > 0.0f
+                                    ? tabMapBelowH
+                                    : ImGui::GetTextLineHeightWithSpacing() * 2;
                         float previewMaxH = tabH - infoH;
                         float previewMaxW = ImGui::GetContentRegionAvail().x;
                         float previewSize = previewMaxW < previewMaxH ? previewMaxW : previewMaxH;
@@ -1147,6 +1310,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         }
                         /* Reserve the full box so the gap also sits below. */
                         ImGui::SetCursorPosY(boxTopY + previewSize);
+                        tabMapBelowTopY = ImGui::GetCursorPosY();
                         /* A click that didn't land on a start opens the zoomed
                          * popup (clicking a free start moves you there). */
                         if (lobbyMapPreview()->popupCompressedData && !miniConsumed &&
@@ -1164,9 +1328,17 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_MAP_UNAVAILABLE));
                     }
                     ImGui::Spacing();
-                    ImGui::Text("%s - %dP %dB %dS", clientSimGetMapName(cs), clientSimGetLobbyPillCount(cs), clientSimGetLobbyBaseCount(cs), clientSimGetLobbyStartCount(cs));
+                    ImGui::Text("%s - %dP %dB %dS", clientSimGetMapName(cs), lobbyLivePillCount(cs), lobbyLiveBaseCount(cs), lobbyLiveStartCount(cs));
 
-                    lobbyRenderScenarioLine(cs);
+                    /* What is playing, under what is loaded, for everyone —
+                     * host included. These are the read-only lines and not
+                     * the settings form's editable ones, which is what lets
+                     * a host have both without reading the same thing twice:
+                     * this panel says what the round is running, and the
+                     * Server Settings column is where they change it. The
+                     * Details button under them is the only way into the
+                     * chooser a non-host has, so it comes with them here. */
+                    lobbyRenderScenarioInfoLines(cs, s);
 
                     /* Skip-map vote is gated by LOBBY_LOCK_MAP — locking
                      * the map blocks both manual change and skip-vote. */
@@ -1207,6 +1379,10 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                             ImGui::TextUnformatted(langGetTextFmt(STR_DLGLOBBY_VOTES, &args));
                         }
                         if (countdownActive) ImGui::EndDisabled();
+                    }
+
+                    if (tabMapBelowTopY >= 0.0f) {
+                        tabMapBelowH = ImGui::GetCursorPosY() - tabMapBelowTopY;
                     }
 
                     ImGui::EndTabItem();
@@ -1375,7 +1551,12 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 /* One-shot initial focus for controller players — only once
                  * Ready is enabled, so we don't try to focus a disabled item. */
                 if (focusReadyPending && canReady) {
-                    ImGui::SetKeyboardFocusHere();
+                    /* Unless the player has already put the caret somewhere —
+                     * the chat box, most likely, while a map was still coming
+                     * down. Their choice wins, and the seed is dropped rather
+                     * than held, so it cannot yank the caret out of a
+                     * half-typed line the moment they pause. */
+                    if (!ImGui::GetIO().WantTextInput) ImGui::SetKeyboardFocusHere();
                     focusReadyPending = false;
                 }
                 if (ImGui::Button(readyLabel, ImVec2(100 * s, 0))) {
@@ -1399,7 +1580,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 ImGui::SameLine(0, 20);
                 glyphInline(SI_ACTION_MENU_CANCEL);   /* B glyph left of Leave */
                 if (ImGui::Button(langGetText(STR_DLGLOBBY_LEAVE), ImVec2(100 * s, 0)) ||
-                    (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !mapPreviewPopupIsOpen() && !lobbyChooser()->open && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
+                    (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !mapPreviewPopupIsOpen() && !lobbyChooser()->open && !lobbyScenarioChooserIsOpen() && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
                       (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
 #ifdef __APPLE__
                       || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
@@ -1892,6 +2073,11 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
              * stays true, so the panel is exactly the map panel. The child
              * keeps its id so the map chooser's scrim still finds it. */
             bool showMapPanel = !lobbyShowLastRound || *lobbyRecapShowMap();
+            /* Last frame's height of everything drawn under the preview,
+             * and where that block starts this frame (below 0 when no
+             * preview is drawn). */
+            static float mapPanelBelowH = 0.0f;
+            float mapPanelBelowTopY = -1.0f;
             if (lobbyShowLastRound) {
                 /* The flip lands on the next frame, so the caption and what is
                  * under it always describe the same view. */
@@ -1941,13 +2127,17 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
 
                 /* Size the preview square as (M - N) - small margin, where
                  *   M = total panel inner vertical space available now
-                 *   N = total vertical height of every other thing that
-                 *       will render in this panel (Choose Map button,
-                 *       separator, the 4-line info block, optional
+                 *   N = total vertical height of everything drawn under
+                 *       the preview (Choose Map button, separator, the
+                 *       map info rows, the scenario and mods lines, the
                  *       Skip Map vote row).
-                 * Pre-measure N so the preview can claim everything else
-                 * deterministically and the panel doesn't end up with
-                 * either dead space or content pushed past the bottom. */
+                 * N is last frame's measured height of that block, not a
+                 * count: the scenario, mods and unsafe lines depend on
+                 * what the round carries and wrap at the panel's width,
+                 * and a count that falls short overflows the panel, whose
+                 * scrollbar then narrows the width the preview is bound
+                 * by and flips the layout every frame. The count below
+                 * is used only until there is a measurement. */
                 bool isHostLocal  = lobbyIsHost(cs, myPlayerNum);
                 bool isAdminLocal = (myPlayerNum < MAX_TANKS &&
                     (clientSimGetLobbySlot(cs, (BYTE)myPlayerNum)->clientFlags
@@ -1962,15 +2152,17 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 float frameH  = ImGui::GetFrameHeight();
                 float spcH    = ImGui::GetStyle().ItemSpacing.y;
 
-                float N = 0.0f;
-                /* Choose Map button (right under the preview) */
-                if (effHostMap) N += frameH + spcH;
-                /* Spacing + Separator + Spacing */
-                N += spcH + 1.0f + spcH;
-                /* Map / pillboxes / bases / starts — 4 text rows */
-                N += 4.0f * lineH;
-                /* Skip Map button row (button + same-line votes text) */
-                if (skipAvail) N += spcH + frameH;
+                float N = mapPanelBelowH;
+                if (N <= 0.0f) {
+                    /* Choose Map button (right under the preview) */
+                    if (effHostMap) N += frameH + spcH;
+                    /* Spacing + Separator + Spacing */
+                    N += spcH + 1.0f + spcH;
+                    /* Map / pillboxes / bases / starts — 4 text rows */
+                    N += 4.0f * lineH;
+                    /* Skip Map button row (button + same-line votes text) */
+                    if (skipAvail) N += spcH + frameH;
+                }
 
                 float panelWidth = ImGui::GetContentRegionAvail().x;
                 float previewSize = M - N - 6.0f;  /* small breathing room */
@@ -2018,6 +2210,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 lobbyDrawPreviewCompass(cs, effHostMap, miniMin, innerSize, gapPx, s);
                 /* Reserve the full box so the gap also sits below the map. */
                 ImGui::SetCursorPosY(boxTopY + previewSize);
+                mapPanelBelowTopY = ImGui::GetCursorPosY();
                 /* A click that didn't land on a start opens the zoomed popup
                  * (clicking a free start moves you there instead). Mouse only;
                  * this two-column layout is never used in controller mode. */
@@ -2065,18 +2258,28 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                     ImGui::SameLine(0.0f, 4.0f * s);
                     lobbyRenderLockBadge();
                 }
-                ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_PILLBOXES), clientSimGetLobbyPillCount(cs));
-                ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_BASES), clientSimGetLobbyBaseCount(cs));
-                ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_STARTS), clientSimGetLobbyStartCount(cs));
-                lobbyRenderScenarioLine(cs);
+                ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_PILLBOXES), lobbyLivePillCount(cs));
+                ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_BASES), lobbyLiveBaseCount(cs));
+                ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_STARTS), lobbyLiveStartCount(cs));
+                /* Same as the Map tab above, and directly under the start
+                 * count for the same reason: the scenario and the mods are
+                 * the last of what is loaded, and everyone reads them here
+                 * whether or not they are the one who can change them, and
+                 * everyone reaches the chooser from the Details button the
+                 * lines end in. */
+                lobbyRenderScenarioInfoLines(cs, s);
 
                 lobbyRenderMapSkipVote(cs, spectator, hasTransport, s, false);
+
+                if (mapPanelBelowTopY >= 0.0f) {
+                    mapPanelBelowH = ImGui::GetCursorPosY() - mapPanelBelowTopY;
+                }
             }
 
             /* Choose Map button moved up to sit directly under the
              * preview image (see the mapPreviewTex branch above). The
-             * pre-measured N height for the preview-sizing math
-             * accounts for it. */
+             * measured N height for the preview-sizing math includes
+             * it. */
 
             ImGui::EndChild(); /* ##MapPanel */
 
@@ -2116,7 +2319,12 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 /* One-shot initial focus for controller players — only once
                  * Ready is enabled, so we don't try to focus a disabled item. */
                 if (focusReadyPending && canReady) {
-                    ImGui::SetKeyboardFocusHere();
+                    /* Unless the player has already put the caret somewhere —
+                     * the chat box, most likely, while a map was still coming
+                     * down. Their choice wins, and the seed is dropped rather
+                     * than held, so it cannot yank the caret out of a
+                     * half-typed line the moment they pause. */
+                    if (!ImGui::GetIO().WantTextInput) ImGui::SetKeyboardFocusHere();
                     focusReadyPending = false;
                 }
                 if (ImGui::Button(readyLabel, ImVec2(-1, 0))) {
@@ -2160,6 +2368,22 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 lobbyChooseMapOpen(cs, renderer);
             }
         }
+
+        /* --- A bot's brain docs, opened from its announce line in team
+           chat. Here, at the lobby window's own id scope: the click that
+           asks for it happens inside the chat child, and BeginPopupModal
+           only finds a popup opened at its own scope. --- */
+        lobbyChatDocsRenderModal(cs);
+
+        /* --- What one scenario or mod is, opened from a script name in the
+           Server Settings row or on the map panel, or from a row of the
+           chooser. Here because no one scope sees all three: the row is drawn
+           inside the settings form, the map panel's lines inside the map
+           panel, and the chooser is a top-level window of its own drawn after
+           this window has ended, so none of them can call OpenPopup where
+           BeginPopupModal would find it. Each sets a flag and this is what
+           turns it into a popup. --- */
+        lobbyScenarioDetailsRenderModal(cs, s);
 
         /* --- Leave confirmation popup --- */
         char leavePopupModalId[64];
@@ -2307,6 +2531,18 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
          * SDL_GetWindowSize) — screenW/screenH is cached at lobby
          * entry and doesn't track OS-window resizes. */
         lobbyChooseMapRenderWindow(cs, renderer, s, winW, winH);
+
+        /* The scenario chooser, drawn here for the same reason and from the
+         * same live winW/winH. Two buttons open it: the Details button on the
+         * mods row inside the settings form's Server Settings column, which
+         * only an effective host is shown, and the Details button under the
+         * map panel's script lines, which everybody is shown — the dialog
+         * draws itself read-only for a client that may not reorder the list.
+         * Both of those sit inside something that can stop being drawn, a tab
+         * on one layout and a collapsing header on the other, so drawing the
+         * dialog from either would lose it the moment the player changed tab
+         * or folded the settings header away. */
+        lobbyScenarioChooserRenderWindow(cs, s, winW, winH);
 
 #if !BOLO_MOBILE
     /* The reel outlives any single body render. Once the summary is gone (the
@@ -2640,11 +2876,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 ev.window.windowID == SDL_GetWindowID(window)) {
                 lobbySaveWindowGeometry(window);
             }
-            if (ev.type == SDL_EVENT_QUIT) {
-                running = false;
-            }
-            if (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
-                ev.window.windowID == SDL_GetWindowID(window)) {
+            if (dialogHandleQuitEvent(window, &ev)) {
                 running = false;
             }
         }

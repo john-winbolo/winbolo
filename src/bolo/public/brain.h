@@ -106,6 +106,10 @@ A base bust have one armour unit or more to resist a shell --
 #ifdef _WIN32
 typedef unsigned char  u_char;
 typedef unsigned short u_short;
+#else
+/* u_char / u_short. glibc's socket headers pull this in; Emscripten's do
+ * not, and its libc declares them only under _GNU_SOURCE or _BSD_SOURCE. */
+#include <sys/types.h>
 #endif
 typedef u_char  NIBBLE; /* to be interpreted as four bits */
 #ifndef _GAMEID_DEFINED
@@ -378,6 +382,31 @@ typedef struct
 	// Appended, as every addition to this struct is — brains index the
 	// fields in front of it by offset, so nothing above may move.
 	BrainRules rules;
+
+	// A smart ping the brain asks the engine to put on the map this think.
+	// ping_pending is 0 on every think the engine builds, so a brain that
+	// says nothing places nothing; set it to non-zero and the other three
+	// fields are read. The engine turns the request into a CMD_PING from
+	// the brain's OWN player slot, so the marker is team-filtered, drawn
+	// and recorded exactly like a marker a person placed. ping_kind is a
+	// PING_KIND_* (input_packet.h); ping_x / ping_y are WORLD units, 256
+	// to a map square. The engine rate-limits bot pings, so a request can
+	// be dropped and the brain is not told.
+	BYTE    ping_pending;
+	BYTE    ping_kind;
+	WORLD_X ping_x;
+	WORLD_Y ping_y;
+
+	// Which pill and base numbers are on the map this tick: bit n set means
+	// pill (or base) n, 0 based, is on it. A scenario can take a pill or a
+	// base off the map for good. The slot stays, so the numbers above it do
+	// not move, but the item is not shown in objects again. A brain that
+	// remembers items it saw earlier needs these to know one has gone,
+	// because an item that is merely out of sight looks the same in objects.
+	// A carried pill is on the map for this purpose; only a removal clears
+	// the bit. Bits at or past max_pillboxes / max_refbases are always 0.
+	uint32_t pills_on_map;
+	uint32_t bases_on_map;
 
 	} BrainInfo;
 

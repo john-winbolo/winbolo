@@ -61,7 +61,7 @@
 /* The seat every case seats, so a failure message names the same thing the
  * assertion does. */
 #define UF_SEAT   3
-#define UF_NAME   "Horde1"
+#define UF_NAME   "Raider1"
 #define UF_TEAM   3
 
 /* A file for the brain path to name. The fixture brain never opens it — the
@@ -88,7 +88,7 @@ static void ufDropBrainFile(void) {
 /* A lobby taking part, configured to run bots. */
 static ServerSim *ufEmptyLobbySim(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097,
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN,
                                                "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) return NULL;

@@ -56,7 +56,8 @@
 #include "netpacks.h"        /* the PACKET_* ids the type switch reads,
                               * LOBBY_REJECT_*, ROUND_LOG_ERR_*,
                               * MAP_DOWNLOAD_MAX_SIZE */
-#include "wire_limits.h"     /* LOBBY_MAP_UPLOAD_MAX_BYTES, LOBBY_LOCK_MAP */
+#include "wire_limits.h"     /* LOBBY_MAP_UPLOAD_MAX_BYTES,
+                              * LOBBY_PACKAGE_UPLOAD_MAX_BYTES, LOBBY_LOCK_MAP */
 #include "global.h"          /* BYTE, MAX_TANKS, MAP_STR_SIZE, TRUE */
 #include "bolo_map.h"        /* map, mapCreate, mapDestroy, mapGetPos,
                               * mapCalcChecksum, mapLoadCompressedMap,
@@ -68,16 +69,25 @@
 #include "client_command.h"  /* ClientCommand, CMD_CHAT */
 #include "transport_command_codec.h" /* commandCodecDecode */
 #include "channel_mux.h"     /* channelRecvFrame */
+#include "lobby_bot_pools.h"   /* LOBBY_BOT_CATALOG_WIRE_MAX */
 #include "bulk_transfer.h"   /* BulkStreamHeader, bulkSenderBusy, bulkSenderBegin,
                               * bulkReceiverInit, BULK_KIND_PREVIEW,
                               * BULK_KIND_ROUND_LOG, BULK_PATH_MAX */
-#include "upload_policy.h"   /* UPLOAD_POLICY_OFF, UPLOAD_POLICY_PERSIST */
+#include "upload_policy.h"   /* UPLOAD_POLICY_OFF, UPLOAD_POLICY_PERSIST,
+                              * SCRIPT_UPLOAD_OFF, UPLOAD_KIND_MAP / _SCRIPT */
 #include "game_sim.h"        /* GameSim — serverSimGetGameSim(sim)->mp / ->pb / ->bs */
 #include "server_sim.h"      /* ServerSim, ServerState, ServerMapEntry, and the sim
                               * accessors the handlers read and write */
 #include "server_sim_internal.h"  /* sim->clientKnownMap, serverSimGetPillsForSlot,
                                    * serverSimGetCompressedMapFor — sim co-owner */
 #include "server_sim_lifecycle.h" /* serverSimGetMapDirRoot */
+#include "../sim/server_sim_shared.h" /* serverSimResolveMapPath */
+#include "server_sim_scenario.h"  /* serverSimScenarioListDir, ScnDirEntry —
+                                   * the scenarios this server offers, read
+                                   * through the lister registered on the sim;
+                                   * serverSimHasScriptUploadAccept */
+#include "scenario_details.h"     /* SCN_DETAILS_MAX — the largest details
+                                   * blob a DETAILS_REQ answers with */
 #include "client_sim_internal.h"  /* LOBBY_MAP_LIST_MAX cap shared with the wire */
 #include "../server_lifecycle.h"  /* serverInstanceRecordProbeReply */
 #include "../../common/md5.h"     /* md5Compute, md5ToHex */
@@ -611,6 +621,124 @@ static void handleLobbyMapListReq(ServerSim *sim, uint8_t *buf, int len,
     } while (i < got);
 }
 
+/* One byte of length ahead of each string, so a string longer than 255 would
+ * be unsendable. They are cut to fit rather than costing the entry: a list is
+ * for choosing from, and a description that ends early still names the thing.
+ * The file name is what a later selection will send back, so it is the one
+ * that must survive whole — SCN_DIR_FILE_LEN is 128, well inside the
+ * byte, and an entry whose name would not fit is left out by the lister. */
+static int scnListPackStr(uint8_t *buf, int pos, const char *s) {
+    size_t n = (s != NULL) ? strlen(s) : 0;
+
+    if (n > 255) n = 255;
+    buf[pos++] = (uint8_t)n;
+    if (n > 0) {
+        memcpy(buf + pos, s, n);
+        pos += (int)n;
+    }
+    return pos;
+}
+
+int udpServerPackScenarioListChunk(uint8_t *buf, int bufLen,
+                                   const ScnDirEntry *entries, int count,
+                                   int first, int *next) {
+    int pos = PACKET_HEADER_SIZE;
+    int finalPos;
+    int countPos;
+    int written = 0;
+    int i;
+
+    if (buf == NULL || next == NULL || bufLen < PACKET_HEADER_SIZE + 2) {
+        if (next != NULL) *next = first;
+        return 0;
+    }
+    packHeader(buf, PACKET_LOBBY_SCENARIO_LIST_RSP, 0);
+    finalPos = pos;
+    buf[pos++] = 0;
+    countPos = pos;
+    buf[pos++] = 0;
+
+    for (i = first; i < count && written < 255; i++) {
+        const ScnDirEntry *e = &entries[i];
+        size_t fileLen = strlen(e->file);
+        size_t nameLen = strlen(e->name);
+        size_t descLen = strlen(e->description);
+        int    need;
+
+        if (fileLen > 255) fileLen = 255;
+        if (nameLen > 255) nameLen = 255;
+        if (descLen > 255) descLen = 255;
+        need = 1 + (int)fileLen + 1 + (int)nameLen + 1 + (int)descLen + 4 + 9;
+        if (pos + need > bufLen) break;
+
+        pos = scnListPackStr(buf, pos, e->file);
+        pos = scnListPackStr(buf, pos, e->name);
+        pos = scnListPackStr(buf, pos, e->description);
+        buf[pos++] = e->maxPlayers;
+        buf[pos++] = e->bots;
+        buf[pos++] = e->bound ? 1 : 0;
+        /* The manifest kind, as one byte beside bound. A chooser has to tell
+           a mod from an unbound scenario, and bound does not answer that:
+           both are false for the two of them. Set means the script keeps the
+           round's win condition, which is what a mod does. */
+        buf[pos++] = e->keepsWinCondition ? 1 : 0;
+        /* Where the server got the file, and its Workshop item (0 for none),
+           most significant byte first. */
+        buf[pos++] = e->source;
+        packU32(buf + pos, (uint32_t)(e->workshopId >> 32));
+        packU32(buf + pos + 4, (uint32_t)(e->workshopId & 0xFFFFFFFFu));
+        pos += 8;
+        written++;
+    }
+
+    buf[countPos] = (uint8_t)written;
+    *next = i;
+    buf[finalPos] = (i >= count) ? 1 : 0;
+    return pos;
+}
+
+static void handleLobbyScenarioListReq(ServerSim *sim, uint8_t *buf, int len,
+                                       struct sockaddr_in *fromAddr) {
+    /* [header 8] and nothing else — the scenarios directory is flat, so there
+     * is no path to ask about. Any lobby client may ask, and the response goes
+     * back to the requester only (wire-only handshake per ARCHITECTURE.md
+     * §"Load-bearing wire-only exceptions"), exactly as the map list is. */
+    int clientIdx = serverFindClient(fromAddr);
+    (void)buf;
+
+    if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+        serverSimGetState(sim) != serverStateLobby ||
+        len < PACKET_HEADER_SIZE) return;
+    if (udpServer.clientReqCooldownTicks[clientIdx] > 0) return;
+    udpServer.clientReqCooldownTicks[clientIdx] = LOBBY_REQ_COOLDOWN_TICKS;
+
+    {
+        /* Cap matches LOBBY_SCENARIO_LIST_MAX on the client so a directory's
+         * full content survives end-to-end. Stack-resident; each ScnDirEntry
+         * is ~464 bytes → ~58 KB, in line with the map list's ~76 KB. */
+        ScnDirEntry entries[LOBBY_SCENARIO_LIST_MAX];
+        uint8_t     rsp[UDP_MAX_PAYLOAD];
+        int         got = serverSimScenarioListDir(sim, entries,
+                                                   LOBBY_SCENARIO_LIST_MAX);
+        int         i   = 0;
+
+        if (got < 0) got = 0;
+        do {
+            int nextIdx = i;
+            int rlen = udpServerPackScenarioListChunk(rsp, (int)sizeof(rsp),
+                                                      entries, got, i,
+                                                      &nextIdx);
+            if (rlen <= 0) break;
+            srvSendTo(rsp, rlen, fromAddr);
+            /* An entry that fits in no chunk would spin this loop. One cannot
+               — the widest is 461 bytes against UDP_MAX_PAYLOAD — so this is
+               the check that says so rather than a case that happens. */
+            if (nextIdx == i) break;
+            i = nextIdx;
+        } while (i < got);
+    }
+}
+
 static void handleLobbyMapUseLocal(ServerSim *sim, uint8_t *buf, int len,
                                    struct sockaddr_in *fromAddr) {
     /* [header 8] [totalLen 4] [nameLen 1] [name N]
@@ -728,9 +856,12 @@ static void handleLobbyMapUseLocal(ServerSim *sim, uint8_t *buf, int len,
      * in-memory upload model. */
     free(bytes);  /* serverSimReloadMap re-reads it via its own path */
 
+    /* The same resolve serverSimReadMapFile made when it checked the MD5
+       above, so the file that is previewed is the file that was compared: a
+       map under the virtual Uploads folder lives in the persist directory
+       when one is configured, not under the map root. */
     char localPath[FILENAME_MAX];
-    SDL_snprintf(localPath, sizeof(localPath), "%s/%s",
-                 serverSimGetMapDirRoot(sim), relBuf);
+    serverSimResolveMapPath(sim, relBuf, localPath, sizeof(localPath));
     bool previewed = false;
     if (serverSimReloadMap(sim, localPath)) {
         /* Display name: the announce name without ".map". */
@@ -757,16 +888,53 @@ static void handleLobbyMapUseLocal(ServerSim *sim, uint8_t *buf, int len,
     #undef SEND_USE_LOCAL_NACK
 }
 
+/* Whether a script upload's name belongs to a script another directory
+ * already offers: the merged listing holds it and the landing directory does
+ * not. A name the landing directory holds is the uploader's own earlier file,
+ * and sending it again replaces it. The listing merges names without regard
+ * to case, so the match here does the same, and the landing directory is
+ * asked for the listing's spelling rather than the wire's, so a file sent
+ * again in another case is still the uploader's own. The host's accept
+ * callback asks again, directory by directory, when the bytes are in. */
+static bool lobbyScriptNameTaken(ServerSim *sim, const char *name) {
+    ScnDirEntry *rows;
+    char         path[FILENAME_MAX];
+    char         listed[SCN_DIR_FILE_LEN];
+    SDL_PathInfo info;
+    int          got;
+    int          i;
+
+    rows = (ScnDirEntry *)calloc(LOBBY_SCENARIO_LIST_MAX, sizeof(*rows));
+    if (rows == NULL) return false;
+    got = serverSimScenarioListDir(sim, rows, LOBBY_SCENARIO_LIST_MAX);
+    listed[0] = '\0';
+    for (i = 0; i < got; i++) {
+        if (SDL_strcasecmp(rows[i].file, name) == 0) {
+            SDL_strlcpy(listed, rows[i].file, sizeof(listed));
+            break;
+        }
+    }
+    free(rows);
+    if (listed[0] == '\0') return false;
+    SDL_snprintf(path, sizeof(path), "%s/%s",
+                 serverSimGetScriptUploadDir(sim), listed);
+    return !(SDL_GetPathInfo(path, &info) && info.type == SDL_PATHTYPE_FILE);
+}
+
 static void handleLobbyMapUploadBegin(ServerSim *sim, uint8_t *buf, int len,
                                       struct sockaddr_in *fromAddr) {
-    /* [header 8] [totalLen 4] [nameLen 1] [name N] [bulkStartSeq 4, optional]
+    /* [header 8] [kind 1] [totalLen 4] [nameLen 1] [name N]
+     * [bulkStartSeq 4]
      * Only host
      * / admin / openHost may push files. Per-client wire-only
-     * ACK (handshake/reliability). */
+     * ACK (handshake/reliability). kind is UPLOAD_KIND_MAP or
+     * UPLOAD_KIND_SCRIPT; it picks the lock, the policy, the cap, the
+     * name rule and where the bytes land. */
     int clientIdx = serverFindClient(fromAddr);
     if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
         serverSimGetState(sim) != serverStateLobby ||
-        len < PACKET_HEADER_SIZE + 5) return;
+        len < PACKET_HEADER_SIZE + 6) return;
+    uint8_t kind = buf[PACKET_HEADER_SIZE + 0];
     /* Cooldown gate — silent break used to leave the client at
      * upload-status=1 (BEGIN sent, awaiting ACK) indefinitely,
      * jamming further picks. Reply with COOLDOWN so the client's
@@ -786,14 +954,24 @@ static void handleLobbyMapUploadBegin(ServerSim *sim, uint8_t *buf, int len,
         srvSendTo(ack, sizeof(ack), fromAddr);
         return;
     }
-    if (serverSimGetServerLocks(sim) & LOBBY_LOCK_MAP) {
+    /* The map lock is about the map; a script upload does not change it. */
+    if (kind == UPLOAD_KIND_MAP &&
+        (serverSimGetServerLocks(sim) & LOBBY_LOCK_MAP)) {
         uint8_t ack[PACKET_HEADER_SIZE + 1];
         packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
         ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_LOCKED;
         srvSendTo(ack, sizeof(ack), fromAddr);
         return;
     }
-    if (udpServer.uploadPolicy == UPLOAD_POLICY_OFF) {
+    /* A script needs its own policy on, somewhere to land, and something
+     * registered to take it; without any of them the bytes are never asked
+     * for. */
+    if ((kind == UPLOAD_KIND_MAP &&
+         udpServer.uploadPolicy == UPLOAD_POLICY_OFF) ||
+        (kind == UPLOAD_KIND_SCRIPT &&
+         (udpServer.scriptUploadPolicy == SCRIPT_UPLOAD_OFF ||
+          serverSimGetScriptUploadDir(sim)[0] == '\0' ||
+          !serverSimHasScriptUploadAccept(sim)))) {
         uint8_t ack[PACKET_HEADER_SIZE + 1];
         packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
         ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_UPLOAD_DISABLED;
@@ -815,14 +993,18 @@ static void handleLobbyMapUploadBegin(ServerSim *sim, uint8_t *buf, int len,
         return;
     }
     uint32_t totalLen =
-        ((uint32_t)buf[PACKET_HEADER_SIZE + 0] << 24) |
-        ((uint32_t)buf[PACKET_HEADER_SIZE + 1] << 16) |
-        ((uint32_t)buf[PACKET_HEADER_SIZE + 2] <<  8) |
-        ((uint32_t)buf[PACKET_HEADER_SIZE + 3]);
-    uint8_t nameLen = buf[PACKET_HEADER_SIZE + 4];
-    if (nameLen == 0 || nameLen > 127 ||
-        len < PACKET_HEADER_SIZE + 5 + nameLen ||
-        totalLen == 0 || totalLen > LOBBY_MAP_UPLOAD_MAX_BYTES) {
+        ((uint32_t)buf[PACKET_HEADER_SIZE + 1] << 24) |
+        ((uint32_t)buf[PACKET_HEADER_SIZE + 2] << 16) |
+        ((uint32_t)buf[PACKET_HEADER_SIZE + 3] <<  8) |
+        ((uint32_t)buf[PACKET_HEADER_SIZE + 4]);
+    uint8_t nameLen = buf[PACKET_HEADER_SIZE + 5];
+    uint32_t maxLen = (kind == UPLOAD_KIND_SCRIPT)
+                      ? LOBBY_PACKAGE_UPLOAD_MAX_BYTES
+                      : LOBBY_MAP_UPLOAD_MAX_BYTES;
+    if ((kind != UPLOAD_KIND_MAP && kind != UPLOAD_KIND_SCRIPT) ||
+        nameLen == 0 || nameLen > 127 ||
+        len < PACKET_HEADER_SIZE + 6 + nameLen + 4 ||
+        totalLen == 0 || totalLen > maxLen) {
         uint8_t ack[PACKET_HEADER_SIZE + 1];
         packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
         ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_INVALID;
@@ -831,9 +1013,9 @@ static void handleLobbyMapUploadBegin(ServerSim *sim, uint8_t *buf, int len,
     }
     char nameBuf[128];
     memset(nameBuf, 0, sizeof(nameBuf));
-    memcpy(nameBuf, buf + PACKET_HEADER_SIZE + 5, nameLen);
+    memcpy(nameBuf, buf + PACKET_HEADER_SIZE + 6, nameLen);
 
-    if (!uploadFilenameIsSafe(nameBuf, nameLen)) {
+    if (!uploadFilenameIsSafe(kind, nameBuf, nameLen)) {
         uint8_t ack[PACKET_HEADER_SIZE + 1];
         packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
         ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_INVALID;
@@ -841,7 +1023,31 @@ static void handleLobbyMapUploadBegin(ServerSim *sim, uint8_t *buf, int len,
         return;
     }
 
-    if (udpServer.uploadPolicy == UPLOAD_POLICY_PERSIST) {
+    /* A script whose name a higher directory holds would never be the file
+     * a pick of that name loads, so it is refused before the bytes come. */
+    if (kind == UPLOAD_KIND_SCRIPT && lobbyScriptNameTaken(sim, nameBuf)) {
+        uint8_t ack[PACKET_HEADER_SIZE + 1];
+        packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
+        ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_NAME_TAKEN;
+        srvSendTo(ack, sizeof(ack), fromAddr);
+        return;
+    }
+
+    /* PERSIST keeps scripts for good, so its directory has caps; the session
+     * directory is emptied instead. */
+    if (kind == UPLOAD_KIND_SCRIPT &&
+        udpServer.scriptUploadPolicy == SCRIPT_UPLOAD_PERSIST &&
+        !udpServerScriptUploadFitsCaps(serverSimGetScriptUploadDir(sim),
+                                       nameBuf, totalLen)) {
+        uint8_t ack[PACKET_HEADER_SIZE + 1];
+        packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
+        ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_UPLOAD_LIMIT_HIT;
+        srvSendTo(ack, sizeof(ack), fromAddr);
+        return;
+    }
+
+    if (kind == UPLOAD_KIND_MAP &&
+        udpServer.uploadPolicy == UPLOAD_POLICY_PERSIST) {
         ServerMapEntry entries[256];
         int got = serverSimEnumerateMapDir(sim, "Uploads",
                                             entries,
@@ -866,6 +1072,27 @@ static void handleLobbyMapUploadBegin(ServerSim *sim, uint8_t *buf, int len,
         }
     }
 
+    /* A script lands in a buffer sized for it here rather than a fixed slot:
+     * at LOBBY_PACKAGE_UPLOAD_MAX_BYTES a slot per client is too much to keep
+     * static. A retry from the same client lets go of the old one first. */
+    if (udpServer.bulkRecvUp[clientIdx].dst ==
+            udpServer.clientScriptUploadBuf[clientIdx]) {
+        udpServer.bulkRecvUp[clientIdx].dst = NULL;
+    }
+    free(udpServer.clientScriptUploadBuf[clientIdx]);
+    udpServer.clientScriptUploadBuf[clientIdx] = NULL;
+    if (kind == UPLOAD_KIND_SCRIPT) {
+        udpServer.clientScriptUploadBuf[clientIdx] = (uint8_t *)malloc(totalLen);
+        if (udpServer.clientScriptUploadBuf[clientIdx] == NULL) {
+            uint8_t ack[PACKET_HEADER_SIZE + 1];
+            packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
+            ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_INVALID;
+            srvSendTo(ack, sizeof(ack), fromAddr);
+            return;
+        }
+    }
+
+    udpServer.clientUploadKind[clientIdx]   = kind;
     udpServer.clientUploadActive[clientIdx] = true;
     udpServer.clientUploadTotal[clientIdx]  = totalLen;
     udpServer.upload_last_progress_ms[clientIdx] = SDL_GetTicks();
@@ -874,13 +1101,11 @@ static void handleLobbyMapUploadBegin(ServerSim *sim, uint8_t *buf, int len,
     /* Fresh receiver for this transfer; the bulk stream that follows
      * carries the bytes (no offset reassembly). */
     bulkReceiverInit(&udpServer.bulkRecvUp[clientIdx]);
-    /* New senders append their bulk sequence boundary. An aborted upload
-     * may have left gaps in this direction; skip its tail before accepting
-     * the next stream. Older BEGIN packets retain the original layout. */
-    if (len >= PACKET_HEADER_SIZE + 5 + nameLen + 4) {
-        channelResetExpected(&udpServer.channelMux[clientIdx], CHANNEL_BULK,
-            unpackU32(buf + PACKET_HEADER_SIZE + 5 + nameLen));
-    }
+    /* The sender's bulk sequence boundary. An aborted upload may have left
+     * gaps in this direction; skip its tail before accepting the next
+     * stream. */
+    channelResetExpected(&udpServer.channelMux[clientIdx], CHANNEL_BULK,
+        unpackU32(buf + PACKET_HEADER_SIZE + 6 + nameLen));
 
     uint8_t ack[PACKET_HEADER_SIZE + 1];
     packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
@@ -921,7 +1146,7 @@ static void handleLobbyMapSearchReq(ServerSim *sim, uint8_t *buf, int len,
     ServerMapEntry entries[LOBBY_MAP_LIST_MAX];
     int got = serverSimSearchMapDir(sim,
         relPath[0] == '\0' ? NULL : relPath,
-        query, entries, LOBBY_MAP_LIST_MAX);
+        query, entries, LOBBY_MAP_LIST_MAX, false);
     if (got < 0) got = 0;
 
     /* Chunked send — every chunk repeats the full path+query
@@ -1050,6 +1275,316 @@ static void handleLobbyMapPreviewReq(ServerSim *sim, uint8_t *buf, int len,
         srvSendTo(err, wpos, fromAddr);
     }
     free(mapBytes);
+}
+
+static void handleLobbyScenarioDetailsReq(ServerSim *sim, uint8_t *buf,
+                                          int len,
+                                          struct sockaddr_in *fromAddr) {
+    /* [header 8] [fileLen 1] [file N]. One script file's details, for the
+     * lobby's details dialog, streamed back over CHANNEL_BULK behind a
+     * BULK_KIND_SCENARIO_DETAILS stream header: the committed map's own
+     * script if the name is its, else the file of that name in the
+     * scenarios directory, else a not-found answer, so the client always
+     * has something to stop waiting on.
+     *
+     * A request that finds this client's bulk stream busy (a preview or a
+     * round log draining) is dropped rather than answered. The client asks
+     * one file at a time and asks again when no answer comes, so a drop
+     * costs one re-ask and a busy server is never made to hold a queue. */
+    int         clientIdx = serverFindClient(fromAddr);
+    int         rpos      = PACKET_HEADER_SIZE;
+    uint8_t     fileLen;
+    char        file[BULK_PATH_MAX + 1];
+    uint8_t    *blob;
+    int         got;
+    bool        wantSettings;
+    BulkStreamHeader sh;
+    static uint32_t s_detailsSeq = 0;
+
+    if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+        len < PACKET_HEADER_SIZE + 1) return;
+    fileLen = buf[rpos++];
+    if (fileLen == 0 || rpos + fileLen > len) return;
+    memcpy(file, buf + rpos, fileLen);
+    file[fileLen] = '\0';
+    /* A name with a NUL inside it is not a name either list could hold. */
+    if (strlen(file) != fileLen) return;
+    /* A newer client ends the request with a flags byte; an older one
+       stops at the name, and is answered in the shape it can read. */
+    wantSettings = (rpos + fileLen < len) &&
+                   (buf[rpos + fileLen] & BULK_SCN_DETAILS_WANT_SETTINGS);
+    if (bulkSenderBusy(&udpServer.bulkSend[clientIdx])) return;
+
+    blob = (uint8_t *)malloc(BULK_SCN_DETAILS_BLOB_MAX);
+    if (blob == NULL) return;
+    if (wantSettings) {
+        int sGot;
+
+        got = serverSimScenarioDetails(sim, file, blob + 3, SCN_DETAILS_MAX);
+        if (got >= 0) {
+            sGot = serverSimScenarioSettingsDecl(
+                sim, file, blob + 3 + got, SCN_SETTINGS_BLOB_MAX);
+            if (sGot < 0) sGot = 0;
+            blob[0] = BULK_SCN_DETAILS_FOUND_V2;
+            blob[1] = (uint8_t)((unsigned)got >> 8);
+            blob[2] = (uint8_t)((unsigned)got & 0xFFu);
+            got     = 2 + got + sGot;
+        } else {
+            blob[0] = BULK_SCN_DETAILS_NOT_FOUND;
+            got     = 0;
+        }
+    } else {
+        got = serverSimScenarioDetails(sim, file, blob + 1, SCN_DETAILS_MAX);
+        blob[0] = (got >= 0) ? BULK_SCN_DETAILS_FOUND
+                             : BULK_SCN_DETAILS_NOT_FOUND;
+        if (got < 0) got = 0;
+    }
+
+    memset(&sh, 0, sizeof(sh));
+    sh.kind      = BULK_KIND_SCENARIO_DETAILS;
+    sh.gen       = ++s_detailsSeq;
+    sh.totalSize = (uint32_t)(1 + got);
+    sh.pathLen   = fileLen;
+    memcpy(sh.path, file, (size_t)fileLen + 1);
+    (void)bulkSenderBegin(&udpServer.bulkSend[clientIdx], &sh, blob,
+                          sh.totalSize);
+    free(blob);   /* bulkSenderBegin copied it into its own buffer */
+}
+
+static void handleLobbyBrainDocsReq(ServerSim *sim, uint8_t *buf, int len,
+                                    struct sockaddr_in *fromAddr) {
+    /* [header 8] [brainIdx 1]. One brain's commands.txt, for the lobby's
+     * docs dialog, streamed back compressed over CHANNEL_BULK behind a
+     * BULK_KIND_BRAIN_DOCS stream header, or a not-found answer the client
+     * can stop waiting on.
+     *
+     * A spectator is answered too, but only while it watches the live
+     * lobby: it reads the same team chat a player does, and its bulk stream
+     * is then free of the delayed feed, which has it the rest of the time.
+     *
+     * A request that finds the bulk stream busy (the join map download, a
+     * preview) is dropped rather than answered, the same as a script
+     * details request: the client asks again when no answer comes, and a
+     * busy server is never made to hold a queue. */
+    int              clientIdx = serverFindClient(fromAddr);
+    int              brainIdx;
+    uint32_t         gen  = 0;
+    uint16_t         rawLen = 0, zLen = 0;
+    const uint8_t   *z    = NULL;
+    uint8_t         *blob;
+    uint32_t         blobLen;
+    BulkSender      *sender;
+    BulkStreamHeader sh;
+
+    if (!serverSimIsLobbyEnabled(sim) || len < PACKET_HEADER_SIZE + 1) return;
+    if (clientIdx >= 0) {
+        sender = &udpServer.bulkSend[clientIdx];
+    } else {
+        int sIdx = serverFindSpectator(fromAddr);
+        if (sIdx < 0 || !udpServer.spectators[sIdx].live) return;
+        sender = &udpServer.spectators[sIdx].bulkSend;
+    }
+    if (bulkSenderBusy(sender)) return;
+    brainIdx = buf[PACKET_HEADER_SIZE];
+
+    blob = (uint8_t *)malloc(BULK_BRAIN_DOCS_BLOB_MAX);
+    if (blob == NULL) return;
+    if (serverSimGetBrainDocs(sim, brainIdx, &gen, &rawLen, &z, &zLen) &&
+        (size_t)zLen + 3 <= BULK_BRAIN_DOCS_BLOB_MAX) {
+        blob[0] = BULK_BRAIN_DOCS_FOUND;
+        blob[1] = (uint8_t)(rawLen >> 8);
+        blob[2] = (uint8_t)(rawLen & 0xFFu);
+        memcpy(blob + 3, z, zLen);
+        blobLen = 3u + zLen;
+    } else {
+        blob[0] = BULK_BRAIN_DOCS_NOT_FOUND;
+        blobLen = 1;
+        gen     = 0;
+    }
+
+    memset(&sh, 0, sizeof(sh));
+    sh.kind      = BULK_KIND_BRAIN_DOCS;
+    sh.gen       = gen;
+    sh.totalSize = blobLen;
+    sh.pathLen   = (uint8_t)SDL_snprintf(sh.path, sizeof(sh.path), "%d",
+                                         brainIdx);
+    (void)bulkSenderBegin(sender, &sh, blob, blobLen);
+    free(blob);   /* bulkSenderBegin copied it into its own buffer */
+}
+
+static void handleLobbyBotPoolReq(ServerSim *sim, uint8_t *buf, int len,
+                                  struct sockaddr_in *fromAddr) {
+    /* [header 8]. The server's bot-name catalogue, streamed back over
+     * CHANNEL_BULK behind a BULK_KIND_BOT_POOL stream header, or an answer
+     * that says there is none. Players only: a spectator adds no bots.
+     *
+     * A request that finds this client's bulk stream busy is dropped rather
+     * than answered, the same as a brain docs request: the client asks
+     * again when no answer comes. */
+    int              clientIdx = serverFindClient(fromAddr);
+    const uint8_t   *cat = NULL;
+    uint32_t         catLen = 0, id = 0;
+    uint8_t          none = BULK_BOT_POOL_NONE;
+    uint8_t         *blob;
+    uint32_t         blobLen;
+    BulkStreamHeader sh;
+
+    (void)buf;
+    if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+        len < PACKET_HEADER_SIZE) return;
+    if (bulkSenderBusy(&udpServer.bulkSend[clientIdx])) return;
+
+    /* Size the answer to the catalogue held, usually a few kilobytes, rather
+     * than to the cap. The none answer is one byte and needs no allocation. */
+    if (serverSimGetBotPoolBlob(sim, &cat, &catLen, &id) &&
+        catLen <= LOBBY_BOT_CATALOG_WIRE_MAX) {
+        blob = (uint8_t *)malloc(1u + catLen);
+        if (blob == NULL) return;
+        blob[0] = BULK_BOT_POOL_FOUND;
+        memcpy(blob + 1, cat, catLen);
+        blobLen = 1u + catLen;
+    } else {
+        blob    = &none;
+        blobLen = 1;
+        id      = 0;
+    }
+
+    memset(&sh, 0, sizeof(sh));
+    sh.kind      = BULK_KIND_BOT_POOL;
+    sh.gen       = id;
+    sh.totalSize = blobLen;
+    sh.pathLen   = 0;
+    (void)bulkSenderBegin(&udpServer.bulkSend[clientIdx], &sh, blob, blobLen);
+    if (blob != &none) {
+        free(blob);   /* bulkSenderBegin copied it into its own buffer */
+    }
+}
+
+/* Answer a PACKET_LOBBY_SCRIPT_FETCH_REQ on this client's CHANNEL_BULK as a
+ * BULK_KIND_SCRIPT_PACKAGE blob: [status 1] then bytes, which only a
+ * BULK_SCRIPT_FOUND answer carries. gen echoes the request's reqSeq and the
+ * path is the name it asked for. */
+static void serverSendScriptPackage(int clientIdx, uint32_t reqSeq,
+                                    const char *file, int fileLen,
+                                    uint8_t status, const uint8_t *bytes,
+                                    uint32_t len) {
+    BulkStreamHeader sh;
+    uint8_t         *blob;
+
+    blob = (uint8_t *)malloc((size_t)len + 1);
+    if (blob == NULL) return;
+    blob[0] = status;
+    if (len > 0) memcpy(blob + 1, bytes, len);
+
+    memset(&sh, 0, sizeof(sh));
+    sh.kind      = BULK_KIND_SCRIPT_PACKAGE;
+    sh.gen       = reqSeq;
+    sh.totalSize = len + 1;
+    sh.pathLen   = (uint8_t)fileLen;
+    memcpy(sh.path, file, (size_t)fileLen + 1);
+    (void)bulkSenderBegin(&udpServer.bulkSend[clientIdx], &sh, blob,
+                          sh.totalSize);
+    free(blob);   /* bulkSenderBegin copied it into its own buffer */
+}
+
+static void handleLobbyScriptFetchReq(ServerSim *sim, uint8_t *buf, int len,
+                                      struct sockaddr_in *fromAddr) {
+    /* [header 8] [reqSeq 4 BE] [fileLen 1] [file N]. A copy of one of the
+     * server's script files, for a player to keep, streamed back over
+     * CHANNEL_BULK behind a BULK_KIND_SCRIPT_PACKAGE stream header. Every
+     * refusal past the drops below is answered with a status byte, so the
+     * client has something to stop waiting on.
+     *
+     * Players only. A spectator's bulk sender carries the delayed feed it
+     * connected for, and an address that is neither has no session to
+     * answer. A request that finds this client's bulk stream busy is dropped
+     * rather than answered, since the answer would queue behind the same
+     * busy sender; the client asks again when no answer comes. */
+    int                    clientIdx = serverFindClient(fromAddr);
+    int                    rpos      = PACKET_HEADER_SIZE;
+    uint32_t               reqSeq;
+    int                    fileLen;
+    char                   file[BULK_PATH_MAX + 1];
+    uint8_t               *bytes    = NULL;
+    uint32_t               bytesLen = 0;
+    ServerScriptReadResult rr;
+    uint8_t                status;
+
+    if (clientIdx < 0) return;
+    if (len < PACKET_HEADER_SIZE + 4 + 1) return;
+    reqSeq  = unpackU32(buf + rpos);
+    rpos   += 4;
+    fileLen = buf[rpos++];
+    if (fileLen == 0 || fileLen > BULK_PATH_MAX || rpos + fileLen > len) {
+        return;
+    }
+    memcpy(file, buf + rpos, (size_t)fileLen);
+    file[fileLen] = '\0';
+    /* A name with a NUL inside it is not a name any listing could hold. */
+    if (strlen(file) != (size_t)fileLen) return;
+    if (!serverSimIsLobbyEnabled(sim) ||
+        serverSimGetState(sim) != serverStateLobby) {
+        return;
+    }
+    if (bulkSenderBusy(&udpServer.bulkSend[clientIdx])) return;
+
+    /* A request inside the cooldown is answered, unlike the list requests
+     * the cooldown drops, and does not restart it. */
+    if (udpServer.clientReqCooldownTicks[clientIdx] > 0) {
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+            "script copy of %s for client %d refused: asked too soon",
+            file, clientIdx);
+        serverSendScriptPackage(clientIdx, reqSeq, file, fileLen,
+                                BULK_SCRIPT_BUSY, NULL, 0);
+        return;
+    }
+    udpServer.clientReqCooldownTicks[clientIdx] = LOBBY_REQ_COOLDOWN_TICKS;
+
+    if (!serverSimGetScriptSharing(sim)) {
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+            "script copy of %s for client %d refused: sharing is off",
+            file, clientIdx);
+        serverSendScriptPackage(clientIdx, reqSeq, file, fileLen,
+                                BULK_SCRIPT_DISABLED, NULL, 0);
+        return;
+    }
+
+    rr = serverSimScriptFileRead(sim, file, &bytes, &bytesLen);
+    switch (rr) {
+    case SERVER_SCRIPT_READ_FOUND:
+        status = BULK_SCRIPT_FOUND;
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+            "script copy of %s for client %d: %u bytes", file, clientIdx,
+            (unsigned)bytesLen);
+        break;
+    case SERVER_SCRIPT_READ_DISABLED:
+        status = BULK_SCRIPT_DISABLED;
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+            "script copy of %s for client %d refused: scripts are off",
+            file, clientIdx);
+        break;
+    case SERVER_SCRIPT_READ_TOO_LARGE:
+        status = BULK_SCRIPT_TOO_LARGE;
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+            "script copy of %s for client %d refused: too large",
+            file, clientIdx);
+        break;
+    case SERVER_SCRIPT_READ_NOT_FOUND:
+    default:
+        status = BULK_SCRIPT_NOT_FOUND;
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+            "script copy of %s for client %d refused: not found",
+            file, clientIdx);
+        break;
+    }
+    if (status != BULK_SCRIPT_FOUND) {
+        free(bytes);
+        bytes    = NULL;
+        bytesLen = 0;
+    }
+    serverSendScriptPackage(clientIdx, reqSeq, file, fileLen, status, bytes,
+                            bytesLen);
+    free(bytes);
 }
 
 static void handleRoundLogReq(ServerSim *sim, uint8_t *buf, int len,
@@ -1265,6 +1800,9 @@ void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         case PACKET_LOBBY_MAP_LIST_REQ:
             handleLobbyMapListReq(sim, buf, len, fromAddr);
             break;
+        case PACKET_LOBBY_SCENARIO_LIST_REQ:
+            handleLobbyScenarioListReq(sim, buf, len, fromAddr);
+            break;
         case PACKET_LOBBY_MAP_USE_LOCAL:
             handleLobbyMapUseLocal(sim, buf, len, fromAddr);
             break;
@@ -1276,6 +1814,18 @@ void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         case PACKET_LOBBY_MAP_PREVIEW_REQ:
             handleLobbyMapPreviewReq(sim, buf, len, fromAddr);
+            break;
+        case PACKET_LOBBY_SCENARIO_DETAILS_REQ:
+            handleLobbyScenarioDetailsReq(sim, buf, len, fromAddr);
+            break;
+        case PACKET_LOBBY_BRAIN_DOCS_REQ:
+            handleLobbyBrainDocsReq(sim, buf, len, fromAddr);
+            break;
+        case PACKET_LOBBY_BOT_POOL_REQ:
+            handleLobbyBotPoolReq(sim, buf, len, fromAddr);
+            break;
+        case PACKET_LOBBY_SCRIPT_FETCH_REQ:
+            handleLobbyScriptFetchReq(sim, buf, len, fromAddr);
             break;
         case PACKET_ROUND_LOG_REQ:
             handleRoundLogReq(sim, buf, len, fromAddr);

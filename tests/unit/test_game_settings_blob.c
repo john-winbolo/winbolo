@@ -88,6 +88,9 @@ int run_game_settings_blob(void) {
                   (unsigned)got.lobbyLocks, (unsigned)wantLocks);
     UT_ASSERT_MSG(got.smartPingsOff,
                   "decoded smartPingsOff false, want true");
+    /* The sim starts with positional sound off, so bit 1 is clear. */
+    UT_ASSERT_MSG(!got.positionalSound,
+                  "decoded positionalSound true with the setting off");
 
     /* Smart pings back on: the bit clears and the mask is untouched. */
     serverSimSetSmartPingsOff(sim, false);
@@ -101,6 +104,24 @@ int run_game_settings_blob(void) {
     UT_ASSERT_MSG(got.lobbyLocks == wantLocks,
                   "locks moved with the pings flag: 0x%08X",
                   (unsigned)got.lobbyLocks);
+
+    /* Positional sound on: bit 1 of byte 16, and nothing else moves. The
+     * reader's own copy of the bit has to be the writer's. */
+    UT_ASSERT(LV_GAME_SETTINGS_FLAG_POSITIONAL_SOUND ==
+              LOG_SETTINGS_FLAG_POSITIONAL_SOUND);
+    serverSimSetPositionalSound(sim, true);
+    serverDedicatedLogBuildSettings(sim, blob);
+    len = (unsigned char)blob[0];
+    payload = (const unsigned char *)blob + 1;
+    UT_ASSERT_MSG((payload[16] & LOG_SETTINGS_FLAG_POSITIONAL_SOUND) != 0,
+                  "settings flags at 16 = %02X, positional-sound bit clear",
+                  payload[16]);
+    memset(&got, 0, sizeof(got));
+    UT_ASSERT_MSG(lvGameSettingsDecode(payload, len, &got), "decode failed");
+    UT_ASSERT_MSG(got.positionalSound,
+                  "decoded positionalSound false, want true");
+    UT_ASSERT_MSG(!got.smartPingsOff,
+                  "the positional-sound bit read as smart pings off");
 
     serverSimDestroy(sim);
 
@@ -131,6 +152,9 @@ int run_game_settings_blob(void) {
         UT_ASSERT_MSG(!old.smartPingsOff,
                       "short payload read smart pings as banned; absent means "
                       "allowed");
+        UT_ASSERT_MSG(!old.positionalSound,
+                      "short payload read positional sound as on; absent "
+                      "means off");
         /* The fields it does carry still land where they always did. */
         UT_ASSERT_MSG(old.gameType == 3 && old.aiType == 2 &&
                           old.timeMinutes == 30 && old.classicMode,

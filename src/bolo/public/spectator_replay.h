@@ -51,7 +51,7 @@ typedef struct {
 int specReplayWriteHeader(const SpecReplayHeaderInfo *info, BYTE *out, int cap);
 
 /* Translate a ring keyframe payload [u32 bodyLen BE][body][u32 ctrlLen BE][ctrl]
-   into [LOG_EVENT_SNAPSHOT][body]. Sets *ctrl/*ctrlLen to the control-snapshot
+   into [LOG_EVENT_SNAPSHOT][body]. Sets *ctrl / *ctrlLen to the control-snapshot
    slice within payload (NOT written to out — the caller hands it to the HUD).
    Returns bytes written to out, or -1 on malformed input / overflow. */
 int specReplayTranslateKeyframe(const BYTE *payload, int payloadLen,

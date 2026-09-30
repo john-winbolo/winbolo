@@ -29,6 +29,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <zlib.h>
 #include "global.h"
 #include "bolo_map.h"
 #include "../common/wb_log.h"
@@ -57,8 +58,9 @@ void mapSetChangeCallback(MapChangeCallback cb) {
     mapChangeCb = cb;
 }
 
-int lzwdecoding(unsigned char *src, unsigned char *dest, int len, int destCap);
-int lzwencoding(unsigned char *src, unsigned char *dest, int len, int destCap);
+/* The bases, pillboxes and starts that lead a compressed map, ahead of the
+ * terrain. */
+#define MAP_COMPRESSED_HEADER_LEN (SIZEOF_BASES + SIZEOF_PILLS + SIZEOF_STARTS)
 
 /*********************************************************
 *NAME:          mapCreate
@@ -580,6 +582,13 @@ static bool mapReadStream(MapReader *r, map *value, pillboxes *pb, bases *bs, st
 
   if (returnValue == TRUE) {
     mapCenter(value, pb, bs, ss);
+    /* After the shift, so the test is against the border the game plays
+     * with. mapLoadCompressedMap repeats it, so a client reading this map
+     * from the wire keeps the same list the server has. Before the terrain
+     * fixes below, which skip an item that is off the map. */
+    pillsRemoveBorderPills(pb);
+    basesRemoveBorderBases(bs);
+    startsRemoveBorderStarts(ss);
   }
 
   /* Ensure terrain under bases is ROAD */
@@ -675,10 +684,15 @@ bool mapReadFromMemory(const BYTE *data, int len, map *value, pillboxes *pb, bas
 *  xValue - The x co-ordinate
 *  yValue - The y co-ordinate 
 *********************************************************/
+bool mapPosInBounds(BYTE xValue, BYTE yValue) {
+  return (xValue > MAP_MINE_EDGE_LEFT && xValue < MAP_MINE_EDGE_RIGHT &&
+          yValue > MAP_MINE_EDGE_TOP && yValue < MAP_MINE_EDGE_BOTTOM);
+}
+
 BYTE mapGetPos(map *value, BYTE xValue, BYTE yValue) {
   BYTE returnValue = DEEP_SEA; /* Value to return */
 
-  if (xValue > MAP_MINE_EDGE_LEFT && xValue < MAP_MINE_EDGE_RIGHT && yValue > MAP_MINE_EDGE_TOP && yValue < MAP_MINE_EDGE_BOTTOM) {
+  if (mapPosInBounds(xValue, yValue)) {
     returnValue = (*value)->mapItem[xValue][yValue];
   }
 
@@ -800,18 +814,21 @@ BYTE mapGetManSpeed(GameSim *sim, map *value, pillboxes *pb, bases *bs, BYTE xVa
   BYTE terrain;     /* The current Terrain */
   bool done;        /* Are we done ? */
 
-  returnValue = MAP_MANSPEED_TDEEPSEA;
+  returnValue = (BYTE) sim->rules.man_speed_deep_sea;
   done = FALSE;
   if ((pillsExistPos(pb,xValue,yValue)) == TRUE) {
     /* Check for PB */
     if (pillsDeadPos(pb, xValue, yValue) == FALSE) {
+      /* A live pillbox keeps its constant, the way it does in mapGetSpeed:
+         what stops a man walking onto one is the square being occupied, not
+         the speed being zero. */
       returnValue = MAP_MANSPEED_TPILLBOX;
       done = TRUE;
     }
   } else if ((basesExistPos(bs,xValue,yValue)) == TRUE) {
     /* Check for owned base */
     if (basesCantDrive(sim, xValue, yValue, playerNum) == FALSE) {
-      returnValue = MAP_MANSPEED_TREFBASE;
+      returnValue = (BYTE) sim->rules.man_speed_refuel_base;
     } else {
       returnValue = 0;
     }
@@ -824,37 +841,37 @@ BYTE mapGetManSpeed(GameSim *sim, map *value, pillboxes *pb, bases *bs, BYTE xVa
     }
     switch (terrain) {
     case DEEP_SEA:
-      returnValue = MAP_MANSPEED_TDEEPSEA;
+      returnValue = (BYTE) sim->rules.man_speed_deep_sea;
       break;
     case BUILDING:
       returnValue = MAP_MANSPEED_TBUILDING;
       break;
     case RIVER:
-      returnValue = MAP_MANSPEED_TRIVER;
+      returnValue = (BYTE) sim->rules.man_speed_river;
       break;
     case SWAMP:
-      returnValue = MAP_MANSPEED_TSWAMP;
+      returnValue = (BYTE) sim->rules.man_speed_swamp;
       break;
     case CRATER:
-      returnValue = MAP_MANSPEED_TCRATER;
+      returnValue = (BYTE) sim->rules.man_speed_crater;
       break;
     case ROAD:
-      returnValue = MAP_MANSPEED_TROAD;
+      returnValue = (BYTE) sim->rules.man_speed_road;
       break;
     case FOREST:
-      returnValue = MAP_MANSPEED_TFOREST;
+      returnValue = (BYTE) sim->rules.man_speed_forest;
       break;
     case RUBBLE:
-      returnValue = MAP_MANSPEED_TRUBBLE;
+      returnValue = (BYTE) sim->rules.man_speed_rubble;
       break;
     case GRASS:
-      returnValue = MAP_MANSPEED_TGRASS;
+      returnValue = (BYTE) sim->rules.man_speed_grass;
       break;
     case HALFBUILDING:
       returnValue = MAP_MANSPEED_THALFBUILDING;
       break;
     case BOAT:
-      returnValue = MAP_MANSPEED_TBOAT;
+      returnValue = (BYTE) sim->rules.man_speed_boat;
       break;
     }
   }
@@ -1529,6 +1546,9 @@ int32_t mapPrepareRun(map *value, bmapRun *run, BYTE *xPos, BYTE *yPos) {
 *  Saves a map to a compressed map structure. Returns 
 *  compressed data length
 *
+*  The blob is one zlib stream over the bases, pillbox and
+*  starts structs followed by the terrain array.
+*
 *ARGUMENTS:
 *  value     - Pointer to the map data structure
 *  ss        - Pointer to the starts structure
@@ -1539,47 +1559,69 @@ int32_t mapPrepareRun(map *value, bmapRun *run, BYTE *xPos, BYTE *yPos) {
 *              it; a map that does not fit returns 0 instead.
 *********************************************************/
 int mapSaveCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE *output, int outputCap) {
+  BYTE header[MAP_COMPRESSED_HEADER_LEN]; /* bases | pillboxes | starts */
+  z_stream z;
+  int ret;
   int returnValue; /* Value to return */
-  int headerLen;   /* Fixed-size part written before the terrain */
-  int mapLen;      /* Encoded terrain length, or -1 if it did not fit */
-  BYTE *ptr;       /* Data pointer    */
-  BYTE *ptr2;
 
-  returnValue = 0;
-
-  /* Refuse before the first memcpy rather than after: the three struct copies
-   * below are fixed size and write regardless of how small output is. */
-  headerLen = SIZEOF_BASES + SIZEOF_PILLS + SIZEOF_STARTS;
-  if (output == NULL || outputCap < headerLen) {
+  if (output == NULL || outputCap <= 0) {
     return 0;
   }
 
-  /* Bases — raw struct copy to match basesSetBaseCompressData on load side */
-  ptr = output;
-  memcpy(ptr, &(**bs), SIZEOF_BASES);
-  returnValue += SIZEOF_BASES;
-  ptr += SIZEOF_BASES;
+  /* Raw struct copies, to match the *SetCompressData calls on the load side */
+  memcpy(header, &(**bs), SIZEOF_BASES);
+  memcpy(header + SIZEOF_BASES, &(**pb), SIZEOF_PILLS);
+  memcpy(header + SIZEOF_BASES + SIZEOF_PILLS, &(**ss), SIZEOF_STARTS);
 
-  /* Pillboxes — raw struct copy to match pillsSetPillCompressData on load side */
-  memcpy(ptr, &(**pb), SIZEOF_PILLS);
-  returnValue += SIZEOF_PILLS;
-  ptr += SIZEOF_PILLS;
-
-  /* Starts — raw struct copy to match startsSetStartCompressData on load side */
-  memcpy(ptr, &(**ss), SIZEOF_STARTS);
-  returnValue += SIZEOF_STARTS;
-  ptr += SIZEOF_STARTS;
-
-  /* Map. An incompressible map encodes larger than its input, so the encoder
-   * is given what is left of the buffer and reports rather than overruns. */
-  ptr2 = (BYTE *) (*value)->mapItem;
-  mapLen = lzwencoding(ptr2, ptr, sizeof((*value)->mapItem),
-                       outputCap - headerLen);
-  if (mapLen < 0) {
+  memset(&z, 0, sizeof(z));
+  if (deflateInit(&z, Z_DEFAULT_COMPRESSION) != Z_OK) {
     return 0;
   }
-  returnValue += mapLen;
+  /* zlib writes no further than avail_out, so a map that does not fit ends
+   * the stream short of Z_STREAM_END and is refused below. */
+  z.next_out = output;
+  z.avail_out = (uInt) outputCap;
+  z.next_in = header;
+  z.avail_in = (uInt) sizeof(header);
+  ret = deflate(&z, Z_NO_FLUSH);
+  if (ret == Z_OK) {
+    z.next_in = (Bytef *) (*value)->mapItem;
+    z.avail_in = (uInt) sizeof((*value)->mapItem);
+    ret = deflate(&z, Z_FINISH);
+  }
+  returnValue = (ret == Z_STREAM_END) ? (int) z.total_out : 0;
+  deflateEnd(&z);
   return returnValue;
+}
+
+/*********************************************************
+*NAME:          mapInflateInto
+*AUTHOR:        John Morrison
+*CREATION DATE: 29/9/26
+*LAST MODIFIED: 29/9/26
+*PURPOSE:
+*  Inflates the next destLen bytes of a compressed map
+*  into dest. Returns the zlib result, or Z_DATA_ERROR if
+*  the stream ended or ran out before dest was full.
+*
+*ARGUMENTS:
+*  z       - The inflate stream, positioned by the last call
+*  dest    - Where the bytes go
+*  destLen - How many bytes dest needs
+*********************************************************/
+static int mapInflateInto(z_stream *z, BYTE *dest, uInt destLen) {
+  int ret;
+
+  z->next_out = dest;
+  z->avail_out = destLen;
+  ret = inflate(z, Z_SYNC_FLUSH);
+  if (ret != Z_OK && ret != Z_STREAM_END) {
+    return ret;
+  }
+  if (z->avail_out != 0) {
+    return Z_DATA_ERROR;
+  }
+  return ret;
 }
 
 
@@ -1601,10 +1643,11 @@ int mapSaveCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE 
 *  inputLen - Size of the buffer
 *********************************************************/
 bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE *input, int inputLen) {
+  BYTE header[MAP_COMPRESSED_HEADER_LEN]; /* bases | pillboxes | starts */
+  BYTE spare;      /* Catches any byte the stream holds past the terrain */
+  z_stream z;
+  int ret;
   bool returnValue; /* Value to return */
-  BYTE *ptr;       /* Data pointer    */
-  int mapSize;
-  BYTE *ptr2;
 
   returnValue = TRUE;
 
@@ -1627,31 +1670,27 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
     return FALSE;
   }
 
-  /* Reject input too short to hold the fixed header before any struct read:
-   * basesSetBaseCompressData/pillsSetPillCompressData/startsSetStartCompressData
-   * each memcpy their full SIZEOF_* below regardless of inputLen, so a truncated
-   * or malformed blob would over-read past the buffer. Every legitimate caller
-   * passes a full compressed map; only short/garbage input is rejected here. */
-  if (input == NULL ||
-      inputLen < (int)(SIZEOF_BASES + SIZEOF_PILLS + SIZEOF_STARTS)) {
+  if (input == NULL || inputLen <= 0) {
     return FALSE;
   }
 
-  /* Bases */
-  ptr = input;
-  basesSetBaseCompressData(bs, ptr, SIZEOF_BASES);
-  inputLen -= SIZEOF_BASES;
-  ptr += SIZEOF_BASES;
+  memset(&z, 0, sizeof(z));
+  if (inflateInit(&z) != Z_OK) {
+    return FALSE;
+  }
+  z.next_in = input;
+  z.avail_in = (uInt) inputLen;
 
-  /* Pillboxes */
-  pillsSetPillCompressData(pb, ptr, SIZEOF_PILLS);
-  inputLen -= SIZEOF_PILLS;
-  ptr += SIZEOF_PILLS;
+  /* The struct region comes out whole or the map is refused before anything
+   * is written: the setters below memcpy their full SIZEOF_* regardless. */
+  if (mapInflateInto(&z, header, (uInt) sizeof(header)) != Z_OK) {
+    inflateEnd(&z);
+    return FALSE;
+  }
 
-  /* Starts */
-  startsSetStartCompressData(ss, ptr, SIZEOF_STARTS);
-  inputLen -= SIZEOF_STARTS;
-  ptr += SIZEOF_STARTS;
+  basesSetBaseCompressData(bs, header, SIZEOF_BASES);
+  pillsSetPillCompressData(pb, header + SIZEOF_BASES, SIZEOF_PILLS);
+  startsSetStartCompressData(ss, header + SIZEOF_BASES + SIZEOF_PILLS, SIZEOF_STARTS);
 
   /* The three setters above memcpy the wire structs wholesale, so none of the
    * per-field clamps that basesSetBase/pillsSetPill/startsSetStart apply on
@@ -1666,13 +1705,30 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
   basesValidate(bs);
   pillsValidate(pb);
   startsValidate(ss);
+  /* The blob carries no live flags, so the setters above have put every
+   * pillbox, base and start back on the map. One in the mined border comes
+   * off again here, the same as mapReadStream takes it off a map file. */
+  pillsRemoveBorderPills(pb);
+  basesRemoveBorderBases(bs);
+  startsRemoveBorderStarts(ss);
 
-  /* Map */
-  ptr2 = (BYTE *) (*value)->mapItem;
-  mapSize = lzwdecoding(ptr, ptr2, inputLen, (int)sizeof((*value)->mapItem));
-  if (mapSize != (int)sizeof((*value)->mapItem)) {
+  /* Map. The terrain has to fill the array exactly and end the stream: the
+   * one spare byte of room is how a stream carrying more than that is told
+   * apart from one that has only its end marker left to read. Bytes after
+   * the end of the stream are refused too. */
+  ret = mapInflateInto(&z, (BYTE *) (*value)->mapItem, (uInt) sizeof((*value)->mapItem));
+  if (ret == Z_OK) {
+    z.next_out = &spare;
+    z.avail_out = 1;
+    ret = inflate(&z, Z_FINISH);
+    if (z.avail_out != 1) {
+      ret = Z_DATA_ERROR;
+    }
+  }
+  if (ret != Z_STREAM_END || z.avail_in != 0) {
     returnValue = FALSE;
   }
+  inflateEnd(&z);
 
   /* Ensure terrain under bases is ROAD */
   if (returnValue == TRUE) {
@@ -1965,5 +2021,87 @@ bool boloMapValidate(const char *path, char *outMapName, size_t outMapNameSize) 
   mapDestroy(&scratchMap);
 
   return ok;
+}
+
+/* Step the cursor over n bytes, or say there are not n bytes left. Every
+ * move through the map below goes through here, so nothing is read that the
+ * buffer does not hold. */
+static bool mapBodyTake(size_t len, size_t *pos, size_t n) {
+  if (*pos > len || n > len - *pos) {
+    return false;
+  }
+  *pos += n;
+  return true;
+}
+
+bool boloMapBodyLength(const unsigned char *data, size_t len, size_t *outLen) {
+  size_t pos;
+  BYTE   numPills;
+  BYTE   numBases;
+  BYTE   numStarts;
+
+  if (outLen == NULL) {
+    return false;
+  }
+  *outLen = 0;
+  if (data == NULL) {
+    return false;
+  }
+
+  /* The preamble: the id, the version byte and the three counts. */
+  pos = 0;
+  if (!mapBodyTake(len, &pos, LENGTH_ID + 4)) {
+    return false;
+  }
+  if (memcmp(data, MAP_HEADER, LENGTH_ID) != 0) {
+    return false;
+  }
+  if (data[LENGTH_ID] != CURRENT_MAP_VERSION) {
+    return false;
+  }
+  numPills  = data[LENGTH_ID + 1];
+  numBases  = data[LENGTH_ID + 2];
+  numStarts = data[LENGTH_ID + 3];
+  /* The same counts mapReadStream refuses a file for. */
+  if (numPills > MAX_PILLS || numBases > MAX_BASES || numStarts > MAX_STARTS) {
+    return false;
+  }
+
+  if (!mapBodyTake(len, &pos, (size_t)numPills * SIZEOFBMAP_PILL_INFO) ||
+      !mapBodyTake(len, &pos, (size_t)numBases * SIZEOFBAMP_BASE_INFO) ||
+      !mapBodyTake(len, &pos, (size_t)numStarts * SIZEOFBMAP_START_INFO)) {
+    return false;
+  }
+
+  /* The runs, until the one that says there are no more. datalen counts its
+   * own four-byte header, so a run's data is datalen - 4 bytes. */
+  for (;;) {
+    BYTE datalen;
+    BYTE y;
+    BYTE startx;
+    BYTE endx;
+    size_t header = pos;
+
+    if (!mapBodyTake(len, &pos, SIZEOFBMAP_RUN_HEADER)) {
+      return false;
+    }
+    datalen = data[header];
+    y       = data[header + 1];
+    startx  = data[header + 2];
+    endx    = data[header + 3];
+
+    if (datalen == SIZEOFBMAP_RUN_HEADER && y == MAP_ARRAY_LAST &&
+        startx == MAP_ARRAY_LAST && endx == MAP_ARRAY_LAST) {
+      *outLen = pos;
+      return true;
+    }
+    if (datalen < SIZEOFBMAP_RUN_HEADER || startx > endx) {
+      return false;
+    }
+    if (!mapBodyTake(len, &pos,
+                     (size_t)(datalen - SIZEOFBMAP_RUN_HEADER))) {
+      return false;
+    }
+  }
 }
 

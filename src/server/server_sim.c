@@ -209,7 +209,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     }
 
     /* No scenario has declared a base game type yet, so a round that turns
-       out to be scripted plays open until a lobby template says otherwise. */
+       out to be scripted plays strict tournament until a lobby template says
+       otherwise. */
     sim->sim.scenarioBaseGame = (gameType)0;
 
     /* "No tutorial progress yet" — memset would leave 0, which (being below
@@ -228,6 +229,15 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
      * them via PACKET_LOBBY_BRAIN_LIST. Cheap one-shot scan of the
      * brains/ tree. */
     brainListScan(&sim->brainList, sim->brainPaths);
+    /* ... and the announce.txt / commands.txt that go with them, read here
+     * ONCE. The send path used to open both files per brain every time it
+     * ran, and it runs inside the sync replay the spectator ring rebuilds on
+     * every lobby keyframe. */
+    serverSimRefreshBrainDocs(sim);
+    /* The bot-name catalogue this server hands out, taken from the pools
+     * loaded now. WinBoloDS loads -botnames or the shipped file after the
+     * sim is made and calls serverSimRefreshBotPools again once it has. */
+    serverSimRefreshBotPools(sim);
 
     sim->startDelay = startDelay;
     sim->gameLength = gameLen;
@@ -241,6 +251,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->snapshotTicks = 0;
     sim->tick = 0;
     sim->roundLogStartTick = ROUND_LOG_START_UNSET;
+    /* No shells in flight toward a three-shot order yet. */
+    memset(sim->shotOrder, 0, sizeof(sim->shotOrder));
     sim->state = serverStateLobby;
     sim->lobbyEnabled = TRUE;
     sim->countdownTicks = 0;
@@ -326,6 +338,10 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
      * are: the field is stored in the negative sense, so the line has to
      * say which way round "false" reads. */
     sim->smartPingsOff  = FALSE;
+    /* And the mods on the pick list compose until a host says otherwise,
+     * written out for the same reason: the field is stored in the negative
+     * sense, so the line has to say which way round "false" reads. */
+    sim->modsOff        = FALSE;
     sim->maxPlayers          = MAX_TANKS;
     sim->maxSpectators       = 0;
     sim->specDelayTicks      = 0;
@@ -361,6 +377,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.callbacks.explosion = serverSimCbExplosion;
     sim->sim.callbacks.tkExplosion = serverSimCbTkExplosion;
     sim->sim.callbacks.shellDeath = serverSimCbShellDeath;
+    sim->sim.callbacks.shellFired = serverSimCbShellFired;
     sim->sim.callbacks.recordDamage = serverSimCbRecordDamage;
     sim->sim.callbacks.recordPlayerAction = serverSimCbRecordPlayerAction;
     sim->sim.callbacks.recordPillPickup = serverSimCbRecordPillPickup;
@@ -376,6 +393,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.callbacks.built = serverSimCbBuilt;
     sim->sim.callbacks.mineLaid = serverSimCbMineLaid;
     sim->sim.callbacks.mineExploded = serverSimCbMineExploded;
+    sim->sim.callbacks.tankHit = serverSimCbTankHit;
     /* The policy queries. Registered on the server alone: a ClientSim leaves
      * them NULL, which is what keeps shared code on the classic branch
      * there. */
@@ -386,6 +404,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.callbacks.canBuild = serverSimCbCanBuild;
     sim->sim.callbacks.canCapture = serverSimCbCanCapture;
     sim->sim.callbacks.canDie = serverSimCbCanDie;
+    sim->sim.callbacks.canHit = serverSimCbCanHit;
+    sim->sim.callbacks.pillDamageScale = serverSimCbPillDamageScale;
     sim->sim.callbacks.ctx = sim;
 
     for (count = 0; count < MAX_TANKS; count++) {
@@ -657,6 +677,11 @@ void serverSimDestroy(ServerSim *sim) {
      * this destroy walk an already-empty bots[] on this call. */
     botManagerDestroy(sim);
 
+    /* The brains' lobby texts, allocated on the first refresh. */
+    serverSimFreeBrainDocs(sim);
+    free(sim->botPoolBlob);
+    sim->botPoolBlob = NULL;
+
     for (count = 0; count < MAX_TANKS; count++) {
         if (sim->sim.tanks[count] != NULL) {
             tankDestroy(&sim->sim, &sim->sim.tanks[count]);
@@ -693,6 +718,10 @@ void serverSimDestroy(ServerSim *sim) {
         sim->trackCap = 0;
         sim->trackLen = 0;
     }
+
+    /* And the scripts.json text beside it. logDestroy above has already
+     * closed any recording that could still write it. */
+    serverSimSetScenarioRecordText(sim, NULL, 0);
 
     /* Free cached map data */
     if (sim->cachedMapData != NULL) {
@@ -829,6 +858,46 @@ void serverSimBuildRoundStatsSummary(ServerSim *sim, RoundStatsSummary *out) {
         strncpy(out->wbnLogKey, serverKey, sizeof(out->wbnLogKey) - 1);
         out->wbnLogKey[sizeof(out->wbnLogKey) - 1] = '\0';
     }
+
+    /* A scenario's own scoreboard, taken from the rows its score op wrote.
+     * Both stores are cleared at round start, so a round with no scenario —
+     * or one whose scenario never scored — leaves hasScenarioScore false and
+     * the recap without a column.
+     *
+     * Player rows are keyed by a 0-based slot and team rows by the team
+     * number (1..MAX_TANKS-1, row 0 naming no team); the summary keeps those
+     * two bases, so a row is copied straight across at its own index, and
+     * each mask carries the store's own valid bit at that same index. The
+     * mask is what tells a reader a row scored zero from a row nobody
+     * scored, which the number alone cannot.
+     *
+     * The op lets every row carry its own label and the recap has one column
+     * to head, so the first label found wins: player rows by ascending slot,
+     * then team rows by ascending team. A scenario that wants a predictable
+     * title gives every row the same one. */
+    for (int slot = 0; slot < MAX_TANKS; slot++) {
+        const ScnScoreRow *row = &sim->scenarioPlayerScores[slot];
+        if (!row->valid) continue;
+        out->scenarioScoreMask |= (uint16_t)(1u << slot);
+        out->scenarioScore[slot] = row->score;
+        if (out->scenarioScoreLabel[0] == '\0' && row->label[0] != '\0') {
+            strncpy(out->scenarioScoreLabel, row->label,
+                    sizeof(out->scenarioScoreLabel) - 1);
+        }
+    }
+    for (int team = 1; team < MAX_TANKS; team++) {
+        const ScnScoreRow *row = &sim->scenarioTeamScores[team];
+        if (!row->valid) continue;
+        out->scenarioTeamScoreMask |= (uint16_t)(1u << team);
+        out->scenarioTeamScore[team] = row->score;
+        if (out->scenarioScoreLabel[0] == '\0' && row->label[0] != '\0') {
+            strncpy(out->scenarioScoreLabel, row->label,
+                    sizeof(out->scenarioScoreLabel) - 1);
+        }
+    }
+    out->scenarioScoreLabel[sizeof(out->scenarioScoreLabel) - 1] = '\0';
+    out->hasScenarioScore =
+        (out->scenarioScoreMask | out->scenarioTeamScoreMask) != 0;
 }
 
 bool serverSimIsRunning(void) {

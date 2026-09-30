@@ -1,0 +1,405 @@
+BOT COMMANDS ARE EXPERIMENTAL AND IN BETA. Expect rough edges and tell us what breaks.
+
+QUICK INFO:
+
+1) SMART PING
+
+   - Smart ping using BOT COMMAND on a pill, tanks, or land tile to command
+     the bot.
+   - Closest bot will respond (closest by ROUTE, and only a bot that is free)
+   - A bot that is working on an order you gave keeps it, and a free bot
+     goes. If no bot is free, the nearest busy bot switches to the new ping
+     (a bot on a decoy hold never does). If none can, one bot says
+     "All bots busy".
+   - Ping a pill, base or tank again to add a second bot, etc. Ping the same
+     open ground again and the bot there just keeps going; if no bot is on
+     that order any more (it died or let it go), one bot is sent again.
+
+Ping "CAUTION" on a target or bot to cancel; on a bot holding nothing it
+retreats it. A ping on an ALLY BOT selects it for your next order.
+
+2) SHOOTING
+
+   - Shoot 3 times in a row to command closest bot to go there for 10 seconds
+     (good for decoys).
+
+All three must run their FULL RANGE onto one open square inside two seconds
+with nothing else of yours fired either side. Only bots within 14 squares of
+YOU hear it, and the 10 seconds start on arrival.
+
+3) CHAT
+
+   - Commands (Ctrl-P by default to turn on pill numbers, Ctrl-B for bases;
+     Cmd-P and Cmd-B on a Mac)
+
+ Examples:
+
+"attack 5" (closest bot attack pill 5)
+
+"bot5 attack pill 5" (specifically only bot named bot5)
+
+"all attack 5" (all bots attack pill 5)
+
+"4 attack closest" (4 bots closest to the pill closest to the sender)
+
+"4 attack 5" (4 bots closest to pill 5 will attack it)
+
+"last attack bob" (last bot previously commanded will attack enemy player
+with bob in its name)
+
+A bot's name may be shortened. "closest" is always a PILLBOX: attack and
+capture look at the ones not ours, defend at ours.
+
+   - Overall strategy:
+
+"focus pills"
+"focus bases"
+"focus off" (back to auto)
+
+4) BOT CONFIRMATIONS
+
+"bot pings on" (ping bot goals)
+"bot chat on" (bots chat their goals)
+
+Both take "off". Pings start ON, chat starts OFF. "bot chat off" silences
+the goal lines only; an answer you are owed still comes back.
+
+NOTE: Bots <= 7 tiles from a human will suicide when attacking a pill (no
+wall blockers built, for brevity).
+
+NOTE: Pillbox repositioning is off when human allies are present. Say
+"repositioning on" to turn it back on.
+
+~~~~~~~~~~~~~~~
+
+More Details:
+
+You can tell GoalHunter bots what to do. There are three ways: a chat line, a
+ping on the map, and three shells on one tile.
+
+
+WHO CAN GIVE AN ORDER
+
+Every player on the bot's team, not only the host and not only the player who
+added the bot. The bot checks the SENDER's team, not the chat channel, so a
+line in team chat and a line in all chat from a team mate both work. A line
+from the other team is ignored, with no answer.
+
+
+CHAT ORDERS
+
+The shape is:  [who] verb [target]
+
+Examples:
+  attack 5             the nearest bot attacks pillbox 5
+  all attack 7         every bot on the team attacks pillbox 7
+  nearby defend 3      every bot within 10 tiles defends pillbox 3
+  socrates attack 5    Socrates attacks pillbox 5, with no auction
+  capture base 2       the nearest bot captures base 2
+  attack bruce         the nearest bot hunts the tank called Bruce
+  retreat              the nearest bot takes cover
+  cancel               release the last order you gave
+
+WHO WORDS
+  (nothing)   one bot: the one with the cheapest route to the target.
+  all         every bot on the team.
+  nearby      every bot within 10 tiles of the target.
+  a number    that many bots, 1 to 16: "3 attack 7". The cheapest routes
+              win, so they are the ones nearest the TARGET. Said about a
+              running order, it adds bots to that one.
+  last        the bot or bots that took YOUR last order, with no auction, as
+              if you had typed their names: "last attack 7". If you have a
+              selection running, that is the set instead. With no order
+              behind you the bot says "no previous order". "last" cannot
+              share the line with a name: that is "last or a name, not both".
+  a bot name  that bot, directly. Several names work: socrates plato attack 5.
+
+VERBS
+  attack      a live enemy pillbox, or an ENEMY tank by name. A team mate's
+              name is turned down: "Socrates is on our side".
+  capture     a dead pillbox, or an enemy or neutral base.
+  sweep       the same as capture.
+  defend      one of YOUR pillboxes. It takes a PILL NUMBER only.
+              "defend base 3" is turned down: "defend takes a pill".
+  retreat     cancel and take cover at once.
+  cancel      release an order. See below.
+  decoy       not built yet. The bot answers "decoy: not yet".
+
+TARGETS
+  A bare number is a pillbox: "attack 5" is pillbox 5.
+  A base needs the word: "capture base 2".
+  "pill 5", "pillbox 5" and "pills 5" all mean the same.
+  A tank is named, not numbered: "attack bruce".
+  closest     the pillbox nearest YOU, not the one nearest the bot.
+              "nearest" is the same word. "closest base" is turned down, and
+              a bot that cannot see you says "can't see you".
+
+CANCEL
+  A cancelled order is OVER. No other bot picks it up, and neither does the
+  one you cancelled: say it again if you want it done.
+  cancel            release the last order you gave.
+  cancel all        clear every live order on the team.
+  cancel <bot>      release that bot, as in "cancel socrates".
+  Focus and repositioning are settings, not orders. "cancel all" leaves them.
+
+SELECT BY NAME
+  One or more bot names ALONE, with no verb, select those bots:
+    socrates
+    socrates plato
+  Each one answers "Awaiting command". Your NEXT order goes to all of them,
+  with no auction. The selection ends after about 10 seconds, when you give
+  the order, or when you say "nevermind" (or "never mind"). A bot that is busy
+  answers "Busy" and is not selected.
+
+NAME MATCHING
+  Names are not case sensitive. A shortening works if it is not shared: "soc"
+  finds Socrates. Any word of a two-word name works: "bruce" finds Bruce Lee.
+  If two bots both fit, the bot asks "Socrates or Seneca?" and does nothing.
+  It never guesses.
+  A TYPO within two letters works too -- "sokrates attack 5" -- but only in a
+  line that is already an order: there has to be a verb in it, and every word
+  in front of that verb has to be a name or a who word. A typo'd name on its
+  own is ordinary talk and gets no answer, because otherwise a sentence like
+  "cause we should push" reads as an order to the bot called Case.
+  VERBS are matched exactly, never by typo. "attak pill 5" is ordinary talk.
+
+TEAM SETTINGS
+  focus bases    every PILLBOX goal costs the team more, so bases win.
+  focus pills    every BASE goal costs more, so pillboxes win.
+  focus off      clear it. "take bases" and "take pills" say the same thing.
+  reposition on  let the bots move their own pillboxes. It is OFF while a
+                 human is on the team. "repositioning on" says the same.
+  reposition off stop them moving pillboxes again. "repositioning off" too.
+  bot pings on   a bot puts an ATTACK marker on the map every time it starts
+                 attacking a pillbox or a tank, so you can see what the bots
+                 are going for without reading chat. "botpings on" too.
+                 This is how a game starts.
+  bot pings off  stop the attack markers.
+  bot chat on    the bots say their goals: "Got it! attack_pill #5".
+                 "botchat" is the same word.
+  bot chat off   stop those lines. Only the GOAL lines go quiet. This is
+                 how a game starts.
+  "bot pings" and "bot chat" go back to these starting values every round.
+  These settings take a subject and ignore it: they are team-wide, so
+  "socrates focus bases" and "last repositioning on" do what the bare lines do.
+  help           the bots say a short version of this page in chat.
+  A setting holds for the whole game, or until you change it.
+
+
+STANDING BESIDE A BOT
+
+A bot attacking a pillbox normally builds a wall in front of it first, which
+takes trees and time. A bot with a HUMAN team-mate within 7 tiles skips that
+and goes straight in. Only the walls change, and a BOT team-mate does not
+count: two bots together keep building.
+
+
+PINGS
+
+Use the BOT COMMAND ping (the purple one in the ping menu). What the bot does
+depends on what is under the tile you ping:
+
+  a live enemy pillbox      attack it
+  a dead pillbox            capture it
+  an enemy or neutral base  capture it
+  one of your pillboxes     defend it
+  an enemy tank             hunt that tank
+  open ground               drive there and hold
+  one of your own bots      select that bot
+  your own base             nothing at all
+
+TILE RULE
+  A PILLBOX OR A BASE HAS TO BE PINGED EXACTLY. They never move, so put the
+  marker right on the tile. A ping one tile off a pillbox is not that pillbox:
+  it is open ground, which means "go there". That is how you send a bot to a
+  square beside a pill.
+  TANKS get the eight tiles around the ping as well, because a tank moves
+  while the ping is in flight. The exact tile still wins first, and when it is
+  empty the nearest tank in the eight around it wins.
+
+PING AGAIN TO ADD A BOT
+  A second ping on the same pillbox, base or tank, or inside its 3x3, sends
+  one MORE bot. The bots that already hold the order keep it. If no bot is
+  free, the nearest bot on another order switches to it (see A BOT KEEPS
+  YOUR ORDER); a bot already on this order is never counted twice.
+  A second ping on the same open ground does not add a bot. It starts the
+  order's clock again, and the bot answers "Still on it". If no bot holds
+  that order any more (it died, it let the order go, or no bot was free the
+  first time), the second ping sends one bot again, as the first ping did.
+
+A BOT KEEPS YOUR ORDER
+  A bot that holds an order from a person does not take a new ping, a new
+  three-shot order or a typed order that does not name it. That goes to a
+  free bot, however soon or late it comes.
+  If no bot is free, for a ping or a typed order the busy bot with the
+  cheapest route switches: it drops its old order and says "No free bot.
+  Leaving ... for ...". A tie goes to the lower player number. A bot on a
+  decoy hold never switches, and a bot that is busy for its own reasons
+  (man out, escaping water, and so on) does not either.
+  If no bot can switch, nobody goes: one bot says "All bots busy" and the
+  order waits for about 60 seconds: the first bot that comes free takes it.
+  A three-shot order with no free bot is dropped without a word.
+  To move a bot that is working on an order, name it ("socrates attack 5"),
+  select it with a ping, use "all" or "nearby", or cancel its order first.
+
+SELECT BY PING
+  A ping on one of your own bots, or inside its 3x3, selects that bot; it
+  answers "Awaiting command". Ping another bot to add it. Your next order,
+  whether you ping it, shoot it or type it, goes to all of them.
+
+CAUTION PING
+  The caution ping is the cancel. A caution ping in the 3x3 of a place the
+  bots were sent to releases the bots working on it. With no order on that
+  place a caution does nothing.
+  A caution ping on one of your own bots: if it holds an order, the first
+  caution cancels the order and a second one makes it retreat. A bot with no
+  order retreats on the first.
+
+
+THREE SHOTS = COME HERE
+
+Fire three shells that run their full range and land on the same open tile.
+Fire all three inside about two seconds, and say it cleanly: no other shot in
+the second before the first of them, and no other shot in the second after
+the third. The order goes out one second after the third shot, so a fourth
+shot in that second takes it back.
+
+The bot with the cheapest route drives there and holds, out of the bots that
+were on your screen when the order went out. A bot further away than that
+does not hear you, and nor does a bot that is working on an order you gave.
+
+A place order is a hard one. The bot drops what it was doing and drives to the
+square. On the way it picks no goals of its own -- no pills, no bases, no
+cover. It has about 60 seconds to get there; an order that never arrives runs
+out on that.
+
+When it arrives it says "holding 10s" and stands on the square for ten
+seconds. During the hold it does not drive anywhere, but it does fight: it
+turns on an enemy tank in range and shoots it, and it shoots an enemy man
+beside it. Its own builder carries on as usual. After the ten seconds the
+order is over, without a word, and the bot picks its own goals again.
+
+You can end it earlier with a caution ping or "cancel", or by giving it
+an order that names it. A new ping somewhere else does not end it: that goes
+to a free bot. A ping on open ground does the same thing as the three shells.
+
+Forest does not count, and a shell that stops on a wall, a building, a
+pillbox, a base or a tank does not count. If no bot is in range, nothing
+happens and no bot speaks.
+
+
+MARKERS THE BOTS PLACE
+
+A bot that takes an order puts an ON MY WAY marker on the place the order
+names, at the moment it answers you. On a group order every bot that took it
+places one, so the map shows how many are coming. This always happens and has
+no setting.
+
+With "bot pings on" a bot also puts an ATTACK marker on a pillbox or a tank
+each time it starts attacking it, so you can watch what the bots are going for.
+The same bot does not mark the same target again for 30 seconds.
+
+A marker a bot places is news, not an order: the bots read each other's
+markers and do nothing about them.
+
+
+HOW AN ORDER RUNS
+
+An order is a hard order, not a hint. The bots do not weigh the danger on the
+map against it. They still defend themselves: they shoot a tank in range, kill
+a man beside them, get out of the water and take cover when they are almost
+dead. The order comes straight back afterwards.
+
+An order holds for about 60 seconds. Each new ping on the same target starts
+the clock again. A bot that runs out of shells on an order that needs them
+refuels at your nearest base and comes back; the clock keeps running.
+
+A "go there" order is the one exception: the 60 seconds is the time it has to
+GET there, and once it arrives it holds the square for ten seconds and then
+lets go. See THREE SHOTS = COME HERE above.
+
+An order ends the moment its job is gone. A defend order on one of your
+pillboxes ends as soon as that pillbox is not yours any more -- shot flat, or
+taken by the enemy. The bot says "lost pill #5" and goes back to its own
+goals, which may well be to go and take it back.
+
+BUSY BOTS
+A bot does not take a new order while its man is out of the tank, while it is
+finishing a pillbox capture, while it is moving a pillbox it voted to move,
+while it is handing itself over to be killed, or while it is escaping water or
+a stuck spot. It answers "Busy" and says why.
+A bot that works on an order from a person does not take a new order that
+does not name it while a free bot can go (see A BOT KEEPS YOUR ORDER). When
+no bot is free and none can switch, one bot says "All bots busy". When the
+bots only say no because none of them can get there, nothing is said.
+
+
+WHAT THE BOTS SAY
+
+  Got it! attack_pill #5        one bot took it. The wording changes with the
+                                bot's name theme.
+  Got it! take_cover            a retreat has no number to say: just the word.
+  Got it! goto                  a "go there and hold" (a ping on open ground,
+                                or three shells on one square). The bot picks
+                                no goals of its own while it is going: that is
+                                what the order means.
+  holding 10s                   it got to the square. It now stands there for
+                                that many seconds, fighting what comes into
+                                range but driving nowhere. Nothing is said
+                                when the time is up.
+  3 on pill #5                  a group order, said once by one bot.
+  Still on it. attack_pill #5   you asked for something it already holds.
+  All bots busy                 no bot was free for your order and none
+                                could switch. It waits about 60 seconds for
+                                a bot to come free.
+  Leaving attack_pill #5 for capture_pill #7
+                                a newer order that names the bot replaced
+                                the old one.
+  No free bot. Leaving goto for attack_pill #5
+                                no bot was free, so this one, the nearest,
+                                dropped its old order for your new one.
+  capture_pill #5 done          the job is finished, so the order is over.
+                                A bot does not wait out the clock: the tick
+                                the pill is yours, or is in somebody's tank,
+                                the order ends and the bot picks its own goal
+                                again.
+  lost pill #5                  the pillbox it was defending is not yours any
+                                more, so there is nothing left to defend. The
+                                order ends and the bot picks its own goals.
+  Lost Hannibal                 the tank it was sent after died or has been
+                                out of sight for ten seconds.
+  Busy (man_out)                it cannot take an order right now.
+  Awaiting command              it is selected and waiting.
+  Standing by                   the selection ran out.
+  Released                      the order was cancelled.
+  Refuelling, coming back       a pause in the order, not the end of it.
+  Socrates or Seneca?           two bots fit the name you typed.
+  X is on our side              you aimed attack at a team mate.
+  didn't understand             the line looked like an order but was not one.
+
+Only lines that start with a verb, a who word, a setting word or a bot name
+spelled right are read. Anything else is ordinary talk and gets no answer.
+
+
+OLD OPERATOR COMMANDS
+
+These are the older debug commands. Every one of them now needs a leading "!",
+from players and bots alike, so an ordinary chat word can never freeze a team,
+and only a team mate may give one: a line from the other side is ignored.
+They are read before any of the orders above, so "!attack:5" is this list's
+attack and "!attack 5" -- with a space -- is the order.
+
+  !stop        pause the bots.
+  !start       let them run again.
+  !status      the bot prints its current goal.
+  !pill:N      go to pillbox N.
+  !base:N      go to base N.
+  !attack:N    attack pillbox N.
+  !cp:N        capture pillbox N.
+  !cb:N        capture base N. !cb:all captures every base.
+  !bpc:N       attack pillbox N with the blocker-pill test log on.
+  !pp:N        place a carried pillbox on pillbox N's square.
+  !watch:N     watch pillbox N.
+
+They are hard locks: the bot runs them ahead of everything else, with no
+refuelling and no escape. Say "!start" to let it think for itself again.

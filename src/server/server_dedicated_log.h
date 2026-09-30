@@ -77,11 +77,10 @@ const char *serverDedicatedLogLastRoundFile(void);
  * stash its filename for a later upload. Called from handleGameOver
  * for lobby-enabled rounds and from the empty-reset path. WBN log
  * uploads require that the session has already been ended via
- * server/quit, so the upload itself is deferred to
- * serverDedicatedLogFlushPendingUpload — the caller is expected to
- * sandwich that flush between winbolonetEndSession() and
- * winbolonetBeginSession() so the upload runs against the just-
- * quit session's still-valid server_key. */
+ * server/quit, so the upload itself is deferred to one of the two
+ * calls below — the caller is expected to sandwich it between the end
+ * of the old session and the start of the next one, so the upload runs
+ * against the just-quit session's still-valid server_key. */
 void serverDedicatedLogStashCurrentRound(void);
 
 /* Upload the stashed round log (if any) to WinBolo.net via
@@ -89,8 +88,20 @@ void serverDedicatedLogStashCurrentRound(void);
  * must have already POSTed server/quit (WBN rejects uploads to an
  * active session) and must not yet have POSTed server/register
  * (registration overwrites winboloNetServerKey, invalidating the
- * URL key the upload needs). Clears the stash either way. */
+ * URL key the upload needs). Clears the stash either way.
+ *
+ * Posts on the calling thread, which is what a teardown wants: it is
+ * about to stop the worker, and httpSetLogUploadTimeout applies to a
+ * call made here. A round transition wants the queued form below. */
 void serverDedicatedLogFlushPendingUpload(void);
+
+/* The same upload, handed to the WinBolo.net worker instead of posted
+ * here. Same guards and the same stash clear; it keeps its place in the
+ * queue, so a caller that queued server/quit before it and
+ * server/register after it gets the order WinBolo.net requires without
+ * waiting for any of the three. This is the form the round-log flush
+ * hook installs, so every round transition queues. */
+void serverDedicatedLogQueuePendingUpload(void);
 
 /* True when a round log has been stashed and is waiting to be uploaded.
  * Lets a teardown caller decide whether it needs to end the WBN session
@@ -132,6 +143,7 @@ void serverDedicatedLogComposePath(const char *logArg, const char *autoBase,
  * does not carry the byte at all and a reader treats it as zero, so every
  * bit here has to mean "off / classic behaviour" when clear. */
 #define LOG_SETTINGS_FLAG_SMART_PINGS_OFF 0x01u
+#define LOG_SETTINGS_FLAG_POSITIONAL_SOUND 0x02u
 
 /* Build the log_GameSettings blob in the pascal form logAddEvent takes:
  * out[0] is the byte count and out[1..] the fields, layout in

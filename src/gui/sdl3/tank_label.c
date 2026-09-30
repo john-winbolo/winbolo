@@ -167,14 +167,21 @@ static void tankLabelRebuild(TankLabelCache *c, SDL_Renderer *r,
      * every bot, so the '@' was always there to find. Now that the sentinel
      * is suppressed (playersLocationShown), a bot's label is its bare name,
      * and a bot icon gated on '@' would never draw again. A bot is a bot
-     * whatever its label says. */
+     * whatever its label says.
+     *
+     * The chip rides with the label length, though, as a person's flag
+     * does: a short label is the bare name for everyone. A bot's label text
+     * is the same in both lengths, so the length is kept beside the icon
+     * and tankLabelNameTex rebuilds when it changes. */
     char nameOnly[TANK_LABEL_NAME_LEN];
     strncpy(nameOnly, label, TANK_LABEL_NAME_LEN - 1);
     nameOnly[TANK_LABEL_NAME_LEN - 1] = '\0';
 
     SDL_Surface *iconSurf = NULL;
     char *at = strrchr(nameOnly, '@');
-    if (sdl3ImguiPlayerIsBot(playerNum) &&
+    bool longLabels = sdl3ImguiTankLabelsLong();
+    c->longLabels[playerNum] = longLabels;
+    if (longLabels && sdl3ImguiPlayerIsBot(playerNum) &&
         (iconSurf = sdl3ImguiGetBotIconSurface(
              sdl3ImguiPlayerIsAlly(playerNum))) != NULL) {
         /* Drop a location if the label still carries one: a bot showing a
@@ -243,7 +250,8 @@ static SDL_Texture *tankLabelNameTex(TankLabelCache *c, SDL_Renderer *r,
     }
     if (!font) return NULL;
 
-    if (strncmp(c->str[playerNum], label, TANK_LABEL_NAME_LEN - 1) != 0) {
+    if (strncmp(c->str[playerNum], label, TANK_LABEL_NAME_LEN - 1) != 0 ||
+        c->longLabels[playerNum] != sdl3ImguiTankLabelsLong()) {
         tankLabelRebuild(c, r, font, label, playerNum);
     }
     return c->nameTex[playerNum];

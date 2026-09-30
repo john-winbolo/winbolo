@@ -31,6 +31,10 @@
 #include "client_sim.h"
 #include "client_command.h"   /* ViewStateKind — the viewport's view kinds */
 #include "client_sim_internal.h"
+#include "brain_list.h"          /* brainDocsDecompress */
+#include "server_sim.h"        /* serverSimGetGameSim — the bound server's own
+                                * alliance matrix, which a hosted bot's inbox
+                                * filter reads instead of its local copy */
 #include "spectator_drain.h"   /* dep-free seam: logviewer host drains capture */
 #include "spectator_replay.h"          /* extract a seed's control-snapshot slice */
 #include "transport_control_codec.h"   /* decode the snapshot's lobby-settings event */
@@ -202,6 +206,9 @@ bool clientSimCreate(ClientSim *cs) {
   struct ServerSim *savedBoundServerSim = cs->boundServerSim;
   SubscriberHandle savedAutoSubHandle = cs->autoSubHandle;
   BrainList savedBrainList = cs->lobbyBrainList;
+  /* The per-brain lobby texts arrive with that list and are never resent,
+   * so they have to survive the memset for the same reason it does. */
+  struct ClientBrainTexts *savedBrainTexts = cs->lobbyBrainTexts;
   ControlObserverCb savedObserverCb  = cs->controlObserverCb;
   void             *savedObserverCtx = cs->controlObserverCtx;
   ControlObserverCb savedTransportObserverCb  = cs->transportObserverCb;
@@ -217,6 +224,7 @@ bool clientSimCreate(ClientSim *cs) {
   cs->boundServerSim     = savedBoundServerSim;
   cs->autoSubHandle      = savedAutoSubHandle;
   cs->lobbyBrainList     = savedBrainList;
+  cs->lobbyBrainTexts    = savedBrainTexts;
   cs->controlObserverCb  = savedObserverCb;
   cs->controlObserverCtx = savedObserverCtx;
   cs->transportObserverCb  = savedTransportObserverCb;
@@ -259,8 +267,8 @@ bool clientSimCreate(ClientSim *cs) {
 
   /* A client is never handed a lobby template; the game a scenario declared
      reaches it on the settings tail instead. Until a settings event lands
-     this is 0, and a scripted round resolves as gameOpen through the same
-     code the server runs. */
+     this is 0, and a scripted round resolves as gameStrictTournament through
+     the same code the server runs. */
   cs->sim.scenarioBaseGame = (gameType)0;
 
   /* Initialize GameSim identity and callbacks */
@@ -306,6 +314,7 @@ bool clientSimCreate(ClientSim *cs) {
   cs->serverShellCount = 0;
   cs->projectedShellCount = 0;
   cs->projectionPingMs = 0;
+  cs->inputTickOffset = 0;
   memset(cs->displayPing, 0, sizeof(cs->displayPing));
   explosionsCreate(&cs->sim.expl);
   rubbleCreate(&cs->sim.rbl);
@@ -515,6 +524,8 @@ static void clientSimDestroyContents(ClientSim *cs) {
     cs->brainBuildInfo = NULL;
   }
 
+  clientSimBrainTextsFree(cs);
+
   /* Free any captured-but-undrained spectator seed/records. */
   clientSimSpectatorFeedClear(cs);
 
@@ -688,7 +699,62 @@ void clientSimSyncFromSnapshot(ClientSim *cs, const SnapshotHeader *hdr,
                       pillSnaps, pillCount, events, eventCount, playerNum);
 }
 
-void clientSimIncomingMessage(ClientSim *cs, BYTE playerNum, char *messageStr) {
+/* May a line from `fromPlayer`, addressed to `destPlayer`, reach THIS
+ * ClientSim's brain inbox?
+ *
+ * Only a hosted bot is asked. A human's ClientSim keeps every line it is
+ * shown, because the inbox is also the "there is a new message" flag its HUD
+ * reads, and a human is entitled to read the room.
+ *
+ * A bot's inbox is not a HUD, it is the bot's orders. The wire already
+ * decided what this seat may SEE (the CTRL_CHAT arm's for_me test: a
+ * broadcast, a line to my slot, or a line to my team). Of those, the one a
+ * bot must not act on is an ENEMY's broadcast — "everyone fall back to base
+ * 3" from the other side is not an order, and GoalHunter only survives it
+ * because it re-checks the ally mask in Lua. A brain nobody here wrote will
+ * not. So a bot keeps its own team's chat and anything aimed at it, and
+ * drops the rest.
+ *
+ * WHICH ALLIANCE TABLE. The SERVER's, whenever this ClientSim is bound to one
+ * — which every hosted bot is. It must not be the bot's own client-side copy:
+ * a bot built mid-round (a scenario wave, or Add Bot during play) has an EMPTY
+ * own row in that copy, because the join replay never fills a client's row for
+ * itself, so reading it there would drop an ally's broadcast for exactly the
+ * bots a scripted round is made of. The server matrix is the authority and is
+ * filled the moment the bot is seated.
+ *
+ * The question is put the same way round as botManagerDeliverInternalMessage
+ * puts it — the SENDER's ally set, asked whether it holds this seat — so the
+ * ordinary chat channel and the bots' internal one cannot disagree even if a
+ * one-sided alliance is ever recorded.
+ *
+ * Unbound is the fallback, not the normal case: a ClientSim with no server
+ * behind it (a replay, a test fixture built by hand) has only its own table,
+ * and reading that is better than dropping every line. */
+static bool clientSimChatReachesInbox(ClientSim *cs, BYTE fromPlayer,
+                                      BYTE destPlayer) {
+  struct ServerSim *bound;
+  players          *plrs;
+  BYTE              myPN;
+
+  if (!clientSimIsBot(cs)) return TRUE;
+  /* Addressed to me or to my team — the CTRL_CHAT filter already proved it
+     is mine, and a line somebody aimed at this seat is meant for it. */
+  if (destPlayer != CHAT_DEST_BROADCAST) return TRUE;
+
+  myPN = clientSimGetMyPlayerNum(cs);
+  if (fromPlayer >= MAX_TANKS || myPN >= MAX_TANKS) return FALSE;
+  if (fromPlayer == myPN) return FALSE;
+
+  bound = clientSimGetBoundServerSim(cs);
+  plrs  = (bound != NULL) ? &serverSimGetGameSim(bound)->plyrs
+                          : &clientSimGetGameSim(cs)->plyrs;
+  return (playersGetAlliesBitMap(plrs, fromPlayer) &
+          ((PlayerBitMap)1u << myPN)) != 0;
+}
+
+void clientSimIncomingMessage(ClientSim *cs, BYTE playerNum, BYTE destPlayer,
+                              char *messageStr) {
   char topLine[FILENAME_MAX];
 
   topLine[0] = '\0';
@@ -696,7 +762,11 @@ void clientSimIncomingMessage(ClientSim *cs, BYTE playerNum, char *messageStr) {
 
   if (clientSimIsInLobby(cs) && playerNum < 16) {
     clientSimAppendLobbyChat(cs, clientSimGetLobbySlot(cs, playerNum)->playerName, messageStr);
-  } else {
+  } else if (clientSimChatReachesInbox(cs, playerNum, destPlayer)) {
+    /* clientMessageAdd draws the line AND pushes it into the brain inbox. A
+       bot draws nothing, so for a bot this call is the inbox push and
+       nothing else — which is why the test above stands in front of it
+       rather than inside the push. */
     clientMessageAdd(clientSimGetMessages(cs), (messageType) (playerNum + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
   }
 }
@@ -1252,7 +1322,7 @@ static bool clientShellVisualBlocked(ClientSim *cs, WORLD newX, WORLD newY,
     if (!interpIsAlive(&cs->interpCtx, p)) continue;
     if (interpGetPosition(&cs->interpCtx, p, 1.0f, &tkX, &tkY, &tkAngle, &tkOnBoat)) {
       /* Match the authoritative shell hit-zone (circle by default; square
-       * under BOLO_LEGACY_SQUARE_COLLISION). See TANK_HIT_RADIUS. */
+       * under BOLO_LEGACY_SQUARE_COLLISION). See tank_hit_radius. */
 #ifdef BOLO_LEGACY_SQUARE_COLLISION
       if (abs((int)newX - (int)tkX) < 128 && abs((int)newY - (int)tkY) < 128) {
         return true;
@@ -1261,8 +1331,9 @@ static bool clientShellVisualBlocked(ClientSim *cs, WORLD newX, WORLD newY,
       int dx = (int)newX - (int)tkX, dy = (int)newY - (int)tkY;
       /* Bounding-box pre-test bounds dx/dy before squaring; see tankIsTankHit
        * in tank.c. Never rejects a real hit, prevents int overflow. */
-      if (abs(dx) < TANK_HIT_RADIUS && abs(dy) < TANK_HIT_RADIUS &&
-          dx * dx + dy * dy < TANK_HIT_RADIUS_SQUARED) {
+      const int hitR = (int) cs->sim.rules.tank_hit_radius;
+      if (abs(dx) < hitR && abs(dy) < hitR &&
+          dx * dx + dy * dy < hitR * hitR) {
         return true;
       }
 #endif
@@ -1576,17 +1647,56 @@ void clientSimClearPendingAllianceRequest(ClientSim *cs) {
   cs->pendingAllianceRequestFrom = 0xFF;
 }
 
-void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *message) {
-  size_t histLen = strlen(cs->lobbyChatHistory);
-  size_t needed = strlen(name) + 2 + strlen(message) + 2; /* "name: message\n" */
-  if (histLen + needed < sizeof(cs->lobbyChatHistory)) {
-    if (histLen > 0) {
-      strcat(cs->lobbyChatHistory, "\n");
+/* THE shape of one line in a lobby chat log: "<name>: <message>".
+ *
+ * One function owns it because two sides have to agree on it. The appends
+ * below write the lines; the lobby's bot-announce poll (imgui_lobby.cpp)
+ * builds the same string and searches the history for it, to find out
+ * whether its append actually landed before it registers the docs behind
+ * that line. Written out twice, a change to one spelling would leave the
+ * search quietly never matching.
+ *
+ * Returns the length written, or -1 when the line would not fit `cap`. */
+int clientSimFormatLobbyChatLine(char *out, size_t cap, const char *name,
+                                 const char *message) {
+  size_t nLen, mLen;
+  if (out == NULL || cap == 0) return -1;
+  out[0] = '\0';
+  if (name == NULL) name = "";
+  if (message == NULL) message = "";
+  nLen = strlen(name);
+  mLen = strlen(message);
+  if (nLen + 2 + mLen + 1 > cap) return -1;
+  memcpy(out, name, nLen);
+  out[nLen]     = ':';
+  out[nLen + 1] = ' ';
+  memcpy(out + nLen + 2, message, mLen);
+  out[nLen + 2 + mLen] = '\0';
+  return (int)(nLen + 2 + mLen);
+}
+
+/* Append "<name>: <message>" to `history` (capacity `cap`), newline-separated
+ * from what is already there. Silently does nothing when the line would not
+ * fit — the caller that cares whether it landed searches the history for it. */
+static void clientSimAppendChatLine(char *history, size_t cap,
+                                    const char *name, const char *message) {
+  size_t histLen = strlen(history);
+  size_t needed  = strlen(name) + 2 + strlen(message) + 2; /* "name: message\n" */
+  if (histLen + needed < cap) {
+    char line[LOBBY_CHAT_LINE_MAX];
+    if (clientSimFormatLobbyChatLine(line, sizeof(line), name, message) < 0) {
+      return;
     }
-    strcat(cs->lobbyChatHistory, name);
-    strcat(cs->lobbyChatHistory, ": ");
-    strcat(cs->lobbyChatHistory, message);
+    if (histLen > 0) {
+      strcat(history, "\n");
+    }
+    strcat(history, line);
   }
+}
+
+void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *message) {
+  clientSimAppendChatLine(cs->lobbyChatHistory, sizeof(cs->lobbyChatHistory),
+                          name, message);
 }
 
 void clientSimClearLobbyChatHistory(ClientSim *cs) {
@@ -1595,16 +1705,8 @@ void clientSimClearLobbyChatHistory(ClientSim *cs) {
 }
 
 void clientSimAppendLobbyTeamChat(ClientSim *cs, const char *name, const char *message) {
-  size_t histLen = strlen(cs->lobbyTeamChatHistory);
-  size_t needed = strlen(name) + 2 + strlen(message) + 2; /* "name: message\n" */
-  if (histLen + needed < sizeof(cs->lobbyTeamChatHistory)) {
-    if (histLen > 0) {
-      strcat(cs->lobbyTeamChatHistory, "\n");
-    }
-    strcat(cs->lobbyTeamChatHistory, name);
-    strcat(cs->lobbyTeamChatHistory, ": ");
-    strcat(cs->lobbyTeamChatHistory, message);
-  }
+  clientSimAppendChatLine(cs->lobbyTeamChatHistory,
+                          sizeof(cs->lobbyTeamChatHistory), name, message);
 }
 
 /* Default chatSendFunc: route outbound chat through clientSimSubmitCommand
@@ -2032,6 +2134,10 @@ bool clientSimIsLobbyHiddenMines(const ClientSim *cs)     { return cs->lobbyHidd
  * question every caller actually asks. A server that never sends the byte
  * leaves lobbySmartPingsOff false, so it reads as allowed. */
 bool clientSimIsLobbyAllowSmartPings(const ClientSim *cs) { return cs ? !cs->lobbySmartPingsOff : true; }
+/* The same turn round for the mods, and the same reason: a server that
+ * never sends the byte leaves lobbyModsOff false, so it reads as composing
+ * them, which is what every server did before the setting existed. */
+bool clientSimGetLobbyModsEnabled(const ClientSim *cs)   { return cs ? !cs->lobbyModsOff : true; }
 bool clientSimIsBalanceProposalActive(const ClientSim *cs){ return cs->balanceProposalActive; }
 uint64_t clientSimGetLastBalanceProposalArrivedMs(const ClientSim *cs) {
     return cs ? cs->lastBalanceProposalArrivedMs : 0;
@@ -2098,6 +2204,39 @@ const ClientPlayerStats *clientSimGetPlayerStats(const ClientSim *cs,
 const ClientSpectatorSlot *clientSimGetSpectatorSlot(const ClientSim *cs, uint8_t idx) {
   if (idx >= MAX_SPECTATORS) return NULL;
   return &cs->spectatorSlots[idx];
+}
+
+const ScnPanelList *clientSimGetScnPanel(const ClientSim *cs, uint8_t id) {
+  if (cs == NULL || id >= SCN_PANEL_IDS) return NULL;
+  if (!cs->scnPanelValid[id]) return NULL;
+  return &cs->scnPanels[id];
+}
+
+uint32_t clientSimGetScnPanelRejectCount(const ClientSim *cs) {
+  return cs ? cs->scnPanelRejects : 0;
+}
+
+const char *clientSimGetScnAnnounce(const ClientSim *cs, uint16_t *outTicks,
+                                    uint32_t *outArrivedTick) {
+  if (cs == NULL || cs->scnAnnounceText[0] == '\0') return NULL;
+  if (outTicks != NULL) *outTicks = cs->scnAnnounceTicks;
+  if (outArrivedTick != NULL) *outArrivedTick = cs->scnAnnounceArrivedTick;
+  return cs->scnAnnounceText;
+}
+
+const ClientScnMarker *clientSimGetScnMarker(const ClientSim *cs, uint8_t id) {
+  if (cs == NULL || id >= SCN_MARKERS_MAX) return NULL;
+  return &cs->scnMarkers[id];
+}
+
+const ClientScnScore *clientSimGetScnPlayerScore(const ClientSim *cs, BYTE slot) {
+  if (cs == NULL || slot >= MAX_TANKS) return NULL;
+  return &cs->scnPlayerScores[slot];
+}
+
+const ClientScnScore *clientSimGetScnTeamScore(const ClientSim *cs, BYTE team) {
+  if (cs == NULL || team >= MAX_TANKS) return NULL;
+  return &cs->scnTeamScores[team];
 }
 
 BYTE clientSimGetLobbyNumConnected(const ClientSim *cs) {
@@ -2367,12 +2506,18 @@ struct ServerSim *clientSimGetBoundServerSim(const ClientSim *cs) {
 
 void clientSimSetConnectErrorReason(ClientSim *cs, const char *str) {
   if (cs == NULL) return;
+  cs->connectErrorId = 0;
   if (str == NULL || str[0] == '\0') {
     cs->connectErrorReason[0] = '\0';
     return;
   }
   strncpy(cs->connectErrorReason, str, sizeof(cs->connectErrorReason) - 1);
   cs->connectErrorReason[sizeof(cs->connectErrorReason) - 1] = '\0';
+}
+
+void clientSimSetConnectErrorId(ClientSim *cs, unsigned int id) {
+  if (cs == NULL) return;
+  cs->connectErrorId = id;
 }
 
 /* Reset the transient game world to a clean slate on entering the
@@ -2468,6 +2613,7 @@ void clientSimResetWorld(ClientSim *cs) {
   cs->predictedShellCount = 0;
   cs->projectedShellCount = 0;
   cs->projectionPingMs = 0;
+  cs->inputTickOffset = 0;
   /* Base-death prediction is stamped in input ticks, which restart with the
    * round; a stamp carried over would compare against the wrong clock. */
   memset(gs->basePredictedDeadTick, 0, sizeof(gs->basePredictedDeadTick));
@@ -2599,9 +2745,31 @@ const char *clientSimGetLobbyScenarioName(const ClientSim *cs)       { return cs
 const char *clientSimGetLobbyScenarioFileName(const ClientSim *cs)   { return cs ? cs->lobbyScenarioFileName : ""; }
 const char *clientSimGetLobbyScenarioDescription(const ClientSim *cs){ return cs ? cs->lobbyScenarioDescription : ""; }
 bool     clientSimGetLobbyScenarioExtraTeams(const ClientSim *cs)    { return cs ? cs->lobbyScenarioExtraTeams : false; }
+bool     clientSimGetLobbyScenarioKeepsWinCondition(const ClientSim *cs) { return cs ? cs->lobbyScenarioKeepsWinCondition : false; }
+bool     clientSimGetLobbyScenarioBound(const ClientSim *cs) { return cs ? cs->lobbyScenarioBound : false; }
+bool     clientSimGetLobbyScenarioUnsafe(const ClientSim *cs) { return cs ? cs->lobbyScenarioUnsafe : false; }
+
+/* The rules that scenario's manifest sets. Bounded on the stored count
+   rather than on the array, so a row above it — one an earlier, longer set
+   left behind — is never handed out. */
+int clientSimGetScenarioRulesCount(const ClientSim *cs) {
+  return cs ? (int)cs->scenarioRulesCount : 0;
+}
+
+int clientSimGetScenarioRuleIndex(const ClientSim *cs, int idx) {
+  if (cs == NULL || idx < 0 || idx >= (int)cs->scenarioRulesCount) return -1;
+  return (int)cs->scenarioRuleIndex[idx];
+}
+
+double clientSimGetScenarioRuleValue(const ClientSim *cs, int idx) {
+  if (cs == NULL || idx < 0 || idx >= (int)cs->scenarioRulesCount) return 0.0;
+  return cs->scenarioRuleValue[idx];
+}
 bool     clientSimGetLobbyWbnAvailable(const ClientSim *cs)          { return cs ? cs->lobbyWbnAvailable : false; }
 uint32_t clientSimGetLobbyServerLocks(const ClientSim *cs)           { return cs->lobbyServerLocks; }
 UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs)           { return cs ? cs->uploadPolicy : UPLOAD_POLICY_ALLOW; }
+ScriptUploadPolicy clientSimGetScriptUploadPolicy(const ClientSim *cs) { return cs ? cs->scriptUploadPolicy : SCRIPT_UPLOAD_ALLOW; }
+bool clientSimGetScriptSharing(const ClientSim *cs) { return cs ? !cs->lobbyScriptSharingOff : true; }
 
 /* The NULL-cs answers here and in the two getters below are meaning B in
  * view_policy.h — what a reader assumes when nothing named a policy —
@@ -2620,6 +2788,10 @@ bool clientSimGetClassicMode(const ClientSim *cs) {
 
 bool clientSimGetAlliesInTrees(const ClientSim *cs) {
   return cs ? cs->alliesInTrees : false;
+}
+
+bool clientSimGetPositionalSound(const ClientSim *cs) {
+  return cs ? cs->positionalSound : false;
 }
 
 uint8_t clientSimGetOverviewWindow(const ClientSim *cs) {
@@ -2683,6 +2855,105 @@ const BrainList *clientSimGetLobbyBrainList(const ClientSim *cs) {
   return &cs->lobbyBrainList;
 }
 
+/* The brain's announce.txt / commands.txt as the server shipped them. Both
+ * return "" — never NULL — when the index is out of range, when no brain has
+ * sent any text yet, or when this particular brain ships no such file, so a
+ * caller can test the first byte instead of guarding two ways. */
+const char *clientSimGetLobbyBrainAnnounce(const ClientSim *cs, int brainIdx) {
+  if (cs == NULL || cs->lobbyBrainTexts == NULL) return "";
+  if (brainIdx < 0 || brainIdx >= BRAIN_LIST_MAX) return "";
+  return cs->lobbyBrainTexts->announce[brainIdx];
+}
+
+const char *clientSimGetLobbyBrainDocs(const ClientSim *cs, int brainIdx) {
+  const char *text;
+  if (cs == NULL || cs->lobbyBrainTexts == NULL) return "";
+  if (brainIdx < 0 || brainIdx >= BRAIN_LIST_MAX) return "";
+  text = cs->lobbyBrainTexts->docs[brainIdx].text;
+  return text != NULL ? text : "";
+}
+
+bool clientSimLobbyBrainHasDocs(const ClientSim *cs, int brainIdx) {
+  if (cs == NULL || cs->lobbyBrainTexts == NULL) return false;
+  if (brainIdx < 0 || brainIdx >= BRAIN_LIST_MAX) return false;
+  return cs->lobbyBrainTexts->docs[brainIdx].gen != 0;
+}
+
+ClientBrainDocsState clientSimGetLobbyBrainDocsState(const ClientSim *cs,
+                                                     int brainIdx) {
+  if (!clientSimLobbyBrainHasDocs(cs, brainIdx)) return CLIENT_BRAIN_DOCS_NONE;
+  switch (cs->lobbyBrainTexts->docs[brainIdx].state) {
+  case CLIENT_BRAIN_DOCS_S_HAVE:   return CLIENT_BRAIN_DOCS_READY;
+  case CLIENT_BRAIN_DOCS_S_FAILED: return CLIENT_BRAIN_DOCS_FAILED;
+  default:                         return CLIENT_BRAIN_DOCS_WAITING;
+  }
+}
+
+void clientSimLobbyBrainDocsWant(ClientSim *cs, int brainIdx,
+                                 bool retryFailed) {
+  uint8_t *state;
+  if (!clientSimLobbyBrainHasDocs(cs, brainIdx)) return;
+  state = &cs->lobbyBrainTexts->docs[brainIdx].state;
+  if (*state == CLIENT_BRAIN_DOCS_S_EMPTY ||
+      (retryFailed && *state == CLIENT_BRAIN_DOCS_S_FAILED)) {
+    *state = CLIENT_BRAIN_DOCS_S_WANTED;
+    cs->lobbyBrainTexts->docs[brainIdx].tries = 0;
+  }
+}
+
+bool clientSimLobbyBrainDocsPut(ClientSim *cs, int brainIdx, uint32_t gen,
+                                const uint8_t *z, size_t zLen, size_t rawLen) {
+  char *text;
+  if (!clientSimLobbyBrainHasDocs(cs, brainIdx)) return false;
+  /* Docs for another generation are not the ones this brain was announced
+     with: the server has re-read the file since, or this is an answer to a
+     request made before the last announce. The next announce, or the next
+     request, brings the right ones. */
+  if (gen != cs->lobbyBrainTexts->docs[brainIdx].gen ||
+      rawLen != cs->lobbyBrainTexts->docs[brainIdx].len) {
+    return false;
+  }
+  text = (char *)malloc(rawLen + 1);
+  if (text == NULL || !brainDocsDecompress(z, zLen, rawLen, text)) {
+    free(text);
+    cs->lobbyBrainTexts->docs[brainIdx].state = CLIENT_BRAIN_DOCS_S_FAILED;
+    return false;
+  }
+  free(cs->lobbyBrainTexts->docs[brainIdx].text);
+  cs->lobbyBrainTexts->docs[brainIdx].text  = text;
+  cs->lobbyBrainTexts->docs[brainIdx].state = CLIENT_BRAIN_DOCS_S_HAVE;
+  return true;
+}
+
+struct ClientBrainTexts *clientSimBrainTexts(ClientSim *cs) {
+  if (cs == NULL) return NULL;
+  if (cs->lobbyBrainTexts == NULL) {
+    cs->lobbyBrainTexts =
+        (struct ClientBrainTexts *)calloc(1, sizeof(*cs->lobbyBrainTexts));
+  }
+  return cs->lobbyBrainTexts;
+}
+
+void clientSimBrainTextsClear(ClientSim *cs) {
+  int i;
+  if (cs == NULL || cs->lobbyBrainTexts == NULL) return;
+  for (i = 0; i < BRAIN_LIST_MAX; i++) {
+    free(cs->lobbyBrainTexts->docs[i].text);
+  }
+  memset(cs->lobbyBrainTexts->announce, 0,
+         sizeof(cs->lobbyBrainTexts->announce));
+  memset(cs->lobbyBrainTexts->docs, 0, sizeof(cs->lobbyBrainTexts->docs));
+  /* An answer still arriving lands in rx and is dropped on completion. */
+  cs->lobbyBrainTexts->rxIdx = 0;
+}
+
+void clientSimBrainTextsFree(ClientSim *cs) {
+  if (cs == NULL || cs->lobbyBrainTexts == NULL) return;
+  clientSimBrainTextsClear(cs);
+  free(cs->lobbyBrainTexts);
+  cs->lobbyBrainTexts = NULL;
+}
+
 const RoundStatsSummary *clientSimGetLastRoundStats(const ClientSim *cs) {
   return cs->lastRoundStatsValid ? &cs->lastRoundStats : NULL;
 }
@@ -2728,6 +2999,102 @@ uint32_t clientSimGetLobbyMapListSeq(const ClientSim *cs) {
 }
 uint32_t clientSimGetLobbyMapChangeSeq(const ClientSim *cs) {
   return cs ? cs->lobbyMapChangeSeq : 0;
+}
+
+/* The scenarios the server offers on their own. Every one of these tolerates
+ * a NULL cs and an index out of range: the list is read by UI code a frame at
+ * a time, and a response landing between two reads must not cost a crash. */
+int clientSimGetLobbyScenarioListCount(const ClientSim *cs) {
+  return cs ? cs->lobbyScenarioListCount : 0;
+}
+const char *clientSimGetLobbyScenarioListFile(const ClientSim *cs, int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return "";
+  return cs->lobbyScenarioListFiles[idx];
+}
+const char *clientSimGetLobbyScenarioListName(const ClientSim *cs, int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return "";
+  return cs->lobbyScenarioListNames[idx];
+}
+const char *clientSimGetLobbyScenarioListDescription(const ClientSim *cs,
+                                                     int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return "";
+  return cs->lobbyScenarioListDescs[idx];
+}
+int clientSimGetLobbyScenarioListMaxPlayers(const ClientSim *cs, int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return 0;
+  return (int)cs->lobbyScenarioListMaxPlayers[idx];
+}
+int clientSimGetLobbyScenarioListBots(const ClientSim *cs, int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return 0;
+  return (int)cs->lobbyScenarioListBots[idx];
+}
+bool clientSimGetLobbyScenarioListBound(const ClientSim *cs, int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return false;
+  return cs->lobbyScenarioListBound[idx];
+}
+bool clientSimGetLobbyScenarioListKeepsWinCondition(const ClientSim *cs,
+                                                    int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return false;
+  return cs->lobbyScenarioListKeepsWin[idx];
+}
+uint8_t clientSimGetLobbyScenarioListSource(const ClientSim *cs, int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) {
+    return SERVER_SCENARIO_SOURCE_SERVER;
+  }
+  return cs->lobbyScenarioListSource[idx];
+}
+uint64_t clientSimGetLobbyScenarioListWorkshopId(const ClientSim *cs,
+                                                 int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return 0;
+  return cs->lobbyScenarioListWorkshopId[idx];
+}
+/* The lobby's ordered script list: what the host has picked, in the order
+ * the round will load it. Entry 0 is the script the round is decided by and
+ * is the same file the attached-scenario accessors describe; the entries
+ * behind it are mods. The same NULL and range tolerance the catalogue
+ * accessors above have, and for the same reason: a chooser reads these a
+ * frame at a time while a new list may land between two reads. */
+int clientSimGetLobbyScriptCount(const ClientSim *cs) {
+  return cs ? cs->lobbyScriptCount : 0;
+}
+const char *clientSimGetLobbyScriptFile(const ClientSim *cs, int i) {
+  if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) return "";
+  return cs->lobbyScriptFiles[i];
+}
+const char *clientSimGetLobbyScriptName(const ClientSim *cs, int i) {
+  if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) return "";
+  return cs->lobbyScriptNames[i];
+}
+bool clientSimGetLobbyScriptKeepsWinCondition(const ClientSim *cs, int i) {
+  if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) return false;
+  return cs->lobbyScriptKeepsWin[i];
+}
+bool clientSimGetLobbyScriptBound(const ClientSim *cs, int i) {
+  if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) return false;
+  return cs->lobbyScriptBound[i];
+}
+uint8_t clientSimGetLobbyScriptSource(const ClientSim *cs, int i) {
+  if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) {
+    return SERVER_SCENARIO_SOURCE_SERVER;
+  }
+  return cs->lobbyScriptSource[i];
+}
+uint64_t clientSimGetLobbyScriptWorkshopId(const ClientSim *cs, int i) {
+  if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) return 0;
+  return cs->lobbyScriptWorkshopId[i];
+}
+uint32_t clientSimGetLobbyScriptSeq(const ClientSim *cs) {
+  return cs ? cs->lobbyScriptSeq : 0;
+}
+
+bool clientSimGetLobbyScenarioListReady(const ClientSim *cs) {
+  return cs ? cs->lobbyScenarioListReady : false;
+}
+bool clientSimGetLobbyScenarioListInFlight(const ClientSim *cs) {
+  return cs ? cs->lobbyScenarioListInFlight : false;
+}
+uint32_t clientSimGetLobbyScenarioListSeq(const ClientSim *cs) {
+  return cs ? cs->lobbyScenarioListSeq : 0;
 }
 
 const char *clientSimGetLobbyMapSearchPath(const ClientSim *cs) {
@@ -2794,6 +3161,173 @@ void clientSimClearLobbyMapPreview(ClientSim *cs) {
   cs->lobbyMapPreviewError      = false;
   cs->lobbyMapPreviewTotal      = 0;
   cs->lobbyMapPreviewReceived   = 0;
+}
+
+/* ---- Script details for the lobby's details dialog ---- */
+
+/* The slot holding file, or -1. */
+static int clientSimScnDetailsFind(const ClientSim *cs, const char *file) {
+  int i;
+  for (i = 0; i < LOBBY_SCN_DETAILS_SLOTS; i++) {
+    if (cs->lobbyScnDetails[i].state != LOBBY_SCN_DETAILS_EMPTY &&
+        strcmp(cs->lobbyScnDetails[i].file, file) == 0) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/* A slot for a file not held yet: an empty one, else one whose answer is in
+ * (FOUND or NONE), which the dialog asks for again if it still needs it.
+ * A slot with a request out is never taken, so an answer always has the
+ * slot it was asked for. -1 when every slot is waiting. */
+static int clientSimScnDetailsTake(ClientSim *cs, const char *file) {
+  int i;
+  int pick = -1;
+  for (i = 0; i < LOBBY_SCN_DETAILS_SLOTS && pick < 0; i++) {
+    if (cs->lobbyScnDetails[i].state == LOBBY_SCN_DETAILS_EMPTY) pick = i;
+  }
+  for (i = 0; i < LOBBY_SCN_DETAILS_SLOTS && pick < 0; i++) {
+    if (cs->lobbyScnDetails[i].state == LOBBY_SCN_DETAILS_FOUND ||
+        cs->lobbyScnDetails[i].state == LOBBY_SCN_DETAILS_NONE) {
+      pick = i;
+    }
+  }
+  if (pick < 0) return -1;
+  memset(&cs->lobbyScnDetails[pick], 0, sizeof(cs->lobbyScnDetails[pick]));
+  SDL_strlcpy(cs->lobbyScnDetails[pick].file, file,
+              sizeof(cs->lobbyScnDetails[pick].file));
+  return pick;
+}
+
+/* A name that fits a slot and a request's one-byte length. */
+static bool clientSimScnDetailsNameOk(const char *file) {
+  size_t n;
+  if (file == NULL || file[0] == '\0') return false;
+  n = strlen(file);
+  return n < LOBBY_SCENARIO_FILE_LEN && n <= 255;
+}
+
+void clientSimLobbyScenarioDetailsWant(ClientSim *cs, const char *file) {
+  int i;
+  if (cs == NULL || !clientSimScnDetailsNameOk(file)) return;
+  if (clientSimScnDetailsFind(cs, file) >= 0) return;
+  i = clientSimScnDetailsTake(cs, file);
+  if (i < 0) return;
+  cs->lobbyScnDetails[i].state = LOBBY_SCN_DETAILS_WANTED;
+}
+
+void clientSimLobbyScenarioDetailsPut(ClientSim *cs, const char *file,
+                                      bool found, const uint8_t *bytes,
+                                      size_t len) {
+  int i;
+  if (cs == NULL || !clientSimScnDetailsNameOk(file)) return;
+  i = clientSimScnDetailsFind(cs, file);
+  if (i < 0) i = clientSimScnDetailsTake(cs, file);
+  if (i < 0) return;
+  /* A blob that is not one reads as a file with nothing known about it,
+     rather than as something the dialog would have to check again. */
+  if (found && (len > SCN_DETAILS_MAX || (len > 0 && bytes == NULL) ||
+                !scnDetailsValid(bytes, len))) {
+    found = false;
+  }
+  cs->lobbyScnDetails[i].state =
+      found ? LOBBY_SCN_DETAILS_FOUND : LOBBY_SCN_DETAILS_NONE;
+  cs->lobbyScnDetails[i].len = found ? (uint16_t)len : 0;
+  if (found && len > 0) memcpy(cs->lobbyScnDetails[i].bytes, bytes, len);
+  /* The settings block, if any, is put after this, so an answer without
+     one reads as a server that did not say. */
+  cs->lobbyScnDetails[i].settingsKnown = false;
+  cs->lobbyScnDetails[i].settingsLen   = 0;
+}
+
+void clientSimLobbyScenarioDetailsForget(ClientSim *cs) {
+  if (cs == NULL) return;
+  memset(cs->lobbyScnDetails, 0, sizeof(cs->lobbyScnDetails));
+  /* An answer still arriving belongs to a slot that is gone; the bulk
+     receiver finishes filling the buffer and the completion drops it. */
+  cs->lobbyScnDetailsRxSlot = 0;
+}
+
+void clientSimLobbyScenarioSettingsPut(ClientSim *cs, const char *file,
+                                       const uint8_t *bytes, size_t len) {
+  int i;
+  if (cs == NULL || !clientSimScnDetailsNameOk(file)) return;
+  i = clientSimScnDetailsFind(cs, file);
+  if (i < 0 || cs->lobbyScnDetails[i].state != LOBBY_SCN_DETAILS_FOUND) {
+    return;
+  }
+  /* A block that does not read is kept as no settings, so the dialog draws
+     nothing rather than a half-read row. */
+  if (len > SCN_SETTINGS_BLOB_MAX || (len > 0 && bytes == NULL) ||
+      scnSettingsBlobRead(bytes, len, NULL, 0) < 0) {
+    len = 0;
+  }
+  cs->lobbyScnDetails[i].settingsKnown = true;
+  cs->lobbyScnDetails[i].settingsLen   = (uint16_t)len;
+  if (len > 0) memcpy(cs->lobbyScnDetails[i].settings, bytes, len);
+}
+
+bool clientSimGetLobbyScenarioSettings(const ClientSim *cs, const char *file,
+                                       const uint8_t **bytes, size_t *len) {
+  int i;
+  if (bytes != NULL) *bytes = NULL;
+  if (len != NULL) *len = 0;
+  if (cs == NULL || file == NULL || file[0] == '\0') return false;
+  i = clientSimScnDetailsFind(cs, file);
+  if (i < 0 || cs->lobbyScnDetails[i].state != LOBBY_SCN_DETAILS_FOUND ||
+      !cs->lobbyScnDetails[i].settingsKnown) {
+    return false;
+  }
+  if (len != NULL) *len = cs->lobbyScnDetails[i].settingsLen;
+  if (bytes != NULL && cs->lobbyScnDetails[i].settingsLen > 0) {
+    *bytes = cs->lobbyScnDetails[i].settings;
+  }
+  return true;
+}
+
+bool clientSimGetLobbyScriptSetting(const ClientSim *cs, const char *file,
+                                    const char *id, int32_t *out) {
+  int i;
+  if (cs == NULL || file == NULL || id == NULL) return false;
+  for (i = 0; i < cs->lobbyScriptSettingCount; i++) {
+    if (strcmp(cs->lobbyScriptSettings[i].file, file) == 0 &&
+        strcmp(cs->lobbyScriptSettings[i].id, id) == 0) {
+      if (out != NULL) *out = cs->lobbyScriptSettings[i].value;
+      return true;
+    }
+  }
+  return false;
+}
+
+bool clientSimLobbyScriptSettingsSupported(const ClientSim *cs) {
+  return cs != NULL && cs->lobbyScriptSettingsSupported;
+}
+
+ClientScnDetailsState clientSimGetLobbyScenarioDetails(const ClientSim *cs,
+                                                       const char *file,
+                                                       const uint8_t **bytes,
+                                                       size_t *len) {
+  int i;
+  if (bytes != NULL) *bytes = NULL;
+  if (len != NULL) *len = 0;
+  if (cs == NULL || file == NULL || file[0] == '\0') {
+    return CLIENT_SCN_DETAILS_UNKNOWN;
+  }
+  i = clientSimScnDetailsFind(cs, file);
+  if (i < 0) return CLIENT_SCN_DETAILS_UNKNOWN;
+  switch (cs->lobbyScnDetails[i].state) {
+    case LOBBY_SCN_DETAILS_FOUND:
+      if (len != NULL) *len = cs->lobbyScnDetails[i].len;
+      if (bytes != NULL && cs->lobbyScnDetails[i].len > 0) {
+        *bytes = cs->lobbyScnDetails[i].bytes;
+      }
+      return CLIENT_SCN_DETAILS_FOUND;
+    case LOBBY_SCN_DETAILS_NONE:
+      return CLIENT_SCN_DETAILS_NONE;
+    default:
+      return CLIENT_SCN_DETAILS_WAITING;
+  }
 }
 
 /* ---- Spectator feed: capture (transport-facing) + drain (session-facing) ---- */
@@ -3048,6 +3582,30 @@ uint8_t  clientSimGetLobbyMapUploadStatus(const ClientSim *cs)     { return cs->
 uint8_t  clientSimGetLobbyMapUploadRejectCode(const ClientSim *cs) { return cs->lobbyMapUploadRejectCode; }
 const char *clientSimGetLobbyMapUploadFinalPath(const ClientSim *cs){ return cs->lobbyMapUploadFinalPath; }
 
+void clientSimSetWorkshopMapDir(ClientSim *cs, const char *dir) {
+  if (cs == NULL) return;
+  if (dir != NULL && dir[0] != '\0') {
+    SDL_strlcpy(cs->workshopMapDir, dir, sizeof(cs->workshopMapDir));
+  } else {
+    cs->workshopMapDir[0] = '\0';
+  }
+}
+
+uint8_t clientSimGetLobbyUploadKind(const ClientSim *cs) {
+  if (cs == NULL) return UPLOAD_KIND_MAP;
+  return cs->lobbyUploadKind;
+}
+
+uint8_t clientSimGetLobbyScriptRefuseReason(const ClientSim *cs) {
+  if (cs == NULL) return SCRIPT_REFUSE_NONE;
+  return cs->lobbyScriptRefuseReason;
+}
+
+int32_t clientSimGetLobbyScriptRefuseNumber(const ClientSim *cs, int which) {
+  if (cs == NULL) return 0;
+  return which == 0 ? cs->lobbyScriptRefuseA : cs->lobbyScriptRefuseB;
+}
+
 bool clientSimConsumeUseLocalFallback(ClientSim *cs) {
   if (!cs || !cs->lobbyMapUseLocalNeedsFallback) return false;
   cs->lobbyMapUseLocalNeedsFallback = false;
@@ -3158,6 +3716,15 @@ bool clientSimGetMyTankMapPosF(ClientSim *cs, float *mapX, float *mapY) {
   tankGetWorld(&MY_TANK(cs), &wx, &wy);
   if (mapX) *mapX = (float)wx / (float)(1 << TANK_SHIFT_MAPSIZE);
   if (mapY) *mapY = (float)wy / (float)(1 << TANK_SHIFT_MAPSIZE);
+  return true;
+}
+
+bool clientSimGetMyTankSubPos(ClientSim *cs, BYTE *subX, BYTE *subY) {
+  WORLD wx = 0, wy = 0;
+  if (!clientSimIsMyTankAlive(cs)) return false;
+  tankGetWorld(&MY_TANK(cs), &wx, &wy);
+  if (subX) *subX = (BYTE)(wx & ((1 << TANK_SHIFT_MAPSIZE) - 1));
+  if (subY) *subY = (BYTE)(wy & ((1 << TANK_SHIFT_MAPSIZE) - 1));
   return true;
 }
 
@@ -3386,6 +3953,12 @@ struct OverviewSnapshot {
    * network thread writes. */
   ClientPing        pings[MAX_CLIENT_PINGS];
   int               pingCount;
+
+  /* A scenario's map markers, taken here for the reason the pings are: the
+   * overview's render half reads this snapshot and never the live store the
+   * control events write. Kept whole and by id, so a cleared marker crosses
+   * as the inactive row it is. */
+  ClientScnMarker   scnMarkers[SCN_MARKERS_MAX];
 };
 
 /* Whether an entity standing on (mapX, mapY) may be drawn: only a square the
@@ -3512,6 +4085,7 @@ void clientSimFillOverviewSnapshot(ClientSim *cs, OverviewSnapshot *s) {
   s->windowCentreY     = 0.0f;
   s->itemLabelCount = 0;
   s->pingCount     = 0;
+  memset(s->scnMarkers, 0, sizeof(s->scnMarkers));
   s->haveMap       = (cs != NULL);
   if (cs == NULL) return;
 
@@ -3520,6 +4094,9 @@ void clientSimFillOverviewSnapshot(ClientSim *cs, OverviewSnapshot *s) {
    * only ever read under the same lock the rest of this fill runs under. */
   s->pingCount = clientSimGetPings(cs, (uint32_t)SDL_GetTicks(), s->pings,
                                    MAX_CLIENT_PINGS);
+
+  /* The scenario's markers, on the same terms. */
+  memcpy(s->scnMarkers, cs->scnMarkers, sizeof(s->scnMarkers));
 
   /* Generation 0 only exists between a round reset and the seed that follows
    * it, so a match on 0 can be a snapshot filled in that same window a round
@@ -3694,6 +4271,10 @@ const ClientPing *overviewSnapshotPings(const OverviewSnapshot *s) {
 
 int overviewSnapshotPingCount(const OverviewSnapshot *s) {
   return s ? s->pingCount : 0;
+}
+
+const ClientScnMarker *overviewSnapshotScnMarkers(const OverviewSnapshot *s) {
+  return s ? &s->scnMarkers[0] : NULL;
 }
 
 const OverviewItemLabel *overviewSnapshotItemLabels(const OverviewSnapshot *s) {
@@ -3900,7 +4481,7 @@ bool clientSimTankScroll(ClientSim *cs) {
   }
 
   /* When autoscroll is on, scrollAutoScroll (called from clientUiOnTick)
-   * is the sole owner of *xValue/*yValue and subPosX/Y. The legacy
+   * is the sole owner of *xValue / *yValue and subPosX/Y. The legacy
    * per-tank-tick scrollManual call here stomps on subPos (resets to 0)
    * mid-frame, producing a visible flicker — the renderer at 60Hz can
    * sample between the zero-out and the next scrollAutoScroll. Skip it. */
@@ -3946,8 +4527,40 @@ void clientSimCycleBuildSelect(ClientSim *cs, int delta) {
   clientSimSetCurrentBuildSelect(cs, order[idx]);
 }
 
+/* Draw other tanks from their full world position (the Smooth mode). */
+void clientSimSetFineTankPositions(ClientSim *cs, bool on) {
+  if (cs == NULL) return;
+  cs->fineTankPositions = on;
+}
+
+bool clientSimGetFineTankPositions(const ClientSim *cs) {
+  return cs != NULL && cs->fineTankPositions;
+}
+
 /* Alliance accessors. */
+
+/* A seat the roster is holding with nobody on the field — a held seat
+   between waves. Unfielding keeps everything the roster knows, the
+   players-table identity included, so playersScreenAllience goes on
+   reading the seat as a live player and answers tankEvil for it. It has
+   no tank, though, so the status strip must not draw one.
+
+   Both routes to that strip ask this one question: the accessor below,
+   which the per-frame draw sites call, and playersSetPlayer, which works
+   out its own alliance for the status tile on a join or a rename. */
+bool clientSimSlotIsUnfielded(const ClientSim *cs, BYTE playerNum) {
+  const ClientLobbySlot *slot;
+
+  if (cs == NULL) return false;
+  slot = clientSimGetLobbySlot(cs, playerNum);
+  return slot != NULL && slot->connected && !slot->fielded;
+}
+
 tankAlliance clientSimGetTankAlliance(ClientSim *cs, BYTE playerNum) {
+  /* 1-based in, 0-based through — for the held-seat test as much as for
+     the table lookup after it. A playerNum of 0 wraps to 255, which is out
+     of range for both and answers tankNone either way, as it did before. */
+  if (clientSimSlotIsUnfielded(cs, (BYTE) (playerNum - 1))) return tankNone;
   return playersScreenAllience(&clientSimGetGameSim(cs)->plyrs, clientSimGetMyPlayerNum(cs), (BYTE) (playerNum - 1));
 }
 
@@ -4086,6 +4699,7 @@ bool clientSimGetPill(ClientSim *cs, BYTE i,
   pillbox p;
   BYTE n = pillsGetNumPills(&gs->pb);
   if (i == 0 || i > n) return false;
+  if (!pillsIsActive(&gs->pb, i)) return false;
   pillsGetPill(&gs->pb, &p, i);
   if (x)      *x      = p.x;
   if (y)      *y      = p.y;
@@ -4101,6 +4715,7 @@ bool clientSimGetBase(ClientSim *cs, BYTE i,
   base b;
   BYTE n = basesGetNumBases(&gs->bs);
   if (i == 0 || i > n) return false;
+  if (!basesIsActive(&gs->bs, i)) return false;
   basesGetBase(&gs->bs, &b, i);
   if (x)     *x     = b.x;
   if (y)     *y     = b.y;
@@ -4113,6 +4728,7 @@ bool clientSimGetBaseStats(ClientSim *cs, BYTE i,
   GameSim *gs = clientSimGetGameSim(cs);
   BYTE n = basesGetNumBases(&gs->bs);
   if (i == 0 || i > n) return false;
+  if (!basesIsActive(&gs->bs, i)) return false;
   basesGetStats(&gs->bs, i, shells, mines, armour);
   return true;
 }

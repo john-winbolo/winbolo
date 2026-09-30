@@ -28,6 +28,18 @@ extern "C" {
  *********************************************************/
 void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPath, bool fromMainMenu);
 
+/* Did the run that just returned end because the player quit, rather than
+ * leaving the editor?  Only the embedded caller asks; it hands the answer to
+ * windowSetQuitting(). */
+bool mapEditorAppQuitRequested(void);
+
+/* The host's settings window, run from the editor's Settings menu item.
+ * WinBolo sets this before mapEditorRun; the standalone MapEditor has no
+ * settings window, leaves it NULL, and so shows no menu item. The function
+ * runs its own loop and must return with no ImGui context current. */
+typedef void (*MapEditorSettingsFn)(void);
+void mapEditorSetSettingsHandler(MapEditorSettingsFn fn);
+
 #ifdef __cplusplus
 }
 #endif

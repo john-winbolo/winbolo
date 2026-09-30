@@ -47,6 +47,9 @@
 #include "../gui/ping_kinds.h"
 #include "../gui/sdl3/ping_icons.h"   /* pingIconsInit -- the replay shares the game's icons */
 #include "../gui/sdl3/ping_marker.h"  /* pingMarkerDraw */
+#include "scenario_panel.h"           /* SCN_MARKERS_MAX */
+#include "lv_scripts.h"               /* lv_screenGetScripts -- no backend.h */
+#include "lv_region_rect.h"           /* lvRegionScreenRect */
 
 #include "game_view.h"
 
@@ -62,6 +65,34 @@ extern bool lv_screenGetPing(int index, unsigned char *sender,
                              unsigned char *kind, uint16_t *worldX,
                              uint16_t *worldY, uint32_t *ageMs);
 extern int  lv_screenGetPingCapacity(void);
+/* lv_presentation.h and draw.h: a scenario marker's square for the followed
+   player, and the viewer's drawing of one. */
+extern bool lv_screenMarkerPlace(BYTE id, BYTE *mx, BYTE *my, BYTE *colour);
+extern void lv_drawScnMarker(SDL_Renderer *renderer, BYTE colour,
+                             float cx, float cy, float tileW, float tileH,
+                             uint32_t nowMs);
+/* draw.h and imgui_main_menu.h: a declared region's name and outline, and
+   whether Options -> Regions is on. */
+extern SDL_Texture *lv_drawRegionName(SDL_Renderer *renderer, TTF_Font *font,
+                                      const char *name, int *outW, int *outH);
+extern void lv_drawRegion(SDL_Renderer *renderer, float x, float y,
+                          float w, float h, float tileH,
+                          SDL_Texture *name, int nameW, int nameH);
+extern bool lv_g_show_regions;
+
+/* The declared regions' names, rendered once and kept: this view is redrawn
+ * every frame, where the overview renders its names only when it repaints. An
+ * entry is good while its name and the zoom match; the fonts are rebuilt at
+ * each setup, so the lot is flushed in lv_drawGameViewTeardown. */
+typedef struct {
+  SDL_Texture *tex;
+  int          w, h;
+  int          zoom;
+  char         name[LV_SCRIPTS_REGION_NAME_LEN];
+} GvRegionName;
+
+static GvRegionName s_regionNames[LV_SCRIPTS_REGIONS_MAX];
+static void gv_flushRegionNames(void);
 
 /* The names under the replay's ping markers, in a cache of their own rather
  * than the classic label pass's: the shared drawer in tank_label.c keys on
@@ -618,6 +649,7 @@ void lv_drawGameViewTeardown(void) {
 
   sdl3DrawStatusShutdown();
   tankLabelCacheFlush(&s_pingNameCache);
+  gv_flushRegionNames();
 
   if (s_tankBarsTex) { SDL_DestroyTexture(s_tankBarsTex); s_tankBarsTex = NULL; }
   if (s_baseBarsTex) { SDL_DestroyTexture(s_baseBarsTex); s_baseBarsTex = NULL; }
@@ -713,6 +745,91 @@ static void gv_drawPings(SDL_Renderer *renderer,
   }
 }
 
+/* --- Scenario map markers -----------------------------------------
+ * The markers the camera tank's player would see, on the same squares the
+ * pings use and with the same arithmetic. The view is redrawn every frame,
+ * so they breathe on the wall clock whether the replay is playing or not. */
+static void gv_drawScnMarkers(SDL_Renderer *renderer,
+                              int originX, int originY, int tileW, int tileH,
+                              int edgeX, int edgeY) {
+  uint32_t now = (uint32_t)SDL_GetTicks();
+  BYTE id;
+
+  for (id = 0; id < SCN_MARKERS_MAX; id++) {
+    BYTE mx, my, colour;
+    float cx, cy;
+
+    if (!lv_screenMarkerPlace(id, &mx, &my, &colour)) continue;
+    cx = (float)originX
+       + ((float)mx + 0.5f - (float)(lv_screenGetXOffset() + 1)) * (float)tileW
+       - (float)edgeX;
+    cy = (float)originY
+       + ((float)my + 0.5f - (float)(lv_screenGetYOffset() + 1)) * (float)tileH
+       - (float)edgeY;
+    lv_drawScnMarker(renderer, colour, cx, cy, (float)tileW, (float)tileH, now);
+  }
+}
+
+/* --- Declared regions ---------------------------------------------
+ * The regions the recording's scripts.json declares, while Options -> Regions
+ * is on, placed with the pings' arithmetic: the view shows squares
+ * xOffset+1 onward from (originX, originY), panned by edgeX/edgeY. Inside the
+ * step-3 clip, so an outline or a name crossing the border is cut there. */
+static void gv_flushRegionNames(void) {
+  int i;
+
+  for (i = 0; i < LV_SCRIPTS_REGIONS_MAX; i++) {
+    if (s_regionNames[i].tex != NULL) SDL_DestroyTexture(s_regionNames[i].tex);
+    s_regionNames[i].tex     = NULL;
+    s_regionNames[i].w       = 0;
+    s_regionNames[i].h       = 0;
+    s_regionNames[i].zoom    = 0;
+    s_regionNames[i].name[0] = '\0';
+  }
+}
+
+static void gv_drawRegions(SDL_Renderer *renderer,
+                           int originX, int originY, int tileW, int tileH,
+                           int edgeX, int edgeY) {
+  const LvScripts *scripts = lv_screenGetScripts();
+  LvRegionView view;
+  int count, i;
+
+  if (!lv_g_show_regions || scripts == NULL) return;
+  count = scripts->regionCount;
+  if (count > LV_SCRIPTS_REGIONS_MAX) count = LV_SCRIPTS_REGIONS_MAX;
+  if (count <= 0) return;
+
+  view.mapX  = (float)originX - (float)edgeX
+             - (float)(lv_screenGetXOffset() + 1) * (float)tileW;
+  view.mapY  = (float)originY - (float)edgeY
+             - (float)(lv_screenGetYOffset() + 1) * (float)tileH;
+  view.tileW = (float)tileW;
+  view.tileH = (float)tileH;
+  view.viewX = (float)originX;
+  view.viewY = (float)originY;
+  view.viewW = (float)(MAIN_SCREEN_SIZE_X * tileW);
+  view.viewH = (float)(MAIN_SCREEN_SIZE_Y * tileH);
+
+  for (i = 0; i < count; i++) {
+    const LvScriptRegion *r = &scripts->regions[i];
+    GvRegionName *label = &s_regionNames[i];
+    LvRegionRect rect;
+
+    if (!lvRegionScreenRect(&view, r->x, r->y, r->w, r->h, &rect)) continue;
+
+    if (label->zoom != s_zoom || SDL_strcmp(label->name, r->name) != 0) {
+      if (label->tex != NULL) SDL_DestroyTexture(label->tex);
+      label->tex = lv_drawRegionName(renderer, s_fonts[3], r->name,
+                                     &label->w, &label->h);
+      label->zoom = s_zoom;
+      SDL_strlcpy(label->name, r->name, sizeof(label->name));
+    }
+    lv_drawRegion(renderer, rect.x, rect.y, rect.w, rect.h, (float)tileH,
+                  label->tex, label->w, label->h);
+  }
+}
+
 /* --- Frame assembly (mirrors sdl3DrawMainScreen step-for-step) ---- */
 
 void lv_drawGameViewFrame(void *screenView, void *mineView,
@@ -767,6 +884,7 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
      with no sub-pixel motion, so the sampler has nothing to blend. */
   ctx.spritesTex = NULL;
   ctx.sprites    = NULL;
+  ctx.precise    = NULL;
 
   /* Set clip rect so the map render stays within the main view (no
    * spillover into the surrounding chrome from the 1-tile mapView
@@ -792,6 +910,13 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
    * border rather than painting over the chrome. A replay has no team, so
    * every ping in the recording is shown. */
   gv_drawPings(renderer, originX, originY, tileW, tileH, edgeX, edgeY);
+
+  /* A scenario's markers, on the ground beside the pings and inside the
+   * same clip. */
+  gv_drawScnMarkers(renderer, originX, originY, tileW, tileH, edgeX, edgeY);
+
+  /* The declared regions, on the ground beside the markers. */
+  gv_drawRegions(renderer, originX, originY, tileW, tileH, edgeX, edgeY);
 
   /* Steps 4-5 — sprites. lv_screenUpdate already populated tks/shells/
    * lgmList just before calling us via lv_drawMainScreen. */

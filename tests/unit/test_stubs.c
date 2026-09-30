@@ -10,6 +10,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <SDL3/SDL.h>
+#include <lua.h>
+#include <lauxlib.h>
 #include "global.h"
 #include "client_sim.h"
 #include "client_sim_internal.h"  /* clientSimGetBoundServerSim — the brain stub */
@@ -17,6 +19,9 @@
 #include "server_sim.h"
 #include "../../src/winbolonet/winbolonet_server.h"
 #include "../../src/winbolonet/winbolonet_core.h"  /* WINBOLO_NET_EVENT_* */
+#include "../../src/winbolonet/winbolonetthread.h" /* WbnResultHandler,
+                                                    WBN_JOB_REGISTER,
+                                                    WBN_JOB_VERIFY */
 #include "luabrainshandler.h"
 #include "lang_message.h"
 #include "nat_portmap.h"
@@ -63,12 +68,30 @@ static bool     s_brainStubArmed = false;
 static ScnTable s_brainStubInit[MAX_TANKS];
 static bool     s_brainStubMade[MAX_TANKS];
 static BYTE     s_brainStubTeam[MAX_TANKS];
+/* How many brains each slot has been asked for, and how many have been
+ * destroyed in all. s_brainStubMade answers whether a slot ever had one,
+ * which cannot tell a seat fielded once from a seat fielded, taken off the
+ * field and fielded again — the count can. The destroys are a total rather
+ * than per slot because luaBrainInstanceDestroy is handed an instance and no
+ * player number, so there is nothing to file them under. */
+static int      s_brainStubCreates[MAX_TANKS];
+static int      s_brainStubDestroys;
+/* Opt-in: hand each instance a real, bare lua_State. The cheap stub leaves
+ * the instance zeroed, so bot_manager skips every brain-facing path — which
+ * is what nearly every case wants and is why this is off by default. A case
+ * that has to watch what the sim writes INTO a brain needs a state to write
+ * into, and this is the smallest one that will do: no libraries, nothing
+ * loaded, so a tick is still the stub's no-op. */
+static bool     s_brainStubLua = false;
 
 void ut_brain_stub_arm(bool succeed) {
   s_brainStubArmed = succeed;
+  s_brainStubLua   = false;
   memset(s_brainStubInit, 0, sizeof(s_brainStubInit));
   memset(s_brainStubMade, 0, sizeof(s_brainStubMade));
   memset(s_brainStubTeam, 0, sizeof(s_brainStubTeam));
+  memset(s_brainStubCreates, 0, sizeof(s_brainStubCreates));
+  s_brainStubDestroys = 0;
 }
 
 int ut_brain_stub_team(int player_num) {
@@ -87,6 +110,19 @@ const ScnTable *ut_brain_stub_init(int player_num) {
   return &s_brainStubInit[player_num];
 }
 
+int ut_brain_stub_creates(int player_num) {
+  if (player_num < 0 || player_num >= MAX_TANKS) return 0;
+  return s_brainStubCreates[player_num];
+}
+
+int ut_brain_stub_destroys(void) {
+  return s_brainStubDestroys;
+}
+
+void ut_brain_stub_lua(bool withState) {
+  s_brainStubLua = withState;
+}
+
 bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
                             const char *name, struct ClientSim *cs,
                             aiType aiMode, bool debug_mode,
@@ -100,9 +136,14 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
    * bot_manager reads L, pathfinder and worldsim straight after this and
    * skips each one when it is NULL. */
   memset(inst, 0, sizeof(*inst));
+  if (s_brainStubLua) {
+    inst->L = luaL_newstate();
+    inst->running = (inst->L != NULL);
+  }
   if (player_num >= 0 && player_num < MAX_TANKS) {
     struct ServerSim *sim = cs ? clientSimGetBoundServerSim(cs) : NULL;
     s_brainStubMade[player_num] = true;
+    s_brainStubCreates[player_num]++;
     if (init != NULL) {
       s_brainStubInit[player_num] = *init;
     } else {
@@ -125,8 +166,16 @@ bool luaBrainInstanceTick(LuaBrainInstance *inst) {
   return false;
 }
 
+/* Counted whether or not a brain was ever made for the instance.
+ * botTearDownRunner calls this for every runner it takes down, and the count
+ * is of the work the teardown asks for. */
 void luaBrainInstanceDestroy(LuaBrainInstance *inst) {
-  (void)inst;
+  if (inst != NULL && inst->L != NULL) {
+    lua_close(inst->L);
+    inst->L = NULL;
+    inst->running = false;
+  }
+  s_brainStubDestroys++;
 }
 
 /* Lua seeding (ec47fa43 / 73ba4e7a): the bot manager forwards -brain-lua-seed
@@ -198,10 +247,12 @@ void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE a
 }
 
 /* What frontEndPlaySound was handed, so a test can assert which variant of a
-   sound the client played. Bounded: once the array is full, further sounds are
-   neither stored nor counted. */
+   sound the client played and at what gains. Bounded: once the array is full,
+   further sounds are neither stored nor counted. */
 #define UT_SOUND_MAX 64
 static int s_ut_sounds[UT_SOUND_MAX];
+static int s_ut_sound_gain_l[UT_SOUND_MAX];
+static int s_ut_sound_gain_r[UT_SOUND_MAX];
 static int s_ut_sound_count;
 
 void ut_sound_reset(void) {
@@ -219,12 +270,33 @@ int ut_sound_get(int index) {
   return s_ut_sounds[index];
 }
 
-void frontEndPlaySound(ClientSim *cs, sndEffects value) {
+int ut_sound_get_gain_left(int index) {
+  if (index < 0 || index >= s_ut_sound_count) {
+    return -1;
+  }
+  return s_ut_sound_gain_l[index];
+}
+
+int ut_sound_get_gain_right(int index) {
+  if (index < 0 || index >= s_ut_sound_count) {
+    return -1;
+  }
+  return s_ut_sound_gain_r[index];
+}
+
+void frontEndPlaySoundPan(ClientSim *cs, sndEffects value,
+                          uint16_t gainL, uint16_t gainR) {
   (void)cs;
   if (s_ut_sound_count < UT_SOUND_MAX) {
     s_ut_sounds[s_ut_sound_count] = (int)value;
+    s_ut_sound_gain_l[s_ut_sound_count] = (int)gainL;
+    s_ut_sound_gain_r[s_ut_sound_count] = (int)gainR;
     s_ut_sound_count++;
   }
+}
+
+void frontEndPlaySound(ClientSim *cs, sndEffects value) {
+  frontEndPlaySoundPan(cs, value, SOUND_GAIN_UNITY, SOUND_GAIN_UNITY);
 }
 
 void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,
@@ -240,16 +312,50 @@ void frontEndStatusPillbox(ClientSim *cs, BYTE pillNum, pillAlliance pb) {
   (void)cs; (void)pillNum; (void)pb;
 }
 
+/* What frontEndStatusTank was last handed. playersSetPlayer works out the
+   status tile for a join or a rename itself and hands it straight to the front
+   end, so this is the only place a test can read the answer it came to. The
+   player number is the 1-based one the call takes; -1 until the first call. */
+static int s_ut_statusTankPlayer   = -1;
+static int s_ut_statusTankAlliance = -1;
+
+int ut_status_tank_last_player(void) {
+  return s_ut_statusTankPlayer;
+}
+
+int ut_status_tank_last_alliance(void) {
+  return s_ut_statusTankAlliance;
+}
+
 void frontEndStatusTank(ClientSim *cs, BYTE tankNum, tankAlliance ts) {
-  (void)cs; (void)tankNum; (void)ts;
+  (void)cs;
+  s_ut_statusTankPlayer   = (int)tankNum;
+  s_ut_statusTankAlliance = (int)ts;
 }
 
 void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) {
   (void)cs; (void)baseNum; (void)bs;
 }
 
+/* The two newswire lines frontEndMessages was last handed, so a test can read
+   what the front end was told to show. Empty until the first call. Sized well
+   past MESSAGE_LINE_BYTES (68 cells of up to 4 bytes each). */
+static char s_ut_messagesTop[512]    = "";
+static char s_ut_messagesBottom[512] = "";
+
+const char *ut_messages_last_top(void) {
+  return s_ut_messagesTop;
+}
+
+const char *ut_messages_last_bottom(void) {
+  return s_ut_messagesBottom;
+}
+
 void frontEndMessages(ClientSim *cs, char *top, char *bottom) {
-  (void)cs; (void)top; (void)bottom;
+  (void)cs;
+  SDL_strlcpy(s_ut_messagesTop, top ? top : "", sizeof(s_ut_messagesTop));
+  SDL_strlcpy(s_ut_messagesBottom, bottom ? bottom : "",
+              sizeof(s_ut_messagesBottom));
 }
 
 void frontEndKillsDeaths(ClientSim *cs, int kills, int deaths) {
@@ -420,6 +526,25 @@ int  wbnStubLgmKillCalls = 0;
 BYTE wbnStubLastLgmKiller = 0xFF;
 BYTE wbnStubLastLgmKilled = 0xFF;
 
+/* The per-slot WinBolo.net keys the real winbolonet_core owns. Empty until a
+ * verify is accepted, which only winbolonetApplyVerifyResult below does, so
+ * every case that never settles a verify reads exactly as it did: no key, and
+ * winboloNetIsPlayerParticipant FALSE. */
+char wbnStubPlayerKey[MAX_TANKS][WINBOLONET_KEY_LEN];
+
+/* winbolonetAddEvent PLAYER_JOIN spy: the reauth cases watch these to prove
+ * a verified re-authentication emits the deferred join exactly once, and for
+ * which slot.
+ *
+ * wbnStubLastJoinKey is the slot's key AT PUBLISH TIME, which is what says
+ * whether the join announced an account or an unidentified player: the real
+ * winbolonetAddEvent reads winboloNetPlayerKey[playerA] when it is called and
+ * winbolonetServerUpdate leaves player_a out when that key is empty. Empty
+ * here means the join went out un-keyed. */
+int      wbnStubJoinEventCalls = 0;
+uint16_t wbnStubJoinEventMask  = 0;   /* bit i = a join emitted for slot i */
+char     wbnStubLastJoinKey[WINBOLONET_KEY_LEN] = "";
+
 bool winbolonetIsRunning(void) { return wbnStubRunning; }
 void winbolonetDestroy(bool isServer) { (void)isServer; }
 void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB, bool aIsBot, bool bIsBot) {
@@ -440,9 +565,27 @@ void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE player
     wbnStubLgmKillCalls++;
     wbnStubLastLgmKiller = playerA;
     wbnStubLastLgmKilled = playerB;
+  } else if (eventType == WINBOLO_NET_EVENT_PLAYER_JOIN) {
+    wbnStubJoinEventCalls++;
+    wbnStubLastJoinKey[0] = '\0';
+    if (playerA < MAX_TANKS) {
+      wbnStubJoinEventMask |= (uint16_t)(1u << playerA);
+      SDL_strlcpy(wbnStubLastJoinKey, wbnStubPlayerKey[playerA],
+                  WINBOLONET_KEY_LEN);
+    }
   }
 }
-void winboloNetGetServerKey(char *keyBuff) { if (keyBuff) keyBuff[0] = '\0'; }
+/* The session key the server is holding. Empty unless a test sets one, which
+ * keeps every case that never looks at it reading exactly as it did. The
+ * round-transition case needs a non-empty one: transportUdpServerSendWbnRekey
+ * drops the broadcast when the server has no key. */
+char wbnStubServerKey[WINBOLONET_KEY_LEN] = "";
+
+void winboloNetGetServerKey(char *keyBuff) {
+  if (keyBuff) {
+    SDL_strlcpy(keyBuff, wbnStubServerKey, WINBOLONET_KEY_LEN);
+  }
+}
 void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, BYTE freePills) {
   (void)playerNum; (void)numPlayers; (void)freeBases; (void)freePills;
 }
@@ -450,7 +593,10 @@ void winboloNetSendLock(bool isLocked) {
   wbnStubSendLockCalls++;
   wbnStubLastLockReported = isLocked;
 }
-bool winboloNetIsPlayerParticipant(BYTE playerNum) { (void)playerNum; return FALSE; }
+bool winboloNetIsPlayerParticipant(BYTE playerNum) {
+  if (playerNum >= MAX_TANKS) return FALSE;
+  return wbnStubPlayerKey[playerNum][0] != '\0' ? TRUE : FALSE;
+}
 bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName,
                                BYTE playerNum, char *errorMsg,
                                bool *hasSteam, bool *isSupporter) {
@@ -510,7 +656,13 @@ void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE f
   (void)mapName; (void)numBases; (void)numPills; (void)freeBases; (void)freePills;
 }
 
-void winbolonetSetLobbyInfo(const WbnLobbyInfo *info) { (void)info; }
+/* winbolonetSetLobbyInfo spy: the lobby-info fill tests read the last struct
+ * the sim handed over. */
+WbnLobbyInfo wbnStubLastLobbyInfo;
+
+void winbolonetSetLobbyInfo(const WbnLobbyInfo *info) {
+  if (info != NULL) wbnStubLastLobbyInfo = *info;
+}
 
 void winbolonetSendLobbyUpdate(void) { wbnStubLobbyUpdateCalls++; }
 
@@ -528,14 +680,217 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
   return FALSE;
 }
 
-void winbolonetEndSession(void) { }
+/* ── Round-transition queue spy (test_round_transition_tick.c) ──────────
+ * The lifecycle queues server/quit, the round-log upload and
+ * server/register for the WinBolo.net worker instead of posting them, and
+ * picks the register's reply up later through winbolonetThreadDrainResults.
+ * These record what was queued and in what order, and hold the reply until
+ * a test releases it. */
+#define WBN_STUB_MAX_JOBS 8
+int      wbnStubJobCount = 0;
+char     wbnStubJobs[WBN_STUB_MAX_JOBS][16];
+uint32_t wbnStubRegisterJobId = 0;
+bool     wbnStubRegisterResultReady = FALSE;
+int      wbnStubRegisterResultStatus = 200;
+int      wbnStubApplyRegisterCalls = 0;
+bool     wbnStubApplyRegisterOk = TRUE;
+
+static uint32_t wbnStubNextJobId = 1;
+
+static uint32_t wbnStubRecordJob(const char *what) {
+  if (wbnStubJobCount >= 0 && wbnStubJobCount < WBN_STUB_MAX_JOBS) {
+    SDL_strlcpy(wbnStubJobs[wbnStubJobCount], what,
+                sizeof(wbnStubJobs[wbnStubJobCount]));
+  }
+  wbnStubJobCount++;
+  return wbnStubNextJobId++;
+}
+
+/* The synchronous pair the lifecycle falls back to when the worker refuses
+ * the rotation (serverLifecycleQueueRotation). Both record themselves in
+ * the same job list as the queued forms, so a test reads one order for
+ * either path. */
+int  wbnStubEndSessionCalls = 0;
+int  wbnStubBeginSessionCalls = 0;
+bool wbnStubBeginSessionOk = FALSE;
+bool wbnStubWorkerRefuses = FALSE;
+
+void winbolonetEndSession(uint32_t drainMaxMs) {
+  (void)drainMaxMs;
+  wbnStubEndSessionCalls++;
+  wbnStubRecordJob("quit");
+}
+
+bool winbolonetQueueEndSession(void) {
+  if (wbnStubWorkerRefuses == TRUE) {
+    /* What the real call answers with no worker: nothing queued, and the
+     * caller sends the rotation itself. */
+    return FALSE;
+  }
+  wbnStubRecordJob("quit");
+  return TRUE;
+}
+
+uint32_t winbolonetQueueBeginSession(char *mapName, unsigned short port,
+                                     BYTE gameType, BYTE ai, bool mines,
+                                     bool password, BYTE numBases,
+                                     BYTE numPills, BYTE freeBases,
+                                     BYTE freePills, BYTE numPlayers) {
+  (void)mapName; (void)port; (void)gameType; (void)ai; (void)mines;
+  (void)password; (void)numBases; (void)numPills; (void)freeBases;
+  (void)freePills; (void)numPlayers;
+  if (wbnStubWorkerRefuses == TRUE) {
+    wbnStubRegisterJobId = 0;
+    return 0;
+  }
+  wbnStubRegisterJobId = wbnStubRecordJob("register");
+  return wbnStubRegisterJobId;
+}
+
+bool winbolonetApplyRegisterResult(int status, const char *response) {
+  (void)status; (void)response;
+  wbnStubApplyRegisterCalls++;
+  return wbnStubApplyRegisterOk;
+}
+
+/* ── client/verify queue spy (test_reauth_result.c) ─────────────────────
+ * The reauth path queues client/verify for the worker and stamps the slot
+ * from udpServerApplyReauthResult when the reply lands. These record the
+ * enqueue, hold the reply until a test releases it, and decide what the
+ * reply says.
+ *
+ * wbnStubVerifyOk defaults FALSE, which is what winboloNetVerifyClientKey
+ * has always answered here, so a case that never sets it sees the failure
+ * arm exactly as before. */
+int      wbnStubVerifyQueueCalls = 0;
+uint32_t wbnStubVerifyJobId = 0;
+char     wbnStubVerifyLastKey[96] = "";   /* >= WBN_JOIN_KEY_WIRE_LEN */
+char     wbnStubVerifyLastName[96] = "";  /* >= PACKET_MAX_PLAYER_NAME */
+bool     wbnStubVerifyResultReady = FALSE;
+int      wbnStubVerifyResultStatus = 200;
+int      wbnStubApplyVerifyCalls = 0;
+bool     wbnStubVerifyOk = FALSE;
+bool     wbnStubVerifyHasSteam = FALSE;
+bool     wbnStubVerifySupporter = FALSE;
+
+uint32_t winbolonetQueueVerifyClientKey(const char *playerKey,
+                                        const char *playerName) {
+  wbnStubVerifyQueueCalls++;
+  SDL_strlcpy(wbnStubVerifyLastKey, playerKey ? playerKey : "",
+              sizeof(wbnStubVerifyLastKey));
+  SDL_strlcpy(wbnStubVerifyLastName, playerName ? playerName : "",
+              sizeof(wbnStubVerifyLastName));
+  wbnStubVerifyJobId = wbnStubNextJobId++;
+  return wbnStubVerifyJobId;
+}
+
+bool winbolonetApplyVerifyResult(int status, const char *response,
+                                 const char *playerKey, BYTE playerNum,
+                                 char *errorMsg, bool *hasSteam,
+                                 bool *isSupporter) {
+  (void)status; (void)response;
+  wbnStubApplyVerifyCalls++;
+  if (errorMsg)    errorMsg[0]  = '\0';
+  if (hasSteam)    *hasSteam    = wbnStubVerifyHasSteam;
+  if (isSupporter) *isSupporter = wbnStubVerifySupporter;
+  if (wbnStubVerifyOk != TRUE) {
+    if (errorMsg) SDL_strlcpy(errorMsg, "stub verify refused", 256);
+    return FALSE;
+  }
+  /* The real apply writes the slot's key here, on the draining thread. */
+  if (playerNum < MAX_TANKS) {
+    SDL_strlcpy(wbnStubPlayerKey[playerNum], playerKey ? playerKey : "",
+                WINBOLONET_KEY_LEN);
+  }
+  return TRUE;
+}
+
+uint32_t winbolonetThreadAddUpload(const char *fileName, const char *key) {
+  uint32_t id;
+  (void)fileName; (void)key;
+  /* Recorded either way: the queued upload and the one the dedicated log
+   * posts itself when this is refused are the same step of the rotation,
+   * and a test reads the order, not which thread sent it. */
+  id = wbnStubRecordJob("upload");
+  if (wbnStubWorkerRefuses == TRUE) {
+    return 0;
+  }
+  return id;
+}
+
+/* ── client/verify_join_code queue spy (test_reauth_result.c) ───────────
+ * A web slot's reauth presents a join_code and takes the read-only
+ * verify_join_code route, queued for the worker like the key route and
+ * placed by the same handler. Shares wbnStubVerifyJobId and the verify
+ * result-ready flag, so the drain below delivers either kind.
+ *
+ * wbnStubJoinCodeOk defaults FALSE, which is what winboloNetVerifyJoinCode
+ * has always answered here. */
+int      wbnStubJoinCodeQueueCalls = 0;
+char     wbnStubJoinCodeLast[128] = "";
+int      wbnStubApplyJoinCodeCalls = 0;
+bool     wbnStubJoinCodeOk = FALSE;
+bool     wbnStubJoinCodeLoggedIn = FALSE;
+char     wbnStubJoinCodeName[PACKET_MAX_PLAYER_NAME] = "";
+char     wbnStubJoinCodeCountry[3] = "";
+
+uint32_t winbolonetQueueVerifyJoinCode(const char *joinCode) {
+  wbnStubJoinCodeQueueCalls++;
+  SDL_strlcpy(wbnStubJoinCodeLast, joinCode ? joinCode : "",
+              sizeof(wbnStubJoinCodeLast));
+  wbnStubVerifyJobId = wbnStubNextJobId++;
+  return wbnStubVerifyJobId;
+}
+
+bool winbolonetApplyVerifyJoinCodeResult(int status, const char *response,
+                                         char *playerNameOut,
+                                         bool *isLoggedInOut,
+                                         char *countryOut, int *userIdOut,
+                                         char *errorMsg) {
+  (void)status; (void)response;
+  wbnStubApplyJoinCodeCalls++;
+  if (playerNameOut) playerNameOut[0] = '\0';
+  if (isLoggedInOut) *isLoggedInOut   = FALSE;
+  if (countryOut)    countryOut[0]    = '\0';
+  if (userIdOut)    *userIdOut        = -1;
+  if (errorMsg)      errorMsg[0]      = '\0';
+  if (wbnStubJoinCodeOk != TRUE) {
+    if (errorMsg) SDL_strlcpy(errorMsg, "stub join code refused", 256);
+    return FALSE;
+  }
+  if (playerNameOut) {
+    SDL_strlcpy(playerNameOut, wbnStubJoinCodeName, PACKET_MAX_PLAYER_NAME);
+  }
+  if (isLoggedInOut) *isLoggedInOut = wbnStubJoinCodeLoggedIn;
+  if (countryOut)    SDL_strlcpy(countryOut, wbnStubJoinCodeCountry, 3);
+  if (userIdOut)    *userIdOut = 4242;
+  return TRUE;
+}
+
+void winbolonetThreadDrainResults(WbnResultHandler handler, void *ctx) {
+  if (handler == NULL) {
+    return;
+  }
+  if (wbnStubRegisterResultReady == TRUE) {
+    wbnStubRegisterResultReady = FALSE;
+    handler(wbnStubRegisterJobId, WBN_JOB_REGISTER, wbnStubRegisterResultStatus,
+            "{}", ctx);
+  }
+  if (wbnStubVerifyResultReady == TRUE) {
+    wbnStubVerifyResultReady = FALSE;
+    handler(wbnStubVerifyJobId, WBN_JOB_VERIFY, wbnStubVerifyResultStatus,
+            "{}", ctx);
+  }
+}
 
 bool winbolonetBeginSession(char *mapName, unsigned short port, BYTE gameType, BYTE ai,
                             bool mines, bool password, BYTE numBases, BYTE numPills,
                             BYTE freeBases, BYTE freePills, BYTE numPlayers) {
   (void)mapName; (void)port; (void)gameType; (void)ai; (void)mines; (void)password;
   (void)numBases; (void)numPills; (void)freeBases; (void)freePills; (void)numPlayers;
-  return FALSE;
+  wbnStubBeginSessionCalls++;
+  wbnStubRecordJob("register");
+  return wbnStubBeginSessionOk;
 }
 
 void winbolonetSendLobbyStatus(bool inLobby) { (void)inLobby; }

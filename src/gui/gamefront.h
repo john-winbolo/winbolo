@@ -55,7 +55,6 @@
 #define DEFAULT_TANKVIEW     23   /* SDL_SCANCODE_T */
 #define DEFAULT_PILLVIEW     10   /* SDL_SCANCODE_G */
 #define DEFAULT_ALLYVIEW     28   /* SDL_SCANCODE_Y */
-#define DEFAULT_LGMVIEW      11   /* SDL_SCANCODE_H */
 #define DEFAULT_BASEVIEW     16   /* SDL_SCANCODE_M */
 
 /* Held while the wheel turns over the map overview, it zooms the map rather
@@ -346,20 +345,6 @@ void gameFrontGetUdpOptions(char *pn, char *add, unsigned short *theirUdp, unsig
 void gameFrontSetUdpOptions(char *pn, char *add, unsigned short theirUdp, unsigned short myUdp);
 
 /*********************************************************
-*NAME:          gameFrontGetPassword
-*AUTHOR:        John Morrison
-*CREATION DATE: 24/2/99
-*LAST MODIFIED: 24/2/99
-*PURPOSE:
-* The network module has tried to join a game with a
-* password, request it here.
-*
-*ARGUMENTS:
-* pword - Password slected
-*********************************************************/
-void gameFrontGetPassword(char *pword);
-
-/*********************************************************
 *NAME:          gameFrontGetPlayerName
 *AUTHOR:        John Morrison
 *CREATION DATE: 24/2/99
@@ -391,7 +376,10 @@ void gameFrontSetPlayerName(char *pn);
 *CREATION DATE: 26/2/99
 *LAST MODIFIED: 26/2/99
 *PURPOSE:
-* Sets the AI type of the game. (From networking module)
+* Sets the AI type of the game being joined, on the client sim and
+* the brains menu. (From networking module.) It does not touch the
+* saved computer tanks pick that gameFrontRememberAiPolicy records:
+* a joined game's setting is not what the next hosted game opens on.
 *
 *ARGUMENTS:
 *
@@ -1000,6 +988,83 @@ extern float gameFrontOverviewZoom;     /* camera scale, e.g. 1.0 */
 extern bool  gameFrontOverviewFollow;
 extern bool  gameFrontShowMapOverview;  /* open when the last game ended */
 
+/* The size the scenario panel is held to, as a percent of the size the
+ * game's own zoom gives it. The drag is clamped to this range and so is a
+ * value read out of the preferences file, because a file somebody has edited
+ * by hand must not be able to open the panel larger than the screen or so
+ * small there is nothing left to get a pointer onto. */
+#define SCN_PANEL_SCALE_MIN 25
+#define SCN_PANEL_SCALE_MAX 300
+
+/* Where the scenario panel sits, how big the player has made it and how
+ * opaque it is drawn ([WINDOW] section). These four are the layout of the
+ * panel the player touched last, and they are the fallback: a scenario the
+ * player has never laid out opens its panel from them, so somebody who likes
+ * the panel small and out of the way gets it that way the first time they
+ * meet a new scenario. A scenario that has been laid out keeps its own four
+ * numbers in a row of its own under [SCENARIO PANEL], written and read by
+ * gameFrontSetScnPanelLayout / gameFrontGetScnPanelLayout below, and those
+ * are what the panel is placed from while that scenario is the one on screen.
+ *
+ * The panel is an ImGui window
+ * inside the main one rather than an OS window of its own, so the position is
+ * a position in the main window's own render coordinates, not a desktop one.
+ * -1 for either coordinate means the player has never moved it, and it opens
+ * at the top-right of the game view; a position saved on a larger display is
+ * clamped back inside the window it is restored into.
+ *
+ * The scale is a percent rather than a size in pixels so that the saved value
+ * keeps its meaning at every zoom: 100 is the size the game's zoom alone
+ * gives the panel, which is the size it had before it could be resized. -1
+ * means it has never been resized, and a loaded value is clamped to
+ * SCN_PANEL_SCALE_MIN..SCN_PANEL_SCALE_MAX, the same range the resize drag
+ * is clamped to.
+ *
+ * The alpha is a percent of opaque, and it fades everything the panel puts
+ * on screen: the black backing it is drawn on and every primitive the
+ * scenario drew, together, so the panel stays one object at every setting.
+ * It reaches no pixel that was not drawn on — the empty parts of the square
+ * are as clear at 10 as they are at 100 — and it does not reach the border
+ * or the corner grips, which are the frontend's own and have to stay
+ * findable. It scales what the panel already looked like rather than setting
+ * it outright, so 100 is the panel as it was before there was a slider — a
+ * dim backing with the scenario's drawing at full strength on top — and that
+ * is also what -1, never touched, resolves to. 0 leaves the square empty but
+ * for those grips. A loaded value is clamped to 0..100.
+ *
+ * All four are written through the debounced gameFrontSaveWindowSettings
+ * path, and only as a drag ends: a drag is a burst of values and only the one
+ * it finishes on is worth a write. */
+extern int   gameFrontScnPanelX;        /* -1 = never moved */
+extern int   gameFrontScnPanelY;
+extern int   gameFrontScnPanelScale;    /* percent, -1 = never resized */
+extern int   gameFrontScnPanelAlpha;    /* percent, -1 = never set */
+
+/* The longest scenario string the pair below is asked to key a row on. The
+ * caller passes the scenario's file name where there is one, because two
+ * scenarios can carry the same display name and the file name is what the
+ * host actually loaded, so this is LOBBY_SCENARIO_FILE_LEN from
+ * control_event.h and not the shorter name length. Both buffers are sized
+ * from it and a longer string is truncated rather than refused. */
+#define SCN_PANEL_SCENARIO_LEN 128
+
+/* One scenario's own scenario-panel layout, kept under "SCENARIO PANEL" /
+ * the scenario ("Survival.scenario.lua") as "x,y,scale,alpha", so each
+ * scenario remembers where its overlay sat, how big it was and how opaque.
+ * The four numbers mean exactly what the globals above mean, -1 and all, and
+ * are clamped on the way out of the file the same way those are: the
+ * preferences file is a text file a player can edit, and a bad row must not
+ * open the panel off screen or too small to get a pointer onto.
+ *
+ * Get returns false, and leaves all four alone, when no row is remembered
+ * yet or when the row does not read as four whole numbers — the caller keeps
+ * the [WINDOW] fallback in that case. Set does nothing for a scenario with
+ * no name, which is a game with no scenario behind it. */
+bool gameFrontGetScnPanelLayout(const char *scenario, int *x, int *y,
+                                int *scale, int *alpha);
+void gameFrontSetScnPanelLayout(const char *scenario, int x, int y,
+                                int scale, int alpha);
+
 /* App full screen mode ([MENU] section). While it is on the main window is
  * full screen everywhere — menus, lobby and game — and every game opens in
  * the Full Screen Map view. That view is the map, so the pop-out above never
@@ -1016,7 +1081,8 @@ extern bool gameFrontUseNatTraversal;
  * gameFrontGetPrefs, applied to the server config in gameFrontSetupServer,
  * and persisted immediately by the per-setting write-through setters below
  * so both settings shells save identically without a close-time flush.
- * gameFrontHostingUploadPolicy holds an UploadPolicy value. */
+ * gameFrontHostingUploadPolicy holds an UploadPolicy value, and
+ * gameFrontHostingScriptUploadPolicy a ScriptUploadPolicy value. */
 extern unsigned short gameFrontHostingPort;            /* default 27500 */
 extern bool           gameFrontHostingAllowSpec;       /* default Yes   */
 extern bool           gameFrontHostingScripts;          /* default Yes   */
@@ -1025,6 +1091,23 @@ extern bool           gameFrontHostingScripts;          /* default Yes   */
                                * map pack can decline its script without
                                * deleting the file. Set on the scenario
                                * library before either attach site runs. */
+extern int            gameFrontHostingScriptUploadPolicy; /* default ALLOW (0) */
+                              /* What this host does with scripts players
+                               * send it. Off refuses them and plays a map a
+                               * player uploaded plainly, leaving every other
+                               * map alone; Allow keeps them for the session;
+                               * Persist keeps them in the directory below.
+                               * Set on the scenario library beside the
+                               * switch above as "not Off". */
+extern bool           gameFrontHostingShareScripts;    /* default Yes   */
+                              /* Let players save a copy of this host's mods
+                               * and scenarios. Reaches the server as
+                               * ServerInstanceConfig.noScriptSharing. */
+extern char           gameFrontHostingScriptUploadDir[FILENAME_MAX];
+                              /* Persist target dir for scripts; default
+                               * <prefs path>uploads/Scripts */
+extern int            gameFrontHostingScriptUploadMaxFiles;   /* 1-255, default 32 */
+extern int            gameFrontHostingScriptUploadMaxStorage; /* MB, 1-4095, default 64 */
 extern int            gameFrontHostingMaxSpec;         /* 1-32,  default 16 */
 extern int            gameFrontHostingUploadPolicy;    /* default ALLOW (0) */
 extern int            gameFrontHostingUploadMaxFiles;  /* 1-255, default 64 */
@@ -1034,6 +1117,10 @@ extern char           gameFrontHostingUploadDir[FILENAME_MAX];
 extern bool           gameFrontHostingLogging;         /* default Yes   */
 extern char           gameFrontHostingLogDir[FILENAME_MAX];
                               /* Round-log dir; default <prefs path> */
+extern char           gameFrontHostingScenarioDir[FILENAME_MAX];
+                              /* The scenarios this host offers on their own,
+                               * independently of any map; default
+                               * <prefs path>scenarios */
 extern bool           gameFrontHostingServeReplays;    /* default Yes   */
                               /* Hand a finished round's log to players who
                                * ask for it. Yes leaves the serve policy at
@@ -1053,15 +1140,24 @@ void gameFrontSetHostingUploadPolicy(int policy);
 void gameFrontSetHostingUploadMaxFiles(int maxFiles);
 void gameFrontSetHostingUploadMaxStorage(int maxStorageMb);
 void gameFrontSetHostingUploadDir(const char *dir);
+void gameFrontSetHostingScriptUploadPolicy(int policy);
+void gameFrontSetHostingShareScripts(bool on);
+void gameFrontSetHostingScriptUploadMaxFiles(int maxFiles);
+void gameFrontSetHostingScriptUploadMaxStorage(int maxStorageMb);
+void gameFrontSetHostingScriptUploadDir(const char *dir);
 void gameFrontSetHostingLogging(bool logging);
 void gameFrontSetHostingLogDir(const char *dir);
+void gameFrontSetHostingScenarioDir(const char *dir);
 void gameFrontSetHostingServeReplays(bool serve);
 void gameFrontSetHostingVoiceMode(int mode);
 
 /* Visibility rules a hosted game starts with ([GAME OPTIONS] section).
  * Read by gameFrontGetPrefs and pushed onto the sim with
- * serverSimSetViewPolicy in gameFrontSetupServer. Each policy global
- * holds a ViewPolicy value; the decay globals hold seconds in the
+ * serverSimSetViewPolicy by every path here that creates a server — the
+ * listen server in gameFrontSetupServer and the single-player game in the
+ * dialog state machine — because both open a lobby whose Visibility
+ * dropdown has to start on what this player last chose. Each policy
+ * global holds a ViewPolicy value; the decay globals hold seconds in the
  * VIEW_DECAY_MIN_SECS..VIEW_DECAY_MAX_SECS range. Each starts on the
  * rules an unconfigured server runs, so hosting with an untouched INI
  * leaves the sim as serverSimInit created it. */
@@ -1077,6 +1173,9 @@ extern bool gameFrontClassicMode;
 /* Allied tanks standing in trees are sent to their allies. Applied before
  * classic mode, which forces it back off. Default off. */
 extern bool gameFrontAlliesInTrees;
+/* Sounds are sent with the side of the screen they happen on. Applied
+ * before classic mode, which forces it back off. Default off. */
+extern bool gameFrontPositionalSound;
 /* Which block of squares the map overview keeps live. Holds an
  * OverviewWindow; starts on OVERVIEW_WINDOW_STOCK. */
 extern int gameFrontOverviewWindow;
@@ -1093,6 +1192,7 @@ void gameFrontSetViewBaseDecaySecs(int secs);
 void gameFrontSetViewAllyDecaySecs(int secs);
 void gameFrontSetClassicMode(bool on);
 void gameFrontSetAlliesInTrees(bool on);
+void gameFrontSetPositionalSound(bool on);
 void gameFrontSetOverviewWindow(int window);
 void gameFrontSetLineOfSight(int mode);
 
@@ -1112,8 +1212,26 @@ void gameFrontSetVisibilityCustom(const VisibilitySettings *v);
 /* The seven visibility globals above as one set. */
 void gameFrontGetVisibilitySettings(VisibilitySettings *out);
 /* Records a set as the host's choice: the seven globals, which named set
- * it is, and — when it is none of them — the set itself. Call it wherever
- * a host changes visibility, rather than writing the three separately. */
-void gameFrontRememberVisibility(const VisibilitySettings *v);
+ * it is, and — when saveCustom is true and the set is none of the named
+ * ones — the set itself. Call it wherever a host changes visibility,
+ * rather than writing the three separately.
+ *
+ * saveCustom is false where the caller is only writing down what the
+ * settings are on right now. Applying a preset sends its settings one at
+ * a time, so the values pass through mixes that match no named set, and
+ * every one of those would otherwise be saved as the hand-made set. The
+ * lobby therefore passes false and writes the hand-made set itself, at
+ * the points where the player edited or picked something. */
+void gameFrontRememberVisibility(const VisibilitySettings *v, bool saveCustom);
+
+/* Records a lobby pick as what the next game this machine hosts opens on:
+ * single player, Internet New and LAN New alike. Each writes the global
+ * and the [GAME OPTIONS] key straight away, so the pick survives a crash
+ * as well as a clean quit. The lobby calls these only where the host
+ * picked something on the machine running the server, and not in a
+ * scenario lobby, whose type and bots are the scenario's. */
+void gameFrontRememberGameType(gameType gt);
+void gameFrontRememberAiPolicy(aiType ai);
+void gameFrontRememberHiddenMines(bool hm);
 
 #endif

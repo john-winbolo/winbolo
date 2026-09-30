@@ -27,6 +27,7 @@
 #include "server_sim.h"
 #include "scenario_defs.h"
 #include "control_event.h"  /* LobbyScenarioSource — the identity setter's source */
+#include "upload_policy.h"  /* ScriptUploadRefusal — the accept callback's answer */
 
 /*********************************************************
  *NAME:          serverSimApplyScenarioOp
@@ -43,9 +44,31 @@
  *
  *  out may be NULL. When it is not, an entity add writes the
  *  index it took and a spawn writes the seat it took.
+ *
+ *  Every op through here is a script's, and is counted
+ *  against the tick's allowances: the one past
+ *  SCN_OPS_PER_TICK, or past SCN_MSGS_PER_TICK for a message
+ *  or a sound, is refused SCN_OP_RATE. An op the prelude
+ *  refuses is not counted.
  *********************************************************/
 ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
                                      ScnOpOut *out);
+
+/*********************************************************
+ *NAME:          serverSimApplyScenarioHostOp
+ *PURPOSE:
+ *  serverSimApplyScenarioOp for an op the host sends on its
+ *  own account: the scenario file's rules at the round start,
+ *  and the line saying a script was switched off. Everything
+ *  is the same — the actor mark, the prelude, the handler —
+ *  except that the op is not counted against the tick's
+ *  allowances and spends none of them.
+ *
+ *  Never for anything a script asked for. A script's op
+ *  through here would be a way round the allowances.
+ *********************************************************/
+ScnOpResult serverSimApplyScenarioHostOp(ServerSim *sim, const ScenarioOp *op,
+                                         ScnOpOut *out);
 
 /*********************************************************
  *NAME:          serverSimCheckScenarioRules
@@ -76,6 +99,56 @@ ScnOpResult serverSimCheckScenarioRules(const ServerSim *sim,
                                         char *why, size_t whyLen);
 
 /*********************************************************
+ *NAME:          scenarioCheckRulesFromClassic
+ *PURPOSE:
+ *  The same question as above, asked against the classic
+ *  table rather than against a round in progress. A rule's
+ *  bounds and the pairs it sits in belong to the table the
+ *  field is declared in, not to a game, so a set of values
+ *  can be checked with no sim to check it against.
+ *
+ *  This is what a check with no game running has to use: a
+ *  map editor holds a script and no ServerSim, and the
+ *  entry above answers SCN_OP_BAD_CALL to a NULL one.
+ *
+ *  The answers are the entry above's, less the refusal for
+ *  a NULL sim: SCN_OP_OK, SCN_OP_RANGE, SCN_OP_PAIR,
+ *  SCN_OP_NO_SUCH_ITEM, and SCN_OP_BAD_CALL for a count
+ *  with no arrays behind it. why takes the reason the check
+ *  gave on a fault and "" otherwise; it may be NULL only
+ *  when whyLen is 0.
+ *********************************************************/
+ScnOpResult scenarioCheckRulesFromClassic(const uint16_t *rules,
+                                          const double *values,
+                                          uint16_t count,
+                                          char *why, size_t whyLen);
+
+/*********************************************************
+ *NAME:          serverSimScenarioFillWorldToRules
+ *PURPOSE:
+ *  Starts every pill and base at the caps the sim's table
+ *  holds, instead of at the numbers the map file holds.
+ *
+ *  A map states a number for each pill's armour and each
+ *  base's stocks and cannot state "full", so a scenario
+ *  that raises a cap gets a map still carrying its author's
+ *  numbers. This is what a scenario asking fill_to_caps is
+ *  answered with, and it is called once the scenario's own
+ *  rules are in the table: run before them it would fill to
+ *  the caps that are on their way out.
+ *
+ *  Raising only — anything at or above a cap is left alone,
+ *  and bringing what is above one down is the clamp every
+ *  rule change already runs. Idempotent. What moves is
+ *  recorded the way that clamp records it, so a replay
+ *  reads the world the round opened on.
+ *
+ *  A pill's firing rate is not touched: an attack interval
+ *  is a rate rather than a stock.
+ *********************************************************/
+void serverSimScenarioFillWorldToRules(ServerSim *sim);
+
+/*********************************************************
  *NAME:          serverSimSetScenarioPolicy
  *PURPOSE:
  *  Registers the vtable the sim asks its scenario decisions
@@ -95,6 +168,28 @@ void serverSimSetScenarioPolicy(ServerSim *sim, const ScenarioPolicy *p);
  *********************************************************/
 void serverSimSetScenarioTick(ServerSim *sim, void (*tick)(void *ctx),
                               void *ctx);
+
+/*********************************************************
+ *NAME:          serverSimSetScenarioTickStats
+ *PURPOSE:
+ *  Records what the scenario's own work cost in the tick
+ *  that has just run, for the dedicated server's info: the
+ *  instructions the tick's calls were charged, the total
+ *  they may spend between them, whether they ran out of it,
+ *  and the wall-clock time the whole of the tick callback
+ *  took.
+ *
+ *  Called once per tick by the tick callback registered
+ *  above, from inside that tick. The sim keeps the last
+ *  time, its average and the round's worst, the last and
+ *  worst instruction counts, and how many ticks ran out; all
+ *  of them start again at each round start.
+ *
+ *  budget is passed rather than known because the sim cannot
+ *  see the header that sets it.
+ *********************************************************/
+void serverSimSetScenarioTickStats(ServerSim *sim, uint32_t instr,
+                                   uint32_t budget, bool tripped, double ms);
 
 /*********************************************************
  *NAME:          serverSimSetScenarioRoundBoot
@@ -187,6 +282,168 @@ void serverSimSetScenarioMapScripted(ServerSim *sim,
                                      void *ctx);
 
 /*********************************************************
+ *NAME:          serverSimSetScenarioLister
+ *PURPOSE:
+ *  Registers the read of the server's scenarios directory:
+ *  what a client is told is on offer when it asks for the
+ *  list. The lister answers how many entries it wrote, or
+ *  -1 for a directory it could not read.
+ *
+ *  A callback rather than a call, for the reason the map
+ *  question above is one: reading a package and running a
+ *  script's top level are the scenario library's to do and
+ *  the sim is below it. src/server/ names nothing under
+ *  src/scenario/, and the link order is what says so — the
+ *  scenario library is listed ahead of the server group
+ *  because it calls into the group, so a call the other way
+ *  would not resolve.
+ *
+ *  NULL clears it, and with nothing registered the directory
+ *  reads empty — which is what a build with no scenario
+ *  library offers, exactly as every map reads unscripted
+ *  above.
+ *
+ *  Registered once, where the process decides whether it
+ *  runs scripts at all, not where a scenario attaches: the
+ *  list is what a server offers instead of the map's own
+ *  scenario, so a server with no scenario attached is
+ *  precisely the one that needs it answered.
+ *
+ *  dir is the directory to read, which the sim holds and
+ *  hands over per call (serverSimGetScenarioDir), so the
+ *  lister keeps no path of its own.
+ *********************************************************/
+void serverSimSetScenarioLister(ServerSim *sim,
+                                int (*list)(void *ctx, const char *dir,
+                                            ScnDirEntry *out, int max),
+                                void *ctx);
+
+/*********************************************************
+ *NAME:          serverSimScenarioListDir
+ *PURPOSE:
+ *  The scenarios this server offers, read through whatever
+ *  was registered above and against the directory the sim
+ *  holds. Answers how many entries were written, and 0 for
+ *  a server with no lister, no directory, or nothing in it
+ *  — all three of which are the ordinary case rather than a
+ *  fault, so none of them is told apart here.
+ *********************************************************/
+int serverSimScenarioListDir(const ServerSim *sim, ScnDirEntry *out, int max);
+
+/*********************************************************
+ *NAME:          serverSimSetScriptUploadAccept
+ *PURPOSE:
+ *  Registers what takes a script a player uploaded: a
+ *  .scenario or .lua that arrived whole over
+ *  PACKET_LOBBY_MAP_UPLOAD_BEGIN with UPLOAD_KIND_SCRIPT.
+ *  The callback checks the bytes and writes them under
+ *  dir/name, answering true. Otherwise it answers false and
+ *  fills why: a SCRIPT_REFUSE_* code and its numbers, which
+ *  go back to the sender in the DONE reply for the client to
+ *  say in its own language, and one line of text for the
+ *  operator's console.
+ *
+ *  A callback rather than a call, for the reason the lister
+ *  above is one: reading a package and running a script are
+ *  the scenario library's to do, and src/server/ cannot call
+ *  src/scenario/.
+ *
+ *  NULL clears it. With nothing registered the server
+ *  refuses a script upload at BEGIN, before any bytes are
+ *  sent, and serverSimScriptUploadAccept answers false with
+ *  SCRIPT_REFUSE_SCRIPTS_OFF.
+ *
+ *  dir is where the upload lands, chosen by the server's
+ *  script upload policy; the callback creates it if it is
+ *  not there.
+ *********************************************************/
+typedef bool (*ScriptUploadAcceptFn)(void *ctx, const char *dir,
+                                     const char *name,
+                                     const uint8_t *bytes, uint32_t len,
+                                     ScriptUploadRefusal *why);
+void serverSimSetScriptUploadAccept(ServerSim *sim, ScriptUploadAcceptFn fn,
+                                    void *ctx);
+
+/*********************************************************
+ *NAME:          serverSimHasScriptUploadAccept
+ *PURPOSE:
+ *  Whether a script upload callback is registered, which is
+ *  whether a script upload can be taken at all.
+ *********************************************************/
+bool serverSimHasScriptUploadAccept(const ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimScriptUploadAccept
+ *PURPOSE:
+ *  Hands an uploaded script to the registered callback and
+ *  answers what it answers. With nothing registered, answers
+ *  false with SCRIPT_REFUSE_SCRIPTS_OFF in why. why is
+ *  cleared first either way and may be NULL.
+ *********************************************************/
+bool serverSimScriptUploadAccept(const ServerSim *sim, const char *dir,
+                                 const char *name, const uint8_t *bytes,
+                                 uint32_t len, ScriptUploadRefusal *why);
+
+/*********************************************************
+ *NAME:          serverSimSetScenarioDetailsReader
+ *PURPOSE:
+ *  Registers the read of one directory file's details
+ *  (scenario_details.h) for serverSimScenarioDetails. A
+ *  callback for the reason the lister above is one, and
+ *  registered beside it. The reader writes the blob into
+ *  out and answers its length, or -1 for a file the
+ *  directory does not hold. dir is the sim's, handed over
+ *  per call as the lister's is.
+ *
+ *  NULL clears it, and with nothing registered only the
+ *  committed map's own script has details to give.
+ *********************************************************/
+void serverSimSetScenarioDetailsReader(ServerSim *sim,
+                                       int (*read)(void *ctx, const char *dir,
+                                                   const char *file,
+                                                   uint8_t *out, size_t cap),
+                                       void *ctx);
+
+/*********************************************************
+ *NAME:          serverSimSetScriptFileReader
+ *PURPOSE:
+ *  Registers the read of one directory file's raw bytes
+ *  for serverSimScriptFileRead, which a player's request
+ *  for a copy of a script is answered from. A callback for
+ *  the reason the lister above is one, and registered
+ *  beside it. The reader finds the file among the names
+ *  its listing holds, refuses one over cap before reading
+ *  it, and on SERVER_SCRIPT_READ_FOUND hands back a
+ *  malloc'd buffer the caller frees. dir is the sim's,
+ *  handed over per call as the lister's is.
+ *
+ *  NULL clears it, and with nothing registered every name
+ *  answers SERVER_SCRIPT_READ_NOT_FOUND.
+ *********************************************************/
+void serverSimSetScriptFileReader(ServerSim *sim,
+                                  ServerScriptReadResult (*read)(
+                                      void *ctx, const char *dir,
+                                      const char *file, uint8_t **outBytes,
+                                      uint32_t *outLen, uint32_t cap),
+                                  void *ctx);
+
+/*********************************************************
+ *NAME:          serverSimSetScenarioSettingsReader
+ *PURPOSE:
+ *  Registers the read of one directory file's settings
+ *  block (scenario_settings.h) for
+ *  serverSimScenarioSettingsDecl, on the terms
+ *  serverSimSetScenarioDetailsReader registers the details
+ *  read. NULL clears it.
+ *********************************************************/
+void serverSimSetScenarioSettingsReader(ServerSim *sim,
+                                        int (*read)(void *ctx,
+                                                    const char *dir,
+                                                    const char *file,
+                                                    uint8_t *out, size_t cap),
+                                        void *ctx);
+
+/*********************************************************
  *NAME:          serverSimSetScenarioLobbyTemplate
  *PURPOSE:
  *  Hands the sim the lobby a scenario asks for. The sim
@@ -231,13 +488,58 @@ void serverSimSetScenarioLobbyTemplate(ServerSim *sim,
  *  fileName    - The file it came from, a name and not a path
  *  description - What it says about itself
  *  extraTeams  - Whether it lets a host add teams of its own
+ *  keepsWinCondition - True when the script declared itself a
+ *                mod, so it changes how the game plays and
+ *                leaves winning and losing alone. False for a
+ *                scenario, which may end the round.
+ *  bound       - True when the script is tied to the one map it
+ *                was written against. A lobby cannot take a
+ *                bound script off on its own: changing it means
+ *                changing the map, which is what a chooser reads
+ *                this to know.
+ *  unsafe      - True when this server runs every script with
+ *                the full Lua library and no limits
+ *                (-allow-unsafe-scripts). The sim cannot ask the
+ *                host, so the lobby learns it here.
  *********************************************************/
 void serverSimSetScenarioIdentity(ServerSim *sim,
                                   LobbyScenarioSource source,
                                   const char *name,
                                   const char *fileName,
                                   const char *description,
-                                  bool extraTeams);
+                                  bool extraTeams,
+                                  bool keepsWinCondition,
+                                  bool bound,
+                                  bool unsafe);
+
+/*********************************************************
+ *NAME:          serverSimSetScenarioRules
+ *PURPOSE:
+ *  Tells the sim which rules the attached scenario's own
+ *  manifest sets, and publishes the set, so the lobby can
+ *  say what a mod changes without opening the file. The
+ *  author's table, not the table the round is running on:
+ *  a rule a scenario changes mid-round moves the second
+ *  and leaves this alone.
+ *
+ *  Goes beside the identity, at the same two points: an
+ *  attach states its set and a detach states an empty one,
+ *  which is what tells a client the scenario has gone. A
+ *  map that never had a scenario reaches neither call, so
+ *  nothing is published there at all.
+ *
+ *  A row naming no rule is dropped, and rows past the
+ *  event's cap with it — a manifest names each rule at
+ *  most once, so a set inside the cap holds every rule
+ *  there is.
+ *
+ *ARGUMENTS:
+ *  sim   - The sim being told
+ *  rules - The rule/value pairs; NULL for none
+ *  count - How many of them; 0 empties the set
+ *********************************************************/
+void serverSimSetScenarioRules(ServerSim *sim, const ScnOpSetRule *rules,
+                               int count);
 
 /*********************************************************
  *NAME:          serverSimAddUnfieldedSeat
@@ -313,5 +615,142 @@ void serverSimSetScenarioState(ServerSim *sim, void *state);
  *  NULL when no scenario is attached.
  *********************************************************/
 void *serverSimGetScenarioState(const ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimGetScriptCount / serverSimGetScript
+ *PURPOSE:
+ *  The list the lobby host wrote, in the order it wrote it,
+ *  as CMD_SET_SCRIPT_LIST recorded it. serverSimGetScript
+ *  answers NULL for an index outside the count.
+ *
+ *  This is what whoever owns the scenario reads when it
+ *  decides what a round plays.
+ *
+ *  One row of it may be the committed map's own script,
+ *  and that row is the host saying where on the list the
+ *  map's script is composed. bound is what marks it: every
+ *  other row is a file out of the scenarios directory and
+ *  the command bus refuses a bound name that is not the
+ *  committed map's. A list that carries no bound row is a
+ *  host who never said, and the map's own script composes
+ *  at the front of these, which is where it has always
+ *  composed.
+ *
+ *  serverSimSetMapScript keeps that row and the map's own
+ *  row in step, so a caller reading this never finds a
+ *  bound row naming a script the committed map does not
+ *  bring.
+ *
+ *  The whole ScnDirEntry and not the file name alone,
+ *  because the chooser's row carries the manifest's name
+ *  and its two flags and re-reading the directory to
+ *  answer would open every file in it.
+ *********************************************************/
+int  serverSimGetScriptCount(const ServerSim *sim);
+const ScnDirEntry *serverSimGetScript(const ServerSim *sim, int i);
+
+/*********************************************************
+ *NAME:          serverSimSetMapScript
+ *PURPOSE:
+ *  Records the committed map's own script as a row of the
+ *  published list, so a chooser can show it above the
+ *  host's picks and say it came with the map.
+ *
+ *  Called by whoever owns the scenario as it decides what
+ *  plays, which is the one caller that knows both that the
+ *  map had a script and that it loaded. entry NULL clears
+ *  it, and a clear is what a map with no script of its own
+ *  passes.
+ *
+ *  bound on the row means what it means on the attached
+ *  scenario: this one came with the map and is not the
+ *  host's to remove. A map's own script is bound whether or
+ *  not its manifest says so, because a host who wants it
+ *  gone changes the map.
+ *
+ *  The host's list is brought into line at the same time,
+ *  because the map's row may also sit on that list and the
+ *  two are one row said twice. Where it does, the new
+ *  script replaces what was in that place and the place
+ *  itself is left alone; a clear takes the row off and
+ *  closes the list up behind it. A host who put the map's
+ *  script third on the list and then committed another
+ *  scripted map therefore still has it third.
+ *
+ *  Recording only. The publish is the caller's, as it is
+ *  for the picks, so a map commit sends one list rather
+ *  than one per step.
+ *********************************************************/
+void serverSimSetMapScript(ServerSim *sim, const ScnDirEntry *entry);
+
+/*********************************************************
+ *NAME:          serverSimGetMapScript
+ *PURPOSE:
+ *  The row serverSimSetMapScript recorded, or NULL when the
+ *  committed map brought no script.
+ *********************************************************/
+const ScnDirEntry *serverSimGetMapScript(const ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimSetMapScriptDetails
+ *PURPOSE:
+ *  The details (scenario_details.h) of the row
+ *  serverSimSetMapScript just recorded: the rules the map's
+ *  own script sets and what its callbacks do. This is what
+ *  serverSimScenarioDetails answers for that script, which
+ *  is not in the scenarios directory and so has nowhere
+ *  else to be read from.
+ *
+ *  After serverSimSetMapScript, which forgets the last
+ *  row's details. Ignored when no row is recorded, and for
+ *  a blob longer than SCN_DETAILS_MAX.
+ *********************************************************/
+void serverSimSetMapScriptDetails(ServerSim *sim, const uint8_t *details,
+                                  size_t len);
+
+/*********************************************************
+ *NAME:          serverSimSetMapScriptSettings
+ *PURPOSE:
+ *  The settings block (scenario_settings.h) of the row
+ *  serverSimSetMapScript just recorded, on the terms
+ *  serverSimSetMapScriptDetails takes the details. Ignored
+ *  when no row is recorded, and for a blob longer than
+ *  SCN_SETTINGS_BLOB_MAX.
+ *********************************************************/
+void serverSimSetMapScriptSettings(ServerSim *sim, const uint8_t *settings,
+                                   size_t len);
+
+/*********************************************************
+ *NAME:          serverSimGetLobbyScriptCount /
+ *               serverSimGetLobbyScript
+ *PURPOSE:
+ *  The list as the lobby is told it, in load order. This is
+ *  what CTRL_LOBBY_SCRIPT_LIST carries and what a chooser
+ *  draws.
+ *
+ *  It is the host's own list where that list carries the
+ *  map's own row, because the host has already said where
+ *  the map's script goes and prepending a second copy would
+ *  draw the same script twice. Where the list does not
+ *  carry it, the map's own script comes first and the
+ *  host's list follows, which is where the round composes
+ *  it for a host who never said otherwise.
+ *
+ *  Held at LOBBY_SCRIPT_LIST_MAX rows, which is the whole
+ *  list a client can take in: a client that is sent more
+ *  keeps the list it already had and shows nothing new.
+ *  The map's own row is the one that cannot be dropped, so
+ *  a host with a full list of picks loses the last of them
+ *  on a map that brings a script of its own.
+ *
+ *  serverSimGetScriptCount above is the other question —
+ *  what the host wrote — and the two answers are the same
+ *  list except where the map's script is playing and the
+ *  host's list does not name it. A caller that wants the
+ *  rows the host may reorder asks that one; a caller
+ *  drawing the lobby asks this one.
+ *********************************************************/
+int  serverSimGetLobbyScriptCount(const ServerSim *sim);
+const ScnDirEntry *serverSimGetLobbyScript(const ServerSim *sim, int i);
 
 #endif /* SERVER_SIM_SCENARIO_H */

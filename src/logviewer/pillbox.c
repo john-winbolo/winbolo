@@ -382,6 +382,51 @@ void lv_pillsDeletePill(pillboxes *value, BYTE x, BYTE y) {
   }
 }
 
+/* The sixteen pictures a pillbox is drawn with, worst first: entry 0 is the
+ * empty pill and entry 15 the intact one. Written out rather than computed
+ * because PILL_EVIL_15 sits away from the other fifteen evil tiles in the
+ * tile numbering. */
+static const BYTE lvPillEvilTiles[PILLBOX_15 + 1] = {
+  PILL_EVIL_0,  PILL_EVIL_1,  PILL_EVIL_2,  PILL_EVIL_3,
+  PILL_EVIL_4,  PILL_EVIL_5,  PILL_EVIL_6,  PILL_EVIL_7,
+  PILL_EVIL_8,  PILL_EVIL_9,  PILL_EVIL_10, PILL_EVIL_11,
+  PILL_EVIL_12, PILL_EVIL_13, PILL_EVIL_14, PILL_EVIL_15
+};
+static const BYTE lvPillGoodTiles[PILLBOX_15 + 1] = {
+  PILL_GOOD_0,  PILL_GOOD_1,  PILL_GOOD_2,  PILL_GOOD_3,
+  PILL_GOOD_4,  PILL_GOOD_5,  PILL_GOOD_6,  PILL_GOOD_7,
+  PILL_GOOD_8,  PILL_GOOD_9,  PILL_GOOD_10, PILL_GOOD_11,
+  PILL_GOOD_12, PILL_GOOD_13, PILL_GOOD_14, PILL_GOOD_15
+};
+
+/*********************************************************
+*NAME:          lv_pillsArmourLevel
+*PURPOSE:
+*  Which of the sixteen pillbox pictures an armour value is
+*  drawn as. pill_max_armour is a rule a scenario can raise to
+*  255, so the armour is scaled onto the pictures rather than
+*  used as an index into them. Integer arithmetic, rounded
+*  down, as the client draws it: at the classic cap of 15
+*  every armour value is its own picture, and a pill that has
+*  taken any damage stops drawing as intact however high the
+*  cap goes.
+*
+*ARGUMENTS:
+*  armour    - The pillbox's armour
+*  maxArmour - The round's pill_max_armour
+*********************************************************/
+BYTE lv_pillsArmourLevel(BYTE armour, int maxArmour) {
+  /* The recording's rules are held at 1 or above; anything that reaches
+     here otherwise would divide by zero. */
+  if (maxArmour < 1) {
+    maxArmour = PILLBOX_15;
+  }
+  if ((int)armour >= maxArmour) {
+    return PILLBOX_15;
+  }
+  return (BYTE)(((int)armour * PILLBOX_15) / maxArmour);
+}
+
 /*********************************************************
 *NAME:          lv_pillsGetScreenHealth
 *AUTHOR:        John Morrison
@@ -391,14 +436,17 @@ void lv_pillsDeletePill(pillboxes *value, BYTE x, BYTE y) {
 *  Returns the health of a pillbox as a screen define.
 *
 *ARGUMENTS:
-*  value  - Pointer to the pillbox structure
-*  xValue - X Location
-*  yValue - Y Location
+*  value     - Pointer to the pillbox structure
+*  xValue    - X Location
+*  yValue    - Y Location
+*  maxArmour - The round's pill_max_armour at the playhead
 *********************************************************/
-BYTE lv_pillsGetScreenHealth(pillboxes *value, BYTE xValue, BYTE yValue) {
+BYTE lv_pillsGetScreenHealth(pillboxes *value, BYTE xValue, BYTE yValue,
+                             int maxArmour) {
   bool done;        /* Finished searching */
   BYTE returnValue; /* Value to return */
   BYTE count;       /* Looping Variable */
+  BYTE level;       /* Picture, 0 (empty) to 15 (intact) */
 
   done = FALSE;
   count = 0;
@@ -409,108 +457,11 @@ BYTE lv_pillsGetScreenHealth(pillboxes *value, BYTE xValue, BYTE yValue) {
       /* Pillbox has been Hit */
       done = TRUE;
       
+      level = lv_pillsArmourLevel((*value)->item[count].armour, maxArmour);
       if (lv_playersIsAllie((*value)->item[count].owner, lv_playersGetSelf() ) == FALSE) {
-        switch((*value)->item[count].armour) {
-        case PILLBOX_15:
-          returnValue = PILL_EVIL_15;
-          break;
-        case PILLBOX_14:
-          returnValue = PILL_EVIL_14;
-          break;
-        case PILLBOX_13:
-          returnValue = PILL_EVIL_13;
-          break;
-        case PILLBOX_12:
-          returnValue = PILL_EVIL_12;
-          break;
-        case PILLBOX_11:
-          returnValue = PILL_EVIL_11;
-          break;
-        case PILLBOX_10:
-          returnValue = PILL_EVIL_10;
-          break;
-        case PILLBOX_9:
-          returnValue = PILL_EVIL_9;
-          break;
-        case PILLBOX_8:
-          returnValue = PILL_EVIL_8;
-          break;
-        case PILLBOX_7:
-          returnValue = PILL_EVIL_7;
-          break;
-        case PILLBOX_6:
-          returnValue = PILL_EVIL_6;
-          break;
-        case PILLBOX_5:
-          returnValue = PILL_EVIL_5;
-          break;
-        case PILLBOX_4:
-          returnValue = PILL_EVIL_4;
-          break;
-        case PILLBOX_3:
-          returnValue = PILL_EVIL_3;
-          break;
-        case PILLBOX_2:
-          returnValue = PILL_EVIL_2;
-          break;
-        case PILLBOX_1:
-          returnValue = PILL_EVIL_1;
-          break;
-        case PILLBOX_0:
-          returnValue = PILL_EVIL_0;
-          break;
-        }
+        returnValue = lvPillEvilTiles[level];
       } else {
-        switch((*value)->item[count].armour) {
-        case PILLBOX_15:
-          returnValue = PILL_GOOD_15;
-          break;
-        case PILLBOX_14:
-          returnValue = PILL_GOOD_14;
-          break;
-        case PILLBOX_13:
-          returnValue = PILL_GOOD_13;
-          break;
-        case PILLBOX_12:
-          returnValue = PILL_GOOD_12;
-          break;
-        case PILLBOX_11:
-          returnValue = PILL_GOOD_11;
-          break;
-        case PILLBOX_10:
-          returnValue = PILL_GOOD_10;
-          break;
-        case PILLBOX_9:
-          returnValue = PILL_GOOD_9;
-          break;
-        case PILLBOX_8:
-          returnValue = PILL_GOOD_8;
-          break;
-        case PILLBOX_7:
-          returnValue = PILL_GOOD_7;
-          break;
-        case PILLBOX_6:
-          returnValue = PILL_GOOD_6;
-          break;
-        case PILLBOX_5:
-          returnValue = PILL_GOOD_5;
-          break;
-        case PILLBOX_4:
-          returnValue = PILL_GOOD_4;
-          break;
-        case PILLBOX_3:
-          returnValue = PILL_GOOD_3;
-          break;
-        case PILLBOX_2:
-          returnValue = PILL_GOOD_2;
-          break;
-        case PILLBOX_1:
-          returnValue = PILL_GOOD_1;
-          break;
-        case PILLBOX_0:
-          returnValue = PILL_GOOD_0;
-          break;
-        }
+        returnValue = lvPillGoodTiles[level];
       }
 
     }
@@ -520,15 +471,21 @@ BYTE lv_pillsGetScreenHealth(pillboxes *value, BYTE xValue, BYTE yValue) {
   return returnValue;
 }
 
+/* The three setters below and lv_pillsSetPillOwner take the 0-based index a
+ * playback record names. It is a byte off the recording, so an index past
+ * item[] is ignored rather than written. */
 void lv_pillsSetHealth(pillboxes *value, BYTE pillNum, BYTE health) {
+  if (pillNum >= MAX_PILLS) return;
   (*value)->item[pillNum].armour = health;
 }
 
 void lv_pillsSetInTank(pillboxes *value, BYTE pillNum, bool inTank) {
+  if (pillNum >= MAX_PILLS) return;
   (*value)->item[pillNum].inTank = inTank;
 }
 
 void lv_pillsSetPos(pillboxes *value, BYTE pillNum, BYTE mx, BYTE my) {
+  if (pillNum >= MAX_PILLS) return;
   (*value)->item[pillNum].x = mx;
   (*value)->item[pillNum].y = my;
 }
@@ -559,6 +516,9 @@ BYTE lv_pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migra
   oldOwner[0] = '\0';
 
   returnValue = NEUTRAL;
+  if (pillNum >= MAX_PILLS) {
+    return returnValue;
+  }
   returnValue = (*value)->item[pillNum].owner;
   (*value)->item[pillNum].owner = owner;
   /* Make the message if required */
@@ -588,7 +548,7 @@ BYTE lv_pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migra
 bool lv_pillsChooseView(pillboxes *value, int x, int y) {
   BYTE count = 0;
   while (count < (*value)->numPills) {
-    if ((*value)->active[count] != FALSE && (*value)->item[count].inTank == FALSE && (*value)->item[count].x == x && (*value)->item[count].y == y && (*value)->item[count].owner != NEUTRAL) {
+    if ((*value)->active[count] != FALSE && (*value)->item[count].inTank == FALSE && (*value)->item[count].x == x && (*value)->item[count].y == y && (*value)->item[count].owner < MAX_TANKS) {
       lv_playersSetSelf((*value)->item[count].owner);
       return TRUE;
     }

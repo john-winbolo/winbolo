@@ -48,6 +48,7 @@ extern "C" {
 #include "../sdl3draw.h"
 #include "global.h"
 #include "../minimap_render.h"
+#include "../map_colours.h"   /* mapColourPaletteKey — part of the cache key */
 #include "../map_preview_popup.h"
 #include "mapgen.h"
 #include "mapgen_maze.h"
@@ -147,6 +148,18 @@ static std::string hashKeyToFilename(const char *scope,
         h = ((h << 5) + h) + '|';
     }
     for (char c : key) h = ((h << 5) + h) + (unsigned char)c;
+    /* The palette the thumbnail will be drawn in. A skin can change it, and
+       the cached PNG carries the colours it was written with, so without this
+       a skin change would leave every thumbnail on disk in the old colours
+       until its map file's modification time changed - never, for a map that
+       shipped with the game. Mixed in as a different file name rather than by
+       clearing the cache, so switching skins back and forth finds both sets
+       already rendered. */
+    uint64_t pal = mapColourPaletteKey();
+    for (int i = 0; i < 8; i++) {
+        h = ((h << 5) + h) + (unsigned char)(pal & 0xFF);
+        pal >>= 8;
+    }
     uint64_t m = (uint64_t)modTime;
     for (int i = 0; i < 8; i++) {
         h = ((h << 5) + h) + (unsigned char)(m & 0xFF);
@@ -796,9 +809,8 @@ SDL_Texture *mapChooserGetMaximizeIcon(void) {
 }
 
 /* Render the list/grid view-mode toggle as two SVG icon buttons.
- * Mutates state->viewMode. The grid view isn't implemented yet —
- * the click is captured but the row layout still draws as a list.
- * Falls back to text labels when the SVG files can't be loaded. */
+ * Mutates state->viewMode. Falls back to text labels when the SVG
+ * files can't be loaded. */
 static void renderViewModeToggle(MapChooserState *state,
                                   SDL_Renderer *renderer) {
     const int iconPx = (int)(ImGui::GetFrameHeight() - 6.0f);
@@ -824,10 +836,13 @@ static void renderViewModeToggle(MapChooserState *state,
         if (clicked) state->viewMode = mode;
     };
 
-    drawBtn("##mcViewList", s_iconListView, "List", 0, "List view");
+    drawBtn("##mcViewList", s_iconListView,
+            langGetText(STR_MAPCHOOSER_VIEW_LIST), 0,
+            langGetText(STR_MAPCHOOSER_VIEW_LIST_TIP));
     ImGui::SameLine();
-    drawBtn("##mcViewGrid", s_iconGridView, "Grid", 1,
-            "Grid view (coming soon)");
+    drawBtn("##mcViewGrid", s_iconGridView,
+            langGetText(STR_MAPCHOOSER_VIEW_GRID), 1,
+            langGetText(STR_MAPCHOOSER_VIEW_GRID_TIP));
 }
 
 /* Render a "/" -separated path as a row of clickable segment
@@ -1062,6 +1077,75 @@ static void normaliseAndDedupe(MapChooserState *state) {
     state->numMaps = writeIdx;
 }
 
+void mapChooserSetWorkshopDir(MapChooserState *state, const char *dir) {
+    if (!state) return;
+    state->workshopDir[0] = '\0';
+    if (!dir || dir[0] == '\0') return;
+    SDL_strlcpy(state->workshopDir, dir, sizeof(state->workshopDir));
+    for (char *p = state->workshopDir; *p; p++) {
+        if (*p == '\\') *p = '/';
+    }
+    size_t len = SDL_strlen(state->workshopDir);
+    while (len > 0 && state->workshopDir[len - 1] == '/') {
+        state->workshopDir[--len] = '\0';
+    }
+}
+
+/* Whether path is the tab's Workshop directory or lies under it. On true,
+ * rest holds what follows the directory and its separator, or "" for the
+ * directory itself. Either separator is accepted in path, and a trailing
+ * one is ignored. False when the tab has no Workshop directory. */
+static bool mapChooserWorkshopRest(const MapChooserState *state,
+                                   const char *path,
+                                   char *rest, size_t restLen) {
+    size_t wsLen = SDL_strlen(state->workshopDir);
+    if (wsLen == 0 || !path) return false;
+    char norm[FILENAME_MAX];
+    SDL_strlcpy(norm, path, sizeof(norm));
+    for (char *p = norm; *p; p++) {
+        if (*p == '\\') *p = '/';
+    }
+    size_t len = SDL_strlen(norm);
+    while (len > 0 && norm[len - 1] == '/') norm[--len] = '\0';
+    if (SDL_strncmp(norm, state->workshopDir, wsLen) != 0) return false;
+    if (norm[wsLen] == '\0') {
+        rest[0] = '\0';
+        return true;
+    }
+    if (norm[wsLen] != '/') return false;
+    SDL_strlcpy(rest, norm + wsLen + 1, restLen);
+    return true;
+}
+
+/* The part of a map path the breadcrumbs show after the tab's root label:
+ *   "data/maps/Sub/X"   → "Sub/X"
+ *   "data/maps"         → ""
+ *   "<workshopDir>/Sub" → "Workshop/Sub"
+ *   "<workshopDir>"     → "Workshop"
+ * Any other path, such as the Server Maps and WinBolo.net tabs' relative
+ * ones, is copied unchanged. The Workshop directory's absolute path is
+ * never shown. */
+static void mapChooserCrumbRel(const MapChooserState *state,
+                               const char *path,
+                               char *out, size_t outLen) {
+    static const char kRoot[]     = "data/maps/";
+    static const char kRootBare[] = "data/maps";
+    char rest[FILENAME_MAX];
+    if (SDL_strncmp(path, kRoot, sizeof(kRoot) - 1) == 0) {
+        SDL_strlcpy(out, path + sizeof(kRoot) - 1, outLen);
+    } else if (SDL_strcasecmp(path, kRootBare) == 0) {
+        out[0] = '\0';
+    } else if (mapChooserWorkshopRest(state, path, rest, sizeof(rest))) {
+        if (rest[0] != '\0') {
+            SDL_snprintf(out, outLen, "Workshop/%s", rest);
+        } else {
+            SDL_strlcpy(out, "Workshop", outLen);
+        }
+    } else {
+        SDL_strlcpy(out, path, outLen);
+    }
+}
+
 void mapChooserLocalFsEnumerate(MapChooserState *state,
                                  const char *relPath, void *ctx) {
     (void)ctx;
@@ -1108,6 +1192,13 @@ void mapChooserLocalFsEnumerate(MapChooserState *state,
         }
         if (plen > 0) e->path[plen - 1] = '\0';
         if (e->path[0] == '\0') {
+            SDL_strlcpy(e->path, root, sizeof(e->path));
+        }
+        /* The Workshop folder is listed at the root, so going up from it
+         * goes back there rather than to the directory that holds it. */
+        char wsRest[FILENAME_MAX];
+        if (mapChooserWorkshopRest(state, dir, wsRest, sizeof(wsRest)) &&
+            wsRest[0] == '\0') {
             SDL_strlcpy(e->path, root, sizeof(e->path));
         }
         e->isFolder = true;
@@ -1164,6 +1255,32 @@ void mapChooserLocalFsEnumerate(MapChooserState *state,
             }
         }
         SDL_free(list);
+    }
+
+    /* Root view also offers the Workshop directory as a folder named
+     * "Workshop", when the tab has one and it exists. Its row carries the
+     * absolute directory, which a click makes currentDir; the listing
+     * above reads any directory path, so the folder's own view needs
+     * nothing more. A real data/maps/Workshop folder is listed instead. */
+    if (!inSubfolder && state->workshopDir[0] != '\0' &&
+        state->numMaps < MAP_CHOOSER_MAX_MAPS) {
+        bool present = false;
+        for (int j = 0; j < state->numMaps; j++) {
+            if (state->maps[j].isFolder &&
+                SDL_strcasecmp(state->maps[j].name, "Workshop") == 0) {
+                present = true; break;
+            }
+        }
+        SDL_PathInfo pi;
+        if (!present && SDL_GetPathInfo(state->workshopDir, &pi) &&
+            pi.type == SDL_PATHTYPE_DIRECTORY) {
+            MapChooserEntry *e = &state->maps[state->numMaps++];
+            memset(e, 0, sizeof(*e));
+            SDL_strlcpy(e->name, "Workshop", sizeof(e->name));
+            SDL_strlcpy(e->path, state->workshopDir, sizeof(e->path));
+            e->isFolder = true;
+            e->modTime  = (int64_t)pi.modify_time;
+        }
     }
 
     /* Root view also surfaces .map files saved to the writable per-user
@@ -1240,6 +1357,7 @@ void mapChooserRefresh(MapChooserState *state);
 
 static void discoverMaps(MapChooserState *state) {
     state->numMaps = 0;
+    state->searchRowsUntagged = false;
     if (state->provider.enumerate) {
         state->provider.enumerate(state, state->currentDir,
                                    state->provider.ctx);
@@ -1329,6 +1447,43 @@ static void updatePreview(MapChooserState *state, SDL_Renderer *renderer) {
     }
 }
 
+/* Select the first map row the "Scenarios only" tick lets through and
+ * preview it, for a folder click. With no such row and the tick off,
+ * falls back to the empty path, the inbuilt Everard marker. With the
+ * tick on, Everard is hidden too, so only the row highlight goes: the
+ * path and preview stay on the map already picked, the same as when the
+ * tick hides the selected row. The provider's onSelect is not called: a
+ * folder click only moves the chooser's own selection. */
+static void selectFirstShownMap(MapChooserState *state,
+                                SDL_Renderer *renderer,
+                                bool scenariosOnly) {
+    int firstFile = -1;
+    for (int j = 0; j < state->numMaps; j++) {
+        if (!state->maps[j].isFolder &&
+            mapChooserEntryPassesScenarioFilter(&state->maps[j],
+                                                scenariosOnly)) {
+            firstFile = j; break;
+        }
+    }
+    if (firstFile >= 0) {
+        state->selectedIdx = firstFile;
+        SDL_strlcpy(state->selectedPath, state->maps[firstFile].path,
+                    sizeof(state->selectedPath));
+        SDL_strlcpy(state->selectedName, state->maps[firstFile].name,
+                    sizeof(state->selectedName));
+        updatePreview(state, renderer);
+        return;
+    }
+    if (scenariosOnly) {
+        state->selectedIdx = -1;
+        return;
+    }
+    state->selectedIdx = 0;
+    state->selectedPath[0] = '\0';
+    state->selectedName[0] = '\0';
+    updatePreview(state, renderer);
+}
+
 /* Reentry guard for generateRandomPreview. Generation is currently
  * synchronous on the GUI thread, so this can't trip in practice —
  * but if mapGenImguiControls ever grew a callback that ran during
@@ -1373,9 +1528,9 @@ static void generateRandomPreview(MapChooserState *state, SDL_Renderer *renderer
     MinimapBounds mb = {0, 0, 0, 0};
     if (view) {
         state->previewTex = minimapCreateTexture(renderer, view, &mb, 0);
-        state->previewPills  = clientMapPreviewGetPillCount(view);
-        state->previewBases  = clientMapPreviewGetBaseCount(view);
-        state->previewStarts = clientMapPreviewGetStartCount(view);
+        state->previewPills  = clientMapPreviewGetLivePillCount(view);
+        state->previewBases  = clientMapPreviewGetLiveBaseCount(view);
+        state->previewStarts = clientMapPreviewGetLiveStartCount(view);
         clientMapPreviewDestroy(view);
     }
     state->previewBoundsMinX = mb.minX;
@@ -1722,19 +1877,14 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
          * preview, so segments are clickable here too. The pieces:
          *   - state->crumbsRootLabel ("Maps" on all tabs today)
          *   - state->currentDir, stripped of any "data/maps[/]" prefix
-         *     so Upload's absolute path matches the Server / WBN
+         *     and with the Workshop directory read as "Workshop", so
+         *     Upload's absolute path matches the Server / WBN
          *     conventions before the root label is prepended.
          * Full absolute path lives in the hover tooltip
          * (pathTooltipPrefix) for callers that want one. */
         {
-            const char *rel = state->currentDir;
-            static const char kRoot[]     = "data/maps/";
-            static const char kRootBare[] = "data/maps";
-            if (SDL_strncmp(rel, kRoot, sizeof(kRoot) - 1) == 0) {
-                rel += sizeof(kRoot) - 1;
-            } else if (SDL_strcasecmp(rel, kRootBare) == 0) {
-                rel = "";
-            }
+            char rel[FILENAME_MAX];
+            mapChooserCrumbRel(state, state->currentDir, rel, sizeof(rel));
             char pathLine[FILENAME_MAX + 64];
             if (state->crumbsRootLabel[0] != '\0' && rel[0] != '\0') {
                 SDL_snprintf(pathLine, sizeof(pathLine), "%s/%s",
@@ -1802,7 +1952,8 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
             float xBtnW = ImGui::GetFrameHeight();
             float gap   = ImGui::GetStyle().ItemSpacing.x;
             ImGui::SetNextItemWidth(-(xBtnW + gap));
-            ImGui::InputTextWithHint("##MapSearch", "Search...",
+            ImGui::InputTextWithHint("##MapSearch",
+                                     langGetText(STR_MAPCHOOSER_SEARCH_HINT),
                                      state->searchFilter,
                                      sizeof(state->searchFilter));
             if (SDL_strcmp(prevFilter, state->searchFilter) != 0) {
@@ -1818,10 +1969,19 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
             }
             if (emptyFilter) ImGui::EndDisabled();
             if ((ImGui::IsItemHovered() || ImGui::IsItemFocused()) && !emptyFilter) {
-                ImGui::SetTooltip("Clear search");
+                ImGui::SetTooltip("%s",
+                    langGetText(STR_MAPCHOOSER_SEARCH_CLEAR));
             }
+            /* The two search-option checkboxes draw at a smaller
+             * font and frame so they read as secondary to the search
+             * box above them. */
+            ImGui::PushFont(NULL, ImGui::GetStyle().FontSizeBase * 0.85f);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                ImVec2(ImGui::GetStyle().FramePadding.x,
+                       ImGui::GetStyle().FramePadding.y * 0.5f));
             bool prevRecursive = state->searchRecursive;
-            ImGui::Checkbox("Search subfolders", &state->searchRecursive);
+            ImGui::Checkbox(langGetText(STR_MAPCHOOSER_SEARCH_SUBFOLDERS),
+                            &state->searchRecursive);
             if (prevRecursive != state->searchRecursive) {
                 toggleChanged = true;
             }
@@ -1829,8 +1989,11 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
              * the Modified column. Off by default so the list stays
              * compact; hover gives a tooltip explaining the trade. */
             ImGui::SameLine();
-            ImGui::Checkbox("Created at", &state->showModifiedColumn);
-            imguiHelpTooltip("Show file modification times in a second column.");
+            ImGui::Checkbox(langGetText(STR_MAPCHOOSER_CREATED_AT),
+                            &state->showModifiedColumn);
+            imguiHelpTooltip(langGetText(STR_MAPCHOOSER_CREATED_AT_TIP));
+            ImGui::PopStyleVar();
+            ImGui::PopFont();
         }
         /* Stale-state safety net: in non-recursive mode the legacy
          * enumerate populates state->maps with basenames only — no
@@ -1873,6 +2036,69 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
         /* List / grid view-mode toggle, directly above the
          * list/grid area. */
         renderViewModeToggle(state, renderer);
+        /* "Scenarios only" — a client-side filter like the plain
+         * search, so a change needs no rescan. Sits right of the view
+         * toggle, at the search options' smaller font and frame, or
+         * on its own line below when the list panel is too narrow.
+         * Greyed out while the rows come from a server-wide search,
+         * whose reply does not say which hits have a script; ticked,
+         * it would hide every hit. */
+        if (state->offerScenariosOnly) {
+            ImGui::PushFont(NULL, ImGui::GetStyle().FontSizeBase * 0.85f);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                ImVec2(ImGui::GetStyle().FramePadding.x,
+                       ImGui::GetStyle().FramePadding.y * 0.5f));
+            float boxW = ImGui::GetFrameHeight()
+                       + ImGui::GetStyle().ItemInnerSpacing.x
+                       + ImGui::CalcTextSize(
+                             langGetText(STR_MAPCHOOSER_SCENARIOSONLY)).x;
+            ImGui::SameLine();
+            if (ImGui::GetContentRegionAvail().x < boxW) {
+                ImGui::NewLine();
+            }
+            bool untagged = state->searchRowsUntagged;
+            if (untagged) ImGui::BeginDisabled();
+            ImGui::Checkbox(langGetText(STR_MAPCHOOSER_SCENARIOSONLY),
+                            &state->scenariosOnly);
+            if (untagged) ImGui::EndDisabled();
+            if (untagged) {
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip |
+                                         ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    ImGui::SetTooltip("%s", langGetText(
+                        STR_MAPCHOOSER_SCENARIOSONLY_NOSEARCH));
+                }
+            } else {
+                imguiHelpTooltip(
+                    langGetText(STR_MAPCHOOSER_SCENARIOSONLY_TIP));
+            }
+            ImGui::PopStyleVar();
+            ImGui::PopFont();
+        }
+        bool scenariosOnly = state->offerScenariosOnly
+                          && state->scenariosOnly
+                          && !state->searchRowsUntagged;
+        /* The tick can hide the selected map (ticked just now, or the
+         * rows were replaced). Only drop the row highlight, the same
+         * "not in the list" state a picked custom file uses. The path
+         * and preview stay on that map, because it is still the map
+         * "Use This Map" / OK will use: on the Server Maps tab the
+         * server keeps the map the last click sent it. Moving the
+         * selection to another row would show one map and commit
+         * another, and calling onSelect would send a preview to the
+         * whole lobby on a filter click. discoverMaps puts the index
+         * back by path on a refresh; this check drops it again. */
+        if (scenariosOnly && state->selectedIdx >= 0 &&
+            state->selectedIdx < state->numMaps) {
+            const MapChooserEntry *sel = &state->maps[state->selectedIdx];
+            if (SDL_strcmp(sel->path, state->selectedPath) == 0 &&
+                !mapChooserEntryPassesScenarioFilter(sel, true)) {
+                state->selectedIdx = -1;
+            }
+        }
+        /* Map rows the filters let through this frame, so an empty
+         * "Scenarios only" result can say so instead of leaving a
+         * blank list. */
+        int shownMapRows = 0;
 
         /* Grid view branches off here entirely — a flowable
          * thumbnail layout. List view continues into the table
@@ -1917,6 +2143,11 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                     if (SDL_strchr(ent.name, '/') ||
                         SDL_strchr(ent.name, '\\')) continue;
                 }
+                if (!mapChooserEntryPassesScenarioFilter(&ent,
+                                                         scenariosOnly)) {
+                    continue;
+                }
+                if (!ent.isFolder && !ent.isParentUp) shownMapRows++;
 
                 /* Wrap to a new row when the next cell would
                  * overflow horizontally. curX == 0 means we're
@@ -2031,25 +2262,8 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                                     sizeof(state->currentDir));
                         discoverMaps(state);
                         state->searchFilter[0] = '\0';
-                        int firstFile = -1;
-                        for (int j = 0; j < state->numMaps; j++) {
-                            if (!state->maps[j].isFolder) {
-                                firstFile = j; break;
-                            }
-                        }
-                        state->selectedIdx = (firstFile >= 0) ? firstFile : 0;
-                        if (firstFile >= 0) {
-                            SDL_strlcpy(state->selectedPath,
-                                state->maps[firstFile].path,
-                                sizeof(state->selectedPath));
-                            SDL_strlcpy(state->selectedName,
-                                state->maps[firstFile].name,
-                                sizeof(state->selectedName));
-                        } else {
-                            state->selectedPath[0] = '\0';
-                            state->selectedName[0] = '\0';
-                        }
-                        updatePreview(state, renderer);
+                        selectFirstShownMap(state, renderer,
+                                            scenariosOnly);
                         changed = true;
                     } else if (state->selectedIdx != i) {
                         state->selectedIdx = i;
@@ -2068,6 +2282,10 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
 
                 curX += kCellW + gap;
             }
+            if (scenariosOnly && shownMapRows == 0) {
+                ImGui::TextDisabled("%s",
+                    langGetText(STR_MAPCHOOSER_NOSCENARIOMAPS));
+            }
             ImGui::EndChild();
         } else
         /* ── List view (the original table) ──────────────── */
@@ -2076,7 +2294,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
         const int kStarColIdx = state->showModifiedColumn ? 2 : 1;
         const float kStarColW = ImGui::GetFrameHeight() + 4.0f;
         if (ImGui::BeginTable("##MapTable", kNumCols, tableFlags)) {
-            ImGui::TableSetupColumn("Name",
+            ImGui::TableSetupColumn(langGetText(STR_MAPCHOOSER_COL_NAME),
                 ImGuiTableColumnFlags_WidthStretch
                 | ImGuiTableColumnFlags_PreferSortAscending, 1.0f,
                 0 /* user_id 0 = name column */);
@@ -2084,7 +2302,8 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
              * default font size 130 px clears the trailing minutes
              * with a touch of breathing room so nothing clips. */
             if (state->showModifiedColumn) {
-                ImGui::TableSetupColumn("Created",
+                ImGui::TableSetupColumn(
+                    langGetText(STR_MAPCHOOSER_COL_CREATED),
                     ImGuiTableColumnFlags_WidthFixed
                     | ImGuiTableColumnFlags_PreferSortDescending, 130.0f,
                     1 /* user_id 1 = modified column */);
@@ -2235,7 +2454,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                         ? ImGui::ImageButton(btnId,
                             (ImTextureID)s_iconStarFull, ImVec2(sz, sz))
                         : ImGui::SmallButton("*");
-                    imguiHelpTooltip("Click to unstar");
+                    imguiHelpTooltip(langGetText(STR_MAPCHOOSER_UNSTAR_TIP));
                     ImGui::PopStyleColor(3);
                     ImGui::PopStyleVar();
                     if (toggled) {
@@ -2289,8 +2508,11 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 return true;
             };
             int starredRowsRendered = 0;
+            /* Starred rows do not carry the scripted flag, so the
+             * "Scenarios only" tick hides the section the way a
+             * recursive search does. */
             if (!(state->searchRecursive &&
-                  state->searchFilter[0] != '\0')) {
+                  state->searchFilter[0] != '\0') && !scenariosOnly) {
                 const char *scope = state->provider.cacheScope
                                      ? state->provider.cacheScope : "";
                 StarRenderCtx ctx{ state, renderer, &changed,
@@ -2316,8 +2538,11 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
              * nothing chosen), let the first rendered row claim default nav
              * focus so entering the list still lands on a row, not a header.
              * selectedIdx <= -2 means a starred row is selected — that row
-             * claims focus itself, so don't fall back here. */
-            bool wantFirstRowFocus = (state->selectedIdx == -1);
+             * claims focus itself, so don't fall back here, unless
+             * "Scenarios only" has hidden the starred section and that row
+             * with it. */
+            bool wantFirstRowFocus = (state->selectedIdx == -1) ||
+                                     (scenariosOnly && state->selectedIdx <= -2);
             bool firstRowFocusClaimed = false;
             for (int i = 0; i < state->numMaps; i++) {
                 const MapChooserEntry &ent = state->maps[i];
@@ -2352,6 +2577,11 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                     }
                     if (!match) continue;
                 }
+                if (!mapChooserEntryPassesScenarioFilter(&ent,
+                                                         scenariosOnly)) {
+                    continue;
+                }
+                if (!ent.isFolder && !ent.isParentUp) shownMapRows++;
 
                 /* List view rows are name-only; preview lives in
                  * the hover tooltip below, and the grid view (a
@@ -2512,18 +2742,18 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                             ImVec4(1, 1, 1, 0.15f));
                         toggled = ImGui::ImageButton(btnId,
                             (ImTextureID)tex, ImVec2(sz, sz));
-                        imguiHelpTooltip(isStarred
-                            ? "Click to unstar"
-                            : "Click to star to always appear at the top");
+                        imguiHelpTooltip(langGetText(isStarred
+                            ? STR_MAPCHOOSER_UNSTAR_TIP
+                            : STR_MAPCHOOSER_STAR_TIP));
                         ImGui::PopStyleColor(3);
                         ImGui::PopStyleVar();
                     } else {
                         /* Textual fallback if the SVG didn't load. */
                         toggled = ImGui::SmallButton(
                             isStarred ? "*" : "+");
-                        imguiHelpTooltip(isStarred
-                            ? "Click to unstar"
-                            : "Click to star to always appear at the top");
+                        imguiHelpTooltip(langGetText(isStarred
+                            ? STR_MAPCHOOSER_UNSTAR_TIP
+                            : STR_MAPCHOOSER_STAR_TIP));
                     }
                     if (toggled) {
                         mapStarsToggle(scope, ent.path, ent.name,
@@ -2537,25 +2767,8 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                                     sizeof(state->currentDir));
                         discoverMaps(state);
                         state->searchFilter[0] = '\0';
-                        int firstFile = -1;
-                        for (int j = 0; j < state->numMaps; j++) {
-                            if (!state->maps[j].isFolder) {
-                                firstFile = j; break;
-                            }
-                        }
-                        state->selectedIdx = (firstFile >= 0) ? firstFile : 0;
-                        if (firstFile >= 0) {
-                            SDL_strlcpy(state->selectedPath,
-                                        state->maps[firstFile].path,
-                                        sizeof(state->selectedPath));
-                            SDL_strlcpy(state->selectedName,
-                                        state->maps[firstFile].name,
-                                        sizeof(state->selectedName));
-                        } else {
-                            state->selectedPath[0] = '\0';
-                            state->selectedName[0] = '\0';
-                        }
-                        updatePreview(state, renderer);
+                        selectFirstShownMap(state, renderer,
+                                            scenariosOnly);
                         changed = true;
                     } else if (state->selectedIdx != i) {
                         state->selectedIdx = i;
@@ -2575,6 +2788,14 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                         }
                     }
                 }
+            }
+            /* One dim row instead of a blank list when the tick hides
+             * every map here. Folder rows above it still show. */
+            if (scenariosOnly && shownMapRows == 0) {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextDisabled("%s",
+                    langGetText(STR_MAPCHOOSER_NOSCENARIOMAPS));
             }
             ImGui::EndTable();
         }
@@ -2821,9 +3042,9 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 if (clicked) {
                     *state->maximizePtr = !maxed;
                 }
-                imguiHelpTooltip(maxed
-                    ? "Restore default size (Esc)"
-                    : "Maximize");
+                imguiHelpTooltip(langGetText(maxed
+                    ? STR_MAPCHOOSER_RESTORE_SIZE_TIP
+                    : STR_MAPCHOOSER_MAXIMIZE_TIP));
                 ImGui::PopStyleColor(3);
                 ImGui::SetCursorScreenPos(saved);
                 /* Submit a zero-size dummy so ImGui re-anchors the
@@ -2850,8 +3071,8 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 double t = ImGui::GetTime() * 8.0;
                 const char *frames[] = {"|", "/", "-", "\\"};
                 int idx = ((int)t) & 3;
-                ImGui::TextDisabled("%s  Loading preview...",
-                                     frames[idx]);
+                ImGui::TextDisabled("%s  %s", frames[idx],
+                    langGetText(STR_MAPCHOOSER_LOADING_PREVIEW));
             } else {
                 ImGui::TextDisabled("%s", langGetText(STR_MAPCHOOSER_NOPREVIEW));
             }
@@ -2906,17 +3127,12 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                     if (lastSep) *lastSep = '\0';
                 }
                 /* Strip the on-disk root so the breadcrumb reads
-                 * relative to data/maps; if nothing's left, fall
-                 * back to "data/maps" so root-level files still
-                 * surface a path indicator. */
-                const char *rel = tmp;
-                static const char kRoot[] = "data/maps/";
-                static const char kRootBare[] = "data/maps";
-                if (strncmp(rel, kRoot, sizeof(kRoot) - 1) == 0) {
-                    rel += sizeof(kRoot) - 1;
-                } else if (SDL_strcasecmp(rel, kRootBare) == 0) {
-                    rel = "";
-                }
+                 * relative to data/maps, with the Workshop directory
+                 * read as "Workshop"; if nothing's left, fall back to
+                 * "data/maps" so root-level files still surface a path
+                 * indicator. */
+                char rel[FILENAME_MAX];
+                mapChooserCrumbRel(state, tmp, rel, sizeof(rel));
                 if (rel[0] == '\0') {
                     /* When the tab supplies a crumbsRootLabel the
                      * label itself IS the root indicator — adding
@@ -2924,7 +3140,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                      * "Maps / data / maps". Leave empty so only the
                      * label appears. */
                     if (state->crumbsRootLabel[0] == '\0') {
-                        SDL_strlcpy(crumbsRendered, kRootBare,
+                        SDL_strlcpy(crumbsRendered, "data/maps",
                                     sizeof(crumbsRendered));
                     }
                 } else {
@@ -2948,17 +3164,12 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
             /* No selection AND no active breadcrumb (e.g. just after
              * a breadcrumb-jump cleared selectedIdx) — fall back to
              * the current folder, same source the upper path label
-             * uses. Strip the local "data/maps[/]" prefix so the
-             * Upload tab's absolute currentDir lines up with the
-             * relative scheme Server Maps / WBN already use. */
-            const char *rel = state->currentDir;
-            static const char kRoot[]     = "data/maps/";
-            static const char kRootBare[] = "data/maps";
-            if (strncmp(rel, kRoot, sizeof(kRoot) - 1) == 0) {
-                rel += sizeof(kRoot) - 1;
-            } else if (SDL_strcasecmp(rel, kRootBare) == 0) {
-                rel = "";
-            }
+             * uses. Strip the local "data/maps[/]" prefix, and read
+             * the Workshop directory as "Workshop", so the Upload tab's
+             * absolute currentDir lines up with the relative scheme
+             * Server Maps / WBN already use. */
+            char rel[FILENAME_MAX];
+            mapChooserCrumbRel(state, state->currentDir, rel, sizeof(rel));
             if (rel[0] != '\0') {
                 SDL_strlcpy(crumbsRendered, rel, sizeof(crumbsRendered));
             }
@@ -3064,9 +3275,9 @@ void mapChooserSetSelectedMapBytes(MapChooserState *state,
                                                     state->compressedLen);
     if (mp) {
         state->previewTex = minimapCreateTexture(renderer, mp, &mb, 0);
-        state->previewPills  = clientMapPreviewGetPillCount(mp);
-        state->previewBases  = clientMapPreviewGetBaseCount(mp);
-        state->previewStarts = clientMapPreviewGetStartCount(mp);
+        state->previewPills  = clientMapPreviewGetLivePillCount(mp);
+        state->previewBases  = clientMapPreviewGetLiveBaseCount(mp);
+        state->previewStarts = clientMapPreviewGetLiveStartCount(mp);
         clientMapPreviewDestroy(mp);
     }
     state->previewBoundsMinX = mb.minX;

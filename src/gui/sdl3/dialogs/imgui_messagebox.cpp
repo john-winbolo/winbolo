@@ -470,9 +470,7 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
             dialogHandleGamepadCancelEvent(window, &ev);
-            if (ev.type == SDL_EVENT_QUIT ||
-                (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
-                 ev.window.windowID == SDL_GetWindowID(window))) {
+            if (dialogHandleQuitEvent(window, &ev)) {
                 result = (buttons == IMGUI_MSG_YES_NO_CANCEL) ?
                          IMGUI_MSG_RESULT_CANCEL : IMGUI_MSG_RESULT_OK;
             } else if (ev.type == SDL_EVENT_KEY_DOWN) {
@@ -614,6 +612,213 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
     return result;
 }
 
+/* Password entry for joining a protected game. Same shell as
+ * imguiMessageBoxEx (own context, captured backbuffer, dimmed overlay);
+ * the body is the message, a masked InputText and a Cancel / OK footer.
+ * Enter confirms, Escape cancels. */
+extern "C" int imguiPasswordPrompt(const char *title, const char *message,
+                                   char *out, size_t outCap) {
+    SDL_Window *window = sdl3DrawGetWindow();
+    SDL_Renderer *renderer = sdl3DrawGetRenderer();
+    if (!window || !renderer || !out || outCap == 0) return IMGUI_MSG_RESULT_CANCEL;
+
+    if (s_messageBoxActive) return IMGUI_MSG_RESULT_CANCEL;
+    s_messageBoxActive = true;
+
+    ImGuiContext *callerCtx = ImGui::GetCurrentContext();
+
+    int savedLogW = 0, savedLogH = 0;
+    SDL_RendererLogicalPresentation savedLogMode = SDL_LOGICAL_PRESENTATION_DISABLED;
+    dialogSaveLogicalPresentation(renderer, &savedLogW, &savedLogH, &savedLogMode);
+
+    int screenW, screenH;
+    SDL_GetWindowSize(window, &screenW, &screenH);
+    if (screenW <= 0 || screenH <= 0) { screenW = 1024; screenH = 768; }
+    float s = dialogComputeScale(screenW, screenH);
+
+    SDL_Texture *bgTex = captureBackbuffer(renderer);
+
+    ImGuiContext *msgCtx = ImGui::CreateContext();
+    ImGui::SetCurrentContext(msgCtx);
+    imguiRegisterPlatformOpenUrl();
+
+    ImGuiIO &io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    io.ConfigNavCursorVisibleAlways = true;
+    io.IniFilename = nullptr;
+
+    ImGui::StyleColorsDark();
+    imguiApplyBoloTheme();
+    ImGui_ImplSDL3_InitForSDLRenderer(window, renderer);
+    ImGui_ImplSDLRenderer3_Init(renderer);
+    dialogApplyScaling(s);
+
+    SDL_Texture *iconTex = imguiLoadSvgIcon(renderer, iconPathForType(IMGUI_MSG_INFO),
+                                            ICON_SIZE);
+
+    float dialogW = (float)screenW * DIALOG_WIDTH_FRACTION;
+    if (dialogW < DIALOG_MIN_W) dialogW = DIALOG_MIN_W;
+    if (dialogW > DIALOG_MAX_W) dialogW = DIALOG_MAX_W;
+    dialogW *= s;
+
+    /* Local entry buffer: the caller's buffer is only written on OK. The
+     * wire carries at most MAP_STR_SIZE - 1 characters, and outCap is the
+     * caller's cap on top of that. */
+    char entry[MAP_STR_SIZE];
+    entry[0] = '\0';
+    size_t entryCap = sizeof(entry);
+    if (outCap < entryCap) entryCap = outCap;
+
+    int result = -1;
+    bool focusField = true;
+    bool openedPopup = false;
+    const char *popupId = title ? title : "Password";
+
+    while (result < 0) {
+        Uint64 frameCapStart = dialogFrameCapBegin();
+        SDL_Event ev;
+        while (SDL_PollEvent(&ev)) {
+            ImGui_ImplSDL3_ProcessEvent(&ev);
+            dialogHandleGamepadCancelEvent(window, &ev);
+            if (dialogHandleQuitEvent(window, &ev)) {
+                result = IMGUI_MSG_RESULT_CANCEL;
+            } else if (ev.type == SDL_EVENT_KEY_DOWN) {
+                SDL_Keycode k = ev.key.key;
+                /* Enter is handled by the InputText (EnterReturnsTrue) so a
+                 * confirm always carries the text the field holds. */
+                if (k == SDLK_ESCAPE) {
+                    result = IMGUI_MSG_RESULT_CANCEL;
+                } else if (k == SDLK_W && (ev.key.mod & KMOD_PRIMARY)) {
+                    result = IMGUI_MSG_RESULT_CANCEL;
+#ifdef __APPLE__
+                } else if (k == SDLK_PERIOD && (ev.key.mod & SDL_KMOD_GUI)) {
+                    result = IMGUI_MSG_RESULT_CANCEL;
+#endif
+                }
+            }
+        }
+
+        SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
+        SDL_RenderClear(renderer);
+        if (bgTex) {
+            SDL_RenderTexture(renderer, bgTex, NULL, NULL);
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 140);
+            SDL_FRect dimRect = { 0, 0, (float)screenW, (float)screenH };
+            SDL_RenderFillRect(renderer, &dimRect);
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+        }
+
+        ImGui_ImplSDLRenderer3_NewFrame();
+        ImGui_ImplSDL3_NewFrame();
+        dialogOverrideFramebufferScale(renderer);
+        ImGui::NewFrame();
+        imguiSteamNavActivateMenuSet();
+        imguiSteamNavFeedCurrentContext();
+
+        int winW, winH;
+        SDL_GetWindowSize(window, &winW, &winH);
+        ImGui::SetNextWindowPos(ImVec2(0, 0));
+        ImGui::SetNextWindowSize(ImVec2((float)winW, (float)winH));
+        ImGui::Begin("##PasswordHost", nullptr,
+                     ImGuiWindowFlags_NoTitleBar |
+                     ImGuiWindowFlags_NoResize |
+                     ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_NoCollapse |
+                     ImGuiWindowFlags_NoBackground |
+                     ImGuiWindowFlags_NoBringToFrontOnFocus |
+                     ImGuiWindowFlags_NoInputs);
+
+        if (!openedPopup) {
+            ImGui::OpenPopup(popupId);
+            openedPopup = true;
+        }
+
+        ImGui::SetNextWindowSizeConstraints(ImVec2(dialogW, 0),
+                                            ImVec2(dialogW, FLT_MAX));
+        static float s_fadePassword = 0.0f;
+        if (ImGui::BeginPopupModal(popupId, nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize |
+                                   ImGuiWindowFlags_NoMove)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                imguiPopupFadeAlpha(&s_fadePassword));
+            ImVec2 modalSize = ImGui::GetWindowSize();
+            ImGui::SetWindowPos(
+                ImVec2(((float)winW - modalSize.x) * 0.5f,
+                       ((float)winH - modalSize.y) * 0.5f));
+
+            float iconDisplaySize = ICON_SIZE * s;
+            if (iconTex) {
+                ImGui::Image((ImTextureID)iconTex,
+                             ImVec2(iconDisplaySize, iconDisplaySize));
+                ImGui::SameLine();
+            }
+            float textStartY = ImGui::GetCursorPosY();
+            ImGui::BeginGroup();
+            float textRegionW = ImGui::GetContentRegionAvail().x;
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + textRegionW);
+            ImGui::TextUnformatted(message ? message : "");
+            ImGui::PopTextWrapPos();
+            ImGui::Spacing();
+            if (focusField) { ImGui::SetKeyboardFocusHere(); focusField = false; }
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            bool enter = ImGui::InputText("##password", entry, entryCap,
+                                          ImGuiInputTextFlags_Password |
+                                          ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::EndGroup();
+            float afterTextY = ImGui::GetCursorPosY();
+            float afterIconY = textStartY + iconDisplaySize +
+                               ImGui::GetStyle().ItemSpacing.y;
+            if (afterIconY > afterTextY) ImGui::SetCursorPosY(afterIconY);
+
+            /* enterConfirms is off: Enter is consumed by the field above,
+             * so the footer only reports clicks and gamepad accept. */
+            int f = WBUI::DialogFooter(langGetText(STR_CANCEL),
+                                       langGetText(STR_OK),
+                                       /*enterConfirms*/ false);
+            if (enter || f == WBUI::FOOTER_CONFIRM) {
+                SDL_strlcpy(out, entry, outCap);
+                result = IMGUI_MSG_RESULT_OK;
+                ImGui::CloseCurrentPopup();
+            } else if (f == WBUI::FOOTER_CANCEL) {
+                result = IMGUI_MSG_RESULT_CANCEL;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::PopStyleVar();
+            ImGui::EndPopup();
+        }
+
+        ImGui::End(); /* ##PasswordHost */
+
+        dialogDrawNavOutline();
+        ImGui::Render();
+        ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer);
+        SDL_RenderPresent(renderer);
+        dialogFrameCapEnd(frameCapStart);
+    }
+
+    if (iconTex) SDL_DestroyTexture(iconTex);
+
+    ImGui_ImplSDLRenderer3_Shutdown();
+    ImGui_ImplSDL3_Shutdown();
+    ImGui::DestroyContext(msgCtx);
+
+    /* Same as imguiMessageBoxEx: leave the undimmed snapshot in the
+     * backbuffer so a following modal does not dim it twice. */
+    if (bgTex) {
+        SDL_RenderTexture(renderer, bgTex, NULL, NULL);
+        SDL_DestroyTexture(bgTex);
+    }
+
+    dialogRestoreLogicalPresentation(renderer, savedLogW, savedLogH, savedLogMode);
+    ImGui::SetCurrentContext(callerCtx);
+
+    SDL_FlushEvent(SDL_EVENT_QUIT);
+    s_messageBoxActive = false;
+    return result;
+}
+
 extern "C" int imguiMessageBoxRich(const char *title,
                                    const TutorialSeg *segments, int segmentCount,
                                    ImguiMsgType type, ImguiMsgButtons buttons) {
@@ -670,9 +875,7 @@ extern "C" int imguiMessageBoxRich(const char *title,
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
             dialogHandleGamepadCancelEvent(window, &ev);
-            if (ev.type == SDL_EVENT_QUIT ||
-                (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
-                 ev.window.windowID == SDL_GetWindowID(window))) {
+            if (dialogHandleQuitEvent(window, &ev)) {
                 result = (buttons == IMGUI_MSG_YES_NO_CANCEL) ?
                          IMGUI_MSG_RESULT_CANCEL : IMGUI_MSG_RESULT_OK;
             } else if (ev.type == SDL_EVENT_KEY_DOWN) {

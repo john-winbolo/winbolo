@@ -23,6 +23,14 @@
 #include "http.h"
 #include "view_policy.h"   /* the view-policy defaults for absent fields */
 #include "server_voice_mode.h"  /* serverVoiceOn — the default for an absent "voice" */
+/* Here and not in the header: the header reaches UI translation units, and
+ * winbolonet_server.h is kept out of those. */
+#include "winbolonet_server.h"  /* WBN_SCENARIO_NAME_LEN, WBN_MODS_MAX */
+
+BOLO_STATIC_ASSERT(WBN_SERVERLIST_NAME_LEN == WBN_SCENARIO_NAME_LEN,
+                   wbn_serverlist_name_len_matches_wbn_scenario_name_len);
+BOLO_STATIC_ASSERT(WBN_SERVERLIST_MODS_MAX == WBN_MODS_MAX,
+                   wbn_serverlist_mods_max_matches_wbn_mods_max);
 
 /* Copy a JSON string item into a fixed buffer, truncating to fit.
  * Non-string / NULL items leave dst as an empty string. */
@@ -71,6 +79,21 @@ static int readIntFieldDef(const cJSON *obj, const char *name, int def) {
 static void readStringField(const cJSON *obj, const char *name,
                             char *dst, size_t dstSize) {
     copyStringField(cJSON_GetObjectItemCaseSensitive(obj, name), dst, dstSize);
+}
+
+/* Copy src into dst (dstSize bytes), cut to fit on a UTF-8 character
+ * boundary: where the cut lands inside a character, back off over its
+ * continuation bytes so the character goes whole. */
+static void copyUtf8Cut(char *dst, size_t dstSize, const char *src) {
+    size_t len = strlen(src);
+    if (len > dstSize - 1) {
+        len = dstSize - 1;
+        while (len > 0 && ((unsigned char)src[len] & 0xC0) == 0x80) {
+            len--;
+        }
+    }
+    memcpy(dst, src, len);
+    dst[len] = '\0';
 }
 
 /* True when s is NULL, empty, or all whitespace. */
@@ -145,6 +168,7 @@ static void parseServerEntry(const cJSON *src, WbnServerListEntry *dst) {
     dst->allowSpectators = readBoolField(src, "allow_spectators");
     dst->classicMode     = readBoolField(src, "classicmode");
     dst->alliesInTrees   = readBoolField(src, "alliesintrees");
+    dst->positionalSound = readBoolField(src, "positionalsound");
     /* Absent reads as false, which here means smart pings are allowed —
      * the behaviour of every server that predates the key. */
     dst->smartPingsOff   = readBoolField(src, "smartpingsoff");
@@ -184,6 +208,41 @@ static void parseServerEntry(const cJSON *src, WbnServerListEntry *dst) {
             snprintf(dst->players[dst->numPlayerNames], PLAYER_NAME_LEN,
                      "%s", name->valuestring);
             dst->numPlayerNames++;
+        }
+    }
+
+    /* The scenario that decides the round, its human cap and the mods that
+     * run. Each is zero when the key is absent; the entry is calloc'd. */
+    const cJSON *scenario = cJSON_GetObjectItemCaseSensitive(src, "scenario");
+    if (cJSON_IsString(scenario) && scenario->valuestring != NULL) {
+        copyUtf8Cut(dst->scenarioName, sizeof(dst->scenarioName),
+                    scenario->valuestring);
+    } else {
+        dst->scenarioName[0] = '\0';
+    }
+    dst->scenarioMaxPlayers = readIntField(src, "scenario_max_players");
+    if (dst->scenarioMaxPlayers < 0) {
+        dst->scenarioMaxPlayers = 0;
+    } else if (dst->scenarioMaxPlayers > 255) {
+        dst->scenarioMaxPlayers = 255;
+    }
+    /* mods: array of names, in order. A non-string or empty entry is skipped
+     * and does not take a slot; the rest clamp to WBN_SERVERLIST_MODS_MAX. */
+    dst->modCount = 0;
+    const cJSON *mods = cJSON_GetObjectItemCaseSensitive(src, "mods");
+    if (cJSON_IsArray(mods)) {
+        const cJSON *mod = NULL;
+        cJSON_ArrayForEach(mod, mods) {
+            if (dst->modCount >= WBN_SERVERLIST_MODS_MAX) {
+                break;
+            }
+            if (!cJSON_IsString(mod) || mod->valuestring == NULL ||
+                mod->valuestring[0] == '\0') {
+                continue;
+            }
+            copyUtf8Cut(dst->modNames[dst->modCount],
+                        sizeof(dst->modNames[dst->modCount]), mod->valuestring);
+            dst->modCount++;
         }
     }
 }

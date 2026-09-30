@@ -14,13 +14,18 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "bot_manager.h"              /* botManagerSetBrainIdx, botManagerAddBot */
 #include "brain_list.h"               /* BRAIN_MODES_MAX, BRAIN_LEVELS_MAX */
 #include "client_command.h"
+#include "client_sim_internal.h"  /* LOBBY_SCENARIO_LIST_MAX — the cap the
+                                   * scenario list packet and the client's
+                                   * chooser share */
 #include "control_event.h"            /* ControlEvent, CTRL_CHAT, CTRL_ALLIANCE_REQUEST */
-#include "server_sim_scenario.h"      /* serverSimScenarioReload */
+#include "server_sim_scenario.h"      /* serverSimScenarioReload,
+                                        serverSimScenarioListDir, ScnDirEntry */
 #include "log.h"
 #include "mapgen.h"                   /* MapGenConfig, mapGenSeedToConfig */
 #include "netpacks.h"                 /* lobbyBotNameAcceptable */
@@ -30,6 +35,7 @@
 #include "server_sim.h"
 #include "server_sim_internal.h"      /* serverSimGameVoteToggle */
 #include "server_sim_join.h"          /* serverSimAssignLobbyStartOnJoin, serverSimLobbyStartSideMask, serverSimLobbyClosedMaskFor; serverSimFindFreeSlot */
+#include "sim/server_sim_shared.h"    /* serverSimResolveMapPath */
 #include "server_sim_lifecycle.h"     /* serverSimSetTeam, lobbyAutoUnreadyOnChange */
 #include "lobby_shared_starts.h"      /* lobbySharedStartsEnabled — several players per start */
 #include "start_sides.h"              /* startSideEligible — the claim command's side check */
@@ -113,6 +119,28 @@ static bool scenarioAllowsExtraTeams(ServerSim *sim, BYTE slot, BYTE team) {
     return allow;
 }
 
+/* Whether the scenario lets player ally with other: player is the one who
+ * asked, other the seat asked. Put to the policy at the request and again at
+ * the accept, the two places a player makes an alliance. Alliances a script
+ * makes itself — set_team, spawning a bot onto a team, seating — go through
+ * other paths and are not asked. With no policy, or one with no opinion, the
+ * answer is yes. */
+static bool scenarioAllowsAlliance(ServerSim *sim, BYTE player, BYTE other) {
+    bool allow;
+
+    if (sim->scenarioPolicy == NULL || sim->scenarioPolicy->canAlly == NULL) {
+        return TRUE;
+    }
+    if (player >= MAX_TANKS || other >= MAX_TANKS) {
+        return TRUE;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    allow = sim->scenarioPolicy->canAlly(sim->scenarioPolicy->ctx, player,
+                                         other);
+    serverSimScenarioPolicyLeave(sim);
+    return allow;
+}
+
 /* The START_SIDE_* choice of a slot's team; a slot on team 0 has no side. */
 static BYTE lobbySlotStartSide(const ServerSim *sim, BYTE slot) {
     const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, slot);
@@ -130,6 +158,128 @@ static bool lobbySlotMayHoldStart(ServerSim *sim, BYTE slot, BYTE idx1) {
     return startSideEligible(serverSimLobbyStartSideMask(sim, idx1),
                              lobbySlotStartSide(sim, slot),
                              serverSimLobbyClosedMaskFor(sim, slot));
+}
+
+/* Does the scenarios directory hold this file name, and under what spelling?
+   The list the server would send a chooser is the answer: a name it does not
+   carry is not one a host could have picked. Asking the sim's registered
+   lister is the whole of this command's filesystem work — reading the
+   directory belongs to the scenario library, which src/server/ does not
+   name.
+
+   The whole matched entry goes back rather than the spelling and one flag.
+   What the caller records is the row the list event publishes — the file,
+   the manifest's name and both flags — and a second lookup to fetch the rest
+   would read the directory twice.
+
+   The cap is the one the list packet and the client's chooser already share,
+   so every scenario a host can see is one the server will accept.
+
+   The entries are read into the heap rather than onto this thread's stack, the
+   way serverSimEnumerateScenarioDir reads them: an entry carries a
+   description, so a full listing runs to ~58 KB, and this is a command
+   handler that a client's datagram reaches. A listing there is no memory to
+   read is no listing, which answers the same as a name the directory does not
+   hold. */
+static bool lobbyScenarioDirHolds(const ServerSim *sim, const char *file,
+                                  ScnDirEntry *out) {
+    ScnDirEntry *entries;
+    int          got;
+    int          i;
+    bool         found = false;
+
+    if (out != NULL) {
+        memset(out, 0, sizeof(*out));
+    }
+    entries = (ScnDirEntry *)calloc((size_t)LOBBY_SCENARIO_LIST_MAX,
+                                    sizeof(*entries));
+    if (entries == NULL) {
+        return false;
+    }
+    got = serverSimScenarioListDir(sim, entries, LOBBY_SCENARIO_LIST_MAX);
+    for (i = 0; i < got; i++) {
+        if (strcmp(entries[i].file, file) == 0) {
+            /* The directory's row rather than the wire's name, so what is
+               recorded is what the lister reported. */
+            if (out != NULL) {
+                *out = entries[i];
+            }
+            found = true;
+            break;
+        }
+    }
+    free(entries);
+    return found;
+}
+
+/* The three path shapes the map command refuses, refused the same way: an
+   absolute path, a Windows drive letter, and a ".." segment. A scenario is
+   picked by a name in a flat directory, so any of the three means the sender
+   is asking for a file somewhere else. */
+static bool lobbyScenarioNameShapeOk(const char *relPath) {
+    const char *s;
+
+    if (relPath[0] == '/' || relPath[0] == '\\') return false;
+    if (relPath[0] != '\0' && relPath[1] == ':') return false;
+    for (s = relPath; *s;) {
+        if (s[0] == '.' && s[1] == '.' &&
+            (s[2] == '\0' || s[2] == '/' || s[2] == '\\')) {
+            return false;
+        }
+        while (*s && *s != '/' && *s != '\\') s++;
+        while (*s == '/' || *s == '\\') s++;
+    }
+    return true;
+}
+
+/* The widths this file holds against each other. client_command.h keeps its
+   own copies of the list cap and the file length because a header on the gui
+   include path cannot reach control_event.h, and control_event.h keeps its
+   own because a public header cannot reach src/scenario/. This translation
+   unit is the one that sees all three, so a number moving alone is a build
+   failure here rather than a list that is silently cut somewhere on the way
+   through. The same pattern control_event.h documents for the three scenario
+   string lengths. */
+BOLO_STATIC_ASSERT(CMD_SCRIPT_LIST_MAX == LOBBY_SCRIPT_LIST_MAX,
+                   cmd_script_list_max_matches_lobby_script_list_max);
+BOLO_STATIC_ASSERT(CMD_SCRIPT_LIST_FILE_LEN == LOBBY_SCENARIO_FILE_LEN,
+                   cmd_script_list_file_len_matches_lobby_scenario_file_len);
+BOLO_STATIC_ASSERT(SCN_DIR_FILE_LEN == LOBBY_SCENARIO_FILE_LEN,
+                   scn_dir_file_len_matches_lobby_scenario_file_len);
+BOLO_STATIC_ASSERT(CMD_SCRIPT_SETTING_ID_LEN == SCN_SETTING_ID_LEN,
+                   cmd_script_setting_id_len_matches_scn_setting_id_len);
+BOLO_STATIC_ASSERT(SCN_DIR_NAME_LEN == LOBBY_SCENARIO_NAME_LEN,
+                   scn_dir_name_len_matches_lobby_scenario_name_len);
+
+/* The selection changed, so which scenario plays is decided again. The same
+   three calls a map commit makes, in the same order: whoever owns the
+   scenario is asked first and swaps what is attached, the seats it asks for
+   are built, the lobby's own settings are brought into line with it, and the
+   result goes out.
+
+   The map path is handed over unchanged because the map has not changed —
+   what the decision weighs is the pick against the committed map's own
+   script, and it needs both. Nothing here reaches into the scenario library:
+   serverSimScenarioOnMapChanged calls whatever registered itself, which is
+   the only direction that links. */
+static void lobbyScenarioReselect(ServerSim *sim) {
+    serverSimScenarioOnMapChanged(sim, sim->mapFilePath);
+    serverSimScenarioApplyLobbyRules(sim);
+    serverSimPublishLobbySettings(sim);
+    /* And the list itself, behind the settings that name its first entry.
+       Both go out on every pick, because a chooser draws its rows from the
+       list and its attached-scenario detail from the settings, and a lobby
+       that had only one of them would show the two disagreeing. */
+    serverSimPublishScriptList(sim);
+    /* And everyone who was ready is ready no longer, as a map commit does it
+       at the end of the same sequence. A pick changes the rules the round
+       runs, the seats the lobby holds and the game it is played by, so a
+       lobby that was all-ready would otherwise start on a scenario nobody
+       agreed to. */
+    lobbyAutoUnreadyOnChange(sim);
+    /* And the tracker's scenario and mod names follow the list, inside the
+       lobby update's usual rate limit. */
+    serverSimWbnLobbyUpdate(sim, FALSE);
 }
 
 static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
@@ -314,6 +464,11 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             if (p->mode != prevMode || p->difficulty != prevLevel) {
                 serverSimRememberManualBotPick(sim, p->slot);
             }
+            /* A mode change is a person choosing the mode: the seat keeps
+               it when the host changes the game type. */
+            if (p->mode != prevMode) {
+                serverSimMarkBotModeSetByHand(sim, p->slot);
+            }
         }
         return CMD_OK;
     }
@@ -366,8 +521,25 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         /* The Result form, so a setting the map's scenario fixes comes back
            as that rather than as a bare invalid: those three were the host's
            to set a map ago and the toast has to say what took them away. */
-        return serverSimApplyLobbySettingResult(sim, p->settingType, p->value,
-                                                p->valueLen);
+        {
+            CmdResult r = serverSimApplyLobbySettingResult(
+                sim, p->settingType, p->value, p->valueLen);
+
+            /* LST_MODS_OFF decides which scripts compose, so the decision is
+               asked again — the same call a pick makes, because the question
+               is the same one. Without it the mods the host just turned off
+               would stay attached until the next map commit.
+
+               Only on a setting that took: a refused edit changed nothing,
+               and recomposing after one would unready the lobby over a click
+               the server turned down. Only for this id, because every other
+               setting on this arm is a value the round reads rather than a
+               change to what the round is made of. */
+            if (r == CMD_OK && p->settingType == LST_MODS_OFF) {
+                lobbyScenarioReselect(sim);
+            }
+            return r;
+        }
     }
     case CMD_CHAT: {
         const CmdChat *p = &cmd->u.chat;
@@ -563,12 +735,24 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         return CMD_OK;
     }
     case CMD_ALLIANCE_REQUEST: {
+        /* Alliances are made in a running round. In the lobby, teams are how
+           sides change, and the client offers these commands in game only. */
+        if (serverSimGetState(sim) != serverStateRunning) {
+            return CMD_REJECT_BAD_STATE;
+        }
         if (serverSimGetRanked(sim)) return CMD_REJECT_BAD_STATE;
         const CmdAllianceRequest *p = &cmd->u.allianceRequest;
         if (p->toPlayer >= MAX_TANKS) return CMD_REJECT_INVALID;
         if (!serverSimIsPlayerConnected(sim, p->toPlayer)) {
             return CMD_REJECT_INVALID;  /* silent on wire today; preserved */
         }
+        /* Refused here rather than at the accept alone, so nobody is shown
+           a request the scenario will not let them take. */
+        if (!scenarioAllowsAlliance(sim, (BYTE)senderSlot, p->toPlayer)) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        /* Recorded so the accept can check it was asked for. */
+        sim->allianceAskedBy[p->toPlayer] |= (uint16_t)(1u << senderSlot);
         logAddEvent(log_AllyRequest, (BYTE)senderSlot, p->toPlayer,
                     0, 0, 0, NULL);
         ControlEvent reqEvt;
@@ -580,11 +764,34 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         return CMD_OK;
     }
     case CMD_ALLIANCE_ACCEPT: {
-        serverSimAcceptAlliance(sim, (BYTE)senderSlot,
-                                cmd->u.allianceAccept.newMember);
+        BYTE newMember = cmd->u.allianceAccept.newMember;
+        uint16_t asked;
+        if (serverSimGetState(sim) != serverStateRunning) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (serverSimGetRanked(sim)) return CMD_REJECT_BAD_STATE;
+        if (newMember >= MAX_TANKS) return CMD_REJECT_INVALID;
+        /* Only a request the new member made can be accepted. Checked here
+           and not in serverSimAcceptAlliance, so a scenario seating players
+           and the tests that call the sim directly are not affected. */
+        asked = (uint16_t)(1u << newMember);
+        if ((sim->allianceAskedBy[senderSlot] & asked) == 0) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        /* Asked again: the scenario's answer may have changed since the
+           request. The new member is the one who asked. A refusal leaves
+           the request in place, as a decline does. */
+        if (!scenarioAllowsAlliance(sim, newMember, (BYTE)senderSlot)) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        sim->allianceAskedBy[senderSlot] &= (uint16_t)~asked;
+        serverSimAcceptAlliance(sim, (BYTE)senderSlot, newMember);
         return CMD_OK;
     }
     case CMD_ALLIANCE_LEAVE: {
+        if (serverSimGetState(sim) != serverStateRunning) {
+            return CMD_REJECT_BAD_STATE;
+        }
         serverSimLeaveAlliance(sim, (BYTE)senderSlot);
         return CMD_OK;
     }
@@ -810,10 +1017,315 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             }
         }
         if (!safe) return CMD_REJECT_INVALID;
+        /* Through the resolve rather than "<map root>/<relPath>": the host
+           picked this name off a listing, and with a persist directory
+           configured the virtual Uploads folder lives somewhere else, so
+           building the path here would commit a different file from the one
+           that was listed. */
         char fullPath[FILENAME_MAX];
-        SDL_snprintf(fullPath, sizeof(fullPath), "%s/%s",
-                     serverSimGetMapDirRoot(sim), relPath);
+        serverSimResolveMapPath(sim, relPath, fullPath, sizeof(fullPath));
         if (!serverSimReloadMap(sim, fullPath)) return CMD_REJECT_INVALID;
+        return CMD_OK;
+    }
+    case CMD_LOBBY_SET_SCENARIO: {
+        /* Lobby-only and host-only, like the map change above it: which
+           scenario a round plays by is the operator's choice and not a
+           joiner's. No LOBBY_LOCK_MAP test, for the same reason — the map
+           command this copies has none either. The lock hides the chooser on
+           the client; the commands that test it server-side are the preview
+           pair and the skip vote.
+
+           Recording the pick is not all this does: the selection decides
+           which scenario plays, so it is made again the moment it changes.
+           serverSimScenarioOnMapChanged is what asks — whoever owns the
+           scenario weighs the pick against the committed map's own script
+           and attaches the winner — and the seating, the lobby rules and
+           the settings event follow it exactly as they do on a map
+           commit. */
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+        const CmdLobbySetScenario *p = &cmd->u.lobbySetScenario;
+        /* An empty path is the one value that is always good: it selects no
+           scenario, so there is no name to check the shape of or look up. */
+        if (p->relPathLen == 0) {
+            serverSimSetSelectedScenario(sim, NULL);
+            lobbyScenarioReselect(sim);
+            return CMD_OK;
+        }
+        /* A ranked game runs no script of any kind, scenario or mod: the
+           point of ranked is that every round was played by the same rules,
+           and a script is there to change them. The other direction is
+           already answered — LST_RANKED is refused while a scenario is
+           attached, and committing a scripted map clears ranked at the
+           commit — so this is that same rule read the other way round, for
+           the one path that had nothing saying it.
+
+           After the clear above and not before it, so a host who turned
+           ranked on with a scenario already picked can still put the
+           selection back to none and is not stuck with it. */
+        if (serverSimGetRanked(sim)) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        char relPath[256];
+        memcpy(relPath, p->relPath, p->relPathLen);
+        relPath[p->relPathLen] = '\0';
+        if (!lobbyScenarioNameShapeOk(relPath)) return CMD_REJECT_INVALID;
+        /* One pick a second, per sim, before the directory is read: finding
+           out whether this name is one the server offers means listing the
+           scenarios directory, which opens every file in it and runs the top
+           level of every loose script on this thread. Any connected player is
+           the host on a server with openHost set, and a datagram may carry
+           several commands, so without this a client can ask for that work as
+           fast as it can send. The same gap a reload takes, for the same
+           reason. The sender is told by the toast, which is why this returns
+           rather than sending a line. */
+        if (sim->scenarioPickTick != 0 &&
+            sim->tick + 1 - sim->scenarioPickTick < SCENARIO_RELOAD_GAP_TICKS) {
+            return CMD_REJECT_COOLDOWN;
+        }
+        sim->scenarioPickTick = sim->tick + 1;
+        ScnDirEntry picked;
+        if (!lobbyScenarioDirHolds(sim, relPath, &picked)) {
+            return CMD_REJECT_INVALID;
+        }
+        /* A scenario that says it is bound belongs to the map it was written
+           against: its tags, its regions and its entity indices are that
+           map's, so over another map they name items that are not there. It
+           arrives with its own map and plays when that map is committed,
+           which leaves nothing here for a host to pick. Refused rather than
+           accepted and quietly ignored, so the host is told.
+
+           Every bound file and not all but one, which is where this arm and
+           the list arm below it part company. The list arm lets the committed
+           map's own script be named, because naming it is how a host says
+           where on the list it goes. This arm replaces the whole list with
+           one row, and a one-row list holding only the map's own script is
+           the same round an empty list plays: the map's script and nothing
+           else. There is no position for a single pick to state, so there is
+           nothing for the map's own script to be picked for here. */
+        if (picked.bound) {
+            return CMD_REJECT_INVALID;
+        }
+        /* The whole row and not the name: the list event carries the
+           manifest's name and both flags per entry, and this is where they
+           are known without reading the directory again. */
+        serverSimSetScriptList(sim, &picked, 1);
+        lobbyScenarioReselect(sim);
+        return CMD_OK;
+    }
+    case CMD_SET_SCRIPT_LIST: {
+        /* The whole script list at once: one scenario deciding the round and
+           mods behind it changing how it plays. The same gates as
+           CMD_LOBBY_SET_SCENARIO beside it, for the same reasons, and one
+           more that only a list can break — two scenarios in it.
+
+           A list and not an index-and-file pair: two hosts editing at the
+           same moment would otherwise interleave into a list neither asked
+           for, and the state here would be a splice rather than an
+           assignment. */
+        int                count;
+        int                i;
+        int                j;
+        int                scenarios = 0;
+        const ScnDirEntry *mapOwn;
+        ScnDirEntry        rows[CMD_SCRIPT_LIST_MAX];
+        ScnDirEntry       *dirRows;
+        int                dirCount;
+        CmdResult          result = CMD_OK;
+
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+        count = (int)cmd->u.setScriptList.count;
+        /* The wire decoder refuses this already; a command submitted through
+           the local transport never met it, and this arm is the one place
+           both paths pass through. */
+        if (count > CMD_SCRIPT_LIST_MAX) return CMD_REJECT_INVALID;
+        /* An empty list clears, and is the one value that needs no name
+           checks: there is no name to test the shape of or look up. It is
+           exempt from the ranked refusal too, so a host who turned ranked on
+           with scripts picked can still put the list back to empty. The same
+           order the set-scenario arm clears in.
+
+           It is not exempt from the tick gap. No directory is read for it,
+           but it recomposes like any other list, and that is the work the gap
+           spaces out. */
+        if (count <= 0) {
+            if (sim->scenarioPickTick != 0 &&
+                sim->tick + 1 - sim->scenarioPickTick <
+                    SCENARIO_RELOAD_GAP_TICKS) {
+                return CMD_REJECT_COOLDOWN;
+            }
+            sim->scenarioPickTick = sim->tick + 1;
+            serverSimSetScriptList(sim, NULL, 0);
+            lobbyScenarioReselect(sim);
+            return CMD_OK;
+        }
+        /* A ranked game runs no script of any kind. Read the other way round
+           from LST_RANKED, which is refused while a script is attached. */
+        if (serverSimGetRanked(sim)) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        /* One list a second, per sim, before the directory is read, and on
+           the same clock the single pick and the reload share: looking a name
+           up means listing the scenarios directory, which opens every file in
+           it and runs the top level of every loose script on this thread. One
+           reading serves the whole list, and this is what spaces those out. */
+        if (sim->scenarioPickTick != 0 &&
+            sim->tick + 1 - sim->scenarioPickTick < SCENARIO_RELOAD_GAP_TICKS) {
+            return CMD_REJECT_COOLDOWN;
+        }
+        sim->scenarioPickTick = sim->tick + 1;
+        /* The committed map's own script, or NULL for a map that brought
+           none. It is the one bound file a list may name, and naming it is
+           how a host says where on the list it goes: the round used to
+           compose it at position 0 whatever the host did, because a region's
+           identity was its place in the composed list, and a region now
+           carries an identity of its own. See scnDecideScenario in
+           src/scenario/scenario_host.c for what the row does once it is
+           recorded. */
+        mapOwn = serverSimGetMapScript(sim);
+        /* One listing for the whole command, matched against every name on
+           it. Reading the directory opens every file in it and runs the top
+           level of every loose script, on this thread and under the sim lock,
+           and it answers the same for the tenth name as for the first.
+
+           On the heap for the reason lobbyScenarioDirHolds puts it there: an
+           entry carries a description, so a full listing runs to ~58 KB,
+           which is more than a command handler a client's datagram reaches
+           should put on the stack. No memory to read the directory into is no
+           listing, which answers the same as a name the directory does not
+           hold — so the allocation failing is not a separate refusal. */
+        dirRows = (ScnDirEntry *)calloc((size_t)LOBBY_SCENARIO_LIST_MAX,
+                                        sizeof(*dirRows));
+        dirCount = dirRows != NULL
+                       ? serverSimScenarioListDir(sim, dirRows,
+                                                  LOBBY_SCENARIO_LIST_MAX)
+                       : 0;
+        for (i = 0; i < count; i++) {
+            const char *file = cmd->u.setScriptList.files[i];
+            if (file[0] == '\0') {
+                result = CMD_REJECT_INVALID;
+                goto scriptListDone;
+            }
+            if (!lobbyScenarioNameShapeOk(file)) {
+                result = CMD_REJECT_INVALID;
+                goto scriptListDone;
+            }
+            if (mapOwn != NULL && strcmp(mapOwn->file, file) == 0) {
+                /* The map's own script, recorded from the row the server
+                   published rather than looked up: the file sits beside the
+                   .map or inside it, so the scenarios directory does not hold
+                   it and lobbyScenarioDirHolds would turn the whole list
+                   down. The row is taken whole, which keeps its name, its
+                   kind and its bound flag exactly as the attach read them —
+                   and bound is what tells this row from a pick everywhere it
+                   is read afterwards.
+
+                   Named twice, it is refused by the duplicate test below
+                   along with every other repeated name. */
+                rows[i] = *mapOwn;
+            } else {
+                int  k;
+                bool held = false;
+
+                memset(&rows[i], 0, sizeof(rows[i]));
+                for (k = 0; k < dirCount; k++) {
+                    if (strcmp(dirRows[k].file, file) == 0) {
+                        /* The directory's row rather than the wire's name, so
+                           what is recorded is what the lister reported: the
+                           file, the manifest's name and both flags, which is
+                           what the list event publishes. */
+                        rows[i] = dirRows[k];
+                        held    = true;
+                        break;
+                    }
+                }
+                /* A name the directory does not carry is not one a host could
+                   have picked. */
+                if (!held) {
+                    result = CMD_REJECT_INVALID;
+                    goto scriptListDone;
+                }
+                /* Any other bound script belongs to a map that is not the
+                   committed one: its tags, its regions and its entity indices
+                   are that map's, so over this map they name items that are
+                   not there. It arrives with its own map and plays when that
+                   map is committed, which leaves nothing here for a host to
+                   pick. */
+                if (rows[i].bound) {
+                    result = CMD_REJECT_INVALID;
+                    goto scriptListDone;
+                }
+            }
+            if (!rows[i].keepsWinCondition) scenarios++;
+            /* The same file twice would load the same script twice, with two
+               sets of its timers and its state running against each other.
+               Refused rather than folded, so the host is told. */
+            for (j = 0; j < i; j++) {
+                if (strcmp(rows[j].file, rows[i].file) == 0) {
+                    result = CMD_REJECT_INVALID;
+                    goto scriptListDone;
+                }
+            }
+        }
+        /* At most one script that may end the round. Two of them would each
+           believe the round is theirs to decide, and which one won would come
+           down to the order they were called in.
+
+           The map's own row counts here like any other. A list holding it and
+           a picked scenario is two scenarios, which the compose would refuse
+           anyway once it had read both files; refusing it here means the host
+           is told at the moment of asking and the list that was playing is
+           still playing. Dropping the map's row from the list is how a host
+           says the picked scenario replaces it — which is what leaving it off
+           the list has always meant. */
+        if (scenarios > 1) {
+            result = CMD_REJECT_INVALID;
+            goto scriptListDone;
+        }
+        serverSimSetScriptList(sim, rows, count);
+        lobbyScenarioReselect(sim);
+scriptListDone:
+        /* Every refusal above reaches here, so the one listing the arm read
+           is freed whichever way it leaves. */
+        free(dirRows);
+        return result;
+    }
+    case CMD_SET_SCRIPT_SETTING: {
+        /* The host choosing a value for one of a script's own settings.
+           Lobby-only and host-only, like the list it is chosen beside: the
+           value changes how the next round plays. The script need not be on
+           the list yet, so a host can set a mod up before adding it.
+
+           Nothing from the client is trusted past the names.
+           serverSimSetScriptSetting reads the declaration for the file on
+           this server, refuses an id it does not declare and a bool
+           setting given anything but 0 or 1, and falls back to the default
+           for an int value outside the range or off the step. */
+        const CmdSetScriptSetting *s = &cmd->u.setScriptSetting;
+
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+        if (memchr(s->file, '\0', sizeof(s->file)) == NULL ||
+            memchr(s->id, '\0', sizeof(s->id)) == NULL ||
+            !lobbyScenarioNameShapeOk(s->file)) {
+            return CMD_REJECT_INVALID;
+        }
+        if (!serverSimSetScriptSetting(sim, s->file, s->id, s->value, NULL)) {
+            return CMD_REJECT_INVALID;
+        }
+        /* What the round plays by changed, so a ready player is asked to
+           look again, as a map or list change asks. */
+        lobbyAutoUnreadyOnChange(sim);
         return CMD_OK;
     }
     case CMD_LOBBY_RELOAD_SCENARIO: {
@@ -994,13 +1506,10 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         if (!bp->pending) return CMD_REJECT_BAD_STATE;
         /* "Humans only" kicks every bot before applying the human-only
          * team assignments — the proposal contains no team for those
-         * slots. */
+         * slots. The scenario's seats go too, and the next map change
+         * seats them again. */
         if (!bp->includeBots) {
-            for (int i = 0; i < MAX_TANKS; i++) {
-                if (serverSimIsBot(sim, (BYTE)i)) {
-                    serverSimRemoveBot(sim, (BYTE)i);
-                }
-            }
+            serverSimRemoveAllBots(sim);
         }
         for (int i = 0; i < MAX_TANKS; i++) {
             if (bp->teamForSlot[i] != 0) {
@@ -1009,6 +1518,14 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             }
         }
         serverSimReapplyTeamAlliances(sim);
+        /* The batch moves teamNumber and nothing else, so a swapped slot
+         * still holds the start it picked for its old team, on its old
+         * team's side, and the round honours a reservation as it stands.
+         * Drop each reservation the new teams' sides no longer allow and
+         * pick again for those slots, the way a team change does. A start
+         * that is still allowed, one a player chose by hand included, is
+         * kept; the slots that move are republished. */
+        serverSimReleaseIneligibleStartsAndBackfill(sim, 0xFF);
         serverSimClearBalanceProposal(sim);
         /* Publish the cleared proposal so balanceProposalActive flips
          * back to false on every client — keeps canBalance gating from

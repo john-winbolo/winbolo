@@ -54,6 +54,7 @@ static int parse_full_entry(void) {
         "\"alliesintrees\":true,"
         "\"overviewwindow\":1,"
         "\"lineofsight\":1,"
+        "\"positionalsound\":true,"
         "\"smartpingsoff\":true,"
         "\"pillviewdecay\":45,"
         "\"baseviewdecay\":90,"
@@ -96,6 +97,7 @@ static int parse_full_entry(void) {
     UT_ASSERT_MSG(s->overviewWindow == 1 && s->lineOfSight == 1,
                   "overview window/line of sight=%d/%d, want 1/1",
                   s->overviewWindow, s->lineOfSight);
+    UT_ASSERT_MSG(s->positionalSound, "positionalSound should be true");
     UT_ASSERT_MSG(s->pillViewDecay == 45 && s->baseViewDecay == 90 &&
                       s->allyViewDecay == 15,
                   "decay secs=%d/%d/%d", s->pillViewDecay, s->baseViewDecay,
@@ -146,6 +148,9 @@ static int parse_defaults(void) {
                   "absent view policies=%d/%d/%d, want 0/3/0",
                   s->pillView, s->baseView, s->allyView);
     UT_ASSERT_MSG(!s->alliesInTrees, "absent alliesintrees should be false");
+    /* Absent "positionalsound" is off, which is what every server that
+     * predates the key runs. */
+    UT_ASSERT_MSG(!s->positionalSound, "absent positionalsound should be false");
     /* Absent "smartpingsoff" is false, which means smart pings are ALLOWED —
      * what every server and tracker that predates the field reports. */
     UT_ASSERT_MSG(!s->smartPingsOff,
@@ -311,4 +316,120 @@ static int malformed_rejected(void) {
 
 int run_wbn_serverlist_malformed(void) {
     return malformed_rejected();
+}
+
+/* -------------------------------------------------------------------- */
+
+/* The scenario, its cap and the mods a row names. */
+static int scripts_parse(void) {
+    WbnServerList list;
+    const WbnServerListEntry *s;
+
+    /* Keys absent: everything zero. */
+    UT_ASSERT(wbnServerListParse("{\"servers\":[{\"address\":\"h\"}]}", &list));
+    s = &list.servers[0];
+    UT_ASSERT_MSG(s->scenarioName[0] == '\0', "absent scenario=\"%s\"",
+                  s->scenarioName);
+    UT_ASSERT_MSG(s->scenarioMaxPlayers == 0, "absent cap=%d",
+                  s->scenarioMaxPlayers);
+    UT_ASSERT_MSG(s->modCount == 0, "absent mods count=%d", s->modCount);
+    wbnServerListFree(&list);
+
+    /* An empty mods array. */
+    UT_ASSERT(wbnServerListParse("{\"servers\":[{\"mods\":[]}]}", &list));
+    UT_ASSERT_MSG(list.servers[0].modCount == 0, "empty mods count=%d",
+                  list.servers[0].modCount);
+    wbnServerListFree(&list);
+
+    /* A scenario, its cap and two mods. */
+    UT_ASSERT(wbnServerListParse(
+        "{\"servers\":[{\"scenario\":\"Survival\",\"scenario_max_players\":6,"
+        "\"mods\":[\"Infection\",\"Pill Tag\"]}]}", &list));
+    s = &list.servers[0];
+    UT_ASSERT_MSG(strcmp(s->scenarioName, "Survival") == 0, "scenario=\"%s\"",
+                  s->scenarioName);
+    UT_ASSERT_MSG(s->scenarioMaxPlayers == 6, "cap=%d", s->scenarioMaxPlayers);
+    UT_ASSERT_MSG(s->modCount == 2, "mods count=%d", s->modCount);
+    UT_ASSERT_MSG(strcmp(s->modNames[0], "Infection") == 0, "mod0=\"%s\"",
+                  s->modNames[0]);
+    UT_ASSERT_MSG(strcmp(s->modNames[1], "Pill Tag") == 0, "mod1=\"%s\"",
+                  s->modNames[1]);
+    wbnServerListFree(&list);
+
+    /* Ten names: the first nine are kept and the tenth dropped. */
+    UT_ASSERT(wbnServerListParse(
+        "{\"servers\":[{\"mods\":[\"m0\",\"m1\",\"m2\",\"m3\",\"m4\","
+        "\"m5\",\"m6\",\"m7\",\"m8\",\"m9\"]}]}", &list));
+    s = &list.servers[0];
+    UT_ASSERT_MSG(s->modCount == WBN_SERVERLIST_MODS_MAX,
+                  "ten mods kept %d, expected %d", s->modCount,
+                  WBN_SERVERLIST_MODS_MAX);
+    UT_ASSERT_MSG(strcmp(s->modNames[8], "m8") == 0, "mod8=\"%s\"",
+                  s->modNames[8]);
+    wbnServerListFree(&list);
+
+    /* A non-string and an empty entry are skipped without taking a slot. */
+    UT_ASSERT(wbnServerListParse(
+        "{\"servers\":[{\"mods\":[\"A\",12,null,\"\",\"B\"]}]}", &list));
+    s = &list.servers[0];
+    UT_ASSERT_MSG(s->modCount == 2, "mixed mods count=%d, expected 2",
+                  s->modCount);
+    UT_ASSERT_MSG(strcmp(s->modNames[0], "A") == 0, "mod0=\"%s\"",
+                  s->modNames[0]);
+    UT_ASSERT_MSG(strcmp(s->modNames[1], "B") == 0, "mod1=\"%s\"",
+                  s->modNames[1]);
+    wbnServerListFree(&list);
+
+    /* A 70-byte name: 62 ASCII bytes, an é at 62..63, then six more. The
+       cut at 63 would split the é, so it goes whole and 62 bytes are kept.
+       Both the scenario and a mod are cut the same way. */
+    {
+        char name[71];
+        char body[256];
+        memset(name, 'x', 62);
+        name[62] = (char)0xC3;
+        name[63] = (char)0xA9;
+        memset(name + 64, 'y', 6);
+        name[70] = '\0';
+        snprintf(body, sizeof(body),
+                 "{\"servers\":[{\"scenario\":\"%s\",\"mods\":[\"%s\"]}]}",
+                 name, name);
+        UT_ASSERT(wbnServerListParse(body, &list));
+        s = &list.servers[0];
+        UT_ASSERT_MSG(strlen(s->scenarioName) == 62,
+                      "long scenario kept %zu bytes, expected 62",
+                      strlen(s->scenarioName));
+        UT_ASSERT_MSG(memcmp(s->scenarioName, name, 62) == 0,
+                      "long scenario's kept bytes differ");
+        UT_ASSERT_MSG(s->modCount == 1, "long mod count=%d", s->modCount);
+        UT_ASSERT_MSG(strlen(s->modNames[0]) == 62,
+                      "long mod kept %zu bytes, expected 62",
+                      strlen(s->modNames[0]));
+        wbnServerListFree(&list);
+    }
+
+    /* The cap is clamped to a byte. */
+    UT_ASSERT(wbnServerListParse(
+        "{\"servers\":[{\"scenario_max_players\":300},"
+        "{\"scenario_max_players\":-4}]}", &list));
+    UT_ASSERT_MSG(list.servers[0].scenarioMaxPlayers == 255,
+                  "cap 300 read as %d, expected 255",
+                  list.servers[0].scenarioMaxPlayers);
+    UT_ASSERT_MSG(list.servers[1].scenarioMaxPlayers == 0,
+                  "cap -4 read as %d, expected 0",
+                  list.servers[1].scenarioMaxPlayers);
+    wbnServerListFree(&list);
+
+    /* A scenario that is not a string reads as none. */
+    UT_ASSERT(wbnServerListParse(
+        "{\"servers\":[{\"scenario\":42}]}", &list));
+    UT_ASSERT_MSG(list.servers[0].scenarioName[0] == '\0',
+                  "a numeric scenario read as \"%s\"",
+                  list.servers[0].scenarioName);
+    wbnServerListFree(&list);
+    return 0;
+}
+
+int run_wbn_serverlist_scripts(void) {
+    return scripts_parse();
 }

@@ -81,6 +81,8 @@ static void winbolonetAddLobbyInfoFields(cJSON *body) {
   cJSON_AddNumberToObject(body, "allyview", s_lobbyInfo.allyView);
   cJSON_AddBoolToObject(body, "classicmode", s_lobbyInfo.classicMode);
   cJSON_AddBoolToObject(body, "alliesintrees", s_lobbyInfo.alliesInTrees);
+  /* Absent reads as false, which is what every server did before the key. */
+  cJSON_AddBoolToObject(body, "positionalsound", s_lobbyInfo.positionalSound);
   cJSON_AddNumberToObject(body, "pillviewdecay", s_lobbyInfo.pillViewDecay);
   cJSON_AddNumberToObject(body, "baseviewdecay", s_lobbyInfo.baseViewDecay);
   cJSON_AddNumberToObject(body, "allyviewdecay", s_lobbyInfo.allyViewDecay);
@@ -98,6 +100,23 @@ static void winbolonetAddLobbyInfoFields(cJSON *body) {
    * 2 proximity. A reader that finds no "voice" key reads on, which is
    * what servers did before the field existed. */
   cJSON_AddNumberToObject(body, "voice", s_lobbyInfo.voiceMode);
+  /* No "scenario" or "scenario_max_players" key is a round no scenario
+   * decides: a plain one, or one only mods change. "mods" is always sent,
+   * [] when none run, so a reader that finds no key is reading a server
+   * from before the field existed. */
+  if (s_lobbyInfo.hasScenario) {
+    cJSON_AddStringToObject(body, "scenario", s_lobbyInfo.scenarioName);
+    cJSON_AddNumberToObject(body, "scenario_max_players",
+                            s_lobbyInfo.scenarioMaxPlayers);
+  }
+  {
+    cJSON *mods = cJSON_CreateArray();
+    BYTE   i;
+    for (i = 0; i < s_lobbyInfo.modCount && i < WBN_MODS_MAX; i++) {
+      cJSON_AddItemToArray(mods, cJSON_CreateString(s_lobbyInfo.modNames[i]));
+    }
+    cJSON_AddItemToObject(body, "mods", mods);
+  }
 }
 
 void winbolonetSendLobbyUpdate(void) {
@@ -108,8 +127,10 @@ void winbolonetSendLobbyUpdate(void) {
     return;
   }
 
+  /* No server_key here or in the other queued server posts below: the
+   * worker stamps the key that is current when the post fires, so one
+   * queued across a round transition names the session that is live then. */
   body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
   cJSON_AddStringToObject(body, "map", s_lobbyInfo.map);
   cJSON_AddNumberToObject(body, "num_bases", s_lobbyInfo.numBases);
   cJSON_AddNumberToObject(body, "num_pills", s_lobbyInfo.numPills);
@@ -124,7 +145,7 @@ void winbolonetSendLobbyUpdate(void) {
 
   json_str = cJSON_PrintUnformatted(body);
   if (json_str) {
-    winbolonetThreadAddServerRequest("server/lobby_update", json_str);
+    winbolonetThreadAddServerKeyedRequest("server/lobby_update", json_str);
     free(json_str);
   }
   cJSON_Delete(body);
@@ -220,8 +241,9 @@ static bool winbolonetApplyRegisterResponse(int status, cJSON *resp, const char 
     return FALSE;
   }
 
-  strncpy(winboloNetServerKey, keyObj->valuestring, WINBOLONET_KEY_LEN - 1);
-  winboloNetServerKey[WINBOLONET_KEY_LEN - 1] = '\0';
+  /* Through the worker's setter: a queued keyed post reads the key on the
+   * worker when it fires, and this write can land while one is being read. */
+  winbolonetThreadSetServerKey(keyObj->valuestring);
 
   tokenObj = cJSON_GetObjectItem(resp, "server_token");
   if (tokenObj && cJSON_IsString(tokenObj)) {
@@ -254,7 +276,7 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
   serverSimConsoleMessage("WinBolo.net Startup");
   winboloNetRunning = FALSE;
   winbolonetEventsCreate();
-  winboloNetServerKey[0] = '\0';
+  winbolonetThreadSetServerKey(NULL);
   for (count = 0; count < MAX_TANKS; count++) {
     winboloNetPlayerKey[count][0] = '\0';
   }
@@ -296,7 +318,7 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
 *********************************************************/
 void winbolonetServerSendTeams(BYTE *array, BYTE length, BYTE numTeams) {
   cJSON *body = NULL;
-  cJSON *resp = NULL;
+  char *json_str = NULL;
   cJSON *teams = NULL;
   cJSON *currentTeam = NULL;
   BYTE arrayPos;
@@ -304,7 +326,6 @@ void winbolonetServerSendTeams(BYTE *array, BYTE length, BYTE numTeams) {
   char teamId[16];
 
   body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
 
   teams = cJSON_CreateObject();
   snprintf(teamId, sizeof(teamId), "%d", teamIndex);
@@ -333,9 +354,12 @@ void winbolonetServerSendTeams(BYTE *array, BYTE length, BYTE numTeams) {
 
   cJSON_AddItemToObject(body, "teams", teams);
 
-  wbn_api_call_server("server/teams", body, &resp);
+  json_str = cJSON_PrintUnformatted(body);
+  if (json_str) {
+    winbolonetThreadAddServerKeyedRequest("server/teams", json_str);
+    free(json_str);
+  }
   cJSON_Delete(body);
-  cJSON_Delete(resp);
 }
 
 /*********************************************************
@@ -500,7 +524,6 @@ void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePill
   staticNumBots = s_lobbyInfo.numBots;
 
   body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
   cJSON_AddNumberToObject(body, "num_players", staticNumPlayers);
   cJSON_AddNumberToObject(body, "num_humans", s_lobbyInfo.numHumans);
   cJSON_AddNumberToObject(body, "num_bots", s_lobbyInfo.numBots);
@@ -536,20 +559,40 @@ void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePill
     /* Queue for background thread (bearer attached at fire time) */
     char *json_str = cJSON_PrintUnformatted(body);
     if (json_str) {
-      winbolonetThreadAddServerRequest("server/update", json_str);
+      winbolonetThreadAddServerKeyedRequest("server/update", json_str);
       free(json_str);
     }
     cJSON_Delete(body);
   } else {
-    /* Send immediately */
-    wbn_api_call_server("server/update", body, &resp);
-    cJSON_Delete(body);
-    if (resp) {
-      cJSON *errObj = cJSON_GetObjectItem(resp, "error");
-      if (errObj && cJSON_IsString(errObj)) {
-        fprintf(stderr, "WinBolo.net update error: %s\n", errObj->valuestring);
+    /* A flush: queued like the periodic update so the caller's thread does
+       not wait on the post. It goes in through
+       winbolonetThreadAddSessionRequest, which the backlog cap does not
+       apply to: both round transitions make this call from the game tick,
+       and a full queue used to refuse it and send the post here, stopping
+       the game for as long as it took. A FALSE therefore means the worker
+       is not running, which is the case winbolonetGoodbye is in - it
+       flushes after the thread has been destroyed and there is no later
+       moment for the post to go out - so the fallback posts here, with the
+       key the worker would have stamped. */
+    char *json_str = cJSON_PrintUnformatted(body);
+    bool queued = FALSE;
+    if (json_str) {
+      queued = winbolonetThreadAddSessionRequest("server/update", json_str);
+      free(json_str);
+    }
+    if (queued == TRUE) {
+      cJSON_Delete(body);
+    } else {
+      cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
+      wbn_api_call_server("server/update", body, &resp);
+      cJSON_Delete(body);
+      if (resp) {
+        cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+        if (errObj && cJSON_IsString(errObj)) {
+          fprintf(stderr, "WinBolo.net update error: %s\n", errObj->valuestring);
+        }
+        cJSON_Delete(resp);
       }
-      cJSON_Delete(resp);
     }
   }
 
@@ -570,39 +613,74 @@ bool winboloNetIsPlayerParticipant(BYTE playerNum) {
 }
 
 /*********************************************************
-*NAME:          winboloNetVerifyClientKey
+*NAME:          winbolonetBuildVerifyBody
 *PURPOSE:
-* Validates a player_key received off the wire via
-* POST /api/v1/client/verify. On success, copies the
-* player_key into the player's slot in winboloNetPlayerKey
-* so subsequent events/leaves can identify the player.
+* Builds the client/verify request body. Shared by the
+* synchronous verify and the queued one so the two send the
+* same request.
+*
+*ARGUMENTS:
+* playerKey  - The key the client presented
+* playerName - Name to verify and attribute under
 *********************************************************/
-bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName, BYTE playerNum, char *errorMsg, bool *hasSteam, bool *isSupporter) {
-  cJSON *body = NULL;
-  cJSON *resp = NULL;
-  int status;
+static cJSON *winbolonetBuildVerifyBody(const char *playerKey,
+                                        const char *playerName) {
+  cJSON *body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
+  cJSON_AddStringToObject(body, "player_key", playerKey);
+  cJSON_AddStringToObject(body, "player_name", playerName);
+  return body;
+}
+
+/*********************************************************
+*NAME:          copyWireError
+*PURPOSE:
+* Copies a WinBolo.net-supplied error string into a
+* caller's error buffer, bounded. The strings come off the
+* wire and the buffer is contracted at 256 bytes, so the
+* copy is capped at 255 characters plus the terminator.
+*
+*ARGUMENTS:
+* errorMsg - Caller's buffer (>= 256)
+* src      - The "error" string from the reply
+*********************************************************/
+static void copyWireError(char *errorMsg, const char *src) {
+  strncpy(errorMsg, src, 255);
+  errorMsg[255] = '\0';
+}
+
+/*********************************************************
+*NAME:          applyVerifyResponse
+*PURPOSE:
+* Reads one client/verify reply. Shared by the synchronous
+* winboloNetVerifyClientKey and the queued
+* winbolonetApplyVerifyResult so the two cannot drift.
+*
+* Writes winboloNetPlayerKey[playerNum] on acceptance, so
+* whichever thread calls this is the thread the slot's key
+* is written on.
+*
+*ARGUMENTS:
+* status      - HTTP status, or -1 when the post never sent
+* resp        - Parsed reply, or NULL
+* playerKey   - The key that was presented
+* playerNum   - Slot the key belongs to
+* errorMsg    - Filled on refusal (>= 256)
+* hasSteam    - Set from the reply, or FALSE
+* isSupporter - Set from the reply, or FALSE
+*********************************************************/
+static bool applyVerifyResponse(int status, cJSON *resp, const char *playerKey,
+                                BYTE playerNum, char *errorMsg,
+                                bool *hasSteam, bool *isSupporter) {
   bool ok = FALSE;
 
   if (hasSteam) *hasSteam = FALSE;
   if (isSupporter) *isSupporter = FALSE;
 
-  if (winboloNetRunning != TRUE || winboloNetServerKey[0] == '\0') {
-    strcpy(errorMsg, "WinBolo.net not running");
-    return FALSE;
-  }
-
-  body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
-  cJSON_AddStringToObject(body, "player_key", playerKey);
-  cJSON_AddStringToObject(body, "player_name", playerName);
-
-  status = wbn_api_call("client/verify", body, &resp);
-  cJSON_Delete(body);
-
   if (status == 200 && resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");
     if (errObj && cJSON_IsString(errObj)) {
-      strcpy(errorMsg, errObj->valuestring);
+      copyWireError(errorMsg, errObj->valuestring);
     } else {
       strncpy(winboloNetPlayerKey[playerNum], playerKey, WINBOLONET_KEY_LEN - 1);
       winboloNetPlayerKey[playerNum][WINBOLONET_KEY_LEN - 1] = '\0';
@@ -624,7 +702,7 @@ bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName, BY
   } else if (resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");
     if (errObj && cJSON_IsString(errObj)) {
-      strcpy(errorMsg, errObj->valuestring);
+      copyWireError(errorMsg, errObj->valuestring);
     } else {
       strcpy(errorMsg, "WinBolo.net verification failed");
     }
@@ -632,46 +710,178 @@ bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName, BY
     strcpy(errorMsg, "No response from WinBolo.net");
   }
 
-  cJSON_Delete(resp);
   return ok;
 }
 
 /*********************************************************
-*NAME:          winboloNetVerifyJoinCode
+*NAME:          winboloNetVerifyClientKey
 *PURPOSE:
-* Resolves a join_code via POST
-* /api/v1/client/verify_join_code. Read-only: it does not
-* consume the code and stores nothing in the slot-keyed
-* winboloNetPlayerKey[] array. On acceptance it reports the
-* resolved player name, login state, country and user id.
+* Validates a player_key received off the wire via
+* POST /api/v1/client/verify. On success, copies the
+* player_key into the player's slot in winboloNetPlayerKey
+* so subsequent events/leaves can identify the player.
+*
+* Posts on the calling thread. Callers on the server tick
+* use winbolonetQueueVerifyClientKey instead.
 *********************************************************/
-bool winboloNetVerifyJoinCode(const char *joinCode,
-                              char  *playerNameOut,   /* >= PACKET_MAX_PLAYER_NAME */
-                              bool  *isLoggedInOut,
-                              char  *countryOut,      /* >= 3 (ISO-2 + NUL) */
-                              int   *userIdOut,       /* -1 when null */
-                              char  *errorMsg) {      /* >= 256 */
+bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName, BYTE playerNum, char *errorMsg, bool *hasSteam, bool *isSupporter) {
   cJSON *body = NULL;
   cJSON *resp = NULL;
   int status;
-  bool ok = FALSE;
+  bool ok;
 
-  if (isLoggedInOut) *isLoggedInOut = FALSE;
-  if (userIdOut) *userIdOut = -1;
-  if (playerNameOut) playerNameOut[0] = '\0';
-  if (countryOut) countryOut[0] = '\0';
+  if (hasSteam) *hasSteam = FALSE;
+  if (isSupporter) *isSupporter = FALSE;
 
   if (winboloNetRunning != TRUE || winboloNetServerKey[0] == '\0') {
     strcpy(errorMsg, "WinBolo.net not running");
     return FALSE;
   }
 
-  body = cJSON_CreateObject();
+  body = winbolonetBuildVerifyBody(playerKey, playerName);
+  status = wbn_api_call("client/verify", body, &resp);
+  cJSON_Delete(body);
+
+  ok = applyVerifyResponse(status, resp, playerKey, playerNum, errorMsg,
+                           hasSteam, isSupporter);
+
+  cJSON_Delete(resp);
+  return ok;
+}
+
+/*********************************************************
+*NAME:          winbolonetQueueVerifyClientKey
+*PURPOSE:
+* Queues a client/verify as a job whose reply comes back
+* through winbolonetThreadDrainResults with kind
+* WBN_JOB_VERIFY. The caller applies it with
+* winbolonetApplyVerifyResult, which is where the slot's
+* key is written.
+*
+* Sent without the bearer, as the synchronous verify is.
+*
+* Returns the job id, or 0 when nothing was queued — in
+* which case no result is coming.
+*
+*ARGUMENTS:
+* playerKey  - The key the client presented
+* playerName - Name to verify and attribute under
+*********************************************************/
+uint32_t winbolonetQueueVerifyClientKey(const char *playerKey,
+                                        const char *playerName) {
+  cJSON *body = NULL;
+  char *json_str = NULL;
+  uint32_t id = 0;
+
+  if (winboloNetRunning != TRUE || winboloNetServerKey[0] == '\0') {
+    return 0;
+  }
+
+  body = winbolonetBuildVerifyBody(playerKey, playerName);
+  json_str = cJSON_PrintUnformatted(body);
+  if (json_str) {
+    id = winbolonetThreadAddJob("client/verify", json_str,
+                                /*needs_bearer*/ FALSE, WBN_JOB_VERIFY);
+    free(json_str);
+  }
+  cJSON_Delete(body);
+
+  return id;
+}
+
+/*********************************************************
+*NAME:          winbolonetApplyVerifyResult
+*PURPOSE:
+* Applies the reply to a queued client/verify. Same reading
+* as the synchronous winboloNetVerifyClientKey, which is why
+* both run through the same apply, and the same write of
+* winboloNetPlayerKey[playerNum] on acceptance — so the slot
+* key is written on whichever thread drains the result.
+*
+*ARGUMENTS:
+* status      - HTTP status the worker got, or -1
+* response    - Reply body, or NULL
+* playerKey   - The key the client presented
+* playerNum   - Slot the key belongs to
+* errorMsg    - Filled on refusal (>= 256)
+* hasSteam    - Set from the reply, or FALSE
+* isSupporter - Set from the reply, or FALSE
+*********************************************************/
+bool winbolonetApplyVerifyResult(int status, const char *response,
+                                 const char *playerKey, BYTE playerNum,
+                                 char *errorMsg, bool *hasSteam,
+                                 bool *isSupporter) {
+  cJSON *resp = NULL;
+  bool ok;
+
+  if (hasSteam) *hasSteam = FALSE;
+  if (isSupporter) *isSupporter = FALSE;
+
+  if (winboloNetRunning != TRUE) {
+    strcpy(errorMsg, "WinBolo.net not running");
+    return FALSE;
+  }
+
+  if (response != NULL) {
+    resp = cJSON_Parse(response);
+  }
+
+  ok = applyVerifyResponse(status, resp, playerKey, playerNum, errorMsg,
+                           hasSteam, isSupporter);
+
+  cJSON_Delete(resp);
+  return ok;
+}
+
+/*********************************************************
+*NAME:          winbolonetBuildVerifyJoinCodeBody
+*PURPOSE:
+* Builds the client/verify_join_code request body. Shared by
+* the synchronous resolve and the queued one so the two send
+* the same request.
+*
+*ARGUMENTS:
+* joinCode - The code the web client presented
+*********************************************************/
+static cJSON *winbolonetBuildVerifyJoinCodeBody(const char *joinCode) {
+  cJSON *body = cJSON_CreateObject();
   cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
   cJSON_AddStringToObject(body, "join_code", joinCode);
+  return body;
+}
 
-  status = wbn_api_call("client/verify_join_code", body, &resp);
-  cJSON_Delete(body);
+/*********************************************************
+*NAME:          applyVerifyJoinCodeResponse
+*PURPOSE:
+* Reads one client/verify_join_code reply. Shared by the
+* synchronous winboloNetVerifyJoinCode and the queued
+* winbolonetApplyVerifyJoinCodeResult so the two cannot
+* drift.
+*
+* Read-only: nothing is stored against a slot here, so this
+* is safe to run on whichever thread drains the result. The
+* caller places what comes back.
+*
+*ARGUMENTS:
+* status        - HTTP status, or -1 when the post never sent
+* resp          - Parsed reply, or NULL
+* playerNameOut - Resolved name (>= PACKET_MAX_PLAYER_NAME)
+* isLoggedInOut - Whether the code names an account
+* countryOut    - ISO-2 country (>= 3)
+* userIdOut     - WBN user id, or -1
+* errorMsg      - Filled on refusal (>= 256)
+*********************************************************/
+static bool applyVerifyJoinCodeResponse(int status, cJSON *resp,
+                                        char *playerNameOut,
+                                        bool *isLoggedInOut,
+                                        char *countryOut, int *userIdOut,
+                                        char *errorMsg) {
+  bool ok = FALSE;
+
+  if (isLoggedInOut) *isLoggedInOut = FALSE;
+  if (userIdOut) *userIdOut = -1;
+  if (playerNameOut) playerNameOut[0] = '\0';
+  if (countryOut) countryOut[0] = '\0';
 
   if (status == 200 && resp) {
     /* "ok" gates acceptance; treat its absence as success so a lean
@@ -702,9 +912,7 @@ bool winboloNetVerifyJoinCode(const char *joinCode,
     } else {
       cJSON *errObj = cJSON_GetObjectItem(resp, "error");
       if (errObj && cJSON_IsString(errObj)) {
-        /* Backend-controlled string into a fixed (>=256) buffer: bound it. */
-        strncpy(errorMsg, errObj->valuestring, 255);
-        errorMsg[255] = '\0';
+        copyWireError(errorMsg, errObj->valuestring);
       } else {
         strcpy(errorMsg, "WinBolo.net join code verification rejected");
       }
@@ -712,13 +920,141 @@ bool winboloNetVerifyJoinCode(const char *joinCode,
   } else if (resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");
     if (errObj && cJSON_IsString(errObj)) {
-      strcpy(errorMsg, errObj->valuestring);
+      copyWireError(errorMsg, errObj->valuestring);
     } else {
       strcpy(errorMsg, "WinBolo.net join code verification failed");
     }
   } else {
     strcpy(errorMsg, "No response from WinBolo.net");
   }
+
+  return ok;
+}
+
+/*********************************************************
+*NAME:          winboloNetVerifyJoinCode
+*PURPOSE:
+* Resolves a join_code via POST
+* /api/v1/client/verify_join_code. Read-only: it does not
+* consume the code and stores nothing in the slot-keyed
+* winboloNetPlayerKey[] array. On acceptance it reports the
+* resolved player name, login state, country and user id.
+*
+* Posts on the calling thread. Callers on the server tick
+* use winbolonetQueueVerifyJoinCode instead.
+*********************************************************/
+bool winboloNetVerifyJoinCode(const char *joinCode,
+                              char  *playerNameOut,   /* >= PACKET_MAX_PLAYER_NAME */
+                              bool  *isLoggedInOut,
+                              char  *countryOut,      /* >= 3 (ISO-2 + NUL) */
+                              int   *userIdOut,       /* -1 when null */
+                              char  *errorMsg) {      /* >= 256 */
+  cJSON *body = NULL;
+  cJSON *resp = NULL;
+  int status;
+  bool ok;
+
+  if (isLoggedInOut) *isLoggedInOut = FALSE;
+  if (userIdOut) *userIdOut = -1;
+  if (playerNameOut) playerNameOut[0] = '\0';
+  if (countryOut) countryOut[0] = '\0';
+
+  if (winboloNetRunning != TRUE || winboloNetServerKey[0] == '\0') {
+    strcpy(errorMsg, "WinBolo.net not running");
+    return FALSE;
+  }
+
+  body = winbolonetBuildVerifyJoinCodeBody(joinCode);
+  status = wbn_api_call("client/verify_join_code", body, &resp);
+  cJSON_Delete(body);
+
+  ok = applyVerifyJoinCodeResponse(status, resp, playerNameOut, isLoggedInOut,
+                                   countryOut, userIdOut, errorMsg);
+
+  cJSON_Delete(resp);
+  return ok;
+}
+
+/*********************************************************
+*NAME:          winbolonetQueueVerifyJoinCode
+*PURPOSE:
+* Queues the client/verify_join_code winboloNetVerifyJoinCode
+* would post. The reply arrives through
+* winbolonetThreadDrainResults with kind WBN_JOB_VERIFY and
+* is read with winbolonetApplyVerifyJoinCodeResult.
+*
+* Sent without the bearer, as the synchronous resolve is.
+* Nothing is stored against a slot here, so the caller keeps
+* whatever it needs to place the reply.
+*
+* Returns the job id, or 0 when nothing was queued, in which
+* case no result is coming.
+*
+*ARGUMENTS:
+* joinCode - The code the web client presented
+*********************************************************/
+uint32_t winbolonetQueueVerifyJoinCode(const char *joinCode) {
+  cJSON *body = NULL;
+  char *json_str = NULL;
+  uint32_t id = 0;
+
+  if (winboloNetRunning != TRUE || winboloNetServerKey[0] == '\0') {
+    return 0;
+  }
+
+  body = winbolonetBuildVerifyJoinCodeBody(joinCode);
+  json_str = cJSON_PrintUnformatted(body);
+  if (json_str) {
+    id = winbolonetThreadAddJob("client/verify_join_code", json_str,
+                                /*needs_bearer*/ FALSE, WBN_JOB_VERIFY);
+    free(json_str);
+  }
+  cJSON_Delete(body);
+
+  return id;
+}
+
+/*********************************************************
+*NAME:          winbolonetApplyVerifyJoinCodeResult
+*PURPOSE:
+* Reads the reply to a queued client/verify_join_code,
+* exactly as winboloNetVerifyJoinCode reads its own. Stores
+* nothing: the caller places the resolved identity on the
+* slot it queued for, on the thread that drains the result.
+*
+*ARGUMENTS:
+* status        - HTTP status the worker got, or -1
+* response      - Reply body, or NULL
+* playerNameOut - Resolved name (>= PACKET_MAX_PLAYER_NAME)
+* isLoggedInOut - Whether the code names an account
+* countryOut    - ISO-2 country (>= 3)
+* userIdOut     - WBN user id, or -1
+* errorMsg      - Filled on refusal (>= 256)
+*********************************************************/
+bool winbolonetApplyVerifyJoinCodeResult(int status, const char *response,
+                                         char *playerNameOut,
+                                         bool *isLoggedInOut,
+                                         char *countryOut, int *userIdOut,
+                                         char *errorMsg) {
+  cJSON *resp = NULL;
+  bool ok;
+
+  if (isLoggedInOut) *isLoggedInOut = FALSE;
+  if (userIdOut) *userIdOut = -1;
+  if (playerNameOut) playerNameOut[0] = '\0';
+  if (countryOut) countryOut[0] = '\0';
+
+  if (winboloNetRunning != TRUE) {
+    strcpy(errorMsg, "WinBolo.net not running");
+    return FALSE;
+  }
+
+  if (response != NULL) {
+    resp = cJSON_Parse(response);
+  }
+
+  ok = applyVerifyJoinCodeResponse(status, resp, playerNameOut, isLoggedInOut,
+                                   countryOut, userIdOut, errorMsg);
 
   cJSON_Delete(resp);
   return ok;
@@ -757,7 +1093,7 @@ bool winboloNetVerifySpectatorKey(const char *spectatorKey, const char *playerNa
   if (status == 200 && resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");
     if (errObj && cJSON_IsString(errObj)) {
-      strcpy(errorMsg, errObj->valuestring);
+      copyWireError(errorMsg, errObj->valuestring);
     } else {
       /* "ok" gates acceptance; treat its absence as success so a
        * lean backend response still verifies, mirroring the player
@@ -779,7 +1115,7 @@ bool winboloNetVerifySpectatorKey(const char *spectatorKey, const char *playerNa
   } else if (resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");
     if (errObj && cJSON_IsString(errObj)) {
-      strcpy(errorMsg, errObj->valuestring);
+      copyWireError(errorMsg, errObj->valuestring);
     } else {
       strcpy(errorMsg, "WinBolo.net spectator verification failed");
     }
@@ -800,7 +1136,7 @@ bool winboloNetVerifySpectatorKey(const char *spectatorKey, const char *playerNa
 *********************************************************/
 void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, BYTE freePills) {
   cJSON *body = NULL;
-  cJSON *resp = NULL;
+  char *json_str = NULL;
 
   winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_LEAVE, TRUE, playerNum, WINBOLO_NET_NO_PLAYER, FALSE, FALSE);
   if (winboloNetPlayerKey[playerNum][0] == '\0' || winboloNetRunning != TRUE) {
@@ -812,21 +1148,19 @@ void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, 
 
   /* Send leave */
   body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
   cJSON_AddStringToObject(body, "player_key", winboloNetPlayerKey[playerNum]);
   cJSON_AddNumberToObject(body, "num_players", numPlayers);
   cJSON_AddNumberToObject(body, "free_bases", freeBases);
   cJSON_AddNumberToObject(body, "free_pills", freePills);
 
-  wbn_api_call_server("client/leave", body, &resp);
-  cJSON_Delete(body);
-  if (resp) {
-    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
-    if (errObj && cJSON_IsString(errObj)) {
-      fprintf(stderr, "WinBolo.net leave error: %s\n", errObj->valuestring);
-    }
-    cJSON_Delete(resp);
+  /* The key is copied into the body above and serialised here, so clearing
+     the slot below cannot reach the post. */
+  json_str = cJSON_PrintUnformatted(body);
+  if (json_str) {
+    winbolonetThreadAddServerKeyedRequest("client/leave", json_str);
+    free(json_str);
   }
+  cJSON_Delete(body);
 
   winboloNetPlayerKey[playerNum][0] = '\0';
 }
@@ -841,25 +1175,21 @@ void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, 
 *********************************************************/
 void winboloNetSpectatorLeaveGame(const char *spectatorKey) {
   cJSON *body = NULL;
-  cJSON *resp = NULL;
+  char *json_str = NULL;
 
   if (spectatorKey == NULL || spectatorKey[0] == '\0' || winboloNetRunning != TRUE) {
     return;
   }
 
   body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
   cJSON_AddStringToObject(body, "player_key", spectatorKey);
 
-  wbn_api_call_server("client/leave", body, &resp);
-  cJSON_Delete(body);
-  if (resp) {
-    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
-    if (errObj && cJSON_IsString(errObj)) {
-      fprintf(stderr, "WinBolo.net spectator leave error: %s\n", errObj->valuestring);
-    }
-    cJSON_Delete(resp);
+  json_str = cJSON_PrintUnformatted(body);
+  if (json_str) {
+    winbolonetThreadAddServerKeyedRequest("client/leave", json_str);
+    free(json_str);
   }
+  cJSON_Delete(body);
 }
 
 /*********************************************************
@@ -869,19 +1199,21 @@ void winboloNetSpectatorLeaveGame(const char *spectatorKey) {
 *********************************************************/
 void winboloNetSendLock(bool isLocked) {
   cJSON *body = NULL;
-  cJSON *resp = NULL;
+  char *json_str = NULL;
 
   if (winboloNetRunning != TRUE) {
     return;
   }
 
   body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
   cJSON_AddBoolToObject(body, "locked", isLocked);
 
-  wbn_api_call_server("server/lock", body, &resp);
+  json_str = cJSON_PrintUnformatted(body);
+  if (json_str) {
+    winbolonetThreadAddServerKeyedRequest("server/lock", json_str);
+    free(json_str);
+  }
   cJSON_Delete(body);
-  cJSON_Delete(resp);
 }
 
 /*********************************************************
@@ -889,15 +1221,18 @@ void winboloNetSendLock(bool isLocked) {
 *PURPOSE:
 * Ends the current WBN session: drains the background
 * thread, POSTs server/quit, clears the bearer + per-slot
-* player keys, and resets the event queue. The HTTP layer
-* stays alive so a subsequent winbolonetBeginSession can
-* re-register (and so the per-round log uploader can fire
+* player keys, and resets the event queue. The worker is
+* drained, not destroyed: it runs for the server's life, so
+* its pooled connection carries into the next session. The
+* HTTP layer stays alive so a subsequent
+* winbolonetBeginSession can re-register (and so the
+* per-round log uploader can fire
 * httpSendLogFile in between, against the still-valid
 * winboloNetServerKey — WBN rejects uploads to an active
 * session, so the upload has to follow the server/quit
 * POST but precede server/register's key swap).
 *********************************************************/
-void winbolonetEndSession(void) {
+void winbolonetEndSession(uint32_t drainMaxMs) {
   BYTE count;
   cJSON *body = NULL;
   cJSON *resp = NULL;
@@ -908,7 +1243,12 @@ void winbolonetEndSession(void) {
 
   serverSimConsoleMessage("WinBolo.net: Ending session...");
 
-  winbolonetThreadDestroy();
+  /* Empty the queue before the bearer below is cleared, so nothing
+   * queued against this session fires against the next one. A caller
+   * that cannot wait out an unreachable WinBolo.net gives a deadline;
+   * what is still queued when it passes is posted against the next
+   * session, which is the cost of not holding the caller. */
+  winbolonetThreadDrainFor(drainMaxMs);
 
   /* server/quit carries the still-valid bearer for this POST. */
   body = cJSON_CreateObject();
@@ -940,9 +1280,10 @@ void winbolonetEndSession(void) {
 /*********************************************************
 *NAME:          winbolonetBeginSession
 *PURPOSE:
-* Registers a fresh WBN session for the next round and
-* restarts the background thread. Pairs with
-* winbolonetEndSession at round boundaries.
+* Registers a fresh WBN session for the next round. The
+* background thread is not started here: it is created once
+* after the first server/register and runs for the server's
+* life. Pairs with winbolonetEndSession at round boundaries.
 *********************************************************/
 bool winbolonetBeginSession(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers) {
   cJSON *body = NULL;
@@ -968,9 +1309,152 @@ bool winbolonetBeginSession(char *mapName, unsigned short port, BYTE gameType, B
 
   cJSON_Delete(resp);
 
-  winbolonetThreadCreate();
   winboloNetLastSent = time(NULL);
 
+  return TRUE;
+}
+
+/*********************************************************
+*NAME:          winbolonetQueueEndSession
+*PURPOSE:
+* Ends the current WBN session without waiting on it.
+* Queues server/quit for the worker, then clears the
+* per-slot player keys and resets the event queue, as
+* winbolonetEndSession does.
+*
+* What it deliberately does not clear is the bearer and
+* winboloNetServerKey. The queued quit needs the bearer at
+* fire time, the round-log upload queued behind it needs the
+* key, and the server/register queued behind that replaces
+* both when its result is applied. Pairs with
+* winbolonetQueueBeginSession, and the caller puts the
+* upload between the two.
+*
+* Returns TRUE when the worker took the quit, FALSE when it
+* is not running. The answer is the caller's signal for the
+* whole rotation: the register behind this would be refused
+* the same way, so a FALSE means the round transition has to
+* be sent on the calling thread.
+*********************************************************/
+bool winbolonetQueueEndSession(void) {
+  BYTE count;
+  cJSON *body = NULL;
+  char *json_str = NULL;
+  bool queued = FALSE;
+
+  if (winboloNetRunning != TRUE) {
+    return FALSE;
+  }
+
+  /* Keyed at fire time like the rest. The quit fires before the register
+   * behind it, and the register's result is what swaps the key, so it still
+   * names the session being ended. Queued through the session form so a
+   * full waiting queue cannot refuse it: a dropped quit leaves the finished
+   * session listed, and the refusal here is what sends the whole rotation
+   * down the synchronous path. */
+  body = cJSON_CreateObject();
+  json_str = cJSON_PrintUnformatted(body);
+  if (json_str) {
+    queued = winbolonetThreadAddSessionRequest("server/quit", json_str);
+    free(json_str);
+  }
+  cJSON_Delete(body);
+  /* Only once the quit is on the queue: a refusal sends the caller to
+     winbolonetEndSession, which announces the same session's end itself. */
+  if (queued) {
+    serverSimConsoleMessage("WinBolo.net: Ending session...");
+  }
+
+  for (count = 0; count < MAX_TANKS; count++) {
+    winboloNetPlayerKey[count][0] = '\0';
+  }
+
+  winbolonetEventsDestroy();
+  winbolonetEventsCreate();
+
+  return queued;
+}
+
+/*********************************************************
+*NAME:          winbolonetQueueBeginSession
+*PURPOSE:
+* Queues the next round's server/register as a job whose
+* reply comes back through winbolonetThreadDrainResults with
+* kind WBN_JOB_REGISTER. The caller applies it with
+* winbolonetApplyRegisterResult.
+*
+* Sent without the bearer, as the synchronous register is:
+* the reply is what issues the next one.
+*
+* Returns the job id, or 0 when nothing was queued — in
+* which case no result is coming and the caller owns the
+* tail itself.
+*
+*ARGUMENTS:
+* As winbolonetCreateServer.
+*********************************************************/
+uint32_t winbolonetQueueBeginSession(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers) {
+  cJSON *body = NULL;
+  char *json_str = NULL;
+  uint32_t id = 0;
+
+  if (winboloNetRunning != TRUE) {
+    return 0;
+  }
+
+  body = winbolonetBuildRegisterBody(mapName, port, gameType, ai, mines, password, numBases, numPills, freeBases, freePills, numPlayers);
+  json_str = cJSON_PrintUnformatted(body);
+  if (json_str) {
+    id = winbolonetThreadAddJob("server/register", json_str,
+                                /*needs_bearer*/ FALSE, WBN_JOB_REGISTER);
+    free(json_str);
+  }
+  cJSON_Delete(body);
+
+  return id;
+}
+
+/*********************************************************
+*NAME:          winbolonetApplyRegisterResult
+*PURPOSE:
+* Applies the reply to a queued server/register, installing
+* the new server key and bearer. Same handling as the
+* synchronous winbolonetBeginSession, which is why it runs
+* through the same apply.
+*
+* Returns TRUE when the new session is live. On FALSE the
+* old session is gone and no new one replaced it, so
+* WinBolo.net is switched off and the bearer the old session
+* was issued cleared.
+*
+*ARGUMENTS:
+* status   - HTTP status the worker got, or -1
+* response - Reply body, or NULL
+*********************************************************/
+bool winbolonetApplyRegisterResult(int status, const char *response) {
+  cJSON *resp = NULL;
+  bool ok;
+
+  if (winboloNetRunning != TRUE) {
+    return FALSE;
+  }
+
+  if (response != NULL) {
+    resp = cJSON_Parse(response);
+  }
+  ok = winbolonetApplyRegisterResponse(status, resp,
+                                       "\tWinBolo.net: New session registered",
+                                       "Error: WinBolo.net re-registration failed",
+                                       "Error: WinBolo.net re-registration failed - WBN disabled");
+  cJSON_Delete(resp);
+
+  if (ok != TRUE) {
+    httpClearServerBearerToken();
+    winboloNetRunning = FALSE;
+    return FALSE;
+  }
+
+  winboloNetLastSent = time(NULL);
   return TRUE;
 }
 
@@ -990,12 +1474,11 @@ void winbolonetSendLobbyStatus(bool inLobby) {
   }
 
   body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
   cJSON_AddBoolToObject(body, "in_lobby", inLobby);
 
   json_str = cJSON_PrintUnformatted(body);
   if (json_str) {
-    winbolonetThreadAddServerRequest("server/lobby", json_str);
+    winbolonetThreadAddServerKeyedRequest("server/lobby", json_str);
     free(json_str);
   }
   cJSON_Delete(body);
@@ -1017,7 +1500,6 @@ void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE f
   }
 
   body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
   cJSON_AddStringToObject(body, "map", mapName);
   cJSON_AddNumberToObject(body, "num_bases", numBases);
   cJSON_AddNumberToObject(body, "num_pills", numPills);
@@ -1026,7 +1508,7 @@ void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE f
 
   json_str = cJSON_PrintUnformatted(body);
   if (json_str) {
-    winbolonetThreadAddServerRequest("server/map", json_str);
+    winbolonetThreadAddServerKeyedRequest("server/map", json_str);
     free(json_str);
   }
   cJSON_Delete(body);

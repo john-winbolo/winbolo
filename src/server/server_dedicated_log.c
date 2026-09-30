@@ -36,6 +36,7 @@
 #include "../winbolonet/winbolonet_core.h"
 #include "../winbolonet/winbolonet_server.h"
 #include "../winbolonet/http.h"
+#include "../winbolonet/winbolonetthread.h"
 
 #include "server_lifecycle.h"
 #include "server_dedicated_log.h"
@@ -220,7 +221,11 @@ void serverDedicatedLogStashCurrentRound(void) {
     s_roundRan = FALSE;
 }
 
-void serverDedicatedLogFlushPendingUpload(void) {
+/* The two forms below differ only in whether the multipart POST happens on
+ * the caller's thread. Same guards either way: nothing stashed, WinBolo.net
+ * off, or no server key and the round goes nowhere, and the stash is cleared
+ * regardless so a round is never offered twice. */
+static void serverDedicatedLogFlushPending(bool queued) {
     if (s_pendingUploadFile[0] == '\0') {
         return;
     }
@@ -228,10 +233,30 @@ void serverDedicatedLogFlushPendingUpload(void) {
         char key[WINBOLONET_KEY_LEN];
         winboloNetGetServerKey(key);
         if (key[0] != '\0') {
-            httpSendLogFile(s_pendingUploadFile, key, FALSE);
+            /* A refused enqueue means the worker is not running. There is
+             * no later moment for the upload, so it posts from here rather
+             * than being dropped with the stash. */
+            if (!queued ||
+                winbolonetThreadAddUpload(s_pendingUploadFile, key) == 0) {
+                if (queued) {
+                    fprintf(stderr,
+                            "WinBolo.net worker refused the round-log upload "
+                            "of %s; sending it on this thread\n",
+                            s_pendingUploadFile);
+                }
+                httpSendLogFile(s_pendingUploadFile, key, FALSE);
+            }
         }
     }
     s_pendingUploadFile[0] = '\0';
+}
+
+void serverDedicatedLogFlushPendingUpload(void) {
+    serverDedicatedLogFlushPending(/*queued*/ FALSE);
+}
+
+void serverDedicatedLogQueuePendingUpload(void) {
+    serverDedicatedLogFlushPending(/*queued*/ TRUE);
 }
 
 bool serverDedicatedLogHasPendingUpload(void) {
@@ -338,6 +363,9 @@ static void handleLobbyEnter(ServerSim *sim) {
     logSetLobbyMode(TRUE);
     s_isLogging = logStart(s_logFileName, sim,
                            0, MAX_TANKS, sim->hasPassword);
+    /* The last round's scripts.json went into its own file at the stash, and
+     * this round has not booted: a lobby log closed before it does has none. */
+    serverSimSetScenarioRecordText(sim, NULL, 0);
     /* A freshly opened lobby log holds no round yet. Redundant with the
      * reset at the end of the stash, deliberately: the invariant then holds
      * whichever path opened this log. */
@@ -474,6 +502,19 @@ static void serverDedicatedLogDrain(void) {
     }
     if (s_lobbyEnterPending == FALSE && s_gameStartPending == FALSE &&
         s_mapMsgPending == FALSE && s_settingsPending == FALSE) {
+        return;
+    }
+    /* The session rotation is queued, so the next round's key is not in yet:
+     * the register is still on the worker and winboloNetGetServerKey still
+     * answers with the round that just quit. logStart stamps the header with
+     * it, so opening the log now would write the finished round's key into
+     * the new round's file — the staleness the block at the top of this file
+     * describes. Hold everything, not just the lobby arm: the three below
+     * write into a log the arm is what opens. The window is closed by the
+     * register result or, when WinBolo.net is off or nothing was queued, on
+     * the tick itself, so this cannot hold forever. */
+    if (s_lobbyEnterPending == TRUE && winbolonetIsRunning() &&
+        sim->wbnSessionRotating) {
         return;
     }
     /* Lobby enter first: it is the arm that opens the log, and the two below
@@ -675,7 +716,7 @@ void serverDedicatedLogInstall(ServerSim *sim, bool dontSendLog) {
     /* Hand the lifecycle our stash/flush so its lobby/empty-reset
      * cleanup can drive the per-round upload. */
     serverLifecycleSetRoundLogHooks(serverDedicatedLogStashCurrentRound,
-                                    serverDedicatedLogFlushPendingUpload);
+                                    serverDedicatedLogQueuePendingUpload);
     /* Tell the transport where a PACKET_ROUND_LOG_REQ gets its bytes. Pushed
      * outward like the two registrations above so the transport never names a
      * symbol in this file — it must stay linkable without the WinBolo.net

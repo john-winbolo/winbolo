@@ -34,6 +34,11 @@
  * Specs used by the bundled tests are loss-only (delay=0/jitter=0) so a
  * surviving datagram is due immediately regardless of wall-clock — the tight
  * pump loop never needs SDL_GetTicks() to advance for a packet to deliver.
+ * A test that does want a delay= spec calls loopbackHarnessUseVirtualClock,
+ * which puts the impairment layer and the client's round-trip measurement on
+ * a counter the pump advances 20ms per tick — one serverInstanceTick, which
+ * is one 20ms frame of two half-steps, so virtual time runs at the sim's
+ * rate. The delay then costs a fixed number of pumps and no real time.
  *
  * ── Lifecycle ───────────────────────────────────────────────────────────
  *   loopbackHarnessStart(&h, name, lobbyMode, impairSpec, seed)
@@ -166,6 +171,37 @@ void loopbackHarnessSetPumpInterval(LoopbackHarness *h, uint32_t ms);
  * control). */
 void loopbackHarnessPump(LoopbackHarness *h);
 
+/* Pump only the client endpoints `n` times, without ticking the server. The
+ * server's recv thread still queues arriving datagrams; nothing drains them
+ * until the next loopbackHarnessPump or a direct serverInstanceTick. Models
+ * a server-side hitch: the client keeps producing while the server stops. */
+void loopbackHarnessPumpClientOnly(LoopbackHarness *h, int n);
+
+/* Drive the client transport's impairment layer from a counter the harness
+ * advances instead of the wall clock, so a delay= spec is deterministic and
+ * costs no real time. Off by default: the loopback tests that already run
+ * impaired keep the wall clock and their existing timing. Call after Start
+ * and before the first pump. No effect unless WB_ENABLE_NETIMPAIR is on. */
+void loopbackHarnessUseVirtualClock(LoopbackHarness *h, bool on);
+
+/* Drop the next `count` server->client datagrams of packetType that reach
+ * client `cs` (h->cs or h->cs2), as if they were lost on the wire. Other
+ * packet types and the other client are not touched. count 0 turns it off.
+ * DropNextLeft returns how many drops are still pending (0 once all have
+ * happened). No effect, and Left returns 0, unless WB_ENABLE_NETIMPAIR is
+ * on. */
+void loopbackHarnessDropNextToClient(LoopbackHarness *h, struct ClientSim *cs,
+                                     uint8_t packetType, int count);
+int  loopbackHarnessDropNextLeft(LoopbackHarness *h, struct ClientSim *cs);
+
+/* The same for client->server datagrams: drop the next `count` of
+ * packetType that client `cs` sends, as if they were lost on the way to the
+ * server. */
+void loopbackHarnessDropNextFromClient(LoopbackHarness *h, struct ClientSim *cs,
+                                       uint8_t packetType, int count);
+int  loopbackHarnessDropNextFromClientLeft(LoopbackHarness *h,
+                                           struct ClientSim *cs);
+
 /* Pump up to maxIters times, evaluating pred after each pump. Returns the
  * 1-based pump count at which pred first held, or -1 if it never held within
  * maxIters. A NULL pred pumps exactly maxIters times and returns maxIters. */
@@ -202,9 +238,10 @@ bool loopbackHarnessTriggerGameStart(LoopbackHarness *h);
 int loopbackRecvFromServer(SOCKET s, uint8_t *buf, int cap,
                            const struct sockaddr_in *server);
 
-/* Tear down client, server (stops the recv thread), sim and threads, and
- * clear the WB_NETIMPAIR environment override. Safe on a zeroed or
- * partially-started harness. */
+/* Tear down client, server (stops the recv thread), sim and threads, clear
+ * the WB_NETIMPAIR environment override, and put the impairment layer back on
+ * the wall clock so one test's virtual clock cannot leak into the next. Safe
+ * on a zeroed or partially-started harness. */
 void loopbackHarnessStop(LoopbackHarness *h);
 
 #endif /* WINBOLO_TEST_LOOPBACK_HARNESS_H */

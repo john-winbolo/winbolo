@@ -18,6 +18,12 @@ tests/baseline/commands/*.jsonl text eol=lf
 # ASCII-hex wire fixtures, compared byte for byte by the codec tests.
 tests/fixtures/wire/*.hex       text eol=lf
 
+# The trigger router is embedded in the binary byte for byte by
+# tools/embed_lua.py, and a unit case holds the embedded copy against this
+# file. A Windows checkout under autocrlf would rewrite every newline and
+# the two would disagree about a file nobody had touched.
+src/scenario/*.lua              text eol=lf
+
 # Plain-text summaries of the recorded .wbv fixtures, compared byte for
 # byte by wbv_fixture_summaries.
 tests/fixtures/wbv/*.summary    text eol=lf

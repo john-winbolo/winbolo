@@ -32,17 +32,25 @@
 
 #define SERVER_TICK_LENGTH (GAME_TICK_LENGTH * 2)
 
-/* Override the operator-controlled upload policy and per-map storage caps.
+/* Override the operator-controlled upload policies and storage caps.
  * Called once at startup after transportUdpServerCreate. A maxFiles or
  * maxStorageBytes value of 0 leaves that cap at the create-time default
  * (64 files / 8 MiB) — lets the GUI host-and-play path use ServerInstanceConfig
  * zero-init without explicit values. policy is always applied (0 = ALLOW).
  * persistDir is the absolute directory PERSIST-policy uploads are written to;
- * NULL or "" leaves it unset (writes fall back to "<mapDirRoot>/Uploads"). */
+ * NULL or "" leaves it unset (writes fall back to "<mapDirRoot>/Uploads").
+ * The script* arguments are the same for player scripts: scriptPolicy is
+ * always applied (0 = ALLOW), a scriptMaxFiles or scriptMaxStorageBytes of 0
+ * keeps the create-time default (32 files / 64 MiB), and a NULL or ""
+ * scriptDir clears the script persist directory. */
 void transportUdpServerSetUploadConfig(UploadPolicy policy,
                                        uint8_t maxFiles,
                                        uint32_t maxStorageBytes,
-                                       const char *persistDir);
+                                       const char *persistDir,
+                                       ScriptUploadPolicy scriptPolicy,
+                                       uint8_t scriptMaxFiles,
+                                       uint32_t scriptMaxStorageBytes,
+                                       const char *scriptDir);
 
 typedef struct {
   unsigned short udpPort;
@@ -104,6 +112,24 @@ typedef struct {
    * built-in "<mapDirRoot>/Uploads". A GUI host points this under the
    * prefs path since its maps root is a read-only bundle. */
   const char    *uploadPersistDir;
+
+  /* Operator-controlled handling for player-uploaded scripts.
+   * Zero-init = ALLOW + transport defaults (32 files / 64 MiB). */
+  ScriptUploadPolicy scriptUploadPolicy;
+  uint8_t        scriptUploadMaxFiles;        /* 0 = leave transport default (32) */
+  uint32_t       scriptUploadMaxStorageBytes; /* 0 = leave transport default (64 MiB) */
+
+  /* Absolute directory for PERSIST-policy uploaded scripts. NULL = the
+   * built-in "<mapDirRoot>/Uploads/Scripts". */
+  const char    *scriptUploadDir;
+  bool           noScriptSharing; /* refuse players' requests for script copies; zero-init shares */
+
+  /* Directory ALLOW-policy uploaded scripts land in for the session, emptied
+   * at startup, at shutdown and when the lobby resets. NULL = the built-in
+   * "<mapDirRoot>/Uploads/Session-<udpPort>", one per server on a shared map
+   * root. A GUI host points this under the prefs path, as it does
+   * uploadPersistDir. */
+  const char    *scriptSessionDir;
 
   /* Initial state + lobby/per-sim toggles applied by serverInstanceStartup.
    * Zero-init means "don't touch what serverSimCreate* set" for the lobby
@@ -260,9 +286,47 @@ void serverLifecycleGetTickStats(double *outLastMs, double *outEwmaMs);
  * same locking rules as serverLifecycleGetTickStats. */
 void serverLifecycleGetSimStats(double *outLastMs, double *outEwmaMs);
 
+/* The worst tick recorded since the last reset, in ms, and how many ticks
+ * cost at least SERVER_TICK_LENGTH ms. Both 0 until the first tick has been
+ * recorded, and both describe the round in progress — the round start clears
+ * them. They survive where the EWMA does not: a few expensive frames decay
+ * out of the average long before anyone asks the server what happened, while
+ * these can be read once the round is over. Producer-thread only — same
+ * locking rules as serverLifecycleGetTickStats. */
+void serverLifecycleGetTickPeak(double *outPeakMs,
+                                unsigned int *outOverBudget);
+
+/* Drop the peak and the over-budget count so they describe the round that is
+ * starting rather than an accumulation across map rotations. Called from the
+ * two authoritative round starts. */
+void serverLifecycleResetTickPeak(void);
+
 /* Feed the EWMA with the wall-clock cost of the tick that just
  * completed. Producer-thread only — called from inside
  * serverInstanceTick after the final mutex release. */
 void serverLifecycleRecordTickMs(double ms);
+
+/* A single catch-up burst that runs more owed ticks than this leaves one
+ * warning line in the log. Five ticks is 100 ms of debt, the point at which
+ * a slot that has fallen behind stops recovering on its own. */
+#define SERVER_HITCH_WARN_TICKS 5
+
+/* Runs one owed tick. Returns false to stop the catch-up immediately —
+ * the shutdown handshake uses this. */
+typedef bool (*ServerTickStepFn)(void *ctx);
+
+/* Runs the ticks the wall clock owes, advancing *oldTick by
+ * SERVER_TICK_LENGTH and *ticks by one per tick run. Returns how many ran.
+ *
+ * The debt is (nowMs - *oldTick) and a tick is owed while that is strictly
+ * greater than SERVER_TICK_LENGTH, so the burst stops with one tick length
+ * still on the clock. Uncapped on purpose: the server's tick clock stays
+ * aligned with wall time, which every client's input counter assumes.
+ * A burst longer than SERVER_HITCH_WARN_TICKS logs one line carrying the
+ * debt, the tick count and the slowest single step.
+ *
+ * ticks may be NULL; oldTick and step may not. */
+uint32_t serverTickCatchUp(uint32_t nowMs, uint32_t *oldTick, uint32_t *ticks,
+                           ServerTickStepFn step, void *ctx);
 
 #endif /* SERVER_LIFECYCLE_H */

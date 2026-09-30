@@ -72,8 +72,10 @@ enum {
 #define CHANNEL_GAME_SEG        16
 #define CHANNEL_MAP_WINDOW     128  /* map events are also GameEvents          */
 #define CHANNEL_MAP_SEG         16
-#define CHANNEL_CONTROL_WINDOW 64   /* covers the join sync-replay burst plus
-                                     * concurrent publishes with margin        */
+#define CHANNEL_CONTROL_WINDOW 64   /* unacked control events in flight; a
+                                     * burst larger than this (the join sync
+                                     * replay) waits in the backlog behind it,
+                                     * see CHANNEL_CONTROL_BACKLOG             */
 #define CHANNEL_CONTROL_SEG   1024  /* one control event = one segment = one
                                      * datagram. Must hold the worst-case
                                      * control message (the full BRAIN_LIST:
@@ -105,6 +107,39 @@ enum {
  * handed to channelStreamSend wait here until the window has room to turn
  * them into segments. */
 #define CHANNEL_STREAM_BUF 65536
+
+/* Capacity in bytes of the control channel's backlog: whole messages that
+ * channelSend has taken for CHANNEL_CONTROL while its window was full, kept
+ * as [len u16][bytes] and moved into the window, oldest first, as acks free
+ * room. A send is refused only when this is full too.
+ *
+ * Sized for the largest join sync replay the caps allow, since the replay
+ * goes onto a joiner's channel in one tick, before anything can be acked.
+ * JOIN_REPLAY_BACKLOG_MAX in udp_server_control.c counts it from the caps and
+ * a static assertion there fails the build when the replay no longer fits.
+ * The fix for that is to move the data that grew onto CHANNEL_BULK, as brain
+ * docs and the bot-name catalogue were, not to raise this: every connection
+ * pays for it in memory. At the current caps the replay is 112,231 bytes:
+ *
+ *   scenario panels, 32 lists of 1,025                             32,800
+ *   events published live during the join, 32 x 1,026              32,832
+ *   165 small records x 133                                        21,945
+ *   script settings, 49 x 170                                       8,330
+ *   brain announces, 16 x 526                                       8,416
+ *   six whole-segment events x 1,026                                6,156
+ *   scenario rules, 3 fragments x 584                               1,752
+ *
+ * rounded up to 120 KiB. Neither brain docs nor the bot-name catalogue is in
+ * it: both go on CHANNEL_BULK when a client asks, where they used to be 273 KB
+ * and 71 KB of the replay. The ring is indexed modulo this size, so it need
+ * not be a power of two.
+ *
+ * The cost is real memory, not reserved address space: transportUdpServerCreate
+ * zeroes the whole server struct and channelMuxInit zeroes each mux, so every
+ * backlog is written and resident. It adds 120 KiB to each mux, about 5.6 MiB
+ * to a process that runs the UDP server (16 player and 32 spectator muxes),
+ * and 120 KiB to a client. */
+#define CHANNEL_CONTROL_BACKLOG (120u * 1024u)
 
 /* Per-channel reliability state. ackedSeq / expectedSeq are exclusive
  * upper bounds (matching the shipped queue model: "confirmed up to here,
@@ -201,12 +236,22 @@ typedef struct ChannelMux {
     uint32_t streamHead;   /* ring read index                  */
     uint32_t streamCount;  /* bytes waiting to be segmentized   */
 
+    /* Control channel (CHANNEL_CONTROL) backlog ring: whole messages waiting
+     * for room in the window, each stored as [len u16 BE][len bytes]. */
+    uint8_t  controlBacklog[CHANNEL_CONTROL_BACKLOG];
+    uint32_t controlBacklogHead;   /* ring read index                   */
+    uint32_t controlBacklogCount;  /* bytes queued, prefixes included   */
+    uint32_t controlBacklogMsgs;   /* messages queued                   */
+
     /* What became of each best-effort channel's traffic. Nothing acks these
      * channels, so a segment that never reaches the wire leaves no trace in
      * the protocol: the ring drops its oldest entry to make room, and a frame
-     * that runs out of packet budget leaves the rest behind. One frame's
-     * worth of the latter is caught up on the next frame, but voice is framed
-     * after every reliable channel, so a run of busy frames can starve it for
+     * that runs out of packet budget leaves the rest behind. A tick builds
+     * several frames, so most of the latter goes out later in the same tick;
+     * what is still pending once the tick's last frame is built is what the
+     * tick as a whole could not carry, and channelChargeBestEffortLeftover
+     * counts that where the sender calls it. Voice is framed
+     * after every reliable channel, so a run of busy ticks can starve it for
      * longer than the ring is deep and the two become the same loss. Counted
      * per channel because that is the only way to see it happen. */
     uint32_t beSent[CHANNEL_COUNT];
@@ -221,7 +266,11 @@ void channelMuxInit(ChannelMux *m);
 
 /* Queue one whole message on a message-flavor channel (0-2). Returns
  * false on a usage error (stream channel, oversized message, bad id) or
- * when the window is full without room for another in-flight segment. */
+ * when the window is full without room for another in-flight segment.
+ * CHANNEL_CONTROL is the exception to the second: a message that finds the
+ * window full, or other messages already waiting, goes into the backlog
+ * behind it and keeps its order, and the send is refused only when the
+ * backlog has no room either. */
 bool channelSend(ChannelMux *m, uint8_t ch, const uint8_t *msg, uint16_t len);
 
 /* Queue one whole message on the best-effort channel. Never blocks and never
@@ -229,9 +278,9 @@ bool channelSend(ChannelMux *m, uint8_t ch, const uint8_t *msg, uint16_t len);
  * is dropped to make room. Returns false only on a usage error (not a
  * best-effort channel, bad id, oversized message). */
 /* Read back what became of one best-effort channel's traffic: segments framed
- * onto the wire, segments the ring dropped to make room, and frames that ran
- * out of packet budget before this channel's turn. Any out pointer may be
- * NULL. A reliable channel or a bad id reports zeroes. */
+ * onto the wire, segments the ring dropped to make room, and segments a whole
+ * tick's frames ran out of packet budget before reaching. Any out pointer may
+ * be NULL. A reliable channel or a bad id reports zeroes. */
 void channelGetBestEffortStats(const ChannelMux *m, uint8_t ch,
                                uint32_t *outSent, uint32_t *outRingDropped,
                                uint32_t *outBudgetSkipped);
@@ -271,8 +320,9 @@ bool channelReceiveBestEffort(ChannelMux *m, uint8_t ch, uint8_t *out,
  * unacked send tail (ackedSeq = txNext = nextSeq) and clear those ring
  * entries, so the previous game's undelivered segments are never resent. The
  * sequence space stays monotonic — low seqs are not reused, new channelSends
- * continue from nextSeq. Returns the post-reset nextSeq, the baseline the
- * peer must adopt with channelResetExpected. */
+ * continue from nextSeq. On CHANNEL_CONTROL the backlog is emptied as well,
+ * as the stream channel's pending bytes are. Returns the post-reset nextSeq,
+ * the baseline the peer must adopt with channelResetExpected. */
 uint32_t channelResetSend(ChannelMux *m, uint8_t ch);
 
 /* Truncate the receive side of a channel forward to match a peer's send
@@ -283,8 +333,24 @@ uint32_t channelResetSend(ChannelMux *m, uint8_t ch);
  * expectedSeq is a no-op. */
 void channelResetExpected(ChannelMux *m, uint8_t ch, uint32_t newExpected);
 
-/* Advance the retransmit clock. tick is the current tick; rttMs is the
- * current RTT estimate used to derive the retransmit timeout. */
+/* Open a tick: advance the retransmit clock. tick is the current tick; rttMs
+ * is the current RTT estimate used to derive the retransmit timeout. Called
+ * once per tick, before the tick's frames are built — calling it twice would
+ * double-advance the clock. */
 void channelTick(ChannelMux *m, uint32_t tick, uint32_t rttMs);
+
+/* Charge each best-effort channel for whatever its frames left behind: add
+ * (nextSeq - txNext) to that channel's beBudgetSkipped.
+ *
+ * Call this after the last frame of a tick, not at the tick boundary. A tick
+ * builds several frames, and a segment the first one had no budget for
+ * usually goes out on one of the rest, so only what is still pending once the
+ * last frame is built was actually lost to the budget. Charging it as a tick
+ * opens would instead charge everything the tick itself produced, because the
+ * producer runs before the frames do.
+ *
+ * Only the running send path calls this, so the counter describes a running
+ * game. The lobby and map-download carriers leave it alone. */
+void channelChargeBestEffortLeftover(ChannelMux *m);
 
 #endif /* CHANNEL_MUX_H */

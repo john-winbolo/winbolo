@@ -67,6 +67,17 @@ void sdl3ImguiResetFrameState(void);
 
 void sdl3ImguiPumpAndRender(struct ClientSim *cs);
 void sdl3ImguiClearNavFocus(void);
+
+/*********************************************************
+*NAME:          sdl3ImguiNewGame
+*PURPOSE:
+*  Drops what the last game left in the draw, ImGui and
+*  input state as a game view opens: the build selection
+*  and build target, an unanswered alliance request, the
+*  full screen map's camera and the tablet overlay's
+*  message and armour tracking. Runs on the main thread.
+*********************************************************/
+void sdl3ImguiNewGame(struct ClientSim *cs);
 void sdl3ImguiForwardEvent(const void *event);
 bool sdl3ImguiWantCaptureMouse(void);
 bool sdl3ImguiIsDialogOpen(void);
@@ -165,15 +176,6 @@ void sdl3ImguiNoteAllianceRequested(void);
 *********************************************************/
 void sdl3ImguiShowAllianceRequest(const char *playerName,
                                   unsigned char playerNum);
-
-/*********************************************************
-*NAME:          sdl3ImguiShowPassword
-*PURPOSE:
-*  Open the password-entry modal for joining a protected
-*  game.  On OK calls gameFrontSetGameOptions with the
-*  entered password.
-*********************************************************/
-void sdl3ImguiShowPassword(void);
 
 /*********************************************************
 *NAME:          sdl3ImguiShowKeySetup
@@ -284,6 +286,17 @@ const char *sdl3ImguiGetPlayerName(unsigned char playerNum);
 SDL_Texture *sdl3ImguiGetSteamIcon(void);
 
 /*********************************************************
+*NAME:          sdl3ImguiSpeakerIconTexture
+*PURPOSE:
+*  Returns the speaker icon (data/ui/speaker.svg) for the
+*  active renderer, white on transparent for tinting.
+*  Loads the icons lazily on first call. Available in every
+*  build, voice or not. Returns NULL if it could not be
+*  loaded.
+*********************************************************/
+SDL_Texture *sdl3ImguiSpeakerIconTexture(void);
+
+/*********************************************************
 *NAME:          sdl3ImguiGetBotIconSurface
 *PURPOSE:
 *  Returns the chip icon — the badge shown for a computer
@@ -390,6 +403,39 @@ bool sdl3ImguiPlayerIsSelf(unsigned char playerNum);
 *  bot (PLAYER_FLAG_BOT) in the cached player list.
 *********************************************************/
 bool sdl3ImguiPlayerIsBot(unsigned char playerNum);
+
+/* Whether tank labels are the long kind, name and location. The bot chip
+ * beside a name rides with the location: a short label is the bare name
+ * for a person and a bot alike. */
+bool sdl3ImguiTankLabelsLong(void);
+
+/*********************************************************
+*NAME:          sdl3ImguiScnPanelShown
+*PURPOSE:
+*  Whether the scenario has a panel to show: a list on
+*  the ClientSim with at least one primitive in it. The
+*  desktop window and the tablet slot both draw only when
+*  this is true.
+*********************************************************/
+bool sdl3ImguiScnPanelShown(struct ClientSim *cs);
+
+/*********************************************************
+*NAME:          sdl3ImguiScnPanelDraw
+*PURPOSE:
+*  Draws the scenario panel's list into the current ImGui
+*  window, as a square of the given side with its top-left
+*  at (originX, originY) in screen pixels. The list is
+*  scaled so its 128 units fill the side.
+*
+*  alpha fades what the scenario drew, from 0 to 1. With
+*  backing set, the panel's dim backing is drawn under the
+*  list at the same alpha; the desktop window leaves it off
+*  because its window background is that backing.
+*
+*  Draws nothing when sdl3ImguiScnPanelShown is false.
+*********************************************************/
+void sdl3ImguiScnPanelDraw(struct ClientSim *cs, float originX, float originY,
+                           float side, float alpha, bool backing);
 
 /*********************************************************
 *NAME:          sdl3ImguiGetPlatformIcon
@@ -561,6 +607,21 @@ void renderPlayerMicCell(struct ClientSim *cs, int playerNum, uint8_t clientFlag
 *********************************************************/
 void renderPlayerPingMuteCell(struct ClientSim *cs, int playerNum, bool isSelf,
                               float size);
+
+/* The size the badge run beside a player name draws at — the platform icon,
+ * the WBN shield, the Steam mark, the bot chip, the smart-ping mute cell and
+ * the mic cell. One font size, which is what the config cog beside the run
+ * and the tank badge in front of it already use, so every glyph on the row
+ * comes out the same height at every UI scale. Call inside a frame: it reads
+ * the active context's font, so the lobby's dialog context and the in-game
+ * one each get their own. */
+float sdl3ImguiWbnIconPx(void);
+
+/* The country flag's drawn size in that same run. A flag is wider than it is
+ * tall, so it keeps its own proportion rather than going square: the 16x11
+ * artwork scaled by whatever sdl3ImguiWbnIconPx is against a 14 px badge.
+ * Either out pointer may be NULL. */
+void sdl3ImguiFlagSize(float *outW, float *outH);
 
 /* Draws the country flag for an alpha-2 code and, on hover, a localized
  * country-name tooltip. Returns true iff a flag image was drawn (false for

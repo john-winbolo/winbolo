@@ -5,10 +5,14 @@
  * the held buttons AND advances lastProcessedInput past the substituted
  * tick. The real (late) input for that tick then arrives stale and its
  * movement is dropped instead of double-executing the held turn (the
- * gunsight-overshoot fix). One-shot actions (mine/build) commanded during
- * a stall are never executed by the substitute, so they are harvested off
- * the dropped stale entry under a lastActionAppliedTick invariant and laid
- * exactly once on the next real input — never zero, never twice.
+ * gunsight-overshoot fix). The drop is not unconditional: while the slot is
+ * in a stall-advance run the newest queued entry is taken instead, so the
+ * stream restarts, and everything below it still drops. One-shot actions
+ * (mine/build) commanded during a stall are never executed by the
+ * substitute, so an entry below that newest tick is harvested off its drop
+ * under a lastActionAppliedTick invariant and laid exactly once on the next
+ * real input — never zero, never twice. The newest tick needs no harvest:
+ * it is applied and lays as it goes.
  *
  * These cases drive serverSimApplyInput + serverSimTick directly on
  * ut_make_running_sim (slot 0) and read T2 state off the ServerSim struct
@@ -73,13 +77,13 @@ int run_stall_advances_processed_tick(void) {
     UT_ASSERT_MSG(sim->inputBufferFilled[SA_SLOT], "stream not established");
     UT_ASSERT_MSG(sim->lastProcessedInput[SA_SLOT] > 0, "lastProcessedInput still 0");
 
-    /* The first STALL_ADVANCE_DRY_TICKS dry half-steps repeat-and-wait
+    /* The first STALL_ADVANCE_DRY_TICKS dry half-steps wait without movement
      * (brief-trough handling), so the substitute only starts advancing
      * once the dry run passes the threshold. Prime two empty frames to
      * clear the wait window before measuring the steady +2-per-frame
      * advance below. */
     serverSimTick(sim);  /* dry 1,2: both wait */
-    serverSimTick(sim);  /* dry 3: wait, dry 4: first substitute-advance */
+    serverSimTick(sim);  /* dry 3,4: both wait */
 
     /* Empty frames: each serverSimTick is two half-steps, each of which
      * substitutes one held tick, so lastProcessedInput climbs by 2. */
@@ -96,9 +100,12 @@ int run_stall_advances_processed_tick(void) {
     UT_ASSERT(afterStall == before + (uint32_t)(2 * n));
 
     /* Deliver the late inputs for exactly the substituted tick numbers.
-     * They are all <= lastProcessedInput, so they drop as stale and never
-     * move lastProcessedInput forward (only the two substitutes of the
-     * draining frame do). */
+     * They are all <= lastProcessedInput, and the slot is in a stall-advance
+     * run, so the newest of them is taken: lastProcessedInput drops to
+     * afterStall - 1 and the apply puts it straight back at afterStall.
+     * Every older entry still drops as stale, and the frame's second
+     * half-step finds the dry counter reset below the threshold, so it
+     * waits. The net advance across the frame is zero. */
     uint32_t k, delivered = 0;
     for (k = before + 1; k <= afterStall; k++) {
         sa_feed(sim, k, INPUT_BTN_LEFT, 0, 0, 0, 0);
@@ -106,21 +113,22 @@ int run_stall_advances_processed_tick(void) {
     }
     uint32_t staleBefore = sim->statDroppedStaleInputs[SA_SLOT];
     uint32_t lpBefore = sim->lastProcessedInput[SA_SLOT];
-    serverSimTick(sim);  /* drains all stale entries in the first half-step */
-    UT_ASSERT_MSG(sim->statDroppedStaleInputs[SA_SLOT] == staleBefore + delivered,
-                  "expected %u stale drops, got %u", delivered,
+    serverSimTick(sim);  /* drains the burst: all but the newest drop */
+    UT_ASSERT_MSG(sim->statDroppedStaleInputs[SA_SLOT] ==
+                      staleBefore + delivered - 1,
+                  "expected %u stale drops, got %u", delivered - 1,
                   sim->statDroppedStaleInputs[SA_SLOT] - staleBefore);
-    UT_ASSERT_MSG(sim->lastProcessedInput[SA_SLOT] == lpBefore + 2,
-                  "late stale inputs must not advance lastProcessedInput "
-                  "beyond the two substitutes (lp moved by %u)",
+    UT_ASSERT_MSG(sim->lastProcessedInput[SA_SLOT] == lpBefore,
+                  "the late burst must leave lastProcessedInput where the "
+                  "stall left it (lp moved by %u)",
                   sim->lastProcessedInput[SA_SLOT] - lpBefore);
 
     serverSimDestroy(sim);
     return 0;
 }
 
-/* 2. A mine commanded during a stall, dropped, then delivered late, is
- *    harvested and laid exactly once on the next real input. */
+/* 2. A mine commanded on a tick the stall substituted past is laid exactly
+ *    once, when the late input for that tick is the one the rebase takes. */
 int run_stall_mine_late_lays_once(void) {
     ServerSim *sim = ut_make_running_sim("MineLate");
     UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
@@ -135,7 +143,7 @@ int run_stall_mine_late_lays_once(void) {
     uint32_t mineTick = 14;
 
     /* Stall window substitutes past mineTick without ever laying it. The
-     * first STALL_ADVANCE_DRY_TICKS dry half-steps repeat-and-wait, so run
+     * first STALL_ADVANCE_DRY_TICKS dry half-steps wait, so run
      * empty frames until the substitute has advanced past the mine tick. */
     int sf;
     for (sf = 0; sf < 5 && sim->lastProcessedInput[SA_SLOT] < mineTick; sf++) {
@@ -151,46 +159,18 @@ int run_stall_mine_late_lays_once(void) {
     /* Deliver the withheld ticks late as a burst (mineTick-1 then mineTick,
      * mirroring a redundancy retransmit). A lone stale input would not be
      * dequeued while the buffer is re-filling (depth < jitterTarget), so a
-     * 2-input burst opens the gate; both drain as stale, the mine on the
-     * higher tick is harvested last, leaving the marker on the mine tick. */
+     * 2-input burst opens the gate. The slot is in a stall-advance run, so
+     * the newest queued tick is taken: mineTick-1 still drops as stale and
+     * mineTick applies for real, laying its mine as it goes. */
     sa_feed(sim, mineTick - 1, INPUT_BTN_LEFT, 0, 0, 0, 0);
     sa_feed(sim, mineTick, INPUT_BTN_LEFT, INPUT_ACTION_LAY_MINE, 0, 0, 0);
+    BYTE minesBeforeLay = tankGetMines(&gs->tanks[SA_SLOT]);
     serverSimTick(sim);
     UT_ASSERT_MSG(sim->lastActionAppliedTick[SA_SLOT] == mineTick,
-                  "harvest must set the marker to the mine tick, got %u",
+                  "the real apply must set the marker to the mine tick, got %u",
                   sim->lastActionAppliedTick[SA_SLOT]);
-    UT_ASSERT_MSG(sim->pendingHarvestActions[SA_SLOT] & INPUT_ACTION_LAY_MINE,
-                  "the mine bit must be pending after harvest");
-    BYTE minesBeforeLay = tankGetMines(&gs->tanks[SA_SLOT]);
-
-    /* Next real input on a game (even) tick folds the pending mine and lays
-     * it exactly once. The late-burst frame's stalls grew jitterTarget (it
-     * can reach 3), so a 2-input pair no longer reopens the re-fill gate
-     * (depth < target → both half-steps substitute and the fed tick goes
-     * stale). Read the live target and lastProcessedInput, then feed a burst
-     * that exceeds the target starting just past lastProcessedInput — that
-     * reopens the gate and guarantees an even (game) tick is among those
-     * applied, so the fold runs. */
-    uint32_t lpi = sim->lastProcessedInput[SA_SLOT];
-    uint8_t  jt  = sim->jitterTarget[SA_SLOT];
-    uint32_t burst = (uint32_t)jt + 2;  /* > target, spans both parities */
-    uint32_t w;
-    for (w = 1; w <= burst; w++) {
-        sa_feed(sim, lpi + w, INPUT_BTN_LEFT, 0, 0, 0, 0);
-    }
-    int frames;
-    for (frames = 0; frames < 8 &&
-         (sim->pendingHarvestActions[SA_SLOT] & INPUT_ACTION_LAY_MINE); frames++) {
-        serverSimTick(sim);
-    }
-    UT_ASSERT_MSG(!(sim->pendingHarvestActions[SA_SLOT] & INPUT_ACTION_LAY_MINE),
-                  "pending mine must clear after folding into a real game input");
-    /* Read the laying tick off the marker rather than predicting it: it must
-     * be a real, applied game (even) input past the mine tick. */
-    uint32_t layTick = sim->lastActionAppliedTick[SA_SLOT];
-    UT_ASSERT_MSG(layTick > mineTick && (layTick % 2) == 0,
-                  "marker must be the real game tick that laid the mine, got %u",
-                  layTick);
+    UT_ASSERT_MSG(sim->pendingHarvestActions[SA_SLOT] == 0,
+                  "an executed mine must not also be carried forward");
 
     /* The action layer laid exactly once (marker + pending prove it). The
      * physical inventory only decrements if the slot-0 spawn tile permits
@@ -201,11 +181,17 @@ int run_stall_mine_late_lays_once(void) {
                   "mine inventory dropped by more than one: %u -> %u",
                   minesBeforeLay, minesAfterLay);
 
-    /* A redundant duplicate of the harvested mine tick and of the laying
-     * tick (both now stale) must not lay a second mine. (The robust
-     * ignored-duplicate check is test 3; this confirms the live numbers.) */
-    sa_feed(sim, mineTick, INPUT_BTN_LEFT, INPUT_ACTION_LAY_MINE, 0, 0, 0);
-    sa_feed(sim, layTick, INPUT_BTN_LEFT, 0, 0, 0, 0);
+    /* A redundant duplicate of the laid mine tick (stale, and no newer than
+     * lastActionAppliedTick) must not lay a second one. (The robust
+     * ignored-duplicate check is test 3; this confirms the live numbers.)
+     * The queue emptied on the laying frame, so the buffer is re-filling:
+     * feed jitterTarget copies or nothing is dequeued and the check proves
+     * nothing. */
+    uint8_t  jt = sim->jitterTarget[SA_SLOT];
+    uint32_t d;
+    for (d = 0; d < (uint32_t)jt; d++) {
+        sa_feed(sim, mineTick, INPUT_BTN_LEFT, INPUT_ACTION_LAY_MINE, 0, 0, 0);
+    }
     serverSimTick(sim);
     UT_ASSERT_MSG(sim->pendingHarvestActions[SA_SLOT] == 0,
                   "redundant duplicates must not create pending state");
@@ -265,7 +251,7 @@ int run_stall_fire_not_harvested(void) {
     sa_establish(sim, INPUT_BTN_LEFT, 0);  /* lastProcessedInput = 12 */
 
     /* Substitute past ticks 13 and 14. The first STALL_ADVANCE_DRY_TICKS
-     * dry half-steps repeat-and-wait, so run empty frames until the
+     * dry half-steps wait, so run empty frames until the
      * substitute has advanced past tick 14. */
     int sf;
     for (sf = 0; sf < 5 && sim->lastProcessedInput[SA_SLOT] < 14; sf++) {
@@ -274,13 +260,17 @@ int run_stall_fire_not_harvested(void) {
     UT_ASSERT(sim->lastProcessedInput[SA_SLOT] >= 14);
     UT_ASSERT(sim->lastActionAppliedTick[SA_SLOT] == 0);
 
-    /* Deliver a late stale burst: a movement on tick 13 then a FIRE-only
-     * entry on tick 14 (the burst opens the re-fill gate; the fire is the
-     * higher tick so it lands last). Both drop; fire is never harvested,
-     * but 14 > lastActionAppliedTick so the marker advances to 14 with no
-     * pending state created. */
-    sa_feed(sim, 13, INPUT_BTN_LEFT, 0, 0, 0, 0);
+    /* Deliver a late burst: the FIRE-only entry on tick 14, then a movement
+     * on tick 15 (two inputs so the re-fill gate opens). 15 is above
+     * lastProcessedInput, so the newest queued tick is not one the boundary
+     * rebase can take and the slot is left where the stall put it. That
+     * keeps 14 at or below lastProcessedInput, so it drops as stale and goes
+     * through the harvest path, where fire is excluded: nothing is made
+     * pending, but 14 > lastActionAppliedTick so the marker advances to 14.
+     * 15 applies fresh and is a keys (odd) tick, which never moves the
+     * marker. */
     sa_feed(sim, 14, 0, INPUT_ACTION_FIRE, 0, 0, 0);
+    sa_feed(sim, 15, INPUT_BTN_LEFT, 0, 0, 0, 0);
     serverSimTick(sim);
     UT_ASSERT_MSG(sim->pendingHarvestActions[SA_SLOT] == 0,
                   "fire must not be harvested into pending actions");
@@ -326,7 +316,7 @@ int run_stall_never_fires(void) {
 
 /* 6. Regression guard: a dry spell no longer than STALL_ADVANCE_DRY_TICKS
  *    half-steps must NOT advance lastProcessedInput and must NOT eat the
- *    in-flight real inputs — the substitutes repeat-and-wait so the late
+ *    in-flight real inputs — the tank waits without advancing so the late
  *    inputs still apply fresh at their true ticks. This is the cadence
  *    trough the regression fix restores: the client batches two inputs per
  *    packet while the server consumes one per half-step, so the queue
@@ -339,28 +329,24 @@ int run_stall_brief_trough_no_advance(void) {
     uint32_t next = sa_establish(sim, INPUT_BTN_LEFT, 0);  /* lpi 12, next 13 */
     UT_ASSERT_MSG(sim->lastProcessedInput[SA_SLOT] > 0, "stream not established");
 
-    /* serverSimTick runs two half-steps, so to land a dry run of exactly
-     * STALL_ADVANCE_DRY_TICKS (== 3, odd) on a frame boundary we offset the
-     * parity with one lone fresh input: its apply lands on the frame's
-     * first half-step and resets the dry counter, leaving that frame's
-     * second half-step as the first dry half-step. (Construction assumes
-     * the threshold is 3; revisit if STALL_ADVANCE_DRY_TICKS changes.) */
+    /* A lone fresh input lands on the first half-step and resets the dry
+     * counter, leaving the second half-step as the first dry half-step. */
     sa_feed(sim, next, INPUT_BTN_LEFT, 0, 0, 0, 0);  /* tick 13 */
     serverSimTick(sim);                              /* applies 13, then dry #1 */
     uint32_t troughBase = sim->lastProcessedInput[SA_SLOT];
     UT_ASSERT_MSG(troughBase == next, "lone fresh input did not apply");
 
-    /* One more empty frame: dry #2 and dry #3. Total dry run is now exactly
-     * STALL_ADVANCE_DRY_TICKS, at the threshold, so it must still wait. */
+    /* One more empty frame: dry #2 and dry #3, still within the four-tick
+     * grace period, so the tank and ACK must still wait. */
     uint32_t staleBefore = sim->statDroppedStaleInputs[SA_SLOT];
     serverSimTick(sim);
     UT_ASSERT_MSG(sim->lastProcessedInput[SA_SLOT] == troughBase,
-                  "a dry run at the threshold advanced lastProcessedInput "
+                  "a brief dry run advanced lastProcessedInput "
                   "(%u -> %u) — a brief trough must wait, not substitute-advance",
                   troughBase, sim->lastProcessedInput[SA_SLOT]);
 
     /* Deliver the real inputs for the tick numbers the trough spanned.
-     * Because the substitutes waited (lpi never advanced past troughBase),
+     * Because the tank waited (lpi never advanced past troughBase),
      * these are all fresh (tick > lpi): they must apply, not drop stale. */
     uint32_t t;
     for (t = troughBase + 1; t <= troughBase + 3; t++) {

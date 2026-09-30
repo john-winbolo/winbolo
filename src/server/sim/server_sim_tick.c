@@ -173,6 +173,31 @@ static void serverSimLogTick(ServerSim *sim) {
         sim->roundLogStartTick = sim->tick;
     }
 
+    /* The tick this entry is written at, so a viewer can turn playback time
+     * into the clock a scenario's timer counts in. Queued after the snapshot
+     * above and before logWriteTick, so it lands in this tick's own entry:
+     * logWriteSnapshot has already flushed what came before it. Written at
+     * the round's first entry, at every entry a snapshot was written for,
+     * which is where a viewer can start playing from, and every
+     * FULL_SYNC_INTERVAL ticks whether or not there was one. The last is for
+     * a live spectator of a server that is not recording to a file: no
+     * snapshot is written for it, since logWriteSnapshot returns before
+     * noting one with no .wbv open and the ring's keyframes do not note
+     * theirs, so without it the feed would carry the first anchor only. On a
+     * recording server that interval is also where the snapshot above is
+     * written. The three tests are one condition, so a tick where more than
+     * one holds still writes one record. */
+    if (sim->state == serverStateRunning &&
+        (sim->roundLogStartTick == sim->tick ||
+         logSnapshotWrittenThisTick() ||
+         (sim->tick % FULL_SYNC_INTERVAL) == 0)) {
+        logAddEvent(log_ServerTick,
+                    (BYTE)((sim->tick >> 24) & 0xFF),
+                    (BYTE)((sim->tick >> 16) & 0xFF),
+                    (BYTE)((sim->tick >> 8) & 0xFF),
+                    (BYTE)(sim->tick & 0xFF), 0, NULL);
+    }
+
     logWriteTick();
 }
 
@@ -217,7 +242,24 @@ static void serverSimApplyOneInput(ServerSim *sim, BYTE count,
     /* Fill in gap ticks lost to packet loss.  When a UDP packet
      * is dropped, the dequeued tick jumps ahead (e.g. 98 → 101).
      * The missing ticks must still run so the turn ramp (firstLeft/
-     * firstRight) stays in sync with the client's prediction. */
+     * firstRight) stays in sync with the client's prediction.
+     *
+     * The window is what keeps a networked client's recovery jump out of
+     * this. A client whose counter fell behind numbers its next input
+     * lastProcessedInput + the round trip + CLIENT_INPUT_JUMP_MARGIN_HALFSTEPS
+     * (client_snapshot.c); the server stall-advances through about the round
+     * trip while that packet is in flight, so what is left when it lands is
+     * the margin, and the margin is held above this window on purpose. A
+     * jump filled here would run the margin's worth of half-steps with the
+     * pre-hitch held buttons, which the client never predicted, and cost a
+     * position correction on every jump. The two constants are a pair: move
+     * one and read the other.
+     *
+     * The fill itself stays for every producer, and is what the in-process
+     * ones need: a local producer supplies one input per two half-steps, so
+     * the number it sends after a dry run is genuinely a half-step or two
+     * past the last one the server ran, and those half-steps have to
+     * happen. */
     {
         uint32_t expected = sim->lastProcessedInput[count] + 1;
         uint32_t gap = applied.tick - expected;
@@ -411,6 +453,20 @@ static uint32_t serverSimFreshBacklog(ServerSim *sim, BYTE count) {
     return newest - lpi;
 }
 
+/* Largest tick among `count`'s queued entries, or 0 when the queue is empty.
+ * Unlike serverSimFreshBacklog this does not clamp to lastProcessedInput, so
+ * it still names a tick when everything queued is stale. */
+static uint32_t serverSimNewestQueuedTick(const ServerSim *sim, BYTE count) {
+    uint32_t newest = 0;
+    uint8_t i = sim->inputQueueTail[count];
+    while (i != sim->inputQueueHead[count]) {
+        uint32_t t = sim->inputQueue[count][i & (SERVER_INPUT_QUEUE_SIZE - 1)].tick;
+        if (t > newest) newest = t;
+        i++;
+    }
+    return newest;
+}
+
 /* Pop entries for `count` until a fresh input (tick > lastProcessedInput)
  * or the queue empties. Stale entries are dropped with one-shot harvest.
  * Returns TRUE with *out filled on fresh; FALSE on empty. */
@@ -419,6 +475,12 @@ static bool serverSimDequeueFresh(ServerSim *sim, BYTE count, InputPacket *out) 
         uint8_t tail = sim->inputQueueTail[count] & (SERVER_INPUT_QUEUE_SIZE - 1);
         *out = sim->inputQueue[count][tail];
         sim->inputQueueTail[count]++;
+        /* Newest tick ever popped, whichever way this entry goes below. The
+         * boundary rebase reads it to tell an entry it has never taken from
+         * a redundancy duplicate of one it has already applied. */
+        if (out->tick > sim->newestDequeuedTick[count]) {
+            sim->newestDequeuedTick[count] = out->tick;
+        }
         if (out->tick > sim->lastProcessedInput[count]) {
             return TRUE;
         }
@@ -493,6 +555,26 @@ static void simRunHalfStep(ServerSim *sim) {
         sim->countdownTicks--;
         if (sim->countdownTicks <= 0) {
             serverSimStartGame(sim);
+        } else {
+            /* One held seat's runner, built and parked here so the round that
+             * follows fields it without building anything. This is the window
+             * for it: the countdown simulates nothing and owes a snapshot to
+             * nobody, so a build here costs no client a slow frame the way the
+             * same build during play would.
+             *
+             * What it does cost is a stall. serverGameTimer reads the clock
+             * once a callback and then runs every tick the clock says is owed,
+             * back to back, so a callback that spends 200ms on a brain is
+             * followed by a burst of the ticks it held up, and each of those
+             * can build another seat. Six seats is not 1.2s added to the
+             * countdown; it is a stall of about 1.2s in which no client
+             * receives anything, after which the countdown count catches up in
+             * one burst and the number clients are shown jumps. Sixteen seats
+             * is about 3.2s, well inside CLIENT_TIMEOUT_TICKS.
+             *
+             * One build a tick, so the countdown count still moves between
+             * them, and never on the tick that starts the round. */
+            serverSimWarmOneHeldSeat(sim);
         }
         logWriteTick();
         return;
@@ -628,6 +710,43 @@ static void simRunHalfStep(ServerSim *sim) {
             sim->inputBufferFilled[count] = 1;
         }
 
+        /* Break a stall-advance lockout. A dry run past the threshold
+         * substitutes a tick every half-step, which lifts lastProcessedInput
+         * past tick numbers the client has not produced yet, so everything
+         * that then arrives is stale and the dry run never ends. When the
+         * queue holds nothing this dequeue would take, move lastProcessedInput
+         * back under the newest queued tick so that one entry is taken as
+         * fresh. Only that one: the dequeue still drops every entry below it
+         * as stale, so a tick already dequeued is not taken a second time.
+         * The rebased tick itself is one a substitute has already moved the
+         * tank through, so the overshoot guarantee is given up for it. That
+         * is the trade: one tick of movement re-run against a dry run that
+         * otherwise never ends. The apply resets inputDryTicks, which closes
+         * this branch until the next dry run.
+         *
+         * newestDequeuedTick keeps a redundancy duplicate out of it. A resent
+         * copy of an already-applied tick looks exactly like a never-taken
+         * one here, and rebasing onto it would run its movement twice and lay
+         * a second mine if it carried one. The UDP transport drops such a
+         * copy before the queue; the in-process one does not dedup at all.
+         *
+         * A slot with no tank is left alone: loop 2 skips it, so nothing
+         * would apply the rebased input and the rewound lastProcessedInput
+         * would stay rewound. */
+        if (sim->lastProcessedInput[count] > 0 &&
+            sim->sim.tanks[count] != NULL &&
+            sim->inputDryTicks[count] > STALL_ADVANCE_DRY_TICKS) {
+            /* The queue walk is behind the two cheap tests: a healthy slot
+             * is never this dry, and this runs for every slot every
+             * half-step. */
+            uint32_t newestQueued = serverSimNewestQueuedTick(sim, count);
+            if (newestQueued > 0 &&
+                newestQueued <= sim->lastProcessedInput[count] &&
+                newestQueued > sim->newestDequeuedTick[count]) {
+                sim->lastProcessedInput[count] = newestQueued - 1;
+            }
+        }
+
         /* Dequeue one input, skipping duplicates/stale */
         hasInput[count] = serverSimDequeueFresh(sim, count, &currentInputs[count]);
 
@@ -732,11 +851,17 @@ static void simRunHalfStep(ServerSim *sim) {
              * for a half-step or two between packets); advancing there would
              * consume the tick and drop the in-flight real input as stale,
              * making the client reconcile constantly. Below the threshold we
-             * fall through to repeat-and-wait so the late input still applies
-             * at its true tick. Only an established stream past the threshold
-             * is treated as genuine loss and stall-advances. */
-            if (sim->lastProcessedInput[count] > 0 &&
-                sim->inputDryTicks[count] > STALL_ADVANCE_DRY_TICKS) {
+             * wait without advancing the tank so the late input still applies
+             * exactly once at its true tick. Only an established stream past
+             * the threshold is treated as genuine loss and stall-advances. */
+            if (sim->lastProcessedInput[count] > 0) {
+                /* A short gap leaves the ACK unchanged. Advancing the tank
+                 * here would add movement that replay cannot account for,
+                 * then the delayed real input would move it again. Leave
+                 * the whole tank state, including its turn ramp, intact. */
+                if (sim->inputDryTicks[count] <= STALL_ADVANCE_DRY_TICKS) {
+                    continue;
+                }
                 /* Established stream, genuine loss: stall-advance. A
                  * substituted tick is a *processed* tick — synthesise an
                  * input from the last held buttons at the next tick number
@@ -758,13 +883,8 @@ static void simRunHalfStep(ServerSim *sim) {
                 synth.buttons   = sim->lastInputButtons[count];
                 serverSimApplyOneInput(sim, count, &synth, TRUE);
             } else {
-                /* Brief cadence trough on an established stream, or a player
-                 * not yet established (dead/loading/never-streamed): keep
-                 * today's idle simulation without consuming a tick. Repeat
-                 * the last held buttons so the turn ramp (firstLeft/
-                 * firstRight) doesn't reset and pull the angle back. Because
-                 * lastProcessedInput is not advanced here, the in-flight real
-                 * input for this tick still applies fresh when it arrives. */
+                /* A player that has not established an input stream still
+                 * needs the idle simulation for death/respawn and loading. */
 #ifdef WB_NETDEBUG
                 if (netdebugButtonTurns(stallTb)) {
                     sim->dbgExecTurnTicks[count]++;
@@ -1136,6 +1256,12 @@ void serverSimTick(ServerSim *sim) {
         serverSimFlushPendingPings(sim);
         simRunHalfStep(sim);
         simRunHalfStep(sim);
+        /* THREE SHOTS = GO THERE, second half. The third shell only ARMS the
+         * order; it is sent here, a quiet second after that shell was fired,
+         * because a player who never shoots again has no other event left to
+         * hang it on. After the half-steps, so a shell that died in this
+         * frame is already counted. */
+        serverSimShotOrderTick(sim);
         /* Ahead of the shadow tick so terrain a scenario edits from here
          * lands in the same frame's map events instead of the next one's.
          * The half-steps drop the map-change callback on their way out, so
@@ -1199,6 +1325,32 @@ void serverSimTick(ServerSim *sim) {
     }
 }
 
+/* Should intake admit this input although it is stale?
+ *
+ * A slot whose stream has fallen behind is stall-advanced every half-step
+ * (see the stall branch in simRunHalfStep), which keeps lifting
+ * lastProcessedInput past tick numbers the client has not produced yet.
+ * Everything the client then sends is renumbered off a lastProcessedInput
+ * that is half a round trip old, arrives at or below the current one, and is
+ * dropped as stale — and only a fresh apply resets inputDryTicks, so the run
+ * never ends on its own. The input that has to reach the queue is the newest
+ * one the slot has ever seen, arriving stale while that run is going on: the
+ * transport drops anything not strictly newer than lastProcessedInput, so
+ * without this it never gets that far.
+ *
+ * This answers admission only. The rebase itself — moving lastProcessedInput
+ * back under the newest queued tick — happens at the tick boundary in
+ * simRunHalfStep, on one entry per dry run. Strictly newer than
+ * newestInputTick, so the redundancy resends of one tick are admitted once. */
+bool serverSimInputWouldRebase(const ServerSim *sim, BYTE n, uint32_t tick) {
+    if (sim == NULL || n >= MAX_TANKS || !sim->playerConnected[n]) {
+        return FALSE;
+    }
+    return tick > sim->newestInputTick[n] &&
+           tick <= sim->lastProcessedInput[n] &&
+           sim->inputDryTicks[n] > STALL_ADVANCE_DRY_TICKS;
+}
+
 void serverSimApplyInput(ServerSim *sim, const InputPacket *input) {
     BYTE p = input->playerNum;
     uint8_t head, next;
@@ -1223,6 +1375,17 @@ void serverSimApplyInput(ServerSim *sim, const InputPacket *input) {
         }
         /* Mask off any undefined bits (keep only autoslow + gunsight) */
         sanitized.flags &= (INPUT_FLAG_AUTOSLOW | INPUT_FLAG_GUNSIGHT_MASK);
+    }
+
+    /* Newest tick ever received for this slot, whatever becomes of the input
+     * afterwards. Intake asks serverSimInputWouldRebase against it so the
+     * redundancy resends of one tick cannot each be admitted past a stale
+     * check and flood the queue; the rebase that call is named for happens at
+     * the tick boundary, in the dequeue loop. Maintained ahead of the
+     * queue-full check below so an input dropped for want of room still
+     * counts as received. */
+    if (sanitized.tick > sim->newestInputTick[p]) {
+        sim->newestInputTick[p] = sanitized.tick;
     }
 
     head = sim->inputQueueHead[p];

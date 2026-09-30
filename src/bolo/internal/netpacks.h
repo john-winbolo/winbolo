@@ -100,10 +100,29 @@ typedef struct BOLO_PACK_ATTR {
                           /* base = bits 2-3, ally = bits 4-5; bit 6 is   */
                           /* classic mode, bit 7 is allies in trees       */
   BYTE view_policies2;    /* overviewWindow = bits 0-1, lineOfSight =     */
-                          /* bits 2-3; bits 4-7 spare                     */
+                          /* bits 2-3; bit 4 is positional sound; bits    */
+                          /* 5-7 spare                                    */
 } INFO_PACKET;
 #pragma pack(pop)
 BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 113, INFO_PACKET_must_be_113_bytes);
+
+/* The scripts a round runs, appended to the reply to an info request (and to
+ * that reply only: the tracker update stays sizeof(INFO_PACKET)). The bytes
+ * start at 113, straight after the INFO_PACKET:
+ *
+ *   [scenarioNameLen 1][scenarioName][scenarioDescLen 1][scenarioDesc]
+ *   [maxPlayers 1][modCount 1][modCount x [nameLen 1][name]]
+ *
+ * Names are at most 63 bytes and the description at most
+ * WBN_SCENARIO_DESC_MAX, each cut on a UTF-8 character boundary. A round with
+ * no scenario writes a name length of 0, a description length of 0 and a cap
+ * of 0; no mods is a count of 0. No NULs are written. A reader drops a tail
+ * whose lengths run past their caps or past the packet, and ignores bytes
+ * after the last mod, so a later field can go on the end. */
+#define WBN_SCENARIO_DESC_MAX 200
+#define INFO_SCRIPT_TAIL_MAX (1 + 63 + 1 + WBN_SCENARIO_DESC_MAX + 1 + 1 + 9 * (1 + 63))
+BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) + INFO_SCRIPT_TAIL_MAX <= MAX_UDPPACKET_SIZE,
+                   INFO_PACKET_and_script_tail_fit_one_udp_packet);
 
 /* Historical INFO_PACKET wire size, before the flags/count/md5 fields were
  * appended. Servers older than those additions send this; discovery accepts
@@ -170,38 +189,46 @@ static inline void infoPacketReadViewPolicies(const INFO_PACKET *info,
   if (alliesInTrees) *alliesInTrees = (info->view_policies & 0x80u) != 0;
 }
 
-/* Pack the overview window and the line-of-sight mode into
- * INFO_PACKET.view_policies2. Two bits each — the window at bits 0-1,
- * line of sight at bits 2-3 — so bits 4-7 stay clear for whatever needs
- * them next. Both are masked, so a value from a newer sender cannot
- * reach the spare bits. */
+/* Pack the overview window, the line-of-sight mode and the
+ * positional-sound flag into INFO_PACKET.view_policies2. Two bits each
+ * for the first two — the window at bits 0-1, line of sight at bits
+ * 2-3 — and positional sound at bit 4, so bits 5-7 stay clear for
+ * whatever needs them next. Both modes are masked, so a value from a
+ * newer sender cannot reach the other bits. */
 static inline BYTE infoPacketPackViewPolicies2(uint8_t overviewWindow,
-                                               uint8_t lineOfSight) {
+                                               uint8_t lineOfSight,
+                                               bool positionalSound) {
   return (BYTE)(((unsigned)overviewWindow & 0x3u)
-              | (((unsigned)lineOfSight & 0x3u) << 2));
+              | (((unsigned)lineOfSight & 0x3u) << 2)
+              | (positionalSound ? 0x10u : 0u));
 }
 
-/* Read the overview window and the line-of-sight mode back out of a
- * received INFO_PACKET. A packet shorter than the full layout predates
- * the byte, so it reports the built-in defaults — the expanded window
- * with nothing blocking sight inside it. Two bits can also hold a value
+/* Read the overview window, the line-of-sight mode and the
+ * positional-sound flag back out of a received INFO_PACKET. A packet
+ * shorter than the full layout predates the byte, so it reports the
+ * built-in defaults — the expanded window with nothing blocking sight
+ * inside it, and positional sound off. Two bits can also hold a value
  * neither enum names; that reports the default as well, so a browser row
  * never shows a mode this build cannot name. Meaning B in view_policy.h,
  * so not the OVERVIEW_WINDOW_STOCK / LINE_OF_SIGHT_STOCK pair. */
 static inline void infoPacketReadViewPolicies2(const INFO_PACKET *info,
                                                size_t len,
                                                uint8_t *overviewWindow,
-                                               uint8_t *lineOfSight) {
+                                               uint8_t *lineOfSight,
+                                               bool *positionalSound) {
   unsigned window = (unsigned)overviewWindowExpanded;
   unsigned sight  = (unsigned)lineOfSightOff;
+  bool sound = false;
   if (info != NULL && len >= sizeof(INFO_PACKET)) {
     unsigned w = (unsigned)info->view_policies2 & 0x3u;
     unsigned s = ((unsigned)info->view_policies2 >> 2) & 0x3u;
     if (w < (unsigned)OVERVIEW_WINDOW_COUNT) window = w;
     if (s < (unsigned)LINE_OF_SIGHT_COUNT) sight = s;
+    sound = (info->view_policies2 & 0x10u) != 0;
   }
   if (overviewWindow) *overviewWindow = (uint8_t)window;
   if (lineOfSight) *lineOfSight = (uint8_t)sight;
+  if (positionalSound) *positionalSound = sound;
 }
 #endif
 
@@ -471,8 +498,17 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
 #define PACKET_LOBBY_SET_BOT_BRAIN  166  /* { slot 1, pathLen 1, path N } */
 #define PACKET_LOBBY_SET_MAP        167  /* { pathLen 1, path N } */
 #define PACKET_LOBBY_MAP_LIST_REQ   168  /* { pathLen 1, path N } */
-#define PACKET_LOBBY_MAP_UPLOAD_BEGIN  169  /* { totalLen 4, nameLen 1, name N }
-                                              * the map bytes then stream over
+#define PACKET_LOBBY_MAP_UPLOAD_BEGIN  169  /* { kind 1, totalLen 4, nameLen 1,
+                                              *   name N, [bulkStartSeq 4] }
+                                              * kind is UPLOAD_KIND_MAP or
+                                              * UPLOAD_KIND_SCRIPT
+                                              * (upload_policy.h) and picks
+                                              * the cap (LOBBY_MAP_UPLOAD_MAX_
+                                              * BYTES or LOBBY_PACKAGE_UPLOAD_
+                                              * MAX_BYTES) and the name rule
+                                              * (.map, or .scenario / .lua;
+                                              * uploadFilenameIsSafe). The
+                                              * bytes then stream over
                                               * CHANNEL_BULK behind a bulk-
                                               * transfer stream header; 170 (the
                                               * old CHUNK carrier) is retired. */
@@ -506,7 +542,17 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
 #define PACKET_LOBBY_BOT_BRAIN_CHG  182  /* { slot 1, pathLen 1, path N } */
 #define PACKET_LOBBY_MAP_LIST_RSP   183  /* server reply to MAP_LIST_REQ */
 #define PACKET_LOBBY_MAP_UPLOAD_ACK 184  /* { status 1 } */
-#define PACKET_LOBBY_MAP_UPLOAD_DONE 185 /* { status 1, pathLen 1, path N } */
+#define PACKET_LOBBY_MAP_UPLOAD_DONE 185 /* map: { status 1, pathLen 1, path N }
+                                          * script (the BEGIN said
+                                          * UPLOAD_KIND_SCRIPT): { status 1,
+                                          *   reason 1, a 2 BE, b 2 BE,
+                                          *   textLen 1, text N }
+                                          * reason is SCRIPT_REFUSE_*
+                                          * (upload_policy.h) with its two
+                                          * numbers, 0 when taken; text is
+                                          * the file's name when taken and
+                                          * the operator's line otherwise,
+                                          * never shown to a player. */
 #define PACKET_LOBBY_MAP_SEARCH_RSP 186  /* server reply to MAP_SEARCH_REQ */
 #define PACKET_LOBBY_SYNC_COMPLETE  180  /* server -> joiner: final event of the
                                           * join sync replay; marks the roster
@@ -754,6 +800,164 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               progress keeps what it started
                                               with. */
 
+#define PACKET_LOBBY_BRAIN_DOCS_CHUNK  222  /* RETIRED: nothing sends it.
+                                              Server → client: one fragment
+                                              of ONE brain's lobby texts.
+                                              { brainIdx 1, seq 1, count 1,
+                                                fragLen 2 BE, frag N }.
+                                              The reassembled blob is
+                                              { announceLen 2 BE, announce,
+                                                docsLen 2 BE, docs } — the
+                                              brain's announce.txt and
+                                              commands.txt. Sent beside the
+                                              brain list, once per brain that
+                                              ships the files. */
+
+#define PACKET_LOBBY_SCENARIO_LIST_REQ 223 /* client → server
+                                              (no payload) what scenarios does
+                                              this server offer on their own,
+                                              independently of any map. The
+                                              directory is flat, unlike the map
+                                              chooser's tree, so there is no
+                                              path to ask about. */
+
+#define PACKET_LOBBY_SCENARIO_LIST_RSP 224 /* server → the one client that
+                                              asked, chunked the way
+                                              MAP_LIST_RSP is:
+                                              { final 1, count 1, entries }
+                                              each entry
+                                              { fileLen 1, file M,
+                                                nameLen 1, name N,
+                                                descLen 1, desc D,
+                                                maxPlayers 1, bots 1,
+                                                bound 1,
+                                                keepsWinCondition 1,
+                                                source 1,
+                                                workshopId 8 BE }
+                                              source is SCN_DIR_SOURCE_*
+                                              (0 server, 1 upload,
+                                              2 Workshop); workshopId is 0
+                                              for none. An entry cut short
+                                              is a malformed chunk.
+                                              Entries are packed until the next
+                                              will not fit in UDP_MAX_PAYLOAD;
+                                              the last chunk sets final, and an
+                                              empty directory is one chunk with
+                                              count 0 and final 1. A string
+                                              longer than its length byte is
+                                              cut rather than dropping the
+                                              entry. */
+
+#define PACKET_LOBBY_SET_SCENARIO      225  /* client → server
+                                              { pathLen 1, path N } the lobby
+                                              host picking one of the
+                                              scenarios above, by the file
+                                              name the list gave. pathLen 0
+                                              is the message that selects
+                                              none, so unlike SET_MAP an
+                                              empty path is carried rather
+                                              than refused. */
+
+#define PACKET_SET_SCRIPT_LIST         226  /* client -> server
+                                              { count 1, then count entries
+                                                of { fileLen 1, file N } }
+                                              the whole ordered script list
+                                              the lobby is to run, at most
+                                              CMD_SCRIPT_LIST_MAX entries.
+                                              The whole list and not one
+                                              index, so two hosts editing at
+                                              once cannot interleave into a
+                                              list neither of them asked for,
+                                              and the server's state is a
+                                              straight assignment rather than
+                                              a splice. count 0 clears the
+                                              list, which is what
+                                              SET_SCENARIO with pathLen 0
+                                              does for the one-script case.
+                                              Worst case on the wire is
+                                              8 + 4 + 1 + 10 * (1 + 127)
+                                              = 1293 bytes, which is why
+                                              COMMAND_MAX_WIRE_BYTES is
+                                              1400. */
+
+#define PACKET_LOBBY_SCENARIO_DETAILS_REQ 227 /* client -> server
+                                              { fileLen 1, file N }
+                                              one script file's details
+                                              (scenario_details.h), asked
+                                              for when the lobby's details
+                                              dialog opens. file is a name
+                                              from the lobby's script list
+                                              or the scenario listing: the
+                                              committed map's own script is
+                                              looked for first, then the
+                                              scenarios directory. The
+                                              answer streams back over
+                                              CHANNEL_BULK as a
+                                              BULK_KIND_SCENARIO_DETAILS
+                                              transfer whose path is the
+                                              file, found or not, so the
+                                              only thing a lost request
+                                              costs is the client's
+                                              re-ask. */
+
+#define PACKET_LOBBY_SCRIPT_FETCH_REQ 228    /* client -> server
+                                              { reqSeq 4 BE, fileLen 1,
+                                                file N }
+                                              a copy of one of the server's
+                                              scripts, asked for from the
+                                              lobby. file is a name from the
+                                              scenario listing. The answer
+                                              streams back over CHANNEL_BULK
+                                              as a BULK_KIND_SCRIPT_PACKAGE
+                                              transfer whose gen echoes
+                                              reqSeq and whose path is the
+                                              file. A request that finds the
+                                              client's bulk stream busy is
+                                              dropped, and the client asks
+                                              again. */
+
+#define PACKET_SET_SCRIPT_SETTING      229  /* client -> server
+                                              { fileLen 1, file N,
+                                                idLen 1, id M, value 4 BE }
+                                              the host's value for one of a
+                                              script's own settings
+                                              (scenario_settings.h). Sent
+                                              only to a server that has sent
+                                              a CTRL_LOBBY_SCRIPT_SETTING,
+                                              because an older one cannot
+                                              decode it. */
+
+#define PACKET_LOBBY_BRAIN_DOCS_REQ    230  /* client -> server
+                                              { brainIdx 1 }
+                                              one brain's commands.txt, asked
+                                              for when a player opens it from
+                                              the lobby. The answer streams
+                                              back over CHANNEL_BULK as a
+                                              BULK_KIND_BRAIN_DOCS transfer
+                                              whose gen is the docs
+                                              generation
+                                              CTRL_LOBBY_BRAIN_ANNOUNCE
+                                              carries. A request that finds
+                                              the client's bulk stream busy
+                                              is dropped, and the client
+                                              asks again. */
+
+#define PACKET_LOBBY_BOT_POOL_REQ      231  /* client -> server
+                                              { } (header only)
+                                              the server's bot-name
+                                              catalogue, asked for by a
+                                              client whose own pools have
+                                              another id than the one
+                                              CTRL_LOBBY_BOT_POOL_INFO
+                                              named. The answer streams
+                                              back over CHANNEL_BULK as a
+                                              BULK_KIND_BOT_POOL transfer
+                                              whose gen is the catalogue
+                                              id. A request that finds the
+                                              client's bulk stream busy is
+                                              dropped, and the client asks
+                                              again. */
+
 #ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
 #define GAME_VOTE_KIND_BACK_TO_LOBBY  1
 #define GAME_VOTE_KIND_SURRENDER      2
@@ -871,6 +1075,11 @@ static inline bool lobbyBotNameAcceptable(
 #define LOBBY_REJECT_UPLOAD_DISABLED   5   /* host disabled map uploads */
 #define LOBBY_REJECT_UPLOAD_LIMIT_HIT  6   /* per-map storage cap reached */
 #define LOBBY_REJECT_COOLDOWN          7   /* per-client request cooldown active */
+#define LOBBY_REJECT_NAME_TAKEN        8   /* a script of that name is in a
+                                            * higher-precedence directory */
+#define LOBBY_REJECT_TIMEOUT           9   /* client-side only: no reply from
+                                            * the server in time; retrying is
+                                            * the fix, not a different file */
 
 /* Alliance update event types */
 #define ALLIANCE_EVENT_REQUEST  0
@@ -892,7 +1101,7 @@ static inline bool lobbyBotNameAcceptable(
 /* PACKET_MAX_PLAYER_NAME lives in public/wire_limits.h (included above
  * via the file-top include list) alongside PACKET_MAX_CHAT_MESSAGE. */
 
-/* Maximum compressed map size (256x256 LZW + bases + pills + starts). The map
+/* Maximum compressed map size (zlib over bases + pills + starts + 256x256). The map
  * streams on CHANNEL_BULK (no per-chunk packet), but this still bounds the blob
  * the sender stages and the receiver allocates. */
 #define MAP_DOWNLOAD_MAX_SIZE 65536
@@ -907,6 +1116,13 @@ static inline bool lobbyBotNameAcceptable(
 
 /* Ping interval in ticks (~0.4 seconds at the 50 Hz game-tick clock) */
 #define PING_INTERVAL_TICKS 20
+
+/* How long a scenario-list request stays in flight before the client gives up
+ * on it (~5 seconds at 50 ticks/sec). The response carries nothing to tell a
+ * stale chunk from a current one, so being in flight is what makes a chunk the
+ * client's; this is what ends that when the answer never arrives, so the
+ * chooser can ask again. */
+#define LOBBY_SCENARIO_LIST_TIMEOUT_TICKS 250
 
 #define INFOREQUESTHEADER { 'B','o','l','o', BOLO_VERSION_MAJOR, BOLO_VERSION_MINOR, BOLO_VERSION_REVISION, BOLOPACKET_INFOREQUEST }
 #define TOKENHEADER { 'B','o','l','o', BOLO_VERSION_MAJOR, BOLO_VERSION_MINOR, BOLO_VERSION_REVISION, BOLOPACKET_TOKEN }

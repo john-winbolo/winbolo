@@ -7,8 +7,9 @@
  * past the prelude is an arm, and an op whose arm has not been written
  * answers SCN_OP_UNSUPPORTED rather than quietly doing nothing. These
  * tests hold the prelude, the registrations beside it, the per-tick
- * callback the host drains from, and the start-in-progress flag that
- * keeps the all-ready detector out of a start already under way.
+ * callback the host drains from, the start-in-progress flag that
+ * keeps the all-ready detector out of a start already under way, and
+ * the allowances a tick gives a script's ops.
  */
 
 #include <stdint.h>
@@ -22,6 +23,9 @@
 #include "server_sim_scenario.h"
 #include "control_event.h"
 #include "bases.h"                 /* the list a setup deals out */
+#include "pillbox.h"               /* pillsExistPos — a square a pill owns */
+#include "bolo_map.h"              /* mapGetPos / mapSetPos */
+#include "client_enums.h"          /* sndEffects — a sound the op takes */
 #include "input_packet.h"          /* SnapshotHeader, EVENT_BASE_CAPTURED */
 #include "everard_map.h"
 #include "test_harness.h"
@@ -62,6 +66,7 @@ static const ScenarioOpType kAllOpTypes[] = {
     SCN_OP_ROSTER_SPAWN_BOT,
     SCN_OP_ROSTER_REMOVE_BOT,
     SCN_OP_ROSTER_SET_TEAM,
+    SCN_OP_ROSTER_BOT_INIT,
     SCN_OP_LOBBY_ADD_BOT,
     SCN_OP_LOBBY_REMOVE_BOT,
     SCN_OP_LOBBY_SET_TEAM,
@@ -69,6 +74,7 @@ static const ScenarioOpType kAllOpTypes[] = {
     SCN_OP_MSG_ALL,
     SCN_OP_MSG_TEAM,
     SCN_OP_MSG_PLAYER,
+    SCN_OP_MSG_SAY,
     SCN_OP_SOUND,
     SCN_OP_LOG,
     SCN_OP_PANEL,
@@ -77,13 +83,14 @@ static const ScenarioOpType kAllOpTypes[] = {
     SCN_OP_MARKER,
     SCN_OP_END_ROUND,
     SCN_OP_SET_GAME_TIME,
-    SCN_OP_SET_RULE
+    SCN_OP_SET_RULE,
+    SCN_OP_SHELL_EXPIRED
 };
 #define NUM_OP_TYPES ((int)(sizeof(kAllOpTypes) / sizeof(kAllOpTypes[0])))
 
 static ServerSim *makeLobbySim(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097,
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN,
                                                "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) return NULL;
@@ -146,17 +153,25 @@ static bool opArmHasLanded(ScenarioOpType t) {
            t == SCN_OP_ROSTER_SPAWN_BOT ||   /* test_scenario_roster_arms.c */
            t == SCN_OP_ROSTER_REMOVE_BOT ||
            t == SCN_OP_ROSTER_SET_TEAM ||
+           t == SCN_OP_ROSTER_BOT_INIT || /* test_scenario_bot_init.c */
            t == SCN_OP_LOBBY_ADD_BOT ||
            t == SCN_OP_LOBBY_REMOVE_BOT ||
            t == SCN_OP_LOBBY_SET_TEAM ||
+           t == SCN_OP_BOT_HINT ||           /* test_scenario_hint.c */
            t == SCN_OP_MSG_ALL ||            /* test_scenario_comms_arms.c */
            t == SCN_OP_MSG_TEAM ||
            t == SCN_OP_MSG_PLAYER ||
+           t == SCN_OP_MSG_SAY ||
            t == SCN_OP_SOUND ||
            t == SCN_OP_LOG ||
+           t == SCN_OP_PANEL ||              /* test_scenario_presentation_arms.c */
+           t == SCN_OP_SCORE ||
+           t == SCN_OP_ANNOUNCE ||
+           t == SCN_OP_MARKER ||
            t == SCN_OP_END_ROUND ||          /* test_scenario_flow_arms.c */
            t == SCN_OP_SET_GAME_TIME ||
-           t == SCN_OP_SET_RULE;             /* test_scenario_rule_arms.c */
+           t == SCN_OP_SET_RULE ||           /* test_scenario_rule_arms.c */
+           t == SCN_OP_SHELL_EXPIRED;        /* test_three_shot_order.c */
 }
 
 /* An op with no arm answers UNSUPPORTED, and an op with one does not. The
@@ -165,9 +180,9 @@ static bool opArmHasLanded(ScenarioOpType t) {
 int run_scenario_op_every_type_unsupported(void) {
     int i;
 
-    UT_ASSERT_MSG(NUM_OP_TYPES == (int)SCN_OP_SET_RULE + 1,
+    UT_ASSERT_MSG(NUM_OP_TYPES == (int)SCN_OP_SHELL_EXPIRED + 1,
                   "kAllOpTypes covers %d types but the enum declares %d",
-                  NUM_OP_TYPES, (int)SCN_OP_SET_RULE + 1);
+                  NUM_OP_TYPES, (int)SCN_OP_SHELL_EXPIRED + 1);
 
     for (i = 0; i < NUM_OP_TYPES; i++) {
         ServerSim *sim = makeLobbySim();
@@ -1558,4 +1573,255 @@ int run_scenario_round_start_clears_seat_holders(void) {
     int rc = shHeldCheck(true, "serverSimStartGameInPlace");
     if (rc != 0) return rc;
     return shHeldCheck(false, "serverSimStartGame");
+}
+
+/* ── The tick's allowances ─────────────────────────────────────────── */
+
+/* A line to the operator's log, which every state takes and which changes
+   nothing a later op in the case is asked against. */
+static ScnOpResult faLog(ServerSim *sim, bool host) {
+    ScenarioOp op;
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_LOG;
+    snprintf(op.u.log.text, sizeof(op.u.log.text), "funnel allowance");
+    return host ? serverSimApplyScenarioHostOp(sim, &op, NULL)
+                : serverSimApplyScenarioOp(sim, &op, NULL);
+}
+
+static ScnOpResult faMsgAll(ServerSim *sim) {
+    ScenarioOp op;
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_MSG_ALL;
+    snprintf(op.u.msgAll.text, sizeof(op.u.msgAll.text), "funnel allowance");
+    return serverSimApplyScenarioOp(sim, &op, NULL);
+}
+
+/* A sound on the square that is nowhere, which the arm takes without asking
+   for a square on the map. */
+static ScnOpResult faSound(ServerSim *sim) {
+    ScenarioOp op;
+    memset(&op, 0, sizeof(op));
+    op.type          = SCN_OP_SOUND;
+    op.u.sound.sound = (BYTE)bigExplosionNear;
+    op.u.sound.x     = 0xFF;
+    op.u.sound.y     = 0xFF;
+    return serverSimApplyScenarioOp(sim, &op, NULL);
+}
+
+/* SCN_OPS_PER_TICK logs apply and the next one is refused without being
+   looked at. A tick hands the allowance back. */
+int run_scenario_funnel_ops_per_tick(void) {
+    ServerSim *sim = ut_make_running_sim("Tester");
+    int        i;
+
+    UT_ASSERT(sim != NULL);
+    for (i = 0; i < SCN_OPS_PER_TICK; i++) {
+        UT_ASSERT_MSG(faLog(sim, false) == SCN_OP_OK,
+                      "op %d of the tick's %d was refused", i + 1,
+                      SCN_OPS_PER_TICK);
+    }
+    UT_ASSERT_MSG(faLog(sim, false) == SCN_OP_RATE,
+                  "op %d in one tick was not refused SCN_OP_RATE",
+                  SCN_OPS_PER_TICK + 1);
+
+    serverSimTick(sim);
+    UT_ASSERT_MSG(faLog(sim, false) == SCN_OP_OK,
+                  "the tick after did not hand the allowance back");
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* SCN_MSGS_PER_TICK messages and sounds apply, the next of either kind is
+   refused, and a log in the same tick is not: it is an op, not a message. */
+int run_scenario_funnel_msgs_per_tick(void) {
+    ServerSim *sim = ut_make_running_sim("Tester");
+    int        i;
+
+    UT_ASSERT(sim != NULL);
+    for (i = 0; i < SCN_MSGS_PER_TICK; i++) {
+        ScnOpResult r = ((i & 1) == 0) ? faMsgAll(sim) : faSound(sim);
+        UT_ASSERT_MSG(r == SCN_OP_OK,
+                      "message %d of the tick's %d answered %d", i + 1,
+                      SCN_MSGS_PER_TICK, (int)r);
+    }
+    UT_ASSERT_MSG(faMsgAll(sim) == SCN_OP_RATE,
+                  "a line past the tick's %d messages was not refused",
+                  SCN_MSGS_PER_TICK);
+    UT_ASSERT_MSG(faSound(sim) == SCN_OP_RATE,
+                  "a sound past the tick's %d messages was not refused",
+                  SCN_MSGS_PER_TICK);
+    for (i = 0; i < 4; i++) {
+        UT_ASSERT_MSG(faLog(sim, false) == SCN_OP_OK,
+                      "a log was refused by the message count");
+    }
+
+    serverSimTick(sim);
+    UT_ASSERT_MSG(faMsgAll(sim) == SCN_OP_OK,
+                  "the tick after did not hand the messages back");
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The host's own ops spend nothing. More of them than a tick allows all
+   apply, and the script then has the whole of its own allowance: every one
+   of SCN_OPS_PER_TICK, and not one more. */
+int run_scenario_funnel_host_ops_uncounted(void) {
+    ServerSim *sim = ut_make_running_sim("Tester");
+    int        i;
+
+    UT_ASSERT(sim != NULL);
+    for (i = 0; i < SCN_OPS_PER_TICK + 44; i++) {
+        UT_ASSERT_MSG(faLog(sim, true) == SCN_OP_OK,
+                      "host op %d was refused", i + 1);
+    }
+    for (i = 0; i < SCN_OPS_PER_TICK; i++) {
+        UT_ASSERT_MSG(faLog(sim, false) == SCN_OP_OK,
+                      "script op %d was refused after the host's ops, so they "
+                      "spent the script's allowance", i + 1);
+    }
+    UT_ASSERT_MSG(faLog(sim, false) == SCN_OP_RATE,
+                  "op %d in one tick was not refused SCN_OP_RATE",
+                  SCN_OPS_PER_TICK + 1);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* An op the prelude refuses costs nothing: many more of them than a tick
+   allows, sent from inside a policy call, and the whole allowance is still
+   there once the call is over. */
+int run_scenario_funnel_prelude_refusal_uncounted(void) {
+    ServerSim *sim = ut_make_running_sim("Tester");
+    int        i;
+
+    UT_ASSERT(sim != NULL);
+    serverSimScenarioPolicyEnter(sim);
+    for (i = 0; i < SCN_OPS_PER_TICK + 44; i++) {
+        UT_ASSERT_MSG(faLog(sim, false) == SCN_OP_IN_POLICY,
+                      "op %d inside a policy call was not refused by the "
+                      "prelude", i + 1);
+    }
+    serverSimScenarioPolicyLeave(sim);
+
+    for (i = 0; i < SCN_OPS_PER_TICK; i++) {
+        UT_ASSERT_MSG(faLog(sim, false) == SCN_OP_OK,
+                      "op %d was refused, so the prelude's refusals spent the "
+                      "allowance", i + 1);
+    }
+    UT_ASSERT_MSG(faLog(sim, false) == SCN_OP_RATE,
+                  "op %d in one tick was not refused SCN_OP_RATE",
+                  SCN_OPS_PER_TICK + 1);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A square inside the minable area that no pill or base stands on: an
+   object writes its own tile back, so one painted over would be undone. */
+static bool faSquareIsFree(ServerSim *sim, BYTE x, BYTE y) {
+    return pillsExistPos(&sim->sim.pb, x, y) == FALSE &&
+           basesExistPos(&sim->sim.bs, x, y) == FALSE;
+}
+
+/* The top-left of a w by h rectangle whose every square is free. */
+static bool faFindRect(ServerSim *sim, int w, int h, BYTE *ox, BYTE *oy) {
+    int x, y, dx, dy;
+    for (y = MAP_MINE_EDGE_TOP + 1; y + h <= MAP_MINE_EDGE_BOTTOM; y++) {
+        for (x = MAP_MINE_EDGE_LEFT + 1; x + w <= MAP_MINE_EDGE_RIGHT; x++) {
+            bool clear = true;
+            for (dy = 0; dy < h && clear; dy++) {
+                for (dx = 0; dx < w && clear; dx++) {
+                    if (!faSquareIsFree(sim, (BYTE)(x + dx), (BYTE)(y + dy))) {
+                        clear = false;
+                    }
+                }
+            }
+            if (clear) {
+                *ox = (BYTE)x;
+                *oy = (BYTE)y;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static ScnOpResult faSetTile(ServerSim *sim, BYTE x, BYTE y, BYTE terrain) {
+    ScenarioOp op;
+    memset(&op, 0, sizeof(op));
+    op.type                 = SCN_OP_MAP_SET_TILE;
+    op.u.mapSetTile.x       = x;
+    op.u.mapSetTile.y       = y;
+    op.u.mapSetTile.terrain = terrain;
+    return serverSimApplyScenarioOp(sim, &op, NULL);
+}
+
+/* set_tile pays out of the fill's tile budget. A square rewritten with the
+   terrain it already holds spends one all the same; a fill over the rest of a
+   square SCN_TILES_PER_TICK rectangle spends what is left; and the next
+   set_tile in the tick is refused and writes nothing. A handful of ops is all
+   the case sends, so the op count is nowhere near what refuses it. */
+int run_scenario_funnel_set_tile_spends_tile_budget(void) {
+    ServerSim *sim = ut_make_running_sim("Tester");
+    ScenarioOp fill;
+    const int  W = 16;                  /* 16 x 16 is one tick's budget */
+    BYTE       rx = 0, ry = 0;
+    int        dx, dy;
+
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(W * W == SCN_TILES_PER_TICK,
+                  "%d squares is not one tick's budget of %d", W * W,
+                  SCN_TILES_PER_TICK);
+    UT_ASSERT_MSG(faFindRect(sim, W, W, &rx, &ry),
+                  "map has no free %dx%d rectangle", W, W);
+    for (dy = 0; dy < W; dy++) {
+        for (dx = 0; dx < W; dx++) {
+            mapSetPos(&sim->sim, &sim->sim.mp, (BYTE)(rx + dx),
+                      (BYTE)(ry + dy), GRASS, FALSE, FALSE);
+        }
+    }
+
+    /* The top row, one square at a time, each already grass. */
+    for (dx = 0; dx < W; dx++) {
+        UT_ASSERT_MSG(faSetTile(sim, (BYTE)(rx + dx), ry, GRASS) == SCN_OP_OK,
+                      "set_tile %d was refused", dx + 1);
+    }
+    UT_ASSERT_MSG(sim->scenarioFillSpent == (uint16_t)W,
+                  "%d set_tiles spent %u of the tile budget, expected %d — a "
+                  "square rewritten with its own terrain spends one too", W,
+                  (unsigned)sim->scenarioFillSpent, W);
+
+    /* The rest of the rectangle by fill, which changes every square. */
+    memset(&fill, 0, sizeof(fill));
+    fill.type = SCN_OP_MAP_FILL_RECT;
+    fill.u.mapFillRect.x0 = rx;
+    fill.u.mapFillRect.y0 = (BYTE)(ry + 1);
+    fill.u.mapFillRect.x1 = (BYTE)(rx + W - 1);
+    fill.u.mapFillRect.y1 = (BYTE)(ry + W - 1);
+    fill.u.mapFillRect.terrain = CRATER;
+    UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &fill, NULL) == SCN_OP_OK,
+                  "a fill of the budget that was left should finish in the op");
+    UT_ASSERT_MSG(sim->scenarioFillSpent == SCN_TILES_PER_TICK,
+                  "the tick has spent %u of the tile budget, expected all %d",
+                  (unsigned)sim->scenarioFillSpent, SCN_TILES_PER_TICK);
+
+    /* Nothing left: refused, and the square keeps its terrain. */
+    UT_ASSERT_MSG(faSetTile(sim, rx, ry, CRATER) == SCN_OP_RATE,
+                  "a set_tile with no tile budget left was not refused");
+    UT_ASSERT_MSG(mapGetPos(&sim->sim.mp, rx, ry) == GRASS,
+                  "the refused set_tile wrote the square: it reads %u",
+                  (unsigned)mapGetPos(&sim->sim.mp, rx, ry));
+
+    /* The frame's end hands the budget back and the same op is taken. */
+    serverSimScenarioDrainFill(sim);
+    UT_ASSERT_MSG(faSetTile(sim, rx, ry, CRATER) == SCN_OP_OK,
+                  "set_tile was still refused once the budget came back");
+    UT_ASSERT_MSG(mapGetPos(&sim->sim.mp, rx, ry) == CRATER,
+                  "the square reads %u after the set_tile applied",
+                  (unsigned)mapGetPos(&sim->sim.mp, rx, ry));
+
+    serverSimDestroy(sim);
+    return 0;
 }

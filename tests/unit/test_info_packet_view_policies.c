@@ -4,8 +4,8 @@
  * The browser advertisement grew a trailing byte carrying the server's
  * three visibility rules, two bits each, plus the classic-mode flag in
  * bit 6 and the allies-in-trees flag in bit 7, and then a second byte
- * carrying the overview window in bits 0-1 and line of sight in bits
- * 2-3. Two things can break quietly here: the packed layout (a compiler
+ * carrying the overview window in bits 0-1, line of sight in bits 2-3
+ * and the positional-sound flag in bit 4. Two things can break quietly here: the packed layout (a compiler
  * that pads the struct would push every consumer's offsets out), and the
  * length tier each decoder uses — an advertisement that stops before a
  * byte must report the built-in defaults for that byte rather than
@@ -90,37 +90,58 @@ int run_info_packet_view_policy_layout(void) {
         UT_ASSERT(alliesInTrees);
     }
 
-    /* The second byte: the overview window owns bits 0-1 and line of
-     * sight bits 2-3, every combination survives a round-trip, and the
-     * four spare bits stay clear. */
+    /* The second byte: the overview window owns bits 0-1, line of sight
+     * bits 2-3 and positional sound bit 4, every combination survives a
+     * round-trip, and the three spare bits stay clear. */
     {
         INFO_PACKET pkt;
         uint8_t window, sight;
+        bool sound;
 
         UT_ASSERT(infoPacketPackViewPolicies2((uint8_t)overviewWindowExpanded,
-                                              (uint8_t)lineOfSightOff) == 0x00);
+                                              (uint8_t)lineOfSightOff,
+                                              false) == 0x00);
         UT_ASSERT(infoPacketPackViewPolicies2((uint8_t)overviewWindowClassic,
-                                              (uint8_t)lineOfSightOff) == 0x01);
+                                              (uint8_t)lineOfSightOff,
+                                              false) == 0x01);
         UT_ASSERT(infoPacketPackViewPolicies2(
                       (uint8_t)overviewWindowExpanded,
-                      (uint8_t)lineOfSightBuildingsAndTrees) == 0x04);
+                      (uint8_t)lineOfSightBuildingsAndTrees, false) == 0x04);
         UT_ASSERT(infoPacketPackViewPolicies2(
                       (uint8_t)overviewWindowClassic,
-                      (uint8_t)lineOfSightBuildingsAndTrees) == 0x05);
+                      (uint8_t)lineOfSightBuildingsAndTrees, false) == 0x05);
+
+        /* Positional sound owns bit 4 alone, and sets it beside either
+         * mode without moving them. */
+        UT_ASSERT(infoPacketPackViewPolicies2((uint8_t)overviewWindowExpanded,
+                                              (uint8_t)lineOfSightOff,
+                                              true) == 0x10);
+        UT_ASSERT(infoPacketPackViewPolicies2(
+                      (uint8_t)overviewWindowClassic,
+                      (uint8_t)lineOfSightBuildingsAndTrees, true) == 0x15);
 
         memset(&pkt, 0, sizeof(pkt));
         for (int w = 0; w < (int)OVERVIEW_WINDOW_COUNT; w++) {
             for (int sg = 0; sg < (int)LINE_OF_SIGHT_COUNT; sg++) {
-                BYTE packed = infoPacketPackViewPolicies2((uint8_t)w,
-                                                          (uint8_t)sg);
-                UT_ASSERT_MSG((packed & 0xF0u) == 0,
-                              "packing %d/%d set a spare bit (0x%02X)",
-                              w, sg, (unsigned)packed);
-                pkt.view_policies2 = packed;
-                infoPacketReadViewPolicies2(&pkt, sizeof(pkt), &window, &sight);
-                UT_ASSERT_MSG((int)window == w && (int)sight == sg,
-                              "round-trip %d/%d came back %d/%d",
-                              w, sg, (int)window, (int)sight);
+                for (int ps = 0; ps <= 1; ps++) {
+                    BYTE packed = infoPacketPackViewPolicies2((uint8_t)w,
+                                                              (uint8_t)sg,
+                                                              ps != 0);
+                    UT_ASSERT_MSG((packed & 0xE0u) == 0,
+                                  "packing %d/%d/%d set a spare bit (0x%02X)",
+                                  w, sg, ps, (unsigned)packed);
+                    UT_ASSERT_MSG(((packed & 0x10u) != 0) == (ps != 0),
+                                  "packing %d/%d/%d left bit 4 as %d",
+                                  w, sg, ps, (int)((packed >> 4) & 1u));
+                    pkt.view_policies2 = packed;
+                    infoPacketReadViewPolicies2(&pkt, sizeof(pkt), &window,
+                                                &sight, &sound);
+                    UT_ASSERT_MSG((int)window == w && (int)sight == sg &&
+                                  (int)sound == ps,
+                                  "round-trip %d/%d/%d came back %d/%d/%d",
+                                  w, sg, ps, (int)window, (int)sight,
+                                  (int)sound);
+                }
             }
         }
 
@@ -136,14 +157,16 @@ int run_info_packet_view_policy_layout(void) {
                                                            true, true);
             pkt.view_policies2 = infoPacketPackViewPolicies2(
                 (uint8_t)overviewWindowClassic,
-                (uint8_t)lineOfSightBuildingsAndTrees);
+                (uint8_t)lineOfSightBuildingsAndTrees, true);
             infoPacketReadViewPolicies(&pkt, sizeof(pkt), &pill, &base, &ally,
                                        &classic, &alliesInTrees);
-            infoPacketReadViewPolicies2(&pkt, sizeof(pkt), &window, &sight);
+            infoPacketReadViewPolicies2(&pkt, sizeof(pkt), &window, &sight,
+                                        &sound);
             UT_ASSERT(pill == viewPolicyKey && base == viewPolicyDecay &&
                       ally == viewPolicyOff && classic && alliesInTrees);
             UT_ASSERT(window == (uint8_t)overviewWindowClassic &&
-                      sight == (uint8_t)lineOfSightBuildingsAndTrees);
+                      sight == (uint8_t)lineOfSightBuildingsAndTrees &&
+                      sound);
         }
     }
 
@@ -195,6 +218,7 @@ int run_info_packet_view_policy_length_tier(void) {
     ViewPolicy pill, base, ally;
     bool classic, alliesInTrees;
     uint8_t window, sight;
+    bool sound;
 
     memset(&pkt, 0, sizeof(pkt));
     pkt.view_policies = infoPacketPackViewPolicies(viewPolicyKey,
@@ -202,7 +226,7 @@ int run_info_packet_view_policy_length_tier(void) {
                                                    viewPolicyOff, true, true);
     pkt.view_policies2 = infoPacketPackViewPolicies2(
         (uint8_t)overviewWindowClassic,
-        (uint8_t)lineOfSightBuildingsAndTrees);
+        (uint8_t)lineOfSightBuildingsAndTrees, true);
 
     /* Full-length packet: the encoded policies, classic mode and allies
      * in trees all come back out. */
@@ -213,11 +237,12 @@ int run_info_packet_view_policy_length_tier(void) {
     UT_ASSERT_MSG(ally == viewPolicyOff, "ally = %d, want off", (int)ally);
     UT_ASSERT_MSG(classic, "classic mode did not survive the round-trip");
     UT_ASSERT_MSG(alliesInTrees, "allies in trees did not survive the round-trip");
-    infoPacketReadViewPolicies2(&pkt, sizeof(pkt), &window, &sight);
+    infoPacketReadViewPolicies2(&pkt, sizeof(pkt), &window, &sight, &sound);
     UT_ASSERT_MSG(window == (uint8_t)overviewWindowClassic,
                   "window = %u, want classic", (unsigned)window);
     UT_ASSERT_MSG(sight == (uint8_t)lineOfSightBuildingsAndTrees,
                   "sight = %u, want buildings and trees", (unsigned)sight);
+    UT_ASSERT_MSG(sound, "positional sound did not survive the round-trip");
 
     /* A 112-byte packet carries view_policies but not view_policies2.
      * The five values in the byte it has must still be the real ones:
@@ -234,11 +259,12 @@ int run_info_packet_view_policy_length_tier(void) {
     UT_ASSERT_MSG(classic, "112-byte packet lost classic mode");
     UT_ASSERT_MSG(alliesInTrees, "112-byte packet lost allies in trees");
     infoPacketReadViewPolicies2(&pkt, INFO_PACKET_PRE_VIEWS2_SIZE,
-                                &window, &sight);
+                                &window, &sight, &sound);
     UT_ASSERT_MSG(window == (uint8_t)overviewWindowExpanded,
                   "112-byte window = %u, want expanded", (unsigned)window);
     UT_ASSERT_MSG(sight == (uint8_t)lineOfSightOff,
                   "112-byte sight = %u, want off", (unsigned)sight);
+    UT_ASSERT_MSG(!sound, "112-byte packet reported positional sound on");
 
     /* A 111-byte packet predates the byte: the defaults win, even
      * though the struct still holds a fully populated view_policies. */
@@ -262,35 +288,46 @@ int run_info_packet_view_policy_length_tier(void) {
 
     /* The second byte defaults the same way at every shorter length. */
     infoPacketReadViewPolicies2(&pkt, INFO_PACKET_PRE_VIEWS_SIZE,
-                                &window, &sight);
+                                &window, &sight, &sound);
     UT_ASSERT(window == (uint8_t)overviewWindowExpanded &&
-              sight == (uint8_t)lineOfSightOff);
-    infoPacketReadViewPolicies2(&pkt, INFO_PACKET_LEGACY_SIZE, &window, &sight);
+              sight == (uint8_t)lineOfSightOff && !sound);
+    infoPacketReadViewPolicies2(&pkt, INFO_PACKET_LEGACY_SIZE, &window, &sight,
+                                &sound);
     UT_ASSERT(window == (uint8_t)overviewWindowExpanded &&
-              sight == (uint8_t)lineOfSightOff);
-    infoPacketReadViewPolicies2(NULL, sizeof(pkt), &window, &sight);
+              sight == (uint8_t)lineOfSightOff && !sound);
+    infoPacketReadViewPolicies2(NULL, sizeof(pkt), &window, &sight, &sound);
     UT_ASSERT(window == (uint8_t)overviewWindowExpanded &&
-              sight == (uint8_t)lineOfSightOff);
+              sight == (uint8_t)lineOfSightOff && !sound);
+    /* Every out-pointer may be NULL. */
+    infoPacketReadViewPolicies2(&pkt, sizeof(pkt), NULL, NULL, NULL);
 
     /* Two bits can hold a value neither enum names. It reads back as the
      * default rather than as a mode the browser has no name for. */
     pkt.view_policies2 = 0x0F;
-    infoPacketReadViewPolicies2(&pkt, sizeof(pkt), &window, &sight);
+    infoPacketReadViewPolicies2(&pkt, sizeof(pkt), &window, &sight, &sound);
     UT_ASSERT_MSG(window == (uint8_t)overviewWindowExpanded,
                   "an unnamed window value read back as %u", (unsigned)window);
     UT_ASSERT_MSG(sight == (uint8_t)lineOfSightOff,
                   "an unnamed sight value read back as %u", (unsigned)sight);
+    UT_ASSERT_MSG(!sound, "unnamed modes set positional sound");
+    /* The same unnamed modes beside bit 4: the flag is read on its own
+     * and the clamp on the modes does not clear it. */
+    pkt.view_policies2 = 0x1F;
+    infoPacketReadViewPolicies2(&pkt, sizeof(pkt), &window, &sight, &sound);
+    UT_ASSERT(window == (uint8_t)overviewWindowExpanded &&
+              sight == (uint8_t)lineOfSightOff);
+    UT_ASSERT_MSG(sound, "unnamed modes cleared positional sound");
     /* Each field is clamped on its own, so an unnamed value in one does
      * not drag its named neighbour back to the default with it. */
     pkt.view_policies2 = 0x09;   /* window classic, sight unnamed */
-    infoPacketReadViewPolicies2(&pkt, sizeof(pkt), &window, &sight);
+    infoPacketReadViewPolicies2(&pkt, sizeof(pkt), &window, &sight, &sound);
     UT_ASSERT_MSG(window == (uint8_t)overviewWindowClassic,
                   "an unnamed sight value moved the window to %u",
                   (unsigned)window);
     UT_ASSERT_MSG(sight == (uint8_t)lineOfSightOff,
                   "an unnamed sight value read back as %u", (unsigned)sight);
     pkt.view_policies2 = 0x07;   /* window unnamed, sight buildings and trees */
-    infoPacketReadViewPolicies2(&pkt, sizeof(pkt), &window, &sight);
+    infoPacketReadViewPolicies2(&pkt, sizeof(pkt), &window, &sight, &sound);
     UT_ASSERT_MSG(window == (uint8_t)overviewWindowExpanded,
                   "an unnamed window value read back as %u", (unsigned)window);
     UT_ASSERT_MSG(sight == (uint8_t)lineOfSightBuildingsAndTrees,
@@ -299,14 +336,14 @@ int run_info_packet_view_policy_length_tier(void) {
      * rides in were always wide enough for it. Pinned here because it is on
      * the wire: a browser row has to read None back as None. */
     pkt.view_policies2 = 0x06;   /* window none, sight buildings and trees */
-    infoPacketReadViewPolicies2(&pkt, sizeof(pkt), &window, &sight);
+    infoPacketReadViewPolicies2(&pkt, sizeof(pkt), &window, &sight, &sound);
     UT_ASSERT_MSG(window == (uint8_t)overviewWindowNone,
                   "the none window read back as %u", (unsigned)window);
     UT_ASSERT_MSG(sight == (uint8_t)lineOfSightBuildingsAndTrees,
                   "the none window moved sight to %u", (unsigned)sight);
     pkt.view_policies2 = infoPacketPackViewPolicies2(
         (uint8_t)overviewWindowClassic,
-        (uint8_t)lineOfSightBuildingsAndTrees);
+        (uint8_t)lineOfSightBuildingsAndTrees, true);
 
     /* A full-length packet with both flags clear reports them off. */
     pkt.view_policies = infoPacketPackViewPolicies(viewPolicyKey,
@@ -362,7 +399,8 @@ static void packPreset(INFO_PACKET *pkt, const VisibilitySettings *v) {
         (ViewPolicy)v->policy[viewCategoryAlly],
         v->classicMode, v->alliesInTrees);
     pkt->view_policies2 = infoPacketPackViewPolicies2(v->overviewWindow,
-                                                      v->lineOfSight);
+                                                      v->lineOfSight,
+                                                      v->positionalSound);
 }
 
 static VisibilitySettings readPacket2(const INFO_PACKET *pkt, size_t len) {
@@ -370,11 +408,12 @@ static VisibilitySettings readPacket2(const INFO_PACKET *pkt, size_t len) {
     ViewPolicy pill, base, ally;
     bool classic, trees;
     uint8_t window, sight;
+    bool sound;
 
     memset(&out, 0, sizeof(out));
     infoPacketReadViewPolicies(pkt, len, &pill, &base, &ally,
                                &classic, &trees);
-    infoPacketReadViewPolicies2(pkt, len, &window, &sight);
+    infoPacketReadViewPolicies2(pkt, len, &window, &sight, &sound);
     out.policy[viewCategoryPill] = (uint8_t)pill;
     out.policy[viewCategoryBase] = (uint8_t)base;
     out.policy[viewCategoryAlly] = (uint8_t)ally;
@@ -382,6 +421,7 @@ static VisibilitySettings readPacket2(const INFO_PACKET *pkt, size_t len) {
     out.alliesInTrees  = trees;
     out.overviewWindow = window;
     out.lineOfSight    = sight;
+    out.positionalSound = sound;
     return out;
 }
 
@@ -423,6 +463,16 @@ int run_info_packet_preset_round_trip(void) {
     got = readPacket(&pkt);
     UT_ASSERT(visibilityPresetMatch(&got) == visibilityPresetCustom);
 
+    /* Positional sound is a single bit too: Max view with it off is
+     * Custom, so the bit really is carried rather than assumed. */
+    UT_ASSERT(visibilityPresetSettings(visibilityPresetMaxView, &want));
+    UT_ASSERT(want.positionalSound);
+    want.positionalSound = false;
+    packPreset(&pkt, &want);
+    got = readPacket(&pkt);
+    UT_ASSERT(!got.positionalSound);
+    UT_ASSERT(visibilityPresetMatch(&got) == visibilityPresetCustom);
+
     return 0;
 }
 
@@ -452,7 +502,8 @@ int run_info_packet_absent_views_read_classic(void) {
                   got.policy[viewCategoryAlly] == (uint8_t)viewPolicyAlways &&
                   !got.classicMode && !got.alliesInTrees &&
                   got.overviewWindow == (uint8_t)overviewWindowExpanded &&
-                  got.lineOfSight == (uint8_t)lineOfSightOff,
+                  got.lineOfSight == (uint8_t)lineOfSightOff &&
+                  !got.positionalSound,
                   "the back-compatibility reading moved");
     UT_ASSERT_MSG(visibilityPresetMatch(&got) == visibilityPresetCustom,
                   "the back-compatibility set matched preset %d, so the "

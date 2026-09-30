@@ -34,6 +34,7 @@
 #include "../gamefront.h"
 #include "../tiles.h"
 #include "input.h"
+#include "turn_tap.h"
 #include "input_touch.h"
 #include "input_gamepad.h"
 #include "build_cursor.h"
@@ -97,6 +98,8 @@ static uint8_t lastGunsightAdj = 0;
 static bool mineKeyEventDown = FALSE;  /* set by SDL_EVENT_KEY_DOWN/UP */
 static bool mineKeyPhysicalDown = FALSE; /* tracks physical key state for edge detection */
 static bool mineKeyEventsActive = FALSE; /* TRUE once we've seen any event for this key */
+static TurnTapState leftTurnTap;
+static TurnTapState rightTurnTap;
 
 /*********************************************************
 *NAME:          appHasFocus
@@ -111,13 +114,40 @@ static bool appHasFocus(void) {
   return sdl3ImguiGameInputWindowHasFocus();
 }
 
+/* Keys the shortcut layer has taken, held swallowed until the player lets go.
+   One bit each, indexed by scancode.
+
+   A menu shortcut is the primary modifier and a letter, and that letter is
+   usually bound to something in the game as well: Ctrl+M opens Send Message
+   and M is the default Base View key, so the message window came up and the
+   view jumped to a base behind it. Ctrl+S, Ctrl+G and Ctrl+1/2/3 collide with
+   turn-left, pill view and the quick-build keys the same way.
+
+   The event that ran the shortcut cannot simply be dropped, because the
+   bindings are not read from events: keyDown polls SDL's keyboard state, and
+   the letter is still physically down there. So the shortcut marks the key
+   here and the poll reads it as up until it comes up for real. */
+static bool swallowedKeys[SDL_SCANCODE_COUNT];
+
 /* Returns non-zero if the key at the given SDL_Scancode is currently held */
 static bool keyDown(int sc) {
   const bool *state = SDL_GetKeyboardState(NULL);
   if (!state || sc <= 0 || sc >= SDL_SCANCODE_COUNT) {
     return false;
   }
+  if (swallowedKeys[sc]) {
+    /* Cleared by the physical release, not by a timer: the player may hold
+       the shortcut chord for as long as they like, and the binding comes back
+       the moment the key is up. */
+    if (state[sc]) return false;
+    swallowedKeys[sc] = FALSE;
+  }
   return state[sc];
+}
+
+void inputSwallowKeyUntilRelease(int scancode) {
+  if (scancode <= 0 || scancode >= SDL_SCANCODE_COUNT) return;
+  swallowedKeys[scancode] = TRUE;
 }
 
 #define KEY_DOWN(sc) keyDown(sc)
@@ -541,6 +571,12 @@ void inputResetHeldKeys(void) {
   mineKeyEventDown = FALSE;
   mineKeyPhysicalDown = FALSE;
   mineKeyEventsActive = FALSE;
+  turnTapReset(&leftTurnTap);
+  turnTapReset(&rightTurnTap);
+  /* SDL_ResetKeyboard above has already put every key up, so nothing is left
+     to swallow — and a key still marked here would otherwise stay dead until
+     it was pressed and released again. */
+  SDL_memset(swallowedKeys, 0, sizeof(swallowedKeys));
   pillViewKeyWasDown = FALSE;
   baseViewKeyWasDown = FALSE;
   allyViewKeyWasDown = FALSE;
@@ -587,6 +623,8 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
   buildSelect curSelect;
 
   if (isMenu == TRUE || sdl3ImguiWantsKeyboard() || !appHasFocus()) {
+    turnTapReset(&leftTurnTap);
+    turnTapReset(&rightTurnTap);
     inputPushToTalkPoll(setKeys, FALSE);
     muteMicPoll(setKeys, FALSE);
     return TNONE;
@@ -596,21 +634,30 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
 
   tb = TNONE;
 
-  if (KEY_DOWN(setKeys->kiForward) && KEY_DOWN(setKeys->kiRight)) {
+  /* Keyboard turns come through the tap queues, so a press and release that
+     both arrived since the last sample still turn once. Gamepad turning
+     below is the analog stick read live each sample, with no press and
+     release pair to queue, so a stick flick shorter than a frame is not
+     preserved this way; the sim's visible first tick still applies to it. */
+  bool turnLeft, turnRight;
+  turnTapReadPair(&leftTurnTap, KEY_DOWN(setKeys->kiLeft),
+                  &rightTurnTap, KEY_DOWN(setKeys->kiRight),
+                  &turnLeft, &turnRight);
+  if (KEY_DOWN(setKeys->kiForward) && turnRight) {
     tb = TRIGHTACCEL;
-  } else if (KEY_DOWN(setKeys->kiForward) && KEY_DOWN(setKeys->kiLeft)) {
+  } else if (KEY_DOWN(setKeys->kiForward) && turnLeft) {
     tb = TLEFTACCEL;
-  } else if (KEY_DOWN(setKeys->kiBackward) && KEY_DOWN(setKeys->kiLeft)) {
+  } else if (KEY_DOWN(setKeys->kiBackward) && turnLeft) {
     tb = TLEFTDECEL;
-  } else if (KEY_DOWN(setKeys->kiBackward) && KEY_DOWN(setKeys->kiRight)) {
+  } else if (KEY_DOWN(setKeys->kiBackward) && turnRight) {
     tb = TRIGHTDECEL;
   } else if (KEY_DOWN(setKeys->kiForward)) {
     tb = TACCEL;
   } else if (KEY_DOWN(setKeys->kiBackward)) {
     tb = TDECEL;
-  } else if (KEY_DOWN(setKeys->kiLeft)) {
+  } else if (turnLeft) {
     tb = TLEFT;
-  } else if (KEY_DOWN(setKeys->kiRight)) {
+  } else if (turnRight) {
     tb = TRIGHT;
   }
 
@@ -654,11 +701,6 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
     int delta = inputGamepadGetBuildSelectChange();
     if (delta != 0) {
       clientSimCycleBuildSelect(cs, delta);
-      /* Sync the status-panel's cached gCurrentBuildSelect — the mouse
-         click path does this at sdl3draw.c:589, but the cycle only
-         updates the ClientSim field. Without this the left-side indent
-         doesn't move when D-pad cycles. */
-      sdl3DrawSelectIndentsOn(clientSimGetCurrentBuildSelect(cs), 0, 0);
     }
 
     /* Build-cursor toggle gesture:
@@ -816,8 +858,6 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
     if (wantSwitch) {
       curSelect = clientSimGetCurrentBuildSelect(cs);
       if (curSelect != newSelect) {
-        sdl3DrawSelectIndentsOff(curSelect, 0, 0);
-        sdl3DrawSelectIndentsOn(newSelect, 0, 0);
         clientSimSetCurrentBuildSelect(cs, newSelect);
       }
     }
@@ -972,8 +1012,24 @@ bool inputIsMineKeyPressed(keyItems *setKeys, bool isMenu) {
 *  setKeys  - Structure that holds the key bindings
 *  scancode - SDL_Scancode of the key
 *  newState - true if pressed, false if released
+*  repeat   - true for an OS auto-repeat of a held key
+*  allowTurn - true while a running game can accept turn taps
 *********************************************************/
-void inputButtonInput(keyItems *setKeys, SDL_Scancode scancode, bool newState) {
+void inputButtonInput(keyItems *setKeys, SDL_Scancode scancode, bool newState,
+                      bool repeat, bool allowTurn) {
+  /* An auto-repeat is not a new press. The suspended path of inputGetKeys
+     clears the tap state every sample, so without this a turn key held
+     across a menu would queue a fresh tap from its next repeat and the poll
+     would insert a release into a continuous hold. */
+  bool acceptTurn = allowTurn && !repeat && scancode > 0 &&
+                    scancode < SDL_SCANCODE_COUNT && !swallowedKeys[scancode] &&
+                    appHasFocus() && !sdl3ImguiWantsKeyboard();
+  if ((int)scancode == setKeys->kiLeft) {
+    turnTapEvent(&leftTurnTap, newState, acceptTurn);
+  }
+  if ((int)scancode == setKeys->kiRight) {
+    turnTapEvent(&rightTurnTap, newState, acceptTurn);
+  }
   if ((int)scancode == setKeys->kiLayMine) {
     /* Edge detection: only set mineKeyEventDown on a fresh press,
      * not on auto-repeat KEY_DOWN events */

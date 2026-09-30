@@ -73,7 +73,9 @@ static InputHandle_t s_real_controller_handle = 0;
    the pad's input dead in the menus.  Force a re-activation to re-bind it. */
 static bool s_force_actionset_reactivate = false;
 /* Set when a Workshop item finishes installing or downloading; consumed by
-   steam_workshop_consume_installed_event() so the skin picker can rescan. */
+   steam_workshop_consume_installed_event(), whose one caller is
+   workshopSyncPoll(): it copies the item into the Workshop directory and
+   moves on the generation the skin picker rescans by. */
 static bool s_workshop_installed_event = false;
 
 /* Workshop publish.  CreateItem and SubmitItemUpdate hand back a
@@ -111,6 +113,7 @@ static char s_pubTitle[k_cchPublishedDocumentTitleMax];
 static char s_pubDesc[k_cchPublishedDocumentDescriptionMax];
 static char s_pubPreview[1024];
 static char s_pubFolder[1024];
+static char s_pubTag[256];
 
 /* StartItemUpdate through SubmitItemUpdate for one item, using the fields
    copied above.  Defined with the other publish functions at the foot of the
@@ -149,6 +152,7 @@ extern "C" void steam_shutdown(void) {
   s_pubDesc[0] = '\0';
   s_pubPreview[0] = '\0';
   s_pubFolder[0] = '\0';
+  s_pubTag[0] = '\0';
 }
 
 extern "C" void steam_run_callbacks(void) {
@@ -749,6 +753,12 @@ extern "C" bool steam_workshop_item(int idx, uint64_t *id, char *folder,
   return true;
 }
 
+extern "C" bool steam_workshop_item_disabled(uint64_t id) {
+  if (!steam_workshop_available() || id == 0) return false;
+  return (SteamUGC()->GetItemState((PublishedFileId_t)id) &
+          k_EItemStateDisabledLocally) != 0;
+}
+
 extern "C" void steam_workshop_request_download(uint64_t id) {
   if (!steam_workshop_available() || id == 0) return;
   SteamUGC()->DownloadItem((PublishedFileId_t)id, true);
@@ -789,6 +799,16 @@ static void steam_publish_copy(char *dst, size_t dstSize, const char *src) {
   dst[dstSize - 1] = '\0';
 }
 
+/* The size of a file in bytes, or -1 when it cannot be opened.  Steam refuses
+ * a preview under 16 bytes or over 1 MB, so the submit log carries it. */
+static long steam_publish_file_size(const char *path) {
+  FILE *f = fopen(path, "rb");
+  if (!f) return -1;
+  long size = (fseek(f, 0, SEEK_END) == 0) ? ftell(f) : -1;
+  fclose(f);
+  return size;
+}
+
 static bool steam_publish_submit_update(PublishedFileId_t id) {
   ISteamUGC *ugc = SteamUGC();
   ISteamUtils *utils = SteamUtils();
@@ -797,19 +817,43 @@ static bool steam_publish_submit_update(PublishedFileId_t id) {
   UGCUpdateHandle_t h = ugc->StartItemUpdate(utils->GetAppID(), id);
   if (h == k_UGCUpdateHandleInvalid) return false;
 
-  ugc->SetItemTitle(h, s_pubTitle);
-  ugc->SetItemDescription(h, s_pubDesc);
-  ugc->SetItemContent(h, s_pubFolder);
+  /* A setter that refuses its value does not stop the submit, whose result
+     then only says "invalid parameter" — so each refusal is logged here with
+     what it was handed. */
+  WB_LOG_INFO(WB_LOG_CAT_GUI,
+              "steam_workshop: submitting id=%llu folder=\"%s\" "
+              "preview=\"%s\" (%ld bytes) tag=\"%s\"",
+              (unsigned long long)id, s_pubFolder, s_pubPreview,
+              s_pubPreview[0] != '\0' ? steam_publish_file_size(s_pubPreview)
+                                      : 0L,
+              s_pubTag);
+  if (!ugc->SetItemTitle(h, s_pubTitle))
+    WB_LOG_ERROR(WB_LOG_CAT_GUI,
+                 "steam_workshop: SetItemTitle refused \"%s\"", s_pubTitle);
+  if (!ugc->SetItemDescription(h, s_pubDesc))
+    WB_LOG_ERROR(WB_LOG_CAT_GUI,
+                 "steam_workshop: SetItemDescription refused (%u bytes)",
+                 (unsigned)strlen(s_pubDesc));
+  if (!ugc->SetItemContent(h, s_pubFolder))
+    WB_LOG_ERROR(WB_LOG_CAT_GUI,
+                 "steam_workshop: SetItemContent refused \"%s\"", s_pubFolder);
   /* An empty preview path is "no preview image"; handing that to
      SetItemPreview would fail the whole update. */
-  if (s_pubPreview[0] != '\0') ugc->SetItemPreview(h, s_pubPreview);
+  if (s_pubPreview[0] != '\0' && !ugc->SetItemPreview(h, s_pubPreview))
+    WB_LOG_ERROR(WB_LOG_CAT_GUI,
+                 "steam_workshop: SetItemPreview refused \"%s\"", s_pubPreview);
 
-  /* One "Skin" tag — what the app's Workshop page filters on. */
-  const char *tags[] = {"Skin"};
-  SteamParamStringArray_t arr;
-  arr.m_ppStrings = tags;
-  arr.m_nNumStrings = 1;
-  ugc->SetItemTags(h, &arr);
+  /* The item's one tag — what the app's Workshop page filters on.  An empty
+     tag leaves the item's tags alone. */
+  if (s_pubTag[0] != '\0') {
+    const char *tags[] = {s_pubTag};
+    SteamParamStringArray_t arr;
+    arr.m_ppStrings = tags;
+    arr.m_nNumStrings = 1;
+    if (!ugc->SetItemTags(h, &arr))
+      WB_LOG_ERROR(WB_LOG_CAT_GUI,
+                   "steam_workshop: SetItemTags refused \"%s\"", s_pubTag);
+  }
 
   /* Visibility is deliberately left alone.  A new item starts private, and
      the author makes it public from the item page — where this flow sends
@@ -824,7 +868,8 @@ extern "C" bool steam_workshop_publish_begin(const char *contentFolder,
                                              const char *title,
                                              const char *description,
                                              const char *previewPng,
-                                             uint64_t existingId) {
+                                             uint64_t existingId,
+                                             const char *tag) {
   if (!steam_workshop_available()) return false;
   /* One publish at a time — a second begin would overwrite the handle the
      dispatch arm is matching against and strand the first. */
@@ -840,6 +885,7 @@ extern "C" bool steam_workshop_publish_begin(const char *contentFolder,
   steam_publish_copy(s_pubTitle, sizeof(s_pubTitle), title);
   steam_publish_copy(s_pubDesc, sizeof(s_pubDesc), description);
   steam_publish_copy(s_pubPreview, sizeof(s_pubPreview), previewPng);
+  steam_publish_copy(s_pubTag, sizeof(s_pubTag), tag);
   s_pubNeedsLegal = false;
   s_pubFileId = 0;
   s_pubUpdate = k_UGCUpdateHandleInvalid;

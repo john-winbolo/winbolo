@@ -41,6 +41,7 @@
 #include "../gui/sdl3/sdl3draw.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "../gui/sdl3/sdl3imgui.h"
+#include "../gui/sdl3/dialogs/imgui_mapchooser.h"
 #include "../gui/sdl3/luabrainshandler.h"
 
 /* Forward declaration */
@@ -200,6 +201,15 @@ bool  gameFrontOverviewFollow = TRUE;
 bool  gameFrontShowMapOverview = FALSE;
 bool  gameFrontFullScreen = FALSE;
 
+/* Scenario panel position, size and opacity (-1 = never moved/resized/set;
+ * [WINDOW] section on desktop). The wasm build never persists window
+ * settings, but the shared scenario panel in sdl3imgui.cpp reads and writes
+ * the symbols. */
+int gameFrontScnPanelX = -1;
+int gameFrontScnPanelY = -1;
+int gameFrontScnPanelScale = -1;
+int gameFrontScnPanelAlpha = -1;
+
 bool isServer = FALSE;
 bool useAutoslow;
 bool useAutohide;
@@ -223,6 +233,11 @@ int            gameFrontHostingUploadPolicy     = UPLOAD_POLICY_ALLOW;
 int            gameFrontHostingUploadMaxFiles   = 64;
 int            gameFrontHostingUploadMaxStorage = 8;
 char           gameFrontHostingUploadDir[FILENAME_MAX] = "";
+int            gameFrontHostingScriptUploadPolicy     = SCRIPT_UPLOAD_ALLOW;
+bool           gameFrontHostingShareScripts           = TRUE;
+int            gameFrontHostingScriptUploadMaxFiles   = 32;
+int            gameFrontHostingScriptUploadMaxStorage = 64;
+char           gameFrontHostingScriptUploadDir[FILENAME_MAX] = "";
 bool           gameFrontHostingLogging          = TRUE;
 char           gameFrontHostingLogDir[FILENAME_MAX] = "";
 bool           gameFrontHostingServeReplays     = TRUE;
@@ -239,6 +254,7 @@ int gameFrontViewBaseDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 int gameFrontViewAllyDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 bool gameFrontClassicMode      = FALSE;
 bool gameFrontAlliesInTrees    = FALSE;
+bool gameFrontPositionalSound  = FALSE;
 int gameFrontOverviewWindow    = OVERVIEW_WINDOW_STOCK;
 int gameFrontLineOfSight       = LINE_OF_SIGHT_STOCK;
 
@@ -246,7 +262,6 @@ int gameFrontLineOfSight       = LINE_OF_SIGHT_STOCK;
  * inside humanSim; only high-level lifecycle gating is tracked here. */
 static ServerSim *wasmServerSim = NULL;
 static bool wasmTransportActive = FALSE;
-static BYTE wasmPlayerNum = 0;
 static SubscriberHandle wasmControlSub = SUBSCRIBER_HANDLE_INVALID;
 
 ClientSim *humanSim = NULL;
@@ -287,7 +302,6 @@ static void gameFrontSetDefaultKeys(keyItems *keys) {
   keys->kiTankView     = DEFAULT_TANKVIEW;
   keys->kiPillView     = DEFAULT_PILLVIEW;
   keys->kiAllyView     = DEFAULT_ALLYVIEW;
-  keys->kiLGMView      = DEFAULT_LGMVIEW;
   keys->kiBaseView     = DEFAULT_BASEVIEW;
   keys->kiOverviewZoom = DEFAULT_OVERVIEW_ZOOM;
   keys->kiOverviewFollow  = DEFAULT_OVERVIEW_FOLLOW;
@@ -342,6 +356,46 @@ static void wasmLockToggleCallback(bool allow) {
   clientSimNetSendLockToggle(humanSim, allow);
 }
 
+/* Ask the browser for the join password with window.prompt, the only
+ * blocking text entry this build has before the game loop runs. wrongBefore
+ * adds the incorrect-password line above the request. Returns FALSE on
+ * Cancel and leaves the password global as it was; otherwise the entry
+ * replaces it. The reply comes back with a one-letter prefix so an empty
+ * entry and a cancelled prompt read differently. */
+static bool wasmAskJoinPassword(bool wrongBefore) {
+  char msg[512];
+  char escaped[1024];
+  /* Room for a fully escaped msg plus the wrapper, so a long localised
+   * message cannot truncate the script mid string literal. */
+  char js[sizeof(escaped) + 96];
+  const char *reply;
+  size_t i, o = 0;
+  if (wrongBefore) {
+    snprintf(msg, sizeof(msg), "%s\n\n%s",
+             langGetText(NETERR_PASSWORDWRONG),
+             langGetText(STR_DLGPASSWORD_BLURB));
+  } else {
+    snprintf(msg, sizeof(msg), "%s", langGetText(STR_DLGPASSWORD_BLURB));
+  }
+  /* JS string literal escape: backslash, quote, newline. */
+  for (i = 0; msg[i] != '\0' && o + 2 < sizeof(escaped); i++) {
+    char c = msg[i];
+    if (c == '\\' || c == '\'') { escaped[o++] = '\\'; escaped[o++] = c; }
+    else if (c == '\n') { escaped[o++] = '\\'; escaped[o++] = 'n'; }
+    else if (c == '\r') { /* dropped */ }
+    else escaped[o++] = c;
+  }
+  escaped[o] = '\0';
+  snprintf(js, sizeof(js),
+    "(function(){ var r = window.prompt('%s'); return r === null ? 'C' : 'P' + r; })()",
+    escaped);
+  reply = emscripten_run_script_string(js);
+  if (reply == NULL || reply[0] != 'P') return FALSE;
+  strncpy(password, reply + 1, sizeof(password) - 1);
+  password[sizeof(password) - 1] = '\0';
+  return TRUE;
+}
+
 /* -------------------------------------------------------
  * gameFrontStart — skip all dialogs, start practice game
  * ------------------------------------------------------- */
@@ -394,21 +448,15 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     /* Tell SDL3 to use the existing canvas element from shell.html */
     SDL_SetHint(SDL_HINT_EMSCRIPTEN_CANVAS_SELECTOR, "#canvas");
 
-    if (sdl3DrawSetup(windowGetZoomFactor()) == FALSE) {
+    /* For custom mode, use ceiling integer zoom so render target >= window.
+       sdl3DrawAdaptRenderTarget will adjust dynamically on resize. */
+    BYTE zf = windowGetZoomFactor();
+    if (zf == ZOOM_FACTOR_CUSTOM) zf = ZOOM_FACTOR_DOUBLE;
+    if (sdl3DrawSetup(zf) == FALSE) {
       printf("[WASM] sdl3DrawSetup FAILED\n");
       return FALSE;
     }
     printf("[WASM] sdl3DrawSetup OK\n");
-
-    /* SDL3's Emscripten backend resets the canvas element size during probing.
-       Force both the canvas buffer and SDL window to the desired resolution. */
-    {
-      SDL_Window *win = sdl3DrawGetWindow();
-      int w, h;
-      SDL_GetWindowSize(win, &w, &h);
-      emscripten_set_canvas_element_size("#canvas", w, h);
-      printf("[WASM] Forced canvas to: %d x %d\n", w, h);
-    }
 
     if (soundSetup() == FALSE) {
       soundEffects = FALSE;
@@ -501,6 +549,16 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       printf("[WASM] network play: join name=%s\n", gameFrontName);
     }
 
+    /* Join password. A ?password= parameter on the launch URL seeds it (a
+     * dev/LAN proxy link can carry one); otherwise it starts empty and an
+     * incorrect-password reject below asks through the browser and retries.
+     * The loop only repeats for that retry. */
+    {
+      const char *urlPw = gameFrontGetUrlParam("password");
+      strncpy(password, urlPw, sizeof(password) - 1);
+      password[sizeof(password) - 1] = '\0';
+    }
+    for (;;) {
     /* Mint the single-use join code from the game_key just before connecting.
      * A fresh code is minted on every (re)connect: a page refresh or relay
      * failover re-runs this path and mints again, so a consumed code is never
@@ -551,13 +609,30 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     if (!clientFrontAwaitJoin(humanSim, 1500)) {
       const char *reason = clientSimGetConnectErrorReason(humanSim);
       printf("[WASM] Join failed: %s\n", reason ? reason : "timeout");
+      if (clientSimGetConnectErrorLangId(humanSim) == STR_REJECT_INCORRECT_PASSWORD) {
+        /* The first reject means the game has a password; a later one
+         * means the entry was wrong. Retry on a fresh ClientSim, with a
+         * fresh join code: the rejected request never reached re-auth,
+         * but the mint is cheap and a new code is always valid. */
+        bool wrongBefore = (password[0] != '\0');
+        if (wasmAskJoinPassword(wrongBefore)) {
+          clientSimDisconnect(humanSim);
+          clientSimDestroy(humanSim);
+          humanSim = clientSimAlloc();
+          clientSimCreate(humanSim);
+          frontEndSetActiveClientSim(humanSim);
+          clientSimSetMyLastPlayerName(humanSim, gameFrontName);
+          continue;
+        }
+      }
       wasmReportConnectFailure(
           reason && reason[0] ? reason
                               : langGetText(STR_WEB_JOIN_NO_RESPONSE));
       return FALSE;
     }
+    break;
+    }
 
-    wasmPlayerNum = clientSimGetServerPlayerNum(humanSim);
     wasmTransportActive = TRUE;
 
     /* Store server address in ClientSim for brain info */
@@ -587,7 +662,8 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
      * and the first snapshot apply fires the viewport finalisation. The lobby
      * vs running landing (netLobby) is settled by clientFrontAwaitJoin, and the
      * mapDownloadComplete flag stays transport-driven, so nothing to do here. */
-    printf("[WASM] UDP connected as player %d\n", wasmPlayerNum);
+    printf("[WASM] UDP connected as player %d\n",
+           clientSimGetServerPlayerNum(humanSim));
   } else {
     /* ---- Single-player via ServerSim + local transport ---- */
     printf("[WASM] Setting up single-player ServerSim...\n");
@@ -617,7 +693,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       }
       if (wasmServerSim == NULL) {
         BYTE emap[6000] = E_MAP;
-        wasmServerSim = serverSimCreateCompressed(emap, 5097, "EverardIsland", gametype, hiddenMines, startDelay, timeLen);
+        wasmServerSim = serverSimCreateCompressed(emap, E_MAP_LEN, "EverardIsland", gametype, hiddenMines, startDelay, timeLen);
       }
       if (wasmServerSim == NULL) {
         printf("[WASM] Failed to create ServerSim\n");
@@ -667,7 +743,6 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       return FALSE;
     }
     wasmTransportActive = TRUE;
-    wasmPlayerNum = 0;
     /* Session-type flag for the lobby/UI (hide multiplayer-only controls).
      * The shared tick core's keys-half pump skip keys off
      * clientSimTransportTicksServer, which clientSimConnectLocal (active)
@@ -772,7 +847,6 @@ void gameFrontSetUdpOptions(char *pn, char *add,
   gameFrontTargetUdp = theirUdp;
 }
 
-void gameFrontGetPassword(char *pword) { strcpy(pword, password); }
 void gameFrontGetPlayerName(char *pn)  { strcpy(pn, gameFrontName); }
 void gameFrontSetPlayerName(char *pn)  { strcpy(gameFrontName, pn); }
 
@@ -924,6 +998,25 @@ uint8_t gameFrontSpBotMode(const char *brainPath) { (void)brainPath; return 0; }
  * lobby re-derives it from the name each session (same result every time). */
 bool gameFrontGetBotTagColor(const char *botName, uint32_t *rgb) { (void)botName; (void)rgb; return false; }
 void gameFrontSetBotTagColor(const char *botName, uint32_t rgb) { (void)botName; (void)rgb; }
+/* No per-scenario panel layout either. Window geometry stays out of the
+ * cloud-synced prefs, so no row is ever remembered and the panel keeps
+ * whatever the gameFrontScnPanel* globals hold. */
+bool gameFrontGetScnPanelLayout(const char *scenario, int *x, int *y,
+                                int *scale, int *alpha) {
+  (void)scenario; (void)x; (void)y; (void)scale; (void)alpha;
+  return false;
+}
+void gameFrontSetScnPanelLayout(const char *scenario, int x, int y,
+                                int scale, int alpha) {
+  (void)scenario; (void)x; (void)y; (void)scale; (void)alpha;
+}
+/* The map chooser tags a map that has a script beside it. The browser build
+ * links no scenario library, so every map reads plain here; desktop asks the
+ * library through scenarioHostMapHasScript. */
+bool mapChooserMapHasScript(const char *mapPath) {
+  (void)mapPath;
+  return false;
+}
 /* No WinBolo.net stats plumbing here either, so the skill guess has nothing
  * to go on: the browser build gets the same Hard every difficulty currently
  * plays like. */
@@ -959,6 +1052,27 @@ void gameFrontSetHostingUploadDir(const char *dir) {
               sizeof(gameFrontHostingUploadDir));
 }
 
+void gameFrontSetHostingScriptUploadPolicy(int policy) {
+  gameFrontHostingScriptUploadPolicy = policy;
+}
+
+void gameFrontSetHostingShareScripts(bool on) {
+  gameFrontHostingShareScripts = on;
+}
+
+void gameFrontSetHostingScriptUploadMaxFiles(int maxFiles) {
+  gameFrontHostingScriptUploadMaxFiles = maxFiles;
+}
+
+void gameFrontSetHostingScriptUploadMaxStorage(int maxStorageMb) {
+  gameFrontHostingScriptUploadMaxStorage = maxStorageMb;
+}
+
+void gameFrontSetHostingScriptUploadDir(const char *dir) {
+  SDL_strlcpy(gameFrontHostingScriptUploadDir, dir ? dir : "",
+              sizeof(gameFrontHostingScriptUploadDir));
+}
+
 void gameFrontSetHostingLogDir(const char *dir) {
   SDL_strlcpy(gameFrontHostingLogDir, dir ? dir : "",
               sizeof(gameFrontHostingLogDir));
@@ -972,6 +1086,7 @@ void gameFrontSetViewBaseDecaySecs(int secs) { gameFrontViewBaseDecaySecs = secs
 void gameFrontSetViewAllyDecaySecs(int secs) { gameFrontViewAllyDecaySecs = secs; }
 void gameFrontSetClassicMode(bool on)        { gameFrontClassicMode = on; }
 void gameFrontSetAlliesInTrees(bool on)      { gameFrontAlliesInTrees = on; }
+void gameFrontSetPositionalSound(bool on)    { gameFrontPositionalSound = on; }
 void gameFrontSetOverviewWindow(int window)  { gameFrontOverviewWindow = window; }
 void gameFrontSetLineOfSight(int mode)       { gameFrontLineOfSight = mode; }
 
@@ -991,7 +1106,14 @@ void gameFrontSetVisibilityCustom(const VisibilitySettings *v) {
   gameFrontVisibilityCustomSaved = TRUE;
 }
 
-void gameFrontRememberVisibility(const VisibilitySettings *v) {
+/* The browser build never hosts (gameFrontHasLocalServer is FALSE), so
+ * the lobby never records a pick here. */
+void gameFrontRememberGameType(gameType gt)     { (void)gt; }
+void gameFrontRememberAiPolicy(aiType ai)       { (void)ai; }
+void gameFrontRememberHiddenMines(bool hm)      { (void)hm; }
+
+void gameFrontRememberVisibility(const VisibilitySettings *v,
+                                 bool                      saveCustom) {
   VisibilityPreset p;
 
   if (v == NULL) return;
@@ -1003,11 +1125,12 @@ void gameFrontRememberVisibility(const VisibilitySettings *v) {
   gameFrontViewAllyDecaySecs = (int)v->decaySecs[viewCategoryAlly];
   gameFrontClassicMode       = v->classicMode;
   gameFrontAlliesInTrees     = v->alliesInTrees;
+  gameFrontPositionalSound   = v->positionalSound;
   gameFrontOverviewWindow    = (int)v->overviewWindow;
   gameFrontLineOfSight       = (int)v->lineOfSight;
   p = visibilityPresetMatch(v);
   gameFrontVisibilityPreset = (int)p;
-  if (p == visibilityPresetCustom) {
+  if (saveCustom && p == visibilityPresetCustom) {
     gameFrontSetVisibilityCustom(v);
   }
 }
@@ -1025,6 +1148,7 @@ void gameFrontGetVisibilitySettings(VisibilitySettings *out) {
   out->overviewWindow              = (uint8_t)gameFrontOverviewWindow;
   out->lineOfSight                 = (uint8_t)gameFrontLineOfSight;
   out->alliesInTrees               = gameFrontAlliesInTrees;
+  out->positionalSound             = gameFrontPositionalSound;
 }
 
 /* Steam rich presence — there is no Steam client behind a browser tab. */
@@ -1064,7 +1188,11 @@ ServerSim *gameFrontGetServerSim(void) {
 }
 
 BYTE gameFrontGetPlayerNum(void) {
-  return wasmPlayerNum;
+  /* Same race as the desktop gamefront.c: the join can land on the lobby
+   * replay before JOIN_ACCEPT, so the copy taken at join may still be 0.
+   * The resent accept updates the transport, so read it live. It answers 0
+   * with no sim and for the local (non-UDP) transport. */
+  return clientSimGetServerPlayerNum(humanSim);
 }
 
 bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {

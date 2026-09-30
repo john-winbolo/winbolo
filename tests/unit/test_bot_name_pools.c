@@ -349,10 +349,11 @@ int run_bot_pool_wire_rejects_garbage(void) {
     return 0;
 }
 
-/* Full server→client wire path for the catalog: serialize → split into
+/* The retired chunk path for the catalog: serialize → split into
  * CTRL_LOBBY_BOT_POOL_CHUNK events → encode each through the real codec →
- * decode → reassemble in order → deserialize+install. Mirrors what the
- * server replay-sync and client_sim_control reassembly do, minus sockets. */
+ * decode → reassemble in order → deserialize+install. Nothing sends the
+ * chunks now (the catalogue goes on CHANNEL_BULK), but the codec stays so
+ * recordings that hold them decode, and this still holds it to that. */
 int run_bot_pool_wire_chunk_transport(void) {
     static unsigned char blob[70000];
     static unsigned char assembled[70000];
@@ -443,5 +444,49 @@ int run_bot_pool_json_missing_file_keeps_active(void) {
         remove(path);
     }
 
+    return 0;
+}
+
+/* THE CATALOGUE ID NAMES THE POOLS, NOT THE BYTES THAT CARRIED THEM.
+ *
+ * A joiner compares the id the server named with the id of its own pools and
+ * fetches the catalogue only when they differ. So the id has to be the same
+ * for the same pools whichever peer computes it — including a client that got
+ * them by installing the server's blob — and different for different pools.
+ * And SerializeWithId must hand out the id that CatalogId would. */
+int run_bot_pool_catalog_id(void) {
+    static unsigned char blob[70000];
+    const char *a[] = { "Red", "Green", "Blue" };
+    LobbyBotPoolDef def;
+    uint32_t builtinId, withId = 0, otherId;
+    int n;
+
+    lobbyBotPoolsReset();
+    builtinId = lobbyBotPoolsCatalogId();
+    UT_ASSERT_MSG(builtinId != 0, "the built-in pools have no id");
+    UT_ASSERT(lobbyBotPoolsCatalogId() == builtinId);
+
+    n = lobbyBotPoolsSerializeWithId(blob, (int)sizeof(blob), &withId);
+    UT_ASSERT(n > 4);
+    UT_ASSERT_MSG(withId == builtinId,
+                  "SerializeWithId said %08x, CatalogId %08x",
+                  (unsigned)withId, (unsigned)builtinId);
+
+    def.label = "Colors"; def.names = a; def.nameCount = 3;
+    UT_ASSERT(lobbyBotPoolsInstall(&def, 1, NULL) == 1);
+    otherId = lobbyBotPoolsCatalogId();
+    UT_ASSERT_MSG(otherId != 0 && otherId != builtinId,
+                  "other pools have id %08x, the built-in ones %08x",
+                  (unsigned)otherId, (unsigned)builtinId);
+
+    /* Installing the built-in blob over them gives the built-in id back:
+       what a client that fetched the server's catalogue then compares. */
+    UT_ASSERT(lobbyBotPoolsDeserializeInstall(blob, n, NULL) > 0);
+    UT_ASSERT_MSG(lobbyBotPoolsCatalogId() == builtinId,
+                  "the pools installed from the blob have id %08x, the pools "
+                  "it was made from %08x",
+                  (unsigned)lobbyBotPoolsCatalogId(), (unsigned)builtinId);
+
+    lobbyBotPoolsReset();
     return 0;
 }

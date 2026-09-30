@@ -79,6 +79,7 @@
 
 #include <lua.h>
 #include <lauxlib.h>
+#include <lualib.h>                /* luaL_openlibs, for an unsafe state */
 
 /* SDL_Mutex, SDL_ThreadID and SDL_GetCurrentThreadID, which the VM lock is
  * built from. server_sim.h brings SDL in as well; named here because this
@@ -87,14 +88,37 @@
 
 #include "platform_types.h"        /* BOLO_STATIC_ASSERT */
 #include "bolo_rand.h"             /* BoloRandState, bolo_rand_save */
+#include "../common/wb_log.h"      /* WB_LOG_INFO — the line a saved copy logs */
+#include "brain_list.h"            /* brainListResolve — the brain a team
+                                    * names, against this server's own
+                                    * brains directory */
 #include "server_sim.h"            /* ServerSim, serverSimConsoleMessage */
-#include "scenario_defs.h"         /* SCN_RULE_LIST, ScenarioOp, ScnOpResult */
+#include "wire_limits.h"           /* LOBBY_MAP_UPLOAD_MAX_BYTES — how much of
+                                    * a map file the chunk test reads — and
+                                    * LOBBY_PACKAGE_UPLOAD_MAX_BYTES, how much
+                                    * of one the attach reads */
+#include "scenario_defs.h"         /* SCN_RULE_COUNT, ScenarioOp, ScnOpResult */
+#include "sim_rules_names.h"       /* simRulesRuleIndex / simRulesRuleName */
 #include "server_sim_scenario.h"   /* the funnel and the round-start hook-up */
 
 #include "scenario_host.h"
+#include "scenario_dir.h"          /* scnDirList — what the sim's scenario
+                                    * lister is pointed at — and the row
+                                    * filler the map's own script is
+                                    * published through */
 #include "scenario_manifest.h"
 #include "scenario_events.h"
 #include "scenario_lua.h"
+#include "scenario_manifest_json.h" /* a package's manifest, read and held
+                                     * against the table its script declares */
+#include "scenario_record_json.h"  /* scnRecordJsonWrite — the recording's
+                                    * scripts.json */
+#include "scenario_package.h"      /* scnPackageFindInMap — the second way a
+                                    * map can carry a script */
+#include "scenario_chunk.h"        /* scnIoSetWorkshopId — an id carried
+                                    * across a repack for publishing */
+#include "scenario_pack.h"         /* scnPackScript — a loose script packed
+                                    * for publishing */
 #include "scenario_sandbox.h"      /* the libraries a scenario state gets */
 #include "scenario_validate.h"     /* ScnParseReport, and the parse this file
                                     * shares with the validator */
@@ -108,8 +132,22 @@
 BOLO_STATIC_ASSERT(SCN_MANIFEST_RULES_MAX >= (int)SCN_RULE_COUNT,
                    manifest_holds_every_rule_at_once);
 
-/* A team's brain is the same text a spawn carries, and the manifest sizes
- * it without seeing the op. Held against the op's own length here. */
+/* How many scripts a host composes, held against how many the wire can name.
+ * scenario_host.h cannot see control_event.h and control_event.h cannot see
+ * src/scenario/, so each keeps its own number and this is the translation
+ * unit that sees both. The two moving apart would be a list a host composed
+ * and the lobby could not say, which nothing at runtime would report. */
+BOLO_STATIC_ASSERT(SCN_SCRIPTS_MAX == LOBBY_SCRIPT_LIST_MAX,
+                   host_composes_exactly_what_the_wire_can_name);
+
+/* And against how many rows the recording's description holds, which
+ * scenario_io sizes without seeing this header. */
+BOLO_STATIC_ASSERT(SCN_SCRIPTS_MAX == SCN_RECORD_SCRIPTS_MAX,
+                   record_describes_every_script_a_round_composes);
+
+/* A team's brain becomes the path a spawn carries, and the manifest sizes the
+ * name without seeing the op. Held against the op's own length here, because
+ * the template below writes the resolved path into a field of that width. */
 BOLO_STATIC_ASSERT(SCN_BRAIN_LEN == SCN_PATH_MAX,
                    manifest_brain_matches_the_op_path_length);
 
@@ -117,6 +155,15 @@ BOLO_STATIC_ASSERT(SCN_BRAIN_LEN == SCN_PATH_MAX,
  * sixty-fifth region would be a region no tank could ever be recorded in. */
 BOLO_STATIC_ASSERT(SCN_REGIONS_MAX <= 64,
                    region_membership_fits_one_word_per_seat);
+
+/* The one long string an action carries goes to announce, message, log or
+ * end_round, and each of those puts it on the wire as a chat-sized message.
+ * A manifest holding a longer one would only have it cut again down there,
+ * where there is nothing left to say so. scenario_manifest.h restates the
+ * wire's length because it cannot see scenario_defs.h; this is where the two
+ * are visible together. */
+BOLO_STATIC_ASSERT(SCN_TRIGGER_TEXT_LEN == SCN_TEXT_MAX,
+                   trigger_text_matches_the_wire_text_length);
 
 /* What a refusal was, in words. A script author reads these, so each is
  * the reason rather than the enumerator's spelling. */
@@ -142,6 +189,7 @@ static const char *scnResultText(ScnOpResult r) {
         case SCN_OP_RATE:           return "over the tick's budget";
         case SCN_OP_NOT_FOUND:      return "not found";
         case SCN_OP_NO_STOCK:       return "not enough stock";
+        case SCN_OP_NO_RUNNER:      return "that seat has no brain behind it";
         case SCN_OP_BAD_CALL:       return "malformed call";
     }
     return "refused";
@@ -182,7 +230,7 @@ static void scnSay(char *buf, size_t len, const char *fmt, ...) {
  * hear it as they always have; a validator collecting problems gets it as an
  * issue under key, which is the dotted path of the thing at fault.
  *
- * The three readers below go through here rather than through scnSay, because
+ * The four readers below go through here rather than through scnSay, because
  * what they complain about is the file's own content and that is exactly what
  * an author asking for a check wants listed. */
 static void scnReport(ScnParseReport *rep, const char *key,
@@ -274,59 +322,23 @@ static void scnLockLeave(ScnVmLock *l) {
 
 /* ── The hooks ────────────────────────────────────────────────────── */
 
-/* Every function a round may call, in one list: the four lifecycle calls
- * and one per event the host turns into a hook. The name a script writes it
- * under is here and nowhere else, so the name the boot resolves and the name
- * a case defines cannot drift apart.
+/* SCN_HOOK_LIST is in scenario_lua.h, where it carries each hook's kind and
+ * parameter names as well as its name, so the catalogue the editor and the
+ * documentation read and the hooks this file dispatches are one list. What
+ * this file takes from it is the id and the name; the rest of a row is not
+ * the host's business.
  *
- * The four at the top are not events. They are made where the round reaches
- * the point each of them names, and they take no trailing scripted boolean
- * because there is no event behind them to have caused.
- *
- * Nor do the last two, and for the same reason read the other way round.
- * Every hook between them comes off the queue, where the entry carries the
- * mark saying whether the scenario caused the fact. The two region hooks
- * come off no queue at all: the host samples where the tanks are once a
- * tick and compares that against the sample before it, so what it has is a
- * difference between two pictures and not an action anybody took. A
- * boolean there could only be a guess about which of the things that moved
- * a tank since the last sample mattered, and a script reading it would be
- * reading a guess. See scnScanRegions for what bounds the loop instead. */
-#define SCN_HOOK_LIST(X)                                                     \
-    X(SETUP,            "on_setup")                                          \
-    X(START,            "on_start")                                          \
-    X(TICK,             "on_tick")                                           \
-    X(END,              "on_end")                                            \
-    X(LOBBY,            "on_lobby")                                          \
-    X(PLAYER_JOIN,      "on_player_join")                                    \
-    X(PLAYER_LEAVE,     "on_player_leave")                                   \
-    X(TEAM_CHANGED,     "on_team_changed")                                   \
-    X(CHAT,             "on_chat")                                           \
-    X(TANK_SPAWNED,     "on_tank_spawned")                                   \
-    X(TANK_KILLED,      "on_tank_killed")                                    \
-    X(LGM_DIED,         "on_lgm_died")                                       \
-    X(LGM_LANDED,       "on_lgm_landed")                                     \
-    X(BASE_CAPTURED,    "on_base_captured")                                  \
-    X(BASE_NEUTRALIZED, "on_base_neutralized")                               \
-    X(PILL_CAPTURED,    "on_pill_captured")                                  \
-    X(PILL_PLACED,      "on_pill_placed")                                    \
-    X(PILL_PICKED_UP,   "on_pill_picked_up")                                 \
-    X(PILL_KILLED,      "on_pill_killed")                                    \
-    X(BUILT,            "on_built")                                          \
-    X(MINE_LAID,        "on_mine_laid")                                      \
-    X(MINE_EXPLOSION,   "on_mine_explosion")                                 \
-    X(ENTER_REGION,     "on_enter_region")                                   \
-    X(LEAVE_REGION,     "on_leave_region")
-
+ * The values below are what h->hooks is indexed by, so the order of the
+ * rows in that list is load-bearing here. */
 typedef enum {
-#define SCN_HOOK_ID_ROW(id, name) SCN_HOOK_##id,
+#define SCN_HOOK_ID_ROW(id, name, kind, params) SCN_HOOK_##id,
     SCN_HOOK_LIST(SCN_HOOK_ID_ROW)
 #undef SCN_HOOK_ID_ROW
     SCN_HOOK_COUNT
 } ScnHookId;
 
 static const char *const kScnHookNames[] = {
-#define SCN_HOOK_NAME_ROW(id, name) name,
+#define SCN_HOOK_NAME_ROW(id, name, kind, params) name,
     SCN_HOOK_LIST(SCN_HOOK_NAME_ROW)
 #undef SCN_HOOK_NAME_ROW
 };
@@ -336,23 +348,265 @@ BOLO_STATIC_ASSERT(
         (int)SCN_HOOK_COUNT,
     hook_name_table_is_the_whole_hook_list);
 
+/* ── The policies ─────────────────────────────────────────────────── */
+
+/* SCN_POLICY_LIST sits beside the hook list in scenario_lua.h and carries
+ * each policy's parameter names and what it answers as well as its name.
+ * What this file takes from it is the id and the name, so the name a policy
+ * is asked for below is the name the catalogue holds and the editor writes a
+ * stub for.
+ *
+ * Nothing is indexed by these values — a policy is looked up by name at each
+ * call rather than resolved once — so the order of the rows carries no
+ * meaning here. */
+typedef enum {
+#define SCN_POLICY_ID_ROW(id, name, params, returns) SCN_POLICY_##id,
+    SCN_POLICY_LIST(SCN_POLICY_ID_ROW)
+#undef SCN_POLICY_ID_ROW
+    SCN_POLICY_COUNT
+} ScnPolicyId;
+
+static const char *const kScnPolicyNames[] = {
+#define SCN_POLICY_NAME_ROW(id, name, params, returns) name,
+    SCN_POLICY_LIST(SCN_POLICY_NAME_ROW)
+#undef SCN_POLICY_NAME_ROW
+};
+
+BOLO_STATIC_ASSERT(
+    (int)(sizeof(kScnPolicyNames) / sizeof(kScnPolicyNames[0])) ==
+        (int)SCN_POLICY_COUNT,
+    policy_name_table_is_the_whole_policy_list);
+
+/* ── One script of the list ───────────────────────────────────────── */
+
+/* What the host holds about one of the scripts it composed.
+ *
+ * There is one of these per script and SCN_SCRIPTS_MAX of them on the host.
+ * Two things live here: what the script is — its bytes and where they came
+ * from, which the host keeps for as long as it is attached — and what this
+ * round made of it, which is the table, the globals and the hooks, all of
+ * them read again at every round start.
+ *
+ * The manifest is held by pointer and not by value, and that is a decision
+ * rather than a habit. A ScenarioManifest is 184,816 bytes: an array of them
+ * by value would cost that times SCN_SCRIPTS_MAX on every host whether the
+ * scripts were there or not — nothing at one, about 1.8 MB at ten — and the
+ * host already holds one of them by value beside this array. By pointer the
+ * cost is 184,816 bytes per script actually loaded and eight bytes per empty
+ * slot, which is the same arithmetic scnRoundBootLocked already does when it
+ * takes its working table off the heap rather than off a tick's frame.
+ *
+ * pkgManifest below is held by pointer for exactly that reason, and the
+ * measured numbers are these. A slot is 4,768 bytes and the array is 47,680,
+ * of which 4,610 a slot is the two paths — both sized for a map path off a
+ * command line, which is what SCN_SCRIPT_PATH_MAX is for. A slot holding no
+ * script costs the same 4,768, because the paths are arrays; what it does
+ * not cost is the 184,816 of a table it has not read or the same again for a
+ * container it did not come out of.
+ *
+ * The host measures 271,144 bytes, against 414,112 for the same host with
+ * the source on it once and the entries without it. It got smaller by moving
+ * the source in: the one package manifest the host used to hold by value is
+ * 184,816 of the 189,448 that left, and the ten slots grew by 46,480 between
+ * them. Held by value instead, pkgManifest alone would have put 1,848,160
+ * bytes on every host, most of it on maps that carry no container at all. */
+typedef struct ScnScriptEntry {
+    /* This script's own table, as its chunk declared it. NULL for a slot
+     * that holds no script. Freed at the end of the round that read it and
+     * at the detach. */
+    ScenarioManifest *manifest;
+
+    /* The table this script's globals live in, as a reference into the
+     * registry of the state that holds it, or LUA_NOREF for a slot with no
+     * script in it. Every global the chunk writes, its scenario table and
+     * its hook and policy functions are fields of this table and of no
+     * other, so two scripts writing the same name do not meet.
+     *
+     * Released with the state rather than by hand: every reference here
+     * belongs to one lua_State, and closing it takes the whole registry
+     * with it. */
+    int envRef;
+
+    /* The functions this script defined, looked up once at the boot that
+     * defined them. LUA_NOREF for every name it does not use, which for
+     * most scripts is most of them. */
+    int hooks[SCN_HOOK_COUNT];
+
+    /* This script's own errors in a row, and whether it has been switched
+     * off for the rest of the round.
+     *
+     * Per script and not per host, because a count shared across the list
+     * would let one script's successes put another script's failures back
+     * to zero and a script that failed every call would never reach the
+     * limit. Both are the round's: a round start puts them back. */
+    unsigned errors;
+    bool     disabled;
+
+    /* The count as the tick found it, and the errors counted against this
+     * script since, both written from the tick. A tick that runs out of
+     * instructions puts the count back to the sum of the two, so the calls
+     * that returned before the tick ran out clear nothing — see
+     * scnErrorTickRestore. */
+    unsigned tickSaved;
+    unsigned tickCounted;
+
+    /* ── What the script is, as against what this round made of it ──
+     *
+     * Everything above is read again at every round start and is gone at the
+     * end of the round that read it. Everything below is read once, when the
+     * host is given this script, and stays until the host lets it go or a
+     * reload replaces it. A round boot that fails empties the first group and
+     * leaves the second alone, which is what lets the next round start try
+     * the same bytes again. */
+
+    /* The script, read once at the attach and run again at every round
+     * start. NULL for a slot holding no script. This entry frees it.
+     *
+     * Per script and not per host, which is the change this phase is: the
+     * host held one set of bytes, so a list of two could be stored and
+     * published and only the first of them could ever be loaded. */
+    char               *src;
+    size_t              srcLen;
+
+    /* The file the bytes were read out of, and what Lua calls the chunk in
+     * an error — '@' and all, with the entry name behind it for a script
+     * that came out of a container. */
+    char                script[SCN_SCRIPT_PATH_MAX];
+    char                chunkName[SCN_SCRIPT_PATH_MAX + 2];
+
+    /* The container's own manifest for a script that came out of one, and
+     * NULL for a loose script, which has no manifest but the table it
+     * declares. Pushed as the scenario global before this script's chunk
+     * runs, and what the table the chunk leaves behind is held against.
+     *
+     * Distinct from manifest above, which is the live table the game rows
+     * read and a round start reads over: this one is what the package says
+     * it is and does not change while the host holds it.
+     *
+     * NULL is also what says the script did not come out of a container,
+     * which used to be a bool of its own beside it. One field rather than
+     * two because the two could disagree, and a fromPackage true with no
+     * manifest behind it would push nothing and still hold the chunk's
+     * table against nothing. */
+    ScenarioManifest   *pkgManifest;
+
+    /* Where this script came from: the committed map, or a file in the
+     * server's scenarios directory the host picked. A reload reads the same
+     * way the attach did and this is what says which; it is also what the
+     * lobby is told for the script that decides the round, so the settings
+     * event names a mod as a mod. */
+    LobbyScenarioSource source;
+} ScnScriptEntry;
+
+/* The conflicts one compose settled, as one thing to hand around: the rows,
+ * how many of them were kept and whether there were more. A compose fills
+ * one of these from nothing, so the log and the table it describes are
+ * always the same list's. */
+typedef struct {
+    ScnComposeConflict row[SCN_CONFLICTS_MAX];
+    int                count;
+    bool               overflowed;
+} ScnConflictLog;
+
 /* ── The host ─────────────────────────────────────────────────────── */
 
 struct ScenarioHost {
     ServerSim       *sim;
     lua_State       *L;       /* the live VM: the metadata one until a round
                                * starts, then that round's own */
+
+    /* The composite: what the list adds up to, and what every reader outside
+     * this file is answered from.
+     *
+     * The rule the split rests on is that a mod contributes runtime
+     * behaviour only, and the declarative state belongs to the one script
+     * that decides the round — the base, whose index is held below:
+     *
+     *   name, description, kind, api, game, lobby, bound, fill_to_caps
+     *     the base's, copied whole. An entry that is not the base and
+     *     declares game, lobby or fill_to_caps is a load error naming the
+     *     file and the key, so there is nothing to merge: two lobby blocks
+     *     would seat two rosters and the caps a fill fills to are the
+     *     deciding script's rules.
+     *
+     *     name and description are not refused, and that is deliberate
+     *     rather than an omission. Every mod in data/mods declares both,
+     *     the scenarios directory listing reads the name to draw a chooser
+     *     row with, and scnScriptSubject says a script's own name in a line
+     *     about that script. They are the base's here and the entry's own
+     *     everywhere a single script is being named. api is not refused for
+     *     the same kind of reason: every file states it, and each entry's
+     *     own is checked against SCENARIO_API_VERSION as it loads.
+     *   tags       the union across the list, keyed by entity and tag, in
+     *              list order. The same tag from two scripts is one tag.
+     *   rules      merged key by key in list order, so a rule two scripts
+     *              both set is the earlier script's and a rule only the
+     *              later one set survives. The top of the list is the
+     *              precedence end, which is what a host orders it for.
+     *              Each value refused is written down in conflicts below.
+     *   regions    the union, kept apart by which script named each one,
+     *              ordered by script index and then by declaration order.
+     *              The order is what a walk sees and nothing more:
+     *              h->inRegion is a bitmask indexed by each region's own
+     *              bit, which the compose works out from the naming file
+     *              and the region's name, so a host reordering the list
+     *              moves the rows and leaves every bit meaning the rectangle
+     *              it meant. Two scripts naming one region is two regions
+     *              here, and each script's own lookups find its own; see
+     *              scenarioLuaRegionFind. Written down in conflicts below as
+     *              well.
+     *   triggers   concatenated in list order.
+     *
+     * It is also what the game table's rows write into at runtime: a region
+     * a hook defines lands here, in the composite, exactly as it did when
+     * there was only ever one table, and carries the entry that defined it
+     * the same way a declared one does. */
     ScenarioManifest manifest;
+
+    /* What two scripts of the list disagreed about, and which of them the
+     * compose gave it to. Filled as the list is added up and emptied at the
+     * start of every compose, so it describes the table above and nothing
+     * else: it is answered through scenarioHostConflict, which a frontend
+     * reads to say out loud what the order decided.
+     *
+     * overflowed says there were more than the array holds. The ones past it
+     * were resolved the same way and only the record of them was dropped —
+     * nothing about the round changes with the flag. */
+    ScnConflictLog   conflicts;
+
+    /* The scripts this host composed, in list order: number one first.
+     *
+     * scripts is how many slots hold a script's bytes, which is what the
+     * host was given and does not change until a reload or a detach. count
+     * is how many of them this round actually loaded, which a round boot
+     * that failed puts back to zero while leaving the bytes where they are —
+     * so the next round start runs the same list again rather than finding
+     * the host empty. The two are equal after any boot that went through.
+     *
+     * Every walk of the loaded list reads count. Every walk of what the host
+     * holds — the reload, the detach — reads scripts. */
+    ScnScriptEntry   entry[SCN_SCRIPTS_MAX];
+    int              scripts;
+    int              count;
+
+    /* Which entry the composite's declarative fields came from, and the one
+     * a policy is asked of: the script that decides the round. scnCompose
+     * picks it and this is where it writes the answer down. Zero for a list
+     * with nothing on it, which asks nobody anything. */
+    int              base;
 
     /* What the game table's rows read, handed to every VM this host boots.
      * It points at the manifest above rather than carrying a copy, so the
      * table a round start reads in is the one the next call answers from. */
     ScnLuaCtx        lua;
 
-    char             script[SCN_SCRIPT_PATH_MAX];
-    char            *src;     /* the script's bytes, read once at attach */
-    size_t           srcLen;
-    char             chunkName[SCN_SCRIPT_PATH_MAX + 2];
+    /* The map the list was composed for, kept because a reload decides where
+     * each script comes from all over again and the map's own answer starts
+     * here. Empty for a host with no committed map behind it. Host-level and
+     * not per entry: there is one committed map, and at most one script on
+     * the list was found beside it. */
+    char             mapPath[SCN_SCRIPT_PATH_MAX];
+
     char             lastError[SCN_ERR_LEN];
     bool             active;
 
@@ -360,16 +614,19 @@ struct ScenarioHost {
      * whichever thread hit the limit wrote and the tick thread says. */
     ScnVmLock        lock;
 
-    /* The round's functions, looked up once at the boot that defines them.
-     * LUA_NOREF for every name the script does not use, which for most
-     * scripts is most of them. */
-    int              hooks[SCN_HOOK_COUNT];
-
-    /* Hook and policy errors in a row, and what happens at
-     * SCN_ERROR_LIMIT of them. Both are the round's, not the
-     * attachment's: a round start puts them back. */
-    unsigned         errors;
+    /* Whether the list has anything left to run: no script loaded, or every
+     * one of them switched off for the round. Held rather than worked out
+     * per call because the read is on the front of every hook, every policy
+     * and every region scan, and kept true by scnDisabledRefresh, which is
+     * the one place it is written after a boot. */
     bool             disabled;
+
+    /* Whether this round has already said that a mod's allow_base_win was
+     * not read. A policy is asked over and over — allow_base_win on every
+     * tick a side owns every base — so the line is said once and the answer
+     * is quietly the ordinary one after that. The round's, like the two
+     * above: a round start puts it back, so the next round says it again. */
+    bool             saidBaseWinIgnored;
 
     /* on_start is owed to the first running tick of the round the start
      * set this on. */
@@ -392,14 +649,22 @@ struct ScenarioHost {
     uint8_t          teams[MAX_TANKS];
 
     /* Which regions each seat's tank was standing in at the last scan, one
-     * bit per region index. The enter and leave hooks are the difference
+     * bit per region. The enter and leave hooks are the difference
      * between this and the next sample, so it is the whole of what the scan
      * remembers; a round start clears it, along with the regions themselves.
      *
-     * A bit is an index into the manifest's region list. Nothing removes a
-     * region inside a round and a defined one replaces by name rather than
-     * appending a second, so an index means the same rectangle for as long
-     * as the bits do. */
+     * A region's bit is its own number and not its place in the manifest's
+     * list. The number is worked out from the file that named the region and
+     * the name it was given — scenarioLuaRegionBit — so it is the same number
+     * whichever order the host put the scripts in and whichever machine
+     * composed the list. Nothing removes a region inside a round and a
+     * defined one replaces by name rather than appending a second, so a bit
+     * means the same rectangle for as long as the round lasts.
+     *
+     * It was the place in the list until the host was allowed to order that
+     * list freely. A bit that meant a position moved to a different
+     * rectangle the moment anything ahead of it moved, which is why the
+     * composer used to pin the map's own script to the front. */
     uint64_t         inRegion[MAX_TANKS];
 
     /* The timers this round is holding, and the functions they hold with
@@ -594,7 +859,29 @@ static int scnPanic(lua_State *L) {
 }
 
 lua_State *scnNewVm(void) {
-    lua_State *L = scnSandboxNewState();
+    lua_State *L;
+
+    /* An operator who passed -allow-unsafe-scripts has chosen to trust every
+       script this server runs, uploaded ones included, so the state is Lua's
+       own: the default allocator, no count hook, and every library the build
+       has, jit and ffi on LuaJIT among them. There is no per-state record,
+       and every sandbox call the host makes around a script finds none and
+       does nothing. print is the one thing kept, so a script's lines still
+       reach the console the operator reads; with no record it counts none of
+       them. math.randomseed stays, since nothing here is sealed. */
+    if (scenarioHostUnsafeScripts()) {
+        L = luaL_newstate();
+        if (L == NULL) {
+            return NULL;
+        }
+        lua_atpanic(L, scnPanic);
+        luaL_openlibs(L);
+        scnSandboxOpenPrint(L);
+        scnSeedRandom(L);
+        return L;
+    }
+
+    L = scnSandboxNewState();
     if (L == NULL) {
         return NULL;
     }
@@ -605,10 +892,12 @@ lua_State *scnNewVm(void) {
     return L;
 }
 
-/* The other end of it. A state carries its memory count beside it, so every
- * close goes through here rather than through lua_close: the count is on the
- * heap and a plain close would leave it behind. NULL is nothing to close,
- * which is what lets the failure paths below close without asking. */
+/* The other end of it. A sandboxed state carries its memory count beside it,
+ * so every close goes through here rather than through lua_close: the count
+ * is on the heap and a plain close would leave it behind. An unsafe state has
+ * none, and the close finds no record and frees nothing extra. NULL is
+ * nothing to close, which is what lets the failure paths below close without
+ * asking. */
 void scnCloseVm(lua_State *L) {
     scnSandboxCloseState(L);
 }
@@ -643,6 +932,195 @@ static const char *scnLuaError(lua_State *L) {
     return (s != NULL) ? s : "unknown error";
 }
 
+/* ── The script's own globals ─────────────────────────────────────── */
+
+/* The state's real globals table.
+ *
+ * Pushed as a value rather than read through, for the reason the raw reads
+ * below exist: a script that puts a metatable on its own globals would
+ * otherwise have one run on every name the host looks up. Where the table
+ * lives is the one place the two Lua builds differ — 5.1 and LuaJIT keep a
+ * pseudo-index for it, 5.4 keeps it in the registry — and WINBOLO_LUAJIT is
+ * what the tree tells them apart by, the same define the force-included shim
+ * is written against. */
+static void scnPushGlobals(lua_State *L) {
+#ifdef WINBOLO_LUAJIT
+    lua_pushvalue(L, LUA_GLOBALSINDEX);
+#else
+    lua_rawgeti(L, LUA_REGISTRYINDEX, LUA_RIDX_GLOBALS);
+#endif
+}
+
+/* A new table holding every field of the table at src, which is an absolute
+ * index, left on top of the stack. depth 1 copies the fields as they are;
+ * depth 2 also copies any field that is itself a table, one level, and so
+ * on. Every read is lua_next and every write lua_rawset, so no metatable on
+ * the source or on anything in it runs.
+ *
+ * Takes 5 stack slots, and 4 more for each level past the first; the caller
+ * checks for them. */
+static void scnCopyTable(lua_State *L, int src, int depth) {
+    lua_newtable(L);                 /* the copy */
+    lua_pushnil(L);
+    while (lua_next(L, src) != 0) {
+        /* Key at -2 and value at -1. The key goes on again for the write,
+           and the value goes on as itself or as a copy of its own. */
+        lua_pushvalue(L, -2);
+        if (depth > 1 && lua_type(L, -2) == LUA_TTABLE) {
+            scnCopyTable(L, lua_gettop(L) - 1, depth - 1);
+        } else {
+            lua_pushvalue(L, -2);
+        }
+        lua_rawset(L, -5);           /* the copy, four slots down */
+        lua_pop(L, 1);
+    }
+}
+
+/* A table for one script's globals to live in, kept in the registry and
+ * answered as a reference. LUA_NOREF where there was no memory for it.
+ *
+ * Every name the state's real globals hold is copied into it, and _G is set
+ * to the new table. That is the whole of it:
+ *
+ *   The copy is what makes the sandbox's library and the game table
+ *   reachable by name. A value that is not a table — print, pairs,
+ *   _VERSION — goes in as itself. A value that is a table goes in as a copy
+ *   of its own, one level deep: string, table, math, os, coroutine and utf8
+ *   where the VM has it. game is copied two levels deep, so TERRAIN and the
+ *   word tables inside it are each script's own as well. A script that
+ *   writes string.find = nil or game.end_round = nil, or adds a row of its
+ *   own to game, changes its own copy and no other script's.
+ *
+ *   That matters because the scripts on one list need not come from one
+ *   person. A scenario and the mods behind it may be written by different
+ *   people, and a write one of them makes to a library or to game must not
+ *   reach another.
+ *
+ *   A copy of game is exact because game never changes after
+ *   scenarioLuaInstall builds it: the rows are closures over the host's
+ *   context, and the constants, TERRAIN and the word tables are fixed
+ *   numbers. There is nothing live in it for a copy to fall behind on.
+ *
+ *   What is still shared: the string metatable, whose __index is the state's
+ *   one string table, so a method call such as s:find(p) reaches that table
+ *   and not the script's copy; the world itself, which every script changes
+ *   through the same ops; and the instruction and op limits, which are the
+ *   state's and the tick's rather than a script's.
+ *
+ *   Under -allow-unsafe-scripts none of the tables are copied: each script
+ *   gets its own names, and the tables behind them are shared as they are.
+ *   That state opens debug, and debug.getregistry and debug.getupvalue reach
+ *   any other script's tables whatever was copied, so keeping scripts apart
+ *   cannot hold there. And copying package would break it: require reads
+ *   path, cpath and its searchers off the original package table — an
+ *   upvalue on 5.4, LUA_ENVIRONINDEX on LuaJIT — so a script setting
+ *   package.path on its copy would find require never saw it.
+ *
+ *   _G is the table itself, which is what a set of globals means by the
+ *   name. Without it a script reading _G would be handed the state's real
+ *   globals and could write round the isolation by accident, and the trigger
+ *   router — which takes the author's handler off _G and puts its own
+ *   wrapper back — would chain on to the wrong table entirely.
+ *
+ * The other way to build this is to leave the table empty and reach the real
+ * globals through __index on a metatable. That is neater and it is
+ * wrong here, because a script may put a metatable on its own globals: under
+ * a chain, the moment one does, every name the sandbox opened goes away with
+ * the metatable it replaced. scenario_host_hook_via_global_metatable is that
+ * script and is what caught it. Protecting the metatable would turn the same
+ * line into a raise, which is no better. Copying leaves what a metatable on
+ * _G means exactly where it was — a lookup layer of the script's own, over a
+ * table that already holds the names.
+ *
+ * Nothing the host reads goes through a metatable either way, because every
+ * read below is raw. That, and not the copy, is what stops a metatable a
+ * script installs from answering for a hook name or a policy name. */
+int scnEnvNew(lua_State *L) {
+    bool copyTables = !scenarioHostUnsafeScripts();
+    int  globals;
+
+    /* 6 for the walk below, and 4 more for each level a copy goes down:
+       game's two levels come to 14. */
+    if (!lua_checkstack(L, 14)) {
+        return LUA_NOREF;
+    }
+    lua_newtable(L);                 /* the env */
+    scnPushGlobals(L);               /* what it starts out holding */
+    globals = lua_gettop(L);
+
+    lua_pushnil(L);
+    while (lua_next(L, globals) != 0) {
+        /* Key at -2 and value at -1, and lua_next wants the key left
+           behind, so the key goes on again for the write. The globals table
+           itself is left as it is here; _G is written below. */
+        lua_pushvalue(L, -2);
+        if (copyTables && lua_type(L, -2) == LUA_TTABLE &&
+            !lua_rawequal(L, -2, globals)) {
+            int depth = (lua_type(L, -3) == LUA_TSTRING &&
+                         strcmp(lua_tostring(L, -3), "game") == 0) ? 2 : 1;
+
+            scnCopyTable(L, lua_gettop(L) - 1, depth);
+        } else {
+            lua_pushvalue(L, -2);
+        }
+        lua_rawset(L, -6);           /* the env, five slots down */
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);                   /* the globals */
+
+    lua_pushstring(L, "_G");
+    lua_pushvalue(L, -2);
+    lua_rawset(L, -3);
+
+    return luaL_ref(L, LUA_REGISTRYINDEX);
+}
+
+/* One script's globals on the stack. LUA_NOREF is the validator and the
+ * editor's check, which run one script in a state of their own and have no
+ * list to keep apart: those read and write the state's real globals, exactly
+ * as every caller did before there was a list at all. */
+static void scnEnvPush(lua_State *L, int envRef) {
+    if (envRef == LUA_NOREF) {
+        scnPushGlobals(L);
+    } else {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, envRef);
+    }
+}
+
+/* Make the table envRef names the globals of the chunk at the top of the
+ * stack. True where it took; the chunk is left on the stack either way.
+ *
+ * This is the host setting a chunk's environment before it runs, which is
+ * not the thing the sandbox took setfenv away for: that was a script
+ * replacing an environment out from under the host after the fact. Nothing
+ * here gives a script a way to do it.
+ *
+ * The two builds spell it differently and the difference is real rather than
+ * cosmetic. On 5.4 a main chunk carries its environment as upvalue one,
+ * named _ENV, which lua_load sets to the globals table and lua_setupvalue
+ * replaces; the call answers "_ENV" and pops the value. On 5.1 and LuaJIT a
+ * function has no _ENV upvalue at all — a main chunk has no upvalues
+ * whatever — and the environment is a field of the closure that lua_setfenv
+ * writes. lua_setupvalue on that build would find no upvalue one, answer
+ * NULL, pop nothing and leave every script sharing one set of globals, so
+ * the two arms are not interchangeable. */
+static bool scnChunkSetEnv(lua_State *L, int envRef) {
+    if (envRef == LUA_NOREF) {
+        return true;                 /* the chunk keeps the real globals */
+    }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, envRef);
+#ifdef WINBOLO_LUAJIT
+    /* Pops the table whatever it answers. */
+    return lua_setfenv(L, -2) != 0;
+#else
+    if (lua_setupvalue(L, -2, 1) == NULL) {
+        lua_pop(L, 1);               /* it popped nothing, so this does */
+        return false;
+    }
+    return true;
+#endif
+}
+
 /* Load and run the bytes the host is holding. Lua's own message already
  * names the source and the line for both a syntax error and one the chunk
  * raises, so it is passed through rather than summarised.
@@ -654,11 +1132,16 @@ static const char *scnLuaError(lua_State *L) {
  * Text only. A precompiled chunk is a stream the VM trusts and does not
  * check, so bytes that arrived inside a map file are refused at the load
  * rather than read as instructions. Every state the host boots comes through
- * here, the validator's included, so WinBoloDS -validate refuses one too. */
-bool scnRunChunk(lua_State *L, const char *src, size_t srcLen,
+ * here, the validator's included, so WinBoloDS -validate refuses one too.
+ *
+ * Except under -allow-unsafe-scripts, where the operator has chosen to trust
+ * every script this server runs, uploaded ones included, and a precompiled
+ * one is taken as well. */
+bool scnRunChunk(lua_State *L, int envRef, const char *src, size_t srcLen,
                  const char *chunkName, char *err, size_t errLen) {
     ScnSandboxCall saved;
-    bool           ok = false;
+    bool           ok   = false;
+    const char    *mode = scenarioHostUnsafeScripts() ? NULL : "t";
 
     /* The chunk's top level is script code like any other, and the one place
        a loop in it would show is here: an attach that never returns. Armed
@@ -666,8 +1149,17 @@ bool scnRunChunk(lua_State *L, const char *src, size_t srcLen,
        executes no instructions to count — and leaves one disarm to reach
        whichever way this goes. */
     scnSandboxArmCall(L, &saved);
-    if (luaL_loadbufferx(L, src, srcLen, chunkName, "t") != 0) {
+    if (luaL_loadbufferx(L, src, srcLen, chunkName, mode) != 0) {
         scnFmt(err, errLen, "scenario: %s", scnLuaError(L));
+        lua_pop(L, 1);
+    } else if (!scnChunkSetEnv(L, envRef)) {
+        /* Nothing a script wrote can reach this: it says the build's own
+           two arms disagree with the VM it was compiled against, and a
+           chunk run on the shared globals after it would be the collision
+           the environment exists to stop. Refused rather than run. */
+        scnFmt(err, errLen,
+               "scenario: this build cannot give %s its own globals",
+               chunkName);
         lua_pop(L, 1);
     } else if (lua_pcall(L, 0, 0, 0) != 0) {
         scnFmt(err, errLen, "scenario: %s", scnLuaError(L));
@@ -700,26 +1192,14 @@ static void scnRawField(lua_State *L, int tbl, const char *key) {
     lua_rawget(L, tbl);
 }
 
-/* The globals table itself, for the same reason and with the same care: a
- * script that puts a metatable on _G would otherwise have one run on every
- * global the host reads. Where the table lives is the one place the two Lua
- * builds differ — 5.1 and LuaJIT keep a pseudo-index for it, 5.4 keeps it
- * in the registry — and WINBOLO_LUAJIT is what the tree tells them apart
- * by, the same define the force-included shim is written against. */
-static void scnPushGlobals(lua_State *L) {
-#ifdef WINBOLO_LUAJIT
-    lua_pushvalue(L, LUA_GLOBALSINDEX);
-#else
-    lua_rawgeti(L, LUA_REGISTRYINDEX, LUA_RIDX_GLOBALS);
-#endif
-}
-
-/* One global, left on the stack where lua_getglobal would have left it. */
-static void scnRawGlobal(lua_State *L, const char *name) {
-    scnPushGlobals(L);
+/* One of a script's globals, left on the stack where lua_getglobal would
+ * have left it, and read out of that script's own table rather than out of
+ * the state's. Raw, for the reason above. */
+static void scnRawGlobal(lua_State *L, int envRef, const char *name) {
+    scnEnvPush(L, envRef);
     lua_pushstring(L, name);
     lua_rawget(L, -2);
-    lua_remove(L, -2);           /* the globals table, under the value */
+    lua_remove(L, -2);           /* the env, under the value */
 }
 
 static void scnReadStr(lua_State *L, int tbl, const char *key,
@@ -757,6 +1237,67 @@ static bool scnReadBool(lua_State *L, int tbl, const char *key, bool def) {
     return v;
 }
 
+/* scenario.kind, which says whether this file may decide the win condition.
+ *
+ * Absent reads as a scenario. Every file written before this key existed
+ * could end its own round, and reading a silent file any other way would
+ * take that away from it with nobody told.
+ *
+ * A word that is neither of the two is reported under its own key and read
+ * as a scenario as well. That is the side to fail towards: the mod kind is
+ * the one things are held back from, so a word nobody could read leaves the
+ * file able to do what it always could rather than quietly stripping it.
+ *
+ * A kind that is there and is not a string goes the same way, with a report
+ * of its own. The other readers here leave a field of the wrong type alone
+ * and say nothing; this one changes what the round lets the file do, so an
+ * author hears about it either way. */
+static ScnManifestKind scnReadKind(lua_State *L, int tbl,
+                                   ScnParseReport *rep) {
+    ScnManifestKind kind = scnKindScenario;
+
+    scnRawField(L, tbl, "kind");
+    if (lua_type(L, -1) == LUA_TSTRING) {
+        const char *word = lua_tostring(L, -1);
+        kind = scnManifestKindFrom(word);
+        if (kind == scnKindUnknown) {
+            scnReport(rep, "kind",
+                      "scenario: kind is '%s', and a kind is \"scenario\" or "
+                      "\"mod\"", word);
+            kind = scnKindScenario;
+        }
+    } else if (!lua_isnil(L, -1)) {
+        scnReport(rep, "kind",
+                  "scenario: kind is not a word, and a kind is \"scenario\" "
+                  "or \"mod\"");
+    }
+    lua_pop(L, 1);
+    return kind;
+}
+
+/* scenario.workshop_id or scenario.workshop_author: the twin of mjDecodeId in
+ * scenario_manifest_json.c, through the same scnManifestParseId. Absent is 0
+ * without a word. A string of digits that fits 64 bits is the value; anything
+ * else, a Lua number included, is reported under its key and read as 0,
+ * because a number has already been made a double and lost the low digits of
+ * a real id. */
+static uint64_t scnReadWorkshopId(lua_State *L, int tbl, const char *key,
+                                  ScnParseReport *rep) {
+    uint64_t v = 0;
+
+    scnRawField(L, tbl, key);
+    if (!lua_isnil(L, -1) &&
+        (lua_type(L, -1) != LUA_TSTRING ||
+         !scnManifestParseId(lua_tostring(L, -1), &v))) {
+        scnReport(rep, key,
+                  "scenario: %s is not a string of digits naming a Steam id; "
+                  "0 used", key);
+        v = 0;
+    }
+    lua_pop(L, 1);
+    return v;
+}
+
 static void scnReadLobby(lua_State *L, int tbl, ScnManifestLobby *lob) {
     int lt;
 
@@ -785,6 +1326,25 @@ static void scnReadLobby(lua_State *L, int tbl, ScnManifestLobby *lob) {
                 team->maxBots = (uint8_t)scnReadInt(L, t, "max_bots", 0);
                 team->fielded = scnReadBool(L, t, "fielded", true);
                 scnReadStr(L, t, "brain", team->brain, sizeof(team->brain));
+                /* The brain mode this team's bots play in and the level
+                   inside it, by the keys the brain's own modes.txt lists.
+                   Taken as text here — what keys a brain has is a question
+                   only the server can answer, and this reader has no brain
+                   in hand. */
+                scnReadStr(L, t, "mode", team->mode, sizeof(team->mode));
+                scnReadStr(L, t, "difficulty", team->difficulty,
+                           sizeof(team->difficulty));
+                /* The table the team's bots are built with, through the one
+                   reader spawn_bot's own init goes through, so a script
+                   cannot find the two spelled differently. A pair that did
+                   not fit costs that pair and is named on the team; the ones
+                   read before it stay, the way scnReadRules keeps the rest of
+                   a rules table past a bad key. An init that is not a table
+                   at all is left alone with no pair named, as every other
+                   reader here leaves a field of the wrong type. */
+                (void)scenarioLuaReadTable(L, t, "init", &team->init,
+                                           team->initBadKey,
+                                           sizeof(team->initBadKey), NULL, 0);
             }
             lua_pop(L, 1);
         }
@@ -814,7 +1374,7 @@ static void scnReadRules(lua_State *L, int tbl, ScenarioManifest *m,
            and break the traversal. */
         if (lua_type(L, -2) == LUA_TSTRING && lua_type(L, -1) == LUA_TNUMBER) {
             const char *key = lua_tostring(L, -2);
-            int         idx = scenarioLuaRuleIndex(key);
+            int         idx = simRulesRuleIndex(key);
             if (idx < 0) {
                 char where[SCN_VALIDATE_KEY_LEN];
                 snprintf(where, sizeof(where), "rules.%s", key);
@@ -960,19 +1520,661 @@ static void scnReadRegions(lua_State *L, int tbl, ScenarioManifest *m,
     lua_pop(L, 1);
 }
 
+/* ── Triggers ─────────────────────────────────────────────────────── */
+
+/* Every array inside a trigger is walked from 1 to the first empty slot, the
+ * way the trigger array itself is, rather than counted with lua_rawlen. A
+ * table with a hole in it has more than one border and which of them rawlen
+ * answers is the interpreter's business, so two builds can read the same file
+ * as two different scenarios. Walking to the first empty slot is the same
+ * answer everywhere.
+ *
+ * What that costs is knowing there was a hole at all: an empty slot and the
+ * end of the array are one thing to lua_rawgeti, and telling them apart means
+ * asking rawlen, which is the unreliable thing. So this says something only
+ * when it is certain. A border is an index that holds a value, so a border at
+ * or past the slot the walk stopped on is proof of something past the hole
+ * that was not read; a border below it proves nothing either way, and a table
+ * written { a, nil, c } may well answer 1 and go unremarked. Best-effort, and
+ * the walk above is what the file actually means.
+ *
+ * at is the 1-based slot the walk stopped on, key is what the report is filed
+ * under, and what names the array inside it. */
+static void scnReportTrigTail(lua_State *L, int arr, int at, const char *key,
+                              const char *what, ScnParseReport *rep) {
+    if ((int)lua_rawlen(L, arr) >= at) {
+        scnReport(rep, key,
+                  "scenario: %s has an empty slot at %d in its %s and holds "
+                  "more past it; nothing past the empty slot is read",
+                  key, at, what);
+    }
+}
+
+/* One value of a test or an action, at the top of the stack and left there.
+ *
+ * The four kinds a table may state: a number, a string, a boolean, and the
+ * table { field = "<name>" } naming a field of the hook's payload. Anything
+ * else — a nil, a bare list, a table without a field key — is left NONE and
+ * reported, so the row holding it still reads and the author is told which
+ * slot did not.
+ *
+ * text is where a string goes when it fits. One that does not goes on the
+ * action's own text, which is why act is passed: a condition passes NULL and
+ * its oversized string is truncated the way every other name here is. Only
+ * the first oversized string in an action has somewhere to live; a second is
+ * reported and left NONE.
+ *
+ * mjTrigValue in scenario_manifest_json.c reads the same four kinds out of
+ * JSON, down to which of them is reported and what is left behind. */
+static void scnReadTrigValue(lua_State *L, ScnTrigValue *out, ScnTrigAct *act,
+                             const char *where, ScnParseReport *rep) {
+    memset(out, 0, sizeof(*out));
+
+    switch (lua_type(L, -1)) {
+    case LUA_TNUMBER:
+        out->kind = SCN_TRIG_VAL_NUMBER;
+        out->num  = (double)lua_tonumber(L, -1);
+        return;
+    case LUA_TBOOLEAN:
+        out->kind = SCN_TRIG_VAL_BOOL;
+        out->num  = lua_toboolean(L, -1) ? 1.0 : 0.0;
+        return;
+    case LUA_TSTRING: {
+        const char *s = lua_tostring(L, -1);
+        out->kind = SCN_TRIG_VAL_STRING;
+        if (strlen(s) < SCN_TRIGGER_NAME_LEN) {
+            snprintf(out->text, sizeof(out->text), "%s", s);
+            return;
+        }
+        if (act == NULL) {
+            snprintf(out->text, sizeof(out->text), "%s", s);
+            scnReport(rep, where,
+                      "scenario: %s is longer than %d bytes and is cut to fit",
+                      where, SCN_TRIGGER_NAME_LEN - 1);
+            return;
+        }
+        if (act->text[0] != '\0') {
+            out->kind = SCN_TRIG_VAL_NONE;
+            scnReport(rep, where,
+                      "scenario: %s is the second long string on one action, "
+                      "which carries one; dropped", where);
+            return;
+        }
+        out->inText = true;
+        /* The same fault as above at the other size: the action's text is
+           wider than an argument slot, and a line past that is cut too. */
+        if (strlen(s) >= SCN_TRIGGER_TEXT_LEN) {
+            scnReport(rep, where,
+                      "scenario: %s is longer than %d bytes and is cut to fit",
+                      where, SCN_TRIGGER_TEXT_LEN - 1);
+        }
+        snprintf(act->text, sizeof(act->text), "%s", s);
+        return;
+    }
+    case LUA_TTABLE:
+        scnRawField(L, -1, "field");
+        if (lua_type(L, -1) == LUA_TSTRING) {
+            out->kind = SCN_TRIG_VAL_FIELD;
+            snprintf(out->text, sizeof(out->text), "%s", lua_tostring(L, -1));
+            lua_pop(L, 1);
+            return;
+        }
+        lua_pop(L, 1);
+        break;
+    default:
+        break;
+    }
+    scnReport(rep, where,
+              "scenario: %s is not a number, a string, a boolean or a field "
+              "reference; dropped", where);
+}
+
+/* One test: { field, operator, value }, read by index. A row that is not
+ * three entries is reported and dropped, since there is no part of it to
+ * keep. */
+static void scnReadTrigCond(lua_State *L, int row, ScnTrigCond *out,
+                            const char *where, ScnParseReport *rep) {
+    memset(out, 0, sizeof(*out));
+
+    if (!lua_istable(L, row) || (int)lua_rawlen(L, row) != 3) {
+        scnReport(rep, where,
+                  "scenario: %s is not a { field, operator, value } row",
+                  where);
+        return;
+    }
+
+    /* A name that is there but empty goes the same way as a slot holding no
+       string at all: the editor writes one into a row it has just made room
+       for, and a row naming nothing tests nothing. scnCheckTrigCond leaves
+       both to this report. */
+    lua_rawgeti(L, row, 1);
+    if (lua_type(L, -1) == LUA_TSTRING && lua_tostring(L, -1)[0] != '\0') {
+        snprintf(out->field, sizeof(out->field), "%s", lua_tostring(L, -1));
+    } else {
+        scnReport(rep, where, "scenario: %s names no field", where);
+    }
+    lua_pop(L, 1);
+
+    lua_rawgeti(L, row, 2);
+    if (lua_type(L, -1) == LUA_TSTRING) {
+        out->op = scnManifestTrigOpFrom(lua_tostring(L, -1));
+    } else {
+        scnReport(rep, where, "scenario: %s names no operator", where);
+    }
+    lua_pop(L, 1);
+
+    lua_rawgeti(L, row, 3);
+    scnReadTrigValue(L, &out->value, NULL, where, rep);
+    lua_pop(L, 1);
+}
+
+/* One action: { op, argument... }. The op is the first entry and the rest
+ * are its positional arguments, in the order the file wrote them. */
+static void scnReadTrigAct(lua_State *L, int row, ScnTrigAct *out,
+                           const char *where, ScnParseReport *rep) {
+    int i;
+
+    memset(out, 0, sizeof(*out));
+
+    if (!lua_istable(L, row) || (int)lua_rawlen(L, row) < 1) {
+        scnReport(rep, where, "scenario: %s is not an { op, argument... } row",
+                  where);
+        return;
+    }
+
+    /* A name that is there but empty goes the same way as a slot holding no
+       string at all: the editor writes one into an action it has just made
+       room for, and an action naming nothing does nothing. scnCheckTrigAct
+       leaves both to this report. */
+    lua_rawgeti(L, row, 1);
+    if (lua_type(L, -1) == LUA_TSTRING && lua_tostring(L, -1)[0] != '\0') {
+        snprintf(out->op, sizeof(out->op), "%s", lua_tostring(L, -1));
+    } else {
+        scnReport(rep, where, "scenario: %s names no op", where);
+    }
+    lua_pop(L, 1);
+
+    for (i = 2; ; i++) {
+        char slot[SCN_VALIDATE_KEY_LEN];
+
+        lua_rawgeti(L, row, i);
+        if (lua_isnil(L, -1)) {
+            lua_pop(L, 1);
+            scnReportTrigTail(L, row, i, where, "arguments", rep);
+            break;
+        }
+        if (out->numArgs >= SCN_TRIGGER_ARGS_MAX) {
+            lua_pop(L, 1);
+            scnReport(rep, where,
+                      "scenario: %s takes more than %d arguments; the rest "
+                      "dropped", where, SCN_TRIGGER_ARGS_MAX);
+            break;
+        }
+        snprintf(slot, sizeof(slot), "%s[%d]", where, (int)out->numArgs);
+        scnReadTrigValue(L, &out->args[out->numArgs], out, slot, rep);
+        lua_pop(L, 1);
+        out->numArgs++;
+    }
+}
+
+/* Triggers are a sequence rather than a table keyed by name, so they are
+ * read by index from 1 up and stop at the first entry that is not there.
+ * Regions above are keyed and arrive in whatever order the table iterates
+ * in; a trigger has no name to be keyed by and its position is part of what
+ * it is, so lua_next would lose the very thing that identifies it.
+ *
+ * The where and actions arrays inside a trigger are read the same way, for
+ * the reason scnReportTrigTail gives.
+ *
+ * A report goes under the position, counted as the file writes it and from
+ * zero, so triggers[3] is the same trigger here, in manifest.json's decoder
+ * and in the comparison of the two. lobby.teams[0] is the first entry of a
+ * Lua array for the same reason.
+ *
+ * Every cap drops what is past it and says so. Nothing is a refusal: a
+ * table with more triggers than this build holds is still a table, the way
+ * one with more regions is. mjDecodeTriggers reads the same shape out of
+ * JSON and fills the struct identically, which is what lets
+ * scnManifestAgrees hold a package's two forms against each other.
+ *
+ * A trigger whose where is there but is not an array goes the same way. A
+ * trigger with no tests runs on every occurrence of its hook, so keeping
+ * one whose tests could not be read would turn what the author wrote as a
+ * conditional into an unconditional one. A row inside the array is the
+ * other case: a row that cannot be read is kept zeroed, which holds on
+ * nothing, so the tests the author did write still stand and the bad row is
+ * inert beside them.
+ *
+ * A trigger naming no hook is dropped too, and for a plainer reason: there
+ * is no hook to put it on, so it never runs however it is kept, and a slot
+ * held by one is a slot the next trigger cannot have. */
+static void scnReadTriggers(lua_State *L, int tbl, ScenarioManifest *m,
+                            ScnParseReport *rep) {
+    int tt;
+    int n;
+
+    scnRawField(L, tbl, "triggers");
+    if (!lua_istable(L, -1)) {
+        if (!lua_isnil(L, -1)) {
+            scnReport(rep, "triggers", "scenario: triggers is not an array");
+        }
+        lua_pop(L, 1);
+        return;
+    }
+    tt = lua_gettop(L);
+
+    for (n = 0; ; n++) {
+        char        where[32];       /* "triggers[%d]", and a row key
+                                      * built on it always fits its own */
+        ScnTrigger *trig;
+        int         entry;
+        int         rows;
+        int         i;
+
+        lua_rawgeti(L, tt, n + 1);
+        if (lua_isnil(L, -1)) {
+            lua_pop(L, 1);
+            break;
+        }
+        entry = lua_gettop(L);
+        snprintf(where, sizeof(where), "triggers[%d]", n);
+
+        if (!lua_istable(L, entry)) {
+            scnReport(rep, where, "scenario: %s is not a trigger", where);
+            lua_pop(L, 1);
+            continue;
+        }
+        /* Said once, under the first row past the cap, and the walk stops:
+           a script decides how long this array is, and a line per excess row
+           would fill the issue list with the one fact and hide every fault
+           after it. The tests and actions below stop the same way. */
+        if (m->numTriggers >= SCN_TRIGGERS_MAX) {
+            scnReport(rep, where,
+                      "scenario: more than %d triggers; the rest dropped",
+                      SCN_TRIGGERS_MAX);
+            lua_pop(L, 1);
+            break;
+        }
+        trig = &m->triggers[m->numTriggers];
+        m->numTriggers++;
+        memset(trig, 0, sizeof(*trig));
+
+        /* A when that is there but empty names no hook the way a missing one
+           does, and neither leaves anything to run on: the router never
+           reaches the trigger, so keeping it spends a slot and rides through
+           a pack and unpack as an entry that does nothing. It goes the way a
+           bad where goes, and the report names the position. */
+        scnRawField(L, entry, "when");
+        if (lua_type(L, -1) == LUA_TSTRING && lua_tostring(L, -1)[0] != '\0') {
+            snprintf(trig->when, sizeof(trig->when), "%s", lua_tostring(L, -1));
+        } else {
+            scnReport(rep, where,
+                      "scenario: %s names no hook to run on; %s dropped",
+                      where, where);
+            m->numTriggers--;        /* the slot claimed above, given back */
+            lua_pop(L, 2);           /* the when field, and the trigger */
+            continue;
+        }
+        lua_pop(L, 1);
+
+        scnRawField(L, entry, "where");
+        if (!lua_isnil(L, -1) && !lua_istable(L, -1)) {
+            scnReport(rep, where,
+                      "scenario: %s's where is not an array; %s dropped",
+                      where, where);
+            m->numTriggers--;        /* the slot claimed above, given back */
+            lua_pop(L, 2);           /* the where field, and the trigger */
+            continue;
+        }
+        if (lua_istable(L, -1)) {
+            rows = lua_gettop(L);
+            for (i = 0; ; i++) {
+                char slot[SCN_VALIDATE_KEY_LEN];
+
+                lua_rawgeti(L, rows, i + 1);
+                if (lua_isnil(L, -1)) {
+                    lua_pop(L, 1);
+                    scnReportTrigTail(L, rows, i + 1, where, "where", rep);
+                    break;
+                }
+                snprintf(slot, sizeof(slot), "%s.where[%d]", where, i);
+                if (trig->numWhere >= SCN_TRIGGER_CONDS_MAX) {
+                    lua_pop(L, 1);
+                    scnReport(rep, slot,
+                              "scenario: more than %d tests on one trigger; "
+                              "the rest dropped", SCN_TRIGGER_CONDS_MAX);
+                    break;
+                }
+                scnReadTrigCond(L, lua_gettop(L),
+                                &trig->where[trig->numWhere], slot, rep);
+                lua_pop(L, 1);
+                trig->numWhere++;
+            }
+        }
+        lua_pop(L, 1);
+
+        scnRawField(L, entry, "actions");
+        if (!lua_isnil(L, -1) && !lua_istable(L, -1)) {
+            scnReport(rep, where, "scenario: %s's actions is not an array",
+                      where);
+        } else if (lua_istable(L, -1)) {
+            rows = lua_gettop(L);
+            for (i = 0; ; i++) {
+                char slot[SCN_VALIDATE_KEY_LEN];
+
+                lua_rawgeti(L, rows, i + 1);
+                if (lua_isnil(L, -1)) {
+                    lua_pop(L, 1);
+                    scnReportTrigTail(L, rows, i + 1, where, "actions", rep);
+                    break;
+                }
+                snprintf(slot, sizeof(slot), "%s.actions[%d]", where, i);
+                if (trig->numActions >= SCN_TRIGGER_ACTIONS_MAX) {
+                    lua_pop(L, 1);
+                    scnReport(rep, slot,
+                              "scenario: more than %d actions on one trigger; "
+                              "the rest dropped", SCN_TRIGGER_ACTIONS_MAX);
+                    break;
+                }
+                scnReadTrigAct(L, lua_gettop(L),
+                               &trig->actions[trig->numActions], slot, rep);
+                lua_pop(L, 1);
+                trig->numActions++;
+            }
+        }
+        lua_pop(L, 1);
+
+        lua_pop(L, 1);               /* the trigger */
+    }
+    lua_pop(L, 1);                   /* triggers */
+}
+
+/* ── The callbacks block ──────────────────────────────────────────── */
+
+/* Every function the catalogue holds fits the manifest's array, so the read
+ * below can never run out of rows: it keeps each name at most once and only a
+ * name the catalogue has. The same tally the map editor holds its description
+ * table against. */
+#define SCN_CB_HOOK_TALLY(id, name, kind, params) +1
+#define SCN_CB_POLICY_TALLY(id, name, params, returns) +1
+BOLO_STATIC_ASSERT((0 SCN_HOOK_LIST(SCN_CB_HOOK_TALLY)) +
+                           (0 SCN_POLICY_LIST(SCN_CB_POLICY_TALLY)) <=
+                       SCN_CALLBACKS_MAX,
+                   manifest_callbacks_hold_every_catalogue_function);
+#undef SCN_CB_HOOK_TALLY
+#undef SCN_CB_POLICY_TALLY
+
+/* Say one line about a callbacks block. The operator hears it, as every
+ * report does; the soft buffer takes it only while nothing else is there, so
+ * a missing sentence never buries a line about a rule that does not exist.
+ *
+ * Never an issue on a validator's sink, and that is the difference from
+ * scnReport. An issue fails a check: -validate says the script has problems
+ * and -pack refuses it. The block is optional and what it reports is advice
+ * to the author, so it must not turn a script that plays perfectly well into
+ * one that cannot be packed. */
+static void scnWarn(ScnParseReport *rep, const char *fmt, ...) {
+    char    line[SCN_ERR_LEN];
+    va_list ap;
+
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+
+    serverSimConsoleMessage(line);
+    if (rep != NULL && rep->soft != NULL && rep->softLen > 0 &&
+        rep->soft[0] == '\0') {
+        snprintf(rep->soft, rep->softLen, "%s", line);
+    }
+}
+
+/* Whether the script uses this callback: a global function by that name in
+ * its own globals, or a trigger the manifest declares on it. The trigger
+ * counts because the router that runs it is installed after this read, so a
+ * hook a file handles only through triggers has no function behind it yet,
+ * and describing it still describes something the round will do. */
+static bool scnScriptUses(lua_State *L, int envRef, const ScenarioManifest *m,
+                          const char *name, bool *byTrigger) {
+    bool    uses;
+    uint8_t i;
+
+    scnRawGlobal(L, envRef, name);
+    uses = lua_isfunction(L, -1) ? true : false;
+    lua_pop(L, 1);
+    *byTrigger = false;
+    for (i = 0; !uses && i < m->numTriggers; i++) {
+        if (strcmp(m->triggers[i].when, name) == 0) {
+            uses       = true;
+            *byTrigger = true;
+        }
+    }
+    return uses;
+}
+
+/* The callbacks block into the struct: one row per function the script uses
+ * and describes, in the catalogue's order. See scenario_manifest.h for what
+ * the block is for.
+ *
+ * Nothing here refuses the file. Each way the block and the script disagree
+ * is one warning and costs only its own row:
+ *
+ *  - the script uses a callback the block does not describe;
+ *  - the block describes a name the catalogue does not have;
+ *  - the block describes a callback the script never defines.
+ *
+ * The first is said whether or not the file has a block at all, so the
+ * author of an older file hears which sentences the lobby is missing. The
+ * other two drop the row, because a player reading the dialog would be told
+ * about something the round never does.
+ *
+ * A sentence too long for its row is cut to fit. A block whose packed size
+ * would pass SCN_CALLBACKS_BLOB_MAX stops at the row that would take it past,
+ * in the catalogue's order, with one line saying how many went. */
+static void scnReadCallbacks(lua_State *L, int envRef, int tbl,
+                             ScenarioManifest *m, const char *path,
+                             ScnParseReport *rep) {
+    const ScnLuaFnRow *rows;
+    size_t             count        = 0;
+    size_t             r;
+    size_t             used         = 0; /* packed size so far */
+    int                cb           = 0; /* the block's stack slot; 0 = none */
+    int                dropped      = 0;
+    const char        *firstDropped = NULL;
+
+    rows = scenarioLuaFunctions(&count);
+
+    scnRawField(L, tbl, "callbacks");
+    if (lua_istable(L, -1)) {
+        cb = lua_gettop(L);
+    } else {
+        if (!lua_isnil(L, -1)) {
+            scnWarn(rep, "scenario: %s: callbacks is not a table of "
+                         "callback = \"what it does\"", path);
+        }
+        lua_pop(L, 1);
+    }
+
+    for (r = 0; r < count; r++) {
+        const char *name = rows[r].name;
+        const char *text = NULL;
+        bool        notString = false;
+        bool        byTrigger;
+        bool        uses = scnScriptUses(L, envRef, m, name, &byTrigger);
+
+        if (cb != 0) {
+            scnRawField(L, cb, name);
+            if (lua_type(L, -1) == LUA_TSTRING) {
+                text = lua_tostring(L, -1);
+            } else if (!lua_isnil(L, -1)) {
+                scnWarn(rep, "scenario: %s: callbacks.%s is not a string; "
+                             "dropped", path, name);
+                notString = true;
+            }
+        }
+        if (text == NULL || text[0] == '\0') {
+            /* A file with no block at all hears this on the console only:
+               the soft line is the load's last word, and an older script
+               that plays perfectly well should not have its last word be
+               advice it never asked for. A value that is not a string has
+               already been warned about above, so it gets no second
+               warning here. */
+            if (uses && !notString) {
+                scnWarn((cb != 0) ? rep : NULL,
+                        "scenario: %s: callbacks does not say what %s does",
+                        path, name);
+            }
+        } else if (!uses) {
+            scnWarn(rep, "scenario: %s: callbacks describes %s, which the "
+                         "script never defines; dropped", path, name);
+        } else {
+            size_t full = strlen(text);
+            size_t n    = scnCallbacksTextFit(text, full);
+            size_t at   = (used == 0) ? 1u : used; /* the count byte */
+            size_t cost = scnCallbacksRowCost(strlen(name), n);
+
+            if (n < full) {
+                scnWarn(rep, "scenario: %s: callbacks.%s is longer than %d "
+                             "bytes; cut to fit", path, name,
+                        SCN_CALLBACK_TEXT_LEN - 1);
+            }
+            if (dropped > 0 || at + cost > SCN_CALLBACKS_BLOB_MAX ||
+                m->numCallbacks >= SCN_CALLBACKS_MAX) {
+                if (dropped == 0) {
+                    firstDropped = name;
+                }
+                dropped++;
+            } else {
+                ScnManifestCallback *row = &m->callbacks[m->numCallbacks];
+
+                m->numCallbacks++;
+                used = at + cost;
+                snprintf(row->name, sizeof(row->name), "%s", name);
+                memcpy(row->text, text, n);
+                row->text[n] = '\0';
+                row->byTrigger = byTrigger;
+            }
+        }
+        if (cb != 0) {
+            lua_pop(L, 1); /* the field */
+        }
+    }
+    if (dropped > 0) {
+        scnWarn(rep, "scenario: %s: callbacks come to more than %d bytes; "
+                     "%d dropped, from %s on", path, SCN_CALLBACKS_BLOB_MAX,
+                dropped, firstDropped);
+    }
+
+    if (cb == 0) {
+        return;
+    }
+    /* The names the walk above never asked about: the ones the catalogue
+       does not have. The key's type is tested before it is read as a string,
+       as scnReadRules does, so a number key is never converted in place
+       under the traversal. */
+    lua_pushnil(L);
+    while (lua_next(L, cb) != 0) {
+        if (lua_type(L, -2) == LUA_TSTRING) {
+            const char *key   = lua_tostring(L, -2);
+            bool        known = false;
+
+            for (r = 0; r < count && !known; r++) {
+                known = strcmp(rows[r].name, key) == 0;
+            }
+            if (!known) {
+                scnWarn(rep, "scenario: %s: callbacks names %s, which is no "
+                             "callback the engine calls; dropped", path, key);
+            }
+        } else {
+            scnWarn(rep, "scenario: %s: callbacks holds an entry that is not "
+                         "callback = \"what it does\"; dropped", path);
+        }
+        lua_pop(L, 1); /* the value; the key stays for the next step */
+    }
+    lua_pop(L, 1); /* callbacks */
+}
+
+/* What a file that declared itself a mod may not have written down. The two
+ * things here are the ones that are on the page rather than in a call: a
+ * trigger whose action names one of the ops that decide the round, and a
+ * game type, which is the only way a file picks between open, tournament and
+ * strict and so is the win condition by another name.
+ *
+ * Refused rather than dropped, and refused here rather than at the first
+ * tick, because both are visible before anything runs. An author who wrote
+ * either of them meant the round to go a particular way, and a file that
+ * loaded with the line quietly taken out would play as neither what they
+ * wrote nor what they would have written.
+ *
+ * The op list is scenario_lua.c's, the same one the ops themselves raise
+ * from, so a row added there is refused here without this function being
+ * touched.
+ *
+ * True when the file may load. */
+static bool scnModHoldsBack(const ScenarioManifest *m, const char *path,
+                            char *err, size_t errLen) {
+    uint16_t i;
+    uint8_t  j;
+
+    if (!scnManifestKeepsWinCondition(m)) {
+        return true;
+    }
+    if (m->game[0] != '\0') {
+        scnFmt(err, errLen,
+               "scenario: %s is a mod and names the game type '%s'; a mod "
+               "leaves the win condition alone, so write "
+               "scenario.kind = \"scenario\" or take the game line out",
+               path, m->game);
+        return false;
+    }
+    for (i = 0; i < m->numTriggers; i++) {
+        const ScnTrigger *trig = &m->triggers[i];
+
+        for (j = 0; j < trig->numActions; j++) {
+            if (scenarioLuaOpDecidesRound(trig->actions[j].op)) {
+                scnFmt(err, errLen,
+                       "scenario: %s is a mod and triggers[%d].actions[%d] "
+                       "calls %s, which decides the round; a mod leaves the "
+                       "win condition alone, so write "
+                       "scenario.kind = \"scenario\" or take the action out",
+                       path, (int)i, (int)j, trig->actions[j].op);
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+/* The report callback scenarioLuaReadSettings is given: a bad settings row
+ * is an issue, the same as a bad rule or tag, because the host would offer
+ * a dropdown that does not do what the author meant. */
+static void scnSettingsReport(void *ud, const char *key, const char *line) {
+    scnReport((ScnParseReport *)ud, key, "%s", line);
+}
+
+/* The settings block into the struct. The rules are in
+ * scenarioLuaReadSettings, because game.setting reads the same block from a
+ * file's top level before this runs and must see the same rows. */
+static void scnReadSettings(lua_State *L, int tbl, ScenarioManifest *m,
+                            const char *path, ScnParseReport *rep) {
+    int n = scenarioLuaReadSettings(L, tbl, m->settings, SCN_SETTINGS_MAX,
+                                    path, scnSettingsReport, rep);
+    m->numSettings = (uint8_t)(n < 0 ? 0 : n);
+}
+
 /* The whole table into the struct. A file with no scenario table at all is
  * refused: it ran, but it is not a scenario.
  *
- * triggers is not read. Its schema is not settled, so a script that
- * carries one is neither parsed nor refused for it. */
-bool scnReadManifest(lua_State *L, ScenarioManifest *m,
+ * triggers are read here with the rest, into the same struct manifest.json
+ * fills, so a package carrying both forms can be held to stating the same
+ * thing in each. */
+bool scnReadManifest(lua_State *L, int envRef, ScenarioManifest *m,
                      const char *path, char *err, size_t errLen,
                      ScnParseReport *rep) {
     int tbl;
 
     memset(m, 0, sizeof(*m));
 
-    scnRawGlobal(L, "scenario");
+    scnRawGlobal(L, envRef, "scenario");
     if (!lua_istable(L, -1)) {
         scnFmt(err, errLen, "scenario: %s declares no scenario table", path);
         lua_pop(L, 1);
@@ -982,17 +2184,807 @@ bool scnReadManifest(lua_State *L, ScenarioManifest *m,
 
     scnReadStr(L, tbl, "name", m->name, sizeof(m->name));
     scnReadStr(L, tbl, "description", m->description, sizeof(m->description));
+    m->kind       = scnReadKind(L, tbl, rep);
     scnReadStr(L, tbl, "game", m->game, sizeof(m->game));
-    m->api   = scnReadInt(L, tbl, "api", 1);
-    m->bound = scnReadBool(L, tbl, "bound", true);
+    m->api        = scnReadInt(L, tbl, "api", 1);
+    m->bound      = scnReadBool(L, tbl, "bound", true);
+    m->fillToCaps = scnReadBool(L, tbl, "fill_to_caps", false);
+    m->workshopId     = scnReadWorkshopId(L, tbl, "workshop_id", rep);
+    m->workshopAuthor = scnReadWorkshopId(L, tbl, "workshop_author", rep);
 
     scnReadLobby(L, tbl, &m->lobby);
     scnReadRules(L, tbl, m, rep);
     scnReadTags(L, tbl, m, rep);
     scnReadRegions(L, tbl, m, rep);
+    scnReadTriggers(L, tbl, m, rep);
+    /* After the triggers, because a hook the file handles only through a
+       trigger is still one it uses. */
+    scnReadCallbacks(L, envRef, tbl, m, path, rep);
+    scnReadSettings(L, tbl, m, path, rep);
 
     lua_pop(L, 1);
-    return true;
+
+    /* Last, because it reads what the lines above put in the struct. A mod
+       that wrote down something only a scenario may write down does not
+       load at all, so the refusal reaches whoever asked for the file the
+       same way a missing scenario table does. */
+    return scnModHoldsBack(m, path, err, errLen);
+}
+
+/* ── Writing the table ────────────────────────────────────────────── */
+
+/* The struct back out as the table a script would have written it as. The
+ * six builders below take one piece each and leave it on the stack;
+ * scnPushManifestGlobal at the end of them is the one the rest of this file
+ * calls, and carries what the whole thing is for. */
+static void scnPushTeams(lua_State *L, const ScnManifestLobby *lob) {
+    int teams;
+    int i;
+
+    lua_newtable(L);
+    teams = lua_gettop(L);
+    for (i = 0; i < (int)lob->numTeams; i++) {
+        const ScnManifestTeam *team = &lob->teams[i];
+        int                    e;
+
+        lua_newtable(L);
+        e = lua_gettop(L);
+        lua_pushinteger(L, (lua_Integer)team->id);
+        lua_setfield(L, e, "id");
+        lua_pushinteger(L, (lua_Integer)team->bots);
+        lua_setfield(L, e, "bots");
+        lua_pushinteger(L, (lua_Integer)team->maxBots);
+        lua_setfield(L, e, "max_bots");
+        lua_pushboolean(L, team->fielded ? 1 : 0);
+        lua_setfield(L, e, "fielded");
+        lua_pushstring(L, team->brain);
+        lua_setfield(L, e, "brain");
+        /* The mode and the level, which scnReadLobby reads and this has to
+           write back for the same reason the brain is written back: a
+           package whose script leaves the lobby table to the manifest is
+           read back through here, and a field dropped on the way out is a
+           field the two forms are then held to disagree about. Both go over
+           whether or not they are set, "" meaning "leave the lobby's" here
+           exactly as it does in the table a file writes. */
+        lua_pushstring(L, team->mode);
+        lua_setfield(L, e, "mode");
+        lua_pushstring(L, team->difficulty);
+        lua_setfield(L, e, "difficulty");
+        /* And the init the team's bots are built with, which was missing
+           here: a packaged manifest that declares one, in a package whose
+           script leaves the table to the manifest, would be read back with
+           no init at all and the two forms held to disagree about it at
+           every load.
+
+           Every value goes over as a string, which is how the table reader
+           stores one whatever the script wrote, so what comes back out of
+           this is what went in. An empty table is left out entirely, no
+           pairs meaning the same as no table. */
+        if (team->init.count > 0) {
+            int ini;
+            int k;
+
+            lua_newtable(L);
+            ini = lua_gettop(L);
+            for (k = 0; k < (int)team->init.count; k++) {
+                lua_pushstring(L, team->init.kv[k].value);
+                lua_setfield(L, ini, team->init.kv[k].key);
+            }
+            lua_setfield(L, e, "init");
+        }
+        /* An array, as the file writes it, so position is part of what the
+           comparison holds the two forms to. */
+        lua_rawseti(L, teams, i + 1);
+    }
+}
+
+static void scnPushLobby(lua_State *L, const ScnManifestLobby *lob) {
+    int t;
+
+    lua_newtable(L);
+    t = lua_gettop(L);
+    lua_pushinteger(L, (lua_Integer)lob->maxPlayers);
+    lua_setfield(L, t, "max_players");
+    lua_pushboolean(L, lob->extraTeams ? 1 : 0);
+    lua_setfield(L, t, "extra_teams");
+    scnPushTeams(L, lob);
+    lua_setfield(L, t, "teams");
+}
+
+/* Keyed by the rule's own name, which is the key scnReadRules resolves back
+ * to the index. An index no name answers to is left out rather than written
+ * under an empty key. */
+static void scnPushRules(lua_State *L, const ScenarioManifest *m) {
+    int      t;
+    uint16_t i;
+
+    lua_newtable(L);
+    t = lua_gettop(L);
+    for (i = 0; i < m->numRules; i++) {
+        const char *name = simRulesRuleName((int)m->rules[i].rule);
+        if (name == NULL || name[0] == '\0') {
+            continue;
+        }
+        lua_pushnumber(L, (lua_Number)m->rules[i].value);
+        lua_setfield(L, t, name);
+    }
+}
+
+/* One kind's tags, keyed by the 1-based entity index the array is held at.
+ * An entity with no tags is left out: an empty list and no list at all read
+ * back the same, and the table stays the size the map's tags make it. */
+static void scnPushTagKind(lua_State *L, const ScnManifestTags *arr,
+                           int maxEntity) {
+    int t;
+    int e;
+
+    lua_newtable(L);
+    t = lua_gettop(L);
+    for (e = 1; e <= maxEntity; e++) {
+        int i;
+        if (arr[e].count == 0) {
+            continue;
+        }
+        lua_newtable(L);
+        for (i = 0; i < (int)arr[e].count; i++) {
+            lua_pushstring(L, arr[e].tag[i]);
+            lua_rawseti(L, -2, i + 1);
+        }
+        lua_rawseti(L, t, e);
+    }
+}
+
+static void scnPushTags(lua_State *L, const ScenarioManifest *m) {
+    int t;
+
+    lua_newtable(L);
+    t = lua_gettop(L);
+    scnPushTagKind(L, m->pillTags, MAX_PILLS);
+    lua_setfield(L, t, "pills");
+    scnPushTagKind(L, m->baseTags, MAX_BASES);
+    lua_setfield(L, t, "bases");
+    scnPushTagKind(L, m->startTags, MAX_STARTS);
+    lua_setfield(L, t, "starts");
+}
+
+static void scnPushRegions(lua_State *L, const ScenarioManifest *m) {
+    int t;
+    int i;
+
+    lua_newtable(L);
+    t = lua_gettop(L);
+    for (i = 0; i < (int)m->numRegions; i++) {
+        const ScnManifestRegion *r = &m->regions[i];
+        int                      e;
+
+        lua_newtable(L);
+        e = lua_gettop(L);
+        lua_pushinteger(L, (lua_Integer)r->x);
+        lua_setfield(L, e, "x");
+        lua_pushinteger(L, (lua_Integer)r->y);
+        lua_setfield(L, e, "y");
+        lua_pushinteger(L, (lua_Integer)r->w);
+        lua_setfield(L, e, "w");
+        lua_pushinteger(L, (lua_Integer)r->h);
+        lua_setfield(L, e, "h");
+        lua_setfield(L, t, r->name);
+    }
+}
+
+/* One value back out, in the kind it was read as. act is the action the
+ * value belongs to, for a string held on the action's own text, and NULL
+ * for a condition's value.
+ *
+ * A NONE is a slot that did not read. It goes out as an empty table, which
+ * scnReadTrigValue reads back as NONE again — the same round trip
+ * manifest.json's null makes, and for the same reason the emitter writes
+ * one: the row keeps the length the file gave it. A nil cannot serve, since
+ * a sequence ends at its first one and the arguments after it would go. */
+static void scnPushTrigValue(lua_State *L, const ScnTrigValue *v,
+                             const ScnTrigAct *act) {
+    switch (v->kind) {
+    case SCN_TRIG_VAL_NUMBER:
+        lua_pushnumber(L, (lua_Number)v->num);
+        return;
+    case SCN_TRIG_VAL_BOOL:
+        lua_pushboolean(L, v->num != 0.0 ? 1 : 0);
+        return;
+    case SCN_TRIG_VAL_STRING:
+        lua_pushstring(L, (v->inText && act != NULL) ? act->text : v->text);
+        return;
+    case SCN_TRIG_VAL_FIELD:
+        lua_newtable(L);
+        lua_pushstring(L, v->text);
+        lua_setfield(L, -2, "field");
+        return;
+    case SCN_TRIG_VAL_NONE:
+    default:
+        lua_newtable(L);
+        return;
+    }
+}
+
+/* An array, in the order the struct holds them, since that is the order a
+ * trigger is identified by. Each row of where and of actions is an array
+ * too, so what goes on is what scnReadTriggers reads. */
+static void scnPushTriggers(lua_State *L, const ScenarioManifest *m) {
+    int t;
+    int i;
+
+    lua_newtable(L);
+    t = lua_gettop(L);
+    for (i = 0; i < (int)m->numTriggers; i++) {
+        const ScnTrigger *trig = &m->triggers[i];
+        int               e;
+        int               list;
+        int               j;
+        int               k;
+
+        lua_newtable(L);
+        e = lua_gettop(L);
+        lua_pushstring(L, trig->when);
+        lua_setfield(L, e, "when");
+
+        lua_newtable(L);
+        list = lua_gettop(L);
+        for (j = 0; j < (int)trig->numWhere; j++) {
+            const ScnTrigCond *c    = &trig->where[j];
+            const char        *name = scnManifestTrigOpName(c->op);
+
+            lua_newtable(L);
+            lua_pushstring(L, c->field);
+            lua_rawseti(L, -2, 1);
+            /* "" for an operator the table cannot name, which is what
+               scnReadTriggers reads back as SCN_TRIG_CMP_UNKNOWN. A row
+               that went on unnamed comes off unnamed. */
+            lua_pushstring(L, name != NULL ? name : "");
+            lua_rawseti(L, -2, 2);
+            scnPushTrigValue(L, &c->value, NULL);
+            lua_rawseti(L, -2, 3);
+            lua_rawseti(L, list, j + 1);
+        }
+        lua_setfield(L, e, "where");
+
+        lua_newtable(L);
+        list = lua_gettop(L);
+        for (j = 0; j < (int)trig->numActions; j++) {
+            const ScnTrigAct *a = &trig->actions[j];
+
+            lua_newtable(L);
+            lua_pushstring(L, a->op);
+            lua_rawseti(L, -2, 1);
+            for (k = 0; k < (int)a->numArgs; k++) {
+                scnPushTrigValue(L, &a->args[k], a);
+                lua_rawseti(L, -2, k + 2);
+            }
+            lua_rawseti(L, list, j + 1);
+        }
+        lua_setfield(L, e, "actions");
+
+        lua_rawseti(L, t, i + 1);
+    }
+}
+
+/* A package's manifest as the scenario global, in the shape scnReadManifest
+ * above reads and Appendix G of the plan specifies. Put on the state before
+ * the chunk runs, and only for a script that came out of a container.
+ *
+ * What it buys: a packaged script may declare no scenario at all and still
+ * play, because what the chunk leaves behind is then this table; and one that
+ * restates the table for a reader of the source is held against the manifest
+ * afterwards rather than believed. A script that assigns nothing reads back
+ * exactly what went on, so that comparison has nothing to do. A loose script
+ * gets nothing pushed and declares its own table, as it always has.
+ *
+ * triggers go over with everything else. scnReadManifest reads them back out
+ * of the same shape, so a packaged script that assigns nothing is read as the
+ * table that went on, triggers and all, and the comparison that follows has
+ * nothing to do.
+ *
+ * The value goes on through the table itself rather than through
+ * lua_setglobal, for the reason scnRawGlobal reads through it: a metatable on
+ * _G is the script's business and running one here is not.
+ *
+ * Which table is envRef's: this script's own globals, where the host is
+ * composing a list, and the state's real globals for the validator and the
+ * editor's check, which pass LUA_NOREF.
+ *
+ * Declared on scenario_validate.h with the rest of the parse, because the
+ * validator pushes the same table before the same chunk: an editor checking a
+ * script against the manifest its forms hold is asking what this server will
+ * do with the pair, and a check that pushed nothing would refuse a script the
+ * load accepts. */
+void scnPushManifestGlobal(lua_State *L, int envRef,
+                           const ScenarioManifest *m) {
+    int t;
+
+    lua_newtable(L);
+    t = lua_gettop(L);
+
+    lua_pushstring(L, m->name);
+    lua_setfield(L, t, "name");
+    lua_pushstring(L, m->description);
+    lua_setfield(L, t, "description");
+    /* The kind as the word the file would have written it as. A packaged
+       script that assigns nothing reads this back as the kind the package
+       states, so the comparison that follows the chunk has nothing to do;
+       one that assigns its own is held against the package and a
+       disagreement names the key. */
+    lua_pushstring(L, scnManifestKindName(m->kind));
+    lua_setfield(L, t, "kind");
+    lua_pushinteger(L, (lua_Integer)m->api);
+    lua_setfield(L, t, "api");
+    lua_pushstring(L, m->game);
+    lua_setfield(L, t, "game");
+    lua_pushboolean(L, m->bound ? 1 : 0);
+    lua_setfield(L, t, "bound");
+    lua_pushboolean(L, m->fillToCaps ? 1 : 0);
+    lua_setfield(L, t, "fill_to_caps");
+    /* The Workshop item and author as the digit strings the file writes
+       them as, and left out for 0, which a reader sees the same as absent.
+       A packaged script that assigns nothing then reads the package's own
+       id back. */
+    if (m->workshopId != 0) {
+        char digits[24];
+
+        snprintf(digits, sizeof(digits), "%llu",
+                 (unsigned long long)m->workshopId);
+        lua_pushstring(L, digits);
+        lua_setfield(L, t, "workshop_id");
+    }
+    if (m->workshopAuthor != 0) {
+        char digits[24];
+
+        snprintf(digits, sizeof(digits), "%llu",
+                 (unsigned long long)m->workshopAuthor);
+        lua_pushstring(L, digits);
+        lua_setfield(L, t, "workshop_author");
+    }
+
+    scnPushLobby(L, &m->lobby);
+    lua_setfield(L, t, "lobby");
+    scnPushRules(L, m);
+    lua_setfield(L, t, "rules");
+    scnPushTags(L, m);
+    lua_setfield(L, t, "tags");
+    scnPushRegions(L, m);
+    lua_setfield(L, t, "regions");
+    scnPushTriggers(L, m);
+    lua_setfield(L, t, "triggers");
+    /* The callbacks block as name = sentence. Left out when there is none,
+       which a reader sees the same as an empty block. */
+    if (m->numCallbacks > 0) {
+        int     cbt;
+        uint8_t i;
+
+        lua_newtable(L);
+        cbt = lua_gettop(L);
+        for (i = 0; i < m->numCallbacks && i < SCN_CALLBACKS_MAX; i++) {
+            lua_pushstring(L, m->callbacks[i].text);
+            lua_setfield(L, cbt, m->callbacks[i].name);
+        }
+        lua_setfield(L, t, "callbacks");
+    }
+    /* The settings block as the file writes it. Left out when there is
+       none, which a reader sees the same as an empty block. */
+    if (m->numSettings > 0) {
+        int     st;
+        uint8_t i;
+
+        lua_newtable(L);
+        st = lua_gettop(L);
+        for (i = 0; i < m->numSettings && i < SCN_SETTINGS_MAX; i++) {
+            const ScnSetting *d = &m->settings[i];
+
+            lua_newtable(L);
+            lua_pushstring(L, d->id);
+            lua_setfield(L, -2, "id");
+            lua_pushstring(L, d->label);
+            lua_setfield(L, -2, "label");
+            if (d->type == SCN_SETTING_TYPE_BOOL) {
+                /* A bool row is written with no range, as the file
+                   declares it. */
+                lua_pushstring(L, "bool");
+                lua_setfield(L, -2, "type");
+                lua_pushboolean(L, d->def != 0);
+                lua_setfield(L, -2, "default");
+            } else {
+                lua_pushstring(L, "int");
+                lua_setfield(L, -2, "type");
+                lua_pushinteger(L, (lua_Integer)d->min);
+                lua_setfield(L, -2, "min");
+                lua_pushinteger(L, (lua_Integer)d->max);
+                lua_setfield(L, -2, "max");
+                lua_pushinteger(L, (lua_Integer)d->step);
+                lua_setfield(L, -2, "step");
+                lua_pushinteger(L, (lua_Integer)d->def);
+                lua_setfield(L, -2, "default");
+            }
+            lua_rawseti(L, st, (int)i + 1);
+        }
+        lua_setfield(L, t, "settings");
+    }
+
+    scnEnvPush(L, envRef);
+    lua_pushstring(L, "scenario");
+    lua_pushvalue(L, t);
+    lua_rawset(L, -3);
+    lua_pop(L, 2);               /* the env, and the table itself */
+}
+
+/* ── The trigger router ───────────────────────────────────────────── */
+
+/* The router's own bytes: src/scenario/scenario_triggers.lua, run through
+ * tools/embed_lua.py and committed. Included here rather than at the head of
+ * the file because this is the one place they are read, which is where
+ * lang.c includes its generated table as well. */
+#include "scenario_triggers.inc"  /* kScnTriggersLua, SCN_TRIGGERS_LUA_LEN */
+
+/* Room for any one hook's fields. The widest row the catalogue holds is
+ * can_build's five parameters and the two their types earn, so this is well
+ * clear of what scenarioLuaFnFields can answer. */
+#define SCN_TRIG_FIELD_MAX 32
+
+/* Which hook a trigger names, as an index into kScnHookNames, or
+ * SCN_HOOK_COUNT for a name that is no hook of this build's.
+ *
+ * The rows scenarioLuaFunctions answers are these same hooks in this same
+ * order and then the policies, so a hook's index here is its row there and
+ * this lookup cannot reach a policy at all. A trigger naming one therefore
+ * goes over with no fields; which names a when may hold is checked before a
+ * round starts, not here. */
+static int scnHookIndexOf(const char *name) {
+    int i;
+
+    for (i = 0; i < (int)SCN_HOOK_COUNT; i++) {
+        if (strcmp(kScnHookNames[i], name) == 0) {
+            return i;
+        }
+    }
+    return (int)SCN_HOOK_COUNT;
+}
+
+/* The triggers as the router reads them. The same data scnPushTriggers puts
+ * in the scenario global, in the shape that is convenient to act on rather
+ * than the shape a file writes: a where-row keyed by what its three parts
+ * are, an action's arguments in a list of their own.
+ *
+ * The values go through scnPushTrigValue, which is what the scenario global
+ * uses, so a long string held on the action's own text arrives as the
+ * argument it belongs to here as well.
+ *
+ * An action's text goes over beside its arguments. Nothing reads it — the
+ * arguments already carry their own strings — but it is the line the struct
+ * holds, and an action carrying one with no argument marked for it is a
+ * shape the JSON emitter and the Lua writer both drop.
+ *
+ * A trigger whose when is not a hook of this build does not go over at all.
+ * The router chains a wrapper on to the global its when names, and a name
+ * that is no hook is either a policy or a misspelling: wrapping a policy
+ * replaces the author's own function with one that discards its answer, so
+ * the round would run the classic rule and the trigger's actions on every
+ * ask. The array stays dense across the drops, because the router walks it
+ * to its first hole. */
+static void scnPushRouterTriggers(lua_State *L, const ScenarioManifest *m) {
+    int t;
+    int i;
+    int out = 0;
+
+    lua_newtable(L);
+    t = lua_gettop(L);
+    for (i = 0; i < (int)m->numTriggers; i++) {
+        const ScnTrigger *trig = &m->triggers[i];
+        int               e;
+        int               list;
+        int               row;
+        int               args;
+        int               j;
+        int               k;
+
+        if (scnHookIndexOf(trig->when) == (int)SCN_HOOK_COUNT) {
+            /* A when of no name at all is the reader's complaint, said under
+               this same key as the table was read; saying it again here is
+               the one fault twice. */
+            if (trig->when[0] != '\0') {
+                char key[SCN_VALIDATE_KEY_LEN];
+
+                snprintf(key, sizeof(key), "triggers[%d]", i);
+                scnReport(NULL, key,
+                          "scenario: %s runs on '%s', which is no hook; "
+                          "dropped", key, trig->when);
+            }
+            continue;
+        }
+
+        lua_newtable(L);
+        e = lua_gettop(L);
+        lua_pushstring(L, trig->when);
+        lua_setfield(L, e, "when");
+
+        lua_newtable(L);
+        list = lua_gettop(L);
+        for (j = 0; j < (int)trig->numWhere; j++) {
+            const ScnTrigCond *c    = &trig->where[j];
+            const char        *name = scnManifestTrigOpName(c->op);
+
+            lua_newtable(L);
+            row = lua_gettop(L);
+            lua_pushstring(L, c->field);
+            lua_setfield(L, row, "field");
+            /* The operator by name, through the table both readers resolve
+               a file's spelling with. A second copy of the seven strings
+               here is how the two would come to disagree.
+
+               An operator the table cannot name goes on as "", which is
+               none of the seven the router compares against, so the row
+               never holds. What it must not be is one of the seven: the
+               router would then run a test the author did not write. */
+            lua_pushstring(L, name != NULL ? name : "");
+            lua_setfield(L, row, "op");
+            scnPushTrigValue(L, &c->value, NULL);
+            lua_setfield(L, row, "value");
+            lua_rawseti(L, list, j + 1);
+        }
+        lua_setfield(L, e, "where");
+
+        lua_newtable(L);
+        list = lua_gettop(L);
+        for (j = 0; j < (int)trig->numActions; j++) {
+            const ScnTrigAct *a = &trig->actions[j];
+
+            lua_newtable(L);
+            row = lua_gettop(L);
+            lua_pushstring(L, a->op);
+            lua_setfield(L, row, "op");
+
+            lua_newtable(L);
+            args = lua_gettop(L);
+            for (k = 0; k < (int)a->numArgs; k++) {
+                scnPushTrigValue(L, &a->args[k], a);
+                lua_rawseti(L, args, k + 1);
+            }
+            lua_setfield(L, row, "args");
+
+            lua_pushstring(L, a->text);
+            lua_setfield(L, row, "text");
+
+            lua_rawseti(L, list, j + 1);
+        }
+        lua_setfield(L, e, "actions");
+
+        out++;
+        lua_rawseti(L, t, out);
+    }
+}
+
+/* One field's entry, as the router reads it. Every field is a table, the
+ * function's own parameters included, so the router's lookup has one shape
+ * to read rather than a number for some names and a table for others:
+ *
+ *   arg     the 1-based position of the argument the field reads
+ *   derive  absent for a parameter itself; otherwise "team", "tag" or
+ *           "region", which is how the router works the value out
+ *   kind    "pill" or "base", on a tag: the word game.tags is asked with
+ *   arg2    on a region: the position of the y beside the x at arg
+ *
+ * The kind and the second position come from the parameter types behind the
+ * field rather than from the hook's name, so a hook whose parameters move
+ * moves these with them.
+ *
+ * A derived field this build cannot work out is left out altogether, and a
+ * row naming it does not hold — the router's own rule for a field it cannot
+ * read. Nothing here says a field suits the operator beside it; that is
+ * checked before a round starts. */
+static void scnPushRouterField(lua_State *L, int tbl,
+                               const ScnLuaFnRow *row,
+                               const ScnLuaFnField *field) {
+    const char *derive = NULL;
+    const char *kind   = NULL;
+    size_t      second = 0;
+    int         entry;
+
+    if (field->derived) {
+        switch (field->type) {
+        case SCN_PARAM_TEAM:
+            derive = "team";
+            break;
+
+        case SCN_PARAM_TAG:
+            /* Which list game.tags is asked for is the parameter's own
+               type. A pillbox and a base number the same way and the word
+               is the only thing that tells them apart. */
+            if (field->from >= row->paramCount) {
+                return;
+            }
+            if (row->params[field->from].type == SCN_PARAM_PILL) {
+                kind = "pill";
+            } else if (row->params[field->from].type == SCN_PARAM_BASE) {
+                kind = "base";
+            } else {
+                return;
+            }
+            derive = "tag";
+            break;
+
+        case SCN_PARAM_REGION:
+            /* A square is a pair, and the y is the parameter after the x.
+               Held against the row rather than assumed, because a field
+               with no y behind it names no square. */
+            second = field->from + 1;
+            if (second >= row->paramCount ||
+                row->params[second].type != SCN_PARAM_SQUARE_Y) {
+                return;
+            }
+            derive = "region";
+            break;
+
+        default:
+            /* A derivation this build has no rule for. */
+            return;
+        }
+    }
+
+    lua_newtable(L);
+    entry = lua_gettop(L);
+    lua_pushinteger(L, (lua_Integer)(field->from + 1));
+    lua_setfield(L, entry, "arg");
+    if (derive != NULL) {
+        lua_pushstring(L, derive);
+        lua_setfield(L, entry, "derive");
+    }
+    if (kind != NULL) {
+        lua_pushstring(L, kind);
+        lua_setfield(L, entry, "kind");
+    }
+    if (second != 0) {
+        lua_pushinteger(L, (lua_Integer)(second + 1));
+        lua_setfield(L, entry, "arg2");
+    }
+    lua_setfield(L, tbl, field->name);
+}
+
+/* Every field the triggers can read, by the hook that carries it: the names
+ * an author writes in a where-row or a { field = ... } value, each against
+ * what the router needs to work its value out.
+ *
+ * One entry per hook named rather than one per trigger, since several
+ * triggers on a hook all read the same payload. */
+static void scnPushRouterFields(lua_State *L, const ScenarioManifest *m) {
+    const ScnLuaFnRow *catalogue;
+    size_t             catalogueCount = 0;
+    int                t;
+    int                i;
+
+    /* The hooks are the head of this list, in the order kScnHookNames holds
+       them, so a hook's index there is its row here. */
+    catalogue = scenarioLuaFunctions(&catalogueCount);
+
+    lua_newtable(L);
+    t = lua_gettop(L);
+
+    for (i = 0; i < (int)m->numTriggers; i++) {
+        ScnLuaFnField rows[SCN_TRIG_FIELD_MAX];
+        const char   *when = m->triggers[i].when;
+        size_t        count;
+        size_t        j;
+        int           hook;
+        int           e;
+
+        hook = scnHookIndexOf(when);
+        if (hook == (int)SCN_HOOK_COUNT ||
+            (size_t)hook >= catalogueCount) {
+            continue;
+        }
+
+        lua_pushstring(L, when);
+        lua_rawget(L, t);
+        if (!lua_isnil(L, -1)) {
+            lua_pop(L, 1);       /* this hook's fields are already over */
+            continue;
+        }
+        lua_pop(L, 1);
+
+        /* The accessor answers how many the row has and writes at most what
+           it was given room for, so a row with more fields than this holds
+           is clamped rather than read past the end. Five parameters is the
+           widest the catalogue has and each earns at most one field, so ten
+           is the most any row can reach. */
+        count = scenarioLuaFnFields((size_t)hook, rows,
+                                    (size_t)SCN_TRIG_FIELD_MAX);
+        if (count > (size_t)SCN_TRIG_FIELD_MAX) {
+            count = (size_t)SCN_TRIG_FIELD_MAX;
+        }
+
+        lua_newtable(L);
+        e = lua_gettop(L);
+        for (j = 0; j < count; j++) {
+            scnPushRouterField(L, e, &catalogue[hook], &rows[j]);
+        }
+        lua_pushstring(L, when);
+        lua_pushvalue(L, e);
+        lua_rawset(L, t);
+        lua_pop(L, 1);           /* the hook's own table */
+    }
+}
+
+/* The router into the state the author's chunk has just run in, and into
+ * that script's own globals.
+ *
+ * envRef is the author's environment, and the router is given it as its own:
+ * the whole of what this chunk does is read a handler off the globals its
+ * script wrote and put a wrapper back, so run against the state's real
+ * globals it would find nothing to chain on to and leave its wrapper where
+ * no host would ever look. `local G = _G` at the head of the file is that
+ * read, which is why the environment carries _G as itself.
+ *
+ * A scenario with no triggers loads none of it: there is nothing to chain on
+ * to, and the state is left exactly as the script left it.
+ *
+ * Loaded and called the way scnRunChunk loads and calls the author's bytes,
+ * with the sandbox call guard armed across the load as well as the call. The
+ * router's top level is script code like any other and the one place a loop
+ * in it would show is an attach that never returns.
+ *
+ * It takes its data as three chunk arguments where scnRunChunk's chunk
+ * takes none, which is the whole of the difference between them. Widening
+ * scnRunChunk would reach the validator's call as well, and the validator
+ * checks a script rather than starting a round, so it loads no router. The
+ * third argument is the sandbox's own copies of the base functions the
+ * router calls: the author's globals are whatever the script left them.
+ *
+ * The chunk name is the file the bytes came from, so a line in an error
+ * names a line of src/scenario/scenario_triggers.lua. That is what the two
+ * chunks buy: the author's file and this one each keep their own numbering.
+ *
+ * Text only, for the reason scnRunChunk is: these bytes are the build's own,
+ * but the loader that reads them is the one a map file's script reaches.
+ * Under -allow-unsafe-scripts it takes either, as scnRunChunk's does: the
+ * operator has chosen to trust every script this server runs. */
+static bool scnInstallTriggers(lua_State *L, int envRef,
+                               const ScenarioManifest *m,
+                               char *err, size_t errLen) {
+    ScnSandboxCall saved;
+    bool           ok   = false;
+    const char    *mode = scenarioHostUnsafeScripts() ? NULL : "t";
+
+    if (m->numTriggers == 0) {
+        return true;
+    }
+
+    scnSandboxArmCall(L, &saved);
+    if (luaL_loadbufferx(L, (const char *)kScnTriggersLua,
+                         (size_t)SCN_TRIGGERS_LUA_LEN,
+                         "@scenario_triggers.lua", mode) != 0) {
+        scnFmt(err, errLen, "scenario: %s", scnLuaError(L));
+        lua_pop(L, 1);
+    } else if (!scnChunkSetEnv(L, envRef)) {
+        scnFmt(err, errLen,
+               "scenario: this build cannot give the trigger router the "
+               "script's own globals");
+        lua_pop(L, 1);
+    } else {
+        scnPushRouterTriggers(L, m);
+        scnPushRouterFields(L, m);
+        scnSandboxPushBase(L);
+        if (lua_pcall(L, 3, 0, 0) != 0) {
+            scnFmt(err, errLen, "scenario: %s", scnLuaError(L));
+            lua_pop(L, 1);
+        } else {
+            ok = true;
+        }
+    }
+    scnSandboxDisarmCall(L, &saved);
+    return ok;
+}
+
+/* What a package whose script restates the table and disagrees with it reads
+ * like. scnManifestAgrees writes the sentence saying what differs and the key
+ * separately; the key is the line of the table to go and look at, which the
+ * sentence does not name, so the three places that refuse a load over one say
+ * both and say them the same way. */
+static void scnDisagreed(char *out, size_t outLen, const char *why,
+                         const char *key) {
+    scnFmt(out, outLen, "%s — the key is '%s'", why, key);
 }
 
 /* ── Applying the rules ───────────────────────────────────────────── */
@@ -1012,11 +3004,13 @@ static void scnApplyRules(ScenarioHost *h) {
         op.u.setRule.rule  = h->manifest.rules[i].rule;
         op.u.setRule.value = h->manifest.rules[i].value;
 
-        r = serverSimApplyScenarioOp(h->sim, &op, NULL);
+        /* The host's own op, not the script's: a table of more rules than
+           one tick's allowance still applies in full. */
+        r = serverSimApplyScenarioHostOp(h->sim, &op, NULL);
         if (r != SCN_OP_OK) {
             scnSay(h->lastError, sizeof(h->lastError),
                    "scenario: rule '%s' refused: %s",
-                   scenarioLuaRuleName((int)h->manifest.rules[i].rule),
+                   simRulesRuleName((int)h->manifest.rules[i].rule),
                    scnResultText(r));
         }
     }
@@ -1024,10 +3018,46 @@ static void scnApplyRules(ScenarioHost *h) {
 
 /* ── Switching a scenario off for the round ───────────────────────── */
 
-/* What a line to the players calls the scenario: its own name where the
- * table gave one, the plain words where it did not. */
+/* What a line to the players calls the whole list: the composite's name
+ * where the table gave one, the plain words where it did not. */
 static const char *scnSubject(const ScenarioHost *h) {
     return (h->manifest.name[0] != '\0') ? h->manifest.name : "The scenario";
+}
+
+/* And what a line calls one script of it, which is the name that script's
+ * own table gave. A list of one composes to that same name, so the lines
+ * below read exactly as they did before there was a list to name.
+ *
+ * Falls back to the composite for a slot with no table read into it yet,
+ * which is a script that failed its load and has nothing of its own to be
+ * called by. */
+static const char *scnScriptSubject(const ScenarioHost *h, int i) {
+    const ScnScriptEntry *e = &h->entry[i];
+
+    if (e->manifest != NULL && e->manifest->name[0] != '\0') {
+        return e->manifest->name;
+    }
+    return scnSubject(h);
+}
+
+/* Whether this slot holds a script that is still running. */
+static bool scnScriptLive(const ScenarioHost *h, int i) {
+    return i >= 0 && i < h->count && !h->entry[i].disabled;
+}
+
+/* The host's own switch, worked out again from the list: off when there is
+ * no script left to run. Every read of h->disabled is this answer held, and
+ * this is the one place it is written once a round is booted. */
+static void scnDisabledRefresh(ScenarioHost *h) {
+    int i;
+
+    for (i = 0; i < h->count; i++) {
+        if (!h->entry[i].disabled) {
+            h->disabled = false;
+            return;
+        }
+    }
+    h->disabled = true;
 }
 
 /* Stop running this scenario's Lua for the rest of the round and hold one
@@ -1042,56 +3072,271 @@ static const char *scnSubject(const ScenarioHost *h) {
  * GUI thread, where the control bus is not this tree's to publish on: the
  * bus and its subscribers are the tick thread's. The tick callback is past
  * both. */
+static void scnSaySwitchedOff(ScenarioHost *h, const char *fmt, va_list ap) {
+    vsnprintf(h->pending, sizeof(h->pending), fmt, ap);
+    h->hasPending = true;
+    scnSay(h->lastError, sizeof(h->lastError), "scenario: %s", h->pending);
+}
+
+/* One script of the list off for the rest of the round, and one line held
+ * for the players naming it. The others carry on; the next round start boots
+ * a fresh VM and begins all of them again.
+ *
+ * Two scripts switched off in the same tick leave the second one's line in
+ * h->pending and the first one's unsaid — there is one line and one tick.
+ * With a list of one that cannot arise, and it is worth a second line rather
+ * than a second field only once a list can hold two. */
+static void scnScriptDisable(ScenarioHost *h, int i, const char *fmt, ...) {
+    va_list ap;
+
+    if (h->entry[i].disabled) {
+        return;                  /* the round is already without this one */
+    }
+    h->entry[i].disabled = true;
+    scnDisabledRefresh(h);
+
+    va_start(ap, fmt);
+    scnSaySwitchedOff(h, fmt, ap);
+    va_end(ap);
+}
+
+/* Every script of the list off at once, for a fault that belongs to no one
+ * of them: the roster audit, which finds a player gone without being able to
+ * say whose hook took them. */
 static void scnDisable(ScenarioHost *h, const char *fmt, ...) {
     va_list ap;
+    int     i;
 
     if (h->disabled) {
         return;                  /* the round is already without it */
     }
+    for (i = 0; i < h->count; i++) {
+        h->entry[i].disabled = true;
+    }
     h->disabled = true;
 
     va_start(ap, fmt);
-    vsnprintf(h->pending, sizeof(h->pending), fmt, ap);
+    scnSaySwitchedOff(h, fmt, ap);
     va_end(ap);
-    h->hasPending = true;
-
-    scnSay(h->lastError, sizeof(h->lastError), "scenario: %s", h->pending);
 }
 
-/* One more error, for a caller that has already said its piece. Apart from a
- * hook or a policy raising, the other thing that counts is a tick that found
- * the event queue full: however many events that tick lost, it is one thing
- * that went wrong and it counts once, so a single overflow cannot take a
- * scenario from nothing to switched off.
+/* One more error against one script, for a caller that has already said its
+ * piece.
+ *
+ * The count is that script's and not the list's. Shared, one script's
+ * successes would put another script's failures back to zero and a script
+ * failing every call it makes would sit below the limit for ever — which is
+ * the whole reason the count moved on to the entry.
  *
  * The count cannot wrap. Past the limit the only thing left to do is switch
- * the scenario off, which the next line does, and a switched-off round still
+ * that script off, which the next line does, and a switched-off round still
  * counts the drops its queue goes on taking. */
-static void scnErrorCounted(ScenarioHost *h) {
-    if (h->errors < UINT_MAX) {
-        h->errors++;
-    }
-    if (h->errors >= SCN_ERROR_LIMIT) {
-        scnDisable(h, "%.32s is off for the rest of the round: %u errors in "
-                      "a row.", scnSubject(h), h->errors);
+static void scnErrorLimit(ScenarioHost *h, int i) {
+    ScnScriptEntry *e = &h->entry[i];
+
+    if (e->errors >= SCN_ERROR_LIMIT) {
+        scnScriptDisable(h, i,
+                         "%.32s is off for the rest of the round: %u errors "
+                         "in a row.", scnScriptSubject(h, i), e->errors);
     }
 }
 
-/* One more call that raised. SCN_ERROR_LIMIT of them in a row and the
- * scenario is off. The operator sees every one on the way there, because
- * which calls they were is the whole of what a script author has to work
- * from until the bindings land. */
-static void scnErrorRaised(ScenarioHost *h, const char *what,
+static void scnErrorCounted(ScenarioHost *h, int i) {
+    ScnScriptEntry *e = &h->entry[i];
+
+    if (e->errors < UINT_MAX) {
+        e->errors++;
+    }
+    if (e->tickCounted < UINT_MAX) {
+        e->tickCounted++;
+    }
+    scnErrorLimit(h, i);
+}
+
+/* Each script's count as the tick found it, and none counted since. Made
+ * where the tick opens its instruction window. */
+static void scnErrorTickSave(ScenarioHost *h) {
+    int i;
+
+    for (i = 0; i < h->count; i++) {
+        h->entry[i].tickSaved   = h->entry[i].errors;
+        h->entry[i].tickCounted = 0;
+    }
+}
+
+/* A tick that ran out of instructions may not clear what came before it.
+ *
+ * Every call ahead of the one that went over returned, and a call that returns
+ * puts its script's count back to zero. Left at that, a script spending the
+ * whole total every tick would be counted one error and then cleared by its
+ * own first call of the next tick, for ever, and never reach the limit. So the
+ * count goes back to what the tick found plus what the tick counted, and the
+ * clears it made are undone.
+ *
+ * Counts only: a script switched off during the tick stays off, and one this
+ * takes to the limit is switched off here as the count would have done. A
+ * tick that did not run out does not come here and keeps its clears. */
+static void scnErrorTickRestore(ScenarioHost *h) {
+    int i;
+
+    for (i = 0; i < h->count; i++) {
+        ScnScriptEntry *e = &h->entry[i];
+
+        e->errors = (e->tickCounted > UINT_MAX - e->tickSaved)
+                        ? UINT_MAX
+                        : e->tickSaved + e->tickCounted;
+        scnErrorLimit(h, i);
+    }
+}
+
+/* An error nobody on the list owns: a timer that raised, or a tick that
+ * found the event queue full. Counted against every script still running,
+ * which for a list of one is that one script and is exactly what a single
+ * shared count did.
+ *
+ * It is the wrong answer for a longer list and it is the honest one until
+ * the owner is known. Phase 4 tags a timer with the script that set it —
+ * the timers are one id space of sixty-four on the host — and the queue is
+ * one queue for the list by design, so a tick that overflows it really has
+ * lost events belonging to all of them. */
+static void scnErrorCountedAll(ScenarioHost *h) {
+    int i;
+
+    for (i = 0; i < h->count; i++) {
+        if (!h->entry[i].disabled) {
+            scnErrorCounted(h, i);
+        }
+    }
+}
+
+/* One more call that raised, against the script whose function it was.
+ * SCN_ERROR_LIMIT of them in a row and that script is off. The operator sees
+ * every one on the way there, because which calls they were is the whole of
+ * what a script author has to work from until the bindings land. */
+static void scnErrorRaised(ScenarioHost *h, int i, const char *what,
                            const char *msg) {
     scnSay(h->lastError, sizeof(h->lastError), "scenario: %s raised: %s",
            what, msg);
-    scnErrorCounted(h);
+    scnErrorCounted(h, i);
 }
 
 /* A call that returned. The count is of errors in a row, so one success
- * clears whatever came before it. */
-static void scnErrorCleared(ScenarioHost *h) {
-    h->errors = 0;
+ * clears whatever that script had before it — and only that script's. */
+static void scnErrorCleared(ScenarioHost *h, int i) {
+    h->entry[i].errors = 0;
+}
+
+/* The same, for the ownerless calls: a timer that returned clears whatever
+ * every running script had, which for a list of one is what it always did.
+ * The note on scnErrorCountedAll applies. */
+static void scnErrorClearedAll(ScenarioHost *h) {
+    int i;
+
+    for (i = 0; i < h->count; i++) {
+        if (!h->entry[i].disabled) {
+            h->entry[i].errors = 0;
+        }
+    }
+}
+
+/* ── Which script is running ──────────────────────────────────────── */
+
+/* Say that this table's script is about to run, and hand back what was there
+ * before for the call that follows to put back. The context is handed to
+ * every VM this host boots, so a row that has to know which file is calling
+ * reads it off there: scnNotTheDecider in src/scenario/scenario_lua.c is the
+ * one row that does, and it is what holds the round-deciding rows back from
+ * a mod.
+ *
+ * The entry's own table and never the composite. The composite's declarative
+ * half is the base's, kind with it — scnComposeInto copies it at line 3153 —
+ * so a mod composed behind a scenario reads as a scenario there and every
+ * row the kind holds back would let it through.
+ *
+ * Saved and put back rather than cleared, because these nest. A hook that
+ * issues an op the sim answers by calling another script's hook has the
+ * outer entry running when it comes back, and a call cleared to nothing
+ * would leave the rest of the outer hook reading as no script at all. A
+ * lua_pcall that raises returns rather than jumping past the caller, so the
+ * matching leave below is reached whichever way the call went.
+ *
+ * The table and not an index, because the reading row would otherwise have
+ * to hold the host, which scenario_lua.c deliberately does not: the host is
+ * opaque there, and every other thing a row reads it reaches through this
+ * same context. The timer loop wants the table form as well — it holds the
+ * table the timer was set by and has no entry index to go with it.
+ *
+ * Three fields move together, though, and the second and third are the same
+ * script said other ways. The region rows want to know which entry is asking
+ * rather than what kind of file it is, because a round may now hold two
+ * regions under one name and the asker's own is the one it means; and
+ * game.define_region wants the entry's file, because a region's bit is
+ * keyed on the naming file's name rather than on its place in a list a host
+ * may reorder. All three are saved and all three are put back, which is what
+ * the triple below carries. Writing them in one place is what keeps them
+ * from drifting apart — a call that set the table and not the position would
+ * leave a script's region lookups answering as nobody's. */
+typedef struct {
+    const ScenarioManifest *manifest;
+    uint8_t                 owner;
+    const char             *file;
+} ScnRunningSave;
+
+static ScnRunningSave scnRunningSet(ScenarioHost *h,
+                                    const ScenarioManifest *m, uint8_t owner,
+                                    const char *file) {
+    ScnRunningSave outer;
+
+    outer.manifest      = h->lua.running;
+    outer.owner         = h->lua.runningOwner;
+    outer.file          = h->lua.runningFile;
+    h->lua.running      = m;
+    h->lua.runningOwner = owner;
+    h->lua.runningFile  = file;
+    return outer;
+}
+
+/* The table form, for the timer loop, which holds the table a timer was set
+ * by and no index beside it. The position is worked back out of the list
+ * here rather than carried on the timer: the entries are at most ten and
+ * each holds one table, so the scan is a handful of pointer comparisons on
+ * a path that runs once per timer that comes due. A table that is on no
+ * entry — a state with no list behind it — is nobody, and has no file
+ * either. */
+static ScnRunningSave scnRunningEnterTable(ScenarioHost *h,
+                                           const ScenarioManifest *m) {
+    uint8_t     owner = SCN_OWNER_NONE;
+    const char *file  = NULL;
+    int         i;
+
+    for (i = 0; m != NULL && i < h->count; i++) {
+        if (h->entry[i].manifest == m) {
+            owner = SCN_OWNER_OF_ENTRY(i);
+            file  = h->entry[i].script;
+            break;
+        }
+    }
+    return scnRunningSet(h, m, owner, file);
+}
+
+/* The same for one entry of the list, which is what every caller but the
+ * timer loop has in hand. The index is already the answer here.
+ *
+ * The whole path and not the file name off the end of it: the entry holds
+ * the path, it outlives every call made under it, and the one row that reads
+ * it takes the last segment for itself. */
+static ScnRunningSave scnRunningEnter(ScenarioHost *h, int i) {
+    return scnRunningSet(h, h->entry[i].manifest, SCN_OWNER_OF_ENTRY(i),
+                         h->entry[i].script);
+}
+
+/* And back to whatever was running before this call, which is nothing for a
+ * call the engine made and the outer entry for one a script's own code led
+ * to. */
+static void scnRunningLeave(ScenarioHost *h, ScnRunningSave outer) {
+    h->lua.running      = outer.manifest;
+    h->lua.runningOwner = outer.owner;
+    h->lua.runningFile  = outer.file;
 }
 
 /* ── The hooks ────────────────────────────────────────────────────── */
@@ -1101,14 +3346,14 @@ static void scnErrorCleared(ScenarioHost *h) {
  * its own scenario table, and the global wins where a script does both.
  * Absent is not an error and is the ordinary case: a scenario defines the
  * few hooks it cares about and none of the rest. */
-static int scnHookRef(lua_State *L, const char *name) {
-    scnRawGlobal(L, name);
+static int scnHookRef(lua_State *L, int envRef, const char *name) {
+    scnRawGlobal(L, envRef, name);
     if (lua_isfunction(L, -1)) {
         return luaL_ref(L, LUA_REGISTRYINDEX);
     }
     lua_pop(L, 1);
 
-    scnRawGlobal(L, "scenario");
+    scnRawGlobal(L, envRef, "scenario");
     if (lua_istable(L, -1)) {
         scnRawField(L, -1, name);
         if (lua_isfunction(L, -1)) {
@@ -1122,54 +3367,180 @@ static int scnHookRef(lua_State *L, const char *name) {
     return LUA_NOREF;
 }
 
-/* Resolve every name at once, at the boot of the state that defines them. */
-static void scnHooksResolve(ScenarioHost *h, lua_State *L) {
-    int i;
+/* Every name of one script at once, out of that script's own globals, at the
+ * boot of the state that defines them. */
+static void scnHooksResolve(ScnScriptEntry *e, lua_State *L) {
+    int j;
 
-    for (i = 0; i < (int)SCN_HOOK_COUNT; i++) {
-        h->hooks[i] = scnHookRef(L, kScnHookNames[i]);
+    for (j = 0; j < (int)SCN_HOOK_COUNT; j++) {
+        e->hooks[j] = scnHookRef(L, e->envRef, kScnHookNames[j]);
     }
 }
 
+/* One slot back to holding no round. Not a release: every reference in it
+ * belongs to a lua_State, and the only caller is one that has closed or is
+ * about to close the state that held them. The table goes back to the heap,
+ * which is this file's to give back.
+ *
+ * The script's own bytes are not touched here, and that is the whole reason
+ * this is separate from scnEntrySourceDrop below. A round boot that fails
+ * runs this over every slot and the next round start reads the same bytes
+ * again; dropping them here would leave the host holding a list it could
+ * never run and no way to say which files it used to be. */
+static void scnEntryForget(ScnScriptEntry *e) {
+    int j;
+
+    free(e->manifest);
+    e->manifest = NULL;
+    e->envRef   = LUA_NOREF;
+    for (j = 0; j < (int)SCN_HOOK_COUNT; j++) {
+        e->hooks[j] = LUA_NOREF;
+    }
+    e->errors   = 0;
+    e->disabled = false;
+}
+
+/* And one slot back to holding no script: the bytes, the container's table
+ * and where both came from. A release, unlike the call above — all three are
+ * this file's own heap. Reached at the detach and wherever a reload puts new
+ * bytes in an entry's place. */
+static void scnEntrySourceDrop(ScnScriptEntry *e) {
+    free(e->src);
+    free(e->pkgManifest);
+    e->src          = NULL;
+    e->srcLen       = 0;
+    e->pkgManifest  = NULL;
+    e->script[0]    = '\0';
+    e->chunkName[0] = '\0';
+    e->source       = lobbyScenarioNone;
+}
+
+/* The whole list back to holding no round. The scripts stay: see
+ * scnEntryForget. */
 static void scnHooksForget(ScenarioHost *h) {
     int i;
 
-    for (i = 0; i < (int)SCN_HOOK_COUNT; i++) {
-        h->hooks[i] = LUA_NOREF;
+    for (i = 0; i < SCN_SCRIPTS_MAX; i++) {
+        scnEntryForget(&h->entry[i]);
     }
+    h->count = 0;
 }
 
-/* Push one hook, ready for its arguments. False when there is nothing to
- * call: a scenario switched off for the round runs none of them, and a name
- * the script never defined is not a call at all and leaves the error count
- * where it was.
+/* And the whole list back to holding nothing at all, which is what a host
+ * that is going away does. Both halves of every slot, and both counts. */
+static void scnListForget(ScenarioHost *h) {
+    int i;
+
+    scnHooksForget(h);
+    for (i = 0; i < SCN_SCRIPTS_MAX; i++) {
+        scnEntrySourceDrop(&h->entry[i]);
+    }
+    h->scripts = 0;
+    h->base    = 0;
+}
+
+/* Whether this hook is worth building arguments for: true when at least one
+ * script on the list is still running and has defined it. False is not a
+ * call at all and leaves every error count where it was.
  *
- * The caller holds the VM lock, and must reach scnHookCall for every true
- * this answers — the function it pushed is on the stack until then. */
+ * The caller holds the VM lock, pushes its arguments after this answers
+ * true, and reaches scnHookCall for every true — which is what takes them
+ * off again. Nothing is pushed here: the arguments go on once and are copied
+ * per script by the call below, so what a hook is handed cannot depend on
+ * how many scripts are listening. */
 static bool scnHookBegin(ScenarioHost *h, ScnHookId id) {
-    if (h->disabled || h->L == NULL || h->hooks[id] == LUA_NOREF) {
+    int i;
+
+    if (h->disabled || h->L == NULL) {
         return false;
     }
-    lua_rawgeti(h->L, LUA_REGISTRYINDEX, h->hooks[id]);
-    return true;
+    for (i = 0; i < h->count; i++) {
+        if (!h->entry[i].disabled && h->entry[i].hooks[id] != LUA_NOREF) {
+            return true;
+        }
+    }
+    return false;
 }
 
-/* Make the call, with the nargs the caller has pushed since. One that
- * raises carries the error count toward the limit and one that returns puts
- * it back to zero. */
-static void scnHookCall(ScenarioHost *h, ScnHookId id, int nargs) {
-    ScnSandboxCall saved;
-    int            rc;
+/* The hook down the list, in list order: number one first.
+ *
+ * The caller's nargs are sitting on the stack. Each script gets its own copy
+ * of them — its function pushed, the arguments pushed again above it, the
+ * call made — and the originals come off at the end. A script is therefore
+ * handed the same values whether it is first or last, and a script that
+ * kept a table it was given cannot be handed a different one next time.
+ *
+ * Nothing arbitrates, because nothing is read: every one of the twenty-five
+ * hooks is declared with no return in the catalogue and the call asks for
+ * zero results, so a hook two scripts define is simply run twice and there
+ * is no semantic decision to make. The policies are the other kind of
+ * call and are a different matter — their answers are read — which is
+ * why they stay one call to one script until phase 4 settles how the
+ * answers combine.
+ *
+ * One that raises carries its own script's count toward the limit and one
+ * that returns puts its own script's count back to zero.
+ *
+ * The audience is a bit per list position, and every hook but two passes
+ * every bit set. The two are the region pair: a region two scripts named is
+ * two rectangles, and the script that named one of them is told about its
+ * own and not about the other script's. scnRegionAudience below works out
+ * which bits that leaves. */
+static void scnHookCallTo(ScenarioHost *h, ScnHookId id, int nargs,
+                          uint16_t to) {
+    int base = lua_gettop(h->L) - nargs;
+    int i;
 
-    scnSandboxArmCall(h->L, &saved);
-    rc = lua_pcall(h->L, nargs, 0, 0);
-    scnSandboxDisarmCall(h->L, &saved);
-    if (rc != 0) {
-        scnErrorRaised(h, kScnHookNames[id], scnLuaError(h->L));
-        lua_pop(h->L, 1);
-        return;
+    for (i = 0; i < h->count; i++) {
+        ScnSandboxCall          saved;
+        ScnRunningSave          outer;
+        int                     rc;
+        int                     j;
+
+        if (h->entry[i].disabled || h->entry[i].hooks[id] == LUA_NOREF ||
+            ((to >> i) & 1u) == 0) {
+            continue;
+        }
+        /* A tick whose calls have spent SCN_BUDGET_TICK_INSTR between them
+           makes no more: the rest of the drain, the region hooks and on_tick
+           are dropped for this tick. A dropped call is no call at all, so it
+           counts no error and clears none; the one that went over has already
+           been counted. */
+        if (scnSandboxTickSpent(h->L)) {
+            break;
+        }
+        /* The function and one copy of each argument. Asked for rather than
+           assumed: LUA_MINSTACK is twenty and the widest hook takes five,
+           so this cannot fail in practice and a state that says no is not
+           one to push on to anyway. */
+        if (!lua_checkstack(h->L, nargs + 1)) {
+            continue;
+        }
+        lua_rawgeti(h->L, LUA_REGISTRYINDEX, h->entry[i].hooks[id]);
+        for (j = 1; j <= nargs; j++) {
+            lua_pushvalue(h->L, base + j);
+        }
+        /* This script's own code is what runs below, so this is where the
+           rows that have to know which file is calling are told. */
+        outer = scnRunningEnter(h, i);
+        scnSandboxArmCall(h->L, &saved);
+        rc = lua_pcall(h->L, nargs, 0, 0);
+        scnSandboxDisarmCall(h->L, &saved);
+        scnRunningLeave(h, outer);
+        if (rc != 0) {
+            scnErrorRaised(h, i, kScnHookNames[id], scnLuaError(h->L));
+            lua_pop(h->L, 1);
+            continue;
+        }
+        scnErrorCleared(h, i);
     }
-    scnErrorCleared(h);
+    /* The arguments the caller pushed, however the calls went. */
+    lua_settop(h->L, base);
+}
+
+/* The whole list, which is what all but the region pair want. */
+static void scnHookCall(ScenarioHost *h, ScnHookId id, int nargs) {
+    scnHookCallTo(h, id, nargs, 0xFFFFu);
 }
 
 /* One that takes nothing: the lifecycle calls with no payload. */
@@ -1178,6 +3549,586 @@ static void scnHookRun(ScenarioHost *h, ScnHookId id) {
         return;
     }
     scnHookCall(h, id, 0);
+}
+
+/* ── Loading one script of the list ───────────────────────────────── */
+
+/* What a slot needs to be handed to load one script into. */
+typedef struct ScnScriptLoad {
+    const char             *src;
+    size_t                  srcLen;
+    /* What Lua calls the chunk in an error, '@' and all, and what the host
+     * calls the file in one of its own. */
+    const char             *chunkName;
+    const char             *path;
+    /* The container's own table, pushed as the scenario global before the
+     * chunk runs and held against what the chunk leaves behind. NULL for a
+     * loose script, which has no manifest but its own. */
+    const ScenarioManifest *pkg;
+    /* Whether this load is the one that will dispatch hooks. The attach and
+     * the reload's check both read a table and throw their state away, and
+     * a hook resolved on either would fire from a state no round is playing
+     * on — the lobby's on_player_join, before a round has booted. Only the
+     * round boot asks for them. */
+    bool                    resolveHooks;
+    /* The context the state below was booted with, and which entry of the
+     * list this script is. The load says so across the chunk run, which is
+     * a file's own top level: the table the chunk is about to declare has
+     * not been read yet, so nothing there knows what kind of file it is,
+     * while the list position has been settled since the host picked the
+     * list. game.define_region is the row that needs it — a region a top
+     * level names would otherwise belong to nobody. Its own table is in
+     * ctx->manifest and this does not touch that.
+     *
+     * ctx is never NULL: every caller booted its state from a context it
+     * holds, and this writes into that same struct. */
+    ScnLuaCtx              *ctx;
+    int                     entry;
+} ScnScriptLoad;
+
+/* A slot ready to take a script: every reference empty and a zeroed table of
+ * its own on the heap, which is the table the chunk's own read fills and the
+ * one a checking state's game rows are pointed at. False where there was no
+ * memory for it.
+ *
+ * Off the heap and not off the caller's frame: a ScenarioManifest is 184,816
+ * bytes, which is more than any of the three callers' stacks should hold and
+ * more than a tick's frame could. */
+static bool scnEntryReady(ScnScriptEntry *e) {
+    scnEntryForget(e);
+    e->manifest = (ScenarioManifest *)calloc(1, sizeof(*e->manifest));
+    return e->manifest != NULL;
+}
+
+/* One script of the list, from a fresh set of globals to the functions the
+ * host will call, all of it in the state the caller booted. The slot comes
+ * in ready from scnEntryReady and goes out either holding the script or
+ * holding nothing.
+ *
+ * In order, and the order is the point:
+ *
+ *  1. a table of this script's own to be the globals it runs in, so its
+ *     globals, its scenario table and its hook and policy functions cannot
+ *     meet another script's.
+ *  2. the package's manifest into that table as the scenario global, where
+ *     the script came out of a container.
+ *  3. the chunk, run in it.
+ *  4. the table read back out of it, which is what the chunk declared and
+ *     not what some later chunk did.
+ *  5. the trigger router, into the same table. Before 7 and not after it:
+ *     the router takes the author's handler off the globals its script
+ *     wrote and puts a wrapper in its place, and the wrapper is the thing
+ *     the host has to hold — resolve first and the host would keep the bare
+ *     handler and the triggers would never run.
+ *  6. the package comparison, which reads what 4 filled in.
+ *  7. this script's twenty-five hooks, where the caller wants them.
+ *
+ * The api check belongs to the caller and not here, because the three
+ * callers word it differently and this phase changes no line a player or a
+ * host can read.
+ *
+ * All of it before the next script's chunk runs, which is what the loop at
+ * each of the three callers gives it. The separate environments are what
+ * make that safe rather than merely tidy — without them step 5 would chain
+ * on to whichever script wrote the global last — and doing the whole cycle
+ * per script keeps it true whatever else changes.
+ *
+ * The plan this was built from put the package comparison at step 4 and the
+ * router at step 6, after the hooks. Both had to move: the comparison's
+ * reason for being early was that the right table had to still be live,
+ * which the environment now guarantees wherever it sits, and a router
+ * installed after the hooks were resolved would be installed for nobody.
+ * Leaving the comparison where the single-script host had it also keeps the
+ * message a bad package gets exactly as it was. */
+static bool scnScriptLoad(lua_State *L, ScnScriptEntry *e,
+                          const ScnScriptLoad *in, char *err, size_t errLen,
+                          ScnParseReport *rep) {
+    char why[SCN_ERR_LEN];
+    char key[SCN_VALIDATE_KEY_LEN];
+    bool ran;
+
+    e->envRef = scnEnvNew(L);
+    if (e->envRef == LUA_NOREF) {
+        scnFmt(err, errLen, "scenario: no memory for %s's own globals",
+               in->path);
+        return false;
+    }
+    if (in->pkg != NULL) {
+        scnPushManifestGlobal(L, e->envRef, in->pkg);
+    }
+    /* Whose top level this is, said for the length of the chunk and taken
+       back afterwards. The table stays unsaid — scnReadManifest has not run
+       yet and the kind is not known until it has — so a row that asks which
+       file is calling still has no answer here, and the win-condition guard
+       still refuses. What is known is which entry of the list the bytes
+       belong to and which file they came out of, and those two are what a
+       region defined at a top level is written down under: the entry is its
+       owner and the file is half the key its bit is worked out from. Put
+       back to nobody whichever way the chunk went, so the reads that follow
+       it are nobody's. */
+    in->ctx->runningOwner = SCN_OWNER_OF_ENTRY(in->entry);
+    in->ctx->runningFile  = in->path;
+    /* And whose globals, so game.setting at a top level can read the
+       settings block the chunk's own scenario table declares. */
+    in->ctx->runningEnv   = e->envRef;
+    ran = scnRunChunk(L, e->envRef, in->src, in->srcLen, in->chunkName, err,
+                      errLen);
+    in->ctx->runningOwner = SCN_OWNER_NONE;
+    in->ctx->runningFile  = NULL;
+    in->ctx->runningEnv   = 0;
+    if (!ran ||
+        !scnReadManifest(L, e->envRef, e->manifest, in->path, err, errLen,
+                         rep) ||
+        !scnInstallTriggers(L, e->envRef, e->manifest, err, errLen)) {
+        return false;
+    }
+    if (in->pkg != NULL &&
+        !scnManifestAgrees(in->pkg, e->manifest, key, sizeof(key), why,
+                           sizeof(why))) {
+        scnDisagreed(err, errLen, why, key);
+        return false;
+    }
+    if (in->resolveHooks) {
+        scnHooksResolve(e, L);
+    }
+    return true;
+}
+
+/* ── Adding the list up ───────────────────────────────────────────── */
+
+/* Which entry owns the declarative fields: the first one that decides the
+ * round, and entry 0 when nothing on the list does.
+ *
+ * The fallback matters more than it looks. A list of mods alone has no
+ * script that may end a round, and composing to entry 0 is what a host
+ * playing one picked mod has always done — the name it says, the api it
+ * checks and the kind that holds its round-deciding rows back are all that
+ * file's. Without the fallback such a list would compose to an empty table
+ * and the mod would stop naming itself in the lobby. */
+static int scnBaseIndex(const ScnScriptEntry *entry, int n) {
+    int i;
+
+    for (i = 0; i < n; i++) {
+        const ScenarioManifest *m = entry[i].manifest;
+        if (m != NULL && !scnManifestKeepsWinCondition(m)) {
+            return i;
+        }
+    }
+    return 0;
+}
+
+/* The one line a compose refusal says. The file first, because an operator
+ * reading it has a directory to go and look in; then what was wrong. */
+static void scnComposeRefusal(char *err, size_t errLen, const char *file,
+                              const char *fmt, ...) {
+    char    why[SCN_ERR_LEN];
+    va_list ap;
+
+    va_start(ap, fmt);
+    vsnprintf(why, sizeof(why), fmt, ap);
+    va_end(ap);
+    scnFmt(err, errLen, "scenario: %s %s", file, why);
+}
+
+/* One entity's tags from one script into the composite's, skipping what is
+ * already there. False when the entity is full, which is a load error rather
+ * than a tag quietly dropped: a script that tagged a pill and found the tag
+ * missing at runtime would have no way of learning why.
+ *
+ * The same tag from two scripts is one tag and not a fault. Tags are read
+ * rather than owned — game.tagged answers a list — so two scripts agreeing
+ * that pill 3 is "north" is two scripts agreeing, which is the opposite of a
+ * collision. A region is the other way round, because a region is a named
+ * rectangle and two scripts naming one mean two different rectangles; those
+ * are kept apart by which script named each, rather than merged. */
+static bool scnTagsMerge(ScnManifestTags *into, const ScnManifestTags *from,
+                         const char *file, const char *kind, int entity,
+                         char *err, size_t errLen) {
+    uint8_t i;
+    uint8_t j;
+
+    for (i = 0; i < from->count && i < SCN_TAGS_PER_ENTITY; i++) {
+        bool seen = false;
+
+        for (j = 0; j < into->count; j++) {
+            if (strcmp(into->tag[j], from->tag[i]) == 0) {
+                seen = true;
+                break;
+            }
+        }
+        if (seen) {
+            continue;
+        }
+        if (into->count >= SCN_TAGS_PER_ENTITY) {
+            scnComposeRefusal(err, errLen, file,
+                              "puts the tag '%s' on %s %d, which already "
+                              "carries the %d tags the other scripts on the "
+                              "list gave it",
+                              from->tag[i], kind, entity,
+                              (int)SCN_TAGS_PER_ENTITY);
+            return false;
+        }
+        snprintf(into->tag[into->count], SCN_TAG_LEN, "%s", from->tag[i]);
+        into->count++;
+    }
+    return true;
+}
+
+/* Every tag of one kind. The arrays are 1-based, the way the file writes
+ * them, so entry 0 is walked with the rest and is empty in both. */
+static bool scnTagArrayMerge(ScnManifestTags *into,
+                             const ScnManifestTags *from, int entities,
+                             const char *file, const char *kind, char *err,
+                             size_t errLen) {
+    int i;
+
+    for (i = 0; i <= entities; i++) {
+        if (from[i].count == 0) {
+            continue;
+        }
+        if (!scnTagsMerge(&into[i], &from[i], file, kind, i, err, errLen)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* The file name out of a path. What the lobby says a scenario came from is a
+ * name; where the server keeps its maps is not something clients are told.
+ * Both separators, because a Windows server holds the other one.
+ *
+ * A reload's message uses it for a second reason: what a reload says goes to
+ * whoever asked for it as a single 128-byte line, and Lua puts the chunk's
+ * name at the front of every message it raises, so a script under a deep map
+ * directory would spend the whole line on a path the asker cannot see and
+ * leave no room for the line number and the error itself. The round boot
+ * keeps the full path — that one goes to the operator's console, where the
+ * path is the useful part. */
+static const char *scnFileNameOf(const char *path) {
+    const char *last = path;
+    const char *p;
+
+    if (path == NULL) return "";
+    for (p = path; *p != '\0'; p++) {
+        if (*p == '/' || *p == '\\') last = p + 1;
+    }
+    return last;
+}
+
+/* One thing two scripts disagreed about, written down as the compose settles
+ * it. Nothing here changes the round: the value is already chosen by the
+ * time this is called, and this is only how a host gets to see what was
+ * chosen and what it was chosen over.
+ *
+ * The files are cut to their own names. A path is the server's business and
+ * the lobby is told file names everywhere else, so a row that travels is a
+ * row a host can read against the list in front of them.
+ *
+ * A log that has filled keeps its first rows and raises overflowed. The
+ * first rows and not the last, because the ones near the top of the list are
+ * the ones a host is most able to act on, and because dropping the newest
+ * needs no shuffling of what is already there.
+ *
+ * A NULL log records nothing, which is what the reload's trial compose
+ * wants: it adds a list up to find out whether it composes at all, into a
+ * table it throws away, and the round that is playing keeps the record of
+ * its own list. */
+static void scnConflictAdd(ScnConflictLog *log, ScnConflictKind kind,
+                           const char *name, const char *winner,
+                           const char *loser) {
+    ScnComposeConflict *row;
+
+    if (log == NULL) {
+        return;
+    }
+    if (log->count >= SCN_CONFLICTS_MAX) {
+        log->overflowed = true;
+        return;
+    }
+    row = &log->row[log->count];
+    row->kind = kind;
+    snprintf(row->name, sizeof(row->name), "%s", name != NULL ? name : "");
+    snprintf(row->winner, sizeof(row->winner), "%s",
+             winner != NULL ? scnFileNameOf(winner) : "");
+    snprintf(row->loser, sizeof(row->loser), "%s",
+             loser != NULL ? scnFileNameOf(loser) : "");
+    log->count++;
+}
+
+/* The list added up into the one table every reader outside this file is
+ * answered from, and the refusals that stop a list which cannot be added up
+ * from playing at all. See the comment on ScenarioHost::manifest for the
+ * rule each field follows.
+ *
+ * True when the list composed. False leaves err saying which file and which
+ * key, and the caller plays the round without a scenario rather than with
+ * part of one: a list that half-composed would run some of what the host
+ * picked, and the host would have no way of telling which half.
+ *
+ * log is filled with what two scripts disagreed about and the compose
+ * settled quietly — a rule they both set, a region they both named. It is
+ * emptied here, so it describes this list and no earlier one. NULL for a
+ * caller that is only finding out whether the list composes.
+ *
+ * A list with nothing on it composes to nothing, which is the round that
+ * plays classic.
+ *
+ * A list of one composes to a copy of that one's table. The loops below all
+ * run once over a base that is also entry 0, the refusals that compare
+ * entries have nothing to compare, the merges have nothing to merge against
+ * and what comes out is byte for byte what the copy this function used to be
+ * produced — the rules included, since one file states each rule once and
+ * they go back in the order it stated them. That is on purpose: the single
+ * script case is every round played before this phase and it must not
+ * move. */
+static bool scnComposeInto(ScenarioManifest *into,
+                           const ScnScriptEntry *entry, int n, int base,
+                           ScnConflictLog *log, char *err, size_t errLen) {
+    /* Which script each composed region and each composed rule came off, for
+       the lines that have to name two files. The regions carry an owner of
+       their own into the round; these are the file names beside it, which
+       the table has no room for and only the record wants. */
+    const char *regionFrom[SCN_REGIONS_MAX]       = { NULL };
+    const char *ruleFrom[SCN_MANIFEST_RULES_MAX]  = { NULL };
+    int         i;
+
+    if (log != NULL) {
+        memset(log, 0, sizeof(*log));
+    }
+    memset(into, 0, sizeof(*into));
+    if (n <= 0 || entry[0].manifest == NULL) {
+        return true;
+    }
+
+    /* The declarative half, copied whole from the base. The four list
+       fields come off again below and are rebuilt from every script,
+       including this one in its own list position.
+
+       The rules come off with the rest, and that is the point of taking
+       them off rather than keeping the base's block: a block kept whole and
+       then merged into would already hold the base's keys, so the base would
+       win every one of them wherever a host put it on the list. Rebuilt in
+       list order, the precedence is the order a host set. */
+    *into = *entry[base].manifest;
+    memset(into->pillTags, 0, sizeof(into->pillTags));
+    memset(into->baseTags, 0, sizeof(into->baseTags));
+    memset(into->startTags, 0, sizeof(into->startTags));
+    into->numRules    = 0;
+    into->numRegions  = 0;
+    into->numTriggers = 0;
+
+    for (i = 0; i < n; i++) {
+        const ScnScriptEntry   *e = &entry[i];
+        const ScenarioManifest *m = e->manifest;
+        uint8_t                 r;
+        uint16_t                t;
+        uint16_t                u;
+
+        if (m == NULL) {
+            continue;
+        }
+
+        if (i != base) {
+            /* A second script that may end the round. Refused rather than
+               ordered, because ordering it would decide which of two files
+               owns the win condition by which one the host happened to
+               list first — and the file that lost would go on running, with
+               its end_round calls raising, for reasons nothing said out
+               loud. The command bus already refuses two in the host's own
+               picks; this is the one place that also sees the map's. */
+            if (!scnManifestKeepsWinCondition(m)) {
+                scnComposeRefusal(err, errLen, e->script,
+                                  "and %s are both scenarios, and a round is "
+                                  "decided by one script: write "
+                                  "scenario.kind = \"mod\" in whichever of "
+                                  "them changes how the game plays",
+                                  entry[base].script);
+                return false;
+            }
+            /* And the declarative keys that belong to whichever script does
+               decide the round. Named one at a time because the author has a
+               line to go and delete, and the key is what says which.
+
+               game is normally refused earlier: scnReadManifest holds every
+               mod to scnModHoldsBack as it reads the table, so a mod naming
+               a game type never reaches here. It is tested again because
+               this function is also what a second scenario would have to
+               get past, and because a rule stated in one place only is a
+               rule that moves when that place does. */
+            if (m->game[0] != '\0') {
+                scnComposeRefusal(err, errLen, e->script,
+                                  "names the game type '%s', which belongs to "
+                                  "%s: the script that decides the round is "
+                                  "the one that says what game it is",
+                                  m->game, entry[base].script);
+                return false;
+            }
+            if (m->lobby.numTeams > 0 || m->lobby.maxPlayers != 0 ||
+                m->lobby.extraTeams) {
+                scnComposeRefusal(err, errLen, e->script,
+                                  "declares a lobby block, which belongs to "
+                                  "%s: two scripts seating the lobby would "
+                                  "each ask for a roster and the second one "
+                                  "read would win",
+                                  entry[base].script);
+                return false;
+            }
+            if (m->fillToCaps) {
+                scnComposeRefusal(err, errLen, e->script,
+                                  "asks for fill_to_caps, which belongs to "
+                                  "%s: the caps a fill fills to are that "
+                                  "script's rules",
+                                  entry[base].script);
+                return false;
+            }
+        }
+
+        if (!scnTagArrayMerge(into->pillTags, m->pillTags, MAX_PILLS,
+                              e->script, "pill", err, errLen) ||
+            !scnTagArrayMerge(into->baseTags, m->baseTags, MAX_BASES,
+                              e->script, "base", err, errLen) ||
+            !scnTagArrayMerge(into->startTags, m->startTags, MAX_STARTS,
+                              e->script, "start", err, errLen)) {
+            return false;
+        }
+
+        /* The rules, merged key by key. A key an earlier script set and this
+           one does not mention stays where it is; a key they both set keeps
+           the earlier script's value, because the earlier script is further
+           up the list and the top of the list is where precedence is. The
+           row keeps its position as well as its value, so the order the
+           rules are applied in at the round start is the order they were
+           stated in.
+
+           A value refused is written down. Nothing else says it happened —
+           the round simply runs the higher script's number — and a host who
+           stacked two mods wants to know which of them won.
+
+           There is no room check and none is possible. A rule appears at
+           most once in this table, whatever the list does, and the static
+           assertion at the top of this file holds SCN_MANIFEST_RULES_MAX at
+           or above the whole rule list, so the array cannot fill. */
+        for (u = 0; u < m->numRules; u++) {
+            uint16_t k;
+
+            for (k = 0; k < into->numRules; k++) {
+                if (into->rules[k].rule == m->rules[u].rule) {
+                    break;
+                }
+            }
+            if (k < into->numRules) {
+                scnConflictAdd(log, scnConflictRule,
+                               simRulesRuleName((int)m->rules[u].rule),
+                               ruleFrom[k], e->script);
+                continue;
+            }
+            into->rules[into->numRules] = m->rules[u];
+            ruleFrom[into->numRules]    = e->script;
+            into->numRules++;
+        }
+
+        /* The regions, appended in list order and then in declaration order.
+           The array is packed and stays packed, so a walk of it is a walk of
+           every rectangle the round holds and the sixty-four the limit
+           allows are sixty-four real regions.
+
+           What a region is known by is not where it lands in that array. It
+           is the bit below, worked out from the file that named it and the
+           name it was given, and the host's per-seat inRegion mask holds one
+           bit per region rather than one bit per array position. That is the
+           rule that changed, and it changed so that a host may put the map's
+           own script anywhere on the list: while the bit was the position,
+           reordering the list moved every rectangle behind the move onto
+           somebody else's bit, and the composer had to pin the map's own
+           script to position 0 to stop it. Now the array order is a
+           presentation detail and the bits are the same whichever way round
+           the list is written.
+
+           Two scripts naming one region is two regions here, each carrying
+           the entry that named it. Neither is dropped and neither is
+           refused: a name is a name inside one file, and a mod that happens
+           to have called its own staging rectangle "spawn" is not a mod that
+           has broken the scenario. Every lookup by name prefers the asking
+           script's own, and then the first one on the list —
+           scenarioLuaRegionFind in src/scenario/scenario_lua.c is the whole
+           rule — so each file goes on meaning its own rectangle and a file
+           that names none still finds the one that exists. The file is in
+           the bit's key for the same reason: the two "spawn" rectangles
+           have to land on two bits, and the name alone does not tell them
+           apart.
+
+           Keeping both sides uses two of the sixty-four bits where refusing
+           used one, which is what the limit below now has to cover. */
+        for (r = 0; r < m->numRegions; r++) {
+            uint8_t k;
+            int     clash = -1;
+
+            /* The first script to have used the name and not the last. That
+               is the one this region is displaced by for anybody else
+               reading it: a script with no region of that name takes the
+               first one on the list, so the pair the record names is the
+               pair whose answer differs. */
+            for (k = 0; k < into->numRegions; k++) {
+                if (strcmp(into->regions[k].name,
+                           m->regions[r].name) == 0) {
+                    clash = (int)k;
+                    break;
+                }
+            }
+            if (clash >= 0) {
+                scnConflictAdd(log, scnConflictRegion, m->regions[r].name,
+                               regionFrom[clash], e->script);
+            }
+            if (into->numRegions >= SCN_REGIONS_MAX) {
+                scnComposeRefusal(err, errLen, e->script,
+                                  "names the region '%s', and the scripts on "
+                                  "the list have already used the %d regions "
+                                  "a round may hold between them",
+                                  m->regions[r].name, (int)SCN_REGIONS_MAX);
+                return false;
+            }
+            regionFrom[into->numRegions]          = e->script;
+            into->regions[into->numRegions]       = m->regions[r];
+            into->regions[into->numRegions].owner = SCN_OWNER_OF_ENTRY(i);
+            /* And its bit for the round, asked for before the count goes up
+               so that the row being written is not itself read as one of the
+               regions whose bits are already spoken for. The entry's own
+               table carries whatever bit it was last given — nothing, for a
+               table straight out of a file — so the value is worked out here
+               over the composite rather than copied along with the
+               rectangle. */
+            into->regions[into->numRegions].bit =
+                scenarioLuaRegionBit(into, e->script, m->regions[r].name);
+            into->numRegions++;
+        }
+
+        /* And the triggers, concatenated. Nothing is keyed here: two scripts
+           listening on one hook is two handlers, which is what the hook
+           router already does with two scripts that each wrote the function
+           by hand. */
+        for (t = 0; t < m->numTriggers; t++) {
+            if (into->numTriggers >= SCN_TRIGGERS_MAX) {
+                scnComposeRefusal(err, errLen, e->script,
+                                  "declares more triggers than the list has "
+                                  "room for: a round holds %d and the scripts "
+                                  "ahead of this one have used them",
+                                  (int)SCN_TRIGGERS_MAX);
+                return false;
+            }
+            into->triggers[into->numTriggers] = m->triggers[t];
+            into->numTriggers++;
+        }
+    }
+    return true;
+}
+
+/* The host's own list added up into the table every outside reader is
+ * answered from. The one caller that seats what it composed: the reload
+ * below composes a list it has not seated yet, into a table of its own. */
+static bool scnCompose(ScenarioHost *h, int n, char *err, size_t errLen) {
+    h->base = (n > 0) ? scnBaseIndex(h->entry, n) : 0;
+    return scnComposeInto(&h->manifest, h->entry, n, h->base, &h->conflicts,
+                          err, errLen);
 }
 
 /* ── The roster audit ─────────────────────────────────────────────── */
@@ -1238,7 +4189,9 @@ static void scnSayPending(ScenarioHost *h) {
     memset(&op, 0, sizeof(op));
     op.type = SCN_OP_MSG_ALL;
     snprintf(op.u.msgAll.text, sizeof(op.u.msgAll.text), "%s", h->pending);
-    if (serverSimApplyScenarioOp(h->sim, &op, NULL) == SCN_OP_OK) {
+    /* The host's line, so a script that spent the tick's messages cannot
+       hold it back. */
+    if (serverSimApplyScenarioHostOp(h->sim, &op, NULL) == SCN_OP_OK) {
         h->hasPending = false;
     }
 }
@@ -1325,6 +4278,30 @@ static void scnHookTankKilled(ScenarioHost *h, const ScnQueuedEvent *e,
     scnHookCall(h, SCN_HOOK_TANK_KILLED, 4);
 }
 
+/* One hit a tank took. [victim, attacker, cause, amount, pill] — already in
+ * the hook's own order. The pill is an index and goes through the helper that
+ * adds; a shell no pillbox fired carries DMG_NO_PILL, which is no index and
+ * reaches the script as nil. */
+static void scnHookTankHit(ScenarioHost *h, const ScnQueuedEvent *e,
+                           bool scripted) {
+    const char *cause = scenarioLuaDeathCauseWord((int)e->data[2]);
+
+    if (cause == NULL || !scnHookBegin(h, SCN_HOOK_TANK_HIT)) {
+        return;
+    }
+    lua_pushinteger(h->L, (lua_Integer)e->data[0]);   /* the victim */
+    lua_pushinteger(h->L, (lua_Integer)e->data[1]);   /* the attacker */
+    lua_pushstring(h->L, cause);
+    lua_pushinteger(h->L, (lua_Integer)e->data[3]);   /* the armour lost */
+    if (e->data[4] < MAX_PILLS) {
+        lua_pushinteger(h->L, scenarioLuaIndexToScript((int)e->data[4]));
+    } else {
+        lua_pushnil(h->L);
+    }
+    lua_pushboolean(h->L, scripted ? 1 : 0);
+    scnHookCall(h, SCN_HOOK_TANK_HIT, 6);
+}
+
 /* A base changed hands. One event carries both facts and the new owner is
  * what tells them apart: a capture names who took it, a neutralisation has
  * nobody to name and says who lost it. */
@@ -1382,6 +4359,10 @@ static void scnGameEventHook(ScenarioHost *h, const ScnQueuedEvent *e,
             scnHookTankKilled(h, e, scripted);
             return;
 
+        case EVENT_TANK_HIT:
+            scnHookTankHit(h, e, scripted);
+            return;
+
         case EVENT_TANK_SPAWNED:
             /* [player, mx, my, respawn] — the last byte is a flag and
                reaches Lua as one. */
@@ -1392,6 +4373,25 @@ static void scnGameEventHook(ScenarioHost *h, const ScnQueuedEvent *e,
             lua_pushboolean(h->L, e->data[3] != 0);
             lua_pushboolean(h->L, scripted ? 1 : 0);
             scnHookCall(h, SCN_HOOK_TANK_SPAWNED, 5);
+            return;
+
+        case EVENT_PING:
+            /* [sender, kind, xHi, xLo, yHi, yLo]. The two positions are in
+               world units, 256 to a map square, and the hook is handed the
+               map square, because that is what a script points at. The hook
+               only watches: there is no scenario call that places a ping,
+               and nothing a handler returns changes the marker. */
+            if (!scnHookBegin(h, SCN_HOOK_PING)) return;
+            lua_pushinteger(h->L, (lua_Integer)e->data[0]);
+            lua_pushinteger(h->L, (lua_Integer)e->data[1]);
+            lua_pushinteger(h->L,
+                (lua_Integer)(((unsigned)e->data[2] << 8 |
+                               (unsigned)e->data[3]) >> M_W_SHIFT_SIZE));
+            lua_pushinteger(h->L,
+                (lua_Integer)(((unsigned)e->data[4] << 8 |
+                               (unsigned)e->data[5]) >> M_W_SHIFT_SIZE));
+            lua_pushboolean(h->L, scripted ? 1 : 0);
+            scnHookCall(h, SCN_HOOK_PING, 5);
             return;
 
         case EVENT_LGM_LOST:
@@ -1436,13 +4436,20 @@ static void scnGameEventHook(ScenarioHost *h, const ScnQueuedEvent *e,
             return;
 
         case EVENT_PILL_PLACED:
-            /* [player, index, mx, my], and the hook names the pillbox
-               first: the two are the other way round from the event. */
+            /* [player, index, mx, my] and the armour behind the wire at
+               data[4], which this file reads as freely as it reads the mine's
+               layer. The hook names the pillbox first: the two are the other
+               way round from the event. The armour follows the player because
+               it is what a script has to read to know which kind of placing
+               this was — a builder finishing the job leaves it at the sim's
+               cap, and a tank sinking, a builder dying or a player leaving
+               leaves it at 0. */
             if (!scnHookBegin(h, SCN_HOOK_PILL_PLACED)) return;
             lua_pushinteger(h->L, scenarioLuaIndexToScript((int)e->data[1]));
             lua_pushinteger(h->L, (lua_Integer)e->data[0]);
+            lua_pushinteger(h->L, (lua_Integer)e->data[4]);
             lua_pushboolean(h->L, scripted ? 1 : 0);
-            scnHookCall(h, SCN_HOOK_PILL_PLACED, 3);
+            scnHookCall(h, SCN_HOOK_PILL_PLACED, 4);
             return;
 
         case EVENT_PILL_PICKED_UP:
@@ -1608,7 +4615,9 @@ static void scnEventConsume(void *ctx, const ScnQueuedEvent *e) {
 /* ── The regions a tank is standing in ────────────────────────────── */
 
 /* Which regions one seat's tank is inside right now, one bit per region
- * index. A seat with nobody in it, and a seat whose tank is not in the
+ * — the region's own stable number and not where it sits in the array,
+ * which is what lets a host reorder the list without moving the bits. A seat
+ * with nobody in it, and a seat whose tank is not in the
  * world — the countdown before a round, and the wait after a death — are
  * both inside nothing: serverSimGetTankInfo leaves the position at zero for
  * those, and zero is a real square, so has_tank is what decides rather than
@@ -1627,10 +4636,59 @@ static uint64_t scnRegionsHolding(ScenarioHost *h, BYTE slot) {
     for (i = 0; i < (int)m->numRegions; i++) {
         if (scenarioLuaRegionHolds(&m->regions[i], (int)info.map_x,
                                    (int)info.map_y)) {
-            bits |= (uint64_t)1 << i;
+            bits |= (uint64_t)1 << m->regions[i].bit;
         }
     }
     return bits;
+}
+
+/* Which scripts on the list hear about one region of the composite, a bit
+ * per list position.
+ *
+ * The script that named the region always hears about its own. Another
+ * script hears about it only when that script named no region of the same
+ * name itself, because a script that did has a rectangle of its own, every
+ * lookup it makes by that name answers with that one, and this transition is
+ * somebody else's square under a name it has already used.
+ *
+ * That is the rule scenarioLuaRegionFind answers a name by, written against
+ * the composite's indexes rather than against a name: own first, and the
+ * last on the list for everyone with none of their own. A script with none
+ * of its own keeps its bit for every region of that name, and hears the
+ * transitions of all of them rather than only of the one a lookup would give
+ * it. Telling it about fewer would need a second rule about which of two
+ * rectangles a script that named neither is standing in, and the honest
+ * answer is both.
+ *
+ * A round with no name used twice leaves every bit set, which is the whole
+ * list, which is what the fan-out did before there were owners at all. */
+static uint16_t scnRegionAudience(const ScenarioHost *h, int region) {
+    const ScenarioManifest *m    = &h->manifest;
+    const char             *name = m->regions[region].name;
+    uint16_t                to   = 0xFFFFu;
+    int                     i;
+
+    for (i = 0; i < (int)m->numRegions; i++) {
+        if (i == region || strcmp(m->regions[i].name, name) != 0) {
+            continue;
+        }
+        /* Another script's region of this name, so that script is told about
+           its own instead of about this one. Owner zero is nobody's: a
+           region with no script behind it takes no bit away, because there
+           is no list position to take it from. */
+        if (m->regions[i].owner != SCN_OWNER_NONE) {
+            to &= (uint16_t) ~(1u << (m->regions[i].owner - 1));
+        }
+    }
+    /* And the owner's bit back on last, so the loop above cannot have taken
+       it off. It can only do that for a second region of the same name with
+       the same owner, which a repeat define replaces rather than adds, and
+       putting the bit back costs one instruction against reasoning about
+       that every time this is read. */
+    if (m->regions[region].owner != SCN_OWNER_NONE) {
+        to |= (uint16_t)(1u << (m->regions[region].owner - 1));
+    }
+    return to;
 }
 
 /* The enter and leave hooks, which are a difference rather than a fact the
@@ -1683,7 +4741,10 @@ static void scnScanRegions(ScenarioHost *h) {
             continue;
         }
         for (i = 0; i < (int)m->numRegions; i++) {
-            uint64_t bit = (uint64_t)1 << i;
+            /* The region's own bit and not the loop counter: the walk is
+               over the packed array and the mask is indexed by the region's
+               own number, so the two are not the same number. */
+            uint64_t bit = (uint64_t)1 << m->regions[i].bit;
             ScnHookId id;
 
             if ((changed & bit) == 0) {
@@ -1695,7 +4756,9 @@ static void scnScanRegions(ScenarioHost *h) {
             }
             lua_pushinteger(h->L, (lua_Integer)slot);
             lua_pushstring(h->L, m->regions[i].name);
-            scnHookCall(h, id, 2);
+            /* Not down the whole list: a script that named a region of this
+               name is told about its own rectangle and not about this one. */
+            scnHookCallTo(h, id, 2, scnRegionAudience(h, i));
         }
     }
 }
@@ -1709,10 +4772,37 @@ static void scnScanRegions(ScenarioHost *h) {
  *
  * The reference comes out of the set and is released here whether the call
  * returned or raised, so a function that fails is still let go of: a timer
- * runs once. */
+ * runs once.
+ *
+ * The script that set a timer is running across the call. The set is one id
+ * space for the whole list and cannot be asked afterwards whose a timer was,
+ * so each entry carries the table of the script that set it and the set
+ * hands it back here — see ScnTimer in src/scenario/scenario_lua.h. Without
+ * it a timer's function would run as no script in particular, and the rows a
+ * scenario may call and a mod may not would be closed to a scenario's own
+ * timer: scnNotTheDecider in src/scenario/scenario_lua.c refuses where no
+ * script is running, and a timer is exactly where a survival scenario ends
+ * its round from.
+ *
+ * Each timer is taken out of the set only as it comes to run, so that a tick
+ * whose calls have spent SCN_BUDGET_TICK_INSTR stops taking and leaves every
+ * timer it has not reached where it was: those run next tick rather than being
+ * lost. Taking one at a time has two consequences a script can see. A timer
+ * cancelled by one earlier in the same run no longer runs, and its cancel
+ * answers true. And the due timers not yet taken still hold their entries
+ * while the run goes on, so a timer set mid-run can find the set fuller than
+ * the run will leave it.
+ *
+ * The error count below is still against every running script. Whose a timer
+ * is, is now known, so counting it against that one alone is possible and is
+ * a separate decision from this one; it is left as it was so that this
+ * change moves nothing but the question of who is calling. */
 static void scnRunTimers(ScenarioHost *h) {
     ScnSandboxCall saved;
-    int refs[SCN_TIMERS_MAX];
+    uint32_t ids[SCN_TIMERS_MAX];
+    const ScenarioManifest *owner;
+    ScnRunningSave          outer;
+    int ref;
     int n;
     int i;
     int rc;
@@ -1720,24 +4810,45 @@ static void scnRunTimers(ScenarioHost *h) {
     if (h->L == NULL) {
         return;
     }
-    n = scenarioLuaTimersTakeDue(&h->timers, serverSimGetTick(h->sim), refs,
-                                 SCN_TIMERS_MAX);
+    /* The due set, read once: a timer set during the run has an id that is
+       not on this list and waits for the next tick. */
+    n = scenarioLuaTimersDue(&h->timers, serverSimGetTick(h->sim), ids,
+                             SCN_TIMERS_MAX);
     for (i = 0; i < n; i++) {
+        /* Out of instructions for this tick: the rest stay in the set and run
+           next tick. A switched-off scenario runs nothing and so goes on
+           taking, to hand back what the rest were holding. */
+        if (!h->disabled && scnSandboxTickSpent(h->L)) {
+            break;
+        }
+        owner = NULL;
+        if (!scenarioLuaTimersTake(&h->timers, ids[i], &ref, &owner)) {
+            continue;                /* cancelled earlier in this run */
+        }
         /* A scenario switched off part way through the run still has to be
            handed back what the rest of the timers were holding. */
         if (!h->disabled) {
-            lua_rawgeti(h->L, LUA_REGISTRYINDEX, refs[i]);
+            lua_rawgeti(h->L, LUA_REGISTRYINDEX, ref);
+            outer = scnRunningEnterTable(h, owner);
             scnSandboxArmCall(h->L, &saved);
             rc = lua_pcall(h->L, 0, 0, 0);
             scnSandboxDisarmCall(h->L, &saved);
+            scnRunningLeave(h, outer);
             if (rc != 0) {
-                scnErrorRaised(h, "a timer", scnLuaError(h->L));
+                /* Against every running script, as it was before the set
+                   carried an owner. Narrowing it to owners[i] is a change to
+                   what an operator reads and to which file the limit
+                   switches off, so it is left for whoever wants that rather
+                   than taken on the way past. */
+                scnSay(h->lastError, sizeof(h->lastError),
+                       "scenario: a timer raised: %s", scnLuaError(h->L));
+                scnErrorCountedAll(h);
                 lua_pop(h->L, 1);
             } else {
-                scnErrorCleared(h);
+                scnErrorClearedAll(h);
             }
         }
-        luaL_unref(h->L, LUA_REGISTRYINDEX, refs[i]);
+        luaL_unref(h->L, LUA_REGISTRYINDEX, ref);
     }
 }
 
@@ -1760,7 +4871,9 @@ static void scnReportDrops(ScenarioHost *h) {
     scnSay(h->lastError, sizeof(h->lastError),
            "scenario: %lu events arrived with the queue full at %d and were "
            "dropped", (unsigned long)dropped, SCN_EVENT_QUEUE_MAX);
-    scnErrorCounted(h);
+    /* Against every running script: one queue serves the list, so a tick
+       that overflowed it lost events belonging to all of them. */
+    scnErrorCountedAll(h);
 }
 
 /* ── The per-tick callback ────────────────────────────────────────── */
@@ -1788,17 +4901,30 @@ static void scnReportDrops(ScenarioHost *h) {
 static void scnTick(void *ctx) {
     ScenarioHost *h = (ScenarioHost *)ctx;
     ServerState   state;
+    Uint64        start;
+    uint32_t      tickInstr = 0;
+    bool          tickSpent = false;
 
     if (h == NULL) {
         return;
     }
     scnLockEnter(&h->lock);
+    /* Timed from inside the lock, so what the operator's info reads is the
+       script's own work and not a wait on a GUI-thread ask. */
+    start = SDL_GetPerformanceCounter();
     /* First, inside the lock and before anything this tick runs: the console
        lines print may put out are counted per tick as well as per call, and
-       this is the tick they are counted against. */
+       this is the tick they are counted against. It also opens the window
+       SCN_BUDGET_TICK_INSTR is counted in, and each script's error count is
+       noted as the window opens, for the restore below.
+
+       on_start is the first call the window sees, so it always runs: it
+       starts with the whole tick's total and nothing ahead of it can have
+       spent any. */
     if (h->L != NULL) {
         scnSandboxTickReset(h->L);
     }
+    scnErrorTickSave(h);
     if (h->startPending &&
         serverSimGetState(h->sim) == serverStateRunning) {
         h->startPending = false;
@@ -1814,6 +4940,22 @@ static void scnTick(void *ctx) {
         scnHookCall(h, SCN_HOOK_TICK, 1);
     }
 
+    /* The window shuts before on_end, so on_end runs on its own call's
+       budget whatever the tick spent and is never one of the calls a spent
+       tick skips. A tick that ran out puts the error counts back first, so
+       what on_end does with its own count is counted as usual.
+
+       The tick's instructions and whether it ran out are read here too, the
+       last point at which the window still holds them. */
+    if (h->L != NULL) {
+        tickInstr = scnSandboxTickInstr(h->L);
+        tickSpent = scnSandboxTickSpent(h->L);
+        if (tickSpent) {
+            scnErrorTickRestore(h);
+        }
+        scnSandboxTickClose(h->L);
+    }
+
     state = serverSimGetState(h->sim);
     if (state == serverStateGameOver && h->lastState != serverStateGameOver) {
         scnHookRun(h, SCN_HOOK_END);
@@ -1822,27 +4964,67 @@ static void scnTick(void *ctx) {
 
     scnReportDrops(h);
     scnSayPending(h);
+    /* The time covers everything above, on_end included; the instructions
+       are the window's alone. The sim cannot see the budget's header, so the
+       total is handed over with the count. */
+    if (h->L != NULL) {
+        double ms = (double)(SDL_GetPerformanceCounter() - start) * 1000.0 /
+                    (double)SDL_GetPerformanceFrequency();
+        serverSimSetScenarioTickStats(h->sim, tickInstr,
+                                      (uint32_t)SCN_BUDGET_TICK_INSTR,
+                                      tickSpent, ms);
+    }
     scnLockLeave(&h->lock);
 }
 
-/* The file name out of a path. What the lobby says a scenario came from is a
- * name; where the server keeps its maps is not something clients are told.
- * Both separators, because a Windows server holds the other one. */
-static const char *scnFileNameOf(const char *path) {
-    const char *last = path;
-    const char *p;
-
-    if (path == NULL) return "";
-    for (p = path; *p != '\0'; p++) {
-        if (*p == '/' || *p == '\\') last = p + 1;
+/* The path of the brain a team names, which is what the sim writes onto the
+ * seat.
+ *
+ * A scenario names a brain rather than pathing to one: the name is a directory
+ * under the server's own brains/, and a scenario shared with a server does not
+ * know that server's layout. The name becomes a path once, here, because both
+ * of the things that read a seat's brain back — the countdown's warm in
+ * warmSeatBrainPath and a spawn that fields the seat in scenarioBrainPath —
+ * open it as a file. Once here also keeps the string the same for the whole
+ * round, so a parked runner goes on matching the brain it was built with.
+ *
+ * A name this server does not have leaves the field empty, which is the seat
+ * on the server's own brain, and says one line naming the team and the name.
+ * The round still plays. An operator who would rather know before starting one
+ * hears the same thing from -validate, which reports the name against the
+ * team's own key. An empty brain is the server's own and is left alone. */
+static void scnTeamBrainPath(const ScnManifestTeam *team, char *out,
+                             size_t outLen) {
+    out[0] = '\0';
+    if (team->brain[0] == '\0') {
+        return;
     }
-    return last;
+    if (brainListResolve(team->brain, out, outLen)) {
+        return;
+    }
+    out[0] = '\0';
+    if (strpbrk(team->brain, "/\\") != NULL) {
+        scnSay(NULL, 0,
+               "scenario: team %u writes the brain '%s' as a path, and a "
+               "scenario names a brain — the directory under this server's "
+               "brains/; its seats take the server's own",
+               (unsigned)team->id, team->brain);
+        return;
+    }
+    scnSay(NULL, 0,
+           "scenario: team %u asks for the brain '%s', which this server does "
+           "not have; its seats take the server's own",
+           (unsigned)team->id, team->brain);
 }
 
 /* The lobby out of the manifest and into the shape the sim reads. A straight
- * copy of the four numbers and the brain, dropping the teams the sim has no
- * seat for: the manifest holds what the file said and this holds what the
- * roster can hold.
+ * copy of the four numbers and the init table, with the brain resolved above,
+ * dropping the teams the sim has no seat for: the manifest holds what the file
+ * said and this holds what the roster can hold.
+ *
+ * initBadKey is not here. What a bad pair is called is something to tell an
+ * author about, which the validator does; the sim is handed the pairs that
+ * were taken and has nothing to do with the one that was not.
  *
  * extra_teams is not here — the sim asks that one through the policy, as a
  * question about what a host may do rather than a description of the lobby
@@ -1864,7 +5046,10 @@ static void scnFillLobbyTemplate(const ScnManifestLobby *lob,
         dst->bots    = src->bots;
         dst->maxBots = src->maxBots;
         dst->fielded = src->fielded;
-        SDL_strlcpy(dst->brain, src->brain, sizeof(dst->brain));
+        scnTeamBrainPath(src, dst->brain, sizeof(dst->brain));
+        SDL_strlcpy(dst->mode, src->mode, sizeof(dst->mode));
+        SDL_strlcpy(dst->difficulty, src->difficulty, sizeof(dst->difficulty));
+        dst->init    = src->init;
     }
 }
 
@@ -1891,17 +5076,96 @@ static void scnFillLobbyTemplate(const ScnManifestLobby *lob,
  * lobby asks before a round has booted its VM, and each round start boots a
  * fresh one, so the lookup goes to whichever state is current. */
 
-/* Push the policy function of this name, ready for its arguments. False when
- * there is nothing to call, which is the ordinary case: a scenario defines
- * the few policies it cares about and none of the rest.
+/* How the answers of a list of scripts are read, now that every one of them
+ * is asked. The thirteen sites below each hold the arbitration for their own
+ * row, because what the answers mean differs by row:
+ *
+ *   the eight predicates
+ *     allow_extra_teams, can_respawn, can_build, can_capture, announce,
+ *     can_hit, can_die and can_ally. Asked in list order, any false wins, and
+ *     the first no stops
+ *     the asking. A predicate is a veto — false takes something out of the
+ *     round — so a script that says no is not something a later script may
+ *     put back, and one that has already lost has nothing left to add.
+ *   on_choose_start and spawn_loadout
+ *     scripts asked from the top down, and the first one to answer usably
+ *     is the one taken; a usable answer stops the asking. There is one
+ *     start and one loadout per spawning tank, so the answers cannot be
+ *     added up and the list order is what settles it. The first and not the
+ *     last, because the order is the thing a host sets deliberately: the
+ *     chooser's buttons say "Load earlier" and "Load later" and its heading
+ *     says the top has priority, so the script loaded earlier is the one
+ *     meant to have the say.
+ *   damage_scale and pill_damage_scale
+ *     every script asked and the percents multiplied. Two scripts halving a
+ *     blow leave a quarter of it, which is the only reading where each
+ *     script's own answer still means what it says on its own.
+ *   allow_base_win
+ *     the base's alone, which is what scnPolicyScript below is for.
+ *
+ * The loops ask h->count entries, so a list of one asks entry 0 once and
+ * what comes out is what a single-script host has always answered. That is
+ * on purpose: the single script case is every round played before there
+ * were lists and it must not move. damage_scale is the one row where the
+ * arithmetic changed, and a hundred times one answer divided by a hundred
+ * is that answer exactly for every value the row takes.
+ *
+ * What a bad answer does is worth stating, because it is the one thing the
+ * plan left open. A script answering on_choose_start with a number that
+ * names no live start has answered, but the site cannot use it, so it is
+ * not taken and an answer from a script earlier on the list still stands.
+ * The alternative was to let any non-nil answer count, usable or not, and
+ * fall back to the classic rule when the last one was bad; it was not taken
+ * because a single script answering badly already falls back to the classic
+ * rule, and keeping an earlier script's usable answer is that same decision
+ * one step back along the list. The error is counted against the script
+ * that gave it either way.
+ *
+ * Neither of those two loops stops early. Every entry that defines the row
+ * is asked, so every scnPolicyBegin that returned true reaches its own
+ * scnPolicyAnswer and the stack is left where the loop found it. */
+
+/* Which script the one policy that is not asked of the list is asked of:
+ * the script that decides the round.
+ *
+ * The base, and not entry 0. The two are the same for every list whose first
+ * entry decides the round, which is most of them; they differ where a map's
+ * own sidecar is a mod and a script the host picked is the scenario, and
+ * there the base is the right one to ask. allow_base_win is the reason the
+ * distinction is worth making at all: it decides an ending, a mod's is not
+ * read, and reading it off whichever file happened to be listed first would
+ * hand the round's one ending decision to a script that is not allowed to
+ * make it.
+ *
+ * A function and not a macro, because it reads a field: a macro spelling
+ * h->base would take whatever the call site happened to have called its
+ * host, which is the kind of thing that compiles for years and then does
+ * not. */
+static int scnPolicyScript(const ScenarioHost *h) {
+    return h->base;
+}
+
+/* Push this script's policy function of this name, ready for its arguments.
+ * False when there is nothing to call, which is the ordinary case: a scenario
+ * defines the few policies it cares about and none of the rest, and a list
+ * asking every entry reaches a good many entries that define none.
  *
  * The caller holds the VM lock, and must reach scnPolicyBool for every true
- * this answers — the function it pushed is on the stack until then. */
-static bool scnPolicyBegin(ScenarioHost *h, const char *name) {
-    if (h->disabled || h->L == NULL) {
+ * this answers — the function it pushed is on the stack until then. A loop
+ * over the list therefore does its own asking inside one pass and leaves the
+ * loop only where no function is pushed; the sites below all do that by
+ * putting the stopping test in the for condition rather than breaking out
+ * between the two calls. */
+static bool scnPolicyBegin(ScenarioHost *h, int script, const char *name) {
+    if (h->disabled || h->L == NULL || !scnScriptLive(h, script)) {
         return false;
     }
-    scnRawGlobal(h->L, name);
+    /* A tick that has spent its instructions asks nothing more, and the site
+       takes the classic answer as it does for a script defining no policy. */
+    if (scnSandboxTickSpent(h->L)) {
+        return false;
+    }
+    scnRawGlobal(h->L, h->entry[script].envRef, name);
     if (lua_isfunction(h->L, -1)) {
         return true;
     }
@@ -1910,20 +5174,28 @@ static bool scnPolicyBegin(ScenarioHost *h, const char *name) {
 }
 
 /* Make the call with the nargs the caller has pushed since, and read the one
- * boolean back. A raise carries the error count toward the limit and answers
- * classic; a return puts the count back to zero, and answers classic only
- * where the script answered nil. */
-static bool scnPolicyBool(ScenarioHost *h, const char *name, int nargs,
-                          bool classic) {
-    ScnSandboxCall saved;
-    bool           answer = classic;
-    int            rc;
+ * boolean back. A raise carries that script's error count toward the limit
+ * and answers classic; a return puts that script's count back to zero, and
+ * answers classic only where the script answered nil.
+ *
+ * script is the entry whose function was pushed, so the count and the running
+ * entry are both that one's. It is the caller's loop variable and not
+ * h->base: a mod's raise is the mod's own to be counted, and the line the
+ * operator reads names the file that raised. */
+static bool scnPolicyBool(ScenarioHost *h, int script, const char *name,
+                          int nargs, bool classic) {
+    ScnRunningSave          outer;
+    ScnSandboxCall          saved;
+    bool                    answer = classic;
+    int                     rc;
 
+    outer = scnRunningEnter(h, script);
     scnSandboxArmCall(h->L, &saved);
     rc = lua_pcall(h->L, nargs, 1, 0);
     scnSandboxDisarmCall(h->L, &saved);
+    scnRunningLeave(h, outer);
     if (rc != 0) {
-        scnErrorRaised(h, name, scnLuaError(h->L));
+        scnErrorRaised(h, script, name, scnLuaError(h->L));
         lua_pop(h->L, 1);
         return classic;
     }
@@ -1931,7 +5203,7 @@ static bool scnPolicyBool(ScenarioHost *h, const char *name, int nargs,
         answer = lua_toboolean(h->L, -1) != 0;
     }
     lua_pop(h->L, 1);
-    scnErrorCleared(h);
+    scnErrorCleared(h, script);
     return answer;
 }
 
@@ -1949,21 +5221,25 @@ static bool scnPolicyBool(ScenarioHost *h, const char *name, int nargs,
  * to be one the site can use. The caller clears it where it takes the
  * answer, so a script answering with something unusable every time climbs
  * toward the limit rather than resetting itself on each call. */
-static bool scnPolicyAnswer(ScenarioHost *h, const char *name, int nargs) {
-    ScnSandboxCall saved;
-    int            rc;
+static bool scnPolicyAnswer(ScenarioHost *h, int script, const char *name,
+                            int nargs) {
+    ScnRunningSave          outer;
+    ScnSandboxCall          saved;
+    int                     rc;
 
+    outer = scnRunningEnter(h, script);
     scnSandboxArmCall(h->L, &saved);
     rc = lua_pcall(h->L, nargs, 1, 0);
     scnSandboxDisarmCall(h->L, &saved);
+    scnRunningLeave(h, outer);
     if (rc != 0) {
-        scnErrorRaised(h, name, scnLuaError(h->L));
+        scnErrorRaised(h, script, name, scnLuaError(h->L));
         lua_pop(h->L, 1);
         return false;
     }
     if (lua_isnil(h->L, -1)) {
         lua_pop(h->L, 1);
-        scnErrorCleared(h);   /* no opinion is not a failure */
+        scnErrorCleared(h, script);  /* no opinion is not a failure */
         return false;
     }
     return true;
@@ -1974,12 +5250,16 @@ static bool scnPolicyAnswer(ScenarioHost *h, const char *name, int nargs) {
  * takes. Counted the way a raise is, because a script answering with
  * something unusable every time is failing every call as surely as one that
  * raises, and the operator needs to see which. The decision itself is the
- * classic one, which the caller has already written down. */
-static void scnPolicyBadAnswer(ScenarioHost *h, const char *name,
+ * classic one, which the caller has already written down.
+ *
+ * script is the entry that answered, which is the caller's loop variable.
+ * Counting it against h->base instead would put a mod's unusable answers on
+ * the scenario's count and switch the wrong file off at the limit. */
+static void scnPolicyBadAnswer(ScenarioHost *h, int script, const char *name,
                                const char *detail) {
     scnSay(h->lastError, sizeof(h->lastError),
            "scenario: %s answered %s; the classic rule stands", name, detail);
-    scnErrorCounted(h);
+    scnErrorCounted(h, script);
 }
 
 /* The largest magnitude any policy answer can mean, so the cast below is
@@ -2045,24 +5325,62 @@ static void scnPushWord(ScenarioHost *h, const char *word) {
     }
 }
 
-/* May a slot be put on a team that no other slot is on? */
+/* May a slot be put on a team that no other slot is on?
+ *
+ * Every script on the list is asked, in list order, and the first no is the
+ * answer. The stopping test is the loop's own condition rather than a break
+ * inside it, which is what keeps the stack contract: a break taken between
+ * scnPolicyBegin and scnPolicyBool would leave the pushed function on the
+ * stack for ever. The six predicates below are written the same way for
+ * the same reason. */
 static bool scnAllowExtraTeams(void *ctx) {
     ScenarioHost *h     = (ScenarioHost *)ctx;
     bool          allow = true;
+    int           i;
 
     if (h == NULL) {
         return true;
     }
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "allow_extra_teams")) {
-        allow = scnPolicyBool(h, "allow_extra_teams", 0, true);
+    for (i = 0; i < h->count && allow; i++) {
+        if (!scnPolicyBegin(h, i,
+                            kScnPolicyNames[SCN_POLICY_ALLOW_EXTRA_TEAMS])) {
+            continue;
+        }
+        allow = scnPolicyBool(h, i,
+                              kScnPolicyNames[SCN_POLICY_ALLOW_EXTRA_TEAMS],
+                              0, true);
     }
     scnLockLeave(&h->lock);
     return allow;
 }
 
+/* Does this script's own environment hold a function of this name? A look
+ * and nothing more: the function is not called, and a tick that has spent
+ * its instructions answers the same as any other, which scnPolicyBegin does
+ * not. The caller holds the VM lock. */
+static bool scnScriptDefines(ScenarioHost *h, int script, const char *name) {
+    bool defined;
+
+    if (h->disabled || h->L == NULL || !scnScriptLive(h, script)) {
+        return false;
+    }
+    scnRawGlobal(h->L, h->entry[script].envRef, name);
+    defined = lua_isfunction(h->L, -1);
+    lua_pop(h->L, 1);
+    return defined;
+}
+
 /* May the round end on one side owning every base? False takes the sweep out
- * of the round's endings and leaves every other one alone. */
+ * of the round's endings and leaves every other one alone.
+ *
+ * This is the one policy whose answer decides an ending, so it is the one a
+ * mod does not get to answer. Ignored rather than raised on, unlike the ops:
+ * the script did not call anything here, the sim called the script, and a
+ * raise would be counted against a file whose only fault is having written
+ * a function this round will not ask. It is said once so the author knows
+ * the function is being skipped rather than never reached, and only when the
+ * mod wrote one: a mod that never did has nothing being skipped. */
 static bool scnAllowBaseWin(void *ctx) {
     ScenarioHost *h     = (ScenarioHost *)ctx;
     bool          allow = true;
@@ -2071,8 +5389,34 @@ static bool scnAllowBaseWin(void *ctx) {
         return true;
     }
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "allow_base_win")) {
-        allow = scnPolicyBool(h, "allow_base_win", 0, true);
+    /* The entry's own table and not the composite. The composite's kind came
+       from the base entry, so reading it here would ask whether the round
+       decides its own ending rather than whether this file does, and would
+       name the composite in the line below — which on a list is the base's
+       name, not the file whose function is being skipped. The base is the
+       one entry this policy is read from, so the base is the one asked
+       about. */
+    if (scnManifestKeepsWinCondition(h->entry[scnPolicyScript(h)].manifest)) {
+        if (!h->saidBaseWinIgnored &&
+            scnScriptDefines(h, scnPolicyScript(h),
+                             kScnPolicyNames[SCN_POLICY_ALLOW_BASE_WIN])) {
+            h->saidBaseWinIgnored = true;
+            scnSay(NULL, 0,
+                   "scenario: %.32s is a mod, so its allow_base_win is not "
+                   "read: a mod leaves the win condition alone. Write "
+                   "scenario.kind = \"scenario\" if it is meant to decide "
+                   "rounds.", scnScriptSubject(h, scnPolicyScript(h)));
+        }
+        scnLockLeave(&h->lock);
+        return true;
+    }
+    /* The base alone, and no loop. This is the one policy the list is not
+       asked: it decides an ending, and an ending is the base's to decide. */
+    if (scnPolicyBegin(h, scnPolicyScript(h),
+                       kScnPolicyNames[SCN_POLICY_ALLOW_BASE_WIN])) {
+        allow = scnPolicyBool(h, scnPolicyScript(h),
+                              kScnPolicyNames[SCN_POLICY_ALLOW_BASE_WIN], 0,
+                              true);
     }
     scnLockLeave(&h->lock);
     return allow;
@@ -2083,14 +5427,19 @@ static bool scnAllowBaseWin(void *ctx) {
 static bool scnCanRespawn(void *ctx, BYTE player) {
     ScenarioHost *h   = (ScenarioHost *)ctx;
     bool          may = true;
+    int           i;
 
     if (h == NULL) {
         return true;
     }
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "can_respawn")) {
+    for (i = 0; i < h->count && may; i++) {
+        if (!scnPolicyBegin(h, i, kScnPolicyNames[SCN_POLICY_CAN_RESPAWN])) {
+            continue;
+        }
         lua_pushinteger(h->L, (lua_Integer)player);
-        may = scnPolicyBool(h, "can_respawn", 1, true);
+        may = scnPolicyBool(h, i, kScnPolicyNames[SCN_POLICY_CAN_RESPAWN], 1,
+                            true);
     }
     scnLockLeave(&h->lock);
     return may;
@@ -2105,18 +5454,23 @@ static bool scnCanBuild(void *ctx, BYTE player, BYTE action, BYTE x, BYTE y,
     ScenarioHost *h    = (ScenarioHost *)ctx;
     const char   *word = scenarioLuaBuildOrderWord((int)action);
     bool          may  = true;
+    int           i;
 
     if (h == NULL || word == NULL) {
         return true;
     }
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "can_build")) {
+    for (i = 0; i < h->count && may; i++) {
+        if (!scnPolicyBegin(h, i, kScnPolicyNames[SCN_POLICY_CAN_BUILD])) {
+            continue;
+        }
         lua_pushinteger(h->L, (lua_Integer)player);
         lua_pushstring(h->L, word);
         lua_pushinteger(h->L, (lua_Integer)x);
         lua_pushinteger(h->L, (lua_Integer)y);
         scnPushItemIndex(h, idx, MAX_PILLS);
-        may = scnPolicyBool(h, "can_build", 5, true);
+        may = scnPolicyBool(h, i, kScnPolicyNames[SCN_POLICY_CAN_BUILD], 5,
+                            true);
     }
     scnLockLeave(&h->lock);
     return may;
@@ -2128,17 +5482,22 @@ static bool scnCanCapture(void *ctx, BYTE kind, BYTE idx, BYTE player) {
     ScenarioHost *h    = (ScenarioHost *)ctx;
     const char   *word = scenarioLuaCaptureKindWord((int)kind);
     bool          may  = true;
+    int           i;
 
     if (h == NULL || word == NULL) {
         return true;
     }
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "can_capture")) {
+    for (i = 0; i < h->count && may; i++) {
+        if (!scnPolicyBegin(h, i, kScnPolicyNames[SCN_POLICY_CAN_CAPTURE])) {
+            continue;
+        }
         lua_pushstring(h->L, word);
         scnPushItemIndex(h, idx,
                          (kind == CAPTURE_KIND_PILL) ? MAX_PILLS : MAX_BASES);
         lua_pushinteger(h->L, (lua_Integer)player);
-        may = scnPolicyBool(h, "can_capture", 3, true);
+        may = scnPolicyBool(h, i, kScnPolicyNames[SCN_POLICY_CAN_CAPTURE], 3,
+                            true);
     }
     scnLockLeave(&h->lock);
     return may;
@@ -2152,12 +5511,16 @@ static bool scnAnnounce(void *ctx, BYTE kind, BYTE subject, BYTE actor) {
     ScenarioHost *h    = (ScenarioHost *)ctx;
     const char   *word = scenarioLuaAnnounceKindWord((int)kind);
     bool          show = true;
+    int           i;
 
     if (h == NULL || word == NULL) {
         return true;
     }
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "announce")) {
+    for (i = 0; i < h->count && show; i++) {
+        if (!scnPolicyBegin(h, i, kScnPolicyNames[SCN_POLICY_ANNOUNCE])) {
+            continue;
+        }
         lua_pushstring(h->L, word);
         if (kind == ANNOUNCE_KIND_BASE_CAPTURED) {
             scnPushItemIndex(h, subject, MAX_BASES);
@@ -2167,7 +5530,8 @@ static bool scnAnnounce(void *ctx, BYTE kind, BYTE subject, BYTE actor) {
             lua_pushinteger(h->L, (lua_Integer)subject);
         }
         lua_pushinteger(h->L, (lua_Integer)actor);
-        show = scnPolicyBool(h, "announce", 3, true);
+        show = scnPolicyBool(h, i, kScnPolicyNames[SCN_POLICY_ANNOUNCE], 3,
+                             true);
     }
     scnLockLeave(&h->lock);
     return show;
@@ -2178,16 +5542,20 @@ static bool scnAnnounce(void *ctx, BYTE kind, BYTE subject, BYTE actor) {
  * a shell and a mine alike, so the script reads one set of words, and a
  * cause the site could not name reaches it as nil. */
 static bool scnCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
-                      BYTE cause) {
+                      BYTE cause, BYTE pill) {
     ScenarioHost *h    = (ScenarioHost *)ctx;
     const char   *word = scenarioLuaDieKindWord((int)kind);
     bool          may  = true;
+    int           i;
 
     if (h == NULL || word == NULL) {
         return true;
     }
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "can_die")) {
+    for (i = 0; i < h->count && may; i++) {
+        if (!scnPolicyBegin(h, i, kScnPolicyNames[SCN_POLICY_CAN_DIE])) {
+            continue;
+        }
         lua_pushstring(h->L, word);
         if (kind == DIE_KIND_PILL) {
             scnPushItemIndex(h, index, MAX_PILLS);
@@ -2198,7 +5566,67 @@ static bool scnCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
         scnPushWord(h, (kind == DIE_KIND_TANK)
                            ? scenarioLuaDeathCauseWord((int)cause)
                            : scenarioLuaDamageSourceWord((int)cause));
-        may = scnPolicyBool(h, "can_die", 4, true);
+        scnPushItemIndex(h, pill, MAX_PILLS);
+        may = scnPolicyBool(h, i, kScnPolicyNames[SCN_POLICY_CAN_DIE], 5,
+                            true);
+    }
+    scnLockLeave(&h->lock);
+    return may;
+}
+
+/* May this shell hit the tank or pill it has reached? The attacker is the
+ * shell's owner, NEUTRAL for a pillbox's, and the pillbox that fired it is the
+ * trailing argument, nil for a tank's shell. A no lets the shell fly on. */
+static bool scnCanHit(void *ctx, BYTE attacker, BYTE kind, BYTE index,
+                      BYTE pill) {
+    ScenarioHost *h    = (ScenarioHost *)ctx;
+    const char   *word = scenarioLuaHitKindWord((int)kind);
+    bool          may  = true;
+    int           i;
+
+    if (h == NULL || word == NULL) {
+        return true;
+    }
+    scnLockEnter(&h->lock);
+    for (i = 0; i < h->count && may; i++) {
+        if (!scnPolicyBegin(h, i, kScnPolicyNames[SCN_POLICY_CAN_HIT])) {
+            continue;
+        }
+        lua_pushinteger(h->L, (lua_Integer)attacker);
+        lua_pushstring(h->L, word);
+        if (kind == HIT_KIND_PILL) {
+            scnPushItemIndex(h, index, MAX_PILLS);
+        } else {
+            lua_pushinteger(h->L, (lua_Integer)index);
+        }
+        scnPushItemIndex(h, pill, MAX_PILLS);
+        may = scnPolicyBool(h, i, kScnPolicyNames[SCN_POLICY_CAN_HIT], 4,
+                            true);
+    }
+    scnLockLeave(&h->lock);
+    return may;
+}
+
+/* May player p ally with seat q? Asked when p requests the alliance and again
+ * when q accepts it, so a script whose answer changed in between is asked
+ * the question it now answers. Both are seats, which Lua does not convert. */
+static bool scnCanAlly(void *ctx, BYTE player, BYTE other) {
+    ScenarioHost *h   = (ScenarioHost *)ctx;
+    bool          may = true;
+    int           i;
+
+    if (h == NULL) {
+        return true;
+    }
+    scnLockEnter(&h->lock);
+    for (i = 0; i < h->count && may; i++) {
+        if (!scnPolicyBegin(h, i, kScnPolicyNames[SCN_POLICY_CAN_ALLY])) {
+            continue;
+        }
+        lua_pushinteger(h->L, (lua_Integer)player);
+        lua_pushinteger(h->L, (lua_Integer)other);
+        may = scnPolicyBool(h, i, kScnPolicyNames[SCN_POLICY_CAN_ALLY], 2,
+                            true);
     }
     scnLockLeave(&h->lock);
     return may;
@@ -2215,20 +5643,33 @@ static bool scnCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
 static bool scnChooseStart(void *ctx, BYTE player, BYTE *startIdx) {
     ScenarioHost *h     = (ScenarioHost *)ctx;
     bool          named = false;
+    int           i;
 
     if (h == NULL || startIdx == NULL) {
         return false;
     }
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "on_choose_start")) {
+    /* Scripts asked from the top down, and the first one to name a start
+       this round has is the one taken. There is one start per spawning tank,
+       so the answers cannot be added up, and the host's list order settles
+       it: a host loads the script it means to have the say higher. A script
+       that answers badly leaves the question open for the next one down,
+       because only a usable answer writes startIdx and ends the loop. */
+    for (i = 0; i < h->count && !named; i++) {
+        if (!scnPolicyBegin(h, i,
+                            kScnPolicyNames[SCN_POLICY_ON_CHOOSE_START])) {
+            continue;
+        }
         lua_pushinteger(h->L, (lua_Integer)player);
-        if (scnPolicyAnswer(h, "on_choose_start", 1)) {
+        if (scnPolicyAnswer(h, i, kScnPolicyNames[SCN_POLICY_ON_CHOOSE_START],
+                            1)) {
             ServerSimStartInfo info;
             long               n    = 0;
             BYTE               read = 0;
 
             if (!scnPolicyWhole(h->L, &n)) {
-                scnPolicyBadAnswer(h, "on_choose_start",
+                scnPolicyBadAnswer(h, i,
+                                   kScnPolicyNames[SCN_POLICY_ON_CHOOSE_START],
                                    "with no start number");
             } else {
                 read = scenarioLuaIndexToRead((lua_Integer)n);
@@ -2239,11 +5680,11 @@ static bool scnChooseStart(void *ctx, BYTE player, BYTE *startIdx) {
                            "scenario: on_choose_start named start %ld for "
                            "player %d, which is not a live start; the engine "
                            "picks", n, (int)player);
-                    scnErrorCounted(h);
+                    scnErrorCounted(h, i);
                 } else {
                     *startIdx = scenarioLuaIndexToOp((lua_Integer)n);
                     named     = true;
-                    scnErrorCleared(h);
+                    scnErrorCleared(h, i);
                 }
             }
             lua_pop(h->L, 1);
@@ -2264,29 +5705,44 @@ static bool scnChooseStart(void *ctx, BYTE player, BYTE *startIdx) {
 static bool scnSpawnLoadout(void *ctx, BYTE player, ScnLoadout *out) {
     ScenarioHost *h        = (ScenarioHost *)ctx;
     bool          answered = false;
+    int           i;
 
     if (h == NULL || out == NULL) {
         return false;
     }
     memset(out, 0, sizeof(*out));
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "spawn_loadout")) {
+    /* Scripts asked from the top down, and the first usable loadout is the
+       one taken, the same way on_choose_start reads its own: a tank spawns
+       with one set of stores, so there is nothing to add up. */
+    for (i = 0; i < h->count && !answered; i++) {
+        if (!scnPolicyBegin(h, i, kScnPolicyNames[SCN_POLICY_SPAWN_LOADOUT])) {
+            continue;
+        }
         lua_pushinteger(h->L, (lua_Integer)player);
-        if (scnPolicyAnswer(h, "spawn_loadout", 1)) {
+        if (scnPolicyAnswer(h, i, kScnPolicyNames[SCN_POLICY_SPAWN_LOADOUT],
+                            1)) {
             if (lua_type(h->L, -1) == LUA_TSTRING) {
                 const char *answer = lua_tostring(h->L, -1);
                 int         type   = 0;
                 if (scenarioLuaLoadoutFromWord(answer, &type)) {
+                    /* Cleared first. A word names the rules the whole
+                       loadout comes from, so nothing of another shape may
+                       be left in out beside it. Nothing writes out before
+                       this now — the loop stops at the first usable answer
+                       — and the clear stays because what it guards is the
+                       field being whole, not the order it was filled in. */
+                    memset(out, 0, sizeof(*out));
                     out->useGameType = 1;
                     out->gameType    = (uint8_t)type;
                     answered         = true;
-                    scnErrorCleared(h);
+                    scnErrorCleared(h, i);
                 } else {
                     scnSay(h->lastError, sizeof(h->lastError),
                            "scenario: spawn_loadout answered '%.24s', which "
                            "names no loadout; the game type stands",
                            answer);
-                    scnErrorCounted(h);
+                    scnErrorCounted(h, i);
                 }
             } else if (lua_istable(h->L, -1)) {
                 ScnLoadout want;
@@ -2297,14 +5753,16 @@ static bool scnSpawnLoadout(void *ctx, BYTE player, ScnLoadout *out) {
                     scnLoadoutAmount(h, "trees",  &want.trees)) {
                     *out     = want;
                     answered = true;
-                    scnErrorCleared(h);
+                    scnErrorCleared(h, i);
                 } else {
-                    scnPolicyBadAnswer(h, "spawn_loadout",
-                                       "with a table that is not four amounts "
-                                       "of 0 to 255");
+                    scnPolicyBadAnswer(
+                        h, i, kScnPolicyNames[SCN_POLICY_SPAWN_LOADOUT],
+                        "with a table that is not four amounts "
+                        "of 0 to 255");
                 }
             } else {
-                scnPolicyBadAnswer(h, "spawn_loadout",
+                scnPolicyBadAnswer(h, i,
+                                   kScnPolicyNames[SCN_POLICY_SPAWN_LOADOUT],
                                    "with neither a loadout word nor a table "
                                    "of amounts");
             }
@@ -2325,38 +5783,216 @@ static bool scnSpawnLoadout(void *ctx, BYTE player, ScnLoadout *out) {
  * The top of the range is a hundredfold. The site widens its own arithmetic
  * and caps the result at 255, so nothing above that changes an outcome a
  * smaller number has not already reached, and a bound is what keeps a number
- * a script names inside an int. */
+ * a script names inside an int.
+ *
+ * Every script on the list is asked and the percents are multiplied, which
+ * is the one reading where each script's answer still means on a list what
+ * it means alone: two scripts halving a blow leave a quarter of it, and one
+ * answering nothing leaves the others exactly as they were. Taking the
+ * first answer instead would have let the list order decide how hard a
+ * shell hits, and taking the smallest would have made a mod that doubles
+ * damage do nothing at all beside one that halves it.
+ *
+ * The arithmetic is held inside the range at every step rather than at the
+ * end. A running product times an answer is at most a hundredfold times a
+ * hundredfold, which is a hundred million and inside an int; clamping back
+ * to the range before the next multiply is what keeps the step after it
+ * inside one too. An int is therefore enough for a list of any length. */
 #define SCN_DAMAGE_SCALE_MAX 10000
 
-static int scnDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause) {
+/* One script's percent, read off the top of the stack and folded into the
+ * running product the two scale rows keep. The answer is popped either way;
+ * a bad one is reported and leaves the product where it was. */
+static int scnScaleFold(ScenarioHost *h, int script, const char *name,
+                        int pct) {
+    long v = 0;
+
+    if (scnPolicyWhole(h->L, &v) && v >= 0 && v <= SCN_DAMAGE_SCALE_MAX) {
+        /* A hundred times one answer divided by a hundred is that answer,
+           so one script on the list reads exactly as it did before there
+           were lists. */
+        pct = (pct * (int)v) / 100;
+        if (pct > SCN_DAMAGE_SCALE_MAX) {
+            pct = SCN_DAMAGE_SCALE_MAX;
+        }
+        scnErrorCleared(h, script);
+    } else {
+        scnPolicyBadAnswer(h, script, name,
+                           "with no percent between 0 and a hundredfold");
+    }
+    lua_pop(h->L, 1);
+    return pct;
+}
+
+static int scnDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause,
+                          BYTE pill) {
     ScenarioHost *h    = (ScenarioHost *)ctx;
     const char   *word = scenarioLuaDeathCauseWord((int)cause);
     int           pct  = 100;
+    int           i;
 
     if (h == NULL || word == NULL) {
         return 100;
     }
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "damage_scale")) {
+    for (i = 0; i < h->count; i++) {
+        if (!scnPolicyBegin(h, i, kScnPolicyNames[SCN_POLICY_DAMAGE_SCALE])) {
+            continue;
+        }
         lua_pushinteger(h->L, (lua_Integer)attacker);
         lua_pushinteger(h->L, (lua_Integer)victim);
         lua_pushstring(h->L, word);
-        if (scnPolicyAnswer(h, "damage_scale", 3)) {
-            long v = 0;
-            if (scnPolicyWhole(h->L, &v) && v >= 0 &&
-                v <= SCN_DAMAGE_SCALE_MAX) {
-                pct = (int)v;
-                scnErrorCleared(h);
-            } else {
-                scnPolicyBadAnswer(h, "damage_scale",
-                                   "with no percent between 0 and "
-                                   "a hundredfold");
-            }
-            lua_pop(h->L, 1);
+        scnPushItemIndex(h, pill, MAX_PILLS);
+        if (scnPolicyAnswer(h, i, kScnPolicyNames[SCN_POLICY_DAMAGE_SCALE],
+                            4)) {
+            pct = scnScaleFold(h, i, kScnPolicyNames[SCN_POLICY_DAMAGE_SCALE],
+                               pct);
         }
     }
     scnLockLeave(&h->lock);
     return pct;
+}
+
+/* What this blow takes off a pill, as a percent, read exactly as the tank's
+ * price above is: every script asked, the percents multiplied, and every way
+ * of saying nothing a hundred. Only the armour lost is priced — the shell
+ * that hits still stops and the pill it hits still turns angry, whatever
+ * this answers. */
+static int scnPillDamageScale(void *ctx, BYTE attacker, BYTE index,
+                              BYTE cause, BYTE pill) {
+    ScenarioHost *h    = (ScenarioHost *)ctx;
+    const char   *word = scenarioLuaDamageSourceWord((int)cause);
+    int           pct  = 100;
+    int           i;
+
+    if (h == NULL || word == NULL) {
+        return 100;
+    }
+    scnLockEnter(&h->lock);
+    for (i = 0; i < h->count; i++) {
+        if (!scnPolicyBegin(h, i,
+                            kScnPolicyNames[SCN_POLICY_PILL_DAMAGE_SCALE])) {
+            continue;
+        }
+        lua_pushinteger(h->L, (lua_Integer)attacker);
+        scnPushItemIndex(h, index, MAX_PILLS);
+        lua_pushstring(h->L, word);
+        scnPushItemIndex(h, pill, MAX_PILLS);
+        if (scnPolicyAnswer(h, i,
+                            kScnPolicyNames[SCN_POLICY_PILL_DAMAGE_SCALE],
+                            4)) {
+            pct = scnScaleFold(h, i,
+                               kScnPolicyNames[SCN_POLICY_PILL_DAMAGE_SCALE],
+                               pct);
+        }
+    }
+    scnLockLeave(&h->lock);
+    return pct;
+}
+
+/* The scripts.json text this round's recording carries, built from the list
+ * the boot has just loaded and handed to the sim, which logStop writes into
+ * the .wbv. Built here, at the boot, because each entry's table is this
+ * round's and goes when the round does.
+ *
+ * Each script's manifest object is rebuilt from its struct — the package's
+ * own for a script that came out of one, the table the file declared for a
+ * loose script — so a key in a package's manifest.json this build does not
+ * know is not in the record.
+ *
+ * Anything that will not build leaves the round with no text and says so
+ * once. The recording is not worth a round. */
+static void scnRecordTextSet(ScenarioHost *h, int n) {
+    ScnRecordDesc *d;
+    char          *manifests[SCN_SCRIPTS_MAX];
+    char           err[SCN_ERR_LEN];
+    char          *text = NULL;
+    const char    *map;
+    int            i;
+
+    memset(manifests, 0, sizeof(manifests));
+    err[0] = '\0';
+    serverSimSetScenarioRecordText(h->sim, NULL, 0);
+
+    /* On the heap: the rule and region rows put it past what a callback
+       inside the round start should hold on its stack. */
+    d = (ScnRecordDesc *)calloc(1, sizeof(*d));
+    if (d == NULL) {
+        scnSay(NULL, 0, "scenario: no memory for the recording's scripts.json");
+        return;
+    }
+
+    /* The committed map's file, which is what the scripts' own rows name
+       too; the sim's display name for a host with no map path behind it. */
+    map = scnFileNameOf(h->mapPath);
+    d->map         = (map[0] != '\0') ? map : serverSimGetMapName(h->sim);
+    d->modsEnabled = !serverSimGetModsOff(h->sim);
+
+    /* The composite's table as the round opens on it. */
+    for (i = 0; i < (int)h->manifest.numRules &&
+                d->numRules < SCN_MANIFEST_RULES_MAX; i++) {
+        d->rules[d->numRules].name  = simRulesRuleName(h->manifest.rules[i].rule);
+        d->rules[d->numRules].value = h->manifest.rules[i].value;
+        d->numRules++;
+    }
+
+    /* The union, each with the file of the script that named it. owner is
+       that script's position plus one. */
+    for (i = 0; i < (int)h->manifest.numRegions && i < SCN_REGIONS_MAX; i++) {
+        const ScnManifestRegion *r = &h->manifest.regions[i];
+        int                      e = (int)r->owner - 1;
+
+        d->regions[i].name = r->name;
+        d->regions[i].x    = r->x;
+        d->regions[i].y    = r->y;
+        d->regions[i].w    = r->w;
+        d->regions[i].h    = r->h;
+        d->regions[i].file = (e >= 0 && e < n)
+                                 ? scnFileNameOf(h->entry[e].script) : "";
+        d->numRegions++;
+    }
+
+    for (i = 0; i < n && i < SCN_SCRIPTS_MAX; i++) {
+        const ScnScriptEntry   *e = &h->entry[i];
+        const ScenarioManifest *m = (e->pkgManifest != NULL) ? e->pkgManifest
+                                                             : e->manifest;
+        ScnManifestDoc         *doc;
+
+        if (m == NULL) {
+            scnFmt(err, sizeof(err), "%s has no table",
+                   scnFileNameOf(e->script));
+            goto fail;
+        }
+        doc = scnManifestFromValues(m, err, sizeof(err));
+        if (doc == NULL) goto fail;
+        manifests[i] = scnManifestWrite(doc, err, sizeof(err));
+        scnManifestFree(doc);
+        if (manifests[i] == NULL) goto fail;
+
+        d->scripts[i].file   = scnFileNameOf(e->script);
+        d->scripts[i].source = (e->source == lobbyScenarioMap) ? "map"
+                                                                : "server";
+        d->scripts[i].kind   = (e->manifest != NULL &&
+                                e->manifest->kind == scnKindKeepsWinCondition)
+                                   ? "mod" : "scenario";
+        d->scripts[i].manifestJson = manifests[i];
+        d->numScripts++;
+    }
+
+    text = scnRecordJsonWrite(d, err, sizeof(err));
+    if (text == NULL) goto fail;
+    serverSimSetScenarioRecordText(h->sim, text, strlen(text));
+    goto done;
+
+fail:
+    scnSay(NULL, 0, "scenario: the recording carries no scripts.json: %s",
+           err[0] != '\0' ? err : "it could not be built");
+done:
+    free(text);
+    for (i = 0; i < SCN_SCRIPTS_MAX; i++) {
+        free(manifests[i]);
+    }
+    free(d);
 }
 
 /* A round the scenario takes no part in: no hooks, no policy answers, and
@@ -2379,7 +6015,17 @@ static void scnRoundWithoutScenario(ScenarioHost *h) {
        them against, and the set must not carry them into the round. */
     scenarioLuaTimersReset(&h->timers);
     memset(&h->manifest, 0, sizeof(h->manifest));
+    /* And what the compose of that table wrote down, which described two
+       scripts of a list that is no longer loaded. */
+    memset(&h->conflicts, 0, sizeof(h->conflicts));
     memset(h->inRegion, 0, sizeof(h->inRegion));
+    /* And the index into a list that is no longer loaded. scnHooksForget
+       above put count back to zero, so every walk stops before reading it;
+       this is so nothing has to know that to be safe. */
+    h->base = 0;
+    /* And the recording's description of the last round's scripts, which
+       this round did not run. */
+    serverSimSetScenarioRecordText(h->sim, NULL, 0);
 }
 
 /* The teams the roster is on right now. Called wherever the host starts
@@ -2418,10 +6064,12 @@ static void scnSeedTeams(ScenarioHost *h) {
  * tank exists, so a round it leaves behind is a plain one from its first
  * placement onward. */
 static void scnRoundBootLocked(ScenarioHost *h) {
-    lua_State       *L;
-    ScenarioManifest fresh;
-    ScnParseReport   rep;
-    char             err[SCN_ERR_LEN];
+    lua_State      *L;
+    ScnScriptLoad   load[SCN_SCRIPTS_MAX];
+    int             n = 0;
+    int             i;
+    ScnParseReport  rep;
+    char            err[SCN_ERR_LEN];
 
     err[0] = '\0';
 
@@ -2451,17 +6099,82 @@ static void scnRoundBootLocked(ScenarioHost *h) {
     rep.soft    = h->lastError;
     rep.softLen = sizeof(h->lastError);
     rep.sink    = NULL;
-    if (!scnRunChunk(L, h->src, h->srcLen, h->chunkName, err, sizeof(err)) ||
-        !scnReadManifest(L, &fresh, h->script, err, sizeof(err), &rep)) {
-        scnSay(h->lastError, sizeof(h->lastError), "%s", err);
-        scnCloseVm(L);
-        scnRoundWithoutScenario(h);
-        return;
+
+    /* The list this round plays, in list order, one descriptor per script
+       the host is holding bytes for.
+
+       Read off the entries and not off the host: the bytes are the entry's
+       from this phase on, which is what lets a round boot every script the
+       lobby picked rather than the first of them.
+
+       A package's own table goes on before each chunk, exactly as it did at
+       the attach: a packaged script that declares no scenario of its own
+       would otherwise start every round short of one and play classic. */
+    memset(load, 0, sizeof(load));
+    for (n = 0; n < h->scripts; n++) {
+        load[n].src       = h->entry[n].src;
+        load[n].srcLen    = h->entry[n].srcLen;
+        load[n].chunkName = h->entry[n].chunkName;
+        load[n].path      = h->entry[n].script;
+        load[n].pkg       = h->entry[n].pkgManifest;
+        load[n].ctx       = &h->lua;
+        load[n].entry     = n;
+        /* This is the state the round dispatches from, so it is the one
+           whose hooks the host holds on to. */
+        load[n].resolveHooks = true;
     }
-    if (fresh.api > SCENARIO_API_VERSION) {
-        scnSay(h->lastError, sizeof(h->lastError),
-               "scenario: %s asks for api %d and this server is api %d",
-               h->script, fresh.api, SCENARIO_API_VERSION);
+
+    for (i = 0; i < n; i++) {
+        /* Emptied first and filled second. The slot is holding the last
+           round's table and references into the last round's state, and
+           that state is closed a few lines on whichever way this goes.
+           The bytes the descriptor above points at are the other half of
+           the entry and this does not touch them. */
+        if (!scnEntryReady(&h->entry[i])) {
+            scnSay(h->lastError, sizeof(h->lastError),
+                   "scenario: no memory for this round's table");
+            scnCloseVm(L);
+            scnRoundWithoutScenario(h);
+            return;
+        }
+        /* One script that will not load plays no scenario at all, which is
+           what a round with one script on the list has always done. The
+           whole list and not the one file: the host picked these scripts to
+           run together, and a round that quietly ran the four that loaded
+           would be a round nobody asked for. The reason names the file. */
+        if (!scnScriptLoad(L, &h->entry[i], &load[i], err, sizeof(err),
+                           &rep)) {
+            scnSay(h->lastError, sizeof(h->lastError), "%s", err);
+            scnCloseVm(L);
+            scnRoundWithoutScenario(h);
+            return;
+        }
+        /* The attach made this same test and words it at more length; a
+           round reaching this one is playing a script that computes its api
+           rather than writing it down. */
+        if (h->entry[i].manifest->api > SCENARIO_API_VERSION) {
+            scnSay(h->lastError, sizeof(h->lastError),
+                   "scenario: %s asks for api %d and this server is api %d",
+                   load[i].path, h->entry[i].manifest->api,
+                   SCENARIO_API_VERSION);
+            scnCloseVm(L);
+            scnRoundWithoutScenario(h);
+            return;
+        }
+    }
+
+    /* The whole table, read from the scripts' bytes again — which is how a
+       region the last round defined stops existing without anything here
+       having to remove it.
+
+       Before the state is handed over, because a list that will not compose
+       is a round without a scenario and the old state has to be the one that
+       goes. The attach composed the same list and passed, so reaching a
+       refusal here means a file was edited on disk and reloaded between the
+       two; the reload composes as well, so in practice this is the path
+       nothing takes and the one that must still be right. */
+    if (!scnCompose(h, n, err, sizeof(err))) {
+        scnSay(h->lastError, sizeof(h->lastError), "%s", err);
         scnCloseVm(L);
         scnRoundWithoutScenario(h);
         return;
@@ -2470,18 +6183,17 @@ static void scnRoundBootLocked(ScenarioHost *h) {
     if (h->L != NULL) {
         scnCloseVm(h->L);
     }
-    h->L        = L;
-    /* The whole table, read from the script's bytes again — which is how a
-       region the last round defined stops existing without anything here
-       having to remove it. */
-    h->manifest = fresh;
-    scnHooksResolve(h, L);
+    h->L     = L;
+    h->count = n;
 
-    /* Off for a round is off for that round alone. This one starts with the
-       count at zero and the scenario running, whatever the last one did. */
-    h->errors       = 0;
-    h->disabled     = false;
-    h->startPending = true;
+    /* Off for a round is off for that round alone. Every script on the list
+       starts with its own count at zero and itself running, whatever the
+       last round did — scnEntryReady above is what put each of them back.
+       The line a mod is told once about its allow_base_win goes back with
+       them, so a round that has one to say says it. */
+    scnDisabledRefresh(h);
+    h->startPending       = true;
+    h->saidBaseWinIgnored = false;
 
     /* The roster copy the team change is measured against, and the state
        on_end watches: both are this round's, and both are read before the
@@ -2497,6 +6209,24 @@ static void scnRoundBootLocked(ScenarioHost *h) {
     memset(h->inRegion, 0, sizeof(h->inRegion));
 
     scnApplyRules(h);
+
+    /* And, for a file that asked for it, the map's pills and bases brought up
+       to the caps the table now holds. After the rules and nowhere else: this
+       is the one point in a round where the scenario's own table is in force
+       and no tank has been built yet, so a fill here is the world the round
+       opens on. Run ahead of the rules it would fill to the numbers they are
+       about to replace, and a map file cannot say "full" on its own, which is
+       the whole reason the key exists.
+
+       A scenario that did not ask changes nothing: the call is not made, and
+       the map plays at the numbers its own file holds. */
+    if (h->manifest.fillToCaps) {
+        serverSimScenarioFillWorldToRules(h->sim);
+    }
+
+    /* And what the recording says the round ran: the list that loaded, and
+       the table it composed to. */
+    scnRecordTextSet(h, n);
 }
 
 /* on_setup, with the VM lock already held.
@@ -2580,6 +6310,85 @@ void scenarioHostSetEnabled(bool enabled) {
     scnEnabled = enabled;
 }
 
+/* The narrower switch beside it: whether a map a client uploaded may bring a
+ * script. One answer for the process for the same reasons the one above is,
+ * and read at the same points. */
+static bool scnUploadScripts = true;
+
+void scenarioHostSetUploadScriptsEnabled(bool enabled) {
+    scnUploadScripts = enabled;
+}
+
+/* And the one that goes the other way: whether a script runs with nothing
+ * held back. One answer for the process, written at startup, and read each
+ * time a state is booted or a chunk is loaded — through the getter, because
+ * those are further up the file than this. */
+static bool scnUnsafeScripts = false;
+
+void scenarioHostSetUnsafeScripts(bool unsafe) {
+    scnUnsafeScripts = unsafe;
+}
+
+bool scenarioHostUnsafeScripts(void) {
+    return scnUnsafeScripts;
+}
+
+/* One character of a path, for the comparison below: separators levelled and
+ * case dropped. */
+static char scnPathChar(char c) {
+    if (c == '\\') {
+        c = '/';
+    }
+    if (c >= 'A' && c <= 'Z') {
+        c = (char)(c + 32);
+    }
+    return c;
+}
+
+/* Whether this map file sits in the server's uploads directory, and so
+ * arrived from a client rather than out of the operator's own map directory.
+ *
+ * The path is the only signal there is. serverFinishUpload writes the bytes
+ * it was sent under their final name and stamps nothing on the file, and the
+ * in-memory preview path has no file at all, so a map is an upload exactly
+ * when its file is the one an upload would have written.
+ *
+ * Separators are levelled and case is dropped, because the two strings are
+ * built by different code — the uploads directory out of an operator's
+ * configuration or a desktop preference, the map path out of a listing — and
+ * on Windows either may spell a separator the other way. Dropping case can
+ * only call a map an upload that is not one, which turns a script down; the
+ * mistake the other way would run one the operator switched off. */
+static bool scnMapIsUpload(const ServerSim *sim, const char *mapPath) {
+    char   uploads[SCN_SCRIPT_PATH_MAX];
+    size_t n;
+    size_t i;
+
+    if (sim == NULL || mapPath == NULL || mapPath[0] == '\0') {
+        return false;
+    }
+    uploads[0] = '\0';
+    serverSimGetUploadsDir(sim, uploads, sizeof(uploads));
+    n = strlen(uploads);
+    /* A trailing separator off the end, so "<dir>/" and "<dir>" are one
+       directory. */
+    while (n > 0 && (uploads[n - 1] == '/' || uploads[n - 1] == '\\')) {
+        n--;
+    }
+    if (n == 0) {
+        return false;
+    }
+    for (i = 0; i < n; i++) {
+        if (mapPath[i] == '\0' ||
+            scnPathChar(mapPath[i]) != scnPathChar(uploads[i])) {
+            return false;
+        }
+    }
+    /* A separator has to follow, so a sibling directory whose name starts
+       with the uploads directory's is not inside it. */
+    return mapPath[n] == '/' || mapPath[n] == '\\';
+}
+
 /* Whether a regular file is there, without opening it. The map lister asks
  * this once per entry on its way through a directory, so it is a stat and
  * not an open. A directory carrying the script's name is not a script:
@@ -2594,8 +6403,147 @@ static bool scnScriptExists(const char *path) {
     return info.type == SDL_PATHTYPE_FILE;
 }
 
-bool scenarioHostMapHasScript(const char *mapPath) {
+/* How many map files have been opened to answer the map-script question, for
+ * the case that holds a second listing to opening none. Written under the
+ * cache's lock below, and read through scenarioHostMapScriptOpens. */
+static unsigned long scnMapScriptOpens;
+
+/* A copy of a string on the heap, which the cache below owns. Written out
+ * rather than calling strdup, which is not C99. */
+static char *scnStrDup(const char *src) {
+    size_t n;
+    char  *out;
+
+    if (src == NULL) {
+        return NULL;
+    }
+    n   = strlen(src) + 1;
+    out = (char *)malloc(n);
+    if (out != NULL) {
+        memcpy(out, src, n);
+    }
+    return out;
+}
+
+/* How much of a map file is read when looking for a chunk in it: a whole map
+ * body, plus the bytes the chunk header needs to be recognised. A map has to
+ * fit inside that cap to reach a client at all, so this much of the front
+ * holds every map and the header of whatever was appended after one. */
+#define SCN_MAP_HEAD_BYTES (LOBBY_MAP_UPLOAD_MAX_BYTES + SCN_PACKAGE_HEADER_LEN)
+
+/* Whether a container is appended to the map file itself. The magic answers
+   the question this predicate asks; what is inside the container is the
+   attach's business, so nothing here opens it. */
+static bool scnMapHasChunk(const char *mapPath) {
+    FILE          *f;
+    unsigned long  opens;
+    long           size;
+    size_t         want;
+    uint8_t       *buf;
+    size_t         got;
+    const uint8_t *chunk;
+    size_t         chunkLen;
+    bool           found;
+
+    f = fopen(mapPath, "rb");
+    if (f == NULL) {
+        return false;
+    }
+    /* One more map file opened, for the case that proves the cache above
+       answers without coming back here. Counted after the open succeeds, so
+       what it counts is reads rather than attempts. */
+    opens = scnMapScriptOpens + 1;
+    scnMapScriptOpens = opens;
+    /* Read the smaller of the file and the head bound: the lister asks this
+       once per map in a directory, and a plain map should cost its own size
+       rather than the bound's. */
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        return false;
+    }
+    size = ftell(f);
+    if (size <= 0 || fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        return false;
+    }
+    want = ((size_t)size < (size_t)SCN_MAP_HEAD_BYTES)
+               ? (size_t)size
+               : (size_t)SCN_MAP_HEAD_BYTES;
+
+    buf = (uint8_t *)malloc(want);
+    if (buf == NULL) {
+        fclose(f);
+        return false;
+    }
+    got = fread(buf, 1, want, f);
+    fclose(f);
+
+    found = scnPackageFindInMap(buf, got, &chunk, &chunkLen);
+    free(buf);
+    return found;
+}
+
+/* The answer for one map, worked out rather than remembered. */
+static bool scnMapHasScriptUncached(const char *mapPath) {
     char script[SCN_SCRIPT_PATH_MAX];
+
+    /* A loose script beside the map is the cheaper of the two tests — a stat
+       against a read — so it goes first. */
+    if (scnScriptPath(mapPath, script, sizeof(script)) &&
+        scnScriptExists(script)) {
+        return true;
+    }
+    return scnMapHasChunk(mapPath);
+}
+
+/* What the last answers were, so a listing need not work them out again.
+ *
+ * The question used to be two stats. It is a stat and a read of the map's
+ * head now, because a script can be packed into the file, and it is asked
+ * once per map on every listing and from the map chooser's render thread —
+ * so a directory of two hundred maps opened two hundred files each time the
+ * list was drawn.
+ *
+ * A row is keyed on everything the answer is a function of: the map file's
+ * size and modify time, and whether there is a loose X.scenario.lua beside it
+ * and when that was last written. Both halves are stats, which is what the
+ * question cost before a script could be packed into a map at all; what the
+ * cache is here to avoid is the open-and-read of the map's head. So a map
+ * that is repacked, replaced or edited is worked out again, and so is one an
+ * author drops a loose script next to or takes one away from — the tag on the
+ * next listing is what it would have been with no cache at all.
+ *
+ * Round-robin replacement over a fixed set of rows, which is enough for the
+ * directories a listing walks and costs nothing to keep. One cache for the
+ * process, as the directory cache above is, and under a lock for the same
+ * reason: the render thread and the tick thread both ask. */
+#define SCN_MAP_SCRIPT_CACHE_MAX 256
+
+typedef struct {
+    char    *path;          /* owned; NULL for a row nothing is in */
+    SDL_Time modified;      /* the map file's */
+    Uint64   size;          /* the map file's */
+    bool     looseSeen;     /* is an X.scenario.lua beside it */
+    SDL_Time looseModified; /* and when it was last written; 0 for none */
+    bool     scripted;
+} ScnMapScriptRow;
+
+typedef struct {
+    ScnVmLock       lock;   /* m is NULL until the lister is registered */
+    ScnMapScriptRow rows[SCN_MAP_SCRIPT_CACHE_MAX];
+    int             next;   /* the row the next answer replaces */
+} ScnMapScriptCache;
+
+static ScnMapScriptCache scnMapScriptCache;
+
+bool scenarioHostMapHasScript(const char *mapPath) {
+    char         script[SCN_SCRIPT_PATH_MAX];
+    SDL_PathInfo info;
+    SDL_PathInfo looseInfo;
+    bool         looseSeen;
+    SDL_Time     looseModified = 0;
+    int          i;
+    bool         answer;
 
     if (mapPath == NULL || mapPath[0] == '\0') {
         return false;
@@ -2607,64 +6555,2220 @@ bool scenarioHostMapHasScript(const char *mapPath) {
     if (!scnEnabled) {
         return false;
     }
-    if (!scnScriptPath(mapPath, script, sizeof(script))) {
-        return false;
+    /* Nothing to key a row on, or nowhere to keep it: the question is
+       answered, just not remembered. */
+    if (scnMapScriptCache.lock.m == NULL ||
+        !SDL_GetPathInfo(mapPath, &info) ||
+        info.type != SDL_PATHTYPE_FILE) {
+        return scnMapHasScriptUncached(mapPath);
     }
-    return scnScriptExists(script);
+    /* The other half of the key, and the first half of the answer: a loose
+       script beside the map outranks anything packed into it, and it is a
+       stat either way. Taken before the row is looked for, so a script
+       dropped next to a map the cache has already seen misses the row rather
+       than being answered from it. */
+    looseSeen = scnScriptPath(mapPath, script, sizeof(script)) &&
+                SDL_GetPathInfo(script, &looseInfo) &&
+                looseInfo.type == SDL_PATHTYPE_FILE;
+    if (looseSeen) {
+        looseModified = looseInfo.modify_time;
+    }
+
+    scnLockEnter(&scnMapScriptCache.lock);
+    for (i = 0; i < SCN_MAP_SCRIPT_CACHE_MAX; i++) {
+        ScnMapScriptRow *row = &scnMapScriptCache.rows[i];
+        if (row->path != NULL && row->modified == info.modify_time &&
+            row->size == info.size && row->looseSeen == looseSeen &&
+            row->looseModified == looseModified &&
+            strcmp(row->path, mapPath) == 0) {
+            answer = row->scripted;
+            scnLockLeave(&scnMapScriptCache.lock);
+            return answer;
+        }
+    }
+    /* Worked out under the lock, so the open this counts is counted once and
+       two threads asking about the same new map do not both read it. The
+       loose script has already been stated, so a map that has one is answered
+       without the map file being opened at all. */
+    answer = looseSeen ? true : scnMapHasChunk(mapPath);
+    {
+        ScnMapScriptRow *row = &scnMapScriptCache.rows[scnMapScriptCache.next];
+        char            *copy = scnStrDup(mapPath);
+        if (copy != NULL) {
+            free(row->path);
+            row->path          = copy;
+            row->modified      = info.modify_time;
+            row->size          = info.size;
+            row->looseSeen     = looseSeen;
+            row->looseModified = looseModified;
+            row->scripted      = answer;
+            scnMapScriptCache.next =
+                (scnMapScriptCache.next + 1) % SCN_MAP_SCRIPT_CACHE_MAX;
+        }
+    }
+    scnLockLeave(&scnMapScriptCache.lock);
+    return answer;
 }
 
-/* The lister's question, in the shape the sim's setter takes. No context:
-   finding a script is a fact about a path and about nothing else. */
+unsigned long scenarioHostMapScriptOpens(void) {
+    unsigned long n;
+
+    if (scnMapScriptCache.lock.m == NULL) {
+        return scnMapScriptOpens;
+    }
+    scnLockEnter(&scnMapScriptCache.lock);
+    n = scnMapScriptOpens;
+    scnLockLeave(&scnMapScriptCache.lock);
+    return n;
+}
+
+/* The lister's question, in the shape the sim's setter takes. The context is
+   the sim whose lister asked, because one part of the answer is not a fact
+   about the path alone: whether the map came out of that server's uploads
+   directory, which with uploaded scripts off makes it plain here however
+   the file was built. Without this the chooser would tag an uploaded map
+   Scripted and the attach would then refuse it. */
 static bool scnMapScriptedCb(void *ctx, const char *mapPath) {
-    (void)ctx;
+    const ServerSim *sim = (const ServerSim *)ctx;
+
+    if (!scnUploadScripts && scnMapIsUpload(sim, mapPath)) {
+        return false;
+    }
     return scenarioHostMapHasScript(mapPath);
 }
 
 void scenarioHostRegisterMapScripted(ServerSim *sim) {
-    serverSimSetScenarioMapScripted(sim, scnMapScriptedCb, NULL);
+    /* The one place the map-script cache's lock is made, as the directory
+       cache's is made where its lister is registered: registering happens
+       once where a process decides whether it runs scripts at all, before
+       any sim can be asked. A build where the mutex cannot be made answers
+       the question every time rather than not at all. */
+    if (scnMapScriptCache.lock.m == NULL) {
+        (void)scnLockCreate(&scnMapScriptCache.lock);
+    }
+    serverSimSetScenarioMapScripted(sim, scnMapScriptedCb, sim);
 }
 
-ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
+/* The last read of the scenarios directory, kept so the next one need not be
+ * made.
+ *
+ * What a read costs is the reason it is kept. scnDirList opens every file in
+ * the directory, inflates each .scenario to reach its manifest, and boots a
+ * Lua state per loose .lua to run that script's top level. A client's list
+ * request and a host's pick both reach it on the thread that ticks the sim, so
+ * a directory of twenty scenarios is twenty VM boots inside one tick, once per
+ * request.
+ *
+ * Invalidation: the cache answers only when the directory is the same path as
+ * last time, SDL_GetPathInfo reports the same modify time on it, and every
+ * scenario file in it (each .scenario and .lua the read would open) has the
+ * same modify time and size it had. A file added to the directory, removed
+ * from it or renamed in it moves the directory's time, so the next read is a
+ * fresh one. A file edited in place leaves the directory's time alone but
+ * moves its own, so a scenario whose text changed is read again as well — a
+ * new setting or callback reaches the lobby's details dialog without a server
+ * restart. The files are stamped rather than only the rows, because a file
+ * whose manifest did not parse has no row, and fixing it in place has to be
+ * seen too.
+ *
+ * Stamping the files costs one directory walk and one SDL_GetPathInfo per
+ * scenario file. A mods directory holds a handful of files, so that is a few
+ * stat calls against a VM boot per file, and it is made before the lock is
+ * taken, so a slow disk holds up only its own caller. A walk made less than
+ * SCN_DIR_STAMPS_REUSE_MS ago stands for a new one when the directory's time
+ * and the change count are unmoved: the lobby's details dialog asks once per
+ * file, each ask reads the file twice (its details, then its settings) and
+ * every read asks each mod directory in turn, so without it a client could
+ * make the server walk every directory several times a packet. An edit in
+ * place is seen that much later at most. A directory with more scenario
+ * files than SCN_DIR_STAMPS_MAX is read every time rather than kept.
+ *
+ * A file replaced in place with its modify time and its size both kept — an
+ * unzip or rsync that preserves times, writing a file of the same length —
+ * moves nothing this looks at, and is not seen until something else changes.
+ *
+ * The stamps are as fine as the kernel writes them, which is a few
+ * milliseconds on an ordinary Linux filesystem rather than a nanosecond, so a
+ * change inside the same tick as the read that kept the listing leaves the
+ * time alone (a file's size still moves if its length changed). The
+ * server now changes these directories itself — an upload put in place, the
+ * session directory emptied — and lists them straight after, so each slot also
+ * keeps the change count serverSimScriptDirsGen answered when it was read, and
+ * a slot whose count is not the current one is read again. Only a change made
+ * by someone else within one stamp can still be missed until the next change
+ * — an operator dropping a scenario in cannot be that close to a read they did
+ * not make, and the file after it, or the next thing to touch the directory,
+ * puts it right.
+ *
+ * A read that filled the caller's array is not kept. It may have stopped short
+ * of the directory, and part of a directory is no answer to hand the next
+ * caller with room for the rest.
+ *
+ * One cache per directory rather than one for the process, because a listing
+ * merges the mod directories: the one this host was given, the player's own
+ * under SDL_GetPrefPath, the Workshop items beside it, the mods shipped
+ * beside the executable, and the directory players' uploads land in. A slot
+ * each and one spare, so every directory of a listing finds its own slot
+ * once they are filled and nothing evicts. It is held under a lock because
+ * the read is not the tick thread's alone — a client hosting in process
+ * reads it from the UI thread through serverSimEnumerateScenarioDir. The
+ * lock and the rows live as long as the process; there is nothing to free
+ * them at, and nothing that would grow them past that many directories'
+ * worth. */
+/* How many directories a listing merges. The five scnModDirs builds:
+   the one this host was given, the player's own, the Workshop one, the
+   shipped one, and the uploads directory. */
+#define SCN_MOD_DIRS_MAX 5
+
+/* One scenario file's modify time and size, which is what an edit in place
+   moves when the directory's own time does not. */
+typedef struct {
+    char     file[SCN_DIR_FILE_LEN];
+    SDL_Time modified;
+    Uint64   size;
+} ScnDirStamp;
+
+/* More scenario files than this in one directory and it is not kept. */
+#define SCN_DIR_STAMPS_MAX 256
+
+typedef struct {
+    bool         valid;
+    char         dir[SCN_SCRIPT_PATH_MAX];
+    SDL_Time     modified;
+    uint32_t     gen;       /* serverSimScriptDirsGen when this was read */
+    ScnDirEntry *rows;
+    /* Each row's details, count of them like the rows. Kept here and not on
+       the rows, which go out on every listing: the details are asked for one
+       file at a time when a lobby's details dialog opens (scnDirDetailsCb),
+       and keeping them is what spares that ask a VM boot per file. */
+    ScnDirDetails *details;
+    int          count;
+    /* Every scenario file's stamp as it stood before the read, sorted by
+       name (scnDirStampsRead). */
+    ScnDirStamp *stamps;
+    int          stampCount;
+    Uint64       stampTicks; /* SDL_GetTicks() when stamps were walked */
+} ScnDirCache;
+
+#define SCN_DIR_CACHE_SLOTS (SCN_MOD_DIRS_MAX + 1)
+
+static ScnVmLock   scnDirCacheLock;   /* m is NULL until the lister is
+                                         registered; guards every slot */
+static ScnDirCache scnDirCache[SCN_DIR_CACHE_SLOTS];
+
+static void scnDirCacheDrop(ScnDirCache *c) {
+    free(c->rows);
+    free(c->details);
+    free(c->stamps);
+    c->rows   = NULL;
+    c->details = NULL;
+    c->stamps = NULL;
+    c->count  = 0;
+    c->stampCount = 0;
+    c->stampTicks = 0;
+    c->valid  = false;
+    c->dir[0] = '\0';
+}
+
+/* Does name end with ext, ignoring case? Defined with the script readers,
+   after scnPackagedScript. */
+static bool scnHasExt(const char *name, const char *ext);
+
+static int scnDirStampCmp(const void *a, const void *b) {
+    return strcmp(((const ScnDirStamp *)a)->file,
+                  ((const ScnDirStamp *)b)->file);
+}
+
+/* The stamp of every file in dir that scnDirListDetails would open, sorted
+   by name, into an array the caller frees. The same names it takes: a plain
+   file in this directory, not hidden, short enough for a row, ending in
+   .scenario or .lua. False when the directory cannot be walked, holds more
+   than SCN_DIR_STAMPS_MAX of them, or the array cannot be had; the caller
+   then reads without the cache. Called without the lock. */
+static bool scnDirStampsRead(const char *dir, ScnDirStamp **outStamps,
+                             int *outCount) {
+    char       **files;
+    ScnDirStamp *stamps;
+    int          fileCount = 0;
+    int          cap;
+    int          n         = 0;
+    int          i;
+    bool         ok        = true;
+
+    *outStamps = NULL;
+    *outCount  = 0;
+    files = SDL_GlobDirectory(dir, "*", 0, &fileCount);
+    if (files == NULL) {
+        return false;
+    }
+    /* No more than the cap is ever filled: one file past it and the walk
+       gives up. */
+    cap = fileCount < SCN_DIR_STAMPS_MAX ? fileCount : SCN_DIR_STAMPS_MAX;
+    stamps = (ScnDirStamp *)malloc((size_t)(cap > 0 ? cap : 1) *
+                                   sizeof(*stamps));
+    if (stamps == NULL) {
+        SDL_free(files);
+        return false;
+    }
+    for (i = 0; i < fileCount; i++) {
+        const char  *name = files[i];
+        char         path[1024];
+        SDL_PathInfo info;
+
+        if (name == NULL || name[0] == '\0' || name[0] == '.' ||
+            strchr(name, '/') != NULL || strchr(name, '\\') != NULL ||
+            strlen(name) >= SCN_DIR_FILE_LEN ||
+            (!scnHasExt(name, SCN_SCENARIO_PACKAGE_EXT) &&
+             !scnHasExt(name, SCN_SCENARIO_SCRIPT_EXT))) {
+            continue;
+        }
+        snprintf(path, sizeof(path), "%s/%s", dir, name);
+        if (!SDL_GetPathInfo(path, &info) || info.type != SDL_PATHTYPE_FILE) {
+            continue;
+        }
+        /* After the file check, so a directory named x.lua does not count. */
+        if (n >= cap) {
+            ok = false;
+            break;
+        }
+        /* Zeroed first so the bytes past the name's end compare equal in
+           scnDirCacheFresh's memcmp. */
+        memset(&stamps[n], 0, sizeof(stamps[n]));
+        snprintf(stamps[n].file, sizeof(stamps[n].file), "%s", name);
+        stamps[n].modified = info.modify_time;
+        stamps[n].size     = info.size;
+        n++;
+    }
+    SDL_free(files);
+    if (!ok) {
+        free(stamps);
+        return false;
+    }
+    if (n > 1) {
+        qsort(stamps, (size_t)n, sizeof(stamps[0]), scnDirStampCmp);
+    }
+    *outStamps = stamps;
+    *outCount  = n;
+    return true;
+}
+
+/* Does the slot hold what the directory holds now: its path, its modify
+   time, this process's change count, and every file's stamp? Called with
+   the lock held. */
+static bool scnDirCacheFresh(const ScnDirCache *c, const char *dir,
+                             SDL_Time modified, uint32_t gen,
+                             const ScnDirStamp *stamps, int stampCount) {
+    return c->valid && c->modified == modified && c->gen == gen &&
+           strcmp(c->dir, dir) == 0 && c->stampCount == stampCount &&
+           (stampCount == 0 ||
+            memcmp(c->stamps, stamps,
+                   (size_t)stampCount * sizeof(stamps[0])) == 0);
+}
+
+/* Is the slot fresh without a new walk: its path, its modify time and this
+   process's change count match, and its stamps were walked less than
+   SCN_DIR_STAMPS_REUSE_MS before now? Called with the lock held. */
+static bool scnDirCacheRecent(const ScnDirCache *c, const char *dir,
+                              SDL_Time modified, uint32_t gen, Uint64 now) {
+    return c->valid && c->modified == modified && c->gen == gen &&
+           strcmp(c->dir, dir) == 0 &&
+           now - c->stampTicks < SCN_DIR_STAMPS_REUSE_MS;
+}
+
+/* The slot's rows, and its details when details is not NULL, into the
+   caller's arrays; answers how many. Called with the lock held, on a slot
+   found fresh whose count fits the caller's arrays. */
+static int scnDirCacheCopyRows(const ScnDirCache *c, ScnDirEntry *out,
+                               ScnDirDetails *details) {
+    int n = c->count;
+
+    if (n > 0) {
+        memcpy(out, c->rows, (size_t)n * sizeof(out[0]));
+        if (details != NULL) {
+            memcpy(details, c->details, (size_t)n * sizeof(details[0]));
+        }
+    }
+    return n;
+}
+
+/* Which slot this directory is kept in: its own if it has one, otherwise an
+   empty slot, otherwise slot 0. Called with the lock held. */
+static ScnDirCache *scnDirCacheSlot(const char *dir) {
+    int i;
+
+    for (i = 0; i < SCN_DIR_CACHE_SLOTS; i++) {
+        if (scnDirCache[i].valid && strcmp(scnDirCache[i].dir, dir) == 0) {
+            return &scnDirCache[i];
+        }
+    }
+    for (i = 0; i < SCN_DIR_CACHE_SLOTS; i++) {
+        if (!scnDirCache[i].valid) {
+            return &scnDirCache[i];
+        }
+    }
+    return &scnDirCache[0];
+}
+
+/* scnDirList, with the last answer kept under the rule above. details, when
+   not NULL, gets each row's details as well (max of them); the cache keeps
+   them either way, so a read made for a listing answers a details ask
+   after it. */
+static int scnDirListCached(const char *dir, ScnDirEntry *out,
+                            ScnDirDetails *details, int max) {
+    SDL_PathInfo   info;
+    ScnDirCache   *c;
+    ScnDirDetails *read;
+    ScnDirStamp   *stamps     = NULL;
+    int            stampCount = 0;
+    int            n;
+    Uint64         now;
+    /* Taken before the read for the reason the modify time is: a change this
+       process makes while the read runs leaves the count newer than this, so
+       the next call reads again. */
+    uint32_t       gen = serverSimScriptDirsGen();
+
+    /* Nothing to key a cache on, or nothing worth keying it to: the read still
+       answers, including the refusals it makes for itself. */
+    if (scnDirCacheLock.m == NULL || dir == NULL || dir[0] == '\0' ||
+        out == NULL || max <= 0 || strlen(dir) >= sizeof(scnDirCache[0].dir) ||
+        !SDL_GetPathInfo(dir, &info) ||
+        info.type != SDL_PATHTYPE_DIRECTORY) {
+        return scnDirListDetails(dir, out, details, max);
+    }
+
+    /* Walked a moment ago and nothing since: answered without a walk. */
+    now = SDL_GetTicks();
+    scnLockEnter(&scnDirCacheLock);
+    c = scnDirCacheSlot(dir);
+    if (c->count <= max &&
+        scnDirCacheRecent(c, dir, info.modify_time, gen, now)) {
+        n = scnDirCacheCopyRows(c, out, details);
+        scnLockLeave(&scnDirCacheLock);
+        return n;
+    }
+    scnLockLeave(&scnDirCacheLock);
+
+    /* The file stamps are taken here, before the lock and before the read,
+       for the reason the directory's time is. */
+    if (!scnDirStampsRead(dir, &stamps, &stampCount)) {
+        return scnDirListDetails(dir, out, details, max);
+    }
+
+    scnLockEnter(&scnDirCacheLock);
+    c = scnDirCacheSlot(dir);
+    if (c->count <= max &&
+        scnDirCacheFresh(c, dir, info.modify_time, gen, stamps, stampCount)) {
+        c->stampTicks = now;
+        n = scnDirCacheCopyRows(c, out, details);
+        scnLockLeave(&scnDirCacheLock);
+        free(stamps);
+        return n;
+    }
+
+    /* The details are read whenever the rows are, into the caller's array
+       or one of this call's own, so what is kept always has both. */
+    read = details;
+    if (read == NULL) {
+        read = (ScnDirDetails *)calloc((size_t)max, sizeof(*read));
+    }
+    n = scnDirListDetails(dir, out, read, max);
+    scnDirCacheDrop(c);
+    if (n >= 0 && n < max && read != NULL) {
+        bool kept = true;
+        if (n > 0) {
+            c->rows = (ScnDirEntry *)malloc((size_t)n * sizeof(out[0]));
+            c->details =
+                (ScnDirDetails *)malloc((size_t)n * sizeof(read[0]));
+            kept = c->rows != NULL && c->details != NULL;
+            if (kept) {
+                memcpy(c->rows, out, (size_t)n * sizeof(out[0]));
+                memcpy(c->details, read, (size_t)n * sizeof(read[0]));
+            } else {
+                scnDirCacheDrop(c);
+            }
+        }
+        if (kept) {
+            snprintf(c->dir, sizeof(c->dir), "%s", dir);
+            /* The time as it stood before the read rather than after it: a
+               file that landed while the read was running leaves the directory
+               newer than this, so the next call reads again rather than
+               keeping an answer that missed it. */
+            c->modified   = info.modify_time;
+            c->gen        = gen;
+            c->count      = n;
+            /* The slot takes the stamps, taken before the read for the
+               same reason as the time above. */
+            c->stamps     = stamps;
+            c->stampCount = stampCount;
+            c->stampTicks = now;
+            stamps        = NULL;
+            c->valid      = true;
+        }
+    }
+    scnLockLeave(&scnDirCacheLock);
+    free(stamps);
+    if (read != details) {
+        free(read);
+    }
+    return n;
+}
+
+/* ── Where mods are read from ─────────────────────────────────────── */
+
+/* Five directories, in the order a name clash resolves between them:
+   the one this host was given, the player's own, the one the player's
+   Workshop subscriptions are copied into, the mods that ship with the build,
+   and the directory scripts players upload land in. The host's, the
+   player's and the shipped ones are the same shape brainListParents gives
+   brains, and for the same reason — a player who drops a file in their own
+   directory is offered it, and one who does nothing is still offered what
+   the build came with.
+
+   The order is the precedence. A file name in two directories resolves to
+   the one further up this list and the others are left out, so replacing a
+   shipped mod means putting a file of that name in a directory above it.
+   That is the way round a player can act on; there is nothing they could do
+   about it if it went the other way. The Workshop directory sits between
+   the player's own and the shipped one: a file the player wrote wins over a
+   subscribed item of the same name, and a subscribed item wins over a mod
+   the build came with. The uploads directory is last so an upload can never
+   stand in for a file the server offers of its own, and an upload whose
+   name a directory above holds is refused.
+
+   A directory that is not there says nothing, which is the ordinary case
+   for every one of them. */
+
+/* SDL_GetPrefPath allocates and creates the directory on every call, and a
+   listing asks for it once per directory it merges, so the prefix it answers
+   is resolved once and kept, and the player's Mods and Workshop directories
+   are both named from it. Under scnDirCacheLock, which the directory cache
+   above already takes and for the same reason: this is read on the tick
+   thread for a server's own listing, and on the UI thread when a client
+   hosting in process fills the chooser through serverSimEnumerateScenarioDir.
+   Nothing is kept allocated, so there is nothing to free at shutdown. */
+static char scnModPrefDir[SCN_SCRIPT_PATH_MAX];
+static bool scnModPrefDirKnown;
+
+/* <prefpath><leaf>, or what the environment variable env names when it is
+   set. False when SDL cannot name the preferences directory or the path is
+   too long to hold. */
+static bool scnModDirPref(const char *env, const char *leaf, char *out,
+                          size_t outLen) {
+    const char *over;
+    char       *pref;
+    bool        locked;
+    bool        ok;
+
+    if (out == NULL || outLen == 0) return false;
+    out[0] = '\0';
+
+    /* The tests name it here: a case that wrote to the real preferences
+       directory would leave files in the home directory of whoever ran it.
+       Read on every call and never kept, because the cases set and clear it
+       between themselves. */
+    over = getenv(env);
+    if (over != NULL && over[0] != '\0') {
+        return (size_t)snprintf(out, outLen, "%s", over) < outLen;
+    }
+
+    /* No lock until the lister is registered, the way scnDirListCached reads
+       its own head: nothing else is running yet to race with. */
+    locked = scnDirCacheLock.m != NULL;
+    if (locked) scnLockEnter(&scnDirCacheLock);
+    if (!scnModPrefDirKnown) {
+        /* SDL_GetPrefPath returns a trailing separator and a string the caller
+           frees. A path SDL cannot name, or one too long to hold, is not
+           recorded, so a later call asks again rather than answering "" for
+           the life of the process. */
+        pref = SDL_GetPrefPath("WinBolo", "WinBolo");
+        if (pref != NULL) {
+            if ((size_t)snprintf(scnModPrefDir, sizeof(scnModPrefDir), "%s",
+                                 pref) < sizeof(scnModPrefDir)) {
+                scnModPrefDirKnown = true;
+            } else {
+                scnModPrefDir[0] = '\0';
+            }
+            SDL_free(pref);
+        }
+    }
+    ok = scnModPrefDirKnown &&
+         (size_t)snprintf(out, outLen, "%s%s", scnModPrefDir, leaf) < outLen;
+    if (locked) scnLockLeave(&scnDirCacheLock);
+    if (!ok) out[0] = '\0';
+    return ok;
+}
+
+/* The player's own. ~/Library/Application Support/WinBolo/WinBolo/Mods on
+   macOS, and whatever SDL_GetPrefPath answers elsewhere — the same writable
+   place brain_list.c reads Brains from, and named the same way.
+
+   False when SDL cannot name it, which is not an error: it means a machine
+   with no place of its own for mods, and the other directories are the
+   whole of the answer. */
+static bool scnModDirUser(char *out, size_t outLen) {
+    return scnModDirPref("WB_MOD_DIR_USER", "Mods", out, outLen);
+}
+
+/* Where the player's Workshop subscriptions are copied to: Workshop beside
+   Mods under SDL_GetPrefPath. Only read here; nothing in this file writes
+   to it.
+
+   False when SDL cannot name it, for the reason scnModDirUser gives. */
+static bool scnModDirWorkshop(char *out, size_t outLen) {
+    return scnModDirPref("WB_MOD_DIR_WORKSHOP", "Workshop", out, outLen);
+}
+
+bool scenarioHostWorkshopDir(char *out, size_t outLen) {
+    return scnModDirWorkshop(out, outLen);
+}
+
+/* The mods that ship with the build, which live in data/mods beside the
+   executable. Resolved from SDL_GetBasePath rather than from the working
+   directory, the way data/lang and data/maps are: a dedicated server is
+   started from wherever the operator happens to be, and the GUI's chdir to
+   the base path is the GUI's own doing and not something this can lean on.
+
+   False when SDL cannot name the base path, which is not an error: it means
+   a build with no shipped mods to offer. */
+static bool scnModDirShipped(char *out, size_t outLen) {
+    const char *base;
+    const char *env;
+
+    if (out == NULL || outLen == 0) return false;
+    out[0] = '\0';
+
+    env = getenv("WB_MOD_DIR_SHIPPED");
+    if (env != NULL && env[0] != '\0') {
+        return (size_t)snprintf(out, outLen, "%s", env) < outLen;
+    }
+
+    base = SDL_GetBasePath();
+    if (base == NULL || base[0] == '\0') {
+        return false;
+    }
+    /* SDL_GetBasePath ends in a separator, so there is none to add. */
+    if ((size_t)snprintf(out, outLen, "%sdata/mods", base) >= outLen) {
+        out[0] = '\0';
+        return false;
+    }
+    return true;
+}
+
+/* One directory on the end of the list, unless it is empty, too long to
+   hold, or a directory already on it — a host whose own directory is the
+   shipped one would otherwise be offered every file in it twice. */
+static void scnModDirAdd(char dirs[][SCN_SCRIPT_PATH_MAX], int *count,
+                         const char *dir) {
+    int i;
+
+    if (dir == NULL || dir[0] == '\0' || *count >= SCN_MOD_DIRS_MAX) return;
+    if (strlen(dir) >= SCN_SCRIPT_PATH_MAX) return;
+    for (i = 0; i < *count; i++) {
+        if (strcmp(dirs[i], dir) == 0) return;
+    }
+    snprintf(dirs[*count], SCN_SCRIPT_PATH_MAX, "%s", dir);
+    (*count)++;
+}
+
+/* The whole list, highest precedence first. `configured` is what this host
+   was given: the -moddir argument on a dedicated server, the "Mod Dir"
+   preference on a desktop host. `uploads` is where the sim puts scripts
+   players upload (serverSimGetScriptUploadDir), and NULL or "" where there
+   is no sim or no uploads.
+
+   *workshopAt, when not NULL, is set to the Workshop directory's index, or
+   -1 when it has no entry of its own: SDL could not name it, or a directory
+   above is the same one and its files are that directory's. */
+static int scnModDirsAt(char dirs[][SCN_SCRIPT_PATH_MAX],
+                        const char *configured, const char *uploads,
+                        int *workshopAt) {
+    char one[SCN_SCRIPT_PATH_MAX];
+    int  count = 0;
+
+    if (workshopAt != NULL) *workshopAt = -1;
+    scnModDirAdd(dirs, &count, configured);
+    if (scnModDirUser(one, sizeof(one)))    scnModDirAdd(dirs, &count, one);
+    if (scnModDirWorkshop(one, sizeof(one))) {
+        int before = count;
+
+        scnModDirAdd(dirs, &count, one);
+        if (workshopAt != NULL && count > before) *workshopAt = before;
+    }
+    if (scnModDirShipped(one, sizeof(one))) scnModDirAdd(dirs, &count, one);
+    scnModDirAdd(dirs, &count, uploads);
+    return count;
+}
+
+static int scnModDirs(char dirs[][SCN_SCRIPT_PATH_MAX], const char *configured,
+                      const char *uploads) {
+    return scnModDirsAt(dirs, configured, uploads, NULL);
+}
+
+/* The uploads directory of the sim a lister or reader was registered with,
+   or NULL for one registered with none. */
+static const char *scnModDirUploads(const void *ctx) {
+    return (ctx != NULL) ? serverSimGetScriptUploadDir((const ServerSim *)ctx)
+                         : NULL;
+}
+
+/* File-name order over the merged list, which is the order each directory
+   was already in on its own. The same comparison scenario_dir.c sorts a
+   single directory by; it is static there, and duplicating four lines is
+   cheaper than giving that file a second public function for one caller. */
+static int scnDirMergedCmp(const void *a, const void *b) {
+    const ScnDirEntry *ea = (const ScnDirEntry *)a;
+    const ScnDirEntry *eb = (const ScnDirEntry *)b;
+
+    return SDL_strcasecmp(ea->file, eb->file);
+}
+
+/* The directory read, in the shape the sim's setter takes. The context is the
+   sim it was registered with, and all it is asked for is where that sim puts
+   uploaded scripts: what is in a directory is a fact about that directory and
+   about nothing else.
+
+   `dir` is what this host was given and the head of the list scnModDirs
+   builds; the player's own directory, the Workshop one, the shipped one and
+   the uploads directory come behind it. Each is read in turn and a file name
+   already taken by a directory above is left out, so the rows are the union
+   of the directories with the higher precedence copy of a clashing name.
+
+   A directory that cannot be read answers -1, which is read here as no rows
+   rather than as a failure: a host with no mod directory of its own is the
+   ordinary case, and the rest of the list still comes through.
+
+   Every row a directory read makes says SCN_DIR_SOURCE_SERVER. The rows read
+   from the Workshop directory are marked SCN_DIR_SOURCE_WORKSHOP and those
+   from the uploads directory SCN_DIR_SOURCE_UPLOAD here, after the read, so
+   the cache holds what the directory says and nothing about where it sits
+   in the list. */
+static int scnDirListCb(void *ctx, const char *dir, ScnDirEntry *out,
+                        int max) {
+    char        dirs[SCN_MOD_DIRS_MAX][SCN_SCRIPT_PATH_MAX];
+    const char *uploads = scnModDirUploads(ctx);
+    int         count;
+    int         above;
+    int         workshop;
+    int         n = 0;
+    int         d;
+
+    if (out == NULL || max <= 0) {
+        return scnDirListCached(dir, out, NULL, max);
+    }
+    /* The list without the uploads directory, then with it: scnModDirs adds
+       it last, and leaves it out when a directory above is the same one. In
+       that case it has no entry of its own and its files are that
+       directory's, so nothing is marked. The Workshop directory is the same:
+       scnModDirsAt names its entry only when it has one of its own. */
+    above = scnModDirs(dirs, dir, NULL);
+    count = scnModDirsAt(dirs, dir, uploads, &workshop);
+    for (d = 0; d < count && n < max; d++) {
+        int extra = scnDirListCached(dirs[d], out + n, NULL, max - n);
+        int i;
+
+        if (extra <= 0) {
+            continue;
+        }
+        if (d == workshop) {
+            for (i = 0; i < extra; i++) {
+                out[n + i].source = SCN_DIR_SOURCE_WORKSHOP;
+            }
+        }
+        if (d >= above && uploads != NULL && strcmp(dirs[d], uploads) == 0) {
+            for (i = 0; i < extra; i++) {
+                out[n + i].source = SCN_DIR_SOURCE_UPLOAD;
+            }
+        }
+        /* The rows kept so far are out[0..n) and this directory's are
+           out[n..n+extra). Anything in the second half whose file name is
+           already in the first is dropped by pulling the rest of the second
+           half down over it. */
+        for (i = 0; i < extra;) {
+            bool dup = false;
+            int  j;
+
+            for (j = 0; j < n; j++) {
+                if (SDL_strcasecmp(out[j].file, out[n + i].file) == 0) {
+                    dup = true;
+                    break;
+                }
+            }
+            if (!dup) {
+                i++;
+                continue;
+            }
+            if (i + 1 < extra) {
+                memmove(&out[n + i], &out[n + i + 1],
+                        (size_t)(extra - i - 1) * sizeof(out[0]));
+            }
+            extra--;
+        }
+        n += extra;
+    }
+    /* Sorted again over the whole list: each directory arrived in file-name
+       order, and a caller reading a chooser's rows should not be able to tell
+       that more than one read made them. */
+    if (n > 1) {
+        qsort(out, (size_t)n, sizeof(out[0]), scnDirMergedCmp);
+    }
+    return n;
+}
+
+/* The most rows one directory's details are looked for among: the lobby
+   listing's own cap (LOBBY_SCENARIO_LIST_MAX), so the read made here is the
+   read a listing makes and the two share the cache's slot. */
+#define SCN_DIR_DETAILS_ROWS 128
+
+/* What scnDirDetailsOneCached found. */
+typedef enum {
+    SCN_DIR_ONE_UNKNOWN,   /* nothing kept for the directory, or kept from
+                              before it last changed: read it */
+    SCN_DIR_ONE_ABSENT,    /* the kept read has no file of that name */
+    SCN_DIR_ONE_FOUND      /* the kept read has it; *got says what was copied */
+} ScnDirOne;
+
+/* One file's details out of the kept read of dir, copying that one record
+   and nothing else. The same tests scnDirListCached makes before it answers
+   from the cache: the lock exists, the directory is still a directory, and
+   its time, this process's change count and every scenario file's modify
+   time and size are the ones the kept read was made at, the files' stamps
+   being walked again only once the last walk is SCN_DIR_STAMPS_REUSE_MS
+   old. Anything else answers SCN_DIR_ONE_UNKNOWN and the caller reads the
+   directory through scnDirListCached, which also refills the cache.
+
+   On SCN_DIR_ONE_FOUND, *got is the length copied into out, or -1 when the
+   details do not fit in cap.
+
+   settings picks which of the record's two blobs is copied: the details, or
+   the settings block. */
+static int scnDirRecordCopy(const ScnDirDetails *d, bool settings,
+                            uint8_t *out, size_t cap) {
+    const uint8_t *bytes = settings ? d->settings : d->bytes;
+    size_t         len   = settings ? d->settingsLen : d->len;
+
+    if (len > cap) {
+        return -1;
+    }
+    memcpy(out, bytes, len);
+    return (int)len;
+}
+
+/* The file's record in a slot found fresh: FOUND with *got set as
+   scnDirRecordCopy answers, or ABSENT. Called with the lock held. */
+static ScnDirOne scnDirCacheFind(const ScnDirCache *c, const char *file,
+                                 bool settings, uint8_t *out, size_t cap,
+                                 int *got) {
+    int i;
+
+    for (i = 0; i < c->count; i++) {
+        if (strcmp(c->details[i].file, file) == 0) {
+            *got = scnDirRecordCopy(&c->details[i], settings, out, cap);
+            return SCN_DIR_ONE_FOUND;
+        }
+    }
+    return SCN_DIR_ONE_ABSENT;
+}
+
+static ScnDirOne scnDirDetailsOneCached(const char *dir, const char *file,
+                                        int max, bool settings, uint8_t *out,
+                                        size_t cap, int *got) {
+    SDL_PathInfo info;
+    ScnDirCache *c;
+    ScnDirOne    result = SCN_DIR_ONE_UNKNOWN;
+    ScnDirStamp *stamps     = NULL;
+    int          stampCount = 0;
+    uint32_t     gen        = serverSimScriptDirsGen();
+    Uint64       now;
+
+    *got = -1;
+    if (scnDirCacheLock.m == NULL || dir == NULL || dir[0] == '\0' ||
+        strlen(dir) >= sizeof(scnDirCache[0].dir) ||
+        !SDL_GetPathInfo(dir, &info) ||
+        info.type != SDL_PATHTYPE_DIRECTORY) {
+        return SCN_DIR_ONE_UNKNOWN;
+    }
+
+    /* Walked a moment ago and nothing since: answered without a walk, which
+       is what keeps a burst of details asks from walking every directory
+       for each one. */
+    now = SDL_GetTicks();
+    scnLockEnter(&scnDirCacheLock);
+    c = scnDirCacheSlot(dir);
+    if (c->count <= max &&
+        scnDirCacheRecent(c, dir, info.modify_time, gen, now)) {
+        result = scnDirCacheFind(c, file, settings, out, cap, got);
+    }
+    scnLockLeave(&scnDirCacheLock);
+    if (result != SCN_DIR_ONE_UNKNOWN) {
+        return result;
+    }
+
+    if (!scnDirStampsRead(dir, &stamps, &stampCount)) {
+        return SCN_DIR_ONE_UNKNOWN;
+    }
+    scnLockEnter(&scnDirCacheLock);
+    c = scnDirCacheSlot(dir);
+    if (c->count <= max &&
+        scnDirCacheFresh(c, dir, info.modify_time, gen, stamps, stampCount)) {
+        c->stampTicks = now;
+        result = scnDirCacheFind(c, file, settings, out, cap, got);
+    }
+    scnLockLeave(&scnDirCacheLock);
+    free(stamps);
+    return result;
+}
+
+/* One file's details, in the shape serverSimSetScenarioDetailsReader takes.
+   The directories are asked in the order the listing merges them, and the
+   first that holds the file answers, so the details are those of the file a
+   host would pick under that name. The name is only ever compared with the
+   names a directory read found, never opened as a path, so a name off the
+   wire reaches no file the listing does not offer.
+
+   Read through the cache, so a dialog asking for a file the lobby has just
+   listed costs a copy of that one file's record and no VM boot. The arrays
+   for a whole directory are only allocated when a directory has to be read
+   again because nothing is kept for it or it changed since, which is what
+   the listing would do. */
+static int scnDirRecordRead(void *ctx, const char *dir, const char *file,
+                            bool settings, uint8_t *out, size_t cap) {
+    char           dirs[SCN_MOD_DIRS_MAX][SCN_SCRIPT_PATH_MAX];
+    ScnDirEntry   *rows    = NULL;
+    ScnDirDetails *details = NULL;
+    int            count;
+    int            d;
+    int            got = -1;
+
+    if (file == NULL || file[0] == '\0' || out == NULL) {
+        return -1;
+    }
+    count = scnModDirs(dirs, dir, scnModDirUploads(ctx));
+    for (d = 0; d < count && got < 0; d++) {
+        ScnDirOne one;
+        int       n;
+        int       i;
+
+        one = scnDirDetailsOneCached(dirs[d], file, SCN_DIR_DETAILS_ROWS,
+                                     settings, out, cap, &got);
+        if (one == SCN_DIR_ONE_FOUND) {
+            /* Found, fitting or not: the search stops here for the same
+               reason it stops on a match in a directory read below. */
+            break;
+        }
+        if (one == SCN_DIR_ONE_ABSENT) {
+            continue;
+        }
+        if (rows == NULL) {
+            rows    = (ScnDirEntry *)calloc(SCN_DIR_DETAILS_ROWS,
+                                            sizeof(*rows));
+            details = (ScnDirDetails *)calloc(SCN_DIR_DETAILS_ROWS,
+                                              sizeof(*details));
+            if (rows == NULL || details == NULL) {
+                break;
+            }
+        }
+        n = scnDirListCached(dirs[d], rows, details, SCN_DIR_DETAILS_ROWS);
+
+        for (i = 0; i < n; i++) {
+            if (strcmp(details[i].file, file) != 0) {
+                continue;
+            }
+            got = scnDirRecordCopy(&details[i], settings, out, cap);
+            /* Found, fitting or not: a lower directory's copy of the name is
+               not the file the listing offers. */
+            d = count;
+            break;
+        }
+    }
+    free(rows);
+    free(details);
+    return got;
+}
+
+static int scnDirDetailsCb(void *ctx, const char *dir, const char *file,
+                           uint8_t *out, size_t cap) {
+    return scnDirRecordRead(ctx, dir, file, false, out, cap);
+}
+
+/* One file's settings block, in the shape serverSimSetScenarioSettingsReader
+   takes, found exactly as scnDirDetailsCb finds the details. */
+static int scnDirSettingsCb(void *ctx, const char *dir, const char *file,
+                            uint8_t *out, size_t cap) {
+    return scnDirRecordRead(ctx, dir, file, true, out, cap);
+}
+
+/* One file's raw bytes, in the shape serverSimSetScriptFileReader takes: the
+   copy of a script a player asked for. The directories are asked in the order
+   the listing merges them, through the same kept reads scnDirDetailsCb uses,
+   and the first one holding the name (ignoring case, the way the listing
+   drops a lower directory's copy of a name) is the only one looked in. The
+   name is compared with the rows a directory read found and never opened as
+   a path: the path read is built from the matched directory and the matched
+   row's own file name.
+
+   A bound row belongs to one map and is not served. The size is checked
+   against cap before anything is allocated, and again against what was read,
+   since the file can change between the two. */
+static ServerScriptReadResult scnDirReadCb(void *ctx, const char *dir,
+                                           const char *file,
+                                           uint8_t **outBytes,
+                                           uint32_t *outLen, uint32_t cap) {
+    char         dirs[SCN_MOD_DIRS_MAX][SCN_SCRIPT_PATH_MAX];
+    char         path[SCN_SCRIPT_PATH_MAX + SCN_DIR_FILE_LEN + 1];
+    ScnDirEntry *rows;
+    SDL_PathInfo info;
+    FILE        *f;
+    uint8_t     *buf;
+    size_t       have = 0;
+    size_t       room;
+    bool         found = false;
+    bool         failed;
+    int          count;
+    int          d;
+
+    if (outBytes == NULL || outLen == NULL) {
+        return SERVER_SCRIPT_READ_NOT_FOUND;
+    }
+    *outBytes = NULL;
+    *outLen   = 0;
+    if (!scnEnabled) {
+        return SERVER_SCRIPT_READ_DISABLED;
+    }
+    if (file == NULL || file[0] == '\0') {
+        return SERVER_SCRIPT_READ_NOT_FOUND;
+    }
+
+    rows = (ScnDirEntry *)calloc(SCN_DIR_DETAILS_ROWS, sizeof(*rows));
+    if (rows == NULL) {
+        return SERVER_SCRIPT_READ_NOT_FOUND;
+    }
+    count = scnModDirs(dirs, dir, scnModDirUploads(ctx));
+    for (d = 0; d < count; d++) {
+        int n = scnDirListCached(dirs[d], rows, NULL, SCN_DIR_DETAILS_ROWS);
+        int i;
+
+        for (i = 0; i < n; i++) {
+            if (SDL_strcasecmp(rows[i].file, file) != 0) {
+                continue;
+            }
+            /* This directory holds the name the listing offers. Anything but
+               the exact name, or a map's own script, is not served. */
+            if (strcmp(rows[i].file, file) == 0 && !rows[i].bound &&
+                (size_t)snprintf(path, sizeof(path), "%s/%s", dirs[d],
+                                 rows[i].file) < sizeof(path)) {
+                found = true;
+            }
+            d = count;
+            break;
+        }
+    }
+    free(rows);
+    if (!found) {
+        return SERVER_SCRIPT_READ_NOT_FOUND;
+    }
+
+    if (!SDL_GetPathInfo(path, &info) || info.type != SDL_PATHTYPE_FILE) {
+        return SERVER_SCRIPT_READ_NOT_FOUND;
+    }
+    if (info.size > (Uint64)cap) {
+        return SERVER_SCRIPT_READ_TOO_LARGE;
+    }
+
+    f = fopen(path, "rb");
+    if (f == NULL) {
+        return SERVER_SCRIPT_READ_NOT_FOUND;
+    }
+    /* One byte past the size stat gave, so a file that grew since is seen to
+       have and the rest is read too, up to one byte past cap. */
+    room = (size_t)info.size + 1;
+    buf  = (uint8_t *)malloc(room);
+    for (;;) {
+        uint8_t *more;
+        size_t   next;
+
+        if (buf == NULL) {
+            break;
+        }
+        have += fread(buf + have, 1, room - have, f);
+        if (have < room || have > (size_t)cap) {
+            break;
+        }
+        next = room * 2;
+        if (next > (size_t)cap + 1) {
+            next = (size_t)cap + 1;
+        }
+        more = (uint8_t *)realloc(buf, next);
+        if (more == NULL) {
+            free(buf);
+            buf = NULL;
+            break;
+        }
+        buf  = more;
+        room = next;
+    }
+    failed = (buf == NULL) || ferror(f);
+    fclose(f);
+    if (failed) {
+        free(buf);
+        return SERVER_SCRIPT_READ_NOT_FOUND;
+    }
+    if (have > (size_t)cap) {
+        free(buf);
+        return SERVER_SCRIPT_READ_TOO_LARGE;
+    }
+    *outBytes = buf;
+    *outLen   = (uint32_t)have;
+    return SERVER_SCRIPT_READ_FOUND;
+}
+
+/* ── Scripts players upload ───────────────────────────────────────── */
+
+/* What an upload is written through before it takes its own name. The
+   leading dot keeps it out of every listing while it is there. */
+#define SCN_UPLOAD_TEMP_PREFIX ".upload-"
+
+/* One refusal: the code and its numbers for the sender, who says it in their
+   own language, and the line to the operator with the file named. The line
+   goes on the wire too, for the log a client keeps, and never on a screen. */
+static void scnUploadRefuse(ScriptUploadRefusal *why, const char *name,
+                            uint8_t reason, int a, int b,
+                            const char *fmt, ...) {
+    va_list ap;
+
+    why->reason = reason;
+    why->a      = a;
+    why->b      = b;
+    va_start(ap, fmt);
+    vsnprintf(why->text, sizeof(why->text), fmt, ap);
+    va_end(ap);
+    scnSay(NULL, 0, "scenario: upload %s refused: %s", name, why->text);
+}
+
+/* The spelling the landing directory already holds for name, ignoring case,
+   or name itself when it holds none. The listing folds two spellings of one
+   name together, so an upload that differs from its earlier self only in
+   case replaces it rather than landing beside it as a second file the
+   listing would hide; and on a file system that folds case the rename is
+   then onto the name it will find. A directory that cannot be read answers
+   name, and the write after it reports the directory on its own. */
+static void scnUploadDestName(const char *dir, const char *name, char *out,
+                              size_t outLen) {
+    char **names;
+    int    count = 0;
+    int    i;
+
+    scnFmt(out, outLen, "%s", name);
+    names = SDL_GlobDirectory(dir, "*", 0, &count);
+    if (names == NULL) return;
+    for (i = 0; i < count; i++) {
+        if (names[i] != NULL && strchr(names[i], '/') == NULL &&
+            strchr(names[i], '\\') == NULL &&
+            SDL_strcasecmp(names[i], name) == 0) {
+            scnFmt(out, outLen, "%s", names[i]);
+            break;
+        }
+    }
+    SDL_free(names);
+}
+
+/* The accept callback serverSimSetScriptUploadAccept takes, with the sim as
+   its context. dir is the sim's landing directory and name has passed the
+   transport's name rule, so it is a bare file name ending in .scenario or
+   .lua.
+
+   The manifest is read out of the written file the way the listing reads
+   one, so what is accepted is exactly what the listing will offer: a
+   package's manifest.json, and a loose script's table through the stub VM.
+   That boot runs on the tick thread, once per upload, behind the upload's
+   own cooldown. A file with problems the validator would report is still
+   taken, as the listing still lists it; what is refused is a file the
+   listing could not offer or the server could not run.
+
+   The bytes go to a dot file in dir and are renamed over <dir>/<name> only
+   once they have passed, so a refusal or a failed write leaves nothing, and
+   a file already there under name, in whatever case, is replaced in one
+   step. */
+static bool scnUploadAccept(void *ctx, const char *dir, const char *name,
+                            const uint8_t *bytes, uint32_t len,
+                            ScriptUploadRefusal *why) {
+    const ServerSim   *sim = (const ServerSim *)ctx;
+    char               dirs[SCN_MOD_DIRS_MAX][SCN_SCRIPT_PATH_MAX];
+    char               tmp[SCN_SCRIPT_PATH_MAX];
+    char               dest[SCN_SCRIPT_PATH_MAX];
+    char               destName[SCN_DIR_FILE_LEN];
+    ScnValidateResult *check;
+    const ScenarioManifest *m;
+    bool               isPackage;
+    bool               ok;
+    FILE              *f;
+    int                count;
+    int                d;
+
+    memset(why, 0, sizeof(*why));
+    if (dir == NULL || dir[0] == '\0' || name == NULL || name[0] == '\0' ||
+        bytes == NULL || len == 0) {
+        scnFmt(why->text, sizeof(why->text), "the upload is empty");
+        return false;
+    }
+    if (!scnEnabled) {
+        scnUploadRefuse(why, name, SCRIPT_REFUSE_SCRIPTS_OFF, 0, 0,
+                        "scripts are off on this server");
+        return false;
+    }
+    isPackage = scnHasExt(name, SCN_SCENARIO_PACKAGE_EXT);
+    if (!isPackage && !scnHasExt(name, SCN_SCENARIO_SCRIPT_EXT)) {
+        scnUploadRefuse(why, name, SCRIPT_REFUSE_NONE, 0, 0,
+                        "not a .scenario or .lua file");
+        return false;
+    }
+
+    /* A name a directory above the landing one holds. The transport asked
+       the listing at BEGIN; this asks each directory again, because a file
+       of that name may have been put in one of them since. */
+    count = scnModDirs(dirs, serverSimGetScenarioDir(sim), dir);
+    for (d = 0; d < count && strcmp(dirs[d], dir) != 0; d++) {
+        char one[SCN_SCRIPT_PATH_MAX];
+
+        snprintf(one, sizeof(one), "%s/%s", dirs[d], name);
+        if (scnScriptExists(one)) {
+            scnUploadRefuse(why, name, SCRIPT_REFUSE_NAME_TAKEN, 0, 0,
+                            "this server already offers a script named %s",
+                            name);
+            return false;
+        }
+    }
+
+    if (!SDL_CreateDirectory(dir)) {
+        scnUploadRefuse(why, name, SCRIPT_REFUSE_WRITE, 0, 0,
+                        "the uploads directory could not be made");
+        return false;
+    }
+    scnUploadDestName(dir, name, destName, sizeof(destName));
+    if ((size_t)snprintf(tmp, sizeof(tmp), "%s/" SCN_UPLOAD_TEMP_PREFIX "%s",
+                         dir, name) >= sizeof(tmp) ||
+        (size_t)snprintf(dest, sizeof(dest), "%s/%s", dir, destName) >=
+            sizeof(dest)) {
+        scnUploadRefuse(why, name, SCRIPT_REFUSE_WRITE, 0, 0,
+                        "the uploads directory's path is too long");
+        return false;
+    }
+    f = fopen(tmp, "wb");
+    if (f == NULL) {
+        scnUploadRefuse(why, name, SCRIPT_REFUSE_WRITE, 0, 0,
+                        "the file could not be written");
+        return false;
+    }
+    ok = fwrite(bytes, 1, len, f) == (size_t)len;
+    if (fclose(f) != 0) {
+        ok = false;
+    }
+    if (!ok) {
+        SDL_RemovePath(tmp);
+        scnUploadRefuse(why, name, SCRIPT_REFUSE_WRITE, 0, 0,
+                        "the file could not be written");
+        return false;
+    }
+
+    /* A result carries the whole manifest and the issue list, which is more
+       than the tick thread's stack should hold. */
+    check = (ScnValidateResult *)calloc(1, sizeof(*check));
+    if (check == NULL) {
+        SDL_RemovePath(tmp);
+        scnUploadRefuse(why, name, SCRIPT_REFUSE_WRITE, 0, 0,
+                        "no memory to read it");
+        return false;
+    }
+    if (isPackage) {
+        ok = scnDirReadPackage(tmp, &check->manifest);
+        if (!ok) {
+            scnUploadRefuse(why, name, SCRIPT_REFUSE_MANIFEST, 0, 0,
+                            "the package's manifest will not parse");
+        }
+    } else {
+        (void)scenarioValidateScript(NULL, tmp, check);
+        ok = check->haveManifest;
+        if (!ok) {
+            int line = (check->count > 0) ? check->issues[0].line : 0;
+            if (line > 0) {
+                scnUploadRefuse(why, name, SCRIPT_REFUSE_SYNTAX, line, 0,
+                                "the script will not load: error on line %d",
+                                line);
+            } else {
+                scnUploadRefuse(why, name, SCRIPT_REFUSE_NO_TABLE, 0, 0,
+                                "the script declares no scenario table");
+            }
+        }
+    }
+    m = &check->manifest;
+    if (ok && m->api > SCENARIO_API_VERSION) {
+        scnUploadRefuse(why, name, SCRIPT_REFUSE_API, m->api,
+                        SCENARIO_API_VERSION,
+                        "it asks for api %d and this server runs api %d",
+                        m->api, SCENARIO_API_VERSION);
+        ok = false;
+    } else if (ok && (int)m->kind >= (int)scnKindUnknown) {
+        scnUploadRefuse(why, name, SCRIPT_REFUSE_KIND, 0, 0,
+                        "it declares a kind this server does not know");
+        ok = false;
+    } else if (ok && m->bound) {
+        scnUploadRefuse(why, name, SCRIPT_REFUSE_BOUND, 0, 0,
+                        "it is bound to a map; a bound scenario is sent as "
+                        "its map");
+        ok = false;
+    }
+    free(check);
+    if (!ok) {
+        SDL_RemovePath(tmp);
+        return false;
+    }
+
+    /* SDL_RenamePath replaces the destination in one step on every platform,
+       so a file already there under name is swapped rather than removed and
+       written again; scenario_chunk.c's pack write says why that matters.
+       SDL's own error line names the server's paths, so it goes to the
+       console alone and not to the sender. */
+    if (!SDL_RenamePath(tmp, dest)) {
+        scnSay(NULL, 0, "scenario: upload %s: rename to %s failed: %s", name,
+               dest, SDL_GetError());
+        scnUploadRefuse(why, name, SCRIPT_REFUSE_WRITE, 0, 0,
+                        "the file could not be put in place");
+        SDL_RemovePath(tmp);
+        return false;
+    }
+    /* The directory's stamp may not move for a file landed this soon after
+       a listing, so the listing is told another way. */
+    serverSimNoteScriptDirsChanged();
+    scnSay(NULL, 0, "scenario: upload %s landed in %s", name, dir);
+    return true;
+}
+
+void scenarioHostRegisterScenarioLister(ServerSim *sim) {
+    /* The one place the cache's lock is made. Registering happens once where a
+       process decides whether it runs scripts at all, before any sim can be
+       asked for a listing, so a lister call always finds the lock built. A
+       second registration finds it built too. A build where the mutex cannot
+       be made lists without the cache rather than not at all.
+
+       The sim is the context of all three: the lister and the reader ask it
+       for the uploads directory they merge last, and the accept callback for
+       the directories above the one it writes to. A process that registers
+       a lister takes uploads; one that does not refuses them at BEGIN. */
+    if (scnDirCacheLock.m == NULL) {
+        (void)scnLockCreate(&scnDirCacheLock);
+    }
+    serverSimSetScenarioLister(sim, scnDirListCb, sim);
+    serverSimSetScenarioDetailsReader(sim, scnDirDetailsCb, sim);
+    serverSimSetScriptFileReader(sim, scnDirReadCb, sim);
+    serverSimSetScenarioSettingsReader(sim, scnDirSettingsCb, sim);
+    serverSimSetScriptUploadAccept(sim, scnUploadAccept, sim);
+}
+
+/* ── The scripts on this computer ─────────────────────────────────── */
+
+/* Where this computer's own scripts are read from, in the order a name
+   clash resolves between them: the player's own Mods directory, then the
+   Workshop directory the player's subscriptions are copied to, so a file
+   the player wrote wins over a subscribed item of the same name.
+
+   *workshopAt, when not NULL, is set to the Workshop directory's index, or
+   -1 when it has no entry of its own, as scnModDirsAt sets it. */
+static int scnLocalDirs(char dirs[][SCN_SCRIPT_PATH_MAX], int *workshopAt) {
+    char one[SCN_SCRIPT_PATH_MAX];
+    int  count = 0;
+
+    if (workshopAt != NULL) *workshopAt = -1;
+    if (scnModDirUser(one, sizeof(one))) scnModDirAdd(dirs, &count, one);
+    if (scnModDirWorkshop(one, sizeof(one))) {
+        int before = count;
+
+        scnModDirAdd(dirs, &count, one);
+        if (workshopAt != NULL && count > before) *workshopAt = before;
+    }
+    return count;
+}
+
+static int scnLocalRowCmp(const void *a, const void *b) {
+    const ServerScenarioEntry *ea = (const ServerScenarioEntry *)a;
+    const ServerScenarioEntry *eb = (const ServerScenarioEntry *)b;
+
+    return SDL_strcasecmp(ea->file, eb->file);
+}
+
+int scenarioHostListLocalScripts(ServerScenarioEntry *out, int max) {
+    char         dirs[SCN_MOD_DIRS_MAX][SCN_SCRIPT_PATH_MAX];
+    ScnDirEntry *rows;
+    int          count;
+    int          workshop;
+    int          n = 0;
+    int          d;
+
+    if (out == NULL || max <= 0) return 0;
+
+    /* A remote client never registers a lister, which is where the cache's
+       lock is otherwise made, and without the lock scnDirListCached reads
+       the directory afresh every time. Made here the same way, so this
+       listing is cached as well. */
+    if (scnDirCacheLock.m == NULL) {
+        (void)scnLockCreate(&scnDirCacheLock);
+    }
+
+    /* On the heap for the reason serverSimEnumerateScenarioDir gives: a full
+       listing runs to tens of kilobytes and this runs on the UI thread. */
+    rows = (ScnDirEntry *)calloc((size_t)max, sizeof(*rows));
+    if (rows == NULL) return 0;
+
+    count = scnLocalDirs(dirs, &workshop);
+    for (d = 0; d < count && n < max; d++) {
+        int got = scnDirListCached(dirs[d], rows, NULL, max);
+        int i;
+
+        for (i = 0; i < got && n < max; i++) {
+            ServerScenarioEntry *e   = &out[n];
+            bool                 dup = false;
+            int                  j;
+
+            /* A name a directory above already gave is that directory's. */
+            for (j = 0; j < n; j++) {
+                if (SDL_strcasecmp(out[j].file, rows[i].file) == 0) {
+                    dup = true;
+                    break;
+                }
+            }
+            if (dup) continue;
+
+            SDL_strlcpy(e->file, rows[i].file, sizeof(e->file));
+            SDL_strlcpy(e->name, rows[i].name, sizeof(e->name));
+            SDL_strlcpy(e->description, rows[i].description,
+                        sizeof(e->description));
+            e->maxPlayers        = rows[i].maxPlayers;
+            e->bots              = rows[i].bots;
+            e->bound             = rows[i].bound;
+            e->keepsWinCondition = rows[i].keepsWinCondition;
+            e->source            = (d == workshop)
+                                       ? SERVER_SCENARIO_SOURCE_WORKSHOP
+                                       : SERVER_SCENARIO_SOURCE_SERVER;
+            e->workshopId        = rows[i].workshopId;
+            e->workshopAuthor    = rows[i].workshopAuthor;
+            n++;
+        }
+    }
+    free(rows);
+
+    if (n > 1) {
+        qsort(out, (size_t)n, sizeof(out[0]), scnLocalRowCmp);
+    }
+    return n;
+}
+
+bool scenarioHostLocalScriptPath(const char *file, char *out, size_t outLen) {
+    char dirs[SCN_MOD_DIRS_MAX][SCN_SCRIPT_PATH_MAX];
+    int  count;
+    int  d;
+
+    if (out == NULL || outLen == 0) return false;
+    out[0] = '\0';
+    /* A file name and nothing else, so what is sent is always a file one of
+       these directories holds and never somewhere a name walked out to. */
+    if (file == NULL || file[0] == '\0' || strchr(file, '/') != NULL ||
+        strchr(file, '\\') != NULL) {
+        return false;
+    }
+
+    count = scnLocalDirs(dirs, NULL);
+    for (d = 0; d < count; d++) {
+        char         path[SCN_SCRIPT_PATH_MAX];
+        SDL_PathInfo info;
+
+        if ((size_t)snprintf(path, sizeof(path), "%s/%s", dirs[d], file) >=
+            sizeof(path)) {
+            continue;
+        }
+        if (!SDL_GetPathInfo(path, &info) || info.type != SDL_PATHTYPE_FILE) {
+            continue;
+        }
+        if ((size_t)snprintf(out, outLen, "%s", path) >= outLen) {
+            out[0] = '\0';
+            return false;
+        }
+        return true;
+    }
+    return false;
+}
+
+/* What a copy is written through before it takes its own name, beside the
+   upload's own prefix and dotted for the same reason: no listing shows it
+   while it is there. */
+#define SCN_LOCAL_SAVE_TEMP_PREFIX ".copy-"
+
+/* Whether a name a server sent is one this computer may write under: a bare
+   file name ending in .lua or .scenario, short enough for a listing row, with
+   no separator, no drive or stream colon, no control byte and no leading dot,
+   and not a name Windows keeps for a device. The server's own upload rule,
+   uploadFilenameIsSafe, asks the same of the names players send it; it lives
+   in the server transport, which this library does not reach. A device name
+   is matched on what comes before the first dot, because Windows opens the
+   device for CON.lua and CON.x.lua alike. */
+static bool scnLocalSaveNameOk(const char *file) {
+    static const char *const reserved[] = {
+        "CON",  "PRN",  "AUX",  "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5",
+        "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5",
+        "LPT6", "LPT7", "LPT8", "LPT9",
+    };
+    const char *dot;
+    size_t      n;
+    size_t      stem;
+    size_t      i;
+
+    if (file == NULL || file[0] == '\0' || file[0] == '.') return false;
+    n = strlen(file);
+    if (n >= SCN_DIR_FILE_LEN) return false;
+    for (i = 0; i < n; i++) {
+        unsigned char ch = (unsigned char)file[i];
+
+        if (ch == '/' || ch == '\\' || ch == ':' || ch < 0x20 || ch == 0x7f) {
+            return false;
+        }
+    }
+    if (!scnHasExt(file, SCN_SCENARIO_SCRIPT_EXT) &&
+        !scnHasExt(file, SCN_SCENARIO_PACKAGE_EXT)) {
+        return false;
+    }
+    dot  = strchr(file, '.');
+    stem = (dot != NULL) ? (size_t)(dot - file) : n;
+    for (i = 0; i < sizeof(reserved) / sizeof(reserved[0]); i++) {
+        if (stem == strlen(reserved[i]) &&
+            SDL_strncasecmp(file, reserved[i], stem) == 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* Whether dir holds file under any spelling of it. Globbed with "*" as
+   scnUploadDestName globs: a NULL pattern would walk the subdirectories too.
+   A directory that cannot be read holds nothing. */
+static bool scnLocalDirHolds(const char *dir, const char *file) {
+    char **names;
+    int    count = 0;
+    bool   found = false;
+    int    i;
+
+    names = SDL_GlobDirectory(dir, "*", 0, &count);
+    if (names == NULL) return false;
+    for (i = 0; i < count; i++) {
+        if (names[i] != NULL && strchr(names[i], '/') == NULL &&
+            strchr(names[i], '\\') == NULL &&
+            SDL_strcasecmp(names[i], file) == 0) {
+            found = true;
+            break;
+        }
+    }
+    SDL_free(names);
+    return found;
+}
+
+ScenarioLocalSaveResult scenarioHostSaveLocalScript(const char *file,
+                                                    const uint8_t *bytes,
+                                                    size_t len) {
+    char  dirs[SCN_MOD_DIRS_MAX][SCN_SCRIPT_PATH_MAX];
+    char  tmp[SCN_SCRIPT_PATH_MAX];
+    char  dest[SCN_SCRIPT_PATH_MAX];
+    bool  ok;
+    FILE *f;
+    int   count;
+    int   workshop;
+    int   d;
+
+    if (!scnLocalSaveNameOk(file)) return SCENARIO_LOCAL_SAVE_BAD_NAME;
+
+    /* A file of that name in any of this computer's directories is the
+       player's own, and a copy never replaces it. */
+    count = scnLocalDirs(dirs, &workshop);
+    for (d = 0; d < count; d++) {
+        if (scnLocalDirHolds(dirs[d], file)) return SCENARIO_LOCAL_SAVE_EXISTS;
+    }
+
+    /* The copy goes in dirs[0], the player's Mods directory. With no Mods
+       directory the head is the Workshop one, which only its sync writes. */
+    if (count == 0 || workshop == 0 || (bytes == NULL && len > 0)) {
+        return SCENARIO_LOCAL_SAVE_WRITE;
+    }
+    if (!SDL_CreateDirectory(dirs[0])) return SCENARIO_LOCAL_SAVE_WRITE;
+    if ((size_t)snprintf(tmp, sizeof(tmp),
+                         "%s/" SCN_LOCAL_SAVE_TEMP_PREFIX "%s", dirs[0],
+                         file) >= sizeof(tmp) ||
+        (size_t)snprintf(dest, sizeof(dest), "%s/%s", dirs[0], file) >=
+            sizeof(dest)) {
+        return SCENARIO_LOCAL_SAVE_WRITE;
+    }
+
+    f = fopen(tmp, "wb");
+    if (f == NULL) return SCENARIO_LOCAL_SAVE_WRITE;
+    ok = (len == 0) || fwrite(bytes, 1, len, f) == len;
+    if (fclose(f) != 0) ok = false;
+    if (!ok || !SDL_RenamePath(tmp, dest)) {
+        SDL_RemovePath(tmp);
+        return SCENARIO_LOCAL_SAVE_WRITE;
+    }
+
+    /* The directory's stamp may not move for a file landed this soon after
+       the last listing, so the listing is told another way, as an upload
+       tells it. */
+    serverSimNoteScriptDirsChanged();
+    WB_LOG_INFO(WB_LOG_CAT_CLIENT, "scenario: saved a copy of %s (%lu bytes) "
+                "in %s", file, (unsigned long)len, dirs[0]);
+    return SCENARIO_LOCAL_SAVE_OK;
+}
+
+/* ── Where the script comes from ──────────────────────────────────── */
+
+/* A script and where it was found. The bytes are the caller's to free;
+ * everything else is a copy, so by the time one of these comes back the map
+ * file's bytes are freed and its container is closed.
+ *
+ * An array of these is what an attach is handed, one per script the round is
+ * to compose, so the two things that used to differ between the two ways in
+ * — which file was read, and what the lobby is told about it — are per
+ * source rather than per call. */
+typedef struct {
+    char            *src;        /* the script; the caller frees it */
+    size_t           srcLen;
+    bool             fromPackage;
+    /* The container's manifest, for a script that came out of one, and NULL
+     * for a loose script, which has no manifest but the table it declares.
+     * On the heap rather than in the struct: a manifest is more than a frame
+     * should hold, and this struct is a local in every caller. */
+    ScenarioManifest *manifest;
+    char             script[SCN_SCRIPT_PATH_MAX];   /* the file that was read */
+    char             entry[SCN_MANIFEST_ENTRY_LEN]; /* "" for a loose script */
+    /* The committed map, or a file in the server's scenarios directory: what
+     * the lobby is told about whichever of these decides the round. */
+    LobbyScenarioSource source;
+} ScnScriptSource;
+
+static void scnSourceDrop(ScnScriptSource *s) {
+    free(s->src);
+    free(s->manifest);
+    s->src      = NULL;
+    s->srcLen   = 0;
+    s->manifest = NULL;
+}
+
+/* The name Lua puts at the front of every message the chunk raises. The
+ * leading '@' is what makes Lua call it a file; a packaged script names the
+ * entry after the map it came out of, so a line number belongs to something
+ * a reader can open.
+ *
+ * path rather than the source's own, because the two callers want different
+ * lengths of it: the console takes the whole path and a reload's single line
+ * back to whoever asked has room only for the file name. */
+static void scnChunkNameOf(const ScnScriptSource *s, const char *path,
+                           char *out, size_t outLen) {
+    if (s->entry[0] != '\0') {
+        snprintf(out, outLen, "@%s:%s", path, s->entry);
+    } else {
+        snprintf(out, outLen, "@%s", path);
+    }
+}
+
+/* The whole map file, for the container that may be appended to it. Bounded
+ * by LOBBY_PACKAGE_UPLOAD_MAX_BYTES rather than by the script cap, because
+ * what is being read is a map and everything the scenario ships with: the
+ * map itself is a couple of dozen KB at most, and the rest is a manifest, a
+ * script and whatever brain directories are in the container, all deflated.
+ * The heaviest brain in this tree deflates to about a megabyte, so a map
+ * shipping one comes to roughly that and the cap is room for several.
+ *
+ * It is the number an uploaded package is held to as well, so an operator
+ * cannot build a package that plays on their own server and can never be
+ * sent anywhere.
+ *
+ * A file that is not there leaves err empty and is not a fault, the way
+ * scnReadFile treats a script that is not there. */
+static bool scnReadMapBytes(const char *path, uint8_t **out, size_t *outLen,
+                            char *err, size_t errLen) {
+    FILE    *f;
+    long     size;
+    uint8_t *buf;
+    size_t   got;
+
+    *out    = NULL;
+    *outLen = 0;
+
+    f = fopen(path, "rb");
+    if (f == NULL) {
+        return false;
+    }
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        scnFmt(err, errLen, "scenario: %s could not be read", path);
+        return false;
+    }
+    size = ftell(f);
+    if (size < 0) {
+        fclose(f);
+        scnFmt(err, errLen, "scenario: %s could not be measured", path);
+        return false;
+    }
+    if (size > (long)LOBBY_PACKAGE_UPLOAD_MAX_BYTES) {
+        fclose(f);
+        scnFmt(err, errLen,
+               "scenario: %s is %ld bytes and the limit is %ld — too large to "
+               "look in for a scenario", path, size,
+               (long)LOBBY_PACKAGE_UPLOAD_MAX_BYTES);
+        return false;
+    }
+    rewind(f);
+
+    buf = (uint8_t *)malloc((size_t)size + 1);
+    if (buf == NULL) {
+        fclose(f);
+        scnFmt(err, errLen, "scenario: no memory to read %s", path);
+        return false;
+    }
+    got      = fread(buf, 1, (size_t)size, f);
+    buf[got] = 0;
+    fclose(f);
+
+    *out    = buf;
+    *outLen = got;
+    return true;
+}
+
+/* The manifest and the script out of a container already open, whichever
+ * file the container came from: a map with one appended to it, or a
+ * .scenario file that is nothing else. Only the two entries named here are
+ * read, and both are copied out, so the caller closes the archive and frees
+ * the file's bytes as soon as this returns.
+ *
+ * from names the file in anything said and is what out->script is set to: an
+ * entry inside a container has no path of its own. */
+static bool scnScriptFromPackage(ScnPackage *p, const char *from,
+                                 ScnScriptSource *out,
                                  char *err, size_t errLen) {
-    char             script[SCN_SCRIPT_PATH_MAX];
-    char             chunkName[SCN_SCRIPT_PATH_MAX + 2];
+    uint8_t                *json      = NULL;
+    size_t                  jsonLen   = 0;
+    uint8_t                *luaBytes  = NULL;
+    size_t                  luaLen    = 0;
+    ScnManifestDoc         *doc       = NULL;
+    const char             *entry;
+    ScnParseReport          rep;
+    char                    soft[SCN_ERR_LEN];
+    /* The read's own reason, kept apart from err so the line an operator sees
+       can name the file the container came out of as well. */
+    char                    why[SCN_ERR_LEN];
+    bool                    ok = false;
+
+    why[0] = '\0';
+    if (!scnPackageReadEntry(p, SCN_PACKAGE_MANIFEST_ENTRY,
+                             SCN_PACKAGE_MANIFEST_MAX_BYTES, &json, &jsonLen,
+                             why, sizeof(why))) {
+        /* An entry that is simply not there gives no reason, which is the line
+           below; a manifest above the cap or one that would not come back
+           whole has said which, and that reason is the useful one. */
+        if (why[0] != '\0') {
+            scnFmt(err, errLen, "scenario: the container in %s: %s", from, why);
+        } else {
+            scnFmt(err, errLen, "scenario: the container in %s has no %s in it",
+                   from, SCN_PACKAGE_MANIFEST_ENTRY);
+        }
+        goto done;
+    }
+    soft[0]     = '\0';
+    rep.soft    = soft;
+    rep.softLen = sizeof(soft);
+    rep.sink    = NULL;
+    doc = scnManifestParse(json, jsonLen, &rep, err, errLen);
+    if (doc == NULL) {
+        goto done;
+    }
+
+    /* The same cap a loose script is read under: what is inside a container
+       is hand-written Lua too, and a script above it is not one. Handed to
+       the read rather than applied to what comes back, so a container
+       declaring a script of any size at all is refused before the memory for
+       it is asked for. */
+    entry = scnManifestScriptEntry(doc);
+    why[0] = '\0';
+    if (!scnPackageReadEntry(p, entry, (size_t)SCN_SCRIPT_MAX_BYTES, &luaBytes,
+                             &luaLen, why, sizeof(why))) {
+        if (why[0] != '\0') {
+            scnFmt(err, errLen, "scenario: the container in %s: %s", from, why);
+        } else {
+            scnFmt(err, errLen,
+                   "scenario: the container in %s names its script '%s' and "
+                   "has no such entry", from, entry);
+        }
+        goto done;
+    }
+
+    /* scnPackageReadEntry hands back a malloc'd buffer with a 0 past the
+       content, which is what the script's bytes are kept as either way. */
+    out->manifest = (ScenarioManifest *)malloc(sizeof(*out->manifest));
+    if (out->manifest == NULL) {
+        scnFmt(err, errLen, "scenario: out of memory");
+        goto done;
+    }
+    *out->manifest   = *scnManifestValues(doc);
+    out->src         = (char *)luaBytes;
+    out->srcLen      = luaLen;
+    luaBytes         = NULL;
+    out->fromPackage = true;
+    snprintf(out->script, sizeof(out->script), "%s", from);
+    snprintf(out->entry, sizeof(out->entry), "%s", entry);
+    ok = true;
+
+done:
+    free(luaBytes);
+    free(json);
+    scnManifestFree(doc);
+    return ok;
+}
+
+/* The container appended to a map file, found and opened, and the manifest
+ * and script read out of it above. The file's bytes are freed before this
+ * returns; nothing else the container holds is read.
+ *
+ * False with err empty for a map that carries no container, which is the
+ * ordinary case and the one every plain map takes. False with err set for a
+ * map that carries one this cannot use: bad framing, no manifest, a manifest
+ * that will not parse, or the script entry missing. That is a refusal an
+ * operator should see, the way an unreadable loose script already is. */
+static bool scnPackagedScript(const char *mapPath, ScnScriptSource *out,
+                              char *err, size_t errLen) {
+    uint8_t                *file     = NULL;
+    size_t                  fileLen  = 0;
+    const uint8_t          *chunk    = NULL;
+    size_t                  chunkLen = 0;
+    ScnPackage             *p        = NULL;
+    bool                    ok;
+
+    if (!scnReadMapBytes(mapPath, &file, &fileLen, err, errLen)) {
+        return false;
+    }
+    if (!scnPackageFindInMap(file, fileLen, &chunk, &chunkLen)) {
+        free(file);
+        return false;            /* a plain map, and nothing to say about it */
+    }
+    p = scnPackageOpen(chunk, chunkLen, err, errLen);
+    if (p == NULL) {
+        free(file);
+        return false;
+    }
+    ok = scnScriptFromPackage(p, mapPath, out, err, errLen);
+    scnPackageClose(p);
+    free(file);
+    return ok;
+}
+
+/* ── A file's package, read for publishing ────────────────────────── */
+
+/* The manifest of a container already in memory, whichever file it came
+ * from: the chunk on the end of a map, or a .scenario file, which is nothing
+ * else. Only manifest.json is read; the script and any brains are not. */
+static bool scnManifestOfContainer(const uint8_t *bytes, size_t len,
+                                   ScenarioManifest *out) {
+    ScnPackage     *p       = NULL;
+    uint8_t        *json    = NULL;
+    size_t          jsonLen = 0;
+    ScnManifestDoc *doc     = NULL;
+    const ScenarioManifest *values;
+    char            err[SCN_ERR_LEN];
+    bool            ok = false;
+
+    err[0] = '\0';
+    p = scnPackageOpen(bytes, len, err, sizeof(err));
+    if (p == NULL) {
+        return false;
+    }
+    if (scnPackageReadEntry(p, SCN_PACKAGE_MANIFEST_ENTRY,
+                            SCN_PACKAGE_MANIFEST_MAX_BYTES, &json, &jsonLen,
+                            err, sizeof(err))) {
+        doc    = scnManifestParse(json, jsonLen, NULL, err, sizeof(err));
+        values = scnManifestValues(doc);
+        if (values != NULL) {
+            *out = *values;
+            ok   = true;
+        }
+    }
+    scnManifestFree(doc);
+    free(json);
+    scnPackageClose(p);
+    return ok;
+}
+
+/* The last part of a path, after either separator. */
+static const char *scnPathLeaf(const char *path) {
+    const char *slash = strrchr(path, '/');
+    const char *back  = strrchr(path, '\\');
+
+    if (back != NULL && (slash == NULL || back > slash)) slash = back;
+    return (slash != NULL) ? slash + 1 : path;
+}
+
+bool scenarioHostMapPackageInfo(const char *mapPath, ServerScenarioEntry *out) {
+    uint8_t          *file     = NULL;
+    size_t            fileLen  = 0;
+    const uint8_t    *chunk    = NULL;
+    size_t            chunkLen = 0;
+    ScenarioManifest *m;
+    char              err[SCN_ERR_LEN];
+    bool              ok = false;
+
+    if (out == NULL) return false;
+    memset(out, 0, sizeof(*out));
+    if (mapPath == NULL || mapPath[0] == '\0') return false;
+
+    /* The same read the attach makes, under the same cap. */
+    err[0] = '\0';
+    if (!scnReadMapBytes(mapPath, &file, &fileLen, err, sizeof(err))) {
+        return false;
+    }
+    /* On the heap: a manifest carries its whole trigger table. */
+    m = (ScenarioManifest *)malloc(sizeof(*m));
+    if (m != NULL && scnPackageFindInMap(file, fileLen, &chunk, &chunkLen) &&
+        scnManifestOfContainer(chunk, chunkLen, m)) {
+        SDL_strlcpy(out->file, scnPathLeaf(mapPath), sizeof(out->file));
+        SDL_strlcpy(out->name, m->name, sizeof(out->name));
+        SDL_strlcpy(out->description, m->description,
+                    sizeof(out->description));
+        out->bound             = m->bound;
+        out->keepsWinCondition = scnManifestKeepsWinCondition(m);
+        out->source            = SERVER_SCENARIO_SOURCE_SERVER;
+        out->workshopId        = m->workshopId;
+        out->workshopAuthor    = m->workshopAuthor;
+        ok = true;
+    }
+    free(m);
+    free(file);
+    return ok;
+}
+
+/* Where a loose script is moved once it has been packed, beside the package
+   in the Mods directory. The mod lister globs "*" and skips anything that is
+   not a file, so nothing in here is listed. */
+#define SCN_PACK_SOURCES_DIR "Sources"
+
+bool scenarioHostPackLooseScript(const char *luaPath, char *outScenarioPath,
+                                 size_t outLen, char *err, size_t errLen) {
+    char              dir[SCN_SCRIPT_PATH_MAX];
+    char              stem[SCN_SCRIPT_PATH_MAX];
+    char              packed[SCN_SCRIPT_PATH_MAX];
+    char              sources[SCN_SCRIPT_PATH_MAX];
+    char              moved[SCN_SCRIPT_PATH_MAX];
+    const char       *leaf;
+    uint8_t          *old      = NULL;
+    size_t            oldLen   = 0;
+    ScenarioManifest *m;
+    uint64_t          keptId     = 0;
+    uint64_t          keptAuthor = 0;
+    size_t            dirLen;
+    size_t            stemLen;
+
+    if (err != NULL && errLen > 0) err[0] = '\0';
+    if (outScenarioPath != NULL && outLen > 0) outScenarioPath[0] = '\0';
+    if (luaPath == NULL || !scnHasExt(luaPath, SCN_SCENARIO_SCRIPT_EXT) ||
+        outScenarioPath == NULL || outLen == 0) {
+        scnFmt(err, errLen, "scenario: there is no loose script to pack");
+        return false;
+    }
+
+    /* Mods/<stem>.lua gives Mods, <stem>, Mods/<stem>.scenario and
+       Mods/Sources/<stem>.lua. */
+    leaf    = scnPathLeaf(luaPath);
+    dirLen  = (size_t)(leaf - luaPath);
+    stemLen = strlen(leaf) - strlen(SCN_SCENARIO_SCRIPT_EXT);
+    if (dirLen == 0 || dirLen > sizeof(dir) || stemLen == 0 ||
+        stemLen >= sizeof(stem)) {
+        scnFmt(err, errLen, "scenario: %s is not a script in a directory",
+               luaPath);
+        return false;
+    }
+    /* The directory without its trailing separator. */
+    memcpy(dir, luaPath, dirLen - 1);
+    dir[dirLen - 1] = '\0';
+    memcpy(stem, leaf, stemLen);
+    stem[stemLen] = '\0';
+    if ((size_t)snprintf(packed, sizeof(packed), "%s/%s%s", dir, stem,
+                         SCN_SCENARIO_PACKAGE_EXT) >= sizeof(packed) ||
+        (size_t)snprintf(sources, sizeof(sources), "%s/%s", dir,
+                         SCN_PACK_SOURCES_DIR) >= sizeof(sources) ||
+        (size_t)snprintf(moved, sizeof(moved), "%s/%s", sources, leaf) >=
+            sizeof(moved) ||
+        strlen(packed) >= outLen) {
+        scnFmt(err, errLen, "scenario: %s gives a path too long to pack to",
+               luaPath);
+        return false;
+    }
+
+    /* A package already there that carries a Workshop item keeps it: the
+       repack writes a manifest from the script's table, which names no item,
+       so the pair is read now and written back after. */
+    if (scnReadMapBytes(packed, &old, &oldLen, NULL, 0)) {
+        m = (ScenarioManifest *)malloc(sizeof(*m));
+        if (m != NULL && scnManifestOfContainer(old, oldLen, m)) {
+            keptId     = m->workshopId;
+            keptAuthor = m->workshopAuthor;
+        }
+        free(m);
+        free(old);
+    }
+
+    if (!scnPackScript(luaPath, packed, err, errLen)) {
+        return false;
+    }
+    serverSimNoteScriptDirsChanged();
+
+    if (keptId != 0 &&
+        !scnIoSetWorkshopId(packed, keptId, keptAuthor, err, errLen)) {
+        /* The package is packed and names no item; the script stays where it
+           was, so the next attempt packs it again and tries once more. */
+        return false;
+    }
+    SDL_strlcpy(outScenarioPath, packed, outLen);
+
+    /* The script out of the listed directory, so the mod list shows the
+       package and not the two. An older copy in Sources is replaced. A move
+       that fails leaves both listed, which is untidy and not wrong: the
+       package is what was asked for. */
+    if (!SDL_CreateDirectory(sources) || !SDL_RenamePath(luaPath, moved)) {
+        WB_LOG_WARN(WB_LOG_CAT_CLIENT, "scenario: packed %s but could not move "
+                    "it into %s: %s", luaPath, sources, SDL_GetError());
+    } else {
+        serverSimNoteScriptDirsChanged();
+    }
+    return true;
+}
+
+/* What script this map has, and where it came from. The attach and the
+ * reload both ask here, so the two cannot answer differently.
+ *
+ * In order:
+ *
+ *  1. A loose X.scenario.lua beside the map wins. That is the loop a script
+ *     is written in — edit the file, reload, play — and it does not ask the
+ *     author to re-pack the map between one round and the next. A map that
+ *     carries a container as well says so once on the console, because the
+ *     operator's own copy of the scenario is then not the one playing.
+ *  2. Otherwise the container appended to the map file itself.
+ *  3. Neither, and the map is a plain map: false, err empty, nothing said.
+ *
+ * A loose script that is there and cannot be read, and a container that is
+ * there and cannot be used, are both false with the reason in err. */
+static bool scnFindScript(const char *mapPath, ScnScriptSource *out,
+                          char *err, size_t errLen) {
+    char script[SCN_SCRIPT_PATH_MAX];
+
+    memset(out, 0, sizeof(*out));
+    /* Whichever of the two files below answers, it is the map's own, and the
+       source travels with the bytes: a composed list holds sources of both
+       kinds and no later reader can tell them apart by looking. */
+    out->source = lobbyScenarioMap;
+    if (!scnScriptPath(mapPath, script, sizeof(script))) {
+        return false;
+    }
+    if (scnReadFile(script, &out->src, &out->srcLen, err, errLen)) {
+        snprintf(out->script, sizeof(out->script), "%s", script);
+        if (scnMapHasChunk(mapPath)) {
+            scnSay(NULL, 0,
+                   "scenario: %s is what runs, and the scenario packed into "
+                   "%s is not", script, mapPath);
+        }
+        return true;
+    }
+    /* A script that is there and unusable has already said which; a script
+       that is not there at all leaves err empty, and the map's own container
+       is the next place to look. */
+    if (err != NULL && errLen > 0 && err[0] != '\0') {
+        return false;
+    }
+    return scnPackagedScript(mapPath, out, err, errLen);
+}
+
+/* Does name end with ext, ignoring case? The directory listing asks the same
+   question of the same two extensions; this is the copy on the side that
+   reads the file rather than the side that lists it. */
+static bool scnHasExt(const char *name, const char *ext) {
+    size_t n = strlen(name);
+    size_t e = strlen(ext);
+
+    if (n <= e) {
+        return false;
+    }
+    return SDL_strcasecmp(name + n - e, ext) == 0;
+}
+
+/* A scenario the server offers on its own, read from the file the host
+ * picked. Nothing here looks at a map: a mod is a file in the scenarios
+ * directory and plays on whatever map is committed.
+ *
+ * A .scenario is a container and nothing else, so scnPackageOpen takes the
+ * whole file — the hunt for a trailer is only for maps. A loose .lua is read
+ * as a script and declares its own table, the way a script beside a map
+ * does. Anything else is refused by name rather than guessed at.
+ *
+ * Unlike a map's own script, a file that is not there is a fault: the host
+ * asked for this one by name, and the directory listing had it a moment ago.
+ *
+ * scnReadMapBytes is what reads a package file whole. It is named for the
+ * map it was written for, but the cap it applies is the one every package is
+ * held to, which is the right one here. */
+static bool scnModScript(const char *path, ScnScriptSource *out,
+                         char *err, size_t errLen) {
+    uint8_t    *file    = NULL;
+    size_t      fileLen = 0;
+    ScnPackage *p;
+    bool        ok;
+
+    memset(out, 0, sizeof(*out));
+    out->source = lobbyScenarioMod;
+    if (scnHasExt(path, SCN_SCENARIO_SCRIPT_EXT)) {
+        if (!scnReadFile(path, &out->src, &out->srcLen, err, errLen)) {
+            if (err != NULL && errLen > 0 && err[0] == '\0') {
+                scnFmt(err, errLen, "scenario: %s is not there", path);
+            }
+            return false;
+        }
+        snprintf(out->script, sizeof(out->script), "%s", path);
+        return true;
+    }
+    if (!scnHasExt(path, SCN_SCENARIO_PACKAGE_EXT)) {
+        scnFmt(err, errLen,
+               "scenario: %s is neither a %s package nor a %s script", path,
+               SCN_SCENARIO_PACKAGE_EXT, SCN_SCENARIO_SCRIPT_EXT);
+        return false;
+    }
+    if (!scnReadMapBytes(path, &file, &fileLen, err, errLen)) {
+        if (err != NULL && errLen > 0 && err[0] == '\0') {
+            scnFmt(err, errLen, "scenario: %s is not there", path);
+        }
+        return false;
+    }
+    p = scnPackageOpen(file, fileLen, err, errLen);
+    if (p == NULL) {
+        free(file);
+        return false;
+    }
+    ok = scnScriptFromPackage(p, path, out, err, errLen);
+    scnPackageClose(p);
+    free(file);
+    return ok;
+}
+
+/* What the lobby is told about a scenario: the seats its template asks for,
+ * and the name it goes by. The attach hands both over and so does a reload,
+ * so a host who edits a script's lobby block sees the change without having
+ * to commit a map.
+ *
+ * The game type the manifest names is read by the same words a spawn op's
+ * loadout takes, so one table answers both. A manifest naming none, or a
+ * word that table does not hold, leaves it 0 — and 0 is no game type at all
+ * rather than gameOpen, which is 1. The lobby does not keep the type it was
+ * on: serverSimScenarioApplyLobbyRules moves it to gameScripted either way,
+ * and gameTypeResolve reads the 0 as gameStrictTournament, so a scenario
+ * that named no game plays strict. */
+static void scnHandLobbyOver(ServerSim *sim, const ScenarioManifest *m,
+                             LobbyScenarioSource source,
+                             const char *fileName) {
+    ScnLobbyTemplate t;
+    ScnOpSetRule     rules[SCN_MANIFEST_RULES_MAX];
+    int              base = 0;
+    uint16_t         i;
+
+    scnFillLobbyTemplate(&m->lobby, &t);
+    if (m->game[0] != '\0' && scenarioLuaLoadoutFromWord(m->game, &base)) {
+        t.baseGameType = (uint8_t)base;
+    }
+    /* The lobby goes over as data rather than as another callback: the sim
+       seats and reconciles it at every point a lobby is built, and a question
+       asked from inside the sim's own map change would otherwise have to
+       reach back into a host that is being replaced at that moment. */
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    /* And what it is called, which the lobby says out loud. A scenario read
+       from beside a map names that file, and a mod names its own; the path
+       either was found at is the server's own business and does not go
+       over. */
+    serverSimSetScenarioIdentity(sim, source, m->name, fileName,
+                                 m->description, m->lobby.extraTeams,
+                                 scnManifestKeepsWinCondition(m), m->bound,
+                                 scenarioHostUnsafeScripts());
+    /* And which rules it sets, so the lobby can say what it changes without
+       anybody opening the file. The manifest's own pairs, whatever the round
+       later makes of them: the table an author wrote is the question the
+       popup asks. A reload comes through here too, so a host who edits the
+       rules block sees the new set the way they see the new name. */
+    for (i = 0; i < m->numRules && i < SCN_MANIFEST_RULES_MAX; i++) {
+        rules[i].rule  = m->rules[i].rule;
+        rules[i].value = m->rules[i].value;
+    }
+    serverSimSetScenarioRules(sim, rules, (int)i);
+}
+
+/* Everything a refused attach has to give back, in one place because there
+ * are now eight ways out of the call below and each of them was three lines
+ * of the same four calls.
+ *
+ * The sources go back whatever happened, which is the promise scnAttachFrom
+ * makes: the bytes are its to free from the moment it is handed them.
+ * Answers NULL so a caller can write `return scnAttachGiveBack(...)`. */
+static ScenarioHost *scnAttachGiveBack(ScenarioHost *h, lua_State *L,
+                                       ScnScriptSource *from, int n) {
+    int i;
+
+    if (h != NULL) {
+        /* Both halves of every slot. Only the tables are ever filled before
+           a refusal — the bytes move onto the entries at the end of a call
+           that went through — but a forget that left half the slot alone
+           would be a hole the day that order changes. */
+        scnListForget(h);
+    }
+    if (L != NULL) {
+        scnCloseVm(L);
+    }
+    if (h != NULL) {
+        scnLockDestroy(&h->lock);
+        free(h);
+    }
+    for (i = 0; i < n; i++) {
+        scnSourceDrop(&from[i]);
+    }
+    return NULL;
+}
+
+/* Everything an attach does once the scripts' bytes are in hand, whichever
+ * files they came out of. The two entry points below differ only in where
+ * they look; from here down a mod and a map's own scenario are the same
+ * thing, and the source's own kind is what the composed list is told apart
+ * by afterwards.
+ *
+ * Takes over every from[i].src either way: a path out of here frees them.
+ *
+ * n is how many scripts the round composes, in list order, and the caller
+ * holds it at SCN_SCRIPTS_MAX. mapPath is the map the list was composed for
+ * and "" where there is none.
+ *
+ * The whole list or none of it. A script that will not load takes the attach
+ * with it rather than being dropped, because the host asked for these
+ * scripts together: a lobby that ran four of five and said nothing would
+ * have the host wondering which four. The reason names the file. */
+static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
+                                   int n, const char *mapPath,
+                                   char *err, size_t errLen) {
     char             soft[SCN_ERR_LEN];
-    ScenarioManifest m;
+    ScnScriptLoad    load[SCN_SCRIPTS_MAX];
+    int              i;
     ScnParseReport   rep;
     ScenarioHost    *h;
     lua_State       *L;
-    char            *src    = NULL;
-    size_t           srcLen = 0;
 
-    if (err != NULL && errLen > 0) {
-        err[0] = '\0';
-    }
-    if (sim == NULL || mapPath == NULL) {
+    if (n <= 0) {
         return NULL;
     }
-    if (!scnScriptPath(mapPath, script, sizeof(script))) {
-        return NULL;
+    if (n > SCN_SCRIPTS_MAX) {
+        n = SCN_SCRIPTS_MAX;
     }
-    /* Off, and the file is not read, parsed or run. The name above is string
-       work on the map path and touches no disk; the one question asked here
-       is whether there is a file, which is what tells a map that lost a
-       script apart from a map that never had one. */
-    if (!scnEnabled) {
-        if (scnScriptExists(script)) {
-            scnFmt(err, errLen,
-                   "scenario: scripts are off; %s was not loaded", script);
-        }
-        return NULL;
-    }
-    /* The one read of the file. No script is the ordinary case: the map
-       plays as a plain map and the operator is told nothing, because there
-       is nothing to tell. A file that is there and cannot be used sets err
-       and is reported. */
-    if (!scnReadFile(script, &src, &srcLen, err, errLen)) {
-        return NULL;
-    }
-    /* The leading '@' is what makes Lua call this a file in its messages. */
-    snprintf(chunkName, sizeof(chunkName), "@%s", script);
 
     /* The host is built before the state is, because the game table's rows
        read through a struct on it and the table goes on before the chunk
@@ -2674,18 +8778,29 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     h = (ScenarioHost *)calloc(1, sizeof(*h));
     if (h == NULL) {
         scnFmt(err, errLen, "scenario: out of memory");
-        free(src);
-        return NULL;
+        return scnAttachGiveBack(NULL, NULL, from, n);
     }
     if (!scnLockCreate(&h->lock)) {
         scnFmt(err, errLen, "scenario: no mutex for the Lua state");
         free(h);
-        free(src);
-        return NULL;
+        return scnAttachGiveBack(NULL, NULL, from, n);
     }
     h->sim           = sim;
     h->lua.sim       = sim;
     h->lua.manifest  = &h->manifest;
+    /* Nothing of a script's is running yet, and nothing is until a call this
+       host makes into one says so. scnRunningSet is the only writer, and
+       scnRunningEnter and scnRunningEnterTable are the two forms of asking
+       for it. */
+    h->lua.running      = NULL;
+    /* And no entry either, which is the same thing said as a position, nor
+       any file, which is the same thing said as where the bytes came from.
+       Both are written in one more place than the table above: scnScriptLoad
+       sets them across a file's own top level, where the table stays NULL
+       because the kind has not been read out of the table yet. */
+    h->lua.runningOwner = SCN_OWNER_NONE;
+    h->lua.runningFile  = NULL;
+    h->lua.runningEnv   = 0;
     h->lua.timers    = &h->timers;
     /* Every state this host boots runs the scenario rather than checking it;
        the reload is the one that checks. */
@@ -2698,8 +8813,20 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     scnHooksForget(h);
     /* Neither of these is the zero calloc left: no subscriber is -1. */
     h->sub        = SUBSCRIBER_HANDLE_INVALID;
-    snprintf(h->script, sizeof(h->script), "%s", script);
-    snprintf(h->chunkName, sizeof(h->chunkName), "%s", chunkName);
+    snprintf(h->mapPath, sizeof(h->mapPath), "%s",
+             mapPath != NULL ? mapPath : "");
+
+    /* Where each script came from, onto its slot before anything runs: the
+       load descriptors below point at these rather than at copies, and a
+       refusal wants the path to name the file in. The bytes stay the
+       source's until the whole list has loaded. */
+    for (i = 0; i < n; i++) {
+        snprintf(h->entry[i].script, sizeof(h->entry[i].script), "%s",
+                 from[i].script);
+        scnChunkNameOf(&from[i], from[i].script, h->entry[i].chunkName,
+                       sizeof(h->entry[i].chunkName));
+        h->entry[i].source = from[i].source;
+    }
 
     /* The one VM entry that takes no lock, because there is nothing yet to
        take one on: until the host below is registered no other thread can
@@ -2707,41 +8834,112 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     L = scnBootVm(h);
     if (L == NULL) {
         scnFmt(err, errLen, "scenario: no memory for a Lua state");
-        scnLockDestroy(&h->lock);
-        free(h);
-        free(src);
-        return NULL;
+        return scnAttachGiveBack(h, NULL, from, n);
     }
 
     soft[0]     = '\0';
     rep.soft    = soft;
     rep.softLen = sizeof(soft);
     rep.sink    = NULL;
-    if (!scnRunChunk(L, src, srcLen, chunkName, err, errLen) ||
-        !scnReadManifest(L, &m, script, err, errLen, &rep)) {
-        scnCloseVm(L);
-        scnLockDestroy(&h->lock);
-        free(h);
-        free(src);
-        return NULL;
-    }
-    if (m.api > SCENARIO_API_VERSION) {
-        scnFmt(err, errLen,
-               "scenario: %s asks for api %d and this server is api %d — "
-               "the server is too old to run it",
-               script, m.api, SCENARIO_API_VERSION);
-        scnCloseVm(L);
-        scnLockDestroy(&h->lock);
-        free(h);
-        free(src);
-        return NULL;
+
+    /* The list this host will play, one descriptor per script.
+       A package's manifest is the truth about what it is, and it goes on as
+       the scenario global before its chunk runs. A script that came out of
+       one may therefore declare no table of its own; a loose script gets
+       nothing pushed and declares its own, as it always has. */
+    memset(load, 0, sizeof(load));
+    for (i = 0; i < n; i++) {
+        load[i].src       = from[i].src;
+        load[i].srcLen    = from[i].srcLen;
+        load[i].chunkName = h->entry[i].chunkName;
+        load[i].path      = h->entry[i].script;
+        load[i].pkg       = from[i].fromPackage ? from[i].manifest : NULL;
+        load[i].ctx       = &h->lua;
+        load[i].entry     = i;
+        /* No hook is dispatched off this state — the hooks belong to a
+           round's VM and the first round start resolves them — so nothing
+           here asks for them. What the load settles is that the chunk runs,
+           the table reads and the router installs at all, said at the attach
+           rather than at the first round start. */
+        load[i].resolveHooks = false;
     }
 
-    h->L        = L;
-    h->manifest = m;
-    h->src      = src;
-    h->srcLen   = srcLen;
-    h->active   = true;
+    for (i = 0; i < n; i++) {
+        /* The tables are read into the host's own slots: they are this
+           call's own until the registrations at the bottom, and every path
+           out before them empties the list, so nothing sees a half-read
+           table and no second copy is held. */
+        if (!scnEntryReady(&h->entry[i])) {
+            scnFmt(err, errLen, "scenario: out of memory");
+            return scnAttachGiveBack(h, L, from, n);
+        }
+        /* A scenario whose triggers cannot be installed is refused the way
+           one whose chunk will not load is. And the table the chunk left
+           behind is held against the package's: a script that assigned
+           nothing reads back what was pushed and passes with nothing to do;
+           one that restated the table and said something else is refused by
+           key, rather than playing a scenario the package does not
+           describe. */
+        if (!scnScriptLoad(L, &h->entry[i], &load[i], err, errLen, &rep)) {
+            return scnAttachGiveBack(h, L, from, n);
+        }
+        if (h->entry[i].manifest->api > SCENARIO_API_VERSION) {
+            scnFmt(err, errLen,
+                   "scenario: %s asks for api %d and this server is api %d — "
+                   "the server is too old to run it",
+                   load[i].path, h->entry[i].manifest->api,
+                   SCENARIO_API_VERSION);
+            return scnAttachGiveBack(h, L, from, n);
+        }
+        /* A scenario that says it is bound was written for its own map, and
+           the tags, regions and entity indices it uses are that map's.
+           Played over another map they name items that are not there, so it
+           is refused as a mod however it was asked for. The lobby pick
+           refuses a bound entry before it ever reaches an attach and is what
+           a host is told; this is the one place every other way in — a
+           console, a startup flag, a test — meets the same answer. A map's
+           own script is untouched: it is bound precisely because it belongs
+           to the map it arrived with, which is why the test is on this
+           entry's own source rather than on the call's.
+
+           Per entry and inside the loop, which is where it moved to: it used
+           to read the composite, and the composite's bound is the base's, so
+           a bound mod listed behind a scenario would have been let through
+           on the scenario's answer. */
+        if (h->entry[i].source == lobbyScenarioMod &&
+            h->entry[i].manifest->bound) {
+            scnFmt(err, errLen,
+                   "scenario: %s is bound to its own map, so it cannot be "
+                   "played over another one", load[i].path);
+            return scnAttachGiveBack(h, L, from, n);
+        }
+    }
+    /* The one table every reader outside this file is answered from, and the
+       refusals a list that cannot be added up meets. */
+    if (!scnCompose(h, n, err, errLen)) {
+        return scnAttachGiveBack(h, L, from, n);
+    }
+    h->count   = n;
+    h->scripts = n;
+
+    /* The bytes onto the entries, which is the point of no return: from here
+       the host owns them and every path out is scenarioHostDetach. The
+       container's manifest moves by pointer rather than by copy — that is
+       what the pointer on the entry is for, and copying it would put a
+       second 184,816 bytes on the stack of whichever call did the copying. */
+    for (i = 0; i < n; i++) {
+        h->entry[i].src         = from[i].src;
+        h->entry[i].srcLen      = from[i].srcLen;
+        /* NULL for a loose script, which is the same thing fromPackage said:
+           a manifest is allocated on the one path that sets that flag, so the
+           entry keeps the pointer and does without the flag. */
+        h->entry[i].pkgManifest = from[i].manifest;
+        from[i].src      = NULL;
+        from[i].manifest = NULL;
+    }
+
+    h->L           = L;
+    h->active      = true;
     snprintf(h->lastError, sizeof(h->lastError), "%s", soft);
 
     /* Registered here rather than at the first round start: the lobby asks
@@ -2760,6 +8958,9 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     h->policy.canCapture      = scnCanCapture;
     h->policy.announce        = scnAnnounce;
     h->policy.canDie          = scnCanDie;
+    h->policy.canHit          = scnCanHit;
+    h->policy.pillDamageScale = scnPillDamageScale;
+    h->policy.canAlly         = scnCanAlly;
     h->policy.chooseStart     = scnChooseStart;
     h->policy.spawnLoadout    = scnSpawnLoadout;
     h->policy.damageScale     = scnDamageScale;
@@ -2772,29 +8973,11 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
        script has the loop the server console already has. */
     serverSimSetScenarioReload(sim, scnReloadCb, h);
     serverSimSetScenarioPolicy(sim, &h->policy);
-    /* The lobby goes over as data rather than as another callback: the sim
-       seats and reconciles it at every point a lobby is built, and a question
-       asked from inside the sim's own map change would otherwise have to
-       reach back into a host that is being replaced at that moment. */
-    {
-        ScnLobbyTemplate t;
-        int              base = 0;
-        scnFillLobbyTemplate(&m.lobby, &t);
-        /* The game type the manifest names, read by the same words a spawn
-           op's loadout takes so one table answers both. A manifest naming
-           none, or a word that table does not hold, leaves it 0 and the
-           round plays open. */
-        if (m.game[0] != '\0' && scenarioLuaLoadoutFromWord(m.game, &base)) {
-            t.baseGameType = (uint8_t)base;
-        }
-        serverSimSetScenarioLobbyTemplate(sim, &t);
-    }
-    /* And what it is called, which the lobby says out loud. A scenario read
-       from beside a map names that file; the path it was found at is the
-       server's own business and does not go over. */
-    serverSimSetScenarioIdentity(sim, lobbyScenarioMap, m.name,
-                                 scnFileNameOf(h->script), m.description,
-                                 m.lobby.extraTeams);
+    /* The base entry is what the lobby is told about: it holds the
+       declarative fields the composite carries, so the name, the file and the
+       source all have to come off the same script. */
+    scnHandLobbyOver(sim, &h->manifest, h->entry[h->base].source,
+                     scnFileNameOf(h->entry[h->base].script));
 
     /* The bus, in three steps and in this order. Registration hands the new
        subscriber the whole of the current server state through the control
@@ -2817,59 +9000,239 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
         !serverSimSetSubscriberEventDeliver(sim, h->sub, scnDeliverEvent)) {
         scnSay(h->lastError, sizeof(h->lastError),
                "scenario: no subscriber slot for %s, so it sees no events",
-               script);
+               h->entry[h->base].script);
     }
     return h;
 }
 
-/* The file name at the end of a path. What a reload says goes to whoever
-   asked for it as a single 128-byte line, and Lua puts the chunk's name at
-   the front of every message it raises — so a script under a deep map
-   directory would spend the whole line on a path the asker cannot see
-   anyway, leaving no room for the line number and the error itself. The
-   round boot keeps the full path: that one goes to the operator's console,
-   where the path is the useful part. */
-static const char *scnFileName(const char *path) {
-    const char *base = path;
-    const char *p;
+/* Where a committed map's own script is, and whether it is to be read at
+ * all. Split out of the attach below because a round is now composed of a
+ * list: the map's own script is the first source in it and the picks come
+ * after, so the finding has to be a step of its own that the decision can
+ * call before it attaches anything.
+ *
+ * false with err empty is the ordinary case — this map has no script, and
+ * there is nothing to tell the operator about a plain map. */
+static bool scnMapSource(ServerSim *sim, const char *mapPath,
+                         ScnScriptSource *out, char *err, size_t errLen) {
+    char script[SCN_SCRIPT_PATH_MAX];
 
-    for (p = path; *p != '\0'; p++) {
-        if (*p == '/' || *p == '\\') {
-            base = p + 1;
-        }
+    if (sim == NULL || mapPath == NULL || out == NULL) {
+        return false;
     }
-    return base;
+    if (!scnScriptPath(mapPath, script, sizeof(script))) {
+        return false;
+    }
+    /* Off, and the file is not read, parsed or run. The name above is string
+       work on the map path and touches no disk; the one question asked here
+       is whether there is a file, which is what tells a map that lost a
+       script apart from a map that never had one. */
+    if (!scnEnabled) {
+        if (scnScriptExists(script)) {
+            scnFmt(err, errLen,
+                   "scenario: scripts are off; %s was not loaded", script);
+        }
+        return false;
+    }
+    /* A map out of this server's uploads directory, with scripts in uploaded
+       maps off. Neither the container inside the file nor a loose script
+       beside it is loaded. Said on the console rather than only in err,
+       because the operator turned this off deliberately and the file that
+       was turned down is the thing they want named; said only for a map that
+       had something to run, the way the switch above is, so an uploaded
+       plain map is as quiet as any other. The question reads the file's head
+       and stats the name beside it, and parses neither. */
+    if (!scnUploadScripts && scnMapIsUpload(sim, mapPath)) {
+        if (scenarioHostMapHasScript(mapPath)) {
+            scnSay(err, errLen,
+                   "scenario: %s came from an upload and scripts in uploaded "
+                   "maps are off; its script was not loaded", mapPath);
+        }
+        return false;
+    }
+    /* The one read of the script, from beside the map or from inside it. No
+       script is the ordinary case: the map plays as a plain map and the
+       operator is told nothing, because there is nothing to tell. A script
+       that is there and cannot be used sets err and is reported. */
+    if (!scnFindScript(mapPath, out, err, errLen)) {
+        return false;
+    }
+    /* An uploaded map's own scenario, about to run. Said whenever it happens
+       and not only when something is wrong: this is the one case where the
+       script a round plays by came from a client rather than out of the
+       operator's own map directory, and an operator who would rather it did
+       not has scenarioHostSetUploadScriptsEnabled to say so. */
+    if (out->fromPackage && scnMapIsUpload(sim, mapPath)) {
+        scnSay(NULL, 0,
+               "scenario: %s came from an upload and carries a scenario; that "
+               "is what runs", mapPath);
+    }
+    return true;
 }
 
-bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
-    char             soft[SCN_ERR_LEN];
-    char             chunkName[SCN_SCRIPT_PATH_MAX + 2];
-    const char      *name;
-    ScenarioManifest m;
-    ScnParseReport   rep;
-    ScnLuaCtx        check;
-    lua_State       *L;
-    char            *src    = NULL;
-    size_t           srcLen = 0;
+/* The same for one of the scenarios the server offers, named by the host.
+ * Unlike a map's own, a file that is not there is a fault, so every false
+ * from here leaves a reason in err. uploads is the sim's uploads directory,
+ * read last as the listing reads it. */
+static bool scnModSource(const char *dir, const char *uploads,
+                         const char *file, ScnScriptSource *out, char *err,
+                         size_t errLen) {
+    char path[SCN_SCRIPT_PATH_MAX];
+
+    if (dir == NULL || file == NULL || file[0] == '\0' || out == NULL) {
+        return false;
+    }
+    /* Off, and the file is not read either. Said rather than silent, unlike
+       a map with no script: a host who picked this one is owed the reason it
+       is not playing. */
+    if (!scnEnabled) {
+        scnFmt(err, errLen, "scenario: scripts are off; %s was not loaded",
+               file);
+        return false;
+    }
+    /* The same directories the listing merges, in the same order, so the file
+       a host picked off the list is the file that loads. Tested rather than
+       tried-and-failed: a mod that is only in the shipped directory would
+       otherwise report the player's path in its error. */
+    {
+        char dirs[SCN_MOD_DIRS_MAX][SCN_SCRIPT_PATH_MAX];
+        int  count = scnModDirs(dirs, dir, uploads);
+        int  d;
+
+        path[0] = '\0';
+        for (d = 0; d < count && path[0] == '\0'; d++) {
+            SDL_PathInfo info;
+            char         one[SCN_SCRIPT_PATH_MAX];
+
+            snprintf(one, sizeof(one), "%s/%s", dirs[d], file);
+            if (SDL_GetPathInfo(one, &info) &&
+                info.type == SDL_PATHTYPE_FILE) {
+                snprintf(path, sizeof(path), "%s", one);
+            }
+        }
+        /* No directory has it. The path the host asked for is the one to
+           name in the error scnModScript is about to make. */
+        if (path[0] == '\0') {
+            snprintf(path, sizeof(path), "%s/%s", dir, file);
+        }
+    }
+    return scnModScript(path, out, err, errLen);
+}
+
+ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
+                                 char *err, size_t errLen) {
+    ScnScriptSource from;
 
     if (err != NULL && errLen > 0) {
         err[0] = '\0';
     }
-    if (h == NULL) {
+    if (!scnMapSource(sim, mapPath, &from, err, errLen)) {
+        return NULL;
+    }
+    return scnAttachFrom(sim, &from, 1, mapPath, err, errLen);
+}
+
+ScenarioHost *scenarioHostAttachMod(ServerSim *sim, const char *dir,
+                                    const char *file,
+                                    char *err, size_t errLen) {
+    ScnScriptSource from;
+
+    if (err != NULL && errLen > 0) {
+        err[0] = '\0';
+    }
+    if (sim == NULL) {
+        return NULL;
+    }
+    if (!scnModSource(dir, serverSimGetScriptUploadDir(sim), file, &from,
+                      err, errLen)) {
+        return NULL;
+    }
+    /* No map path: this scenario was not found for any map and plays on
+       whichever one is committed. */
+    return scnAttachFrom(sim, &from, 1, "", err, errLen);
+}
+
+/* One script of a reloading list, read again from wherever it came from. A
+ * mod is its own file in the scenarios directory and is re-read straight
+ * from it; for a map's own scenario, where the script comes from is asked
+ * again rather than remembered, because a loose script dropped beside a
+ * packed map is meant to take over at the next reload and one deleted from
+ * beside it is meant to hand the map back to its own container.
+ *
+ * The entry's own source is what decides which of the two this is, so a list
+ * holding both kinds reloads each of them the way it was found. */
+static bool scnReloadSource(ScenarioHost *h, int i, ScnScriptSource *out,
+                            char *err, size_t errLen) {
+    if (h->entry[i].source == lobbyScenarioMod) {
+        return scnModScript(h->entry[i].script, out, err, errLen);
+    }
+    /* The same refusal the attach makes, because a reload reads the file
+       again: without it a scenario the switch turned down at the commit
+       would come back the moment anyone asked for a reload. */
+    if (!scnUploadScripts && scnMapIsUpload(h->sim, h->mapPath)) {
+        scnFmt(err, errLen,
+               "scenario: %s came from an upload and scripts in uploaded maps "
+               "are off", h->mapPath);
         return false;
     }
-    name = scnFileName(h->script);
-    /* The leading '@' is what makes Lua call this a file in its messages. */
-    snprintf(chunkName, sizeof(chunkName), "@%s", name);
-
-    if (!scnReadFile(h->script, &src, &srcLen, err, errLen)) {
-        /* A file that has gone leaves err empty, because at attach that is
-           the ordinary case rather than a fault. Asked for by name it is a
-           fault, so it is stated here. */
+    if (!scnFindScript(h->mapPath, out, err, errLen)) {
+        /* A map with nothing to read leaves err empty, because at an attach
+           that is the ordinary case rather than a fault. Asked for by name it
+           is a fault, so it is stated here. */
         if (err != NULL && errLen > 0 && err[0] == '\0') {
-            scnFmt(err, errLen, "scenario: %s is no longer there", name);
+            scnFmt(err, errLen, "scenario: %s is no longer there",
+                   scnFileNameOf(h->entry[i].script));
         }
         return false;
+    }
+    return true;
+}
+
+bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
+    char              soft[SCN_ERR_LEN];
+    ScnScriptSource  *from     = NULL;
+    /* Slots of this call's own, and deliberately not h->entry[]: the round
+       that is running is still dispatching out of those, and a reload
+       promises that nothing it touches changes until the next round start.
+       On the heap rather than the stack because the list is ten of them. */
+    ScnScriptEntry   *reloaded = NULL;
+    /* And a composite of its own, for the same reason and one more: a
+       manifest is 180 KB and a frame is not the place for it. */
+    ScenarioManifest *composed = NULL;
+    ScnParseReport    rep;
+    ScnLuaCtx         check;
+    lua_State        *L    = NULL;
+    int               n    = 0;
+    int               read = 0;   /* sources in hand, to be given back */
+    int               made = 0;   /* slots made ready, to be emptied */
+    int               base = 0;
+    int               i;
+    bool              ok   = false;
+
+    if (err != NULL && errLen > 0) {
+        err[0] = '\0';
+    }
+    if (h == NULL || h->scripts <= 0) {
+        return false;
+    }
+    n        = h->scripts;
+    from     = (ScnScriptSource *)calloc((size_t)n, sizeof(*from));
+    reloaded = (ScnScriptEntry *)calloc((size_t)n, sizeof(*reloaded));
+    composed = (ScenarioManifest *)calloc(1, sizeof(*composed));
+    if (from == NULL || reloaded == NULL || composed == NULL) {
+        scnFmt(err, errLen, "scenario: out of memory");
+        goto done;
+    }
+
+    /* Every file read again before any of them is checked. The whole list or
+       none of it, the way the attach takes it: a reload that swapped three
+       scripts and stopped at the fourth would leave a round composed of two
+       different edits of the same list. */
+    for (i = 0; i < n; i++) {
+        if (!scnReloadSource(h, i, &from[i], err, errLen)) {
+            goto done;
+        }
+        read = i + 1;
     }
 
     /* Everything below happens in a Lua state of its own, and nothing the
@@ -2887,96 +9250,512 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
        top level ends a round, seats a bot or sends the players a line is
        read for whether it loads and applies none of it. The two rows that
        write what the host is holding are turned away the same way: the
-       manifest a region would be defined in is the local below, which is
-       read over a few lines later, and a state with no timer set refuses a
-       timer rather than leaving the round holding a function in a state this
-       call is about to close. All of it is the one thing a reload promises —
-       that nothing changes until the next round start.
+       manifest a region would be defined in is this call's own slot, which
+       is read over a few lines later, and a state with no timer set refuses
+       a timer rather than leaving the round holding a function in a state
+       this call is about to close. All of it is the one thing a reload
+       promises — that nothing changes until the next round start.
 
        The rows that read are left working: what the check is for is finding
        out whether the file loads, and a file that reads the sim as it loads
        has to be able to. The console command holds the server mutex across
-       the whole reload, so those reads see one picture of the round. */
-    memset(&m, 0, sizeof(m));   /* the chunk can read it before it is read */
+       the whole reload, so those reads see one picture of the round.
+
+       One state for the whole list, which is what a round start gives it
+       too: each script runs in a set of globals of its own, and checking
+       them apart from one another would check something the round never
+       does. */
     check.sim       = h->sim;
-    check.manifest  = &m;
+    check.manifest  = NULL;
+    /* A check runs each file's top level and calls nothing of its own, so no
+       entry is ever running in this state. Written down rather than left to
+       the struct, which is a local here.
+       The position and the file are set per file by the load below, the same
+       as at a round start, so a top level that defines a region says whose it
+       is and lands on the bit the round would give it. Both start as nobody
+       and the load puts them back on its way out. */
+    check.running      = NULL;
+    check.runningOwner = SCN_OWNER_NONE;
+    check.runningFile  = NULL;
+    check.runningEnv   = 0;
     check.timers    = NULL;
     check.checkOnly = true;
     L = scnBootVmWith(&check);
     if (L == NULL) {
         scnFmt(err, errLen, "scenario: no memory for a Lua state");
-        free(src);
-        return false;
+        goto done;
     }
 
     soft[0]     = '\0';
     rep.soft    = soft;
     rep.softLen = sizeof(soft);
     rep.sink    = NULL;
-    if (!scnRunChunk(L, src, srcLen, chunkName, err, errLen) ||
-        !scnReadManifest(L, &m, name, err, errLen, &rep)) {
-        scnCloseVm(L);
-        free(src);
-        return false;
+    for (i = 0; i < n; i++) {
+        char          chunkName[SCN_SCRIPT_PATH_MAX + 2];
+        const char   *name = scnFileNameOf(from[i].script);
+        ScnScriptLoad load;
+
+        if (!scnEntryReady(&reloaded[i])) {
+            scnFmt(err, errLen, "scenario: no memory for the table");
+            goto done;
+        }
+        made = i + 1;
+        /* The slot this script is read into, so a top-level define_region
+           lands in the copy this call will throw away rather than in the
+           round's. */
+        check.manifest = reloaded[i].manifest;
+        scnChunkNameOf(&from[i], name, chunkName, sizeof(chunkName));
+        /* The whole load cycle a round start runs, on this state and this
+           slot: the script's own globals, the package's table into them the
+           same way a round's state gets it, the chunk, the table read back
+           and the router. A packaged script that declares no table of its
+           own is therefore checked as it will be run rather than turned down
+           for a table it never writes, and a reload answers for the whole of
+           what a round start would do with the file rather than for the
+           script alone.
+
+           No hooks: this state is closed a few lines down and dispatches
+           nothing, so what the call settles is that all of it goes
+           through. */
+        memset(&load, 0, sizeof(load));
+        load.src          = from[i].src;
+        load.srcLen       = from[i].srcLen;
+        load.chunkName    = chunkName;
+        load.path         = name;
+        load.pkg          = from[i].fromPackage ? from[i].manifest : NULL;
+        load.ctx          = &check;
+        load.entry        = i;
+        load.resolveHooks = false;
+        if (!scnScriptLoad(L, &reloaded[i], &load, err, errLen, &rep)) {
+            goto done;
+        }
+        if (reloaded[i].manifest->api > SCENARIO_API_VERSION) {
+            scnFmt(err, errLen,
+                   "scenario: %s asks for api %d and this server is api %d — "
+                   "the server is too old to run it",
+                   name, reloaded[i].manifest->api, SCENARIO_API_VERSION);
+            goto done;
+        }
+        /* The refusal the attach makes, made again: a mod is played over
+           whatever map is committed, and a mod edited on disk to say it is
+           bound was written for a map of its own. Without this a reload
+           would seat over any map a table the attach would have turned
+           away. */
+        if (from[i].source == lobbyScenarioMod &&
+            reloaded[i].manifest->bound) {
+            scnFmt(err, errLen,
+                   "scenario: %s is bound to its own map, so it cannot be "
+                   "played over another one", name);
+            goto done;
+        }
     }
-    if (m.api > SCENARIO_API_VERSION) {
-        scnFmt(err, errLen,
-               "scenario: %s asks for api %d and this server is api %d — "
-               "the server is too old to run it",
-               name, m.api, SCENARIO_API_VERSION);
-        scnCloseVm(L);
-        free(src);
-        return false;
+    /* And the list added up, which is where an edit that left the list
+       impossible to add up is caught: a second scenario, a mod that declares
+       a game block, more regions than a round holds. Into this call's own
+       table, because the round that is running is still answering readers
+       out of the host's.
+
+       No conflict log, for the same reason. The host's log describes the
+       list the round is running, and this compose is a trial. The next round
+       start composes the swapped bytes into the host's own table and fills
+       the log there, which is also when the running round's table changes. */
+    base = scnBaseIndex(reloaded, n);
+    if (!scnComposeInto(composed, reloaded, n, base, NULL, err, errLen)) {
+        goto done;
     }
     scnCloseVm(L);
+    L = NULL;
 
-    /* The bytes are replaced and nothing else is. The VM and the table the
-       round is running on stay as they are; the next round start builds
-       both again from what is now here.
+    /* The bytes are replaced, and with them where they came from. The VM and
+       the table the round is running on stay as they are; the next round
+       start builds both again from what is now here.
 
-       Under the lock, because the round start reads these bytes under it and
+       Where they came from goes too, because the answer may have changed
+       since the attach: a loose script dropped beside a packed map is read
+       from a different file, runs under a different chunk name and stops
+       being held against the container's manifest.
+
+       What each entry's source is does not go: a map's own script is still
+       the map's and a pick is still a pick, whichever file the map's own
+       turned out to be read from this time.
+
+       Under the lock, because the round start reads all of this under it and
        a reload arrives on whichever thread the operator's command came in
        on. Only the swap: the reading and the checking above happen on a Lua
        state of their own, and holding the lock across a disk read would stop
        a tick for as long as the file took. */
     scnLockEnter(&h->lock);
-    free(h->src);
-    h->src    = src;
-    h->srcLen = srcLen;
+    for (i = 0; i < n; i++) {
+        free(h->entry[i].src);
+        free(h->entry[i].pkgManifest);
+        h->entry[i].src         = from[i].src;
+        h->entry[i].srcLen      = from[i].srcLen;
+        h->entry[i].pkgManifest = from[i].manifest;
+        from[i].src      = NULL;
+        from[i].manifest = NULL;
+        snprintf(h->entry[i].script, sizeof(h->entry[i].script), "%s",
+                 from[i].script);
+        scnChunkNameOf(&from[i], from[i].script, h->entry[i].chunkName,
+                       sizeof(h->entry[i].chunkName));
+    }
     snprintf(h->lastError, sizeof(h->lastError), "%s", soft);
     scnLockLeave(&h->lock);
-    return true;
+
+    /* The seats as well as the rules. Until now a reload swapped the bytes
+       the next round boots from and stopped there, so a host who edited the
+       script's lobby block saw the same lobby until a map was committed. The
+       template and the name go over again from the table this reload just
+       composed, and the lobby is seated from them, so what was edited is
+       what the lobby shows.
+
+       h->manifest is left alone on purpose: the round that is running keeps
+       the table it started with, and the round start reads the new one from
+       the bytes swapped above. What changes here is what the lobby is told,
+       which is not the running round's to keep. */
+    scnHandLobbyOver(h->sim, composed, h->entry[base].source,
+                     scnFileNameOf(h->entry[base].script));
+    /* And the map's own script's details, which the lobby's details dialog
+       reads and which were packed from the manifest the attach read. Without
+       this the dialog shows the rules and callbacks the file had before the
+       edit until the next map commit. They are packed from this reload's
+       manifest for the same entry scnPublishMapScript packed them from, and
+       they go over whatever the server is doing, like the template above:
+       they describe what the next round will play and not the running one.
+
+       Only the details bytes. The row itself (serverSimSetMapScript) is left
+       alone: it is also the host's list's copy of the row, its file name is
+       what the list and the details request name the script by, and
+       rewriting it here would change the lobby list outside the lobby-only
+       publish below. The row's name and description therefore stay as the
+       commit left them until the next map commit.
+
+       serverSimSetMapScriptDetails does nothing when no map script row is
+       published, so an entry with no row behind it changes nothing. */
+    for (i = 0; i < n; i++) {
+        if (h->entry[i].source == lobbyScenarioMap &&
+            reloaded[i].manifest != NULL) {
+            uint8_t details[SCN_DETAILS_MAX];
+            size_t  len = scnDirDetailsFromManifest(details, sizeof(details),
+                                                    reloaded[i].manifest);
+
+            serverSimSetMapScriptDetails(h->sim, details, len);
+            {
+                uint8_t settings[SCN_SETTINGS_BLOB_MAX];
+                size_t  sLen = scnDirSettingsFromManifest(
+                    settings, sizeof(settings), reloaded[i].manifest);
+
+                serverSimSetMapScriptSettings(h->sim, settings, sLen);
+            }
+            break;
+        }
+    }
+    /* Seated only from the lobby. The template is data either way and goes
+       over above whatever the server is doing, but building the seats and
+       moving the game type onto a round already running would change a game
+       in progress — and the round that is running keeps what it started
+       with, which is the whole of what a reload promises. A reload from the
+       server console mid-round therefore lands its seats at the next return
+       to the lobby, where the reconcile reads the template this just set. */
+    if (serverSimGetState(h->sim) == serverStateLobby) {
+        serverSimScenarioSeatLobby(h->sim);
+        serverSimScenarioApplyLobbyRules(h->sim);
+        serverSimPublishLobbySettings(h->sim);
+    }
+    ok = true;
+
+done:
+    /* One way out for all of it, because a list has a dozen ways to fail and
+       each of them has the same four things to give back. The two loops walk
+       only what was made: a source that was never read and a slot that was
+       never readied are still the zeroes calloc left. */
+    if (L != NULL) {
+        scnCloseVm(L);
+    }
+    for (i = 0; i < made; i++) {
+        scnEntryForget(&reloaded[i]);
+    }
+    for (i = 0; i < read; i++) {
+        scnSourceDrop(&from[i]);
+    }
+    free(composed);
+    free(reloaded);
+    free(from);
+    return ok;
 }
 
-/* The sim's map change, answered. The caller's own pointer is the context
- * because the host it names is the one being replaced here. */
-static void scnMapChanged(void *ctx, ServerSim *sim, const char *mapPath) {
-    ScenarioHost **slot = (ScenarioHost **)ctx;
-    char           err[512];
+/* The row a chooser draws for the committed map's own script, filled from
+ * the manifest the attach just read. The same filler the scenarios directory
+ * uses, so the map's row says what the file would say if it sat in that
+ * directory; what makes it the map's is where the sim keeps it and the bound
+ * flag the setter writes over it.
+ *
+ * The file name and not the path, which is what every other row carries. A
+ * script packed into the map has the map's own name here, because that is the
+ * file an operator would go and look at. */
+static void scnPublishMapScript(ServerSim *sim, const ScenarioHost *h,
+                                int which) {
+    ScnDirEntry row;
+
+    if (h == NULL || which < 0 || which >= h->count ||
+        h->entry[which].manifest == NULL) {
+        serverSimSetMapScript(sim, NULL);
+        return;
+    }
+    scnDirEntryFromManifest(&row, scnFileNameOf(h->entry[which].script),
+                            h->entry[which].manifest);
+    serverSimSetMapScript(sim, &row);
+    /* And its details, which the lobby's details dialog asks for by this
+       row's name. The map's script is in no directory, so this is the only
+       place they can come from. */
+    {
+        uint8_t details[SCN_DETAILS_MAX];
+        size_t  len = scnDirDetailsFromManifest(details, sizeof(details),
+                                                h->entry[which].manifest);
+
+        serverSimSetMapScriptDetails(sim, details, len);
+    }
+    {
+        uint8_t settings[SCN_SETTINGS_BLOB_MAX];
+        size_t  len = scnDirSettingsFromManifest(settings, sizeof(settings),
+                                                 h->entry[which].manifest);
+
+        serverSimSetMapScriptSettings(sim, settings, len);
+    }
+}
+
+/* Which scripts this lobby plays, decided in one place because more than one
+ * thing changes the answer: a map commit and the host editing its list both
+ * come through here.
+ *
+ * The whole list, in this order:
+ *
+ *  1. The committed map's own script, from beside the file or inside it,
+ *     where the host's list names it — at whatever place on that list the
+ *     host put it — or, where the list does not name it, at the front, and
+ *     then only if no script the host picked decides the round.
+ *  2. Every script the host picked, in the order it picked them.
+ *  3. Nothing at all, and the map plays plainly.
+ *
+ * Rule 1 used to be "otherwise", and that is what changed first: a pick of
+ * any kind took the map's own script off, so a scenario map with a mod
+ * picked over it played the mod alone. A mod says of itself that it changes
+ * how the game plays and leaves the win condition alone, so there was never
+ * anything for it to replace — a host who picks one on a scenario map is
+ * asking for both, and the round now composes both.
+ *
+ * What changed after that is where the map's own script lands. It used to be
+ * position 0 always, because a region's identity was its place in the
+ * composed list and moving the map's script would have moved every rectangle
+ * behind it onto a different bit. A region now carries a bit of its own and
+ * the place in the list means nothing to it, so the host may say where the
+ * map's own script goes — and saying so is how a host puts a mod's rules
+ * ahead of the map's scenario instead of behind them.
+ *
+ * The host says it by leaving the map's own row on the list, which is the one
+ * bound row a list may carry. Everything else on the list is a file out of
+ * the scenarios directory; bound means "the map brought this", the command
+ * bus refuses any other bound name, and this is the one place that turns
+ * that row back into a read of the map rather than of the directory.
+ *
+ * A picked scenario still replaces the map's own, which is the half of the
+ * old rule that stays. Two scripts that may each end the round cannot both
+ * play, and between the map's and the one the host asked for by name, the
+ * host is the one who decided. A list that names both is refused by the
+ * compose, which is the one place that sees the map's script and the picks
+ * together. The settings event says which is playing, so nobody has to guess
+ * why the map's own is not.
+ *
+ * Clearing the list is therefore not the same as playing nothing: it is rule
+ * 1, so a map with a script of its own picks it back up and a plain map is
+ * left plain.
+ *
+ * A script that will not load plays nothing rather than the list without it.
+ * The host asked for these scripts together, and a lobby that quietly ran
+ * four of five would leave the host guessing which four; the reason names
+ * the file and is said on the console.
+ *
+ * The caller's own pointer is the context because the host it names is the
+ * one being replaced here. */
+static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
+                              const char *mapPath) {
+    ScnScriptSource src[SCN_SCRIPTS_MAX];
+    char            err[512];
+    int             n       = 0;
+    int             mapAt   = -1;
+    int             picks;
+    int             i;
+    bool            picked  = false;
+    bool            listed  = false;
 
     if (slot == NULL) return;
     scenarioHostDetach(*slot);
     *slot = NULL;
-    /* A map that came from bytes rather than a file has nothing beside it to
-       read, so the map is played plainly and the detach above is the whole
-       of the work. */
-    if (sim == NULL || mapPath == NULL || mapPath[0] == '\0') return;
+    if (sim == NULL) return;
 
     err[0] = '\0';
-    *slot = scenarioHostAttach(sim, mapPath, err, sizeof(err));
+    memset(src, 0, sizeof(src));
+
+    /* Two questions of the rows the lobby recorded, asked before any file is
+       read: whether one of the picks decides the round, and whether the
+       host's list names the map's own script.
+
+       The first is asked of the rows rather than of the files because the row
+       carries the kind its manifest declared, which is the same question the
+       compose would ask after loading it. A row written from a file name
+       alone — a startup flag, a test — leaves the flag false and is therefore
+       taken for a scenario. That is the older behaviour of the two and the
+       safe one: a pick made that way has always replaced the map's own.
+
+       The map's own row is not one of the picks for either purpose. It does
+       not make picked true, because it is not a script the host picked over
+       the map's; and it is the row the loop below reads the map through
+       rather than the directory. bound is what names it, which is a flag the
+       command bus lets no other row on the list carry. */
+    picks = serverSimGetScriptCount(sim);
+    for (i = 0; i < picks; i++) {
+        const ScnDirEntry *row = serverSimGetScript(sim, i);
+        if (row == NULL || row->file[0] == '\0') {
+            continue;
+        }
+        if (row->bound) {
+            listed = true;
+        } else if (!row->keepsWinCondition && !serverSimGetModsOff(sim)) {
+            /* Not while the Mods/Scenario setting is off: the loop below
+               composes no pick then, and a picked scenario that will not play
+               must not take the map's own script off with it. */
+            picked = true;
+        }
+    }
+
+    /* The map's own at the front, for a list that did not say where to put
+       it. That is every list built before the map's row could be on one, and
+       every list a host built without touching that row, so it is the case
+       that has to stay exactly as it was: the map's script first and the
+       picks behind it in the order the host chose.
+
+       Where the list does say — the bound row — nothing happens here and the
+       loop below reads the map at the row's own place. */
+    if (!listed && !picked && mapPath != NULL && mapPath[0] != '\0' &&
+        scnMapSource(sim, mapPath, &src[0], err, sizeof(err))) {
+        mapAt = 0;
+        n     = 1;
+    }
+
+    for (i = 0; i < picks; i++) {
+        const ScnDirEntry *row = serverSimGetScript(sim, i);
+        bool               own;
+
+        if (row == NULL || row->file[0] == '\0') {
+            continue;
+        }
+        own = row->bound;
+        /* Mods/Scenario off, so the round composes none of the host's picks:
+           no mod and no picked scenario. The list itself is left as the host
+           wrote it, so checking the box back on brings the same scripts back
+           in the same order.
+
+           The map's own script is never what this takes off. It is not a
+           pick, whatever place on the list it has been given, and a switch
+           for the scripts a host chose has never decided whether the map
+           plays by its own rules. With no picked scenario composing, picked
+           above stays false and the map's own script comes back at the front
+           where the list does not name it.
+
+           The setting is LST_MODS_OFF, src/bolo/public/wire_limits.h. */
+        if (!own && serverSimGetModsOff(sim)) {
+            continue;
+        }
+        /* Ten is what a round composes and ten is what the lobby list
+           carries, so a map that brings its own script costs the last pick.
+           Said rather than dropped quietly: the host picked it. */
+        if (n >= SCN_SCRIPTS_MAX) {
+            scnSay(NULL, 0,
+                   "scenario: %s is past the %d scripts a round may hold and "
+                   "is not loaded", row->file, (int)SCN_SCRIPTS_MAX);
+            break;
+        }
+        if (own) {
+            /* The map's own script, read off the committed map rather than
+               out of the scenarios directory — the file sits beside the .map
+               or inside it and the directory has never held it.
+
+               A false here is a map with no script of its own, and it is not
+               a failure. It is what a row left over from the last map looks
+               like after a plain map is committed: the row named a script
+               that belonged to a map that is no longer on, so there is
+               nothing to load and the rest of the list plays. Quietly,
+               because scnMapSource has already said anything worth saying —
+               scripts switched off, an upload whose script is not allowed —
+               and a plain map has nothing to report at all.
+
+               mapAt is where it landed and not where the row sat: a mods-off
+               round composes fewer scripts than the list holds, so the two
+               are the same number only when nothing ahead of this was
+               skipped. */
+            if (mapPath == NULL || mapPath[0] == '\0' ||
+                !scnMapSource(sim, mapPath, &src[n], err, sizeof(err))) {
+                continue;
+            }
+            mapAt = n;
+            n++;
+            continue;
+        }
+        if (!scnModSource(serverSimGetScenarioDir(sim),
+                          serverSimGetScriptUploadDir(sim), row->file,
+                          &src[n], err, sizeof(err))) {
+            /* The whole list or none of it, and that holds for the reading
+               as well as the loading: the sources already in hand are given
+               back rather than played without the one that would not read. */
+            int j;
+            for (j = 0; j < n; j++) {
+                scnSourceDrop(&src[j]);
+            }
+            n     = 0;
+            mapAt = -1;
+            break;
+        }
+        n++;
+    }
+
+    if (n > 0) {
+        /* The map path whether or not the map's own script is on the list: it
+           is the map this list was composed for, and a reload asks it again
+           for whichever entries came off it. */
+        *slot = scnAttachFrom(sim, src, n, mapPath, err, sizeof(err));
+    }
+    /* And the row the lobby draws for the map's own script, which is a row
+       only where that script is actually playing: an attach that was refused
+       plays nothing, and a row saying otherwise would have a chooser showing
+       a scenario the round has not got. The publish is the caller's — a map
+       commit and a pick each send the list once, after this returns. */
+    scnPublishMapScript(sim, *slot, (*slot != NULL) ? mapAt : -1);
     /* Said rather than returned: a map commit has nobody to answer, and
-       until this line an operator rotating through a directory had no way
-       of telling which rounds ran a script. The attach names both the
+       without this line an operator rotating through a directory would have
+       no way of telling which rounds ran a script. The attach names both the
        scenario and the file it came from; a refusal and a file that cannot
-       be used arrive in err already said. A map with no script beside it
-       sets neither and stays quiet, which is what keeps a rotation over
-       plain maps as silent as it was. */
+       be used arrive in err already said. A map with no script beside it and
+       an empty list sets neither and stays quiet, which is what keeps a
+       rotation over plain maps as silent as it was. */
     if (*slot != NULL) {
         scnSay(NULL, 0, "scenario: %s loaded from %s",
                scenarioHostName(*slot), scenarioHostScriptPath(*slot));
+        /* And what is behind it, one line for the whole list rather than one
+           each: a host running three mods over a scenario wants to see that
+           it is three, and the line above already named what decides the
+           round. */
+        if (scenarioHostScriptCount(*slot) > 1) {
+            scnSay(NULL, 0, "scenario: %d scripts loaded in all",
+                   scenarioHostScriptCount(*slot));
+        }
     } else if (err[0] != '\0') {
         scnSay(NULL, 0, "%s", err);
     }
+}
+
+/* The sim's map change, answered — and the host's scenario pick, which
+ * arrives the same way because the question it asks is the same one. */
+static void scnMapChanged(void *ctx, ServerSim *sim, const char *mapPath) {
+    scnDecideScenario(sim, (ScenarioHost **)ctx, mapPath);
 }
 
 void scenarioHostFollowMap(ServerSim *sim, ScenarioHost **slot) {
@@ -3012,7 +9791,18 @@ void scenarioHostDetach(ScenarioHost *h) {
         /* And what it was called, so a lobby left without a scenario says
            it has none. */
         serverSimSetScenarioIdentity(h->sim, lobbyScenarioNone, NULL, NULL,
-                                     NULL, false);
+                                     NULL, false, false, false, false);
+        /* And an empty rules set, which is how a client is told the set it
+           was shown has gone. Reached only where a host existed, so a map
+           that never had a scenario publishes nothing at all rather than an
+           empty set saying one has just left. */
+        serverSimSetScenarioRules(h->sim, NULL, 0);
+        /* The recording's description of the scripts is left on the sim.
+           This round ran them, and a host that leaves mid-round detaches
+           before it closes the round's log, so clearing it here would leave
+           that recording with no scripts.json. logStop clears it once it has
+           written it, which is what keeps a later round on a plain map from
+           recording this one's. */
         /* Both channels go with the slot, and an invalid handle is a
            no-op, so this needs no test of its own. */
         serverSimUnregisterSubscriber(h->sim, h->sub);
@@ -3028,7 +9818,10 @@ void scenarioHostDetach(ScenarioHost *h) {
         scnCloseVm(h->L);
     }
     scnLockDestroy(&h->lock);
-    free(h->src);
+    /* And the list itself, both halves of every slot. The references in it
+       belonged to the state just closed; the tables and the scripts' bytes
+       are this host's and are freed here. */
+    scnListForget(h);
     free(h);
 }
 
@@ -3044,8 +9837,12 @@ const char *scenarioHostDescription(const ScenarioHost *h) {
     return (h != NULL) ? h->manifest.description : "";
 }
 
+/* The base entry's file and not the list's first, which is the same thing
+   for every list of one and the right one for the rest: what this answers is
+   where the scenario came from, and the scenario is whichever script decides
+   the round. */
 const char *scenarioHostScriptPath(const ScenarioHost *h) {
-    return (h != NULL) ? h->script : "";
+    return (h != NULL) ? h->entry[h->base].script : "";
 }
 
 const char *scenarioHostLastError(const ScenarioHost *h) {
@@ -3056,6 +9853,48 @@ const ScenarioManifest *scenarioHostManifest(const ScenarioHost *h) {
     return (h != NULL) ? &h->manifest : NULL;
 }
 
+int scenarioHostScriptCount(const ScenarioHost *h) {
+    return (h != NULL) ? h->count : 0;
+}
+
+bool scenarioHostScriptErrors(const ScenarioHost *h, int i, unsigned *errors,
+                              bool *disabled) {
+    if (h == NULL || i < 0 || i >= h->count) {
+        return false;
+    }
+    if (errors != NULL) {
+        *errors = h->entry[i].errors;
+    }
+    if (disabled != NULL) {
+        *disabled = h->entry[i].disabled;
+    }
+    return true;
+}
+
 const ScnEventQueue *scenarioHostEventQueue(const ScenarioHost *h) {
     return (h != NULL) ? &h->events : NULL;
+}
+
+/* How many rows the compose of the running list wrote. Zero for a list whose
+   scripts asked for nothing twice, which is every list of one. */
+int scenarioHostConflictCount(const ScenarioHost *h) {
+    return (h != NULL) ? h->conflicts.count : 0;
+}
+
+/* One row by its place in the record. The order is the order the compose met
+   them in, which is the list's order, so a reader that walks 0 upwards reads
+   the clashes script by script down the list. */
+const ScnComposeConflict *scenarioHostConflict(const ScenarioHost *h, int i) {
+    if (h == NULL || i < 0 || i >= h->conflicts.count) {
+        return NULL;
+    }
+    return &h->conflicts.row[i];
+}
+
+/* Whether the record ran out of room. The rows that are there are still the
+   first SCN_CONFLICTS_MAX clashes the compose met; what this says is that
+   there were more after them, so a reader can say so instead of showing a
+   full list that is not full. */
+bool scenarioHostConflictsOverflowed(const ScenarioHost *h) {
+    return (h != NULL) && h->conflicts.overflowed;
 }

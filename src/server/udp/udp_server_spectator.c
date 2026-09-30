@@ -198,6 +198,12 @@ static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
     case CTRL_LOBBY_BOT_CONFIG:
     case CTRL_LOBBY_BOT_BRAIN:
     case CTRL_LOBBY_BRAIN_LIST:
+    /* The brains' announce lines, which index into the list above. A
+     * spectator reads the lobby's team chat, and a bot's announce line is a
+     * team-chat line whose docs open when it is clicked — without these it
+     * would see the line and find nothing behind it. The docs themselves it
+     * asks for on its own CHANNEL_BULK, the way a player does. */
+    case CTRL_LOBBY_BRAIN_ANNOUNCE:
     case CTRL_PLAYER_JOIN:
     case CTRL_BALANCE_PROPOSAL:
     case CTRL_MAP_SKIP_STATE:
@@ -229,6 +235,35 @@ static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
          * playerNum. */
         allow = (evt->u.chat.destPlayer == 0xFF);
         break;
+    /* A scenario's presentation, for the three that carry a recipient
+     * pair: a viewer sees what is addressed to everyone and nothing
+     * narrower. A spectator belongs to no team and holds no slot, so a
+     * team- or player-addressed one never qualifies — the same reasoning
+     * the CTRL_CHAT arm above uses, and the same answer the per-client
+     * filter in udpClientDeliverControl reaches by comparing. */
+    case CTRL_SCN_PANEL:
+        allow = (evt->u.scnPanel.destTeam == 0 &&
+                 evt->u.scnPanel.destPlayer == 0xFF);
+        break;
+    case CTRL_SCN_ANNOUNCE:
+        allow = (evt->u.scnAnnounce.destTeam == 0 &&
+                 evt->u.scnAnnounce.destPlayer == 0xFF);
+        break;
+    case CTRL_SCN_MARKER:
+        allow = (evt->u.scnMarker.destTeam == 0 &&
+                 evt->u.scnMarker.destPlayer == 0xFF);
+        break;
+    /* Scores are broadcast — a viewer reading a scenario's panel and
+     * markers with a blank scoreboard beside them looks broken, the
+     * same reason CTRL_STATS_SEED is allowed above. */
+    case CTRL_SCN_SCORE:
+    /* And the rules that scenario's manifest sets: the lobby line a viewer
+     * already reads names the scenario, and this is what is behind it. As
+     * public as the name and the description CTRL_LOBBY_SETTINGS carries to
+     * the same viewer, and addressed to nobody. */
+    case CTRL_SCENARIO_RULES:
+        allow = true;
+        break;
     default:
         allow = false;
         break;
@@ -259,9 +294,10 @@ static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
         packU16(msg + 1, (uint16_t)bodyLen);
         if (!channelSend(&sp->channelMux, CHANNEL_CONTROL,
                          msg, (uint16_t)(3 + bodyLen))) {
-            /* Full window: drop and warn. Do NOT disconnect from inside the
-             * deliver callback — there is no deferred-removal path for
-             * spectators, and tearing the slot down here risks reentrancy. */
+            /* Full backlog behind the window: drop and warn. Do NOT disconnect
+             * from inside the deliver callback — there is no deferred-removal
+             * path for spectators, and tearing the slot down here risks
+             * reentrancy. */
             WB_LOG_WARN(WB_LOG_CAT_NET,
                         "spectator control channel overflow for slot %d, dropping event",
                         idx);
@@ -680,16 +716,17 @@ void serverDisconnectSpectator(ServerSim *sim, int s, bool graceful) {
  * spectator-owned storage at seek time (mirroring serverInitMapDownload's copy
  * of the compressed map); the bulk transfer then drains that copy across ticks. */
 
-/* CHANNEL_CONTROL is a 64-deep reliable window; a cold-start countdown that ran
- * for up to specDelayTicks at one send per tick would overflow it. Resend the
- * countdown status no more than once every this many ticks (~2/s at 50 tick/s). */
+/* CHANNEL_CONTROL is a 64-deep reliable window with a bounded backlog behind
+ * it; a cold-start countdown that ran for up to specDelayTicks at one send per
+ * tick would pile up behind it for no reason. Resend the countdown status no
+ * more than once every this many ticks (~2/s at 50 tick/s). */
 #define SPEC_COUNTDOWN_RESEND_TICKS 25u
 
 /* Arm/refresh a spectator's "spectating begins in X" countdown carrying
  * `remaining` ticks. Updates the state every tick (so a reader sees it track
- * toward zero) but only puts a SPEC_CTRL_COUNTDOWN on the 64-deep CHANNEL_CONTROL
- * window on first entry and then once per SPEC_COUNTDOWN_RESEND_TICKS, so a long
- * wait can't overflow it. Shared by the cutover gate (delayed view not yet at the
+ * toward zero) but only puts a SPEC_CTRL_COUNTDOWN on CHANNEL_CONTROL on first
+ * entry and then once per SPEC_COUNTDOWN_RESEND_TICKS, so a long wait can't
+ * fill its window and backlog. Shared by the cutover gate (delayed view not yet at the
  * game) and the cold-start path (ring not yet holding a full delay of history). */
 static void serverSpectatorArmCountdown(SpectatorConn *sp, uint32_t remaining) {
     bool firstEntry = !sp->inCountdown;

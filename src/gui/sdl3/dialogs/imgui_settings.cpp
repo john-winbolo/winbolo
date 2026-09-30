@@ -33,6 +33,9 @@
 #include "imgui_nav_outline.h"
 #include "imgui_controller_prompt.h"
 #include "dialog_footer.h"
+#include "workshop_publish_modal.h"  /* declarations only; the calls are
+                                        desktop-only, like the module */
+#include "imgui_settings_workshop.h" /* the same */
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 #include "../imgui_steam_nav.h"
@@ -43,7 +46,7 @@ extern "C" {
 #include "../../gamefront.h"
 #include "global.h"
 #include "client_enums.h"  /* labelLen */
-#include "upload_policy.h"  /* UploadPolicy — map-upload combo */
+#include "upload_policy.h"  /* UploadPolicy, ScriptUploadPolicy — upload combos */
 #include "view_policy.h"  /* ViewPolicy — hosting visibility rows */
 #include "server_voice_mode.h"  /* ServerVoiceMode — hosting voice combo */
 #include "playername_validate.h"
@@ -54,6 +57,7 @@ extern "C" {
 #include "../tileloader.h"
 #include "../../lang.h"
 #include "../../../steam/steam_wrapper.h"
+#include "../workshop_sync.h"  /* workshopSyncGeneration — the skin picker */
 #include "imgui_settings.h"
 #include "imgui_keyboard.h"
 #include "imgui_keysetup.h"
@@ -95,6 +99,7 @@ extern "C" {
   extern bool labelSelf;
   extern BYTE zoomFactor;
   extern bool soundEffects;
+  extern bool positionalSound;
   extern bool backgroundSound;
   extern bool useSoundKeepalive;
   extern int  soundVolume;
@@ -113,6 +118,7 @@ extern "C" {
   void windowShowPillLabels_toggle(struct ClientSim *cs);
   void windowShowBaseLabels_toggle(struct ClientSim *cs);
   void windowSoundEffects_toggle(void);
+  void windowPositionalSound_toggle(void);
   void windowBackgroundSoundChange_toggle(void);
   void windowSoundKeepalive(void);
   void windowSetSoundVolume(int pct);
@@ -534,107 +540,27 @@ static bool s_skinPopupWasOpen = false;
    iOS but not Emscripten, hence both halves. */
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
 
-/* Publish-to-Workshop state.  A publish runs across frames — the Steam calls
-   behind it finish asynchronously — so the modal keeps what it needs between
-   them.  File scope because both settings shells share the tab renderer. */
-static char     s_pubPath[SKIN_PATH_MAX];  /* the skin on disk being sent */
-static char     s_pubTitle[129];           /* the SDK's title limit */
-static char     s_pubDesc[8000];           /* the SDK's description limit */
-static uint64_t s_pubExistingId = 0;       /* WorkshopId out of the skin.ini */
-static uint64_t s_pubAuthor     = 0;       /* WorkshopAuthor out of the same */
-static bool     s_pubAsNew      = true;    /* make an item vs update that id */
-static bool     s_pubStarted    = false;   /* a begin said yes: poll it */
-static uint64_t s_pubDoneId     = 0;       /* the item Steam published */
-static bool     s_pubNeedsLegal = false;   /* the author still has to accept
-                                              the Workshop agreement */
-static bool     s_pubFailed     = false;   /* the begin or the poll said no */
-static bool     s_pubInFlight   = false;   /* the last poll said in progress:
-                                              Steam is still reading the
-                                              upload folder */
-static bool     s_pubPopupOpen  = false;   /* the modal drew last frame, so a
-                                              frame without it is an exit */
+/* The skin the Publish button last opened the window on.  A publish still
+   uploading keeps the window on its own skin (workshopPublishPrepare refuses
+   another), so this is also the skin a finished publish belongs to.  The
+   context both callbacks below are handed. */
+static char s_skinPublishPath[SKIN_PATH_MAX];
 
-/* <prefpath>workshop_upload is the folder handed to Steam as the item's
-   content; the preview PNG goes beside it, not in it, or it would be uploaded
-   as part of the skin.  SDL_GetPrefPath already ends in a separator. */
-static bool skinPublishPaths(char *folder, size_t folderLen,
-                             char *preview, size_t previewLen) {
-    const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
-    if (prefDir == nullptr) return false;
-    SDL_snprintf(folder, folderLen, "%sworkshop_upload", prefDir);
-    SDL_snprintf(preview, previewLen, "%sworkshop_preview.png", prefDir);
-    SDL_free((void *)prefDir);
-    return true;
-}
-
-/* Empties the upload folder and removes it.  Steam uploads everything the
-   folder holds, so anything an earlier publish left there would go up with
-   this one. */
-static void skinPublishClearFolder(const char *folder) {
-    int    count = 0;
-    char **list = SDL_GlobDirectory(folder, "*", 0, &count);
-    if (list != nullptr) {
-        for (int i = 0; i < count; i++) {
-            char full[SKIN_PATH_MAX * 2];
-            if (list[i] == nullptr || list[i][0] == '\0') continue;
-            SDL_snprintf(full, sizeof(full), "%s/%s", folder, list[i]);
-            SDL_RemovePath(full);
-        }
-        SDL_free(list);
-    }
-    SDL_RemovePath(folder);
-}
-
-/* Copies a skin archive into the upload folder through memory: the pinned SDL
-   has no file-copy call, and a skin is small enough to hold. */
-static bool skinPublishCopyFile(const char *from, const char *to) {
-    size_t        len = 0;
-    void         *data = SDL_LoadFile(from, &len);
-    SDL_IOStream *io;
-    bool          ok;
-
-    if (data == nullptr) return false;
-    io = SDL_IOFromFile(to, "wb");
-    if (io == nullptr) {
-        SDL_free(data);
-        return false;
-    }
-    ok = (len == 0 || SDL_WriteIO(io, data, len) == len);
-    if (!SDL_CloseIO(io)) ok = false;
-    SDL_free(data);
-    if (!ok) SDL_RemovePath(to);
-    return ok;
-}
-
-/* The scratch the upload was built from, once the modal is done with it. */
-static void skinPublishCleanup(void) {
-    char folder[SKIN_PATH_MAX];
-    char preview[SKIN_PATH_MAX];
-
-    if (!skinPublishPaths(folder, sizeof(folder), preview, sizeof(preview))) {
-        return;
-    }
-    skinPublishClearFolder(folder);
-    SDL_RemovePath(preview);
-}
+/* The skin id the Publish button last opened the window on, beside its
+   path. The button only has the picked skin's id before it is pressed, so
+   this says whether s_skinPublishPath is the picked skin's path. */
+static char s_skinPublishReqId[SKIN_ID_MAX];
 
 /* Builds the item's content — one .wsf, whichever shape the skin has on disk
-   — writes a preview beside it and starts the upload.  Returns what
-   steam_workshop_publish_begin said, so the caller knows whether polling
-   means anything. */
-static bool skinPublishStart(void) {
-    char         folder[SKIN_PATH_MAX];
-    char         preview[SKIN_PATH_MAX];
+   — and writes a preview where the window asks for it. */
+static bool skinPublishBuild(void *ctx, const char *folder,
+                             char *previewOut, size_t previewLen) {
+    const char  *path = (const char *)ctx;
     char         archive[SKIN_PATH_MAX * 2];
     char         name[SKIN_ID_MAX];
-    const char  *previewArg = nullptr;
     SDL_PathInfo info;
 
-    if (!skinPublishPaths(folder, sizeof(folder), preview, sizeof(preview))) {
-        return false;
-    }
-    skinPublishClearFolder(folder);
-    if (!SDL_CreateDirectory(folder)) return false;
+    (void)previewLen;
 
     /* The archive is named after the skin, which is the id's text after the
        ':' — the same name the scan would give it. */
@@ -650,30 +576,42 @@ static bool skinPublishStart(void) {
     }
     SDL_snprintf(archive, sizeof(archive), "%s/%s.wsf", folder, name);
 
-    if (!SDL_GetPathInfo(s_pubPath, &info)) return false;
+    if (!SDL_GetPathInfo(path, &info)) return false;
     if (info.type == SDL_PATHTYPE_DIRECTORY) {
         /* A folder holding one archive is read as that archive, so the item
            gets the archive itself rather than a zip wrapping it. */
         char inner[SKIN_PATH_MAX];
-        if (skinSourceResolveArchive(s_pubPath, inner, sizeof(inner))) {
-            if (!skinPublishCopyFile(inner, archive)) return false;
-        } else if (!skinSourceZipDirectory(s_pubPath, archive, nullptr)) {
+        if (skinSourceResolveArchive(path, inner, sizeof(inner))) {
+            if (!workshopPublishCopyFile(inner, archive)) return false;
+        } else if (!skinSourceZipDirectory(path, archive, nullptr)) {
             return false;
         }
-    } else if (!skinPublishCopyFile(s_pubPath, archive)) {
+    } else if (!workshopPublishCopyFile(path, archive)) {
         return false;
     }
 
     /* A preview that will not render is not a reason to stop: the item
        publishes without one and Steam shows its own placeholder. */
-    if (skinWritePreviewPng(skinGetActiveSource(), preview)) {
-        previewArg = preview;
+    if (!skinWritePreviewPng(skinGetActiveSource(), previewOut)) {
+        previewOut[0] = '\0';
     }
-
-    return steam_workshop_publish_begin(folder, s_pubTitle, s_pubDesc,
-                                        previewArg,
-                                        s_pubAsNew ? 0 : s_pubExistingId);
+    return true;
 }
+
+/* The published id and author go into the skin's skin.ini. */
+static bool skinPublishRecordId(void *ctx, uint64_t id, uint64_t author) {
+    return skinSetWorkshopId((const char *)ctx, id, author);
+}
+
+static const WorkshopPublishSpec s_skinPublishSpec = {
+    "##SkinPublish",
+    STR_DLGSKIN_PUBLISH_HEADING,
+    STR_DLGSKIN_PUBLISH_UPDATE,
+    "Skin",
+    skinPublishBuild,
+    skinPublishRecordId,
+    s_skinPublishPath,
+};
 #endif  /* !BOLO_MOBILE && !__EMSCRIPTEN__ */
 
 #if defined(WINBOLO_VOICE)
@@ -893,6 +831,8 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
     }
 
 #ifndef __ANDROID__
+    /* The web canvas follows the page, so it has no window size to pick. */
+#ifndef __EMSCRIPTEN__
     /* ---- Window size — desktop, in-game only ---- */
     if (ctx->inGame && !uiModeIsTablet()) {
         const char *zoomLabels[] = {
@@ -920,6 +860,7 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
             ImGui::EndCombo();
         }
     }
+#endif
 
     /* ---- UI scale — desktop, in-game only, not Steam Deck ---- */
     if (ctx->inGame && !uiModeIsTablet() && !uiModeIsSteamDeck()) {
@@ -1021,6 +962,36 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
         if (ImGui::IsItemDeactivatedAfterEdit()) gameFrontSaveCurrentPrefs();
     }
 #endif
+
+    /* ---- The simplified view ---- Both surfaces it covers are desktop and
+       Deck, the same as the map view settings above, so it follows their
+       tablet test.  Each tick is applied and written as it is clicked: the
+       views read the setting every frame, so the change shows at once. */
+    if (!uiModeIsTablet()) {
+        ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_MAPVIEW));
+
+        bool simple = gfxGetSimplifiedZoomOut();
+        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_SIMPLEZOOM), &simple)) {
+            gfxSetSimplifiedZoomOut(simple);
+            gameFrontSaveCurrentPrefs();
+        }
+        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_SIMPLEZOOM_TIP));
+
+        /* Indented and disabled under its parent: with the simplified view
+           off there is nothing for it to hold back, and the tick would read
+           as a second, independent switch. */
+        ImGui::Indent();
+        ImGui::BeginDisabled(!simple);
+        bool overviewOnly = gfxGetSimplifiedOverviewOnly();
+        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW),
+                            &overviewOnly)) {
+            gfxSetSimplifiedOverviewOnly(overviewOnly);
+            gameFrontSaveCurrentPrefs();
+        }
+        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW_TIP));
+        ImGui::EndDisabled();
+        ImGui::Unindent();
+    }
 #endif
 
     /* ---- Skin ---- */
@@ -1058,8 +1029,18 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
         }
 
         /* A Workshop download finishing while the picker is open leaves the
-           rows stale.  Drained every frame so the flag doesn't sit set. */
-        const bool workshopChanged = steam_workshop_consume_installed_event();
+           rows stale.  The sync consumes Steam's installed edge and moves its
+           generation on; a generation this block has not seen yet is that
+           edge. */
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+        static uint32_t s_workshopGenSeen = 0;
+        const uint32_t  workshopGen       = workshopSyncGeneration();
+        const bool      workshopChanged   = workshopGen != s_workshopGenSeen;
+        s_workshopGenSeen = workshopGen;
+#else
+        /* No Workshop on these builds: the stub's edge never fired here. */
+        const bool workshopChanged = false;
+#endif
 
         /* The item that just finished downloading may be the one the player
            picked before it existed locally.  activeId is a local copy, so this
@@ -1245,14 +1226,9 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
         imguiHandOnHover();
 
         /* Runtime check, not an #ifdef: the stub build answers false, so the
-           button simply isn't there when Steam isn't running. */
+           button simply isn't there when Steam isn't running. Browsing the
+           Workshop is on the Steam Workshop tab, beside what it installs. */
         if (steam_workshop_available()) {
-            ImGui::SameLine();
-            if (ImGui::Button(langGetText(STR_DLGSKIN_BROWSE_WORKSHOP))) {
-                steam_workshop_open_browse_page();
-            }
-            imguiHandOnHover();
-
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
             /* Publishing is for a skin the player put in their own folder and
                that actually loaded: the built-in art has no files to send, a
@@ -1263,9 +1239,18 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
                 reqId != nullptr && reqId[0] != '\0' &&
                 skinKindFromId(reqId) == SKIN_KIND_USER &&
                 skinGetActiveSource() != nullptr;
+            /* Another item still uploading refuses this skin. The picked
+               skin's path is known here only when it is the skin the window
+               last opened on; for any other skin "" is asked, which is busy
+               while any upload runs. */
+            const bool  publishBusy =
+                canPublish &&
+                workshopPublishBusyFor(strcmp(reqId, s_skinPublishReqId) == 0
+                                           ? s_skinPublishPath
+                                           : "");
 
             ImGui::SameLine();
-            ImGui::BeginDisabled(!canPublish);
+            ImGui::BeginDisabled(!canPublish || publishBusy);
             if (ImGui::Button(langGetText(STR_DLGSKIN_PUBLISH))) {
                 /* The picker's rows only live while its combo is open, so the
                    skin's path on disk comes from a scan made here. */
@@ -1286,38 +1271,25 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
                 /* No path is a skin that went away since it was picked; there
                    is nothing to publish, so the modal does not open. */
                 if (path[0] != '\0') {
-                    /* Reopening on the skin whose publish is still running
-                       picks the live state back up rather than restarting it;
-                       any other skin starts from its own ini. */
-                    const bool resume =
-                        s_pubStarted && strcmp(s_pubPath, path) == 0;
-                    SDL_strlcpy(s_pubPath, path, sizeof(s_pubPath));
-                    if (!resume) {
-                        SkinInfo info;
-                        skinSourceReadIni(skinGetActiveSource(), &info);
-                        const char *name = info.name;
-                        if (name[0] == '\0') {
-                            const char *colon = strchr(reqId, ':');
-                            name = (colon != nullptr) ? colon + 1 : reqId;
-                        }
-                        SDL_strlcpy(s_pubTitle, name, sizeof(s_pubTitle));
-                        SDL_strlcpy(s_pubDesc, info.notes, sizeof(s_pubDesc));
-                        s_pubExistingId = info.workshopId;
-                        s_pubAuthor     = info.workshopAuthor;
-                        /* An update is offered only when the recorded
-                           publisher is this account.  Steam refuses an update
-                           to somebody else's item, and an unknown publisher is
-                           no proof the item is ours — publishing a second item
-                           by mistake is the recoverable error. */
-                        s_pubAsNew = !(s_pubExistingId != 0 &&
-                                       s_pubAuthor != 0 &&
-                                       s_pubAuthor == steam_get_steam_id());
-                        s_pubStarted    = false;
-                        s_pubDoneId     = 0;
-                        s_pubNeedsLegal = false;
-                        s_pubFailed     = false;
+                    /* The window takes these only for a fresh start; on the
+                       skin whose publish is still running it keeps the live
+                       state instead. */
+                    SkinInfo info;
+                    skinSourceReadIni(skinGetActiveSource(), &info);
+                    const char *name = info.name;
+                    if (name[0] == '\0') {
+                        const char *colon = strchr(reqId, ':');
+                        name = (colon != nullptr) ? colon + 1 : reqId;
                     }
-                    ImGui::OpenPopup("##SkinPublish");
+                    if (workshopPublishPrepare(path, name, info.notes,
+                                               info.workshopId,
+                                               info.workshopAuthor)) {
+                        SDL_strlcpy(s_skinPublishPath, path,
+                                    sizeof(s_skinPublishPath));
+                        SDL_strlcpy(s_skinPublishReqId, reqId,
+                                    sizeof(s_skinPublishReqId));
+                        ImGui::OpenPopup(s_skinPublishSpec.popupId);
+                    }
                 }
             }
             ImGui::EndDisabled();
@@ -1325,152 +1297,16 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
             /* A disabled item is not hovered as far as ImGui is concerned
                unless it is asked for, and the reason it is disabled is exactly
                what the player needs to read. */
-            if (!canPublish &&
+            if ((!canPublish || publishBusy) &&
                 ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled |
                                      ImGuiHoveredFlags_ForTooltip)) {
                 ImGui::SetTooltip("%s",
-                                  langGetText(STR_DLGSKIN_PUBLISH_NEEDUSER));
+                                  langGetText(canPublish
+                                                  ? STR_DLGSKIN_PUBLISH_WORKING
+                                                  : STR_DLGSKIN_PUBLISH_NEEDUSER));
             }
 
-            if (ImGui::BeginPopupModal("##SkinPublish", nullptr,
-                                       ImGuiWindowFlags_AlwaysAutoResize)) {
-                const float fieldW = ImGui::GetFontSize() * 20.0f;
-                s_pubPopupOpen = true;
-
-                ImGui::TextUnformatted(
-                    langGetText(STR_DLGSKIN_PUBLISH_HEADING));
-                ImGui::Separator();
-
-                ImGui::TextUnformatted(langGetText(STR_DLGSKIN_PUBLISH_NAME));
-                ImGui::SetNextItemWidth(fieldW);
-                ImGui::InputText("##pubtitle", s_pubTitle, sizeof(s_pubTitle));
-                ImGui::TextUnformatted(langGetText(STR_DLGSKIN_PUBLISH_DESC));
-                ImGui::InputTextMultiline("##pubdesc", s_pubDesc,
-                                          sizeof(s_pubDesc),
-                                          ImVec2(fieldW,
-                                                 ImGui::GetFontSize() * 6.0f));
-
-                /* Only a skin that already carries an id has an item to
-                   update, so the choice is not offered otherwise. */
-                if (s_pubExistingId != 0) {
-                    if (ImGui::RadioButton(
-                            langGetText(STR_DLGSKIN_PUBLISH_UPDATE),
-                            !s_pubAsNew)) {
-                        s_pubAsNew = false;
-                    }
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("#%llu",
-                                        (unsigned long long)s_pubExistingId);
-                    if (ImGui::RadioButton(
-                            langGetText(STR_DLGSKIN_PUBLISH_NEW), s_pubAsNew)) {
-                        s_pubAsNew = true;
-                    }
-                }
-
-                /* The poll answers -1 with nothing in flight, so it is only
-                   asked after a begin that said yes. */
-                int state = 0;
-                if (s_pubStarted) {
-                    uint64_t doneId = 0;
-                    bool     needsLegal = false;
-                    state = steam_workshop_publish_poll(&doneId, &needsLegal);
-                    if (state == 1 && doneId != 0 && s_pubDoneId == 0) {
-                        s_pubDoneId     = doneId;
-                        s_pubNeedsLegal = needsLegal;
-                        /* Written back once, so the next publish of this skin
-                           updates this item instead of making another, and
-                           knows the item is this account's. The modal takes
-                           the new pair from here rather than from the
-                           source's cached ini, which predates the write.
-                           When the write fails the skin still carries no id,
-                           so the modal keeps offering publish-as-new, which
-                           is what the file on disk will do next time too. */
-                        if (skinSetWorkshopId(s_pubPath, doneId,
-                                              steam_get_steam_id())) {
-                            s_pubExistingId = doneId;
-                            s_pubAuthor     = steam_get_steam_id();
-                            s_pubAsNew      = false;
-                        } else {
-                            WB_LOG_WARN(WB_LOG_CAT_ASSET,
-                                        "imgui_settings: published %s as "
-                                        "Workshop item %llu but could not "
-                                        "record the id in its skin.ini; the "
-                                        "next publish will make a new item",
-                                        s_pubPath,
-                                        (unsigned long long)doneId);
-                        }
-                    } else if (state == -1) {
-                        s_pubFailed = true;
-                    }
-                }
-                s_pubInFlight = (s_pubStarted && state == 0);
-
-                ImGui::Spacing();
-                if (s_pubStarted && state == 0) {
-                    ImGui::TextUnformatted(
-                        langGetText(STR_DLGSKIN_PUBLISH_WORKING));
-                    uint64_t bytesDone = 0, bytesTotal = 0;
-                    if (steam_workshop_publish_progress(&bytesDone,
-                                                        &bytesTotal) != 0 &&
-                        bytesTotal > 0) {
-                        ImGui::ProgressBar((float)((double)bytesDone /
-                                                   (double)bytesTotal),
-                                           ImVec2(fieldW, 0.0f));
-                    }
-                } else if (s_pubStarted && state == 1) {
-                    ImGui::TextUnformatted(
-                        langGetText(STR_DLGSKIN_PUBLISH_DONE));
-                    if (s_pubDoneId != 0) {
-                        if (ImGui::Button(
-                                langGetText(STR_DLGSKIN_PUBLISH_OPENITEM))) {
-                            steam_workshop_open_item_page(s_pubDoneId);
-                        }
-                        imguiHandOnHover();
-                    }
-                    if (s_pubNeedsLegal) {
-                        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s",
-                                           langGetText(
-                                               STR_DLGSKIN_PUBLISH_LEGAL));
-                    }
-                } else if (s_pubFailed) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s",
-                                       langGetText(STR_DLGSKIN_PUBLISH_FAILED));
-                }
-
-                ImGui::Separator();
-                ImGui::BeginDisabled(s_pubStarted && state == 0);
-                if (ImGui::Button(langGetText(STR_DLGSKIN_PUBLISH_GO))) {
-                    s_pubDoneId     = 0;
-                    s_pubNeedsLegal = false;
-                    s_pubFailed     = false;
-                    s_pubStarted    = skinPublishStart();
-                    if (!s_pubStarted) s_pubFailed = true;
-                }
-                ImGui::EndDisabled();
-                imguiHandOnHover();
-                ImGui::SameLine();
-                if (ImGui::Button(langGetText(STR_CLOSE))) {
-                    /* Closing does not stop an upload Steam has already been
-                       given — the UGC API has no cancel — so reopening shows
-                       it still running.  Steam reads the content folder after
-                       the update is submitted, so the scratch only goes once
-                       the upload is over; one abandoned mid-upload is cleared
-                       by the next publish, which empties the folder before it
-                       builds. */
-                    if (!s_pubInFlight) skinPublishCleanup();
-                    ImGui::CloseCurrentPopup();
-                }
-                imguiHandOnHover();
-                ImGui::EndPopup();
-            } else if (s_pubPopupOpen) {
-                /* The modal is gone.  Usually the frame after the Close button
-                   ran, where the scratch is already dealt with, but the
-                   settings window can also be closed out from under an open
-                   modal — same rule, so no exit deletes files Steam is still
-                   reading. */
-                s_pubPopupOpen = false;
-                if (!s_pubInFlight) skinPublishCleanup();
-            }
+            workshopPublishDraw(&s_skinPublishSpec);
 #endif  /* !BOLO_MOBILE && !__EMSCRIPTEN__ */
         }
 
@@ -1620,6 +1456,61 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
             }
             imguiHelpTooltip(langGetText(STR_DLGSKIN_TEXFILTER_TIP));
         }
+
+        /* Fog of war style.  Read where each view washes its hidden squares,
+           so a pick shows on the next frame with no rebuild of anything.  Not
+           greyed by what the server allows: the wash is this client painting
+           ground it is already being sent, and the pick changes the colour of
+           that paint and nothing else. */
+        {
+            const char *fogLabels[FOG_STYLE_COUNT] = {
+                langGetText(STR_DLGSKIN_FOGSTYLE_GREY),
+                langGetText(STR_DLGSKIN_FOGSTYLE_DARK),
+                langGetText(STR_DLGSKIN_FOGSTYLE_DARKROADS),
+                langGetText(STR_DLGSKIN_FOGSTYLE_NONE),
+            };
+            const char *fogTips[FOG_STYLE_COUNT] = {
+                langGetText(STR_DLGSKIN_FOGSTYLE_GREY_TIP),
+                langGetText(STR_DLGSKIN_FOGSTYLE_DARK_TIP),
+                langGetText(STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP),
+                langGetText(STR_DLGSKIN_FOGSTYLE_NONE_TIP),
+            };
+            int fsIdx = (int)gfxGetFogStyle();
+            if (fsIdx < 0 || fsIdx >= FOG_STYLE_COUNT) fsIdx = 0;
+
+            ImGui::TextUnformatted(langGetText(STR_DLGSKIN_FOGSTYLE));
+            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10.0f);
+            if (ImGui::BeginCombo("##fogstyle", fogLabels[fsIdx])) {
+                for (int i = 0; i < FOG_STYLE_COUNT; i++) {
+                    bool sel = (fsIdx == i);
+                    if (ImGui::Selectable(fogLabels[i], sel) && i != fsIdx) {
+                        gfxSetFogStyle((FogStyle)i);
+                        gameFrontSaveCurrentPrefs();
+                    }
+                    /* One line each, on the entry it is about, so the list
+                       says what it is offering without a tip per row in the
+                       closed control. */
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+                        ImGui::SetTooltip("%s", fogTips[i]);
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            imguiHelpTooltip(langGetText(STR_DLGSKIN_FOGSTYLE_TIP));
+
+            /* None is the one entry a player could read as switching fog of
+               war off, so it says plainly that it has not.  Read back from
+               the store rather than from fsIdx above, which was taken before
+               the combo and is a frame behind a pick made in it.  Wrapped and
+               dimmed the way the other notes in this dialog are. */
+            if (gfxGetFogStyle() == FOG_STYLE_NONE) {
+                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() +
+                                       ImGui::GetFontSize() * 20.0f);
+                ImGui::TextDisabled(
+                    "%s", langGetText(STR_DLGSKIN_FOGSTYLE_NONE_NOTE));
+                ImGui::PopTextWrapPos();
+            }
+        }
     }
 }
 
@@ -1639,6 +1530,12 @@ extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
         bool se = (bool)soundEffects;
         if (ImGui::Checkbox(langGetText(STR_MENU_SOUND_EFFECTS), &se)) windowSoundEffects_toggle();
     }
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+    {
+        bool ps = (bool)positionalSound;
+        if (ImGui::Checkbox(langGetText(STR_DLGLOBBY_POSITIONAL_SOUND_CB), &ps)) windowPositionalSound_toggle();
+    }
+#endif
     if (!uiModeIsTablet()) {
         bool bgs = (bool)backgroundSound;
         if (ImGui::Checkbox(langGetText(STR_MENU_BACKGROUND_SOUND), &bgs)) windowBackgroundSoundChange_toggle();
@@ -1889,6 +1786,38 @@ static void SDLCALL hostingUploadDirDialogCallback(void *userdata,
 static char s_hostingLogPickedDir[FILENAME_MAX];
 static bool s_hostingLogDirPicked = false;
 
+/* And again for the Scenario Directory field, on statics of its own for the
+ * same reason. */
+static char s_hostingScnPickedDir[FILENAME_MAX];
+static bool s_hostingScnDirPicked = false;
+
+static void SDLCALL hostingScenarioDirDialogCallback(void *userdata,
+                                                     const char *const *filelist,
+                                                     int filter) {
+    (void)userdata;
+    (void)filter;
+    if (filelist && filelist[0]) {
+        SDL_strlcpy(s_hostingScnPickedDir, filelist[0], FILENAME_MAX);
+        s_hostingScnDirPicked = true;
+    }
+}
+
+/* And for the Script Upload Directory field, on statics of its own for the
+ * same reason. */
+static char s_hostingScriptPickedDir[FILENAME_MAX];
+static bool s_hostingScriptDirPicked = false;
+
+static void SDLCALL hostingScriptUploadDirDialogCallback(void *userdata,
+                                                         const char *const *filelist,
+                                                         int filter) {
+    (void)userdata;
+    (void)filter;
+    if (filelist && filelist[0]) {
+        SDL_strlcpy(s_hostingScriptPickedDir, filelist[0], FILENAME_MAX);
+        s_hostingScriptDirPicked = true;
+    }
+}
+
 static void SDLCALL hostingLogDirDialogCallback(void *userdata,
                                                 const char *const *filelist,
                                                 int filter) {
@@ -1936,6 +1865,16 @@ static void hostingViewRow(const char *id, langid label, int *policy,
     ImGui::PopID();
 }
 
+/* The label to the left of a value field, as the Display tab draws its
+ * rows: text first, then the widget on the same line under a hidden "##"
+ * label. ImGui's own label goes to the right of a widget, which is where a
+ * checkbox keeps it and where a number, a path or a choice should not. */
+static void hostingLabel(langid label) {
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(langGetText(label));
+    ImGui::SameLine();
+}
+
 /* -------------------------------------------------------
  * Hosting tab — settings for the server the client spins up
  * when hosting from the game finder.  Shared by the pre-game
@@ -1947,7 +1886,8 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
     /* ---- Port ---- */
     {
         int port = gameFrontHostingPort;
-        if (ImGui::InputInt(langGetText(STR_DLGSETTINGS_HOSTING_PORT), &port)) {
+        hostingLabel(STR_DLGSETTINGS_HOSTING_PORT);
+        if (ImGui::InputInt("##hostingport", &port)) {
             if (port < 1024)  port = 1024;
             if (port > 65535) port = 65535;
             gameFrontSetHostingPort((unsigned short)port);
@@ -1964,7 +1904,8 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
          * preserved so toggling back on restores the previous number. */
         ImGui::BeginDisabled(!allow);
         int maxSpec = gameFrontHostingMaxSpec;
-        if (ImGui::InputInt(langGetText(STR_DLGSETTINGS_HOSTING_MAXSPEC), &maxSpec)) {
+        hostingLabel(STR_DLGSETTINGS_HOSTING_MAXSPEC);
+        if (ImGui::InputInt("##hostingmaxspec", &maxSpec)) {
             if (maxSpec < 1)  maxSpec = 1;
             if (maxSpec > 32) maxSpec = 32;
             gameFrontSetHostingMaxSpec(maxSpec);
@@ -1979,6 +1920,144 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
                             &runScripts)) {
             gameFrontSetHostingScripts(runScripts);
         }
+        /* The narrower choice under it: what this host does with scripts
+         * players send it. Off refuses them, and a map a player uploaded
+         * here plays plainly even when it carries a scenario inside the .map
+         * file; Allow keeps them for the session; Allow and keep saves them
+         * to the directory below. Greyed while scripts are off altogether,
+         * which already turns them down; the value is kept so switching
+         * scripts back on restores what the host chose. */
+        ImGui::BeginDisabled(!runScripts);
+        {
+            /* Combo display order is Off / Allow / Persist, but the enum
+             * values are not in that order (ALLOW=0, OFF=1, PERSIST=2) — map
+             * explicitly. */
+            static const int kScriptPolicyByIndex[3] = {
+                SCRIPT_UPLOAD_OFF, SCRIPT_UPLOAD_ALLOW, SCRIPT_UPLOAD_PERSIST
+            };
+            const char *scriptPolicyItems[3] = {
+                langGetText(STR_DLGSETTINGS_HOSTING_UPLOAD_OFF),
+                langGetText(STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_SESSION),
+                langGetText(STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_KEEP)
+            };
+            int scriptIdx = 1;  /* default Allow */
+            for (int i = 0; i < 3; ++i) {
+                if (kScriptPolicyByIndex[i] == gameFrontHostingScriptUploadPolicy) {
+                    scriptIdx = i;
+                    break;
+                }
+            }
+            hostingLabel(STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADS);
+            if (ImGui::Combo("##hostingscriptuploads", &scriptIdx,
+                             scriptPolicyItems, 3)) {
+                gameFrontSetHostingScriptUploadPolicy(
+                    kScriptPolicyByIndex[scriptIdx]);
+            }
+
+            /* Directory and caps only bite on Persist (Off/Allow never keep
+             * a script past the session). */
+            if (gameFrontHostingScriptUploadPolicy == SCRIPT_UPLOAD_PERSIST) {
+                static char scriptDirBuf[FILENAME_MAX];
+                static bool scriptDirEditing = false;
+                if (s_hostingScriptDirPicked) {
+                    gameFrontSetHostingScriptUploadDir(s_hostingScriptPickedDir);
+                    s_hostingScriptDirPicked = false;
+                }
+                if (!scriptDirEditing) {
+                    SDL_strlcpy(scriptDirBuf, gameFrontHostingScriptUploadDir,
+                                sizeof(scriptDirBuf));
+                }
+                hostingLabel(STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADDIR);
+                bool scriptCommit = ImGui::InputText(
+                    "##hostingscriptuploaddirfield",
+                    scriptDirBuf, sizeof(scriptDirBuf),
+                    ImGuiInputTextFlags_EnterReturnsTrue);
+                scriptDirEditing = ImGui::IsItemActive();
+                if (scriptCommit || ImGui::IsItemDeactivatedAfterEdit()) {
+                    gameFrontSetHostingScriptUploadDir(scriptDirBuf);
+                }
+                /* Distinct ID from the other Browse buttons, which share the
+                 * same label and can be on screen at the same time. */
+                ImGui::PushID("hostingscriptuploaddir");
+                if (ImGui::Button(langGetText(STR_MAPEDIT_BROWSE))) {
+                    SDL_Window *win = sdl3DrawGetWindow();
+                    const char *loc = gameFrontHostingScriptUploadDir[0]
+                                          ? gameFrontHostingScriptUploadDir
+                                          : NULL;
+                    SDL_ShowOpenFolderDialog(hostingScriptUploadDirDialogCallback,
+                                             NULL, win, loc, false);
+                }
+                ImGui::PopID();
+
+                int scriptMaxFiles = gameFrontHostingScriptUploadMaxFiles;
+                hostingLabel(STR_DLGSETTINGS_HOSTING_UPLOAD_MAXFILES);
+                if (ImGui::InputInt("##hostingscriptuploadmaxfiles",
+                                    &scriptMaxFiles)) {
+                    if (scriptMaxFiles < 1)   scriptMaxFiles = 1;
+                    if (scriptMaxFiles > 255) scriptMaxFiles = 255;
+                    gameFrontSetHostingScriptUploadMaxFiles(scriptMaxFiles);
+                }
+                int scriptMaxStorage = gameFrontHostingScriptUploadMaxStorage;
+                hostingLabel(STR_DLGSETTINGS_HOSTING_UPLOAD_MAXSTORAGE);
+                if (ImGui::InputInt("##hostingscriptuploadmaxstorage",
+                                    &scriptMaxStorage)) {
+                    if (scriptMaxStorage < 1)    scriptMaxStorage = 1;
+                    if (scriptMaxStorage > 4095) scriptMaxStorage = 4095;
+                    gameFrontSetHostingScriptUploadMaxStorage(scriptMaxStorage);
+                }
+            }
+
+            /* Whether players may save a copy of this host's mods and
+             * scenarios. Greyed with the rest, since a host that runs no
+             * scripts has none to share. */
+            bool shareScripts = gameFrontHostingShareScripts;
+            if (ImGui::Checkbox(
+                    langGetText(STR_DLGSETTINGS_HOSTING_SHARESCRIPTS),
+                    &shareScripts)) {
+                gameFrontSetHostingShareScripts(shareScripts);
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip(
+                    "%s", langGetText(STR_DLGSETTINGS_HOSTING_SHARESCRIPTS_TIP));
+            }
+        }
+        ImGui::EndDisabled();
+
+        /* The scenarios this host offers on their own, independently of any
+         * map — what the lobby's mod chooser lists. Same shape as the Upload
+         * Directory field below: an editable field that is the primary input
+         * and the fallback where there is no native folder dialog, with
+         * Browse filling it in. */
+        static char scnDirBuf[FILENAME_MAX];
+        static bool scnDirEditing = false;
+        if (s_hostingScnDirPicked) {
+            gameFrontSetHostingScenarioDir(s_hostingScnPickedDir);
+            s_hostingScnDirPicked = false;
+        }
+        if (!scnDirEditing) {
+            SDL_strlcpy(scnDirBuf, gameFrontHostingScenarioDir,
+                        sizeof(scnDirBuf));
+        }
+        hostingLabel(STR_DLGSETTINGS_HOSTING_SCENARIODIR);
+        bool scnCommit = ImGui::InputText(
+            "##hostingscenariodirfield",
+            scnDirBuf, sizeof(scnDirBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+        scnDirEditing = ImGui::IsItemActive();
+        if (scnCommit || ImGui::IsItemDeactivatedAfterEdit()) {
+            gameFrontSetHostingScenarioDir(scnDirBuf);
+        }
+        /* Distinct ID from the Upload Directory and Log Directory Browse
+         * buttons, which share the same label and can be on screen at the
+         * same time. */
+        ImGui::PushID("hostingscenariodir");
+        if (ImGui::Button(langGetText(STR_MAPEDIT_BROWSE))) {
+            SDL_Window *win = sdl3DrawGetWindow();
+            const char *loc = gameFrontHostingScenarioDir[0]
+                                  ? gameFrontHostingScenarioDir : NULL;
+            SDL_ShowOpenFolderDialog(hostingScenarioDirDialogCallback, NULL,
+                                     win, loc, false);
+        }
+        ImGui::PopID();
     }
 
     /* ---- Map uploads ---- */
@@ -1997,8 +2076,8 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
         for (int i = 0; i < 3; ++i) {
             if (kPolicyByIndex[i] == gameFrontHostingUploadPolicy) { idx = i; break; }
         }
-        if (ImGui::Combo(langGetText(STR_DLGSETTINGS_HOSTING_MAPUPLOADS),
-                         &idx, policyItems, 3)) {
+        hostingLabel(STR_DLGSETTINGS_HOSTING_MAPUPLOADS);
+        if (ImGui::Combo("##hostingmapuploads", &idx, policyItems, 3)) {
             gameFrontSetHostingUploadPolicy(kPolicyByIndex[idx]);
         }
 
@@ -2020,8 +2099,9 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
             if (!dirEditing) {
                 SDL_strlcpy(dirBuf, gameFrontHostingUploadDir, sizeof(dirBuf));
             }
+            hostingLabel(STR_DLGSETTINGS_HOSTING_UPLOADDIR);
             bool commit = ImGui::InputText(
-                langGetText(STR_DLGSETTINGS_HOSTING_UPLOADDIR),
+                "##hostinguploaddirfield",
                 dirBuf, sizeof(dirBuf), ImGuiInputTextFlags_EnterReturnsTrue);
             dirEditing = ImGui::IsItemActive();
             if (commit || ImGui::IsItemDeactivatedAfterEdit()) {
@@ -2036,15 +2116,15 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
             }
 
             int maxFiles = gameFrontHostingUploadMaxFiles;
-            if (ImGui::InputInt(langGetText(STR_DLGSETTINGS_HOSTING_UPLOAD_MAXFILES),
-                                &maxFiles)) {
+            hostingLabel(STR_DLGSETTINGS_HOSTING_UPLOAD_MAXFILES);
+            if (ImGui::InputInt("##hostinguploadmaxfiles", &maxFiles)) {
                 if (maxFiles < 1)   maxFiles = 1;
                 if (maxFiles > 255) maxFiles = 255;
                 gameFrontSetHostingUploadMaxFiles(maxFiles);
             }
             int maxStorage = gameFrontHostingUploadMaxStorage;
-            if (ImGui::InputInt(langGetText(STR_DLGSETTINGS_HOSTING_UPLOAD_MAXSTORAGE),
-                                &maxStorage)) {
+            hostingLabel(STR_DLGSETTINGS_HOSTING_UPLOAD_MAXSTORAGE);
+            if (ImGui::InputInt("##hostinguploadmaxstorage", &maxStorage)) {
                 if (maxStorage < 1)    maxStorage = 1;
                 if (maxStorage > 4095) maxStorage = 4095;
                 gameFrontSetHostingUploadMaxStorage(maxStorage);
@@ -2076,8 +2156,9 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
             if (!logDirEditing) {
                 SDL_strlcpy(logDirBuf, gameFrontHostingLogDir, sizeof(logDirBuf));
             }
+            hostingLabel(STR_DLGSETTINGS_HOSTING_LOGDIR);
             bool commit = ImGui::InputText(
-                langGetText(STR_DLGSETTINGS_HOSTING_LOGDIR),
+                "##hostinglogdirfield",
                 logDirBuf, sizeof(logDirBuf), ImGuiInputTextFlags_EnterReturnsTrue);
             logDirEditing = ImGui::IsItemActive();
             if (commit || ImGui::IsItemDeactivatedAfterEdit()) {
@@ -2126,8 +2207,8 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
         for (int i = 0; i < 3; ++i) {
             if (kVoiceByIndex[i] == gameFrontHostingVoiceMode) { idx = i; break; }
         }
-        if (ImGui::Combo(langGetText(STR_DLGSETTINGS_HOSTING_VOICE),
-                         &idx, voiceItems, 3)) {
+        hostingLabel(STR_DLGSETTINGS_HOSTING_VOICE);
+        if (ImGui::Combo("##hostingvoice", &idx, voiceItems, 3)) {
             gameFrontSetHostingVoiceMode(kVoiceByIndex[idx]);
         }
         /* Proximity is stored and sent but nothing acts on it yet, so say so
@@ -2138,9 +2219,9 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
     }
 
     /* ---- Visibility ----
-     * The seven view rules a game hosted from here starts with: the
+     * The eight view rules a game hosted from here starts with: the
      * pill / base / allied-tank policies, classic mode, allies in trees,
-     * the overview window and line of sight.  The host can still change
+     * positional sound, the overview window and line of sight.  The host can still change
      * them from the lobby once the game is up, and this dialog has no
      * path into a running game.  The setters persist to prefs and clamp
      * the seconds, so the values go through them untouched. */
@@ -2189,6 +2270,15 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
             ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_ALLIES_TREES_TIP));
         }
 
+        bool sound = gameFrontPositionalSound;
+        if (ImGui::Checkbox(langGetText(STR_DLGLOBBY_POSITIONAL_SOUND_CB),
+                            &sound)) {
+            gameFrontSetPositionalSound(sound);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_POSITIONAL_SOUND_TIP));
+        }
+
         /* Which block of squares the map overview keeps live round the
          * player's own tank. A combo rather than a tick box because the
          * choice is a named mode, and the index is the OverviewWindow
@@ -2231,17 +2321,28 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
         /* The seven controls above are the lobby's Custom row in another
          * shape, so the choice behind them is recorded the same way. Left
          * out, a set made here would be overwritten on the next start by
-         * whatever preset was remembered before it. */
+         * whatever preset was remembered before it.
+         *
+         * saveCustom is true: everything these controls hold was typed in
+         * here by hand, so a set that matches no preset is a set the
+         * player made and is worth keeping. */
         VisibilitySettings chosen;
         gameFrontGetVisibilitySettings(&chosen);
-        gameFrontRememberVisibility(&chosen);
+        gameFrontRememberVisibility(&chosen, true);
     }
 
     ImGui::Spacing();
     ImGui::TextDisabled("%s", langGetText(STR_DLGSETTINGS_HOSTING_APPLYNOTE));
 }
 
-extern "C" void imguiSettingsShow(void) {
+/* The blocking settings loop.  inEditor is the map editor's call: the editor
+ * already has the window at the size it wants and its own title in it, so the
+ * window is left alone, the background game is not drawn behind the panel, and
+ * the tutorial button is left out because the editor has no way to hand over
+ * to the tutorial. The Controls tab is left out too: its only control opens key
+ * setup, which resizes and retitles the window, and the keys it sets are the
+ * game's, not the editor's. */
+static void settingsShowLoop(bool inEditor) {
     SDL_Window *window = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
     if (!window || !renderer) return;
@@ -2256,13 +2357,15 @@ extern "C" void imguiSettingsShow(void) {
     if (screenW <= 0 || screenH <= 0) { screenW = 1024; screenH = 768; }
     float s = dialogComputeScale(screenW, screenH);
 
+    if (!inEditor) {
 #if !BOLO_MOBILE
-    /* Keep the window at the same size as the welcome dialog */
-    dialogSetWindowSize(window, 1024, 768);
-    dialogSetWindowTitle(window, langGetText(STR_DLGSETTINGS_WINTITLE));
-    SDL_SetWindowResizable(window, true);
+        /* Keep the window at the same size as the welcome dialog */
+        dialogSetWindowSize(window, 1024, 768);
+        dialogSetWindowTitle(window, langGetText(STR_DLGSETTINGS_WINTITLE));
+        SDL_SetWindowResizable(window, true);
 #endif
-    dialogRestorePosition(window);
+        dialogRestorePosition(window);
+    }
     SDL_ShowWindow(window);
     SDL_RaiseWindow(window);
 
@@ -2301,7 +2404,7 @@ extern "C" void imguiSettingsShow(void) {
     imguiSettingsSeedPlayerName();
 
     /* Background game */
-    BgGame *bg = bgGameGetShared();
+    BgGame *bg = inEditor ? nullptr : bgGameGetShared();
     bool hasBg = (bg != nullptr);
     Uint64 lastTickTime = SDL_GetTicks();
 
@@ -2310,6 +2413,9 @@ extern "C" void imguiSettingsShow(void) {
     imguiWinbolonetStartValidation();
 
     bool running = true;
+    /* A quit taken while the editor's settings window was up (see the event
+       loop); pushed again for the editor after the window closes. */
+    bool quitForEditor = false;
 #if !BOLO_MOBILE
     bool showKeySetup = false;
     /* Full screen pick from the Display tab, applied after Present alongside
@@ -2335,9 +2441,14 @@ extern "C" void imguiSettingsShow(void) {
             dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
             dialogHandleWindowMoveResize(window, &ev);
-            if (ev.type == SDL_EVENT_QUIT ||
-                (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
-                 ev.window.windowID == SDL_GetWindowID(window))) {
+            if (inEditor) {
+                /* The editor decides whether a quit ends the application, since
+                 * it may have an unsaved map to ask about; the quit is handed
+                 * back to it once this window has closed. */
+                DialogQuitAction qa = dialogQuitClassify(&ev, SDL_GetWindowID(window));
+                if (qa == DIALOG_QUIT_APPLICATION) quitForEditor = true;
+                if (qa != DIALOG_QUIT_NONE) running = false;
+            } else if (dialogHandleQuitEvent(window, &ev)) {
                 running = false;
             }
         }
@@ -2383,8 +2494,11 @@ extern "C" void imguiSettingsShow(void) {
                      ImGuiWindowFlags_NoScrollbar |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-        /* Centered overlay panel */
-        float panelW = 680.0f * s, panelH = 580.0f * s;
+        /* Centered overlay panel, 80% of the window wide so the tab names
+           fit whole: never narrower than the 680px it used to be, and no
+           wider than 900px, past which the settings only gain empty space. */
+        float panelW = SDL_clamp((float)winW * 0.8f, 680.0f * s, 900.0f * s);
+        float panelH = 580.0f * s;
         if (panelW > (float)winW * 0.95f) panelW = (float)winW * 0.95f;
         if (panelH > (float)winH * 0.95f) panelH = (float)winH * 0.95f;
 
@@ -2430,7 +2544,7 @@ extern "C" void imguiSettingsShow(void) {
         /* Controller tab cycling: shoulder buttons (or the Steam menu-tab
            actions where the pad is hidden from SDL) step through the visible
            tabs, skipping any that aren't present and wrapping at the ends. */
-        enum { STAB_GENERAL, STAB_DISPLAY, STAB_SOUND, STAB_CONTROLS, STAB_GAMEHUD, STAB_HOSTING, STAB_LAST, STAB_COUNT };
+        enum { STAB_GENERAL, STAB_DISPLAY, STAB_SOUND, STAB_CONTROLS, STAB_GAMEHUD, STAB_HOSTING, STAB_WORKSHOP, STAB_LAST, STAB_COUNT };
         static int s_pgActiveTab = STAB_GENERAL;
         static int s_pgForceTab  = -1;
         bool present[STAB_COUNT];
@@ -2445,11 +2559,17 @@ extern "C" void imguiSettingsShow(void) {
         present[STAB_HOSTING] = true;
 #endif
 #if !BOLO_MOBILE
-        present[STAB_CONTROLS] = !uiModeIsTablet();
+        present[STAB_CONTROLS] = !uiModeIsTablet() && !inEditor;
         present[STAB_LAST]     = true;
 #else
         present[STAB_CONTROLS] = false;
         present[STAB_LAST]     = false;
+#endif
+        /* The Workshop's module is desktop only, and the tab needs Steam. */
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+        present[STAB_WORKSHOP] = steam_workshop_available();
+#else
+        present[STAB_WORKSHOP] = false;
 #endif
         {
             int shift = (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ? 1 : 0)
@@ -2471,17 +2591,19 @@ extern "C" void imguiSettingsShow(void) {
                 imguiSettingsRenderLanguagePicker(langEntries, langCount, &ctx);
 
                 /* ---- Tutorial ---- */
-                ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_TUTORIAL));
-                if (ImGui::Button(langGetText(STR_DLGSETTINGS_PLAY_TUTORIAL), ImVec2(140, 0))) {
-                    gameFrontRequestPlayTutorial();
-                    running = false;  /* Close settings; openSettings handler routes to openTutorial. */
-                }
-                imguiHandOnHover();
-                ImGui::SameLine();
-                {
-                    bool showOnMain = gameFrontGetShowTutorialButton();
-                    if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_SHOW_ON_MAIN), &showOnMain)) {
-                        gameFrontSetShowTutorialButton(showOnMain);
+                if (!inEditor) {
+                    ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_TUTORIAL));
+                    if (ImGui::Button(langGetText(STR_DLGSETTINGS_PLAY_TUTORIAL), ImVec2(140, 0))) {
+                        gameFrontRequestPlayTutorial();
+                        running = false;  /* Close settings; openSettings handler routes to openTutorial. */
+                    }
+                    imguiHandOnHover();
+                    ImGui::SameLine();
+                    {
+                        bool showOnMain = gameFrontGetShowTutorialButton();
+                        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_SHOW_ON_MAIN), &showOnMain)) {
+                            gameFrontSetShowTutorialButton(showOnMain);
+                        }
                     }
                 }
 
@@ -2516,7 +2638,7 @@ extern "C" void imguiSettingsShow(void) {
                 ImGui::EndTabItem();
             }
 #if !BOLO_MOBILE
-            if (!uiModeIsTablet()) {
+            if (present[STAB_CONTROLS]) {
                 if (ImGui::BeginTabItem(langGetText(STR_LV_WIN_CONTROLS), nullptr,
                         s_pgForceTab == STAB_CONTROLS ? ImGuiTabItemFlags_SetSelected : 0)) {
                     s_pgActiveTab = STAB_CONTROLS;
@@ -2541,6 +2663,17 @@ extern "C" void imguiSettingsShow(void) {
                 s_pgActiveTab = STAB_HOSTING;
                 ImGui::BeginChild("##hostingPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
                 imguiSettingsRenderHostingTab(&ctx);
+                ImGui::EndChild();
+                ImGui::EndTabItem();
+            }
+#endif
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+            if (present[STAB_WORKSHOP] &&
+                ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_WORKSHOP_HEADING), nullptr,
+                    s_pgForceTab == STAB_WORKSHOP ? ImGuiTabItemFlags_SetSelected : 0)) {
+                s_pgActiveTab = STAB_WORKSHOP;
+                ImGui::BeginChild("##workshopPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
+                imguiSettingsWorkshopSection();
                 ImGui::EndChild();
                 ImGui::EndTabItem();
             }
@@ -2725,8 +2858,10 @@ extern "C" void imguiSettingsShow(void) {
                Controls coming back out of key setup. */
             s_pgForceTab = s_pgActiveTab;
 
-            dialogSetWindowSize(window, 1024, 768);
-            dialogSetWindowTitle(window, langGetText(STR_DLGSETTINGS_WINTITLE));
+            if (!inEditor) {
+                dialogSetWindowSize(window, 1024, 768);
+                dialogSetWindowTitle(window, langGetText(STR_DLGSETTINGS_WINTITLE));
+            }
 
             lastTickTime = SDL_GetTicks();
         }
@@ -2771,4 +2906,19 @@ extern "C" void imguiSettingsShow(void) {
 #endif
 
     SDL_FlushEvent(SDL_EVENT_QUIT);
+
+    if (quitForEditor) {
+        SDL_Event quitEv;
+        SDL_zero(quitEv);
+        quitEv.type = SDL_EVENT_QUIT;
+        SDL_PushEvent(&quitEv);
+    }
+}
+
+extern "C" void imguiSettingsShow(void) {
+    settingsShowLoop(false);
+}
+
+extern "C" void imguiSettingsShowInEditor(void) {
+    settingsShowLoop(true);
 }

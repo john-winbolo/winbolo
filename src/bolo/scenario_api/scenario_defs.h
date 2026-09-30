@@ -28,6 +28,8 @@
 #include "types.h"          /* TankModifiers — the modifier op's payload */
 #include "wire_limits.h"    /* PACKET_MAX_CHAT_MESSAGE — the text cap below */
 #include "scenario_table.h" /* ScnTable — the init and hint payloads below */
+#include "sim_rules_names.h" /* SIM_RULE_LIST — the rule list SCN_RULE_LIST is */
+#include "scenario_panel.h" /* SCN_PANEL_MAX — the panel op's byte capacity */
 
 /* Text capacity for every op that carries a line. The server-text
  * control event holds char text[PACKET_MAX_CHAT_MESSAGE + 1]
@@ -36,18 +38,23 @@
  * truncated. */
 #define SCN_TEXT_MAX (PACKET_MAX_CHAT_MESSAGE + 1)
 
-/* Byte capacity of one panel display list. The list rides a single
- * control segment, which carries CHANNEL_CONTROL_SEG (1024) bytes
- * (channel_mux.h) and rejects a message larger than that. Of those,
- * the channel frame spends type(1) + bodyLen(2), and the panel event's
- * own header spends target(1) + panel(1) + len(2):
- *   1024 - 1 - 2 - 1 - 1 - 2 = 1017
- * server_sim_scenario.c pins this against CHANNEL_CONTROL_SEG, which
- * it can see and this header cannot. */
-#define SCN_PANEL_MAX 1017
+/* SCN_PANEL_MAX, the byte capacity of one panel display list, comes in
+ * from scenario_panel.h with the rest of the panel's public types. It
+ * moved there when the control event that delivers a list needed the
+ * same number: control_event.h is public and cannot read this
+ * directory, and two copies of the figure would drift. */
 
-/* Buffer for a brain path or a "package:NAME" reference. */
+/* Buffer for a brain: the name a scenario writes — a directory under the
+ * server's own brains/, such as "GoalHunter_1.7" — and the path that name is
+ * resolved to before the sim is handed it. */
 #define SCN_PATH_MAX 256
+
+/* A bot mode key or a level key, as a team template or a bot op names it,
+ * matched against the keys in the brain's own modes.txt. The same number
+ * BRAIN_MODE_KEY_LEN holds in public/brain_list.h and SCN_BOT_KEY_LEN holds
+ * on the host's side of the wall; server_sim_lobby.c is where all three
+ * meet, and it is the one file that sees every one of them. */
+#define SCN_BOT_KEY_MAX 16
 
 /* One team a scenario's lobby seats, as the sim reads it.
  *
@@ -56,13 +63,27 @@
  * the two that binds again once the seats exist. fielded false asks for the
  * seats without the bots — roster entries the start sequence skips until a
  * spawn names one. brain is the path those bots run, or "" for the server's
- * own. */
+ * own; the scenario names a brain and the host resolves that name to this
+ * path, so what reaches the sim is always a file to open.
+ *
+ * mode and difficulty name the brain mode these bots play in and the level
+ * inside it, by the keys the brain's modes.txt lists. "" for either leaves
+ * the seat's config as the lobby would have had it, which is what every
+ * template before these two fields said.
+ *
+ * init is the table the team's bots are built with, read once when a VM is
+ * built, empty for none. It is what the countdown warms a held seat's runner
+ * with, so a spawn naming that seat with the same table — or with none of its
+ * own, which inherits this — is a resume rather than a build. */
 typedef struct {
-    uint8_t id;                   /* team number, 1-16 */
-    uint8_t bots;
-    uint8_t maxBots;
-    bool    fielded;
-    char    brain[SCN_PATH_MAX];
+    uint8_t  id;                   /* team number, 1-16 */
+    uint8_t  bots;
+    uint8_t  maxBots;
+    bool     fielded;
+    char     brain[SCN_PATH_MAX];
+    char     mode[SCN_BOT_KEY_MAX];        /* "" = leave the lobby's */
+    char     difficulty[SCN_BOT_KEY_MAX];  /* "" = leave the lobby's */
+    ScnTable init;
 } ScnLobbyTeam;
 
 /* The lobby a scenario asks for. The host reads this out of its manifest and
@@ -76,13 +97,75 @@ typedef struct {
  * baseGameType is the game type the scenario declared, by the same words a
  * spawn op's loadout takes. It is the host's one-way hand-over of that
  * value: the sim keeps it where the spawn and start paths can read it when
- * the round is gameScripted. 0 means none declared, which plays open. */
+ * the round is gameScripted. 0 means none declared, which plays strict
+ * tournament. */
 typedef struct {
     uint8_t      maxPlayers;
     uint8_t      numTeams;
     uint8_t      baseGameType;   /* a gameType value, 0 for none */
     ScnLobbyTeam teams[MAX_TANKS];
 } ScnLobbyTemplate;
+
+/* What a scenario is called and what it asks for, as the sim reads it.
+ *
+ * The name and description lengths are SCN_SCENARIO_NAME_LEN and
+ * SCN_SCENARIO_DESC_LEN in src/scenario_io/scenario_manifest.h, stated again
+ * under names of their own: that header is the one a frontend includes and
+ * this one is not, so a gui or runtime_only translation unit can reach it and
+ * not this. scenario_dir.c sees both and holds each pair against the other,
+ * so the two cannot drift.
+ *
+ * The file name is a name in the directory and never a path: the directory is
+ * flat, and where it is on disk is the server's own business. */
+#define SCN_DIR_FILE_LEN 128
+#define SCN_DIR_NAME_LEN 64
+#define SCN_DIR_DESC_LEN 256
+
+/* One scenario a server offers on its own, independently of any map: a
+ * .scenario package or a loose .lua in the scenarios directory, read into the
+ * few fields a chooser needs to show it.
+ *
+ * The sim holds no notion of what is in either file. It is handed a filled
+ * array by the lister registered on it (serverSimSetScenarioLister), which is
+ * the scenario library's to implement, and it passes the entries to the wire
+ * layer — the dependency points one way, as it does for the lobby template.
+ *
+ * maxPlayers is the cap the scenario asks for, 0 leaving the server's own.
+ * bots is the seats its lobby template asks for, summed over its teams and
+ * held at 255 because it travels in one byte. bound true says the scenario is
+ * tied to the map it was written against, which is what makes it no use as a
+ * mod. keepsWinCondition true says the file declares itself a mod: it changes
+ * how the game plays and leaves the win condition alone, so several of them
+ * can run at once behind one scenario. The two are separate questions and a
+ * file may answer either way to both.
+ *
+ * source says which of the server's directories the row was read from, one
+ * of the SCN_DIR_SOURCE_* values below. A directory read leaves it
+ * SCN_DIR_SOURCE_SERVER; the merged lister sets it for the rows it takes
+ * from the uploads directory. workshopId is the Steam Workshop item the file
+ * came from, 0 for none, and workshopAuthor the SteamID64 of the account that
+ * published it, 0 for none. The author is for this computer's own listings
+ * (the Settings dialog's Workshop section asks it to offer Update rather than
+ * Publish) and is never sent: the scenario-list packet and the script-list
+ * event carry the id and not the author. */
+typedef struct {
+    char     file[SCN_DIR_FILE_LEN];  /* the name in the directory */
+    char     name[SCN_DIR_NAME_LEN];  /* the manifest's */
+    char     description[SCN_DIR_DESC_LEN];
+    uint8_t  maxPlayers;
+    uint8_t  bots;
+    bool     bound;
+    bool     keepsWinCondition;
+    uint8_t  source;
+    uint64_t workshopId;
+    uint64_t workshopAuthor;
+} ScnDirEntry;
+
+/* ScnDirEntry.source. One byte on the wire, in the scenario-list packet and
+ * the script-list event. */
+#define SCN_DIR_SOURCE_SERVER   0 /* one of the server's own directories */
+#define SCN_DIR_SOURCE_UPLOAD   1 /* the directory players upload scripts to */
+#define SCN_DIR_SOURCE_WORKSHOP 2 /* the directory Workshop items sync into */
 
 /* How many roster changes may be outstanding at once. Spawns and
  * removals share one first-in first-out queue and the sim drains one of
@@ -91,12 +174,15 @@ typedef struct {
  * SCN_OP_FULL rather than displacing anything already accepted. */
 #define SCN_ROSTER_QUEUE_MAX 32
 
-/* How many tiles a fill may change in one tick. A rectangle that
- * changes more than this applies what the budget allows, keeps the
- * remainder and answers SCN_OP_QUEUED; the sim carries the rest on
- * later ticks, one budget each. A fill with no budget left in the
- * tick it arrives in is refused rather than queued, so nothing that
- * cannot move is left on the sim. A whole-map fill takes 256 ticks.
+/* How many tiles a fill and set_tile may change in one tick between
+ * them. A rectangle that changes more than this applies what the
+ * budget allows, keeps the remainder and answers SCN_OP_QUEUED; the
+ * sim carries the rest on later ticks, one budget each. A fill with no
+ * budget left in the tick it arrives in is refused rather than queued,
+ * so nothing that cannot move is left on the sim. A whole-map fill
+ * takes 256 ticks. Every set_tile that applies spends one square of
+ * the same budget, and one that arrives with none left is refused
+ * SCN_OP_RATE.
  *
  * The number is also the depth of the server's per-frame map event
  * buffer, which is a collision rather than a design: a fill spending
@@ -104,6 +190,26 @@ typedef struct {
  * terrain changes are dropped where they are recorded. Lowering this
  * is what would leave them room. */
 #define SCN_TILES_PER_TICK 256
+
+/* How many ops a script may send in one tick, whatever they are. The
+ * one past the last is refused SCN_OP_RATE without being looked at,
+ * and the allowance comes back with the next tick. The host's own ops
+ * — the scenario file's rules at the round start, and the line saying
+ * a script was switched off — are not counted.
+ *
+ * The same as SCN_TILES_PER_TICK and the frame's map event buffer, so
+ * a script redrawing a coast one square at a time is held by the tile
+ * budget rather than by this. A starting value; a measurement may want
+ * it somewhere else. */
+#define SCN_OPS_PER_TICK 256
+
+/* And how many of those may reach the players: SCN_OP_MSG_ALL,
+ * SCN_OP_MSG_TEAM, SCN_OP_MSG_PLAYER, SCN_OP_MSG_SAY and SCN_OP_SOUND,
+ * and no others. The one past the last is refused SCN_OP_RATE, as the
+ * op count's is. SCN_OP_LOG is not among them: it writes the round log
+ * and sends nothing to anybody, so SCN_OPS_PER_TICK is the only thing
+ * that bounds it. A starting value, as the op count is. */
+#define SCN_MSGS_PER_TICK 8
 
 /* ScnKV, ScnTable and the SCN_TABLE_* caps are in
  * public/scenario_table.h: the init table is also a parameter of
@@ -168,6 +274,7 @@ typedef enum {
     SCN_OP_ROSTER_SPAWN_BOT,
     SCN_OP_ROSTER_REMOVE_BOT,
     SCN_OP_ROSTER_SET_TEAM,
+    SCN_OP_ROSTER_BOT_INIT,
 
     /* Roster, lobby */
     SCN_OP_LOBBY_ADD_BOT,
@@ -181,6 +288,7 @@ typedef enum {
     SCN_OP_MSG_ALL,
     SCN_OP_MSG_TEAM,
     SCN_OP_MSG_PLAYER,
+    SCN_OP_MSG_SAY,
     SCN_OP_SOUND,
     SCN_OP_LOG,
 
@@ -195,7 +303,11 @@ typedef enum {
     SCN_OP_SET_GAME_TIME,
 
     /* Rules */
-    SCN_OP_SET_RULE
+    SCN_OP_SET_RULE,
+
+    /* Test hooks. Not part of the round a player plays: each one drives a
+     * server path a script has no other way to reach. */
+    SCN_OP_SHELL_EXPIRED
 } ScenarioOpType;
 
 /* A payload byte holding 0xFF means there is nothing there: no slot, no
@@ -375,10 +487,15 @@ typedef struct {
 typedef struct {
     BYTE     slot;                   /* 0xFF = first free seat above the cap */
     char     name[PLAYER_NAME_LEN];
-    char     brain[SCN_PATH_MAX];    /* a path or "package:NAME" */
+    char     brain[SCN_PATH_MAX];    /* the brain the script named, resolved
+                                      * to a path before the op is submitted */
     BYTE     team;
     BYTE     start;                  /* 0xFF = let the engine choose */
     BYTE     loadout;                /* 0 = ask the policy */
+    /* The brain mode and the level inside it, by the keys the brain's
+     * modes.txt lists; "" leaves the seat's config alone. */
+    char     mode[SCN_BOT_KEY_MAX];
+    char     difficulty[SCN_BOT_KEY_MAX];
     ScnTable init;
 } ScnOpRosterSpawnBot;
 
@@ -391,14 +508,29 @@ typedef struct {
     BYTE team;
 } ScnOpRosterSetTeam;
 
+/* New data for a bot that is already playing. The same flat table a spawn
+ * hands a bot at its first breath, handed to one in the middle of a round:
+ * the bot's BRAIN_INIT is rebuilt from it and the brain is told, so a script
+ * can change a bot's orders rather than only choose them once. */
+typedef struct {
+    BYTE     slot;
+    ScnTable init;
+} ScnOpRosterBotInit;
+
 /* ── Roster, lobby ─────────────────────────────────────────────── */
 
 typedef struct {
     BYTE slot;
     char name[PLAYER_NAME_LEN];
-    char brain[SCN_PATH_MAX];
+    char brain[SCN_PATH_MAX];   /* resolved the same way a spawn's is */
     BYTE team;
     bool fielded;
+    /* The brain mode and the level inside it, by the keys the brain's
+     * modes.txt lists; "" leaves the seat's config alone. A held seat takes
+     * them too — nothing loads a brain for it yet, and the spawn that fields
+     * it later reads the config off the seat. */
+    char mode[SCN_BOT_KEY_MAX];
+    char difficulty[SCN_BOT_KEY_MAX];
 } ScnOpLobbyAddBot;
 
 typedef struct {
@@ -432,6 +564,22 @@ typedef struct {
     BYTE slot;
     char text[SCN_TEXT_MAX];
 } ScnOpMsgPlayer;
+
+/* A chat line said by a seat, not by the server. slot is who said it, and
+ * mode is who hears it: a player's three destinations are their own team,
+ * the whole game, and one other seat. A team other than the sender's own is
+ * not among them — the chat path refuses a line addressed to a team the
+ * sender is not on, whoever sends it. */
+#define SCN_SAY_TEAM   0    /* the sender's own team */
+#define SCN_SAY_ALL    1    /* everyone */
+#define SCN_SAY_PLAYER 2    /* one seat, named by target */
+
+typedef struct {
+    BYTE slot;
+    BYTE mode;
+    BYTE target;                /* the seat, under SCN_SAY_PLAYER */
+    char text[SCN_TEXT_MAX];
+} ScnOpMsgSay;
 
 typedef struct {
     BYTE sound;     /* an sndEffects value */
@@ -488,129 +636,34 @@ typedef struct {
 
 /* ── Rules ─────────────────────────────────────────────────────── */
 
-/* Every SimRules field, in the order the struct declares them. The index
- * enum below is generated from this one list, and so is the arm's write
- * table in server_sim_scenario.c, so an index and a field cannot drift
- * apart by hand: there is one list and two readings of it.
+/* Every SimRules field, in the order the struct declares them, with the
+ * type its field holds and the unit it is read in. The list itself lives in
+ * public/sim_rules_names.h, where a frontend can see it: the editor's rules
+ * form and the lobby's popup name a rule and describe a value, and neither
+ * of them sees this directory. SCN_RULE_LIST is that list under the name
+ * the scenario surface has always spelled it, so the expansion sites here
+ * and in server_sim_scenario.c are unchanged apart from the two columns
+ * they ignore.
  *
- * What holds the list against the struct is in server_sim_scenario.c,
- * which can see both: a static assertion that the table is exactly
- * SCN_RULE_COUNT fields wide, so a field added to SimRules without a line
- * here does not compile, and the offsets case in
- * tests/unit/test_scenario_rule_arms.c, which walks the list against the
- * struct and fails on a line out of order or a field named twice.
+ * The index enum below is generated from the list, and so is the arm's
+ * write table in server_sim_scenario.c, so an index and a field cannot
+ * drift apart by hand: there is one list and two readings of it.
  *
- * A field's name is the name a scenario uses for it (sim_rules.h), so the
- * enumerator carries that name verbatim rather than an upper-case
- * respelling of it: one spelling, and no second column to get wrong. */
-#define SCN_RULE_LIST(X)                                                     \
-    /* Tank */                                                               \
-    X(tank_reload_ticks)                                                     \
-    X(tank_full_shells)                                                      \
-    X(tank_full_mines)                                                       \
-    X(tank_full_trees)                                                       \
-    X(tank_full_armour)                                                      \
-    X(tank_death_ticks)                                                      \
-    X(tank_water_ticks)                                                      \
-    X(shell_damage)                                                          \
-    X(mine_damage)                                                           \
-    X(just_fired_ticks)                                                      \
-    X(gunsight_min)                                                          \
-    X(gunsight_max)                                                          \
-    X(tank_accel_rate)                                                       \
-    X(tank_decel_rate)                                                       \
-    X(tank_brake_rate)                                                       \
-    X(tank_autoslow_rate)                                                    \
-    X(tank_min_move)                                                         \
-    /* Terrain: the cap a tank's speed clamps to */                          \
-    X(speed_road)                                                            \
-    X(speed_grass)                                                           \
-    X(speed_forest)                                                          \
-    X(speed_river)                                                           \
-    X(speed_swamp)                                                           \
-    X(speed_crater)                                                          \
-    X(speed_rubble)                                                          \
-    X(speed_boat)                                                            \
-    X(speed_deep_sea)                                                        \
-    X(speed_refuel_base)                                                     \
-    /* Terrain: bradians turned per tick */                                  \
-    X(turn_road)                                                             \
-    X(turn_grass)                                                            \
-    X(turn_forest)                                                           \
-    X(turn_river)                                                            \
-    X(turn_swamp)                                                            \
-    X(turn_crater)                                                           \
-    X(turn_rubble)                                                           \
-    X(turn_boat)                                                             \
-    X(turn_deep_sea)                                                         \
-    X(turn_refuel_base)                                                      \
-    /* Shells */                                                             \
-    X(shell_life)                                                            \
-    X(shell_speed)                                                           \
-    X(shell_start_add)                                                       \
-    /* Builder */                                                            \
-    X(lgm_build_ticks)                                                       \
-    X(lgm_cost_road)                                                         \
-    X(lgm_cost_building)                                                     \
-    X(lgm_cost_repair_building)                                              \
-    X(lgm_cost_pill_repair)                                                  \
-    X(lgm_cost_boat)                                                         \
-    X(lgm_cost_pill_new)                                                     \
-    X(lgm_cost_mine)                                                         \
-    X(lgm_pill_repair_load)                                                  \
-    X(lgm_gather_trees)                                                      \
-    X(lgm_helicopter_speed)                                                  \
-    /* Pillbox */                                                            \
-    X(pill_max_armour)                                                       \
-    X(pill_attack_ticks)                                                     \
-    X(pill_attack_min_ticks)                                                 \
-    X(pill_cooldown_ticks)                                                   \
-    X(pill_repair_amount)                                                    \
-    X(pill_range)                                                            \
-    /* Base */                                                               \
-    X(base_full_armour)                                                      \
-    X(base_full_shells)                                                      \
-    X(base_full_mines)                                                       \
-    X(base_capture_armour)                                                   \
-    X(base_hit_armour)                                                       \
-    X(base_min_armour)                                                       \
-    X(base_min_shells)                                                       \
-    X(base_min_mines)                                                        \
-    X(base_armour_give)                                                      \
-    X(base_shells_give)                                                      \
-    X(base_mines_give)                                                       \
-    X(base_refuel_armour_ticks)                                              \
-    X(base_refuel_shells_ticks)                                              \
-    X(base_refuel_mines_ticks)                                               \
-    X(base_regen_ticks)                                                      \
-    /* Terrain destruction and explosions */                                 \
-    X(building_life)                                                         \
-    X(rubble_life)                                                           \
-    X(grass_life)                                                            \
-    X(swamp_life)                                                            \
-    X(mine_fuse_ticks)                                                       \
-    X(big_explosion_threshold)                                               \
-    /* Tree growth */                                                        \
-    X(tree_grow_ticks)                                                       \
-    X(tree_grow_initial_ticks)                                               \
-    X(tree_weight_forest)                                                    \
-    X(tree_weight_grass)                                                     \
-    X(tree_weight_river)                                                     \
-    X(tree_weight_boat)                                                      \
-    X(tree_weight_deep_sea)                                                  \
-    X(tree_weight_swamp)                                                     \
-    X(tree_weight_rubble)                                                    \
-    X(tree_weight_building)                                                  \
-    X(tree_weight_half_building)                                             \
-    X(tree_weight_crater)                                                    \
-    X(tree_weight_road)                                                      \
-    X(tree_weight_mine)
+ * What holds the list against the struct is the static assertion in
+ * sim_rules.c, which can see both — sizeof(SimRules) against
+ * SIM_RULE_COUNT times four, so a field added to SimRules without a row in
+ * the list does not compile — the assertion in server_sim_scenario.c that
+ * the write table is exactly SCN_RULE_COUNT fields wide, and the offsets
+ * case in tests/unit/test_scenario_rule_arms.c, which walks the list
+ * against the struct and fails on a row out of order or a field named
+ * twice. */
+#define SCN_RULE_LIST(X) SIM_RULE_LIST(X)
 
 /* How a rule is named on the op: one member per SimRules field, in the
  * struct's own field order. SCN_RULE_COUNT is one past the last, and an
  * index at or above it names no rule. */
 typedef enum {
-#define SCN_RULE_ENUM_MEMBER(name) SCN_RULE_##name,
+#define SCN_RULE_ENUM_MEMBER(name, kind, unit) SCN_RULE_##name,
     SCN_RULE_LIST(SCN_RULE_ENUM_MEMBER)
 #undef SCN_RULE_ENUM_MEMBER
     SCN_RULE_COUNT
@@ -627,6 +680,28 @@ typedef struct {
     uint16_t rule;    /* a ScnRuleIndex */
     double   value;
 } ScnOpSetRule;
+
+/* ── Test hooks ────────────────────────────────────────────────── */
+
+/* One of `slot`'s shells ran its full range and died on square (x, y) with
+ * nothing hit. It fires the three-shot order detector exactly as a real
+ * expiring shell does, without a gun having to be aimed: a script cannot
+ * make a seat shoot, and three full-range shells landing on one chosen
+ * square is not something a round can be steered into. Nothing else happens
+ * — no explosion, no sound, no shell is created or destroyed.
+ *
+ * fireTick is the SERVER tick the shell LEFT THE GUN, which is what every
+ * timing rule in the detector reads — the window the three have to share,
+ * and the quiet second either side of them. haveFireTick is false when the
+ * script did not say, and the shell then counts as fired on the current
+ * tick. (x, y) must name a square the map really holds; anything outside
+ * the playable band is refused with SCN_OP_BAD_SQUARE. */
+typedef struct {
+    BYTE     slot;
+    BYTE     x, y;
+    bool     haveFireTick;
+    uint32_t fireTick;
+} ScnOpShellExpired;
 
 /* One op, tagged by type. */
 typedef struct {
@@ -663,6 +738,7 @@ typedef struct {
         ScnOpRosterSpawnBot    rosterSpawnBot;
         ScnOpRosterRemoveBot   rosterRemoveBot;
         ScnOpRosterSetTeam     rosterSetTeam;
+        ScnOpRosterBotInit     rosterBotInit;
         ScnOpLobbyAddBot       lobbyAddBot;
         ScnOpLobbyRemoveBot    lobbyRemoveBot;
         ScnOpLobbySetTeam      lobbySetTeam;
@@ -670,6 +746,7 @@ typedef struct {
         ScnOpMsgAll            msgAll;
         ScnOpMsgTeam           msgTeam;
         ScnOpMsgPlayer         msgPlayer;
+        ScnOpMsgSay            msgSay;
         ScnOpSound             sound;
         ScnOpLog               log;
         ScnOpPanel             panel;
@@ -679,6 +756,7 @@ typedef struct {
         ScnOpEndRound          endRound;
         ScnOpSetGameTime       setGameTime;
         ScnOpSetRule           setRule;
+        ScnOpShellExpired      shellExpired;
     } u;
 } ScenarioOp;
 
@@ -701,8 +779,9 @@ typedef enum {
     SCN_OP_ALREADY,         /* add of an active item, give of a carried pill, spawn of a fielded seat */
     SCN_OP_TOO_BIG,         /* a list or text exceeds its buffer */
     SCN_OP_RATE,            /* a second panel update in one tick, or a budget */
-    SCN_OP_NOT_FOUND,       /* brain path or package name that does not resolve */
+    SCN_OP_NOT_FOUND,       /* a brain that does not resolve: a name this server does not have, a path where a name belongs, or a "package:" the funnel refuses */
     SCN_OP_NO_STOCK,        /* a builder order the tank cannot pay for */
+    SCN_OP_NO_RUNNER,       /* a bot seat with no brain behind it: never fielded, or its runner released */
     SCN_OP_BAD_CALL         /* no sim or no op: the call itself is malformed */
 } ScnOpResult;
 
@@ -722,14 +801,30 @@ typedef struct {
 #define CAPTURE_KIND_PILL 0
 #define CAPTURE_KIND_BASE 1
 
+/* canHit kind — what a shell has reached. index is the tank slot for a tank
+ * and the pill index for a pill. */
+#define HIT_KIND_TANK 0
+#define HIT_KIND_PILL 1
+
 /* What inflicted a hit. Mirrors ATTR_SRC_* on-disk. The stats funnel records
  * one of these with every blow, and canDie is handed one as the cause of a
  * builder's or a pill's death — a tank's cause is a LAST_DEATH_BY_* instead.
  * Here rather than beside DMG_TARGET_* in game_sim.h because the policy
- * surface hands them out and the host cannot see internal/. */
-#define DMG_SRC_UNKNOWN 0
-#define DMG_SRC_SHELL   1
-#define DMG_SRC_MINE    2
+ * surface hands them out and the host cannot see internal/.
+ *
+ * DMG_SRC_EXPLOSION is a dying tank's blast. It is only ever put to the
+ * policy questions and is never recorded: the blast's damage to a pill has
+ * never been a stats record, so there is no ATTR_SRC_* beside it. */
+#define DMG_SRC_UNKNOWN   0
+#define DMG_SRC_SHELL     1
+#define DMG_SRC_MINE      2
+#define DMG_SRC_EXPLOSION 3
+
+/* The pill argument every combat question carries: the pill index of the
+ * pillbox whose shell dealt the blow, or this for a blow no pillbox's shell
+ * dealt. The attacker beside it is NEUTRAL for a pillbox's shell either way,
+ * so this is what says which pillbox it was. */
+#define DMG_NO_PILL 0xFF
 
 /* announce kind — which newswire-worthy fact is being put to the policy.
  * The values are the policy's own vocabulary and never reach the wire; what
@@ -761,9 +856,23 @@ typedef struct ScenarioPolicy {
                         * answer "open" or {shells, mines, armour,
                         * trees} */
     bool (*canRespawn)(void *ctx, BYTE player);    /* tickets, elimination */
-    int  (*damageScale)(void *ctx, BYTE attacker, BYTE victim, BYTE cause);
+    int  (*damageScale)(void *ctx, BYTE attacker, BYTE victim, BYTE cause,
+                        BYTE pill);
                        /* percent: boss armour, handicaps, friendly fire
-                        * off, an invulnerable escort */
+                        * off, an invulnerable escort. pill is the
+                        * pillbox whose shell it was, DMG_NO_PILL
+                        * otherwise */
+    bool (*canHit)(void *ctx, BYTE attacker, BYTE kind, BYTE index,
+                   BYTE pill);
+                       /* may this shell hit the tank or pill it has
+                        * reached? kind is a HIT_KIND_*. NULL = always.
+                        * false lets the shell fly on as if the target
+                        * were not there */
+    int  (*pillDamageScale)(void *ctx, BYTE attacker, BYTE index, BYTE cause,
+                            BYTE pill);
+                       /* percent of the armour a blow takes off pill
+                        * index; cause is DMG_SRC_SHELL or
+                        * DMG_SRC_EXPLOSION. NULL = 100 */
     bool (*canBuild)(void *ctx, BYTE player, BYTE action, BYTE x, BYTE y,
                      BYTE idx);
                        /* tutorials, protected zones; idx is the pill
@@ -778,14 +887,23 @@ typedef struct ScenarioPolicy {
                         * every client line site reads before it writes a
                         * line; a vote line, which the server writes as
                         * text, is simply not sent. NULL = always */
-    bool (*canDie)(void *ctx, BYTE kind, BYTE index, BYTE killer, BYTE cause);
+    bool (*canDie)(void *ctx, BYTE kind, BYTE index, BYTE killer, BYTE cause,
+                   BYTE pill);
                        /* may this tank, builder or pill be destroyed
                         * by this blow? kind: tank, builder, pill;
                         * index: the slot or the pill index; cause: a
                         * LAST_DEATH_BY_* value for a tank, the damage
-                        * source otherwise. NULL = always. false leaves
-                        * a tank at zero armour and alive, a builder
-                        * untouched, a pill at one armour */
+                        * source otherwise; pill: the pillbox whose
+                        * shell it was, DMG_NO_PILL otherwise. NULL =
+                        * always. false leaves a tank at zero armour and
+                        * alive, a builder untouched, a pill at one
+                        * armour */
+    bool (*canAlly)(void *ctx, BYTE player, BYTE other);
+                       /* may player ally with other? Asked when player
+                        * requests the alliance and again when other
+                        * accepts it. NULL = always. false refuses the
+                        * request or the accept; alliances a script makes
+                        * through set_team or seating are not asked */
     void *ctx;
 } ScenarioPolicy;
 

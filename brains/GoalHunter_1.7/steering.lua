@@ -27,6 +27,15 @@ local function attack_mod()
   if not _attack then _attack = require("attack") end
   return _attack
 end
+-- orders.lua owns the "is this tank standing on the square it was sent to"
+-- rule (ORD.hold_parked), so the park below and the order slot cannot drift
+-- apart. Required lazily for the same reason attack.lua is: a new top-level
+-- require changes the order modules are first loaded in.
+local _orders
+local function orders_mod()
+  if not _orders then _orders = require("orders") end
+  return _orders
+end
 
 local M = {}
 
@@ -369,7 +378,27 @@ local _pp_stationary = {
 }
 local _at_stationary = { engage=true, close=true, disengage=true }
 
-local function intentionally_stationary(goal, info)
+-- A GO-THERE ORDER IN ITS HOLD PHASE: the tank is parked by M.steer below,
+-- on purpose, for as long as the hold runs.  The stuck detector must read
+-- that as deliberate or it escalates and throws the order away.  The park
+-- kinds only (C.ORDER_HOLD_PARK_KINDS): a survival goal that works by moving
+-- still drives, and still counts as stuck if it cannot.
+--
+-- THE PARK NEEDS THE TANK TO BE ON THE SQUARE.  It used to ask only whether
+-- the slot said "holding", with no distance test at all, so a bot that died
+-- mid-hold and respawned across the map went on having its throttle taken
+-- away -- parked on a square nobody pointed at, for the rest of the hold
+-- (Andrew's peer review, Sep 16).  ORD.hold_parked adds the one-square test,
+-- the same radius that starts the hold.
+local function order_hold_parked(state, goal, info)
+  if not (C.BOT_COMMANDS_ENABLED and state and goal) then return false end
+  if not (C.ORDER_HOLD_PARK_KINDS or {})[goal.kind] then return false end
+  return orders_mod().hold_parked(state, info) and true or false
+end
+M.order_hold_parked = order_hold_parked
+
+local function intentionally_stationary(goal, info, state)
+  if order_hold_parked(state, goal, info) then return true end
   local s = goal.substate or ""
   if goal.kind == "attack_pill" and _ap_stationary[s] then return true end
   if goal.kind == "pill_place"  and _pp_stationary[s] then return true end
@@ -394,6 +423,13 @@ local function intentionally_stationary(goal, info)
   -- flee_to_base is the same destination semantics (park on a base pad) — the
   -- critical-flee injection swaps refuel_at_base to flee_to_base at low armour,
   -- and both kinds dock via the same steering branch now.
+  -- A PLACE ORDER, once we are on (or beside) the ordered square: parked on
+  -- purpose, for as long as the order runs. Without this the stuck detector
+  -- reads the hold as a wedged tank and gives the order up.
+  if goal.kind == "goto_tile" and info and goal.mx then
+    local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
+    if U.mdist(tmx, tmy, goal.mx, goal.my) <= 1 then return true end
+  end
   if (goal.kind == "refuel_at_base" or goal.kind == "flee_to_base")
      and info and goal.mx then
     local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
@@ -448,7 +484,7 @@ local function stuck_recovery(state, info, goal)
   -- state._lgm_paced: the LGM pacing throttle capped the tank last tick —
   -- the crawl is intentional, so don't count it as "no progress".
   if state.wall_clearing or state._lgm_paced
-     or intentionally_stationary(goal, info) then
+     or intentionally_stationary(goal, info, state) then
     state.stuck_progress = nil
     return
   end
@@ -561,6 +597,110 @@ local function stuck_recovery(state, info, goal)
   end
 end
 
+-- Path flip guard (C.PF_FLIP_FRESH_ASTAR; PRESETS.keel = false).
+-- The Dijkstra next step can send the tank back to the tile it just left
+-- (A->B->A): 20260925_105315 bot9 t=2931-3055 drove (147,123)->(147,122)->
+-- (147,123)->(147,122) for 120 ticks round an ally's avoid tiles (see
+-- chain_rank_pick in brain_pathfinder.c for the cause). When the step names
+-- the tile we just left and it is not the destination, run a fresh A* from
+-- the current tile instead, and keep doing so while we stay on this tile, for
+-- at most C.PF_FLIP_FRESH_ASTAR_TICKS path calls (about one per tick). After
+-- that the hold is spent: Dijkstra steps again on this tile, and no new hold
+-- starts until the tank moves.
+--
+-- 2026-09-26: the fresh A* takes the same avoid tiles as the Dijkstra step
+-- (M.flip_astar below), and the hold is capped. Before, the A* could drive
+-- into the ally the Dijkstra path was avoiding, and a full A* ran on every
+-- path call for as long as the tank stayed on the tile.
+--
+-- M.flip_track(state, tmx, tmy): call once per path call. Remembers the last
+-- tile we LEFT (state._pf_left_mx/my) and drops the hold when we move.
+function M.flip_track(state, tmx, tmy)
+  if state._pf_cur_mx ~= tmx or state._pf_cur_my ~= tmy then
+    if state._pf_cur_mx then
+      state._pf_left_mx, state._pf_left_my = state._pf_cur_mx, state._pf_cur_my
+    end
+    state._pf_cur_mx, state._pf_cur_my = tmx, tmy
+    state._pf_flip_hold = nil
+  end
+end
+
+-- M.flip_is_back(state, dest_mx, dest_my, nx, ny) -> true when (nx,ny) is the
+-- tile we just left and not the destination. Pure: one compare.
+function M.flip_is_back(state, dest_mx, dest_my, nx, ny)
+  return nx ~= nil and nx >= 0 and state._pf_left_mx ~= nil
+     and nx == state._pf_left_mx and ny == state._pf_left_my
+     and not (nx == dest_mx and ny == dest_my)
+end
+
+-- M.flip_holding(state, tmx, tmy, dest_mx, dest_my) -> true while a flip hold
+-- is set for this tile and this destination.
+-- A spent hold (h.spent, see M.flip_use) is not holding.
+function M.flip_holding(state, tmx, tmy, dest_mx, dest_my)
+  local h = state._pf_flip_hold
+  return h ~= nil and not h.spent and h.mx == tmx and h.my == tmy
+     and h.dmx == dest_mx and h.dmy == dest_my
+end
+
+-- M.flip_spent(state, tmx, tmy, dest_mx, dest_my) -> true when the hold for
+-- this tile and destination has used up its PF_FLIP_FRESH_ASTAR_TICKS. No new
+-- hold starts then (flip_track clears it when the tank moves).
+function M.flip_spent(state, tmx, tmy, dest_mx, dest_my)
+  local h = state._pf_flip_hold
+  return h ~= nil and h.spent == true and h.mx == tmx and h.my == tmy
+     and h.dmx == dest_mx and h.dmy == dest_my
+end
+
+-- M.flip_use(state) -> true while the hold may still run a fresh A*. Counts
+-- one path call; at PF_FLIP_FRESH_ASTAR_TICKS the hold is marked spent.
+function M.flip_use(state)
+  local h = state._pf_flip_hold
+  if not h or h.spent then return false end
+  h.n = (h.n or 0) + 1
+  if h.n > (C.PF_FLIP_FRESH_ASTAR_TICKS or 60) then
+    h.spent = true
+    print2(string.format("PF_FLIP_SPENT t=%d tile=(%d,%d) dest=(%d,%d) -- fresh A* for %d path calls, back to the Dijkstra step",
+      state.tick or 0, h.mx, h.my, h.dmx, h.dmy, h.n - 1))
+    return false
+  end
+  return true
+end
+
+-- M.flip_astar(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines,
+--              armour, avoid, penalty) -> status, nx, ny
+--   The flip guard's fresh A* (skip_dijkstra = true). The C A* takes no
+--   obstacle set, so the avoid tiles (the same list the Dijkstra tracer is
+--   given, packed y*256+x) are added to the cost overlay for this one call
+--   and put back straight after: the overlay is an int16, so the added cost
+--   is capped at 32767 there (the tracer adds `penalty` itself). The tank's
+--   own tile and the destination are left alone, as the tracer does.
+function M.flip_astar(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, avoid, penalty)
+  local saved = nil
+  if avoid and penalty and penalty > 0 then
+    saved = {}
+    for k, v in pairs(avoid) do
+      local key = (v == true) and k or v   -- list of keys, or a key set
+      if type(key) == "number" and saved[key] == nil then
+        local x, y = key % 256, math.floor(key / 256)
+        if not (x == tmx and y == tmy) and not (x == dest_mx and y == dest_my) then
+          local old = cpf.get_overlay(x, y) or 0
+          saved[key] = old
+          local add = old + penalty
+          if add > 32767 then add = 32767 end
+          cpf.set_overlay(x, y, add)
+        end
+      end
+    end
+  end
+  local st, nx, ny = cpf.path_to(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, C.ASTAR_BUDGET, true)
+  if saved then
+    for key, old in pairs(saved) do
+      cpf.set_overlay(key % 256, math.floor(key / 256), old)
+    end
+  end
+  return st, nx, ny
+end
+
 -- Wrapper: call C pathfinder and update state.pf for compatibility with
 -- stuck detection, debug logging, and other consumers of state.pf.
 local function cpf_path_to(state, info, dest_mx, dest_my)
@@ -607,9 +747,39 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
     avoid = merged
   end
   local _t_s0 = BRAIN_PROFILE and clock_us() or 0
-  local status, nx, ny = cpf.path_to(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, C.ASTAR_BUDGET, false, avoid,
-                                     nogo and (C.SEA_NOGO_AVOID_PENALTY or 30000)
-                                          or C.NAV_AVOID_PENALTY)
+  -- Not while a sea no-go set is live: A* does not take the obstacle set, and
+  -- the no-go water is a hard rule (the ally avoid tiles are only a dodge).
+  local flip_on = C.PF_FLIP_FRESH_ASTAR and not nogo
+  if flip_on then M.flip_track(state, tmx, tmy) end
+  local status, nx, ny
+  local avoid_pen = nogo and (C.SEA_NOGO_AVOID_PENALTY or 30000) or C.NAV_AVOID_PENALTY
+  local flip_astar = flip_on and M.flip_holding(state, tmx, tmy, dest_mx, dest_my)
+                     and M.flip_use(state)
+  if not flip_astar then
+    status, nx, ny = cpf.path_to(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, C.ASTAR_BUDGET, false, avoid,
+                                 avoid_pen)
+    if flip_on and status == 1 and M.flip_is_back(state, dest_mx, dest_my, nx, ny)
+       and not M.flip_spent(state, tmx, tmy, dest_mx, dest_my) then
+      state._pf_flip_hold = { mx = tmx, my = tmy, dmx = dest_mx, dmy = dest_my }
+      flip_astar = M.flip_use(state)
+      print2(string.format("PF_FLIP t=%d tile=(%d,%d) next=(%d,%d) = tile just left, dest=(%d,%d) -> fresh A* while on this tile (up to %d path calls)",
+        state.tick or 0, tmx, tmy, nx, ny, dest_mx, dest_my, C.PF_FLIP_FRESH_ASTAR_TICKS or 60))
+    end
+  end
+  if flip_astar then
+    -- skip_dijkstra = true: A* from THIS tile, with the same avoid tiles.
+    -- Taken only when it gives a step (done, or running with a step);
+    -- otherwise the Dijkstra step as before, so a budget-starved A* cannot
+    -- freeze the tank.
+    local a_st, a_nx, a_ny = M.flip_astar(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour,
+                                          avoid, avoid_pen)
+    if a_st == 1 or (a_st == 0 and a_nx and a_nx >= 0) then
+      status, nx, ny = a_st, a_nx, a_ny
+    elseif status == nil then
+      status, nx, ny = cpf.path_to(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, C.ASTAR_BUDGET, false, avoid,
+                                   avoid_pen)
+    end
+  end
   if BRAIN_PROFILE then
     _path_search_us = _path_search_us + (clock_us() - _t_s0)
     -- Snapshot which method (dij/astar) cpf.path_to actually used
@@ -675,6 +845,19 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
     pf.next_my = -1
   end
 
+  -- DECOY GETAWAY diagonal step (C.DECOY_GETAWAY_DIAGONAL): while the chain
+  -- moves, a diagonal next square is driven straight at, not round by a side
+  -- square (decoy_getaway.diagonal_next says why the Dijkstra goes round).
+  local g_ga = state.goal
+  if g_ga and g_ga._getaway and g_ga.mx == dest_mx and g_ga.my == dest_my then
+    local gx, gy = orders_mod().getaway_diagonal(g_ga, tmx, tmy, info.inboat, state.world)
+    if gx then
+      pf.status  = "done"
+      pf.next_mx, pf.next_my = gx, gy
+      pf.path_chain = { tmx, tmy, gx, gy }
+    end
+  end
+
   -- Boat-mode near deep water: when the tank sits on a tile bordering deep sea
   -- (any of the 8 neighbours), keep the nav destination within ONE tile of the
   -- tank. Stops steering from aiming a long diagonal that clips a deep-water
@@ -699,6 +882,7 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
   end
   return nil, nil
 end
+M._cpf_path_to = cpf_path_to   -- unit tests (test_place_line_flip.lua)
 
 -- Impassable terrain types for path lookahead line-of-sight checks.
 local IMPASSABLE = {
@@ -2368,8 +2552,14 @@ local function attack_pill_steer(state, world, info, goal)
       -- 3-tier turn (hold for big corrections, tap for fine):
       -- holds give continuous engine rotation; taps stay at /8 ramp
       -- speed PROVIDED the engine's firstLeft/firstRight counter
-      -- doesn't saturate (tank.c:1751 — first 6 turn ticks at /8,
-      -- then full speed). The brain runs at half the engine's rate,
+      -- doesn't saturate (tankTurn in tank.c: first 6 turn ticks at
+      -- /8, then full speed). The very first tick of a turn is the
+      -- exception: tankVisibleTurn rounds it up to the smallest
+      -- multiple of /8 that moves the gunsight crosshair a pixel,
+      -- which at the max range we hold is 0.125 to about 0.5 brad,
+      -- still inside the 1-brad lock tolerance. A brain that
+      -- fine-aims at short range would see up to 3.4 brad and could
+      -- oscillate. The brain runs at half the engine's rate,
       -- so 1 brain tick of held key = 2 engine ticks. That makes
       -- the safe burst max 3 brain ticks (= 6 engine ticks at /8).
       -- A 4-brain-tick burst overshoots: the last 2 engine ticks
@@ -2983,6 +3173,24 @@ local function tank_combat_steer(state, world, info, goal)
         pill = goal._heat_pid, shots = goal._heat_shots })
       return keys, taps
     end
+  end
+
+  -- C.ATTACK_TANK_PILL_HEAT_ONLY: the heat volley above is all this bot does
+  -- on an attack_tank; it never closes on or shoots the tank. With no volley,
+  -- hold still and ask for one replan (eval_attack_tank then drops the row if
+  -- no pill can be heated). A human's `attack <tank>` order on THIS tank and
+  -- a "kill me" delivery fall through and fight as before.
+  if C.ATTACK_TANK_PILL_HEAT_ONLY and not km_pn
+     and not (C.BOT_COMMANDS_ENABLED and state._order
+              and state._order.kind == "attack_tank"
+              and state._order.tid == target.id) then
+    if goal.substate ~= "heat_only_hold" then
+      goal.substate = "heat_only_hold"
+      state._force_replan_reason = state._force_replan_reason or "heat_only_hold"
+    end
+    log.reason("steer", { mode = "tank_combat_heat_only_hold" })
+    if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
+    return keys, taps
   end
 
   if dist_tiles > C.TANK_COMBAT_ENGAGE_RANGE then
@@ -3856,7 +4064,10 @@ local function steer_core(state, world, info, goal)
           -- kill_me_wait: the tile was advertised to the whole team as where
           -- we will be standing, so once we are on it we STAY on it. Same
           -- park as take_cover, for the same reason.
-          or goal.kind == "kill_me_wait")
+          or goal.kind == "kill_me_wait"
+          -- goto_tile: a person pointed at this square and said go there.
+          -- Standing on it IS the order, so park the same way.
+          or goal.kind == "goto_tile")
          and goal.mx == (bit.rshift(info.tankx, 8)) and goal.my == (bit.rshift(info.tanky, 8)) then
     -- ON the wait/cover spot: stand still. For wait_for_lgm, let the LGM
     -- finish whatever he's doing (farming, opportunistic build) before
@@ -6011,6 +6222,28 @@ function M.steer(state, world, info, goal)
                                state._cliff_sticky_my or -1))
         end
       end
+    end
+  end
+
+  -- ── A GO-THERE ORDER IN ITS HOLD PHASE: STAND STILL AND FIGHT ─────────
+  -- A person pointed at a square and the bot is standing on it.  From the
+  -- arrival tick the hard goal lock is off (goals.lua, "the hold phase of a
+  -- go-there order") so attack_tank and kill_lgm can win the pool -- but
+  -- winning must not turn into DRIVING, or the order stops meaning anything
+  -- the moment a tank shows up.  So the throttle is taken away HERE, at the
+  -- one point every key leaves this module: KEY_FASTER is cleared and the
+  -- tank brakes if it is still rolling.  Turn keys and taps (the gun) pass
+  -- through untouched, which is the whole point -- it aims and fires from the
+  -- spot.  Only the park kinds are held this way, so a critical-armour flee
+  -- or an escape from water still drives.
+  if order_hold_parked(state, goal, info) and keys then
+    local before = keys
+    keys = bit.band(keys, bit.bnot(KEY_FASTER))
+    if (info.speed or 0) > 0 then keys = bit.bor(keys, KEY_SLOWER) end
+    if BRAIN_DEBUG_MODE and before ~= keys then
+      print2(string.format("ORDER_HOLD_PARK t=%d goal=%s keys=%d->%d",
+                           state.tick or 0, tostring(goal and goal.kind),
+                           before, keys))
     end
   end
   return keys, taps

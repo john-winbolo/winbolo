@@ -28,6 +28,13 @@ extern "C" {
 /* Initialize ImGui context and backends for the editor. */
 void mapEditorImguiInit(SDL_Window *window, SDL_Renderer *renderer);
 
+/* Run a dialog that makes and destroys its own ImGui context (the host's
+ * settings window). The editor's context is set aside while it runs, so its
+ * panels come back as they were, then its input state is cleared, since the
+ * key and mouse releases went to the dialog, and its font is reloaded for a
+ * language the dialog may have picked. Call between frames. */
+void mapEditorImguiRunOutside(void (*fn)(void));
+
 /* Set the renderer used for shared UI elements (lock icons, etc.).
  * Called automatically by mapEditorImguiInit; call this separately when
  * using mapGenImguiControls outside the map editor (e.g. map chooser). */
@@ -51,6 +58,10 @@ void mapEditorImguiNewFrame(void);
 /* Menu action flags returned from the menu bar each frame. */
 typedef struct {
     bool wantExit;
+    /* The player asked for the application to end rather than to leave the
+     * editor.  Only Quit sets it — "Return to Menu" sets wantExit alone —
+     * and it survives the unsaved-changes modal with the exit it started. */
+    bool wantQuitApp;
     bool wantNew;
     bool wantOpen;
     bool wantOpenWbn;   /* File > Open from WinBolo.net (WinBolo client build only) */
@@ -78,6 +89,7 @@ typedef struct {
     bool wantZoomIn;
     bool wantZoomOut;
     bool wantZoomSet;
+    bool wantSettings;  /* Settings (WinBolo client build only) */
     /* Window submenu toggles — set by the macOS NSMenu trampolines. The
      * in-window ImGui menu mutates *showX directly via ImGui::MenuItem's
      * bool pointer; that's synchronous and doesn't need a flag. Async
@@ -91,6 +103,7 @@ typedef struct {
     bool wantToggleOverview;
     bool wantToggleStats;
     bool wantToggleStampLibrary;
+    bool wantToggleScenario;
     int  zoomSetIndex;      /* target zoom step when wantZoomSet is true */
     int  openRecentIndex;   /* -1 = none, else index into recent files */
 } MapEditorMenuAction;
@@ -109,8 +122,8 @@ void mapEditorImguiMenuBar(MapEditorMenuAction *action,
                            bool *showTerrain, bool *showTools,
                            bool *showInspector, bool *showObjects,
                            bool *showOverview, bool *showStats,
-                           bool *showStampLibrary,
-                           bool fromMainMenu,
+                           bool *showStampLibrary, bool *showScenario,
+                           bool fromMainMenu, bool hasSettings,
                            int zoomStepIndex, int zoomStepCount,
                            const float *zoomStepValues);
 
@@ -309,6 +322,75 @@ bool mapEditorImguiTextDialog(bool *open, TextConfig *cfg,
  * wantRefresh: set to true if user clicked "Refresh Spatial". */
 #include "mapeditor_stats.h"
 void mapEditorImguiStatsPanel(const MapStats *stats, bool *p_open, bool *wantRefresh);
+
+/* Which of the scenario panel's views its body shows. The order is the order
+ * of the button row across the top, and the script view is what a panel that
+ * has never been switched opens on. */
+typedef enum {
+    ME_SCENARIO_VIEW_SCRIPT = 0,
+    ME_SCENARIO_VIEW_METADATA,
+    ME_SCENARIO_VIEW_LOBBY,
+    ME_SCENARIO_VIEW_RULES,
+    ME_SCENARIO_VIEW_TAGS,
+    ME_SCENARIO_VIEW_FUNCTIONS,
+    ME_SCENARIO_VIEW_TRIGGERS
+} MEScenarioView;
+
+/* Render the scenario panel: the button row and whichever view it picks.
+ * st: the script buffer and where it came from.
+ * form: the manifest the metadata, lobby and rules forms edit.
+ * mapPath: the map the script belongs to ("" when the map has no file yet,
+ *          which disables Save — a script is stored beside a map).
+ * view: which view the body shows, one of MEScenarioView; the button row
+ *       writes to it.
+ * p_open: pointer to show/hide flag.
+ * wantSave: set to true when the user clicks Save.
+ * wantReload: set to true when the user clicks Reload.
+ * wantValidate: set to true when the user clicks Validate.
+ * wantPack: set to true when the user clicks Pack into Map, at the foot of the
+ *           metadata view.
+ * wantSaveMod: set to true when the user clicks Save as Mod, which needs a path
+ *              and so opens a save dialog.
+ * mapInfo: the open map's entity counts and positions and the rectangle the
+ *          selection tool holds, which the tags view lists and draws regions
+ *          from. The panel cannot ask the map itself — those lists are bolo
+ *          internals this translation unit has no reach into — so mapeditor.c
+ *          fills it in. NULL leaves the tags view with nothing to list.
+ * selKind/selIndex: the object selected on the map, so the tags view can mark
+ *          its row. ME_SEL_NONE for none.
+ * clickedKind/clickedIndex: set when a tag row is clicked, the way the object
+ *          list reports one.
+ * panX/panY: the tile to pan to for that click, or -1 for neither.
+ * The panel never touches the filesystem; mapeditor.c acts on the five flags.
+ * The check is read for its issues and its markers; mapeditor.c is what runs
+ * it, and what the last write did is the state's own status line. */
+#include "mapeditor_scenario.h"
+/* The form, the check and the map facts are passed by pointer, so their
+ * headers stay out of this one: they would otherwise carry the manifest's
+ * layout and the issue list into every file that includes mapeditor_imgui.h.
+ * The files that edit a form or read a check include them themselves. The tags
+ * are declared here rather than left to the prototype, which in C would scope
+ * them to the parameter list and leave the call site holding another type. */
+struct MEScenarioForm;
+struct MEScenarioCheck;
+struct MEScenarioMapInfo;
+void mapEditorImguiScenarioPanel(MEScenarioState *st, struct MEScenarioForm *form,
+                                 struct MEScenarioCheck *check,
+                                 const char *mapPath, int *view, bool *p_open,
+                                 const struct MEScenarioMapInfo *mapInfo,
+                                 int selKind, int selIndex,
+                                 int *clickedKind, int *clickedIndex,
+                                 int *panX, int *panY,
+                                 bool *wantSave, bool *wantReload,
+                                 bool *wantValidate, bool *wantPack,
+                                 bool *wantSaveMod);
+
+/* Did the scenario panel's script view draw in the frame that just ended?
+ * Reading it clears the mark. mapEditorImguiNewFrame asks once a frame so the
+ * editor can keep SDL text input running for the window while that view is up:
+ * the widget takes its characters from ImGui's character queue, which fills
+ * from SDL text-input events and nothing else turns those on. */
+bool mapEditorImguiScriptViewDrew(void);
 
 /* Render the Image Import dialog.
  * open: pointer to the open flag (set to false when dialog closes).

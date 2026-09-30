@@ -133,6 +133,10 @@ bool lv_playersSetPlayerName(BYTE playerNum, char *playerName) {
 
   label[0] = '\0';
   returnValue = FALSE;
+  /* The slot comes off the recording; one past the array names nobody. */
+  if (playerNum >= MAX_TANKS) {
+    return returnValue;
+  }
   plrs.item[playerNum].inUse = TRUE;
   /* Reuse MESSAGE_CHANGENAME (bolo wording: "{other}" has handed
    * control over to "{player}"). The legacy logviewer wording
@@ -170,6 +174,9 @@ bool lv_playersSetPlayerName(BYTE playerNum, char *playerName) {
 *  name       - The player name to set
 *********************************************************/
 void lv_playersSetPlayerNameQuiet(BYTE playerNum, const char *name) {
+  if (playerNum >= MAX_TANKS) {
+    return;
+  }
   plrs.item[playerNum].inUse = TRUE;
   strncpy(plrs.item[playerNum].playerName, name, PLAYER_NAME_LEN - 1);
   plrs.item[playerNum].playerName[PLAYER_NAME_LEN - 1] = '\0';
@@ -201,6 +208,10 @@ void lv_playersSetPlayerNameQuiet(BYTE playerNum, const char *name) {
 void lv_playersSetPlayer(BYTE playerNum, char *playerName, char *location, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, bool onBoat, BYTE numAllies, BYTE *allies, bool announce, bool override, BYTE accountFlags) {
   BYTE count; /* Looping variable */
 
+  /* The slot comes off the recording; one past the array names nobody. */
+  if (playerNum >= MAX_TANKS) {
+    return;
+  }
   if (plrs.item[playerNum].inUse == FALSE || override == TRUE) {
 
     if (override == FALSE || plrs.item[playerNum].inUse == FALSE) {
@@ -277,7 +288,7 @@ void lv_playersSetPlayer(BYTE playerNum, char *playerName, char *location, BYTE 
 *  lgmFrame   - Lgm Frame number
 *********************************************************/
 void lv_playersUpdateTank(BYTE playerNum, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, bool onBoat) {
- if (plrs.item[playerNum].inUse == TRUE) {
+ if (playerNum < MAX_TANKS && plrs.item[playerNum].inUse == TRUE) {
     plrs.item[playerNum].mapX = mx;
     plrs.item[playerNum].mapY = my;
     plrs.item[playerNum].pixelX = px;
@@ -289,7 +300,7 @@ void lv_playersUpdateTank(BYTE playerNum, BYTE mx, BYTE my, BYTE px, BYTE py, BY
 
 
 void lv_playersUpdateLgm(BYTE playerNum, BYTE lgmMX, BYTE lgmMY, BYTE lgmPX, BYTE lgmPY, BYTE lgmFrame) {
-  if (plrs.item[playerNum].inUse == TRUE) {
+  if (playerNum < MAX_TANKS && plrs.item[playerNum].inUse == TRUE) {
     plrs.item[playerNum].lgmMapX = lgmMX;
     plrs.item[playerNum].lgmMapY = lgmMY;
     plrs.item[playerNum].lgmPixelX = lgmPX;
@@ -375,6 +386,12 @@ void lv_playersMakeMessageName(BYTE playerNum, char *dest) {
   char label[FILENAME_MAX];   /* Used to hold the string made by label */
 
   label[0] = '\0';
+  /* A slot past the array reads as an empty seat, as lv_playersGetPlayerName
+     answers it. */
+  if (playerNum >= MAX_TANKS) {
+    snprintf(dest, FILENAME_MAX, "%s", NO_TANK);
+    return;
+  }
   lv_labelMakeMessage(label, plrs.item[playerNum].playerName, plrs.item[playerNum].location);
   snprintf(dest, FILENAME_MAX, "%s", label);
 }
@@ -395,7 +412,7 @@ void lv_playersMakeScreenName(BYTE playerNum, char *dest) {
   char label[FILENAME_MAX];   /* Used to hold the string made by label */
 
   label[0] = '\0';
-  if (plrs.item[playerNum].inUse == TRUE) {
+  if (playerNum < MAX_TANKS && plrs.item[playerNum].inUse == TRUE) {
     lv_labelMakeTankLabel(label, plrs.item[playerNum].playerName, plrs.item[playerNum].location, FALSE);
     /* Tag bot tanks so a replay viewer can tell a brain-driven slot
      * apart from a human at a glance. The label font is fixed-width
@@ -432,7 +449,8 @@ bool lv_playersIsAllie(BYTE playerA, BYTE playerB) {
 
   if (playerA == playerB) {
     returnValue = TRUE;
-  } else if (playerA == NEUTRAL || playerB == NEUTRAL) {
+  } else if (playerA >= MAX_TANKS || playerB >= MAX_TANKS) {
+    /* NEUTRAL, or an owner byte past the array: allied to nobody. */
     returnValue = FALSE;
   } else {
     /* Check for exist */
@@ -467,7 +485,7 @@ BYTE lv_playersGetNumAllie(BYTE playerNum) {
   BYTE returnValue; /* Value to return */
 
   returnValue = 0;
-  if (plrs.item[playerNum].inUse == TRUE) {
+  if (playerNum < MAX_TANKS && plrs.item[playerNum].inUse == TRUE) {
     returnValue = lv_allienceNumAllies(&(plrs.item[playerNum].allie)) + 1;
   }
   return returnValue;
@@ -493,7 +511,7 @@ tankAlliance lv_playersScreenAllience(BYTE playerNum) {
       returnValue = tankNone;
     } else if (playerNum == myPlayerNum) {
       returnValue = tankSelf;
-    } else if (lv_allienceExist(&(plrs.item[myPlayerNum].allie), playerNum) == TRUE) {
+    } else if (myPlayerNum < MAX_TANKS && lv_allienceExist(&(plrs.item[myPlayerNum].allie), playerNum) == TRUE) {
       returnValue = tankAllie;
     } else {
       returnValue = tankEvil;
@@ -682,7 +700,7 @@ void lv_playersLeaveGame(BYTE playerNum, bool announce) {
   BYTE count;                /* Looping variable */
 
 
-  if (plrs.item[playerNum].inUse == TRUE) {
+  if (playerNum < MAX_TANKS && plrs.item[playerNum].inUse == TRUE) {
     lv_allienceDestroy(&(plrs.item[playerNum].allie));
     count = 0;
     while (count < MAX_TANKS) {
@@ -719,11 +737,12 @@ void lv_playersLeaveGame(BYTE playerNum, bool announce) {
 *  playerNum - The player num to check
 *********************************************************/
 bool lv_playersIsInUse(BYTE playerNumber) {
+  if (playerNumber >= MAX_TANKS) return FALSE;
   return plrs.item[playerNumber].inUse;
 }
 
 bool lv_playersIsBot(BYTE playerNumber) {
-  if (!plrs.item[playerNumber].inUse) return FALSE;
+  if (playerNumber >= MAX_TANKS || !plrs.item[playerNumber].inUse) return FALSE;
   return (plrs.item[playerNumber].accountFlags & LV_PLAYER_FLAG_BOT) ? TRUE : FALSE;
 }
 
@@ -744,7 +763,7 @@ bool lv_playersIsBot(BYTE playerNumber) {
 *  frame     - LGM Frame
 *********************************************************/
 void lv_playersGetLgmDetails(BYTE playerNumber, BYTE *mx, BYTE *my , BYTE *px, BYTE *py, BYTE *frame){
-  if (plrs.item[playerNumber].inUse == TRUE) {
+  if (playerNumber < MAX_TANKS && plrs.item[playerNumber].inUse == TRUE) {
     *mx = plrs.item[playerNumber].lgmMapX;
     *my = plrs.item[playerNumber].lgmMapY;
     *px = plrs.item[playerNumber].lgmPixelX;
@@ -777,7 +796,7 @@ void lv_playersGetLgmDetails(BYTE playerNumber, BYTE *mx, BYTE *my , BYTE *px, B
 *  onBoat    - Whether the tank is on a boat
 *********************************************************/
 void lv_playersGetTankDetails(BYTE playerNumber, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame, bool *onBoat) {
-  if (plrs.item[playerNumber].inUse == TRUE) {
+  if (playerNumber < MAX_TANKS && plrs.item[playerNumber].inUse == TRUE) {
     *mx     = plrs.item[playerNumber].mapX;
     *my     = plrs.item[playerNumber].mapY;
     *px     = plrs.item[playerNumber].pixelX;
@@ -810,9 +829,12 @@ void lv_playersLeaveAlliance(BYTE playerNum) {
   BYTE count; /* Looping variable */
   BYTE total; /* Amount of items to redraw */
 
+  /* The slot comes off the recording; one past the array names nobody. */
+  if (playerNum >= MAX_TANKS) {
+    return;
+  }
   lv_allienceDestroy(&(plrs.item[playerNum].allie));
   plrs.item[playerNum].allie = lv_allienceCreate();
-  plrs.item[playerNum].team = lv_playersGetUnusedTeam(playerNum);
   count = 0;
   while (count < MAX_TANKS) {
     if (plrs.item[count].inUse == TRUE && count != playerNum) {
@@ -820,8 +842,12 @@ void lv_playersLeaveAlliance(BYTE playerNum) {
     }
     count++;
   }
- 
-  
+  /* The leaver gives up the group's colour and takes the lowest free one; the
+   * group it left keeps its colour. */
+  plrs.item[playerNum].team = NO_TEAM_SET;
+  lv_playersRebuildTeams(TRUE);
+
+
   /* Update the screen */
   total = lv_screenNumBases();
   for (count=1;count<=total;count++) {
@@ -893,8 +919,6 @@ void lv_playersAcceptAlliance(BYTE acceptedBy, BYTE newMember) {
   allyA = lv_playersGetAlliesBitMap(acceptedBy);
   allyB = lv_playersGetAlliesBitMap(newMember);
 
-  // plrs.item[acceptedBy].team = plrs.item[newMember].team;
-
   count = 0;
   // For all possible tanks..
   while (count < MAX_TANKS) {
@@ -915,8 +939,6 @@ void lv_playersAcceptAlliance(BYTE acceptedBy, BYTE newMember) {
           if (test2) {
 						// Add an alliance between count and count2.
             lv_allienceAdd(&(plrs.item[count].allie), count2);
-						// So, put all allies of the 'accepter', on the team of the 'requester'.
-						plrs.item[count].team = plrs.item[count2].team;
           }
           count2++;
         }
@@ -940,9 +962,11 @@ void lv_playersAcceptAlliance(BYTE acceptedBy, BYTE newMember) {
     }
     count++;
   }
-      
-      
- 
+
+  /* The merged group takes the colour of its lowest-numbered member; nobody
+   * outside it is touched. */
+  lv_playersRebuildTeams(TRUE);
+
   /* Update the screen */
   total = lv_screenNumBases();
   for (count=1;count<=total;count++) {
@@ -975,7 +999,7 @@ bool lv_playersChooseView(int x, int y) {
 }
 
 BYTE lv_playersGetCentredX() {
-  if (plrs.item[myPlayerNum].inUse == TRUE && plrs.item[myPlayerNum].mapX >= MAP_MINE_EDGE_LEFT) {
+  if (myPlayerNum < MAX_TANKS && plrs.item[myPlayerNum].inUse == TRUE && plrs.item[myPlayerNum].mapX >= MAP_MINE_EDGE_LEFT) {
       return ((plrs.item[myPlayerNum].mapX << 8) + (plrs.item[myPlayerNum].pixelX << 4)) >> 8;
   }
   return 0;
@@ -983,7 +1007,7 @@ BYTE lv_playersGetCentredX() {
 
 
 BYTE lv_playersGetCentredY() {
-  if (plrs.item[myPlayerNum].inUse == TRUE && plrs.item[myPlayerNum].mapY >= MAP_MINE_EDGE_TOP) {
+  if (myPlayerNum < MAX_TANKS && plrs.item[myPlayerNum].inUse == TRUE && plrs.item[myPlayerNum].mapY >= MAP_MINE_EDGE_TOP) {
       return ((plrs.item[myPlayerNum].mapY << 8) + (plrs.item[myPlayerNum].pixelY << 4)) >> 8;
   }
   return 0;
@@ -997,7 +1021,7 @@ BYTE lv_playersGetCentredY() {
  * only move in whole 16-pixel steps. Callers that want smooth scrolling use
  * these instead. */
 int lv_playersGetCentredPixelX(void) {
-    if (plrs.item[myPlayerNum].inUse == TRUE &&
+    if (myPlayerNum < MAX_TANKS && plrs.item[myPlayerNum].inUse == TRUE &&
         plrs.item[myPlayerNum].mapX >= MAP_MINE_EDGE_LEFT) {
         /* 16 px per map square, matching the << 4 the BYTE accessors use. */
         return (int)plrs.item[myPlayerNum].mapX * 16 +
@@ -1007,7 +1031,7 @@ int lv_playersGetCentredPixelX(void) {
 }
 
 int lv_playersGetCentredPixelY(void) {
-    if (plrs.item[myPlayerNum].inUse == TRUE &&
+    if (myPlayerNum < MAX_TANKS && plrs.item[myPlayerNum].inUse == TRUE &&
         plrs.item[myPlayerNum].mapY >= MAP_MINE_EDGE_TOP) {
         return (int)plrs.item[myPlayerNum].mapY * 16 +
                (int)plrs.item[myPlayerNum].pixelY;
@@ -1061,6 +1085,7 @@ BYTE lv_playersFindByName(const char *name) {
 }
 
 BYTE lv_playersGetTeamId(BYTE playerNum) {
+  if (playerNum >= MAX_TANKS) return NO_TEAM_SET;
   return plrs.item[playerNum].team;
 }
 
@@ -1089,10 +1114,73 @@ BYTE lv_playersGetUnusedTeam(BYTE playerNum) {
 }
 
 BYTE lv_playersGetTeamForOwner(BYTE owner) {
-  if (plrs.item[owner].inUse == TRUE) {
+  /* owner is a byte off the recording and the caller uses the answer as a tc[]
+     row, so neither array may be reached past on a damaged or hostile file. */
+  if (owner < MAX_TANKS && plrs.item[owner].inUse == TRUE &&
+      plrs.item[owner].team < MAX_TANKS) {
     return plrs.item[owner].team;
   }
   return NEUTRAL_TEAM;
+}
+
+/* Give every alliance group one palette slot. Groups are found from the
+ * mutual ally lists, so this runs after a whole snapshot has loaded (allies
+ * later in the snapshot count too) and after each alliance event.
+ *
+ * keep TRUE:  a group keeps the colour its lowest-numbered member already
+ *             holds, so a mid-game merge, split, or seek never recolours
+ *             anyone who didn't move. Only groups with no usable colour get
+ *             the lowest free one.
+ * keep FALSE: colours are dealt afresh, lowest free first in slot order, so
+ *             two teams are always Team 1 and Team 2 however the players sat
+ *             in the lobby. Used at the round's first world snapshot, where
+ *             the join-order colours handed out in the lobby mean nothing. */
+void lv_playersRebuildTeams(bool keep) {
+  BYTE groups[MAX_TANKS];
+  BYTE colours[MAX_TANKS];
+  bool used[MAX_TANKS] = {FALSE};
+  BYTE i, j, k;
+
+  for (i = 0; i < MAX_TANKS; i++) {
+    groups[i] = i;
+    colours[i] = NO_TEAM_SET;
+  }
+  for (i = 0; i < MAX_TANKS; i++) {
+    if (!plrs.item[i].inUse) continue;
+    for (j = 0; j < i; j++) {
+      if (plrs.item[j].inUse &&
+          lv_allienceExist(&plrs.item[i].allie, j) &&
+          lv_allienceExist(&plrs.item[j].allie, i)) {
+        BYTE from = groups[i];
+        BYTE to = groups[j];
+        for (k = 0; k < MAX_TANKS; k++) {
+          if (groups[k] == from) groups[k] = to;
+        }
+      }
+    }
+  }
+  /* Reserve surviving colours before allocating any new ones. */
+  for (i = 0; keep && i < MAX_TANKS; i++) {
+    BYTE team = plrs.item[i].team;
+    if (plrs.item[i].inUse && colours[groups[i]] == NO_TEAM_SET &&
+        team < MAX_TANKS && !used[team]) {
+      colours[groups[i]] = team;
+      used[team] = TRUE;
+    }
+  }
+  for (i = 0; i < MAX_TANKS; i++) {
+    if (!plrs.item[i].inUse) continue;
+    if (colours[groups[i]] == NO_TEAM_SET) {
+      for (j = 0; j < MAX_TANKS; j++) {
+        if (!used[j]) {
+          colours[groups[i]] = j;
+          used[j] = TRUE;
+          break;
+        }
+      }
+    }
+    plrs.item[i].team = colours[groups[i]];
+  }
 }
 
 void lv_playersSetTeams(BYTE *pTeams) {

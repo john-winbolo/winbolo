@@ -22,6 +22,8 @@
 #include "client_mappreview.h"
 #include "global.h"  /* MAP_MINE_EDGE_*, MINE_START/END/SUBTRACT, terrain constants */
 #include "types.h"   /* struct mapObj/pillsObj/basesObj/startsObj layouts */
+#include "map_colours.h"
+
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -70,7 +72,20 @@ void minimapRenderPixels(const MapPreview *view,
                 terrain = (BYTE)(raw - MINE_SUBTRACT);
             }
 
-            minimapTerrainColor(terrain, &pixels[idx], &pixels[idx+1], &pixels[idx+2]);
+            /* mapColourTerrain takes raw terrain, so the mine strip above is
+               work it would have done anyway; minimapTerrainColor strips too.
+               Neither can refuse a terrain a map file holds, so the fallback
+               only catches a byte no terrain uses. */
+            if (flags & MINIMAP_EDIT_PALETTE) {
+                minimapTerrainColor(terrain, &pixels[idx], &pixels[idx+1],
+                                    &pixels[idx+2]);
+            } else {
+                SDL_Color c = { 0, 0, 0, 255 };
+                mapColourTerrain(terrain, &c);
+                pixels[idx]   = c.r;
+                pixels[idx+1] = c.g;
+                pixels[idx+2] = c.b;
+            }
             pixels[idx+3] = 255;
 
             /* Darken mined tiles */
@@ -174,17 +189,30 @@ void minimapDrawObjects(uint8_t *pixels,
     const struct startsObj *ss = clientMapPreviewStarts(view);
 
     if (pillColor && pb) {
-        for (i = 0; i < pb->numPills; i++) {
+        /* The map file records an owner for every pill, NEUTRAL on all but
+           a speciality map. Both callers here — the map chooser and the map
+           editor — draw a map nobody is playing, so there is no viewer for
+           a colour to be "own" relative to; this only distinguishes a pill
+           the file hands to a player at load from a neutral one. A scripted
+           map that starts its players with pills in hand (Survival's
+           centre) says so in the preview, and a plain map, whose pills are
+           all neutral, is drawn as before. */
+        static const uint8_t ownedCol[3] = {255, 0, 255}; /* magenta */
+        for (i = 0; i < pb->numPills && i < MAX_PILLS; i++) {
             int px = pb->item[i].x;
             int py = pb->item[i].y;
+            const uint8_t *col = (pb->item[i].owner != NEUTRAL) ? ownedCol : pillColor;
+            /* Not on the map: the loader took it off (one in the mined
+               border). The map editor puts every item back on. */
+            if (pb->active[i] == FALSE) continue;
             for (dy = -1; dy <= 1; dy++) {
                 for (dx = -1; dx <= 1; dx++) {
                     int nx = px + dx, ny = py + dy;
                     if (nx >= 0 && nx < MINIMAP_SIZE && ny >= 0 && ny < MINIMAP_SIZE) {
                         int idx = (ny * MINIMAP_SIZE + nx) * 4;
-                        pixels[idx]   = pillColor[0];
-                        pixels[idx+1] = pillColor[1];
-                        pixels[idx+2] = pillColor[2];
+                        pixels[idx]   = col[0];
+                        pixels[idx+1] = col[1];
+                        pixels[idx+2] = col[2];
                         pixels[idx+3] = 255;
                     }
                 }
@@ -193,9 +221,10 @@ void minimapDrawObjects(uint8_t *pixels,
     }
 
     if (baseColor && bs) {
-        for (i = 0; i < bs->numBases; i++) {
+        for (i = 0; i < bs->numBases && i < MAX_BASES; i++) {
             int bx = bs->item[i].x;
             int by = bs->item[i].y;
+            if (bs->active[i] == FALSE) continue;
             for (dy = -1; dy <= 1; dy++) {
                 for (dx = -1; dx <= 1; dx++) {
                     int nx = bx + dx, ny = by + dy;
@@ -212,9 +241,10 @@ void minimapDrawObjects(uint8_t *pixels,
     }
 
     if (startColor && ss) {
-        for (i = 0; i < ss->numStarts; i++) {
+        for (i = 0; i < ss->numStarts && i < MAX_STARTS; i++) {
             int sx = ss->item[i].x;
             int sy = ss->item[i].y;
+            if (ss->active[i] == FALSE) continue;
             /* Colour by ownership when an override is in effect, else the
              * caller's default (yellow). The off-side bit rides on top of
              * the code and dims the dot rather than changing its colour. */
@@ -281,9 +311,9 @@ SDL_Texture *minimapFromCompressed(SDL_Renderer *renderer,
     MapPreview *mp = clientMapPreviewLoadFromBuffer(compressedData, dataLen);
     if (!mp) return NULL;
 
-    if (outPills)  *outPills  = clientMapPreviewGetPillCount(mp);
-    if (outBases)  *outBases  = clientMapPreviewGetBaseCount(mp);
-    if (outStarts) *outStarts = clientMapPreviewGetStartCount(mp);
+    if (outPills)  *outPills  = clientMapPreviewGetLivePillCount(mp);
+    if (outBases)  *outBases  = clientMapPreviewGetLiveBaseCount(mp);
+    if (outStarts) *outStarts = clientMapPreviewGetLiveStartCount(mp);
 
     tex = minimapCreateTexture(renderer, mp, bounds, 0);
 
@@ -337,9 +367,9 @@ SDL_Texture *minimapFromFile(SDL_Renderer *renderer, const char *mapPath,
 
     if (!mp) return NULL;
 
-    if (outPills)  *outPills  = clientMapPreviewGetPillCount(mp);
-    if (outBases)  *outBases  = clientMapPreviewGetBaseCount(mp);
-    if (outStarts) *outStarts = clientMapPreviewGetStartCount(mp);
+    if (outPills)  *outPills  = clientMapPreviewGetLivePillCount(mp);
+    if (outBases)  *outBases  = clientMapPreviewGetLiveBaseCount(mp);
+    if (outStarts) *outStarts = clientMapPreviewGetLiveStartCount(mp);
 
     tex = minimapCreateTexture(renderer, mp, bounds, 0);
 

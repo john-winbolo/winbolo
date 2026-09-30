@@ -28,7 +28,9 @@ void serverSimLobbyCheckAllReady(ServerSim *sim);
  * host did between rounds, cuts a team back to maxBots, and returns the
  * seats a script fielded to being held. ClearSeats is the first half of
  * serverSimScenarioSeatLobby on its own. OnMapChanged tells whoever owns the
- * scenario about the new map and then seats what they leave behind.
+ * scenario about the new map and then seats what they leave behind, where
+ * that is a different template from the one the lobby was seated from; a
+ * template that did not change leaves every bot where it is.
  *
  * serverSimScenarioSeatLobby and serverSimScenarioApplyLobbyRules are on
  * server_sim.h instead: a process booting onto a scripted map makes both
@@ -146,6 +148,19 @@ LobbyPlayer     *serverSimGetLobbyPlayerMut(ServerSim *sim, BYTE n);
  * transport_udp_server.c. The returned pointer has no trailing slash;
  * concatenate with "/<rel>". */
 const char *serverSimGetMapDirRoot(const ServerSim *sim);
+
+/* serverSimSetScenarioDir / serverSimGetScenarioDir: moved to
+ * public/server_sim.h — unlike the map root, a desktop host sets this one
+ * from its own preferences, and a GUI translation unit sees public/ only. */
+
+/* Records which scenario from that directory the lobby host has picked, by
+ * the file name the directory listing gave; NULL or "" is none. Recording the
+ * pick is all it does — the caller asks for the decision about what plays
+ * again afterwards and publishes the result, as the CMD_LOBBY_SET_SCENARIO
+ * case does. Its callers are that case and the tests, so it stays here while
+ * serverSimGetSelectedScenario is public: the scenario library reads the pick
+ * back, and a frontend that wants a different one sends the command. */
+void serverSimSetSelectedScenario(ServerSim *sim, const char *file);
 
 /* Absolute directory backing the virtual "Uploads/" folder for
  * PERSIST-policy uploads. Pass NULL or "" to leave it unset (uploads then

@@ -1,5 +1,7 @@
 {"tick":0,"type":"CTRL_GAME_PHASE","phase":"LOBBY","countdownSeconds":0}
 {"tick":0,"type":"CTRL_LOBBY_SETTINGS","mapName":"Everard Island","lobbyGameType":3,"lobbyHiddenMines":false,"lobbyAiType":0,"lobbyTimeLimit":-1,"lobbyPillCount":16,"lobbyBaseCount":11,"lobbyStartCount":16,"mapSkipAvailable":false,"netStat":0,"hasLobby":true,"voiceMode":0}
+{"tick":0,"type":"CTRL_LOBBY_SCRIPT_LIST","final":true,"count":0,"entries":[]}
+{"type":"CTRL_LOBBY_SCRIPT_SETTING","op":0,"file":"","id":"","value":0}
 {"tick":0,"type":"CTRL_SIM_RULES"}
 {"tick":0,"type":"CTRL_LOBBY_BRAIN_LIST"}
 {"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"HeadlessBot","teamNumber":1,"ready":false,"isBot":false,"pingMs":0,"countryCode":"XX","clientFlags":0,"clientType":0}}

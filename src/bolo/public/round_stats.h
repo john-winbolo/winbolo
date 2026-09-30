@@ -160,6 +160,10 @@ typedef struct {
  * the wire. */
 #define ROUND_STATS_LOGKEY_LEN 33   /* mirrors WINBOLONET_KEY_LEN */
 
+/* The scenario score column's title, including its terminator. Mirrors the
+ * label field on the score op, so a title the op accepted always fits. */
+#define ROUND_STATS_SCN_LABEL_LEN 16
+
 typedef struct {
     uint8_t  slot;
     uint8_t  isBot;
@@ -181,6 +185,22 @@ typedef struct {
     char     wbnLogKey[ROUND_STATS_LOGKEY_LEN]; /* finished round's WBN log key; "" if none */
     uint8_t  highlightCount;                 /* <= ROUND_STATS_HIGHLIGHTS_WIRE_MAX */
     HighlightWindow highlights[ROUND_STATS_HIGHLIGHTS_WIRE_MAX];
+    /* A scenario's own scoreboard, as its score op left it at round end. The
+     * two arrays are indexed on different bases and it matters:
+     * scenarioScore is keyed by a 0-based player slot, so slot 0 is entry 0;
+     * scenarioTeamScore is keyed by the team number, which runs 1..MAX_TANKS-1,
+     * so entry 0 names no team and always reads 0. Each array has a mask on
+     * the same base saying which of its entries the scenario actually wrote,
+     * so a row scored zero is a different thing from a row never scored: the
+     * flag says whether there is a column, the masks say which rows are in
+     * it, and an entry whose bit is clear has no number to show. Everything
+     * here is zero unless hasScenarioScore is set. */
+    bool     hasScenarioScore;               /* a scenario set at least one score */
+    char     scenarioScoreLabel[ROUND_STATS_SCN_LABEL_LEN]; /* the column's title */
+    uint16_t scenarioScoreMask;              /* bit i set = slot i was scored */
+    uint16_t scenarioTeamScoreMask;          /* bit t set = team t was scored; bit 0 unused */
+    int32_t  scenarioScore[MAX_TANKS];       /* per 0-based player slot */
+    int32_t  scenarioTeamScore[MAX_TANKS];   /* per team 1..MAX_TANKS-1; 0 unused */
 } RoundStatsSummary;
 
 /* Awards tuning (tunable). */

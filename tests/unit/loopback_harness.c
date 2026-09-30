@@ -19,6 +19,7 @@
 #include "client_sim.h"
 #include "client_net.h"
 #include "client_connect_state.h"
+#include "client_sim_internal.h"  /* ClientSim::transport */
 #include "threads.h"
 #include "transport_udp.h"  /* transportUdpServerRecvQueuePending, GetBoundPort */
 
@@ -32,7 +33,61 @@
 
 /* E_MAP compressed length — the same literal ut_make_running_sim passes to
  * serverSimCreateCompressed. */
-#define LOOPBACK_EMAP_LEN 5097
+#define LOOPBACK_EMAP_LEN E_MAP_LEN
+
+/* Virtual impairment clock. The transport hands net_impair.c whatever clock
+ * transportUdpClientSetVirtualClock installed, and the module is pure — it
+ * takes nowMs as a parameter — so a counter the pump advances a fixed amount
+ * per tick turns a delay= spec into an exact pump count. Off unless a test
+ * asks for it: the bundled impaired tests keep the wall clock and the timing
+ * they were written against. */
+
+/* Game time in one pump. A pump runs serverInstanceTick once, which advances
+ * the sim by one 20ms frame — serverSimTick runs both half-steps inside it —
+ * so the step is the frame, not a half-step. Pace it off a half-step and the
+ * clock runs at half the rate of the sim it is pacing, which costs a delay=
+ * spec twice the game time it names. */
+#define LOOPBACK_VIRTUAL_STEP_MS 20
+
+#if WB_ENABLE_NETIMPAIR
+static bool     loopbackVirtualClockOn = false;
+static uint64_t loopbackVirtualNowMs   = 0;
+
+static uint64_t loopbackVirtualNow(void) {
+    return loopbackVirtualNowMs;
+}
+#endif
+
+/* One pump's worth of virtual time. A no-op while the virtual clock is off,
+ * which is what keeps loopbackHarnessPump's behaviour unchanged for every
+ * test that does not ask for it. */
+static void loopbackAdvanceVirtualClock(void) {
+#if WB_ENABLE_NETIMPAIR
+    if (loopbackVirtualClockOn) {
+        loopbackVirtualNowMs += LOOPBACK_VIRTUAL_STEP_MS;
+    }
+#endif
+}
+
+void loopbackHarnessUseVirtualClock(LoopbackHarness *h, bool on) {
+    (void)h;
+#if WB_ENABLE_NETIMPAIR
+    loopbackVirtualClockOn = on;
+    if (on) {
+        /* From zero, so a spec's delay is counted in pumps from the call
+         * rather than from whenever the process started. Call it before the
+         * first pump: anything already sitting in an impairment queue was
+         * stamped off the wall clock and would not come due for hours of
+         * virtual time. */
+        loopbackVirtualNowMs = 0;
+        transportUdpClientSetVirtualClock(loopbackVirtualNow);
+    } else {
+        transportUdpClientSetVirtualClock(NULL);
+    }
+#else
+    (void)on;
+#endif
+}
 
 /* Set (or clear) the WB_NETIMPAIR override the client reads at connect
  * time. Empty/NULL clears it so a clean-path harness sees no impairment. */
@@ -315,6 +370,7 @@ static void loopbackPumpPace(LoopbackHarness *h) {
 void loopbackHarnessPump(LoopbackHarness *h) {
     if (h == NULL) return;
     loopbackPumpPace(h);
+    loopbackAdvanceVirtualClock();
     if (h->clientUp) clientSimNetTick(h->cs);
     /* Second client (when one was added) ticks in the same phase as the
      * first, before the server: both endpoints' datagrams are then drained
@@ -351,6 +407,71 @@ void loopbackHarnessPump(LoopbackHarness *h) {
         SDL_Delay(1);
     }
     if (h->serverUp) serverInstanceTick(h->sim);
+}
+
+void loopbackHarnessPumpClientOnly(LoopbackHarness *h, int n) {
+    int i;
+    if (h == NULL || n <= 0) return;
+    for (i = 0; i < n; i++) {
+        loopbackAdvanceVirtualClock();
+        if (h->clientUp) clientSimNetTick(h->cs);
+        if (h->client2Up) clientSimNetTick(h->cs2);
+        /* No serverInstanceTick, and no SDL_Delay either: the yield in
+         * loopbackHarnessPump exists to give the server's recv thread a
+         * chance to deliver before the server ticks, and nothing here ticks
+         * the server. Datagrams the client sends still reach the server's
+         * socket and its recv thread still queues them; they sit in that
+         * queue until something drains it. */
+    }
+}
+
+void loopbackHarnessDropNextToClient(LoopbackHarness *h, struct ClientSim *cs,
+                                     uint8_t packetType, int count) {
+    (void)h;
+#if WB_ENABLE_NETIMPAIR
+    if (cs == NULL) return;
+    transportUdpClientTestDropNext(&cs->transport, packetType, count);
+#else
+    (void)cs;
+    (void)packetType;
+    (void)count;
+#endif
+}
+
+int loopbackHarnessDropNextLeft(LoopbackHarness *h, struct ClientSim *cs) {
+    (void)h;
+#if WB_ENABLE_NETIMPAIR
+    if (cs == NULL) return 0;
+    return transportUdpClientTestDropNextLeft(&cs->transport);
+#else
+    (void)cs;
+    return 0;
+#endif
+}
+
+void loopbackHarnessDropNextFromClient(LoopbackHarness *h, struct ClientSim *cs,
+                                       uint8_t packetType, int count) {
+    (void)h;
+#if WB_ENABLE_NETIMPAIR
+    if (cs == NULL) return;
+    transportUdpClientTestDropNextOut(&cs->transport, packetType, count);
+#else
+    (void)cs;
+    (void)packetType;
+    (void)count;
+#endif
+}
+
+int loopbackHarnessDropNextFromClientLeft(LoopbackHarness *h,
+                                          struct ClientSim *cs) {
+    (void)h;
+#if WB_ENABLE_NETIMPAIR
+    if (cs == NULL) return 0;
+    return transportUdpClientTestDropNextOutLeft(&cs->transport);
+#else
+    (void)cs;
+    return 0;
+#endif
 }
 
 int loopbackHarnessPumpUntil(LoopbackHarness *h, int maxIters,
@@ -432,6 +553,11 @@ void loopbackHarnessStop(LoopbackHarness *h) {
         h->threadsUp = false;
     }
     loopbackSetImpairEnv(NULL);
+    /* Process-wide state, so it outlives the harness unless it is cleared
+     * here: the next test in this binary would otherwise inherit a counter
+     * this one stopped advancing, and its impaired packets would never come
+     * due. */
+    loopbackHarnessUseVirtualClock(h, false);
     h->clientUp = false;
     h->serverUp = false;
 }

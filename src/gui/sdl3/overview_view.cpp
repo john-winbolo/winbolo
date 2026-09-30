@@ -43,6 +43,7 @@
 
 #include "overview_view.h"
 #include "overview_fog.h"   /* overviewFogBuildMask and the fog's constants */
+#include "fog_roads_draw.h" /* the edge bands the Darker with fog edge look adds */
 #include "key_claims.h"     /* keyIsClaimedByGame */
 #include "build_cursor.h"   /* buildCursorSetTile */
 
@@ -61,10 +62,15 @@ extern "C" {
 #include "screenbullet.h"
 #include "../tiles.h"       /* MINE_X / MINE_Y, TILE_SIZE_X / TILE_SIZE_Y */
 #include "sprite_positions.h"
+#include "tilenum.h"
 #include "mapview.h"         /* MapViewCtx */
 #include "mapview_overlay.h" /* mapViewDrawOverlay — the whole entity layer */
+#include "gfx_settings.h"    /* gfxGetFogStyle — the player's fog of war look */
 #include "../ping_kinds.h"   /* pingDisplayAlpha */
+#include "gfx_settings.h"   /* the simplified view setting */
+#include "map_markers.h"    /* the pill disc and the base square */
 #include "ping_marker.h"     /* pingMarkerDraw — the on-map ping pass */
+#include "scenario_marker.h" /* scnMarkerDraw — a scenario's marks, beside it */
 #include "ping_overlay.h"    /* pingOverlayIsMenuOpen — the wheel's gate */
 #include "ring_band.h"       /* the respawn ring's band, sides and curve */
 }
@@ -95,6 +101,25 @@ extern "C" bool showBaseLabels;
  * Below it the labels are wider than the tanks are apart and the picture
  * turns into text. */
 #define OVERVIEW_LABEL_MIN_ZOOM 1.0f
+
+/* Zoom below which the view stops drawing sprites: the ground goes to one
+ * map colour a square and tanks, pills and bases to marker shapes
+ * (map_colours.h), which read at sizes where an 8 px tile is a smudge. */
+#define OVERVIEW_SPRITE_MIN_ZOOM 1.0f
+
+/* Whether this frame draws the simplified view: the zoom is under the floor,
+ * the player has the setting on, and the sub-option is not holding it to the
+ * Map Overview window. ownsWindow is true for the full screen map, which is
+ * the surface that sub-option excludes.
+ *
+ * Asked once a frame and handed to both passes, so the ground and the things
+ * standing on it cannot end up in different styles - including on the frame
+ * the player clicks the tick, where asking twice could straddle the change. */
+static inline bool overviewViewSimple(float zoomScale, bool ownsWindow) {
+    if (zoomScale >= OVERVIEW_SPRITE_MIN_ZOOM) return false;
+    if (!gfxGetSimplifiedZoomOut()) return false;
+    return !(ownsWindow && gfxGetSimplifiedOverviewOnly());
+}
 
 /* The death blackout, drawn over the whole view from the tick the sim says a
  * death has stopped being watchable (clientSimIsMyTankDeathBlackout) through
@@ -285,6 +310,47 @@ static bool overviewViewEnsureTarget(OverviewView *v, SDL_Renderer *r,
     return true;
 }
 
+/* A pill or a base, for the zooms where its sprite is too small to read: the
+ * shapes are map_markers.h's, and what is on the square decides which shape
+ * and which allegiance colour. A pill draws the same whatever its health — at
+ * these sizes there is no room to show it, and the number pass is off this
+ * far out too. */
+static void overviewViewDrawItem(SDL_Renderer *r, const SDL_FRect *dest,
+                                 MapColourItem kind) {
+    bool base = kind >= MAP_COLOUR_ITEM_BASE_GOOD;
+    SDL_FColor color = mapColourMarkerEvil();
+    if (kind == MAP_COLOUR_ITEM_PILL_GOOD || kind == MAP_COLOUR_ITEM_BASE_GOOD) {
+        color = mapColourMarkerGood();
+    } else if (kind == MAP_COLOUR_ITEM_BASE_NEUTRAL) {
+        color = mapColourMarkerNeutral();
+    }
+    float radius = base ? SDL_max(2.5f, dest->w * 0.42f) : SDL_max(2.0f, dest->w * 0.36f);
+    float cx = dest->x + dest->w / 2, cy = dest->y + dest->h / 2;
+    if (base) {
+        mapMarkerBase(r, cx, cy, radius, color);
+    } else {
+        mapMarkerPill(r, cx, cy, radius, color);
+    }
+}
+
+/* A pill or base square seen during the ground pass, held back so its marker
+ * goes on after the ground: a marker's minimum size can run a fraction past
+ * its square, and the next square's block would clip it. */
+typedef struct {
+    int              mx, my;
+    MapColourItem kind;
+} OverviewItemHit;
+
+static void overviewViewDrawItems(SDL_Renderer *r, const OverviewItemHit *hits,
+                                  int count, float originX, float originY,
+                                  float tilePx) {
+    for (int i = 0; i < count; i++) {
+        SDL_FRect dest = { originX + (float)hits[i].mx * tilePx,
+                           originY + (float)hits[i].my * tilePx, tilePx, tilePx };
+        overviewViewDrawItem(r, &dest, hits[i].kind);
+    }
+}
+
 /* Every square the view covers, all at full brightness — what the player can
  * see this instant and what they are only remembering alike. The fog pass
  * below takes the second kind back down; keeping the two apart is what lets
@@ -293,46 +359,77 @@ static void overviewViewDrawTerrain(SDL_Renderer *r, SDL_Texture *tiles, int ss,
                                     const OverviewCamera *cam,
                                     int viewW, int viewH,
                                     const OverviewMap *om,
-                                    int left, int top, int right, int bottom) {
+                                    int left, int top, int right, int bottom,
+                                    bool simple) {
     /* The in-window overview draws from the main window's tile sheet, which
      * the classic view mods for its own purposes. */
     SDL_SetTextureColorMod(tiles, 255, 255, 255);
 
-    float tilePx = (float)OVERVIEW_TILE_PX * overviewCameraZoomScale(cam);
+    float zoomScale = overviewCameraZoomScale(cam);
+    float tilePx = (float)OVERVIEW_TILE_PX * zoomScale;
     SDL_FRect mineSrc = mapViewAtlasSrc(MINE_X, MINE_Y,
                                         TILE_SIZE_X, TILE_SIZE_Y, ss);
+
+    /* The camera's snapped corner of square 0,0, once: every square is a
+     * whole number of tiles from it, exactly, so the grid has no seams and
+     * the fog and the sprites, placed from the same corner, sit on it. */
+    float originX = 0.0f, originY = 0.0f;
+    overviewCameraWorldToScreen(cam, viewW, viewH, 0.0f, 0.0f, &originX, &originY);
+
+    /* The pill and base squares met on the way, drawn after the ground. The
+     * map holds MAX_PILLS + MAX_BASES items, but the memory can keep a moved
+     * item's old square as well as its new one, so a full list is drawn out
+     * and started again rather than trusted never to fill. */
+    OverviewItemHit hits[MAX_PILLS + MAX_BASES];
+    int hitCount = 0;
+
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
+    if (simple) {
+        SDL_GetRenderDrawBlendMode(r, &oldBlend);
+        SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    }
 
     /* x outer, y inner: the memory is [x][y], so the inner walk is
      * contiguous. */
     for (int mx = left; mx <= right; mx++) {
+        float sx = originX + (float)mx * tilePx;
         for (int my = top; my <= bottom; my++) {
             BYTE tile = om->tile[mx][my];
             if (tile == OVERVIEW_UNSEEN) continue;  /* the black clear shows */
 
             BYTE flags = om->flags[mx][my];
-            float sx = 0.0f, sy = 0.0f;
-            overviewCameraWorldToScreen(cam, viewW, viewH,
-                                        (float)mx, (float)my, &sx, &sy);
-            /* Whole pixels. The camera is continuous, so a tile boundary can
-             * land on a half-pixel, and neighbouring tiles then either leave
-             * a gap that shows the black clear colour or sample a texel from
-             * the next atlas cell. Rounding here is exact rather than
-             * approximate: tilePx is OVERVIEW_TILE_PX * zoomScale, and every
-             * rung of the zoom ladder makes that a whole number, so
-             * round(sx + tilePx) == round(sx) + tilePx. Tiles keep their
-             * exact size and abut. */
-            sx = SDL_roundf(sx);
-            sy = SDL_roundf(sy);
-            SDL_FRect dest = { sx, sy, tilePx, tilePx };
-            SDL_FRect src  = mapViewAtlasSrc(mapViewPosX[tile],
-                                             mapViewPosY[tile],
-                                             TILE_SIZE_X, TILE_SIZE_Y, ss);
-            SDL_RenderTexture(r, tiles, &src, &dest);
+            SDL_FRect dest = { sx, originY + (float)my * tilePx, tilePx, tilePx };
+            SDL_Color color;
+            if (simple && mapColourTerrain(tile, &color)) {
+                SDL_SetRenderDrawColor(r, color.r, color.g, color.b, color.a);
+                SDL_RenderFillRect(r, &dest);
+                MapColourItem kind = mapColourItemKind(tile);
+                if (kind != MAP_COLOUR_ITEM_NONE) {
+                    if (hitCount == (int)(MAX_PILLS + MAX_BASES)) {
+                        overviewViewDrawItems(r, hits, hitCount, originX, originY, tilePx);
+                        hitCount = 0;
+                    }
+                    hits[hitCount].mx   = mx;
+                    hits[hitCount].my   = my;
+                    hits[hitCount].kind = kind;
+                    hitCount++;
+                }
+            } else {
+                SDL_FRect src = mapViewAtlasSrc(mapViewPosX[tile],
+                                                mapViewPosY[tile],
+                                                TILE_SIZE_X, TILE_SIZE_Y, ss);
+                SDL_RenderTexture(r, tiles, &src, &dest);
+            }
 
             if ((flags & OVERVIEW_F_MINE) != 0) {
                 SDL_RenderTexture(r, tiles, &mineSrc, &dest);
             }
         }
+    }
+
+    if (simple) {
+        overviewViewDrawItems(r, hits, hitCount, originX, originY, tilePx);
+        SDL_SetRenderDrawBlendMode(r, oldBlend);
     }
 }
 
@@ -363,9 +460,9 @@ static bool overviewViewEnsureFog(OverviewView *v, SDL_Renderer *r) {
      * keeps the edge where the mask puts it. The view target above is set the
      * same way. */
     SDL_SetTextureScaleMode(v->fog, SDL_SCALEMODE_NEAREST);
-    /* The fog's colour — src is white, so this alone picks it. Grey rather
-     * than black: see fog_look.h for why a darkening had nothing to work on. */
-    SDL_SetTextureColorMod(v->fog, FOG_LOOK_R, FOG_LOOK_G, FOG_LOOK_B);
+    /* The fog's colour is the colour mod — src is white, so that alone picks
+     * it — and the player can change it while the game runs, so it is set per
+     * frame in overviewViewDrawFog rather than once here. */
     v->fogRenderer = r;
     return true;
 }
@@ -422,8 +519,17 @@ static void overviewViewUploadFog(OverviewView *v, const OverviewMap *om) {
  * flags are 64K of bytes. */
 static void overviewViewDrawFog(OverviewView *v, SDL_Renderer *r,
                                 const OverviewCamera *cam, int viewW, int viewH,
-                                const OverviewMap *om) {
+                                const OverviewMap *om,
+                                int left, int top, int right, int bottom) {
+    /* What the player has asked fog to look like. None draws nothing at all,
+     * so the mask is not even rebuilt: the one that is already there stays
+     * good, and picking a look that washes again uses it. */
+    FogStyle      style = gfxGetFogStyle();
+    unsigned char fogR = 0, fogG = 0, fogB = 0;
+
+    if (fogLookColour(style, &fogR, &fogG, &fogB) == 0) return;
     if (!overviewViewEnsureFog(v, r)) return;
+    SDL_SetTextureColorMod(v->fog, fogR, fogG, fogB);
 
     /* With line of sight on, the hidden squares move as the tank drives without
      * any rect moving, so the map's generation is what the mask is held against
@@ -451,10 +557,82 @@ static void overviewViewDrawFog(OverviewView *v, SDL_Renderer *r,
     float sx = 0.0f, sy = 0.0f;
     overviewCameraWorldToScreen(cam, viewW, viewH, 0.0f, 0.0f, &sx, &sy);
 
-    SDL_FRect dst = { SDL_roundf(sx), SDL_roundf(sy),
+    SDL_FRect dst = { sx, sy,
                       tilePx * (float)MAP_ARRAY_SIZE,
                       tilePx * (float)MAP_ARRAY_SIZE };
     SDL_RenderTexture(r, v->fog, NULL, &dst);
+
+    /* The fog line that the Darker with fog edge look draws back in, over the
+     * blit that has just gone down. A second walk of the visible squares
+     * rather than a pass folded into the terrain loop: the mask the bands are
+     * gated on is built here, and a square is only reached at all if the mask
+     * says it is fogged, which most of a zoomed-out map is not.
+     *
+     * The same mask says whether each neighbour is fogged, so the band lands
+     * on exactly the line the blit above draws, on its fogged side.
+     *
+     * Dropped outright once a square is too small to hold the fade, which is
+     * where the band would be a line over the whole square rather than an
+     * edge on it — and where there are the most squares to walk. Three bands
+     * of a pixel each with road left between them needs nine pixels a square;
+     * under that the pass does not run, which is what lets the painter keep
+     * its bands a whole pixel wide rather than thinning them to fit. */
+    if (fogLookDrawsFogEdge(style) &&
+        tilePx >= (float)(FOG_ROAD_BANDS * 3)) {
+        const BYTE *mask = v->fogMask;
+        FogRoadPainter painter;
+        fogRoadPainterBegin(&painter, r);
+        /* y outer, x inner — the other way round from the terrain pass above,
+         * and for the same reason it goes the way it does. The terrain reads
+         * om->tile, which is [x][y]; this reads the fog mask, which is a
+         * texture's worth of rows, so the walk that is contiguous for one is
+         * strided for the other. The mask is what every square is tested
+         * against, so the walk follows the mask and the three rows it needs
+         * are held as pointers rather than recomputed per square. */
+        for (int my = top; my <= bottom; my++) {
+            const BYTE *row  = mask + (size_t)my * OVERVIEW_FOG_MASK_SIDE;
+            const BYTE *rowU = (my > 0) ? row - OVERVIEW_FOG_MASK_SIDE : NULL;
+            const BYTE *rowD = (my < MAP_ARRAY_SIZE - 1)
+                                   ? row + OVERVIEW_FOG_MASK_SIDE : NULL;
+            for (int mx = left; mx <= right; mx++) {
+                if (row[mx] == 0) continue;   /* in plain sight */
+
+                /* Off the map counts as fogged, so no band is drawn along the
+                 * map border. The border is deep sea in every map the game
+                 * ships, so this is a guard rather than a case that comes
+                 * up. */
+                int lf = (mx > 0) ? (row[mx - 1] != 0) : 1;
+                int rf = (mx < MAP_ARRAY_SIZE - 1) ? (row[mx + 1] != 0) : 1;
+                int uf = rowU ? (rowU[mx] != 0) : 1;
+                int df = rowD ? (rowD[mx] != 0) : 1;
+
+                /* The cheap half of the rule first. Fog with fog on all four
+                 * sides is not at the fog line and takes no band whatever is
+                 * on it, and that is most of a fogged map — so the square is
+                 * dropped here, before the strided read of om->tile that the
+                 * rest of the rule would need. */
+                unsigned char edges = fogEdgeSides(lf, rf, uf, df);
+                if (edges == 0) continue;
+
+                /* Ground the player has never seen. The terrain pass skips it
+                 * and leaves the black clear showing, so a band here would be
+                 * drawn on nothing. Tested the same way and for the same
+                 * reason it is tested there. */
+                BYTE tile = om->tile[mx][my];
+                if (tile == OVERVIEW_UNSEEN) continue;
+                if (!fogEdgeTileWantsBand(tile)) continue;
+
+                float ex = 0.0f, ey = 0.0f;
+                overviewCameraWorldToScreen(cam, viewW, viewH, (float)mx,
+                                            (float)my, &ex, &ey);
+                /* Rounded the way the terrain pass rounds, so a band sits on
+                 * the tile it belongs to rather than half a pixel off it. */
+                fogRoadPainterSquare(&painter, edges, SDL_roundf(ex),
+                                     SDL_roundf(ey), tilePx, tilePx);
+            }
+        }
+        fogRoadPainterEnd(&painter);
+    }
 }
 
 /* Black over the finished frame, for as long as the sim says the death is in
@@ -741,7 +919,8 @@ static void overviewViewDrawEntities(OverviewView *v,
                                      SDL_Texture *crosshair,
                                      const OverviewCamera *cam,
                                      int viewW, int viewH,
-                                     const OverviewSnapshot *snap) {
+                                     const OverviewSnapshot *snap,
+                                     bool simple) {
     MapViewCtx        ctx;
     MapViewOverlay    ov;
     OverviewItemLabel items[MAX_PILLS + MAX_BASES];
@@ -757,10 +936,12 @@ static void overviewViewDrawEntities(OverviewView *v,
      * lists were built from a rect starting at 0,0, so bbx is the offset from
      * map square 0,0 and the whole transform reduces to placing that square:
      * hand it the camera's answer for 0,0 as the origin and the rung as the
-     * scale, and every sprite lands where the camera would have put it. The
-     * origin stays a float all the way down, so the camera's fractional
-     * position is kept rather than rounded. tileW is also the size a tank
-     * sprite is drawn at, so it is one square at this zoom. */
+     * scale, and every sprite lands where the camera would have put it. That
+     * answer is the snapped corner the terrain and the fog were placed from,
+     * so a sprite on a whole square covers exactly that square's block and
+     * one at a fractional square sits between two on the same grid. tileW
+     * is also the size a tank sprite is drawn at, so it is one square at
+     * this zoom. */
     float zoomScale = overviewCameraZoomScale(cam);
     float o0x = 0.0f, o0y = 0.0f;
     overviewCameraWorldToScreen(cam, viewW, viewH, 0.0f, 0.0f, &o0x, &o0y);
@@ -783,8 +964,10 @@ static void overviewViewDrawEntities(OverviewView *v,
        for the pop-out. */
     ctx.spritesTex = NULL;
     ctx.sprites    = NULL;
+    ctx.precise    = NULL;
 
     SDL_memset(&ov, 0, sizeof(ov));
+    ov.simpleTanks = simple;
 
     /* Where a build will land, from the same mouse_square sprite the main view
      * draws. Solid while cursor mode is on or the pointer is over the map (the
@@ -1039,12 +1222,18 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
             overviewCameraFollowTick(&v->cam, w, h, tankX, tankY);
         }
 
+        /* After the camera work above, which is what can change the zoom this
+         * frame, and before either pass reads it. */
+        bool simple = overviewViewSimple(overviewCameraZoomScale(&v->cam),
+                                         ownsWindow);
+
         int left = 0, top = 0, right = 0, bottom = 0;
         if (overviewCameraVisibleRange(&v->cam, w, h,
                                        &left, &top, &right, &bottom)) {
             overviewViewDrawTerrain(r, tiles, sheetScale, &v->cam, w, h, om,
-                                    left, top, right, bottom);
-            overviewViewDrawFog(v, r, &v->cam, w, h, om);
+                                    left, top, right, bottom, simple);
+            overviewViewDrawFog(v, r, &v->cam, w, h, om,
+                                left, top, right, bottom);
         }
 
         /* Smart pings on the ground, on the same terms the classic view draws
@@ -1098,11 +1287,48 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
             }
         }
 
+        /* A scenario's map markers, beside the pings and on the same terms:
+         * the square's centre and one map square at this zoom, handed to the
+         * shared drawer that decides everything about how a marker looks. The
+         * classic view calls the same function with its own two numbers, so
+         * the two views cannot come to look different.
+         *
+         * Not held to the live-square filter either, for the ping's reason: a
+         * scenario marking ground is usually marking ground nobody can see. */
+        {
+            const ClientScnMarker *ml = overviewSnapshotScnMarkers(snap);
+            const screenTanks     *mt = (const screenTanks *)
+                                        overviewSnapshotTanks(snap);
+            Uint32 nowMs     = (Uint32)SDL_GetTicks();
+            float  zoomScale = overviewCameraZoomScale(&v->cam);
+            float  tilePx    = (float)OVERVIEW_TILE_PX * zoomScale;
+            for (int i = 0; ml != NULL && i < SCN_MARKERS_MAX; i++) {
+                uint8_t sqX = 0, sqY = 0;
+                float   sx = 0.0f, sy = 0.0f;
+                if (!ml[i].active) continue;
+                if (ml[i].kind == SCN_MARKER_KIND_FOLLOW) {
+                    /* The same tank list the sprites below are drawn from, so
+                     * a slot with no tank in this frame leaves no mark. */
+                    if (!scnMarkerTankSquare(mt, ml[i].slot, &sqX, &sqY)) {
+                        continue;
+                    }
+                } else {
+                    sqX = ml[i].x;
+                    sqY = ml[i].y;
+                }
+                overviewCameraWorldToScreen(&v->cam, w, h,
+                                            (float)sqX + 0.5f,
+                                            (float)sqY + 0.5f, &sx, &sy);
+                scnMarkerDraw(r, ml[i].colour, sx, sy, tilePx, tilePx,
+                              (unsigned int)nowMs);
+            }
+        }
+
         /* Sprites on top of the fog: a tank only stands on a live square, and
          * the build cursor and the gunsight are the player's own marks, so
          * neither wants dimming. */
         overviewViewDrawEntities(v, r, tiles, sheetScale, crosshair, &v->cam,
-                                 w, h, snap);
+                                 w, h, snap, simple);
     }
 
     /* Only where this view has replaced the classic one: beside the pop-out

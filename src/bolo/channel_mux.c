@@ -161,6 +161,66 @@ void channelTick(ChannelMux *m, uint32_t tick, uint32_t rttMs) {
     m->rttMs = rttMs;
 }
 
+void channelChargeBestEffortLeftover(ChannelMux *m) {
+    int ch;
+    if (m == NULL) {
+        return;
+    }
+    for (ch = 0; ch < CHANNEL_COUNT; ch++) {
+        ChannelState *c = &m->ch[ch];
+        if (!c->bestEffort) {
+            continue;
+        }
+        m->beBudgetSkipped[ch] += (c->nextSeq - c->txNext);
+    }
+}
+
+/* Move backlog messages into the control window while it has room, oldest
+ * first, so they take their sequence numbers in the order they were sent. */
+static void channelControlRefill(ChannelMux *m) {
+    ChannelState *c = &m->ch[CHANNEL_CONTROL];
+    while (m->controlBacklogMsgs > 0 && (c->nextSeq - c->ackedSeq) < c->window) {
+        uint32_t head = m->controlBacklogHead;
+        uint16_t len = (uint16_t)(
+            ((uint16_t)m->controlBacklog[head] << 8) |
+            m->controlBacklog[(head + 1) % CHANNEL_CONTROL_BACKLOG]);
+        uint32_t idx = c->nextSeq % c->window;
+        uint8_t *seg = c->sendData + idx * c->segSize;
+        uint32_t k;
+        for (k = 0; k < len; k++) {
+            seg[k] = m->controlBacklog[(head + 2 + k) % CHANNEL_CONTROL_BACKLOG];
+        }
+        c->sendLen[idx] = len;
+        m->controlBacklogHead = (head + 2 + len) % CHANNEL_CONTROL_BACKLOG;
+        m->controlBacklogCount -= 2u + len;
+        m->controlBacklogMsgs--;
+        c->nextSeq++;
+    }
+}
+
+/* Append one message to the control backlog. False when it has no room. */
+static bool channelControlQueue(ChannelMux *m, const uint8_t *msg,
+                                uint16_t len) {
+    uint32_t tail;
+    uint32_t k;
+    /* controlBacklogCount never exceeds the capacity, so the subtraction
+     * cannot wrap. */
+    if (2u + (uint32_t)len > CHANNEL_CONTROL_BACKLOG - m->controlBacklogCount) {
+        return false;
+    }
+    tail = (m->controlBacklogHead + m->controlBacklogCount) %
+           CHANNEL_CONTROL_BACKLOG;
+    m->controlBacklog[tail] = (uint8_t)(len >> 8);
+    m->controlBacklog[(tail + 1) % CHANNEL_CONTROL_BACKLOG] = (uint8_t)len;
+    for (k = 0; k < len; k++) {
+        m->controlBacklog[(tail + 2 + k) % CHANNEL_CONTROL_BACKLOG] =
+            (msg != NULL) ? msg[k] : 0;
+    }
+    m->controlBacklogCount += 2u + len;
+    m->controlBacklogMsgs++;
+    return true;
+}
+
 bool channelSend(ChannelMux *m, uint8_t ch, const uint8_t *msg, uint16_t len) {
     if (m == NULL || ch >= CHANNEL_COUNT || ch == CHANNEL_BULK) {
         return false; /* usage error: bad id or wrong flavor */
@@ -168,6 +228,18 @@ bool channelSend(ChannelMux *m, uint8_t ch, const uint8_t *msg, uint16_t len) {
     ChannelState *c = &m->ch[ch];
     if (len > c->segSize) {
         return false; /* a message must fit one segment */
+    }
+    /* The control channel waits behind its window instead of refusing: a
+     * join's sync replay is larger than the window and arrives in one tick.
+     * Anything already waiting goes first, so a new message joins the
+     * backlog whenever the backlog is not empty. A full backlog is the
+     * overflow signal. */
+    if (ch == CHANNEL_CONTROL) {
+        channelControlRefill(m);
+        if (m->controlBacklogMsgs > 0 ||
+            (c->nextSeq - c->ackedSeq) >= c->window) {
+            return channelControlQueue(m, msg, len);
+        }
     }
     /* Window-bounded: never let more than `window` segments be unacked. */
     if ((c->nextSeq - c->ackedSeq) >= c->window) {
@@ -279,8 +351,10 @@ int channelBuildFrame(ChannelMux *m, uint8_t *buf, int budget) {
         return 0;
     }
 
-    /* Bring any pending stream bytes into the window first. */
+    /* Bring any pending stream bytes and waiting control messages into their
+     * windows first; acks since the last frame may have made room. */
     channelStreamRefill(m);
+    channelControlRefill(m);
 
     int pos = 0;
     int ackCountPos = pos;
@@ -317,8 +391,28 @@ int channelBuildFrame(ChannelMux *m, uint8_t *buf, int budget) {
     uint8_t segCount = 0;
 
     uint32_t rto = channelRtoTicks(m);
-    for (ch = 0; ch < CHANNEL_COUNT; ch++) {
-        ChannelState *c = &m->ch[ch];
+    /* Segment order, and the one place it is decided. Not channel id order:
+     * that puts CHANNEL_BULK (3) ahead of the two best-effort channels
+     * (4 effect, 5 voice), and a live map transfer has as many segments
+     * ready as the budget of every frame in the tick will hold, so effect
+     * and voice were framed only once bulk ran out - which during a
+     * download is never. Bulk is the one channel whose work is always
+     * waiting and never urgent, so it is framed last and takes what the
+     * others leave.
+     *
+     * This is an ordering inside one frame, not a change to any channel's
+     * delivery: every segment carries its own channel id and sequence, each
+     * channel keeps its own window, and a bulk segment that misses a frame
+     * is framed by the next one. */
+    static const uint8_t frameOrder[CHANNEL_COUNT] = {
+        CHANNEL_GAME, CHANNEL_MAP, CHANNEL_CONTROL,
+        CHANNEL_GAME_EFFECT, CHANNEL_VOICE, CHANNEL_BULK
+    };
+    int orderIdx;
+    for (orderIdx = 0; orderIdx < CHANNEL_COUNT; orderIdx++) {
+        ChannelState *c;
+        ch = frameOrder[orderIdx];
+        c = &m->ch[ch];
         if (c->bestEffort) {
             /* Drain-and-clear: frame each pending segment once, free its ring
              * slot, advance the cursor. No ack listing, no RTO, no retransmit
@@ -329,11 +423,7 @@ int channelBuildFrame(ChannelMux *m, uint8_t *buf, int budget) {
                 uint16_t slen = c->sendLen[idx];
                 if (segCount == 255 ||
                     pos + CHANNEL_SEG_HEADER_SIZE + slen > budget) {
-                    /* Tight budget — the rest drain next frame. Counted per
-                     * segment left behind: the ring is shallow, so a run of
-                     * frames that all end here loses the oldest of them. */
-                    m->beBudgetSkipped[ch] += (c->nextSeq - seq);
-                    break;
+                    break; /* tight budget — the rest drain on a later frame */
                 }
                 buf[pos] = (uint8_t)ch;
                 packU32(buf + pos + 1, seq);
@@ -630,6 +720,13 @@ uint32_t channelResetSend(ChannelMux *m, uint8_t ch) {
     if (ch == CHANNEL_BULK) {
         m->streamHead = 0;
         m->streamCount = 0;
+    }
+    /* Likewise the control channel's backlog: those messages were sent before
+     * the reset and must not take sequence numbers after it. */
+    if (ch == CHANNEL_CONTROL) {
+        m->controlBacklogHead = 0;
+        m->controlBacklogCount = 0;
+        m->controlBacklogMsgs = 0;
     }
     return c->nextSeq;
 }

@@ -48,6 +48,24 @@
  * upload_cap_enforced. */
 #define LOBBY_MAP_UPLOAD_MAX_BYTES (64u * 1024u)
 
+/* Maximum bytes accepted for a scenario package: a .scenario file, or a
+ * .map with a WBSC container appended to it. The cap above stays the one
+ * a plain map is held to — a package is bigger because it carries a
+ * manifest, a script and whatever brain directories the scenario ships
+ * with, all deflated inside the container.
+ *
+ * 4 MiB, the same as ROUND_LOG_MAX_BYTES. The heaviest brain in this tree
+ * is GoalHunter, 5.8 MB of Lua on disk and about 1 MB deflated, so a map
+ * shipping one comes to roughly a megabyte and this leaves room for
+ * several. On the wire, PACKET_LOBBY_MAP_UPLOAD_BEGIN holds a script
+ * upload (UPLOAD_KIND_SCRIPT) to it, and so does the server's bulk sink
+ * when the bytes arrive. The disk readers read against it too: the
+ * scenario directory lister, and the scenario host, which reads a map
+ * file from the operator's own disk looking for a container in it. One
+ * number for all of them, so a package an operator can play on their
+ * own server is one they can upload. */
+#define LOBBY_PACKAGE_UPLOAD_MAX_BYTES (4u * 1024u * 1024u)
+
 /* Maximum bytes the server will serve for the last completed round's
  * replay log (PACKET_ROUND_LOG_REQ, carried as BULK_KIND_ROUND_LOG).
  * A busy full lobby records about 2.3 KB/s, so 4 MiB is roughly half
@@ -82,6 +100,8 @@
 #define LOBBY_LOCK_OVERVIEW_WINDOW   (1u << 14)
 #define LOBBY_LOCK_LINE_OF_SIGHT     (1u << 15)
 #define LOBBY_LOCK_SMART_PINGS       (1u << 16)
+#define LOBBY_LOCK_MODS              (1u << 17)
+#define LOBBY_LOCK_POSITIONAL_SOUND  (1u << 18)
 
 /* LST_TIME_MINUTES accepted range. Surfaced publicly so the lobby
  * UI can validate the user's value before sending. Authoritative
@@ -133,13 +153,37 @@ typedef enum {
                                  * player seeing inside that block.
                                  * Classic mode forces it off and refuses
                                  * an edit while it stays on. */
-    LST_SMART_PINGS_OFF   = 15  /* 1 byte bool, carried in the NEGATIVE
+    LST_SMART_PINGS_OFF   = 15, /* 1 byte bool, carried in the NEGATIVE
                                  * sense: non-zero means the server refuses
                                  * smart pings. Allowing them is the legacy
                                  * behaviour, and every optional field on
                                  * this wire reads as zero when the sender
                                  * never learned it, so refusing them is the
                                  * value that has to cost a byte to say. */
+    LST_MODS_OFF          = 16, /* 1 byte bool, carried in the NEGATIVE
+                                 * sense for the same reason as
+                                 * LST_SMART_PINGS_OFF above: non-zero means
+                                 * the round composes none of the scripts
+                                 * the host has picked. Running them is what
+                                 * every build before this one did, so it is
+                                 * the zero, and a server or client that
+                                 * never writes the byte behaves as it did.
+                                 *
+                                 * Mods and picked scenarios alike: the
+                                 * lobby labels it Mods/Scenario. Every pick
+                                 * is skipped when this is set, and only the
+                                 * map's own script still plays. The pick
+                                 * list is not touched, so checking the box
+                                 * back on brings the same scripts back in
+                                 * the same order. A server built before the
+                                 * scenario half skips the mods alone. */
+    LST_POSITIONAL_SOUND  = 17  /* 1 byte bool, carried the plain way
+                                 * round: non-zero means on. When on,
+                                 * sound events tell a human which side a
+                                 * sound is on and roughly how far. Off is
+                                 * the classic behaviour, and classic mode
+                                 * forces it off and refuses an edit while
+                                 * it stays on. */
 } LobbySettingType;
 
 #endif /* WIRE_LIMITS_H */

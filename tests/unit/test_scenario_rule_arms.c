@@ -93,7 +93,7 @@
  * good a place to ask from as a round and is the cheaper sim to build. */
 static ServerSim *raSim(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) return NULL;
     serverSimSetLobbyEnabled(sim, true);
@@ -128,8 +128,8 @@ typedef struct {
 } RaRuleField;
 
 static const RaRuleField kRaRuleFields[] = {
-#define RA_FIELD_ROW(name) { #name, offsetof(SimRules, name), \
-                             sizeof(((SimRules *)0)->name) },
+#define RA_FIELD_ROW(name, kind, unit)                                       \
+    { #name, offsetof(SimRules, name), sizeof(((SimRules *)0)->name) },
     SCN_RULE_LIST(RA_FIELD_ROW)
 #undef RA_FIELD_ROW
 };

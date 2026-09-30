@@ -47,6 +47,8 @@
 #include <errno.h>
 #include <time.h>
 #include <curl/curl.h>
+#include <SDL3/SDL_thread.h>
+#include <SDL3/SDL_timer.h>
 #include "tweetnacl.h"
 #include "cJSON.h"
 #include "wbn_signing_key.h"
@@ -74,6 +76,40 @@ static char wbnHostOverride[FILENAME_MAX]; /* command-line override for WBN host
  * the default. Lets a caller that must not block for long (e.g. shutting a
  * hosted game down) cap the upload without changing it for everyone else. */
 static long s_logUploadTimeoutOverride = 0;
+
+/* The WinBolo.net worker thread's own easy handle, kept between posts so a
+ * queued post costs one round trip rather than a TCP connect plus a TLS
+ * handshake. curl_easy_reset does not discard live connections, the TLS
+ * session cache or the DNS cache, so resetting it per request keeps the
+ * pool.
+ *
+ * s_workerCurlThread records the thread that created it. An easy handle
+ * must not be used by two threads, and the GUI-thread client callers reach
+ * wbn_api_post_impl too, so the comparison there is what keeps them on
+ * their own per-call handles. */
+static CURL        *s_workerCurl = NULL;
+static SDL_ThreadID s_workerCurlThread = 0;
+
+/* A post or an upload slower than this leaves one line in the log. The
+ * thread is in the line on purpose: these calls belong on the WinBolo.net
+ * worker, and one that ran on the server tick thread stalls the tick for
+ * every connected client for as long as it takes. */
+#define WBN_SLOW_CALL_WARN_MS 100u
+
+/* Report a curl_easy_perform that ran long. startMs is SDL_GetTicks taken
+ * immediately before the perform. */
+static void wbnLogSlowCall(const char *what, Uint64 startMs) {
+  Uint64 elapsedMs = SDL_GetTicks() - startMs;
+  if (elapsedMs > WBN_SLOW_CALL_WARN_MS) {
+    SDL_ThreadID self = SDL_GetCurrentThreadID();
+    WB_LOG_WARN(WB_LOG_CAT_NET, "slow WBN call [%s]: %llu ms on thread %llu%s",
+                what,
+                (unsigned long long)elapsedMs,
+                (unsigned long long)self,
+                (s_workerCurlThread != 0 && self == s_workerCurlThread)
+                    ? " (wbn worker)" : "");
+  }
+}
 
 /*********************************************************
 *NAME:          buildBaseUrl
@@ -374,6 +410,40 @@ static void wbn_sign_request(const char *timestamp_str, const char *json_body, c
 }
 
 /*********************************************************
+*NAME:          httpWorkerPoolBegin
+*PURPOSE:
+* Creates the handle the WinBolo.net worker thread keeps
+* between posts and records the calling thread as its
+* owner. Called by the worker thread, on itself.
+*********************************************************/
+void httpWorkerPoolBegin(void) {
+  if (s_workerCurl != NULL) {
+    return;
+  }
+  s_workerCurl = curl_easy_init();
+  if (s_workerCurl == NULL) {
+    WB_LOG_WARN(WB_LOG_CAT_NET, "httpWorkerPoolBegin: curl_easy_init failed");
+    return;
+  }
+  s_workerCurlThread = SDL_GetCurrentThreadID();
+}
+
+/*********************************************************
+*NAME:          httpWorkerPoolEnd
+*PURPOSE:
+* Destroys the worker thread's kept handle and clears the
+* owning thread. Called by the worker thread, on itself,
+* once it has stopped posting.
+*********************************************************/
+void httpWorkerPoolEnd(void) {
+  if (s_workerCurl != NULL) {
+    curl_easy_cleanup(s_workerCurl);
+    s_workerCurl = NULL;
+  }
+  s_workerCurlThread = 0;
+}
+
+/*********************************************************
 *NAME:          wbn_api_post_impl
 *PURPOSE:
 * Shared low-level POST body. extra_header is appended to
@@ -386,8 +456,17 @@ static int wbn_api_post_impl(const char *endpoint, const char *json_body,
   if (response_out) *response_out = NULL;
   if (!httpStarted) return -1;
 
-  CURL *curl = curl_easy_init();
+  /* An easy handle must not be used by two threads at once, so the kept
+   * handle is taken only by the thread that created it. The GUI-thread
+   * client callers come through here as well and keep taking their own
+   * per-call handle. */
+  bool pooled = (s_workerCurl != NULL &&
+                 SDL_GetCurrentThreadID() == s_workerCurlThread);
+  CURL *curl = pooled ? s_workerCurl : curl_easy_init();
   if (!curl) return -1;
+  if (pooled) {
+    curl_easy_reset(curl);
+  }
 
   /* Build URL: <baseUrl>/api/v1/<endpoint> */
   char url[FILENAME_MAX + 64];
@@ -417,7 +496,9 @@ static int wbn_api_post_impl(const char *endpoint, const char *json_body,
   dynBufInit(&respBuf);
   if (!respBuf.data) {
     curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
+    if (!pooled) {
+      curl_easy_cleanup(curl);
+    }
     return -1;
   }
 
@@ -444,13 +525,17 @@ static int wbn_api_post_impl(const char *endpoint, const char *json_body,
   WB_LOG_DEBUG(WB_LOG_CAT_NET, "wbn_api_post: POST %s", url);
   wbnLogRedactedJsonDebug(WB_LOG_CAT_NET, "wbn_api_post: body=", json_body);
 
+  Uint64 performStartMs = SDL_GetTicks();
   CURLcode res = curl_easy_perform(curl);
+  wbnLogSlowCall(endpoint, performStartMs);
 
   long http_code = 0;
   curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
 
   curl_slist_free_all(headers);
-  curl_easy_cleanup(curl);
+  if (!pooled) {
+    curl_easy_cleanup(curl);
+  }
 
   if (res != CURLE_OK) {
     WB_LOG_WARN(WB_LOG_CAT_NET, "wbn_api_post [%s]: curl error: %s", endpoint, curl_easy_strerror(res));
@@ -699,7 +784,9 @@ bool httpSendLogFile(const char *fileName, char *key, bool wantFeedback) {
     curl_easy_setopt(curl, CURLOPT_INTERFACE, altIpAddress);
   }
 
+  Uint64 performStartMs = SDL_GetTicks();
   CURLcode res = curl_easy_perform(curl);
+  wbnLogSlowCall("log.php upload", performStartMs);
   long httpCode = 0;
   curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
   curl_mime_free(mime);
@@ -978,7 +1065,11 @@ static int wbn_prefs_request_impl(const char *bearerToken, bool is_put,
 
   WB_LOG_DEBUG(WB_LOG_CAT_NET, "wbn_prefs: %s %s", is_put ? "PUT" : "GET", url);
 
+  Uint64 performStartMs = SDL_GetTicks();
   CURLcode res = curl_easy_perform(curl);
+  if (is_put) {
+    wbnLogSlowCall("prefs PUT", performStartMs);
+  }
 
   long http_code = 0;
   curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);

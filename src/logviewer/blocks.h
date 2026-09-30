@@ -47,4 +47,11 @@ size_t lv_logGetTotalSize();
 BYTE lv_blocksGetKey();
 void lv_blocksSetKey(BYTE key);
 
+/* The open recording's scripts.json member, read when the zip was opened,
+ * NUL-terminated, with its length in *len (the terminator not counted). NULL
+ * with *len = 0 when the member is absent, over SCN_RECORD_TEXT_MAX or could
+ * not be read, and always for a stream, which has no zip. Valid until the
+ * next create, stream begin or destroy. */
+const char *lv_blocksGetScriptsJson(size_t *len);
+
 #endif /* __BLOCKS_H */

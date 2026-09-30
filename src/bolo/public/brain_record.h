@@ -14,7 +14,8 @@
  *  Format is platform-native binary (little-endian, MSVC x64 struct
  *  packing) — writer and reader are the same Windows build, so no
  *  portable encoding is attempted. Versioned via BRAINREC_VERSION;
- *  the reader must reject a mismatch.
+ *  a reader accepts the versions brainRecVersionReadable names and
+ *  refuses the rest.
  *********************************************************/
 #ifndef BRAIN_RECORD_H
 #define BRAIN_RECORD_H
@@ -35,7 +36,11 @@ extern "C" {
  * version whenever the frame layout below changes; the loader checks it. */
 #define BRAINREC_MAGIC        "WBNREC1"
 #define BRAINREC_MAGIC_LEN    8
-#define BRAINREC_VERSION      6u     /* v6: + wider death wait, pill armour byte */
+#define BRAINREC_VERSION      7u     /* v7: + on-map masks for pills and bases */
+/* The oldest version a reader still loads. v7 only appended a tail to each
+ * frame, so a v6 file reads the same up to the tail and has no masks: every
+ * pill and base in it is on the map. */
+#define BRAINREC_VERSION_MIN_READ 6u
 #define BRAINREC_FRAME_MAGIC  0xB07EC0DEu
 #define BRAINREC_FILENAME     "brainrec.btr"
 
@@ -79,7 +84,12 @@ typedef struct {
  * out of step from the first frame on, because the structs themselves are a
  * different size. A v5 file is exactly that: its TankSnapshot carries an
  * 8-bit death wait and its PillSnapshot packs armour into the flags byte.
- * There is no conversion to attempt, so a reader refuses and says so. */
+ * There is no conversion to attempt, so a reader refuses and says so.
+ *
+ * The one exception is a version that only appended to the end of a frame:
+ * v7 added the on-map masks after the alliance words, so a v6 frame is a v7
+ * frame without them. brainRecVersionReadable says which versions those are;
+ * the reader then has to read the tail only when the file has it. */
 static inline bool brainRecMagicMatches(const BrainRecHeader *hdr) {
     return hdr != NULL &&
            memcmp(hdr->magic, BRAINREC_MAGIC, BRAINREC_MAGIC_LEN) == 0;
@@ -87,6 +97,15 @@ static inline bool brainRecMagicMatches(const BrainRecHeader *hdr) {
 
 static inline bool brainRecVersionMatches(const BrainRecHeader *hdr) {
     return hdr != NULL && hdr->version == BRAINREC_VERSION;
+}
+
+/* Whether a reader built now can load a file of this header's version: this
+ * version, or an older one whose frames only lack a tail added since (v6 has
+ * no on-map masks). A v5 file and anything newer than this build are
+ * refused. */
+static inline bool brainRecVersionReadable(const BrainRecHeader *hdr) {
+    return hdr != NULL && hdr->version >= BRAINREC_VERSION_MIN_READ &&
+           hdr->version <= BRAINREC_VERSION;
 }
 
 /* Compact goal-candidate row (mirror of BrainGoalInfo.candidates[] element,

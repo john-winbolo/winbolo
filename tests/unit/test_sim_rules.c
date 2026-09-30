@@ -119,6 +119,9 @@
 #include "swamp.h"
 #include "minesexp.h"
 #include "tankexp.h"     /* TK_DAMAGE — the splash the explosion path deals */
+#include "floodfill.h"  /* FLOOD_FILL_WAIT */
+#include "sounddist.h"  /* SDIST_SOFT / SDIST_NONE */
+#include "starts.h"     /* START_* */
 #include "treegrow.h"
 #include "sim_rules.h"
 #include "client_sim.h"
@@ -162,7 +165,12 @@ int run_sim_rules_classic_defaults(void) {
     SR_EQ(tank_water_ticks, TANK_WATER_TIME);
     SR_EQ(shell_damage, DAMAGE);
     SR_EQ(mine_damage, MINE_DAMAGE);
+    SR_EQ(mine_damage_range, MINE_DAMAGE_RANGE);
+    SR_EQ(mine_fatal_divisor, MINE_FATAL_DIVISOR);
+    SR_EQ(water_loss_shells, TANK_WATER_LOSS_SHELLS);
+    SR_EQ(water_loss_mines, TANK_WATER_LOSS_MINES);
     SR_EQ(just_fired_ticks, JUST_FIRED_TICKS);
+    SR_EQ(tree_hide_distance, MIN_TREEHIDE_DIST);
     SR_EQ(gunsight_min, GUNSIGHT_MIN);
     SR_EQ(gunsight_max, GUNSIGHT_MAX);
     SR_FEQ(tank_accel_rate, TANK_ACCELERATE_RATE);
@@ -170,6 +178,18 @@ int run_sim_rules_classic_defaults(void) {
     SR_FEQ(tank_brake_rate, TANK_SLOWKEY_RATE);
     SR_FEQ(tank_autoslow_rate, TANK_AUTOSLOW_SPEED);
     SR_EQ(tank_min_move, TANK_MIN_MOVE_SPEED);
+
+    /* Tank collision geometry */
+    SR_EQ(tank_hit_radius, TANK_HIT_RADIUS);
+    SR_EQ(tank_collision_distance, TANK_COLLISION_DISTANCE);
+    SR_EQ(tank_nudge_threshold, TANK_NUDGE_THRESHOLD);
+    SR_EQ(tank_nudge_amount, TANK_NUDGE_AMOUNT);
+    SR_EQ(tank_nudge_iterations, TANK_MAX_NUDGE_ITERATIONS);
+    SR_EQ(tank_bump_decay_shift, TANK_BUMP_DECAY_SHIFT);
+    SR_EQ(tank_pill_pickup_inset, TANK_PILL_PICKUP_INSET);
+    SR_EQ(tank_boat_exit_inset, TANK_MOVE_BOAT_SUB);
+    SR_EQ(tank_slide_step, TANK_SLIDE);
+    SR_FEQ(tank_wall_glide, TANK_WALL_GLIDE);
 
     /* Terrain speed caps */
     SR_EQ(speed_road, MAP_SPEED_TROAD);
@@ -195,6 +215,18 @@ int run_sim_rules_classic_defaults(void) {
     SR_FEQ(turn_deep_sea, MAP_TURN_TDEEPSEA);
     SR_FEQ(turn_refuel_base, MAP_TURN_TREFBASE);
 
+    /* Builder walk speeds */
+    SR_EQ(man_speed_road, MAP_MANSPEED_TROAD);
+    SR_EQ(man_speed_grass, MAP_MANSPEED_TGRASS);
+    SR_EQ(man_speed_forest, MAP_MANSPEED_TFOREST);
+    SR_EQ(man_speed_river, MAP_MANSPEED_TRIVER);
+    SR_EQ(man_speed_swamp, MAP_MANSPEED_TSWAMP);
+    SR_EQ(man_speed_crater, MAP_MANSPEED_TCRATER);
+    SR_EQ(man_speed_rubble, MAP_MANSPEED_TRUBBLE);
+    SR_EQ(man_speed_boat, MAP_MANSPEED_TBOAT);
+    SR_EQ(man_speed_deep_sea, MAP_MANSPEED_TDEEPSEA);
+    SR_EQ(man_speed_refuel_base, MAP_MANSPEED_TREFBASE);
+
     /* Shells */
     SR_EQ(shell_life, SHELL_LIFE);
     SR_EQ(shell_speed, SHELL_SPEED);
@@ -212,6 +244,11 @@ int run_sim_rules_classic_defaults(void) {
     SR_EQ(lgm_pill_repair_load, LGM_LOAD_PILLREPAIR);
     SR_EQ(lgm_gather_trees, LGM_GATHER_TREE);
     SR_EQ(lgm_helicopter_speed, LGM_HELICOPTER_SPEED);
+    SR_EQ(lgm_arrive_tolerance, LGM_MAX_GOAL);
+    SR_EQ(lgm_return_tolerance, LGM_RETURN_MAX_GOAL);
+    SR_EQ(lgm_pill_drop_search, LGM_PILL_DROP_SEARCH);
+    SR_EQ(lgm_boat_leave_offset, LGM_TANKBOAT_LEAVE);
+    SR_EQ(lgm_boat_return_offset, LGM_TANKBOAT_RETURN);
 
     /* Pillbox */
     SR_EQ(pill_max_armour, PILLS_MAX_ARMOUR);
@@ -220,6 +257,13 @@ int run_sim_rules_classic_defaults(void) {
     SR_EQ(pill_cooldown_ticks, PILLBOX_COOLDOWN_TIME);
     SR_EQ(pill_repair_amount, PILL_REPAIR_AMOUNT);
     SR_EQ(pill_range, PILLBOX_RANGE);
+    SR_EQ(pill_shell_damage, PILLBOX_SHELL_DAMAGE);
+    SR_EQ(pill_angry_divisor, PILLBOX_ANGRY_DIVISOR);
+    SR_FEQ(pill_fire_length, PILLBOX_FIRE_DISTANCE);
+    SR_EQ(pill_base_defend_range, PILL_BASE_HIT_RANGE);
+    SR_EQ(pill_aim_iterations, MAX_AIM_ITERATE);
+    SR_EQ(pill_massage_range, PILLBOX_MASSAGE_RANGE);
+    SR_FEQ(pill_massage_cosine, PILLBOX_MASSAGE_COSINE);
 
     /* Base */
     SR_EQ(base_full_armour, BASE_FULL_ARMOUR);
@@ -237,6 +281,8 @@ int run_sim_rules_classic_defaults(void) {
     SR_FEQ(base_refuel_shells_ticks, BASE_REFUEL_SHELLS);
     SR_FEQ(base_refuel_mines_ticks, BASE_REFUEL_MINES);
     SR_EQ(base_regen_ticks, BASE_TICKS_BETWEEN_REFUEL);
+    SR_EQ(base_status_range, BASE_STATUS_RANGE);
+    SR_EQ(base_reveal_range, BASE_PREDICT_REVEAL_RANGE);
 
     /* Terrain destruction and explosions */
     SR_EQ(building_life, BUILDING_LIFE);
@@ -245,10 +291,26 @@ int run_sim_rules_classic_defaults(void) {
     SR_EQ(swamp_life, SWAMP_LIFE);
     SR_EQ(mine_fuse_ticks, MINES_EXPLOSION_WAIT);
     SR_EQ(big_explosion_threshold, TANK_BIG_EXPLOSION_THRESHOLD);
+    SR_EQ(tank_explosion_damage, TK_DAMAGE);
+    SR_EQ(tank_explosion_length, TK_EXPLODE_LENGTH);
+    SR_EQ(tank_explosion_move, TK_MOVE_AMOUNT);
+    SR_EQ(tank_explosion_update_ticks, TK_UPDATE_TIME);
+    SR_EQ(tank_explosion_width, TK_WIDTH_CHECK);
+    SR_EQ(tank_explosion_height, TK_HEIGHT_CHECK);
 
     /* Tree growth */
+    SR_EQ(start_tank_range, START_TANK_RANGE);
+    SR_EQ(start_pill_range, START_PILL_RANGE);
+    SR_EQ(start_base_range, START_BASE_RANGE);
+    SR_EQ(start_spawn_separation, START_SPAWN_SEPARATION);
+    SR_EQ(start_scatter_max, START_SCATTER_MAX);
+    SR_EQ(start_neutral_threshold_pct, START_NEUTRAL_THRESHOLD_PCT);
+    SR_EQ(sound_soft_range, SDIST_SOFT);
+    SR_EQ(sound_none_range, SDIST_NONE);
+    SR_EQ(flood_fill_ticks, FLOOD_FILL_WAIT);
     SR_EQ(tree_grow_ticks, TREEGROW_TIME);
     SR_EQ(tree_grow_initial_ticks, TREEGROW_INITIAL_TIME);
+    SR_EQ(tree_grow_initial_score, TREEGROW_INITIAL_SCORE);
     SR_EQ(tree_weight_forest, TREE_GROW_FOREST);
     SR_EQ(tree_weight_grass, TREE_GROW_GRASS);
     SR_EQ(tree_weight_river, TREE_GROW_RIVER);
@@ -261,6 +323,19 @@ int run_sim_rules_classic_defaults(void) {
     SR_EQ(tree_weight_crater, TREE_GROW_CRATER);
     SR_EQ(tree_weight_road, TREE_GROW_ROAD);
     SR_EQ(tree_weight_mine, TREE_GROW_MINE);
+
+    /* Pillbox shell cap */
+    SR_EQ(pill_shell_cap, PILLBOX_SHELL_CAP);
+    SR_EQ(pill_max_shells_at_tank, PILLBOX_MAX_SHELLS_AT_TANK);
+
+    /* Base defence shape */
+    SR_EQ(pill_base_defend_shape, PILL_BASE_HIT_SHAPE);
+
+    /* Mac Bolo shell push */
+    SR_EQ(tank_slide_mac, TANK_SLIDE_MAC);
+    SR_EQ(tank_slide_armour_bonus, TANK_SLIDE_ARMOUR_BONUS);
+    SR_EQ(pill_aim_mac, 0);
+    SR_EQ(tank_collision_mac, 0);
 
     return 0;
 }
@@ -382,6 +457,7 @@ int run_sim_rules_validate_ranges(void) {
     SR_RANGE_INT(just_fired_ticks, 0, 255);
     SR_RANGE_INT(tank_min_move, 0, 255);
     SR_RANGE_INT(shell_speed, 1, 255);
+    SR_RANGE_INT(tank_slide_step, 0, 63);
 
     /* The gunsight ends and the two shell numbers the budget is built from
        all sit in one arithmetic, so each bound needs the others brought
@@ -418,9 +494,10 @@ int run_sim_rules_validate_ranges(void) {
     SR_RANGE_FLT(tank_autoslow_rate, 0.01, 16.0, 0.005);
     /* A tree cannot be worth more than a whole pill, and one load still has
        to finish a pill on nothing — which at the top of the range means a
-       tree worth far more than the classic four. */
+       tree worth far more than the classic four. The splash a dying tank
+       deals sits under the same ceiling, so it comes down with it. */
     SR_RANGE_INT_WITH(pill_max_armour, 1, 255,
-                      t.pill_repair_amount = 1,
+                      t.pill_repair_amount = 1; t.tank_explosion_damage = 1,
                       t.pill_repair_amount = 255);
     SR_RANGE_INT(pill_cooldown_ticks, 0, 255);
     /* A base that holds nothing keeps nothing back, hands nothing out, and
@@ -919,7 +996,7 @@ int run_sim_rules_pill_empties_without_wrapping(void) {
 
     /* Armour to spare: exactly the splash comes off. */
     gs->pb->item[0].armour = (BYTE) (TK_DAMAGE + 3);
-    pillsGetDamagePos(gs, &gs->pb, px, py, TK_DAMAGE);
+    pillsGetDamagePos(gs, &gs->pb, px, py, TK_DAMAGE, NEUTRAL);
     UT_ASSERT_MSG(gs->pb->item[0].armour == 3,
                   "a hit with armour to spare left %u, expected 3",
                   (unsigned) gs->pb->item[0].armour);
@@ -927,7 +1004,7 @@ int run_sim_rules_pill_empties_without_wrapping(void) {
     /* Less left than the splash takes: empty, not a wrap. */
     for (armour = 1; armour < TK_DAMAGE; armour++) {
         gs->pb->item[0].armour = (BYTE) armour;
-        pillsGetDamagePos(gs, &gs->pb, px, py, TK_DAMAGE);
+        pillsGetDamagePos(gs, &gs->pb, px, py, TK_DAMAGE, NEUTRAL);
         UT_ASSERT_MSG(gs->pb->item[0].armour == 0,
                       "a pill at %d armour hit for %d read back %u, expected 0",
                       armour, TK_DAMAGE, (unsigned) gs->pb->item[0].armour);
@@ -936,7 +1013,7 @@ int run_sim_rules_pill_empties_without_wrapping(void) {
     /* Exactly emptied is zero too, and the pill reads as dead on the ground
        rather than as one still worth shooting. */
     gs->pb->item[0].armour = (BYTE) TK_DAMAGE;
-    pillsGetDamagePos(gs, &gs->pb, px, py, TK_DAMAGE);
+    pillsGetDamagePos(gs, &gs->pb, px, py, TK_DAMAGE, NEUTRAL);
     UT_ASSERT_MSG(gs->pb->item[0].armour == 0,
                   "a pill emptied exactly read back %u, expected 0",
                   (unsigned) gs->pb->item[0].armour);
@@ -947,7 +1024,7 @@ int run_sim_rules_pill_empties_without_wrapping(void) {
        back down into the living range, so the old shape left the pill alive
        on the hit that should have finished it. */
     gs->pb->item[0].armour = 1;
-    pillsGetDamagePos(gs, &gs->pb, px, py, 255);
+    pillsGetDamagePos(gs, &gs->pb, px, py, 255, NEUTRAL);
     UT_ASSERT_MSG(gs->pb->item[0].armour == 0,
                   "a pill at 1 armour hit for 255 read back %u, expected 0",
                   (unsigned) gs->pb->item[0].armour);
@@ -955,10 +1032,563 @@ int run_sim_rules_pill_empties_without_wrapping(void) {
     /* An explosion landing on a pill already dead leaves it dead rather than
        raising it, which the same wrap used to do. */
     gs->pb->item[0].armour = 0;
-    pillsGetDamagePos(gs, &gs->pb, px, py, 255);
+    pillsGetDamagePos(gs, &gs->pb, px, py, 255, NEUTRAL);
     UT_ASSERT_MSG(gs->pb->item[0].armour == 0,
                   "an explosion on a dead pill left it at %u, expected 0",
                   (unsigned) gs->pb->item[0].armour);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* What a shell takes off a pillbox. A shell takes shell_damage off a tank and
+ * off a base; against a pill it took one, written as a decrement, so the
+ * amount could not be moved without moving what a shell does to everything
+ * else. pillsDamagePos now reads its own rule, and reads it the way the base
+ * path reads its own — asking whether the blow takes more than is left rather
+ * than subtracting into a BYTE and reading the wrap. */
+int run_sim_rules_pill_shell_damage_follows(void) {
+    ServerSim *sim = ut_make_running_sim("Sapper");
+    GameSim *gs;
+    pillbox item;
+    BYTE px, py;
+
+    UT_ASSERT(sim != NULL);
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    UT_ASSERT_MSG(pillsGetNumPills(&gs->pb) >= 1,
+                  "Everard Island should carry at least one pillbox");
+    memset(&item, 0, sizeof(item));
+    pillsGetPill(&gs->pb, &item, 1);
+    px = item.x;
+    py = item.y;
+
+    /* The classic rule is one, which is what the decrement used to do. */
+    UT_ASSERT_MSG(gs->rules.pill_shell_damage == PILLBOX_SHELL_DAMAGE,
+                  "a running sim starts at pill_shell_damage %ld, expected %d",
+                  (long) gs->rules.pill_shell_damage, PILLBOX_SHELL_DAMAGE);
+    gs->pb->item[0].armour = 10;
+    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL, DMG_NO_PILL);
+    UT_ASSERT_MSG(gs->pb->item[0].armour == 9,
+                  "a classic shell left the pill at %u, expected 9",
+                  (unsigned) gs->pb->item[0].armour);
+
+    /* Moved, and the shell takes the rule rather than one. */
+    gs->rules.pill_shell_damage = 4;
+    gs->pb->item[0].armour = 10;
+    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL, DMG_NO_PILL);
+    UT_ASSERT_MSG(gs->pb->item[0].armour == 6,
+                  "a shell taking 4 left the pill at %u, expected 6",
+                  (unsigned) gs->pb->item[0].armour);
+
+    /* Less left than the shell takes: empty, not a wrap. */
+    gs->pb->item[0].armour = 2;
+    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL, DMG_NO_PILL);
+    UT_ASSERT_MSG(gs->pb->item[0].armour == 0,
+                  "a pill at 2 armour hit for 4 read back %u, expected 0",
+                  (unsigned) gs->pb->item[0].armour);
+    UT_ASSERT_MSG(pillsDeadPos(&gs->pb, px, py) == TRUE,
+                  "a pill emptied by a raised shell did not read as dead");
+
+    /* A shell that takes the whole cap is a pill killed by one hit, which the
+       range check allows and which the path has to actually carry out. */
+    gs->rules.pill_shell_damage = gs->rules.pill_max_armour;
+    gs->pb->item[0].armour = (BYTE) gs->rules.pill_max_armour;
+    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL, DMG_NO_PILL);
+    UT_ASSERT_MSG(gs->pb->item[0].armour == 0,
+                  "a full pill hit for the whole cap read back %u, expected 0",
+                  (unsigned) gs->pb->item[0].armour);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* How fast a hurt pillbox angers. The interval starts at pill_attack_ticks and
+ * is floored at pill_attack_min_ticks, both rules already; the step between
+ * them was a literal halving, so the two ends could be moved and the ramp
+ * between them could not. A divisor of one is a pill that never angers, which
+ * is why the range check's floor is one rather than two. */
+int run_sim_rules_pill_angry_divisor_follows(void) {
+    ServerSim *sim = ut_make_running_sim("Stoker");
+    GameSim *gs;
+    pillbox item;
+    BYTE px, py;
+
+    UT_ASSERT(sim != NULL);
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    UT_ASSERT_MSG(pillsGetNumPills(&gs->pb) >= 1,
+                  "Everard Island should carry at least one pillbox");
+    memset(&item, 0, sizeof(item));
+    pillsGetPill(&gs->pb, &item, 1);
+    px = item.x;
+    py = item.y;
+
+    UT_ASSERT_MSG(gs->rules.pill_angry_divisor == PILLBOX_ANGRY_DIVISOR,
+                  "a running sim starts at pill_angry_divisor %ld, expected %d",
+                  (long) gs->rules.pill_angry_divisor, PILLBOX_ANGRY_DIVISOR);
+
+    /* Classic: one hit halves the interval. */
+    gs->pb->item[0].armour = 10;
+    gs->pb->item[0].speed = (BYTE) gs->rules.pill_attack_ticks;
+    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL, DMG_NO_PILL);
+    UT_ASSERT_MSG(gs->pb->item[0].speed ==
+                      (BYTE) (gs->rules.pill_attack_ticks / 2),
+                  "a classic hit left the interval at %u, expected %ld",
+                  (unsigned) gs->pb->item[0].speed,
+                  (long) (gs->rules.pill_attack_ticks / 2));
+
+    /* A divisor of one is a pill that never angers. */
+    gs->rules.pill_angry_divisor = 1;
+    gs->pb->item[0].armour = 10;
+    gs->pb->item[0].speed = (BYTE) gs->rules.pill_attack_ticks;
+    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL, DMG_NO_PILL);
+    UT_ASSERT_MSG(gs->pb->item[0].speed ==
+                      (BYTE) gs->rules.pill_attack_ticks,
+                  "a divisor of one moved the interval to %u, expected %ld",
+                  (unsigned) gs->pb->item[0].speed,
+                  (long) gs->rules.pill_attack_ticks);
+
+    /* A divisor past the whole span angers the pill fully on the first shell,
+       and the floor is what catches it rather than the division. */
+    gs->rules.pill_angry_divisor = 255;
+    gs->pb->item[0].armour = 10;
+    gs->pb->item[0].speed = (BYTE) gs->rules.pill_attack_ticks;
+    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL, DMG_NO_PILL);
+    UT_ASSERT_MSG(gs->pb->item[0].speed ==
+                      (BYTE) gs->rules.pill_attack_min_ticks,
+                  "a divisor of 255 left the interval at %u, expected the "
+                  "floor %ld",
+                  (unsigned) gs->pb->item[0].speed,
+                  (long) gs->rules.pill_attack_min_ticks);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+int run_sim_rules_tank_collision_mac(void) {
+    /* Mac Bolo reference positions at speed 32: the 16-WU
+     * displacement matches one WinBolo tick at speed 16. Obstruction and
+     * aim use the actual 20/40 ms speed conversion, not that probe speed.
+     * In particular, row 3 must keep leading during a 15-WU wall slide. */
+    static const struct {
+        int x, y, heading, speed, endX, endY, blocked, shot;
+    } cases[] = {
+        {-32,-240,64,16, -16,-240,0,63},
+        {-32,-240,80,16, -17,-234,0,79},
+        {-32,-193,64,16, -16,-193,0,63},
+        {-32,-193,80,16, -17,-193,0,79},
+        {0,-225,128,16, 0,-225,1,1},
+        {-210,-210,96,16, -209,-209,1,223},
+        {-210,-210,0,0, -210,-210,0,223},
+        {-32,-240,72,16, -17,-234,0,79},
+        {-32,-240,248,16, -32,-256,0,251},
+    };
+    /* Mac's stationary-box probe, north of a pill, for all 16 sectors. */
+    static const int boxY[16] = {
+        -225,-241,-241,-225,-225,-225,-225,-225,
+        -225,-225,-225,-225,-225,-225,-241,-241
+    };
+    ServerSim *sim = ut_make_running_sim("Mac movement");
+    GameSim *gs;
+    tank target;
+    struct tankObj initial;
+    pillbox *pill;
+    bool connected[MAX_TANKS] = {false};
+    int x, y, prediction;
+    size_t i;
+    const int centre = 100 * 256 + 128;
+    UT_ASSERT(sim != NULL);
+    gs = serverSimGetGameSim(sim);
+    target = gs->tanks[0];
+    UT_ASSERT(target != NULL && gs->pb->numPills > 0);
+    for (x = 98; x <= 102; x++) for (y = 98; y <= 102; y++) {
+        mapSetPos(gs, &gs->mp, (BYTE)x, (BYTE)y, ROAD, FALSE, FALSE);
+    }
+    for (i = 0; i < gs->pb->numPills; i++) gs->pb->active[i] = FALSE;
+    gs->pb->active[0] = TRUE;
+    pill = &gs->pb->item[0];
+    pill->x = pill->y = 100;
+    pill->owner = NEUTRAL;
+    pill->armour = 15;
+    pill->inTank = FALSE;
+    target->autoSlowdown = FALSE;
+    target->destroyed = FALSE;
+    target->onBoat = FALSE;
+    target->boatState = BoatState_NotOnBoat;
+    target->deathWait = 0;
+    initial = *target;
+    gs->rules.pill_aim_mac = 1;
+    gs->rules.tank_collision_mac = 1;
+    connected[0] = true;
+    for (prediction = 0; prediction <= 1; prediction++) {
+        gs->isPredicting = prediction != 0;
+        for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+            *target = initial;
+            target->x = (WORLD)(centre + cases[i].x);
+            target->y = (WORLD)(centre + cases[i].y);
+            target->angle = (TURNTYPE)cases[i].heading;
+            target->speed = (SPEEDTYPE)cases[i].speed;
+            tankUpdate(gs, &gs->tanks[0], 0, FALSE, FALSE);
+            UT_ASSERT_MSG(target->x == centre + cases[i].endX &&
+                          target->y == centre + cases[i].endY,
+                "Mac move %u (prediction %d): (%d,%d), expected (%d,%d)",
+                (unsigned)i, prediction, target->x - centre, target->y - centre,
+                cases[i].endX, cases[i].endY);
+            UT_ASSERT_MSG(target->obstructed == (cases[i].blocked != 0),
+                "Mac move %u (prediction %d): blocked=%d", (unsigned)i,
+                prediction, target->obstructed);
+            if (!prediction) {
+                shellsDestroy(&gs->shs);
+                pill->reload = pill->speed;
+                pill->justSeen = TRUE;
+                pillsUpdate(gs, gs->tanks, connected, MAX_TANKS);
+                UT_ASSERT(gs->shs != NULL);
+                UT_ASSERT_MSG(gs->shs->angle == cases[i].shot,
+                    "pill after move %u: shot=%f, expected %d", (unsigned)i,
+                    (double)gs->shs->angle, cases[i].shot);
+            }
+        }
+        for (i = 0; i < 16; i++) {
+            *target = initial;
+            target->x = (WORLD)centre;
+            target->y = (WORLD)(centre - 225);
+            target->angle = (TURNTYPE)(i * 16);
+            target->speed = 0;
+            tankUpdate(gs, &gs->tanks[0], 0, FALSE, FALSE);
+            UT_ASSERT_MSG(target->x == centre && target->y == centre + boxY[i],
+                "Mac box sector %u: (%d,%d)", (unsigned)i,
+                target->x - centre, target->y - centre);
+        }
+    }
+    /* Turning the mod off restores the circle's 240-WU clearance. */
+    gs->isPredicting = FALSE;
+    gs->rules.tank_collision_mac = 0;
+    *target = initial;
+    target->x = (WORLD)(centre - 32);
+    target->y = (WORLD)(centre - 193);
+    target->angle = 64;
+    target->speed = 16;
+    tankUpdate(gs, &gs->tanks[0], 0, FALSE, FALSE);
+    UT_ASSERT(target->x == centre - 16 && target->y == centre - 240);
+    /* A circle sliding into a wall also compares with its pre-move cell. */
+    *target = initial;
+    target->x = (WORLD)(centre - 24);
+    target->y = (WORLD)(centre - 240);
+    target->angle = 80;
+    target->speed = 16;
+    tankUpdate(gs, &gs->tanks[0], 0, FALSE, FALSE);
+    UT_ASSERT(target->x == centre - 9 && target->y == centre - 240);
+    UT_ASSERT(!target->obstructed);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+int run_sim_rules_pill_aim_mac(void) {
+    /* Mac Bolo reference shell directions, with WinBolo speeds multiplied
+     * by four. The first three rows cover moving, stopped and obstructed
+     * tanks at close range. The rest cover
+     * the asymmetric pixel boundary, all 16 headings, diagonal distance,
+     * slow motion and normal leading out to eight squares. */
+    static const struct {
+        int dx, dy, heading, speed, obstructed, expected;
+    } cases[] = {
+        {0, -200, 64, 4, 0, 63},
+        {0, -200, 64, 0, 0, 1},
+        {0, -200, 64, 4, 1, 1},
+        {0, -300, 64, 16, 0, 1},
+        {0, -256, 64, 16, 0, 1},
+        {0, -255, 64, 16, 0, 63},
+        {0, 255, 64, 16, 0, 127},
+        {0, -384, 64, 16, 0, 7},
+        {0, -200, 64, 1, 0, 63},
+        {0, -200, 64, 3, 0, 63},
+        {0, -200, 64, 6, 0, 63},
+        {0, -200, 64, 12, 0, 63},
+        {0, -200, 0, 16, 0, 1},
+        {0, -200, 32, 16, 0, 31},
+        {0, -200, 128, 16, 0, 127},
+        {176, -176, 48, 16, 0, 47},
+        {192, -192, 48, 16, 0, 33},
+        {200, 0, 128, 16, 0, 127},
+        {-200, 0, 0, 16, 0, 255},
+        {200, 200, 240, 16, 0, 95},
+        {0, -2048, 64, 16, 0, 17},
+        {0, -200, 80, 16, 0, 79},
+        {0, -200, 96, 16, 0, 95},
+        {0, -200, 112, 16, 0, 111},
+        {0, -200, 144, 16, 0, 145},
+        {0, -200, 160, 16, 0, 161},
+        {0, -200, 176, 16, 0, 177},
+        {0, -200, 192, 16, 0, 193},
+        {0, -200, 208, 16, 0, 209},
+        {0, -200, 224, 16, 0, 225},
+        {0, -200, 16, 16, 0, 15},
+        {0, -200, 48, 16, 0, 47},
+    };
+    ServerSim *sim = ut_make_running_sim("Mac aim");
+    GameSim *gs;
+    size_t i;
+    int origin;
+    UT_ASSERT(sim != NULL);
+    gs = serverSimGetGameSim(sim);
+    gs->rules.pill_aim_mac = 1;
+    /* The legacy approximation must not influence this mode. */
+    gs->rules.pill_massage_range = 65535;
+    gs->rules.pill_massage_cosine = 0.0f;
+    /* Near either map edge the distant aim point must not wrap WORLD. */
+    for (origin = 4096; origin <= 61440; origin += 28672) {
+        for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+            TURNTYPE aimed = pillsTargetTank(gs, &gs->mp, &gs->pb, &gs->bs,
+                (WORLD)origin, (WORLD)origin,
+                (WORLD)(origin + cases[i].dx), (WORLD)(origin + cases[i].dy),
+                (TURNTYPE)cases[i].heading, (BYTE)cases[i].speed,
+                FALSE, 0, cases[i].obstructed != 0);
+            UT_ASSERT_MSG(aimed == cases[i].expected,
+                "Mac aim row %u at %d: got %f, expected %d",
+                (unsigned)i, origin, (double)aimed, cases[i].expected);
+        }
+    }
+    /* Exercise the firing path too: the target's obstructed flag must reach
+     * the aim calculation even while its requested speed remains nonzero. */
+    {
+        bool connected[MAX_TANKS] = {false};
+        tank target = gs->tanks[0];
+        pillbox *pill = &gs->pb->item[0];
+        int blocked;
+        UT_ASSERT(target != NULL && gs->pb->numPills > 0);
+        for (i = 0; i < gs->pb->numPills; i++) gs->pb->active[i] = FALSE;
+        gs->pb->active[0] = TRUE;
+        pill->x = pill->y = 100;
+        pill->owner = NEUTRAL;
+        pill->armour = 15;
+        pill->inTank = FALSE;
+        target->x = 100 * 256 + 128;
+        target->y = target->x - 200;
+        target->angle = 64;
+        target->speed = 4;
+        target->destroyed = FALSE;
+        connected[0] = true;
+        for (blocked = 0; blocked <= 1; blocked++) {
+            shellsDestroy(&gs->shs);
+            pill->reload = pill->speed;
+            pill->justSeen = TRUE;
+            target->obstructed = blocked != 0;
+            pillsUpdate(gs, gs->tanks, connected, MAX_TANKS);
+            UT_ASSERT(gs->shs != NULL);
+            UT_ASSERT_MSG(gs->shs->angle == (blocked ? 1 : 63),
+                "firing at a %s tank aimed at %f", blocked ? "blocked" : "moving",
+                (double)gs->shs->angle);
+        }
+    }
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The "pillmassage" aim, which was a build-time switch and is now two rules.
+ * pill_massage_range is the distance the legacy forward prediction takes
+ * over from the solver inside, and zero — what the classic table holds — is
+ * what takes it out altogether. pill_massage_cosine is how straight at the
+ * pillbox a tank has to be driving to be led properly anyway.
+ *
+ * The tank is put a square and a bit diagonally off the pillbox and driven
+ * along an axis, so the angle between its heading and the line to the
+ * pillbox is 45 degrees whichever way round the engine reckons its bradians:
+ * the cosine the rule is read against is 0.707 either way, which sits between
+ * the two ends this walks it to. */
+int run_sim_rules_pill_massage_follows(void) {
+    ServerSim *sim = ut_make_running_sim("Gunner");
+    GameSim  *gs;
+    pillbox   item;
+    WORLD     px, py;
+    WORLD     tankX, tankY;
+    TURNTYPE  solved;
+    TURNTYPE  aimed;
+
+    UT_ASSERT(sim != NULL);
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    UT_ASSERT_MSG(pillsGetNumPills(&gs->pb) >= 1,
+                  "the map should carry at least one pillbox");
+    memset(&item, 0, sizeof(item));
+    pillsGetPill(&gs->pb, &item, 1);
+    px = (WORLD) ((item.x << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE);
+    py = (WORLD) ((item.y << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE);
+    tankX = (WORLD) (px + 200);
+    tankY = (WORLD) (py + 200);
+
+    solved = pillsTargetTankMove(gs, &gs->mp, &gs->pb, &gs->bs, px, py, tankX,
+                                 tankY, 0.0f, 16, FALSE, 0);
+
+    /* The classic table holds zero, so every tank is led by the solver. */
+    UT_ASSERT_MSG(gs->rules.pill_massage_range == PILLBOX_MASSAGE_RANGE,
+                  "a running sim starts at pill_massage_range %ld, expected %d",
+                  (long) gs->rules.pill_massage_range, PILLBOX_MASSAGE_RANGE);
+    aimed = pillsTargetTank(gs, &gs->mp, &gs->pb, &gs->bs, px, py, tankX, tankY,
+                            0.0f, 16, FALSE, 0, FALSE);
+    UT_ASSERT_MSG(aimed == solved,
+                  "the classic table aimed at %f, expected the solver's %f",
+                  (double) aimed, (double) solved);
+
+    /* In range, and with a cosine no tank can be straighter than, the old
+       prediction takes over. */
+    gs->rules.pill_massage_range  = 384;
+    gs->rules.pill_massage_cosine = 1.0f;
+    aimed = pillsTargetTank(gs, &gs->mp, &gs->pb, &gs->bs, px, py, tankX, tankY,
+                            0.0f, 16, FALSE, 0, FALSE);
+    UT_ASSERT_MSG(aimed != solved,
+                  "a massaged pillbox aimed at the solver's %f",
+                  (double) solved);
+
+    /* The same tank at the classic cosine is driving straight enough at the
+       pillbox to be led properly. */
+    gs->rules.pill_massage_cosine = (float) PILLBOX_MASSAGE_COSINE;
+    aimed = pillsTargetTank(gs, &gs->mp, &gs->pb, &gs->bs, px, py, tankX, tankY,
+                            0.0f, 16, FALSE, 0, FALSE);
+    UT_ASSERT_MSG(aimed == solved,
+                  "a tank at 45 degrees aimed at %f, expected the solver's %f",
+                  (double) aimed, (double) solved);
+
+    /* And a range the tank stands outside leaves it to the solver however
+       the cosine reads. */
+    gs->rules.pill_massage_range  = 200;
+    gs->rules.pill_massage_cosine = 1.0f;
+    aimed = pillsTargetTank(gs, &gs->mp, &gs->pb, &gs->bs, px, py, tankX, tankY,
+                            0.0f, 16, FALSE, 0, FALSE);
+    UT_ASSERT_MSG(aimed == solved,
+                  "a tank outside the range aimed at %f, expected the "
+                  "solver's %f",
+                  (double) aimed, (double) solved);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The splash a dying tank lays on a pillbox, and the shape of the wreck that
+ * carries it. tkExplosionUpdate drove the wreck on TK_MOVE_AMOUNT every
+ * TK_UPDATE_TIME ticks and tested a box of TK_WIDTH_CHECK by TK_HEIGHT_CHECK
+ * around it; the four splash sites passed TK_DAMAGE. All six are rules now,
+ * so a scenario can make a death throw a longer, wider or harder wreck. The
+ * splash is checked through pillsGetDamagePos, which is the path the wreck
+ * itself calls. */
+int run_sim_rules_tank_explosion_follows(void) {
+    ServerSim *sim = ut_make_running_sim("Pyre");
+    GameSim *gs;
+    pillbox item;
+    BYTE px, py;
+
+    UT_ASSERT(sim != NULL);
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    UT_ASSERT_MSG(pillsGetNumPills(&gs->pb) >= 1,
+                  "Everard Island should carry at least one pillbox");
+    memset(&item, 0, sizeof(item));
+    pillsGetPill(&gs->pb, &item, 1);
+    px = item.x;
+    py = item.y;
+
+    /* The six defaults are the constants the sites used to read. */
+    UT_ASSERT_MSG(gs->rules.tank_explosion_damage == TK_DAMAGE,
+                  "tank_explosion_damage is %ld, expected %d",
+                  (long) gs->rules.tank_explosion_damage, TK_DAMAGE);
+    UT_ASSERT_MSG(gs->rules.tank_explosion_length == TK_EXPLODE_LENGTH,
+                  "tank_explosion_length is %ld, expected %d",
+                  (long) gs->rules.tank_explosion_length, TK_EXPLODE_LENGTH);
+    UT_ASSERT_MSG(gs->rules.tank_explosion_move == TK_MOVE_AMOUNT,
+                  "tank_explosion_move is %ld, expected %d",
+                  (long) gs->rules.tank_explosion_move, TK_MOVE_AMOUNT);
+    UT_ASSERT_MSG(gs->rules.tank_explosion_update_ticks == TK_UPDATE_TIME,
+                  "tank_explosion_update_ticks is %ld, expected %d",
+                  (long) gs->rules.tank_explosion_update_ticks, TK_UPDATE_TIME);
+    UT_ASSERT_MSG(gs->rules.tank_explosion_width == TK_WIDTH_CHECK,
+                  "tank_explosion_width is %ld, expected %d",
+                  (long) gs->rules.tank_explosion_width, TK_WIDTH_CHECK);
+    UT_ASSERT_MSG(gs->rules.tank_explosion_height == TK_HEIGHT_CHECK,
+                  "tank_explosion_height is %ld, expected %d",
+                  (long) gs->rules.tank_explosion_height, TK_HEIGHT_CHECK);
+
+    /* The splash takes the rule rather than the constant. */
+    gs->rules.tank_explosion_damage = 2;
+    gs->pb->item[0].armour = 10;
+    pillsGetDamagePos(gs, &gs->pb, px, py,
+                      (BYTE) gs->rules.tank_explosion_damage, NEUTRAL);
+    UT_ASSERT_MSG(gs->pb->item[0].armour == 8,
+                  "a splash of 2 left the pill at %u, expected 8",
+                  (unsigned) gs->pb->item[0].armour);
+
+    /* Zero is a wreck that scorches nothing, which the range check allows. */
+    gs->rules.tank_explosion_damage = 0;
+    gs->pb->item[0].armour = 10;
+    pillsGetDamagePos(gs, &gs->pb, px, py,
+                      (BYTE) gs->rules.tank_explosion_damage, NEUTRAL);
+    UT_ASSERT_MSG(gs->pb->item[0].armour == 10,
+                  "a splash of 0 moved the pill to %u, expected 10",
+                  (unsigned) gs->pb->item[0].armour);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* What the water takes off a wading tank. tank_water_ticks says how often
+ * tankInWater runs; what it takes each time was a pair of decrements, so the
+ * interval could be moved and the loss could not. Driven through tankInWater
+ * directly, which is the call the wading test in tankUpdate makes. */
+int run_sim_rules_water_loss_follows(void) {
+    ServerSim *sim = ut_make_running_sim("Wader");
+    GameSim *gs;
+    tank *tnk;
+    BYTE shells, mines, armour, trees;
+
+    UT_ASSERT(sim != NULL);
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    tnk = &gs->tanks[0];
+    UT_ASSERT(tnk != NULL && *tnk != NULL);
+
+    UT_ASSERT_MSG(gs->rules.water_loss_shells == TANK_WATER_LOSS_SHELLS &&
+                      gs->rules.water_loss_mines == TANK_WATER_LOSS_MINES,
+                  "a running sim starts at %ld/%ld, expected %d/%d",
+                  (long) gs->rules.water_loss_shells,
+                  (long) gs->rules.water_loss_mines,
+                  TANK_WATER_LOSS_SHELLS, TANK_WATER_LOSS_MINES);
+
+    /* Classic: one of each. */
+    tankSetStats(tnk, 20, 20, 20, 20);
+    tankInWater(gs, tnk);
+    tankGetStats(tnk, &shells, &mines, &armour, &trees);
+    UT_ASSERT_MSG(shells == 19 && mines == 19,
+                  "a classic ducking left %u shells and %u mines, expected 19 "
+                  "and 19", (unsigned) shells, (unsigned) mines);
+
+    /* Moved, and the water takes the rule rather than one. */
+    gs->rules.water_loss_shells = 5;
+    gs->rules.water_loss_mines  = 3;
+    tankSetStats(tnk, 20, 20, 20, 20);
+    tankInWater(gs, tnk);
+    tankGetStats(tnk, &shells, &mines, &armour, &trees);
+    UT_ASSERT_MSG(shells == 15 && mines == 17,
+                  "a ducking taking 5 and 3 left %u shells and %u mines, "
+                  "expected 15 and 17", (unsigned) shells, (unsigned) mines);
+
+    /* Less carried than the water takes: empty, not a wrap. */
+    tankSetStats(tnk, 2, 1, 20, 20);
+    tankInWater(gs, tnk);
+    tankGetStats(tnk, &shells, &mines, &armour, &trees);
+    UT_ASSERT_MSG(shells == 0 && mines == 0,
+                  "a tank carrying less than the water takes read back %u "
+                  "shells and %u mines, expected 0 and 0",
+                  (unsigned) shells, (unsigned) mines);
+
+    /* Zero is water that takes nothing, which the range check allows and
+       which has to leave the tank alone rather than empty it. */
+    gs->rules.water_loss_shells = 0;
+    gs->rules.water_loss_mines  = 0;
+    tankSetStats(tnk, 20, 20, 20, 20);
+    tankInWater(gs, tnk);
+    tankGetStats(tnk, &shells, &mines, &armour, &trees);
+    UT_ASSERT_MSG(shells == 20 && mines == 20,
+                  "a ducking taking nothing left %u shells and %u mines, "
+                  "expected 20 and 20", (unsigned) shells, (unsigned) mines);
 
     serverSimDestroy(sim);
     return 0;
@@ -1256,7 +1886,7 @@ int run_sim_rules_shell_flight_follows(void) {
 
     /* Fired east, so the whole step lands on X and the comparison is the
        speed itself, in 24.8 fixed point. */
-    shellsAddItem(gs, &gs->shs, 10000, 20000, east, len, 0, FALSE);
+    shellsAddItem(gs, &gs->shs, 10000, 20000, east, len, 0, NEUTRAL, DMG_NO_PILL, FALSE);
     UT_ASSERT_MSG(gs->shs != NULL, "the classic shot produced no shell");
     classicStep = gs->shs->xStep;
     classicLen = gs->shs->length;
@@ -1272,7 +1902,7 @@ int run_sim_rules_shell_flight_follows(void) {
 
     /* Double the speed and the next shell steps twice as far per tick. */
     gs->rules.shell_speed *= 2;
-    shellsAddItem(gs, &gs->shs, 10000, 20000, east, len, 0, FALSE);
+    shellsAddItem(gs, &gs->shs, 10000, 20000, east, len, 0, NEUTRAL, DMG_NO_PILL, FALSE);
     fastStep = gs->shs->xStep;
     UT_ASSERT_MSG(fastStep == classicStep * 2,
                   "doubling shell_speed gave a step of %ld, not %ld",
@@ -1281,7 +1911,7 @@ int run_sim_rules_shell_flight_follows(void) {
     /* And a longer life is a longer budget, on the same gunsight. */
     gs->rules.shell_speed /= 2;
     gs->rules.shell_life *= 2;
-    shellsAddItem(gs, &gs->shs, 10000, 20000, east, len, 0, FALSE);
+    shellsAddItem(gs, &gs->shs, 10000, 20000, east, len, 0, NEUTRAL, DMG_NO_PILL, FALSE);
     longLen = gs->shs->length;
     UT_ASSERT_MSG(longLen > classicLen,
                   "doubling shell_life left the shell living %u ticks, not "
@@ -1426,7 +2056,7 @@ int run_sim_rules_are_classic(void) {
 
     /* The last field, so the walk is not stopping short of the end. */
     simRulesClassic(&r);
-    r.tree_weight_mine = r.tree_weight_mine + 1;
+    r.tank_collision_mac = 1;
     UT_ASSERT_MSG(!simRulesAreClassic(&r),
                   "a table with its last field moved is reported classic");
 

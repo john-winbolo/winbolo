@@ -68,7 +68,7 @@
 
 static ServerSim *make_sim_two_players(void) {
     BYTE emap[6000] = E_MAP;
-    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+    ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) return NULL;
     serverSimSetLobbyEnabled(sim, false);
@@ -114,7 +114,7 @@ int run_shells_survive_cleared_lgm_slot(void) {
      * the very next update, which is the branch that faulted in the report. */
     WORLD sx = 0, sy = 0;
     UT_ASSERT(serverSimGetTankState(sim, 0, &sx, &sy));
-    shellsAddItem(gs, &gs->shs, sx, sy, 0, 8, /*owner*/ 0, FALSE);
+    shellsAddItem(gs, &gs->shs, sx, sy, 0, 8, /*owner*/ 0, NEUTRAL, DMG_NO_PILL, FALSE);
     UT_ASSERT_MSG(gs->shs != NULL, "shell was not added");
     gs->shs->length = SHELL_DEATH;
 

@@ -49,6 +49,11 @@ int lv_imgui_context_init(SDL_Window* window, SDL_Renderer* renderer) {
     
     // Enable docking and multi-viewport for flexible window layout
     ImGuiIO& io = ImGui::GetIO();
+    /* No imgui.ini, like every other ImGui context in the tree. Left on, ImGui
+     * writes it into the process's current directory, which is wherever the
+     * viewer was launched from (a log double-clicked on the Desktop, say).
+     * Window visibility is already kept in the viewer's own preferences. */
+    io.IniFilename = nullptr;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
     io.ConfigNavCursorVisibleAlways = true;

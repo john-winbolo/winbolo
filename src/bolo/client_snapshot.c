@@ -51,6 +51,7 @@
 #include "bases.h"
 #include "starts.h"
 #include "tank.h"
+#include "tank_diagonal_snap.h"
 #include "shells.h"
 #include "rubble.h"
 #include "explosions.h"
@@ -148,23 +149,63 @@ void clientBuildInputPacket(ClientSim *csPtr, InputPacket *pkt, tankButton tb, b
    * runs two half-steps; the wasm client drops its sim backlog after a tab
    * background; a GUI hitch that doesn't catch up) would otherwise emit tick
    * numbers the server has already passed, and every such input would arrive
-   * stale forever. If the supplied tick has fallen at or behind the server's
-   * last-processed tick, renumber it to the smallest value past
-   * lastProcessedInput whose parity matches the input's INTENT (isGameTick:
-   * even = game, odd = keys) — taken from the parameter, never derived from the
-   * stale tick. Prediction, the input history, and the send all consume this
-   * same packet, so they pick up the jump automatically. When the producer
-   * keeps pace (normal desktop/UDP, where the client predicts ahead of the
-   * ack) tick > lastProcessedInput and this is a no-op. */
+   * stale forever. Two populations arrive here and they are answered
+   * separately, selected on whether the transport has measured a round trip.
+   * Both give the packet the parity matching the input's INTENT (isGameTick:
+   * even = game, odd = keys), taken from the parameter, never derived from the
+   * stale tick.
+   *
+   *   projectionPingMs > 0 — a networked client whose counter fell behind
+   *     after a hitch. Its packet is half a round trip old on arrival, so it
+   *     jumps past lastProcessedInput by the round trip in half-steps plus a
+   *     margin — where the server will be when the packet lands — and keeps
+   *     that jump as inputTickOffset, which every later packet adds. The
+   *     stream catches up in one round trip instead of one snapshot, because
+   *     the jump is adopted once rather than recomputed against a
+   *     lastProcessedInput that only moves when a snapshot arrives.
+   *
+   *   projectionPingMs == 0 — a producer on the local transport (headless,
+   *     the gym, an in-process host), which supplies one input per net tick
+   *     while the server runs two half-steps. It is not behind after a hitch,
+   *     it under-supplies structurally, so this fires in perfect conditions.
+   *     It takes the next tick number the server has not processed and stores
+   *     nothing: there is no flight time to cover, and pushing the packet
+   *     further out would only park it in the queue ahead of its half-step.
+   *
+   * Prediction, the input history, and the send all consume this same packet,
+   * so they pick up the new number automatically, and the producer's counter
+   * keeps running on wall time — none of the five producers change. When a
+   * networked producer keeps pace (normal desktop/UDP, where the client
+   * predicts ahead of the ack) tick + offset > lastProcessedInput and that
+   * branch is a no-op. */
   {
     uint32_t lpi = csPtr->clientState.serverLastProcessedInput;
-    if (pkt->tick <= lpi) {
-      uint32_t renum = lpi + 1;
-      /* game tick wants an even number, keys tick an odd one */
-      if (((renum % 2) == 0) != isGameTick) {
-        renum++;
+    if (csPtr->projectionPingMs == 0) {
+      if (pkt->tick <= lpi) {
+        uint32_t renum = lpi + 1;
+        /* game tick wants an even number, keys tick an odd one */
+        if (((renum % 2) == 0) != isGameTick) {
+          renum++;
+        }
+        pkt->tick = renum;
       }
-      pkt->tick = renum;
+    } else {
+      uint32_t want = tick + csPtr->inputTickOffset;
+      if (want <= lpi) {
+        uint32_t rttHalfSteps = (uint32_t)(csPtr->projectionPingMs / 10);
+        uint32_t target;
+        if (rttHalfSteps > CLIENT_INPUT_JUMP_MAX_RTT_HALFSTEPS) {
+          rttHalfSteps = CLIENT_INPUT_JUMP_MAX_RTT_HALFSTEPS;
+        }
+        target = lpi + rttHalfSteps + CLIENT_INPUT_JUMP_MARGIN_HALFSTEPS;
+        /* game tick wants an even number, keys tick an odd one */
+        if (((target % 2) == 0) != isGameTick) {
+          target++;
+        }
+        csPtr->inputTickOffset = target - tick;
+        want = target;
+      }
+      pkt->tick = want;
     }
   }
 
@@ -518,10 +559,10 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
         }
         break;
       case EVENT_SOUND:
-        /* data: [soundId, tier, direction, sourcePlayer] — play the variant the
-         * tier names. The server measured the sound against this recipient's
-         * tank and dropped anything out of earshot, so there is no distance
-         * work left here. Sounds are server-authoritative (isPredicting
+        /* data: [soundId, pan, dist, sourcePlayer] — play the variant dist
+         * picks, panned by pan. The server measured the sound against this
+         * recipient's tank and dropped anything out of earshot, so there is
+         * no range test left here. Sounds are server-authoritative (isPredicting
          * suppresses prediction-side sounds). Bubbles and tank-sink are
          * restricted to the local player: they're tied to the player's own
          * boat/drown event and would otherwise play whenever any remote tank
@@ -531,23 +572,23 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
           sndEffects sid = (sndEffects)events[i].data[0];
           bool selfOnly = (sid == bubbles || sid == tankSinkNear || sid == tankSinkFar);
           if (!selfOnly || events[i].data[3] == csPtr->myPlayerNum) {
-            clientSoundDist(&csPtr->sim, sid, events[i].data[1], events[i].data[2]);
+            clientSoundDist(&csPtr->sim, sid, (int8_t)events[i].data[1], events[i].data[2]);
           }
         }
         break;
       case EVENT_SOUND_SHOOT:
-        /* data: [soundId, tier, direction, firingPlayer] — skip own shots (client plays shootSelf via prediction) */
+        /* data: [soundId, pan, dist, firingPlayer] — skip own shots (client plays shootSelf via prediction) */
         if (isHuman && events[i].data[3] != csPtr->myPlayerNum) {
-          clientSoundDist(&csPtr->sim, shootNear, events[i].data[1], events[i].data[2]);
+          clientSoundDist(&csPtr->sim, shootNear, (int8_t)events[i].data[1], events[i].data[2]);
         }
         break;
       case EVENT_SOUND_TANK_HIT:
-        /* data: [soundId, tier, direction, hitPlayer] */
+        /* data: [soundId, pan, dist, hitPlayer] */
         if (isHuman) {
           if (events[i].data[3] == csPtr->myPlayerNum) {
             frontEndPlaySound(csPtr, hitTankSelf);
           } else {
-            clientSoundDist(&csPtr->sim, hitTankNear, events[i].data[1], events[i].data[2]);
+            clientSoundDist(&csPtr->sim, hitTankNear, (int8_t)events[i].data[1], events[i].data[2]);
           }
         }
         break;
@@ -947,12 +988,15 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
           /* And its sound, out through the same seam the lobby sounds use:
              the frontend owns every audio decision from here on, including
              whether this kind has a sound of its own or plays the default
-             one. Not distance-attenuated — a ping is a message, not
-             something happening on the map — and the sender's own copy plays
-             too, as the confirmation that the ping went out. A replay does
-             not reach this code at all: the log viewer keeps its own ping
-             ring and plays nothing for it. */
-          frontEndPlaySound(csPtr, pingSoundEffect(kind));
+             one. It pans by the pinged square's east-west offset from this
+             player's own tank, but it is not distance-attenuated — a ping is
+             a message, not something happening on the map — and the sender's
+             own copy plays too, as the confirmation that the ping went out. A
+             replay does not reach this code at all: the log viewer keeps its
+             own ping ring and plays nothing for it. px is in world units,
+             256 to a map square. */
+          clientSoundPing(&csPtr->sim, csPtr->myPlayerNum, pingSoundEffect(kind),
+                          (BYTE)(px >> 8));
         }
         break;
       }
@@ -1330,9 +1374,8 @@ void clientApplySnapshot(ClientSim *csPtr,
           csPtr->lastServerDestroyed = destroyed;
         }
 
-        /* Sync resources from server — but not reload/shells, which are
-         * already set correctly by the reconciliation replay (it accounts
-         * for unprocessed fire inputs that the server hasn't seen yet). */
+        /* Sync resources from server, then replay pending range and fire
+         * inputs below, whether or not the pose needed reconciliation. */
         tankSetShells(&csPtr->sim, &MY_TANK(csPtr), tanks[i].shells);
         tankSetMines(&csPtr->sim, &MY_TANK(csPtr), tanks[i].mines);
         tankSetTrees(&csPtr->sim, &MY_TANK(csPtr), tanks[i].trees);
@@ -1359,15 +1402,25 @@ void clientApplySnapshot(ClientSim *csPtr,
         tankSetOnBoat(&MY_TANK(csPtr),
                       (tanks[i].tankStatus & TANK_STATUS_ON_BOAT) != 0);
 
-        /* Correct shells/reload for any unprocessed fire inputs.
-         * The server snapshot reflects state before our fire was processed,
-         * so we must re-apply the fire effect to prevent double-firing. */
+        /* Restore pending range adjustments and fire effects on top of the
+         * acknowledged state. Range changes apply on both keys and game ticks;
+         * fire effects only apply on game ticks. */
         {
           uint32_t tick;
+          BYTE sightLen = tankGetGunsightLength(&MY_TANK(csPtr));
           for (tick = csPtr->clientState.oldestUnacked; tick <= csPtr->clientState.newestInput; tick++) {
             uint8_t idx = tick & (CLIENT_INPUT_HISTORY_SIZE - 1);
             InputPacket *histPkt = &csPtr->clientState.history[idx];
+            uint8_t gsAdj;
             if (histPkt->tick != tick) continue;
+            /* Replay only the range, not the auto-hide/UI side effects of
+             * tankGunsightIncrease/Decrease: those already ran locally. */
+            gsAdj = (histPkt->flags & INPUT_FLAG_GUNSIGHT_MASK) >> INPUT_FLAG_GUNSIGHT_SHIFT;
+            if (gsAdj == 1 && sightLen < csPtr->sim.rules.gunsight_max) {
+              sightLen++;
+            } else if (gsAdj == 2 && sightLen > csPtr->sim.rules.gunsight_min) {
+              sightLen--;
+            }
             if ((tick % 2) == 1) continue; /* keys tick — no fire */
             /* Decrement reload like tankUpdate would */
             if (tankGetReloadTime(&MY_TANK(csPtr)) > 0) {
@@ -1381,6 +1434,7 @@ void clientApplySnapshot(ClientSim *csPtr,
               tankSetShells(&csPtr->sim, &MY_TANK(csPtr), tankGetShells(&MY_TANK(csPtr)) - 1);
             }
           }
+          tankSetGunsightLength(&MY_TANK(csPtr), sightLen);
         }
       }
       /* Count down the base-unblock enlarged-clamp window once per local-tank
@@ -1850,15 +1904,34 @@ void clientSnapshotRenderInterp(ClientSim *cs, uint32_t nowMs,
 
     if (drew) {
       BYTE lgmMX = 0, lgmMY = 0, lgmPX = 0, lgmPY = 0, lgmFrame = 0;
-      BYTE mx = (BYTE)(interpX >> TANK_SHIFT_MAPSIZE);
-      BYTE px = (BYTE)((interpX & 0xFF) >> TANK_SHIFT_RIGHT2);
-      BYTE my = (BYTE)(interpY >> TANK_SHIFT_MAPSIZE);
-      BYTE py = (BYTE)((interpY & 0xFF) >> TANK_SHIFT_RIGHT2);
       BYTE frame = utilGetDir(interpAngle);
+      int snapX = (int)interpX;
+      int snapY = (int)interpY;
+      BYTE mx, my, px, py;
+      /* The position is cut down to a game pixel here; on a diagonal cut it
+       * on the diagonal lattice so both axes step on the same frame. */
+      tankDiagonalSnap(frame, &snapX, &snapY);
+      if (snapX < 0) {
+        snapX = 0;
+      } else if (snapX > 0xFFFF) {
+        snapX = 0xFFF0;
+      }
+      if (snapY < 0) {
+        snapY = 0;
+      } else if (snapY > 0xFFFF) {
+        snapY = 0xFFF0;
+      }
+      mx = (BYTE)(snapX >> TANK_SHIFT_MAPSIZE);
+      px = (BYTE)((snapX & 0xFF) >> TANK_SHIFT_RIGHT2);
+      my = (BYTE)(snapY >> TANK_SHIFT_MAPSIZE);
+      py = (BYTE)((snapY & 0xFF) >> TANK_SHIFT_RIGHT2);
       interpGetLgm(&cs->interpCtx, pn, &lgmMX, &lgmMY, &lgmPX, &lgmPY,
                    &lgmFrame);
       playersUpdate(&cs->sim.plyrs, pn, mx, my, px, py, frame, interpOnBoat,
                     lgmMX, lgmMY, lgmPX, lgmPY, lgmFrame);
+      /* The same position before the snap and the pixel cut, for the
+       * Smooth animation mode (clientSimSetFineTankPositions). */
+      playersSetFinePosition(&cs->sim.plyrs, pn, interpX, interpY);
     } else if (interpHasData(&cs->interpCtx, pn) &&
                (!interpIsAlive(&cs->interpCtx, pn) ||
                 interpTankHidden(&cs->interpCtx, pn))) {

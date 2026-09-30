@@ -16,6 +16,7 @@ local shield = require("attack_shield")
 local viz    = require("viz")
 local squad      = require("squad")
 local ally_state = require("ally_state")
+local SM         = require("spot_margin")  -- blitz spot LOS margin (2026-09-24)
 
 local smart_cost = cpf.smart_cost
 local KIND_PILL   = cpf.KIND_PILL
@@ -280,10 +281,22 @@ local function clear_attack_goal(state, reason, no_urgent)
   -- (goal._blitz_* fields were wiped above; the commander's roster/reject and
   -- squad_blitz_target are recomputed by squad.update each tick.)
   state.squad_blitz_engage_mx, state.squad_blitz_engage_my = nil, nil
+  state.squad_blitz_engage_fx, state.squad_blitz_engage_fy = nil, nil
+  state.squad_blitz_engage_deg = nil
   state.squad_blitz_in_position = nil
   state.squad_blitz_aimed = nil
   state.squad_blitz_bd = nil
   state._blitz_reject = nil   -- soldier's rejected-standoff set (parallel negotiation)
+  -- C.BLITZ_NOSPOT_RENEGOTIATE: the engage spot just went, so the accept that
+  -- was given FOR that spot goes too. squad.update then negotiates again (a
+  -- fresh bes, checked by the commander's arbiter) instead of re-committing
+  -- with no spot and self-scanning (20260925_134920 bot2 t=3044-3079).
+  if C.BLITZ_NOSPOT_RENEGOTIATE and state.squad_blitz_accepted then
+    print2(string.format("BLITZ_ACCEPT_DROP t=%d C%s -- attack goal cleared (%s), renegotiate",
+      state.tick or 0, tostring(state.squad_blitz_accepted), tostring(reason)))
+    state.squad_blitz_accepted = nil
+    state._blitz_commit_tick   = nil
+  end
   if state.pf then state.pf.status = "idle" end
   -- Auto-derive a caller location if the call site didn't pass a reason,
   -- so the overlay still tells you which line cleared the goal.
@@ -307,6 +320,13 @@ local function clear_attack_goal(state, reason, no_urgent)
   if reason and BRAIN_DEBUG_MODE then
     print(string.format("[clear_attack_goal] %s", reason))
   end
+  -- Same reason in the print2 log (print() above is invisible there; the
+  -- reason used to live only in the recording's panel via _last_attack_clear).
+  if BRAIN_DEBUG_MODE then
+    print2(string.format("ATTACK_CLEARED t=%d %s/%s @(%s,%s) why: %s",
+      state.tick or 0, tostring(kind_was), tostring(sub_was),
+      tostring(mx_was), tostring(my_was), r))
+  end
 end
 M.clear_attack_goal = clear_attack_goal
 
@@ -315,18 +335,69 @@ M.clear_attack_goal = clear_attack_goal
 -- refuel/flee/survival entirely (no armour gate). Dedups by id (re-stamping
 -- the same kill just refreshes the kill_tick). Cleared on capture / in_tank /
 -- TTL expiry by the override, and on tank death by squad.reset_blitz_state.
+--
+-- Count the tanks COMMITTED to blitzing THIS pill right now: self + every active
+-- ally broadcasting attack_pill on the same target that is past negotiation and
+-- not dead.  Mirrors squad.blitz_members' field access + dead test
+-- (squad.lua blitz_members) but WITHOUT the role/commander filter -- a blitz on
+-- one pill can draw tanks from more than one squad, and every body on it counts.
+-- Used by the "blitz only when hit" hold (blitz_commit_hold) and by the kill
+-- claim's blitz size (kill_blitz_size below).
+local function blitz_party_count(state, now, self_pn, target_id)
+  local n = 1                                   -- self
+  if not target_id then return n end
+  local dead = state.tank_dead_at
+  for pn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
+    if pn ~= self_pn then
+      local h = slot.info
+      local is_dead = dead and dead[pn] and dead[pn] > (slot.last_tick or 0)
+      if not is_dead and h.goal == "attack_pill"
+         and tonumber(h.target or "") == target_id and h.sqst ~= "nego" then
+        n = n + 1
+      end
+    end
+  end
+  return n
+end
+
+-- Blitz size for a kill claim on pill `id` (KILL_PICKUP_PAIR_MIN_SQUAD). The
+-- largest party this bot knew for the take: the per-tick running max that
+-- update_attack_substate keeps on the goal (goal._kp_party_max) and a live
+-- count now. 1 when our goal is not a blitz attack_pill on this pill (a solo
+-- take). Read from the GOAL before clear_attack_goal wipes it, so the size
+-- survives the squad breaking up right after the kill. Every committed member
+-- counts the same set of tanks, so claimers normally agree on the size.
+local function kill_blitz_size(state, id, now)
+  local g = state.goal
+  if not (g and g.kind == "attack_pill" and g.target_id == id) then return 1 end
+  local n = g._kp_party_max or 1
+  if g._blitz or g._blitz_committed then
+    local live = blitz_party_count(state, now, state.player_number or -1, id)
+    if live > n then n = live end
+  end
+  return n
+end
+M.kill_blitz_size = kill_blitz_size
+
 local function mark_kill_pickup(state, id, mx, my, now)
   if not C.KILL_PICKUP_ENABLED then return end
   if not id or id < 0 then return end
+  -- Blitz size, only while the pair rule is on (keel: no scan, no field read).
+  local sz = nil
+  if (C.KILL_PICKUP_PAIR_MIN_SQUAD or 0) > 0 then sz = kill_blitz_size(state, id, now) end
   local kp = state.kill_pickup
   if kp and kp.id == id then
     kp.kill_tick = now; kp.mx = mx; kp.my = my
+    -- Re-stamp (e.g. swerve done): keep the LARGEST size seen. By now the
+    -- other members may already be on capture_pill, so a fresh count is low.
+    if sz and sz > (kp.squad_n or 1) then kp.squad_n = sz end
     return
   end
   -- created_tick = first time we claimed THIS pill (absolute commitment cap,
   -- since the grabber refreshes kill_tick while driving in). kill_tick is the
-  -- rolling TTL anchor.
-  state.kill_pickup = { id = id, mx = mx, my = my, kill_tick = now, created_tick = now }
+  -- rolling TTL anchor. squad_n = blitz size at kill time (1 = solo / rule off).
+  state.kill_pickup = { id = id, mx = mx, my = my, kill_tick = now, created_tick = now,
+                        squad_n = sz or 1 }
 end
 M.mark_kill_pickup = mark_kill_pickup
 
@@ -362,13 +433,22 @@ local function handoff_to_capture_pill(state, world, info, pid, now)
     return false
   end
   local self_pn = info.player_number
+  -- Pair pickup (KILL_PICKUP_PAIR_MIN_SQUAD): a big enough blitz keeps TWO
+  -- capturers, so we skip only when `keep` allies are already capturing it.
+  local keep = 1
+  local pair_min = C.KILL_PICKUP_PAIR_MIN_SQUAD or 0
+  if pair_min > 0 and (kp.squad_n or 1) >= pair_min then keep = 2 end
+  local n_on = 0
   for apn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
     if apn ~= self_pn then
       local si = slot.info
       if si and si.goal == "capture_pill" and tonumber(si.target) == pid then
-        print2(string.format("KILL_HANDOFF t=%d pill#%d SKIP — p%d already on capture_pill for it",
-          now, pid, apn))
-        return false
+        n_on = n_on + 1
+        if n_on >= keep then
+          print2(string.format("KILL_HANDOFF t=%d pill#%d SKIP — p%d already on capture_pill for it (%d on it, keep=%d squad=%d)",
+            now, pid, apn, n_on, keep, kp.squad_n or 1))
+          return false
+        end
       end
     end
   end
@@ -389,6 +469,7 @@ local function handoff_to_capture_pill(state, world, info, pid, now)
     now, pid, p.mx, p.my))
   return true
 end
+M.handoff_to_capture_pill = handoff_to_capture_pill   -- exported for tests
 -- Pill-suicider post-kill handoff. A suicider NEVER swerves, in any situation,
 -- so where a normal tank enters the "kill" swerve the tick its pill dies and
 -- runs the capture handoff when that swerve FINISHES, the suicider runs the
@@ -798,6 +879,12 @@ local function standoff_shot_obstacle(goal, pill, world)
           end
         end
       end
+      -- A pill our man (or an ally's) is walking to build here: it will be a
+      -- blocker in a few seconds, so treat it as one now (knob-gated fill,
+      -- see spot_margin.pending_pill_at).
+      if SM.pending_pill_at(world, t.mx, t.my) then
+        return string.format("pending pill at (%d,%d) in shot path", t.mx, t.my)
+      end
       -- Wall count gate.
       local tt = U.ttype(t.mx, t.my)
       if tt == C.T_BUILDING or tt == C.T_HALFBUILD then
@@ -817,7 +904,7 @@ end
 -- target pill tile. Returns (shots_needed, reason_str) where
 -- shots_needed is the extra shots to clear the path (0 = clear path),
 -- or (math.huge, reason) if an impassable obstacle (other pillbox) blocks.
-local function shot_path_obstacle_count(info, goal, world, aim_wx, aim_wy)
+local function shot_path_obstacle_count(info, goal, world, aim_wx, aim_wy, from_wx, from_wy)
   local pmx, pmy = goal.mx, goal.my
   -- Fire the tank's LIVE float gun angle (info.tank_angle, straight from the
   -- engine's MY_TANK->angle) — bit-exact with the shot the engine will actually
@@ -832,9 +919,17 @@ local function shot_path_obstacle_count(info, goal, world, aim_wx, aim_wy)
   -- charge from here, aiming at the pill CENTRE the way steering's charge does,
   -- is anything solid in the way?" while the gun is still settling inside
   -- SQUAD_BLITZ_AIM_TOL. Pass nothing and the behaviour is exactly as before.
+  --
+  -- Optional origin override (from_wx/from_wy, world units, only together with
+  -- an aim override): fire the test shell from a point other than the tank.
+  -- The blitz GO gate passes the soldier's planned standoff here
+  -- (C.BLITZ_GO_GATE_FROM_STANDOFF): the soldier waits at its SETUP point,
+  -- 2.25 tiles behind the standoff, and the charge fires from the standoff.
+  local ox, oy = info.tankx, info.tanky
+  if from_wx and from_wy and aim_wx and aim_wy then ox, oy = from_wx, from_wy end
   local tiles
   if aim_wx and aim_wy then
-    tiles = cpf.simulate_shot(info.tankx, info.tanky, aim_wx, aim_wy,
+    tiles = cpf.simulate_shot(ox, oy, aim_wx, aim_wy,
                               cpf.SHOT_TANK, 0)
   else
     tiles = cpf.simulate_shot_angle(info.tankx, info.tanky,
@@ -842,8 +937,8 @@ local function shot_path_obstacle_count(info, goal, world, aim_wx, aim_wy)
                                     cpf.SHOT_TANK, 0)
   end
   if not tiles then return 0, "no sim" end
-  local origin_mx = bit.rshift(info.tankx, 8)
-  local origin_my = bit.rshift(info.tanky, 8)
+  local origin_mx = bit.rshift(ox, 8)
+  local origin_my = bit.rshift(oy, 8)
   local shots = 0
   local reached_pill = false
   local prev_mx, prev_my = nil, nil
@@ -2319,49 +2414,9 @@ end
 -- Split out of spot_clear_aim (below) as a plain module-level local rather than
 -- a closure so the per-spot scan, which calls this five times per candidate,
 -- allocates nothing extra.
-local function aim_line_trees(ox, oy, omx, omy, pmx, pmy, world, i)
-  local off = shield.AIM_OFFSETS_TILE_FIRE[i]
-  local awx = bit.lshift(pmx, 8) + math.floor(off[1] * 256)
-  local awy = bit.lshift(pmy, 8) + math.floor(off[2] * 256)
-  local tiles = cpf.simulate_shot(ox, oy, awx, awy, cpf.SHOT_TANK, 0)
-  if not tiles then return nil end
-  local pill_at = world and world.pill_at
-  local base_at = world and world.base_at
-  local pills   = world and world.pills
-  local blocked, reached, trees = false, false, 0
-  for ti = 1, #tiles do
-    local t = tiles[ti]
-    if t.mx == pmx and t.my == pmy then reached = true; break end
-    -- Our own tile never obstructs our own shot.
-    if t.mx ~= omx or t.my ~= omy then
-      local tt = U.ttype(t.mx, t.my)
-      if tt == C.T_BUILDING or tt == C.T_HALFBUILD then
-        blocked = true; break
-      elseif tt == C.T_FOREST then
-        trees = trees + 1
-      end
-      local key = t.my * 256 + t.mx
-      local be = base_at and base_at[key]
-      if be and be.base then blocked = true; break end
-      local plist = pill_at and pill_at[key]
-      if plist then
-        for _, e in ipairs(plist) do
-          -- Live-table check (see shot_path_obstacle_count): a pill_at entry
-          -- can point at a stale copy of a pill an ally has since driven
-          -- over, and a phantom hp-15 blocker would throw away good spots.
-          local p = (e.id and pills and pills[e.id]) or e.pill
-          if p and not p.in_tank and (p.health or 0) > 0
-             and (p.mx == nil or (p.mx == t.mx and p.my == t.my)) then
-            blocked = true; break
-          end
-        end
-        if blocked then break end
-      end
-    end
-  end
-  if reached and not blocked then return trees, awx, awy end
-  return nil
-end
+-- (The body now lives in spot_margin.lua, unchanged, so squad.lua's arbiter
+-- can share it. Called with no wallset it behaves exactly as before.)
+local aim_line_trees = SM.aim_line_trees
 
 -- Same test, from an arbitrary ORIGIN in world units (not just a planned
 -- standoff tile). This is the shared "which point on this pill can I hit from
@@ -2509,6 +2564,8 @@ local function reset_to_plan_position(state, goal)
   goal._blitz_prog_bd           = nil
   goal._blitz_prog_tick         = nil
   goal._blitz_wait_since        = nil
+  goal._blitz_wait_entry        = nil
+  goal._blitz_follow_logged     = nil
   state.squad_blitz_in_position = nil
   -- A re-entered charge has to start its own accounting. Left set, the stall
   -- backstop would still be measuring progress against the FIRST charge and
@@ -2543,6 +2600,397 @@ local function blocked_line_replan(state, goal, pmx, pmy, now)
   end
   reset_to_plan_position(state, goal)
   return false, bucket, tries
+end
+
+-- Blitz GO gate origin, world units (C.BLITZ_GO_GATE_FROM_STANDOFF, fix C,
+-- 2026-09-24). A blitz SOLDIER waits at its SETUP point, 2.25 tiles behind its
+-- standoff, but the charge fires from the standoff, so the GO-time shot check
+-- runs from the planned standoff float point. The commander, and KEEL, use the
+-- live tank position.
+local function blitz_go_origin(info, goal)
+  if C.BLITZ_GO_GATE_FROM_STANDOFF and goal._blitz and not goal._blitz_cmdr
+     and goal.standoff_fx and goal.standoff_fy then
+    return math.floor(goal.standoff_fx * 256 + 0.5),
+           math.floor(goal.standoff_fy * 256 + 0.5)
+  end
+  return info.tankx, info.tanky
+end
+
+-- Blitz GO gate: the LOS margin (C.BLITZ_SPOT_LOS_MARGIN, see spot_margin.lua)
+-- on the line from (ox,oy) (world units) to the goal's aim point. When the
+-- current aim fails it, try the other aim points (margin + shell test) and
+-- re-aim onto the first that passes. Returns nil when the GO may stand, or an
+-- obstacle string when no aim point passes both (caller replans).
+local function blitz_go_margin(state, goal, world, ox, oy, pmx, pmy, now)
+  local margin = C.BLITZ_SPOT_LOS_MARGIN or 0
+  if margin <= 0 then return nil end
+  local ctx = SM.new_ctx(world, pmx, pmy)
+  local awx = goal.aim_wx or bit.bor((bit.lshift(pmx, 8)), 128)
+  local awy = goal.aim_wy or bit.bor((bit.lshift(pmy, 8)), 128)
+  local ok, f = SM.line_margin(ctx, ox / 256.0, oy / 256.0, awx / 256.0, awy / 256.0, margin)
+  if ok then return nil end
+  print2(string.format(
+    "BLITZ_GO_MARGIN t=%d pill=(%d,%d) origin=(%.2f,%.2f) aim=(%.2f,%.2f) blocker=(%d,%d) kind=%s off=%.3f d=%.2f L=%.2f margin=%.2f need=%.3f (=%.2f*%.2f/%.2f) -> try other aims",
+    now, pmx, pmy, ox / 256.0, oy / 256.0, awx / 256.0, awy / 256.0,
+    f.bx, f.by, tostring(f.kind), f.off, f.d, f.L, margin, f.need, margin, f.d, f.L))
+  local idx, nwx, nwy, trees = SM.clear_aim_margin(ox, oy, pmx, pmy, world, margin,
+    { ctx = ctx, prefer_idx = goal.aim_idx, site = "go", tick = now })
+  if not idx then
+    return string.format("LOS margin: blocker (%d,%d) off=%.3f need=%.3f", f.bx, f.by, f.off, f.need)
+  end
+  set_goal_aim(goal, pmx, pmy, idx, nwx, nwy)
+  local w = goal._shield_scan and goal._shield_scan.best
+  if w and w.aims and w.aims[idx] then w.best_aim_idx = idx end
+  print2(string.format("BLITZ_GO_MARGIN_REAIM t=%d pill=(%d,%d) to=%s(%d) trees=%d",
+    now, pmx, pmy, shield.AIM_NAMES[idx] or tostring(idx), idx, trees or 0))
+  return nil
+end
+
+-- Known blitz spots a soldier's own plan_position pick must keep clear of
+-- (C.BLITZ_NOSPOT_RENEGOTIATE, 2026-09-25 evening). Recorded case: after a
+-- NO-SPOT, bot2's own scan picked a spot 0.25 tile from its commander's bes
+-- (122.0745,144.3533). Returns a list of {fx, fy, pn} -- the commander's bes
+-- plus the bes of every other soldier of that commander -- or nil when the
+-- knob is off, we lead this take, or the goal is not on the blitz pill.
+function M._blitz_ally_spots(state, goal, self_pn)
+  if not C.BLITZ_NOSPOT_RENEGOTIATE then return nil end
+  if not goal or goal._blitz_cmdr or state.squad_role == "c" then return nil end
+  local cmdr = state.squad_blitz_accepted or state.squad_cmdr or state.squad_negotiate_cmdr
+  if not cmdr or cmdr == self_pn then return nil end
+  local call = state.blitz_calls and state.blitz_calls[cmdr]
+  local pill = state.squad_blitz_target or state.squad_negotiate_pill or (call and call.pill)
+  if pill == nil or pill ~= goal.target_id then return nil end
+  local out = {}
+  local function add(pn, b)
+    if b and b ~= "" then
+      local x, y = tostring(b):match("^(%-?[%d.]+),(%-?[%d.]+)$")
+      x, y = tonumber(x), tonumber(y)
+      if x and y then out[#out + 1] = { x, y, pn } end
+    end
+  end
+  add(cmdr, ally_state.get_key(cmdr, "bes"))
+  local now = state.tick or 0
+  local dead = state.tank_dead_at
+  for pn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
+    if pn ~= self_pn and pn ~= cmdr and slot.info
+       and tonumber(slot.info.cmdr or "") == cmdr
+       and not (dead and dead[pn] and dead[pn] > (slot.last_tick or 0)) then
+      add(pn, slot.info.bes)
+    end
+  end
+  return out
+end
+
+-- First known spot within SQUAD_BLITZ_CLASH_TILES of (fx, fy), as
+-- (pn, dist), or nil. No new number: the same clash distance the
+-- commander's arbiter uses.
+function M._blitz_spot_clash(known, fx, fy)
+  if not (known and fx and fy) then return nil end
+  local clash = C.SQUAD_BLITZ_CLASH_TILES or 1
+  for i = 1, #known do
+    local k = known[i]
+    local dx, dy = fx - k[1], fy - k[2]
+    local dd = math.sqrt(dx * dx + dy * dy)
+    if dd <= clash then return k[3], dd end
+  end
+  return nil
+end
+
+-- plan_position filter: skip every LOS spot that clashes with a known blitz
+-- spot. Returns (skip, n_los, n_skip) or nil when M._blitz_ally_spots is nil
+-- or there is nothing to test.
+function M._blitz_ally_spot_filter(state, goal, spots, self_pn)
+  local known = M._blitz_ally_spots(state, goal, self_pn)
+  if not known or #known == 0 then return nil end
+  local now = state.tick or 0
+  local skip, n_los, n_skip = {}, 0, 0
+  for _, s in ipairs(spots) do
+    if s.has_los and s.cx and s.cy then
+      n_los = n_los + 1
+      local pn, dd = M._blitz_spot_clash(known, s.cx, s.cy)
+      if pn then
+        skip[s] = true
+        n_skip = n_skip + 1
+        print2(string.format("BLITZ_ALLY_SPOT_SKIP t=%d pill=#%s spot=(%.2f,%.2f) near p%s dist=%.2f<=%.2f",
+          now, tostring(goal.target_id), s.cx, s.cy, tostring(pn), dd,
+          C.SQUAD_BLITZ_CLASH_TILES or 1))
+      end
+    end
+  end
+  return skip, n_los, n_skip
+end
+
+-- A committed blitz SOLDIER whose line was blocked goes back to plan_position
+-- (blocked_line_replan) and picks a fresh spot from the same scan as a solo
+-- take would. That pick is still a BLITZ spot, so (2026-09-24):
+--   * C.BLITZ_SPOT_LOS_MARGIN > 0: skip spots that fail the LOS margin, and
+--     remember which aim point passed for the ones that do.
+--   * C.BLITZ_SPOT_EXACT_ORIGIN: skip spots within SQUAD_BLITZ_CLASH_TILES of
+--     the commander's broadcast standoff (bes). 20260924_224514 bot0: the
+--     replan landed on the commander's own standoff (118,142).
+-- Returns skip (spot -> true), aims (spot -> {idx, awx, awy}) -- or nil when
+-- the filter is off, this is not a committed soldier, or it would leave no
+-- spot at all (then plan_position picks exactly as before, and says so).
+local function blitz_soldier_replan_filter(state, goal, world, spots, pmx, pmy)
+  if not (goal._blitz and goal._blitz_started and not goal._blitz_cmdr
+          and state.squad_cmdr) then return nil end
+  local margin = C.BLITZ_SPOT_LOS_MARGIN or 0
+  local exact  = C.BLITZ_SPOT_EXACT_ORIGIN
+  if margin <= 0 and not exact then return nil end
+  local now = state.tick or 0
+  local cfx, cfy
+  if exact then
+    local b = ally_state.get_key(state.squad_cmdr, "bes")
+    if b and b ~= "" then
+      local x, y = b:match("^(%-?[%d.]+),(%-?[%d.]+)$")
+      cfx, cfy = tonumber(x), tonumber(y)
+    end
+  end
+  local clash = C.SQUAD_BLITZ_CLASH_TILES or 1
+  local ctx = (margin > 0) and SM.new_ctx(world, pmx, pmy) or nil
+  local skip, aims = {}, {}
+  local n_los, n_skip, n_clash, n_margin = 0, 0, 0, 0
+  for _, s in ipairs(spots) do
+    if s.has_los and s.cx and s.cy then
+      n_los = n_los + 1
+      local bad = false
+      if cfx and cfy then
+        local dx, dy = s.cx - cfx, s.cy - cfy
+        local dd = math.sqrt(dx * dx + dy * dy)
+        if dd <= clash then
+          bad = true
+          n_clash = n_clash + 1
+          print2(string.format("BLITZ_REPLAN_SKIP t=%d spot=(%.2f,%.2f) reason=cmdr_clash cmdr=p%s bes=(%.2f,%.2f) dist=%.2f<=%.2f",
+            now, s.cx, s.cy, tostring(state.squad_cmdr), cfx, cfy, dd, clash))
+        end
+      end
+      if not bad and margin > 0 then
+        -- The scan shell-tested s.aim_idx from exactly (s.cx,s.cy): trust it.
+        local idx, awx, awy = SM.clear_aim_margin(
+          math.floor(s.cx * 256 + 0.5), math.floor(s.cy * 256 + 0.5),
+          pmx, pmy, world, margin,
+          { ctx = ctx, prefer_idx = s.aim_idx, trusted_idx = s.aim_idx,
+            trusted_trees = s.aim_trees, site = "replan", tick = now })
+        if idx then aims[s] = { idx, awx, awy }
+        else bad = true; n_margin = n_margin + 1 end
+      end
+      if bad then skip[s] = true; n_skip = n_skip + 1 end
+    end
+  end
+  print2(string.format("BLITZ_REPLAN_FILTER t=%d pill=(%d,%d) los=%d skipped=%d (cmdr_clash=%d margin=%d) margin=%.2f%s",
+    now, pmx, pmy, n_los, n_skip, n_clash, n_margin, margin,
+    (n_los > 0 and n_skip >= n_los) and " -> ALL skipped, pick unfiltered" or ""))
+  if n_los == 0 or n_skip >= n_los then return nil end
+  return skip, aims
+end
+
+-- Fix A, after a blocked replan (C.BLITZ_SPOT_EXACT_ORIGIN): a committed soldier
+-- that re-planned has a NEW standoff, but kept broadcasting the OLD engage spot
+-- (bes), so the commander's clash check could not see it land on the
+-- commander's own standoff. Once plan_position has picked, copy the new
+-- standoff into the engage spot the bes broadcast and the arbiter read.
+--
+-- goal._blitz_brj_resync (set by the committed-soldier brj replan, 2026-09-25)
+-- forces the same copy with EXACT off too: the commander must see the NEW spot,
+-- or it keeps rejecting the old one. The float falls back to the tile centre
+-- when the pick stored none.
+local function blitz_sync_engage(state, goal, now)
+  local resync = goal._blitz_brj_resync
+  if not (C.BLITZ_SPOT_EXACT_ORIGIN or resync) then return end
+  local sfx = goal.standoff_fx or (resync and goal.standoff_mx and goal.standoff_mx + 0.5)
+  local sfy = goal.standoff_fy or (resync and goal.standoff_my and goal.standoff_my + 0.5)
+  if not (goal._blitz_started and state.squad_blitz_engage_mx
+          and goal.standoff_mx and goal.standoff_my
+          and sfx and sfy) then return end
+  if goal.substate == "plan_position" then return end   -- still picking
+  goal._blitz_brj_resync = nil
+  local efx = state.squad_blitz_engage_fx or (state.squad_blitz_engage_mx + 0.5)
+  local efy = state.squad_blitz_engage_fy or (state.squad_blitz_engage_my + 0.5)
+  if math.abs(efx - sfx) < 0.01 and math.abs(efy - sfy) < 0.01 then return end
+  print2(string.format("BLITZ_ENGAGE_SYNC t=%d pill=#%s old=(%.2f,%.2f) new=(%.2f,%.2f) deg=%s sub=%s%s",
+    now, tostring(goal.target_id), efx, efy, sfx, sfy,
+    tostring(goal._chosen_deg), tostring(goal.substate), resync and " (brj)" or ""))
+  state.squad_blitz_engage_mx, state.squad_blitz_engage_my = goal.standoff_mx, goal.standoff_my
+  state.squad_blitz_engage_fx, state.squad_blitz_engage_fy = sfx, sfy
+  state.squad_blitz_engage_deg = goal._chosen_deg
+  -- 2026-09-26: the reject flag was read against the OLD spot. While we sat
+  -- in plan_position this function returned early, so squad.update's
+  -- read_cmdr_brj kept matching the commander's brj (still naming the old
+  -- spot) against the old engage fields and set the flag again. Left set,
+  -- M.blitz_brj_replan below saw it with the NEW spot's key and replanned a
+  -- second time for one reject: a good angle banned and one of the
+  -- SANITY_PILL_REPLANS_MAX tries used. A reject of the new spot sets it
+  -- again at the next read.
+  state._blitz_call_rejected = nil
+end
+
+-- brj for a COMMITTED soldier (bug, 20260925_105315 bot1 t=3032+): the
+-- commander rejected the spot we already committed to (shot_blocked: a pill
+-- appeared on our line), but only a NEGOTIATING soldier ever acted on brj, so
+-- we drove to the rejected spot forever. Drop the spot: ban its angle and
+-- replan (the blocked-line path, same try count and abandon), and re-broadcast
+-- the new spot once picked (goal._blitz_brj_resync -> blitz_sync_engage). Once
+-- per rejected spot: brj for the old spot keeps arriving until the new bes
+-- lands. Returns "none" (nothing to do), "replan" or "abandon" (goal cleared).
+function M.blitz_brj_replan(state, goal, pmx, pmy, now)
+  if not (state._blitz_call_rejected and state.squad_blitz_accepted
+          and goal._blitz_started and not goal._blitz_committed
+          and (goal.substate == "approach" or goal.substate == "blitz_wait")) then
+    return "none"
+  end
+  local rfx = state.squad_blitz_engage_fx
+              or (state.squad_blitz_engage_mx and state.squad_blitz_engage_mx + 0.5)
+  local rfy = state.squad_blitz_engage_fy
+              or (state.squad_blitz_engage_my and state.squad_blitz_engage_my + 0.5)
+  local rkey = rfx and string.format("%.4f,%.4f", rfx, rfy) or "-"
+  if rkey == goal._blitz_brj_spot then return "none" end
+  goal._blitz_brj_spot = rkey
+  local sub = goal.substate
+  local abandon, bucket, tries = blocked_line_replan(state, goal, pmx, pmy, now)
+  print2(string.format("BLITZ_BRJ_REPLAN t=%d pill=#%s C%s rejected our committed spot (%s) sub=%s -> %s (ban=%s try %d/%d)",
+    now, tostring(goal.target_id), tostring(state.squad_blitz_accepted), rkey,
+    tostring(sub), abandon and "abandon" or "replan",
+    tostring(bucket), tries or 0, C.SANITY_PILL_REPLANS_MAX or 3))
+  if abandon then
+    clear_attack_goal(state, string.format("blitz: commander rejected committed spot %d times", tries or 0))
+    return "abandon"
+  end
+  goal._blitz_brj_resync = true
+  return "replan"
+end
+M._blitz_sync_engage = blitz_sync_engage   -- unit tests
+
+-- Soldier blitz_wait backstop follow (C.BLITZ_SOLDIER_WAIT_FOLLOW_CMDR,
+-- 2026-09-25 evening). True when the soldier should restart its
+-- SQUAD_BLITZ_WAIT_TIMEOUT count from the commander's last message
+-- (cslot.last_tick): blitz-only with BLITZ_ONLY_EXTEND_WAIT (the only case a
+-- commander extends its wait, at most BLITZ_ONLY_EXTEND_MAX times), the
+-- commander's call is open on our pill,
+-- its bac names us, and it has sent something since the count last started.
+-- Logs BLITZ_WAIT_FOLLOW once per goal.
+function M.blitz_soldier_wait_follow(state, goal, cslot, cmdr, self_pn, now)
+  if not (C.BLITZ_SOLDIER_WAIT_FOLLOW_CMDR and C.BLITZ_ONLY_EXTEND_WAIT
+          and squad.blitz_only(state)) then return false end
+  if not (cslot and cslot.info and goal and goal._blitz_wait_since) then return false end
+  local call = state.blitz_calls and state.blitz_calls[cmdr]
+  if not (call and call.pill == goal.target_id) then return false end
+  local named = false
+  local bac = cslot.info.bac
+  if bac then
+    for s in string.gmatch(tostring(bac), "%d+") do
+      if tonumber(s) == self_pn then named = true; break end
+    end
+  end
+  if not named then return false end
+  local last = cslot.last_tick or 0
+  if last <= goal._blitz_wait_since then return false end
+  -- Log once, on the first tick the follow keeps us past the old backstop.
+  local entry = goal._blitz_wait_entry or goal._blitz_wait_since
+  if not goal._blitz_follow_logged
+     and (now - entry) > (C.SQUAD_BLITZ_WAIT_TIMEOUT or 1500) then
+    goal._blitz_follow_logged = true
+    print2(string.format("BLITZ_WAIT_FOLLOW t=%d C%s pill=#%s waited %dt > %d -- commander still calls and accepts us, backstop counts from its last message t=%d",
+      now, tostring(cmdr), tostring(goal.target_id), now - entry,
+      C.SQUAD_BLITZ_WAIT_TIMEOUT or 1500, last))
+  end
+  return true
+end
+
+-- HUMAN ORDER BLITZ CAP (C.HUMAN_ATTACK_BLITZ_WAIT_MAX_S, 2026-09-28).
+-- True when this attack_pill goal is a person's held order (state._order is an
+-- attack_pill order on the same pill) and the cap has run out.  The clock
+-- starts on the first tick this is asked for that order -- the first tick the
+-- bot runs the attack goal for it -- and is kept on state, keyed by the
+-- order's oid and take tick, so a replan that rebuilds the goal table does not
+-- restart it, and a new order on the same pill does.  0 / nil = no cap, and a
+-- goal the bot picked for itself always answers false.
+-- update_attack_substate stores the answer in goal._hcap_over every tick; the
+-- blitz waits read that field.
+function M.human_blitz_cap_over(goal, state, now)
+  local cap_s = C.HUMAN_ATTACK_BLITZ_WAIT_MAX_S
+  if not (C.BOT_COMMANDS_ENABLED and cap_s and cap_s > 0) then return false end
+  local o = state._order
+  if not (o and o.kind == "attack_pill" and goal and goal.target_id
+          and o.tid == goal.target_id) then
+    return false
+  end
+  local hc = state._hcap
+  if not hc or hc.oid ~= o.oid or hc.since ~= o.since then
+    hc = { oid = o.oid, since = o.since, t0 = now, logged = false }
+    state._hcap = hc
+  end
+  -- 50 ticks per second.
+  if (now - hc.t0) < cap_s * 50 then return false end
+  if not hc.logged then
+    hc.logged = true
+    print2(string.format("HUMAN_BLITZ_CAP t=%d oid=%s pill=#%s sub=%s waited=%d cap=%ds -- person's order: no more blitz waiting",
+      now, tostring(o.oid), tostring(goal.target_id), tostring(goal.substate),
+      now - hc.t0, cap_s))
+  end
+  return true
+end
+
+-- HUMAN ORDER GATHER CAP (C.HUMAN_ATTACK_GATHER_MAX_S, 2026-09-29).
+-- Same order test as human_blitz_cap_over, own clock: it starts on the first
+-- tick this is asked for that order, which is the first gather_trees tick
+-- (only the gather_trees handler asks).  Kept on state, keyed by oid + take
+-- tick, so a replan does not restart it.  True = end gathering now through
+-- the PPT_GATHER_TIMEOUT exit.  0 / nil = no cap; a goal the bot picked for
+-- itself always answers false.
+function M.human_gather_cap_over(goal, state, now)
+  local cap_s = C.HUMAN_ATTACK_GATHER_MAX_S
+  if not (C.BOT_COMMANDS_ENABLED and cap_s and cap_s > 0) then return false end
+  local o = state._order
+  if not (o and o.kind == "attack_pill" and goal and goal.target_id
+          and o.tid == goal.target_id) then
+    return false
+  end
+  local hc = state._hgcap
+  if not hc or hc.oid ~= o.oid or hc.since ~= o.since then
+    hc = { oid = o.oid, since = o.since, t0 = now, logged = false }
+    state._hgcap = hc
+  end
+  -- 50 ticks per second.
+  if (now - hc.t0) < cap_s * 50 then return false end
+  if not hc.logged then
+    hc.logged = true
+    print2(string.format("HUMAN_GATHER_CAP t=%d oid=%s pill=#%s gathered=%d cap=%ds -- person's order: stop gathering trees",
+      now, tostring(o.oid), tostring(goal.target_id), now - hc.t0, cap_s))
+  end
+  return true
+end
+
+-- Commander GO verdict in blitz_wait, as a pure function (unit tests).
+--   bo_hold    squad.blitz_only(state) and C.BLITZ_ONLY_EXTEND_WAIT
+--   timed_out  READY_TIMEOUT (+ extensions) elapsed
+--   ready/total  soldiers ready / committed; party = 1 + total
+--   set_inwait   PARKED set: commander + soldiers in a ready substate
+--   ext_n        extensions already added on this goal (nil = 0)
+--   ext_max      cap on ext_n (nil = C.BLITZ_ONLY_EXTEND_MAX)
+-- Returns "extend" (blitz-only, timed out, parked < min, ext_n < ext_max: add
+-- a timeout), "abandon" (timed out and party < min; or blitz-only, timed out,
+-- parked < min with the extensions used up), "go", or "wait".
+-- bo_hold false = exactly the old rules.
+-- 2026-09-26: the extensions are capped. With no cap a commander that nobody
+-- joined extended forever, its soldiers followed it (BLITZ_SOLDIER_WAIT_FOLLOW
+-- _CMDR) and BLITZ_NO_BUILD_ACTIVE kept pill building off the whole time. Once
+-- the cap is reached, a blitz-only commander still short of parked tanks gives
+-- the take up: blitz-only never charges short.
+function M.blitz_cmdr_go_verdict(bo_hold, timed_out, ready, total, party, set_inwait, bmin, ext_n, ext_max)
+  local early_go = set_inwait >= bmin
+  if bo_hold and timed_out and not early_go then
+    ext_max = ext_max or C.BLITZ_ONLY_EXTEND_MAX or 3
+    if (ext_n or 0) < ext_max then return "extend" end
+    return "abandon"
+  end
+  if timed_out and party < bmin then return "abandon" end
+  local go_now
+  if bo_hold then
+    go_now = early_go                  -- parked set >= MIN, nothing else
+  else
+    go_now = (ready >= total and party >= bmin) or timed_out or early_go
+  end
+  return go_now and "go" or "wait"
 end
 
 -- ── C / Lua parity self-check ────────────────────────────────────────────
@@ -3533,9 +3981,21 @@ local function blitz_commit_negotiated(goal, state, world, info, pmx, pmy)
   -- two neutral pills). Bail instead so the caller runs a normal plan_position
   -- take, which scans for a real, screened spot.
   if not smx then return false end
-  print2(string.format("BLITZ_COMMIT_STANDOFF t=%d pill=#%s spot=(%s,%s) src=engage pill_xy=(%d,%d)",
-    state.tick or 0, tostring(goal.target_id), tostring(smx), tostring(smy), pmx, pmy))
+  print2(string.format("BLITZ_COMMIT_STANDOFF t=%d pill=#%s spot=(%s,%s) float=(%s,%s) deg=%s exact=%s src=engage pill_xy=(%d,%d)",
+    state.tick or 0, tostring(goal.target_id), tostring(smx), tostring(smy),
+    tostring(state.squad_blitz_engage_fx), tostring(state.squad_blitz_engage_fy),
+    tostring(state.squad_blitz_engage_deg), tostring(C.BLITZ_SPOT_EXACT_ORIGIN), pmx, pmy))
   local cx, cy = smx + 0.5, smy + 0.5
+  -- C.BLITZ_SPOT_EXACT_ORIGIN (fix A, 2026-09-24): commit the scan's validated
+  -- FLOAT point (the point the shell test and the margin ran from), not the tile
+  -- centre, and its angle, so ban_current_pill_angle can ban it after a blocked
+  -- replan. KEEL committed the tile centre and left _chosen_deg nil.
+  local efx, efy = state.squad_blitz_engage_fx, state.squad_blitz_engage_fy
+  if C.BLITZ_SPOT_EXACT_ORIGIN and efx and efy
+     and math.floor(efx) == smx and math.floor(efy) == smy then
+    cx, cy = efx, efy
+    goal._chosen_deg = state.squad_blitz_engage_deg
+  end
   goal.standoff_fx, goal.standoff_fy = cx, cy
   goal.standoff_mx, goal.standoff_my = smx, smy
   -- Aim at the wall-clear point chosen during negotiation (center or a corner that
@@ -3613,6 +4073,7 @@ local function blitz_clear_aim(sfx, sfy, pmx, pmy, wallset, world)
         if tt == C.T_BUILDING or tt == C.T_HALFBUILD then blocked = true; break end
         local be = world and world.base_at and world.base_at[t.my * 256 + t.mx]
         if be and be.base then blocked = true; break end
+        if SM.pending_pill_at(world, t.mx, t.my) then blocked = true; break end
         local plist = world and world.pill_at and world.pill_at[t.my * 256 + t.mx]
         if plist then for _, e in ipairs(plist) do local pp = e.id and world.pills[e.id]; if pp and not pp.in_tank and (pp.health or 0) > 0 and pp.mx == t.mx and pp.my == t.my then blocked = true; break end end end
         if blocked then break end
@@ -3628,27 +4089,66 @@ end
 -- "never fire through a friendly wall" rule. Returns the chosen spot AND its aim
 -- point (afx,afy float, nil when no walls → take aims center as before). Returns
 -- nil when no eligible spot exists (caller bails rather than picking a blocked line).
+--
+-- Two knobs (2026-09-24):
+--   C.BLITZ_SPOT_EXACT_ORIGIN -- each spot is tested from the scan's FLOAT point
+--     (s.cx,s.cy), the point the scan's shell test ran from, and the pick
+--     returns that point and its angle so the commit / bes / arbiter / GO gate
+--     all use it. false (KEEL) = tile centre, as before.
+--   C.BLITZ_SPOT_LOS_MARGIN > 0 -- a spot is eligible only if one of its five aim
+--     points passes the shell test AND the tapering line margin
+--     (spot_margin.lua). The margin runs first (pure maths); a shell simulation
+--     is paid only for an aim that passed it, and not at all for the scan's own
+--     aim when we test from the scan's own point. 0 (KEEL) = no margin.
+-- Returns smx, smy, afx, afy, sfx, sfy, deg -- or nil, reason. reason "margin"
+-- means spots existed but the margin rejected them all (the caller must not
+-- fall back to pick_standoff, which knows nothing about the margin).
 local function blitz_pick_from_scan(spots, state, tmx, tmy, wallset, pmx, pmy, world)
   if not spots then return nil end
   local rej = state._blitz_reject
   local need_clear = wallset and next(wallset) ~= nil
+  local margin = C.BLITZ_SPOT_LOS_MARGIN or 0
+  local exact  = C.BLITZ_SPOT_EXACT_ORIGIN
+  local mctx   = (margin > 0) and SM.new_ctx(world, pmx, pmy) or nil
+  local n_mrej = 0
   -- Eligible spots (LOS, not rejected, and — when walling — a wall-clear aim).
   local elig = {}
   for _, s in ipairs(spots) do
     if s.has_los and s.mx and not (rej and rej[U.mkey(s.mx, s.my)]) then
+      local sfx, sfy = s.mx + 0.5, s.my + 0.5
+      if exact and s.cx and s.cy then sfx, sfy = s.cx, s.cy end
       local afx, afy
-      if need_clear then
-        afx, afy = blitz_clear_aim(s.mx + 0.5, s.my + 0.5, pmx, pmy, wallset, world)
+      local ok = true
+      if margin > 0 then
+        -- The scan shell-tested s.aim_idx from (s.cx,s.cy) with no shield walls:
+        -- trust it only when we test from that same point without walls.
+        local trusted = (exact and s.cx and not need_clear) and s.aim_idx or nil
+        local idx, awx, awy = SM.clear_aim_margin(
+          math.floor(sfx * 256 + 0.5), math.floor(sfy * 256 + 0.5),
+          pmx, pmy, world, margin,
+          { ctx = mctx, prefer_idx = s.aim_idx, trusted_idx = trusted,
+            trusted_trees = s.aim_trees, wallset = need_clear and wallset or nil,
+            site = "pick", tick = state.tick })
+        if idx then afx, afy = awx / 256.0, awy / 256.0
+        else ok = false; n_mrej = n_mrej + 1 end
+      elseif need_clear then
+        afx, afy = blitz_clear_aim(sfx, sfy, pmx, pmy, wallset, world)
+        ok = afx ~= nil
       elseif s.aim_wx and s.aim_wy then
         -- No commander walls to dodge, so take the aim the spot scan already
         -- proved is shootable from here instead of defaulting to the centre.
         afx, afy = s.aim_wx / 256.0, s.aim_wy / 256.0
       end
-      if (not need_clear) or afx then elig[#elig + 1] = { s = s, afx = afx, afy = afy } end
+      if ok then elig[#elig + 1] = { s = s, afx = afx, afy = afy, sfx = sfx, sfy = sfy } end
     end
   end
   if #elig == 0 then
     if BRAIN_DEBUG_MODE and need_clear then print2(string.format("BLITZ_PICK_SCAN t=%d NO wall-clear spot among %d (cmdr shield walls active) -> bail", state.tick or 0, #spots)) end
+    if n_mrej > 0 then
+      print2(string.format("BLITZ_PICK_SCAN t=%d NO spot passes the LOS margin (%.2f): %d rejected of %d -> bail",
+        state.tick or 0, margin, n_mrej, #spots))
+      return nil, "margin"
+    end
     return nil
   end
   -- Pass 1: best (lowest) score among eligible. Pass 2: closest within the band.
@@ -3667,19 +4167,24 @@ local function blitz_pick_from_scan(spots, state, tmx, tmy, wallset, pmx, pmy, w
   end
   if not chosen then return nil end
   if BRAIN_DEBUG_MODE then
-    print2(string.format("BLITZ_PICK_SCAN best_s=%.0f band=[%.0f,%.0f) elig=%d need_clear=%s -> chose=(%d,%d) aim=(%s,%s)",
-      best_s, lo, hi, #elig, tostring(need_clear), chosen.s.mx, chosen.s.my,
+    print2(string.format("BLITZ_PICK_SCAN best_s=%.0f band=[%.0f,%.0f) elig=%d need_clear=%s margin=%.2f margin_rej=%d exact=%s -> chose=(%d,%d) float=(%.2f,%.2f) deg=%s aim=(%s,%s)",
+      best_s, lo, hi, #elig, tostring(need_clear), margin, n_mrej, tostring(exact),
+      chosen.s.mx, chosen.s.my, chosen.sfx, chosen.sfy, tostring(chosen.s.deg),
       chosen.afx and string.format("%.2f", chosen.afx) or "ctr",
       chosen.afy and string.format("%.2f", chosen.afy) or "ctr"))
   end
-  return chosen.s.mx, chosen.s.my, chosen.afx, chosen.afy
+  return chosen.s.mx, chosen.s.my, chosen.afx, chosen.afy, chosen.sfx, chosen.sfy, chosen.s.deg
 end
+
+M._blitz_pick_from_scan = blitz_pick_from_scan   -- unit tests
 
 function M.blitz_negotiate(state, world, info, now)
   local cmdr = state.squad_negotiate_cmdr
   if not cmdr or state.squad_blitz_accepted then
     if not state.squad_blitz_accepted then
       state.squad_blitz_engage_mx, state.squad_blitz_engage_my = nil, nil
+      state.squad_blitz_engage_fx, state.squad_blitz_engage_fy = nil, nil
+      state.squad_blitz_engage_deg = nil
       state.squad_blitz_aim_fx, state.squad_blitz_aim_fy = nil, nil
       state.squad_blitz_bd = nil
       state._blitz_reject = nil
@@ -3755,10 +4260,11 @@ function M.blitz_negotiate(state, world, info, now)
     for s in string.gmatch(bwl, "%d+") do wallset[tonumber(s)] = true end
   end
   local walls_active = wallset and next(wallset) ~= nil
-  local smx, smy, aim_fx, aim_fy
+  local smx, smy, aim_fx, aim_fy, spot_fx, spot_fy, spot_deg, nospot_why
   local scan_ready = cached and cached.spots
   if scan_ready then
-    smx, smy, aim_fx, aim_fy = blitz_pick_from_scan(cached.spots, state, tmx, tmy, wallset, pill.mx, pill.my, world)
+    smx, smy, aim_fx, aim_fy, spot_fx, spot_fy, spot_deg = blitz_pick_from_scan(cached.spots, state, tmx, tmy, wallset, pill.mx, pill.my, world)
+    if not smx then nospot_why = smy end   -- "margin" when the LOS margin rejected every spot
     if BRAIN_DEBUG_MODE then
       state._blitz_negotiate_scan = { spots = cached.spots, mx = pill.mx, my = pill.my,
                                       pill = pid, cmdr = cmdr,
@@ -3769,14 +4275,19 @@ function M.blitz_negotiate(state, world, info, now)
   -- shield walls to dodge. If the commander IS walling and a READY scan found no
   -- wall-clear spot, do NOT fall back (pick_standoff ignores the walls) — bail via
   -- the no-spot path so we never commit a spot whose only shot crosses a friendly wall.
-  if not smx and not (scan_ready and walls_active) then
+  -- Same for the LOS margin (C.BLITZ_SPOT_LOS_MARGIN): pick_standoff knows
+  -- nothing about it, so a ready scan whose spots all failed the margin bails.
+  if not smx and not (scan_ready and (walls_active or nospot_why == "margin")) then
     smx, smy = M.pick_standoff(world, info, pill, state)
+    spot_fx, spot_fy, spot_deg = nil, nil, nil   -- tile centre, no scan angle
   end
   if not smx then
     -- No appropriate standoff spot for this blitz pill: reject it for ~30s so the
     -- join discount / join-scan stop re-picking it, drop the negotiation, and
     -- stamp a comm-line "no-spot" decline so the (often one-tick) reject shows.
     state.squad_blitz_engage_mx = nil
+    state.squad_blitz_engage_fx, state.squad_blitz_engage_fy = nil, nil
+    state.squad_blitz_engage_deg = nil
     state._blitz_pill_reject = state._blitz_pill_reject or {}
     state._blitz_pill_reject[pid] = now + (C.SQUAD_BLITZ_NOSPOT_REJECT_TICKS or 1500)
     state._blitz_comm_reject = { tick = now, cmdr = cmdr, reason = "nospot" }
@@ -3787,6 +4298,16 @@ function M.blitz_negotiate(state, world, info, now)
     return
   end
   state.squad_blitz_engage_mx, state.squad_blitz_engage_my = smx, smy
+  -- Fix A (C.BLITZ_SPOT_EXACT_ORIGIN): keep the scan's validated float point and
+  -- angle. bes, the arbiter, the commit and the GO gate read them. nil (KEEL, or
+  -- a pick_standoff fallback) = the tile centre as before.
+  if C.BLITZ_SPOT_EXACT_ORIGIN then
+    state.squad_blitz_engage_fx, state.squad_blitz_engage_fy = spot_fx, spot_fy
+    state.squad_blitz_engage_deg = spot_deg
+  else
+    state.squad_blitz_engage_fx, state.squad_blitz_engage_fy = nil, nil
+    state.squad_blitz_engage_deg = nil
+  end
   state.squad_blitz_aim_fx, state.squad_blitz_aim_fy = aim_fx, aim_fy   -- wall-clear aim (nil = aim pill center)
   state._blitz_offer_pill = pid   -- mark the offer as made for this pill (hold it)
   state._blitz_offer_bwl = bwl or ""   -- commander's wall set we validated against (busts hold on change)
@@ -3852,27 +4373,7 @@ local function blitz_contested_check(goal, state, world, info, now)
 end
 
 -- ── "Blitz only when hit" (BLITZ_SWERVE_ONLY_WHEN_HIT) ────────────────────
--- Count the tanks COMMITTED to blitzing THIS pill right now: self + every active
--- ally broadcasting attack_pill on the same target that is past negotiation and
--- not dead.  Mirrors squad.blitz_members' field access + dead test
--- (squad.lua:137-146) but WITHOUT the role/commander filter -- a blitz on one
--- pill can draw tanks from more than one squad, and every body on it counts.
-local function blitz_party_count(state, now, self_pn, target_id)
-  local n = 1                                   -- self
-  if not target_id then return n end
-  local dead = state.tank_dead_at
-  for pn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
-    if pn ~= self_pn then
-      local h = slot.info
-      local is_dead = dead and dead[pn] and dead[pn] > (slot.last_tick or 0)
-      if not is_dead and h.goal == "attack_pill"
-         and tonumber(h.target or "") == target_id and h.sqst ~= "nego" then
-        n = n + 1
-      end
-    end
-  end
-  return n
-end
+-- (blitz_party_count is defined near mark_kill_pickup, which also uses it.)
 -- True when a committed blitzer should HOLD its proactive swerves: the mode is
 -- on, >= MIN blitzers are on this pill, we are still UNDAMAGED (armour has not
 -- dropped below the value we committed with -- ANY hit ends the hold), and we
@@ -3992,6 +4493,45 @@ function M.update_attack_substate(goal, state, world, info)
   local pmx, pmy = goal.mx, goal.my
 
   if not goal.substate then goal.substate = "plan_position" end
+  -- Person's attack order: has the blitz-wait cap run out? (M.human_blitz_cap_over)
+  goal._hcap_over = M.human_blitz_cap_over(goal, state, now or 0)
+
+  -- Kill-claim blitz size (KILL_PICKUP_PAIR_MIN_SQUAD): keep the largest party
+  -- seen on this take, so mark_kill_pickup still has it if members drop off
+  -- the take (or their broadcasts go stale) right before the pill dies.
+  if (C.KILL_PICKUP_PAIR_MIN_SQUAD or 0) > 0 and (goal._blitz or goal._blitz_committed) then
+    local n
+    if goal._blitz_party_tick == now and goal._blitz_party then
+      n = goal._blitz_party
+    else
+      n = blitz_party_count(state, now, info.player_number or -1, goal.target_id)
+    end
+    if n > (goal._kp_party_max or 1) then goal._kp_party_max = n end
+  end
+
+  -- PING SUICIDE RUN (orders.lua). The goal rides kill_hardline, the straight
+  -- rush: path to a tile beside the pill with the pill's own danger taken off
+  -- the costs, fire whenever aligned. None of the blitz, LGM-near or
+  -- plan_position hold code below runs. The run ends only on pill death
+  -- (here) or tank death (orders.on_death). When no tile beside the pill is
+  -- reachable, kill_hardline sets _hardline_abort; wipe the bad-tile memory
+  -- every PING_SUICIDE_RETRY_TICKS and try again instead of giving up.
+  if goal._ping_suicide then
+    goal.substate = "kill_hardline"
+    local pill = world.pills[goal.target_id]
+    if not pill or (pill.health or 0) <= 0 or pill.in_tank
+       or pill.owner == "friendly" then
+      clear_attack_goal(state, "suicide run: pill dead")
+      return
+    end
+    if goal._hardline_abort
+       and now - (goal._suicide_wipe or -1e9) >= (C.PING_SUICIDE_RETRY_TICKS or 50) then
+      goal._suicide_wipe = now
+      goal._hardline_bad, goal._hardline_abort = nil, nil
+      goal._hardline_mx, goal._hardline_my = nil, nil
+    end
+    return
+  end
 
   -- CONTESTED TAKE, re-checked. The GO-time check only sees the enemies that
   -- were near the pill at GO; a defender that rolls up mid-charge should flip
@@ -4048,6 +4588,8 @@ function M.update_attack_substate(goal, state, world, info)
      and not goal._blitz_cmdr
      and (_cmdr_gone or _retargeted) then
     state.squad_blitz_engage_mx, state.squad_blitz_engage_my = nil, nil
+    state.squad_blitz_engage_fx, state.squad_blitz_engage_fy = nil, nil
+    state.squad_blitz_engage_deg = nil
     state.squad_blitz_in_position = nil
     clear_attack_goal(state, "blitz ended: commander gone / squad retargeted")
     return
@@ -4121,16 +4663,52 @@ function M.update_attack_substate(goal, state, world, info)
           -- No negotiated/derivable spot yet — retry the commit next tick.
           goal._blitz_started = nil
           print2(string.format("BLITZ_COMMIT t=%d NO-SPOT (retry) pill=#%s", now, tostring(goal.target_id)))
+          -- C.BLITZ_NOSPOT_RENEGOTIATE: committed with no engage spot. Drop
+          -- the accept so squad.update negotiates a fresh, arbiter-checked
+          -- spot; the blitz-ended check then clears this goal next tick.
+          if C.BLITZ_NOSPOT_RENEGOTIATE and state.squad_blitz_accepted then
+            print2(string.format("BLITZ_ACCEPT_DROP t=%d C%s -- committed with no engage spot, renegotiate",
+              now, tostring(state.squad_blitz_accepted)))
+            state.squad_blitz_accepted = nil
+            state._blitz_commit_tick   = nil
+          end
         else
           print2(string.format("BLITZ_COMMIT t=%d pill=#%s standoff=(%d,%d) approach/SETUP=(%.1f,%.1f) sub->approach",
                 now, tostring(goal.target_id), goal.standoff_mx or -1, goal.standoff_my or -1,
                 goal.approach_fx or -1, goal.approach_fy or -1))
         end
       end
+      blitz_sync_engage(state, goal, now)
+      -- brj for a COMMITTED soldier: drop the rejected spot and replan
+      -- (M.blitz_brj_replan). Anything but "none" ends this tick's update.
+      if M.blitz_brj_replan(state, goal, pmx, pmy, now) ~= "none" then return end
     elseif goal.substate == "plan_position" and not goal._blitz_started then
       -- COMMANDER: plan its own take at plan_position (standoff + wall-shield).
       goal._blitz_started = true
       print2(string.format("BLITZ_COMMIT t=%d pill=#%s commander -> plans own take (plan_position)", now, tostring(goal.target_id)))
+    end
+  end
+
+  -- BLITZ-ONLY GATE ("blitzonly" flag / C.BLITZ_ONLY_PILL_ATTACKS, see
+  -- squad.blitz_only). A take may sit in the pre-GO substates (the ones a
+  -- blitz call stays open in: plan_position / approach / gather_trees /
+  -- detree / build_walls / blitz_wait) as long as it likes -- that is where a
+  -- commander calls, recruits and gathers. It may go past them (aim, charge,
+  -- in_range_*, shoot_pill, engage, swerve, kill_hardline, ...) ONLY as a
+  -- committed blitz: goal._blitz, goal._blitz_committed (commit_fire latched it
+  -- on a real GO -- quorum met, or the soldier heard GO) and not the solo
+  -- fall-back _blitz_solo. Anything else is a solo attack and the take is
+  -- dropped. The pool gate (goals.lua apply_blitz_only_gate) keeps most solo
+  -- takes from being picked at all; this is the backstop for the ones that
+  -- were picked (role changed, the call closed, a take that never became a
+  -- blitz) so none of them fires on the pill.
+  if squad.blitz_only(state) then
+    local _bo_sub = goal.substate or "plan_position"
+    if not squad.BLITZ_CALL_OPEN_SUB[_bo_sub]
+       and not (goal._blitz and goal._blitz_committed and not goal._blitz_solo) then
+      print2(string.format("BLITZ_ONLY_ABORT t=%d pill=#%s sub=%s blitz=%s committed=%s solo=%s role=%s [%s] -- would attack the pill outside a committed blitz", now, tostring(goal.target_id), _bo_sub, tostring(goal._blitz), tostring(goal._blitz_committed), tostring(goal._blitz_solo), tostring(state.squad_role), squad.blitz_only_label(state)))
+      clear_attack_goal(state, "blitz_only: " .. _bo_sub .. " outside a committed blitz")
+      return
     end
   end
 
@@ -4239,6 +4817,9 @@ function M.update_attack_substate(goal, state, world, info)
      and not goal.scan_spots
      and not _hardline_candidate
      and not _pp_hold_stranded
+     -- A person's attack order past HUMAN_ATTACK_BLITZ_WAIT_MAX_S does not
+     -- wait for the man: the tank goes and he walks back to it.
+     and not goal._hcap_over
      and info.man_status ~= C.LGM_INTANK
      and info.man_status ~= C.LGM_DEAD then
     if BRAIN_DEBUG_MODE then
@@ -4375,6 +4956,9 @@ function M.update_attack_substate(goal, state, world, info)
       if php == 1
          and info.armour >= (C.ATTACK_RUSH_MIN_ARMOUR or 5)
          and panger <= (C.ATTACK_RUSH_MAX_ANGER or 0.34)
+         -- Blitz-only: a 1-HP rush is a solo attack unless the blitz already
+         -- went GO, so it is not taken (BLITZ_ONLY_ABORT would drop it).
+         and not (squad.blitz_only(state) and not goal._blitz_committed)
          and U.mdist(bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8), pmx, pmy) <= (C.HARDLINE_ENGAGE_RANGE or 10) then
         goal._kill_rush = true
         goal.substate   = "kill_hardline"
@@ -4503,10 +5087,30 @@ function M.update_attack_substate(goal, state, world, info)
       end
       if BRAIN_DEBUG_MODE and state._plan_trace then state._plan_trace.passed_influence = true end
 
+      -- Committed blitz soldier re-planning after a blocked line: drop spots
+      -- that fail the LOS margin or sit on the commander's standoff (nil = no
+      -- filter; see blitz_soldier_replan_filter). Solo takes: always nil.
+      local bz_skip, bz_aims = blitz_soldier_replan_filter(state, goal, world, spots, pmx, pmy)
+      -- C.BLITZ_NOSPOT_RENEGOTIATE: a soldier's own pick on the blitz pill
+      -- keeps SQUAD_BLITZ_CLASH_TILES from the commander's and allies' spots.
+      -- Every LOS spot clashes = no spot of our own; drop the goal and
+      -- negotiate again.
+      do
+        local az_skip, az_los, az_n = M._blitz_ally_spot_filter(state, goal, spots, info.player_number or -1)
+        if az_skip and az_n > 0 then
+          if az_n >= az_los then
+            clear_attack_goal(state, string.format("blitz: every own spot (%d) clashes with a squad spot, renegotiate", az_los))
+            return
+          end
+          bz_skip = bz_skip or {}
+          for s in pairs(az_skip) do bz_skip[s] = true end
+        end
+      end
+
       -- Step 2: collect all "green" spots (adj_score < 10 with LOS)
       local greens = {}
       for _, s in ipairs(spots) do
-        if s.has_los and s._adj_score and s._adj_score < 10 then
+        if s.has_los and not (bz_skip and bz_skip[s]) and s._adj_score and s._adj_score < 10 then
           greens[#greens + 1] = s
         end
       end
@@ -4517,7 +5121,7 @@ function M.update_attack_substate(goal, state, world, info)
       if #greens == 0 then
         local los_spots = {}
         for _, s in ipairs(spots) do
-          if s.has_los then los_spots[#los_spots + 1] = s end
+          if s.has_los and not (bz_skip and bz_skip[s]) then los_spots[#los_spots + 1] = s end
         end
         table.sort(los_spots, function(a, b)
           return (a._adj_score or math.huge) < (b._adj_score or math.huge)
@@ -4588,6 +5192,9 @@ function M.update_attack_substate(goal, state, world, info)
         goal.aim_wx  = best.aim_wx
         goal.aim_wy  = best.aim_wy
         goal.aim_idx = best.aim_idx
+        -- Blitz soldier replan: the aim point that passed the LOS margin.
+        local bz_a = bz_aims and bz_aims[best]
+        if bz_a then goal.aim_idx, goal.aim_wx, goal.aim_wy = bz_a[1], bz_a[2], bz_a[3] end
         goal._scan_tick = state.tick   -- frame stamp for staged overlay reveal
         -- Approach position: extend line from pill through standoff by
         -- APPROACH_OFFSET. Stored as both float (precise final target)
@@ -4668,9 +5275,28 @@ function M.update_attack_substate(goal, state, world, info)
         -- standoff/charge path: the gather_trees pre-flight and the build_walls
         -- entry are both gated on _is_ppt + _shield_scan. The shield.scan
         -- itself is skipped below (its ~20 ms of tick budget goes unspent).
-        if state.is_pill_suicider and goal._is_ppt then
+        --
+        -- A HUMAN TEAM-MATE STANDING CLOSE DOES THE SAME THING, and for a
+        -- different reason: the wall shield costs trees, a gather detour and a
+        -- slow shielded creep, and a person watching from seven squares away
+        -- reads all of that as the bot doing nothing. Close to a human the bot
+        -- goes straight in. Same effect on the take, same one flag, so it
+        -- lands here beside the designated suicider rather than in a branch of
+        -- its own; ORDER_HUMAN_NEAR_SUICIDE_TILES = 0 turns it off.
+        local human_tiles = C.ORDER_HUMAN_NEAR_SUICIDE_TILES or 0
+        local human_near = nil
+        if human_tiles > 0 then
+          human_near = U.human_ally_near(info, bit.rshift(info.tankx or 0, 8),
+                                         bit.rshift(info.tanky or 0, 8), human_tiles)
+        end
+        goal._human_near = human_near
+        if (state.is_pill_suicider or human_near) and goal._is_ppt then
           goal._is_ppt = false
-          if BRAIN_DEBUG_MODE then print2(string.format("PPT_SKIP t=%d reason=pill_suicider pill=(%d,%d) hp=%d", state.tick or 0, pmx, pmy, pill_hp)) end
+          if BRAIN_DEBUG_MODE then print2(string.format("PPT_SKIP t=%d reason=%s pill=(%d,%d) hp=%d",
+            state.tick or 0,
+            state.is_pill_suicider and "pill_suicider"
+              or string.format("human_ally_%d_away", human_near),
+            pmx, pmy, pill_hp)) end
         end
         local scan_radius = goal._is_ppt and C.PPT_STANDOFF
                             or C.ATTACK_PILL_STANDOFF
@@ -4711,13 +5337,28 @@ function M.update_attack_substate(goal, state, world, info)
         -- to plan: skip it outright (leaving _shield_scan nil, exactly the state
         -- the existing DEMOTED(no-shield) path produces) and keep the standoff
         -- the spot-selection pass just chose. Also saves the scan's tick budget.
-        goal._shield_scan_pending = (not state.is_pill_suicider) or nil
+        -- A human standing close skips it for the same reason (see the
+        -- PPT_SKIP block above): nothing will be built, so nothing needs
+        -- planning, and the scan's tick budget goes unspent.
+        goal._shield_scan_pending =
+          (not (state.is_pill_suicider or goal._human_near)) or nil
       else
         if BRAIN_DEBUG_MODE and not goal._plan_logged then
           print(string.format(TAG .. " PLAN: no candidates for pill@(%d,%d), falling back", pmx, pmy))
           goal._plan_logged = true
         end
         local smx, smy = M.pick_standoff(world, info, pill, state)
+        -- C.BLITZ_NOSPOT_RENEGOTIATE: the geometric fallback gets the same
+        -- clash test as the scan spots.
+        if smx then
+          local cpn, cdd = M._blitz_spot_clash(
+            M._blitz_ally_spots(state, goal, info.player_number or -1), smx + 0.5, smy + 0.5)
+          if cpn then
+            clear_attack_goal(state, string.format("blitz: fallback standoff (%d,%d) %.2f tiles from p%s's spot, renegotiate",
+              smx, smy, cdd, tostring(cpn)))
+            return
+          end
+        end
         goal.standoff_mx = smx
         goal.standoff_my = smy
         if smx then
@@ -5029,7 +5670,9 @@ function M.update_attack_substate(goal, state, world, info)
             clear_attack_goal(state, "abort@approach_entry — " .. unsafe)
             return
           end
-          if blitz_join_unaccepted(state, info) then
+          -- A person's attack order past HUMAN_ATTACK_BLITZ_WAIT_MAX_S does
+          -- not wait for the accept any more: it approaches.
+          if blitz_join_unaccepted(state, info) and not goal._hcap_over then
             -- Ally is blitzing this pill and we're not accepted yet — HOLD at
             -- plan_position (keep the standoff fresh, let squad negotiation run);
             -- don't approach uninvited. Flips to approach on accept, or re-plans
@@ -5118,7 +5761,9 @@ function M.update_attack_substate(goal, state, world, info)
       goal._gather_last_progress = now
     end
     local stalled = (now - (goal._gather_last_progress or now)) > 250  -- ~5 s
+    -- A person's attack order also times out at HUMAN_ATTACK_GATHER_MAX_S.
     local timed_out = (now - (goal._gather_start or now)) > (C.PPT_GATHER_TIMEOUT or 1500)
+                      or M.human_gather_cap_over(goal, state, now)
     if trees_have >= trees_need then
       local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus)
       if unsafe then
@@ -5343,21 +5988,37 @@ function M.update_attack_substate(goal, state, world, info)
       if not (goal._blitz_shielded and goal._shield_scan) then
         local aim_wx = goal.aim_wx or bit.bor((bit.lshift(pmx, 8)), 128)
         local aim_wy = goal.aim_wy or bit.bor((bit.lshift(pmy, 8)), 128)
-        local go_obs, go_why = shot_path_obstacle_count(info, goal, world, aim_wx, aim_wy)
+        -- Where the test shell starts. A soldier is NOT parked at its standoff
+        -- here: it waits at its SETUP point, ATTACK_APPROACH_OFFSET (2.25 tiles)
+        -- further out along the same ray, and fires only after the charge has
+        -- carried it in to the standoff. KEEL tested from the live tank (the
+        -- SETUP point), a different line from the one the charge fires down
+        -- (20260924_224514 bot0: SETUP (127.52,146.37) missed our pill #15 by
+        -- 0.01 tile, the standoff line ran into it). With
+        -- C.BLITZ_GO_GATE_FROM_STANDOFF the soldier tests from its planned
+        -- standoff float point instead. The commander keeps the live position.
+        local gox, goy = blitz_go_origin(info, goal)
+        local go_obs, go_why = shot_path_obstacle_count(info, goal, world, aim_wx, aim_wy, gox, goy)
         if go_obs == math.huge then
-          -- Step 1 of the blocked-line ladder: we are PARKED at our standoff
-          -- here, so this is a real answer about a real spot — but a blocked
-          -- CENTRE (or blocked planned corner) says nothing about the pill's
-          -- other three corners. Try them from the live tank position before
-          -- touching the plan (loss_b6 bot3 t=9483 is the charge-side twin of
-          -- this: a neighbouring pill clipped one aim line and binned the take).
-          local ladder = try_reaim(state, goal, world, info.tankx, info.tanky,
+          -- Step 1 of the blocked-line ladder: a blocked CENTRE (or blocked
+          -- planned corner) says nothing about the pill's other three corners.
+          -- Try them from the same origin before touching the plan (loss_b6
+          -- bot3 t=9483 is the charge-side twin of this: a neighbouring pill
+          -- clipped one aim line and binned the take).
+          local ladder = try_reaim(state, goal, world, gox, goy,
                                    pmx, pmy, now, "BLITZ_GO", go_why)
           if ladder ~= "blocked" then
             -- Re-aimed on the spot (or holding while the gun swings onto the new
             -- corner): GO stands, fall through and commit.
             go_obs = 0
           end
+        end
+        -- Blitz LOS margin (C.BLITZ_SPOT_LOS_MARGIN > 0): the line must also
+        -- keep its tapering distance from walls / pills / bases. Re-aims onto
+        -- another aim point that passes both tests; nil when none does.
+        if go_obs ~= math.huge and goal._blitz then
+          local mwhy = blitz_go_margin(state, goal, world, gox, goy, pmx, pmy, now)
+          if mwhy then go_obs, go_why = math.huge, mwhy end
         end
         if go_obs == math.huge then
           -- Step 2. Ban this approach angle the way SANITY_BAN does — the
@@ -5381,9 +6042,9 @@ function M.update_attack_substate(goal, state, world, info)
             clear_attack_goal(state, "blitz GO blocked by a friendly pill on every tried line")
             return
           end
-          print2(string.format("BLITZ_GO_BLOCKED t=%d pill=(%d,%d) obstacle=%s tank=(%d,%d) banned=%s spots=%d -> replan",
+          print2(string.format("BLITZ_GO_BLOCKED t=%d pill=(%d,%d) obstacle=%s tank=(%d,%d) origin=(%.2f,%.2f) banned=%s spots=%d -> replan",
             now, pmx, pmy, tostring(go_why),
-            bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8),
+            bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8), gox / 256.0, goy / 256.0,
             bucket and string.format("%d..%d", (bucket - 5) % 360, (bucket + 5) % 360) or "none",
             tries))
           return
@@ -5428,7 +6089,9 @@ function M.update_attack_substate(goal, state, world, info)
     -- overwhelm is overkill for a near-dead pill, so stop waiting for the GO
     -- handshake and just finish it (solo). commit_fire broadcasts GO so any
     -- joiner stops waiting too. Only pre-fire (commit_fire latches it).
-    if _wp and (_wp.health or 0) > 0 and (_wp.health or 0) < (C.HARD_TAKE_MIN_HP or 12) then
+    -- Blitz-only (squad.blitz_only): no "finish it solo" -- keep waiting for GO.
+    if _wp and (_wp.health or 0) > 0 and (_wp.health or 0) < (C.HARD_TAKE_MIN_HP or 12)
+       and not squad.blitz_only(state) then
       goal._blitz = false
       goal._blitz_solo = true
       state.squad_blitz_go = true
@@ -5453,7 +6116,13 @@ function M.update_attack_substate(goal, state, world, info)
 
     if state.squad_role == "c" then
       local total, ready, min_bd, any_unseen, inwait = squad.blitz_ready_status(state, now, info.player_number or -1, info)
-      if total == 0 then
+      -- Blitz-only (squad.blitz_only): nobody answering is NOT a solo GO. Fall
+      -- through to the wait below: a joiner can still arrive. At READY_TIMEOUT
+      -- with party=1 < MIN: without BLITZ_ONLY_EXTEND_WAIT the take is given
+      -- up (BLITZ_ABANDON_SHORT); with it the wait is extended up to
+      -- BLITZ_ONLY_EXTEND_MAX times first, then given up the same way
+      -- (2026-09-26: before the cap it extended forever).
+      if total == 0 and not squad.blitz_only(state) then
         -- Nobody (left) answering. If we SKIPPED walls for a joiner who is now
         -- gone (full-pill PPT, no shield built), degrade to a normal SOLO
         -- PROTECTED take: re-approach so the in-position decision builds the
@@ -5465,6 +6134,8 @@ function M.update_attack_substate(goal, state, world, info)
           goal._blitz_committed   = nil
           goal._blitz_ready_since = nil
           state.squad_blitz_engage_mx, state.squad_blitz_engage_my = nil, nil
+          state.squad_blitz_engage_fx, state.squad_blitz_engage_fy = nil, nil
+          state.squad_blitz_engage_deg  = nil
           state.squad_blitz_bd          = nil
           state.squad_blitz_in_position = nil
           goal.substate = "approach"
@@ -5551,6 +6222,48 @@ function M.update_attack_substate(goal, state, world, info)
       local party      = 1 + (total or 0)
       local set_inwait = 1 + (inwait or 0)
       local early_go = set_inwait >= bmin
+      -- Blitz-only hold (C.BLITZ_ONLY_EXTEND_WAIT, 2026-09-25, Andrew): with no
+      -- soloers allowed and a party MIN set, the only GO is the PARKED set
+      -- (commander + soldiers at their spots in a ready substate = set_inwait)
+      -- reaching MIN. Committed-but-still-driving soldiers do not count, and
+      -- the timeout neither charges nor abandons: it adds one more
+      -- SQUAD_BLITZ_READY_TIMEOUT to the wait. The call stays open in
+      -- blitz_wait, so recruiting goes on meanwhile. At most
+      -- BLITZ_ONLY_EXTEND_MAX extensions (2026-09-26), then the take is given
+      -- up below (BLITZ_ABANDON_SHORT).
+      local bo_hold = squad.blitz_only(state) and C.BLITZ_ONLY_EXTEND_WAIT
+      if BRAIN_DEBUG_MODE and state._blitz_wait_viz then
+        local v = state._blitz_wait_viz
+        v.parked = set_inwait
+        v.bo_hold = bo_hold
+        v.bo_ext_n = goal._blitz_only_ext_n or 0
+      end
+      local verdict = M.blitz_cmdr_go_verdict(bo_hold, timed_out, ready, total, party, set_inwait, bmin,
+                                              goal._blitz_only_ext_n or 0, C.BLITZ_ONLY_EXTEND_MAX or 3)
+      -- A person's attack order past HUMAN_ATTACK_BLITZ_WAIT_MAX_S: GO now,
+      -- whoever is parked. No more waiting, no blitz-only extension, and no
+      -- short-handed abandon of the take the person asked for.
+      if goal._hcap_over and verdict ~= "go" then
+        print2(string.format("BLITZ_GO_HUMAN_CAP t=%d pill=%s verdict=%s ready=%d/%d party=%d parked=%d min=%d -- person's order, GO",
+          now, tostring(goal.target_id), verdict, ready, total, party, set_inwait, bmin))
+        verdict = "go"
+      end
+      if verdict == "extend" then
+        local add = C.SQUAD_BLITZ_READY_TIMEOUT or 150
+        goal._blitz_timeout_ext = (goal._blitz_timeout_ext or 0) + add
+        goal._blitz_only_ext_n  = (goal._blitz_only_ext_n or 0) + 1
+        print2(string.format("BLITZ_WAIT_EXTEND t=%d pill=%s parked=%d < min=%d, extensions=%d/%d (+%d, wait now %d) ready=%d/%d party=%d [%s %s] -- blitz-only: no GO short",
+          now, tostring(goal.target_id), set_inwait, bmin, goal._blitz_only_ext_n, C.BLITZ_ONLY_EXTEND_MAX or 3, add,
+          (C.SQUAD_BLITZ_READY_TIMEOUT or 150) + goal._blitz_timeout_ext,
+          ready, total, party, squad.blitz_size_label(), squad.blitz_only_label(state)))
+        if BRAIN_DEBUG_MODE and state._blitz_wait_viz then
+          state._blitz_wait_viz.bo_ext_n = goal._blitz_only_ext_n
+          state._blitz_wait_viz.ext = goal._blitz_timeout_ext
+          state._blitz_wait_viz.eff_timeout = (C.SQUAD_BLITZ_READY_TIMEOUT or 150) + goal._blitz_timeout_ext
+          state._blitz_wait_viz.timed_out = false
+        end
+        return
+      end
       -- Short-handed at the deadline: MIN is HARD, so do NOT charge with fewer
       -- tanks than the blitz asks for. Give up the take instead — clearing the
       -- attack goal also drops our blitz standoff/claim state, which closes the
@@ -5558,13 +6271,15 @@ function M.update_attack_substate(goal, state, world, info)
       -- soldier still holding for a GO that is never coming. The next replan
       -- picks a fresh goal; if this pill still looks worth a blitz the call
       -- reopens, which is also the recruiting window a third tank needs.
-      if timed_out and party < bmin then
-        print2(string.format("BLITZ_ABANDON_SHORT t=%d pill=%s party=%d < min=%d (ready=%d/%d inwait=%d) [%s] -- READY_TIMEOUT with too few tanks; releasing the call instead of charging short",
-              now, tostring(goal.target_id), party, bmin, ready, total, inwait or 0, squad.blitz_size_label()))
-        clear_attack_goal(state, string.format("blitz_wait: READY_TIMEOUT short-handed (party=%d < min=%d)", party, bmin))
+      -- Blitz-only with the extensions used up (BLITZ_ONLY_EXTEND_MAX) ends
+      -- here too, with party possibly >= min but parked < min.
+      if verdict == "abandon" then
+        print2(string.format("BLITZ_ABANDON_SHORT t=%d pill=%s party=%d parked=%d min=%d (ready=%d/%d inwait=%d ext=%d) [%s] -- READY_TIMEOUT with too few tanks; releasing the call instead of charging short",
+              now, tostring(goal.target_id), party, set_inwait, bmin, ready, total, inwait or 0, goal._blitz_only_ext_n or 0, squad.blitz_size_label()))
+        clear_attack_goal(state, string.format("blitz_wait: READY_TIMEOUT short-handed (party=%d parked=%d < min=%d, ext=%d)", party, set_inwait, bmin, goal._blitz_only_ext_n or 0))
         return
       end
-      if (ready >= total and party >= bmin) or timed_out or early_go then
+      if verdict == "go" then
         state.squad_blitz_go = true        -- broadcast GO (bgo) in init.lua
         -- Same moment the quorum is met (NOT the short-handed abandon above):
         -- designate random soldiers until the blitz has BLITZ_MIN_SUICIDERS
@@ -5601,7 +6316,20 @@ function M.update_attack_substate(goal, state, world, info)
         clear_attack_goal(state, "blitz_wait: commander gone/retargeted/dead")
         return
       end
-      if not goal._blitz_wait_since then goal._blitz_wait_since = now end
+      if not goal._blitz_wait_since then
+        goal._blitz_wait_since = now
+        goal._blitz_wait_entry = now   -- first blitz_wait tick (the follow log reads it)
+      end
+      -- C.BLITZ_SOLDIER_WAIT_FOLLOW_CMDR: under blitz-only the commander
+      -- extends its own wait (BLITZ_WAIT_EXTEND, at most BLITZ_ONLY_EXTEND_MAX
+      -- times, then it clears its goal and sends bcc). While it still
+      -- has the call open on our pill and names us in bac, restart our
+      -- backstop from its last message, so we do not time out under a
+      -- commander that is still waiting for the set. Silent / call closed /
+      -- dropped us = no restart, and the backstop runs from there.
+      if M.blitz_soldier_wait_follow(state, goal, cslot, cmdr, info.player_number or -1, now) then
+        goal._blitz_wait_since = cslot.last_tick
+      end
       if (now - goal._blitz_wait_since) > (C.SQUAD_BLITZ_WAIT_TIMEOUT or 1500) then
         clear_attack_goal(state, "blitz_wait: GO never arrived (timeout)")
         return
@@ -5619,6 +6347,12 @@ function M.update_attack_substate(goal, state, world, info)
           go = "1"
           print2(string.format("BLITZ_GO_MISSED t=%d cmdr=%s sub=%s -> infer GO", now, tostring(cmdr), tostring(csub)))
         end
+      end
+      -- A person's attack order past HUMAN_ATTACK_BLITZ_WAIT_MAX_S: do not
+      -- wait for the commander's GO any more; go in now.
+      if go ~= "1" and goal._hcap_over then
+        go = "1"
+        print2(string.format("BLITZ_GO_HUMAN_CAP t=%d cmdr=%s -- person's order, soldier goes without GO", now, tostring(cmdr)))
       end
       if go == "1" then
         commit_fire()
@@ -5789,7 +6523,9 @@ function M.update_attack_substate(goal, state, world, info)
           -- near-dead pill doesn't warrant a multi-tank overwhelm / GO handshake.
           local _wp  = world.pills and world.pills[goal.target_id]
           local _php = _wp and _wp.health or 0
-          if _php > 0 and _php < (C.HARD_TAKE_MIN_HP or 12) then
+          -- Blitz-only (squad.blitz_only): no solo shortcut -- blitz it anyway.
+          if _php > 0 and _php < (C.HARD_TAKE_MIN_HP or 12)
+             and not squad.blitz_only(state) then
             goal._blitz = false
             goal._blitz_solo = true
             print2(string.format("BLITZ_ABANDON t=%d pill=#%d hp=%d < %d — finishing solo (skip blitz_wait)",
@@ -5864,6 +6600,23 @@ function M.update_attack_substate(goal, state, world, info)
         if needs_build and not goal._is_ppt then
           needs_build = false
           why_no_build = "no-shield (pill HP below threshold) — no walls needed"
+        end
+        -- A HUMAN TEAM-MATE WHO ARRIVED AFTER THE PLAN. plan_position makes
+        -- the _is_ppt call once for the life of the goal, so a person who
+        -- drove up while the bot was approaching would otherwise still watch
+        -- it stop and build. The distance is re-read here, at the one place
+        -- the walls are actually committed to, so the rule holds whenever the
+        -- human turns up. ORDER_HUMAN_NEAR_SUICIDE_TILES = 0 turns it off.
+        if needs_build and (C.ORDER_HUMAN_NEAR_SUICIDE_TILES or 0) > 0 then
+          local hn = U.human_ally_near(info, bit.rshift(info.tankx or 0, 8),
+                                       bit.rshift(info.tanky or 0, 8),
+                                       C.ORDER_HUMAN_NEAR_SUICIDE_TILES)
+          if hn then
+            needs_build = false
+            goal._is_ppt = false
+            goal._human_near = hn
+            why_no_build = string.format("human ally %d away — going straight in", hn)
+          end
         end
         local trees_needed = needs_build and (#pots * cost_per_wall) or 0
         if needs_build and (info.trees or 0) < trees_needed then
@@ -7144,7 +7897,9 @@ function M.update_attack_substate(goal, state, world, info)
       -- reason finetune's first tick is: the previous substate may have
       -- been holding a turn key, so the engine's firstLeft/firstRight
       -- ramp counter is unknown. One blank tick guarantees the next
-      -- emitted tap starts at /8 instead of full speed.
+      -- emitted tap starts at /8 instead of full speed (its first
+      -- engine tick is the visible-nudge multiple of /8, see
+      -- steering.lua's 3-tier turn note).
       goal._shoot_first_steer = true
       print(string.format(TAG ..
         " ATTACK: finetune verified (angle %.2f, %d taps) — opening fire",
@@ -8497,8 +9252,9 @@ end
 -- Deterministic: candidate ids are collected then table.sort-ed, so the scan
 -- order never depends on pairs(); the winner is the lowest id among the
 -- closest-to-the-enemy candidates (ties broken by id).
--- Emits one HEAT_PILL line per decision, with every factor that produced it.
-local function heat_pill_select(state, world, info, goal, target, now, tmx, tmy, los_fn)
+-- Emits one HEAT_PILL line per decision, with every factor that produced it,
+-- unless `quiet` (the heat_pill_available ask from goal selection).
+local function heat_pill_select(state, world, info, goal, target, now, tmx, tmy, los_fn, quiet)
   local pills = world.pills
   if not pills then return nil end
 
@@ -8557,7 +9313,7 @@ local function heat_pill_select(state, world, info, goal, target, now, tmx, tmy,
         if not los then reason = "no_los" end
       end
 
-      if BRAIN_DEBUG_MODE then
+      if BRAIN_DEBUG_MODE and not quiet then
         -- One line per VERDICT CHANGE, not per tick. The gate is re-asked every
         -- tick of every attack_tank fight for every friendly pill, and a bot
         -- with a pill behind it printed the same `SKIP:not_closer` 447 times in
@@ -8589,6 +9345,18 @@ local function heat_pill_select(state, world, info, goal, target, now, tmx, tmy,
     end
   end
   return best
+end
+
+-- Could this bot heat a friendly pill at enemy tank `target` right now, or is
+-- a volley already running? The same tests heat_pill_steer makes before it
+-- starts a volley (no ghost, not afloat, heat_pill_select), asked quietly.
+-- Read by goals.lua eval_attack_tank for C.ATTACK_TANK_PILL_HEAT_ONLY.
+function M.heat_pill_available(state, world, info, target, now, tmx, tmy, los_fn)
+  if not C.ATTACK_TANK_HEAT_PILL or not target or not los_fn then return false end
+  if state._heat_active then return true end
+  if target.ghost or info.inboat then return false end
+  return heat_pill_select(state, world, info, nil, target, now,
+                          tmx, tmy, los_fn, true) ~= nil
 end
 
 -- REAP AN ABANDONED VOLLEY.
