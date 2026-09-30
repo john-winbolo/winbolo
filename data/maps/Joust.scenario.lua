@@ -1,7 +1,8 @@
 -- Joust
 --
--- A deep-sea arena, 28 by 28 squares, inside a wall of buildings three
--- squares thick. There is no land inside it. Every tank starts and comes
+-- A round deep-sea arena, 38 squares across (1176 squares of water), inside
+-- a wall of buildings at least five squares thick. There is no land inside
+-- it. Every tank starts and comes
 -- back on a boat, and any hit on a tank on a boat sinks the boat, so the
 -- tank drowns: one hit kills. The first side to reach the kill count the
 -- host picked wins.
@@ -16,9 +17,10 @@
 -- last enemy tank that hit it in the last CREDIT_SECONDS, and for nobody when
 -- no enemy did. Killing a tank on your own side scores nothing.
 --
--- Where a tank starts. Joust.map has sixteen starts, eight at each end of the
--- arena. The script reads them from the map and names no squares. In a team
--- round each team takes one end. The first time a tank comes on, it takes
+-- Where a tank starts. Joust.map has sixteen starts, evenly spaced on a ring
+-- four squares in from the water's edge, each facing the middle. The script
+-- reads them from the map and names no squares. In a team round each team
+-- takes one half of the ring, west or east. The first time a tank comes on, it takes
 -- the start that matches its place (its place in its own team in a team
 -- round), so no two tanks share one. After that, a tank comes back on the
 -- start that is farthest from every enemy tank, and no shell can hit it for
@@ -91,8 +93,8 @@ local function side_name(key)
   return name_of(n)
 end
 
--- Which end a seat plays from in a team round. The teams take the two ends
--- in turn, lowest team number first.
+-- Which half of the ring a seat plays from in a team round. The teams take
+-- the two halves in turn, lowest team number first.
 local function end_of(p)
   local teams, seen = {}, {}
   for q = 0, game.max_tanks() - 1 do
@@ -124,8 +126,9 @@ local function count_teams()
   return count
 end
 
--- The map's starts, split into the two ends at the middle of all of them.
--- "all" keeps the map's own order, which takes the two ends in turn.
+-- The map's starts, split into a west and an east half at the middle of all
+-- of them. "all" keeps the map's own order: west, east, west, east, and any
+-- first few seats spread out round the ring.
 local function read_ends()
   if ends ~= nil then
     return ends
@@ -352,8 +355,11 @@ function on_choose_start(p)
     return nil
   end
   -- The opening: one start for each place, so no two tanks share a square.
-  -- A free-for-all takes the map's order, which puts the seats at the two
-  -- ends in turn.
+  -- A free-for-all takes the map's order, which spreads the seats round the
+  -- ring. The opening tanks are placed one at a time, and the lobby may not
+  -- show every seat and team yet, so a team round can fall back to that
+  -- order too. It alternates west and east, so seats on round-robin teams
+  -- still start on their own half.
   if not spawned[p] and
      (not started or game.tick() - start_at < OPENING_TICKS) then
     return list[(place_of(p) % #list) + 1].n
@@ -467,12 +473,12 @@ end
 
 scenario = {
   name        = "Joust",
-  description = "A deep-sea arena inside thick walls. Every tank is on a " ..
+  description = "A round deep-sea arena inside thick walls. Every tank is on a " ..
                 "boat, so one hit drowns it. First to the kill count wins.",
   api         = 1,
   game        = "open",
 
-  -- The script splits the map's own starts into its two ends.
+  -- The script splits the map's own starts into its two halves.
   bound       = true,
 
   settings = {
@@ -500,7 +506,7 @@ scenario = {
 
   callbacks = {
     on_start = "Reads the kill target, decides team or free-for-all, posts the scores and starts the shell refill.",
-    on_choose_start = "Picks each tank's start: one for each place at the opening, then the start farthest from every enemy, at its own end in a team round.",
+    on_choose_start = "Picks each tank's start: one for each place at the opening, then the start farthest from every enemy, on its own half of the ring in a team round.",
     on_tank_hit = "Remembers the last enemy tank that hit each tank.",
     on_tank_killed = "Gives the kill to the killer, or for a drowning to the last enemy hit, and ends the round at the target.",
     on_tank_spawned = "Makes sure a new tank is on its boat and starts its one-second shield.",
