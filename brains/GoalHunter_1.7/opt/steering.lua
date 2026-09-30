@@ -3087,6 +3087,10 @@ local function tank_combat_steer(state, world, info, goal)
     -- it near full: tanks in combat almost always drive flat-out, and a low
     -- estimate (from velocity noise) would under-lead.
     local cur_cap = C.MAP_SPEED[U.ttype(bit.rshift(math.floor(twx), 8), bit.rshift(math.floor(twy), 8))]
+    -- C.MAP_SPEED follows the rules only. With ENEMY_SPEED_OWN_MODS the
+    -- target is assumed to carry our speed modifier too (nil = no change).
+    local enemy_scale = U.enemy_speed_scale()
+    if enemy_scale and cur_cap then cur_cap = cur_cap * enemy_scale end
     local throttle = (cur_cap and cur_cap > 0) and (vmag / cur_cap) or 1
     if throttle > 1 then throttle = 1 end
     shell_travel_ticks = wdist / shell_speed_per_tick
@@ -3096,6 +3100,7 @@ local function tank_combat_steer(state, world, info, goal)
       if n > 100 then n = 100 end                    -- shell range backstop
       for _ = 1, n do
         local cap = C.MAP_SPEED[U.ttype(bit.rshift(math.floor(ex), 8), bit.rshift(math.floor(ey), 8))] or 0
+        if enemy_scale then cap = cap * enemy_scale end
         local step = cap * throttle
         ex = ex + hx * step
         ey = ey + hy * step
@@ -4781,15 +4786,16 @@ local function steer_core(state, world, info, goal)
     if abs_corr > ramp_start and dist_t < 4 then
       if plow_through then
         turn_base_cap = (under_fire or race_mode)
-                        and math.min(C.NAV_TOP_SPEED, C.NAV_TURN_TOP_SPEED) * 2
-                        or math.min(C.NAV_CRUISE_SPEED, C.NAV_TURN_CRUISE_SPEED) * 2
+                        and U.nav_turn_cap(C.NAV_TOP_SPEED, C.NAV_TURN_TOP_SPEED) * 2
+                        or U.nav_turn_cap(C.NAV_CRUISE_SPEED, C.NAV_TURN_CRUISE_SPEED) * 2
       else
         -- The cap sets the speed a turn is taken at (turn radius = speed /
         -- turn rate), so it is the lower of the top-speed cap and the
         -- turn-radius cap; under classic rules both are the same number.
+        -- (U.nav_turn_cap: with STEER_TURN_SPEEDUP a faster turn raises it.)
         turn_base_cap = (under_fire or race_mode)
-                        and math.min(C.NAV_TOP_SPEED, C.NAV_TURN_TOP_SPEED)
-                        or math.min(C.NAV_CRUISE_SPEED, C.NAV_TURN_CRUISE_SPEED)
+                        and U.nav_turn_cap(C.NAV_TOP_SPEED, C.NAV_TURN_TOP_SPEED)
+                        or U.nav_turn_cap(C.NAV_CRUISE_SPEED, C.NAV_TURN_CRUISE_SPEED)
       end
       turn_factor    = 1.0 - math.min((abs_corr - ramp_start) / 70.0, 1.0)
       -- The floor keeps a hard-turning tank creeping forward rather than

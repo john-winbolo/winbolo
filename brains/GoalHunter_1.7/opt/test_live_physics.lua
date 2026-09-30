@@ -12,6 +12,12 @@
 -- 3. A missing info.rules, and LIVE_PHYSICS = false, change nothing.
 -- 7. Ice Rink (speed 140, accel 35, turn 55) and Juggernaut (speed 65,
 --    accel 60) scale the turn-radius caps and brake distances.
+-- 8. STEER_TURN_SPEEDUP: a turn faster than the top speed raises the
+--    cornering cap (turn 150, Juggernaut), capped; classic / Ice / Turbo not.
+-- 9. STEER_TERRAIN_TURN: the turn entries follow the live / classic turn
+--    rate of the terrain under the tank; classic terrain rates change nothing.
+-- 10. ENEMY_SPEED_OWN_MODS: enemy_speed_scale() is our speed % / 100, and
+--    nil at speed 100, with the knob off, or with LIVE_PHYSICS off.
 -- =========================================================================
 
 package.path = "./?.lua;" .. package.path
@@ -412,6 +418,173 @@ do
   check("ACCEL off: NAV_BRAKE_MULT stays 12", C3.NAV_BRAKE_MULT == 12, C3.NAV_BRAKE_MULT)
   check("ACCEL off: NAV_TURN_CRUISE_SPEED still 26.4",
         math.abs(C3.NAV_TURN_CRUISE_SPEED - 26.4) < 1e-9, C3.NAV_TURN_CRUISE_SPEED)
+end
+
+-- util holds its own C and live_physics: load it again after fresh().
+local function fresh_util()
+  package.loaded["util"] = nil
+  return require("util")
+end
+
+-- ---------------------------------------------------------------------------
+print("8. STEER_TURN_SPEEDUP: a faster turn raises the cornering cap")
+do
+  local function run(speed, accel, turn, knob)
+    local C, LP = fresh()
+    if knob ~= nil then C.STEER_TURN_SPEEDUP = knob end
+    local m = classic_mods()
+    m.speed, m.accel, m.turn = speed, accel, turn
+    LP.apply({ rules = classic_rules(), mods = m, reload_ticks = 13 })
+    local U = fresh_util()
+    return C, LP, U
+  end
+  local near = function(a, b) return math.abs(a - b) < 1e-9 end
+
+  -- Classic: no ratio, the cap is exactly the old math.min.
+  local C, LP, U = run(100, 100, 100)
+  check("classic: turn_speedup nil", LP.turn_speedup() == nil, LP.turn_speedup())
+  check("classic: cruise cap 48", U.nav_turn_cap(C.NAV_CRUISE_SPEED, C.NAV_TURN_CRUISE_SPEED) == 48)
+  check("classic: top cap 64", U.nav_turn_cap(C.NAV_TOP_SPEED, C.NAV_TURN_TOP_SPEED) == 64)
+  check("classic: cap keeps integer type",
+        math.type == nil or math.type(U.nav_turn_cap(48, 48)) == math.type(48))
+
+  -- Turn 150 alone: ratio 1.5, cruise 48 -> min(48 x 1.25, 64) = 60; top stays 64.
+  C, LP, U = run(100, 100, 150)
+  check("turn150: turn_speedup 1.5", near(LP.turn_speedup(), 1.5), LP.turn_speedup())
+  local cc = U.nav_turn_cap(C.NAV_CRUISE_SPEED, C.NAV_TURN_CRUISE_SPEED)
+  check("turn150: cruise cap 60", near(cc, 60), cc)
+  check("turn150: top cap 64", near(U.nav_turn_cap(C.NAV_TOP_SPEED, C.NAV_TURN_TOP_SPEED), 64))
+
+  -- Juggernaut (speed 65, turn 100): ratio 100/65 = 1.538; cruise 31.2 ->
+  -- 31.2 x 1.25 = 39; top 41.6 stays 41.6 (the live top speed).
+  C, LP, U = run(65, 60, 100)
+  check("jugg: turn_speedup 100/65", near(LP.turn_speedup(), 100 / 65), LP.turn_speedup())
+  cc = U.nav_turn_cap(C.NAV_CRUISE_SPEED, C.NAV_TURN_CRUISE_SPEED)
+  check("jugg: cruise cap 39", near(cc, 39), cc)
+  local tc = U.nav_turn_cap(C.NAV_TOP_SPEED, C.NAV_TURN_TOP_SPEED)
+  check("jugg: top cap 41.6", near(tc, 41.6), tc)
+
+  -- Ice Rink (speed 140, turn 55) and Turbo (170, turn 150): the turn is the
+  -- slower one, no speedup; the cap is the turn-radius cap as before.
+  C, LP, U = run(140, 35, 55)
+  check("ice: turn_speedup nil", LP.turn_speedup() == nil, LP.turn_speedup())
+  check("ice: cruise cap 26.4", near(U.nav_turn_cap(C.NAV_CRUISE_SPEED, C.NAV_TURN_CRUISE_SPEED), 26.4))
+  C, LP, U = run(170, 180, 150)
+  check("turbo: turn_speedup nil", LP.turn_speedup() == nil, LP.turn_speedup())
+  check("turbo: cruise cap 72", near(U.nav_turn_cap(C.NAV_CRUISE_SPEED, C.NAV_TURN_CRUISE_SPEED), 72))
+
+  -- Small ratio under the cap: speed 100, turn 110 -> 48 x 1.1 = 52.8.
+  C, LP, U = run(100, 100, 110)
+  cc = U.nav_turn_cap(C.NAV_CRUISE_SPEED, C.NAV_TURN_CRUISE_SPEED)
+  check("turn110: cruise cap 52.8", near(cc, 52.8), cc)
+
+  -- Knob off: the old math.min (48 at turn 150).
+  C, LP, U = run(100, 100, 150, false)
+  check("knob off: turn_speedup nil", LP.turn_speedup() == nil, LP.turn_speedup())
+  check("knob off: cruise cap 48", U.nav_turn_cap(C.NAV_CRUISE_SPEED, C.NAV_TURN_CRUISE_SPEED) == 48)
+
+  -- LIVE_PHYSICS off (KEEL): no speedup even with the knob on.
+  C, LP, U = run(100, 100, 150)
+  C.LIVE_PHYSICS = false
+  LP.apply({ rules = classic_rules(), mods = { speed = 100, accel = 100, turn = 150 } })
+  check("LIVE_PHYSICS off: turn_speedup nil", LP.turn_speedup() == nil, LP.turn_speedup())
+end
+
+-- ---------------------------------------------------------------------------
+print("9. STEER_TERRAIN_TURN: turn entries follow the terrain under the tank")
+do
+  local tile = 7                       -- T_GRASS
+  local reads = 0
+  _G.TERRAIN_MASK = 0x0F
+  _G.get_terrain = function(mx, my) reads = reads + 1; return tile end
+  local function run(rules, mods, tt, inboat, knob)
+    local C, LP = fresh()
+    if knob ~= nil then C.STEER_TERRAIN_TURN = knob end
+    tile = tt
+    reads = 0
+    LP.apply({ rules = rules, mods = mods or classic_mods(), reload_ticks = 13,
+               tankx = 100 * 256 + 128, tanky = 100 * 256 + 128, inboat = inboat })
+    return C, LP
+  end
+  local near = function(a, b) return math.abs(a - b) < 1e-9 end
+
+  -- Classic rules in swamp: no tile read, nothing changes.
+  local C, LP = run(classic_rules(), nil, 2)
+  check("classic swamp: no tile read", reads == 0, reads)
+  check("classic swamp: NAV_TURN_CRUISE_SPEED 48", C.NAV_TURN_CRUISE_SPEED == 48, C.NAV_TURN_CRUISE_SPEED)
+  check("classic swamp: SWERVE_TURN_TICKS unchanged", C.SWERVE_TURN_TICKS == OLD.SWERVE_TURN_TICKS, C.SWERVE_TURN_TICKS)
+
+  -- Ice Rink in swamp, terrain rules classic: road ratio (26.4), no tile read.
+  local m = classic_mods(); m.speed, m.accel, m.turn = 140, 35, 55
+  C, LP = run(classic_rules(), m, 2)
+  check("ice swamp: no tile read", reads == 0, reads)
+  check("ice swamp: NAV_TURN_CRUISE_SPEED 26.4", near(C.NAV_TURN_CRUISE_SPEED, 26.4), C.NAV_TURN_CRUISE_SPEED)
+
+  -- Forest turn rule 1.0 (classic 0.5): in forest the caps double.
+  local r = classic_rules(); r.turn_forest = 1.0
+  C, LP = run(r, nil, 5)
+  check("forest x2: one tile read", reads == 1, reads)
+  check("forest x2: NAV_TURN_CRUISE_SPEED 96", near(C.NAV_TURN_CRUISE_SPEED, 96), C.NAV_TURN_CRUISE_SPEED)
+  check("forest x2: NAV_TURN_TOP_SPEED 128", near(C.NAV_TURN_TOP_SPEED, 128), C.NAV_TURN_TOP_SPEED)
+  check("forest x2: ORBIT_FAST_SPEED 32", C.ORBIT_FAST_SPEED == 32, C.ORBIT_FAST_SPEED)
+  check("forest x2: turn_speedup 2", near(LP.turn_speedup(), 2), LP.turn_speedup())
+  -- ... but on grass (classic 1.0) nothing changes.
+  C, LP = run(r, nil, 7)
+  check("forest x2, on grass: NAV_TURN_CRUISE_SPEED 48", C.NAV_TURN_CRUISE_SPEED == 48, C.NAV_TURN_CRUISE_SPEED)
+  check("forest x2, on grass: turn_speedup nil", LP.turn_speedup() == nil, LP.turn_speedup())
+  -- Knob off: road rule, even in forest.
+  C, LP = run(r, nil, 5, nil, false)
+  check("knob off, forest: no tile read", reads == 0, reads)
+  check("knob off, forest: NAV_TURN_CRUISE_SPEED 48", C.NAV_TURN_CRUISE_SPEED == 48, C.NAV_TURN_CRUISE_SPEED)
+
+  -- Swamp halved (0.125 of classic 0.25): swamp caps halve, swerve ticks double.
+  r = classic_rules(); r.turn_swamp = 0.125
+  C, LP = run(r, nil, 2)
+  check("swamp /2: NAV_TURN_CRUISE_SPEED 24", near(C.NAV_TURN_CRUISE_SPEED, 24), C.NAV_TURN_CRUISE_SPEED)
+  check("swamp /2: SWERVE_TURN_TICKS x2", C.SWERVE_TURN_TICKS == OLD.SWERVE_TURN_TICKS * 2, C.SWERVE_TURN_TICKS)
+
+  -- In a boat on river the boat rule counts (boat 0.5 of classic 1).
+  r = classic_rules(); r.turn_boat = 0.5
+  C, LP = run(r, nil, 1, true)
+  check("boat /2 on river: NAV_TURN_CRUISE_SPEED 24", near(C.NAV_TURN_CRUISE_SPEED, 24), C.NAV_TURN_CRUISE_SPEED)
+  C, LP = run(r, nil, 1, false)
+  check("boat /2, river on foot: NAV_TURN_CRUISE_SPEED 48", C.NAV_TURN_CRUISE_SPEED == 48, C.NAV_TURN_CRUISE_SPEED)
+
+  -- Road rule changed, tank on grass: grass keeps its own classic rate.
+  r = classic_rules(); r.turn_road = 2
+  C, LP = run(r, nil, 7)
+  check("road x2, on grass: NAV_TURN_CRUISE_SPEED 48", C.NAV_TURN_CRUISE_SPEED == 48, C.NAV_TURN_CRUISE_SPEED)
+  C, LP = run(r, nil, 4)
+  check("road x2, on road: NAV_TURN_CRUISE_SPEED 96", near(C.NAV_TURN_CRUISE_SPEED, 96), C.NAV_TURN_CRUISE_SPEED)
+
+  _G.get_terrain = nil
+  _G.TERRAIN_MASK = nil
+end
+
+-- ---------------------------------------------------------------------------
+print("10. ENEMY_SPEED_OWN_MODS: enemy speed caps take our speed modifier")
+do
+  local function run(speed, knob, live)
+    local C, LP = fresh()
+    if knob ~= nil then C.ENEMY_SPEED_OWN_MODS = knob end
+    if live ~= nil then C.LIVE_PHYSICS = live end
+    local m = classic_mods()
+    m.speed = speed
+    LP.apply({ rules = classic_rules(), mods = m, reload_ticks = 13 })
+    return C, LP, fresh_util()
+  end
+  local C, LP, U = run(100)
+  check("classic: enemy_speed_scale nil", U.enemy_speed_scale() == nil, U.enemy_speed_scale())
+  check("classic: MAP_SPEED table untouched", C.MAP_SPEED[4] == 16, C.MAP_SPEED[4])
+  C, LP, U = run(140)
+  check("ice: enemy_speed_scale 1.4", math.abs(U.enemy_speed_scale() - 1.4) < 1e-12, U.enemy_speed_scale())
+  check("ice: MAP_SPEED road still 16 (rules only)", C.MAP_SPEED[4] == 16, C.MAP_SPEED[4])
+  C, LP, U = run(65)
+  check("jugg: enemy_speed_scale 0.65", math.abs(U.enemy_speed_scale() - 0.65) < 1e-12, U.enemy_speed_scale())
+  C, LP, U = run(170, false)
+  check("knob off: enemy_speed_scale nil", U.enemy_speed_scale() == nil, U.enemy_speed_scale())
+  C, LP, U = run(170, nil, false)
+  check("LIVE_PHYSICS off: enemy_speed_scale nil", U.enemy_speed_scale() == nil, U.enemy_speed_scale())
 end
 
 print(string.format("\n%d passed, %d failed", pass, fail))

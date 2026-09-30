@@ -280,6 +280,30 @@ M.NAV_TURN_CRUISE_SPEED = 48
 M.ORBIT_FAST_SPEED      = 16   -- orbit detector: faster than this near the goal can orbit
 M.ORBIT_BRAKE_SPEED     = 8    -- orbit brake: slow to this to shrink the turn radius
 M.KILL_LGM_TURN_DELTA   = 6    -- kill_lgm aim search: brads per think when a turn key is held
+-- 2026-09-30 follow-ups (all need LIVE_PHYSICS and LIVE_PHYSICS_TURN):
+-- STEER_TURN_SPEEDUP: the cornering caps above only ever came DOWN when the
+-- turn rate was slower than the top speed. With this on, a turn rate that is
+-- faster than the top speed (turn ratio / speed ratio > 1, e.g. turn 150)
+-- raises the cornering cap by that same ratio, at most x
+-- STEER_TURN_SPEEDUP_MAX, and never above our live top speed
+-- (NAV_TOP_SPEED). Under classic rules the ratio is exactly 1: no change.
+-- PRESETS.keel = false.
+M.STEER_TURN_SPEEDUP     = true
+M.STEER_TURN_SPEEDUP_MAX = 1.25   -- AWAITING APPROVAL (Sep 30): cornering cap may rise at most 25%
+-- STEER_TERRAIN_TURN: the turn-radius caps, orbit speeds, swerve turn times
+-- and kill_lgm turn step follow the live/classic turn rate of the terrain
+-- the tank is on now (river/deep sea in a boat = the boat rule), not the
+-- road rule. Each terrain is compared with its OWN classic rate, so classic
+-- forest/swamp (0.5/0.25) change nothing. Only read when a turn rule differs
+-- from classic. PRESETS.keel = false.
+M.STEER_TERRAIN_TURN     = true
+-- ENEMY_SPEED_OWN_MODS: the brain cannot see another tank's modifiers (it
+-- sees only each tank's current speed), so the one enemy prediction built on
+-- a fixed speed table -- the tank_combat aim lead's per-terrain caps
+-- (C.MAP_SPEED, rules only) -- ignored them. With this on those caps also
+-- take OUR speed modifier (Rule Roulette gives every tank the same one).
+-- Needs LIVE_PHYSICS_SPEED. Speed 100 = no change. PRESETS.keel = false.
+M.ENEMY_SPEED_OWN_MODS   = true
 -- Braking distances. A stop from speed v takes v / (brake rate) ticks and
 -- v^2 / (2 x brake rate) world units. The terms below multiply info.speed, so
 -- live rules scale them by classic brake / live brake (brake rate x accel
@@ -4921,6 +4945,11 @@ M.PRESETS = {
     -- from info.rules and its own modifiers (a no-op under classic rules).
     -- KEEL reads the classic numbers whatever the scenario sets.
     LIVE_PHYSICS                  = false,
+    -- 2026-09-30: live-physics follow-ups (faster turn raises the cornering
+    -- cap, enemy speed takes our speed modifier, turn scaling per terrain).
+    STEER_TURN_SPEEDUP            = false,
+    STEER_TERRAIN_TURN            = false,
+    ENEMY_SPEED_OWN_MODS          = false,
     -- 2026-09-08: while on capture_pill the bot now sweeps the target tile for
     -- an enemy builder rebuilding the corpse -- the kill_lgm aim solution takes
     -- the TURN keys whenever it points within CAPTURE_LGM_HUNT_TOL_BRADS of
