@@ -338,6 +338,9 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     /* And whether this server runs its scripts without the sandbox, so a
        joiner sees it before they play. */
     evt->u.lobbySettings.scenarioUnsafe = sim->scenarioIdentity.unsafe;
+    /* And whether the list fields its own bots, which is the one case the
+       server refuses a lobby set to no bots. */
+    evt->u.lobbySettings.scenarioNeedsBots = sim->scenarioIdentity.needsBots;
 }
 
 /* How many CTRL_LOBBY_SCRIPT_LIST chunks the list needs. Never 0: an empty

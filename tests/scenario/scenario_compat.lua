@@ -52,6 +52,9 @@ scenario = {
   description = "A bot-behaviour arena from tests/scenario.",
   game        = GATE_GAMETYPE or "open",
   api         = 1,
+  -- The arenas field their own tanks with game.spawn_bot, which a lobby
+  -- set to no bots refuses.
+  needs_bots  = true,
 }
 
 -- ── neutral by nil ───────────────────────────────────────────────────────

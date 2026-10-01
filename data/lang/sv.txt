@@ -683,6 +683,9 @@ STR_MAPCHOOSER_RESTORE_SIZE_TIP=Återställ standardstorlek (Esc)
 STR_MAPCHOOSER_MAXIMIZE_TIP=Maximera
 STR_MAPCHOOSER_LOADING_PREVIEW=Laddar förhandsvisning...
 
+# Map editor scenario panel
+STR_MAPEDIT_SCENARIO_NEEDS_BOTS=Kräver tillåtna bottar: det här skriptet lägger till egna bottar
+
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Status
 STR_TABLET_KILLS_DEATHS=Dödar: {number}  Dödsfall: {number2}

@@ -6054,6 +6054,11 @@ set(_unit_test_names
     lobby_scenario_reset_keeps_rules
     lobby_scenario_refuses_ranked
     lobby_scenario_refuses_ai_none
+    lobby_scenario_no_bots_script_keeps_ai
+    lobby_scenario_needs_bots_raises_and_gives_back
+    lobby_scenario_ranked_give_back_clears_ai
+    lobby_scenario_needs_bots_drop_gives_back
+    lobby_scenario_needs_bots_snapshot_at_raise
     lobby_scenario_refuses_game_type
     lobby_scenario_boot_sets_type
     lobby_scenario_identity_strips_controls
@@ -6298,6 +6303,8 @@ set(_unit_test_names
     scenario_validate_trigger_announce_clear
     scenario_validate_trigger_arg_literal
     scenario_validate_rule_pair_key
+    scenario_validate_needs_bots_missing
+    scenario_validate_needs_bots_declared
     scenario_lua_every_row_answers
     scenario_lua_op_arguments_match_the_doc
     scenario_lua_read_index_passes_through
@@ -6439,6 +6446,7 @@ set(_unit_test_names
     scenario_manifest_json_trigger_text_cut
     scenario_manifest_workshop_keys
     scenario_manifest_agrees_workshop
+    scenario_manifest_json_needs_bots
     scenario_io_set_workshop_id
     scenario_map_body_length
     scenario_map_find_container
@@ -6567,6 +6575,8 @@ set(_unit_test_names
     scenario_compose_on_picks_replace_map
     scenario_compose_off_then_on
     scenario_compose_off_full_list_hides_last
+    scenario_compose_needs_bots_any_mod
+    scenario_compose_needs_bots_scenario_and_mod
     scenario_panel_parses_each_primitive
     scenario_panel_refuses_malformed
     scenario_panel_boundaries

@@ -1091,6 +1091,13 @@ bool        clientSimGetLobbyScenarioBound(const ClientSim *cs);
  * sandboxed, which it was. */
 bool        clientSimGetLobbyScenarioUnsafe(const ClientSim *cs);
 
+/* True when the attached list fields its own bots (a script in it said
+ * needs_bots), so the server refuses the AI policy that takes every bot off
+ * the roster and the lobby greys that row. False with no script attached.
+ * A server that predates the field reads as true, because every such server
+ * refused that policy for any script. */
+bool        clientSimGetLobbyScenarioNeedsBots(const ClientSim *cs);
+
 /* The lobby's ordered script list: one scenario deciding the round and mods
  * behind it changing how it plays, in the order they load. Mirrored from
  * CTRL_LOBBY_SCRIPT_LIST, which the server publishes whole on every change,

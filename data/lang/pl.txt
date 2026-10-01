@@ -683,6 +683,9 @@ STR_MAPCHOOSER_RESTORE_SIZE_TIP=Przywróć domyślny rozmiar (Esc)
 STR_MAPCHOOSER_MAXIMIZE_TIP=Maksymalizuj
 STR_MAPCHOOSER_LOADING_PREVIEW=Wczytywanie podglądu...
 
+# Map editor scenario panel
+STR_MAPEDIT_SCENARIO_NEEDS_BOTS=Wymaga włączonych botów: ten skrypt dodaje własne boty
+
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Stan
 STR_TABLET_KILLS_DEATHS=Zabicia: {number}  Śmierci: {number2}
