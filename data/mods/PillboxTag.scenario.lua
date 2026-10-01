@@ -82,7 +82,8 @@
 -- that goes after it.
 --
 -- The bases are pit stops. They start neutral, driving over one hands out half
--- a tank of armour, and the base then goes off the map for half a minute
+-- a tank of armour and 3 mines (a holder carrying the prize gets the mines
+-- but still no shells), and the base then goes off the map for half a minute
 -- before it comes back.
 
 -- Tweak these. Each is the default of a setting the host can change in the
@@ -2929,8 +2930,9 @@ function can_build(p, action, x, y, n)
   return nil
 end
 
--- A base is a pit stop: half a tank of armour, and then the base is off the
--- map for half a minute.
+-- A base is a pit stop: half a tank of armour and 3 mines, and then
+-- the base is off the map for half a minute. add_stocks holds the mines at
+-- the tank's cap.
 function on_base_captured(n, old, new, scripted)
   if over or scripted or new == game.NEUTRAL then
     return
@@ -2940,9 +2942,9 @@ function on_base_captured(n, old, new, scripted)
     return
   end
   local x, y = b.x, b.y
-  game.add_stocks(new, { armour = half_armour })
+  game.add_stocks(new, { armour = half_armour, mines = 3 })
   -- The empty gun: a base is the one thing that can hand a carrying holder
-  -- a shell.
+  -- a shell. The mines stay: a carrying holder gets those like everybody.
   if carrying(new) then
     game.set_stocks(new, { shells = 0 })
   end
@@ -3185,7 +3187,7 @@ scenario = {
     on_tick = "Holder speed by terrain, plus boost; man out: gun fills.",
     on_player_join = "A joiner hunts, on 0 points.",
     on_player_leave = "A leaving holder's built prize dies.",
-    on_base_captured = "A base: half armour, then gone 30 s.",
+    on_base_captured = "A base: half armour, 3 mines, then gone 30 s.",
     on_pill_placed = "Built: 3 armour, no score. Dropped: dead.",
     on_pill_picked_up = "Holder: 1 point/s (and team), slow, unarmed.",
     on_pill_killed = "A shot-down prize is anybody's (a bot's own hop aside).",
