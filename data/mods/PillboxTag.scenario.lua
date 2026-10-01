@@ -106,6 +106,55 @@ local BUILT_ARMOUR      = 3     -- the most armour the prize holds when built. A
                                 -- times. A build is set down to this in
                                 -- on_pill_placed and a repair in on_built.
 
+-- How the bots play the prize. None of these is a lobby setting, and none of
+-- them changes a rule: they are what this script tells a bot to do, and what
+-- it tunes the bot's brain to. A person playing the same part is told nothing.
+-- Distances are map squares and times are seconds unless a line says other.
+local HOP_HUNTER_WITHIN   = 8   -- a bot holder hops (or builds a fort) when a
+                                -- hunter is this close
+local HOP_EVERY           = 12  -- the least time from one hop or fort to the
+                                -- next, counted from the pick-up
+local HOP_SIDE_WITHIN     = 5   -- a hunter this close sends the hop square 45
+                                -- degrees off the line away from the hunters,
+                                -- not straight ahead
+local HOP_SPARE_SHELLS    = 2   -- a hop build fills the gun to the prize's
+                                -- armour plus this many shells, so a miss or
+                                -- two still kills it
+local HOP_GIVE_UP         = 6   -- a build order that has not put the prize
+                                -- down after this long is forgotten
+local HOP_PICKUP_SECONDS  = 10  -- a holder who shot down his own prize keeps
+                                -- it this long while he drives over to it
+local FORT_ARMOUR_AT      = 20  -- a bot holder whose tank is at or below this
+                                -- armour (a full tank is 40) builds a fort
+                                -- instead of hopping
+local FORT_FREE_WITHIN    = 8   -- the guard takes the fort back when no hunter
+                                -- is this close
+local FORT_SECONDS        = 10  -- the longest a fort stands before the guard
+                                -- takes it back
+local FORT_REPAIR_BELOW   = 3   -- the guard holds one tree, for a repair, only
+                                -- while the fort has less armour than this
+local LAST_SHOT_ARMOUR    = 1   -- a fort shot down to this armour is taken
+                                -- back by its guard before a hunter kills it
+local RUN_FROM_WITHIN     = 11  -- hunters this close are what a bot holder
+                                -- runs from
+local RUN_AWAY_SQUARES    = 10  -- how far from those hunters' middle the run
+                                -- square is
+local RUN_EVERY           = 3   -- how often a running holder gets a new square
+local RUN_SEA_MARGIN      = 2   -- a run square is at least this far from deep
+                                -- sea
+local RUN_PARK_TICKS      = 50  -- brain ticks (50 a second) a holder waits on
+                                -- a run square before it plays on
+local MINE_BEHIND_WITHIN  = 6   -- a hunter this close behind a bot holder gets
+                                -- one of his mines laid in its path
+local MINE_BEHIND_GAP     = 3   -- the least time between two of those mines
+local ESCORT_BEHIND       = 3   -- team round: how far behind the holder his
+                                -- bot teammates are sent
+local DROPPED_WITHIN      = 4   -- a hunter this close to a dropped prize is
+                                -- sent onto its own square, not past it
+local HUNTER_PARK_TICKS   = 25  -- brain ticks a hunter waits on a square it was
+                                -- sent to, so its own pillbox fight and
+                                -- pick-up take over soon after
+
 -- The two words of the "Teams" setting, as scenario.settings declares them.
 local FREE_FOR_ALL      = "Free For All"
 local LOBBY_TEAMS       = "Use Lobby Teams"
@@ -184,6 +233,14 @@ local wet_seat    = nil         -- the holder whose deep sea clock runs, or nil
 local wet_from    = 0           -- the game.tick() that clock started on
 local warned      = nil         -- the seat with the deep sea warning on
                                 -- screen, or nil
+local plan        = nil         -- what a bot holder is doing with the prize:
+                                -- nil, or { kind = "hop" | "fort" | "take",
+                                -- x, y, at, built, dead_at, near }
+local hop_after   = 0           -- the game.tick() a bot holder may next hop
+local man_was_out = false       -- whether the holder's man had the prize out
+                                -- last frame
+local run_at      = nil         -- elapsed second of the holder's last run order
+local mine_at     = nil         -- elapsed second of the last mine laid behind
 
 local function whole(n)
   return math.floor(n + 0.5)
@@ -278,11 +335,32 @@ local function standing(pb)
   return pb ~= nil and not pb.in_tank and pb.armour > 0
 end
 
--- Whether seat p is the holder with the prize in hand: in the tank, or in
--- his man's hands on the way to a build. That is when the gun stays empty.
--- While a built prize stands, the holder is restocked like everybody else.
+-- Whether the holder's man is out of the tank with the prize in his hands:
+-- the tank's pill count says the pillbox is aboard, and the man is out on a
+-- pill job. He keeps the prize until he builds it, dies, or brings it back.
+local function man_out(p)
+  if p == nil or p ~= holder or pill == nil then
+    return false
+  end
+  local pb = game.pill(pill)
+  if pb == nil or not pb.in_tank then
+    return false
+  end
+  local man = game.builder(p)
+  return man ~= nil and man.state ~= "in_tank" and man.state ~= "dead" and
+         man.job == "pill"
+end
+
+-- Whether seat p is the holder with the prize in his tank. That is when he
+-- scores and the gun stays empty. While his man walks it out, and while a
+-- built prize stands, he scores nothing and is restocked like everybody else.
+-- The slow legs stay on him all the while he is the holder (see on_tick).
 local function carrying(p)
-  return p ~= nil and p == holder and not standing(game.pill(pill))
+  if p == nil or p ~= holder then
+    return false
+  end
+  local pb = game.pill(pill)
+  return pb ~= nil and pb.in_tank and not man_out(p)
 end
 
 local function prize()
@@ -716,28 +794,48 @@ end
 -- carrying the prize is told where the prize is.
 --
 -- A brain is retuned with game.bot_init, which hands it a new init table.
--- The table replaces the last one whole, but the numbers it set do not go
--- back on their own: GoalHunter writes every cfg=NAME=VALUE into its own
--- constants, and a constant stays where it was put until something writes it
--- again. So a bot that changes part is handed its new numbers AND the
--- ordinary value of every number its old part changed. DEFAULTS is that
--- ordinary value, read off the brain's constants.lua, for every knob either
--- part touches.
+-- The flag words in the table are the whole statement of them: GoalHunter
+-- puts noblitz and suicider back itself on every new table, so each table
+-- names every flag word of the part. A number is different. GoalHunter
+-- writes every cfg=NAME=VALUE into its own constants, and a constant stays
+-- where it was put until something writes it again. So a table carries only
+-- the numbers that change: have[p] is what this script last wrote into seat
+-- p's brain, and a knob it never wrote is at DEFAULTS, the ordinary value
+-- read off the brain's constants.lua.
 --
 -- The ordinary value is the Hard one. A Medium or Easy bot plays with
 -- TANK_COMBAT_BASE_COST moved by its level, and a script cannot see a seat's
--- level, so once a hunter has set it and been the holder, it comes back as
--- the Hard number. A hunter sets it lower than any level does, so the only
--- difference is how a former holder bids for a fight it has no shells for.
+-- level, so once a hunter has set it and taken another part, it comes back
+-- as the Hard number. A hunter sets it lower than any level does, so the
+-- only difference is how a former hunter bids for a fight.
 local DEFAULTS = {
-  TANK_COMBAT_ENABLED     = true,
-  TANK_COMBAT_BASE_COST   = 30,
-  TAKE_COVER_W_ENEMY      = 20,
-  FLEE_DANGER_WEIGHT      = 80,
-  STRATEGIC_PLACE_ENABLED = true,
-  EMERGENCY_DROP_ENABLED  = true,
-  PILL_REPOSITION_ENABLED = true,
-  BUILDER_POOL_ENABLED    = true,
+  TANK_COMBAT_ENABLED                  = true,
+  TANK_COMBAT_BASE_COST                = 30,
+  TAKE_COVER_W_ENEMY                   = 20,
+  FLEE_DANGER_WEIGHT                   = 80,
+  STRATEGIC_PLACE_ENABLED              = true,
+  EMERGENCY_DROP_ENABLED               = true,
+  PILL_REPOSITION_ENABLED              = true,
+  BUILDER_POOL_ENABLED                 = true,
+  PILL_REPOSITION_IN_OPENING           = false,
+  PILL_JUST_BUILT_TICKS                = 1500,
+  PILL_REPOSITION_SURPLUS_W            = 50,
+  PILL_REPOSITION_LOCK_COST            = 30,
+  PILL_REPOSITION_COOLDOWN_TICKS       = 1500,
+  PILL_REPOSITION_MIN_SHELLS           = 15,
+  REPOSITION_VOTE_RECENT_MEMORY_TICKS  = 1500,
+  REPOSITION_VOTE_FAIL_COOLDOWN        = 1500,
+  REPOSITION_SCORE_INTERVAL            = 50,
+  REPOSITION_DISABLE_WITH_HUMAN_ALLIES = true,
+  REPOSITION_VOTE_ENABLED              = true,
+  CAPTURE_PILL_BASE_COST               = 20,
+  ATTACK_PILL_BASE_COST                = 30,
+  ATTACK_FAR_PREEMPT_RANGE             = 7,
+  ORDER_GOTO_HOLD_TICKS                = 500,
+  ORDER_INJECT_COST                    = 20,
+  DEFEND_ALARM_MIN_DIST                = 9,
+  DEFEND_ALARM_BASE_COST               = 100,
+  CAPTURE_LGM_HUNT                     = true,
 }
 
 -- The flag words a brain keeps until it is told the opposite. GoalHunter puts
@@ -745,31 +843,101 @@ local DEFAULTS = {
 -- it leaves standing, and "normal" is the word that takes it off.
 local FLAG_UNDO = { ammoless = "normal" }
 
--- The two parts. Neither has a reason to move a pillbox, and neither should
--- have its builder spend the round on walls and guns. The only live pillbox a
--- hunter ever meets is a built prize, and its own pillbox fight is left on for
--- that. A hunter bids hard for a tank fight, because the holder is a tank.
--- The holder does not fight at all (it has no shells, and a tank fight is
--- also when a brain puts a carried pillbox down as a guard), weighs danger
--- twice as heavily when it runs, looks for cover sooner, never goes looking
--- for a base to refuel at (nothing will fill its gun), and never puts the
--- prize down on purpose.
---
--- The hunter is told not to put a pillbox down as well. A bot that picks the
+-- What every part shares. None of the parts has a reason to put a pillbox
+-- down of its own accord, and none should have its builder spend the round
+-- on walls and guns: the only pillbox build is the one this script orders.
+-- A hunter is told not to put one down as well, because a bot that picks the
 -- prize up is still a hunter until its new table reaches the brain, most of
--- a second later, and a brain that is outnumbered with a pillbox aboard drops
--- it beside itself on the very next think (the "emergency drop"). Measured
--- on a headless run before this line: holders built the prize back into a
--- gun within half a second of picking it up.
+-- a second later, and a brain that is outnumbered with a pillbox aboard
+-- drops it beside itself on the very next think (the "emergency drop").
+--
+-- The rest is the brain's own pillbox move, set up for the hop (see the hop
+-- part below) and left switched off by PILL_REPOSITION_ENABLED everywhere
+-- else. It is the same in every part so that a holder going from one part to
+-- the next is handed as few numbers as can be. A move is never refused for
+-- the opening phase, which a round with every base neutral never leaves; a
+-- built prize may be moved at once and again straight after; the move costs
+-- next to nothing so it wins the bot's choice of goal; three shells are
+-- enough to start it; and no memory of an earlier move holds it back. A dead
+-- pillbox is worth driving over at no extra cost, which is the pick-up.
+local SHARED = {
+  STRATEGIC_PLACE_ENABLED              = false,
+  EMERGENCY_DROP_ENABLED               = false,
+  BUILDER_POOL_ENABLED                 = false,
+  PILL_REPOSITION_IN_OPENING           = true,
+  PILL_JUST_BUILT_TICKS                = 0,
+  PILL_REPOSITION_SURPLUS_W            = 5000,
+  PILL_REPOSITION_LOCK_COST            = 1,
+  PILL_REPOSITION_COOLDOWN_TICKS       = 0,
+  PILL_REPOSITION_MIN_SHELLS           = 3,
+  REPOSITION_VOTE_RECENT_MEMORY_TICKS  = 0,
+  REPOSITION_VOTE_FAIL_COOLDOWN        = 0,
+  REPOSITION_DISABLE_WITH_HUMAN_ALLIES = false,
+  CAPTURE_PILL_BASE_COST               = 0,
+}
+
+-- The parts.
+--
+-- hunter: bids hard for a tank fight, because the holder is a tank. The only
+-- live pillbox a hunter ever meets is a built prize, and it costs nothing to
+-- go after, so its own pillbox fight takes it on. A square it was sent to
+-- holds it for half a second, not ten, so that fight and the pick-up of a
+-- dropped prize take over soon after it arrives.
+--
+-- manhunt: a hunter while the holder's man walks the prize out. A tank fight
+-- costs more and a far target is less of a reason not to go, so the brain's
+-- own hunt for a man on foot wins over shooting the holder's empty tank, and
+-- the attack order it is handed does not outbid that hunt either.
+--
+-- mate: in a team round, a bot on the holder's team. It never votes on a
+-- pillbox move, so its silence is a yes and the holder's hop goes ahead.
+--
+-- holder: does not fight at all (it has no shells, and a tank fight is also
+-- when a brain puts a carried pillbox down as a guard), weighs danger twice
+-- as heavily when it runs, looks for cover sooner, never goes looking for a
+-- base to refuel at (nothing will fill its gun), and waits a second on a run
+-- square before it plays on.
+--
+-- hop: the holder once a hop has put the prize down. It moves the prize, which
+-- in the brain is: shoot your own pillbox down and drive over it. Danger and
+-- cover are weighed the ordinary way, so running off does not beat the
+-- pick-up, and the move is looked at five times a second. It drives straight
+-- at the prize: the brain's habit of turning to shoot at a man near a pillbox
+-- it is going to pick up is off, because a hunter's man near the prize had
+-- the tank turning to him and back to the prize, over and over, at range.
+--
+-- guard: the holder once a fort has put the prize down. It has shells again,
+-- so it fights, and it goes to the fort's defence as soon as the fort is
+-- under fire, from beside it as well as from afar.
 local ROLES = {
   hunter = {
     flags = { "noblitz", "nosuicider" },
     cfg = {
       TANK_COMBAT_BASE_COST   = 10,
-      STRATEGIC_PLACE_ENABLED = false,
-      EMERGENCY_DROP_ENABLED  = false,
       PILL_REPOSITION_ENABLED = false,
-      BUILDER_POOL_ENABLED    = false,
+      ATTACK_PILL_BASE_COST   = 0,
+      ORDER_GOTO_HOLD_TICKS   = HUNTER_PARK_TICKS,
+    },
+  },
+  manhunt = {
+    flags = { "noblitz", "nosuicider" },
+    cfg = {
+      TANK_COMBAT_BASE_COST    = 60,
+      PILL_REPOSITION_ENABLED  = false,
+      ATTACK_PILL_BASE_COST    = 0,
+      ORDER_GOTO_HOLD_TICKS    = HUNTER_PARK_TICKS,
+      ATTACK_FAR_PREEMPT_RANGE = 11,
+      ORDER_INJECT_COST        = 60,
+    },
+  },
+  mate = {
+    flags = { "noblitz", "nosuicider" },
+    cfg = {
+      TANK_COMBAT_BASE_COST   = 10,
+      PILL_REPOSITION_ENABLED = false,
+      ATTACK_PILL_BASE_COST   = 0,
+      ORDER_GOTO_HOLD_TICKS   = HUNTER_PARK_TICKS,
+      REPOSITION_VOTE_ENABLED = false,
     },
   },
   holder = {
@@ -778,10 +946,26 @@ local ROLES = {
       TANK_COMBAT_ENABLED     = false,
       TAKE_COVER_W_ENEMY      = 60,
       FLEE_DANGER_WEIGHT      = 160,
-      STRATEGIC_PLACE_ENABLED = false,
-      EMERGENCY_DROP_ENABLED  = false,
       PILL_REPOSITION_ENABLED = false,
-      BUILDER_POOL_ENABLED    = false,
+      ORDER_GOTO_HOLD_TICKS   = RUN_PARK_TICKS,
+    },
+  },
+  hop = {
+    flags = { "noblitz", "nosuicider", "ammoless" },
+    cfg = {
+      TANK_COMBAT_ENABLED       = false,
+      PILL_REPOSITION_ENABLED   = true,
+      REPOSITION_SCORE_INTERVAL = 10,
+      ORDER_GOTO_HOLD_TICKS     = RUN_PARK_TICKS,
+      CAPTURE_LGM_HUNT          = false,
+    },
+  },
+  guard = {
+    flags = { "noblitz", "nosuicider" },
+    cfg = {
+      PILL_REPOSITION_ENABLED = false,
+      DEFEND_ALARM_MIN_DIST   = 0,
+      DEFEND_ALARM_BASE_COST  = 30,
     },
   },
 }
@@ -812,20 +996,44 @@ local function is_bot(p)
   return slot ~= nil and slot.bot
 end
 
--- The whole table for one seat in one part, and the same table as one line
--- of text so two of them can be compared. Every knob this seat has been
--- handed before and this part does not set goes back to DEFAULTS.
+local have = {}                 -- seat -> knob -> the value last written into
+                                -- its brain; a knob not here is at DEFAULTS
+
+-- The part seat p plays now.
+local function role_of(p)
+  if p == holder then
+    if plan ~= nil and plan.built then
+      return (plan.kind == "fort") and "guard" or "hop"
+    end
+    return "holder"
+  end
+  local held_by = scoring_team(holder)
+  if held_by ~= nil and scoring_team(p) == held_by then
+    return "mate"
+  end
+  if man_out(holder) then
+    return "manhunt"
+  end
+  return "hunter"
+end
+
+-- The table for one seat in one part, and the same table as one line of text
+-- so two of them can be compared. The numbers in it are the ones that differ
+-- from what the brain already has, as many as fit; the rest wait for the next
+-- table. `sent` is the numbers it carries.
 local function init_table(role_name, p)
   local role = ROLES[role_name]
   local had  = touched[p] or {}
+  local now  = have[p] or {}
   local want = {}
-  for k, v in pairs(role.cfg) do
+  for k, v in pairs(DEFAULTS) do
     want[k] = v
   end
-  for k in pairs(had) do
-    if want[k] == nil and DEFAULTS[k] ~= nil then
-      want[k] = DEFAULTS[k]
-    end
+  for k, v in pairs(SHARED) do
+    want[k] = v
+  end
+  for k, v in pairs(role.cfg) do
+    want[k] = v
   end
 
   local t, pairs_n = {}, 0
@@ -843,26 +1051,42 @@ local function init_table(role_name, p)
   end
 
   local names = {}
-  for k in pairs(want) do
-    names[#names + 1] = k
+  for k, v in pairs(want) do
+    local cur = now[k]
+    if cur == nil then
+      cur = DEFAULTS[k]
+    end
+    if v ~= cur then
+      names[#names + 1] = k
+    end
   end
   table.sort(names)
   local chunks, value = {}, nil
+  local sent, pending = {}, {}
   for _, k in ipairs(names) do
     local item = k .. "=" .. cfg_text(want[k])
     -- Every value after the first carries the six bytes of "0;cfg=" as well.
     local room = (#chunks == 0) and INIT_VALUE_MAX or INIT_VALUE_MAX - 6
     if value ~= nil and #value + 5 + #item <= room then
       value = value .. ";cfg=" .. item
-    else
+      pending[k] = want[k]
+    elseif pairs_n + #chunks + 1 + ((value ~= nil) and 1 or 0) <= INIT_PAIRS_MAX then
       if value ~= nil then
         chunks[#chunks + 1] = value
+        for q, v in pairs(pending) do
+          sent[q] = v
+        end
+        pending = {}
       end
       value = item
+      pending[k] = want[k]
     end
   end
   if value ~= nil then
     chunks[#chunks + 1] = value
+    for q, v in pairs(pending) do
+      sent[q] = v
+    end
   end
   for i, v in ipairs(chunks) do
     if i == 1 then
@@ -870,10 +1094,6 @@ local function init_table(role_name, p)
     else
       t["cfg" .. i] = "0;cfg=" .. v
     end
-  end
-  pairs_n = pairs_n + #chunks
-  if pairs_n > INIT_PAIRS_MAX then
-    return nil
   end
 
   local keys = {}
@@ -885,28 +1105,31 @@ local function init_table(role_name, p)
   for i, k in ipairs(keys) do
     line[i] = k .. "=" .. t[k]
   end
-  return t, table.concat(line, " "), want
+  return t, table.concat(line, " "), sent
 end
 
--- Hands a bot the table for the part it has, unless it already has that
--- table: every table a brain takes it says a line about, so the same one
+-- Hands a bot the table for the part it has, unless the brain already has all
+-- of it: every table a brain takes it says a line about, so the same one
 -- twice is noise. A refusal is left for the next second to try again: a bot
--- that has only just joined may not have a brain to take it yet.
+-- that has only just joined may not have a brain to take it yet. So is
+-- whatever did not fit in one table.
 local function tune(p)
   if not is_bot(p) then
     return
   end
-  local name = (p == holder) and "holder" or "hunter"
-  local t, line, want = init_table(name, p)
-  if t == nil or tuned[p] == line then
+  local name = role_of(p)
+  local t, line, sent = init_table(name, p)
+  if next(sent) == nil and tuned[p] == name then
     return
   end
   if game.bot_init(p, t) then
-    tuned[p] = line
-    local had = touched[p] or {}
-    for k in pairs(want) do
-      had[k] = true
+    tuned[p] = name
+    local now = have[p] or {}
+    for k, v in pairs(sent) do
+      now[k] = v
     end
+    have[p] = now
+    local had = touched[p] or {}
     for _, f in ipairs(ROLES[name].flags) do
       had[f] = true
     end
@@ -1095,13 +1318,37 @@ local function tell(p, order, force)
   end
 end
 
+-- The unit step a 0-255 facing points along, in map squares: 0 is north and
+-- 64 east, and y grows to the south.
+local function facing(dir)
+  local a = (dir - 64) / 256 * 2 * math.pi
+  return math.cos(a), math.sin(a)
+end
+
+-- In a team round the holder's bot teammates ride with him: each is sent to
+-- the square ESCORT_BEHIND behind his tank, kept until he has moved off it.
+local function escort_order(p, from)
+  local s = game.tank(holder)
+  if s == nil or s.dead then
+    return nil
+  end
+  local fx, fy = facing(s.dir)
+  local x = whole(s.mx - ESCORT_BEHIND * fx)
+  local y = whole(s.my - ESCORT_BEHIND * fy)
+  return goto_order(p, x, y, from, "escort " .. holder)
+end
+
+-- While the holder's man walks the prize out, every hunter is told to attack
+-- the holder: an attack order leaves the brain free to choose its own goal,
+-- which is how its hunt for a man on foot gets him (see the manhunt part). A
+-- goto would hold the bot to the square and shut that hunt off.
+local function man_order(q)
+  return { key = "attack " .. q, target = "man " .. q,
+           hint = { verb = "attack", player = q } }
+end
+
 local function aim_one(p)
   if p == holder or pill == nil or not is_bot(p) or not in_round(p) then
-    return
-  end
-  -- In a team round the holder's teammates are not sent after him.
-  local held_by = scoring_team(holder)
-  if held_by ~= nil and scoring_team(p) == held_by then
     return
   end
   local t = game.tank(p)
@@ -1109,6 +1356,13 @@ local function aim_one(p)
     return
   end
   local from = { x = t.mx, y = t.my }
+  -- In a team round the holder's teammates are not sent after him: they ride
+  -- along behind him.
+  local held_by = scoring_team(holder)
+  if held_by ~= nil and scoring_team(p) == held_by then
+    tell(p, escort_order(p, from))
+    return
+  end
   local pb = game.pill(pill)
   if pb == nil then
     return
@@ -1121,15 +1375,22 @@ local function aim_one(p)
     return
   end
   if not pb.in_tank then
-    tell(p, ground_order(p, pb.x, pb.y, from))
+    -- Close to it, the bot is sent onto the prize's own square, and the short
+    -- park on it hands over to the brain's own pick-up, which drives over a
+    -- dead pillbox rather than stopping beside it.
+    if chebyshev(from.x, from.y, pb.x, pb.y) <= DROPPED_WITHIN then
+      tell(p, goto_hint(pb.x, pb.y, string.format("onto %d,%d", pb.x, pb.y),
+                        pb.x, pb.y))
+    else
+      tell(p, ground_order(p, pb.x, pb.y, from))
+    end
     return
   end
   if holder == nil then
     return
   end
-  local man = game.builder(holder)
-  if man ~= nil and man.state ~= "in_tank" and man.job == "pill" then
-    tell(p, goto_order(p, man.mx, man.my, from, "man"))
+  if man_out(holder) then
+    tell(p, man_order(holder))
     return
   end
   tell(p, order_for_tank(p, holder, from))
@@ -1255,6 +1516,329 @@ local function sort_teams()
   end
 end
 
+-- What a bot holder does with the prize besides running with it. A person
+-- holding it is told nothing and plays it his own way.
+--
+-- The hop: with a hunter close, the holder's man puts the prize down a few
+-- squares off, the gun comes back while the man is out and while the prize
+-- stands, and the holder shoots his own prize down and drives over it. The
+-- pick-up is a new take, with its speed boost. The square is straight ahead,
+-- as far as the prize has armour, so the tank is already driving at it; with
+-- a hunter very close it goes 45 degrees off the line away from the hunters
+-- instead, on the side nearer the way the tank faces. The brain does the
+-- shooting and the pick-up itself: the hop part turns on its own pillbox move.
+--
+-- The fort: a holder whose tank is badly hurt puts the prize down and guards
+-- it, with a gun that fills a shell a second. The guard takes it back (the
+-- same shoot and pick-up) once no hunter is close, after FORT_SECONDS, when
+-- fewer hunters are close than when it went up, or when a hunter has shot
+-- it down to LAST_SHOT_ARMOUR, so the last shot is the guard's own.
+
+-- Every live tank in the round that hunts seat p, within `within` squares of
+-- it, nearest first: everybody but p in a Free For All, everybody off p's team
+-- in a team round.
+local function hunters_near(p, within)
+  local list = {}
+  local me = game.tank(p)
+  if me == nil or me.dead then
+    return list, me
+  end
+  local side = scoring_team(p)
+  for q = 0, game.max_tanks() - 1 do
+    if q ~= p and in_round(q) and (side == nil or scoring_team(q) ~= side) then
+      local s = game.tank(q)
+      if s ~= nil and not s.dead then
+        local d = chebyshev(me.mx, me.my, s.mx, s.my)
+        if d <= within then
+          list[#list + 1] = { q = q, s = s, d = d }
+        end
+      end
+    end
+  end
+  table.sort(list, function(a, b) return a.d < b.d end)
+  return list, me
+end
+
+-- The unit step from the hunters' middle to tank `me`, or the tank's own
+-- facing when it sits right on that middle.
+local function away_from(me, list)
+  local cx, cy = 0, 0
+  for _, h in ipairs(list) do
+    cx, cy = cx + h.s.mx, cy + h.s.my
+  end
+  cx, cy = cx / #list, cy / #list
+  local ax, ay = me.mx - cx, me.my - cy
+  local len = math.sqrt(ax * ax + ay * ay)
+  if len < 0.5 then
+    return facing(me.dir)
+  end
+  return ax / len, ay / len
+end
+
+local function turned(x, y, degrees)
+  local a = math.rad(degrees)
+  local c, s = math.cos(a), math.sin(a)
+  return x * c - y * s, x * s + y * c
+end
+
+local function base_on(x, y)
+  for n = 1, game.num_bases() do
+    local b = game.base(n)
+    if b ~= nil and b.x == x and b.y == y then
+      return true
+    end
+  end
+  return false
+end
+
+-- Ground the prize is put down on: open land with no base and no known mine.
+-- A run square is any land. Both are filled on first use, from inside a hook,
+-- like carry_ground's table.
+local PILL_GROUND, RUN_GROUND
+
+local function ground_tables()
+  if PILL_GROUND ~= nil then
+    return
+  end
+  PILL_GROUND, RUN_GROUND = {}, {}
+  local T = game.TERRAIN
+  for _, name in ipairs({ "grass", "road", "swamp", "crater", "rubble" }) do
+    PILL_GROUND[T[name]] = true
+  end
+  for _, name in ipairs({ "grass", "road", "swamp", "crater", "rubble",
+                          "forest", "mine_grass", "mine_road", "mine_swamp",
+                          "mine_crater", "mine_rubble", "mine_forest" }) do
+    RUN_GROUND[T[name]] = true
+  end
+end
+
+local function pill_ground(x, y)
+  if x < 0 or x > 255 or y < 0 or y > 255 then
+    return false
+  end
+  ground_tables()
+  return PILL_GROUND[game.map_tile(x, y)] == true and not base_on(x, y)
+end
+
+-- A run square: land, and no deep sea within RUN_SEA_MARGIN of it.
+local function run_ground(x, y)
+  ground_tables()
+  if x < 0 or x > 255 or y < 0 or y > 255 or not RUN_GROUND[game.map_tile(x, y)] then
+    return false
+  end
+  for dy = -RUN_SEA_MARGIN, RUN_SEA_MARGIN do
+    for dx = -RUN_SEA_MARGIN, RUN_SEA_MARGIN do
+      if game.map_tile(x + dx, y + dy) == game.TERRAIN.deep_sea then
+        return false
+      end
+    end
+  end
+  return true
+end
+
+-- The square a hop or fort puts the prize on, or nil when there is none.
+local function hop_square(me, close)
+  local fx, fy = facing(me.dir)
+  local lines = {}
+  if #close > 0 then
+    local ax, ay = away_from(me, close)
+    local lx, ly = turned(ax, ay, 45)
+    local rx, ry = turned(ax, ay, -45)
+    if lx * fx + ly * fy >= rx * fx + ry * fy then
+      lines = { { lx, ly }, { rx, ry } }
+    else
+      lines = { { rx, ry }, { lx, ly } }
+    end
+  else
+    lines = { { fx, fy } }
+  end
+  for _, k in ipairs({ BUILT_ARMOUR, BUILT_ARMOUR + 1, BUILT_ARMOUR - 1 }) do
+    for _, l in ipairs(lines) do
+      local x, y = whole(me.mx + k * l[1]), whole(me.my + k * l[2])
+      if k > 0 and (x ~= me.mx or y ~= me.my) and pill_ground(x, y) then
+        return x, y
+      end
+    end
+  end
+  return nil
+end
+
+local function start_plan(kind, p, me, close, near_n)
+  local x, y = hop_square(me, close)
+  if x == nil then
+    return false
+  end
+  -- The plan is in place before the order goes, because the engine asks
+  -- can_build about the order before it takes it.
+  plan = { kind = kind, x = x, y = y, at = game.tick(), built = false,
+           near = near_n, trees = me.trees }
+  local ok, why = game.builder_order(p, "pill", x, y)
+  if not ok then
+    plan = nil
+    return false
+  end
+  hop_after = game.tick() + HOP_EVERY * 100
+  game.log(string.format("Pillbox Tag: player %d %s at (%d, %d)", p, kind, x, y))
+  return true
+end
+
+local function take_back(why)
+  plan.kind = "take"
+  game.log(string.format("Pillbox Tag: player %d takes the fort back (%s)",
+                         holder, why))
+  tune(holder)
+  -- The guard's gun is filled the way a hop's is, to the fort's armour and
+  -- HOP_SPARE_SHELLS over, and never below the shells the brain wants
+  -- before it starts a pillbox move: a guard who has been firing at the
+  -- hunters often has too few left for the move to start at all.
+  local t, pb = game.tank(holder), game.pill(pill)
+  if t ~= nil and not t.dead and pb ~= nil then
+    local want = math.min(game.rule("tank_full_shells"),
+                          math.max(pb.armour, SHARED.PILL_REPOSITION_MIN_SHELLS)
+                          + HOP_SPARE_SHELLS)
+    if t.shells < want then
+      game.set_stocks(holder, { shells = want })
+    end
+  end
+  -- A run order from before the fort can still be held, often to a square
+  -- the fort itself now blocks, and a held order outbids the pillbox move
+  -- until it lapses a minute later. A hold where the tank stands replaces it
+  -- and is over a second after (the hop part's own hold time).
+  if is_bot(holder) and game.hint(holder, { verb = "hold" }) then
+    told[holder], told_for[holder], goto_at[holder] = "hold", nil, nil
+    told_at[holder] = elapsed
+  end
+end
+
+-- A bot holder's run: a square RUN_AWAY_SQUARES off the middle of the hunters
+-- within RUN_FROM_WITHIN, on land and clear of deep sea. Straight away first,
+-- then 45 and 90 degrees either side.
+local function run_from(p, me, list)
+  local ax, ay = away_from(me, list)
+  for _, deg in ipairs({ 0, 45, -45, 90, -90 }) do
+    local rx, ry = turned(ax, ay, deg)
+    local x = whole(me.mx + RUN_AWAY_SQUARES * rx)
+    local y = whole(me.my + RUN_AWAY_SQUARES * ry)
+    if run_ground(x, y) then
+      tell(p, goto_hint(x, y, "run"), true)
+      run_at = elapsed
+      return
+    end
+  end
+end
+
+-- One of the holder's own mines on the square behind him, when a hunter is
+-- close behind.
+local function mine_behind(p, me)
+  if me.mines < 1 or (mine_at ~= nil and elapsed - mine_at < MINE_BEHIND_GAP) then
+    return
+  end
+  local fx, fy = facing(me.dir)
+  local behind = false
+  for _, h in ipairs(hunters_near(p, MINE_BEHIND_WITHIN)) do
+    if (h.s.mx - me.mx) * fx + (h.s.my - me.my) * fy < 0 then
+      behind = true
+      break
+    end
+  end
+  if not behind then
+    return
+  end
+  local x, y = whole(me.mx - fx), whole(me.my - fy)
+  if (x == me.mx and y == me.my) or not run_ground(x, y) or base_on(x, y) then
+    return
+  end
+  if game.place_mine(x, y, p, false) then
+    game.add_stocks(p, { mines = -1 })
+    mine_at = elapsed
+  end
+end
+
+-- Once a second, for a bot holder.
+local function bot_holder_second()
+  if holder == nil or pill == nil or not is_bot(holder) then
+    return
+  end
+  local pb = game.pill(pill)
+  local me = game.tank(holder)
+  if pb == nil or me == nil or me.dead then
+    return
+  end
+  local now = game.tick()
+
+  if plan ~= nil then
+    if not plan.built then
+      -- The man never put it down: the order was refused, or he came back.
+      if pb.in_tank and not man_out(holder) and
+         now - plan.at >= HOP_GIVE_UP * 100 then
+        game.log(string.format("Pillbox Tag: player %d %s gave up", holder,
+                               plan.kind))
+        plan = nil
+        tune(holder)
+      end
+      return
+    end
+    if standing(pb) then
+      -- The guard holds one tree only while the fort wants a repair; nobody
+      -- else in the plan holds any, so the brain never patches a prize it is
+      -- about to shoot down.
+      local trees = (plan.kind == "fort" and pb.armour < FORT_REPAIR_BELOW)
+                    and 1 or 0
+      if me.trees ~= trees then
+        game.set_stocks(holder, { trees = trees })
+      end
+      if plan.kind == "fort" then
+        local near = hunters_near(holder, FORT_FREE_WITHIN)
+        if #near == 0 then
+          take_back("no hunter near")
+        elseif now - plan.built_at >= FORT_SECONDS * 100 then
+          take_back("time")
+        elseif #near < plan.near then
+          take_back("hunters left")
+        end
+      end
+    end
+    return
+  end
+
+  if not carrying(holder) then
+    return
+  end
+  local man = game.builder(holder)
+  if man ~= nil and man.state ~= "in_tank" then
+    return
+  end
+  local list = hunters_near(holder, math.max(HOP_HUNTER_WITHIN, RUN_FROM_WITHIN))
+  local hop_n, close, chasers = 0, {}, {}
+  for _, h in ipairs(list) do
+    if h.d <= HOP_HUNTER_WITHIN then
+      hop_n = hop_n + 1
+    end
+    if h.d <= RUN_FROM_WITHIN then
+      chasers[#chasers + 1] = h
+    end
+    if h.d <= HOP_SIDE_WITHIN then
+      close[#close + 1] = h
+    end
+  end
+  if hop_n > 0 and now >= hop_after then
+    local kind = (me.armour <= FORT_ARMOUR_AT) and "fort" or "hop"
+    local fort_n = 0
+    for _, h in ipairs(list) do
+      if h.d <= FORT_FREE_WITHIN then
+        fort_n = fort_n + 1
+      end
+    end
+    if start_plan(kind, holder, me, close, fort_n) then
+      return
+    end
+  end
+  if #chasers > 0 and (run_at == nil or elapsed - run_at >= RUN_EVERY) then
+    run_from(holder, me, chasers)
+  end
+  mine_behind(holder, me)
+end
+
 local finish
 local lose_the_prize
 
@@ -1267,18 +1851,21 @@ local function each_second()
   elapsed = elapsed + 1
 
   -- A built prize that is dead with a holder still on it went down some way
-  -- on_pill_killed did not hear about. Nobody holds a dead pillbox.
+  -- on_pill_killed did not hear about. Nobody holds a dead pillbox, except a
+  -- bot holder for the HOP_PICKUP_SECONDS after he shot his own down.
   if holder ~= nil and pill ~= nil then
     local pb = game.pill(pill)
-    if pb ~= nil and not pb.in_tank and pb.armour == 0 then
+    if pb ~= nil and not pb.in_tank and pb.armour == 0 and
+       not (plan ~= nil and plan.dead_at ~= nil and
+            game.tick() - plan.dead_at < HOP_PICKUP_SECONDS * 100) then
       lose_the_prize(holder)
       aim_everybody()
     end
   end
 
-  -- The point is for carrying it, in the tank or in the man's hands on the
-  -- way to a build. A built prize scores nothing while it stands.
-  if holder ~= nil and not standing(game.pill(pill)) then
+  -- The point is for carrying it in the tank. Nothing scores while the man
+  -- walks it out or while a built prize stands.
+  if carrying(holder) then
     seconds[holder] = (seconds[holder] or 0) + 1
     game.score(holder, seconds[holder], SCORE_LABEL)
     local team = scoring_team(holder)
@@ -1300,6 +1887,7 @@ local function each_second()
   -- anything when there is nothing new to say.
   tune_everybody()
   aim_everybody()
+  bot_holder_second()
 
   local mines = (elapsed % MINE_EVERY == 0)
   for p = 0, game.max_tanks() - 1 do
@@ -1308,7 +1896,8 @@ local function each_second()
       -- A holder carrying the prize is the one tank that is not restocked:
       -- an empty gun is what stops it shooting, and handing it a shell would
       -- undo that. A shell it came by some other way is taken off it here.
-      -- Once the prize is built he is restocked like everybody else.
+      -- While his man walks it out, and once it is built, he is restocked
+      -- like everybody else.
       if carrying(p) then
         if t.shells > 0 then
           game.set_stocks(p, { shells = 0 })
@@ -1612,10 +2201,24 @@ end
 -- takes back their own prize keeps any cover they still have and gets no new
 -- cover. A holder the prize is taken straight from loses the prize, and with
 -- it their own boost and cover, first.
+-- A bot holder's hop or fort is over: the trees the plan took off him go
+-- back, and the next one waits HOP_EVERY.
+local function end_plan()
+  if plan ~= nil and holder ~= nil then
+    local t = game.tank(holder)
+    if t ~= nil and not t.dead and plan.trees ~= nil and t.trees ~= plan.trees then
+      game.set_stocks(holder, { trees = plan.trees })
+    end
+  end
+  plan = nil
+  hop_after = game.tick() + HOP_EVERY * 100
+end
+
 local function take_the_prize(p)
   if holder ~= nil and holder ~= p then
     lose_the_prize(holder)
   end
+  end_plan()
   local new_hand = (last_holder ~= p)
   holder = p
   last_holder = p
@@ -1650,6 +2253,7 @@ local function take_the_prize(p)
 end
 
 lose_the_prize = function(p)
+  end_plan()
   holder = nil
   boost_from = nil
   invuln_seat = nil
@@ -1690,6 +2294,21 @@ function on_pill_placed(n, p, armour, scripted)
       end
       take_the_prize(p)
     end
+    -- A bot holder's hop or fort is down. A hop fills his gun to the prize's
+    -- armour and HOP_SPARE_SHELLS over, so he can shoot it down at once.
+    if plan ~= nil and p == holder and not plan.built then
+      plan.built = true
+      plan.built_at = game.tick()
+      if plan.kind == "hop" then
+        local t = game.tank(p)
+        local want = math.min(game.rule("tank_full_shells"),
+                              BUILT_ARMOUR + HOP_SPARE_SHELLS)
+        if t ~= nil and t.shells < want then
+          game.set_stocks(p, { shells = want })
+        end
+      end
+      tune(p)
+    end
     aim_everybody()
     return
   end
@@ -1706,8 +2325,17 @@ end
 -- one: nobody holds it, the old holder gets his speed back (his gun is
 -- already being filled while it stands), and the first tank to drive over it
 -- is the new holder.
+--
+-- A bot holder shooting down his own hop or fort is not a loss: it is the
+-- first half of taking it back, and he keeps it for HOP_PICKUP_SECONDS while
+-- he drives over to it. Anybody who gets there first takes it.
 function on_pill_killed(n, by, scripted)
   if over or n ~= pill then
+    return
+  end
+  if plan ~= nil and plan.built and holder ~= nil and by == holder then
+    plan.dead_at = game.tick()
+    aim_everybody()
     return
   end
   lose_the_prize(holder)
@@ -1755,11 +2383,22 @@ end
 -- compared. Only the holder, and only on a prize still standing and under
 -- BUILT_ARMOUR: a dead one is picked up, not repaired, and the engine would
 -- spend his trees filling a full one to 15 only for on_built to take it back.
+--
+-- A bot holder puts the prize down only where this script sent his man. A
+-- brain can still decide on a build of its own in the second before its new
+-- part reaches it (a tank fight with a pillbox aboard is one), and that one
+-- is refused here. A person holding the prize builds where he likes.
 function can_build(p, action, x, y, n)
   if over or pill == nil or action ~= "pill" then
     return nil
   end
   local pb = game.pill(pill)
+  if p == holder and is_bot(p) and pb ~= nil and pb.in_tank then
+    if plan ~= nil and not plan.built and plan.x == x and plan.y == y then
+      return nil
+    end
+    return false
+  end
   if pb ~= nil and not pb.in_tank and pb.x == x and pb.y == y then
     if p == holder and standing(pb) and pb.armour < BUILT_ARMOUR then
       return nil
@@ -1835,6 +2474,7 @@ function on_player_leave(p, scripted)
   end
   if holder == p then
     holder = nil
+    plan = nil
     boost_from = nil
     invuln_seat = nil
     if pill ~= nil and standing(game.pill(pill)) then
@@ -1849,6 +2489,7 @@ function on_player_leave(p, scripted)
   goto_at[p] = nil
   tuned[p]   = nil
   touched[p] = nil
+  have[p]    = nil
   team_of[p] = nil
   lobby_team[p] = nil
 end
@@ -1895,12 +2536,32 @@ end
 -- engine asks it in the middle of a hit, and it asks the game nothing back:
 -- it goes by invuln_seat alone, and this puts that back to nil on the first
 -- frame past INVULN_SECONDS.
+--
+-- The man walking the prize out is watched here too, frame by frame: the
+-- moment he goes the gun starts to fill and the hunters are turned on him,
+-- and the moment he is back with it the gun is emptied again. And a fort a
+-- hunter has shot down to LAST_SHOT_ARMOUR is taken back at once.
 function on_tick(tick)
   if invuln_seat ~= nil and game.tick() >= invuln_to then
     invuln_seat = nil
   end
+  local out = man_out(holder)
+  if out ~= man_was_out and not over then
+    man_was_out = out
+    if not out and carrying(holder) then
+      game.set_stocks(holder, { shells = 0 })
+    end
+    tune_everybody()
+    aim_everybody()
+  end
   if over or holder == nil then
     return
+  end
+  if plan ~= nil and plan.built and plan.kind == "fort" then
+    local pb = game.pill(pill)
+    if standing(pb) and pb.armour <= LAST_SHOT_ARMOUR then
+      take_back("last shot")
+    end
   end
   local t = game.tank(holder)
   if t == nil or t.dead then
@@ -1945,8 +2606,8 @@ scenario = {
   description = string.format("One dead pillbox, %d minutes by default. " ..
                 "Carrying it scores a point a second, slows you most on " ..
                 "the fastest ground, and empties your gun; a new holder " ..
-                "gets a short head start. Build it and it stops scoring " ..
-                "but your gun refills; three shells kill it.",
+                "gets a short head start. Built or on foot it scores " ..
+                "nothing but your gun refills; three shells kill it.",
                 math.floor(ROUND_SECONDS / 60)),
   api         = 1,
   kind        = "scenario",
@@ -1990,16 +2651,16 @@ scenario = {
                "neutral.",
     on_start = "Clock, compass, sea timer; Free For All: own teams.",
     on_end = "Logs how long the round ran.",
-    on_tick = "Holder speed by terrain, plus boost.",
+    on_tick = "Holder speed by terrain, plus boost; man out: gun fills.",
     on_player_join = "A joiner hunts, on 0 points.",
     on_player_leave = "A leaving holder's built prize dies.",
     on_base_captured = "A base: half armour, then gone 30 s.",
     on_pill_placed = "Built: 3 armour, no score. Dropped: dead.",
     on_pill_picked_up = "Holder: 1 point/s (and team), slow, unarmed.",
-    on_pill_killed = "A shot-down prize is anybody's.",
+    on_pill_killed = "A shot-down prize is anybody's (a bot's own hop aside).",
     on_pill_captured = "Only the holder may own a built prize.",
     on_built = "A repair stops at 3 armour.",
-    can_build = "Only the holder may repair it.",
+    can_build = "Only the holder may repair it; bots build where told.",
     on_team_changed = "Teams are fixed for the round.",
     allow_base_win = "Holding every base does not win.",
     can_ally = "No alliances in Free For All; teammates in a team round.",
