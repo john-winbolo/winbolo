@@ -16,8 +16,11 @@
 --
 -- Every time the prize changes hands, the new holder gets a head start: twice
 -- their carry speed for two seconds, fading back to their carry speed over
--- the next three, and no damage for the first two. All of those numbers are
--- the host's to change in the lobby (see "Tweak these" below).
+-- the next three, and no damage for the first two. For those first two
+-- seconds all slow ground (grass, forest, river, swamp, crater, rubble, deep
+-- sea) is as fast as a road, for every tank on the map, not only the holder,
+-- and then goes back to its own speed (see road_lift). All of those numbers
+-- are the host's to change in the lobby (see "Tweak these" below).
 --
 -- The map's own pillboxes are taken off at setup and one is kept back as the
 -- prize. The ones taken off are gone from the pillbox panel too. The holder
@@ -96,7 +99,9 @@ local SPEED_PENALTY_PCT   = 30   -- how much slower the holder is: 30 is 30%
                                  -- slower on grass, more on a road and less
                                  -- on slow ground (see CARRY_PENALTY)
 local BOOST_MULT          = 2.0  -- a new holder's speed, times their carry speed
-local BOOST_SECONDS       = 2    -- how long the full boost lasts
+local BOOST_SECONDS       = 2    -- how long the full boost lasts, and how
+                                 -- long all slow ground is as fast as a road
+                                 -- for everybody (see road_lift)
 local BOOST_DECAY_SECONDS = 3    -- how long it then takes to fade back to 1
 local INVULN_SECONDS      = 2    -- how long a new holder takes no damage
 local DEEP_WATER_SECONDS  = 10   -- how long the holder may carry the prize
@@ -246,6 +251,59 @@ local team_mode   = nil         -- true for "Use Lobby Teams"; read on first use
 local team_seconds = {}         -- lobby team -> seconds its holders carried
 local boost_from  = nil         -- the game.tick() the holder took the prize on,
                                 -- or nil when there is no boost to run
+
+-- The full boost puts all slow ground up to road speed, for every tank on the
+-- map, through the sim's speed_* rules. start reads the rules when it runs,
+-- so a host's own values are kept: each one under speed_road is raised to it
+-- and its old value saved; one already at or over a road is left alone. stop
+-- puts back exactly what start saved. A take while a lift is on only moves
+-- the end later, so the saved values are always the ones from before the
+-- lift, never the lifted ones. The turn_* rules are not touched. on_tick
+-- ends a lift on time, and every path that ends a boost early (a drop, a
+-- death, the holder leaving, the end of the round) stops it too.
+local road_lift = {
+  saved = nil,  -- rule name -> its value before the lift; nil: no lift on
+  to    = 0,    -- the game.tick() the lift ends on
+  rules = { "speed_grass", "speed_forest", "speed_river", "speed_swamp",
+            "speed_crater", "speed_rubble", "speed_boat", "speed_deep_sea",
+            "speed_refuel_base" },
+}
+
+function road_lift.start(secs)
+  if secs <= 0 then
+    return
+  end
+  if road_lift.saved == nil then
+    local road = game.rule("speed_road")
+    local saved = {}
+    for _, name in ipairs(road_lift.rules) do
+      local was = game.rule(name)
+      if was < road and game.set_rule(name, road) then
+        saved[name] = was
+      end
+    end
+    -- Nothing under a road is no lift at all, and nothing for on_tick to end.
+    if next(saved) == nil then
+      return
+    end
+    road_lift.saved = saved
+  end
+  road_lift.to = game.tick() + secs * 100
+end
+
+function road_lift.stop()
+  local saved = road_lift.saved
+  if saved == nil then
+    return
+  end
+  road_lift.saved = nil
+  for _, name in ipairs(road_lift.rules) do
+    if saved[name] ~= nil then
+      game.set_rule(name, saved[name])
+    end
+  end
+end
+
 local invuln_seat = nil         -- the seat damage_scale spares, or nil
 local invuln_to   = 0           -- the game.tick() that seat is spared until
 local last_holder = nil         -- the seat that took the prize last; kept
@@ -2390,6 +2448,7 @@ finish = function()
     return
   end
   over = true
+  road_lift.stop()
 
   -- The sides: every tank in a Free For All; in a team round every team,
   -- and every tank on no team.
@@ -2551,7 +2610,7 @@ end
 -- whole part of its speed each frame. So a share such as 2.7 of a swamp's 3
 -- cannot be set; it is made by switching between the two whole caps either
 -- side of it (2 and 3). What decides is how far the holder really went:
--- carry_ahead adds up the distance he covered past his share. He runs at the
+-- carry.ahead adds up the distance he covered past his share. He runs at the
 -- upper cap until he is one saved-up move ahead (see carry_legs), then at the
 -- lower cap until he is one saved-up move behind, and so on. Each change is a
 -- modifier sent to every client, so the band keeps it to about once a second;
@@ -2565,9 +2624,12 @@ end
 -- it. That is one square, and the band carries over it.
 local CARRY_JUMP = 64           -- world units in a frame that are not driving
 local carry_by_code             -- terrain code to { rule, pct }
-local carry_ahead = 0           -- world units the holder has gone past his share
-local carry_low = false         -- whether he is on the lower cap
-local carry_x, carry_y          -- where he was last frame, nil to start over
+local carry = {
+  ahead = 0,                    -- world units the holder has gone past his share
+  low   = false,                -- whether he is on the lower cap
+  x     = nil,                  -- where he was last frame, nil to start over
+  y     = nil,
+}
 
 local function carry_ground(t)
   if carry_by_code == nil then
@@ -2600,7 +2662,10 @@ end
 
 -- The new holder's boost as a factor on their carry speed: BOOST_MULT for
 -- BOOST_SECONDS, then falling in a straight line to 1 over
--- BOOST_DECAY_SECONDS, then 1. game.tick() counts 100 a second.
+-- BOOST_DECAY_SECONDS, then 1. game.tick() counts 100 a second. Over the
+-- BOOST_SECONDS road_lift has the slow ground at road speed, so carry_legs
+-- reads a road's cap there and the factor goes on that; the fade is on the
+-- ground's own cap again.
 local function boost_now()
   if boost_from == nil then
     return 1
@@ -2618,9 +2683,9 @@ local function boost_now()
 end
 
 local function carry_start()
-  carry_ahead = 0
-  carry_low = false
-  carry_x, carry_y = nil, nil
+  carry.ahead = 0
+  carry.low = false
+  carry.x, carry.y = nil, nil
 end
 
 -- The modifier set is replaced whole, and an empty one is the classic tank,
@@ -2644,23 +2709,23 @@ local function carry_legs(p, t)
     -- share over the ground's cap, and then the boosted cap is the one a
     -- frame's move is measured against.
     local band = math.max(cap, math.ceil(share)) + game.rule("tank_min_move")
-    if carry_x ~= nil then
-      local dx, dy = t.wx - carry_x, t.wy - carry_y
+    if carry.x ~= nil then
+      local dx, dy = t.wx - carry.x, t.wy - carry.y
       local moved = math.sqrt(dx * dx + dy * dy)
       -- A bigger jump is a respawn or a teleport, not driving.
       if moved <= CARRY_JUMP then
-        carry_ahead = math.max(carry_ahead + moved - share, -2 * band)
+        carry.ahead = math.max(carry.ahead + moved - share, -2 * band)
       end
     end
-    if carry_ahead >= band then
-      carry_low = true
-    elseif carry_ahead <= -band then
-      carry_low = false
+    if carry.ahead >= band then
+      carry.low = true
+    elseif carry.ahead <= -band then
+      carry.low = false
     end
-    local want = carry_low and math.floor(share) or math.ceil(share)
+    local want = carry.low and math.floor(share) or math.ceil(share)
     pct = carry_pct(want, cap)
   end
-  carry_x, carry_y = t.wx, t.wy
+  carry.x, carry.y = t.wx, t.wy
   local now = (t.mods.speed == 0) and 100 or t.mods.speed
   if now ~= pct then
     game.set_modifiers(p, (pct == 100) and {} or { speed = pct })
@@ -2701,6 +2766,7 @@ local function take_the_prize(p)
   last_holder = p
   seconds[p] = seconds[p] or 0
   boost_from = game.tick()
+  road_lift.start(BOOST_SECONDS)
   if new_hand then
     if INVULN_SECONDS > 0 then
       invuln_seat = p
@@ -2733,6 +2799,7 @@ lose_the_prize = function(p)
   end_plan()
   holder = nil
   boost_from = nil
+  road_lift.stop()
   invuln_seat = nil
   if p ~= nil then
     game.set_modifiers(p, {})
@@ -3002,6 +3069,7 @@ function on_player_leave(p, scripted)
     holder = nil
     plan = nil
     boost_from = nil
+    road_lift.stop()
     invuln_seat = nil
     if pill ~= nil and standing(game.pill(pill)) then
       game.set_pill_armour(pill, 0)
@@ -3072,6 +3140,12 @@ function on_tick(tick)
   if invuln_seat ~= nil and game.tick() >= invuln_to then
     invuln_seat = nil
   end
+  -- The full boost is over: the ground goes back to its own speed, and the
+  -- holder's band starts again on the caps it has now.
+  if road_lift.saved ~= nil and game.tick() >= road_lift.to then
+    road_lift.stop()
+    carry_start()
+  end
   local out = man_out(holder)
   if out ~= man_was_out and not over then
     man_was_out = out
@@ -3124,6 +3198,7 @@ end
 
 function on_end()
   over = true
+  road_lift.stop()
   game.log(string.format("Pillbox Tag ended after %d seconds", elapsed))
 end
 
@@ -3158,8 +3233,8 @@ scenario = {
     { id = "boost_pct", label = "New holder boost (% of carry speed)",
       type = "int", min = 100, max = 250, step = 10,
       default = whole(BOOST_MULT * 100) },
-    { id = "boost_seconds", label = "Boost time (seconds)", type = "int",
-      min = 0, max = 10, step = 1, default = BOOST_SECONDS },
+    { id = "boost_seconds", label = "Boost time, all ground at road speed (s)",
+      type = "int", min = 0, max = 10, step = 1, default = BOOST_SECONDS },
     { id = "boost_decay_seconds", label = "Boost fade time (seconds)",
       type = "int", min = 0, max = 10, step = 1,
       default = BOOST_DECAY_SECONDS },
