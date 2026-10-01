@@ -355,7 +355,9 @@ static void main_loop_iteration(void) {
    *     traffic) the server has already dropped us and the client has already
    *     declared SERVER_SHUTDOWN, so the owed ticks are dead either way.  In
    *     single-player there is simply nothing to catch up to.  Drop the debt
-   *     and resume from real time. */
+   *     and resume from real time.  A hidden tab's frames can also arrive
+   *     under STALL_RESET_MS apart; the cap on the leftover after the
+   *     catch-up below keeps those from building a backlog. */
   if (!s_connFailed && clientSimHasTransport(cs)) {
     const double MAX_ELAPSED_MS  = 200.0;  /* per-frame catch-up bound (ordinary jank) */
     const double STALL_RESET_MS  = 500.0;  /* gap above this = background/suspend → drop */
@@ -376,7 +378,13 @@ static void main_loop_iteration(void) {
       windowRunGameTick(cs);
       ticksThisFrame++;
     }
-    /* Leftover `gameTickAccum` (>= GAME_TICK_LENGTH) drains in future frames. */
+    /* The leftover drains in future frames, but no more than MAX_ELAPSED_MS
+     * of it is kept, so frames that keep arriving too far apart for the
+     * catch-up limit (a hidden tab's timer, a sustained slow frame rate) run
+     * the game slower instead of banking time. */
+    if (gameTickAccum > MAX_ELAPSED_MS) {
+      gameTickAccum = MAX_ELAPSED_MS;
+    }
   }
 
   /* Voice encode/decode runs here, beside the game tick and outside the
