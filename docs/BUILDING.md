@@ -326,8 +326,12 @@ cmake --build build-wasm-logviewer -j$(nproc)
 
 ### Testing locally
 
+The game uses threads, which the browser allows only on a page served with the
+`Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy` headers, so
+serve it with `serve_isolated.py`, which sends both:
+
 ```bash
-python3 -m http.server -d build-wasm-game 8080
+python3 src/wasm/serve_isolated.py build-wasm-game 8080
 # Open http://localhost:8080/winbolo.html
 ```
 

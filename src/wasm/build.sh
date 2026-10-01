@@ -17,8 +17,8 @@
 #   build-wasm-game/winbolo.wasm
 #   build-wasm-game/winbolo.data  - Preloaded assets
 #
-# Serve locally:
-#   python3 -m http.server -d build-wasm-game 8080
+# Serve locally (threads need the COOP and COEP headers this script sends):
+#   python3 src/wasm/serve_isolated.py build-wasm-game 8080
 #   Then open http://localhost:8080/winbolo.html
 #
 
@@ -50,6 +50,6 @@ echo ""
 echo "=== Build complete ==="
 echo "Output files in: $BUILD_DIR/"
 echo ""
-echo "To test locally:"
-echo "  python3 -m http.server -d $BUILD_DIR 8080"
+echo "To test locally (threads need the COOP and COEP headers this script sends):"
+echo "  python3 $SCRIPT_DIR/serve_isolated.py $BUILD_DIR 8080"
 echo "  Open http://localhost:8080/winbolo.html"
