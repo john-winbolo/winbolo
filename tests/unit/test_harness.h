@@ -1454,6 +1454,13 @@ int run_base_stock_visibility(void);
    (test_base_half_tick.c): one pair of fields per sim, not per process. */
 int run_base_half_tick_per_sim_sequence(void);
 int run_base_half_tick_other_sim_does_not_disturb(void);
+
+/* A base refuel moves the same amount off the base as onto the tank
+   (test_base_refuel_give.c): the give is cut to the room the tank has. */
+int run_base_refuel_partial_give_armour(void);
+int run_base_refuel_partial_give_shells_and_mines(void);
+int run_base_refuel_partial_give_classic_rules(void);
+int run_base_refuel_whole_give_unchanged(void);
 int run_base_armour_fog_of_war(void);
 int run_base_armour_reveal_in_range(void);
 int run_two_clients_full_sync_independent(void);
