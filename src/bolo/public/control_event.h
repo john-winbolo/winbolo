@@ -1180,11 +1180,13 @@ typedef struct ControlEvent {
             char    label[16];
         } scnScore;
 
-        /* CTRL_SCN_ANNOUNCE — a line drawn across the top of the game view. */
+        /* CTRL_SCN_ANNOUNCE — a big line across the game view. */
         struct {
             char     text[PACKET_MAX_CHAT_MESSAGE + 1];
             uint16_t ticks;      /* how long it stays up */
-            uint8_t  place;      /* an SCN_ANNOUNCE_PLACE_* value; 0 is the top */
+            uint8_t  hasPos;     /* 0: the usual place; else posX/posY */
+            uint8_t  posX;       /* centre, 0..SCN_ANNOUNCE_POS_MAX across */
+            uint8_t  posY;       /* centre, 0..SCN_ANNOUNCE_POS_MAX down */
             uint8_t  destTeam;
             uint8_t  destPlayer;
         } scnAnnounce;

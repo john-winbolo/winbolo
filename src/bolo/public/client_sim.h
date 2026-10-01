@@ -746,9 +746,13 @@ uint32_t clientSimGetScnPanelRejectCount(const ClientSim *cs);
 const char *clientSimGetScnAnnounce(const ClientSim *cs, uint16_t *outTicks,
                                     uint32_t *outArrivedTick);
 
-/* Where the announcement on screen sits, a ScnAnnouncePlace; the top (0)
- * when there is none. */
-uint8_t clientSimGetScnAnnouncePlace(const ClientSim *cs);
+/* Where the announcement on screen goes. True, with *outX and *outY the
+ * centre of the line as position bytes across and down the view (0 to
+ * SCN_ANNOUNCE_POS_MAX), when the script gave it a position; false, with
+ * both left alone, when it goes in the usual place or there is no line.
+ * Either out pointer may be NULL. */
+bool clientSimGetScnAnnouncePos(const ClientSim *cs, uint8_t *outX,
+                                uint8_t *outY);
 
 /* The status line on screen, or NULL when there is none. outEndsAt gets
  * the server tick its countdown runs to, on clientSimGetLastServerTick's

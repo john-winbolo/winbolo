@@ -38,14 +38,14 @@
  * truncated. */
 #define SCN_TEXT_MAX (PACKET_MAX_CHAT_MESSAGE + 1)
 
-/* The longest announcement that may go anywhere but the top. A placed line
- * rides as text, a 0x00 and the place byte in the announce body. A client
- * older than the place reads all of that as the text and drops a body past
- * PACKET_MAX_CHAT_MESSAGE, so a placed text of 127 or 128 bytes would show
- * nothing there. The script layer refuses a placed line past this, as it
- * refuses every other line past its limit, rather than cutting it. A line at
- * the top keeps the full SCN_TEXT_MAX - 1. */
-#define SCN_ANNOUNCE_PLACED_TEXT_MAX (PACKET_MAX_CHAT_MESSAGE - 2)
+/* The longest announcement that may carry a position. A positioned line
+ * rides as the text, a 0x00 and the two position bytes in the announce body.
+ * A client older than the position reads all of that as the text and drops a
+ * body past PACKET_MAX_CHAT_MESSAGE, so a positioned text of 126 to 128 bytes
+ * would show nothing there. The script layer and the arm refuse a positioned
+ * line past this, as they refuse every other line past its limit, rather
+ * than cutting it. A line with no position keeps the full SCN_TEXT_MAX - 1. */
+#define SCN_ANNOUNCE_POSITIONED_TEXT_MAX (PACKET_MAX_CHAT_MESSAGE - 3)
 
 /* SCN_PANEL_MAX, the byte capacity of one panel display list, comes in
  * from scenario_panel.h with the rest of the panel's public types. It
@@ -620,7 +620,11 @@ typedef struct {
 typedef struct {
     BYTE     target;
     uint16_t ticks;
-    BYTE     place;                 /* a ScnAnnouncePlace (scenario_panel.h) */
+    BYTE     hasPos;                /* 0: drawn where announcements always
+                                       were; else posX/posY say where */
+    BYTE     posX;                  /* the line's centre, 0 to
+                                       SCN_ANNOUNCE_POS_MAX across the view */
+    BYTE     posY;                  /* the same, down the view */
     char     text[SCN_TEXT_MAX];
 } ScnOpAnnounce;
 

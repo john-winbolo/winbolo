@@ -6315,6 +6315,7 @@ set(_unit_test_names
     scenario_lua_panel_refusals
     scenario_lua_presentation_targets
     scenario_lua_score_and_announce
+    scenario_lua_announce_position
     scenario_lua_acting_rows_refuse_a_check
     scenario_sandbox_removed_names_are_nil
     scenario_sandbox_bytecode_chunk_refused
@@ -6565,10 +6566,11 @@ set(_unit_test_names
     scenario_panel_roundtrip
     scenario_panel_timer_text
     scenario_announce_remaining
-    scenario_announce_place
+    scenario_announce_position
     scenario_status_line
     scn_status_codec_and_client
-    scn_arm_status_and_place
+    scn_announce_position_codec
+    scn_arm_status_and_position
     scn_arm_status_overlap
     scenario_panel_slot_rect
     lv_rule_names_and_panel_parse
@@ -6604,6 +6606,7 @@ set(_unit_test_names
     lv_presentation_slot_team
     lv_presentation_announce_posts
     lv_presentation_status_line
+    lv_presentation_announce_position
     lv_presentation_marker_visible
     lv_presentation_live_seek
     lv_presentation_live_fast_forward

@@ -4689,24 +4689,22 @@ static void renderScenarioPanel(ClientSim *cs) {
  * The scenario announcement
  *
  * One line across the game view, for the few seconds a
- * scenario asked for. It sits at the top of the view,
- * centred, and keeps clear of what is already drawn up
- * there: the scenario panel wherever the player left it,
- * the vote widgets and alliance request beside the view,
- * and the HUD column and build strip when the full screen
- * map owns the window. On the main view it never moves
- * down onto the player's own tank; when there is no room
- * above the tank it stays on the top row, over the panel
- * (scnAnnouncePlace has the rule). The full screen map has
- * no tank in a fixed place, so there the line may go as
- * far down as the map.
+ * scenario asked for. With no position it sits where it
+ * always has: centred across, in the view's upper third
+ * rather than dead centre, which is where the player's own
+ * tank is (scnAnnounceDefaultPlace). With a position the
+ * script names the line's centre as shares of the view,
+ * and the line is kept inside the view and below the
+ * status line, and nothing else (scnAnnounceAt). The view
+ * is the main view, the full screen map when that owns the
+ * window, or tablet mode's own game view.
  *
  * Tablet mode draws both lines too, over its own game view
- * (the fixed viewport sdl3draw centres on the screen), and
- * keeps them clear of the scenario square that tablet mode
- * pins in that view's top-right corner. Its buttons and
- * bars sit in the gutters beside the view, so nothing else
- * is in the way at the top.
+ * (the fixed viewport sdl3draw centres on the screen). The
+ * status line keeps clear of the scenario square that
+ * tablet mode pins in that view's top-right corner. Its
+ * buttons and bars sit in the gutters beside the view, so
+ * nothing else is in the way at the top.
  *
  * Drawn on the foreground draw list and not in a window at
  * all. A window across the middle of the screen would take
@@ -4718,12 +4716,14 @@ static void renderScenarioPanel(ClientSim *cs) {
  * whatever terrain happens to be under it, and one colour
  * against grass is a line somebody cannot read.
  *
- * The status line is drawn the same way and sits above it:
- * the one line a scenario keeps up for as long as it likes,
- * as high on the view as it goes, with a countdown this
- * client works out from the tick the script named. An
- * announcement at the top goes below the status line; one
- * placed "upper" is centred a quarter of the way down.
+ * The status line is drawn the same way: the one line a
+ * scenario keeps up for as long as it likes, as high on the
+ * view as it goes, with a countdown this client works out
+ * from the tick the script named. It moves sideways or down
+ * to keep clear of the scenario panel, the vote widgets and
+ * alliance request, and the full screen map's HUD column
+ * and build strip, but on the main view never down onto
+ * the player's own tank (scnStatusPlace has the rule).
  *
  * The bytes are the script's own and are not localised, so
  * nothing on this path goes near the language table.
@@ -4733,17 +4733,19 @@ static void renderScenarioPanel(ClientSim *cs) {
    same way the panel's own text does. */
 #define SCN_ANNOUNCE_UNITS 20.0f
 
-/* The space above the line on the top row, and the space it keeps from
-   anything it has to move clear of, in panel units. The panel's own inset
-   from the view's corner, so the two line up when they sit side by side. */
+/* The space the status line keeps from anything it has to move clear of, and
+   the space an announcement with a position keeps below the status line, in
+   panel units. The panel's own inset from the view's corner, so the status
+   line and the panel line up when they sit side by side. */
 #define SCN_ANNOUNCE_INSET_UNITS SCN_PANEL_DEFAULT_INSET
 
-/* The most things the line is kept clear of at once: the panel, two vote
-   widgets, the alliance request, and the full screen map's HUD column and
-   build strip. */
+/* The most things the status line is kept clear of at once: the panel, two
+   vote widgets, the alliance request, and the full screen map's HUD column
+   and build strip. */
 #define SCN_ANNOUNCE_MAX_OBSTACLES 8
 
-/* Adds a window's last known rect to the things the line keeps clear of.
+/* Adds a window's last known rect to the things the status line keeps clear
+   of.
    Active is this frame, for a window already submitted (the panel); WasActive
    is the last one, for a window submitted after the line (the vote widgets
    and the alliance request), which sit still from frame to frame. */
@@ -4783,11 +4785,6 @@ static void scnAnnounceAddHudRect(float mapX, float mapY, float x, float y,
    announcement's inset: the status line is meant to sit as high on the view
    as it can and still keep its outline inside it. */
 #define SCN_STATUS_INSET_UNITS 1.0f
-
-/* How far down the view an announcement placed "upper" is centred, as a
-   share of the view's height: a quarter of the way down, clear of the status
-   line and well above the player's own tank. */
-#define SCN_ANNOUNCE_UPPER_SHARE 0.25f
 
 /* Draws one outlined line at (px, py): the line in near-black one stroke out
    in each of the eight directions, so the letters keep an edge whichever way
@@ -4853,13 +4850,12 @@ static void renderScenarioAnnounce(ClientSim *cs) {
     }
 
     /* The game view in render coordinates, and the things at its top the
-       lines have to keep clear of. The full screen map is the view when it
-       owns the window, with its HUD column down the right and its build
-       strip on the left. One slot is kept back for the status line.
-       tankView is false on the full screen map, where the tank is wherever
-       it is on the map and not in the middle square. */
+       status line has to keep clear of. The full screen map is the view when
+       it owns the window, with its HUD column down the right and its build
+       strip on the left. tankView is false on the full screen map, where the
+       tank is wherever it is on the map and not in the middle square. */
     ScnAnnounceRect view;
-    ScnAnnounceRect obstacles[SCN_ANNOUNCE_MAX_OBSTACLES + 1];
+    ScnAnnounceRect obstacles[SCN_ANNOUNCE_MAX_OBSTACLES];
     int             count    = 0;
     bool            tankView = true;
     float mapX = 0.0f, mapY = 0.0f, mapW = 0.0f, mapH = 0.0f;
@@ -4907,34 +4903,36 @@ static void renderScenarioAnnounce(ClientSim *cs) {
        box that has to stay clear is that much bigger than the letters. */
     const float o = (scale > 1.0f) ? scale : 1.0f;
     const float inset = SCN_ANNOUNCE_INSET_UNITS * scale;
-    /* On the main view the player's tank sits in the middle square, and no
-       line is moved down onto it: the floor is the top of that square. The
-       full screen map has no such square, so there the floor is the bottom
-       of the map. */
+    /* On the main view the player's tank sits in the middle square, and the
+       status line is never moved down onto it: the floor is the top of that
+       square. The full screen map has no such square, so there the floor is
+       the bottom of the map. */
     const float floorY =
         tankView ? (view.y0 + view.y1) * 0.5f -
                        (view.y1 - view.y0) / (float)MAIN_SCREEN_SIZE_Y * 0.5f
                  : view.y1;
 
     /* The status line first, as high on the view as it goes, moved sideways
-       or down only by the same things the announcement keeps clear of. Its
-       row then becomes a band the width of the view, so an announcement at
+       or down by the things at the top of the view. Its row then becomes a
+       band the width of the view, so an announcement with a position near
        the top drops below it rather than sharing its row. */
+    ScnAnnounceRect statusBand = { 0.0f, 0.0f, 0.0f, 0.0f };
+    bool            haveBand   = false;
     if (haveStatus) {
         const ImVec2 measured =
             font->CalcTextSizeA(height, FLT_MAX, 0.0f, status);
         const float boxW = measured.x + 2.0f * o;
         const float boxH = measured.y + 2.0f * o;
         float boxX = 0.0f, boxY = 0.0f;
-        scnAnnouncePlace(view, boxW, boxH, SCN_STATUS_INSET_UNITS * scale,
-                         inset, floorY, obstacles, count, &boxX, &boxY);
+        scnStatusPlace(view, boxW, boxH, SCN_STATUS_INSET_UNITS * scale,
+                       inset, floorY, obstacles, count, &boxX, &boxY);
         scnDrawOutlinedLine(dl, font, height, boxX + o, boxY + o, o, 255,
                             status);
-        obstacles[count].x0 = view.x0;
-        obstacles[count].y0 = boxY;
-        obstacles[count].x1 = view.x1;
-        obstacles[count].y1 = boxY + boxH;
-        count++;
+        statusBand.x0 = view.x0;
+        statusBand.y0 = boxY;
+        statusBand.x1 = view.x1;
+        statusBand.y1 = boxY + boxH;
+        haveBand      = true;
     }
 
     if (!haveAnnounce) return;
@@ -4942,18 +4940,17 @@ static void renderScenarioAnnounce(ClientSim *cs) {
     const ImVec2 measured = font->CalcTextSizeA(height, FLT_MAX, 0.0f, text);
     const float  boxW     = measured.x + 2.0f * o;
     const float  boxH     = measured.y + 2.0f * o;
-    float boxX = 0.0f, boxY = 0.0f;
-    if (clientSimGetScnAnnouncePlace(cs) ==
-        (uint8_t)SCN_ANNOUNCE_PLACE_UPPER) {
-        /* Centred on the line a quarter of the way down the view. */
-        const float startY = view.y0 +
-                             (view.y1 - view.y0) * SCN_ANNOUNCE_UPPER_SHARE -
-                             boxH * 0.5f;
-        scnAnnouncePlaceFrom(view, boxW, boxH, startY, inset, floorY,
-                             obstacles, count, &boxX, &boxY);
+    float   boxX = 0.0f, boxY = 0.0f;
+    uint8_t posX = 0, posY = 0;
+    if (clientSimGetScnAnnouncePos(cs, &posX, &posY)) {
+        /* Where the script said, kept inside the view by the status line's
+           inset and below the status line. */
+        scnAnnounceAt(view, boxW, boxH, posX, posY,
+                      SCN_STATUS_INSET_UNITS * scale,
+                      haveBand ? &statusBand : nullptr, inset, &boxX, &boxY);
     } else {
-        scnAnnouncePlace(view, boxW, boxH, inset, inset, floorY, obstacles,
-                         count, &boxX, &boxY);
+        /* Where announcements have always gone. */
+        scnAnnounceDefaultPlace(view, boxW, o, &boxX, &boxY);
     }
 
     /* Full strength until the last stretch, then out. */

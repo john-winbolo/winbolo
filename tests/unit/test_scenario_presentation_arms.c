@@ -1222,7 +1222,7 @@ int run_scn_arm_markers_scores_reset(void) {
 }
 
 /* ================================================================
- * 9b. The status line and the announcement's place: what the arms publish
+ * 9b. The status line and the announcement's position: what the arms publish
  *     and record, the status line's no-change rule, the joiner replay,
  *     the ring snapshot and the reset.
  * ================================================================ */
@@ -1269,7 +1269,7 @@ static int paSnapshotStatus(const uint8_t *snap, int snapLen) {
     return found;
 }
 
-int run_scn_arm_status_and_place(void) {
+int run_scn_arm_status_and_position(void) {
     ReplayHarness     h;
     ServerSim        *sim;
     PaStatusCapture   st;
@@ -1326,22 +1326,43 @@ int run_scn_arm_status_and_place(void) {
     UT_ASSERT(paStatus(sim, 0xFF, 0, "x") != SCN_OP_OK);
     UT_ASSERT(st.count == 4);
 
-    /* ── announce place ── upper, then the top. */
+    /* ── announce position ── one with a position, then one with none. */
     memset(&op, 0, sizeof(op));
     op.type = SCN_OP_ANNOUNCE;
-    op.u.announce.ticks = 300;
-    op.u.announce.place = SCN_ANNOUNCE_PLACE_UPPER;
+    op.u.announce.ticks  = 300;
+    op.u.announce.hasPos = 1;
+    op.u.announce.posX   = 40;
+    op.u.announce.posY   = (BYTE)SCN_ANNOUNCE_POS_MAX;
     SDL_strlcpy(op.u.announce.text, "News", sizeof(op.u.announce.text));
     UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_OK);
     UT_ASSERT(cap.announceCount == 1);
-    UT_ASSERT(cap.lastAnnounce.u.scnAnnounce.place == SCN_ANNOUNCE_PLACE_UPPER);
+    UT_ASSERT(cap.lastAnnounce.u.scnAnnounce.hasPos == 1);
+    UT_ASSERT(cap.lastAnnounce.u.scnAnnounce.posX == 40);
+    UT_ASSERT(cap.lastAnnounce.u.scnAnnounce.posY == SCN_ANNOUNCE_POS_MAX);
     UT_ASSERT(paAnnounce(sim, 0, 300, "Top") == SCN_OP_OK);
     UT_ASSERT(cap.announceCount == 2);
-    UT_ASSERT(cap.lastAnnounce.u.scnAnnounce.place == SCN_ANNOUNCE_PLACE_TOP);
-    /* A place past the set is refused. */
-    op.u.announce.place = SCN_ANNOUNCE_PLACE_COUNT;
+    UT_ASSERT(cap.lastAnnounce.u.scnAnnounce.hasPos == 0);
+
+    /* A position byte past the far edge is refused, on either axis. */
+    op.u.announce.posX = (BYTE)(SCN_ANNOUNCE_POS_MAX + 1);
     UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_RANGE);
+    op.u.announce.posX = 40;
+    op.u.announce.posY = (BYTE)(SCN_ANNOUNCE_POS_MAX + 1);
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_RANGE);
+    op.u.announce.posY = 0;
     UT_ASSERT(cap.announceCount == 2);
+
+    /* A positioned line past the text an older client takes is refused,
+       not cut; at the limit it is published. */
+    memset(op.u.announce.text, 0, sizeof(op.u.announce.text));
+    memset(op.u.announce.text, 'x', SCN_ANNOUNCE_POSITIONED_TEXT_MAX + 1);
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_TOO_BIG);
+    UT_ASSERT(cap.announceCount == 2);
+    op.u.announce.text[SCN_ANNOUNCE_POSITIONED_TEXT_MAX] = '\0';
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_OK);
+    UT_ASSERT(cap.announceCount == 3);
+    UT_ASSERT(strlen(cap.lastAnnounce.u.scnAnnounce.text) ==
+              SCN_ANNOUNCE_POSITIONED_TEXT_MAX);
 
     serverSimUnregisterSubscriber(sim, stHandle);
     replayHarnessTick(&h, 4);
@@ -1369,14 +1390,24 @@ int run_scn_arm_status_and_place(void) {
     UT_ASSERT(hits.payloadLen[3] == 7);            /* the clear */
     UT_ASSERT(hits.payload[3][6] == 0);
 
-    /* The upper announcement carries its place after the text; the top one
-       is recorded as it always was. */
+    /* The positioned announcement carries its two position bytes after the
+       text; the one with none is recorded as it always was. */
     UT_ASSERT(paFindLogged(h.path, (uint8_t)log_ScnAnnounce, &hits));
-    UT_ASSERT(hits.count == 2);
-    UT_ASSERT_MSG(hits.payloadLen[0] == 5 + 4 + 1,
-                  "the upper line's record is %d bytes", hits.payloadLen[0]);
-    UT_ASSERT(hits.payload[0][5 + 4] == SCN_ANNOUNCE_PLACE_UPPER);
+    UT_ASSERT(hits.count == 3);
+    UT_ASSERT_MSG(hits.payloadLen[0] == 5 + 4 + 2,
+                  "the positioned line's record is %d bytes",
+                  hits.payloadLen[0]);
+    UT_ASSERT(hits.payload[0][4] == 4);
+    UT_ASSERT(memcmp(hits.payload[0] + 5, "News", 4) == 0);
+    UT_ASSERT(hits.payload[0][5 + 4] == 40);
+    UT_ASSERT(hits.payload[0][5 + 4 + 1] == SCN_ANNOUNCE_POS_MAX);
     UT_ASSERT(hits.payloadLen[1] == 5 + 3);
+    UT_ASSERT_MSG(hits.payloadLen[2] ==
+                      5 + SCN_ANNOUNCE_POSITIONED_TEXT_MAX + 2,
+                  "the longest positioned line's record is %d bytes",
+                  hits.payloadLen[2]);
+    UT_ASSERT(hits.payload[2][5 + SCN_ANNOUNCE_POSITIONED_TEXT_MAX] == 40);
+    UT_ASSERT(hits.payload[2][5 + SCN_ANNOUNCE_POSITIONED_TEXT_MAX + 1] == 0);
 
     replayHarnessStop(&h);
 

@@ -1168,12 +1168,12 @@ int run_lv_presentation_announce_posts(void) {
     return 0;
 }
 
-/* ── 8b. The status line, and a placed announcement ───────────────── */
+/* ── 8b. The status line, and an announcement with a position ─────── */
 
 /* After the opening:
  *   tick 0   status "Wave 1/5" to everyone, counting to tick 4096   20 ms
- *   tick 1   "Hi" to everyone for 100 ticks, placed upper: the one
- *            place byte after the text                              40 ms
+ *   tick 1   "Hi" to everyone for 100 ticks at the top: the two
+ *            position bytes, 127 and 0, after the text              40 ms
  *   tick 2   the status line cleared                                60 ms
  *   ticks 3-6 NOEVENTS 3
  *   tick 7   LOG_QUIT                                              160 ms */
@@ -1181,8 +1181,8 @@ static const uint8_t kLvpStatusStream[] = {
     0x03, 0x01, 0x44, 0x00, 0x0F,
         0x00, 0xFF, 0x00, 0x00, 0x10, 0x00,
         0x08, 0x57, 0x61, 0x76, 0x65, 0x20, 0x31, 0x2F, 0x35,
-    0x03, 0x01, 0x40, 0x00, 0x08,
-        0x00, 0xFF, 0x00, 0x64, 0x02, 0x48, 0x69, 0x01,
+    0x03, 0x01, 0x40, 0x00, 0x09,
+        0x00, 0xFF, 0x00, 0x64, 0x02, 0x48, 0x69, 0x7F, 0x00,
     0x03, 0x01, 0x44, 0x00, 0x07,
         0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00,
     0x01, 0x03,
@@ -1214,9 +1214,13 @@ int run_lv_presentation_status_line(void) {
     heldEnds = (st != NULL && st->endsAt == 4096u);
     rowSet   = (lv_screenGetStatusRow(0, 0xFF) != NULL &&
                 lv_screenGetStatusRow(0, 0xFF)->set);
-    /* The placed announcement is read past its place byte. */
+    /* The positioned announcement is read with its position, and the
+       status record after it from the right byte. */
     annAt40  = (lv_screenGetAnnounce()->set &&
-                strcmp(lv_screenGetAnnounce()->text, "Hi") == 0);
+                strcmp(lv_screenGetAnnounce()->text, "Hi") == 0 &&
+                lv_screenGetAnnounce()->hasPos &&
+                lv_screenGetAnnounce()->posX == 127 &&
+                lv_screenGetAnnounce()->posY == 0);
 
     lv_screenSeekToTimeMs(120);
     goneAt120 = (lv_screenFollowedStatus() == NULL);
@@ -1235,9 +1239,124 @@ int run_lv_presentation_status_line(void) {
     UT_ASSERT_MSG(rowSet, "everyone's status row is not set at 40 ms");
     UT_ASSERT_MSG(heldText, "the status line holds the wrong text");
     UT_ASSERT_MSG(heldEnds, "the status line counts to the wrong tick");
-    UT_ASSERT_MSG(annAt40, "the placed announcement was not read");
+    UT_ASSERT_MSG(annAt40, "the positioned announcement was not read");
     UT_ASSERT_MSG(goneAt120, "the status line is still up after its clear");
     UT_ASSERT_MSG(backAt40, "a seek back did not rebuild the status line");
+    return 0;
+}
+
+/* ── 8c. Where a recorded announcement goes ────────────────────────── */
+
+/* After the opening:
+ *   tick 0   "Go!" with no position                                  20 ms
+ *   tick 1   "Hi" at (30, 240)                                       40 ms
+ *   tick 2   "Up" at (255, 16) and one byte more a later build
+ *            might add: 255 reads as 254, the extra byte is skipped  60 ms
+ *   tick 3   "No" and one stray byte: too few for a position         80 ms
+ *   ticks 4-7 NOEVENTS 3
+ *   tick 8   LOG_QUIT                                               180 ms */
+static const uint8_t kLvpAnnouncePosStream[] = {
+    0x03, 0x01, 0x40, 0x00, 0x08,
+        0x00, 0xFF, 0x00, 0x64, 0x03, 0x47, 0x6F, 0x21,
+    0x03, 0x01, 0x40, 0x00, 0x09,
+        0x00, 0xFF, 0x00, 0x64, 0x02, 0x48, 0x69, 0x1E, 0xF0,
+    0x03, 0x01, 0x40, 0x00, 0x0A,
+        0x00, 0xFF, 0x00, 0x64, 0x02, 0x55, 0x70, 0xFF, 0x10, 0x55,
+    0x03, 0x01, 0x40, 0x00, 0x08,
+        0x00, 0xFF, 0x00, 0x64, 0x02, 0x4E, 0x6F, 0x33,
+    0x01, 0x03,
+    0x00,
+};
+
+/* The announcement stored at ms, as text and position: hasPos is -1 when
+   nothing is stored. */
+typedef struct {
+    char text[8];
+    int  hasPos;
+    int  x;
+    int  y;
+} LvpAnnSeen;
+
+static LvpAnnSeen lvpAnnAt(uint32_t ms) {
+    LvpAnnSeen           seen;
+    const LvPresAnnounce *a;
+
+    memset(&seen, 0, sizeof(seen));
+    lv_screenSeekToTimeMs(ms);
+    a = lv_screenGetAnnounce();
+    if (!a->set) {
+        seen.hasPos = -1;
+        return seen;
+    }
+    snprintf(seen.text, sizeof(seen.text), "%s", a->text);
+    seen.hasPos = a->hasPos ? 1 : 0;
+    seen.x      = a->posX;
+    seen.y      = a->posY;
+    return seen;
+}
+
+int run_lv_presentation_announce_position(void) {
+    const char     *path = "lv_presentation_announce_pos.wbv";
+    static LvpLog   b;
+    LogViewerState *lv;
+    LvpAnnSeen      at20, at40, at60, at80, back40, back20;
+    bool            playedPos = false;
+
+    lvpPutOpening(&b);
+    lvpPut(&b, kLvpAnnouncePosStream, sizeof(kLvpAnnouncePosStream));
+    lv = lvpOpen(&b, path);
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the hand-built log could not be loaded");
+    }
+
+    /* Played through from the start: the line at 40 ms has its position
+       as playback reads it, not only as a rebuild does. */
+    {
+        int steps = 0;
+        while (lv_screenIsPlaying() == TRUE && steps < 64 &&
+               !(lv_screenGetAnnounce()->set &&
+                 strcmp(lv_screenGetAnnounce()->text, "Hi") == 0)) {
+            lv_screenLogTick();
+            steps++;
+        }
+        playedPos = lv_screenGetAnnounce()->set &&
+                    lv_screenGetAnnounce()->hasPos &&
+                    lv_screenGetAnnounce()->posX == 30 &&
+                    lv_screenGetAnnounce()->posY == 240;
+    }
+
+    /* Seeks forward, then back: each rebuild reads the position from the
+       record's own framed length. */
+    at20   = lvpAnnAt(20);
+    at40   = lvpAnnAt(40);
+    at60   = lvpAnnAt(60);
+    at80   = lvpAnnAt(80);
+    back40 = lvpAnnAt(40);
+    back20 = lvpAnnAt(20);
+
+    UT_ASSERT_MSG(lvpPlayToEnd(), "playback did not reach the end");
+    lv_decoderDestroy(lv);
+    remove(path);
+
+    UT_ASSERT_MSG(playedPos, "playback lost the position of the line at 40 ms");
+    UT_ASSERT_MSG(strcmp(at20.text, "Go!") == 0 && at20.hasPos == 0,
+                  "at 20 ms: '%s' hasPos %d", at20.text, at20.hasPos);
+    UT_ASSERT_MSG(strcmp(at40.text, "Hi") == 0 && at40.hasPos == 1 &&
+                      at40.x == 30 && at40.y == 240,
+                  "at 40 ms: '%s' hasPos %d at (%d, %d)", at40.text,
+                  at40.hasPos, at40.x, at40.y);
+    UT_ASSERT_MSG(strcmp(at60.text, "Up") == 0 && at60.hasPos == 1 &&
+                      at60.x == (int)SCN_ANNOUNCE_POS_MAX && at60.y == 16,
+                  "at 60 ms: '%s' hasPos %d at (%d, %d)", at60.text,
+                  at60.hasPos, at60.x, at60.y);
+    UT_ASSERT_MSG(strcmp(at80.text, "No") == 0 && at80.hasPos == 0,
+                  "at 80 ms: '%s' hasPos %d", at80.text, at80.hasPos);
+    UT_ASSERT_MSG(back40.hasPos == 1 && back40.x == 30 && back40.y == 240,
+                  "a seek back to 40 ms rebuilt hasPos %d at (%d, %d)",
+                  back40.hasPos, back40.x, back40.y);
+    UT_ASSERT_MSG(back20.hasPos == 0 && strcmp(back20.text, "Go!") == 0,
+                  "a seek back to 20 ms kept a position");
     return 0;
 }
 

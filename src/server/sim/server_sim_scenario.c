@@ -3280,14 +3280,17 @@ static ScnOpResult scenarioOpScore(ServerSim *sim, const ScnOpScore *p) {
     return SCN_OP_OK;
 }
 
-/* Put a line across the centre of the screen for a while.
+/* Put a big line across the game view for a while, where announcements
+ * always go or at the position the script gave.
  *
  * An empty line is the clear, and its ticks are not read: there is nothing to
  * hold up. A line with something in it and no time to be up in is a mistake
  * rather than a clear, so it is refused instead of flashing for a frame. */
 static ScnOpResult scenarioOpAnnounce(ServerSim *sim, const ScnOpAnnounce *p) {
     ControlEvent evt;
-    char         pstr[1 + SCN_TEXT_MAX];
+    /* The pascal string, and the two position bytes after it that the log
+       writer reads when opt3 says the line has a position. */
+    char         pstr[1 + SCN_TEXT_MAX + 2];
     BYTE         destTeam, destPlayer;
     size_t       len;
     ScnOpResult  r;
@@ -3309,16 +3312,28 @@ static ScnOpResult scenarioOpAnnounce(ServerSim *sim, const ScnOpAnnounce *p) {
     if (len > 0 && p->ticks == 0) {
         return SCN_OP_RANGE;
     }
-    if (p->place >= (BYTE)SCN_ANNOUNCE_PLACE_COUNT) {
-        return SCN_OP_RANGE;
+    if (p->hasPos != 0) {
+        if (p->posX > (BYTE)SCN_ANNOUNCE_POS_MAX ||
+            p->posY > (BYTE)SCN_ANNOUNCE_POS_MAX) {
+            return SCN_OP_RANGE;
+        }
+        /* An older client drops a positioned body past its field (see
+           SCN_ANNOUNCE_POSITIONED_TEXT_MAX). The clear has no position to
+           send, so it is never held to this. */
+        if (len > SCN_ANNOUNCE_POSITIONED_TEXT_MAX) {
+            return SCN_OP_TOO_BIG;
+        }
     }
 
-    /* The place rides in opt3; the writer puts it after the text only when
-       it is not the top, so a line at the top is recorded as it always
-       was. */
+    /* opt3 says whether the line has a position; when it does, the two
+       bytes ride after the pascal string and the writer puts them after the
+       text. A line with no position is recorded as it always was. */
     pstr[0] = (char)len;
     memcpy(pstr + 1, p->text, len);
-    logAddEvent(log_ScnAnnounce, destTeam, destPlayer, p->place, 0, p->ticks,
+    pstr[1 + len]     = (char)p->posX;
+    pstr[1 + len + 1] = (char)p->posY;
+    logAddEvent(log_ScnAnnounce, destTeam, destPlayer,
+                (BYTE)((p->hasPos != 0 && len > 0) ? 1 : 0), 0, p->ticks,
                 pstr);
 
     memset(&evt, 0, sizeof(evt));
@@ -3326,7 +3341,9 @@ static ScnOpResult scenarioOpAnnounce(ServerSim *sim, const ScnOpAnnounce *p) {
     SDL_strlcpy(evt.u.scnAnnounce.text, p->text,
                 sizeof(evt.u.scnAnnounce.text));
     evt.u.scnAnnounce.ticks      = p->ticks;
-    evt.u.scnAnnounce.place      = p->place;
+    evt.u.scnAnnounce.hasPos     = (p->hasPos != 0) ? 1u : 0u;
+    evt.u.scnAnnounce.posX       = p->posX;
+    evt.u.scnAnnounce.posY       = p->posY;
     evt.u.scnAnnounce.destTeam   = destTeam;
     evt.u.scnAnnounce.destPlayer = destPlayer;
     serverSimPublishControl(sim, &evt);

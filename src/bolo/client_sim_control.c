@@ -78,7 +78,9 @@ static void clientSimScnClearPresentation(ClientSim *cs) {
     cs->scnAnnounceText[0] = '\0';
     cs->scnAnnounceTicks = 0;
     cs->scnAnnounceArrivedTick = 0;
-    cs->scnAnnouncePlace = 0;
+    cs->scnAnnounceHasPos = 0;
+    cs->scnAnnouncePosX = 0;
+    cs->scnAnnouncePosY = 0;
     cs->scnStatusText[0] = '\0';
     cs->scnStatusEndsAt = SCN_STATUS_NO_COUNTDOWN;
     memset(cs->scnMarkers, 0, sizeof(cs->scnMarkers));
@@ -1532,7 +1534,9 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
            the line down against the clock the scenario set it by rather
            than against wall time. */
         cs->scnAnnounceArrivedTick = cs->lastServerTick;
-        cs->scnAnnouncePlace = evt->u.scnAnnounce.place;
+        cs->scnAnnounceHasPos = evt->u.scnAnnounce.hasPos ? 1u : 0u;
+        cs->scnAnnouncePosX = evt->u.scnAnnounce.posX;
+        cs->scnAnnouncePosY = evt->u.scnAnnounce.posY;
         break;
 
     case CTRL_SCN_STATUS:

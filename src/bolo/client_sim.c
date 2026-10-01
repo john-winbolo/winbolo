@@ -2224,9 +2224,13 @@ const char *clientSimGetScnAnnounce(const ClientSim *cs, uint16_t *outTicks,
   return cs->scnAnnounceText;
 }
 
-uint8_t clientSimGetScnAnnouncePlace(const ClientSim *cs) {
-  if (cs == NULL || cs->scnAnnounceText[0] == '\0') return 0;
-  return cs->scnAnnouncePlace;
+bool clientSimGetScnAnnouncePos(const ClientSim *cs, uint8_t *outX,
+                                uint8_t *outY) {
+  if (cs == NULL || cs->scnAnnounceText[0] == '\0') return false;
+  if (cs->scnAnnounceHasPos == 0) return false;
+  if (outX != NULL) *outX = cs->scnAnnouncePosX;
+  if (outY != NULL) *outY = cs->scnAnnouncePosY;
+  return true;
 }
 
 const char *clientSimGetScnStatus(const ClientSim *cs, uint32_t *outEndsAt) {

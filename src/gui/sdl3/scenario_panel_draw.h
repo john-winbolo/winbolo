@@ -196,9 +196,9 @@ typedef struct ScnAnnounceRect {
 } ScnAnnounceRect;
 
 /*********************************************************
- *NAME:          scnAnnouncePlace
+ *NAME:          scnStatusPlace
  *PURPOSE:
- *  Where the announcement's top-left corner goes: at the
+ *  Where the status line's top-left corner goes: at the
  *  top of the game view, centred over it, and clear of the
  *  things already drawn up there (the scenario panel, the
  *  vote widgets, the HUD column of the full screen map).
@@ -215,8 +215,7 @@ typedef struct ScnAnnounceRect {
  *  the top row, over whatever is there.
  *
  *  A line wider than the view is centred over the view and
- *  runs out past both of its edges, the same as it always
- *  has.
+ *  runs out past both of its edges.
  *
  *ARGUMENTS:
  *  view      - the game view
@@ -229,41 +228,13 @@ typedef struct ScnAnnounceRect {
  *  count     - how many there are
  *  outX/outY - receive the line's top-left corner
  *********************************************************/
-static inline void scnAnnouncePlaceFrom(ScnAnnounceRect view, float textW,
-                                        float textH, float startY, float gap,
-                                        float floorY,
-                                        const ScnAnnounceRect *obstacles,
-                                        int count, float *outX, float *outY);
-
-static inline void scnAnnouncePlace(ScnAnnounceRect view, float textW,
-                                    float textH, float inset, float gap,
-                                    float floorY,
-                                    const ScnAnnounceRect *obstacles,
-                                    int count, float *outX, float *outY) {
-    scnAnnouncePlaceFrom(view, textW, textH, view.y0 + inset, gap, floorY,
-                         obstacles, count, outX, outY);
-}
-
-/*********************************************************
- *NAME:          scnAnnouncePlaceFrom
- *PURPOSE:
- *  scnAnnouncePlace with the first row the search tries
- *  given as a y rather than as an inset from the top of
- *  the view. An announcement placed "upper" starts a
- *  quarter of the way down the view, and the rule from
- *  there on is the same: sideways first, then down below
- *  the thing in the way, never past floorY, and back to
- *  the first row centred when nothing fits.
- *
- *  A startY above the view's top starts at the top.
- *********************************************************/
-static inline void scnAnnouncePlaceFrom(ScnAnnounceRect view, float textW,
-                                        float textH, float startY, float gap,
-                                        float floorY,
-                                        const ScnAnnounceRect *obstacles,
-                                        int count, float *outX, float *outY) {
+static inline void scnStatusPlace(ScnAnnounceRect view, float textW,
+                                  float textH, float inset, float gap,
+                                  float floorY,
+                                  const ScnAnnounceRect *obstacles,
+                                  int count, float *outX, float *outY) {
     const float centreX = (view.x0 + view.x1) * 0.5f;
-    const float topY    = (startY > view.y0) ? startY : view.y0;
+    const float topY    = view.y0 + inset;
     float spanX0 = view.x0;
     float spanX1 = view.x1;
     float lowestY;
@@ -349,6 +320,101 @@ static inline void scnAnnouncePlaceFrom(ScnAnnounceRect view, float textW,
 
     if (outX != NULL) *outX = centreX - textW * 0.5f;
     if (outY != NULL) *outY = topY;
+}
+
+/* How far down the game view an announcement with no position has the top
+ * of its letters, as a share of the view's height. This is where every
+ * announcement went before a script could say where: in the upper third,
+ * clear of the player's own tank in the middle. */
+#define SCN_ANNOUNCE_DOWN 0.28f
+
+/*********************************************************
+ *NAME:          scnAnnounceDefaultPlace
+ *PURPOSE:
+ *  Where an announcement with no position goes: centred
+ *  across the view, with the top of its letters
+ *  SCN_ANNOUNCE_DOWN of the way down. Nothing moves it. A
+ *  line wider than the view runs out past both edges.
+ *
+ *ARGUMENTS:
+ *  view      - the game view
+ *  boxW      - the line's width, outline included
+ *  outline   - how far the outline reaches past the letters
+ *  outX/outY - receive the box's top-left corner; the
+ *              letters go one outline in from it
+ *********************************************************/
+static inline void scnAnnounceDefaultPlace(ScnAnnounceRect view, float boxW,
+                                           float outline, float *outX,
+                                           float *outY) {
+    if (outX != NULL) *outX = (view.x0 + view.x1) * 0.5f - boxW * 0.5f;
+    if (outY != NULL) {
+        *outY = view.y0 + (view.y1 - view.y0) * SCN_ANNOUNCE_DOWN - outline;
+    }
+}
+
+/* A position byte as a share of the view, 0 to 1. A byte past
+ * SCN_ANNOUNCE_POS_MAX reads as the far edge. */
+static inline float scnAnnouncePosShare(uint8_t b) {
+    if (b > (uint8_t)SCN_ANNOUNCE_POS_MAX) b = (uint8_t)SCN_ANNOUNCE_POS_MAX;
+    return (float)b / (float)SCN_ANNOUNCE_POS_MAX;
+}
+
+/* One axis of scnAnnounceAt: the box's low edge with its centre at
+ * lo + share * (hi - lo), kept inset inside lo..hi. A box too big for the
+ * room is centred on it. */
+static inline float scnAnnounceAxis(float lo, float hi, float share,
+                                    float size, float inset) {
+    const float minEdge = lo + inset;
+    const float maxEdge = hi - inset - size;
+    float       edge    = lo + share * (hi - lo) - size * 0.5f;
+
+    if (maxEdge < minEdge) return (lo + hi) * 0.5f - size * 0.5f;
+    if (edge < minEdge) edge = minEdge;
+    if (edge > maxEdge) edge = maxEdge;
+    return edge;
+}
+
+/*********************************************************
+ *NAME:          scnAnnounceAt
+ *PURPOSE:
+ *  Where an announcement with a position goes: its centre
+ *  on the point the script named, as shares of the view
+ *  across and down, then moved the least it takes to keep
+ *  the whole box inset inside the view, so no edge of the
+ *  line is cut off. A line too wide for the view is
+ *  centred across it.
+ *
+ *  The one thing it keeps clear of is the status line,
+ *  which also sits at the top: a box that would touch the
+ *  status line's band drops to one gap below it. It does
+ *  not move for panels or windows, and it may sit on the
+ *  player's tank; the script chose the spot.
+ *
+ *ARGUMENTS:
+ *  view       - the game view
+ *  boxW/boxH  - the line's size, outline included
+ *  posX/posY  - the centre as position bytes
+ *  inset      - the space kept from the view's edges
+ *  statusBand - the status line's band, or NULL for none
+ *  gap        - the space kept below the status line
+ *  outX/outY  - receive the box's top-left corner
+ *********************************************************/
+static inline void scnAnnounceAt(ScnAnnounceRect view, float boxW,
+                                 float boxH, uint8_t posX, uint8_t posY,
+                                 float inset,
+                                 const ScnAnnounceRect *statusBand,
+                                 float gap, float *outX, float *outY) {
+    const float x = scnAnnounceAxis(view.x0, view.x1,
+                                    scnAnnouncePosShare(posX), boxW, inset);
+    float       y = scnAnnounceAxis(view.y0, view.y1,
+                                    scnAnnouncePosShare(posY), boxH, inset);
+
+    if (statusBand != NULL && y < statusBand->y1 + gap &&
+        y + boxH > statusBand->y0 - gap) {
+        y = statusBand->y1 + gap;
+    }
+    if (outX != NULL) *outX = x;
+    if (outY != NULL) *outY = y;
 }
 
 /*********************************************************

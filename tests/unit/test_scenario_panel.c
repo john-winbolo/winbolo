@@ -555,109 +555,119 @@ int run_scenario_announce_remaining(void) {
     return 0;
 }
 
-/* Where the announcement goes: the top of the game view, centred, and clear
- * of the things drawn up there, but never moved down onto the player's tank.
+/* Two floats the same to within a hundredth of a pixel: the default place is
+ * a share of the view, which a float holds only to its last bit. */
+static bool scnNear(float a, float b) {
+    float d = a - b;
+    if (d < 0.0f) d = -d;
+    return d < 0.01f;
+}
+
+/* Where an announcement goes.
  *
- * The view is the classic one at zoom 1: 240 x 240 pixels at (81, 18), so
- * the tank's square starts 8 pixels above the middle, at y 130, and that is
- * the floor. The line is 100 x 20, the inset and the gap are 4. */
-int run_scenario_announce_place(void) {
+ * With no position it goes where announcements always went: centred across
+ * the view, the top of its letters 0.28 of the way down, moved by nothing.
+ * The letters sit one outline in from the box this places, so the box is
+ * checked against the letter position the older drawer worked out itself.
+ *
+ * With a position its centre goes on the point the script named, as shares
+ * of the view, kept inset inside the view, and dropped below the status
+ * line when it would touch it.
+ *
+ * The view is the classic one at zoom 1: 240 x 240 pixels at (81, 18). The
+ * line is 100 x 20 with its outline, the inset 1 and the gap 4. */
+int run_scenario_announce_position(void) {
     const ScnAnnounceRect view = { 81.0f, 18.0f, 321.0f, 258.0f };
-    const float floorY = 130.0f;
+    const ScnAnnounceRect band = { 81.0f, 19.0f, 321.0f, 39.0f };
     float x = -1.0f;
     float y = -1.0f;
 
-    /* Nothing in the way: centred, one inset below the top. */
-    scnAnnouncePlace(view, 100.0f, 20.0f, 4.0f, 4.0f, floorY, NULL, 0, &x, &y);
-    UT_ASSERT(x == 151.0f);
-    UT_ASSERT(y == 22.0f);
+    /* The shares: 127 is exactly the middle, 254 the far edge, and 255
+       reads as 254. */
+    UT_ASSERT(scnAnnouncePosShare(0) == 0.0f);
+    UT_ASSERT(scnAnnouncePosShare((uint8_t)SCN_ANNOUNCE_POS_MID) == 0.5f);
+    UT_ASSERT(scnAnnouncePosShare((uint8_t)SCN_ANNOUNCE_POS_MAX) == 1.0f);
+    UT_ASSERT(scnAnnouncePosShare(255) == 1.0f);
 
-    /* A small panel in the top-right corner leaves room beside it: the line
-       stays on the top row and moves left only as far as the gap needs. */
+    /* ── no position ── the letters land where the older drawer put them:
+       px = view centre - text width / 2, py = top + height * 0.28. Text 96
+       wide with an outline of 2 is a box 100 wide. */
     {
-        const ScnAnnounceRect panel[1] = { { 250.0f, 22.0f, 317.0f, 89.0f } };
-        scnAnnouncePlace(view, 100.0f, 20.0f, 4.0f, 4.0f, floorY, panel, 1,
-                         &x, &y);
-        UT_ASSERT(x == 146.0f);
-        UT_ASSERT(y == 22.0f);
+        const float outline = 2.0f;
+        const float textW   = 96.0f;
+        const float mainPx  = (view.x0 + view.x1) * 0.5f - textW * 0.5f;
+        const float mainPy  = view.y0 + (view.y1 - view.y0) * 0.28f;
+        scnAnnounceDefaultPlace(view, textW + 2.0f * outline, outline, &x,
+                                &y);
+        UT_ASSERT_MSG(scnNear(x + outline, mainPx) &&
+                          scnNear(y + outline, mainPy),
+                      "the default line's letters are at (%.2f, %.2f), "
+                      "main put them at (%.2f, %.2f)", x + outline,
+                      y + outline, mainPx, mainPy);
+        UT_ASSERT(scnNear(y + outline, 85.2f));
     }
-
-    /* A wide, short panel leaves 104 pixels beside it, too few for a 120
-       wide line: the line drops to one gap below the panel, centred again. */
-    {
-        const ScnAnnounceRect panel[1] = { { 189.0f, 22.0f, 317.0f, 70.0f } };
-        scnAnnouncePlace(view, 120.0f, 20.0f, 4.0f, 4.0f, floorY, panel, 1,
-                         &x, &y);
-        UT_ASSERT(x == 141.0f);
-        UT_ASSERT(y == 74.0f);
-    }
-
-    /* The full size panel, 128 square: below it is past the floor, so the
-       line stays centred on the top row, over the panel. */
-    {
-        const ScnAnnounceRect panel[1] = { { 189.0f, 22.0f, 317.0f, 150.0f } };
-        scnAnnouncePlace(view, 120.0f, 20.0f, 4.0f, 4.0f, floorY, panel, 1,
-                         &x, &y);
-        UT_ASSERT(x == 141.0f);
-        UT_ASSERT(y == 22.0f);
-    }
-
-    /* A thing off to the side of the view is not in the way. */
-    {
-        const ScnAnnounceRect vote[1] = { { 330.0f, 0.0f, 440.0f, 60.0f } };
-        scnAnnouncePlace(view, 100.0f, 20.0f, 4.0f, 4.0f, floorY, vote, 1,
-                         &x, &y);
-        UT_ASSERT(x == 151.0f);
-        UT_ASSERT(y == 22.0f);
-    }
-
-    /* A line wider than the view is centred over it and runs past both
-       edges; a thing beside the view that it would cross pushes it down. */
-    scnAnnouncePlace(view, 300.0f, 20.0f, 4.0f, 4.0f, floorY, NULL, 0, &x, &y);
+    /* A line wider than the view still runs out past both edges, as it
+       always has. */
+    scnAnnounceDefaultPlace(view, 300.0f, 2.0f, &x, &y);
     UT_ASSERT(x == 51.0f);
-    UT_ASSERT(y == 22.0f);
+
+    /* ── a position ── the middle of the view. */
+    scnAnnounceAt(view, 100.0f, 20.0f, 127, 127, 1.0f, NULL, 4.0f, &x, &y);
+    UT_ASSERT_MSG(x == 151.0f && y == 128.0f,
+                  "the centred line is at (%.2f, %.2f)", x, y);
+
+    /* "top": y 0 would put half the line above the view, so it is moved
+       down to the inset. */
+    scnAnnounceAt(view, 100.0f, 20.0f, 127, 0, 1.0f, NULL, 4.0f, &x, &y);
+    UT_ASSERT(x == 151.0f);
+    UT_ASSERT_MSG(y == 19.0f, "the top line is at y %.2f", y);
+
+    /* The corners: kept whole inside the view, one inset from its edges. */
+    scnAnnounceAt(view, 100.0f, 20.0f, 0, 0, 1.0f, NULL, 4.0f, &x, &y);
+    UT_ASSERT(x == 82.0f && y == 19.0f);
+    scnAnnounceAt(view, 100.0f, 20.0f, 254, 254, 1.0f, NULL, 4.0f, &x, &y);
+    UT_ASSERT_MSG(x == 220.0f && y == 237.0f,
+                  "the bottom-right line is at (%.2f, %.2f)", x, y);
+    /* A byte of 255 is the same as 254. */
+    scnAnnounceAt(view, 100.0f, 20.0f, 255, 255, 1.0f, NULL, 4.0f, &x, &y);
+    UT_ASSERT(x == 220.0f && y == 237.0f);
+
+    /* A point well inside is not moved: three quarters across and down. */
     {
-        const ScnAnnounceRect vote[1] = { { 330.0f, 0.0f, 440.0f, 60.0f } };
-        scnAnnouncePlace(view, 300.0f, 20.0f, 4.0f, 4.0f, floorY, vote, 1,
-                         &x, &y);
-        UT_ASSERT(x == 51.0f);
-        UT_ASSERT(y == 64.0f);
+        const float wantX = view.x0 + 240.0f * (190.0f / 254.0f) - 50.0f;
+        const float wantY = view.y0 + 240.0f * (190.0f / 254.0f) - 10.0f;
+        scnAnnounceAt(view, 100.0f, 20.0f, 190, 190, 1.0f, NULL, 4.0f, &x,
+                      &y);
+        UT_ASSERT(scnNear(x, wantX) && scnNear(y, wantY));
     }
 
-    /* Two things stacked: the line drops below the first, finds the second
-       in the way on that row too, and drops below that. */
-    {
-        const ScnAnnounceRect stack[2] = {
-            { 81.0f, 18.0f, 321.0f, 60.0f },
-            { 81.0f, 60.0f, 321.0f, 100.0f },
-        };
-        scnAnnouncePlace(view, 100.0f, 20.0f, 4.0f, 4.0f, floorY, stack, 2,
-                         &x, &y);
-        UT_ASSERT(x == 151.0f);
-        UT_ASSERT(y == 104.0f);
-    }
+    /* A line wider than the view is centred across it. */
+    scnAnnounceAt(view, 300.0f, 20.0f, 0, 127, 1.0f, NULL, 4.0f, &x, &y);
+    UT_ASSERT(x == 51.0f);
 
-    /* A view with no free row at all: back to the top, centred, on top of
-       whatever is there, rather than out of sight. */
-    {
-        const ScnAnnounceRect wall[1] = { { 0.0f, 0.0f, 500.0f, 500.0f } };
-        scnAnnouncePlace(view, 100.0f, 20.0f, 4.0f, 4.0f, floorY, wall, 1,
-                         &x, &y);
-        UT_ASSERT(x == 151.0f);
-        UT_ASSERT(y == 22.0f);
-    }
+    /* ── the status line ── a line that would touch its band drops one gap
+       below it; one clear of it stays put. */
+    scnAnnounceAt(view, 100.0f, 20.0f, 127, 0, 1.0f, &band, 4.0f, &x, &y);
+    UT_ASSERT_MSG(y == 43.0f, "the top line under the status line is at "
+                  "y %.2f", y);
+    scnAnnounceAt(view, 100.0f, 20.0f, 127, 25, 1.0f, &band, 4.0f, &x, &y);
+    UT_ASSERT(y == 43.0f);
+    scnAnnounceAt(view, 100.0f, 20.0f, 127, 127, 1.0f, &band, 4.0f, &x, &y);
+    UT_ASSERT(y == 128.0f);
 
     return 0;
 }
 
-/* The status line's text, and where it and the announcement go together.
+/* The status line's text, and where it goes.
  *
  * The text is the script's line, and with a countdown four spaces and the
- * time left as a panel countdown shows it. The status line takes the top
- * row; the game view then treats its row as a band the width of the view,
- * so an announcement at the top drops below it. An announcement placed
- * "upper" starts a quarter of the way down and keeps the same rules from
- * there. Same classic view as run_scenario_announce_place. */
+ * time left as a panel countdown shows it.
+ *
+ * It goes at the top of the game view, centred, and clear of the things
+ * drawn up there, but never moved down onto the player's tank. The view is
+ * the classic one at zoom 1: 240 x 240 pixels at (81, 18), so the tank's
+ * square starts 8 pixels above the middle, at y 130, and that is the floor.
+ * The line is 100 x 20, the inset and the gap are 4 unless a case says. */
 int run_scenario_status_line(void) {
     const ScnAnnounceRect view = { 81.0f, 18.0f, 321.0f, 258.0f };
     const float floorY = 130.0f;
@@ -698,47 +708,89 @@ int run_scenario_status_line(void) {
     }
 
     /* The status line on the top row, one unit (here 1 px) below the top. */
-    scnAnnouncePlace(view, 100.0f, 20.0f, 1.0f, 4.0f, floorY, NULL, 0, &x, &y);
+    scnStatusPlace(view, 100.0f, 20.0f, 1.0f, 4.0f, floorY, NULL, 0, &x, &y);
     UT_ASSERT(x == 151.0f);
     UT_ASSERT(y == 19.0f);
 
-    /* Its row as a band: an announcement at the top drops one gap below. */
-    {
-        const ScnAnnounceRect band[1] = { { 81.0f, 19.0f, 321.0f, 39.0f } };
-        scnAnnouncePlace(view, 100.0f, 20.0f, 4.0f, 4.0f, floorY, band, 1,
-                         &x, &y);
-        UT_ASSERT(x == 151.0f);
-        UT_ASSERT(y == 43.0f);
+    /* Nothing in the way, inset 4: centred, one inset below the top. */
+    scnStatusPlace(view, 100.0f, 20.0f, 4.0f, 4.0f, floorY, NULL, 0, &x, &y);
+    UT_ASSERT(x == 151.0f);
+    UT_ASSERT(y == 22.0f);
 
-        /* Placed "upper": centred on the line a quarter of the way down
-           (18 + 240 / 4 = 78), so its top is at 68, clear of the band. */
-        scnAnnouncePlaceFrom(view, 100.0f, 20.0f, 68.0f, 4.0f, floorY, band, 1,
-                             &x, &y);
-        UT_ASSERT(x == 151.0f);
-        UT_ASSERT(y == 68.0f);
+    /* A small panel in the top-right corner leaves room beside it: the line
+       stays on the top row and moves left only as far as the gap needs. */
+    {
+        const ScnAnnounceRect panel[1] = { { 250.0f, 22.0f, 317.0f, 89.0f } };
+        scnStatusPlace(view, 100.0f, 20.0f, 4.0f, 4.0f, floorY, panel, 1,
+                       &x, &y);
+        UT_ASSERT(x == 146.0f);
+        UT_ASSERT(y == 22.0f);
     }
 
-    /* Something at the quarter line pushes an upper line down below it, and
-       never past the floor: with no room it goes back to its start row. */
+    /* A wide, short panel leaves 104 pixels beside it, too few for a 120
+       wide line: the line drops to one gap below the panel, centred again. */
     {
-        const ScnAnnounceRect thing[1] = { { 81.0f, 60.0f, 321.0f, 90.0f } };
-        scnAnnouncePlaceFrom(view, 100.0f, 20.0f, 68.0f, 4.0f, floorY, thing, 1,
-                             &x, &y);
-        UT_ASSERT(x == 151.0f);
-        UT_ASSERT(y == 94.0f);
-    }
-    {
-        const ScnAnnounceRect thing[1] = { { 81.0f, 60.0f, 321.0f, 125.0f } };
-        scnAnnouncePlaceFrom(view, 100.0f, 20.0f, 68.0f, 4.0f, floorY, thing, 1,
-                             &x, &y);
-        UT_ASSERT(x == 151.0f);
-        UT_ASSERT(y == 68.0f);
+        const ScnAnnounceRect panel[1] = { { 189.0f, 22.0f, 317.0f, 70.0f } };
+        scnStatusPlace(view, 120.0f, 20.0f, 4.0f, 4.0f, floorY, panel, 1,
+                       &x, &y);
+        UT_ASSERT(x == 141.0f);
+        UT_ASSERT(y == 74.0f);
     }
 
-    /* A start above the view starts at the top of it. */
-    scnAnnouncePlaceFrom(view, 100.0f, 20.0f, 0.0f, 4.0f, floorY, NULL, 0, &x,
-                         &y);
-    UT_ASSERT(y == 18.0f);
+    /* The full size panel, 128 square: below it is past the floor, so the
+       line stays centred on the top row, over the panel. */
+    {
+        const ScnAnnounceRect panel[1] = { { 189.0f, 22.0f, 317.0f, 150.0f } };
+        scnStatusPlace(view, 120.0f, 20.0f, 4.0f, 4.0f, floorY, panel, 1,
+                       &x, &y);
+        UT_ASSERT(x == 141.0f);
+        UT_ASSERT(y == 22.0f);
+    }
+
+    /* A thing off to the side of the view is not in the way. */
+    {
+        const ScnAnnounceRect vote[1] = { { 330.0f, 0.0f, 440.0f, 60.0f } };
+        scnStatusPlace(view, 100.0f, 20.0f, 4.0f, 4.0f, floorY, vote, 1,
+                       &x, &y);
+        UT_ASSERT(x == 151.0f);
+        UT_ASSERT(y == 22.0f);
+    }
+
+    /* A line wider than the view is centred over it and runs past both
+       edges; a thing beside the view that it would cross pushes it down. */
+    scnStatusPlace(view, 300.0f, 20.0f, 4.0f, 4.0f, floorY, NULL, 0, &x, &y);
+    UT_ASSERT(x == 51.0f);
+    UT_ASSERT(y == 22.0f);
+    {
+        const ScnAnnounceRect vote[1] = { { 330.0f, 0.0f, 440.0f, 60.0f } };
+        scnStatusPlace(view, 300.0f, 20.0f, 4.0f, 4.0f, floorY, vote, 1,
+                       &x, &y);
+        UT_ASSERT(x == 51.0f);
+        UT_ASSERT(y == 64.0f);
+    }
+
+    /* Two things stacked: the line drops below the first, finds the second
+       in the way on that row too, and drops below that. */
+    {
+        const ScnAnnounceRect stack[2] = {
+            { 81.0f, 18.0f, 321.0f, 60.0f },
+            { 81.0f, 60.0f, 321.0f, 100.0f },
+        };
+        scnStatusPlace(view, 100.0f, 20.0f, 4.0f, 4.0f, floorY, stack, 2,
+                       &x, &y);
+        UT_ASSERT(x == 151.0f);
+        UT_ASSERT(y == 104.0f);
+    }
+
+    /* A view with no free row at all: back to the top, centred, on top of
+       whatever is there, rather than out of sight. */
+    {
+        const ScnAnnounceRect wall[1] = { { 0.0f, 0.0f, 500.0f, 500.0f } };
+        scnStatusPlace(view, 100.0f, 20.0f, 4.0f, 4.0f, floorY, wall, 1,
+                       &x, &y);
+        UT_ASSERT(x == 151.0f);
+        UT_ASSERT(y == 22.0f);
+    }
 
     return 0;
 }

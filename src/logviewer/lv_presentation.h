@@ -63,13 +63,19 @@ typedef struct {
 } LvPresScore;
 
 /* The announcement line. ms is the absolute log time the record landed at
-   and ticks how long the server held it up for. */
+   and ticks how long the server held it up for. hasPos says the script gave
+   it a position, posX and posY the line's centre as position bytes across
+   and down the view (0 to SCN_ANNOUNCE_POS_MAX); with no position it went
+   where announcements always go. */
 typedef struct {
   bool     set;
   uint32_t ms;
   uint16_t ticks;
   BYTE     destTeam;
   BYTE     destPlayer;
+  bool     hasPos;
+  BYTE     posX;
+  BYTE     posY;
   char     text[LV_PRES_ANNOUNCE_MAX + 1];   /* always terminated */
 } LvPresAnnounce;
 

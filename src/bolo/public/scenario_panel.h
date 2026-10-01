@@ -121,17 +121,15 @@ typedef enum {
     SCN_PANEL_TIMER_UP   = 1
 } ScnPanelTimerMode;
 
-/* Where an announcement sits in the game view. Top is the top row, and is
- * what every announcement got before there was a choice. Upper is about a
- * quarter of the way down the view, for the bigger lines a round says about
- * what is happening. The values ride the wire and the recording, so a new
- * place goes on the end, and a reader draws a value it does not know at the
- * top. */
-typedef enum {
-    SCN_ANNOUNCE_PLACE_TOP   = 0,
-    SCN_ANNOUNCE_PLACE_UPPER = 1,
-    SCN_ANNOUNCE_PLACE_COUNT
-} ScnAnnouncePlace;
+/* Where an announcement sits in the game view, when the script gives a
+ * position: the centre of the line as a share of the view's width (x) and
+ * height (y), 0 the left or top edge and 1 the right or bottom edge. Each
+ * share rides the wire and the recording as one byte, 0 to
+ * SCN_ANNOUNCE_POS_MAX, so the middle (SCN_ANNOUNCE_POS_MID) is exactly
+ * half. A reader takes a byte past the max as the max. An announcement with
+ * no position is drawn where announcements have always been drawn. */
+#define SCN_ANNOUNCE_POS_MAX 254u
+#define SCN_ANNOUNCE_POS_MID 127u
 
 /* The status line's endsAt when it has no countdown. A countdown's target is
  * a server tick, and this one is never reached. */
