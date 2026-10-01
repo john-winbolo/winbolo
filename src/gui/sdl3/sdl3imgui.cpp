@@ -1578,13 +1578,23 @@ static void renderSysInfoContent(void) {
         }
 
         if (hasBots) {
-            ImGui::Text("%s: %u",
+            /* Overrun rate against thinks, computed as the dedicated
+             * server's bot report does; 0 when nothing has thought yet. */
+            double poolRate = ps.totalThinks > 0
+                ? (double)ps.totalOverruns * 100.0 / (double)ps.totalThinks
+                : 0.0;
+            ImGui::Text("%s: %u (%.2f%%)",
                         langGetText(STR_DLGSYSINFO_BRAIN_OVERRUNS),
-                        ps.totalOverruns);
+                        ps.totalOverruns, poolRate);
             if (ps.totalOverruns > 0) {
                 for (int i = 0; i < MAX_TANKS; i++) {
                     if (botInfoValid[i] && botInfos[i].overrunCount > 0) {
-                        ImGui::Text("  bot[%d]: %u", i, botInfos[i].overrunCount);
+                        double rate = botInfos[i].thinkCount > 0
+                            ? (double)botInfos[i].overrunCount * 100.0
+                                  / (double)botInfos[i].thinkCount
+                            : 0.0;
+                        ImGui::Text("  bot[%d]: %u (%.2f%%)", i,
+                                    botInfos[i].overrunCount, rate);
                     }
                 }
             }
