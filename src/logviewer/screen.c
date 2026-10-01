@@ -126,6 +126,32 @@ BYTE lv_screenGetYOffset(void) { return g_lv->yOffset; }
 bool lv_screenGetFastForwarding(void) { return g_lv->fastForwarding; }
 uint32_t lv_screenGetTimeRunning(void) { return g_lv->timeRunning; }
 
+/* The one place the camera is brought back into range; every write to
+ * xOffset/yOffset that is not already clamped ends here.
+ *
+ * The tile fetch in lv_screenUpdateView casts column and row to a BYTE, so a
+ * view whose left edge plus width passes 255 wraps round and draws column 0
+ * beside column 255: the map's two mined borders appear back to back in the
+ * middle of the screen. The whole-tile offset is held in
+ * [0, 255 - screenSize], the same range the pan, follow and zoom paths clamp
+ * to, and the sub-pixel pan is zeroed on an edge that moved so nothing bleeds
+ * past the last rendered tile. A size of 0 (a decoder whose host has not
+ * sized it yet) leaves the full 0..255 range. */
+static void lv_screenClampOffsets(void) {
+  int maxOffX = 255 - lv_screenGetSizeX();
+  int maxOffY = 255 - lv_screenGetSizeY();
+  if (maxOffX < 0) maxOffX = 0;
+  if (maxOffY < 0) maxOffY = 0;
+  if (g_lv->xOffset > maxOffX) {
+    g_lv->xOffset = (BYTE)maxOffX;
+    g_lv->subPxX = 0;
+  }
+  if (g_lv->yOffset > maxOffY) {
+    g_lv->yOffset = (BYTE)maxOffY;
+    g_lv->subPxY = 0;
+  }
+}
+
 /* Decode a log_RuleSet payload from its two index bytes, its blob's length
  * byte and the blob. TRUE, with *index and *value set, only for a length of
  * eight, an index this build has a rule for and a finite value: the record
@@ -650,6 +676,11 @@ void lv_screenSetup() {
   g_lv->yOffset = 127;
   g_lv->subPxX  = 0;
   g_lv->subPxY  = 0;
+  /* Every load runs through here after the host has sized the tile grid, and
+   * the embedded reel's grid can be wider than half the map at 0.5x. Left at
+   * 127 the view would open past column 255 and wrap, so the default is
+   * pulled down to the widest the grid allows. */
+  lv_screenClampOffsets();
   lv_mapCreate(&g_lv->mp);
   lv_pillsCreate(&g_lv->pb);
   lv_startsCreate(&g_lv->ss);
@@ -5172,6 +5203,7 @@ bool lv_screenCloseLog() {
 void lv_screenSetOffset(BYTE x, BYTE y) {
   g_lv->xOffset = x;
   g_lv->yOffset = y;
+  lv_screenClampOffsets();
 }
 BYTE lv_screenGetOffsetX() {
   return g_lv->xOffset;
@@ -5350,6 +5382,8 @@ void lv_screenSetSizeX(BYTE x) {
       (*g_lv->mineView).mineItem = newItems;
     }
   }
+  /* A wider grid shrinks the range the offset may sit in. */
+  lv_screenClampOffsets();
   /* Resize the render target to match the new screen size.
    * This is critical for correct mouse coordinate mapping. */
   lv_drawResizeRenderTarget();
@@ -5371,6 +5405,8 @@ void lv_screenSetSizeY(BYTE y) {
       (*g_lv->mineView).mineItem = newItems;
     }
   }
+  /* A taller grid shrinks the range the offset may sit in. */
+  lv_screenClampOffsets();
   /* Resize the render target to match the new screen size.
    * This is critical for correct mouse coordinate mapping. */
   lv_drawResizeRenderTarget();
@@ -5504,6 +5540,7 @@ void lv_screenMouseCentreClick(int xPos, int yPos) {
   div_t dt;        /* Used for integer division */
   int xClick;
   int yClick;
+  int cx, cy;
 
   if (g_lv->logLoaded == FALSE) {
     return;
@@ -5512,14 +5549,26 @@ void lv_screenMouseCentreClick(int xPos, int yPos) {
   xClick = (int) (dt.quot);
   dt = div(yPos, (16)); //screenSizeY
   yClick = (int) (dt.quot);
-  g_lv->xOffset = (g_lv->xOffset + xClick) - (g_lv->screenSizeX / 2);
-  g_lv->yOffset = (g_lv->yOffset + yClick) - (g_lv->screenSizeY / 2);
+  /* In int, then clamped: the BYTE arithmetic this used to do wrapped a click
+   * near the top-left to the far side of the map, and a click near the
+   * bottom-right past column 255. */
+  cx = ((int)g_lv->xOffset + xClick) - (g_lv->screenSizeX / 2);
+  cy = ((int)g_lv->yOffset + yClick) - (g_lv->screenSizeY / 2);
+  if (cx < 0) cx = 0;
+  if (cy < 0) cy = 0;
+  if (cx > 255) cx = 255;
+  if (cy > 255) cy = 255;
+  g_lv->xOffset = (BYTE)cx;
+  g_lv->yOffset = (BYTE)cy;
+  lv_screenClampOffsets();
   /* Defer to the flag — see lv_screenPanToTotalPixels. */
   g_lv->wantScreenUpdate = TRUE;
 }
 
-/* Centre the game view on a map cell, clamped so the offset stays in range
- * (xOffset/yOffset are unsigned tile indices). */
+/* Centre the game view on a map cell, clamped so the view stays on the map
+ * (xOffset/yOffset are unsigned tile indices, and the right and bottom edges
+ * must not pass 255 or the view wraps). A jump to a cell is a whole-tile
+ * move, so a partial drag in flight is dropped, as the zoom does. */
 void lv_screenCentreOnCell(int mapX, int mapY) {
   int cx, cy;
   if (g_lv->logLoaded == FALSE) {
@@ -5533,6 +5582,9 @@ void lv_screenCentreOnCell(int mapX, int mapY) {
   if (cy > 255) cy = 255;
   g_lv->xOffset = (BYTE)cx;
   g_lv->yOffset = (BYTE)cy;
+  g_lv->subPxX = 0;
+  g_lv->subPxY = 0;
+  lv_screenClampOffsets();
   /* Defer to the flag — see lv_screenPanToTotalPixels. */
   g_lv->wantScreenUpdate = TRUE;
 }

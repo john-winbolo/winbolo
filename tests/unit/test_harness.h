@@ -1334,6 +1334,17 @@ int run_lv_logged_name_from_join_event(void);
 int run_lv_game_settings_from_walk(void);
 int run_lv_game_settings_absent(void);
 
+/* Replay camera range (test_lv_camera.c): the tile fetch casts the column to
+ * a BYTE, so a view whose left edge plus width passes 255 wraps and draws the
+ * map's two mined borders back to back mid-screen. Every writer of the
+ * offset ends in one clamp to [0, 255 - screenSize]: the load's 127,127
+ * default on a wide grid, a highlight jump to a cell, a grid that grew, the
+ * raw setter and the standalone viewer's centre-on-click. */
+int run_lv_camera_load_fits_wide_grid(void);
+int run_lv_camera_centre_on_cell_stays_on_map(void);
+int run_lv_camera_resize_and_set_offset_clamp(void);
+int run_lv_camera_mouse_centre_click_stays_on_map(void);
+
 /* Spectator ring-seed fixture generator (test_spectator_seed_capture.c):
  * dispatch-only. Captures a real ServerSim ring keyframe (no trailing data) and
  * writes it to <WB_WBV_FIXTURE_DIR>/spectator_seed.bin when the env var is set. */
