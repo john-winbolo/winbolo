@@ -627,6 +627,15 @@ M.STANDOFF_SHOT_TREE_PENALTY    = 8    -- per forest tile on the CHOSEN aim path
 -- spots are now hard-rejected instead of penalized.
 M.STANDOFF_SHOT_BLOCKED_PENALTY = 200
 
+-- Walled-in pill fallback. When no standoff spot on the ring has a shell line
+-- that misses every wall (a pill boxed in by built walls), the spot scan runs a
+-- second pass in which walls count like trees on the line (a wall is 5 shells,
+-- a half-built wall 4, the same numbers shot_path_obstacle_count uses) instead
+-- of blocking. The take then shoots its way through the wall. Pills and bases
+-- on the line still block. The C fast path is untouched: when it finds no spot
+-- and this is on, the Lua sweep runs the wall pass. Off = exactly the old scan.
+M.ATTACK_PILL_WALL_FALLBACK = false        -- keel false
+
 -- Pill-take spots that sit deep inside enemy influence are much harder to
 -- hold during the take. In mid/late game (phase != "opening"), multiply
 -- those spots' total_score so a hostile-territory take ranks well below
@@ -4899,6 +4908,8 @@ M.PRESETS = {
   keel = {
     -- 2026-10-01: flat capture_base cost for game modes; 0 is no such term.
     CAPTURE_BASE_EXTRA_COST = 0,
+    -- 2026-10-01: wall pass for a walled-in pill; off is the old scan.
+    ATTACK_PILL_WALL_FALLBACK = false,
     -- 2026-09-08: while on capture_pill the bot now sweeps the target tile for
     -- an enemy builder rebuilding the corpse -- the kill_lgm aim solution takes
     -- the TURN keys whenever it points within CAPTURE_LGM_HUNT_TOL_BRADS of
