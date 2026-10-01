@@ -2020,6 +2020,7 @@ STR_MENU_MAP_OVERVIEW=Podgląd mapy
 STR_MENU_OVERVIEW_IN_WINDOW=Pełny ekran
 STR_OVERVIEW_FOLLOWING=śledzenie
 STR_OVERVIEW_FREE=swobodna
+STR_OVERVIEW_FREE_HINT=swobodna ({string1}, aby śledzić)
 STR_DLGKEYSETUP_OVERVIEWZOOM=Powiększenie mapy (przytrzymaj)
 STR_DLGKEYSETUP_OVERVIEWFOLLOW=Śledzenie na mapie (przełącz)
 STR_DLGKEYSETUP_OVERVIEWZOOMIN=Powiększ mapę

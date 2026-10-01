@@ -206,6 +206,19 @@ typedef struct {
     uint8_t destPlayer;    /* 0xFF = everyone, else a 0-based slot */
 } ScnMarkerRow;
 
+/* One destination's status line, as the status op last set it. valid is
+ * false for a destination nothing has set and for one a clear emptied.
+ * seq is the write order: 0 for a row never written, else the value of
+ * ServerSim.scenarioStatusSeq when the row was last set or cleared. A client
+ * keeps the newest line addressed to it, so the store needs the order to
+ * know what each seat shows. */
+typedef struct {
+    bool     valid;
+    uint32_t seq;
+    uint32_t endsAt;       /* SCN_STATUS_NO_COUNTDOWN for none */
+    char     text[PACKET_MAX_CHAT_MESSAGE + 1];
+} ScnStatusRow;
+
 struct ServerSim {
     GameSim      sim;    /* MUST be first member */
 
@@ -469,6 +482,13 @@ struct ServerSim {
     ServerVoiceMode voiceMode;     /* how client voice is handled; fixed at
                                     * startup, read by the advertisement
                                     * paths. */
+    bool     scenarioVoiceEveryone; /* a script's game.set_voice_everyone:
+                                    * true sends voice in a running round to
+                                    * every player, not only to allies.
+                                    * Cleared by serverSimResetGameWorld,
+                                    * serverSimStartGameInPlace and a
+                                    * scenario detach, so it never reaches a
+                                    * later round. */
     BYTE     maxPlayers;           /* cap on join slots; 0 falls back to MAX_TANKS */
     BYTE     maxBots;              /* cap on AI bots in the lobby; 0 = no cap */
     BYTE     maxSpectators;        /* 0 = spectating disabled */
@@ -1330,6 +1350,13 @@ struct ServerSim {
      * join replay hands every valid row to a subscriber that arrives
      * mid-round. */
     ScnMarkerRow           scenarioMarkers[SCN_MARKERS_MAX];
+
+    /* The status line each destination was last given, keyed the way the
+     * panel store is (SCN_PANEL_TARGETS rows: everyone, the teams, the
+     * slots), so a joiner is handed the line the round is showing. */
+    ScnStatusRow           scenarioStatus[SCN_PANEL_TARGETS];
+    /* The last write order handed to a status row. 0 = nothing written. */
+    uint32_t               scenarioStatusSeq;
 
     /* Spectator roster enumerator (registered by the transport layer). Invoked
      * during sync-replay to emit one CTRL_SPECTATOR_SLOT per connected

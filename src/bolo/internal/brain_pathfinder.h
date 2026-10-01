@@ -125,6 +125,12 @@ struct BrainPathfinder {
    * but the brain LGM sim only sees terrain type (refbase = walkable), so it
    * would otherwise march the LGM straight into an enemy base. */
   uint8_t  lgm_block[65536];
+  /* The man's speed per terrain type (0..15) and on his blessed tile, for
+   * the LGM walk sim. brainPathfinderCreate seeds them with the classic
+   * bolo_map.h numbers; a brain may push the live man_speed_* rules with
+   * brainPathfinderSetManSpeed. Nobody pushing = the classic walk. */
+  uint8_t  man_speed[16];
+  uint8_t  man_speed_blessed;
 
   /* Per-terrain-type tables (indexed 0..15) */
   float terrain_cost_table[16];      /* land mode costs */
@@ -624,6 +630,11 @@ int brainPathfinderLgmWalkPathMap(BrainPathfinder *pf,
  * cross (enemy bases). Brain stamps these each tick before LGM reach checks. */
 void brainPathfinderClearLgmBlock(BrainPathfinder *pf);
 void brainPathfinderSetLgmBlock(BrainPathfinder *pf, BYTE mx, BYTE my);
+
+/* The man's walk speed on terrain `type` (0..15), or on his blessed tile when
+ * `type` is -1, for every LGM walk sim above. Speed is clamped to 0..255.
+ * Out-of-range types are ignored. */
+void brainPathfinderSetManSpeed(BrainPathfinder *pf, int type, int speed);
 
 /* Tank travel-time estimation (straight-line, tick-by-tick simulation) */
 int brainPathfinderEstimateTankTravelTicks(BrainPathfinder *pf,

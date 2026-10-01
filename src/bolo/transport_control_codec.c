@@ -3216,9 +3216,20 @@ static bool decodeScnScoreBody(const uint8_t *buf, size_t len,
     return true;
 }
 
-/* CTRL_SCN_ANNOUNCE body: [ticks 2 BE][text, the rest of the body].
- * The text carries no terminator on the wire, the way the chat bodies
- * do it; the decoder terminates what it stores. */
+/* CTRL_SCN_ANNOUNCE body: [ticks 2 BE][text][0x00 x 1 y 1], where the last
+ * three bytes are only there when the script gave the line a position.
+ *
+ * The text carries no terminator on the wire, the way the chat bodies do
+ * it; the decoder terminates what it stores. A positioned line puts one
+ * 0x00 after the text and the two position bytes after that: the centre of
+ * the line across and down the view, 0 to SCN_ANNOUNCE_POS_MAX each. An
+ * older client takes the whole rest of the body as the text: it stores the
+ * text, the 0x00 ends the string there, and it draws the line where it
+ * always drew one. The one thing it cannot take is a positioned line of
+ * more than PACKET_MAX_CHAT_MESSAGE - 3 bytes, whose body is then past its
+ * field: it skips that line and shows nothing, so the senders refuse one
+ * (SCN_ANNOUNCE_POSITIONED_TEXT_MAX). A line with no position is sent
+ * exactly as before, so an older client sees no difference at all for it. */
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeScnAnnounceBody(const ControlEvent *evt,
@@ -3227,26 +3238,57 @@ static EncodeResult encodeScnAnnounceBody(const ControlEvent *evt,
                                           size_t *outLen) {
     size_t textLen;
     size_t needed;
+    bool   positioned;
     (void)recipient;
     textLen = strnlen(evt->u.scnAnnounce.text, sizeof(evt->u.scnAnnounce.text));
     if (textLen > PACKET_MAX_CHAT_MESSAGE) textLen = PACKET_MAX_CHAT_MESSAGE;
-    needed = 2 + textLen;
+    positioned = evt->u.scnAnnounce.hasPos != 0 && textLen > 0;
+    needed = 2 + textLen + (positioned ? 3u : 0u);
     if (bufCap < needed) return ENCODE_OVERFLOW;
     packU16(buf, evt->u.scnAnnounce.ticks);
     if (textLen > 0) {
         memcpy(buf + 2, evt->u.scnAnnounce.text, textLen);
     }
+    if (positioned) {
+        buf[2 + textLen]     = 0x00;
+        buf[2 + textLen + 1] = evt->u.scnAnnounce.posX;
+        buf[2 + textLen + 2] = evt->u.scnAnnounce.posY;
+    }
     *outLen = needed;
     return ENCODE_OK;
 }
 
+/* A position byte as this build reads it: past the max is the max. */
+static uint8_t scnAnnouncePosByte(uint8_t b) {
+    return (b > (uint8_t)SCN_ANNOUNCE_POS_MAX) ? (uint8_t)SCN_ANNOUNCE_POS_MAX
+                                               : b;
+}
+
 static bool decodeScnAnnounceBody(const uint8_t *buf, size_t len,
                                   ControlEvent *outEvt) {
-    size_t textLen;
+    size_t         textLen;
+    const uint8_t *nul;
+    bool           positioned = false;
+    uint8_t        posX = 0;
+    uint8_t        posY = 0;
     if (buf == NULL || outEvt == NULL) return false;
     if (len < 2) return false;
     textLen = len - 2;
-    /* A body longer than the field is refused rather than truncated: a
+    /* The text runs to the first 0x00 or to the end of the body. What
+     * follows a 0x00 is the extension: the two position bytes, and anything
+     * after them that a later build adds and this one does not read. Fewer
+     * than two bytes there is no position. */
+    nul = (textLen > 0) ? (const uint8_t *)memchr(buf + 2, 0, textLen) : NULL;
+    if (nul != NULL) {
+        size_t extLen = textLen - (size_t)(nul - (buf + 2)) - 1;
+        textLen = (size_t)(nul - (buf + 2));
+        if (extLen >= 2) {
+            positioned = true;
+            posX = scnAnnouncePosByte(nul[1]);
+            posY = scnAnnouncePosByte(nul[2]);
+        }
+    }
+    /* A text longer than the field is refused rather than truncated: a
      * cut announcement is a different line from the one the scenario
      * wrote, and the sender had the same cap to measure against. */
     if (textLen >= sizeof(outEvt->u.scnAnnounce.text)) return false;
@@ -3254,10 +3296,67 @@ static bool decodeScnAnnounceBody(const uint8_t *buf, size_t len,
     outEvt->type = CTRL_SCN_ANNOUNCE;
     outEvt->u.scnAnnounce.destPlayer = 0xFF;
     outEvt->u.scnAnnounce.ticks = unpackU16(buf);
+    /* A clear has no text to put anywhere, so it has no position. */
+    if (positioned && textLen > 0) {
+        outEvt->u.scnAnnounce.hasPos = 1;
+        outEvt->u.scnAnnounce.posX   = posX;
+        outEvt->u.scnAnnounce.posY   = posY;
+    }
     if (textLen > 0) {
         memcpy(outEvt->u.scnAnnounce.text, buf + 2, textLen);
     }
     outEvt->u.scnAnnounce.text[textLen] = '\0';
+    return true;
+}
+
+/* CTRL_SCN_STATUS body: [endsAt 4 BE][text, the rest of the body].
+ *
+ * endsAt is the server tick the countdown runs to, SCN_STATUS_NO_COUNTDOWN
+ * for none. The text carries no terminator, as the announcement's does, and
+ * an empty text is the clear. A 0x00 in the body ends the text: whatever
+ * follows it is room for a later build to add fields, and this one skips
+ * it, the way the announcement's position rides. */
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeScnStatusBody(const ControlEvent *evt,
+                                        const struct UdpServerClient *recipient,
+                                        uint8_t *buf, size_t bufCap,
+                                        size_t *outLen) {
+    size_t textLen;
+    size_t needed;
+    (void)recipient;
+    textLen = strnlen(evt->u.scnStatus.text, sizeof(evt->u.scnStatus.text));
+    if (textLen > PACKET_MAX_CHAT_MESSAGE) textLen = PACKET_MAX_CHAT_MESSAGE;
+    needed = 4 + textLen;
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    packU32(buf, evt->u.scnStatus.endsAt);
+    if (textLen > 0) {
+        memcpy(buf + 4, evt->u.scnStatus.text, textLen);
+    }
+    *outLen = needed;
+    return ENCODE_OK;
+}
+
+static bool decodeScnStatusBody(const uint8_t *buf, size_t len,
+                                ControlEvent *outEvt) {
+    size_t         textLen;
+    const uint8_t *nul;
+    if (buf == NULL || outEvt == NULL) return false;
+    if (len < 4) return false;
+    textLen = len - 4;
+    nul = (textLen > 0) ? (const uint8_t *)memchr(buf + 4, 0, textLen) : NULL;
+    if (nul != NULL) {
+        textLen = (size_t)(nul - (buf + 4));
+    }
+    if (textLen >= sizeof(outEvt->u.scnStatus.text)) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_SCN_STATUS;
+    outEvt->u.scnStatus.destPlayer = 0xFF;
+    outEvt->u.scnStatus.endsAt = unpackU32(buf);
+    if (textLen > 0) {
+        memcpy(outEvt->u.scnStatus.text, buf + 4, textLen);
+    }
+    outEvt->u.scnStatus.text[textLen] = '\0';
     return true;
 }
 
@@ -3766,6 +3865,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_SCN_SCORE]             = encodeScnScoreBody,
     [CTRL_SCN_ANNOUNCE]          = encodeScnAnnounceBody,
     [CTRL_SCN_MARKER]            = encodeScnMarkerBody,
+    [CTRL_SCN_STATUS]            = encodeScnStatusBody,
     [CTRL_SCENARIO_RULES]        = encodeScenarioRulesBody,
     [CTRL_LOBBY_SCRIPT_LIST]     = encodeLobbyScriptListBody,
     [CTRL_LOBBY_SCRIPT_SETTING]  = encodeLobbyScriptSettingBody,
@@ -3821,6 +3921,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_SCN_SCORE]             = decodeScnScoreBody,
     [CTRL_SCN_ANNOUNCE]          = decodeScnAnnounceBody,
     [CTRL_SCN_MARKER]            = decodeScnMarkerBody,
+    [CTRL_SCN_STATUS]            = decodeScnStatusBody,
     [CTRL_SCENARIO_RULES]        = decodeScenarioRulesBody,
     [CTRL_LOBBY_SCRIPT_LIST]     = decodeLobbyScriptListBody,
     [CTRL_LOBBY_SCRIPT_SETTING]  = decodeLobbyScriptSettingBody,

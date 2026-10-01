@@ -347,6 +347,7 @@ static const LangEntry langTable[] = {
     /* Map overview pop-out */
     {1988, "following"},
     {1989, "free"},
+    {2756, "free ({string1} to follow)"},
 
     {590,  "Tutorial"},
     {591,  "Play Tutorial"},

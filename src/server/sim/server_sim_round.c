@@ -1211,6 +1211,10 @@ void serverSimResetGameWorld(ServerSim *sim) {
     serverSimScenarioResetFill(sim);
     serverSimScenarioResetRoster(sim);
     serverSimScenarioResetPresentation(sim);
+    /* Voice to everyone is the last round's script's choice. Cleared here,
+       ahead of the next round's boot, so a script sets it again for each
+       round and a round with no script hears allies only. */
+    sim->scenarioVoiceEveryone = false;
     /* Drop any ping accepted but not yet buffered, so it can't leak a stale
      * marker into the next round's first running tick — and the rate limiter
      * with it, because sim->tick is rewound to 0 below and last round's tick
@@ -1541,6 +1545,9 @@ void serverSimStartGameInPlace(ServerSim *sim) {
      * to boot — which would otherwise play by the last script's numbers. */
     simRulesClassic(&sim->sim.rules);
     serverSimResetScenarioSeats(sim);
+    /* Voice to allies only, as serverSimResetGameWorld leaves it for the
+       full-reset start, which this path does not go through. */
+    sim->scenarioVoiceEveryone = false;
 
     /* Held for the whole start so the all-ready detector refuses to run
      * while the roster and the state are being rebuilt. */

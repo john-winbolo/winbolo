@@ -76,6 +76,8 @@ extern "C" {
 #include "scenario_marker.h" /* scnMarkerDraw — a scenario's marks, beside it */
 #include "ping_overlay.h"    /* pingOverlayIsMenuOpen — the wheel's gate */
 #include "ring_band.h"       /* the respawn ring's band, sides and curve */
+#include "../lang.h"         /* the camera readout's words */
+#include "../ui_mode.h"      /* uiShouldUseControllerMode — no key hint there */
 }
 #include "sdl3draw_status.h" /* sdl3DrawGetMessageFont, sdl3DrawGetLabelFont,
                                 sdl3DrawGetTinyFont — the main window's faces */
@@ -181,6 +183,24 @@ static inline bool overviewViewSimple(float zoomScale, bool ownsWindow) {
 #define OVERVIEW_ITEM_BORDER_MIN   2
 #define OVERVIEW_ITEM_BORDER_MAX   6      /* inset + weight stays inside HUD_MARGIN (8) */
 
+/* The camera readout — the zoom, and whether the camera follows the tank —
+ * is on screen for a moment after either changes, and when the view comes up,
+ * rather than all the time: following shows itself, with the tank held in the
+ * middle of the picture, and a readout that never goes away reads as a debug
+ * line. Held solid, then faded out. Every change restarts the hold, so a wheel
+ * run through several rungs keeps the zoom up as a running count. */
+#define OVERVIEW_NOTICE_HOLD_MS 2000
+#define OVERVIEW_NOTICE_FADE_MS 400
+
+/* What the readout says: the zoom alone, the follow state alone, or both.
+ * Both is what a view coming up shows, and what a second change of the other
+ * kind lands on while the first is still showing. */
+enum {
+    OVERVIEW_NOTICE_ALL = 0,
+    OVERVIEW_NOTICE_ZOOM,
+    OVERVIEW_NOTICE_FOLLOW
+};
+
 struct OverviewView {
     OverviewCamera cam;
 
@@ -268,6 +288,14 @@ struct OverviewView {
     bool           followBeforeItemView;
     Uint64         scrollTick;
 
+    /* The camera readout: when it was last started — 0 when there is none —
+     * and which OVERVIEW_NOTICE_ kind it shows. Started by the player's own
+     * changes in overviewViewHandleInput and by the host when the view comes
+     * up; the follow flips an item view makes in the render are not the
+     * player's and do not start one. */
+    Uint64         noticeTick;
+    uint8_t        noticeKind;
+
     /* This view's tank-label cache — the shared drawer in tank_label.c
      * builds its textures on whichever renderer hosts the view (the classic
      * pass's cache is the main window's and cannot be shared). It flushes
@@ -283,6 +311,31 @@ struct OverviewView {
      * the tank names are: the pop-out has its own. */
     ItemLabelCache itemLabelCache;
 };
+
+/* Where the camera readout is in its life at `now`: 1 while held solid,
+ * falling to 0 through the fade, and below 0 once it is over or there is
+ * none. */
+static float overviewNoticeAlpha(const OverviewView *v, Uint64 now) {
+    if (v->noticeTick == 0) return -1.0f;
+    Uint64 elapsed = now - v->noticeTick;
+    if (elapsed < OVERVIEW_NOTICE_HOLD_MS) return 1.0f;
+    elapsed -= OVERVIEW_NOTICE_HOLD_MS;
+    if (elapsed >= OVERVIEW_NOTICE_FADE_MS) return -1.0f;
+    return 1.0f - (float)elapsed / (float)OVERVIEW_NOTICE_FADE_MS;
+}
+
+/* (Re)start the camera readout saying `kind`. A change of one kind landing
+ * while a readout of the other is still up widens it to both, so neither
+ * change is lost from the picture. */
+static void overviewNoticeStart(OverviewView *v, uint8_t kind) {
+    Uint64 now = SDL_GetTicks();
+    if (now == 0) now = 1; /* 0 is the no-readout value */
+    if (overviewNoticeAlpha(v, now) > 0.0f && v->noticeKind != kind) {
+        kind = OVERVIEW_NOTICE_ALL;
+    }
+    v->noticeTick = now;
+    v->noticeKind = kind;
+}
 
 /* (Re)create the offscreen when the host asks for a size — or a renderer —
  * the current one does not match. Returns false when there is no target to
@@ -1035,6 +1088,8 @@ extern "C" OverviewView *overviewViewCreate(void) {
      * a frame first. */
     mapViewInit();
     overviewCameraInit(&v->cam);
+    /* A fresh view is one coming up, so it says what it came up with. */
+    overviewViewShowCameraNotice(v);
     return v;
 }
 
@@ -1484,6 +1539,14 @@ extern "C" void overviewViewHandleInput(OverviewView *v, bool hovered,
     ImGuiIO &io = ImGui::GetIO();
     OverviewCamera *cam = &v->cam;
 
+    /* The camera as it stood before this frame's input, for the readout at
+     * the end: every way the player changes the zoom or the follow flag — the
+     * wheel, the keys, a drag or a pan dropping follow, Home claiming it —
+     * goes through this call, so a comparison here catches them all without
+     * each path having to say so. */
+    int  zoomBefore   = cam->zoomIndex;
+    bool followBefore = cam->follow;
+
     /* The pan InvisibleButton the caller submitted immediately before this
      * owns the press, so a drag that wanders off the image keeps panning. */
     if (ImGui::IsItemActive()) {
@@ -1667,6 +1730,69 @@ extern "C" void overviewViewHandleInput(OverviewView *v, bool hovered,
             overviewCameraCenterOnTank(cam, viewW, viewH, tankX, tankY);
         }
     }
+
+    /* What this frame's input changed, and so what the readout says. */
+    bool zoomChanged   = (cam->zoomIndex != zoomBefore);
+    bool followChanged = (cam->follow != followBefore);
+    if (zoomChanged && followChanged) {
+        overviewNoticeStart(v, OVERVIEW_NOTICE_ALL);
+    } else if (zoomChanged) {
+        overviewNoticeStart(v, OVERVIEW_NOTICE_ZOOM);
+    } else if (followChanged) {
+        overviewNoticeStart(v, OVERVIEW_NOTICE_FOLLOW);
+    }
+}
+
+extern "C" void overviewViewShowCameraNotice(OverviewView *v) {
+    if (!v) return;
+    overviewNoticeStart(v, OVERVIEW_NOTICE_ALL);
+}
+
+/* The follow half of the readout. Free with a follow key bound names the key,
+ * since a drag or a pan drops following without one being pressed and this is
+ * where the player learns how to get it back. Not under a controller, where
+ * the keyboard name means nothing. The format call's result lives in a ring
+ * of buffers, so the caller copies it out before formatting anything else. */
+static const char *overviewNoticeFollowText(const OverviewView *v,
+                                            const keyItems *keys) {
+    if (v->cam.follow) return langGetText(STR_OVERVIEW_FOLLOWING);
+    int sc = keys ? keys->kiOverviewFollow : 0;
+    const char *name = NULL;
+    if (sc > 0 && sc < SDL_SCANCODE_COUNT && !uiShouldUseControllerMode()) {
+        name = SDL_GetScancodeName((SDL_Scancode)sc);
+    }
+    if (!name || !*name) return langGetText(STR_OVERVIEW_FREE);
+    MessageArgs args = {};
+    SDL_strlcpy(args.string1, name, sizeof(args.string1));
+    return langGetTextFmt(STR_OVERVIEW_FREE_HINT, &args);
+}
+
+extern "C" bool overviewViewCameraNotice(OverviewView *v, const keyItems *keys,
+                                         char *buf, size_t cap,
+                                         float *outAlpha) {
+    if (!v || !buf || cap == 0) return false;
+    float alpha = overviewNoticeAlpha(v, SDL_GetTicks());
+    if (alpha <= 0.0f) {
+        v->noticeTick = 0;
+        return false;
+    }
+    /* %g keeps the ladder readable (0.5, 1, 1.5, 2) with no trailing zeros,
+     * and the text is ASCII because the hosts are compiled without /utf-8. */
+    double zoom = (double)overviewCameraZoomScale(&v->cam);
+    switch (v->noticeKind) {
+    case OVERVIEW_NOTICE_ZOOM:
+        SDL_snprintf(buf, cap, "%gx", zoom);
+        break;
+    case OVERVIEW_NOTICE_FOLLOW:
+        SDL_strlcpy(buf, overviewNoticeFollowText(v, keys), cap);
+        break;
+    default:
+        SDL_snprintf(buf, cap, "%gx - %s", zoom,
+                     overviewNoticeFollowText(v, keys));
+        break;
+    }
+    if (outAlpha) *outAlpha = alpha;
+    return true;
 }
 
 /* The hover test in overviewViewHandleInput restores the pointer when it
