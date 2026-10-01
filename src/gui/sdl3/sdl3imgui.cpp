@@ -4308,16 +4308,13 @@ static void scnPanelIdentity(ClientSim *cs, int owner, char *key, size_t keySz,
 }
 
 /* Whether the player has a way to turn a closed panel back on: the
-   Brains > Info Overlay items. macOS draws its menus natively and that menu
-   has no such items yet, and the Deck-style controller mode and the tablet
-   UI draw no menu bar at all. Where there is no way back there is no X, and
-   a panel hidden earlier shows, so nothing is lost for good. */
+   Brains > Info Overlay items, in the in-window bar (renderScnPanelMenuItems)
+   or on macOS in the native bar, which populateMacMenuState hands the same
+   rows. The Deck-style controller mode and the tablet UI draw no menu bar at
+   all. Where there is no way back there is no X, and a panel hidden earlier
+   shows, so nothing is lost for good. */
 static bool scnPanelCanReopen(void) {
-#if defined(__APPLE__)
-    return false;
-#else
     return !uiModeIsTablet() && !uiShouldUseControllerMode();
-#endif
 }
 
 static bool scnPanelEffectiveShown(const ScnPanelView &v) {
@@ -8518,6 +8515,26 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
         strncpy(s->brainNames[i], src, sizeof s->brainNames[i] - 1);
         s->brainNames[i][sizeof s->brainNames[i] - 1] = '\0';
     }
+
+    /* Brains > Info Overlay: one row per script with a scenario panel this
+       round, the rows renderScnPanelMenuItems draws in the in-window bar.
+       Synced here as the in-window bar syncs before it draws, so the native
+       bar sees the round as it is on the frame a panel arrives. */
+    static_assert(SCN_PANEL_OWNERS <= MAC_MENU_SCN_PANELS,
+                  "MacMenuState holds a row for every scenario panel owner");
+    scnPanelViewsSync(cs);
+    s->scnPanelCount = 0;
+    if (scnPanelCanReopen()) {
+        for (int i = 0; i < SCN_PANEL_OWNERS; i++) {
+            const ScnPanelView &v = s_scnViews[i];
+            if (!v.keyed) continue;
+            const int n = s->scnPanelCount++;
+            s->scnPanelOwner[n] = i;
+            s->scnPanelShown[n] = v.shown;
+            strncpy(s->scnPanelNames[n], v.name, sizeof s->scnPanelNames[n] - 1);
+            s->scnPanelNames[n][sizeof s->scnPanelNames[n] - 1] = '\0';
+        }
+    }
 }
 #endif
 
@@ -9561,6 +9578,14 @@ extern "C" void sdl3ImguiShowBrainSettings(void) {
     s_brainSettings      = luaBrainGetSettings(&s_brainSettingsCount);
     s_brainSettingsOpen  = true;
     s_closeMenuPopups    = true;
+}
+/* The native Brains > Info Overlay rows: the same toggle the in-window
+ * checkbox makes (renderScnPanelMenuItems). owner is the script's position
+ * on the round's list, the row's tag. */
+extern "C" void sdl3ImguiToggleScnPanelShown(int owner) {
+    if (owner < 0 || owner >= SCN_PANEL_OWNERS) return;
+    if (!s_scnViews[owner].keyed) return;
+    scnPanelSetShown(owner, !s_scnViews[owner].shown);
 }
 
 /* Is the players panel on screen in ANY of its forms? The desktop pop-out

@@ -55,6 +55,11 @@ void mac_menubar_install_dock_menu(void);
  * acceptable (trampolines that need it will no-op). */
 void mac_menubar_set_clientsim(void *clientSim);
 
+/* Must cover SCN_PANEL_OWNERS in bolo/public/scenario_panel.h — the
+ * literal is repeated rather than included so this header keeps its only
+ * dependency on <stdbool.h>. sdl3imgui.cpp asserts the two fit. */
+#define MAC_MENU_SCN_PANELS 10
+
 /* Snapshot of UI state that the native menu mirrors. Populated by
  * sdl3imgui.cpp once per frame and passed to mac_menubar_refresh() to
  * sync NSMenuItem .state / .enabled / .title with the in-window menu. */
@@ -133,6 +138,18 @@ struct MacMenuState {
     int  brainCount;           /* min(luaBrainGetNum(), 16) — snapshot cap */
     bool brainSettingsShown;   /* brainRunning && !mlBrainSingletonIsRunning() */
     char brainNames[16][64];   /* first brainCount entries valid; trailing entries undefined */
+    /* Brains > Info Overlay — one checkbox per script that drew a scenario
+     * panel this round, the rows renderScnPanelMenuItems() draws in the
+     * in-window bar. The first scnPanelCount rows are valid. Each names the
+     * owner (the script's position on the round's list) its row toggles,
+     * because the owners with a panel need not be consecutive. The parent
+     * Brains item is enabled when aiActive or scnPanelCount > 0, as the
+     * in-window bar is, and with aiActive off the Manual and brain rows are
+     * left out, the way the in-window bar leaves them out. */
+    int  scnPanelCount;
+    int  scnPanelOwner[MAC_MENU_SCN_PANELS];
+    bool scnPanelShown[MAC_MENU_SCN_PANELS];
+    char scnPanelNames[MAC_MENU_SCN_PANELS][128];
 };
 
 /* Push the snapshot into the native menu. Walks cached NSMenuItem
