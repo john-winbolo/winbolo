@@ -5,9 +5,7 @@ WinBolo uses the following third-party libraries, code, artwork and sounds.
 WinBolo itself is licensed under the GNU General Public License, version 3 or
 later (see [LICENSE](LICENSE)). Every code library below is under a licence
 that can be combined with it, except the Steamworks SDK, which is covered by
-[LICENSE-EXCEPTION.md](LICENSE-EXCEPTION.md). The two under Apache 2.0,
-libmaxminddb and crashpad, can be combined with GPL version 3 but not with
-version 2, which is one reason WinBolo moved from version 2 to version 3.
+[LICENSE-EXCEPTION.md](LICENSE-EXCEPTION.md).
 
 ## Bolo graphics and sounds
 
@@ -126,6 +124,12 @@ version 2, which is one reason WinBolo moved from version 2 to version 3.
 - Version: 1.22.0
 - License: MIT
 - https://github.com/microsoft/onnxruntime
+- The prebuilt library bundles over sixty components under Apache 2.0, BSD
+  and MIT licences, among them protobuf, Eigen, Boost, abseil, flatbuffers and
+  cpuinfo. Their notices are in ONNX Runtime's
+  [ThirdPartyNotices.txt](https://github.com/microsoft/onnxruntime/blob/v1.22.0/ThirdPartyNotices.txt),
+  which ships with every WinBolo build that includes the library as
+  `THIRD_PARTY_NOTICES-onnxruntime.txt`, beside this file.
 
 ### libplum (optional, BOLO_PORTMAP; not built on iOS or wasm)
 - Version: 0.5.3
