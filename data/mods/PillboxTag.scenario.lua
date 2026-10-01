@@ -1407,7 +1407,26 @@ local function aim_one(p)
   -- about a pillbox is defend, and a goto is a hold that shuts off every
   -- other goal, the brain's pillbox fight with them. Left alone, the brain
   -- sees a hostile pillbox and goes after it itself.
+  --
+  -- The order the bot was given before the prize went up is called off, once:
+  -- it still holds it for up to a minute, and an attack on the holder or a
+  -- goto after him keeps it on him and off the prize (a person who builds by
+  -- his fort had every hunter sitting on him, unable to shoot through the
+  -- walls, while the fort shot them). The brain has no word that only ends
+  -- an order, so the bot is told to hold where it is: it is there already, so
+  -- the hold is the hunter's short park, and then its own choice takes over.
+  -- A bot holder's hop is left as it was: the prize stands for a few seconds
+  -- only, and he shoots it down and takes it back himself.
   if standing(pb) then
+    if told[p] ~= nil and told[p] ~= "release" and
+       (plan == nil or plan.kind ~= "hop") then
+      local man = game.builder(p)
+      if (man == nil or man.state == "in_tank") and
+         game.hint(p, { verb = "hold" }) then
+        told[p], told_for[p], told_at[p] = "release", "release", elapsed
+        goto_at[p] = nil
+      end
+    end
     return
   end
   if not pb.in_tank then
