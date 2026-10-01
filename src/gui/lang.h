@@ -2577,10 +2577,8 @@
 #define STR_DLGLOBBY_SCENARIO_KIND_MODS     2607
 #define STR_DLGLOBBY_SCENARIO_KIND_SCENARIOS 2608
 
-/* The two hosting settings that go with a scenario carried inside a map: the
- * switch that decides whether a map a player uploaded may bring one, and the
- * directory of scenarios this host offers on their own. */
-#define STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS 2213
+/* The hosting setting that names the directory of scenarios this host offers
+ * on their own, independently of any map. */
 #define STR_DLGSETTINGS_HOSTING_SCENARIODIR  2216
 
 /* Rule change descriptions */

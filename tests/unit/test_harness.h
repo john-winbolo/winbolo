@@ -453,17 +453,6 @@ int run_lobby_reload_scenario_no_scenario(void);
 int run_lobby_reload_scenario_calls_back(void);
 int run_lobby_reload_scenario_cooldown(void);
 
-/* The lobby's scenario pick (test_lobby_set_scenario.c): who may pick, when,
- * which names are accepted, that a refusal leaves the previous pick alone,
- * and the tick gap between one pick and the next. */
-int run_lobby_set_scenario_selects(void);
-int run_lobby_set_scenario_none(void);
-int run_lobby_set_scenario_refuses_unknown(void);
-int run_lobby_set_scenario_refuses_shape(void);
-int run_lobby_set_scenario_refuses_bound(void);
-int run_lobby_set_scenario_cooldown(void);
-int run_lobby_set_scenario_unreadies(void);
-
 /* The lobby's ordered script list (test_lobby_script_list.c): one scenario
  * deciding the round and mods behind it. The chunked control event and the
  * whole-list command against hand-written bytes, the dispatcher's gates, and
@@ -472,6 +461,9 @@ int run_script_list_control_codec(void);
 int run_script_list_command_codec(void);
 int run_script_list_dispatch(void);
 int run_script_list_lists_once(void);
+int run_script_list_no_lister(void);
+int run_script_list_refuses_shape(void);
+int run_script_list_unreadies(void);
 
 /* test_scenario_settings.c: a script's own lobby settings, from the
  * declaration through the wire to game.setting and Survival. */
@@ -2201,6 +2193,9 @@ int run_loopback_brain_docs_survives_bulk_rebase(void);
 /* Client->server map upload over CHANNEL_BULK (test_loopback_upload.c): a map
  * uploaded under loss completes and the server decodes the reassembled bytes. */
 int run_loopback_map_upload(void);
+/* A loaded map upload re-joins the client; once it is CONNECTED again the
+ * Server Maps listing is asked for and answered. */
+int run_loopback_map_upload_list_after_rejoin(void);
 /* Script upload (test_script_upload.c): the BEGIN body for both kinds against
  * hand-written bytes; the server's BEGIN refusals for a script, and the map
  * ones the kind byte must leave alone; a 4 MiB package arriving whole at the
@@ -3020,6 +3015,9 @@ int run_lobby_map_keeps_bots_plain(void);
 int run_lobby_map_keeps_bots_scenario(void);
 int run_lobby_map_keeps_bots_map_own_row(void);
 int run_lobby_map_rotate_holds_seats_again(void);
+/* A map rotation decides the scenario again: a plain map leaves none
+ * attached, and the scripted map brings its own back. */
+int run_scenario_map_rotation_redecides(void);
 /* And a script pick, which keeps the host's bots unless the script lays out
  * a lobby of its own. */
 int run_lobby_script_keeps_bots_mod(void);

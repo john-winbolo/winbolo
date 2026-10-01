@@ -125,6 +125,8 @@
 #include "treegrow.h"
 #include "sim_rules.h"
 #include "client_sim.h"
+#include "client_net.h"            /* clientSimGetConnectState */
+#include "client_connect_state.h"  /* CLIENT_CONNECT_CONNECTED */
 #include "client_sim_internal.h"
 #include "brain.h"
 #include "brain_data.h"
@@ -133,6 +135,16 @@
 #include "obs_builder.h"  /* obsBuildMultiView — the refusal a case can drive */
 #include "loopback_harness.h"
 #include "test_harness.h"
+
+/* The pumps a loopback case allows its client to reach CONNECTED in. */
+#define CONNECT_MAX 2000
+
+/* The client has joined: its map is installed and it has a player number,
+ * which is what the cases below read off it. */
+static bool pred_connected(LoopbackHarness *h, void *user) {
+    (void)user;
+    return clientSimGetConnectState(h->cs) == CLIENT_CONNECT_CONNECTED;
+}
 
 /* ---- defaults ----------------------------------------------------------- */
 
@@ -605,8 +617,11 @@ int run_sim_rules_copies_follow(void) {
     memset(&h, 0, sizeof(h));
     UT_ASSERT_MSG(loopbackHarnessStart(&h, "Rules", false, NULL, 4321),
                   "loopback start failed");
-    loopbackHarnessPumpUntil(&h, 40, NULL, NULL);
     UT_ASSERT_MSG(h.cs != NULL, "the harness produced no client");
+    if (loopbackHarnessPumpUntil(&h, CONNECT_MAX, pred_connected, NULL) < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("client never reached CONNECTED within %d pumps", CONNECT_MAX);
+    }
 
     /* Classic first, so the change below is what moves the readings. */
     clientSimGetTankFullStats(h.cs, &fullShells, &fullMines, &fullArmour,
@@ -2087,8 +2102,11 @@ int run_sim_rules_obs_refuses_non_classic(void) {
     memset(&h, 0, sizeof(h));
     UT_ASSERT_MSG(loopbackHarnessStart(&h, "ObsScale", false, NULL, 4322),
                   "loopback start failed");
-    loopbackHarnessPumpUntil(&h, 40, NULL, NULL);
     UT_ASSERT_MSG(h.cs != NULL, "the harness produced no client");
+    if (loopbackHarnessPumpUntil(&h, CONNECT_MAX, pred_connected, NULL) < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("client never reached CONNECTED within %d pumps", CONNECT_MAX);
+    }
 
     obs  = (WinBoloObs *) malloc(sizeof(*obs));
     zero = (WinBoloObs *) calloc(1, sizeof(*zero));
@@ -2343,8 +2361,11 @@ int run_sim_rules_obs_reload_follows(void) {
     memset(&h, 0, sizeof(h));
     UT_ASSERT_MSG(loopbackHarnessStart(&h, "ObsReload", false, NULL, 4323),
                   "loopback start failed");
-    loopbackHarnessPumpUntil(&h, 40, NULL, NULL);
     UT_ASSERT_MSG(h.cs != NULL, "the harness produced no client");
+    if (loopbackHarnessPumpUntil(&h, CONNECT_MAX, pred_connected, NULL) < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("client never reached CONNECTED within %d pumps", CONNECT_MAX);
+    }
 
     obs = (WinBoloObs *) malloc(sizeof(*obs));
     UT_ASSERT_MSG(obs != NULL, "could not allocate an observation");

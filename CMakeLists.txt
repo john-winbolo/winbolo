@@ -3927,9 +3927,6 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The lobby's reload request: who may ask, when, and what a lobby with
     # no scenario answers.
     tests/unit/test_lobby_reload_scenario.c
-    # The lobby's scenario pick: who may pick, when, and which names the
-    # scenarios directory makes good.
-    tests/unit/test_lobby_set_scenario.c
     # The lobby's ordered script list: the chunked control event, the
     # whole-list command, the dispatcher's gates and the client's reassembly.
     tests/unit/test_lobby_script_list.c
@@ -5017,17 +5014,13 @@ set(_unit_test_names
     lobby_reload_scenario_no_scenario
     lobby_reload_scenario_calls_back
     lobby_reload_scenario_cooldown
-    lobby_set_scenario_selects
-    lobby_set_scenario_none
-    lobby_set_scenario_refuses_unknown
-    lobby_set_scenario_refuses_shape
-    lobby_set_scenario_refuses_bound
-    lobby_set_scenario_cooldown
-    lobby_set_scenario_unreadies
     script_list_control_codec
     script_list_command_codec
     script_list_dispatch
     script_list_lists_once
+    script_list_no_lister
+    script_list_refuses_shape
+    script_list_unreadies
     scenario_settings_blob
     scenario_settings_manifest_lua
     scenario_settings_manifest_json
@@ -5604,6 +5597,7 @@ set(_unit_test_names
     loopback_bot_pool_survives_bulk_rebase
     loopback_brain_docs_survives_bulk_rebase
     loopback_map_upload
+    loopback_map_upload_list_after_rejoin
     upload_begin_golden
     script_upload_begin_refusals
     loopback_script_upload_at_cap
@@ -6073,6 +6067,7 @@ set(_unit_test_names
     lobby_map_keeps_bots_scenario
     lobby_map_keeps_bots_map_own_row
     lobby_map_rotate_holds_seats_again
+    scenario_map_rotation_redecides
     lobby_script_keeps_bots_mod
     lobby_script_keeps_bots_swap
     scripted_game_type_loadout_follows_base

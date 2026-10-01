@@ -44,16 +44,14 @@
  * NULL or "" leaves it unset (writes fall back to "<mapDirRoot>/Uploads").
  * The script* arguments are the same for player scripts: scriptPolicy is
  * always applied (0 = ALLOW), a scriptMaxFiles or scriptMaxStorageBytes of 0
- * keeps the create-time default (32 files / 64 MiB), and a NULL or ""
- * scriptDir clears the script persist directory. */
+ * keeps the create-time default (32 files / 64 MiB). */
 void transportUdpServerSetUploadConfig(UploadPolicy policy,
                                        uint8_t maxFiles,
                                        uint32_t maxStorageBytes,
                                        const char *persistDir,
                                        ScriptUploadPolicy scriptPolicy,
                                        uint8_t scriptMaxFiles,
-                                       uint32_t scriptMaxStorageBytes,
-                                       const char *scriptDir);
+                                       uint32_t scriptMaxStorageBytes);
 
 typedef struct {
   unsigned short udpPort;
