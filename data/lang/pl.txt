@@ -2726,3 +2726,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Warsztat
 # The game finder's scripts
 STR_DLGBROWSER_MODS=Mody
 STR_DLGBROWSER_MODS_MORE=+ mody ({number})
+
+# In-game newswire — a scenario changed who hears a player's voice
+STR_VOICE_EVERYONE_ON=Czat głosowy słyszą teraz wszyscy w grze
+STR_VOICE_EVERYONE_OFF=Czat głosowy słyszą teraz tylko twoi sojusznicy

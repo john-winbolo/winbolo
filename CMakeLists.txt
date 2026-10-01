@@ -4062,6 +4062,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_tank_status_wire.c
     tests/unit/test_voice_flags.c
     tests/unit/test_voice_talking_codec.c
+    tests/unit/test_voice_everyone_codec.c
     tests/unit/test_voice_talking_set.c
     # The rules event's body codec: every carried rule round-trips field by
     # field, rates a fixed-point scale could not carry survive, and the
@@ -5430,6 +5431,7 @@ set(_unit_test_names
     two_clients_full_sync_independent
     voice_flags_snapshot_masking
     voice_talking_codec
+    voice_everyone_codec
     sim_rules_codec_roundtrip
     sim_rules_codec_golden
     voice_talking_stops_in_countdown
@@ -6223,6 +6225,10 @@ set(_unit_test_names
     scenario_voice_everyone_on
     scenario_voice_everyone_resets
     scenario_voice_everyone_voice_off
+    scenario_voice_everyone_publish
+    scenario_voice_everyone_join
+    scenario_voice_everyone_client
+    scenario_voice_everyone_mic_bits
     scenario_fill_caps_raises_bases
     scenario_fill_caps_raises_pills
     scenario_fill_caps_off_changes_nothing

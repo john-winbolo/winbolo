@@ -1893,6 +1893,13 @@ hears at most four talkers at a time, and a spectator still hears nobody.
 Outside a round everyone hears everyone already, so the setting has no effect
 in the lobby.
 
+Every player is told when the setting changes in a running round: a line in
+the newswire, in the player's own language, and while it is on the outline of
+the microphone in the game view is drawn amber rather than white. A setting already on when
+the round starts is told as it starts, and a player who joins mid-round is
+told as they join. Setting the value it already holds tells nobody anything,
+so a script may set it every tick. The replay records each change.
+
 The setting is the server's own and lasts for one round. Every round starts
 with it off, and it goes off again when the round returns to the lobby and
 when the scenario is taken off the server, so a later round without the script

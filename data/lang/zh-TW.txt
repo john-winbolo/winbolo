@@ -2728,3 +2728,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=工作坊
 # The game finder's scripts
 STR_DLGBROWSER_MODS=模組
 STR_DLGBROWSER_MODS_MORE=+{number} 個模組
+
+# In-game newswire — a scenario changed who hears a player's voice
+STR_VOICE_EVERYONE_ON=語音聊天現在會傳給遊戲中的所有人
+STR_VOICE_EVERYONE_OFF=語音聊天現在只會傳給你的盟友

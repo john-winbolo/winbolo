@@ -425,6 +425,15 @@ struct ClientSim {
      * out, so this is 0 in a running game. Raw: the local mute list is not
      * folded in here. */
     PlayerBitMap     voiceTalkingMap;
+    /* A scenario's voice-to-everyone flag as the server last stated it
+     * (CTRL_VOICE_EVERYONE), and whether the running round plays by it:
+     * voiceEveryoneInRound is the flag while a round is running and false
+     * otherwise, and the line telling the player is printed when it moves.
+     * Held apart because the flag can arrive before the round's RUNNING
+     * phase (a script's on_setup) and must not print until the round is
+     * one where it decides who hears whom. */
+    bool             scnVoiceEveryone;
+    bool             voiceEveryoneInRound;
     char             lobbyChatHistory[4096]; /* Lobby chat buffer with player names */
     char             lobbyTeamChatHistory[4096]; /* Team-only lobby chat buffer */
 

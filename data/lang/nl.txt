@@ -2730,3 +2730,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop
 # The game finder's scripts
 STR_DLGBROWSER_MODS=Mods
 STR_DLGBROWSER_MODS_MORE=+{number} mods
+
+# In-game newswire — a scenario changed who hears a player's voice
+STR_VOICE_EVERYONE_ON=Voicechat gaat nu naar iedereen in het spel
+STR_VOICE_EVERYONE_OFF=Voicechat gaat nu alleen naar je bondgenoten

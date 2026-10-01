@@ -27,6 +27,19 @@
  *   run_scenario_voice_everyone_voice_off — a server with voice off refuses
  *       the op's on, takes its off, and the getter answers false
  *
+ * And how the players are told (CTRL_VOICE_EVERYONE):
+ *
+ *   run_scenario_voice_everyone_publish  — one event per change of value, from
+ *       the op and from each of the three clears, and none for a repeat
+ *   run_scenario_voice_everyone_join     — a client joining while it is on is
+ *       given it in its sync, holds it and is told; while off, nothing is sent
+ *   run_scenario_voice_everyone_client   — the client prints its line only
+ *       when the rule a running round plays by changes: not in the lobby, as
+ *       the round starts when the flag is already on, and silently on the way
+ *       out of the round
+ *   run_scenario_voice_everyone_mic_bits — a snapshot shows a non-ally's
+ *       microphone state while voice goes to everyone, and hides it otherwise
+ *
  * The round is two seats on team 1 and one on team 2, so 0 and 1 are allies
  * and 2 is nobody's.
  */
@@ -42,6 +55,14 @@
 #include "server_sim_scenario.h"   /* serverSimApplyScenarioOp */
 #include "server_sim_lifecycle.h"  /* serverSimSetLobbyEnabled */
 #include "scenario_defs.h"         /* ScenarioOp, SCN_OP_SET_VOICE_EVERYONE */
+#include "control_event.h"         /* CTRL_VOICE_EVERYONE */
+#include "client_sim.h"
+#include "client_sim_internal.h"   /* cs->messages */
+#include "client_sim_control.h"    /* clientSimApplyControl */
+#include "messages.h"              /* MessageState's queue */
+#include "players.h"               /* playersSetClientFlags */
+#include "player_flags.h"          /* PLAYER_FLAG_HAS_MIC */
+#include "input_packet.h"          /* SnapshotHeader, TANK_SNAPSHOT_PLAYER_MASK */
 #include "everard_map.h"           /* E_MAP */
 #include "test_harness.h"
 
@@ -235,6 +256,259 @@ int run_scenario_voice_everyone_voice_off(void) {
     UT_ASSERT_MSG(!serverSimGetScenarioVoiceEveryone(sim),
                   "the getter said voice goes to everyone on a server with "
                   "voice off");
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── How the players are told ───────────────────────────────────────── */
+
+/* What a bus subscriber has been sent of CTRL_VOICE_EVERYONE. */
+typedef struct {
+    int  count;
+    bool last;
+} VeSeen;
+
+static void veCount(void *ctx, const ControlEvent *evt) {
+    VeSeen *seen = (VeSeen *)ctx;
+    if (evt->type == CTRL_VOICE_EVERYONE) {
+        seen->count++;
+        seen->last = evt->u.voiceEveryone.on;
+    }
+}
+
+/* Expect exactly `n` events so far, the last of them saying `value`. */
+#define VE_EXPECT(seen, n, value, what)                                      \
+    UT_ASSERT_MSG((seen).count == (n) && (seen).last == (value),              \
+                  "%s: %d event(s), last %s; expected %d, last %s", (what),   \
+                  (seen).count, (seen).last ? "on" : "off", (n),              \
+                  (value) ? "on" : "off")
+
+int run_scenario_voice_everyone_publish(void) {
+    ServerSim       *sim = veRunningSim();
+    VeSeen           seen;
+    SubscriberHandle h;
+
+    UT_ASSERT(sim != NULL);
+    memset(&seen, 0, sizeof(seen));
+    h = serverSimRegisterSubscriber(sim, veCount, &seen);
+    UT_ASSERT(h != SUBSCRIBER_HANDLE_INVALID);
+    VE_EXPECT(seen, 0, false, "a sync with the flag off");
+
+    /* The op: one event for each change, none for a repeat. */
+    UT_ASSERT(veSet(sim, true) == SCN_OP_OK);
+    VE_EXPECT(seen, 1, true, "on");
+    UT_ASSERT(veSet(sim, true) == SCN_OP_OK);
+    VE_EXPECT(seen, 1, true, "on again");
+    UT_ASSERT(veSet(sim, false) == SCN_OP_OK);
+    VE_EXPECT(seen, 2, false, "off");
+    UT_ASSERT(veSet(sim, false) == SCN_OP_OK);
+    VE_EXPECT(seen, 2, false, "off again");
+
+    /* The three clears, each while the flag is on. */
+    UT_ASSERT(veSet(sim, true) == SCN_OP_OK);
+    serverSimReturnToLobby(sim);
+    VE_EXPECT(seen, 4, false, "the return to the lobby");
+
+    UT_ASSERT(veSet(sim, true) == SCN_OP_OK);
+    serverSimStartGame(sim);
+    VE_EXPECT(seen, 6, false, "a round start after a lobby call");
+
+    UT_ASSERT(veSet(sim, true) == SCN_OP_OK);
+    serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
+                                 false, false, false, false, false);
+    VE_EXPECT(seen, 8, false, "a detach");
+
+    /* And a clear while it is already off says nothing. */
+    serverSimStartGame(sim);
+    VE_EXPECT(seen, 8, false, "a round start with the flag off");
+
+    serverSimUnregisterSubscriber(sim, h);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The bottom lines queued on a client's newswire, ASCII only, as one string. */
+static void veNewswire(ClientSim *cs, char *out, size_t cap) {
+    MessageState *ms = clientSimGetMessages(cs);
+    size_t        n  = 0;
+    int           i;
+
+    for (i = 0; i < ms->queueCount && n + 1 < cap; i++) {
+        uint32_t cp = ms->queueBottom[(ms->queueHead + i) % MESSAGE_QUEUE_CAP];
+        out[n++] = (cp < 0x80) ? (char)cp : '?';
+    }
+    out[n] = '\0';
+}
+
+/* How many lines the client has queued on its newswire. This binary stubs
+ * langGetText to return "?" for every string (test_stubs.c), so a line told
+ * is one "?" in the queue, and which of the two lines it was is read off
+ * clientSimGetVoiceEveryone instead. Nothing else in these cases writes to
+ * the newswire. */
+static int veToldCount(ClientSim *cs) {
+    static char text[MESSAGE_QUEUE_CAP + 1];
+    const char *p;
+    int         n = 0;
+
+    veNewswire(cs, text, sizeof(text));
+    for (p = strchr(text, '?'); p != NULL; p = strchr(p + 1, '?')) {
+        n++;
+    }
+    return n;
+}
+
+int run_scenario_voice_everyone_join(void) {
+    ServerSim       *sim = veRunningSim();
+    VeSeen           seen;
+    SubscriberHandle h;
+    ClientSim       *cs;
+
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(veSet(sim, true) == SCN_OP_OK);
+
+    /* A subscriber joining now is given the flag in its sync. */
+    memset(&seen, 0, sizeof(seen));
+    h = serverSimRegisterSubscriber(sim, veCount, &seen);
+    UT_ASSERT(h != SUBSCRIBER_HANDLE_INVALID);
+    VE_EXPECT(seen, 1, true, "a sync with the flag on");
+    serverSimUnregisterSubscriber(sim, h);
+
+    /* And a client joining now holds it and is told, because it has no
+       other way to know. */
+    cs = clientSimAlloc();
+    UT_ASSERT(cs != NULL);
+    clientSimCreate(cs);
+    clientSimSetPlayerNum(cs, 2);
+    h = serverSimRegisterClientSubscriber(sim, cs);
+    UT_ASSERT(h != SUBSCRIBER_HANDLE_INVALID);
+    UT_ASSERT_MSG(clientSimGetVoiceEveryone(cs),
+                  "a client joining mid-round does not know voice goes to "
+                  "everyone");
+    UT_ASSERT_MSG(veToldCount(cs) == 1,
+                  "a client joining mid-round was told %d time(s), expected 1",
+                  veToldCount(cs));
+    serverSimUnregisterSubscriber(sim, h);
+    clientSimDestroy(cs);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+static void veApply(ClientSim *cs, ControlEventType type, bool on) {
+    ControlEvent evt;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = type;
+    if (type == CTRL_VOICE_EVERYONE) {
+        evt.u.voiceEveryone.on = on;
+    }
+    clientSimApplyControl(cs, &evt);
+}
+
+int run_scenario_voice_everyone_client(void) {
+    ClientSim *cs = clientSimAlloc();
+
+    UT_ASSERT(cs != NULL);
+    clientSimCreate(cs);
+    veApply(cs, CTRL_GAME_PHASE_LOBBY, false);
+
+    /* In the lobby: held, not told, since the lobby is all-talk. */
+    veApply(cs, CTRL_VOICE_EVERYONE, true);
+    UT_ASSERT(!clientSimGetVoiceEveryone(cs));
+    UT_ASSERT_MSG(veToldCount(cs) == 0,
+                  "the lobby was told about voice to everyone");
+
+    /* The round starts with it on, as a script's on_setup leaves it. */
+    veApply(cs, CTRL_GAME_PHASE_RUNNING, false);
+    UT_ASSERT(clientSimGetVoiceEveryone(cs));
+    UT_ASSERT_MSG(veToldCount(cs) == 1,
+                  "the round start told %d line(s), expected 1",
+                  veToldCount(cs));
+
+    /* A repeat tells nothing; a change tells each time. */
+    veApply(cs, CTRL_VOICE_EVERYONE, true);
+    UT_ASSERT(veToldCount(cs) == 1);
+    veApply(cs, CTRL_VOICE_EVERYONE, false);
+    UT_ASSERT(!clientSimGetVoiceEveryone(cs));
+    UT_ASSERT_MSG(veToldCount(cs) == 2,
+                  "off in the round left %d line(s) told, expected 2",
+                  veToldCount(cs));
+    veApply(cs, CTRL_VOICE_EVERYONE, true);
+    UT_ASSERT(clientSimGetVoiceEveryone(cs));
+    UT_ASSERT(veToldCount(cs) == 3);
+
+    /* The round ends: the value goes, and nobody is told "allies only" on
+       the way into an all-talk lobby, by the end or by the clear after it. */
+    veApply(cs, CTRL_GAME_PHASE_GAME_OVER, false);
+    UT_ASSERT(!clientSimGetVoiceEveryone(cs));
+    veApply(cs, CTRL_VOICE_EVERYONE, false);
+    veApply(cs, CTRL_GAME_PHASE_LOBBY, false);
+    UT_ASSERT(!clientSimGetVoiceEveryone(cs));
+    UT_ASSERT_MSG(veToldCount(cs) == 3,
+                  "leaving the round left %d line(s) told, expected 3",
+                  veToldCount(cs));
+
+    clientSimDestroy(cs);
+    return 0;
+}
+
+/* Seat 2's microphone flags as seat 0's snapshot carries them. Returns 0 when
+ * seat 2 is not in the snapshot at all. */
+static int veMicFlagsSeenBy0(ServerSim *sim, uint8_t *out) {
+    SnapshotHeader      hdr;
+    TankSnapshot        tk[MAX_TANKS];
+    ShellSnapshot       sh[MAX_SNAPSHOT_SHELLS];
+    TkExplosionSnapshot te[MAX_SNAPSHOT_TK_EXPLOSIONS];
+    BaseSnapshot        bo[MAX_SNAPSHOT_BASES];
+    PillSnapshot        po[MAX_SNAPSHOT_PILLS];
+    GameEvent           ev[MAX_SNAPSHOT_EVENTS];
+    int                 i;
+
+    memset(&hdr, 0, sizeof(hdr));
+    serverSimBuildSnapshot(sim, 0, &hdr, tk, MAX_TANKS,
+                           sh, MAX_SNAPSHOT_SHELLS,
+                           te, MAX_SNAPSHOT_TK_EXPLOSIONS,
+                           bo, MAX_SNAPSHOT_BASES,
+                           po, MAX_SNAPSHOT_PILLS,
+                           ev, MAX_SNAPSHOT_EVENTS, true);
+    for (i = 0; i < (int)hdr.tankCount; i++) {
+        if ((tk[i].playerNum & TANK_SNAPSHOT_PLAYER_MASK) == 2) {
+            *out = (uint8_t)(tk[i].clientFlags & PLAYER_VOICE_FLAG_MASK);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int run_scenario_voice_everyone_mic_bits(void) {
+    ServerSim *sim = veRunningSim();
+    uint8_t    mic = 0xFF;
+
+    UT_ASSERT(sim != NULL);
+    if (veSidesAreSet(sim) != 0) {
+        serverSimDestroy(sim);
+        return 1;
+    }
+    playersSetClientFlags(&sim->sim.plyrs, 2, PLAYER_FLAG_HAS_MIC);
+
+    /* Allies only: seat 0 cannot hear seat 2, so is not shown a microphone. */
+    UT_ASSERT_MSG(veMicFlagsSeenBy0(sim, &mic),
+                  "seat 2 is not in seat 0's snapshot");
+    UT_ASSERT_MSG(mic == 0,
+                  "seat 0 was shown seat 2's microphone (0x%02x) with voice to "
+                  "allies only", (unsigned)mic);
+
+    /* Voice to everyone: seat 0 hears seat 2, so is shown it. */
+    UT_ASSERT(veSet(sim, true) == SCN_OP_OK);
+    UT_ASSERT(veMicFlagsSeenBy0(sim, &mic));
+    UT_ASSERT_MSG(mic == PLAYER_FLAG_HAS_MIC,
+                  "seat 0 was not shown seat 2's microphone (0x%02x) with "
+                  "voice to everyone", (unsigned)mic);
+
+    /* And back. */
+    UT_ASSERT(veSet(sim, false) == SCN_OP_OK);
+    UT_ASSERT(veMicFlagsSeenBy0(sim, &mic));
+    UT_ASSERT(mic == 0);
 
     serverSimDestroy(sim);
     return 0;

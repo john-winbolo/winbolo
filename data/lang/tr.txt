@@ -2730,3 +2730,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Atölye
 # The game finder's scripts
 STR_DLGBROWSER_MODS=Modlar
 STR_DLGBROWSER_MODS_MORE=+{number} mod
+
+# In-game newswire — a scenario changed who hears a player's voice
+STR_VOICE_EVERYONE_ON=Sesli sohbet artık oyundaki herkese gidiyor
+STR_VOICE_EVERYONE_OFF=Sesli sohbet artık yalnızca müttefiklerine gidiyor

@@ -1569,6 +1569,34 @@ static bool decodeVoiceTalkingBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CTRL_VOICE_EVERYONE body wire format (fixed length):
+ *   [on 1]   0 = voice to allies only, 1 = voice to everyone
+ * Any other byte is refused rather than read as true, so a corrupt body
+ * cannot tell a player their voice goes further than it does. Delivered
+ * body-only on CHANNEL_CONTROL. */
+#define VOICE_EVERYONE_BODY_PAYLOAD 1
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeVoiceEveryoneBody(const ControlEvent *evt,
+                                            const struct UdpServerClient *recipient,
+                                            uint8_t *buf, size_t bufCap,
+                                            size_t *outLen) {
+    (void)recipient;
+    if (bufCap < VOICE_EVERYONE_BODY_PAYLOAD) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.voiceEveryone.on ? 1 : 0;
+    *outLen = VOICE_EVERYONE_BODY_PAYLOAD;
+    return ENCODE_OK;
+}
+
+static bool decodeVoiceEveryoneBody(const uint8_t *buf, size_t len,
+                                    ControlEvent *outEvt) {
+    if (len < VOICE_EVERYONE_BODY_PAYLOAD || buf[0] > 1) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_VOICE_EVERYONE;
+    outEvt->u.voiceEveryone.on = (buf[0] == 1);
+    return true;
+}
+
 /* CTRL_ENTITY_CHANGE body wire format (fixed length):
  *   [kind 1] [index 1] [added 1] [record 6]
  * The record region is the same six bytes whatever the kind, so the body is
@@ -3866,6 +3894,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_SCN_ANNOUNCE]          = encodeScnAnnounceBody,
     [CTRL_SCN_MARKER]            = encodeScnMarkerBody,
     [CTRL_SCN_STATUS]            = encodeScnStatusBody,
+    [CTRL_VOICE_EVERYONE]        = encodeVoiceEveryoneBody,
     [CTRL_SCENARIO_RULES]        = encodeScenarioRulesBody,
     [CTRL_LOBBY_SCRIPT_LIST]     = encodeLobbyScriptListBody,
     [CTRL_LOBBY_SCRIPT_SETTING]  = encodeLobbyScriptSettingBody,
@@ -3922,6 +3951,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_SCN_ANNOUNCE]          = decodeScnAnnounceBody,
     [CTRL_SCN_MARKER]            = decodeScnMarkerBody,
     [CTRL_SCN_STATUS]            = decodeScnStatusBody,
+    [CTRL_VOICE_EVERYONE]        = decodeVoiceEveryoneBody,
     [CTRL_SCENARIO_RULES]        = decodeScenarioRulesBody,
     [CTRL_LOBBY_SCRIPT_LIST]     = decodeLobbyScriptListBody,
     [CTRL_LOBBY_SCRIPT_SETTING]  = decodeLobbyScriptSettingBody,

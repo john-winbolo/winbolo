@@ -2728,3 +2728,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=创意工坊
 # The game finder's scripts
 STR_DLGBROWSER_MODS=MOD
 STR_DLGBROWSER_MODS_MORE=+{number} 个 MOD
+
+# In-game newswire — a scenario changed who hears a player's voice
+STR_VOICE_EVERYONE_ON=语音聊天现在会发送给游戏中的所有人
+STR_VOICE_EVERYONE_OFF=语音聊天现在仅发送给你的盟友

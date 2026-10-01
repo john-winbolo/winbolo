@@ -367,6 +367,7 @@ static const char *logEventsTypeName(int type) {
     case CTRL_SCN_ANNOUNCE:          return "CTRL_SCN_ANNOUNCE";
     case CTRL_SCN_MARKER:            return "CTRL_SCN_MARKER";
     case CTRL_SCN_STATUS:            return "CTRL_SCN_STATUS";
+    case CTRL_VOICE_EVERYONE:        return "CTRL_VOICE_EVERYONE";
     case CTRL_SCENARIO_RULES:        return "CTRL_SCENARIO_RULES";
     case CTRL_LOBBY_SCRIPT_LIST:     return "CTRL_LOBBY_SCRIPT_LIST";
     case CTRL_LOBBY_SCRIPT_SETTING:  return "CTRL_LOBBY_SCRIPT_SETTING";
@@ -692,6 +693,11 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
     case CTRL_VOICE_TALKING:
       fprintf(f, ",\"talking\":%u",
               (unsigned)evt->u.voiceTalking.talking);
+      break;
+
+    case CTRL_VOICE_EVERYONE:
+      fprintf(f, ",\"on\":%s",
+              evt->u.voiceEveryone.on ? "true" : "false");
       break;
 
     case CTRL_LOBBY_BRAIN_DOCS_CHUNK:
