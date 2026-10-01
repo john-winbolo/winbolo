@@ -484,6 +484,32 @@ static void wasmSeedPracticeBot(const char *brainPath, bool scriptSeats) {
   serverSimReapplyTeamAlliances(wasmServerSim);
 }
 
+/* The shared background game the menu and its dialogs draw behind them.
+ * Not fatal when it cannot be made: the menu is then drawn plain. */
+void wasmBackgroundGameCreate(void) {
+  char mapPath[512];
+  BgGame *bg = (BgGame *)SDL_calloc(1, sizeof(BgGame));
+  if (bg == NULL) {
+    printf("[WASM] background game: out of memory\n");
+    return;
+  }
+  if (wasmPickBackgroundMap(mapPath, sizeof(mapPath)) &&
+      bgGameCreate(bg, mapPath, sdl3DrawGetRenderer())) {
+    bgGameSetShared(bg);
+  } else {
+    printf("[WASM] background game: not created\n");
+    SDL_free(bg);
+  }
+}
+
+void wasmBackgroundGameDestroy(void) {
+  BgGame *bg = bgGameGetShared();
+  if (bg == NULL) return;
+  bgGameSetShared(NULL);
+  bgGameDestroy(bg);
+  SDL_free(bg);
+}
+
 /* -------------------------------------------------------
  * gameFrontWasmSetup — page-lifetime setup, run once per page
  * ------------------------------------------------------- */
@@ -531,22 +557,7 @@ bool gameFrontWasmSetup(keyItems *keys) {
 
     brainsHandlerLoadBrains();
 
-    /* The shared background game the menu and its dialogs draw behind
-     * them, made once for the page. Not fatal when it fails: the menu is
-     * then drawn plain. main_wasm.c hides it while a game runs; the page
-     * never frees it. */
-    {
-      BgGame *bg = (BgGame *)SDL_calloc(1, sizeof(BgGame));
-      if (bg != NULL) {
-        char mapPath[512];
-        if (wasmPickBackgroundMap(mapPath, sizeof(mapPath)) &&
-            bgGameCreate(bg, mapPath, sdl3DrawGetRenderer())) {
-          bgGameSetShared(bg);
-        } else {
-          SDL_free(bg);
-        }
-      }
-    }
+    wasmBackgroundGameCreate();
   }
 
   guiMessageSetHandler(sdl3MessageHandler);

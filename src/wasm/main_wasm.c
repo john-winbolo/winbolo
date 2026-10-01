@@ -712,8 +712,9 @@ static void wasmEndSinglePlayerGame(void) {
   imguiLobbyFrameReset();
   tutorialOverlayReset();
 
-  /* The menu's background game ticks again (wasmPlayGame stopped it). */
-  bgGameSetHiddenByForeground(bgGameGetShared(), FALSE);
+  /* wasmPlayGame freed the menu's background game; make a new one, on a
+   * newly picked map, for the menu. */
+  wasmBackgroundGameCreate();
 
   /* The in-game menu's toggles change only the live settings, as on the
    * desktop, which writes them when its game ends; do the same here, after
@@ -731,15 +732,12 @@ static void wasmEndSinglePlayerGame(void) {
 static bool wasmPlayGame(const char *cmdLine, const WasmLaunch *launch) {
   wasmGameStateReset();
 
-  /* Stop the menu's background game while this one runs, so its bots take
-   * no turns on the page's thread, and drop its kept scene texture, as the
-   * desktop does when it leaves the menu. wasmEndSinglePlayerGame starts
-   * it again. */
-  {
-    BgGame *bg = bgGameGetShared();
-    bgGameSetHiddenByForeground(bg, TRUE);
-    bgGameReleaseScene(bg);
-  }
+  /* Free the menu's background game before this one starts. Each of its
+   * bots holds tens of MB of brain, and the page's heap never shrinks, so
+   * keeping them through the game would leave that much less for it.
+   * wasmEndSinglePlayerGame makes a new one; a network game ends by leaving
+   * the page. */
+  wasmBackgroundGameDestroy();
 
   printf("[WASM] Starting gameFrontWasmStart...\n");
   bool started = (gameFrontWasmStart(cmdLine, &keys, launch) != FALSE);
