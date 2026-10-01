@@ -77,6 +77,7 @@ static const ScenarioOpType kAllOpTypes[] = {
     SCN_OP_MSG_SAY,
     SCN_OP_SOUND,
     SCN_OP_LOG,
+    SCN_OP_SET_VOICE_EVERYONE,
     SCN_OP_PANEL,
     SCN_OP_SCORE,
     SCN_OP_ANNOUNCE,
@@ -165,6 +166,7 @@ static bool opArmHasLanded(ScenarioOpType t) {
            t == SCN_OP_MSG_SAY ||
            t == SCN_OP_SOUND ||
            t == SCN_OP_LOG ||
+           t == SCN_OP_SET_VOICE_EVERYONE || /* test_scenario_voice_everyone.c */
            t == SCN_OP_PANEL ||              /* test_scenario_presentation_arms.c */
            t == SCN_OP_SCORE ||
            t == SCN_OP_ANNOUNCE ||

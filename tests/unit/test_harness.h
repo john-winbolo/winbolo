@@ -3137,6 +3137,15 @@ int run_scenario_rule_arm_records(void);
 int run_scenario_rule_clamps_world(void);
 int run_scenario_rule_clamp_records(void);
 
+/* Voice to everyone (test_scenario_voice_everyone.c). Allies only in a round
+ * and everyone in the lobby with no script, the op turning voice to everyone
+ * on and off, the return to the lobby, a round start and a detach each
+ * turning it off, and a server with voice off refusing it. */
+int run_scenario_voice_everyone_default(void);
+int run_scenario_voice_everyone_on(void);
+int run_scenario_voice_everyone_resets(void);
+int run_scenario_voice_everyone_voice_off(void);
+
 /* fill_to_caps (test_scenario_fill_caps.c). A mod that raises a cap and asks
  * for the map to start at it, for a base stock and for a pill's armour; the
  * same mod without the key, which raises the cap and moves nothing; and what
@@ -3390,6 +3399,7 @@ int run_scenario_validate_needs_bots_declared(void);
  * as, the whole-map string, a shape error against the error limit, and
  * the rules, tags and regions a script declares read back. */
 int run_scenario_lua_every_row_answers(void);
+int run_scenario_lua_voice_everyone(void);
 int run_scenario_lua_op_arguments_match_the_doc(void);
 int run_scenario_lua_read_index_passes_through(void);
 int run_scenario_lua_op_index_subtracts_one(void);

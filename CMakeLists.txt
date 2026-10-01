@@ -3804,6 +3804,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # puts in a recording — its bytes on disk and both of the viewer's
     # readers over them.
     tests/unit/test_scenario_rule_arms.c
+    # Voice to everyone: the op behind game.set_voice_everyone and the rule
+    # the voice forward asks, with the points that turn it off again and
+    # the refusal on a server with voice off.
+    tests/unit/test_scenario_voice_everyone.c
     # fill_to_caps: a mod that raises a cap and asks for the map's pills and
     # bases to start at it rather than at the numbers the map file holds — a
     # base stock, a pill's armour, the same mod with the key left out, and
@@ -6169,6 +6173,10 @@ set(_unit_test_names
     scenario_rule_arm_records
     scenario_rule_clamps_world
     scenario_rule_clamp_records
+    scenario_voice_everyone_default
+    scenario_voice_everyone_on
+    scenario_voice_everyone_resets
+    scenario_voice_everyone_voice_off
     scenario_fill_caps_raises_bases
     scenario_fill_caps_raises_pills
     scenario_fill_caps_off_changes_nothing
@@ -6335,6 +6343,7 @@ set(_unit_test_names
     scenario_validate_needs_bots_missing
     scenario_validate_needs_bots_declared
     scenario_lua_every_row_answers
+    scenario_lua_voice_everyone
     scenario_lua_op_arguments_match_the_doc
     scenario_lua_read_index_passes_through
     scenario_lua_op_index_subtracts_one

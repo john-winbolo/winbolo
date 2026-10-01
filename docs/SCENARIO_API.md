@@ -1839,6 +1839,8 @@ to escort a person stays where it is.
 | `game.say(p, text[, target])` | A chat line seat `p` says, exactly as a player typing would: to its own team with no target, to everyone with `"all"`, or to one seat with a number. |
 | `game.sound(name[, x, y])` | Plays one of the server's sounds, at a square or everywhere. |
 | `game.log(text)` | Writes a line to the server's console. No player sees it. |
+| `game.set_voice_everyone(on)` | With `true`, voice in the running round goes to every player rather than to the talker's allies alone. `false` puts it back. |
+| `game.voice_everyone()` | Whether voice is going to everyone: what `set_voice_everyone` last set this round, and `false` on a server with voice off. |
 | `game.end_round([text[, winner_team]])` | Ends the round now, with the line the lobby shows and the team that won it. |
 | `game.set_game_time(ticks)` | How long the round has left, in `game.tick()`'s own units: 100 a second, so a minute is 6000. |
 | `game.add_game_time(ticks)` | Adds to what the round has left, or takes away with a negative, in the same units. A round with no time limit has nothing to add to, so give it a length first. |
@@ -1881,6 +1883,23 @@ receiver that never sees it. Use `"all"` or a seat number there.
 `end_round` is how a scenario wins or loses a round. It stops play there and
 then, and the line it carries is shown in the lobby exactly as written — the
 server adds no verdict of its own.
+
+`set_voice_everyone` is for a round where sides do not fit voice. In a round,
+the server sends a player's voice only to that player's allies, so a round
+where every tank is on a team of its own has nobody hearing anybody. With voice
+to everyone on, the alliance check is skipped and every connected player hears
+every talker. Nothing else changes: a player's mutes still hold, a player still
+hears at most four talkers at a time, and a spectator still hears nobody.
+Outside a round everyone hears everyone already, so the setting has no effect
+in the lobby.
+
+The setting is the server's own and lasts for one round. Every round starts
+with it off, and it goes off again when the round returns to the lobby and
+when the scenario is taken off the server, so a later round without the script
+has voice to allies only. Call it from `on_setup` or later; a call in the lobby
+is cleared when the round starts. A server with voice off forwards no voice at
+all, so `set_voice_everyone(true)` is refused there (`SCN_OP_WRONG_STATE`);
+`set_voice_everyone(false)` is always taken.
 
 ---
 
