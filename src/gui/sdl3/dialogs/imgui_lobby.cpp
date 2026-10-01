@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -236,7 +239,6 @@ extern "C" void imguiLobbyFrameReset(void) {
 
     lobbyChooserReset();
     lobbyScenarioChooserReset();
-    lobbyScenarioRulesReset();
 
     lobbyChatReset();
 
@@ -1341,46 +1343,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                      * chooser a non-host has, so it comes with them here. */
                     lobbyRenderScenarioInfoLines(cs, s);
 
-                    /* Skip-map vote is gated by LOBBY_LOCK_MAP — locking
-                     * the map blocks both manual change and skip-vote. */
-                    if (!spectator && clientSimIsMapSkipAvailable(cs) && clientSimIsInLobby(cs) &&
-                        !(clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP)) {
-                        ImGui::Spacing();
-                        bool countdownActive = clientSimGetCountdownSeconds(cs) > 0;
-                        if (countdownActive) ImGui::BeginDisabled();
-                        bool voted = clientSimIsMapSkipMyVote(cs);
-                        const char *skipLabel = voted ? langGetText(STR_DLGLOBBY_CANCELSKIP) : langGetText(STR_DLGLOBBY_SKIPMAP);
-                        if (voted) {
-                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.4f, 0.1f, 1.0f));
-                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.5f, 0.2f, 1.0f));
-                            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.7f, 0.3f, 0.05f, 1.0f));
-                        }
-                        if (ImGui::Button(skipLabel, ImVec2(100 * s, 0))) {
-                            clientSimSetMapSkipMyVote(cs, !clientSimIsMapSkipMyVote(cs));
-                            if (hasTransport) {
-                                clientSimNetSendMapSkipVote(cs);
-                            }
-                        }
-                        if (voted) {
-                            ImGui::PopStyleColor(3);
-                        }
-                        ImGui::SameLine();
-                        int skipCount = 0, humanCount = 0;
-                        for (int j = 0; j < MAX_TANKS; j++) {
-                            const ClientLobbySlot *jSlot = clientSimGetLobbySlot(cs, (BYTE)j);
-                            if (jSlot && jSlot->connected && !jSlot->isBot) {
-                                humanCount++;
-                                if (clientSimIsMapSkipVote(cs, (BYTE)j)) skipCount++;
-                            }
-                        }
-                        {
-                            MessageArgs args = {};
-                            args.number = skipCount;
-                            args.number2 = humanCount;
-                            ImGui::TextUnformatted(langGetTextFmt(STR_DLGLOBBY_VOTES, &args));
-                        }
-                        if (countdownActive) ImGui::EndDisabled();
-                    }
+                    lobbyRenderMapSkipVote(cs, spectator, hasTransport, s, false);
 
                     if (tabMapBelowTopY >= 0.0f) {
                         tabMapBelowH = ImGui::GetCursorPosY() - tabMapBelowTopY;
@@ -2376,19 +2339,14 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
            only finds a popup opened at its own scope. --- */
         lobbyChatDocsRenderModal(cs);
 
-        /* --- The scenario's rules, opened from the scenario line. Here for
-           the same reason as the docs modal above: the Rules button is drawn
-           inside the settings form's Server Settings column, and
-           BeginPopupModal only finds a popup opened at its own scope. --- */
-        lobbyScenarioRulesRenderModal(cs);
-
-        /* --- What one scenario or mod is, opened from the icon on either of
-           the two script lines or from a row of the chooser. Here because no
-           one scope sees all three: the two lines are drawn inside the
-           settings form and inside the map panel, and the chooser is a
-           top-level window of its own drawn after this window has ended, so
-           none of them can call OpenPopup where BeginPopupModal would find
-           it. Each sets a flag and this is what turns it into a popup. --- */
+        /* --- What one scenario or mod is, opened from a script name in the
+           Server Settings row or on the map panel, or from a row of the
+           chooser. Here because no one scope sees all three: the row is drawn
+           inside the settings form, the map panel's lines inside the map
+           panel, and the chooser is a top-level window of its own drawn after
+           this window has ended, so none of them can call OpenPopup where
+           BeginPopupModal would find it. Each sets a flag and this is what
+           turns it into a popup. --- */
         lobbyScenarioDetailsRenderModal(cs, s);
 
         /* --- Leave confirmation popup --- */

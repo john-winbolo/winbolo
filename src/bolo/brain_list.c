@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 #include "brain_list.h"
@@ -743,7 +746,9 @@ bool brainListLoadModes(const char *name, BrainModes *out) {
     brainModesSynthesizeDefault(out);
     if (!name || !name[0]) return false;
 
-    char blob[4096];
+    /* 8 KB: the file is mostly comments, and a longer file is cut off
+     * silently, which would drop its last sections. */
+    char blob[8192];
     if (!brainListReadSidecarAny(name, "modes.txt", blob, sizeof(blob))) {
         return false;
     }
@@ -760,6 +765,11 @@ bool brainListLoadModes(const char *name, BrainModes *out) {
 
     BrainMode *cur = NULL;       /* mode the current section writes into */
     int        curIdx = -1;
+    /* A header line seen yet? Lines above the first section are the file's
+     * own settings (open_default); below it they belong to a mode. */
+    bool       sawSection = false;
+    char       openDefaultKey[BRAIN_MODE_KEY_LEN];
+    openDefaultKey[0] = '\0';
     char      *line = blob;
     while (line != NULL && *line != '\0') {
         char *eol = strchr(line, '\n');
@@ -775,6 +785,7 @@ bool brainListLoadModes(const char *name, BrainModes *out) {
         if (s[0] == '[') {
             /* New section: "[key]". */
             cur = NULL;
+            sawSection = true;
             char *close = strchr(s, ']');
             if (close) {
                 *close = '\0';
@@ -788,6 +799,19 @@ bool brainListLoadModes(const char *name, BrainModes *out) {
                     /* Until a label line says otherwise the key IS the
                      * label, so a terse manifest still renders. */
                     SDL_strlcpy(cur->label, key, sizeof(cur->label));
+                }
+            }
+        } else if (s[0] != '\0' && !sawSection) {
+            /* A file-level setting. Only open_default exists; anything else
+             * here is ignored, as an unknown field in a section is. */
+            char *eq = strchr(s, '=');
+            if (eq) {
+                *eq = '\0';
+                char *field = brainModesTrim(s);
+                char *value = brainModesTrim(eq + 1);
+                if (SDL_strcasecmp(field, "open_default") == 0 &&
+                    brainModesKeyOk(value)) {
+                    SDL_strlcpy(openDefaultKey, value, sizeof(openDefaultKey));
                 }
             }
         } else if (s[0] != '\0' && cur != NULL) {
@@ -807,6 +831,32 @@ bool brainListLoadModes(const char *name, BrainModes *out) {
                         SDL_strlcpy(defaultKeys[curIdx], value,
                                     sizeof(defaultKeys[curIdx]));
                     }
+                } else if (SDL_strcasecmp(field, "about") == 0) {
+                    /* Already trimmed; strlcpy cuts a long line to the
+                     * field. A cut can split a UTF-8 sequence, so a
+                     * trailing partial one is removed. */
+                    SDL_strlcpy(cur->about, value, sizeof(cur->about));
+                    size_t n = strlen(cur->about);
+                    if (n == sizeof(cur->about) - 1) {
+                        size_t k = n;
+                        while (k > 0 &&
+                               ((unsigned char)cur->about[k - 1] & 0xC0) == 0x80) {
+                            k--;
+                        }
+                        if (k > 0 &&
+                            ((unsigned char)cur->about[k - 1] & 0x80) != 0) {
+                            unsigned char lead = (unsigned char)cur->about[k - 1];
+                            size_t need = (lead >= 0xF0) ? 4
+                                        : (lead >= 0xE0) ? 3
+                                        : (lead >= 0xC0) ? 2 : 1;
+                            if (n - (k - 1) < need) cur->about[k - 1] = '\0';
+                        }
+                    }
+                } else if (SDL_strcasecmp(field, "standard_levels") == 0) {
+                    cur->standardLevels =
+                        SDL_strcasecmp(value, "yes") == 0 ||
+                        SDL_strcasecmp(value, "true") == 0 ||
+                        SDL_strcmp(value, "1") == 0;
                 }
                 /* An unknown field is ignored: a newer manifest can carry
                  * keys this build has never heard of and still load. */
@@ -840,8 +890,36 @@ bool brainListLoadModes(const char *name, BrainModes *out) {
                         : (m->levelCount > 0 ? m->levelCount - 1 : 0);
     }
     if (kept.modeCount <= 0) return false;   /* out keeps the fallback */
+    /* kept holds the modes in the same order as parsed, so a key resolves to
+     * the same index in both. An unknown key starts Open games in mode 0. */
+    {
+        int od = brainModesFindMode(&kept, openDefaultKey);
+        kept.openDefaultMode = (od >= 0) ? od : 0;
+    }
     *out = kept;
     return true;
+}
+
+bool brainModeUsesStandardLevels(const BrainMode *mode) {
+    static const char *const kStandard[3] = { "easy", "medium", "hard" };
+    if (mode == NULL) return false;
+    if (!mode->standardLevels && SDL_strcasecmp(mode->key, "default") != 0) {
+        return false;
+    }
+    if (mode->levelCount != 3) return false;
+    for (int i = 0; i < 3; i++) {
+        if (SDL_strcasecmp(mode->levels[i].key, kStandard[i]) != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+int brainModesStartMode(const BrainModes *modes, bool openGame) {
+    if (!modes || !openGame) return 0;
+    if (modes->openDefaultMode < 0 ||
+        modes->openDefaultMode >= modes->modeCount) return 0;
+    return modes->openDefaultMode;
 }
 
 /* Recover a brain's directory name from its init.lua path — the same

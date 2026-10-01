@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -35,6 +38,8 @@
 #include "treegrow.h"               /* treeGrowReset — the world reset's tree state */
 #include "sim_rules.h"              /* simRulesClassic — the table a round starts from */
 #include "start_sides.h"            /* START_SIDE_ANY — the per-team side table handed to startsAssignBatch */
+#include "server_sim_scenario.h"    /* serverSimGetLobbyScriptCount / serverSimGetLobbyScript — the mods WinBolo.net is told */
+#include "playername_validate.h"    /* playerNameTruncateUtf8 — the names cut on a character boundary */
 #include "../../winbolonet/winbolonet_core.h"     /* winbolonetAddEvent, WINBOLO_NET_EVENT_WIN */
 #include "../../winbolonet/winbolonet_server.h"   /* WbnLobbyInfo, winbolonetSetLobbyInfo, winbolonetSendLobbyUpdate */
 #include "../../common/md5.h"       /* the BMAPBOLO map hash WinBolo.net matches against */
@@ -105,14 +110,10 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
         serverSimConsoleMessage(msg);
     }
 
-    /* Drop any bots the previous occupants added, seats held for a bot that
-       was never fielded included — those have no bot manager entry, so the
-       roster is what has to be asked. */
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (serverSimIsBot(sim, i)) {
-            serverSimRemoveBot(sim, i);
-        }
-    }
+    /* Drop any bots the previous occupants added, the scenario's seats
+       included, so the decision below seats the template again even where
+       it reaches the one attached already. */
+    serverSimRemoveAllBots(sim);
 
     /* Clear per-slot start reservations back to the none sentinel. */
     for (i = 0; i < MAX_TANKS; i++) {
@@ -184,6 +185,7 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
     sim->lastBotLevelKey[0] = '\0';
     memset(sim->lastTeamBotLevelKey, 0, sizeof(sim->lastTeamBotLevelKey));
     sim->botConfigPublishPending = 0;
+    sim->botModeSetByHand        = 0;
 
     /* Unlock the lobby to new players: clear both the host-toggled
      * allow-new-players gate and the transport-level admin lock. */
@@ -598,8 +600,78 @@ void serverSimCacheMapMd5FromFile(ServerSim *sim, const char *path) {
  * edits (e.g. time-limit slider) coalesce into one send per window. */
 #define WBN_LOBBY_UPDATE_INTERVAL 30
 
+/* winbolonet_server.h keeps its own copies of the name length and the mod
+   cap because it does not include control_event.h. This translation unit sees
+   both, so one moving without the other is a build failure here rather than a
+   name or a list cut short on the way to the tracker. */
+BOLO_STATIC_ASSERT(WBN_SCENARIO_NAME_LEN == LOBBY_SCENARIO_NAME_LEN,
+                   wbn_scenario_name_len_matches_lobby_scenario_name_len);
+BOLO_STATIC_ASSERT(WBN_MODS_MAX == LOBBY_SCRIPT_LIST_MAX - 1,
+                   wbn_mods_max_matches_lobby_script_list_max);
+/* server_sim.h keeps its own copies of the same three figures for the script
+   summary, for the same reason; the summary is copied field for field into the
+   tracker's struct and the info reply, so all three sets move together. */
+BOLO_STATIC_ASSERT(SERVER_SCRIPT_NAME_LEN == LOBBY_SCENARIO_NAME_LEN,
+                   server_script_name_len_matches_lobby_scenario_name_len);
+BOLO_STATIC_ASSERT(SERVER_SCRIPT_DESC_LEN == LOBBY_SCENARIO_DESC_LEN,
+                   server_script_desc_len_matches_lobby_scenario_desc_len);
+BOLO_STATIC_ASSERT(SERVER_SCRIPT_MODS_MAX == LOBBY_SCRIPT_LIST_MAX - 1,
+                   server_script_mods_max_matches_lobby_script_list_max);
+BOLO_STATIC_ASSERT(SERVER_SCRIPT_NAME_LEN == WBN_SCENARIO_NAME_LEN,
+                   server_script_name_len_matches_wbn_scenario_name_len);
+BOLO_STATIC_ASSERT(SERVER_SCRIPT_MODS_MAX == WBN_MODS_MAX,
+                   server_script_mods_max_matches_wbn_mods_max);
+
+/* A script's name for the tracker: the manifest's, or the file's where the
+   manifest named nothing, as the lobby draws it. Cut to fit on a character
+   boundary; the file name is the longer of the two and can run past the
+   buffer. */
+static void serverSimWbnCopyName(char *dst, const char *name,
+                                 const char *file) {
+    char   tmp[LOBBY_SCENARIO_FILE_LEN];
+    size_t len;
+
+    snprintf(tmp, sizeof(tmp), "%s", name[0] != '\0' ? name : file);
+    len = playerNameTruncateUtf8(tmp, WBN_SCENARIO_NAME_LEN - 1);
+    memcpy(dst, tmp, len + 1);
+}
+
+void serverSimGetScriptSummary(const ServerSim *sim, ServerScriptSummary *out) {
+    int count;
+    int i;
+    if (out == NULL) return;
+    memset(out, 0, sizeof(*out));
+    if (sim == NULL) return;
+    /* The scenario only when one decides the round: a mod attached as the
+       identity leaves winning alone, so the round reads as plain. */
+    out->hasScenario = sim->scenarioIdentity.source != lobbyScenarioNone &&
+                       !sim->scenarioIdentity.keepsWinCondition;
+    if (out->hasScenario) {
+        serverSimWbnCopyName(out->scenarioName, sim->scenarioIdentity.name,
+                             sim->scenarioIdentity.fileName);
+        snprintf(out->scenarioDescription, sizeof(out->scenarioDescription),
+                 "%s", sim->scenarioIdentity.description);
+        out->scenarioMaxPlayers = sim->scenarioLobby.maxPlayers;
+    }
+    /* The mods that run, in the lobby's list order. None with Mods Enabled
+       off, whatever the list still names. */
+    out->modCount = 0;
+    if (!serverSimGetModsOff(sim)) {
+        count = serverSimGetLobbyScriptCount(sim);
+        for (i = 0; i < count && out->modCount < SERVER_SCRIPT_MODS_MAX; i++) {
+            const ScnDirEntry *row = serverSimGetLobbyScript(sim, i);
+            if (row == NULL || !row->keepsWinCondition) continue;
+            serverSimWbnCopyName(out->modNames[out->modCount], row->name,
+                                 row->file);
+            out->modCount++;
+        }
+    }
+}
+
 void serverSimRefreshWbnLobbyInfo(ServerSim *sim) {
-    WbnLobbyInfo info;
+    WbnLobbyInfo        info;
+    ServerScriptSummary scripts;
+    BYTE                i;
     if (sim == NULL) return;
     memset(&info, 0, sizeof(info));
     snprintf(info.map, sizeof(info.map), "%s", sim->mapName);
@@ -641,6 +713,14 @@ void serverSimRefreshWbnLobbyInfo(ServerSim *sim) {
     info.baseViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryBase);
     info.allyViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryAlly);
     info.voiceMode       = serverSimGetVoiceMode(sim);
+    serverSimGetScriptSummary(sim, &scripts);
+    info.hasScenario        = scripts.hasScenario;
+    info.scenarioMaxPlayers = scripts.scenarioMaxPlayers;
+    memcpy(info.scenarioName, scripts.scenarioName, sizeof(info.scenarioName));
+    info.modCount = scripts.modCount;
+    for (i = 0; i < scripts.modCount; i++) {
+        memcpy(info.modNames[i], scripts.modNames[i], sizeof(info.modNames[i]));
+    }
     winbolonetSetLobbyInfo(&info);
 }
 
@@ -889,8 +969,8 @@ void serverSimReturnToLobby(ServerSim *sim) {
     /* Forget the host's manual bot mode/difficulty pick on EVERY return to
      * the lobby, whether or not anyone stayed. The pick belongs to one lobby
      * session — from entering the lobby until the game starts — and a round
-     * ending starts a new one, so the host who set a bot to Survival last
-     * game does not find the next lobby's Add Bot already in Survival. The
+     * ending starts a new one, so the host who set a bot to some other mode
+     * last game does not find the next lobby's Add Bot already in it. The
      * empty-lobby branch below calls serverSimResetLobbyToDefaults, which
      * clears these again; clearing twice costs nothing and keeps the two
      * paths honest on their own.
@@ -1783,7 +1863,23 @@ void serverSimMapRotateRound(ServerSim *sim) {
      * gameOver path via serverSimReturnToLobby). */
     sim->state = serverStateLobby;
     if (sim->mapDirFiles != NULL) {
-        serverSimMapDirPickRandom(sim);
+        /* The round being left may have fielded the scenario's held seats,
+           and nobody is here to keep an edit to them, so the next round
+           opens on the template's own lobby. A decision that reaches the
+           same template leaves the seats as they stand; this is what tells
+           it to seat them again. Not serverSimScenarioReconcileLobby: that
+           takes every fielded seat of the template off the field, a team
+           the template fields from the start included, and in a round that
+           starts straight away nothing puts that team back on.
+
+           Where no map in the directory loads, the map change never runs
+           and the lobby is the one it was, so the flag goes back to what it
+           said about that lobby. */
+        bool wasSeated = sim->scenarioLobbySeated;
+        sim->scenarioLobbySeated = false;
+        if (!serverSimMapDirPickRandom(sim)) {
+            sim->scenarioLobbySeated = wasSeated;
+        }
     }
 
     /* Full world reset + tank (re)creation + state -> running. With no

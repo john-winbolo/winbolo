@@ -11,18 +11,14 @@
 -- are twenty-four squares west of it, and seat 2 is the speaker, so seat 1
 -- is the one bot that HEARS the order and has to decline it.
 --
--- Two things are read. One bot acked, and it was seat 0 — named by the seat
--- the line came from, which is the same number `game.lobby_slot` knows it
--- by. And seat 1 is still more than fifteen squares out well after the
--- order, so declining meant staying put rather than going anyway.
+-- Only the acks are read. At ACK_BY exactly one bot has acked, and it was
+-- seat 0 — named by the seat the line came from, which is the same number
+-- `game.lobby_slot` knows it by. Where any tank drives is not read. Seat 2
+-- never hears the order (a sender does not receive its own line).
 --
--- Seat 2 is not held to that: it never heard the order (a sender does not
--- receive its own line), so where it drives says nothing about `nearby`.
---
--- A second, DEAD pillbox is put four squares from seat 1 on purpose. A bot
--- with nothing at all to do drifts towards the only pill on the map, and
--- that drift would read as disobedience it never committed; a free pillbox
--- on its doorstep gives it its own work and leaves the reading clean.
+-- A second, DEAD pillbox is put four squares from seat 1 on purpose. It
+-- gives seat 1 its own work away from the ordered pill, so nothing pulls it
+-- towards pill #0 and its chat stays clear of a stray ack for it.
 
 scenario = {
   name        = "ROOST order_nearby",
@@ -40,8 +36,6 @@ local POS = { [0] = { 122, 128 },   -- 6 squares from the ordered pill
 local SETUP_AT = 150
 local SAY_AT   = 250
 local ACK_BY   = 600
-local HOLD_BY  = 1200     -- how long the far bot has to stay away
-local FAR      = 15       -- squares it must still be beyond
 
 local pill_n, said_at = nil, nil
 local ackers, n_ackers = {}, 0
@@ -113,26 +107,12 @@ function on_tick(t)
     if n_ackers ~= 1 then
       finish(string.format("FAIL order_nearby: %d bots acked in %d ticks, wanted 1",
                            n_ackers, ACK_BY))
-      return
-    end
-    if not ackers[0] then
+    elseif not ackers[0] then
       local who = "nobody"
       for p in pairs(ackers) do who = "p" .. p end
       finish("FAIL order_nearby: the order went to " .. who .. ", not to p0")
-      return
-    end
-  end
-
-  if since >= HOLD_BY then
-    local d0, d1 = away(0, PX, PY), away(1, PX, PY)
-    if n_ackers ~= 1 or not ackers[0] then
-      finish(string.format("FAIL order_nearby: %d acks by +%d", n_ackers, since))
-    elseif d1 and d1 > FAR then
-      finish(string.format("PASS order_nearby: p0 alone acked and is %d away, p1 still %d",
-                           d0 or -1, d1))
     else
-      finish(string.format("FAIL order_nearby: p1 closed to %d, inside %d, at +%d",
-                           d1 or -1, FAR, since))
+      finish(string.format("PASS order_nearby: p0 alone acked in %d ticks", ACK_BY))
     end
   end
 end

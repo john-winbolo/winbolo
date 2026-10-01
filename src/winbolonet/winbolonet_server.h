@@ -5,13 +5,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 
@@ -52,11 +55,18 @@ typedef struct BalanceProposal BalanceProposal;
 * settings are all carried so a single lobby_update POST is
 * a complete, idempotent snapshot.
 *********************************************************/
+/* The same figure as LOBBY_SCENARIO_NAME_LEN in control_event.h, which this
+ * header does not include; server_sim_round.c holds the two together. */
+#define WBN_SCENARIO_NAME_LEN 64
+/* LOBBY_SCRIPT_LIST_MAX - 1: one scenario deciding the round and the rest
+ * mods. Held against it in server_sim_round.c. */
+#define WBN_MODS_MAX 9
+
 typedef struct {
   char     map[256];                 /* Map name */
   char     mapMd5[33];               /* 32 hex of BMAPBOLO bytes; "" if none */
   bool     randomMap;                /* Randomly generated map */
-  BYTE     gameType;                 /* 1=open, 2=tournament, 3=strict */
+  BYTE     gameType;                 /* 1=open, 2=tournament, 3=strict, 4=scripted */
   BYTE     ai;                       /* aiType policy (0..3) */
   bool     mines;                    /* Hidden mines */
   bool     ranked;                   /* Ranked match */
@@ -91,6 +101,11 @@ typedef struct {
   ServerVoiceMode voiceMode;         /* Voice the server forwards: 0 on, 1 off,
                                       * 2 proximity. Proximity is not implemented
                                       * and forwards the same as on. */
+  bool     hasScenario;                          /* a scenario (not a mod) decides the round */
+  char     scenarioName[WBN_SCENARIO_NAME_LEN];  /* its name; "" when !hasScenario */
+  BYTE     scenarioMaxPlayers;                   /* its human cap, 0 = none */
+  BYTE     modCount;                             /* 0..WBN_MODS_MAX */
+  char     modNames[WBN_MODS_MAX][WBN_SCENARIO_NAME_LEN]; /* in list order */
 } WbnLobbyInfo;
 
 /*********************************************************

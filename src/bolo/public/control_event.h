@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -596,6 +599,10 @@ typedef struct LobbyScriptEntry {
     F(turn_crater) F(turn_rubble) F(turn_boat) F(turn_deep_sea)              \
     F(turn_refuel_base)
 
+/* Optional tail after the original 131-byte body. Omitted when zero so
+ * classic games keep their wire format; old recordings decode as zero. */
+#define CTRL_SIM_RULES_EXT_U8_FIELDS(F) F(tank_collision_mac)
+
 /* Every carried rule, whatever its width, for the callers that do not care
  * how wide one goes — the check for whether a changed rule is one this
  * event carries, and the round-trip case that walks them all. */
@@ -603,7 +610,8 @@ typedef struct LobbyScriptEntry {
     CTRL_SIM_RULES_U8_FIELDS(F)                                              \
     CTRL_SIM_RULES_U16_FIELDS(F)                                             \
     CTRL_SIM_RULES_U32_FIELDS(F)                                             \
-    CTRL_SIM_RULES_F32_FIELDS(F)
+    CTRL_SIM_RULES_F32_FIELDS(F)                                             \
+    CTRL_SIM_RULES_EXT_U8_FIELDS(F)
 
 /* The member each list entry becomes. Integer rules keep the int32_t
  * SimRules declares them as whatever width they travel in, so reading one
@@ -614,11 +622,14 @@ typedef struct LobbyScriptEntry {
 /* Body size, so the encoder and the decoder agree on it by construction
  * rather than by counting: one byte, two, four and four per entry. */
 #define CTRL_SIM_RULES_COUNT_ONE(name) + 1
-#define CTRL_SIM_RULES_BODY_LEN                                              \
+#define CTRL_SIM_RULES_BASE_BODY_LEN                                         \
     ((size_t)((0 CTRL_SIM_RULES_U8_FIELDS(CTRL_SIM_RULES_COUNT_ONE)) * 1 +   \
               (0 CTRL_SIM_RULES_U16_FIELDS(CTRL_SIM_RULES_COUNT_ONE)) * 2 +  \
               (0 CTRL_SIM_RULES_U32_FIELDS(CTRL_SIM_RULES_COUNT_ONE)) * 4 +  \
               (0 CTRL_SIM_RULES_F32_FIELDS(CTRL_SIM_RULES_COUNT_ONE)) * 4))
+#define CTRL_SIM_RULES_BODY_LEN                                              \
+    (CTRL_SIM_RULES_BASE_BODY_LEN +                                         \
+     (size_t)(0 CTRL_SIM_RULES_EXT_U8_FIELDS(CTRL_SIM_RULES_COUNT_ONE)))
 
 /* `quiet` on the five variants that carry one is the announce policy's
  * answer, stamped by the server where it built the event: 0 to announce the
@@ -758,8 +769,9 @@ typedef struct ControlEvent {
                                             * every server did before the field
                                             * existed. */
             bool     lobbyModsOff;         /* the round composes none of the
-                                            * picked mods. Held in the negative
-                                            * sense for the same reason as
+                                            * picked mods or scenarios. Held
+                                            * in the negative sense for the
+                                            * same reason as
                                             * lobbySmartPingsOff above, and read
                                             * back through the positive accessor
                                             * clientSimGetLobbyModsEnabled.
@@ -824,6 +836,14 @@ typedef struct ControlEvent {
              * as sandboxed, which every server that predates this field
              * was. */
             bool     scenarioUnsafe;
+            /* True when the attached list said needs_bots, so the server
+             * refuses the AI policy that takes every bot off the roster.
+             * Appended behind scenarioUnsafe. Unlike the bytes above, a
+             * decoder that finds this byte missing sets it TRUE: every
+             * server that predates it refused that policy for any script,
+             * and a lobby that offers a row the server turns down is worse
+             * than one that greys a row the server would take. */
+            bool     scenarioNeedsBots;
         } lobbySettings;
 
         /* CTRL_LOBBY_MAP_CHANGE — no payload fields needed */
@@ -1126,6 +1146,7 @@ typedef struct ControlEvent {
             CTRL_SIM_RULES_U16_FIELDS(CTRL_SIM_RULES_INT_MEMBER)
             CTRL_SIM_RULES_U32_FIELDS(CTRL_SIM_RULES_INT_MEMBER)
             CTRL_SIM_RULES_F32_FIELDS(CTRL_SIM_RULES_FLT_MEMBER)
+            CTRL_SIM_RULES_EXT_U8_FIELDS(CTRL_SIM_RULES_INT_MEMBER)
         } simRules;
 
         /* CTRL_SCN_PANEL — one panel's display list, replacing whatever

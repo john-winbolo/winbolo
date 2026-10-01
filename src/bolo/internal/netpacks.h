@@ -5,13 +5,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 
@@ -105,6 +108,24 @@ typedef struct BOLO_PACK_ATTR {
 } INFO_PACKET;
 #pragma pack(pop)
 BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 113, INFO_PACKET_must_be_113_bytes);
+
+/* The scripts a round runs, appended to the reply to an info request (and to
+ * that reply only: the tracker update stays sizeof(INFO_PACKET)). The bytes
+ * start at 113, straight after the INFO_PACKET:
+ *
+ *   [scenarioNameLen 1][scenarioName][scenarioDescLen 1][scenarioDesc]
+ *   [maxPlayers 1][modCount 1][modCount x [nameLen 1][name]]
+ *
+ * Names are at most 63 bytes and the description at most
+ * WBN_SCENARIO_DESC_MAX, each cut on a UTF-8 character boundary. A round with
+ * no scenario writes a name length of 0, a description length of 0 and a cap
+ * of 0; no mods is a count of 0. No NULs are written. A reader drops a tail
+ * whose lengths run past their caps or past the packet, and ignores bytes
+ * after the last mod, so a later field can go on the end. */
+#define WBN_SCENARIO_DESC_MAX 200
+#define INFO_SCRIPT_TAIL_MAX (1 + 63 + 1 + WBN_SCENARIO_DESC_MAX + 1 + 1 + 9 * (1 + 63))
+BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) + INFO_SCRIPT_TAIL_MAX <= MAX_UDPPACKET_SIZE,
+                   INFO_PACKET_and_script_tail_fit_one_udp_packet);
 
 /* Historical INFO_PACKET wire size, before the flags/count/md5 fields were
  * appended. Servers older than those additions send this; discovery accepts
@@ -830,16 +851,6 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               cut rather than dropping the
                                               entry. */
 
-#define PACKET_LOBBY_SET_SCENARIO      225  /* client → server
-                                              { pathLen 1, path N } the lobby
-                                              host picking one of the
-                                              scenarios above, by the file
-                                              name the list gave. pathLen 0
-                                              is the message that selects
-                                              none, so unlike SET_MAP an
-                                              empty path is carried rather
-                                              than refused. */
-
 #define PACKET_SET_SCRIPT_LIST         226  /* client -> server
                                               { count 1, then count entries
                                                 of { fileLen 1, file N } }
@@ -853,9 +864,8 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               and the server's state is a
                                               straight assignment rather than
                                               a splice. count 0 clears the
-                                              list, which is what
-                                              SET_SCENARIO with pathLen 0
-                                              does for the one-script case.
+                                              list, and a one-row list picks
+                                              a single script.
                                               Worst case on the wire is
                                               8 + 4 + 1 + 10 * (1 + 127)
                                               = 1293 bytes, which is why

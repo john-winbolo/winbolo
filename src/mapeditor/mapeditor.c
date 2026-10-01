@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /*********************************************************
@@ -60,6 +60,9 @@
 
 /* From tileloader.h */
 extern SDL_Surface *tileLoaderBuildSheet(int tileSize);
+/* From sdl3draw.h: moves when the skin or Tile Detail changes the tiles.
+   The standalone editor has no skin picker, and its copy never moves. */
+extern unsigned int sdl3DrawGetTilesGeneration(void);
 
 #define ME_MIN_ZOOM 1
 #define ME_MAX_ZOOM 16
@@ -105,6 +108,9 @@ typedef struct {
        Atlas cell coordinates (mapViewPosX/Y and the mine/boat constants) are
        expressed at 1x, so every source rect scales by this — see meAtlasSrc. */
     int          sheetScale;
+    /* sdl3DrawGetTilesGeneration when the atlas was built; a skin picked in
+       the settings window moves it, and the atlas is rebuilt to match. */
+    unsigned int tilesGeneration;
 
     /* Map data — heap-allocated, owned by the editor */
     map       mp;
@@ -343,6 +349,9 @@ typedef struct {
      * application both set quit, and embedded they mean different things:
      * one hands the window back to WinBolo, the other ends it. */
     bool  exitIsAppQuit;
+    /* Settings was picked; the settings window runs after this frame is
+     * presented, since it brings its own ImGui context. */
+    bool  wantSettings;
 } MapEditorState;
 
 /* Read back by mapEditorAppQuitRequested() once the run has returned — the
@@ -351,6 +360,12 @@ static bool s_appQuitRequested = FALSE;
 
 bool mapEditorAppQuitRequested(void) {
     return s_appQuitRequested;
+}
+
+static MapEditorSettingsFn s_settingsFn = NULL;
+
+void mapEditorSetSettingsHandler(MapEditorSettingsFn fn) {
+    s_settingsFn = fn;
 }
 
 /* Read a neighbour tile for adjacency calculation, treating bases as ROAD
@@ -1186,7 +1201,9 @@ static int meAtlasScaleFor(int renderZoom) {
    when the scale actually moves, and keeps the existing atlas on failure. */
 static void meEnsureAtlas(MapEditorState *ed, int renderZoom) {
     int want = meAtlasScaleFor(renderZoom);
-    if (want == ed->sheetScale && ed->tilesTex) return;
+    unsigned int gen = sdl3DrawGetTilesGeneration();
+    if (want == ed->sheetScale && ed->tilesTex &&
+        gen == ed->tilesGeneration) return;
 
     SDL_Surface *sheet = tileLoaderBuildSheet(TILE_SIZE_X * want);
     if (!sheet) return;
@@ -1198,6 +1215,7 @@ static void meEnsureAtlas(MapEditorState *ed, int renderZoom) {
     if (ed->tilesTex) SDL_DestroyTexture(ed->tilesTex);
     ed->tilesTex = tex;
     ed->sheetScale = want;
+    ed->tilesGeneration = gen;
 }
 
 /* Source rect for one atlas cell, given its 1x coordinates. */
@@ -3693,6 +3711,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
        zoom and pixel density (meEnsureAtlas); this just guarantees there is an
        atlas before the first frame, and gives the failure an exit path. */
     ed->sheetScale = 1;
+    ed->tilesGeneration = sdl3DrawGetTilesGeneration();
     SDL_Surface *sheet = tileLoaderBuildSheet(TILE_SIZE_X);
     if (!sheet) {
         WB_LOG_ERROR(WB_LOG_CAT_ASSET, "mapEditorRun: tileLoaderBuildSheet failed");
@@ -3758,7 +3777,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
      * WinBolo (which has its own NSMenu installed) restores cleanly on
      * exit. Standalone has no prior mainMenu — the shim builds a
      * "Map Editor" app menu with Quit/Hide instead. */
-    me_mac_menubar_install(window);
+    me_mac_menubar_install(window, s_settingsFn != NULL);
 #endif
 
     /* macOS trackpad pinch-to-zoom */
@@ -4685,7 +4704,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                               &ed->showInspector, &ed->showObjects,
                               &ed->showOverview, &ed->showStatsPanel,
                               &ed->showStampLibrary, &ed->showScenario,
-                              ed->fromMainMenu,
+                              ed->fromMainMenu, s_settingsFn != NULL,
                               ed->zoomStepIndex, (int)ZOOM_STEP_COUNT,
                               zoomSteps);
 #endif
@@ -4759,6 +4778,9 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
         }
         if (menuAction.togglePillRanges) {
             ed->showPillRanges = !ed->showPillRanges;
+        }
+        if (menuAction.wantSettings && s_settingsFn) {
+            ed->wantSettings = true;
         }
         /* Window submenu toggles — populated only by the macOS NSMenu
          * shim. The in-window ImGui menu mutates show* directly via
@@ -5392,6 +5414,16 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
 
         mapEditorImguiRender();
         SDL_RenderPresent(renderer);
+
+        if (ed->wantSettings) {
+            ed->wantSettings = false;
+            mapEditorImguiRunOutside(s_settingsFn);
+#ifdef __APPLE__
+            /* The menu bar stayed live while the settings window was up; a
+             * second pick of Settings there would open it again at once. */
+            me_mac_menubar_drop_settings_request();
+#endif
+        }
     }
 
     /* Cleanup */

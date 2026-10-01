@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /*********************************************************
@@ -27,6 +27,13 @@ extern "C" {
 
 /* Initialize ImGui context and backends for the editor. */
 void mapEditorImguiInit(SDL_Window *window, SDL_Renderer *renderer);
+
+/* Run a dialog that makes and destroys its own ImGui context (the host's
+ * settings window). The editor's context is set aside while it runs, so its
+ * panels come back as they were, then its input state is cleared, since the
+ * key and mouse releases went to the dialog, and its font is reloaded for a
+ * language the dialog may have picked. Call between frames. */
+void mapEditorImguiRunOutside(void (*fn)(void));
 
 /* Set the renderer used for shared UI elements (lock icons, etc.).
  * Called automatically by mapEditorImguiInit; call this separately when
@@ -82,6 +89,7 @@ typedef struct {
     bool wantZoomIn;
     bool wantZoomOut;
     bool wantZoomSet;
+    bool wantSettings;  /* Settings (WinBolo client build only) */
     /* Window submenu toggles — set by the macOS NSMenu trampolines. The
      * in-window ImGui menu mutates *showX directly via ImGui::MenuItem's
      * bool pointer; that's synchronous and doesn't need a flag. Async
@@ -115,7 +123,7 @@ void mapEditorImguiMenuBar(MapEditorMenuAction *action,
                            bool *showInspector, bool *showObjects,
                            bool *showOverview, bool *showStats,
                            bool *showStampLibrary, bool *showScenario,
-                           bool fromMainMenu,
+                           bool fromMainMenu, bool hasSettings,
                            int zoomStepIndex, int zoomStepCount,
                            const float *zoomStepValues);
 

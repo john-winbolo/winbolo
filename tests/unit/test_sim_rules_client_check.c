@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*
@@ -170,6 +173,7 @@ int run_sim_rules_client_check_every_carried_field(void) {
     CTRL_SIM_RULES_U16_FIELDS(SR_DRIVE_INT)
     CTRL_SIM_RULES_U32_FIELDS(SR_DRIVE_INT)
     CTRL_SIM_RULES_F32_FIELDS(SR_DRIVE_FLT)
+    CTRL_SIM_RULES_EXT_U8_FIELDS(SR_DRIVE_INT)
 
 #undef SR_DRIVE_INT
 #undef SR_DRIVE_FLT

@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -540,18 +543,19 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
  * been. source(1) + extraTeams(1), then the three strings, each a one-byte
  * length and that many bytes with no terminator — the same shape the team
  * name and the bot name use in this file — then the base game type(1) and
- * last what kind of script it is(1), whether it is bound to one map(1) and
- * whether this server runs scripts without the sandbox(1), each appended
- * behind what was already there so none of the offsets ahead of it move.
+ * last what kind of script it is(1), whether it is bound to one map(1),
+ * whether this server runs scripts without the sandbox(1) and whether the
+ * list needs bots allowed(1), each appended behind what was already there
+ * so none of the offsets ahead of it move.
  *
- * Worst case measured: 1 + 1 + 64 + 128 + 256 + 1 + 1 + 1 + 1 = 454, on top
- * of LOBBY_SETTINGS_WIRE_PAYLOAD's 83, so 537 bytes against a 1021-byte
+ * Worst case measured: 1 + 1 + 64 + 128 + 256 + 1 + 1 + 1 + 1 + 1 = 455, on
+ * top of LOBBY_SETTINGS_WIRE_PAYLOAD's 83, so 538 bytes against a 1021-byte
  * segment. The two asserts behind the encoder are what hold that. */
 #define LOBBY_SETTINGS_WIRE_SCENARIO_MAX                                   \
     (1 + 1 + (1 + (LOBBY_SCENARIO_NAME_LEN - 1))                           \
            + (1 + (LOBBY_SCENARIO_FILE_LEN - 1))                           \
            + (1 + (LOBBY_SCENARIO_DESC_LEN - 1))                           \
-           + 1 + 1 + 1 + 1)
+           + 1 + 1 + 1 + 1 + 1)
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
@@ -670,6 +674,10 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
            the sandbox because every server that predates this byte ran
            one. */
         buf[pos++] = evt->u.lobbySettings.scenarioUnsafe ? 1 : 0;
+        /* And whether the list fields its own bots: 1 when a script in it
+           said needs_bots, so the server refuses a lobby set to no bots.
+           The decoder reads a missing byte as 1 — see scenarioNeedsBots. */
+        buf[pos++] = evt->u.lobbySettings.scenarioNeedsBots ? 1 : 0;
     }
     *outLen = pos;
     return ENCODE_OK;
@@ -1735,7 +1743,9 @@ static EncodeResult encodeSimRulesBody(const ControlEvent *evt,
                                        size_t *outLen) {
     size_t pos = 0;
     (void)recipient;
-    if (bufCap < CTRL_SIM_RULES_BODY_LEN) return ENCODE_OVERFLOW;
+    bool extended = evt->u.simRules.tank_collision_mac != 0;
+    size_t bodyLen = extended ? CTRL_SIM_RULES_BODY_LEN : CTRL_SIM_RULES_BASE_BODY_LEN;
+    if (bufCap < bodyLen) return ENCODE_OVERFLOW;
 
 #define SIM_RULES_PACK_U8(name)                                              \
     buf[pos++] = (uint8_t)evt->u.simRules.name;
@@ -1750,6 +1760,9 @@ static EncodeResult encodeSimRulesBody(const ControlEvent *evt,
     CTRL_SIM_RULES_U16_FIELDS(SIM_RULES_PACK_U16)
     CTRL_SIM_RULES_U32_FIELDS(SIM_RULES_PACK_U32)
     CTRL_SIM_RULES_F32_FIELDS(SIM_RULES_PACK_F32)
+    if (extended) {
+        CTRL_SIM_RULES_EXT_U8_FIELDS(SIM_RULES_PACK_U8)
+    }
 
 #undef SIM_RULES_PACK_U8
 #undef SIM_RULES_PACK_U16
@@ -1763,7 +1776,7 @@ static EncodeResult encodeSimRulesBody(const ControlEvent *evt,
 static bool decodeSimRulesBody(const uint8_t *buf, size_t len,
                                ControlEvent *outEvt) {
     size_t pos = 0;
-    if (len != CTRL_SIM_RULES_BODY_LEN) return false;
+    if (len != CTRL_SIM_RULES_BODY_LEN && len != CTRL_SIM_RULES_BASE_BODY_LEN) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_SIM_RULES;
 
@@ -1780,6 +1793,9 @@ static bool decodeSimRulesBody(const uint8_t *buf, size_t len,
     CTRL_SIM_RULES_U16_FIELDS(SIM_RULES_UNPACK_U16)
     CTRL_SIM_RULES_U32_FIELDS(SIM_RULES_UNPACK_U32)
     CTRL_SIM_RULES_F32_FIELDS(SIM_RULES_UNPACK_F32)
+    if (len == CTRL_SIM_RULES_BODY_LEN) {
+        CTRL_SIM_RULES_EXT_U8_FIELDS(SIM_RULES_UNPACK_U8)
+    }
 
 #undef SIM_RULES_UNPACK_U8
 #undef SIM_RULES_UNPACK_U16
@@ -2708,6 +2724,15 @@ static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
        sandboxed, which every such server was. */
     if (len >= pos + 1) {
         outEvt->u.lobbySettings.scenarioUnsafe = buf[pos++] ? true : false;
+    }
+    /* Absent means the sender predates this field, and every such server
+       refused a lobby set to no bots whatever script was attached, so a
+       missing byte reads as true. A body with no scenario tail at all
+       leaves it false, beside a source that says there is no script. */
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.scenarioNeedsBots = buf[pos++] ? true : false;
+    } else if (outEvt->u.lobbySettings.scenarioSource != lobbyScenarioNone) {
+        outEvt->u.lobbySettings.scenarioNeedsBots = true;
     }
     return true;
 }

@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -364,6 +367,8 @@ LocalJoinResult serverSimLocalJoin(ServerSim *sim,
 void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     bool wasBot;
     if (playerNum >= MAX_TANKS) return;
+    /* The next occupant of this seat has not had its mode picked by anyone. */
+    sim->botModeSetByHand &= (uint16_t)~(1u << playerNum);
     /* Captured before any teardown so the last-human-left reset below can
      * tell a human departure from a bot one. Bot removals run through this
      * same path (botManagerRemoveBot), and the reset itself removes bots —

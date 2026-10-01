@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -51,11 +54,13 @@
 #include "bolo_rand.h"
 #include "brain_list.h"   /* BrainModes, brainListLoadModesForPath — bot modes */
 #include "client_frontend_connect.h"
+#include "client_frontend_sp.h"
 #include "client_sim.h"
 #include "control_event.h"
 #include "discovery.h"
 #include "global.h"
 #include "util.h"
+#include "../scn_panel_prefs.h"
 #include "gui_message.h"
 #include "frontend.h"
 #include "../brainsHandler.h"
@@ -95,6 +100,7 @@
 #include "../../common/prefs_doc.h"
 #include "../../steam/steam_wrapper.h"
 #include "../../mapeditor/mapeditor.h"
+#include "dialogs/imgui_settings.h"  /* imguiSettingsShowInEditor */
 #include "mapgen.h"
 /* Forward declaration only — don't include logviewer.h to avoid type conflicts
    between src/logviewer/ and src/bolo/ headers (both define map, bases, etc.) */
@@ -388,6 +394,7 @@ int   gameFrontScnPanelX = -1;
 int   gameFrontScnPanelY = -1;
 int   gameFrontScnPanelScale = -1;
 int   gameFrontScnPanelAlpha = -1;
+bool  gameFrontScnPanelCloseAsk = TRUE;
 float gameFrontOverviewZoom = 2.0f;
 bool  gameFrontOverviewFollow = TRUE;
 bool  gameFrontShowMapOverview = FALSE;
@@ -562,6 +569,8 @@ static void gameFrontLockToggleCallback(bool allow) {
  *   #StatusInLobbyPlural   — in a lobby with N players (uses %map%, %numplayers%)
  *   #StatusInGameSolo      — playing alone (uses %map%)
  *   #StatusInGamePlural    — playing with N players (uses %map%, %numplayers%)
+ *
+ * %map% carries "<scenario> (<map>)" while a scenario decides the round.
  * ------------------------------------------------------- */
 static void gameFrontSetConnectIfAvailable(ClientSim *cs) {
   char connect[FILENAME_MAX];
@@ -589,12 +598,44 @@ static void gameFrontSetConnectIfAvailable(ClientSim *cs) {
   }
 }
 
+/* Room for the longest scenario label (its file name, when the manifest
+ * names nothing), " (", the map name, ")" and the NUL. Each length counts
+ * its own NUL, which leaves the two bytes the ")" and the NUL take. */
+#define STEAM_PRESENCE_MAP_LEN (LOBBY_SCENARIO_FILE_LEN + 2 + MAP_STR_SIZE)
+
+/* The value %map% shows. While a scenario decides the round it is the
+ * scenario and the map, so a friend's list names the scenario; a round
+ * running only mods, or no script at all, shows the map alone as it always
+ * has. A scenario with no name falls back to its file name, as the lobby's
+ * script rows do. Empty while neither is known. */
+static void gameFrontPresenceMapValue(ClientSim *cs, char *out,
+                                      size_t outSize) {
+  const char *mapName = clientSimGetMapName(cs);
+  const char *scnName = "";
+
+  if (mapName == NULL) mapName = "";
+  if (clientSimGetLobbyScenarioSource(cs) != 0 &&
+      !clientSimGetLobbyScenarioKeepsWinCondition(cs)) {
+    scnName = clientSimGetLobbyScenarioName(cs);
+    if (scnName[0] == '\0') scnName = clientSimGetLobbyScenarioFileName(cs);
+  }
+  if (scnName[0] == '\0') {
+    snprintf(out, outSize, "%s", mapName);
+  } else if (mapName[0] == '\0') {
+    snprintf(out, outSize, "%s", scnName);
+  } else {
+    snprintf(out, outSize, "%s (%s)", scnName, mapName);
+  }
+}
+
 void gameFrontUpdateSteamPresence(ClientSim *cs) {
   if (cs == NULL) return;
   BYTE numPlayers = clientSimGetNumPlayers(cs);
   char numStr[16];
+  char mapValue[STEAM_PRESENCE_MAP_LEN];
   snprintf(numStr, sizeof(numStr), "%d", (int)numPlayers);
-  steam_set_rich_presence("map", clientSimGetMapName(cs));
+  gameFrontPresenceMapValue(cs, mapValue, sizeof(mapValue));
+  steam_set_rich_presence("map", mapValue);
   steam_set_rich_presence("numplayers", numStr);
   /* "Solo" is a property of the game *mode*, not the live player count: an
    * Internet game with one player present is still an open, joinable game
@@ -624,9 +665,10 @@ void gameFrontSetSteamPresenceLobby(ClientSim *cs) {
    * value as a delete, which would leave "%map%" literal in the rendered
    * display string while the lobby waits for the server's lobbySettings
    * packet to populate cs->mapName. */
-  const char *mapName = clientSimGetMapName(cs);
-  if (mapName != NULL && mapName[0] != '\0') {
-    steam_set_rich_presence("map", mapName);
+  char mapValue[STEAM_PRESENCE_MAP_LEN];
+  gameFrontPresenceMapValue(cs, mapValue, sizeof(mapValue));
+  if (mapValue[0] != '\0') {
+    steam_set_rich_presence("map", mapValue);
   }
   steam_set_rich_presence("numplayers", numStr);
   steam_set_rich_presence("steam_display",
@@ -1093,6 +1135,23 @@ static void gameFrontApplyVisibilityPrefs(ServerSim *sim) {
 /* -------------------------------------------------------
  * gameFrontDialogs — setup dialog state machine
  * ------------------------------------------------------- */
+/* Whether a map in the background game's directory is one it may show. The
+ * tutorial map and Better Best Map Ever are left out by name, and so is any
+ * map that is a scenario: one with a script beside it or packed into it,
+ * whether or not this process runs scripts. A scenario's rules only hold
+ * while its script runs, and the background game runs none, so what it
+ * would show is the scenario's map played as something it is not. */
+static bool bgMapAllowed(const char *dir, const char *name) {
+    char path[512];
+
+    if (SDL_strcasecmp(name, "Inbuilt Tutorial.map") == 0 ||
+        SDL_strcasecmp(name, "Better Best Map Ever.map") == 0) {
+        return false;
+    }
+    SDL_snprintf(path, sizeof(path), "%s/%s", dir, name);
+    return !scenarioHostMapCarriesScript(path);
+}
+
 /* Pick a random .map file from data/maps/ for the background game */
 static bool pickRandomMap(char *out, size_t outLen) {
     const char *dir = "data/maps";
@@ -1112,8 +1171,7 @@ static bool pickRandomMap(char *out, size_t outLen) {
         while ((ent = readdir(d)) != NULL && count < 256) {
             size_t len = strlen(ent->d_name);
             if (len > 4 && strcasecmp(ent->d_name + len - 4, ".map") == 0 &&
-                strcasecmp(ent->d_name, "Inbuilt Tutorial.map") != 0 &&
-                strcasecmp(ent->d_name, "Better Best Map Ever.map") != 0) {
+                bgMapAllowed(dir, ent->d_name)) {
                 mapFiles[count] = SDL_strdup(ent->d_name);
                 count++;
             }
@@ -1139,13 +1197,12 @@ static bool pickRandomMap(char *out, size_t outLen) {
     /* Filter out maps unsuitable for the background game */
     int filtered = 0;
     for (int i = 0; i < count; i++) {
-        if (SDL_strcasecmp(list[i], "Inbuilt Tutorial.map") != 0 &&
-            SDL_strcasecmp(list[i], "Better Best Map Ever.map") != 0) {
+        if (bgMapAllowed(dir, list[i])) {
             list[filtered++] = list[i];
         }
     }
     if (filtered == 0) {
-        WB_LOG_WARN(WB_LOG_CAT_MAP, "[BgGame] pickRandomMap: no non-tutorial maps in '%s'", dir);
+        WB_LOG_WARN(WB_LOG_CAT_MAP, "[BgGame] pickRandomMap: no maps in '%s' once the tutorial and scenarios are left out", dir);
         SDL_free(list);
         return false;
     }
@@ -1330,6 +1387,7 @@ static bool gameFrontDialogs(void) {
     }
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
     case openMapEditor:
+      mapEditorSetSettingsHandler(imguiSettingsShowInEditor);
       mapEditorRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), NULL, true);
       /* The editor runs its own loop in WinBolo's window, so a quit taken
        * there stops with it.  Leaving the editor comes back to the welcome
@@ -2209,43 +2267,14 @@ bool gameFrontSetDlgState(openingStates newState) {
                 if (botBrain[0] == '\0') botBrain = spBrainPath;
                 uint8_t spMode  = gameFrontSpBotMode(botBrain);
                 uint8_t spLevel = gameFrontSpBotLevel(botBrain, spMode);
-                /* Resolved through the one rule a new bot follows, so the
-                 * single-player path and the lobby cannot disagree. These bots
-                 * are appearing for the first time, so the player's remembered
-                 * manual pick is NOT applied — that pick is for the Add Bot
-                 * button afterwards. */
-                serverSimResolveNewBotConfig(spServerSim,
-                                             (int)gameFrontBotSetupData.bots[bi].teamNumber,
-                                             botBrain, false, &spMode, &spLevel);
-                serverSimSetBotConfig(spServerSim, slot, spMode, spLevel,
-                                      0 /* personality: normal */, NULL);
-                /* No team and no init table here: single-player bots are
-                 * placed by the alliance pass below, and their config comes
-                 * from the slot config set just above. */
-                serverSimCreateBot(spServerSim, slot, botBrain, botName, spAiPolicy,
-                                   spGameType, spHiddenMines, 0, NULL);
-                /* serverSimCreateBot loads the brain from the path but leaves
-                 * the lobby brain-INDEX at the 0xFF "default" sentinel, so the
-                 * lobby Bot Code dropdown renders "(none)". Resolve the index
-                 * from the path (case-insensitive exact match, else the
-                 * version-suffixed dir name as a substring) so the dropdown
-                 * shows the actual brain — GoalHunter_1.7 by default. */
-                const BrainList *spbl = serverSimGetBrainList(spServerSim);
-                if (spbl) {
-                  for (int k = 0; k < spbl->count; k++) {
-                    const char *kp = serverSimGetBrainPathForIdx(spServerSim, (uint8_t)k);
-                    if ((kp && SDL_strcasecmp(kp, botBrain) == 0) ||
-                        strstr(botBrain, spbl->entries[k].name) != NULL) {
-                      serverSimSetBotBrainIdxFor(spServerSim, slot, (uint8_t)k);
-                      break;
-                    }
-                  }
-                }
-                /* Apply team number */
-                uint8_t team = gameFrontBotSetupData.bots[bi].teamNumber;
-                if (team > 0) {
-                  clientSimNetSendTeamSet(humanSim, slot, team);
-                }
+                /* The shared seeding step (client_frontend_sp.c): config
+                 * into the slot, the bot made, the Bot Code dropdown pointed
+                 * at its brain, its team set. The web's practice start calls
+                 * the same body. */
+                clientFrontSeedBot(spServerSim, humanSim, slot, botBrain, botName,
+                                   spAiPolicy, spGameType, spHiddenMines,
+                                   gameFrontBotSetupData.bots[bi].teamNumber,
+                                   spMode, spLevel);
               }
               /* Apply human player team number */
               if (gameFrontBotSetupData.playerTeamNumber > 0) {
@@ -3381,9 +3410,12 @@ bool gameFrontGetChosenBotLevelKey(char *out, size_t outSz) {
   return true;
 }
 
-/* Which of a brain's modes a single-player bot is created in: the player's
- * chosen mode when the brain still declares it, else mode 0 (the default
- * mode every ordinary game uses). */
+/* The mode that goes with the player's saved level: the player's chosen
+ * mode when the brain still declares it, else mode 0 (the default mode
+ * every ordinary game uses). It only says which mode's list the saved level
+ * is read from. serverSimResolveNewBotConfig keeps the level and puts the
+ * bot in the game type's own starting mode, so a mode saved in one lobby
+ * never starts bots in the next one. */
 uint8_t gameFrontSpBotMode(const char *brainPath) {
   char key[BRAIN_MODE_KEY_LEN];
   BrainModes modes;
@@ -3452,30 +3484,14 @@ void gameFrontSetBotTagColor(const char *botName, uint32_t rgb) {
  * the scenario is the whole key so a player scanning the section sees the
  * scenarios they have played by name.
  *
- * The key is copied a character at a time rather than with SDL_snprintf
- * because a control character in a scenario's name would reach the
- * preferences file as an escape and make the row impossible to match up by
- * eye. Anything below a space becomes an underscore here, and it does so in
- * the read and the write alike, so both still name the same row. A byte
- * above 0x7F is left as it is: those are the middle of a UTF-8 character in
- * a name somebody chose, not a control code. */
-static void gameFrontScnPanelLayoutKey(const char *scenario, char *key,
-                                       size_t keySz) {
-  size_t i = 0;
-  if (keySz == 0) return;
-  while (scenario[i] != '\0' && i + 1 < keySz) {
-    key[i] = ((unsigned char)scenario[i] >= 0x20) ? scenario[i] : '_';
-    i++;
-  }
-  key[i] = '\0';
-}
-
+ * The key rule (scnPanelPrefsKey) turns a control character into an
+ * underscore, and the read and the write share it. */
 bool gameFrontGetScnPanelLayout(const char *scenario, int *x, int *y,
                                 int *scale, int *alpha) {
   char key[SCN_PANEL_SCENARIO_LEN], buff[64];
   int rx, ry, rscale, ralpha;
   if (!scenario || !scenario[0] || !x || !y || !scale || !alpha) return false;
-  gameFrontScnPanelLayoutKey(scenario, key, sizeof(key));
+  scnPanelPrefsKey(scenario, key, sizeof(key));
   prefsGetString("SCENARIO PANEL", key, "", buff, sizeof(buff));
   /* All four or none: a half-written row says nothing about where the panel
      belongs, and the caller's fallback is a whole layout of its own rather
@@ -3514,9 +3530,59 @@ void gameFrontSetScnPanelLayout(const char *scenario, int x, int y,
                                 int scale, int alpha) {
   char key[SCN_PANEL_SCENARIO_LEN], val[64];
   if (!scenario || !scenario[0]) return;
-  gameFrontScnPanelLayoutKey(scenario, key, sizeof(key));
+  scnPanelPrefsKey(scenario, key, sizeof(key));
   SDL_snprintf(val, sizeof(val), "%d,%d,%d,%d", x, y, scale, alpha);
   prefsSetString("SCENARIO PANEL", key, val);
+}
+
+/* The script's shown flag and pop-out row live in sections of their own
+ * rather than as more numbers on the layout row: an old client reading a
+ * five- or six-number layout row would drop the whole row. Same key rule
+ * as the layout row, so the three rows of one script line up by eye. */
+bool gameFrontGetScnPanelShown(const char *script) {
+  char key[SCN_PANEL_SCENARIO_LEN], buff[16];
+  if (!script || !script[0]) return TRUE;
+  scnPanelPrefsKey(script, key, sizeof(key));
+  prefsGetString(SCN_PANEL_PREFS_SHOWN_SECTION, key, "", buff, sizeof(buff));
+  return scnPanelYesNoParse(buff, true) ? TRUE : FALSE;
+}
+
+void gameFrontSetScnPanelShown(const char *script, bool shown) {
+  char key[SCN_PANEL_SCENARIO_LEN];
+  if (!script || !script[0]) return;
+  scnPanelPrefsKey(script, key, sizeof(key));
+  prefsSetString(SCN_PANEL_PREFS_SHOWN_SECTION, key, scnPanelYesNoWord(shown));
+}
+
+bool gameFrontGetScnPanelPopout(const char *script, int panel, bool *open,
+                                int *x, int *y, int *w, int *h) {
+  char key[SCN_PANEL_SCENARIO_LEN + 8], buff[80];
+  ScnPanelPopout row;
+  if (!script || !script[0] || !open || !x || !y || !w || !h) return false;
+  scnPanelPrefsPopoutKey(script, panel, key, sizeof(key));
+  prefsGetString(SCN_PANEL_PREFS_POPOUT_SECTION, key, "", buff, sizeof(buff));
+  if (!scnPanelPopoutParse(buff, &row)) return false;
+  *open = row.open;
+  *x = row.x;
+  *y = row.y;
+  *w = row.w;
+  *h = row.h;
+  return true;
+}
+
+void gameFrontSetScnPanelPopout(const char *script, int panel, bool open,
+                                int x, int y, int w, int h) {
+  char key[SCN_PANEL_SCENARIO_LEN + 8], val[80];
+  ScnPanelPopout row;
+  if (!script || !script[0]) return;
+  scnPanelPrefsPopoutKey(script, panel, key, sizeof(key));
+  row.open = open;
+  row.x = x;
+  row.y = y;
+  row.w = w;
+  row.h = h;
+  scnPanelPopoutFormat(&row, val, sizeof(val));
+  prefsSetString(SCN_PANEL_PREFS_POPOUT_SECTION, key, val);
 }
 
 bool gameFrontGetChosenBotDifficulty(uint8_t *out) {
@@ -3876,19 +3942,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   gameFrontHostingAllowSpec = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("HOSTING", "Run Map Scripts", "Yes", buff, FILENAME_MAX);
   gameFrontHostingScripts = YESNO_TO_TRUEFALSE(buff[0]);
-  /* Script Upload Policy replaced the Yes/No "Run Upload Scripts". A file
-   * written before it has only the old key, so that is read in its place
-   * (No is Off, anything else Allow); the old key is never written again,
-   * and once the new one is saved it is not read. */
-  prefsGetString("HOSTING", "Script Upload Policy", "", buff, FILENAME_MAX);
-  if (buff[0] != '\0') {
-    gameFrontHostingScriptUploadPolicy =
-        scriptUploadPolicyResolve(buff, false);
-  } else {
-    prefsGetString("HOSTING", "Run Upload Scripts", "Yes", buff, FILENAME_MAX);
-    gameFrontHostingScriptUploadPolicy =
-        scriptUploadPolicyResolve(NULL, !YESNO_TO_TRUEFALSE(buff[0]));
-  }
+  prefsGetString("HOSTING", "Script Upload Policy", "Allow", buff, FILENAME_MAX);
+  gameFrontHostingScriptUploadPolicy = scriptUploadPolicyResolve(buff);
   prefsGetString("HOSTING", "Share Scripts", "Yes", buff, FILENAME_MAX);
   gameFrontHostingShareScripts = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("HOSTING", "Max Spectators", "16", buff, FILENAME_MAX);
@@ -4641,6 +4696,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   labelSelf = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("MENU", "Show Map Overview", "No", buff, FILENAME_MAX);
   gameFrontShowMapOverview = YESNO_TO_TRUEFALSE(buff[0]);
+  prefsGetString("MENU", "Scenario Panel Close Ask", "Yes", buff, FILENAME_MAX);
+  gameFrontScnPanelCloseAsk = scnPanelYesNoParse(buff, true) ? TRUE : FALSE;
   /* The key keeps the name it has always had so settings in existing player
      files carry over; what it feeds now drives full screen for the whole app,
      not just the in-window map view a game opens with. */
@@ -5133,6 +5190,8 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("MENU", "Label Own Tank", TRUEFALSE_TO_STR(labelSelf));
   prefsSetString("MENU", "Show Map Overview",
                  TRUEFALSE_TO_STR(gameFrontShowMapOverview));
+  prefsSetString("MENU", "Scenario Panel Close Ask",
+                 scnPanelYesNoWord(gameFrontScnPanelCloseAsk));
   prefsSetString("MENU", "Show Full Screen Map",
                  TRUEFALSE_TO_STR(gameFrontFullScreen));
   /* The full screen map's HUD panels. */

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /*
  * crash_handler.c — see crash_handler.h.
  *

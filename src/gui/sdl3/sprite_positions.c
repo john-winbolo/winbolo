@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -556,4 +559,32 @@ void spritePositionTankLabelAt(float baseX, float baseY, int mode, float scale,
 
 bool spritePositionItemLabelShown(float scale, float minScale) {
   return scale >= minScale;
+}
+
+void mapViewCameraSplit(int pos, int unit, int *outSquare, int *outEdge) {
+  int square = (pos >= 0) ? pos / unit : -((-pos + unit - 1) / unit);
+  *outSquare = square;
+  *outEdge = pos - square * unit;
+}
+
+void mapViewCameraAxis(int centerW, const float *preciseCenterW, int viewLen,
+                       int zf, int *outSquare, int *outEdge) {
+  if (preciseCenterW == NULL) {
+    /* Camera top-left in game pixels, split there, then scaled: the view
+       moves zf screen pixels at a time. */
+    int camP = ((centerW * TILE_SIZE_X) >> 8) - viewLen / (2 * zf);
+    mapViewCameraSplit(camP, TILE_SIZE_X, outSquare, outEdge);
+    *outEdge *= zf;
+  } else {
+    /* Camera top-left in whole screen pixels (world units * zf / 16,
+       rounded), so the view moves one screen pixel at a time instead of
+       zf. The edge can then be any 0..scaledTile-1. */
+    int camS = (int)floorf(*preciseCenterW * (float)zf / 16.0f + 0.5f) - viewLen / 2;
+    mapViewCameraSplit(camS, TILE_SIZE_X * zf, outSquare, outEdge);
+  }
+}
+
+bool mapViewSquareInMap(int mx, int my) {
+  /* 256 = MAP_ARRAY_SIZE; types.h is not included here (see the .h) */
+  return mx >= 0 && mx < 256 && my >= 0 && my < 256;
 }

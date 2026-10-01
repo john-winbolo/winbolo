@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -311,24 +314,6 @@ const char *serverSimGetScenarioDir(const ServerSim *sim) {
         return sim->scenarioDirPath;
     }
     return "data/scenarios";
-}
-
-/* The pick, kept as the first entry of the script list. A caller with only
-   a file name to give is every caller this has: the command arm that knows
-   more than the name calls serverSimSetScriptList instead, and what this one
-   writes leaves the manifest's name and the two flags empty, which is
-   honest — it has not read the directory and does not know them. */
-void serverSimSetSelectedScenario(ServerSim *sim, const char *file) {
-    ScnDirEntry entry;
-
-    if (sim == NULL) return;
-    if (file == NULL || file[0] == '\0') {
-        serverSimSetScriptList(sim, NULL, 0);
-        return;
-    }
-    memset(&entry, 0, sizeof(entry));
-    SDL_strlcpy(entry.file, file, sizeof(entry.file));
-    serverSimSetScriptList(sim, &entry, 1);
 }
 
 /* Entry 0 and not the whole list, because what this answers is the one
@@ -675,8 +660,10 @@ static bool serverSimApplyRandomMapConfig(ServerSim *sim,
  *
  * Everything a Cancel needs goes in together: the bytes, the display name,
  * the file the map was read from so a script can be found beside it again,
- * and the template seats each team holds, because the cancel re-seats the
- * template from scratch and the host's trim would otherwise go with it.
+ * and the template seats each team holds, because where the previewed map
+ * brought a different template the cancel re-seats this one from scratch,
+ * and the host's trim would otherwise go with it. Where the template never
+ * changed nothing is re-seated and the counts put back are the ones there.
  * previousSeatsValid comes from serverSimScenarioSeatCounts, which answers
  * false when no template is attached — that is what keeps "no template" apart
  * from a team the host emptied on purpose.
@@ -1088,10 +1075,12 @@ bool serverSimRevertPreview(ServerSim *sim) {
         "serverSimRevertPreview: rolled back to '%s'", sim->mapName);
     serverSimApplyMapChange(sim);
 
-    /* The map change above seated the template from scratch, which is what a
-       map the host commits wants and not what one they backed out of wants:
-       the seats are back at the template's counts and the host's trim is
-       gone. Put their counts back. */
+    /* Where the previewed map brought a different template, the map change
+       above seated this one from scratch, which is what a map the host
+       commits wants and not what one they backed out of wants: the seats are
+       back at the template's counts and the host's trim is gone. Put their
+       counts back. Where the template never changed nothing was re-seated,
+       and the trim finds every team at or under its count already. */
     if (sim->previousSeatsValid) {
         serverSimScenarioTrimSeatsTo(sim, sim->previousSeats);
     }
@@ -1516,7 +1505,9 @@ void serverSimReplayScriptSettings(
     }
 }
 
-static void searchDirRecursive(const char *fullRoot,
+static void searchDirRecursive(const ServerSim *sim,
+                                bool wantScripted,
+                                const char *fullRoot,
                                 const char *subRel,
                                 const char *queryLower,
                                 size_t queryLen,
@@ -1560,7 +1551,8 @@ static void searchDirRecursive(const char *fullRoot,
         }
 
         if (isDir) {
-            searchDirRecursive(fullRoot, rel, queryLower, queryLen,
+            searchDirRecursive(sim, wantScripted, fullRoot, rel,
+                               queryLower, queryLen,
                                entries, maxEntries, count, depth + 1);
             continue;
         }
@@ -1586,16 +1578,20 @@ static void searchDirRecursive(const char *fullRoot,
         e->isFolder = false;
         e->modTime  = (int64_t)info.modify_time;
         e->size     = (int64_t)info.size;
-        /* Written rather than left alone: the caller's array is not zeroed,
-           and the search's own results do not carry the flag. */
-        e->scripted = false;
+        /* Asked the way the folder listing asks, so a search hit is tagged
+           like the same map in its folder. Only the in-process chooser
+           wants it; the network search reply has no byte for it, so that
+           caller skips the lookup. */
+        e->scripted = wantScripted
+                    && serverSimScenarioMapIsScripted(sim, childPath);
     }
     SDL_free(list);
 }
 
 int serverSimSearchMapDir(ServerSim *sim, const char *relPath,
                            const char *query,
-                           ServerMapEntry *entries, int maxEntries) {
+                           ServerMapEntry *entries, int maxEntries,
+                           bool wantScripted) {
     if (!entries || maxEntries <= 0) return -1;
     if (!query || query[0] == '\0') return 0;
     if (!relPathIsSafe(relPath)) return -1;
@@ -1614,7 +1610,7 @@ int serverSimSearchMapDir(ServerSim *sim, const char *relPath,
     queryLower[qlen] = '\0';
 
     int count = 0;
-    searchDirRecursive(fullRoot, "", queryLower, qlen,
+    searchDirRecursive(sim, wantScripted, fullRoot, "", queryLower, qlen,
                        entries, maxEntries, &count, 0);
 
     for (int i = 1; i < count; i++) {

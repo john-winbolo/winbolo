@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /*********************************************************
@@ -144,6 +144,12 @@ BOLO_STATIC_ASSERT(SCN_SCRIPTS_MAX == LOBBY_SCRIPT_LIST_MAX,
  * scenario_io sizes without seeing this header. */
 BOLO_STATIC_ASSERT(SCN_SCRIPTS_MAX == SCN_RECORD_SCRIPTS_MAX,
                    record_describes_every_script_a_round_composes);
+
+/* A panel carries its script's position in four bits and a client keeps a
+ * list for SCN_PANEL_OWNERS of them (scenario_panel.h), so every script a
+ * host can compose has to fit both. */
+BOLO_STATIC_ASSERT(SCN_SCRIPTS_MAX <= SCN_PANEL_OWNERS && SCN_PANEL_OWNERS <= 16,
+                   every_script_can_own_a_panel);
 
 /* A team's brain becomes the path a spawn carries, and the manifest sizes the
  * name without seeing the op. Held against the op's own length here, because
@@ -556,6 +562,9 @@ struct ScenarioHost {
      *              scenarioLuaRegionFind. Written down in conflicts below as
      *              well.
      *   triggers   concatenated in list order.
+     *   needs_bots true when any script on the list says it. A mod may
+     *              field bots as surely as a scenario may, and the lobby
+     *              has to allow them for whichever one does.
      *
      * It is also what the game table's rows write into at runtime: a region
      * a hook defines lands here, in the composite, exactly as it did when
@@ -2189,6 +2198,7 @@ bool scnReadManifest(lua_State *L, int envRef, ScenarioManifest *m,
     m->api        = scnReadInt(L, tbl, "api", 1);
     m->bound      = scnReadBool(L, tbl, "bound", true);
     m->fillToCaps = scnReadBool(L, tbl, "fill_to_caps", false);
+    m->needsBots  = scnReadBool(L, tbl, "needs_bots", false);
     m->workshopId     = scnReadWorkshopId(L, tbl, "workshop_id", rep);
     m->workshopAuthor = scnReadWorkshopId(L, tbl, "workshop_author", rep);
 
@@ -2520,6 +2530,8 @@ void scnPushManifestGlobal(lua_State *L, int envRef,
     lua_setfield(L, t, "bound");
     lua_pushboolean(L, m->fillToCaps ? 1 : 0);
     lua_setfield(L, t, "fill_to_caps");
+    lua_pushboolean(L, m->needsBots ? 1 : 0);
+    lua_setfield(L, t, "needs_bots");
     /* The Workshop item and author as the digit strings the file writes
        them as, and left out for 0, which a reader sees the same as absent.
        A packaged script that assigns nothing then reads the package's own
@@ -3999,6 +4011,13 @@ static bool scnComposeInto(ScenarioManifest *into,
                                   entry[base].script);
                 return false;
             }
+        }
+
+        /* Any script that fields bots needs the lobby to allow them, mod
+           or scenario, so the list needs them when one of its scripts
+           does. The base's own answer came over with the copy above. */
+        if (m->needsBots) {
+            into->needsBots = true;
         }
 
         if (!scnTagArrayMerge(into->pillTags, m->pillTags, MAX_PILLS,
@@ -6555,6 +6574,17 @@ typedef struct {
 static ScnMapScriptCache scnMapScriptCache;
 
 bool scenarioHostMapHasScript(const char *mapPath) {
+    /* What the tag means is that picking this map here runs its script, so a
+       process with scripts off answers no for every map: the attach would
+       refuse the file and the map would play plain. Without this the chooser
+       marks maps Scripted on a server that will not run one. */
+    if (!scnEnabled) {
+        return false;
+    }
+    return scenarioHostMapCarriesScript(mapPath);
+}
+
+bool scenarioHostMapCarriesScript(const char *mapPath) {
     char         script[SCN_SCRIPT_PATH_MAX];
     SDL_PathInfo info;
     SDL_PathInfo looseInfo;
@@ -6564,13 +6594,6 @@ bool scenarioHostMapHasScript(const char *mapPath) {
     bool         answer;
 
     if (mapPath == NULL || mapPath[0] == '\0') {
-        return false;
-    }
-    /* What the tag means is that picking this map here runs its script, so a
-       process with scripts off answers no for every map: the attach would
-       refuse the file and the map would play plain. Without this the chooser
-       marks maps Scripted on a server that will not run one. */
-    if (!scnEnabled) {
         return false;
     }
     /* Nothing to key a row on, or nowhere to keep it: the question is
@@ -6708,11 +6731,13 @@ void scenarioHostRegisterMapScripted(ServerSim *sim) {
  * The stamps are as fine as the kernel writes them, which is a few
  * milliseconds on an ordinary Linux filesystem rather than a nanosecond, so a
  * change inside the same tick as the read that kept the listing leaves the
- * time alone (a file's size still moves if its length changed). The
- * server now changes these directories itself — an upload put in place, the
- * session directory emptied — and lists them straight after, so each slot also
- * keeps the change count serverSimScriptDirsGen answered when it was read, and
- * a slot whose count is not the current one is read again. Only a change made
+ * time alone (a file's size still moves if its length changed). This
+ * process changes these directories itself — an upload landing, the session
+ * emptying, Save a copy, packing a loose script, and the desktop's Workshop
+ * sync and publish — and lists them straight after, so each slot also keeps
+ * the change count serverSimScriptDirsGen answered when it was read, and a
+ * slot whose count is not the current one is read again. Every writer of a
+ * scripts directory bumps that count. Only a change made
  * by someone else within one stamp can still be missed until the next change
  * — an operator dropping a scenario in cannot be that close to a read they did
  * not make, and the file after it, or the next thing to touch the directory,
@@ -8711,7 +8736,7 @@ static void scnHandLobbyOver(ServerSim *sim, const ScenarioManifest *m,
     serverSimSetScenarioIdentity(sim, source, m->name, fileName,
                                  m->description, m->lobby.extraTeams,
                                  scnManifestKeepsWinCondition(m), m->bound,
-                                 scenarioHostUnsafeScripts());
+                                 m->needsBots, scenarioHostUnsafeScripts());
     /* And which rules it sets, so the lobby can say what it changes without
        anybody opening the file. The manifest's own pairs, whatever the round
        later makes of them: the table an author wrote is the question the
@@ -9637,7 +9662,10 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
         }
         if (row->bound) {
             listed = true;
-        } else if (!row->keepsWinCondition) {
+        } else if (!row->keepsWinCondition && !serverSimGetModsOff(sim)) {
+            /* Not while the Mods/Scenario setting is off: the loop below
+               composes no pick then, and a picked scenario that will not play
+               must not take the map's own script off with it. */
             picked = true;
         }
     }
@@ -9664,20 +9692,20 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
             continue;
         }
         own = row->bound;
-        /* Mods off, so the round composes none of them. The row already
-           carries the kind its manifest declared, which is the same question
-           the picked loop above asks, so no file is read to answer it. A
-           scenario on the list is not a mod and still composes, and the list
-           itself is left as the host wrote it: checking the box back on
-           brings the same mods back in the same order.
+        /* Mods/Scenario off, so the round composes none of the host's picks:
+           no mod and no picked scenario. The list itself is left as the host
+           wrote it, so checking the box back on brings the same scripts back
+           in the same order.
 
-           The map's own script is never what this takes off. It did not
-           become a mod by being given a place on the list, and a switch for
-           the mods a host stacked on top of a map has never decided whether
-           that map plays by its own rules.
+           The map's own script is never what this takes off. It is not a
+           pick, whatever place on the list it has been given, and a switch
+           for the scripts a host chose has never decided whether the map
+           plays by its own rules. With no picked scenario composing, picked
+           above stays false and the map's own script comes back at the front
+           where the list does not name it.
 
            The setting is LST_MODS_OFF, src/bolo/public/wire_limits.h. */
-        if (!own && row->keepsWinCondition && serverSimGetModsOff(sim)) {
+        if (!own && serverSimGetModsOff(sim)) {
             continue;
         }
         /* Ten is what a round composes and ten is what the lobby list
@@ -9822,7 +9850,7 @@ void scenarioHostDetach(ScenarioHost *h) {
         /* And what it was called, so a lobby left without a scenario says
            it has none. */
         serverSimSetScenarioIdentity(h->sim, lobbyScenarioNone, NULL, NULL,
-                                     NULL, false, false, false, false);
+                                     NULL, false, false, false, false, false);
         /* And an empty rules set, which is how a client is told the set it
            was shown has gone. Reached only where a host existed, so a map
            that never had a scenario publishes nothing at all rather than an

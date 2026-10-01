@@ -3,7 +3,7 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  */
 
@@ -214,7 +214,6 @@
 #define STR_TUTORIAL25                      409
 #define STR_TUTORIAL_START01                410
 #define STR_TUTORIAL_START02                411
-#define STR_TUTORIAL_START03                412
 #define STR_TUTORIAL_START04                413
 
 /* Touch-mode (tablet/mobile) siblings of the tutorial strings whose
@@ -629,6 +628,7 @@
 #define STR_DLGBROWSER_PREVIEW_UNAVAIL      1815
 #define STR_DLGBROWSER_PREVIEW_ENLARGE      1816
 #define STR_DLGBROWSER_ENLARGE_BTN          1829
+#define STR_DLGBROWSER_SIGNIN_TO_JOIN       2736
 #define STR_DLGBROWSER_AI_PLAYERS           1817
 #define STR_DLGBROWSER_WBN_PLAYERS          1818
 #define STR_DLGBROWSER_ST_LOCKED            1819
@@ -874,6 +874,9 @@
  * shown is decided from the window's real state, not from the preference. */
 #define STR_DLGWELCOME_SWITCH_CLASSIC       1991
 #define STR_DLGWELCOME_SWITCH_FULLSCREEN    1992
+/* The web client's label for the single-player row, which opens a practice
+ * game in the in-game lobby. */
+#define STR_DLGWELCOME_PRACTICE             2735
 /* Map Chooser dialog */
 #define STR_MAPCHOOSER_EVERARD              793
 #define STR_MAPCHOOSER_LOADMAP              794
@@ -885,6 +888,42 @@
 #define STR_MAPCHOOSER_STATS                800
 #define STR_MAPCHOOSER_MAPFILES             801
 #define STR_MAPCHOOSER_ALLFILES             802
+/* The "Scenarios only" checkbox beside the chooser's view toggle, its
+ * tooltip, the line the list shows when the tick hides every map in the
+ * folder or search, and the tooltip while a server-wide search greys the
+ * tick out. */
+#define STR_MAPCHOOSER_SCENARIOSONLY        2715
+#define STR_MAPCHOOSER_SCENARIOSONLY_TIP    2716
+#define STR_MAPCHOOSER_NOSCENARIOMAPS       2717
+#define STR_MAPCHOOSER_SCENARIOSONLY_NOSEARCH 2718
+/* The rest of the chooser's own words: the list/grid toggle (a text
+ * label for when its icon cannot load, and its tooltip), the search box
+ * hint and its clear button's tooltip, the two search-option checkboxes
+ * and the tooltip on the second, the list view's two column headers, the
+ * star button's two tooltips, the preview's maximise button's two
+ * tooltips, and the preview pane's line while a map downloads. */
+#define STR_MAPCHOOSER_VIEW_LIST            2719
+#define STR_MAPCHOOSER_VIEW_GRID            2720
+#define STR_MAPCHOOSER_VIEW_LIST_TIP        2721
+#define STR_MAPCHOOSER_VIEW_GRID_TIP        2722
+#define STR_MAPCHOOSER_SEARCH_HINT          2723
+#define STR_MAPCHOOSER_SEARCH_CLEAR         2724
+#define STR_MAPCHOOSER_SEARCH_SUBFOLDERS    2725
+#define STR_MAPCHOOSER_CREATED_AT           2726
+#define STR_MAPCHOOSER_CREATED_AT_TIP       2727
+#define STR_MAPCHOOSER_COL_NAME             2728
+#define STR_MAPCHOOSER_COL_CREATED          2729
+#define STR_MAPCHOOSER_UNSTAR_TIP           2730
+#define STR_MAPCHOOSER_STAR_TIP             2731
+#define STR_MAPCHOOSER_RESTORE_SIZE_TIP     2732
+#define STR_MAPCHOOSER_MAXIMIZE_TIP         2733
+#define STR_MAPCHOOSER_LOADING_PREVIEW      2734
+/* Map editor scenario panel */
+#define STR_MAPEDIT_SCENARIO_NEEDS_BOTS     2738
+/* About box licence */
+#define STR_DLGABOUT_LICENCE                2750
+#define STR_DLGABOUT_LICENCE_NOTICE         2751
+#define STR_DLGABOUT_FILE_NOT_FOUND         2752
 
 /* Tablet HUD */
 #define STR_TABLET_STATUS_TITLE             803
@@ -2384,7 +2423,7 @@
 #define STR_DLGLOBBY_SCENARIO_ON_MAP        2212
 
 /* The two lines the lobby draws about what is running, and the dialog behind
- * the icon on each of them. Two lines rather than one because a round has at
+ * the script names on them. Two lines rather than one because a round has at
  * most one scenario and any number of mods, and the two are not the same
  * question: the scenario arrives with the committed map, so changing it means
  * changing the map, while the mods are what the host picked and are the only
@@ -2403,7 +2442,10 @@
  *
  * Both are the summary half of the Server Settings row and neither names
  * mods any more: ENABLED_CB is the checkbox label at the head of that row
- * and says the word once. ACTIVE opens with the dash that binds the two, in
+ * and says the words once. It reads Mods/Scenario because the setting keeps
+ * the host's picked scenario out of the round as well as the mods, and the
+ * row under it names both, each with its Mod or Scenario tag; ACTIVE counts
+ * them together. ACTIVE opens with the dash that binds the two, in
  * the string rather than drawn beside it so a language that joins them
  * differently can move it.
  *
@@ -2442,10 +2484,12 @@
  * language that brackets a number differently has to be able to say so.
  *
  * TIP_ON, TIP_OFF and TIP_NONE are the first line of the hover, one per case:
- * the mods are running, the mods are picked but the setting is off, or there
- * are none. Each is a sentence rather than a label, because the hover is the
- * only place a joiner is told which of the three the round is in — the
- * checkbox that decides it is in the host-only settings panel. The names
+ * the mods are running, the scripts are picked but Mods/Scenario is off, or
+ * there are none. TIP_OFF lists every pick that will not run, the picked
+ * scenario as well as the mods. Each is a sentence rather than a label,
+ * because the hover is the only place a joiner is told which of the three
+ * the round is in — the checkbox that decides it is in the host-only
+ * settings panel. The names
  * follow, numbered, and need no string of their own.
  *
  * OFF_NOTE is the same fact on the map panel's Mods: line, which lists the
@@ -2470,6 +2514,19 @@
 #define STR_SCNPANEL_OPACITY_LBL            2619
 #define STR_SCNPANEL_OPACITY_LINE1          2620
 #define STR_SCNPANEL_OPACITY_LINE2          2621
+
+/* One item per script with a panel goes under Brains > INFO_OVERLAY, a
+ * checkbox that shows or hides that script's panel. POP_OUT and POP_IN are
+ * the buttons in the panel's settings that move it into an OS window of its
+ * own and back. CLOSE_TITLE and CLOSE_BODY are the confirm the X on a panel
+ * opens: {string1} in the title = the script's name; in the body {string1} =
+ * the Brains menu's name and {string2} = the Info Overlay item's name, so
+ * the body names the menu path in the player's own language. */
+#define STR_MENU_INFO_OVERLAY               2740
+#define STR_SCNPANEL_POP_OUT                2741
+#define STR_SCNPANEL_POP_IN                 2742
+#define STR_SCNPANEL_CLOSE_TITLE            2743
+#define STR_SCNPANEL_CLOSE_BODY             2744
 
 /* The two-column chooser. OFFERED heads the catalogue on the left and ROUND
  * heads the round's own list on the right, so the two columns say what they
@@ -2520,10 +2577,8 @@
 #define STR_DLGLOBBY_SCENARIO_KIND_MODS     2607
 #define STR_DLGLOBBY_SCENARIO_KIND_SCENARIOS 2608
 
-/* The two hosting settings that go with a scenario carried inside a map: the
- * switch that decides whether a map a player uploaded may bring one, and the
- * directory of scenarios this host offers on their own. */
-#define STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS 2213
+/* The hosting setting that names the directory of scenarios this host offers
+ * on their own, independently of any map. */
 #define STR_DLGSETTINGS_HOSTING_SCENARIODIR  2216
 
 /* Rule change descriptions */
@@ -2789,24 +2844,16 @@
 #define STR_MAPEDIT_SCENARIO_ARG_TEXT           2573
 #define STR_MAPEDIT_SCENARIO_TEXT_ONE_LONG      2574
 
-/* The lobby's rules popup: the button on the scenario line, the window's
- * caption, and the four columns a row is drawn in — the rule, what the
- * classic game plays it at, what the scenario set it to, and what that does
- * to it in words. */
+/* A rules table: its heading, and the four columns a row is drawn in — the
+ * rule, what the classic game plays it at, what the scenario set it to, and
+ * what that does to it in words. The lobby's details dialog and the log
+ * viewer use them. Ids 2329 and 2432 to 2434 were the lobby's rules popup,
+ * which was removed. */
 #define STR_DLGLOBBY_SCENARIO_RULES         2328
-#define STR_DLGLOBBY_SCENARIO_RULES_TITLE   2329
 #define STR_DLGLOBBY_RULES_COL_RULE         2330
 #define STR_DLGLOBBY_RULES_COL_CLASSIC      2331
 #define STR_DLGLOBBY_RULES_COL_SCENARIO     2332
 #define STR_DLGLOBBY_RULES_COL_CHANGE       2333
-
-/* The same popup's per-rule detail: the button on a row that opens it, the
- * caption naming the rule as the manifest spells it, and the one label the
- * four columns above do not already provide. The other three lines in there
- * are labelled with the column ids, which are the same words. */
-#define STR_DLGLOBBY_RULE_DETAIL_TITLE      2432
-#define STR_DLGLOBBY_RULES_INFO             2433
-#define STR_DLGLOBBY_RULES_RANGE            2434
 
 /* A row of a script's details table whose rule a script higher on the list
  * also sets, so this script's value does not play. {string1} = the script
@@ -2814,7 +2861,7 @@
  * that plays. */
 #define STR_DLGLOBBY_RULES_OVERRIDDEN       2622
 
-/* Under the rules table of a mod, on a server that has mods turned off. */
+/* Under the rules table of a pick, on a server with Mods/Scenario off. */
 #define STR_DLGLOBBY_DETAILS_MODS_OFF       2624
 /* The details dialog's table of what a script implements, from the
  * callbacks block of its manifest: the heading over it (one per kind of
@@ -2830,9 +2877,18 @@
 #define STR_DLGLOBBY_DETAILS_TYPE_QUERY          2630
 #define STR_DLGLOBBY_DETAILS_TYPE_TRIGGER        2631
 /* The details dialog's rules table: the header over a script's own value.
- * Its own id rather than STR_DLGLOBBY_RULES_COL_SCENARIO, which the host's
- * Rules popup still uses, because the dialog shows mods too. */
+ * Its own id rather than STR_DLGLOBBY_RULES_COL_SCENARIO, which the log
+ * viewer's rules table still uses, because the dialog shows mods too. */
 #define STR_DLGLOBBY_DETAILS_COL_NEW_VALUE       2632
+/* The details dialog's settings table: its two column headers, so it is
+ * headed the way the rules and callbacks tables above it are. */
+#define STR_DLGLOBBY_DETAILS_COL_SETTING         2753
+#define STR_DLGLOBBY_DETAILS_COL_VALUE           2754
+
+/* The details dialog's heading over the rules table, with the colon the
+ * Settings and implements headings have. The log viewer keeps
+ * STR_DLGLOBBY_SCENARIO_RULES as a separator title with no colon. */
+#define STR_DLGLOBBY_DETAILS_RULES               2755
 
 /* The map panel's warning under the scenario and mods lines, shown only when
  * the server was started with -allow-unsafe-scripts. A sentence rather than a
@@ -2872,7 +2928,7 @@
 /* Rule descriptions */
 
 /* What each simulation rule governs, one line apiece, shown wherever a rule
- * is named: the editor's rules form and the lobby's rules popup. Named for
+ * is named: the editor's rules form and the lobby's details dialog. Named for
  * the rule as SIM_RULE_LIST spells it, and in that order, so the table in
  * sim_rules_phrase.c is generated from the list rather than written out. A
  * rule's own name is not translated — it is what a manifest, a script and an
@@ -3042,6 +3098,8 @@
 #define STR_RULE_DESC_pill_base_defend_shape     2700
 #define STR_RULE_DESC_tank_slide_armour_bonus    2702
 #define STR_RULE_DESC_tank_slide_mac             2703
+#define STR_RULE_DESC_pill_aim_mac               2711
+#define STR_RULE_DESC_tank_collision_mac         2712
 
 /* Rule range wording */
 
@@ -3200,7 +3258,7 @@
 #define STR_DLGLOBBY_DETAILS_SETTING_OFF         2708
 #define STR_DLGLOBBY_DETAILS_SETTING_ON_DEFAULT  2709
 #define STR_DLGLOBBY_DETAILS_SETTING_OFF_DEFAULT 2710
-#define STR_DLGLOBBY_DETAILS_SETTING_CHOICE_DEFAULT 2711
+#define STR_DLGLOBBY_DETAILS_SETTING_CHOICE_DEFAULT 2756
 
 /* The map editor's metadata form: the read-only line naming the Steam
  * Workshop item a scenario was published as ({string1} = the item id) and
@@ -3239,6 +3297,13 @@
  * published to the Steam Workshop. The link beside it reuses
  * STR_DLGSETTINGS_WORKSHOP_OPEN. */
 #define STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP       2680
+
+/* The game finder's scripts */
+/* The label of the details pane's row naming the mods a server runs, and the
+ * end of a row's map line when more than one runs ({number} = how many). The
+ * scenario row and the Scenario filter entry reuse STR_DLGGAMEINFO_SCRIPTED. */
+#define STR_DLGBROWSER_MODS                      2713
+#define STR_DLGBROWSER_MODS_MORE                 2714
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

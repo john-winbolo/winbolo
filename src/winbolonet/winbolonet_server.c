@@ -5,13 +5,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 
@@ -100,6 +103,23 @@ static void winbolonetAddLobbyInfoFields(cJSON *body) {
    * 2 proximity. A reader that finds no "voice" key reads on, which is
    * what servers did before the field existed. */
   cJSON_AddNumberToObject(body, "voice", s_lobbyInfo.voiceMode);
+  /* No "scenario" or "scenario_max_players" key is a round no scenario
+   * decides: a plain one, or one only mods change. "mods" is always sent,
+   * [] when none run, so a reader that finds no key is reading a server
+   * from before the field existed. */
+  if (s_lobbyInfo.hasScenario) {
+    cJSON_AddStringToObject(body, "scenario", s_lobbyInfo.scenarioName);
+    cJSON_AddNumberToObject(body, "scenario_max_players",
+                            s_lobbyInfo.scenarioMaxPlayers);
+  }
+  {
+    cJSON *mods = cJSON_CreateArray();
+    BYTE   i;
+    for (i = 0; i < s_lobbyInfo.modCount && i < WBN_MODS_MAX; i++) {
+      cJSON_AddItemToArray(mods, cJSON_CreateString(s_lobbyInfo.modNames[i]));
+    }
+    cJSON_AddItemToObject(body, "mods", mods);
+  }
 }
 
 void winbolonetSendLobbyUpdate(void) {

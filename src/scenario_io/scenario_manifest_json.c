@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /*********************************************************
@@ -12,7 +12,8 @@
  *
  *  The decode is the twin of scnReadManifest in
  *  scenario_host.c: the same fields, the same defaults —
- *  api 1, bound true, fill_to_caps false, kind "scenario",
+ *  api 1, bound true, fill_to_caps false, needs_bots false,
+ *  kind "scenario",
  *  a team fielded
  *  unless it says otherwise — and the same soft reports through
  *  ScnParseReport for the same shapes, so a rule name that
@@ -1278,6 +1279,7 @@ static bool mjDecode(ScnManifestDoc *d, ScnParseReport *rep,
     }
     m->bound      = mjBool(d->root, "bound", true);
     m->fillToCaps = mjBool(d->root, "fill_to_caps", false);
+    m->needsBots  = mjBool(d->root, "needs_bots", false);
     m->workshopId     = mjDecodeId(d->root, "workshop_id", rep);
     m->workshopAuthor = mjDecodeId(d->root, "workshop_author", rep);
 
@@ -1452,6 +1454,17 @@ static void mjPutString(cJSON *obj, const char *key, const char *v) {
 
 static void mjPutBool(cJSON *obj, const char *key, bool v) {
     mjPut(obj, key, cJSON_CreateBool(v ? 1 : 0));
+}
+
+/* true, or no key at all for false. For a key added after manifests were
+ * already written: a manifest that does not ask for it is the text it was
+ * before the key existed, and turning it off takes the key away. */
+static void mjPutTrue(cJSON *obj, const char *key, bool v) {
+    if (!v) {
+        cJSON_DeleteItemFromObjectCaseSensitive(obj, key);
+        return;
+    }
+    mjPutBool(obj, key, true);
 }
 
 /* An id as its decimal digits, or no key at all for 0. Left out rather than
@@ -1699,6 +1712,7 @@ static void mjEmit(cJSON *root, const ScnManifestDoc *d) {
     mjPutString(root, "game", m->game);
     mjPutBool(root, "bound", m->bound);
     mjPutBool(root, "fill_to_caps", m->fillToCaps);
+    mjPutTrue(root, "needs_bots", m->needsBots);
     mjPutId(root, "workshop_id", m->workshopId);
     mjPutId(root, "workshop_author", m->workshopAuthor);
 
@@ -2049,6 +2063,13 @@ bool scnManifestAgrees(const ScenarioManifest *fromJson,
                         "script's table says %s",
                         fromJson->fillToCaps ? "true" : "false",
                         fromLua->fillToCaps ? "true" : "false");
+    }
+    if (fromJson->needsBots != fromLua->needsBots) {
+        return mjDiffer(key, keyLen, err, errLen, "needs_bots",
+                        "scenario: the manifest says needs_bots %s and the "
+                        "script's table says %s",
+                        fromJson->needsBots ? "true" : "false",
+                        fromLua->needsBots ? "true" : "false");
     }
     /* The Workshop item and its author are held to agreeing only where the
        script's table states them. Both are written into manifest.json after

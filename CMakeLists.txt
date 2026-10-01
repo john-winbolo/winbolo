@@ -730,7 +730,6 @@ else()
         src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
         src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
         src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
-        src/gui/sdl3/dialogs/lobby/lobby_scenario_rules.cpp
         src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
         src/gui/sdl3/wbn_map_source.cpp
         PROPERTIES COMPILE_OPTIONS "-Werror=undef;${LOBBY_MISSING_DECL_OPTION}"
@@ -886,10 +885,14 @@ file(GLOB IOS_DATA_UI "${CMAKE_SOURCE_DIR}/data/ui/*.svg")
 # above does not reach them.
 file(GLOB IOS_DATA_UI_PING "${CMAKE_SOURCE_DIR}/data/ui/ping/*.svg")
 file(GLOB IOS_LANG_FILES "${CMAKE_SOURCE_DIR}/data/lang/*.txt")
-# About-box markdown docs that live at the repo root but ship in data/
+# About-box markdown docs that live at the repo root but ship in data/,
+# with the licence and its additional permissions, which every copy of the
+# program has to carry.
 set(IOS_ABOUT_DOCS
     "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
     "${CMAKE_SOURCE_DIR}/AUTHORS.md"
+    "${CMAKE_SOURCE_DIR}/LICENSE"
+    "${CMAKE_SOURCE_DIR}/LICENSE-EXCEPTION.md"
 )
 
 # Bolo engine sources that stay per-target (HAVE_STEAM-divergent).
@@ -962,6 +965,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/tutorial_text.c
     src/gui/ui_mode.c
     src/gui/visibility_presets.c
+    src/gui/scn_panel_prefs.c
     src/gui/sdl3/dialogs/imgui_welcome.cpp
     src/gui/sdl3/dialogs/imgui_mapchooser.cpp
     src/gui/sdl3/dialogs/imgui_udpsetup.cpp
@@ -983,7 +987,6 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
     src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
     src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
-    src/gui/sdl3/dialogs/lobby/lobby_scenario_rules.cpp
     src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
     src/gui/sdl3/dialogs/imgui_settings.cpp
     src/gui/sdl3/dialogs/imgui_keysetup.cpp
@@ -1028,6 +1031,7 @@ add_executable(WinBoloIOS MACOSX_BUNDLE
     src/gui/sdl3/gamefront.c
     src/client_frontend/client_frontend_connect.c
     src/client_frontend/client_frontend_tick.c
+    src/client_frontend/client_frontend_sp.c
     src/bolo/lobby_bot_pools_json.c
     src/gui/sdl3/dialog_backend.c
     # PNG writer for the map chooser's thumbnail cache (imgui_mapchooser.cpp).
@@ -1580,6 +1584,7 @@ set(CLIENT_SOURCES
     src/bolo/nat_portmap.c
     src/gui/ui_mode.c
     src/gui/visibility_presets.c
+    src/gui/scn_panel_prefs.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/sdl3imgui.cpp src/gui/sdl3/imgui_steam_nav.cpp src/gui/sdl3/sdl3imgui_tablet.cpp src/gui/sdl3/luabrainshandler.c src/gui/sdl3/wb_theme.cpp
     # The scenario panel's display list, drawn with ImGui's own 2D calls.
     # Written against ImGui, public/scenario_panel.h and the tile lookup in
@@ -1595,7 +1600,8 @@ set(CLIENT_SOURCES
     src/client_frontend/client_frontend_connect.c
     src/client_frontend/client_frontend_tick.c
     src/client_frontend/client_frontend_common.c
-    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_rules.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/dialog_quit.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
+    src/client_frontend/client_frontend_sp.c
+    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/dialog_quit.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/lobby_start_list.cpp
@@ -2011,7 +2017,10 @@ add_custom_command(TARGET WinBolo POST_BUILD
 )
 
 # Ship the top-level docs (Third Party Notices, Authors) inside data/
-# so the About box can find them via SDL_GetBasePath()/data/.
+# so the About box can find them via SDL_GetBasePath()/data/. The licence
+# and its additional permissions go with them: the GPL requires every copy
+# of the program to carry a copy of the licence, and on macOS data/ is inside
+# the .app bundle, so the bundle carries its own.
 add_custom_command(TARGET WinBolo POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
@@ -2019,7 +2028,13 @@ add_custom_command(TARGET WinBolo POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/AUTHORS.md"
         "${WINBOLO_DATA_DIR}/data/AUTHORS.md"
-    COMMENT "Copying About-box markdown docs to data/"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/LICENSE"
+        "${WINBOLO_DATA_DIR}/data/LICENSE"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/LICENSE-EXCEPTION.md"
+        "${WINBOLO_DATA_DIR}/data/LICENSE-EXCEPTION.md"
+    COMMENT "Copying About-box markdown docs and the licence to data/"
 )
 
 add_custom_command(TARGET WinBolo POST_BUILD
@@ -3294,6 +3309,13 @@ add_custom_target(dist
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md" "${DIST_DIR}/data/THIRD_PARTY_NOTICES.md"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/AUTHORS.md" "${DIST_DIR}/data/AUTHORS.md"
 
+    # The licence, its additional permissions and the third-party notices at
+    # the root of the zip, where someone unpacking it will see them. The GPL
+    # requires every copy of the program to carry a copy of the licence.
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/LICENSE" "${DIST_DIR}/LICENSE"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/LICENSE-EXCEPTION.md" "${DIST_DIR}/LICENSE-EXCEPTION.md"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md" "${DIST_DIR}/THIRD_PARTY_NOTICES.md"
+
     # Brain scripts (excludes *.md plan/roadmap notes via copy_brains.cmake)
     COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains/GoalHunter_1.7"
     COMMAND ${CMAKE_COMMAND}
@@ -3545,6 +3567,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # swept round names its winner, a passed vote credits nobody, a surrender
     # credits the opposing team, an abandoned round reports nothing.
     tests/unit/test_base_win_resolve.c
+    # The returning lobby's win message: serverSimLocalOnReturnToLobby sends
+    # it once to everyone and clears it, and an over-long one is cut on a
+    # character boundary with "...".
+    tests/unit/test_lobby_return_win_message.c
     # Surrender-vote privacy: the team-scoped CTRL_GAME_VOTE_STATE is withheld
     # from non-members on the wire, its newswire lines are suppressed on the
     # in-process bus, and a team-scoped (base-monopoly) back-to-lobby vote
@@ -3723,6 +3749,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # commit, reconciling them when a round comes back, re-seating them when
     # an emptied lobby resets, and leaving a preview and a plain map alone.
     tests/unit/test_lobby_template.c
+    # A lobby map change keeping the bots and the host's script list.
+    tests/unit/test_lobby_map_keeps_bots.c
     tests/unit/test_survival_lobby_round.c
     # What a real client draws when a held seat is taken off the field: the
     # tank has to go with it, though the roster row stays.
@@ -3737,6 +3765,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     # without one, the scripted game type a commit sets and gives back, and
     # the ranked and AI-policy settings a scenario does not go with.
     tests/unit/test_lobby_scenario_settings.c
+    # What the sim tells WinBolo.net about the scripts a round runs: the
+    # scenario, its cap and the mods, read off the stubbed lobby-info setter.
+    tests/unit/test_wbn_lobby_info_scenario.c
+    # The script bytes the reply to an info request carries after the
+    # INFO_PACKET: the writer and the reader, each against literal bytes.
+    tests/unit/test_info_script_tail.c
     # The policy a server holds for scripts players send it: the word it is
     # set from, its byte on the lobby-settings event, and the sim's and the
     # client's copies.
@@ -3875,6 +3909,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # a live set of settings back as one of them.
     tests/unit/test_visibility_presets.c
     src/gui/visibility_presets.c
+    # The scenario panel pop-out row, yes/no words and lost-window rescue.
+    tests/unit/test_scn_panel_prefs.c
+    src/gui/scn_panel_prefs.c
     tests/unit/test_info_packet_view_policies.c
     tests/unit/test_upload_cap.c
     # The virtual "Workshop" folder in the map listing and the resolve.
@@ -3890,9 +3927,6 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The lobby's reload request: who may ask, when, and what a lobby with
     # no scenario answers.
     tests/unit/test_lobby_reload_scenario.c
-    # The lobby's scenario pick: who may pick, when, and which names the
-    # scenarios directory makes good.
-    tests/unit/test_lobby_set_scenario.c
     # The lobby's ordered script list: the chunked control event, the
     # whole-list command, the dispatcher's gates and the client's reassembly.
     tests/unit/test_lobby_script_list.c
@@ -4326,6 +4360,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_input_gate.c
     tests/unit/test_key_claims.c
     tests/unit/test_server_address_parse.c
+    # The map chooser's "Scenarios only" row test, header-only.
+    tests/unit/test_map_chooser_scenario_filter.c
     # Skin asset reads: a directory, a flat zip and a zip wrapped in one
     # top-level folder must resolve the same relative names to the same
     # bytes.
@@ -4790,15 +4826,20 @@ set(_unit_test_names
     shell_death_rejected_culls_without_impact
     # A new bot's mode/difficulty rule (test_lobby_bot_config_memory.c): the
     # base, then the host's last MANUAL pick, remembered by key so it survives
-    # a brain declaring a different list. Reads the shipped GoalHunter_1.7
-    # modes.txt beside the binary and writes nothing, so these are safe under
-    # `ctest -j`.
+    # a brain declaring a different list. Each case writes its own fixture
+    # brain, brains/ut_bcm_<case>/ in the build directory, and deletes it
+    # when it finishes, so these are safe under `ctest -j`.
     lobby_bot_config_memory_applies
     lobby_bot_config_memory_empty_is_noop
     lobby_bot_config_memory_unknown_key
     lobby_bot_config_memory_not_honoured
     lobby_bot_config_memory_manual_only
     lobby_bot_config_memory_new_lobby
+    lobby_bot_config_memory_open_start
+    lobby_bot_config_memory_type_change
+    lobby_bot_config_memory_map_commit_type
+    lobby_bot_config_memory_dispatch_mark
+    lobby_bot_config_memory_saved_mode
     lobby_add_bot_rejects_empty_brain_path
     lobby_add_bot_rejects_ai_none
     lobby_add_bot_rejects_not_in_lobby
@@ -4825,6 +4866,8 @@ set(_unit_test_names
     surrender_credits_the_opposing_team
     win_during_manual_countdown_resolves_as_vote
     abandoned_round_reports_nothing
+    lobby_return_sends_win_message
+    lobby_return_cuts_long_win_message
     round_stats_zeroed_on_fresh_sim
     round_stats_kill_basic
     round_stats_drown_not_suicide
@@ -4930,6 +4973,12 @@ set(_unit_test_names
     visibility_preset_custom
     visibility_preset_ignores_decay
     visibility_preset_pref_words
+    scn_panel_popout_row
+    scn_panel_yes_no
+    scn_panel_rescue
+    scn_panel_prefs_sections
+    client_scn_panel_owners
+    scn_arm_panel_owners
     info_packet_preset_round_trip
     info_packet_absent_views_read_classic
     upload_cap_enforced
@@ -4966,17 +5015,13 @@ set(_unit_test_names
     lobby_reload_scenario_no_scenario
     lobby_reload_scenario_calls_back
     lobby_reload_scenario_cooldown
-    lobby_set_scenario_selects
-    lobby_set_scenario_none
-    lobby_set_scenario_refuses_unknown
-    lobby_set_scenario_refuses_shape
-    lobby_set_scenario_refuses_bound
-    lobby_set_scenario_cooldown
-    lobby_set_scenario_unreadies
     script_list_control_codec
     script_list_command_codec
     script_list_dispatch
     script_list_lists_once
+    script_list_no_lister
+    script_list_refuses_shape
+    script_list_unreadies
     scenario_settings_blob
     scenario_settings_manifest_lua
     scenario_settings_manifest_json
@@ -5012,9 +5057,12 @@ set(_unit_test_names
     wbn_serverlist_players
     wbn_serverlist_motd
     wbn_serverlist_malformed
+    wbn_serverlist_scripts
     wbn_map_parse
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
+    brain_msgh_budget_kill_no_traceback
+    brain_msgh_real_error_keeps_traceback
     brain_inbox_push_peek_fifo
     brain_inbox_overflow_drops_oldest
     brain_inbox_legacy_drain_fifo
@@ -5027,6 +5075,9 @@ set(_unit_test_names
     brain_modes_missing_falls_back
     brain_modes_malformed_lines_skipped
     brain_modes_counts_clamped
+    brain_modes_open_default
+    brain_modes_about
+    brain_modes_standard_levels
     brain_view_data_edge_rect
     bot_init_arg_difficulty_token
     bot_init_arg_mode_tokens
@@ -5426,10 +5477,12 @@ set(_unit_test_names
     overview_snapshot_filter
     overview_snapshot_generation
     overview_snapshot_removed_item_has_no_label
+    overview_snapshot_corner_keeps_self
     mapview_sprite_classic
     mapview_sprite_ladder
     mapview_sprite_shell_tip
     mapview_sprite_lgm_snap
+    mapview_camera_split
     mapview_overlay_gunsight
     mapview_overlay_tank_label
     mapview_overlay_tank_label_smooth
@@ -5478,6 +5531,8 @@ set(_unit_test_names
     sim_rules_pill_shell_damage_follows
     sim_rules_pill_angry_divisor_follows
     sim_rules_pill_massage_follows
+    sim_rules_pill_aim_mac
+    sim_rules_tank_collision_mac
     pill_shell_cap_off_is_no_limit
     pill_shell_cap_retargets_next_nearest
     pill_shell_cap_holds_then_fires_when_freed
@@ -5548,6 +5603,7 @@ set(_unit_test_names
     loopback_bot_pool_survives_bulk_rebase
     loopback_brain_docs_survives_bulk_rebase
     loopback_map_upload
+    loopback_map_upload_list_after_rejoin
     upload_begin_golden
     script_upload_begin_refusals
     loopback_script_upload_at_cap
@@ -5731,6 +5787,7 @@ set(_unit_test_names
     addrparse_port_bounds
     addrparse_bad_port
     addrparse_empty
+    mapchooser_scenario_filter
     bot_pool_builtin_defaults
     bot_pool_install_and_clamp
     bot_pool_install_dedup_and_drop
@@ -6000,6 +6057,7 @@ set(_unit_test_names
     lobby_template_cap_refuses_extra_human
     lobby_template_cap_never_binds_bots
     lobby_template_cancel_keeps_trim
+    lobby_template_cancel_same_template_keeps_edits
     lobby_template_cancel_keeps_empty_team
     lobby_template_cancel_chain_rolls_back
     lobby_template_commit_keeps_new_lobby
@@ -6009,7 +6067,15 @@ set(_unit_test_names
     lobby_template_seat_carries_mode
     lobby_template_mode_unknown_key_kept
     lobby_template_no_mode_leaves_config
+    lobby_template_seat_new_seat_base
     lobby_template_add_bot_takes_template
+    lobby_map_keeps_bots_plain
+    lobby_map_keeps_bots_scenario
+    lobby_map_keeps_bots_map_own_row
+    lobby_map_rotate_holds_seats_again
+    scenario_map_rotation_redecides
+    lobby_script_keeps_bots_mod
+    lobby_script_keeps_bots_swap
     scripted_game_type_loadout_follows_base
     scripted_game_type_no_base_is_strict
     scripted_game_type_strict_ignores_base
@@ -6023,10 +6089,18 @@ set(_unit_test_names
     lobby_scenario_reset_keeps_rules
     lobby_scenario_refuses_ranked
     lobby_scenario_refuses_ai_none
+    lobby_scenario_no_bots_script_keeps_ai
+    lobby_scenario_needs_bots_raises_and_gives_back
+    lobby_scenario_ranked_give_back_clears_ai
+    lobby_scenario_needs_bots_drop_gives_back
+    lobby_scenario_needs_bots_snapshot_at_raise
     lobby_scenario_refuses_game_type
     lobby_scenario_boot_sets_type
     lobby_scenario_identity_strips_controls
     lobby_scenario_nolobby_boot_seats_template
+    wbn_lobby_info_scenario
+    info_script_tail_golden
+    info_script_tail_read
     script_upload_policy_resolve
     script_upload_policy_word
     script_upload_policy_codec
@@ -6264,6 +6338,8 @@ set(_unit_test_names
     scenario_validate_trigger_announce_clear
     scenario_validate_trigger_arg_literal
     scenario_validate_rule_pair_key
+    scenario_validate_needs_bots_missing
+    scenario_validate_needs_bots_declared
     scenario_lua_every_row_answers
     scenario_lua_op_arguments_match_the_doc
     scenario_lua_read_index_passes_through
@@ -6406,6 +6482,7 @@ set(_unit_test_names
     scenario_manifest_json_trigger_text_cut
     scenario_manifest_workshop_keys
     scenario_manifest_agrees_workshop
+    scenario_manifest_json_needs_bots
     scenario_io_set_workshop_id
     scenario_map_body_length
     scenario_map_find_container
@@ -6529,6 +6606,13 @@ set(_unit_test_names
     scenario_compose_compat_write_stays_local
     scenario_compose_pairs_game_complete
     scenario_compose_unsafe_keeps_sharing
+    scenario_compose_off_map_script_only
+    scenario_compose_off_plain_map_none
+    scenario_compose_on_picks_replace_map
+    scenario_compose_off_then_on
+    scenario_compose_off_full_list_hides_last
+    scenario_compose_needs_bots_any_mod
+    scenario_compose_needs_bots_scenario_and_mod
     scenario_panel_parses_each_primitive
     scenario_panel_refuses_malformed
     scenario_panel_boundaries
@@ -6566,6 +6650,7 @@ set(_unit_test_names
     lv_presentation_rebuild_many
     lv_presentation_plain_round
     lv_presentation_panel_choice
+    lv_presentation_panel_owner
     lv_presentation_slot_team
     lv_presentation_announce_posts
     lv_presentation_marker_visible
@@ -6693,6 +6778,7 @@ add_executable(WinBoloWbnTests
     tests/wbn/test_wbn_key_at_fire_time.c
     tests/wbn/test_wbn_queue_cap.c
     tests/wbn/test_wbn_forced_update_full_queue.c
+    tests/wbn/test_wbn_scenario_fields.c
     src/bolo/global.c
     src/common/prefs.c
     src/common/prefs_doc.c
@@ -6769,6 +6855,12 @@ set_tests_properties(wbn.queue_cap_refuses_posts PROPERTIES TIMEOUT 120)
 add_test(NAME wbn.forced_update_full_queue
          COMMAND $<TARGET_FILE:WinBoloWbnTests> forced_update_full_queue)
 set_tests_properties(wbn.forced_update_full_queue PROPERTIES TIMEOUT 120)
+
+# A register and four lobby_updates, none of them held, each body read for the
+# scenario, cap and mod keys.
+add_test(NAME wbn.scenario_fields
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> scenario_fields)
+set_tests_properties(wbn.scenario_fields PROPERTIES TIMEOUT 60)
 
 # ---- Include-rule check: the scenario surface is invisible to a frontend --
 # src/bolo/scenario_api/ is on the include path of scenario_host, sim_owner

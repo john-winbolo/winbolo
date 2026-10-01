@@ -7,7 +7,8 @@
 #   emcmake cmake -B build-wasm-game -S src/wasm
 #   cmake --build build-wasm-game
 #
-# Output: build-wasm-game/winbolo.html, winbolo.js, winbolo.wasm, winbolo.data
+# Output: build-wasm-game/winbolo.html, winbolo.js, winbolo.wasm, winbolo.data,
+# plus js/relay.js and img/ copied from web/
 #
 # Serve locally with: python3 -m http.server -d build-wasm-game
 
@@ -156,6 +157,11 @@ target_link_libraries(imgui_backends PUBLIC SDL3::SDL3)
 #
 add_subdirectory(${REPO_ROOT}/src/bolo ${CMAKE_BINARY_DIR}/bolo_static)
 add_subdirectory(${REPO_ROOT}/src/server ${CMAKE_BINARY_DIR}/server_static)
+# The scenario runtime, for a practice game's in-page server: it runs the mods
+# in data/mods and the script beside a scripted map in data/maps, as desktop
+# single player does. Its minizip, cJSON and Lua targets are declared above.
+add_subdirectory(${REPO_ROOT}/src/scenario_io ${CMAKE_BINARY_DIR}/scenario_io_static)
+add_subdirectory(${REPO_ROOT}/src/scenario ${CMAKE_BINARY_DIR}/scenario_static)
 add_subdirectory(${REPO_ROOT}/brains ${CMAKE_BINARY_DIR}/bot_brains_static)
 
 set(BOLO_SOURCES
@@ -189,6 +195,7 @@ set(WBN_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/winbolonet_wasm.c)
 set(GUI_SOURCES
     ${SRC_ROOT}/gui/ui_mode.c
     ${SRC_ROOT}/gui/visibility_presets.c
+    ${SRC_ROOT}/gui/scn_panel_prefs.c
     ${SRC_ROOT}/gui/sdl3/sdl3imgui.cpp
     ${SRC_ROOT}/gui/sdl3/imgui_steam_nav.cpp
     ${SRC_ROOT}/gui/sdl3/sdl3imgui_tablet.cpp
@@ -227,7 +234,6 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_reel.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
-    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_scenario_rules.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_settings.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_keysetup.cpp
@@ -365,6 +371,11 @@ set(WASM_SOURCES
     # key) stays excluded here too; this drives the page's fetch() instead, and
     # without suspending the C stack, since the reel polls it mid-frame.
     ${CMAKE_CURRENT_SOURCE_DIR}/round_log_fetch_wasm.c
+    # The game finder's internet list: the page fetches /api/v1/games and the
+    # finder polls for the reply each frame; wbn_serverlist.c parses it, with
+    # its http.c fetch compiled out here.
+    ${CMAKE_CURRENT_SOURCE_DIR}/finder_wasm.c
+    ${SRC_ROOT}/winbolonet/wbn_serverlist.c
     ${SRC_ROOT}/steam/steam_wrapper_stub.c
     ${SRC_ROOT}/common/sentry_integration.c
     ${SRC_ROOT}/common/wb_log.c
@@ -382,6 +393,9 @@ set(WASM_SOURCES
     ${SRC_ROOT}/client_frontend/client_frontend_connect.c
     ${SRC_ROOT}/client_frontend/client_frontend_tick.c
     ${SRC_ROOT}/client_frontend/client_frontend_common.c
+    # The single-player lobby seeding the practice start shares with the
+    # desktop's single-player start.
+    ${SRC_ROOT}/client_frontend/client_frontend_sp.c
     # Voice: the Opus wrappers and the client voice runtime, shared with the
     # desktop build. voice_wasm.c is this platform's half of voice_backend.h,
     # standing in for gui/sdl3/voice.c.
@@ -445,11 +459,16 @@ target_compile_definitions(winbolo PRIVATE
     # Lights up the settings dialog's voice block, which compiles into this
     # target too.
     WINBOLO_VOICE=1
+    # The network-impairment hooks are for the loopback tests only; every
+    # shipping target keeps them compiled out.
+    WB_ENABLE_NETIMPAIR=0
 )
 target_compile_options(winbolo PRIVATE -Werror=undef -fno-common -include sys/types.h)
 target_link_options(winbolo PRIVATE "LINKER:--allow-multiple-definition")
 
-target_link_libraries(winbolo PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
+# scenario_static ahead of server_sim_static: it calls the funnel and the
+# round-start registration, which the server library provides.
+target_link_libraries(winbolo PRIVATE bolo_static scenario_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(winbolo PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
@@ -556,6 +575,12 @@ target_link_options(winbolo PRIVATE
     "SHELL:--preload-file ${PRELOAD_DIR}/EverardIsland.map@/data/EverardIsland.map"
     "SHELL:--preload-file ${PRELOAD_DIR}/InbuiltTutorial.map@/data/InbuiltTutorial.map"
     "SHELL:--preload-file ${REPO_ROOT}/brains/GoalHunter_1.7@/Brains/GoalHunter_1.7"
+    # The licence and its additional permissions, which every copy of the
+    # program has to carry, and the About-box docs beside them in /data.
+    "SHELL:--preload-file ${REPO_ROOT}/LICENSE@/data/LICENSE"
+    "SHELL:--preload-file ${REPO_ROOT}/LICENSE-EXCEPTION.md@/data/LICENSE-EXCEPTION.md"
+    "SHELL:--preload-file ${REPO_ROOT}/THIRD_PARTY_NOTICES.md@/data/THIRD_PARTY_NOTICES.md"
+    "SHELL:--preload-file ${REPO_ROOT}/AUTHORS.md@/data/AUTHORS.md"
     # _malloc/_free + the string/value helpers are used by prefs_bridge_wasm.c's
     # EM_ASYNC_JS fetch transport to hand response bodies back to C.
     "SHELL:-sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_wbWasmWheel','_wbWasmResetHeldKeys']"
@@ -566,6 +591,9 @@ target_link_options(winbolo PRIVATE
     "SHELL:--shell-file ${CMAKE_CURRENT_SOURCE_DIR}/shell.html"
     -sFORCE_FILESYSTEM=1
     -sASYNCIFY=1
+    # The menus nest deeper blocking loops (menu -> settings -> key setup)
+    # than the default 4096-byte ASYNCIFY stack holds.
+    "-sASYNCIFY_STACK_SIZE=65536"
     -lwebsocket.js
 )
 
@@ -583,11 +611,37 @@ set_target_properties(winbolo PROPERTIES
     SUFFIX ".html"
 )
 
+# The page's own files beside winbolo.html: the relay picker the shell loads
+# from /js/relay.js, and the favicon, loading-screen logo and link-preview
+# image under /img. They keep their paths under web/, so the build directory
+# serves the same URLs the site does. One command per file, each depending
+# on its source, so editing one re-copies it on the next build.
+set(WEB_FILES_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/web")
+set(_web_files js/relay.js img/favicon.png img/wb2-logo.png img/wb2-og.jpg)
+set(_web_files_out)
+foreach(_w IN LISTS _web_files)
+    get_filename_component(_w_dir "${CMAKE_CURRENT_BINARY_DIR}/${_w}" DIRECTORY)
+    add_custom_command(
+        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${_w}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${_w_dir}
+        COMMAND ${CMAKE_COMMAND} -E copy ${WEB_FILES_SRC_DIR}/${_w}
+                ${CMAKE_CURRENT_BINARY_DIR}/${_w}
+        DEPENDS ${WEB_FILES_SRC_DIR}/${_w}
+        COMMENT "Copying web/${_w}"
+        VERBATIM)
+    list(APPEND _web_files_out "${CMAKE_CURRENT_BINARY_DIR}/${_w}")
+endforeach()
+add_custom_target(web_files DEPENDS ${_web_files_out})
+add_dependencies(winbolo web_files)
+
 # ---------------------------------------------------------------------------
 # wasm-dist: precompress the web assets (for Caddy
 # `file_server { precompressed br gzip }`) and pack everything a deploy needs
-# into wasm-dist.zip. Run explicitly — it is NOT part of the normal build, so
-# day-to-day builds don't re-brotli the data file:
+# into wasm-dist.zip: winbolo.{html,js,wasm,data}, js/relay.js, each with its
+# .br and .gz copies, and img/ as it is (PNG and JPEG are already compressed).
+# The zip keeps the js/ and img/ paths, so unzipping it into the site root is
+# the whole deploy. See docs/web-hosting.md. Run explicitly — it is NOT part
+# of the normal build, so day-to-day builds don't re-brotli the data file:
 #     cmake --build <build-dir> --target wasm-dist
 # Requires `brotli` (apt-get install brotli); gzip is already standard.
 # ---------------------------------------------------------------------------
@@ -598,13 +652,26 @@ if(BROTLI_EXE AND GZIP_EXE)
     # fallback for clients that accept neither encoding); -f overwrites stale
     # variants. CJK font subsetting brings the data file down to ~68 MB, small
     # enough to brotli every asset at -q 11.
-    set(_wasm_dist_assets winbolo.html winbolo.js winbolo.wasm winbolo.data)
+    set(_wasm_dist_assets winbolo.html winbolo.js winbolo.wasm winbolo.data
+                          js/relay.js)
     set(_wasm_dist_cmds)
     set(_wasm_dist_zip_files)
     foreach(_a IN LISTS _wasm_dist_assets)
         list(APPEND _wasm_dist_cmds COMMAND ${BROTLI_EXE} -f -k -q 11 "${_a}")
         list(APPEND _wasm_dist_cmds COMMAND ${GZIP_EXE} -f -k -9 "${_a}")
         list(APPEND _wasm_dist_zip_files "${_a}" "${_a}.br" "${_a}.gz")
+    endforeach()
+    set(_wasm_dist_images ${_web_files})
+    list(FILTER _wasm_dist_images INCLUDE REGEX "^img/")
+    list(APPEND _wasm_dist_zip_files ${_wasm_dist_images})
+
+    # The licence files are served beside the page as plain text, so they
+    # are copied in rather than precompressed.
+    set(_wasm_dist_licence_files LICENSE LICENSE-EXCEPTION.md THIRD_PARTY_NOTICES.md)
+    foreach(_l IN LISTS _wasm_dist_licence_files)
+        list(APPEND _wasm_dist_cmds
+             COMMAND ${CMAKE_COMMAND} -E copy_if_different "${REPO_ROOT}/${_l}" "${_l}")
+        list(APPEND _wasm_dist_zip_files "${_l}")
     endforeach()
 
     add_custom_target(wasm-dist

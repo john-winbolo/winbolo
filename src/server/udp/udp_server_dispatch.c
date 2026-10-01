@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /*********************************************************
@@ -1146,7 +1146,7 @@ static void handleLobbyMapSearchReq(ServerSim *sim, uint8_t *buf, int len,
     ServerMapEntry entries[LOBBY_MAP_LIST_MAX];
     int got = serverSimSearchMapDir(sim,
         relPath[0] == '\0' ? NULL : relPath,
-        query, entries, LOBBY_MAP_LIST_MAX);
+        query, entries, LOBBY_MAP_LIST_MAX, false);
     if (got < 0) got = 0;
 
     /* Chunked send — every chunk repeats the full path+query

@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -354,6 +357,23 @@ void serverSimRemoveBot(ServerSim *sim, BYTE playerNum) {
         serverSimRemovePlayer(sim, playerNum);
     }
     serverSimPublishLobbySlot(sim, playerNum);
+}
+
+void serverSimRemoveAllBots(ServerSim *sim) {
+    BYTE i;
+    if (sim == NULL) return;
+    /* The roster is what has to be asked, not the pool: a seat held for a
+       bot that was never fielded has no bot manager entry. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (serverSimIsBot(sim, i)) {
+            serverSimRemoveBot(sim, i);
+        }
+    }
+    /* The scenario's seats went with the rest, so the lobby no longer holds
+       what its template built. A decision that reaches the same template
+       leaves a lobby alone, which here would leave it empty; this is what
+       tells it to seat the template again. */
+    sim->scenarioLobbySeated = false;
 }
 
 void serverSimDestroyBots(ServerSim *sim) {

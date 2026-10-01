@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*
@@ -141,12 +144,13 @@ int run_sim_rules_describe_names(void) {
                   (double)classic.turn_road);
 
     /* The last row, which is where a list one short of the struct shows. */
+    UT_ASSERT(SIM_RULE_tank_collision_mac == SIM_RULE_COUNT - 1);
     UT_ASSERT_MSG(srdSame(simRulesClassicValue((int)SIM_RULE_COUNT - 1),
-                          (double)classic.tank_slide_armour_bonus),
-                  "the last rule reads %.4f and tank_slide_armour_bonus "
+                          (double)classic.tank_collision_mac),
+                  "the last rule reads %.4f and tank_collision_mac "
                   "holds %ld",
                   simRulesClassicValue((int)SIM_RULE_COUNT - 1),
-                  (long)classic.tank_slide_armour_bonus);
+                  (long)classic.tank_collision_mac);
 
     /* The tags and widths the list carries, on one row of each width. */
     UT_ASSERT_MSG(simRulesRuleValueKind(SIM_RULE_tank_reload_ticks) ==

@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -28,6 +31,14 @@ extern "C" {
 
 /* Show the pre-game settings dialog as a blocking modal loop. */
 void imguiSettingsShow(void);
+
+/* The same dialog opened from the map editor inside WinBolo.  The editor's
+ * window keeps its size and title, no background game is drawn, and the
+ * tutorial button and the Controls tab (key setup) are left out.  The caller
+ * owns the ImGui context it returns to: this makes and destroys its own.  A
+ * quit taken while it is up is not acted on here; it is pushed back as
+ * SDL_EVENT_QUIT for the editor to handle. */
+void imguiSettingsShowInEditor(void);
 
 typedef struct SettingsRenderCtx {
     struct ClientSim *cs;       /* NULL pre-game; live sim in-game */

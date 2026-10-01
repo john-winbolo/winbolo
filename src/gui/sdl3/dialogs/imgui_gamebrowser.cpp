@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -69,6 +72,25 @@ extern "C" {
 #include "../map_preview_view.h"
 #include "../map_preview_popup.h"
 #include "../../../bolo/public/client_mappreview.h"
+
+#ifdef __EMSCRIPTEN__
+/* The web's internet game list (src/wasm/finder_wasm.c). Start hands the
+ * fetch to the page and returns; Take gives 0 until it finishes, then 1 with
+ * a malloc'd body the caller frees, or NULL when the fetch failed. Neither
+ * waits. Hand-declared, as lobby_internal.h declares the reel's fetch. */
+void wasmFinderFetchStart(void);
+int  wasmFinderFetchTake(char **out);
+/* Load /join/<serverKey> in this tab (finder_wasm.c). */
+void wasmFinderJoin(const char *serverKey);
+/* The page's WinBolo.net account (winbolonet_wasm.c), read from
+ * /api/v1/me; signing in goes to www.winbolo.net and returns to the finder. */
+bool wasmAccountPending(void);
+bool wasmAccountSignedIn(void);
+void wasmAccountSignInToFinder(void);
+/* TRUE, once, when Back or Forward has moved the browser off the finder's
+ * history entry (main_wasm.c). */
+bool wasmFinderTakeBack(void);
+#endif
 }
 
 /* The lobby's visibility value renderer and the preset table, so a listed
@@ -168,8 +190,43 @@ struct ServerEntry {
      * says nothing leaves here means they are allowed — what every server
      * did before the setting existed. */
     bool smartPingsOff;
+    /* The scripts the round runs. A tracker row fills the name, cap and mods
+     * from WinBolo.net and has no description until the server's own reply
+     * arrives; a LAN row fills them from that reply. */
+    char scenarioName[DISCOVERY_SCRIPT_NAME_LEN];
+    char scenarioDescription[DISCOVERY_SCRIPT_DESC_LEN];
+    bool hasScriptReply;          /* the server's own reply has filled these */
+    int  scenarioMaxPlayers;      /* human cap, 0 = none */
+    int  modCount;
+    char modNames[DISCOVERY_SCRIPT_MODS_MAX][DISCOVERY_SCRIPT_NAME_LEN];
     std::vector<std::string> players;   /* logged-in usernames, blanks already filtered */
 };
+
+/* A tracker row's script names are copied into ServerEntry's discovery-sized
+ * buffers, so the two sets of sizes must agree. */
+static_assert(DISCOVERY_SCRIPT_NAME_LEN == WBN_SERVERLIST_NAME_LEN,
+              "a tracker script name must fit ServerEntry's name buffers");
+static_assert(DISCOVERY_SCRIPT_MODS_MAX == WBN_SERVERLIST_MODS_MAX,
+              "a tracker row's mods must fit ServerEntry's mod list");
+
+/* Copy the scripts from a server's own reply into e, replacing whatever a
+ * tracker row put there. The web build has no LAN search and no info ping,
+ * so nothing there asks a server for its own reply. */
+#ifndef __EMSCRIPTEN__
+static void serverEntrySetScripts(ServerEntry &e, const DiscoveryScripts &sc) {
+    int n = sc.modCount;
+    if (n > DISCOVERY_SCRIPT_MODS_MAX) n = DISCOVERY_SCRIPT_MODS_MAX;
+    SDL_strlcpy(e.scenarioName, sc.scenarioName, sizeof(e.scenarioName));
+    SDL_strlcpy(e.scenarioDescription, sc.scenarioDescription,
+                sizeof(e.scenarioDescription));
+    e.scenarioMaxPlayers = sc.scenarioMaxPlayers;
+    e.modCount = n;
+    for (int m = 0; m < n; m++) {
+        SDL_strlcpy(e.modNames[m], sc.modNames[m], sizeof(e.modNames[m]));
+    }
+    e.hasScriptReply = true;
+}
+#endif
 
 /* Compact "Views:" tag for the detail pane. Lists only the categories
  * that differ from the defaults, so a stock server shows nothing at
@@ -316,6 +373,12 @@ static const char *gameTypeAbbr(gameType g) {
     }
 }
 
+/* Everything from here to the refresh icon pings servers or searches the LAN,
+ * both on threads the web build cannot start (it links without -pthread, so
+ * constructing a std::thread throws). The web finder lists internet games
+ * only and leaves every row's ping unset. */
+#ifndef __EMSCRIPTEN__
+
 /* ---- Async ping worker ---- */
 struct PingWork {
     char address[FILENAME_MAX];
@@ -352,6 +415,7 @@ struct PingResult {
     bool positionalSound;
     bool hasViewInfo;
     ServerVoiceMode voiceMode;
+    DiscoveryScripts scripts;   /* hasScriptInfo false when the reply carried none */
 };
 
 /* Resolve hostname to IP (if needed) and look up country via GeoIP database */
@@ -439,6 +503,7 @@ static PingResult pingServer(const PingWork &work) {
     res.positionalSound = false;
     res.hasViewInfo = false;
     res.voiceMode = serverVoiceOn;
+    memset(&res.scripts, 0, sizeof(res.scripts));
 
     /* Reverse-DNS the address regardless of whether the UDP info-ping
      * answers, so even unresponsive servers get a hostname. */
@@ -471,6 +536,7 @@ static PingResult pingServer(const PingWork &work) {
         res.positionalSound = dpr.positionalSound;
         res.hasViewInfo     = dpr.hasViewInfo;
         res.voiceMode       = dpr.voiceMode;
+        res.scripts         = dpr.scripts;
         SDL_strlcpy(res.mapMd5, dpr.mapMd5, sizeof(res.mapMd5));
     }
     return res;
@@ -605,6 +671,11 @@ static ServerEntry serverEntryFromDiscovery(const DiscoveryServer *src) {
     e.timeLimit   = (src->timeLimit != 0);
     e.timeMinutes = (int)(src->timeLimit / (50 * 60));
     e.lobbyStatus = src->inLobby ? 1 : 0;
+    /* A reply with no script bytes (an older server, or an mDNS record)
+     * leaves the fields empty for the ping reply to fill. */
+    if (src->scripts.hasScriptInfo) {
+        serverEntrySetScripts(e, src->scripts);
+    }
 
     resolveCountryCode(e);
     return e;
@@ -637,6 +708,8 @@ extern "C" void broadcastServerCallback(const DiscoveryServer *server, void *use
     enqueuePing(pw);
 }
 
+#endif /* !__EMSCRIPTEN__ */
+
 /* ---- Refresh icon (loaded from SVG) ---- */
 static SDL_Texture *s_refreshIcon = nullptr;
 static bool s_refreshIconAttempted = false;
@@ -653,6 +726,39 @@ static SDL_Texture *s_voiceIcon = nullptr;
 static SDL_Texture *s_voiceMutedIcon = nullptr;
 static bool s_voiceIconsAttempted = false;
 
+#ifdef __EMSCRIPTEN__
+/* How long the web finder waits on the page's /api/v1/me check before it
+ * reads the player as signed out. A fetch that fails never reports back; the
+ * account block in imgui_winbolonet.cpp waits the same. */
+#define FINDER_ACCOUNT_CHECK_MS 5000
+
+enum FinderAccount {
+    FINDER_ACCOUNT_CHECKING,
+    FINDER_ACCOUNT_SIGNED_OUT,
+    FINDER_ACCOUNT_SIGNED_IN
+};
+
+/* The player's account as Join sees it, timed from when the finder opened.
+ * A name that arrives after the wait still switches it to signed in. */
+static FinderAccount finderAccountState(Uint64 openedMs) {
+    if (wasmAccountSignedIn()) {
+        return FINDER_ACCOUNT_SIGNED_IN;
+    }
+    if (wasmAccountPending() &&
+        SDL_GetTicks() - openedMs < FINDER_ACCOUNT_CHECK_MS) {
+        return FINDER_ACCOUNT_CHECKING;
+    }
+    return FINDER_ACCOUNT_SIGNED_OUT;
+}
+
+/* Whether the web can join this row: it needs the key its /join/ address
+ * is built from, and a game the list says is taking new players (the red
+ * Locked/Full dot). */
+static bool finderRowJoinable(const ServerEntry &e) {
+    return e.serverKey[0] != '\0' && e.allowNewPlayers;
+}
+#endif
+
 extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     /* Copy title — the caller passes langGetText() which returns a shared
      * static buffer that gets overwritten by any later langGetText() call
@@ -660,6 +766,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     char titleBuf[256];
     SDL_strlcpy(titleBuf, title ? title : "", sizeof(titleBuf));
     title = titleBuf;
+
+#ifdef __EMSCRIPTEN__
+    /* The web finder lists internet games only: there is no LAN search. */
+    useTracker = 1;
+#endif
 
     SDL_Window *window = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
@@ -711,7 +822,10 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     /* Load flag atlas for this dialog's ImGui context */
     flagsCreate(renderer);
 
-    /* Open GeoIP database for country flag lookups */
+    /* Open GeoIP database for country flag lookups. Only a LAN row looks its
+     * country up; an internet row takes it from the list, so the web build,
+     * which has no LAN search, never opens the database. */
+#ifndef __EMSCRIPTEN__
     if (!geoLookupIsLoaded()) {
 #if BOLO_MOBILE
         /* Android assets can't be mmap'd.  Extract the mmdb file from
@@ -751,6 +865,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 #endif
         WB_LOG_INFO(WB_LOG_CAT_ASSET, "[GameBrowser] GeoIP database loaded: %s", geoLookupIsLoaded() ? "yes" : "no");
     }
+#endif
 
     /* Background game */
     BgGame *bg = bgGameGetShared();
@@ -772,14 +887,23 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
      * writing after the dialog function returns (avoids blocking on exit). */
     static std::atomic<bool> searching(false);
     static std::atomic<bool> searchDone(false);
+#ifndef __EMSCRIPTEN__
     static std::thread searchThread;
     /* LAN mDNS browse runs on its own thread alongside the broadcast worker
      * (non-tracker searches only); both feed broadcastServerCallback, which
      * dedupes by address+port under serversMtx. */
     static std::thread mdnsThread;
+#endif
     static bool searchResultOk = false;
     static WbnServerList searchResultList = {};
 
+#ifdef __EMSCRIPTEN__
+    /* On the web a search is a fetch the page runs. One the last finder left
+     * running is forgotten here; the refresh this open starts replaces it on
+     * the page, so its reply is never taken. */
+    searching = false;
+    searchDone = false;
+#else
     /* Clean up any leftover state from a previous detached search */
     if (searchDone) {
         searchDone = false;
@@ -790,6 +914,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
     /* Drop any pings still in flight from a previous browser session. */
     resetPings();
+#endif
 
     /* Filter state */
     int filterGameType = -1; /* -1 = all */
@@ -812,6 +937,9 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
     int result = -1;
     bool running = true;
+#ifdef __EMSCRIPTEN__
+    const Uint64 openedMs = SDL_GetTicks();
+#endif
 
     /* Auto-refresh on open */
     bool autoRefresh = true;
@@ -826,8 +954,10 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
      * session; the loaded map is swapped when the selected md5 changes.
      * NULL view => preview treated as unavailable (all uses guarded). */
     MapPreviewView *previewView = mapPreviewViewCreate();
+#ifndef __EMSCRIPTEN__
     char loadedPreviewMd5[33] = "";
     bool loadedPreviewOk = false;
+#endif
     /* Compressed bytes of the currently-loaded preview map, retained so a
      * click on the thumbnail can hand them to the zoomable popup without
      * re-fetching. Refreshed whenever loadedPreviewMd5 changes. */
@@ -856,9 +986,35 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             }
         }
 
+#ifdef __EMSCRIPTEN__
+        /* Back or Forward off the finder's history entry closes it as Cancel
+         * does; the browser is already on the menu's entry. */
+        if (wasmFinderTakeBack()) {
+            gameFrontSetDlgState(openWelcome);
+            running = false;
+        }
+        const FinderAccount account = finderAccountState(openedMs);
+#endif
+
+#ifdef __EMSCRIPTEN__
+        /* Take the page's reply once it lands and parse it here, standing in
+         * for the search thread's wbnFetchServerList. A failed fetch parses
+         * nothing and reads as a failed search. */
+        if (searching && !searchDone) {
+            char *body = nullptr;
+            if (wasmFinderFetchTake(&body)) {
+                searchResultOk = (body != nullptr) &&
+                                 wbnServerListParse(body, &searchResultList);
+                free(body);
+                searchDone = true;
+            }
+        }
+#endif
+
         /* Check if background search completed */
         if (searchDone) {
             searchDone = false;
+#ifndef __EMSCRIPTEN__
             if (searchThread.joinable()) {
                 searchThread.join();
             }
@@ -867,6 +1023,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             if (mdnsThread.joinable()) {
                 mdnsThread.join();
             }
+#endif
             searching = false;
 
             if (useTracker) {
@@ -919,6 +1076,15 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         e.hasViewInfo = w.hasViewInfo;
                         e.voiceMode = (ServerVoiceMode)w.voiceMode;
                         e.smartPingsOff = w.smartPingsOff;
+                        /* The tracker sends no description; that and
+                         * hasScriptReply wait for the server's own reply. */
+                        SDL_strlcpy(e.scenarioName, w.scenarioName, sizeof(e.scenarioName));
+                        e.scenarioMaxPlayers = w.scenarioMaxPlayers;
+                        e.modCount = w.modCount;
+                        if (e.modCount > DISCOVERY_SCRIPT_MODS_MAX) e.modCount = DISCOVERY_SCRIPT_MODS_MAX;
+                        for (int m = 0; m < e.modCount; m++) {
+                            SDL_strlcpy(e.modNames[m], w.modNames[m], sizeof(e.modNames[m]));
+                        }
 
                         e.players.clear();
                         for (int p = 0; p < w.numPlayerNames; p++) {
@@ -950,6 +1116,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     int total = (int)servers.size();
                     if (total > 0) {
                         statusText = langGetText(STR_DLGBROWSER_GAMES_LOADED);
+#ifndef __EMSCRIPTEN__
                         /* Queue async pings to each server (bounded pool) */
                         for (int i = 0; i < total; i++) {
                             PingWork pw = {};
@@ -958,6 +1125,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                             pw.index = i;
                             enqueuePing(pw);
                         }
+#endif
                     } else {
                         statusText = langGetText(STR_DLGBROWSER_NO_GAMES);
                     }
@@ -992,6 +1160,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         }
 
         /* Process incoming ping results */
+#ifndef __EMSCRIPTEN__
         {
             std::lock_guard<std::mutex> lock(pingPool().resultsMtx);
             for (auto &pr : pingPool().results) {
@@ -1040,10 +1209,18 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         servers[pr.index].lobbyStatus     = pr.inLobby ? 1 : 0;
                         SDL_strlcpy(servers[pr.index].mapMd5, pr.mapMd5, sizeof(servers[pr.index].mapMd5));
                     }
+                    /* Outside the block above: the tracker's list carries the
+                     * scripts' names but no description, so a reply that brings
+                     * script bytes replaces the tracker's names in both modes.
+                     * A reply without them leaves the entry as it is. */
+                    if (pr.scripts.hasScriptInfo) {
+                        serverEntrySetScripts(servers[pr.index], pr.scripts);
+                    }
                 }
             }
             pingPool().results.clear();
         }
+#endif
 
         /* Tick the background game at fixed rate (unless paused) */
         if (hasBg && !bg->paused) {
@@ -1242,6 +1419,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     servers.clear();
                 }
 
+#ifndef __EMSCRIPTEN__
                 bool ut = (useTracker != 0);
 
                 if (searchThread.joinable()) {
@@ -1254,11 +1432,17 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                  * previous list so their results can't land on the rebuilt
                  * indices, and drop pending/in-flight work. */
                 resetPings();
+#endif
 
                 wbnServerListFree(&searchResultList);
                 searchResultOk = false;
                 searching = true;
 
+#ifdef __EMSCRIPTEN__
+                /* The page fetches the list; the frame loop above takes the
+                 * reply when it lands. A fetch still running is replaced. */
+                wasmFinderFetchStart();
+#else
                 struct SearchParams { bool tracker; };
                 SearchParams sp = {};
                 sp.tracker = ut;
@@ -1289,6 +1473,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         discoveryFindMdnsGamesAsync(broadcastServerCallback, &mcbd);
                     });
                 }
+#endif
             }
 
             ImGui::Separator();
@@ -1435,6 +1620,15 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     selectedItem = i;
                     SDL_strlcpy(selKeyAddr, e.address, sizeof(selKeyAddr));
                     selKeyPort = e.port;
+#ifdef __EMSCRIPTEN__
+                    /* The web joins as its Join button does, signed in only;
+                     * signed out or still checking, the row is only
+                     * selected. */
+                    if (joinActivate && account == FINDER_ACCOUNT_SIGNED_IN &&
+                        finderRowJoinable(e)) {
+                        wasmFinderJoin(e.serverKey);
+                    }
+#else
                     if (joinActivate) {
                         char playerName[PLAYER_NAME_LEN];
                         gameFrontGetPlayerName(playerName);
@@ -1449,6 +1643,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                             running = false;
                         }
                     }
+#endif
                 }
                 imguiHandOnHover();
                 ImVec2 pEnd = ImGui::GetCursorScreenPos();
@@ -1484,7 +1679,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
                 /* Ping string + colour FIRST, so the name can be clamped to
                  * stop before it (a long reverse-DNS otherwise runs under the
-                 * right-aligned ping). */
+                 * right-aligned ping). The web has no ping, so there the
+                 * name runs to the row's right edge. */
+#ifdef __EMSCRIPTEN__
+                float pingLeft = textRight;
+#else
                 char pingStr[24];
                 ImVec4 pcol;
                 if (e.pingMs >= 0) {
@@ -1498,6 +1697,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     pcol = ImGui::GetStyle().Colors[ImGuiCol_TextDisabled];
                 }
                 float pingLeft = textRight - ImGui::CalcTextSize(pingStr).x;
+#endif
 
                 /* Name line — host name if known, else address:port. Clamp its
                  * width to (pingLeft − gap) so a long reverse-DNS can't overlap
@@ -1549,14 +1749,35 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     }
                 }
 
-                /* Map line with ranked (*) / random (rnd) markers */
-                char mapLine[MAP_STR_SIZE + 32];
+                /* Map line with ranked (*) / random (rnd) markers, then the
+                 * scenario after " · " and the mods after it: one mod by
+                 * name, more as a count. Sized for the map and its markers
+                 * (MAP_STR_SIZE + 32), " · " and a 63-byte scenario name
+                 * (4 + 63), and " + " and a 63-byte mod name (3 + 63), which
+                 * also holds " " and the formatted count. */
+                char mapLine[MAP_STR_SIZE + 32 + 4 + (DISCOVERY_SCRIPT_NAME_LEN - 1)
+                             + 3 + (DISCOVERY_SCRIPT_NAME_LEN - 1)];
                 char rndMark[24] = "";
                 if (e.randomMap)
                     SDL_snprintf(rndMark, sizeof(rndMark), " (%s)",
                                  langGetText(STR_DLGBROWSER_RND_ABBR));
                 SDL_snprintf(mapLine, sizeof(mapLine), "%s%s%s", e.mapName,
                              e.ranked ? " *" : "", rndMark);
+                if (e.scenarioName[0] != '\0') {
+                    SDL_strlcat(mapLine, " · ", sizeof(mapLine));
+                    SDL_strlcat(mapLine, e.scenarioName, sizeof(mapLine));
+                }
+                if (e.modCount == 1) {
+                    SDL_strlcat(mapLine, " + ", sizeof(mapLine));
+                    SDL_strlcat(mapLine, e.modNames[0], sizeof(mapLine));
+                } else if (e.modCount > 1) {
+                    MessageArgs modArgs = {};
+                    modArgs.number = e.modCount;
+                    SDL_strlcat(mapLine, " ", sizeof(mapLine));
+                    SDL_strlcat(mapLine,
+                                langGetTextFmt(STR_DLGBROWSER_MODS_MORE, &modArgs),
+                                sizeof(mapLine));
+                }
                 browserClampText(mapLine, sizeof(mapLine),
                                  visLeft - (8.0f * s) - textX);
                 dl->AddText(ImVec2(textX, p0.y + pad + lineH),
@@ -1565,14 +1786,21 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 /* Ping, right-aligned on the first line (string/colour/pingLeft
                  * were computed above so the name could be clamped not to
                  * overlap it). */
+#ifndef __EMSCRIPTEN__
                 dl->AddText(ImVec2(pingLeft, p0.y + pad),
                             ImGui::GetColorU32(pcol), pingStr);
+#endif
 
-                /* Players X/cap in the left gutter, under the flag */
+                /* Players X/cap in the left gutter, under the flag. A
+                 * scenario's human cap counts humans against it. */
                 {
                     int cap = e.maxPlayers > 0 ? e.maxPlayers : MAX_TANKS;
                     char pc[24];
-                    SDL_snprintf(pc, sizeof(pc), "%d/%d", (int)e.numPlayers, cap);
+                    if (e.scenarioMaxPlayers > 0) {
+                        SDL_snprintf(pc, sizeof(pc), "%d/%d", e.numHumans, e.scenarioMaxPlayers);
+                    } else {
+                        SDL_snprintf(pc, sizeof(pc), "%d/%d", (int)e.numPlayers, cap);
+                    }
                     dl->AddText(ImVec2(contentX, p0.y + pad + lineH),
                                 ImGui::GetColorU32(ImGuiCol_TextDisabled), pc);
                 }
@@ -1636,6 +1864,12 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     /* Random/unknown map — nothing to fetch. */
                     centeredDimmed(langGetText(STR_DLGBROWSER_PREVIEW_UNAVAIL));
                 } else {
+#ifdef __EMSCRIPTEN__
+                    /* The map fetch (map_preview_fetch.cpp) runs
+                     * wbnMapFetchByMd5 on worker threads, and the web build
+                     * has neither, so a listed game shows no preview. */
+                    centeredDimmed(langGetText(STR_DLGBROWSER_PREVIEW_UNAVAIL));
+#else
                     mapPreviewFetchRequest(sel.mapMd5);
                     const uint8_t *bytes = nullptr;
                     size_t len = 0;
@@ -1714,6 +1948,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                             centeredDimmed(langGetText(STR_DLGBROWSER_PREVIEW_UNAVAIL));
                         }
                     }
+#endif
                 }
             }
             ImGui::EndChild();
@@ -1733,6 +1968,38 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGBROWSER_COL_TYPE));
                     ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(gameTypeStr(sel.game));
+
+                    /* Scenario — its name, and under it the description once
+                     * the server's own reply has brought one. A tracker row
+                     * has the name at once and shows an ellipsis until then.
+                     * The description wraps at the pane's right edge. */
+                    if (sel.scenarioName[0] != '\0') {
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGGAMEINFO_SCRIPTED));
+                        ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(sel.scenarioName);
+                        if (!sel.hasScriptReply) {
+                            ImGui::TextDisabled("…");
+                        } else if (sel.scenarioDescription[0] != '\0') {
+                            ImGui::PushTextWrapPos(ImGui::GetWindowContentRegionMax().x);
+                            ImGui::TextUnformatted(sel.scenarioDescription);
+                            ImGui::PopTextWrapPos();
+                        }
+                    }
+
+                    /* Mods — the names that run, joined and wrapped. */
+                    if (sel.modCount > 0) {
+                        std::string mods;
+                        for (int m = 0; m < sel.modCount; m++) {
+                            if (m > 0) mods += ", ";
+                            mods += sel.modNames[m];
+                        }
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGBROWSER_MODS));
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::PushTextWrapPos(ImGui::GetWindowContentRegionMax().x);
+                        ImGui::TextUnformatted(mods.c_str());
+                        ImGui::PopTextWrapPos();
+                    }
 
                     /* Version */
                     ImGui::TableNextRow();
@@ -1763,7 +2030,10 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     {
                         char pbuf[96];
                         int cap = sel.maxPlayers > 0 ? sel.maxPlayers : MAX_TANKS;
-                        int n = SDL_snprintf(pbuf, sizeof(pbuf), "%d/%d", (int)sel.numPlayers, cap);
+                        /* A scenario's human cap counts humans against it. */
+                        int n = (sel.scenarioMaxPlayers > 0)
+                                    ? SDL_snprintf(pbuf, sizeof(pbuf), "%d/%d", sel.numHumans, sel.scenarioMaxPlayers)
+                                    : SDL_snprintf(pbuf, sizeof(pbuf), "%d/%d", (int)sel.numPlayers, cap);
                         if (sel.hasRichInfo && sel.numBots > 0 &&
                             n > 0 && (size_t)n < sizeof(pbuf)) {
                             MessageArgs aiArgs = {};
@@ -1936,9 +2206,10 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 langGetText(STR_DLGGAMEINFO_OPEN),
                 langGetText(STR_DLGGAMEINFO_TOURN),
                 langGetText(STR_DLGGAMESETUP_STRICT_SHORT),
+                langGetText(STR_DLGGAMEINFO_SCRIPTED),
             };
             int gtIdx = (filterGameType < 0) ? 0 : filterGameType;
-            if (ImGui::Combo("##filterType", &gtIdx, gameTypes, 4)) {
+            if (ImGui::Combo("##filterType", &gtIdx, gameTypes, 5)) {
                 filterGameType = (gtIdx == 0) ? -1 : gtIdx;
             }
 
@@ -1977,12 +2248,16 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         {
             int total = (int)servers.size();
             int pendingPings = 0;
+            /* The web never pings, so its rows stay unpinged rather than
+             * pending and the count stays at zero. */
+#ifndef __EMSCRIPTEN__
             {
                 std::lock_guard<std::mutex> lock(serversMtx);
                 for (auto &s : servers) {
                     if (s.pingMs == -1) pendingPings++;
                 }
             }
+#endif
             MessageArgs args = {};
             SDL_strlcpy(args.string1, statusText, sizeof(args.string1));
             args.number = total;
@@ -2012,8 +2287,12 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             legendDot(dotOrange, true,  langGetText(STR_DLGBROWSER_ST_INGAME));
             ImGui::SameLine(0.0f, 16.0f * s);
             legendDot(dotRed,    true,  langGetText(STR_DLGBROWSER_ST_LOCKED));
+            /* A grey dot is a server that did not answer the ping, which the
+             * web never sends. */
+#ifndef __EMSCRIPTEN__
             ImGui::SameLine(0.0f, 16.0f * s);
             legendDot(dotGrey,   false, langGetText(STR_DLGBROWSER_ST_NORESP));
+#endif
         }
 
         ImGui::Spacing();
@@ -2030,7 +2309,9 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         float btnW = 110.0f * s;
         float btnH = 28.0f * s;
         {
+#ifndef __EMSCRIPTEN__
             bool hasSelection = (selectedItem >= 0 && selectedItem < (int)servers.size());
+#endif
 
             /* Controller mode draws the bound A/B glyphs inline, left of the
              * primary buttons (A = Join, B = Cancel). Glyph height matches the
@@ -2048,6 +2329,32 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
             /* Join — A glyph before the disabled-state guard so it isn't dimmed. */
             glyphInline(SI_ACTION_MENU_ACCEPT);
+#ifdef __EMSCRIPTEN__
+            /* Signed out, the button signs in and comes back to the finder,
+             * whatever is selected. Otherwise it is Join, disabled while the
+             * account check is out or the selected row cannot be joined. */
+            if (account == FINDER_ACCOUNT_SIGNED_OUT) {
+                const char *signInLabel = langGetText(STR_DLGBROWSER_SIGNIN_TO_JOIN);
+                float signInW = ImGui::CalcTextSize(signInLabel).x
+                              + ImGui::GetStyle().FramePadding.x * 2.0f;
+                if (signInW < btnW) signInW = btnW;
+                if (ImGui::Button(signInLabel, ImVec2(signInW, btnH))) {
+                    wasmAccountSignInToFinder();
+                }
+                imguiHandOnHover();
+            } else {
+                const bool canJoin =
+                    account == FINDER_ACCOUNT_SIGNED_IN &&
+                    selectedItem >= 0 && selectedItem < (int)servers.size() &&
+                    finderRowJoinable(servers[selectedItem]);
+                if (!canJoin) ImGui::BeginDisabled();
+                if (ImGui::Button(langGetText(STR_DLGTCP_JOIN), ImVec2(btnW, btnH))) {
+                    wasmFinderJoin(servers[selectedItem].serverKey);
+                }
+                imguiHandOnHover();
+                if (!canJoin) ImGui::EndDisabled();
+            }
+#else
             if (!hasSelection) ImGui::BeginDisabled();
 
             if (ImGui::Button(langGetText(STR_DLGTCP_JOIN), ImVec2(btnW, btnH))) {
@@ -2071,6 +2378,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             }
             imguiHandOnHover();
             if (!hasSelection) ImGui::EndDisabled();
+#endif
 
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
             /* Spectate — beside Join. Enabled only when the selected server
@@ -2114,6 +2422,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 if (!previewEnlargeReady) ImGui::EndDisabled();
             }
 
+            /* Rejoin, New Game, Player Name and Manual Connect are left off the
+             * web: it hosts nothing, has no address entry, and a web join
+             * loads a page of its own that picks its own name, so neither a
+             * rejoin nor the name set here would reach it. */
+#ifndef __EMSCRIPTEN__
             /* Rejoin */
             ImGui::SameLine();
             if (!hasSelection) ImGui::BeginDisabled();
@@ -2168,6 +2481,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 running = false;
             }
             imguiHandOnHover();
+#endif
 
             /* Cancel - right-aligned, muted-grey styling per dialog spec.
              * In controller mode a B glyph sits just left of it; shift the
@@ -2275,7 +2589,9 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
      * timeout. resetPings() supersedes anything already popped by a
      * pool worker so its eventual result is dropped; the workers
      * themselves block on their own ephemeral-port sockets and don't
-     * touch port 27500, so they don't need to be joined. */
+     * touch port 27500, so they don't need to be joined. The web runs no
+     * search or ping, so there is nothing to stop. */
+#ifndef __EMSCRIPTEN__
     discoveryAbortBroadcastSearch();
     discoveryAbortMdnsSearch();
     resetPings();
@@ -2285,6 +2601,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     if (mdnsThread.joinable()) {
         mdnsThread.join();
     }
+#endif
 
     /* Close the shared zoom popup so it doesn't linger over the next
      * dialog (mirrors the map-chooser's exit cleanup). */

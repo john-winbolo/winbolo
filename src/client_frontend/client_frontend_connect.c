@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "client_frontend_connect.h"
 
 #include <SDL3/SDL.h>

@@ -182,6 +182,11 @@ int run_lobby_bot_config_memory_unknown_key_ignored(void);
 int run_lobby_bot_config_memory_not_honoured(void);
 int run_lobby_bot_config_memory_manual_only(void);
 int run_lobby_bot_config_memory_cleared_on_return_to_lobby(void);
+int run_lobby_bot_config_memory_open_game_start_mode(void);
+int run_lobby_bot_config_memory_game_type_change(void);
+int run_lobby_bot_config_memory_map_commit_type(void);
+int run_lobby_bot_config_memory_dispatch_hand_mark(void);
+int run_lobby_bot_config_memory_saved_mode_not_carried(void);
 int run_lobby_add_bot_rejects_empty_brain_path(void);
 int run_lobby_add_bot_rejects_ai_none(void);
 int run_lobby_add_bot_rejects_not_in_lobby(void);
@@ -232,6 +237,12 @@ int run_manual_vote_countdown_survives_lost_base(void);
 int run_surrender_credits_the_opposing_team(void);
 int run_win_during_manual_countdown_resolves_as_vote(void);
 int run_abandoned_round_reports_nothing(void);
+/* The returning lobby's win message (test_lobby_return_win_message.c).
+ * serverSimLocalOnReturnToLobby sends a pending win message once, to
+ * everyone, clears it and republishes the lobby; a message over the wire's
+ * cap is cut on a character boundary and ends in "...". */
+int run_lobby_return_sends_win_message(void);
+int run_lobby_return_cuts_long_win_message(void);
 int run_round_stats_zeroed_on_fresh_sim(void);
 int run_round_stats_kill_basic(void);
 int run_round_stats_drown_not_suicide(void);
@@ -364,6 +375,12 @@ int run_visibility_preset_round_trip(void);
 int run_visibility_preset_custom(void);
 int run_visibility_preset_ignores_decay(void);
 int run_visibility_preset_pref_words(void);
+int run_scn_panel_popout_row(void);
+int run_scn_panel_yes_no(void);
+int run_scn_panel_rescue(void);
+int run_scn_panel_prefs_sections(void);
+int run_client_scn_panel_owners(void);
+int run_scn_arm_panel_owners(void);
 int run_info_packet_view_policy_layout(void);
 int run_info_packet_preset_round_trip(void);
 int run_info_packet_absent_views_read_classic(void);
@@ -437,17 +454,6 @@ int run_lobby_reload_scenario_no_scenario(void);
 int run_lobby_reload_scenario_calls_back(void);
 int run_lobby_reload_scenario_cooldown(void);
 
-/* The lobby's scenario pick (test_lobby_set_scenario.c): who may pick, when,
- * which names are accepted, that a refusal leaves the previous pick alone,
- * and the tick gap between one pick and the next. */
-int run_lobby_set_scenario_selects(void);
-int run_lobby_set_scenario_none(void);
-int run_lobby_set_scenario_refuses_unknown(void);
-int run_lobby_set_scenario_refuses_shape(void);
-int run_lobby_set_scenario_refuses_bound(void);
-int run_lobby_set_scenario_cooldown(void);
-int run_lobby_set_scenario_unreadies(void);
-
 /* The lobby's ordered script list (test_lobby_script_list.c): one scenario
  * deciding the round and mods behind it. The chunked control event and the
  * whole-list command against hand-written bytes, the dispatcher's gates, and
@@ -456,6 +462,9 @@ int run_script_list_control_codec(void);
 int run_script_list_command_codec(void);
 int run_script_list_dispatch(void);
 int run_script_list_lists_once(void);
+int run_script_list_no_lister(void);
+int run_script_list_refuses_shape(void);
+int run_script_list_unreadies(void);
 
 /* test_scenario_settings.c: a script's own lobby settings, from the
  * declaration through the wire to game.setting and Survival. */
@@ -502,9 +511,12 @@ int run_wbn_serverlist_parse(void);
 int run_wbn_serverlist_players(void);
 int run_wbn_serverlist_motd(void);
 int run_wbn_serverlist_malformed(void);
+int run_wbn_serverlist_scripts(void);
 int run_wbn_map_parse(void);
 int run_brain_crash_log_writes_file(void);
 int run_brain_crash_log_falls_back_to_luaptr(void);
+int run_brain_msgh_budget_kill_no_traceback(void);
+int run_brain_msgh_real_error_keeps_traceback(void);
 int run_brain_inbox_push_peek_fifo(void);
 int run_brain_inbox_overflow_drops_oldest(void);
 int run_brain_inbox_legacy_drain_fifo(void);
@@ -527,6 +539,9 @@ int run_brain_modes_manifest_parses(void);
 int run_brain_modes_missing_falls_back(void);
 int run_brain_modes_malformed_lines_skipped(void);
 int run_brain_modes_counts_clamped(void);
+int run_brain_modes_open_default(void);
+int run_brain_modes_about(void);
+int run_brain_modes_standard_levels(void);
 
 /* The brain's terrain window at the map edge (test_brain_view_data.c): the
  * rect brainDataMakeInfo builds is inclusive, so a tank on row or column 240
@@ -1890,6 +1905,10 @@ int run_overview_snapshot_generation(void);
 /* A pillbox or base a removal has taken off the map has no label in the
  * snapshot's list. */
 int run_overview_snapshot_removed_item_has_no_label(void);
+/* The player's own tank nosed into an inside corner of buildings with line of
+ * sight on stays on the full screen map: the filter asks about the square
+ * under the tank, not the hidden corner block its sprite starts in. */
+int run_overview_snapshot_corner_keeps_self(void);
 
 /* Sprite placement at a float scale (test_mapview_sprite_scale.c): the
  * arithmetic behind mapViewDrawShells / Tanks / LGMs, shared by the classic
@@ -1904,6 +1923,7 @@ int run_mapview_sprite_classic(void);
 int run_mapview_sprite_ladder(void);
 int run_mapview_sprite_shell_tip(void);
 int run_mapview_sprite_lgm_snap(void);
+int run_mapview_camera_split(void);
 
 /* The entity overlay's placements (test_mapview_overlay.c): the gunsight's
  * top-left is the classic view's formula at an integer scale and the
@@ -2049,6 +2069,8 @@ int run_sim_rules_pill_empties_without_wrapping(void);
 int run_sim_rules_pill_shell_damage_follows(void);
 int run_sim_rules_pill_angry_divisor_follows(void);
 int run_sim_rules_pill_massage_follows(void);
+int run_sim_rules_pill_aim_mac(void);
+int run_sim_rules_tank_collision_mac(void);
 /* pill_shell_cap and pill_max_shells_at_tank through pillsUpdate
  * (test_pill_shell_cap.c). */
 int run_pill_shell_cap_off_is_no_limit(void);
@@ -2177,6 +2199,9 @@ int run_loopback_brain_docs_survives_bulk_rebase(void);
 /* Client->server map upload over CHANNEL_BULK (test_loopback_upload.c): a map
  * uploaded under loss completes and the server decodes the reassembled bytes. */
 int run_loopback_map_upload(void);
+/* A loaded map upload re-joins the client; once it is CONNECTED again the
+ * Server Maps listing is asked for and answered. */
+int run_loopback_map_upload_list_after_rejoin(void);
 /* Script upload (test_script_upload.c): the BEGIN body for both kinds against
  * hand-written bytes; the server's BEGIN refusals for a script, and the map
  * ones the kind byte must leave alone; a 4 MiB package arriving whole at the
@@ -2588,6 +2613,10 @@ int run_addrparse_port_bounds(void);
 int run_addrparse_bad_port(void);
 int run_addrparse_empty(void);
 
+/* The map chooser's "Scenarios only" row test
+ * (test_map_chooser_scenario_filter.c). */
+int run_mapchooser_scenario_filter(void);
+
 /* Voice codec round-trip (test_voice_core.c): a continuous tone encoded and
  * decoded frame by frame stays inside the per-frame byte budget (the
  * constrained-VBR guarantee), decodes a full 20 ms frame every time, keeps
@@ -2916,10 +2945,26 @@ int run_lobby_scenario_commit_sets_type(void);
 int run_lobby_scenario_reset_keeps_rules(void);
 int run_lobby_scenario_refuses_ranked(void);
 int run_lobby_scenario_refuses_ai_none(void);
+int run_lobby_scenario_no_bots_script_keeps_ai(void);
+int run_lobby_scenario_needs_bots_raises_and_gives_back(void);
+int run_lobby_scenario_ranked_give_back_clears_ai(void);
+int run_lobby_scenario_needs_bots_drop_gives_back(void);
+int run_lobby_scenario_needs_bots_snapshot_at_raise(void);
 int run_lobby_scenario_refuses_game_type(void);
 int run_lobby_scenario_boot_sets_type(void);
 int run_lobby_scenario_identity_strips_controls(void);
 int run_lobby_scenario_nolobby_boot_seats_template(void);
+
+/* What the sim tells WinBolo.net about the scripts a round runs
+ * (test_wbn_lobby_info_scenario.c): the scenario, its cap and the mods, none
+ * on a plain round, a mods-only round or with Mods Enabled off. */
+int run_wbn_lobby_info_scenario(void);
+
+/* The script bytes the reply to an info request carries after the
+ * INFO_PACKET (test_info_script_tail.c): the writer against literal bytes,
+ * and the reader against literal buffers, well-formed and not. */
+int run_info_script_tail_golden(void);
+int run_info_script_tail_read(void);
 
 /* The policy a server holds for scripts players send it
  * (test_script_upload_policy.c): the word it is set from and the legacy flag
@@ -2956,6 +3001,7 @@ int run_lobby_template_cap_seats_human_above_bots(void);
 int run_lobby_template_cap_refuses_extra_human(void);
 int run_lobby_template_cap_never_binds_bots(void);
 int run_lobby_template_cancel_keeps_trim(void);
+int run_lobby_template_cancel_same_template_keeps_edits(void);
 int run_lobby_template_cancel_keeps_empty_team(void);
 int run_lobby_template_cancel_chain_rolls_back(void);
 int run_lobby_template_commit_keeps_new_lobby(void);
@@ -2965,7 +3011,23 @@ int run_lobby_template_seat_carries_init(void);
 int run_lobby_template_seat_carries_mode(void);
 int run_lobby_template_mode_unknown_key_kept(void);
 int run_lobby_template_no_mode_leaves_config(void);
+int run_lobby_template_seat_new_seat_base(void);
 int run_lobby_template_add_bot_takes_template(void);
+
+/* A lobby map change (test_lobby_map_keeps_bots.c): the bots, their names,
+ * teams and difficulties, and the host's script list all surviving a change
+ * of map made through the lobby's own command. */
+int run_lobby_map_keeps_bots_plain(void);
+int run_lobby_map_keeps_bots_scenario(void);
+int run_lobby_map_keeps_bots_map_own_row(void);
+int run_lobby_map_rotate_holds_seats_again(void);
+/* A map rotation decides the scenario again: a plain map leaves none
+ * attached, and the scripted map brings its own back. */
+int run_scenario_map_rotation_redecides(void);
+/* And a script pick, which keeps the host's bots unless the script lays out
+ * a lobby of its own. */
+int run_lobby_script_keeps_bots_mod(void);
+int run_lobby_script_keeps_bots_swap(void);
 
 /* The scripted game type (test_scripted_game_type.c): gameScripted resolving
  * through the base game the scenario declared, at the loadout and at the
@@ -3326,6 +3388,8 @@ int run_scenario_validate_trigger_field_team(void);
 int run_scenario_validate_trigger_announce_clear(void);
 int run_scenario_validate_trigger_arg_literal(void);
 int run_scenario_validate_rule_pair_key(void);
+int run_scenario_validate_needs_bots_missing(void);
+int run_scenario_validate_needs_bots_declared(void);
 
 /* The binding table (test_scenario_lua.c): every row of the registry
  * called once, the three index rules, the nils an absent entity reads
@@ -3526,6 +3590,7 @@ int run_scenario_manifest_json_trigger_text_cut(void);
  * manifest that names one. */
 int run_scenario_manifest_workshop_keys(void);
 int run_scenario_manifest_agrees_workshop(void);
+int run_scenario_manifest_json_needs_bots(void);
 
 /* The Workshop item stamped into a scenario file that already exists
  * (test_scenario_workshop_id.c): a .scenario package and a packed map, with
@@ -3732,6 +3797,13 @@ int run_scenario_compose_game_nested_copy(void);
 int run_scenario_compose_compat_write_stays_local(void);
 int run_scenario_compose_pairs_game_complete(void);
 int run_scenario_compose_unsafe_keeps_sharing(void);
+int run_scenario_compose_off_map_script_only(void);
+int run_scenario_compose_off_plain_map_none(void);
+int run_scenario_compose_on_picks_replace_map(void);
+int run_scenario_compose_off_then_on(void);
+int run_scenario_compose_off_full_list_hides_last(void);
+int run_scenario_compose_needs_bots_any_mod(void);
+int run_scenario_compose_needs_bots_scenario_and_mod(void);
 
 /* The panel's display list (test_scenario_panel.c): the byte layout
  * decoded from a hand-written list, the refusal each malformed list
@@ -3811,6 +3883,7 @@ int run_lv_presentation_scripted_round(void);
 int run_lv_presentation_rebuild_many(void);
 int run_lv_presentation_plain_round(void);
 int run_lv_presentation_panel_choice(void);
+int run_lv_presentation_panel_owner(void);
 int run_lv_presentation_slot_team(void);
 int run_lv_presentation_announce_posts(void);
 int run_lv_presentation_marker_visible(void);

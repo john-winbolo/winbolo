@@ -160,7 +160,7 @@ STR_WBTIMELIMIT_END=Tidsgränsen har löpt ut. Spelet har avslutats.
 STR_WBERR_SAVEMAP=Fel vid sparande av karta (Disk full?)
 
 # Tutorial strings
-STR_TUTORIAL01=Framför dig finns en kort flod som leder inåt land. Håll\nnedtryckt tangenten {ACCEL} för att köra din båt till\nflodens slut.\n\nNär du kommer dit, fortsätt hålla {ACCEL} nedtryckt. Tanken\nstiger av båten och båten lämnas förtöjd vid flodens slut
+STR_TUTORIAL01=Framför dig finns en kort flod som leder inåt land. Håll\nnedtryckt tangenten {ACCEL} för att köra din båt till\nflodens slut.\n\nNär du kommer dit, fortsätt hålla {ACCEL} nedtryckt. Tanken\nstiger av båten och båten lämnas förtöjd vid flodens slut.
 STR_TUTORIAL02=Du befinner dig nu på gräset. Tanken rör sig ganska\nsnabbt på gräs.\n\n\nFortätt trycka på {ACCEL} för att köra framåt mot skogen.
 STR_TUTORIAL03=Du befinner dig nu i skogen. Tanken rör sig långsammare\ni skogen än på gräs.\n\n\nFortätt trycka på {ACCEL} för att köra framåt mot träsket.
 STR_TUTORIAL04=Du befinner dig nu i träsket. Tanken rör sig mycket\nlångsamt i träsk. Som tur är finns det en väg framåt.\n\n\nFortätt trycka på {ACCEL} för att köra framåt till vägen.
@@ -184,12 +184,11 @@ STR_TUTORIAL21=För att korsa den här floden måste du bygga en båt. Båtar\nk
 STR_TUTORIAL22=Det finns en bunker framåt och några försörjningsbaser som\nger dig ammunition. Hämta granater från\nförsörjningsbasen och attackera bunkern.\n\n\nDen skjuter tillbaka, men om din tank träffas kan du enkelt\nåtervända till försörjningsbasen för att reparera pansaret\ntill fullt styrka igen.
 STR_TUTORIAL23=Med tålamod och försiktighet bör du kunna förstöra den\nhär bunkern. Använd de färdigheter du lärt dig för att göra\ndet lättare:\n\n\nGöm dig i skogen så att bunkern inte kan se dig,\nskörda träd, bygg vägar för att tanken ska röra sig\nsnabbare och bygg byggnader för att ge skydd mot\nbunkereld.
 STR_TUTORIAL24=Efter att du lyckats besegra den här bunkern är din sista\nutmaning i tutorialen att ta ut de två\nbunkrarna som vaktar utgången, bygga en båt och fly.\n\n\nVar noga med att hålla koll på tankens pansarnivå –\nom din tank förstörs får du en ny tank i närheten\nså att du kan försöka igen.
-STR_TUTORIAL25=Grattis! Du har genomfört WinBolo-tutorialen.\n\n\n\nOrdna nu med några vänner att spela med och se\nvad det är som tävlar mot intelligenta mänskliga\nmotståndare i stället för stillastående, tanklösa mål.\n\nOm du vill spela om tutorialen senare kan du\nstarta den igen från menyn Inställningar.
+STR_TUTORIAL25=Grattis! Du har genomfört WinBolo-tutorialen.\n\n\n\nNu är du redo att spela. Gå med i ett spel online,\nskapa ett åt dina vänner eller öva mot bottar.\n\nOm du vill spela om tutorialen senare kan du\nstarta den igen från menyn Inställningar.
 STR_TUTORIAL_START01=Välkommen till WinBolo-tutorialen. Den här ön presenterar\ngrundprinciperna i WinBolo och leder dig igenom\ndem ett i taget. Varje ny princip beskrivs\ni ett fönster som det här.\n\nEfter varje meddelande:\ntryck {DISMISS} för att fortsätta.
 STR_TUTORIAL_START02=WinBolo är den enda auktoriserade klonen av Stuart Cheshires klassiska Macintosh-nätverksspel Bolo.\nDu hittar strategitips och annan information på den officiella webbplatsen:\n\nhttps://www.winbolo.com\n\nEller kom och häng med oss på Reddit och Discord\n
-STR_TUTORIAL_START03=En snabb notering om Internetspel.\n\nOm du ansluter till ett onlinespel och det är många nätverksfel\nska du lämna spelet omedelbart innan\ndu förstör spelet för de andra spelarna.
-STR_TUTORIAL_START04=Du styr en tank som för närvarande befinner sig på en\nbåt till havs. Tryck {ACCEL} för att tanken (och båten) ska\nåka framåt och tryck {BRAKE} för att sakta ned och stanna.\n\nTrycka inte på tangenterna som om du skriver – tryck\noch håll dem tills tanken håller önskad hastighet\noch släpp sedan. Tryck {ACCEL} nu för att köra\nbåten framåt mot land.\n(Tryck {DISMISS} först för att stänga fönstret)
-STR_TUTORIAL01_TOUCH=Framför dig finns en kort flod som leder inåt land. Tryck\ntumspaken framåt för att köra din båt till\nflodens slut.\n\nNär du kommer dit, fortsätt hålla tumspaken\nframåttryckt. Tanken stiger av båten och\nbåten lämnas förtöjd vid flodens slut
+STR_TUTORIAL_START04=Du styr en tank som för närvarande befinner sig på en\nbåt till havs. Tryck {ACCEL} för att tanken (och båten) ska\nåka framåt och tryck {BRAKE} för att sakta ned och stanna.\n\nTryck och håll ned tangenterna tills tanken håller\nönskad hastighet, släpp sedan. Tryck {ACCEL} nu för\natt köra båten framåt mot land.\n(Tryck {DISMISS} först för att stänga fönstret)
+STR_TUTORIAL01_TOUCH=Framför dig finns en kort flod som leder inåt land. Tryck\ntumspaken framåt för att köra din båt till\nflodens slut.\n\nNär du kommer dit, fortsätt hålla tumspaken\nframåttryckt. Tanken stiger av båten och\nbåten lämnas förtöjd vid flodens slut.
 STR_TUTORIAL02_TOUCH=Du befinner dig nu på gräset. Tanken rör sig ganska\nsnabbt på gräs.\n\n\nHåll tumspaken tryckt framåt för att köra framåt\nmot skogen.
 STR_TUTORIAL03_TOUCH=Du befinner dig nu i skogen. Tanken rör sig långsammare\ni skogen än på gräs.\n\n\nHåll tumspaken tryckt framåt för att köra framåt\nmot träsket.
 STR_TUTORIAL04_TOUCH=Du befinner dig nu i träsket. Tanken rör sig mycket\nlångsamt i träsk. Som tur är finns det en väg framåt.\n\n\nHåll tumspaken tryckt framåt för att köra framåt\ntill vägen.
@@ -203,7 +202,7 @@ STR_TUTORIAL19_TOUCH=Efter att ha samlat lite trä, välj väg/bro-verktyget\n(d
 STR_TUTORIAL21_TOUCH=För att korsa den här floden måste du bygga en båt. Båtar\nkräver fem träd, så tryck på de fem träden för att skörda dem.\nVälj sedan mur/båt-verktyget (den tredje knappen uppifrån)\noch tryck på vattnet för att bygga en båt.\n\nOm du trycker på land bygger du en mur i stället\noch du måste skörda fler träd för att bygga en båt.\nKör upp på båten och kör till den andra sidan.
 STR_TUTORIAL_START01_TOUCH=Välkommen till WinBolo-tutorialen. Den här ön presenterar\ngrundprinciperna i WinBolo och leder dig igenom\ndem ett i taget. Varje ny princip beskrivs\ni ett fönster som det här.\n\nEfter att ha läst varje meddelande kan du fortsätta genom\natt trycka på "OK"-knappen.
 STR_TUTORIAL_START04_TOUCH=Du styr en tank som för närvarande befinner sig på en\nbåt till havs. Använd tumspaken på vänster sida av\nskärmen för att köra: tryck framåt för att accelerera, dra\nbakåt för att sakta ned och stanna.\n\nJu hårdare du trycker tumspaken, desto snabbare går\ntanken. Tryck tumspaken framåt nu för att köra\nbåten mot land.\n(Tryck OK först för att stänga det här fönstret)
-STR_TUTORIAL01_CTRL=Framför dig finns en kort flod som leder inåt land.\nTryck vänster spak framåt för att köra din båt\ntill flodens slut.\n\nNär du kommer dit, fortsätt hålla spaken framåttryckt.\nTanken stiger av båten och båten lämnas förtöjd\nvid flodens slut
+STR_TUTORIAL01_CTRL=Framför dig finns en kort flod som leder inåt land.\nTryck vänster spak framåt för att köra din båt\ntill flodens slut.\n\nNär du kommer dit, fortsätt hålla spaken framåttryckt.\nTanken stiger av båten och båten lämnas förtöjd\nvid flodens slut.
 STR_TUTORIAL02_CTRL=Du befinner dig nu på gräset. Tanken rör sig ganska\nsnabbt på gräs.\n\n\nHåll vänster spak tryckt framåt för att köra framåt\nmot skogen.
 STR_TUTORIAL03_CTRL=Du befinner dig nu i skogen. Tanken rör sig långsammare\ni skogen än på gräs.\n\n\nHåll vänster spak tryckt framåt för att köra framåt\nmot träsket.
 STR_TUTORIAL04_CTRL=Du befinner dig nu i träsket. Tanken rör sig mycket\nlångsamt i träsk. Som tur är finns det en väg framåt.\n\n\nHåll vänster spak tryckt framåt för att köra framåt\ntill vägen.
@@ -663,6 +662,32 @@ STR_MAPCHOOSER_NOPREVIEW=Ingen förhandsvisning tillgänglig
 STR_MAPCHOOSER_STATS=Bunkrar: {number}  Baser: {number2}  Startplatser: {number3}
 STR_MAPCHOOSER_MAPFILES=Kartfiler
 STR_MAPCHOOSER_ALLFILES=Alla filer
+STR_MAPCHOOSER_SCENARIOSONLY=Endast scenarier
+STR_MAPCHOOSER_SCENARIOSONLY_TIP=Visa bara kartor som har ett eget scenarioskript.
+STR_MAPCHOOSER_NOSCENARIOMAPS=Inga kartor med ett scenario här
+STR_MAPCHOOSER_SCENARIOSONLY_NOSEARCH=Det här filtret fungerar inte vid en serverövergripande sökning. Servern anger inte vilka träffar som har ett scenario.
+STR_MAPCHOOSER_VIEW_LIST=Lista
+STR_MAPCHOOSER_VIEW_GRID=Rutnät
+STR_MAPCHOOSER_VIEW_LIST_TIP=Listvy
+STR_MAPCHOOSER_VIEW_GRID_TIP=Rutnätsvy
+STR_MAPCHOOSER_SEARCH_HINT=Sök...
+STR_MAPCHOOSER_SEARCH_CLEAR=Rensa sökning
+STR_MAPCHOOSER_SEARCH_SUBFOLDERS=Sök i undermappar
+STR_MAPCHOOSER_CREATED_AT=Skapad
+STR_MAPCHOOSER_CREATED_AT_TIP=Visa filernas ändringstider i en andra kolumn.
+STR_MAPCHOOSER_COL_NAME=Namn
+STR_MAPCHOOSER_COL_CREATED=Skapad
+STR_MAPCHOOSER_UNSTAR_TIP=Klicka för att ta bort stjärnmarkeringen
+STR_MAPCHOOSER_STAR_TIP=Klicka för att markera med en stjärna, så att den alltid visas överst
+STR_MAPCHOOSER_RESTORE_SIZE_TIP=Återställ standardstorlek (Esc)
+STR_MAPCHOOSER_MAXIMIZE_TIP=Maximera
+STR_MAPCHOOSER_LOADING_PREVIEW=Laddar förhandsvisning...
+
+# Map editor scenario panel
+STR_MAPEDIT_SCENARIO_NEEDS_BOTS=Kräver tillåtna bottar: det här skriptet lägger till egna bottar
+STR_DLGABOUT_LICENCE=Licens
+STR_DLGABOUT_LICENCE_NOTICE=Fri programvara under GNU GPL v3 eller senare. Ingen garanti.
+STR_DLGABOUT_FILE_NOT_FOUND=Filen hittades inte.
 
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Status
@@ -1792,6 +1817,7 @@ STR_DLGBROWSER_SELECT_SERVER=Välj en server
 STR_DLGBROWSER_PREVIEW_UNAVAIL=Förhandsgranskning ej tillgänglig
 STR_DLGBROWSER_PREVIEW_ENLARGE=Klicka för att förstora
 STR_DLGBROWSER_ENLARGE_BTN=Förstora
+STR_DLGBROWSER_SIGNIN_TO_JOIN=Logga in för att gå med
 STR_DLGBROWSER_AI_PLAYERS=({number} AI-spelare)
 STR_DLGBROWSER_WBN_PLAYERS=WinBolo.net spelare:
 STR_DLGBROWSER_ST_LOCKED=Låst/Full
@@ -2006,6 +2032,7 @@ STR_DLGKEYSETUP_OVERVIEWZOOMIN=Zooma in kartan
 STR_DLGKEYSETUP_OVERVIEWZOOMOUT=Zooma ut kartan
 STR_DLGWELCOME_SWITCH_CLASSIC=Byt till klassiskt
 STR_DLGWELCOME_SWITCH_FULLSCREEN=Byt till helskärm
+STR_DLGWELCOME_PRACTICE=Träning
 
 # Display & Sound settings: full screen and the map's HUD panels
 STR_DLGSETTINGS_FULLSCREEN=Helskärm
@@ -2168,13 +2195,13 @@ STR_DLGLOBBY_SCENARIO_FILTER=Filtrera efter namn
 STR_DLGLOBBY_SCENARIO_NO_MATCH=Inget här matchar det namnet.
 STR_DLGLOBBY_SCENARIO_DETAILS=Detaljer
 STR_DLGLOBBY_SCENARIO_DETAILS_TITLE=Om {string1}
-STR_DLGLOBBY_MODS_ENABLED_CB=Moddar aktiverade
-STR_DLGLOBBY_MODS_DETAILS_TIP=Öppnar väljaren, där moddar läggs till, tas bort och ordnas.
+STR_DLGLOBBY_MODS_ENABLED_CB=Moddar/Scenario aktiverade
+STR_DLGLOBBY_MODS_DETAILS_TIP=Öppnar väljaren, där scenariot och moddarna läggs till, tas bort och ordnas.
 STR_DLGLOBBY_SCENARIO_ORDER_NOTE=Ladd- och körordning: Högre upp har prioritet.
 STR_DLGLOBBY_SCENARIO_ALL_IN_ROUND=Allt den här servern erbjuder finns redan i omgången.
 STR_DLGLOBBY_MODS_HEAD_N=({number})
 STR_DLGLOBBY_MODS_TIP_ON=Dessa moddar körs den här omgången, i den här ordningen:
-STR_DLGLOBBY_MODS_TIP_OFF=Moddar är avstängda. Dessa är valda för omgången, men körs inte:
+STR_DLGLOBBY_MODS_TIP_OFF=Moddar/Scenario är avstängt. Dessa är valda för omgången, men körs inte:
 STR_DLGLOBBY_MODS_TIP_NONE=Inga moddar är laddade för den här omgången.
 STR_DLGLOBBY_MODS_OFF_NOTE=(avstängd, körs inte)
 STR_SCNPANEL_SETTINGS_TITLE=Scenariopanel
@@ -2198,7 +2225,6 @@ STR_DLGLOBBY_SCENARIO_TAG_SCENARIO=Scenario
 STR_DLGLOBBY_SCENARIO_KIND_ALL=Alla
 STR_DLGLOBBY_SCENARIO_KIND_MODS=Endast moddar
 STR_DLGLOBBY_SCENARIO_KIND_SCENARIOS=Endast scenarier
-STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS=Kör skript i uppladdade banor
 STR_DLGSETTINGS_HOSTING_SCENARIODIR=Moddmapp
 STR_DLGSETTINGS_MAPVIEW=Kartvy
 STR_DLGSETTINGS_SIMPLEZOOM=Använd förenklad vy vid utzoomning
@@ -2413,18 +2439,14 @@ STR_MAPEDIT_SCENARIO_ARG_NUMBER=Tal
 STR_MAPEDIT_SCENARIO_ARG_TEXT=Text
 STR_MAPEDIT_SCENARIO_TEXT_ONE_LONG=En åtgärd bär en lång rad, och ett annat argument har den redan
 STR_DLGLOBBY_SCENARIO_RULES=Regler
-STR_DLGLOBBY_SCENARIO_RULES_TITLE=Vad {string1} ändrar
 STR_DLGLOBBY_RULES_COL_RULE=Regel
 STR_DLGLOBBY_RULES_COL_CLASSIC=Klassiskt
 STR_DLGLOBBY_RULES_COL_SCENARIO=Scenario
 STR_DLGLOBBY_RULES_COL_CHANGE=Ändring
-STR_DLGLOBBY_RULE_DETAIL_TITLE=Regel: {string1}
-STR_DLGLOBBY_RULES_INFO=Info
-STR_DLGLOBBY_RULES_RANGE=Intervall
 STR_DLGLOBBY_RULES_OVERRIDDEN=Åsidosatt av {string1}, som anger {string2}
 
 # Under the rules table of a mod, on a server that has mods turned off.
-STR_DLGLOBBY_DETAILS_MODS_OFF=Moddar är avstängda på den här servern, så den här moddens regler gäller inte.
+STR_DLGLOBBY_DETAILS_MODS_OFF=Moddar/Scenario är avstängt på den här servern, så det här skriptets regler gäller inte.
 STR_DLGLOBBY_DETAILS_IMPLEMENTS_MOD=Vad den här modden implementerar:
 STR_DLGLOBBY_DETAILS_IMPLEMENTS_SCENARIO=Vad det här scenariot implementerar:
 STR_DLGLOBBY_DETAILS_COL_METHOD=Metod
@@ -2706,3 +2728,7 @@ STR_DLGSETTINGS_WORKSHOP_UNUSABLE=Kan inte användas
 
 # The lobby's Workshop chip
 STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop
+
+# The game finder's scripts
+STR_DLGBROWSER_MODS=Moddar
+STR_DLGBROWSER_MODS_MORE=+{number} moddar

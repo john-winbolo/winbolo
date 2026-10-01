@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  * What a rule is, in words:
  *
@@ -64,7 +67,7 @@ static const langid srdDescIds[] = {
 #define SRD_FIRST_ID3 2575u
 #define SRD_LAST_ID3  2576u
 #define SRD_FIRST_ID4 2698u
-#define SRD_LAST_ID4  2703u
+#define SRD_LAST_ID4  2712u
 
 /* ── 1. A description id per rule ──────────────────────────────────────── */
 

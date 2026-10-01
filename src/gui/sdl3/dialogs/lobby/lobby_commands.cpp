@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -278,31 +281,25 @@ void lobbyBotModeAndLevel(ClientSim *cs, int slot,
     if (outLevel) *outLevel = level;
 }
 
-/* Is this the brain's DEFAULT mode — the one every ordinary game uses, and
- * the only one whose three levels have hand-written lang strings? Judged by
- * the mode's key rather than its index so a brain whose first section is
- * named something else does not borrow the Easy/Medium/Hard wording. */
+/* Is this the brain's DEFAULT mode — the one every ordinary game uses, so
+ * the row and the gear tooltip need not name it? Judged by the mode's key
+ * rather than its index. */
 bool lobbyBotModeIsDefault(const BrainModes *modes, int mode) {
     if (!modes || mode < 0 || mode >= modes->modeCount) return true;
     return SDL_strcasecmp(modes->modes[mode].key, "default") == 0;
 }
 
-/* May this mode's levels be WORDED from the lang strings? Only when it is
- * the default mode AND its levels are still exactly easy / medium / hard in
- * that order — the three STR_BOT_DIFF_* blurbs describe those and nothing
- * else. A modes.txt that renames or extends the default mode's levels gets
- * its own labels shown instead of three strings that would quietly lie. */
+/* May this mode's levels be WORDED from the lang strings? Only when its
+ * levels are exactly easy / medium / hard in that order — the three
+ * STR_BOT_DIFF_* blurbs describe those and nothing else — AND the mode is
+ * the default one or its modes.txt section says `standard_levels = yes`
+ * (brainModeUsesStandardLevels). Turtle says so: its levels are default's
+ * plus one placement switch. A mode that shares the three keys without
+ * the line keeps its own labels, since its levels may play differently.
+ * A mode that renames or extends its levels shows its own labels too. */
 bool lobbyBotModeUsesLangLevels(const BrainModes *modes, int mode) {
-    if (!lobbyBotModeIsDefault(modes, mode)) return false;
     if (!modes || mode < 0 || mode >= modes->modeCount) return true;
-    const BrainMode *m = &modes->modes[mode];
-    if (m->levelCount != BOT_DIFFICULTY_MAX + 1) return false;
-    for (int i = 0; i <= BOT_DIFFICULTY_MAX; i++) {
-        if (SDL_strcasecmp(m->levels[i].key, botDifficultyName((uint8_t)i)) != 0) {
-            return false;
-        }
-    }
-    return true;
+    return brainModeUsesStandardLevels(&modes->modes[mode]);
 }
 
 /* ── Bot difficulty presentation ─────────────────────────────────────
@@ -384,10 +381,11 @@ void lobbyDrawTagline(const char *tag, float wrapPosX, int difficulty) {
 
 /* Gear hover tooltip: "Configure" plus a "Currently:" line naming the bot,
  * its mode when that is not the default one, and its difficulty
- * ("GoalHunter · Survival Scenario · Hard"). The default mode adds that
- * difficulty's short tagline underneath with the Easy./Medium./Hard. token
- * coloured; another mode's levels have no such blurb (they are data), so
- * the line above says it all. */
+ * ("GoalHunter · Turtle · Hard"). A mode with the standard
+ * levels (lobbyBotModeUsesLangLevels) adds that difficulty's short tagline
+ * underneath with the Easy./Medium./Hard. token coloured; another mode's
+ * levels have no such blurb (they are data), so the line above says it
+ * all. */
 void lobbyGearTooltip(ClientSim *cs, int slot, float s) {
     ImGui::BeginTooltip();
     ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_TOOLTIP_CONFIG));

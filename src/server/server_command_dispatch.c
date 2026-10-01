@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 #include <assert.h>
@@ -160,58 +163,6 @@ static bool lobbySlotMayHoldStart(ServerSim *sim, BYTE slot, BYTE idx1) {
                              serverSimLobbyClosedMaskFor(sim, slot));
 }
 
-/* Does the scenarios directory hold this file name, and under what spelling?
-   The list the server would send a chooser is the answer: a name it does not
-   carry is not one a host could have picked. Asking the sim's registered
-   lister is the whole of this command's filesystem work — reading the
-   directory belongs to the scenario library, which src/server/ does not
-   name.
-
-   The whole matched entry goes back rather than the spelling and one flag.
-   What the caller records is the row the list event publishes — the file,
-   the manifest's name and both flags — and a second lookup to fetch the rest
-   would read the directory twice.
-
-   The cap is the one the list packet and the client's chooser already share,
-   so every scenario a host can see is one the server will accept.
-
-   The entries are read into the heap rather than onto this thread's stack, the
-   way serverSimEnumerateScenarioDir reads them: an entry carries a
-   description, so a full listing runs to ~58 KB, and this is a command
-   handler that a client's datagram reaches. A listing there is no memory to
-   read is no listing, which answers the same as a name the directory does not
-   hold. */
-static bool lobbyScenarioDirHolds(const ServerSim *sim, const char *file,
-                                  ScnDirEntry *out) {
-    ScnDirEntry *entries;
-    int          got;
-    int          i;
-    bool         found = false;
-
-    if (out != NULL) {
-        memset(out, 0, sizeof(*out));
-    }
-    entries = (ScnDirEntry *)calloc((size_t)LOBBY_SCENARIO_LIST_MAX,
-                                    sizeof(*entries));
-    if (entries == NULL) {
-        return false;
-    }
-    got = serverSimScenarioListDir(sim, entries, LOBBY_SCENARIO_LIST_MAX);
-    for (i = 0; i < got; i++) {
-        if (strcmp(entries[i].file, file) == 0) {
-            /* The directory's row rather than the wire's name, so what is
-               recorded is what the lister reported. */
-            if (out != NULL) {
-                *out = entries[i];
-            }
-            found = true;
-            break;
-        }
-    }
-    free(entries);
-    return found;
-}
-
 /* The three path shapes the map command refuses, refused the same way: an
    absolute path, a Windows drive letter, and a ".." segment. A scenario is
    picked by a name in a flat directory, so any of the three means the sender
@@ -277,6 +228,9 @@ static void lobbyScenarioReselect(ServerSim *sim) {
        lobby that was all-ready would otherwise start on a scenario nobody
        agreed to. */
     lobbyAutoUnreadyOnChange(sim);
+    /* And the tracker's scenario and mod names follow the list, inside the
+       lobby update's usual rate limit. */
+    serverSimWbnLobbyUpdate(sim, FALSE);
 }
 
 static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
@@ -460,6 +414,11 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
                                   p->nameLen > 0 ? validatedName : NULL);
             if (p->mode != prevMode || p->difficulty != prevLevel) {
                 serverSimRememberManualBotPick(sim, p->slot);
+            }
+            /* A mode change is a person choosing the mode: the seat keeps
+               it when the host changes the game type. */
+            if (p->mode != prevMode) {
+                serverSimMarkBotModeSetByHand(sim, p->slot);
             }
         }
         return CMD_OK;
@@ -1019,100 +978,19 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         if (!serverSimReloadMap(sim, fullPath)) return CMD_REJECT_INVALID;
         return CMD_OK;
     }
-    case CMD_LOBBY_SET_SCENARIO: {
-        /* Lobby-only and host-only, like the map change above it: which
-           scenario a round plays by is the operator's choice and not a
-           joiner's. No LOBBY_LOCK_MAP test, for the same reason — the map
-           command this copies has none either. The lock hides the chooser on
-           the client; the commands that test it server-side are the preview
-           pair and the skip vote.
-
-           Recording the pick is not all this does: the selection decides
-           which scenario plays, so it is made again the moment it changes.
-           serverSimScenarioOnMapChanged is what asks — whoever owns the
-           scenario weighs the pick against the committed map's own script
-           and attaches the winner — and the seating, the lobby rules and
-           the settings event follow it exactly as they do on a map
-           commit. */
-        if (!serverSimIsLobbyEnabled(sim) ||
-            serverSimGetState(sim) != serverStateLobby) {
-            return CMD_REJECT_BAD_STATE;
-        }
-        if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
-        const CmdLobbySetScenario *p = &cmd->u.lobbySetScenario;
-        /* An empty path is the one value that is always good: it selects no
-           scenario, so there is no name to check the shape of or look up. */
-        if (p->relPathLen == 0) {
-            serverSimSetSelectedScenario(sim, NULL);
-            lobbyScenarioReselect(sim);
-            return CMD_OK;
-        }
-        /* A ranked game runs no script of any kind, scenario or mod: the
-           point of ranked is that every round was played by the same rules,
-           and a script is there to change them. The other direction is
-           already answered — LST_RANKED is refused while a scenario is
-           attached, and committing a scripted map clears ranked at the
-           commit — so this is that same rule read the other way round, for
-           the one path that had nothing saying it.
-
-           After the clear above and not before it, so a host who turned
-           ranked on with a scenario already picked can still put the
-           selection back to none and is not stuck with it. */
-        if (serverSimGetRanked(sim)) {
-            return CMD_REJECT_BAD_STATE;
-        }
-        char relPath[256];
-        memcpy(relPath, p->relPath, p->relPathLen);
-        relPath[p->relPathLen] = '\0';
-        if (!lobbyScenarioNameShapeOk(relPath)) return CMD_REJECT_INVALID;
-        /* One pick a second, per sim, before the directory is read: finding
-           out whether this name is one the server offers means listing the
-           scenarios directory, which opens every file in it and runs the top
-           level of every loose script on this thread. Any connected player is
-           the host on a server with openHost set, and a datagram may carry
-           several commands, so without this a client can ask for that work as
-           fast as it can send. The same gap a reload takes, for the same
-           reason. The sender is told by the toast, which is why this returns
-           rather than sending a line. */
-        if (sim->scenarioPickTick != 0 &&
-            sim->tick + 1 - sim->scenarioPickTick < SCENARIO_RELOAD_GAP_TICKS) {
-            return CMD_REJECT_COOLDOWN;
-        }
-        sim->scenarioPickTick = sim->tick + 1;
-        ScnDirEntry picked;
-        if (!lobbyScenarioDirHolds(sim, relPath, &picked)) {
-            return CMD_REJECT_INVALID;
-        }
-        /* A scenario that says it is bound belongs to the map it was written
-           against: its tags, its regions and its entity indices are that
-           map's, so over another map they name items that are not there. It
-           arrives with its own map and plays when that map is committed,
-           which leaves nothing here for a host to pick. Refused rather than
-           accepted and quietly ignored, so the host is told.
-
-           Every bound file and not all but one, which is where this arm and
-           the list arm below it part company. The list arm lets the committed
-           map's own script be named, because naming it is how a host says
-           where on the list it goes. This arm replaces the whole list with
-           one row, and a one-row list holding only the map's own script is
-           the same round an empty list plays: the map's script and nothing
-           else. There is no position for a single pick to state, so there is
-           nothing for the map's own script to be picked for here. */
-        if (picked.bound) {
-            return CMD_REJECT_INVALID;
-        }
-        /* The whole row and not the name: the list event carries the
-           manifest's name and both flags per entry, and this is where they
-           are known without reading the directory again. */
-        serverSimSetScriptList(sim, &picked, 1);
-        lobbyScenarioReselect(sim);
-        return CMD_OK;
-    }
     case CMD_SET_SCRIPT_LIST: {
         /* The whole script list at once: one scenario deciding the round and
-           mods behind it changing how it plays. The same gates as
-           CMD_LOBBY_SET_SCENARIO beside it, for the same reasons, and one
-           more that only a list can break — two scenarios in it.
+           mods behind it changing how it plays. Lobby-only and host-only,
+           like the map change above it: which scripts a round plays by is
+           the operator's choice and not a joiner's. No LOBBY_LOCK_MAP test,
+           for the same reason — the map command has none either. The lock
+           hides the chooser on the client; the commands that test it
+           server-side are the preview pair and the skip vote.
+
+           Recording the list is not all this does: the list decides which
+           scripts play, so the decision is made again the moment it changes
+           (lobbyScenarioReselect), and the seating, the lobby rules and the
+           settings event follow it exactly as they do on a map commit.
 
            A list and not an index-and-file pair: two hosts editing at the
            same moment would otherwise interleave into a list neither asked
@@ -1141,8 +1019,7 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         /* An empty list clears, and is the one value that needs no name
            checks: there is no name to test the shape of or look up. It is
            exempt from the ranked refusal too, so a host who turned ranked on
-           with scripts picked can still put the list back to empty. The same
-           order the set-scenario arm clears in.
+           with scripts picked can still put the list back to empty.
 
            It is not exempt from the tick gap. No directory is read for it,
            but it recomposes like any other list, and that is the work the gap
@@ -1163,8 +1040,8 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         if (serverSimGetRanked(sim)) {
             return CMD_REJECT_BAD_STATE;
         }
-        /* One list a second, per sim, before the directory is read, and on
-           the same clock the single pick and the reload share: looking a name
+        /* One list a second, per sim, before the directory is read, held to
+           the same gap the reload is: looking a name
            up means listing the scenarios directory, which opens every file in
            it and runs the top level of every loose script on this thread. One
            reading serves the whole list, and this is what spaces those out. */
@@ -1187,8 +1064,9 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
            level of every loose script, on this thread and under the sim lock,
            and it answers the same for the tenth name as for the first.
 
-           On the heap for the reason lobbyScenarioDirHolds puts it there: an
-           entry carries a description, so a full listing runs to ~58 KB,
+           On the heap rather than this thread's stack, the way
+           serverSimEnumerateScenarioDir reads it: an entry carries a
+           description, so a full listing runs to ~58 KB,
            which is more than a command handler a client's datagram reaches
            should put on the stack. No memory to read the directory into is no
            listing, which answers the same as a name the directory does not
@@ -1212,9 +1090,9 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             if (mapOwn != NULL && strcmp(mapOwn->file, file) == 0) {
                 /* The map's own script, recorded from the row the server
                    published rather than looked up: the file sits beside the
-                   .map or inside it, so the scenarios directory does not hold
-                   it and lobbyScenarioDirHolds would turn the whole list
-                   down. The row is taken whole, which keeps its name, its
+                   .map or inside it, so the listing above does not hold it
+                   and the lookup below would turn the whole list down. The
+                   row is taken whole, which keeps its name, its
                    kind and its bound flag exactly as the attach read them —
                    and bound is what tells this row from a pick everywhere it
                    is read afterwards.
@@ -1499,13 +1377,10 @@ scriptListDone:
         if (!bp->pending) return CMD_REJECT_BAD_STATE;
         /* "Humans only" kicks every bot before applying the human-only
          * team assignments — the proposal contains no team for those
-         * slots. */
+         * slots. The scenario's seats go too, and the next map change
+         * seats them again. */
         if (!bp->includeBots) {
-            for (int i = 0; i < MAX_TANKS; i++) {
-                if (serverSimIsBot(sim, (BYTE)i)) {
-                    serverSimRemoveBot(sim, (BYTE)i);
-                }
-            }
+            serverSimRemoveAllBots(sim);
         }
         for (int i = 0; i < MAX_TANKS; i++) {
             if (bp->teamForSlot[i] != 0) {

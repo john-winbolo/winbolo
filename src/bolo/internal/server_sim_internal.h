@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /*********************************************************
@@ -173,9 +173,11 @@ typedef struct {
  * MAX_TANKS + slot is that 0-based player slot. Thirty-two in all. */
 #define SCN_PANEL_TARGETS (2 * MAX_TANKS)
 
-/* One panel's last list for one destination. bytes sits last and the three
- * fields ahead of it total seven, so the struct is exactly 1024 bytes and
- * the array of them carries no padding between entries. */
+/* One script's last list for one panel and one destination. The three
+ * fields ahead of bytes total seven, so the struct is SCN_PANEL_MAX + 7
+ * bytes (1024 today, with no tail padding). The sim holds one per panel,
+ * destination and script: 1 x 32 x 10 of them, 320 KB, all zeroed when a
+ * round's presentation resets. */
 typedef struct {
     uint32_t tick;                  /* the sim tick the list was stored at */
     uint16_t len;                   /* bytes of the list, 0 for a cleared panel */
@@ -255,15 +257,16 @@ struct ServerSim {
      * when it changes mode or difficulty — and never by an automatic write
      * (a scenario seed, single player's own add path, the CLI). Otherwise
      * the game's defaults pass for the host's choice: that is how single
-     * player's skill guess used to override Survival's Hard.
+     * player's skill guess used to override the Hard that Survival's
+     * template names for its horde.
      *
      * Stored as the brain's own KEYS, not the indices that are kept in
      * botConfigs. An index only means something against one manifest: mode
-     * 1 is "survival" in GoalHunter and could be anything at all in another
-     * brain, so copying the number onto a bot running a different brain
-     * would silently pick the wrong mode. Keys are re-resolved against
-     * whatever brain the new bot actually runs, and a key that brain has
-     * never heard of is simply dropped.
+     * 1 is whatever that brain's modes.txt lists second and could be
+     * anything at all in another brain, so copying the number onto a bot
+     * running a different brain would silently pick the wrong mode. Keys
+     * are re-resolved against whatever brain the new bot actually runs, and
+     * a key that brain has never heard of is simply dropped.
      *
      * Empty strings mean "nothing chosen yet this lobby session" — bots are
      * added at the ordinary default. The lifetime is one lobby session: the
@@ -289,7 +292,7 @@ struct ServerSim {
      * pair above is the wrong memory for those teams: it would carry the
      * mode across as well, and it would carry a level chosen on the
      * defenders' team onto the horde. Survival is the shape: the horde is
-     * survival mode at whatever difficulty a human last set on a HORDE
+     * the default mode at whatever difficulty a human last set on a HORDE
      * seat, and the defenders are whatever the host picks for themselves.
      *
      * Written by the same one writer as the pair above, cleared in the same
@@ -302,6 +305,14 @@ struct ServerSim {
      * serverSimFlushBotConfigPublishes, so a scenario seed's ten bots do not
      * add ten events to the burst it already makes in one call stack. */
     uint16_t        botConfigPublishPending;
+
+    /* One bit per slot: a person changed this bot's MODE by hand (the gear
+     * popup's Mode dropdown, through CMD_LOBBY_BOT_CONFIG). A seat with the
+     * bit keeps its mode when the host changes the game type; a seat without
+     * it follows the new type's starting mode (brainModesStartMode). Set only
+     * by serverSimMarkBotModeSetByHand, cleared when the seat's player leaves
+     * (serverSimRemovePlayer) and when new-bot defaults are applied. */
+    uint16_t        botModeSetByHand;
 
     BotManager      botMgr;  /* per-sim bot manager — initialised by botManagerInitInSim */
 
@@ -444,8 +455,10 @@ struct ServerSim {
                                     * both give — has to mean pings ALLOWED,
                                     * because that is what every build before
                                     * this one did. */
-    bool     modsOff;              /* the round composes none of the mods on
-                                    * the pick list. Stored in the negative
+    bool     modsOff;              /* the round composes none of the scripts
+                                    * on the pick list, mods and picked
+                                    * scenarios alike; the map's own script
+                                    * still plays. Stored in the negative
                                     * sense for the same reason as
                                     * smartPingsOff above. The pick list is
                                     * left alone, so this is what a host turns
@@ -879,7 +892,7 @@ struct ServerSim {
     char         scenarioDirPath[FILENAME_MAX];
     /* Which of the scenarios in that directory the host has picked, by the
        file name the lister reported; empty means none. Written by the
-       CMD_LOBBY_SET_SCENARIO case and read back through
+       CMD_SET_SCRIPT_LIST case and read back through
        serverSimGetSelectedScenario, which is what whoever owns the scenario
        asks when it decides what plays: a pick here beats the committed map's
        own script, and empty hands the map its own back. Survives a lobby
@@ -902,8 +915,8 @@ struct ServerSim {
        compose reads the map through it instead of the directory, and the
        lobby list stops prepending the map's row when it finds it here.
 
-       Written only by serverSimSetScriptList and serverSimSetSelectedScenario
-       in server_sim_maps.c, so there is one place that holds the count and
+       Written only by serverSimSetScriptList in server_sim_maps.c, so there
+       is one place that holds the count and
        the rows in step — and by serverSimSetMapScript, which keeps that one
        bound row agreeing with the row below it. */
     ScnDirEntry  scenarioScripts[LOBBY_SCRIPT_LIST_MAX];
@@ -1127,20 +1140,18 @@ struct ServerSim {
     ScnLobbyTemplate       scenarioLobby;
     bool                   scenarioLobbyValid;
     /* What the seats now in the lobby were built from: whether the seating
-     * ran on a template at all, the map file it ran for, and the template
-     * itself. The three are written after each seating, so holding the live
-     * template above against them says whether the bots in the lobby came
-     * from the lobby that is attached now — which is what tells a scenario
-     * picked on the map already committed, where the seats stand, from one
-     * that arrived with a new map or a new template. The path is empty where
-     * the live map has no file of its own, which is every map that came from
-     * bytes.
+     * ran on a template at all, and the template itself. The two are written
+     * by each seating, so holding the live template above against them says
+     * whether the bots in the lobby came from the lobby that is attached now
+     * — which is what tells a map change or a pick that kept the scenario's
+     * lobby, where the bots stand, from one that brought a new template.
+     * Anything that empties the lobby of its bots without seating it again
+     * clears scenarioLobbySeated, so the next decision seats it afresh.
      *
      * The template is held in full rather than as a digest because the
      * question asked of it is exact: two lobbies that differ by one seat are
      * different lobbies. */
     bool                   scenarioLobbySeated;
-    char                   scenarioLobbySeatedMap[FILENAME_MAX];
     ScnLobbyTemplate       scenarioLobbySeatedTemplate;
     /* What the attached scenario is called, where it came from, and what it
      * says about itself — the lobby's description of it, which the settings
@@ -1168,6 +1179,12 @@ struct ServerSim {
          * changing the map. False while source is lobbyScenarioNone, for the
          * reason the flag above it is. */
         bool                bound;
+        /* True when the composed list said needs_bots: a script in it
+         * fields its own bots, so the lobby is moved off aiNone while it is
+         * attached and may not be put back on it. Carried to every client
+         * so the lobby greys the "no computer tanks" row only then. False
+         * while source is lobbyScenarioNone. */
+        bool                needsBots;
         /* True when this server runs every script with the full Lua library
          * and no limits (-allow-unsafe-scripts). The lobby carries it to
          * every client so a player can see it before they play. False while
@@ -1208,14 +1225,19 @@ struct ServerSim {
     /* What the lobby was set to when a scripted map displaced it: the game
      * type gameScripted took the place of, the ranked flag a scripted round
      * cannot run under, and the AI policy and bot AI type that aiNone was
-     * moved off. A commit with no scenario puts all four back and empties
-     * them again. preScenarioGameType is the one that says whether anything
+     * moved off. A commit with no scenario puts them back and empties them
+     * again. preScenarioGameType is the one that says whether anything
      * is held: 0 is no game type, which no lobby is ever on, and is what
      * every lobby that has not had a scripted map committed into it reads. */
     gameType               preScenarioGameType;
     bool                   preScenarioRanked;
     uint8_t                preScenarioAiPolicy;
     aiType                 preScenarioAiType;
+    /* True once a list that said needs_bots moved the lobby off aiNone.
+     * The two above are taken at that raise, and put back as soon as the
+     * list stops saying needs_bots (serverSimScenarioApplyLobbyRules). A
+     * list that never touched the AI policy leaves it the host's. */
+    bool                   preScenarioAiRaised;
     /* The brain a seat was seeded with, so a seat held without a bot in it
      * still knows what to run when something fields it. Empty means the
      * server's own. */
@@ -1271,18 +1293,20 @@ struct ServerSim {
     uint8_t                scenarioRosterHead;   /* the next one to drain */
     uint8_t                scenarioRosterCount;
 
-    /* The last display list each panel was sent, per destination, so a
-     * subscriber registering mid-round is given what the panels already
-     * hold. Every update replaces the whole list, so one list per key is
-     * the whole of the state.
+    /* The last display list each script sent each panel, per destination,
+     * so a subscriber registering mid-round is given what the panels
+     * already hold. Every update replaces the whole list, so one list per
+     * key is the whole of the state.
      *
-     * The key is the pair (panel id, destination), because a scenario
-     * giving each of sixteen players its own panel is ordinary and the two
-     * of them must not overwrite each other. tick is the sim tick the list
-     * was stored at, which is what refuses a second update for the same
-     * pair in the same tick; valid says a list has been stored at all, so
-     * a cleared store admits an update at tick 0. */
-    ScnPanelStore          scenarioPanels[SCN_PANEL_IDS][SCN_PANEL_TARGETS];
+     * The key is (panel id, destination, owner). A scenario giving each of
+     * sixteen players its own panel is ordinary, and two scripts of the
+     * round's list each keep their own panel, so none of them may
+     * overwrite another. tick is the sim tick the list was stored at, which
+     * is what refuses a second update for the same key in the same tick;
+     * valid says a list has been stored at all, so a cleared store admits
+     * an update at tick 0. */
+    ScnPanelStore          scenarioPanels[SCN_PANEL_IDS][SCN_PANEL_TARGETS]
+                                         [SCN_PANEL_OWNERS];
 
     /* Where the panel arm decodes an arriving list to find out whether it
      * decodes. It lives here to keep 7.7 KB off the funnel's frame, and
@@ -1393,13 +1417,14 @@ void serverSimScenarioResetTickStats(ServerSim *sim);
 void serverSimScenarioResetPresentation(ServerSim *sim);
 
 /* Hand the stored panel lists to a joining subscriber's callback, as the
- * events that published them. The recipient filters run on the delivery side
+ * events that published them: every script's latest list for every panel
+ * and destination, each stamped with its script's owner. The recipient filters run on the delivery side
  * for a replayed event exactly as they do for a live one, so with
  * withTargeted this replays every list and lets the filter decide which of
  * them the joiner keeps.
  *
- * withTargeted false replays the everyone-addressed list of each panel and
- * nothing else. That is what the delayed spectator ring's control snapshot
+ * withTargeted false replays each script's everyone-addressed list of each
+ * panel and nothing else. That is what the delayed spectator ring's control snapshot
  * asks for: a spectator belongs to no team and holds no slot, so the lists
  * held to one of either reach nobody down that path, and leaving them out
  * keeps the keyframe inside LOG_CONTROL_SNAPSHOT_MAX.
@@ -1448,8 +1473,8 @@ void serverSimFillScenarioRulesEvent(const ServerSim *sim, uint8_t seq,
  * serverSimSetScriptList replaces the whole list. count is held at
  * LOBBY_SCRIPT_LIST_MAX and a NULL entries pointer clears it. It records
  * only — the caller asks for the decision about what plays again and
- * publishes the result, as the CMD_LOBBY_SET_SCENARIO case does around
- * serverSimSetSelectedScenario.
+ * publishes the result, as the CMD_SET_SCRIPT_LIST case does through
+ * lobbyScenarioReselect.
  *
  * serverSimPublishScriptList sends the list as the chunks it needs, in order
  * and back to back, which is what lets the reader do without a fragment

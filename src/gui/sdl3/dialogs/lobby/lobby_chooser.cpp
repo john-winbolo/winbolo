@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -175,9 +178,13 @@ static void lobbyServerMapsListProvider(MapChooserState *state,
             got = serverSimSearchMapDir(spSim,
                 inSub ? relPath : NULL,
                 state->searchFilter,
-                hits, MAP_CHOOSER_MAX_MAPS);
+                hits, MAP_CHOOSER_MAX_MAPS, true);
             if (got < 0) got = 0;
         } else if (cs && clientSimHasTransport(cs)) {
+            /* The search reply carries no scripted byte, so these rows
+             * are never tagged; the chooser greys out "Scenarios only"
+             * rather than let it hide every hit. */
+            state->searchRowsUntagged = true;
             const char *want    = inSub ? relPath : "";
             const char *cachedP = clientSimGetLobbyMapSearchPath(cs);
             const char *cachedQ = clientSimGetLobbyMapSearchQuery(cs);
@@ -204,6 +211,7 @@ static void lobbyServerMapsListProvider(MapChooserState *state,
                         clientSimGetLobbyMapSearchIsFolder(cs, i);
                     hits[got].modTime =
                         clientSimGetLobbyMapSearchModTime(cs, i);
+                    hits[got].scripted = false;
                     got++;
                 }
             }
@@ -213,6 +221,7 @@ static void lobbyServerMapsListProvider(MapChooserState *state,
             memset(e, 0, sizeof(*e));
             e->isFolder = hits[i].isFolder;
             e->modTime  = hits[i].modTime;
+            e->scripted = hits[i].scripted;
             /* Split the hit's relative path into folder + basename. The
              * row shows just the basename; the enclosing folder lives
              * in crumbsPath so the hover tooltip + preview breadcrumb
@@ -964,6 +973,11 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
          * off disk. In multiplayer the whole tab is gated on uploads
          * being enabled, so the button only appears when it can act. */
         s_chooserTabs.upload.showDeviceLoad = true;
+        /* Both tabs' rows say whether a map has a script beside it, so
+         * both offer the "Scenarios only" filter. Winbolo.net rows never
+         * say, so that tab does not. */
+        s_chooserTabs.server.offerScenariosOnly = true;
+        s_chooserTabs.upload.offerScenariosOnly = true;
         /* Random tab — third chooser instance, runs in randomTabOnly
          * mode so the widget renders generator controls on the left
          * and the procedural preview on the right. */
