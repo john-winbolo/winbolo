@@ -214,6 +214,12 @@ void wbWasmResetHeldKeys(void) {
   inputResetHeldKeys();
 }
 
+/* 1 while the page is hidden (another tab, minimised). Reads document.hidden
+ * directly, so it never suspends. */
+EM_JS(int, wasmPageHidden, (void), {
+  return document.hidden ? 1 : 0;
+});
+
 /* -------------------------------------------------------
  * windowRunGameTick — game logic using transport
  * ------------------------------------------------------- */
@@ -356,7 +362,12 @@ static void main_loop_iteration(void) {
    *     single-player there is simply nothing to catch up to.  Drop the debt
    *     and resume from real time.  A hidden tab's frames can also arrive
    *     under STALL_RESET_MS apart; the cap on the leftover after the
-   *     catch-up below keeps those from building a backlog. */
+   *     catch-up below keeps those from building a backlog.
+   *
+   * A single-player game (practice or the tutorial, whose server runs in the
+   * page) pauses while the page is hidden: it runs no ticks and owes none, so
+   * it resumes where it stopped. A network game keeps ticking while hidden to
+   * stay in step with its server. */
   if (!s_connFailed && clientSimHasTransport(cs)) {
     const double MAX_ELAPSED_MS  = 200.0;  /* per-frame catch-up bound (ordinary jank) */
     const double STALL_RESET_MS  = 500.0;  /* gap above this = background/suspend → drop */
@@ -364,7 +375,9 @@ static void main_loop_iteration(void) {
     double now = emscripten_get_now();
     double gap = now - lastFrameTime;
     lastFrameTime = now;
-    if (gap > STALL_RESET_MS) {
+    if (gameFrontGetServerSim() != NULL && wasmPageHidden()) {
+      gameTickAccum = 0.0;
+    } else if (gap > STALL_RESET_MS) {
       gameTickAccum = 0.0;
     } else {
       gameTickAccum += (gap > MAX_ELAPSED_MS) ? MAX_ELAPSED_MS : gap;
