@@ -263,6 +263,19 @@ that can be combined with it, except the Steamworks SDK, which is covered by
   on each call, and the few 5.4 API calls LuaJIT lacks are shimmed. Lua's
   notice is kept at the top of the file. Re-apply on upgrade.
 
+### ldump
+- Location: brains/GoalHunter_1.7/ldump.lua and brains/GoalHunter_1.7/opt/ldump.lua
+- Version: 1.4.0 (the library's init.lua)
+- License: MIT No Attribution (MIT-0)
+- https://github.com/girvel/ldump
+- Author: Nikita Dobrynin (girvel)
+- A Lua serialisation library. The GoalHunter brain's debugger uses it to
+  snapshot and restore the brain's state. The two copies are identical; the
+  root one is the recorder build and `opt/` the production build.
+- Unmodified apart from the origin line at the top of each copy. The licence
+  asks for no credit; the entry is here so the file is not taken for WinBolo's
+  own code.
+
 ## Controller Glyphs
 
 ### Xelu's Free Controller & Key Prompts
