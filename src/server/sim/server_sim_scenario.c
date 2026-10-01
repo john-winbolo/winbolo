@@ -4308,6 +4308,80 @@ ScnOpResult serverSimCheckScenarioRules(const ServerSim *sim,
     return scenarioCheckRulesAgainst(&copy, rules, values, count, why, whyLen);
 }
 
+/* The same question asked of the whole set, and the answer committed when it
+ * is yes. scenarioOpSetRule's commit, made once for the set rather than once
+ * per rule: the funnel's two refusals ahead of it, the copy checked with every
+ * value in, then the records, the clamp and the publish in the order that
+ * handler gives them and for the same reasons.
+ *
+ * Each rule's record carries what its field holds once the set is in, read
+ * back off the committed table. That is the value the handler records — the
+ * field read straight after the write — for every set that names a rule once,
+ * which is every set a script's table can make. A set that named one rule
+ * twice would record the value that stood rather than the one overwritten.
+ *
+ * One clamp, after every record: the clamp brings the world inside the table
+ * the set leaves, and a table halfway through the set is not one the round
+ * ever plays on. One publish at most, held by the setup window as the
+ * handler's is, and sent only when the set touched a rule clients read. */
+ScnOpResult serverSimApplyScenarioRules(ServerSim *sim,
+                                        const uint16_t *rules,
+                                        const double *values,
+                                        uint16_t count,
+                                        char *why, size_t whyLen) {
+    SimRules    copy;
+    ScnOpResult r;
+    bool        was;
+    bool        carried = false;
+    uint16_t    i;
+
+    if (why != NULL && whyLen > 0) {
+        why[0] = '\0';
+    }
+    if (sim == NULL) {
+        return SCN_OP_BAD_CALL;
+    }
+    if (count == 0) {
+        return SCN_OP_OK;
+    }
+
+    /* The funnel's prelude, less the roster exception, which no rule is. */
+    if (sim->inScenarioPolicy > 0) {
+        return SCN_OP_IN_POLICY;
+    }
+    if (sim->startInProgress && !sim->scenarioSetupWindow) {
+        return SCN_OP_WRONG_STATE;
+    }
+
+    copy = sim->sim.rules;
+    r    = scenarioCheckRulesAgainst(&copy, rules, values, count, why, whyLen);
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+
+    /* The mark the funnel's entry puts on, saved and put back for the same
+       reason: what the commit publishes is the scenario's doing. */
+    was                 = sim->scenarioActing;
+    sim->scenarioActing = true;
+
+    sim->sim.rules = copy;
+    for (i = 0; i < count; i++) {
+        double written = 0.0;
+        (void)serverSimGetScenarioRule(sim, rules[i], &written);
+        scenarioRecordRuleSet(rules[i], written);
+        if (scenarioRuleIsCarried(rules[i])) {
+            carried = true;
+        }
+    }
+    scenarioClampWorldToRules(sim);
+    if (carried && !sim->scenarioSetupWindow) {
+        serverSimPublishSimRules(sim);
+    }
+
+    sim->scenarioActing = was;
+    return SCN_OP_OK;
+}
+
 /* The same check with no round behind it. The classic table is what a rule's
  * bounds are stated against in the first place, so a value outside its row is
  * outside it whether or not a game is running.

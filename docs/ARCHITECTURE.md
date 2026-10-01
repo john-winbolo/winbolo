@@ -2354,7 +2354,11 @@ behind this door cannot move out in front of it.
 target under the `scenario_host` profile and the proof that the two
 headers build against `public/` alone. Its shape follows from the
 profile: every read a binding makes is a T1 accessor on
-`server_sim.h`; every write goes through `serverSimApplyScenarioOp`;
+`server_sim.h`; every write goes through `serverSimApplyScenarioOp`,
+except a round's rules table, which the boot writes whole through
+`serverSimApplyScenarioRules` — the funnel's refusals, one check of
+the set as `serverSimCheckScenarioRules` makes it, and nothing written
+when that check fails;
 events arrive through the ordinary subscriber bus; and the sim
 reaches back into the host only through registered pointers
 (`serverSimSetScenarioTick`, `serverSimSetScenarioRoundBoot`,
