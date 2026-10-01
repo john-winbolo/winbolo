@@ -5082,6 +5082,21 @@ M.PRESETS = {
     CAPTURE_BASE_EXTRA_FREE_DIST = 0,
     -- 2026-10-01: wall pass for a walled-in pill; off is the old scan.
     ATTACK_PILL_WALL_FALLBACK = false,
+    -- 2026-09-24: live game rules. The bot rescales its physics constants
+    -- from info.rules and its own modifiers (a no-op under classic rules).
+    -- KEEL reads the classic numbers whatever the scenario sets.
+    LIVE_PHYSICS                  = false,
+    -- 2026-09-30: live-physics follow-ups (faster turn raises the cornering
+    -- cap, enemy speed takes our speed modifier, turn scaling per terrain).
+    STEER_TURN_SPEEDUP            = false,
+    STEER_TERRAIN_TURN            = false,
+    ENEMY_SPEED_OWN_MODS          = false,
+    -- 2026-09-30: the man's walk, the world-sim build dwell, shell life and
+    -- the pill range in world units follow the live rules.
+    LIVE_PHYSICS_LGM_WALK         = false,
+    LIVE_PHYSICS_WSIM_BUILD       = false,
+    LIVE_PHYSICS_SHELL_LIFE       = false,
+    LIVE_PHYSICS_PILL_RANGE_WU    = false,
     -- 2026-09-08: while on capture_pill the bot now sweeps the target tile for
     -- an enemy builder rebuilding the corpse -- the kill_lgm aim solution takes
     -- the TURN keys whenever it points within CAPTURE_LGM_HUNT_TOL_BRADS of

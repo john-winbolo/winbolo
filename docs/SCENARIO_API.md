@@ -1869,8 +1869,6 @@ to escort a person stays where it is.
 | `game.say(p, text[, target])` | A chat line seat `p` says, exactly as a player typing would: to its own team with no target, to everyone with `"all"`, or to one seat with a number. |
 | `game.sound(name[, x, y])` | Plays one of the server's sounds, at a square or everywhere. |
 | `game.log(text)` | Writes a line to the server's console. No player sees it. |
-| `game.set_voice_everyone(on)` | With `true`, voice in the running round goes to every player rather than to the talker's allies alone. `false` puts it back. |
-| `game.voice_everyone()` | Whether voice is going to everyone: what `set_voice_everyone` last set this round, and `false` on a server with voice off. |
 | `game.end_round([text[, winner_team]])` | Ends the round now, with the line the lobby shows and the team that won it. |
 | `game.set_game_time(ticks)` | How long the round has left, in `game.tick()`'s own units: 100 a second, so a minute is 6000. |
 | `game.add_game_time(ticks)` | Adds to what the round has left, or takes away with a negative, in the same units. A round with no time limit has nothing to add to, so give it a length first. |
@@ -1914,23 +1912,6 @@ receiver that never sees it. Use `"all"` or a seat number there.
 then, and the line it carries is shown in the lobby exactly as written — the
 server adds no verdict of its own.
 
-`set_voice_everyone` is for a round where sides do not fit voice. In a round,
-the server sends a player's voice only to that player's allies, so a round
-where every tank is on a team of its own has nobody hearing anybody. With voice
-to everyone on, the alliance check is skipped and every connected player hears
-every talker. Nothing else changes: a player's mutes still hold, a player still
-hears at most four talkers at a time, and a spectator still hears nobody.
-Outside a round everyone hears everyone already, so the setting has no effect
-in the lobby.
-
-The setting is the server's own and lasts for one round. Every round starts
-with it off, and it goes off again when the round returns to the lobby and
-when the scenario is taken off the server, so a later round without the script
-has voice to allies only. Call it from `on_setup` or later; a call in the lobby
-is cleared when the round starts. A server with voice off forwards no voice at
-all, so `set_voice_everyone(true)` is refused there (`SCN_OP_WRONG_STATE`);
-`set_voice_everyone(false)` is always taken.
-
 ---
 
 ## Showing things on a client
@@ -1943,7 +1924,7 @@ exist.
 | Call | What it does |
 |---|---|
 | `game.panel(id, list[, target])` | Draws panel `id` from a list of primitives. An empty list clears it. |
-| `game.score(target, value[, label])` | The scenario's own score for one seat with a number, or for a team with `{ team = t }`. `label` is the short word shown beside it, up to 15 bytes. |
+| `game.score(target, value[, label])` | The scenario's own score for one seat with a number, or for a team with `{ team = t }`. `label` is the short word shown beside it, up to 15 bytes. A round that scores both teams and seats gets a grouped recap table: a row for each scored team, best team score first, with its members (by lobby team) under it, best own score first; seats on no scored team follow. A round that scores only one of the two keeps the plain table of players. |
 | `game.announce(text[, seconds[, target[, position]]])` | A big line across the game view for that many seconds. Left out, `position` puts the line where it has always gone, centred in the upper third of the view. Give `"top"`, `"center"` or `{ x = , y = }` to put the centre of the line somewhere else. Empty text takes the line away. |
 | `game.status(text[, countdown_to[, target]])` | The status line: one line at the very top of the game view, centred, that stays until it is changed or cleared. `countdown_to` is a tick on `game.tick()`'s clock; the client shows the time left to it after the text. Empty text takes the line away. |
 | `game.marker(id, x, y[, colour[, target]])` | Puts mark `id` on a map square. |
@@ -2218,7 +2199,7 @@ square.
 | `tank_nudge_threshold` | 96 | 0 to 65535 | Which way a shove goes. Two tanks are pushed apart along x when their x gap is over this and along y otherwise, so a smaller number sends more shoves sideways. |
 | `tank_nudge_amount` | 16 | 1 to 255 | How far one shove moves a tank. |
 | `tank_nudge_iterations` | 5 | 1 to 255 | How many shoves are tried in a tick before the pair is left where it is. |
-| `tank_bump_decay_shift` | 2 | 0 to 31 | Knockback loses 1 / 2^this of its remaining displacement per reference 40 ms. A bigger number means slower decay and more total travel. Movement runs every 20 ms with the equivalent decay; 2 retains about 86.6% per tick. |
+| `tank_bump_decay_shift` | 2 | 0 to 31 | A right shift: a knockback loses that fraction of itself each tick, plus one. A bigger number is a slower decay, not a faster one — 2 takes off a quarter a tick, 31 takes off only the one. |
 | `tank_pill_pickup_inset` | 16 | 0 to 255 | How far off its centre a tank reaches to pick a dead pillbox up. |
 | `tank_boat_exit_inset` | 64 | 0 to 255 | How far inside the bank a boat is held when a tank leaves one. |
 | `tank_slide_step` | 32 | 0 to 63 | How far a knocked tank slides per step. |
@@ -2226,17 +2207,6 @@ square.
 | `tank_slide_armour_bonus` | 32 | 0 to 255 | Extra push step at zero armour, added to `tank_slide_step` in proportion to the armour missing before the hit: nothing at full armour, the whole bonus at none. Only read while `tank_slide_mac` is 1. A `tank_slide_step` of 0 is no push at all, bonus included. |
 | `tank_wall_glide` | 0.0 | 0.0 to 1.0 | 0 slides a tank along a wall it hits; 1 lets it glide off free. Not read while `tank_collision_mac` is 1. |
 | `tank_collision_mac` | 0 | 0 to 1 | Whether a tank collides with walls, live pillboxes and hostile bases the Mac Bolo way. 0, the classic table, is the WinBolo circle: a tank of radius `tank_hit_radius` is pushed out of each solid square and slid along it by `tank_wall_glide`. 1 is Mac Bolo's sixteen direction-dependent tank boxes, nudged one pixel at a time, with a corner pushing on both axes and a tank wedged between opposing walls left where it is. It lets a tank pass closer beside a pillbox than the circle does, which is what puts it inside the bad-lead range of `pill_aim_mac`. |
-
-Knockback advances every 20 ms using floating-point decay, with fractional
-movement carried between updates. Integer positions round symmetrically, so
-opposite directions receive equal shoves. Strength and decay retain their
-40 ms reference scale: the default multiplier is `sqrt(0.75)` per tick,
-preserving both total travel and fade timing without skipped updates. Each
-hit captures its strength and decay settings; changes to the rules affect
-the next hit. With the default rules, unobstructed cardinal displacement is
-about 7 pixels at full armour, rising to 14 pixels on the last surviving
-shell hit (5 armour before impact). This deliberately averages Mac Bolo's
-direction-dependent rounding.
 
 **Terrain: the cap a tank's speed clamps to.**
 

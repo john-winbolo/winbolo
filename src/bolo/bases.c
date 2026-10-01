@@ -1226,26 +1226,47 @@ void basesRefueling(GameSim *sim, tank *tnk, BYTE baseNum) {
   if ((*value)->item[baseNum].refuelTime == 0) {
     tankGetStats(tnk, &shellsAmount, &mines, &armour, &trees);
     if (playersIsAllie(&sim->plyrs, (*value)->item[baseNum].owner, gameSimGetTankPlayer(sim, tnk))) {
+      /* Each stock moves by the smaller of what the base gives per refuel
+       * and the room the tank has left. The base is asked whether it can
+       * spare a whole give, as it always was, but only the amount the tank
+       * can hold leaves it. Deducting the whole give when the tank is less
+       * than a give short of full left tankAdd* refusing the lot (it never
+       * adds past full), so the base drained while the tank stayed put.
+       * That needed rules where the full amount is not a multiple of the
+       * give, which is what modified rule sets do. */
+      int give;
       /* A destroyed tank draws nothing from the base. Its armour reads as a
        * real 0 rather than a wrapped value, so the capacity test below no
        * longer rejects it on its own. */
       if (!tankIsDestroyed(tnk) && armour < sim->rules.tank_full_armour && ((*value)->item[baseNum].armour - sim->rules.base_armour_give) >= sim->rules.base_min_armour) {
-        (*value)->item[baseNum].armour -= sim->rules.base_armour_give;
-        tankAddArmour(sim, tnk, sim->rules.base_armour_give);
+        give = sim->rules.tank_full_armour - armour;
+        if (give > sim->rules.base_armour_give) {
+          give = sim->rules.base_armour_give;
+        }
+        (*value)->item[baseNum].armour = (BYTE) ((*value)->item[baseNum].armour - give);
+        tankAddArmour(sim, tnk, (BYTE) give);
         (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(sim, BASES_HALFTICK_TYPE_ARMOUR);
         if (isServer == FALSE) {
           frontEndUpdateBaseStatusBars(clientSimFromSim(sim), ((*value)->item[baseNum].shells), ((*value)->item[baseNum].mines), ((*value)->item[baseNum].armour));
         }
       } else if (shellsAmount < sim->rules.tank_full_shells && ((*value)->item[baseNum].shells - sim->rules.base_shells_give) >= sim->rules.base_min_shells) {
-        (*value)->item[baseNum].shells -= sim->rules.base_shells_give;
-        tankAddShells(sim, tnk, sim->rules.base_shells_give);
+        give = sim->rules.tank_full_shells - shellsAmount;
+        if (give > sim->rules.base_shells_give) {
+          give = sim->rules.base_shells_give;
+        }
+        (*value)->item[baseNum].shells = (BYTE) ((*value)->item[baseNum].shells - give);
+        tankAddShells(sim, tnk, (BYTE) give);
         (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(sim, BASES_HALFTICK_TYPE_SHELL);
         if (isServer == FALSE) {
           frontEndUpdateBaseStatusBars(clientSimFromSim(sim), ((*value)->item[baseNum].shells), ((*value)->item[baseNum].mines), ((*value)->item[baseNum].armour));
         }
       } else if (mines < sim->rules.tank_full_mines && ((*value)->item[baseNum].mines - sim->rules.base_mines_give) >= sim->rules.base_min_mines) {
-        (*value)->item[baseNum].mines -= sim->rules.base_mines_give;
-        tankAddMines(sim, tnk, sim->rules.base_mines_give);
+        give = sim->rules.tank_full_mines - mines;
+        if (give > sim->rules.base_mines_give) {
+          give = sim->rules.base_mines_give;
+        }
+        (*value)->item[baseNum].mines = (BYTE) ((*value)->item[baseNum].mines - give);
+        tankAddMines(sim, tnk, (BYTE) give);
         (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(sim, BASES_HALFTICK_TYPE_MINE);
         if (isServer == FALSE) {
           frontEndUpdateBaseStatusBars(clientSimFromSim(sim), ((*value)->item[baseNum].shells), ((*value)->item[baseNum].mines), ((*value)->item[baseNum].armour));
