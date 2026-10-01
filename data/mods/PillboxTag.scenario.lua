@@ -872,6 +872,7 @@ local DEFAULTS = {
   DEFEND_ALARM_MIN_DIST                = 9,
   DEFEND_ALARM_BASE_COST               = 100,
   CAPTURE_LGM_HUNT                     = true,
+  CAPTURE_BASE_EXTRA_COST              = 0,
 }
 
 -- The flag words a brain keeps until it is told the opposite. GoalHunter puts
@@ -912,11 +913,21 @@ local SHARED = {
   CAPTURE_PILL_BASE_COST               = 0,
 }
 
+-- What a hunter (and a manhunt and a mate) adds to the cost of driving onto
+-- a base to capture it. Every base stays neutral all round, so the brain
+-- never leaves its opening phase, which multiplies a near base's cost by 0.3
+-- and a pillbox fight's by up to 3. A near base with a path cost of 15 to 23
+-- came to 6 to 10, under the holder (17 to 37) and the prize (100 to 760). A
+-- base is only a pit stop here, and armour from one is the brain's refuel,
+-- which this does not touch. 3000 puts the nearest base at 900 or more.
+local BASE_EXTRA = 3000
+
 -- The parts.
 --
 -- hunter: bids hard for a tank fight, because the holder is a tank. The only
 -- live pillbox a hunter ever meets is a built prize, and it costs nothing to
--- go after, so its own pillbox fight takes it on. A square it was sent to
+-- go after, so its own pillbox fight takes it on. It leaves the bases alone
+-- (BASE_EXTRA), and so do a manhunt and a mate. A square it was sent to
 -- holds it for half a second, not ten, so that fight and the pick-up of a
 -- dropped prize take over soon after it arrives.
 --
@@ -950,6 +961,7 @@ local ROLES = {
     flags = { "noblitz", "nosuicider" },
     cfg = {
       TANK_COMBAT_BASE_COST   = 10,
+      CAPTURE_BASE_EXTRA_COST = BASE_EXTRA,
       PILL_REPOSITION_ENABLED = false,
       ATTACK_PILL_BASE_COST   = 0,
       ORDER_GOTO_HOLD_TICKS   = HUNTER_PARK_TICKS,
@@ -959,6 +971,7 @@ local ROLES = {
     flags = { "noblitz", "nosuicider" },
     cfg = {
       TANK_COMBAT_BASE_COST    = 60,
+      CAPTURE_BASE_EXTRA_COST  = BASE_EXTRA,
       PILL_REPOSITION_ENABLED  = false,
       ATTACK_PILL_BASE_COST    = 0,
       ORDER_GOTO_HOLD_TICKS    = HUNTER_PARK_TICKS,
@@ -970,6 +983,7 @@ local ROLES = {
     flags = { "noblitz", "nosuicider" },
     cfg = {
       TANK_COMBAT_BASE_COST   = 10,
+      CAPTURE_BASE_EXTRA_COST = BASE_EXTRA,
       PILL_REPOSITION_ENABLED = false,
       ATTACK_PILL_BASE_COST   = 0,
       ORDER_GOTO_HOLD_TICKS   = HUNTER_PARK_TICKS,

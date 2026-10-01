@@ -1207,7 +1207,7 @@ local function eval_capture_base(state, world, info, tmx, tmy, boat, ammo)
     function(b) return (C.BASE_PILL_COVER_PEN or 3) * count_new_exposure_pills(world, b.mx, b.my, tmx, tmy, true) end)
   if not base then return nil end
 
-  local raw_cost = bcost
+  local raw_cost = bcost + (C.CAPTURE_BASE_EXTRA_COST or 0)
   local imminent = false
   if base.health == 0
      and raw_cost <= C.IMMINENT_CAPTURE_PATH_COST
@@ -10871,7 +10871,10 @@ function M.rescore_nearby_bases(state, world, info, radius)
               _fcm, _fcn = base_friendly_cover(world, obj, tmx, tmy)
               if _fcn > 0 then _mk = _mk * _fcm; _thr = _thr * _fcm end
             end
-            local total = c + _stale + _mk + _thr
+            -- capture_base's flat game-mode cost (0 at keel) rides along, or
+            -- this rescore would undo it for every base within the radius.
+            local _extra = (pool_idx == 3) and (C.CAPTURE_BASE_EXTRA_COST or 0) or 0
+            local total = c + _stale + _mk + _thr + _extra
             cand.cost = total
             rescored = rescored + 1
             -- Bump the cost-cache timestamp too, so the pool-grid "age" shows
@@ -10881,6 +10884,9 @@ function M.rescore_nearby_bases(state, world, info, radius)
             if entry then
               entry.cost = total; entry.raw = c; entry.tick = now
               entry._age = _age; entry._stale = _stale
+              if pool_idx == 3 then
+                entry._p3_extra = (_extra ~= 0) and _extra or nil
+              end
               if pool_idx == 7 then
                 entry._base = _mk; entry._tv = _tv; entry._thr = _thr
                 entry._b_n = _mn; entry._b_nfull = _mnfull; entry._b_frac = _mfrac
@@ -12155,9 +12161,15 @@ local function get_formula_inner(e)
     -- LOADED, BUILDER-LESS surcharge: the one danger term pool 3 otherwise
     -- does not have. Absent (and its chip absent) at the keel value 0.
     local _cb_nb_chip, _cb_nb_det = "", ""
-    if e._p3_mult then
-      _cb_nb_chip = string.format(" + nobuild_danger{%.1f}", e._p3_dang or 0)
+    if e._p3_extra then
+      _cb_nb_chip = string.format(" + extra{%.0f}", e._p3_extra)
       _cb_nb_det = string.format(
+        "|extra:CAPTURE_BASE_EXTRA_COST{%.0f}, a flat cost ADDED to every capture_base row (a game mode's knob; keel 0 = no such term)",
+        e._p3_extra)
+    end
+    if e._p3_mult then
+      _cb_nb_chip = _cb_nb_chip .. string.format(" + nobuild_danger{%.1f}", e._p3_dang or 0)
+      _cb_nb_det = _cb_nb_det .. string.format(
         "|nobuild_danger:LOADED, BUILDER-LESS — threat.at(base)%.1f × DANGER_SCALE{%.3f} × CAPTURE_BASE_NO_LGM_DANGER_MULT{%d} = %.1f, ADDED. A base is a tile you have to sit on, and sitting on a covered one with an unplaceable stack aboard loses the whole load. At the keel value 0 this term does not exist, which is what pool 3 did before",
         e._p3_dv or 0, C.CAPTURE_PILL_DANGER_SCALE, e._p3_mult, e._p3_dang or 0)
     end
@@ -13442,6 +13454,14 @@ function M.step_eval_queue(state, world, info)
         _p3_dang = _p3_dv * C.CAPTURE_PILL_DANGER_SCALE * _p3_mult
         c = c + _p3_dang
       end
+      -- A flat cost on every capture_base row, for a game mode that wants its
+      -- bots off the bases (Pillbox Tag's hunters). Added before the phase
+      -- weight, like every other term. Keel 0: no such term.
+      local _p3_extra = 0
+      if pool_idx == 3 and (C.CAPTURE_BASE_EXTRA_COST or 0) ~= 0 then
+        _p3_extra = C.CAPTURE_BASE_EXTRA_COST
+        c = c + _p3_extra
+      end
 
       -- Pool 5 (repair_pill): the UNIFIED repair formula, per candidate.
       -- Historically the damage discount lived only in the finalize step
@@ -13788,6 +13808,7 @@ function M.step_eval_queue(state, world, info)
         entry._p3_dv=(_p3_mult > 0) and _p3_dv or nil
         entry._p3_dang=(_p3_mult > 0) and _p3_dang or nil
         entry._p3_mult=(_p3_mult > 0) and _p3_mult or nil
+        entry._p3_extra=(_p3_extra ~= 0) and _p3_extra or nil
       elseif pool_idx == 5 then
         entry._stale=stale_cost; entry._age=_gen_age
         entry._dmg=_rp_dmg
@@ -15452,6 +15473,7 @@ function M.finalize_pools(state, world, info)
                             info.shells or 32, info.trees or 0, info.mines or 0,
                             info.armour or 40)
       if c3 and c3 < 1e8 then
+        c3 = c3 + (C.CAPTURE_BASE_EXTRA_COST or 0)
         local imminent3 = false
         if (gb.health or 0) == 0 and c3 <= C.IMMINENT_CAPTURE_PATH_COST
            and (info.armour or 0) >= C.IMMINENT_CAPTURE_MIN_ARMOUR then
