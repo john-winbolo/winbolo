@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -849,6 +852,14 @@ typedef struct ControlEvent {
              * as sandboxed, which every server that predates this field
              * was. */
             bool     scenarioUnsafe;
+            /* True when the attached list said needs_bots, so the server
+             * refuses the AI policy that takes every bot off the roster.
+             * Appended behind scenarioUnsafe. Unlike the bytes above, a
+             * decoder that finds this byte missing sets it TRUE: every
+             * server that predates it refused that policy for any script,
+             * and a lobby that offers a row the server turns down is worse
+             * than one that greys a row the server would take. */
+            bool     scenarioNeedsBots;
         } lobbySettings;
 
         /* CTRL_LOBBY_MAP_CHANGE — no payload fields needed */

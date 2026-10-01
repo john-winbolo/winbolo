@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -1104,6 +1107,13 @@ bool        clientSimGetLobbyScenarioBound(const ClientSim *cs);
  * not that the server sandboxes. A server that predates the field reads as
  * sandboxed, which it was. */
 bool        clientSimGetLobbyScenarioUnsafe(const ClientSim *cs);
+
+/* True when the attached list fields its own bots (a script in it said
+ * needs_bots), so the server refuses the AI policy that takes every bot off
+ * the roster and the lobby greys that row. False with no script attached.
+ * A server that predates the field reads as true, because every such server
+ * refused that policy for any script. */
+bool        clientSimGetLobbyScenarioNeedsBots(const ClientSim *cs);
 
 /* The lobby's ordered script list: one scenario deciding the round and mods
  * behind it changing how it plays, in the order they load. Mirrored from

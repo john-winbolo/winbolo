@@ -885,10 +885,14 @@ file(GLOB IOS_DATA_UI "${CMAKE_SOURCE_DIR}/data/ui/*.svg")
 # above does not reach them.
 file(GLOB IOS_DATA_UI_PING "${CMAKE_SOURCE_DIR}/data/ui/ping/*.svg")
 file(GLOB IOS_LANG_FILES "${CMAKE_SOURCE_DIR}/data/lang/*.txt")
-# About-box markdown docs that live at the repo root but ship in data/
+# About-box markdown docs that live at the repo root but ship in data/,
+# with the licence and its additional permissions, which every copy of the
+# program has to carry.
 set(IOS_ABOUT_DOCS
     "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
     "${CMAKE_SOURCE_DIR}/AUTHORS.md"
+    "${CMAKE_SOURCE_DIR}/LICENSE"
+    "${CMAKE_SOURCE_DIR}/LICENSE-EXCEPTION.md"
 )
 
 # Bolo engine sources that stay per-target (HAVE_STEAM-divergent).
@@ -2009,7 +2013,10 @@ add_custom_command(TARGET WinBolo POST_BUILD
 )
 
 # Ship the top-level docs (Third Party Notices, Authors) inside data/
-# so the About box can find them via SDL_GetBasePath()/data/.
+# so the About box can find them via SDL_GetBasePath()/data/. The licence
+# and its additional permissions go with them: the GPL requires every copy
+# of the program to carry a copy of the licence, and on macOS data/ is inside
+# the .app bundle, so the bundle carries its own.
 add_custom_command(TARGET WinBolo POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
@@ -2017,7 +2024,13 @@ add_custom_command(TARGET WinBolo POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/AUTHORS.md"
         "${WINBOLO_DATA_DIR}/data/AUTHORS.md"
-    COMMENT "Copying About-box markdown docs to data/"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/LICENSE"
+        "${WINBOLO_DATA_DIR}/data/LICENSE"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/LICENSE-EXCEPTION.md"
+        "${WINBOLO_DATA_DIR}/data/LICENSE-EXCEPTION.md"
+    COMMENT "Copying About-box markdown docs and the licence to data/"
 )
 
 add_custom_command(TARGET WinBolo POST_BUILD
@@ -3291,6 +3304,13 @@ add_custom_target(dist
     # About box can find them via SDL_GetBasePath()/data/.
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md" "${DIST_DIR}/data/THIRD_PARTY_NOTICES.md"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/AUTHORS.md" "${DIST_DIR}/data/AUTHORS.md"
+
+    # The licence, its additional permissions and the third-party notices at
+    # the root of the zip, where someone unpacking it will see them. The GPL
+    # requires every copy of the program to carry a copy of the licence.
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/LICENSE" "${DIST_DIR}/LICENSE"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/LICENSE-EXCEPTION.md" "${DIST_DIR}/LICENSE-EXCEPTION.md"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md" "${DIST_DIR}/THIRD_PARTY_NOTICES.md"
 
     # Brain scripts (excludes *.md plan/roadmap notes via copy_brains.cmake)
     COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains/GoalHunter_1.7"
@@ -6046,6 +6066,11 @@ set(_unit_test_names
     lobby_scenario_reset_keeps_rules
     lobby_scenario_refuses_ranked
     lobby_scenario_refuses_ai_none
+    lobby_scenario_no_bots_script_keeps_ai
+    lobby_scenario_needs_bots_raises_and_gives_back
+    lobby_scenario_ranked_give_back_clears_ai
+    lobby_scenario_needs_bots_drop_gives_back
+    lobby_scenario_needs_bots_snapshot_at_raise
     lobby_scenario_refuses_game_type
     lobby_scenario_boot_sets_type
     lobby_scenario_identity_strips_controls
@@ -6290,6 +6315,8 @@ set(_unit_test_names
     scenario_validate_trigger_announce_clear
     scenario_validate_trigger_arg_literal
     scenario_validate_rule_pair_key
+    scenario_validate_needs_bots_missing
+    scenario_validate_needs_bots_declared
     scenario_lua_every_row_answers
     scenario_lua_op_arguments_match_the_doc
     scenario_lua_read_index_passes_through
@@ -6432,6 +6459,7 @@ set(_unit_test_names
     scenario_manifest_json_trigger_text_cut
     scenario_manifest_workshop_keys
     scenario_manifest_agrees_workshop
+    scenario_manifest_json_needs_bots
     scenario_io_set_workshop_id
     scenario_map_body_length
     scenario_map_find_container
@@ -6560,6 +6588,8 @@ set(_unit_test_names
     scenario_compose_on_picks_replace_map
     scenario_compose_off_then_on
     scenario_compose_off_full_list_hides_last
+    scenario_compose_needs_bots_any_mod
+    scenario_compose_needs_bots_scenario_and_mod
     scenario_panel_parses_each_primitive
     scenario_panel_refuses_malformed
     scenario_panel_boundaries

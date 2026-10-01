@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /*********************************************************
@@ -1190,6 +1190,12 @@ struct ServerSim {
          * changing the map. False while source is lobbyScenarioNone, for the
          * reason the flag above it is. */
         bool                bound;
+        /* True when the composed list said needs_bots: a script in it
+         * fields its own bots, so the lobby is moved off aiNone while it is
+         * attached and may not be put back on it. Carried to every client
+         * so the lobby greys the "no computer tanks" row only then. False
+         * while source is lobbyScenarioNone. */
+        bool                needsBots;
         /* True when this server runs every script with the full Lua library
          * and no limits (-allow-unsafe-scripts). The lobby carries it to
          * every client so a player can see it before they play. False while
@@ -1230,14 +1236,19 @@ struct ServerSim {
     /* What the lobby was set to when a scripted map displaced it: the game
      * type gameScripted took the place of, the ranked flag a scripted round
      * cannot run under, and the AI policy and bot AI type that aiNone was
-     * moved off. A commit with no scenario puts all four back and empties
-     * them again. preScenarioGameType is the one that says whether anything
+     * moved off. A commit with no scenario puts them back and empties them
+     * again. preScenarioGameType is the one that says whether anything
      * is held: 0 is no game type, which no lobby is ever on, and is what
      * every lobby that has not had a scripted map committed into it reads. */
     gameType               preScenarioGameType;
     bool                   preScenarioRanked;
     uint8_t                preScenarioAiPolicy;
     aiType                 preScenarioAiType;
+    /* True once a list that said needs_bots moved the lobby off aiNone.
+     * The two above are taken at that raise, and put back as soon as the
+     * list stops saying needs_bots (serverSimScenarioApplyLobbyRules). A
+     * list that never touched the AI policy leaves it the host's. */
+    bool                   preScenarioAiRaised;
     /* The brain a seat was seeded with, so a seat held without a bot in it
      * still knows what to run when something fields it. Empty means the
      * server's own. */

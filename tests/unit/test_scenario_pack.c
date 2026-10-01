@@ -73,12 +73,14 @@
 /* ── What is packed ───────────────────────────────────────────────── */
 
 /* A table with nothing in it that depends on the map: no tags and no regions,
- * so it checks out against whichever map the copy was made from. */
+ * so it checks out against whichever map the copy was made from. Its team
+ * asks for bots, so it says needs_bots, which the checks require of it. */
 static const char kSpScript[] =
     "scenario = {\n"
     "  name = \"Packed By The Server\",\n"
     "  description = \"Written into the map by -pack\",\n"
     "  api = 1,\n"
+    "  needs_bots = true,\n"
     "  rules = { tank_reload_ticks = 7 },\n"
     "  lobby = {\n"
     "    max_players = 8,\n"

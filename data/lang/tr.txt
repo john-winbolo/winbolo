@@ -683,6 +683,12 @@ STR_MAPCHOOSER_RESTORE_SIZE_TIP=Varsayılan Boyutu Geri Yükle (Esc)
 STR_MAPCHOOSER_MAXIMIZE_TIP=Büyüt
 STR_MAPCHOOSER_LOADING_PREVIEW=Önizleme yükleniyor...
 
+# Map editor scenario panel
+STR_MAPEDIT_SCENARIO_NEEDS_BOTS=Botlara izin verilmeli: bu betik kendi botlarını ekler
+STR_DLGABOUT_LICENCE=Lisans
+STR_DLGABOUT_LICENCE_NOTICE=GNU GPL v3 veya sonrası altında özgür yazılım. Garanti yoktur.
+STR_DLGABOUT_FILE_NOT_FOUND=Dosya bulunamadı.
+
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Durum
 STR_TABLET_KILLS_DEATHS=Öldürmeler: {number}  Ölümler: {number2}

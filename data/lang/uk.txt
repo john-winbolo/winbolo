@@ -683,6 +683,12 @@ STR_MAPCHOOSER_RESTORE_SIZE_TIP=Відновити розмір за замов�
 STR_MAPCHOOSER_MAXIMIZE_TIP=Розгорнути
 STR_MAPCHOOSER_LOADING_PREVIEW=Завантаження попереднього перегляду...
 
+# Map editor scenario panel
+STR_MAPEDIT_SCENARIO_NEEDS_BOTS=Потрібно дозволити ботів: цей скрипт додає власних ботів
+STR_DLGABOUT_LICENCE=Ліцензія
+STR_DLGABOUT_LICENCE_NOTICE=Вільне ПЗ за ліцензією GNU GPL v3 або новішою. Без гарантій.
+STR_DLGABOUT_FILE_NOT_FOUND=Файл не знайдено.
+
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Статус
 STR_TABLET_KILLS_DEATHS=Знищень: {number}  Смертей: {number2}

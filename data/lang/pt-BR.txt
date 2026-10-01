@@ -683,6 +683,12 @@ STR_MAPCHOOSER_RESTORE_SIZE_TIP=Restaurar tamanho padrão (Esc)
 STR_MAPCHOOSER_MAXIMIZE_TIP=Maximizar
 STR_MAPCHOOSER_LOADING_PREVIEW=Carregando visualização...
 
+# Map editor scenario panel
+STR_MAPEDIT_SCENARIO_NEEDS_BOTS=Precisa de bots permitidos: este script adiciona seus próprios bots
+STR_DLGABOUT_LICENCE=Licença
+STR_DLGABOUT_LICENCE_NOTICE=Software livre sob a GNU GPL v3 ou posterior. Sem garantia.
+STR_DLGABOUT_FILE_NOT_FOUND=Arquivo não encontrado.
+
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Status
 STR_TABLET_KILLS_DEATHS=Abates: {number}  Mortes: {number2}
