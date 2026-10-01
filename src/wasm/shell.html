@@ -387,20 +387,26 @@
                server rotates its key — on initial join and on each return-to-
                lobby. Keep the address bar on the live game so a copied link, or a
                reload after a dropped connection, mints into the current game. No
-               reload; the open connection is untouched. */
+               reload; the open connection is untouched. The entry keeps its
+               state, which the popstate handler reads. Only the game's own
+               entry is rewritten: nothing changes once the game has ended, or
+               once Back or Forward has moved the browser off it and the game
+               loop has yet to end it. */
             wbOnGameKey: function(gameKey) {
-                if (!gameKey) { return; }
-                try { history.replaceState(null, '', '/join/' + encodeURIComponent(gameKey)); }
+                if (!gameKey || Module.wbScreen !== 'game') { return; }
+                var state = history.state;
+                if (!state || state.screen !== 'game') { return; }
+                try { history.replaceState(state, '', '/join/' + encodeURIComponent(gameKey)); }
                 catch (e) {}
             },
 
             /* The screen the page is on, 'menu', 'finder' or 'game'.
-               main_wasm.c sets it; only a single-player game ever sets
+               main_wasm.c sets it; any game, network or single player, sets
                'game'. */
             wbScreen: 'menu',
 
             /* Set by the popstate handler below when Back or Forward moves
-               off a single-player game or the game finder; the game loop or
+               off a game or the game finder; the game loop or
                the finder reads and clears it. */
             wbNavRequest: '',
 
@@ -435,21 +441,19 @@
             }
         }, true);
 
-        /* Back and Forward between the menu and a single-player game or the
-           game finder. C owns the screen: it pushes the game's or the
+        /* Back and Forward between the menu and a game or the game finder.
+           C owns the screen: it pushes the game's or the
            finder's history entry, sets Module.wbScreen, and closes them. This
            handler only records a request for the game loop or the finder to
            take, because a function called from JS must never suspend the
            page's single ASYNCIFY stack, and the game, the finder and the menu
            all run on it. It never calls into the module.
-             - Moving off a running single-player game asks the game loop to
-               leave it, as Leave Game does; moving off the finder closes it,
-               as Cancel does.
+             - Moving off a running game, network or single player, asks the
+               game loop to leave it, as Leave Game does; moving off the
+               finder closes it, as Cancel does.
              - Forward into a game that has already ended, or a finder that
                has closed, shows the menu: the entry is rewritten to the
-               menu's address.
-           Multiplayer never sets wbScreen to 'game', so nothing here acts
-           during a join. */
+               menu's address. */
         window.addEventListener('popstate', function(e) {
             var target = (e.state && e.state.screen) || 'menu';
             var screen = Module.wbScreen;

@@ -120,7 +120,7 @@ static bool finishedLoop = FALSE;
 static bool showAllianceReq = TRUE;
 /* Set by windowLeaveGame; wasmRunGame ends the game on it. */
 static bool s_leaveRequested = FALSE;
-/* Browser history for single player, kept by main's screen loop and not by
+/* Browser history for games, kept by main's screen loop and not by
  * wasmGameStateReset. s_gameEntryPushed: the game was picked from the menu,
  * which pushed its history entry, so the menu's entry sits behind it.
  * s_leftByHistory: the game ended because Back or Forward moved off it, so
@@ -468,7 +468,7 @@ EM_ASYNC_JS(void, wasmFrameWait, (void), {
 });
 
 /* -------------------------------------------------------
- * Browser history for the menu and single-player games
+ * Browser history for the menu and games
  *
  * shell.html's popstate handler never calls in here; it only records
  * Module.wbNavRequest, which the game loop reads. None of these suspend.
@@ -556,12 +556,12 @@ bool wasmFinderTakeBack(void) {
 }
 
 /* Run the current game until it ends: a game over or quit (finishedLoop) or
- * a leave request (windowLeaveGame). In single player, Back or Forward off
- * the game's history entry leaves it the same way. */
+ * a leave request (windowLeaveGame). Back or Forward off the game's history
+ * entry leaves it the same way, network or single player. */
 static void wasmRunGame(void) {
   while (!finishedLoop && !s_leaveRequested) {
     main_loop_iteration();
-    if (gameFrontGetServerSim() != NULL && wasmTakeNavRequest()) {
+    if (wasmTakeNavRequest()) {
       s_leftByHistory = TRUE;
       windowLeaveGame();
     }
@@ -935,11 +935,12 @@ int main(int argc, char *argv[]) {
       s_gameEntryPushed = TRUE;
     }
 
-    /* From here Back or Forward asks a single-player game to end. Set
-     * before the start, so a request made while it comes up, or while a
-     * failed start shows its error, is still taken below. */
+    /* From here Back or Forward asks the game to end. Set before the start,
+     * so a request made while it comes up (a join waits on its join code and
+     * the server's answer), or while a failed start shows its error, is
+     * still taken below. */
+    wasmSetScreen("game");
     if (next.mode != WASM_GAME_JOIN) {
-      wasmSetScreen("game");
       wasmChooseSinglePlayerName(&next);
     }
 
