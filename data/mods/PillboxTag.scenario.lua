@@ -27,9 +27,16 @@
 -- filled again a shell a second like everybody else's, and a respawn arms
 -- him fully. It never holds more than three armour, so three shells put it
 -- down, and it is drawn as a pillbox with three armour left of fifteen.
--- Killing the holder does not move a built prize; the others shoot it down to
--- nothing and drive over it, which makes the one who picks it up the new
--- holder. A tank only picks up a dead pillbox, so the holder cannot take
+-- The others shoot it down to nothing and drive over it, which makes the one
+-- who picks it up the new holder.
+--
+-- If the holder dies while the prize is out of his tank, it is a dead
+-- pillbox, free for anyone to take, and nobody holds it. Built, it goes to
+-- nothing where it stands; shot down by him and not yet picked up, it is dead
+-- already; in his man's hands, the man goes on and puts it down dead. In his
+-- tank it drops with the tank, dead, as it always has.
+--
+-- A tank only picks up a dead pillbox, so the holder cannot take
 -- his own back up while it stands; it has to be shot down first (his own
 -- shells do that too), and then it is a race to drive over it. Picking it up
 -- empties the gun again in the same frame. Nobody but the holder may repair it,
@@ -239,6 +246,11 @@ local plan        = nil         -- what a bot holder is doing with the prize:
 local hop_after   = 0           -- the game.tick() a bot holder may next hop
 local man_was_out = false       -- whether the holder's man had the prize out
                                 -- last frame
+local forfeit     = nil         -- { p, x, y }: the seat whose man still has
+                                -- the prize in his hands after the holder's
+                                -- tank died, and the man's square then, or
+                                -- nil; what the man puts down is put down
+                                -- dead
 local run_at      = nil         -- elapsed second of the holder's last run order
 local mine_at     = nil         -- elapsed second of the last mine laid behind
 
@@ -388,12 +400,18 @@ local function prize()
     return pb.x + 0.5, pb.y + 0.5, "GROUND", "green",
            shot_own_down() and holder or nil
   end
-  if holder == nil then
+  -- A dead holder's man still walking the prize out is on foot with it, but
+  -- it is nobody's: the carrier is the holder, nil by then.
+  local walker = holder or (forfeit and forfeit.p)
+  if walker == nil then
     return nil
   end
-  local man = game.builder(holder)
+  local man = game.builder(walker)
   if man ~= nil and man.state ~= "in_tank" and man.job == "pill" then
     return man.wx / 256, man.wy / 256, "ON FOOT", "cyan", holder
+  end
+  if holder == nil then
+    return nil
   end
   local t = game.tank(holder)
   if t == nil then
@@ -1819,9 +1837,8 @@ local function bot_holder_second()
 
   -- A fort is there to hold off the hunters round it, and nobody scores
   -- while it stands. It is taken back, and the prize grabbed:
-  --   * when no hunter is near it, counted round the fort, not the guard: a
-  --     guard who died and came back on the far side of the map has no
-  --     hunter near him, but the fort may still have them all round it;
+  --   * when no hunter is near it, counted round the fort, the same middle
+  --     start_plan counts round;
   --   * after FORT_SECONDS, unless the holder is strictly top on the board:
   --     a stalled round helps the leader, so the leader's fort stands for as
   --     long as hunters are near it, and anybody else's for FORT_SECONDS.
@@ -1829,7 +1846,8 @@ local function bot_holder_second()
   --   * when fewer hunters are near it than when it was ordered (counted
   --     round the same square then; see start_plan);
   --   * at LAST_SHOT_ARMOUR (in on_tick).
-  -- All of these are asked while the guard is dead as well.
+  -- A guard who dies loses the prize (see on_tank_killed), so there is no
+  -- dead guard to ask for.
   if plan ~= nil and plan.built and plan.kind == "fort" and standing(pb) then
     local near = hunters_near(holder, FORT_FREE_WITHIN,
                               { mx = pb.x, my = pb.y })
@@ -1842,12 +1860,9 @@ local function bot_holder_second()
     end
   end
 
+  -- A holder who dies with the prize out of his tank is no holder after
+  -- on_tank_killed, and one who dies carrying it is none after the drop.
   if me.dead then
-    -- The go-back order below is sent again once he is back: a brain
-    -- forgets its order when its tank dies.
-    if plan ~= nil then
-      plan.back_told = nil
-    end
     return
   end
 
@@ -1874,8 +1889,8 @@ local function bot_holder_second()
       end
       -- A hop, or a fort that has been taken back, is the holder's to shoot
       -- down and drive over, which the brain's own pillbox move does once
-      -- he is near it. A holder who is not near it (he came back from a
-      -- death somewhere else, or wandered off) is sent back: to the square
+      -- he is near it. A holder who is not near it (he wandered off, or a
+      -- fight pulled him away) is sent back: to the square
       -- BUILT_ARMOUR short of it on his side, where a hop leaves him. So is
       -- one it has stood beside for HOP_PICKUP_SECONDS. A goto holds him
       -- only RUN_PARK_TICKS once he is there, and the move takes over.
@@ -1959,6 +1974,21 @@ local function each_second()
        not shot_own_down() then
       lose_the_prize(holder)
       aim_everybody()
+    end
+  end
+  -- A dead holder's man who brought the prize back aboard, not down: it is
+  -- put down dead where the man was when the holder died, through
+  -- on_pill_placed, not under his new tank, which would hand it straight
+  -- back to him.
+  if forfeit ~= nil and holder == nil and pill ~= nil then
+    local f = forfeit
+    local pb, t, man = game.pill(pill), game.tank(f.p), game.builder(f.p)
+    if pb ~= nil and pb.in_tank and t ~= nil and not t.dead and
+       man ~= nil and man.state == "in_tank" then
+      local x, y = standable_near(f.x, f.y)
+      if x == nil or game.drop_pill(f.p, pill, x, y) == nil then
+        game.drop_pill(f.p, pill)
+      end
     end
   end
 
@@ -2318,6 +2348,7 @@ local function take_the_prize(p)
     lose_the_prize(holder)
   end
   end_plan()
+  forfeit = nil
   local new_hand = (last_holder ~= p)
   holder = p
   last_holder = p
@@ -2385,7 +2416,11 @@ function on_pill_placed(n, p, armour, scripted)
   if over or n ~= pill then
     return
   end
-  if armour > 0 and p ~= nil and in_round(p) then
+  -- The prize is on the map again, so no man has it in his hands. One a dead
+  -- holder's man put down goes the way of a drop below.
+  local forfeited = (forfeit ~= nil and p == forfeit.p)
+  forfeit = nil
+  if armour > 0 and p ~= nil and in_round(p) and not forfeited then
     hold_down_the_prize()
     if p ~= holder then
       if holder ~= nil then
@@ -2438,6 +2473,47 @@ function on_pill_killed(n, by, scripted)
     return
   end
   lose_the_prize(holder)
+  aim_everybody()
+end
+
+-- A holder who dies while the prize is out of his tank loses it, person or
+-- bot: a prize standing on the map goes to nothing where it is, the way a
+-- leaving holder's does, one he has shot down is dead already, and one in
+-- his man's hands is put down dead when the man gets there (see forfeit in
+-- on_pill_placed). Nobody holds it after, so nobody scores, and every hunter
+-- is sent at it; the dead player comes back as a hunter. A prize in his tank
+-- is left to the drop the death makes, which on_pill_placed already handles.
+--
+-- His orders go with him: a brain forgets its order when its tank dies, so
+-- what this script last told him is forgotten too, and the next order he
+-- gets is a fresh one.
+function on_tank_killed(victim, killer, cause, scripted)
+  if over or pill == nil or victim == nil or victim ~= holder then
+    return
+  end
+  local pb = game.pill(pill)
+  if pb == nil then
+    return
+  end
+  local walking = man_out(victim)
+  if pb.in_tank and not walking then
+    return
+  end
+  if walking then
+    -- A dead tank has no square to read, so the man's is kept.
+    local man = game.builder(victim)
+    forfeit = { p = victim, x = man.mx, y = man.my }
+  end
+  lose_the_prize(victim)
+  told[victim], told_for[victim], told_at[victim], goto_at[victim] =
+    nil, nil, nil, nil
+  if standing(pb) then
+    game.set_pill_armour(pill, 0)
+  end
+  game.log(string.format("Pillbox Tag: player %d died with the prize out "
+                         .. "(%s); it is anybody's", victim,
+                         walking and "his man has it" or
+                         string.format("at %d,%d", pb.x, pb.y)))
   aim_everybody()
 end
 
@@ -2571,6 +2647,9 @@ function on_player_leave(p, scripted)
   if warned == p then
     warned = nil
   end
+  if forfeit ~= nil and forfeit.p == p then
+    forfeit = nil
+  end
   if holder == p then
     holder = nil
     plan = nil
@@ -2702,11 +2781,12 @@ end
 scenario = {
   name        = "Pillbox Tag",
   -- The round length here is the default; the lobby can set another.
+  -- The engine keeps 255 bytes of this; at 30 minutes it is 254.
   description = string.format("One dead pillbox, %d minutes by default. " ..
-                "Carrying it scores a point a second, slows you most on " ..
-                "the fastest ground, and empties your gun; a new holder " ..
-                "gets a short head start. Built or on foot it scores " ..
-                "nothing but your gun refills; three shells kill it.",
+                "Carrying it scores a point a second, slows you, empties " ..
+                "your gun; a new holder gets a head start. Built or on " ..
+                "foot it scores nothing, your gun refills, three shells " ..
+                "kill it. Die while it is out and it is anyone's.",
                 math.floor(ROUND_SECONDS / 60)),
   api         = 1,
   kind        = "scenario",
@@ -2757,6 +2837,8 @@ scenario = {
     on_pill_placed = "Built: 3 armour, no score. Dropped: dead.",
     on_pill_picked_up = "Holder: 1 point/s (and team), slow, unarmed.",
     on_pill_killed = "A shot-down prize is anybody's (a bot's own hop aside).",
+    on_tank_killed = "Holder dies with the prize out of his tank: it is " ..
+                     "dead, free for anyone to take.",
     on_pill_captured = "Only the holder may own a built prize.",
     on_built = "A repair stops at 3 armour.",
     can_build = "Only the holder may repair it; bots build where told.",
