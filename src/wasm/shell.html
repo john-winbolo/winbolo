@@ -60,6 +60,7 @@
         .loading.hidden { opacity: 0; visibility: hidden; }
         .loading .logo { height: 96px; filter: drop-shadow(0 4px 24px rgba(0,0,0,.6)); }
         #status { font-size: .9rem; color: var(--muted); min-height: 1.2em; }
+        #status.error { color: var(--text); max-width: min(360px, 70vw); }
         .bar {
             width: min(360px, 70vw); height: 8px;
             background: var(--surface2); border: 1px solid var(--border);
@@ -145,26 +146,9 @@
     </script>
     <script src="/js/relay.js"></script>
     <script>
-    /* Pick the closest healthy relay as early as possible, so the choice is
-       ready before the game opens its socket. Runs in parallel with the asset
-       download; the winner lands in WB_RELAY and is consumed by wbMintJoinCode
-       when it points the game socket at a relay. Never rejects — an all-down
-       probe resolves to the default. */
+    /* The relay the game socket goes through, set by Module.wbRelayProbe
+       once its latency test finishes; null until then. */
     window.WB_RELAY = null;
-    window.__wbRelayReady = (function () {
-        // Only web play (a /join/<game_key> route) needs a relay; tutorial,
-        // practise, single-player and the dev proxy skip the probe entirely.
-        if (!new URLSearchParams(window.location.search).get('game_key')) {
-            return Promise.resolve(null);
-        }
-        return wbProbeRelays().then(function (region) {
-            window.WB_RELAY = region || WB_DEFAULT;
-            return window.WB_RELAY;
-        }).catch(function () {
-            window.WB_RELAY = WB_DEFAULT;
-            return window.WB_RELAY;
-        });
-    })();
     </script>
 </head>
 <body>
@@ -342,8 +326,17 @@
                for game_key via POST /api/join (same-origin, session cookie),
                points the game socket at the probed relay, and resolves
                { status, code, error } for the C caller. One mint per connect —
-               a refresh or failover re-runs this and mints anew. */
-            wbMintJoinCode: function(gameKey) {
+               a refresh or failover re-runs this and mints anew.
+
+               On a 401 (not signed in), navigateOn401 says what to do. True,
+               for a page opened from a /join/ link: send the player to the
+               login and back to this address to try again. False, for a join
+               from the page's game finder, where the session ran out after
+               the page read /api/v1/me: mark the page signed out, so the
+               account checks, the finder's "Sign in to join" and the prefs
+               sync all see it, and stay here; the empty error lets the C
+               caller show its own translated message. */
+            wbMintJoinCode: function(gameKey, navigateOn401) {
                 return fetch('/api/join', {
                     method: 'POST',
                     credentials: 'same-origin',
@@ -351,8 +344,11 @@
                     body: JSON.stringify({ game_key: gameKey })
                 }).then(function(r) {
                     if (r.status === 401) {
-                        // Logged out (e.g. a shared /join link opened cold):
-                        // send to login and come back here to try again.
+                        if (!navigateOn401) {
+                            window.WB_PREFS_AUTH = false;
+                            window.WB_PREFS_NAME = '';
+                            return { status: 401, code: '', error: '' };
+                        }
                         window.location.href = 'https://www.winbolo.net/login?return=' +
                             encodeURIComponent(window.location.href);
                         return { status: 401, code: '', error: 'Sign in to join.' };
@@ -365,11 +361,13 @@
                             if (j && j.error) { error = j.error; }
                         } catch (e) { error = body; }
                         if (r.status === 200 && code) {
-                            // Route the game socket through the probed relay before
+                            // Route the game socket through the measured relay before
                             // resolving — the socket opens right after the C caller
-                            // gets the code. Wait for the probe (already resolved in
-                            // practice) so the measured relay wins, not the default.
-                            return Promise.resolve(window.__wbRelayReady).then(function() {
+                            // gets the code. Wait for the latency test (started at
+                            // load or when the finder opened, so usually done; started
+                            // here if neither ran) so the measured relay wins, not the
+                            // default.
+                            return Module.wbRelayProbe().then(function() {
                                 var region = window.WB_RELAY || WB_DEFAULT;
                                 Module.websocket.url = wbRelayWsUrl(region, code);
                                 return { status: 200, code: code, error: '' };
@@ -382,24 +380,59 @@
                 });
             },
 
+            /* Test every relay's latency and pick the closest healthy one,
+               once per page. The first call starts the test (wbProbeRelays,
+               relay.js, about 15 requests) and every call returns the same
+               promise, which resolves to the region once it is set in
+               WB_RELAY: the fastest healthy relay, or WB_DEFAULT when none
+               answers or the test fails. Never rejects. It runs at load for a
+               /join/<key> page, when the game finder first opens
+               (finder_wasm.c), and from wbMintJoinCode if neither has. */
+            wbRelayProbe: (function() {
+                var pending = null;
+                return function() {
+                    if (pending === null) {
+                        /* Started inside the promise so a throw (relay.js
+                           missing) lands in the catch below rather than in
+                           the C caller of wasmRelayProbeStart. */
+                        pending = Promise.resolve().then(function() {
+                            return wbProbeRelays();
+                        }).then(function(region) {
+                            window.WB_RELAY = region || WB_DEFAULT;
+                            return window.WB_RELAY;
+                        }).catch(function() {
+                            window.WB_RELAY = WB_DEFAULT;
+                            return window.WB_RELAY;
+                        });
+                    }
+                    return pending;
+                };
+            })(),
+
             /* Called from the transport (transport_udp_client.c) whenever the
                server rotates its key — on initial join and on each return-to-
                lobby. Keep the address bar on the live game so a copied link, or a
                reload after a dropped connection, mints into the current game. No
-               reload; the open connection is untouched. */
+               reload; the open connection is untouched. The entry keeps its
+               state, which the popstate handler reads. Only the game's own
+               entry is rewritten: nothing changes once the game has ended, or
+               once Back or Forward has moved the browser off it and the game
+               loop has yet to end it. */
             wbOnGameKey: function(gameKey) {
-                if (!gameKey) { return; }
-                try { history.replaceState(null, '', '/join/' + encodeURIComponent(gameKey)); }
+                if (!gameKey || Module.wbScreen !== 'game') { return; }
+                var state = history.state;
+                if (!state || state.screen !== 'game') { return; }
+                try { history.replaceState(state, '', '/join/' + encodeURIComponent(gameKey)); }
                 catch (e) {}
             },
 
             /* The screen the page is on, 'menu', 'finder' or 'game'.
-               main_wasm.c sets it; only a single-player game ever sets
+               main_wasm.c sets it; any game, network or single player, sets
                'game'. */
             wbScreen: 'menu',
 
             /* Set by the popstate handler below when Back or Forward moves
-               off a single-player game or the game finder; the game loop or
+               off a game or the game finder; the game loop or
                the finder reads and clears it. */
             wbNavRequest: '',
 
@@ -411,6 +444,13 @@
                     ? '/winbolo.html' : '/';
             }
         };
+
+        /* A /join/<key> page connects as soon as the game starts, so test the
+           relays now, alongside the download. Other pages wait for the game
+           finder to open. */
+        if (new URLSearchParams(window.location.search).get('game_key')) {
+            Module.wbRelayProbe();
+        }
 
         Module.setStatus('Downloading…');
 
@@ -434,21 +474,19 @@
             }
         }, true);
 
-        /* Back and Forward between the menu and a single-player game or the
-           game finder. C owns the screen: it pushes the game's or the
+        /* Back and Forward between the menu and a game or the game finder.
+           C owns the screen: it pushes the game's or the
            finder's history entry, sets Module.wbScreen, and closes them. This
            handler only records a request for the game loop or the finder to
            take, because a function called from JS must never suspend the
            page's single ASYNCIFY stack, and the game, the finder and the menu
            all run on it. It never calls into the module.
-             - Moving off a running single-player game asks the game loop to
-               leave it, as Leave Game does; moving off the finder closes it,
-               as Cancel does.
+             - Moving off a running game, network or single player, asks the
+               game loop to leave it, as Leave Game does; moving off the
+               finder closes it, as Cancel does.
              - Forward into a game that has already ended, or a finder that
                has closed, shows the menu: the entry is rewritten to the
-               menu's address.
-           Multiplayer never sets wbScreen to 'game', so nothing here acts
-           during a join. */
+               menu's address. */
         window.addEventListener('popstate', function(e) {
             var target = (e.state && e.state.screen) || 'menu';
             var screen = Module.wbScreen;
@@ -467,6 +505,31 @@
         });
     </script>
 
-    {{{ SCRIPT }}}
+    <!-- Emscripten requires its script placeholder; the guard below loads the game script instead. -->
+    <!-- {{{ SCRIPT }}} -->
+    <script>
+        /* The game runs threads, which need SharedArrayBuffer, and the browser
+           gives that only to a cross-origin isolated page (served with
+           Cross-Origin-Opener-Policy and Cross-Origin-Embedder-Policy). Without
+           it the game cannot start, so say so instead of loading it. */
+        if (window.crossOriginIsolated) {
+            var gameScript = document.createElement('script');
+            gameScript.async = true;
+            gameScript.src = 'winbolo.js';
+            document.body.appendChild(gameScript);
+        } else {
+            var statusEl = document.getElementById('status');
+            var fill = document.getElementById('bar-fill');
+            if (statusEl) {
+                statusEl.textContent = 'This browser can’t run WinBolo here. ' +
+                    'Please try an up-to-date Chrome, Firefox, Edge or Safari.';
+                statusEl.classList.add('error');
+            }
+            if (fill) fill.classList.remove('indeterminate');
+            console.error('WinBolo: page is not cross-origin isolated ' +
+                '(COOP/COEP headers missing); serve a local build with ' +
+                'src/wasm/serve_isolated.py');
+        }
+    </script>
 </body>
 </html>

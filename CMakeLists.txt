@@ -1524,15 +1524,18 @@ add_subdirectory(brains)
 
 # server_static and server_sim_static have a circular dependency that
 # GNU ld resolves with --start-group/--end-group ($<LINK_GROUP:RESCAN>).
+# server_round_log_static sits in the group too: the recorder calls the
+# transport and the lifecycle in server_static, and servermain.c calls the
+# recorder, so neither order resolves on one pass.
 # MSVC's link.exe does multi-pass static-lib resolution natively, and
 # Apple's ld doesn't support library groups at all -- both also reject
 # $<LINK_GROUP> for the CXX link language, so emit plain library names
-# there. Use this variable in target_link_libraries wherever both libs
+# there. Use this variable in target_link_libraries wherever these libs
 # are linked together.
 if(MSVC OR APPLE)
-    set(SERVER_LINK_GROUP server_static server_sim_static)
+    set(SERVER_LINK_GROUP server_static server_sim_static server_round_log_static)
 else()
-    set(SERVER_LINK_GROUP "$<LINK_GROUP:RESCAN,server_static,server_sim_static>")
+    set(SERVER_LINK_GROUP "$<LINK_GROUP:RESCAN,server_static,server_sim_static,server_round_log_static>")
 endif()
 
 # ---------------------------------------------------------------------------
