@@ -1340,46 +1340,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                      * chooser a non-host has, so it comes with them here. */
                     lobbyRenderScenarioInfoLines(cs, s);
 
-                    /* Skip-map vote is gated by LOBBY_LOCK_MAP — locking
-                     * the map blocks both manual change and skip-vote. */
-                    if (!spectator && clientSimIsMapSkipAvailable(cs) && clientSimIsInLobby(cs) &&
-                        !(clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP)) {
-                        ImGui::Spacing();
-                        bool countdownActive = clientSimGetCountdownSeconds(cs) > 0;
-                        if (countdownActive) ImGui::BeginDisabled();
-                        bool voted = clientSimIsMapSkipMyVote(cs);
-                        const char *skipLabel = voted ? langGetText(STR_DLGLOBBY_CANCELSKIP) : langGetText(STR_DLGLOBBY_SKIPMAP);
-                        if (voted) {
-                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.4f, 0.1f, 1.0f));
-                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.5f, 0.2f, 1.0f));
-                            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.7f, 0.3f, 0.05f, 1.0f));
-                        }
-                        if (ImGui::Button(skipLabel, ImVec2(100 * s, 0))) {
-                            clientSimSetMapSkipMyVote(cs, !clientSimIsMapSkipMyVote(cs));
-                            if (hasTransport) {
-                                clientSimNetSendMapSkipVote(cs);
-                            }
-                        }
-                        if (voted) {
-                            ImGui::PopStyleColor(3);
-                        }
-                        ImGui::SameLine();
-                        int skipCount = 0, humanCount = 0;
-                        for (int j = 0; j < MAX_TANKS; j++) {
-                            const ClientLobbySlot *jSlot = clientSimGetLobbySlot(cs, (BYTE)j);
-                            if (jSlot && jSlot->connected && !jSlot->isBot) {
-                                humanCount++;
-                                if (clientSimIsMapSkipVote(cs, (BYTE)j)) skipCount++;
-                            }
-                        }
-                        {
-                            MessageArgs args = {};
-                            args.number = skipCount;
-                            args.number2 = humanCount;
-                            ImGui::TextUnformatted(langGetTextFmt(STR_DLGLOBBY_VOTES, &args));
-                        }
-                        if (countdownActive) ImGui::EndDisabled();
-                    }
+                    lobbyRenderMapSkipVote(cs, spectator, hasTransport, s, false);
 
                     if (tabMapBelowTopY >= 0.0f) {
                         tabMapBelowH = ImGui::GetCursorPosY() - tabMapBelowTopY;
