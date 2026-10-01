@@ -8824,12 +8824,12 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                    which cannot arrive once the transport is gone. */
                 clientSimDisconnect(cs);
 #ifdef __EMSCRIPTEN__
-                /* The browser has no welcome screen to fall back to the way
-                   winbolo.c does after imguiLobbyShow returns 0 — the menu is
-                   the hosting page, so navigate back to it. Ordered after the
-                   disconnect so transportUdpClientDestroy still gets its
-                   graceful PACKET_QUIT out over a live socket; the navigation
-                   itself only runs once this frame returns to the browser. */
+                /* The browser runs no lobby loop that returns to the menu the
+                   way winbolo.c's does after imguiLobbyShow returns 0, so ask
+                   the page's game loop to end the game; it then shows the
+                   menu. Ordered after the disconnect so
+                   transportUdpClientDestroy still gets its graceful
+                   PACKET_QUIT out over a live socket. */
                 windowLeaveGame();
 #endif
             }

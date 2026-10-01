@@ -26,6 +26,7 @@
 #include "client_sim.h"
 #include "control_event.h"
 #include "global.h"
+#include "lobby_bot_pools.h"
 #include "platform_net.h"
 #include "client_net.h"
 #include "gui_message.h"
@@ -1043,6 +1044,10 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
     }
     wasmTransportActive = FALSE;
   }
+  /* Drop the bot-pool catalog a joined server sent, so a later practice
+   * lobby offers the stock bot names again. The web loads no catalog file
+   * of its own, so clearing it is all desktop's reload amounts to here. */
+  lobbyBotPoolsReset();
   frontEndSetActiveClientSim(NULL);
   clientSimDestroy(humanSim);  /* also tears down the embedded transport */
   humanSim = NULL;

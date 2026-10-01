@@ -326,10 +326,9 @@ static void main_loop_iteration(void) {
   /* On the first frame after a terminal failure, raise the error dialog. The
    * frozen state below renders this last frame without ticking or sending.
    *
-   * Dismissing it leaves the game, and main navigates back to /: a network
-   * game does not return to the menu in the same page, so without this the
-   * player is left on the cleared frame with only the menu bar over it. The
-   * latch stops this branch re-arming. */
+   * Dismissing it leaves the game, and main ends it and shows the menu;
+   * without this the player is left on the cleared frame with only the menu
+   * bar over it. The latch stops this branch re-arming. */
   if (s_connFailed && !s_connErrorShown) {
     imguiMessageBoxEx(DIALOG_BOX_TITLE, s_connReason, IMGUI_MSG_ERROR,
                       IMGUI_MSG_OK);
@@ -698,12 +697,13 @@ static void wasmShowFinder(bool launched) {
   s_finderLeftByHistory = FALSE;
 }
 
-/* End a single-player game (practice or tutorial) so the menu, and then
- * another game, can follow in the same page. The first three run in the
- * order the desktop's game end runs them (winbolo.c): the voice talkers go
- * with their game, then the game's ImGui context, then the sims. The lobby
- * and tutorial overlay state is per-game too and is dropped last. */
-static void wasmEndSinglePlayerGame(void) {
+/* End a game, network or single player, so the menu, and then another game,
+ * can follow in the same page. The first three run in the order the
+ * desktop's game end runs them (winbolo.c): the voice talkers go with their
+ * game, then the game's ImGui context, then the sims, and with the client
+ * sim a network game's transport and its socket. The lobby and tutorial
+ * overlay state is per-game too and is dropped last. */
+static void wasmEndGame(void) {
   voiceReset();
   sdl3ImguiCleanup();
   /* A start that failed has already freed its sims (humanSim is NULL). */
@@ -722,18 +722,18 @@ static void wasmEndSinglePlayerGame(void) {
 
 /* Run one game from start to end: reset the per-game state, start the game
  * the launch describes, set up its UI and run the loop until it ends.
- * Returns TRUE for a network game (no local server sim), whose end the
- * caller finishes by navigating away; FALSE for single player, including a
- * single-player start that failed, which has shown its error and freed what
- * it made. */
+ * Returns TRUE for a network game (no local server sim), whose connection
+ * the caller closes before it ends the game; FALSE for single player,
+ * including a single-player start that failed, which has shown its error and
+ * freed what it made. */
 static bool wasmPlayGame(const char *cmdLine, const WasmLaunch *launch) {
   wasmGameStateReset();
 
   /* Free the menu's background game before this one starts. Each of its
    * bots holds tens of MB of brain, and the page's heap never shrinks, so
    * keeping them through the game would leave that much less for it.
-   * main makes a new one when the menu shows again; a network game ends by
-   * leaving the page. No-op on a page that went straight into a game. */
+   * main makes a new one when the menu shows again. No-op on a page that
+   * went straight into a game. */
   wasmBackgroundGameDestroy();
 
   printf("[WASM] Starting gameFrontWasmStart...\n");
@@ -800,6 +800,22 @@ static bool wasmPlayGame(const char *cmdLine, const WasmLaunch *launch) {
   return gameFrontGetServerSim() == NULL;
 }
 
+/* Choose the name a single-player game plays under: a validated ?name= from
+ * the page's launch wins; otherwise "Me". Run before every single-player
+ * game, because a join replaces the name with its own network name (the
+ * account name or web<rand>) inside gameFrontWasmStart. */
+static void wasmChooseSinglePlayerName(const WasmLaunch *launch) {
+  char validated[PLAYER_NAME_LEN];
+  if (launch->name[0] != '\0' &&
+      playerNameValidate(launch->name, validated, PLAYER_NAME_LEN, NULL)) {
+    gameFrontSetPlayerName(validated);
+    printf("[WASM] single player: name=%s (from URL)\n", validated);
+  } else {
+    gameFrontSetPlayerName((char *)"Me");
+    printf("[WASM] single player: default name=Me\n");
+  }
+}
+
 int main(int argc, char *argv[]) {
   const char *cmdLine = "";
   WasmLaunch launch;
@@ -860,31 +876,17 @@ int main(int argc, char *argv[]) {
    * them into the new game. No-op when not signed in. */
   wbPrefsSyncNow();
 
-  /* Single-player name: a validated ?name= wins; otherwise "Me". A join
-   * chooses its own network name (the account name or web<rand>) inside
-   * gameFrontWasmStart, before it connects. */
-  if (launch.mode != WASM_GAME_JOIN) {
-    char validated[PLAYER_NAME_LEN];
-    if (launch.name[0] != '\0' &&
-        playerNameValidate(launch.name, validated, PLAYER_NAME_LEN, NULL)) {
-      gameFrontSetPlayerName(validated);
-      printf("[WASM] single player: name=%s (from URL)\n", validated);
-    } else {
-      gameFrontSetPlayerName((char *)"Me");
-      printf("[WASM] single player: default name=Me\n");
-    }
-  }
-
   /* Screens: the menu, then a game, then the menu again. A launch that names
-   * a game goes straight into it; a join never shows the menu. A game picked
-   * from the menu carries no join key, dev proxy or password.
+   * a game, a join included, goes straight into it, and its end shows the
+   * menu. A game picked from the menu carries no join key, dev proxy or
+   * password.
    *
    * History: the menu's entry is the page's first. A game picked from the
-   * menu pushes its own entry, so Back returns to the menu; a single-player
-   * game the page launched straight into marks its entry as the game, with
-   * no menu behind it. A ?finder=1 launch marks its entry as the finder's
-   * (wasmShowFinder), which becomes the menu's once the finder closes. A
-   * join leaves the history alone. */
+   * menu pushes its own entry, so Back returns to the menu; a game the page
+   * launched straight into marks its entry as the game, with no menu behind
+   * it, and that entry becomes the menu's when the game ends. A ?finder=1
+   * launch marks its entry as the finder's (wasmShowFinder), which becomes
+   * the menu's once the finder closes. */
   WasmLaunch next = launch;
   bool menu = launch.showMenu;
   if (openFinder) {
@@ -892,7 +894,7 @@ int main(int argc, char *argv[]) {
   } else if (launch.showMenu) {
     wasmHistoryReplaceMenu();
     wasmSetScreen("menu");
-  } else if (launch.mode != WASM_GAME_JOIN) {
+  } else {
     wasmHistoryMarkGame();
     s_gameEntryPushed = FALSE;
   }
@@ -938,6 +940,7 @@ int main(int argc, char *argv[]) {
      * failed start shows its error, is still taken below. */
     if (next.mode != WASM_GAME_JOIN) {
       wasmSetScreen("game");
+      wasmChooseSinglePlayerName(&next);
     }
 
     if (wasmPlayGame(cmdLine, &next)) {
@@ -948,31 +951,11 @@ int main(int argc, char *argv[]) {
       if (humanSim != NULL && clientSimHasTransport(humanSim)) {
         clientSimDisconnect(humanSim);
       }
-
-      /* Write the in-game menu's toggles, as a single-player game end does.
-       * The page is about to go, so there are no more frames for the
-       * debounced upload to run on: send a change now. This waits on the
-       * fetch on main's stack, and is a no-op when not signed in. */
-      gameFrontPutPrefs(&keys);
-      if (prefsSyncDirty()) {
-        wbPrefsSyncNow();
-      }
-      emscripten_run_script("window.location.href='/'");
-
-      /* Stay on this stack until the browser unloads the page. The
-       * navigation only starts once control returns to the browser, and the
-       * page stays on screen until the next one loads, so nothing is torn
-       * down here: freeing the window or the renderer now would blank the
-       * page while it is still showing. Returning from main would leave no
-       * stack to wait on. */
-      for (;;) {
-        wasmFrameWait();
-      }
     }
 
-    /* Single player: end the game and go back to the menu, keeping every
-     * setting the player changed. */
-    wasmEndSinglePlayerGame();
+    /* End the game and go back to the menu, keeping every setting the
+     * player changed. The menu's frames upload a change to them. */
+    wasmEndGame();
 
     /* Put the history on the menu's entry. A request the game loop never
      * took (the start failed or the game ended in the same frame) still
@@ -1039,8 +1022,8 @@ static void wasmGameStateReset(void) {
 }
 
 /* Leave the game: ask wasmRunGame to end it after the current frame. main
- * then disconnects a network game that is still connected and navigates the
- * hosting page back to /; single player goes back to the menu. */
+ * then disconnects a network game that is still connected, ends the game
+ * and shows the menu. */
 void windowLeaveGame(void) { s_leaveRequested = TRUE; }
 
 void windowApplyMenuChecks(ClientSim *cs) {
@@ -1620,8 +1603,7 @@ void frontEndGameOver(ClientSim *cs) {
                     IMGUI_MSG_INFO, IMGUI_MSG_OK);
   finishedLoop = TRUE;
   /* Dismissing the dialog leaves the game. finishedLoop ends the game loop
-   * after this frame; main then returns single player to the menu and
-   * navigates a network game back to /. */
+   * after this frame; main then ends the game and shows the menu. */
   windowLeaveGame();
 }
 
