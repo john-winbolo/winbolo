@@ -6345,7 +6345,7 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo, sc
     reject = "lgm_busy"
   elseif info.inboat then
     reject = "inboat"
-  elseif state.phase == "opening" then
+  elseif state.phase == "opening" and not C.PILL_REPOSITION_IN_OPENING then
     reject = "opening"   -- need pills in place during the opening
   elseif not repos_locked and not approved and not my_voting then
     -- Win-then-vote pacing: a just-failed team vote or a very recently executed

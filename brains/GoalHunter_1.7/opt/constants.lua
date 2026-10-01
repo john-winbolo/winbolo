@@ -2315,6 +2315,11 @@ M.PILL_ROLE_REEVAL_TICKS        = 3000  -- re-evaluate a pill's back/front/aggro
 M.PILL_UTILITY_TARGET_FRAC      = 0.25  -- desired share of pills available as blockers/utility; below this, hold a spare pill in tank
 M.ALLY_BLOCKER_REJECT_TICKS     = 150   -- ticks a pill stays rejected from our pools after an ally declares it a blocker while we were targeting it (yield window so we don't immediately re-pick it)
 M.PILL_REPOSITION_MIN_SHELLS    = 15    -- need this many shells to reposition (must shoot the pill down to 0 to pick it up)
+-- 2026-09-30: let a reposition run during the "opening" phase. Off, the
+-- opening refuses it in eval_reposition_pill and in the vote's can_carry_now,
+-- as it always has. A scenario that keeps every base neutral (Pillbox Tag)
+-- never leaves the opening, so it turns this on per bot. KEEL: false.
+M.PILL_REPOSITION_IN_OPENING   = false
 M.REPOSITION_DEMOLISH_GRACE_TICKS = 1500 -- ~30s: while demolishing a pill for reposition, suppress repair_pill on it (avoid shoot???repair???shoot oscillation)
 M.REPAIR_REPOSITION_BLOCK_TICKS = 400  -- 8s @ 50Hz: block repair_pill on a pill we're repositioning (driven by the live goal each tick) AND for this long AFTER the reposition goal ends ??? so a freed pool can't immediately heal the pill we just shot down. Covers the gap REPOSITION_DEMOLISH_GRACE missed (it only refreshes while reposition_steer is firing).
 -- Reposition risk penalties (raise cost = discourage repositioning):
@@ -5246,6 +5251,9 @@ M.PRESETS = {
     --   competition, so its keel value has to be the identity, 1.0, for the
     --   baseline pool numbers to come out unchanged.
     FOCUS_OTHER_COST_MULT         = 1.0,
+    --   2026-09-30: a reposition may run in the opening phase.  KEEL: the
+    --   opening refused it.
+    PILL_REPOSITION_IN_OPENING    = false,
   },
   -- nolgm_off: RUDDER as it stood BEFORE the loaded, builder-less work
   -- (2026-09-08) -- every knob that work added, at its pre-change value, and
