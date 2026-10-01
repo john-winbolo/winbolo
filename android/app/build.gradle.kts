@@ -188,10 +188,26 @@ tasks.register<Copy>("copyLangAssets") {
     into(assetsLangDir)
 }
 
+// Copy the licence, its additional permissions and the About-box docs into
+// assets/data/. The GPL requires every copy of the program to carry a copy
+// of the licence.
+val repoRootDir = file("../..")
+
+tasks.register<Copy>("copyLicenceAssets") {
+    from(repoRootDir) {
+        include("LICENSE")
+        include("LICENSE-EXCEPTION.md")
+        include("THIRD_PARTY_NOTICES.md")
+        include("AUTHORS.md")
+    }
+    into(assetsDataDir)
+}
+
 tasks.configureEach {
     if (name == "preBuild") {
         dependsOn("copyGameAssets")
         dependsOn("copyBrainAssets")
         dependsOn("copyLangAssets")
+        dependsOn("copyLicenceAssets")
     }
 }

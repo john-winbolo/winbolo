@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -2397,6 +2400,13 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
             break;
         }
         c->joinState = UDP_CLIENT_CONNECTED;
+        /* A map list request made while the join was not complete was never
+         * sent, and a map change always re-joins, so the listing the chooser
+         * asked for then is still owed. Drop the cache and tick the counter
+         * the chooser watches so it asks again now that a request goes out. */
+        cs->lobbyMapListReady    = false;
+        cs->lobbyMapListInFlight = false;
+        cs->lobbyMapListSeq++;
         installCompressedMap(cs, c->mapDownloadBuf,
                              (int)c->mapDownloadTotal, NULL,
                              /*initViewport=*/true);

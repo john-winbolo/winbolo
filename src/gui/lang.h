@@ -3,7 +3,7 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  */
 
@@ -628,6 +628,7 @@
 #define STR_DLGBROWSER_PREVIEW_UNAVAIL      1815
 #define STR_DLGBROWSER_PREVIEW_ENLARGE      1816
 #define STR_DLGBROWSER_ENLARGE_BTN          1829
+#define STR_DLGBROWSER_SIGNIN_TO_JOIN       2736
 #define STR_DLGBROWSER_AI_PLAYERS           1817
 #define STR_DLGBROWSER_WBN_PLAYERS          1818
 #define STR_DLGBROWSER_ST_LOCKED            1819
@@ -873,6 +874,9 @@
  * shown is decided from the window's real state, not from the preference. */
 #define STR_DLGWELCOME_SWITCH_CLASSIC       1991
 #define STR_DLGWELCOME_SWITCH_FULLSCREEN    1992
+/* The web client's label for the single-player row, which opens a practice
+ * game in the in-game lobby. */
+#define STR_DLGWELCOME_PRACTICE             2735
 /* Map Chooser dialog */
 #define STR_MAPCHOOSER_EVERARD              793
 #define STR_MAPCHOOSER_LOADMAP              794
@@ -914,6 +918,12 @@
 #define STR_MAPCHOOSER_RESTORE_SIZE_TIP     2732
 #define STR_MAPCHOOSER_MAXIMIZE_TIP         2733
 #define STR_MAPCHOOSER_LOADING_PREVIEW      2734
+/* Map editor scenario panel */
+#define STR_MAPEDIT_SCENARIO_NEEDS_BOTS     2738
+/* About box licence */
+#define STR_DLGABOUT_LICENCE                2750
+#define STR_DLGABOUT_LICENCE_NOTICE         2751
+#define STR_DLGABOUT_FILE_NOT_FOUND         2752
 
 /* Tablet HUD */
 #define STR_TABLET_STATUS_TITLE             803
@@ -2505,6 +2515,19 @@
 #define STR_SCNPANEL_OPACITY_LINE1          2620
 #define STR_SCNPANEL_OPACITY_LINE2          2621
 
+/* One item per script with a panel goes under Brains > INFO_OVERLAY, a
+ * checkbox that shows or hides that script's panel. POP_OUT and POP_IN are
+ * the buttons in the panel's settings that move it into an OS window of its
+ * own and back. CLOSE_TITLE and CLOSE_BODY are the confirm the X on a panel
+ * opens: {string1} in the title = the script's name; in the body {string1} =
+ * the Brains menu's name and {string2} = the Info Overlay item's name, so
+ * the body names the menu path in the player's own language. */
+#define STR_MENU_INFO_OVERLAY               2740
+#define STR_SCNPANEL_POP_OUT                2741
+#define STR_SCNPANEL_POP_IN                 2742
+#define STR_SCNPANEL_CLOSE_TITLE            2743
+#define STR_SCNPANEL_CLOSE_BODY             2744
+
 /* The two-column chooser. OFFERED heads the catalogue on the left and ROUND
  * heads the round's own list on the right, so the two columns say what they
  * are rather than leaving a host to work it out from what is in them.
@@ -2554,10 +2577,8 @@
 #define STR_DLGLOBBY_SCENARIO_KIND_MODS     2607
 #define STR_DLGLOBBY_SCENARIO_KIND_SCENARIOS 2608
 
-/* The two hosting settings that go with a scenario carried inside a map: the
- * switch that decides whether a map a player uploaded may bring one, and the
- * directory of scenarios this host offers on their own. */
-#define STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS 2213
+/* The hosting setting that names the directory of scenarios this host offers
+ * on their own, independently of any map. */
 #define STR_DLGSETTINGS_HOSTING_SCENARIODIR  2216
 
 /* Rule change descriptions */
@@ -2859,6 +2880,15 @@
  * Its own id rather than STR_DLGLOBBY_RULES_COL_SCENARIO, which the log
  * viewer's rules table still uses, because the dialog shows mods too. */
 #define STR_DLGLOBBY_DETAILS_COL_NEW_VALUE       2632
+/* The details dialog's settings table: its two column headers, so it is
+ * headed the way the rules and callbacks tables above it are. */
+#define STR_DLGLOBBY_DETAILS_COL_SETTING         2753
+#define STR_DLGLOBBY_DETAILS_COL_VALUE           2754
+
+/* The details dialog's heading over the rules table, with the colon the
+ * Settings and implements headings have. The log viewer keeps
+ * STR_DLGLOBBY_SCENARIO_RULES as a separator title with no colon. */
+#define STR_DLGLOBBY_DETAILS_RULES               2755
 
 /* The map panel's warning under the scenario and mods lines, shown only when
  * the server was started with -allow-unsafe-scripts. A sentence rather than a
@@ -3228,7 +3258,7 @@
 #define STR_DLGLOBBY_DETAILS_SETTING_OFF         2708
 #define STR_DLGLOBBY_DETAILS_SETTING_ON_DEFAULT  2709
 #define STR_DLGLOBBY_DETAILS_SETTING_OFF_DEFAULT 2710
-#define STR_DLGLOBBY_DETAILS_SETTING_CHOICE_DEFAULT 2735
+#define STR_DLGLOBBY_DETAILS_SETTING_CHOICE_DEFAULT 2756
 
 /* The map editor's metadata form: the read-only line naming the Steam
  * Workshop item a scenario was published as ({string1} = the item id) and

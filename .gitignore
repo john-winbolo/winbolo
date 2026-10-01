@@ -28,10 +28,11 @@ third_party/steamworks/
 __pycache__/
 *.pyc
 
-# BrainTest / WinBolo runtime artifacts (root-only — there's a tracked
-# data/maps/imgui.ini we don't want masked, hence the leading slash on
-# imgui.ini specifically). All other patterns are anchored to repo root.
+# BrainTest / WinBolo runtime artifacts. All patterns are anchored to repo
+# root, plus an ImGui layout file in data/maps/ that was once committed by
+# mistake.
 /imgui.ini
+/data/maps/imgui.ini
 /*.log
 /debug_sessions/
 

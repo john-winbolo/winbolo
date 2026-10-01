@@ -88,6 +88,7 @@ add_library(server_sim_static STATIC
     sim/server_sim_callbacks.c
     sim/server_sim_snapshot.c
     sim/server_sim_round.c
+    sim/server_sim_lifecycle_local.c
     sim/server_sim_maps.c
     sim/server_sim_vote.c
     sim/server_sim_players.c

@@ -5,13 +5,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 
@@ -670,8 +673,6 @@ void printArgs() {
   fprintf(stderr, "                Value is a number, true or false for a bool setting, or one\n");
   fprintf(stderr, "                of the words of a choice setting (quote words with spaces).\n");
   fprintf(stderr, "                May be given more than once.\n");
-  fprintf(stderr, "-nouploadscripts - The old spelling of -scriptuploads off (see Script\n");
-  fprintf(stderr, "                uploads below). -scriptuploads wins when both are given.\n");
   fprintf(stderr, "-allow-unsafe-scripts - Run scenario scripts with the full Lua standard\n");
   fprintf(stderr, "                library, no memory cap, no time limits and precompiled chunks\n");
   fprintf(stderr, "                accepted. Reaches uploaded maps' scripts and -validate too;\n");
@@ -713,7 +714,7 @@ void printArgs() {
   fprintf(stderr, "                Valid: gametype, ai, mines, timelimit (alias: limit),\n");
   fprintf(stderr, "                autolock, password, ranked, openhost, map, pillview,\n");
   fprintf(stderr, "                baseview, allyview, classicmode, alliesintrees,\n");
-  fprintf(stderr, "                overviewwindow, lineofsight, smartpings,\n");
+  fprintf(stderr, "                overviewwindow, lineofsight, smartpings, mods,\n");
   fprintf(stderr, "                positionalsound.\n");
   fprintf(stderr, "                Locking pillview, baseview, allyview, alliesintrees,\n");
   fprintf(stderr, "                overviewwindow, lineofsight or positionalsound also\n");
@@ -772,6 +773,7 @@ void printArgs() {
   fprintf(stderr, "                down is named), \"allow\" keeps them for the session\n");
   fprintf(stderr, "                (default), \"persist\" keeps them for good.\n");
   fprintf(stderr, "-scriptuploaddir <Dir> - Directory persisted scripts are written to.\n");
+  fprintf(stderr, "                (default <map root>/Uploads/Scripts).\n");
   fprintf(stderr, "-scriptuploadmaxfiles <N> - Max stored script files in persist mode\n");
   fprintf(stderr, "                (1-255, default 32).\n");
   fprintf(stderr, "-scriptuploadmaxstorage <MB> - Max script storage in persist mode\n");
@@ -2000,7 +2002,8 @@ int main(int argc, char **argv) {
     snprintf(banner, sizeof banner,
              "WinBolo Server - v%s\n"
              "Copyright 1998-2026 John Morrison\n"
-             "Bolo Copyright 1987-1995 Stuart Cheshire",
+             "Bolo Copyright 1987-1995 Stuart Cheshire\n"
+             "Free software under the GNU GPL v3 or later. No warranty.",
              WINBOLO_DISPLAY_VERSION);
     serverMessageConsoleMessage(serverSim, banner);
   }
@@ -2021,14 +2024,12 @@ int main(int argc, char **argv) {
   }
   /* -scriptuploads: the narrower one. Under off a map a client sent plays
      plainly whatever it carries, and the operator's own maps are untouched.
-     -nouploadscripts is the old spelling of off, used when no word is given.
      Resolved here rather than beside the map-upload flags below because the
      host switch has to be set before the first attach, for the same reason
      as -noscenarios; the same value goes into the instance config below. */
   const int scriptPolicyArg = findArg(argc, argv, "scriptuploads");
   const ScriptUploadPolicy scriptUploadPolicy = scriptUploadPolicyResolve(
-      scriptPolicyArg != ARG_NOT_FOUND ? (char *)argv[scriptPolicyArg] : NULL,
-      argExist(argc, argv, "nouploadscripts") == TRUE);
+      scriptPolicyArg != ARG_NOT_FOUND ? (char *)argv[scriptPolicyArg] : NULL);
   scenarioHostSetUploadScriptsEnabled(scriptUploadPolicy != SCRIPT_UPLOAD_OFF);
   /* And the question the map lister asks of every map it finds, so the list
      a player picks from says which maps are scripted. Registered here rather

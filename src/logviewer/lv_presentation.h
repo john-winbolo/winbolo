@@ -3,7 +3,7 @@
  * and map markers at the playhead
  *
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * What the recording's log_ScnPanel, log_ScnScore, log_ScnAnnounce and
  * log_ScnMarker records say at the playhead (layouts in

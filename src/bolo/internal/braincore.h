@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -232,6 +235,20 @@ bool brainCoreCallMethod(lua_State *L, BrainInfo *info, const char *method);
 void brc_write_crash_log(lua_State *L,
                          const char *method,
                          const char *err_or_traceback);
+
+/*********************************************************
+ *NAME:          brc_traceback_msgh
+ *PURPOSE:
+ *  The lua_pcall message handler brainCoreCallThink and
+ *  brainCoreCallMethod install. Returns the error message
+ *  with a Lua stack traceback appended, except for the
+ *  per-think budget hook's "tick_budget_exceeded" raised
+ *  while that hook is installed, which it returns unchanged:
+ *  the caller throws that message away. Exposed (non-static)
+ *  so tests/unit/test_brain_crash_log.c can run a pcall with
+ *  it.
+ *********************************************************/
+int brc_traceback_msgh(lua_State *L);
 
 /*********************************************************
  *NAME:          brainCoreSetLogFlushHook

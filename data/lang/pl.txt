@@ -683,6 +683,12 @@ STR_MAPCHOOSER_RESTORE_SIZE_TIP=Przywróć domyślny rozmiar (Esc)
 STR_MAPCHOOSER_MAXIMIZE_TIP=Maksymalizuj
 STR_MAPCHOOSER_LOADING_PREVIEW=Wczytywanie podglądu...
 
+# Map editor scenario panel
+STR_MAPEDIT_SCENARIO_NEEDS_BOTS=Wymaga włączonych botów: ten skrypt dodaje własne boty
+STR_DLGABOUT_LICENCE=Licencja
+STR_DLGABOUT_LICENCE_NOTICE=Wolne oprogramowanie, licencja GNU GPL v3 lub nowsza. Brak gwarancji.
+STR_DLGABOUT_FILE_NOT_FOUND=Nie znaleziono pliku.
+
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Stan
 STR_TABLET_KILLS_DEATHS=Zabicia: {number}  Śmierci: {number2}
@@ -1805,6 +1811,7 @@ STR_DLGBROWSER_SELECT_SERVER=Wybierz serwer
 STR_DLGBROWSER_PREVIEW_UNAVAIL=Podgląd niedostępny
 STR_DLGBROWSER_PREVIEW_ENLARGE=Kliknij, aby powiększyć
 STR_DLGBROWSER_ENLARGE_BTN=Powiększ
+STR_DLGBROWSER_SIGNIN_TO_JOIN=Zaloguj się, aby dołączyć
 STR_DLGBROWSER_AI_PLAYERS=({number} graczy AI)
 STR_DLGBROWSER_WBN_PLAYERS=WinBolo.net gracze:
 STR_DLGBROWSER_ST_LOCKED=Zablokowany/Pełny
@@ -2019,6 +2026,7 @@ STR_DLGKEYSETUP_OVERVIEWZOOMIN=Powiększ mapę
 STR_DLGKEYSETUP_OVERVIEWZOOMOUT=Pomniejsz mapę
 STR_DLGWELCOME_SWITCH_CLASSIC=Przełącz na tryb klasyczny
 STR_DLGWELCOME_SWITCH_FULLSCREEN=Przełącz na pełny ekran
+STR_DLGWELCOME_PRACTICE=Trening
 
 # Ustawienia Wyświetlanie i dźwięk: pełny ekran i panele HUD mapy
 STR_DLGSETTINGS_FULLSCREEN=Pełny ekran
@@ -2211,7 +2219,6 @@ STR_DLGLOBBY_SCENARIO_TAG_SCENARIO=Scenariusz
 STR_DLGLOBBY_SCENARIO_KIND_ALL=Wszystkie
 STR_DLGLOBBY_SCENARIO_KIND_MODS=Tylko mody
 STR_DLGLOBBY_SCENARIO_KIND_SCENARIOS=Tylko scenariusze
-STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS=Uruchamiaj skrypty w wysłanych mapach
 STR_DLGSETTINGS_HOSTING_SCENARIODIR=Katalog modów
 STR_DLGSETTINGS_MAPVIEW=Widok mapy
 STR_DLGSETTINGS_SIMPLEZOOM=Użyj uproszczonego widoku przy pomniejszeniu
