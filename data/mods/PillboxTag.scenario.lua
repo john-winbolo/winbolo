@@ -53,6 +53,15 @@
 -- teammates, and the team with the most seconds wins. The bots on the
 -- holder's team are not sent after him.
 --
+-- Voice chat. In a round the server sends a player's voice only to his
+-- allies, so in a Free For All nobody would hear anybody. The host picks who
+-- hears whom with the "Voice chat to everyone" setting. "Only in Free For
+-- All", the default, sends every voice to everybody in a Free For All and
+-- leaves a team round with voice to teammates. "Yes" sends every voice to
+-- everybody in both, and "No" keeps voice to allies in both. A server that
+-- is older than the setting keeps voice to allies, and a server with voice
+-- off has no voice at all.
+--
 -- The scores under the compass: in Free For All one row a tank; in a team
 -- round a row for each team with its total and, under it, a row for each
 -- member with the seconds they carried. When that is more rows than there
@@ -2516,6 +2525,17 @@ function on_start()
   post_team_scores()
   game.log("Pillbox Tag: " .. (teams_on() and "lobby teams" or "free for all"))
 
+  -- Who hears whose voice, by the "Voice chat to everyone" setting: "Yes" is
+  -- everybody, "No" is allies only, and "Only in Free For All" is everybody
+  -- in a Free For All and teammates in a team round. The engine clears it at
+  -- every round start, so it is set here each round. An engine without the
+  -- call keeps voice to allies.
+  if game.set_voice_everyone then
+    local voice = game.setting("voice_everyone")
+    game.set_voice_everyone(voice == "Yes" or
+                            (voice ~= "No" and not teams_on()))
+  end
+
   -- How close a tank in a wood has to be before it can be seen, in squares.
   hide_at = math.floor(game.rule("tree_hide_distance") / 256)
   tune_everybody()
@@ -3148,6 +3168,10 @@ scenario = {
       default = DEEP_WATER_SECONDS },
     { id = "teams", label = "Teams", type = "choice",
       choices = { FREE_FOR_ALL, LOBBY_TEAMS }, default = FREE_FOR_ALL },
+    { id = "voice_everyone", label = "Voice chat to everyone",
+      type = "choice",
+      choices = { "Only in " .. FREE_FOR_ALL, "Yes", "No" },
+      default = "Only in " .. FREE_FOR_ALL },
   },
 
   -- What each callback below does, in a line a player reads: the lobby's
@@ -3155,7 +3179,8 @@ scenario = {
   callbacks = {
     on_setup = "One pillbox is the prize, the rest go; bases start " ..
                "neutral.",
-    on_start = "Clock, compass, sea timer; Free For All: own teams.",
+    on_start = "Clock, compass, sea timer; Free For All: own teams; " ..
+               "voice to all by setting.",
     on_end = "Logs how long the round ran.",
     on_tick = "Holder speed by terrain, plus boost; man out: gun fills.",
     on_player_join = "A joiner hunts, on 0 points.",
