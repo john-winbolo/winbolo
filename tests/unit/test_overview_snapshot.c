@@ -274,7 +274,9 @@ static bool snapLgmOn(const screenLgm *lgms, BYTE x, BYTE y) {
 
 /* The filter as the renderer ran it before the fill took it over, kept here
  * as it was and against the renderer's own overviewEntityIsVisible, so the
- * lists the fill hands out can be checked against it entry for entry. */
+ * lists the fill hands out can be checked against it entry for entry. The one
+ * change since: a tank is asked about the square under its centre rather than
+ * the square its sprite starts in, which the fill's filter does too. */
 static void snapOldFilter(const OverviewMap *om, BYTE me, bool selfAlive,
                           const screenTanks *allTks, const screenLgm *allLgms,
                           const screenBullets *allSb, screenTanks *outTks,
@@ -295,8 +297,10 @@ static void snapOldFilter(const OverviewMap *om, BYTE me, bool selfAlive,
         screenTanksGetItem(allTks, count, &mx, &my, &px, &py, &frame,
                            &playerNum, name);
         bool isSelf = (playerNum == me);
+        BYTE cx = mx, cy = my;
         if (isSelf && !selfAlive) continue;
-        if (!overviewEntityIsVisible(om, mx, my)) continue;
+        screenTanksGetCentreSquare(allTks, count, &cx, &cy);
+        if (!overviewEntityIsVisible(om, cx, cy)) continue;
         screenTanksGetSubPixel(allTks, count, &wx, &wy, &angle);
         screenTanksAddItem(outTks, mx, my, px, py, frame, playerNum, name,
                            wx, wy, angle);
@@ -931,6 +935,104 @@ int run_overview_snapshot_removed_item_has_no_label(void) {
                       "the removed base still has a label at %u,%u",
                       (unsigned)bx, (unsigned)by);
     }
+
+    snapFixtureStop(&f);
+    return 0;
+}
+
+/* The player's own tank nosed into an inside corner of buildings, with line
+ * of sight on. The tank sits in the top left quarter of its square, so the
+ * square its sprite starts in is the corner block diagonally before it, which
+ * the sight mask rightly calls hidden: a square behind two walls. The square
+ * the tank is standing on is live, and that is the square the filter has to
+ * ask about. Before the fix the tank, and the reticle with it, vanished from
+ * the full screen map here. The corner block being hidden is asserted too, so
+ * the case is known to be the real one and not a corner the mask can see. */
+int run_overview_snapshot_corner_keeps_self(void) {
+    SnapFixture f;
+    const char *err = snapFixtureStart(&f, "Corner");
+    UT_ASSERT_MSG(err == NULL, "%s", err);
+
+    /* No pills, so nothing but the buildings put down here blocks sight. */
+    f.gs->pb->numPills = 0;
+    f.cs->lineOfSight = (uint8_t)lineOfSightBuildingsAndTrees;
+
+    UT_ASSERT_MSG(f.tankMX >= 2 && f.tankMY >= 2,
+                  "the tank landed at %u,%u, too near the map edge for a "
+                  "corner to its north west", (unsigned)f.tankMX,
+                  (unsigned)f.tankMY);
+    BYTE wallX = (BYTE)(f.tankMX - 1); /* The column to the west */
+    BYTE wallY = (BYTE)(f.tankMY - 1); /* The row to the north */
+    mapSetPos(f.gs, &f.gs->mp, wallX, f.tankMY, BUILDING, TRUE, TRUE);
+    mapSetPos(f.gs, &f.gs->mp, f.tankMX, wallY, BUILDING, TRUE, TRUE);
+    mapSetPos(f.gs, &f.gs->mp, wallX, wallY, BUILDING, TRUE, TRUE);
+    mapSetPos(f.gs, &f.gs->mp, f.tankMX, f.tankMY, GRASS, TRUE, TRUE);
+
+    /* Into the top left quarter of its square, facing north west, as a tank
+     * driven into the corner ends up. 100 world units in is short of the 128
+     * that puts the sprite's top left on the tank's own square. */
+    tankSetLocationData(&f.gs->tanks[f.me],
+                        (WORLD)(((WORLD)f.tankMX << TANK_SHIFT_MAPSIZE) + 100),
+                        (WORLD)(((WORLD)f.tankMY << TANK_SHIFT_MAPSIZE) + 100),
+                        (TURNTYPE)32, 0, FALSE);
+    {
+        BYTE mx = 0, my = 0;
+        UT_ASSERT_MSG(clientSimGetMyTankMapPos(f.cs, &mx, &my) == TRUE &&
+                          mx == f.tankMX && my == f.tankMY,
+                      "moving the tank inside its square changed its square to "
+                      "%u,%u", (unsigned)mx, (unsigned)my);
+    }
+
+    clientSimDisplayTick(f.cs, false);
+    clientSimFillOverviewSnapshot(f.cs, f.snap);
+
+    const OverviewMap *om = overviewSnapshotMap(f.snap);
+    UT_ASSERT_MSG(om != NULL, "the snapshot has no map");
+    UT_ASSERT_MSG(om->hiddenActive == TRUE,
+                  "line of sight is on and the tank is live, yet the map is "
+                  "not hiding anything");
+    UT_ASSERT_MSG((om->flags[wallX][wallY] & OVERVIEW_F_HIDDEN) != 0,
+                  "the corner block at %u,%u is not hidden (flags %02x), so "
+                  "this is not the case being pinned", (unsigned)wallX,
+                  (unsigned)wallY, (unsigned)om->flags[wallX][wallY]);
+    UT_ASSERT_MSG((om->flags[f.tankMX][f.tankMY] & OVERVIEW_F_LIVE) != 0,
+                  "the tank's own square is not live");
+
+    /* The whole-map list carries the tank on the corner block, which is the
+     * square that used to be tested. */
+    {
+        screenTanks   allTks;
+        screenLgm     allLgms;
+        screenBullets allSb;
+        BYTE listX = 0, listY = 0, cx = 0, cy = 0;
+
+        screenTanksCreate(&allTks);
+        screenLgmCreate(&allLgms);
+        allSb = screenBulletsCreate();
+        clientSimPrepareOverviewEntities(f.cs, &allTks, &allLgms, &allSb);
+        UT_ASSERT_MSG(snapFindTank(&allTks, f.me, &listX, &listY) == TRUE,
+                      "the whole-map list has no local tank");
+        UT_ASSERT_MSG(listX == wallX && listY == wallY,
+                      "the local tank is listed on %u,%u, expected the corner "
+                      "block %u,%u", (unsigned)listX, (unsigned)listY,
+                      (unsigned)wallX, (unsigned)wallY);
+        screenTanksGetCentreSquare(&allTks, 1, &cx, &cy);
+        UT_ASSERT_MSG(cx == f.tankMX && cy == f.tankMY,
+                      "the centre square reads %u,%u, expected %u,%u",
+                      (unsigned)cx, (unsigned)cy, (unsigned)f.tankMX,
+                      (unsigned)f.tankMY);
+        screenBulletsDestroy(&allSb);
+        screenLgmDestroy(&allLgms);
+        screenTanksDestroy(&allTks);
+    }
+
+    UT_ASSERT_MSG(snapFindTank(overviewSnapshotTanks(f.snap), f.me, NULL, NULL) == TRUE,
+                  "the local tank dropped off the full screen map in an "
+                  "inside corner");
+    UT_ASSERT_MSG(overviewSnapshotSelfDrawn(f.snap) == TRUE,
+                  "selfDrawn is false with the tank in an inside corner");
+    err = snapListsMatch(&f);
+    UT_ASSERT_MSG(err == NULL, "%s", err);
 
     snapFixtureStop(&f);
     return 0;
