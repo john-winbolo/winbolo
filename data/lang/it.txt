@@ -685,6 +685,9 @@ STR_MAPCHOOSER_LOADING_PREVIEW=Caricamento anteprima...
 
 # Map editor scenario panel
 STR_MAPEDIT_SCENARIO_NEEDS_BOTS=I bot devono essere consentiti: questo script aggiunge i propri bot
+STR_DLGABOUT_LICENCE=Licenza
+STR_DLGABOUT_LICENCE_NOTICE=Software libero, licenza GNU GPL v3 o successiva. Nessuna garanzia.
+STR_DLGABOUT_FILE_NOT_FOUND=File non trovato.
 
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Stato

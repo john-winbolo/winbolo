@@ -3,11 +3,15 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  */
 
-/* Everard Island compressed map data, shared by server and client. */
+/* Everard Island compressed map data, shared by server and client.
+ *
+ * The map itself is Bolo's original built-in map, copyright Stuart Cheshire,
+ * and is not covered by the GPL notice above; it is used with his permission.
+ * See "Bolo graphics and sounds" in THIRD_PARTY_NOTICES.md. */
 
 #ifndef EVERARD_MAP_H
 #define EVERARD_MAP_H

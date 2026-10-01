@@ -2,7 +2,7 @@
  * lv_scripts.h - the scripts and rule changes a recording carries
  *
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * The recording's scripts.json holder, its log_RuleSet list, and the
  * accessors that read them at the playhead.

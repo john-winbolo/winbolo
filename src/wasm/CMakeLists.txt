@@ -558,6 +558,12 @@ target_link_options(winbolo PRIVATE
     "SHELL:--preload-file ${PRELOAD_DIR}/EverardIsland.map@/data/EverardIsland.map"
     "SHELL:--preload-file ${PRELOAD_DIR}/InbuiltTutorial.map@/data/InbuiltTutorial.map"
     "SHELL:--preload-file ${REPO_ROOT}/brains/GoalHunter_1.7@/Brains/GoalHunter_1.7"
+    # The licence and its additional permissions, which every copy of the
+    # program has to carry, and the About-box docs beside them in /data.
+    "SHELL:--preload-file ${REPO_ROOT}/LICENSE@/data/LICENSE"
+    "SHELL:--preload-file ${REPO_ROOT}/LICENSE-EXCEPTION.md@/data/LICENSE-EXCEPTION.md"
+    "SHELL:--preload-file ${REPO_ROOT}/THIRD_PARTY_NOTICES.md@/data/THIRD_PARTY_NOTICES.md"
+    "SHELL:--preload-file ${REPO_ROOT}/AUTHORS.md@/data/AUTHORS.md"
     # _malloc/_free + the string/value helpers are used by prefs_bridge_wasm.c's
     # EM_ASYNC_JS fetch transport to hand response bodies back to C.
     "SHELL:-sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_wbWasmWheel','_wbWasmResetHeldKeys']"
@@ -607,6 +613,15 @@ if(BROTLI_EXE AND GZIP_EXE)
         list(APPEND _wasm_dist_cmds COMMAND ${BROTLI_EXE} -f -k -q 11 "${_a}")
         list(APPEND _wasm_dist_cmds COMMAND ${GZIP_EXE} -f -k -9 "${_a}")
         list(APPEND _wasm_dist_zip_files "${_a}" "${_a}.br" "${_a}.gz")
+    endforeach()
+
+    # The licence files are served beside the page as plain text, so they
+    # are copied in rather than precompressed.
+    set(_wasm_dist_licence_files LICENSE LICENSE-EXCEPTION.md THIRD_PARTY_NOTICES.md)
+    foreach(_l IN LISTS _wasm_dist_licence_files)
+        list(APPEND _wasm_dist_cmds
+             COMMAND ${CMAKE_COMMAND} -E copy_if_different "${REPO_ROOT}/${_l}" "${_l}")
+        list(APPEND _wasm_dist_zip_files "${_l}")
     endforeach()
 
     add_custom_target(wasm-dist

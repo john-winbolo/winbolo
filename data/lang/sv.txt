@@ -685,6 +685,9 @@ STR_MAPCHOOSER_LOADING_PREVIEW=Laddar förhandsvisning...
 
 # Map editor scenario panel
 STR_MAPEDIT_SCENARIO_NEEDS_BOTS=Kräver tillåtna bottar: det här skriptet lägger till egna bottar
+STR_DLGABOUT_LICENCE=Licens
+STR_DLGABOUT_LICENCE_NOTICE=Fri programvara under GNU GPL v3 eller senare. Ingen garanti.
+STR_DLGABOUT_FILE_NOT_FOUND=Filen hittades inte.
 
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Status
