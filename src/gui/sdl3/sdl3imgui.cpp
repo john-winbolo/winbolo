@@ -432,6 +432,9 @@ static SDL_Texture *s_iconSpeaker[ICON_SLOT_COUNT]      = {};
 static SDL_Texture *s_iconMic[ICON_SLOT_COUNT]          = {};
 static SDL_Texture *s_iconMicMuted[ICON_SLOT_COUNT]     = {};
 static SDL_Texture *s_iconMicOff[ICON_SLOT_COUNT]       = {};
+/* The own row with voice switched off on this client: a separate icon from
+ * no microphone, because the fix is different — a setting, not a device. */
+static SDL_Texture *s_iconMicDisabled[ICON_SLOT_COUNT]  = {};
 static SDL_Texture *s_iconSpeakerMuted[ICON_SLOT_COUNT] = {};
 /* The local player's slot, read once a frame in sdl3ImguiPumpAndRender — the
  * only place here with a ClientSim to ask. PLAYER_SELF_UNKNOWN rather than 0
@@ -543,6 +546,7 @@ static void ensureWbnIconsLoaded(void) {
     s_iconMic[slot]          = imguiLoadSvgIconWhite(r, "data/ui/mic.svg",           WBN_ICON_RASTER_PX);
     s_iconMicMuted[slot]     = imguiLoadSvgIconWhite(r, "data/ui/mic-muted.svg",     WBN_ICON_RASTER_PX);
     s_iconMicOff[slot]       = imguiLoadSvgIconWhite(r, "data/ui/mic-off.svg",       WBN_ICON_RASTER_PX);
+    s_iconMicDisabled[slot]  = imguiLoadSvgIconWhite(r, "data/ui/mic-disabled.svg",  WBN_ICON_RASTER_PX);
     s_iconSpeakerMuted[slot] = imguiLoadSvgIconWhite(r, "data/ui/speaker-muted.svg", WBN_ICON_RASTER_PX);
 #endif
     /* Renderer-free, so they are loaded once for every slot rather than
@@ -766,6 +770,7 @@ static void destroyIconSlot(int slot) {
     if (s_iconMic[slot]) { SDL_DestroyTexture(s_iconMic[slot]); s_iconMic[slot] = nullptr; }
     if (s_iconMicMuted[slot]) { SDL_DestroyTexture(s_iconMicMuted[slot]); s_iconMicMuted[slot] = nullptr; }
     if (s_iconMicOff[slot]) { SDL_DestroyTexture(s_iconMicOff[slot]); s_iconMicOff[slot] = nullptr; }
+    if (s_iconMicDisabled[slot]) { SDL_DestroyTexture(s_iconMicDisabled[slot]); s_iconMicDisabled[slot] = nullptr; }
     if (s_iconSpeakerMuted[slot]) { SDL_DestroyTexture(s_iconSpeakerMuted[slot]); s_iconSpeakerMuted[slot] = nullptr; }
 #endif
     s_wbnIconsLoaded[slot] = false;
@@ -10361,6 +10366,10 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
        until it round-tripped, and never at all on a connection that carries no
        voice. */
     if (isSelf) selfMuted = voiceIsSelfMuted();
+    /* Voice switched off here also clears PLAYER_FLAG_HAS_MIC, so without
+       this the own row would say there is no microphone when the reason is
+       the setting. Local truth, like selfMuted above. */
+    bool voiceOff = isSelf && !voiceIsEnabled();
 
     if (!inLobby && !isSelf && !hasMic && !mutedByMe) {
         /* In game, a remote player who has no microphone is not worth a
@@ -10396,6 +10405,10 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
         micTip  = mutedTalking ? STR_PLAYER_TIP_VOICE_MUTEDBYYOU_TALKING
                                : STR_PLAYER_TIP_VOICE_MUTEDBYYOU;
         micPulseFill = mutedTalking;
+    } else if (voiceOff) {
+        micTex  = s_iconMicDisabled[iconSlot];
+        micTint = MIC_TINT_DIM;
+        micTip  = STR_DLGLOBBY_VOICE_OFF;
     } else if (!hasMic) {
         micTex  = s_iconMicOff[iconSlot];
         micTint = MIC_TINT_DIM;
@@ -10443,8 +10456,9 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
         /* An SVG that would not load must still hold the column, or
          * the name and ping shift between rows. */
         ImGui::Dummy(ImVec2(size, size));
-    } else if (isSelf && !hasMic) {
-        /* Not clickable without a microphone: there is nothing to gate.
+    } else if (isSelf && (!hasMic || voiceOff)) {
+        /* Not clickable without a microphone or with voice off: there is
+         * nothing to gate.
          * The clickable branch below toggles a local transmit gate, not
          * the mute the server rejects against yourself. */
         ImGui::ImageWithBg((ImTextureID)micTex, ImVec2(size, size),
