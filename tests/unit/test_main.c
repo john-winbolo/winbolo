@@ -1484,6 +1484,7 @@ static const UnitTestEntry s_tests[] = {
     { "lobby_map_keeps_bots_scenario",           run_lobby_map_keeps_bots_scenario           },
     { "lobby_map_keeps_bots_map_own_row",        run_lobby_map_keeps_bots_map_own_row        },
     { "lobby_map_rotate_holds_seats_again",      run_lobby_map_rotate_holds_seats_again      },
+    { "scenario_map_rotation_redecides",         run_scenario_map_rotation_redecides         },
     { "lobby_script_keeps_bots_mod",             run_lobby_script_keeps_bots_mod             },
     { "lobby_script_keeps_bots_swap",            run_lobby_script_keeps_bots_swap            },
     { "scripted_game_type_loadout_follows_base",

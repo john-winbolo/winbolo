@@ -2997,6 +2997,9 @@ int run_lobby_map_keeps_bots_plain(void);
 int run_lobby_map_keeps_bots_scenario(void);
 int run_lobby_map_keeps_bots_map_own_row(void);
 int run_lobby_map_rotate_holds_seats_again(void);
+/* A map rotation decides the scenario again: a plain map leaves none
+ * attached, and the scripted map brings its own back. */
+int run_scenario_map_rotation_redecides(void);
 /* And a script pick, which keeps the host's bots unless the script lays out
  * a lobby of its own. */
 int run_lobby_script_keeps_bots_mod(void);
