@@ -4488,6 +4488,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # clip-time fit resolves base cells from the log's own snapshots
     # (test_lv_calibration.c).
     tests/unit/test_lv_calibration.c
+    # Replay camera range: the load's 127,127 default, a highlight jump, a
+    # grid that grew and the raw setter all keep the view's far edge at 255
+    # on a grid wider than half the map (test_lv_camera.c).
+    tests/unit/test_lv_camera.c
     # On-demand generator for the committed real ring-seed fixture
     # (spectator_seed.bin): captures a ServerSim ring keyframe with no trailing
     # data for test_spec_seed_load_real (test_spectator_seed_capture.c).
@@ -5199,6 +5203,11 @@ set(_unit_test_names
     lv_logged_name_from_join_event
     lv_game_settings_from_walk
     lv_game_settings_absent
+    lv_camera_load_fits_wide_grid
+    lv_camera_centre_on_cell_stays_on_map
+    lv_camera_resize_and_set_offset_clamp
+    lv_camera_mouse_centre_click_stays_on_map
+    lv_camera_arrow_nudge_stays_on_map
     blocks_stream
     stream_load
     stream_pump
