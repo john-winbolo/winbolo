@@ -2663,9 +2663,9 @@ end
 -- The new holder's boost as a factor on their carry speed: BOOST_MULT for
 -- BOOST_SECONDS, then falling in a straight line to 1 over
 -- BOOST_DECAY_SECONDS, then 1. game.tick() counts 100 a second. Over the
--- BOOST_SECONDS road_lift has the slow ground at road speed, so carry_legs
--- reads a road's cap there and the factor goes on that; the fade is on the
--- ground's own cap again.
+-- BOOST_SECONDS road_lift has the slow ground at road speed, and carry_legs
+-- drives it as a road (the road's cap and share) with the factor on that; the
+-- fade is on the ground's own cap and share again.
 local function boost_now()
   if boost_from == nil then
     return 1
@@ -2693,10 +2693,17 @@ end
 --
 -- A boost multiplies the share, and the same band makes the fraction of the
 -- boosted share, so it is kept to within a saved-up move too.
+--
+-- Ground that road_lift has put at road speed is driven as a road: the road's
+-- rule and the road's share, not the ground's own share of the lifted cap.
+-- Ground the lift left alone (already at or over a road) keeps its own row.
 local function carry_legs(p, t)
   local boost = boost_now()
   local pct = math.min(SPEED_MOD_MAX, whole(CARRY_SPEED_OTHER * boost))
   local row = carry_ground(t)
+  if row and road_lift.saved ~= nil and road_lift.saved[row.rule] ~= nil then
+    row = carry_by_code[game.TERRAIN.road]
+  end
   local cap = row and game.rule(row.rule) or 0
   if cap > 0 then
     local share = cap * row.pct / 100 * boost
