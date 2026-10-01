@@ -600,6 +600,11 @@ target_link_options(winbolo PRIVATE
     "SHELL:--shell-file ${CMAKE_CURRENT_SOURCE_DIR}/shell.html"
     -sFORCE_FILESYSTEM=1
     -sASYNCIFY=1
+    # Lua and the brain C code never wait on a frame or a fetch, but ASYNCIFY
+    # instruments every function that makes an indirect call, which takes in
+    # the whole Lua VM and slows every think. Only src/wasm and SDL's present
+    # suspend, and no Lua binding reaches them.
+    "SHELL:-sASYNCIFY_REMOVE=['lua*','brainPathfinder*','wsim_*','cpf_*']"
     # The menus nest deeper blocking loops (menu -> settings -> key setup)
     # than the default 4096-byte ASYNCIFY stack holds.
     "-sASYNCIFY_STACK_SIZE=65536"
