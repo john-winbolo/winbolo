@@ -5478,6 +5478,7 @@ set(_unit_test_names
     overview_snapshot_filter
     overview_snapshot_generation
     overview_snapshot_removed_item_has_no_label
+    overview_snapshot_corner_keeps_self
     mapview_sprite_classic
     mapview_sprite_ladder
     mapview_sprite_shell_tip

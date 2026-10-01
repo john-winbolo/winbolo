@@ -953,6 +953,7 @@ static const UnitTestEntry s_tests[] = {
     { "overview_snapshot_filter",                run_overview_snapshot_filter                },
     { "overview_snapshot_generation",            run_overview_snapshot_generation            },
     { "overview_snapshot_removed_item_has_no_label", run_overview_snapshot_removed_item_has_no_label },
+    { "overview_snapshot_corner_keeps_self",     run_overview_snapshot_corner_keeps_self     },
     { "mapview_sprite_classic",                  run_mapview_sprite_classic                  },
     { "mapview_sprite_ladder",                   run_mapview_sprite_ladder                   },
     { "mapview_sprite_shell_tip",                run_mapview_sprite_shell_tip                },
