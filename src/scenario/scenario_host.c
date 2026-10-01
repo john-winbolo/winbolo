@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /*********************************************************
@@ -144,6 +144,12 @@ BOLO_STATIC_ASSERT(SCN_SCRIPTS_MAX == LOBBY_SCRIPT_LIST_MAX,
  * scenario_io sizes without seeing this header. */
 BOLO_STATIC_ASSERT(SCN_SCRIPTS_MAX == SCN_RECORD_SCRIPTS_MAX,
                    record_describes_every_script_a_round_composes);
+
+/* A panel carries its script's position in four bits and a client keeps a
+ * list for SCN_PANEL_OWNERS of them (scenario_panel.h), so every script a
+ * host can compose has to fit both. */
+BOLO_STATIC_ASSERT(SCN_SCRIPTS_MAX <= SCN_PANEL_OWNERS && SCN_PANEL_OWNERS <= 16,
+                   every_script_can_own_a_panel);
 
 /* A team's brain becomes the path a spawn carries, and the manifest sizes the
  * name without seeing the op. Held against the op's own length here, because
@@ -6550,6 +6556,17 @@ typedef struct {
 static ScnMapScriptCache scnMapScriptCache;
 
 bool scenarioHostMapHasScript(const char *mapPath) {
+    /* What the tag means is that picking this map here runs its script, so a
+       process with scripts off answers no for every map: the attach would
+       refuse the file and the map would play plain. Without this the chooser
+       marks maps Scripted on a server that will not run one. */
+    if (!scnEnabled) {
+        return false;
+    }
+    return scenarioHostMapCarriesScript(mapPath);
+}
+
+bool scenarioHostMapCarriesScript(const char *mapPath) {
     char         script[SCN_SCRIPT_PATH_MAX];
     SDL_PathInfo info;
     SDL_PathInfo looseInfo;
@@ -6559,13 +6576,6 @@ bool scenarioHostMapHasScript(const char *mapPath) {
     bool         answer;
 
     if (mapPath == NULL || mapPath[0] == '\0') {
-        return false;
-    }
-    /* What the tag means is that picking this map here runs its script, so a
-       process with scripts off answers no for every map: the attach would
-       refuse the file and the map would play plain. Without this the chooser
-       marks maps Scripted on a server that will not run one. */
-    if (!scnEnabled) {
         return false;
     }
     /* Nothing to key a row on, or nowhere to keep it: the question is

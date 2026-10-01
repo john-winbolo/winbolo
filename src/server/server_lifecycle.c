@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 #include <stdio.h>
@@ -53,12 +56,6 @@
  * serverLifecycleSetRoundLogHooks. NULL on every other binary that
  * links server_static, so the lifecycle's stash/flush calls become
  * no-ops there. */
-/* Adapter: serverSimEmitBrainAnnounces hands each event to a deliver
- * callback; the return-to-lobby path wants them on the broadcast bus. */
-static void serverSimPublishBrainAnnounceCb(void *ctx, const ControlEvent *evt) {
-  serverSimPublishControl((ServerSim *)ctx, evt);
-}
-
 static void (*s_roundLogStash)(void) = NULL;
 static void (*s_roundLogFlush)(void) = NULL;
 
@@ -816,6 +813,68 @@ static void serverLifecycleStartBrainDebugSession(ServerSim *sim) {
   serverLifecycleOpenBraindbgBlock(sim);
 }
 
+/* The network server's work that sits between two steps of the shared
+ * lobby and round sequence (serverSimLocalTick). Each runs under the tick
+ * mutex, on the tick that crosses its edge, before the sim step it names. */
+
+/* Game ended → finalize this game's recording so the .btr is complete on
+ * disk; clearing the flag makes the next game open a fresh dir (the
+ * map-rotate restart re-enters running on a later tick). */
+static void lifecycleBeforeGameOver(ServerSim *sim, void *ctx) {
+  (void)sim;
+  (void)ctx;
+  if (s_braindbgSessionOpen) {
+    brainRecordEndGame();
+    s_braindbgSessionOpen = false;
+  }
+}
+
+/* Countdown finished — game started.  Reset per-client and per-slot
+ * transport state before the RUNNING publish, so the codec encodes
+ * PACKET_GAME_START against fresh queues. */
+static void lifecycleBeforeGameStart(ServerSim *sim, void *ctx) {
+  (void)ctx;
+  transportUdpServerOnGameStart(sim);
+}
+
+/* Back from a round, before the lobby republish. */
+static void lifecycleBeforeReturnToLobby(ServerSim *sim, void *ctx) {
+  (void)ctx;
+  /* Flush remaining WBN events (win, final kills, etc.) */
+  winbolonetServerUpdate(serverSimGetNumPlayers(sim),
+                         serverSimGetNumNeutralBases(sim),
+                         serverSimGetNumNeutralPills(sim), TRUE);
+  /* Pick next map from rotation if mapdir is configured */
+  if (sim->mapDirFiles != NULL) {
+    serverSimMapDirPickRandom(sim);
+  }
+  /* End the round's WBN session, upload the round log against the
+   * just-quit key (WBN rejects uploads to an active session), then
+   * register a fresh session for the next round. handleGameOver already
+   * stashed the round's filename when the GAME_OVER phase fired; the
+   * flush is a no-op when there's nothing pending or when WBN is offline.
+   *
+   * All three are queued for the worker rather than sent here. It sends
+   * them in the order they were queued, which is the order WinBolo.net
+   * needs — quit before the upload, upload before the key swap — and
+   * none of the three costs this tick anything.
+   *
+   * The rotation window stays open. serverLifecycleWbnResult closes it
+   * when the register result lands, and does the rekey broadcast and the
+   * lock re-send there too. With no register queued there is no result
+   * coming, so the window closes in the helper instead. A register
+   * still out from the previous round defers all three until it
+   * answers. */
+  serverLifecycleQueueRotation(sim);
+}
+
+static const ServerSimLocalTickHooks s_localTickHooks = {
+  NULL,
+  lifecycleBeforeGameOver,
+  lifecycleBeforeGameStart,
+  lifecycleBeforeReturnToLobby,
+};
+
 void serverInstanceTick(ServerSim *sim) {
   /* Measure the entire tick wall-clock — outside the mutex acquire so
    * the EWMA captures contention wait time too. Single bottom-of-function
@@ -848,7 +907,8 @@ void serverInstanceTick(ServerSim *sim) {
    * that has to run on this thread, before the sim does. */
   winbolonetThreadDrainResults(serverLifecycleWbnResult, sim);
 
-  if (sim->state == serverStateRunning) {
+  ServerState preTickState = sim->state;
+  if (preTickState == serverStateRunning) {
     /* First running tick of this game → open a fresh recording session
      * (deferred from startup so lobby/countdown time is excluded and the
      * timeline anchors at this game's tick 0). Runs before serverSimBotTick so
@@ -888,53 +948,21 @@ void serverInstanceTick(ServerSim *sim) {
         serverLifecycleOpenBraindbgBlock(sim);
       }
     }
-    /* Run brain AI bots — queues two InputPackets per bot (keys + game) */
-    if (serverSimGetNumBots(sim) > 0) {
-      serverSimBotTick(sim, sim->botAiType);
-    }
-    /* Advance the sim by one 20ms frame.  serverSimTick internally runs
-     * the keys-tick + game-tick pair and accumulates events from both
-     * half-steps into a single frame's worth of state, so the prior
-     * save/restore dance is no longer needed here.  The half-step split
-     * is private to server_sim.c. */
-    ServerState preTickState = sim->state;
-    Uint64 simStart = SDL_GetPerformanceCounter();
-    serverSimTick(sim);
-    Uint64 simEnd = SDL_GetPerformanceCounter();
-    /* If game ended during this tick, publish game-over events */
-    if (preTickState == serverStateRunning && sim->state == serverStateGameOver) {
-      /* Game ended → finalize this game's recording so the .btr is complete on
-       * disk; clearing the flag makes the next game open a fresh dir (the
-       * map-rotate restart below re-enters running on a later tick). */
-      if (s_braindbgSessionOpen) {
-        brainRecordEndGame();
-        s_braindbgSessionOpen = false;
-      }
-      /* Decide the win/exit message and WBN crediting. The policy lives in
-       * the sim core (serverSimResolveGameOver) so the dedicated server and
-       * the in-process SP/host both resolve a game over identically. */
-      serverSimResolveGameOver(sim);
-      {
-        ControlEvent phaseEvt;
-        ControlEvent overEvt;
-        memset(&phaseEvt, 0, sizeof(phaseEvt));
-        phaseEvt.type = CTRL_GAME_PHASE_GAME_OVER;
-        serverSimPublishControl(sim, &phaseEvt);
-        memset(&overEvt, 0, sizeof(overEvt));
-        overEvt.type = CTRL_GAME_OVER;
-        serverSimPublishControl(sim, &overEvt);
-      }
-      /* Ship the round's scoreboard + awards while the accumulator is still
-       * intact (returnToLobby clears it later). This path runs only for a
-       * round that actually reached game-over. */
-#if POSTGAME_STATS_ENABLED
-      {
-        ControlEvent rsEvt;
-        rsEvt.type = CTRL_ROUND_STATS;
-        serverSimBuildRoundStatsSummary(sim, &rsEvt.u.roundStats);
-        serverSimPublishControl(sim, &rsEvt);
-      }
-#endif
+  }
+
+  /* The lobby and round sequence: the bot tick and sim tick with the
+   * game-over edge in the running state; the sim tick, balance proposal,
+   * countdown and game-start edges, return-to-lobby edge, slot heartbeat
+   * and bot-config publishes in every other state. Shared with the browser
+   * client's local tick so the two cannot drift. The network work that has
+   * to sit between its steps rides in the hooks above; the work that
+   * follows an edge is keyed off the edge it returns. */
+  double simMs = 0.0;
+  ServerLocalEdge edge = serverSimLocalTick(sim, transportUdpServerGetTickCount(),
+                                            &s_localTickHooks, &simMs);
+
+  if (preTickState == serverStateRunning) {
+    if (edge == serverLocalEdgeGameOver) {
       /* No-lobby map rotation: a win boots everyone and restarts a fresh
        * round here, inside the tick, so sim->state leaves gameOver before
        * the main loop's exit check observes it — the server never quits. */
@@ -947,8 +975,6 @@ void serverInstanceTick(ServerSim *sim) {
         transportUdpServerDrainEvents(sim);
       }
     }
-    double simFreq = (double)SDL_GetPerformanceFrequency();
-    double simMs = (double)(simEnd - simStart) * 1000.0 / simFreq;
     serverLifecycleRecordSimMs(simMs);
     /* Send snapshots only if still running */
     if (sim->state == serverStateRunning) {
@@ -957,194 +983,34 @@ void serverInstanceTick(ServerSim *sim) {
       }
     }
   } else {
-    /* Lobby/countdown/gameover: single tick for state machine processing */
-    ServerState preTickState = sim->state;
-    serverSimTick(sim);
-
-    /* Check if a balance proposal just completed */
-    if (sim->balanceProposal.broadcastNeeded) {
-      ControlEvent evt;
-      memset(&evt, 0, sizeof(evt));
-      evt.type = CTRL_BALANCE_PROPOSAL;
-      memcpy(evt.u.balanceProposal.teamForSlot,
-             sim->balanceProposal.teamForSlot, MAX_TANKS);
-      serverSimPublishControl(sim, &evt);
-      sim->balanceProposal.broadcastNeeded = false;
-    }
-
-    /* Handle state transitions */
-    if (preTickState == serverStateCountdown) {
-      if (sim->state == serverStateRunning) {
-        /* Countdown finished — game started.  Reset per-client and
-         * per-slot transport state before publishing the RUNNING
-         * transition so the codec encodes PACKET_GAME_START against
-         * fresh queues. */
-        transportUdpServerOnGameStart(sim);
-        {
-          ControlEvent evt;
-          memset(&evt, 0, sizeof(evt));
-          evt.type = CTRL_GAME_PHASE_RUNNING;
-          serverSimPublishControl(sim, &evt);
-        }
-        /* The table this round runs on has already been stated: the tick
-         * that ended the countdown ran serverSimStartGame, which publishes
-         * it at the end of every start. */
-        if (serverSimGetNumBots(sim) > 0) {
-          botManagerOnGameStart(sim);
-        }
-        /* Re-assert team alliances now that (a) the reliable queues were
-         * reset above — discarding the CTRL_ALLIANCE_RESET the start
-         * sequence published, which left remote clients rendering their
-         * own teammates as enemies — and (b) botManagerOnGameStart just
-         * rebuilt the bot ClientSims, whose alliance matrices start
-         * empty. One republish + direct bot sync fixes both sides. */
-        serverSimReapplyTeamAlliances(sim);
-        /* Notify WBN that we are now in-game */
-        winbolonetSendLobbyStatus(FALSE);
-        /* Send EVENT_PLAYER_JOIN for each connected WBN player */
-        {
-          BYTE pi;
-          for (pi = 0; pi < MAX_TANKS; pi++) {
-            if (sim->playerConnected[pi] &&
-                winboloNetIsPlayerParticipant(pi)) {
-              winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
-                                 pi, WINBOLO_NET_NO_PLAYER, FALSE, FALSE);
-            }
-          }
-        }
-        /* Force a snapshot to every client in the same tick as the
-         * RUNNING publish above. The running-state branch's periodic
-         * transportUdpServerSend fires on the NEXT tick (~20ms), so
-         * without this push the client receives CTRL_GAME_PHASE_RUNNING,
-         * flips inLobby=false, and renders its (stale, round-1) MY_TANK
-         * for a frame before the first authoritative snapshot lands.
-         * serverSendSnapshot drains the per-client control queue into
-         * the same packet, so RUNNING and the fresh tank state arrive
-         * bundled — pairs with the client's hasPredictedTank=FALSE
-         * reset on LOBBY to make that first snapshot run the init
-         * branch (stocks, camera centre). */
-        if (instanceAcceptRemoteClients) {
-          transportUdpServerSend(sim);
-        }
-      } else if (sim->state == serverStateCountdown &&
-                 sim->countdownTicks > 0 &&
-                 sim->countdownTicks % 50 == 0) {
-        /* Broadcast countdown tick (once per second) */
-        uint8_t secs = (uint8_t)((sim->countdownTicks + 49) / 50);
-        ControlEvent evt;
-        memset(&evt, 0, sizeof(evt));
-        evt.type = CTRL_GAME_PHASE_COUNTDOWN;
-        evt.u.gamePhase.countdownSeconds = secs;
-        serverSimPublishControl(sim, &evt);
-      }
-    }
-    if (preTickState == serverStateGameOver &&
-        sim->state == serverStateLobby) {
-      /* Flush remaining WBN events (win, final kills, etc.) */
-      winbolonetServerUpdate(serverSimGetNumPlayers(sim),
-                             serverSimGetNumNeutralBases(sim),
-                             serverSimGetNumNeutralPills(sim), TRUE);
-      /* Pick next map from rotation if mapdir is configured */
-      if (sim->mapDirFiles != NULL) {
-        serverSimMapDirPickRandom(sim);
-      }
-      /* End the round's WBN session, upload the round log against the
-       * just-quit key (WBN rejects uploads to an active session), then
-       * register a fresh session for the next round. handleGameOver already
-       * stashed the round's filename when the GAME_OVER phase fired; the
-       * flush is a no-op when there's nothing pending or when WBN is offline.
-       *
-       * All three are queued for the worker rather than sent here. It sends
-       * them in the order they were queued, which is the order WinBolo.net
-       * needs — quit before the upload, upload before the key swap — and
-       * none of the three costs this tick anything.
-       *
-       * The rotation window stays open. serverLifecycleWbnResult closes it
-       * when the register result lands, and does the rekey broadcast and the
-       * lock re-send there too. With no register queued there is no result
-       * coming, so the window closes in the helper instead. A register
-       * still out from the previous round defers all three until it
-       * answers. */
-      serverLifecycleQueueRotation(sim);
-      /* Republish the bot brain catalogue.  Mid-game joiners were gated
-       * out of the BrainList during their sync replay (see
-       * serverSimSyncSubscriber), so they need it now before the lobby
-       * UI's AiConfig combobox appears.  In-lobby clients get it as a
-       * (cheap) refresh. */
-      {
-        ControlEvent evt;
-        memset(&evt, 0, sizeof(evt));
-        serverSimFillLobbyBrainListEvent(sim, &evt);
-        serverSimPublishControl(sim, &evt);
-        /* ... and the brains' announce lines that go with it, so the
-         * returning lobby can announce a bot's brain the same way a fresh
-         * join does. The refresh first: this seam between rounds is where an
-         * operator would have edited a brain's texts, and it is off the tick
-         * path, so a re-read costs nothing anybody feels. Docs that changed
-         * get a new generation here, which tells each client to drop the
-         * copy it holds. */
-        serverSimRefreshBrainDocs(sim);
-        serverSimEmitBrainAnnounces(sim, serverSimPublishBrainAnnounceCb, sim);
-      }
-      /* Republish lobby state so every client's mirror reflects the
-       * fresh lobby. serverSimReturnToLobby's contract says the caller
-       * does this fan-out; CTRL_GAME_PHASE_LOBBY alone doesn't carry
-       * the inLobby flag or per-slot data, so without these the host's
-       * own UDP loopback ClientSim leaves cs->inLobby false and never
-       * opens the lobby dialog — the window looks frozen because there
-       * is no game view either. */
-      serverSimPublishLobbySettings(sim);
+    if (edge == serverLocalEdgeGameStart) {
+      /* Notify WBN that we are now in-game */
+      winbolonetSendLobbyStatus(FALSE);
+      /* Send EVENT_PLAYER_JOIN for each connected WBN player */
       {
         BYTE pi;
-        /* Republish EVERY slot, not just connected ones. A player who
-         * left mid-round had their CTRL_LOBBY_SLOT suppressed — the
-         * leave-time publish is gated to lobby/countdown state
-         * (transport_udp_server.c PACKET_QUIT), so a running-state quit
-         * never told clients to clear that slot. The client's lobbySlots
-         * mirror is only mutated by CTRL_LOBBY_SLOT (CTRL_PLAYER_LEAVE is
-         * chat-only), so without this the departed player lingers as a
-         * ghost in the returning lobby. A vacant slot fills as
-         * connected=false (serverSimFillLobbySlotEvent), which clears it. */
         for (pi = 0; pi < MAX_TANKS; pi++) {
-          serverSimPublishLobbySlot(sim, pi);
+          if (sim->playerConnected[pi] &&
+              winboloNetIsPlayerParticipant(pi)) {
+            winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
+                               pi, WINBOLO_NET_NO_PLAYER, FALSE, FALSE);
+          }
         }
       }
-      /* Send the win message now that players are back in the lobby */
-      if (sim->pendingWinMessage[0] != '\0') {
-        transportUdpServerSendServerMessage(sim->pendingWinMessage);
-        sim->pendingWinMessage[0] = '\0';
+      /* Force a snapshot to every client in the same tick as the
+       * RUNNING publish. The running-state branch's periodic
+       * transportUdpServerSend fires on the NEXT tick (~20ms), so
+       * without this push the client receives CTRL_GAME_PHASE_RUNNING,
+       * flips inLobby=false, and renders its (stale, round-1) MY_TANK
+       * for a frame before the first authoritative snapshot lands.
+       * serverSendSnapshot drains the per-client control queue into
+       * the same packet, so RUNNING and the fresh tank state arrive
+       * bundled — pairs with the client's hasPredictedTank=FALSE
+       * reset on LOBBY to make that first snapshot run the init
+       * branch (stocks, camera centre). */
+      if (instanceAcceptRemoteClients) {
+        transportUdpServerSend(sim);
       }
-    }
-
-    /* Periodic lobby-slot republish so the ping column in the lobby
-     * UI tracks live values instead of freezing between unrelated
-     * slot changes (ready toggle, bot config, etc.). CTRL_LOBBY_SLOT
-     * carries pingMs; without this heartbeat a quiet lobby shows the
-     * value from whenever someone last clicked something. 250 ticks
-     * at 50 Hz is ~5 s, well under the perceptible-staleness window
-     * and far below the wire cost the queue can absorb. Skipped in
-     * running state — snapshots already carry pingMs per tick there. */
-    if (transportUdpServerGetTickCount() % 250 == 0 &&
-        (sim->state == serverStateLobby ||
-         sim->state == serverStateCountdown)) {
-      BYTE pi;
-      for (pi = 0; pi < MAX_TANKS; pi++) {
-        if (sim->playerConnected[pi]) {
-          serverSimPublishLobbySlot(sim, pi);
-        }
-      }
-    }
-
-    /* Bot-config events queued by serverSimApplyNewBotDefaults — a freshly
-     * added or seeded bot's mode and difficulty — sent a couple per tick
-     * instead of inside the add. A scenario seeds ten bots in one call stack
-     * while no client ack can be read; ten more events there would grow the
-     * burst that once overran a client's 64-event reliable window and
-     * dropped the host. Runs for single player too: its timer drives this
-     * same function. */
-    if (sim->state == serverStateLobby ||
-        sim->state == serverStateCountdown) {
-      serverSimFlushBotConfigPublishes(sim);
     }
 
     /* Timeout check — not called via transportUdpServerSend() during lobby */

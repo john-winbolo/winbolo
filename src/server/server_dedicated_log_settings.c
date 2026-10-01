@@ -2,7 +2,7 @@
  * server_dedicated_log_settings.c - the log_GameSettings blob writer
  *
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * Split out of server_dedicated_log.c so a unit test can drive the real
  * writer without linking the log file's lifecycle — the round stash, the

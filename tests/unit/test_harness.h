@@ -237,6 +237,12 @@ int run_manual_vote_countdown_survives_lost_base(void);
 int run_surrender_credits_the_opposing_team(void);
 int run_win_during_manual_countdown_resolves_as_vote(void);
 int run_abandoned_round_reports_nothing(void);
+/* The returning lobby's win message (test_lobby_return_win_message.c).
+ * serverSimLocalOnReturnToLobby sends a pending win message once, to
+ * everyone, clears it and republishes the lobby; a message over the wire's
+ * cap is cut on a character boundary and ends in "...". */
+int run_lobby_return_sends_win_message(void);
+int run_lobby_return_cuts_long_win_message(void);
 int run_round_stats_zeroed_on_fresh_sim(void);
 int run_round_stats_kill_basic(void);
 int run_round_stats_drown_not_suicide(void);
@@ -368,6 +374,12 @@ int run_visibility_preset_round_trip(void);
 int run_visibility_preset_custom(void);
 int run_visibility_preset_ignores_decay(void);
 int run_visibility_preset_pref_words(void);
+int run_scn_panel_popout_row(void);
+int run_scn_panel_yes_no(void);
+int run_scn_panel_rescue(void);
+int run_scn_panel_prefs_sections(void);
+int run_client_scn_panel_owners(void);
+int run_scn_arm_panel_owners(void);
 int run_info_packet_view_policy_layout(void);
 int run_info_packet_preset_round_trip(void);
 int run_info_packet_absent_views_read_classic(void);
@@ -497,6 +509,8 @@ int run_wbn_serverlist_scripts(void);
 int run_wbn_map_parse(void);
 int run_brain_crash_log_writes_file(void);
 int run_brain_crash_log_falls_back_to_luaptr(void);
+int run_brain_msgh_budget_kill_no_traceback(void);
+int run_brain_msgh_real_error_keeps_traceback(void);
 int run_brain_inbox_push_peek_fifo(void);
 int run_brain_inbox_overflow_drops_oldest(void);
 int run_brain_inbox_legacy_drain_fifo(void);
@@ -1885,6 +1899,10 @@ int run_overview_snapshot_generation(void);
 /* A pillbox or base a removal has taken off the map has no label in the
  * snapshot's list. */
 int run_overview_snapshot_removed_item_has_no_label(void);
+/* The player's own tank nosed into an inside corner of buildings with line of
+ * sight on stays on the full screen map: the filter asks about the square
+ * under the tank, not the hidden corner block its sprite starts in. */
+int run_overview_snapshot_corner_keeps_self(void);
 
 /* Sprite placement at a float scale (test_mapview_sprite_scale.c): the
  * arithmetic behind mapViewDrawShells / Tanks / LGMs, shared by the classic
@@ -3858,6 +3876,7 @@ int run_lv_presentation_scripted_round(void);
 int run_lv_presentation_rebuild_many(void);
 int run_lv_presentation_plain_round(void);
 int run_lv_presentation_panel_choice(void);
+int run_lv_presentation_panel_owner(void);
 int run_lv_presentation_slot_team(void);
 int run_lv_presentation_announce_posts(void);
 int run_lv_presentation_marker_visible(void);

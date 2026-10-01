@@ -685,6 +685,9 @@ STR_MAPCHOOSER_LOADING_PREVIEW=Carregando visualização...
 
 # Map editor scenario panel
 STR_MAPEDIT_SCENARIO_NEEDS_BOTS=Precisa de bots permitidos: este script adiciona seus próprios bots
+STR_DLGABOUT_LICENCE=Licença
+STR_DLGABOUT_LICENCE_NOTICE=Software livre sob a GNU GPL v3 ou posterior. Sem garantia.
+STR_DLGABOUT_FILE_NOT_FOUND=Arquivo não encontrado.
 
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Status
@@ -1812,6 +1815,7 @@ STR_DLGBROWSER_SELECT_SERVER=Selecione um servidor
 STR_DLGBROWSER_PREVIEW_UNAVAIL=Prévia indisponível
 STR_DLGBROWSER_PREVIEW_ENLARGE=Clique para ampliar
 STR_DLGBROWSER_ENLARGE_BTN=Ampliar
+STR_DLGBROWSER_SIGNIN_TO_JOIN=Fazer login para entrar
 STR_DLGBROWSER_AI_PLAYERS=({number} jogadores de IA)
 STR_DLGBROWSER_WBN_PLAYERS=WinBolo.net jogadores:
 STR_DLGBROWSER_ST_LOCKED=Bloqueado/Cheio
@@ -2026,6 +2030,7 @@ STR_DLGKEYSETUP_OVERVIEWZOOMIN=Ampliar mapa
 STR_DLGKEYSETUP_OVERVIEWZOOMOUT=Reduzir mapa
 STR_DLGWELCOME_SWITCH_CLASSIC=Mudar para o clássico
 STR_DLGWELCOME_SWITCH_FULLSCREEN=Mudar para tela cheia
+STR_DLGWELCOME_PRACTICE=Treino
 
 # Configurações de Tela e som: tela cheia e os painéis de HUD do mapa
 STR_DLGSETTINGS_FULLSCREEN=Tela cheia

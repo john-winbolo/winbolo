@@ -685,6 +685,9 @@ STR_MAPCHOOSER_LOADING_PREVIEW=Завантаження попереднього
 
 # Map editor scenario panel
 STR_MAPEDIT_SCENARIO_NEEDS_BOTS=Потрібно дозволити ботів: цей скрипт додає власних ботів
+STR_DLGABOUT_LICENCE=Ліцензія
+STR_DLGABOUT_LICENCE_NOTICE=Вільне ПЗ за ліцензією GNU GPL v3 або новішою. Без гарантій.
+STR_DLGABOUT_FILE_NOT_FOUND=Файл не знайдено.
 
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Статус
@@ -1814,6 +1817,7 @@ STR_DLGBROWSER_SELECT_SERVER=Оберіть сервер
 STR_DLGBROWSER_PREVIEW_UNAVAIL=Перегляд недоступний
 STR_DLGBROWSER_PREVIEW_ENLARGE=Натисніть для збільшення
 STR_DLGBROWSER_ENLARGE_BTN=Збільшити
+STR_DLGBROWSER_SIGNIN_TO_JOIN=Увійти, щоб приєднатися
 STR_DLGBROWSER_AI_PLAYERS=({number} гравців ШІ)
 STR_DLGBROWSER_WBN_PLAYERS=WinBolo.net гравці:
 STR_DLGBROWSER_ST_LOCKED=Заблок./Заповнений
@@ -2028,6 +2032,7 @@ STR_DLGKEYSETUP_OVERVIEWZOOMIN=Збільшити карту
 STR_DLGKEYSETUP_OVERVIEWZOOMOUT=Зменшити карту
 STR_DLGWELCOME_SWITCH_CLASSIC=Перемкнутися на класичний режим
 STR_DLGWELCOME_SWITCH_FULLSCREEN=Перемкнутися на весь екран
+STR_DLGWELCOME_PRACTICE=Тренування
 
 # Налаштування «Екран і звук»: весь екран і HUD-панелі карти
 STR_DLGSETTINGS_FULLSCREEN=Весь екран

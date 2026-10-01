@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -734,6 +737,15 @@ typedef struct {
  * ClientSim and stays good until the next control event is applied, so
  * a caller draws from it rather than holding it across frames. */
 const ScnPanelList *clientSimGetScnPanel(const ClientSim *cs, uint8_t id);
+
+/* The same, for the one script of the round's list that sent it. owner is
+ * that script's position on the list, the index clientSimGetLobbyScript*
+ * takes. clientSimGetScnPanel above answers with the lowest owner whose
+ * list has something in it (or, when every list is empty, the lowest owner
+ * with a list at all), which is the one panel a frontend with room for
+ * only one shows. */
+const ScnPanelList *clientSimGetScnPanelOf(const ClientSim *cs, uint8_t id,
+                                           uint8_t owner);
 
 /* How many arriving panel lists scnPanelParse refused, and this client
  * therefore dropped instead of drawing. */

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /*
  * make_tile_test_map — writes a small .map that puts the terrain-shape
  * lookups in src/bolo/screencalc.c side by side, so each one can be
