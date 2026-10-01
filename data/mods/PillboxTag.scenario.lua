@@ -750,7 +750,18 @@ local function compass(p, me, tx, ty, what, colour, carrier, rows, rows_key)
     local dy = ty - (me.wy / 256)
     local len = math.sqrt(dx * dx + dy * dy)
     status_colour = colour
-    status = string.format("%s %d", what, math.floor(len + 0.5))
+    -- A prize in a tank says whose tank. The name is cut to 12 so the line,
+    -- "IN " and " TANK" and the distance with it, is no longer than the
+    -- LABEL_MAX a score row holds.
+    local label = what
+    if what == "IN TANK" and carrier ~= nil then
+      local who = name_of(carrier)
+      if #who > 12 then
+        who = who:sub(1, 10) .. ".."
+      end
+      label = "IN " .. who .. " TANK"
+    end
+    status = string.format("%s %d", label, math.floor(len + 0.5))
     if len >= 0.5 then
       ux, uy = dx / len, dy / len
       tipx, tipy = CX + RADIUS * ux, CY + RADIUS * uy
