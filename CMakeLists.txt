@@ -965,6 +965,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/tutorial_text.c
     src/gui/ui_mode.c
     src/gui/visibility_presets.c
+    src/gui/scn_panel_prefs.c
     src/gui/sdl3/dialogs/imgui_welcome.cpp
     src/gui/sdl3/dialogs/imgui_mapchooser.cpp
     src/gui/sdl3/dialogs/imgui_udpsetup.cpp
@@ -1583,6 +1584,7 @@ set(CLIENT_SOURCES
     src/bolo/nat_portmap.c
     src/gui/ui_mode.c
     src/gui/visibility_presets.c
+    src/gui/scn_panel_prefs.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/sdl3imgui.cpp src/gui/sdl3/imgui_steam_nav.cpp src/gui/sdl3/sdl3imgui_tablet.cpp src/gui/sdl3/luabrainshandler.c src/gui/sdl3/wb_theme.cpp
     # The scenario panel's display list, drawn with ImGui's own 2D calls.
     # Written against ImGui, public/scenario_panel.h and the tile lookup in
@@ -3907,6 +3909,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # a live set of settings back as one of them.
     tests/unit/test_visibility_presets.c
     src/gui/visibility_presets.c
+    # The scenario panel pop-out row, yes/no words and lost-window rescue.
+    tests/unit/test_scn_panel_prefs.c
+    src/gui/scn_panel_prefs.c
     tests/unit/test_info_packet_view_policies.c
     tests/unit/test_upload_cap.c
     # The virtual "Workshop" folder in the map listing and the resolve.
@@ -4970,6 +4975,12 @@ set(_unit_test_names
     visibility_preset_custom
     visibility_preset_ignores_decay
     visibility_preset_pref_words
+    scn_panel_popout_row
+    scn_panel_yes_no
+    scn_panel_rescue
+    scn_panel_prefs_sections
+    client_scn_panel_owners
+    scn_arm_panel_owners
     info_packet_preset_round_trip
     info_packet_absent_views_read_classic
     upload_cap_enforced
@@ -6637,6 +6648,7 @@ set(_unit_test_names
     lv_presentation_rebuild_many
     lv_presentation_plain_round
     lv_presentation_panel_choice
+    lv_presentation_panel_owner
     lv_presentation_slot_team
     lv_presentation_announce_posts
     lv_presentation_marker_visible

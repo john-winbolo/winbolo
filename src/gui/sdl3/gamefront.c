@@ -60,6 +60,7 @@
 #include "discovery.h"
 #include "global.h"
 #include "util.h"
+#include "../scn_panel_prefs.h"
 #include "gui_message.h"
 #include "frontend.h"
 #include "../brainsHandler.h"
@@ -393,6 +394,7 @@ int   gameFrontScnPanelX = -1;
 int   gameFrontScnPanelY = -1;
 int   gameFrontScnPanelScale = -1;
 int   gameFrontScnPanelAlpha = -1;
+bool  gameFrontScnPanelCloseAsk = TRUE;
 float gameFrontOverviewZoom = 2.0f;
 bool  gameFrontOverviewFollow = TRUE;
 bool  gameFrontShowMapOverview = FALSE;
@@ -3482,30 +3484,14 @@ void gameFrontSetBotTagColor(const char *botName, uint32_t rgb) {
  * the scenario is the whole key so a player scanning the section sees the
  * scenarios they have played by name.
  *
- * The key is copied a character at a time rather than with SDL_snprintf
- * because a control character in a scenario's name would reach the
- * preferences file as an escape and make the row impossible to match up by
- * eye. Anything below a space becomes an underscore here, and it does so in
- * the read and the write alike, so both still name the same row. A byte
- * above 0x7F is left as it is: those are the middle of a UTF-8 character in
- * a name somebody chose, not a control code. */
-static void gameFrontScnPanelLayoutKey(const char *scenario, char *key,
-                                       size_t keySz) {
-  size_t i = 0;
-  if (keySz == 0) return;
-  while (scenario[i] != '\0' && i + 1 < keySz) {
-    key[i] = ((unsigned char)scenario[i] >= 0x20) ? scenario[i] : '_';
-    i++;
-  }
-  key[i] = '\0';
-}
-
+ * The key rule (scnPanelPrefsKey) turns a control character into an
+ * underscore, and the read and the write share it. */
 bool gameFrontGetScnPanelLayout(const char *scenario, int *x, int *y,
                                 int *scale, int *alpha) {
   char key[SCN_PANEL_SCENARIO_LEN], buff[64];
   int rx, ry, rscale, ralpha;
   if (!scenario || !scenario[0] || !x || !y || !scale || !alpha) return false;
-  gameFrontScnPanelLayoutKey(scenario, key, sizeof(key));
+  scnPanelPrefsKey(scenario, key, sizeof(key));
   prefsGetString("SCENARIO PANEL", key, "", buff, sizeof(buff));
   /* All four or none: a half-written row says nothing about where the panel
      belongs, and the caller's fallback is a whole layout of its own rather
@@ -3544,9 +3530,59 @@ void gameFrontSetScnPanelLayout(const char *scenario, int x, int y,
                                 int scale, int alpha) {
   char key[SCN_PANEL_SCENARIO_LEN], val[64];
   if (!scenario || !scenario[0]) return;
-  gameFrontScnPanelLayoutKey(scenario, key, sizeof(key));
+  scnPanelPrefsKey(scenario, key, sizeof(key));
   SDL_snprintf(val, sizeof(val), "%d,%d,%d,%d", x, y, scale, alpha);
   prefsSetString("SCENARIO PANEL", key, val);
+}
+
+/* The script's shown flag and pop-out row live in sections of their own
+ * rather than as more numbers on the layout row: an old client reading a
+ * five- or six-number layout row would drop the whole row. Same key rule
+ * as the layout row, so the three rows of one script line up by eye. */
+bool gameFrontGetScnPanelShown(const char *script) {
+  char key[SCN_PANEL_SCENARIO_LEN], buff[16];
+  if (!script || !script[0]) return TRUE;
+  scnPanelPrefsKey(script, key, sizeof(key));
+  prefsGetString(SCN_PANEL_PREFS_SHOWN_SECTION, key, "", buff, sizeof(buff));
+  return scnPanelYesNoParse(buff, true) ? TRUE : FALSE;
+}
+
+void gameFrontSetScnPanelShown(const char *script, bool shown) {
+  char key[SCN_PANEL_SCENARIO_LEN];
+  if (!script || !script[0]) return;
+  scnPanelPrefsKey(script, key, sizeof(key));
+  prefsSetString(SCN_PANEL_PREFS_SHOWN_SECTION, key, scnPanelYesNoWord(shown));
+}
+
+bool gameFrontGetScnPanelPopout(const char *script, int panel, bool *open,
+                                int *x, int *y, int *w, int *h) {
+  char key[SCN_PANEL_SCENARIO_LEN + 8], buff[80];
+  ScnPanelPopout row;
+  if (!script || !script[0] || !open || !x || !y || !w || !h) return false;
+  scnPanelPrefsPopoutKey(script, panel, key, sizeof(key));
+  prefsGetString(SCN_PANEL_PREFS_POPOUT_SECTION, key, "", buff, sizeof(buff));
+  if (!scnPanelPopoutParse(buff, &row)) return false;
+  *open = row.open;
+  *x = row.x;
+  *y = row.y;
+  *w = row.w;
+  *h = row.h;
+  return true;
+}
+
+void gameFrontSetScnPanelPopout(const char *script, int panel, bool open,
+                                int x, int y, int w, int h) {
+  char key[SCN_PANEL_SCENARIO_LEN + 8], val[80];
+  ScnPanelPopout row;
+  if (!script || !script[0]) return;
+  scnPanelPrefsPopoutKey(script, panel, key, sizeof(key));
+  row.open = open;
+  row.x = x;
+  row.y = y;
+  row.w = w;
+  row.h = h;
+  scnPanelPopoutFormat(&row, val, sizeof(val));
+  prefsSetString(SCN_PANEL_PREFS_POPOUT_SECTION, key, val);
 }
 
 bool gameFrontGetChosenBotDifficulty(uint8_t *out) {
@@ -4671,6 +4707,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   labelSelf = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("MENU", "Show Map Overview", "No", buff, FILENAME_MAX);
   gameFrontShowMapOverview = YESNO_TO_TRUEFALSE(buff[0]);
+  prefsGetString("MENU", "Scenario Panel Close Ask", "Yes", buff, FILENAME_MAX);
+  gameFrontScnPanelCloseAsk = scnPanelYesNoParse(buff, true) ? TRUE : FALSE;
   /* The key keeps the name it has always had so settings in existing player
      files carry over; what it feeds now drives full screen for the whole app,
      not just the in-window map view a game opens with. */
@@ -5163,6 +5201,8 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("MENU", "Label Own Tank", TRUEFALSE_TO_STR(labelSelf));
   prefsSetString("MENU", "Show Map Overview",
                  TRUEFALSE_TO_STR(gameFrontShowMapOverview));
+  prefsSetString("MENU", "Scenario Panel Close Ask",
+                 scnPanelYesNoWord(gameFrontScnPanelCloseAsk));
   prefsSetString("MENU", "Show Full Screen Map",
                  TRUEFALSE_TO_STR(gameFrontFullScreen));
   /* The full screen map's HUD panels. */

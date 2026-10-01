@@ -173,9 +173,11 @@ typedef struct {
  * MAX_TANKS + slot is that 0-based player slot. Thirty-two in all. */
 #define SCN_PANEL_TARGETS (2 * MAX_TANKS)
 
-/* One panel's last list for one destination. bytes sits last and the three
- * fields ahead of it total seven, so the struct is exactly 1024 bytes and
- * the array of them carries no padding between entries. */
+/* One script's last list for one panel and one destination. The three
+ * fields ahead of bytes total seven, so the struct is SCN_PANEL_MAX + 7
+ * bytes (1024 today, with no tail padding). The sim holds one per panel,
+ * destination and script: 1 x 32 x 10 of them, 320 KB, all zeroed when a
+ * round's presentation resets. */
 typedef struct {
     uint32_t tick;                  /* the sim tick the list was stored at */
     uint16_t len;                   /* bytes of the list, 0 for a cleared panel */
@@ -1291,18 +1293,20 @@ struct ServerSim {
     uint8_t                scenarioRosterHead;   /* the next one to drain */
     uint8_t                scenarioRosterCount;
 
-    /* The last display list each panel was sent, per destination, so a
-     * subscriber registering mid-round is given what the panels already
-     * hold. Every update replaces the whole list, so one list per key is
-     * the whole of the state.
+    /* The last display list each script sent each panel, per destination,
+     * so a subscriber registering mid-round is given what the panels
+     * already hold. Every update replaces the whole list, so one list per
+     * key is the whole of the state.
      *
-     * The key is the pair (panel id, destination), because a scenario
-     * giving each of sixteen players its own panel is ordinary and the two
-     * of them must not overwrite each other. tick is the sim tick the list
-     * was stored at, which is what refuses a second update for the same
-     * pair in the same tick; valid says a list has been stored at all, so
-     * a cleared store admits an update at tick 0. */
-    ScnPanelStore          scenarioPanels[SCN_PANEL_IDS][SCN_PANEL_TARGETS];
+     * The key is (panel id, destination, owner). A scenario giving each of
+     * sixteen players its own panel is ordinary, and two scripts of the
+     * round's list each keep their own panel, so none of them may
+     * overwrite another. tick is the sim tick the list was stored at, which
+     * is what refuses a second update for the same key in the same tick;
+     * valid says a list has been stored at all, so a cleared store admits
+     * an update at tick 0. */
+    ScnPanelStore          scenarioPanels[SCN_PANEL_IDS][SCN_PANEL_TARGETS]
+                                         [SCN_PANEL_OWNERS];
 
     /* Where the panel arm decodes an arriving list to find out whether it
      * decodes. It lives here to keep 7.7 KB off the funnel's frame, and
@@ -1413,13 +1417,14 @@ void serverSimScenarioResetTickStats(ServerSim *sim);
 void serverSimScenarioResetPresentation(ServerSim *sim);
 
 /* Hand the stored panel lists to a joining subscriber's callback, as the
- * events that published them. The recipient filters run on the delivery side
+ * events that published them: every script's latest list for every panel
+ * and destination, each stamped with its script's owner. The recipient filters run on the delivery side
  * for a replayed event exactly as they do for a live one, so with
  * withTargeted this replays every list and lets the filter decide which of
  * them the joiner keeps.
  *
- * withTargeted false replays the everyone-addressed list of each panel and
- * nothing else. That is what the delayed spectator ring's control snapshot
+ * withTargeted false replays each script's everyone-addressed list of each
+ * panel and nothing else. That is what the delayed spectator ring's control snapshot
  * asks for: a spectator belongs to no team and holds no slot, so the lists
  * held to one of either reach nobody down that path, and leaving them out
  * keeps the keyframe inside LOG_CONTROL_SNAPSHOT_MAX.
