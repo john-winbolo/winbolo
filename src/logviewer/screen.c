@@ -621,15 +621,27 @@ void lv_screenUpdateView(updateType value) {
   }
 
   if (g_lv->centredTank == FALSE || value == redraw) {
+    /* The arrow-key nudge, in int and then clamped: a bare BYTE decrement at
+     * column 0 jumped the view to column 255, and an increment past the edge
+     * drew the wrapped borders like every other unclamped writer. */
+    int ox = g_lv->xOffset;
+    int oy = g_lv->yOffset;
     if (value == left) {
-      g_lv->xOffset--;
+      ox--;
     } else if (value == right) {
-      g_lv->xOffset++;
+      ox++;
     } else if (value == up) {
-      g_lv->yOffset--;
+      oy--;
     } else if (value == down) {
-      g_lv->yOffset++;
+      oy++;
     }
+    if (ox < 0) ox = 0;
+    if (oy < 0) oy = 0;
+    if (ox > 255) ox = 255;
+    if (oy > 255) oy = 255;
+    g_lv->xOffset = (BYTE)ox;
+    g_lv->yOffset = (BYTE)oy;
+    lv_screenClampOffsets();
   }
 
   /* Iterate sizeX+1 by sizeY+1 to populate one extra column and row

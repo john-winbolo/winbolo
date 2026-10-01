@@ -151,3 +151,39 @@ int run_lv_camera_mouse_centre_click_stays_on_map(void) {
   lv_decoderDestroy(lv);
   return 0;
 }
+
+/* The standalone viewer's arrow keys moved the offset one tile with a bare
+ * BYTE increment or decrement: left at column 0 jumped the view to column
+ * 255, and right at the far edge drew the wrapped borders. Each press now
+ * stops at the edge, and a press that has room still moves one tile. */
+int run_lv_camera_arrow_nudge_stays_on_map(void) {
+  LogViewerState *lv = cameraDecoder(253, 84);
+  BYTE ox = 0, oy = 0;
+
+  UT_ASSERT_MSG(lv != NULL, "decoder failed to create");
+  lv->logLoaded = TRUE;
+
+  /* The load put x at its far edge, 2. A right press has nowhere to go. */
+  lv_screenUpdate(right);
+  lv_screenGetOffsets(&ox, &oy);
+  UT_ASSERT_MSG(ox == 2, "x offset after right at the edge = %u (want 2)", ox);
+  UT_ASSERT_MSG(oy == 127, "y offset after right = %u (want 127)", oy);
+
+  lv_screenUpdate(left);
+  lv_screenGetOffsets(&ox, &oy);
+  UT_ASSERT_MSG(ox == 1, "x offset after left = %u (want 1)", ox);
+
+  lv_screenSetOffset(0, 0);
+  lv_screenUpdate(left);
+  lv_screenUpdate(up);
+  lv_screenGetOffsets(&ox, &oy);
+  UT_ASSERT_MSG(ox == 0 && oy == 0,
+                "offset after left and up at the corner = %u,%u (want 0,0)",
+                ox, oy);
+
+  lv_screenUpdate(down);
+  lv_screenGetOffsets(&ox, &oy);
+  UT_ASSERT_MSG(oy == 1, "y offset after down = %u (want 1)", oy);
+  lv_decoderDestroy(lv);
+  return 0;
+}

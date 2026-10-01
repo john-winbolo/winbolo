@@ -640,6 +640,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_camera_centre_on_cell_stays_on_map",   run_lv_camera_centre_on_cell_stays_on_map   },
     { "lv_camera_resize_and_set_offset_clamp",   run_lv_camera_resize_and_set_offset_clamp   },
     { "lv_camera_mouse_centre_click_stays_on_map", run_lv_camera_mouse_centre_click_stays_on_map },
+    { "lv_camera_arrow_nudge_stays_on_map",      run_lv_camera_arrow_nudge_stays_on_map      },
     { "wbv_v2_capture",                          run_wbv_v2_capture                          },
     { "wbv_fixture_summaries",                   run_wbv_fixture_summaries                   },
     { "wbv_summary_capture",                     run_wbv_summary_capture                     },

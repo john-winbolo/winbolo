@@ -5203,6 +5203,11 @@ set(_unit_test_names
     lv_logged_name_from_join_event
     lv_game_settings_from_walk
     lv_game_settings_absent
+    lv_camera_load_fits_wide_grid
+    lv_camera_centre_on_cell_stays_on_map
+    lv_camera_resize_and_set_offset_clamp
+    lv_camera_mouse_centre_click_stays_on_map
+    lv_camera_arrow_nudge_stays_on_map
     blocks_stream
     stream_load
     stream_pump
