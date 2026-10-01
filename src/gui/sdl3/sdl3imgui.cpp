@@ -1164,6 +1164,13 @@ static void popOutHideEx(PopOutWindow *pw, bool raiseMain) {
         SDL_SyncWindow(pw->window);
     }
     SDL_HideWindow(pw->window);
+    if (popOutScnPanelOwner(pw) >= 0) {
+        WB_LOG_INFO(WB_LOG_CAT_GUI,
+                    "[ScnPanel] owner %d pop-out hidden; flags now 0x%llx raiseMain=%d",
+                    popOutScnPanelOwner(pw),
+                    (unsigned long long)SDL_GetWindowFlags(pw->window),
+                    raiseMain ? 1 : 0);
+    }
     /* Hiding the pop-out leaves keyboard focus orphaned (notably on macOS,
      * where the OS does not auto-return key status to the main window), so
      * explicitly raise the main game window back to the front/focus. */
@@ -4494,6 +4501,8 @@ static void scnPanelPopOut(int owner) {
 
 static void scnPanelPopIn(int owner) {
     ScnPanelView &v = s_scnViews[owner];
+    WB_LOG_INFO(WB_LOG_CAT_GUI, "[ScnPanel] owner %d pop in; window open=%d",
+                owner, s_popScnPanel[owner].open ? 1 : 0);
     v.popped = false;
     v.placed = false;
     if (s_popScnPanel[owner].open) popOutHide(&s_popScnPanel[owner]);
@@ -4562,6 +4571,21 @@ static bool scnPanelPopOutShow(int owner) {
         }
         SDL_SetWindowMinimumSize(pw->window, SCN_PANEL_POPOUT_MIN_PX,
                                  SCN_PANEL_POPOUT_MIN_PX);
+        /* This window's ImGui never changes the OS cursor. The gear and the
+           X ask for a hand, and on macOS that request from a window that can
+           never be key makes SDL's Cocoa code see "the wrong cursor is on
+           screen" on every pointer move and rebuild the window's cursor
+           rects, which re-creates its tracking area and fires a mouse-leave
+           each time. ImGui then forgets where the pointer is every frame,
+           and nothing in the window can be clicked. The cursor stays the
+           game window's, which is the key window and the one whose cursor
+           macOS shows. */
+        {
+            ImGuiContext *saved = ImGui::GetCurrentContext();
+            ImGui::SetCurrentContext(pw->imguiCtx);
+            ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+            ImGui::SetCurrentContext(saved);
+        }
 #ifdef _WIN32
         /* Owned by the game window, so it stays above it in the stacking
            order. Without this a full screen game window, or the Full Screen
@@ -4599,6 +4623,10 @@ static bool scnPanelPopOutShow(int owner) {
         pw->width  = cw;
         pw->height = ch;
     }
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
+                "[ScnPanel] owner %d pop-out shown at %d,%d %dx%d; flags 0x%llx",
+                owner, x, y, cw, ch,
+                (unsigned long long)SDL_GetWindowFlags(pw->window));
     scnPanelSavePopout(owner);
     return true;
 }
@@ -7578,9 +7606,15 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 bool isForThisWindow = false;
                 switch (ev.type) {
                     /* Only the scenario panel pop-outs take the pointer
-                       leaving: they show their buttons on hover, and without
-                       it ImGui would think the pointer was still over the
-                       last button it crossed. */
+                       leaving and coming back: they show their buttons on
+                       hover, and without the leave ImGui would think the
+                       pointer was still over the last button it crossed.
+                       The enter goes too because the ImGui backend pairs
+                       them: a leave it has not seen an enter for since is
+                       taken as the pointer gone at the next frame, so a
+                       leave and an enter in one batch of events would
+                       otherwise still cost a frame of hover. */
+                    case SDL_EVENT_WINDOW_MOUSE_ENTER:
                     case SDL_EVENT_WINDOW_MOUSE_LEAVE:
                         isForThisWindow = (scnOwner >= 0 &&
                                            ev.window.windowID == pwID);
