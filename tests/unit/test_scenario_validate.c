@@ -1748,8 +1748,8 @@ int run_scenario_validate_trigger_action(void) {
         rc = 1;
     }
     /* Too few, against an op whose count is a range: announce takes a line,
-       and a time and a target it may be written without. */
-    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[2]", "takes 1 to 3")) {
+       and a time, a target and a position it may be written without. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[2]", "takes 1 to 4")) {
         rc = 1;
     }
     /* And too many, against one whose count is exact. */

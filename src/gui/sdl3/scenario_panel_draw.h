@@ -35,6 +35,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "wire_limits.h"    /* PACKET_MAX_CHAT_MESSAGE, the status line's cap */
 #include "scenario_panel.h" /* the decoded list, and GAME_NUMTOTALTICKS_SEC
                              * by way of global.h */
 
@@ -105,6 +106,46 @@ static inline void scnPanelTimerText(uint32_t now, uint32_t target,
     snprintf(out, outSize, "%u:%02u", mins, secs);
 }
 
+/* The most bytes the status line's full text can hold: the script's line,
+ * the gap before the countdown, and the countdown. */
+#define SCN_STATUS_LINE_MAX (PACKET_MAX_CHAT_MESSAGE + 1 + 4 + \
+                             SCN_PANEL_TIMER_TEXT_MAX)
+
+/*********************************************************
+ *NAME:          scnStatusLineText
+ *PURPOSE:
+ *  The status line as it is drawn: the script's text, and
+ *  when it asked for a countdown, four spaces and the time
+ *  left until that tick as a panel countdown shows it
+ *  ("Wave 3/10    2:44"). The countdown stops at 0:00.
+ *
+ *  False, with out empty, when there is no line to draw.
+ *
+ *ARGUMENTS:
+ *  text    - the script's line, or NULL
+ *  endsAt  - the tick counted to, or SCN_STATUS_NO_COUNTDOWN
+ *  now     - the tick the viewer is on
+ *  out     - receives the text, always terminated
+ *  outSize - bytes of out, including the terminator
+ *********************************************************/
+static inline bool scnStatusLineText(const char *text, uint32_t endsAt,
+                                     uint32_t now, char *out,
+                                     size_t outSize) {
+    char timer[SCN_PANEL_TIMER_TEXT_MAX];
+
+    if (out == NULL || outSize == 0) return false;
+    out[0] = '\0';
+    if (text == NULL || text[0] == '\0') return false;
+    if (endsAt == SCN_STATUS_NO_COUNTDOWN) {
+        snprintf(out, outSize, "%s", text);
+        return true;
+    }
+    scnPanelTimerText(now, endsAt, (uint8_t)SCN_PANEL_TIMER_DOWN, timer,
+                      sizeof(timer));
+    snprintf(out, outSize, "%s    %s", text, timer);
+    return true;
+}
+
 /*********************************************************
  *NAME:          scnAnnounceRemaining
  *PURPOSE:
@@ -147,6 +188,236 @@ static inline bool scnAnnounceRemaining(const char *text, uint32_t arrivedTick,
 
     if (outLeft != NULL) *outLeft = (uint32_t)ticks - elapsed;
     return true;
+}
+
+/* A rectangle in screen pixels, x0/y0 the top-left corner and x1/y1 the
+ * bottom-right one. */
+typedef struct ScnAnnounceRect {
+    float x0, y0, x1, y1;
+} ScnAnnounceRect;
+
+/*********************************************************
+ *NAME:          scnStatusPlace
+ *PURPOSE:
+ *  Where the status line's top-left corner goes: at the
+ *  top of the game view, centred over it, and clear of the
+ *  things already drawn up there (the scenario panel, the
+ *  vote widgets, the HUD column of the full screen map).
+ *
+ *  The line stays on the top row when it can. If a thing
+ *  is in the way it moves sideways, as little as it has
+ *  to, into the free space beside it. If the line does not
+ *  fit beside it, the line drops to just below it and the
+ *  same search runs again on that row. The line never
+ *  drops past floorY, which the caller puts just above the
+ *  player's own tank in the middle of the view: a line
+ *  over the tank is worse than a line over a panel. When
+ *  no row above the floor fits, the line goes centred on
+ *  the top row, over whatever is there.
+ *
+ *  A line wider than the view is centred over the view and
+ *  runs out past both of its edges.
+ *
+ *ARGUMENTS:
+ *  view      - the game view
+ *  textW     - the line's width, outline included
+ *  textH     - the line's height, outline included
+ *  inset     - the space above the line on the top row
+ *  gap       - the space kept between the line and a thing
+ *  floorY    - the lowest the line's bottom edge may go
+ *  obstacles - the things to keep clear of; may be NULL
+ *  count     - how many there are
+ *  outX/outY - receive the line's top-left corner
+ *********************************************************/
+static inline void scnStatusPlace(ScnAnnounceRect view, float textW,
+                                  float textH, float inset, float gap,
+                                  float floorY,
+                                  const ScnAnnounceRect *obstacles,
+                                  int count, float *outX, float *outY) {
+    const float centreX = (view.x0 + view.x1) * 0.5f;
+    const float topY    = view.y0 + inset;
+    float spanX0 = view.x0;
+    float spanX1 = view.x1;
+    float lowestY;
+    float y;
+    int   pass;
+
+    if (textW > spanX1 - spanX0) {
+        spanX0 = centreX - textW * 0.5f;
+        spanX1 = centreX + textW * 0.5f;
+    }
+    lowestY = view.y1 - textH;
+    if (floorY - textH < lowestY) lowestY = floorY - textH;
+    if (lowestY < topY) lowestY = topY;
+    if (obstacles == NULL) count = 0;
+
+    y = topY;
+    /* Each pass either places the line or drops below one more thing, so
+     * one pass more than there are things always finishes. */
+    for (pass = 0; pass <= count && y <= lowestY; pass++) {
+        float bestX    = 0.0f;
+        float bestDist = -1.0f;
+        float nextY    = 0.0f;
+        bool  haveNext = false;
+        int   c;
+        int   i;
+
+        /* The places the line could go on this row: centred, and just
+         * either side of each thing. */
+        for (c = -1; c < 2 * count; c++) {
+            float x;
+            float dist;
+            bool  clear = true;
+
+            if (c < 0) {
+                x = centreX - textW * 0.5f;
+            } else if ((c & 1) == 0) {
+                x = obstacles[c / 2].x0 - gap - textW;
+            } else {
+                x = obstacles[c / 2].x1 + gap;
+            }
+            if (x < spanX0) x = spanX0;
+            if (x > spanX1 - textW) x = spanX1 - textW;
+
+            for (i = 0; i < count; i++) {
+                const ScnAnnounceRect *o = &obstacles[i];
+                if (x < o->x1 + gap && x + textW > o->x0 - gap &&
+                    y < o->y1 + gap && y + textH > o->y0 - gap) {
+                    clear = false;
+                    break;
+                }
+            }
+            if (!clear) continue;
+
+            dist = (x + textW * 0.5f) - centreX;
+            if (dist < 0.0f) dist = -dist;
+            if (bestDist < 0.0f || dist < bestDist) {
+                bestDist = dist;
+                bestX    = x;
+            }
+        }
+
+        if (bestDist >= 0.0f) {
+            if (outX != NULL) *outX = bestX;
+            if (outY != NULL) *outY = y;
+            return;
+        }
+
+        /* Nothing fits on this row: drop to just below the highest bottom
+         * edge of the things on it. */
+        for (i = 0; i < count; i++) {
+            const ScnAnnounceRect *o = &obstacles[i];
+            if (y < o->y1 + gap && y + textH > o->y0 - gap) {
+                const float below = o->y1 + gap;
+                if (!haveNext || below < nextY) {
+                    nextY    = below;
+                    haveNext = true;
+                }
+            }
+        }
+        if (!haveNext || nextY <= y) break;
+        y = nextY;
+    }
+
+    if (outX != NULL) *outX = centreX - textW * 0.5f;
+    if (outY != NULL) *outY = topY;
+}
+
+/* How far down the game view an announcement with no position has the top
+ * of its letters, as a share of the view's height. This is where every
+ * announcement went before a script could say where: in the upper third,
+ * clear of the player's own tank in the middle. */
+#define SCN_ANNOUNCE_DOWN 0.28f
+
+/*********************************************************
+ *NAME:          scnAnnounceDefaultPlace
+ *PURPOSE:
+ *  Where an announcement with no position goes: centred
+ *  across the view, with the top of its letters
+ *  SCN_ANNOUNCE_DOWN of the way down. Nothing moves it. A
+ *  line wider than the view runs out past both edges.
+ *
+ *ARGUMENTS:
+ *  view      - the game view
+ *  boxW      - the line's width, outline included
+ *  outline   - how far the outline reaches past the letters
+ *  outX/outY - receive the box's top-left corner; the
+ *              letters go one outline in from it
+ *********************************************************/
+static inline void scnAnnounceDefaultPlace(ScnAnnounceRect view, float boxW,
+                                           float outline, float *outX,
+                                           float *outY) {
+    if (outX != NULL) *outX = (view.x0 + view.x1) * 0.5f - boxW * 0.5f;
+    if (outY != NULL) {
+        *outY = view.y0 + (view.y1 - view.y0) * SCN_ANNOUNCE_DOWN - outline;
+    }
+}
+
+/* A position byte as a share of the view, 0 to 1. A byte past
+ * SCN_ANNOUNCE_POS_MAX reads as the far edge. */
+static inline float scnAnnouncePosShare(uint8_t b) {
+    if (b > (uint8_t)SCN_ANNOUNCE_POS_MAX) b = (uint8_t)SCN_ANNOUNCE_POS_MAX;
+    return (float)b / (float)SCN_ANNOUNCE_POS_MAX;
+}
+
+/* One axis of scnAnnounceAt: the box's low edge with its centre at
+ * lo + share * (hi - lo), kept inset inside lo..hi. A box too big for the
+ * room is centred on it. */
+static inline float scnAnnounceAxis(float lo, float hi, float share,
+                                    float size, float inset) {
+    const float minEdge = lo + inset;
+    const float maxEdge = hi - inset - size;
+    float       edge    = lo + share * (hi - lo) - size * 0.5f;
+
+    if (maxEdge < minEdge) return (lo + hi) * 0.5f - size * 0.5f;
+    if (edge < minEdge) edge = minEdge;
+    if (edge > maxEdge) edge = maxEdge;
+    return edge;
+}
+
+/*********************************************************
+ *NAME:          scnAnnounceAt
+ *PURPOSE:
+ *  Where an announcement with a position goes: its centre
+ *  on the point the script named, as shares of the view
+ *  across and down, then moved the least it takes to keep
+ *  the whole box inset inside the view, so no edge of the
+ *  line is cut off. A line too wide for the view is
+ *  centred across it.
+ *
+ *  The one thing it keeps clear of is the status line,
+ *  which also sits at the top: a box that comes within one
+ *  gap of the status line's band drops to one gap below it.
+ *  The caller hands the band the full width of the view, so
+ *  this happens wherever the box sits across it. It does
+ *  not move for panels or windows, and it may sit on the
+ *  player's tank; the script chose the spot.
+ *
+ *ARGUMENTS:
+ *  view       - the game view
+ *  boxW/boxH  - the line's size, outline included
+ *  posX/posY  - the centre as position bytes
+ *  inset      - the space kept from the view's edges
+ *  statusBand - the status line's band, or NULL for none
+ *  gap        - the space kept below the status line
+ *  outX/outY  - receive the box's top-left corner
+ *********************************************************/
+static inline void scnAnnounceAt(ScnAnnounceRect view, float boxW,
+                                 float boxH, uint8_t posX, uint8_t posY,
+                                 float inset,
+                                 const ScnAnnounceRect *statusBand,
+                                 float gap, float *outX, float *outY) {
+    const float x = scnAnnounceAxis(view.x0, view.x1,
+                                    scnAnnouncePosShare(posX), boxW, inset);
+    float       y = scnAnnounceAxis(view.y0, view.y1,
+                                    scnAnnouncePosShare(posY), boxH, inset);
+
+    if (statusBand != NULL && y < statusBand->y1 + gap &&
+        y + boxH > statusBand->y0 - gap) {
+        y = statusBand->y1 + gap;
+    }
+    if (outX != NULL) *outX = x;
+    if (outY != NULL) *outY = y;
 }
 
 /*********************************************************

@@ -2248,6 +2248,22 @@ const char *clientSimGetScnAnnounce(const ClientSim *cs, uint16_t *outTicks,
   return cs->scnAnnounceText;
 }
 
+bool clientSimGetScnAnnouncePos(const ClientSim *cs, uint8_t *outX,
+                                uint8_t *outY) {
+  if (cs == NULL || cs->scnAnnounceText[0] == '\0') return false;
+  if (cs->scnAnnounceHasPos == 0) return false;
+  if (outX != NULL) *outX = cs->scnAnnouncePosX;
+  if (outY != NULL) *outY = cs->scnAnnouncePosY;
+  return true;
+}
+
+const char *clientSimGetScnStatus(const ClientSim *cs, uint32_t *outEndsAt) {
+  if (outEndsAt != NULL) *outEndsAt = SCN_STATUS_NO_COUNTDOWN;
+  if (cs == NULL || cs->scnStatusText[0] == '\0') return NULL;
+  if (outEndsAt != NULL) *outEndsAt = cs->scnStatusEndsAt;
+  return cs->scnStatusText;
+}
+
 const ClientScnMarker *clientSimGetScnMarker(const ClientSim *cs, uint8_t id) {
   if (cs == NULL || id >= SCN_MARKERS_MAX) return NULL;
   return &cs->scnMarkers[id];

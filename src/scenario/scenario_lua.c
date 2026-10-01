@@ -1793,6 +1793,22 @@ static const ScnLuaWordSet kScnTimerModes = {
     "a timer mode"
 };
 
+/* The words a script may write for an announcement's position, each a short
+ * name for one centre: "top" is centred across and as high as the line
+ * goes (under the status line when there is one), and "center" is the
+ * middle of the view. The values are position bytes, x then y. */
+typedef struct {
+    const char *word;
+    BYTE        x;
+    BYTE        y;
+} ScnAnnounceAtWord;
+
+static const ScnAnnounceAtWord kScnAnnounceAtWords[] = {
+    { "top",    (BYTE)SCN_ANNOUNCE_POS_MID, 0                          },
+    { "center", (BYTE)SCN_ANNOUNCE_POS_MID, (BYTE)SCN_ANNOUNCE_POS_MID },
+    { "centre", (BYTE)SCN_ANNOUNCE_POS_MID, (BYTE)SCN_ANNOUNCE_POS_MID },
+};
+
 /* Every one of the four sets above names every value its field can carry,
  * counting from zero, so a number a set does not reach is a number the panel
  * parser would turn down. The readers lean on that rather than carrying a
@@ -4247,6 +4263,79 @@ static int scnLuaScore(lua_State *L) {
                    (int)op.u.score.score);
 }
 
+/* One share of an announcement's position, read off the position table at
+ * idx: a number, or the call is written wrong and raises. *out gets it as
+ * it was written, for the refusal to name. False for a share outside 0 to 1,
+ * NaN included, which the caller refuses as out of range. */
+static bool scnAnnounceShare(lua_State *L, int idx, const char *field,
+                             lua_Number *out, BYTE *outByte) {
+    lua_Number v;
+
+    lua_getfield(L, idx, field);
+    if (lua_type(L, -1) != LUA_TNUMBER) {
+        const char *got = luaL_typename(L, -1);
+        lua_pop(L, 1);
+        luaL_argerror(L, idx,
+                      lua_pushfstring(L, "position.%s must be a number, got %s",
+                                      field, got));
+        return false;   /* luaL_argerror does not come back */
+    }
+    v = lua_tonumber(L, -1);
+    lua_pop(L, 1);
+    *out = v;
+    /* Written this way round so a NaN fails it. */
+    if (!(v >= 0.0 && v <= 1.0)) {
+        return false;
+    }
+    /* Rounded to the nearest byte; v is not negative, so the cast floors. */
+    *outByte = (BYTE)(v * (lua_Number)SCN_ANNOUNCE_POS_MAX + 0.5);
+    return true;
+}
+
+/* An announcement's position: one of the words in kScnAnnounceAtWords, or
+ * a table { x = across, y = down }, each from 0 to 1 with 0.5 the middle.
+ * Anything else, a word outside the set, or a table without both numbers,
+ * is the call written wrong and raises. A share outside 0 to 1 answers
+ * false with *bad naming it, which the caller refuses as out of range. */
+static bool scnArgAnnouncePos(lua_State *L, int idx, BYTE *outX, BYTE *outY,
+                              const char **badField, lua_Number *bad) {
+    if (lua_type(L, idx) == LUA_TSTRING) {
+        const char *word = lua_tostring(L, idx);
+        size_t      i;
+
+        for (i = 0; i < sizeof(kScnAnnounceAtWords) /
+                            sizeof(kScnAnnounceAtWords[0]);
+             i++) {
+            if (strcmp(kScnAnnounceAtWords[i].word, word) == 0) {
+                *outX = kScnAnnounceAtWords[i].x;
+                *outY = kScnAnnounceAtWords[i].y;
+                return true;
+            }
+        }
+        luaL_argerror(L, idx,
+                      lua_pushfstring(L, "position is '%s', which is not "
+                                      "\"top\", \"center\" or a table "
+                                      "{ x = , y = }", word));
+        return false;   /* luaL_argerror does not come back */
+    }
+    if (lua_type(L, idx) != LUA_TTABLE) {
+        luaL_argerror(L, idx,
+                      lua_pushfstring(L, "position must be \"top\", \"center\" "
+                                      "or a table { x = , y = }, got %s",
+                                      luaL_typename(L, idx)));
+        return false;   /* luaL_argerror does not come back */
+    }
+    if (!scnAnnounceShare(L, idx, "x", bad, outX)) {
+        *badField = "x";
+        return false;
+    }
+    if (!scnAnnounceShare(L, idx, "y", bad, outY)) {
+        *badField = "y";
+        return false;
+    }
+    return true;
+}
+
 static int scnLuaAnnounce(lua_State *L) {
     ScenarioOp  op;
     size_t      len     = 0;
@@ -4255,6 +4344,9 @@ static int scnLuaAnnounce(lua_State *L) {
     lua_Number  ticks;
     lua_Integer asked  = 0;
     BYTE        target = 0;
+    bool        hasPos = false;
+    BYTE        posX   = 0;
+    BYTE        posY   = 0;
 
     /* A line to be held up has to say how long for, and a missing argument
        is the call written wrong rather than a refusal waiting. The clear is
@@ -4269,6 +4361,29 @@ static int scnLuaAnnounce(lua_State *L) {
     }
     if (!scnPresentationTarget(L, 3, &target, &asked)) {
         return scnRefused(L, SCN_OP_RANGE, "target is %d", (int)asked);
+    }
+    /* Left out, the line goes where every announcement went before there
+       was a choice. A position of the wrong shape is the call written
+       wrong, which scnArgAnnouncePos raises; a share past the view's edge
+       is refused. */
+    if (!lua_isnoneornil(L, 4)) {
+        const char *badField = "x";
+        lua_Number  bad      = 0.0;
+        if (!scnArgAnnouncePos(L, 4, &posX, &posY, &badField, &bad)) {
+            return scnRefused(L, SCN_OP_RANGE,
+                              "position.%s is %f, outside 0 to 1", badField,
+                              (double)bad);
+        }
+        hasPos = true;
+    }
+    /* A client older than the position drops a positioned line past this,
+       so it is refused here, the way every line past its limit is (see
+       SCN_ANNOUNCE_POSITIONED_TEXT_MAX). */
+    if (hasPos && len > SCN_ANNOUNCE_POSITIONED_TEXT_MAX) {
+        return scnRefused(L, SCN_OP_TOO_BIG,
+                          "text is %d bytes, limit %d for a line with a "
+                          "position", (int)len,
+                          (int)SCN_ANNOUNCE_POSITIONED_TEXT_MAX);
     }
     /* Negated, so a NaN is refused rather than converting to something. */
     if (!(seconds >= 0)) {
@@ -4300,9 +4415,58 @@ static int scnLuaAnnounce(lua_State *L) {
     op.type              = SCN_OP_ANNOUNCE;
     op.u.announce.target = target;
     op.u.announce.ticks  = (uint16_t)ticks;
+    op.u.announce.hasPos = hasPos ? 1 : 0;
+    op.u.announce.posX   = posX;
+    op.u.announce.posY   = posY;
     memcpy(op.u.announce.text, text, len + 1);
     return scnDone(L, &op, "%d bytes for %d ticks", (int)len,
                    (int)op.u.announce.ticks);
+}
+
+static int scnLuaStatus(lua_State *L) {
+    ScenarioOp  op;
+    size_t      len    = 0;
+    const char *text   = scnArgText(L, 1, "text", &len);
+    lua_Number  endsAt = 0.0;
+    bool        timed  = false;
+    lua_Integer asked  = 0;
+    BYTE        target = 0;
+
+    if (!lua_isnoneornil(L, 2)) {
+        endsAt = scnArgNumber(L, 2, "countdown_to");
+        timed  = true;
+    }
+    if (len >= SCN_TEXT_MAX) {
+        return scnRefused(L, SCN_OP_TOO_BIG, "text is %d bytes, limit %d",
+                          (int)len, (int)SCN_TEXT_MAX - 1);
+    }
+    if (!scnPresentationTarget(L, 3, &target, &asked)) {
+        return scnRefused(L, SCN_OP_RANGE, "target is %d", (int)asked);
+    }
+    /* The countdown is a tick on the clock game.tick() answers on, the same
+       one a panel timer counts to, and the client counts to it itself. The
+       top value is kept back: it is the payload's word for no countdown.
+       Negated, so a NaN is refused rather than converting to something. */
+    if (timed && !(endsAt >= 0 &&
+                   endsAt < (lua_Number)SCN_STATUS_NO_COUNTDOWN)) {
+        return scnRefused(L, SCN_OP_RANGE,
+                          "countdown_to is a tick from 0 to %u",
+                          (unsigned)(SCN_STATUS_NO_COUNTDOWN - 1u));
+    }
+    memset(&op, 0, sizeof(op));
+    op.type            = SCN_OP_STATUS;
+    op.u.status.target = target;
+    /* Converted here and not by scnWhole, which clamps to the int32 range
+       and would turn every tick past 2147483647 into that one. The test
+       above already holds endsAt to 0 .. 4294967294, so the cast truncates
+       the fraction and nothing more. */
+    op.u.status.endsAt = timed ? (uint32_t)endsAt : SCN_STATUS_NO_COUNTDOWN;
+    memcpy(op.u.status.text, text, len + 1);
+    if (!timed) {
+        return scnDone(L, &op, "%d bytes", (int)len);
+    }
+    return scnDone(L, &op, "%d bytes, counting to tick %u", (int)len,
+                   (unsigned)op.u.status.endsAt);
 }
 
 /* The three marker rows are one op with the kind changed, so they are one
@@ -5149,6 +5313,14 @@ static const ScnLuaOpParam kScnOpArgs_announce[] = {
        putting one up, so there is nothing to time. scnLuaAnnounce reads it
        only where the text has something in it. */
     { "seconds", SCN_PARAM_NUMBER, true },
+    { "target", SCN_PARAM_TARGET, true },
+    /* A word or a table { x = , y = }. Typed as the word, so the row stays
+       one a trigger may call: a trigger writes "top" or "center". */
+    { "position", SCN_PARAM_WORD, true }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_status[] = {
+    { "text", SCN_PARAM_STRING, false },
+    { "countdown_to", SCN_PARAM_NUMBER, true },
     { "target", SCN_PARAM_TARGET, true }, SCN_OP_ARG_END
 };
 /* A colour is the palette's word or the number behind it, which is what
@@ -5510,9 +5682,17 @@ static const ScnLuaRow kScnLuaRows[] = {
       "short word shown beside it.",
       SCN_OP_PARAMS(score), SCN_OP_ACTS },
     { "announce", scnLuaAnnounce,
-      "announce(text[, seconds[, target]]) — a line across the centre of the "
-      "screen for that many seconds; empty text takes the line away.",
+      "announce(text[, seconds[, target[, position]]]) — a big line across "
+      "the view for that many seconds; position is \"top\", \"center\" or "
+      "{ x = , y = }, the line's centre from 0 to 1 across and down the "
+      "view; left out, the line goes where it always has; empty text takes "
+      "the line away.",
       SCN_OP_PARAMS(announce), SCN_OP_ACTS },
+    { "status", scnLuaStatus,
+      "status(text[, countdown_to[, target]]) — the line that stays along "
+      "the very top of the view; countdown_to is a game.tick() the client "
+      "counts down to beside the text; empty text takes the line away.",
+      SCN_OP_PARAMS(status), SCN_OP_ACTS },
     { "marker", scnLuaMarker,
       "marker(id, x, y[, colour[, target]]) — put mark id on a map square; "
       "a second marker on the same id replaces the first.",

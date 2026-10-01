@@ -3988,6 +3988,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_deferred_join.c
     tests/unit/test_join_collision.c
     tests/unit/test_base_refuel_timers.c
+    tests/unit/test_base_refuel_give.c
     tests/unit/test_lobby_reset_cleanup.c
     tests/unit/test_autolock_on_game_start.c
     tests/unit/test_lobby_transfer_host.c
@@ -5360,6 +5361,10 @@ set(_unit_test_names
     base_stock_visibility
     base_half_tick_per_sim_sequence
     base_half_tick_other_sim_does_not_disturb
+    base_refuel_partial_give_armour
+    base_refuel_partial_give_shells_and_mines
+    base_refuel_partial_give_classic_rules
+    base_refuel_whole_give_unchanged
     base_armour_fog_of_war
     base_armour_reveal_in_range
     base_death_prediction_replay_tick
@@ -6367,6 +6372,7 @@ set(_unit_test_names
     scenario_lua_panel_large_size
     scenario_lua_presentation_targets
     scenario_lua_score_and_announce
+    scenario_lua_announce_position
     scenario_lua_acting_rows_refuse_a_check
     scenario_sandbox_removed_names_are_nil
     scenario_sandbox_bytecode_chunk_refused
@@ -6621,6 +6627,12 @@ set(_unit_test_names
     scenario_panel_large_size
     scenario_panel_timer_text
     scenario_announce_remaining
+    scenario_announce_position
+    scenario_status_line
+    scn_status_codec_and_client
+    scn_announce_position_codec
+    scn_arm_status_and_position
+    scn_arm_status_overlap
     scenario_panel_slot_rect
     lv_rule_names_and_panel_parse
     lv_scripted_game_type_header
@@ -6655,6 +6667,8 @@ set(_unit_test_names
     lv_presentation_panel_owner
     lv_presentation_slot_team
     lv_presentation_announce_posts
+    lv_presentation_status_line
+    lv_presentation_announce_position
     lv_presentation_marker_visible
     lv_presentation_live_seek
     lv_presentation_live_fast_forward

@@ -890,6 +890,9 @@ function Brain.open(info)
   PF.reset()
   cpf.configure()
   wsim.configure()
+  -- configure() just sent the classic tables; start live scaling afresh.
+  U.live_physics.reset()
+  U.live_physics.apply(info)
   danger.reset()
   threat.reset()
   hearing.reset()
@@ -1520,6 +1523,9 @@ function Brain.think(info)
   state.tick = state.tick + 1
   state._last_info = info
   attack.walls_reset()   -- wall-pass flag never outlives a budget-killed think
+  -- Live rules -> physics constants, before anything reads C this think.
+  -- Classic rules (or C.LIVE_PHYSICS false) change nothing.
+  U.live_physics.apply(info)
   local now  = state.tick
   -- Ticks since THIS brain instance opened. `now` is seeded from the engine
   -- clock (see Brain.open), so it is NOT the age of the bot: a Survival wave
@@ -6801,8 +6807,9 @@ function Brain.think(info)
     -- Per-tick deltas. Approximate; engine ramps each over time
     -- but the search re-runs every tick so picking the right
     -- DIRECTION matters more than the exact magnitude.
-    local TURN_DELTA  = 6   -- bolo brads/tick when turn key held
-    local SPEED_DELTA = 2   -- speed units/tick when throttle held
+    -- (TURN / SPEED follow our turn and accel rates under live rules.)
+    local TURN_DELTA  = C.KILL_LGM_TURN_DELTA    -- 6 classic: bolo brads/tick when turn key held
+    local SPEED_DELTA = C.KILL_LGM_SPEED_DELTA   -- 2 classic: speed units/tick when throttle held
     local GUN_DELTA   = 2   -- sightLen units/tick when range held
                             -- (2 input packets/tick @ 1 step each)
     local cur_dir    = info.direction or 0
@@ -6827,8 +6834,9 @@ function Brain.think(info)
     -- Built lazily here, not at module scope, because the KEY_* globals
     -- are host-injected and guaranteed present by the first tick.
     local mt = state._kill_lgm_move_tables
-    if not mt then
+    if not mt or mt.td ~= TURN_DELTA or mt.sd ~= SPEED_DELTA then
       mt = {
+        td = TURN_DELTA, sd = SPEED_DELTA,
         TURNS  = { { k = 0,             d =  0,          n = "T:none" },
                    { k = KEY_TURNLEFT,  d = -TURN_DELTA, n = "T:L"    },
                    { k = KEY_TURNRIGHT, d =  TURN_DELTA, n = "T:R"    } },

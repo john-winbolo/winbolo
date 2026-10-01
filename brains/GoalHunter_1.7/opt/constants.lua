@@ -249,6 +249,95 @@ M.LGM_BUILD_TIME = 20 -- ticks the LGM spends building at destination
 M.TANK_FULL_ARMOUR = 40
 M.TANK_FULL_SHELLS = 40
 
+-- Live game rules (live_physics.lua). Many constants here encode a classic
+-- physics number: full armour 40, 5 armour per hit, reload 13, pill armour
+-- 15, road speed 16. With LIVE_PHYSICS on, each think rescales them from
+-- info.rules and the tank's own modifiers (info.mods). Under classic rules
+-- every value stays exactly as written here. PRESETS.keel = false.
+-- 2026-09-24.
+M.LIVE_PHYSICS        = true
+M.LIVE_PHYSICS_ARMOUR = true  -- armour lines: danger in hits taken, readiness as a fraction of full
+M.LIVE_PHYSICS_SHELLS = true  -- shell lines: fraction of full shells, or tank / pill kills
+M.LIVE_PHYSICS_RELOAD = true  -- TTK_TICKS_PER_HIT, FIRE_HOLD_TICKS follow our reload ticks
+M.LIVE_PHYSICS_PILL   = true  -- pill armour, repair, range, anger; the world sim's pill rules
+M.LIVE_PHYSICS_BASE   = true  -- base armour, capture line, steal line, regen staleness
+M.LIVE_PHYSICS_LGM    = true  -- builder costs, build time, man speed, helicopter return
+M.LIVE_PHYSICS_SPEED  = true  -- terrain speed caps / route costs (Lua and the C pathfinder + world sim)
+M.LIVE_PHYSICS_TURN   = true  -- turn-time sizing (swerve turn, blitz ready timeout) and turn-radius speed caps
+M.LIVE_PHYSICS_ACCEL  = true  -- brake / look-ahead distances and brake profiles follow our accel + brake rates
+M.LIVE_PHYSICS_SHELL  = true  -- shell speed, gunsight max
+-- Top-speed caps in info.speed units (engine speed x4): 64 = road top speed,
+-- 48 = the navigation cruise cap. Live rules scale them with the road speed
+-- rule and our speed modifier.
+M.NAV_TOP_SPEED    = 64
+M.NAV_CRUISE_SPEED = 48
+-- Turn-radius speed caps (info.speed units). A tank's turn radius is speed /
+-- turn rate, so the speed a turn can be taken at follows the turn rate, not
+-- the top speed. Live rules scale these with the road turn rule and our turn
+-- modifier; the nav code takes the lower of the cap above and this one.
+M.NAV_TURN_TOP_SPEED    = 64
+M.NAV_TURN_CRUISE_SPEED = 48
+M.ORBIT_FAST_SPEED      = 16   -- orbit detector: faster than this near the goal can orbit
+M.ORBIT_BRAKE_SPEED     = 8    -- orbit brake: slow to this to shrink the turn radius
+M.KILL_LGM_TURN_DELTA   = 6    -- kill_lgm aim search: brads per think when a turn key is held
+-- 2026-09-30 follow-ups (all need LIVE_PHYSICS and LIVE_PHYSICS_TURN):
+-- STEER_TURN_SPEEDUP: the cornering caps above only ever came DOWN when the
+-- turn rate was slower than the top speed. With this on, a turn rate that is
+-- faster than the top speed (turn ratio / speed ratio > 1, e.g. turn 150)
+-- raises the cornering cap by that same ratio, at most x
+-- STEER_TURN_SPEEDUP_MAX, and never above our live top speed
+-- (NAV_TOP_SPEED). Under classic rules the ratio is exactly 1: no change.
+-- PRESETS.keel = false.
+M.STEER_TURN_SPEEDUP     = true
+M.STEER_TURN_SPEEDUP_MAX = 1.25   -- approved by Andrew (Sep 30): cornering cap may rise at most 25%
+-- STEER_TERRAIN_TURN: the turn-radius caps, orbit speeds, swerve turn times
+-- and kill_lgm turn step follow the live/classic turn rate of the terrain
+-- the tank is on now (river/deep sea in a boat = the boat rule), not the
+-- road rule. Each terrain is compared with its OWN classic rate, so classic
+-- forest/swamp (0.5/0.25) change nothing. Only read when a turn rule differs
+-- from classic. PRESETS.keel = false.
+M.STEER_TERRAIN_TURN     = true
+-- ENEMY_SPEED_OWN_MODS: the brain cannot see another tank's modifiers (it
+-- sees only each tank's current speed), so the one enemy prediction built on
+-- a fixed speed table -- the tank_combat aim lead's per-terrain caps
+-- (C.MAP_SPEED, rules only) -- ignored them. With this on those caps also
+-- take OUR speed modifier (Rule Roulette gives every tank the same one).
+-- Needs LIVE_PHYSICS_SPEED. Speed 100 = no change. PRESETS.keel = false.
+M.ENEMY_SPEED_OWN_MODS   = true
+-- 2026-09-30 second follow-ups: predictions that still used classic numbers.
+-- Each is an exact no-op when its rules are classic. PRESETS.keel = false.
+-- LIVE_PHYSICS_LGM_WALK (needs LIVE_PHYSICS_LGM): the man's walk follows the
+-- live man_speed_* rules in the C LGM walk sim (builder trips, rescue and
+-- return ETAs, the builder shell gate), on his blessed tile
+-- (MAN_SPEED_BLESSED = man_speed_refuel_base), and in the grass
+-- ticks-per-tile estimates (REPAIR_DEAD_GRASS_TICKS_PER_TILE,
+-- BUILDER_POOL_GRASS_TICKS_PER_TILE, WSIM_DWELL_TICKS_PER_TILE).
+M.LIVE_PHYSICS_LGM_WALK      = true
+-- LIVE_PHYSICS_WSIM_BUILD (needs LIVE_PHYSICS_LGM): the world sim's pill
+-- placement dwell builds for lgm_build_ticks (WSIM_DWELL_BUILD_TICKS).
+M.LIVE_PHYSICS_WSIM_BUILD    = true
+-- LIVE_PHYSICS_SHELL_LIFE (needs LIVE_PHYSICS_SHELL): shell-path steps
+-- (SHELL_MAX_STEPS) and the builder shell gate horizon
+-- (LGM_SHELL_PREDICT_TICKS) scale with live / classic shell_life.
+M.LIVE_PHYSICS_SHELL_LIFE    = true
+-- LIVE_PHYSICS_PILL_RANGE_WU (needs LIVE_PHYSICS_PILL): PILLBOX_RANGE_WU (sea
+-- cover, shell-source and cluster-guard range tests) = the live pill_range.
+M.LIVE_PHYSICS_PILL_RANGE_WU = true
+-- Braking distances. A stop from speed v takes v / (brake rate) ticks and
+-- v^2 / (2 x brake rate) world units. The terms below multiply info.speed, so
+-- live rules scale them by classic brake / live brake (brake rate x accel
+-- modifier). The brake-profile gains (desired speed per wu of distance) scale
+-- the other way.
+M.NAV_BRAKE_MULT           = 12    -- approach brake zone starts at info.speed x this (wu)
+M.NAV_BRAKE_MULT_PRECISE   = 24    -- the same for attack_pill / pill_place / the approach gate
+M.NAV_BRAKE_FACTOR         = 0.08  -- approach brake: desired speed = distance x this
+M.NAV_BRAKE_FACTOR_PRECISE = 0.04  -- the same for attack_pill / pill_place
+M.AP_BRAKE_ZONE_FACTOR     = 0.03  -- approach-point brake zone (unused while FAST_APPROACH)
+M.CLIFF_NAV_LOOK_TICKS     = 10    -- nav deep-sea emergency stop: look info.speed x this wu ahead
+M.CLIFF_NAV_LOOK_MAX_STEPS = 6     -- ... in whole tiles, at most this many (scales with the longest stop)
+M.INRANGE_COAST_PER_SPEED  = 2     -- in-range stop: coast distance = info.speed x this + 4 wu
+M.KILL_LGM_SPEED_DELTA     = 2     -- kill_lgm aim search: info.speed change per think on throttle
+
 -- Goal selection thresholds
 M.ARMOUR_CRITICAL  = 5    -- flee immediately
 M.ARMOUR_LOW       = 15   -- seek resupply
@@ -4920,6 +5009,21 @@ M.PRESETS = {
     CAPTURE_BASE_EXTRA_FREE_DIST = 0,
     -- 2026-10-01: wall pass for a walled-in pill; off is the old scan.
     ATTACK_PILL_WALL_FALLBACK = false,
+    -- 2026-09-24: live game rules. The bot rescales its physics constants
+    -- from info.rules and its own modifiers (a no-op under classic rules).
+    -- KEEL reads the classic numbers whatever the scenario sets.
+    LIVE_PHYSICS                  = false,
+    -- 2026-09-30: live-physics follow-ups (faster turn raises the cornering
+    -- cap, enemy speed takes our speed modifier, turn scaling per terrain).
+    STEER_TURN_SPEEDUP            = false,
+    STEER_TERRAIN_TURN            = false,
+    ENEMY_SPEED_OWN_MODS          = false,
+    -- 2026-09-30: the man's walk, the world-sim build dwell, shell life and
+    -- the pill range in world units follow the live rules.
+    LIVE_PHYSICS_LGM_WALK         = false,
+    LIVE_PHYSICS_WSIM_BUILD       = false,
+    LIVE_PHYSICS_SHELL_LIFE       = false,
+    LIVE_PHYSICS_PILL_RANGE_WU    = false,
     -- 2026-09-08: while on capture_pill the bot now sweeps the target tile for
     -- an enemy builder rebuilding the corpse -- the kill_lgm aim solution takes
     -- the TURN keys whenever it points within CAPTURE_LGM_HUNT_TOL_BRADS of

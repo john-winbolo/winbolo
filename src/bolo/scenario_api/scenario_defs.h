@@ -38,6 +38,15 @@
  * truncated. */
 #define SCN_TEXT_MAX (PACKET_MAX_CHAT_MESSAGE + 1)
 
+/* The longest announcement that may carry a position. A positioned line
+ * rides as the text, a 0x00 and the two position bytes in the announce body.
+ * A client older than the position reads all of that as the text and drops a
+ * body past PACKET_MAX_CHAT_MESSAGE, so a positioned text of 126 to 128 bytes
+ * would show nothing there. The script layer and the arm refuse a positioned
+ * line past this, as they refuse every other line past its limit, rather
+ * than cutting it. A line with no position keeps the full SCN_TEXT_MAX - 1. */
+#define SCN_ANNOUNCE_POSITIONED_TEXT_MAX (PACKET_MAX_CHAT_MESSAGE - 3)
+
 /* SCN_PANEL_MAX, the byte capacity of one panel display list, comes in
  * from scenario_panel.h with the rest of the panel's public types. It
  * moved there when the control event that delivers a list needed the
@@ -297,6 +306,7 @@ typedef enum {
     SCN_OP_SCORE,
     SCN_OP_ANNOUNCE,
     SCN_OP_MARKER,
+    SCN_OP_STATUS,
 
     /* Flow */
     SCN_OP_END_ROUND,
@@ -614,8 +624,24 @@ typedef struct {
 typedef struct {
     BYTE     target;
     uint16_t ticks;
+    BYTE     hasPos;                /* 0: drawn where announcements always
+                                       were; else posX/posY say where */
+    BYTE     posX;                  /* the line's centre, 0 to
+                                       SCN_ANNOUNCE_POS_MAX across the view */
+    BYTE     posY;                  /* the same, down the view */
     char     text[SCN_TEXT_MAX];
 } ScnOpAnnounce;
+
+/* The status line: a line at the very top of the game view that stays until
+ * the script changes it or clears it. endsAt is a server tick, on the clock
+ * game.tick() answers, that the client counts down to and shows beside the
+ * text as M:SS; SCN_STATUS_NO_COUNTDOWN (scenario_panel.h) is no countdown.
+ * Empty text is the clear. */
+typedef struct {
+    BYTE     target;
+    uint32_t endsAt;
+    char     text[SCN_TEXT_MAX];
+} ScnOpStatus;
 
 typedef struct {
     BYTE target;
@@ -757,6 +783,7 @@ typedef struct {
         ScnOpScore             score;
         ScnOpAnnounce          announce;
         ScnOpMarker            marker;
+        ScnOpStatus            status;
         ScnOpEndRound          endRound;
         ScnOpSetGameTime       setGameTime;
         ScnOpSetRule           setRule;
