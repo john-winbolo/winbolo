@@ -700,7 +700,12 @@ static void wasmGameStateReset(void);
 /* Most bot runners the page asks for, the page's thread included: one per
  * tank, the cap botManagerInit also applies. The link's PTHREAD_POOL_SIZE
  * expression (CMakeLists.txt) sizes the workers by the same rule, one fewer
- * than the runners, so a change here must be made there too. */
+ * than the runners, so a change here must be made there too. The link also
+ * sets PTHREAD_POOL_SIZE_STRICT=2: a thread the started workers cannot take
+ * is refused rather than made later, so a mismatch fails the pool create
+ * below, which logs and leaves thinks on the page's thread, instead of the
+ * first bot tick waiting for a worker the browser cannot start until the
+ * page's thread yields. */
 #define WASM_MAX_BOT_RUNNERS MAX_TANKS
 
 /* Create the bot worker pool, before any sim is made: each sim sizes its

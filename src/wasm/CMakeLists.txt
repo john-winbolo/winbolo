@@ -617,9 +617,16 @@ target_link_options(winbolo PRIVATE
     # thread waits on the event loop to start. The expression is evaluated in
     # the page and sizes them by wasmStartBotPool's rule in main_wasm.c: one
     # fewer than the runners, which are one fewer than the cores, at most 16
-    # runners (15 workers). Brain thinks run Lua on them, so they get a
-    # bigger stack than Emscripten's default.
-    "SHELL:-sPTHREAD_POOL_SIZE=Math.max(0,Math.min(navigator.hardwareConcurrency-2,15))"
+    # runners (15 workers). A browser that reports no core count gets no
+    # workers, which matches SDL's count of 1 there. Brain thinks run Lua on
+    # them, so they get a bigger stack than Emscripten's default.
+    "SHELL:-sPTHREAD_POOL_SIZE=Math.max(0,Math.min((navigator.hardwareConcurrency||1)-2,15))"
+    # A thread beyond the started workers would be made only once the page's
+    # thread returns to the browser, which the pool's dispatch, waiting on
+    # that thread, never does: the first bot tick would hang. Refuse it
+    # instead, so the pool create fails, logs, and thinks run on the page's
+    # thread. Any new thread in this build must therefore be counted above.
+    "-sPTHREAD_POOL_SIZE_STRICT=2"
     "-sDEFAULT_PTHREAD_STACK_SIZE=2097152"
     -lwebsocket.js
 )
