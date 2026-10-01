@@ -4503,25 +4503,43 @@ static void scnPanelPopIn(int owner) {
     scnPanelSavePopout(owner);
 }
 
-/* Shows a window without handing it keyboard focus. The pop-out is created
-   SDL_WINDOW_NOT_FOCUSABLE already; the hint covers a platform that honours
-   one and not the other. If focus lands there anyway it goes straight back
-   to the game window: input.c steers the tank only while the main window or
-   the map overview has focus, so a panel window holding it would stop the
-   tank. */
-static void scnPanelShowWithoutFocus(SDL_Window *w) {
-    /* A copy of the whole value, whatever its length, since the set below
-       may free the string SDL_GetHint returned. */
-    const char *prev = SDL_GetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN);
+/* Runs one SDL window call with a hint set to "0" and puts the hint back
+   after. A copy of the whole previous value, whatever its length, since the
+   set may free the string SDL_GetHint returned. */
+template <typename Fn>
+static void scnPanelWithHintOff(const char *hint, Fn call) {
+    const char *prev = SDL_GetHint(hint);
     char *saved = (prev != nullptr) ? SDL_strdup(prev) : nullptr;
-    SDL_SetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, "0");
-    SDL_ShowWindow(w);
+    SDL_SetHint(hint, "0");
+    call();
     if (saved != nullptr) {
-        SDL_SetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, saved);
+        SDL_SetHint(hint, saved);
         SDL_free(saved);
     } else {
-        SDL_ResetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN);
+        SDL_ResetHint(hint);
     }
+}
+
+/* Shows a window in front of the game window without handing it keyboard
+   focus. The pop-out is created SDL_WINDOW_NOT_FOCUSABLE already; the hints
+   cover a platform that honours one and not the other.
+
+   Two calls, because showing without activation is not enough on its own:
+   SDL's Cocoa backend orders a window shown that way *below* the key
+   window, which is the game window, so the pop-out came up behind the game
+   and could not be seen until the game window was moved. The raise with
+   activation off is a plain order-to-front on every backend (orderFront:
+   on macOS, SWP_NOACTIVATE on Windows, XRaiseWindow on X11), which puts it
+   in front without making it key.
+
+   If focus lands there anyway it goes straight back to the game window:
+   input.c steers the tank only while the main window or the map overview
+   has focus, so a panel window holding it would stop the tank. */
+static void scnPanelShowWithoutFocus(SDL_Window *w) {
+    scnPanelWithHintOff(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN,
+                        [w]() { SDL_ShowWindow(w); });
+    scnPanelWithHintOff(SDL_HINT_WINDOW_ACTIVATE_WHEN_RAISED,
+                        [w]() { SDL_RaiseWindow(w); });
     if (SDL_GetKeyboardFocus() == w && s_window != nullptr) {
         SDL_RaiseWindow(s_window);
     }
