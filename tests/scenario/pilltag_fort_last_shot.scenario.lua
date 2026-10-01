@@ -14,6 +14,13 @@
 
 ARENA = { given = false }
 
+-- No road lift here. The arena places the hunter off where the guard is when
+-- the plan starts, and the guard's route from the take is what puts him
+-- there; with slow ground at road speed for the first BOOST_SECONDS he goes
+-- somewhere else, builds where the hunter is not near, and takes the fort
+-- straight back. pilltag_road_lift tests the lift.
+road_lift.rules = {}
+
 local arena_real_killed = on_pill_killed
 function on_pill_killed(n, by, scripted)
   local A = ARENA
