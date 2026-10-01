@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /*********************************************************
@@ -562,6 +562,9 @@ struct ScenarioHost {
      *              scenarioLuaRegionFind. Written down in conflicts below as
      *              well.
      *   triggers   concatenated in list order.
+     *   needs_bots true when any script on the list says it. A mod may
+     *              field bots as surely as a scenario may, and the lobby
+     *              has to allow them for whichever one does.
      *
      * It is also what the game table's rows write into at runtime: a region
      * a hook defines lands here, in the composite, exactly as it did when
@@ -2195,6 +2198,7 @@ bool scnReadManifest(lua_State *L, int envRef, ScenarioManifest *m,
     m->api        = scnReadInt(L, tbl, "api", 1);
     m->bound      = scnReadBool(L, tbl, "bound", true);
     m->fillToCaps = scnReadBool(L, tbl, "fill_to_caps", false);
+    m->needsBots  = scnReadBool(L, tbl, "needs_bots", false);
     m->workshopId     = scnReadWorkshopId(L, tbl, "workshop_id", rep);
     m->workshopAuthor = scnReadWorkshopId(L, tbl, "workshop_author", rep);
 
@@ -2526,6 +2530,8 @@ void scnPushManifestGlobal(lua_State *L, int envRef,
     lua_setfield(L, t, "bound");
     lua_pushboolean(L, m->fillToCaps ? 1 : 0);
     lua_setfield(L, t, "fill_to_caps");
+    lua_pushboolean(L, m->needsBots ? 1 : 0);
+    lua_setfield(L, t, "needs_bots");
     /* The Workshop item and author as the digit strings the file writes
        them as, and left out for 0, which a reader sees the same as absent.
        A packaged script that assigns nothing then reads the package's own
@@ -3987,6 +3993,13 @@ static bool scnComposeInto(ScenarioManifest *into,
                                   entry[base].script);
                 return false;
             }
+        }
+
+        /* Any script that fields bots needs the lobby to allow them, mod
+           or scenario, so the list needs them when one of its scripts
+           does. The base's own answer came over with the copy above. */
+        if (m->needsBots) {
+            into->needsBots = true;
         }
 
         if (!scnTagArrayMerge(into->pillTags, m->pillTags, MAX_PILLS,
@@ -8699,7 +8712,7 @@ static void scnHandLobbyOver(ServerSim *sim, const ScenarioManifest *m,
     serverSimSetScenarioIdentity(sim, source, m->name, fileName,
                                  m->description, m->lobby.extraTeams,
                                  scnManifestKeepsWinCondition(m), m->bound,
-                                 scenarioHostUnsafeScripts());
+                                 m->needsBots, scenarioHostUnsafeScripts());
     /* And which rules it sets, so the lobby can say what it changes without
        anybody opening the file. The manifest's own pairs, whatever the round
        later makes of them: the table an author wrote is the question the
@@ -9797,7 +9810,7 @@ void scenarioHostDetach(ScenarioHost *h) {
         /* And what it was called, so a lobby left without a scenario says
            it has none. */
         serverSimSetScenarioIdentity(h->sim, lobbyScenarioNone, NULL, NULL,
-                                     NULL, false, false, false, false);
+                                     NULL, false, false, false, false, false);
         /* And an empty rules set, which is how a client is told the set it
            was shown has gone. Reached only where a host existed, so a map
            that never had a scenario publishes nothing at all rather than an

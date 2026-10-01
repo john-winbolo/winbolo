@@ -45,14 +45,16 @@
 #                     what proves scenario_defs.h and server_sim_scenario.h
 #                     stand up against public/ alone.
 #
-#                     Linked by the six binaries that host a ServerSim:
-#                     WinBoloDS and WinBoloHeadless, the three client builds
-#                     that host in process — WinBolo, WinBoloIOS and the
-#                     Android main — and WinBoloUnitTests, which drives it
-#                     directly. Each of those six is built from a CMake tree
-#                     that has to declare this library's own dependencies as
-#                     well: see the cJSON note at the foot of this file. Not
-#                     linked by wasm, gym or braintest, none of which host.
+#                     Linked by the seven binaries that host a ServerSim:
+#                     WinBoloDS and WinBoloHeadless, the four client builds
+#                     that host in process — WinBolo, WinBoloIOS, the
+#                     Android main and the web client (src/wasm), whose
+#                     practice game runs its server in the page — and
+#                     WinBoloUnitTests, which drives it directly. Each of
+#                     those seven is built from a CMake tree that has to
+#                     declare this library's own dependencies as well: see
+#                     the cJSON note at the foot of this file. Not linked by
+#                     gym or braintest, neither of which hosts.
 
 add_library(scenario_static STATIC
     scenario_host.c
@@ -85,7 +87,7 @@ target_link_libraries(scenario_static PUBLIC SDL3::SDL3)
 # The file half of a scenario. PUBLIC because the headers that come with it
 # are part of what this library hands its includers — scenario_validate.h
 # names ScnValidateResult and scenario_lua.h names ScenarioManifest, both
-# declared over there — so the six binaries that link scenario_static
+# declared over there — so the seven binaries that link scenario_static
 # resolve those headers and those symbols without naming the library.
 target_link_libraries(scenario_static PUBLIC scenario_io_static)
 

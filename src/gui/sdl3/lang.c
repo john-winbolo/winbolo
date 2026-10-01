@@ -3,7 +3,7 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  */
 
@@ -646,6 +646,7 @@ static const LangEntry langTable[] = {
     {790,  "Map Editor"},
     {791,  "Log Viewer"},
     {792,  "Internet"},
+    {2735, "Practice"},
     {793,  "Everard Island (Inbuilt)"},
     {794,  "Load a Map"},
     {795,  "Load from Device..."},
@@ -1939,6 +1940,7 @@ static const LangEntry langTable[] = {
     {1827, "Large"},
     {1828, "Alliances are disabled in ranked games."},
     {1829, "Enlarge"},
+    {2736, "Sign in to join"},
     {1844, "Display & Sound"},
     {1845, "Game/HUD"},
     {1846, "Session"},
@@ -2682,11 +2684,15 @@ static const LangEntry langTable[] = {
     {2732, "Restore default size (Esc)"},
     {2733, "Maximize"},
     {2734, "Loading preview..."},
+    {2738, "Needs bots allowed: this script adds its own bots"},
     {2740, "Info Overlay"},
     {2741, "Pop out"},
     {2742, "Pop in"},
     {2743, "Close {string1}?"},
     {2744, "Turn it back on from {string1} > {string2}."},
+    {2750, "Licence"},
+    {2751, "Free software under the GNU GPL v3 or later. No warranty."},
+    {2752, "File not found."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -2769,6 +2772,7 @@ bool     clientSimGetLobbyScenarioExtraTeams(const ClientSim *cs)    { return cs
 bool     clientSimGetLobbyScenarioKeepsWinCondition(const ClientSim *cs) { return cs ? cs->lobbyScenarioKeepsWinCondition : false; }
 bool     clientSimGetLobbyScenarioBound(const ClientSim *cs) { return cs ? cs->lobbyScenarioBound : false; }
 bool     clientSimGetLobbyScenarioUnsafe(const ClientSim *cs) { return cs ? cs->lobbyScenarioUnsafe : false; }
+bool     clientSimGetLobbyScenarioNeedsBots(const ClientSim *cs) { return cs ? cs->lobbyScenarioNeedsBots : false; }
 
 /* The rules that scenario's manifest sets. Bounded on the stored count
    rather than on the array, so a row above it — one an earlier, longer set

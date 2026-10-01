@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -51,6 +54,7 @@
 #include "bolo_rand.h"
 #include "brain_list.h"   /* BrainModes, brainListLoadModesForPath — bot modes */
 #include "client_frontend_connect.h"
+#include "client_frontend_sp.h"
 #include "client_sim.h"
 #include "control_event.h"
 #include "discovery.h"
@@ -2248,43 +2252,14 @@ bool gameFrontSetDlgState(openingStates newState) {
                 if (botBrain[0] == '\0') botBrain = spBrainPath;
                 uint8_t spMode  = gameFrontSpBotMode(botBrain);
                 uint8_t spLevel = gameFrontSpBotLevel(botBrain, spMode);
-                /* Resolved through the one rule a new bot follows, so the
-                 * single-player path and the lobby cannot disagree. These bots
-                 * are appearing for the first time, so the player's remembered
-                 * manual pick is NOT applied — that pick is for the Add Bot
-                 * button afterwards. */
-                serverSimResolveNewBotConfig(spServerSim,
-                                             (int)gameFrontBotSetupData.bots[bi].teamNumber,
-                                             botBrain, false, &spMode, &spLevel);
-                serverSimSetBotConfig(spServerSim, slot, spMode, spLevel,
-                                      0 /* personality: normal */, NULL);
-                /* No team and no init table here: single-player bots are
-                 * placed by the alliance pass below, and their config comes
-                 * from the slot config set just above. */
-                serverSimCreateBot(spServerSim, slot, botBrain, botName, spAiPolicy,
-                                   spGameType, spHiddenMines, 0, NULL);
-                /* serverSimCreateBot loads the brain from the path but leaves
-                 * the lobby brain-INDEX at the 0xFF "default" sentinel, so the
-                 * lobby Bot Code dropdown renders "(none)". Resolve the index
-                 * from the path (case-insensitive exact match, else the
-                 * version-suffixed dir name as a substring) so the dropdown
-                 * shows the actual brain — GoalHunter_1.7 by default. */
-                const BrainList *spbl = serverSimGetBrainList(spServerSim);
-                if (spbl) {
-                  for (int k = 0; k < spbl->count; k++) {
-                    const char *kp = serverSimGetBrainPathForIdx(spServerSim, (uint8_t)k);
-                    if ((kp && SDL_strcasecmp(kp, botBrain) == 0) ||
-                        strstr(botBrain, spbl->entries[k].name) != NULL) {
-                      serverSimSetBotBrainIdxFor(spServerSim, slot, (uint8_t)k);
-                      break;
-                    }
-                  }
-                }
-                /* Apply team number */
-                uint8_t team = gameFrontBotSetupData.bots[bi].teamNumber;
-                if (team > 0) {
-                  clientSimNetSendTeamSet(humanSim, slot, team);
-                }
+                /* The shared seeding step (client_frontend_sp.c): config
+                 * into the slot, the bot made, the Bot Code dropdown pointed
+                 * at its brain, its team set. The web's practice start calls
+                 * the same body. */
+                clientFrontSeedBot(spServerSim, humanSim, slot, botBrain, botName,
+                                   spAiPolicy, spGameType, spHiddenMines,
+                                   gameFrontBotSetupData.bots[bi].teamNumber,
+                                   spMode, spLevel);
               }
               /* Apply human player team number */
               if (gameFrontBotSetupData.playerTeamNumber > 0) {

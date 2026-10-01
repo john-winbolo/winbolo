@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Preserve short keyboard presses between simulation samples. */
 #ifndef WINBOLO_TURN_TAP_H
 #define WINBOLO_TURN_TAP_H

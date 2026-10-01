@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Shared client-frontend callback bodies that carry sim-state logic (guards,
  * pref persistence) rather than platform-specific rendering. Both the desktop
  * (winbolo.c) and web (main_wasm.c) clients link this instead of each keeping

@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -72,8 +75,12 @@ extern "C" {
 #include "server_sim.h"     /* ServerScenarioEntry / serverSimEnumerateScenarioDir — the in-process read */
 #include "lobby_script_rows.h" /* lobbyScriptRowsClassify — server, both or this computer */
 #ifndef __EMSCRIPTEN__
-/* scenarioHostListLocalScripts / LocalScriptPath. The browser build links no
-   scenario library and has no Mods directory of its own, so it lists none. */
+/* scenarioHostListLocalScripts / LocalScriptPath. This computer's own column
+   is only read for a server in another process, which in the browser build
+   is a multiplayer game: the browser has no Mods directory of its own to send
+   from, so it lists none. A practice game's server is in the page and lists
+   the shipped mods through serverSimEnumerateScenarioDir like any server in
+   this process. */
 #include "../../../../scenario/scenario_host.h"
 #endif
 #include "scenario_details.h"           /* the rules and callbacks blob the dialog reads */

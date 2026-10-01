@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -1115,7 +1118,181 @@ static void wbnDrawAccountLockedLine(void) {
     ImGui::PopStyleColor();
 }
 
+#ifdef __EMSCRIPTEN__
+/* The web's account, from winbolonet_wasm.c. The page knows who is signed
+ * in from /api/v1/me, and signing in and out happens on www.winbolo.net, so
+ * the web never offers the login popup above: it signs its request with a
+ * key this build does not carry. */
+extern "C" {
+bool wasmAccountPending(void);
+bool wasmAccountSignedIn(void);
+void wasmAccountName(char *out, size_t outSize);
+void wasmAccountSignIn(void);
+void wasmAccountSignOut(void);
+}
+
+enum WbnWebAccount {
+    WBN_WEB_CHECKING,
+    WBN_WEB_SIGNED_OUT,
+    WBN_WEB_SIGNED_IN
+};
+
+/* How long the block shows the checking spinner while the page's
+ * /api/v1/me fetch is out. A fetch that fails never reports back, so after
+ * this the player reads as signed out; a name that arrives later still
+ * switches the block over. */
+#define WBN_WEB_CHECK_TIMEOUT_MS 5000
+
+/* Shared by the welcome block and the settings section, since both read the
+ * one fetch; the wait is timed from whichever draws first. */
+static WbnWebAccount wbnWebAccountState(void) {
+    static bool s_checkStarted = false;
+    static Uint64 s_checkStartMs = 0;
+
+    if (wasmAccountSignedIn()) {
+        return WBN_WEB_SIGNED_IN;
+    }
+    if (wasmAccountPending()) {
+        Uint64 now = SDL_GetTicks();
+        if (!s_checkStarted) {
+            s_checkStarted = true;
+            s_checkStartMs = now;
+        }
+        if (now - s_checkStartMs < WBN_WEB_CHECK_TIMEOUT_MS) {
+            return WBN_WEB_CHECKING;
+        }
+    }
+    return WBN_WEB_SIGNED_OUT;
+}
+
+/* The settings section on the web: the same label and status line as the
+ * desktop's, with the site's sign in / sign out in place of the popup. The
+ * rank, stats and expiry lines are left out; the web has none of them. */
+static void wbnDrawWebSection(bool inGame) {
+    WbnWebAccount acct = wbnWebAccountState();
+    if (acct == WBN_WEB_CHECKING) {
+        wbnDrawSpinner(langGetText(STR_DLGWBN_CHECKING));
+        return;
+    }
+
+    ImGui::TextUnformatted(langGetText(STR_DLGWBN_LABEL));
+    ImGui::SameLine();
+    if (acct == WBN_WEB_SIGNED_IN) {
+        char name[PLAYER_NAME_LEN];
+        wasmAccountName(name, sizeof(name));
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s",
+                           langGetText(STR_DLGWBN_SIGNED_IN));
+        if (name[0] != '\0') {
+            ImGui::SameLine();
+            ImGui::TextUnformatted(name);
+        }
+    } else {
+        ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_NOT_SIGNED_IN));
+    }
+
+    /* Either button leaves the page, which would end a running game. */
+    if (inGame) {
+        wbnDrawAccountLockedLine();
+        return;
+    }
+    if (acct == WBN_WEB_SIGNED_IN) {
+        if (ImGui::Button(langGetText(STR_DLGWBN_SIGN_OUT))) {
+            wasmAccountSignOut();
+        }
+    } else {
+        if (ImGui::Button(langGetText(STR_DLGWBN_SIGN_IN_BTN))) {
+            wasmAccountSignIn();
+        }
+    }
+    imguiHandOnHover();
+}
+
+/* The welcome menu's top-left block on the web, in the desktop block's
+ * ghost-button style. Signed out: the same hollow-shield "Sign in to WBN"
+ * button. Signed in: a filled shield and the player's name, then a
+ * "Sign out of WBN" button, since there is no stats dialog to host it. */
+static void wbnDrawWebStatusBlock(void) {
+    WbnWebAccount acct = wbnWebAccountState();
+    if (acct == WBN_WEB_CHECKING) {
+        wbnDrawSpinner(langGetText(STR_DLGWBN_CHECKING));
+        return;
+    }
+
+    ImGuiViewport *vp = ImGui::GetMainViewport();
+    float s = dialogComputeScale((int)vp->Size.x, (int)vp->Size.y);
+
+    bool hasBg = (bgGameGetShared() != nullptr);
+    const float ghostBtnAlpha  = hasBg ? 0.15f : 0.6f;
+    const float ghostTextAlpha = hasBg ? 0.75f : 0.9f;
+    const float btnW = 180.0f * s;
+    const float btnH = 30.0f * s;
+    const float lineH = ImGui::GetTextLineHeight();
+    const float iconSz = lineH;
+    const float gap = 6.0f * s;
+    const int restA = (int)(ghostTextAlpha * 255.0f);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f * s);
+    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.1f, 0.1f, 0.1f, ghostBtnAlpha));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.2f, 0.2f, 0.7f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.3f, 0.3f, 0.3f, 0.9f));
+    ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1.0f, 1.0f, 1.0f, ghostTextAlpha));
+
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    if (acct == WBN_WEB_SIGNED_IN) {
+        char name[PLAYER_NAME_LEN];
+        wasmAccountName(name, sizeof(name));
+
+        /* Name line: the account chip's filled shield and name, drawn as
+         * plain text over the menu so only the button below is clickable. */
+        ImVec2 cur = ImGui::GetCursorScreenPos();
+        float halfH = iconSz * 0.5f;
+        imguiDrawSpinningShield(dl, ImVec2(cur.x + halfH, cur.y + halfH),
+                                halfH * 0.80f, halfH, 0.0f,
+                                IM_COL32(255, 255, 255, restA), true);
+        dl->AddText(ImVec2(cur.x + iconSz + gap, cur.y),
+                    IM_COL32(255, 255, 255, restA), name);
+        float nameW = iconSz + gap + ImGui::CalcTextSize(name).x;
+        ImGui::Dummy(ImVec2(nameW, lineH));
+
+        if (ImGui::Button(langGetText(STR_DLGWBN_SIGN_OUT), ImVec2(btnW, btnH))) {
+            wasmAccountSignOut();
+        }
+        imguiHandOnHover();
+    } else {
+        const char *label = langGetText(STR_DLGWBN_SIGN_IN_BTN);
+
+        ImVec2 cur = ImGui::GetCursorScreenPos();
+        bool hov = ImGui::IsMouseHoveringRect(cur, ImVec2(cur.x + btnW, cur.y + btnH));
+        if (ImGui::Button("##wbnsignin", ImVec2(btnW, btnH))) {
+            wasmAccountSignIn();
+        }
+        imguiHandOnHover();
+
+        float textW = ImGui::CalcTextSize(label).x;
+        float contentW = iconSz + gap + textW;
+        float tx = cur.x + (btnW - contentW) * 0.5f;
+        float ty = cur.y + (btnH - lineH) * 0.5f;
+        int textA = hov ? 255 : restA;
+
+        /* The desktop's hollow shield, spinning while hovered. */
+        float halfH = iconSz * 0.5f;
+        float phase = hov ? (float)SDL_GetTicks() * 0.002f : 0.0f;
+        imguiDrawSpinningShield(dl, ImVec2(tx + iconSz * 0.5f, ty + halfH),
+                                halfH * 0.80f, halfH, phase,
+                                IM_COL32(255, 255, 255, textA), false);
+        tx += iconSz + gap;
+        dl->AddText(ImVec2(tx, ty), IM_COL32(255, 255, 255, textA), label);
+    }
+
+    ImGui::PopStyleColor(4);
+    ImGui::PopStyleVar(1);
+}
+#endif
+
 extern "C" void imguiWinbolonetDrawSection(bool inGame) {
+#ifdef __EMSCRIPTEN__
+    wbnDrawWebSection(inGame);
+#else
     /* Check for async completion */
     wbnCheckThread();
 
@@ -1172,6 +1349,7 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame) {
 
     wbnRenderLoginPopup();
     imguiWinbolonetDrawStatsDialog();
+#endif
 }
 
 /* Compact account status block for the welcome screen. Signed out: a
@@ -1181,6 +1359,9 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame) {
  * same popup/worker as the settings section. Render inside an existing
  * ImGui window. */
 extern "C" void imguiWinbolonetDrawStatusBlock(void) {
+#ifdef __EMSCRIPTEN__
+    wbnDrawWebStatusBlock();
+#else
     /* Check for async completion */
     wbnCheckThread();
 
@@ -1283,6 +1464,7 @@ extern "C" void imguiWinbolonetDrawStatusBlock(void) {
 
     wbnRenderLoginPopup();
     imguiWinbolonetDrawStatsDialog();
+#endif
 }
 
 /* Opens the shared sign-in / create-account popup. Lets surfaces that
