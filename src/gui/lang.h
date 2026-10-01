@@ -628,6 +628,7 @@
 #define STR_DLGBROWSER_PREVIEW_UNAVAIL      1815
 #define STR_DLGBROWSER_PREVIEW_ENLARGE      1816
 #define STR_DLGBROWSER_ENLARGE_BTN          1829
+#define STR_DLGBROWSER_SIGNIN_TO_JOIN       2736
 #define STR_DLGBROWSER_AI_PLAYERS           1817
 #define STR_DLGBROWSER_WBN_PLAYERS          1818
 #define STR_DLGBROWSER_ST_LOCKED            1819
@@ -873,6 +874,9 @@
  * shown is decided from the window's real state, not from the preference. */
 #define STR_DLGWELCOME_SWITCH_CLASSIC       1991
 #define STR_DLGWELCOME_SWITCH_FULLSCREEN    1992
+/* The web client's label for the single-player row, which opens a practice
+ * game in the in-game lobby. */
+#define STR_DLGWELCOME_PRACTICE             2735
 /* Map Chooser dialog */
 #define STR_MAPCHOOSER_EVERARD              793
 #define STR_MAPCHOOSER_LOADMAP              794

@@ -1817,6 +1817,7 @@ STR_DLGBROWSER_SELECT_SERVER=Selecteer een server
 STR_DLGBROWSER_PREVIEW_UNAVAIL=Voorbeeld niet beschikbaar
 STR_DLGBROWSER_PREVIEW_ENLARGE=Klik om te vergroten
 STR_DLGBROWSER_ENLARGE_BTN=Vergroten
+STR_DLGBROWSER_SIGNIN_TO_JOIN=Aanmelden om deel te nemen
 STR_DLGBROWSER_AI_PLAYERS=({number} AI-spelers)
 STR_DLGBROWSER_WBN_PLAYERS=WinBolo.net spelers:
 STR_DLGBROWSER_ST_LOCKED=Vergrendeld/Vol
@@ -2031,6 +2032,7 @@ STR_DLGKEYSETUP_OVERVIEWZOOMIN=Kaart inzoomen
 STR_DLGKEYSETUP_OVERVIEWZOOMOUT=Kaart uitzoomen
 STR_DLGWELCOME_SWITCH_CLASSIC=Overschakelen naar Klassiek
 STR_DLGWELCOME_SWITCH_FULLSCREEN=Overschakelen naar volledig scherm
+STR_DLGWELCOME_PRACTICE=Training
 
 # Display & Sound settings: full screen and the map's HUD panels
 STR_DLGSETTINGS_FULLSCREEN=Volledig scherm

@@ -237,6 +237,12 @@ int run_manual_vote_countdown_survives_lost_base(void);
 int run_surrender_credits_the_opposing_team(void);
 int run_win_during_manual_countdown_resolves_as_vote(void);
 int run_abandoned_round_reports_nothing(void);
+/* The returning lobby's win message (test_lobby_return_win_message.c).
+ * serverSimLocalOnReturnToLobby sends a pending win message once, to
+ * everyone, clears it and republishes the lobby; a message over the wire's
+ * cap is cut on a character boundary and ends in "...". */
+int run_lobby_return_sends_win_message(void);
+int run_lobby_return_cuts_long_win_message(void);
 int run_round_stats_zeroed_on_fresh_sim(void);
 int run_round_stats_kill_basic(void);
 int run_round_stats_drown_not_suicide(void);
@@ -505,6 +511,8 @@ int run_wbn_serverlist_scripts(void);
 int run_wbn_map_parse(void);
 int run_brain_crash_log_writes_file(void);
 int run_brain_crash_log_falls_back_to_luaptr(void);
+int run_brain_msgh_budget_kill_no_traceback(void);
+int run_brain_msgh_real_error_keeps_traceback(void);
 int run_brain_inbox_push_peek_fifo(void);
 int run_brain_inbox_overflow_drops_oldest(void);
 int run_brain_inbox_legacy_drain_fifo(void);

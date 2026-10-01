@@ -717,6 +717,19 @@ static inline void dialogFrameCapEnd(Uint64 frameStart) {
         SDL_Delay((Uint32)(DIALOG_FRAME_CAP_MS - elapsed));
     }
 }
+#elif defined(__EMSCRIPTEN__)
+/* Browser: wait for the next animation frame (main_wasm.c), which paces the
+ * dialog loops and yields to the browser between frames. */
+#ifdef __cplusplus
+extern "C"
+#endif
+void wasmFrameWait(void);
+
+static inline Uint64 dialogFrameCapBegin(void) { return 0; }
+static inline void dialogFrameCapEnd(Uint64 frameStart) {
+    (void)frameStart;
+    wasmFrameWait();
+}
 #else
 static inline Uint64 dialogFrameCapBegin(void) { return 0; }
 static inline void dialogFrameCapEnd(Uint64 frameStart) { (void)frameStart; }
@@ -780,6 +793,10 @@ extern int g_currentDevicePreset;
  * display's, so resizing or recentring it either does nothing or fights
  * the compositor. */
 static inline void dialogSetWindowSize(SDL_Window *window, int w, int h) {
+    /* The page sizes a page-filling canvas, not the dialog. */
+    if (SDL_GetWindowFlags(window) & SDL_WINDOW_FILL_DOCUMENT) {
+        return;
+    }
     if (uiShouldUseControllerMode()) {
         return;
     }
@@ -801,6 +818,10 @@ static inline void dialogSetWindowSize(SDL_Window *window, int w, int h) {
 
 /* Set dialog window title; appends device preset info when one is active. */
 static inline void dialogSetWindowTitle(SDL_Window *window, const char *title) {
+    /* On a page-filling canvas the page's shell owns the tab title. */
+    if (SDL_GetWindowFlags(window) & SDL_WINDOW_FILL_DOCUMENT) {
+        return;
+    }
     if (g_currentDevicePreset >= 0 && g_currentDevicePreset < s_numDevicePresets &&
         s_devicePresets[g_currentDevicePreset].mode != UI_MODE_DESKTOP) {
         const DevicePreset *p = &s_devicePresets[g_currentDevicePreset];
@@ -920,7 +941,9 @@ static inline void dialogHandleWindowMoveResize(SDL_Window *win, const SDL_Event
  * window is fullscreen: it already covers the display, so moving it either
  * does nothing or fights the compositor. */
 static inline void dialogRestorePosition(SDL_Window *win) {
-    if (win && !(SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN) &&
+    /* A page-filling canvas sits where the page puts it. */
+    if (win && !(SDL_GetWindowFlags(win) &
+                 (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FILL_DOCUMENT)) &&
         gameFrontDialogX >= 0 && gameFrontDialogY >= 0) {
         SDL_SetWindowPosition(win, gameFrontDialogX, gameFrontDialogY);
     }
