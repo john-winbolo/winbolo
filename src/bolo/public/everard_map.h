@@ -7,7 +7,11 @@
  * (at your option) any later version.
  */
 
-/* Everard Island compressed map data, shared by server and client. */
+/* Everard Island compressed map data, shared by server and client.
+ *
+ * The map itself is Bolo's original built-in map, copyright Stuart Cheshire,
+ * and is not covered by the GPL notice above; it is used with his permission.
+ * See "Bolo graphics and sounds" in THIRD_PARTY_NOTICES.md. */
 
 #ifndef EVERARD_MAP_H
 #define EVERARD_MAP_H

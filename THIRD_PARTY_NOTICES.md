@@ -31,10 +31,32 @@ version 2, which is one reason WinBolo moved from version 2 to version 3.
     `man_lay_mine_near`, `mine_explosion_*`, `shooting_*`, `shot_building_*`,
     `shot_tree_*` and `tank_sinking_*`. The lobby and ping sounds are not
     included; the lobby sounds are listed under [Audio](#audio).
-- They are separate data files that WinBolo loads at run time, not part of
-  the program's code, so they can be distributed alongside the GPL program
-  under their own terms.
-- A skin can replace any of them; see [docs/SKINS.md](docs/SKINS.md).
+  - Everard Island, Bolo's original built-in map: `data/maps/Everard Island.map`
+    and the copy compiled into the program from
+    `src/bolo/public/everard_map.h`
+  - `data/maps/Inbuilt Tutorial.map`, the map the tutorial is played on
+- Apart from the built-in copy of Everard Island, they are separate data files
+  that WinBolo loads at run time, not part of the program's code, so they can
+  be distributed alongside the GPL program under their own terms.
+- A skin can replace any of the graphics and sounds; see
+  [docs/SKINS.md](docs/SKINS.md).
+
+## Bolo community maps
+
+- Location: `data/maps/*.map`, except Everard Island and Inbuilt Tutorial
+  (above).
+- Made by members of the Bolo community and shared publicly on Bolo FTP map
+  archives and Usenet newsgroups. Each map remains its author's work.
+  **Not licensed under the GPL.**
+- Included in WinBolo as freely shared community maps, the way Bolo players
+  have always passed them around. `data/maps/readme.txt` describes how the
+  original selection was chosen.
+- If you made one of these maps and want it credited or removed, open an
+  issue.
+- They are separate data files that WinBolo loads at run time, distributed
+  alongside the GPL program under their own terms.
+- The scenario scripts beside some maps (`*.scenario.lua`) are WinBolo's own
+  code and are covered by the GPL.
 
 ## FetchContent Dependencies (downloaded at build time)
 

@@ -155,6 +155,9 @@ The game's graphics and sounds are not covered by the GPL. They are Stuart
 Cheshire's designs from Bolo, copyright 1987-1995 Stuart Cheshire, and are used
 with his permission. The files are listed in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md#bolo-graphics-and-sounds).
+The maps in `data/maps/` are Bolo community maps, each its author's own work,
+and are not covered by the GPL either; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md#bolo-community-maps).
 
 Steam builds also link the Steamworks SDK, which is owned by Valve, is not
 open source, and is not included in this repository. The copyright holders
