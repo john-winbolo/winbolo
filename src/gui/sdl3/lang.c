@@ -3,7 +3,7 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  */
 
@@ -2685,6 +2685,9 @@ static const LangEntry langTable[] = {
     {2733, "Maximize"},
     {2734, "Loading preview..."},
     {2738, "Needs bots allowed: this script adds its own bots"},
+    {2750, "Licence"},
+    {2751, "Free software under the GNU GPL v3 or later. No warranty."},
+    {2752, "File not found."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

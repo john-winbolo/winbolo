@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /*
  * luajit_compat.h — Lua 5.4 C-API shims for building the WinBolo brain glue
  * against LuaJIT (a Lua 5.1 VM). Force-included into every Lua-touching TU when

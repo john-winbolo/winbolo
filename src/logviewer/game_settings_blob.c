@@ -2,7 +2,7 @@
  * game_settings_blob.c - decode of the log_GameSettings payload
  *
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 #include "game_settings_blob.h"
