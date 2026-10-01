@@ -161,6 +161,10 @@ local DROPPED_WITHIN      = 4   -- a hunter this close to a dropped prize is
 local HUNTER_PARK_TICKS   = 25  -- brain ticks a hunter waits on a square it was
                                 -- sent to, so its own pillbox fight and
                                 -- pick-up take over soon after
+local WALL_FALLBACK_SECONDS = 30 -- a standing prize that has lost no armour
+                                -- this long after hunters were sent to
+                                -- squares with a line to it turns on the
+                                -- hunters' shot through the walls
 
 -- The two words of the "Teams" setting, as scenario.settings declares them.
 local FREE_FOR_ALL      = "Free For All"
@@ -254,6 +258,9 @@ local forfeit     = nil         -- { p, x, y }: the seat whose man still has
                                 -- dead
 local run_at      = nil         -- elapsed second of the holder's last run order
 local mine_at     = nil         -- elapsed second of the last mine laid behind
+local walled      = {}          -- the walled-in prize: watch, the watch on a
+                                -- standing prize or nil, and its helpers (see
+                                -- walled.update)
 
 local function whole(n)
   return math.floor(n + 0.5)
@@ -874,6 +881,7 @@ local DEFAULTS = {
   DEFEND_ALARM_BASE_COST               = 100,
   CAPTURE_LGM_HUNT                     = true,
   CAPTURE_BASE_EXTRA_COST              = 0,
+  ATTACK_PILL_WALL_FALLBACK            = false,
 }
 
 -- The flag words a brain keeps until it is told the opposite. GoalHunter puts
@@ -1105,6 +1113,12 @@ local function init_table(role_name, p)
   end
   for k, v in pairs(role.cfg) do
     want[k] = v
+  end
+  -- A hunter after a walled-in prize may shoot through the walls once the
+  -- watch says so (see walled.update). It goes off with the watch.
+  if walled.watch ~= nil and walled.watch.fallback and
+     (role_name == "hunter" or role_name == "manhunt") then
+    want.ATTACK_PILL_WALL_FALLBACK = true
   end
 
   local t, pairs_n = {}, 1
@@ -1420,6 +1434,246 @@ local function man_order(q)
            hint = { verb = "attack", player = q } }
 end
 
+-- A prize behind walls. A brain fights a pillbox only from its ring of firing
+-- squares: 72 squares, one every 5 degrees, STANDOFF squares from the
+-- pillbox's middle. It takes a square only when a shell from there has a line
+-- to the pillbox (its middle or a corner) that crosses no wall; trees are
+-- fine, they only cost shells. A person who builds the prize inside walls can
+-- leave no such square, or none a hunter can drive to, and then the hunters
+-- never fire at it.
+--
+-- So while a prize stands, walled.update finds the ring squares with a line,
+-- and sends each hunter that can drive to one to its own square (two hunters
+-- share one only when there are more hunters than squares). That goto is a
+-- short hold, and from that square the brain's own pillbox fight takes over.
+-- When there is no such square, or no hunter can drive to one, or the prize
+-- has lost no armour for WALL_FALLBACK_SECONDS after the hunters were sent,
+-- the hunters are tuned to shoot through the walls
+-- (ATTACK_PILL_WALL_FALLBACK). That stays on until the prize is picked up or
+-- dies.
+--
+-- The work is cut to fit the instruction budget of one call: the squares are
+-- found in one second, which of them a tank can drive to in the next, and
+-- both again every AIM_REFRESH seconds. "Can drive to" is worked out inside
+-- the VIEW_SQUARES box around the prize only: the squares a tank can reach
+-- from each other inside the box, and whether that ground runs out to the
+-- edge of the box. A hunter outside the box can reach the ground that runs to
+-- the edge.
+walled.STANDOFF  = 7.4          -- the brain's ATTACK_PILL_STANDOFF
+walled.AIM_INSET = 16 / 256     -- the brain's AIM_INSET_FIRE: how far inside
+                                -- the pillbox's square a corner aim is
+walled.AIM_POINTS = {
+  { 0.5, 0.5 },
+  { walled.AIM_INSET, walled.AIM_INSET },
+  { 1 - walled.AIM_INSET, walled.AIM_INSET },
+  { walled.AIM_INSET, 1 - walled.AIM_INSET },
+  { 1 - walled.AIM_INSET, 1 - walled.AIM_INSET },
+}
+
+function walled.is_wall(x, y)
+  local t = game.map_tile(x, y)
+  return t == game.TERRAIN.building or t == game.TERRAIN.half_building
+end
+
+-- Whether a straight line from (fx, fy) to (ax, ay), in squares, reaches the
+-- pillbox's square (px, py) without crossing a wall. It steps square by
+-- square along the line. The square it starts on does not count, the way the
+-- brain's own test leaves it out.
+function walled.clear_line(fx, fy, ax, ay, px, py)
+  local x, y = math.floor(fx), math.floor(fy)
+  local dx, dy = ax - fx, ay - fy
+  local sx = (dx > 0) and 1 or -1
+  local sy = (dy > 0) and 1 or -1
+  local step_x = (dx ~= 0) and math.abs(1 / dx) or math.huge
+  local step_y = (dy ~= 0) and math.abs(1 / dy) or math.huge
+  local next_x = (dx > 0) and (x + 1 - fx) * step_x or (fx - x) * step_x
+  local next_y = (dy > 0) and (y + 1 - fy) * step_y or (fy - y) * step_y
+  while next_x <= 1 or next_y <= 1 do
+    if next_x < next_y then
+      x, next_x = x + sx, next_x + step_x
+    else
+      y, next_y = y + sy, next_y + step_y
+    end
+    if x == px and y == py then
+      return true
+    end
+    if walled.is_wall(x, y) then
+      return false
+    end
+  end
+  return true
+end
+
+-- The ring squares around a pillbox at (px, py) a tank can stand on with a
+-- line to it, the way the brain works them out.
+function walled.line_squares(px, py)
+  local out, seen = {}, {}
+  for deg = 0, 355, 5 do
+    local r = math.rad(deg)
+    local fx = px + 0.5 + math.sin(r) * walled.STANDOFF
+    local fy = py + 0.5 - math.cos(r) * walled.STANDOFF
+    local x, y = math.floor(fx), math.floor(fy)
+    local key = y * 256 + x
+    if not seen[key] and standable(x, y) then
+      local t = game.map_tile(x, y)
+      if t ~= game.TERRAIN.river and t ~= game.TERRAIN.boat then
+        for _, a in ipairs(walled.AIM_POINTS) do
+          if walled.clear_line(fx, fy, px + a[1], py + a[2], px, py) then
+            seen[key] = true
+            out[#out + 1] = { x = x, y = y, key = key }
+            break
+          end
+        end
+      end
+    end
+  end
+  return out
+end
+
+-- The ground a tank can drive over inside the VIEW_SQUARES box around
+-- (px, py), in pieces: a flood from each square in `squares` that no earlier
+-- flood reached. Returns piece (square key -> piece number) and edge (piece
+-- number -> true when the piece runs out to the edge of the box).
+function walled.pieces(px, py, squares)
+  local x0, x1 = px - VIEW_SQUARES, px + VIEW_SQUARES
+  local y0, y1 = py - VIEW_SQUARES, py + VIEW_SQUARES
+  local piece, edge, seen = {}, {}, {}
+  local deep, wall, half = game.TERRAIN.deep_sea, game.TERRAIN.building,
+                           game.TERRAIN.half_building
+  for c, sq in ipairs(squares) do
+    if seen[sq.key] == nil then
+      seen[sq.key] = c
+      local queue, head = { sq.key }, 1
+      while head <= #queue do
+        local k = queue[head]
+        head = head + 1
+        local kx, ky = k % 256, math.floor(k / 256)
+        if kx == x0 or kx == x1 or ky == y0 or ky == y1 then
+          edge[c] = true
+        end
+        for i = 1, 4 do
+          local nx, ny = kx, ky
+          if i == 1 then nx = kx + 1 elseif i == 2 then nx = kx - 1
+          elseif i == 3 then ny = ky + 1 else ny = ky - 1 end
+          local nk = ny * 256 + nx
+          if nx >= x0 and nx <= x1 and ny >= y0 and ny <= y1 and
+             nx >= 0 and nx <= 255 and ny >= 0 and ny <= 255 and
+             seen[nk] == nil then
+            local t = game.map_tile(nx, ny)
+            if t ~= nil and t ~= deep and t ~= wall and t ~= half then
+              seen[nk] = c
+              queue[#queue + 1] = nk
+            else
+              seen[nk] = false
+            end
+          end
+        end
+      end
+    end
+  end
+  for _, sq in ipairs(squares) do
+    piece[sq.key] = seen[sq.key]
+  end
+  return piece, edge, seen
+end
+
+-- A bot that goes after the prize: not the holder, and not on his team.
+function walled.hunter(p)
+  if p == holder or not is_bot(p) or not in_round(p) then
+    return false
+  end
+  local held_by = scoring_team(holder)
+  return held_by == nil or scoring_team(p) ~= held_by
+end
+
+function walled.fallback_on(why)
+  walled.watch.fallback = true
+  game.log(string.format("Pillbox Tag: hunters shoot through the walls at %d,%d (%s)",
+                         walled.watch.x, walled.watch.y, why))
+  tune_everybody()
+end
+
+-- Whether a hunter on (x, y) can drive to square sq.
+function walled.can_reach(w, x, y, sq)
+  local c = w.piece[sq.key]
+  if chebyshev(x, y, w.x, w.y) >= VIEW_SQUARES then
+    return w.edge[c] == true
+  end
+  return w.seen[y * 256 + x] == c
+end
+
+-- Once a second.
+function walled.update()
+  local pb = (pill ~= nil) and game.pill(pill) or nil
+  if not standing(pb) or holder == nil or (plan ~= nil and plan.kind == "hop") then
+    if walled.watch ~= nil then
+      walled.watch = nil
+      tune_everybody()
+    end
+    return
+  end
+  if walled.watch == nil or walled.watch.x ~= pb.x or walled.watch.y ~= pb.y then
+    walled.watch = { x = pb.x, y = pb.y, armour = pb.armour, loss_at = elapsed,
+                     assign = {}, sent = {}, taken = {}, fallback = false }
+  end
+  local w = walled.watch
+  if pb.armour < w.armour then
+    w.loss_at = elapsed
+  end
+  w.armour = pb.armour
+  if w.fallback then
+    return
+  end
+  if w.sent_at ~= nil and
+     elapsed - math.max(w.loss_at, w.sent_at) >= WALL_FALLBACK_SECONDS then
+    walled.fallback_on("no armour lost in " .. WALL_FALLBACK_SECONDS .. " s")
+    return
+  end
+  if w.squares == nil or elapsed - w.squares_at >= AIM_REFRESH then
+    w.squares, w.squares_at, w.piece = walled.line_squares(pb.x, pb.y), elapsed, nil
+    if #w.squares == 0 then
+      walled.fallback_on("no square has a line")
+    end
+    return
+  end
+  if w.piece == nil then
+    w.piece, w.edge, w.seen = walled.pieces(pb.x, pb.y, w.squares)
+    return
+  end
+  -- Give every hunter that has none yet a square it can drive to: the
+  -- nearest one nobody else has, if there is one.
+  local hunters, can = 0, 0
+  for p = 0, game.max_tanks() - 1 do
+    local t = walled.hunter(p) and game.tank(p) or nil
+    if t ~= nil and not t.dead then
+      hunters = hunters + 1
+      if w.assign[p] ~= nil then
+        can = can + 1
+      else
+        local best, best_d, best_free = nil, nil, false
+        for _, sq in ipairs(w.squares) do
+          if walled.can_reach(w, t.mx, t.my, sq) then
+            local free = not w.taken[sq.key]
+            local d = chebyshev(t.mx, t.my, sq.x, sq.y)
+            if best == nil or (free and not best_free) or
+               (free == best_free and d < best_d) then
+              best, best_d, best_free = sq, d, free
+            end
+          end
+        end
+        if best ~= nil then
+          w.assign[p] = best
+          w.taken[best.key] = true
+          can = can + 1
+        end
+      end
+    end
+  end
+  if hunters > 0 and can == 0 then
+    walled.fallback_on("no hunter can reach a square with a line")
+  end
+end
+
 local function aim_one(p)
   if p == holder or pill == nil or not is_bot(p) or not in_round(p) then
     return
@@ -1455,6 +1709,21 @@ local function aim_one(p)
   -- A bot holder's hop is left as it was: the prize stands for a few seconds
   -- only, and he shoots it down and takes it back himself.
   if standing(pb) then
+    -- A hunter with a square that has a line to a walled-in prize is sent
+    -- there once (see walled.update); after that its own choice plays on.
+    if walled.watch ~= nil and walled.watch.sent[p] then
+      return
+    end
+    local sq = (walled.watch ~= nil and not walled.watch.fallback) and walled.watch.assign[p] or nil
+    if sq ~= nil then
+      local order = goto_hint(sq.x, sq.y, string.format("line %d,%d", pb.x, pb.y))
+      tell(p, order, true)
+      if told[p] == order.key then
+        walled.watch.sent[p] = true
+        walled.watch.sent_at = walled.watch.sent_at or elapsed
+      end
+      return
+    end
     if told[p] ~= nil and told[p] ~= "release" and
        (plan == nil or plan.kind ~= "hop") then
       local man = game.builder(p)
@@ -2066,6 +2335,7 @@ local function each_second()
   -- when that is already so.
   hold_down_the_prize()
   sort_teams()
+  walled.update()
 
   -- Every second, because a bot that has only just joined may not take its
   -- table on the first try, and a chase goes stale in seconds. Neither says
