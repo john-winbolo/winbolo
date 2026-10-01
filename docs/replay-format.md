@@ -422,8 +422,8 @@ and ignored.
 
 ### `log_ScnAnnounce` payload
 
-A line a scenario put across the top of the game view. Four header bytes,
-then the line as a Pascal string:
+A big line a scenario put across the game view. Four header bytes, then the
+line as a Pascal string, then a position when the script gave one:
 
 | Bytes | Field | Notes |
 |---|---|---|
@@ -432,13 +432,15 @@ then the line as a Pascal string:
 | 2–3 | Ticks | Big-endian; how long the line stays up |
 | 4 | Text length | 0–128 |
 | 5… | Text | That many bytes |
-| after the text | Place | Only when the line is not at the top: 1 = upper, a quarter of the way down the view (`ScnAnnouncePlace`) |
+| after the text | Position x | Only for a line with a position: the centre of the line across the view, 0 = left edge, 254 = right edge, 127 = the middle |
+| next | Position y | The same, down the view: 0 = top edge, 254 = bottom edge |
 
-The place byte is written only for a line that is not at the top, so a line
-at the top is recorded byte for byte as it was before the place existed. A
-reader takes it when the framed length has one byte left after the text, and
-a viewer that predates it skips it by the framed length. A place it does not
-know is drawn at the top.
+The two position bytes are written only for a line with a position, so a line
+with none is recorded byte for byte as it was before positions existed, and
+is drawn where announcements always go. A reader takes them when the framed
+length has at least two bytes left after the text, and leaves anything after
+them for the framed length to skip. A byte of 255 reads as 254. A viewer that
+predates the position skips the two bytes by the framed length.
 
 A text length of 0 is the clear: the scenario took the line down, and the
 ticks alongside it were not read. A line with something in it is never
@@ -452,6 +454,13 @@ past 128 bytes is consumed and ignored. Playback also posts each line to the
 viewer's newswire once, whatever its destination, prefixed "[Team N]" or
 "[name]" when it went to a team or a player; a clear posts nothing, and a
 seek's rebuild posts nothing.
+
+On the wire the line travels as `CTRL_SCN_ANNOUNCE`: the ticks as a
+big-endian `u16`, then the text with no length byte, then for a line with a
+position a 0x00 and the same two position bytes. A client that predates the
+position reads the whole rest of the body as the text; the 0x00 ends the text
+it draws, in the usual place. It refuses a body whose text part is longer
+than 128 bytes, so a line with a position is held to 125 bytes of text.
 
 ### `log_ScnStatus` payload
 
