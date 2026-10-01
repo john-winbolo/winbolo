@@ -1383,6 +1383,15 @@ if(ENABLE_ONNXRUNTIME AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         )
         FetchContent_MakeAvailable(onnxruntime_prebuilt)
 
+        # The prebuilt library bundles about thirty components under
+        # Apache, BSD and MIT licences, listed in its ThirdPartyNotices.txt.
+        # Those licences require the text to ship with the binary, so the
+        # file is copied beside THIRD_PARTY_NOTICES.md wherever the library
+        # itself is shipped. A system or vcpkg install carries its own copy.
+        if(EXISTS "${onnxruntime_prebuilt_SOURCE_DIR}/ThirdPartyNotices.txt")
+            set(ONNXRUNTIME_NOTICES "${onnxruntime_prebuilt_SOURCE_DIR}/ThirdPartyNotices.txt" CACHE INTERNAL "")
+        endif()
+
         # Find the shared library in the extracted directory
         if(WIN32)
             file(GLOB _ORT_DLL "${onnxruntime_prebuilt_SOURCE_DIR}/lib/onnxruntime.dll")
@@ -2078,6 +2087,15 @@ add_custom_command(TARGET WinBolo POST_BUILD
 )
 # Copy ONNX Runtime shared library if using FetchContent prebuilt
 if(HAVE_ONNXRUNTIME)
+    # Its third-party notices go into data/ beside THIRD_PARTY_NOTICES.md,
+    # which points to them.
+    if(DEFINED ONNXRUNTIME_NOTICES)
+        add_custom_command(TARGET WinBolo POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_NOTICES}"
+                "${WINBOLO_DATA_DIR}/data/THIRD_PARTY_NOTICES-onnxruntime.txt"
+            COMMENT "Copying ONNX Runtime third-party notices to data/"
+        )
+    endif()
     if(WIN32 AND DEFINED ONNXRUNTIME_DLL)
         add_custom_command(TARGET WinBolo POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_DLL}" "$<TARGET_FILE_DIR:WinBolo>"
@@ -3256,6 +3274,16 @@ if(HAVE_SENTRY AND TARGET crashpad_handler)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:crashpad_handler>" "${DIST_DIR}/")
 endif()
 
+# The prebuilt ONNX Runtime's own third-party notices travel with its
+# library: beside THIRD_PARTY_NOTICES.md in data/ for the About box, and at
+# the zip root where someone unpacking it will see them.
+set(DIST_ORT_NOTICES_CMD "")
+if(HAVE_ONNXRUNTIME AND DEFINED ONNXRUNTIME_NOTICES)
+    set(DIST_ORT_NOTICES_CMD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_NOTICES}" "${DIST_DIR}/data/THIRD_PARTY_NOTICES-onnxruntime.txt"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_NOTICES}" "${DIST_DIR}/THIRD_PARTY_NOTICES-onnxruntime.txt")
+endif()
+
 # Strip debug info from the staged Linux binaries before zipping.  Only Linux
 # carries embedded DWARF in the ELF binaries; Windows keeps it in separate .pdb
 # files and macOS in .dSYM bundles, so neither needs stripping here.  We strip
@@ -3315,6 +3343,7 @@ add_custom_target(dist
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/LICENSE" "${DIST_DIR}/LICENSE"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/LICENSE-EXCEPTION.md" "${DIST_DIR}/LICENSE-EXCEPTION.md"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md" "${DIST_DIR}/THIRD_PARTY_NOTICES.md"
+    ${DIST_ORT_NOTICES_CMD}
 
     # Brain scripts (excludes *.md plan/roadmap notes via copy_brains.cmake)
     COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains/GoalHunter_1.7"
