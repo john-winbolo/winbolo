@@ -21,6 +21,9 @@
  *
  *   /api/v1/games needs no authentication and is served from
  *   the page's own origin (docs/web-hosting.md).
+ *
+ *   Joining a listed game navigates this tab to the game's
+ *   /join/ address (wasmFinderJoin).
  *********************************************************/
 
 #include <emscripten.h>
@@ -73,4 +76,12 @@ EM_JS(int, wasmFinderFetchTake, (char **out), {
         }
     }
     return 1;
+});
+
+/* Join a listed game: load /join/<server key> in this tab, the address the
+ * join path mints a join code from. The page unloads once the browser starts
+ * the navigation; nothing here waits for it. A password-protected game is
+ * joined the same way, and the join path asks for the password. */
+EM_JS(void, wasmFinderJoin, (const char *serverKey), {
+    window.location.href = '/join/' + encodeURIComponent(UTF8ToString(serverKey));
 });

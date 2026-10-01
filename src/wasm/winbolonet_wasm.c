@@ -228,6 +228,16 @@ EM_JS(void, wbAccountSignInJs, (void), {
                          encodeURIComponent(window.location.href);
 });
 
+/* Sign in from the game finder. The login returns the player to the finder
+ * at the menu's address, not to this page's address: a /join/<key> taken
+ * before signing in can be dead by then, since the server changes its key
+ * each time it returns to its lobby. */
+EM_JS(void, wbAccountSignInToFinderJs, (void), {
+  window.location.href = 'https://www.winbolo.net/login?return=' +
+                         encodeURIComponent(window.location.origin +
+                                            Module.wbMenuUrl() + '?finder=1');
+});
+
 EM_JS(void, wbAccountSignOutJs, (void), {
   window.location.href = 'https://www.winbolo.net/logout';
 });
@@ -242,4 +252,5 @@ void wasmAccountName(char *out, size_t outSize) {
 }
 
 void wasmAccountSignIn(void)  { wbAccountSignInJs(); }
+void wasmAccountSignInToFinder(void) { wbAccountSignInToFinderJs(); }
 void wasmAccountSignOut(void) { wbAccountSignOutJs(); }

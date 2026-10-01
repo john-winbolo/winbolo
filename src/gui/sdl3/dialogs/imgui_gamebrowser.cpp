@@ -77,6 +77,16 @@ extern "C" {
  * waits. Hand-declared, as lobby_internal.h declares the reel's fetch. */
 void wasmFinderFetchStart(void);
 int  wasmFinderFetchTake(char **out);
+/* Load /join/<serverKey> in this tab (finder_wasm.c). */
+void wasmFinderJoin(const char *serverKey);
+/* The page's WinBolo.net account (winbolonet_wasm.c), read from
+ * /api/v1/me; signing in goes to www.winbolo.net and returns to the finder. */
+bool wasmAccountPending(void);
+bool wasmAccountSignedIn(void);
+void wasmAccountSignInToFinder(void);
+/* TRUE, once, when Back or Forward has moved the browser off the finder's
+ * history entry (main_wasm.c). */
+bool wasmFinderTakeBack(void);
 #endif
 }
 
@@ -713,6 +723,39 @@ static SDL_Texture *s_voiceIcon = nullptr;
 static SDL_Texture *s_voiceMutedIcon = nullptr;
 static bool s_voiceIconsAttempted = false;
 
+#ifdef __EMSCRIPTEN__
+/* How long the web finder waits on the page's /api/v1/me check before it
+ * reads the player as signed out. A fetch that fails never reports back; the
+ * account block in imgui_winbolonet.cpp waits the same. */
+#define FINDER_ACCOUNT_CHECK_MS 5000
+
+enum FinderAccount {
+    FINDER_ACCOUNT_CHECKING,
+    FINDER_ACCOUNT_SIGNED_OUT,
+    FINDER_ACCOUNT_SIGNED_IN
+};
+
+/* The player's account as Join sees it, timed from when the finder opened.
+ * A name that arrives after the wait still switches it to signed in. */
+static FinderAccount finderAccountState(Uint64 openedMs) {
+    if (wasmAccountSignedIn()) {
+        return FINDER_ACCOUNT_SIGNED_IN;
+    }
+    if (wasmAccountPending() &&
+        SDL_GetTicks() - openedMs < FINDER_ACCOUNT_CHECK_MS) {
+        return FINDER_ACCOUNT_CHECKING;
+    }
+    return FINDER_ACCOUNT_SIGNED_OUT;
+}
+
+/* Whether the web can join this row: it needs the key its /join/ address
+ * is built from, and a game the list says is taking new players (the red
+ * Locked/Full dot). */
+static bool finderRowJoinable(const ServerEntry &e) {
+    return e.serverKey[0] != '\0' && e.allowNewPlayers;
+}
+#endif
+
 extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     /* Copy title — the caller passes langGetText() which returns a shared
      * static buffer that gets overwritten by any later langGetText() call
@@ -891,6 +934,9 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
     int result = -1;
     bool running = true;
+#ifdef __EMSCRIPTEN__
+    const Uint64 openedMs = SDL_GetTicks();
+#endif
 
     /* Auto-refresh on open */
     bool autoRefresh = true;
@@ -936,6 +982,16 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 running = false;
             }
         }
+
+#ifdef __EMSCRIPTEN__
+        /* Back or Forward off the finder's history entry closes it as Cancel
+         * does; the browser is already on the menu's entry. */
+        if (wasmFinderTakeBack()) {
+            gameFrontSetDlgState(openWelcome);
+            running = false;
+        }
+        const FinderAccount account = finderAccountState(openedMs);
+#endif
 
 #ifdef __EMSCRIPTEN__
         /* Take the page's reply once it lands and parse it here, standing in
@@ -1551,8 +1607,6 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 if (ImGui::Selectable("##srv", isSelected,
                                       ImGuiSelectableFlags_AllowDoubleClick,
                                       ImVec2(rowW, rowH))) {
-                    /* On the web a row is only selected: it joins nothing. */
-#ifndef __EMSCRIPTEN__
                     /* Join on a mouse double-click, or — in controller mode,
                      * where the row activates via keyboard Space and never a
                      * mouse double-click — on a second A press on the row that
@@ -1560,11 +1614,18 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                      * captured before the assignment below). */
                     bool joinActivate = ImGui::IsMouseDoubleClicked(0) ||
                                         (uiShouldUseControllerMode() && isSelected);
-#endif
                     selectedItem = i;
                     SDL_strlcpy(selKeyAddr, e.address, sizeof(selKeyAddr));
                     selKeyPort = e.port;
-#ifndef __EMSCRIPTEN__
+#ifdef __EMSCRIPTEN__
+                    /* The web joins as its Join button does, signed in only;
+                     * signed out or still checking, the row is only
+                     * selected. */
+                    if (joinActivate && account == FINDER_ACCOUNT_SIGNED_IN &&
+                        finderRowJoinable(e)) {
+                        wasmFinderJoin(e.serverKey);
+                    }
+#else
                     if (joinActivate) {
                         char playerName[PLAYER_NAME_LEN];
                         gameFrontGetPlayerName(playerName);
@@ -2266,10 +2327,30 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             /* Join — A glyph before the disabled-state guard so it isn't dimmed. */
             glyphInline(SI_ACTION_MENU_ACCEPT);
 #ifdef __EMSCRIPTEN__
-            /* The web finder joins nothing: Join is drawn disabled. */
-            ImGui::BeginDisabled();
-            ImGui::Button(langGetText(STR_DLGTCP_JOIN), ImVec2(btnW, btnH));
-            ImGui::EndDisabled();
+            /* Signed out, the button signs in and comes back to the finder,
+             * whatever is selected. Otherwise it is Join, disabled while the
+             * account check is out or the selected row cannot be joined. */
+            if (account == FINDER_ACCOUNT_SIGNED_OUT) {
+                const char *signInLabel = langGetText(STR_DLGBROWSER_SIGNIN_TO_JOIN);
+                float signInW = ImGui::CalcTextSize(signInLabel).x
+                              + ImGui::GetStyle().FramePadding.x * 2.0f;
+                if (signInW < btnW) signInW = btnW;
+                if (ImGui::Button(signInLabel, ImVec2(signInW, btnH))) {
+                    wasmAccountSignInToFinder();
+                }
+                imguiHandOnHover();
+            } else {
+                const bool canJoin =
+                    account == FINDER_ACCOUNT_SIGNED_IN &&
+                    selectedItem >= 0 && selectedItem < (int)servers.size() &&
+                    finderRowJoinable(servers[selectedItem]);
+                if (!canJoin) ImGui::BeginDisabled();
+                if (ImGui::Button(langGetText(STR_DLGTCP_JOIN), ImVec2(btnW, btnH))) {
+                    wasmFinderJoin(servers[selectedItem].serverKey);
+                }
+                imguiHandOnHover();
+                if (!canJoin) ImGui::EndDisabled();
+            }
 #else
             if (!hasSelection) ImGui::BeginDisabled();
 

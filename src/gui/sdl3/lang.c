@@ -1940,6 +1940,7 @@ static const LangEntry langTable[] = {
     {1827, "Large"},
     {1828, "Alliances are disabled in ranked games."},
     {1829, "Enlarge"},
+    {2736, "Sign in to join"},
     {1844, "Display & Sound"},
     {1845, "Game/HUD"},
     {1846, "Session"},

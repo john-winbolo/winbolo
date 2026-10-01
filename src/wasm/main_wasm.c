@@ -127,6 +127,9 @@ static bool s_leaveRequested = FALSE;
  * the browser is already on the menu's entry. */
 static bool s_gameEntryPushed = FALSE;
 static bool s_leftByHistory = FALSE;
+/* Set when Back or Forward closed the game finder (wasmFinderTakeBack), so
+ * the browser is already on the menu's entry. */
+static bool s_finderLeftByHistory = FALSE;
 
 /* Terminal connection-failure state. Set on any unrecoverable connection
  * problem (can't reach the relay, version mismatch, used/expired join code,
@@ -464,8 +467,8 @@ EM_ASYNC_JS(void, wasmFrameWait, (void), {
  * Module.wbNavRequest, which the game loop reads. None of these suspend.
  * ------------------------------------------------------- */
 
-/* Record the screen the page is on ("menu" or "game") for the popstate
- * handler. */
+/* Record the screen the page is on ("menu", "finder" or "game") for the
+ * popstate handler. */
 static void wasmSetScreen(const char *screen) {
   EM_ASM({ Module.wbScreen = UTF8ToString($0); }, screen);
 }
@@ -497,6 +500,24 @@ static void wasmHistoryMarkGame(void) {
   });
 }
 
+/* Push a history entry for the game finder opened from the menu, at the
+ * address that opens the finder directly, so a reload opens it again. */
+static void wasmHistoryPushFinder(void) {
+  EM_ASM({
+    try { history.pushState({screen: "finder"}, "", Module.wbMenuUrl() + "?finder=1"); }
+    catch (e) {}
+  });
+}
+
+/* Mark the current entry as the game finder, for a ?finder=1 launch. The
+ * address, ?finder=1 with it, is left as it is. */
+static void wasmHistoryMarkFinder(void) {
+  EM_ASM({
+    try { history.replaceState({screen: "finder"}, "", location.href); }
+    catch (e) {}
+  });
+}
+
 /* Step back to the menu's entry. The popstate this fires arrives once main
  * next waits on a frame, by which time the screen is already the menu, so
  * the handler ignores it. */
@@ -513,6 +534,18 @@ static bool wasmTakeNavRequest(void) {
     return 1;
   });
   return pending != 0;
+}
+
+/* Called by the game finder once a frame: TRUE, once, when Back or Forward
+ * has moved off its history entry, and the finder then closes as Cancel
+ * does. Records that the browser is already on the menu's entry, so
+ * wasmShowFinder leaves the history alone. */
+bool wasmFinderTakeBack(void) {
+  if (!wasmTakeNavRequest()) {
+    return FALSE;
+  }
+  s_finderLeftByHistory = TRUE;
+  return TRUE;
 }
 
 /* Run the current game until it ends: a game over or quit (finishedLoop) or
@@ -593,10 +626,37 @@ static void wasmReadLaunch(WasmLaunch *out, bool *openFinder) {
 }
 
 /* Show the game finder over the menu's background, as the desktop's Internet
- * row does, and return when it closes. Nothing in it starts a game, so the
- * menu always follows. */
-static void wasmShowFinder(void) {
+ * row does, and return when it closes; the menu follows. Its Join and Sign in
+ * to join load another page, so the finder only ever closes by Cancel or by
+ * Back or Forward.
+ *
+ * History: opened from the menu, the finder pushes its own entry; on a
+ * ?finder=1 launch it marks the launch entry. Closed by Back or Forward, the
+ * browser is already on the menu's entry. Closed by Cancel, a pushed entry is
+ * stepped back off, and a launch entry becomes the menu at the menu's
+ * address. Nothing between here and the menu's first frame wait suspends,
+ * so the screen is the menu again by the time history.back()'s popstate
+ * arrives, and the handler ignores it. */
+static void wasmShowFinder(bool launched) {
+  s_finderLeftByHistory = FALSE;
+  if (launched) {
+    wasmHistoryMarkFinder();
+  } else {
+    wasmHistoryPushFinder();
+  }
+  wasmSetScreen("finder");
+
   imguiGameBrowserShow(langGetText(STR_GAMEFRONT_TRACKERFINDER_TITLE), TRUE);
+
+  if (s_finderLeftByHistory) {
+    /* The browser is already on the menu's entry. */
+  } else if (launched) {
+    wasmHistoryReplaceMenu();
+  } else {
+    wasmHistoryBack();
+  }
+  wasmSetScreen("menu");
+  s_finderLeftByHistory = FALSE;
 }
 
 /* End a single-player game (practice or tutorial) so the menu, and then
@@ -787,10 +847,14 @@ int main(int argc, char *argv[]) {
    * History: the menu's entry is the page's first. A game picked from the
    * menu pushes its own entry, so Back returns to the menu; a single-player
    * game the page launched straight into marks its entry as the game, with
-   * no menu behind it. A join leaves the history alone. */
+   * no menu behind it. A ?finder=1 launch marks its entry as the finder's
+   * (wasmShowFinder), which becomes the menu's once the finder closes. A
+   * join leaves the history alone. */
   WasmLaunch next = launch;
   bool menu = launch.showMenu;
-  if (launch.showMenu) {
+  if (openFinder) {
+    /* wasmShowFinder marks the entry, keeping its address. */
+  } else if (launch.showMenu) {
     wasmHistoryReplaceMenu();
     wasmSetScreen("menu");
   } else if (launch.mode != WASM_GAME_JOIN) {
@@ -803,7 +867,7 @@ int main(int argc, char *argv[]) {
        * showing, once. */
       if (openFinder) {
         openFinder = FALSE;
-        wasmShowFinder();
+        wasmShowFinder(TRUE);
         continue;
       }
       /* The welcome dialog returns an openingStates value (gamefront.h). */
@@ -816,7 +880,7 @@ int main(int argc, char *argv[]) {
         if (r == openSettings) {
           imguiSettingsShow();
         } else if (r == openInternet) {
-          wasmShowFinder();
+          wasmShowFinder(FALSE);
         }
         /* Settings or the finder closed, or a row with nothing behind it
          * on the web (Local, Quit): show the menu again. */
