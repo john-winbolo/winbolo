@@ -186,15 +186,11 @@ set(BOLO_SOURCES
 # server_stubs.c + server_stubs_wasm.c cover the server-side symbols the
 # shared sim/dialogs reference; serverInstanceStartup is a local-only stub
 # in server_stubs_wasm.c, matching the iOS/Android/BrainTest clients.
-# The three server_dedicated_log files are taken from server_static on their
-# own: they record a practice game's rounds for the lobby's replay, as on
-# desktop single player.
+# The round recorder comes from server_round_log_static: it records a
+# practice game's rounds for the lobby's replay, as on desktop single player.
 set(SERVER_SOURCES
     ${SRC_ROOT}/server/geolookup.c
     ${SRC_ROOT}/server/server_stubs.c
-    ${SRC_ROOT}/server/server_dedicated_log.c
-    ${SRC_ROOT}/server/server_dedicated_log_settings.c
-    ${SRC_ROOT}/server/server_dedicated_log_path.c
 )
 
 # Map editor sources reachable from shared dialogs (map chooser pulls in
@@ -455,15 +451,10 @@ bolo_apply_include_rules(winbolo gui)
 # lobby-background animation; mirror the main build's per-file grant.
 # server_stubs_wasm.c's local-only serverInstanceStartup calls
 # serverSimApplyInstanceConfig, declared in internal/server_sim_lifecycle.h.
-# The server_dedicated_log files get the internal access server_static
-# compiles them with.
 bolo_grant_internal_source_access(winbolo
     ${SRC_ROOT}/bolo/transport_udp_client.c
     ${SRC_ROOT}/gui/sdl3/bg_game.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/server_stubs_wasm.c
-    ${SRC_ROOT}/server/server_dedicated_log.c
-    ${SRC_ROOT}/server/server_dedicated_log_settings.c
-    ${SRC_ROOT}/server/server_dedicated_log_path.c)
+    ${CMAKE_CURRENT_SOURCE_DIR}/server_stubs_wasm.c)
 
 target_compile_definitions(winbolo PRIVATE
     _GNU_SOURCE
@@ -489,7 +480,9 @@ target_link_options(winbolo PRIVATE "LINKER:--allow-multiple-definition")
 
 # scenario_static ahead of server_sim_static: it calls the funnel and the
 # round-start registration, which the server library provides.
-target_link_libraries(winbolo PRIVATE bolo_static scenario_static server_sim_static bot_brains_static threads_static)
+# server_round_log_static records practice rounds; the transport and
+# lifecycle calls it makes land on the stubs in server_stubs_wasm.c.
+target_link_libraries(winbolo PRIVATE bolo_static scenario_static server_sim_static server_round_log_static bot_brains_static threads_static)
 target_link_libraries(winbolo PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
