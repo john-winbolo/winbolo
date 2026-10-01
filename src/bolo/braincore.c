@@ -925,8 +925,23 @@ void brainCoreExtractOutput(lua_State *L, BrainInfo *info) {
  *      surface the failure without grepping log files.
  * No CLI switch — always on.
  */
-static int brc_traceback_msgh(lua_State *L) {
+
+/* The text the per-think budget hook in bot_manager.c raises. Lua puts
+ * "<chunk>:<line>: " in front of it, so it is matched as a substring. */
+#define BRC_BUDGET_KILL_TEXT "tick_budget_exceeded"
+
+/* Not static so tests/unit/test_brain_crash_log.c can call it through a
+ * lua_pcall of its own. */
+int brc_traceback_msgh(lua_State *L) {
   const char *msg = lua_tostring(L, 1);
+  /* A budget kill's message is thrown away by the caller, so building a
+   * traceback for it only costs time. The budget hook raises only while it
+   * is installed, so a message that merely mentions the text with no hook
+   * (brain.open / brain.close) keeps its traceback. */
+  if (msg != NULL && lua_gethook(L) != NULL &&
+      strstr(msg, BRC_BUDGET_KILL_TEXT) != NULL) {
+    return 1;
+  }
   if (msg == NULL) {
     if (luaL_callmeta(L, 1, "__tostring") && lua_type(L, -1) == LUA_TSTRING) {
       return 1;
@@ -1245,7 +1260,7 @@ bool brainCoreCallThink(lua_State *L, BrainInfo *info, bool *out_killed) {
      * with the same line every tick. The producer's rate-limited
      * overrun warning covers operator visibility. */
     bool killed = (out_killed != NULL && errMsg != NULL &&
-                   strstr(errMsg, "tick_budget_exceeded") != NULL);
+                   strstr(errMsg, BRC_BUDGET_KILL_TEXT) != NULL);
     if (killed) {
       *out_killed = true;
       /* The budget hook is STILL ARMED here: bot_manager.c's

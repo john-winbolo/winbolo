@@ -196,6 +196,9 @@ static uint16_t paFullList(uint8_t *out) {
 
 /* ── Ops ──────────────────────────────────────────────────────────── */
 
+static ScnOpResult paPanelFrom(ServerSim *sim, BYTE owner, BYTE target,
+                               const uint8_t *bytes, uint16_t len);
+
 static ScnOpResult paPanel(ServerSim *sim, BYTE target, BYTE panel,
                            const uint8_t *bytes, uint16_t len) {
     ScenarioOp op;
@@ -440,13 +443,20 @@ int run_scn_arm_panel_publishes_and_records(void) {
     UT_ASSERT(cap.lastPanel.u.scnPanel.destPlayer == 0xFF);
     UT_ASSERT(cap.lastPanel.u.scnPanel.len == SCN_PANEL_MAX);
 
+    /* A second script's list for everyone. The recorded id byte carries
+       its owner in the high nibble, the same byte the live event carries. */
+    replayHarnessTick(&h, 2);
+    UT_ASSERT(paPanelFrom(sim, 3, 0, sprite, listLen) == SCN_OP_OK);
+    UT_ASSERT(cap.panelCount == 4);
+    UT_ASSERT(cap.lastPanel.u.scnPanel.panel == SCN_PANEL_WIRE(0, 3));
+
     replayHarnessTick(&h, 4);
     UT_ASSERT_MSG(replayHarnessStopRecording(&h), "could not stop recording");
 
     UT_ASSERT_MSG(paFindLogged(h.path, (uint8_t)log_ScnPanel, &hits),
                   "the recording did not end on a clean quit: %s", h.path);
-    UT_ASSERT_MSG(hits.count == 3,
-                  "the recording holds %d log_ScnPanel record(s), expected 3",
+    UT_ASSERT_MSG(hits.count == 4,
+                  "the recording holds %d log_ScnPanel record(s), expected 4",
                   hits.count);
 
     /* The player-held list: panel id, the destination pair, the length as a
@@ -473,6 +483,15 @@ int run_scn_arm_panel_publishes_and_records(void) {
               SCN_PANEL_MAX);
     UT_ASSERT_MSG(memcmp(hits.payload[2] + 5, list, SCN_PANEL_MAX) == 0,
                   "the recorded list is not the one published");
+
+    /* Script 3's record: owner 3 in the high nibble, panel 0 in the low. */
+    UT_ASSERT_MSG(hits.payload[3][0] == SCN_PANEL_WIRE(0, 3),
+                  "script 3's record carries id byte 0x%02X, expected 0x%02X",
+                  (unsigned)hits.payload[3][0],
+                  (unsigned)SCN_PANEL_WIRE(0, 3));
+    UT_ASSERT(hits.payload[3][1] == 0);
+    UT_ASSERT(hits.payload[3][2] == 0xFF);
+    UT_ASSERT(hits.payloadLen[3] == 5 + (int)listLen);
 
     replayHarnessStop(&h);
     return bad;
@@ -569,8 +588,10 @@ int run_scn_arm_panel_replayed_to_joiner(void) {
     const ScnPanelList *held;
     uint8_t             list[SCN_PANEL_MAX];
     uint8_t             other[SCN_PANEL_MAX];
+    uint8_t             mod[SCN_PANEL_MAX];
     uint16_t            listLen;
     uint16_t            otherLen;
+    uint16_t            modLen;
 
     UT_ASSERT(sim != NULL);
     listLen  = paSpriteList(list, 32);
@@ -582,6 +603,11 @@ int run_scn_arm_panel_replayed_to_joiner(void) {
     UT_ASSERT(paPanel(sim, 0, 0, list, listLen) == SCN_OP_OK);
     UT_ASSERT(paPanel(sim, PA_TARGET_PLAYER(PA_SLOT_OTHER), 0, other,
                       otherLen) == SCN_OP_OK);
+    /* A second script of the round's list draws its own panel 0 for
+       everyone in the same tick. It keeps its own row, so the joiner must
+       be given both scripts' lists and not only the last one written. */
+    modLen = paSpriteList(mod, 77);
+    UT_ASSERT(paPanelFrom(sim, 3, 0, mod, modLen) == SCN_OP_OK);
 
     cs = clientSimAlloc();
     UT_ASSERT(cs != NULL);
@@ -610,6 +636,19 @@ int run_scn_arm_panel_replayed_to_joiner(void) {
                   "the joiner's panel holds tile %u — 99 means the list "
                   "addressed to slot %d reached it",
                   (unsigned)held->items[0].u.sprite.tile, PA_SLOT_OTHER);
+
+    /* And script 3's list sits beside it, under its own owner. */
+    held = clientSimGetScnPanelOf(cs, 0, 3);
+    UT_ASSERT_MSG(held != NULL,
+                  "the joiner was not given script 3's panel 0 list");
+    UT_ASSERT(held->count == 1);
+    UT_ASSERT_MSG(held->items[0].u.sprite.tile == 77,
+                  "script 3's panel holds tile %u, expected 77",
+                  (unsigned)held->items[0].u.sprite.tile);
+    held = clientSimGetScnPanelOf(cs, 0, 0);
+    UT_ASSERT_MSG(held != NULL && held->count == 1 &&
+                  held->items[0].u.sprite.tile == 32,
+                  "script 3's list overwrote script 0's for the joiner");
 
     serverSimUnregisterSubscriber(sim, handle);
     clientSimDestroy(cs);
@@ -1710,5 +1749,64 @@ int run_scn_markers_scores_loopback_late_join(void) {
     UT_ASSERT(p != NULL && p->valid && p->score == 12);
 
     loopbackHarnessStop(&h);
+    return 0;
+}
+
+/* ================================================================
+ * Each script of the round's list owns its own panel. Two scripts may
+ * update the same panel for the same target in one tick, and the live
+ * event says which script sent it; one script still gets one update
+ * per tick, even when another script's update comes between its two.
+ * ================================================================ */
+static ScnOpResult paPanelFrom(ServerSim *sim, BYTE owner, BYTE target,
+                               const uint8_t *bytes, uint16_t len) {
+    ScenarioOp op;
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_PANEL;
+    op.u.panel.target = target;
+    op.u.panel.panel  = 0;
+    op.u.panel.owner  = owner;
+    op.u.panel.len    = len;
+    memcpy(op.u.panel.bytes, bytes, len);
+    return serverSimApplyScenarioOp(sim, &op, NULL);
+}
+
+int run_scn_arm_panel_owners(void) {
+    ServerSim *sim = paMakeLobbySim();
+    PaCapture  cap;
+    uint8_t    list[SCN_PANEL_MAX];
+    uint16_t   listLen;
+
+    UT_ASSERT(sim != NULL);
+    paSubscribe(sim, &cap);
+    listLen = paSpriteList(list, 32);
+
+    UT_ASSERT(paPanelFrom(sim, 0, 0, list, listLen) == SCN_OP_OK);
+    UT_ASSERT(cap.lastPanel.u.scnPanel.panel == SCN_PANEL_WIRE(0, 0));
+    UT_ASSERT_MSG(paPanelFrom(sim, 3, 0, list, listLen) == SCN_OP_OK,
+                  "a second script's panel in the same tick was refused");
+    UT_ASSERT_MSG(cap.lastPanel.u.scnPanel.panel == SCN_PANEL_WIRE(0, 3),
+                  "the event carries panel byte 0x%02X, expected 0x%02X",
+                  (unsigned)cap.lastPanel.u.scnPanel.panel,
+                  (unsigned)SCN_PANEL_WIRE(0, 3));
+    UT_ASSERT(SCN_PANEL_WIRE_ID(cap.lastPanel.u.scnPanel.panel) == 0);
+    UT_ASSERT(SCN_PANEL_WIRE_OWNER(cap.lastPanel.u.scnPanel.panel) == 3);
+
+    /* Script 0 again in the same tick: refused, although script 3's
+       update came between its two. */
+    UT_ASSERT_MSG(paPanelFrom(sim, 0, 0, list, listLen) == SCN_OP_RATE,
+                  "a script got two updates in one tick");
+    UT_ASSERT(paPanelFrom(sim, 3, 0, list, listLen) == SCN_OP_RATE);
+    UT_ASSERT(cap.panelCount == 2);
+
+    /* An owner past the list is not a script. */
+    UT_ASSERT(paPanelFrom(sim, SCN_PANEL_OWNERS, 0, list, listLen) ==
+              SCN_OP_RANGE);
+
+    sim->tick++;
+    UT_ASSERT(paPanelFrom(sim, 0, 0, list, listLen) == SCN_OP_OK);
+    UT_ASSERT(paPanelFrom(sim, 3, 0, list, listLen) == SCN_OP_OK);
+
+    serverSimDestroy(sim);
     return 0;
 }

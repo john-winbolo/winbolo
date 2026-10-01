@@ -189,15 +189,6 @@ void clientSimNetSendLobbySetBotBrain(ClientSim *cs, BYTE slot,
  * Windows drive letters before opening the file. */
 void clientSimNetSendLobbySetMap(ClientSim *cs, const char *mapRelPath);
 
-/* Host (or openHost / admin) only — pick one of the scenarios the server
- * offers on its own. relPath is the file name the scenario list gave, and
- * "" selects none; NULL is a no-op. The server rejects "..", absolute
- * paths, Windows drive letters and a name its scenarios directory does not
- * hold. Picking is a commit and not a preview: the scenario it names takes
- * effect at once, over the committed map's own script if that map has one,
- * and the lobby settings event says which is playing. */
-void clientSimNetSendLobbySetScenario(ClientSim *cs, const char *relPath);
-
 /* Host (or openHost / admin) only - set the lobby's whole script list: one
  * scenario deciding the round and mods behind it, in load order. files is
  * `count` file names as the scenario list gave them; count 0 clears the list

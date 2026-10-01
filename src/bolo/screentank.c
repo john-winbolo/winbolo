@@ -264,3 +264,31 @@ void screenTanksGetSubPixel(const screenTanks *value, BYTE itemNum, BYTE *wx, BY
     *angle = (*value).pos[itemNum].angle;
   }
 }
+
+/*********************************************************
+*NAME:          screenTanksGetCentreSquare
+*AUTHOR:        John Morrison
+*CREATION DATE: 1/10/26
+*LAST MODIFIED: 1/10/26
+*PURPOSE:
+*  Gets the map square the tank's centre is standing on,
+*  in the same frame as the item's mx/my. See screentank.h.
+*
+*ARGUMENTS:
+*  value      - Pointer to the screenTanks data structure
+*  itemNum    - The item number to get
+*  mx         - Map X of the square the centre is on
+*  my         - Map Y of the square the centre is on
+*********************************************************/
+void screenTanksGetCentreSquare(const screenTanks *value, BYTE itemNum, BYTE *mx, BYTE *my) {
+  itemNum--;
+  if (itemNum < (*value).numTanksScreen) {
+    /* wx and wy are the low byte of the centre less TANK_SUBTRACT, so the
+       centre is wx + TANK_SUBTRACT into the listed square: on the next square
+       over once that reaches a whole square. */
+    *mx = (BYTE) ((*value).pos[itemNum].mx +
+                  (((*value).pos[itemNum].wx >= TANK_SUBTRACT) ? 1 : 0));
+    *my = (BYTE) ((*value).pos[itemNum].my +
+                  (((*value).pos[itemNum].wy >= TANK_SUBTRACT) ? 1 : 0));
+  }
+}

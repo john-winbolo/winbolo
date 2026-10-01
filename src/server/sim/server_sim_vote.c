@@ -127,6 +127,38 @@ void publishServerMessage(ServerSim *sim, const char *message) {
     serverSimPublishControl(sim, &evt);
 }
 
+/* Server-originated English broadcast for text that may be over the wire's
+ * chat cap. Rather than let SDL_strlcpy lop the tail mid-character, a long
+ * message is cut on a UTF-8 boundary and ends in an ellipsis, so the
+ * overflow reads as an intentional truncation. */
+void publishServerEnglishBroadcast(ServerSim *sim, const char *message) {
+    ControlEvent evt;
+    size_t maxChars = sizeof(evt.u.serverText.text) - 1; /* PACKET_MAX_CHAT_MESSAGE */
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SERVER_TEXT;
+    evt.u.serverText.destPlayer = 0xFF;  /* everyone, not slot 0 */
+    if (SDL_strlen(message) <= maxChars) {
+        SDL_strlcpy(evt.u.serverText.text, message, sizeof(evt.u.serverText.text));
+    } else {
+        /* CTRL_SERVER_TEXT / PACKET_CHAT_BROADCAST cap the wire payload at
+         * PACKET_MAX_CHAT_MESSAGE. Rather than let SDL_strlcpy lop the tail
+         * mid-character (a long winners list overflows the cap), cut on a
+         * UTF-8 boundary and append an ellipsis so the overflow reads as an
+         * intentional truncation. */
+        size_t cut = maxChars - 3; /* leave room for "..." */
+        while (cut > 0 && ((unsigned char)message[cut] & 0xC0) == 0x80) {
+            cut--; /* back up so a multi-byte sequence isn't split */
+        }
+        SDL_memcpy(evt.u.serverText.text, message, cut);
+        SDL_strlcpy(evt.u.serverText.text + cut, "...",
+                    sizeof(evt.u.serverText.text) - cut);
+    }
+    /* In-process subscribers (SP host bots + human) consume CTRL_SERVER_TEXT
+     * directly; UDP clients receive the encoder-emitted
+     * PACKET_CHAT_BROADCAST(fromPlayer=0xFE) via the codec. */
+    serverSimPublishControl(sim, &evt);
+}
+
 /* Like publishServerMessage but delivered ONLY to members of teamId (1-15).
  * destTeam rides the ControlEvent and is filtered per-recipient in
  * udpClientDeliverControl + the in-process CTRL_SERVER_TEXT handler — used to

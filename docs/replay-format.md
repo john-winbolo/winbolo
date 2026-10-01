@@ -367,7 +367,7 @@ reader needs no history:
 
 | Bytes | Field | Notes |
 |---|---|---|
-| 0 | Panel id | Always 0, the in-game square, which is the only panel there is. It rides as a byte, so a second panel would need no change to this record |
+| 0 | Panel id and owner | Low four bits: the panel id, always 0, the in-game square, which is the only panel there is. High four bits: which script of the round's list drew it, 0 for the first script and for engine calls (`SCN_PANEL_WIRE` in `scenario_panel.h`). A recording made before owners existed has 0 there throughout |
 | 1 | `destTeam` | 0 = everyone, otherwise the team number the list was held to. Teams run 1–15 |
 | 2 | `destPlayer` | 0xFF = everyone, otherwise the 0-based player slot the list was held to |
 | 3–4 | List length | Big-endian; 0 for a list that cleared the panel |
@@ -390,7 +390,8 @@ Written by the scenario funnel's panel arm
 (`src/server/sim/server_sim_scenario.c`), which parses a list before it
 publishes one, so a list in a recording is one that parses. The viewer keeps
 the list for its destination, checking it with `scnPanelParse` first, and
-rebuilds every panel at the playhead after a seek. A record with a panel id
+rebuilds every panel at the playhead after a seek. It shows whichever script
+wrote to a destination last. A record whose low four bits are a panel id
 other than 0, a destination out of range, a length past `SCN_PANEL_MAX` or a
 list that does not parse is consumed and ignored.
 

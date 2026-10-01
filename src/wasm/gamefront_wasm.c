@@ -20,7 +20,9 @@
 #include <emscripten.h>
 #include <emscripten/html5.h>
 
+#include "bolo_rand.h"
 #include "client_frontend_connect.h"
+#include "client_frontend_sp.h"
 #include "client_sim.h"
 #include "control_event.h"
 #include "global.h"
@@ -31,6 +33,7 @@
 #include "frontend.h"
 #include "server_sim.h"
 #include "../server/server_lifecycle.h"
+#include "../scenario/scenario_host.h"
 #include "../gui/brainsHandler.h"
 #include "../gui/clientmutex.h"
 #include "../gui/gamefront.h"
@@ -39,14 +42,22 @@
 #include "../gui/sound.h"
 #include "../gui/winbolo.h"
 #include "../gui/sdl3/sdl3draw.h"
+#include "../gui/sdl3/bg_game.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "../gui/sdl3/sdl3imgui.h"
 #include "../gui/sdl3/dialogs/imgui_mapchooser.h"
 #include "../gui/sdl3/luabrainshandler.h"
+#include "../gui/sdl3/input_gamepad.h"
+#include "../gui/sdl3/build_cursor.h"
+#include "../gui/voice.h"
+#include "../common/prefs.h"
+#include "cJSON.h"
+#include "gamefront_wasm.h"
 
 /* Forward declaration */
 extern void sdl3MessageHandler(const char *message, const char *title);
 extern void wasmReportConnectFailure(const char *reason);  /* main_wasm.c */
+extern void wbPrefsPumpUpload(uint64_t nowMs);  /* prefs_bridge_wasm.c */
 
 /* Mint a fresh single-use join code from the reusable game_key by awaiting
  * Module.wbMintJoinCode (POST /api/join, cookie-authed) via ASYNCIFY — mirrors
@@ -85,24 +96,6 @@ static const char *gameFrontMintFailReason(int status) {
   }
 }
 
-
-/* -------------------------------------------------------
- * URL parameter helper (WASM only)
- * ------------------------------------------------------- */
-static const char *gameFrontGetUrlParam(const char *name) {
-  static char buf[512];
-  char js[640];
-  snprintf(js, sizeof(js),
-    "(function(){ var p = new URLSearchParams(window.location.search).get('%s');"
-    " return p ? p : ''; })()", name);
-  const char *result = emscripten_run_script_string(js);
-  if (result) {
-    strncpy(buf, result, sizeof(buf) - 1);
-    buf[sizeof(buf) - 1] = '\0';
-    return buf;
-  }
-  return "";
-}
 
 /* Parse "server=host:port" from a proxy URL query string.
  * Fills serverHost (up to hostSize bytes) and *serverPort. */
@@ -209,6 +202,7 @@ int gameFrontScnPanelX = -1;
 int gameFrontScnPanelY = -1;
 int gameFrontScnPanelScale = -1;
 int gameFrontScnPanelAlpha = -1;
+bool gameFrontScnPanelCloseAsk = TRUE;
 
 bool isServer = FALSE;
 bool useAutoslow;
@@ -261,6 +255,10 @@ int gameFrontLineOfSight       = LINE_OF_SIGHT_STOCK;
 /* Server-authoritative state — the Transport handle itself now lives
  * inside humanSim; only high-level lifecycle gating is tracked here. */
 static ServerSim *wasmServerSim = NULL;
+/* The practice game's scenario: the script beside its map, or the mods picked
+ * in its lobby. Follows the committed map, and is detached before the sim
+ * goes. NULL for a map with no script, and always for the tutorial. */
+static ScenarioHost *wasmScenarioHost = NULL;
 static bool wasmTransportActive = FALSE;
 static SubscriberHandle wasmControlSub = SUBSCRIBER_HANDLE_INVALID;
 
@@ -286,6 +284,9 @@ extern bool showBaseLabels;
 extern bool labelSelf;
 extern labelLen labelMsg;
 extern labelLen labelTank;
+extern int soundVolume;
+extern int windowMasterVolume;
+bool windowGetShowTankMicIcons(void);
 
 /* -------------------------------------------------------
  * Default key setup
@@ -396,21 +397,110 @@ static bool wasmAskJoinPassword(bool wrongBefore) {
   return TRUE;
 }
 
-/* -------------------------------------------------------
- * gameFrontStart — skip all dialogs, start practice game
- * ------------------------------------------------------- */
-bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSim **out_cs) {
-  isTutorial = FALSE;
-  password[0] = '\0';
-  wantRejoin = FALSE;
+/* Pick a random .map file from the preloaded data/maps for the menu's
+ * background game, leaving out what the desktop's pick does (gamefront.c
+ * bgMapAllowed): the tutorial map and Better Best Map Ever by name, and
+ * every map that is a scenario, whether or not scripts are on, since the
+ * background game runs no script and would show the scenario's map played
+ * as something it is not. */
+static bool wasmPickBackgroundMap(char *out, size_t outLen) {
+  const char *dir = "data/maps";
+  int count = 0;
+  int filtered = 0;
+  int i;
+  char path[512];
+  char **list = SDL_GlobDirectory(dir, "*.map", 0, &count);
+  if (list == NULL || count == 0) {
+    printf("[WASM] background game: no maps in '%s'\n", dir);
+    SDL_free(list);
+    return FALSE;
+  }
+  for (i = 0; i < count; i++) {
+    if (SDL_strcasecmp(list[i], "Inbuilt Tutorial.map") == 0 ||
+        SDL_strcasecmp(list[i], "Better Best Map Ever.map") == 0) {
+      continue;
+    }
+    SDL_snprintf(path, sizeof(path), "%s/%s", dir, list[i]);
+    if (scenarioHostMapCarriesScript(path)) {
+      continue;
+    }
+    list[filtered++] = list[i];
+  }
+  if (filtered == 0) {
+    printf("[WASM] background game: no maps in '%s' once the tutorial and scenarios are left out\n", dir);
+    SDL_free(list);
+    return FALSE;
+  }
+  SDL_snprintf(out, outLen, "%s/%s", dir,
+               list[bolo_rand_below((uint32_t)filtered)]);
+  SDL_free(list);
+  return TRUE;
+}
 
-  /* Set defaults. The real player name is chosen in main_wasm.c after this
-   * returns (web<rand> for join-code play, ?name= or "Me" for single player);
-   * this seed only matters to any path that reads the name before then. */
+/* Find the brain practice bots run, trying the same paths in the same order
+ * as the desktop's single-player lookup (gamefront.c findBrainPath). The web
+ * preloads /Brains/GoalHunter_1.7, which the first path finds. */
+static bool wasmFindBrainPath(char *out, size_t outLen) {
+  const char *candidates[] = {
+    "Brains/GoalHunter_1.7/init.lua",
+    "brains/GoalHunter_1.7/init.lua",
+    "data/Brains/GoalHunter_1.7/init.lua",
+  };
+  int i;
+  for (i = 0; i < 3; i++) {
+    FILE *f = fopen(candidates[i], "r");
+    if (f) {
+      fclose(f);
+      snprintf(out, outLen, "%s", candidates[i]);
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+/* Seed the practice lobby with one enemy bot, as desktop single player does
+ * when there is no saved bot setup: the player on team 1, "Bot 1" in slot 1
+ * on team 2. The bot's steps are the shared seeding body the desktop's
+ * single-player start calls too (client_frontend_sp.c). No bot with the AI
+ * policy on none or no brain found.
+ *
+ * scriptSeats is a lobby the map's script lays out itself (Survival seats its
+ * whole horde). As on desktop, no bot is made there, since it would take a
+ * slot ahead of the script's seats; the player still takes their team and the
+ * alliance pass still runs. */
+static void wasmSeedPracticeBot(const char *brainPath, bool scriptSeats) {
+  const BYTE slot       = 1;
+  const BYTE botTeam    = 2;
+  const BYTE playerTeam = 1;
+  uint8_t spMode, spLevel;
+
+  if (compTanks == aiNone || brainPath[0] == '\0') return;
+
+  if (scriptSeats) {
+    clientSimNetSendTeamSet(humanSim, 0, playerTeam);
+    serverSimReapplyTeamAlliances(wasmServerSim);
+    return;
+  }
+
+  spMode  = gameFrontSpBotMode(brainPath);
+  spLevel = gameFrontSpBotLevel(brainPath, spMode);
+  clientFrontSeedBot(wasmServerSim, humanSim, slot, brainPath, "Bot 1",
+                     compTanks, gametype, hiddenMines, botTeam,
+                     spMode, spLevel);
+  clientSimNetSendTeamSet(humanSim, 0, playerTeam);
+  /* The alliance pass at lobby entry saw an empty lobby; run it again now
+   * that the player and the bot have teams. */
+  serverSimReapplyTeamAlliances(wasmServerSim);
+}
+
+/* -------------------------------------------------------
+ * gameFrontWasmSetup — page-lifetime setup, run once per page
+ * ------------------------------------------------------- */
+bool gameFrontWasmSetup(keyItems *keys) {
+  /* Seed the player name. main_wasm.c chooses the single-player name after
+   * this, and a join chooses its network name before it connects; this seed
+   * only matters to any path that reads the name before then. */
   strcpy(gameFrontName, "Me");
-  gameFrontUdpAddress[0] = '\0';
-  gameFrontMyUdp = 27500;
-  gameFrontTargetUdp = 27500;
   strcpy(gameFrontTrackerAddr, TRACKER_ADDRESS);
   gameFrontTrackerPort = TRACKER_PORT;
   gameFrontTrackerEnabled = FALSE;
@@ -419,32 +509,18 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   gameFrontWbnUse = FALSE;
   gameFrontRemeber = FALSE;
 
-  /* Default game options */
-  gametype = gameOpen;
-  hiddenMines = FALSE;
-  compTanks = aiNone;
-  startDelay = 0;
-  timeLen = UNLIMITED_GAME_TIME;
   useAutoslow = FALSE;
   useAutohide = FALSE;
 
   /* Seed default keys. A logged-in player's stored bindings (and the rest of
-   * their synced settings) are applied afterwards by wasmApplyJoinPrefs, which
-   * runs after gameFrontStart so it overrides exactly what the user synced. */
+   * their synced settings) are applied afterwards by wasmApplyJoinPrefs, and
+   * no game start seeds them again, so they last for the page. */
   gameFrontSetDefaultKeys(keys);
 
   langSetup();
 
-  /* Process command line */
-  if (cmdLine != NULL && cmdLine[0] != '\0') {
-    strncpy(fileName, cmdLine, FILENAME_MAX - 1);
-    fileName[FILENAME_MAX - 1] = '\0';
-  } else {
-    fileName[0] = '\0';
-  }
-
   /* Initialise subsystems */
-  if (isLoaded == FALSE) {
+  {
     /* Tell SDL3 to use the existing canvas element from shell.html */
     SDL_SetHint(SDL_HINT_EMSCRIPTEN_CANVAS_SELECTOR, "#canvas");
 
@@ -463,28 +539,76 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     }
 
     brainsHandlerLoadBrains();
+
+    /* The shared background game the menu and its dialogs draw behind
+     * them, made once for the page. Not fatal when it fails: the menu is
+     * then drawn plain. main_wasm.c hides it while a game runs; the page
+     * never frees it. */
+    {
+      BgGame *bg = (BgGame *)SDL_calloc(1, sizeof(BgGame));
+      if (bg != NULL) {
+        char mapPath[512];
+        if (wasmPickBackgroundMap(mapPath, sizeof(mapPath)) &&
+            bgGameCreate(bg, mapPath, sdl3DrawGetRenderer())) {
+          bgGameSetShared(bg);
+        } else {
+          SDL_free(bg);
+        }
+      }
+    }
   }
 
   guiMessageSetHandler(sdl3MessageHandler);
+  return TRUE;
+}
 
-  /* ---- Determine net mode from URL params ----
+/* -------------------------------------------------------
+ * gameFrontWasmStart — skip all dialogs, start the launch's game
+ * ------------------------------------------------------- */
+bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
+                        const WasmLaunch *launch) {
+  (void)keys;
+
+  /* Per-game state, reset for each game. */
+  isTutorial = FALSE;
+  password[0] = '\0';
+  wantRejoin = FALSE;
+  gameFrontUdpAddress[0] = '\0';
+  gameFrontMyUdp = 27500;
+  gameFrontTargetUdp = 27500;
+
+  /* Default game options */
+  gametype = gameOpen;
+  hiddenMines = FALSE;
+  compTanks = aiNone;
+  startDelay = 0;
+  timeLen = UNLIMITED_GAME_TIME;
+
+  /* Process command line */
+  if (cmdLine != NULL && cmdLine[0] != '\0') {
+    strncpy(fileName, cmdLine, FILENAME_MAX - 1);
+    fileName[FILENAME_MAX - 1] = '\0';
+  } else {
+    fileName[0] = '\0';
+  }
+
+  /* Start the tutorial step sequencer from the first step, whatever the
+   * mode, so a game never inherits the last one's step or frame count. */
+  frontEndTutorialReset();
+
+  /* ---- Determine net mode from the launch ----
    * Production web play is selected by ?game_key= (the shareable
    * play.winbolo.net/join/<game_key> link). A dev/LAN run may instead pass an
    * explicit ?proxyURL=. Either selects UDP-over-WebSocket mode. The single-use
    * join code is minted from the game_key at connect time (JS POST /api/join),
    * not carried in the URL. shell.html points Module.websocket.url at the real
    * relay, so the host:port handed to the transport here is an ignored
-   * sentinel — routing lives in the minted join code (or the dev proxy URL). */
+   * sentinel — routing lives in the minted join code (or the dev proxy URL).
+   * main_wasm.c read these from the URL once, at page start. */
   netType urlNetType = netSingle;
-  /* gameFrontGetUrlParam returns a shared static buffer, so copy each value
-   * out before the next call overwrites it. */
-  char gameKey[128];
-  strncpy(gameKey, gameFrontGetUrlParam("game_key"), sizeof(gameKey) - 1);
-  gameKey[sizeof(gameKey) - 1] = '\0';
-  char devProxy[1024];
-  strncpy(devProxy, gameFrontGetUrlParam("proxyURL"), sizeof(devProxy) - 1);
-  devProxy[sizeof(devProxy) - 1] = '\0';
-  bool wantTutorial = (gameFrontGetUrlParam("tutorial")[0] != '\0');
+  const char *gameKey = launch->gameKey;
+  const char *devProxy = launch->devProxy;
+  bool wantTutorial = (launch->mode == WASM_GAME_TUTORIAL);
   bool haveGameKey = (gameKey[0] != '\0');
   if (haveGameKey || devProxy[0] != '\0') {
     urlNetType = netUdp;
@@ -554,8 +678,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
      * incorrect-password reject below asks through the browser and retries.
      * The loop only repeats for that retry. */
     {
-      const char *urlPw = gameFrontGetUrlParam("password");
-      strncpy(password, urlPw, sizeof(password) - 1);
+      strncpy(password, launch->password, sizeof(password) - 1);
       password[sizeof(password) - 1] = '\0';
     }
     for (;;) {
@@ -679,16 +802,20 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       startDelay = 0;
       timeLen = UNLIMITED_GAME_TIME;
       compTanks = aiNone;
-      frontEndTutorialReset();
       isTutorial = TRUE;
       printf("[WASM] starting guided tutorial\n");
     }
 
+    /* Whether the sim was built from fileName, which is the only map a
+     * script can sit beside: the built-in map has no file on disk. */
+    bool mapFromFile = FALSE;
     {
       if (fileName[0] != '\0') {
         wasmServerSim = serverSimCreate(fileName, gametype, hiddenMines, startDelay, timeLen);
         if (wasmServerSim == NULL) {
           printf("[WASM] Failed to load map '%s' into ServerSim, trying built-in\n", fileName);
+        } else {
+          mapFromFile = TRUE;
         }
       }
       if (wasmServerSim == NULL) {
@@ -700,6 +827,38 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
         clientSimDestroy(humanSim);
         return FALSE;
       }
+    }
+
+    if (!wantTutorial) {
+      /* The scenario steps desktop single player takes after it creates its
+       * sim (gamefront.c), in the same order: the scripts preferences set on
+       * the library before the attach, so the map commits that follow answer
+       * to them too; the map chooser's scripted question and the mods
+       * listing registered on the sim whatever map is hosted; the script
+       * beside this map attached; and from then on the scenario follows the
+       * committed map, which is how a scripted map or a mod picked in the
+       * lobby takes effect. The mods listed are the ones shipped in
+       * /data/mods (the preloaded data directory). There is no Workshop, no
+       * Mod Dir preference and no uploads directory here, so those are left
+       * unset. The tutorial takes none of this. */
+      scenarioHostSetEnabled(gameFrontHostingScripts);
+      scenarioHostSetUploadScriptsEnabled(
+          gameFrontHostingScriptUploadPolicy != SCRIPT_UPLOAD_OFF);
+      scenarioHostRegisterMapScripted(wasmServerSim);
+      scenarioHostRegisterScenarioLister(wasmServerSim);
+      if (mapFromFile && strncmp(fileName, "randommap:", 10) != 0) {
+        char scenarioErr[512];
+        wasmScenarioHost = scenarioHostAttach(wasmServerSim, fileName,
+                                              scenarioErr, sizeof(scenarioErr));
+        if (wasmScenarioHost != NULL) {
+          printf("[WASM] Scenario loaded: %s (from %s)\n",
+                 scenarioHostName(wasmScenarioHost),
+                 scenarioHostScriptPath(wasmScenarioHost));
+        } else if (scenarioErr[0] != '\0') {
+          printf("[WASM] %s\n", scenarioErr);
+        }
+      }
+      scenarioHostFollowMap(wasmServerSim, &wasmScenarioHost);
     }
 
     if (wantTutorial) {
@@ -715,16 +874,39 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       clientSimSetTutorial(humanSim, true);
     }
 
-    /* WASM single-player: no lobby, run immediately. acceptRemoteClients
-     * is zero-init false so the UDP / WBN / tracker bring-up is
-     * skipped; skipLobby drives the StartGameInPlace transition;
-     * viewPlayer 0 is the SP convention. */
+    /* The brain practice bots run. Resolved once for the config's bot brain
+     * and the starting bot below. */
+    char spBrainPath[FILENAME_MAX] = "";
+    if (!wantTutorial) {
+      wasmFindBrainPath(spBrainPath, sizeof(spBrainPath));
+    }
+
+    /* acceptRemoteClients, WinBolo.net, the tracker and NAT stay zero-init
+     * off, so the network bring-up is skipped. The tutorial skips the lobby
+     * and runs immediately (skipLobby drives the StartGameInPlace
+     * transition); practice opens the lobby as desktop single player does,
+     * with the desktop's no-prefs AI policy, Full Advantage. viewPlayer 0 is
+     * the SP convention. */
     {
       ServerInstanceConfig cfg;
       memset(&cfg, 0, sizeof(cfg));
-      cfg.skipLobby = true;
+      if (wantTutorial) {
+        cfg.skipLobby = true;
+      } else {
+        compTanks             = aiFull;
+        cfg.password          = password;
+        cfg.maxPlayers        = MAX_TANKS;
+        cfg.compTanks         = (BYTE)compTanks;
+        cfg.lobbyEnabled      = true;
+        cfg.emptyResetEnabled = true;
+        cfg.hasPassword       = (password[0] != '\0');
+        cfg.botBrainPath      = (spBrainPath[0] != '\0') ? spBrainPath : NULL;
+        cfg.botAiType         = (BYTE)compTanks;
+      }
       if (!serverInstanceStartup(wasmServerSim, &cfg)) {
         printf("[WASM] serverInstanceStartup failed\n");
+        scenarioHostDetach(wasmScenarioHost);
+        wasmScenarioHost = NULL;
         serverSimDestroy(wasmServerSim);
         wasmServerSim = NULL;
         clientSimDestroy(humanSim);
@@ -732,11 +914,24 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       }
     }
 
-    /* Run the 12-step join+install in one call. */
-    if (!clientSimConnectLocal(humanSim, wasmServerSim,
-                               gameFrontName, "", 0, 0)) {
-      printf("[WASM] clientSimConnectLocal failed: %s\n",
+    /* The local join below carries gameFrontName to the server. main_wasm.c
+     * chose the single-player name (a validated ?name= or "Me") before this
+     * start ran. */
+
+    /* Run the 12-step join+install in one call. The tutorial's transport
+     * ticks the server itself; practice's is passive, as desktop single
+     * player's is, and main_wasm.c ticks the server through
+     * serverInstanceTick. */
+    bool connected = wantTutorial
+        ? clientSimConnectLocal(humanSim, wasmServerSim,
+                                gameFrontName, "", 0, 0)
+        : clientSimConnectLocalPassive(humanSim, wasmServerSim,
+                                       gameFrontName, "", 0, 0);
+    if (!connected) {
+      printf("[WASM] local connect failed: %s\n",
              clientSimGetConnectErrorReason(humanSim));
+      scenarioHostDetach(wasmScenarioHost);
+      wasmScenarioHost = NULL;
       serverSimDestroy(wasmServerSim);
       wasmServerSim = NULL;
       clientSimDestroy(humanSim);
@@ -745,9 +940,28 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     wasmTransportActive = TRUE;
     /* Session-type flag for the lobby/UI (hide multiplayer-only controls).
      * The shared tick core's keys-half pump skip keys off
-     * clientSimTransportTicksServer, which clientSimConnectLocal (active)
-     * set above — not off this flag. */
+     * clientSimTransportTicksServer, which the connect set above — not off
+     * this flag. */
     clientSimSetIsSinglePlayer(humanSim, true);
+    if (!wantTutorial) {
+      /* Practice enters the lobby, where the player picks the map, bots
+       * and settings and presses Start. The same four flags desktop
+       * single player sets after its connect. */
+      clientSimSetInLobby(humanSim, true);
+      clientSimSetNetStatus(humanSim, netLobby);
+      clientSimSetMapDownloadComplete(humanSim, true);
+      wasmSeedPracticeBot(spBrainPath,
+                          wasmScenarioHost != NULL &&
+                              serverSimScenarioHasLobbyTemplate(wasmServerSim));
+      /* The lobby the map's scenario asks for, and its settings, as desktop
+       * single player seats them: after the player has joined, so slot 0 is
+       * theirs, and after the seeded bot, which a seat in its slot would
+       * otherwise replace. A map with no scenario seats nothing. */
+      if (wasmScenarioHost != NULL) {
+        serverSimScenarioSeatLobby(wasmServerSim);
+        serverSimScenarioApplyLobbyRules(wasmServerSim);
+      }
+    }
     /* Phase 2: connect registers the auto-subscriber. Clear the
      * legacy handle so the teardown path's unregister is a no-op. */
     wasmControlSub = SUBSCRIBER_HANDLE_INVALID;
@@ -778,6 +992,10 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
     if (wasmServerSim != NULL) {
       serverSimUnregisterSubscriber(wasmServerSim, wasmControlSub);
       wasmControlSub = SUBSCRIBER_HANDLE_INVALID;
+      /* Before the sim goes, as desktop's shutdown does, so the next
+       * practice game starts with no scenario. */
+      scenarioHostDetach(wasmScenarioHost);
+      wasmScenarioHost = NULL;
       serverSimDestroy(wasmServerSim);
       wasmServerSim = NULL;
     }
@@ -1010,12 +1228,24 @@ void gameFrontSetScnPanelLayout(const char *scenario, int x, int y,
                                 int scale, int alpha) {
   (void)scenario; (void)x; (void)y; (void)scale; (void)alpha;
 }
-/* The map chooser tags a map that has a script beside it. The browser build
- * links no scenario library, so every map reads plain here; desktop asks the
- * library through scenarioHostMapHasScript. */
-bool mapChooserMapHasScript(const char *mapPath) {
-  (void)mapPath;
+/* Nor a per-script shown flag or pop-out: the browser has one window. */
+bool gameFrontGetScnPanelShown(const char *script) { (void)script; return true; }
+void gameFrontSetScnPanelShown(const char *script, bool shown) {
+  (void)script; (void)shown;
+}
+bool gameFrontGetScnPanelPopout(const char *script, int panel, bool *open,
+                                int *x, int *y, int *w, int *h) {
+  (void)script; (void)panel; (void)open; (void)x; (void)y; (void)w; (void)h;
   return false;
+}
+void gameFrontSetScnPanelPopout(const char *script, int panel, bool open,
+                                int x, int y, int w, int h) {
+  (void)script; (void)panel; (void)open; (void)x; (void)y; (void)w; (void)h;
+}
+/* The map chooser tags a map that has a script beside it, answered by the
+ * scenario library as on desktop. */
+bool mapChooserMapHasScript(const char *mapPath) {
+  return scenarioHostMapHasScript(mapPath);
 }
 /* No WinBolo.net stats plumbing here either, so the skill guess has nothing
  * to go on: the browser build gets the same Hard every difficulty currently
@@ -1029,13 +1259,17 @@ uint8_t gameFrontSpBotLevel(const char *brainPath, uint8_t mode) {
  * into [HOSTING] as it changes; there is no prefs file in the browser, so
  * these only hold the value for the session the dialogs read it back in.
  *
- * The desktop's scripts setter also passes the answer to the scenario
- * library, which is what decides whether an attach loads a script. This
- * build links no scenario library — the browser never hosts — so there is
- * nothing here to tell and the value is held for the dialogs alone. */
+ * The two script setters also pass the answer to the scenario library, as
+ * desktop's do: the library decides whether a practice game's attach loads a
+ * script, and the map chooser's scripted tag reads it too. */
 void gameFrontSetHostingPort(unsigned short port)    { gameFrontHostingPort = port; }
 void gameFrontSetHostingAllowSpec(bool allow)        { gameFrontHostingAllowSpec = allow; }
-void gameFrontSetHostingScripts(bool allow)          { gameFrontHostingScripts = allow; }
+
+void gameFrontSetHostingScripts(bool allow) {
+  gameFrontHostingScripts = allow;
+  scenarioHostSetEnabled(allow);
+}
+
 void gameFrontSetHostingMaxSpec(int maxSpec)         { gameFrontHostingMaxSpec = maxSpec; }
 void gameFrontSetHostingUploadPolicy(int policy)     { gameFrontHostingUploadPolicy = policy; }
 void gameFrontSetHostingUploadMaxFiles(int maxFiles) { gameFrontHostingUploadMaxFiles = maxFiles; }
@@ -1054,6 +1288,7 @@ void gameFrontSetHostingUploadDir(const char *dir) {
 
 void gameFrontSetHostingScriptUploadPolicy(int policy) {
   gameFrontHostingScriptUploadPolicy = policy;
+  scenarioHostSetUploadScriptsEnabled(policy != SCRIPT_UPLOAD_OFF);
 }
 
 void gameFrontSetHostingShareScripts(bool on) {
@@ -1202,12 +1437,190 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   return TRUE;
 }
 
-void gameFrontPutPrefs(keyItems *keys) {
-  (void)keys;
+/* While wasmPrefsSnapshot runs, the writers below record each value into
+ * this object instead of the prefs document. */
+static cJSON *s_wasmPrefsRecord = NULL;
+
+static void wasmPrefsPut(const char *section, const char *key,
+                         const char *value) {
+  if (s_wasmPrefsRecord != NULL) {
+    cJSON *sec = cJSON_GetObjectItemCaseSensitive(s_wasmPrefsRecord, section);
+    if (sec == NULL) {
+      sec = cJSON_CreateObject();
+      if (sec == NULL) return;
+      cJSON_AddItemToObject(s_wasmPrefsRecord, section, sec);
+    }
+    cJSON_AddStringToObject(sec, key, value);
+    return;
+  }
+  prefsSetString(section, key, value);
 }
 
-/* No prefs file in the browser — settings live only for the session. */
+/* Writers for the prefs document, in the desktop's formats (gamefront.c):
+ * integers as "%d", "Yes"/"No" for flags, "%.2f" for the float settings. */
+static void wasmPrefsSetInt(const char *section, const char *key, int value) {
+  char buff[32];
+  snprintf(buff, sizeof(buff), "%d", value);
+  wasmPrefsPut(section, key, buff);
+}
+
+static void wasmPrefsSetBool(const char *section, const char *key,
+                             bool value) {
+  wasmPrefsPut(section, key, TRUEFALSE_TO_STR(value));
+}
+
+static void wasmPrefsSetFloat(const char *section, const char *key,
+                              float value) {
+  char buff[32];
+  snprintf(buff, sizeof(buff), "%.2f", value);
+  wasmPrefsPut(section, key, buff);
+}
+
+/* Write the settings the web applies from a WinBolo.net prefs document
+ * (wasmApplyJoinPrefs in main_wasm.c), one for one: every key that function
+ * reads, this writes, under the desktop's section and name, and nothing
+ * else. The
+ * document lives on MEMFS for the page; wbPrefsPumpUpload sends it to
+ * WinBolo.net when the player is signed in. A write that changes nothing
+ * leaves the document clean, so calling this with no change uploads
+ * nothing. */
+void gameFrontPutPrefs(keyItems *keys) {
+  int i;
+
+  wasmPrefsSetInt("KEYS", "Forward",        keys->kiForward);
+  wasmPrefsSetInt("KEYS", "Backwards",      keys->kiBackward);
+  wasmPrefsSetInt("KEYS", "Left",           keys->kiLeft);
+  wasmPrefsSetInt("KEYS", "Right",          keys->kiRight);
+  wasmPrefsSetInt("KEYS", "Shoot",          keys->kiShoot);
+  wasmPrefsSetInt("KEYS", "Lay Mine",       keys->kiLayMine);
+  wasmPrefsSetInt("KEYS", "Increase Range", keys->kiGunIncrease);
+  wasmPrefsSetInt("KEYS", "Decrease Range", keys->kiGunDecrease);
+  wasmPrefsSetInt("KEYS", "Tank View",      keys->kiTankView);
+  wasmPrefsSetInt("KEYS", "Pill View",      keys->kiPillView);
+  wasmPrefsSetInt("KEYS", "Ally View",      keys->kiAllyView);
+  wasmPrefsSetInt("KEYS", "Base View",      keys->kiBaseView);
+  wasmPrefsSetInt("KEYS", "Overview Zoom",  keys->kiOverviewZoom);
+  wasmPrefsSetInt("KEYS", "Overview Follow",   keys->kiOverviewFollow);
+  wasmPrefsSetInt("KEYS", "Overview Zoom In",  keys->kiOverviewZoomIn);
+  wasmPrefsSetInt("KEYS", "Overview Zoom Out", keys->kiOverviewZoomOut);
+  wasmPrefsSetInt("KEYS", "Scroll Up",      keys->kiScrollUp);
+  wasmPrefsSetInt("KEYS", "Scroll Down",    keys->kiScrollDown);
+  wasmPrefsSetInt("KEYS", "Scroll Left",    keys->kiScrollLeft);
+  wasmPrefsSetInt("KEYS", "Scroll Right",   keys->kiScrollRight);
+  wasmPrefsSetInt("KEYS", "Quick Tree",     keys->kiQuickTree);
+  wasmPrefsSetInt("KEYS", "Quick Road",     keys->kiQuickRoad);
+  wasmPrefsSetInt("KEYS", "Quick Wall",     keys->kiQuickWall);
+  wasmPrefsSetInt("KEYS", "Quick Pillbox",  keys->kiQuickPillbox);
+  wasmPrefsSetInt("KEYS", "Quick Mine",     keys->kiQuickMine);
+  wasmPrefsSetInt("KEYS", "Ping 1",         keys->kiPing[0]);
+  wasmPrefsSetInt("KEYS", "Ping 2",         keys->kiPing[1]);
+  wasmPrefsSetInt("KEYS", "Ping 3",         keys->kiPing[2]);
+  for (i = 0; i < PING_BIND_DIRECT_SLOTS; i++) {
+    char name[32];
+    snprintf(name, sizeof(name), "Ping Direct %d", i + 1);
+    wasmPrefsSetInt("KEYS", name, keys->kiPingDirect[i]);
+  }
+
+  wasmPrefsSetBool("MENU", "Show Gunsight",   showGunsight);
+  wasmPrefsSetBool("MENU", "Sound Effects",   soundEffects);
+  wasmPrefsSetBool("MENU", "Show Newswire Messages",  showNewswireMessages);
+  wasmPrefsSetBool("MENU", "Show Assistant Messages", showAssistantMessages);
+  wasmPrefsSetBool("MENU", "Show AI Messages",        showAIMessages);
+  wasmPrefsSetBool("MENU", "Show Network Status Messages",
+                   showNetworkStatusMessages);
+  wasmPrefsSetBool("MENU", "Show Network Debug Messages",
+                   showNetworkDebugMessages);
+  wasmPrefsSetBool("MENU", "Autoscroll Enabled", autoScrollingEnabled);
+  wasmPrefsSetBool("MENU", "Show Pill Labels",   showPillLabels);
+  wasmPrefsSetBool("MENU", "Show Base Labels",   showBaseLabels);
+  wasmPrefsSetBool("MENU", "Label Own Tank",     labelSelf);
+  wasmPrefsSetInt("MENU", "Message Label Size", (int)labelMsg);
+  wasmPrefsSetInt("MENU", "Tank Label Size",    (int)labelTank);
+  wasmPrefsSetInt("MENU", "Sound Volume",       soundVolume);
+  wasmPrefsSetInt("MENU", "Master Volume",      windowMasterVolume);
+
+  wasmPrefsSetBool("GAME OPTIONS", "Auto Slowdown", useAutoslow);
+  wasmPrefsSetBool("GAME OPTIONS", "Auto Show-Hide Gunsight", useAutohide);
+
+  wasmPrefsSetFloat("SETTINGS", "Gamepad Scroll Sens",
+                    g_gamepadScrollSensitivity);
+  wasmPrefsSetFloat("SETTINGS", "Gamepad Tank Sens",
+                    g_gamepadTankSensitivity);
+  wasmPrefsSetFloat("SETTINGS", "Gamepad Build Cursor Sens",
+                    g_gamepadBuildCursorSensitivity);
+  wasmPrefsSetBool("SETTINGS", "Build Exit Executes", g_buildExitExecutes);
+  wasmPrefsSetBool("SETTINGS", "Build Exit Executes Momentary Only",
+                   g_buildExitExecutesMomentaryOnly);
+  wasmPrefsSetBool("SETTINGS", "Build Double Tap Road", g_buildDoubleTapRoad);
+  wasmPrefsSetBool("SETTINGS", "Build Hold Momentary", g_buildHoldMomentary);
+  wasmPrefsSetBool("SETTINGS", "Build Auto Close On Execute",
+                   g_buildAutoCloseOnExecute);
+
+  /* Voice is read back out of the running voice module, as the desktop
+   * does. The mode names are the desktop's (gamefront.c). */
+  wasmPrefsSetBool("VOICE", "Enabled", voiceIsEnabled());
+  {
+    VoiceMode vm = voiceGetMode();
+    wasmPrefsPut("VOICE", "Mode",
+                   vm == VOICE_MODE_OFF    ? "Off"
+                   : vm == VOICE_MODE_OPEN ? "Open Mic"
+                                           : "Push To Talk");
+  }
+  wasmPrefsSetFloat("VOICE", "Mic Gain",     voiceGetMicGain());
+  wasmPrefsSetFloat("VOICE", "Voice Volume", voiceGetOutputVolume());
+  wasmPrefsSetBool("VOICE", "Tank Icons", windowGetShowTankMicIcons());
+}
+
+/* Write the current settings, with the key bindings the game holds. */
 void gameFrontSaveCurrentPrefs(void) {
+  keyItems k;
+  windowGetKeys(&k);
+  gameFrontPutPrefs(&k);
+}
+
+/* The settings gameFrontSaveCurrentPrefs would write, as a JSON object of
+ * sections of string values, without touching the prefs document. The
+ * caller frees the result; NULL if it could not be built. */
+char *wasmPrefsSnapshot(void) {
+  keyItems k;
+  char *out;
+
+  s_wasmPrefsRecord = cJSON_CreateObject();
+  if (s_wasmPrefsRecord == NULL) return NULL;
+  windowGetKeys(&k);
+  gameFrontPutPrefs(&k);
+  out = cJSON_PrintUnformatted(s_wasmPrefsRecord);
+  cJSON_Delete(s_wasmPrefsRecord);
+  s_wasmPrefsRecord = NULL;
+  return out;
+}
+
+/* Write into the prefs document each setting whose value in current (a
+ * wasmPrefsSnapshot) differs from its value in baseline (an earlier one):
+ * the settings changed since baseline was taken. The rest of the document
+ * is left as it is. */
+void wasmPrefsWriteChanged(const char *baseline, const char *current) {
+  cJSON *base = cJSON_Parse(baseline);
+  cJSON *cur = cJSON_Parse(current);
+  cJSON *sec;
+
+  if (base != NULL && cur != NULL) {
+    cJSON_ArrayForEach(sec, cur) {
+      cJSON *baseSec = cJSON_GetObjectItemCaseSensitive(base, sec->string);
+      cJSON *item;
+      cJSON_ArrayForEach(item, sec) {
+        cJSON *was = cJSON_GetObjectItemCaseSensitive(baseSec, item->string);
+        if (!cJSON_IsString(item)) continue;
+        if (cJSON_IsString(was) &&
+            strcmp(was->valuestring, item->valuestring) == 0) {
+          continue;
+        }
+        prefsSetString(sec->string, item->string, item->valuestring);
+      }
+    }
+  }
+  cJSON_Delete(base);
+  cJSON_Delete(cur);
 }
 
 void gameFrontHandleUrlOpen(char *url) {
@@ -1227,13 +1640,21 @@ void gameFrontSetLanguageCode(const char *code) {
   (void)code;
 }
 
+/* Settings' Play Tutorial button. Settings closes after the click and main's
+ * screen loop shows the menu again, which takes this request on its first
+ * frame and returns openTutorial, so the loop starts the tutorial. */
 void gameFrontRequestPlayTutorial(void) {
+  gameFrontRequestTransition(openTutorial);
 }
 
 void gameFrontSaveWindowSettings(void) {
 }
 
+/* Called every frame by the game frame (sdl3ImguiProcessEvents) and the
+ * shared dialog loops: push any setting changed this session, debounced.
+ * No-op when not signed in or when nothing is sync-dirty. */
 void gameFrontPumpDirty(void) {
+  wbPrefsPumpUpload(SDL_GetTicks());
 }
 
 void gameFrontSaveTankPrefs(ClientSim *cs) {
@@ -1241,12 +1662,17 @@ void gameFrontSaveTankPrefs(ClientSim *cs) {
     useAutoslow = clientSimGetTankAutoSlowdown(cs);
     useAutohide = clientSimGetTankAutoHideGunsight(cs);
   }
+  gameFrontSaveCurrentPrefs();
 }
 
+/* Whether the menu shows the Tutorial row. Lives for the page: finishing the
+ * tutorial clears it, as on the desktop, and a reload brings it back. */
+static bool wasmShowTutorialButton = TRUE;
+
 bool gameFrontGetShowTutorialButton(void) {
-  return FALSE;
+  return wasmShowTutorialButton;
 }
 
 void gameFrontSetShowTutorialButton(bool show) {
-  (void)show;
+  wasmShowTutorialButton = show;
 }

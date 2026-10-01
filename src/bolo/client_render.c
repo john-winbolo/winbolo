@@ -212,19 +212,27 @@ static bool clientRenderSquareHidden(const screenHidden *hidden, BYTE x,
 
 /* Drops every tank standing on a square out of sight, the local player's own
  * excepted: it stands on a square it can always see, and its reticle must not
- * blink out if that ever stops being true. The list is an array with a count,
- * so the ones kept are moved down over the ones dropped. */
+ * blink out if that ever stops being true. The square asked about is the one
+ * under the tank's centre, not the one its sprite starts in: the listed square
+ * is half a square back from the centre, and for a tank in the top or left half
+ * of its square that is the square before it, which beside a wall is the wall.
+ * The list is an array with a count, so the ones kept are moved down over the
+ * ones dropped. */
 static void clientRenderDropHiddenTanks(screenTanks *tks,
                                         const screenHidden *hidden,
                                         BYTE myPlayerNum) {
   BYTE kept; /* How many have been written back so far */
   BYTE i;    /* Looping variable */
+  BYTE cx;   /* The square the tank's centre is on */
+  BYTE cy;
 
   kept = 0;
   for (i = 0; i < tks->numTanksScreen; i++) {
+    cx = tks->pos[i].mx;
+    cy = tks->pos[i].my;
+    screenTanksGetCentreSquare(tks, (BYTE)(i + 1), &cx, &cy);
     if (tks->pos[i].playerNum != myPlayerNum &&
-        clientRenderSquareHidden(hidden, tks->pos[i].mx, tks->pos[i].my) ==
-            TRUE) {
+        clientRenderSquareHidden(hidden, cx, cy) == TRUE) {
       continue;
     }
     if (kept != i) {

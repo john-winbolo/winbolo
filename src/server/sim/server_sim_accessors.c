@@ -1050,9 +1050,9 @@ int serverSimEmptyScriptSessionDir(ServerSim *sim) {
     return removed;
 }
 
-ScriptUploadPolicy scriptUploadPolicyResolve(const char *word, bool legacyOff) {
+ScriptUploadPolicy scriptUploadPolicyResolve(const char *word) {
     if (word == NULL || word[0] == '\0') {
-        return legacyOff ? SCRIPT_UPLOAD_OFF : SCRIPT_UPLOAD_ALLOW;
+        return SCRIPT_UPLOAD_ALLOW;
     }
     if (SDL_strcasecmp(word, "off") == 0)     return SCRIPT_UPLOAD_OFF;
     if (SDL_strcasecmp(word, "allow") == 0)   return SCRIPT_UPLOAD_ALLOW;

@@ -18,7 +18,7 @@
  *
  * Drives the real path: a scratch scenarios directory with real files in it,
  * the host's own lister on the sim, and the pick made by applying
- * CMD_LOBBY_SET_SCENARIO — so what the case proves is that the attach and the
+ * CMD_SET_SCRIPT_LIST — so what the case proves is that the attach and the
  * detach reach the publish, not that the publish works when called.
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
@@ -32,7 +32,7 @@
 #include <SDL3/SDL.h>
 
 #include "global.h"
-#include "client_command.h"        /* CMD_LOBBY_SET_SCENARIO */
+#include "client_command.h"        /* CMD_SET_SCRIPT_LIST */
 #include "control_event.h"
 #include "sim_rules_names.h"       /* SIM_RULE_* — the rules the mod sets */
 #include "server_sim.h"
@@ -150,18 +150,25 @@ static void srCommit(ServerSim *sim, const char *mapPath) {
     serverSimScenarioApplyLobbyRules(sim);
 }
 
-/* The host picking a scenario, through the command the lobby sends. "" is the
- * pick that selects none, which is what detaches. */
+/* The host picking a scenario, through the command the lobby sends: a
+ * one-row script list, or an empty one for "", which selects none and is what
+ * detaches.
+ *
+ * Every list, the empty one included, is held to a one-a-second tick gap, so
+ * the clock is moved past it first, the way test_lobby_script_list.c does. */
 static CmdResult srSelect(ServerSim *sim, const char *file) {
     ClientCommand cmd;
     CmdResult     r;
-    size_t        n = strlen(file);
 
     memset(&cmd, 0, sizeof(cmd));
-    cmd.type   = CMD_LOBBY_SET_SCENARIO;
+    cmd.type   = CMD_SET_SCRIPT_LIST;
     cmd.cmdSeq = 1;
-    cmd.u.lobbySetScenario.relPathLen = (uint8_t)n;
-    if (n > 0) memcpy(cmd.u.lobbySetScenario.relPath, file, n);
+    if (file[0] != '\0') {
+        cmd.u.setScriptList.count = 1;
+        snprintf(cmd.u.setScriptList.files[0],
+                 sizeof(cmd.u.setScriptList.files[0]), "%s", file);
+    }
+    sim->tick += SCENARIO_RELOAD_GAP_TICKS;
     threadsWaitForMutex();
     r = serverSimApplyCommand(sim, 0, &cmd);
     threadsReleaseMutex();

@@ -9,7 +9,8 @@
  * These cases drive the real path end to end rather than setting a template
  * by hand: a scratch scenarios directory with real files in it, the host's
  * own directory lister registered on the sim, and the pick made by applying
- * CMD_LOBBY_SET_SCENARIO. What they prove is that the decision, the seating
+ * CMD_SET_SCRIPT_LIST with one row, or with none to select none. What they
+ * prove is that the decision, the seating
  * and the lobby's own settings agree afterwards.
  *
  * A map is named but never written. A loose X.scenario.lua beside it is the
@@ -56,7 +57,7 @@
 #include <SDL3/SDL.h>
 
 #include "global.h"
-#include "client_command.h"        /* CMD_LOBBY_SET_SCENARIO */
+#include "client_command.h"        /* CMD_SET_SCRIPT_LIST */
 #include "control_event.h"         /* LobbyScenarioSource */
 #include "server_sim.h"
 #include "server_sim_internal.h"   /* scenarioIdentity, lobbyPlayers, the
@@ -317,18 +318,24 @@ static void spCommit(ServerSim *sim, const char *mapPath) {
     serverSimScenarioApplyLobbyRules(sim);
 }
 
-/* The host picking a scenario, through the command the lobby sends. "" is
- * the pick that selects none. */
+/* The host picking a scenario, through the command the lobby sends: a
+ * one-row script list, or an empty one for "", which selects none.
+ *
+ * Every list, the empty one included, is held to a one-a-second tick gap, so
+ * the clock is moved past it first, the way test_lobby_script_list.c does. */
 static CmdResult spSelect(ServerSim *sim, const char *file) {
     ClientCommand cmd;
     CmdResult     r;
-    size_t        n = strlen(file);
 
     memset(&cmd, 0, sizeof(cmd));
-    cmd.type   = CMD_LOBBY_SET_SCENARIO;
+    cmd.type   = CMD_SET_SCRIPT_LIST;
     cmd.cmdSeq = 1;
-    cmd.u.lobbySetScenario.relPathLen = (uint8_t)n;
-    if (n > 0) memcpy(cmd.u.lobbySetScenario.relPath, file, n);
+    if (file[0] != '\0') {
+        cmd.u.setScriptList.count = 1;
+        snprintf(cmd.u.setScriptList.files[0],
+                 sizeof(cmd.u.setScriptList.files[0]), "%s", file);
+    }
+    sim->tick += SCENARIO_RELOAD_GAP_TICKS;
     threadsWaitForMutex();
     r = serverSimApplyCommand(sim, 0, &cmd);
     threadsReleaseMutex();

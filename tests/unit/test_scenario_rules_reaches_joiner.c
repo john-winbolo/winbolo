@@ -16,7 +16,7 @@
  *
  * Drives the real path: a scratch scenarios directory with a real file in
  * it, the host's own lister on the sim, and the pick made by applying
- * CMD_LOBBY_SET_SCENARIO.
+ * CMD_SET_SCRIPT_LIST with one row.
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
@@ -29,7 +29,7 @@
 #include <SDL3/SDL.h>
 
 #include "global.h"
-#include "client_command.h"        /* CMD_LOBBY_SET_SCENARIO */
+#include "client_command.h"        /* CMD_SET_SCRIPT_LIST */
 #include "client_sim.h"            /* ClientSim — the joiner the replay reaches */
 #include "control_event.h"
 #include "sim_rules_names.h"       /* SIM_RULE_* — the rules the mod sets */
@@ -122,13 +122,13 @@ static void sjDestroy(ServerSim *sim) {
 static CmdResult sjSelect(ServerSim *sim, const char *file) {
     ClientCommand cmd;
     CmdResult     r;
-    size_t        n = strlen(file);
 
     memset(&cmd, 0, sizeof(cmd));
-    cmd.type   = CMD_LOBBY_SET_SCENARIO;
+    cmd.type   = CMD_SET_SCRIPT_LIST;
     cmd.cmdSeq = 1;
-    cmd.u.lobbySetScenario.relPathLen = (uint8_t)n;
-    if (n > 0) memcpy(cmd.u.lobbySetScenario.relPath, file, n);
+    cmd.u.setScriptList.count = 1;
+    snprintf(cmd.u.setScriptList.files[0],
+             sizeof(cmd.u.setScriptList.files[0]), "%s", file);
     threadsWaitForMutex();
     r = serverSimApplyCommand(sim, 0, &cmd);
     threadsReleaseMutex();

@@ -58,7 +58,33 @@ extern "C" {
  * Keeping the four meant a ServerSim carried 128 KiB of panel store and
  * a ClientSim 30 KB for three ids no frontend could show. */
 #define SCN_PANEL_IDS        1
-#define SCN_PANEL_TEXT_MAX   48    /* bytes of one text primitive's string */
+
+/* Which script of the round's list drew a panel.
+ *
+ * A round runs one scenario and up to nine mods, and each of them may call
+ * game.panel(0, ...). They used to land on the one panel 0 and overwrite
+ * each other. The host now says which script sent each list, so a client
+ * keeps one list per script and can show, hide or pop out each one.
+ *
+ * The owner rides in the high four bits of the panel byte the event and the
+ * recording already carry, and the panel id keeps the low four. The owner
+ * is the script's position on the round's list, 0 for the first: the same
+ * position the lobby's script list (clientSimGetLobbyScript*) numbers it by.
+ * The first script, and any call the engine makes itself, is owner 0, so
+ * the byte for those is exactly the byte it always was. A client or a log
+ * viewer that predates this reads a mod's panel byte as a panel id it does
+ * not have and drops it, which is what it did with any unknown id.
+ *
+ * SCN_PANEL_OWNERS is how many owners a client keeps a list for. It must
+ * cover the host's script cap (SCN_SCRIPTS_MAX, asserted in the host) and
+ * fit in four bits. */
+#define SCN_PANEL_OWNERS     10
+#define SCN_PANEL_WIRE(id, owner) \
+    ((uint8_t)((((unsigned)(owner) & 0x0Fu) << 4) | ((unsigned)(id) & 0x0Fu)))
+#define SCN_PANEL_WIRE_ID(b)    ((uint8_t)((unsigned)(b) & 0x0Fu))
+#define SCN_PANEL_WIRE_OWNER(b) ((uint8_t)(((unsigned)(b) >> 4) & 0x0Fu))
+
+#define SCN_PANEL_TEXT_MAX   48   /* bytes of one text primitive's string */
 #define SCN_PANEL_ITEMS_MAX  128   /* most primitives one list may hold */
 #define SCN_PANEL_COLOURS    16    /* the palette's size */
 #define SCN_MARKERS_MAX      16    /* marker ids 0..15, kept by id */

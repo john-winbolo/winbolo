@@ -321,7 +321,9 @@ int run_scenario_map_has_script_chunk(void) {
         }
     }
 
-    /* With scripts off no map is scripted, whichever way it carries one. */
+    /* With scripts off no map is scripted, whichever way it carries one. Both
+       still carry one, which is the question the menu's background game asks
+       so a scenario map stays out of it however scripts are set. */
     if (rc == 0) {
         scenarioHostSetEnabled(false);
         if (scenarioHostMapHasScript(packedPath) ||
@@ -331,7 +333,27 @@ int run_scenario_map_has_script_chunk(void) {
                     __FILE__, __LINE__);
             rc = 1;
         }
+        if (rc == 0 && (!scenarioHostMapCarriesScript(packedPath) ||
+                        !scenarioHostMapCarriesScript(plainPath))) {
+            fprintf(stderr,
+                    "FAIL %s:%d: a map stopped carrying its script when "
+                    "scripts were switched off\n",
+                    __FILE__, __LINE__);
+            rc = 1;
+        }
         scenarioHostSetEnabled(true);
+    }
+
+    /* And a map with neither carries none. */
+    if (rc == 0) {
+        remove(scriptPath);
+        if (scenarioHostMapCarriesScript(plainPath)) {
+            fprintf(stderr,
+                    "FAIL %s:%d: a plain map with its loose script gone still "
+                    "carries one\n",
+                    __FILE__, __LINE__);
+            rc = 1;
+        }
     }
 
     remove(scriptPath);

@@ -75,8 +75,12 @@ extern "C" {
 #include "server_sim.h"     /* ServerScenarioEntry / serverSimEnumerateScenarioDir — the in-process read */
 #include "lobby_script_rows.h" /* lobbyScriptRowsClassify — server, both or this computer */
 #ifndef __EMSCRIPTEN__
-/* scenarioHostListLocalScripts / LocalScriptPath. The browser build links no
-   scenario library and has no Mods directory of its own, so it lists none. */
+/* scenarioHostListLocalScripts / LocalScriptPath. This computer's own column
+   is only read for a server in another process, which in the browser build
+   is a multiplayer game: the browser has no Mods directory of its own to send
+   from, so it lists none. A practice game's server is in the page and lists
+   the shipped mods through serverSimEnumerateScenarioDir like any server in
+   this process. */
 #include "../../../../scenario/scenario_host.h"
 #endif
 #include "scenario_details.h"           /* the rules and callbacks blob the dialog reads */
@@ -353,9 +357,8 @@ static void lobbyRoundSetRow(LobbyRoundRow *r, const char *file,
  * lives, and written into out in load order.
  *
  * Two places because the committed map's own scenario is attached without
- * ever entering the script list: only CMD_LOBBY_SET_SCRIPT_LIST and
- * CMD_LOBBY_SET_SCENARIO write that list, and a map sidecar goes through
- * neither. So a scripted map with no host picks reports
+ * ever entering the script list: only CMD_SET_SCRIPT_LIST writes that list,
+ * and a map sidecar does not go through it. So a scripted map with no host picks reports
  * clientSimGetLobbyScriptCount 0 while CTRL_LOBBY_SETTINGS separately reports
  * an attached scenario with bound set. Reading the list alone would leave the
  * column empty under a map that is plainly running something.
@@ -1235,7 +1238,7 @@ static float lobbyScenarioDetailsMinWidth(void) {
 
     return ImGui::CalcTextSize("tank_full_shells").x +
            3.0f * lobbyScenarioDetailsNumberColumnWidth() +
-           8.0f * st.CellPadding.x + 2.0f * st.WindowPadding.x +
+           8.0f * st.CellPadding.x + 4.0f * st.WindowPadding.x +
            st.ScrollbarSize + 2.0f * st.ItemSpacing.x;
 }
 
@@ -1248,10 +1251,10 @@ static bool lobbyScenarioDetailsRulesBegin(void) {
     float w = lobbyScenarioDetailsNumberColumnWidth();
 
     ImGui::Spacing();
-    ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_SCENARIO_RULES));
-    if (!ImGui::BeginTable("##detailRules", 4,
-                           ImGuiTableFlags_RowBg |
-                               ImGuiTableFlags_BordersInnerH)) {
+    imguiBeginPanelSection("##detailRulesBox");
+    ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_DETAILS_RULES));
+    if (!imguiBeginPanelTable("##detailRules", 4)) {
+        imguiEndPanelSection();
         return false;
     }
     ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_RULES_COL_RULE),
@@ -1387,7 +1390,8 @@ static void lobbyScenarioDetailsRules(ClientSim *cs) {
                 rule, value, winner >= 0 ? order[winner].name : NULL,
                 winning);
         }
-        ImGui::EndTable();
+        imguiEndPanelTable();
+        imguiEndPanelSection();
     }
 
     /* Shown whether or not the table is: a pick on a server with
@@ -1460,13 +1464,13 @@ static void lobbyScenarioDetailsCallbacks(ClientSim *cs) {
     }
 
     ImGui::Spacing();
+    imguiBeginPanelSection("##detailCallbacksBox");
     ImGui::TextUnformatted(
         langGetText(s_detailsKind == 1
                         ? STR_DLGLOBBY_DETAILS_IMPLEMENTS_MOD
                         : STR_DLGLOBBY_DETAILS_IMPLEMENTS_SCENARIO));
-    if (!ImGui::BeginTable("##detailCallbacks", 3,
-                           ImGuiTableFlags_RowBg |
-                               ImGuiTableFlags_BordersInnerH)) {
+    if (!imguiBeginPanelTable("##detailCallbacks", 3)) {
+        imguiEndPanelSection();
         return;
     }
     ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_DETAILS_COL_METHOD),
@@ -1493,7 +1497,8 @@ static void lobbyScenarioDetailsCallbacks(ClientSim *cs) {
         ImGui::TableSetColumnIndex(2);
         ImGui::TextWrapped("%s", text);
     }
-    ImGui::EndTable();
+    imguiEndPanelTable();
+    imguiEndPanelSection();
 }
 
 /* How one value of setting st reads, into out: the number, or On or Off for
@@ -1556,6 +1561,9 @@ static void lobbyScenarioDetailsSettings(ClientSim *cs) {
     host = lobbyScenarioMayChoose(cs);
     live = clientSimLobbyScriptSettingsSupported(cs);
 
+    /* The label column fits its header as well as every label under it. */
+    labelW = ImGui::CalcTextSize(
+                 langGetText(STR_DLGLOBBY_DETAILS_COL_SETTING)).x;
     for (i = 0; i < n; i++) {
         labelW = SDL_max(labelW, ImGui::CalcTextSize(rows[i].label[0] != '\0'
                                                          ? rows[i].label
@@ -1563,15 +1571,19 @@ static void lobbyScenarioDetailsSettings(ClientSim *cs) {
     }
 
     ImGui::Spacing();
+    imguiBeginPanelSection("##detailSettingsBox");
     ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_DETAILS_SETTINGS));
-    if (!ImGui::BeginTable("##detailSettings", 2,
-                           ImGuiTableFlags_RowBg |
-                               ImGuiTableFlags_BordersInnerH)) {
+    if (!imguiBeginPanelTable("##detailSettings", 2)) {
+        imguiEndPanelSection();
         return;
     }
-    ImGui::TableSetupColumn("##label", ImGuiTableColumnFlags_WidthFixed,
-                            labelW);
-    ImGui::TableSetupColumn("##value", ImGuiTableColumnFlags_WidthStretch);
+    /* Headed like the rules and callbacks tables above it, so all three
+       tables in the dialog start with the same highlighted row. */
+    ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_DETAILS_COL_SETTING),
+                            ImGuiTableColumnFlags_WidthFixed, labelW);
+    ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_DETAILS_COL_VALUE),
+                            ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableHeadersRow();
     for (i = 0; i < n; i++) {
         const ScnSetting *st = &rows[i];
         int32_t           chosen;
@@ -1615,13 +1627,14 @@ static void lobbyScenarioDetailsSettings(ClientSim *cs) {
         }
         ImGui::PopID();
     }
-    ImGui::EndTable();
+    imguiEndPanelTable();
 
     if (host && !live) {
         lobbyScenarioRowNote(langGetText(STR_DLGLOBBY_DETAILS_SETTINGS_OLD));
     } else if (!host) {
         lobbyScenarioRowNote(langGetText(STR_DLGLOBBY_DETAILS_SETTINGS_HOST));
     }
+    imguiEndPanelSection();
 }
 
 /* One scenario or mod, described in full.
