@@ -53,12 +53,24 @@
 -- teammates, and the team with the most seconds wins. The bots on the
 -- holder's team are not sent after him.
 --
+-- Voice chat. In a round the server sends a player's voice only to his
+-- allies, so in a Free For All nobody would hear anybody. The host picks who
+-- hears whom with the "Voice chat to everyone" setting. "Only in Free For
+-- All", the default, sends every voice to everybody in a Free For All and
+-- leaves a team round with voice to teammates. "Yes" sends every voice to
+-- everybody in both, and "No" keeps voice to allies in both. A server that
+-- is older than the setting keeps voice to allies, and a server with voice
+-- off has no voice at all.
+--
 -- The scores under the compass: in Free For All one row a tank; in a team
 -- round a row for each team with its total and, under it, a row for each
 -- member with the seconds they carried. When that is more rows than there
 -- is room for, every team's row stays and the player's own row goes under
 -- their team. A team of bots only is named after the pool its bots take
--- their names from, as the lobby names them.
+-- their names from, as the lobby names them. The holder's row (in a team
+-- round, his team's row and his own) is drawn in yellow, the panel's gold,
+-- and is never cut off: when it would fall below the last row there is room
+-- for, it takes that last row's place.
 --
 -- The compass is the panel. A script cannot draw on the edge of the game view,
 -- so the square over the view is a compass rose instead: the needle points at
@@ -73,7 +85,8 @@
 -- that goes after it.
 --
 -- The bases are pit stops. They start neutral, driving over one hands out half
--- a tank of armour, and the base then goes off the map for half a minute
+-- a tank of armour and 3 mines (a holder carrying the prize gets the mines
+-- but still no shells), and the base then goes off the map for half a minute
 -- before it comes back.
 
 -- Tweak these. Each is the default of a setting the host can change in the
@@ -686,7 +699,8 @@ local function compass(p, me, tx, ty, what, colour, carrier, rows, rows_key)
     end
   end
 
-  local key = string.format("%s %s %s %s %s %s", tostring(carrier),
+  local key = string.format("%s %s %s %s %s %s %s", tostring(carrier),
+                            tostring(holder),
                             tipx and whole(tipx) or "-",
                             tipy and whole(tipy) or "-", status_colour, status,
                             rows_key)
@@ -730,10 +744,13 @@ local function compass(p, me, tx, ty, what, colour, carrier, rows, rows_key)
       break
     end
     local y = BOARD_Y + (i - 1) * BOARD_STEP
+    -- The holder's rows are yellow, the palette's nearest to gold (it has
+    -- no gold), whether or not rows_for had to force them on.
     local shade = "grey"
     if row.team ~= nil then
-      shade = (row.team == scoring_team(carrier)) and "yellow" or "white"
-    elseif row.slot == carrier then
+      shade = (holder ~= nil and row.team == scoring_team(holder)) and
+              "yellow" or "white"
+    elseif row.slot == holder then
       shade = "yellow"
     elseif row.slot == p then
       shade = "white"
@@ -770,21 +787,46 @@ end
 -- The rows one player's panel shows. When there are more than BOARD_ROWS,
 -- a team round keeps every team's row and puts the player's own row under
 -- their team's; a Free For All shows the best BOARD_ROWS.
+--
+-- The holder's row is always one of them. It is his team's row in a team
+-- round, and his own row in a Free For All or when he is on no team. When
+-- it sorts below the last row there is room for, it takes that last row's
+-- place. Everything above it outscores it, so the list stays in score order;
+-- and an indented row is never left without its team, because a team's
+-- members follow its row.
 local function rows_for(p, rows)
-  if #rows <= BOARD_ROWS or not teams_on() then
-    return rows
-  end
-  local out, mine = {}, scoring_team(p)
-  for _, row in ipairs(rows) do
-    if not row.indent then
-      out[#out + 1] = row
-      if row.team ~= nil and row.team == mine then
-        for _, m in ipairs(rows) do
-          if m.indent and m.slot == p then
-            out[#out + 1] = m
+  local out = rows
+  if #rows > BOARD_ROWS and teams_on() then
+    local mine = scoring_team(p)
+    out = {}
+    for _, row in ipairs(rows) do
+      if not row.indent then
+        out[#out + 1] = row
+        if row.team ~= nil and row.team == mine then
+          for _, m in ipairs(rows) do
+            if m.indent and m.slot == p then
+              out[#out + 1] = m
+            end
           end
         end
       end
+    end
+  end
+  if holder == nil or #out <= BOARD_ROWS then
+    return out
+  end
+  local ht = scoring_team(holder)
+  for k = BOARD_ROWS + 1, #out do
+    local row = out[k]
+    if (ht ~= nil and row.team == ht) or
+       (ht == nil and row.team == nil and not row.indent and
+        row.slot == holder) then
+      local shown = {}
+      for i = 1, BOARD_ROWS - 1 do
+        shown[i] = out[i]
+      end
+      shown[BOARD_ROWS] = row
+      return shown
     end
   end
   return out
@@ -881,6 +923,7 @@ local DEFAULTS = {
   DEFEND_ALARM_BASE_COST               = 100,
   CAPTURE_LGM_HUNT                     = true,
   CAPTURE_BASE_EXTRA_COST              = 0,
+  CAPTURE_BASE_EXTRA_FREE_DIST         = 0,
   ATTACK_PILL_WALL_FALLBACK            = false,
 }
 
@@ -929,6 +972,10 @@ local SHARED = {
 -- came to 6 to 10, under the holder (17 to 37) and the prize (100 to 760). A
 -- base is only a pit stop here, and armour from one is the brain's refuel,
 -- which this does not touch. 3000 puts the nearest base at 900 or more.
+-- A base within 5 tiles (Manhattan, from the tank) does not pay it, so a bot
+-- that passes close to a base takes it anyway. The brain knob for that is
+-- CAPTURE_BASE_EXTRA_FREE_DIST, set to 5 beside BASE_EXTRA in the three parts
+-- below.
 local BASE_EXTRA = 3000
 
 -- The parts.
@@ -936,9 +983,9 @@ local BASE_EXTRA = 3000
 -- hunter: bids hard for a tank fight, because the holder is a tank. The only
 -- live pillbox a hunter ever meets is a built prize, and it costs nothing to
 -- go after, so its own pillbox fight takes it on. It leaves the bases alone
--- (BASE_EXTRA), and so do a manhunt and a mate. A square it was sent to
--- holds it for half a second, not ten, so that fight and the pick-up of a
--- dropped prize take over soon after it arrives.
+-- (BASE_EXTRA) unless one is within 5 tiles, and so do a manhunt and a mate.
+-- A square it was sent to holds it for half a second, not ten, so that fight
+-- and the pick-up of a dropped prize take over soon after it arrives.
 --
 -- manhunt: a hunter while the holder's man walks the prize out. A tank fight
 -- costs more and a far target is less of a reason not to go, so the brain's
@@ -969,34 +1016,37 @@ local ROLES = {
   hunter = {
     flags = { "noblitz", "nosuicider" },
     cfg = {
-      TANK_COMBAT_BASE_COST   = 10,
-      CAPTURE_BASE_EXTRA_COST = BASE_EXTRA,
-      PILL_REPOSITION_ENABLED = false,
-      ATTACK_PILL_BASE_COST   = 0,
-      ORDER_GOTO_HOLD_TICKS   = HUNTER_PARK_TICKS,
+      TANK_COMBAT_BASE_COST        = 10,
+      CAPTURE_BASE_EXTRA_COST      = BASE_EXTRA,
+      CAPTURE_BASE_EXTRA_FREE_DIST = 5,
+      PILL_REPOSITION_ENABLED      = false,
+      ATTACK_PILL_BASE_COST        = 0,
+      ORDER_GOTO_HOLD_TICKS        = HUNTER_PARK_TICKS,
     },
   },
   manhunt = {
     flags = { "noblitz", "nosuicider" },
     cfg = {
-      TANK_COMBAT_BASE_COST    = 60,
-      CAPTURE_BASE_EXTRA_COST  = BASE_EXTRA,
-      PILL_REPOSITION_ENABLED  = false,
-      ATTACK_PILL_BASE_COST    = 0,
-      ORDER_GOTO_HOLD_TICKS    = HUNTER_PARK_TICKS,
-      ATTACK_FAR_PREEMPT_RANGE = 11,
-      ORDER_INJECT_COST        = 60,
+      TANK_COMBAT_BASE_COST        = 60,
+      CAPTURE_BASE_EXTRA_COST      = BASE_EXTRA,
+      CAPTURE_BASE_EXTRA_FREE_DIST = 5,
+      PILL_REPOSITION_ENABLED      = false,
+      ATTACK_PILL_BASE_COST        = 0,
+      ORDER_GOTO_HOLD_TICKS        = HUNTER_PARK_TICKS,
+      ATTACK_FAR_PREEMPT_RANGE     = 11,
+      ORDER_INJECT_COST            = 60,
     },
   },
   mate = {
     flags = { "noblitz", "nosuicider" },
     cfg = {
-      TANK_COMBAT_BASE_COST   = 10,
-      CAPTURE_BASE_EXTRA_COST = BASE_EXTRA,
-      PILL_REPOSITION_ENABLED = false,
-      ATTACK_PILL_BASE_COST   = 0,
-      ORDER_GOTO_HOLD_TICKS   = HUNTER_PARK_TICKS,
-      REPOSITION_VOTE_ENABLED = false,
+      TANK_COMBAT_BASE_COST        = 10,
+      CAPTURE_BASE_EXTRA_COST      = BASE_EXTRA,
+      CAPTURE_BASE_EXTRA_FREE_DIST = 5,
+      PILL_REPOSITION_ENABLED      = false,
+      ATTACK_PILL_BASE_COST        = 0,
+      ORDER_GOTO_HOLD_TICKS        = HUNTER_PARK_TICKS,
+      REPOSITION_VOTE_ENABLED      = false,
     },
   },
   holder = {
@@ -2516,6 +2566,17 @@ function on_start()
   post_team_scores()
   game.log("Pillbox Tag: " .. (teams_on() and "lobby teams" or "free for all"))
 
+  -- Who hears whose voice, by the "Voice chat to everyone" setting: "Yes" is
+  -- everybody, "No" is allies only, and "Only in Free For All" is everybody
+  -- in a Free For All and teammates in a team round. The engine clears it at
+  -- every round start, so it is set here each round. An engine without the
+  -- call keeps voice to allies.
+  if game.set_voice_everyone then
+    local voice = game.setting("voice_everyone")
+    game.set_voice_everyone(voice == "Yes" or
+                            (voice ~= "No" and not teams_on()))
+  end
+
   -- How close a tank in a wood has to be before it can be seen, in squares.
   hide_at = math.floor(game.rule("tree_hide_distance") / 256)
   tune_everybody()
@@ -2909,8 +2970,9 @@ function can_build(p, action, x, y, n)
   return nil
 end
 
--- A base is a pit stop: half a tank of armour, and then the base is off the
--- map for half a minute.
+-- A base is a pit stop: half a tank of armour and 3 mines, and then
+-- the base is off the map for half a minute. add_stocks holds the mines at
+-- the tank's cap.
 function on_base_captured(n, old, new, scripted)
   if over or scripted or new == game.NEUTRAL then
     return
@@ -2920,9 +2982,9 @@ function on_base_captured(n, old, new, scripted)
     return
   end
   local x, y = b.x, b.y
-  game.add_stocks(new, { armour = half_armour })
+  game.add_stocks(new, { armour = half_armour, mines = 3 })
   -- The empty gun: a base is the one thing that can hand a carrying holder
-  -- a shell.
+  -- a shell. The mines stay: a carrying holder gets those like everybody.
   if carrying(new) then
     game.set_stocks(new, { shells = 0 })
   end
@@ -3148,6 +3210,10 @@ scenario = {
       default = DEEP_WATER_SECONDS },
     { id = "teams", label = "Teams", type = "choice",
       choices = { FREE_FOR_ALL, LOBBY_TEAMS }, default = FREE_FOR_ALL },
+    { id = "voice_everyone", label = "Voice chat to everyone",
+      type = "choice",
+      choices = { "Only in " .. FREE_FOR_ALL, "Yes", "No" },
+      default = "Only in " .. FREE_FOR_ALL },
   },
 
   -- What each callback below does, in a line a player reads: the lobby's
@@ -3155,12 +3221,13 @@ scenario = {
   callbacks = {
     on_setup = "One pillbox is the prize, the rest go; bases start " ..
                "neutral.",
-    on_start = "Clock, compass, sea timer; Free For All: own teams.",
+    on_start = "Clock, compass, sea timer; Free For All: own teams; " ..
+               "voice to all by setting.",
     on_end = "Logs how long the round ran.",
     on_tick = "Holder speed by terrain, plus boost; man out: gun fills.",
     on_player_join = "A joiner hunts, on 0 points.",
     on_player_leave = "A leaving holder's built prize dies.",
-    on_base_captured = "A base: half armour, then gone 30 s.",
+    on_base_captured = "A base: half armour, 3 mines, then gone 30 s.",
     on_pill_placed = "Built: 3 armour, no score. Dropped: dead.",
     on_pill_picked_up = "Holder: 1 point/s (and team), slow, unarmed.",
     on_pill_killed = "A shot-down prize is anybody's (a bot's own hop aside).",
