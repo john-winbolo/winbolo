@@ -385,8 +385,10 @@ static inline float scnAnnounceAxis(float lo, float hi, float share,
  *  centred across it.
  *
  *  The one thing it keeps clear of is the status line,
- *  which also sits at the top: a box that would touch the
- *  status line's band drops to one gap below it. It does
+ *  which also sits at the top: a box that comes within one
+ *  gap of the status line's band drops to one gap below it.
+ *  The caller hands the band the full width of the view, so
+ *  this happens wherever the box sits across it. It does
  *  not move for panels or windows, and it may sit on the
  *  player's tank; the script chose the spot.
  *

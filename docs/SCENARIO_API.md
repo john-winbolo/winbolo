@@ -1491,9 +1491,15 @@ neither. In the lobby the clock moves at half that
 rate, so a line put up before the round starts stays up about twice as long as
 it asked for.
 
-**Where an announcement goes.** With no `position` the line goes where every
-announcement has always gone: centred across the view, in its upper third,
-clear of the player's own tank in the middle. Nothing moves it.
+**Where an announcement goes.** With no `position` the line is centred across
+the game view, with the top of its letters 0.28 of the way down, in the upper
+third and clear of the player's own tank in the middle. No panel, window or
+status line moves it. On the main view that is where every announcement has
+always gone. On the full screen map the same rule is applied to the map, so
+the line sits 0.28 of the way down the map and not at its old spot, which was
+worked out from the main view's rectangle. In tablet mode the rule is
+applied to tablet mode's own game view; before, tablet mode drew no
+announcement at all.
 
 `position` puts the centre of the line at a point on the game view. Give a
 table `{ x = across, y = down }`, each from 0 to 1: `{ x = 0, y = 0 }` is the
@@ -1508,8 +1514,12 @@ scripts use most:
 
 The line is moved the least it takes to keep all of it inside the view, so
 `y = 0` puts it as high as it goes and no edge is ever cut off. A line wider
-than the view is centred across it. When a status line is up, a line that
-would touch it drops to just below it. A line with a position does not move
+than the view is centred across it. When a status line is up, its row counts
+as a band the full width of the view, from the top to the bottom of the status
+line's box. A line that would come within one gap of that band drops to one
+gap below it, wherever it sits across the view, even where the status line is
+short and nowhere near it. The gap is the scenario panel's own inset from the
+corner of the view. A line with a position does not move
 for the scenario panel or other windows, and `"center"` sits on the player's
 own tank: the script chose the spot, so use it when there is little else to
 watch.
@@ -2142,12 +2152,23 @@ of that trigger's actions and every trigger after it on that hook for that
 event. The server counts one error against the script, and a script that
 keeps failing is switched off for the rest of the round.
 
-Two things only the round finds out, so keep them in mind. **A `call` naming a
+Three things only the round finds out, so keep them in mind. **A `call` naming a
 function your script never defined is skipped**, not reported — the check has
 no way to know what the chunk will define, since a script may define a
-function under a condition. And a region a test names may be one
+function under a condition. A region a test names may be one
 `game.define_region` makes during the round, so an unknown region name is not
-refused either.
+refused either. And **an `announce` position word is checked only when the
+trigger fires**: the check before the round holds a word to being text, not
+to the words an op takes, so `{ "announce", "Go", 3, "all", "middle" }` passes
+it. When that trigger fires, the word raises inside `announce`, the same way
+a literal of the wrong kind does above.
+
+A trigger can only write a number, a string, a boolean or a `{ field = }`, so
+the position of an `announce` action is `"top"`, `"center"` or `"centre"`. The
+`{ x = , y = }` table is out of reach; a script that wants one calls
+`game.announce` from Lua. A positioned line is held to 125 bytes, so an
+`announce` action with a position and a longer line is refused with
+`SCN_OP_TOO_BIG` when it fires and shows nothing.
 
 **Limits.** 64 triggers in a scenario, 4 tests and 4 actions on one trigger, 6
 arguments on one action. Going past any of them drops what is past it and says

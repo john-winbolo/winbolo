@@ -430,7 +430,7 @@ line as a Pascal string, then a position when the script gave one:
 | 0 | `destTeam` | 0 = everyone, otherwise the team number the line was held to. Teams run 1–15 |
 | 1 | `destPlayer` | 0xFF = everyone, otherwise the 0-based player slot |
 | 2–3 | Ticks | Big-endian; how long the line stays up |
-| 4 | Text length | 0–128 |
+| 4 | Text length | 0–128 for a line with no position; 1–125 for a line with a position |
 | 5… | Text | That many bytes |
 | after the text | Position x | Only for a line with a position: the centre of the line across the view, 0 = left edge, 254 = right edge, 127 = the middle |
 | next | Position y | The same, down the view: 0 = top edge, 254 = bottom edge |

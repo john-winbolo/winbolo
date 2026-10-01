@@ -4689,10 +4689,14 @@ static void renderScenarioPanel(ClientSim *cs) {
  * The scenario announcement
  *
  * One line across the game view, for the few seconds a
- * scenario asked for. With no position it sits where it
- * always has: centred across, in the view's upper third
- * rather than dead centre, which is where the player's own
- * tank is (scnAnnounceDefaultPlace). With a position the
+ * scenario asked for. With no position it is centred
+ * across, in the view's upper third rather than dead
+ * centre, which is where the player's own tank is
+ * (scnAnnounceDefaultPlace). On the main view that is where
+ * it always went. The full screen map and tablet mode apply
+ * the same rule to their own view; before, the full screen
+ * map placed it by the main view's rectangle and tablet
+ * mode drew none. With a position the
  * script names the line's centre as shares of the view,
  * and the line is kept inside the view and below the
  * status line, and nothing else (scnAnnounceAt). The view
