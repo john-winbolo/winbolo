@@ -67,7 +67,10 @@
 -- member with the seconds they carried. When that is more rows than there
 -- is room for, every team's row stays and the player's own row goes under
 -- their team. A team of bots only is named after the pool its bots take
--- their names from, as the lobby names them.
+-- their names from, as the lobby names them. The holder's row (in a team
+-- round, his team's row and his own) is drawn in yellow, the panel's gold,
+-- and is never cut off: when it would fall below the last row there is room
+-- for, it takes that last row's place.
 --
 -- The compass is the panel. A script cannot draw on the edge of the game view,
 -- so the square over the view is a compass rose instead: the needle points at
@@ -696,7 +699,8 @@ local function compass(p, me, tx, ty, what, colour, carrier, rows, rows_key)
     end
   end
 
-  local key = string.format("%s %s %s %s %s %s", tostring(carrier),
+  local key = string.format("%s %s %s %s %s %s %s", tostring(carrier),
+                            tostring(holder),
                             tipx and whole(tipx) or "-",
                             tipy and whole(tipy) or "-", status_colour, status,
                             rows_key)
@@ -740,10 +744,13 @@ local function compass(p, me, tx, ty, what, colour, carrier, rows, rows_key)
       break
     end
     local y = BOARD_Y + (i - 1) * BOARD_STEP
+    -- The holder's rows are yellow, the palette's nearest to gold (it has
+    -- no gold), whether or not rows_for had to force them on.
     local shade = "grey"
     if row.team ~= nil then
-      shade = (row.team == scoring_team(carrier)) and "yellow" or "white"
-    elseif row.slot == carrier then
+      shade = (holder ~= nil and row.team == scoring_team(holder)) and
+              "yellow" or "white"
+    elseif row.slot == holder then
       shade = "yellow"
     elseif row.slot == p then
       shade = "white"
@@ -780,21 +787,46 @@ end
 -- The rows one player's panel shows. When there are more than BOARD_ROWS,
 -- a team round keeps every team's row and puts the player's own row under
 -- their team's; a Free For All shows the best BOARD_ROWS.
+--
+-- The holder's row is always one of them. It is his team's row in a team
+-- round, and his own row in a Free For All or when he is on no team. When
+-- it sorts below the last row there is room for, it takes that last row's
+-- place. Everything above it outscores it, so the list stays in score order;
+-- and an indented row is never left without its team, because a team's
+-- members follow its row.
 local function rows_for(p, rows)
-  if #rows <= BOARD_ROWS or not teams_on() then
-    return rows
-  end
-  local out, mine = {}, scoring_team(p)
-  for _, row in ipairs(rows) do
-    if not row.indent then
-      out[#out + 1] = row
-      if row.team ~= nil and row.team == mine then
-        for _, m in ipairs(rows) do
-          if m.indent and m.slot == p then
-            out[#out + 1] = m
+  local out = rows
+  if #rows > BOARD_ROWS and teams_on() then
+    local mine = scoring_team(p)
+    out = {}
+    for _, row in ipairs(rows) do
+      if not row.indent then
+        out[#out + 1] = row
+        if row.team ~= nil and row.team == mine then
+          for _, m in ipairs(rows) do
+            if m.indent and m.slot == p then
+              out[#out + 1] = m
+            end
           end
         end
       end
+    end
+  end
+  if holder == nil or #out <= BOARD_ROWS then
+    return out
+  end
+  local ht = scoring_team(holder)
+  for k = BOARD_ROWS + 1, #out do
+    local row = out[k]
+    if (ht ~= nil and row.team == ht) or
+       (ht == nil and row.team == nil and not row.indent and
+        row.slot == holder) then
+      local shown = {}
+      for i = 1, BOARD_ROWS - 1 do
+        shown[i] = out[i]
+      end
+      shown[BOARD_ROWS] = row
+      return shown
     end
   end
   return out
