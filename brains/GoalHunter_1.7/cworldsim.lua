@@ -40,6 +40,9 @@ local DEFAULT_TERRAIN_SPEED = {
   [C.T_PILLBOX]   = 16,
 }
 
+-- The table configure() sends; live_physics.lua scales it for live rules.
+M.DEFAULTS = { terrain_speed = DEFAULT_TERRAIN_SPEED }
+
 --- Configure terrain speeds (call once at brain open).
 --- @param opts table|nil  Optional overrides: opts.terrain_speed = { [type] = speed }
 function M.configure(opts)

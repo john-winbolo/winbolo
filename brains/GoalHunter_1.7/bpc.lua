@@ -190,7 +190,7 @@ function M.steer(state, world, info, goal)
       local move_dir = U.aim_at(info.tankx, info.tanky, U.m2w(nx), U.m2w(ny))
       local corr = U.adiff(info.direction, move_dir)
       -- Rush: higher max speed to capture fast
-      local k, t = U.nav_turn_speed(corr, info.speed, 64)
+      local k, t = U.nav_turn_speed(corr, info.speed, C.NAV_TOP_SPEED)
       keys = bit.bor(keys, k)
       taps = bit.bor(taps, t)
     else

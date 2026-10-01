@@ -500,6 +500,8 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
     lua_newtable(L); lua_setfield(L, -2, "objects");
     lua_newtable(L); lua_setfield(L, -2, "messages");
     lua_newtable(L); lua_setfield(L, -2, "events");
+    lua_newtable(L); lua_setfield(L, -2, "rules");
+    lua_newtable(L); lua_setfield(L, -2, "mods");
     lua_setfield(L, -2, "info");                      /* T.info = info */
     lua_newtable(L); lua_setfield(L, -2, "base");     /* T.base */
     lua_newtable(L); lua_setfield(L, -2, "message");  /* T.message */
@@ -765,6 +767,103 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
    * state for a clean respawn; it should early-return without acting. */
   lua_pushboolean(L, info->dead);
   lua_setfield(L, -2, "dead");
+
+  /* The rules this sim runs on (info.rules) and this tank's own modifiers
+   * (info.mods, percent, 100 = classic) — persistent tables, overwritten in
+   * place. A brain reads these rather than assuming the classic numbers. */
+  {
+    const BrainRules *r = &info->rules;
+    lua_getfield(L, -1, "rules");
+#define BRC_RULE_I(f) lua_pushinteger(L, r->f); lua_setfield(L, -2, #f)
+#define BRC_RULE_F(f) lua_pushnumber(L, r->f);  lua_setfield(L, -2, #f)
+    BRC_RULE_I(tank_reload_ticks);
+    BRC_RULE_I(tank_full_shells);
+    BRC_RULE_I(tank_full_mines);
+    BRC_RULE_I(tank_full_trees);
+    BRC_RULE_I(tank_full_armour);
+    BRC_RULE_I(tank_death_ticks);
+    BRC_RULE_I(tank_water_ticks);
+    BRC_RULE_I(mine_damage);
+    BRC_RULE_I(just_fired_ticks);
+    BRC_RULE_I(tank_min_move);
+    BRC_RULE_F(tank_accel_rate);
+    BRC_RULE_F(tank_decel_rate);
+    BRC_RULE_F(tank_brake_rate);
+    BRC_RULE_F(tank_autoslow_rate);
+    BRC_RULE_I(speed_road);
+    BRC_RULE_I(speed_grass);
+    BRC_RULE_I(speed_forest);
+    BRC_RULE_I(speed_river);
+    BRC_RULE_I(speed_swamp);
+    BRC_RULE_I(speed_crater);
+    BRC_RULE_I(speed_rubble);
+    BRC_RULE_I(speed_boat);
+    BRC_RULE_I(speed_deep_sea);
+    BRC_RULE_I(speed_refuel_base);
+    BRC_RULE_F(turn_road);
+    BRC_RULE_F(turn_grass);
+    BRC_RULE_F(turn_forest);
+    BRC_RULE_F(turn_river);
+    BRC_RULE_F(turn_swamp);
+    BRC_RULE_F(turn_crater);
+    BRC_RULE_F(turn_rubble);
+    BRC_RULE_F(turn_boat);
+    BRC_RULE_F(turn_deep_sea);
+    BRC_RULE_F(turn_refuel_base);
+    BRC_RULE_I(pill_max_armour);
+    BRC_RULE_I(pill_attack_ticks);
+    BRC_RULE_I(pill_attack_min_ticks);
+    BRC_RULE_I(base_full_armour);
+    BRC_RULE_I(base_full_shells);
+    BRC_RULE_I(base_full_mines);
+    BRC_RULE_I(shell_damage);
+    BRC_RULE_I(shell_life);
+    BRC_RULE_I(shell_speed);
+    BRC_RULE_I(gunsight_max);
+    BRC_RULE_I(tree_hide_distance);
+    BRC_RULE_I(pill_cooldown_ticks);
+    BRC_RULE_I(pill_repair_amount);
+    BRC_RULE_I(pill_range);
+    BRC_RULE_I(pill_shell_damage);
+    BRC_RULE_I(pill_angry_divisor);
+    BRC_RULE_I(base_capture_armour);
+    BRC_RULE_I(base_hit_armour);
+    BRC_RULE_I(base_regen_ticks);
+    BRC_RULE_I(lgm_build_ticks);
+    BRC_RULE_I(lgm_cost_road);
+    BRC_RULE_I(lgm_cost_building);
+    BRC_RULE_I(lgm_cost_pill_repair);
+    BRC_RULE_I(lgm_cost_boat);
+    BRC_RULE_I(lgm_cost_pill_new);
+    BRC_RULE_I(lgm_cost_mine);
+    BRC_RULE_I(lgm_gather_trees);
+    BRC_RULE_I(lgm_helicopter_speed);
+    BRC_RULE_I(man_speed_road);
+    BRC_RULE_I(man_speed_grass);
+    BRC_RULE_I(man_speed_forest);
+    BRC_RULE_I(man_speed_river);
+    BRC_RULE_I(man_speed_swamp);
+    BRC_RULE_I(man_speed_crater);
+    BRC_RULE_I(man_speed_rubble);
+    BRC_RULE_I(man_speed_boat);
+    BRC_RULE_I(man_speed_deep_sea);
+    BRC_RULE_I(man_speed_refuel_base);
+#undef BRC_RULE_I
+#undef BRC_RULE_F
+    lua_pop(L, 1);
+
+    lua_getfield(L, -1, "mods");
+    lua_pushinteger(L, info->mods.speed);  lua_setfield(L, -2, "speed");
+    lua_pushinteger(L, info->mods.accel);  lua_setfield(L, -2, "accel");
+    lua_pushinteger(L, info->mods.turn);   lua_setfield(L, -2, "turn");
+    lua_pushinteger(L, info->mods.reload); lua_setfield(L, -2, "reload");
+    lua_pushinteger(L, info->mods.dealt);  lua_setfield(L, -2, "dealt");
+    lua_pushinteger(L, info->mods.taken);  lua_setfield(L, -2, "taken");
+    lua_pop(L, 1);
+
+    lua_pushinteger(L, info->reload_ticks);
+    lua_setfield(L, -2, "reload_ticks");
+  }
 
   /* Game events — persistent array; each element holds a persistent nested
    * data array. Overwrite type and data[1..dlen] in place, nil each data tail
@@ -2343,6 +2442,18 @@ static int l_cpf_lgm_walk_path(lua_State *L) {
   return 1;
 }
 
+/* cpf_set_man_speed(type, speed) -- the man's walk speed on terrain `type`
+ * (0..15), or on his blessed tile when `type` is -1, for the LGM walk sim
+ * (cpf_lgm_travel_ticks*, cpf_lgm_walk_path). The pathfinder starts on the
+ * classic speeds, so a brain that never calls this walks the classic man. */
+static int l_cpf_set_man_speed(lua_State *L) {
+  CPF_GET(L);
+  int type  = (int)luaL_checkinteger(L, 1);
+  int speed = (int)luaL_checkinteger(L, 2);
+  brainPathfinderSetManSpeed(pf, type, speed);
+  return 0;
+}
+
 /* cpf_set_lgm_blocked(tiles) — tiles is an array of { mx, my } pairs (each a
  * 2-element table). Clears the LGM-impassable overlay, then marks each tile so
  * the LGM travel sim treats it as a wall. The bot's brain map is PURE TERRAIN
@@ -2577,6 +2688,7 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_lgm_travel_ticks_map",  l_cpf_lgm_travel_ticks_map },
     { "cpf_lgm_walk_path",         l_cpf_lgm_walk_path },
     { "cpf_set_lgm_blocked",       l_cpf_set_lgm_blocked },
+    { "cpf_set_man_speed",         l_cpf_set_man_speed },
     { "cpf_estimate_tank_travel_ticks", l_cpf_estimate_tank_travel_ticks },
     { "cpf_dijkstra_shells_at",    l_cpf_dijkstra_shells_at },
     { "cpf_astar_shells_at",       l_cpf_astar_shells_at },
@@ -2632,6 +2744,33 @@ static int l_wsim_set_terrain_speed(lua_State *L) {
   int type = (int)luaL_checkinteger(L, 1);
   float speed = (float)luaL_checknumber(L, 2);
   brainWorldSimSetTerrainSpeed(ws, type, speed);
+  return 0;
+}
+
+/* wsim_set_rules{ shell_damage=, pill_range=, pill_attack_ticks=,
+ *   pill_attack_min_ticks=, pill_cooldown_ticks=, pill_hit_damage=,
+ *   shoot_interval=, forest_range= } -- push live rule numbers into the
+ * forward model. A missing field (or 0) keeps the current value. */
+static int brc_opt_field_int(lua_State *L, int idx, const char *key) {
+  int v = 0;
+  lua_getfield(L, idx, key);
+  if (lua_isnumber(L, -1)) v = (int)lua_tointeger(L, -1);
+  lua_pop(L, 1);
+  return v;
+}
+
+static int l_wsim_set_rules(lua_State *L) {
+  WSIM_GET(L);
+  luaL_checktype(L, 1, LUA_TTABLE);
+  brainWorldSimSetRules(ws,
+                        brc_opt_field_int(L, 1, "shell_damage"),
+                        brc_opt_field_int(L, 1, "pill_range"),
+                        brc_opt_field_int(L, 1, "pill_attack_ticks"),
+                        brc_opt_field_int(L, 1, "pill_attack_min_ticks"),
+                        brc_opt_field_int(L, 1, "pill_cooldown_ticks"),
+                        brc_opt_field_int(L, 1, "pill_hit_damage"),
+                        brc_opt_field_int(L, 1, "shoot_interval"),
+                        brc_opt_field_int(L, 1, "forest_range"));
   return 0;
 }
 
@@ -2802,6 +2941,7 @@ void brainCoreRegisterWorldSim(lua_State *L, BrainWorldSim **wsPtr) {
   static const struct { const char *name; lua_CFunction func; } funcs[] = {
     { "wsim_clear",             l_wsim_clear },
     { "wsim_set_terrain_speed", l_wsim_set_terrain_speed },
+    { "wsim_set_rules",         l_wsim_set_rules },
     { "wsim_add_pill",          l_wsim_add_pill },
     { "wsim_add_tank",          l_wsim_add_tank },
     { "wsim_set_path",          l_wsim_set_path },

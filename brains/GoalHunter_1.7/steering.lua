@@ -2217,7 +2217,7 @@ local function attack_pill_steer(state, world, info, goal)
     if nx then
       local move_dir = U.aim_at(info.tankx, info.tanky, U.m2w(nx), U.m2w(ny))
       local corr = U.adiff(info.direction, move_dir)
-      local k, t = nav_turn_speed(corr, info.speed, 64)
+      local k, t = nav_turn_speed(corr, info.speed, C.NAV_TOP_SPEED)
       keys = bit.bor(keys, k)
       taps = bit.bor(taps, t)
     else
@@ -2374,7 +2374,7 @@ local function attack_pill_steer(state, world, info, goal)
       -- speed * 2 wu of coast is the empirical brake distance. If that
       -- exceeds the gap to the tolerance window, brake; otherwise keep
       -- going (slowly).
-      local would_overshoot = (info.speed * 2 + 4) > (sdist - close_enough)
+      local would_overshoot = (info.speed * C.INRANGE_COAST_PER_SPEED + 4) > (sdist - close_enough)
       -- Detect "info.speed lies, real motion is 0" (friction-stuck on
       -- tree/swamp): if sdist hasn't changed for several ticks even
       -- though info.speed > 0, the brake is useless and we should be
@@ -2431,7 +2431,7 @@ local function attack_pill_steer(state, world, info, goal)
       if BRAIN_DEBUG_MODE then
         local twx = info.tankx / 256.0
         local twy = info.tanky / 256.0
-        local stop_dist_now = info.speed * 2 + 4
+        local stop_dist_now = info.speed * C.INRANGE_COAST_PER_SPEED + 4
         local gap = sdist - close_enough
         -- Color by branch: green=at_spot/creep, yellow=brake, red=stuck
         local r, g, b = 100, 255, 100
@@ -2440,7 +2440,7 @@ local function attack_pill_steer(state, world, info, goal)
         end
         viz.text("approach_dist", twx + 1.0, twy + 0.4,
           string.format("in_range: %s  sdist=%d gap=%+d stop=%d",
-                        branch, sdist, gap, stop_dist_now),
+                        branch, sdist, gap, math.floor(stop_dist_now)),
           "topleft", r, g, b, 255, 0.4)
         viz.text("approach_dist", twx + 1.0, twy + 1.0,
           string.format("stuck=%d/8t prev_sd=%d",
@@ -2820,7 +2820,7 @@ local function attack_pill_steer(state, world, info, goal)
     elseif nx and nx >= 0 and tn < 2 then lookx, looky = nx, ny end
     local move_dir = U.aim_at(info.tankx, info.tanky, U.m2w(lookx), U.m2w(looky))
     local mcorr = U.adiff(info.direction, move_dir)
-    local k, t = nav_turn_speed(mcorr, info.speed, 48, 4)
+    local k, t = nav_turn_speed(mcorr, info.speed, C.NAV_CRUISE_SPEED, 4)
     keys = bit.bor(keys, k)
     taps = bit.bor(taps, t)
 
@@ -3340,6 +3340,10 @@ local function tank_combat_steer(state, world, info, goal)
     -- it near full: tanks in combat almost always drive flat-out, and a low
     -- estimate (from velocity noise) would under-lead.
     local cur_cap = C.MAP_SPEED[U.ttype(bit.rshift(math.floor(twx), 8), bit.rshift(math.floor(twy), 8))]
+    -- C.MAP_SPEED follows the rules only. With ENEMY_SPEED_OWN_MODS the
+    -- target is assumed to carry our speed modifier too (nil = no change).
+    local enemy_scale = U.enemy_speed_scale()
+    if enemy_scale and cur_cap then cur_cap = cur_cap * enemy_scale end
     local throttle = (cur_cap and cur_cap > 0) and (vmag / cur_cap) or 1
     if throttle > 1 then throttle = 1 end
     shell_travel_ticks = wdist / shell_speed_per_tick
@@ -3349,6 +3353,7 @@ local function tank_combat_steer(state, world, info, goal)
       if n > 100 then n = 100 end                    -- shell range backstop
       for _ = 1, n do
         local cap = C.MAP_SPEED[U.ttype(bit.rshift(math.floor(ex), 8), bit.rshift(math.floor(ey), 8))] or 0
+        if enemy_scale then cap = cap * enemy_scale end
         local step = cap * throttle
         ex = ex + hx * step
         ey = ey + hy * step
@@ -4777,7 +4782,7 @@ local function steer_core(state, world, info, goal)
       if offset_dist > 128 then
         local corr = U.adiff(info.direction, offset_dir)
         -- Retreat: high max speed, low min speed — escape ASAP
-        local k, t = nav_turn_speed(corr, info.speed, 64, 2)
+        local k, t = nav_turn_speed(corr, info.speed, C.NAV_TOP_SPEED, 2)
         keys = bit.bor(keys, k)
         taps = bit.bor(taps, t)
       else
@@ -5124,7 +5129,9 @@ local function steer_core(state, world, info, goal)
 
     local eff_dist = goal_dist
     -- Attack pill: start braking much earlier to avoid overshooting standoff
-    local brake_mult = (goal.kind == "attack_pill" or goal.kind == "pill_place") and 24 or 12
+    -- (C.NAV_BRAKE_MULT_* follow our brake rate under live rules.)
+    local brake_mult = (goal.kind == "attack_pill" or goal.kind == "pill_place")
+                       and C.NAV_BRAKE_MULT_PRECISE or C.NAV_BRAKE_MULT
     local brake_dist = math.max(128, info.speed * brake_mult)
     local facing_away = math.abs(correction) > 64
 
@@ -5147,7 +5154,7 @@ local function steer_core(state, world, info, goal)
       local ORBIT_RELEASE_BRAD = 8     -- ~11° — release brake when aligned
       local in_zone = eff_dist < ORBIT_NEAR_WU
                   and math.abs(correction) > ORBIT_CORR_BRAD
-                  and info.speed > 16
+                  and info.speed > C.ORBIT_FAST_SPEED   -- 16 classic
       if in_zone then
         goal._orbit_stuck = (goal._orbit_stuck or 0) + 1
         if goal._orbit_stuck >= ORBIT_DETECT_TICKS then
@@ -5204,7 +5211,7 @@ local function steer_core(state, world, info, goal)
       local ng = state.next_goal
       move_dir   = U.aim_at(info.tankx, info.tanky, ng.wx, ng.wy)
       eff_dist   = U.wdist(info.tankx, info.tanky, ng.wx, ng.wy)
-      brake_dist = math.max(128, info.speed * 12)
+      brake_dist = math.max(128, info.speed * C.NAV_BRAKE_MULT)
       correction = U.adiff(info.direction, move_dir)
       facing_away = math.abs(correction) > 64
       lookahead_active = true
@@ -5218,8 +5225,8 @@ local function steer_core(state, world, info, goal)
     local cliff = false
     local cliff_hit_mx, cliff_hit_my, cliff_hit_steps  -- for viz/debug
     if not info.inboat then
-      local look_wu = math.max(256, info.speed * 10)   -- ~10 ticks of motion
-      local steps   = math.min(6, math.max(1, math.ceil(look_wu / 256)))
+      local look_wu = math.max(256, info.speed * C.CLIFF_NAV_LOOK_TICKS)   -- ~10 ticks of motion (classic brake)
+      local steps   = math.min(C.CLIFF_NAV_LOOK_MAX_STEPS, math.max(1, math.ceil(look_wu / 256)))
       local sdir    = U.bsin(info.direction)
       local cdir    = U.bcos(info.direction)
       for i = 1, steps do
@@ -5287,7 +5294,7 @@ local function steer_core(state, world, info, goal)
       -- flag makes the (earlier) predictor branch win; stage-2 creep still takes
       -- over once speed<=4 or within 1/2 tile (it returns before reaching here).
       _approach_brake_active = C.FAST_APPROACH
-                               or _approach_sdist_wu < math.max(256, info.speed * 24)
+                               or _approach_sdist_wu < math.max(256, info.speed * C.NAV_BRAKE_MULT_PRECISE)
     end
     -- Throttle-branch diagnostic.  Set by each branch below so the
     -- hud_throttle overlay can show which decision tier fired this
@@ -5310,9 +5317,17 @@ local function steer_core(state, world, info, goal)
     local plow_ease     = (dist_t >= 4) and 1.0 or 0.0  -- legacy var name kept for viz
     if abs_corr > ramp_start and dist_t < 4 then
       if plow_through then
-        turn_base_cap = (under_fire or race_mode) and 128 or 96
+        turn_base_cap = (under_fire or race_mode)
+                        and U.nav_turn_cap(C.NAV_TOP_SPEED, C.NAV_TURN_TOP_SPEED) * 2
+                        or U.nav_turn_cap(C.NAV_CRUISE_SPEED, C.NAV_TURN_CRUISE_SPEED) * 2
       else
-        turn_base_cap = (under_fire or race_mode) and  64 or 48
+        -- The cap sets the speed a turn is taken at (turn radius = speed /
+        -- turn rate), so it is the lower of the top-speed cap and the
+        -- turn-radius cap; under classic rules both are the same number.
+        -- (U.nav_turn_cap: with STEER_TURN_SPEEDUP a faster turn raises it.)
+        turn_base_cap = (under_fire or race_mode)
+                        and U.nav_turn_cap(C.NAV_TOP_SPEED, C.NAV_TURN_TOP_SPEED)
+                        or U.nav_turn_cap(C.NAV_CRUISE_SPEED, C.NAV_TURN_CRUISE_SPEED)
       end
       turn_factor    = 1.0 - math.min((abs_corr - ramp_start) / 70.0, 1.0)
       -- The floor keeps a hard-turning tank creeping forward rather than
@@ -5333,7 +5348,7 @@ local function steer_core(state, world, info, goal)
           "UTURN_PIVOT t=%d goal=%s corr=%d side=%d factor=%.2f base_cap=%d"
           .. " turn_capped=%d (floor 6->0) flag=%s",
           state.tick or 0, tostring(goal.kind), abs_corr,
-          state._uturn.side or 0, turn_factor, turn_base_cap, turn_capped,
+          state._uturn.side or 0, turn_factor, math.floor(turn_base_cap), turn_capped,
           tostring(C.TURN_CAP_UTURN_PIVOT)))
       end
     end
@@ -5382,7 +5397,7 @@ local function steer_core(state, world, info, goal)
       else
         decision_line = string.format(
           "dist=%.1ft < 4t -> base_cap=%d x ramp_factor=%.2f = %d  (turn_max_speed=%d)",
-          dist_t, turn_base_cap, turn_factor, turn_capped, turn_max_speed)
+          dist_t, math.floor(turn_base_cap), turn_factor, turn_capped, turn_max_speed)
       end
 
       viz.text("steering_text", twx, twy + 1.3, state_line,    "center", 180, 220, 255, 255)
@@ -5550,7 +5565,7 @@ local function steer_core(state, world, info, goal)
       else
         _throttle_branch = "ap_brake_zone"
         local sdist_wu = _approach_sdist_wu
-        local desired = math.max(4, math.floor(sdist_wu * 0.03))
+        local desired = math.max(4, math.floor(sdist_wu * C.AP_BRAKE_ZONE_FACTOR))
         if info.speed > desired + 4 then
           keys = bit.bor(keys, KEY_SLOWER)
         elseif info.speed < desired and sdist_wu > 128 then
@@ -5583,7 +5598,7 @@ local function steer_core(state, world, info, goal)
       end
     elseif orbit_brake then
       _throttle_branch = "orbit_brake"
-      if info.speed > 8 then keys = bit.bor(keys, KEY_SLOWER) end
+      if info.speed > C.ORBIT_BRAKE_SPEED then keys = bit.bor(keys, KEY_SLOWER) end   -- 8 classic
     elseif eff_dist < brake_dist and not plow_through then
       _throttle_branch = "approach_brake"
       -- Approach braking: slow proportionally to remaining distance.
@@ -5591,7 +5606,7 @@ local function steer_core(state, world, info, goal)
       -- skip this — keep cruising through the destination.
       -- Attack pill: brake harder to avoid overshooting the standoff
       local brake_factor = (goal.kind == "attack_pill" or goal.kind == "pill_place")
-                           and 0.04 or 0.08
+                           and C.NAV_BRAKE_FACTOR_PRECISE or C.NAV_BRAKE_FACTOR
       -- For exact-center goals (pill_place final tile, rescue_lgm) allow
       -- a much lower floor so the tank can creep onto the exact center
       -- without stalling at speed 6. Cap the absolute max at 4 too so
@@ -5663,7 +5678,7 @@ local function steer_core(state, world, info, goal)
         "topleft", 120, 220, 255, 230)
       viz.hud_text("hud_throttle", 10, 168,
         string.format("  spd=%d  abs_corr=%d  eff_dist=%d  brake_dist=%d",
-                      info.speed, abs_corr, eff_dist, brake_dist),
+                      info.speed, abs_corr, eff_dist, math.floor(brake_dist)),
         "topleft", 180, 200, 220, 200)
       viz.hud_text("hud_throttle", 10, 180,
         string.format("  flags: boat_exit=%s  inboat=%s  cliff=%s  facing_away=%s  orbit=%s  ap_brake=%s  ap_sdist=%d",
