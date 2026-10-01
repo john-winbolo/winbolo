@@ -88,7 +88,7 @@ local function can_carry_now(state, info)
   if info.man_status ~= C.LGM_INTANK then return false end
   if info.inboat then return false end
   if (info.shells or 0) < (C.PILL_REPOSITION_MIN_SHELLS or 15) then return false end
-  if state.phase == "opening" then return false end
+  if state.phase == "opening" and not C.PILL_REPOSITION_IN_OPENING then return false end
   if state._reposition_cooldown_tick
      and (state.tick or 0) - state._reposition_cooldown_tick < (C.PILL_REPOSITION_COOLDOWN_TICKS or 0) then
     return false
