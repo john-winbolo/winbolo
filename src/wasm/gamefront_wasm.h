@@ -37,15 +37,17 @@ typedef struct {
 /* Set up what lasts for the life of the page, once, before any game: seed the
  * player name, the tracker and WinBolo.net token fields, the tank options and
  * the default keys, load the language, create the window on the page's canvas,
- * bring up sound and the brains list, make the menu's background game and set
- * the message handler. Settings synced or changed after this are never seeded
- * again by a game start. Returns FALSE if the window cannot be created. */
+ * bring up sound and the brains list, and set the message handler. The menu's
+ * background game is made later, by main_wasm.c, only if the menu shows.
+ * Settings synced or changed after this are never seeded again by a game
+ * start. Returns FALSE if the window cannot be created. */
 bool gameFrontWasmSetup(keyItems *keys);
 
 /* Make the menu's shared background game on a newly picked map and set it as
  * the shared one (bgGameGetShared). Leaves none and logs when it cannot be
- * made. gameFrontWasmSetup calls it for the first menu, and main_wasm.c on
- * each return to the menu after a single-player game. */
+ * made. main_wasm.c calls it, when there is none, each time the menu or the
+ * finder is about to show: on the page's first menu and on each return to
+ * the menu after a single-player game. */
 void wasmBackgroundGameCreate(void);
 
 /* Free the shared background game, its sim and its bots' brains, and clear

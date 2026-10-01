@@ -603,7 +603,7 @@ static void wasmGameStateReset(void);
  * than the logical cores, leaving a core for the browser, at most
  * WASM_MAX_BOT_RUNNERS and at least 1; 1 runs every think on the page's
  * thread. */
-static void wasmStartBotPool(int *coresOut, int *runnersOut) {
+static void wasmStartBotPool(void) {
   int cores = SDL_GetNumLogicalCPUCores();
   int runners = cores - 1;
 
@@ -613,13 +613,14 @@ static void wasmStartBotPool(int *coresOut, int *runnersOut) {
   if (runners < 1) {
     runners = 1;
   }
-  if (!serverSimBotPoolInit(runners)) {
+  if (serverSimBotPoolInit(runners)) {
+    /* The page's thread is one of the runners; the pool holds the rest. */
+    printf("[WASM] bot pool: %d logical cores, %d runners, %d workers\n",
+           cores, runners, runners - 1);
+  } else {
     printf("[WASM] bot pool: create failed for %d runners (%d logical cores); "
            "thinks run on the page's thread\n", runners, cores);
   }
-
-  *coresOut = cores;
-  *runnersOut = runners;
 }
 
 /* Copy one URL parameter into dst. getUrlParam returns a shared static
@@ -712,10 +713,6 @@ static void wasmEndSinglePlayerGame(void) {
   imguiLobbyFrameReset();
   tutorialOverlayReset();
 
-  /* wasmPlayGame freed the menu's background game; make a new one, on a
-   * newly picked map, for the menu. */
-  wasmBackgroundGameCreate();
-
   /* The in-game menu's toggles change only the live settings, as on the
    * desktop, which writes them when its game ends; do the same here, after
    * gameFrontEnd has read the tank options back. The menu's frames upload
@@ -735,8 +732,8 @@ static bool wasmPlayGame(const char *cmdLine, const WasmLaunch *launch) {
   /* Free the menu's background game before this one starts. Each of its
    * bots holds tens of MB of brain, and the page's heap never shrinks, so
    * keeping them through the game would leave that much less for it.
-   * wasmEndSinglePlayerGame makes a new one; a network game ends by leaving
-   * the page. */
+   * main makes a new one when the menu shows again; a network game ends by
+   * leaving the page. No-op on a page that went straight into a game. */
   wasmBackgroundGameDestroy();
 
   printf("[WASM] Starting gameFrontWasmStart...\n");
@@ -807,8 +804,6 @@ int main(int argc, char *argv[]) {
   const char *cmdLine = "";
   WasmLaunch launch;
   bool openFinder = FALSE;
-  int botCores = 0;
-  int botRunners = 0;
 
   (void)argc;
   (void)argv;
@@ -847,7 +842,7 @@ int main(int argc, char *argv[]) {
   /* The only read of the page URL; the game mode comes from here on. */
   wasmReadLaunch(&launch, &openFinder);
 
-  wasmStartBotPool(&botCores, &botRunners);
+  wasmStartBotPool();
 
   /* Page-lifetime setup: default keys, language, window, sound, brains. */
   if (gameFrontWasmSetup(&keys) == FALSE) {
@@ -855,21 +850,6 @@ int main(int argc, char *argv[]) {
     clientMutexDestroy();
     SDL_Quit();
     return 1;
-  }
-
-  /* The pool's worker count is read through a sim's stats, so this waits
-   * for the background game's sim. */
-  {
-    BgGame *bg = bgGameGetShared();
-    if (bg != NULL && bg->sim != NULL) {
-      BotPoolStats poolStats;
-      serverSimGetBotPoolStats(bg->sim, &poolStats);
-      printf("[WASM] bot pool: %d logical cores, %d runners, %d workers\n",
-             botCores, botRunners, poolStats.workerCount);
-    } else {
-      printf("[WASM] bot pool: %d logical cores, %d runners, "
-             "workers unknown (no background game)\n", botCores, botRunners);
-    }
   }
 
   /* Pull the account's cloud prefs and apply them over the defaults the
@@ -918,6 +898,11 @@ int main(int argc, char *argv[]) {
   }
   for (;;) {
     if (menu) {
+      /* The menu and the finder draw the background game; a page that goes
+       * straight into a game never makes it. */
+      if (bgGameGetShared() == NULL) {
+        wasmBackgroundGameCreate();
+      }
       /* A ?finder=1 launch opens the finder before the menu's first
        * showing, once. */
       if (openFinder) {

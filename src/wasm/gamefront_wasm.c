@@ -556,8 +556,6 @@ bool gameFrontWasmSetup(keyItems *keys) {
     }
 
     brainsHandlerLoadBrains();
-
-    wasmBackgroundGameCreate();
   }
 
   guiMessageSetHandler(sdl3MessageHandler);
