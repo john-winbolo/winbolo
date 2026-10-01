@@ -462,23 +462,93 @@ static void main_loop_iteration(void) {
 /* Wait for the browser's next animation frame. This paces the game loop at
  * the display's rate, one frame per requestAnimationFrame. A hidden
  * tab stops requestAnimationFrame, so a 250 ms timeout also resolves the wait
- * and the loop keeps advancing (the browser throttles it further); whichever
- * fires first wins and the other is cancelled or ignored. Suspends main's
- * stack through ASYNCIFY, so only C on that stack may call it. */
+ * and the loop keeps advancing (the browser throttles it further). While a
+ * network game runs in a hidden page, the hidden-page tick worker
+ * (wasmSetFastHiddenFrames) also resolves it, every 20 ms. Whichever fires
+ * first wins and the others are cancelled or ignored. Suspends main's stack
+ * through ASYNCIFY, so only C on that stack may call it. */
 EM_ASYNC_JS(void, wasmFrameWait, (void), {
     await new Promise((resolve) => {
         let done = false;
         let timer = 0;
+        let frame = 0;
         const finish = () => {
             if (done) return;
             done = true;
             clearTimeout(timer);
+            /* A hidden page holds animation-frame callbacks until it is
+               shown again; cancel this one so a hidden network game's
+               20 ms passes do not queue thousands of them. */
+            cancelAnimationFrame(frame);
             resolve();
         };
         timer = setTimeout(finish, 250);
-        requestAnimationFrame(finish);
+        frame = requestAnimationFrame(finish);
+        const hiddenTick = Module.wbHiddenTick;
+        if (hiddenTick && hiddenTick.running) {
+            hiddenTick.waiter = finish;
+        }
     });
 });
+
+/* Turn the hidden-page tick on or off for a network game. A network game
+ * must keep running in a hidden page: voice sends and plays a frame every
+ * 20 ms, and the client must stay in step with its server. A hidden page
+ * gets no requestAnimationFrame and the browser slows its timers to a second
+ * or more, but a dedicated worker's timers are not slowed, so a small worker
+ * made from a blob: URL posts a message every 20 ms and wasmFrameWait
+ * resolves on it. The worker runs only while Module.wbFastHiddenFrames is
+ * set and the page is hidden; a visibilitychange listener starts and stops
+ * it. Its message handler only resolves the pending frame wait and never
+ * calls into the module. A single-player game pauses while hidden instead
+ * (see main_loop_iteration), so it never sets the flag. Never suspends. */
+EM_JS(void, wasmSetFastHiddenFrames, (int on), {
+    let tick = Module.wbHiddenTick;
+    if (!tick) {
+        tick = Module.wbHiddenTick = { worker: null, running: false, waiter: null };
+        tick.sync = () => {
+            const want = !!Module.wbFastHiddenFrames && document.hidden;
+            if (want === tick.running) return;
+            if (want && !tick.worker) {
+                try {
+                    const src = "let id = 0; onmessage = (e) => { clearInterval(id); id = 0;" +
+                                " if (e.data) id = setInterval(() => postMessage(0), 20); };";
+                    const url = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
+                    tick.worker = new Worker(url);
+                    URL.revokeObjectURL(url);
+                    tick.worker.onmessage = () => {
+                        const waiter = tick.waiter;
+                        tick.waiter = null;
+                        if (waiter) waiter();
+                    };
+                } catch (e) {
+                    /* No worker: the frame wait keeps its 250 ms timeout. */
+                    tick.worker = null;
+                    return;
+                }
+            }
+            tick.running = want;
+            if (!want) tick.waiter = null;
+            tick.worker.postMessage(want ? 1 : 0);
+        };
+        document.addEventListener("visibilitychange", tick.sync);
+    }
+    Module.wbFastHiddenFrames = !!on;
+    tick.sync();
+});
+
+/* Set up the page for a network game's loop (on) or put it back (off).
+ * SDL reads SDL_HINT_EMSCRIPTEN_ASYNCIFY in both its present and SDL_Delay.
+ * With the hint on, each present sleeps on a page timer, which a hidden page
+ * slows to a second or more; every web loop already paces itself with
+ * wasmFrameWait, so the game loop turns the present's sleep off. It is off
+ * only while the loop runs: the join wait (clientFrontAwaitJoin) needs
+ * SDL_Delay to keep yielding to the browser, and the menu, the finder and
+ * single player keep SDL's default. */
+static void wasmNetworkGameFrames(bool on) {
+  SDL_SetHint(SDL_HINT_EMSCRIPTEN_ASYNCIFY, on ? "0" : "1");
+  wasmSetFastHiddenFrames(on ? 1 : 0);
+}
 
 /* -------------------------------------------------------
  * Browser history for the menu and games
@@ -863,7 +933,16 @@ static bool wasmPlayGame(const char *cmdLine, const WasmLaunch *launch) {
 
   fprintf(stderr, "[WASM] Starting main loop; humanSim=%p\n", (void*)humanSim);
   fflush(stderr);
-  wasmRunGame();
+  {
+    bool network = (gameFrontGetServerSim() == NULL);
+    if (network) {
+      wasmNetworkGameFrames(TRUE);
+    }
+    wasmRunGame();
+    if (network) {
+      wasmNetworkGameFrames(FALSE);
+    }
+  }
 
   return gameFrontGetServerSim() == NULL;
 }
