@@ -4443,6 +4443,13 @@ M.CAPTURE_NO_LGM_ROUTE_STRICT     = true   -- keel false
 -- so it reads in the same units as the capture_pill danger term beside it.
 M.CAPTURE_BASE_NO_LGM_DANGER_MULT = 20     -- keel 0 (term absent)
 
+-- A flat cost added to every capture_base row before the phase weight. For a
+-- game mode that wants its bots to leave the bases alone (a Pillbox Tag hunter
+-- has a prize to chase, and a round where every base stays neutral never
+-- leaves the opening phase, whose x0.3 makes a near base beat the prize).
+-- Refuel is its own pool and takes neutral bases too, so it is not touched.
+M.CAPTURE_BASE_EXTRA_COST = 0              -- keel 0 (term absent)
+
 -- 4. "KILL ME" -- handing the stack to a team-mate who can still build.
 --
 -- Allied shells DO hurt allied tanks (tank.c tankIsTankHit only ignores the
@@ -4876,6 +4883,8 @@ M.ORDER_HINT_ESCORT_TILES = 3
 -- not match the constant it replaces.
 M.PRESETS = {
   keel = {
+    -- 2026-10-01: flat capture_base cost for game modes; 0 is no such term.
+    CAPTURE_BASE_EXTRA_COST = 0,
     -- 2026-09-08: while on capture_pill the bot now sweeps the target tile for
     -- an enemy builder rebuilding the corpse -- the kill_lgm aim solution takes
     -- the TURN keys whenever it points within CAPTURE_LGM_HUNT_TOL_BRADS of
