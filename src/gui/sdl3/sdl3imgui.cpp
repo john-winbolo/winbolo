@@ -5453,10 +5453,10 @@ static void renderScnPanelMenuItems(bool afterBrains) {
    line and the panel line up when they sit side by side. */
 #define SCN_ANNOUNCE_INSET_UNITS SCN_PANEL_DEFAULT_INSET
 
-/* The most things the status line is kept clear of at once: the panel, two
-   vote widgets, the alliance request, and the full screen map's HUD column
-   and build strip. */
-#define SCN_ANNOUNCE_MAX_OBSTACLES 8
+/* The most things the status line is kept clear of at once: one panel per
+   script of the round's list, two vote widgets, the alliance request, and
+   the full screen map's HUD column and build strip. */
+#define SCN_ANNOUNCE_MAX_OBSTACLES (SCN_PANEL_OWNERS + 5)
 
 /* Adds a window's last known rect to the things the status line keeps clear
    of.
@@ -5600,7 +5600,15 @@ static void renderScenarioAnnounce(ClientSim *cs) {
             return;
         }
     }
-    scnAnnounceAddWindow("##scenariopanel", obstacles, &count);
+    /* Each script of the round's list has a panel window of its own, named
+       by renderScenarioPanelView as the id plus the owner. A panel popped
+       out into its own window is in another ImGui context and is not found,
+       which is right: it is not over the game view. */
+    for (int owner = 0; owner < SCN_PANEL_OWNERS; owner++) {
+        char winId[32];
+        SDL_snprintf(winId, sizeof(winId), "##scenariopanel%d", owner);
+        scnAnnounceAddWindow(winId, obstacles, &count);
+    }
     scnAnnounceAddWindow("###gamevote_1", obstacles, &count);
     scnAnnounceAddWindow("###gamevote_2", obstacles, &count);
     scnAnnounceAddWindow("###alliancereq", obstacles, &count);
