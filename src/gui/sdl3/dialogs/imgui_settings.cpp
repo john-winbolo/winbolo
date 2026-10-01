@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -2560,9 +2563,13 @@ static void settingsShowLoop(bool inEditor) {
 #endif
 #if !BOLO_MOBILE
         present[STAB_CONTROLS] = !uiModeIsTablet() && !inEditor;
-        present[STAB_LAST]     = true;
 #else
         present[STAB_CONTROLS] = false;
+#endif
+        /* UPnP, NAT traversal and the news popup mean nothing in a browser. */
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+        present[STAB_LAST]     = true;
+#else
         present[STAB_LAST]     = false;
 #endif
         /* The Workshop's module is desktop only, and the tab needs Steam. */
@@ -2678,7 +2685,7 @@ static void settingsShowLoop(bool inEditor) {
                 ImGui::EndTabItem();
             }
 #endif
-#if !BOLO_MOBILE
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
             if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_NETWORK), nullptr,
                     s_pgForceTab == STAB_LAST ? ImGuiTabItemFlags_SetSelected : 0)) {
                 s_pgActiveTab = STAB_LAST;

@@ -237,6 +237,12 @@ int run_manual_vote_countdown_survives_lost_base(void);
 int run_surrender_credits_the_opposing_team(void);
 int run_win_during_manual_countdown_resolves_as_vote(void);
 int run_abandoned_round_reports_nothing(void);
+/* The returning lobby's win message (test_lobby_return_win_message.c).
+ * serverSimLocalOnReturnToLobby sends a pending win message once, to
+ * everyone, clears it and republishes the lobby; a message over the wire's
+ * cap is cut on a character boundary and ends in "...". */
+int run_lobby_return_sends_win_message(void);
+int run_lobby_return_cuts_long_win_message(void);
 int run_round_stats_zeroed_on_fresh_sim(void);
 int run_round_stats_kill_basic(void);
 int run_round_stats_drown_not_suicide(void);
@@ -505,6 +511,8 @@ int run_wbn_serverlist_scripts(void);
 int run_wbn_map_parse(void);
 int run_brain_crash_log_writes_file(void);
 int run_brain_crash_log_falls_back_to_luaptr(void);
+int run_brain_msgh_budget_kill_no_traceback(void);
+int run_brain_msgh_real_error_keeps_traceback(void);
 int run_brain_inbox_push_peek_fifo(void);
 int run_brain_inbox_overflow_drops_oldest(void);
 int run_brain_inbox_legacy_drain_fifo(void);
@@ -1893,6 +1901,10 @@ int run_overview_snapshot_generation(void);
 /* A pillbox or base a removal has taken off the map has no label in the
  * snapshot's list. */
 int run_overview_snapshot_removed_item_has_no_label(void);
+/* The player's own tank nosed into an inside corner of buildings with line of
+ * sight on stays on the full screen map: the filter asks about the square
+ * under the tank, not the hidden corner block its sprite starts in. */
+int run_overview_snapshot_corner_keeps_self(void);
 
 /* Sprite placement at a float scale (test_mapview_sprite_scale.c): the
  * arithmetic behind mapViewDrawShells / Tanks / LGMs, shared by the classic
@@ -2926,6 +2938,11 @@ int run_lobby_scenario_commit_sets_type(void);
 int run_lobby_scenario_reset_keeps_rules(void);
 int run_lobby_scenario_refuses_ranked(void);
 int run_lobby_scenario_refuses_ai_none(void);
+int run_lobby_scenario_no_bots_script_keeps_ai(void);
+int run_lobby_scenario_needs_bots_raises_and_gives_back(void);
+int run_lobby_scenario_ranked_give_back_clears_ai(void);
+int run_lobby_scenario_needs_bots_drop_gives_back(void);
+int run_lobby_scenario_needs_bots_snapshot_at_raise(void);
 int run_lobby_scenario_refuses_game_type(void);
 int run_lobby_scenario_boot_sets_type(void);
 int run_lobby_scenario_identity_strips_controls(void);
@@ -3361,6 +3378,8 @@ int run_scenario_validate_trigger_field_team(void);
 int run_scenario_validate_trigger_announce_clear(void);
 int run_scenario_validate_trigger_arg_literal(void);
 int run_scenario_validate_rule_pair_key(void);
+int run_scenario_validate_needs_bots_missing(void);
+int run_scenario_validate_needs_bots_declared(void);
 
 /* The binding table (test_scenario_lua.c): every row of the registry
  * called once, the three index rules, the nils an absent entity reads
@@ -3560,6 +3579,7 @@ int run_scenario_manifest_json_trigger_text_cut(void);
  * manifest that names one. */
 int run_scenario_manifest_workshop_keys(void);
 int run_scenario_manifest_agrees_workshop(void);
+int run_scenario_manifest_json_needs_bots(void);
 
 /* The Workshop item stamped into a scenario file that already exists
  * (test_scenario_workshop_id.c): a .scenario package and a packed map, with
@@ -3771,6 +3791,8 @@ int run_scenario_compose_off_plain_map_none(void);
 int run_scenario_compose_on_picks_replace_map(void);
 int run_scenario_compose_off_then_on(void);
 int run_scenario_compose_off_full_list_hides_last(void);
+int run_scenario_compose_needs_bots_any_mod(void);
+int run_scenario_compose_needs_bots_scenario_and_mod(void);
 
 /* The panel's display list (test_scenario_panel.c): the byte layout
  * decoded from a hand-written list, the refusal each malformed list

@@ -3,7 +3,7 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  */
 
@@ -628,6 +628,7 @@
 #define STR_DLGBROWSER_PREVIEW_UNAVAIL      1815
 #define STR_DLGBROWSER_PREVIEW_ENLARGE      1816
 #define STR_DLGBROWSER_ENLARGE_BTN          1829
+#define STR_DLGBROWSER_SIGNIN_TO_JOIN       2736
 #define STR_DLGBROWSER_AI_PLAYERS           1817
 #define STR_DLGBROWSER_WBN_PLAYERS          1818
 #define STR_DLGBROWSER_ST_LOCKED            1819
@@ -873,6 +874,9 @@
  * shown is decided from the window's real state, not from the preference. */
 #define STR_DLGWELCOME_SWITCH_CLASSIC       1991
 #define STR_DLGWELCOME_SWITCH_FULLSCREEN    1992
+/* The web client's label for the single-player row, which opens a practice
+ * game in the in-game lobby. */
+#define STR_DLGWELCOME_PRACTICE             2735
 /* Map Chooser dialog */
 #define STR_MAPCHOOSER_EVERARD              793
 #define STR_MAPCHOOSER_LOADMAP              794
@@ -914,6 +918,12 @@
 #define STR_MAPCHOOSER_RESTORE_SIZE_TIP     2732
 #define STR_MAPCHOOSER_MAXIMIZE_TIP         2733
 #define STR_MAPCHOOSER_LOADING_PREVIEW      2734
+/* Map editor scenario panel */
+#define STR_MAPEDIT_SCENARIO_NEEDS_BOTS     2738
+/* About box licence */
+#define STR_DLGABOUT_LICENCE                2750
+#define STR_DLGABOUT_LICENCE_NOTICE         2751
+#define STR_DLGABOUT_FILE_NOT_FOUND         2752
 
 /* Tablet HUD */
 #define STR_TABLET_STATUS_TITLE             803
@@ -2861,13 +2871,13 @@
 #define STR_DLGLOBBY_DETAILS_COL_NEW_VALUE       2632
 /* The details dialog's settings table: its two column headers, so it is
  * headed the way the rules and callbacks tables above it are. */
-#define STR_DLGLOBBY_DETAILS_COL_SETTING         2736
-#define STR_DLGLOBBY_DETAILS_COL_VALUE           2737
+#define STR_DLGLOBBY_DETAILS_COL_SETTING         2753
+#define STR_DLGLOBBY_DETAILS_COL_VALUE           2754
 
 /* The details dialog's heading over the rules table, with the colon the
  * Settings and implements headings have. The log viewer keeps
  * STR_DLGLOBBY_SCENARIO_RULES as a separator title with no colon. */
-#define STR_DLGLOBBY_DETAILS_RULES               2739
+#define STR_DLGLOBBY_DETAILS_RULES               2755
 
 /* The map panel's warning under the scenario and mods lines, shown only when
  * the server was started with -allow-unsafe-scripts. A sentence rather than a

@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -2748,6 +2751,7 @@ bool     clientSimGetLobbyScenarioExtraTeams(const ClientSim *cs)    { return cs
 bool     clientSimGetLobbyScenarioKeepsWinCondition(const ClientSim *cs) { return cs ? cs->lobbyScenarioKeepsWinCondition : false; }
 bool     clientSimGetLobbyScenarioBound(const ClientSim *cs) { return cs ? cs->lobbyScenarioBound : false; }
 bool     clientSimGetLobbyScenarioUnsafe(const ClientSim *cs) { return cs ? cs->lobbyScenarioUnsafe : false; }
+bool     clientSimGetLobbyScenarioNeedsBots(const ClientSim *cs) { return cs ? cs->lobbyScenarioNeedsBots : false; }
 
 /* The rules that scenario's manifest sets. Bounded on the stored count
    rather than on the array, so a row above it — one an earlier, longer set
@@ -3979,7 +3983,15 @@ static bool overviewSquareIsLive(const OverviewMap *om, int mapX, int mapY) {
  * square it stands on is live, the local player's own tank included. Whether
  * that tank survived the test is reported back through outSelfDrawn, so the
  * reticle can follow it. Copying into fresh lists rather than editing the
- * built ones leaves the sim's per-frame views untouched. */
+ * built ones leaves the sim's per-frame views untouched.
+ *
+ * For a tank the square it stands on is the one under its centre, which is
+ * not the square the list carries: that is the sprite's top left, half a
+ * square back from the centre. A tank in the top left quarter of its square is
+ * listed on the square diagonally before it, and driven into an inside corner
+ * of buildings that square is the corner block, which the sight mask rightly
+ * calls hidden. Asking about that square dropped the player's own tank off the
+ * full screen map every time they nosed into such a corner. */
 static void overviewViewFilterEntities(const OverviewMap *om, BYTE me,
                                        bool selfAlive,
                                        const screenTanks *allTks,
@@ -3990,6 +4002,7 @@ static void overviewViewFilterEntities(const OverviewMap *om, BYTE me,
                                        bool *outSelfDrawn) {
   BYTE mx, my, px, py, frame, playerNum;
   BYTE wx, wy, angle;
+  BYTE cx, cy; /* The square the tank's centre is on */
   char name[PLAYER_NAME_LEN];
   BYTE count;
   BYTE total;
@@ -4008,7 +4021,10 @@ static void overviewViewFilterEntities(const OverviewMap *om, BYTE me,
      * at all. This is also what takes the reticle off for the death wait:
      * outSelfDrawn stays false. */
     if (isSelf && !selfAlive) continue;
-    if (!overviewSquareIsLive(om, mx, my)) continue;
+    cx = mx;
+    cy = my;
+    screenTanksGetCentreSquare(allTks, count, &cx, &cy);
+    if (!overviewSquareIsLive(om, cx, cy)) continue;
     screenTanksGetSubPixel(allTks, count, &wx, &wy, &angle);
     screenTanksAddItem(outTks, mx, my, px, py, frame, playerNum, name,
                        wx, wy, angle);

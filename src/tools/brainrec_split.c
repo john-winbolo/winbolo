@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /*********************************************************
  *NAME:          brainrec_split.c
  *PURPOSE:

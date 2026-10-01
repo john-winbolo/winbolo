@@ -735,6 +735,12 @@ STR_MAPCHOOSER_RESTORE_SIZE_TIP=Restaurar tamaño predeterminado (Esc)
 STR_MAPCHOOSER_MAXIMIZE_TIP=Maximizar
 STR_MAPCHOOSER_LOADING_PREVIEW=Cargando vista previa...
 
+# Map editor scenario panel
+STR_MAPEDIT_SCENARIO_NEEDS_BOTS=Requiere permitir bots: este script añade sus propios bots
+STR_DLGABOUT_LICENCE=Licencia
+STR_DLGABOUT_LICENCE_NOTICE=Software libre bajo la GNU GPL v3 o posterior. Sin garantía.
+STR_DLGABOUT_FILE_NOT_FOUND=No se encontró el archivo.
+
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Estado
 STR_TABLET_KILLS_DEATHS=Bajas: {number}  Muertes: {number2}
@@ -1863,6 +1869,7 @@ STR_DLGBROWSER_SELECT_SERVER=Seleccionar servidor
 STR_DLGBROWSER_PREVIEW_UNAVAIL=Vista previa no disp.
 STR_DLGBROWSER_PREVIEW_ENLARGE=Clic para ampliar
 STR_DLGBROWSER_ENLARGE_BTN=Ampliar
+STR_DLGBROWSER_SIGNIN_TO_JOIN=Iniciar sesión para unirte
 STR_DLGBROWSER_AI_PLAYERS=({number} jugadores IA)
 STR_DLGBROWSER_WBN_PLAYERS=WinBolo.net jugadores:
 STR_DLGBROWSER_ST_LOCKED=Bloqueado/Lleno
@@ -2026,6 +2033,7 @@ STR_DLGKEYSETUP_OVERVIEWZOOMIN=Acercar mapa
 STR_DLGKEYSETUP_OVERVIEWZOOMOUT=Alejar mapa
 STR_DLGWELCOME_SWITCH_CLASSIC=Cambiar a clásico
 STR_DLGWELCOME_SWITCH_FULLSCREEN=Cambiar a pantalla completa
+STR_DLGWELCOME_PRACTICE=Práctica
 
 # Ajustes de Pantalla y sonido: pantalla completa y los paneles HUD del mapa
 STR_DLGSETTINGS_FULLSCREEN=Pantalla completa

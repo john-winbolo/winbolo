@@ -115,7 +115,7 @@ int run_info_script_tail_golden(void) {
         serverSimSetScenarioLobbyTemplate(sim, &t);
         serverSimSetScenarioIdentity(sim, lobbyScenarioMod, "Survival",
                                      "survival.lua", "Last tank", false,
-                                     false, false, false);
+                                     false, false, false, false);
         istRow(&rows[0], "survival.lua", "Survival", false);
         istRow(&rows[1], "infection.lua", "Infection", true);
         istRow(&rows[2], "pilltag.lua", "Pill Tag", true);
@@ -141,7 +141,7 @@ int run_info_script_tail_golden(void) {
         memset(desc + 201, 'e', 9);
         desc[210] = '\0';
         serverSimSetScenarioIdentity(sim, lobbyScenarioMod, "S", "s.lua", desc,
-                                     false, false, false, false);
+                                     false, false, false, false, false);
         serverSimSetScriptList(sim, NULL, 0);
 
         memset(want, 0, sizeof(want));
@@ -166,7 +166,7 @@ int run_info_script_tail_golden(void) {
     UT_ASSERT_MSG(buf[0] == 0xAB, "a short buffer was written to");
 
     serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
-                                 false, false, false, false);
+                                 false, false, false, false, false);
     serverSimDestroy(sim);
     return 0;
 }

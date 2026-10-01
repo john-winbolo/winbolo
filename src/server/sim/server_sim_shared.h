@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -192,6 +195,13 @@ void publishMapSkipState(ServerSim *sim);
  * subscriber. The base-sweep branch of the tick core in server_sim_tick.c calls
  * it. */
 void publishServerMessage(ServerSim *sim, const char *message);
+
+/* The same broadcast for pre-rendered English text that can run past the
+ * wire's chat cap (a long winners list): a message over the cap is cut on a
+ * UTF-8 character boundary and ends in "...". The return-to-lobby win
+ * message in server_sim_lifecycle_local.c sends through it, and so does
+ * the UDP server's serverSendServerEnglishBroadcast. */
+void publishServerEnglishBroadcast(ServerSim *sim, const char *message);
 
 /* The same line held to one team (1..MAX_TANKS-1), through destTeam on the
  * event. The surrender vote's private notices use it, and so does the scenario

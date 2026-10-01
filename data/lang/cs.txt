@@ -683,6 +683,12 @@ STR_MAPCHOOSER_RESTORE_SIZE_TIP=Obnovit výchozí velikost (Esc)
 STR_MAPCHOOSER_MAXIMIZE_TIP=Maximalizovat
 STR_MAPCHOOSER_LOADING_PREVIEW=Načítání náhledu...
 
+# Map editor scenario panel
+STR_MAPEDIT_SCENARIO_NEEDS_BOTS=Vyžaduje povolené boty: tento skript přidává vlastní boty
+STR_DLGABOUT_LICENCE=Licence
+STR_DLGABOUT_LICENCE_NOTICE=Svobodný software pod GNU GPL v3 nebo novější. Bez záruky.
+STR_DLGABOUT_FILE_NOT_FOUND=Soubor nebyl nalezen.
+
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Stav
 STR_TABLET_KILLS_DEATHS=Zabití: {number}  Úmrtí: {number2}
@@ -1809,6 +1815,7 @@ STR_DLGBROWSER_SELECT_SERVER=Vyberte server
 STR_DLGBROWSER_PREVIEW_UNAVAIL=Náhled nedostupný
 STR_DLGBROWSER_PREVIEW_ENLARGE=Kliknutím zvětšíte
 STR_DLGBROWSER_ENLARGE_BTN=Zvětšit
+STR_DLGBROWSER_SIGNIN_TO_JOIN=Přihlásit se k připojení
 STR_DLGBROWSER_AI_PLAYERS=({number} hráčů AI)
 STR_DLGBROWSER_WBN_PLAYERS=WinBolo.net hráči:
 STR_DLGBROWSER_ST_LOCKED=Zamčeno/Plné
@@ -2023,6 +2030,7 @@ STR_DLGKEYSETUP_OVERVIEWZOOMIN=Přiblížit mapu
 STR_DLGKEYSETUP_OVERVIEWZOOMOUT=Oddálit mapu
 STR_DLGWELCOME_SWITCH_CLASSIC=Přejít na klasický
 STR_DLGWELCOME_SWITCH_FULLSCREEN=Přejít na celou obrazovku
+STR_DLGWELCOME_PRACTICE=Cvičení
 
 # Display & Sound settings: full screen and the map's HUD panels
 STR_DLGSETTINGS_FULLSCREEN=Celá obrazovka

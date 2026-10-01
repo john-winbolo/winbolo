@@ -885,10 +885,14 @@ file(GLOB IOS_DATA_UI "${CMAKE_SOURCE_DIR}/data/ui/*.svg")
 # above does not reach them.
 file(GLOB IOS_DATA_UI_PING "${CMAKE_SOURCE_DIR}/data/ui/ping/*.svg")
 file(GLOB IOS_LANG_FILES "${CMAKE_SOURCE_DIR}/data/lang/*.txt")
-# About-box markdown docs that live at the repo root but ship in data/
+# About-box markdown docs that live at the repo root but ship in data/,
+# with the licence and its additional permissions, which every copy of the
+# program has to carry.
 set(IOS_ABOUT_DOCS
     "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
     "${CMAKE_SOURCE_DIR}/AUTHORS.md"
+    "${CMAKE_SOURCE_DIR}/LICENSE"
+    "${CMAKE_SOURCE_DIR}/LICENSE-EXCEPTION.md"
 )
 
 # Bolo engine sources that stay per-target (HAVE_STEAM-divergent).
@@ -1026,6 +1030,7 @@ add_executable(WinBoloIOS MACOSX_BUNDLE
     src/gui/sdl3/gamefront.c
     src/client_frontend/client_frontend_connect.c
     src/client_frontend/client_frontend_tick.c
+    src/client_frontend/client_frontend_sp.c
     src/bolo/lobby_bot_pools_json.c
     src/gui/sdl3/dialog_backend.c
     # PNG writer for the map chooser's thumbnail cache (imgui_mapchooser.cpp).
@@ -1593,6 +1598,7 @@ set(CLIENT_SOURCES
     src/client_frontend/client_frontend_connect.c
     src/client_frontend/client_frontend_tick.c
     src/client_frontend/client_frontend_common.c
+    src/client_frontend/client_frontend_sp.c
     src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/dialog_quit.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/map_preview_popup.cpp
@@ -2009,7 +2015,10 @@ add_custom_command(TARGET WinBolo POST_BUILD
 )
 
 # Ship the top-level docs (Third Party Notices, Authors) inside data/
-# so the About box can find them via SDL_GetBasePath()/data/.
+# so the About box can find them via SDL_GetBasePath()/data/. The licence
+# and its additional permissions go with them: the GPL requires every copy
+# of the program to carry a copy of the licence, and on macOS data/ is inside
+# the .app bundle, so the bundle carries its own.
 add_custom_command(TARGET WinBolo POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
@@ -2017,7 +2026,13 @@ add_custom_command(TARGET WinBolo POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/AUTHORS.md"
         "${WINBOLO_DATA_DIR}/data/AUTHORS.md"
-    COMMENT "Copying About-box markdown docs to data/"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/LICENSE"
+        "${WINBOLO_DATA_DIR}/data/LICENSE"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/LICENSE-EXCEPTION.md"
+        "${WINBOLO_DATA_DIR}/data/LICENSE-EXCEPTION.md"
+    COMMENT "Copying About-box markdown docs and the licence to data/"
 )
 
 add_custom_command(TARGET WinBolo POST_BUILD
@@ -3292,6 +3307,13 @@ add_custom_target(dist
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md" "${DIST_DIR}/data/THIRD_PARTY_NOTICES.md"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/AUTHORS.md" "${DIST_DIR}/data/AUTHORS.md"
 
+    # The licence, its additional permissions and the third-party notices at
+    # the root of the zip, where someone unpacking it will see them. The GPL
+    # requires every copy of the program to carry a copy of the licence.
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/LICENSE" "${DIST_DIR}/LICENSE"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/LICENSE-EXCEPTION.md" "${DIST_DIR}/LICENSE-EXCEPTION.md"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md" "${DIST_DIR}/THIRD_PARTY_NOTICES.md"
+
     # Brain scripts (excludes *.md plan/roadmap notes via copy_brains.cmake)
     COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains/GoalHunter_1.7"
     COMMAND ${CMAKE_COMMAND}
@@ -3543,6 +3565,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # swept round names its winner, a passed vote credits nobody, a surrender
     # credits the opposing team, an abandoned round reports nothing.
     tests/unit/test_base_win_resolve.c
+    # The returning lobby's win message: serverSimLocalOnReturnToLobby sends
+    # it once to everyone and clears it, and an over-long one is cut on a
+    # character boundary with "...".
+    tests/unit/test_lobby_return_win_message.c
     # Surrender-vote privacy: the team-scoped CTRL_GAME_VOTE_STATE is withheld
     # from non-members on the wire, its newswire lines are suppressed on the
     # in-process bus, and a team-scoped (base-monopoly) back-to-lobby vote
@@ -4838,6 +4864,8 @@ set(_unit_test_names
     surrender_credits_the_opposing_team
     win_during_manual_countdown_resolves_as_vote
     abandoned_round_reports_nothing
+    lobby_return_sends_win_message
+    lobby_return_cuts_long_win_message
     round_stats_zeroed_on_fresh_sim
     round_stats_kill_basic
     round_stats_drown_not_suicide
@@ -5023,6 +5051,8 @@ set(_unit_test_names
     wbn_map_parse
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
+    brain_msgh_budget_kill_no_traceback
+    brain_msgh_real_error_keeps_traceback
     brain_inbox_push_peek_fifo
     brain_inbox_overflow_drops_oldest
     brain_inbox_legacy_drain_fifo
@@ -5437,6 +5467,7 @@ set(_unit_test_names
     overview_snapshot_filter
     overview_snapshot_generation
     overview_snapshot_removed_item_has_no_label
+    overview_snapshot_corner_keeps_self
     mapview_sprite_classic
     mapview_sprite_ladder
     mapview_sprite_shell_tip
@@ -6046,6 +6077,11 @@ set(_unit_test_names
     lobby_scenario_reset_keeps_rules
     lobby_scenario_refuses_ranked
     lobby_scenario_refuses_ai_none
+    lobby_scenario_no_bots_script_keeps_ai
+    lobby_scenario_needs_bots_raises_and_gives_back
+    lobby_scenario_ranked_give_back_clears_ai
+    lobby_scenario_needs_bots_drop_gives_back
+    lobby_scenario_needs_bots_snapshot_at_raise
     lobby_scenario_refuses_game_type
     lobby_scenario_boot_sets_type
     lobby_scenario_identity_strips_controls
@@ -6290,6 +6326,8 @@ set(_unit_test_names
     scenario_validate_trigger_announce_clear
     scenario_validate_trigger_arg_literal
     scenario_validate_rule_pair_key
+    scenario_validate_needs_bots_missing
+    scenario_validate_needs_bots_declared
     scenario_lua_every_row_answers
     scenario_lua_op_arguments_match_the_doc
     scenario_lua_read_index_passes_through
@@ -6431,6 +6469,7 @@ set(_unit_test_names
     scenario_manifest_json_trigger_text_cut
     scenario_manifest_workshop_keys
     scenario_manifest_agrees_workshop
+    scenario_manifest_json_needs_bots
     scenario_io_set_workshop_id
     scenario_map_body_length
     scenario_map_find_container
@@ -6559,6 +6598,8 @@ set(_unit_test_names
     scenario_compose_on_picks_replace_map
     scenario_compose_off_then_on
     scenario_compose_off_full_list_hides_last
+    scenario_compose_needs_bots_any_mod
+    scenario_compose_needs_bots_scenario_and_mod
     scenario_panel_parses_each_primitive
     scenario_panel_refuses_malformed
     scenario_panel_boundaries
