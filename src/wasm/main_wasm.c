@@ -1478,6 +1478,11 @@ void windowTutorialPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
 /* -------------------------------------------------------
  * Frontend callbacks — called by backend (bolo engine)
  * ------------------------------------------------------- */
+
+/* Tracks which ClientSim owns the on-screen player panel, so stale callbacks
+ * from a previous game can't write into the live UI (mirrors winbolo.c). */
+static struct ClientSim *s_activeUiCs = NULL;
+
 void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,
                             screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms,
                             int32_t srtDelay, bool isPillView, int edgeX, int edgeY) {
@@ -1501,7 +1506,7 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
 }
 
 void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
-  (void)cs;
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   BYTE fullShells, fullMines, fullArmour, fullTrees;
   clientSimGetTankFullStats(cs, &fullShells, &fullMines, &fullArmour, &fullTrees);
   sdl3DrawStatusTankBars(0, 0, shells, mines, armour, trees,
@@ -1509,13 +1514,14 @@ void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE a
 }
 
 void frontEndPlaySound(ClientSim *cs, sndEffects value) {
-  (void)cs;
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (soundEffects == TRUE) soundPlayEffect(value);
 }
 
 void frontEndPlaySoundPan(ClientSim *cs, sndEffects value,
                           uint16_t gainL, uint16_t gainR) {
   (void)gainL; (void)gainR;
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   frontEndPlaySound(cs, value);
 }
 
@@ -1524,35 +1530,38 @@ void windowPlaySound(sndEffects value) {
 }
 
 void frontEndStatusPillbox(ClientSim *cs, BYTE pillNum, pillAlliance pb) {
-  (void)cs;
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  /* The per-frame render pass repaints every pill icon from sim state on the
+     render thread; skip the direct draw when called from a bot's worker. */
+  if (!sdl3DrawOnRenderThread()) return;
   sdl3DrawStatusPillbox(pillNum, pb, showPillLabels);
   sdl3DrawCopyPillsStatus(0, 0);
 }
 
 void frontEndStatusTank(ClientSim *cs, BYTE tankNum, tankAlliance ts) {
-  (void)cs;
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  /* See frontEndStatusPillbox — repainted every frame from sim state; skip
+     the direct draw when off the render thread. */
+  if (!sdl3DrawOnRenderThread()) return;
   sdl3DrawStatusTank(tankNum, ts);
   sdl3DrawCopyTanksStatus(0, 0);
 }
 
 void frontEndMessages(ClientSim *cs, char *top, char *bottom) {
-  (void)cs;
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (drawBusy == FALSE) sdl3DrawMessages(0, 0, top, bottom);
 }
 
 void frontEndKillsDeaths(ClientSim *cs, int kills, int deaths) {
-  (void)cs;
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (drawBusy == FALSE) sdl3DrawKillsDeaths(0, 0, kills, deaths);
 }
 
 void frontEndUpdatePlayerPing(ClientSim *cs, playerNumbers value, uint16_t ping) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (!clientSimIsRunning(cs)) return;
   sdl3ImguiUpdatePlayerPing((unsigned char)value, ping);
 }
-
-/* Tracks which ClientSim owns the on-screen player panel, so stale callbacks
- * from a previous game can't write into the live UI (mirrors winbolo.c). */
-static struct ClientSim *s_activeUiCs = NULL;
 
 void frontEndUpdatePlayerFlags(ClientSim *cs, playerNumbers value, uint8_t clientType, uint8_t clientFlags) {
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
@@ -1560,13 +1569,16 @@ void frontEndUpdatePlayerFlags(ClientSim *cs, playerNumbers value, uint8_t clien
 }
 
 void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) {
-  (void)cs;
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  /* See frontEndStatusPillbox — repainted every frame from sim state; skip
+     the direct draw when off the render thread. */
+  if (!sdl3DrawOnRenderThread()) return;
   sdl3DrawStatusBase(baseNum, bs, showBaseLabels);
   sdl3DrawCopyBasesStatus(0, 0);
 }
 
 void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour) {
-  (void)cs;
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   BYTE fullShells, fullMines, fullArmour;
   clientSimGetBaseFullStats(cs, &fullShells, &fullMines, &fullArmour);
   sdl3DrawStatusBaseBars(0, 0, shells, mines, armour,
@@ -1574,14 +1586,14 @@ void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE a
 }
 
 void frontEndManStatus(ClientSim *cs, bool isDead, TURNTYPE angle) {
-  (void)cs;
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   clientMutexWaitFor();
   sdl3DrawSetManStatus(0, 0, isDead, angle);
   clientMutexRelease();
 }
 
 void frontEndManClear(ClientSim *cs) {
-  (void)cs;
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   clientMutexWaitFor();
   sdl3DrawSetManClear();
   sdl3DrawCopyManStatus(0, 0);
@@ -1605,6 +1617,7 @@ void frontEndAudioReturningToLobby(bool active) {
 }
 
 void frontEndGameOver(ClientSim *cs) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   /* A practice round ends in the lobby: the server holds game over, then
    * returns to the lobby with the win message, and the player stays in the
    * page's game loop. Only a game with no lobby leaves here. */
@@ -1678,6 +1691,7 @@ void frontEndEnableRequestAllyMenu(bool enabled) { (void)enabled; }
 void frontEndEnableLeaveAllyMenu(bool enabled)   { (void)enabled; }
 
 void frontEndShowGunsight(ClientSim *cs, bool isShown) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   showGunsight = !isShown;
   clientSimSetGunsight(cs, showGunsight);
 }
