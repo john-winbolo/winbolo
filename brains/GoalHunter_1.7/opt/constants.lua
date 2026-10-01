@@ -1985,6 +1985,20 @@ M.ATTACK_TANK_HEAT_PILL         = true  -- master: heat a friendly pill during a
 -- opportunistic shot on other goals (init.lua). Needs ATTACK_TANK_HEAT_PILL;
 -- with that off, attack_tank only ever runs on an order.
 M.ATTACK_TANK_PILL_HEAT_ONLY    = false
+-- Peace list (2026-10-01, Andrew; Pillbox Tag hunters). The init token
+-- "peace=1/3/4" names seats this bot does not pick a fight with: they are
+-- never an attack_tank or kill_lgm target and get no opportunistic shot
+-- (goals.lua eval_attack_tank gate "peace", refresh_kill_lgm, init.lua
+-- opportunistic fire). "peace=" with nothing after it empties the list. A
+-- listed seat whose shell hits this bot is a normal enemy for
+-- PEACE_HOSTILE_TICKS; then, for PEACE_COOLDOWN_TICKS, the seat is left
+-- alone again even if it hits this bot again. A hit after that starts a new
+-- hostile spell. Brain ticks (50 a second). An empty list (the default)
+-- changes nothing. A human's `attack <tank>` order on a listed seat still
+-- fights it.
+M.PEACE_ENABLED                 = true
+M.PEACE_HOSTILE_TICKS           = 1500  -- 30 s
+M.PEACE_COOLDOWN_TICKS          = 250   -- 5 s
 M.ATTACK_TANK_HEAT_MIN_HP       = 5     -- health floor of the volley cap: a pill at or below this
                                         -- affords no heat shells at all. The cap scales linearly to
                                         -- PILLS_MAX_HEALTH (15 -> all 4 halvings): hp 15/13/10/7/6
@@ -4937,6 +4951,9 @@ M.PRESETS = {
     -- 2026-09-29: heat-only attack_tank (no tank fighting of its own). KEEL
     -- fights every tank it picks.
     ATTACK_TANK_PILL_HEAT_ONLY    = false,
+    -- 2026-10-01: peace list. KEEL ignores the "peace=" token and fights
+    -- every enemy it picks.
+    PEACE_ENABLED                 = false,
     -- 2026-09-29: defensive turtle placement (one pill cluster at home).
     -- KEEL spreads its pills by the normal placement scan.
     PILL_PLACE_TURTLE             = false,

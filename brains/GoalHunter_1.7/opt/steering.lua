@@ -2756,6 +2756,16 @@ local function tank_combat_steer(state, world, info, goal)
   end
 
   -- Match by proximity to goal position (tank may have moved since goal was set)
+  -- Peace list ("peace=" token): a spared seat is never re-acquired here,
+  -- neither by the goal-tile match nor by the nearest-tank fallback below.
+  if not km_pn and state.peace then
+    local kept = {}
+    for _, et in ipairs(cand_tanks) do
+      if not attack_mod().peace_spared(state, et.id) then kept[#kept + 1] = et end
+    end
+    cand_tanks = kept
+  end
+
   if not target then
   for _, et in ipairs(cand_tanks) do
     local d = U.mdist(et.mx, et.my, goal.mx, goal.my)
@@ -5096,7 +5106,8 @@ local function steer_core(state, world, info, goal)
       -- Enemy tanks
       if not shot_fired then
         for _, et in ipairs(perc.enemy_tanks or {}) do
-          if et.dist <= 8 then
+          if et.dist <= 8
+             and not (state.peace and attack_mod().peace_spared(state, et.id)) then
             local aim = U.aim_at(info.tankx, info.tanky, U.m2w(et.mx), U.m2w(et.my))
             if math.abs(U.adiff(info.direction, aim)) < 8
                and shot_path_clear(info, world, U.m2w(et.mx), U.m2w(et.my), et.mx, et.my) then

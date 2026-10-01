@@ -1362,6 +1362,21 @@ function Brain.apply_init_tokens(state, a)
         -- Sweeping wave: allies' claims on DEAD pills are ignored (pool 4),
         -- so several bots race the same body and draw fire on the way in.
         state.ally_claim_dead_off = true
+      elseif tok:sub(1, 6) == "peace=" then
+        -- Peace list: player numbers, '/' separated ("peace=1/3/4"). This
+        -- bot does not pick a fight with those seats until one of them
+        -- hurts it (attack.peace_update, C.PEACE_*). "peace=" alone clears
+        -- the list. Each token replaces the whole list, so a script can
+        -- re-send it when the seats change.
+        local set = {}
+        for part in tok:sub(7):gmatch("[^/]+") do
+          if part:match("^%d+$") then set[tonumber(part)] = true
+          else
+            state._cfg_warn = (state._cfg_warn or "") .. string.format(
+              "[peace] BAD SEAT '%s' in '%s' -- want peace=N/N/... player numbers; skipped. ", part, tok)
+          end
+        end
+        state.peace = set
       elseif tok:sub(1, 10) == "portfolio=" then
         -- Integer percents, '/' separated: B/F/A or B/F/A/U.
         -- Complaints are LATCHED into state._cfg_warn, not printed here: this
@@ -4197,6 +4212,9 @@ function Brain.think(info)
     state._last_damage_tick = now
   end
   state._prev_armour = info.armour
+  -- Peace list: a listed seat that just hurt us becomes a normal enemy for
+  -- a while. No-op without a "peace=" token.
+  attack.peace_update(state, info, now)
 
   -- ── Incremental Dijkstra scheduler ──
   --
@@ -7938,7 +7956,8 @@ function Brain.think(info)
     local perc = state.perc
     if perc and perc.enemy_tanks then
       for _, et in ipairs(perc.enemy_tanks) do
-        if et.dist <= C.TANK_COMBAT_OPPORTUNISTIC_RANGE then
+        if et.dist <= C.TANK_COMBAT_OPPORTUNISTIC_RANGE
+           and not attack.peace_spared(state, et.id) then
           local et_wx = U.m2w(et.mx)
           local et_wy = U.m2w(et.my)
           local aim_dir = U.aim_at(info.tankx, info.tanky, et_wx, et_wy)
@@ -8013,6 +8032,8 @@ function Brain.think(info)
       state._kill_lgm_eval[#state._kill_lgm_eval + 1] = _ev
       if info.inboat then
         _ev.status = "in_boat"
+      elseif attack.peace_spared(state, elm.idnum) then
+        _ev.status = "peace"          -- spared seat's man (peace= token)
       elseif _no_shells then
         _ev.status = "no_shells"
       elseif _ev.dist > C.KILL_LGM_SHOOT_RANGE then

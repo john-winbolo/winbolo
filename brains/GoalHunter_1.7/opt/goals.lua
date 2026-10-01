@@ -2066,6 +2066,11 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
                                           tmx, tmy, require("steering").shot_path_clear) then
       local_gate = "heat_only"
     end
+    -- Peace list ("peace=" token): a listed seat is not a target until it
+    -- hurts us (attack.peace_spared).
+    if not local_gate and attack.peace_spared(state, et.id) then
+      local_gate = "peace"
+    end
     -- `attack <tank name>` ORDER: the min-shells gate, the pill-crossfire
     -- gate and the heat_only gate are waived for the ONE tank the human
     -- named. No danger check.
@@ -15386,6 +15391,15 @@ function M.refresh_kill_lgm(state, info, world)
   end
   local _cp_hit = nil   -- cheapest discounted row this tick, for the log line
   local elgms = state.perc and state.perc.enemy_lgms
+  -- Peace list ("peace=" token): drop the men of spared seats. A man's
+  -- idnum is his owner's player number. Only built when a list exists.
+  if elgms and state.peace then
+    local kept = {}
+    for _, lgm in ipairs(elgms) do
+      if not attack.peace_spared(state, lgm.idnum) then kept[#kept + 1] = lgm end
+    end
+    elgms = kept
+  end
   if elgms and #elgms > 0 and (info.shells or 0) > 0 then
     -- Cost model mirrors eval_attack_tank: per-target evaluation with
     -- LOS-fast-engage vs Manhattan-boundary-standoff branches, plus
