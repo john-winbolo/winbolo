@@ -525,6 +525,17 @@ static void wasmHistoryMarkFinder(void) {
   });
 }
 
+/* Make the finder's entry the entry of the game joined from it, at that
+ * game's /join/ address, so a reload rejoins it and Back from the game goes
+ * to whatever was behind the finder. */
+static void wasmHistoryReplaceJoin(const char *gameKey) {
+  EM_ASM({
+    var url = "/join/" + encodeURIComponent(UTF8ToString($0));
+    try { history.replaceState({screen: "game"}, "", url); }
+    catch (e) {}
+  }, gameKey);
+}
+
 /* Step back to the menu's entry. The popstate this fires arrives once main
  * next waits on a frame, by which time the screen is already the menu, so
  * the handler ignores it. */
@@ -553,6 +564,18 @@ bool wasmFinderTakeBack(void) {
   }
   s_finderLeftByHistory = TRUE;
   return TRUE;
+}
+
+/* The server key of the game the finder's Join picked; empty when the
+ * finder closed any other way. */
+static char s_finderJoinKey[128] = "";
+
+/* Called by the game finder's Join, which then closes the finder: record
+ * the game to join. wasmShowFinder hands it to main, which starts it in this
+ * page. */
+void wasmFinderJoin(const char *serverKey) {
+  SDL_strlcpy(s_finderJoinKey, serverKey ? serverKey : "",
+              sizeof(s_finderJoinKey));
 }
 
 /* Run the current game until it ends: a game over or quit (finishedLoop) or
@@ -667,21 +690,28 @@ static void wasmReadLaunch(WasmLaunch *out, bool *openFinder) {
 void wasmRelayProbeStart(void);
 
 /* Show the game finder over the menu's background, as the desktop's Internet
- * row does, and return when it closes; the menu follows. Its Join and Sign in
- * to join load another page, so the finder only ever closes by Cancel or by
- * Back or Forward.
+ * row does, and return when it closes. Returns TRUE when it closed on a Join,
+ * with the game's server key in s_finderJoinKey, and main starts that game;
+ * FALSE when it closed by Cancel or by Back or Forward, and the menu follows.
+ * Its Sign in to join loads another page.
  *
  * History: opened from the menu, the finder pushes its own entry; on a
- * ?finder=1 launch it marks the launch entry. Closed by Back or Forward, the
- * browser is already on the menu's entry. Closed by Cancel, a pushed entry is
- * stepped back off, and a launch entry becomes the menu at the menu's
- * address. Nothing between here and the menu's first frame wait suspends,
- * so the screen is the menu again by the time history.back()'s popstate
- * arrives, and the handler ignores it. */
-static void wasmShowFinder(bool launched) {
+ * ?finder=1 launch it marks the launch entry. Closed by a Join, that entry
+ * becomes the game's (wasmHistoryReplaceJoin), with the menu's entry behind
+ * it when the finder was pushed, and main sets the screen to the game.
+ * Closed by Back or Forward, the browser is already on the menu's entry, and
+ * a Join made in the same frame is dropped. Closed by Cancel, a pushed entry
+ * is stepped back off, and a launch entry becomes the menu at the menu's
+ * address. Nothing between here and the next frame wait suspends, so the
+ * screen has changed by the time history.back()'s popstate arrives, and the
+ * handler ignores it. */
+static bool wasmShowFinder(bool launched) {
+  bool joined;
+
   /* A Join from the finder then finds the closest relay already picked. */
   wasmRelayProbeStart();
   s_finderLeftByHistory = FALSE;
+  s_finderJoinKey[0] = '\0';
   if (launched) {
     wasmHistoryMarkFinder();
   } else {
@@ -691,15 +721,34 @@ static void wasmShowFinder(bool launched) {
 
   imguiGameBrowserShow(langGetText(STR_GAMEFRONT_TRACKERFINDER_TITLE), TRUE);
 
-  if (s_finderLeftByHistory) {
-    /* The browser is already on the menu's entry. */
-  } else if (launched) {
-    wasmHistoryReplaceMenu();
+  /* The finder's last frame waits on the browser after it decides to close,
+   * so Back or Forward can still arrive then; take it here. */
+  wasmFinderTakeBack();
+  joined = (s_finderJoinKey[0] != '\0' && !s_finderLeftByHistory);
+
+  if (joined) {
+    wasmHistoryReplaceJoin(s_finderJoinKey);
   } else {
-    wasmHistoryBack();
+    if (s_finderLeftByHistory) {
+      /* The browser is already on the menu's entry. */
+    } else if (launched) {
+      wasmHistoryReplaceMenu();
+    } else {
+      wasmHistoryBack();
+    }
+    wasmSetScreen("menu");
   }
-  wasmSetScreen("menu");
   s_finderLeftByHistory = FALSE;
+  return joined;
+}
+
+/* Set next up to join the game the finder's Join picked: a network game
+ * with the finder's server key and no dev proxy or password. */
+static void wasmUseFinderJoin(WasmLaunch *next) {
+  next->mode = WASM_GAME_JOIN;
+  SDL_strlcpy(next->gameKey, s_finderJoinKey, sizeof(next->gameKey));
+  next->devProxy[0] = '\0';
+  next->password[0] = '\0';
 }
 
 /* End a game, network or single player, so the menu, and then another game,
@@ -884,14 +933,16 @@ int main(int argc, char *argv[]) {
   /* Screens: the menu, then a game, then the menu again. A launch that names
    * a game, a join included, goes straight into it, and its end shows the
    * menu. A game picked from the menu carries no join key, dev proxy or
-   * password.
+   * password; a game joined from the finder carries only its server key.
    *
    * History: the menu's entry is the page's first. A game picked from the
    * menu pushes its own entry, so Back returns to the menu; a game the page
    * launched straight into marks its entry as the game, with no menu behind
    * it, and that entry becomes the menu's when the game ends. A ?finder=1
    * launch marks its entry as the finder's (wasmShowFinder), which becomes
-   * the menu's once the finder closes. */
+   * the menu's once the finder closes. A Join in the finder turns the
+   * finder's entry into the game's: from the menu's finder the menu's entry
+   * is behind it, from a ?finder=1 launch nothing is. */
   WasmLaunch next = launch;
   bool menu = launch.showMenu;
   if (openFinder) {
@@ -911,33 +962,43 @@ int main(int argc, char *argv[]) {
         wasmBackgroundGameCreate();
       }
       /* A ?finder=1 launch opens the finder before the menu's first
-       * showing, once. */
+       * showing, once. A Join there plays the game, whose entry has no
+       * menu behind it; anything else shows the menu. */
       if (openFinder) {
         openFinder = FALSE;
-        wasmShowFinder(TRUE);
-        continue;
-      }
-      /* The welcome dialog returns an openingStates value (gamefront.h). */
-      int r = imguiWelcomeShow();
-      if (r == openSetup) {
-        next.mode = WASM_GAME_PRACTICE;
-      } else if (r == openTutorial) {
-        next.mode = WASM_GAME_TUTORIAL;
-      } else {
-        if (r == openSettings) {
-          imguiSettingsShow();
-        } else if (r == openInternet) {
-          wasmShowFinder(FALSE);
+        if (!wasmShowFinder(TRUE)) {
+          continue;
         }
-        /* Settings or the finder closed, or a row with nothing behind it
-         * on the web (Local, Quit): show the menu again. */
-        continue;
+        wasmUseFinderJoin(&next);
+        s_gameEntryPushed = FALSE;
+      } else {
+        /* The welcome dialog returns an openingStates value (gamefront.h). */
+        int r = imguiWelcomeShow();
+        if (r == openSetup || r == openTutorial) {
+          next.mode = (r == openSetup) ? WASM_GAME_PRACTICE
+                                       : WASM_GAME_TUTORIAL;
+          next.gameKey[0] = '\0';
+          next.devProxy[0] = '\0';
+          next.password[0] = '\0';
+          wasmHistoryPushGame(next.mode);
+          s_gameEntryPushed = TRUE;
+        } else if (r == openInternet) {
+          /* A Join in the finder plays the game, whose entry has the
+           * menu's behind it; closed any other way, the menu shows. */
+          if (!wasmShowFinder(FALSE)) {
+            continue;
+          }
+          wasmUseFinderJoin(&next);
+          s_gameEntryPushed = TRUE;
+        } else {
+          if (r == openSettings) {
+            imguiSettingsShow();
+          }
+          /* Settings closed, or a row with nothing behind it on the web
+           * (Local, Quit): show the menu again. */
+          continue;
+        }
       }
-      next.gameKey[0] = '\0';
-      next.devProxy[0] = '\0';
-      next.password[0] = '\0';
-      wasmHistoryPushGame(next.mode);
-      s_gameEntryPushed = TRUE;
     }
 
     /* From here Back or Forward asks the game to end. Set before the start,
