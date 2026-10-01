@@ -1162,6 +1162,19 @@ struct ClientSim {
     char         scnAnnounceText[PACKET_MAX_CHAT_MESSAGE + 1];
     uint16_t     scnAnnounceTicks;
     uint32_t     scnAnnounceArrivedTick;
+    /* Where the script put it: scnAnnounceHasPos 0 is the usual place,
+     * else the centre of the line as position bytes across and down the
+     * view (SCN_ANNOUNCE_POS_MAX is the far edge). */
+    uint8_t      scnAnnounceHasPos;
+    uint8_t      scnAnnouncePosX;
+    uint8_t      scnAnnouncePosY;
+
+    /* The status line on screen; text[0] == '\0' is none. It stays until
+     * the scenario replaces or clears it. scnStatusEndsAt is the server
+     * tick its countdown runs to, SCN_STATUS_NO_COUNTDOWN for none, on the
+     * same clock as scnAnnounceArrivedTick. */
+    char         scnStatusText[PACKET_MAX_CHAT_MESSAGE + 1];
+    uint32_t     scnStatusEndsAt;
 
     /* Markers by id. SCN_MARKER_KIND_CLEAR turns one off rather than
      * storing a third kind, so a stored marker is always drawable. */

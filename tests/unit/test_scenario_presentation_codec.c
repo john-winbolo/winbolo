@@ -40,6 +40,7 @@
 #include "client_sim_control.h"
 #include "control_event.h"
 #include "scenario_panel.h"
+#include "scenario_defs.h"   /* SCN_ANNOUNCE_POSITIONED_TEXT_MAX */
 #include "transport_control_codec.h"
 #include "test_harness.h"
 
@@ -481,6 +482,364 @@ int run_scn_presentation_client_filters(void) {
     UT_ASSERT(!clientSimGetScnMarker(cs, 3)->active);
     UT_ASSERT(!clientSimGetScnTeamScore(cs, 2)->valid);
     UT_ASSERT(clientSimGetScnPanelRejectCount(cs) == 0);
+
+    clientSimDestroy(cs);
+    return 0;
+}
+
+/* ── The status line and the announcement's position ──────────────── */
+
+/* CTRL_SCN_STATUS: [endsAt 4 BE][text, the rest of the body]. */
+static const uint8_t kStatusBody[] = {
+    0x00, 0x01, 0x86, 0xA0,        /* endsAt 100000 */
+    'W', 'a', 'v', 'e', ' ', '3', '/', '1', '0'
+};
+
+/* A CTRL_SCN_ANNOUNCE with a position: [ticks 2 BE][text][0x00][x 1][y 1]. */
+static const uint8_t kAnnouncePosBody[] = {
+    0x01, 0xF4,                    /* ticks 500 */
+    'H', 'i',
+    0x00, 0x7F, 0x00               /* x 127 (the middle), y 0 (the top) */
+};
+
+/*
+ * scn_status_codec_and_client — the status body both ways against
+ * hand-written bytes, and what a client keeps: addressed like the other
+ * presentation events, replaced by the next line, cleared by an empty one
+ * and by the return to the lobby.
+ */
+int run_scn_status_codec_and_client(void) {
+    ControlEvent evt;
+    ControlEvent back;
+    ClientSim   *cs;
+    uint32_t     endsAt = 0;
+    size_t       i;
+
+    /* ── status, both ways ── */
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SCN_STATUS;
+    memcpy(evt.u.scnStatus.text, "Wave 3/10", 10);
+    evt.u.scnStatus.endsAt = 100000;
+    evt.u.scnStatus.destTeam = 1;      /* never travels */
+    evt.u.scnStatus.destPlayer = 2;
+    if (encodesTo("status", &evt, kStatusBody, sizeof(kStatusBody))) return 1;
+    memset(&back, 0xAB, sizeof(back));
+    UT_ASSERT(decodeBody(CTRL_SCN_STATUS, kStatusBody, sizeof(kStatusBody),
+                         &back));
+    UT_ASSERT(back.type == CTRL_SCN_STATUS);
+    UT_ASSERT(back.u.scnStatus.endsAt == 100000);
+    UT_ASSERT(strcmp(back.u.scnStatus.text, "Wave 3/10") == 0);
+    UT_ASSERT(back.u.scnStatus.destTeam == 0);
+    UT_ASSERT(back.u.scnStatus.destPlayer == 0xFF);
+    UT_ASSERT(transportControlCodecEncoder(CTRL_SCN_STATUS) == NULL);
+
+    /* The clear is the four-byte header alone. */
+    {
+        static const uint8_t kClear[] = { 0xFF, 0xFF, 0xFF, 0xFF };
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_SCN_STATUS;
+        evt.u.scnStatus.endsAt = SCN_STATUS_NO_COUNTDOWN;
+        if (encodesTo("status clear", &evt, kClear, sizeof(kClear))) return 1;
+        UT_ASSERT(decodeBody(CTRL_SCN_STATUS, kClear, sizeof(kClear), &back));
+        UT_ASSERT(back.u.scnStatus.text[0] == '\0');
+        UT_ASSERT(back.u.scnStatus.endsAt == SCN_STATUS_NO_COUNTDOWN);
+    }
+
+    /* A short header, and a text past the field, are refused. */
+    if (refusesBody("status short header", CTRL_SCN_STATUS, kStatusBody, 3))
+        return 1;
+    {
+        uint8_t buf[4 + PACKET_MAX_CHAT_MESSAGE + 1];
+        memset(buf, 0, 4);
+        for (i = 0; i < (size_t)PACKET_MAX_CHAT_MESSAGE + 1; i++) {
+            buf[4 + i] = 'x';
+        }
+        if (refusesBody("status text past the field", CTRL_SCN_STATUS, buf,
+                        sizeof(buf))) return 1;
+    }
+
+    /* Bytes after a 0x00 are room for a later build and are skipped. */
+    {
+        static const uint8_t kExt[] = { 0, 0, 0, 5, 'A', 0x00, 0x42, 0x43 };
+        UT_ASSERT(decodeBody(CTRL_SCN_STATUS, kExt, sizeof(kExt), &back));
+        UT_ASSERT(strcmp(back.u.scnStatus.text, "A") == 0);
+        UT_ASSERT(back.u.scnStatus.endsAt == 5);
+    }
+
+    /* ── the client ── */
+    cs = scnClientOnTeam(2, 1);
+    UT_ASSERT(cs != NULL);
+    UT_ASSERT(clientSimGetScnStatus(cs, &endsAt) == NULL);
+    UT_ASSERT(endsAt == SCN_STATUS_NO_COUNTDOWN);
+
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SCN_STATUS;
+    memcpy(evt.u.scnStatus.text, "hidden", 7);
+    evt.u.scnStatus.endsAt = 777;
+    evt.u.scnStatus.destTeam = 2;      /* not this client's team */
+    evt.u.scnStatus.destPlayer = 0xFF;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT_MSG(clientSimGetScnStatus(cs, NULL) == NULL,
+                  "a status line for another team was kept");
+    evt.u.scnStatus.destTeam = 0;
+    evt.u.scnStatus.destPlayer = 5;    /* not this client's slot */
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(clientSimGetScnStatus(cs, NULL) == NULL);
+
+    evt.u.scnStatus.destPlayer = 0xFF;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(clientSimGetScnStatus(cs, &endsAt) != NULL);
+    UT_ASSERT(strcmp(clientSimGetScnStatus(cs, NULL), "hidden") == 0);
+    UT_ASSERT(endsAt == 777);
+
+    /* The next line replaces it, and a line with no countdown has none. */
+    memcpy(evt.u.scnStatus.text, "Wave 1/5 over", 14);
+    evt.u.scnStatus.endsAt = SCN_STATUS_NO_COUNTDOWN;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(strcmp(clientSimGetScnStatus(cs, &endsAt), "Wave 1/5 over") == 0);
+    UT_ASSERT(endsAt == SCN_STATUS_NO_COUNTDOWN);
+
+    /* An empty line clears it. */
+    evt.u.scnStatus.text[0] = '\0';
+    evt.u.scnStatus.endsAt = 5;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(clientSimGetScnStatus(cs, &endsAt) == NULL);
+    UT_ASSERT(endsAt == SCN_STATUS_NO_COUNTDOWN);
+
+    /* The return to the lobby drops the status line. */
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SCN_STATUS;
+    memcpy(evt.u.scnStatus.text, "Wave 2/5", 9);
+    evt.u.scnStatus.endsAt = 900;
+    evt.u.scnStatus.destPlayer = 0xFF;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(clientSimGetScnStatus(cs, NULL) != NULL);
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_GAME_PHASE_LOBBY;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(clientSimGetScnStatus(cs, NULL) == NULL);
+
+    clientSimDestroy(cs);
+    return 0;
+}
+
+/* What a client from before the position does with an announcement body:
+ * main's decodeScnAnnounceBody, copied. It refuses a text part of the field
+ * or longer, then stores the whole rest of the body and terminates it, so a
+ * 0x00 in the body ends the string it draws. False when it drops the line. */
+static bool oldClientAnnounceText(const uint8_t *buf, size_t len,
+                                  char out[PACKET_MAX_CHAT_MESSAGE + 1]) {
+    size_t textLen;
+    if (len < 2) return false;
+    textLen = len - 2;
+    if (textLen >= PACKET_MAX_CHAT_MESSAGE + 1) return false;
+    memset(out, 0, PACKET_MAX_CHAT_MESSAGE + 1);
+    if (textLen > 0) memcpy(out, buf + 2, textLen);
+    out[textLen] = '\0';
+    return true;
+}
+
+/*
+ * scn_announce_position_codec — the announcement's position both ways
+ * against hand-written bytes, what a client from before the position does
+ * with each body, the text limits on both sides of them, and what a client
+ * keeps.
+ */
+int run_scn_announce_position_codec(void) {
+    ControlEvent evt;
+    ControlEvent back;
+    ClientSim   *cs;
+    char         oldText[PACKET_MAX_CHAT_MESSAGE + 1];
+    uint8_t      x = 0;
+    uint8_t      y = 0;
+    size_t       i;
+
+    /* ── both ways ── */
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SCN_ANNOUNCE;
+    evt.u.scnAnnounce.ticks  = 500;
+    memcpy(evt.u.scnAnnounce.text, "Hi", 3);
+    evt.u.scnAnnounce.hasPos = 1;
+    evt.u.scnAnnounce.posX   = (uint8_t)SCN_ANNOUNCE_POS_MID;
+    evt.u.scnAnnounce.posY   = 0;
+    if (encodesTo("announce with a position", &evt, kAnnouncePosBody,
+                  sizeof(kAnnouncePosBody))) return 1;
+    memset(&back, 0xAB, sizeof(back));
+    UT_ASSERT(decodeBody(CTRL_SCN_ANNOUNCE, kAnnouncePosBody,
+                         sizeof(kAnnouncePosBody), &back));
+    UT_ASSERT(back.type == CTRL_SCN_ANNOUNCE);
+    UT_ASSERT(strcmp(back.u.scnAnnounce.text, "Hi") == 0);
+    UT_ASSERT(back.u.scnAnnounce.ticks == 500);
+    UT_ASSERT(back.u.scnAnnounce.hasPos == 1);
+    UT_ASSERT(back.u.scnAnnounce.posX == SCN_ANNOUNCE_POS_MID);
+    UT_ASSERT(back.u.scnAnnounce.posY == 0);
+
+    /* Every byte pair round-trips, up to the far edge. */
+    for (i = 0; i <= SCN_ANNOUNCE_POS_MAX; i += 127) {
+        uint8_t body[sizeof(kAnnouncePosBody)];
+        memcpy(body, kAnnouncePosBody, sizeof(body));
+        body[5] = (uint8_t)i;
+        body[6] = (uint8_t)(SCN_ANNOUNCE_POS_MAX - i);
+        evt.u.scnAnnounce.posX = body[5];
+        evt.u.scnAnnounce.posY = body[6];
+        if (encodesTo("announce position edge", &evt, body, sizeof(body)))
+            return 1;
+        UT_ASSERT(decodeBody(CTRL_SCN_ANNOUNCE, body, sizeof(body), &back));
+        UT_ASSERT(back.u.scnAnnounce.posX == body[5]);
+        UT_ASSERT(back.u.scnAnnounce.posY == body[6]);
+    }
+
+    /* A line with no position is the body from before the position, byte
+       for byte, and decodes with none. */
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SCN_ANNOUNCE;
+    evt.u.scnAnnounce.ticks = 300;
+    memcpy(evt.u.scnAnnounce.text, "Go!", 4);
+    evt.u.scnAnnounce.posX = 9;          /* ignored with no hasPos */
+    evt.u.scnAnnounce.posY = 9;
+    if (encodesTo("announce with no position", &evt, kAnnounceBody,
+                  sizeof(kAnnounceBody))) return 1;
+    UT_ASSERT(decodeBody(CTRL_SCN_ANNOUNCE, kAnnounceBody,
+                         sizeof(kAnnounceBody), &back));
+    UT_ASSERT(back.u.scnAnnounce.hasPos == 0);
+
+    /* A clear carries no position, whatever the event says. */
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SCN_ANNOUNCE;
+    evt.u.scnAnnounce.hasPos = 1;
+    evt.u.scnAnnounce.posX   = 5;
+    evt.u.scnAnnounce.posY   = 5;
+    {
+        static const uint8_t kAnnClear[] = { 0x00, 0x00 };
+        static const uint8_t kAnnClearPos[] = { 0x00, 0x00, 0x00, 0x05, 0x05 };
+        if (encodesTo("announce clear", &evt, kAnnClear, sizeof(kAnnClear)))
+            return 1;
+        /* And a clear that arrives with position bytes decodes with none. */
+        UT_ASSERT(decodeBody(CTRL_SCN_ANNOUNCE, kAnnClearPos,
+                             sizeof(kAnnClearPos), &back));
+        UT_ASSERT(back.u.scnAnnounce.text[0] == '\0');
+        UT_ASSERT(back.u.scnAnnounce.hasPos == 0);
+    }
+
+    /* A byte of 255 reads as the far edge. */
+    {
+        static const uint8_t kFar[] = { 0, 1, 'A', 0x00, 0xFF, 0xFF };
+        UT_ASSERT(decodeBody(CTRL_SCN_ANNOUNCE, kFar, sizeof(kFar), &back));
+        UT_ASSERT(back.u.scnAnnounce.hasPos == 1);
+        UT_ASSERT(back.u.scnAnnounce.posX == SCN_ANNOUNCE_POS_MAX);
+        UT_ASSERT(back.u.scnAnnounce.posY == SCN_ANNOUNCE_POS_MAX);
+    }
+
+    /* Bytes after the two position bytes are a later build's and are
+       skipped; one byte after the 0x00 is no position at all. */
+    {
+        static const uint8_t kMore[] = { 0, 1, 'A', 0x00, 0x10, 0x20, 0x30 };
+        static const uint8_t kOne[]  = { 0, 1, 'A', 0x00, 0x10 };
+        UT_ASSERT(decodeBody(CTRL_SCN_ANNOUNCE, kMore, sizeof(kMore), &back));
+        UT_ASSERT(strcmp(back.u.scnAnnounce.text, "A") == 0);
+        UT_ASSERT(back.u.scnAnnounce.hasPos == 1);
+        UT_ASSERT(back.u.scnAnnounce.posX == 0x10);
+        UT_ASSERT(back.u.scnAnnounce.posY == 0x20);
+        UT_ASSERT(decodeBody(CTRL_SCN_ANNOUNCE, kOne, sizeof(kOne), &back));
+        UT_ASSERT(strcmp(back.u.scnAnnounce.text, "A") == 0);
+        UT_ASSERT(back.u.scnAnnounce.hasPos == 0);
+    }
+
+    /* ── an older client ── it draws the script's text, in its usual place,
+       for a positioned line; and a line with no position is unchanged. */
+    UT_ASSERT(oldClientAnnounceText(kAnnouncePosBody, sizeof(kAnnouncePosBody),
+                                    oldText));
+    UT_ASSERT_MSG(strcmp(oldText, "Hi") == 0,
+                  "an older client read the positioned line as \"%s\"",
+                  oldText);
+    UT_ASSERT(oldClientAnnounceText(kAnnounceBody, sizeof(kAnnounceBody),
+                                    oldText));
+    UT_ASSERT(strcmp(oldText, "Go!") == 0);
+
+    /* ── the limits ── a line with no position of the full 128 bytes, and
+       a positioned line of 125, which both kinds of client take. A
+       positioned line of 126 would be dropped by an older client, which is
+       why the senders refuse it; this build still decodes it. */
+    UT_ASSERT(SCN_ANNOUNCE_POSITIONED_TEXT_MAX == PACKET_MAX_CHAT_MESSAGE - 3);
+    {
+        uint8_t      buf[SCN_PANEL_MAX + 16];
+        const size_t full = (size_t)PACKET_MAX_CHAT_MESSAGE;
+        const size_t posMax = (size_t)SCN_ANNOUNCE_POSITIONED_TEXT_MAX;
+        size_t       outLen = 0;
+        ControlEncodeBodyFn enc =
+            transportControlCodecBodyEncoder(CTRL_SCN_ANNOUNCE);
+        UT_ASSERT(enc != NULL);
+
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_SCN_ANNOUNCE;
+        evt.u.scnAnnounce.ticks = 100;
+        memset(evt.u.scnAnnounce.text, 'x', full);
+        evt.u.scnAnnounce.text[full] = '\0';
+        UT_ASSERT(enc(&evt, NULL, buf, sizeof(buf), &outLen) == ENCODE_OK);
+        UT_ASSERT(outLen == 2 + full);
+        UT_ASSERT(decodeBody(CTRL_SCN_ANNOUNCE, buf, outLen, &back));
+        UT_ASSERT(strlen(back.u.scnAnnounce.text) == full);
+        UT_ASSERT(back.u.scnAnnounce.hasPos == 0);
+        UT_ASSERT(oldClientAnnounceText(buf, outLen, oldText));
+        UT_ASSERT(strlen(oldText) == full);
+
+        memset(evt.u.scnAnnounce.text, 0, sizeof(evt.u.scnAnnounce.text));
+        memset(evt.u.scnAnnounce.text, 'x', posMax);
+        evt.u.scnAnnounce.hasPos = 1;
+        evt.u.scnAnnounce.posX   = 200;
+        evt.u.scnAnnounce.posY   = 50;
+        UT_ASSERT(enc(&evt, NULL, buf, sizeof(buf), &outLen) == ENCODE_OK);
+        UT_ASSERT(outLen == 2 + posMax + 3);
+        UT_ASSERT(decodeBody(CTRL_SCN_ANNOUNCE, buf, outLen, &back));
+        UT_ASSERT(strlen(back.u.scnAnnounce.text) == posMax);
+        UT_ASSERT(back.u.scnAnnounce.posX == 200);
+        UT_ASSERT(back.u.scnAnnounce.posY == 50);
+        UT_ASSERT_MSG(oldClientAnnounceText(buf, outLen, oldText),
+                      "an older client drops a %u-byte positioned line",
+                      (unsigned)posMax);
+        UT_ASSERT(strlen(oldText) == posMax);
+
+        /* One byte more is past what an older client takes. */
+        evt.u.scnAnnounce.text[posMax] = 'x';
+        UT_ASSERT(enc(&evt, NULL, buf, sizeof(buf), &outLen) == ENCODE_OK);
+        UT_ASSERT(outLen == 2 + posMax + 1 + 3);
+        UT_ASSERT(!oldClientAnnounceText(buf, outLen, oldText));
+        UT_ASSERT(decodeBody(CTRL_SCN_ANNOUNCE, buf, outLen, &back));
+        UT_ASSERT(strlen(back.u.scnAnnounce.text) == posMax + 1);
+    }
+
+    /* ── the client ── it keeps the position with the line, drops it for
+       a line with none and on the return to the lobby. */
+    cs = scnClientOnTeam(2, 1);
+    UT_ASSERT(cs != NULL);
+    UT_ASSERT(!clientSimGetScnAnnouncePos(cs, &x, &y));
+
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SCN_ANNOUNCE;
+    evt.u.scnAnnounce.ticks = 100;
+    memcpy(evt.u.scnAnnounce.text, "News", 5);
+    evt.u.scnAnnounce.hasPos = 1;
+    evt.u.scnAnnounce.posX = 30;
+    evt.u.scnAnnounce.posY = 240;
+    evt.u.scnAnnounce.destPlayer = 0xFF;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(clientSimGetScnAnnouncePos(cs, &x, &y));
+    UT_ASSERT(x == 30 && y == 240);
+    UT_ASSERT(clientSimGetScnAnnouncePos(cs, NULL, NULL));
+
+    evt.u.scnAnnounce.hasPos = 0;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT_MSG(!clientSimGetScnAnnouncePos(cs, &x, &y),
+                  "a line with no position kept the last line's position");
+
+    evt.u.scnAnnounce.hasPos = 1;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(clientSimGetScnAnnouncePos(cs, NULL, NULL));
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_GAME_PHASE_LOBBY;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(clientSimGetScnAnnounce(cs, NULL, NULL) == NULL);
+    UT_ASSERT(!clientSimGetScnAnnouncePos(cs, &x, &y));
 
     clientSimDestroy(cs);
     return 0;

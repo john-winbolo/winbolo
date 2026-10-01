@@ -1895,7 +1895,8 @@ exist.
 |---|---|
 | `game.panel(id, list[, target])` | Draws panel `id` from a list of primitives. An empty list clears it. |
 | `game.score(target, value[, label])` | The scenario's own score for one seat with a number, or for a team with `{ team = t }`. `label` is the short word shown beside it, up to 15 bytes. |
-| `game.announce(text[, seconds[, target]])` | A line across the centre of the screen for that many seconds. Empty text takes the line away. |
+| `game.announce(text[, seconds[, target[, position]]])` | A big line across the game view for that many seconds. Left out, `position` puts the line where it has always gone, centred in the upper third of the view. Give `"top"`, `"center"` or `{ x = , y = }` to put the centre of the line somewhere else. Empty text takes the line away. |
+| `game.status(text[, countdown_to[, target]])` | The status line: one line at the very top of the game view, centred, that stays until it is changed or cleared. `countdown_to` is a tick on `game.tick()`'s clock; the client shows the time left to it after the text. Empty text takes the line away. |
 | `game.marker(id, x, y[, colour[, target]])` | Puts mark `id` on a map square. |
 | `game.marker_follow(id, p[, colour[, target]])` | Puts mark `id` on seat `p`, where it rides the tank rather than the ground. |
 | `game.clear_marker(id[, target])` | Takes mark `id` off the map. |
@@ -1916,7 +1917,81 @@ neither. In the lobby the clock moves at half that
 rate, so a line put up before the round starts stays up about twice as long as
 it asked for.
 
-**Who sees it.** The last argument of `panel`, `announce` and the three marker
+**Where an announcement goes.** With no `position` the line is centred across
+the game view, with the top of its letters 0.28 of the way down, in the upper
+third and clear of the player's own tank in the middle. No panel, window or
+status line moves it. On the main view that is where every announcement has
+always gone. On the full screen map the same rule is applied to the map, so
+the line sits 0.28 of the way down the map and not at its old spot, which was
+worked out from the main view's rectangle. In tablet mode the rule is
+applied to tablet mode's own game view; before, tablet mode drew no
+announcement at all.
+
+`position` puts the centre of the line at a point on the game view. Give a
+table `{ x = across, y = down }`, each from 0 to 1: `{ x = 0, y = 0 }` is the
+top-left corner, `{ x = 1, y = 1 }` the bottom-right one and
+`{ x = 0.5, y = 0.5 }` the middle. Two words are short names for the points
+scripts use most:
+
+| Word | Same as | Use it for |
+|---|---|---|
+| `"top"` | `{ x = 0.5, y = 0 }` | Lines that come often, such as kill lines: up out of the way |
+| `"center"` (or `"centre"`) | `{ x = 0.5, y = 0.5 }` | Important lines in a quiet moment, such as the round start or the winner |
+
+The line is moved the least it takes to keep all of it inside the view, so
+`y = 0` puts it as high as it goes and no edge is ever cut off. A line wider
+than the view is centred across it. When a status line is up, its row counts
+as a band the full width of the view, from the top to the bottom of the status
+line's box. A line that would come within one gap of that band drops to one
+gap below it, wherever it sits across the view, even where the status line is
+short and nowhere near it. The gap is the scenario panel's own inset from the
+corner of the view. A line with a position does not move
+for the scenario panel or other windows, and `"center"` sits on the player's
+own tank: the script chose the spot, so use it when there is little else to
+watch.
+
+The position is sent as two bytes, so it lands on one of 255 steps across and
+down. A share that is not a number, a table without both `x` and `y`, or a
+word other than these stops the script. A share below 0, above 1, or NaN is
+refused with `SCN_OP_RANGE`.
+
+A line with no position is up to 128 bytes. A line with a position is up to
+125 bytes, and a longer one is refused with `SCN_OP_TOO_BIG`. A client older
+than the position draws every line in the usual place, and it would drop a
+positioned line longer than 125 bytes and show nothing. Both lines are drawn
+on the desktop view, on the full screen map and in tablet mode, each over its
+own game view.
+
+On a server older than the position, `game.announce` reads only its first
+three arguments, so a script that passes a position there still shows the
+line, in the usual place.
+
+**The status line.** `game.status` holds one line at the top of the view for
+as long as the round wants it, such as "Wave 3/10". With `countdown_to`, the
+client adds the time left to that tick, in minutes and seconds, four spaces
+after the text ("Wave 3/10    2:44"), and counts it down on its own clock, so
+a countdown is one call and not one a second. It stops at 0:00. The text is
+up to 128 bytes, and a longer one is refused with `SCN_OP_TOO_BIG`. A player
+sees the last line written to them, whether it went to everyone, to their team
+or to their seat, and an empty line to any of those takes it away. Calling it
+again with the same text, countdown and target sends nothing when no later
+line was written to any of those players, so a script can restate its line
+every second without cost. A late joiner is given the lines in the order they
+were written, so it ends on the last line written to it, the same line the
+players around it see. A replay shows it too. A `countdown_to` below 0 or
+past 4294967294, or a seat or team outside the game, is refused with
+`SCN_OP_RANGE`.
+
+```lua
+game.status(string.format("Wave %d/%d", wave, waves), wave_ends_at)
+game.announce("Wave 3 - they come from the north", 5, nil, "center")
+game.announce(name .. " got a kill", 2, nil, "top")
+game.announce("Red has the flag", 3, { team = 2 }, { x = 0.5, y = 0.8 })
+game.announce("Go!", 2)      -- no position: where announcements always go
+game.status("")              -- take the status line away
+```
+
+**Who sees it.** The last argument of `panel`, `status`, `announce` and the three marker
 calls is the same target every other call takes: left out, or `"all"`, for
 everyone; a number for one seat; `{ team = t }` for one team. A late joiner is
 given whatever the panels hold at the moment it arrives, so a panel put up in
@@ -2503,12 +2578,23 @@ of that trigger's actions and every trigger after it on that hook for that
 event. The server counts one error against the script, and a script that
 keeps failing is switched off for the rest of the round.
 
-Two things only the round finds out, so keep them in mind. **A `call` naming a
+Three things only the round finds out, so keep them in mind. **A `call` naming a
 function your script never defined is skipped**, not reported — the check has
 no way to know what the chunk will define, since a script may define a
-function under a condition. And a region a test names may be one
+function under a condition. A region a test names may be one
 `game.define_region` makes during the round, so an unknown region name is not
-refused either.
+refused either. And **an `announce` position word is checked only when the
+trigger fires**: the check before the round holds a word to being text, not
+to the words an op takes, so `{ "announce", "Go", 3, "all", "middle" }` passes
+it. When that trigger fires, the word raises inside `announce`, the same way
+a literal of the wrong kind does above.
+
+A trigger can only write a number, a string, a boolean or a `{ field = }`, so
+the position of an `announce` action is `"top"`, `"center"` or `"centre"`. The
+`{ x = , y = }` table is out of reach; a script that wants one calls
+`game.announce` from Lua. A positioned line is held to 125 bytes, so an
+`announce` action with a position and a longer line is refused with
+`SCN_OP_TOO_BIG` when it fires and shows nothing.
 
 **Limits.** 64 triggers in a scenario, 4 tests and 4 actions on one trigger, 6
 arguments on one action. Going past any of them drops what is past it and says

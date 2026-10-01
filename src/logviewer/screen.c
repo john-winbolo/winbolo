@@ -819,12 +819,12 @@ BYTE lv_screenGetPos(screen *value,BYTE xValue, BYTE yValue) {
 void lv_windowAddEvent(int eventType, char *msg);
 
 /* --- Scenario presentation --------------------------------------------
- * The panels, scores, announcement and markers a scenario put up, as the
- * recording's log_ScnPanel, log_ScnScore, log_ScnAnnounce and log_ScnMarker
- * records state them, kept in g_lv->pres. Each record replaces the state for
- * its own key — one panel row, one score, the announcement or one marker —
- * so what a store holds at a time is what the last record for its key up to
- * that time left there.
+ * The panels, scores, announcement, markers and status lines a scenario put
+ * up, as the recording's log_ScnPanel, log_ScnScore, log_ScnAnnounce,
+ * log_ScnMarker and log_ScnStatus records state them, kept in g_lv->pres.
+ * Each record replaces the state for its own key — one panel row, one score,
+ * the announcement, one marker or one status row — so what a store holds at
+ * a time is what the last record for its key up to that time left there.
  *
  * Each slot's lobby team rides the same index, from log_TeamSet, because a
  * team panel is drawn for the players on that team and the snapshots do not
@@ -855,19 +855,22 @@ void lv_windowAddEvent(int eventType, char *msg);
 #define LV_PRES_KEY_ANNOUNCE      (LV_PRES_KEY_TEAM_SCORE + LV_PRES_TEAMS - 1)
 #define LV_PRES_KEY_MARKER        (LV_PRES_KEY_ANNOUNCE + 1)
 #define LV_PRES_KEY_SLOT_TEAM     (LV_PRES_KEY_MARKER + SCN_MARKERS_MAX)
-#define LV_PRES_KEYS              (LV_PRES_KEY_SLOT_TEAM + MAX_TANKS)
+#define LV_PRES_KEY_STATUS        (LV_PRES_KEY_SLOT_TEAM + MAX_TANKS)
+#define LV_PRES_KEYS              (LV_PRES_KEY_STATUS + LV_PRES_PANEL_ROWS)
 
 /* A key rides in a byte. */
 BOLO_STATIC_ASSERT(LV_PRES_KEYS <= 256, lv_pres_key_fits_a_byte);
 
 /* One record that passed its checks, as the load walk found it: the time
-   playback reaches it, its type code, the key it fills and where its payload
-   starts. */
+   playback reaches it, its type code, the key it fills, where its payload
+   starts and its framed length, which is what says whether an announcement
+   carries its position bytes. */
 typedef struct {
-  uint32_t ms;
-  BYTE     code;
-  BYTE     key;
-  size_t   payloadPos;
+  uint32_t       ms;
+  BYTE           code;
+  BYTE           key;
+  unsigned short frameLen;
+  size_t         payloadPos;
 } LvPresRecord;
 
 /* Most records the index holds for one recording. It grows as the walk
@@ -906,6 +909,8 @@ typedef struct {
   BYTE     hdr[6];                /* the fixed bytes ahead of the length */
   unsigned len;                   /* the list's, label's, line's or blob's */
   BYTE     data[SCN_PANEL_MAX];   /* its bytes, when len fits */
+  bool     hasPos;                /* an announcement's two position bytes */
+  BYTE     pos[2];                /* across, then down */
 } LvPresPayload;
 
 /* The payload being read. Static for the same reason as the scratch list,
@@ -935,7 +940,7 @@ static void lv_presReset(void) {
 }
 
 static void lv_presIndexAdd(uint32_t ms, BYTE code, int key,
-                            size_t payloadPos);
+                            size_t payloadPos, unsigned short frameLen);
 
 /* On a feed, index a record playback has just stored under key, the way the
  * load walk would have indexed it, so a seek back can rebuild the stores from
@@ -945,7 +950,7 @@ static void lv_presIndexAdd(uint32_t ms, BYTE code, int key,
  * rebuild's search, so the index is marked for a sort rather than kept sorted
  * here. Does nothing on a loaded file, whose walk indexed every record. */
 static void lv_presLiveIndex(uint32_t ms, BYTE code, int key,
-                             size_t payloadPos) {
+                             size_t payloadPos, unsigned short frameLen) {
   if (s_presWalked || key < 0) {
     return;
   }
@@ -954,7 +959,7 @@ static void lv_presLiveIndex(uint32_t ms, BYTE code, int key,
   }
   s_presLiveAny     = TRUE;
   s_presLiveLastPos = payloadPos;
-  lv_presIndexAdd(ms, code, key, payloadPos);
+  lv_presIndexAdd(ms, code, key, payloadPos, frameLen);
   s_presLive          = TRUE;
   s_presIndexUnsorted = TRUE;
 }
@@ -984,14 +989,17 @@ static int lv_presPanelRow(BYTE destTeam, BYTE destPlayer) {
  * Entered just past the event's code byte and its framed length; consumes
  * what the record's own lengths say, whatever they say, so the stream stays
  * aligned whatever the record held. The layouts are
- * docs/replay-format.md's. */
-static void lv_presReadPayload(BYTE code, LvPresPayload *p) {
+ * docs/replay-format.md's. frameLen is the record's framed length, 0 for an
+ * unframed one; only an announcement reads it, for its position bytes. */
+static void lv_presReadPayload(BYTE code, unsigned frameLen,
+                               LvPresPayload *p) {
   BYTE len = 0;
 
   memset(p->hdr, 0, sizeof(p->hdr));
-  p->code  = code;
-  p->len   = 0;
-  p->whole = FALSE;
+  p->code   = code;
+  p->len    = 0;
+  p->whole  = FALSE;
+  p->hasPos = FALSE;
   switch (code) {
   case log_ScnPanel: {
     /* panel id, destTeam, destPlayer, then the list's length as a
@@ -1018,11 +1026,16 @@ static void lv_presReadPayload(BYTE code, LvPresPayload *p) {
   case log_ScnScore:
     /* kind, target, the score as a big-endian int32, then the label as a
        pascal string. */
+  case log_ScnStatus:
+    /* destTeam, destPlayer, the countdown's end tick as a big-endian u32,
+       then the line as a pascal string. */
     p->whole = logReadBytes(p->hdr, 6) == 6;
     break;
   case log_ScnAnnounce:
     /* destTeam, destPlayer, the ticks as a big-endian u16, then the line as
-       a pascal string. */
+       a pascal string, then for a line with a position its two bytes,
+       across and down. Only the framed length says whether they are there;
+       they are read after the line, below. */
   case log_ScnMarker:
     /* id, kind, destTeam, destPlayer, then the placement as a pascal blob of
        x, y, slot and colour. */
@@ -1040,6 +1053,13 @@ static void lv_presReadPayload(BYTE code, LvPresPayload *p) {
     p->whole = logReadBytes(p->data, len) == (int)len && p->whole;
   }
   p->len = len;
+  /* The position bytes ride after the line when the frame holds two more
+     bytes than the header, the length byte and the line. Anything past
+     them is a later build's and is left for the framed length to skip. */
+  if (code == log_ScnAnnounce && p->whole && len > 0 &&
+      frameLen >= 4u + 1u + (unsigned)len + 2u) {
+    p->hasPos = logReadBytes(p->pos, 2) == 2;
+  }
 }
 
 /* The key a payload fills, or -1 when it fails a check. Playback and the
@@ -1102,6 +1122,12 @@ static int lv_presCheck(const LvPresPayload *p) {
       return -1;
     }
     return LV_PRES_KEY_SLOT_TEAM + h[0];
+  case log_ScnStatus:
+    row = lv_presPanelRow(h[0], h[1]);
+    if (row < 0 || p->len > LV_PRES_ANNOUNCE_MAX) {
+      return -1;
+    }
+    return LV_PRES_KEY_STATUS + row;
   default:
     return -1;
   }
@@ -1152,6 +1178,14 @@ static void lv_presApply(const LvPresPayload *p, int key, uint32_t ms) {
     a->ticks      = (uint16_t)(((unsigned)h[2] << 8) | h[3]);
     a->destTeam   = h[0];
     a->destPlayer = h[1];
+    if (p->hasPos) {
+      /* A byte past the max reads as the max, as the game reads one. */
+      a->hasPos = TRUE;
+      a->posX   = (p->pos[0] > SCN_ANNOUNCE_POS_MAX)
+                      ? (BYTE)SCN_ANNOUNCE_POS_MAX : p->pos[0];
+      a->posY   = (p->pos[1] > SCN_ANNOUNCE_POS_MAX)
+                      ? (BYTE)SCN_ANNOUNCE_POS_MAX : p->pos[1];
+    }
     memcpy(a->text, p->data, p->len);
     return;
   }
@@ -1177,6 +1211,23 @@ static void lv_presApply(const LvPresPayload *p, int key, uint32_t ms) {
     g_lv->pres.teamKnown[slot] = TRUE;
     return;
   }
+  case log_ScnStatus: {
+    /* A clear is a write too, as a panel row's is: it replaces whatever an
+       older row showed. */
+    LvPresStatus *s = &g_lv->pres.status[key - LV_PRES_KEY_STATUS];
+    memset(s, 0, sizeof(*s));
+    s->written = TRUE;
+    s->ms      = ms;
+    s->endsAt  = SCN_STATUS_NO_COUNTDOWN;
+    if (p->len == 0) {
+      return;
+    }
+    s->set    = TRUE;
+    s->endsAt = ((uint32_t)h[2] << 24) | ((uint32_t)h[3] << 16) |
+                ((uint32_t)h[4] << 8)  | (uint32_t)h[5];
+    memcpy(s->text, p->data, p->len);
+    return;
+  }
   default:
     return;
   }
@@ -1186,10 +1237,10 @@ static void lv_presApply(const LvPresPayload *p, int key, uint32_t ms) {
  * says, as at time ms, if it passes its checks. What playback runs. Answers
  * the key it stored under, or -1 for a record that failed; s_presPayload
  * still holds what was read. */
-static int lv_presReadRecord(BYTE code, uint32_t ms) {
+static int lv_presReadRecord(BYTE code, unsigned frameLen, uint32_t ms) {
   int key;
 
-  lv_presReadPayload(code, &s_presPayload);
+  lv_presReadPayload(code, frameLen, &s_presPayload);
   key = lv_presCheck(&s_presPayload);
   if (key >= 0) {
     lv_presApply(&s_presPayload, key, ms);
@@ -1404,6 +1455,52 @@ const LvPresScore *lv_screenGetScore(BYTE kind, BYTE target) {
     return &g_lv->pres.teamScores[target];
   }
   return NULL;
+}
+
+const LvPresStatus *lv_screenGetStatusRow(BYTE destTeam, BYTE destPlayer) {
+  int index;
+
+  if (g_lv == NULL) {
+    return NULL;
+  }
+  index = lv_presPanelRow(destTeam, destPlayer);
+  return (index < 0) ? NULL : &g_lv->pres.status[index];
+}
+
+const LvPresStatus *lv_screenFollowedStatus(void) {
+  const LvPresStatus *order[3];
+  const LvPresStatus *best = NULL;
+  BYTE                slot;
+  BYTE                team;
+  int                 i;
+
+  if (g_lv == NULL) {
+    return NULL;
+  }
+  /* The slot's row, the team's, then everyone's: the order a tie goes, so a
+     later candidate wins only on a greater ms, as lv_screenChoosePanelRow
+     picks a panel row. */
+  order[0] = NULL;
+  order[1] = NULL;
+  order[2] = lv_screenGetStatusRow(0, 0xFF);
+  slot = lv_screenFollowedSlot();
+  if (slot < MAX_TANKS) {
+    order[0] = lv_screenGetStatusRow(0, slot);
+    /* Team 0 is no team, whose row is the everyone row. */
+    if (lv_screenGetSlotTeam(slot, &team) && team != 0) {
+      order[1] = lv_screenGetStatusRow(team, 0xFF);
+    }
+  }
+  for (i = 0; i < 3; i++) {
+    const LvPresStatus *row = order[i];
+    if (row == NULL || !row->written) {
+      continue;
+    }
+    if (best == NULL || row->ms > best->ms) {
+      best = row;
+    }
+  }
+  return (best != NULL && best->set) ? best : NULL;
 }
 
 const LvPresAnnounce *lv_screenGetAnnounce(void) {
@@ -2155,9 +2252,11 @@ void lv_screenProcessLog(unsigned short numEvents) {
     case log_ScnScore:
     case log_ScnAnnounce:
     case log_ScnMarker:
-      /* A scenario panel's display list, a score row, the centre-screen line
-         or a map marker, stored for the playhead. On a loaded file this
-         leaves the stores as a rebuild at this time would; on a live feed,
+    case log_ScnStatus:
+      /* A scenario panel's display list, a score row, the announcement
+         line, a map marker or a status line, stored for the playhead. On a
+         loaded file this leaves the stores as a rebuild at this time would;
+         on a live feed,
          which has no walk, it is the only way they fill, and the record is
          indexed here so a seek back can rebuild from it. The reader
          consumes the record's own lengths, so everything after it is still
@@ -2165,9 +2264,11 @@ void lv_screenProcessLog(unsigned short numEvents) {
          posted to the newswire, here and not in the store step, so a rebuild
          never posts it again. */
       {
-        int presKey = lv_presReadRecord(code, g_lv->timeRunning);
+        int presKey = lv_presReadRecord(code, isV2 ? evLen : 0u,
+                                        g_lv->timeRunning);
         if (presKey >= 0 && isV2) {
-          lv_presLiveIndex(g_lv->timeRunning, code, presKey, payloadStart);
+          lv_presLiveIndex(g_lv->timeRunning, code, presKey, payloadStart,
+                           evLen);
         }
         if (presKey >= 0 && code == log_ScnAnnounce) {
           lv_presPostAnnounce(&s_presPayload);
@@ -2501,7 +2602,8 @@ void lv_screenProcessLog(unsigned short numEvents) {
       {
         int teamKey = lv_presStoreTeam(opt1, opt2, g_lv->timeRunning);
         if (isV2) {
-          lv_presLiveIndex(g_lv->timeRunning, code, teamKey, payloadStart);
+          lv_presLiveIndex(g_lv->timeRunning, code, teamKey, payloadStart,
+                           evLen);
         }
       }
       break;
@@ -3287,12 +3389,27 @@ static int walkSkipEventBody(BYTE code) {
          id, its kind and its own destination, and the marker's blob is always
          the four bytes of a placement; both are walked the way a text
          record's are. Only a v2 log can carry either; the v1 walker is given
-         the cases anyway, for the reason it is given one for log_Ping. */
+         the cases anyway, for the reason it is given one for log_Ping.
+         Note: an announcement with a position has two more bytes, across
+         and down, after the string (log.c writes them only then). Nothing in
+         the unframed bytes says whether they are there, so only the framed
+         length can size a positioned line. This case walks the form with no
+         position, which is the only form an unframed stream could hold. */
       { BYTE b[4]; if (logReadBytes(b, 4) != 4) return -1; }
       if (logReadBytes(&lenByte, 1) != 1) return -1;
       { BYTE buf[256]; rc = lenByte ? logReadBytes(buf, lenByte) : 0;
         if (rc != lenByte) return -1; }
       return 5 + lenByte;
+    case log_ScnStatus:
+      /* The destination pair + the countdown's end tick as four big-endian
+         bytes, then the line as a pascal string. Only a v2 log can carry
+         one; the v1 walker is given the case anyway, for the reason it is
+         given one for log_Ping. */
+      { BYTE b[6]; if (logReadBytes(b, 6) != 6) return -1; }
+      if (logReadBytes(&lenByte, 1) != 1) return -1;
+      { BYTE buf[256]; rc = lenByte ? logReadBytes(buf, lenByte) : 0;
+        if (rc != lenByte) return -1; }
+      return 7 + lenByte;
     case log_ScnScore:
       /* kind + target + the score as four big-endian bytes, then the label as
          a pascal string. */
@@ -3881,7 +3998,7 @@ static void lv_presIndexTruncate(void) {
  * index, or one that cannot grow, keeps what it has and sets the truncated
  * flag. */
 static void lv_presIndexAdd(uint32_t ms, BYTE code, int key,
-                            size_t payloadPos) {
+                            size_t payloadPos, unsigned short frameLen) {
   if (s_presIndexCount >= s_presIndexCap) {
     int           cap = (s_presIndexCap == 0) ? 256 : s_presIndexCap * 2;
     LvPresRecord *grown;
@@ -3903,6 +4020,7 @@ static void lv_presIndexAdd(uint32_t ms, BYTE code, int key,
   }
   s_presIndex[s_presIndexCount].ms         = ms;
   s_presIndex[s_presIndexCount].code       = code;
+  s_presIndex[s_presIndexCount].frameLen   = frameLen;
   s_presIndex[s_presIndexCount].key        = (BYTE)key;
   s_presIndex[s_presIndexCount].payloadPos = payloadPos;
   s_presIndexCount++;
@@ -3959,12 +4077,12 @@ static bool walkScanPresentation(unsigned short numEvents, uint32_t ms) {
     payloadPos = lv_logGetCurrentPosition();
     if (code == log_ScnPanel || code == log_ScnScore ||
         code == log_ScnAnnounce || code == log_ScnMarker ||
-        code == log_TeamSet) {
+        code == log_ScnStatus || code == log_TeamSet) {
       int key;
-      lv_presReadPayload(code, &s_presPayload);
+      lv_presReadPayload(code, evLen, &s_presPayload);
       key = lv_presCheck(&s_presPayload);
       if (key >= 0) {
-        lv_presIndexAdd(ms, code, key, payloadPos);
+        lv_presIndexAdd(ms, code, key, payloadPos, evLen);
       }
     }
     lv_logSetPosition(payloadPos + evLen);
@@ -4219,7 +4337,7 @@ static void lv_presRebuild(uint32_t t) {
     }
     e = &s_presIndex[lo - 1];
     lv_logSetPosition(e->payloadPos);
-    lv_presReadPayload(e->code, &s_presPayload);
+    lv_presReadPayload(e->code, e->frameLen, &s_presPayload);
     lv_presApply(&s_presPayload, e->key, e->ms);
   }
   lv_logSetPosition(savedPos);

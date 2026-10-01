@@ -23,6 +23,12 @@ extern "C" {
  * is every frame of a plain recording. */
 void lv_imgui_scenario_panel_window(bool logLoaded);
 
+/* Draw the status line the followed player saw at the playhead along the
+ * top of the viewport, centred and outlined as the game draws it, with its
+ * countdown on the server's tick at the playhead. Draws nothing while no log
+ * is loaded or while there is no line. */
+void lv_imgui_scenario_status(bool logLoaded);
+
 /* The smallest side the window's square may have, in screen pixels: one pixel
  * a panel unit, the size it had before it could be resized. The largest is
  * whatever fits the shorter side of the main viewport. */

@@ -118,6 +118,13 @@ local DEFAULT_CONFIG = {
   min_armour        = 0,
 }
 
+-- The tables configure() sends. live_physics.lua scales these for live
+-- rules and re-sends only the entries that change.
+M.DEFAULTS = {
+  terrain_cost  = DEFAULT_TERRAIN_COST,
+  terrain_speed = DEFAULT_TERRAIN_SPEED,
+}
+
 --- Configure the C pathfinder with defaults, optionally overridden.
 --- @param opts table|nil Optional overrides:
 ---   opts.terrain_cost       = { [type] = cost, ... }  -- sparse overrides
