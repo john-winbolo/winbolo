@@ -145,6 +145,12 @@ BOLO_STATIC_ASSERT(SCN_SCRIPTS_MAX == LOBBY_SCRIPT_LIST_MAX,
 BOLO_STATIC_ASSERT(SCN_SCRIPTS_MAX == SCN_RECORD_SCRIPTS_MAX,
                    record_describes_every_script_a_round_composes);
 
+/* A panel carries its script's position in four bits and a client keeps a
+ * list for SCN_PANEL_OWNERS of them (scenario_panel.h), so every script a
+ * host can compose has to fit both. */
+BOLO_STATIC_ASSERT(SCN_SCRIPTS_MAX <= SCN_PANEL_OWNERS && SCN_PANEL_OWNERS <= 16,
+                   every_script_can_own_a_panel);
+
 /* A team's brain becomes the path a spawn carries, and the manifest sizes the
  * name without seeing the op. Held against the op's own length here, because
  * the template below writes the resolved path into a field of that width. */
@@ -6550,6 +6556,17 @@ typedef struct {
 static ScnMapScriptCache scnMapScriptCache;
 
 bool scenarioHostMapHasScript(const char *mapPath) {
+    /* What the tag means is that picking this map here runs its script, so a
+       process with scripts off answers no for every map: the attach would
+       refuse the file and the map would play plain. Without this the chooser
+       marks maps Scripted on a server that will not run one. */
+    if (!scnEnabled) {
+        return false;
+    }
+    return scenarioHostMapCarriesScript(mapPath);
+}
+
+bool scenarioHostMapCarriesScript(const char *mapPath) {
     char         script[SCN_SCRIPT_PATH_MAX];
     SDL_PathInfo info;
     SDL_PathInfo looseInfo;
@@ -6559,13 +6576,6 @@ bool scenarioHostMapHasScript(const char *mapPath) {
     bool         answer;
 
     if (mapPath == NULL || mapPath[0] == '\0') {
-        return false;
-    }
-    /* What the tag means is that picking this map here runs its script, so a
-       process with scripts off answers no for every map: the attach would
-       refuse the file and the map would play plain. Without this the chooser
-       marks maps Scripted on a server that will not run one. */
-    if (!scnEnabled) {
         return false;
     }
     /* Nothing to key a row on, or nowhere to keep it: the question is
@@ -6703,11 +6713,13 @@ void scenarioHostRegisterMapScripted(ServerSim *sim) {
  * The stamps are as fine as the kernel writes them, which is a few
  * milliseconds on an ordinary Linux filesystem rather than a nanosecond, so a
  * change inside the same tick as the read that kept the listing leaves the
- * time alone (a file's size still moves if its length changed). The
- * server now changes these directories itself — an upload put in place, the
- * session directory emptied — and lists them straight after, so each slot also
- * keeps the change count serverSimScriptDirsGen answered when it was read, and
- * a slot whose count is not the current one is read again. Only a change made
+ * time alone (a file's size still moves if its length changed). This
+ * process changes these directories itself — an upload landing, the session
+ * emptying, Save a copy, packing a loose script, and the desktop's Workshop
+ * sync and publish — and lists them straight after, so each slot also keeps
+ * the change count serverSimScriptDirsGen answered when it was read, and a
+ * slot whose count is not the current one is read again. Every writer of a
+ * scripts directory bumps that count. Only a change made
  * by someone else within one stamp can still be missed until the next change
  * — an operator dropping a scenario in cannot be that close to a read they did
  * not make, and the file after it, or the next thing to touch the directory,

@@ -890,10 +890,10 @@ const char *serverSimGetWorkshopMapDir(const ServerSim *sim);
  *  decide what plays: a pick beats the committed map's own
  *  script, and none hands the map its own back. Changing it
  *  is the sim's own business and lives on
- *  server_sim_lifecycle.h — a frontend that wants a
- *  different scenario sends CMD_LOBBY_SET_SCENARIO, which is
- *  what asks for that decision again and publishes the
- *  result.
+ *  server_sim_internal.h (serverSimSetScriptList) — a
+ *  frontend that wants a different scenario sends
+ *  CMD_SET_SCRIPT_LIST, which is what asks for that decision
+ *  again and publishes the result.
  *
  *ARGUMENTS:
  *  sim  - Pointer to the ServerSim
@@ -2544,9 +2544,10 @@ const char *serverSimGetScriptSessionDir(const ServerSim *sim);
  * the lobby reset. */
 int         serverSimEmptyScriptSessionDir(ServerSim *sim);
 
-/* A count of the changes this process has made to a scripts directory: a
- * file an upload put in place, or files the session emptying removed. The
- * scenario library's directory listing keeps what it read against this as
+/* A count of the changes this process has made to a scripts directory: an
+ * upload landing, the session emptying, Save a copy, packing a loose script,
+ * and the desktop's Workshop sync and publish. Every writer of a scripts
+ * directory bumps it. The scenario library's directory listing keeps what it read against this as
  * well as against the directory's modify time, which the kernel stamps too
  * coarsely to see a change made straight after a read. Process-wide because
  * that listing cache is process-wide. Safe from any thread. */
@@ -2555,12 +2556,9 @@ uint32_t    serverSimScriptDirsGen(void);
 
 /* Resolve the script upload policy from its command-line or preference
  * word. A non-empty word is matched against off / allow / persist
- * ignoring case and always wins over legacyOff; an unknown word logs a
- * warning naming it and resolves to SCRIPT_UPLOAD_ALLOW. With no word
- * (NULL or empty), legacyOff — the old -nouploadscripts flag or
- * "Run Upload Scripts" preference set to No — gives SCRIPT_UPLOAD_OFF,
- * else SCRIPT_UPLOAD_ALLOW. */
-ScriptUploadPolicy scriptUploadPolicyResolve(const char *word, bool legacyOff);
+ * ignoring case; an unknown word logs a warning naming it and resolves to
+ * SCRIPT_UPLOAD_ALLOW. No word (NULL or empty) gives SCRIPT_UPLOAD_ALLOW. */
+ScriptUploadPolicy scriptUploadPolicyResolve(const char *word);
 
 /* The preference spelling of a policy: "Off", "Allow" or "Persist".
  * Anything out of range reads as "Allow". */

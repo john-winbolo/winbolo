@@ -237,6 +237,20 @@ void brc_write_crash_log(lua_State *L,
                          const char *err_or_traceback);
 
 /*********************************************************
+ *NAME:          brc_traceback_msgh
+ *PURPOSE:
+ *  The lua_pcall message handler brainCoreCallThink and
+ *  brainCoreCallMethod install. Returns the error message
+ *  with a Lua stack traceback appended, except for the
+ *  per-think budget hook's "tick_budget_exceeded" raised
+ *  while that hook is installed, which it returns unchanged:
+ *  the caller throws that message away. Exposed (non-static)
+ *  so tests/unit/test_brain_crash_log.c can run a pcall with
+ *  it.
+ *********************************************************/
+int brc_traceback_msgh(lua_State *L);
+
+/*********************************************************
  *NAME:          brainCoreSetLogFlushHook
  *PURPOSE:
  *  Registers a callback that brc_write_crash_log invokes

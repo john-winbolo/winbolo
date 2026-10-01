@@ -1075,9 +1075,12 @@ static int lv_presCheck(const LvPresPayload *p) {
   }
   switch (p->code) {
   case log_ScnPanel:
-    /* Panel 0, the in-game square, is the only panel there is. */
+    /* Panel 0, the in-game square, is the only panel there is. The high
+       four bits say which script of the round's list drew it
+       (SCN_PANEL_WIRE_OWNER); this viewer keeps one list per audience and
+       shows whichever script wrote to it last, as the recording played. */
     row = lv_presPanelRow(h[1], h[2]);
-    if (h[0] != 0 || row < 0 || p->len > SCN_PANEL_MAX) {
+    if (SCN_PANEL_WIRE_ID(h[0]) != 0 || row < 0 || p->len > SCN_PANEL_MAX) {
       return -1;
     }
     if (scnPanelParse(p->data, (uint16_t)p->len, &s_presPanelScratch) !=

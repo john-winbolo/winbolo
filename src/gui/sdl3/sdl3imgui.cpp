@@ -82,6 +82,7 @@ extern "C" {
 #include "glyphs.h"
 #include "ping_overlay.h"
 #include "scenario_panel_draw.h" /* the shared drawer behind the scenario panel */
+#include "../scn_panel_prefs.h"  /* pop-out rows and the lost-window rule */
 #include "dialogs/imgui_keycap.h"
 /* The lobby's visibility value renderer and the preset table, so the
  * in-game info panel names a server's rules in the same words and
@@ -923,6 +924,10 @@ static PopOutWindow s_popGameInfo    = {};
 static PopOutWindow s_popSendMsg     = {};
 static PopOutWindow s_popPlayers     = {};
 static PopOutWindow s_popMapOverview = {};
+/* One per script of the round's list, for that script's scenario panel
+   (SCN_PANEL_OWNERS, scenario_panel.h). Indexed by the script's position on
+   the list, the same owner the panel byte carries. */
+static PopOutWindow s_popScnPanel[SCN_PANEL_OWNERS] = {};
 
 /* Every site that treats the pop-outs as a set — event routing, the
  * focus/mute check, cleanup — walks this table, so adding a pop-out means
@@ -930,8 +935,22 @@ static PopOutWindow s_popMapOverview = {};
  * because each pop-out draws different content. */
 static PopOutWindow *const s_popOuts[] = {
     &s_popSysInfo, &s_popNetInfo, &s_popGameInfo, &s_popSendMsg,
-    &s_popPlayers, &s_popMapOverview
+    &s_popPlayers, &s_popMapOverview,
+    &s_popScnPanel[0], &s_popScnPanel[1], &s_popScnPanel[2],
+    &s_popScnPanel[3], &s_popScnPanel[4], &s_popScnPanel[5],
+    &s_popScnPanel[6], &s_popScnPanel[7], &s_popScnPanel[8],
+    &s_popScnPanel[9]
 };
+static_assert(SCN_PANEL_OWNERS == 10,
+              "s_popOuts lists one scenario panel pop-out per owner");
+
+/* Whether a pop-out is one of the scenario panels', and which owner's. */
+static int popOutScnPanelOwner(const PopOutWindow *pw) {
+    for (int i = 0; i < SCN_PANEL_OWNERS; i++) {
+        if (pw == &s_popScnPanel[i]) return i;
+    }
+    return -1;
+}
 #define POPOUT_COUNT ((int)(sizeof(s_popOuts) / sizeof(s_popOuts[0])))
 
 static ImGuiContext *s_mainImguiCtx = nullptr;
@@ -1132,7 +1151,7 @@ static void popOutDestroy(PopOutWindow *pw) {
  * SDL_Renderer + ImGui context alive. See popOutCreate for why we must not
  * call SDL_DestroyRenderer while the app (and the Steam overlay) keeps
  * presenting the main window. */
-static void popOutHide(PopOutWindow *pw) {
+static void popOutHideEx(PopOutWindow *pw, bool raiseMain) {
     if (!pw->window || !pw->open) return;
     pw->open = false;
     /* A pop-out the player took full screen owns a macOS Space of its own,
@@ -1145,19 +1164,43 @@ static void popOutHide(PopOutWindow *pw) {
         SDL_SyncWindow(pw->window);
     }
     SDL_HideWindow(pw->window);
+    if (popOutScnPanelOwner(pw) >= 0) {
+        WB_LOG_INFO(WB_LOG_CAT_GUI,
+                    "[ScnPanel] owner %d pop-out hidden; flags now 0x%llx raiseMain=%d",
+                    popOutScnPanelOwner(pw),
+                    (unsigned long long)SDL_GetWindowFlags(pw->window),
+                    raiseMain ? 1 : 0);
+    }
     /* Hiding the pop-out leaves keyboard focus orphaned (notably on macOS,
      * where the OS does not auto-return key status to the main window), so
      * explicitly raise the main game window back to the front/focus. */
-    if (s_window) SDL_RaiseWindow(s_window);
+    if (raiseMain && s_window) SDL_RaiseWindow(s_window);
 }
 
-/* True while the window manager owns the pop-out's size and position — full
- * screen or zoomed. Neither is geometry the player chose, so neither is
- * remembered. */
+static void popOutHide(PopOutWindow *pw) { popOutHideEx(pw, true); }
+
+/* A hide the player did not ask for: a scenario panel's pop-out put away
+ * at round end, on disconnect, or because its script's list went. The
+ * player may be in another program by then, so the game window is not
+ * raised over it. The one exception is a pop-out that holds keyboard
+ * focus, which the raise is there to hand back; a scenario pop-out is
+ * made not focusable, so that should never happen. */
+static void popOutHideQuiet(PopOutWindow *pw) {
+    if (!pw->window || !pw->open) return;
+    popOutHideEx(pw, SDL_GetKeyboardFocus() == pw->window);
+}
+
+/* The window states whose size and position belong to the window manager:
+ * full screen, zoomed and minimised. None is geometry the player chose (a
+ * minimised window on Windows sits at -32000,-32000), so none is
+ * remembered, and none is moved by the lost-window rescue. */
+#define POPOUT_OS_MANAGED_FLAGS \
+    (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED | SDL_WINDOW_MINIMIZED)
+
+/* True while the window manager owns the pop-out's size and position. */
 static bool popOutGeometryIsOsManaged(const PopOutWindow *pw) {
     if (!pw->window) return false;
-    return (SDL_GetWindowFlags(pw->window) &
-            (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED)) != 0;
+    return (SDL_GetWindowFlags(pw->window) & POPOUT_OS_MANAGED_FLAGS) != 0;
 }
 
 /* Whether a remembered overview rect can still be handed back. A rect saved
@@ -1177,6 +1220,83 @@ static bool overviewSavedGeometryUsable(int x, int y, int w, int h) {
     if (!SDL_GetDisplayUsableBounds(disp, &usable)) return false;
     if (w > usable.w || h > usable.h) return false;
     return x >= usable.x && y >= usable.y;
+}
+
+/* The lost-window check shared by the map overview and the scenario panel
+ * pop-outs. A window counts as found when enough of its top strip, where
+ * the title bar is, sits on the usable area of some display
+ * (scnPanelRescueRect has the rule). A lost one is moved onto the primary
+ * display's usable area, centred, and cut down to fit it.
+ *
+ * Run when a pop-out opens and on every display added, removed or moved. A
+ * window the OS owns the geometry of (full screen, maximised or minimised)
+ * is left alone, and so is everything when SDL reports no displays. The
+ * displays handed to the rule are their usable bounds, falling back to the
+ * full bounds only when SDL has no usable bounds for one.
+ *
+ * The rect checked includes the window's frame, so a window whose client
+ * area is on screen but whose title bar is under the top of the display or
+ * the menu bar still counts as lost. Returns true when it moved the window. */
+#define POPOUT_RESCUE_DISPLAYS_MAX 16
+static bool popOutRescueWindow(SDL_Window *w) {
+    if (w == nullptr) return false;
+    if (SDL_GetWindowFlags(w) & POPOUT_OS_MANAGED_FLAGS) {
+        return false;
+    }
+
+    int count = 0;
+    SDL_DisplayID *ids = SDL_GetDisplays(&count);
+    if (ids == nullptr) return false;
+    ScnPanelRect displays[POPOUT_RESCUE_DISPLAYS_MAX];
+    int n = 0;
+    for (int i = 0; i < count && n < POPOUT_RESCUE_DISPLAYS_MAX; i++) {
+        SDL_Rect b;
+        if (SDL_GetDisplayUsableBounds(ids[i], &b) ||
+            SDL_GetDisplayBounds(ids[i], &b)) {
+            displays[n].x = b.x;
+            displays[n].y = b.y;
+            displays[n].w = b.w;
+            displays[n].h = b.h;
+            n++;
+        }
+    }
+    SDL_free(ids);
+
+    SDL_DisplayID primary = SDL_GetPrimaryDisplay();
+    SDL_Rect pu;
+    if (primary == 0 ||
+        (!SDL_GetDisplayUsableBounds(primary, &pu) &&
+         !SDL_GetDisplayBounds(primary, &pu))) {
+        return false;
+    }
+    const ScnPanelRect primaryUsable = { pu.x, pu.y, pu.w, pu.h };
+
+    int x = 0, y = 0, cw = 0, ch = 0;
+    SDL_GetWindowPosition(w, &x, &y);
+    SDL_GetWindowSize(w, &cw, &ch);
+    /* The frame is unknown until a window has been shown once on some
+       platforms; it then reads 0 and the client rect is checked alone. */
+    int top = 0, left = 0, bottom = 0, right = 0;
+    if (!SDL_GetWindowBordersSize(w, &top, &left, &bottom, &right)) {
+        top = left = bottom = right = 0;
+    }
+    const ScnPanelRect win = { x - left, y - top, cw + left + right,
+                               ch + top + bottom };
+    ScnPanelRect out;
+    if (!scnPanelRescueRect(&win, displays, n, &primaryUsable, &out)) {
+        return false;
+    }
+
+    int nw = out.w - left - right;
+    int nh = out.h - top - bottom;
+    if (nw < 1) nw = 1;
+    if (nh < 1) nh = 1;
+    if (nw != cw || nh != ch) SDL_SetWindowSize(w, nw, nh);
+    SDL_SetWindowPosition(w, out.x + left, out.y + top);
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
+                "[PopOut] window at %d,%d %dx%d was off every display; moved to %d,%d",
+                x, y, cw, ch, out.x + left, out.y + top);
+    return true;
 }
 
 static bool popOutBeginFrame(PopOutWindow *pw) {
@@ -1306,6 +1426,11 @@ static void mapOverviewOpen(void) {
         SDL_ShowWindow(s_popMapOverview.window);
         SDL_RaiseWindow(s_popMapOverview.window);
     }
+    /* The check above only asks whether the saved top-left corner is on a
+       display. This one also catches a window whose title bar is off the
+       top, and a re-shown window whose display has gone since it was last
+       up. Its move is saved by the WINDOW_MOVED handler. */
+    popOutRescueWindow(s_popMapOverview.window);
     gameFrontShowMapOverview = true;
 #endif
 }
@@ -4060,78 +4185,714 @@ void sdl3ImguiScnPanelDraw(struct ClientSim *cs, float originX, float originY,
     scnPanelDraw(list, originX, originY, &env);
 }
 
-/* The scenario the panel on screen is laid out for, which is the row its
-   position, size and opacity are kept under. Empty until a panel with a
-   scenario behind it is drawn, and empty again for one without: that panel
-   uses the [WINDOW] numbers and writes no row of its own.
+/* -------------------------------------------------------
+ * One scenario panel per script
+ *
+ * A round runs one scenario and up to nine mods, and each may draw a panel.
+ * The client keeps one list per script (clientSimGetScnPanelOf), and this
+ * frontend gives each its own view: an ImGui window in the game, or an OS
+ * window of its own when the player pops it out. A view is indexed by the
+ * script's position on the round's list, the owner the panel byte carries.
+ *
+ * Each view is keyed by the script's file name, which is what its rows in
+ * the preferences file are kept under: the layout row (position, size,
+ * opacity), the shown flag behind Brains > Info Overlay, and the pop-out row.
+ * ------------------------------------------------------- */
 
-   At file scope rather than inside the panel because the settings window
-   below is a function of its own and writes the opacity through the same
-   path. */
-static char s_scnPanelScenario[SCN_PANEL_SCENARIO_LEN] = "";
+/* Pop-outs are separate OS windows, which the web, Android and iOS builds
+   do not have. The tablet UI on desktop has none either; that is a runtime
+   test (scnPanelPopOutAvailable). */
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && \
+    !(defined(__APPLE__) && TARGET_OS_IOS)
+#define SCN_POPOUT_BUILT 1
+#else
+#define SCN_POPOUT_BUILT 0
+#endif
 
-/* The one place the panel's four numbers reach the preferences file, called
-   as each of the three gestures that change them ends.
+/* The gear and the X are at least this big, in screen pixels, whatever the
+   UI scale: small enough UI scales would otherwise shrink them past what a
+   finger can hit. They grow with the UI scale above it, and a panel shrunk
+   right down caps them at a share of its side. */
+#define SCN_PANEL_BTN_MIN_PX 22.0f
 
-   Two rows are written, not one. The scenario's own row is what its panel
-   opens from the next time it is played, and the [WINDOW] pair is what a
-   scenario nobody has laid out yet inherits, so it has to keep following
-   whichever panel was touched last. */
-static void scnPanelPersistLayout(void) {
+/* How long the gear and the X stay up after the pointer leaves the panel, in
+   milliseconds. A touch screen has no hover: a tap is a press and a release
+   with nothing before it, so the buttons have to still be there for the tap
+   after the one that showed them. */
+#define SCN_PANEL_CHROME_LINGER_MS 2500
+
+struct ScnPanelView {
+    /* Filled for the script now at this position. Cleared when the script
+       has no panel list, or leaves the round. */
+    bool   keyed;
+    char   key[SCN_PANEL_SCENARIO_LEN];   /* the rows' key, "" for none */
+    char   name[SCN_PANEL_SCENARIO_LEN];  /* menu, title and confirm label */
+
+    /* The Brains > Info Overlay toggle. */
+    bool   shown;
+
+    /* The in-game layout, same meaning as gameFrontScnPanelX/Y/Scale/Alpha:
+       -1 is "never set". alphaPct is the live opacity the settings slider
+       edits; alpha is the stored one. */
+    int    x, y, scale, alpha;
+    int    alphaPct;
+
+    /* ImGui is holding a position for the window. */
+    bool   placed;
+    /* The resize handle was being dragged last frame, and the side it is on
+       before the snap. */
+    bool   resizing;
+    float  rawSide;
+    /* The settings window the gear opens. */
+    bool   settingsOpen;
+    /* The gear and X stay up until this SDL tick. */
+    Uint64 chromeUntil;
+
+    /* The player's choice to have the panel in an OS window of its own, and
+       where that window sits, in desktop coordinates. */
+    bool   popped;
+    int    popX, popY, popW, popH;
+    Uint64 popChromeUntil;
+};
+static ScnPanelView s_scnViews[SCN_PANEL_OWNERS];
+
+/* A texture only draws through the renderer that made it, and every pop-out
+   has a renderer of its own. The shared ICON_SLOT_POPOUT slot and
+   activeTilesTexture belong to one pop-out at a time, so a scenario panel
+   pop-out keeps its own copies here. Outside ScnPanelView because a view is
+   reset when its script changes, and these live as long as the renderer. */
+struct ScnPanelPopTex {
+    SDL_Texture  *tiles;
+    SDL_Renderer *tilesRenderer;
+    unsigned int  tilesGen;
+    SDL_Texture  *gear;
+    SDL_Renderer *gearRenderer;
+};
+static ScnPanelPopTex s_scnPopTex[SCN_PANEL_OWNERS];
+
+/* "Pop in" and "hide" chosen inside a pop-out's own frame, done once that
+   frame ends: hiding a window in the middle of its own frame would leave the
+   frame half drawn to a window that is gone. */
+static bool s_scnPopInReq[SCN_PANEL_OWNERS];
+static bool s_scnHideReq[SCN_PANEL_OWNERS];
+
+/* The X's confirm. One at a time: the owner it is for (-1 for none), whether
+   it is up in that owner's pop-out or in the game window, a request to open
+   it on the next frame of that context, a request to cancel it, and the
+   "Don't ask again" box. */
+static int  s_scnCloseAskOwner   = -1;
+static bool s_scnCloseAskPopout  = false;
+static bool s_scnCloseAskOpenNow = false;
+static bool s_scnCloseAskCancel  = false;
+static bool s_scnCloseDontAsk    = false;
+
+static const ScnPanelList *scnPanelListOf(ClientSim *cs, int owner) {
+    if (cs == nullptr || owner < 0 || owner >= SCN_PANEL_OWNERS) return nullptr;
+    return clientSimGetScnPanelOf(cs, 0, (uint8_t)owner);
+}
+
+/* The script at a position on the round's list: the file name its rows are
+   kept under and the name it is shown by. The file name is the identity: it
+   is what the host loaded, and two scripts can share a display name. An old
+   server that sends no list still names the attached scenario, which is
+   owner 0. */
+static void scnPanelIdentity(ClientSim *cs, int owner, char *key, size_t keySz,
+                             char *name, size_t nameSz) {
+    const char *file = "";
+    const char *nm   = "";
+    if (owner < clientSimGetLobbyScriptCount(cs)) {
+        file = clientSimGetLobbyScriptFile(cs, owner);
+        nm   = clientSimGetLobbyScriptName(cs, owner);
+    }
+    if (owner == 0 && file[0] == '\0' && nm[0] == '\0') {
+        file = clientSimGetLobbyScenarioFileName(cs);
+        nm   = clientSimGetLobbyScenarioName(cs);
+    }
+    SDL_snprintf(key, keySz, "%s", file[0] != '\0' ? file : nm);
+    if (nm[0] == '\0') nm = file;
+    if (nm[0] == '\0') nm = langGetText(STR_SCNPANEL_SETTINGS_TITLE);
+    SDL_snprintf(name, nameSz, "%s", nm);
+}
+
+/* Whether the player has a way to turn a closed panel back on: the
+   Brains > Info Overlay items, in the in-window bar (renderScnPanelMenuItems)
+   or on macOS in the native bar, which populateMacMenuState hands the same
+   rows. The Deck-style controller mode and the tablet UI draw no menu bar at
+   all. Where there is no way back there is no X, and a panel hidden earlier
+   shows, so nothing is lost for good. */
+static bool scnPanelCanReopen(void) {
+    return !uiModeIsTablet() && !uiShouldUseControllerMode();
+}
+
+static bool scnPanelEffectiveShown(const ScnPanelView &v) {
+    return v.shown || !scnPanelCanReopen();
+}
+
+static bool scnPanelPopOutAvailable(void) {
+#if SCN_POPOUT_BUILT
+    return !uiModeIsTablet() && s_window != nullptr;
+#else
+    return false;
+#endif
+}
+
+/* Where a view's layout reaches the preferences file, as each gesture that
+   changes it ends. Two rows, as before there was more than one panel: the
+   script's own row, and the [WINDOW] numbers a script with no row yet
+   inherits, which follow whichever panel was touched last. */
+static void scnPanelPersistLayout(const ScnPanelView &v) {
+    gameFrontScnPanelX     = v.x;
+    gameFrontScnPanelY     = v.y;
+    gameFrontScnPanelScale = v.scale;
+    gameFrontScnPanelAlpha = v.alpha;
     gameFrontSaveWindowSettings();
-    if (s_scnPanelScenario[0] != '\0') {
-        gameFrontSetScnPanelLayout(s_scnPanelScenario, gameFrontScnPanelX,
-                                   gameFrontScnPanelY, gameFrontScnPanelScale,
-                                   gameFrontScnPanelAlpha);
+    if (v.key[0] != '\0') {
+        gameFrontSetScnPanelLayout(v.key, v.x, v.y, v.scale, v.alpha);
     }
 }
 
-/* The scenario panel's settings window, and the alpha percent it edits.
-   Opened by the gear in the panel's top-right corner and closed by that gear
-   again or by its own close button, so `open` is owned by the caller and
-   written back through the pointer.
+static void scnPanelSavePopout(int owner) {
+    const ScnPanelView &v = s_scnViews[owner];
+    if (v.key[0] == '\0') return;
+    gameFrontSetScnPanelPopout(v.key, 0, v.popped, v.popX, v.popY, v.popW,
+                               v.popH);
+}
 
-   A window rather than a popup, because a popup closes the moment the
-   pointer goes anywhere else and the whole point of an opacity control is to
-   watch the panel while it moves. Submitted after the panel's End for the
-   plain reason that one ImGui window cannot be opened inside another.
+/* The view's script has gone: its list was dropped (the round ended, the
+   script was removed) or another script now sits at its position. The
+   pop-out is hidden, not destroyed (see popOutHide), and the popped row is
+   left as it is, so the script's panel comes back popped out next time. */
+static void scnPanelViewRetire(int owner) {
+    if (s_popScnPanel[owner].open) popOutHideQuiet(&s_popScnPanel[owner]);
+    if (s_scnCloseAskOwner == owner) s_scnCloseAskCancel = true;
+    s_scnPopInReq[owner] = false;
+    s_scnHideReq[owner]  = false;
+    memset(&s_scnViews[owner], 0, sizeof(s_scnViews[owner]));
+}
 
-   The panel reads alphaPct every frame, for its backing and for the alpha
-   it hands the list drawer, so the slider is live: the square behind the
-   window fades as the grab is dragged, and only the value the drag finishes
-   on reaches the preferences file. */
-static void renderScenarioPanelSettings(bool *open, float gearX, float gearY,
-                                        int *alphaPct) {
-    if (!*open) return;
+static void scnPanelViewLoad(int owner, const char *key, const char *name) {
+    ScnPanelView &v = s_scnViews[owner];
+    memset(&v, 0, sizeof(v));
+    v.keyed = true;
+    SDL_snprintf(v.key, sizeof(v.key), "%s", key);
+    SDL_snprintf(v.name, sizeof(v.name), "%s", name);
+    v.shown = (key[0] != '\0') ? gameFrontGetScnPanelShown(key) : true;
+
+    /* A script with no layout row of its own takes the [WINDOW] size and
+       opacity, which is the layout the player last chose. The position too
+       for the round's first script, as before; the others open at the
+       default corner, stacked, so two new panels do not land on each other. */
+    int sx, sy, ss, sa;
+    if (key[0] != '\0' && gameFrontGetScnPanelLayout(key, &sx, &sy, &ss, &sa)) {
+        v.x = sx;
+        v.y = sy;
+        v.scale = ss;
+        v.alpha = sa;
+    } else {
+        v.x     = (owner == 0) ? gameFrontScnPanelX : -1;
+        v.y     = (owner == 0) ? gameFrontScnPanelY : -1;
+        v.scale = gameFrontScnPanelScale;
+        v.alpha = gameFrontScnPanelAlpha;
+    }
+    v.alphaPct = (v.alpha >= 0) ? v.alpha : SCN_PANEL_ALPHA_DEFAULT;
+    if (v.alphaPct < 0) v.alphaPct = 0;
+    if (v.alphaPct > 100) v.alphaPct = 100;
+
+    bool open;
+    int px, py, pw, ph;
+    if (key[0] != '\0' &&
+        gameFrontGetScnPanelPopout(key, 0, &open, &px, &py, &pw, &ph)) {
+        v.popped = open;
+        v.popX = px;
+        v.popY = py;
+        v.popW = pw;
+        v.popH = ph;
+    } else {
+        v.popped = false;
+        v.popX = -1;
+        v.popY = -1;
+        v.popW = SCN_PANEL_POPOUT_DEFAULT_PX;
+        v.popH = SCN_PANEL_POPOUT_DEFAULT_PX;
+    }
+}
+
+/* Brings the views in line with the scripts that have a panel list now.
+   Cheap, and called from both the menu and the panel pass, so whichever
+   runs first in a frame sees the round as it is. */
+static void scnPanelViewsSync(ClientSim *cs) {
+    for (int i = 0; i < SCN_PANEL_OWNERS; i++) {
+        ScnPanelView &v = s_scnViews[i];
+        if (scnPanelListOf(cs, i) == nullptr) {
+            if (v.keyed) scnPanelViewRetire(i);
+            continue;
+        }
+        char key[SCN_PANEL_SCENARIO_LEN];
+        char name[SCN_PANEL_SCENARIO_LEN];
+        scnPanelIdentity(cs, i, key, sizeof(key), name, sizeof(name));
+        if (v.keyed && strcmp(key, v.key) == 0) {
+            if (strcmp(name, v.name) != 0) {
+                SDL_snprintf(v.name, sizeof(v.name), "%s", name);
+            }
+            continue;
+        }
+        if (v.keyed) scnPanelViewRetire(i);
+        scnPanelViewLoad(i, key, name);
+    }
+}
+
+static void scnPanelViewsRetireAll(void) {
+    for (int i = 0; i < SCN_PANEL_OWNERS; i++) {
+        if (s_scnViews[i].keyed || s_popScnPanel[i].open) scnPanelViewRetire(i);
+    }
+}
+
+static bool scnPanelAnyListed(void) {
+    for (int i = 0; i < SCN_PANEL_OWNERS; i++) {
+        if (s_scnViews[i].keyed) return true;
+    }
+    return false;
+}
+
+/* The menu toggle, and what the X's confirm does. Hiding takes the view off
+   screen in both forms. The popped choice is kept, so turning it back on
+   brings it back the way it was. */
+static void scnPanelSetShown(int owner, bool shown) {
+    ScnPanelView &v = s_scnViews[owner];
+    v.shown = shown;
+    if (v.key[0] != '\0') gameFrontSetScnPanelShown(v.key, shown);
+    if (!shown) {
+        v.settingsOpen = false;
+        v.placed       = false;
+        v.resizing     = false;
+        if (s_popScnPanel[owner].open) popOutHide(&s_popScnPanel[owner]);
+    }
+}
+
+/* The X, and the confirm's Close: from a pop-out's own frame the hide waits
+   for that frame to end. */
+static void scnPanelHideFrom(int owner, bool inPopout) {
+    if (inPopout) {
+        s_scnHideReq[owner] = true;
+    } else {
+        scnPanelSetShown(owner, false);
+    }
+}
+
+static void scnPanelRequestClose(int owner, bool inPopout) {
+    if (!scnPanelCanReopen()) return;
+    if (!gameFrontScnPanelCloseAsk) {
+        scnPanelHideFrom(owner, inPopout);
+        return;
+    }
+    s_scnCloseAskOwner   = owner;
+    s_scnCloseAskPopout  = inPopout;
+    s_scnCloseAskOpenNow = true;
+    s_scnCloseAskCancel  = false;
+    s_scnCloseDontAsk    = false;
+}
+
+static void scnPanelPopOut(int owner) {
+    ScnPanelView &v = s_scnViews[owner];
+    v.popped       = true;
+    v.settingsOpen = false;
+    scnPanelSavePopout(owner);
+    /* The panel pass opens the window on the next frame. */
+}
+
+static void scnPanelPopIn(int owner) {
+    ScnPanelView &v = s_scnViews[owner];
+    WB_LOG_INFO(WB_LOG_CAT_GUI, "[ScnPanel] owner %d pop in; window open=%d",
+                owner, s_popScnPanel[owner].open ? 1 : 0);
+    v.popped = false;
+    v.placed = false;
+    if (s_popScnPanel[owner].open) popOutHide(&s_popScnPanel[owner]);
+    if (s_scnCloseAskOwner == owner && s_scnCloseAskPopout) {
+        s_scnCloseAskCancel = true;
+    }
+    scnPanelSavePopout(owner);
+}
+
+/* Runs one SDL window call with a hint set to "0" and puts the hint back
+   after. A copy of the whole previous value, whatever its length, since the
+   set may free the string SDL_GetHint returned. */
+template <typename Fn>
+static void scnPanelWithHintOff(const char *hint, Fn call) {
+    const char *prev = SDL_GetHint(hint);
+    char *saved = (prev != nullptr) ? SDL_strdup(prev) : nullptr;
+    SDL_SetHint(hint, "0");
+    call();
+    if (saved != nullptr) {
+        SDL_SetHint(hint, saved);
+        SDL_free(saved);
+    } else {
+        SDL_ResetHint(hint);
+    }
+}
+
+/* Shows a window in front of the game window without handing it keyboard
+   focus. The pop-out is created SDL_WINDOW_NOT_FOCUSABLE already; the hints
+   cover a platform that honours one and not the other.
+
+   Two calls, because showing without activation is not enough on its own:
+   SDL's Cocoa backend orders a window shown that way *below* the key
+   window, which is the game window, so the pop-out came up behind the game
+   and could not be seen until the game window was moved. The raise with
+   activation off is a plain order-to-front on every backend (orderFront:
+   on macOS, SWP_NOACTIVATE on Windows, XRaiseWindow on X11), which puts it
+   in front without making it key.
+
+   If focus lands there anyway it goes straight back to the game window:
+   input.c steers the tank only while the main window or the map overview
+   has focus, so a panel window holding it would stop the tank. */
+static void scnPanelShowWithoutFocus(SDL_Window *w) {
+    scnPanelWithHintOff(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN,
+                        [w]() { SDL_ShowWindow(w); });
+    scnPanelWithHintOff(SDL_HINT_WINDOW_ACTIVATE_WHEN_RAISED,
+                        [w]() { SDL_RaiseWindow(w); });
+    if (SDL_GetKeyboardFocus() == w && s_window != nullptr) {
+        SDL_RaiseWindow(s_window);
+    }
+}
+
+/* Opens, or re-shows, a view's pop-out at its saved place and size. Not
+   through popOutCreate's re-show path, which raises the window and would
+   give it focus. */
+static bool scnPanelPopOutShow(int owner) {
+    ScnPanelView &v  = s_scnViews[owner];
+    PopOutWindow *pw = &s_popScnPanel[owner];
+    const int w = (v.popW > 0) ? v.popW : SCN_PANEL_POPOUT_DEFAULT_PX;
+    const int h = (v.popH > 0) ? v.popH : SCN_PANEL_POPOUT_DEFAULT_PX;
+
+    if (pw->window == nullptr) {
+        if (!popOutCreate(pw, v.name, w, h,
+                          SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN |
+                              SDL_WINDOW_NOT_FOCUSABLE)) {
+            return false;
+        }
+        SDL_SetWindowMinimumSize(pw->window, SCN_PANEL_POPOUT_MIN_PX,
+                                 SCN_PANEL_POPOUT_MIN_PX);
+        /* This window's ImGui never changes the OS cursor. The gear and the
+           X ask for a hand, and on macOS that request from a window that can
+           never be key makes SDL's Cocoa code see "the wrong cursor is on
+           screen" on every pointer move and rebuild the window's cursor
+           rects, which re-creates its tracking area and fires a mouse-leave
+           each time. ImGui then forgets where the pointer is every frame,
+           and nothing in the window can be clicked. The cursor stays the
+           game window's, which is the key window and the one whose cursor
+           macOS shows. */
+        {
+            ImGuiContext *saved = ImGui::GetCurrentContext();
+            ImGui::SetCurrentContext(pw->imguiCtx);
+            ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+            ImGui::SetCurrentContext(saved);
+        }
+#ifdef _WIN32
+        /* Owned by the game window, so it stays above it in the stacking
+           order. Without this a full screen game window, or the Full Screen
+           Map, covers the pop-out the moment the game window is clicked, and
+           a pop-out on the game's own display could not be found to drag to
+           another one. Owned windows stay above their owner only, not above
+           other programs. Windows only: on macOS a child window moves with
+           its parent, which is the opposite of what a pop-out is for. */
+        if (s_window != nullptr) SDL_SetWindowParent(pw->window, s_window);
+#endif
+    } else {
+        SDL_SetWindowTitle(pw->window, v.name);
+        SDL_SetWindowSize(pw->window, w, h);
+        pw->open   = true;
+        pw->width  = w;
+        pw->height = h;
+    }
+
+    if (v.popX != -1 || v.popY != -1) {
+        SDL_SetWindowPosition(pw->window, v.popX, v.popY);
+    }
+    popOutRescueWindow(pw->window);
+    scnPanelShowWithoutFocus(pw->window);
+
+    /* What the window really came up at, after the OS and the rescue had
+       their say, is what is remembered. */
+    int x = 0, y = 0, cw = 0, ch = 0;
+    SDL_GetWindowPosition(pw->window, &x, &y);
+    SDL_GetWindowSize(pw->window, &cw, &ch);
+    if (cw > 0 && ch > 0) {
+        v.popX = x;
+        v.popY = y;
+        v.popW = cw;
+        v.popH = ch;
+        pw->width  = cw;
+        pw->height = ch;
+    }
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
+                "[ScnPanel] owner %d pop-out shown at %d,%d %dx%d; flags 0x%llx",
+                owner, x, y, cw, ch,
+                (unsigned long long)SDL_GetWindowFlags(pw->window));
+    scnPanelSavePopout(owner);
+    return true;
+}
+
+/* The pop-out's tile sheet, on its own renderer, rebuilt when the skin or
+   Tile Detail changes. Built at twice the 1x size, like the players
+   pop-out's copy: the panel's drawer addresses the sheet in 1x units
+   normalised against TILE_FILE_X/Y, so a sheet at any scale works. The
+   attempt is recorded before it is made, so a failed build is not retried
+   every frame. */
+static SDL_Texture *scnPopEnsureTiles(int owner, SDL_Renderer *r) {
+    ScnPanelPopTex &t = s_scnPopTex[owner];
+    const unsigned int gen = sdl3DrawGetTilesGeneration();
+    if (t.tilesRenderer == r && t.tilesGen == gen) return t.tiles;
+    if (t.tiles) {
+        SDL_DestroyTexture(t.tiles);
+        t.tiles = nullptr;
+    }
+    t.tilesRenderer = r;
+    t.tilesGen      = gen;
+    SDL_Surface *sheet = tileLoaderBuildSheet(TILE_SIZE_X * 2);
+    if (!sheet) {
+        WB_LOG_ERROR(WB_LOG_CAT_ASSET, "[ScnPanel] tileLoaderBuildSheet failed");
+        return nullptr;
+    }
+    t.tiles = SDL_CreateTextureFromSurface(r, sheet);
+    SDL_DestroySurface(sheet);
+    if (!t.tiles) {
+        WB_LOG_ERROR(WB_LOG_CAT_ASSET,
+                     "[ScnPanel] SDL_CreateTextureFromSurface failed: %s",
+                     SDL_GetError());
+        return nullptr;
+    }
+    SDL_SetTextureBlendMode(t.tiles, SDL_BLENDMODE_BLEND);
+    return t.tiles;
+}
+
+static SDL_Texture *scnPopEnsureGear(int owner, SDL_Renderer *r) {
+    ScnPanelPopTex &t = s_scnPopTex[owner];
+    if (t.gearRenderer == r) return t.gear;
+    if (t.gear) {
+        SDL_DestroyTexture(t.gear);
+        t.gear = nullptr;
+    }
+    t.gearRenderer = r;
+    t.gear = imguiLoadSvgIconWhite(r, "data/ui/settings.svg", WBN_ICON_RASTER_PX);
+    return t.gear;
+}
+
+/* The side of the gear and of the X. */
+static float scnPanelButtonSide(float side) {
+    const float b = ImMax(SCN_PANEL_BTN_MIN_PX, SCN_PANEL_BAR_PX * s_uiScale);
+    return ImMin(b, side * 0.3f);
+}
+
+struct ScnPanelButtons {
+    bool gearHot, gearClicked;
+    bool closeHot, closeClicked;
+    float gearX;    /* the gear's left edge, for the settings window */
+};
+
+/* The gear and the X, as buttons: the X in the top-right corner of the
+   square and the gear just left of it. Submitted every frame whether or not
+   they are drawn, so a tap lands on them even while they are hidden. A
+   button fires on release, which is what a tap on a touch screen is. */
+static ScnPanelButtons scnPanelSubmitButtons(ImVec2 pos, float side, float btn,
+                                             bool withClose) {
+    ScnPanelButtons b = {};
+    const float closeX = pos.x + side - btn;
+    b.gearX = withClose ? closeX - btn : closeX;
+
+    ImGui::SetCursorScreenPos(ImVec2(b.gearX, pos.y));
+    b.gearClicked = ImGui::InvisibleButton("##scnpanelsettings", ImVec2(btn, btn));
+    b.gearHot     = ImGui::IsItemHovered();
+    if (b.gearHot || ImGui::IsItemActive()) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    }
+    if (withClose) {
+        ImGui::SetCursorScreenPos(ImVec2(closeX, pos.y));
+        b.closeClicked = ImGui::InvisibleButton("##scnpanelclose", ImVec2(btn, btn));
+        b.closeHot     = ImGui::IsItemHovered();
+        if (b.closeHot || ImGui::IsItemActive()) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        }
+    }
+    return b;
+}
+
+/* Draws the two buttons scnPanelSubmitButtons placed. A pixel in from the
+   right edge, since a window's draw list is clipped to the window's rect
+   and art at pos.x + side would lose its last column. gearTex may be NULL:
+   the art is an asset and can be missing, and the fallback is three short
+   bars, a sliders shape. */
+static void scnPanelDrawButtons(ImDrawList *dl, ImVec2 pos, float side,
+                                float btn, bool withClose,
+                                SDL_Texture *gearTex,
+                                const ScnPanelButtons &b, bool gearLit) {
+    const float x1      = pos.x + side - 1.0f;
+    const float closeX0 = x1 - btn;
+    const float gearX1  = withClose ? closeX0 : x1;
+    const float gearX0  = gearX1 - btn;
+
+    const ImU32 gearCol = (b.gearHot || gearLit)
+                              ? IM_COL32(255, 255, 255, 245)
+                              : IM_COL32(235, 235, 235, 170);
+    const float gi = btn * 0.1f;
+    if (gearTex != nullptr) {
+        dl->AddImage((ImTextureID)gearTex, ImVec2(gearX0 + gi, pos.y + gi),
+                     ImVec2(gearX1 - gi, pos.y + btn - gi), ImVec2(0.0f, 0.0f),
+                     ImVec2(1.0f, 1.0f), gearCol);
+    } else {
+        const float tickH = ImMax(1.0f, btn * 0.12f);
+        const float tickW = btn * 0.62f;
+        const float tickX = gearX0 + btn * 0.5f - tickW * 0.5f;
+        for (int i = 0; i < 3; i++) {
+            const float tickY =
+                pos.y + btn * (0.28f + 0.22f * (float)i) - tickH * 0.5f;
+            dl->AddRectFilled(ImVec2(tickX, tickY),
+                              ImVec2(tickX + tickW, tickY + tickH), gearCol);
+        }
+    }
+
+    if (withClose) {
+        /* Red under the pointer, the colour a window's own close box goes. */
+        if (b.closeHot) {
+            dl->AddRectFilled(ImVec2(closeX0, pos.y), ImVec2(x1, pos.y + btn),
+                              IM_COL32(196, 43, 28, 230));
+        }
+        const ImU32 xCol = b.closeHot ? IM_COL32(255, 255, 255, 255)
+                                      : IM_COL32(235, 235, 235, 170);
+        const float in = btn * 0.3f;
+        const float th = ImMax(1.5f, btn * 0.08f);
+        dl->AddLine(ImVec2(closeX0 + in, pos.y + in),
+                    ImVec2(x1 - in, pos.y + btn - in), xCol, th);
+        dl->AddLine(ImVec2(x1 - in, pos.y + in),
+                    ImVec2(closeX0 + in, pos.y + btn - in), xCol, th);
+    }
+}
+
+/* The X's confirm, in the context it was asked from: the game window, or the
+   pop-out whose X it was (ctxOwner). Called every frame in each context, so
+   a confirm left open when its view went away is closed rather than left on
+   the popup stack.
+
+   A pop-out never has keyboard focus, so Esc and gamepad B cannot reach a
+   confirm up in one. The game window's pass turns those into
+   s_scnCloseAskCancel for it (renderScenarioPanels). */
+static void renderScnPanelCloseConfirm(bool inPopout, int ctxOwner) {
+    const bool mine = s_scnCloseAskOwner >= 0 &&
+                      s_scnCloseAskPopout == inPopout &&
+                      (!inPopout || s_scnCloseAskOwner == ctxOwner);
+    const char *scriptName =
+        mine ? s_scnViews[s_scnCloseAskOwner].name : "";
+
+    MessageArgs targs = {};
+    SDL_snprintf(targs.string1, sizeof(targs.string1), "%s", scriptName);
+    char title[256];
+    SDL_snprintf(title, sizeof(title), "%s###scnpanelclose",
+                 langGetTextFmt(STR_SCNPANEL_CLOSE_TITLE, &targs));
+
+    if (mine && s_scnCloseAskOpenNow) {
+        ImGui::OpenPopup(title);
+        s_scnCloseAskOpenNow = false;
+    }
+
+    /* Sized for a small pop-out as well as the game window: never wider
+       than the window it is in, with the text wrapped to fit. */
+    const ImVec2 ds = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowPos(ImVec2(ds.x * 0.5f, ds.y * 0.5f),
+                            ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f), ds);
+
+    /* One fade per ImGui context: the game window's, and each pop-out's,
+       so two confirms never share a counter. */
+    static float s_fadeScnClose[SCN_PANEL_OWNERS + 1] = {};
+    const int fadeIdx = (inPopout && ctxOwner >= 0 &&
+                         ctxOwner < SCN_PANEL_OWNERS) ? ctxOwner + 1 : 0;
+    bool keep = true;
+    bool began = ImGui::BeginPopupModal(title, &keep,
+                                        ImGuiWindowFlags_AlwaysAutoResize |
+                                            ImGuiWindowFlags_NoSavedSettings);
+    if (began) {
+        if (!mine || s_scnCloseAskCancel || s_closeAllPopups) {
+            ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+            if (mine) {
+                s_scnCloseAskOwner  = -1;
+                s_scnCloseAskCancel = false;
+            }
+            return;
+        }
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                            imguiPopupFadeAlpha(&s_fadeScnClose[fadeIdx]));
+
+        const float pad   = ImGui::GetStyle().WindowPadding.x;
+        const float wrapW = ImMin(ds.x - pad * 4.0f,
+                                  ImGui::GetFontSize() * 24.0f);
+        MessageArgs bargs = {};
+        SDL_snprintf(bargs.string1, sizeof(bargs.string1), "%s",
+                     langGetText(STR_MENU_BRAINS));
+        SDL_snprintf(bargs.string2, sizeof(bargs.string2), "%s",
+                     langGetText(STR_MENU_INFO_OVERLAY));
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImMax(wrapW, 1.0f));
+        ImGui::TextUnformatted(langGetTextFmt(STR_SCNPANEL_CLOSE_BODY, &bargs));
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
+        ImGui::Checkbox(langGetText(STR_CTRL_PROMPT_DONTASK),
+                        &s_scnCloseDontAsk);
+
+        const int f = WBUI::DialogFooter(langGetText(STR_CANCEL),
+                                         langGetText(STR_CLOSE));
+        if (f == WBUI::FOOTER_CONFIRM) {
+            const int owner = s_scnCloseAskOwner;
+            if (s_scnCloseDontAsk) {
+                gameFrontScnPanelCloseAsk = false;
+                gameFrontSaveCurrentPrefs();
+            }
+            ImGui::CloseCurrentPopup();
+            s_scnCloseAskOwner = -1;
+            scnPanelHideFrom(owner, inPopout);
+        } else if (f == WBUI::FOOTER_CANCEL) {
+            ImGui::CloseCurrentPopup();
+            s_scnCloseAskOwner = -1;
+        }
+        ImGui::PopStyleVar();
+        ImGui::EndPopup();
+    }
+    /* Closed by its own title-bar close box, or gone without a button:
+       both are a cancel. */
+    if (mine && s_scnCloseAskOwner >= 0 && (!keep || !began) &&
+        !s_scnCloseAskOpenNow) {
+        s_scnCloseAskOwner  = -1;
+        s_scnCloseAskCancel = false;
+    }
+}
+
+/* One view's settings window, opened by its gear. A window rather than a
+   popup, because a popup closes the moment the pointer goes anywhere else
+   and the whole point of an opacity control is to watch the panel while it
+   moves. Submitted after the panel's End, since one ImGui window cannot be
+   opened inside another.
+
+   The view reads alphaPct every frame, so the slider is live, and only the
+   value a drag finishes on reaches the preferences file. */
+static void renderScenarioPanelSettings(int owner, float gearX, float gearY) {
+    ScnPanelView &v = s_scnViews[owner];
+    if (!v.settingsOpen) return;
 
     /* Beside the gear the first time it is opened, and the player's to move
-       after that, which is what Appearing rather than Always buys. */
+       after that. */
     const ImVec2 display = ImGui::GetIO().DisplaySize;
     ImGui::SetNextWindowPos(ImVec2(gearX + SCN_PANEL_DIALOG_GAP,
                                    gearY + SCN_PANEL_DIALOG_GAP),
                             ImGuiCond_Appearing);
 
-    char title[128];
-    snprintf(title, sizeof(title), "%s###scnpanelsettings",
-             langGetText(STR_SCNPANEL_SETTINGS_TITLE));
+    char title[SCN_PANEL_SCENARIO_LEN + 32];
+    SDL_snprintf(title, sizeof(title), "%s###scnpanelsettings%d", v.name, owner);
 
-    /* AlwaysAutoResize because there is one row in it and a window sized to
-       its contents needs no resize grip of its own to argue with the panel's.
-       NoSavedSettings because this is a transient thing opened off a grip:
-       remembering where it sat in a previous session would put it somewhere
-       with no relation to where the panel is now. */
-    if (ImGui::Begin(title, open,
+    if (ImGui::Begin(title, &v.settingsOpen,
                      ImGuiWindowFlags_AlwaysAutoResize |
                      ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_NoDocking |
                      ImGuiWindowFlags_NoCollapse)) {
-        /* Held inside the main window, for the reason the panel itself is:
-           a window whose title bar is off screen has nothing left to grab to
-           drag it back. Clamped here rather than before Begin because the
-           window sizes itself to its contents and its size is not known
-           until it has been laid out, and clamped every frame rather than
-           only on the first because the gear can be near an edge, the main
-           window can be made smaller, and ImGui re-clamps neither. */
+        /* Held inside the main window, where its title bar can be grabbed.
+           Clamped every frame, since the window sizes itself to its contents
+           and the main window can shrink. */
         const ImVec2 winPos  = ImGui::GetWindowPos();
         const ImVec2 winSize = ImGui::GetWindowSize();
         float keepX = winPos.x, keepY = winPos.y;
@@ -4143,148 +4904,47 @@ static void renderScenarioPanelSettings(bool *open, float gearX, float gearY,
             ImGui::SetWindowPos(ImVec2(keepX, keepY));
         }
 
+        /* Into an OS window of its own, which can go to another display. */
+        if (scnPanelPopOutAvailable()) {
+            if (ImGui::Button(langGetText(STR_SCNPANEL_POP_OUT))) {
+                scnPanelPopOut(owner);
+            }
+            imguiHandOnHover();
+            ImGui::Spacing();
+        }
+
         char sliderLbl[128];
-        snprintf(sliderLbl, sizeof(sliderLbl), "%s###scnAlpha",
-                 langGetText(STR_SCNPANEL_OPACITY_LBL));
+        SDL_snprintf(sliderLbl, sizeof(sliderLbl), "%s###scnAlpha",
+                     langGetText(STR_SCNPANEL_OPACITY_LBL));
         ImGui::SetNextItemWidth(SCN_PANEL_DIALOG_SLIDER_W);
-        ImGui::SliderInt(sliderLbl, alphaPct, 0, 100, "%d%%");
-        /* Written when the grab is let go and not on every frame it moves,
-           the same as the panel's position and size: a drag is a burst of
-           values and only the one it ends on is worth a preferences write.
-           DeactivatedAfterEdit rather than Deactivated, so a click that
-           lands on the slider and changes nothing writes nothing. */
+        ImGui::SliderInt(sliderLbl, &v.alphaPct, 0, 100, "%d%%");
         if (ImGui::IsItemDeactivatedAfterEdit()) {
-            if (*alphaPct < 0) *alphaPct = 0;
-            if (*alphaPct > 100) *alphaPct = 100;
-            if (*alphaPct != gameFrontScnPanelAlpha) {
-                gameFrontScnPanelAlpha = *alphaPct;
-                scnPanelPersistLayout();
+            if (v.alphaPct < 0) v.alphaPct = 0;
+            if (v.alphaPct > 100) v.alphaPct = 100;
+            if (v.alphaPct != v.alpha) {
+                v.alpha = v.alphaPct;
+                scnPanelPersistLayout(v);
             }
         }
-        /* What the number means, because "opacity" alone does not say what
-           it is the opacity of. It is everything the panel puts on screen,
-           its backing and the scenario's drawing together, and it is nothing
-           else: the square's empty parts stay as clear as they are now, and
-           the border, the title bar and the resize grip keep their own alpha
-           so a panel taken to zero can still be found and turned back up. */
+        /* It is everything the panel draws, backing and drawing together,
+           and nothing else: empty parts stay clear, and the border, the
+           buttons and the grips keep their own alpha so a panel taken to
+           zero can still be found. */
         ImGui::TextDisabled("%s", langGetText(STR_SCNPANEL_OPACITY_LINE1));
         ImGui::TextDisabled("%s", langGetText(STR_SCNPANEL_OPACITY_LINE2));
     }
     ImGui::End();
 }
 
-static void renderScenarioPanel(ClientSim *cs) {
-    /* Whether ImGui is already holding a position for the window. Cleared
-       whenever the panel is not drawn, so the next list to arrive places it
-       again from what was saved rather than from wherever the last one that
-       shared this window id happened to sit. */
-    static bool s_scnPanelPlaced = false;
+/* One view, in the game window. stack is how many views were placed ahead
+   of it this frame, which is where a view with no saved position opens:
+   below the ones before it down the right of the game view. */
+static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
+    ScnPanelView &v = s_scnViews[owner];
 
-    /* The side the resize drag is really on, before the snap. The snap is
-       applied to what is shown and to what is stored, never back into this:
-       a value that has been pulled onto a cardinal cannot leave it without
-       the pointer covering the snap distance twice, which feels like the
-       panel is stuck. Accumulate raw, show snapped. */
-    static float s_scnPanelRawSide = 0.0f;
-
-    /* Whether the resize handle was being dragged on the frame before this
-       one. The window's size has to be set before Begin, so a drag read
-       inside the window lands on the next frame and this is what carries it
-       across. */
-    static bool s_scnPanelResizing = false;
-
-    /* Whether the settings window the gear opens is up, and the opacity
-       percent it edits.
-
-       The percent is taken from the preference once, the first time a panel
-       is drawn, and belongs to the settings window after that. Re-reading the
-       preference every frame would be wrong now that the edit happens in a
-       window submitted later in the same frame: the read at the top would
-       stamp the stored value back over the live one before the player had
-       seen a single frame of what they were dragging. */
-    static bool s_scnPanelSettingsOpen = false;
-    static bool s_scnPanelAlphaSeeded  = false;
-    static int  s_scnPanelAlphaPct     = SCN_PANEL_ALPHA_DEFAULT;
-
-    const bool shown = sdl3ImguiScnPanelShown(cs);
-
-    /* Tablet mode is the mobile frontends. They map the square into a slot
-       of their own rather than into a window the player drags, so this one
-       stays out of their way, grips and settings window and all.
-
-       The settings window is closed on the way out rather than left standing.
-       It is the panel's own window and there is no panel: left open it would
-       be a stray box with a slider in it, adjusting something that is not on
-       screen and with no gear anywhere to shut it again. */
-    if (cs == nullptr || uiModeIsTablet() || !shown) {
-        s_scnPanelPlaced        = false;
-        s_scnPanelResizing      = false;
-        s_scnPanelSettingsOpen  = false;
-        return;
-    }
-
-    /* Which scenario's panel this is, and so which row its layout comes out
-       of. The file name is the identity to key on: it is what the host
-       actually loaded, and two scenarios can carry the same display name.
-       The display name is there for one that arrived without a file name,
-       and both empty is a game with no scenario behind the panel at all —
-       that one keeps the [WINDOW] numbers and never writes a row.
-
-       Truncated into a buffer of the same size as the one it is compared
-       against, so a name too long to hold is cut the same way on both sides.
-       A name that compared unequal every frame would re-place the panel
-       every frame, and a panel being placed cannot be dragged. */
-    char scnKey[SCN_PANEL_SCENARIO_LEN];
-    {
-        const char *scnName = clientSimGetLobbyScenarioFileName(cs);
-        if (scnName[0] == '\0') scnName = clientSimGetLobbyScenarioName(cs);
-        SDL_snprintf(scnKey, sizeof(scnKey), "%s", scnName);
-    }
-
-    if (strcmp(scnKey, s_scnPanelScenario) != 0) {
-        SDL_snprintf(s_scnPanelScenario, sizeof(s_scnPanelScenario), "%s",
-                     scnKey);
-        /* A scenario with no row of its own leaves the globals holding
-           whatever the last panel left there, which is deliberate: it is the
-           layout the player last chose, and it is a better guess at what
-           they want than the top-right corner at full size. */
-        int savedX, savedY, savedScale, savedAlpha;
-        if (gameFrontGetScnPanelLayout(s_scnPanelScenario, &savedX, &savedY,
-                                       &savedScale, &savedAlpha)) {
-            gameFrontScnPanelX     = savedX;
-            gameFrontScnPanelY     = savedY;
-            gameFrontScnPanelScale = savedScale;
-            gameFrontScnPanelAlpha = savedAlpha;
-        }
-        /* Lay the panel out again from those numbers instead of leaving it
-           where the last scenario's panel sat. The position is only pushed
-           at ImGui while Placed is down and the opacity is only taken from
-           the preference while Seeded is, so both have to come down here. A
-           drag cannot cross the change either: the grip it started on
-           belongs to a panel that is gone. */
-        s_scnPanelPlaced      = false;
-        s_scnPanelAlphaSeeded = false;
-        s_scnPanelResizing    = false;
-        s_scnPanelRawSide     = 0.0f;
-    }
-
-    /* The gear's artwork, through the same per-renderer icon slots every
-       other SVG badge here uses. */
-    ensureWbnIconsLoaded();
-
-    if (!s_scnPanelAlphaSeeded) {
-        s_scnPanelAlphaSeeded = true;
-        s_scnPanelAlphaPct    = (gameFrontScnPanelAlpha >= 0)
-                                    ? gameFrontScnPanelAlpha
-                                    : SCN_PANEL_ALPHA_DEFAULT;
-        if (s_scnPanelAlphaPct < 0) s_scnPanelAlphaPct = 0;
-        if (s_scnPanelAlphaPct > 100) s_scnPanelAlphaPct = 100;
-    }
-
-    /* The game's own zoom, as the pixels it actually comes out at on screen:
-       in Custom zoom the game is drawn into a render target at the integer
-       zoom and then blitted at a fractional scale, so the two multiply. The
-       same number the vote widgets anchor themselves with. */
+    /* The game's own zoom, as the pixels it comes out at on screen: in
+       Custom zoom the game is drawn at the integer zoom and blitted at a
+       fractional scale, so the two multiply. */
     int rawZoom = sdl3DrawGetZoomFactor();
     if (rawZoom < 1) rawZoom = 1;
     float gameScale = 1.0f;
@@ -4292,21 +4952,13 @@ static void renderScenarioPanel(ClientSim *cs) {
     if (gameScale <= 0.0f) gameScale = 1.0f;
     const float scale = (float)rawZoom * gameScale;
 
-    /* The size the zoom alone gives the panel, which is what the player's own
-       scale is a percent of. */
+    /* The size the zoom alone gives the panel, which the player's own scale
+       is a percent of. */
     const float baseSide = (float)SCN_PANEL_UNITS * scale;
-
-    /* The main window, which is what everything below is kept inside: the
-       size the panel may grow to and the positions it may be left at. */
     const ImVec2 display = ImGui::GetIO().DisplaySize;
 
-    /* What the drag is allowed to reach. The floor and the ceiling are the
-       tighter of two things each: the panel must stay big enough to hold its
-       handles and small enough to fit the shorter side of the display, and it
-       must also stay inside the percent range the preference is stored in, or
-       letting go of the drag would jerk the panel back to the nearest percent
-       the file can hold. A display small enough to put the ceiling under the
-       floor gets the ceiling for both. */
+    /* What the drag may reach: big enough for its handles, small enough for
+       the display, and inside the percent range the preference holds. */
     float sideMin = ImMax(SCN_PANEL_MIN_PX,
                           baseSide * (float)SCN_PANEL_SCALE_MIN / 100.0f);
     float sideMax = ImMin(ImMin(display.x, display.y),
@@ -4314,23 +4966,14 @@ static void renderScenarioPanel(ClientSim *cs) {
     if (sideMax < SCN_PANEL_MIN_PX) sideMax = SCN_PANEL_MIN_PX;
     if (sideMin > sideMax) sideMin = sideMax;
 
-    /* The size the player has dialled in. -1 is a player who has never
-       resized it, which is the size the zoom alone gives, the size the panel
-       had before it could be resized at all. */
-    const float percent = (gameFrontScnPanelScale >= 0)
-                              ? (float)gameFrontScnPanelScale
-                              : 100.0f;
+    const float percent = (v.scale >= 0) ? (float)v.scale : 100.0f;
     float side = baseSide * percent / 100.0f;
 
-    /* True while the resize drag is sitting on a cardinal size. Nothing about
-       the panel says what size it is, so the snap would be invisible without
-       something to show it, and this is what the border reads. */
+    /* True while the resize drag sits on a cardinal size; the border shows
+       it. Accumulate raw, show snapped. */
     bool snapped = false;
-
-    if (s_scnPanelResizing) {
-        /* Mid-drag the accumulated raw side is the size, snapped on the way
-           to the screen and no further. */
-        side = s_scnPanelRawSide;
+    if (v.resizing) {
+        side = v.rawSide;
         for (size_t i = 0; i < sizeof(scnPanelCardinals) / sizeof(int); i++) {
             const float cardinal =
                 baseSide * (float)scnPanelCardinals[i] / 100.0f;
@@ -4345,76 +4988,52 @@ static void renderScenarioPanel(ClientSim *cs) {
     if (side > sideMax) side = sideMax;
 
     /* Where it goes when nothing has been saved: the top-right of the game
-       view, inset a little. Render coordinates, which is what ImGui draws
-       in and what the smart-ping overlay pins itself with. */
-    float defX = SCN_PANEL_DEFAULT_INSET * scale;
-    float defY = SCN_PANEL_DEFAULT_INSET * scale;
+       view, inset a little, below any view already placed there. */
+    const float inset = SCN_PANEL_DEFAULT_INSET * scale;
+    float defX = inset;
+    float defY = inset;
     {
         float gx, gy, gw, gh, gtw, gth, rx0, ry0, rx1, ry1;
         if (sdl3DrawGetMainViewGameRect(&gx, &gy, &gw, &gh, &gtw, &gth) &&
             sdl3DrawGameToRenderCoords(gx, gy, &rx0, &ry0) &&
             sdl3DrawGameToRenderCoords(gx + gw, gy + gh, &rx1, &ry1)) {
-            defX = rx1 - side - SCN_PANEL_DEFAULT_INSET * scale;
-            defY = ry0 + SCN_PANEL_DEFAULT_INSET * scale;
+            defX = rx1 - side - inset;
+            defY = ry0 + inset;
         }
     }
+    defY += (float)stack * (side + inset);
 
-    /* A position saved on a larger display would put the panel off screen,
-       where there is nothing to grab to drag it back, so a restored one is
-       brought inside the window it is restored into. Against the side the
-       panel is at now, not the side the zoom alone would give it: a panel
-       that has been resized next to an edge has to be free to come away from
-       where the old boundary was. */
-    float wantX = (gameFrontScnPanelX >= 0) ? (float)gameFrontScnPanelX : defX;
-    float wantY = (gameFrontScnPanelY >= 0) ? (float)gameFrontScnPanelY : defY;
+    /* A position saved on a larger display is brought inside this one. */
+    float wantX = (v.x >= 0) ? (float)v.x : defX;
+    float wantY = (v.y >= 0) ? (float)v.y : defY;
     if (wantX > display.x - side) wantX = display.x - side;
     if (wantY > display.y - side) wantY = display.y - side;
     if (wantX < 0.0f) wantX = 0.0f;
     if (wantY < 0.0f) wantY = 0.0f;
 
-    if (!s_scnPanelPlaced) {
+    if (!v.placed) {
         ImGui::SetNextWindowPos(ImVec2(wantX, wantY), ImGuiCond_Always);
-        s_scnPanelPlaced = true;
+        v.placed = true;
     }
     ImGui::SetNextWindowSize(ImVec2(side, side), ImGuiCond_Always);
 
-    /* Where the gear ended up, read again after the panel window has been
-       closed so the settings window can open beside it. The settings window
-       is a window of its own and one ImGui window cannot be submitted inside
-       another, so it goes after the End below. */
     float gearX = 0.0f;
     float gearY = 0.0f;
 
-    /* No padding, so the window's own rect is the square the list is drawn
-       in and one panel unit is one pixel at zoom 1. The backing is dim
-       rather than opaque: the map under the panel stays readable, and what
-       the script draws reads on top of it. How dim is the player's, through
-       the opacity slider in the settings window, which scales the backing's
-       own SCN_PANEL_BACKING_ALPHA rather than standing in for it — a hundred
-       percent is the backing the panel has always had, not a black box.
-
-       The same percent goes to the backing here and to env.alpha below, so
-       the slider fades the whole of the panel's drawing at once and not the
-       backing out from under writing that stayed. It never reaches a pixel
-       nothing was drawn on: a square the script left empty is as clear at
-       ten percent as it is at a hundred. */
+    /* No padding and no border, so the window's rect is the square the list
+       is drawn in; the backing is the player's opacity times the dim
+       SCN_PANEL_BACKING_ALPHA. NoMove and NoResize: the bar and the corner
+       grip are the only things that move or resize it. */
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-    /* No window border either. The theme gives every window a one pixel one,
-       and ImGui clips a window's draw list to the inside of that border, so
-       the panel's own border below would be clipped away by the border it is
-       replacing. The hand-drawn one is the one that changes colour on a
-       snap, and it has to be at the very edge of the square. */
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::PushStyleColor(
         ImGuiCol_WindowBg,
         IM_COL32(0, 0, 0,
-                 (int)lroundf((float)s_scnPanelAlphaPct *
+                 (int)lroundf((float)v.alphaPct *
                               (float)SCN_PANEL_BACKING_ALPHA / 100.0f)));
-    /* NoMove as well as NoResize: the whole body used to be a drag area,
-       and a scenario draws to the edges of its square, so every pixel of what
-       it drew was also a place a stray drag picked the panel up. The two
-       corner handles below are the only things that move or resize it now. */
-    const bool open = ImGui::Begin("##scenariopanel", nullptr,
+    char winId[32];
+    SDL_snprintf(winId, sizeof(winId), "##scenariopanel%d", owner);
+    const bool open = ImGui::Begin(winId, nullptr,
                                    ImGuiWindowFlags_NoTitleBar |
                                    ImGuiWindowFlags_NoResize |
                                    ImGuiWindowFlags_NoMove |
@@ -4429,25 +5048,18 @@ static void renderScenarioPanel(ClientSim *cs) {
         const ImVec2 pos = ImGui::GetWindowPos();
         ImDrawList *dl   = ImGui::GetWindowDrawList();
 
-        /* A quarter of the side at most each, so the bar and the resize grip
-           never meet in the middle of a panel that has been shrunk right
-           down. */
-        const float handle = ImMin(SCN_PANEL_HANDLE_PX, side * 0.25f);
-        const float bar    = ImMin(SCN_PANEL_BAR_PX, side * 0.25f);
+        const float handle    = ImMin(SCN_PANEL_HANDLE_PX, side * 0.25f);
+        const float btn       = scnPanelButtonSide(side);
+        const bool  withClose = scnPanelCanReopen();
+        const float btnsW     = withClose ? btn * 2.0f : btn;
 
-        /* The bar and both grips are submitted on every frame whether or not
-           they are drawn. An invisible button that stops being submitted
-           stops being the active item, so a drag that wanders off the panel
-           — which every resize that shrinks it does — would die halfway
-           through the gesture. Drawing them is the part that waits for the
-           pointer.
-
-           The title bar: the full width of the panel bar the square the
-           settings button takes at its right end. The two do not overlap, so
-           which one the pointer is on never depends on the order they are
-           submitted in. */
+        /* The bar and both grips are submitted every frame, drawn or not: an
+           invisible button that stops being submitted stops being the
+           active item, and a drag that wanders off the panel would die. The
+           bar runs from the left edge up to the buttons. */
         ImGui::SetCursorScreenPos(pos);
-        ImGui::InvisibleButton("##scnpanelmove", ImVec2(side - bar, bar));
+        ImGui::InvisibleButton("##scnpanelmove",
+                               ImVec2(ImMax(side - btnsW, 1.0f), btn));
         const bool moveHot    = ImGui::IsItemHovered();
         const bool moveActive = ImGui::IsItemActive();
         if (moveHot || moveActive) {
@@ -4460,22 +5072,11 @@ static void renderScenarioPanel(ClientSim *cs) {
             }
         }
 
-        /* The settings button, on the right end of the bar, where the button
-           that opens a window's settings sits on any other window. A click
-           toggles: the gear that opened the window closes it again, which is
-           what a player who has lost the window behind something else will
-           try first. */
-        gearX = pos.x + side - bar;
+        const ScnPanelButtons b = scnPanelSubmitButtons(pos, side, btn, withClose);
+        gearX = b.gearX;
         gearY = pos.y;
-        ImGui::SetCursorScreenPos(ImVec2(gearX, gearY));
-        ImGui::InvisibleButton("##scnpanelsettings", ImVec2(bar, bar));
-        const bool gearHot = ImGui::IsItemHovered();
-        if (gearHot || ImGui::IsItemActive()) {
-            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-        }
-        if (ImGui::IsItemClicked()) {
-            s_scnPanelSettingsOpen = !s_scnPanelSettingsOpen;
-        }
+        if (b.gearClicked) v.settingsOpen = !v.settingsOpen;
+        if (b.closeClicked) scnPanelRequestClose(owner, false);
 
         ImGui::SetCursorScreenPos(
             ImVec2(pos.x + side - handle, pos.y + side - handle));
@@ -4486,63 +5087,41 @@ static void renderScenarioPanel(ClientSim *cs) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE);
         }
         if (ImGui::IsItemActivated()) {
-            /* Start the raw side from what is on screen, snap and all, so
-               the panel does not jump on the first pixel of the drag. */
-            s_scnPanelRawSide = side;
+            v.rawSide = side;
         }
         if (resizeActive) {
-            /* The square stays square, so one number has to come out of a
-               two-axis drag: whichever axis moved further, with its sign
-               kept. Down and right grow it, up and left shrink it, which is
-               what a corner grip on anything else does. */
+            /* The square stays square: whichever axis moved further. */
             const ImVec2 drag = ImGui::GetIO().MouseDelta;
-            s_scnPanelRawSide +=
-                (fabsf(drag.x) >= fabsf(drag.y)) ? drag.x : drag.y;
-            if (s_scnPanelRawSide < sideMin) s_scnPanelRawSide = sideMin;
-            if (s_scnPanelRawSide > sideMax) s_scnPanelRawSide = sideMax;
+            v.rawSide += (fabsf(drag.x) >= fabsf(drag.y)) ? drag.x : drag.y;
+            if (v.rawSide < sideMin) v.rawSide = sideMin;
+            if (v.rawSide > sideMax) v.rawSide = sideMax;
         }
         if (ImGui::IsItemDeactivated()) {
-            /* Let go: the size that was on screen, which is the snapped one,
-               becomes the size that is kept. Written here and not on every
-               frame of the drag, the way the position is. */
             int pct = (int)lroundf(side / baseSide * 100.0f);
             if (pct < SCN_PANEL_SCALE_MIN) pct = SCN_PANEL_SCALE_MIN;
             if (pct > SCN_PANEL_SCALE_MAX) pct = SCN_PANEL_SCALE_MAX;
-            if (pct != gameFrontScnPanelScale) {
-                gameFrontScnPanelScale = pct;
-                scnPanelPersistLayout();
+            if (pct != v.scale) {
+                v.scale = pct;
+                scnPanelPersistLayout(v);
             }
         }
-        s_scnPanelResizing = resizeActive;
+        v.resizing = resizeActive;
 
-        /* The bar and the resize grip appear only while the pointer is on
-           the panel, while one of them is being dragged, or while the
-           settings window is up. The bar covers the top of what the scenario
-           drew while it is up, which is the price of having it only when it
-           is wanted: a bar that was always there would cost those pixels for
-           the whole round.
+        /* The bar, the buttons and the grip show while the pointer is on
+           the panel, for a while after it leaves (a touch has no hover),
+           while one of them is being dragged, and while the settings window
+           is up. */
+        const Uint64 now = SDL_GetTicks();
+        if (ImGui::IsWindowHovered(
+                ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) {
+            v.chromeUntil = now + SCN_PANEL_CHROME_LINGER_MS;
+        }
+        const bool handlesVisible = now < v.chromeUntil || moveActive ||
+                                    resizeActive || v.settingsOpen ||
+                                    s_scnCloseAskOwner == owner;
 
-           That last case matters: with the settings window open the panel is
-           being worked on, and chrome that vanished the moment the pointer
-           left the square to reach the slider would make the panel look
-           inert while its own settings are on screen, with no lit gear to
-           say where the window came from.
-
-           AllowWhenBlockedByActiveItem, or the moment a grip becomes the
-           active item the window stops counting as hovered and the thing
-           being dragged disappears from under the pointer. */
-        const bool handlesVisible =
-            ImGui::IsWindowHovered(
-                ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) ||
-            moveActive || resizeActive || s_scnPanelSettingsOpen;
-
-        /* Where the window is after the move handle has had this frame's
-           drag. Clamped again here for the main window having been made
-           smaller since the panel was placed, which ImGui does not do on its
-           own, and against the side the panel is at now. The clamp, and the
-           move with it, lands on the next frame — the background was
-           submitted at pos already, and the list is drawn on top of that
-           background rather than half a frame ahead of it. */
+        /* Kept inside the main window, and saved through the debounced
+           window-settings path when it moves. */
         const ImVec2 moved = ImGui::GetWindowPos();
         float keepX = moved.x, keepY = moved.y;
         if (keepX > display.x - side) keepX = display.x - side;
@@ -4552,119 +5131,51 @@ static void renderScenarioPanel(ClientSim *cs) {
         if (keepX != moved.x || keepY != moved.y) {
             ImGui::SetWindowPos(ImVec2(keepX, keepY));
         }
-
-        /* Saved through the debounced window-settings path, the way the map
-           overview's geometry is: a drag is a burst of positions and only
-           the one it ends on is worth a write. */
-        if ((int)keepX != gameFrontScnPanelX ||
-            (int)keepY != gameFrontScnPanelY) {
-            gameFrontScnPanelX = (int)keepX;
-            gameFrontScnPanelY = (int)keepY;
-            scnPanelPersistLayout();
+        if ((int)keepX != v.x || (int)keepY != v.y) {
+            v.x = (int)keepX;
+            v.y = (int)keepY;
+            scnPanelPersistLayout(v);
         }
 
-        /* Drawn at the side the player has dragged the square to, so the
-           drawing resizes with the window.
+        /* The script's drawing, at the side the square is on screen and the
+           player's opacity. No backing from the drawer: the window
+           background above is this panel's backing. */
+        const ScnPanelList *list = scnPanelListOf(cs, owner);
+        if (list != nullptr && list->count > 0) {
+            ScnPanelDrawEnv env;
+            env.playerName = scnPanelPlayerName;
+            env.ctx        = nullptr;
+            env.tick       = clientSimGetLastServerTick(cs);
+            env.scale      = side / (float)SCN_PANEL_UNITS;
+            env.alpha      = (float)v.alphaPct / 100.0f;
+            env.tiles      = (void *)sdl3DrawGetTilesTexture();
+            scnPanelDraw(list, pos.x, pos.y, &env);
+        }
 
-           The opacity slider, on what the scenario drew. The same percent
-           the backing is pushed through ImGuiCol_WindowBg at above, so the
-           two fade together and the panel stays one object rather than
-           writing that floats over a backing that has left without it.
-
-           The border, the title bar and the resize grip below are drawn
-           after this at their own alpha and are deliberately not on this
-           list: they are the frontend's chrome. A panel at nothing has to
-           keep a gear to click and a bar to grab, or there is no way back
-           from it.
-
-           No backing from the drawer: the window background pushed above is
-           this panel's backing. */
-        sdl3ImguiScnPanelDraw(cs, pos.x, pos.y, side,
-                              (float)s_scnPanelAlphaPct / 100.0f, false);
-
-        /* The border, and the grips on top of it, drawn after the list so
-           that a scenario filling its square does not bury them.
-
-           The border goes on every frame and not only while the pointer is
-           there: it is the only thing that says where the panel ends when the
-           script has drawn nothing near an edge. While a resize drag is
-           sitting on a cardinal size it goes a shade brighter and cooler,
-           which is the only sign there is that the snap happened. A colour
-           change and nothing else — a thicker line would push the content
-           about under it.
-
-           A pixel in from the far corner, the same as the resize grip below.
-           A window's draw list is clipped to the window's own rect, and a
-           line drawn at pos + side sits on that boundary: the top and the
-           left survive it and the right and the bottom are clipped away,
-           leaving a border down two sides of the square. */
+        /* The border on every frame, a shade brighter while a resize sits on
+           a cardinal size. A pixel in from the far corner, since the draw
+           list is clipped to the window's rect. */
         dl->AddRect(pos, ImVec2(pos.x + side - 1.0f, pos.y + side - 1.0f),
                     snapped ? IM_COL32(140, 220, 255, 110)
                             : IM_COL32(255, 255, 255, 40));
 
         if (handlesVisible) {
-            /* The title bar, grey, right across the top of the panel. It is
-               the whole drag area: a bar reads as something to take hold of
-               at a glance, where a small mark in a corner has to be found
-               first. Solid rather than translucent, so what it covers does
-               not show through it and read as a smear over the scenario's
-               own drawing.
-
-               A pixel in on the right for the reason the border is: the
-               window's draw list is clipped to the window's own rect, so a
-               fill that reached pos.x + side would lose its last column. */
+            /* The title bar, grey, right across the top: the drag area. The
+               buttons sit on its right end with no plate of their own. */
             const ImU32 barCol = (moveHot || moveActive)
                                      ? IM_COL32(150, 150, 150, 235)
                                      : IM_COL32(112, 112, 112, 205);
-            dl->AddRectFilled(pos, ImVec2(pos.x + side - 1.0f, pos.y + bar),
+            dl->AddRectFilled(pos, ImVec2(pos.x + side - 1.0f, pos.y + btn),
                               barCol);
-            /* A line under it, so the bar has an edge against whatever the
-               scenario drew below it rather than fading into it. */
-            dl->AddLine(ImVec2(pos.x, pos.y + bar),
-                        ImVec2(pos.x + side - 1.0f, pos.y + bar),
+            dl->AddLine(ImVec2(pos.x, pos.y + btn),
+                        ImVec2(pos.x + side - 1.0f, pos.y + btn),
                         IM_COL32(0, 0, 0, 90));
 
-            /* The settings button: the gear, on the right end of the bar,
-               dim until the pointer is on it and brought forward while the
-               window it opens is up so the panel says where that window came
-               from. It is drawn straight on the bar with no plate of its own
-               — the bar is the plate.
+            scnPanelDrawButtons(dl, pos, side, btn, withClose,
+                                s_iconScnPanelGear[activeIconSlot()], b,
+                                v.settingsOpen);
 
-               Inset by a pixel on the far side for the reason the border is:
-               the window's draw list is clipped to the window's own rect, and
-               art that reached pos.x + side would lose its right-hand column.
-
-               The gear is an asset and an asset can be missing, so there is a
-               fallback. It has to be drawn, not skipped: the invisible button
-               under it is submitted whatever happens, and a corner that takes
-               clicks while showing nothing is worse than a crude glyph. Three
-               short bars, a sliders shape, which is the other thing a settings
-               control is drawn as. */
-            const ImU32 gearCol = (gearHot || s_scnPanelSettingsOpen)
-                                      ? IM_COL32(255, 255, 255, 245)
-                                      : IM_COL32(235, 235, 235, 170);
-            SDL_Texture *gearTex = s_iconScnPanelGear[activeIconSlot()];
-            const float gx1 = pos.x + side - 1.0f;
-            if (gearTex != nullptr) {
-                dl->AddImage((ImTextureID)gearTex, ImVec2(gx1 - bar, pos.y),
-                             ImVec2(gx1, pos.y + bar), ImVec2(0.0f, 0.0f),
-                             ImVec2(1.0f, 1.0f), gearCol);
-            } else {
-                const float tickH = ImMax(1.0f, bar * 0.12f);
-                const float tickW = bar * 0.62f;
-                const float tickX = gx1 - bar * 0.5f - tickW * 0.5f;
-                for (int i = 0; i < 3; i++) {
-                    const float tickY =
-                        pos.y + bar * (0.28f + 0.22f * (float)i) -
-                        tickH * 0.5f;
-                    dl->AddRectFilled(ImVec2(tickX, tickY),
-                                      ImVec2(tickX + tickW, tickY + tickH),
-                                      gearCol);
-                }
-            }
-
-            /* The resize grip: three diagonals stepping out of the corner,
-               which is the grip every other window in the world uses. */
+            /* The resize grip: three diagonals stepping out of the corner. */
             const ImU32 resizeCol = (resizeHot || resizeActive)
                                         ? IM_COL32(255, 255, 255, 200)
                                         : IM_COL32(255, 255, 255, 110);
@@ -4681,8 +5192,207 @@ static void renderScenarioPanel(ClientSim *cs) {
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
 
-    renderScenarioPanelSettings(&s_scnPanelSettingsOpen, gearX, gearY,
-                                &s_scnPanelAlphaPct);
+    renderScenarioPanelSettings(owner, gearX, gearY);
+}
+
+/* Every script's panel in the game window, and the opening and closing of
+   their pop-outs. The pop-outs themselves draw after the game window's frame
+   (renderScenarioPanelPopOuts). */
+static void renderScenarioPanels(ClientSim *cs) {
+    scnPanelViewsSync(cs);
+
+    /* Tablet mode maps the square into a slot of its own
+       (sdl3imgui_tablet.cpp), so no view here, grips, pop-outs and all. */
+    const bool tablet = uiModeIsTablet();
+
+    /* Esc and gamepad B cancel a confirm up in a pop-out, which never has
+       keyboard focus of its own. */
+    /* A confirm asked from a pop-out that is no longer up has no frame left
+       to close it in, so it is dropped here. */
+    if (s_scnCloseAskOwner >= 0 && s_scnCloseAskPopout &&
+        !s_popScnPanel[s_scnCloseAskOwner].open) {
+        s_scnCloseAskOwner   = -1;
+        s_scnCloseAskOpenNow = false;
+        s_scnCloseAskCancel  = false;
+    }
+    if (s_scnCloseAskOwner >= 0 && s_scnCloseAskPopout &&
+        (ImGui::IsKeyPressed(ImGuiKey_Escape, false) ||
+         (inputGamepadIsConnected() &&
+          ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)))) {
+        s_scnCloseAskCancel = true;
+    }
+
+    if (cs != nullptr && !tablet) ensureWbnIconsLoaded();
+
+    int stack = 0;
+    for (int i = 0; i < SCN_PANEL_OWNERS; i++) {
+        ScnPanelView &v  = s_scnViews[i];
+        PopOutWindow *pw = &s_popScnPanel[i];
+        const ScnPanelList *list = scnPanelListOf(cs, i);
+        const bool shown = v.keyed && cs != nullptr && !tablet &&
+                           scnPanelEffectiveShown(v) && list != nullptr;
+
+        /* A pop-out stays up while the script has a list at all, even an
+           empty one, so a script that clears and redraws its panel does not
+           make an OS window blink. */
+        const bool wantPop = shown && v.popped && scnPanelPopOutAvailable();
+        if (wantPop && !pw->open) {
+            if (!scnPanelPopOutShow(i)) {
+                v.popped = false;
+                scnPanelSavePopout(i);
+            }
+        } else if (!wantPop && pw->open) {
+            /* Every player hide (menu, X, Pop in) has already closed the
+               window by now, so what reaches here is automatic: the list
+               went, tablet mode, or the pop-out became unavailable. */
+            popOutHideQuiet(pw);
+        }
+
+        /* In the game window, only while there is something to draw, which
+           is how the single panel always behaved. */
+        if (shown && !pw->open && list->count > 0) {
+            renderScenarioPanelView(cs, i, stack);
+            stack++;
+        } else {
+            v.placed       = false;
+            v.resizing     = false;
+            v.settingsOpen = false;
+        }
+    }
+
+    renderScnPanelCloseConfirm(false, -1);
+}
+
+/* One view's pop-out frame: the square as large as the window allows,
+   centred with black bars on the long side, drawn the way the game window
+   draws it but at full opacity, with the gear and the X in its top-right
+   corner. */
+static void renderScenarioPanelPopOut(ClientSim *cs, int owner) {
+    PopOutWindow *pw = &s_popScnPanel[owner];
+    ScnPanelView &v  = s_scnViews[owner];
+    if (!pw->open || !pw->window) return;
+
+    /* Ahead of the ImGui frame, like the overview's sheet: both are built on
+       this pop-out's renderer. */
+    SDL_Texture *tiles = scnPopEnsureTiles(owner, pw->renderer);
+    SDL_Texture *gear  = scnPopEnsureGear(owner, pw->renderer);
+
+    if (!popOutBeginFrame(pw)) return;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 255));
+    popOutBeginContent();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+
+    const ImVec2 ds   = ImGui::GetIO().DisplaySize;
+    const float  side = floorf(ImMin(ds.x, ds.y));
+    const ImVec2 pos(floorf((ds.x - side) * 0.5f), floorf((ds.y - side) * 0.5f));
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+
+    const ScnPanelList *list = scnPanelListOf(cs, owner);
+    if (list != nullptr && list->count > 0 && side > 0.0f) {
+        ScnPanelDrawEnv env;
+        env.playerName = scnPanelPlayerName;
+        env.ctx        = nullptr;
+        env.tick       = clientSimGetLastServerTick(cs);
+        env.scale      = side / (float)SCN_PANEL_UNITS;
+        env.alpha      = 1.0f;
+        env.tiles      = (void *)tiles;
+        scnPanelDraw(list, pos.x, pos.y, &env);
+    }
+    if (side > 1.0f) {
+        dl->AddRect(pos, ImVec2(pos.x + side - 1.0f, pos.y + side - 1.0f),
+                    IM_COL32(255, 255, 255, 40));
+    }
+
+    const float btn       = scnPanelButtonSide(side);
+    const bool  withClose = scnPanelCanReopen();
+    const ScnPanelButtons b = scnPanelSubmitButtons(pos, side, btn, withClose);
+    if (b.gearClicked) ImGui::OpenPopup("##scnpopmenu");
+    if (b.closeClicked) scnPanelRequestClose(owner, true);
+
+    const Uint64 now = SDL_GetTicks();
+    if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem |
+                               ImGuiHoveredFlags_AllowWhenBlockedByPopup)) {
+        v.popChromeUntil = now + SCN_PANEL_CHROME_LINGER_MS;
+    }
+    const bool menuUp = ImGui::IsPopupOpen("##scnpopmenu");
+    if (now < v.popChromeUntil || menuUp || s_scnCloseAskOwner == owner) {
+        /* A plate under the buttons, since there is no bar here for them to
+           sit on and the script may have drawn anything under them. */
+        const float btnsW = withClose ? btn * 2.0f : btn;
+        dl->AddRectFilled(ImVec2(pos.x + side - 1.0f - btnsW, pos.y),
+                          ImVec2(pos.x + side - 1.0f, pos.y + btn),
+                          IM_COL32(40, 40, 40, 200));
+        scnPanelDrawButtons(dl, pos, side, btn, withClose, gear, b, menuUp);
+    }
+
+    /* The gear's settings here are the way back in. */
+    if (ImGui::BeginPopup("##scnpopmenu")) {
+        if (ImGui::MenuItem(langGetText(STR_SCNPANEL_POP_IN))) {
+            s_scnPopInReq[owner] = true;
+        }
+        ImGui::EndPopup();
+    }
+
+    renderScnPanelCloseConfirm(true, owner);
+
+    popOutEndContent(pw);
+    popOutEndFrame(pw);
+}
+
+static void renderScenarioPanelPopOuts(ClientSim *cs) {
+    for (int i = 0; i < SCN_PANEL_OWNERS; i++) {
+        renderScenarioPanelPopOut(cs, i);
+    }
+    for (int i = 0; i < SCN_PANEL_OWNERS; i++) {
+        if (s_scnHideReq[i]) {
+            s_scnHideReq[i]  = false;
+            s_scnPopInReq[i] = false;
+            if (s_scnViews[i].keyed) scnPanelSetShown(i, false);
+        }
+        if (s_scnPopInReq[i]) {
+            s_scnPopInReq[i] = false;
+            if (s_scnViews[i].keyed) scnPanelPopIn(i);
+        }
+    }
+}
+
+/* The pop-outs' textures go before the renderers they were made on, and the
+   views with the game. Called from sdl3ImguiCleanup ahead of popOutDestroy. */
+static void scnPanelViewsCleanup(void) {
+    for (int i = 0; i < SCN_PANEL_OWNERS; i++) {
+        ScnPanelPopTex &t = s_scnPopTex[i];
+        if (t.tiles) SDL_DestroyTexture(t.tiles);
+        if (t.gear) SDL_DestroyTexture(t.gear);
+        t = {};
+        memset(&s_scnViews[i], 0, sizeof(s_scnViews[i]));
+        s_scnPopInReq[i] = false;
+        s_scnHideReq[i]  = false;
+    }
+    s_scnCloseAskOwner   = -1;
+    s_scnCloseAskOpenNow = false;
+    s_scnCloseAskCancel  = false;
+}
+
+/* Brains > Info Overlay: one checkbox per script that has a panel this
+   round, labelled with the script's name. */
+static void renderScnPanelMenuItems(bool afterBrains) {
+    if (!scnPanelAnyListed() || !scnPanelCanReopen()) return;
+    if (afterBrains) ImGui::Separator();
+    if (ImGui::BeginMenu(langGetText(STR_MENU_INFO_OVERLAY))) {
+        for (int i = 0; i < SCN_PANEL_OWNERS; i++) {
+            const ScnPanelView &v = s_scnViews[i];
+            if (!v.keyed) continue;
+            char lbl[SCN_PANEL_SCENARIO_LEN + 24];
+            SDL_snprintf(lbl, sizeof(lbl), "%s##scnpanelshown%d", v.name, i);
+            if (ImGui::MenuItem(lbl, nullptr, v.shown)) {
+                scnPanelSetShown(i, !v.shown);
+            }
+        }
+        ImGui::EndMenu();
+    }
 }
 
 /* -------------------------------------------------------
@@ -6465,55 +7175,66 @@ static void renderMenuBar(ClientSim *cs) {
     }
 
     /* ---- Brains -------------------------------------- */
-    if (ImGui::BeginMenu(langGetText(STR_MENU_BRAINS), clientSimGetAiType(cs) != aiNone)) {
-        bool running = luaBrainIsRunning() != 0;
-        int  runIdx  = luaBrainGetRunningIndex();
+    /* Brains also holds Info Overlay, the scenario panel toggles, so it is
+       open to a game with a panel even where the server allows no brains.
+       The brain items are left out then: a list of brains nobody may pick
+       is noise. */
+    scnPanelViewsSync(cs);
+    const bool aiAllowed = clientSimGetAiType(cs) != aiNone;
+    if (ImGui::BeginMenu(langGetText(STR_MENU_BRAINS),
+                         aiAllowed || (scnPanelAnyListed() && scnPanelCanReopen()))) {
+        if (aiAllowed) {
+            bool running = luaBrainIsRunning() != 0;
+            int  runIdx  = luaBrainGetRunningIndex();
 
-        /* Manual (stop brain) entry — checked when no brain is active */
-        if (ImGui::MenuItem(langGetText(STR_MENU_MANUAL), nullptr, !running)) {
-            if (running) {
-                luaBrainStop();
-                mlBrainStopSingleton();
+            /* Manual (stop brain) entry — checked when no brain is active */
+            if (ImGui::MenuItem(langGetText(STR_MENU_MANUAL), nullptr, !running)) {
+                if (running) {
+                    luaBrainStop();
+                    mlBrainStopSingleton();
+                }
             }
-        }
 
-        /* One entry per discovered brain */
-        int numBrains = luaBrainGetNum();
-        if (numBrains > 0) {
-            ImGui::Separator();
-            for (int bi = 0; bi < numBrains; bi++) {
-                const char *name = luaBrainGetName(bi);
-                bool isActive    = running && (bi == runIdx);
-                if (ImGui::MenuItem(name ? name : "?", nullptr, isActive)) {
-                    if (!isActive) {
-                        const char *path = luaBrainGetPath(bi);
-                        if (path) {
-                            if (luaBrainGetType(bi) == BRAIN_TYPE_ONNX) {
-                                mlBrainStartSingleton(path, name ? name : "", cs);
-                            } else {
-                                luaBrainStart(path, name ? name : "", cs);
+            /* One entry per discovered brain */
+            int numBrains = luaBrainGetNum();
+            if (numBrains > 0) {
+                ImGui::Separator();
+                for (int bi = 0; bi < numBrains; bi++) {
+                    const char *name = luaBrainGetName(bi);
+                    bool isActive    = running && (bi == runIdx);
+                    if (ImGui::MenuItem(name ? name : "?", nullptr, isActive)) {
+                        if (!isActive) {
+                            const char *path = luaBrainGetPath(bi);
+                            if (path) {
+                                if (luaBrainGetType(bi) == BRAIN_TYPE_ONNX) {
+                                    mlBrainStartSingleton(path, name ? name : "", cs);
+                                } else {
+                                    luaBrainStart(path, name ? name : "", cs);
+                                }
+                                /* Refresh settings descriptor for the new brain */
+                                luaBrainFreeSettings(s_brainSettings);
+                                s_brainSettings      = nullptr;
+                                s_brainSettingsCount = 0;
+                                s_brainSettingsOpen  = false;
                             }
-                            /* Refresh settings descriptor for the new brain */
-                            luaBrainFreeSettings(s_brainSettings);
-                            s_brainSettings      = nullptr;
-                            s_brainSettingsCount = 0;
-                            s_brainSettingsOpen  = false;
                         }
                     }
                 }
             }
-        }
 
-        /* Settings entry — only when a Lua brain is running (ONNX has no settings) */
-        if (running && !mlBrainSingletonIsRunning()) {
-            ImGui::Separator();
-            if (ImGui::MenuItem(langGetText(STR_MENU_SETTINGS))) {
-                /* Re-fetch on every open so values are current */
-                luaBrainFreeSettings(s_brainSettings);
-                s_brainSettings      = luaBrainGetSettings(&s_brainSettingsCount);
-                s_brainSettingsOpen  = true;
+            /* Settings entry — only when a Lua brain is running (ONNX has no settings) */
+            if (running && !mlBrainSingletonIsRunning()) {
+                ImGui::Separator();
+                if (ImGui::MenuItem(langGetText(STR_MENU_SETTINGS))) {
+                    /* Re-fetch on every open so values are current */
+                    luaBrainFreeSettings(s_brainSettings);
+                    s_brainSettings      = luaBrainGetSettings(&s_brainSettingsCount);
+                    s_brainSettingsOpen  = true;
+                }
             }
         }
+
+        renderScnPanelMenuItems(aiAllowed);
 
         ImGui::EndMenu();
     }
@@ -7032,6 +7753,29 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             inputResetHeldKeys();
         }
 
+        /* A display came, went or moved: an OS window left on a display that
+           is no longer there is brought back onto the primary one. The map
+           overview and the scenario panel pop-outs, which are the pop-outs
+           whose place is remembered. Not consumed: the main window's own
+           handling further down sees these too. */
+        if (ev.type == SDL_EVENT_DISPLAY_ADDED ||
+            ev.type == SDL_EVENT_DISPLAY_REMOVED ||
+            ev.type == SDL_EVENT_DISPLAY_MOVED) {
+            if (s_popMapOverview.open) {
+                popOutRescueWindow(s_popMapOverview.window);
+            }
+            for (int i = 0; i < SCN_PANEL_OWNERS; i++) {
+                PopOutWindow *pw = &s_popScnPanel[i];
+                if (!pw->open || !pw->window) continue;
+                if (popOutRescueWindow(pw->window)) {
+                    ScnPanelView &sv = s_scnViews[i];
+                    SDL_GetWindowPosition(pw->window, &sv.popX, &sv.popY);
+                    SDL_GetWindowSize(pw->window, &sv.popW, &sv.popH);
+                    scnPanelSavePopout(i);
+                }
+            }
+        }
+
         /* Route events to pop-out windows — if the event belongs to a
            pop-out, forward it there and skip the rest of the main loop
            so it doesn't reach the game input. */
@@ -7042,8 +7786,24 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 if (!pw->open || !pw->window) continue;
 
                 SDL_WindowID pwID = SDL_GetWindowID(pw->window);
+                /* A scenario panel's pop-out, and whose, or -1. */
+                const int scnOwner = popOutScnPanelOwner(pw);
                 bool isForThisWindow = false;
                 switch (ev.type) {
+                    /* Only the scenario panel pop-outs take the pointer
+                       leaving and coming back: they show their buttons on
+                       hover, and without the leave ImGui would think the
+                       pointer was still over the last button it crossed.
+                       The enter goes too because the ImGui backend pairs
+                       them: a leave it has not seen an enter for since is
+                       taken as the pointer gone at the next frame, so a
+                       leave and an enter in one batch of events would
+                       otherwise still cost a frame of hover. */
+                    case SDL_EVENT_WINDOW_MOUSE_ENTER:
+                    case SDL_EVENT_WINDOW_MOUSE_LEAVE:
+                        isForThisWindow = (scnOwner >= 0 &&
+                                           ev.window.windowID == pwID);
+                        break;
                     case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
                     case SDL_EVENT_WINDOW_FOCUS_GAINED:
                     case SDL_EVENT_WINDOW_FOCUS_LOST:
@@ -7150,7 +7910,23 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                             gameFrontOverviewW = pw->width;
                             gameFrontOverviewH = pw->height;
                             gameFrontSaveWindowSettings();
+                        } else if (scnOwner >= 0 &&
+                                   !popOutGeometryIsOsManaged(pw)) {
+                            s_scnViews[scnOwner].popW = pw->width;
+                            s_scnViews[scnOwner].popH = pw->height;
+                            scnPanelSavePopout(scnOwner);
                         }
+                    }
+
+                    /* A scenario panel's pop-out never keeps keyboard focus:
+                       input.c steers the tank only while the game window or
+                       the map overview has it. It is created unfocusable and
+                       shown without activation, so this is the fallback for
+                       a platform that hands it focus anyway. */
+                    if (scnOwner >= 0 &&
+                        ev.type == SDL_EVENT_WINDOW_FOCUS_GAINED &&
+                        s_window != nullptr) {
+                        SDL_RaiseWindow(s_window);
                     }
                 }
 
@@ -7166,6 +7942,13 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                     gameFrontOverviewX = ev.window.data1;
                     gameFrontOverviewY = ev.window.data2;
                     gameFrontSaveWindowSettings();
+                }
+                if (ev.type == SDL_EVENT_WINDOW_MOVED &&
+                    ev.window.windowID == pwID && scnOwner >= 0 &&
+                    !popOutGeometryIsOsManaged(pw)) {
+                    s_scnViews[scnOwner].popX = ev.window.data1;
+                    s_scnViews[scnOwner].popY = ev.window.data2;
+                    scnPanelSavePopout(scnOwner);
                 }
 
                 /* Out here with the move above, and for the same reason: the
@@ -7191,9 +7974,28 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                         gameFrontSaveWindowSettings();
                     }
                 }
+                if (ev.type == SDL_EVENT_WINDOW_LEAVE_FULLSCREEN &&
+                    ev.window.windowID == pwID && scnOwner >= 0) {
+                    int px = 0, py = 0, pww = 0, pwh = 0;
+                    SDL_GetWindowSize(pw->window, &pww, &pwh);
+                    SDL_GetWindowPosition(pw->window, &px, &py);
+                    if (pww > 0 && pwh > 0) {
+                        ScnPanelView &sv = s_scnViews[scnOwner];
+                        pw->width  = pww;
+                        pw->height = pwh;
+                        sv.popW = pww;
+                        sv.popH = pwh;
+                        sv.popX = px;
+                        sv.popY = py;
+                        scnPanelSavePopout(scnOwner);
+                    }
+                }
 
                 if (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && ev.window.windowID == pwID) {
-                    if (pw == &s_popMapOverview) mapOverviewClose();
+                    /* Closing a scenario panel's OS window puts the panel
+                       back in the game window: the same as its Pop in. */
+                    if (scnOwner >= 0) scnPanelPopIn(scnOwner);
+                    else if (pw == &s_popMapOverview) mapOverviewClose();
                     else popOutHide(pw);
                     consumedByPopOut = true;
                 }
@@ -7205,7 +8007,7 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                    already forwarded above, so ImGui has deactivated any live
                    InputText before the window goes away. */
                 if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat &&
-                    ev.key.windowID == pwID &&
+                    ev.key.windowID == pwID && scnOwner < 0 &&
                     ev.key.scancode == SDL_SCANCODE_ESCAPE) {
                     if (pw == &s_popMapOverview) mapOverviewClose();
                     else popOutHide(pw);
@@ -7950,6 +8752,26 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
         strncpy(s->brainNames[i], src, sizeof s->brainNames[i] - 1);
         s->brainNames[i][sizeof s->brainNames[i] - 1] = '\0';
     }
+
+    /* Brains > Info Overlay: one row per script with a scenario panel this
+       round, the rows renderScnPanelMenuItems draws in the in-window bar.
+       Synced here as the in-window bar syncs before it draws, so the native
+       bar sees the round as it is on the frame a panel arrives. */
+    static_assert(SCN_PANEL_OWNERS <= MAC_MENU_SCN_PANELS,
+                  "MacMenuState holds a row for every scenario panel owner");
+    scnPanelViewsSync(cs);
+    s->scnPanelCount = 0;
+    if (scnPanelCanReopen()) {
+        for (int i = 0; i < SCN_PANEL_OWNERS; i++) {
+            const ScnPanelView &v = s_scnViews[i];
+            if (!v.keyed) continue;
+            const int n = s->scnPanelCount++;
+            s->scnPanelOwner[n] = i;
+            s->scnPanelShown[n] = v.shown;
+            strncpy(s->scnPanelNames[n], v.name, sizeof s->scnPanelNames[n] - 1);
+            s->scnPanelNames[n][sizeof s->scnPanelNames[n] - 1] = '\0';
+        }
+    }
 }
 #endif
 
@@ -8155,6 +8977,10 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         s_wasInLobby = nowInLobby;
 
         if (nowInLobby) {
+            /* The lobby frame returns below, ahead of the panel pass and the
+               pop-out pump, so the scenario panels' OS windows are put away
+               here: a panel belongs to the round it was sent in. */
+            scnPanelViewsRetireAll();
 #if defined(WINBOLO_VOICE)
             /* The lobby's push-to-talk poll, which the blocking modal runs in
                its own loop. This host ticks voice earlier in the frame, so the
@@ -8434,7 +9260,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
 #endif
     renderSendMsgPanel(cs);
     renderPlayersPanel(cs);
-    renderScenarioPanel(cs);
+    renderScenarioPanels(cs);
     renderScenarioAnnounce(cs);
 
     /* Modal dialogs */
@@ -8641,6 +9467,9 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             popOutEndContent(&s_popMapOverview);
             popOutEndFrame(&s_popMapOverview);
         }
+
+        /* Each script's scenario panel that the player popped out. */
+        renderScenarioPanelPopOuts(cs);
 
         ImGui::SetCurrentContext(mainCtx);
     }
@@ -8986,6 +9815,14 @@ extern "C" void sdl3ImguiShowBrainSettings(void) {
     s_brainSettings      = luaBrainGetSettings(&s_brainSettingsCount);
     s_brainSettingsOpen  = true;
     s_closeMenuPopups    = true;
+}
+/* The native Brains > Info Overlay rows: the same toggle the in-window
+ * checkbox makes (renderScnPanelMenuItems). owner is the script's position
+ * on the round's list, the row's tag. */
+extern "C" void sdl3ImguiToggleScnPanelShown(int owner) {
+    if (owner < 0 || owner >= SCN_PANEL_OWNERS) return;
+    if (!s_scnViews[owner].keyed) return;
+    scnPanelSetShown(owner, !s_scnViews[owner].shown);
 }
 
 /* Is the players panel on screen in ANY of its forms? The desktop pop-out
@@ -9796,6 +10633,7 @@ void sdl3ImguiCleanup(void) {
         s_tilesPopOut = nullptr;
     }
     s_tilesPopOutRenderer = nullptr;
+    scnPanelViewsCleanup();
     destroyIconSlot(ICON_SLOT_POPOUT);
     flagsDestroy();
     for (int i = 0; i < POPOUT_COUNT; i++) popOutDestroy(s_popOuts[i]);

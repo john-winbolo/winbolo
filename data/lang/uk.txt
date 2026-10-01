@@ -1817,6 +1817,7 @@ STR_DLGBROWSER_SELECT_SERVER=Оберіть сервер
 STR_DLGBROWSER_PREVIEW_UNAVAIL=Перегляд недоступний
 STR_DLGBROWSER_PREVIEW_ENLARGE=Натисніть для збільшення
 STR_DLGBROWSER_ENLARGE_BTN=Збільшити
+STR_DLGBROWSER_SIGNIN_TO_JOIN=Увійти, щоб приєднатися
 STR_DLGBROWSER_AI_PLAYERS=({number} гравців ШІ)
 STR_DLGBROWSER_WBN_PLAYERS=WinBolo.net гравці:
 STR_DLGBROWSER_ST_LOCKED=Заблок./Заповнений
@@ -2031,6 +2032,7 @@ STR_DLGKEYSETUP_OVERVIEWZOOMIN=Збільшити карту
 STR_DLGKEYSETUP_OVERVIEWZOOMOUT=Зменшити карту
 STR_DLGWELCOME_SWITCH_CLASSIC=Перемкнутися на класичний режим
 STR_DLGWELCOME_SWITCH_FULLSCREEN=Перемкнутися на весь екран
+STR_DLGWELCOME_PRACTICE=Тренування
 
 # Налаштування «Екран і звук»: весь екран і HUD-панелі карти
 STR_DLGSETTINGS_FULLSCREEN=Весь екран
@@ -2223,7 +2225,6 @@ STR_DLGLOBBY_SCENARIO_TAG_SCENARIO=Сценарій
 STR_DLGLOBBY_SCENARIO_KIND_ALL=Усі
 STR_DLGLOBBY_SCENARIO_KIND_MODS=Лише моди
 STR_DLGLOBBY_SCENARIO_KIND_SCENARIOS=Лише сценарії
-STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS=Запускати скрипти у завантажених картах
 STR_DLGSETTINGS_HOSTING_SCENARIODIR=Папка модів
 STR_DLGSETTINGS_MAPVIEW=Вид карти
 STR_DLGSETTINGS_SIMPLEZOOM=Використовувати спрощений вид при зменшенні

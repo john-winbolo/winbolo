@@ -51,7 +51,12 @@ BgGame *bgGameGetShared(void) { return sharedBg; }
 
 /* Bot player count range */
 #define BG_MIN_BOTS 2
+#ifdef __EMSCRIPTEN__
+/* The bots share the page's only thread with the menu. */
+#define BG_MAX_BOTS 4
+#else
 #define BG_MAX_BOTS 16
+#endif
 
 /* User zoom range, in whole zoom factors (16px tiles * zf). */
 #define BG_MIN_ZOOM 1

@@ -153,15 +153,6 @@ const char *serverSimGetMapDirRoot(const ServerSim *sim);
  * public/server_sim.h — unlike the map root, a desktop host sets this one
  * from its own preferences, and a GUI translation unit sees public/ only. */
 
-/* Records which scenario from that directory the lobby host has picked, by
- * the file name the directory listing gave; NULL or "" is none. Recording the
- * pick is all it does — the caller asks for the decision about what plays
- * again afterwards and publishes the result, as the CMD_LOBBY_SET_SCENARIO
- * case does. Its callers are that case and the tests, so it stays here while
- * serverSimGetSelectedScenario is public: the scenario library reads the pick
- * back, and a frontend that wants a different one sends the command. */
-void serverSimSetSelectedScenario(ServerSim *sim, const char *file);
-
 /* Absolute directory backing the virtual "Uploads/" folder for
  * PERSIST-policy uploads. Pass NULL or "" to leave it unset (uploads then
  * resolve under "<mapDirRoot>/Uploads"). The enumerate/search/read resolvers
@@ -216,5 +207,70 @@ void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
  * state. Callers (UDP PACKET_LOBBY_TEAM_CLEAR handler, SP-host
  * clientSimNetSendLobbyTeamClear). */
 void serverSimClearTeamMeta(ServerSim *sim, BYTE teamId);
+
+/* The lobby and round steps of the server's tick that a game with no
+ * remote clients still needs. Defined in server_sim_lifecycle_local.c.
+ * serverInstanceTick calls each at its point in the tick, between the
+ * network work around it, and the browser client's local tick calls the
+ * same functions. None takes a lock: the caller's lock covers them.
+ *
+ * BotTick runs the bots for a running round, before the sim tick.
+ * OnGameOver is the running -> game-over edge (resolve, the game-over
+ * publishes, the round stats). PublishBalanceProposal sends a finished
+ * team-balance proposal after a non-running sim tick. OnGameStart is the
+ * countdown -> running edge (the running publish, the bots' game start,
+ * the alliance re-assert). CountdownTick publishes the seconds left once a
+ * second during the countdown. OnReturnToLobby is the game-over -> lobby
+ * edge (brain list and announces, lobby settings, every slot, the pending
+ * win message). LobbySlotHeartbeat republishes the connected slots every
+ * 250th tick of the caller's tickCount in the lobby or countdown. */
+void serverSimLocalBotTick(ServerSim *sim);
+void serverSimLocalOnGameOver(ServerSim *sim);
+void serverSimLocalPublishBalanceProposal(ServerSim *sim);
+void serverSimLocalOnGameStart(ServerSim *sim);
+void serverSimLocalCountdownTick(ServerSim *sim);
+void serverSimLocalOnReturnToLobby(ServerSim *sim);
+void serverSimLocalLobbySlotHeartbeat(ServerSim *sim, uint32_t tickCount);
+
+/* The one sequence that runs the steps above around a sim tick, so the
+ * dedicated server's tick and the browser client's local tick cannot drift
+ * apart on the order or the conditions. Defined in
+ * server_sim_lifecycle_local.c.
+ *
+ * In the running state: BotTick, the sim tick, and on the running ->
+ * game-over edge the beforeGameOver hook and then OnGameOver. In every
+ * other state: the sim tick, PublishBalanceProposal, then on the countdown
+ * -> running edge the beforeGameStart hook and OnGameStart (or CountdownTick
+ * while the countdown goes on), on the game-over -> lobby edge the
+ * beforeReturnToLobby hook and OnReturnToLobby, then LobbySlotHeartbeat and
+ * the queued bot-config publishes while in the lobby or countdown.
+ *
+ * The hooks are the network server's work that has to sit between two of
+ * those steps: the transport queue reset before the RUNNING publish, the
+ * WinBolo.net session rotation before the lobby republish, the brain
+ * recording's end before the game-over resolve. hooks may be NULL, and so
+ * may any hook in it. Work that follows the sequence (a map rotation after
+ * game over, a snapshot after game start) keys off the returned edge.
+ *
+ * tickCount is the caller's tick counter for the heartbeat. outSimMs, when
+ * not NULL, takes the wall-clock milliseconds the sim tick itself took.
+ * Takes no lock: the caller's lock covers it. */
+typedef enum {
+  serverLocalEdgeNone,
+  serverLocalEdgeGameOver,       /* running -> game over this tick */
+  serverLocalEdgeGameStart,      /* countdown -> running this tick */
+  serverLocalEdgeReturnToLobby   /* game over -> lobby this tick */
+} ServerLocalEdge;
+
+typedef struct ServerSimLocalTickHooks {
+  void *ctx;
+  void (*beforeGameOver)(ServerSim *sim, void *ctx);
+  void (*beforeGameStart)(ServerSim *sim, void *ctx);
+  void (*beforeReturnToLobby)(ServerSim *sim, void *ctx);
+} ServerSimLocalTickHooks;
+
+ServerLocalEdge serverSimLocalTick(ServerSim *sim, uint32_t tickCount,
+                                   const ServerSimLocalTickHooks *hooks,
+                                   double *outSimMs);
 
 #endif
