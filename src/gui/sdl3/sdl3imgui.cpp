@@ -1389,6 +1389,9 @@ static void mapOverviewOpen(void) {
     if (sdl3DrawIsOverviewInWindow() || overviewSuppressed()) return;
     s_showMapOverviewPanel   = true;
     gameFrontShowMapOverview = true;
+    /* The map is coming back on screen, so it says what camera it kept. A
+       view not made yet says so on its own when it is. */
+    overviewViewShowCameraNotice(s_overviewView);
 #else
     /* Full screen mode owns the whole window and draws the same map itself,
        so the pop-out never opens while it is on — in a game, in the lobby or
@@ -1437,6 +1440,9 @@ static void mapOverviewOpen(void) {
        up. Its move is saved by the WINDOW_MOVED handler. */
     popOutRescueWindow(s_popMapOverview.window);
     gameFrontShowMapOverview = true;
+    /* The map is coming back on screen, so it says what camera it kept. A
+       view not made yet says so on its own when it is. */
+    overviewViewShowCameraNotice(s_overviewView);
 #endif
 }
 
@@ -2412,6 +2418,31 @@ static void renderCtrlSendMsg(ClientSim *cs) {
 /* -------------------------------------------------------
  * Map Overview pop-out
  * ------------------------------------------------------- */
+/* The camera readout the view hands out for a moment after the zoom or the
+ * follow flag changes, in a box whose left edge is at x and whose top — or,
+ * with anchorBottom, bottom — is at y. Drawn with the window draw list rather
+ * than as a widget: the map image fills its window exactly, and anything that
+ * added to the content would give it a scrollbar. The fade is the view's; the
+ * box and the text take it together. Nothing is drawn once it is over. */
+static void overviewDrawCameraNotice(OverviewView *view, const keyItems *keys,
+                                     float x, float y, bool anchorBottom) {
+    char  status[96];
+    float alpha = 0.0f;
+    if (!overviewViewCameraNotice(view, keys, status, sizeof(status), &alpha))
+        return;
+    const float pad = 4.0f;
+    ImVec2 textSize = ImGui::CalcTextSize(status);
+    float  boxH     = textSize.y + pad * 2.0f;
+    float  top      = anchorBottom ? y - boxH : y;
+    ImVec2 boxMin(x, top);
+    ImVec2 boxMax(x + textSize.x + pad * 2.0f, top + boxH);
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(boxMin, boxMax,
+                      IM_COL32(0, 0, 0, (int)(160.0f * alpha)));
+    dl->AddText(ImVec2(boxMin.x + pad, boxMin.y + pad),
+                IM_COL32(230, 230, 230, (int)(255.0f * alpha)), status);
+}
+
 static void renderMapOverviewContent(ClientSim *cs) {
     SDL_Texture *tex  = overviewViewGetTexture(s_overviewView);
     int          texW = 0;
@@ -2465,28 +2496,11 @@ static void renderMapOverviewContent(ClientSim *cs) {
             gameFrontOverviewFollow = cam->follow;
             gameFrontSaveWindowSettings();
         }
-
-        /* Zoom and follow state along the bottom-left of the map. Drawn onto
-           the image with the window draw list rather than as a widget: the
-           image is exactly DisplaySize, so anything that added to the
-           content would give the pop-out a scrollbar. %g keeps the ladder
-           readable (0.5, 1, 1.5, 2) with no trailing zeros, and the text is
-           ASCII because this file is compiled without /utf-8. */
-        char status[96];
-        SDL_snprintf(status, sizeof(status), "%gx - %s", (double)zoom,
-                     langGetText(cam->follow ? STR_OVERVIEW_FOLLOWING
-                                             : STR_OVERVIEW_FREE));
-        const float pad = 4.0f;
-        ImVec2 textSize = ImGui::CalcTextSize(status);
-        ImVec2 boxMin(imgMin.x,
-                      imgMin.y + (float)texH - (textSize.y + pad * 2.0f));
-        ImVec2 boxMax(imgMin.x + textSize.x + pad * 2.0f,
-                      imgMin.y + (float)texH);
-        ImDrawList *dl = ImGui::GetWindowDrawList();
-        dl->AddRectFilled(boxMin, boxMax, IM_COL32(0, 0, 0, 160));
-        dl->AddText(ImVec2(boxMin.x + pad, boxMin.y + pad),
-                    IM_COL32(230, 230, 230, 255), status);
     }
+
+    /* The zoom and follow readout, bottom-left of the map while it lasts. */
+    overviewDrawCameraNotice(s_overviewView, &keys, imgMin.x,
+                             imgMin.y + (float)texH, true);
 }
 
 #ifdef __EMSCRIPTEN__
@@ -2710,40 +2724,21 @@ static void renderOverviewInWindow(ClientSim *cs) {
                                       overviewViewCamera(view),
                                       (int)rw, (int)rh);
 
-        /* Zoom and follow state along the top of the map — the pop-out puts the
-           same readout bottom-left, but here the bottom of the window is where
-           the newswire goes. Drawn with the window draw list so it adds nothing
-           to the window's content. %g keeps the ladder readable (0.5, 1, 1.5,
-           2) with no trailing zeros, and the text is ASCII because this file is
-           compiled without /utf-8. */
-        OverviewCamera *cam = overviewViewCamera(view);
-        if (cam) {
-            char status[96];
-            SDL_snprintf(status, sizeof(status), "%gx - %s",
-                         (double)overviewCameraZoomScale(cam),
-                         langGetText(cam->follow ? STR_OVERVIEW_FOLLOWING
-                                                 : STR_OVERVIEW_FREE));
-            const float pad = 4.0f;
-            ImVec2 textSize = ImGui::CalcTextSize(status);
-            /* The corner belongs to the build strip, so the readout starts
-               just past it, level with its top. The gap matches the margin the
-               strip itself keeps from the map's edge. With no HUD drawn there
-               is nothing to clear and it sits in the corner. */
-            float textX = rx;
-            float textY = ry;
-            if (haveHud) {
-                const float hudGap = 8.0f;
-                textX = rx + hud.buildX + hud.buildW + hudGap;
-                textY = ry + hud.buildY;
-            }
-            ImVec2 boxMin(textX, textY);
-            ImVec2 boxMax(textX + textSize.x + pad * 2.0f,
-                          textY + textSize.y + pad * 2.0f);
-            ImDrawList *dl = ImGui::GetWindowDrawList();
-            dl->AddRectFilled(boxMin, boxMax, IM_COL32(0, 0, 0, 160));
-            dl->AddText(ImVec2(boxMin.x + pad, boxMin.y + pad),
-                        IM_COL32(230, 230, 230, 255), status);
+        /* The zoom and follow readout along the top of the map while it
+           lasts — the pop-out puts it bottom-left, but here the bottom of the
+           window is where the newswire goes. The corner belongs to the build
+           strip, so the readout starts just past it, level with its top. The
+           gap matches the margin the strip itself keeps from the map's edge.
+           With no HUD drawn there is nothing to clear and it sits in the
+           corner. */
+        float textX = rx;
+        float textY = ry;
+        if (haveHud) {
+            const float hudGap = 8.0f;
+            textX = rx + hud.buildX + hud.buildW + hudGap;
+            textY = ry + hud.buildY;
         }
+        overviewDrawCameraNotice(view, &keys, textX, textY, false);
     }
     ImGui::End();
 }

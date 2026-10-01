@@ -397,6 +397,7 @@ STR_BRAINSETTINGS_TITLE=Brain Settings
 # Map overview pop-out
 STR_OVERVIEW_FOLLOWING=following
 STR_OVERVIEW_FREE=free
+STR_OVERVIEW_FREE_HINT=free ({string1} to follow)
 
 # Settings panel additions (pre-game)
 STR_DLGSETTINGS_TUTORIAL=Tutorial

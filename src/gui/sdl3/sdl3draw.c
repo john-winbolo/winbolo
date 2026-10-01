@@ -984,7 +984,11 @@ SDL_Texture *sdl3DrawGetTilesTexture(void) {
 void sdl3DrawSetOverviewInWindow(bool active) {
   if (active == gOverviewInWindow) return;
   gOverviewInWindow = active;
-  if (!active) {
+  if (active) {
+    /* The map is coming back on screen, so it says what camera it kept. A
+       view not made yet says so on its own when the first draw makes it. */
+    overviewViewShowCameraNotice(gOverviewView);
+  } else {
     overviewViewReleaseCursor(gOverviewView);
     gOverviewRect.x = gOverviewRect.y = gOverviewRect.w = gOverviewRect.h = 0.0f;
     gOverviewHudValid = FALSE;
