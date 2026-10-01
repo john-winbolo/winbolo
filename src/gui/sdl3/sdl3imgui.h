@@ -236,6 +236,17 @@ void sdl3ImguiStartBrain(int idx, struct ClientSim *cs);
 void sdl3ImguiShowBrainSettings(void);
 
 /*********************************************************
+*NAME:          sdl3ImguiToggleScnPanelShown
+*PURPOSE:
+*  Show or hide one script's scenario panel, the toggle the
+*  Brains > Info Overlay checkbox makes. owner is the script's
+*  position on the round's list. No-op for an owner with no
+*  panel this round. Called from the macOS native menu's
+*  Info Overlay rows.
+*********************************************************/
+void sdl3ImguiToggleScnPanelShown(int owner);
+
+/*********************************************************
 *NAME:          sdl3ImguiWantsKeyboard
 *PURPOSE:
 *  Returns true when ImGui has an active text input widget

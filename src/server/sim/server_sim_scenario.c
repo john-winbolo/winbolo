@@ -3208,12 +3208,13 @@ static void scenarioFillPanelEvent(ControlEvent *evt, BYTE panel,
  * that leaves here is one every client can draw. The decode is thrown away:
  * what the arm needs from it is whether it decodes at all.
  *
- * One update per panel per destination per tick. The key is the pair, not the
- * panel alone — a scenario giving each of sixteen players its own copy of
- * panel 0 is ordinary, and the drain already bounds how many ops one tick
- * applies. A second update for the same pair in the same tick is refused
- * rather than queued: every update replaces the whole list, so the one that
- * would have been overwritten was never going to be seen. */
+ * One update per panel per destination per script per tick. The key is
+ * the triple, not the panel alone — a scenario giving each of sixteen
+ * players its own copy of panel 0 is ordinary, two scripts of the round's
+ * list each keep their own panel, and the drain already bounds how many ops
+ * one tick applies. A second update for the same key in the same tick is
+ * refused rather than queued: every update replaces the whole list, so the
+ * one that would have been overwritten was never going to be seen. */
 static ScnOpResult scenarioOpPanel(ServerSim *sim, const ScnOpPanel *p) {
     ControlEvent   evt;
     ScnPanelStore *store;
@@ -3237,8 +3238,17 @@ static ScnOpResult scenarioOpPanel(ServerSim *sim, const ScnOpPanel *p) {
         return SCN_OP_RANGE;
     }
 
+    /* The limit is per script: two scripts that each update their own panel
+       in the same tick both reach the client, which keeps one list per
+       script, and each keeps its own row here so a late joiner is given
+       both. Only a second update from the same script is the one that
+       could never be seen. */
+    if (p->owner >= SCN_PANEL_OWNERS) {
+        return SCN_OP_RANGE;
+    }
     store = &sim->scenarioPanels[p->panel]
-                                [scenarioPanelTargetIndex(destTeam, destPlayer)];
+                                [scenarioPanelTargetIndex(destTeam, destPlayer)]
+                                [p->owner];
     /* valid is what makes tick 0 a tick like any other: a store that has
        never held a list reads tick 0 too, and without the flag the first
        update of a round would look like the second. */
@@ -3255,11 +3265,11 @@ static ScnOpResult scenarioOpPanel(ServerSim *sim, const ScnOpPanel *p) {
 
     /* Recorded from the store, which holds the same bytes and is not const,
        so the record costs no second copy. */
-    logAddEvent(log_ScnPanel, p->panel, destTeam, destPlayer, 0, p->len,
-                (char *)store->bytes);
+    logAddEvent(log_ScnPanel, SCN_PANEL_WIRE(p->panel, p->owner), destTeam,
+                destPlayer, 0, p->len, (char *)store->bytes);
 
-    scenarioFillPanelEvent(&evt, p->panel, destTeam, destPlayer, p->bytes,
-                           p->len);
+    scenarioFillPanelEvent(&evt, SCN_PANEL_WIRE(p->panel, p->owner), destTeam,
+                           destPlayer, p->bytes, p->len);
     serverSimPublishControl(sim, &evt);
     return SCN_OP_OK;
 }
@@ -3482,25 +3492,19 @@ void serverSimScenarioReplayPanels(
     int          panel;
     int          lastTarget;
     int          target;
+    int          owner;
 
     if (sim == NULL || deliver == NULL) {
         return;
     }
     /* Row 0 is the everyone-addressed list and the rows above it are the
        teams and the slots. Without withTargeted the walk stops after row 0,
-       which is one record per panel rather than up to 32. */
+       which is one record per panel per script rather than up to 32. */
     lastTarget = withTargeted ? SCN_PANEL_TARGETS : 1;
     for (panel = 0; panel < SCN_PANEL_IDS; panel++) {
         for (target = 0; target < lastTarget; target++) {
-            const ScnPanelStore *store = &sim->scenarioPanels[panel][target];
             BYTE destTeam;
             BYTE destPlayer;
-            if (!store->valid || store->len == 0) {
-                /* A panel nothing has written, or one a scenario cleared. A
-                   joiner's panels start empty either way, so replaying the
-                   clear would send it what it already has. */
-                continue;
-            }
             if (target < MAX_TANKS) {
                 destTeam   = (BYTE)target;   /* 0 = everyone, else the team */
                 destPlayer = 0xFF;
@@ -3508,9 +3512,24 @@ void serverSimScenarioReplayPanels(
                 destTeam   = 0;
                 destPlayer = (BYTE)(target - MAX_TANKS);   /* a 0-based slot */
             }
-            scenarioFillPanelEvent(&evt, (BYTE)panel, destTeam, destPlayer,
-                                   store->bytes, store->len);
-            deliver(ctx, &evt);
+            /* Each script of the round's list keeps its own row, so every
+               script's latest list goes, in list order. */
+            for (owner = 0; owner < SCN_PANEL_OWNERS; owner++) {
+                const ScnPanelStore *store =
+                    &sim->scenarioPanels[panel][target][owner];
+                if (!store->valid || store->len == 0) {
+                    /* A panel nothing has written, or one a scenario
+                       cleared. A joiner's panels start empty either way,
+                       so replaying the clear would send it what it already
+                       has. */
+                    continue;
+                }
+                scenarioFillPanelEvent(&evt,
+                                       SCN_PANEL_WIRE(panel, owner),
+                                       destTeam, destPlayer, store->bytes,
+                                       store->len);
+                deliver(ctx, &evt);
+            }
         }
     }
 }

@@ -738,6 +738,15 @@ typedef struct {
  * a caller draws from it rather than holding it across frames. */
 const ScnPanelList *clientSimGetScnPanel(const ClientSim *cs, uint8_t id);
 
+/* The same, for the one script of the round's list that sent it. owner is
+ * that script's position on the list, the index clientSimGetLobbyScript*
+ * takes. clientSimGetScnPanel above answers with the lowest owner whose
+ * list has something in it (or, when every list is empty, the lowest owner
+ * with a list at all), which is the one panel a frontend with room for
+ * only one shows. */
+const ScnPanelList *clientSimGetScnPanelOf(const ClientSim *cs, uint8_t id,
+                                           uint8_t owner);
+
 /* How many arriving panel lists scnPanelParse refused, and this client
  * therefore dropped instead of drawing. */
 uint32_t clientSimGetScnPanelRejectCount(const ClientSim *cs);
@@ -1325,8 +1334,9 @@ uint32_t    clientSimGetLobbyMapListSeq(const ClientSim *cs);
  * template asks for. Bound says it is tied to the map it was written against,
  * so a chooser can say why one it can see is not one it may pick.
  *
- * Nothing selects a scenario yet; this is what is on offer. "" / 0 / false
- * for a NULL cs or an index out of range. */
+ * This is what is on offer; a host picks from it with CMD_SET_SCRIPT_LIST,
+ * and the clientSimGetLobbyScript* accessors answer what was picked. "" / 0 /
+ * false for a NULL cs or an index out of range. */
 int         clientSimGetLobbyScenarioListCount(const ClientSim *cs);
 const char *clientSimGetLobbyScenarioListFile(const ClientSim *cs, int idx);
 const char *clientSimGetLobbyScenarioListName(const ClientSim *cs, int idx);

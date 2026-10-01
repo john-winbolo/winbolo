@@ -143,7 +143,7 @@ log_EntityMasks,     // which indices are on the map, as three big-endian u16: p
 log_ServerText,      // a server line a scenario wrote: opt1=destTeam (0 = everyone), opt2=destPlayer (0xFF = everyone), then the text as a pascal string
 log_GameTimeSet,     // the round's game time after a scenario changed it, as a big-endian int32 of ticks across opt1..opt4
 log_RuleSet,         // one simulation rule a scenario changed: short1=rule index, then the value the field ended up holding as an 8-byte pascal blob (layout in docs/replay-format.md)
-log_ScnPanel,        // one scenario panel's display list: opt1=panel id, opt2=destTeam (0 = everyone), opt3=destPlayer (0xFF = everyone), short1=the list's byte length, then that many bytes (layout in docs/replay-format.md)
+log_ScnPanel,        // one scenario panel's display list: opt1=panel id in the low four bits and the drawing script's list position in the high four (SCN_PANEL_WIRE), opt2=destTeam (0 = everyone), opt3=destPlayer (0xFF = everyone), short1=the list's byte length, then that many bytes (layout in docs/replay-format.md)
 log_ScnScore,        // a scenario's score row: opt1=kind, opt2=target, then the score as a big-endian int32 and the label as a pascal string (layout in docs/replay-format.md)
 log_ScnAnnounce,     // a centre-screen line a scenario put up: opt1=destTeam, opt2=destPlayer, short1=ticks it stays up, then the text as a pascal string
 log_ScnMarker,       // a scenario map marker: opt1=id, opt2=kind, opt3=destTeam, opt4=destPlayer, then x, y, slot and colour as a four-byte pascal blob

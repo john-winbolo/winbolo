@@ -203,6 +203,7 @@ int gameFrontScnPanelX = -1;
 int gameFrontScnPanelY = -1;
 int gameFrontScnPanelScale = -1;
 int gameFrontScnPanelAlpha = -1;
+bool gameFrontScnPanelCloseAsk = TRUE;
 
 bool isServer = FALSE;
 bool useAutoslow;
@@ -398,13 +399,17 @@ static bool wasmAskJoinPassword(bool wrongBefore) {
 }
 
 /* Pick a random .map file from the preloaded data/maps for the menu's
- * background game, leaving out the same two maps the desktop's pick does
- * (the tutorial map and Better Best Map Ever). */
+ * background game, leaving out what the desktop's pick does (gamefront.c
+ * bgMapAllowed): the tutorial map and Better Best Map Ever by name, and
+ * every map that is a scenario, whether or not scripts are on, since the
+ * background game runs no script and would show the scenario's map played
+ * as something it is not. */
 static bool wasmPickBackgroundMap(char *out, size_t outLen) {
   const char *dir = "data/maps";
   int count = 0;
   int filtered = 0;
   int i;
+  char path[512];
   char **list = SDL_GlobDirectory(dir, "*.map", 0, &count);
   if (list == NULL || count == 0) {
     printf("[WASM] background game: no maps in '%s'\n", dir);
@@ -412,13 +417,18 @@ static bool wasmPickBackgroundMap(char *out, size_t outLen) {
     return FALSE;
   }
   for (i = 0; i < count; i++) {
-    if (SDL_strcasecmp(list[i], "Inbuilt Tutorial.map") != 0 &&
-        SDL_strcasecmp(list[i], "Better Best Map Ever.map") != 0) {
-      list[filtered++] = list[i];
+    if (SDL_strcasecmp(list[i], "Inbuilt Tutorial.map") == 0 ||
+        SDL_strcasecmp(list[i], "Better Best Map Ever.map") == 0) {
+      continue;
     }
+    SDL_snprintf(path, sizeof(path), "%s/%s", dir, list[i]);
+    if (scenarioHostMapCarriesScript(path)) {
+      continue;
+    }
+    list[filtered++] = list[i];
   }
   if (filtered == 0) {
-    printf("[WASM] background game: no non-tutorial maps in '%s'\n", dir);
+    printf("[WASM] background game: no maps in '%s' once the tutorial and scenarios are left out\n", dir);
     SDL_free(list);
     return FALSE;
   }
@@ -1259,6 +1269,20 @@ bool gameFrontGetScnPanelLayout(const char *scenario, int *x, int *y,
 void gameFrontSetScnPanelLayout(const char *scenario, int x, int y,
                                 int scale, int alpha) {
   (void)scenario; (void)x; (void)y; (void)scale; (void)alpha;
+}
+/* Nor a per-script shown flag or pop-out: the browser has one window. */
+bool gameFrontGetScnPanelShown(const char *script) { (void)script; return true; }
+void gameFrontSetScnPanelShown(const char *script, bool shown) {
+  (void)script; (void)shown;
+}
+bool gameFrontGetScnPanelPopout(const char *script, int panel, bool *open,
+                                int *x, int *y, int *w, int *h) {
+  (void)script; (void)panel; (void)open; (void)x; (void)y; (void)w; (void)h;
+  return false;
+}
+void gameFrontSetScnPanelPopout(const char *script, int panel, bool open,
+                                int x, int y, int w, int h) {
+  (void)script; (void)panel; (void)open; (void)x; (void)y; (void)w; (void)h;
 }
 /* The map chooser tags a map that has a script beside it, answered by the
  * scenario library as on desktop. */

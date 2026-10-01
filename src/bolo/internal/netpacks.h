@@ -851,16 +851,6 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               cut rather than dropping the
                                               entry. */
 
-#define PACKET_LOBBY_SET_SCENARIO      225  /* client → server
-                                              { pathLen 1, path N } the lobby
-                                              host picking one of the
-                                              scenarios above, by the file
-                                              name the list gave. pathLen 0
-                                              is the message that selects
-                                              none, so unlike SET_MAP an
-                                              empty path is carried rather
-                                              than refused. */
-
 #define PACKET_SET_SCRIPT_LIST         226  /* client -> server
                                               { count 1, then count entries
                                                 of { fileLen 1, file N } }
@@ -874,9 +864,8 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               and the server's state is a
                                               straight assignment rather than
                                               a splice. count 0 clears the
-                                              list, which is what
-                                              SET_SCENARIO with pathLen 0
-                                              does for the one-script case.
+                                              list, and a one-row list picks
+                                              a single script.
                                               Worst case on the wire is
                                               8 + 4 + 1 + 10 * (1 + 127)
                                               = 1293 bytes, which is why

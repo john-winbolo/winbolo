@@ -2177,7 +2177,6 @@ static const LangEntry langTable[] = {
     {2210, "Up to {number} players"},
     {2211, "{number} bot seats"},
     {2212, "Mod: {string2} (on {string1})"},
-    {2213, "Run scripts in uploaded maps"},
     {2216, "Mod Directory"},
     {2217, "unchanged"},
     {2218, "{string1}x faster"},
@@ -2685,9 +2684,17 @@ static const LangEntry langTable[] = {
     {2733, "Maximize"},
     {2734, "Loading preview..."},
     {2738, "Needs bots allowed: this script adds its own bots"},
+    {2740, "Info Overlay"},
+    {2741, "Pop out"},
+    {2742, "Pop in"},
+    {2743, "Close {string1}?"},
+    {2744, "Turn it back on from {string1} > {string2}."},
     {2750, "Licence"},
     {2751, "Free software under the GNU GPL v3 or later. No warranty."},
     {2752, "File not found."},
+    {2753, "Setting"},
+    {2754, "Value"},
+    {2755, "Rules:"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

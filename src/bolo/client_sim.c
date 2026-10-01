@@ -2210,9 +2210,30 @@ const ClientSpectatorSlot *clientSimGetSpectatorSlot(const ClientSim *cs, uint8_
 }
 
 const ScnPanelList *clientSimGetScnPanel(const ClientSim *cs, uint8_t id) {
+  uint8_t owner;
   if (cs == NULL || id >= SCN_PANEL_IDS) return NULL;
-  if (!cs->scnPanelValid[id]) return NULL;
-  return &cs->scnPanels[id];
+  /* The lowest script whose list has something in it, so a scenario that
+     cleared its panel does not hide a mod's that is still drawing. */
+  for (owner = 0; owner < SCN_PANEL_OWNERS; owner++) {
+    if (cs->scnPanelValid[id][owner] && cs->scnPanels[id][owner].count > 0) {
+      return &cs->scnPanels[id][owner];
+    }
+  }
+  /* Every list is empty: the lowest cleared one, so a caller still tells a
+     cleared panel from one nothing has sent. */
+  for (owner = 0; owner < SCN_PANEL_OWNERS; owner++) {
+    if (cs->scnPanelValid[id][owner]) return &cs->scnPanels[id][owner];
+  }
+  return NULL;
+}
+
+const ScnPanelList *clientSimGetScnPanelOf(const ClientSim *cs, uint8_t id,
+                                           uint8_t owner) {
+  if (cs == NULL || id >= SCN_PANEL_IDS || owner >= SCN_PANEL_OWNERS) {
+    return NULL;
+  }
+  if (!cs->scnPanelValid[id][owner]) return NULL;
+  return &cs->scnPanels[id][owner];
 }
 
 uint32_t clientSimGetScnPanelRejectCount(const ClientSim *cs) {
@@ -3983,7 +4004,15 @@ static bool overviewSquareIsLive(const OverviewMap *om, int mapX, int mapY) {
  * square it stands on is live, the local player's own tank included. Whether
  * that tank survived the test is reported back through outSelfDrawn, so the
  * reticle can follow it. Copying into fresh lists rather than editing the
- * built ones leaves the sim's per-frame views untouched. */
+ * built ones leaves the sim's per-frame views untouched.
+ *
+ * For a tank the square it stands on is the one under its centre, which is
+ * not the square the list carries: that is the sprite's top left, half a
+ * square back from the centre. A tank in the top left quarter of its square is
+ * listed on the square diagonally before it, and driven into an inside corner
+ * of buildings that square is the corner block, which the sight mask rightly
+ * calls hidden. Asking about that square dropped the player's own tank off the
+ * full screen map every time they nosed into such a corner. */
 static void overviewViewFilterEntities(const OverviewMap *om, BYTE me,
                                        bool selfAlive,
                                        const screenTanks *allTks,
@@ -3994,6 +4023,7 @@ static void overviewViewFilterEntities(const OverviewMap *om, BYTE me,
                                        bool *outSelfDrawn) {
   BYTE mx, my, px, py, frame, playerNum;
   BYTE wx, wy, angle;
+  BYTE cx, cy; /* The square the tank's centre is on */
   char name[PLAYER_NAME_LEN];
   BYTE count;
   BYTE total;
@@ -4012,7 +4042,10 @@ static void overviewViewFilterEntities(const OverviewMap *om, BYTE me,
      * at all. This is also what takes the reticle off for the death wait:
      * outSelfDrawn stays false. */
     if (isSelf && !selfAlive) continue;
-    if (!overviewSquareIsLive(om, mx, my)) continue;
+    cx = mx;
+    cy = my;
+    screenTanksGetCentreSquare(allTks, count, &cx, &cy);
+    if (!overviewSquareIsLive(om, cx, cy)) continue;
     screenTanksGetSubPixel(allTks, count, &wx, &wy, &angle);
     screenTanksAddItem(outTks, mx, my, px, py, frame, playerNum, name,
                        wx, wy, angle);

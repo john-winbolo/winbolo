@@ -2400,6 +2400,13 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
             break;
         }
         c->joinState = UDP_CLIENT_CONNECTED;
+        /* A map list request made while the join was not complete was never
+         * sent, and a map change always re-joins, so the listing the chooser
+         * asked for then is still owed. Drop the cache and tick the counter
+         * the chooser watches so it asks again now that a request goes out. */
+        cs->lobbyMapListReady    = false;
+        cs->lobbyMapListInFlight = false;
+        cs->lobbyMapListSeq++;
         installCompressedMap(cs, c->mapDownloadBuf,
                              (int)c->mapDownloadTotal, NULL,
                              /*initViewport=*/true);

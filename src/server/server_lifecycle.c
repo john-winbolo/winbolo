@@ -545,8 +545,7 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
                                       cfg->uploadPersistDir,
                                       cfg->scriptUploadPolicy,
                                       cfg->scriptUploadMaxFiles,
-                                      cfg->scriptUploadMaxStorageBytes,
-                                      cfg->scriptUploadDir);
+                                      cfg->scriptUploadMaxStorageBytes);
     sim->uploadPolicy = cfg->uploadPolicy;
     serverSimSetScriptUploadPolicy(sim, cfg->scriptUploadPolicy);
     serverSimSetScriptSharing(sim, !cfg->noScriptSharing);

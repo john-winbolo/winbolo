@@ -1482,23 +1482,26 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
     }
 
     case CTRL_SCN_PANEL: {
-        uint8_t panel = evt->u.scnPanel.panel;
+        /* The byte is the panel id and the sending script's position on
+           the round's list, packed by SCN_PANEL_WIRE. */
+        uint8_t panel = SCN_PANEL_WIRE_ID(evt->u.scnPanel.panel);
+        uint8_t owner = SCN_PANEL_WIRE_OWNER(evt->u.scnPanel.panel);
         if (!clientSimScnAddressedToMe(cs, evt->u.scnPanel.destTeam,
                                        evt->u.scnPanel.destPlayer)) {
             break;
         }
-        if (panel >= SCN_PANEL_IDS) break;
+        if (panel >= SCN_PANEL_IDS || owner >= SCN_PANEL_OWNERS) break;
         /* Parsed straight into the stored list: scnPanelParse writes its
            output only when it takes a list whole, so a list this client
            cannot read leaves the panel showing exactly what it had. The
            refusal is counted rather than logged per event — a scenario
            sending a bad list usually sends it every time it updates. */
         if (scnPanelParse(evt->u.scnPanel.bytes, evt->u.scnPanel.len,
-                          &cs->scnPanels[panel]) != SCN_PANEL_OK) {
+                          &cs->scnPanels[panel][owner]) != SCN_PANEL_OK) {
             cs->scnPanelRejects++;
             break;
         }
-        cs->scnPanelValid[panel] = true;
+        cs->scnPanelValid[panel][owner] = true;
         break;
     }
 
