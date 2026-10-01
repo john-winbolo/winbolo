@@ -241,4 +241,45 @@ void serverSimLocalCountdownTick(ServerSim *sim);
 void serverSimLocalOnReturnToLobby(ServerSim *sim);
 void serverSimLocalLobbySlotHeartbeat(ServerSim *sim, uint32_t tickCount);
 
+/* The one sequence that runs the steps above around a sim tick, so the
+ * dedicated server's tick and the browser client's local tick cannot drift
+ * apart on the order or the conditions. Defined in
+ * server_sim_lifecycle_local.c.
+ *
+ * In the running state: BotTick, the sim tick, and on the running ->
+ * game-over edge the beforeGameOver hook and then OnGameOver. In every
+ * other state: the sim tick, PublishBalanceProposal, then on the countdown
+ * -> running edge the beforeGameStart hook and OnGameStart (or CountdownTick
+ * while the countdown goes on), on the game-over -> lobby edge the
+ * beforeReturnToLobby hook and OnReturnToLobby, then LobbySlotHeartbeat and
+ * the queued bot-config publishes while in the lobby or countdown.
+ *
+ * The hooks are the network server's work that has to sit between two of
+ * those steps: the transport queue reset before the RUNNING publish, the
+ * WinBolo.net session rotation before the lobby republish, the brain
+ * recording's end before the game-over resolve. hooks may be NULL, and so
+ * may any hook in it. Work that follows the sequence (a map rotation after
+ * game over, a snapshot after game start) keys off the returned edge.
+ *
+ * tickCount is the caller's tick counter for the heartbeat. outSimMs, when
+ * not NULL, takes the wall-clock milliseconds the sim tick itself took.
+ * Takes no lock: the caller's lock covers it. */
+typedef enum {
+  serverLocalEdgeNone,
+  serverLocalEdgeGameOver,       /* running -> game over this tick */
+  serverLocalEdgeGameStart,      /* countdown -> running this tick */
+  serverLocalEdgeReturnToLobby   /* game over -> lobby this tick */
+} ServerLocalEdge;
+
+typedef struct ServerSimLocalTickHooks {
+  void *ctx;
+  void (*beforeGameOver)(ServerSim *sim, void *ctx);
+  void (*beforeGameStart)(ServerSim *sim, void *ctx);
+  void (*beforeReturnToLobby)(ServerSim *sim, void *ctx);
+} ServerSimLocalTickHooks;
+
+ServerLocalEdge serverSimLocalTick(ServerSim *sim, uint32_t tickCount,
+                                   const ServerSimLocalTickHooks *hooks,
+                                   double *outSimMs);
+
 #endif

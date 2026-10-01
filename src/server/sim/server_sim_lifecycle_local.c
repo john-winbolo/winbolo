@@ -31,6 +31,7 @@
  *********************************************************/
 
 #include <string.h>
+#include <SDL3/SDL.h>               /* SDL_GetPerformanceCounter — the sim tick's wall clock */
 
 #include "server_sim_shared.h"      /* publishServerEnglishBroadcast — the win message */
 #include "server_sim_internal.h"
@@ -217,4 +218,97 @@ void serverSimLocalLobbySlotHeartbeat(ServerSim *sim, uint32_t tickCount) {
             }
         }
     }
+}
+
+/* Runs one hook if the caller gave it. */
+static void localTickHook(void (*hook)(ServerSim *, void *),
+                          ServerSim *sim, const ServerSimLocalTickHooks *hooks) {
+    if (hooks != NULL && hook != NULL) {
+        hook(sim, hooks->ctx);
+    }
+}
+
+/* The sequence the steps above run in around a sim tick. The dedicated
+ * server's tick (server_lifecycle.c) calls it with its network work in the
+ * hooks and after it; the browser client's local tick (server_stubs_wasm.c)
+ * calls it with no hooks. The header says what runs when. */
+ServerLocalEdge serverSimLocalTick(ServerSim *sim, uint32_t tickCount,
+                                   const ServerSimLocalTickHooks *hooks,
+                                   double *outSimMs) {
+    ServerState preTickState = sim->state;
+    ServerLocalEdge edge = serverLocalEdgeNone;
+
+    if (outSimMs != NULL) {
+        *outSimMs = 0.0;
+    }
+
+    if (preTickState == serverStateRunning) {
+        /* Run brain AI bots — queues two InputPackets per bot (keys + game) */
+        serverSimLocalBotTick(sim);
+        /* Advance the sim by one 20ms frame.  serverSimTick internally runs
+         * the keys-tick + game-tick pair and accumulates events from both
+         * half-steps into a single frame's worth of state. The half-step
+         * split is private to server_sim.c. */
+        Uint64 simStart = SDL_GetPerformanceCounter();
+        serverSimTick(sim);
+        Uint64 simEnd = SDL_GetPerformanceCounter();
+        if (outSimMs != NULL) {
+            *outSimMs = (double)(simEnd - simStart) * 1000.0 /
+                        (double)SDL_GetPerformanceFrequency();
+        }
+        /* If game ended during this tick, publish game-over events */
+        if (sim->state == serverStateGameOver) {
+            edge = serverLocalEdgeGameOver;
+            localTickHook(hooks ? hooks->beforeGameOver : NULL, sim, hooks);
+            serverSimLocalOnGameOver(sim);
+        }
+        return edge;
+    }
+
+    /* Lobby/countdown/gameover: single tick for state machine processing */
+    serverSimTick(sim);
+
+    /* Check if a balance proposal just completed */
+    serverSimLocalPublishBalanceProposal(sim);
+
+    /* Handle state transitions */
+    if (preTickState == serverStateCountdown) {
+        if (sim->state == serverStateRunning) {
+            /* Countdown finished — game started. The network server resets
+             * its per-client queues in the hook, before the RUNNING publish,
+             * so the codec encodes PACKET_GAME_START against fresh queues. */
+            edge = serverLocalEdgeGameStart;
+            localTickHook(hooks ? hooks->beforeGameStart : NULL, sim, hooks);
+            serverSimLocalOnGameStart(sim);
+        } else {
+            /* Broadcast countdown tick (once per second) */
+            serverSimLocalCountdownTick(sim);
+        }
+    }
+    if (preTickState == serverStateGameOver &&
+        sim->state == serverStateLobby) {
+        /* Back in the lobby. The network server's WinBolo.net session
+         * rotation goes first, in the hook. */
+        edge = serverLocalEdgeReturnToLobby;
+        localTickHook(hooks ? hooks->beforeReturnToLobby : NULL, sim, hooks);
+        serverSimLocalOnReturnToLobby(sim);
+    }
+
+    /* Periodic lobby-slot republish so the ping column in the lobby UI
+     * tracks live values instead of freezing between unrelated slot
+     * changes (ready toggle, bot config, etc.). */
+    serverSimLocalLobbySlotHeartbeat(sim, tickCount);
+
+    /* Bot-config events queued by serverSimApplyNewBotDefaults — a freshly
+     * added or seeded bot's mode and difficulty — sent a couple per tick
+     * instead of inside the add. A scenario seeds ten bots in one call stack
+     * while no client ack can be read; ten more events there would grow the
+     * burst that once overran a client's 64-event reliable window and
+     * dropped the host. Runs for single player too: its timer drives this
+     * same function. */
+    if (sim->state == serverStateLobby ||
+        sim->state == serverStateCountdown) {
+        serverSimFlushBotConfigPublishes(sim);
+    }
+    return edge;
 }
