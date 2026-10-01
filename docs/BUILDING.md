@@ -312,11 +312,6 @@ emcmake cmake -B build-wasm-game -S src/wasm -DCMAKE_BUILD_TYPE=Release
 cmake --build build-wasm-game -j$(nproc)
 ```
 
-Or use the convenience script:
-```bash
-./src/wasm/build.sh
-```
-
 ### Build (log viewer)
 
 ```bash
