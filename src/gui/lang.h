@@ -916,6 +916,9 @@
 #define STR_MAPCHOOSER_LOADING_PREVIEW      2734
 /* Map editor scenario panel */
 #define STR_MAPEDIT_SCENARIO_NEEDS_BOTS     2738
+/* About box licence */
+#define STR_DLGABOUT_LICENCE                2750
+#define STR_DLGABOUT_LICENCE_NOTICE         2751
 
 /* Tablet HUD */
 #define STR_TABLET_STATUS_TITLE             803

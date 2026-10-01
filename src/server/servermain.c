@@ -1870,7 +1870,8 @@ int main(int argc, char **argv) {
     snprintf(banner, sizeof banner,
              "WinBolo Server - v%s\n"
              "Copyright 1998-2026 John Morrison\n"
-             "Bolo Copyright 1987-1995 Stuart Cheshire",
+             "Bolo Copyright 1987-1995 Stuart Cheshire\n"
+             "Free software under the GNU GPL v3 or later. No warranty.",
              WINBOLO_DISPLAY_VERSION);
     serverMessageConsoleMessage(serverSim, banner);
   }

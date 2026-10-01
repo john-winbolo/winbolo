@@ -685,6 +685,8 @@ STR_MAPCHOOSER_LOADING_PREVIEW=Voorbeeld laden...
 
 # Map editor scenario panel
 STR_MAPEDIT_SCENARIO_NEEDS_BOTS=Bots moeten zijn toegestaan: dit script voegt zijn eigen bots toe
+STR_DLGABOUT_LICENCE=Licentie
+STR_DLGABOUT_LICENCE_NOTICE=Vrije software onder de GNU GPL v3 of later. Geen garantie.
 
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Status

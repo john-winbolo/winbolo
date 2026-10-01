@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /*
- * About modal: WinBolo version, copyright, web links, and "Third Party
- * Notices" / "Authors" markdown popups.
+ * About modal: WinBolo version, copyright, licence notice, web links, and
+ * "Licence" / "Third Party Notices" / "Authors" markdown popups.
  *
  * The popup is renderable inside any active ImGui context — both the
  * welcome screen (clicking the bottom-right version label) and the in-game
@@ -9,7 +9,7 @@
  * the dialog looks identical from either entry point.
  *
  * Markdown is rendered via the vendored imgui_markdown header. Source files
- * (THIRD_PARTY_NOTICES.md, AUTHORS.md) are copied into data/ by CMake at
+ * (LICENSE, THIRD_PARTY_NOTICES.md, AUTHORS.md) are copied into data/ by CMake at
  * build time and loaded lazily via SDL_GetBasePath().
  */
 
@@ -37,6 +37,7 @@ extern "C" {
 static bool        s_showAbout      = false;
 static bool        s_showThirdParty = false;
 static bool        s_showAuthors    = false;
+static bool        s_showLicence    = false;
 
 /* About-modal version-line stage: 0 short, 1 full, 2 transient "Copied!". */
 static int         s_verStage       = 0;
@@ -44,6 +45,7 @@ static double      s_copiedAt       = 0.0;
 
 static std::string s_thirdPartyMd;
 static std::string s_authorsMd;
+static std::string s_licenceMd;
 
 /* One-frame flag set by aboutPopupCloseAll(); reset at the end of the
  * next render pass. */
@@ -365,6 +367,14 @@ static void openMarkdownPopup(const char *which) {
             }
         }
         s_showAuthors = true;
+    } else if (SDL_strcmp(which, "licence") == 0) {
+        if (s_licenceMd.empty()) {
+            s_licenceMd = loadDataFile("LICENSE");
+            if (s_licenceMd.empty()) {
+                s_licenceMd = "Licence file not found.";
+            }
+        }
+        s_showLicence = true;
     }
 }
 
@@ -510,9 +520,15 @@ static void renderAboutModalBody(void) {
     ImGui::TextUnformatted("   ");
     ImGui::SameLine();
     ImGui::TextLinkOpenURL("www.winbolo.net", "https://www.winbolo.net/");
-    /* Third Party Notices / Authors open internal markdown popups, so they're
-     * plain TextLinks (not URL links) — tucked under the web links to free the
-     * row below for the Forums / Reddit / Discord buttons. */
+    /* Licence / Third Party Notices / Authors open internal markdown popups,
+     * so they're plain TextLinks (not URL links) — tucked under the web links
+     * to free the row below for the Forums / Reddit / Discord buttons. */
+    if (ImGui::TextLink(langGetText(STR_DLGABOUT_LICENCE))) {
+        openMarkdownPopup("licence");
+    }
+    ImGui::SameLine();
+    ImGui::TextUnformatted("   ");
+    ImGui::SameLine();
     if (ImGui::TextLink(langGetText(STR_DLGABOUT_THIRD_PARTY))) {
         openMarkdownPopup("third_party");
     }
@@ -523,6 +539,24 @@ static void renderAboutModalBody(void) {
         openMarkdownPopup("authors");
     }
     ImGui::EndGroup();
+
+    /* Licence notice across the full width, centred when it fits on one line
+     * and wrapped when it does not (a long translation, a narrow window). */
+    ImGui::Spacing();
+    {
+        const char *notice = langGetText(STR_DLGABOUT_LICENCE_NOTICE);
+        float noticeW = ImGui::CalcTextSize(notice).x;
+        float avail   = ImGui::GetContentRegionAvail().x;
+        ImGui::PushStyleColor(ImGuiCol_Text,
+                              ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        if (noticeW <= avail) {
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - noticeW) * 0.5f);
+            ImGui::TextUnformatted(notice);
+        } else {
+            ImGui::TextWrapped("%s", notice);
+        }
+        ImGui::PopStyleColor();
+    }
 
     ImGui::Spacing();
     /* Forums / Reddit / Discord as one centred row with a slightly wider gap
@@ -578,8 +612,11 @@ static void renderAboutModalBody(void) {
      * over it. With OpenPopup called from this stack frame, closing the
      * child popup returns to the still-open About modal instead of
      * dismissing everything. */
+    static float s_fadeLicence = 0.0f;
     static float s_fadeThird   = 0.0f;
     static float s_fadeAuthors = 0.0f;
+    renderMarkdownPopupBody(langGetText(STR_DLGABOUT_LICENCE), "licence",
+                            &s_showLicence, s_licenceMd, &s_fadeLicence);
     renderMarkdownPopupBody("Third Party Notices", "thirdparty",
                             &s_showThirdParty, s_thirdPartyMd, &s_fadeThird);
     renderMarkdownPopupBody("Authors", "authors",

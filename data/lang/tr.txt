@@ -685,6 +685,8 @@ STR_MAPCHOOSER_LOADING_PREVIEW=Önizleme yükleniyor...
 
 # Map editor scenario panel
 STR_MAPEDIT_SCENARIO_NEEDS_BOTS=Botlara izin verilmeli: bu betik kendi botlarını ekler
+STR_DLGABOUT_LICENCE=Lisans
+STR_DLGABOUT_LICENCE_NOTICE=GNU GPL v3 veya sonrası altında özgür yazılım. Garanti yoktur.
 
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Durum

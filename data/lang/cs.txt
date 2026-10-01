@@ -685,6 +685,8 @@ STR_MAPCHOOSER_LOADING_PREVIEW=Načítání náhledu...
 
 # Map editor scenario panel
 STR_MAPEDIT_SCENARIO_NEEDS_BOTS=Vyžaduje povolené boty: tento skript přidává vlastní boty
+STR_DLGABOUT_LICENCE=Licence
+STR_DLGABOUT_LICENCE_NOTICE=Svobodný software pod GNU GPL v3 nebo novější. Bez záruky.
 
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Stav
