@@ -1383,6 +1383,15 @@ if(ENABLE_ONNXRUNTIME AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         )
         FetchContent_MakeAvailable(onnxruntime_prebuilt)
 
+        # The prebuilt library bundles about thirty components under
+        # Apache, BSD and MIT licences, listed in its ThirdPartyNotices.txt.
+        # Those licences require the text to ship with the binary, so the
+        # file is copied beside THIRD_PARTY_NOTICES.md wherever the library
+        # itself is shipped. A system or vcpkg install carries its own copy.
+        if(EXISTS "${onnxruntime_prebuilt_SOURCE_DIR}/ThirdPartyNotices.txt")
+            set(ONNXRUNTIME_NOTICES "${onnxruntime_prebuilt_SOURCE_DIR}/ThirdPartyNotices.txt" CACHE INTERNAL "")
+        endif()
+
         # Find the shared library in the extracted directory
         if(WIN32)
             file(GLOB _ORT_DLL "${onnxruntime_prebuilt_SOURCE_DIR}/lib/onnxruntime.dll")
@@ -1515,15 +1524,18 @@ add_subdirectory(brains)
 
 # server_static and server_sim_static have a circular dependency that
 # GNU ld resolves with --start-group/--end-group ($<LINK_GROUP:RESCAN>).
+# server_round_log_static sits in the group too: the recorder calls the
+# transport and the lifecycle in server_static, and servermain.c calls the
+# recorder, so neither order resolves on one pass.
 # MSVC's link.exe does multi-pass static-lib resolution natively, and
 # Apple's ld doesn't support library groups at all -- both also reject
 # $<LINK_GROUP> for the CXX link language, so emit plain library names
-# there. Use this variable in target_link_libraries wherever both libs
+# there. Use this variable in target_link_libraries wherever these libs
 # are linked together.
 if(MSVC OR APPLE)
-    set(SERVER_LINK_GROUP server_static server_sim_static)
+    set(SERVER_LINK_GROUP server_static server_sim_static server_round_log_static)
 else()
-    set(SERVER_LINK_GROUP "$<LINK_GROUP:RESCAN,server_static,server_sim_static>")
+    set(SERVER_LINK_GROUP "$<LINK_GROUP:RESCAN,server_static,server_sim_static,server_round_log_static>")
 endif()
 
 # ---------------------------------------------------------------------------
@@ -2078,6 +2090,15 @@ add_custom_command(TARGET WinBolo POST_BUILD
 )
 # Copy ONNX Runtime shared library if using FetchContent prebuilt
 if(HAVE_ONNXRUNTIME)
+    # Its third-party notices go into data/ beside THIRD_PARTY_NOTICES.md,
+    # which points to them.
+    if(DEFINED ONNXRUNTIME_NOTICES)
+        add_custom_command(TARGET WinBolo POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_NOTICES}"
+                "${WINBOLO_DATA_DIR}/data/THIRD_PARTY_NOTICES-onnxruntime.txt"
+            COMMENT "Copying ONNX Runtime third-party notices to data/"
+        )
+    endif()
     if(WIN32 AND DEFINED ONNXRUNTIME_DLL)
         add_custom_command(TARGET WinBolo POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_DLL}" "$<TARGET_FILE_DIR:WinBolo>"
@@ -3256,6 +3277,16 @@ if(HAVE_SENTRY AND TARGET crashpad_handler)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:crashpad_handler>" "${DIST_DIR}/")
 endif()
 
+# The prebuilt ONNX Runtime's own third-party notices travel with its
+# library: beside THIRD_PARTY_NOTICES.md in data/ for the About box, and at
+# the zip root where someone unpacking it will see them.
+set(DIST_ORT_NOTICES_CMD "")
+if(HAVE_ONNXRUNTIME AND DEFINED ONNXRUNTIME_NOTICES)
+    set(DIST_ORT_NOTICES_CMD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_NOTICES}" "${DIST_DIR}/data/THIRD_PARTY_NOTICES-onnxruntime.txt"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_NOTICES}" "${DIST_DIR}/THIRD_PARTY_NOTICES-onnxruntime.txt")
+endif()
+
 # Strip debug info from the staged Linux binaries before zipping.  Only Linux
 # carries embedded DWARF in the ELF binaries; Windows keeps it in separate .pdb
 # files and macOS in .dSYM bundles, so neither needs stripping here.  We strip
@@ -3315,6 +3346,7 @@ add_custom_target(dist
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/LICENSE" "${DIST_DIR}/LICENSE"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/LICENSE-EXCEPTION.md" "${DIST_DIR}/LICENSE-EXCEPTION.md"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md" "${DIST_DIR}/THIRD_PARTY_NOTICES.md"
+    ${DIST_ORT_NOTICES_CMD}
 
     # Brain scripts (excludes *.md plan/roadmap notes via copy_brains.cmake)
     COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains/GoalHunter_1.7"
@@ -3804,6 +3836,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # puts in a recording — its bytes on disk and both of the viewer's
     # readers over them.
     tests/unit/test_scenario_rule_arms.c
+    # Voice to everyone: the op behind game.set_voice_everyone and the rule
+    # the voice forward asks, with the points that turn it off again and
+    # the refusal on a server with voice off.
+    tests/unit/test_scenario_voice_everyone.c
     # fill_to_caps: a mod that raises a cap and asks for the map's pills and
     # bases to start at it rather than at the numbers the map file holds — a
     # base stock, a pill's armour, the same mod with the key left out, and
@@ -3988,6 +4024,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_deferred_join.c
     tests/unit/test_join_collision.c
     tests/unit/test_base_refuel_timers.c
+    tests/unit/test_base_refuel_give.c
     tests/unit/test_lobby_reset_cleanup.c
     tests/unit/test_autolock_on_game_start.c
     tests/unit/test_lobby_transfer_host.c
@@ -4483,6 +4520,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # clip-time fit resolves base cells from the log's own snapshots
     # (test_lv_calibration.c).
     tests/unit/test_lv_calibration.c
+    # Replay camera range: the load's 127,127 default, a highlight jump, a
+    # grid that grew and the raw setter all keep the view's far edge at 255
+    # on a grid wider than half the map (test_lv_camera.c).
+    tests/unit/test_lv_camera.c
     # On-demand generator for the committed real ring-seed fixture
     # (spectator_seed.bin): captures a ServerSim ring keyframe with no trailing
     # data for test_spec_seed_load_real (test_spectator_seed_capture.c).
@@ -5194,6 +5235,11 @@ set(_unit_test_names
     lv_logged_name_from_join_event
     lv_game_settings_from_walk
     lv_game_settings_absent
+    lv_camera_load_fits_wide_grid
+    lv_camera_centre_on_cell_stays_on_map
+    lv_camera_resize_and_set_offset_clamp
+    lv_camera_mouse_centre_click_stays_on_map
+    lv_camera_arrow_nudge_stays_on_map
     blocks_stream
     stream_load
     stream_pump
@@ -5354,6 +5400,10 @@ set(_unit_test_names
     base_stock_visibility
     base_half_tick_per_sim_sequence
     base_half_tick_other_sim_does_not_disturb
+    base_refuel_partial_give_armour
+    base_refuel_partial_give_shells_and_mines
+    base_refuel_partial_give_classic_rules
+    base_refuel_whole_give_unchanged
     base_armour_fog_of_war
     base_armour_reveal_in_range
     base_death_prediction_replay_tick
@@ -6171,6 +6221,10 @@ set(_unit_test_names
     scenario_rule_clamp_records
     scenario_rules_whole_set_pair
     scenario_rules_whole_set_refused
+    scenario_voice_everyone_default
+    scenario_voice_everyone_on
+    scenario_voice_everyone_resets
+    scenario_voice_everyone_voice_off
     scenario_fill_caps_raises_bases
     scenario_fill_caps_raises_pills
     scenario_fill_caps_off_changes_nothing
@@ -6338,6 +6392,7 @@ set(_unit_test_names
     scenario_validate_needs_bots_missing
     scenario_validate_needs_bots_declared
     scenario_lua_every_row_answers
+    scenario_lua_voice_everyone
     scenario_lua_op_arguments_match_the_doc
     scenario_lua_read_index_passes_through
     scenario_lua_op_index_subtracts_one
@@ -6362,6 +6417,7 @@ set(_unit_test_names
     scenario_lua_panel_refusals
     scenario_lua_presentation_targets
     scenario_lua_score_and_announce
+    scenario_lua_announce_position
     scenario_lua_acting_rows_refuse_a_check
     scenario_sandbox_removed_names_are_nil
     scenario_sandbox_bytecode_chunk_refused
@@ -6615,6 +6671,12 @@ set(_unit_test_names
     scenario_panel_roundtrip
     scenario_panel_timer_text
     scenario_announce_remaining
+    scenario_announce_position
+    scenario_status_line
+    scn_status_codec_and_client
+    scn_announce_position_codec
+    scn_arm_status_and_position
+    scn_arm_status_overlap
     scenario_panel_slot_rect
     lv_rule_names_and_panel_parse
     lv_scripted_game_type_header
@@ -6649,6 +6711,8 @@ set(_unit_test_names
     lv_presentation_panel_owner
     lv_presentation_slot_team
     lv_presentation_announce_posts
+    lv_presentation_status_line
+    lv_presentation_announce_position
     lv_presentation_marker_visible
     lv_presentation_live_seek
     lv_presentation_live_fast_forward

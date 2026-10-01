@@ -364,6 +364,22 @@ typedef enum {
      * Appended at the END, like every type above it: the tables in
      * transport_control_codec.c are indexed by this enum. */
     CTRL_LOBBY_BOT_POOL_INFO,
+    /* CTRL_SCN_STATUS — a scenario's status line: one line at the very top
+     * of the game view that stays until the scenario changes it or clears
+     * it, with an optional countdown the client runs down itself.
+     *
+     * Body-only on CHANNEL_CONTROL like the four presentation events above,
+     * and addressed the same way: destTeam/destPlayer never travel, and the
+     * delivery path filters on them. The server keeps the last line per
+     * destination and replays it into a joining client's sync, as it does a
+     * panel's list.
+     *
+     * An older client has no decoder for the type and skips it, so it shows
+     * nothing for the line and nothing else changes.
+     *
+     * Appended at the END, like every type above it: the tables in
+     * transport_control_codec.c are indexed by this enum. */
+    CTRL_SCN_STATUS,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -1175,13 +1191,26 @@ typedef struct ControlEvent {
             char    label[16];
         } scnScore;
 
-        /* CTRL_SCN_ANNOUNCE — a line drawn across the centre of the screen. */
+        /* CTRL_SCN_ANNOUNCE — a big line across the game view. */
         struct {
             char     text[PACKET_MAX_CHAT_MESSAGE + 1];
             uint16_t ticks;      /* how long it stays up */
+            uint8_t  hasPos;     /* 0: the usual place; else posX/posY */
+            uint8_t  posX;       /* centre, 0..SCN_ANNOUNCE_POS_MAX across */
+            uint8_t  posY;       /* centre, 0..SCN_ANNOUNCE_POS_MAX down */
             uint8_t  destTeam;
             uint8_t  destPlayer;
         } scnAnnounce;
+
+        /* CTRL_SCN_STATUS — the status line at the top of the game view.
+         * Empty text clears it. endsAt is the server tick a countdown runs
+         * to, SCN_STATUS_NO_COUNTDOWN for none. */
+        struct {
+            char     text[PACKET_MAX_CHAT_MESSAGE + 1];
+            uint32_t endsAt;
+            uint8_t  destTeam;
+            uint8_t  destPlayer;
+        } scnStatus;
 
         /* CTRL_SCN_MARKER — a mark on the map, kept by id. */
         struct {

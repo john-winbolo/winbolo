@@ -1334,6 +1334,19 @@ int run_lv_logged_name_from_join_event(void);
 int run_lv_game_settings_from_walk(void);
 int run_lv_game_settings_absent(void);
 
+/* Replay camera range (test_lv_camera.c): the tile fetch casts the column to
+ * a BYTE, so a view whose left edge plus width passes 255 wraps and draws the
+ * map's two mined borders back to back mid-screen. Every writer of the
+ * offset ends in one clamp to [0, 255 - screenSize]: the load's 127,127
+ * default on a wide grid, a highlight jump to a cell, a grid that grew, the
+ * raw setter, the standalone viewer's centre-on-click and its arrow-key
+ * nudge. */
+int run_lv_camera_load_fits_wide_grid(void);
+int run_lv_camera_centre_on_cell_stays_on_map(void);
+int run_lv_camera_resize_and_set_offset_clamp(void);
+int run_lv_camera_mouse_centre_click_stays_on_map(void);
+int run_lv_camera_arrow_nudge_stays_on_map(void);
+
 /* Spectator ring-seed fixture generator (test_spectator_seed_capture.c):
  * dispatch-only. Captures a real ServerSim ring keyframe (no trailing data) and
  * writes it to <WB_WBV_FIXTURE_DIR>/spectator_seed.bin when the env var is set. */
@@ -1454,6 +1467,13 @@ int run_base_stock_visibility(void);
    (test_base_half_tick.c): one pair of fields per sim, not per process. */
 int run_base_half_tick_per_sim_sequence(void);
 int run_base_half_tick_other_sim_does_not_disturb(void);
+
+/* A base refuel moves the same amount off the base as onto the tank
+   (test_base_refuel_give.c): the give is cut to the room the tank has. */
+int run_base_refuel_partial_give_armour(void);
+int run_base_refuel_partial_give_shells_and_mines(void);
+int run_base_refuel_partial_give_classic_rules(void);
+int run_base_refuel_whole_give_unchanged(void);
 int run_base_armour_fog_of_war(void);
 int run_base_armour_reveal_in_range(void);
 int run_two_clients_full_sync_independent(void);
@@ -3141,6 +3161,15 @@ int run_scenario_rule_clamp_records(void);
 int run_scenario_rules_whole_set_pair(void);
 int run_scenario_rules_whole_set_refused(void);
 
+/* Voice to everyone (test_scenario_voice_everyone.c). Allies only in a round
+ * and everyone in the lobby with no script, the op turning voice to everyone
+ * on and off, the return to the lobby, a round start and a detach each
+ * turning it off, and a server with voice off refusing it. */
+int run_scenario_voice_everyone_default(void);
+int run_scenario_voice_everyone_on(void);
+int run_scenario_voice_everyone_resets(void);
+int run_scenario_voice_everyone_voice_off(void);
+
 /* fill_to_caps (test_scenario_fill_caps.c). A mod that raises a cap and asks
  * for the map to start at it, for a base stock and for a pill's armour; the
  * same mod without the key, which raises the cap and moves nothing; and what
@@ -3395,6 +3424,7 @@ int run_scenario_validate_needs_bots_declared(void);
  * as, the whole-map string, a shape error against the error limit, and
  * the rules, tags and regions a script declares read back. */
 int run_scenario_lua_every_row_answers(void);
+int run_scenario_lua_voice_everyone(void);
 int run_scenario_lua_op_arguments_match_the_doc(void);
 int run_scenario_lua_read_index_passes_through(void);
 int run_scenario_lua_op_index_subtracts_one(void);
@@ -3419,6 +3449,7 @@ int run_scenario_lua_panel_words_and_numbers(void);
 int run_scenario_lua_panel_refusals(void);
 int run_scenario_lua_presentation_targets(void);
 int run_scenario_lua_score_and_announce(void);
+int run_scenario_lua_announce_position(void);
 int run_scenario_lua_acting_rows_refuse_a_check(void);
 
 /* The state a scenario runs in (test_scenario_sandbox.c): the names the
@@ -3818,6 +3849,8 @@ int run_scenario_panel_timer_text(void);
  * long — the other piece of the presentation's arithmetic with no renderer
  * in it. */
 int run_scenario_announce_remaining(void);
+int run_scenario_announce_position(void);
+int run_scenario_status_line(void);
 /* The tablet UI's scenario panel square (test_scenario_panel_slot.c): a
  * quarter of the screen's shorter side in the game view's top-right, on a
  * phone, a tablet, and views too small for the full side. */
@@ -3884,6 +3917,8 @@ int run_lv_presentation_panel_choice(void);
 int run_lv_presentation_panel_owner(void);
 int run_lv_presentation_slot_team(void);
 int run_lv_presentation_announce_posts(void);
+int run_lv_presentation_status_line(void);
+int run_lv_presentation_announce_position(void);
 int run_lv_presentation_marker_visible(void);
 int run_lv_presentation_live_seek(void);
 int run_lv_presentation_live_fast_forward(void);
@@ -3909,6 +3944,8 @@ int run_scn_presentation_codec_bodies(void);
 int run_scn_presentation_codec_refuses_short(void);
 int run_scn_presentation_decoder_sets_broadcast(void);
 int run_scn_presentation_client_filters(void);
+int run_scn_status_codec_and_client(void);
+int run_scn_announce_position_codec(void);
 
 /* The four presentation ops (test_scenario_presentation_arms.c): the panel
  * list published, recorded, replayed to a joiner and pared back to the
@@ -3922,6 +3959,8 @@ int run_scn_arm_panel_one_update_per_tick(void);
 int run_scn_arm_panel_replayed_to_joiner(void);
 int run_scn_arm_panel_snapshot_bounded(void);
 int run_scn_arm_score_announce_marker(void);
+int run_scn_arm_status_and_position(void);
+int run_scn_arm_status_overlap(void);
 int run_scn_arm_markers_scores_replayed_to_joiner(void);
 int run_scn_arm_markers_scores_snapshot(void);
 int run_scn_arm_markers_scores_reset(void);

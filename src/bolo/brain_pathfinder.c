@@ -374,6 +374,8 @@ static inline float heuristic(int x0, int y0, int x1, int y1) {
 /* Create / Destroy                                                    */
 /* ------------------------------------------------------------------ */
 
+static void lgmSeedManSpeed(BrainPathfinder *pf);
+
 BrainPathfinder *brainPathfinderCreate(void) {
   BrainPathfinder *pf = (BrainPathfinder *)calloc(1, sizeof(BrainPathfinder));
   if (!pf) return NULL;
@@ -412,6 +414,7 @@ BrainPathfinder *brainPathfinderCreate(void) {
   pf->shell_speed = classic.shell_speed;
   pf->shell_start_add = classic.shell_start_add;
   pf->gunsight_max = classic.gunsight_max;
+  lgmSeedManSpeed(pf);
 
   /* Resource drain config */
   /* A tuned A* cost, not a copy of tank_water_ticks: ~85 ticks/tile at
@@ -634,18 +637,36 @@ void brainPathfinderSetShellRules(BrainPathfinder *pf, int32_t shellLife,
 
 void brainPathfinderSetTerrainCost(BrainPathfinder *pf, int type, float cost) {
   if (pf && type >= 0 && type < 16) {
+    /* A changed value makes the edge cache stale. Setting the same value
+       again (the classic configure) leaves the cache alone. */
+    if (pf->terrain_cost_table[type] != cost) {
+      pf->edge_cost_valid = 0;
+      pf->cache_dirty = 1;
+    }
     pf->terrain_cost_table[type] = cost;
   }
 }
 
 void brainPathfinderSetBoatCost(BrainPathfinder *pf, int type, float cost) {
   if (pf && type >= 0 && type < 16) {
+    /* A changed value makes the edge cache stale. Setting the same value
+       again (the classic configure) leaves the cache alone. */
+    if (pf->terrain_cost_boat_table[type] != cost) {
+      pf->edge_cost_valid = 0;
+      pf->cache_dirty = 1;
+    }
     pf->terrain_cost_boat_table[type] = cost;
   }
 }
 
 void brainPathfinderSetTerrainSpeed(BrainPathfinder *pf, int type, float speed) {
   if (pf && type >= 0 && type < 16) {
+    /* A changed value makes the edge cache stale. Setting the same value
+       again (the classic configure) leaves the cache alone. */
+    if (pf->terrain_speed_table[type] != speed) {
+      pf->edge_cost_valid = 0;
+      pf->cache_dirty = 1;
+    }
     pf->terrain_speed_table[type] = speed;
   }
 }
@@ -2191,6 +2212,9 @@ void brainPathfinderDijkstraStart(BrainPathfinder *pf, int slate, uint32_t tick,
   (void)trees; (void)mines; (void)armour;
   if (!pf || !pf->map) return;
   if (slate < 0 || slate >= DIJKSTRA_NUM_SLATES) return;
+#ifndef __EMSCRIPTEN__
+  /* The web build leaves this out: nothing there can create the trigger
+   * file, and the check costs a file-system call per search. */
   /* On-demand dijkstra logging: touch "log_next_dijkstra" to trigger.
    * Only logs for player 0's pathfinder. Deletes the trigger file and
    * logs one full slate start+expansion, then closes the log. */
@@ -2202,6 +2226,7 @@ void brainPathfinderDijkstraStart(BrainPathfinder *pf, int slate, uint32_t tick,
       if (!dijkstra_log) brainPathfinderEnableDijkstraLog(1);
     }
   }
+#endif
   DijkstraSlate *s = &pf->dij_slates[slate];
 
   /* Lazy edge-cost rebuild */
@@ -3810,7 +3835,25 @@ static BYTE lgmGetBrainManSpeed(BrainPathfinder *pf, BYTE mx, BYTE my) {
    * march straight into an enemy base. */
   if (pf->lgm_block[my * MAP_SIZE + mx]) return 0;
   uint8_t type = pf->map[my * MAP_SIZE + mx] & 0x0F;
-  return lgm_man_speed[type];
+  return pf->man_speed[type];
+}
+
+/* The classic walk: the table above and the refuel-base speed on the blessed
+ * tile. Called once from brainPathfinderCreate. */
+static void lgmSeedManSpeed(BrainPathfinder *pf) {
+  memcpy(pf->man_speed, lgm_man_speed, sizeof(pf->man_speed));
+  pf->man_speed_blessed = MAP_MANSPEED_TREFBASE;
+}
+
+void brainPathfinderSetManSpeed(BrainPathfinder *pf, int type, int speed) {
+  if (!pf) return;
+  if (speed < 0) speed = 0;
+  if (speed > 255) speed = 255;
+  if (type == -1) {
+    pf->man_speed_blessed = (uint8_t)speed;
+  } else if (type >= 0 && type < 16) {
+    pf->man_speed[type] = (uint8_t)speed;
+  }
 }
 
 void brainPathfinderClearLgmBlock(BrainPathfinder *pf) {
@@ -3877,7 +3920,7 @@ static int lgmTravelTicksCore(BrainPathfinder *pf,
 
     /* Speed: blessed tile gets full speed, otherwise terrain-based */
     if (bmx == localBlessX && bmy == localBlessY) {
-      speed = MAP_MANSPEED_TREFBASE;
+      speed = pf->man_speed_blessed;
     } else {
       speed = lgmGetBrainManSpeed(pf, bmx, bmy);
     }

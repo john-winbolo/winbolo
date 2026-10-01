@@ -432,6 +432,9 @@ static SDL_Texture *s_iconSpeaker[ICON_SLOT_COUNT]      = {};
 static SDL_Texture *s_iconMic[ICON_SLOT_COUNT]          = {};
 static SDL_Texture *s_iconMicMuted[ICON_SLOT_COUNT]     = {};
 static SDL_Texture *s_iconMicOff[ICON_SLOT_COUNT]       = {};
+/* The own row with voice switched off on this client: a separate icon from
+ * no microphone, because the fix is different — a setting, not a device. */
+static SDL_Texture *s_iconMicDisabled[ICON_SLOT_COUNT]  = {};
 static SDL_Texture *s_iconSpeakerMuted[ICON_SLOT_COUNT] = {};
 /* The local player's slot, read once a frame in sdl3ImguiPumpAndRender — the
  * only place here with a ClientSim to ask. PLAYER_SELF_UNKNOWN rather than 0
@@ -543,6 +546,7 @@ static void ensureWbnIconsLoaded(void) {
     s_iconMic[slot]          = imguiLoadSvgIconWhite(r, "data/ui/mic.svg",           WBN_ICON_RASTER_PX);
     s_iconMicMuted[slot]     = imguiLoadSvgIconWhite(r, "data/ui/mic-muted.svg",     WBN_ICON_RASTER_PX);
     s_iconMicOff[slot]       = imguiLoadSvgIconWhite(r, "data/ui/mic-off.svg",       WBN_ICON_RASTER_PX);
+    s_iconMicDisabled[slot]  = imguiLoadSvgIconWhite(r, "data/ui/mic-disabled.svg",  WBN_ICON_RASTER_PX);
     s_iconSpeakerMuted[slot] = imguiLoadSvgIconWhite(r, "data/ui/speaker-muted.svg", WBN_ICON_RASTER_PX);
 #endif
     /* Renderer-free, so they are loaded once for every slot rather than
@@ -766,6 +770,7 @@ static void destroyIconSlot(int slot) {
     if (s_iconMic[slot]) { SDL_DestroyTexture(s_iconMic[slot]); s_iconMic[slot] = nullptr; }
     if (s_iconMicMuted[slot]) { SDL_DestroyTexture(s_iconMicMuted[slot]); s_iconMicMuted[slot] = nullptr; }
     if (s_iconMicOff[slot]) { SDL_DestroyTexture(s_iconMicOff[slot]); s_iconMicOff[slot] = nullptr; }
+    if (s_iconMicDisabled[slot]) { SDL_DestroyTexture(s_iconMicDisabled[slot]); s_iconMicDisabled[slot] = nullptr; }
     if (s_iconSpeakerMuted[slot]) { SDL_DestroyTexture(s_iconSpeakerMuted[slot]); s_iconSpeakerMuted[slot] = nullptr; }
 #endif
     s_wbnIconsLoaded[slot] = false;
@@ -1384,6 +1389,9 @@ static void mapOverviewOpen(void) {
     if (sdl3DrawIsOverviewInWindow() || overviewSuppressed()) return;
     s_showMapOverviewPanel   = true;
     gameFrontShowMapOverview = true;
+    /* The map is coming back on screen, so it says what camera it kept. A
+       view not made yet says so on its own when it is. */
+    overviewViewShowCameraNotice(s_overviewView);
 #else
     /* Full screen mode owns the whole window and draws the same map itself,
        so the pop-out never opens while it is on — in a game, in the lobby or
@@ -1432,6 +1440,9 @@ static void mapOverviewOpen(void) {
        up. Its move is saved by the WINDOW_MOVED handler. */
     popOutRescueWindow(s_popMapOverview.window);
     gameFrontShowMapOverview = true;
+    /* The map is coming back on screen, so it says what camera it kept. A
+       view not made yet says so on its own when it is. */
+    overviewViewShowCameraNotice(s_overviewView);
 #endif
 }
 
@@ -1703,13 +1714,23 @@ static void renderSysInfoContent(void) {
         }
 
         if (hasBots) {
-            ImGui::Text("%s: %u",
+            /* Overrun rate against thinks, computed as the dedicated
+             * server's bot report does; 0 when nothing has thought yet. */
+            double poolRate = ps.totalThinks > 0
+                ? (double)ps.totalOverruns * 100.0 / (double)ps.totalThinks
+                : 0.0;
+            ImGui::Text("%s: %u (%.2f%%)",
                         langGetText(STR_DLGSYSINFO_BRAIN_OVERRUNS),
-                        ps.totalOverruns);
+                        ps.totalOverruns, poolRate);
             if (ps.totalOverruns > 0) {
                 for (int i = 0; i < MAX_TANKS; i++) {
                     if (botInfoValid[i] && botInfos[i].overrunCount > 0) {
-                        ImGui::Text("  bot[%d]: %u", i, botInfos[i].overrunCount);
+                        double rate = botInfos[i].thinkCount > 0
+                            ? (double)botInfos[i].overrunCount * 100.0
+                                  / (double)botInfos[i].thinkCount
+                            : 0.0;
+                        ImGui::Text("  bot[%d]: %u (%.2f%%)", i,
+                                    botInfos[i].overrunCount, rate);
                     }
                 }
             }
@@ -2407,6 +2428,31 @@ static void renderCtrlSendMsg(ClientSim *cs) {
 /* -------------------------------------------------------
  * Map Overview pop-out
  * ------------------------------------------------------- */
+/* The camera readout the view hands out for a moment after the zoom or the
+ * follow flag changes, in a box whose left edge is at x and whose top — or,
+ * with anchorBottom, bottom — is at y. Drawn with the window draw list rather
+ * than as a widget: the map image fills its window exactly, and anything that
+ * added to the content would give it a scrollbar. The fade is the view's; the
+ * box and the text take it together. Nothing is drawn once it is over. */
+static void overviewDrawCameraNotice(OverviewView *view, const keyItems *keys,
+                                     float x, float y, bool anchorBottom) {
+    char  status[96];
+    float alpha = 0.0f;
+    if (!overviewViewCameraNotice(view, keys, status, sizeof(status), &alpha))
+        return;
+    const float pad = 4.0f;
+    ImVec2 textSize = ImGui::CalcTextSize(status);
+    float  boxH     = textSize.y + pad * 2.0f;
+    float  top      = anchorBottom ? y - boxH : y;
+    ImVec2 boxMin(x, top);
+    ImVec2 boxMax(x + textSize.x + pad * 2.0f, top + boxH);
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(boxMin, boxMax,
+                      IM_COL32(0, 0, 0, (int)(160.0f * alpha)));
+    dl->AddText(ImVec2(boxMin.x + pad, boxMin.y + pad),
+                IM_COL32(230, 230, 230, (int)(255.0f * alpha)), status);
+}
+
 static void renderMapOverviewContent(ClientSim *cs) {
     SDL_Texture *tex  = overviewViewGetTexture(s_overviewView);
     int          texW = 0;
@@ -2460,28 +2506,11 @@ static void renderMapOverviewContent(ClientSim *cs) {
             gameFrontOverviewFollow = cam->follow;
             gameFrontSaveWindowSettings();
         }
-
-        /* Zoom and follow state along the bottom-left of the map. Drawn onto
-           the image with the window draw list rather than as a widget: the
-           image is exactly DisplaySize, so anything that added to the
-           content would give the pop-out a scrollbar. %g keeps the ladder
-           readable (0.5, 1, 1.5, 2) with no trailing zeros, and the text is
-           ASCII because this file is compiled without /utf-8. */
-        char status[96];
-        SDL_snprintf(status, sizeof(status), "%gx - %s", (double)zoom,
-                     langGetText(cam->follow ? STR_OVERVIEW_FOLLOWING
-                                             : STR_OVERVIEW_FREE));
-        const float pad = 4.0f;
-        ImVec2 textSize = ImGui::CalcTextSize(status);
-        ImVec2 boxMin(imgMin.x,
-                      imgMin.y + (float)texH - (textSize.y + pad * 2.0f));
-        ImVec2 boxMax(imgMin.x + textSize.x + pad * 2.0f,
-                      imgMin.y + (float)texH);
-        ImDrawList *dl = ImGui::GetWindowDrawList();
-        dl->AddRectFilled(boxMin, boxMax, IM_COL32(0, 0, 0, 160));
-        dl->AddText(ImVec2(boxMin.x + pad, boxMin.y + pad),
-                    IM_COL32(230, 230, 230, 255), status);
     }
+
+    /* The zoom and follow readout, bottom-left of the map while it lasts. */
+    overviewDrawCameraNotice(s_overviewView, &keys, imgMin.x,
+                             imgMin.y + (float)texH, true);
 }
 
 #ifdef __EMSCRIPTEN__
@@ -2705,40 +2734,21 @@ static void renderOverviewInWindow(ClientSim *cs) {
                                       overviewViewCamera(view),
                                       (int)rw, (int)rh);
 
-        /* Zoom and follow state along the top of the map — the pop-out puts the
-           same readout bottom-left, but here the bottom of the window is where
-           the newswire goes. Drawn with the window draw list so it adds nothing
-           to the window's content. %g keeps the ladder readable (0.5, 1, 1.5,
-           2) with no trailing zeros, and the text is ASCII because this file is
-           compiled without /utf-8. */
-        OverviewCamera *cam = overviewViewCamera(view);
-        if (cam) {
-            char status[96];
-            SDL_snprintf(status, sizeof(status), "%gx - %s",
-                         (double)overviewCameraZoomScale(cam),
-                         langGetText(cam->follow ? STR_OVERVIEW_FOLLOWING
-                                                 : STR_OVERVIEW_FREE));
-            const float pad = 4.0f;
-            ImVec2 textSize = ImGui::CalcTextSize(status);
-            /* The corner belongs to the build strip, so the readout starts
-               just past it, level with its top. The gap matches the margin the
-               strip itself keeps from the map's edge. With no HUD drawn there
-               is nothing to clear and it sits in the corner. */
-            float textX = rx;
-            float textY = ry;
-            if (haveHud) {
-                const float hudGap = 8.0f;
-                textX = rx + hud.buildX + hud.buildW + hudGap;
-                textY = ry + hud.buildY;
-            }
-            ImVec2 boxMin(textX, textY);
-            ImVec2 boxMax(textX + textSize.x + pad * 2.0f,
-                          textY + textSize.y + pad * 2.0f);
-            ImDrawList *dl = ImGui::GetWindowDrawList();
-            dl->AddRectFilled(boxMin, boxMax, IM_COL32(0, 0, 0, 160));
-            dl->AddText(ImVec2(boxMin.x + pad, boxMin.y + pad),
-                        IM_COL32(230, 230, 230, 255), status);
+        /* The zoom and follow readout along the top of the map while it
+           lasts — the pop-out puts it bottom-left, but here the bottom of the
+           window is where the newswire goes. The corner belongs to the build
+           strip, so the readout starts just past it, level with its top. The
+           gap matches the margin the strip itself keeps from the map's edge.
+           With no HUD drawn there is nothing to clear and it sits in the
+           corner. */
+        float textX = rx;
+        float textY = ry;
+        if (haveHud) {
+            const float hudGap = 8.0f;
+            textX = rx + hud.buildX + hud.buildW + hudGap;
+            textY = ry + hud.buildY;
         }
+        overviewDrawCameraNotice(view, &keys, textX, textY, false);
     }
     ImGui::End();
 }
@@ -5399,9 +5409,26 @@ static void renderScnPanelMenuItems(bool afterBrains) {
  * The scenario announcement
  *
  * One line across the game view, for the few seconds a
- * scenario asked for. It sits in the view's upper third
- * rather than dead centre, which is where the player's own
- * tank is.
+ * scenario asked for. With no position it is centred
+ * across, in the view's upper third rather than dead
+ * centre, which is where the player's own tank is
+ * (scnAnnounceDefaultPlace). On the main view that is where
+ * it always went. The full screen map and tablet mode apply
+ * the same rule to their own view; before, the full screen
+ * map placed it by the main view's rectangle and tablet
+ * mode drew none. With a position the
+ * script names the line's centre as shares of the view,
+ * and the line is kept inside the view and below the
+ * status line, and nothing else (scnAnnounceAt). The view
+ * is the main view, the full screen map when that owns the
+ * window, or tablet mode's own game view.
+ *
+ * Tablet mode draws both lines too, over its own game view
+ * (the fixed viewport sdl3draw centres on the screen). The
+ * status line keeps clear of the scenario square that
+ * tablet mode pins in that view's top-right corner. Its
+ * buttons and bars sit in the gutters beside the view, so
+ * nothing else is in the way at the top.
  *
  * Drawn on the foreground draw list and not in a window at
  * all. A window across the middle of the screen would take
@@ -5413,6 +5440,15 @@ static void renderScnPanelMenuItems(bool afterBrains) {
  * whatever terrain happens to be under it, and one colour
  * against grass is a line somebody cannot read.
  *
+ * The status line is drawn the same way: the one line a
+ * scenario keeps up for as long as it likes, as high on the
+ * view as it goes, with a countdown this client works out
+ * from the tick the script named. It moves sideways or down
+ * to keep clear of the scenario panel, the vote widgets and
+ * alliance request, and the full screen map's HUD column
+ * and build strip, but on the main view never down onto
+ * the player's own tank (scnStatusPlace has the rule).
+ *
  * The bytes are the script's own and are not localised, so
  * nothing on this path goes near the language table.
  * ------------------------------------------------------- */
@@ -5421,66 +5457,66 @@ static void renderScnPanelMenuItems(bool afterBrains) {
    same way the panel's own text does. */
 #define SCN_ANNOUNCE_UNITS 20.0f
 
-/* How far down the game view the line sits, as a fraction of its height. */
-#define SCN_ANNOUNCE_DOWN 0.28f
+/* The space the status line keeps from anything it has to move clear of, and
+   the space an announcement with a position keeps below the status line, in
+   panel units. The panel's own inset from the view's corner, so the status
+   line and the panel line up when they sit side by side. */
+#define SCN_ANNOUNCE_INSET_UNITS SCN_PANEL_DEFAULT_INSET
+
+/* The most things the status line is kept clear of at once: one panel per
+   script of the round's list, two vote widgets, the alliance request, and
+   the full screen map's HUD column and build strip. */
+#define SCN_ANNOUNCE_MAX_OBSTACLES (SCN_PANEL_OWNERS + 5)
+
+/* Adds a window's last known rect to the things the status line keeps clear
+   of.
+   Active is this frame, for a window already submitted (the panel); WasActive
+   is the last one, for a window submitted after the line (the vote widgets
+   and the alliance request), which sit still from frame to frame. */
+static void scnAnnounceAddWindow(const char *name, ScnAnnounceRect *obstacles,
+                                 int *count) {
+    if (*count >= SCN_ANNOUNCE_MAX_OBSTACLES) return;
+    ImGuiWindow *w = ImGui::FindWindowByName(name);
+    if (w == nullptr || !(w->Active || w->WasActive) || w->Hidden) return;
+    if (w->Size.x <= 0.0f || w->Size.y <= 0.0f) return;
+    obstacles[*count].x0 = w->Pos.x;
+    obstacles[*count].y0 = w->Pos.y;
+    obstacles[*count].x1 = w->Pos.x + w->Size.x;
+    obstacles[*count].y1 = w->Pos.y + w->Size.y;
+    (*count)++;
+}
+
+/* Adds one of the full screen map's HUD rects, which are kept relative to
+   the map rect at (mapX, mapY). */
+static void scnAnnounceAddHudRect(float mapX, float mapY, float x, float y,
+                                  float w, float h,
+                                  ScnAnnounceRect *obstacles, int *count) {
+    if (*count >= SCN_ANNOUNCE_MAX_OBSTACLES) return;
+    if (w <= 0.0f || h <= 0.0f) return;
+    obstacles[*count].x0 = mapX + x;
+    obstacles[*count].y0 = mapY + y;
+    obstacles[*count].x1 = mapX + x + w;
+    obstacles[*count].y1 = mapY + y + h;
+    (*count)++;
+}
 
 /* The last of an announcement's life spent fading, in ticks. Long enough to
    read as going rather than as cut off; ticks run at a hundred a second, so
    this is a third of one. */
 #define SCN_ANNOUNCE_FADE_TICKS 33u
 
-static void renderScenarioAnnounce(ClientSim *cs) {
-    if (cs == nullptr || uiModeIsTablet()) return;
+/* The space above the status line, in panel units. Smaller than the
+   announcement's inset: the status line is meant to sit as high on the view
+   as it can and still keep its outline inside it. */
+#define SCN_STATUS_INSET_UNITS 1.0f
 
-    uint16_t    ticks       = 0;
-    uint32_t    arrivedTick = 0;
-    const char *text        = clientSimGetScnAnnounce(cs, &ticks, &arrivedTick);
-    uint32_t    left        = 0;
-    if (!scnAnnounceRemaining(text, arrivedTick, ticks,
-                              clientSimGetLastServerTick(cs), &left)) {
-        return;
-    }
-
-    /* The same zoom the panel window scales by, so the two agree about what
-       one unit is worth on this screen. */
-    int rawZoom = sdl3DrawGetZoomFactor();
-    if (rawZoom < 1) rawZoom = 1;
-    float gameScale = 1.0f;
-    sdl3DrawGetGameRect(nullptr, nullptr, nullptr, nullptr, &gameScale);
-    if (gameScale <= 0.0f) gameScale = 1.0f;
-    const float scale = (float)rawZoom * gameScale;
-
-    float gx, gy, gw, gh, gtw, gth, rx0, ry0, rx1, ry1;
-    if (!sdl3DrawGetMainViewGameRect(&gx, &gy, &gw, &gh, &gtw, &gth)) return;
-    if (!sdl3DrawGameToRenderCoords(gx, gy, &rx0, &ry0)) return;
-    if (!sdl3DrawGameToRenderCoords(gx + gw, gy + gh, &rx1, &ry1)) return;
-
-    ImFont *font = ImGui::GetFont();
-    if (font == nullptr) return;
-
-    float height = SCN_ANNOUNCE_UNITS * scale;
-    if (height < 8.0f) height = 8.0f;
-    const ImVec2 measured = font->CalcTextSizeA(height, FLT_MAX, 0.0f, text);
-
-    const float px = (rx0 + rx1) * 0.5f - measured.x * 0.5f;
-    const float py = ry0 + (ry1 - ry0) * SCN_ANNOUNCE_DOWN;
-
-    /* Full strength until the last stretch, then out. */
-    float fade = 1.0f;
-    if (left < SCN_ANNOUNCE_FADE_TICKS) {
-        fade = (float)left / (float)SCN_ANNOUNCE_FADE_TICKS;
-    }
-    const int alpha = (int)(255.0f * fade);
-    if (alpha <= 0) return;
-
-    ImDrawList *dl = ImGui::GetForegroundDrawList();
-    if (dl == nullptr) return;
-
-    /* The outline: the same line in near-black, one stroke out in each of the
-       eight directions, so the letters keep an edge whichever way the terrain
-       under them happens to run. */
+/* Draws one outlined line at (px, py): the line in near-black one stroke out
+   in each of the eight directions, so the letters keep an edge whichever way
+   the terrain under them happens to run, then the line in white. */
+static void scnDrawOutlinedLine(ImDrawList *dl, ImFont *font, float height,
+                                float px, float py, float o, int alpha,
+                                const char *text) {
     const ImU32 edge = IM_COL32(0, 0, 0, alpha);
-    const float o    = (scale > 1.0f) ? scale : 1.0f;
     for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {
             if (dx == 0 && dy == 0) continue;
@@ -5491,6 +5527,173 @@ static void renderScenarioAnnounce(ClientSim *cs) {
     }
     dl->AddText(font, height, ImVec2(px, py),
                 IM_COL32(255, 255, 255, alpha), text);
+}
+
+/* The status line and the announcement share a view, a scale, a font and the
+   things at the top of the view they both keep clear of, and are drawn
+   together so the announcement can keep clear of the status line too. */
+static void renderScenarioAnnounce(ClientSim *cs) {
+    if (cs == nullptr) return;
+
+    const uint32_t now = clientSimGetLastServerTick(cs);
+
+    /* The status line, with its countdown worked out on this client's own
+       clock. */
+    uint32_t    statusEndsAt = SCN_STATUS_NO_COUNTDOWN;
+    const char *statusRaw    = clientSimGetScnStatus(cs, &statusEndsAt);
+    char        status[SCN_STATUS_LINE_MAX];
+    const bool  haveStatus =
+        scnStatusLineText(statusRaw, statusEndsAt, now, status,
+                          sizeof(status));
+
+    uint16_t    ticks       = 0;
+    uint32_t    arrivedTick = 0;
+    const char *text        = clientSimGetScnAnnounce(cs, &ticks, &arrivedTick);
+    uint32_t    left        = 0;
+    const bool  haveAnnounce =
+        scnAnnounceRemaining(text, arrivedTick, ticks, now, &left);
+    if (!haveStatus && !haveAnnounce) return;
+
+    /* The same zoom the panel window scales by, so the two agree about what
+       one unit is worth on this screen. Tablet mode draws the game view at
+       its own zoom, in the same coordinates ImGui uses. */
+    float scale = 1.0f;
+    int   tvX = 0, tvY = 0, tvW = 0, tvH = 0, tvZoom = 0;
+    const bool tablet = uiModeIsTablet();
+    if (tablet) {
+        sdl3DrawGetTabletViewport(&tvX, &tvY, &tvW, &tvH, &tvZoom);
+        if (tvW <= 0 || tvH <= 0) return;   /* no view drawn yet */
+        scale = (float)((tvZoom < 1) ? 1 : tvZoom);
+    } else {
+        int rawZoom = sdl3DrawGetZoomFactor();
+        if (rawZoom < 1) rawZoom = 1;
+        float gameScale = 1.0f;
+        sdl3DrawGetGameRect(nullptr, nullptr, nullptr, nullptr, &gameScale);
+        if (gameScale <= 0.0f) gameScale = 1.0f;
+        scale = (float)rawZoom * gameScale;
+    }
+
+    /* The game view in render coordinates, and the things at its top the
+       status line has to keep clear of. The full screen map is the view when
+       it owns the window, with its HUD column down the right and its build
+       strip on the left. tankView is false on the full screen map, where the
+       tank is wherever it is on the map and not in the middle square. */
+    ScnAnnounceRect view;
+    ScnAnnounceRect obstacles[SCN_ANNOUNCE_MAX_OBSTACLES];
+    int             count    = 0;
+    bool            tankView = true;
+    float mapX = 0.0f, mapY = 0.0f, mapW = 0.0f, mapH = 0.0f;
+    if (tablet) {
+        view.x0 = (float)tvX;
+        view.y0 = (float)tvY;
+        view.x1 = (float)(tvX + tvW);
+        view.y1 = (float)(tvY + tvH);
+        scnAnnounceAddWindow("##ScenarioSlot", obstacles, &count);
+    } else if (sdl3DrawGetOverviewInWindowRect(&mapX, &mapY, &mapW, &mapH)) {
+        tankView = false;
+        view.x0 = mapX;
+        view.y0 = mapY;
+        view.x1 = mapX + mapW;
+        view.y1 = mapY + mapH;
+        OverviewHudLayout hud;
+        if (sdl3DrawGetOverviewHudLayout(&hud)) {
+            scnAnnounceAddHudRect(mapX, mapY, hud.columnX, hud.columnY,
+                                  hud.columnW, hud.columnH, obstacles, &count);
+            scnAnnounceAddHudRect(mapX, mapY, hud.buildX, hud.buildY,
+                                  hud.buildW, hud.buildH, obstacles, &count);
+        }
+    } else {
+        float gx, gy, gw, gh, gtw, gth;
+        if (!sdl3DrawGetMainViewGameRect(&gx, &gy, &gw, &gh, &gtw, &gth)) return;
+        if (!sdl3DrawGameToRenderCoords(gx, gy, &view.x0, &view.y0)) return;
+        if (!sdl3DrawGameToRenderCoords(gx + gw, gy + gh, &view.x1, &view.y1)) {
+            return;
+        }
+    }
+    /* Each script of the round's list has a panel window of its own, named
+       by renderScenarioPanelView as the id plus the owner. A panel popped
+       out into its own window is in another ImGui context and is not found,
+       which is right: it is not over the game view. */
+    for (int owner = 0; owner < SCN_PANEL_OWNERS; owner++) {
+        char winId[32];
+        SDL_snprintf(winId, sizeof(winId), "##scenariopanel%d", owner);
+        scnAnnounceAddWindow(winId, obstacles, &count);
+    }
+    scnAnnounceAddWindow("###gamevote_1", obstacles, &count);
+    scnAnnounceAddWindow("###gamevote_2", obstacles, &count);
+    scnAnnounceAddWindow("###alliancereq", obstacles, &count);
+
+    ImFont *font = ImGui::GetFont();
+    if (font == nullptr) return;
+    ImDrawList *dl = ImGui::GetForegroundDrawList();
+    if (dl == nullptr) return;
+
+    float height = SCN_ANNOUNCE_UNITS * scale;
+    if (height < 8.0f) height = 8.0f;
+
+    /* The outline reaches one stroke past the letters on every side, so the
+       box that has to stay clear is that much bigger than the letters. */
+    const float o = (scale > 1.0f) ? scale : 1.0f;
+    const float inset = SCN_ANNOUNCE_INSET_UNITS * scale;
+    /* On the main view the player's tank sits in the middle square, and the
+       status line is never moved down onto it: the floor is the top of that
+       square. The full screen map has no such square, so there the floor is
+       the bottom of the map. */
+    const float floorY =
+        tankView ? (view.y0 + view.y1) * 0.5f -
+                       (view.y1 - view.y0) / (float)MAIN_SCREEN_SIZE_Y * 0.5f
+                 : view.y1;
+
+    /* The status line first, as high on the view as it goes, moved sideways
+       or down by the things at the top of the view. Its row then becomes a
+       band the width of the view, so an announcement with a position near
+       the top drops below it rather than sharing its row. */
+    ScnAnnounceRect statusBand = { 0.0f, 0.0f, 0.0f, 0.0f };
+    bool            haveBand   = false;
+    if (haveStatus) {
+        const ImVec2 measured =
+            font->CalcTextSizeA(height, FLT_MAX, 0.0f, status);
+        const float boxW = measured.x + 2.0f * o;
+        const float boxH = measured.y + 2.0f * o;
+        float boxX = 0.0f, boxY = 0.0f;
+        scnStatusPlace(view, boxW, boxH, SCN_STATUS_INSET_UNITS * scale,
+                       inset, floorY, obstacles, count, &boxX, &boxY);
+        scnDrawOutlinedLine(dl, font, height, boxX + o, boxY + o, o, 255,
+                            status);
+        statusBand.x0 = view.x0;
+        statusBand.y0 = boxY;
+        statusBand.x1 = view.x1;
+        statusBand.y1 = boxY + boxH;
+        haveBand      = true;
+    }
+
+    if (!haveAnnounce) return;
+
+    const ImVec2 measured = font->CalcTextSizeA(height, FLT_MAX, 0.0f, text);
+    const float  boxW     = measured.x + 2.0f * o;
+    const float  boxH     = measured.y + 2.0f * o;
+    float   boxX = 0.0f, boxY = 0.0f;
+    uint8_t posX = 0, posY = 0;
+    if (clientSimGetScnAnnouncePos(cs, &posX, &posY)) {
+        /* Where the script said, kept inside the view by the status line's
+           inset and below the status line. */
+        scnAnnounceAt(view, boxW, boxH, posX, posY,
+                      SCN_STATUS_INSET_UNITS * scale,
+                      haveBand ? &statusBand : nullptr, inset, &boxX, &boxY);
+    } else {
+        /* Where announcements have always gone. */
+        scnAnnounceDefaultPlace(view, boxW, o, &boxX, &boxY);
+    }
+
+    /* Full strength until the last stretch, then out. */
+    float fade = 1.0f;
+    if (left < SCN_ANNOUNCE_FADE_TICKS) {
+        fade = (float)left / (float)SCN_ANNOUNCE_FADE_TICKS;
+    }
+    const int alpha = (int)(255.0f * fade);
+    if (alpha <= 0) return;
+
+    scnDrawOutlinedLine(dl, font, height, boxX + o, boxY + o, o, alpha, text);
 }
 
 /* About modal + linked markdown popups live in dialogs/imgui_about.cpp so
@@ -8814,12 +9017,12 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                    which cannot arrive once the transport is gone. */
                 clientSimDisconnect(cs);
 #ifdef __EMSCRIPTEN__
-                /* The browser has no welcome screen to fall back to the way
-                   winbolo.c does after imguiLobbyShow returns 0 — the menu is
-                   the hosting page, so navigate back to it. Ordered after the
-                   disconnect so transportUdpClientDestroy still gets its
-                   graceful PACKET_QUIT out over a live socket; the navigation
-                   itself only runs once this frame returns to the browser. */
+                /* The browser runs no lobby loop that returns to the menu the
+                   way winbolo.c's does after imguiLobbyShow returns 0, so ask
+                   the page's game loop to end the game; it then shows the
+                   menu. Ordered after the disconnect so
+                   transportUdpClientDestroy still gets its graceful
+                   PACKET_QUIT out over a live socket. */
                 windowLeaveGame();
 #endif
             }
@@ -10168,6 +10371,10 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
        until it round-tripped, and never at all on a connection that carries no
        voice. */
     if (isSelf) selfMuted = voiceIsSelfMuted();
+    /* Voice switched off here also clears PLAYER_FLAG_HAS_MIC, so without
+       this the own row would say there is no microphone when the reason is
+       the setting. Local truth, like selfMuted above. */
+    bool voiceOff = isSelf && !voiceIsEnabled();
 
     if (!inLobby && !isSelf && !hasMic && !mutedByMe) {
         /* In game, a remote player who has no microphone is not worth a
@@ -10203,6 +10410,10 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
         micTip  = mutedTalking ? STR_PLAYER_TIP_VOICE_MUTEDBYYOU_TALKING
                                : STR_PLAYER_TIP_VOICE_MUTEDBYYOU;
         micPulseFill = mutedTalking;
+    } else if (voiceOff) {
+        micTex  = s_iconMicDisabled[iconSlot];
+        micTint = MIC_TINT_DIM;
+        micTip  = STR_DLGLOBBY_VOICE_OFF;
     } else if (!hasMic) {
         micTex  = s_iconMicOff[iconSlot];
         micTint = MIC_TINT_DIM;
@@ -10250,8 +10461,9 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
         /* An SVG that would not load must still hold the column, or
          * the name and ping shift between rows. */
         ImGui::Dummy(ImVec2(size, size));
-    } else if (isSelf && !hasMic) {
-        /* Not clickable without a microphone: there is nothing to gate.
+    } else if (isSelf && (!hasMic || voiceOff)) {
+        /* Not clickable without a microphone or with voice off: there is
+         * nothing to gate.
          * The clickable branch below toggles a local transmit gate, not
          * the mute the server rejects against yourself. */
         ImGui::ImageWithBg((ImTextureID)micTex, ImVec2(size, size),

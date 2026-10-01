@@ -352,15 +352,10 @@ static void main_loop_iteration(void) {
             {
                 BYTE newTilesX = (BYTE)(tileW / TILE_SIZE_X);
                 BYTE newTilesY = (BYTE)(tileH / TILE_SIZE_Y);
+                /* The size setters keep the offset inside the map for the
+                 * new grid. */
                 lv_screenSetSizeX(newTilesX);
                 lv_screenSetSizeY(newTilesY);
-                if (g_lv->isLoaded) {
-                    BYTE ox, oy;
-                    lv_screenGetOffsets(&ox, &oy);
-                    if ((int)ox + newTilesX > 255) ox = (BYTE)(255 - newTilesX);
-                    if ((int)oy + newTilesY > 255) oy = (BYTE)(255 - newTilesY);
-                    lv_screenSetOffset(ox, oy);
-                }
             }
             lv_drawResizeRenderTarget();
             lv_drawDirtyScreen();

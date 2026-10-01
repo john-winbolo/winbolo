@@ -123,6 +123,21 @@ void          overviewViewHandleInput(OverviewView *v, bool hovered,
    the system cursor back. Safe on a NULL view. */
 void          overviewViewReleaseCursor(OverviewView *v);
 
+/* The camera readout — the zoom and whether the camera follows the tank — is
+   something the host draws over the map for a moment, not all the time. The
+   view starts it itself when the player changes either through
+   overviewViewHandleInput; the host starts it with overviewViewShowCameraNotice
+   when the view comes back on screen, so the player sees the state they are
+   picking up. A freshly created view starts with one. Safe on a NULL view.
+
+   overviewViewCameraNotice fills `buf` with what to show and `outAlpha` with
+   how solid to draw it (1 held, falling to 0 through the fade), and returns
+   false once there is nothing to draw. `keys` supplies the follow binding the
+   free-camera text names; NULL leaves it unnamed. */
+void          overviewViewShowCameraNotice(OverviewView *v);
+bool          overviewViewCameraNotice(OverviewView *v, const keyItems *keys,
+                                       char *buf, size_t cap, float *outAlpha);
+
 #ifdef __cplusplus
 }
 #endif
