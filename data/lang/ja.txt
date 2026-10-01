@@ -2729,3 +2729,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=ワークショップ
 # The game finder's scripts
 STR_DLGBROWSER_MODS=MOD
 STR_DLGBROWSER_MODS_MORE=+MOD {number}個
+
+# In-game newswire — a scenario changed who hears a player's voice
+STR_VOICE_EVERYONE_ON=ボイスチャットはゲーム内の全員に聞こえるようになりました
+STR_VOICE_EVERYONE_OFF=ボイスチャットは同盟にのみ聞こえるようになりました

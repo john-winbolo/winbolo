@@ -3302,6 +3302,10 @@
 #define STR_DLGBROWSER_MODS                      2713
 #define STR_DLGBROWSER_MODS_MORE                 2714
 
+/* In-game newswire — a scenario changed who hears a player's voice */
+#define STR_VOICE_EVERYONE_ON                    2756
+#define STR_VOICE_EVERYONE_OFF                   2757
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

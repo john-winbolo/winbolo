@@ -2731,3 +2731,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop
 # The game finder's scripts
 STR_DLGBROWSER_MODS=Moddar
 STR_DLGBROWSER_MODS_MORE=+{number} moddar
+
+# In-game newswire — a scenario changed who hears a player's voice
+STR_VOICE_EVERYONE_ON=Röstchatten hörs nu av alla i spelet
+STR_VOICE_EVERYONE_OFF=Röstchatten hörs nu bara av dina allierade

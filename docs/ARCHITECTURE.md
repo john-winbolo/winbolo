@@ -1059,7 +1059,7 @@ only source of truth for "byte-identical".
    `s_encoders[]` — has no callers outside the codec file itself.
    Every event added since the carrier landed is body-only:
    `CTRL_VIEW_TARGET`, `CTRL_SPECTATOR_CHAT`, `CTRL_ROUND_RATING_POSTED`,
-   `CTRL_STATS_SEED`, `CTRL_VOICE_TALKING`.
+   `CTRL_STATS_SEED`, `CTRL_VOICE_TALKING`, `CTRL_VOICE_EVERYONE`.
 
    The encoder receives a per-recipient `UdpServerClient *recipient`.
    **Ignore it** — mark the function `/* recipient: safe — ignored. */`

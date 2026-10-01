@@ -2729,3 +2729,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Мастерская
 # The game finder's scripts
 STR_DLGBROWSER_MODS=Моды
 STR_DLGBROWSER_MODS_MORE=+ моды ({number})
+
+# In-game newswire — a scenario changed who hears a player's voice
+STR_VOICE_EVERYONE_ON=Голосовой чат теперь слышат все в игре
+STR_VOICE_EVERYONE_OFF=Голосовой чат теперь слышат только ваши союзники

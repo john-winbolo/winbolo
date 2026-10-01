@@ -380,6 +380,23 @@ typedef enum {
      * Appended at the END, like every type above it: the tables in
      * transport_control_codec.c are indexed by this enum. */
     CTRL_SCN_STATUS,
+    /* CTRL_VOICE_EVERYONE — whether a scenario has sent voice in the round to
+     * every player (game.set_voice_everyone) rather than to the talker's
+     * allies alone. Published when the server's flag changes value: from the
+     * op, and from the three places that clear it (a round start, the reset
+     * back to the lobby and the scenario detaching) when it was on. Replayed
+     * into a joining client's sync while it is on.
+     *
+     * The client keeps the value and prints a line of its own when the rule
+     * a running round plays by changes, so the line is in the reader's
+     * language; a server chat line could only be English.
+     *
+     * Broadcast and body-only on CHANNEL_CONTROL. Not on the spectator
+     * allowlist: a spectator hears nobody, whatever the flag says.
+     *
+     * Appended at the END, like every type above it: the tables in
+     * transport_control_codec.c are indexed by this enum. */
+    CTRL_VOICE_EVERYONE,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -1099,6 +1116,11 @@ typedef struct ControlEvent {
         struct {
             PlayerBitMap talking;
         } voiceTalking;
+
+        /* CTRL_VOICE_EVERYONE — the flag's new value. */
+        struct {
+            bool on;
+        } voiceEveryone;
 
         /* CTRL_ENTITY_CHANGE — the item, where it sits in its list, and
          * whether it is now on the map or off it.

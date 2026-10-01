@@ -1294,15 +1294,16 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         {
             uint8_t cf = playersGetClientFlags(&sim->sim.plyrs, (BYTE)i);
             /* The mic bits are shown only to the players this one's voice
-             * could reach: everyone outside a running game (all-talk), the
-             * live alliance inside one. Same scope rule serverPumpVoice
-             * carries the frames themselves by, so a mic status can never
-             * appear for someone you cannot hear. Safe because a snapshot
-             * is built per recipient — never cache or share the result.
-             * Every other bit stays recipient-agnostic. */
+             * could reach: everyone outside a running game (all-talk),
+             * everyone while a scenario has voice to everyone on, the live
+             * alliance otherwise. serverSimVoiceSidesAllow is the rule
+             * serverPumpVoice carries the frames themselves by, so a mic
+             * status can never appear for someone you cannot hear, nor go
+             * missing for someone you can. Safe because a snapshot is built
+             * per recipient — never cache or share the result. Every other
+             * bit stays recipient-agnostic. */
             if (i != clientIdx &&
-                serverSimGetState(sim) == serverStateRunning &&
-                !playersIsAllie(&sim->sim.plyrs, (BYTE)i, clientIdx)) {
+                !serverSimVoiceSidesAllow(sim, clientIdx, (BYTE)i)) {
                 cf &= (uint8_t)~PLAYER_VOICE_FLAG_MASK;
             }
             ts->clientFlags = cf;

@@ -2727,3 +2727,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=창작마당
 # The game finder's scripts
 STR_DLGBROWSER_MODS=모드
 STR_DLGBROWSER_MODS_MORE=+모드 {number}개
+
+# In-game newswire — a scenario changed who hears a player's voice
+STR_VOICE_EVERYONE_ON=이제 음성 채팅이 게임의 모든 플레이어에게 전달됩니다
+STR_VOICE_EVERYONE_OFF=이제 음성 채팅이 동맹에게만 전달됩니다

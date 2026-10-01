@@ -3128,9 +3128,26 @@ static ScnOpResult scenarioOpLog(ServerSim *sim, const ScnOpLog *p) {
     return SCN_OP_OK;
 }
 
-/* Voice to everyone. The flag is all this writes: the voice forward reads it
- * through serverSimVoiceSidesAllow on every frame, so the change is heard on
- * the next one. No state guard, for the same reason the presentation arms
+void serverSimSetScenarioVoiceEveryone(ServerSim *sim, bool on) {
+    ControlEvent evt;
+
+    if (sim->scenarioVoiceEveryone == on) {
+        return;   /* a script that sets it every tick sends nothing */
+    }
+    sim->scenarioVoiceEveryone = on;
+
+    logAddEvent(log_VoiceEveryone, on ? 1 : 0, 0, 0, 0, 0, NULL);
+
+    memset(&evt, 0, sizeof(evt));
+    evt.type                = CTRL_VOICE_EVERYONE;
+    evt.u.voiceEveryone.on  = on;
+    serverSimPublishControl(sim, &evt);
+}
+
+/* Voice to everyone. The voice forward reads the flag through
+ * serverSimVoiceSidesAllow on every frame, so the change is heard on the next
+ * one, and the setter tells the clients so each player can be told in their
+ * own language. No state guard, for the same reason the presentation arms
  * have none, but a round start clears the flag (serverSimResetGameWorld and
  * serverSimStartGameInPlace), so one set in the lobby does not reach the
  * round. A server with voice off forwards no voice at all, so turning the
@@ -3141,7 +3158,7 @@ static ScnOpResult scenarioOpSetVoiceEveryone(ServerSim *sim,
     if (p->on && sim->voiceMode == serverVoiceOff) {
         return SCN_OP_WRONG_STATE;
     }
-    sim->scenarioVoiceEveryone = p->on;
+    serverSimSetScenarioVoiceEveryone(sim, p->on);
     return SCN_OP_OK;
 }
 
@@ -4918,8 +4935,9 @@ void serverSimSetScenarioIdentity(ServerSim *sim,
         sim->scenarioRulesCount = 0;
         serverSimScenarioResetPresentation(sim);
         /* And voice goes back to allies only: the script that asked for
-           voice to everyone has gone. */
-        sim->scenarioVoiceEveryone = false;
+           voice to everyone has gone. Told to the clients, since a detach
+           in a running round changes who hears a player from now on. */
+        serverSimSetScenarioVoiceEveryone(sim, false);
         return;
     }
     sim->scenarioIdentity.source            = source;

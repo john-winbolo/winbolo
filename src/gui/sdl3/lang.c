@@ -2695,6 +2695,8 @@ static const LangEntry langTable[] = {
     {2753, "Setting"},
     {2754, "Value"},
     {2755, "Rules:"},
+    {2756, "Voice now goes to everyone in the game"},
+    {2757, "Voice now goes to your allies only"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

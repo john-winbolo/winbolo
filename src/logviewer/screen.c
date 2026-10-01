@@ -2208,6 +2208,18 @@ void lv_screenProcessLog(unsigned short numEvents) {
         lv_messageAdd(networkMessage, MESSAGE_NETSERVER, STR_LV_MSG_SERVER, &args);
       }
       break;
+    case log_VoiceEveryone:
+      /* A scenario changed who hears a player's voice. The players were each
+         told in their own language, so the viewer says it the same way, with
+         the same two lines the game prints. */
+      logReadBytes(&opt1, 1);
+      {
+        MessageArgs args = {0};
+        lv_messageAdd(networkMessage, MESSAGE_NETSERVER,
+                      opt1 ? STR_VOICE_EVERYONE_ON : STR_VOICE_EVERYONE_OFF,
+                      &args);
+      }
+      break;
     case log_GameTimeSet:
       /* The round's game time, as a big-endian int32 of ticks. The viewer
          counts gmeLength down a tick at a time the way the server does, so
@@ -3266,7 +3278,9 @@ static int walkSkipEventBody(BYTE code) {
     case log_PlayerReady:
     case log_PlayerUnready:
     case log_MapSkipVote:
-      /* 1 byte */
+    case log_VoiceEveryone:
+      /* 1 byte. log_VoiceEveryone is only written to v2 and later logs; it
+         is listed for the reason log_Ping is, to keep the table full. */
       { BYTE b; if (logReadBytes(&b, 1) != 1) return -1; }
       return 1;
     case log_PillSetHealth:

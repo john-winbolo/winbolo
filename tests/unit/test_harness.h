@@ -1431,6 +1431,9 @@ int run_voice_flags_snapshot_masking(void);
  * the talking bitmap encodes/decodes through the body tables — empty, one
  * bit, several bits and MAX_TANKS - 1 — and a short body is rejected. */
 int run_voice_talking_codec(void);
+/* CTRL_VOICE_EVERYONE body-codec round-trip (test_voice_everyone_codec.c):
+ * on and off survive, any other byte and an empty body are refused. */
+int run_voice_everyone_codec(void);
 
 /* CTRL_SIM_RULES body codec (test_sim_rules_codec.c): every carried rule
  * round-trips through the body tables, compared field by field and
@@ -3152,6 +3155,10 @@ int run_scenario_voice_everyone_default(void);
 int run_scenario_voice_everyone_on(void);
 int run_scenario_voice_everyone_resets(void);
 int run_scenario_voice_everyone_voice_off(void);
+int run_scenario_voice_everyone_publish(void);
+int run_scenario_voice_everyone_join(void);
+int run_scenario_voice_everyone_client(void);
+int run_scenario_voice_everyone_mic_bits(void);
 
 /* fill_to_caps (test_scenario_fill_caps.c). A mod that raises a cap and asks
  * for the map to start at it, for a base stock and for a pill's armour; the

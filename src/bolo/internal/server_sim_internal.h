@@ -1443,6 +1443,14 @@ void serverSimScenarioResetTickStats(ServerSim *sim);
  * detach arm of serverSimSetScenarioIdentity. */
 void serverSimScenarioResetPresentation(ServerSim *sim);
 
+/* Set where a running round's voice goes: true for every player, false for
+ * the talker's allies alone. Does nothing when the value is unchanged;
+ * otherwise records the change in the replay log and publishes
+ * CTRL_VOICE_EVERYONE so every client can tell its player. The one writer of
+ * scenarioVoiceEveryone: the game.set_voice_everyone op, the two round starts
+ * in server_sim_round.c and the detach arm of serverSimSetScenarioIdentity. */
+void serverSimSetScenarioVoiceEveryone(ServerSim *sim, bool on);
+
 /* Hand the stored panel lists to a joining subscriber's callback, as the
  * events that published them: every script's latest list for every panel
  * and destination, each stamped with its script's owner. The recipient filters run on the delivery side

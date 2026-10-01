@@ -2737,3 +2737,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop
 STR_DLGBROWSER_MODS=Mods
 STR_DLGBROWSER_MODS_MORE=+{number} mods
 
+# In-game newswire — a scenario changed who hears a player's voice
+STR_VOICE_EVERYONE_ON=Voice now goes to everyone in the game
+STR_VOICE_EVERYONE_OFF=Voice now goes to your allies only
+
