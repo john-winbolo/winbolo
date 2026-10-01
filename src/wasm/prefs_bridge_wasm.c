@@ -58,6 +58,14 @@ static char *s_pageStartPrefs = NULL;
  * document is reported as nothing to do, and a PUT is never sent. */
 static bool s_adoptedThisPage = false;
 
+/* Set when a GET before adoption answered 404: the account has no prefs
+ * document, and this page will not make one (see s_adoptedThisPage). With
+ * nothing to download and nothing allowed up, every later sync on this page
+ * would be the same GET with the same answer, so the pump and the sync stop
+ * here instead of asking again every debounce. A document the desktop
+ * writes while this page is open is picked up on the next page load. */
+static bool s_noServerDocument = false;
+
 /* ---- Async transport primitives (EM_ASYNC_JS defines C-callable JS) -------
  * Each awaits the Module.wbPrefs* fetch helper in shell.html and writes a
  * malloc'd response body back through *out (pointer args arrive as addresses).
@@ -109,6 +117,7 @@ int wbn_prefs_get(const char *bearerToken, char **response_out) {
     char *body = NULL;
     int status = wbPrefsJsGet(&body);
     if (status == 404 && !s_adoptedThisPage) {
+        s_noServerDocument = true;
         status = -1;
     }
     *response_out = body;
@@ -141,7 +150,7 @@ static bool wbPrefsHasAuth(void) {
  * worker thread). Safe to call at bootstrap (before keys are read) and from
  * the debounced upload pump. No-op when not signed in. */
 void wbPrefsSyncNow(void) {
-    if (!wbPrefsHasAuth()) {
+    if (!wbPrefsHasAuth() || s_noServerDocument) {
         return;
     }
     if (!s_adoptedThisPage && s_pageStartPrefs == NULL) {
@@ -222,7 +231,9 @@ void wbPrefsSyncNow(void) {
 void wbPrefsPumpUpload(uint64_t nowMs) {
     static uint64_t s_lastAttemptMs = 0;
     static bool s_armed = false;
-    if (!prefsSyncDirty()) {
+    /* Nothing can go up on this page (see s_noServerDocument), so a dirty
+     * document is left dirty rather than re-fetched every debounce. */
+    if (s_noServerDocument || !prefsSyncDirty()) {
         s_armed = false;
         return;
     }
