@@ -1,5 +1,4 @@
 -- GATE: ticks=8000 bots=2 script=data/mods/PillboxTag.scenario.lua
--- GATE: expect=fail the brain needs over a second from the take to its first shot; the hunter's next shot comes first at LAST_SHOT_ARMOUR 1 (passes at 2)
 --
 -- Pillbox Tag, the fort's last shot.
 --
