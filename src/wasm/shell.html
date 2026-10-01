@@ -60,6 +60,7 @@
         .loading.hidden { opacity: 0; visibility: hidden; }
         .loading .logo { height: 96px; filter: drop-shadow(0 4px 24px rgba(0,0,0,.6)); }
         #status { font-size: .9rem; color: var(--muted); min-height: 1.2em; }
+        #status.error { color: var(--text); max-width: min(360px, 70vw); }
         .bar {
             width: min(360px, 70vw); height: 8px;
             background: var(--surface2); border: 1px solid var(--border);
@@ -467,6 +468,31 @@
         });
     </script>
 
-    {{{ SCRIPT }}}
+    <!-- Emscripten requires its script placeholder; the guard below loads the game script instead. -->
+    <!-- {{{ SCRIPT }}} -->
+    <script>
+        /* The game runs threads, which need SharedArrayBuffer, and the browser
+           gives that only to a cross-origin isolated page (served with
+           Cross-Origin-Opener-Policy and Cross-Origin-Embedder-Policy). Without
+           it the game cannot start, so say so instead of loading it. */
+        if (window.crossOriginIsolated) {
+            var gameScript = document.createElement('script');
+            gameScript.async = true;
+            gameScript.src = 'winbolo.js';
+            document.body.appendChild(gameScript);
+        } else {
+            var statusEl = document.getElementById('status');
+            var fill = document.getElementById('bar-fill');
+            if (statusEl) {
+                statusEl.textContent = 'This browser can’t run WinBolo here. ' +
+                    'Please try an up-to-date Chrome, Firefox, Edge or Safari.';
+                statusEl.classList.add('error');
+            }
+            if (fill) fill.classList.remove('indeterminate');
+            console.error('WinBolo: page is not cross-origin isolated ' +
+                '(COOP/COEP headers missing); serve a local build with ' +
+                'src/wasm/serve_isolated.py');
+        }
+    </script>
 </body>
 </html>
