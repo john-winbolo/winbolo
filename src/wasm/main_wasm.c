@@ -120,7 +120,7 @@ static bool finishedLoop = FALSE;
 static bool showAllianceReq = TRUE;
 /* Set by windowLeaveGame; wasmRunGame ends the game on it. */
 static bool s_leaveRequested = FALSE;
-/* Browser history for single player, kept by main's screen loop and not by
+/* Browser history for games, kept by main's screen loop and not by
  * wasmGameStateReset. s_gameEntryPushed: the game was picked from the menu,
  * which pushed its history entry, so the menu's entry sits behind it.
  * s_leftByHistory: the game ended because Back or Forward moved off it, so
@@ -213,6 +213,12 @@ EMSCRIPTEN_KEEPALIVE
 void wbWasmResetHeldKeys(void) {
   inputResetHeldKeys();
 }
+
+/* 1 while the page is hidden (another tab, minimised). Reads document.hidden
+ * directly, so it never suspends. */
+EM_JS(int, wasmPageHidden, (void), {
+  return document.hidden ? 1 : 0;
+});
 
 /* -------------------------------------------------------
  * windowRunGameTick — game logic using transport
@@ -326,10 +332,9 @@ static void main_loop_iteration(void) {
   /* On the first frame after a terminal failure, raise the error dialog. The
    * frozen state below renders this last frame without ticking or sending.
    *
-   * Dismissing it leaves the game, and main navigates back to /: a network
-   * game does not return to the menu in the same page, so without this the
-   * player is left on the cleared frame with only the menu bar over it. The
-   * latch stops this branch re-arming. */
+   * Dismissing it leaves the game, and main ends it and shows the menu;
+   * without this the player is left on the cleared frame with only the menu
+   * bar over it. The latch stops this branch re-arming. */
   if (s_connFailed && !s_connErrorShown) {
     imguiMessageBoxEx(DIALOG_BOX_TITLE, s_connReason, IMGUI_MSG_ERROR,
                       IMGUI_MSG_OK);
@@ -355,7 +360,14 @@ static void main_loop_iteration(void) {
    *     traffic) the server has already dropped us and the client has already
    *     declared SERVER_SHUTDOWN, so the owed ticks are dead either way.  In
    *     single-player there is simply nothing to catch up to.  Drop the debt
-   *     and resume from real time. */
+   *     and resume from real time.  A hidden tab's frames can also arrive
+   *     under STALL_RESET_MS apart; the cap on the leftover after the
+   *     catch-up below keeps those from building a backlog.
+   *
+   * A single-player game (practice or the tutorial, whose server runs in the
+   * page) pauses while the page is hidden: it runs no ticks and owes none, so
+   * it resumes where it stopped. A network game keeps ticking while hidden to
+   * stay in step with its server. */
   if (!s_connFailed && clientSimHasTransport(cs)) {
     const double MAX_ELAPSED_MS  = 200.0;  /* per-frame catch-up bound (ordinary jank) */
     const double STALL_RESET_MS  = 500.0;  /* gap above this = background/suspend → drop */
@@ -363,7 +375,9 @@ static void main_loop_iteration(void) {
     double now = emscripten_get_now();
     double gap = now - lastFrameTime;
     lastFrameTime = now;
-    if (gap > STALL_RESET_MS) {
+    if (gameFrontGetServerSim() != NULL && wasmPageHidden()) {
+      gameTickAccum = 0.0;
+    } else if (gap > STALL_RESET_MS) {
       gameTickAccum = 0.0;
     } else {
       gameTickAccum += (gap > MAX_ELAPSED_MS) ? MAX_ELAPSED_MS : gap;
@@ -376,7 +390,13 @@ static void main_loop_iteration(void) {
       windowRunGameTick(cs);
       ticksThisFrame++;
     }
-    /* Leftover `gameTickAccum` (>= GAME_TICK_LENGTH) drains in future frames. */
+    /* The leftover drains in future frames, but no more than MAX_ELAPSED_MS
+     * of it is kept, so frames that keep arriving too far apart for the
+     * catch-up limit (a hidden tab's timer, a sustained slow frame rate) run
+     * the game slower instead of banking time. */
+    if (gameTickAccum > MAX_ELAPSED_MS) {
+      gameTickAccum = MAX_ELAPSED_MS;
+    }
   }
 
   /* Voice encode/decode runs here, beside the game tick and outside the
@@ -442,26 +462,96 @@ static void main_loop_iteration(void) {
 /* Wait for the browser's next animation frame. This paces the game loop at
  * the display's rate, one frame per requestAnimationFrame. A hidden
  * tab stops requestAnimationFrame, so a 250 ms timeout also resolves the wait
- * and the loop keeps advancing (the browser throttles it further); whichever
- * fires first wins and the other is cancelled or ignored. Suspends main's
- * stack through ASYNCIFY, so only C on that stack may call it. */
+ * and the loop keeps advancing (the browser throttles it further). While a
+ * network game runs in a hidden page, the hidden-page tick worker
+ * (wasmSetFastHiddenFrames) also resolves it, every 20 ms. Whichever fires
+ * first wins and the others are cancelled or ignored. Suspends main's stack
+ * through ASYNCIFY, so only C on that stack may call it. */
 EM_ASYNC_JS(void, wasmFrameWait, (void), {
     await new Promise((resolve) => {
         let done = false;
         let timer = 0;
+        let frame = 0;
         const finish = () => {
             if (done) return;
             done = true;
             clearTimeout(timer);
+            /* A hidden page holds animation-frame callbacks until it is
+               shown again; cancel this one so a hidden network game's
+               20 ms passes do not queue thousands of them. */
+            cancelAnimationFrame(frame);
             resolve();
         };
         timer = setTimeout(finish, 250);
-        requestAnimationFrame(finish);
+        frame = requestAnimationFrame(finish);
+        const hiddenTick = Module.wbHiddenTick;
+        if (hiddenTick && hiddenTick.running) {
+            hiddenTick.waiter = finish;
+        }
     });
 });
 
+/* Turn the hidden-page tick on or off for a network game. A network game
+ * must keep running in a hidden page: voice sends and plays a frame every
+ * 20 ms, and the client must stay in step with its server. A hidden page
+ * gets no requestAnimationFrame and the browser slows its timers to a second
+ * or more, but a dedicated worker's timers are not slowed, so a small worker
+ * made from a blob: URL posts a message every 20 ms and wasmFrameWait
+ * resolves on it. The worker runs only while Module.wbFastHiddenFrames is
+ * set and the page is hidden; a visibilitychange listener starts and stops
+ * it. Its message handler only resolves the pending frame wait and never
+ * calls into the module. A single-player game pauses while hidden instead
+ * (see main_loop_iteration), so it never sets the flag. Never suspends. */
+EM_JS(void, wasmSetFastHiddenFrames, (int on), {
+    let tick = Module.wbHiddenTick;
+    if (!tick) {
+        tick = Module.wbHiddenTick = { worker: null, running: false, waiter: null };
+        tick.sync = () => {
+            const want = !!Module.wbFastHiddenFrames && document.hidden;
+            if (want === tick.running) return;
+            if (want && !tick.worker) {
+                try {
+                    const src = "let id = 0; onmessage = (e) => { clearInterval(id); id = 0;" +
+                                " if (e.data) id = setInterval(() => postMessage(0), 20); };";
+                    const url = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
+                    tick.worker = new Worker(url);
+                    URL.revokeObjectURL(url);
+                    tick.worker.onmessage = () => {
+                        const waiter = tick.waiter;
+                        tick.waiter = null;
+                        if (waiter) waiter();
+                    };
+                } catch (e) {
+                    /* No worker: the frame wait keeps its 250 ms timeout. */
+                    tick.worker = null;
+                    return;
+                }
+            }
+            tick.running = want;
+            if (!want) tick.waiter = null;
+            tick.worker.postMessage(want ? 1 : 0);
+        };
+        document.addEventListener("visibilitychange", tick.sync);
+    }
+    Module.wbFastHiddenFrames = !!on;
+    tick.sync();
+});
+
+/* Set up the page for a network game's loop (on) or put it back (off).
+ * SDL reads SDL_HINT_EMSCRIPTEN_ASYNCIFY in both its present and SDL_Delay.
+ * With the hint on, each present sleeps on a page timer, which a hidden page
+ * slows to a second or more; every web loop already paces itself with
+ * wasmFrameWait, so the game loop turns the present's sleep off. It is off
+ * only while the loop runs: the join wait (clientFrontAwaitJoin) needs
+ * SDL_Delay to keep yielding to the browser, and the menu, the finder and
+ * single player keep SDL's default. */
+static void wasmNetworkGameFrames(bool on) {
+  SDL_SetHint(SDL_HINT_EMSCRIPTEN_ASYNCIFY, on ? "0" : "1");
+  wasmSetFastHiddenFrames(on ? 1 : 0);
+}
+
 /* -------------------------------------------------------
- * Browser history for the menu and single-player games
+ * Browser history for the menu and games
  *
  * shell.html's popstate handler never calls in here; it only records
  * Module.wbNavRequest, which the game loop reads. None of these suspend.
@@ -518,6 +608,17 @@ static void wasmHistoryMarkFinder(void) {
   });
 }
 
+/* Make the finder's entry the entry of the game joined from it, at that
+ * game's /join/ address, so a reload rejoins it and Back from the game goes
+ * to whatever was behind the finder. */
+static void wasmHistoryReplaceJoin(const char *gameKey) {
+  EM_ASM({
+    var url = "/join/" + encodeURIComponent(UTF8ToString($0));
+    try { history.replaceState({screen: "game"}, "", url); }
+    catch (e) {}
+  }, gameKey);
+}
+
 /* Step back to the menu's entry. The popstate this fires arrives once main
  * next waits on a frame, by which time the screen is already the menu, so
  * the handler ignores it. */
@@ -548,13 +649,25 @@ bool wasmFinderTakeBack(void) {
   return TRUE;
 }
 
+/* The server key of the game the finder's Join picked; empty when the
+ * finder closed any other way. */
+static char s_finderJoinKey[128] = "";
+
+/* Called by the game finder's Join, which then closes the finder: record
+ * the game to join. wasmShowFinder hands it to main, which starts it in this
+ * page. */
+void wasmFinderJoin(const char *serverKey) {
+  SDL_strlcpy(s_finderJoinKey, serverKey ? serverKey : "",
+              sizeof(s_finderJoinKey));
+}
+
 /* Run the current game until it ends: a game over or quit (finishedLoop) or
- * a leave request (windowLeaveGame). In single player, Back or Forward off
- * the game's history entry leaves it the same way. */
+ * a leave request (windowLeaveGame). Back or Forward off the game's history
+ * entry leaves it the same way, network or single player. */
 static void wasmRunGame(void) {
   while (!finishedLoop && !s_leaveRequested) {
     main_loop_iteration();
-    if (gameFrontGetServerSim() != NULL && wasmTakeNavRequest()) {
+    if (wasmTakeNavRequest()) {
       s_leftByHistory = TRUE;
       windowLeaveGame();
     }
@@ -583,6 +696,42 @@ static const char *getUrlParam(const char *name) {
 
 /* Defined with windowSetQuitting, beside the quit flags it resets. */
 static void wasmGameStateReset(void);
+
+/* Most bot runners the page asks for, the page's thread included: one per
+ * tank, the cap botManagerInit also applies. The link's PTHREAD_POOL_SIZE
+ * expression (CMakeLists.txt) sizes the workers by the same rule, one fewer
+ * than the runners, so a change here must be made there too. The link also
+ * sets PTHREAD_POOL_SIZE_STRICT=2: a thread the started workers cannot take
+ * is refused rather than made later, so a mismatch fails the pool create
+ * below, which logs and leaves thinks on the page's thread, instead of the
+ * first bot tick waiting for a worker the browser cannot start until the
+ * page's thread yields. */
+#define WASM_MAX_BOT_RUNNERS MAX_TANKS
+
+/* Create the bot worker pool, before any sim is made: each sim sizes its
+ * bot runners from the pool when it is created. The runners are one fewer
+ * than the logical cores, leaving a core for the browser, at most
+ * WASM_MAX_BOT_RUNNERS and at least 1; 1 runs every think on the page's
+ * thread. */
+static void wasmStartBotPool(void) {
+  int cores = SDL_GetNumLogicalCPUCores();
+  int runners = cores - 1;
+
+  if (runners > WASM_MAX_BOT_RUNNERS) {
+    runners = WASM_MAX_BOT_RUNNERS;
+  }
+  if (runners < 1) {
+    runners = 1;
+  }
+  if (serverSimBotPoolInit(runners)) {
+    /* The page's thread is one of the runners; the pool holds the rest. */
+    printf("[WASM] bot pool: %d logical cores, %d runners, %d workers\n",
+           cores, runners, runners - 1);
+  } else {
+    printf("[WASM] bot pool: create failed for %d runners (%d logical cores); "
+           "thinks run on the page's thread\n", runners, cores);
+  }
+}
 
 /* Copy one URL parameter into dst. getUrlParam returns a shared static
  * buffer, so each value is copied out before the next read. */
@@ -625,20 +774,32 @@ static void wasmReadLaunch(WasmLaunch *out, bool *openFinder) {
   *openFinder = (out->showMenu && finder[0] != '\0');
 }
 
+/* Start the page's relay latency test without waiting (finder_wasm.c). */
+void wasmRelayProbeStart(void);
+
 /* Show the game finder over the menu's background, as the desktop's Internet
- * row does, and return when it closes; the menu follows. Its Join and Sign in
- * to join load another page, so the finder only ever closes by Cancel or by
- * Back or Forward.
+ * row does, and return when it closes. Returns TRUE when it closed on a Join,
+ * with the game's server key in s_finderJoinKey, and main starts that game;
+ * FALSE when it closed by Cancel or by Back or Forward, and the menu follows.
+ * Its Sign in to join loads another page.
  *
  * History: opened from the menu, the finder pushes its own entry; on a
- * ?finder=1 launch it marks the launch entry. Closed by Back or Forward, the
- * browser is already on the menu's entry. Closed by Cancel, a pushed entry is
- * stepped back off, and a launch entry becomes the menu at the menu's
- * address. Nothing between here and the menu's first frame wait suspends,
- * so the screen is the menu again by the time history.back()'s popstate
- * arrives, and the handler ignores it. */
-static void wasmShowFinder(bool launched) {
+ * ?finder=1 launch it marks the launch entry. Closed by a Join, that entry
+ * becomes the game's (wasmHistoryReplaceJoin), with the menu's entry behind
+ * it when the finder was pushed, and main sets the screen to the game.
+ * Closed by Back or Forward, the browser is already on the menu's entry, and
+ * a Join made in the same frame is dropped. Closed by Cancel, a pushed entry
+ * is stepped back off, and a launch entry becomes the menu at the menu's
+ * address. Nothing between here and the next frame wait suspends, so the
+ * screen has changed by the time history.back()'s popstate arrives, and the
+ * handler ignores it. */
+static bool wasmShowFinder(bool launched) {
+  bool joined;
+
+  /* A Join from the finder then finds the closest relay already picked. */
+  wasmRelayProbeStart();
   s_finderLeftByHistory = FALSE;
+  s_finderJoinKey[0] = '\0';
   if (launched) {
     wasmHistoryMarkFinder();
   } else {
@@ -648,23 +809,44 @@ static void wasmShowFinder(bool launched) {
 
   imguiGameBrowserShow(langGetText(STR_GAMEFRONT_TRACKERFINDER_TITLE), TRUE);
 
-  if (s_finderLeftByHistory) {
-    /* The browser is already on the menu's entry. */
-  } else if (launched) {
-    wasmHistoryReplaceMenu();
+  /* The finder's last frame waits on the browser after it decides to close,
+   * so Back or Forward can still arrive then; take it here. */
+  wasmFinderTakeBack();
+  joined = (s_finderJoinKey[0] != '\0' && !s_finderLeftByHistory);
+
+  if (joined) {
+    wasmHistoryReplaceJoin(s_finderJoinKey);
   } else {
-    wasmHistoryBack();
+    if (s_finderLeftByHistory) {
+      /* The browser is already on the menu's entry. */
+    } else if (launched) {
+      wasmHistoryReplaceMenu();
+    } else {
+      wasmHistoryBack();
+    }
+    wasmSetScreen("menu");
   }
-  wasmSetScreen("menu");
   s_finderLeftByHistory = FALSE;
+  return joined;
 }
 
-/* End a single-player game (practice or tutorial) so the menu, and then
- * another game, can follow in the same page. The first three run in the
- * order the desktop's game end runs them (winbolo.c): the voice talkers go
- * with their game, then the game's ImGui context, then the sims. The lobby
- * and tutorial overlay state is per-game too and is dropped last. */
-static void wasmEndSinglePlayerGame(void) {
+/* Set next up to join the game the finder's Join picked: a network game
+ * with the finder's server key and no dev proxy or password. */
+static void wasmUseFinderJoin(WasmLaunch *next) {
+  next->mode = WASM_GAME_JOIN;
+  SDL_strlcpy(next->gameKey, s_finderJoinKey, sizeof(next->gameKey));
+  next->devProxy[0] = '\0';
+  next->password[0] = '\0';
+  next->inPage = TRUE;
+}
+
+/* End a game, network or single player, so the menu, and then another game,
+ * can follow in the same page. The first three run in the order the
+ * desktop's game end runs them (winbolo.c): the voice talkers go with their
+ * game, then the game's ImGui context, then the sims, and with the client
+ * sim a network game's transport and its socket. The lobby and tutorial
+ * overlay state is per-game too and is dropped last. */
+static void wasmEndGame(void) {
   voiceReset();
   sdl3ImguiCleanup();
   /* A start that failed has already freed its sims (humanSim is NULL). */
@@ -673,9 +855,6 @@ static void wasmEndSinglePlayerGame(void) {
   }
   imguiLobbyFrameReset();
   tutorialOverlayReset();
-
-  /* The menu's background game ticks again (wasmPlayGame stopped it). */
-  bgGameSetHiddenByForeground(bgGameGetShared(), FALSE);
 
   /* The in-game menu's toggles change only the live settings, as on the
    * desktop, which writes them when its game ends; do the same here, after
@@ -686,22 +865,19 @@ static void wasmEndSinglePlayerGame(void) {
 
 /* Run one game from start to end: reset the per-game state, start the game
  * the launch describes, set up its UI and run the loop until it ends.
- * Returns TRUE for a network game (no local server sim), whose end the
- * caller finishes by navigating away; FALSE for single player, including a
- * single-player start that failed, which has shown its error and freed what
- * it made. */
+ * Returns TRUE for a network game (no local server sim), whose connection
+ * the caller closes before it ends the game; FALSE for single player,
+ * including a single-player start that failed, which has shown its error and
+ * freed what it made. */
 static bool wasmPlayGame(const char *cmdLine, const WasmLaunch *launch) {
   wasmGameStateReset();
 
-  /* Stop the menu's background game while this one runs, so its bots take
-   * no turns on the page's thread, and drop its kept scene texture, as the
-   * desktop does when it leaves the menu. wasmEndSinglePlayerGame starts
-   * it again. */
-  {
-    BgGame *bg = bgGameGetShared();
-    bgGameSetHiddenByForeground(bg, TRUE);
-    bgGameReleaseScene(bg);
-  }
+  /* Free the menu's background game before this one starts. Each of its
+   * bots holds tens of MB of brain, and the page's heap never shrinks, so
+   * keeping them through the game would leave that much less for it.
+   * main makes a new one when the menu shows again. No-op on a page that
+   * went straight into a game. */
+  wasmBackgroundGameDestroy();
 
   printf("[WASM] Starting gameFrontWasmStart...\n");
   bool started = (gameFrontWasmStart(cmdLine, &keys, launch) != FALSE);
@@ -762,9 +938,34 @@ static bool wasmPlayGame(const char *cmdLine, const WasmLaunch *launch) {
 
   fprintf(stderr, "[WASM] Starting main loop; humanSim=%p\n", (void*)humanSim);
   fflush(stderr);
-  wasmRunGame();
+  {
+    bool network = (gameFrontGetServerSim() == NULL);
+    if (network) {
+      wasmNetworkGameFrames(TRUE);
+    }
+    wasmRunGame();
+    if (network) {
+      wasmNetworkGameFrames(FALSE);
+    }
+  }
 
   return gameFrontGetServerSim() == NULL;
+}
+
+/* Choose the name a single-player game plays under: a validated ?name= from
+ * the page's launch wins; otherwise "Me". Run before every single-player
+ * game, because a join replaces the name with its own network name (the
+ * account name or web<rand>) inside gameFrontWasmStart. */
+static void wasmChooseSinglePlayerName(const WasmLaunch *launch) {
+  char validated[PLAYER_NAME_LEN];
+  if (launch->name[0] != '\0' &&
+      playerNameValidate(launch->name, validated, PLAYER_NAME_LEN, NULL)) {
+    gameFrontSetPlayerName(validated);
+    printf("[WASM] single player: name=%s (from URL)\n", validated);
+  } else {
+    gameFrontSetPlayerName((char *)"Me");
+    printf("[WASM] single player: default name=Me\n");
+  }
 }
 
 int main(int argc, char *argv[]) {
@@ -809,6 +1010,8 @@ int main(int argc, char *argv[]) {
   /* The only read of the page URL; the game mode comes from here on. */
   wasmReadLaunch(&launch, &openFinder);
 
+  wasmStartBotPool();
+
   /* Page-lifetime setup: default keys, language, window, sound, brains. */
   if (gameFrontWasmSetup(&keys) == FALSE) {
     printf("[WASM] gameFrontWasmSetup FAILED\n");
@@ -825,31 +1028,19 @@ int main(int argc, char *argv[]) {
    * them into the new game. No-op when not signed in. */
   wbPrefsSyncNow();
 
-  /* Single-player name: a validated ?name= wins; otherwise "Me". A join
-   * chooses its own network name (the account name or web<rand>) inside
-   * gameFrontWasmStart, before it connects. */
-  if (launch.mode != WASM_GAME_JOIN) {
-    char validated[PLAYER_NAME_LEN];
-    if (launch.name[0] != '\0' &&
-        playerNameValidate(launch.name, validated, PLAYER_NAME_LEN, NULL)) {
-      gameFrontSetPlayerName(validated);
-      printf("[WASM] single player: name=%s (from URL)\n", validated);
-    } else {
-      gameFrontSetPlayerName((char *)"Me");
-      printf("[WASM] single player: default name=Me\n");
-    }
-  }
-
   /* Screens: the menu, then a game, then the menu again. A launch that names
-   * a game goes straight into it; a join never shows the menu. A game picked
-   * from the menu carries no join key, dev proxy or password.
+   * a game, a join included, goes straight into it, and its end shows the
+   * menu. A game picked from the menu carries no join key, dev proxy or
+   * password; a game joined from the finder carries only its server key.
    *
    * History: the menu's entry is the page's first. A game picked from the
-   * menu pushes its own entry, so Back returns to the menu; a single-player
-   * game the page launched straight into marks its entry as the game, with
-   * no menu behind it. A ?finder=1 launch marks its entry as the finder's
-   * (wasmShowFinder), which becomes the menu's once the finder closes. A
-   * join leaves the history alone. */
+   * menu pushes its own entry, so Back returns to the menu; a game the page
+   * launched straight into marks its entry as the game, with no menu behind
+   * it, and that entry becomes the menu's when the game ends. A ?finder=1
+   * launch marks its entry as the finder's (wasmShowFinder), which becomes
+   * the menu's once the finder closes. A Join in the finder turns the
+   * finder's entry into the game's: from the menu's finder the menu's entry
+   * is behind it, from a ?finder=1 launch nothing is. */
   WasmLaunch next = launch;
   bool menu = launch.showMenu;
   if (openFinder) {
@@ -857,47 +1048,65 @@ int main(int argc, char *argv[]) {
   } else if (launch.showMenu) {
     wasmHistoryReplaceMenu();
     wasmSetScreen("menu");
-  } else if (launch.mode != WASM_GAME_JOIN) {
+  } else {
     wasmHistoryMarkGame();
     s_gameEntryPushed = FALSE;
   }
   for (;;) {
     if (menu) {
+      /* The menu and the finder draw the background game; a page that goes
+       * straight into a game never makes it. */
+      if (bgGameGetShared() == NULL) {
+        wasmBackgroundGameCreate();
+      }
       /* A ?finder=1 launch opens the finder before the menu's first
-       * showing, once. */
+       * showing, once. A Join there plays the game, whose entry has no
+       * menu behind it; anything else shows the menu. */
       if (openFinder) {
         openFinder = FALSE;
-        wasmShowFinder(TRUE);
-        continue;
-      }
-      /* The welcome dialog returns an openingStates value (gamefront.h). */
-      int r = imguiWelcomeShow();
-      if (r == openSetup) {
-        next.mode = WASM_GAME_PRACTICE;
-      } else if (r == openTutorial) {
-        next.mode = WASM_GAME_TUTORIAL;
-      } else {
-        if (r == openSettings) {
-          imguiSettingsShow();
-        } else if (r == openInternet) {
-          wasmShowFinder(FALSE);
+        if (!wasmShowFinder(TRUE)) {
+          continue;
         }
-        /* Settings or the finder closed, or a row with nothing behind it
-         * on the web (Local, Quit): show the menu again. */
-        continue;
+        wasmUseFinderJoin(&next);
+        s_gameEntryPushed = FALSE;
+      } else {
+        /* The welcome dialog returns an openingStates value (gamefront.h). */
+        int r = imguiWelcomeShow();
+        if (r == openSetup || r == openTutorial) {
+          next.mode = (r == openSetup) ? WASM_GAME_PRACTICE
+                                       : WASM_GAME_TUTORIAL;
+          next.gameKey[0] = '\0';
+          next.devProxy[0] = '\0';
+          next.password[0] = '\0';
+          next.inPage = FALSE;
+          wasmHistoryPushGame(next.mode);
+          s_gameEntryPushed = TRUE;
+        } else if (r == openInternet) {
+          /* A Join in the finder plays the game, whose entry has the
+           * menu's behind it; closed any other way, the menu shows. */
+          if (!wasmShowFinder(FALSE)) {
+            continue;
+          }
+          wasmUseFinderJoin(&next);
+          s_gameEntryPushed = TRUE;
+        } else {
+          if (r == openSettings) {
+            imguiSettingsShow();
+          }
+          /* Settings closed, or a row with nothing behind it on the web
+           * (Local, Quit): show the menu again. */
+          continue;
+        }
       }
-      next.gameKey[0] = '\0';
-      next.devProxy[0] = '\0';
-      next.password[0] = '\0';
-      wasmHistoryPushGame(next.mode);
-      s_gameEntryPushed = TRUE;
     }
 
-    /* From here Back or Forward asks a single-player game to end. Set
-     * before the start, so a request made while it comes up, or while a
-     * failed start shows its error, is still taken below. */
+    /* From here Back or Forward asks the game to end. Set before the start,
+     * so a request made while it comes up (a join waits on its join code and
+     * the server's answer), or while a failed start shows its error, is
+     * still taken below. */
+    wasmSetScreen("game");
     if (next.mode != WASM_GAME_JOIN) {
-      wasmSetScreen("game");
+      wasmChooseSinglePlayerName(&next);
     }
 
     if (wasmPlayGame(cmdLine, &next)) {
@@ -908,31 +1117,11 @@ int main(int argc, char *argv[]) {
       if (humanSim != NULL && clientSimHasTransport(humanSim)) {
         clientSimDisconnect(humanSim);
       }
-
-      /* Write the in-game menu's toggles, as a single-player game end does.
-       * The page is about to go, so there are no more frames for the
-       * debounced upload to run on: send a change now. This waits on the
-       * fetch on main's stack, and is a no-op when not signed in. */
-      gameFrontPutPrefs(&keys);
-      if (prefsSyncDirty()) {
-        wbPrefsSyncNow();
-      }
-      emscripten_run_script("window.location.href='/'");
-
-      /* Stay on this stack until the browser unloads the page. The
-       * navigation only starts once control returns to the browser, and the
-       * page stays on screen until the next one loads, so nothing is torn
-       * down here: freeing the window or the renderer now would blank the
-       * page while it is still showing. Returning from main would leave no
-       * stack to wait on. */
-      for (;;) {
-        wasmFrameWait();
-      }
     }
 
-    /* Single player: end the game and go back to the menu, keeping every
-     * setting the player changed. */
-    wasmEndSinglePlayerGame();
+    /* End the game and go back to the menu, keeping every setting the
+     * player changed. The menu's frames upload a change to them. */
+    wasmEndGame();
 
     /* Put the history on the menu's entry. A request the game loop never
      * took (the start failed or the game ended in the same frame) still
@@ -999,8 +1188,8 @@ static void wasmGameStateReset(void) {
 }
 
 /* Leave the game: ask wasmRunGame to end it after the current frame. main
- * then disconnects a network game that is still connected and navigates the
- * hosting page back to /; single player goes back to the menu. */
+ * then disconnects a network game that is still connected, ends the game
+ * and shows the menu. */
 void windowLeaveGame(void) { s_leaveRequested = TRUE; }
 
 void windowApplyMenuChecks(ClientSim *cs) {
@@ -1429,6 +1618,15 @@ void windowTutorialPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
 /* -------------------------------------------------------
  * Frontend callbacks — called by backend (bolo engine)
  * ------------------------------------------------------- */
+
+/* Tracks which ClientSim owns the on-screen player panel, so stale callbacks
+ * from a previous game can't write into the live UI (mirrors winbolo.c).
+ * NULL between games, when the menu's background game runs: its bots'
+ * sims would pass this test, so each callback also drops a bot's sim
+ * outright. A bot is never the client on screen, and its callbacks arrive
+ * on the bot worker pool's threads. */
+static struct ClientSim *s_activeUiCs = NULL;
+
 void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,
                             screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms,
                             int32_t srtDelay, bool isPillView, int edgeX, int edgeY) {
@@ -1452,7 +1650,8 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
 }
 
 void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
-  (void)cs;
+  if (clientSimIsBot(cs)) return;
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   BYTE fullShells, fullMines, fullArmour, fullTrees;
   clientSimGetTankFullStats(cs, &fullShells, &fullMines, &fullArmour, &fullTrees);
   sdl3DrawStatusTankBars(0, 0, shells, mines, armour, trees,
@@ -1460,13 +1659,16 @@ void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE a
 }
 
 void frontEndPlaySound(ClientSim *cs, sndEffects value) {
-  (void)cs;
+  if (clientSimIsBot(cs)) return;
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (soundEffects == TRUE) soundPlayEffect(value);
 }
 
 void frontEndPlaySoundPan(ClientSim *cs, sndEffects value,
                           uint16_t gainL, uint16_t gainR) {
   (void)gainL; (void)gainR;
+  if (clientSimIsBot(cs)) return;
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   frontEndPlaySound(cs, value);
 }
 
@@ -1475,49 +1677,63 @@ void windowPlaySound(sndEffects value) {
 }
 
 void frontEndStatusPillbox(ClientSim *cs, BYTE pillNum, pillAlliance pb) {
-  (void)cs;
+  if (clientSimIsBot(cs)) return;
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  /* The per-frame render pass repaints every pill icon from sim state on the
+     render thread; skip the direct draw when called from a bot's worker. */
+  if (!sdl3DrawOnRenderThread()) return;
   sdl3DrawStatusPillbox(pillNum, pb, showPillLabels);
   sdl3DrawCopyPillsStatus(0, 0);
 }
 
 void frontEndStatusTank(ClientSim *cs, BYTE tankNum, tankAlliance ts) {
-  (void)cs;
+  if (clientSimIsBot(cs)) return;
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  /* See frontEndStatusPillbox — repainted every frame from sim state; skip
+     the direct draw when off the render thread. */
+  if (!sdl3DrawOnRenderThread()) return;
   sdl3DrawStatusTank(tankNum, ts);
   sdl3DrawCopyTanksStatus(0, 0);
 }
 
 void frontEndMessages(ClientSim *cs, char *top, char *bottom) {
-  (void)cs;
+  if (clientSimIsBot(cs)) return;
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (drawBusy == FALSE) sdl3DrawMessages(0, 0, top, bottom);
 }
 
 void frontEndKillsDeaths(ClientSim *cs, int kills, int deaths) {
-  (void)cs;
+  if (clientSimIsBot(cs)) return;
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (drawBusy == FALSE) sdl3DrawKillsDeaths(0, 0, kills, deaths);
 }
 
 void frontEndUpdatePlayerPing(ClientSim *cs, playerNumbers value, uint16_t ping) {
+  if (clientSimIsBot(cs)) return;
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (!clientSimIsRunning(cs)) return;
   sdl3ImguiUpdatePlayerPing((unsigned char)value, ping);
 }
 
-/* Tracks which ClientSim owns the on-screen player panel, so stale callbacks
- * from a previous game can't write into the live UI (mirrors winbolo.c). */
-static struct ClientSim *s_activeUiCs = NULL;
-
 void frontEndUpdatePlayerFlags(ClientSim *cs, playerNumbers value, uint8_t clientType, uint8_t clientFlags) {
+  if (clientSimIsBot(cs)) return;
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3ImguiUpdatePlayerFlags((unsigned char)value, clientType, clientFlags);
 }
 
 void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) {
-  (void)cs;
+  if (clientSimIsBot(cs)) return;
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  /* See frontEndStatusPillbox — repainted every frame from sim state; skip
+     the direct draw when off the render thread. */
+  if (!sdl3DrawOnRenderThread()) return;
   sdl3DrawStatusBase(baseNum, bs, showBaseLabels);
   sdl3DrawCopyBasesStatus(0, 0);
 }
 
 void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour) {
-  (void)cs;
+  if (clientSimIsBot(cs)) return;
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   BYTE fullShells, fullMines, fullArmour;
   clientSimGetBaseFullStats(cs, &fullShells, &fullMines, &fullArmour);
   sdl3DrawStatusBaseBars(0, 0, shells, mines, armour,
@@ -1525,14 +1741,16 @@ void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE a
 }
 
 void frontEndManStatus(ClientSim *cs, bool isDead, TURNTYPE angle) {
-  (void)cs;
+  if (clientSimIsBot(cs)) return;
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   clientMutexWaitFor();
   sdl3DrawSetManStatus(0, 0, isDead, angle);
   clientMutexRelease();
 }
 
 void frontEndManClear(ClientSim *cs) {
-  (void)cs;
+  if (clientSimIsBot(cs)) return;
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   clientMutexWaitFor();
   sdl3DrawSetManClear();
   sdl3DrawCopyManStatus(0, 0);
@@ -1556,6 +1774,8 @@ void frontEndAudioReturningToLobby(bool active) {
 }
 
 void frontEndGameOver(ClientSim *cs) {
+  if (clientSimIsBot(cs)) return;
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   /* A practice round ends in the lobby: the server holds game over, then
    * returns to the lobby with the win message, and the player stays in the
    * page's game loop. Only a game with no lobby leaves here. */
@@ -1567,18 +1787,19 @@ void frontEndGameOver(ClientSim *cs) {
                     IMGUI_MSG_INFO, IMGUI_MSG_OK);
   finishedLoop = TRUE;
   /* Dismissing the dialog leaves the game. finishedLoop ends the game loop
-   * after this frame; main then returns single player to the menu and
-   * navigates a network game back to /. */
+   * after this frame; main then ends the game and shows the menu. */
   windowLeaveGame();
 }
 
 void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value) {
+  if (clientSimIsBot(cs)) return;
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3ImguiClearPlayer((unsigned char)value);
 }
 
 void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags) {
   char cc[3];
+  if (clientSimIsBot(cs)) return;
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (!clientSimIsRunning(cs)) {
     cc[0] = 'X'; cc[1] = 'X'; cc[2] = '\0';
@@ -1595,6 +1816,7 @@ void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char
 }
 
 void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) {
+  if (clientSimIsBot(cs)) return;
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3ImguiSetPlayerCheckState((unsigned char)value, isChecked);
 }
@@ -1629,6 +1851,8 @@ void frontEndEnableRequestAllyMenu(bool enabled) { (void)enabled; }
 void frontEndEnableLeaveAllyMenu(bool enabled)   { (void)enabled; }
 
 void frontEndShowGunsight(ClientSim *cs, bool isShown) {
+  if (clientSimIsBot(cs)) return;
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   showGunsight = !isShown;
   clientSimSetGunsight(cs, showGunsight);
 }

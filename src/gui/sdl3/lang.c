@@ -347,6 +347,7 @@ static const LangEntry langTable[] = {
     /* Map overview pop-out */
     {1988, "following"},
     {1989, "free"},
+    {2756, "free ({string1} to follow)"},
 
     {590,  "Tutorial"},
     {591,  "Play Tutorial"},
@@ -2695,8 +2696,8 @@ static const LangEntry langTable[] = {
     {2753, "Setting"},
     {2754, "Value"},
     {2755, "Rules:"},
-    {2756, "Voice now goes to everyone in the game"},
-    {2757, "Voice now goes to your allies only"},
+    {2757, "Voice now goes to everyone in the game"},
+    {2758, "Voice now goes to your allies only"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

@@ -444,6 +444,10 @@
 /* Map overview pop-out */
 #define STR_OVERVIEW_FOLLOWING              1988
 #define STR_OVERVIEW_FREE                   1989
+/* The free-camera readout when a follow key is bound: a pan drops following
+ * without a key press, so this is where the player is told how to get it
+ * back. {string1} is the key's name. */
+#define STR_OVERVIEW_FREE_HINT              2756
 /* Settings panel additions (pre-game) */
 #define STR_DLGSETTINGS_TUTORIAL            590
 #define STR_DLGSETTINGS_PLAY_TUTORIAL       591
@@ -3303,8 +3307,8 @@
 #define STR_DLGBROWSER_MODS_MORE                 2714
 
 /* In-game newswire — a scenario changed who hears a player's voice */
-#define STR_VOICE_EVERYONE_ON                    2756
-#define STR_VOICE_EVERYONE_OFF                   2757
+#define STR_VOICE_EVERYONE_ON                    2757
+#define STR_VOICE_EVERYONE_OFF                   2758
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

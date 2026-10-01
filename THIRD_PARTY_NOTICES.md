@@ -5,9 +5,7 @@ WinBolo uses the following third-party libraries, code, artwork and sounds.
 WinBolo itself is licensed under the GNU General Public License, version 3 or
 later (see [LICENSE](LICENSE)). Every code library below is under a licence
 that can be combined with it, except the Steamworks SDK, which is covered by
-[LICENSE-EXCEPTION.md](LICENSE-EXCEPTION.md). The two under Apache 2.0,
-libmaxminddb and crashpad, can be combined with GPL version 3 but not with
-version 2, which is one reason WinBolo moved from version 2 to version 3.
+[LICENSE-EXCEPTION.md](LICENSE-EXCEPTION.md).
 
 ## Bolo graphics and sounds
 
@@ -126,6 +124,12 @@ version 2, which is one reason WinBolo moved from version 2 to version 3.
 - Version: 1.22.0
 - License: MIT
 - https://github.com/microsoft/onnxruntime
+- The prebuilt library bundles over sixty components under Apache 2.0, BSD
+  and MIT licences, among them protobuf, Eigen, Boost, abseil, flatbuffers and
+  cpuinfo. Their notices are in ONNX Runtime's
+  [ThirdPartyNotices.txt](https://github.com/microsoft/onnxruntime/blob/v1.22.0/ThirdPartyNotices.txt),
+  which ships with every WinBolo build that includes the library as
+  `THIRD_PARTY_NOTICES-onnxruntime.txt`, beside this file.
 
 ### libplum (optional, BOLO_PORTMAP; not built on iOS or wasm)
 - Version: 0.5.3
@@ -258,6 +262,19 @@ version 2, which is one reason WinBolo moved from version 2 to version 3.
   scenario instruction budgets, gmatch's iterator resets its recursion depth
   on each call, and the few 5.4 API calls LuaJIT lacks are shimmed. Lua's
   notice is kept at the top of the file. Re-apply on upgrade.
+
+### ldump
+- Location: brains/GoalHunter_1.7/ldump.lua and brains/GoalHunter_1.7/opt/ldump.lua
+- Version: 1.4.0 (the library's init.lua)
+- License: MIT No Attribution (MIT-0)
+- https://github.com/girvel/ldump
+- Author: Nikita Dobrynin (girvel)
+- A Lua serialisation library. The GoalHunter brain's debugger uses it to
+  snapshot and restore the brain's state. The two copies are identical; the
+  root one is the recorder build and `opt/` the production build.
+- Unmodified apart from the origin line at the top of each copy. The licence
+  asks for no credit; the entry is here so the file is not taken for WinBolo's
+  own code.
 
 ## Controller Glyphs
 

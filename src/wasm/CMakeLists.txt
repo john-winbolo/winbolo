@@ -10,7 +10,9 @@
 # Output: build-wasm-game/winbolo.html, winbolo.js, winbolo.wasm, winbolo.data,
 # plus js/relay.js and img/ copied from web/
 #
-# Serve locally with: python3 -m http.server -d build-wasm-game
+# Serve locally with: python3 src/wasm/serve_isolated.py build-wasm-game
+# The build uses threads, which need the COOP/COEP headers that
+# python3 -m http.server cannot send.
 
 cmake_minimum_required(VERSION 3.18)
 
@@ -102,6 +104,14 @@ set(OPUS_X86_PRESUME_SSE2 OFF CACHE BOOL "" FORCE)
 set(OPUS_X86_PRESUME_SSE4_1 OFF CACHE BOOL "" FORCE)
 set(OPUS_X86_PRESUME_AVX2 OFF CACHE BOOL "" FORCE)
 
+# Bot brain thinks run on the bot worker pool's threads. Emscripten links
+# shared memory only when every object is built with -pthread, so these come
+# before the dependencies are added: SDL3, SDL3_ttf, ImGui, Lua, zlib, cJSON,
+# Opus and every target below all compile with it.
+set(SDL_PTHREADS ON CACHE BOOL "" FORCE)
+add_compile_options(-pthread)
+add_link_options(-pthread)
+
 FetchContent_MakeAvailable(sdl3 sdl3_ttf imgui lua zlib cjson opus)
 
 ###
@@ -176,6 +186,8 @@ set(BOLO_SOURCES
 # server_stubs.c + server_stubs_wasm.c cover the server-side symbols the
 # shared sim/dialogs reference; serverInstanceStartup is a local-only stub
 # in server_stubs_wasm.c, matching the iOS/Android/BrainTest clients.
+# The round recorder comes from server_round_log_static: it records a
+# practice game's rounds for the lobby's replay, as on desktop single player.
 set(SERVER_SOURCES
     ${SRC_ROOT}/server/geolookup.c
     ${SRC_ROOT}/server/server_stubs.c
@@ -468,7 +480,9 @@ target_link_options(winbolo PRIVATE "LINKER:--allow-multiple-definition")
 
 # scenario_static ahead of server_sim_static: it calls the funnel and the
 # round-start registration, which the server library provides.
-target_link_libraries(winbolo PRIVATE bolo_static scenario_static server_sim_static bot_brains_static threads_static)
+# server_round_log_static records practice rounds; the transport and
+# lifecycle calls it makes land on the stubs in server_stubs_wasm.c.
+target_link_libraries(winbolo PRIVATE bolo_static scenario_static server_sim_static server_round_log_static bot_brains_static threads_static)
 target_link_libraries(winbolo PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
@@ -591,9 +605,29 @@ target_link_options(winbolo PRIVATE
     "SHELL:--shell-file ${CMAKE_CURRENT_SOURCE_DIR}/shell.html"
     -sFORCE_FILESYSTEM=1
     -sASYNCIFY=1
+    # Lua and the brain C code never wait on a frame or a fetch, but ASYNCIFY
+    # instruments every function that makes an indirect call, which takes in
+    # the whole Lua VM and slows every think. Only src/wasm and SDL's present
+    # suspend, and no Lua binding reaches them.
+    "SHELL:-sASYNCIFY_REMOVE=['lua*','brainPathfinder*','wsim_*','cpf_*']"
     # The menus nest deeper blocking loops (menu -> settings -> key setup)
     # than the default 4096-byte ASYNCIFY stack holds.
     "-sASYNCIFY_STACK_SIZE=65536"
+    # Workers for the bot worker pool, started with the page so no pool
+    # thread waits on the event loop to start. The expression is evaluated in
+    # the page and sizes them by wasmStartBotPool's rule in main_wasm.c: one
+    # fewer than the runners, which are one fewer than the cores, at most 16
+    # runners (15 workers). A browser that reports no core count gets no
+    # workers, which matches SDL's count of 1 there. Brain thinks run Lua on
+    # them, so they get a bigger stack than Emscripten's default.
+    "SHELL:-sPTHREAD_POOL_SIZE=Math.max(0,Math.min((navigator.hardwareConcurrency||1)-2,15))"
+    # A thread beyond the started workers would be made only once the page's
+    # thread returns to the browser, which the pool's dispatch, waiting on
+    # that thread, never does: the first bot tick would hang. Refuse it
+    # instead, so the pool create fails, logs, and thinks run on the page's
+    # thread. Any new thread in this build must therefore be counted above.
+    "-sPTHREAD_POOL_SIZE_STRICT=2"
+    "-sDEFAULT_PTHREAD_STACK_SIZE=2097152"
     -lwebsocket.js
 )
 
