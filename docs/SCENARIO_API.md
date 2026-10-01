@@ -1869,6 +1869,8 @@ to escort a person stays where it is.
 | `game.say(p, text[, target])` | A chat line seat `p` says, exactly as a player typing would: to its own team with no target, to everyone with `"all"`, or to one seat with a number. |
 | `game.sound(name[, x, y])` | Plays one of the server's sounds, at a square or everywhere. |
 | `game.log(text)` | Writes a line to the server's console. No player sees it. |
+| `game.set_voice_everyone(on)` | With `true`, voice in the running round goes to every player rather than to the talker's allies alone. `false` puts it back. |
+| `game.voice_everyone()` | Whether voice is going to everyone: what `set_voice_everyone` last set this round, and `false` on a server with voice off. |
 | `game.end_round([text[, winner_team]])` | Ends the round now, with the line the lobby shows and the team that won it. |
 | `game.set_game_time(ticks)` | How long the round has left, in `game.tick()`'s own units: 100 a second, so a minute is 6000. |
 | `game.add_game_time(ticks)` | Adds to what the round has left, or takes away with a negative, in the same units. A round with no time limit has nothing to add to, so give it a length first. |
@@ -1912,6 +1914,23 @@ receiver that never sees it. Use `"all"` or a seat number there.
 then, and the line it carries is shown in the lobby exactly as written — the
 server adds no verdict of its own.
 
+`set_voice_everyone` is for a round where sides do not fit voice. In a round,
+the server sends a player's voice only to that player's allies, so a round
+where every tank is on a team of its own has nobody hearing anybody. With voice
+to everyone on, the alliance check is skipped and every connected player hears
+every talker. Nothing else changes: a player's mutes still hold, a player still
+hears at most four talkers at a time, and a spectator still hears nobody.
+Outside a round everyone hears everyone already, so the setting has no effect
+in the lobby.
+
+The setting is the server's own and lasts for one round. Every round starts
+with it off, and it goes off again when the round returns to the lobby and
+when the scenario is taken off the server, so a later round without the script
+has voice to allies only. Call it from `on_setup` or later; a call in the lobby
+is cleared when the round starts. A server with voice off forwards no voice at
+all, so `set_voice_everyone(true)` is refused there (`SCN_OP_WRONG_STATE`);
+`set_voice_everyone(false)` is always taken.
+
 ---
 
 ## Showing things on a client
@@ -1924,7 +1943,7 @@ exist.
 | Call | What it does |
 |---|---|
 | `game.panel(id, list[, target])` | Draws panel `id` from a list of primitives. An empty list clears it. |
-| `game.score(target, value[, label])` | The scenario's own score for one seat with a number, or for a team with `{ team = t }`. `label` is the short word shown beside it, up to 15 bytes. A round that scores both teams and seats gets a grouped recap table: a row for each scored team, best team score first, with its members (by lobby team) under it, best own score first; seats on no scored team follow. A round that scores only one of the two keeps the plain table of players. |
+| `game.score(target, value[, label])` | The scenario's own score for one seat with a number, or for a team with `{ team = t }`. `label` is the short word shown beside it, up to 15 bytes. |
 | `game.announce(text[, seconds[, target[, position]]])` | A big line across the game view for that many seconds. Left out, `position` puts the line where it has always gone, centred in the upper third of the view. Give `"top"`, `"center"` or `{ x = , y = }` to put the centre of the line somewhere else. Empty text takes the line away. |
 | `game.status(text[, countdown_to[, target]])` | The status line: one line at the very top of the game view, centred, that stays until it is changed or cleared. `countdown_to` is a tick on `game.tick()`'s clock; the client shows the time left to it after the text. Empty text takes the line away. |
 | `game.marker(id, x, y[, colour[, target]])` | Puts mark `id` on a map square. |

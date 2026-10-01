@@ -482,6 +482,13 @@ struct ServerSim {
     ServerVoiceMode voiceMode;     /* how client voice is handled; fixed at
                                     * startup, read by the advertisement
                                     * paths. */
+    bool     scenarioVoiceEveryone; /* a script's game.set_voice_everyone:
+                                    * true sends voice in a running round to
+                                    * every player, not only to allies.
+                                    * Cleared by serverSimResetGameWorld,
+                                    * serverSimStartGameInPlace and a
+                                    * scenario detach, so it never reaches a
+                                    * later round. */
     BYTE     maxPlayers;           /* cap on join slots; 0 falls back to MAX_TANKS */
     BYTE     maxBots;              /* cap on AI bots in the lobby; 0 = no cap */
     BYTE     maxSpectators;        /* 0 = spectating disabled */

@@ -820,6 +820,14 @@ static int scnLuaRule(lua_State *L) {
     return 1;
 }
 
+/* Whether voice is going to everyone rather than to allies alone: what
+   set_voice_everyone last set this round, and false on a server with voice
+   off, where nobody hears anybody. */
+static int scnLuaVoiceEveryone(lua_State *L) {
+    lua_pushboolean(L, serverSimGetScenarioVoiceEveryone(scnCtx(L)->sim));
+    return 1;
+}
+
 /* ── Settings ─────────────────────────────────────────────────────── */
 
 /* One line about a settings block, through the caller's reporter. */
@@ -3665,6 +3673,21 @@ static int scnLuaLog(lua_State *L) {
     return scnDone(L, &op, "%d bytes", (int)len);
 }
 
+/* Voice to everyone, on or off. The sentence is only read on a refusal, and
+   the one refusal there is says why: turning it on where the server has
+   voice off. */
+static int scnLuaSetVoiceEveryone(lua_State *L) {
+    ScenarioOp op;
+    bool       on = scnArgBool(L, 1, "on");
+
+    memset(&op, 0, sizeof(op));
+    op.type                  = SCN_OP_SET_VOICE_EVERYONE;
+    op.u.setVoiceEveryone.on = on;
+    return scnDone(L, &op, "%s",
+                   on ? "voice to everyone on, and this server has voice off"
+                      : "voice to everyone off");
+}
+
 /* ── Presentation ─────────────────────────────────────────────────── */
 
 /* The player bit in a presentation op's target byte. The layout is written
@@ -4275,10 +4298,10 @@ static bool scnAnnounceShare(lua_State *L, int idx, const char *field,
     if (lua_type(L, -1) != LUA_TNUMBER) {
         const char *got = luaL_typename(L, -1);
         lua_pop(L, 1);
-        return luaL_argerror(
-                   L, idx,
-                   lua_pushfstring(L, "position.%s must be a number, got %s",
-                                   field, got)) != 0;
+        luaL_argerror(L, idx,
+                      lua_pushfstring(L, "position.%s must be a number, got %s",
+                                      field, got));
+        return false;   /* luaL_argerror does not come back */
     }
     v = lua_tonumber(L, -1);
     lua_pop(L, 1);
@@ -4312,18 +4335,18 @@ static bool scnArgAnnouncePos(lua_State *L, int idx, BYTE *outX, BYTE *outY,
                 return true;
             }
         }
-        return luaL_argerror(
-                   L, idx,
-                   lua_pushfstring(L, "position is '%s', which is not "
-                                   "\"top\", \"center\" or a table "
-                                   "{ x = , y = }", word)) != 0;
+        luaL_argerror(L, idx,
+                      lua_pushfstring(L, "position is '%s', which is not "
+                                      "\"top\", \"center\" or a table "
+                                      "{ x = , y = }", word));
+        return false;   /* luaL_argerror does not come back */
     }
     if (lua_type(L, idx) != LUA_TTABLE) {
-        return luaL_argerror(
-                   L, idx,
-                   lua_pushfstring(L, "position must be \"top\", \"center\" "
-                                   "or a table { x = , y = }, got %s",
-                                   luaL_typename(L, idx))) != 0;
+        luaL_argerror(L, idx,
+                      lua_pushfstring(L, "position must be \"top\", \"center\" "
+                                      "or a table { x = , y = }, got %s",
+                                      luaL_typename(L, idx)));
+        return false;   /* luaL_argerror does not come back */
     }
     if (!scnAnnounceShare(L, idx, "x", bad, outX)) {
         *badField = "x";
@@ -5088,6 +5111,7 @@ static const ScnLuaOpParam kScnOpArgs_allied[] = {
 static const ScnLuaOpParam kScnOpArgs_rule[] = {
     { "name", SCN_PARAM_WORD, false }, SCN_OP_ARG_END
 };
+static const ScnLuaOpParam kScnOpArgs_voice_everyone[] = { SCN_OP_ARG_END };
 /* An id is matched against the calling script's own settings block and an
    id that names none raises, so it is a word out of a fixed set. */
 static const ScnLuaOpParam kScnOpArgs_setting[] = {
@@ -5298,6 +5322,9 @@ static const ScnLuaOpParam kScnOpArgs_sound[] = {
 static const ScnLuaOpParam kScnOpArgs_log[] = {
     { "text", SCN_PARAM_STRING, false }, SCN_OP_ARG_END
 };
+static const ScnLuaOpParam kScnOpArgs_set_voice_everyone[] = {
+    { "on", SCN_PARAM_BOOL, false }, SCN_OP_ARG_END
+};
 static const ScnLuaOpParam kScnOpArgs_panel[] = {
     { "id", SCN_PARAM_NUMBER, false }, { "list", SCN_PARAM_TABLE, false },
     { "target", SCN_PARAM_TARGET, true }, SCN_OP_ARG_END
@@ -5447,6 +5474,10 @@ static const ScnLuaRow kScnLuaRows[] = {
       "rule(name) — what a gameplay rule is set to; a name that spells no "
       "rule raises.",
       SCN_OP_PARAMS(rule), SCN_OP_READS },
+    { "voice_everyone", scnLuaVoiceEveryone,
+      "voice_everyone() — whether voice in the round goes to every player "
+      "rather than to allies alone; false on a server with voice off.",
+      SCN_OP_PARAMS(voice_everyone), SCN_OP_READS },
     { "setting", scnLuaSetting,
       "setting(id) — the value the host chose in the lobby for one of "
       "this script's own settings, or its declared default: a number, "
@@ -5669,6 +5700,12 @@ static const ScnLuaRow kScnLuaRows[] = {
       "log(text) — write a line to the server's console; no player sees "
       "it.",
       SCN_OP_PARAMS(log), SCN_OP_ACTS },
+    { "set_voice_everyone", scnLuaSetVoiceEveryone,
+      "set_voice_everyone(on) — with true, voice in the running round goes "
+      "to every player rather than to allies alone; false puts it back. "
+      "Every round starts with it off, and a server with voice off refuses "
+      "true.",
+      SCN_OP_PARAMS(set_voice_everyone), SCN_OP_ACTS },
     { "panel", scnLuaPanel,
       "panel(id, list[, target]) — draw a panel from a list of primitives, "
       "each an array with its name first: { \"rect\", x, y, w, h, colour, "

@@ -30,10 +30,9 @@
                                             * CHANNEL_VOICE_SEG */
 #include "voice_segment.h"                 /* voiceSegmentUnpackUp, voiceSegmentPackDown */
 #include "voice_talker_select.h"           /* VoiceTalkerCandidate, voiceSelectTalkers */
-#include "players.h"                       /* playersIsAllie */
-#include "game_sim.h"                      /* GameSim — serverSimGetGameSim(sim)->plyrs */
 #include "server_sim.h"                    /* ServerSim, ServerState, serverSimGetState,
-                                            * serverSimGetGameSim, serverSimPublishControl */
+                                            * serverSimVoiceSidesAllow,
+                                            * serverSimPublishControl */
 #include "control_event.h"                 /* ControlEvent, CTRL_VOICE_TALKING */
 
 void transportUdpServerSetVoiceMute(BYTE clientSlot, BYTE targetPlayer,
@@ -186,7 +185,6 @@ typedef struct {
  * timeout sweep (every other state), ahead of the carriers that put the
  * channel data on the wire, so a frame is forwarded in the tick it landed. */
 void serverPumpVoice(ServerSim *sim) {
-    bool inGame = (serverSimGetState(sim) == serverStateRunning);
     bool voiceOn = !udpServer.voiceDisabled;
     /* The transport's own tick, not the sim's: this measures how long ago a
      * frame arrived, and the sim's tick does not advance at a constant rate —
@@ -356,13 +354,13 @@ void serverPumpVoice(ServerSim *sim) {
                 continue;
             }
             /* In game, voice follows the live alliance — so a mid-game
-             * alliance change takes effect on the next frame. Outside a
-             * game everyone hears everyone: the lobby is where teams get
-             * argued out, and scoping voice by team there works against
-             * the room. */
-            if (inGame &&
-                !playersIsAllie(&serverSimGetGameSim(sim)->plyrs,
-                                (BYTE)to, (BYTE)talker)) {
+             * alliance change takes effect on the next frame — unless a
+             * scenario has turned voice to everyone on. Outside a game
+             * everyone hears everyone: the lobby is where teams get argued
+             * out, and scoping voice by team there works against the room.
+             * serverSimVoiceSidesAllow (server_sim_accessors.c) holds the
+             * rule. */
+            if (!serverSimVoiceSidesAllow(sim, (BYTE)to, (BYTE)talker)) {
                 continue;
             }
             audible[audibleCount++] = talkers[t];
