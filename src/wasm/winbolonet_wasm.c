@@ -218,7 +218,7 @@ EM_JS(int, wbAccountSignedInJs, (void), {
 
 EM_JS(void, wbAccountNameJs, (char *out, int outSize), {
   var name = window.WB_PREFS_NAME;
-  stringToUTF8((typeof name === 'string') ? name : '', out, outSize);
+  stringToUTF8((typeof name === 'string') ? name : "", out, outSize);
 });
 
 /* Same tab: the site's login returns the player to this page, which

@@ -19,7 +19,7 @@
 #include "../gui/input.h"  /* keyItems */
 
 typedef enum {
-  WASM_GAME_PRACTICE,   /* single player, lobby skipped */
+  WASM_GAME_PRACTICE,   /* single player, opened in the in-game lobby */
   WASM_GAME_TUTORIAL,
   WASM_GAME_JOIN        /* ?game_key= / /join/<key>, or ?proxyURL= */
 } WasmGameMode;
