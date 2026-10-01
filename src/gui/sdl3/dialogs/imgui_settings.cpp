@@ -2560,9 +2560,13 @@ static void settingsShowLoop(bool inEditor) {
 #endif
 #if !BOLO_MOBILE
         present[STAB_CONTROLS] = !uiModeIsTablet() && !inEditor;
-        present[STAB_LAST]     = true;
 #else
         present[STAB_CONTROLS] = false;
+#endif
+        /* UPnP, NAT traversal and the news popup mean nothing in a browser. */
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+        present[STAB_LAST]     = true;
+#else
         present[STAB_LAST]     = false;
 #endif
         /* The Workshop's module is desktop only, and the tab needs Steam. */
@@ -2678,7 +2682,7 @@ static void settingsShowLoop(bool inEditor) {
                 ImGui::EndTabItem();
             }
 #endif
-#if !BOLO_MOBILE
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
             if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_NETWORK), nullptr,
                     s_pgForceTab == STAB_LAST ? ImGuiTabItemFlags_SetSelected : 0)) {
                 s_pgActiveTab = STAB_LAST;
