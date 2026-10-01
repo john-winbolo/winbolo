@@ -22,6 +22,7 @@
 
 #include "bolo_rand.h"
 #include "client_frontend_connect.h"
+#include "client_frontend_sp.h"
 #include "client_sim.h"
 #include "control_event.h"
 #include "global.h"
@@ -449,11 +450,9 @@ static bool wasmFindBrainPath(char *out, size_t outLen) {
 
 /* Seed the practice lobby with one enemy bot, as desktop single player does
  * when there is no saved bot setup: the player on team 1, "Bot 1" in slot 1
- * on team 2. The steps and their order are the desktop's (gamefront.c, the
- * single-player bot setup): the bot's mode and difficulty go into the slot
- * before the bot is created, so its brain loads with them, and the lobby's
- * brain dropdown is pointed at the brain it runs. No bot with the AI policy
- * on none or no brain found.
+ * on team 2. The bot's steps are the shared seeding body the desktop's
+ * single-player start calls too (client_frontend_sp.c). No bot with the AI
+ * policy on none or no brain found.
  *
  * scriptSeats is a lobby the map's script lays out itself (Survival seats its
  * whole horde). As on desktop, no bot is made there, since it would take a
@@ -464,7 +463,6 @@ static void wasmSeedPracticeBot(const char *brainPath, bool scriptSeats) {
   const BYTE botTeam    = 2;
   const BYTE playerTeam = 1;
   uint8_t spMode, spLevel;
-  const BrainList *bl;
 
   if (compTanks == aiNone || brainPath[0] == '\0') return;
 
@@ -476,31 +474,9 @@ static void wasmSeedPracticeBot(const char *brainPath, bool scriptSeats) {
 
   spMode  = gameFrontSpBotMode(brainPath);
   spLevel = gameFrontSpBotLevel(brainPath, spMode);
-  /* Resolved through the one rule a new bot follows. A bot appearing for
-   * the first time does not take the player's remembered manual pick. */
-  serverSimResolveNewBotConfig(wasmServerSim, (int)botTeam, brainPath, false,
-                               &spMode, &spLevel);
-  serverSimSetBotConfig(wasmServerSim, slot, spMode, spLevel,
-                        0 /* personality: normal */, NULL);
-  serverSimCreateBot(wasmServerSim, slot, brainPath, "Bot 1", compTanks,
-                     gametype, hiddenMines, 0, NULL);
-  /* serverSimCreateBot leaves the lobby brain index at the 0xFF default, so
-   * the Bot Code dropdown would read "(none)". Point it at the brain's
-   * catalogue entry: an exact path match, else the brain directory's name
-   * inside the path. */
-  bl = serverSimGetBrainList(wasmServerSim);
-  if (bl != NULL) {
-    int k;
-    for (k = 0; k < bl->count; k++) {
-      const char *kp = serverSimGetBrainPathForIdx(wasmServerSim, (uint8_t)k);
-      if ((kp && SDL_strcasecmp(kp, brainPath) == 0) ||
-          strstr(brainPath, bl->entries[k].name) != NULL) {
-        serverSimSetBotBrainIdxFor(wasmServerSim, slot, (uint8_t)k);
-        break;
-      }
-    }
-  }
-  clientSimNetSendTeamSet(humanSim, slot, botTeam);
+  clientFrontSeedBot(wasmServerSim, humanSim, slot, brainPath, "Bot 1",
+                     compTanks, gametype, hiddenMines, botTeam,
+                     spMode, spLevel);
   clientSimNetSendTeamSet(humanSim, 0, playerTeam);
   /* The alliance pass at lobby entry saw an empty lobby; run it again now
    * that the player and the bot have teams. */

@@ -392,6 +392,9 @@ set(WASM_SOURCES
     ${SRC_ROOT}/client_frontend/client_frontend_connect.c
     ${SRC_ROOT}/client_frontend/client_frontend_tick.c
     ${SRC_ROOT}/client_frontend/client_frontend_common.c
+    # The single-player lobby seeding the practice start shares with the
+    # desktop's single-player start.
+    ${SRC_ROOT}/client_frontend/client_frontend_sp.c
     # Voice: the Opus wrappers and the client voice runtime, shared with the
     # desktop build. voice_wasm.c is this platform's half of voice_backend.h,
     # standing in for gui/sdl3/voice.c.
