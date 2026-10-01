@@ -26,7 +26,7 @@
 #include "test_harness.h"
 
 static void fillOp(ScenarioOp *op, BYTE slot,
-                   uint8_t speed, uint8_t accel, uint8_t turn,
+                   uint16_t speed, uint8_t accel, uint8_t turn,
                    uint8_t reload, uint8_t dealt, uint8_t taken) {
     memset(op, 0, sizeof(*op));
     op->type = SCN_OP_TANK_SET_MODIFIERS;
@@ -40,7 +40,7 @@ static void fillOp(ScenarioOp *op, BYTE slot,
 }
 
 static int modsEqual(const TankModifiers *m,
-                     uint8_t speed, uint8_t accel, uint8_t turn,
+                     uint16_t speed, uint8_t accel, uint8_t turn,
                      uint8_t reload, uint8_t dealt, uint8_t taken) {
     return m->speed == speed && m->accel == accel && m->turn == turn &&
            m->reload == reload && m->dealt == dealt && m->taken == taken;
@@ -139,7 +139,7 @@ int run_tank_modifiers_op_refusals(void) {
 #define TM_CLR_FMASK()
 #define TM_CLR_FGROUP(bit, type, name)  if (!(combo & (bit))) s.name = 0;
 
-/* Every presence combination round-trips, including the ninth bit. The point
+/* Every presence combination round-trips, including the ninth and tenth bits. The point
  * is the widened mask: a field that shifted would show up as a mismatch in
  * some combination, and the core-only case pins the mask's own width. */
 int run_tank_modifiers_wire_roundtrip(void) {
@@ -163,8 +163,9 @@ int run_tank_modifiers_wire_roundtrip(void) {
     filled.hiddenFlags = 0xA1;
     filled.modSpeed = 0xB1; filled.modAccel = 0xB2; filled.modTurn = 0xB3;
     filled.modReload = 0xB4; filled.modDealt = 0xB5; filled.modTaken = 0xB6;
+    filled.modSpeedWide = 533;
 
-    for (combo = 0; combo < 512; combo++) {
+    for (combo = 0; combo < 1024; combo++) {
         TankSnapshot s, out;
         uint8_t buf[TANK_SNAPSHOT_WIRE_SIZE];
         int packed, consumed;
@@ -226,6 +227,84 @@ int run_tank_modifiers_wire_roundtrip(void) {
                       "the modifier group did not survive the wire");
     }
 
+    return 0;
+}
+
+/* A speed past a byte. The op stores it whole and a value past the bound is
+ * held to TANK_MOD_SPEED_MAX. The owner's snapshot entry carries 255 in the
+ * byte and the whole speed in the wide group, two bytes more than the byte
+ * alone; a speed that fits a byte keeps the wide group off the wire, so that
+ * entry is the bytes it always was. */
+int run_tank_modifiers_wide_speed(void) {
+    ServerSim *sim = ut_make_running_sim("Tester");
+    ScenarioOp op;
+    TankModifiers got;
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(sim->sim.tanks[0] != NULL);
+
+    fillOp(&op, 0, 533, 0, 0, 0, 0, 0);
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_OK);
+    tankGetModifiers(sim->sim.tanks[0], &got);
+    UT_ASSERT_MSG(got.speed == 533, "speed 533 stored as %u", got.speed);
+    UT_ASSERT_MSG(tankModPct(got.speed) == 533, "tankModPct(533) = %d",
+                  tankModPct(got.speed));
+
+    fillOp(&op, 0, TANK_MOD_SPEED_MAX + 500, 0, 0, 0, 0, 0);
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_OK);
+    tankGetModifiers(sim->sim.tanks[0], &got);
+    UT_ASSERT_MSG(got.speed == TANK_MOD_SPEED_MAX,
+                  "a speed past the bound stored as %u, want %d",
+                  got.speed, TANK_MOD_SPEED_MAX);
+
+    /* The owner's snapshot entry, built and sent through the codec. */
+    {
+        static SnapshotHeader hdr;
+        static TankSnapshot tk[MAX_TANKS];
+        static ShellSnapshot sh[MAX_SNAPSHOT_SHELLS];
+        static TkExplosionSnapshot te[MAX_SNAPSHOT_TK_EXPLOSIONS];
+        static BaseSnapshot bo[MAX_SNAPSHOT_BASES];
+        static PillSnapshot po[MAX_SNAPSHOT_PILLS];
+        static GameEvent ev[MAX_SNAPSHOT_EVENTS];
+        uint8_t buf[TANK_SNAPSHOT_WIRE_SIZE];
+        TankSnapshot out;
+        int n, packedWide, packedByte;
+
+        fillOp(&op, 0, 533, 0, 0, 0, 0, 0);
+        UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_OK);
+        serverSimBuildSnapshot(sim, 0, &hdr, tk, MAX_TANKS, sh, MAX_SNAPSHOT_SHELLS,
+                               te, MAX_SNAPSHOT_TK_EXPLOSIONS, bo, MAX_SNAPSHOT_BASES,
+                               po, MAX_SNAPSHOT_PILLS, ev, MAX_SNAPSHOT_EVENTS, true);
+        UT_ASSERT(hdr.tankCount >= 1);
+        UT_ASSERT_MSG(tk[0].modSpeed == 255 && tk[0].modSpeedWide == 533,
+                      "snapshot speed byte %u wide %u, want 255 and 533",
+                      tk[0].modSpeed, tk[0].modSpeedWide);
+        memset(buf, 0, sizeof(buf));
+        packedWide = packTankSnapshot(buf, &tk[0]);
+        memset(&out, 0, sizeof(out));
+        n = unpackTankSnapshot(buf, (size_t)packedWide, &out);
+        UT_ASSERT_MSG(n == packedWide && out.modSpeedWide == 533 &&
+                      out.modSpeed == 255,
+                      "the wide speed did not survive the wire (%d of %d, %u/%u)",
+                      n, packedWide, out.modSpeed, out.modSpeedWide);
+
+        fillOp(&op, 0, 200, 0, 0, 0, 0, 0);
+        UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_OK);
+        serverSimBuildSnapshot(sim, 0, &hdr, tk, MAX_TANKS, sh, MAX_SNAPSHOT_SHELLS,
+                               te, MAX_SNAPSHOT_TK_EXPLOSIONS, bo, MAX_SNAPSHOT_BASES,
+                               po, MAX_SNAPSHOT_PILLS, ev, MAX_SNAPSHOT_EVENTS, true);
+        UT_ASSERT_MSG(tk[0].modSpeed == 200 && tk[0].modSpeedWide == 0,
+                      "snapshot speed byte %u wide %u, want 200 and 0",
+                      tk[0].modSpeed, tk[0].modSpeedWide);
+        memset(buf, 0, sizeof(buf));
+        packedByte = packTankSnapshot(buf, &tk[0]);
+        UT_ASSERT_MSG(packedWide == packedByte + 2,
+                      "the wide entry is %d bytes and the byte one %d "
+                      "(want two more)", packedWide, packedByte);
+        UT_ASSERT_MSG((unpackU16(buf + 1) & TANK_PRESENT_MODS_WIDE) == 0,
+                      "a speed that fits a byte set the wide group bit");
+    }
+
+    serverSimDestroy(sim);
     return 0;
 }
 

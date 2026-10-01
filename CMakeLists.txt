@@ -5942,6 +5942,7 @@ set(_unit_test_names
     tank_diagonal_steps_both_axes
     tank_mod_speed_caps_on_road
     tank_mod_speed_river_still_moves
+    tank_mod_speed_wide_on_river
     tank_mod_accel_doubles_ticks_to_cap
     tank_mod_accel_doubles_ticks_to_brake
     tank_mod_accel_halves_autoslow
@@ -5961,6 +5962,7 @@ set(_unit_test_names
     tank_modifiers_op_writes_set
     tank_modifiers_op_refusals
     tank_modifiers_wire_roundtrip
+    tank_modifiers_wide_speed
     tank_modifiers_survive_death
     tank_modifiers_cleared_at_create
     scenario_op_unknown_type_unsupported

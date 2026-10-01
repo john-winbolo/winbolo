@@ -1582,7 +1582,7 @@ refused with `SCN_OP_BAD_SQUARE`, the same answer as a square off the map.
 | `game.set_boat(p, on)` | Puts a tank on a boat or takes it off one. The square under it has to be water. |
 | `game.give_pill(p, n)` | Puts a pillbox into a tank, however armoured and whoever held it. |
 | `game.drop_pill(p, n[, x, y])` | Puts a carried pillbox back on the map, on a square or under the tank. |
-| `game.set_modifiers(p, t)` | Replaces a tank's `speed`, `accel`, `turn`, `reload`, `dealt` and `taken` percentages. A field the table leaves out goes back to the classic tank: the whole set is replaced, not merged. |
+| `game.set_modifiers(p, t)` | Replaces a tank's `speed`, `accel`, `turn`, `reload`, `dealt` and `taken` percentages. A field the table leaves out goes back to the classic tank: the whole set is replaced, not merged. `speed` goes from 0 to 2000 and the others from 0 to 255; past that the call is refused with `SCN_OP_RANGE`. `speed` scales the ground's speed cap, so 534 puts a river's 3 at a road's 16. However high it is set, the engine holds the tank's scaled cap to 160 world units a frame, the most the byte-sized modifier could give on the fastest speed rule. |
 
 ### The builder
 

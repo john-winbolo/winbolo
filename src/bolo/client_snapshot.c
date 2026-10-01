@@ -1176,7 +1176,8 @@ void clientApplySnapshot(ClientSim *csPtr,
         tankSetReload(&MY_TANK(csPtr), tanks[i].reload);
         {
           TankModifiers mods;
-          mods.speed = tanks[i].modSpeed;
+          mods.speed = tanks[i].modSpeedWide ? tanks[i].modSpeedWide
+                                             : tanks[i].modSpeed;
           mods.accel = tanks[i].modAccel;
           mods.turn = tanks[i].modTurn;
           mods.reload = tanks[i].modReload;
@@ -1390,7 +1391,8 @@ void clientApplySnapshot(ClientSim *csPtr,
              the position check above snapped and replayed, so this and the
              first-snapshot write cover the whole stream. */
           TankModifiers mods;
-          mods.speed = tanks[i].modSpeed;
+          mods.speed = tanks[i].modSpeedWide ? tanks[i].modSpeedWide
+                                             : tanks[i].modSpeed;
           mods.accel = tanks[i].modAccel;
           mods.turn = tanks[i].modTurn;
           mods.reload = tanks[i].modReload;

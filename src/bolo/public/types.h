@@ -166,9 +166,14 @@ typedef struct {
 
 /* Per-tank movement and combat percentages. 0 means classic, so a
  * zeroed struct is the unmodified tank; every other value is a percent
- * of the classic figure. */
+ * of the classic figure. Speed is wider than the others so a tank can be
+ * made as fast as a road on the slowest ground (a road's 16 over a
+ * river's 3 is 533%, and more with a boost on top); it goes up to
+ * TANK_MOD_SPEED_MAX. The others stay at a byte. */
+#define TANK_MOD_SPEED_MAX 2000
 typedef struct {
-    uint8_t speed, accel, turn, reload, dealt, taken; /* percent; 0 = classic */
+    uint16_t speed;                           /* percent, 0..TANK_MOD_SPEED_MAX; 0 = classic */
+    uint8_t  accel, turn, reload, dealt, taken; /* percent; 0 = classic */
 } TankModifiers;
 
 typedef struct tankObj *tank;

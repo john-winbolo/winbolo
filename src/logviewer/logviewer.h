@@ -82,7 +82,7 @@ typedef struct {
  * log_TankSetModifiers records. 0 means classic, so a slot the recording says
  * nothing about reads as an unmodified tank. Stored but not drawn. */
 typedef struct {
-  BYTE speed;
+  uint16_t speed;  /* past a byte when the record's blob is eight long */
   BYTE accel;
   BYTE turn;
   BYTE reload;

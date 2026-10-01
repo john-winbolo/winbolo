@@ -452,15 +452,28 @@ static ScnOpResult scenarioOpTankSetModifiers(ServerSim *sim,
 
     {
         /* [len][speed][accel][turn][reload][dealt][taken] — the six do not fit
-           logAddEvent's four opt bytes and its short. */
-        char blob[7];
+           logAddEvent's four opt bytes and its short. A speed past a byte
+           writes 255 in its byte and adds the whole speed as a big-endian
+           u16 after the six, which makes the blob eight bytes. A speed that
+           fits a byte writes the six-byte blob a recording always had, so
+           those recordings are unchanged, and a reader that only knows the
+           six skips the longer record whole (it applies a blob of six
+           only). */
+        TankModifiers stored;
+        char blob[9];
+        tankGetModifiers(sim->sim.tanks[p->slot], &stored);
         blob[0] = 6;
-        blob[1] = (char)p->mods.speed;
-        blob[2] = (char)p->mods.accel;
-        blob[3] = (char)p->mods.turn;
-        blob[4] = (char)p->mods.reload;
-        blob[5] = (char)p->mods.dealt;
-        blob[6] = (char)p->mods.taken;
+        blob[1] = (char)(stored.speed > 255 ? 255 : stored.speed);
+        blob[2] = (char)stored.accel;
+        blob[3] = (char)stored.turn;
+        blob[4] = (char)stored.reload;
+        blob[5] = (char)stored.dealt;
+        blob[6] = (char)stored.taken;
+        if (stored.speed > 255) {
+            blob[0] = 8;
+            blob[7] = (char)((stored.speed >> 8) & 0xFF);
+            blob[8] = (char)(stored.speed & 0xFF);
+        }
         logAddEvent(log_TankSetModifiers, p->slot, 0, 0, 0, 0, blob);
     }
     return SCN_OP_OK;
