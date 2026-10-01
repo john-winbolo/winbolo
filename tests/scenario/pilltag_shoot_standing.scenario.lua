@@ -10,7 +10,9 @@
 -- When the fort goes up, seat 1 is put 5 squares behind the guard, so he is
 -- close enough that the guard does not take it straight back.
 --
--- PASS: seat 1 hits the fort while it stands. Decided when the fort is over.
+-- PASS: seat 1 ends the fort while it stands: he hits it, or he kills its
+-- guard (a guard who dies loses the prize, and the fort goes dead where it
+-- stands). Decided when the fort is over.
 -- A guard's own hit on his fort is logged, not failed: the guard role keeps
 -- its gun for the hunters, and a shot at a hunter can catch the fort.
 
@@ -28,6 +30,17 @@ function pill_damage_scale(attacker, n, cause, by_pill)
       tostring(attacker), plan.kind, tostring(cause), game.tick(), game.pill(pill).armour)
   end
   return 100
+end
+
+-- A kill of the guard by the hunter while the fort stands ends the fort.
+local arena_real_killed = on_tank_killed
+function on_tank_killed(victim, killer, cause, scripted)
+  local A = ARENA
+  if victim == 0 and killer == 1 and plan ~= nil and plan.built and
+     plan.kind == "fort" then
+    A.guard_killed = game.tick()
+  end
+  arena_real_killed(victim, killer, cause, scripted)
 end
 
 local arena_real_tick = on_tick
@@ -69,13 +82,17 @@ function on_tick(tick)
     local k = 5 / math.max(math.abs(fx), math.abs(fy))
     game.teleport(1, whole(me.mx - k * fx), whole(me.my - k * fy), me.dir)
   end
-  if (A.hits["1:fort"] or 0) > 0 and A.built_at ~= nil
-         and (plan == nil or plan.kind ~= "fort") then
-    -- Decided once the fort is over: taken back, or shot down.
-    verdict(true, string.format("hunter hit the fort %d time(s), guard %d",
-                                A.hits["1:fort"], A.hits["0:fort"] or 0))
+  if ((A.hits["1:fort"] or 0) > 0 or A.guard_killed ~= nil) and
+     A.built_at ~= nil and (plan == nil or plan.kind ~= "fort") then
+    -- Decided once the fort is over: taken back, shot down, or dead with
+    -- its guard.
+    verdict(true, string.format("hunter hit the fort %d time(s), guard %d, "
+                                .. "hunter killed the guard: %s",
+                                A.hits["1:fort"] or 0, A.hits["0:fort"] or 0,
+                                tostring(A.guard_killed ~= nil)))
   end
   if tick >= GATE_TICKS - 100 then
-    verdict(false, A.built_at == nil and "no fort" or "the hunter never hit the fort")
+    verdict(false, A.built_at == nil and "no fort" or
+                   "the hunter never hit the fort or killed its guard")
   end
 end
