@@ -65,12 +65,16 @@ extern void wbPrefsPumpUpload(uint64_t nowMs);  /* prefs_bridge_wasm.c */
  * Module.wbMintJoinCode (POST /api/join, cookie-authed) via ASYNCIFY — mirrors
  * prefs_bridge_wasm.c's fetch helpers. Writes the code into out (up to outSize)
  * on HTTP 200; on any other outcome writes a malloc'd reason string through
- * *errOut (caller frees) when the backend supplied one. Returns the HTTP
+ * *errOut (caller frees) when the backend supplied one. On a 401,
+ * navigateOn401 non-zero sends the page to the WinBolo.net login and back;
+ * zero marks the page signed out and leaves it where it is. Returns the HTTP
  * status, or -1 on a transport error. */
 EM_ASYNC_JS(int, wasmMintJoinCode,
-            (const char *gameKey, char *out, int outSize, char **errOut), {
+            (const char *gameKey, char *out, int outSize, char **errOut,
+             int navigateOn401), {
     try {
-        const r = await Module.wbMintJoinCode(UTF8ToString(gameKey));
+        const r = await Module.wbMintJoinCode(UTF8ToString(gameKey),
+                                              navigateOn401 !== 0);
         if (r && r.status === 200 && typeof r.code === 'string') {
             stringToUTF8(r.code, out, outSize);
         } else if (r && typeof r.error === 'string') {
@@ -701,8 +705,12 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
     char joinCode[128] = "";
     if (haveGameKey) {
       char *mintErr = NULL;
+      /* A page opened from a /join/ link goes to the login on a 401 and
+       * comes back to the same link. A join from the page's finder stays
+       * in the page: the error below says to sign in, and the finder then
+       * offers it. */
       int mintStatus = wasmMintJoinCode(gameKey, joinCode, sizeof(joinCode),
-                                        &mintErr);
+                                        &mintErr, launch->inPage ? 0 : 1);
       if (mintStatus != 200 || joinCode[0] == '\0') {
         const char *reason = (mintErr && mintErr[0] != '\0')
                            ? mintErr : gameFrontMintFailReason(mintStatus);

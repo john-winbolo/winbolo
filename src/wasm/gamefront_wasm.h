@@ -32,6 +32,10 @@ typedef struct {
   char name[PLAYER_NAME_LEN];     /* ?name=, unvalidated */
   bool showMenu;                  /* true when the page should open on the
                                      menu rather than go straight into mode */
+  bool inPage;                    /* true for a join started from the page's
+                                     game finder; false for a page opened from
+                                     a /join/ link or a dev proxy, and for
+                                     every other game */
 } WasmLaunch;
 
 /* Set up what lasts for the life of the page, once, before any game: seed the

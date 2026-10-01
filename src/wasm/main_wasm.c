@@ -749,6 +749,7 @@ static void wasmUseFinderJoin(WasmLaunch *next) {
   SDL_strlcpy(next->gameKey, s_finderJoinKey, sizeof(next->gameKey));
   next->devProxy[0] = '\0';
   next->password[0] = '\0';
+  next->inPage = TRUE;
 }
 
 /* End a game, network or single player, so the menu, and then another game,
@@ -980,6 +981,7 @@ int main(int argc, char *argv[]) {
           next.gameKey[0] = '\0';
           next.devProxy[0] = '\0';
           next.password[0] = '\0';
+          next.inPage = FALSE;
           wasmHistoryPushGame(next.mode);
           s_gameEntryPushed = TRUE;
         } else if (r == openInternet) {

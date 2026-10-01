@@ -326,8 +326,17 @@
                for game_key via POST /api/join (same-origin, session cookie),
                points the game socket at the probed relay, and resolves
                { status, code, error } for the C caller. One mint per connect —
-               a refresh or failover re-runs this and mints anew. */
-            wbMintJoinCode: function(gameKey) {
+               a refresh or failover re-runs this and mints anew.
+
+               On a 401 (not signed in), navigateOn401 says what to do. True,
+               for a page opened from a /join/ link: send the player to the
+               login and back to this address to try again. False, for a join
+               from the page's game finder, where the session ran out after
+               the page read /api/v1/me: mark the page signed out, so the
+               account checks, the finder's "Sign in to join" and the prefs
+               sync all see it, and stay here; the empty error lets the C
+               caller show its own translated message. */
+            wbMintJoinCode: function(gameKey, navigateOn401) {
                 return fetch('/api/join', {
                     method: 'POST',
                     credentials: 'same-origin',
@@ -335,8 +344,11 @@
                     body: JSON.stringify({ game_key: gameKey })
                 }).then(function(r) {
                     if (r.status === 401) {
-                        // Logged out (e.g. a shared /join link opened cold):
-                        // send to login and come back here to try again.
+                        if (!navigateOn401) {
+                            window.WB_PREFS_AUTH = false;
+                            window.WB_PREFS_NAME = '';
+                            return { status: 401, code: '', error: '' };
+                        }
                         window.location.href = 'https://www.winbolo.net/login?return=' +
                             encodeURIComponent(window.location.href);
                         return { status: 401, code: '', error: 'Sign in to join.' };
