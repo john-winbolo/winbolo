@@ -27,7 +27,7 @@ These are downloaded and built by CMake — no manual installation needed:
 ### Requirements
 
 - Visual Studio 2019 or later (with C/C++ workload), or MinGW
-- CMake 3.15+
+- CMake 3.28+
 - Git
 
 No additional libraries are needed. All dependencies including libcurl (using Windows Schannel for SSL) are built from source.
@@ -57,7 +57,7 @@ See [Build targets](#build-targets) for the full list.
 ### Requirements
 
 - GCC or Clang with C99 and C++17 support
-- CMake 3.15+
+- CMake 3.28+
 - Git
 - System packages:
 
@@ -174,7 +174,7 @@ WB_WBV_FIXTURE_DIR=tests/fixtures/wbv ~/linux-build/WinBoloUnitTests --test wbv_
 ### Requirements
 
 - Xcode command line tools (or full Xcode)
-- CMake 3.15+
+- CMake 3.28+
 - Git
 - libcurl (included with macOS, but headers may need Xcode CLT)
 
@@ -218,7 +218,7 @@ The minimum macOS deployment target is 11.0 (Big Sur).
 ### Requirements
 
 - macOS with Xcode 14+
-- CMake 3.15+
+- CMake 3.28+
 
 ### Build
 

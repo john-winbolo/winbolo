@@ -72,7 +72,7 @@ cmake -B build -S .
 cmake --build build
 ```
 
-The build needs CMake 3.15 or newer and a C99 / C++17 compiler. Linux needs a
+The build needs CMake 3.28 or newer and a C99 / C++17 compiler. Linux needs a
 few system packages first, and iOS, Android and WebAssembly each have their own
 steps. See [docs/BUILDING.md](docs/BUILDING.md) for every platform, the list of
 build targets, the optional features (ONNX Runtime, Steam, Sentry), and
@@ -129,7 +129,7 @@ baseline scenario.
 | `src/server/` | The server: hosting a game, and the dedicated server |
 | `src/gui/` | The desktop client (SDL3 and Dear ImGui) |
 | `src/client_frontend/` | Client code shared by the desktop, mobile and web builds |
-| `src/ios/`, `src/android/`, `src/wasm/` | Platform-specific clients (`android/` holds the Gradle project) |
+| `src/gui/ios/`, `src/android/`, `src/wasm/` | Platform-specific clients (`android/` holds the Gradle project) |
 | `src/mapeditor/`, `src/logviewer/`, `src/headless/`, `src/braintest/`, `src/gym/` | The other programs listed above |
 | `src/scenario/`, `src/scenario_io/` | Running scenario scripts, and reading and writing scenario files |
 | `src/winbolonet/` | The client for the winbolo.net tracker and player accounts |
@@ -155,8 +155,9 @@ The game's graphics and sounds are not covered by the GPL. They are Stuart
 Cheshire's designs from Bolo, copyright 1987-1995 Stuart Cheshire, and are used
 with his permission. The files are listed in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md#bolo-graphics-and-sounds).
-The maps in `data/maps/` are Bolo community maps, each its author's own work,
-and are not covered by the GPL either; see
+The Everard Island and Inbuilt Tutorial maps are also Stuart Cheshire's, on the
+same terms, and are listed in the same section. The other maps in `data/maps/` are Bolo community maps, each its
+author's own work, and are not covered by the GPL either; see
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md#bolo-community-maps).
 
 Steam builds also link the Steamworks SDK, which is owned by Valve, is not

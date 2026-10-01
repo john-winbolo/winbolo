@@ -30,7 +30,9 @@ version 2, which is one reason WinBolo moved from version 2 to version 3.
     `farming_tree_*`, `hit_tank_*`, `man_building_*`, `man_dying_*`,
     `man_lay_mine_near`, `mine_explosion_*`, `shooting_*`, `shot_building_*`,
     `shot_tree_*` and `tank_sinking_*`. The lobby and ping sounds are not
-    included; the lobby sounds are listed under [Audio](#audio).
+    included: the lobby sounds are listed under [Audio](#audio), and the ping
+    sounds (`ping_default.wav`, `ping_caution.wav`) were added by Andrew Roth
+    as part of WinBolo and are covered by the GPL.
   - Everard Island, Bolo's original built-in map: `data/maps/Everard Island.map`
     and the copy compiled into the program from
     `src/bolo/public/everard_map.h`

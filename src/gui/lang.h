@@ -919,6 +919,7 @@
 /* About box licence */
 #define STR_DLGABOUT_LICENCE                2750
 #define STR_DLGABOUT_LICENCE_NOTICE         2751
+#define STR_DLGABOUT_FILE_NOT_FOUND         2752
 
 /* Tablet HUD */
 #define STR_TABLET_STATUS_TITLE             803

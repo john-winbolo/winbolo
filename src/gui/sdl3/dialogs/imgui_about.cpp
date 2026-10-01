@@ -355,7 +355,7 @@ static void openMarkdownPopup(const char *which) {
         if (s_thirdPartyMd.empty()) {
             s_thirdPartyMd = loadDataFile("THIRD_PARTY_NOTICES.md");
             if (s_thirdPartyMd.empty()) {
-                s_thirdPartyMd = "Third-party notices file not found.";
+                s_thirdPartyMd = langGetText(STR_DLGABOUT_FILE_NOT_FOUND);
             }
         }
         s_showThirdParty = true;
@@ -363,7 +363,7 @@ static void openMarkdownPopup(const char *which) {
         if (s_authorsMd.empty()) {
             s_authorsMd = loadDataFile("AUTHORS.md");
             if (s_authorsMd.empty()) {
-                s_authorsMd = "Authors file not found.";
+                s_authorsMd = langGetText(STR_DLGABOUT_FILE_NOT_FOUND);
             }
         }
         s_showAuthors = true;
@@ -371,7 +371,7 @@ static void openMarkdownPopup(const char *which) {
         if (s_licenceMd.empty()) {
             s_licenceMd = loadDataFile("LICENSE");
             if (s_licenceMd.empty()) {
-                s_licenceMd = "Licence file not found.";
+                s_licenceMd = langGetText(STR_DLGABOUT_FILE_NOT_FOUND);
             }
         }
         s_showLicence = true;
@@ -617,9 +617,9 @@ static void renderAboutModalBody(void) {
     static float s_fadeAuthors = 0.0f;
     renderMarkdownPopupBody(langGetText(STR_DLGABOUT_LICENCE), "licence",
                             &s_showLicence, s_licenceMd, &s_fadeLicence);
-    renderMarkdownPopupBody("Third Party Notices", "thirdparty",
+    renderMarkdownPopupBody(langGetText(STR_DLGABOUT_THIRD_PARTY), "thirdparty",
                             &s_showThirdParty, s_thirdPartyMd, &s_fadeThird);
-    renderMarkdownPopupBody("Authors", "authors",
+    renderMarkdownPopupBody(langGetText(STR_DLGABOUT_AUTHORS), "authors",
                             &s_showAuthors, s_authorsMd, &s_fadeAuthors);
 
     ImGui::PopStyleVar();

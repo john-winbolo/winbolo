@@ -687,6 +687,7 @@ STR_MAPCHOOSER_LOADING_PREVIEW=Загрузка предпросмотра...
 STR_MAPEDIT_SCENARIO_NEEDS_BOTS=Требует разрешённых ботов: этот скрипт добавляет своих ботов
 STR_DLGABOUT_LICENCE=Лицензия
 STR_DLGABOUT_LICENCE_NOTICE=Свободное ПО по лицензии GNU GPL v3 или новее. Без гарантии.
+STR_DLGABOUT_FILE_NOT_FOUND=Файл не найден.
 
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Статус
