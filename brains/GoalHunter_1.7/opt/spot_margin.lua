@@ -48,6 +48,11 @@ local print2 = require("print2")
 
 local M = {}
 
+-- True only while an attack_pill take or spot scan runs in its wall pass
+-- (C.ATTACK_PILL_WALL_FALLBACK). aim_line_trees then counts built walls on the
+-- line as shells to spend instead of a block. attack.lua sets and clears it.
+M.walls_ok = false
+
 local sqrt, floor, huge = math.sqrt, math.floor, math.huge
 
 -- ── Pure geometry ────────────────────────────────────────────────────────
@@ -254,7 +259,11 @@ function M.aim_line_trees(ox, oy, omx, omy, pmx, pmy, world, i, wallset)
     if t.mx ~= omx or t.my ~= omy then
       local tt = U.ttype(t.mx, t.my)
       if tt == C.T_BUILDING or tt == C.T_HALFBUILD then
-        blocked = true; break
+        -- Wall pass (C.ATTACK_PILL_WALL_FALLBACK): the wall costs the shells
+        -- it takes to shoot through it, the same numbers
+        -- shot_path_obstacle_count uses (wall 5, half-built wall 4).
+        if not M.walls_ok then blocked = true; break end
+        trees = trees + ((tt == C.T_BUILDING) and 5 or 4)
       elseif tt == C.T_FOREST then
         trees = trees + 1
       end
