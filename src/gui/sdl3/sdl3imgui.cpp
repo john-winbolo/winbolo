@@ -5399,9 +5399,26 @@ static void renderScnPanelMenuItems(bool afterBrains) {
  * The scenario announcement
  *
  * One line across the game view, for the few seconds a
- * scenario asked for. It sits in the view's upper third
- * rather than dead centre, which is where the player's own
- * tank is.
+ * scenario asked for. With no position it is centred
+ * across, in the view's upper third rather than dead
+ * centre, which is where the player's own tank is
+ * (scnAnnounceDefaultPlace). On the main view that is where
+ * it always went. The full screen map and tablet mode apply
+ * the same rule to their own view; before, the full screen
+ * map placed it by the main view's rectangle and tablet
+ * mode drew none. With a position the
+ * script names the line's centre as shares of the view,
+ * and the line is kept inside the view and below the
+ * status line, and nothing else (scnAnnounceAt). The view
+ * is the main view, the full screen map when that owns the
+ * window, or tablet mode's own game view.
+ *
+ * Tablet mode draws both lines too, over its own game view
+ * (the fixed viewport sdl3draw centres on the screen). The
+ * status line keeps clear of the scenario square that
+ * tablet mode pins in that view's top-right corner. Its
+ * buttons and bars sit in the gutters beside the view, so
+ * nothing else is in the way at the top.
  *
  * Drawn on the foreground draw list and not in a window at
  * all. A window across the middle of the screen would take
@@ -5413,6 +5430,15 @@ static void renderScnPanelMenuItems(bool afterBrains) {
  * whatever terrain happens to be under it, and one colour
  * against grass is a line somebody cannot read.
  *
+ * The status line is drawn the same way: the one line a
+ * scenario keeps up for as long as it likes, as high on the
+ * view as it goes, with a countdown this client works out
+ * from the tick the script named. It moves sideways or down
+ * to keep clear of the scenario panel, the vote widgets and
+ * alliance request, and the full screen map's HUD column
+ * and build strip, but on the main view never down onto
+ * the player's own tank (scnStatusPlace has the rule).
+ *
  * The bytes are the script's own and are not localised, so
  * nothing on this path goes near the language table.
  * ------------------------------------------------------- */
@@ -5421,66 +5447,66 @@ static void renderScnPanelMenuItems(bool afterBrains) {
    same way the panel's own text does. */
 #define SCN_ANNOUNCE_UNITS 20.0f
 
-/* How far down the game view the line sits, as a fraction of its height. */
-#define SCN_ANNOUNCE_DOWN 0.28f
+/* The space the status line keeps from anything it has to move clear of, and
+   the space an announcement with a position keeps below the status line, in
+   panel units. The panel's own inset from the view's corner, so the status
+   line and the panel line up when they sit side by side. */
+#define SCN_ANNOUNCE_INSET_UNITS SCN_PANEL_DEFAULT_INSET
+
+/* The most things the status line is kept clear of at once: one panel per
+   script of the round's list, two vote widgets, the alliance request, and
+   the full screen map's HUD column and build strip. */
+#define SCN_ANNOUNCE_MAX_OBSTACLES (SCN_PANEL_OWNERS + 5)
+
+/* Adds a window's last known rect to the things the status line keeps clear
+   of.
+   Active is this frame, for a window already submitted (the panel); WasActive
+   is the last one, for a window submitted after the line (the vote widgets
+   and the alliance request), which sit still from frame to frame. */
+static void scnAnnounceAddWindow(const char *name, ScnAnnounceRect *obstacles,
+                                 int *count) {
+    if (*count >= SCN_ANNOUNCE_MAX_OBSTACLES) return;
+    ImGuiWindow *w = ImGui::FindWindowByName(name);
+    if (w == nullptr || !(w->Active || w->WasActive) || w->Hidden) return;
+    if (w->Size.x <= 0.0f || w->Size.y <= 0.0f) return;
+    obstacles[*count].x0 = w->Pos.x;
+    obstacles[*count].y0 = w->Pos.y;
+    obstacles[*count].x1 = w->Pos.x + w->Size.x;
+    obstacles[*count].y1 = w->Pos.y + w->Size.y;
+    (*count)++;
+}
+
+/* Adds one of the full screen map's HUD rects, which are kept relative to
+   the map rect at (mapX, mapY). */
+static void scnAnnounceAddHudRect(float mapX, float mapY, float x, float y,
+                                  float w, float h,
+                                  ScnAnnounceRect *obstacles, int *count) {
+    if (*count >= SCN_ANNOUNCE_MAX_OBSTACLES) return;
+    if (w <= 0.0f || h <= 0.0f) return;
+    obstacles[*count].x0 = mapX + x;
+    obstacles[*count].y0 = mapY + y;
+    obstacles[*count].x1 = mapX + x + w;
+    obstacles[*count].y1 = mapY + y + h;
+    (*count)++;
+}
 
 /* The last of an announcement's life spent fading, in ticks. Long enough to
    read as going rather than as cut off; ticks run at a hundred a second, so
    this is a third of one. */
 #define SCN_ANNOUNCE_FADE_TICKS 33u
 
-static void renderScenarioAnnounce(ClientSim *cs) {
-    if (cs == nullptr || uiModeIsTablet()) return;
+/* The space above the status line, in panel units. Smaller than the
+   announcement's inset: the status line is meant to sit as high on the view
+   as it can and still keep its outline inside it. */
+#define SCN_STATUS_INSET_UNITS 1.0f
 
-    uint16_t    ticks       = 0;
-    uint32_t    arrivedTick = 0;
-    const char *text        = clientSimGetScnAnnounce(cs, &ticks, &arrivedTick);
-    uint32_t    left        = 0;
-    if (!scnAnnounceRemaining(text, arrivedTick, ticks,
-                              clientSimGetLastServerTick(cs), &left)) {
-        return;
-    }
-
-    /* The same zoom the panel window scales by, so the two agree about what
-       one unit is worth on this screen. */
-    int rawZoom = sdl3DrawGetZoomFactor();
-    if (rawZoom < 1) rawZoom = 1;
-    float gameScale = 1.0f;
-    sdl3DrawGetGameRect(nullptr, nullptr, nullptr, nullptr, &gameScale);
-    if (gameScale <= 0.0f) gameScale = 1.0f;
-    const float scale = (float)rawZoom * gameScale;
-
-    float gx, gy, gw, gh, gtw, gth, rx0, ry0, rx1, ry1;
-    if (!sdl3DrawGetMainViewGameRect(&gx, &gy, &gw, &gh, &gtw, &gth)) return;
-    if (!sdl3DrawGameToRenderCoords(gx, gy, &rx0, &ry0)) return;
-    if (!sdl3DrawGameToRenderCoords(gx + gw, gy + gh, &rx1, &ry1)) return;
-
-    ImFont *font = ImGui::GetFont();
-    if (font == nullptr) return;
-
-    float height = SCN_ANNOUNCE_UNITS * scale;
-    if (height < 8.0f) height = 8.0f;
-    const ImVec2 measured = font->CalcTextSizeA(height, FLT_MAX, 0.0f, text);
-
-    const float px = (rx0 + rx1) * 0.5f - measured.x * 0.5f;
-    const float py = ry0 + (ry1 - ry0) * SCN_ANNOUNCE_DOWN;
-
-    /* Full strength until the last stretch, then out. */
-    float fade = 1.0f;
-    if (left < SCN_ANNOUNCE_FADE_TICKS) {
-        fade = (float)left / (float)SCN_ANNOUNCE_FADE_TICKS;
-    }
-    const int alpha = (int)(255.0f * fade);
-    if (alpha <= 0) return;
-
-    ImDrawList *dl = ImGui::GetForegroundDrawList();
-    if (dl == nullptr) return;
-
-    /* The outline: the same line in near-black, one stroke out in each of the
-       eight directions, so the letters keep an edge whichever way the terrain
-       under them happens to run. */
+/* Draws one outlined line at (px, py): the line in near-black one stroke out
+   in each of the eight directions, so the letters keep an edge whichever way
+   the terrain under them happens to run, then the line in white. */
+static void scnDrawOutlinedLine(ImDrawList *dl, ImFont *font, float height,
+                                float px, float py, float o, int alpha,
+                                const char *text) {
     const ImU32 edge = IM_COL32(0, 0, 0, alpha);
-    const float o    = (scale > 1.0f) ? scale : 1.0f;
     for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {
             if (dx == 0 && dy == 0) continue;
@@ -5491,6 +5517,173 @@ static void renderScenarioAnnounce(ClientSim *cs) {
     }
     dl->AddText(font, height, ImVec2(px, py),
                 IM_COL32(255, 255, 255, alpha), text);
+}
+
+/* The status line and the announcement share a view, a scale, a font and the
+   things at the top of the view they both keep clear of, and are drawn
+   together so the announcement can keep clear of the status line too. */
+static void renderScenarioAnnounce(ClientSim *cs) {
+    if (cs == nullptr) return;
+
+    const uint32_t now = clientSimGetLastServerTick(cs);
+
+    /* The status line, with its countdown worked out on this client's own
+       clock. */
+    uint32_t    statusEndsAt = SCN_STATUS_NO_COUNTDOWN;
+    const char *statusRaw    = clientSimGetScnStatus(cs, &statusEndsAt);
+    char        status[SCN_STATUS_LINE_MAX];
+    const bool  haveStatus =
+        scnStatusLineText(statusRaw, statusEndsAt, now, status,
+                          sizeof(status));
+
+    uint16_t    ticks       = 0;
+    uint32_t    arrivedTick = 0;
+    const char *text        = clientSimGetScnAnnounce(cs, &ticks, &arrivedTick);
+    uint32_t    left        = 0;
+    const bool  haveAnnounce =
+        scnAnnounceRemaining(text, arrivedTick, ticks, now, &left);
+    if (!haveStatus && !haveAnnounce) return;
+
+    /* The same zoom the panel window scales by, so the two agree about what
+       one unit is worth on this screen. Tablet mode draws the game view at
+       its own zoom, in the same coordinates ImGui uses. */
+    float scale = 1.0f;
+    int   tvX = 0, tvY = 0, tvW = 0, tvH = 0, tvZoom = 0;
+    const bool tablet = uiModeIsTablet();
+    if (tablet) {
+        sdl3DrawGetTabletViewport(&tvX, &tvY, &tvW, &tvH, &tvZoom);
+        if (tvW <= 0 || tvH <= 0) return;   /* no view drawn yet */
+        scale = (float)((tvZoom < 1) ? 1 : tvZoom);
+    } else {
+        int rawZoom = sdl3DrawGetZoomFactor();
+        if (rawZoom < 1) rawZoom = 1;
+        float gameScale = 1.0f;
+        sdl3DrawGetGameRect(nullptr, nullptr, nullptr, nullptr, &gameScale);
+        if (gameScale <= 0.0f) gameScale = 1.0f;
+        scale = (float)rawZoom * gameScale;
+    }
+
+    /* The game view in render coordinates, and the things at its top the
+       status line has to keep clear of. The full screen map is the view when
+       it owns the window, with its HUD column down the right and its build
+       strip on the left. tankView is false on the full screen map, where the
+       tank is wherever it is on the map and not in the middle square. */
+    ScnAnnounceRect view;
+    ScnAnnounceRect obstacles[SCN_ANNOUNCE_MAX_OBSTACLES];
+    int             count    = 0;
+    bool            tankView = true;
+    float mapX = 0.0f, mapY = 0.0f, mapW = 0.0f, mapH = 0.0f;
+    if (tablet) {
+        view.x0 = (float)tvX;
+        view.y0 = (float)tvY;
+        view.x1 = (float)(tvX + tvW);
+        view.y1 = (float)(tvY + tvH);
+        scnAnnounceAddWindow("##ScenarioSlot", obstacles, &count);
+    } else if (sdl3DrawGetOverviewInWindowRect(&mapX, &mapY, &mapW, &mapH)) {
+        tankView = false;
+        view.x0 = mapX;
+        view.y0 = mapY;
+        view.x1 = mapX + mapW;
+        view.y1 = mapY + mapH;
+        OverviewHudLayout hud;
+        if (sdl3DrawGetOverviewHudLayout(&hud)) {
+            scnAnnounceAddHudRect(mapX, mapY, hud.columnX, hud.columnY,
+                                  hud.columnW, hud.columnH, obstacles, &count);
+            scnAnnounceAddHudRect(mapX, mapY, hud.buildX, hud.buildY,
+                                  hud.buildW, hud.buildH, obstacles, &count);
+        }
+    } else {
+        float gx, gy, gw, gh, gtw, gth;
+        if (!sdl3DrawGetMainViewGameRect(&gx, &gy, &gw, &gh, &gtw, &gth)) return;
+        if (!sdl3DrawGameToRenderCoords(gx, gy, &view.x0, &view.y0)) return;
+        if (!sdl3DrawGameToRenderCoords(gx + gw, gy + gh, &view.x1, &view.y1)) {
+            return;
+        }
+    }
+    /* Each script of the round's list has a panel window of its own, named
+       by renderScenarioPanelView as the id plus the owner. A panel popped
+       out into its own window is in another ImGui context and is not found,
+       which is right: it is not over the game view. */
+    for (int owner = 0; owner < SCN_PANEL_OWNERS; owner++) {
+        char winId[32];
+        SDL_snprintf(winId, sizeof(winId), "##scenariopanel%d", owner);
+        scnAnnounceAddWindow(winId, obstacles, &count);
+    }
+    scnAnnounceAddWindow("###gamevote_1", obstacles, &count);
+    scnAnnounceAddWindow("###gamevote_2", obstacles, &count);
+    scnAnnounceAddWindow("###alliancereq", obstacles, &count);
+
+    ImFont *font = ImGui::GetFont();
+    if (font == nullptr) return;
+    ImDrawList *dl = ImGui::GetForegroundDrawList();
+    if (dl == nullptr) return;
+
+    float height = SCN_ANNOUNCE_UNITS * scale;
+    if (height < 8.0f) height = 8.0f;
+
+    /* The outline reaches one stroke past the letters on every side, so the
+       box that has to stay clear is that much bigger than the letters. */
+    const float o = (scale > 1.0f) ? scale : 1.0f;
+    const float inset = SCN_ANNOUNCE_INSET_UNITS * scale;
+    /* On the main view the player's tank sits in the middle square, and the
+       status line is never moved down onto it: the floor is the top of that
+       square. The full screen map has no such square, so there the floor is
+       the bottom of the map. */
+    const float floorY =
+        tankView ? (view.y0 + view.y1) * 0.5f -
+                       (view.y1 - view.y0) / (float)MAIN_SCREEN_SIZE_Y * 0.5f
+                 : view.y1;
+
+    /* The status line first, as high on the view as it goes, moved sideways
+       or down by the things at the top of the view. Its row then becomes a
+       band the width of the view, so an announcement with a position near
+       the top drops below it rather than sharing its row. */
+    ScnAnnounceRect statusBand = { 0.0f, 0.0f, 0.0f, 0.0f };
+    bool            haveBand   = false;
+    if (haveStatus) {
+        const ImVec2 measured =
+            font->CalcTextSizeA(height, FLT_MAX, 0.0f, status);
+        const float boxW = measured.x + 2.0f * o;
+        const float boxH = measured.y + 2.0f * o;
+        float boxX = 0.0f, boxY = 0.0f;
+        scnStatusPlace(view, boxW, boxH, SCN_STATUS_INSET_UNITS * scale,
+                       inset, floorY, obstacles, count, &boxX, &boxY);
+        scnDrawOutlinedLine(dl, font, height, boxX + o, boxY + o, o, 255,
+                            status);
+        statusBand.x0 = view.x0;
+        statusBand.y0 = boxY;
+        statusBand.x1 = view.x1;
+        statusBand.y1 = boxY + boxH;
+        haveBand      = true;
+    }
+
+    if (!haveAnnounce) return;
+
+    const ImVec2 measured = font->CalcTextSizeA(height, FLT_MAX, 0.0f, text);
+    const float  boxW     = measured.x + 2.0f * o;
+    const float  boxH     = measured.y + 2.0f * o;
+    float   boxX = 0.0f, boxY = 0.0f;
+    uint8_t posX = 0, posY = 0;
+    if (clientSimGetScnAnnouncePos(cs, &posX, &posY)) {
+        /* Where the script said, kept inside the view by the status line's
+           inset and below the status line. */
+        scnAnnounceAt(view, boxW, boxH, posX, posY,
+                      SCN_STATUS_INSET_UNITS * scale,
+                      haveBand ? &statusBand : nullptr, inset, &boxX, &boxY);
+    } else {
+        /* Where announcements have always gone. */
+        scnAnnounceDefaultPlace(view, boxW, o, &boxX, &boxY);
+    }
+
+    /* Full strength until the last stretch, then out. */
+    float fade = 1.0f;
+    if (left < SCN_ANNOUNCE_FADE_TICKS) {
+        fade = (float)left / (float)SCN_ANNOUNCE_FADE_TICKS;
+    }
+    const int alpha = (int)(255.0f * fade);
+    if (alpha <= 0) return;
+
+    scnDrawOutlinedLine(dl, font, height, boxX + o, boxY + o, o, alpha, text);
 }
 
 /* About modal + linked markdown popups live in dialogs/imgui_about.cpp so

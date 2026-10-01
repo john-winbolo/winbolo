@@ -123,10 +123,11 @@ log_GameTimeSet,     // the round's game time after a scenario changed it, as a 
 log_RuleSet,         // one simulation rule a scenario changed: short1=rule index, then the value the field ended up holding as an 8-byte pascal blob (layout in docs/replay-format.md)
 log_ScnPanel,        // one scenario panel's display list: opt1=panel id in the low four bits and the drawing script's list position in the high four (SCN_PANEL_WIRE), opt2=destTeam (0 = everyone), opt3=destPlayer (0xFF = everyone), short1=the list's byte length, then that many bytes (layout in docs/replay-format.md)
 log_ScnScore,        // a scenario's score row: opt1=kind, opt2=target, then the score as a big-endian int32 and the label as a pascal string (layout in docs/replay-format.md)
-log_ScnAnnounce,     // a centre-screen line a scenario put up: opt1=destTeam, opt2=destPlayer, short1=ticks it stays up, then the text as a pascal string
+log_ScnAnnounce,     // a big line a scenario put up across the game view: opt1=destTeam, opt2=destPlayer, short1=ticks it stays up, then the text as a pascal string, then two position bytes (across, down; 0-254) only when the script gave a position, which opt3 non-zero asks for (layout in docs/replay-format.md)
 log_ScnMarker,       // a scenario map marker: opt1=id, opt2=kind, opt3=destTeam, opt4=destPlayer, then x, y, slot and colour as a four-byte pascal blob
 log_ScnHint,         // an order a scenario gave one bot: opt1=slot, then the hint's verb as a pascal string. The rest of the hint's pairs are the bot's brain's business and are not recorded
-log_ServerTick       // the server's game tick at this entry, as a big-endian u32 across opt1..opt4. Written at the round's first entry, at every entry that carries a snapshot and every FULL_SYNC_INTERVAL ticks (layout in docs/replay-format.md)
+log_ServerTick,      // the server's game tick at this entry, as a big-endian u32 across opt1..opt4. Written at the round's first entry, at every entry that carries a snapshot and every FULL_SYNC_INTERVAL ticks (layout in docs/replay-format.md)
+log_ScnStatus        // a scenario's status line at the top of the view: opt1=destTeam, opt2=destPlayer, then the countdown's end tick as a big-endian u32 (0xFFFFFFFF = no countdown) and the text as a pascal string. An empty text is the clear (layout in docs/replay-format.md)
 } logitem;
 
 /* Which list a log_EntityChange names. Mirrors ENTITY_KIND_* in

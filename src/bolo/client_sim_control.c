@@ -81,6 +81,11 @@ static void clientSimScnClearPresentation(ClientSim *cs) {
     cs->scnAnnounceText[0] = '\0';
     cs->scnAnnounceTicks = 0;
     cs->scnAnnounceArrivedTick = 0;
+    cs->scnAnnounceHasPos = 0;
+    cs->scnAnnouncePosX = 0;
+    cs->scnAnnouncePosY = 0;
+    cs->scnStatusText[0] = '\0';
+    cs->scnStatusEndsAt = SCN_STATUS_NO_COUNTDOWN;
     memset(cs->scnMarkers, 0, sizeof(cs->scnMarkers));
     memset(cs->scnPlayerScores, 0, sizeof(cs->scnPlayerScores));
     memset(cs->scnTeamScores, 0, sizeof(cs->scnTeamScores));
@@ -1536,6 +1541,23 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
            the line down against the clock the scenario set it by rather
            than against wall time. */
         cs->scnAnnounceArrivedTick = cs->lastServerTick;
+        cs->scnAnnounceHasPos = evt->u.scnAnnounce.hasPos ? 1u : 0u;
+        cs->scnAnnouncePosX = evt->u.scnAnnounce.posX;
+        cs->scnAnnouncePosY = evt->u.scnAnnounce.posY;
+        break;
+
+    case CTRL_SCN_STATUS:
+        /* The last line addressed to this client replaces the one before,
+           the way a panel's list does; empty text clears it. */
+        if (!clientSimScnAddressedToMe(cs, evt->u.scnStatus.destTeam,
+                                       evt->u.scnStatus.destPlayer)) {
+            break;
+        }
+        SDL_strlcpy(cs->scnStatusText, evt->u.scnStatus.text,
+                    sizeof(cs->scnStatusText));
+        cs->scnStatusEndsAt = (cs->scnStatusText[0] != '\0')
+                                  ? evt->u.scnStatus.endsAt
+                                  : SCN_STATUS_NO_COUNTDOWN;
         break;
 
     case CTRL_SCN_MARKER: {
