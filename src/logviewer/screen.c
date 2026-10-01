@@ -821,10 +821,10 @@ void lv_windowAddEvent(int eventType, char *msg);
 /* --- Scenario presentation --------------------------------------------
  * The panels, scores, announcement, markers and status lines a scenario put
  * up, as the recording's log_ScnPanel, log_ScnScore, log_ScnAnnounce,
- * log_ScnMarker and log_ScnStatus records state them, kept in g_lv->pres. Each record replaces the state for
- * its own key — one panel row, one score, the announcement or one marker —
- * so what a store holds at a time is what the last record for its key up to
- * that time left there.
+ * log_ScnMarker and log_ScnStatus records state them, kept in g_lv->pres.
+ * Each record replaces the state for its own key — one panel row, one score,
+ * the announcement, one marker or one status row — so what a store holds at
+ * a time is what the last record for its key up to that time left there.
  *
  * Each slot's lobby team rides the same index, from log_TeamSet, because a
  * team panel is drawn for the players on that team and the snapshots do not
@@ -1181,10 +1181,10 @@ static void lv_presApply(const LvPresPayload *p, int key, uint32_t ms) {
     if (p->hasPos) {
       /* A byte past the max reads as the max, as the game reads one. */
       a->hasPos = TRUE;
-      a->posX   = (p->pos[0] > SCN_ANNOUNCE_POS_MAX) ? (BYTE)SCN_ANNOUNCE_POS_MAX
-                                                     : p->pos[0];
-      a->posY   = (p->pos[1] > SCN_ANNOUNCE_POS_MAX) ? (BYTE)SCN_ANNOUNCE_POS_MAX
-                                                     : p->pos[1];
+      a->posX   = (p->pos[0] > SCN_ANNOUNCE_POS_MAX)
+                      ? (BYTE)SCN_ANNOUNCE_POS_MAX : p->pos[0];
+      a->posY   = (p->pos[1] > SCN_ANNOUNCE_POS_MAX)
+                      ? (BYTE)SCN_ANNOUNCE_POS_MAX : p->pos[1];
     }
     memcpy(a->text, p->data, p->len);
     return;
@@ -2254,8 +2254,9 @@ void lv_screenProcessLog(unsigned short numEvents) {
     case log_ScnMarker:
     case log_ScnStatus:
       /* A scenario panel's display list, a score row, the announcement
-         line, a map marker or a status line, stored for the playhead. On a loaded file this
-         leaves the stores as a rebuild at this time would; on a live feed,
+         line, a map marker or a status line, stored for the playhead. On a
+         loaded file this leaves the stores as a rebuild at this time would;
+         on a live feed,
          which has no walk, it is the only way they fill, and the record is
          indexed here so a seek back can rebuild from it. The reader
          consumes the record's own lengths, so everything after it is still

@@ -4166,10 +4166,10 @@ static bool scnAnnounceShare(lua_State *L, int idx, const char *field,
     if (lua_type(L, -1) != LUA_TNUMBER) {
         const char *got = luaL_typename(L, -1);
         lua_pop(L, 1);
-        return luaL_argerror(
-                   L, idx,
-                   lua_pushfstring(L, "position.%s must be a number, got %s",
-                                   field, got)) != 0;
+        luaL_argerror(L, idx,
+                      lua_pushfstring(L, "position.%s must be a number, got %s",
+                                      field, got));
+        return false;   /* luaL_argerror does not come back */
     }
     v = lua_tonumber(L, -1);
     lua_pop(L, 1);
@@ -4203,18 +4203,18 @@ static bool scnArgAnnouncePos(lua_State *L, int idx, BYTE *outX, BYTE *outY,
                 return true;
             }
         }
-        return luaL_argerror(
-                   L, idx,
-                   lua_pushfstring(L, "position is '%s', which is not "
-                                   "\"top\", \"center\" or a table "
-                                   "{ x = , y = }", word)) != 0;
+        luaL_argerror(L, idx,
+                      lua_pushfstring(L, "position is '%s', which is not "
+                                      "\"top\", \"center\" or a table "
+                                      "{ x = , y = }", word));
+        return false;   /* luaL_argerror does not come back */
     }
     if (lua_type(L, idx) != LUA_TTABLE) {
-        return luaL_argerror(
-                   L, idx,
-                   lua_pushfstring(L, "position must be \"top\", \"center\" "
-                                   "or a table { x = , y = }, got %s",
-                                   luaL_typename(L, idx))) != 0;
+        luaL_argerror(L, idx,
+                      lua_pushfstring(L, "position must be \"top\", \"center\" "
+                                      "or a table { x = , y = }, got %s",
+                                      luaL_typename(L, idx)));
+        return false;   /* luaL_argerror does not come back */
     }
     if (!scnAnnounceShare(L, idx, "x", bad, outX)) {
         *badField = "x";
