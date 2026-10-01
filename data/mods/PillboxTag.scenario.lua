@@ -363,6 +363,14 @@ local function carrying(p)
   return pb ~= nil and pb.in_tank and not man_out(p)
 end
 
+-- Whether the holder has just shot his own built prize down and is still in
+-- the HOP_PICKUP_SECONDS he has to drive over to it. The prize lies on the
+-- ground, but he is still its holder.
+local function shot_own_down()
+  return holder ~= nil and plan ~= nil and plan.dead_at ~= nil and
+         game.tick() - plan.dead_at < HOP_PICKUP_SECONDS * 100
+end
+
 local function prize()
   if pill == nil then
     return nil
@@ -375,7 +383,10 @@ local function prize()
     return pb.x + 0.5, pb.y + 0.5, "BUILT", "orange", holder
   end
   if not pb.in_tank then
-    return pb.x + 0.5, pb.y + 0.5, "GROUND", "green", nil
+    -- A holder on his way to his own shot-down prize is still its carrier,
+    -- so his panel says it is his and refresh leaves his legs alone.
+    return pb.x + 0.5, pb.y + 0.5, "GROUND", "green",
+           shot_own_down() and holder or nil
   end
   if holder == nil then
     return nil
@@ -634,6 +645,8 @@ local function compass(p, me, tx, ty, what, colour, carrier, rows, rows_key)
     status, status_colour = "YOURS - RUN", "yellow"
     if what == "BUILT" then
       status = "YOURS - BUILT"
+    elseif what == "GROUND" then
+      status = "YOURS - DOWN"
     end
   elseif tx ~= nil then
     local dx = tx - (me.wx / 256)
@@ -803,11 +816,16 @@ end
 -- p's brain, and a knob it never wrote is at DEFAULTS, the ordinary value
 -- read off the brain's constants.lua.
 --
--- The ordinary value is the Hard one. A Medium or Easy bot plays with
--- TANK_COMBAT_BASE_COST moved by its level, and a script cannot see a seat's
--- level, so once a hunter has set it and taken another part, it comes back
--- as the Hard number. A hunter sets it lower than any level does, so the
--- only difference is how a former hunter bids for a fight.
+-- The ordinary value is the Hard one. The brain's level bundles
+-- (MODE_LEVELS in constants.lua) move three of the knobs below for a Medium
+-- or Easy bot: TANK_COMBAT_BASE_COST (Medium 40, Easy 60),
+-- DEFEND_ALARM_BASE_COST (Medium 140, Easy 220) and CAPTURE_LGM_HUNT (Easy
+-- false). A script cannot see a seat's level, and the brain takes no level
+-- word after its first think, so once a part has set one of the three and
+-- the bot takes another part, that knob comes back as the Hard value here:
+-- a former hunter bids for a fight as Hard does, a former guard answers a
+-- fort alarm as Hard does, and an Easy bot that has held the prize goes
+-- after a builder on a pillbox as Hard does.
 local DEFAULTS = {
   TANK_COMBAT_ENABLED                  = true,
   TANK_COMBAT_BASE_COST                = 30,
@@ -1665,15 +1683,19 @@ local function hop_square(me, close)
   return nil
 end
 
-local function start_plan(kind, p, me, close, near_n)
+local function start_plan(kind, p, me, close)
   local x, y = hop_square(me, close)
   if x == nil then
     return false
   end
+  -- The hunters near the square, counted from the square: the fort's own
+  -- tests count round the fort once it is up, so "hunters left" compares
+  -- two counts with the same middle.
+  local near = hunters_near(p, FORT_FREE_WITHIN, { mx = x, my = y })
   -- The plan is in place before the order goes, because the engine asks
   -- can_build about the order before it takes it.
   plan = { kind = kind, x = x, y = y, at = game.tick(), built = false,
-           near = near_n, trees = me.trees }
+           near = #near, trees = me.trees }
   local ok, why = game.builder_order(p, "pill", x, y)
   if not ok then
     plan = nil
@@ -1686,6 +1708,7 @@ end
 
 local function take_back(why)
   plan.kind = "take"
+  plan.taken_at = game.tick()
   game.log(string.format("Pillbox Tag: player %d takes the fort back (%s)",
                          holder, why))
   tune(holder)
@@ -1756,6 +1779,32 @@ local function mine_behind(p, me)
   end
 end
 
+-- Whether the holder is strictly top on the board: his team's seconds above
+-- every other team's in a team round, his own seconds above everybody
+-- else's otherwise. A tie is not top.
+local function holder_leads()
+  local mine_team = scoring_team(holder)
+  local mine = (mine_team ~= nil) and (team_seconds[mine_team] or 0)
+               or (seconds[holder] or 0)
+  for q = 0, game.max_tanks() - 1 do
+    if q ~= holder and in_round(q) then
+      local t = scoring_team(q)
+      local theirs = nil
+      if mine_team ~= nil then
+        if t ~= nil and t ~= mine_team then
+          theirs = team_seconds[t] or 0
+        end
+      else
+        theirs = seconds[q] or 0
+      end
+      if theirs ~= nil and theirs >= mine then
+        return false
+      end
+    end
+  end
+  return true
+end
+
 -- Once a second, for a bot holder.
 local function bot_holder_second()
   if holder == nil or pill == nil or not is_bot(holder) then
@@ -1763,10 +1812,44 @@ local function bot_holder_second()
   end
   local pb = game.pill(pill)
   local me = game.tank(holder)
-  if pb == nil or me == nil or me.dead then
+  if pb == nil or me == nil then
     return
   end
   local now = game.tick()
+
+  -- A fort is there to hold off the hunters round it, and nobody scores
+  -- while it stands. It is taken back, and the prize grabbed:
+  --   * when no hunter is near it, counted round the fort, not the guard: a
+  --     guard who died and came back on the far side of the map has no
+  --     hunter near him, but the fort may still have them all round it;
+  --   * after FORT_SECONDS, unless the holder is strictly top on the board:
+  --     a stalled round helps the leader, so the leader's fort stands for as
+  --     long as hunters are near it, and anybody else's for FORT_SECONDS.
+  --     Asked every second, so a lead won or lost mid-fort counts at once;
+  --   * when fewer hunters are near it than when it was ordered (counted
+  --     round the same square then; see start_plan);
+  --   * at LAST_SHOT_ARMOUR (in on_tick).
+  -- All of these are asked while the guard is dead as well.
+  if plan ~= nil and plan.built and plan.kind == "fort" and standing(pb) then
+    local near = hunters_near(holder, FORT_FREE_WITHIN,
+                              { mx = pb.x, my = pb.y })
+    if #near == 0 then
+      take_back("no hunter near")
+    elseif now - plan.built_at >= FORT_SECONDS * 100 and not holder_leads() then
+      take_back("time")
+    elseif #near < plan.near then
+      take_back("hunters left")
+    end
+  end
+
+  if me.dead then
+    -- The go-back order below is sent again once he is back: a brain
+    -- forgets its order when its tank dies.
+    if plan ~= nil then
+      plan.back_told = nil
+    end
+    return
+  end
 
   if plan ~= nil then
     if not plan.built then
@@ -1789,18 +1872,35 @@ local function bot_holder_second()
       if me.trees ~= trees then
         game.set_stocks(holder, { trees = trees })
       end
-      if plan.kind == "fort" then
-        -- Counted round the fort, not the guard: a guard who died and came
-        -- back on the far side of the map has no hunter near him, but the
-        -- fort may still have them all round it.
-        local near = hunters_near(holder, FORT_FREE_WITHIN,
-                                  { mx = pb.x, my = pb.y })
-        if #near == 0 then
-          take_back("no hunter near")
-        elseif now - plan.built_at >= FORT_SECONDS * 100 then
-          take_back("time")
-        elseif #near < plan.near then
-          take_back("hunters left")
+      -- A hop, or a fort that has been taken back, is the holder's to shoot
+      -- down and drive over, which the brain's own pillbox move does once
+      -- he is near it. A holder who is not near it (he came back from a
+      -- death somewhere else, or wandered off) is sent back: to the square
+      -- BUILT_ARMOUR short of it on his side, where a hop leaves him. So is
+      -- one it has stood beside for HOP_PICKUP_SECONDS. A goto holds him
+      -- only RUN_PARK_TICKS once he is there, and the move takes over.
+      if plan.kind ~= "fort" then
+        local d = chebyshev(me.mx, me.my, pb.x, pb.y)
+        local since = plan.taken_at or plan.built_at
+        if d > DROPPED_WITHIN or now - since >= HOP_PICKUP_SECONDS * 100 then
+          local sx, sy = sign(me.mx - pb.x), sign(me.my - pb.y)
+          if sx == 0 and sy == 0 then
+            sx = 1
+          end
+          local x, y = standable_near(pb.x + BUILT_ARMOUR * sx,
+                                      pb.y + BUILT_ARMOUR * sy)
+          if x ~= nil then
+            local first = (plan.back_told == nil)
+            tell(holder, goto_hint(x, y, string.format("back to %d,%d",
+                                                       pb.x, pb.y)), first)
+            if first and told_for[holder] ~= nil and
+               told_for[holder]:sub(1, 7) == "back to" then
+              plan.back_told = now
+              game.log(string.format("Pillbox Tag: player %d goes back to "
+                                     .. "the %s at (%d, %d) from %d away",
+                                     holder, plan.kind, pb.x, pb.y, d))
+            end
+          end
         end
       end
     end
@@ -1829,13 +1929,7 @@ local function bot_holder_second()
   end
   if hop_n > 0 and now >= hop_after then
     local kind = (me.armour <= FORT_ARMOUR_AT) and "fort" or "hop"
-    local fort_n = 0
-    for _, h in ipairs(list) do
-      if h.d <= FORT_FREE_WITHIN then
-        fort_n = fort_n + 1
-      end
-    end
-    if start_plan(kind, holder, me, close, fort_n) then
+    if start_plan(kind, holder, me, close) then
       return
     end
   end
@@ -1862,8 +1956,7 @@ local function each_second()
   if holder ~= nil and pill ~= nil then
     local pb = game.pill(pill)
     if pb ~= nil and not pb.in_tank and pb.armour == 0 and
-       not (plan ~= nil and plan.dead_at ~= nil and
-            game.tick() - plan.dead_at < HOP_PICKUP_SECONDS * 100) then
+       not shot_own_down() then
       lose_the_prize(holder)
       aim_everybody()
     end

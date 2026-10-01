@@ -91,6 +91,31 @@ end
 """
 
 PER_TEST_TIMEOUT_S = 10 * 60
+
+# A script= arena is one chunk, and Lua allows 200 locals in one. The gate
+# stops above this many, a few short of the cap, so the message comes before
+# the loader error does.
+TOP_LEVEL_LOCALS_MAX = 195
+TOP_LOCAL_RE = re.compile(r"^local\s+(function\s+)?([^=]*)")
+
+
+def top_level_locals(text):
+    """The locals a Lua file declares at its top level: every line that starts
+    "local" in the first column, one for "local function f", and one per name
+    before the "=" for "local a, b = ...". A rough count, which is all the
+    check above needs: the top level of these files starts in column 0 and
+    everything inside a block is indented."""
+    n = 0
+    for line in text.splitlines():
+        m = TOP_LOCAL_RE.match(line)
+        if m is None:
+            continue
+        if m.group(1):
+            n += 1
+            continue
+        names = m.group(2).split("--", 1)[0]
+        n += len([x for x in names.split(",") if x.strip()])
+    return n
 GATE_RE = re.compile(r"^\s*--\s*GATE:\s*(.*)$")
 VERDICT_RE = re.compile(r"^VERDICT\s+(PASS|FAIL)\s+(\S+)\s*(.*)$")
 PORT_RE = re.compile(r"listening on UDP port (\d+)")
@@ -266,10 +291,20 @@ class Job(object):
         top-level locals and wrap its hooks (keep the old function in a local
         and call it from the new one). Keep the arena's own top-level locals
         few: Lua allows 200 in one chunk and a big script uses many of them.
+        The gate counts them first and stops with a clear message when the
+        two together come near the cap, rather than letting every script=
+        arena fail with a loader error.
         """
         with open(os.path.join(ROOT, self.opts["script"]),
                   encoding="utf-8") as f:
             script = f.read()
+        n = top_level_locals(script) + top_level_locals(body)
+        if n > TOP_LEVEL_LOCALS_MAX:
+            sys.exit("%s: %s and the arena declare %d top-level locals "
+                     "together; Lua allows 200 in one chunk and the gate "
+                     "stops above %d. Fold some of the script's locals into "
+                     "a table." % (self.name, self.opts["script"], n,
+                                   TOP_LEVEL_LOCALS_MAX))
         with open(out, "w", encoding="utf-8", newline="\n") as f:
             f.write('GATE_NAME = "%s"\nGATE_TICKS = %s\n'
                     'GATE_GAMETYPE = "%s"\n\n'
