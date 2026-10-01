@@ -932,6 +932,7 @@ static void lvHostRenderFrame(const char *overlay) {
         lv_imgui_render_game_view(g_lv);
         /* The camera tank's panel, as its player saw it. */
         lv_imgui_scenario_panel_window(g_lv->isLoaded ? true : false);
+        lv_imgui_scenario_status(g_lv->isLoaded ? true : false);
         /* Live spectator keeps the DVR scrubber reachable in game view; the
          * standalone viewer's game view shows no scrubber (never live mode). */
         if (lv_screenSpecIsLiveMode()) {
@@ -957,6 +958,7 @@ static void lvHostRenderFrame(const char *overlay) {
         lv_g_show_game_info_window = true;
         lv_imgui_game_info_window();
         lv_imgui_scenario_panel_window(g_lv->isLoaded ? true : false);
+        lv_imgui_scenario_status(g_lv->isLoaded ? true : false);
         lv_imgui_spectator_badge(g_lv->gamePhase);
         lv_g_reset_window_positions = false;
         if (overlay != NULL) {
@@ -1005,6 +1007,7 @@ static void lvHostRenderFrame(const char *overlay) {
                 bool save_scn = lv_g_show_scenario_panel_window;
                 lv_g_show_scenario_panel_window = true;
                 lv_imgui_scenario_panel_window(g_lv->isLoaded ? true : false);
+                lv_imgui_scenario_status(g_lv->isLoaded ? true : false);
                 lv_g_show_scenario_panel_window = save_scn;
             }
 
@@ -1022,6 +1025,7 @@ static void lvHostRenderFrame(const char *overlay) {
             lv_imgui_item_info_window();
             lv_imgui_comments_window();
             lv_imgui_scenario_panel_window(g_lv->isLoaded ? true : false);
+            lv_imgui_scenario_status(g_lv->isLoaded ? true : false);
         }
         lv_g_reset_window_positions = false;
         /* Popup stacks over panels, under blocking modal dialogs. */

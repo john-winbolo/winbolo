@@ -538,7 +538,7 @@ local function check_the_end(shot)
   -- points at them.
   if #left == 1 and alone ~= left[1] then
     alone = left[1]
-    game.announce(name_of(alone) .. " is the last one left", 4)
+    game.announce(name_of(alone) .. " is the last one left", 4, nil, "center")
   end
 end
 
@@ -712,13 +712,13 @@ local function infect(p, by)
   -- A destroyed tank puts its cargo down as it goes, which can land after this
   -- handler has run, and a builder out with a pillbox finishes it whenever he
   -- does. Both reach on_pill_placed, which hands such a pillbox on then.
-  game.announce(name_of(p) .. " is infected", 2)
+  game.announce(name_of(p) .. " is infected", 2, nil, "top")
   -- And the player it happened to is told in their own words, after the line
   -- that goes to everybody so that theirs replaces it on their own screen.
   -- Turning is the one thing in the round that happens to a player rather than
   -- being done by them, and reading your own name in the third person is not
   -- being told.
-  game.announce("You are infected", 3, p)
+  game.announce("You are infected", 3, p, "center")
   game.message("You are infected. Everyone you kill joins you.", p)
   game.sound("man_dying_near")
   -- A bot is handed the horde's word straight away rather than on the next
@@ -797,7 +797,7 @@ local function turn_zero()
   end
   zero = p
   loose = true
-  game.announce("The virus is loose", 3)
+  game.announce("The virus is loose", 3, nil, "center")
   infect(p, nil)
   -- A restart after the whole horde has walked out is a fresh horde, and it is
   -- helped the same way, so the clock is started over rather than doubled.
@@ -821,7 +821,7 @@ local function warn_zero()
     game.message("Virus needs two players. Nobody is infected.")
     return
   end
-  game.announce("You are infected in three seconds", WARNING_SECONDS, zero)
+  game.announce("You are infected in three seconds", WARNING_SECONDS, zero, "center")
   game.message("You are the first infected. Get among them.", zero)
 end
 
@@ -860,8 +860,8 @@ end
 -- roster for everybody else.
 local function start_compass()
   compass_on = true
-  game.announce("The horde has a compass on you", 3, { team = SURVIVORS })
-  game.announce("Your compass points at the survivors", 3, { team = INFECTED })
+  game.announce("The horde has a compass on you", 3, { team = SURVIVORS }, "top")
+  game.announce("Your compass points at the survivors", 3, { team = INFECTED }, "top")
 end
 
 -- The deep sea clock. It only runs once the first one has turned: before that
@@ -898,7 +898,7 @@ local function watch_the_water(now)
       else
         warned[p] = true
         game.announce(string.format("Deep water! Infected in %.1f s", left),
-                      1, p)
+                      1, p, "top")
       end
     elseif wet[p] ~= nil or warned[p] then
       dry_off(p)

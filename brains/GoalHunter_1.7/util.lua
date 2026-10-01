@@ -8,6 +8,7 @@ local C       = require("constants")
 local metrics = require("metrics")
 local changes = require("changes")
 local print2  = require("print2")
+local LP      = require("live_physics")
 -- viz is required for line_walk's optional debug-overlay drawing.
 -- It must come AFTER changes/metrics to keep the load order stable
 -- (no circular requires; viz doesn't pull anything from util).
@@ -339,10 +340,37 @@ end
 --   rushes can pass a higher value.
 -- min_speed: floor for braking (default 4).  ws_retreat passes lower.
 -- =========================================================================
+-- nav_turn_cap(nav_cap, turn_cap) — the speed a corner is taken at.
+-- nav_cap is a top-speed cap (C.NAV_TOP_SPEED / C.NAV_CRUISE_SPEED) and
+-- turn_cap its turn-radius twin (C.NAV_TURN_*). Normally the lower of the
+-- two, so a slow turn rate lowers the cap. With C.STEER_TURN_SPEEDUP a turn
+-- rate faster than our top speed raises it by the same ratio, at most
+-- x C.STEER_TURN_SPEEDUP_MAX and never above our live top speed
+-- (C.NAV_TOP_SPEED). Under classic rules this is math.min(nav_cap, turn_cap).
+function M.nav_turn_cap(nav_cap, turn_cap)
+  local r = LP.turn_speedup()
+  if r then
+    local up = C.STEER_TURN_SPEEDUP_MAX
+    if type(up) ~= "number" or up < 1 then up = 1 end
+    if r < up then up = r end
+    local v = nav_cap * up
+    if v > C.NAV_TOP_SPEED then v = C.NAV_TOP_SPEED end
+    if v < nav_cap then v = nav_cap end
+    return v
+  end
+  return math.min(nav_cap, turn_cap)
+end
+
+-- enemy_speed_scale() — nil, or the factor enemy terrain speed caps
+-- (C.MAP_SPEED) take under C.ENEMY_SPEED_OWN_MODS (our speed modifier).
+function M.enemy_speed_scale()
+  return LP.enemy_speed_scale()
+end
+
 function M.nav_turn_speed(corr, speed, max_speed, min_speed)
   local keys, taps = 0, 0
   local abs_corr = math.abs(corr)
-  max_speed = max_speed or 48
+  max_speed = max_speed or C.NAV_CRUISE_SPEED   -- 48 classic
   min_speed = min_speed or 4
 
   -- Turning: 3-tier hold/tap/none
@@ -368,8 +396,17 @@ function M.nav_turn_speed(corr, speed, max_speed, min_speed)
   elseif abs_corr > 80 then
     if speed > min_speed then keys = bit.bor(keys, KEY_SLOWER) end
   else
+    -- The ramp sets the speed a turn is taken at, so the nav caps give way to
+    -- the turn-radius caps when our turn rate is slower than our top speed
+    -- (live_physics.lua scales both; under classic rules they are equal).
+    local ramp_max = max_speed
+    if max_speed == C.NAV_CRUISE_SPEED then
+      ramp_max = M.nav_turn_cap(max_speed, C.NAV_TURN_CRUISE_SPEED)
+    elseif max_speed == C.NAV_TOP_SPEED then
+      ramp_max = M.nav_turn_cap(max_speed, C.NAV_TURN_TOP_SPEED)
+    end
     local factor = 1.0 - (abs_corr - 16) / 64.0
-    local desired = math.max(min_speed, math.floor(factor * max_speed))
+    local desired = math.max(min_speed, math.floor(factor * ramp_max))
     if speed > desired + 4 then
       keys = bit.bor(keys, KEY_SLOWER)
     elseif speed < desired then
@@ -547,5 +584,9 @@ function M.fire_hold_block(state, hold_ticks)
   state._last_fire_tick = now
   return false
 end
+
+-- Live game rules -> physics constants (see live_physics.lua). Reached
+-- through U so Brain.think needs no new upvalue.
+M.live_physics = require("live_physics")
 
 return M
