@@ -9627,6 +9627,70 @@ function M.heat_pill_fire(state, world, info, goal, pill, pid, hits, shots, now)
   return keys, taps
 end
 
+-- ── Peace list ("peace=1/3/4" init token, C.PEACE_*) ─────────────────────
+-- A script can name seats this bot does not pick a fight with (Pillbox Tag:
+-- every hunter lists the other hunters, so they all go for the holder). A
+-- listed seat is skipped as a tank-combat target, a kill_lgm target and an
+-- opportunistic shot, until it hurts this bot. Then it is a normal enemy for
+-- C.PEACE_HOSTILE_TICKS. A cooldown of C.PEACE_COOLDOWN_TICKS follows, and
+-- in it the seat is spared again even if it keeps shooting. The next hit
+-- after the cooldown opens a new hostile window. Hits inside a window do not
+-- extend it.
+--
+-- WHO HIT US: the engine gives no attacker id. A shell object does carry its
+-- firer (ob.owner, 0xFF for a pill), so peace_update keeps the owner of the
+-- NEAREST hostile shell within C.IMD_SHELLS_RADIUS_WU of the tank that is
+-- flying towards it (a shell heading away cannot hit it). When armour
+-- drops, the attacker is the owner kept at the last think (the shell that hit
+-- is gone by the time we look), or this think's if the last think saw none.
+-- Only that one owner is blamed, and only if it is on the list: a listed
+-- hunter's shell flying past while the holder or a pill hits us does not
+-- count.
+--
+-- With no list, or C.PEACE_ENABLED off, both helpers do nothing and touch no
+-- state, so a bot without the token behaves exactly as before.
+
+-- Is seat `pn` spared right now? `pn` is a player number (a tank's id, a
+-- man's idnum).
+function M.peace_spared(state, pn)
+  local set = state.peace
+  if not set or pn == nil or not set[pn] or not C.PEACE_ENABLED then return false end
+  local hu = state._peace_hostile_until
+  if hu and hu[pn] and (state.tick or 0) < hu[pn] then return false end
+  return true
+end
+
+-- Once per think, after state.took_damage_this_tick is set.
+function M.peace_update(state, info, now)
+  local set = state.peace
+  if not set or next(set) == nil or not C.PEACE_ENABLED then return end
+  local nearest, best = nil, C.IMD_SHELLS_RADIUS_WU * C.IMD_SHELLS_RADIUS_WU
+  for _, ob in ipairs(info.objects or {}) do
+    if ob.type == OBJECT_SHOT and bit.band(ob.info or 0, OBJECT_HOSTILE) ~= 0 then
+      local dx, dy = info.tankx - ob.x, info.tanky - ob.y
+      local d2 = dx * dx + dy * dy
+      local d = ob.direction or 0
+      if d2 <= best and U.bsin(d) * dx - U.bcos(d) * dy > 0 then
+        nearest, best = ob.owner, d2
+      end
+    end
+  end
+  if state.took_damage_this_tick then
+    local pn = state._peace_nearest
+    if pn == nil then pn = nearest end
+    local cu = state._peace_cooldown_until or {}
+    if pn ~= nil and set[pn] and now >= (cu[pn] or 0) then
+      local hu = state._peace_hostile_until or {}
+      state._peace_hostile_until, state._peace_cooldown_until = hu, cu
+      hu[pn] = now + C.PEACE_HOSTILE_TICKS
+      cu[pn] = hu[pn] + C.PEACE_COOLDOWN_TICKS
+      log.event("peace_hostile", string.format("p%d hit us; enemy until %d, spared again until %d",
+                                               pn, hu[pn], cu[pn]))
+    end
+  end
+  state._peace_nearest = nearest
+end
+
 return M
 --[[ REMOVED: position/aim/engage/curve_away/rush/disengage substates
   if goal.substate == "position" then

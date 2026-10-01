@@ -221,6 +221,7 @@ local told        = {}          -- seat -> which order that was, as a short key
 local told_for    = {}          -- seat -> what that order was after, as a short key
 local goto_at     = {}          -- seat -> the square a goto order sent it to
 local tuned       = {}          -- seat -> the init table it was last handed, as text
+local peace_of    = {}          -- seat -> the peace list it was last handed
 local touched     = {}          -- seat -> every knob and flag word it has been handed
 local hide_at     = 3           -- squares off a tank in forest stops being seen
 local board       = {}          -- the leaderboard, rebuilt once a second
@@ -1041,6 +1042,26 @@ local function in_round(p)
   return slot ~= nil and slot.connected and slot.fielded
 end
 
+-- The seats a bot leaves alone: every other seat in the round but the holder.
+-- It goes to the brain as its peace list ("peace=1/3/4"), so the hunters go
+-- for the holder and the prize and not for each other. A seat on the list
+-- that shoots the bot is fought back for a while all the same. The holder's
+-- own list is empty, and so is the list of a bot with nobody to spare. The
+-- list is sent again whenever it changes: a new holder comes off every list,
+-- and the old one goes on.
+local function peace_text(p)
+  if p == holder then
+    return ""
+  end
+  local seats = {}
+  for q = 0, game.max_tanks() - 1 do
+    if q ~= p and q ~= holder and in_round(q) then
+      seats[#seats + 1] = tostring(q)
+    end
+  end
+  return table.concat(seats, "/")
+end
+
 local function is_bot(p)
   local slot = game.lobby_slot(p)
   return slot ~= nil and slot.bot
@@ -1086,7 +1107,8 @@ local function init_table(role_name, p)
     want[k] = v
   end
 
-  local t, pairs_n = {}, 0
+  local t, pairs_n = {}, 1
+  t.peace = peace_text(p)
   local flags = {}
   for _, f in ipairs(role.flags) do
     flags[f] = true
@@ -1169,11 +1191,12 @@ local function tune(p)
   end
   local name = role_of(p)
   local t, line, sent = init_table(name, p)
-  if next(sent) == nil and tuned[p] == name then
+  if next(sent) == nil and tuned[p] == name and peace_of[p] == t.peace then
     return
   end
   if game.bot_init(p, t) then
     tuned[p] = name
+    peace_of[p] = t.peace
     local now = have[p] or {}
     for k, v in pairs(sent) do
       now[k] = v
@@ -2411,7 +2434,7 @@ local function take_the_prize(p)
   game.score(p, seconds[p], SCORE_LABEL)
   -- A bot takes the holder's part at once, and everybody else is turned on it.
   stop_the_fight(p)
-  tune(p)
+  tune_everybody()
   aim_everybody()
 end
 
@@ -2699,6 +2722,7 @@ function on_player_leave(p, scripted)
   told_for[p] = nil
   goto_at[p] = nil
   tuned[p]   = nil
+  peace_of[p] = nil
   touched[p] = nil
   have[p]    = nil
   team_of[p] = nil
