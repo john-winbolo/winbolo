@@ -6550,6 +6550,17 @@ typedef struct {
 static ScnMapScriptCache scnMapScriptCache;
 
 bool scenarioHostMapHasScript(const char *mapPath) {
+    /* What the tag means is that picking this map here runs its script, so a
+       process with scripts off answers no for every map: the attach would
+       refuse the file and the map would play plain. Without this the chooser
+       marks maps Scripted on a server that will not run one. */
+    if (!scnEnabled) {
+        return false;
+    }
+    return scenarioHostMapCarriesScript(mapPath);
+}
+
+bool scenarioHostMapCarriesScript(const char *mapPath) {
     char         script[SCN_SCRIPT_PATH_MAX];
     SDL_PathInfo info;
     SDL_PathInfo looseInfo;
@@ -6559,13 +6570,6 @@ bool scenarioHostMapHasScript(const char *mapPath) {
     bool         answer;
 
     if (mapPath == NULL || mapPath[0] == '\0') {
-        return false;
-    }
-    /* What the tag means is that picking this map here runs its script, so a
-       process with scripts off answers no for every map: the attach would
-       refuse the file and the map would play plain. Without this the chooser
-       marks maps Scripted on a server that will not run one. */
-    if (!scnEnabled) {
         return false;
     }
     /* Nothing to key a row on, or nowhere to keep it: the question is

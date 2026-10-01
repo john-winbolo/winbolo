@@ -1133,6 +1133,23 @@ static void gameFrontApplyVisibilityPrefs(ServerSim *sim) {
 /* -------------------------------------------------------
  * gameFrontDialogs — setup dialog state machine
  * ------------------------------------------------------- */
+/* Whether a map in the background game's directory is one it may show. The
+ * tutorial map and Better Best Map Ever are left out by name, and so is any
+ * map that is a scenario: one with a script beside it or packed into it,
+ * whether or not this process runs scripts. A scenario's rules only hold
+ * while its script runs, and the background game runs none, so what it
+ * would show is the scenario's map played as something it is not. */
+static bool bgMapAllowed(const char *dir, const char *name) {
+    char path[512];
+
+    if (SDL_strcasecmp(name, "Inbuilt Tutorial.map") == 0 ||
+        SDL_strcasecmp(name, "Better Best Map Ever.map") == 0) {
+        return false;
+    }
+    SDL_snprintf(path, sizeof(path), "%s/%s", dir, name);
+    return !scenarioHostMapCarriesScript(path);
+}
+
 /* Pick a random .map file from data/maps/ for the background game */
 static bool pickRandomMap(char *out, size_t outLen) {
     const char *dir = "data/maps";
@@ -1152,8 +1169,7 @@ static bool pickRandomMap(char *out, size_t outLen) {
         while ((ent = readdir(d)) != NULL && count < 256) {
             size_t len = strlen(ent->d_name);
             if (len > 4 && strcasecmp(ent->d_name + len - 4, ".map") == 0 &&
-                strcasecmp(ent->d_name, "Inbuilt Tutorial.map") != 0 &&
-                strcasecmp(ent->d_name, "Better Best Map Ever.map") != 0) {
+                bgMapAllowed(dir, ent->d_name)) {
                 mapFiles[count] = SDL_strdup(ent->d_name);
                 count++;
             }
@@ -1179,13 +1195,12 @@ static bool pickRandomMap(char *out, size_t outLen) {
     /* Filter out maps unsuitable for the background game */
     int filtered = 0;
     for (int i = 0; i < count; i++) {
-        if (SDL_strcasecmp(list[i], "Inbuilt Tutorial.map") != 0 &&
-            SDL_strcasecmp(list[i], "Better Best Map Ever.map") != 0) {
+        if (bgMapAllowed(dir, list[i])) {
             list[filtered++] = list[i];
         }
     }
     if (filtered == 0) {
-        WB_LOG_WARN(WB_LOG_CAT_MAP, "[BgGame] pickRandomMap: no non-tutorial maps in '%s'", dir);
+        WB_LOG_WARN(WB_LOG_CAT_MAP, "[BgGame] pickRandomMap: no maps in '%s' once the tutorial and scenarios are left out", dir);
         SDL_free(list);
         return false;
     }
