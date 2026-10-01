@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (c) 1998-2026 John Morrison.
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Subset the bundled CJK fonts down to the glyph ranges WinBolo can actually
 # display, shrinking the WASM preload from ~163 MB of fonts to ~19 MB.

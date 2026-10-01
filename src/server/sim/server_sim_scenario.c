@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -2295,6 +2298,16 @@ void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath) {
     serverSimScenarioSeatLobby(sim);
 }
 
+/* Put back the AI policy a needs_bots list moved the lobby off, and hold
+   nothing more. */
+static void scenarioGiveBackAi(ServerSim *sim) {
+    serverSimSetAiPolicy(sim, sim->preScenarioAiPolicy);
+    serverSimSetBotAiType(sim, sim->preScenarioAiType);
+    sim->preScenarioAiPolicy = 0;
+    sim->preScenarioAiType   = aiNone;
+    sim->preScenarioAiRaised = false;
+}
+
 /* The lobby's own settings, brought into line with whatever scenario is
    attached now. Both points a lobby first learns its scenario need this: a
    map commit, which calls it straight after the map change above, and a
@@ -2316,10 +2329,15 @@ void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath) {
    attached, and this is the other direction — ranked already on when the
    scenario arrives.
 
-   The AI policy: a scenario fields its own bots, and aiNone empties the
-   roster of them, so a policy that allows none is moved up to the one that
-   allows them plainly. A policy that already allows bots is the operator's
-   or the host's and is left alone.
+   The AI policy: only for a list that said needs_bots. Such a script fields
+   its own bots, and aiNone empties the roster of them and refuses every
+   spawn, so a policy that allows none is moved up to the one that allows
+   them plainly. A policy that already allows bots is the operator's or the
+   host's and is left alone. A list that did not say it leaves the policy
+   alone too, whatever it is: a mod like Virus plays with the bots a host
+   adds or with none, and turning bots on for it would be the script
+   deciding something that is the host's. needsBots is the composed list's
+   answer, and it is true when any script in the list says it.
 
    Only a scenario takes the game type. A mod keeps the round's win
    condition, names no game of its own — scnModHoldsBack refuses a mod that
@@ -2328,16 +2346,33 @@ void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath) {
    on changing it. keepsWinCondition is the composed list's answer, and it is
    true only when every script in the list is a mod.
 
-   All three are remembered and all three are given back, so a lobby that was
-   ranked with no bots is ranked with no bots again once the last script goes.
-   They are remembered together, on the first script of a run whether or not
-   it is the kind that moves the game type: a mod turns ranked off as surely
-   as a scenario does, and what it turned off has to come back the same way.
+   The game type and ranked are remembered and given back, so a lobby that
+   was ranked with no bots is ranked with no bots again once the last script
+   goes. They are remembered together, on the first script of a run whether
+   or not it is the kind that moves the game type: a mod turns ranked off as
+   surely as a scenario does, and what it turned off has to come back the
+   same way.
+
    preScenarioGameType holds nothing until then, which is what says whether
    there is anything to give back. A lobby already on gameScripted when that
    first script arrives has no earlier type worth keeping — no host can pick
    that type and no plain map is ever on it — so gameOpen is held instead,
-   which is where such a lobby used to land anyway. */
+   which is where such a lobby used to land anyway.
+
+   The AI policy follows its own rule, because only a needs_bots list moves
+   it:
+   - It is remembered at the raise, not at the first script, so what comes
+     back is what the lobby was on just before the raise. A change the host
+     made under an unflagged script before that is kept.
+   - It is given back as soon as the list stops saying needs_bots: when the
+     last script goes, or when the list changes to one that does not say it
+     (the flagged script dropped while an unflagged one stays). After that
+     nothing of the server's is held, so a policy the host picks under the
+     unflagged list is the host's and stays when the last script goes.
+   - When ranked is given back, the AI policy goes to aiNone with it. The
+     settings handler never lets ranked run with bots allowed (turning ranked
+     on sets aiNone, and ranked refuses any other policy), and a host may
+     have turned bots on while the script held ranked off. */
 void serverSimScenarioApplyLobbyRules(ServerSim *sim) {
     gameType typeBefore;
 
@@ -2352,8 +2387,6 @@ void serverSimScenarioApplyLobbyRules(ServerSim *sim) {
             sim->preScenarioGameType =
                 (was == gameScripted) ? gameOpen : was;
             sim->preScenarioRanked   = serverSimGetRanked(sim);
-            sim->preScenarioAiPolicy = sim->aiPolicy;
-            sim->preScenarioAiType   = serverSimGetBotAiType(sim);
         }
         if (!sim->scenarioIdentity.keepsWinCondition &&
             gameTypeGet(&sim->sim.game) != gameScripted) {
@@ -2362,19 +2395,37 @@ void serverSimScenarioApplyLobbyRules(ServerSim *sim) {
         if (serverSimGetRanked(sim)) {
             serverSimSetRanked(sim, false);
         }
-        if (serverSimGetBotAiType(sim) == aiNone) {
-            serverSimSetAiPolicy(sim, (uint8_t)aiYes);
-            serverSimSetBotAiType(sim, aiYes);
+        if (sim->scenarioIdentity.needsBots) {
+            if (serverSimGetBotAiType(sim) == aiNone) {
+                /* Remembered here, just before the raise, not at the first
+                   script: see the comment above. */
+                sim->preScenarioAiPolicy = sim->aiPolicy;
+                sim->preScenarioAiType   = serverSimGetBotAiType(sim);
+                serverSimSetAiPolicy(sim, (uint8_t)aiYes);
+                serverSimSetBotAiType(sim, aiYes);
+                sim->preScenarioAiRaised = true;
+            }
+        } else if (sim->preScenarioAiRaised) {
+            /* The list no longer says needs_bots, so the raise is undone now.
+               What the host picks from here on is the host's. */
+            scenarioGiveBackAi(sim);
         }
     } else if (sim->preScenarioGameType != (gameType)0) {
         serverSimSetGameType(sim, sim->preScenarioGameType);
         serverSimSetRanked(sim, sim->preScenarioRanked);
-        serverSimSetAiPolicy(sim, sim->preScenarioAiPolicy);
-        serverSimSetBotAiType(sim, sim->preScenarioAiType);
+        if (sim->preScenarioRanked) {
+            /* Ranked never runs with bots allowed. */
+            serverSimSetAiPolicy(sim, (uint8_t)aiNone);
+            serverSimSetBotAiType(sim, aiNone);
+            sim->preScenarioAiRaised = false;
+        } else if (sim->preScenarioAiRaised) {
+            scenarioGiveBackAi(sim);
+        }
         sim->preScenarioGameType = (gameType)0;
         sim->preScenarioRanked   = false;
         sim->preScenarioAiPolicy = 0;
         sim->preScenarioAiType   = aiNone;
+        sim->preScenarioAiRaised = false;
     } else if (gameTypeGet(&sim->sim.game) == gameScripted) {
         /* On the scripted type with no script and nothing held: a lobby that
            got there without going through the arm above. There is no earlier
@@ -3157,12 +3208,13 @@ static void scenarioFillPanelEvent(ControlEvent *evt, BYTE panel,
  * that leaves here is one every client can draw. The decode is thrown away:
  * what the arm needs from it is whether it decodes at all.
  *
- * One update per panel per destination per tick. The key is the pair, not the
- * panel alone — a scenario giving each of sixteen players its own copy of
- * panel 0 is ordinary, and the drain already bounds how many ops one tick
- * applies. A second update for the same pair in the same tick is refused
- * rather than queued: every update replaces the whole list, so the one that
- * would have been overwritten was never going to be seen. */
+ * One update per panel per destination per script per tick. The key is
+ * the triple, not the panel alone — a scenario giving each of sixteen
+ * players its own copy of panel 0 is ordinary, two scripts of the round's
+ * list each keep their own panel, and the drain already bounds how many ops
+ * one tick applies. A second update for the same key in the same tick is
+ * refused rather than queued: every update replaces the whole list, so the
+ * one that would have been overwritten was never going to be seen. */
 static ScnOpResult scenarioOpPanel(ServerSim *sim, const ScnOpPanel *p) {
     ControlEvent   evt;
     ScnPanelStore *store;
@@ -3186,8 +3238,17 @@ static ScnOpResult scenarioOpPanel(ServerSim *sim, const ScnOpPanel *p) {
         return SCN_OP_RANGE;
     }
 
+    /* The limit is per script: two scripts that each update their own panel
+       in the same tick both reach the client, which keeps one list per
+       script, and each keeps its own row here so a late joiner is given
+       both. Only a second update from the same script is the one that
+       could never be seen. */
+    if (p->owner >= SCN_PANEL_OWNERS) {
+        return SCN_OP_RANGE;
+    }
     store = &sim->scenarioPanels[p->panel]
-                                [scenarioPanelTargetIndex(destTeam, destPlayer)];
+                                [scenarioPanelTargetIndex(destTeam, destPlayer)]
+                                [p->owner];
     /* valid is what makes tick 0 a tick like any other: a store that has
        never held a list reads tick 0 too, and without the flag the first
        update of a round would look like the second. */
@@ -3204,11 +3265,11 @@ static ScnOpResult scenarioOpPanel(ServerSim *sim, const ScnOpPanel *p) {
 
     /* Recorded from the store, which holds the same bytes and is not const,
        so the record costs no second copy. */
-    logAddEvent(log_ScnPanel, p->panel, destTeam, destPlayer, 0, p->len,
-                (char *)store->bytes);
+    logAddEvent(log_ScnPanel, SCN_PANEL_WIRE(p->panel, p->owner), destTeam,
+                destPlayer, 0, p->len, (char *)store->bytes);
 
-    scenarioFillPanelEvent(&evt, p->panel, destTeam, destPlayer, p->bytes,
-                           p->len);
+    scenarioFillPanelEvent(&evt, SCN_PANEL_WIRE(p->panel, p->owner), destTeam,
+                           destPlayer, p->bytes, p->len);
     serverSimPublishControl(sim, &evt);
     return SCN_OP_OK;
 }
@@ -3431,25 +3492,19 @@ void serverSimScenarioReplayPanels(
     int          panel;
     int          lastTarget;
     int          target;
+    int          owner;
 
     if (sim == NULL || deliver == NULL) {
         return;
     }
     /* Row 0 is the everyone-addressed list and the rows above it are the
        teams and the slots. Without withTargeted the walk stops after row 0,
-       which is one record per panel rather than up to 32. */
+       which is one record per panel per script rather than up to 32. */
     lastTarget = withTargeted ? SCN_PANEL_TARGETS : 1;
     for (panel = 0; panel < SCN_PANEL_IDS; panel++) {
         for (target = 0; target < lastTarget; target++) {
-            const ScnPanelStore *store = &sim->scenarioPanels[panel][target];
             BYTE destTeam;
             BYTE destPlayer;
-            if (!store->valid || store->len == 0) {
-                /* A panel nothing has written, or one a scenario cleared. A
-                   joiner's panels start empty either way, so replaying the
-                   clear would send it what it already has. */
-                continue;
-            }
             if (target < MAX_TANKS) {
                 destTeam   = (BYTE)target;   /* 0 = everyone, else the team */
                 destPlayer = 0xFF;
@@ -3457,9 +3512,24 @@ void serverSimScenarioReplayPanels(
                 destTeam   = 0;
                 destPlayer = (BYTE)(target - MAX_TANKS);   /* a 0-based slot */
             }
-            scenarioFillPanelEvent(&evt, (BYTE)panel, destTeam, destPlayer,
-                                   store->bytes, store->len);
-            deliver(ctx, &evt);
+            /* Each script of the round's list keeps its own row, so every
+               script's latest list goes, in list order. */
+            for (owner = 0; owner < SCN_PANEL_OWNERS; owner++) {
+                const ScnPanelStore *store =
+                    &sim->scenarioPanels[panel][target][owner];
+                if (!store->valid || store->len == 0) {
+                    /* A panel nothing has written, or one a scenario
+                       cleared. A joiner's panels start empty either way,
+                       so replaying the clear would send it what it already
+                       has. */
+                    continue;
+                }
+                scenarioFillPanelEvent(&evt,
+                                       SCN_PANEL_WIRE(panel, owner),
+                                       destTeam, destPlayer, store->bytes,
+                                       store->len);
+                deliver(ctx, &evt);
+            }
         }
     }
 }
@@ -4616,6 +4686,7 @@ void serverSimSetScenarioIdentity(ServerSim *sim,
                                   bool extraTeams,
                                   bool keepsWinCondition,
                                   bool bound,
+                                  bool needsBots,
                                   bool unsafe) {
     if (sim == NULL) return;
     memset(&sim->scenarioIdentity, 0, sizeof(sim->scenarioIdentity));
@@ -4638,6 +4709,7 @@ void serverSimSetScenarioIdentity(ServerSim *sim,
     sim->scenarioIdentity.extraTeams        = extraTeams;
     sim->scenarioIdentity.keepsWinCondition = keepsWinCondition;
     sim->scenarioIdentity.bound             = bound;
+    sim->scenarioIdentity.needsBots         = needsBots;
     sim->scenarioIdentity.unsafe            = unsafe;
     scnCopyIdentityText(sim->scenarioIdentity.name,
                         sizeof(sim->scenarioIdentity.name), name);

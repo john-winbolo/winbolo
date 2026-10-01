@@ -94,10 +94,10 @@
 #define LS_SCN_FILE_LEN 8
 #define LS_SCN_DESC_LEN 8
 /* source(1) + extraTeams(1), the three strings, and behind them the base
- * game type(1), the kind(1), bound(1) and unsafe(1). */
+ * game type(1), the kind(1), bound(1), unsafe(1) and needsBots(1). */
 #define LS_SCRIPTED_BODY_LEN                                                \
     (LS_PLAIN_BODY_LEN + 1 + 1 + (1 + LS_SCN_NAME_LEN)                      \
-     + (1 + LS_SCN_FILE_LEN) + (1 + LS_SCN_DESC_LEN) + 1 + 1 + 1 + 1)
+     + (1 + LS_SCN_FILE_LEN) + (1 + LS_SCN_DESC_LEN) + 1 + 1 + 1 + 1 + 1)
 
 /* Distinct values throughout, so a pair of fields swapped between the event
  * and the bytes shows up as two mismatches rather than cancelling out. The
@@ -312,6 +312,13 @@ int run_lobby_scenario_settings_scripted_bytes(void) {
                   "the unsafe flag should be at offset 111, not %u",
                   (unsigned)pos);
     want[pos++] = 1;
+    /* And needs_bots behind unsafe. Zero here: lsFillPlain leaves it
+       clear, and this is the byte a decoder reads as 1 when it is absent,
+       so a zero written in the right place is what shows. */
+    UT_ASSERT_MSG(pos == 112,
+                  "the needs-bots flag should be at offset 112, not %u",
+                  (unsigned)pos);
+    want[pos++] = 0;
     UT_ASSERT_MSG(pos == LS_SCRIPTED_BODY_LEN,
                   "the case's own expected bytes came to %u, not %d",
                   (unsigned)pos, LS_SCRIPTED_BODY_LEN);
@@ -350,6 +357,9 @@ int run_lobby_scenario_settings_roundtrip(void) {
     in.u.lobbySettings.scenarioKeepsWinCondition = true;
     /* True for the same reason: a byte nobody wrote reads as sandboxed. */
     in.u.lobbySettings.scenarioUnsafe = true;
+    /* False, the other way round: a byte nobody wrote reads as needing
+       bots, which is what every older server enforced. */
+    in.u.lobbySettings.scenarioNeedsBots = false;
 
     UT_ASSERT(benc(&in, NULL, body, sizeof(body), &bodyLen) == ENCODE_OK);
     memset(&out, 0, sizeof(out));
@@ -381,14 +391,33 @@ int run_lobby_scenario_settings_roundtrip(void) {
     UT_ASSERT_MSG(out.u.lobbySettings.scenarioUnsafe,
                   "the script mode did not survive: the unsafe flag came back "
                   "false");
+    UT_ASSERT_MSG(!out.u.lobbySettings.scenarioNeedsBots,
+                  "the needs-bots flag did not survive: it came back true");
 
-    /* The same body one byte short, as a sender that predates the unsafe
-       byte writes it. Everything up to bound still decodes, and the mode
-       reads as sandboxed. */
+    /* The same body one byte short, as a sender that predates the
+       needs-bots byte writes it. Everything up to unsafe still decodes, and
+       the list reads as needing bots, which that sender enforced for every
+       script. */
     {
         ControlEvent shortOut;
         memset(&shortOut, 0, sizeof(shortOut));
         UT_ASSERT_MSG(bdec(body, bodyLen - 1, &shortOut),
+                      "a body without the needs-bots byte did not decode");
+        UT_ASSERT_MSG(shortOut.u.lobbySettings.scenarioNeedsBots,
+                      "a body without the needs-bots byte decoded as not "
+                      "needing bots");
+        UT_ASSERT_MSG(shortOut.u.lobbySettings.scenarioUnsafe,
+                      "a body without the needs-bots byte lost the unsafe "
+                      "flag ahead of it");
+    }
+
+    /* Two bytes short, as a sender that predates the unsafe byte writes it.
+       Everything up to bound still decodes, and the mode reads as
+       sandboxed. */
+    {
+        ControlEvent shortOut;
+        memset(&shortOut, 0, sizeof(shortOut));
+        UT_ASSERT_MSG(bdec(body, bodyLen - 2, &shortOut),
                       "a body without the unsafe byte did not decode");
         UT_ASSERT_MSG(!shortOut.u.lobbySettings.scenarioUnsafe,
                       "a body without the unsafe byte decoded as unsafe");
@@ -421,6 +450,8 @@ int run_lobby_scenario_settings_roundtrip(void) {
         UT_ASSERT_MSG(plainOut.u.lobbySettings.scenarioBaseGame == 0,
                       "a no-scenario body decoded to base game type %u",
                       (unsigned)plainOut.u.lobbySettings.scenarioBaseGame);
+        UT_ASSERT_MSG(!plainOut.u.lobbySettings.scenarioNeedsBots,
+                      "a no-scenario body decoded as needing bots");
     }
     return 0;
 }
@@ -439,10 +470,12 @@ static ServerSim *lsLobbySim(void) {
     return sim;
 }
 
+/* A scenario that fields its own bots (needs_bots), which is what the cases
+ * below that expect the lobby moved off aiNone are about. */
 static void lsAttachIdentity(ServerSim *sim) {
     serverSimSetScenarioIdentity(sim, lobbyScenarioMap, LS_SCN_NAME,
                                  LS_SCN_FILE, LS_SCN_DESC, true,
-                                 false, false, false);
+                                 false, false, true, false);
 }
 
 /* Commit a map. Which map does not matter here — what matters is that the
@@ -496,7 +529,7 @@ int run_lobby_scenario_commit_sets_type(void) {
     UT_ASSERT(serverSimGetGameType(sim) == gameScripted);
 
     serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
-                                 false, false, false, false);
+                                 false, false, false, false, false);
     UT_ASSERT_MSG(lsCommitMap(sim), "the plain commit was refused");
     UT_ASSERT_MSG(serverSimGetGameType(sim) == gameTournament,
                   "a plain map gave back game type %d, wanted the host's "
@@ -579,7 +612,7 @@ int run_lobby_scenario_reset_keeps_rules(void) {
     /* And what the reset remembered as displaced is the operator's own type,
        which is what a plain map committed from here gives back. */
     serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
-                                 false, false, false, false);
+                                 false, false, false, false, false);
     UT_ASSERT_MSG(lsCommitMap(sim), "the plain commit was refused");
     UT_ASSERT_MSG(serverSimGetGameType(sim) == gameTournament,
                   "a plain map after the reset gave back game type %d, wanted "
@@ -634,7 +667,7 @@ int run_lobby_scenario_refuses_ranked(void) {
 
     /* With the scenario gone it is the host's again. */
     serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
-                                 false, false, false, false);
+                                 false, false, false, false, false);
     UT_ASSERT_MSG(serverSimApplyLobbySetting(sim, LST_RANKED, &on, 1),
                   "ranked stayed refused after the scenario went");
     UT_ASSERT(serverSimGetRanked(sim));
@@ -707,6 +740,233 @@ int run_lobby_scenario_refuses_ai_none(void) {
     return 0;
 }
 
+/* ── 6b. A script that does not say needs_bots ──────────────────── */
+
+/* A mod like Virus plays with the bots a host adds, or with none. It does
+ * not say needs_bots, so attaching it leaves a lobby on aiNone, the host may
+ * still pick aiNone while it is attached, and what the host picks while it
+ * is attached is still what the lobby is on once it goes. */
+int run_lobby_scenario_no_bots_script_keeps_ai(void) {
+    ServerSim *sim = lsLobbySim();
+    uint8_t    v;
+
+    UT_ASSERT(sim != NULL);
+    v = (uint8_t)aiNone;
+    UT_ASSERT_MSG(serverSimApplyLobbySetting(sim, LST_AI_POLICY, &v, 1),
+                  "setup: aiNone was refused on a lobby with no scenario");
+
+    /* A mod that keeps the win condition and does not say needs_bots. */
+    serverSimSetScenarioIdentity(sim, lobbyScenarioMod, "Virus", "virus.lua",
+                                 "", false, true, false, false, false);
+    UT_ASSERT_MSG(lsCommitMap(sim), "the commit with the mod was refused");
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) == aiNone,
+                  "a script without needs_bots moved the AI policy to %d, "
+                  "wanted it left on aiNone (%d)",
+                  (int)serverSimGetBotAiType(sim), (int)aiNone);
+
+    /* aiNone is still the host's to pick while it is attached. */
+    v = (uint8_t)aiNone;
+    {
+        CmdResult r = serverSimApplyLobbySettingResult(sim, LST_AI_POLICY,
+                                                       &v, 1);
+        UT_ASSERT_MSG(r == CMD_OK,
+                      "aiNone on a lobby running a script without needs_bots "
+                      "answered %d, wanted CMD_OK (%d)", (int)r, (int)CMD_OK);
+    }
+
+    /* The host turns bots on while the mod is attached. */
+    v = (uint8_t)aiFull;
+    UT_ASSERT(serverSimApplyLobbySetting(sim, LST_AI_POLICY, &v, 1));
+    UT_ASSERT(lsCommitMap(sim));
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) == aiFull,
+                  "a second commit with the mod moved the host's aiFull to %d",
+                  (int)serverSimGetBotAiType(sim));
+
+    /* And the mod going does not undo the host's own choice: the script
+       never moved the policy, so there is nothing of its to give back. */
+    serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
+                                 false, false, false, false, false);
+    UT_ASSERT(lsCommitMap(sim));
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) == aiFull,
+                  "the mod going moved the host's aiFull to %d",
+                  (int)serverSimGetBotAiType(sim));
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 6c. A script that says needs_bots ──────────────────────────── */
+
+/* The other side: a script that says needs_bots moves a lobby off aiNone,
+ * and the lobby goes back to aiNone once the last script goes, even after a
+ * host picked another policy that allows bots in between. */
+int run_lobby_scenario_needs_bots_raises_and_gives_back(void) {
+    ServerSim *sim = lsLobbySim();
+    uint8_t    v;
+
+    UT_ASSERT(sim != NULL);
+    v = (uint8_t)aiNone;
+    UT_ASSERT(serverSimApplyLobbySetting(sim, LST_AI_POLICY, &v, 1));
+
+    serverSimSetScenarioIdentity(sim, lobbyScenarioMod, "Survival",
+                                 "survival.lua", "", false, false, true,
+                                 true, false);
+    UT_ASSERT(lsCommitMap(sim));
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) == aiYes,
+                  "a script with needs_bots left the AI policy at %d, wanted "
+                  "aiYes (%d)", (int)serverSimGetBotAiType(sim), (int)aiYes);
+
+    v = (uint8_t)aiFull;
+    UT_ASSERT(serverSimApplyLobbySetting(sim, LST_AI_POLICY, &v, 1));
+    UT_ASSERT(serverSimGetBotAiType(sim) == aiFull);
+
+    serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
+                                 false, false, false, false, false);
+    UT_ASSERT(lsCommitMap(sim));
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) == aiNone,
+                  "the needs_bots script going left the AI policy at %d, "
+                  "wanted the aiNone (%d) it moved the lobby off",
+                  (int)serverSimGetBotAiType(sim), (int)aiNone);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 6d. Ranked given back takes the AI policy back to aiNone ──── */
+
+/* Helpers for 6d to 6f: put one script on the lobby, or none. */
+static void lsSetVirus(ServerSim *sim) {
+    serverSimSetScenarioIdentity(sim, lobbyScenarioMod, "Virus", "virus.lua",
+                                 "", false, true, false, false, false);
+}
+
+static void lsSetSurvival(ServerSim *sim) {
+    serverSimSetScenarioIdentity(sim, lobbyScenarioMod, "Survival",
+                                 "survival.lua", "", false, false, true,
+                                 true, false);
+}
+
+static void lsSetNoScript(ServerSim *sim) {
+    serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
+                                 false, false, false, false, false);
+}
+
+/* A ranked lobby runs with aiNone. An unflagged script turns ranked off and
+ * leaves the AI alone, so the host may turn bots on. When the script goes,
+ * ranked comes back, and the AI policy must go back to aiNone with it:
+ * ranked never runs with bots allowed. */
+int run_lobby_scenario_ranked_give_back_clears_ai(void) {
+    ServerSim *sim = lsLobbySim();
+    uint8_t    v;
+
+    UT_ASSERT(sim != NULL);
+    v = 1;
+    UT_ASSERT(serverSimApplyLobbySetting(sim, LST_RANKED, &v, 1));
+    UT_ASSERT(serverSimGetRanked(sim));
+    UT_ASSERT(serverSimGetBotAiType(sim) == aiNone);
+
+    lsSetVirus(sim);
+    UT_ASSERT(lsCommitMap(sim));
+    UT_ASSERT(!serverSimGetRanked(sim));
+    UT_ASSERT(serverSimGetBotAiType(sim) == aiNone);
+
+    v = (uint8_t)aiYes;
+    UT_ASSERT_MSG(serverSimApplyLobbySetting(sim, LST_AI_POLICY, &v, 1),
+                  "aiYes was refused under an unflagged script");
+    UT_ASSERT(serverSimGetBotAiType(sim) == aiYes);
+
+    lsSetNoScript(sim);
+    UT_ASSERT(lsCommitMap(sim));
+    UT_ASSERT_MSG(serverSimGetRanked(sim), "ranked did not come back");
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) == aiNone,
+                  "ranked came back with AI type %d, wanted aiNone (%d)",
+                  (int)serverSimGetBotAiType(sim), (int)aiNone);
+    UT_ASSERT_MSG(sim->aiPolicy == (uint8_t)aiNone,
+                  "ranked came back with AI policy %d, wanted aiNone (%d)",
+                  (int)sim->aiPolicy, (int)aiNone);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 6e. The raise is undone when the list stops saying needs_bots ── */
+
+/* The flagged script goes while an unflagged one stays. The raise is undone
+ * at once. What the host then picks under the unflagged script is the
+ * host's, and it stays when the last script goes. */
+int run_lobby_scenario_needs_bots_drop_gives_back(void) {
+    ServerSim *sim = lsLobbySim();
+    uint8_t    v;
+
+    UT_ASSERT(sim != NULL);
+    v = (uint8_t)aiNone;
+    UT_ASSERT(serverSimApplyLobbySetting(sim, LST_AI_POLICY, &v, 1));
+
+    lsSetSurvival(sim);
+    UT_ASSERT(lsCommitMap(sim));
+    UT_ASSERT(serverSimGetBotAiType(sim) == aiYes);
+
+    /* The list changes to one that does not say needs_bots, without passing
+       through an empty list. */
+    lsSetVirus(sim);
+    UT_ASSERT(lsCommitMap(sim));
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) == aiNone,
+                  "the flagged script went and the AI type stayed %d, wanted "
+                  "the aiNone (%d) from before the raise",
+                  (int)serverSimGetBotAiType(sim), (int)aiNone);
+
+    /* The host turns bots on under the unflagged script. */
+    v = (uint8_t)aiFull;
+    UT_ASSERT(serverSimApplyLobbySetting(sim, LST_AI_POLICY, &v, 1));
+    UT_ASSERT(serverSimGetBotAiType(sim) == aiFull);
+
+    lsSetNoScript(sim);
+    UT_ASSERT(lsCommitMap(sim));
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) == aiFull,
+                  "the last script went and the host's aiFull became %d",
+                  (int)serverSimGetBotAiType(sim));
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 6f. The AI policy is remembered at the raise ───────────────── */
+
+/* The host is on aiFull, adds an unflagged script, then picks aiNone. A
+ * flagged script then raises the lobby. The give-back returns the aiNone
+ * from just before the raise, not the aiFull from the first script. */
+int run_lobby_scenario_needs_bots_snapshot_at_raise(void) {
+    ServerSim *sim = lsLobbySim();
+    uint8_t    v;
+
+    UT_ASSERT(sim != NULL);
+    v = (uint8_t)aiFull;
+    UT_ASSERT(serverSimApplyLobbySetting(sim, LST_AI_POLICY, &v, 1));
+
+    lsSetVirus(sim);
+    UT_ASSERT(lsCommitMap(sim));
+    UT_ASSERT(serverSimGetBotAiType(sim) == aiFull);
+
+    v = (uint8_t)aiNone;
+    UT_ASSERT(serverSimApplyLobbySetting(sim, LST_AI_POLICY, &v, 1));
+    UT_ASSERT(serverSimGetBotAiType(sim) == aiNone);
+
+    lsSetSurvival(sim);
+    UT_ASSERT(lsCommitMap(sim));
+    UT_ASSERT(serverSimGetBotAiType(sim) == aiYes);
+
+    lsSetNoScript(sim);
+    UT_ASSERT(lsCommitMap(sim));
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) == aiNone,
+                  "the give-back returned AI type %d, wanted the aiNone (%d) "
+                  "from just before the raise",
+                  (int)serverSimGetBotAiType(sim), (int)aiNone);
+    UT_ASSERT(sim->aiPolicy == (uint8_t)aiNone);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
 /* ── 7. The game type a scripted round is on ──────────────────────── */
 
 int run_lobby_scenario_refuses_game_type(void) {
@@ -763,7 +1023,7 @@ int run_lobby_scenario_refuses_game_type(void) {
 
     /* With the scenario gone the type is the host's again. */
     serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
-                                 false, false, false, false);
+                                 false, false, false, false, false);
     UT_ASSERT_MSG(serverSimApplyLobbySetting(sim, LST_GAME_TYPE, &types[1], 1),
                   "the game type stayed refused after the scenario went");
     UT_ASSERT(serverSimGetGameType(sim) == gameTournament);
@@ -804,7 +1064,7 @@ int run_lobby_scenario_boot_sets_type(void) {
 
     /* And the give-back works from here as it does after a commit. */
     serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
-                                 false, false, false, false);
+                                 false, false, false, false, false);
     UT_ASSERT_MSG(lsCommitMap(sim), "the plain commit was refused");
     UT_ASSERT_MSG(serverSimGetGameType(sim) == gameTournament,
                   "a plain commit after a boot gave back game type %d, "
@@ -853,7 +1113,7 @@ int run_lobby_scenario_identity_strips_controls(void) {
 
     serverSimSetScenarioIdentity(sim, lobbyScenarioMap, "Wave\tDefense",
                                  "wave\vdefense.lua", kDesc, true, false,
-                                 false, false);
+                                 false, false, false);
     memset(&evt, 0, sizeof(evt));
     serverSimFillLobbySettingsEvent(sim, &evt);
 

@@ -16,6 +16,15 @@
  *   - brain_crash_log_falls_back_to_luaptr:
  *       no state.bot_index; verifies the fallback filename pattern
  *       brain_crash_*_L0x*.log is used instead.
+ *
+ * And two for the message handler brainCoreCallThink installs,
+ * brc_traceback_msgh, run through a lua_pcall of their own:
+ *   - brain_msgh_budget_kill_no_traceback:
+ *       "tick_budget_exceeded" raised while a count hook is installed,
+ *       as the per-think budget hook raises it, comes back unchanged.
+ *   - brain_msgh_real_error_keeps_traceback:
+ *       a plain error still gets "stack traceback", and so does one
+ *       that mentions tick_budget_exceeded with no hook installed.
  */
 
 #include <stdio.h>
@@ -263,4 +272,73 @@ int run_brain_crash_log_falls_back_to_luaptr(void) {
     lua_close(L);
     cleanup_tempdir(TEMPDIR);
     return rc;
+}
+
+/* A count hook that never fires within these tests' few instructions. It
+ * stands in for the budget hook: the handler only asks whether one is
+ * installed. */
+static void msgh_idle_hook(lua_State *L, lua_Debug *ar) {
+    (void)L;
+    (void)ar;
+}
+
+/* Raises the message in upvalue 1, as luaL_error does from the budget
+ * hook. */
+static int msgh_raise(lua_State *L) {
+    return luaL_error(L, "%s", lua_tostring(L, lua_upvalueindex(1)));
+}
+
+/* Runs msgh_raise(text) under lua_pcall with brc_traceback_msgh as the
+ * handler, with msgh_idle_hook installed when withHook is set, and copies
+ * the handler's result into out. Returns the pcall status. */
+static int msgh_run(const char *text, bool withHook, char *out,
+                    size_t outLen) {
+    lua_State *L = luaL_newstate();
+    int status;
+    const char *res;
+
+    out[0] = '\0';
+    if (L == NULL) return -1;
+    luaL_openlibs(L);
+    if (withHook) {
+        lua_sethook(L, msgh_idle_hook, LUA_MASKCOUNT, 1000000);
+    }
+    lua_pushcfunction(L, brc_traceback_msgh);
+    lua_pushstring(L, text);
+    lua_pushcclosure(L, msgh_raise, 1);
+    status = lua_pcall(L, 0, 0, 1);
+    res = lua_tostring(L, -1);
+    if (res != NULL) SDL_strlcpy(out, res, outLen);
+    lua_close(L);
+    return status;
+}
+
+int run_brain_msgh_budget_kill_no_traceback(void) {
+    char out[4096];
+    int status = msgh_run("tick_budget_exceeded", true, out, sizeof(out));
+
+    UT_ASSERT_MSG(status != LUA_OK, "the raise should fail the pcall");
+    UT_ASSERT_MSG(strstr(out, "tick_budget_exceeded") != NULL,
+                  "budget kill message lost: %s", out);
+    UT_ASSERT_MSG(strstr(out, "stack traceback") == NULL,
+                  "budget kill built a traceback: %s", out);
+    return 0;
+}
+
+int run_brain_msgh_real_error_keeps_traceback(void) {
+    char out[4096];
+    int status = msgh_run("TEST_MSGH_REAL_ERROR", true, out, sizeof(out));
+
+    UT_ASSERT_MSG(status != LUA_OK, "the raise should fail the pcall");
+    UT_ASSERT_MSG(strstr(out, "TEST_MSGH_REAL_ERROR") != NULL,
+                  "real error message lost: %s", out);
+    UT_ASSERT_MSG(strstr(out, "stack traceback") != NULL,
+                  "real error has no traceback: %s", out);
+
+    /* The text alone, with no hook installed, is not a budget kill. */
+    status = msgh_run("tick_budget_exceeded", false, out, sizeof(out));
+    UT_ASSERT_MSG(status != LUA_OK, "the raise should fail the pcall");
+    UT_ASSERT_MSG(strstr(out, "stack traceback") != NULL,
+                  "unhooked error has no traceback: %s", out);
+    return 0;
 }

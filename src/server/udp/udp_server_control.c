@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /*********************************************************
@@ -41,7 +41,7 @@
 #include "../../common/wb_log.h"      /* WB_LOG_ERROR, WB_LOG_CAT_NET */
 #include "../../common/mp_diag_log.h" /* mpDiagLog */
 #include "brain_list.h"          /* BRAIN_LIST_MAX, BRAIN_ANNOUNCE_MAX */
-#include "scenario_panel.h"      /* SCN_PANEL_IDS, SCN_PANEL_MAX, SCN_MARKERS_MAX */
+#include "scenario_panel.h"      /* SCN_PANEL_IDS, _OWNERS, _MAX, SCN_MARKERS_MAX */
 #include "scenario_settings.h"   /* SCN_SETTING_ID_LEN */
 #include "server_sim_internal.h" /* SCN_PANEL_TARGETS */
 
@@ -71,7 +71,11 @@
  *   script settings: a CLEAR and one SET per value
  *   brain announces: one per brain (brain docs go on CHANNEL_BULK)
  *   scenario rules fragments, of SCN_RULES_FRAG_ROWS 9-byte rows
- *   scenario panels: every panel, for everyone, each team and each slot
+ *   scenario panels: each script's list of every panel, for everyone, the
+ *     joiner's team and the joiner's slot. The replay hands up all
+ *     SCN_PANEL_TARGETS destinations, but udpClientDeliverControl drops the
+ *     other teams' and slots' lists before they are queued, so three per
+ *     script reach here
  *   small records of at most 128 body bytes: a slot, a lobby join, bot config
  *     and bot brain per player; 32 spectator slots; 15 team metadata rows; 16
  *     markers; 31 score rows; two votes, balance, map skip, entity sync,
@@ -89,7 +93,7 @@
                     (SCN_SETTING_ID_LEN - 1) + 4)                             \
      + BRAIN_LIST_MAX * JOIN_MSG(9 + BRAIN_ANNOUNCE_MAX)                      \
      + CTRL_SCENARIO_RULES_FRAGS_MAX * JOIN_MSG(3 + SCN_RULES_FRAG_ROWS * 9)  \
-     + SCN_PANEL_IDS * SCN_PANEL_TARGETS * JOIN_MSG(3 + SCN_PANEL_MAX)        \
+     + SCN_PANEL_IDS * SCN_PANEL_OWNERS * 3u * JOIN_MSG(3 + SCN_PANEL_MAX)    \
      + (4u * MAX_TANKS + 32u + (MAX_TANKS - 1) + SCN_MARKERS_MAX +            \
         (2u * MAX_TANKS - 1) + 7u) * JOIN_MSG_SMALL                           \
      + 32u * JOIN_MSG_FULL)

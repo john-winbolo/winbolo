@@ -87,6 +87,17 @@ if [[ "$STAGED" -eq 0 ]]; then
     exit 1
 fi
 
+# The licence, its additional permissions and the third-party notices, in a
+# folder of their own. The GPL requires every copy of the program to carry a
+# copy of the licence, and WinBoloDS, MapEditor.app and Log Viewer.app do not
+# carry one of their own.
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+mkdir -p "$STAGE/Licence"
+cp "$REPO_ROOT/LICENSE" \
+   "$REPO_ROOT/LICENSE-EXCEPTION.md" \
+   "$REPO_ROOT/THIRD_PARTY_NOTICES.md" \
+   "$STAGE/Licence/"
+
 echo "Staged for DMG:"
 ls -1 "$STAGE" | sed 's/^/  /'
 echo ""
@@ -101,6 +112,7 @@ create-dmg \
     --icon "MapEditor.app"   290 180 \
     --icon "Log Viewer.app"  450 180 \
     --icon "WinBoloDS"       130 320 \
+    --icon "Licence"         290 320 \
     --app-drop-link          450 320 \
     "$DMG" \
     "$STAGE"

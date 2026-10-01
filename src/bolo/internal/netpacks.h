@@ -5,13 +5,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 
@@ -848,16 +851,6 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               cut rather than dropping the
                                               entry. */
 
-#define PACKET_LOBBY_SET_SCENARIO      225  /* client → server
-                                              { pathLen 1, path N } the lobby
-                                              host picking one of the
-                                              scenarios above, by the file
-                                              name the list gave. pathLen 0
-                                              is the message that selects
-                                              none, so unlike SET_MAP an
-                                              empty path is carried rather
-                                              than refused. */
-
 #define PACKET_SET_SCRIPT_LIST         226  /* client -> server
                                               { count 1, then count entries
                                                 of { fileLen 1, file N } }
@@ -871,9 +864,8 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               and the server's state is a
                                               straight assignment rather than
                                               a splice. count 0 clears the
-                                              list, which is what
-                                              SET_SCENARIO with pathLen 0
-                                              does for the one-script case.
+                                              list, and a one-row list picks
+                                              a single script.
                                               Worst case on the wire is
                                               8 + 4 + 1 + 10 * (1 + 127)
                                               = 1293 bytes, which is why

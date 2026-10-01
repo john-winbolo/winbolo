@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -41,16 +44,14 @@
  * NULL or "" leaves it unset (writes fall back to "<mapDirRoot>/Uploads").
  * The script* arguments are the same for player scripts: scriptPolicy is
  * always applied (0 = ALLOW), a scriptMaxFiles or scriptMaxStorageBytes of 0
- * keeps the create-time default (32 files / 64 MiB), and a NULL or ""
- * scriptDir clears the script persist directory. */
+ * keeps the create-time default (32 files / 64 MiB). */
 void transportUdpServerSetUploadConfig(UploadPolicy policy,
                                        uint8_t maxFiles,
                                        uint32_t maxStorageBytes,
                                        const char *persistDir,
                                        ScriptUploadPolicy scriptPolicy,
                                        uint8_t scriptMaxFiles,
-                                       uint32_t scriptMaxStorageBytes,
-                                       const char *scriptDir);
+                                       uint32_t scriptMaxStorageBytes);
 
 typedef struct {
   unsigned short udpPort;

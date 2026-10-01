@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -40,9 +43,8 @@
  * encoding. The largest variant is CMD_SET_SCRIPT_LIST, which carries a
  * whole script list: header(8) + cmdSeq(4) + count(1) +
  * CMD_SCRIPT_LIST_MAX * (1 + CMD_SCRIPT_LIST_FILE_LEN - 1) =
- * 13 + 10 * 128 = 1293. Behind it are CMD_LOBBY_SET_MAP and
- * CMD_LOBBY_SET_SCENARIO (header + 1 + 256 = 265) and CMD_CHAT
- * (header + 1 + 128 = 137).
+ * 13 + 10 * 128 = 1293. Behind it are CMD_LOBBY_SET_MAP (header + 1 +
+ * 256 = 265) and CMD_CHAT (header + 1 + 128 = 137).
  *
  * 1400 rather than 1293 so this stays one number a reader can hold against
  * the datagram cap, which is also 1400. The queue drain in

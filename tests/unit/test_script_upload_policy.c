@@ -3,8 +3,7 @@
  *
  * ScriptUploadPolicy is set from a word — -scriptuploads on the dedicated
  * server, --scriptuploads on the headless runner, "Script Upload Policy" in
- * the desktop's preferences — with the old -nouploadscripts flag and "Run
- * Upload Scripts" preference read as off when no word is given. It goes out
+ * the desktop's preferences — and is allow when no word is given. It goes out
  * to every client on the lobby-settings event, one byte directly after the
  * map upload policy.
  *
@@ -13,8 +12,7 @@
  * whenever the encoder and the decoder agreed with each other.
  *
  * run_script_upload_policy_resolve   — the three words in any case, an
- *                                      unknown word, and the legacy flag with
- *                                      and without a word
+ *                                      unknown word, and no word
  * run_script_upload_policy_word      — the preference spelling of each value
  * run_script_upload_policy_codec     — the byte at its offset, both policies
  *                                      back out, and a body that stops before
@@ -69,31 +67,21 @@
 
 int run_script_upload_policy_resolve(void) {
     /* The three words, in the case each is least likely to be typed in. */
-    UT_ASSERT_MSG(scriptUploadPolicyResolve("off", false) == SCRIPT_UPLOAD_OFF,
+    UT_ASSERT_MSG(scriptUploadPolicyResolve("off") == SCRIPT_UPLOAD_OFF,
                   "\"off\" did not resolve to off");
-    UT_ASSERT_MSG(scriptUploadPolicyResolve("ALLOW", false) == SCRIPT_UPLOAD_ALLOW,
+    UT_ASSERT_MSG(scriptUploadPolicyResolve("ALLOW") == SCRIPT_UPLOAD_ALLOW,
                   "\"ALLOW\" did not resolve to allow");
-    UT_ASSERT_MSG(scriptUploadPolicyResolve("Persist", false) ==
-                      SCRIPT_UPLOAD_PERSIST,
+    UT_ASSERT_MSG(scriptUploadPolicyResolve("Persist") == SCRIPT_UPLOAD_PERSIST,
                   "\"Persist\" did not resolve to persist");
 
     /* A word nobody knows is allow, which is what a server with no word at
        all does, rather than a refusal the operator did not ask for. */
-    UT_ASSERT_MSG(scriptUploadPolicyResolve("sometimes", false) ==
-                      SCRIPT_UPLOAD_ALLOW,
+    UT_ASSERT_MSG(scriptUploadPolicyResolve("sometimes") == SCRIPT_UPLOAD_ALLOW,
                   "an unknown word did not resolve to allow");
 
-    /* No word: the legacy flag decides, and an empty word is no word. */
-    UT_ASSERT_MSG(scriptUploadPolicyResolve(NULL, true) == SCRIPT_UPLOAD_OFF,
-                  "-nouploadscripts with no word did not resolve to off");
-    UT_ASSERT_MSG(scriptUploadPolicyResolve(NULL, false) == SCRIPT_UPLOAD_ALLOW,
-                  "no word and no legacy flag did not resolve to allow");
-    UT_ASSERT_MSG(scriptUploadPolicyResolve("", true) == SCRIPT_UPLOAD_OFF,
-                  "an empty word with the legacy flag did not resolve to off");
-
-    /* A word given beside the legacy flag wins over it. */
-    UT_ASSERT_MSG(scriptUploadPolicyResolve("allow", true) == SCRIPT_UPLOAD_ALLOW,
-                  "\"allow\" lost to the legacy flag");
+    /* No word is allow. */
+    UT_ASSERT_MSG(scriptUploadPolicyResolve(NULL) == SCRIPT_UPLOAD_ALLOW,
+                  "no word did not resolve to allow");
     return 0;
 }
 
@@ -108,12 +96,11 @@ int run_script_upload_policy_word(void) {
 
     /* And each word goes back to the value it came from, which is what a
        preference written and read again depends on. */
-    UT_ASSERT(scriptUploadPolicyResolve(scriptUploadPolicyWord(SCRIPT_UPLOAD_OFF),
-                                        false) == SCRIPT_UPLOAD_OFF);
-    UT_ASSERT(scriptUploadPolicyResolve(scriptUploadPolicyWord(SCRIPT_UPLOAD_ALLOW),
-                                        true) == SCRIPT_UPLOAD_ALLOW);
-    UT_ASSERT(scriptUploadPolicyResolve(
-                  scriptUploadPolicyWord(SCRIPT_UPLOAD_PERSIST), false) ==
+    UT_ASSERT(scriptUploadPolicyResolve(scriptUploadPolicyWord(SCRIPT_UPLOAD_OFF)) ==
+              SCRIPT_UPLOAD_OFF);
+    UT_ASSERT(scriptUploadPolicyResolve(scriptUploadPolicyWord(SCRIPT_UPLOAD_ALLOW)) ==
+              SCRIPT_UPLOAD_ALLOW);
+    UT_ASSERT(scriptUploadPolicyResolve(scriptUploadPolicyWord(SCRIPT_UPLOAD_PERSIST)) ==
               SCRIPT_UPLOAD_PERSIST);
     return 0;
 }

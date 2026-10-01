@@ -683,6 +683,12 @@ STR_MAPCHOOSER_RESTORE_SIZE_TIP=Standardgröße wiederherstellen (Esc)
 STR_MAPCHOOSER_MAXIMIZE_TIP=Maximieren
 STR_MAPCHOOSER_LOADING_PREVIEW=Vorschau wird geladen...
 
+# Map editor scenario panel
+STR_MAPEDIT_SCENARIO_NEEDS_BOTS=Erfordert erlaubte Bots: Dieses Skript fügt eigene Bots hinzu
+STR_DLGABOUT_LICENCE=Lizenz
+STR_DLGABOUT_LICENCE_NOTICE=Freie Software unter der GNU GPL v3 oder später. Keine Garantie.
+STR_DLGABOUT_FILE_NOT_FOUND=Datei nicht gefunden.
+
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Status
 STR_TABLET_KILLS_DEATHS=Kills: {number}  Tode: {number2}
@@ -1811,6 +1817,7 @@ STR_DLGBROWSER_SELECT_SERVER=Server auswählen
 STR_DLGBROWSER_PREVIEW_UNAVAIL=Vorschau n. verf.
 STR_DLGBROWSER_PREVIEW_ENLARGE=Zum Vergrößern klicken
 STR_DLGBROWSER_ENLARGE_BTN=Vergrößern
+STR_DLGBROWSER_SIGNIN_TO_JOIN=Zum Beitreten anmelden
 STR_DLGBROWSER_AI_PLAYERS=({number} KI-Spieler)
 STR_DLGBROWSER_WBN_PLAYERS=WinBolo.net-Spieler:
 STR_DLGBROWSER_ST_LOCKED=Gesperrt/Voll
@@ -2025,6 +2032,7 @@ STR_DLGKEYSETUP_OVERVIEWZOOMIN=Karte vergrößern
 STR_DLGKEYSETUP_OVERVIEWZOOMOUT=Karte verkleinern
 STR_DLGWELCOME_SWITCH_CLASSIC=Zu Klassisch wechseln
 STR_DLGWELCOME_SWITCH_FULLSCREEN=Zu Vollbild wechseln
+STR_DLGWELCOME_PRACTICE=Training
 
 # Display & Sound settings: full screen and the map's HUD panels
 STR_DLGSETTINGS_FULLSCREEN=Vollbild
@@ -2217,7 +2225,6 @@ STR_DLGLOBBY_SCENARIO_TAG_SCENARIO=Szenario
 STR_DLGLOBBY_SCENARIO_KIND_ALL=Alle
 STR_DLGLOBBY_SCENARIO_KIND_MODS=Nur Mods
 STR_DLGLOBBY_SCENARIO_KIND_SCENARIOS=Nur Szenarien
-STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS=Skripte in hochgeladenen Karten ausführen
 STR_DLGSETTINGS_HOSTING_SCENARIODIR=Mod-Verzeichnis
 STR_DLGSETTINGS_MAPVIEW=Kartenansicht
 STR_DLGSETTINGS_SIMPLEZOOM=Vereinfachte Ansicht beim Herauszoomen verwenden

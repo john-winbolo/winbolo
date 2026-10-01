@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /*********************************************************
@@ -374,14 +374,12 @@ typedef struct UdpServerState {
      * sim's copy (both set from cfg->uploadPersistDir in serverInstanceStartup). */
     char         uploadPersistDir[FILENAME_MAX];
     /* The same for player-uploaded scripts. Zero-init = ALLOW; the caps
-     * default to 32 files / 64 MiB. Empty scriptUploadDir = unset. It is the
-     * operator's setting as given; where a script lands is the directory the
+     * default to 32 files / 64 MiB. Where a script lands is the directory the
      * sim resolved (serverSimGetScriptUploadDir), which is what the caps
      * count and the accept callback writes to. */
     ScriptUploadPolicy scriptUploadPolicy;
     uint8_t      scriptUploadMaxFiles;
     uint32_t     scriptUploadMaxStorageBytes;
-    char         scriptUploadDir[FILENAME_MAX];
 
     /* LRU token buckets for the per-source-IP JOIN rate limit. A zeroed
      * table reads as all-empty (srcAddr 0), so the existing

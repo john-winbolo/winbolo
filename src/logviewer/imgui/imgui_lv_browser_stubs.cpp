@@ -2,7 +2,7 @@
  * imgui_lv_browser_stubs.cpp - LogViewer stubs for the shared WBN browser dialog
  *
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * The main-game WBN browser dialog (src/gui/sdl3/dialogs/imgui_wbn_browser.cpp)
  * is reused in LogViewer so we don't carry two implementations. The dialog

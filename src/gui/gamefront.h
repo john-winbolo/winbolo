@@ -5,13 +5,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 
@@ -1064,6 +1067,32 @@ bool gameFrontGetScnPanelLayout(const char *scenario, int *x, int *y,
                                 int *scale, int *alpha);
 void gameFrontSetScnPanelLayout(const char *scenario, int x, int y,
                                 int scale, int alpha);
+
+/* Whether one script's scenario panel is shown, kept under
+ * "SCENARIO PANEL SHOWN" / the script ("Survival.scenario.lua") as Yes or No.
+ * It is the checkbox for that script under Brains > Info Overlay, and the X
+ * on the panel turns it off. The key is the same one the layout row above
+ * uses. Get returns true, shown, for a script with no row yet. */
+bool gameFrontGetScnPanelShown(const char *script);
+void gameFrontSetScnPanelShown(const char *script, bool shown);
+
+/* Whether one scenario panel of one script is popped out into an OS window of
+ * its own, and where that window sat, kept under "SCENARIO PANEL POPOUT" /
+ * the script and panel id ("Survival.scenario.lua#0") as "open,x,y,w,h"
+ * (see scn_panel_prefs.h, which reads and writes the row). Unlike the layout
+ * row above these are desktop coordinates, since the window is the OS's to
+ * place. Get returns false, leaving all five alone, when no row is
+ * remembered or the row does not read. x and y of -1 mean no position was
+ * ever saved. */
+bool gameFrontGetScnPanelPopout(const char *script, int panel, bool *open,
+                                int *x, int *y, int *w, int *h);
+void gameFrontSetScnPanelPopout(const char *script, int panel, bool open,
+                                int x, int y, int w, int h);
+
+/* Whether the X on a scenario panel asks before it closes the panel ([MENU]
+ * "Scenario Panel Close Ask", Yes by default). The confirm's "Don't ask
+ * again" box turns it off. */
+extern bool  gameFrontScnPanelCloseAsk;
 
 /* App full screen mode ([MENU] section). While it is on the main window is
  * full screen everywhere — menus, lobby and game — and every game opens in

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /*
@@ -622,21 +622,6 @@ void clientSimNetSendLobbySetMap(ClientSim *cs, const char *mapRelPath) {
   ClientCommand cmd = { .type = CMD_LOBBY_SET_MAP };
   cmd.u.lobbySetMap.relPathLen = (uint8_t)pl;
   memcpy(cmd.u.lobbySetMap.relPath, mapRelPath, pl);
-  clientSimSubmitCommand(cs, &cmd);
-}
-
-void clientSimNetSendLobbySetScenario(ClientSim *cs, const char *relPath) {
-  if (cs == NULL || !cs->hasTransport) return;
-  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
-  if (relPath == NULL) return;
-  size_t pl = strlen(relPath);
-  if (pl > 255) return;
-  /* An empty path is a message and not a caller's mistake: it is how the
-     host selects no scenario, so it goes out where the map wrapper above
-     would return. */
-  ClientCommand cmd = { .type = CMD_LOBBY_SET_SCENARIO };
-  cmd.u.lobbySetScenario.relPathLen = (uint8_t)pl;
-  if (pl > 0) memcpy(cmd.u.lobbySetScenario.relPath, relPath, pl);
   clientSimSubmitCommand(cs, &cmd);
 }
 

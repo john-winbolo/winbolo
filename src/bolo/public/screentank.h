@@ -5,13 +5,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 
@@ -199,6 +202,29 @@ void screenTanksGetItem(const screenTanks *value, BYTE itemNum, BYTE *mx, BYTE *
 *  angle      - The full 0-255 facing angle
 *********************************************************/
 void screenTanksGetSubPixel(const screenTanks *value, BYTE itemNum, BYTE *wx, BYTE *wy, BYTE *angle);
+
+/*********************************************************
+*NAME:          screenTanksGetCentreSquare
+*AUTHOR:        John Morrison
+*CREATION DATE: 1/10/26
+*LAST MODIFIED: 1/10/26
+*PURPOSE:
+*  Gets the map square the tank's centre is standing on,
+*  in the same frame as the item's mx/my. The listed square
+*  is the sprite's top left corner, which is the centre
+*  moved back half a square, so a tank in the top or left
+*  half of its square is listed on the square before it.
+*  Whatever asks whether a tank can be seen wants the
+*  square it is on, not the one its picture starts in.
+*  Nothing is written for an item number off the list.
+*
+*ARGUMENTS:
+*  value      - Pointer to the screenTanks data structure
+*  itemNum    - The item number to get
+*  mx         - Map X of the square the centre is on
+*  my         - Map Y of the square the centre is on
+*********************************************************/
+void screenTanksGetCentreSquare(const screenTanks *value, BYTE itemNum, BYTE *mx, BYTE *my);
 
 #endif /* SCREENTANKS_H */
 

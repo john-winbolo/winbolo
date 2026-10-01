@@ -86,6 +86,9 @@ scenario = {
   -- a file that says nothing gets and this one has something to say.
   kind = "scenario",
   game = "tournament",   -- humans farm; wave bots override per spawn below
+  -- The horde is held bot seats this file fields with game.spawn_bot, and
+  -- a lobby set to no bots refuses every one, so the lobby must allow them.
+  needs_bots = true,
 
   -- The lobby, declared rather than built. Six human seats on the
   -- defenders' team, ten seats HELD for the horde: they sit in the roster

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /*********************************************************
@@ -534,6 +534,9 @@ static void serverFinishUpload(ServerSim *sim, int clientIdx) {
 
     udpServer.clientUploadActive[clientIdx] = false;
     udpServer.clientUploadTotal[clientIdx]  = 0;
+    /* The finished upload is what the client's next list request follows, so
+       it must not be held up by the cooldown the upload's own BEGIN started. */
+    udpServer.clientReqCooldownTicks[clientIdx] = 0;
 
     char relReturn[256];
     SDL_snprintf(relReturn, sizeof(relReturn), "Uploads/%s", origName);

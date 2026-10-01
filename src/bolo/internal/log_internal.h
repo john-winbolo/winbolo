@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -54,10 +57,12 @@
  * to 2*MAX_TANKS bot config+brain, up to two vote states, one balance, one
  * map-skip, one stats seed, one entity sync, up to
  * CTRL_SCENARIO_RULES_FRAGS_MAX scenario-rules fragments, up to
- * SCN_PANEL_IDS scenario panels, up to SCN_MARKERS_MAX scenario markers, up
- * to MAX_TANKS player score rows and MAX_TANKS-1 team score rows, and up to
- * MAX_TANKS player-joins — (8 + CTRL_SCENARIO_RULES_FRAGS_MAX +
- * SCN_PANEL_IDS + SCN_MARKERS_MAX + 2*MAX_TANKS-1 + 5*MAX_TANKS) events,
+ * SCN_PANEL_IDS x SCN_PANEL_OWNERS scenario panels (one per script of the
+ * round's list), up to SCN_MARKERS_MAX scenario markers, up to MAX_TANKS
+ * player score rows and MAX_TANKS-1 team score rows, and up to MAX_TANKS
+ * player-joins — (8 + CTRL_SCENARIO_RULES_FRAGS_MAX +
+ * SCN_PANEL_IDS*SCN_PANEL_OWNERS + SCN_MARKERS_MAX + 2*MAX_TANKS-1 +
+ * 5*MAX_TANKS) events,
  * each charged a 4-byte [u16 type] [u16 bodyLen] header plus a body of
  * MAX_CONTROL_PACKET.
  *
@@ -72,15 +77,15 @@
  * encodes is the brain list at around 905 bytes, the rest far under that, so
  * the counted events reserve a good deal more than they spend.
  *
- * One panel each and not one per destination: this replay runs with
+ * One panel per script and not one per destination: this replay runs with
  * serverSimSyncSubscriber's fullReplay false, which takes each panel's
  * everyone-addressed list and leaves the ones held to a team or a slot,
  * because a spectator is on neither and serverSpectatorDeliverControl would
  * drop them. A marker is one per id for the same reason: it is kept by id,
  * and the ones held to a team or a slot are left out the same way. */
 #define LOG_CONTROL_SNAPSHOT_MAX                                                \
-  ((8 + CTRL_SCENARIO_RULES_FRAGS_MAX + SCN_PANEL_IDS + SCN_MARKERS_MAX +       \
-    2 * MAX_TANKS - 1 + 5 * MAX_TANKS) *                                        \
+  ((8 + CTRL_SCENARIO_RULES_FRAGS_MAX + SCN_PANEL_IDS * SCN_PANEL_OWNERS +      \
+    SCN_MARKERS_MAX + 2 * MAX_TANKS - 1 + 5 * MAX_TANKS) *                      \
    (MAX_CONTROL_PACKET + 4))
 
 /* Register a spectator ring fed by the log writer. While a ring is

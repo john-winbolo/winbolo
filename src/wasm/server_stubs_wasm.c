@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /*
@@ -33,14 +33,18 @@
  *     link. Single-player passes acceptRemoteClients=false, so the only
  *     live work startup does is serverSimApplyInstanceConfig; the
  *     transport / WBN / NAT branches are dead. Mirrors the iOS / Android
- *     / BrainTest local-only lifecycle stubs.
+ *     / BrainTest local-only lifecycle stubs. The tick runs the lobby and
+ *     round sequence a local game needs (serverSimLocalTick in
+ *     server_sim_lifecycle_local.c) for the practice game, whose server
+ *     the page ticks.
  */
 
 #include <stddef.h>
 #include <string.h>
 #include "global.h"
 #include "server_sim.h"
-#include "server_sim_lifecycle.h"  /* serverSimApplyInstanceConfig */
+#include "server_sim_lifecycle.h"  /* serverSimApplyInstanceConfig,
+                                    * serverSimLocalTick */
 #include "server_lifecycle.h"
 #include "server_dedicated_log.h"
 
@@ -77,5 +81,22 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   return TRUE;
 }
 
-void serverInstanceTick(ServerSim *sim) { (void)sim; }
+/* Ticks run, counted at the top of each call the way the UDP server counts
+ * its receive passes. The lobby-slot heartbeat reads it. */
+static uint32_t s_localTickCount = 0;
+
+/* The browser client's local server tick: the lobby and round sequence the
+ * dedicated server's serverInstanceTick runs (serverSimLocalTick, shared so
+ * the two cannot drift), without the network server around it (no UDP, no
+ * WinBolo.net, no tracker or NAT, no brain-record sessions, so no hooks)
+ * and without the dedicated server's options (map rotation, -mapdir,
+ * auto-close, empty reset). main_wasm.c calls it once per 20 ms tick for a
+ * game whose local transport does not tick the server itself. The web's
+ * threads are single-threaded no-ops, so there is no lock to take. */
+void serverInstanceTick(ServerSim *sim) {
+  if (sim == NULL) return;
+  s_localTickCount++;
+  serverSimLocalTick(sim, s_localTickCount, NULL, NULL);
+}
+
 void serverInstanceShutdown(ServerSim *sim) { (void)sim; }

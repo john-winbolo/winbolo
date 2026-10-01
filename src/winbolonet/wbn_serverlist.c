@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /*********************************************************
@@ -10,7 +10,9 @@
  *   Parses the WinBolo.net public game list (GET
  *   /api/v1/games). wbnServerListParse is pure cJSON;
  *   wbnFetchServerList drives the transport via
- *   wbn_api_get_public in http.c.
+ *   wbn_api_get_public in http.c. The WASM build never links
+ *   http.c, so it compiles the parser and wbnServerListFree
+ *   only; its page fetches the list (src/wasm/finder_wasm.c).
  *********************************************************/
 
 #include "wbn_serverlist.h"
@@ -20,7 +22,9 @@
 #include <ctype.h>
 
 #include "cJSON.h"
+#ifndef __EMSCRIPTEN__
 #include "http.h"
+#endif
 #include "view_policy.h"   /* the view-policy defaults for absent fields */
 #include "server_voice_mode.h"  /* serverVoiceOn — the default for an absent "voice" */
 /* Here and not in the header: the header reaches UI translation units, and
@@ -317,6 +321,7 @@ bool wbnServerListParse(const char *json, WbnServerList *out) {
     return true;
 }
 
+#ifndef __EMSCRIPTEN__
 bool wbnFetchServerList(WbnServerList *out) {
     char *resp = NULL;
     int code = wbn_api_get_public("games", &resp);
@@ -331,6 +336,7 @@ bool wbnFetchServerList(WbnServerList *out) {
     free(resp);
     return ok;
 }
+#endif
 
 void wbnServerListFree(WbnServerList *out) {
     if (out == NULL) {

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /*********************************************************
@@ -43,6 +43,10 @@ bool tutorialOverlayIsOpen(void);
 /* Render one frame of the overlay (no-op when closed).  Call every
  * frame from the main render path, on the main thread. */
 void tutorialOverlayRender(struct ClientSim *cs);
+
+/* Drop any message left showing or queued, and its completion callback, so
+ * the next tutorial starts with the overlay closed. */
+void tutorialOverlayReset(void);
 
 #ifdef __cplusplus
 }

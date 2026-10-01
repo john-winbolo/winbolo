@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /*
@@ -34,6 +34,14 @@
  *   script_list_lists_once     — a full list of ten names reads the mod
  *       directories once, not once per name, and a refused list reads them
  *       once too.
+ *   script_list_no_lister      — with no lister registered every name is
+ *       refused and the list that was there stays.
+ *   script_list_refuses_shape  — "..", a leading separator of either kind, a
+ *       drive letter and a ".." past the first segment are each refused, one
+ *       directory read apiece, and the list stays; a running round and a
+ *       server with no lobby are refused for the state.
+ *   script_list_unreadies      — an accepted list, and an accepted clear,
+ *       put every ready human back to not ready.
  *   script_list_client_apply   — a two-chunk list reassembled into a
  *       ClientSim and read back through the accessors the lobby chooser
  *       uses, including a run that would overrun the cap: nothing of that
@@ -746,6 +754,156 @@ int run_script_list_lists_once(void) {
                       "a refused list read the mod directories %d times",
                       d.calls);
     }
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A server with no lister offers nothing, so every name is one it does not
+ * hold — which is what a build with no scenario library answers. The list
+ * set before the lister went is left as it was. */
+int run_script_list_no_lister(void) {
+    ServerSim  *sim;
+    SlDir       d;
+    const char *good[3] = { "wave.scenario", "fastreload.lua", "nolgm.lua" };
+    int         i;
+
+    sim = slLobby(&d);
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(slApply(sim, 0, good, 3) == CMD_OK,
+                  "setup: the host's list was refused");
+
+    serverSimSetScenarioLister(sim, NULL, NULL);
+    for (i = 0; i < 3; i++) {
+        CmdResult r;
+
+        slPastCooldown(sim);
+        r = slApply(sim, 0, &good[i], 1);
+        UT_ASSERT_MSG(r == CMD_REJECT_INVALID,
+                      "\"%s\" on a server with no lister answered %d, wanted "
+                      "CMD_REJECT_INVALID (%d)", good[i], (int)r,
+                      (int)CMD_REJECT_INVALID);
+    }
+    UT_ASSERT_MSG(serverSimGetScriptCount(sim) == 3,
+                  "a refusal replaced the list: %d entries, wanted 3",
+                  serverSimGetScriptCount(sim));
+    UT_ASSERT(strcmp(serverSimGetScript(sim, 0)->file, "wave.scenario") == 0);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* Every path shape lobbyScenarioNameShapeOk refuses, one list each, and the
+ * two states in which there is no lobby to set a list for. */
+int run_script_list_refuses_shape(void) {
+    ServerSim  *sim;
+    SlDir       d;
+    const char *good[3] = { "wave.scenario", "fastreload.lua", "nolgm.lua" };
+    const char *bad[]   = {
+        "../wave.scenario",    /* climbs out of the directory */
+        "/wave.scenario",      /* absolute */
+        "\\wave.scenario",     /* absolute, the other separator */
+        "C:wave.scenario",     /* a Windows drive letter */
+        "sub/../wave.scenario" /* a ".." that is not the first segment */
+    };
+    size_t      i;
+    CmdResult   r;
+
+    sim = slLobby(&d);
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(slApply(sim, 0, good, 3) == CMD_OK,
+                  "setup: the host's list was refused");
+
+    for (i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        int calls;
+
+        slPastCooldown(sim);
+        calls = d.calls;
+        r = slApply(sim, 0, &bad[i], 1);
+        UT_ASSERT_MSG(r == CMD_REJECT_INVALID,
+                      "\"%s\" answered %d, wanted CMD_REJECT_INVALID (%d)",
+                      bad[i], (int)r, (int)CMD_REJECT_INVALID);
+        /* Exactly one read per refused list: the arm reads the directory
+           once, before it looks at any name, and then checks each name's
+           shape against that reading. */
+        UT_ASSERT_MSG(d.calls == calls + 1,
+                      "\"%s\" read the directory %d times, wanted once",
+                      bad[i], d.calls - calls);
+    }
+    UT_ASSERT_MSG(serverSimGetScriptCount(sim) == 3,
+                  "a refused shape replaced the list: %d entries, wanted 3",
+                  serverSimGetScriptCount(sim));
+    UT_ASSERT(strcmp(serverSimGetScript(sim, 0)->file, "wave.scenario") == 0);
+
+    /* Nobody can set a list once the round is running: it plays by what it
+       started with. */
+    serverSimSetState(sim, serverStateRunning);
+    slPastCooldown(sim);
+    r = slApply(sim, 0, &good[1], 1);
+    UT_ASSERT_MSG(r == CMD_REJECT_BAD_STATE,
+                  "a list during a running round answered %d, wanted "
+                  "CMD_REJECT_BAD_STATE (%d)", (int)r,
+                  (int)CMD_REJECT_BAD_STATE);
+
+    /* Same answer from a server that runs no lobby at all. */
+    serverSimSetState(sim, serverStateLobby);
+    serverSimSetLobbyEnabled(sim, false);
+    slPastCooldown(sim);
+    r = slApply(sim, 0, &good[1], 1);
+    UT_ASSERT_MSG(r == CMD_REJECT_BAD_STATE,
+                  "a list on a server with no lobby answered %d, wanted "
+                  "CMD_REJECT_BAD_STATE (%d)", (int)r,
+                  (int)CMD_REJECT_BAD_STATE);
+    UT_ASSERT_MSG(serverSimGetScriptCount(sim) == 3,
+                  "a refusal for the state replaced the list");
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A list changes the rules the round runs by, the seats the lobby holds and
+ * the game it is played as, so it ends the readiness the way a map commit
+ * does — an all-ready lobby would otherwise start on scripts nobody who
+ * pressed Ready had seen. A clear is the same kind of change. Both humans are
+ * checked each time: the host who sent the list and the player who did not. */
+int run_script_list_unreadies(void) {
+    ServerSim         *sim;
+    SlDir              d;
+    const char        *mod[1] = { "fastreload.lua" };
+    const LobbyPlayer *lp;
+
+    sim = slLobby(&d);
+    UT_ASSERT(sim != NULL);
+
+    threadsWaitForMutex();
+    serverSimSetReady(sim, 0, true);
+    serverSimSetReady(sim, 1, true);
+    threadsReleaseMutex();
+    lp = serverSimGetLobbyPlayer(sim, 0);
+    UT_ASSERT_MSG(lp != NULL && lp->ready, "setup: the host is not ready");
+    lp = serverSimGetLobbyPlayer(sim, 1);
+    UT_ASSERT_MSG(lp != NULL && lp->ready, "setup: the joiner is not ready");
+
+    slPastCooldown(sim);
+    UT_ASSERT_MSG(slApply(sim, 0, mod, 1) == CMD_OK, "the list was refused");
+    lp = serverSimGetLobbyPlayer(sim, 0);
+    UT_ASSERT_MSG(lp != NULL && !lp->ready,
+                  "the host who sent the list is still ready after it");
+    lp = serverSimGetLobbyPlayer(sim, 1);
+    UT_ASSERT_MSG(lp != NULL && !lp->ready,
+                  "the joiner is still ready after a list they did not send");
+
+    /* And a clear, past the gap. */
+    threadsWaitForMutex();
+    serverSimSetReady(sim, 0, true);
+    serverSimSetReady(sim, 1, true);
+    threadsReleaseMutex();
+    slPastCooldown(sim);
+    UT_ASSERT_MSG(slApply(sim, 0, NULL, 0) == CMD_OK, "the clear was refused");
+    lp = serverSimGetLobbyPlayer(sim, 0);
+    UT_ASSERT_MSG(lp != NULL && !lp->ready, "the clear left the host ready");
+    lp = serverSimGetLobbyPlayer(sim, 1);
+    UT_ASSERT_MSG(lp != NULL && !lp->ready, "the clear left the joiner ready");
 
     serverSimDestroy(sim);
     return 0;

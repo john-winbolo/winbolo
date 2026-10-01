@@ -213,6 +213,7 @@ set(ANDROID_SOURCES
     # SDL3 GUI (rendering, sound, input, etc.)
     ${PROJ_ROOT}/src/gui/ui_mode.c
     ${PROJ_ROOT}/src/gui/visibility_presets.c
+    ${PROJ_ROOT}/src/gui/scn_panel_prefs.c
     ${PROJ_ROOT}/src/gui/sdl3/clientmutex.c
     ${PROJ_ROOT}/src/gui/sdl3/sdl3imgui.cpp
     ${PROJ_ROOT}/src/gui/sdl3/scenario_panel_draw.cpp
@@ -261,6 +262,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/dns_lookups.c
     ${PROJ_ROOT}/src/gui/sdl3/gamefront.c
     ${PROJ_ROOT}/src/client_frontend/client_frontend_connect.c
+    ${PROJ_ROOT}/src/client_frontend/client_frontend_sp.c
     ${PROJ_ROOT}/src/gui/sdl3/bg_game.c
     ${PROJ_ROOT}/src/gui/sdl3/mapview.c
     ${PROJ_ROOT}/src/gui/sdl3/mapview_overlay.c

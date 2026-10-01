@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 #ifndef CLIENT_FRONTEND_RENDER_H
 #define CLIENT_FRONTEND_RENDER_H
 

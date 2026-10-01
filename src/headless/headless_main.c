@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -143,9 +146,6 @@ static char optMap[512] = "";
 static bool optStdin = FALSE;
 /* Run the map plainly, whatever script sits beside it. */
 static bool optNoScenarios = false;
-/* Run a map that came from an upload plainly, whatever it carries. The old
-   spelling of --scriptuploads off, used when no word is given. */
-static bool optNoUploadScripts = false;
 /* The --scriptuploads word as typed, and the policy it resolves to. */
 static char optScriptUploads[16] = "";
 static ScriptUploadPolicy optScriptUploadPolicy = SCRIPT_UPLOAD_ALLOW;
@@ -2142,8 +2142,6 @@ static void printUsage(const char *prog) {
     "                    is packed into the file or sits beside it; every other\n"
     "                    map is unaffected), allow keeps them for the session\n"
     "                    (default), persist keeps them for good\n"
-    "  --nouploadscripts The old spelling of --scriptuploads off; --scriptuploads\n"
-    "                    wins when both are given\n"
     "  --allow-unsafe-scripts\n"
     "                    Run scenario scripts with the full Lua standard\n"
     "                    library, no memory cap, no time limits and precompiled\n"
@@ -2308,8 +2306,6 @@ static bool parseArgs(int argc, char **argv) {
       optClassicMode = true;
     } else if (strcmp(argv[i], "--noscenarios") == 0) {
       optNoScenarios = true;
-    } else if (strcmp(argv[i], "--nouploadscripts") == 0) {
-      optNoUploadScripts = true;
     } else if (strcmp(argv[i], "--scriptuploads") == 0 && i + 1 < argc) {
       strncpy(optScriptUploads, argv[++i], sizeof(optScriptUploads) - 1);
     } else if (strcmp(argv[i], "--allow-unsafe-scripts") == 0 ||
@@ -2623,8 +2619,7 @@ static int runFastMode(void) {
   /* --scriptuploads: the narrower one. Under off a map a client sent plays
      plainly whatever it carries, and the operator's own maps are untouched.
      The policy also goes into the instance config fastModeSetupGame builds. */
-  optScriptUploadPolicy =
-      scriptUploadPolicyResolve(optScriptUploads, optNoUploadScripts);
+  optScriptUploadPolicy = scriptUploadPolicyResolve(optScriptUploads);
   scenarioHostSetUploadScriptsEnabled(optScriptUploadPolicy != SCRIPT_UPLOAD_OFF);
   /* --allow-unsafe-scripts: the other way. Every script runs with the full
      Lua library and no limits, uploaded ones included, and it is said

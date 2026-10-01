@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /*
  * crash_handler.h — last-gasp C stack-trace dumper.
  *

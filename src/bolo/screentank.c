@@ -5,13 +5,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 
@@ -259,5 +262,33 @@ void screenTanksGetSubPixel(const screenTanks *value, BYTE itemNum, BYTE *wx, BY
     *wx = (*value).pos[itemNum].wx;
     *wy = (*value).pos[itemNum].wy;
     *angle = (*value).pos[itemNum].angle;
+  }
+}
+
+/*********************************************************
+*NAME:          screenTanksGetCentreSquare
+*AUTHOR:        John Morrison
+*CREATION DATE: 1/10/26
+*LAST MODIFIED: 1/10/26
+*PURPOSE:
+*  Gets the map square the tank's centre is standing on,
+*  in the same frame as the item's mx/my. See screentank.h.
+*
+*ARGUMENTS:
+*  value      - Pointer to the screenTanks data structure
+*  itemNum    - The item number to get
+*  mx         - Map X of the square the centre is on
+*  my         - Map Y of the square the centre is on
+*********************************************************/
+void screenTanksGetCentreSquare(const screenTanks *value, BYTE itemNum, BYTE *mx, BYTE *my) {
+  itemNum--;
+  if (itemNum < (*value).numTanksScreen) {
+    /* wx and wy are the low byte of the centre less TANK_SUBTRACT, so the
+       centre is wx + TANK_SUBTRACT into the listed square: on the next square
+       over once that reaches a whole square. */
+    *mx = (BYTE) ((*value).pos[itemNum].mx +
+                  (((*value).pos[itemNum].wx >= TANK_SUBTRACT) ? 1 : 0));
+    *my = (BYTE) ((*value).pos[itemNum].my +
+                  (((*value).pos[itemNum].wy >= TANK_SUBTRACT) ? 1 : 0));
   }
 }

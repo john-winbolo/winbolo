@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /*********************************************************
@@ -810,6 +810,13 @@ static void meScnMetadataBody(MEScenarioForm *f, MEScenarioState *st,
 
     if (ImGui::Checkbox(langGetText(STR_MAPEDIT_SCENARIO_FILL_TO_CAPS),
                         &m->fillToCaps)) {
+        f->dirty = true;
+    }
+
+    /* needs_bots: the script fields its own bots, so the lobby must allow
+       them. A mod may say it too, so the box is on both forms. */
+    if (ImGui::Checkbox(langGetText(STR_MAPEDIT_SCENARIO_NEEDS_BOTS),
+                        &m->needsBots)) {
         f->dirty = true;
     }
 

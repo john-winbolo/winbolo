@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -626,41 +629,6 @@ static bool commandDecodeLobbySetMap(const uint8_t *buf, size_t len,
     return true;
 }
 
-/* CMD_LOBBY_SET_SCENARIO — PACKET_LOBBY_SET_SCENARIO
- * Wire: [header 8] [pathLen 1] [path N]
- * The shape CMD_LOBBY_SET_MAP uses, with one difference: pathLen 0 is
- * carried rather than refused, because an empty path is the message
- * that selects no scenario. */
-static bool commandEncodeLobbySetScenario(const ClientCommand *cmd,
-                                          uint8_t *buf, size_t bufCap,
-                                          size_t *outLen) {
-    uint8_t pathLen = cmd->u.lobbySetScenario.relPathLen;
-    const size_t needed = CMD_PACKET_BODY_OFFSET + 1 + pathLen;
-    if (bufCap < needed) return false;
-    packHeader(buf, PACKET_LOBBY_SET_SCENARIO, 0);
-    buf[CMD_PACKET_BODY_OFFSET] = pathLen;
-    if (pathLen > 0) {
-        memcpy(buf + CMD_PACKET_BODY_OFFSET + 1,
-               cmd->u.lobbySetScenario.relPath, pathLen);
-    }
-    *outLen = needed;
-    return true;
-}
-
-static bool commandDecodeLobbySetScenario(const uint8_t *buf, size_t len,
-                                          ClientCommand *cmd) {
-    if (len < CMD_PACKET_BODY_OFFSET + 1) return false;
-    uint8_t pathLen = buf[CMD_PACKET_BODY_OFFSET];
-    if (len < (size_t)CMD_PACKET_BODY_OFFSET + 1 + pathLen) return false;
-    cmd->type = CMD_LOBBY_SET_SCENARIO;
-    cmd->u.lobbySetScenario.relPathLen = pathLen;
-    if (pathLen > 0) {
-        memcpy(cmd->u.lobbySetScenario.relPath,
-               buf + CMD_PACKET_BODY_OFFSET + 1, pathLen);
-    }
-    return true;
-}
-
 /* CMD_SET_SCRIPT_SETTING - PACKET_SET_SCRIPT_SETTING
  * Wire: [header 8] [cmdSeq 4] [fileLen 1] [file N] [idLen 1] [id M]
  *       [value 4 BE]
@@ -741,7 +709,7 @@ static bool commandDecodeSetScriptSetting(const uint8_t *buf, size_t len,
  * wins, and the server's state is an assignment rather than a splice.
  *
  * Each name is a one-byte length and that many bytes with no terminator, the
- * shape CMD_LOBBY_SET_SCENARIO uses beside it. A count past
+ * shape CMD_LOBBY_SET_MAP uses for its path. A count past
  * CMD_SCRIPT_LIST_MAX is refused rather than trimmed on both sides: a list
  * the encoder cut short is a different list, and the caller would never
  * learn which scripts it lost. */
@@ -1286,7 +1254,6 @@ bool commandCodecEncode(const ClientCommand *cmd,
         case CMD_LOCK_TOGGLE:           ok = commandEncodeLockToggle(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_ADD_BOT:         ok = commandEncodeLobbyAddBot(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_SET_MAP:         ok = commandEncodeLobbySetMap(cmd, buf, bufCap, outLen); break;
-        case CMD_LOBBY_SET_SCENARIO:    ok = commandEncodeLobbySetScenario(cmd, buf, bufCap, outLen); break;
         case CMD_SET_SCRIPT_LIST:       ok = commandEncodeSetScriptList(cmd, buf, bufCap, outLen); break;
         case CMD_SET_SCRIPT_SETTING:    ok = commandEncodeSetScriptSetting(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_PREVIEW_CANCEL:  ok = commandEncodeLobbyPreviewCancel(cmd, buf, bufCap, outLen); break;
@@ -1342,7 +1309,6 @@ bool commandCodecDecode(const uint8_t *buf, size_t len,
         case PACKET_LOCK_TOGGLE:           return commandDecodeLockToggle(buf, len, cmd);
         case PACKET_LOBBY_ADD_BOT:         return commandDecodeLobbyAddBot(buf, len, cmd);
         case PACKET_LOBBY_SET_MAP:         return commandDecodeLobbySetMap(buf, len, cmd);
-        case PACKET_LOBBY_SET_SCENARIO:    return commandDecodeLobbySetScenario(buf, len, cmd);
         case PACKET_SET_SCRIPT_LIST:       return commandDecodeSetScriptList(buf, len, cmd);
         case PACKET_SET_SCRIPT_SETTING:    return commandDecodeSetScriptSetting(buf, len, cmd);
         case PACKET_LOBBY_PREVIEW_CANCEL:  return commandDecodeLobbyPreviewCancel(buf, len, cmd);

@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -735,6 +738,15 @@ typedef struct {
  * a caller draws from it rather than holding it across frames. */
 const ScnPanelList *clientSimGetScnPanel(const ClientSim *cs, uint8_t id);
 
+/* The same, for the one script of the round's list that sent it. owner is
+ * that script's position on the list, the index clientSimGetLobbyScript*
+ * takes. clientSimGetScnPanel above answers with the lowest owner whose
+ * list has something in it (or, when every list is empty, the lowest owner
+ * with a list at all), which is the one panel a frontend with room for
+ * only one shows. */
+const ScnPanelList *clientSimGetScnPanelOf(const ClientSim *cs, uint8_t id,
+                                           uint8_t owner);
+
 /* How many arriving panel lists scnPanelParse refused, and this client
  * therefore dropped instead of drawing. */
 uint32_t clientSimGetScnPanelRejectCount(const ClientSim *cs);
@@ -1091,6 +1103,13 @@ bool        clientSimGetLobbyScenarioBound(const ClientSim *cs);
  * sandboxed, which it was. */
 bool        clientSimGetLobbyScenarioUnsafe(const ClientSim *cs);
 
+/* True when the attached list fields its own bots (a script in it said
+ * needs_bots), so the server refuses the AI policy that takes every bot off
+ * the roster and the lobby greys that row. False with no script attached.
+ * A server that predates the field reads as true, because every such server
+ * refused that policy for any script. */
+bool        clientSimGetLobbyScenarioNeedsBots(const ClientSim *cs);
+
 /* The lobby's ordered script list: one scenario deciding the round and mods
  * behind it changing how it plays, in the order they load. Mirrored from
  * CTRL_LOBBY_SCRIPT_LIST, which the server publishes whole on every change,
@@ -1315,8 +1334,9 @@ uint32_t    clientSimGetLobbyMapListSeq(const ClientSim *cs);
  * template asks for. Bound says it is tied to the map it was written against,
  * so a chooser can say why one it can see is not one it may pick.
  *
- * Nothing selects a scenario yet; this is what is on offer. "" / 0 / false
- * for a NULL cs or an index out of range. */
+ * This is what is on offer; a host picks from it with CMD_SET_SCRIPT_LIST,
+ * and the clientSimGetLobbyScript* accessors answer what was picked. "" / 0 /
+ * false for a NULL cs or an index out of range. */
 int         clientSimGetLobbyScenarioListCount(const ClientSim *cs);
 const char *clientSimGetLobbyScenarioListFile(const ClientSim *cs, int idx);
 const char *clientSimGetLobbyScenarioListName(const ClientSim *cs, int idx);

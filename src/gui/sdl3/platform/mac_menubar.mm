@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 #import <Cocoa/Cocoa.h>
 #import <objc/runtime.h>
 
@@ -86,6 +87,7 @@ extern "C" void clientSimTogglePlayerCheckState(struct ClientSim *cs, unsigned c
 extern "C" void sdl3ImguiStopBrain(void);
 extern "C" void sdl3ImguiStartBrain(int idx, struct ClientSim *cs);
 extern "C" void sdl3ImguiShowBrainSettings(void);
+extern "C" void sdl3ImguiToggleScnPanelShown(int owner);
 
 extern "C" {
 #include "../../gamefront.h"
@@ -146,6 +148,17 @@ static NSMenuItem *s_brainManualItem   = nil;
 static NSMenuItem *s_brainSettingsItem = nil;
 static int  s_lastBrainCount           = -1;   /* force rebuild on first refresh */
 static BOOL s_lastBrainSettingsShown   = NO;
+static int  s_lastAiActive             = -1;   /* -1 = not yet refreshed */
+
+/* Brains > Info Overlay — the scenario panel toggles, one per script with a
+ * panel this round. The submenu item is alloced once and attached by refresh
+ * only while there is a row to show; its rows are rebuilt when the set of
+ * owners changes and their titles and checkmarks are refreshed per frame,
+ * the way the brain rows above are. */
+static NSMenuItem *s_infoOverlayItem   = nil;
+static NSMenu     *s_infoOverlayMenu   = nil;
+static int  s_lastScnPanelCount        = -1;
+static int  s_lastScnPanelOwner[MAC_MENU_SCN_PANELS];
 
 /* Per-slot NSMenuItem + custom view caches for the rich player rows in
  * the Players menu. Items are created up-front in mac_menubar_install();
@@ -278,6 +291,7 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 - (void)onBrainManual:(id)sender;
 - (void)onBrainItem:(id)sender;
 - (void)onBrainSettings:(id)sender;
+- (void)onScnPanelShown:(id)sender;
 - (void)onDockSinglePlayer:(id)sender;
 - (void)onDockFindInternet:(id)sender;
 - (void)onDockFindLan:(id)sender;
@@ -504,6 +518,10 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 - (void)onBrainSettings:(id)sender {
     (void)sender;
     sdl3ImguiShowBrainSettings();
+}
+- (void)onScnPanelShown:(id)sender {
+    NSMenuItem *item = (NSMenuItem *)sender;
+    sdl3ImguiToggleScnPanelShown((int)item.tag);
 }
 - (void)onDockSinglePlayer:(id)sender {
     (void)sender;
@@ -1401,10 +1419,23 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
         keyEquivalent:@""];
     [brainSettingsItem setTarget:g_bridge];
 
+    /* Pre-allocated Info Overlay submenu — attached by refresh while a
+     * script has a scenario panel this round, with one checkbox row per
+     * script. Explicitly gated like the rest of the Brains menu. */
+    NSMenuItem *infoOverlayItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_MENU_INFO_OVERLAY)
+        action:nil
+        keyEquivalent:@""];
+    NSMenu *infoOverlayMenu = [[NSMenu alloc] initWithTitle:LANG_STR(STR_MENU_INFO_OVERLAY)];
+    [infoOverlayMenu setAutoenablesItems:NO];
+    [infoOverlayItem setSubmenu:infoOverlayMenu];
+
     s_brainsParentItem  = brainsItem;
     s_brainsMenu        = brainsMenu;
     s_brainManualItem   = brainManualItem;
     s_brainSettingsItem = brainSettingsItem;
+    s_infoOverlayItem   = infoOverlayItem;
+    s_infoOverlayMenu   = infoOverlayMenu;
 
     /* Window menu — items dispatched through the responder chain to the
      * key NSWindow; no explicit targets. */
@@ -1602,25 +1633,39 @@ void mac_menubar_refresh(const struct MacMenuState *s) {
      * is one int compare, one BOOL compare, and a title-equality check
      * per brain item; the heavy rebuild only fires when the brain count
      * or Settings visibility actually changes. */
+    /* The Brains menu also holds Info Overlay, the scenario panel toggles,
+     * so it is open to a game with a panel even where the server allows no
+     * brains. The brain rows are left out then, as the in-window bar leaves
+     * them out: a list of brains nobody may pick is noise. */
+    const BOOL aiActive = s->aiActive ? YES : NO;
+    int scnCount = s->scnPanelCount;
+    if (scnCount < 0) scnCount = 0;
+    if (scnCount > MAC_MENU_SCN_PANELS) scnCount = MAC_MENU_SCN_PANELS;
     if (s_brainsParentItem) {
-        [s_brainsParentItem setEnabled:(s->aiActive ? YES : NO)];
+        [s_brainsParentItem setEnabled:((aiActive || scnCount > 0) ? YES : NO)];
     }
     if (s_brainManualItem) {
         [s_brainManualItem setState:(!s->brainRunning ? NSControlStateValueOn : NSControlStateValueOff)];
+        [s_brainManualItem setHidden:!aiActive];
     }
 
     BOOL countChanged    = (s_lastBrainCount != s->brainCount);
     BOOL settingsChanged = (s_lastBrainSettingsShown != (s->brainSettingsShown ? YES : NO));
+    BOOL aiChanged       = (s_lastAiActive != (int)aiActive);
+    BOOL scnChanged      = (s_lastScnPanelCount != scnCount);
+    for (int i = 0; i < scnCount && !scnChanged; i++) {
+        if (s_lastScnPanelOwner[i] != s->scnPanelOwner[i]) scnChanged = YES;
+    }
 
-    if (s_brainsMenu && (countChanged || settingsChanged)) {
+    if (s_brainsMenu && (countChanged || settingsChanged || aiChanged || scnChanged)) {
         /* Drop everything after Manual (index 0) — brain rows, separators,
-         * and the Settings entry. The Settings item itself is retained by
-         * s_brainSettingsItem, so removal is safe. */
+         * the Settings entry and the Info Overlay submenu. The last two are
+         * retained by their statics, so removal is safe. */
         while ([s_brainsMenu numberOfItems] > 1) {
             [s_brainsMenu removeItemAtIndex:1];
         }
 
-        if (s->brainCount > 0) {
+        if (aiActive && s->brainCount > 0) {
             [s_brainsMenu addItem:[NSMenuItem separatorItem]];
             for (int i = 0; i < s->brainCount; i++) {
                 NSMenuItem *bi = [[NSMenuItem alloc]
@@ -1633,13 +1678,53 @@ void mac_menubar_refresh(const struct MacMenuState *s) {
             }
         }
 
-        if (s->brainSettingsShown) {
+        if (aiActive && s->brainSettingsShown) {
             [s_brainsMenu addItem:[NSMenuItem separatorItem]];
             [s_brainsMenu addItem:s_brainSettingsItem];
         }
 
+        /* Info Overlay after a separator, one row per script with a panel,
+         * tagged with the owner the row toggles. */
+        if (scnCount > 0 && s_infoOverlayItem && s_infoOverlayMenu) {
+            if (aiActive) [s_brainsMenu addItem:[NSMenuItem separatorItem]];
+            [s_infoOverlayMenu removeAllItems];
+            for (int i = 0; i < scnCount; i++) {
+                NSMenuItem *pi = [[NSMenuItem alloc]
+                    initWithTitle:[NSString stringWithUTF8String:s->scnPanelNames[i]]
+                    action:@selector(onScnPanelShown:)
+                    keyEquivalent:@""];
+                [pi setTag:s->scnPanelOwner[i]];
+                [pi setTarget:g_bridge];
+                [s_infoOverlayMenu addItem:pi];
+            }
+            [s_brainsMenu addItem:s_infoOverlayItem];
+        }
+
         s_lastBrainCount         = s->brainCount;
         s_lastBrainSettingsShown = s->brainSettingsShown ? YES : NO;
+        s_lastAiActive           = (int)aiActive;
+        s_lastScnPanelCount      = scnCount;
+        for (int i = 0; i < scnCount; i++) {
+            s_lastScnPanelOwner[i] = s->scnPanelOwner[i];
+        }
+    }
+
+    /* Per-frame: the Info Overlay rows' titles and checkmarks. A script's
+     * display name can arrive after its panel, and the checkmark mirrors
+     * the shown flag the X and the in-window checkbox change. */
+    if (s_infoOverlayMenu && scnCount > 0) {
+        for (NSMenuItem *it in [s_infoOverlayMenu itemArray]) {
+            int row = -1;
+            for (int i = 0; i < scnCount; i++) {
+                if (s->scnPanelOwner[i] == (int)it.tag) { row = i; break; }
+            }
+            if (row < 0) continue;
+            NSString *currentTitle = [NSString stringWithUTF8String:s->scnPanelNames[row]];
+            if (![it.title isEqualToString:currentTitle]) {
+                [it setTitle:currentTitle];
+            }
+            [it setState:(s->scnPanelShown[row] ? NSControlStateValueOn : NSControlStateValueOff)];
+        }
     }
 
     /* Per-frame: refresh titles + checkmarks on existing brain rows. Names

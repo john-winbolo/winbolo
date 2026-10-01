@@ -2270,3 +2270,63 @@ int run_scenario_manifest_agrees_workshop(void) {
                   "a different author was refused under '%s'", key);
     return 0;
 }
+
+/* needs_bots is written only when true, so a manifest that does not ask for
+ * bots is the text it was before the key existed. And the two forms of a
+ * package are refused when they disagree on it. */
+int run_scenario_manifest_json_needs_bots(void) {
+    ScenarioManifest base;
+    ScenarioManifest other;
+    ScnManifestDoc  *made;
+    ScnManifestDoc  *back;
+    char            *text;
+    char             err[256];
+    char             key[SCN_VALIDATE_KEY_LEN];
+    bool             hasKey;
+    bool             readBack;
+
+    /* false: no key at all. */
+    fillBase(&base);
+    base.needsBots = false;
+    made = scnManifestFromValues(&base, err, sizeof(err));
+    UT_ASSERT_MSG(made != NULL, "a doc could not be built: %s", err);
+    text = scnManifestWrite(made, err, sizeof(err));
+    scnManifestFree(made);
+    UT_ASSERT_MSG(text != NULL, "the manifest could not be written: %s", err);
+    hasKey = strstr(text, "needs_bots") != NULL;
+    free(text);
+    UT_ASSERT_MSG(!hasKey, "needs_bots false was written as a key");
+
+    /* true: the key is there and reads back true. */
+    base.needsBots = true;
+    made = scnManifestFromValues(&base, err, sizeof(err));
+    UT_ASSERT_MSG(made != NULL, "a doc could not be built: %s", err);
+    text = scnManifestWrite(made, err, sizeof(err));
+    scnManifestFree(made);
+    UT_ASSERT_MSG(text != NULL, "the manifest could not be written: %s", err);
+    hasKey = strstr(text, "needs_bots") != NULL;
+    back   = parseText(text, NULL, err, sizeof(err));
+    free(text);
+    UT_ASSERT_MSG(hasKey, "needs_bots true was not written");
+    UT_ASSERT_MSG(back != NULL, "what was written would not parse: %s", err);
+    readBack = scnManifestValues(back)->needsBots;
+    scnManifestFree(back);
+    UT_ASSERT_MSG(readBack, "needs_bots true read back false");
+
+    /* A mismatch between the two forms is refused, from either side. */
+    fillBase(&base);
+    fillBase(&other);
+    base.needsBots  = false;
+    other.needsBots = true;
+    UT_ASSERT(!scnManifestAgrees(&base, &other, key, sizeof(key), err,
+                                 sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "needs_bots") == 0, "the key was '%s'", key);
+    UT_ASSERT(!scnManifestAgrees(&other, &base, key, sizeof(key), err,
+                                 sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "needs_bots") == 0, "the key was '%s'", key);
+    other.needsBots = false;
+    UT_ASSERT_MSG(scnManifestAgrees(&base, &other, key, sizeof(key), err,
+                                    sizeof(err)),
+                  "two equal forms were refused at %s: %s", key, err);
+    return 0;
+}
