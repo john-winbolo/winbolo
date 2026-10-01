@@ -69,6 +69,15 @@ extern "C" {
 #include "../map_preview_view.h"
 #include "../map_preview_popup.h"
 #include "../../../bolo/public/client_mappreview.h"
+
+#ifdef __EMSCRIPTEN__
+/* The web's internet game list (src/wasm/finder_wasm.c). Start hands the
+ * fetch to the page and returns; Take gives 0 until it finishes, then 1 with
+ * a malloc'd body the caller frees, or NULL when the fetch failed. Neither
+ * waits. Hand-declared, as lobby_internal.h declares the reel's fetch. */
+void wasmFinderFetchStart(void);
+int  wasmFinderFetchTake(char **out);
+#endif
 }
 
 /* The lobby's visibility value renderer and the preset table, so a listed
@@ -188,7 +197,9 @@ static_assert(DISCOVERY_SCRIPT_MODS_MAX == WBN_SERVERLIST_MODS_MAX,
               "a tracker row's mods must fit ServerEntry's mod list");
 
 /* Copy the scripts from a server's own reply into e, replacing whatever a
- * tracker row put there. */
+ * tracker row put there. The web build has no LAN search and no info ping,
+ * so nothing there asks a server for its own reply. */
+#ifndef __EMSCRIPTEN__
 static void serverEntrySetScripts(ServerEntry &e, const DiscoveryScripts &sc) {
     int n = sc.modCount;
     if (n > DISCOVERY_SCRIPT_MODS_MAX) n = DISCOVERY_SCRIPT_MODS_MAX;
@@ -202,6 +213,7 @@ static void serverEntrySetScripts(ServerEntry &e, const DiscoveryScripts &sc) {
     }
     e.hasScriptReply = true;
 }
+#endif
 
 /* Compact "Views:" tag for the detail pane. Lists only the categories
  * that differ from the defaults, so a stock server shows nothing at
@@ -347,6 +359,12 @@ static const char *gameTypeAbbr(gameType g) {
     default:                 return langGetText(STR_DLGGAMESETUP_STRICT_SHORT);
     }
 }
+
+/* Everything from here to the refresh icon pings servers or searches the LAN,
+ * both on threads the web build cannot start (it links without -pthread, so
+ * constructing a std::thread throws). The web finder lists internet games
+ * only and leaves every row's ping unset. */
+#ifndef __EMSCRIPTEN__
 
 /* ---- Async ping worker ---- */
 struct PingWork {
@@ -677,6 +695,8 @@ extern "C" void broadcastServerCallback(const DiscoveryServer *server, void *use
     enqueuePing(pw);
 }
 
+#endif /* !__EMSCRIPTEN__ */
+
 /* ---- Refresh icon (loaded from SVG) ---- */
 static SDL_Texture *s_refreshIcon = nullptr;
 static bool s_refreshIconAttempted = false;
@@ -700,6 +720,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     char titleBuf[256];
     SDL_strlcpy(titleBuf, title ? title : "", sizeof(titleBuf));
     title = titleBuf;
+
+#ifdef __EMSCRIPTEN__
+    /* The web finder lists internet games only: there is no LAN search. */
+    useTracker = 1;
+#endif
 
     SDL_Window *window = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
@@ -751,7 +776,10 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     /* Load flag atlas for this dialog's ImGui context */
     flagsCreate(renderer);
 
-    /* Open GeoIP database for country flag lookups */
+    /* Open GeoIP database for country flag lookups. Only a LAN row looks its
+     * country up; an internet row takes it from the list, so the web build,
+     * which has no LAN search, never opens the database. */
+#ifndef __EMSCRIPTEN__
     if (!geoLookupIsLoaded()) {
 #if BOLO_MOBILE
         /* Android assets can't be mmap'd.  Extract the mmdb file from
@@ -791,6 +819,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 #endif
         WB_LOG_INFO(WB_LOG_CAT_ASSET, "[GameBrowser] GeoIP database loaded: %s", geoLookupIsLoaded() ? "yes" : "no");
     }
+#endif
 
     /* Background game */
     BgGame *bg = bgGameGetShared();
@@ -812,14 +841,23 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
      * writing after the dialog function returns (avoids blocking on exit). */
     static std::atomic<bool> searching(false);
     static std::atomic<bool> searchDone(false);
+#ifndef __EMSCRIPTEN__
     static std::thread searchThread;
     /* LAN mDNS browse runs on its own thread alongside the broadcast worker
      * (non-tracker searches only); both feed broadcastServerCallback, which
      * dedupes by address+port under serversMtx. */
     static std::thread mdnsThread;
+#endif
     static bool searchResultOk = false;
     static WbnServerList searchResultList = {};
 
+#ifdef __EMSCRIPTEN__
+    /* On the web a search is a fetch the page runs. One the last finder left
+     * running is forgotten here; the refresh this open starts replaces it on
+     * the page, so its reply is never taken. */
+    searching = false;
+    searchDone = false;
+#else
     /* Clean up any leftover state from a previous detached search */
     if (searchDone) {
         searchDone = false;
@@ -830,6 +868,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
     /* Drop any pings still in flight from a previous browser session. */
     resetPings();
+#endif
 
     /* Filter state */
     int filterGameType = -1; /* -1 = all */
@@ -866,8 +905,10 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
      * session; the loaded map is swapped when the selected md5 changes.
      * NULL view => preview treated as unavailable (all uses guarded). */
     MapPreviewView *previewView = mapPreviewViewCreate();
+#ifndef __EMSCRIPTEN__
     char loadedPreviewMd5[33] = "";
     bool loadedPreviewOk = false;
+#endif
     /* Compressed bytes of the currently-loaded preview map, retained so a
      * click on the thumbnail can hand them to the zoomable popup without
      * re-fetching. Refreshed whenever loadedPreviewMd5 changes. */
@@ -896,9 +937,25 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             }
         }
 
+#ifdef __EMSCRIPTEN__
+        /* Take the page's reply once it lands and parse it here, standing in
+         * for the search thread's wbnFetchServerList. A failed fetch parses
+         * nothing and reads as a failed search. */
+        if (searching && !searchDone) {
+            char *body = nullptr;
+            if (wasmFinderFetchTake(&body)) {
+                searchResultOk = (body != nullptr) &&
+                                 wbnServerListParse(body, &searchResultList);
+                free(body);
+                searchDone = true;
+            }
+        }
+#endif
+
         /* Check if background search completed */
         if (searchDone) {
             searchDone = false;
+#ifndef __EMSCRIPTEN__
             if (searchThread.joinable()) {
                 searchThread.join();
             }
@@ -907,6 +964,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             if (mdnsThread.joinable()) {
                 mdnsThread.join();
             }
+#endif
             searching = false;
 
             if (useTracker) {
@@ -999,6 +1057,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     int total = (int)servers.size();
                     if (total > 0) {
                         statusText = langGetText(STR_DLGBROWSER_GAMES_LOADED);
+#ifndef __EMSCRIPTEN__
                         /* Queue async pings to each server (bounded pool) */
                         for (int i = 0; i < total; i++) {
                             PingWork pw = {};
@@ -1007,6 +1066,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                             pw.index = i;
                             enqueuePing(pw);
                         }
+#endif
                     } else {
                         statusText = langGetText(STR_DLGBROWSER_NO_GAMES);
                     }
@@ -1041,6 +1101,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         }
 
         /* Process incoming ping results */
+#ifndef __EMSCRIPTEN__
         {
             std::lock_guard<std::mutex> lock(pingPool().resultsMtx);
             for (auto &pr : pingPool().results) {
@@ -1100,6 +1161,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             }
             pingPool().results.clear();
         }
+#endif
 
         /* Tick the background game at fixed rate (unless paused) */
         if (hasBg && !bg->paused) {
@@ -1298,6 +1360,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     servers.clear();
                 }
 
+#ifndef __EMSCRIPTEN__
                 bool ut = (useTracker != 0);
 
                 if (searchThread.joinable()) {
@@ -1310,11 +1373,17 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                  * previous list so their results can't land on the rebuilt
                  * indices, and drop pending/in-flight work. */
                 resetPings();
+#endif
 
                 wbnServerListFree(&searchResultList);
                 searchResultOk = false;
                 searching = true;
 
+#ifdef __EMSCRIPTEN__
+                /* The page fetches the list; the frame loop above takes the
+                 * reply when it lands. A fetch still running is replaced. */
+                wasmFinderFetchStart();
+#else
                 struct SearchParams { bool tracker; };
                 SearchParams sp = {};
                 sp.tracker = ut;
@@ -1345,6 +1414,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         discoveryFindMdnsGamesAsync(broadcastServerCallback, &mcbd);
                     });
                 }
+#endif
             }
 
             ImGui::Separator();
@@ -1481,6 +1551,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 if (ImGui::Selectable("##srv", isSelected,
                                       ImGuiSelectableFlags_AllowDoubleClick,
                                       ImVec2(rowW, rowH))) {
+                    /* On the web a row is only selected: it joins nothing. */
+#ifndef __EMSCRIPTEN__
                     /* Join on a mouse double-click, or — in controller mode,
                      * where the row activates via keyboard Space and never a
                      * mouse double-click — on a second A press on the row that
@@ -1488,9 +1560,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                      * captured before the assignment below). */
                     bool joinActivate = ImGui::IsMouseDoubleClicked(0) ||
                                         (uiShouldUseControllerMode() && isSelected);
+#endif
                     selectedItem = i;
                     SDL_strlcpy(selKeyAddr, e.address, sizeof(selKeyAddr));
                     selKeyPort = e.port;
+#ifndef __EMSCRIPTEN__
                     if (joinActivate) {
                         char playerName[PLAYER_NAME_LEN];
                         gameFrontGetPlayerName(playerName);
@@ -1505,6 +1579,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                             running = false;
                         }
                     }
+#endif
                 }
                 imguiHandOnHover();
                 ImVec2 pEnd = ImGui::GetCursorScreenPos();
@@ -1540,7 +1615,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
                 /* Ping string + colour FIRST, so the name can be clamped to
                  * stop before it (a long reverse-DNS otherwise runs under the
-                 * right-aligned ping). */
+                 * right-aligned ping). The web has no ping, so there the
+                 * name runs to the row's right edge. */
+#ifdef __EMSCRIPTEN__
+                float pingLeft = textRight;
+#else
                 char pingStr[24];
                 ImVec4 pcol;
                 if (e.pingMs >= 0) {
@@ -1554,6 +1633,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     pcol = ImGui::GetStyle().Colors[ImGuiCol_TextDisabled];
                 }
                 float pingLeft = textRight - ImGui::CalcTextSize(pingStr).x;
+#endif
 
                 /* Name line — host name if known, else address:port. Clamp its
                  * width to (pingLeft − gap) so a long reverse-DNS can't overlap
@@ -1642,8 +1722,10 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 /* Ping, right-aligned on the first line (string/colour/pingLeft
                  * were computed above so the name could be clamped not to
                  * overlap it). */
+#ifndef __EMSCRIPTEN__
                 dl->AddText(ImVec2(pingLeft, p0.y + pad),
                             ImGui::GetColorU32(pcol), pingStr);
+#endif
 
                 /* Players X/cap in the left gutter, under the flag. A
                  * scenario's human cap counts humans against it. */
@@ -1718,6 +1800,12 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     /* Random/unknown map — nothing to fetch. */
                     centeredDimmed(langGetText(STR_DLGBROWSER_PREVIEW_UNAVAIL));
                 } else {
+#ifdef __EMSCRIPTEN__
+                    /* The map fetch (map_preview_fetch.cpp) runs
+                     * wbnMapFetchByMd5 on worker threads, and the web build
+                     * has neither, so a listed game shows no preview. */
+                    centeredDimmed(langGetText(STR_DLGBROWSER_PREVIEW_UNAVAIL));
+#else
                     mapPreviewFetchRequest(sel.mapMd5);
                     const uint8_t *bytes = nullptr;
                     size_t len = 0;
@@ -1796,6 +1884,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                             centeredDimmed(langGetText(STR_DLGBROWSER_PREVIEW_UNAVAIL));
                         }
                     }
+#endif
                 }
             }
             ImGui::EndChild();
@@ -2095,12 +2184,16 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         {
             int total = (int)servers.size();
             int pendingPings = 0;
+            /* The web never pings, so its rows stay unpinged rather than
+             * pending and the count stays at zero. */
+#ifndef __EMSCRIPTEN__
             {
                 std::lock_guard<std::mutex> lock(serversMtx);
                 for (auto &s : servers) {
                     if (s.pingMs == -1) pendingPings++;
                 }
             }
+#endif
             MessageArgs args = {};
             SDL_strlcpy(args.string1, statusText, sizeof(args.string1));
             args.number = total;
@@ -2130,8 +2223,12 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             legendDot(dotOrange, true,  langGetText(STR_DLGBROWSER_ST_INGAME));
             ImGui::SameLine(0.0f, 16.0f * s);
             legendDot(dotRed,    true,  langGetText(STR_DLGBROWSER_ST_LOCKED));
+            /* A grey dot is a server that did not answer the ping, which the
+             * web never sends. */
+#ifndef __EMSCRIPTEN__
             ImGui::SameLine(0.0f, 16.0f * s);
             legendDot(dotGrey,   false, langGetText(STR_DLGBROWSER_ST_NORESP));
+#endif
         }
 
         ImGui::Spacing();
@@ -2148,7 +2245,9 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         float btnW = 110.0f * s;
         float btnH = 28.0f * s;
         {
+#ifndef __EMSCRIPTEN__
             bool hasSelection = (selectedItem >= 0 && selectedItem < (int)servers.size());
+#endif
 
             /* Controller mode draws the bound A/B glyphs inline, left of the
              * primary buttons (A = Join, B = Cancel). Glyph height matches the
@@ -2166,6 +2265,12 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
             /* Join — A glyph before the disabled-state guard so it isn't dimmed. */
             glyphInline(SI_ACTION_MENU_ACCEPT);
+#ifdef __EMSCRIPTEN__
+            /* The web finder joins nothing: Join is drawn disabled. */
+            ImGui::BeginDisabled();
+            ImGui::Button(langGetText(STR_DLGTCP_JOIN), ImVec2(btnW, btnH));
+            ImGui::EndDisabled();
+#else
             if (!hasSelection) ImGui::BeginDisabled();
 
             if (ImGui::Button(langGetText(STR_DLGTCP_JOIN), ImVec2(btnW, btnH))) {
@@ -2189,6 +2294,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             }
             imguiHandOnHover();
             if (!hasSelection) ImGui::EndDisabled();
+#endif
 
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
             /* Spectate — beside Join. Enabled only when the selected server
@@ -2232,6 +2338,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 if (!previewEnlargeReady) ImGui::EndDisabled();
             }
 
+            /* Rejoin, New Game, Player Name and Manual Connect are left off the
+             * web: it hosts nothing, has no address entry, and a web join
+             * loads a page of its own that picks its own name, so neither a
+             * rejoin nor the name set here would reach it. */
+#ifndef __EMSCRIPTEN__
             /* Rejoin */
             ImGui::SameLine();
             if (!hasSelection) ImGui::BeginDisabled();
@@ -2286,6 +2397,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 running = false;
             }
             imguiHandOnHover();
+#endif
 
             /* Cancel - right-aligned, muted-grey styling per dialog spec.
              * In controller mode a B glyph sits just left of it; shift the
@@ -2393,7 +2505,9 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
      * timeout. resetPings() supersedes anything already popped by a
      * pool worker so its eventual result is dropped; the workers
      * themselves block on their own ephemeral-port sockets and don't
-     * touch port 27500, so they don't need to be joined. */
+     * touch port 27500, so they don't need to be joined. The web runs no
+     * search or ping, so there is nothing to stop. */
+#ifndef __EMSCRIPTEN__
     discoveryAbortBroadcastSearch();
     discoveryAbortMdnsSearch();
     resetPings();
@@ -2403,6 +2517,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     if (mdnsThread.joinable()) {
         mdnsThread.join();
     }
+#endif
 
     /* Close the shared zoom popup so it doesn't linger over the next
      * dialog (mirrors the map-chooser's exit cleanup). */

@@ -50,6 +50,7 @@
 #include "../gui/sdl3/input_gamepad.h"
 #include "../gui/sdl3/build_cursor.h"
 #include "../gui/sdl3/luabrainshandler.h"
+#include "../gui/sdl3/dialogs/imgui_gamebrowser.h"
 #include "../gui/sdl3/dialogs/imgui_lobby.h"
 #include "../gui/sdl3/dialogs/imgui_messagebox.h"
 #include "../gui/sdl3/dialogs/imgui_settings.h"
@@ -562,9 +563,9 @@ static void wasmCopyUrlParam(const char *name, char *dst, size_t dstSize) {
  * (/join/<key>) or proxyURL joins a game and never shows the menu; otherwise
  * tutorial (/tutorial) goes straight into the tutorial and practise
  * (/practise) straight into single player. A page with none of these (/)
- * opens on the menu. finder (/?finder=1) opens the menu as well for now,
- * until the game finder exists. */
-static void wasmReadLaunch(WasmLaunch *out) {
+ * opens on the menu. finder (/?finder=1) sets *openFinder and showMenu: the
+ * game finder opens first, and the menu once it closes. */
+static void wasmReadLaunch(WasmLaunch *out, bool *openFinder) {
   char tutorial[8];
   char practise[8];
   char finder[8];
@@ -588,6 +589,14 @@ static void wasmReadLaunch(WasmLaunch *out) {
   out->showMenu = (out->mode != WASM_GAME_JOIN &&
                    (finder[0] != '\0' ||
                     (out->mode == WASM_GAME_PRACTICE && practise[0] == '\0')));
+  *openFinder = (out->showMenu && finder[0] != '\0');
+}
+
+/* Show the game finder over the menu's background, as the desktop's Internet
+ * row does, and return when it closes. Nothing in it starts a game, so the
+ * menu always follows. */
+static void wasmShowFinder(void) {
+  imguiGameBrowserShow(langGetText(STR_GAMEFRONT_TRACKERFINDER_TITLE), TRUE);
 }
 
 /* End a single-player game (practice or tutorial) so the menu, and then
@@ -701,6 +710,7 @@ static bool wasmPlayGame(const char *cmdLine, const WasmLaunch *launch) {
 int main(int argc, char *argv[]) {
   const char *cmdLine = "";
   WasmLaunch launch;
+  bool openFinder = FALSE;
 
   (void)argc;
   (void)argv;
@@ -737,7 +747,7 @@ int main(int argc, char *argv[]) {
   voiceInit();
 
   /* The only read of the page URL; the game mode comes from here on. */
-  wasmReadLaunch(&launch);
+  wasmReadLaunch(&launch, &openFinder);
 
   /* Page-lifetime setup: default keys, language, window, sound, brains. */
   if (gameFrontWasmSetup(&keys) == FALSE) {
@@ -789,6 +799,13 @@ int main(int argc, char *argv[]) {
   }
   for (;;) {
     if (menu) {
+      /* A ?finder=1 launch opens the finder before the menu's first
+       * showing, once. */
+      if (openFinder) {
+        openFinder = FALSE;
+        wasmShowFinder();
+        continue;
+      }
       /* The welcome dialog returns an openingStates value (gamefront.h). */
       int r = imguiWelcomeShow();
       if (r == openSetup) {
@@ -798,9 +815,11 @@ int main(int argc, char *argv[]) {
       } else {
         if (r == openSettings) {
           imguiSettingsShow();
+        } else if (r == openInternet) {
+          wasmShowFinder();
         }
-        /* Settings closed, or a row with nothing behind it on the web
-         * (Internet, Local, Quit): show the menu again. */
+        /* Settings or the finder closed, or a row with nothing behind it
+         * on the web (Local, Quit): show the menu again. */
         continue;
       }
       next.gameKey[0] = '\0';

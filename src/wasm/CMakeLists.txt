@@ -370,6 +370,11 @@ set(WASM_SOURCES
     # key) stays excluded here too; this drives the page's fetch() instead, and
     # without suspending the C stack, since the reel polls it mid-frame.
     ${CMAKE_CURRENT_SOURCE_DIR}/round_log_fetch_wasm.c
+    # The game finder's internet list: the page fetches /api/v1/games and the
+    # finder polls for the reply each frame; wbn_serverlist.c parses it, with
+    # its http.c fetch compiled out here.
+    ${CMAKE_CURRENT_SOURCE_DIR}/finder_wasm.c
+    ${SRC_ROOT}/winbolonet/wbn_serverlist.c
     ${SRC_ROOT}/steam/steam_wrapper_stub.c
     ${SRC_ROOT}/common/sentry_integration.c
     ${SRC_ROOT}/common/wb_log.c
