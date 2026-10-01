@@ -2688,6 +2688,9 @@ static const LangEntry langTable[] = {
     {2750, "Licence"},
     {2751, "Free software under the GNU GPL v3 or later. No warranty."},
     {2752, "File not found."},
+    {2753, "Setting"},
+    {2754, "Value"},
+    {2755, "Rules:"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

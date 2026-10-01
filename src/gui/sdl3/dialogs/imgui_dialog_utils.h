@@ -525,6 +525,61 @@ static inline void imguiDrawIconHeader(int tileX, int tileY, const char *label) 
     ImGui::TableHeader(label);
 }
 
+/* A table drawn the way the lobby's team panels and the in-game players
+ * panel are drawn: a border round the whole table and a header row in the
+ * theme's accent. The header takes ImGuiCol_Header, not
+ * ImGuiCol_TableHeaderBg: the theme leaves that at ImGui's grey, which reads
+ * as one more row rather than as the top of the table. The border takes
+ * ImGuiCol_Border, the colour ImGuiChildFlags_Borders draws round each lobby
+ * team panel. Row stripes and the line under each row are always on.
+ *
+ * The two colours stay pushed until imguiEndPanelTable: ImGui reads the
+ * border colour in BeginTable and the header colour when the header row
+ * ends. Call imguiEndPanelTable only when this returned true, the same as
+ * EndTable. BordersOuterV also turns on ImGui's outer cell padding, so a
+ * caller that sums column widths counts two cell paddings per column. */
+static inline bool imguiBeginPanelTable(const char *id, int columns,
+                                        ImGuiTableFlags extraFlags = 0,
+                                        const ImVec2 &size = ImVec2(0.0f, 0.0f)) {
+    ImGui::PushStyleColor(ImGuiCol_TableHeaderBg,
+                          ImGui::GetColorU32(ImGuiCol_Header));
+    ImGui::PushStyleColor(ImGuiCol_TableBorderStrong,
+                          ImGui::GetColorU32(ImGuiCol_Border));
+    if (!ImGui::BeginTable(id, columns,
+                           ImGuiTableFlags_RowBg |
+                               ImGuiTableFlags_BordersInnerH |
+                               ImGuiTableFlags_BordersOuter | extraFlags,
+                           size)) {
+        ImGui::PopStyleColor(2);
+        return false;
+    }
+    return true;
+}
+
+static inline void imguiEndPanelTable(void) {
+    ImGui::EndTable();
+    ImGui::PopStyleColor(2);
+}
+
+/* A bordered box around one section of a dialog: its heading, its table and
+ * any note under it. The box is as tall as what is drawn in it and as wide
+ * as the space it is in, with the window padding inside the border. Always
+ * pair it with imguiEndPanelSection, the same as BeginChild with EndChild,
+ * whatever BeginChild returned. NavFlattened lets a gamepad move between
+ * the boxes and into their dropdowns as if no box were there. */
+static inline void imguiBeginPanelSection(const char *id) {
+    ImGui::BeginChild(id, ImVec2(0.0f, 0.0f),
+                      ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY |
+                          ImGuiChildFlags_AlwaysUseWindowPadding |
+                          ImGuiChildFlags_NavFlattened,
+                      ImGuiWindowFlags_NoScrollbar |
+                          ImGuiWindowFlags_NoScrollWithMouse);
+}
+
+static inline void imguiEndPanelSection(void) {
+    ImGui::EndChild();
+}
+
 /* Register Platform_OpenInShellFn on the current ImGui context so that
  * ImGui::TextLinkOpenURL() actually launches the system browser on click.
  * Call once per ImGui::CreateContext(), with that context current. */
