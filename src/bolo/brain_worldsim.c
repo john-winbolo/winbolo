@@ -276,6 +276,10 @@ void brainWorldSimSetRules(BrainWorldSim *sim, int shell_damage, int pill_range,
                            int pill_cooldown_ticks, int pill_hit_damage,
                            int shoot_interval, int forest_range) {
   if (!sim) return;
+  /* Both ranges are squared into an int by the run loop. The rule bound is
+     65535, whose square does not fit; 46340 is the largest value that does. */
+  if (pill_range > 46340)   pill_range = 46340;
+  if (forest_range > 46340) forest_range = 46340;
   if (shell_damage > 0)          sim->shell_damage = shell_damage;
   if (pill_range > 0)            sim->pill_range = pill_range;
   if (pill_attack_ticks > 0)     sim->pill_attack_ticks = pill_attack_ticks;
