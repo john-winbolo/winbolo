@@ -285,6 +285,10 @@ set(_cjk_fonts
 # Preload data files so they're available in the virtual filesystem
 set(EMSCRIPTEN_LINK_FLAGS "")
 string(APPEND EMSCRIPTEN_LINK_FLAGS " --preload-file ${DATA_DIR}@/data")
+# The licence and its additional permissions, which every copy of the program
+# has to carry.
+string(APPEND EMSCRIPTEN_LINK_FLAGS " --preload-file ${REPO_ROOT}/LICENSE@/data/LICENSE")
+string(APPEND EMSCRIPTEN_LINK_FLAGS " --preload-file ${REPO_ROOT}/LICENSE-EXCEPTION.md@/data/LICENSE-EXCEPTION.md")
 
 if(_have_fonttools)
     set(SUBSET_FONTS_DIR "${CMAKE_CURRENT_BINARY_DIR}/fonts_subset")

@@ -153,8 +153,10 @@ local function goal_to(team)
   local who = (team == RED) and "Red" or "Blue"
   game.message(string.format("%s scores. %d - %d", who, goals[RED],
                              goals[BLUE]))
+  -- A goal stops play while the ball goes back to the spot, so the line
+  -- can sit in the middle of the view.
   game.announce(string.format("%s!  %d - %d", who, goals[RED], goals[BLUE]),
-                3)
+                3, nil, "center")
   game.sound("big_explosion_near", SPOT.x, SPOT.y)
   put_ball_on_the_spot()
   line_up()

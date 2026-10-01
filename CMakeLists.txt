@@ -885,10 +885,14 @@ file(GLOB IOS_DATA_UI "${CMAKE_SOURCE_DIR}/data/ui/*.svg")
 # above does not reach them.
 file(GLOB IOS_DATA_UI_PING "${CMAKE_SOURCE_DIR}/data/ui/ping/*.svg")
 file(GLOB IOS_LANG_FILES "${CMAKE_SOURCE_DIR}/data/lang/*.txt")
-# About-box markdown docs that live at the repo root but ship in data/
+# About-box markdown docs that live at the repo root but ship in data/,
+# with the licence and its additional permissions, which every copy of the
+# program has to carry.
 set(IOS_ABOUT_DOCS
     "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
     "${CMAKE_SOURCE_DIR}/AUTHORS.md"
+    "${CMAKE_SOURCE_DIR}/LICENSE"
+    "${CMAKE_SOURCE_DIR}/LICENSE-EXCEPTION.md"
 )
 
 # Bolo engine sources that stay per-target (HAVE_STEAM-divergent).
@@ -2011,7 +2015,10 @@ add_custom_command(TARGET WinBolo POST_BUILD
 )
 
 # Ship the top-level docs (Third Party Notices, Authors) inside data/
-# so the About box can find them via SDL_GetBasePath()/data/.
+# so the About box can find them via SDL_GetBasePath()/data/. The licence
+# and its additional permissions go with them: the GPL requires every copy
+# of the program to carry a copy of the licence, and on macOS data/ is inside
+# the .app bundle, so the bundle carries its own.
 add_custom_command(TARGET WinBolo POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
@@ -2019,7 +2026,13 @@ add_custom_command(TARGET WinBolo POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/AUTHORS.md"
         "${WINBOLO_DATA_DIR}/data/AUTHORS.md"
-    COMMENT "Copying About-box markdown docs to data/"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/LICENSE"
+        "${WINBOLO_DATA_DIR}/data/LICENSE"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/LICENSE-EXCEPTION.md"
+        "${WINBOLO_DATA_DIR}/data/LICENSE-EXCEPTION.md"
+    COMMENT "Copying About-box markdown docs and the licence to data/"
 )
 
 add_custom_command(TARGET WinBolo POST_BUILD
@@ -3293,6 +3306,13 @@ add_custom_target(dist
     # About box can find them via SDL_GetBasePath()/data/.
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md" "${DIST_DIR}/data/THIRD_PARTY_NOTICES.md"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/AUTHORS.md" "${DIST_DIR}/data/AUTHORS.md"
+
+    # The licence, its additional permissions and the third-party notices at
+    # the root of the zip, where someone unpacking it will see them. The GPL
+    # requires every copy of the program to carry a copy of the licence.
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/LICENSE" "${DIST_DIR}/LICENSE"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/LICENSE-EXCEPTION.md" "${DIST_DIR}/LICENSE-EXCEPTION.md"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md" "${DIST_DIR}/THIRD_PARTY_NOTICES.md"
 
     # Brain scripts (excludes *.md plan/roadmap notes via copy_brains.cmake)
     COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains/GoalHunter_1.7"
@@ -6336,6 +6356,8 @@ set(_unit_test_names
     scenario_validate_trigger_announce_clear
     scenario_validate_trigger_arg_literal
     scenario_validate_rule_pair_key
+    scenario_validate_needs_bots_missing
+    scenario_validate_needs_bots_declared
     scenario_lua_every_row_answers
     scenario_lua_op_arguments_match_the_doc
     scenario_lua_read_index_passes_through
@@ -6363,6 +6385,7 @@ set(_unit_test_names
     scenario_lua_panel_large_size
     scenario_lua_presentation_targets
     scenario_lua_score_and_announce
+    scenario_lua_announce_position
     scenario_lua_acting_rows_refuse_a_check
     scenario_sandbox_removed_names_are_nil
     scenario_sandbox_bytecode_chunk_refused
@@ -6617,10 +6640,11 @@ set(_unit_test_names
     scenario_panel_large_size
     scenario_panel_timer_text
     scenario_announce_remaining
-    scenario_announce_place
+    scenario_announce_position
     scenario_status_line
     scn_status_codec_and_client
-    scn_arm_status_and_place
+    scn_announce_position_codec
+    scn_arm_status_and_position
     scn_arm_status_overlap
     scenario_panel_slot_rect
     lv_rule_names_and_panel_parse
@@ -6657,6 +6681,7 @@ set(_unit_test_names
     lv_presentation_slot_team
     lv_presentation_announce_posts
     lv_presentation_status_line
+    lv_presentation_announce_position
     lv_presentation_marker_visible
     lv_presentation_live_seek
     lv_presentation_live_fast_forward

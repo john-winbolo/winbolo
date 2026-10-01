@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -755,9 +758,13 @@ uint32_t clientSimGetScnPanelRejectCount(const ClientSim *cs);
 const char *clientSimGetScnAnnounce(const ClientSim *cs, uint16_t *outTicks,
                                     uint32_t *outArrivedTick);
 
-/* Where the announcement on screen sits, a ScnAnnouncePlace; the top (0)
- * when there is none. */
-uint8_t clientSimGetScnAnnouncePlace(const ClientSim *cs);
+/* Where the announcement on screen goes. True, with *outX and *outY the
+ * centre of the line as position bytes across and down the view (0 to
+ * SCN_ANNOUNCE_POS_MAX), when the script gave it a position; false, with
+ * both left alone, when it goes in the usual place or there is no line.
+ * Either out pointer may be NULL. */
+bool clientSimGetScnAnnouncePos(const ClientSim *cs, uint8_t *outX,
+                                uint8_t *outY);
 
 /* The status line on screen, or NULL when there is none. outEndsAt gets
  * the server tick its countdown runs to, on clientSimGetLastServerTick's

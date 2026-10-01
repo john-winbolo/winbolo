@@ -442,7 +442,7 @@ scenario = {
 | `bound` | boolean | True (the default) when the scenario is tied to its map. A scenario that names tags or regions is tied to its map by definition, because tags and regions are the map's own squares and entities. A server can also offer scenarios of its own, which play over whichever map a host has committed; a scenario with `bound` true is not one of those and a host picking it is refused, because over another map its tags, its regions and its entity indices name items that are not there. |
 | `triggers` | array | What the scenario does without a line of Lua: hooks to listen on, tests against what each hook is handed, and calls to make when every test holds. A scenario may carry triggers, a script, or both. See [Triggers](#triggers). |
 | `fill_to_caps` | boolean | False by default. True starts every pillbox and base on the map at the caps your `rules` table leaves in force rather than at the numbers the map file holds. A map file states a number for each pill's armour and each base's stocks and has no way of stating "full", so a scenario that raises `base_full_armour` or `pill_max_armour` would otherwise open with the map's own smaller numbers and climb to the new ones over the round. Raising only: anything already at or above a cap is left where it is, and anything above one is brought down by the rules themselves. A pill's firing rate is not touched. |
-| `needs_bots` | boolean | False by default. True says the script needs the lobby to allow bots: it fields its own, through a `lobby` team with `bots` above 0 or with held seats, through `game.spawn_bot`, or through `game.lobby_add_bot`, and a lobby set to no computer tanks refuses every one of those. With it, attaching the script moves a lobby set to no bots up to one that runs them, the host cannot set no bots while the script is attached, and the lobby goes back to no bots once the last script goes. Without it the script leaves the host's bot setting alone, and a script that only works with the bots a host adds — retuning them with `game.bot_init`, say — does not need it. A mod may say it as well as a scenario, and a list needs bots when any script on it says so. A `lobby` team with `bots = 0` does not say it. |
+| `needs_bots` | boolean | False by default. True says the script needs the lobby to allow bots: it fields its own, through a `lobby` team with `bots` above 0 or with held seats, through `game.spawn_bot`, or through `game.lobby_add_bot`, and a lobby set to no computer tanks refuses every one of those. With it, attaching the script moves a lobby set to no bots up to one that runs them, the host cannot set no bots while the script is attached, and the lobby goes back to no bots once the last script goes. Without it the script leaves the host's bot setting alone, and a script that only works with the bots a host adds — retuning them with `game.bot_init`, say — does not need it. A mod may say it as well as a scenario, and a list needs bots when any script on it says so. A `lobby` team with `bots = 0` does not say it. A file that fields bots and leaves it out works in a lobby that allows bots and fails in one that does not, so `-validate` reports it and packing or publishing the file is refused: a `lobby` team with `bots` above 0, or a call to `game.spawn_bot` or `game.lobby_add_bot` anywhere in the code (a comment or a string that only names one is not a call). |
 | `callbacks` | table | What each of the script's callbacks does, one sentence each for a player, keyed by the callback's name: `callbacks = { on_start = "Lines the teams up.", can_die = "Builders cannot be killed." }`. The lobby's details dialog shows them under the rules table, headed "What this mod implements:" or "What this scenario implements:", as a table of Method (the callback's name), Type and High-level overview (the sentence). Type is Event for a hook whose return the engine ignores, Query for a policy whose answer it uses, and Trigger for a hook only a trigger's `when` defines. A script with no block shows no such section. Optional, and it changes nothing about how the round plays. At most 40 rows, each sentence cut at 159 bytes (at a UTF-8 character boundary), and 2048 bytes for the whole block packed (a type byte and two length bytes per row plus the name and the sentence, and one count byte) — about twenty lines of eighty letters. The load warns, and never refuses the file, for each callback the script defines that the block does not describe, for each name that is no callback the engine calls, and for each name the script never defines; those last two rows are dropped. The warnings go to the server console and `-validate` prints them. The names are the ones in the hook and policy tables below; a trigger's `when` counts as defining its hook. |
 | `workshop_id` | string | The Steam Workshop item the file was published as, written as a string of decimal digits (`"3301234567"`), because a Lua number cannot hold every digit of a 64-bit id. The game writes it into the file's manifest when you publish it; it is not meant to be set by hand. A script that declares its own `scenario` table need not repeat it: it is compared with the manifest only when the table states it, and a table that states a different id is refused. Anything that is not a string of digits is reported and read as none. |
 | `workshop_author` | string | The SteamID64 of the account that published the file, a string of decimal digits like `workshop_id`, and written by the game at the same time. The same rules apply: not meant to be set by hand, need not be repeated, and refused only when the table states a different one. |
@@ -1499,7 +1499,7 @@ exist.
 |---|---|
 | `game.panel(id, list[, target])` | Draws panel `id` from a list of primitives. An empty list clears it. |
 | `game.score(target, value[, label])` | The scenario's own score for one seat with a number, or for a team with `{ team = t }`. `label` is the short word shown beside it, up to 15 bytes. A round that scores both teams and seats gets a grouped recap table: a row for each scored team, best team score first, with its members (by lobby team) under it, best own score first; seats on no scored team follow. A round that scores only one of the two keeps the plain table of players. |
-| `game.announce(text[, seconds[, target[, place]]])` | A line across the game view, centred, for that many seconds. `place` says where it goes: `"top"` (the default) or `"upper"`, a quarter of the way down. It moves aside or down to keep clear of the scenario panel and the status line. Empty text takes the line away. |
+| `game.announce(text[, seconds[, target[, position]]])` | A big line across the game view for that many seconds. Left out, `position` puts the line where it has always gone, centred in the upper third of the view. Give `"top"`, `"center"` or `{ x = , y = }` to put the centre of the line somewhere else. Empty text takes the line away. |
 | `game.status(text[, countdown_to[, target]])` | The status line: one line at the very top of the game view, centred, that stays until it is changed or cleared. `countdown_to` is a tick on `game.tick()`'s clock; the client shows the time left to it after the text. Empty text takes the line away. |
 | `game.marker(id, x, y[, colour[, target]])` | Puts mark `id` on a map square. |
 | `game.marker_follow(id, p[, colour[, target]])` | Puts mark `id` on seat `p`, where it rides the tank rather than the ground. |
@@ -1521,19 +1521,44 @@ neither. In the lobby the clock moves at half that
 rate, so a line put up before the round starts stays up about twice as long as
 it asked for.
 
-**Where an announcement goes.** Left out, or `"top"`, the line goes along the
-top of the view, as every announcement did before there was a choice. When a
-status line is up, a top announcement sits just below it and never over it.
-`"upper"` starts the line a quarter of the way down the view, for the bigger
-news of a round, and it still moves down to keep clear of the panel. Any
-other word stops the script. A line at the top is up to 128 bytes. A line
-placed anywhere else is up to 126 bytes, and a longer one is refused with
-`SCN_OP_TOO_BIG`: a client older than the place draws every line at the top,
-and it drops a placed line longer than 126 bytes and shows nothing. Both
-lines are drawn on the desktop view, on the full screen map and in tablet
-mode. On the main view a line never moves down onto the player's own tank; the
-full screen map has no tank in a fixed place, so there a line may move down as
-far as the map goes.
+**Where an announcement goes.** With no `position` the line goes where every
+announcement has always gone: centred across the view, in its upper third,
+clear of the player's own tank in the middle. Nothing moves it.
+
+`position` puts the centre of the line at a point on the game view. Give a
+table `{ x = across, y = down }`, each from 0 to 1: `{ x = 0, y = 0 }` is the
+top-left corner, `{ x = 1, y = 1 }` the bottom-right one and
+`{ x = 0.5, y = 0.5 }` the middle. Two words are short names for the points
+scripts use most:
+
+| Word | Same as | Use it for |
+|---|---|---|
+| `"top"` | `{ x = 0.5, y = 0 }` | Lines that come often, such as kill lines: up out of the way |
+| `"center"` (or `"centre"`) | `{ x = 0.5, y = 0.5 }` | Important lines in a quiet moment, such as the round start or the winner |
+
+The line is moved the least it takes to keep all of it inside the view, so
+`y = 0` puts it as high as it goes and no edge is ever cut off. A line wider
+than the view is centred across it. When a status line is up, a line that
+would touch it drops to just below it. A line with a position does not move
+for the scenario panel or other windows, and `"center"` sits on the player's
+own tank: the script chose the spot, so use it when there is little else to
+watch.
+
+The position is sent as two bytes, so it lands on one of 255 steps across and
+down. A share that is not a number, a table without both `x` and `y`, or a
+word other than these stops the script. A share below 0, above 1, or NaN is
+refused with `SCN_OP_RANGE`.
+
+A line with no position is up to 128 bytes. A line with a position is up to
+125 bytes, and a longer one is refused with `SCN_OP_TOO_BIG`. A client older
+than the position draws every line in the usual place, and it would drop a
+positioned line longer than 125 bytes and show nothing. Both lines are drawn
+on the desktop view, on the full screen map and in tablet mode, each over its
+own game view.
+
+On a server older than the position, `game.announce` reads only its first
+three arguments, so a script that passes a position there still shows the
+line, in the usual place.
 
 **The status line.** `game.status` holds one line at the top of the view for
 as long as the round wants it, such as "Wave 3/10". With `countdown_to`, the
@@ -1553,7 +1578,10 @@ past 4294967294, or a seat or team outside the game, is refused with
 
 ```lua
 game.status(string.format("Wave %d/%d", wave, waves), wave_ends_at)
-game.announce("Wave 3 - they come from the north", 5, nil, "upper")
+game.announce("Wave 3 - they come from the north", 5, nil, "center")
+game.announce(name .. " got a kill", 2, nil, "top")
+game.announce("Red has the flag", 3, { team = 2 }, { x = 0.5, y = 0.8 })
+game.announce("Go!", 2)      -- no position: where announcements always go
 game.status("")              -- take the status line away
 ```
 

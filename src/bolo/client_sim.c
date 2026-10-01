@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -2245,9 +2248,13 @@ const char *clientSimGetScnAnnounce(const ClientSim *cs, uint16_t *outTicks,
   return cs->scnAnnounceText;
 }
 
-uint8_t clientSimGetScnAnnouncePlace(const ClientSim *cs) {
-  if (cs == NULL || cs->scnAnnounceText[0] == '\0') return 0;
-  return cs->scnAnnouncePlace;
+bool clientSimGetScnAnnouncePos(const ClientSim *cs, uint8_t *outX,
+                                uint8_t *outY) {
+  if (cs == NULL || cs->scnAnnounceText[0] == '\0') return false;
+  if (cs->scnAnnounceHasPos == 0) return false;
+  if (outX != NULL) *outX = cs->scnAnnouncePosX;
+  if (outY != NULL) *outY = cs->scnAnnouncePosY;
+  return true;
 }
 
 const char *clientSimGetScnStatus(const ClientSim *cs, uint32_t *outEndsAt) {

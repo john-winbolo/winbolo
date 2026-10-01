@@ -2,7 +2,7 @@
  * lv_region_rect.h - where a declared region lands on one of the viewer's maps
  *
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * The overview and the game view place a map square differently: the overview
  * draws the viewport's first square at its target's origin, the game view one

@@ -5,13 +5,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 
@@ -937,12 +940,15 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
     wordsLen = (unsigned short)((BYTE)words[0]) + 1;
     memcpy(out + off, words, wordsLen);
     off += wordsLen;
-    /* Where on the view the line goes, from opt3. It follows the text only
-       when it is not the top, so a line at the top is recorded byte for
-       byte as it was before the place existed, and a viewer that predates
-       it skips the trailing byte by the framed length. */
+    /* Where on the view the line goes. opt3 non-zero says the script gave
+       a position, and its two bytes (across, then down) follow the pascal
+       string in words. They follow the text only then, so a line with no
+       position is recorded byte for byte as it was before positions
+       existed, and a viewer that predates them skips the two bytes by the
+       framed length. */
     if (opt3 != 0) {
-      out[off++] = opt3;
+      out[off++] = (BYTE)words[wordsLen];
+      out[off++] = (BYTE)words[wordsLen + 1];
     }
     break;
   case log_ScnStatus:

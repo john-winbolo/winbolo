@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /*********************************************************
@@ -1162,7 +1162,12 @@ struct ClientSim {
     char         scnAnnounceText[PACKET_MAX_CHAT_MESSAGE + 1];
     uint16_t     scnAnnounceTicks;
     uint32_t     scnAnnounceArrivedTick;
-    uint8_t      scnAnnouncePlace;   /* a ScnAnnouncePlace */
+    /* Where the script put it: scnAnnounceHasPos 0 is the usual place,
+     * else the centre of the line as position bytes across and down the
+     * view (SCN_ANNOUNCE_POS_MAX is the far edge). */
+    uint8_t      scnAnnounceHasPos;
+    uint8_t      scnAnnouncePosX;
+    uint8_t      scnAnnouncePosY;
 
     /* The status line on screen; text[0] == '\0' is none. It stays until
      * the scenario replaces or clears it. scnStatusEndsAt is the server

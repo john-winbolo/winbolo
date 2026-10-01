@@ -683,6 +683,12 @@ STR_MAPCHOOSER_RESTORE_SIZE_TIP=Standaardgrootte herstellen (Esc)
 STR_MAPCHOOSER_MAXIMIZE_TIP=Maximaliseren
 STR_MAPCHOOSER_LOADING_PREVIEW=Voorbeeld laden...
 
+# Map editor scenario panel
+STR_MAPEDIT_SCENARIO_NEEDS_BOTS=Bots moeten zijn toegestaan: dit script voegt zijn eigen bots toe
+STR_DLGABOUT_LICENCE=Licentie
+STR_DLGABOUT_LICENCE_NOTICE=Vrije software onder de GNU GPL v3 of later. Geen garantie.
+STR_DLGABOUT_FILE_NOT_FOUND=Bestand niet gevonden.
+
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Status
 STR_TABLET_KILLS_DEATHS=Kills: {number}  Doden: {number2}

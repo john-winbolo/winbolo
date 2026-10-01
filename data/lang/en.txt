@@ -852,6 +852,11 @@ STR_MAPCHOOSER_LOADING_PREVIEW=Loading preview...
 # Map editor scenario panel
 STR_MAPEDIT_SCENARIO_NEEDS_BOTS=Needs bots allowed: this script adds its own bots
 
+# About box licence
+STR_DLGABOUT_LICENCE=Licence
+STR_DLGABOUT_LICENCE_NOTICE=Free software under the GNU GPL v3 or later. No warranty.
+STR_DLGABOUT_FILE_NOT_FOUND=File not found.
+
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Status
 STR_TABLET_KILLS_DEATHS=Kills: {number}  Deaths: {number2}
