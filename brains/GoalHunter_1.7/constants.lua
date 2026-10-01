@@ -4473,6 +4473,14 @@ M.CAPTURE_BASE_NO_LGM_DANGER_MULT = 20     -- keel 0 (term absent)
 -- Refuel is its own pool and takes neutral bases too, so it is not touched.
 M.CAPTURE_BASE_EXTRA_COST = 0              -- keel 0 (term absent)
 
+-- A base this close is taken anyway: a capture_base row whose base is within
+-- this many tiles of the tank does NOT pay CAPTURE_BASE_EXTRA_COST. The
+-- distance is Manhattan tiles (U.mdist) from the tank's tile to the base,
+-- because that is what every capture_base site has to hand; the rows hold a
+-- travel COST, not a tile count. 0 = no waiver, the extra applies at every
+-- distance (the old behaviour).
+M.CAPTURE_BASE_EXTRA_FREE_DIST = 0         -- keel 0 (no waiver)
+
 -- 4. "KILL ME" -- handing the stack to a team-mate who can still build.
 --
 -- Allied shells DO hurt allied tanks (tank.c tankIsTankHit only ignores the
@@ -4908,6 +4916,8 @@ M.PRESETS = {
   keel = {
     -- 2026-10-01: flat capture_base cost for game modes; 0 is no such term.
     CAPTURE_BASE_EXTRA_COST = 0,
+    -- 2026-10-01: a base this many tiles away skips that cost; 0 is no waiver.
+    CAPTURE_BASE_EXTRA_FREE_DIST = 0,
     -- 2026-10-01: wall pass for a walled-in pill; off is the old scan.
     ATTACK_PILL_WALL_FALLBACK = false,
     -- 2026-09-08: while on capture_pill the bot now sweeps the target tile for

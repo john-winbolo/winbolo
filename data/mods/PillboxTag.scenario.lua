@@ -891,6 +891,7 @@ local DEFAULTS = {
   DEFEND_ALARM_BASE_COST               = 100,
   CAPTURE_LGM_HUNT                     = true,
   CAPTURE_BASE_EXTRA_COST              = 0,
+  CAPTURE_BASE_EXTRA_FREE_DIST         = 0,
   ATTACK_PILL_WALL_FALLBACK            = false,
 }
 
@@ -939,6 +940,10 @@ local SHARED = {
 -- came to 6 to 10, under the holder (17 to 37) and the prize (100 to 760). A
 -- base is only a pit stop here, and armour from one is the brain's refuel,
 -- which this does not touch. 3000 puts the nearest base at 900 or more.
+-- A base within 5 tiles (Manhattan, from the tank) does not pay it, so a bot
+-- that passes close to a base takes it anyway. The brain knob for that is
+-- CAPTURE_BASE_EXTRA_FREE_DIST, set to 5 beside BASE_EXTRA in the three parts
+-- below.
 local BASE_EXTRA = 3000
 
 -- The parts.
@@ -946,9 +951,9 @@ local BASE_EXTRA = 3000
 -- hunter: bids hard for a tank fight, because the holder is a tank. The only
 -- live pillbox a hunter ever meets is a built prize, and it costs nothing to
 -- go after, so its own pillbox fight takes it on. It leaves the bases alone
--- (BASE_EXTRA), and so do a manhunt and a mate. A square it was sent to
--- holds it for half a second, not ten, so that fight and the pick-up of a
--- dropped prize take over soon after it arrives.
+-- (BASE_EXTRA) unless one is within 5 tiles, and so do a manhunt and a mate.
+-- A square it was sent to holds it for half a second, not ten, so that fight
+-- and the pick-up of a dropped prize take over soon after it arrives.
 --
 -- manhunt: a hunter while the holder's man walks the prize out. A tank fight
 -- costs more and a far target is less of a reason not to go, so the brain's
@@ -979,34 +984,37 @@ local ROLES = {
   hunter = {
     flags = { "noblitz", "nosuicider" },
     cfg = {
-      TANK_COMBAT_BASE_COST   = 10,
-      CAPTURE_BASE_EXTRA_COST = BASE_EXTRA,
-      PILL_REPOSITION_ENABLED = false,
-      ATTACK_PILL_BASE_COST   = 0,
-      ORDER_GOTO_HOLD_TICKS   = HUNTER_PARK_TICKS,
+      TANK_COMBAT_BASE_COST        = 10,
+      CAPTURE_BASE_EXTRA_COST      = BASE_EXTRA,
+      CAPTURE_BASE_EXTRA_FREE_DIST = 5,
+      PILL_REPOSITION_ENABLED      = false,
+      ATTACK_PILL_BASE_COST        = 0,
+      ORDER_GOTO_HOLD_TICKS        = HUNTER_PARK_TICKS,
     },
   },
   manhunt = {
     flags = { "noblitz", "nosuicider" },
     cfg = {
-      TANK_COMBAT_BASE_COST    = 60,
-      CAPTURE_BASE_EXTRA_COST  = BASE_EXTRA,
-      PILL_REPOSITION_ENABLED  = false,
-      ATTACK_PILL_BASE_COST    = 0,
-      ORDER_GOTO_HOLD_TICKS    = HUNTER_PARK_TICKS,
-      ATTACK_FAR_PREEMPT_RANGE = 11,
-      ORDER_INJECT_COST        = 60,
+      TANK_COMBAT_BASE_COST        = 60,
+      CAPTURE_BASE_EXTRA_COST      = BASE_EXTRA,
+      CAPTURE_BASE_EXTRA_FREE_DIST = 5,
+      PILL_REPOSITION_ENABLED      = false,
+      ATTACK_PILL_BASE_COST        = 0,
+      ORDER_GOTO_HOLD_TICKS        = HUNTER_PARK_TICKS,
+      ATTACK_FAR_PREEMPT_RANGE     = 11,
+      ORDER_INJECT_COST            = 60,
     },
   },
   mate = {
     flags = { "noblitz", "nosuicider" },
     cfg = {
-      TANK_COMBAT_BASE_COST   = 10,
-      CAPTURE_BASE_EXTRA_COST = BASE_EXTRA,
-      PILL_REPOSITION_ENABLED = false,
-      ATTACK_PILL_BASE_COST   = 0,
-      ORDER_GOTO_HOLD_TICKS   = HUNTER_PARK_TICKS,
-      REPOSITION_VOTE_ENABLED = false,
+      TANK_COMBAT_BASE_COST        = 10,
+      CAPTURE_BASE_EXTRA_COST      = BASE_EXTRA,
+      CAPTURE_BASE_EXTRA_FREE_DIST = 5,
+      PILL_REPOSITION_ENABLED      = false,
+      ATTACK_PILL_BASE_COST        = 0,
+      ORDER_GOTO_HOLD_TICKS        = HUNTER_PARK_TICKS,
+      REPOSITION_VOTE_ENABLED      = false,
     },
   },
   holder = {
