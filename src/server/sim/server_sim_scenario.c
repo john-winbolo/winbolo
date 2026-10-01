@@ -3128,6 +3128,23 @@ static ScnOpResult scenarioOpLog(ServerSim *sim, const ScnOpLog *p) {
     return SCN_OP_OK;
 }
 
+/* Voice to everyone. The flag is all this writes: the voice forward reads it
+ * through serverSimVoiceSidesAllow on every frame, so the change is heard on
+ * the next one. No state guard, for the same reason the presentation arms
+ * have none, but a round start clears the flag (serverSimResetGameWorld and
+ * serverSimStartGameInPlace), so one set in the lobby does not reach the
+ * round. A server with voice off forwards no voice at all, so turning the
+ * flag on there is refused rather than taken and ignored. Turning it off is
+ * always taken. */
+static ScnOpResult scenarioOpSetVoiceEveryone(ServerSim *sim,
+                                              const ScnOpSetVoiceEveryone *p) {
+    if (p->on && sim->voiceMode == serverVoiceOff) {
+        return SCN_OP_WRONG_STATE;
+    }
+    sim->scenarioVoiceEveryone = p->on;
+    return SCN_OP_OK;
+}
+
 /* ── Presentation ─────────────────────────────────────
  *
  * Four arms that show a player something without changing the world. None of
@@ -4500,6 +4517,8 @@ static ScnOpResult scenarioApplyOp(ServerSim *sim, const ScenarioOp *op,
             return scenarioOpSound(sim, &op->u.sound);
         case SCN_OP_LOG:
             return scenarioOpLog(sim, &op->u.log);
+        case SCN_OP_SET_VOICE_EVERYONE:
+            return scenarioOpSetVoiceEveryone(sim, &op->u.setVoiceEveryone);
         case SCN_OP_PANEL:
             return scenarioOpPanel(sim, &op->u.panel);
         case SCN_OP_SCORE:
@@ -4898,6 +4917,9 @@ void serverSimSetScenarioIdentity(ServerSim *sim,
         memset(sim->scenarioRules, 0, sizeof(sim->scenarioRules));
         sim->scenarioRulesCount = 0;
         serverSimScenarioResetPresentation(sim);
+        /* And voice goes back to allies only: the script that asked for
+           voice to everyone has gone. */
+        sim->scenarioVoiceEveryone = false;
         return;
     }
     sim->scenarioIdentity.source            = source;

@@ -11,6 +11,9 @@
  * run_scenario_lua_every_row_answers   — a script calls every row in the
  *                                        registry once and none of them
  *                                        raises or is missing
+ * run_scenario_lua_voice_everyone      — set_voice_everyone and
+ *                                        voice_everyone from a script, and
+ *                                        the refusal with server voice off
  * run_scenario_lua_op_arguments_match_the_doc
  *                                      — every row says what arguments it
  *                                        takes, and says the same as the
@@ -480,6 +483,7 @@ static const char *const kSlEveryRowCalls =
     "  lobby_slot  = function() return game.lobby_slot(0) end,\n"
     "  allied      = function() return game.allied(0, 0) end,\n"
     "  rule        = function() return game.rule(\"tank_reload_ticks\") end,\n"
+    "  voice_everyone = function() return game.voice_everyone() end,\n"
     "  tags        = function() return game.tags(\"pill\", 1) end,\n"
     "  tagged      = function() return game.tagged(\"keep\") end,\n"
     "  region      = function() return game.region(\"keep\") end,\n"
@@ -545,6 +549,7 @@ static const char *const kSlEveryRowCalls =
     "  say         = function() return game.say(9, \"hello\") end,\n"
     "  sound       = function() return game.sound(\"shoot_self\") end,\n"
     "  log         = function() return game.log(\"hello\") end,\n"
+    "  set_voice_everyone = function() return game.set_voice_everyone(false) end,\n"
     /* The presentation rows. Panel 0 is cleared rather than drawn to, and
        the rest are aimed at seat 0 and a square well inside the map, so each
        one is taken rather than refused. */
@@ -680,6 +685,68 @@ int run_scenario_lua_every_row_answers(void) {
         UT_ASSERT_MSG(strcmp(got, want) == 0,
                       "the constants read '%s', expected '%s'", got, want);
     }
+
+    lua_close(L);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 1b. Voice to everyone through the binding ───────────────────────── */
+
+/* The setter reaches the sim's flag and the getter reads it back, both from
+   a script; a server with voice off refuses true with the wrong-state name
+   and the getter there answers false. */
+static const char *const kSlVoiceEveryone =
+    "before = game.voice_everyone()\n"
+    "set_ok = game.set_voice_everyone(true)\n"
+    "after_on = game.voice_everyone()\n"
+    "off_ok = game.set_voice_everyone(false)\n"
+    "after_off = game.voice_everyone()\n";
+
+static const char *const kSlVoiceEveryoneRefused =
+    "refused, code = game.set_voice_everyone(true)\n"
+    "still = game.voice_everyone()\n";
+
+int run_scenario_lua_voice_everyone(void) {
+    ServerSim       *sim = ut_make_running_sim("Seat0");
+    ScenarioManifest m;
+    ScnLuaCtx        ctx;
+    lua_State       *L;
+    char             err[512];
+    char             code[64];
+
+    if (sim == NULL) UT_FAIL("could not build a running sim");
+    memset(&m, 0, sizeof(m));
+    L = slVm(&ctx, sim, &m);
+    UT_ASSERT(L != NULL);
+
+    UT_ASSERT_MSG(slRun(L, kSlVoiceEveryone, err, sizeof(err)),
+                  "the chunk would not run: %s", err);
+    UT_ASSERT_MSG(!slGlobalIsNil(L, "before") && !slGlobalBool(L, "before"),
+                  "voice_everyone() did not start as false");
+    UT_ASSERT_MSG(slGlobalBool(L, "set_ok"),
+                  "set_voice_everyone(true) did not answer true");
+    UT_ASSERT_MSG(slGlobalBool(L, "after_on"),
+                  "voice_everyone() did not read back true");
+    UT_ASSERT_MSG(slGlobalBool(L, "off_ok"),
+                  "set_voice_everyone(false) did not answer true");
+    UT_ASSERT_MSG(!slGlobalIsNil(L, "after_off") &&
+                  !slGlobalBool(L, "after_off"),
+                  "voice_everyone() did not read back false");
+    UT_ASSERT(!serverSimGetScenarioVoiceEveryone(sim));
+
+    serverSimSetVoiceMode(sim, serverVoiceOff);
+    UT_ASSERT_MSG(slRun(L, kSlVoiceEveryoneRefused, err, sizeof(err)),
+                  "the chunk would not run: %s", err);
+    UT_ASSERT_MSG(slGlobalIsNil(L, "refused"),
+                  "set_voice_everyone(true) was taken on a server with voice "
+                  "off");
+    slGlobalStr(L, "code", code, sizeof(code));
+    UT_ASSERT_MSG(strcmp(code, scenarioLuaResultName(
+                                   (int)SCN_OP_WRONG_STATE)) == 0,
+                  "the refusal was named '%s'", code);
+    UT_ASSERT_MSG(!slGlobalIsNil(L, "still") && !slGlobalBool(L, "still"),
+                  "voice_everyone() did not answer false with voice off");
 
     lua_close(L);
     serverSimDestroy(sim);
