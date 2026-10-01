@@ -28,6 +28,10 @@
  *       rotates maps. A seat the script fielded in one round is held again
  *       in the next, though the template is the same, because nobody is
  *       there between rounds to keep an edit.
+ *   scenario_map_rotation_redecides — the same kind of server with the
+ *       scenario host following the map. A rotation onto a plain map leaves
+ *       no scenario attached, and one back onto the scripted map attaches
+ *       its own script again.
  *   lobby_script_keeps_bots_mod — bots the host added, then a mod with
  *       settings and no lobby of its own picked over them, as Rule Roulette
  *       is. The bots stay through the pick, a map change, a second mod on the
@@ -60,6 +64,7 @@
 #include "starts.h"                /* startsGetNumStarts */
 #include "scenario_host.h"
 #include "everard_map.h"
+#include "bolo_rand.h"             /* bolo_srand, so the rotation's pick repeats */
 #include "threads.h"
 #include "test_harness.h"
 
@@ -713,6 +718,84 @@ int run_lobby_map_rotate_holds_seats_again(void) {
                   "seats, expected 2", held);
 
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── A rotation decides the scenario again ────────────────────────── */
+
+/* How many rotations a case may spend landing on the map it wants. The pick
+   is random over the directory, so with two maps each rotation lands on
+   either; the stream is seeded, so the count is the same every run. */
+#define MK_ROTATE_TRIES 16
+
+/* Rotate until the map named leaf is the one loaded, answering how many
+   rotations it took, or -1 when it never landed. */
+static int mkRotateOnto(ServerSim *sim, const char *leaf) {
+    int i;
+
+    for (i = 1; i <= MK_ROTATE_TRIES; i++) {
+        serverSimMapRotateRound(sim);
+        if (strcmp(serverSimGetMapName(sim), leaf) == 0) return i;
+    }
+    return -1;
+}
+
+/* A server that rotates maps with the scenario host following the map. The
+ * rotation reaches the map change the way a lobby commit does, so the map's
+ * own script goes when a plain map comes up and returns with its map: the
+ * previous map's scenario does not stay attached over the next one. */
+int run_scenario_map_rotation_redecides(void) {
+    ServerSim *sim;
+    char       ownLeaf[64];
+    int        took;
+
+    UT_ASSERT(mkSetUp());
+    /* The big map carries a script beside it; the small one does not. */
+    snprintf(ownLeaf, sizeof(ownLeaf), "big%s", SCN_SCRIPT_SUFFIX);
+    UT_ASSERT(mkPut(mkMaps, ownLeaf, kMkMapOwn));
+    bolo_srand(0x5CE7A210u);
+    sim = mkSim();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(sim->mapDirCount == 2, "the map directory holds %d maps, "
+                  "expected 2", sim->mapDirCount);
+
+    /* The scripted map, committed the way the lobby commits one. */
+    UT_ASSERT(mkSetMap(sim, MK_BIG_MAP) == CMD_OK);
+    UT_ASSERT_MSG(mkSlot != NULL, "no scenario attached on the big map");
+    UT_ASSERT_MSG(strcmp(scenarioHostName(mkSlot), "Big Island Rules") == 0,
+                  "the big map attached '%s'", scenarioHostName(mkSlot));
+    UT_ASSERT_MSG(serverSimGetMapScript(sim) != NULL,
+                  "the big map's own script was not found beside it");
+
+    /* From here the server runs as -skiplobby -maprotate does. */
+    serverSimSetLobbyEnabled(sim, false);
+    serverSimSetMapRotate(sim, true);
+
+    /* Onto the plain map: nothing plays over it. */
+    took = mkRotateOnto(sim, "small");
+    UT_ASSERT_MSG(took > 0, "%d rotations never landed on the small map; the "
+                  "map is '%s'", MK_ROTATE_TRIES, serverSimGetMapName(sim));
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "the rotation did not start the next round");
+    UT_ASSERT_MSG(mkSlot == NULL, "'%s' stayed attached over the small map",
+                  scenarioHostName(mkSlot));
+    UT_ASSERT_MSG(serverSimGetMapScript(sim) == NULL,
+                  "the big map's script outlived the big map");
+
+    /* And back: the big map brings its script again. */
+    took = mkRotateOnto(sim, "big");
+    UT_ASSERT_MSG(took > 0, "%d rotations never landed back on the big map; "
+                  "the map is '%s'", MK_ROTATE_TRIES,
+                  serverSimGetMapName(sim));
+    UT_ASSERT_MSG(mkSlot != NULL,
+                  "no scenario attached after rotating back to the big map");
+    UT_ASSERT_MSG(strcmp(scenarioHostName(mkSlot), "Big Island Rules") == 0,
+                  "the big map attached '%s' after the rotation",
+                  scenarioHostName(mkSlot));
+    UT_ASSERT_MSG(serverSimGetMapScript(sim) != NULL,
+                  "the big map's own script did not come back with it");
+
+    mkDestroy(sim);
     return 0;
 }
 

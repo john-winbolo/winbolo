@@ -75,8 +75,12 @@ extern "C" {
 #include "server_sim.h"     /* ServerScenarioEntry / serverSimEnumerateScenarioDir — the in-process read */
 #include "lobby_script_rows.h" /* lobbyScriptRowsClassify — server, both or this computer */
 #ifndef __EMSCRIPTEN__
-/* scenarioHostListLocalScripts / LocalScriptPath. The browser build links no
-   scenario library and has no Mods directory of its own, so it lists none. */
+/* scenarioHostListLocalScripts / LocalScriptPath. This computer's own column
+   is only read for a server in another process, which in the browser build
+   is a multiplayer game: the browser has no Mods directory of its own to send
+   from, so it lists none. A practice game's server is in the page and lists
+   the shipped mods through serverSimEnumerateScenarioDir like any server in
+   this process. */
 #include "../../../../scenario/scenario_host.h"
 #endif
 #include "scenario_details.h"           /* the rules and callbacks blob the dialog reads */
@@ -353,9 +357,8 @@ static void lobbyRoundSetRow(LobbyRoundRow *r, const char *file,
  * lives, and written into out in load order.
  *
  * Two places because the committed map's own scenario is attached without
- * ever entering the script list: only CMD_LOBBY_SET_SCRIPT_LIST and
- * CMD_LOBBY_SET_SCENARIO write that list, and a map sidecar goes through
- * neither. So a scripted map with no host picks reports
+ * ever entering the script list: only CMD_SET_SCRIPT_LIST writes that list,
+ * and a map sidecar does not go through it. So a scripted map with no host picks reports
  * clientSimGetLobbyScriptCount 0 while CTRL_LOBBY_SETTINGS separately reports
  * an attached scenario with bound set. Reading the list alone would leave the
  * column empty under a map that is plainly running something.

@@ -1612,6 +1612,7 @@ static int body_source_on_wire(LoopbackHarness *h, int slot, const UpDirs *d) {
     int         n;
     int         i;
     int         at;
+    (void)slot;
 
     UT_ASSERT(up_write_mod(d->shipped, "ship.lua", "Shipped"));
     UT_ASSERT(utScratchPath(dir, sizeof(dir), NULL));
@@ -1622,9 +1623,6 @@ static int body_source_on_wire(LoopbackHarness *h, int slot, const UpDirs *d) {
                   (int)r.status, (int)r.reject, r.finalPath);
 
     /* The list packet, asked for the way the chooser asks. */
-    threadsWaitForMutex();
-    udpServer.clientReqCooldownTicks[slot] = 0;
-    threadsReleaseMutex();
     clientSimNetSendLobbyScenarioListRequest(h->cs);
     UT_ASSERT_MSG(loopbackHarnessPumpUntil(h, ACK_MAX,
                                            pred_scenario_list_ready,

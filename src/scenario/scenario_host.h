@@ -390,6 +390,22 @@ bool scenarioHostUnsafeScripts(void);
 bool scenarioHostMapHasScript(const char *mapPath);
 
 /*********************************************************
+ *NAME:          scenarioHostMapCarriesScript
+ *PURPOSE:
+ *  Whether the map at mapPath is a scenario at all: a
+ *  script is beside it on disk or packed into it, whether
+ *  or not this process would run it. The question above
+ *  less its scripts-on test, over the same cache. For a
+ *  caller that is sorting maps rather than promising a
+ *  round, such as the menu's background game, which leaves
+ *  scenario maps out however scripts are set.
+ *
+ *ARGUMENTS:
+ *  mapPath - Full path to the .map file
+ *********************************************************/
+bool scenarioHostMapCarriesScript(const char *mapPath);
+
+/*********************************************************
  *NAME:          scenarioHostMapScriptOpens
  *PURPOSE:
  *  How many map files the question above has opened since

@@ -1031,6 +1031,7 @@ add_executable(WinBoloIOS MACOSX_BUNDLE
     src/gui/sdl3/gamefront.c
     src/client_frontend/client_frontend_connect.c
     src/client_frontend/client_frontend_tick.c
+    src/client_frontend/client_frontend_sp.c
     src/bolo/lobby_bot_pools_json.c
     src/gui/sdl3/dialog_backend.c
     # PNG writer for the map chooser's thumbnail cache (imgui_mapchooser.cpp).
@@ -1599,6 +1600,7 @@ set(CLIENT_SOURCES
     src/client_frontend/client_frontend_connect.c
     src/client_frontend/client_frontend_tick.c
     src/client_frontend/client_frontend_common.c
+    src/client_frontend/client_frontend_sp.c
     src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/dialog_quit.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/map_preview_popup.cpp
@@ -3565,6 +3567,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # swept round names its winner, a passed vote credits nobody, a surrender
     # credits the opposing team, an abandoned round reports nothing.
     tests/unit/test_base_win_resolve.c
+    # The returning lobby's win message: serverSimLocalOnReturnToLobby sends
+    # it once to everyone and clears it, and an over-long one is cut on a
+    # character boundary with "...".
+    tests/unit/test_lobby_return_win_message.c
     # Surrender-vote privacy: the team-scoped CTRL_GAME_VOTE_STATE is withheld
     # from non-members on the wire, its newswire lines are suppressed on the
     # in-process bus, and a team-scoped (base-monopoly) back-to-lobby vote
@@ -3921,9 +3927,6 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The lobby's reload request: who may ask, when, and what a lobby with
     # no scenario answers.
     tests/unit/test_lobby_reload_scenario.c
-    # The lobby's scenario pick: who may pick, when, and which names the
-    # scenarios directory makes good.
-    tests/unit/test_lobby_set_scenario.c
     # The lobby's ordered script list: the chunked control event, the
     # whole-list command, the dispatcher's gates and the client's reassembly.
     tests/unit/test_lobby_script_list.c
@@ -4875,6 +4878,8 @@ set(_unit_test_names
     surrender_credits_the_opposing_team
     win_during_manual_countdown_resolves_as_vote
     abandoned_round_reports_nothing
+    lobby_return_sends_win_message
+    lobby_return_cuts_long_win_message
     round_stats_zeroed_on_fresh_sim
     round_stats_kill_basic
     round_stats_drown_not_suicide
@@ -5022,17 +5027,13 @@ set(_unit_test_names
     lobby_reload_scenario_no_scenario
     lobby_reload_scenario_calls_back
     lobby_reload_scenario_cooldown
-    lobby_set_scenario_selects
-    lobby_set_scenario_none
-    lobby_set_scenario_refuses_unknown
-    lobby_set_scenario_refuses_shape
-    lobby_set_scenario_refuses_bound
-    lobby_set_scenario_cooldown
-    lobby_set_scenario_unreadies
     script_list_control_codec
     script_list_command_codec
     script_list_dispatch
     script_list_lists_once
+    script_list_no_lister
+    script_list_refuses_shape
+    script_list_unreadies
     scenario_settings_blob
     scenario_settings_manifest_lua
     scenario_settings_manifest_json
@@ -5072,6 +5073,8 @@ set(_unit_test_names
     wbn_map_parse
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
+    brain_msgh_budget_kill_no_traceback
+    brain_msgh_real_error_keeps_traceback
     brain_inbox_push_peek_fifo
     brain_inbox_overflow_drops_oldest
     brain_inbox_legacy_drain_fifo
@@ -5486,6 +5489,7 @@ set(_unit_test_names
     overview_snapshot_filter
     overview_snapshot_generation
     overview_snapshot_removed_item_has_no_label
+    overview_snapshot_corner_keeps_self
     mapview_sprite_classic
     mapview_sprite_ladder
     mapview_sprite_shell_tip
@@ -5623,6 +5627,7 @@ set(_unit_test_names
     loopback_bot_pool_survives_bulk_rebase
     loopback_brain_docs_survives_bulk_rebase
     loopback_map_upload
+    loopback_map_upload_list_after_rejoin
     upload_begin_golden
     script_upload_begin_refusals
     loopback_script_upload_at_cap
@@ -6092,6 +6097,7 @@ set(_unit_test_names
     lobby_map_keeps_bots_scenario
     lobby_map_keeps_bots_map_own_row
     lobby_map_rotate_holds_seats_again
+    scenario_map_rotation_redecides
     lobby_script_keeps_bots_mod
     lobby_script_keeps_bots_swap
     scripted_game_type_loadout_follows_base

@@ -10,10 +10,11 @@
  *  Link-time stubs for GUI source files the wasm client
  *  does not build: the input-source tracker
  *  (input_source.c), the tutorial overlay
- *  (imgui_tutorial_overlay.cpp) and the controller-lost
- *  prompt (imgui_controller_disconnect.cpp).  sdl3imgui.cpp
- *  and ui_mode.c reference these symbols unconditionally;
- *  the browser build keeps them as no-ops.
+ *  (imgui_tutorial_overlay.cpp), the controller-lost
+ *  prompt (imgui_controller_disconnect.cpp) and its menu
+ *  hook (imgui_controller_prompt.cpp).  sdl3imgui.cpp,
+ *  ui_mode.c and the menu dialogs reference these symbols
+ *  unconditionally; the browser build keeps them as no-ops.
  *
  *  Definitions match the real headers (included below) so
  *  the signatures can't drift from the desktop build.
@@ -22,6 +23,7 @@
 #include "input_source.h"
 #include "dialogs/imgui_tutorial_overlay.h"
 #include "dialogs/imgui_controller_disconnect.h"
+#include "dialogs/imgui_controller_prompt.h"
 #include "map_stars.h"
 
 /* ----- Map favourites + thumbnail cache -------------------------------
@@ -70,3 +72,7 @@ void controllerDisconnectOpen(void) {}
 void controllerDisconnectClose(void) {}
 bool controllerDisconnectIsOpen(void) { return false; }
 bool controllerDisconnectRender(void) { return false; }
+
+/* The menu-loop hook that raises that prompt (imgui_controller_prompt.cpp),
+ * called by the welcome, settings and key setup dialogs. */
+void controllerDialogsRenderMenu(void) {}

@@ -27,7 +27,7 @@
 #                     ScenarioManifest, the issue list — is declared here
 #                     because this is the half that can be linked alone.
 #
-#                     scenario_static links it PUBLIC, so the six binaries
+#                     scenario_static links it PUBLIC, so the seven binaries
 #                     that host a ServerSim get it and its directory without
 #                     naming it. The map editor and the log viewer are
 #                     expected to link it directly and nothing else from
@@ -79,8 +79,9 @@ target_link_libraries(scenario_io_static PRIVATE minizip)
 # library has to declare cjson for itself, the way it declares SDL3, zlib and
 # minizip — so every tree that links it, or links scenario_static and gets it
 # that way, fetches it: the root CMakeLists.txt for WinBolo, WinBoloIOS,
-# WinBoloDS, WinBoloHeadless and WinBoloUnitTests, and
-# android/app/CMakeLists.txt for the Android main. A tree that links this
+# WinBoloDS, WinBoloHeadless and WinBoloUnitTests,
+# android/app/CMakeLists.txt for the Android main, and src/wasm/CMakeLists.txt
+# for the web client. A tree that links this
 # library on its own — the map editor, the log viewer — adds its own
 # declaration.
 target_link_libraries(scenario_io_static PRIVATE cjson)

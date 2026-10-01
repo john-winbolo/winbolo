@@ -628,6 +628,7 @@
 #define STR_DLGBROWSER_PREVIEW_UNAVAIL      1815
 #define STR_DLGBROWSER_PREVIEW_ENLARGE      1816
 #define STR_DLGBROWSER_ENLARGE_BTN          1829
+#define STR_DLGBROWSER_SIGNIN_TO_JOIN       2736
 #define STR_DLGBROWSER_AI_PLAYERS           1817
 #define STR_DLGBROWSER_WBN_PLAYERS          1818
 #define STR_DLGBROWSER_ST_LOCKED            1819
@@ -873,6 +874,9 @@
  * shown is decided from the window's real state, not from the preference. */
 #define STR_DLGWELCOME_SWITCH_CLASSIC       1991
 #define STR_DLGWELCOME_SWITCH_FULLSCREEN    1992
+/* The web client's label for the single-player row, which opens a practice
+ * game in the in-game lobby. */
+#define STR_DLGWELCOME_PRACTICE             2735
 /* Map Chooser dialog */
 #define STR_MAPCHOOSER_EVERARD              793
 #define STR_MAPCHOOSER_LOADMAP              794
@@ -2573,10 +2577,8 @@
 #define STR_DLGLOBBY_SCENARIO_KIND_MODS     2607
 #define STR_DLGLOBBY_SCENARIO_KIND_SCENARIOS 2608
 
-/* The two hosting settings that go with a scenario carried inside a map: the
- * switch that decides whether a map a player uploaded may bring one, and the
- * directory of scenarios this host offers on their own. */
-#define STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS 2213
+/* The hosting setting that names the directory of scenarios this host offers
+ * on their own, independently of any map. */
 #define STR_DLGSETTINGS_HOSTING_SCENARIODIR  2216
 
 /* Rule change descriptions */
@@ -2880,13 +2882,13 @@
 #define STR_DLGLOBBY_DETAILS_COL_NEW_VALUE       2632
 /* The details dialog's settings table: its two column headers, so it is
  * headed the way the rules and callbacks tables above it are. */
-#define STR_DLGLOBBY_DETAILS_COL_SETTING         2736
-#define STR_DLGLOBBY_DETAILS_COL_VALUE           2737
+#define STR_DLGLOBBY_DETAILS_COL_SETTING         2753
+#define STR_DLGLOBBY_DETAILS_COL_VALUE           2754
 
 /* The details dialog's heading over the rules table, with the colon the
  * Settings and implements headings have. The log viewer keeps
  * STR_DLGLOBBY_SCENARIO_RULES as a separator title with no colon. */
-#define STR_DLGLOBBY_DETAILS_RULES               2739
+#define STR_DLGLOBBY_DETAILS_RULES               2755
 
 /* The map panel's warning under the scenario and mods lines, shown only when
  * the server was started with -allow-unsafe-scripts. A sentence rather than a

@@ -93,6 +93,14 @@ static const char *kSoundFiles[WB_NUM_SOUNDS] = {
 BOLO_STATIC_ASSERT(WB_PING_KIND_FIRST_INDEX + PING_KIND_COUNT == WB_NUM_SOUNDS,
                    every_ping_kind_needs_a_sound_file_name);
 
+/* The per-kind ping sounds, and only those: a game or a skin that does not
+ * hold one is the normal case, not a fault, so a file missing here is not
+ * warned about. ping_default is not one of them — it is what the others fall
+ * back to, and a game missing it is worth the usual warning. */
+static bool soundIsOptional(int index) {
+  return index >= WB_PING_KIND_FIRST_INDEX && index < WB_NUM_SOUNDS;
+}
+
 /* Which of those files were there to read. wb_audio_load answers that part
  * synchronously (the decode that follows is asynchronous, and a slot still
  * decoding simply plays nothing for a tick or two), which is enough to build
@@ -162,8 +170,10 @@ EM_JS(void, wb_audio_init, (void), {
 
 /* Returns 1 on success, 0 on failure. Decoding is async, so the slot may be
  * empty for a tick or two after this returns; soundPlayEffect handles that
- * gracefully. */
-EM_JS(int, wb_audio_load, (int id, const char *path), {
+ * gracefully. When optional is non-zero a missing file (errno 44, ENOENT in
+ * Emscripten's FS) returns 0 without a warning; any other failure, and a file
+ * that will not decode, still warns. */
+EM_JS(int, wb_audio_load, (int id, const char *path, int optional), {
   if (!Module.WB_audio || !Module.WB_audio.ctx) return 0;
   var p = UTF8ToString(path);
   try {
@@ -178,7 +188,9 @@ EM_JS(int, wb_audio_load, (int id, const char *path), {
     );
     return 1;
   } catch (e) {
-    console.warn("[WB_audio] load failed for " + p + ":", e);
+    if (!(optional && e && e.errno === 44)) {
+      console.warn("[WB_audio] load failed for " + p + ":", e);
+    }
     return 0;
   }
 });
@@ -236,7 +248,7 @@ bool soundSetup(void) {
   applyStreamGain();
   for (i = 0; i < WB_NUM_SOUNDS; i++) {
     snprintf(path, sizeof(path), "/data/sounds/%s", kSoundFiles[i]);
-    s_loaded[i] = (wb_audio_load(i, path) != 0);
+    s_loaded[i] = (wb_audio_load(i, path, soundIsOptional(i) ? 1 : 0) != 0);
   }
   s_isPlayable = TRUE;
   return TRUE;

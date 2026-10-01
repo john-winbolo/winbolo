@@ -1203,6 +1203,13 @@ static void popOutHideEx(PopOutWindow *pw, bool raiseMain) {
         SDL_SyncWindow(pw->window);
     }
     SDL_HideWindow(pw->window);
+    if (popOutScnPanelOwner(pw) >= 0) {
+        WB_LOG_INFO(WB_LOG_CAT_GUI,
+                    "[ScnPanel] owner %d pop-out hidden; flags now 0x%llx raiseMain=%d",
+                    popOutScnPanelOwner(pw),
+                    (unsigned long long)SDL_GetWindowFlags(pw->window),
+                    raiseMain ? 1 : 0);
+    }
     /* Hiding the pop-out leaves keyboard focus orphaned (notably on macOS,
      * where the OS does not auto-return key status to the main window), so
      * explicitly raise the main game window back to the front/focus. */
@@ -4347,16 +4354,13 @@ static void scnPanelIdentity(ClientSim *cs, int owner, char *key, size_t keySz,
 }
 
 /* Whether the player has a way to turn a closed panel back on: the
-   Brains > Info Overlay items. macOS draws its menus natively and that menu
-   has no such items yet, and the Deck-style controller mode and the tablet
-   UI draw no menu bar at all. Where there is no way back there is no X, and
-   a panel hidden earlier shows, so nothing is lost for good. */
+   Brains > Info Overlay items, in the in-window bar (renderScnPanelMenuItems)
+   or on macOS in the native bar, which populateMacMenuState hands the same
+   rows. The Deck-style controller mode and the tablet UI draw no menu bar at
+   all. Where there is no way back there is no X, and a panel hidden earlier
+   shows, so nothing is lost for good. */
 static bool scnPanelCanReopen(void) {
-#if defined(__APPLE__)
-    return false;
-#else
     return !uiModeIsTablet() && !uiShouldUseControllerMode();
-#endif
 }
 
 static bool scnPanelEffectiveShown(const ScnPanelView &v) {
@@ -4536,6 +4540,8 @@ static void scnPanelPopOut(int owner) {
 
 static void scnPanelPopIn(int owner) {
     ScnPanelView &v = s_scnViews[owner];
+    WB_LOG_INFO(WB_LOG_CAT_GUI, "[ScnPanel] owner %d pop in; window open=%d",
+                owner, s_popScnPanel[owner].open ? 1 : 0);
     v.popped = false;
     v.placed = false;
     if (s_popScnPanel[owner].open) popOutHide(&s_popScnPanel[owner]);
@@ -4545,25 +4551,43 @@ static void scnPanelPopIn(int owner) {
     scnPanelSavePopout(owner);
 }
 
-/* Shows a window without handing it keyboard focus. The pop-out is created
-   SDL_WINDOW_NOT_FOCUSABLE already; the hint covers a platform that honours
-   one and not the other. If focus lands there anyway it goes straight back
-   to the game window: input.c steers the tank only while the main window or
-   the map overview has focus, so a panel window holding it would stop the
-   tank. */
-static void scnPanelShowWithoutFocus(SDL_Window *w) {
-    /* A copy of the whole value, whatever its length, since the set below
-       may free the string SDL_GetHint returned. */
-    const char *prev = SDL_GetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN);
+/* Runs one SDL window call with a hint set to "0" and puts the hint back
+   after. A copy of the whole previous value, whatever its length, since the
+   set may free the string SDL_GetHint returned. */
+template <typename Fn>
+static void scnPanelWithHintOff(const char *hint, Fn call) {
+    const char *prev = SDL_GetHint(hint);
     char *saved = (prev != nullptr) ? SDL_strdup(prev) : nullptr;
-    SDL_SetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, "0");
-    SDL_ShowWindow(w);
+    SDL_SetHint(hint, "0");
+    call();
     if (saved != nullptr) {
-        SDL_SetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, saved);
+        SDL_SetHint(hint, saved);
         SDL_free(saved);
     } else {
-        SDL_ResetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN);
+        SDL_ResetHint(hint);
     }
+}
+
+/* Shows a window in front of the game window without handing it keyboard
+   focus. The pop-out is created SDL_WINDOW_NOT_FOCUSABLE already; the hints
+   cover a platform that honours one and not the other.
+
+   Two calls, because showing without activation is not enough on its own:
+   SDL's Cocoa backend orders a window shown that way *below* the key
+   window, which is the game window, so the pop-out came up behind the game
+   and could not be seen until the game window was moved. The raise with
+   activation off is a plain order-to-front on every backend (orderFront:
+   on macOS, SWP_NOACTIVATE on Windows, XRaiseWindow on X11), which puts it
+   in front without making it key.
+
+   If focus lands there anyway it goes straight back to the game window:
+   input.c steers the tank only while the main window or the map overview
+   has focus, so a panel window holding it would stop the tank. */
+static void scnPanelShowWithoutFocus(SDL_Window *w) {
+    scnPanelWithHintOff(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN,
+                        [w]() { SDL_ShowWindow(w); });
+    scnPanelWithHintOff(SDL_HINT_WINDOW_ACTIVATE_WHEN_RAISED,
+                        [w]() { SDL_RaiseWindow(w); });
     if (SDL_GetKeyboardFocus() == w && s_window != nullptr) {
         SDL_RaiseWindow(s_window);
     }
@@ -4586,6 +4610,21 @@ static bool scnPanelPopOutShow(int owner) {
         }
         SDL_SetWindowMinimumSize(pw->window, SCN_PANEL_POPOUT_MIN_PX,
                                  SCN_PANEL_POPOUT_MIN_PX);
+        /* This window's ImGui never changes the OS cursor. The gear and the
+           X ask for a hand, and on macOS that request from a window that can
+           never be key makes SDL's Cocoa code see "the wrong cursor is on
+           screen" on every pointer move and rebuild the window's cursor
+           rects, which re-creates its tracking area and fires a mouse-leave
+           each time. ImGui then forgets where the pointer is every frame,
+           and nothing in the window can be clicked. The cursor stays the
+           game window's, which is the key window and the one whose cursor
+           macOS shows. */
+        {
+            ImGuiContext *saved = ImGui::GetCurrentContext();
+            ImGui::SetCurrentContext(pw->imguiCtx);
+            ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+            ImGui::SetCurrentContext(saved);
+        }
 #ifdef _WIN32
         /* Owned by the game window, so it stays above it in the stacking
            order. Without this a full screen game window, or the Full Screen
@@ -4623,6 +4662,10 @@ static bool scnPanelPopOutShow(int owner) {
         pw->width  = cw;
         pw->height = ch;
     }
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
+                "[ScnPanel] owner %d pop-out shown at %d,%d %dx%d; flags 0x%llx",
+                owner, x, y, cw, ch,
+                (unsigned long long)SDL_GetWindowFlags(pw->window));
     scnPanelSavePopout(owner);
     return true;
 }
@@ -7787,9 +7830,15 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 bool isForThisWindow = false;
                 switch (ev.type) {
                     /* Only the scenario panel pop-outs take the pointer
-                       leaving: they show their buttons on hover, and without
-                       it ImGui would think the pointer was still over the
-                       last button it crossed. */
+                       leaving and coming back: they show their buttons on
+                       hover, and without the leave ImGui would think the
+                       pointer was still over the last button it crossed.
+                       The enter goes too because the ImGui backend pairs
+                       them: a leave it has not seen an enter for since is
+                       taken as the pointer gone at the next frame, so a
+                       leave and an enter in one batch of events would
+                       otherwise still cost a frame of hover. */
+                    case SDL_EVENT_WINDOW_MOUSE_ENTER:
                     case SDL_EVENT_WINDOW_MOUSE_LEAVE:
                         isForThisWindow = (scnOwner >= 0 &&
                                            ev.window.windowID == pwID);
@@ -8741,6 +8790,26 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
         const char *src  = name ? name : "?";
         strncpy(s->brainNames[i], src, sizeof s->brainNames[i] - 1);
         s->brainNames[i][sizeof s->brainNames[i] - 1] = '\0';
+    }
+
+    /* Brains > Info Overlay: one row per script with a scenario panel this
+       round, the rows renderScnPanelMenuItems draws in the in-window bar.
+       Synced here as the in-window bar syncs before it draws, so the native
+       bar sees the round as it is on the frame a panel arrives. */
+    static_assert(SCN_PANEL_OWNERS <= MAC_MENU_SCN_PANELS,
+                  "MacMenuState holds a row for every scenario panel owner");
+    scnPanelViewsSync(cs);
+    s->scnPanelCount = 0;
+    if (scnPanelCanReopen()) {
+        for (int i = 0; i < SCN_PANEL_OWNERS; i++) {
+            const ScnPanelView &v = s_scnViews[i];
+            if (!v.keyed) continue;
+            const int n = s->scnPanelCount++;
+            s->scnPanelOwner[n] = i;
+            s->scnPanelShown[n] = v.shown;
+            strncpy(s->scnPanelNames[n], v.name, sizeof s->scnPanelNames[n] - 1);
+            s->scnPanelNames[n][sizeof s->scnPanelNames[n] - 1] = '\0';
+        }
     }
 }
 #endif
@@ -9787,6 +9856,14 @@ extern "C" void sdl3ImguiShowBrainSettings(void) {
     s_brainSettings      = luaBrainGetSettings(&s_brainSettingsCount);
     s_brainSettingsOpen  = true;
     s_closeMenuPopups    = true;
+}
+/* The native Brains > Info Overlay rows: the same toggle the in-window
+ * checkbox makes (renderScnPanelMenuItems). owner is the script's position
+ * on the round's list, the row's tag. */
+extern "C" void sdl3ImguiToggleScnPanelShown(int owner) {
+    if (owner < 0 || owner >= SCN_PANEL_OWNERS) return;
+    if (!s_scnViews[owner].keyed) return;
+    scnPanelSetShown(owner, !s_scnViews[owner].shown);
 }
 
 /* Is the players panel on screen in ANY of its forms? The desktop pop-out
