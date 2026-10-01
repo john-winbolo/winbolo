@@ -85,7 +85,7 @@ int run_wbn_lobby_info_scenario(void) {
     serverSimSetScenarioLobbyTemplate(sim, &t);
     serverSimSetScenarioIdentity(sim, lobbyScenarioMod, "Survival",
                                  "survival.lua", "Last tank standing", false,
-                                 false, false, false);
+                                 false, false, false, false);
     wliRow(&rows[0], "survival.lua", "Survival", false);
     wliRow(&rows[1], "infection.lua", "Infection", true);
     wliRow(&rows[2], "pilltag.lua", "Pillbox Tag", true);
@@ -107,7 +107,7 @@ int run_wbn_lobby_info_scenario(void) {
     /* The identity is a mod, so no scenario decides the round. */
     serverSimSetScenarioIdentity(sim, lobbyScenarioMod, "Infection",
                                  "infection.lua", "", false,
-                                 true, false, false);
+                                 true, false, false, false);
     wliRow(&rows[0], "infection.lua", "Infection", true);
     serverSimSetScriptList(sim, rows, 1);
     info = wliRefresh(sim);
@@ -157,7 +157,7 @@ int run_wbn_lobby_info_scenario(void) {
     }
 
     serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
-                                 false, false, false, false);
+                                 false, false, false, false, false);
     serverSimDestroy(sim);
     return 0;
 }

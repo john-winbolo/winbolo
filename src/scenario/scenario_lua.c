@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /*********************************************************
@@ -4041,6 +4041,17 @@ static int scnLuaPanel(lua_State *L) {
     op.type           = SCN_OP_PANEL;
     op.u.panel.target = target;
     op.u.panel.panel  = (BYTE)id;
+    /* Which script this list is from, so each script keeps a panel of its
+       own on the client instead of overwriting the others'. runningOwner is
+       that script's position on the list plus one, and SCN_OWNER_NONE a call
+       no script of the round's made; both of the latter read as owner 0. */
+    {
+        const ScnLuaCtx *c = scnCtx(L);
+        if (c != NULL && c->runningOwner != SCN_OWNER_NONE &&
+            c->runningOwner <= SCN_PANEL_OWNERS) {
+            op.u.panel.owner = (BYTE)(c->runningOwner - 1);
+        }
+    }
     /* An empty list is the clear, and it never reaches the writer: 0 is the
        writer's answer both for a list it would not take and for one with
        nothing in it, and the count is what tells those apart. Every other

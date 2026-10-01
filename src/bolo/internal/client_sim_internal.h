@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /*********************************************************
@@ -954,6 +954,9 @@ struct ClientSim {
      * library and no limits (-allow-unsafe-scripts). False with no script
      * attached, since the server only says so beside one. */
     bool     lobbyScenarioUnsafe;
+    /* True when the attached list fields its own bots (needs_bots), so the
+     * server refuses the AI policy that takes every bot off the roster. */
+    bool     lobbyScenarioNeedsBots;
 
     /* The lobby's ordered script list, from CTRL_LOBBY_SCRIPT_LIST. Entry 0
      * is the one the round is decided by and is the same file the identity
@@ -1137,12 +1140,15 @@ struct ClientSim {
      * rule. All of it is dropped on the return to lobby, in the
      * CTRL_GAME_PHASE_LOBBY arm beside the rest of that reset. */
 
-    /* One display list per panel id, already decoded. scnPanelValid
-     * says a list has arrived at all: a panel nothing has sent to is
-     * not the same as one sent an empty list to clear it, and only the
-     * first of those should leave the frontend's slot unbuilt. */
-    ScnPanelList scnPanels[SCN_PANEL_IDS];
-    bool         scnPanelValid[SCN_PANEL_IDS];
+    /* One display list per panel id per script of the round's list,
+     * already decoded. The second index is the owner the panel byte
+     * carries (SCN_PANEL_WIRE_OWNER), so each script's panel is kept
+     * apart from the others'. scnPanelValid says a list has arrived at
+     * all: a panel nothing has sent to is not the same as one sent an
+     * empty list to clear it, and only the first of those should leave
+     * the frontend's slot unbuilt. */
+    ScnPanelList scnPanels[SCN_PANEL_IDS][SCN_PANEL_OWNERS];
+    bool         scnPanelValid[SCN_PANEL_IDS][SCN_PANEL_OWNERS];
     /* Arriving lists scnPanelParse refused: dropped rather than drawn,
      * and counted so a malformed list is visible to whoever wrote it
      * instead of silently showing nothing. */

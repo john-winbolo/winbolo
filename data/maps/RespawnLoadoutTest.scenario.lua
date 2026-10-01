@@ -59,6 +59,9 @@ scenario = {
   -- on every life. No brain on the team: both probes fall back to the
   -- server's -brain argument, which the runner points at the probe brain.
   game = "tournament",
+  -- Both probes are held bot seats fielded with game.spawn_bot, which a
+  -- lobby set to no bots refuses.
+  needs_bots = true,
   lobby = {
     max_players = 1,
     -- Two held seats. Held rather than fielded because this script has to

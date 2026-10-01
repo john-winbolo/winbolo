@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -311,24 +314,6 @@ const char *serverSimGetScenarioDir(const ServerSim *sim) {
         return sim->scenarioDirPath;
     }
     return "data/scenarios";
-}
-
-/* The pick, kept as the first entry of the script list. A caller with only
-   a file name to give is every caller this has: the command arm that knows
-   more than the name calls serverSimSetScriptList instead, and what this one
-   writes leaves the manifest's name and the two flags empty, which is
-   honest — it has not read the directory and does not know them. */
-void serverSimSetSelectedScenario(ServerSim *sim, const char *file) {
-    ScnDirEntry entry;
-
-    if (sim == NULL) return;
-    if (file == NULL || file[0] == '\0') {
-        serverSimSetScriptList(sim, NULL, 0);
-        return;
-    }
-    memset(&entry, 0, sizeof(entry));
-    SDL_strlcpy(entry.file, file, sizeof(entry.file));
-    serverSimSetScriptList(sim, &entry, 1);
 }
 
 /* Entry 0 and not the whole list, because what this answers is the one

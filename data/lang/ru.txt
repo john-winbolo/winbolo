@@ -683,6 +683,12 @@ STR_MAPCHOOSER_RESTORE_SIZE_TIP=Восстановить размер по ум�
 STR_MAPCHOOSER_MAXIMIZE_TIP=Развернуть
 STR_MAPCHOOSER_LOADING_PREVIEW=Загрузка предпросмотра...
 
+# Map editor scenario panel
+STR_MAPEDIT_SCENARIO_NEEDS_BOTS=Требует разрешённых ботов: этот скрипт добавляет своих ботов
+STR_DLGABOUT_LICENCE=Лицензия
+STR_DLGABOUT_LICENCE_NOTICE=Свободное ПО по лицензии GNU GPL v3 или новее. Без гарантии.
+STR_DLGABOUT_FILE_NOT_FOUND=Файл не найден.
+
 # Tablet HUD
 STR_TABLET_STATUS_TITLE=Статус
 STR_TABLET_KILLS_DEATHS=Убийств: {number}  Смертей: {number2}
@@ -1809,6 +1815,7 @@ STR_DLGBROWSER_SELECT_SERVER=Выберите сервер
 STR_DLGBROWSER_PREVIEW_UNAVAIL=Нет превью
 STR_DLGBROWSER_PREVIEW_ENLARGE=Нажмите для увеличения
 STR_DLGBROWSER_ENLARGE_BTN=Увеличить
+STR_DLGBROWSER_SIGNIN_TO_JOIN=Войти, чтобы присоединиться
 STR_DLGBROWSER_AI_PLAYERS=({number} ИИ-игроков)
 STR_DLGBROWSER_WBN_PLAYERS=WinBolo.net игроки:
 STR_DLGBROWSER_ST_LOCKED=Заблок./Заполнен
@@ -2023,6 +2030,7 @@ STR_DLGKEYSETUP_OVERVIEWZOOMIN=Увеличить карту
 STR_DLGKEYSETUP_OVERVIEWZOOMOUT=Уменьшить карту
 STR_DLGWELCOME_SWITCH_CLASSIC=Переключиться на классический режим
 STR_DLGWELCOME_SWITCH_FULLSCREEN=Переключиться на полноэкранный режим
+STR_DLGWELCOME_PRACTICE=Тренировка
 
 # Настройки «Экран и звук»: полноэкранный режим и HUD-панели карты
 STR_DLGSETTINGS_FULLSCREEN=Полноэкранный режим
@@ -2215,7 +2223,6 @@ STR_DLGLOBBY_SCENARIO_TAG_SCENARIO=Сценарий
 STR_DLGLOBBY_SCENARIO_KIND_ALL=Все
 STR_DLGLOBBY_SCENARIO_KIND_MODS=Только моды
 STR_DLGLOBBY_SCENARIO_KIND_SCENARIOS=Только сценарии
-STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS=Запускать скрипты в загруженных картах
 STR_DLGSETTINGS_HOSTING_SCENARIODIR=Папка модов
 STR_DLGSETTINGS_MAPVIEW=Вид карты
 STR_DLGSETTINGS_SIMPLEZOOM=Использовать упрощённый вид при уменьшении масштаба

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /*********************************************************
@@ -402,6 +402,16 @@ typedef struct {
      * otherwise leave every base short of it and every pill under it. Off
      * unless the file asks for it, which leaves a map's own numbers alone. */
     bool fillToCaps;
+
+    /* True when the file needs the lobby to allow bots: it fields its own
+     * (a lobby team with bots above 0, game.spawn_bot, game.lobby_add_bot),
+     * and a lobby set to no bots would refuse every one of them. Only then
+     * does attaching it move a lobby off "no computer tanks" and keep it
+     * off while it is attached. Off unless the file asks for it, so a
+     * script that only works with the bots a host adds, or with none,
+     * leaves the host's bot setting alone. A team with bots = 0 does not
+     * say this, which is why it is a key of its own. */
+    bool needsBots;
 
     /* The Steam Workshop item this file was published as, and the account
      * that published it, written into the file once it is published

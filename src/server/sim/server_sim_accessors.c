@@ -3,13 +3,16 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 /*********************************************************
@@ -1047,9 +1050,9 @@ int serverSimEmptyScriptSessionDir(ServerSim *sim) {
     return removed;
 }
 
-ScriptUploadPolicy scriptUploadPolicyResolve(const char *word, bool legacyOff) {
+ScriptUploadPolicy scriptUploadPolicyResolve(const char *word) {
     if (word == NULL || word[0] == '\0') {
-        return legacyOff ? SCRIPT_UPLOAD_OFF : SCRIPT_UPLOAD_ALLOW;
+        return SCRIPT_UPLOAD_ALLOW;
     }
     if (SDL_strcasecmp(word, "off") == 0)     return SCRIPT_UPLOAD_OFF;
     if (SDL_strcasecmp(word, "allow") == 0)   return SCRIPT_UPLOAD_ALLOW;

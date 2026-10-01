@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /*
  * winbolo_ios.m — iOS app entry point for WinBolo.
  * Full game loop with engine integration.

@@ -2,7 +2,7 @@
  * game_settings_blob.h - decode of the log_GameSettings payload
  *
  * Copyright (c) 1998-2026 John Morrison.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * The replay's lobby settings arrive as a framed blob of binary bytes
  * (layout in docs/replay-format.md). This turns one into a struct.

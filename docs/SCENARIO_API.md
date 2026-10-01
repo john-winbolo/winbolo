@@ -17,6 +17,13 @@ bug worth reporting.
 ## Contents
 
 - [Where a scenario lives](#where-a-scenario-lives)
+- [Packaging](#packaging)
+- [Mods](#mods)
+- [The script list](#the-script-list)
+- [Uploads](#uploads)
+- [Sharing: Save a copy](#sharing-save-a-copy)
+- [The Steam Workshop](#the-steam-workshop)
+- [Recordings and the game finder](#recordings-and-the-game-finder)
 - [What a scripted lobby looks like](#what-a-scripted-lobby-looks-like)
 - [A worked example: Wave Defense](#a-worked-example-wave-defense)
 - [The `scenario` table](#the-scenario-table)
@@ -50,11 +57,25 @@ bug worth reporting.
 
 ## Where a scenario lives
 
-A scenario is found by the map's file name. `Wave Defense.map` is played with
-`Wave Defense.scenario.lua` beside it; a map with no such file beside it is an
-ordinary map. Nothing else points the server at a scenario, so copying a map
-to a new name and writing a script for the copy is how you attach a scenario
-without changing how the original map plays.
+A script reaches a round in one of five ways:
+
+- **Beside the map.** `Wave Defense.map` is played with
+  `Wave Defense.scenario.lua` beside it. This is the file you edit.
+- **Inside the map.** A `.map` can carry its scenario packed into the file
+  itself, so the scenario goes wherever the map goes. See
+  [Packaging](#packaging).
+- **As a `.scenario` file** in one of the server's mod directories, which
+  plays over whatever map is committed. See [Mods](#mods).
+- **On the lobby's list.** The host picks a scenario and up to nine mods in
+  the lobby's chooser, and the chooser sends that list to the server. See
+  [The script list](#the-script-list).
+- **From the map editor**, which writes the script beside the map, packs it
+  into the map, or saves it as a `.scenario` file. See
+  [Packaging](#packaging).
+
+A map with no script beside it and none inside it is an ordinary map. Copying
+a map to a new name and writing a script for the copy is still how you attach
+a scenario without changing how the original map plays.
 
 The server reads the file once when the map is loaded and runs it again at the
 start of every round, each time in a Lua state of its own. That means:
@@ -222,27 +243,33 @@ With any of them off a map that has a script beside it plays plainly, the
 operator is told which script was skipped, and the map chooser does not tag
 the map as scripted.
 
-**Switching off only the scripts inside uploaded maps.** A `.map` a player
-uploads to a server can have a scenario packed into the file, and the server
-keeps the bytes it was sent whole, so committing that map later runs the
-script that came with it. An uploaded map's script runs under exactly the
-same sandbox as one on the operator's own disk — the same library, the same
-memory cap, the same instruction budget — and, as above, at the server's own
-privilege. A server that would rather not take a script from a player has a
-narrower switch than turning scripts off altogether:
+**Scripts that come from players.** A player can send a server a mod or a
+scenario from the lobby, and a `.map` a player uploads can have a scenario
+packed into it. A server that keeps an uploaded map on disk keeps the bytes it
+was sent whole, so committing that map later runs the script that came with
+it. Either kind runs under exactly the same sandbox as a script on the
+operator's own disk — the same library, the same memory cap, the same
+instruction budget — and, as above, at the server's own privilege. What a
+server does with them is its script upload policy, a narrower switch than
+turning scripts off altogether:
 
-- `-nouploadscripts` on the dedicated server. One dash.
-- `--nouploadscripts` on the headless runner. Two.
-- **Run scripts in uploaded maps**, the desktop client's hosting preference,
-  under the one above. On by default, and it takes effect the moment it
-  changes.
+- `-scriptuploads off|allow|persist` on the dedicated server. One dash.
+- `--scriptuploads off|allow|persist` on the headless runner. Two.
+- **Scripts from Players**, the desktop client's hosting preference, under the
+  one above: Off, Allow this session or Allow and keep. Greyed while scripts
+  are off altogether.
 
-With it off, a map whose file sits in the server's uploads directory attaches
-neither a packed scenario nor a loose script beside it, the console names the
-upload that was turned down, and the map chooser does not tag it as scripted.
-Every other map is unaffected. With it on, one console line names each
-uploaded map whose packed scenario is what runs, so the operator can see when
-a round is being played by a script a player sent.
+All three default to allow, which the desktop calls Allow this session. Off
+refuses every script a player sends, and
+strips the script from an uploaded map: a map whose file sits in the server's
+map uploads directory attaches neither a packed scenario nor a loose script
+beside it, the console names the upload that was turned down, and the map
+chooser does not tag it as scripted. Every other map is unaffected. On the
+desktop that half takes effect the moment the preference changes. Allow and
+persist take the scripts players send, for the session or for good (see
+[Uploads](#uploads)), and run an uploaded map's own scenario; one console line
+names each uploaded map whose packed scenario is what runs, so the operator
+can see when a round is being played by a script a player sent.
 
 **Running scripts with nothing held back.** For an operator whose own content
 needs more than the sandbox allows, there is a switch that lifts it, named
@@ -273,8 +300,9 @@ plain Lua:
 `print` still goes to the server console, where the operator and the desktop
 client look, with no limit on how many lines.
 
-It applies to uploaded maps' scripts as well. If `-nouploadscripts` is given
-too, that still refuses an uploaded map's script outright. The host prints a
+It applies to uploaded maps' scripts and to the scripts players send as well.
+With the script upload policy set to off, an uploaded map's script is still
+refused outright, and so is every script a player sends. The host prints a
 note at startup saying the switch is on. It exists for content the operator
 trusts as their own; a server open to uploads from strangers should not run
 this way.
@@ -293,6 +321,404 @@ round to start boots the new rules and hooks, while the lobby seats the
 template asks for, the scenario's name and description, and the game it
 declares are the map commit's and change only when the map is committed
 again. The round in progress keeps what it started with.
+
+---
+
+## Packaging
+
+A scenario is kept in one of three shapes, and a server reads all three:
+
+- **A loose script**, plain Lua: `X.scenario.lua` beside `X.map`, or a `.lua`
+  file in a mod directory.
+- **A chunk in the map.** The scenario's manifest and its script, framed as a
+  WBSC container and appended to the `.map` file after the map itself. The
+  scenario then goes wherever the file is copied, uploaded or published. This
+  is the shape for a scenario with `bound` true.
+- **A `.scenario` file.** The same container as a file of its own, which is
+  how a mod, or a scenario that plays over any map, is kept in a mod
+  directory.
+
+The manifest is the `scenario` table written down as data, with the keys
+[The `scenario` table](#the-scenario-table) lists.
+
+**The map editor is the ordinary way to pack.** Its scenario panel writes all
+three:
+
+- **Save** writes the loose script beside the map, and checks it.
+- **Pack into Map** writes the chunk on to the map file, replacing any chunk
+  already there. A manifest with `bound` false is refused: a chunk on a map is
+  that map's scenario, and one that plays over any map is saved as a
+  `.scenario` instead.
+- **Save as Mod…** writes a `.scenario` file with `bound` false and no tags or
+  regions, whatever the forms hold, because those belong to a map a mod has
+  never seen.
+
+Both packs check the script first, and a script with problems is not written;
+the panel's Script view lists them. Saving a map that opened with a chunk puts
+that chunk back on the file, so editing a packed map's terrain does not lose
+its scenario. Pack into Map is what writes the forms' changes.
+
+**`-pack` does the same from the command line.**
+
+```
+WinBoloDS -pack "maps/Wave Defense.map"
+```
+
+writes the script beside the map into the map file and exits without starting
+a server. The manifest comes from the script's own `scenario` table, and a
+chunk already on the map is replaced. A script with problems is not packed;
+run `-validate` on the map to see them. The command exits 0 when the map was
+packed and 1 when it was not.
+
+**Write it loose, ship it packed.** A loose script beside a map wins over the
+chunk inside it. That is the loop a scenario is written in: keep
+`X.scenario.lua` beside the packed `X.map`, edit it, `reload` or press
+**Reload script**, and play, with no packing between rounds. While both are
+there the console says once that the loose script is what runs and the packed
+one is not. Delete the loose script and the next reload hands the map back to
+its own chunk. When you are done, pack it and take the loose script away: a
+server that has both runs the loose one.
+
+---
+
+## Mods
+
+A mod is a file whose table says `kind = "mod"`: it changes how the game
+plays and leaves winning and losing alone. The `kind` row of
+[The `scenario` table](#the-scenario-table) has the whole rule. In short, a
+mod may not:
+
+- name a `game` type, or declare a trigger action that calls `end_round`,
+  `set_game_time`, `add_game_time` or `score`. The file is refused as it
+  loads;
+- call any of those four from its code. Each raises when a mod calls it;
+- decide the round through `allow_base_win`. The server does not read a mod's.
+
+A mod further down the list than the round's scenario, or than the first
+script of a round with no scenario, may not declare a `lobby` block or
+`fill_to_caps` either, because those belong to the script at the head of the
+round. A list that breaks this plays no script, and the console names the file
+and the key.
+
+**Where mods are found.** A server offers every `.scenario` file and every
+loose `.lua` in these directories, merged into one list, highest precedence
+first:
+
+1. The directory this host was given: `-moddir` on the dedicated server
+   (default `data/scenarios`), or the desktop client's **Mod Directory**
+   hosting preference (default `<prefpath>Mods`).
+2. `<prefpath>Mods`, the player's own.
+3. `<prefpath>Workshop`, where subscribed Workshop items are copied. See
+   [The Steam Workshop](#the-steam-workshop).
+4. `data/mods` beside the executable: the mods that ship with the game.
+5. The uploads directory, where scripts players send land. See
+   [Uploads](#uploads).
+
+A file name two directories both hold is the higher directory's. The lower
+copy is not listed and never loads. A directory named twice is read once, and
+one that is not there is not an error: it means that directory offers nothing.
+
+`<prefpath>` is the game's own writable folder, the one it reads `Brains` from
+as well: `~/Library/Application Support/WinBolo/WinBolo/` on macOS, and SDL's
+preferences path on other systems. The dedicated server reads the same
+folders a desktop host does.
+
+- `-moddir <Dir>` on the dedicated server. One dash. `-scenariodir` is its old
+  name and is still taken; `-moddir` wins when both are given.
+- **Mod Directory**, the desktop client's hosting preference. It is read when
+  a game is hosted, so a change reaches the next hosted game. The client makes
+  the folder if it is not there.
+
+**The shipped mods** live in `data/mods`, found from where the executable is
+rather than from where the server was started, so every host offers them
+whatever `-moddir` says.
+
+---
+
+## The script list
+
+A round runs an ordered list of scripts: at most one scenario, the file that
+decides the round, and mods behind it, ten scripts in all. A map that brings a
+scenario of its own counts that scenario as one of the ten.
+
+**The chooser.** The host opens it with the **Details** button on the lobby's
+Mods row. The left column, **This server offers**, lists every script the
+server's directories hold, with a filter box and a kind filter. The right
+column, **This round runs**, is the list, top first, with **Load earlier** and
+**Load later** to move a row and a button to drop one. The arrow on a left row
+adds it: a mod goes on the end, and a scenario takes the place of the scenario
+already on the list. **OK** sends the whole list to the server in one command.
+Any script's name opens its details: its description, its rules and its
+settings.
+
+The host, an admin, or anyone while Open Host is on may change the list. For
+everyone else, spectators included, the chooser is read-only.
+
+**Order is precedence.** The top of the list wins. A rule two scripts both set
+is the higher script's, and the details dialog marks the lower one's row
+*Overridden by …*. A region two scripts both name is kept twice, once for
+each, and each script's own lookups find its own. Tags are the union of every
+script's, and every script's triggers are kept, in list order. The round needs
+bots when any script on the list says `needs_bots`, whatever its place (see
+`needs_bots` in [The `scenario` table](#the-scenario-table)).
+
+**A picked scenario replaces the map's own.** Two scripts that can each end the
+round cannot both play, so a scenario the host picks plays in place of the
+scenario the map brought. A mod picked on a scenario map plays beside the
+map's scenario. The map's own row can sit anywhere on the list, which is how a
+host puts a mod's rules ahead of the map's.
+
+**What the server refuses.** A list with two scenarios, the same file twice, a
+name none of its directories holds, or another map's bound scenario is refused
+whole, and the list that was playing goes on playing. So is a list sent while a
+round is running, a second list inside a second of the last, and any list but
+an empty one while the lobby is ranked. A script on an accepted list that will
+not load plays no script at all rather than the rest of the list without it,
+and the console says which file.
+
+**Mods/Scenario Enabled.** The host's Mods row in the lobby has this checkbox,
+on by default. Off, the round composes none of the host's picks: no mod and no
+picked scenario. The map's own scenario still plays. The list is kept as the
+host wrote it, so turning the box back on brings the same scripts back in the
+same order, and the lobby marks each pick that is switched off. An operator
+locks the box with `-lock mods` on the dedicated server.
+
+---
+
+## Uploads
+
+A player with a mod or a scenario on their own machine can send it to the
+server whose lobby they are in. The server's script upload policy, set by the
+switches under [Where a scenario lives](#where-a-scenario-lives), decides what
+happens to it:
+
+| Policy | A script a player sends | An uploaded map's own script |
+|---|---|---|
+| off | Refused before any bytes are sent. | Not run. |
+| allow (the default) | Kept for the session, in the Session directory. | Run. |
+| persist | Kept for good, in the Scripts directory. | Run. |
+
+It is a policy of its own, apart from the one for map uploads.
+
+**Where they land.**
+
+- On the dedicated server, persist writes to `<map root>/Uploads/Scripts`, or
+  to the directory `-scriptuploaddir` names, and allow writes to
+  `<map root>/Uploads/Session-<port>`. The port is in the name so that two
+  servers sharing a map directory keep separate sessions.
+- On a desktop host, persist writes to the **Script Upload Directory**
+  preference, which defaults to `<prefpath>uploads/Scripts`, and allow writes
+  to `<prefpath>uploads/Session`.
+
+The directory in force is the last and lowest entry of the mod list (see
+[Mods](#mods)), so an uploaded file is offered beside the server's own and
+marked *uploaded*.
+
+**The Session directory is emptied** when the server starts, when it shuts
+down, and when the last player leaves and the lobby resets to its defaults:
+the group that brought the files is the session. A desktop host going back to
+the menu is a shutdown. At the reset, every pick on the list that named a file
+in the directory is dropped first, and the console says how many. Only a host
+that takes players from other machines empties it; single player never does.
+
+**Name rules.** A script's file name ends in `.scenario` or `.lua` and is at
+most 127 bytes. It may not start with a dot, hold a path separator, a colon or
+a control character, have a dot or a space just before the extension, or be a
+Windows reserved name such as `CON` or `LPT1`. The file may be up to 4 MiB.
+
+**What the server checks.** At the start of an upload, in order: that the
+sender has not asked too soon after their last request, that they may change
+the round (the host, an admin, or anyone while Open Host is on), that the
+policy is not off, that no other player's upload is in flight, the size and
+the name, that the name is not taken, and under persist, the caps. Once the
+bytes have arrived the server reads the file the way the mod list would: a
+`.scenario`'s manifest must parse and a `.lua` must load and declare a
+`scenario` table. A file that asks for a newer `api`, declares a `kind` this
+server does not know, or is bound to a map is refused as well; a bound
+scenario arrives as its map instead. The player is told why, and a script
+with a syntax error says the line.
+
+**A name already taken** in a higher directory — `-moddir`, the Mods or
+Workshop folder, or the shipped mods — is refused at the start with reject
+code 8, `LOBBY_REJECT_NAME_TAKEN`, because a pick of that name would load the
+higher file and never the upload. The match ignores case. Sending a file the
+uploads directory already holds is not refused: the new one replaces it.
+
+**The caps** hold under persist only, since the Session directory is emptied
+instead. Only the `.scenario` and `.lua` files directly in the Scripts
+directory count, and a file an upload replaces counts by its change in size.
+An upload past either cap is refused at the start, and again when its bytes
+arrive if another upload has landed since. A value outside the range is
+clamped, with a warning.
+
+- `-scriptuploads off|allow|persist` on the dedicated server, and
+  `--scriptuploads` on the headless runner, which takes none of the switches
+  below.
+- `-scriptuploaddir <Dir>`: where persist writes. Default
+  `<map root>/Uploads/Scripts`.
+- `-scriptuploadmaxfiles <N>`: 1 to 255 files, default 32.
+- `-scriptuploadmaxstorage <MB>`: 1 to 4095 MB, default 64.
+- On the desktop, **Script Upload Directory**, **Max Files** and **Max Storage
+  (MB)** under **Scripts from Players**, drawn when Allow and keep is chosen,
+  with the same ranges and defaults. Its preferences file keeps them under
+  `HOSTING` as `Script Upload Policy` (`Off`, `Allow` or `Persist`),
+  `Script Upload Dir`, `Script Upload Max Files` and
+  `Script Upload Max Storage`.
+
+**Map uploads** have their own policy and caps: `-uploadpolicy off|allow|persist`,
+`-uploaddir <Dir>` for where a persisted map is written (default
+`<map root>/Uploads`), `-uploadmaxfiles <N>` 1 to 255 (default 64) and
+`-uploadmaxstorage <MB>` 1 to 4095 (default 8). A persisted map upload is a
+file in that directory, which is what the script upload policy's off looks
+for. A map upload under allow plays from memory and has no file, so a scenario
+packed into it does not run under any script policy.
+
+**In the chooser.** On a server in another process, the left column also lists
+what this computer holds in `<prefpath>Mods` and `<prefpath>Workshop`. A row
+is matched to the server's by Workshop item id when both carry one, and by
+file name, ignoring case, otherwise. Each row says where it is:
+
+- *server*: only the server has it;
+- a tick and *on this computer*: both have it;
+- *on this computer* and a **Send to server** button in place of the add
+  arrow: only you have it.
+
+A row the server holds because a player sent it also says *uploaded*.
+
+Send draws a progress bar under the row while it runs. When the file lands,
+the chooser asks the server for its list again and the row becomes one both
+hold; for a player who may change the round, the file is also added to the
+list they are building, and the round gets it when they press OK. A refusal
+shows its reason under the row for five seconds.
+
+Send is drawn for every player, and greyed with the reason on hover for a
+player who may not change the round, when the server's policy is off, and
+while any upload is in flight. In single player or on your own desktop host
+every script on this computer is already one the server reads, so no row is
+on this computer alone and there is nothing to send.
+
+---
+
+## Sharing: Save a copy
+
+A row only the server has carries a **Save a copy** button, a down arrow whose
+tooltip reads *Save a copy to your Mods folder*. It asks the server for the
+file and writes it to `<prefpath>Mods` under the same name, and the row then
+reads as one both hold. The round never needs the copy, since every script
+runs on the server; it is for hosting the script yourself later. A loose
+`.lua` arrives as its source and lands as a `.lua`.
+
+The button is offered only against a server in another process. It is greyed
+for a spectator, when the server does not share, and while another copy is on
+its way. A file your Mods or Workshop folder already holds under that name is
+not asked for. A file the server no longer has, one too large to send, and a
+request too soon after the last are refused, and each shows its reason under
+the row.
+
+Sharing is on by default:
+
+- `-noscriptsharing` on the dedicated server turns it off. One dash.
+- **Let players copy this server's scripts**, the desktop client's hosting
+  preference, kept as `Share Scripts` (`Yes` or `No`). Greyed with the rest
+  while scripts are off.
+
+**A bound scenario is not served this way.** The map's own scenario lives in
+the map file, and the map a joining player downloads is the map alone,
+without its chunk. See [What is not here yet](#what-is-not-here-yet).
+
+**A Workshop row** also carries **Open in Workshop**, which opens the item's
+page in Steam when Steam is running. Subscribing there is the better copy,
+because Steam keeps it up to date.
+
+---
+
+## The Steam Workshop
+
+Mods and scenarios are published to and subscribed from the Steam Workshop,
+the way skins are. All of it needs the Steam client running; without Steam
+none of it is drawn.
+
+**Subscribing.** Subscribe on the item's Workshop page. The game copies each
+installed item's one `.map`, `.scenario` or `.lua` file into
+`<prefpath>Workshop` when it starts, and again whenever Steam says an item has
+finished installing, so a subscription reaches the chooser without a restart.
+An item that holds a skin is left to the skin picker, and one that holds none
+of the three files, or more than one, is skipped with a line in the log. Two
+items with the same file name keep the lower item id's.
+`<prefpath>Workshop/workshop.json` records which file came from which item,
+with the source's size and modify time, so each pass copies only what changed
+and removes only the files it put there, once you unsubscribe.
+
+**Publishing** is on the **Workshop** tab of the Settings dialog, which is
+there only while Steam is running. Two buttons at the top switch between its
+two views, **Subscribed** and **Publish**, beside **Refresh**, which runs the
+copy again, and **Browse Workshop**.
+
+- *Subscribed* lists what you are subscribed to: each item's name, whether it
+  is a mod, a scenario, a map or a skin, its state (*Installed*, downloading,
+  or *Not usable* for an item the copy could not use), and
+  **Open in Workshop**. Skins are listed here and still read in place by the
+  skin picker.
+- *Publish* lists every script in your own `<prefpath>Mods` folder and every
+  map under `data/maps` that carries a scenario, each with **Publish**, or
+  **Update** when the file already names an item you published. Either opens
+  the publish window the skin picker uses.
+
+A loose `.lua` is packed before it is published: into `<name>.scenario` beside
+it in the Mods folder, with the `.lua` moved into `Mods/Sources`, where the
+mod list does not look. The package is what is sent. A loose script that is
+bound to a map is not offered, because it ships inside its map.
+
+**Tags.** An item is tagged `Mod` or `Scenario` from the file's `kind`, as a
+skin is tagged `Skin`. The copy does not read the tag: what an item is comes
+from the file it holds, so a plain map somebody published lands in
+`<prefpath>Workshop` as well.
+
+**Provenance.** When a publish succeeds, the game writes the item's id and
+your SteamID64 into the file that was sent, as the manifest's `workshop_id`
+and `workshop_author` (see [The `scenario` table](#the-scenario-table)): into
+a `.scenario`'s manifest, or into the chunk on a `.map`. That is what makes
+the next press **Update** rather than a second item, and what lets the lobby
+match a server's copy of an item to yours whatever the two files are called.
+The map editor shows both, read-only.
+
+**The Workshop folder in the map chooser.** A `.map` copied into
+`<prefpath>Workshop` is offered in the desktop client's map chooser as a
+folder named **Workshop** at the top of the map list, the way `Uploads` is. A
+real folder called `Workshop` in the map directory is shown in its place.
+
+**In the lobby**, a row whose file names a Workshop item wears a *Workshop*
+chip after its kind and, with Steam running, an **Open in Workshop** button.
+The map panel's script lines wear the chip too.
+
+**A dedicated server has no Steam.** It publishes nothing and copies nothing,
+and its map list has no Workshop folder. It reads the same mod directories a
+desktop host does, `<prefpath>Workshop` among them, so an operator who wants a
+Workshop mod on a server copies the file into `-moddir` or into one of those
+folders.
+
+---
+
+## Recordings and the game finder
+
+**A recording keeps the round's scripts.** The `.wbv` of a round that ran
+scripts holds a `scripts.json` member saying what they were; a plain round's
+has none. [docs/replay-format.md](replay-format.md#scriptsjson) describes it.
+
+**The finder names them.** A server registered with WinBolo.net sends three
+keys about its scripts when it registers and with every lobby update:
+
+- `scenario`: the name of the scenario that decides the round;
+- `scenario_max_players`: that scenario's cap on human players, 0 for none;
+- `mods`: the names of the mods that run, `[]` when none do.
+
+A round no scenario decides, a plain one or one only mods change, sends
+neither of the first two. The game finder puts the scenario's name after the
+map on a server's row, then the one mod's name or *+N mods*, and counts humans
+against the scenario's cap when it has one. The details pane names the
+scenario, with its description once the server itself has answered, and lists
+the mods. That answer is the info reply, whose bytes are in
+[docs/info_packet_wire.md](info_packet_wire.md#script-bytes-after-the-packet).
 
 ---
 
@@ -320,16 +746,20 @@ description with a newline in it does not take the lobby apart.
 whether a script sits beside it, and the ones that do carry a Scripted tag.
 With scripts switched off nothing is tagged.
 
-**Three settings are refused while a scenario is attached.** Any game-type
-change, ranked on, and the no-bots AI policy. All three are refused the same
-way and the host is shown the same line — *That setting is fixed by the map's
-scenario* — rather than the request failing silently.
+**Some settings are refused while a scenario is attached.** Any game-type
+change and ranked on, and — only when a script on the list says
+`needs_bots = true` — the no-bots AI policy. They are refused the same way
+and the host is shown the same line — *That setting is fixed by the map's
+scenario* — rather than the request failing silently. A mod leaves the game
+type to the host.
 
-**Committing a scripted map moves two settings out of the way**, because the
-three above cannot stand beside a scenario: ranked goes off, and an AI policy
-set to no bots moves up to one that runs them. Committing a plain map
-afterwards gives all three back — the game type, the ranked flag and the AI
-policy the lobby was on before the scenario arrived.
+**Committing a scripted map moves settings out of the way**, because the
+ones above cannot stand beside a scenario: ranked goes off, and — only when a
+script on the list says `needs_bots = true` — an AI policy set to no bots
+moves up to one that runs them. A list that does not say it leaves the AI
+policy to the host, so a lobby with no bots stays with no bots. Committing a
+plain map afterwards gives them back — the game type, the ranked flag, and
+the AI policy the lobby was on before a `needs_bots` script moved it.
 
 **A lobby everyone leaves keeps the scenario's settings.** The reset that
 empties a lobby puts the operator's own game type, ranked flag and AI policy
@@ -418,6 +848,7 @@ scenario = {
   game         = "open",
   bound        = true,
   fill_to_caps = false,
+  needs_bots   = false,
   lobby        = { ... },
   rules        = { ... },
   tags         = { ... },
@@ -437,6 +868,7 @@ scenario = {
 | `bound` | boolean | True (the default) when the scenario is tied to its map. A scenario that names tags or regions is tied to its map by definition, because tags and regions are the map's own squares and entities. A server can also offer scenarios of its own, which play over whichever map a host has committed; a scenario with `bound` true is not one of those and a host picking it is refused, because over another map its tags, its regions and its entity indices name items that are not there. |
 | `triggers` | array | What the scenario does without a line of Lua: hooks to listen on, tests against what each hook is handed, and calls to make when every test holds. A scenario may carry triggers, a script, or both. See [Triggers](#triggers). |
 | `fill_to_caps` | boolean | False by default. True starts every pillbox and base on the map at the caps your `rules` table leaves in force rather than at the numbers the map file holds. A map file states a number for each pill's armour and each base's stocks and has no way of stating "full", so a scenario that raises `base_full_armour` or `pill_max_armour` would otherwise open with the map's own smaller numbers and climb to the new ones over the round. Raising only: anything already at or above a cap is left where it is, and anything above one is brought down by the rules themselves. A pill's firing rate is not touched. |
+| `needs_bots` | boolean | False by default. True says the script needs the lobby to allow bots: it fields its own, through a `lobby` team with `bots` above 0 or with held seats, through `game.spawn_bot`, or through `game.lobby_add_bot`, and a lobby set to no computer tanks refuses every one of those. With it, attaching the script moves a lobby set to no bots up to one that runs them, the host cannot set no bots while the script is attached, and the lobby goes back to no bots once the last script goes. Without it the script leaves the host's bot setting alone, and a script that only works with the bots a host adds — retuning them with `game.bot_init`, say — does not need it. A mod may say it as well as a scenario, and a list needs bots when any script on it says so. A `lobby` team with `bots = 0` does not say it. A file that fields bots and leaves it out works in a lobby that allows bots and fails in one that does not, so `-validate` reports it and packing or publishing the file is refused: a `lobby` team with `bots` above 0, or a call to `game.spawn_bot` or `game.lobby_add_bot` anywhere in the code (a comment or a string that only names one is not a call). |
 | `callbacks` | table | What each of the script's callbacks does, one sentence each for a player, keyed by the callback's name: `callbacks = { on_start = "Lines the teams up.", can_die = "Builders cannot be killed." }`. The lobby's details dialog shows them under the rules table, headed "What this mod implements:" or "What this scenario implements:", as a table of Method (the callback's name), Type and High-level overview (the sentence). Type is Event for a hook whose return the engine ignores, Query for a policy whose answer it uses, and Trigger for a hook only a trigger's `when` defines. A script with no block shows no such section. Optional, and it changes nothing about how the round plays. At most 40 rows, each sentence cut at 159 bytes (at a UTF-8 character boundary), and 2048 bytes for the whole block packed (a type byte and two length bytes per row plus the name and the sentence, and one count byte) — about twenty lines of eighty letters. The load warns, and never refuses the file, for each callback the script defines that the block does not describe, for each name that is no callback the engine calls, and for each name the script never defines; those last two rows are dropped. The warnings go to the server console and `-validate` prints them. The names are the ones in the hook and policy tables below; a trigger's `when` counts as defining its hook. |
 | `workshop_id` | string | The Steam Workshop item the file was published as, written as a string of decimal digits (`"3301234567"`), because a Lua number cannot hold every digit of a 64-bit id. The game writes it into the file's manifest when you publish it; it is not meant to be set by hand. A script that declares its own `scenario` table need not repeat it: it is compared with the manifest only when the table states it, and a table that states a different id is refused. Anything that is not a string of digits is reported and read as none. |
 | `workshop_author` | string | The SteamID64 of the account that published the file, a string of decimal digits like `workshop_id`, and written by the game at the same time. The same rules apply: not meant to be set by hand, need not be repeated, and refused only when the table states a different one. |
@@ -2304,7 +2736,12 @@ own brain.
 
 No round is run and no bot loads, but the file's top level does run, the same
 way it would at a round start — so a file you would not run is a file you
-should not check. The stub `game` table answers `nil` to every call, so a
+should not check, with `-validate` or with the map editor's **Validate**. The
+editor makes the same check on the text in its script pane when you press
+Validate, whenever it saves the script, and before it packs one, with the
+manifest its forms hold standing in for the one a package would carry. It has
+no server behind it, so it does not hold tags against the map, and says so.
+The stub `game` table answers `nil` to every call, so a
 script that reads the world at its top level, which it should not, raises
 here and not on the server.
 
@@ -2329,3 +2766,8 @@ Named so you do not spend an afternoon looking for them:
   parameters and the flag is added after them. A trigger fires whether the
   event was the script's doing or the round's. Test it in a handler of your
   own if it matters.
+- **A copy of a bound scenario.** Save a copy does not serve the map's own
+  scenario, because its file is the map, and the map a player downloads is
+  the map without its chunk. Serving it would take a map download that keeps
+  the chunk, which is not built. Share the `.map` file itself, or publish it
+  to the Workshop.
