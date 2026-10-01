@@ -663,6 +663,9 @@ static void wasmReadLaunch(WasmLaunch *out, bool *openFinder) {
   *openFinder = (out->showMenu && finder[0] != '\0');
 }
 
+/* Start the page's relay latency test without waiting (finder_wasm.c). */
+void wasmRelayProbeStart(void);
+
 /* Show the game finder over the menu's background, as the desktop's Internet
  * row does, and return when it closes; the menu follows. Its Join and Sign in
  * to join load another page, so the finder only ever closes by Cancel or by
@@ -676,6 +679,8 @@ static void wasmReadLaunch(WasmLaunch *out, bool *openFinder) {
  * so the screen is the menu again by the time history.back()'s popstate
  * arrives, and the handler ignores it. */
 static void wasmShowFinder(bool launched) {
+  /* A Join from the finder then finds the closest relay already picked. */
+  wasmRelayProbeStart();
   s_finderLeftByHistory = FALSE;
   if (launched) {
     wasmHistoryMarkFinder();

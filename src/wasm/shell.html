@@ -146,26 +146,9 @@
     </script>
     <script src="/js/relay.js"></script>
     <script>
-    /* Pick the closest healthy relay as early as possible, so the choice is
-       ready before the game opens its socket. Runs in parallel with the asset
-       download; the winner lands in WB_RELAY and is consumed by wbMintJoinCode
-       when it points the game socket at a relay. Never rejects — an all-down
-       probe resolves to the default. */
+    /* The relay the game socket goes through, set by Module.wbRelayProbe
+       once its latency test finishes; null until then. */
     window.WB_RELAY = null;
-    window.__wbRelayReady = (function () {
-        // Only web play (a /join/<game_key> route) needs a relay; tutorial,
-        // practise, single-player and the dev proxy skip the probe entirely.
-        if (!new URLSearchParams(window.location.search).get('game_key')) {
-            return Promise.resolve(null);
-        }
-        return wbProbeRelays().then(function (region) {
-            window.WB_RELAY = region || WB_DEFAULT;
-            return window.WB_RELAY;
-        }).catch(function () {
-            window.WB_RELAY = WB_DEFAULT;
-            return window.WB_RELAY;
-        });
-    })();
     </script>
 </head>
 <body>
@@ -366,11 +349,13 @@
                             if (j && j.error) { error = j.error; }
                         } catch (e) { error = body; }
                         if (r.status === 200 && code) {
-                            // Route the game socket through the probed relay before
+                            // Route the game socket through the measured relay before
                             // resolving — the socket opens right after the C caller
-                            // gets the code. Wait for the probe (already resolved in
-                            // practice) so the measured relay wins, not the default.
-                            return Promise.resolve(window.__wbRelayReady).then(function() {
+                            // gets the code. Wait for the latency test (started at
+                            // load or when the finder opened, so usually done; started
+                            // here if neither ran) so the measured relay wins, not the
+                            // default.
+                            return Module.wbRelayProbe().then(function() {
                                 var region = window.WB_RELAY || WB_DEFAULT;
                                 Module.websocket.url = wbRelayWsUrl(region, code);
                                 return { status: 200, code: code, error: '' };
@@ -382,6 +367,35 @@
                     return { status: -1, code: '', error: 'Could not reach the server to get a join code.' };
                 });
             },
+
+            /* Test every relay's latency and pick the closest healthy one,
+               once per page. The first call starts the test (wbProbeRelays,
+               relay.js, about 15 requests) and every call returns the same
+               promise, which resolves to the region once it is set in
+               WB_RELAY: the fastest healthy relay, or WB_DEFAULT when none
+               answers or the test fails. Never rejects. It runs at load for a
+               /join/<key> page, when the game finder first opens
+               (finder_wasm.c), and from wbMintJoinCode if neither has. */
+            wbRelayProbe: (function() {
+                var pending = null;
+                return function() {
+                    if (pending === null) {
+                        /* Started inside the promise so a throw (relay.js
+                           missing) lands in the catch below rather than in
+                           the C caller of wasmRelayProbeStart. */
+                        pending = Promise.resolve().then(function() {
+                            return wbProbeRelays();
+                        }).then(function(region) {
+                            window.WB_RELAY = region || WB_DEFAULT;
+                            return window.WB_RELAY;
+                        }).catch(function() {
+                            window.WB_RELAY = WB_DEFAULT;
+                            return window.WB_RELAY;
+                        });
+                    }
+                    return pending;
+                };
+            })(),
 
             /* Called from the transport (transport_udp_client.c) whenever the
                server rotates its key — on initial join and on each return-to-
@@ -418,6 +432,13 @@
                     ? '/winbolo.html' : '/';
             }
         };
+
+        /* A /join/<key> page connects as soon as the game starts, so test the
+           relays now, alongside the download. Other pages wait for the game
+           finder to open. */
+        if (new URLSearchParams(window.location.search).get('game_key')) {
+            Module.wbRelayProbe();
+        }
 
         Module.setStatus('Downloading…');
 

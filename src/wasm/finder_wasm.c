@@ -78,6 +78,14 @@ EM_JS(int, wasmFinderFetchTake, (char **out), {
     return 1;
 });
 
+/* Start the page's relay latency test (Module.wbRelayProbe, shell.html) and
+ * return without waiting for it, so a Join from the finder finds the closest
+ * relay already picked. The test runs once per page; later calls start
+ * nothing. */
+EM_JS(void, wasmRelayProbeStart, (void), {
+    Module.wbRelayProbe();
+});
+
 /* Join a listed game: load /join/<server key> in this tab, the address the
  * join path mints a join code from. The page unloads once the browser starts
  * the navigation; nothing here waits for it. A password-protected game is
