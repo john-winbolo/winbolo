@@ -2756,6 +2756,7 @@ int run_tank_diagonal_steps_both_axes(void);
  * square so only the modifier is under test. */
 int run_tank_mod_speed_caps_on_road(void);
 int run_tank_mod_speed_river_still_moves(void);
+int run_tank_mod_speed_wide_on_river(void);
 int run_tank_mod_accel_doubles_ticks_to_cap(void);
 int run_tank_mod_accel_doubles_ticks_to_brake(void);
 int run_tank_mod_accel_halves_autoslow(void);
@@ -2776,6 +2777,7 @@ int run_tank_mod_predicted_stop_matches_engine(void);
 int run_tank_modifiers_op_writes_set(void);
 int run_tank_modifiers_op_refusals(void);
 int run_tank_modifiers_wire_roundtrip(void);
+int run_tank_modifiers_wide_speed(void);
 int run_tank_modifiers_survive_death(void);
 int run_tank_modifiers_cleared_at_create(void);
 

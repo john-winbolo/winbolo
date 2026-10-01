@@ -817,8 +817,9 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
     off += wordsLen;
     break;
   case log_TankSetModifiers:
-    /* player + a length-prefixed blob of the six modifier bytes. The six do
-       not fit the four opt bytes and the short, so they travel as a binary
+    /* player + a length-prefixed blob of the six modifier bytes (eight when
+       the speed is past a byte; see docs/replay-format.md). The six do not
+       fit the four opt bytes and the short, so they travel as a binary
        pascal blob the way log_GameSettings carries its settings. */
     out[off++] = log_TankSetModifiers;
     out[off++] = opt1;

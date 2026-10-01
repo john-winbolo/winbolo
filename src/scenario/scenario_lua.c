@@ -2346,10 +2346,10 @@ static int scnLuaDropPill(lua_State *L) {
     return scnDone(L, &op, "player %d, pill %d", (int)p, (int)n);
 }
 
-/* One percentage out of a modifier table. Absent is the classic tank, which
- * the payload spells 0. */
-static bool scnModField(lua_State *L, int idx, const char *key, uint8_t *out,
-                        lua_Integer *bad) {
+/* One percentage out of a modifier table, 0..max. Absent is the classic
+ * tank, which the payload spells 0. */
+static bool scnModValue(lua_State *L, int idx, const char *key,
+                        lua_Integer max, lua_Integer *out, lua_Integer *bad) {
     lua_Integer v = 0;
 
     lua_getfield(L, idx, key);
@@ -2362,8 +2362,20 @@ static bool scnModField(lua_State *L, int idx, const char *key, uint8_t *out,
         v = scnWhole(lua_tonumber(L, -1));
     }
     lua_pop(L, 1);
-    if (!scnFitsByte(v)) {
+    if (v < 0 || v > max) {
         *bad = v;
+        return false;
+    }
+    *out = v;
+    return true;
+}
+
+/* A byte-sized percentage: every modifier but speed. */
+static bool scnModField(lua_State *L, int idx, const char *key, uint8_t *out,
+                        lua_Integer *bad) {
+    lua_Integer v = 0;
+
+    if (!scnModValue(L, idx, key, 255, &v, bad)) {
         return false;
     }
     *out = (uint8_t)v;
@@ -2387,8 +2399,14 @@ static int scnLuaSetModifiers(lua_State *L) {
     m = &op.u.tankSetModifiers.mods;
     /* The whole set is replaced, so a field the table leaves out goes back to
        the classic tank rather than keeping what it had. */
-    if (!scnModField(L, 2, "speed", &m->speed, &bad)) {
-        return scnRefused(L, SCN_OP_RANGE, "speed is %d", (int)bad);
+    {
+        /* Speed alone goes past a byte, up to TANK_MOD_SPEED_MAX. */
+        lua_Integer speed = 0;
+
+        if (!scnModValue(L, 2, "speed", TANK_MOD_SPEED_MAX, &speed, &bad)) {
+            return scnRefused(L, SCN_OP_RANGE, "speed is %d", (int)bad);
+        }
+        m->speed = (uint16_t)speed;
     }
     if (!scnModField(L, 2, "accel", &m->accel, &bad)) {
         return scnRefused(L, SCN_OP_RANGE, "accel is %d", (int)bad);

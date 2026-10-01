@@ -1329,7 +1329,10 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                  * unmodified tank, which keeps the group off the wire. */
                 TankModifiers mods;
                 tankGetModifiers(sim->sim.tanks[i], &mods);
-                ts->modSpeed = mods.speed;
+                /* A speed past a byte rides the wide group, which a speed
+                   that fits leaves off the wire. */
+                ts->modSpeed = (uint8_t)(mods.speed > 255 ? 255 : mods.speed);
+                ts->modSpeedWide = (uint16_t)(mods.speed > 255 ? mods.speed : 0);
                 ts->modAccel = mods.accel;
                 ts->modTurn = mods.turn;
                 ts->modReload = mods.reload;
@@ -1350,6 +1353,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
             ts->modReload = 0;
             ts->modDealt = 0;
             ts->modTaken = 0;
+            ts->modSpeedWide = 0;
         }
 
         /* Tree-hidden tank, man still on screen: the entry is here for the man

@@ -2457,11 +2457,16 @@ void tankAccel(GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton tb) {
   SPEEDTYPE slowKeyRate = (SPEEDTYPE) (sim->rules.tank_brake_rate * accelPct / 100);
 
   rawCap = mapGetSpeed(sim,mp,pb,bs,bmx,bmy,(*value)->onBoat, gameSimGetTankPlayer(sim, value));
+  /* rawCap is at most 255 and the percent at most TANK_MOD_SPEED_MAX, so the
+     product fits an int with room to spare. */
   displace = (SPEEDTYPE) ((rawCap * tankModPct((*value)->mods.speed)) / 100);
   /* Ground the tank can cross stays crossable however slow it has been made:
      a cap that scales away to nothing becomes the smallest cap that moves. */
   if (rawCap > 0 && displace < 1) {
     displace = 1;
+  }
+  if (displace > TANK_MOD_SPEED_CAP_MAX) {
+    displace = TANK_MOD_SPEED_CAP_MAX;
   }
   if ((tb == TDECEL || tb == TLEFTDECEL || tb == TRIGHTDECEL) || (*value)->speed > displace)  {
     subAmount = (*value)->speed;
@@ -3796,6 +3801,10 @@ void tankSetModifiers(tank value, const TankModifiers *mods) {
     return;
   }
   value->mods = *mods;
+  /* Whatever wrote the set, the speed never goes past its bound. */
+  if (value->mods.speed > TANK_MOD_SPEED_MAX) {
+    value->mods.speed = TANK_MOD_SPEED_MAX;
+  }
 }
 
 /*********************************************************
@@ -3894,7 +3903,12 @@ BYTE tankDamageAmount(GameSim *sim, BYTE base, BYTE owner, BYTE victim,
 *********************************************************/
 BYTE tankBoatExitSpeed(GameSim *sim, tank value) {
   int pct = (value == NULL) ? 100 : tankModPct(value->mods.speed);
-  return (BYTE) ((sim->rules.speed_boat * pct) / 100);
+  int speed = (sim->rules.speed_boat * pct) / 100;
+  /* Held to the cap tankAccel holds the tank to, which also keeps it a byte. */
+  if (speed > TANK_MOD_SPEED_CAP_MAX) {
+    speed = TANK_MOD_SPEED_CAP_MAX;
+  }
+  return (BYTE) speed;
 }
 
 

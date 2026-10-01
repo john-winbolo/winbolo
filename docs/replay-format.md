@@ -150,7 +150,7 @@ Selected event types (see the `logitem` enum for the complete list):
 | 53 | `log_GameSettings` | Pascal-form blob of every lobby setting (below) |
 | 54 | `log_Ping` | Smart ping: sender, kind, world x/y (below) |
 | 55 | `log_TankSetStock` | Tank stocks: player, shells, mines, armour, trees (below) |
-| 56 | `log_TankSetModifiers` | Per-tank modifiers: `player:u8`, then a Pascal blob of six bytes: speed, acceleration, turn, reload, damage dealt, damage taken, each a percent with 0 meaning classic. A reader consumes the blob by its length byte and applies it only when the length is 6 |
+| 56 | `log_TankSetModifiers` | Per-tank modifiers: `player:u8`, then a Pascal blob of six bytes: speed, acceleration, turn, reload, damage dealt, damage taken, each a percent with 0 meaning classic. Speed goes up to 2000; when it is past 255 the speed byte holds 255 and the blob is eight bytes, the six followed by the whole speed as a big-endian `u16`. A speed that fits a byte always writes the six-byte blob. A reader consumes the blob by its length byte and applies it only when the length is 6 or 8; a reader that knows only the six skips an eight-byte record whole |
 | 57 | `log_EntityChange` | One pillbox, base or start joined the map or left it (below) |
 | 58 | `log_EntityMasks` | Which pillboxes, bases and starts are on the map (below) |
 | 59 | `log_ServerText` | A server line a scenario wrote: `destTeam:u8` (0 = everyone), `destPlayer:u8` (0xFF = everyone), Pascal text |
