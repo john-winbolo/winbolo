@@ -3988,6 +3988,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_deferred_join.c
     tests/unit/test_join_collision.c
     tests/unit/test_base_refuel_timers.c
+    tests/unit/test_base_refuel_give.c
     tests/unit/test_lobby_reset_cleanup.c
     tests/unit/test_autolock_on_game_start.c
     tests/unit/test_lobby_transfer_host.c
@@ -5354,6 +5355,10 @@ set(_unit_test_names
     base_stock_visibility
     base_half_tick_per_sim_sequence
     base_half_tick_other_sim_does_not_disturb
+    base_refuel_partial_give_armour
+    base_refuel_partial_give_shells_and_mines
+    base_refuel_partial_give_classic_rules
+    base_refuel_whole_give_unchanged
     base_armour_fog_of_war
     base_armour_reveal_in_range
     base_death_prediction_replay_tick
