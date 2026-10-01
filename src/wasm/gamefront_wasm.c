@@ -33,6 +33,7 @@
 #include "frontend.h"
 #include "server_sim.h"
 #include "../server/server_lifecycle.h"
+#include "../server/server_dedicated_log.h"
 #include "../scenario/scenario_host.h"
 #include "../gui/brainsHandler.h"
 #include "../gui/clientmutex.h"
@@ -904,6 +905,28 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
       }
     }
 
+    /* Record practice rounds for the lobby's replay, as desktop single
+     * player does (gamefront.c, after gameFrontStartServerSim): the same two
+     * files under the prefs path, in the same order, before the connect. */
+    if (!wantTutorial) {
+      char spLogPath[FILENAME_MAX];
+      char spRoundPath[FILENAME_MAX];
+      const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+      if (prefDir != NULL) {
+        snprintf(spLogPath, sizeof(spLogPath),
+                 "%ssingleplayer-recording.wbv", prefDir);
+        snprintf(spRoundPath, sizeof(spRoundPath), "%ssingleplayer.wbv", prefDir);
+        SDL_free((void *)prefDir);
+      } else {
+        snprintf(spLogPath, sizeof(spLogPath), "singleplayer-recording.wbv");
+        snprintf(spRoundPath, sizeof(spRoundPath), "singleplayer.wbv");
+      }
+      serverSimSetWantLogging(wasmServerSim, true);
+      serverSimSetUserLogFileName(wasmServerSim, spLogPath);
+      serverDedicatedLogInstall(wasmServerSim, true);
+      serverDedicatedLogSetCompletedPath(spRoundPath);
+    }
+
     /* The local join below carries gameFrontName to the server. main_wasm.c
      * chose the single-player name (a validated ?name= or "Me") before this
      * start ran. */
@@ -922,6 +945,9 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
              clientSimGetConnectErrorReason(humanSim));
       scenarioHostDetach(wasmScenarioHost);
       wasmScenarioHost = NULL;
+      /* The round recorder goes with its server, as in gameFrontEnd. */
+      serverDedicatedLogStashCurrentRound();
+      serverDedicatedLogUninstall();
       serverSimDestroy(wasmServerSim);
       wasmServerSim = NULL;
       clientSimDestroy(humanSim);
@@ -986,6 +1012,13 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
        * practice game starts with no scenario. */
       scenarioHostDetach(wasmScenarioHost);
       wasmScenarioHost = NULL;
+      /* Close the round's log and let go of the recorder before the sim
+       * goes, as desktop's gameFrontShutdownServer does. Its WinBolo.net
+       * upload step is left out: a practice round is never uploaded. The
+       * uninstall is unconditional there too, so it covers the tutorial,
+       * which never installed. */
+      serverDedicatedLogStashCurrentRound();
+      serverDedicatedLogUninstall();
       serverSimDestroy(wasmServerSim);
       wasmServerSim = NULL;
     }
@@ -1173,9 +1206,9 @@ void gameFrontReloadSkins(void)               { }
 void gameFrontShutdownServer(void)            { }
 bool gameFrontPreferencesExist(void)          { return FALSE; }
 bool gameFrontSetupServer(void)               { return FALSE; }
-/* The web build never owns a round log to offer back, so callers that gate
- * on a locally recorded round see nothing. */
-bool gameFrontHasLocalServer(void)            { return FALSE; }
+/* The page's own server: a practice game's (or the tutorial's), from its
+ * creation in gameFrontWasmStart to gameFrontEnd. */
+bool gameFrontHasLocalServer(void)            { return wasmServerSim != NULL; }
 
 /* Lobby/host helpers the in-game lobby pulls in now that it renders in the
  * web build (C6). Host-only / Steam / persistence features that are inert in
@@ -1317,8 +1350,8 @@ void gameFrontSetVisibilityCustom(const VisibilitySettings *v) {
   gameFrontVisibilityCustomSaved = TRUE;
 }
 
-/* The browser build never hosts (gameFrontHasLocalServer is FALSE), so
- * the lobby never records a pick here. */
+/* A practice lobby asks to remember these as desktop single player does,
+ * but nothing persists them in a browser tab, so they are dropped. */
 void gameFrontRememberGameType(gameType gt)     { (void)gt; }
 void gameFrontRememberAiPolicy(aiType ai)       { (void)ai; }
 void gameFrontRememberHiddenMines(bool hm)      { (void)hm; }
