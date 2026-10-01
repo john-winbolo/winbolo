@@ -168,3 +168,12 @@ By submitting a contribution, you confirm that:
 If your contribution includes code or assets from another project, name the
 source and its licence in the pull request, and add it to
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+The game's graphics and sounds are the exception to the GPL: they are Stuart
+Cheshire's designs from Bolo, used with his permission, and are listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md#bolo-graphics-and-sounds).
+Changes to those files are welcome, but they stay under the same terms as the
+originals rather than the GPL: by sending one, you agree that it is distributed
+as part of WinBolo on those terms. New artwork and sounds that are your own
+work, not copied or traced from Bolo, are covered by the GPL like the rest of a
+contribution.

@@ -1,13 +1,40 @@
 # Third-Party Notices
 
-WinBolo uses the following third-party libraries and code.
+WinBolo uses the following third-party libraries, code, artwork and sounds.
 
 WinBolo itself is licensed under the GNU General Public License, version 3 or
-later (see [LICENSE](LICENSE)). Every code library below is under a licence that
-can be combined with it, except the Steamworks SDK, which is covered by
-[LICENSE-EXCEPTION.md](LICENSE-EXCEPTION.md). The two under Apache 2.0, libmaxminddb and crashpad,
-can be combined with GPL version 3 but not with version 2, which is one reason
-WinBolo moved from version 2 to version 3.
+later (see [LICENSE](LICENSE)). Every code library below is under a licence
+that can be combined with it, except the Steamworks SDK, which is covered by
+[LICENSE-EXCEPTION.md](LICENSE-EXCEPTION.md). The two under Apache 2.0,
+libmaxminddb and crashpad, can be combined with GPL version 3 but not with
+version 2, which is one reason WinBolo moved from version 2 to version 3.
+
+## Bolo graphics and sounds
+
+- Designs copyright 1987-1995 Stuart Cheshire. **Not licensed under the GPL.**
+- WinBolo's versions of them, including the high-resolution redraws, were made
+  by John Morrison from the original Bolo graphics and sounds. Because they
+  reproduce Stuart Cheshire's designs, they cannot be licensed without him,
+  and the GPL does not apply to them.
+- Used with the permission of Stuart Cheshire, for distribution as part of
+  WinBolo. This permission does not extend to any other use. If you
+  distribute WinBolo or a modified version, these files remain Stuart
+  Cheshire's and are not covered by the GPL.
+- WinBolo's graphics and sounds have been published with its source code since
+  12 December 2008, first on Google Code and winbolo.com, and later on GitHub.
+- Files:
+  - `data/tile.bmp`, `data/tanks.bmp`, `data/pillbox.bmp`, `data/base.bmp`,
+    `data/boats.bmp`, `data/items.bmp` and `data/skin.bmp`
+  - every file in `data/svg/` (the high-resolution tiles and sprites)
+  - the game sounds in `data/sounds/`: `big_explosion_*`, `bubbles`,
+    `farming_tree_*`, `hit_tank_*`, `man_building_*`, `man_dying_*`,
+    `man_lay_mine_near`, `mine_explosion_*`, `shooting_*`, `shot_building_*`,
+    `shot_tree_*` and `tank_sinking_*`. The lobby and ping sounds are not
+    included; the lobby sounds are listed under [Audio](#audio).
+- They are separate data files that WinBolo loads at run time, not part of
+  the program's code, so they can be distributed alongside the GPL program
+  under their own terms.
+- A skin can replace any of them; see [docs/SKINS.md](docs/SKINS.md).
 
 ## FetchContent Dependencies (downloaded at build time)
 

@@ -151,6 +151,11 @@ WinBolo is released under the GNU General Public License, version 3 or (at
 your option) any later version. See
 [LICENSE](LICENSE).
 
+The game's graphics and sounds are not covered by the GPL. They are Stuart
+Cheshire's designs from Bolo, copyright 1987-1995 Stuart Cheshire, and are used
+with his permission. The files are listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md#bolo-graphics-and-sounds).
+
 Steam builds also link the Steamworks SDK, which is owned by Valve, is not
 open source, and is not included in this repository. The copyright holders
 give additional permissions in [LICENSE-EXCEPTION.md](LICENSE-EXCEPTION.md)
