@@ -114,6 +114,138 @@ int run_loopback_map_upload(void) {
     return 0;
 }
 
+/* How many pumps the listing may take once the client is CONNECTED again:
+ * the request out, the server's answer, and the client reading it, with room
+ * to spare. */
+#define LIST_AFTER_REJOIN_PUMPS 8
+
+/* The Server Maps tab's refresh as lobby_chooser.cpp drives it: one
+ * enumerate each time the list counter moves, which asks for the root
+ * listing unless the cache already holds it or the same request is in
+ * flight. force is the enumerate the tab makes when it opens. */
+static void chooser_frame(ClientSim *cs, uint32_t *serverMapSeq, bool force) {
+    const char *want = "";
+    uint32_t    seq  = clientSimGetLobbyMapListSeq(cs);
+    bool        ready, inFlight, haveMatch, sameReq;
+
+    if (!force && seq == *serverMapSeq) return;
+    *serverMapSeq = seq;
+    ready     = clientSimGetLobbyMapListReady(cs);
+    inFlight  = clientSimGetLobbyMapListInFlight(cs);
+    haveMatch = ready &&
+                (SDL_strcmp(clientSimGetLobbyMapListPath(cs), want) == 0);
+    sameReq   = (SDL_strcmp(clientSimGetLobbyMapListReqPath(cs), want) == 0);
+    if (!haveMatch && !(inFlight && sameReq)) {
+        clientSimNetSendLobbyMapListRequest(cs, want);
+    }
+}
+
+static bool pred_root_list_ready(LoopbackHarness *h, void *user) {
+    (void)user;
+    return clientSimGetLobbyMapListReady(h->cs) &&
+           SDL_strcmp(clientSimGetLobbyMapListPath(h->cs), "") == 0;
+}
+
+static bool pred_cooldown_clear(LoopbackHarness *h, void *user) {
+    int  slot = *(const int *)user;
+    bool clear;
+    (void)h;
+    threadsWaitForMutex();
+    clear = (udpServer.clientReqCooldownTicks[slot] == 0);
+    threadsReleaseMutex();
+    return clear;
+}
+
+/* A map upload the server loads changes the map, so the client re-joins and
+ * DONE lands while it is not CONNECTED: the listing the chooser asks for on
+ * DONE is never sent. Once the re-join completes the chooser must ask again
+ * and be answered, with the server no longer holding the cooldown the
+ * upload's BEGIN started. */
+int run_loopback_map_upload_list_after_rejoin(void) {
+    LoopbackHarness h;
+    BYTE     emap[6000] = E_MAP;
+    uint32_t serverMapSeq = 0;
+    int      slot;
+    int      i;
+    int      settledAt = -1;
+    int      leftAt    = -1;
+    int      backAt    = -1;
+    int      listedAt  = -1;
+    uint8_t  status    = 0;
+
+    UT_ASSERT(loopbackHarnessStart(&h, "ListRejoin", /*lobbyMode*/ true,
+                                   NULL, 0xC0FFEEu));
+    if (loopbackHarnessPumpUntil(&h, CONNECT_MAX, pred_connected, NULL) < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("client never reached CONNECTED within %d pumps", CONNECT_MAX);
+    }
+    slot = clientSimGetMyPlayerNum(h.cs);
+    threadsWaitForMutex();
+    serverSimSetOpenHost(h.sim, true);
+    /* ALLOW loads the upload, which is the map change the re-join follows. */
+    udpServer.uploadPolicy = UPLOAD_POLICY_ALLOW;
+    threadsReleaseMutex();
+
+    /* The tab opens and fills its cache, then the cooldown that request
+     * started runs out so the upload's BEGIN is taken. */
+    chooser_frame(h.cs, &serverMapSeq, /*force*/ true);
+    if (loopbackHarnessPumpUntil(&h, UPLOAD_MAX, pred_root_list_ready,
+                                 NULL) < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the first listing never arrived");
+    }
+    if (loopbackHarnessPumpUntil(&h, UPLOAD_MAX, pred_cooldown_clear,
+                                 &slot) < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the listing's cooldown never ran out");
+    }
+
+    if (!transportUdpClientStartLobbyMapUploadFromBytes(&h.cs->transport,
+                                                        emap, EMAP_LEN,
+                                                        "rejoin.map")) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("upload kick rejected");
+    }
+
+    for (i = 0; i < UPLOAD_MAX; i++) {
+        ClientConnectState st;
+        loopbackHarnessPump(&h);
+        chooser_frame(h.cs, &serverMapSeq, /*force*/ false);
+        st = clientSimGetConnectState(h.cs);
+        if (settledAt < 0) {
+            status = clientSimGetLobbyMapUploadStatus(h.cs);
+            if (status == 3 || status == 4) settledAt = i;
+        }
+        if (leftAt < 0 && st != CLIENT_CONNECT_CONNECTED) leftAt = i;
+        if (leftAt >= 0 && backAt < 0 && st == CLIENT_CONNECT_CONNECTED) {
+            backAt = i;
+        }
+        if (backAt >= 0 && listedAt < 0 &&
+            pred_root_list_ready(&h, NULL)) {
+            listedAt = i;
+            break;
+        }
+        if (backAt >= 0 && i - backAt > LIST_AFTER_REJOIN_PUMPS) break;
+    }
+
+    fprintf(stderr, "  map upload list after re-join: settled@%d status=%d "
+                    "left@%d back@%d listed@%d (cooldown %d ticks)\n",
+            settledAt, (int)status, leftAt, backAt, listedAt,
+            LOBBY_REQ_COOLDOWN_TICKS);
+    loopbackHarnessStop(&h);
+
+    UT_ASSERT_MSG(settledAt >= 0 && status == 3,
+                  "the upload did not complete (settled@%d status=%d)",
+                  settledAt, (int)status);
+    UT_ASSERT_MSG(leftAt >= 0, "the loaded upload did not re-join the client");
+    UT_ASSERT_MSG(backAt >= 0, "the client never reached CONNECTED again");
+    UT_ASSERT_MSG(listedAt >= 0 && listedAt - backAt <= LIST_AFTER_REJOIN_PUMPS,
+                  "no map listing within %d pumps of the re-join "
+                  "(back@%d listed@%d)",
+                  LIST_AFTER_REJOIN_PUMPS, backAt, listedAt);
+    return 0;
+}
+
 /* Watches an upload for the status that means the server took a BEGIN and
  * the bytes are going over the bulk channel. */
 static bool pred_upload_settled_note_bulk(LoopbackHarness *h, void *user) {

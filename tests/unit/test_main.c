@@ -1058,6 +1058,7 @@ static const UnitTestEntry s_tests[] = {
     { "loopback_bot_pool_survives_bulk_rebase",  run_loopback_bot_pool_survives_bulk_rebase  },
     { "loopback_brain_docs_survives_bulk_rebase", run_loopback_brain_docs_survives_bulk_rebase },
     { "loopback_map_upload",                     run_loopback_map_upload                     },
+    { "loopback_map_upload_list_after_rejoin",   run_loopback_map_upload_list_after_rejoin   },
     { "upload_begin_golden",                     run_upload_begin_golden                     },
     { "script_upload_begin_refusals",            run_script_upload_begin_refusals            },
     { "loopback_script_upload_at_cap",           run_loopback_script_upload_at_cap           },

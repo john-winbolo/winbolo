@@ -5555,6 +5555,7 @@ set(_unit_test_names
     loopback_bot_pool_survives_bulk_rebase
     loopback_brain_docs_survives_bulk_rebase
     loopback_map_upload
+    loopback_map_upload_list_after_rejoin
     upload_begin_golden
     script_upload_begin_refusals
     loopback_script_upload_at_cap
