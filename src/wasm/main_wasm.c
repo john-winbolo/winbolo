@@ -584,6 +584,36 @@ static const char *getUrlParam(const char *name) {
 /* Defined with windowSetQuitting, beside the quit flags it resets. */
 static void wasmGameStateReset(void);
 
+/* Most bot runners the page asks for, the page's thread included: one per
+ * tank, the cap botManagerInit also applies. The link's PTHREAD_POOL_SIZE
+ * expression (CMakeLists.txt) sizes the workers by the same rule, one fewer
+ * than the runners, so a change here must be made there too. */
+#define WASM_MAX_BOT_RUNNERS MAX_TANKS
+
+/* Create the bot worker pool, before any sim is made: each sim sizes its
+ * bot runners from the pool when it is created. The runners are one fewer
+ * than the logical cores, leaving a core for the browser, at most
+ * WASM_MAX_BOT_RUNNERS and at least 1; 1 runs every think on the page's
+ * thread. */
+static void wasmStartBotPool(int *coresOut, int *runnersOut) {
+  int cores = SDL_GetNumLogicalCPUCores();
+  int runners = cores - 1;
+
+  if (runners > WASM_MAX_BOT_RUNNERS) {
+    runners = WASM_MAX_BOT_RUNNERS;
+  }
+  if (runners < 1) {
+    runners = 1;
+  }
+  if (!serverSimBotPoolInit(runners)) {
+    printf("[WASM] bot pool: create failed for %d runners (%d logical cores); "
+           "thinks run on the page's thread\n", runners, cores);
+  }
+
+  *coresOut = cores;
+  *runnersOut = runners;
+}
+
 /* Copy one URL parameter into dst. getUrlParam returns a shared static
  * buffer, so each value is copied out before the next read. */
 static void wasmCopyUrlParam(const char *name, char *dst, size_t dstSize) {
@@ -771,6 +801,8 @@ int main(int argc, char *argv[]) {
   const char *cmdLine = "";
   WasmLaunch launch;
   bool openFinder = FALSE;
+  int botCores = 0;
+  int botRunners = 0;
 
   (void)argc;
   (void)argv;
@@ -809,12 +841,29 @@ int main(int argc, char *argv[]) {
   /* The only read of the page URL; the game mode comes from here on. */
   wasmReadLaunch(&launch, &openFinder);
 
+  wasmStartBotPool(&botCores, &botRunners);
+
   /* Page-lifetime setup: default keys, language, window, sound, brains. */
   if (gameFrontWasmSetup(&keys) == FALSE) {
     printf("[WASM] gameFrontWasmSetup FAILED\n");
     clientMutexDestroy();
     SDL_Quit();
     return 1;
+  }
+
+  /* The pool's worker count is read through a sim's stats, so this waits
+   * for the background game's sim. */
+  {
+    BgGame *bg = bgGameGetShared();
+    if (bg != NULL && bg->sim != NULL) {
+      BotPoolStats poolStats;
+      serverSimGetBotPoolStats(bg->sim, &poolStats);
+      printf("[WASM] bot pool: %d logical cores, %d runners, %d workers\n",
+             botCores, botRunners, poolStats.workerCount);
+    } else {
+      printf("[WASM] bot pool: %d logical cores, %d runners, "
+             "workers unknown (no background game)\n", botCores, botRunners);
+    }
   }
 
   /* Pull the account's cloud prefs and apply them over the defaults the

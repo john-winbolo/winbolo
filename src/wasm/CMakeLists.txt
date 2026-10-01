@@ -10,7 +10,9 @@
 # Output: build-wasm-game/winbolo.html, winbolo.js, winbolo.wasm, winbolo.data,
 # plus js/relay.js and img/ copied from web/
 #
-# Serve locally with: python3 -m http.server -d build-wasm-game
+# Serve locally with: python3 src/wasm/serve_isolated.py build-wasm-game
+# The build uses threads, which need the COOP/COEP headers that
+# python3 -m http.server cannot send.
 
 cmake_minimum_required(VERSION 3.18)
 
@@ -101,6 +103,14 @@ set(OPUS_X86_PRESUME_SSE OFF CACHE BOOL "" FORCE)
 set(OPUS_X86_PRESUME_SSE2 OFF CACHE BOOL "" FORCE)
 set(OPUS_X86_PRESUME_SSE4_1 OFF CACHE BOOL "" FORCE)
 set(OPUS_X86_PRESUME_AVX2 OFF CACHE BOOL "" FORCE)
+
+# Bot brain thinks run on the bot worker pool's threads. Emscripten links
+# shared memory only when every object is built with -pthread, so these come
+# before the dependencies are added: SDL3, SDL3_ttf, ImGui, Lua, zlib, cJSON,
+# Opus and every target below all compile with it.
+set(SDL_PTHREADS ON CACHE BOOL "" FORCE)
+add_compile_options(-pthread)
+add_link_options(-pthread)
 
 FetchContent_MakeAvailable(sdl3 sdl3_ttf imgui lua zlib cjson opus)
 
@@ -593,6 +603,14 @@ target_link_options(winbolo PRIVATE
     # The menus nest deeper blocking loops (menu -> settings -> key setup)
     # than the default 4096-byte ASYNCIFY stack holds.
     "-sASYNCIFY_STACK_SIZE=65536"
+    # Workers for the bot worker pool, started with the page so no pool
+    # thread waits on the event loop to start. The expression is evaluated in
+    # the page and sizes them by wasmStartBotPool's rule in main_wasm.c: one
+    # fewer than the runners, which are one fewer than the cores, at most 16
+    # runners (15 workers). Brain thinks run Lua on them, so they get a
+    # bigger stack than Emscripten's default.
+    "SHELL:-sPTHREAD_POOL_SIZE=Math.max(0,Math.min(navigator.hardwareConcurrency-2,15))"
+    "-sDEFAULT_PTHREAD_STACK_SIZE=2097152"
     -lwebsocket.js
 )
 
