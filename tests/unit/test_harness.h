@@ -3128,7 +3128,9 @@ int run_scenario_flow_arm_records(void);
  * it indexes, a rule written and read back, a rate the op's double carries
  * and an int32 could not, the two refusals and the table each leaves
  * untouched, the record the write puts in a recording, the records a lowered
- * cap brings down to it, and what the clamp leaves in the replay. */
+ * cap brings down to it, and what the clamp leaves in the replay. Then a
+ * whole set: a pair one rule at a time refuses, taken together, and a set that
+ * breaks a pair leaving the table as it was. */
 int run_scenario_rule_index_matches_table(void);
 int run_scenario_rule_set(void);
 int run_scenario_rule_set_float(void);
@@ -3136,6 +3138,8 @@ int run_scenario_rule_refusals(void);
 int run_scenario_rule_arm_records(void);
 int run_scenario_rule_clamps_world(void);
 int run_scenario_rule_clamp_records(void);
+int run_scenario_rules_whole_set_pair(void);
+int run_scenario_rules_whole_set_refused(void);
 
 /* fill_to_caps (test_scenario_fill_caps.c). A mod that raises a cap and asks
  * for the map to start at it, for a base stock and for a pill's armour; the
@@ -3330,6 +3334,7 @@ int run_scenario_host_manifest_read_from_its_own_env(void);
 int run_scenario_host_manifest_reads_workshop(void);
 int run_scenario_host_errors_counted_per_script(void);
 int run_scenario_host_many_rules_all_applied(void);
+int run_scenario_host_rules_table_whole(void);
 
 /* What a file that declared scenario.kind = "mod" may not do
  * (test_scenario_host.c): the rows it is held back from at run time, the

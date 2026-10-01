@@ -32,6 +32,10 @@
  *       leaves both lists alone, and a cap put back up hands nothing back
  *   run_scenario_rule_clamp_records    — what the clamp moved reaches the
  *       replay, so the viewer holds the new armour rather than the old
+ *   run_scenario_rules_whole_set_pair  — a cap and the rule it caps, raised
+ *       together, land as a set where the op refuses the first of them alone
+ *   run_scenario_rules_whole_set_refused — a set that breaks a pair sets
+ *       none of itself, and the table is byte for byte as it was
  *
  * The byte-for-byte checks compare the whole table rather than the field the
  * op named: an arm that wrote its field and then refused would pass a check
@@ -749,5 +753,110 @@ int run_scenario_rule_clamp_records(void) {
                   replayHarnessDiff(&h));
 
     replayHarnessStop(&h);
+    return 0;
+}
+
+/* ================================================================
+ * 8. A whole set, taken together.
+ *
+ * pill_max_armour raised to 30 and pill_repair_amount to 20, the repair
+ * amount first. Against the classic table each of the two breaks a pair on
+ * its own: 20 is above the classic cap of 15, and a cap of 30 is above what
+ * the classic load of 4 times the classic repair amount of 4 can mend. With
+ * both in, 20 sits under 30 and 4 times 20 covers it, so the set stands
+ * whichever order it is written in, and one rule at a time it does not.
+ * ================================================================ */
+
+#define RA_PAIR_CAP     30
+#define RA_PAIR_REPAIR  20
+#define RA_PAIR_LOW_CAP 10
+
+int run_scenario_rules_whole_set_pair(void) {
+    const uint16_t rules[2]  = { SCN_RULE_pill_repair_amount,
+                                 SCN_RULE_pill_max_armour };
+    const double   values[2] = { (double)RA_PAIR_REPAIR, (double)RA_PAIR_CAP };
+    ServerSim     *sim = raSim();
+    GameSim       *gs;
+    SimRules       before;
+    char           why[256];
+
+    UT_ASSERT_MSG(sim != NULL, "raSim returned NULL");
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT_MSG(gs != NULL, "the sim has no GameSim");
+    UT_ASSERT_MSG(gs->rules.pill_max_armour < RA_PAIR_REPAIR,
+                  "setup: pill_max_armour is %ld, so a repair amount of %d "
+                  "would not break the pair on its own",
+                  (long)gs->rules.pill_max_armour, RA_PAIR_REPAIR);
+
+    UT_ASSERT_MSG(serverSimApplyScenarioRules(sim, rules, values, 2, why,
+                                              sizeof(why)) == SCN_OP_OK,
+                  "the set was refused (%s); with both values in, every pair "
+                  "they share holds", why);
+    UT_ASSERT_MSG(why[0] == '\0', "an accepted set left a reason: %s", why);
+    UT_ASSERT_MSG(gs->rules.pill_max_armour == RA_PAIR_CAP,
+                  "pill_max_armour is %ld, expected %d",
+                  (long)gs->rules.pill_max_armour, RA_PAIR_CAP);
+    UT_ASSERT_MSG(gs->rules.pill_repair_amount == RA_PAIR_REPAIR,
+                  "pill_repair_amount is %ld, expected %d",
+                  (long)gs->rules.pill_repair_amount, RA_PAIR_REPAIR);
+    serverSimDestroy(sim);
+
+    /* And the same first value through the one-rule op, on a classic table:
+       refused, and the table untouched. That refusal is why the set has to
+       be written whole. */
+    sim = raSim();
+    UT_ASSERT_MSG(sim != NULL, "raSim returned NULL");
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT_MSG(gs != NULL, "the sim has no GameSim");
+    before = gs->rules;
+    UT_ASSERT_MSG(raSetRule(sim, SCN_RULE_pill_repair_amount,
+                            (double)RA_PAIR_REPAIR) == SCN_OP_PAIR,
+                  "a repair amount of %d above the classic cap must be "
+                  "refused SCN_OP_PAIR", RA_PAIR_REPAIR);
+    UT_ASSERT_MSG(memcmp(&before, &gs->rules, sizeof(before)) == 0,
+                  "a refused rule left the table changed");
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ================================================================
+ * 9. A whole set that fails sets none of itself.
+ *
+ * A cap of 10 is inside its row and stands on the classic table alone; a
+ * repair amount of 20 is inside its row too, and the two together break the
+ * pair that holds the repair amount under the cap. The cap must not land
+ * without the rule it was listed with.
+ * ================================================================ */
+int run_scenario_rules_whole_set_refused(void) {
+    const uint16_t rules[2]  = { SCN_RULE_pill_max_armour,
+                                 SCN_RULE_pill_repair_amount };
+    const double   values[2] = { (double)RA_PAIR_LOW_CAP,
+                                 (double)RA_PAIR_REPAIR };
+    ServerSim     *sim = raSim();
+    GameSim       *gs;
+    SimRules       before;
+    ScnOpResult    r;
+    char           why[256];
+
+    UT_ASSERT_MSG(sim != NULL, "raSim returned NULL");
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT_MSG(gs != NULL, "the sim has no GameSim");
+    before = gs->rules;
+
+    r = serverSimApplyScenarioRules(sim, rules, values, 2, why, sizeof(why));
+    UT_ASSERT_MSG(r != SCN_OP_OK,
+                  "a set whose repair amount is above its own cap was "
+                  "accepted");
+    UT_ASSERT_MSG(r == SCN_OP_PAIR, "the set was refused %d, expected "
+                  "SCN_OP_PAIR", (int)r);
+    UT_ASSERT_MSG(why[0] != '\0', "the refusal gave no reason");
+    UT_ASSERT_MSG(memcmp(&before, &gs->rules, sizeof(before)) == 0,
+                  "a refused set left the table changed: pill_max_armour is "
+                  "%ld, pill_repair_amount %ld",
+                  (long)gs->rules.pill_max_armour,
+                  (long)gs->rules.pill_repair_amount);
+
+    serverSimDestroy(sim);
     return 0;
 }

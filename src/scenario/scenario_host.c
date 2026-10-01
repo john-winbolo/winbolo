@@ -3001,30 +3001,38 @@ static void scnDisagreed(char *out, size_t outLen, const char *why,
 
 /* ── Applying the rules ───────────────────────────────────────────── */
 
-/* One op per rule. Nothing is published here: the setup window the round
- * start opens across this call holds the set-rule handler's own publish,
- * and the start states the whole table once on the way out. */
+/* The table applied whole or not at all, in one call. A pair the table moves
+ * together is judged with both halves in: a table that raises pill_max_armour
+ * and pill_repair_amount above the old cap is taken whichever of the two is
+ * written first, where one rule at a time would refuse the repair amount
+ * against the cap it has not reached yet. And a table -validate and packing
+ * refuse does not half-apply here: one that fails the check sets none of its
+ * rules, the round keeps the classic table the start put it on, and the
+ * console says why in one line.
+ *
+ * The call is the host's own and counts against no tick's allowance, so a
+ * table of any length applies in full. Nothing is published here: the setup
+ * window the round start opens across this call holds the publish, and the
+ * start states the whole table once on the way out. */
 static void scnApplyRules(ScenarioHost *h) {
-    uint16_t i;
+    uint16_t    rules[SCN_MANIFEST_RULES_MAX];
+    double      values[SCN_MANIFEST_RULES_MAX];
+    char        why[SCN_ERR_LEN];
+    uint16_t    n = 0;
+    ScnOpResult r;
 
-    for (i = 0; i < h->manifest.numRules; i++) {
-        ScenarioOp  op;
-        ScnOpResult r;
+    while (n < h->manifest.numRules && n < SCN_MANIFEST_RULES_MAX) {
+        rules[n]  = h->manifest.rules[n].rule;
+        values[n] = h->manifest.rules[n].value;
+        n++;
+    }
 
-        memset(&op, 0, sizeof(op));
-        op.type            = SCN_OP_SET_RULE;
-        op.u.setRule.rule  = h->manifest.rules[i].rule;
-        op.u.setRule.value = h->manifest.rules[i].value;
-
-        /* The host's own op, not the script's: a table of more rules than
-           one tick's allowance still applies in full. */
-        r = serverSimApplyScenarioHostOp(h->sim, &op, NULL);
-        if (r != SCN_OP_OK) {
-            scnSay(h->lastError, sizeof(h->lastError),
-                   "scenario: rule '%s' refused: %s",
-                   simRulesRuleName((int)h->manifest.rules[i].rule),
-                   scnResultText(r));
-        }
+    r = serverSimApplyScenarioRules(h->sim, rules, values, n, why,
+                                    sizeof(why));
+    if (r != SCN_OP_OK) {
+        scnSay(h->lastError, sizeof(h->lastError),
+               "scenario: rules not applied: %s",
+               why[0] != '\0' ? why : scnResultText(r));
     }
 }
 

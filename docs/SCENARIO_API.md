@@ -977,10 +977,12 @@ round ends.
 ### `scenario.rules`
 
 A table of rule name to value. Names are the ones in [Rules](#rules) —
-the same ones `game.rule` and `game.set_rule` take. A name that spells no rule,
-or a value outside a rule's range, is reported and the rest of the table still
-applies. A value that is not a number is dropped without a report, so `"40"`
-in quotes sets nothing.
+the same ones `game.rule` and `game.set_rule` take. A name that spells no rule
+is reported and dropped, and the rest of the table still applies. A value that
+is not a number is dropped without a report, so `"40"` in quotes sets nothing.
+At round start the table is checked and applied whole: a value outside its
+rule's range, or two values that break a pair between them, applies none of the
+table's rules, and the console says why.
 
 ```lua
 rules = {
@@ -1141,9 +1143,11 @@ without asking for it: the round after a scenario is detached, and a round
 whose script failed to boot — neither has a table of its own to write, and
 neither inherits the last script's.
 
-The table is applied a rule at a time. A rule the file names that the sim
-refuses is reported by name, with the reason, and the rest of the table is
-applied around it; one bad row does not cost a scenario its other rules.
+The table is applied as a whole. Every value goes in before the check reads
+any of them, so a table that raises `pill_max_armour` and `pill_repair_amount`
+together is taken in whatever order it lists them. A table the check refuses
+applies none of its rules: the round plays the classic table, and the console
+names the reason, as `-validate` does.
 
 ### The roster and the lobby
 
