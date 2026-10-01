@@ -1536,11 +1536,13 @@ end
 
 -- Every live tank in the round that hunts seat p, within `within` squares of
 -- it, nearest first: everybody but p in a Free For All, everybody off p's team
--- in a team round.
-local function hunters_near(p, within)
+-- in a team round. Measured from p's tank, or from square `at` ({ mx, my })
+-- when one is given, and then whether p's tank is alive or not.
+local function hunters_near(p, within, at)
   local list = {}
   local me = game.tank(p)
-  if me == nil or me.dead then
+  local from = at or me
+  if from == nil or (at == nil and me.dead) then
     return list, me
   end
   local side = scoring_team(p)
@@ -1548,7 +1550,7 @@ local function hunters_near(p, within)
     if q ~= p and in_round(q) and (side == nil or scoring_team(q) ~= side) then
       local s = game.tank(q)
       if s ~= nil and not s.dead then
-        local d = chebyshev(me.mx, me.my, s.mx, s.my)
+        local d = chebyshev(from.mx, from.my, s.mx, s.my)
         if d <= within then
           list[#list + 1] = { q = q, s = s, d = d }
         end
@@ -1788,7 +1790,11 @@ local function bot_holder_second()
         game.set_stocks(holder, { trees = trees })
       end
       if plan.kind == "fort" then
-        local near = hunters_near(holder, FORT_FREE_WITHIN)
+        -- Counted round the fort, not the guard: a guard who died and came
+        -- back on the far side of the map has no hunter near him, but the
+        -- fort may still have them all round it.
+        local near = hunters_near(holder, FORT_FREE_WITHIN,
+                                  { mx = pb.x, my = pb.y })
         if #near == 0 then
           take_back("no hunter near")
         elseif now - plan.built_at >= FORT_SECONDS * 100 then
