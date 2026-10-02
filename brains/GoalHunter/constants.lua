@@ -5079,12 +5079,11 @@ M.SUICIDE_AIM_HIT_HALF_TILES  = 0.4   -- keel 0.4 (moot; SUICIDE_AIM_AT_PILL off
 M.SUICIDE_AIM_REACH_PAD_TILES = 0.5   -- keel 0.5 (moot; SUICIDE_AIM_AT_PILL off)
 -- PACE (2026-10-02, Andrew): the run stays about SUICIDE_PACE_AHEAD_TILES
 -- closer to the pill than the nearest visible human team-mate.  Not that
--- far ahead: top speed.  More than SUICIDE_PACE_SLACK_TILES past that lead,
--- and already in shell reach of the pill: hold still (it still aims and
--- fires).  In between, or no human visible: the old cruise speed.
+-- far ahead: top speed.  Lead kept (or no human visible) and already
+-- aiming at the pill in shell reach: hold still and keep firing; it pushes
+-- in only to keep the lead.  Not yet aiming: the old cruise speed.
 -- 0 = off (old behaviour: always cruise speed).
 M.SUICIDE_PACE_AHEAD_TILES    = 1     -- keel 0 (off)
-M.SUICIDE_PACE_SLACK_TILES    = 1     -- keel 1 (moot; SUICIDE_PACE_AHEAD_TILES 0)
 -- CHARGE NOW (2026-10-02, Andrew): an ATTACK ping from a human team-mate on a
 -- pill this bot is attacking (its attack_pill goal, ordered or its own) means
 -- "go now".  No blocker standing in the take's wall slots yet: the bot drops
@@ -5515,7 +5514,6 @@ M.PRESETS = {
     SUICIDE_AIM_HIT_HALF_TILES    = 0.4,
     SUICIDE_AIM_REACH_PAD_TILES   = 0.5,
     SUICIDE_PACE_AHEAD_TILES      = 0,
-    SUICIDE_PACE_SLACK_TILES      = 1,
     --   2026-10-02: an ATTACK ping on a pill the bot is attacking = charge
     --   now. KEEL read a lone ATTACK ping as a marker only.
     PING_ATTACK_CHARGE_NOW        = false,
