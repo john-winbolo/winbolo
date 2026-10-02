@@ -330,6 +330,13 @@ that can be combined with it, except the Steamworks SDK, which is covered by
 - Author: DB-IP (https://db-ip.com)
 - Used by the server (and the in-client game browser) for IP-to-country lookups via libmaxminddb. Rebuilt monthly; download the latest .mmdb and replace the file in place.
 
+### Codicons (GitHub icon)
+- Location: data/ui/github.svg, data/ui/github-outline.svg
+- License: MIT
+- https://github.com/microsoft/vscode-codicons
+- Author: Microsoft Corporation
+- The GitHub icon, used for the repository link in the About box. github-outline.svg is a modified copy for the main menu: the cat is stroked rather than filled, and the viewBox is padded so the mark draws smaller.
+
 ### flag-icons
 - Location: data/flags/
 - License: MIT

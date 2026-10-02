@@ -102,17 +102,19 @@ static SDL_Texture *loadPng(SDL_Renderer *renderer, const char *filename) {
     return tex;
 }
 
-/* Reddit / Discord glyphs for the bottom-right social links. Rasterised white
+/* Reddit / Discord / GitHub glyphs for the bottom-right social links. Rasterised white
  * (like the About-box icons) so they read over any terrain, and cached for the
  * program lifetime — the renderer outlives every show of this screen. */
 static SDL_Texture *s_welcomeReddit  = nullptr;
 static SDL_Texture *s_welcomeDiscord = nullptr;
+static SDL_Texture *s_welcomeGithub  = nullptr;
 /* Fraction of each icon texture below the artwork's lowest pixel. The SVGs are
- * square but their glyphs don't fill the canvas (and Reddit/Discord differ), so
+ * square but their glyphs don't fill the canvas (and each differs), so
  * the texture's bottom edge isn't the glyph's bottom edge. We use this to
  * bottom-align the *visible* mark with the version text rather than the square. */
 static float s_welcomeRedditInsetB  = 0.0f;
 static float s_welcomeDiscordInsetB = 0.0f;
+static float s_welcomeGithubInsetB  = 0.0f;
 
 /* Bottom transparent inset of an SVG, as a fraction of its height: the gap from
  * the lowest drawn point to the canvas bottom. Matches imguiLoadSvgIconWhite's
@@ -141,8 +143,13 @@ static void ensureWelcomeSocialIcons(SDL_Renderer *r) {
     tried = true;
     s_welcomeReddit       = imguiLoadSvgIconWhite(r, "data/ui/reddit.svg", 48);
     s_welcomeDiscord      = imguiLoadSvgIconWhite(r, "data/ui/discord.svg", 48);
+    /* The About box's GitHub icon with the cat stroked instead of filled and a
+     * padded viewBox: the filled cat stands out too much over the terrain,
+     * and at full size the ring looks larger than the other two marks. */
+    s_welcomeGithub       = imguiLoadSvgIconWhite(r, "data/ui/github-outline.svg", 48);
     s_welcomeRedditInsetB  = welcomeSvgBottomInset("data/ui/reddit.svg");
     s_welcomeDiscordInsetB = welcomeSvgBottomInset("data/ui/discord.svg");
+    s_welcomeGithubInsetB  = welcomeSvgBottomInset("data/ui/github-outline.svg");
 }
 
 extern "C" int imguiWelcomeShow(void) {
@@ -613,14 +620,14 @@ extern "C" int imguiWelcomeShow(void) {
             ImGui::PopStyleVar(3);
         }
 
-        /* Reddit / Discord links — bottom-right, left of the version label and
+        /* Reddit / Discord / GitHub links — bottom-right, left of the version label and
          * centred on its baseline. Drawn icon-only in the version-label style
          * (invisible button + a tinted drawlist image with a 1px shadow) rather
          * than framed ImageButtons, so they sit cleanly over the terrain. */
         {
             ensureWelcomeSocialIcons(renderer);
             const float icon   = 27.5f * s;
-            const float gap    = 10.0f * s;   /* between the two icons          */
+            const float gap    = 10.0f * s;   /* between adjacent icons         */
             const float pad    = 12.0f * s;   /* between the icons and the text */
             const float margin = 12.0f * s;
 
@@ -632,16 +639,18 @@ extern "C" int imguiWelcomeShow(void) {
             float verX = (float)winW - verSize.x - margin;
             float verY = (float)winH - verSize.y - margin;
 
-            float rowW  = icon * 2.0f + gap;
+            const int nLinks = 3;
+            float rowW  = icon * (float)nLinks + gap * (float)(nLinks - 1);
             float rowX  = verX - pad - rowW;
             float textBottom = verY + verSize.y;
 
-            struct { SDL_Texture *tex; const char *id; const char *url; float insetB; } links[2] = {
+            struct { SDL_Texture *tex; const char *id; const char *url; float insetB; } links[nLinks] = {
                 { s_welcomeReddit,  "##wreddit",  "https://www.reddit.com/r/winbolo", s_welcomeRedditInsetB },
                 { s_welcomeDiscord, "##wdiscord", "https://discord.gg/znGR3VMaqd",    s_welcomeDiscordInsetB },
+                { s_welcomeGithub,  "##wgithub",  "https://github.com/john-winbolo/winbolo", s_welcomeGithubInsetB },
             };
             ImDrawList *sdl = ImGui::GetWindowDrawList();
-            for (int i = 0; i < 2; ++i) {
+            for (int i = 0; i < nLinks; ++i) {
                 /* Drop each icon by its own transparent bottom band so the
                  * visible glyph — not the square — sits on the text baseline. */
                 float rowY = textBottom - icon * (1.0f - links[i].insetB);
