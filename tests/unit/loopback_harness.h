@@ -78,6 +78,10 @@ typedef struct LoopbackHarness {
     struct ClientSim *cs;
     struct ClientSim *cs2;      /* second client, or NULL — see AddClient */
     unsigned short    port;     /* ephemeral localhost port the server bound */
+    /* Wall-clock ms one pump is held to, or 0 for "as fast as it will go".
+     * See loopbackHarnessSetPumpInterval. */
+    uint32_t          pumpIntervalMs;
+    uint64_t          nextPumpAtMs;
     bool              threadsUp;
     bool              serverUp;
     bool              clientUp;
@@ -96,6 +100,21 @@ typedef bool (*LoopbackPredicate)(LoopbackHarness *h, void *user);
 bool loopbackHarnessStart(LoopbackHarness *h, const char *playerName,
                           bool lobbyMode, const char *impairSpec,
                           uint64_t seed);
+
+/* Called once by loopbackHarnessStartPrepared, with the server sim built and
+ * h->sim set but no client connected yet. `user` is passed through. */
+typedef void (*LoopbackSimSetup)(LoopbackHarness *h, void *user);
+
+/* Same as loopbackHarnessStart, but runs `setup` on the fresh ServerSim
+ * between bringing the server up and connecting the client. A test that has
+ * to shape the world it plays in — carve terrain, move a pillbox — wants the
+ * shaping to be in the map the joiner downloads, not a pile of map events
+ * chasing it afterwards. setup runs under the tick mutex; a NULL setup makes
+ * this exactly loopbackHarnessStart. */
+bool loopbackHarnessStartPrepared(LoopbackHarness *h, const char *playerName,
+                                  bool lobbyMode, const char *impairSpec,
+                                  uint64_t seed, LoopbackSimSetup setup,
+                                  void *user);
 
 /* Join a second player client to a harness that is already up, so a test can
  * observe what one client's departure does to the other's server-side state
@@ -125,6 +144,26 @@ bool loopbackHarnessStartSpectator(LoopbackHarness *h, const char *playerName,
  * failure. */
 bool loopbackHarnessStartSpectatorLobby(LoopbackHarness *h,
                                         const char *playerName, uint64_t seed);
+
+/* Hold each pump to `ms` of wall clock (0, the default, removes the hold).
+ *
+ * A pump is one 20ms server frame, but a free-running pump loop gets through
+ * one in a millisecond or two — so a test's sim time runs about ten times
+ * faster than its wall clock. That does not matter to a loss-only spec, where
+ * a surviving datagram is due immediately. It matters a great deal to a DELAY:
+ * the impairment layer holds a datagram by the wall clock (SDL_GetTicks), so
+ * "delay=80" costs eighty milliseconds of real time and therefore tens of
+ * frames of game time, while everything the server derives from its own ping
+ * measurement — the lag-compensation rewind above all — is computed from that
+ * same 80ms as four frames. The link is then lagged two ways at once and by
+ * different amounts, which is not a link any player has.
+ *
+ * Setting the interval to 20 makes one pump cost one frame of wall clock, so
+ * a delay spec means the same number of frames to the transport and to the
+ * server's own arithmetic. Pay it only where it is needed — a join handshake
+ * does not care — and keep the paced stretch short, because it is real
+ * seconds. */
+void loopbackHarnessSetPumpInterval(LoopbackHarness *h, uint32_t ms);
 
 /* Advance both endpoints by exactly one tick: client tick (sends queued
  * input/commands, receives + impairs inbound, applies control/snapshots),

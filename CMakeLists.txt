@@ -4188,6 +4188,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The rules table over the wire: a mid-round change reaching a connected
     # client, a joiner arriving on the changed table, a server-only rule
     # publishing nothing, and a new table clamping what the client holds.
+    tests/unit/test_lgm_under_fire.c
     tests/unit/test_loopback_sim_rules.c
     # The client's own check of the rules table before it keeps one.
     tests/unit/test_sim_rules_client_check.c
@@ -4689,6 +4690,16 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     # path. scratch_dir.c adds a pid and the test name beneath it and sweeps
     # its own subtree at exit.
     WB_TEST_SCRATCH_DIR="${CMAKE_BINARY_DIR}/test-scratch"
+    # Where a test that records a .wbv replay of its own run puts the file.
+    # Unlike the scratch root above it is NOT swept at exit and carries no pid:
+    # the whole point is that a person can open the last run in the LogViewer.
+    WB_TEST_REPLAY_DIR="${CMAKE_BINARY_DIR}/replays"
+    # Where a test that records a brain-debug session of its own run puts the
+    # session dir. BrainTest's Load Session browser globs "debug_sessions/*"
+    # relative to its working directory, and that is this same build dir, so a
+    # session written here is one the browser lists. Like the replay dir it is
+    # NOT swept at exit: the point is that a person can step through the run.
+    WB_TEST_DEBUG_SESSION_DIR="${CMAKE_BINARY_DIR}/debug_sessions"
     # Committed v1 .wbv fixture directory: the reader gate loads from here and
     # the on-demand capture (re)writes spectator_v1.wbv into it.
     WB_WBV_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/wbv"
@@ -5621,6 +5632,11 @@ set(_unit_test_names
     tkexp_lgm_pairing
     loopback_join
     loopback_join_loss
+    # The builder walled in behind his own tank under pillbox fire. The
+    # lagged case is a bug report written as a test and FAILS today on
+    # purpose; the nolag case is its control and passes.
+    lgm_wall_behind_tank_under_fire_lagged
+    lgm_wall_behind_tank_under_fire_nolag
     loopback_password
     loopback_lobby_running_loss
     loopback_quiet_lobby_control_loss
