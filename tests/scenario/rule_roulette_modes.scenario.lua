@@ -1,19 +1,20 @@
--- Rule Roulette's rule modes, Normal and Glass Cannon's pillbox shells,
--- played through in a fixed order.
+-- Rule Roulette's rule modes, both Normals and Glass Cannon's pillbox
+-- shells, played through in a fixed order on both tracks at once.
 --
 -- The runner writes data/mods/RuleRoulette.scenario.lua in front of this
--- text (the include on the GATE line), so the mod's own locals -- MODES,
--- queue, mode, shown -- are in scope here. That is how the order is forced
--- without a test hook in the mod: the queue is filled before the mod's
--- on_start takes the first mode from it.
+-- text (the include on the GATE line), so the mod's own locals -- TANK and
+-- BUILDER, each with its modes, queue, mode and shown -- are in scope here.
+-- That is how the order is forced without a test hook in the mod: the
+-- queues are filled before the mod's on_start takes the first modes.
 --
---   Overdrive, Cleanup Crew, Turbo, Hustle, Lead Feet, Air Drop, Normal,
---   Glass Cannon, Iron Hide
+--   tank:    Overdrive, Turbo, Normal, Glass Cannon, Rust Bucket, Iron Hide
+--   builder: Cleanup Crew, Hustle, Lead Feet, Air Drop, Normal
 --
--- 20 seconds each. Hustle straight into Lead Feet and Lead Feet straight
--- into Air Drop check that one mode's rules are back before the next one
--- reads them; Air Drop straight into Normal checks that Normal puts them
--- back too.
+-- 20 seconds each on both tracks, so both change on the same tick every
+-- time. Hustle straight into Lead Feet and Lead Feet straight into Air Drop
+-- check that one mode's rules are back before the next one reads them; Air
+-- Drop straight into the builder Normal checks that Normal puts them back
+-- too.
 --
 -- The round starts on host values, not the classic ones, so a mode that
 -- worked from the classic numbers, or put the classic numbers back, shows:
@@ -32,12 +33,17 @@
 --   5. A dead builder flies back at 175% under Air Drop (the host's 4 at
 --      167% is 6.68, which rounds to 7), measured the same
 --      way.
---   6. Under Normal every tank has all six modifiers at 100 (and, by 1,
---      every rule at its value before the roulette).
+--   6. Under the tank Normal every tank has all six modifiers at 100, and
+--      under the builder Normal every builder rule is at its value before
+--      the roulette (by 1). Each Normal's panel line is its own.
 --   7. A second tank shells its own pillbox all round. Under Glass Cannon
 --      each shell takes 2 armour off it, under every other mode 1. Under
 --      Glass Cannon the policy also answers 100 for a pillbox's own shell
 --      and for a blast.
+--   8. Every frame the panel the mod would draw ends inside the 128 units,
+--      no panel update was refused, and with Overdrive or Rust Bucket (all
+--      six numbers) and preview 3 all three upcoming rows still fit: the
+--      last one ends at 127.
 --
 -- GATE: ticks=22000 bots=0 ai=yesfull gametype=open include=data/mods/RuleRoulette.scenario.lua
 
@@ -52,6 +58,8 @@ for i, st in ipairs(roulette.settings) do
   local c = {}
   for k, v in pairs(st) do c[k] = v end
   if c.id == "interval" then c.default = 20 end
+  if c.id == "builder_interval" then c.default = 20 end
+  if c.id == "preview" then c.default = 3 end
   if c.id == "countdown" then c.default = 0 end
   arena_settings[i] = c
 end
@@ -71,8 +79,9 @@ scenario = {
   settings = arena_settings,
 }
 
-local ORDER = { "Overdrive", "Cleanup Crew", "Turbo", "Hustle", "Lead Feet",
-                "Air Drop", "Normal", "Glass Cannon", "Iron Hide" }
+local TANK_ORDER    = { "Overdrive", "Turbo", "Normal", "Glass Cannon", "Rust Bucket",
+                       "Iron Hide" }
+local BUILDER_ORDER = { "Cleanup Crew", "Hustle", "Lead Feet", "Air Drop", "Normal" }
 
 -- What each rule holds with no rule mode in force.
 local BASE = {
@@ -99,13 +108,15 @@ local EXPECT = {
                     man_speed_boat = 12, man_speed_refuel_base = 12 },
   ["Air Drop"] = { lgm_helicopter_speed = 7 },
 }
+-- The builder track's panel line for each builder mode.
 local PANEL = {
   ["Cleanup Crew"] = "Roads: free",
   ["Hustle"]       = "Builder: 125% speed",
   ["Lead Feet"]    = "Builder: 75% speed",
   ["Air Drop"]     = "Parachute: 175% speed",
-  ["Normal"]       = "Everything classic",
+  ["Normal"]       = "Builder rules all classic",
 }
+local TANK_NORMAL_LINE = "Tank numbers all classic"
 
 -- The test ground: a road east from the tank to a grass square G, with
 -- grass around it, and deep sea to the west holding the only start, so a
@@ -136,7 +147,9 @@ local pill_n    = nil      -- the gunner's pillbox
 local armour    = nil      -- its armour last frame, nil after a reset
 local last_name = nil      -- the mode in force last frame
 local pill_hits = { glass = {}, other = {} }  -- armour per shell -> count
-local normal_ok = false    -- Normal seen with every modifier at 100
+local normal_ok = false    -- the tank Normal seen with every modifier at 100
+local bnormal_ok = false   -- the builder Normal seen with every rule back
+local full_panel = 0       -- frames with six numbers and 3 rows at 127
 local policy_ok = nil      -- the direct pill_damage_scale answers, or why not
 
 local function T(name) return game.TERRAIN[name] end
@@ -168,12 +181,17 @@ function on_choose_start(g, p)
   return start_n
 end
 
-function on_start(g)
-  for _, want in ipairs(ORDER) do
-    for i, m in ipairs(MODES) do
-      if m.name == want then queue[#queue + 1] = i end
+local function force(tr, order)
+  for _, want in ipairs(order) do
+    for i, m in ipairs(tr.modes) do
+      if m.name == want then tr.queue[#tr.queue + 1] = i end
     end
   end
+end
+
+function on_start(g)
+  force(TANK, TANK_ORDER)
+  force(BUILDER, BUILDER_ORDER)
   mod_start()
 end
 
@@ -208,22 +226,30 @@ local function rate(t, key)
 end
 
 local function check_rules(g)
-  local name = mode and mode.name or "-"
+  local tname = TANK.mode and TANK.mode.name or "-"
+  local name = BUILDER.mode and BUILDER.mode.name or "-"
   local want = EXPECT[name] or {}
   for _, r in ipairs(WATCH) do
     local v = g.rule(r)
     local w = want[r] or BASE[r]
     if v ~= w then
-      return string.format("%s: %s is %s, want %s", name, r, tostring(v), tostring(w))
+      return string.format("%s/%s: %s is %s, want %s", tname, name, r,
+                           tostring(v), tostring(w))
     end
   end
   if g.rule("base_regen_ticks") ~= 667 then
     return string.format("%s: base_regen_ticks is %s", name, tostring(g.rule("base_regen_ticks")))
   end
-  if PANEL[name] ~= nil and shown ~= PANEL[name] then
-    return string.format("%s: panel line '%s'", name, tostring(shown))
+  if BUILDER.shown ~= PANEL[name] then
+    return string.format("builder %s: panel line '%s'", name, tostring(BUILDER.shown))
   end
   if name == "Normal" then
+    if BUILDER.mode.kind ~= "normal" then
+      return "builder Normal: kind " .. tostring(BUILDER.mode.kind)
+    end
+    bnormal_ok = true
+  end
+  if tname == "Normal" then
     for p = 0, g.max_tanks() - 1 do
       local tk = g.tank(p)
       if tk ~= nil then
@@ -234,13 +260,31 @@ local function check_rules(g)
         end
       end
     end
-    if mode.kind ~= "normal" then
-      return "Normal: kind " .. tostring(mode.kind)
+    if TANK.mode.kind ~= "normal" then
+      return "Normal: kind " .. tostring(TANK.mode.kind)
+    end
+    if TANK.shown ~= TANK_NORMAL_LINE then
+      return "tank Normal: panel line '" .. tostring(TANK.shown) .. "'"
     end
     normal_ok = true
+  elseif TANK.shown ~= nil then
+    return string.format("tank %s: a panel line '%s' with no rule mode", tname, TANK.shown)
   end
-  if PANEL[name] == nil and shown ~= nil then
-    return string.format("%s: a panel line '%s' with no rule mode", name, shown)
+  -- The panel the mod draws this second, laid out again here.
+  if TANK.mode ~= nil then
+    local bottom = panel_bottom(build_panel())
+    if bottom > 128 then
+      return string.format("%s/%s: panel ends at %d", tname, name, bottom)
+    end
+    if (tname == "Overdrive" or tname == "Rust Bucket") and BUILDER.mode ~= nil then
+      if bottom ~= 127 then
+        return string.format("%s/%s: full panel ends at %d, not 127", tname, name, bottom)
+      end
+      full_panel = full_panel + 1
+    end
+  end
+  if refused ~= 0 then
+    return refused .. " panel updates refused"
   end
   return nil
 end
@@ -267,7 +311,7 @@ end
 -- The gunner's pillbox: what each shell took this frame, and the gunner's
 -- shells and the pillbox's armour kept topped up.
 local function watch_pill(g)
-  local name = mode and mode.name or "-"
+  local name = TANK.mode and TANK.mode.name or "-"
   local changed = name ~= last_name
   last_name = name
   local gt = g.tank(GUN)
@@ -304,8 +348,9 @@ end
 local function finish(g)
   local w16, w20, w12 = rate(walk, 16), rate(walk, 20), rate(walk, 12)
   local f4, f7 = rate(fly, 4), rate(fly, 7)
-  for _, n in ipairs({ "Cleanup Crew", "Hustle", "Lead Feet", "Air Drop", "Normal",
-                       "Glass Cannon" }) do
+  for _, n in ipairs({ "builder Cleanup Crew", "builder Hustle", "builder Lead Feet",
+                       "builder Air Drop", "builder Normal", "tank Normal",
+                       "tank Glass Cannon", "tank Rust Bucket" }) do
     if not seen[n] then return false, n .. " never came up" end
   end
   if not free_road then return false, "no road laid from a tank with no trees" end
@@ -316,7 +361,9 @@ local function finish(g)
   if not (f4 and f7) then
     return false, string.format("flight samples missing: 4 %s 7 %s", tostring(f4), tostring(f7))
   end
-  if not normal_ok then return false, "Normal never checked" end
+  if not normal_ok then return false, "tank Normal never checked" end
+  if not bnormal_ok then return false, "builder Normal never checked" end
+  if full_panel == 0 then return false, "the full two-track panel never checked" end
   if policy_ok ~= true then return false, tostring(policy_ok or "policy never asked") end
   if not only(pill_hits.glass, 2, 5) or not only(pill_hits.other, 1, 5) then
     return false, string.format("pillbox armour per shell: Glass Cannon %s, others %s",
@@ -325,12 +372,14 @@ local function finish(g)
   local hr, lr, ar = w20 / w16, w12 / w16, f7 / f4
   local ok = hr > 1.17 and hr < 1.33 and lr > 0.69 and lr < 0.81 and ar > 1.65 and ar < 1.85
   return ok, string.format("walk x%.2f/x%.2f, flight x%.2f, free road, rules back, " ..
-                           "Normal 100s, pill 2 x%d / 1 x%d",
-                           hr, lr, ar, pill_hits.glass[2], pill_hits.other[1])
+                           "both Normals, pill 2 x%d / 1 x%d, full panel %d frames",
+                           hr, lr, ar, pill_hits.glass[2], pill_hits.other[1], full_panel)
 end
 
 function on_tick(g, tick)
-  if mode ~= nil then seen[mode.name] = true end
+  for _, tr in ipairs(TRACKS) do
+    if tr.mode ~= nil then seen[tr.id .. " " .. tr.mode.name] = true end
+  end
   if bad == nil then
     bad = check_rules(g)
     if bad ~= nil then verdict_fail(bad); return end
@@ -338,8 +387,8 @@ function on_tick(g, tick)
 
   watch_pill(g)
 
-  -- Done once Iron Hide, the mode after Glass Cannon, is in force.
-  if mode ~= nil and mode.name == "Iron Hide" and seen["Glass Cannon"] then
+  -- Done once Iron Hide, the tank mode after Rust Bucket, is in force.
+  if TANK.mode ~= nil and TANK.mode.name == "Iron Hide" and seen["tank Rust Bucket"] then
     local ok, why = finish(g)
     verdict(ok, why)
     return
