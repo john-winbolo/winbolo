@@ -50,9 +50,6 @@
 #include "platform/platform_config.h"
 #include "platform/platform_dialogs.h"
 
-/* Version string referenced by imgui_dialogs.cpp */
-const char *lv_g_version_string = "1.01-wasm";
-
 /* --------------------------------------------------------------------------
  * Helper: default team colour value for index
  *
