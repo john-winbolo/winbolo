@@ -1698,9 +1698,10 @@ there and then, and the bare flags (`noblitz`, `blitzonly`, `suicider`,
 `nosuicider`, `noclaimdead`, `normal`, `ammoless`, `survivor`, `horde`) change the bot's behaviour from the next
 tick. `difficulty=` and `mode=` are **not** applied at runtime — those choose a
 whole bundle of values at load and a second bundle cannot unset the first — so
-the brain logs them as unsupported and leaves them. It also says one line to
-its team, `init updated: <n> tokens`, so a human on the same side can see the
-change land.
+the brain logs them as unsupported and leaves them. It also says one line,
+`init updated: <n> tokens`, to the other bots on its team (never to a human:
+a scenario that retunes its bots often would fill the newswire), so a script's
+`on_chat` can see the change land when another bot is on the same side.
 
 A bot whose brain is not running yet still keeps the table: the record is what
 its next brain is built from, so nothing the script asked for is lost.
