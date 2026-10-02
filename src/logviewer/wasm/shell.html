@@ -116,7 +116,7 @@
             document.getElementById('loading').classList.remove('hidden');
         }
 
-        var runtimeReady = false;   /* main() is running */
+        var runtimeReady = false;   /* main() has set the viewer up */
         var logPending   = false;   /* a log download has been started */
         var logData      = null;    /* { data, name } waiting for the runtime */
         var failed       = false;   /* an error is on the overlay */
@@ -147,16 +147,20 @@
             monitorRunDependencies: function(left) {
                 if (!left) setProgress('app', 'Starting…', 1);
             },
-            onRuntimeInitialized: function() {
-                runtimeReady = true;
-                setProgress('app', 'Ready', 1);
-                if (logData) {
-                    openWbvData(logData.data, logData.name);
-                    logData = null;
-                    logPending = false;
-                }
-                updateOverlay();
+        };
+
+        /* Called by main() once the viewer is set up, just before its loop
+           starts. Not onRuntimeInitialized: that comes before main(), and a
+           log opened then reaches a viewer that does not exist yet. */
+        window.wbLogViewerReady = function() {
+            runtimeReady = true;
+            setProgress('app', 'Ready', 1);
+            if (logData) {
+                openWbvData(logData.data, logData.name);
+                logData = null;
+                logPending = false;
             }
+            updateOverlay();
         };
 
         window.onerror = function(msg) {

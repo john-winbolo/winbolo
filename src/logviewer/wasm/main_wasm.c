@@ -543,6 +543,11 @@ int main(int argc, char *argv[]) {
 
     printf("[WASM] Starting main loop\n");
 
+    /* Tell the page the viewer is set up, so a log it downloaded first can
+     * be opened now. Emscripten's onRuntimeInitialized comes before main(),
+     * when g_lv does not exist yet. */
+    emscripten_run_script("if (window.wbLogViewerReady) window.wbLogViewerReady();");
+
     /* Hand control to the browser's event loop.
      * 0 = use requestAnimationFrame (typically 60fps).
      * 1 = simulate_infinite_loop (don't return from main). */
