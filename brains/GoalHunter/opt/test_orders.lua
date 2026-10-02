@@ -2781,6 +2781,83 @@ do
         GOALS.charge_now_holds(r.st) == false, "?")
 end
 
+-- A HUMAN SHOOTING THE PILL = CHARGE NOW (HUMAN_SHOOTING_CHARGE_NOW,
+-- 2026-10-02).  Human p0 at (26,20): 6 tiles from pill 5, 16 from the bot
+-- at (10,10), so no human-near suicide run can start.  The steps are the
+-- order init.lua runs them in.
+do
+  check("human-shooting charge is on live", C.HUMAN_SHOOTING_CHARGE_NOW == true, "?")
+  check("keel turns the human-shooting charge off",
+        C.PRESETS.keel.HUMAN_SHOOTING_CHARGE_NOW == false, "?")
+  local function think(r, t)
+    r.st.tick = t
+    ORD.note_human_shooting(r.st, r.w, r.inf, t)
+    if not r.st._suicide then ORD.human_near_suicide(r.st, r.w, r.inf, t) end
+    if r.st._suicide then ORD.suicide_lock(r.st, r.w, r.inf, t) end
+    ORD.human_shooting_charge(r.st, r.w, r.inf, t)
+    ORD.charge_now_check(r.st, r.w, r.inf, t)
+  end
+  local function shbot()
+    local r = hbot(26, 20)
+    r.st.orders.held = nil                  -- a goal the bot chose itself
+    return r
+  end
+  local r = shbot()
+  think(r, 100)
+  check("human-shooting: a human who is not shooting: no charge",
+        r.st._charge_now == nil, "?")
+  r.inf.objects[2] = shell_from(r, 26, 20, 0.9)
+  think(r, 101)
+  check("human-shooting: a shell from the human on the pill starts charge now (self-chosen goal)",
+        r.st._charge_now ~= nil and r.st._charge_now.tid == 5
+        and r.st._charge_now.sender == 0 and r.st._suicide == nil,
+        tostring(r.st._charge_now and r.st._charge_now.sender))
+  r.inf.objects[2] = nil
+  think(r, 102)
+  check("human-shooting: the charge stands while the goal is on the pill",
+        r.st._charge_now ~= nil, "?")
+
+  C.HUMAN_SHOOTING_CHARGE_NOW = false
+  r = shbot()
+  r.inf.objects[2] = shell_from(r, 26, 20, 0.9)
+  think(r, 101)
+  check("HUMAN_SHOOTING_CHARGE_NOW=false: no charge", r.st._charge_now == nil, "?")
+  C.HUMAN_SHOOTING_CHARGE_NOW = true
+
+  -- A CAUTION ping on the pill cancels it, and it does not come back on the
+  -- same pill until the bot has had some other goal.
+  r = shbot()
+  r.inf.objects[2] = shell_from(r, 26, 20, 0.9)
+  think(r, 101)
+  r.inf.events = { ping(1, 0, 20, 20) }
+  ORD.on_events(r.st, r.w, r.inf, 110)
+  r.inf.events = {}
+  check("human-shooting: a caution on the pill ends the charge", r.st._charge_now == nil, "?")
+  think(r, 111)
+  check("human-shooting: after the caution, still shooting: no restart",
+        r.st._charge_now == nil, "?")
+  r.st.goal = { kind = "none" }
+  think(r, 112)
+  r.st.goal = { kind = "attack_pill", target_id = 5, mx = 20, my = 20 }
+  think(r, 113)
+  check("human-shooting: a gap with no goal does not lift the caution",
+        r.st._charge_now == nil, "?")
+  r.st.goal = { kind = "refuel" }
+  think(r, 114)
+  r.st.goal = { kind = "attack_pill", target_id = 5, mx = 20, my = 20 }
+  think(r, 115)
+  check("human-shooting: after some other goal the rule arms again",
+        r.st._charge_now ~= nil, "?")
+
+  -- Ordered + a shooting human within ORDER_HUMAN_NEAR_SUICIDE_TILES: the
+  -- suicide run wins, no charge now beside it.
+  r = hbot(14, 15)
+  r.inf.objects[2] = shell_from(r, 14, 15, 0.9)
+  think(r, 101)
+  check("human-shooting: the human-near suicide run takes precedence",
+        r.st._suicide ~= nil and r.st._charge_now == nil, "?")
+end
+
 -- =========================================================================
 -- GO-THERE DECOY HARD HOLD (Andrew, 2026-09-24).  A bot-command ping on open
 -- ground next to an enemy pill: on arrival the bot parks there as a decoy
