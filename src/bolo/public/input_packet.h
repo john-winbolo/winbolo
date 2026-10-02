@@ -328,6 +328,11 @@ typedef struct {
                                  * armour the tank actually lost and pill the pill index whose
                                  * shell it was, DMG_NO_PILL otherwise. */
 
+/* The highest event type. Move it when adding one above: the unit tests walk
+ * every type up to it and fail on one that a reader keyed on the full list
+ * (obsEventIsRead, for the ML observation) has not been told about. */
+#define EVENT_LAST           EVENT_TANK_HIT
+
 /* EVENT_BUILT's action byte is the builder's own request code, which is the
  * same number BuilderJob uses in server_sim.h — the two are already pinned
  * together by a static assert in server_sim_accessors.c, so this event needs
@@ -471,7 +476,8 @@ static inline bool gameEventIsReliable(uint8_t type) {
  * recording build keeps it; every per-client build and the UDP drain drop it.
  * EVENT_TANK_HIT is local because nothing on a client reads it: a client
  * learns a tank's armour from its snapshot, and the event is there for the
- * scenario host's on_tank_hit.
+ * scenario host's on_tank_hit and the gym's hit rewards, both of which read
+ * it in the server's own process.
  *
  * A local-only event still needs a gameEventDataSize row: the recording packs
  * it, and the brain event table is sized from the same function. */

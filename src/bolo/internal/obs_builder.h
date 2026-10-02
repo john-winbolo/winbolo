@@ -71,6 +71,72 @@ struct ClientSim;
  *********************************************************/
 bool obsBuildMultiView(struct ClientSim *cs, const BrainInfo *tankBi, WinBoloObs *obs);
 
+/*********************************************************
+ *NAME:          obsEventIsRead
+ *PURPOSE:
+ *  Whether obsBuildEventsFrom reads an event type. The gym
+ *  copies only these out of the server's event queue, so the
+ *  translator and the gym's filter cannot disagree about which
+ *  events matter.
+ *
+ *  Every event type is named in the switch behind this, read
+ *  or not, and the unit test walks every type up to EVENT_LAST
+ *  and fails on one the switch does not name. A new event type
+ *  therefore has to be given an answer here before the tests
+ *  pass again.
+ *
+ *ARGUMENTS:
+ *  type - An EVENT_* value
+ *
+ *RETURNS:
+ *  OBS_EVENT_READ, OBS_EVENT_IGNORED, or OBS_EVENT_UNKNOWN
+ *  for a type the switch does not name
+ *********************************************************/
+typedef enum {
+    OBS_EVENT_UNKNOWN = 0,
+    OBS_EVENT_READ,
+    OBS_EVENT_IGNORED
+} ObsEventUse;
+
+ObsEventUse obsEventIsRead(uint8_t type);
+
+/*********************************************************
+ *NAME:          obsBuildEventsFrom
+ *PURPOSE:
+ *  Turns a list of game events into the observation's
+ *  discrete events, positional sounds and assistant message.
+ *  The gym and the in-game ML brain both build through this,
+ *  so a trained model hears the same thing in a game that it
+ *  heard in training.
+ *
+ *  Sounds are built only from events a client receives
+ *  (never a gameEventIsLocal one), because the in-game brain
+ *  reads a client's events and the gym must not hear what
+ *  the game will not tell it. Discrete events feed the gym's
+ *  rewards, not the model, and may use server-only events.
+ *
+ *  Hits come from EVENT_TANK_HIT, which is server-only. A
+ *  list taken from a client has none, so for one of those
+ *  the agent's own hit sound stands in for a hit received,
+ *  and a hit dealt is not known at all.
+ *
+ *  Appends to obs; the caller zeroes it first.
+ *
+ *ARGUMENTS:
+ *  events     - The events to read
+ *  count      - How many
+ *  fromServer - True for the server's own queue (the gym),
+ *               false for a list a client received
+ *  selfPlayer - The observing player's slot
+ *  allies     - The observing player's allies bitmap
+ *  tankTx     - The observing tank's map square X
+ *  tankTy     - The observing tank's map square Y
+ *  obs        - Output observation
+ *********************************************************/
+void obsBuildEventsFrom(const GameEvent *events, int count, bool fromServer,
+                        BYTE selfPlayer, PlayerBitMap allies, int tankTx,
+                        int tankTy, WinBoloObs *obs);
+
 #ifdef __cplusplus
 }
 #endif
