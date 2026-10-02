@@ -2559,6 +2559,9 @@ local function hbot(hx, hy)
   hold_attack(r)
   return r
 end
+-- These cases are the "near is enough" rule (ORDER_HUMAN_NEAR_NEEDS_SHOOTING
+-- off, the keel value); the shooting rule has its own cases below.
+C.ORDER_HUMAN_NEAR_NEEDS_SHOOTING = false
 do
   local r = hbot(15, 10)
   ORD.human_near_suicide(r.st, r.w, r.inf, 100)
@@ -2614,6 +2617,140 @@ do
   C.ORDER_HUMAN_NEAR_SUICIDE_RUN = true
   check("keel turns the human-near run off",
         C.PRESETS.keel.ORDER_HUMAN_NEAR_SUICIDE_RUN == false, "?")
+end
+C.ORDER_HUMAN_NEAR_NEEDS_SHOOTING = true
+
+-- THE HUMAN MUST BE SHOOTING AT THE PILL (ORDER_HUMAN_NEAR_NEEDS_SHOOTING,
+-- 2026-10-02).  Human p0 at (14,15): 5 tiles from the bot, 8.5 tiles from
+-- the centre of pill 5 at (20,20).  A friendly shell 90% of the way from the
+-- human to the pill centre, flying at the pill, is "the human shooting".
+_G.OBJECT_SHOT = _G.OBJECT_SHOT or 2
+local U = require("util")
+local function shell_from(r, hx, hy, frac)
+  local pcx, pcy = 20 * 256 + 128, 20 * 256 + 128
+  local sx = hx * 256 + (pcx - hx * 256) * frac
+  local sy = hy * 256 + (pcy - hy * 256) * frac
+  return { type = _G.OBJECT_SHOT, x = math.floor(sx), y = math.floor(sy), info = 0,
+           direction = U.aim_at(hx * 256, hy * 256, pcx, pcy) }
+end
+do
+  check("shooting rule is on live", C.ORDER_HUMAN_NEAR_NEEDS_SHOOTING == true, "?")
+  check("keel turns the shooting rule off (near is enough)",
+        C.PRESETS.keel.ORDER_HUMAN_NEAR_NEEDS_SHOOTING == false, "?")
+  local r = hbot(14, 15)
+  ORD.note_human_shooting(r.st, r.w, r.inf, 100)
+  ORD.human_near_suicide(r.st, r.w, r.inf, 100)
+  check("shooting rule: a human 5 away who is not shooting: no run",
+        r.st._suicide == nil, "?")
+  r.inf.objects[2] = shell_from(r, 14, 15, 0.9)
+  ORD.note_human_shooting(r.st, r.w, r.inf, 101)
+  ORD.human_near_suicide(r.st, r.w, r.inf, 101)
+  check("shooting rule: a shell from that human on the pill: the run starts",
+        r.st._suicide ~= nil and r.st._suicide.sender == 0, "?")
+
+  r = hbot(14, 15)
+  r.inf.objects[2] = shell_from(r, 14, 15, 0.9)
+  ORD.note_human_shooting(r.st, r.w, r.inf, 100)
+  r.inf.objects[2] = nil
+  ORD.human_near_suicide(r.st, r.w, r.inf, 100 + C.ORDER_HUMAN_SHOOTING_WINDOW_TICKS + 1)
+  check("shooting rule: the last shot is older than the window: no run",
+        r.st._suicide == nil, "?")
+
+  r = hbot(14, 15)
+  local sh = shell_from(r, 14, 15, 0.9)
+  sh.direction = (sh.direction + 64) % 256    -- flying across, not from him
+  r.inf.objects[2] = sh
+  ORD.note_human_shooting(r.st, r.w, r.inf, 100)
+  ORD.human_near_suicide(r.st, r.w, r.inf, 100)
+  check("shooting rule: a shell whose line misses the human: no run",
+        r.st._suicide == nil, "?")
+
+  -- The damage reading: the pill loses armour while the human faces it.
+  -- Human at (15,15): 7.8 tiles from the pill centre, inside shell reach.
+  r = hbot(15, 15)
+  r.inf.objects[1].direction = U.aim_at(15 * 256, 15 * 256, 20 * 256 + 128, 20 * 256 + 128)
+  ORD.note_human_shooting(r.st, r.w, r.inf, 100)
+  r.w.pills[5].health = 9
+  ORD.note_human_shooting(r.st, r.w, r.inf, 101)
+  ORD.human_near_suicide(r.st, r.w, r.inf, 101)
+  check("shooting rule: pill hit while the human faces it: the run starts",
+        r.st._suicide ~= nil, "?")
+  r = hbot(15, 15)
+  r.inf.objects[1].direction = (U.aim_at(15 * 256, 15 * 256, 20 * 256 + 128, 20 * 256 + 128) + 128) % 256
+  ORD.note_human_shooting(r.st, r.w, r.inf, 100)
+  r.w.pills[5].health = 9
+  ORD.note_human_shooting(r.st, r.w, r.inf, 101)
+  ORD.human_near_suicide(r.st, r.w, r.inf, 101)
+  check("shooting rule: pill hit while the human faces away: no run",
+        r.st._suicide == nil, "?")
+end
+
+-- ATTACK PING = CHARGE NOW (PING_ATTACK_CHARGE_NOW, 2026-10-02).  An ATTACK
+-- ping on its own, on the pill the bot's attack_pill goal is after, from a
+-- human team-mate.
+do
+  check("charge-now is on live", C.PING_ATTACK_CHARGE_NOW == true, "?")
+  check("keel turns charge-now off", C.PRESETS.keel.PING_ATTACK_CHARGE_NOW == false, "?")
+  local function cbot()
+    local r = BOT(1, 10, 10)
+    r.st.goal = { kind = "attack_pill", target_id = 5, mx = 20, my = 20 }
+    return r
+  end
+  local r = cbot()
+  attack_ping(r, 100)
+  check("charge-now: an ATTACK ping on the bot's own target starts it",
+        r.st._charge_now ~= nil and r.st._charge_now.tid == 5 and r.st._suicide == nil, "?")
+  ORD.charge_now_check(r.st, r.w, r.inf, 101)
+  check("charge-now: it stands while the goal is on that pill", r.st._charge_now ~= nil, "?")
+  r.st.goal = { kind = "refuel" }
+  ORD.charge_now_check(r.st, r.w, r.inf, 102)
+  check("charge-now: it ends when the goal ends", r.st._charge_now == nil, "?")
+
+  r = cbot()
+  attack_ping(r, 100, 30, 30)
+  check("charge-now: an ATTACK ping somewhere else: nothing", r.st._charge_now == nil, "?")
+
+  r = cbot()
+  r.st.goal = { kind = "attack_pill", target_id = 9, mx = 60, my = 60 }
+  attack_ping(r, 100)
+  check("charge-now: a ping on a pill that is not its target: nothing",
+        r.st._charge_now == nil, "?")
+
+  r = cbot()
+  attack_ping(r, 100)
+  r.inf.events = { ping(1, 0, 20, 20) }
+  ORD.on_events(r.st, r.w, r.inf, 110)
+  r.inf.events = {}
+  check("charge-now: a caution on the pill ends it", r.st._charge_now == nil, "?")
+  r = cbot()
+  attack_ping(r, 100)
+  r.inf.events = { ping(1, 0, 10, 10) }
+  ORD.on_events(r.st, r.w, r.inf, 110)
+  r.inf.events = {}
+  check("charge-now: a caution on the bot ends it", r.st._charge_now == nil, "?")
+
+  r = cbot()
+  attack_ping(r, 100)
+  r.w.pills[5].health = 0
+  ORD.charge_now_check(r.st, r.w, r.inf, 101)
+  check("charge-now: it ends when the pill dies", r.st._charge_now == nil, "?")
+
+  r = cbot()
+  attack_ping(r, 100)
+  ORD.on_death(r.st, r.inf)
+  check("charge-now: it ends when the tank dies", r.st._charge_now == nil, "?")
+
+  C.PING_ATTACK_CHARGE_NOW = false
+  r = cbot()
+  attack_ping(r, 100)
+  check("PING_ATTACK_CHARGE_NOW=false: a lone ATTACK ping does nothing",
+        r.st._charge_now == nil, "?")
+  C.PING_ATTACK_CHARGE_NOW = true
+
+  -- The double ping is still the suicide run, not a charge.
+  local b = sbot(); settle(b, 101, 115); attack_ping(b, 125)
+  check("charge-now: bot-command + ATTACK double ping is still the suicide run",
+        b.st._suicide ~= nil and b.st._charge_now == nil, "?")
 end
 
 -- =========================================================================

@@ -8,6 +8,8 @@ QUICK INFO:
    - Closest bot will respond
    - Keep pinging to add a second bot, etc.
    - Ping "CAUTION" on a target or bot to cancel.
+   - Ping "ATTACK" on a pill a bot is attacking to make it charge in now.
+     A "CAUTION" ping on the bot or the pill stops the charge.
 
 2) SHOOTING
 
@@ -50,8 +52,8 @@ capture look at the ones not ours, defend at ours.
 Both take "off". Pings start ON, chat starts OFF. "bot chat off" silences
 the goal lines only; an answer you are owed still comes back.
 
-NOTE: Bots <= 7 tiles from a human will suicide when attacking a pill (no
-wall blockers built, for brevity).
+NOTE: Bots <= 7 tiles from a human build no wall blockers when attacking a
+pill. They make a suicide run only when that human is shooting at the pill.
 
 NOTE: Pillbox repositioning is off when human allies are present. Say
 "repositioning on" to turn it back on.

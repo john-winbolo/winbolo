@@ -2820,9 +2820,6 @@ local function attack_pill_steer(state, world, info, goal)
     elseif nx and nx >= 0 and tn < 2 then lookx, looky = nx, ny end
     local move_dir = U.aim_at(info.tankx, info.tanky, U.m2w(lookx), U.m2w(looky))
     local mcorr = U.adiff(info.direction, move_dir)
-    local k, t = nav_turn_speed(mcorr, info.speed, C.NAV_CRUISE_SPEED, 4)
-    keys = bit.bor(keys, k)
-    taps = bit.bor(taps, t)
 
     -- Extend gunsight to max so the shot reaches.
     if info.gunrange < C.GUNSIGHT_MAX then keys = bit.bor(keys, KEY_MORERANGE) end
@@ -2841,15 +2838,107 @@ local function attack_pill_steer(state, world, info, goal)
     -- tanks through — so gating fire on alignment makes the shot we FIRE match
     -- the line we validated; we never kill a stray pill/base in passing.
     local fire_corr = U.adiff(info.direction, U.aim_at(info.tankx, info.tanky, pill_wx, pill_wy))
-    if dist_to_pill <= fire_w and info.shells > C.SHELL_RESERVE
-       and math.abs(fire_corr) <= (C.HARDLINE_FIRE_AIM_TOL or 8)
-       and shot_path_clear(info, world, pill_wx, pill_wy, pmx, pmy) then
-      keys = bit.bor(keys, KEY_SHOOT)
+    local fire_tol  = C.HARDLINE_FIRE_AIM_TOL or 8
+    local shot_clear = nil   -- shot_path_clear result, computed at most once
+
+    -- SUICIDE RUN AIM (SUICIDE_AIM_AT_PILL). The path heading is not the pill
+    -- heading: the 8-brad gate let shells fly a tile wide of the pill, and
+    -- once the path bent off the pill line the bot stopped firing. So once a
+    -- shell can reach the pill (gunrange/2 + a half-tile pad) along a clear
+    -- line, the run turns to FACE the pill and drives at it (it stops against
+    -- the pillbox, still facing it). The fire gate is the real hit width:
+    -- the shell line must pass within SUICIDE_AIM_HIT_HALF_TILES of the pill
+    -- centre at this distance (never looser than the old gate, never under
+    -- 1 brad). With no shells, or no clear line, it follows the path as before.
+    local aim_mode = false
+    if (goal._ping_suicide or goal._charge_now) and C.SUICIDE_AIM_AT_PILL then
+      fire_w = (shoot_tiles + (C.SUICIDE_AIM_REACH_PAD_TILES or 0.5)) * 256.0
+      -- info.tank_angle is the float angle the shell really flies along;
+      -- info.direction is its floor (up to 1 brad off).
+      fire_corr = U.adiff(info.tank_angle or info.direction,
+        U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0, pmx + 0.5, pmy + 0.5))
+      local dt  = math.max(dist_to_pill / 256.0, 0.5)
+      local tol = math.atan((C.SUICIDE_AIM_HIT_HALF_TILES or 0.4) / dt) * 256 / C.TWO_PI
+      fire_tol = math.min(fire_tol, math.max(1, tol))
+      if dist_to_pill <= fire_w and (info.shells or 0) > 0 then
+        shot_clear = shot_path_clear(info, world, pill_wx, pill_wy, pmx, pmy)
+        aim_mode = shot_clear and true or false
+      end
     end
-    print2(string.format("HARDLINE_DRV t=%d tank=(%d,%d) inboat=%s spd=%d dir=%d look=(%d,%d) mdir=%d corr=%d next=(%s,%s) nextT=%s keys=%d taps=%d",
+
+    -- SUICIDE RUN PACE (SUICIDE_PACE_AHEAD_TILES; 0 = off). Stay about that
+    -- many tiles closer to the pill than the nearest visible human team-mate:
+    -- not that far ahead -> top speed; more than SUICIDE_PACE_SLACK_TILES past
+    -- the lead AND already aiming at the pill (aim_mode: in reach, clear
+    -- line) -> hold still and keep firing; otherwise, or with no human in
+    -- the object list, the old cruise speed. Pacing only sets the throttle;
+    -- it never touches the turn keys or the fire gate.
+    local cap  = C.NAV_CRUISE_SPEED
+    local pace = "off"
+    local ahead = goal._ping_suicide and (C.SUICIDE_PACE_AHEAD_TILES or 0) or 0
+    if ahead > 0 then
+      local hd
+      local allies, bots, me = info.allies or 0, info.player_bots or 0, info.player_number
+      local OT, OH = _G.OBJECT_TANK, _G.OBJECT_HOSTILE or 0
+      for _, ob in ipairs(info.objects or {}) do
+        local pn = ob.idnum or -1
+        if ob.type == OT and pn >= 0 and pn ~= me
+           and bit.band(ob.info or 0, OH) == 0
+           and bit.band(allies, bit.lshift(1, pn)) ~= 0
+           and bit.band(bots, bit.lshift(1, pn)) == 0 then
+          local d = U.wdist(ob.x or 0, ob.y or 0, pill_wx, pill_wy) / 256.0
+          if not hd or d < hd then hd = d end
+        end
+      end
+      pace = "nohuman"
+      if hd then
+        local lead = hd - dist_to_pill / 256.0
+        if lead < ahead then
+          cap, pace = C.NAV_TOP_SPEED, "go"
+        elseif lead > ahead + (C.SUICIDE_PACE_SLACK_TILES or 1) and aim_mode then
+          cap, pace = 0, "hold"
+        else
+          pace = "cruise"
+        end
+      end
+    end
+
+    local k, t
+    if aim_mode then
+      -- Throttle from the pill heading; turn keys from the fine aim helper
+      -- (hold > 6 brads, tap > 1), like the other pill-shooting steers.
+      k = nav_turn_speed(fire_corr, info.speed, cap, 0)
+      k = bit.band(k, bit.bnot(bit.bor(KEY_TURNLEFT, KEY_TURNRIGHT)))
+      local h, tp = U.aim_turn_bits(fire_corr, 6, 1)
+      k, t = bit.bor(k, h), tp
+      -- Driving straight at the pill skips the path: never drive a land
+      -- tank into deep sea on the way.
+      if not info.inboat then
+        local ax = bit.rshift(math.floor(info.tankx + 256 * U.bsin_f(info.direction)), 8)
+        local ay = bit.rshift(math.floor(info.tanky - 256 * U.bcos_f(info.direction)), 8)
+        if U.ttype(ax, ay) == C.T_DEEPSEA then
+          k = bit.band(k, bit.bnot(KEY_FASTER))
+          if info.speed > 0 then k = bit.bor(k, KEY_SLOWER) end
+        end
+      end
+    else
+      k, t = nav_turn_speed(mcorr, info.speed, cap, 4)
+    end
+    keys = bit.bor(keys, k)
+    taps = bit.bor(taps, t)
+
+    if dist_to_pill <= fire_w and info.shells > C.SHELL_RESERVE
+       and math.abs(fire_corr) <= fire_tol then
+      if shot_clear == nil then
+        shot_clear = shot_path_clear(info, world, pill_wx, pill_wy, pmx, pmy)
+      end
+      if shot_clear then keys = bit.bor(keys, KEY_SHOOT) end
+    end
+    print2(string.format("HARDLINE_DRV t=%d tank=(%d,%d) inboat=%s spd=%d dir=%d look=(%d,%d) mdir=%d corr=%d next=(%s,%s) nextT=%s keys=%d taps=%d aim=%s fcorr=%.1f tol=%.1f dist=%.1f reach=%.1f pace=%s cap=%d",
       state.tick or 0, tmx, tmy, tostring(info.inboat), info.speed or -1, info.direction or -1,
       lookx, looky, move_dir, mcorr, tostring(nx), tostring(ny),
-      (nx and nx >= 0) and tostring(U.ttype_peek(nx, ny)) or "?", keys, taps))
+      (nx and nx >= 0) and tostring(U.ttype_peek(nx, ny)) or "?", keys, taps,
+      tostring(aim_mode), fire_corr, fire_tol, dist_to_pill / 256.0, fire_w / 256.0, pace, cap))
     return keys, taps
   end
 

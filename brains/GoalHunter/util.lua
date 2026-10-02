@@ -526,7 +526,9 @@ end
 -- reads. Returns the distance to the NEAREST such human, or nil for none,
 -- and that human's player number as a second value.
 -- `tiles` is a cap: a human further off than that is not reported at all.
-function M.human_ally_near(info, mx, my, tiles)
+-- `only` (optional) is a set {[pn]=true}: a human not in it is skipped
+-- (orders.human_near_suicide passes the humans seen shooting at the pill).
+function M.human_ally_near(info, mx, my, tiles, only)
   if not info or not mx or not tiles or tiles <= 0 then return nil end
   local allies = info.allies or 0
   local bots   = info.player_bots or 0
@@ -539,7 +541,8 @@ function M.human_ally_near(info, mx, my, tiles)
     if ob.type == OT and pn >= 0 and pn ~= me
        and bit.band(ob.info or 0, OH) == 0
        and bit.band(allies, bit.lshift(1, pn)) ~= 0
-       and bit.band(bots, bit.lshift(1, pn)) == 0 then
+       and bit.band(bots, bit.lshift(1, pn)) == 0
+       and (not only or only[pn]) then
       local dx = math.abs(bit.rshift(ob.x or 0, 8) - mx)
       local dy = math.abs(bit.rshift(ob.y or 0, 8) - my)
       local d  = (dx > dy) and dx or dy
