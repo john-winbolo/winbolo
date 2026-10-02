@@ -5540,5 +5540,28 @@ print("decoy_getaway.lua -- the decoy getaway")
   math.atan = atan1
 end)()
 
+-- A SCENARIO HINT TO A BUSY BOT.  Nobody gave it, so nobody is owed the
+-- "Busy" (ORDER_HINT_BUSY_SILENT); a person's order still gets one.
+do
+  print("orders.lua — a busy bot refuses a scenario hint in silence")
+  local saved = C.ORDER_HINT_BUSY_SILENT
+  local function busy_lines(silent)
+    C.ORDER_HINT_BUSY_SILENT = silent
+    local st, w, inf = ST(), W(), I()
+    st._suicide = { tid = 3, since = 50 }
+    ORD.on_scenario_hint(st, w, inf, { verb = "goto", x = "40", y = "40" }, 100)
+    local n = 0
+    for _, line in ipairs((st.orders and st.orders.say) or {}) do
+      if line:find("Busy", 1, true) then n = n + 1 end
+    end
+    return n
+  end
+  local quiet = busy_lines(true)
+  check("a busy bot says nothing to a scenario hint", quiet == 0, tostring(quiet))
+  local keel = busy_lines(false)
+  check("ORDER_HINT_BUSY_SILENT=false (keel): it says Busy", keel == 1, tostring(keel))
+  C.ORDER_HINT_BUSY_SILENT = saved
+end
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

@@ -2339,7 +2339,12 @@ local function start_order(state, world, info, spec, who, now, want)
       take_order(state, world, info, spec, M.travel_cost(state, world, info, spec) or 0,
                  now, #who.pns > 1)
     elseif mine and busy then
-      say(state, string.format("Busy (%s)", reason))
+      -- A scenario hint has no person behind it, so nobody is owed the
+      -- "Busy" (C.ORDER_HINT_BUSY_SILENT).  Pillbox Tag re-sends its hints
+      -- on its own clock, and each one a busy bot refused was a chat line.
+      if not (C.ORDER_HINT_BUSY_SILENT and spec.sender == (M.HINT_SENDER or 255)) then
+        say(state, string.format("Busy (%s)", reason))
+      end
     end
     return true
   end
