@@ -848,6 +848,7 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
     BRC_RULE_I(man_speed_boat);
     BRC_RULE_I(man_speed_deep_sea);
     BRC_RULE_I(man_speed_refuel_base);
+    BRC_RULE_I(building_life);
 #undef BRC_RULE_I
 #undef BRC_RULE_F
     lua_pop(L, 1);

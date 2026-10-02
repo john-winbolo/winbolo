@@ -367,6 +367,19 @@ function M.enemy_speed_scale()
   return LP.enemy_speed_scale()
 end
 
+--- Whether a wall is worth shells under C.WALL_SHOOT_LIFE_MAX: always when
+--- the knob is 0 (the old behaviour), otherwise only when the live
+--- building_life (info.rules; classic 4 when the host does not send it) is
+--- at most the knob. Joust walls take 255 hits and are never shot.
+function M.wall_shootable(info)
+  local cap = C.WALL_SHOOT_LIFE_MAX or 0
+  if cap <= 0 then return true end
+  local r = info and info.rules
+  local life = r and r.building_life
+  if type(life) ~= "number" or life <= 0 then life = 4 end
+  return life <= cap
+end
+
 function M.nav_turn_speed(corr, speed, max_speed, min_speed)
   local keys, taps = 0, 0
   local abs_corr = math.abs(corr)

@@ -230,6 +230,8 @@ typedef struct {
 	int32_t man_speed_boat;
 	int32_t man_speed_deep_sea;
 	int32_t man_speed_refuel_base;
+	/* Shell hits a wall stands before it falls to rubble. */
+	int32_t building_life;
 } BrainRules;
 
 /* This tank's own modifiers, each a percent of the classic figure. The
