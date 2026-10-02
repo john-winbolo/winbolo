@@ -1,4 +1,4 @@
--- acquire_shore -- does GoalHunter 1.7 turn on a tank that appears across
+-- acquire_shore -- does GoalHunter turn on a tank that appears across
 -- the water while it drives along a shore?
 --
 -- The acquire_driving arena (read acquire_idle's header for the measures and
@@ -19,7 +19,7 @@
 -- brake is the whole of the delay. Until that is fixed the arena is expected
 -- to fail.
 --
--- GATE: ticks=24000 bots=1 gametype=open ai=yesfull expect=fail GoalHunter 1.7 cliff brake (steering.lua ~3710) skips the attack_tank aim turn while moving toward deep sea
+-- GATE: ticks=24000 bots=1 gametype=open ai=yesfull expect=fail GoalHunter cliff brake (steering.lua ~3710) skips the attack_tank aim turn while moving toward deep sea
 
 -- KNOB VARIANT. A copy of this file with SHOOTER_CFG set hands the shooter
 -- that one cfg= token through game.bot_init at frame 3, before any event.

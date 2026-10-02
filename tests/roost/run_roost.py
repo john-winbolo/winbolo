@@ -41,7 +41,7 @@ VERDICT_PREFIX = "ROOST VERDICT "
 # The brain the server runs when no -brain is given (servermain.c looks for
 # this path first), so an .args file that leaves -brain out still gets the
 # chat-on spec below for the brain it will actually run.
-DEFAULT_BRAIN = "brains/GoalHunter_1.7/init.lua"
+DEFAULT_BRAIN = "brains/GoalHunter/init.lua"
 
 DEFAULT_ARGS = [
     "-gametype", "tournament",

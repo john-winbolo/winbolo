@@ -61,7 +61,7 @@ local PONDS    = { { 126, 118 }, { 96, 112 } }
 local GRASS    = 7
 local POND_TICK = 400
 
-local BOT_BRAIN = "../brains/GoalHunter_1.7/init.lua"
+local BOT_BRAIN = "../brains/GoalHunter/init.lua"
 -- The driver's CFG_ON, verbatim.  REFUEL_BASELINE_SHELLS pins state.shell_target
 -- at the ordinary 40 in an arena with nothing to shoot at; SHELLS_LOW is pinned
 -- at the 20 this arena's numbers were derived for.

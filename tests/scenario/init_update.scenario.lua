@@ -4,7 +4,7 @@
 -- that hands a bot already on the field a new init table, and for the
 -- Brain.on_init that GoalHunter answers it with.
 --
--- Two real GoalHunter 1.7 bots on one team, so there is somebody for the
+-- Two real GoalHunter bots on one team, so there is somebody for the
 -- announcement to be said TO: a team line with nobody on the team is dropped
 -- unsaid, which is right for the brain and useless for a test.
 --
@@ -23,7 +23,7 @@ local TARGET = 0
 local OTHER  = 1
 local TEAM   = 1        -- team 0 is NO team on this host: two bots on it are
                         -- not allies and the line would reach nobody
-local GOALHUNTER = "../brains/GoalHunter_1.7/init.lua"  -- from the build dir
+local GOALHUNTER = "../brains/GoalHunter/init.lua"  -- from the build dir
 
 -- Sent at ORDER_AT. Two tokens: one bare flag the tick-1 parser matches by
 -- name, and one constant override that goes through _cfg_set. Both are things

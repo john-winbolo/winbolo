@@ -109,7 +109,7 @@ static int assert_is_synthesized_default(const BrainModes *m) {
 int run_brain_modes_manifest_parses(void) {
     BrainModes m;
 
-    /* The shape brains/GoalHunter_1.7/modes.txt ships in, with a second mode
+    /* The shape brains/GoalHunter/modes.txt ships in, with a second mode
      * added: comments, blank lines, CRLF endings and spaces around every
      * '='. */
     modes_cleanup();

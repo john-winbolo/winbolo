@@ -5,7 +5,7 @@
 -- bot channel so the bot under test's ally_state slot for this slot says
 -- exactly what the test wants, at exactly the tick the test wants.
 --
--- WHY A SCRIPT AND NOT A SECOND GoalHunter.  Variant A already uses a real 1.7
+-- WHY A SCRIPT AND NOT A SECOND GoalHunter.  Variant A already uses a real GoalHunter
 -- ally, which is the honest end-to-end case but gives no control over WHEN the
 -- advert changes.  The two expiry rules are about timing and nothing else:
 --
@@ -25,7 +25,7 @@
 --
 -- The advert deliberately carries mx/my and NOT a target id: that is the
 -- coordinate half of the guard's matching rule (init.lua only spends bytes on
--- the tile when the goal has no object id).  Variant A's real 1.7 ally covers
+-- the tile when the goal has no object id).  Variant A's real GoalHunter ally covers
 -- the id half.
 --
 -- BRAIN_INIT_ARG tokens (';' separated — the scenario's spawn_bot init string
@@ -41,7 +41,7 @@
 -- A scenario that spawns this brain hands it its `spawn_bot{ init = {...} }`
 -- table as the global BRAIN_INIT. This brain reads BRAIN_INIT_ARG, the
 -- "k=v;k=v" string, so flatten the table into that string before anything
--- parses it. Same rule as brains/GoalHunter_1.7/init.lua: keys sorted so the
+-- parses it. Same rule as brains/GoalHunter/init.lua: keys sorted so the
 -- string is the same every time, a value of "1" or true becoming the bare
 -- word, "0" or false dropped, everything else staying k=v. A string already
 -- in BRAIN_INIT_ARG -- the command-line path -- keeps its place.

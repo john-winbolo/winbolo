@@ -1,4 +1,4 @@
--- acquire_driving -- how fast does GoalHunter 1.7 turn on a tank that
+-- acquire_driving -- how fast does GoalHunter turn on a tank that
 -- appears while it is driving somewhere else?
 --
 -- The same arena as acquire_idle (read its header for the measures and the

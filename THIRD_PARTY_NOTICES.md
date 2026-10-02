@@ -264,7 +264,7 @@ that can be combined with it, except the Steamworks SDK, which is covered by
   notice is kept at the top of the file. Re-apply on upgrade.
 
 ### ldump
-- Location: brains/GoalHunter_1.7/ldump.lua and brains/GoalHunter_1.7/opt/ldump.lua
+- Location: brains/GoalHunter/ldump.lua and brains/GoalHunter/opt/ldump.lua
 - Version: 1.4.0 (the library's init.lua)
 - License: MIT No Attribution (MIT-0)
 - https://github.com/girvel/ldump

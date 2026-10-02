@@ -1,4 +1,4 @@
--- wall_stuck_off -- (knob off) does GoalHunter 1.7 keep its shells when it is stuck at a
+-- wall_stuck_off -- (knob off) does GoalHunter keep its shells when it is stuck at a
 -- wall that will not fall?
 --
 -- Joust's walls take 255 hits (rule building_life = 255). A bot that shoots
@@ -23,7 +23,7 @@
 -- This is wall_stuck with the knob at its default (0): the bot shoots the
 -- ring, so this arena is expected to fail. It shows the fault the knob fixes.
 --
--- GATE: ticks=9000 bots=1 gametype=open ai=yesfull expect=fail GoalHunter 1.7 with WALL_SHOOT_LIFE_MAX=0 (the default) shoots a 255-hit wall it is stuck at
+-- GATE: ticks=9000 bots=1 gametype=open ai=yesfull expect=fail GoalHunter with WALL_SHOOT_LIFE_MAX=0 (the default) shoots a 255-hit wall it is stuck at
 
 -- KNOB VARIANT. SHOOTER_CFG goes to the shooter through game.bot_init at
 -- frame 3, before the first round.

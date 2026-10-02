@@ -65,7 +65,7 @@ local OUR_BASE = { 122, 122 }
 local FOE_BASE = { 126, 133 }
 local FOE_WALL = { 126, 122 }
 
-local OUR_BRAIN = "../brains/GoalHunter_1.7/init.lua"
+local OUR_BRAIN = "../brains/GoalHunter/init.lua"
 local FOE_BRAIN = "../tests/brains/park_and_wall.lua"
 
 -- defend_alarm_test.py TOKENS for this arena, verbatim.

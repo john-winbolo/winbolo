@@ -3210,7 +3210,7 @@ static int scnResolveOpBrain(lua_State *L, char *brain, size_t brainLen) {
         return scnRefused(L, SCN_OP_NOT_FOUND,
                           "brain '%s' is a path; a scenario names a brain, "
                           "which is the directory under the server's brains/ "
-                          "— 'GoalHunter_1.7', not a path to it", brain);
+                          "— 'GoalHunter', not a path to it", brain);
     }
     if (!brainListResolve(brain, path, sizeof(path))) {
         return scnRefused(L, SCN_OP_NOT_FOUND,

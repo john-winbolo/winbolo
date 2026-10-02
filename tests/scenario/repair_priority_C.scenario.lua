@@ -43,7 +43,7 @@ local GRASS = 7
 local FILL_TICK = 120
 local p0 = 0
 
-local BOT_BRAIN = "../brains/GoalHunter_1.7/init.lua"
+local BOT_BRAIN = "../brains/GoalHunter/init.lua"
 -- The driver's TOKENS["C"]: capture and repair_pill priced out so the TANK
 -- stays out of the experiment, and the farm row at its 99 ceiling.
 local TOKENS = "cfg=CAPTURE_PILL_BASE_COST=1e30;cfg=REPAIR_BASE_COST=1e30;" ..

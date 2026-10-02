@@ -1,6 +1,6 @@
--- acquire_idle -- how fast does GoalHunter 1.7 turn on a tank that appears?
+-- acquire_idle -- how fast does GoalHunter turn on a tank that appears?
 --
--- One stock GoalHunter 1.7 bot (seat 0, Hard) on a grass field (41 x 61
+-- One stock GoalHunter bot (seat 0, Hard) on a grass field (41 x 61
 -- squares) in deep sea. A target that never shoots (tests/brains/lead_dummy.lua,
 -- seat 1) waits on a grass islet 80 squares away, then is put down 5 squares
 -- from the shooter, standing still, at a bearing relative to the way the

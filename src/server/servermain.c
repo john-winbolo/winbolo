@@ -787,9 +787,9 @@ void printArgs() {
   fprintf(stderr, "                (default: 0 = no limit). Caps lobby \"Add Bot\" requests\n");
   fprintf(stderr, "                and clamps -bots.\n");
   fprintf(stderr, "-brain <path> - Path to the Lua brain script for bots (default: the\n");
-  fprintf(stderr, "                first of Brains/GoalHunter_1.7/init.lua,\n");
-  fprintf(stderr, "                brains/GoalHunter_1.7/init.lua,\n");
-  fprintf(stderr, "                data/Brains/GoalHunter_1.7/init.lua that exists)\n");
+  fprintf(stderr, "                first of Brains/GoalHunter/init.lua,\n");
+  fprintf(stderr, "                brains/GoalHunter/init.lua,\n");
+  fprintf(stderr, "                data/Brains/GoalHunter/init.lua that exists)\n");
   fprintf(stderr, "-mode <key> - Mode for the -bots bots, one of the mode keys in the\n");
   fprintf(stderr, "                brain's modes.txt (default 'default'). Handed to the\n");
   fprintf(stderr, "                brain as a 'mode=<key>' BRAIN_INIT_ARG token.\n");
@@ -2523,9 +2523,9 @@ int main(int argc, char **argv) {
      * so that lobby "Add Bot" requests have a brain to use. */
     if (brainPath[0] == '\0' && ai != aiNone) {
       static const char *candidates[] = {
-        "Brains/GoalHunter_1.7/init.lua",
-        "brains/GoalHunter_1.7/init.lua",
-        "data/Brains/GoalHunter_1.7/init.lua",
+        "Brains/GoalHunter/init.lua",
+        "brains/GoalHunter/init.lua",
+        "data/Brains/GoalHunter/init.lua",
       };
       int c;
       for (c = 0; c < 3; c++) {

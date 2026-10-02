@@ -54,7 +54,7 @@
  * directory, and two copies of the figure would drift. */
 
 /* Buffer for a brain: the name a scenario writes — a directory under the
- * server's own brains/, such as "GoalHunter_1.7" — and the path that name is
+ * server's own brains/, such as "GoalHunter" — and the path that name is
  * resolved to before the sim is handed it. */
 #define SCN_PATH_MAX 256
 

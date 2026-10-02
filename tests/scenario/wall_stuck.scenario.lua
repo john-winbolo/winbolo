@@ -1,4 +1,4 @@
--- wall_stuck -- does GoalHunter 1.7 keep its shells when it is stuck at a
+-- wall_stuck -- does GoalHunter keep its shells when it is stuck at a
 -- wall that will not fall?
 --
 -- Joust's walls take 255 hits (rule building_life = 255). A bot that shoots

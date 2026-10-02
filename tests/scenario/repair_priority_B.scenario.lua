@@ -42,7 +42,7 @@ local GRASS = 7
 local FILL_TICK = 120
 local p0 = 0
 
-local BOT_BRAIN = "../brains/GoalHunter_1.7/init.lua"
+local BOT_BRAIN = "../brains/GoalHunter/init.lua"
 -- The driver's TOKENS["B"]: capture priced out so the tank leaves the corpses
 -- alone, and both seeding feeders priced out so the pool's own ordering runs.
 local TOKENS = "cfg=CAPTURE_PILL_BASE_COST=1e30;cfg=REPAIR_BASE_COST=1e30;" ..

@@ -391,7 +391,7 @@ static void scnCheckLobby(const ServerSim *sim, const ScenarioManifest *m,
         /* The brain the team names, held against the brains this server has.
            Neither of these refuses the scenario: the map still loads and the
            team's seats fall back to the server's own brain. What they are for
-           is telling an operator they need GoalHunter_1.7 before a round is
+           is telling an operator they need GoalHunter before a round is
            started, rather than leaving them to find it out from a wave that
            seats bots which field nothing.
 
@@ -405,7 +405,7 @@ static void scnCheckLobby(const ServerSim *sim, const ScenarioManifest *m,
                 scnIssueAdd(out, key,
                             "'%s' is a path; a scenario names a brain, which "
                             "is the directory under the server's brains/ — "
-                            "'GoalHunter_1.7', not a path to it", t->brain);
+                            "'GoalHunter', not a path to it", t->brain);
             } else if (!brainListResolve(t->brain, brainPath,
                                          sizeof(brainPath))) {
                 brainPath[0] = '\0';

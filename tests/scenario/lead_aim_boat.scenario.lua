@@ -1,4 +1,4 @@
--- lead_aim_boat -- does GoalHunter 1.7 lead a tank on a boat?
+-- lead_aim_boat -- does GoalHunter lead a tank on a boat?
 --
 -- The same arena as lead_aim_land (read its header for the method and the
 -- threshold), but the target rides a boat at boat speed (speed_boat, 16 wu a
@@ -8,7 +8,7 @@
 --   boat_river  the lane is river, the target is on a boat
 --   boat_sea    the lane is deep sea, the target is on a boat
 --
--- THE BUG THIS ARENA SHOWS. GoalHunter 1.7 predicts the target's motion from
+-- THE BUG THIS ARENA SHOWS. GoalHunter predicts the target's motion from
 -- the speed of the square under it (steering.lua, the engage lead block near
 -- line 3342: C.MAP_SPEED[terrain] times the throttle, throttle clamped to 1).
 -- C.MAP_SPEED is 3 for river and deep sea, but a tank on a boat moves at
@@ -17,7 +17,7 @@
 -- fifth of what it needs and the shells pass behind the boat. Until that is
 -- fixed the arena is expected to fail.
 --
--- GATE: ticks=20000 bots=1 gametype=open ai=yesfull expect=fail GoalHunter 1.7 leads a boat at C.MAP_SPEED[river/deep sea]=3, not speed_boat=16 (steering.lua engage lead ~3342)
+-- GATE: ticks=20000 bots=1 gametype=open ai=yesfull expect=fail GoalHunter leads a boat at C.MAP_SPEED[river/deep sea]=3, not speed_boat=16 (steering.lua engage lead ~3342)
 
 -- KNOB VARIANT. A copy of this file with SHOOTER_CFG set hands the shooter
 -- that one cfg= token through game.bot_init at frame 3, before any event.

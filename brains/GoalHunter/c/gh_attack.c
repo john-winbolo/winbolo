@@ -15,7 +15,7 @@
  * --------------------
  * Only ONE brain version's c/ directory is compiled (brains/CMakeLists.txt,
  * WINBOLO_BRAIN_C_DIR) and EVERY brain version links it.  GoalHunter 1.5 and
- * 1.6 are frozen and their attack.lua sweep differs from 1.7's (no clear-aim
+ * 1.6 are frozen and their attack.lua sweep differs from the current one's (no clear-aim
  * gate, among other things), so one C algorithm cannot be faithful to both.
  * The two paths are selected by what sync_pill_at is handed:
  *
@@ -23,8 +23,8 @@
  *             way.  eval_legacy() below is the historical code, unchanged,
  *             including its (wrong, see below) terrain constants.  Frozen.
  *
- *   parity  — sync_pill_at(world, pmx, pmy).  1.7 calls it this way.
- *             eval_parity() reproduces 1.7's Lua sweep rule for rule.
+ *   parity  — sync_pill_at(world, pmx, pmy).  The current GoalHunter calls it this way.
+ *             eval_parity() reproduces its Lua sweep rule for rule.
  *
  * The legacy path's terrain constants never matched the engine.  The brain's
  * terrain byte is the BBUILDING..TERRAIN_UNKNOWN enum from brain.h
@@ -136,7 +136,7 @@ typedef struct NaAttackCtx {
 
     /* ── parity path ─────────────────────────────────────────────────
      * world_synced is set by the last sync_pill_at: 1 when it was handed
-     * the whole world table (GoalHunter 1.7), 0 when it was handed a bare
+     * the whole world table (the current GoalHunter), 0 when it was handed a bare
      * world.pill_at (1.5 / 1.6).  It selects the evaluation path. */
     int      world_synced;
     uint8_t  p_any[MAP_TILES];       /* world.pill_at[k] is a non-empty list */
@@ -599,7 +599,7 @@ static void sync_world_flags(lua_State *L, NaAttackCtx *ctx, int widx) {
 /*
  * gh_attack.sync_pill_at(world_or_pill_at, target_pmx, target_pmy)
  *
- * Handed the whole `world` table (GoalHunter 1.7) it builds the parity
+ * Handed the whole `world` table (the current GoalHunter) it builds the parity
  * path's flag arrays and selects the parity evaluator.  Handed a bare
  * `world.pill_at` (GoalHunter 1.5 / 1.6) it rebuilds only the legacy
  * occupancy array and selects the legacy evaluator.
@@ -731,7 +731,7 @@ static int clear_aim_from_world(NaAttackCtx *ctx, const BYTE *w,
 }
 
 /* ── Parity evaluator ─────────────────────────────────────────────────────
- * Rule-for-rule port of GoalHunter 1.7's M.evaluate_pill_difficulty sweep
+ * Rule-for-rule port of the current GoalHunter's M.evaluate_pill_difficulty sweep
  * (detailed = false, step_deg = 5, no banned angles) plus
  * M.finalize_pill_eval.  Every arithmetic step is done in double, the width
  * Lua uses, so the 50-point bucket boundary falls the same way. */
@@ -937,7 +937,7 @@ static int eval_parity(lua_State *L, NaAttackCtx *ctx, const BYTE *w,
 
 /* ── Legacy evaluator (GoalHunter 1.5 / 1.6) ─────────────────────────────
  * Unchanged from before the parity work.  Do not "fix" anything here: those
- * brains are frozen and their Lua sweep is the 1.5/1.6 one, not 1.7's. */
+ * brains are frozen and their Lua sweep is the 1.5/1.6 one, not the current one. */
 static int eval_legacy(lua_State *L, NaAttackCtx *ctx, const BYTE *world,
                        int pmx, int pmy, int step, int phase_not_opening,
                        int tmx, int tmy) {

@@ -77,7 +77,7 @@ local TOPUP_ARMOUR = 11          -- 4 down: BUILDER_POOL_TOPUP_MIN_MISSING exact
 local STUCK_ENGINE_TICKS = 3000
 local p0 = 0
 
-local BOT_BRAIN = "../brains/GoalHunter_1.7/init.lua"
+local BOT_BRAIN = "../brains/GoalHunter/init.lua"
 -- The driver's TOKENS["A"] -- the fix at its default on both knobs.
 local TOKENS = "cfg=PILL_REPOSITION_ENABLED=false"
 

@@ -33,7 +33,7 @@
 local OUR_PILL   = { 126, 126 }
 local OUR_BASE   = { 122, 122 }
 local FOE_BASE   = { 126, 133 }
-local OUR_BRAIN  = "../brains/GoalHunter_1.7/init.lua"
+local OUR_BRAIN  = "../brains/GoalHunter/init.lua"
 local FOE_BRAIN  = "../tests/brains/shell_pill_then_flee.lua"
 
 -- defend_repair_test.py TOKENS, verbatim.

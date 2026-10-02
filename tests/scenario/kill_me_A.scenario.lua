@@ -5,7 +5,7 @@
 --
 -- GATE: ticks=10200 bots=0 ai=yesfull gametype=open limit=20
 --
--- MEASURED 2026-09-15 on main's GoalHunter_1.7, at the driver's own seed,
+-- MEASURED 2026-09-15 on main's GoalHunter, at the driver's own seed,
 -- budget and pins.  Inside 10200 ticks p0's top-up never completes once, so
 -- the pill never reads full and the gate is never walled: the arena does not
 -- reach its own precondition.  Given 30200 ticks it does -- the wall goes up

@@ -333,6 +333,15 @@ static size_t brainListReadSidecarAny(const char *name, const char *file,
     for (i = 0; i < count && got == 0; i++) {
         got = brainListReadSidecar(parents[i], name, file, blob, blobSz);
     }
+    /* The old GoalHunter_1.7 name reads the renamed brain's files when no
+       directory by the old name is on disk (BRAIN_LIST_GOALHUNTER_OLD_NAME). */
+    if (got == 0 &&
+        SDL_strcasecmp(name, BRAIN_LIST_GOALHUNTER_OLD_NAME) == 0) {
+        for (i = 0; i < count && got == 0; i++) {
+            got = brainListReadSidecar(parents[i], BRAIN_LIST_GOALHUNTER_NAME,
+                                       file, blob, blobSz);
+        }
+    }
     return got;
 }
 
@@ -367,6 +376,45 @@ bool brainListResolve(const char *name, char *outPath, size_t outLen) {
         }
         return true;
     }
+    /* A scenario or server config written before the GoalHunter brain lost
+       its version suffix names "GoalHunter_1.7". With no directory by that
+       name on disk, it gets the renamed brain. */
+    if (SDL_strcasecmp(name, BRAIN_LIST_GOALHUNTER_OLD_NAME) == 0) {
+        return brainListResolve(BRAIN_LIST_GOALHUNTER_NAME, outPath, outLen);
+    }
+    return false;
+}
+
+bool brainListAliasPath(const char *path, char *out, size_t outLen) {
+    static const char kOld[] = BRAIN_LIST_GOALHUNTER_OLD_NAME;
+    const size_t oldLen = sizeof(kOld) - 1;
+    char   rewritten[1024];
+    size_t pathLen;
+    size_t i;
+
+    if (out == NULL || outLen == 0) return false;
+    if (path == NULL) { out[0] = '\0'; return false; }
+    pathLen = strlen(path);
+    /* Find a whole directory component that is the old name. */
+    for (i = 0; i + oldLen <= pathLen; i++) {
+        bool startOk = (i == 0 || path[i - 1] == '/' || path[i - 1] == '\\');
+        char after   = path[i + oldLen];
+        bool endOk   = (after == '\0' || after == '/' || after == '\\');
+        int  n;
+        if (!startOk || !endOk) continue;
+        if (SDL_strncasecmp(path + i, kOld, oldLen) != 0) continue;
+        n = SDL_snprintf(rewritten, sizeof(rewritten), "%.*s%s%s",
+                         (int)i, path, BRAIN_LIST_GOALHUNTER_NAME,
+                         path + i + oldLen);
+        if (n < 0 || (size_t)n >= sizeof(rewritten)) break;
+        /* A real GoalHunter_1.7 directory (a player's own copy) wins. */
+        if (SDL_GetPathInfo(path, NULL)) break;
+        if (!SDL_GetPathInfo(rewritten, NULL)) break;
+        if ((size_t)n >= outLen) break;
+        SDL_strlcpy(out, rewritten, outLen);
+        return true;
+    }
+    if (out != path) SDL_strlcpy(out, path, outLen);
     return false;
 }
 
@@ -549,9 +597,13 @@ bool brainListLoadTextsForPath(const char *brainPath,
                                char *docs, size_t docsSz,
                                bool *truncated) {
     char dir[1024];
+    char aliased[1024];
     if (announce && announceSz) announce[0] = '\0';
     if (docs && docsSz) docs[0] = '\0';
     if (truncated) *truncated = false;
+    if (brainListAliasPath(brainPath, aliased, sizeof(aliased))) {
+        brainPath = aliased;
+    }
     if (!brainListDirOfPath(brainPath, dir, sizeof(dir))) return false;
     return brainListLoadTexts(dir, announce, announceSz, docs, docsSz,
                               truncated);
@@ -563,7 +615,11 @@ int64_t brainListTextsMtimeForPath(const char *brainPath) {
     int64_t best = 0;
     int i;
     static const char *const names[2] = { "announce.txt", "commands.txt" };
+    char aliased[1024];
 
+    if (brainListAliasPath(brainPath, aliased, sizeof(aliased))) {
+        brainPath = aliased;
+    }
     if (!brainListDirOfPath(brainPath, dir, sizeof(dir))) return 0;
     for (i = 0; i < 2; i++) {
         SDL_PathInfo info;

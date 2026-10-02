@@ -205,7 +205,7 @@ def gate_options(name):
 # runs with cwd=<build>, so <build>/Brains/<stem>/init.lua is on the path it
 # already searches.
 #
-# <build>/Brains is not ours. CMake stages GoalHunter_1.7 into it beside the
+# <build>/Brains is not ours. CMake stages GoalHunter into it beside the
 # binary, so only the stems staged here are removed at the end, and the
 # directory itself only when this run made it. Copies, not links: this runs on
 # Windows too.
@@ -222,7 +222,7 @@ def stage_brains(build_dir):
         if not f.endswith(".lua"):
             continue
         stem = f[: -len(".lua")]
-        if stem == "GoalHunter_1.7":       # never ours to write or remove
+        if stem == "GoalHunter":       # never ours to write or remove
             continue
         d = os.path.join(parent, stem)
         mine = not os.path.isdir(d)
@@ -341,7 +341,7 @@ class Job(object):
                "-nolobby",
                "-gametype", o["gametype"],
                "-bots", str(o["bots"]),
-               "-brain", os.path.join(ROOT, "brains", "GoalHunter_1.7",
+               "-brain", os.path.join(ROOT, "brains", "GoalHunter",
                                       "init.lua"),
                "-ai", o["ai"],
                "-seed", str(o["seed"]),

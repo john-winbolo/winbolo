@@ -3,7 +3,7 @@
 -- shore events come in at the turn limit. Everything below the header is
 -- acquire_shore's own text; keep the two in step.
 --
--- acquire_shore -- does GoalHunter 1.7 turn on a tank that appears across
+-- acquire_shore -- does GoalHunter turn on a tank that appears across
 -- the water while it drives along a shore?
 --
 -- The acquire_driving arena (read acquire_idle's header for the measures and

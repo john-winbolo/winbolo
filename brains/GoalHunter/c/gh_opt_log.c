@@ -408,9 +408,9 @@ static int l_flush(lua_State *L) {
  * the process (each lua_State registers this module, but s_thread / the
  * queue are file-statics), and a brain has no way to know it is the last
  * user. GoalHunter 1.6's optimize.lua calls close() at its Brain.close;
- * when it used to stop the thread, every 1.7 brain closing after it found
+ * when it used to stop the thread, every current GoalHunter brain closing after it found
  * append() returning false and died in print2's fail_hard -- two
- * brain_crash logs at the end of every 1.6-vs-1.7 game (20260903_105448
+ * brain_crash logs at the end of every 1.6-vs-current game (20260903_105448
  * block 2), and, now that the server rebuilds every bot's brain at each
  * round start, it would have been two per round. A synchronous drain gives
  * close() everything it was ever used for (the log is complete on disk

@@ -1,6 +1,6 @@
--- lead_aim_land -- does GoalHunter 1.7 lead a moving tank on land?
+-- lead_aim_land -- does GoalHunter lead a moving tank on land?
 --
--- One stock GoalHunter 1.7 bot (seat 0, the -bots seat, Hard: the hard level
+-- One stock GoalHunter bot (seat 0, the -bots seat, Hard: the hard level
 -- bundle is empty, so it plays on the plain constants) sits on a 5x5 grass
 -- island. A target that never shoots (tests/brains/lead_dummy.lua, seat 1)
 -- drives straight passes along a 3-row lane 6 squares north of the island

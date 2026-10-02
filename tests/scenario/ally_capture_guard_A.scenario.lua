@@ -4,7 +4,7 @@
 --
 -- One dead friendly pill at (126,126).  Our bot is parked at the east start
 -- with a full woodpile and the LGM aboard, and is priced out of taking the
--- corpse itself (OUR_CFG below).  A SECOND real GoalHunter 1.7 starts six tiles
+-- corpse itself (OUR_CFG below).  A SECOND real GoalHunter starts six tiles
 -- north with nothing else on the map to do, so it goes for the corpse and
 -- advertises `goal=capture_pill target=<pill id>` on the internal channel —
 -- which is the ID half of the guard's matching rule.
@@ -17,7 +17,7 @@
 local CORPSE    = 1                 -- the map's only pillbox
 local OUR_SLOT  = 0
 local ALLY_SLOT = 1
-local GOALHUNTER = "../brains/GoalHunter_1.7/init.lua"  -- from the build dir
+local GOALHUNTER = "../brains/GoalHunter/init.lua"  -- from the build dir
 
 -- The driver's OUR_CFG, word for word.  CAPTURE_PILL_BASE_COST prices our own
 -- TANK out of simply driving over the corpse (which measures nothing about the

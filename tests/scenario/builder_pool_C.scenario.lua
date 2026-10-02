@@ -1,7 +1,7 @@
 -- Scenario script for tests/builder_pool_C.map.  Companion to
 -- tests/builder_pool_test.py variant C -- "two allies, one pill".
 --
--- Two GoalHunter 1.7 bots pinned to opposite ponds, equidistant from the single
+-- Two GoalHunter bots pinned to opposite ponds, equidistant from the single
 -- worn pill in the middle.  Both see it, both can reach it with the man, and
 -- both would repair it -- which is exactly the race BUILDER_POOL_PLAN section 6
 -- is about.  The claim rides /info extra as `bpj`; the earlier claim tick wins
@@ -15,7 +15,7 @@ local OUR_PILL   = { 126, 126 }
 local BASES      = { { 114, 126 }, { 138, 126 }, { 126, 120 } }
 local OUR_SLOT   = 0
 local ALLY_SLOT  = 1
-local GOALHUNTER = "../brains/GoalHunter_1.7/init.lua"    -- from the build dir
+local GOALHUNTER = "../brains/GoalHunter/init.lua"    -- from the build dir
 
 -- The driver's KEEL_DEFEND, on BOTH bots.  It keeps them on the keel defend
 -- evaluator, whose ARRIVED WATCH/REPAIR rungs are what park a bot at the pill

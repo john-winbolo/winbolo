@@ -28,7 +28,7 @@
 --     bot simply keeps what it grabs -- and, on this host, the refill is not
 --     then refused for the square already holding a pillbox.
 local TOKENS  = "cfg=CAPTURE_LGM_HUNT=false;cfg=TANK_COMBAT_ENABLED=false;cfg=BUILDER_POOL_ENABLED=false;cfg=STRATEGIC_PLACE_ENABLED=false"
-local OUR_BRAIN = "../brains/GoalHunter_1.7/init.lua"
+local OUR_BRAIN = "../brains/GoalHunter/init.lua"
 local FOE_BRAIN = "../tests/brains/farm_beside.lua"
 
 local P0, P1  = 0, 1

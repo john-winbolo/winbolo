@@ -142,7 +142,7 @@ int run_loopback_fine_tank_position(void) {
     serverSimSetBotAiType(h.sim, aiFull);
     if (!serverSimAddUnfieldedSeat(h.sim, LF_SEAT, "Glider", LF_TEAM) ||
         !serverSimAddBot(h.sim, LF_SEAT, &(ServerSimBotConfig){
-                             .brainPath   = "brains/GoalHunter_1.7/init.lua",
+                             .brainPath   = "brains/GoalHunter/init.lua",
                              .brainName   = "Glider",
                              .ai          = aiFull,
                              .gameType    = gameOpen,

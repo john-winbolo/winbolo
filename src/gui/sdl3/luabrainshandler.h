@@ -527,7 +527,7 @@ typedef struct {
 *  scnTableFromArgText: ';'-separated "key=value" pairs, a
 *  bare token being the value "1". E.g.
 *
-*     0-3=brains/GoalHunter_1.7/init.lua,4-5=brains/Foo/init.lua[llm]
+*     0-3=brains/GoalHunter/init.lua,4-5=brains/Foo/init.lua[llm]
 *
 *  The caller pre-fills `slots` for every id with the default
 *  brain path and an empty table; this overwrites only the ids

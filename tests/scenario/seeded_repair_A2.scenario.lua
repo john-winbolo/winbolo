@@ -43,7 +43,7 @@ local GRASS = 7
 local FILL_TICK = 120
 local p0 = 0
 
-local BOT_BRAIN = "../brains/GoalHunter_1.7/init.lua"
+local BOT_BRAIN = "../brains/GoalHunter/init.lua"
 -- The driver's TOKENS["A2"].
 local TOKENS = "cfg=REPAIR_BASE_COST=1e30;cfg=DEFEND_ALARM_MODE=false;" ..
                "cfg=BUILDER_POOL_SEEDED_COMPETES=false;" ..

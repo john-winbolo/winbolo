@@ -3,7 +3,7 @@
 -- at 16 is led at 16. Everything below the header is lead_aim_boat's own
 -- text; keep the two in step.
 --
--- lead_aim_boat -- does GoalHunter 1.7 lead a tank on a boat?
+-- lead_aim_boat -- does GoalHunter lead a tank on a boat?
 --
 -- The same arena as lead_aim_land (read its header for the method and the
 -- threshold), but the target rides a boat at boat speed (speed_boat, 16 wu a
@@ -13,7 +13,7 @@
 --   boat_river  the lane is river, the target is on a boat
 --   boat_sea    the lane is deep sea, the target is on a boat
 --
--- THE BUG THIS ARENA SHOWS. GoalHunter 1.7 predicts the target's motion from
+-- THE BUG THIS ARENA SHOWS. GoalHunter predicts the target's motion from
 -- the speed of the square under it (steering.lua, the engage lead block near
 -- line 3342: C.MAP_SPEED[terrain] times the throttle, throttle clamped to 1).
 -- C.MAP_SPEED is 3 for river and deep sea, but a tank on a boat moves at

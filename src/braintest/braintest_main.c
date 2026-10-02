@@ -80,6 +80,7 @@
 #include "minesexp.h"
 #include "control_event.h"
 #include "brain_pathfinder.h"
+#include "brain_list.h"   /* BRAIN_LIST_GOALHUNTER_* */
 #include "gui_message.h"
 #include "server_sim.h"
 #include "server_sim_lifecycle.h"
@@ -2355,7 +2356,7 @@ static void signalHandler(int sig) {
 /* Command-line parsing                                                */
 /* ------------------------------------------------------------------ */
 
-static char optBrain[512] = "brains/GoalHunter_1.7";
+static char optBrain[512] = "brains/GoalHunter";
 static char optBotInit[1024] = ""; /* -bot-init spec; per-bot brain paths + [arg] */
 static char optMap[512]   = "";
 static char optLoadSession[1024] = "";  /* -loadsession <dir>: replay a brainrec.btr */
@@ -2655,6 +2656,19 @@ static bool findBrainScript(const char *base, char *out, size_t outLen) {
         if (io) { SDL_CloseIO(io); SDL_snprintf(out, outLen, "%s", tryPath); return true; }
     }
 
+    /* "-brain brains/GoalHunter_1.7" (or a bare "GoalHunter_1.7") written
+     * before the brain lost its version suffix names the renamed GoalHunter
+     * brain. The retry's name no longer holds the old one, so it runs once. */
+    {
+        const char *old = SDL_strcasestr(base, BRAIN_LIST_GOALHUNTER_OLD_NAME);
+        if (old) {
+            char renamed[1024];
+            SDL_snprintf(renamed, sizeof(renamed), "%.*s%s%s",
+                         (int)(old - base), base, BRAIN_LIST_GOALHUNTER_NAME,
+                         old + SDL_strlen(BRAIN_LIST_GOALHUNTER_OLD_NAME));
+            return findBrainScript(renamed, out, outLen);
+        }
+    }
     return false;
 }
 
@@ -6279,13 +6293,13 @@ int main(int argc, char *argv[]) {
             if (bl > 0 && (brainName[bl-1] == '/' || brainName[bl-1] == '\\'))
                 brainName[bl-1] = '\0';
         }
-        /* Strip a trailing version suffix ("GoalHunter_1.7" -> "GoalHunter")
+        /* Strip a trailing version suffix ("GoalHunter_1.6" -> "GoalHunter")
          * so panel-type namespacing ("<brain>:<type>") matches the renderers'
          * fixed "GoalHunter:" prefix across the versioned brain dirs from the
          * 1.0/1.5 split. Only strips when the chars after the last '_' are
          * version-like (start with a digit), so a brain whose real name
          * contains an underscore is left alone. Also keeps the namespaced type
-         * within PANEL_REG_TYPE_MAX, which was truncating "GoalHunter_1.7:
+         * within PANEL_REG_TYPE_MAX, which was truncating "GoalHunter_1.6:
          * pool_grid" to "...pool_gri". */
         {
             char *us = NULL;

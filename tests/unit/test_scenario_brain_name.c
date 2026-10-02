@@ -1,7 +1,7 @@
 /*
  * A scenario names the brain its teams and its roster ops run.
  *
- * The name is the directory under the server's own brains/ — "GoalHunter_1.7"
+ * The name is the directory under the server's own brains/ — "GoalHunter"
  * — and never a path, because a scenario shared with a server knows nothing of
  * that server's layout. brainListResolve turns a name into the init.lua the
  * bot loader opens, and the three places a scenario writes a brain go through

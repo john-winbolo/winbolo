@@ -36,7 +36,7 @@ local GRASS = 7
 local FILL_TICK = 120
 local p0 = 0
 
-local BOT_BRAIN = "../brains/GoalHunter_1.7/init.lua"
+local BOT_BRAIN = "../brains/GoalHunter/init.lua"
 -- The driver's TOKENS["D2"]: arena D's two tokens, plus the legacy formula.
 local TOKENS = "cfg=CAPTURE_PILL_BASE_COST=1e30;cfg=ATTACK_PILL_BASE_COST=1e30;" ..
                "cfg=BUILDER_POOL_REPAIR_LINEAR=false"

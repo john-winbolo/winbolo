@@ -80,7 +80,7 @@ local LABEL          = "KILLS"
 local FREE_FOR_ALL   = "Free For All"
 local LOBBY_TEAMS    = "Use Lobby Teams"
 
--- The GoalHunter preset Joust's bots play with (brains/GoalHunter_1.7/
+-- The GoalHunter preset Joust's bots play with (brains/GoalHunter/
 -- constants.lua PRESETS.joust): lead a boat at its real speed, turn onto the
 -- target before speeding up, fire as soon as the gun is near the lead
 -- point, turn or change speed out of the path of a shell, and never shoot

@@ -900,7 +900,7 @@ Each team:
 | `bots` | number | How many seats to seat for this team when the lobby is built. A host who trims them gets the trimmed number back next round: the point of seating them where a host can see them is that the host may change them. |
 | `max_bots` | number | The ceiling a host may raise `bots` to. 0 means no ceiling stated, which is not the same as no bots allowed. |
 | `fielded` | boolean | True (the default) puts a bot in the seat at the start of the round. False holds the seat without one: it is in the roster, it takes no tank, and no bot plays in it until a `spawn_bot` names it. Its runner is built ahead of the round, as the two paragraphs below this table describe. |
-| `brain` | string | The brain this team's bots run, **named**: the directory under the server's `brains/`, such as `GoalHunter_1.7`. Empty means the server's own. A name this server does not have leaves the team's seats on the server's own brain, says one line on the console, and is reported by `-validate` before a round is ever started. A value with `/` or `\` in it is a path, not a name, and is refused as such — a scenario shared with a server knows nothing of that server's layout, which is why it names the brain and lets the server find it. `package:NAME`, a brain carried inside the scenario, is still refused with `SCN_OP_NOT_FOUND`. |
+| `brain` | string | The brain this team's bots run, **named**: the directory under the server's `brains/`, such as `GoalHunter`. Empty means the server's own. A name this server does not have leaves the team's seats on the server's own brain, says one line on the console, and is reported by `-validate` before a round is ever started. A value with `/` or `\` in it is a path, not a name, and is refused as such — a scenario shared with a server knows nothing of that server's layout, which is why it names the brain and lets the server find it. `package:NAME`, a brain carried inside the scenario, is still refused with `SCN_OP_NOT_FOUND`. |
 | `mode` | string | The brain mode this team's bots play in, by the key the brain's own `modes.txt` lists — `"default"`, say. Left out, the seats keep whatever mode the lobby would have given them. |
 | `difficulty` | string | The level inside that mode, by the key the same file lists — `"hard"`. Left out, the seats keep the lobby's level, except that a team naming a `mode` and no `difficulty` lands on that mode's own default level. |
 | `init` | table | A flat table of names to strings or numbers, handed to this team's bots when their VM is built. A `spawn_bot` that names one of these seats and carries no `init` of its own gets this one. |
@@ -910,8 +910,8 @@ operator naming a file on their own machine, where the layout is theirs to know.
 A `brain` in a scenario is content that travels with the map to servers that
 have never seen it, so it names what it wants and the server resolves the name
 against its own `brains/` — the same directories the lobby's bot list is built
-from. Ship a scenario that needs `GoalHunter_1.7` and every server that has
-`GoalHunter_1.7` runs it; one that does not gets a reported problem and a
+from. Ship a scenario that needs `GoalHunter` and every server that has
+`GoalHunter` runs it; one that does not gets a reported problem and a
 playable round.
 
 **`mode` and `difficulty` are the half the lobby reads.** They are matched
@@ -1668,7 +1668,7 @@ A map holds 16 of each at once; the 17th is refused with `SCN_OP_FULL`.
 |---|---|
 | `slot` | The seat to take. Left out, the first free seat is taken, and which one that is is decided as the spawn lands rather than as it is queued. A seat held for a bot that is not on the field is the one occupied seat a spawn may name — fielding it is what the seat is for. A seat that already has somebody on the field is refused with `SCN_OP_ALREADY`. |
 | `name` | The bot's name. A seat that is already held keeps the name it was seated with, whatever this says. |
-| `brain` | The brain to run, named the way a team's is: the directory under the server's `brains/`, such as `GoalHunter_1.7`. Left out, the seat's own brain is used — the one its team was written with — and failing that the server's. A name this server does not have, a value with `/` or `\` in it, and `package:NAME` are each refused with `SCN_OP_NOT_FOUND`. |
+| `brain` | The brain to run, named the way a team's is: the directory under the server's `brains/`, such as `GoalHunter`. Left out, the seat's own brain is used — the one its team was written with — and failing that the server's. A name this server does not have, a value with `/` or `\` in it, and `package:NAME` are each refused with `SCN_OP_NOT_FOUND`. |
 | `team` | The team to join. A held seat keeps the team it was seated with. |
 | `start` | The start to come in on, 1-based. Left out, the engine chooses. |
 | `loadout` | What this one bot comes in with: `"open"`, `"tournament"` or `"strict"` for that game type's amounts. A word that is none of the three stops the call the way any bad argument does. It outranks `spawn_loadout`, which is not asked about this tank at all, and it is spent on the tank the spawn builds — the bot's next life is fuelled the way every other tank's is. Left out, `spawn_loadout` answers, and failing that the round's own game type. |
@@ -1858,7 +1858,7 @@ says afterwards. A player can call a scripted order off with `cancel all` or
 by naming the bot — a bare `cancel` cannot, because that one releases only
 the speaker's own order and a hint's sender is the scenario.
 
-GoalHunter 1.7 also reads `ping = "1"` on a `goto`: the order is filed as if
+GoalHunter also reads `ping = "1"` on a `goto`: the order is filed as if
 a bot-command ping had given it, so a square a hostile pillbox can shoot turns
 the hold into the decoy hold. No scenario op places a ping, so this key is how
 a script reaches the decoy hold (the `decoy_getaway` ROOST test uses it).
@@ -2893,7 +2893,7 @@ half the report. The map has to load before the script is looked at.
 
 The brains a scenario's teams name are checked against the ones this server
 has, so `-validate` on the server you are about to run is what tells you a map
-wants `GoalHunter_1.7` and this machine has not got it. That is a problem
+wants `GoalHunter` and this machine has not got it. That is a problem
 rather than a refusal: the map still plays, with those seats on the server's
 own brain.
 

@@ -62,7 +62,7 @@ everybody's configure step for one test directory.
 
     -gametype tournament -ai yes -nolobby -notracker -nowinbolonet
     -dontsendlog -noinput -bots 2 -allybots 1 -threads 4
-    -brain brains/GoalHunter_1.7/init.lua -seed 42 -asap
+    -brain brains/GoalHunter/init.lua -seed 42 -asap
 
 Two allied GoalHunter bots, because the smallest interesting question about
 a bot is what one of them does that the other does not: give the order to
@@ -82,7 +82,7 @@ The runner also adds `-bot-init 0-15=<the -brain path>[cfg=BOT_CHAT_DEFAULT=true
 so every bot starts with "bot chat" on. A real game starts with the bots
 quiet, but most of these tests read the spoken acks to see that an order was
 taken. An `.args` file with no `-brain` gets the same spec for
-`brains/GoalHunter_1.7/init.lua`, the brain the server runs when none is
+`brains/GoalHunter/init.lua`, the brain the server runs when none is
 named. A test that gives its own `-bot-init` keeps it, and the runner adds
 `;cfg=BOT_CHAT_DEFAULT=true` inside the `[...]` of each of its specs (or adds
 `[cfg=BOT_CHAT_DEFAULT=true]` to a spec with no brackets). Tokens apply in
@@ -164,7 +164,7 @@ cannot make a seat ping a square. Every ping path in `orders.lua` — the verb
 table by tile, select-by-ping, the repeat ping that adds a bot, the caution
 ping — is therefore untested here, and will stay that way until the API grows
 a ping op. The chat forms of the same orders are what these rounds cover.
-The one exception is the decoy hold: GoalHunter 1.7 reads `ping = "1"` on a
+The one exception is the decoy hold: GoalHunter reads `ping = "1"` on a
 `goto` hint as a ping order, and `decoy_getaway` uses that.
 
 ## The arena the order tests share
