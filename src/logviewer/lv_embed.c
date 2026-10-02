@@ -654,7 +654,11 @@ void lvEmbedPanBegin(void) {
 
 /* Drag delta in host screen pixels, measured from where lvEmbedPanBegin
  * latched. Each on-screen pixel is 1/zoom native pixels, and dragging right
- * reveals more of the map's left, so the delta is subtracted. */
+ * reveals more of the map's left, so the delta is subtracted.
+ *
+ * A drag that moves turns off following the tank lvEmbedFocusPlayerByName
+ * picked; otherwise the next replay tick puts the camera back on it. A zero
+ * delta (a click that has not moved yet) leaves following on. */
 void lvEmbedPanDelta(float dxScreenPx, float dyScreenPx) {
     float zoom;
     int   totalPxX, totalPxY;
@@ -668,6 +672,9 @@ void lvEmbedPanDelta(float dxScreenPx, float dyScreenPx) {
     totalPxY = s_embedPanStartPxY - (int)(dyScreenPx / zoom);
 
     lv_clientMutexWaitFor();
+    if (dxScreenPx != 0.0f || dyScreenPx != 0.0f) {
+        g_lv->centredTank = FALSE;
+    }
     lv_drawDirtyScreen();
     lv_screenPanToTotalPixels(totalPxX, totalPxY);
     lv_clientMutexRelease();

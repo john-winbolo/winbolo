@@ -261,8 +261,9 @@ void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *rend
  * lvEmbedFrameTexture updates the render target when the decode timers asked
  * for it and reports the texture plus the visible slice within it (src rect in
  * texture pixels), clearing and presenting nothing. Wheel coordinates are
- * image-local; pan deltas are host screen pixels measured from lvEmbedPanBegin.
- * lvEmbedGetZoomLevel reports the scale the slice is drawn at, so a host can
+ * image-local; pan deltas are host screen pixels measured from lvEmbedPanBegin,
+ * and a non-zero delta turns off following the tank lvEmbedFocusPlayerByName
+ * picked. lvEmbedGetZoomLevel reports the scale the slice is drawn at, so a host can
  * size its image at the slice times the zoom instead of stretching it to fill.
  * lvEmbedGetProgress, lvEmbedSeekRatio, lvEmbedSeekToClip and lvEmbedSeekToTime
  * all speak in the presented window rather than the whole log: progress is
