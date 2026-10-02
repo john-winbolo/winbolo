@@ -1698,7 +1698,7 @@ static void serverSimApplyMapChange(ServerSim *sim) {
        scenario is told about the file first and the seating reads whatever
        template they leave; the settings publish below then carries a lobby
        that is already the new map's. */
-    serverSimScenarioOnMapChanged(sim, sim->mapFilePath);
+    serverSimScenarioOnMapCommitted(sim, sim->mapFilePath);
     /* And the list the lobby draws, because the map commit has just changed
        it: the row for the map's own script is the committed map's, and the
        decision above is what set or cleared it. The picks are untouched by a

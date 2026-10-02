@@ -9598,6 +9598,16 @@ static void scnPublishMapScript(ServerSim *sim, const ScenarioHost *h,
  * together. The settings event says which is playing, so nobody has to guess
  * why the map's own is not.
  *
+ * That is the order for a scenario picked while the map is on. The other
+ * order — a map with its own scenario committed while a picked scenario is
+ * on the list — goes the other way, because there the map is the newer
+ * choice: the commit takes the picked scenarios off the list before this
+ * runs (serverSimScenarioOnMapCommitted), so the map's own plays and the mods
+ * stay behind it.
+ *
+ * The Mods/Scenario setting off composes nothing at all, the map's own script
+ * included, and the map plays plainly on the lobby's own game type.
+ *
  * Clearing the list is therefore not the same as playing nothing: it is rule
  * 1, so a map with a script of its own picks it back up and a plain map is
  * left plain.
@@ -9619,6 +9629,7 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
     int             i;
     bool            picked  = false;
     bool            listed  = false;
+    bool            modsOff;
 
     if (slot == NULL) return;
     scenarioHostDetach(*slot);
@@ -9627,6 +9638,7 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
 
     err[0] = '\0';
     memset(src, 0, sizeof(src));
+    modsOff = serverSimGetModsOff(sim);
 
     /* Two questions of the rows the lobby recorded, asked before any file is
        read: whether one of the picks decides the round, and whether the
@@ -9652,10 +9664,7 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
         }
         if (row->bound) {
             listed = true;
-        } else if (!row->keepsWinCondition && !serverSimGetModsOff(sim)) {
-            /* Not while the Mods/Scenario setting is off: the loop below
-               composes no pick then, and a picked scenario that will not play
-               must not take the map's own script off with it. */
+        } else if (!row->keepsWinCondition) {
             picked = true;
         }
     }
@@ -9668,7 +9677,8 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
 
        Where the list does say — the bound row — nothing happens here and the
        loop below reads the map at the row's own place. */
-    if (!listed && !picked && mapPath != NULL && mapPath[0] != '\0' &&
+    if (!listed && !picked && !modsOff && mapPath != NULL &&
+        mapPath[0] != '\0' &&
         scnMapSource(sim, mapPath, &src[0], err, sizeof(err))) {
         mapAt = 0;
         n     = 1;
@@ -9682,20 +9692,21 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
             continue;
         }
         own = row->bound;
-        /* Mods/Scenario off, so the round composes none of the host's picks:
-           no mod and no picked scenario. The list itself is left as the host
-           wrote it, so checking the box back on brings the same scripts back
-           in the same order.
+        /* Mods/Scenario off, so the round composes no script at all: no mod,
+           no picked scenario and not the map's own either. The list itself
+           is left as the host wrote it, so checking the box back on brings
+           the same scripts back in the same order.
 
-           The map's own script is never what this takes off. It is not a
-           pick, whatever place on the list it has been given, and a switch
-           for the scripts a host chose has never decided whether the map
-           plays by its own rules. With no picked scenario composing, picked
-           above stays false and the map's own script comes back at the front
-           where the list does not name it.
+           The map's own script goes too. The box reads "Mods/Scenario", and a
+           host who turns it off on a scenario map is asking for the map to
+           play plainly, on the game type the lobby had before a scenario
+           moved it to scripted (serverSimScenarioApplyLobbyRules gives that
+           back once nothing is attached). A lobby still showing the map's
+           scenario under Game Type with the box off was the bug this
+           replaced.
 
            The setting is LST_MODS_OFF, src/bolo/public/wire_limits.h. */
-        if (!own && serverSimGetModsOff(sim)) {
+        if (modsOff) {
             continue;
         }
         /* Ten is what a round composes and ten is what the lobby list
