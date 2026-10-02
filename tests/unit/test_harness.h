@@ -2107,6 +2107,15 @@ int run_sim_rules_builder_cost_follows(void);
  * build on a sim that is not running it (test_sim_rules.c). */
 int run_sim_rules_are_classic(void);
 int run_sim_rules_obs_refuses_non_classic(void);
+
+/* The event translator the gym and the in-game ML brain share
+ * (test_obs_events.c). */
+int run_obs_events_every_type_classified(void);
+int run_obs_events_kills(void);
+int run_obs_events_hits(void);
+int run_obs_events_builders(void);
+int run_obs_events_sound_ids(void);
+int run_obs_events_pill_killed(void);
 int run_sim_rules_shell_flight_follows(void);
 int run_sim_rules_brain_shot_follows(void);
 int run_sim_rules_worldsim_pill_follows(void);

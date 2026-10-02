@@ -827,8 +827,9 @@ void serverSimCbMineExploded(void *ctx, BYTE mapX, BYTE mapY, BYTE layer) {
 /* A tank took a shell or a mine. Local like the mine placing above, for a
  * different reason: nothing a client or a bot reads needs it, and a round with
  * shells flying would spend a slot of the tick's event buffer on every hit.
- * It is raised only while an in-process subscriber is listening, which is the
- * scenario host, so a round nobody scripts spends nothing on it. */
+ * It is raised only while an in-process subscriber takes events: the scenario
+ * host, for on_tank_hit, and the gym, which reads it off the queue for its hit
+ * rewards. A round with neither spends nothing on it. */
 void serverSimCbTankHit(void *ctx, BYTE victim, BYTE attacker, BYTE cause,
                         BYTE amount, BYTE pill) {
     ServerSim *sim = (ServerSim *)ctx;
