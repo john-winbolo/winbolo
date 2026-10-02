@@ -175,11 +175,16 @@ its key:
 |-----|-------|
 | `/gamelog/<key>` | the log with that key |
 | `/logviewer.html?key=<key>` | the same log |
+| `/logviewer.html?url=<url>` | the log at that address; a relative address is taken from the site root, and another site must allow it with CORS |
 
 The page fetches `/logdownload?key=<key>` from its own origin, so the server
 passes `/logdownload` on to the WinBolo.net backend, and `/gamelog/*` is an
 internal rewrite to `logviewer.html`. The page carries `<base href="/">`, so it
 must be served from the site root.
+
+Build the deploy zip with `cmake --build <build-dir> --target wasm-dist` in the
+log viewer build. It makes `<build-dir>/wasm-logviewer-dist.zip`; unzip it into
+the site root.
 
 ```caddy
 logviewer.winbolo.net {

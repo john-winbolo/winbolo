@@ -93,10 +93,14 @@
                 var c = document.getElementById('canvas');
                 console.log('[WASM] Canvas after init:', c.width, 'x', c.height, 'style:', c.style.cssText);
 
-                /* A WinBolo.net log key, from /gamelog/<key> or ?key=<key> */
+                /* A WinBolo.net log key, from /gamelog/<key> or ?key=<key>,
+                   or a full download address from ?url=<url> */
                 var key = logKeyFromLocation();
+                var url = new URLSearchParams(window.location.search).get('url');
                 if (key) {
                     loadWbvFromKey(key);
+                } else if (url) {
+                    loadWbvFromUrl(url);
                 }
             }
         };
@@ -121,30 +125,47 @@
         }
 
         /* The log key in the page address: the path /gamelog/<key>, or the
-           query ?key=<key>. Returns '' when there is none. */
+           query ?key=<key>. Returns '' when there is none, or when the path
+           is not valid percent-encoding: this runs before main(), so a throw
+           here would stop the viewer starting. */
         function logKeyFromLocation() {
             var m = window.location.pathname.match(/^\/gamelog\/([^\/]+)\/?$/);
-            if (m) return decodeURIComponent(m[1]);
+            if (m) {
+                try { return decodeURIComponent(m[1]); } catch (err) { return ''; }
+            }
             return new URLSearchParams(window.location.search).get('key') || '';
         }
 
         /* Download a WinBolo.net log by its key and open it. /logdownload is
            same-origin: the web server passes it on to WinBolo.net. */
         function loadWbvFromKey(key) {
+            loadWbvFrom('/logdownload?key=' + encodeURIComponent(key), key);
+        }
+
+        /* Download a log from a full address and open it. A relative address
+           resolves against the site root (see <base>). */
+        function loadWbvFromUrl(url) {
+            var last = url.split('?')[0].split('/').pop().replace(/\.wbv$/i, '');
+            loadWbvFrom(url, last);
+        }
+
+        /* Fetch a log and open it as <name>.wbv, keeping only safe characters
+           of name for its path in the Emscripten FS. */
+        function loadWbvFrom(fetchUrl, name) {
             Module.setStatus('Downloading log file...');
-            fetch('/logdownload?key=' + encodeURIComponent(key))
+            fetch(fetchUrl)
                 .then(function(response) {
                     if (!response.ok) throw new Error('HTTP ' + response.status);
                     return response.arrayBuffer();
                 })
                 .then(function(buffer) {
                     var data = new Uint8Array(buffer);
-                    var name = key.replace(/[^0-9A-Za-z_-]/g, '') || 'download';
-                    openWbvData(data, name + '.wbv');
+                    var safe = name.replace(/[^0-9A-Za-z_-]/g, '') || 'download';
+                    openWbvData(data, safe + '.wbv');
                 })
                 .catch(function(err) {
-                    Module.setStatus('Error loading URL: ' + err.message);
-                    console.error('Failed to load log from URL:', err);
+                    Module.setStatus('Error loading log: ' + err.message);
+                    console.error('Failed to load log:', err);
                 });
         }
 
