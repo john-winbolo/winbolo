@@ -1429,6 +1429,39 @@ else()
     message(STATUS "ONNX Runtime not found — ML brain support disabled")
 endif()
 
+# Copies the ONNX Runtime shared library next to a target. bolo_static
+# PUBLIC-links onnxruntime, so every binary that links bolo_static, directly
+# or through server_sim_static, loads the library at startup and its $ORIGIN
+# / @executable_path RPATH expects it beside the executable. Call this for
+# each such target rather than relying on a sibling target's copy landing in
+# the same directory: a single-target build then still starts. Does nothing
+# when ONNX Runtime came from the system rather than FetchContent, and
+# nothing without ONNX Runtime at all.
+function(winbolo_stage_onnxruntime TARGET)
+    if(NOT HAVE_ONNXRUNTIME)
+        return()
+    endif()
+    if(WIN32 AND DEFINED ONNXRUNTIME_DLL)
+        add_custom_command(TARGET ${TARGET} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_DLL}" "$<TARGET_FILE_DIR:${TARGET}>"
+            COMMENT "Copying ONNX Runtime DLL to ${TARGET} output directory"
+        )
+    elseif(DEFINED ONNXRUNTIME_LIBDIR)
+        file(GLOB _ort_libs "${ONNXRUNTIME_LIBDIR}/libonnxruntime*")
+        foreach(_f ${_ort_libs})
+            # Skip .dSYM bundles: they are directories, so copy_if_different
+            # fails on them, and the debug symbols need not ship beside the
+            # binary.
+            if(_f MATCHES "\\.dSYM$")
+                continue()
+            endif()
+            add_custom_command(TARGET ${TARGET} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_f}" "$<TARGET_FILE_DIR:${TARGET}>"
+            )
+        endforeach()
+    endif()
+endfunction()
+
 # Sentry crash reporting — sentry-native for desktop.  The ENABLE_SENTRY /
 # SENTRY_DSN / HAVE_SENTRY* declarations, and the iOS sentry-cocoa download,
 # live above the iOS/desktop split because the iOS target consumes them there.
@@ -2089,35 +2122,15 @@ add_custom_command(TARGET WinBolo POST_BUILD
     COMMENT "Copying SDL3 shared libraries to WinBolo output directory"
 )
 # Copy ONNX Runtime shared library if using FetchContent prebuilt
-if(HAVE_ONNXRUNTIME)
+winbolo_stage_onnxruntime(WinBolo)
+if(HAVE_ONNXRUNTIME AND DEFINED ONNXRUNTIME_NOTICES)
     # Its third-party notices go into data/ beside THIRD_PARTY_NOTICES.md,
     # which points to them.
-    if(DEFINED ONNXRUNTIME_NOTICES)
-        add_custom_command(TARGET WinBolo POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_NOTICES}"
-                "${WINBOLO_DATA_DIR}/data/THIRD_PARTY_NOTICES-onnxruntime.txt"
-            COMMENT "Copying ONNX Runtime third-party notices to data/"
-        )
-    endif()
-    if(WIN32 AND DEFINED ONNXRUNTIME_DLL)
-        add_custom_command(TARGET WinBolo POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_DLL}" "$<TARGET_FILE_DIR:WinBolo>"
-            COMMENT "Copying ONNX Runtime DLL to WinBolo output directory"
-        )
-    elseif(DEFINED ONNXRUNTIME_LIBDIR)
-        file(GLOB _ORT_ALL_SO "${ONNXRUNTIME_LIBDIR}/libonnxruntime*")
-        foreach(_f ${_ORT_ALL_SO})
-            # Skip .dSYM bundles — they are directories, not files, so
-            # copy_if_different fails on them. They are debug symbols that
-            # don't need to ship next to the binary.
-            if(_f MATCHES "\\.dSYM$")
-                continue()
-            endif()
-            add_custom_command(TARGET WinBolo POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_f}" "$<TARGET_FILE_DIR:WinBolo>"
-            )
-        endforeach()
-    endif()
+    add_custom_command(TARGET WinBolo POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_NOTICES}"
+            "${WINBOLO_DATA_DIR}/data/THIRD_PARTY_NOTICES-onnxruntime.txt"
+        COMMENT "Copying ONNX Runtime third-party notices to data/"
+    )
 endif()
 # Copy crashpad_handler next to WinBolo executable
 if(HAVE_SENTRY AND TARGET crashpad_handler)
@@ -2304,31 +2317,9 @@ add_custom_command(TARGET WinBoloDS POST_BUILD
 )
 
 # bolo_static PUBLIC-links onnxruntime, so WinBoloDS inherits the dylib
-# dependency. Mirror the WinBolo/MapEditor POST_BUILD copy step so the
-# dedicated server finds the dylib next to its executable — without this,
-# launching WinBoloDS fails at dyld load time with
+# dependency; without the copy, launching it fails at dyld load time with
 # "Library not loaded: @rpath/libonnxruntime.*.dylib".
-if(HAVE_ONNXRUNTIME)
-    if(WIN32 AND DEFINED ONNXRUNTIME_DLL)
-        add_custom_command(TARGET WinBoloDS POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_DLL}" "$<TARGET_FILE_DIR:WinBoloDS>"
-            COMMENT "Copying ONNX Runtime DLL to WinBoloDS output directory"
-        )
-    elseif(DEFINED ONNXRUNTIME_LIBDIR)
-        file(GLOB _ORT_ALL_SO "${ONNXRUNTIME_LIBDIR}/libonnxruntime*")
-        foreach(_f ${_ORT_ALL_SO})
-            # Skip .dSYM bundles — they are directories, not files, so
-            # copy_if_different fails on them. They are debug symbols that
-            # don't need to ship next to the binary.
-            if(_f MATCHES "\\.dSYM$")
-                continue()
-            endif()
-            add_custom_command(TARGET WinBoloDS POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_f}" "$<TARGET_FILE_DIR:WinBoloDS>"
-            )
-        endforeach()
-    endif()
-endif()
+winbolo_stage_onnxruntime(WinBoloDS)
 
 add_custom_command(TARGET WinBoloDS POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -2696,6 +2687,7 @@ add_custom_command(TARGET WinBoloHeadless POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:WinBoloHeadless>"
     COMMENT "Copying SDL3 shared library to WinBoloHeadless output directory"
 )
+winbolo_stage_onnxruntime(WinBoloHeadless)
 add_custom_command(TARGET WinBoloHeadless POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -2798,11 +2790,12 @@ set_target_properties(winbolo_gym PROPERTIES
     PUBLIC_HEADER src/gym/winbolo_gym.h
 )
 
-# Copy SDL3 next to the gym library
+# Copy SDL3 and ONNX Runtime next to the gym library
 add_custom_command(TARGET winbolo_gym POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:winbolo_gym>"
     COMMENT "Copying SDL3 shared library to winbolo_gym output directory"
 )
+winbolo_stage_onnxruntime(winbolo_gym)
 add_custom_command(TARGET winbolo_gym POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/data/lang" "$<TARGET_FILE_DIR:winbolo_gym>/data/lang"
@@ -2951,6 +2944,7 @@ add_custom_command(TARGET BrainTest POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:BrainTest>"
     COMMENT "Copying SDL3 shared library to BrainTest output directory"
 )
+winbolo_stage_onnxruntime(BrainTest)
 add_custom_command(TARGET BrainTest POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:BrainTest>/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -3206,31 +3200,10 @@ add_custom_command(TARGET MapEditor POST_BUILD
 )
 
 # bot_brains_static pulls in onnxruntime, so MapEditor inherits the
-# dylib dependency. Mirror the WinBolo POST_BUILD copy step so the
-# .app bundle ships with the dylib next to the executable — without
-# this, launching the standalone MapEditor.app fails at dyld load
-# time with "Library not loaded: @rpath/libonnxruntime.*.dylib".
-if(HAVE_ONNXRUNTIME)
-    if(WIN32 AND DEFINED ONNXRUNTIME_DLL)
-        add_custom_command(TARGET MapEditor POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_DLL}" "$<TARGET_FILE_DIR:MapEditor>"
-            COMMENT "Copying ONNX Runtime DLL to MapEditor output directory"
-        )
-    elseif(DEFINED ONNXRUNTIME_LIBDIR)
-        file(GLOB _ORT_ALL_SO "${ONNXRUNTIME_LIBDIR}/libonnxruntime*")
-        foreach(_f ${_ORT_ALL_SO})
-            # Skip .dSYM bundles — they are directories, not files, so
-            # copy_if_different fails on them. They are debug symbols that
-            # don't need to ship next to the binary.
-            if(_f MATCHES "\\.dSYM$")
-                continue()
-            endif()
-            add_custom_command(TARGET MapEditor POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_f}" "$<TARGET_FILE_DIR:MapEditor>"
-            )
-        endforeach()
-    endif()
-endif()
+# dylib dependency; the .app bundle ships with the dylib next to the
+# executable, or launching the standalone MapEditor.app fails at dyld
+# load time with "Library not loaded: @rpath/libonnxruntime.*.dylib".
+winbolo_stage_onnxruntime(MapEditor)
 if(APPLE)
     add_custom_command(TARGET MapEditor POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -4735,6 +4708,10 @@ add_custom_command(TARGET WinBoloUnitTests POST_BUILD
         "$<TARGET_FILE_DIR:WinBoloUnitTests>/data/mods"
     COMMENT "Copying shipped mods to WinBoloUnitTests output directory"
 )
+# The test binary links bolo_static, so it loads ONNX Runtime at startup
+# like the game does. Stage the library here so a tests-only build runs,
+# rather than depending on WinBoloDS's copy of it into the same directory.
+winbolo_stage_onnxruntime(WinBoloUnitTests)
 
 target_include_directories(WinBoloUnitTests PRIVATE
     src/gui/sdl3
@@ -7358,8 +7335,8 @@ if(WB_FUZZ)
     # Stage the FetchContent-built shared libs next to the fuzz binaries so the
     # $ORIGIN RPATH resolves them at run time (these copies normally ride the
     # game/server targets, which a fuzz-only build doesn't produce). Mirrors
-    # the WinBolo POST_BUILD copy. Tier 1 needs only SDL3; tier 2 also pulls in
-    # onnxruntime via bot_brains_static.
+    # the WinBolo POST_BUILD copy. Every fuzz target links bolo_static, which
+    # PUBLIC-links onnxruntime, so each gets that library too.
     add_custom_command(TARGET fuzz_wire_codec POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:fuzz_wire_codec>")
@@ -7381,26 +7358,12 @@ if(WB_FUZZ)
     add_custom_command(TARGET fuzz_replay POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:fuzz_replay>")
-    if(HAVE_ONNXRUNTIME AND DEFINED ONNXRUNTIME_LIBDIR)
-        file(GLOB _FUZZ_ORT_SO "${ONNXRUNTIME_LIBDIR}/libonnxruntime*")
-        foreach(_f ${_FUZZ_ORT_SO})
-            if(_f MATCHES "\\.dSYM$")
-                continue()
-            endif()
-            add_custom_command(TARGET fuzz_server_dispatch POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${_f}" "$<TARGET_FILE_DIR:fuzz_server_dispatch>")
-            add_custom_command(TARGET fuzz_client_snapshot POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${_f}" "$<TARGET_FILE_DIR:fuzz_client_snapshot>")
-            add_custom_command(TARGET fuzz_join_accept POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${_f}" "$<TARGET_FILE_DIR:fuzz_join_accept>")
-            add_custom_command(TARGET fuzz_replay POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${_f}" "$<TARGET_FILE_DIR:fuzz_replay>")
-        endforeach()
-    endif()
+    foreach(_fuzz_target
+            fuzz_wire_codec fuzz_map_load fuzz_map_fields fuzz_replay
+            fuzz_channel_frame fuzz_voice_segment fuzz_bulk_transfer
+            fuzz_server_dispatch fuzz_client_snapshot fuzz_join_accept)
+        winbolo_stage_onnxruntime(${_fuzz_target})
+    endforeach()
 endif()
 
 endif() # iOS vs Desktop
