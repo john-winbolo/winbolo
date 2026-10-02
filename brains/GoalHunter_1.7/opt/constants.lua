@@ -2085,6 +2085,14 @@ M.BOAT_SHELL_DODGE_GAP           = 192
 -- the best dodge would still clear the gap if it started this much later.
 -- 0 = dodge the first tick a shell threatens.
 M.BOAT_SHELL_DODGE_DEFER         = 0
+-- BOAT_SHELL_DODGE_CHANCE: 0..1. The chance that the boat dodges a threat.
+-- The bot rolls once when a threat starts (the first brain tick a shell
+-- would hit the boat with its planned keys) and keeps that answer until no
+-- shell threatens the boat. So it does not switch between dodging and not
+-- dodging each tick. The roll is a hash of the tick, the player number and
+-- state.replan_offset (no math.random), so a seed always plays the same.
+-- 1 = always dodge (old behaviour; no roll is made).
+M.BOAT_SHELL_DODGE_CHANCE        = 1.0
 -- EDGE_COST_REFRESH_THINKS: rebuild the pathfinder's Dijkstra edge-cost table
 -- every this many thinks (steering.lua M.steer). The table is built once in
 -- Brain.open and kept until the map pointer changes, so terrain that differs
@@ -5034,6 +5042,7 @@ M.PRESETS = {
     BOAT_SHELL_DODGE              = false,
     BOAT_SHELL_DODGE_GAP          = 192,
     BOAT_SHELL_DODGE_DEFER        = 0,
+    BOAT_SHELL_DODGE_CHANCE       = 1.0,
     EDGE_COST_REFRESH_THINKS      = 0,
     -- 2026-09-08: while on capture_pill the bot now sweeps the target tile for
     -- an enemy builder rebuilding the corpse -- the kill_lgm aim solution takes
@@ -5465,7 +5474,14 @@ M.PRESETS = {
     -- Bench (Free For All Joust, 4 and 6 bots, target 10, winner = side of
     -- the top scorer): Hard beat Medium 8-0, Medium beat Easy 7-1 (and 28-4
     -- in a 32-game run), Hard beat Easy 8-0.
+    -- 2026-10-02: Hard dodges a threat on a coin flip (Andrew:
+    -- "unpredictability is good"). Hard with dodging off beat Hard with
+    -- dodging on 25-7 in 32 games (it fires 36% more), but a dodger wins
+    -- more of the close fights. Hard otherwise keeps the values above.
     by_difficulty = {
+      hard = {
+        BOAT_SHELL_DODGE_CHANCE   = 0.5,
+      },
       medium = {
         OUTNUMBERED_DISENGAGE     = false,
         AIM_ERROR_BRADS           = 3,

@@ -5652,11 +5652,34 @@ local function boat_shell_dodge(state, info, keys, taps)
       end
     end
   end
-  if #shells == 0 then return keys, taps end
+  if #shells == 0 then state._dodge_roll = nil return keys, taps end
   local throt = (bit.band(keys, KEY_FASTER) ~= 0 and 1)
              or (bit.band(keys, KEY_SLOWER) ~= 0 and -1) or 0
   local planned = dodge_fly(info, shells, held, throt, prev_held, vmax)
-  if planned >= gap then return keys, taps end
+  if planned >= gap then state._dodge_roll = nil return keys, taps end
+  -- C.BOAT_SHELL_DODGE_CHANCE: a threat starts here. Roll once, at the first
+  -- tick of the threat, and keep the answer until the threat ends (the two
+  -- returns above clear it). The roll is a hash, not math.random, so it does
+  -- not move the shared random stream and a seed always plays the same.
+  -- 1 = always dodge: no roll is made.
+  local chance = C.BOAT_SHELL_DODGE_CHANCE or 1
+  if chance < 1 then
+    local roll = state._dodge_roll
+    if roll == nil then
+      -- seed < 3000017, so seed * 2654435761 < 2^53 and is exact.
+      local seed = ((state.tick or 0) * 7 + (info.player_number or 0) * 7919
+                    + (state.replan_offset or 0) * 131) % 3000017
+      local h = math.floor(seed * 2654435761 / 65536) % 65536
+      roll = (h / 65536) < chance
+      state._dodge_roll = roll
+      state._dodge_threats = (state._dodge_threats or 0) + 1
+      if roll then state._dodge_rolled_yes = (state._dodge_rolled_yes or 0) + 1 end
+      log.reason("steer", { mode = "boat_shell_dodge_roll", dodge = roll,
+        chance = chance, threats = state._dodge_threats,
+        dodges = state._dodge_rolled_yes or 0 })
+    end
+    if not roll then return keys, taps end
+  end
   local best_g, best_t, best_s = planned, held, throt
   for _, t in ipairs(DODGE_TURNS) do
     for _, s in ipairs(DODGE_THROTS) do
@@ -5741,6 +5764,8 @@ function M.steer(state, world, info, goal)
   -- of a hostile shell that would hit it. Default false never enters.
   if C.BOAT_SHELL_DODGE and keys and info.inboat then
     keys, taps = boat_shell_dodge(state, info, keys, taps)
+  else
+    state._dodge_roll = nil   -- off the boat (or dead): the threat is over
   end
   if C.CLIFF_STOP_MASK_ALL_GOALS and keys and not info.inboat then
     local sdir = U.bsin(info.direction)
