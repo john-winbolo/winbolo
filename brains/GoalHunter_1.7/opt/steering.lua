@@ -5731,6 +5731,11 @@ function M.steer(state, world, info, goal)
       cpf.set_config("wall_shoot_cost", no_walls and 1e6 or C.WALL_SHOOT_COST)
     end
   end
+  -- C.EDGE_COST_REFRESH_THINKS: see constants.lua. Default 0 never enters.
+  if C.EDGE_COST_REFRESH_THINKS > 0
+     and (state.tick or 0) % C.EDGE_COST_REFRESH_THINKS == 0 then
+    cpf.rebuild_edge_costs()
+  end
   local keys, taps = steer_core(state, world, info, goal)
   -- C.BOAT_SHELL_DODGE: a boat turns and changes speed to get out of the way
   -- of a hostile shell that would hit it. Default false never enters.

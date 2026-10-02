@@ -2085,6 +2085,13 @@ M.BOAT_SHELL_DODGE_GAP           = 192
 -- the best dodge would still clear the gap if it started this much later.
 -- 0 = dodge the first tick a shell threatens.
 M.BOAT_SHELL_DODGE_DEFER         = 0
+-- EDGE_COST_REFRESH_THINKS: rebuild the pathfinder's Dijkstra edge-cost table
+-- every this many thinks (steering.lua M.steer). The table is built once in
+-- Brain.open and kept until the map pointer changes, so terrain that differs
+-- from the open-time map stays priced as the old tile: in Joust the slate
+-- route named an arena wall as plain water and the boat drove into it for
+-- good. 0 = never (old behaviour: built once).
+M.EDGE_COST_REFRESH_THINKS       = 0
 -- ── attack_tank: heat a FRIENDLY pill mid-fight (2026-09-06) ──────────────
 -- While fighting enemy tank E, a friendly pill CLOSER to E than we are is a
 -- second gun already in position -- but only if it is angry. The engine's
@@ -5027,6 +5034,7 @@ M.PRESETS = {
     BOAT_SHELL_DODGE              = false,
     BOAT_SHELL_DODGE_GAP          = 192,
     BOAT_SHELL_DODGE_DEFER        = 0,
+    EDGE_COST_REFRESH_THINKS      = 0,
     -- 2026-09-08: while on capture_pill the bot now sweeps the target tile for
     -- an enemy builder rebuilding the corpse -- the kill_lgm aim solution takes
     -- the TURN keys whenever it points within CAPTURE_LGM_HUNT_TOL_BRADS of
@@ -5438,6 +5446,34 @@ M.PRESETS = {
     WALL_SHOOT_LIFE_MAX           = 8,
     BOAT_SHELL_DODGE              = true,
     BOAT_SHELL_DODGE_DEFER        = 8,
+    EDGE_COST_REFRESH_THINKS      = 250,    -- about 10 s; arena walls never fall
+    -- Per level, on top of the values above (init.lua _apply_cfg_tokens).
+    -- Hard keeps the values above. Medium and Easy aim wider, fire slower,
+    -- wait for a steadier target and do not dodge shells, so Hard beats
+    -- Medium and Medium beats Easy (2026-10-01 bench: 22-2 and 23-1 over 24
+    -- games each). Joust is always "outnumbered" in a Free For All, so the
+    -- lower levels must not disengage for it, or a 4-6 bot round stalls.
+    by_difficulty = {
+      medium = {
+        OUTNUMBERED_DISENGAGE     = false,
+        AIM_ERROR_BRADS           = 6,
+        FIRE_HOLD_TICKS           = 20,
+        REACTION_DELAY_TICKS      = 16,
+        TANK_COMBAT_STEADY_TICKS  = 5,
+        TANK_COMBAT_AIM_GATE_BRADS = 12,
+        BOAT_SHELL_DODGE          = false,
+      },
+      easy = {
+        OUTNUMBERED_DISENGAGE     = false,
+        AIM_ERROR_BRADS           = 14,
+        FIRE_HOLD_TICKS           = 50,
+        REACTION_DELAY_TICKS      = 24,
+        TANK_COMBAT_STEADY_TICKS  = 10,
+        TANK_COMBAT_AIM_GATE_BRADS = 8,
+        BOAT_SHELL_DODGE          = false,
+        LEAD_CAP_USE_MEASURED     = false,
+      },
+    },
   },
 }
 
