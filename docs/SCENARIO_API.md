@@ -458,7 +458,11 @@ everyone else, spectators included, the chooser is read-only.
 is the higher script's, and the details dialog marks the lower one's row
 *Overridden by …*. A region two scripts both name is kept twice, once for
 each, and each script's own lookups find its own. Tags are the union of every
-script's, and every script's triggers are kept, in list order. The round needs
+script's, and every script's triggers are kept, in list order. Hooks run down
+the list, top first, except `on_tick`, which runs up it: the bottom script's
+first and the top script's last. A write such as `game.set_modifiers` or
+`game.set_rule` replaces what was there, so in a frame the last write stands,
+and the top script's `on_tick` write is the one that stands. The round needs
 bots when any script on the list says `needs_bots`, whatever its place (see
 `needs_bots` in [The `scenario` table](#the-scenario-table)).
 
@@ -1129,7 +1133,7 @@ there is nothing for a return to reach. See [Triggers](#triggers).
 |---|---|
 | `on_setup()` | Once, after the scenario's rules are applied and before the round's first tick. Every write is available except the six roster ops — `spawn_bot`, `remove_bot`, `set_team` and the three `lobby_*` calls — which answer `SCN_OP_WRONG_STATE` here. This is where the map gets ready. |
 | `on_start()` | The round's first running tick. The tanks exist and the roster has settled, so this is the first moment a scenario can ask who is playing. |
-| `on_tick(tick)` | Once per frame, fifty times a second. The `tick` it is handed goes up by **2** each time, not by 1 — see [Three clocks](#three-clocks). **Prefer not to declare this.** Timers and the hooks below cover nearly everything, and a handler that runs fifty times a second is a handler that has to be cheap. |
+| `on_tick(tick)` | Once per frame, fifty times a second. The `tick` it is handed goes up by **2** each time, not by 1 — see [Three clocks](#three-clocks). With more than one script on the list, the scripts' `on_tick` run bottom to top, so the top script writes last and its `set_modifiers`, `set_rule` and other writes stand (see [The script list](#the-script-list)). **Prefer not to declare this.** Timers and the hooks below cover nearly everything, and a handler that runs fifty times a second is a handler that has to be cheap. |
 | `on_end()` | The round has just ended, for any reason. |
 
 **What a setup arranges, and what it does not.** The window that lets writes

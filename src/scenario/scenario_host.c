@@ -3500,7 +3500,8 @@ static bool scnHookBegin(ScenarioHost *h, ScnHookId id) {
     return false;
 }
 
-/* The hook down the list, in list order: number one first.
+/* The hook down the list, in list order: number one first. on_tick is the
+ * one exception and goes up the list; see the note at the top of the loop.
  *
  * The caller's nargs are sitting on the stack. Each script gets its own copy
  * of them — its function pushed, the arguments pushed again above it, the
@@ -3526,10 +3527,18 @@ static bool scnHookBegin(ScenarioHost *h, ScnHookId id) {
  * which bits that leaves. */
 static void scnHookCallTo(ScenarioHost *h, ScnHookId id, int nargs,
                           uint16_t to) {
-    int base = lua_gettop(h->L) - nargs;
-    int i;
+    int  base = lua_gettop(h->L) - nargs;
+    /* on_tick alone goes up the list, the last script first, so number one
+       writes last in the frame. game.set_modifiers and the other writes
+       replace what was there, so the last write is the one that stands, and
+       up the list makes that the top script's — the same script the lobby's
+       "the top of the list wins" gives a rule to. Every other hook keeps
+       list order. With one script the two orders are the same call. */
+    bool up = (id == SCN_HOOK_TICK);
+    int  n;
 
-    for (i = 0; i < h->count; i++) {
+    for (n = 0; n < h->count; n++) {
+        int                     i = up ? h->count - 1 - n : n;
         ScnSandboxCall          saved;
         ScnRunningSave          outer;
         int                     rc;
@@ -3541,7 +3550,8 @@ static void scnHookCallTo(ScenarioHost *h, ScnHookId id, int nargs,
         }
         /* A tick whose calls have spent SCN_BUDGET_TICK_INSTR between them
            makes no more: the rest of the drain, the region hooks and on_tick
-           are dropped for this tick. A dropped call is no call at all, so it
+           are dropped for this tick (for on_tick that is the scripts nearer
+           the top, which run last). A dropped call is no call at all, so it
            counts no error and clears none; the one that went over has already
            been counted. */
         if (scnSandboxTickSpent(h->L)) {

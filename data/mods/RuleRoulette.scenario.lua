@@ -96,12 +96,13 @@
 --
 --   For the product to be what the tank drives on, this script's on_tick
 --   has to run after the other script's in the same frame. on_tick is the
---   last per-frame hook, and the scripts' on_tick run down the lobby's
---   list, top first. So put Rule Roulette BELOW the other mod (a lower
---   priority). Above it, the other mod's on_tick writes after this one, and
---   its value is the one the tank drives on. A write from the other mod's
---   timers or event hooks comes before every on_tick, so the order does not
---   matter for those.
+--   last per-frame hook, and the scripts' on_tick run up the lobby's list,
+--   bottom first, so the top script writes last. So put Rule Roulette ABOVE
+--   the other mod (a higher priority, nearer the top of the list). Below
+--   it, the other mod's on_tick writes after this one, and its value is the
+--   one the tank drives on. A write from the other mod's timers or event
+--   hooks comes before every on_tick, so the order does not matter for
+--   those.
 --
 -- The host sets both intervals, how many upcoming modes the panel shows for
 -- each track, the countdown, the chat commands and the multiply setting in
@@ -1123,7 +1124,7 @@ scenario = {
     { id = "chat", label = "!roulette chat commands", type = "bool",
       default = false },
     -- Yes: each frame a tank's modifiers are the other mods' set times the
-    -- tank mode, not replaced by it. List Rule Roulette below those mods.
+    -- tank mode, not replaced by it. List Rule Roulette above those mods.
     { id = "multiply", label = "Multiply other mods' modifiers",
       type = "choice", choices = { "Yes", "No" }, default = "No" },
   },

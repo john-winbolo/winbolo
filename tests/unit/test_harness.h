@@ -3881,6 +3881,7 @@ int run_scenario_compose_drop_picked_scenarios(void);
 int run_scenario_compose_fallback_strict(void);
 int run_scenario_compose_needs_bots_any_mod(void);
 int run_scenario_compose_needs_bots_scenario_and_mod(void);
+int run_scenario_compose_on_tick_bottom_first(void);
 
 /* The panel's display list (test_scenario_panel.c): the byte layout
  * decoded from a hand-written list, the refusal each malformed list

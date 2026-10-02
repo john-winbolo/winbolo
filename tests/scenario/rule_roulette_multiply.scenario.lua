@@ -6,7 +6,7 @@
 -- The gate runs one script per arena, so the other mod is played by this
 -- arena: its on_tick runs first in the frame, then Rule Roulette's on_tick,
 -- then the checks. That is the order the lobby gives when Rule Roulette is
--- listed BELOW the other mod.
+-- listed ABOVE the other mod: on_tick runs up the list, bottom first.
 --
 -- The stand-in (ARENA.other), as Pillbox Tag does it:
 --  * seat 0 is the "holder": every frame his speed modifier is set to a

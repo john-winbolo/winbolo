@@ -2197,6 +2197,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_compose_fallback_strict",                run_scenario_compose_fallback_strict                },
     { "scenario_compose_needs_bots_any_mod",             run_scenario_compose_needs_bots_any_mod             },
     { "scenario_compose_needs_bots_scenario_and_mod",    run_scenario_compose_needs_bots_scenario_and_mod    },
+    { "scenario_compose_on_tick_bottom_first",            run_scenario_compose_on_tick_bottom_first            },
     { "scenario_panel_parses_each_primitive",            run_scenario_panel_parses_each_primitive            },
     { "scenario_panel_refuses_malformed",                run_scenario_panel_refuses_malformed                },
     { "scenario_panel_boundaries",                       run_scenario_panel_boundaries                       },
