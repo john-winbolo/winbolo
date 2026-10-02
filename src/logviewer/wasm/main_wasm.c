@@ -309,6 +309,39 @@ static void mainSavePreferences(void) {
 }
 
 /* --------------------------------------------------------------------------
+ * Fit the tile grid to a window of w x h points at the current zoom.
+ *
+ * The canvas fills the page, so the page sets the window's size and the
+ * window is never resized to a whole number of tiles: the grid is the
+ * nearest whole number of tiles, the way the desktop viewer fits a maximized
+ * window, and the blit clips what is left over.
+ * -------------------------------------------------------------------------- */
+static void fitTilesToWindow(int w, int h) {
+    int menuH = (int)lv_imgui_get_menu_bar_height();
+    float zoom = lv_drawGetZoomLevel();
+    float tilePxX, tilePxY;
+    int tilesX, tilesY;
+
+    if (zoom <= 0.0f) zoom = 1.0f;
+    tilePxX = (float)TILE_SIZE_X * zoom;
+    tilePxY = (float)TILE_SIZE_Y * zoom;
+    tilesX = (int)(((float)w + tilePxX * 0.5f) / tilePxX);
+    tilesY = (int)(((float)(h - menuH) + tilePxY * 0.5f) / tilePxY);
+    if (tilesX < 1) tilesX = 1;
+    if (tilesY < 1) tilesY = 1;
+    if (tilesX > 255) tilesX = 255;
+    if (tilesY > 255) tilesY = 255;
+
+    /* The size setters keep the offset inside the map for the new grid. */
+    lv_screenSetSizeX((BYTE)tilesX);
+    lv_screenSetSizeY((BYTE)tilesY);
+    lv_screenSetSubOffset(0, 0);
+    lv_drawResizeRenderTarget();
+    lv_drawDirtyScreen();
+    g_lv->wantScreenUpdate = TRUE;
+}
+
+/* --------------------------------------------------------------------------
  * Main loop body — called by emscripten_set_main_loop. The decoder is
  * ticked by lv_embed.c's SDL timers, which SDL runs on the browser's own
  * event loop under Emscripten.
@@ -337,29 +370,20 @@ static void main_loop_iteration(void) {
             g_lv->wantScreenUpdate = TRUE;
         }
         if (sdlEvent.type == SDL_EVENT_WINDOW_RESIZED) {
-            int w = sdlEvent.window.data1;
-            int h = sdlEvent.window.data2;
-            int menuH = (int)lv_imgui_get_menu_bar_height();
-
-            int tileW = ((w + TILE_SIZE_X / 2) / TILE_SIZE_X) * TILE_SIZE_X;
-            int tileH = (((h - menuH) + TILE_SIZE_Y / 2) / TILE_SIZE_Y) * TILE_SIZE_Y;
-            if (tileW < TILE_SIZE_X) tileW = TILE_SIZE_X;
-            if (tileH < TILE_SIZE_Y) tileH = TILE_SIZE_Y;
-            if (tileW > 255 * TILE_SIZE_X) tileW = 255 * TILE_SIZE_X;
-            if (tileH > 255 * TILE_SIZE_Y) tileH = 255 * TILE_SIZE_Y;
-
-            SDL_SetWindowSize(g_lv->window, tileW, tileH + menuH);
-            {
-                BYTE newTilesX = (BYTE)(tileW / TILE_SIZE_X);
-                BYTE newTilesY = (BYTE)(tileH / TILE_SIZE_Y);
-                /* The size setters keep the offset inside the map for the
-                 * new grid. */
-                lv_screenSetSizeX(newTilesX);
-                lv_screenSetSizeY(newTilesY);
+            fitTilesToWindow(sdlEvent.window.data1, sdlEvent.window.data2);
+        }
+        if (sdlEvent.type == SDL_EVENT_MOUSE_WHEEL) {
+            /* Stepped zoom anchored on the cursor, as on the desktop. Left to
+             * ImGui while the cursor is over a panel, so panels still scroll. */
+            if (!lv_imgui_want_capture_mouse()) {
+                int mx = (int)sdlEvent.wheel.mouse_x;
+                int my = (int)sdlEvent.wheel.mouse_y;
+                if (sdlEvent.wheel.y > 0.0f) {
+                    lv_drawZoomIn(mx, my);
+                } else if (sdlEvent.wheel.y < 0.0f) {
+                    lv_drawZoomOut(mx, my);
+                }
             }
-            lv_drawResizeRenderTarget();
-            lv_drawDirtyScreen();
-            g_lv->wantScreenUpdate = TRUE;
         }
         /* Note: SDL_EVENT_QUIT is not meaningful in browser */
     }
@@ -368,9 +392,9 @@ static void main_loop_iteration(void) {
     SDL_SetRenderDrawColor(g_lv->renderer, 0, 0, 0, 255);
     SDL_RenderClear(g_lv->renderer);
 
-    if (g_lv->isLoaded == FALSE) {
-        lv_drawSplashForImGui();
-    } else {
+    /* With no log loaded the page shows only the menu bar: no splash, so
+     * nothing sits behind the page's progress bars while a log downloads. */
+    if (g_lv->isLoaded == TRUE) {
         if (g_lv->wantScreenUpdate == TRUE) {
             lv_drawDirtyScreen();
             lv_screenUpdate(redraw);
@@ -419,18 +443,6 @@ int main(int argc, char *argv[]) {
 
     g_lv->isSoundsPlaying = TRUE;
 
-    /* SDL3's Emscripten backend sets the canvas element size to 1x1 during
-     * probing, then relies on CSS for display size when external_size=true.
-     * But the rendering buffer (element size) needs to match.
-     * Force both the SDL window and canvas buffer to our desired size. */
-    {
-        int w = lv_screenGetSizeX() * TILE_SIZE_X;
-        int h = lv_screenGetSizeY() * TILE_SIZE_Y + 25; /* +25 for menu bar */
-        printf("[WASM] Forcing canvas to: %d x %d\n", w, h);
-        emscripten_set_canvas_element_size("#canvas", w, h);
-        SDL_SetWindowSize(g_lv->window, w, h);
-    }
-
     printf("[WASM] Starting lv_imgui_context_init...\n");
     if (lv_imgui_context_init(g_lv->window, g_lv->renderer) == 0) {
         printf("[WASM] lv_imgui_context_init FAILED\n");
@@ -448,6 +460,23 @@ int main(int argc, char *argv[]) {
     lv_imgui_item_info_init();
     lv_imgui_dialogs_init(g_lv);
     lv_imgui_game_viewport_init(g_lv);
+
+    /* The canvas covers the page and follows the browser window's size, as
+     * the game's does. The grid is fitted to it now and on every resize. */
+    SDL_SetWindowFillDocument(g_lv->window, true);
+    /* SDL moves everything else in <body> into a hidden <div> when the canvas
+     * takes the page. The page's progress bars, its drop outline and the File
+     * > Open input still have to work, so they go back on top of the canvas. */
+    emscripten_run_script(
+        "['loading', 'drop', 'wbv-file-input'].forEach(function(id) {"
+        "  var el = document.getElementById(id);"
+        "  if (el) document.body.appendChild(el);"
+        "});");
+    {
+        int w = 0, h = 0;
+        SDL_GetWindowSize(g_lv->window, &w, &h);
+        fitTilesToWindow(w, h);
+    }
 
     /* Sound (non-fatal if it fails) */
     if (lv_soundSetup() == FALSE) {
