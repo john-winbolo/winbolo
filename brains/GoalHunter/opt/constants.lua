@@ -2017,6 +2017,28 @@ M.PILL_PLACE_TURTLE_UNDERDEFENDED_BONUS  = 0
 -- out the existing spacing bonus (+15 up to SPACING_BONUS_MAX) applies.
 M.PILL_PLACE_TURTLE_SPACING = 2
 
+-- ── Turtle bases: stay near the nest (2026-10-02, Andrew) ──
+-- Read only while PILL_PLACE_TURTLE is on. Turtle bots care less about bases
+-- overall, unless the base is near their own ground.
+--   * Base-run end (strategy.lua): the opening phase ends, and the phase
+--     becomes middle, once taken bases (owned by anyone, i.e. not neutral)
+--     >= ceil(TURTLE_BASE_RUN_END_FRAC x total bases). The 500-tick
+--     OPENING_MIN_TICKS minimum and the PHASE_HYSTERESIS_TICKS wait still
+--     apply. This ends the WHOLE opening. 0 = off (the normal opening test).
+--   * Far-base cost (goals.lua M.turtle_far): d = Chebyshev tiles from the
+--     base tile to the nearest tile with influence > 0 (our ground; 0 when
+--     the base tile is on it). capture_base and attack_base rows for that
+--     base cost x min(2^(d / TURTLE_BASE_DOUBLE_TILES), TURTLE_BASE_MULT_CAP),
+--     applied before the snap floors (IMMINENT capture, steal, close-out
+--     still win). No positive tile anywhere = x1. DOUBLE_TILES 0 = off.
+--   * d is cached per base and recomputed every TURTLE_BASE_D_REFRESH_TICKS;
+--     the ring search stops at the distance where the multiplier reaches
+--     the cap (at most 64 tiles), and a base past that reads d = that cap.
+M.TURTLE_BASE_RUN_END_FRAC    = 0.25
+M.TURTLE_BASE_DOUBLE_TILES    = 8
+M.TURTLE_BASE_MULT_CAP        = 16
+M.TURTLE_BASE_D_REFRESH_TICKS = 50   -- cache life of d, not a behaviour knob
+
 -- Tank combat
 M.TANK_COMBAT_ENABLED           = true
 M.TANK_COMBAT_MIN_SHELLS        = 10    -- don't engage with fewer shells
@@ -5161,6 +5183,12 @@ M.PRESETS = {
     -- 2026-09-29: defensive turtle placement (one pill cluster at home).
     -- KEEL spreads its pills by the normal placement scan.
     PILL_PLACE_TURTLE             = false,
+    -- 2026-10-02: turtle bases. KEEL keeps the normal opening test and
+    -- prices every base the same however far it is from its own ground
+    -- (only read while PILL_PLACE_TURTLE is on).
+    TURTLE_BASE_RUN_END_FRAC      = 0,
+    TURTLE_BASE_DOUBLE_TILES      = 0,
+    TURTLE_BASE_MULT_CAP          = 1,
     -- 2026-09-06: the MAIN defend_pill evaluator is now ALARM MODE (see the
     -- DEFEND_ALARM_* block above): defend_pill is REJECTED unless a hostile
     -- tank is visible within 11 tiles of the pill RIGHT NOW, something enemy

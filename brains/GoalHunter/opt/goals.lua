@@ -1201,6 +1201,132 @@ function M.capture_base_extra_text(extra, d, free)
     extra, why)
 end
 
+-- ── Turtle far-base cost (TURTLE_BASE_* in constants.lua) ────────────────
+-- A turtle bot cares less about a base the further it is from its own
+-- ground. d = Chebyshev tiles from the base tile to the nearest tile with
+-- cpf.influence_at > 0; the capture_base / attack_base row for that base is
+-- multiplied by min(2^(d / TURTLE_BASE_DOUBLE_TILES), TURTLE_BASE_MULT_CAP).
+-- All on M: the main chunk is at Lua's local cap.
+
+-- The multiplier for a distance d. nil d (no ground of our own yet, or the
+-- feature off) and DOUBLE_TILES <= 0 both give 1.
+function M.turtle_far_mult_of(d)
+  local t = C.TURTLE_BASE_DOUBLE_TILES or 0
+  if d == nil or t <= 0 then return 1 end
+  local cap = C.TURTLE_BASE_MULT_CAP or 1
+  local m = 2 ^ (d / t)
+  if m > cap then m = cap end
+  if m < 1 then m = 1 end
+  return m
+end
+
+-- How far the ring search looks: the distance where the multiplier reaches
+-- the cap (no point looking further, the answer cannot change), at most 64.
+function M.turtle_far_search_cap()
+  local t = C.TURTLE_BASE_DOUBLE_TILES or 0
+  local cap = C.TURTLE_BASE_MULT_CAP or 1
+  if t <= 0 or cap <= 1 then return 0 end
+  local lim = math.ceil(t * math.log(cap) / math.log(2))
+  if lim > 64 then lim = 64 end
+  if lim < 1 then lim = 1 end
+  return lim
+end
+
+-- Ring search: Chebyshev rings outward from (bmx, bmy), stopping at the first
+-- tile where inf_at(x, y) > 0. Tiles off the map (outside 0..255) are
+-- skipped. ub (optional) is a known upper bound on d: a ring at ub or beyond
+-- is not searched and ub is returned. Nothing found within lim -> lim.
+function M.turtle_far_ring_d(bmx, bmy, lim, inf_at, ub)
+  if (inf_at(bmx, bmy) or 0) > 0 then return 0 end
+  local stop = lim
+  if ub and ub < stop then stop = ub end
+  for r = 1, stop - 1 do
+    local y0, y1 = bmy - r, bmy + r
+    local x0, x1 = bmx - r, bmx + r
+    for x = x0, x1 do
+      if x >= 0 and x <= 255 then
+        if y0 >= 0 and (inf_at(x, y0) or 0) > 0 then return r end
+        if y1 <= 255 and (inf_at(x, y1) or 0) > 0 then return r end
+      end
+    end
+    for y = y0 + 1, y1 - 1 do
+      if y >= 0 and y <= 255 then
+        if x0 >= 0 and (inf_at(x0, y) or 0) > 0 then return r end
+        if x1 <= 255 and (inf_at(x1, y) or 0) > 0 then return r end
+      end
+    end
+  end
+  return stop
+end
+
+-- d and the multiplier for one base, from a per-bot cache rebuilt every
+-- TURTLE_BASE_D_REFRESH_TICKS for ALL bases at once. Returns nil, 1 when
+-- turtle is off, the knob is 0, or we hold no ground (no friendly base and
+-- no placed live friendly pill = no positive influence stamp anywhere).
+-- Upper bound for the search: the nearest friendly stamp centre that is
+-- itself positive -- every tile inside the ring before it gets checked.
+function M.turtle_far(state, world, bid, base)
+  if not C.PILL_PLACE_TURTLE then return nil, 1 end
+  local lim = M.turtle_far_search_cap()
+  if lim <= 0 or not base then return nil, 1 end
+  local now = state.tick or 0
+  local tc = state._turtle_far
+  if not tc or (now - tc.tick) >= (C.TURTLE_BASE_D_REFRESH_TICKS or 50)
+     or now < tc.tick or tc.lim ~= lim then
+    tc = { tick = now, lim = lim, d = {} }
+    state._turtle_far = tc
+    -- own = friendly stamps (the same set init.lua stamps positive);
+    -- cx/cy = the ones whose centre tile reads positive (search bounds).
+    local cx, cy, n, own = {}, {}, 0, 0
+    for _, b in pairs(world.bases or {}) do
+      if b.owner == "friendly" then
+        own = own + 1
+        if (cpf.influence_at(b.mx, b.my) or 0) > 0 then
+          n = n + 1; cx[n] = b.mx; cy[n] = b.my
+        end
+      end
+    end
+    for _, p in pairs(world.pills or {}) do
+      if p.owner == "friendly" and (p.health or 0) > 0 and not p.in_tank then
+        own = own + 1
+        if (cpf.influence_at(p.mx, p.my) or 0) > 0 then
+          n = n + 1; cx[n] = p.mx; cy[n] = p.my
+        end
+      end
+    end
+    tc.none = (own == 0)
+    if not tc.none then
+      for id, b in pairs(world.bases or {}) do
+        local ub = nil
+        for i = 1, n do
+          local dd = math.max(math.abs(cx[i] - b.mx), math.abs(cy[i] - b.my))
+          if not ub or dd < ub then ub = dd end
+        end
+        tc.d[id] = M.turtle_far_ring_d(b.mx, b.my, lim, cpf.influence_at, ub)
+      end
+    end
+  end
+  if tc.none then return nil, 1 end
+  local d = tc.d[bid]
+  if d == nil then
+    -- A base the cache has not seen (new id since the last rebuild).
+    d = M.turtle_far_ring_d(base.mx, base.my, lim, cpf.influence_at)
+    tc.d[bid] = d
+  end
+  return d, M.turtle_far_mult_of(d)
+end
+
+-- Breakdown chip and detail line for one row. Empty when there is no term.
+function M.turtle_far_text(d, m)
+  if d == nil then return "", "" end
+  local lim = M.turtle_far_search_cap()
+  local dtxt = (d >= lim) and string.format(">=%d", d) or tostring(d)
+  return string.format(" x turtle_far{d=%s,x%.2f}", dtxt, m), string.format(
+    "|turtle_far:turtle bot (PILL_PLACE_TURTLE). The base is %s tile(s) (Chebyshev) from the nearest tile with influence > 0 (our ground). x min(2^(%d/%d[TURTLE_BASE_DOUBLE_TILES]), %g[TURTLE_BASE_MULT_CAP]) = x%.2f, applied to the row sum before any snap floor. The search stops at %d tiles, where the multiplier reaches the cap; d is cached for %d ticks",
+    dtxt, d, C.TURTLE_BASE_DOUBLE_TILES or 0, C.TURTLE_BASE_MULT_CAP or 1, m,
+    lim, C.TURTLE_BASE_D_REFRESH_TICKS or 50)
+end
+
 local function eval_capture_base(state, world, info, tmx, tmy, boat, ammo)
   local has_capturable = not state.perc
         or (state.perc.neutral_base_count > 0)
@@ -1217,6 +1343,10 @@ local function eval_capture_base(state, world, info, tmx, tmy, boat, ammo)
 
   local xe, xd, xf = M.capture_base_extra(tmx, tmy, base.mx, base.my)
   local raw_cost = bcost + xe
+  -- Turtle far-base multiplier, before the floors below (x1 off-turtle).
+  -- Note: nearest_where already picked this base on its unmultiplied cost.
+  local tfd, tfm = M.turtle_far(state, world, bid, base)
+  raw_cost = raw_cost * tfm
   local imminent = false
   if base.health == 0
      and raw_cost <= C.IMMINENT_CAPTURE_PATH_COST
@@ -1259,8 +1389,8 @@ local function eval_capture_base(state, world, info, tmx, tmy, boat, ammo)
 
   local desc = ""  -- pool viz string; populated only when BRAIN_POOL_VIZ
   if BRAIN_POOL_VIZ then
-    desc = string.format("capture_base#%d@(%d,%d) cost=%.0f%s", bid, base.mx, base.my, raw_cost,
-                         (M.capture_base_extra_text(xe, xd, xf)))
+    desc = string.format("capture_base#%d@(%d,%d) cost=%.0f%s%s", bid, base.mx, base.my, raw_cost,
+                         (M.capture_base_extra_text(xe, xd, xf)), (M.turtle_far_text(tfd, tfm)))
     if imminent then desc = desc .. " IMMINENT" end
   end
   -- TODO: Phase 6 race-loss should clear race_mode on captures we've decided not to win.
@@ -1860,6 +1990,9 @@ local function eval_attack_base(state, world, info, tmx, tmy, boat, ammo)
   local threat_at_base = threat.at(base.mx, base.my)
   local adj_cost = bcost + C.ATTACK_BASE_EXTRA_COST
                  + threat_at_base * C.ATTACK_BASE_THREAT_WEIGHT
+  -- Turtle far-base multiplier, before the close-out floor (x1 off-turtle).
+  local tfd, tfm = M.turtle_far(state, world, bid, base)
+  adj_cost = adj_cost * tfm
   -- Base Killer Mode: heavily discount base attacks when we have numbers advantage
   if state.perc and state.perc.base_killer_mode then
     adj_cost = adj_cost * C.BASE_KILLER_ATTACK_DISCOUNT
@@ -1873,9 +2006,12 @@ local function eval_attack_base(state, world, info, tmx, tmy, boat, ammo)
     _closeout = closeout or nil,
     goal = { kind = "attack_base", mx = base.mx, my = base.my,
              wx = U.m2w(base.mx), wy = U.m2w(base.my), target_id = bid },
-    desc = BRAIN_POOL_VIZ and string.format("attack_base#%d@(%d,%d) cost=%.0f (path=%.0f +base=%d +threat=%.0f×%d)",
+    desc = BRAIN_POOL_VIZ and string.format("attack_base#%d@(%d,%d) cost=%.0f (path=%.0f +base=%d +threat=%.0f×%d)%s%s%s",
            bid, base.mx, base.my, adj_cost, bcost, C.ATTACK_BASE_EXTRA_COST,
-           threat_at_base, C.ATTACK_BASE_THREAT_WEIGHT) or "",
+           threat_at_base, C.ATTACK_BASE_THREAT_WEIGHT, (M.turtle_far_text(tfd, tfm)),
+           (state.perc and state.perc.base_killer_mode)
+             and string.format(" x killer{%.2f}", C.BASE_KILLER_ATTACK_DISCOUNT) or "",
+           closeout and string.format(" CLOSEOUT(min %.0f)", C.ATTACK_BASE_CLOSEOUT_COST or 8) or "") or "",
     cands = bcands,
   }
 end
@@ -10473,6 +10609,10 @@ function M.rescore_nearby_bases(state, world, info, radius)
               _extra, _xd, _xf = M.capture_base_extra(tmx, tmy, cand.mx, cand.my)
             end
             local total = c + _stale + _mk + _thr + _extra
+            -- Turtle far-base multiplier (x1 off-turtle), same as the
+            -- incremental eval, or the rescore would strip it.
+            local _tfd, _tfm = M.turtle_far(state, world, cand.id, obj)
+            total = total * _tfm
             cand.cost = total
             rescored = rescored + 1
             -- Bump the cost-cache timestamp too, so the pool-grid "age" shows
@@ -10482,6 +10622,7 @@ function M.rescore_nearby_bases(state, world, info, radius)
             if entry then
               entry.cost = total; entry.raw = c; entry.tick = now
               entry._age = _age; entry._stale = _stale
+              entry._tf_d = _tfd; entry._tf_m = _tfd and _tfm or nil
               if pool_idx == 3 then
                 entry._p3_extra = (_extra ~= 0) and _extra or nil
                 entry._p3_xd = _xd; entry._p3_xf = _xd and _xf or nil
@@ -11476,18 +11617,23 @@ local function get_formula_inner(e)
       })[e._steal_rej] or e._steal_rej
       _d_steal = "|steal:no -- " .. why
     end
+    -- Turtle far-base multiplier: the whole sum is multiplied, BEFORE the
+    -- steal snap. "(" .. sum .. ") x turtle_far{..}" only when it applies.
+    local _tf_chip, _tf_det = M.turtle_far_text(e._tf_d, e._tf_m or 1)
+    local _tf_open = (_tf_chip ~= "") and "(" or ""
+    local _tf_close = (_tf_chip ~= "") and (")" .. _tf_chip) or ""
     if e._steal then
       -- The snap floor is a min(), not another term: print it as one so the
       -- displayed chain still resolves to the cost the pool competed.
       f = string.format(
-        "min(A*{%.0f}@(%d,%d) + base{%s} + threat{%.0f} + stale{%.0f},%s)||base:%s|threat:%s|stale:%s%s",
-        raw, e._mx or 0, e._my or 0, _b_chip, e._thr, e._stale, _st_chip,
-        _d_base, _d_threat, _d_stale, _d_steal)
+        "min(%sA*{%.0f}@(%d,%d) + base{%s} + threat{%.0f} + stale{%.0f}%s,%s)||base:%s|threat:%s|stale:%s%s%s",
+        _tf_open, raw, e._mx or 0, e._my or 0, _b_chip, e._thr, e._stale, _tf_close, _st_chip,
+        _d_base, _d_threat, _d_stale, _d_steal, _tf_det)
     else
       f = string.format(
-        "A*{%.0f}@(%d,%d) + base{%s} + threat{%.0f} + stale{%.0f}%s||base:%s|threat:%s|stale:%s%s",
-        raw, e._mx or 0, e._my or 0, _b_chip, e._thr, e._stale, _st_chip,
-        _d_base, _d_threat, _d_stale, _d_steal)
+        "%sA*{%.0f}@(%d,%d) + base{%s} + threat{%.0f} + stale{%.0f}%s%s||base:%s|threat:%s|stale:%s%s%s",
+        _tf_open, raw, e._mx or 0, e._my or 0, _b_chip, e._thr, e._stale, _tf_close, _st_chip,
+        _d_base, _d_threat, _d_stale, _d_steal, _tf_det)
     end
   elseif p == 4 then
     -- Rejected dead-pill rows: short-circuit with a "REJECT: <reason>"
@@ -11753,10 +11899,13 @@ local function get_formula_inner(e)
         "|nobuild_danger:LOADED, BUILDER-LESS — threat.at(base)%.1f × DANGER_SCALE{%.3f} × CAPTURE_BASE_NO_LGM_DANGER_MULT{%d} = %.1f, ADDED. A base is a tile you have to sit on, and sitting on a covered one with an unplaceable stack aboard loses the whole load. At the keel value 0 this term does not exist, which is what pool 3 did before",
         e._p3_dv or 0, C.CAPTURE_PILL_DANGER_SCALE, e._p3_mult, e._p3_dang or 0)
     end
+    -- Turtle far-base multiplier on the whole sum (absent off-turtle).
+    local _tf_chip, _tf_det = M.turtle_far_text(e._tf_d, e._tf_m or 1)
     f = string.format(
-      "A*{%.0f}@(%d,%d) + stale{%.0f}%s||A*:danger-weighted dijkstra travel to base; danger at base tile=%.1f is BAKED INTO the path cost (not a separate term) — that's why a near dangerous base can cost more than a far safe one|stale:%s%s",
-      raw, e._mx or 0, e._my or 0, e._stale or 0, _cb_nb_chip, _cb_dv,
-      fmt_stale_detail(e._age, e._stale), _cb_nb_det)
+      "%sA*{%.0f}@(%d,%d) + stale{%.0f}%s%s||A*:danger-weighted dijkstra travel to base; danger at base tile=%.1f is BAKED INTO the path cost (not a separate term) — that's why a near dangerous base can cost more than a far safe one|stale:%s%s%s",
+      (_tf_chip ~= "") and "(" or "", raw, e._mx or 0, e._my or 0, e._stale or 0, _cb_nb_chip,
+      (_tf_chip ~= "") and (")" .. _tf_chip) or "", _cb_dv,
+      fmt_stale_detail(e._age, e._stale), _cb_nb_det, _tf_det)
   else
     f = string.format("A*{%.0f}@(%d,%d) + stale{%.0f}||stale:%s",
       raw, e._mx or 0, e._my or 0, e._stale, fmt_stale_detail(e._age, e._stale))
@@ -12943,6 +13092,15 @@ function M.step_eval_queue(state, world, info)
       -- the pool outright instead of losing to routine errands. refresh_base_steal
       -- owns the gates (fresh armour, range, ammo, pill coverage, tank armour,
       -- not afloat) and picks exactly ONE base.
+      -- TURTLE FAR-BASE multiplier (pools 3 and 7, turtle bots only; x1 and
+      -- nil d otherwise). Pool 7 takes it here, BEFORE the steal snap below;
+      -- pool 3 takes it after its two added terms further down. Pool 3's
+      -- IMMINENT floor is applied later, in the finalize step.
+      local _tf_d, _tf_m = nil, 1
+      if pool_idx == 3 or pool_idx == 7 then
+        _tf_d, _tf_m = M.turtle_far(state, world, id, obj)
+        if pool_idx == 7 then c = c * _tf_m end
+      end
       local _p7_steal = false
       if pool_idx == 7 and state.base_steal and state.base_steal.id == id then
         _p7_steal = true
@@ -13019,6 +13177,7 @@ function M.step_eval_queue(state, world, info)
       if pool_idx == 3 then
         _p3_extra, _p3_xd, _p3_xf = M.capture_base_extra(tmx, tmy, obj.mx, obj.my)
         c = c + _p3_extra
+        c = c * _tf_m   -- turtle far-base multiplier (see above)
       end
 
       -- Pool 5 (repair_pill): the UNIFIED repair formula, per candidate.
@@ -13324,6 +13483,7 @@ function M.step_eval_queue(state, world, info)
         entry._fcov_m = (_p7_fcov_n > 0) and _p7_fcov_m or nil
         entry._fcov_n = (_p7_fcov_n > 0) and _p7_fcov_n or nil
         entry._steal = _p7_steal or nil
+        entry._tf_d = _tf_d; entry._tf_m = _tf_d and _tf_m or nil
         local _sr = state.base_steal_rejects and state.base_steal_rejects[id]
         entry._steal_rej  = _sr and _sr.reason or nil
         entry._steal_pill = _sr and _sr.pill or nil
@@ -13356,6 +13516,7 @@ function M.step_eval_queue(state, world, info)
         entry._p3_mult=(_p3_mult > 0) and _p3_mult or nil
         entry._p3_extra=(_p3_extra ~= 0) and _p3_extra or nil
         entry._p3_xd=_p3_xd; entry._p3_xf=_p3_xd and _p3_xf or nil
+        entry._tf_d = _tf_d; entry._tf_m = _tf_d and _tf_m or nil
       elseif pool_idx == 5 then
         entry._stale=stale_cost; entry._age=_gen_age
         entry._dmg=_rp_dmg
@@ -14917,6 +15078,8 @@ function M.finalize_pools(state, world, info)
       if c3 and c3 < 1e8 then
         local xe3, xd3, xf3 = M.capture_base_extra(tmx, tmy, gb.mx, gb.my)
         c3 = c3 + xe3
+        local tfd3, tfm3 = M.turtle_far(state, world, state.goal.target_id, gb)
+        c3 = c3 * tfm3   -- turtle far-base multiplier, before the floor
         local imminent3 = false
         if (gb.health or 0) == 0 and c3 <= C.IMMINENT_CAPTURE_PATH_COST
            and (info.armour or 0) >= C.IMMINENT_CAPTURE_MIN_ARMOUR then
@@ -14931,9 +15094,10 @@ function M.finalize_pools(state, world, info)
                    target_id = state.goal.target_id,
                    race_mode = C.CAPTURE_RACE_MODE_CAPTURE },
           desc = BRAIN_POOL_VIZ and string.format(
-                 "capture_base#%d@(%d,%d) cost=%.0f%s GOAL-BRIDGE%s",
+                 "capture_base#%d@(%d,%d) cost=%.0f%s%s GOAL-BRIDGE%s",
                  state.goal.target_id, gb.mx, gb.my, c3,
                  (M.capture_base_extra_text(xe3, xd3, xf3)),
+                 (M.turtle_far_text(tfd3, tfm3)),
                  imminent3 and " IMMINENT" or "") or "",
         }
       else
@@ -15231,6 +15395,8 @@ function M.finalize_pools(state, world, info)
     local d_fcn   = _ce7 and _ce7._fcov_n or ((b_fcov_n > 0) and b_fcov_n or nil)
     local d_fchip = d_fcm
       and string.format(" x fcover{%.2f n=%d}", d_fcm, d_fcn or 0) or ""
+    -- Turtle far-base multiplier on the whole sum (empty chip when absent).
+    local d_tfchip = _ce7 and (M.turtle_far_text(_ce7._tf_d, _ce7._tf_m or 1)) or ""
     -- "~" = the terms printed below are NOT the ones inside `cand`: either the
     -- winner has no cost_cache row at all (the steal can name a base the eval
     -- queue never scored), or the row was re-evaluated after the partial-pool
@@ -15244,13 +15410,14 @@ function M.finalize_pools(state, world, info)
       goal = { kind = "attack_base", mx = base.mx, my = base.my,
                wx = U.m2w(base.mx), wy = U.m2w(base.my), target_id = bid },
       desc = BRAIN_POOL_VIZ and string.format(
-             "attack_base#%d@(%d,%d) cost=%.0f (cand%s=%.0f = path{%.0f} +stale{%.0f}"
-             .. " +base{%d x hp %s/%d%s = %.0f} +threat{%.2f x %d%s = %.0f})%s",
+             "attack_base#%d@(%d,%d) cost=%.0f (cand%s=%.0f = %spath{%.0f} +stale{%.0f}"
+             .. " +base{%d x hp %s/%d%s = %.0f} +threat{%.2f x %d%s = %.0f}%s)%s",
              bid, base.mx, base.my, adj_cost, d_mark, bcost,
-             d_path, d_stale,
+             (d_tfchip ~= "") and "(" or "", d_path, d_stale,
              C.ATTACK_BASE_EXTRA_COST,
              d_n and tostring(d_n) or "?", d_nfull, d_fchip, d_base,
              d_tv, C.ATTACK_BASE_THREAT_WEIGHT, d_fchip, d_thr,
+             (d_tfchip ~= "") and (")" .. d_tfchip) or "",
              _steal7 and string.format(" STEAL(snapped to %.0f)", C.BASE_STEAL_COST)
                       or "") or "",
       cands = pr7 and pr7.candidates or nil,
