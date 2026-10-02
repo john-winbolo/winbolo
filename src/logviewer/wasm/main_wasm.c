@@ -342,6 +342,60 @@ static void fitTilesToWindow(int w, int h) {
 }
 
 /* --------------------------------------------------------------------------
+ * Step the decoder by the time that has passed since the last frame.
+ *
+ * The desktop steps it from an SDL timer every timerSleep ms. In the browser
+ * that timer is a setTimeout chain on the page's one thread, and each tick
+ * only books the next after it has run and waited behind the frame being
+ * drawn, so it lands late every time and the log plays at about half speed.
+ * Here the main loop counts the ticks owed by the clock and runs them, so the
+ * log keeps to time however long a frame takes. A tab in the background gets
+ * no frames, so a long gap is dropped rather than replayed all at once.
+ * -------------------------------------------------------------------------- */
+#define MAX_TICKS_PER_FRAME 100
+
+static void runElapsedTicks(void) {
+    static Uint64 lastMs = 0;
+    static Uint64 owedMs = 0;
+    Uint64 now = SDL_GetTicks();
+    Uint64 sleepMs, ticks, i;
+
+    if (g_lv->playIsPlaying == FALSE || g_lv->isLoaded == FALSE) {
+        lastMs = 0;
+        owedMs = 0;
+        return;
+    }
+    if (lastMs == 0) {
+        lastMs = now;
+        return;
+    }
+    owedMs += now - lastMs;
+    lastMs = now;
+
+    sleepMs = (g_lv->timerSleep > 0) ? (Uint64)g_lv->timerSleep : 20;
+    ticks = owedMs / sleepMs;
+    owedMs -= ticks * sleepMs;
+    if (ticks > MAX_TICKS_PER_FRAME) {
+        ticks = MAX_TICKS_PER_FRAME;
+        owedMs = 0;
+    }
+    if (ticks == 0) {
+        return;
+    }
+
+    lv_clientMutexWaitFor();
+    for (i = 0; i < ticks; i++) {
+        lv_screenLogTick();
+        if (g_lv->doubleSpeed == TRUE) {
+            lv_screenLogTick();
+            lv_screenLogTick();
+        }
+    }
+    lv_clientMutexRelease();
+    g_lv->wantScreenUpdate = TRUE;
+}
+
+/* --------------------------------------------------------------------------
  * Main loop body — called by emscripten_set_main_loop. The decoder is
  * ticked by lv_embed.c's SDL timers, which SDL runs on the browser's own
  * event loop under Emscripten.
@@ -387,6 +441,8 @@ static void main_loop_iteration(void) {
         }
         /* Note: SDL_EVENT_QUIT is not meaningful in browser */
     }
+
+    runElapsedTicks();
 
     /* --- Render --- */
     SDL_SetRenderDrawColor(g_lv->renderer, 0, 0, 0, 255);
@@ -440,6 +496,8 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     printf("[WASM] lvHostSetupCore OK\n");
+    /* The main loop steps the decoder (runElapsedTicks), not the SDL timer. */
+    lv_windowSetHostRunsTicks(true);
 
     g_lv->isSoundsPlaying = TRUE;
 

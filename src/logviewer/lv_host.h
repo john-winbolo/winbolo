@@ -51,5 +51,8 @@ void lv_updateSpeed(BYTE spd, int updateSlider);
 void lv_windowNeedRedraw(void);
 void lv_windowPlay(void);
 void lv_windowPause(void);
+/* true: lv_windowPlay starts no decoder timer, and the host steps the
+ * decoder itself (the web viewer, from its main loop). */
+void lv_windowSetHostRunsTicks(bool on);
 
 #endif /* LV_HOST_H */
