@@ -668,57 +668,14 @@ endforeach()
 add_custom_target(web_files DEPENDS ${_web_files_out})
 add_dependencies(winbolo web_files)
 
-# ---------------------------------------------------------------------------
-# wasm-dist: precompress the web assets (for Caddy
-# `file_server { precompressed br gzip }`) and pack everything a deploy needs
-# into wasm-dist.zip: winbolo.{html,js,wasm,data}, js/relay.js, each with its
-# .br and .gz copies, and img/ as it is (PNG and JPEG are already compressed).
-# The zip keeps the js/ and img/ paths, so unzipping it into the site root is
-# the whole deploy. See docs/web-hosting.md. Run explicitly — it is NOT part
-# of the normal build, so day-to-day builds don't re-brotli the data file:
-#     cmake --build <build-dir> --target wasm-dist
-# Requires `brotli` (apt-get install brotli); gzip is already standard.
-# ---------------------------------------------------------------------------
-find_program(BROTLI_EXE brotli)
-find_program(GZIP_EXE   gzip)
-if(BROTLI_EXE AND GZIP_EXE)
-    # Files served by Caddy. -k keeps the original (Caddy needs it as the
-    # fallback for clients that accept neither encoding); -f overwrites stale
-    # variants. CJK font subsetting brings the data file down to ~68 MB, small
-    # enough to brotli every asset at -q 11.
-    set(_wasm_dist_assets winbolo.html winbolo.js winbolo.wasm winbolo.data
-                          js/relay.js)
-    set(_wasm_dist_cmds)
-    set(_wasm_dist_zip_files)
-    foreach(_a IN LISTS _wasm_dist_assets)
-        list(APPEND _wasm_dist_cmds COMMAND ${BROTLI_EXE} -f -k -q 11 "${_a}")
-        list(APPEND _wasm_dist_cmds COMMAND ${GZIP_EXE} -f -k -9 "${_a}")
-        list(APPEND _wasm_dist_zip_files "${_a}" "${_a}.br" "${_a}.gz")
-    endforeach()
-    set(_wasm_dist_images ${_web_files})
-    list(FILTER _wasm_dist_images INCLUDE REGEX "^img/")
-    list(APPEND _wasm_dist_zip_files ${_wasm_dist_images})
-
-    # The licence files are served beside the page as plain text, so they
-    # are copied in rather than precompressed.
-    set(_wasm_dist_licence_files LICENSE LICENSE-EXCEPTION.md THIRD_PARTY_NOTICES.md)
-    foreach(_l IN LISTS _wasm_dist_licence_files)
-        list(APPEND _wasm_dist_cmds
-             COMMAND ${CMAKE_COMMAND} -E copy_if_different "${REPO_ROOT}/${_l}" "${_l}")
-        list(APPEND _wasm_dist_zip_files "${_l}")
-    endforeach()
-
-    add_custom_target(wasm-dist
-        ${_wasm_dist_cmds}
-        COMMAND ${CMAKE_COMMAND} -E tar "cf" wasm-dist.zip --format=zip
-                ${_wasm_dist_zip_files}
-        WORKING_DIRECTORY $<TARGET_FILE_DIR:winbolo>
-        COMMENT "Precompressing web assets (.br + .gz) and packing wasm-dist.zip"
-        VERBATIM
-    )
-    add_dependencies(wasm-dist winbolo)
-else()
-    message(WARNING
-        "wasm-dist: brotli and/or gzip not found "
-        "(apt-get install brotli) — the wasm-dist target is unavailable")
-endif()
+# wasm-dist: precompressed web assets and licence files in wasm-dist.zip (see
+# cmake/wasm_dist.cmake). The zip keeps the js/ and img/ paths; img/ goes in
+# as it is, since PNG and JPEG are already compressed. CJK font subsetting
+# brings the data file down to ~68 MB, small enough to brotli every asset at
+# -q 11.
+include(${REPO_ROOT}/cmake/wasm_dist.cmake)
+set(_wasm_dist_images ${_web_files})
+list(FILTER _wasm_dist_images INCLUDE REGEX "^img/")
+bolo_add_wasm_dist(winbolo
+    COMPRESS winbolo.html winbolo.js winbolo.wasm winbolo.data js/relay.js
+    PLAIN    ${_wasm_dist_images})
