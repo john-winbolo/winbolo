@@ -5094,11 +5094,29 @@ M.SUICIDE_HOLD_MARGIN_TILES   = 0.5   -- keel 0 (moot; SUICIDE_AIM_AT_PILL off)
 -- SUICIDE_AIM_* aim).  A blocker already up: it carries on the careful way
 -- (standoff, aim, fire) but builds no more walls, gathers no trees and waits
 -- for nothing (no blitz wait, no anger cool-down).  NOT a suicide run:
--- refuel, flee and armour checks stay.  Ends when the goal leaves that pill,
+-- refuel, flee and armour checks stay (CHARGE_NOW_IGNORE_SAFETY below waives
+-- them).  Ends when the goal leaves that pill,
 -- the pill dies or is ours, the tank dies, or a caution ping lands on the bot
 -- or the pill.  The bot-command + ATTACK double ping is still the suicide
 -- run; this is the ATTACK ping on its own.
 M.PING_ATTACK_CHARGE_NOW      = true  -- keel false
+
+-- CHARGE NOW IGNORES SAFETY (2026-10-02, Andrew): "If [a human] pings the
+-- attack on the pill already targeted by the bot, it should then ignore its
+-- own armour, trees, ammo and just go in."  While charge-now is on (state.
+-- _charge_now, goal._charge_now) the bot takes the suicide run's waivers:
+--   * pick_goal keeps the attack_pill goal (goals.lua), so no refuel, no
+--     flee, no take_cover and no critical-armour order pause can win;
+--   * no armour-floor abort in attack.lua (armour_unsafe_for_pill_take and
+--     the carrying-a-pill floor on approach), no emergency pill drop;
+--   * no "not enough shells" abort, and 0 shells does not invalidate the
+--     goal (init.lua): it drives in with no shells, like the suicide run;
+--   * no "Refuelling, coming back" chat line.
+-- Trees were already skipped by charge-now itself.  Unlike the suicide run
+-- it still ends when the goal ends, and the careful (blocker standing)
+-- path is kept.  false = the PING_ATTACK_CHARGE_NOW behaviour as it was:
+-- refuel, flee and armour checks stay.
+M.CHARGE_NOW_IGNORE_SAFETY    = true  -- keel false
 
 -- How far the seat a bot is escorting may drift from where the bot was last
 -- sent before the escort re-aims.  A hint may name its own `distance`; this
@@ -5521,6 +5539,9 @@ M.PRESETS = {
     --   2026-10-02: an ATTACK ping on a pill the bot is attacking = charge
     --   now. KEEL read a lone ATTACK ping as a marker only.
     PING_ATTACK_CHARGE_NOW        = false,
+    --   2026-10-02: charge now ignores the bot's own armour, trees and
+    --   ammo. KEEL had no charge now at all.
+    CHARGE_NOW_IGNORE_SAFETY      = false,
     --   2026-10-02: the human-near rule needs the human to be shooting at
     --   the pill. KEEL counted any visible human within the tiles.
     ORDER_HUMAN_NEAR_NEEDS_SHOOTING   = false,

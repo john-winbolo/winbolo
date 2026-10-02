@@ -19026,6 +19026,13 @@ function M.special_mode_goal(state, world, info)
   return nil
 end
 
+-- True while an ATTACK-ping "charge now" (orders.lua, state._charge_now)
+-- stands on the pill of the bot's live attack_pill goal.
+function M.charge_now_holds(state)
+  local r, g = state._charge_now, state.goal
+  return (r and g and g.kind == "attack_pill" and g.target_id == r.tid) and true or false
+end
+
 function M.pick_goal(state, world, info, quiet)
   -- Cache the few info fields the breakdown viz needs (pool_breakdown has
   -- only `state` in scope).
@@ -19048,6 +19055,14 @@ function M.pick_goal(state, world, info, quiet)
   -- tests live in orders.suicide_lock; a finished run clears state._suicide.
   if state._suicide then
     return require("orders").suicide_goal(state._suicide)
+  end
+  -- CHARGE NOW IGNORES SAFETY (C.CHARGE_NOW_IGNORE_SAFETY): an ATTACK ping
+  -- on the pill this bot is attacking keeps that goal the same way. Nothing
+  -- else is scored: no refuel, no flee, no take_cover, no armour pause.
+  -- init.lua's same_winner test keeps the live goal table. orders.
+  -- charge_now_check ends the charge when the goal or the pill is gone.
+  if C.CHARGE_NOW_IGNORE_SAFETY and M.charge_now_holds(state) then
+    return state.goal
   end
   -- SEA-PILL HARVEST, collect phase. Afloat, on purpose, with cluster pills
   -- still in the water and the water still safe: this OWNS the goal. Anything

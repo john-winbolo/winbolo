@@ -5374,8 +5374,10 @@ function Brain.think(info)
     -- better. What survives here is the part panic has no equivalent for: the
     -- tile search below, and the state facts (builder aboard, not in a boat)
     -- that should_panic_build checks for us.
+    -- CHARGE NOW IGNORES SAFETY: no low-armour pill drop during a charge.
     local _ed_panic = C.EMERGENCY_DROP_ENABLED
                       and state.goal.kind ~= "pill_place"
+                      and not (C.CHARGE_NOW_IGNORE_SAFETY and goals.charge_now_holds(state))
                       and danger.should_panic_build(state, info)
     if _ed_panic then
       -- The incoming-shell refusal used to sit here: skip the drop when a
@@ -5670,7 +5672,10 @@ function Brain.think(info)
               end
             end
           end
-          if not decoy_in_blitz then
+          -- CHARGE NOW IGNORES SAFETY: a charge-now take drives in with no
+          -- shells, like the suicide run (C.CHARGE_NOW_IGNORE_SAFETY).
+          if not decoy_in_blitz
+             and not (C.CHARGE_NOW_IGNORE_SAFETY and goals.charge_now_holds(state)) then
             goal_valid = false
             if state.pool_cache then state.pool_cache[6] = nil end
           end

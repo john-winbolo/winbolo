@@ -4354,8 +4354,10 @@ function M.update(state, world, info, now)
     end
   end
 
-  -- A suicide run never tops up, so it never says it is going to.
-  if h and h.needs_shells and not state._suicide then
+  -- A suicide run never tops up, so it never says it is going to.  Nor does
+  -- a charge now that ignores safety (C.CHARGE_NOW_IGNORE_SAFETY).
+  if h and h.needs_shells and not state._suicide
+     and not (state._charge_now and C.CHARGE_NOW_IGNORE_SAFETY) then
     -- A pause, not an exit: the timer keeps running while the tank tops up.
     local low = (info.shells or 0) < (C.SHELLS_LOW or 20)
     if low and not h.refuel_said then
