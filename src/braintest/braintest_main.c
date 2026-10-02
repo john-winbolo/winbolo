@@ -80,7 +80,6 @@
 #include "minesexp.h"
 #include "control_event.h"
 #include "brain_pathfinder.h"
-#include "brain_list.h"   /* BRAIN_LIST_GOALHUNTER_* */
 #include "gui_message.h"
 #include "server_sim.h"
 #include "server_sim_lifecycle.h"
@@ -985,7 +984,7 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
 
     /* Legend: recorded viz_idx -> category name, remapped to BrainTest's own
      * registry index by name. PER SLOT: every brain self-assigns its indices
-     * from its own sorted id list, so a 1.6 bot and a 1.7 bot in the same
+     * from its own sorted id list, so bots running two different brains in the same
      * game number the same category differently. The blob is
      *   {"<idx>":"<name>",...[,"slots":{"<slot>":{"<idx>":"<name>",...},...}]}
      * -- the leading global map (older recordings have only that) seeds every
@@ -2656,19 +2655,6 @@ static bool findBrainScript(const char *base, char *out, size_t outLen) {
         if (io) { SDL_CloseIO(io); SDL_snprintf(out, outLen, "%s", tryPath); return true; }
     }
 
-    /* "-brain brains/GoalHunter_1.7" (or a bare "GoalHunter_1.7") written
-     * before the brain lost its version suffix names the renamed GoalHunter
-     * brain. The retry's name no longer holds the old one, so it runs once. */
-    {
-        const char *old = SDL_strcasestr(base, BRAIN_LIST_GOALHUNTER_OLD_NAME);
-        if (old) {
-            char renamed[1024];
-            SDL_snprintf(renamed, sizeof(renamed), "%.*s%s%s",
-                         (int)(old - base), base, BRAIN_LIST_GOALHUNTER_NAME,
-                         old + SDL_strlen(BRAIN_LIST_GOALHUNTER_OLD_NAME));
-            return findBrainScript(renamed, out, outLen);
-        }
-    }
     return false;
 }
 

@@ -4016,7 +4016,7 @@ M.STUCK_DEST_BLAME_TICKS = 100 -- the stuck escalation only BLACKLISTS its desti
 -- work with no existence outside their goal (builder.set_mode still owns them
 -- and pre-empts the pool by MODE, exactly as before).
 -- =========================================================================
-M.BUILDER_POOL_ENABLED = true   -- master switch; false = 1.7-at-HARBOR behaviour
+M.BUILDER_POOL_ENABLED = true   -- master switch; false = behaviour at the HARBOR tag
 
 -- ── Leash ────────────────────────────────────────────────────────────────
 -- How far from the TANK a side-quest target may sit. The man walks at roughly

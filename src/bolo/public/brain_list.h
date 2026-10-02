@@ -94,23 +94,6 @@ bool brainListLoadColor(const char *name, uint32_t *rgb);
  * src/bolo/public/ alone. */
 bool brainListResolve(const char *name, char *outPath, size_t outLen);
 
-/* The old name of the GoalHunter brain directory. The brain shipped as
- * brains/GoalHunter_1.7 until its directory lost the version suffix; the
- * game's own version now tracks it. Scenarios, command lines, -bot-init specs
- * and server configs written for the old name still work: brainListResolve and
- * brainListAliasPath fall back to "GoalHunter" when no GoalHunter_1.7
- * directory is on disk. */
-#define BRAIN_LIST_GOALHUNTER_OLD_NAME "GoalHunter_1.7"
-#define BRAIN_LIST_GOALHUNTER_NAME     "GoalHunter"
-
-/* Rewrite a brain path that names the old GoalHunter_1.7 directory
- * ("brains/GoalHunter_1.7/init.lua") to the GoalHunter one
- * ("brains/GoalHunter/init.lua"). Writes the new path to `out` and returns
- * true only when the path has a GoalHunter_1.7 directory component, the path
- * as given is not on disk, and the rewritten path is. Otherwise copies `path`
- * to `out` unchanged and returns false. `out` may be `path`. */
-bool brainListAliasPath(const char *path, char *out, size_t outLen);
-
 
 /* ── announce.txt / commands.txt: what a brain tells the lobby ────────
  *

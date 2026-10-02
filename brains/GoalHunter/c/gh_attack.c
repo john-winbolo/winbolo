@@ -13,8 +13,8 @@
  *
  * TWO EVALUATION PATHS
  * --------------------
- * Only ONE brain version's c/ directory is compiled (brains/CMakeLists.txt,
- * WINBOLO_BRAIN_C_DIR) and EVERY brain version links it.  GoalHunter 1.5 and
+ * Only ONE brain c/ directory is compiled (brains/CMakeLists.txt,
+ * brains/GoalHunter/c) and EVERY brain version links it.  GoalHunter 1.5 and
  * 1.6 are frozen and their attack.lua sweep differs from the current one's (no clear-aim
  * gate, among other things), so one C algorithm cannot be faithful to both.
  * The two paths are selected by what sync_pill_at is handed:

@@ -5123,7 +5123,6 @@ set(_unit_test_names
     brain_list_scan_path_resolves
     brain_list_texts_read
     brain_docs_compress_roundtrip
-    brain_list_goalhunter_alias
     unit_test_names_match_cmake
     brain_modes_manifest_parses
     brain_modes_missing_falls_back
