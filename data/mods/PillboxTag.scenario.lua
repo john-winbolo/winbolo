@@ -93,6 +93,14 @@
 -- the only live pillbox on the map, so it is the brain's own pillbox fight
 -- that goes after it.
 --
+-- Deep sea. Nobody can drive out to a holder on deep sea, so the holder may
+-- carry the prize there for ten seconds by default before his tank is
+-- killed, with the seconds left on his screen. Each trip out and back cuts
+-- his next trip's time, by default by half (10, 5, 2.5, ...), so he cannot
+-- live on the sea and only touch shallow water now and then to start the
+-- clock again. His tank's death, or the prize going to another seat, puts
+-- him back to the full time (see wet_time).
+--
 -- The bases are pit stops. They start neutral, driving over one hands out half
 -- a tank of armour and 3 mines (a holder carrying the prize gets the mines
 -- but still no shells), and the base then goes off the map for half a minute
@@ -118,6 +126,8 @@ local BOOST_USE_DECAY_PCT = 50   -- how much of the boost over 1 each take
 local INVULN_SECONDS      = 2    -- how long a new holder takes no damage
 local DEEP_WATER_SECONDS  = 10   -- how long the holder may carry the prize
                                  -- on deep sea before their tank is killed
+                                 -- (each trip there cuts the next one's
+                                 -- time: see wet_time.decay)
 
 local MINE_EVERY        = 30    -- seconds between a tank's mines
 local BASE_DOWN_SECONDS = 30    -- how long a used base stays off the map
@@ -304,6 +314,32 @@ local wet_seat    = nil         -- the holder whose deep sea clock runs, or nil
 local wet_from    = 0           -- the game.tick() that clock started on
 local warned      = nil         -- the seat with the deep sea warning on
                                 -- screen, or nil
+
+-- The deep sea time each trip cuts. A holder who takes the prize onto deep
+-- sea and back off it again has his next trip's time cut by decay percent:
+-- with the defaults 10 s, then 5, 2.5, 1.25 and on, so a holder cannot
+-- live on the sea and only touch land now and then to start the clock
+-- again. There is no floor: a time under a frame kills on the next look.
+-- A seat goes back to the full DEEP_WATER_SECONDS when its tank dies and
+-- when it stops being the holder, so the next holder starts at full.
+-- decay is the default of the "Deep water decay per trip" setting, kept
+-- here rather than under "Tweak these" because the file is at Lua's limit
+-- of top-level locals: how much each trip onto deep sea and off again cuts
+-- the holder's next deep sea time; 0 keeps the full time every trip.
+local wet_time = {
+  decay = 50,
+  secs  = {},                   -- seat -> its next trip's seconds; nil is
+                                -- the full DEEP_WATER_SECONDS
+}
+
+function wet_time.of(p)
+  return wet_time.secs[p] or DEEP_WATER_SECONDS
+end
+
+function wet_time.cut(p)
+  wet_time.secs[p] = wet_time.of(p) * (100 - wet_time.decay) / 100
+end
+
 local plan        = nil         -- what a bot holder is doing with the prize:
                                 -- nil, or { kind = "hop" | "fort" | "take",
                                 -- x, y, at, built, dead_at, near }
@@ -354,6 +390,7 @@ local function read_settings()
   boost_use.base_others   = game.setting("base_boost_others") ~= "No"
   INVULN_SECONDS      = game.setting("invuln_seconds")
   DEEP_WATER_SECONDS  = game.setting("deep_water_seconds")
+  wet_time.decay      = game.setting("deep_water_decay_pct")
   work_out_shares()
 end
 
@@ -669,8 +706,14 @@ local function team_board(rows)
 end
 -- Takes the deep sea count off: the clock starts again the next time the
 -- holder takes the prize onto deep sea, and the warning comes off the screen
--- it was on.
-local function dry_off()
+-- it was on. done is true when the trip is over because the holder came off
+-- the deep sea with his tank alive (or the prize left his tank out there):
+-- that cuts his next trip's time (see wet_time). A trip that ends in a death
+-- or a new holder cuts nothing, because those put the seat back to full.
+local function dry_off(done)
+  if done and wet_seat ~= nil then
+    wet_time.cut(wet_seat)
+  end
   wet_seat = nil
   if warned ~= nil then
     game.announce("", 0, warned)
@@ -681,9 +724,11 @@ end
 -- The deep sea clock. It only counts the holder, and only while the prize is
 -- in their tank (not built, and not in their man's hands) and the tank is
 -- alive and on a deep sea square, afloat or not. Nobody can drive out to a
--- holder there, so the holder has DEEP_WATER_SECONDS to come back to shore.
+-- holder there, so the holder has DEEP_WATER_SECONDS to come back to shore,
+-- less what his earlier trips have cut (see wet_time).
 -- Their screen shows the seconds left, to a tenth, and is written again on
--- every refresh, so the count goes down as they watch. When it runs out their
+-- every refresh, so the count goes down as they watch; once a trip has been
+-- cut, it shows the trip's whole time too. When it runs out their
 -- tank is killed. The kill drops the prize the way sinking does, so
 -- on_pill_placed takes it off them and rescue_from_the_sea walks it to land.
 -- A kill is not a hit, so damage_scale does not see it, and a new holder's
@@ -696,24 +741,29 @@ local function watch_the_water(what, carrier)
   if t == nil or t.dead or
      game.map_tile(t.mx, t.my) ~= game.TERRAIN.deep_sea then
     if wet_seat ~= nil or warned ~= nil then
-      dry_off()
+      local w = (wet_seat ~= nil) and game.tank(wet_seat) or nil
+      dry_off(wet_seat == holder and w ~= nil and not w.dead)
     end
     return
   end
   local now = game.tick()
   if wet_seat ~= carrier then
-    dry_off()
+    dry_off(false)
     wet_seat, wet_from = carrier, now
   end
-  local left = DEEP_WATER_SECONDS - (now - wet_from) / 100
+  local allow = wet_time.of(carrier)
+  local left = allow - (now - wet_from) / 100
   if left <= 0 then
-    dry_off()
+    dry_off(false)
     game.message(name_of(carrier) .. " stayed in deep water too long.")
     game.kill_tank(carrier)
   else
     warned = carrier
-    game.announce(string.format("Deep water! You die in %.1f s", left), 1,
-                  carrier)
+    local text = string.format("Deep water! You die in %.1f s", left)
+    if allow < DEEP_WATER_SECONDS then
+      text = text .. string.format(" (%.1f s this trip)", allow)
+    end
+    game.announce(text, 1, carrier)
   end
 end
 
@@ -2590,6 +2640,7 @@ end
 function on_start()
   running = true
   boost_use.count = {}
+  wet_time.secs = {}
   boost_use.base = {}
   for p = 0, game.max_tanks() - 1 do
     seconds[p] = 0
@@ -2936,6 +2987,7 @@ lose_the_prize = function(p)
   boost_from = nil
   invuln_seat = nil
   if p ~= nil then
+    wet_time.secs[p] = nil
     game.set_modifiers(p, {})
     tune(p)
     sort_team(p)
@@ -3037,10 +3089,16 @@ end
 -- gets is a fresh one.
 --
 -- Any tank's death, holder or not, puts its seat back to the full boost on
--- its next take (see boost_use).
+-- its next take (see boost_use), and to the full deep sea time (see
+-- wet_time). A deep sea clock that was running for it stops, and cuts
+-- nothing; its warning comes off on the next refresh.
 function on_tank_killed(victim, killer, cause, scripted)
   if victim ~= nil then
     boost_use.count[victim] = nil
+    wet_time.secs[victim] = nil
+    if wet_seat == victim then
+      wet_seat = nil
+    end
     -- A modifier outlives the tank, so a base boost is taken off with it.
     if boost_use.base[victim] ~= nil then
       boost_use.base[victim] = nil
@@ -3214,6 +3272,7 @@ function on_player_leave(p, scripted)
   end
   boost_use.count[p] = nil
   boost_use.base[p] = nil
+  wet_time.secs[p] = nil
   if holder == p then
     holder = nil
     plan = nil
@@ -3398,6 +3457,9 @@ scenario = {
     { id = "deep_water_seconds", label = "Holder deep water time (seconds)",
       type = "int", min = 3, max = 60, step = 1,
       default = DEEP_WATER_SECONDS },
+    { id = "deep_water_decay_pct", label = "Deep water decay per trip (%)",
+      type = "int", min = 0, max = 100, step = 5,
+      default = wet_time.decay },
     { id = "teams", label = "Teams", type = "choice",
       choices = { FREE_FOR_ALL, LOBBY_TEAMS }, default = FREE_FOR_ALL },
     { id = "voice_everyone", label = "Voice chat to everyone",
@@ -3425,7 +3487,7 @@ scenario = {
     on_pill_killed = "A shot-down prize is anybody's (a bot's own hop aside).",
     on_tank_killed = "Holder dies with the prize out of his tank: it is " ..
                      "dead, free for anyone to take. A death resets " ..
-                     "the boost decay.",
+                     "the boost and deep water decay.",
     on_pill_captured = "Only the holder may own a built prize.",
     on_built = "A repair stops at 3 armour.",
     can_build = "Only the holder may repair it; bots build where told.",
