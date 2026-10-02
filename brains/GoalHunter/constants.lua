@@ -3158,6 +3158,41 @@ M.ORDER_HUMAN_NEAR_SUICIDE_TILES = 7   -- keel 0 (off)
 -- Needs PING_SUICIDE_ENABLED and ORDER_HUMAN_NEAR_SUICIDE_TILES > 0.  The
 -- human is the run's sender, so a bare "cancel" from them ends it.
 M.ORDER_HUMAN_NEAR_SUICIDE_RUN = true   -- keel false
+-- 2026-10-02 (Andrew): being near is not enough for the RUN.  The suicide
+-- run above starts only for a human team-mate within the same tiles who is
+-- SHOOTING AT THE PILL.  The 7-tile check itself is unchanged, and a human
+-- who is near but not shooting still gets the wall skip (attack.lua, no
+-- walls, no tree gather; HUMAN_NEAR_BLITZ_CAP below caps the blitz wait).
+-- "Shooting" means: within the last ORDER_HUMAN_SHOOTING_WINDOW_TICKS brain
+-- ticks (50 = 1 s) either
+--   * a friendly shell was on or next to the pill (within
+--     ORDER_HUMAN_SHOT_NEAR_TILES of its centre) on a line that runs back to
+--     that human (the human within ORDER_HUMAN_SHOT_LINE_TILES of the line
+--     behind the shell, and within shell reach), or
+--   * the pill lost armour while that human was within shell reach of it and
+--     facing it (heading within ORDER_HUMAN_FACE_BRADS of the pill).
+-- The engine names no shooter for a shell, so this is the best reading the
+-- brain has.  orders.note_human_shooting keeps the record (per human, for
+-- the bot's attack_pill target); orders.human_near_suicide reads it.
+M.ORDER_HUMAN_NEAR_NEEDS_SHOOTING   = true  -- keel false (near is enough)
+M.ORDER_HUMAN_SHOOTING_WINDOW_TICKS = 150   -- keel 150 (moot; NEEDS_SHOOTING off)
+M.ORDER_HUMAN_SHOT_NEAR_TILES       = 1.5   -- keel 1.5 (moot)
+M.ORDER_HUMAN_SHOT_LINE_TILES       = 1.0   -- keel 1.0 (moot)
+M.ORDER_HUMAN_FACE_BRADS            = 12    -- keel 12 (moot)
+-- 2026-10-02 (Andrew): a human team-mate within ORDER_HUMAN_NEAR_SUICIDE_TILES
+-- (the wall-skip case, goal._human_near) and the take is a blitz: the bot
+-- waits at most HUMAN_ATTACK_BLITZ_WAIT_MAX_S seconds at its spot, commander
+-- (GO) and soldier (goes without the GO) alike.  A commander with no soldier
+-- at all goes the moment it reaches its spot, blitz-only or not.
+M.HUMAN_NEAR_BLITZ_CAP              = true  -- keel false (no cap)
+-- 2026-10-02 (Andrew): a blitz SOLDIER still driving to its setup point when
+-- the commander charges (GO, or the commander's broadcast shows a firing
+-- substate): as close to the pill as its setup point is, or closer
+-- (Euclidean): it joins the charge now.  Further out: it drops the goal and
+-- goal selection picks again.  If that hands the same pill back while the
+-- charge still runs (an order on the pill, or the blitz row), the new goal
+-- joins the charge at once, so there is no drop-and-repick loop.
+M.BLITZ_SOLDIER_JOIN_CHARGE         = true  -- keel false (drive on to the setup point)
 -- Suicider goal-cost surcharge. User's spec, verbatim: "instead of doing
 -- attack_pill 0.33, do everything but refuel 3x cost" ??? plus the addendum
 -- "defend_pill specifically is x6, not x3". Applied at ONE choke point
@@ -5029,6 +5064,39 @@ M.PING_SUICIDE_WINDOW_TICKS = 50     -- keel 50 (moot; PING_SUICIDE_ENABLED off)
 -- When no square beside the pill can be reached, the run does not end: it
 -- forgets which squares failed and tries them all again after this long.
 M.PING_SUICIDE_RETRY_TICKS  = 50     -- keel 50 (moot; PING_SUICIDE_ENABLED off)
+-- AIM (2026-10-02, bot bug): the run used to steer its heading along the
+-- path and fire whenever that heading was within HARDLINE_FIRE_AIM_TOL (8
+-- brads = 11 degrees) of the pill.  At 7 tiles that is 1.4 tiles off, so the
+-- shells flew past the pill, and once the path bent away the bot stopped
+-- firing.  Now, once a shell can reach the pill with a clear line, the bot
+-- turns to FACE the pill (and drives at it), and fires only when the shell
+-- line passes within SUICIDE_AIM_HIT_HALF_TILES of the pill centre.  A shell
+-- reaches gunrange/2 tiles; the bot fires only within that plus
+-- SUICIDE_AIM_REACH_PAD_TILES (the old gate used + 1, so shells fell short).
+-- The CHARGE NOW rush (PING_ATTACK_CHARGE_NOW below) aims the same way.
+M.SUICIDE_AIM_AT_PILL         = true  -- keel false (old: aim along the path, 8-brad gate)
+M.SUICIDE_AIM_HIT_HALF_TILES  = 0.4   -- keel 0.4 (moot; SUICIDE_AIM_AT_PILL off)
+M.SUICIDE_AIM_REACH_PAD_TILES = 0.5   -- keel 0.5 (moot; SUICIDE_AIM_AT_PILL off)
+-- PACE (2026-10-02, Andrew): the run stays about SUICIDE_PACE_AHEAD_TILES
+-- closer to the pill than the nearest visible human team-mate.  Not that
+-- far ahead: top speed.  More than SUICIDE_PACE_SLACK_TILES past that lead,
+-- and already in shell reach of the pill: hold still (it still aims and
+-- fires).  In between, or no human visible: the old cruise speed.
+-- 0 = off (old behaviour: always cruise speed).
+M.SUICIDE_PACE_AHEAD_TILES    = 1     -- keel 0 (off)
+M.SUICIDE_PACE_SLACK_TILES    = 1     -- keel 1 (moot; SUICIDE_PACE_AHEAD_TILES 0)
+-- CHARGE NOW (2026-10-02, Andrew): an ATTACK ping from a human team-mate on a
+-- pill this bot is attacking (its attack_pill goal, ordered or its own) means
+-- "go now".  No blocker standing in the take's wall slots yet: the bot drops
+-- the plan and rushes straight in, firing as it goes (kill_hardline, with the
+-- SUICIDE_AIM_* aim).  A blocker already up: it carries on the careful way
+-- (standoff, aim, fire) but builds no more walls, gathers no trees and waits
+-- for nothing (no blitz wait, no anger cool-down).  NOT a suicide run:
+-- refuel, flee and armour checks stay.  Ends when the goal leaves that pill,
+-- the pill dies or is ours, the tank dies, or a caution ping lands on the bot
+-- or the pill.  The bot-command + ATTACK double ping is still the suicide
+-- run; this is the ATTACK ping on its own.
+M.PING_ATTACK_CHARGE_NOW      = true  -- keel false
 
 -- How far the seat a bot is escorting may drift from where the bot was last
 -- sent before the escort re-aims.  A hint may name its own `distance`; this
@@ -5440,6 +5508,29 @@ M.PRESETS = {
     PING_SUICIDE_ENABLED          = false,
     PING_SUICIDE_WINDOW_TICKS     = 50,
     PING_SUICIDE_RETRY_TICKS      = 50,
+    --   2026-10-02: the suicide run faces the pill to fire (tight hit gate,
+    --   real shell reach) and paces itself one tile ahead of the nearest
+    --   human. KEEL aimed along its path with the 8-brad gate, at cruise.
+    SUICIDE_AIM_AT_PILL           = false,
+    SUICIDE_AIM_HIT_HALF_TILES    = 0.4,
+    SUICIDE_AIM_REACH_PAD_TILES   = 0.5,
+    SUICIDE_PACE_AHEAD_TILES      = 0,
+    SUICIDE_PACE_SLACK_TILES      = 1,
+    --   2026-10-02: an ATTACK ping on a pill the bot is attacking = charge
+    --   now. KEEL read a lone ATTACK ping as a marker only.
+    PING_ATTACK_CHARGE_NOW        = false,
+    --   2026-10-02: the human-near rule needs the human to be shooting at
+    --   the pill. KEEL counted any visible human within the tiles.
+    ORDER_HUMAN_NEAR_NEEDS_SHOOTING   = false,
+    ORDER_HUMAN_SHOOTING_WINDOW_TICKS = 150,
+    ORDER_HUMAN_SHOT_NEAR_TILES       = 1.5,
+    ORDER_HUMAN_SHOT_LINE_TILES       = 1.0,
+    ORDER_HUMAN_FACE_BRADS            = 12,
+    --   2026-10-02: human near = blitz wait capped at
+    --   HUMAN_ATTACK_BLITZ_WAIT_MAX_S; a late soldier joins the charge or
+    --   drops the goal. KEEL: no cap, and the soldier drove on to its spot.
+    HUMAN_NEAR_BLITZ_CAP              = false,
+    BLITZ_SOLDIER_JOIN_CHARGE         = false,
     --   2026-09-24: a ping "go there" next to an enemy pill is a HARD decoy
     --   hold, and one with no pill in range ends on arrival. KEEL had only
     --   the soft 10 s hold that any reactive goal could drive away from.
