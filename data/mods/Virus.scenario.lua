@@ -9,11 +9,13 @@
 -- when their tank's explosion has played out, not the moment they die.
 --
 -- The two sides are the same tank. The one exception is the first to turn,
--- who is half again as quick, turns and accelerates harder, and is harder to
--- kill than anybody: a full tank of armour that gives way in ten hits rather
--- than eight, and a gun as good as anybody's. They keep it all round long and
--- on every life, and nobody else is given it while they are in the horde, not
--- even if they leave. The one time it moves is when the whole horde has left:
+-- who at first is half again as quick, turns and accelerates harder, and is
+-- harder to kill than anybody: a full tank of armour that gives way in ten
+-- hits rather than eight, and a gun as good as anybody's. The edge shrinks as
+-- the horde grows: each infected seat halves what they have over a small edge
+-- that stays (ZERO_BOOST), and it grows back if infected leave. They keep it
+-- all round long and on every life, and nobody else is given it while they
+-- are in the horde, not even if they leave. The one time it moves is when the whole horde has left:
 -- the virus starts again, and the new first one to turn is given it. Every
 -- other infected tank is the classic tank with a full tank of armour, and
 -- the last survivor is the classic tank too. The infected come back three
@@ -81,13 +83,15 @@ local BOOM_SECONDS    = 3     -- from the last survivor's death to the end of
                               -- the round, so their explosion plays out
 
 -- The defaults of three more lobby settings (scenario.settings at the bottom
--- of the file declares them from these numbers). on_start puts the host's
+-- of the file declares them from these values). on_start puts the host's
 -- choice over them.
 local COMPASS_SECONDS    = 90   -- the tail of the round the horde has a compass
                                 -- in; 0 is no compass
 local DEEP_WATER_SECONDS = 10   -- how long a survivor can stay on deep sea
-local ZERO_HUMAN         = 0    -- 1: the first to turn is always a person
-                                -- when one is playing; 0: pick_zero decides
+local ZERO_HUMAN         = "No" -- who turns first, the lobby's choice:
+                                -- "Yes" a person when one is playing; "No"
+                                -- a bot when one is playing; "Random" any
+                                -- seat, person or bot.
 
 -- What an infected tank comes back with, and the most the trickle feeds it
 -- to: half a full tank of shells.
@@ -100,8 +104,19 @@ end
 -- prices every blow they take, and a full tank's armour gives way in eight
 -- hits, so 80 is ten. The whole set is replaced rather than merged, so every
 -- field is written out, and an empty table is the classic tank.
-local ZERO_MODS = { speed = 145, accel = 150, turn = 125,
-                    reload = 100, dealt = 100, taken = 80 }
+--
+-- The edge shrinks as the horde grows. With n infected seats, the first one
+-- included, each field is floor + (full - floor) x half^(n - 1), rounded to
+-- a whole percent: the full set alone, half way to the floor at two, and
+-- close to the floor by five or six. The floor is still a small edge. Speed
+-- goes 145, 128, 119, 114, 112, ... towards 110.
+local ZERO_BOOST = {
+  full  = { speed = 145, accel = 150, turn = 125,
+            reload = 100, dealt = 100, taken = 80 },
+  floor = { speed = 110, accel = 110, turn = 105,
+            reload = 100, dealt = 100, taken = 95 },
+  half  = 0.5,     -- what is left of the edge over the floor per infected
+}
 
 local SCORE_ALIVE  = "ALIVE"
 local SCORE_INFECTED = "INFECTED"
@@ -147,7 +162,8 @@ local helper  = nil           -- the help's waiting timer, while there is one
 local ends_at = 0             -- the tick the round ends on, for the panel clock
 local zero    = nil           -- the first to turn, once one has been picked
 local alone   = nil           -- the last survivor, once there is one
-local boosted = nil           -- the seat that holds ZERO_MODS, if any does
+local boosted = nil           -- the seat that holds the first one's numbers
+local boosted_mods = nil      -- the set boosted was last handed
 local crushed = {}            -- pill -> true, run over by the horde, to go
 local razed   = {}            -- base -> true, run over by the horde, to go
 
@@ -194,22 +210,54 @@ local function post_score(p)
   end
 end
 
+-- The first one's numbers for the horde as it is now (ZERO_BOOST): every
+-- field, worked out from the number of infected seats in the round.
+local function zero_mods()
+  local n = math.max(1, #roll(INFECTED))
+  local keep = ZERO_BOOST.half ^ (n - 1)
+  local out = {}
+  for k, full in pairs(ZERO_BOOST.full) do
+    local floor = ZERO_BOOST.floor[k]
+    out[k] = math.floor(floor + (full - floor) * keep + 0.5)
+  end
+  return out
+end
+
+local function same_mods(a, b)
+  if a == nil or b == nil then
+    return false
+  end
+  for k, v in pairs(ZERO_BOOST.full) do
+    if a[k] ~= b[k] then
+      return false
+    end
+  end
+  return true
+end
+
 -- Hands the first one to turn their numbers once they are infected, and takes them
 -- off any seat that held them and is not the first one any more, which is the
 -- old first one when the virus starts again. The engine keeps a tank's
 -- modifiers across a respawn and only clears them when the tank is made new,
--- on a join or a new round, so this is called when zero changes and on a turn,
--- and does nothing when nothing has changed. Only this function and the net
--- in on_tank_spawned ever set modifiers, and the net only hands ZERO_MODS back
--- to boosted, so every seat but boosted is the classic tank.
+-- on a join or a new round, so this is called when zero changes, on a turn
+-- and whenever the number of infected changes (the numbers shrink as the
+-- horde grows), and does nothing when nothing has changed. Only this function
+-- and the net in on_tank_spawned ever set modifiers, and the net only hands
+-- the current set back to boosted, so every seat but boosted is the classic
+-- tank.
 local function crown_zero()
   if boosted ~= nil and boosted ~= zero then
     game.set_modifiers(boosted, {})
     boosted = nil
+    boosted_mods = nil
   end
-  if zero ~= nil and side[zero] == INFECTED and boosted ~= zero then
-    game.set_modifiers(zero, ZERO_MODS)
-    boosted = zero
+  if zero ~= nil and side[zero] == INFECTED then
+    local mods = zero_mods()
+    if boosted ~= zero or not same_mods(mods, boosted_mods) then
+      game.set_modifiers(zero, mods)
+      boosted = zero
+      boosted_mods = mods
+    end
   end
 end
 
@@ -687,7 +735,8 @@ local function infect(p, by)
   turned[p] = turned[p] or 0
   game.set_team(p, INFECTED)
   -- The first one to turn is handed their numbers here; anybody else stays
-  -- the classic tank they already are.
+  -- the classic tank they already are. One more infected also shrinks the
+  -- first one's numbers, which this hands them too.
   crown_zero()
   post_score(p)
   -- Everybody but the first turns by dying, and comes back on the loadout the
@@ -728,16 +777,12 @@ local function infect(p, by)
   check_the_end(by ~= nil)
 end
 
--- Who turns first, and it matters who is in the room. Two people or more and
--- it is one of them, because a brain plays the ordinary game and would spend
--- its first minute looking for a base rather than hunting anybody. One person
--- and it is a bot: picking the only human is not a draw, it is a certainty, and
--- it hands the one player in the round the one seat with nobody to hunt. Two in
--- the round at least, either way, or there is nobody to hunt at all.
---
--- The host can say the first one is always a person (ZERO_HUMAN). Then it is
--- one of the people whenever there is one, the only one included; a round of
--- bots alone still picks a bot.
+-- Who turns first: the host's lobby choice (ZERO_HUMAN). "Yes" is one of the
+-- people, and any seat when there are no people. "No" is one of the bots, and
+-- any seat when there are no bots: never a person while a bot is in the round.
+-- "Random" is a plain draw over every seat in the round, people and bots
+-- alike. Two in the round at least, whichever it is, or there is nobody to
+-- hunt at all.
 local function pick_zero()
   local pool, humans, bots = {}, {}, {}
   for _, p in ipairs(roll(SURVIVORS)) do
@@ -753,11 +798,9 @@ local function pick_zero()
     return nil
   end
   local from = pool
-  if ZERO_HUMAN == 1 and #humans > 0 then
+  if ZERO_HUMAN == "Yes" and #humans > 0 then
     from = humans
-  elseif #humans > 1 then
-    from = humans
-  elseif #humans == 1 and #bots > 0 then
+  elseif ZERO_HUMAN == "No" and #bots > 0 then
     from = bots
   end
   return from[math.random(#from)]
@@ -985,6 +1028,9 @@ function on_start()
   COMPASS_SECONDS    = game.setting("compass_seconds")
   DEEP_WATER_SECONDS = game.setting("deep_water_seconds")
   ZERO_HUMAN         = game.setting("zero_human")
+  if ZERO_HUMAN ~= "Yes" and ZERO_HUMAN ~= "Random" then
+    ZERO_HUMAN = "No"
+  end
   running = true
   elapsed = 0
   ends_at = game.tick() + ROUND_SECONDS * 100
@@ -1046,9 +1092,10 @@ function on_tank_killed(victim, killer, cause, scripted)
 end
 
 -- The modifiers are kept across a respawn, so this is a net under the moment of
--- turning rather than the thing that does it: the first one's numbers are
--- only handed to them again if their tank has come back without them. A
--- modifier of 0 is the classic tank, the same as 100.
+-- turning rather than the thing that does it: the first one's numbers, as
+-- they are for the horde now, are only handed to them again if their tank
+-- has come back without them. A modifier of 0 is the classic tank, the same
+-- as 100.
 local function same_pct(a, b)
   if a == nil or a == 0 then a = 100 end
   if b == nil or b == 0 then b = 100 end
@@ -1089,9 +1136,11 @@ function on_tank_spawned(p, mx, my, respawn, scripted)
   if t == nil then
     return
   end
-  for k, v in pairs(ZERO_MODS) do
+  local mods = zero_mods()
+  for k, v in pairs(mods) do
     if not same_pct(t.mods[k], v) then
-      game.set_modifiers(p, ZERO_MODS)
+      game.set_modifiers(p, mods)
+      boosted_mods = mods
       return
     end
   end
@@ -1117,6 +1166,8 @@ function on_player_join(p, scripted)
     side[p] = INFECTED
     game.set_team(p, INFECTED)
     game.message("You have arrived infected. Hunt them down.", p)
+    -- One more infected: the first one's numbers shrink.
+    crown_zero()
   else
     side[p] = SURVIVORS
     game.set_team(p, SURVIVORS)
@@ -1154,6 +1205,11 @@ function on_player_leave(p, scripted)
   end
   if boosted == p then
     boosted = nil
+    boosted_mods = nil
+  end
+  -- One fewer infected: the first one's numbers grow back a step.
+  if was == INFECTED then
+    crown_zero()
   end
   if not running or over or ending then
     return
@@ -1311,8 +1367,9 @@ scenario = {
     { id = "compass_seconds", label = "Compass on survivors, last (s, 0 off)",
       type = "int", min = 0, max = 300, step = 15,
       default = COMPASS_SECONDS },
-    { id = "zero_human", label = "First infected is a person (1 always, 0 auto)",
-      type = "int", min = 0, max = 1, step = 1, default = ZERO_HUMAN },
+    { id = "zero_human", label = "First infected is a person",
+      type = "choice", choices = { "Yes", "No", "Random" },
+      default = ZERO_HUMAN },
   },
 
   -- What each callback below does, in a line a player reads: the lobby's
