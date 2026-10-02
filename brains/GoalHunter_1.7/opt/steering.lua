@@ -3007,7 +3007,9 @@ local function tank_combat_steer(state, world, info, goal)
     -- Wall-clear: if the next A* step is a wall tile, stop and shoot it
     -- down. cpf_path_to may route through walls (wall_shoot_cost) and
     -- return a wall tile as the next step.
-    if nx and info.shells > C.TANK_COMBAT_FLEE_SHELLS then
+    -- C.WALL_SHOOT_LIFE_MAX: a wall that takes more hits than the knob is
+    -- not shot (Joust's 255-hit walls); default 0 shoots every wall.
+    if nx and info.shells > C.TANK_COMBAT_FLEE_SHELLS and U.wall_shootable(info) then
       local next_tt = U.ttype(nx, ny)
       if next_tt == C.T_BUILDING or next_tt == C.T_HALFBUILD then
         local wall_wx = U.m2w(nx)
@@ -3096,11 +3098,19 @@ local function tank_combat_steer(state, world, info, goal)
     -- magnitude, which flickers 16/11 as the target straddles a road edge. Floor
     -- it near full: tanks in combat almost always drive flat-out, and a low
     -- estimate (from velocity noise) would under-lead.
-    local cur_cap = C.MAP_SPEED[U.ttype(bit.rshift(math.floor(twx), 8), bit.rshift(math.floor(twy), 8))]
+    local cur_tt = U.ttype(bit.rshift(math.floor(twx), 8), bit.rshift(math.floor(twy), 8))
+    local cur_cap = C.MAP_SPEED[cur_tt]
     -- C.MAP_SPEED follows the rules only. With ENEMY_SPEED_OWN_MODS the
     -- target is assumed to carry our speed modifier too (nil = no change).
     local enemy_scale = U.enemy_speed_scale()
     if enemy_scale and cur_cap then cur_cap = cur_cap * enemy_scale end
+    -- C.LEAD_CAP_USE_MEASURED: a tank going faster than the table allows is
+    -- on something the table does not know (a boat on deep sea sails at 16,
+    -- MAP_SPEED says 3), so its own tile, and every tile of the same terrain
+    -- ahead of it, is capped no lower than what it is doing now. Other
+    -- terrain keeps its table cap, so a road->swamp slowdown is still led.
+    local lead_floor = C.LEAD_CAP_USE_MEASURED and vmag or nil
+    if lead_floor and (cur_cap or 0) < lead_floor then cur_cap = lead_floor end
     local throttle = (cur_cap and cur_cap > 0) and (vmag / cur_cap) or 1
     if throttle > 1 then throttle = 1 end
     shell_travel_ticks = wdist / shell_speed_per_tick
@@ -3109,8 +3119,10 @@ local function tank_combat_steer(state, world, info, goal)
       local n = math.floor(shell_travel_ticks + 0.5)
       if n > 100 then n = 100 end                    -- shell range backstop
       for _ = 1, n do
-        local cap = C.MAP_SPEED[U.ttype(bit.rshift(math.floor(ex), 8), bit.rshift(math.floor(ey), 8))] or 0
+        local ett = U.ttype(bit.rshift(math.floor(ex), 8), bit.rshift(math.floor(ey), 8))
+        local cap = C.MAP_SPEED[ett] or 0
         if enemy_scale then cap = cap * enemy_scale end
+        if lead_floor and ett == cur_tt and cap < lead_floor then cap = lead_floor end
         local step = cap * throttle
         ex = ex + hx * step
         ey = ey + hy * step
@@ -3190,7 +3202,10 @@ local function tank_combat_steer(state, world, info, goal)
   -- whole lead — it loosed shots while the gun was still short of the lead,
   -- sitting on the tank (aim_corr +6 = ~0.5 tile ahead of the tank). ±3 brads is
   -- ~0.3-0.4 tile of lateral slop at 5-7 tiles: on the lead, not on the tank.
-  local _aim_ok    = math.abs(aim_corr) < 3
+  -- C.TANK_COMBAT_AIM_GATE_BRADS: the gate's width (default 3, the above).
+  -- Joust widens it: a shell that misses costs little there, and a boat that
+  -- swerves can swerve into it.
+  local _aim_ok    = math.abs(aim_corr) < (C.TANK_COMBAT_AIM_GATE_BRADS or 3)
   local _shells_ok = info.shells > C.TANK_COMBAT_FLEE_SHELLS
   -- Heading-stability gate: the lead (even the terrain-aware one) assumes the
   -- target holds its HEADING over the shell's ~1-2s flight. Two things break
@@ -3231,7 +3246,21 @@ local function tank_combat_steer(state, world, info, goal)
                            and goal._engage_stuck_my == tmy)
   goal._engage_stuck_mx = tmx
   goal._engage_stuck_my = tmy
-  if _aim_ok and _shells_ok and _steady_ok then
+  -- C.TANK_COMBAT_FIRE_MAX_FLIGHT: hold the shot when the lead point is past
+  -- where the shell dies. A shell lives 1 + shell_life * (gunsight / 2) -
+  -- SHELL_START_ADD (5) steps of shell_speed wu (src/bolo/shells.c
+  -- shellLifeTicks), from the live rules and the gunsight we hold now. 64 wu
+  -- of slack: the shell hits anywhere inside the target's hit circle.
+  local _range_ok = true
+  if C.TANK_COMBAT_FIRE_MAX_FLIGHT then
+    local r = info.rules
+    local life = (r and r.shell_life and r.shell_life > 0) and r.shell_life or 8
+    local spd  = (r and r.shell_speed and r.shell_speed > 0) and r.shell_speed or 32
+    local steps = 1 + math.floor(life * (info.gunrange or 14) / 2) - 5
+    local reach_wu = steps * spd + 64
+    _range_ok = U.wdist(info.tankx, info.tanky, pred_wx, pred_wy) <= reach_wu
+  end
+  if _aim_ok and _shells_ok and _steady_ok and _range_ok then
     local _clear = shot_path_clear(info, world, pred_wx, pred_wy,
                                    bit.rshift(math.floor(pred_wx), 8),
                                    bit.rshift(math.floor(pred_wy), 8),
@@ -3279,9 +3308,13 @@ local function tank_combat_steer(state, world, info, goal)
   elseif dist_tiles <= C.TANK_COMBAT_ENGAGE_RANGE then
     -- In range: hold moderate speed for evasion, use jink
     local desired_speed = 12  -- keep moving to dodge
+    -- C.TANK_COMBAT_TURN_FIRST_BRADS: while the gun is this far off the lead,
+    -- turn first and do not speed up (0 = off).
+    local turn_first = (C.TANK_COMBAT_TURN_FIRST_BRADS or 0) > 0
+                       and math.abs(aim_corr) > C.TANK_COMBAT_TURN_FIRST_BRADS
     if info.speed > desired_speed + 4 then
       keys = bit.bor(keys, KEY_SLOWER)
-    elseif info.speed < desired_speed then
+    elseif info.speed < desired_speed and not turn_first then
       keys = bit.bor(keys, KEY_FASTER)
     end
   end
@@ -3541,6 +3574,22 @@ local function steer_core(state, world, info, goal)
         state._cliff_sticky_left = sticky_n
         state._cliff_sticky_mx   = trigger_mx
         state._cliff_sticky_my   = trigger_my
+      end
+      -- C.COMBAT_CLIFF_AIM_KEEP: in an attack_tank ENGAGE the brake keeps
+      -- its KEY_SLOWER and drops KEY_FASTER, but the turn and the shot are
+      -- the aim's, not the evade turn's. Turning toward a target across the
+      -- water points the ray at the sea every tick, and the evade turn then
+      -- swung the gun back off the target until the tank had stopped
+      -- (tests/scenario/acquire_shore). Any other substate (close) falls
+      -- through to the evade turn below.
+      if C.COMBAT_CLIFF_AIM_KEEP and goal.kind == "attack_tank" then
+        local ck, ct = tank_combat_steer(state, world, info, goal)
+        if ck and goal.substate == "engage" then
+          ck = bit.bor(bit.band(ck, bit.bnot(KEY_FASTER)), KEY_SLOWER)
+          log.reason("steer", { mode = "global_cliff_aim_keep",
+                                goal_kind = goal.kind })
+          return ck, ct or 0
+        end
       end
       -- EVASIVE TURN: brake AND steer away. Braking alone returned early with
       -- no turn key, so on every brake tick the tank held its heading; at
@@ -4422,7 +4471,8 @@ local function steer_core(state, world, info, goal)
           end
         end
 
-        if not wall_clearing and (next_tt == C.T_BUILDING or next_tt == C.T_HALFBUILD) then
+        if not wall_clearing and (next_tt == C.T_BUILDING or next_tt == C.T_HALFBUILD)
+           and U.wall_shootable(info) then
           local wall_wx = U.m2w(pf.next_mx)
           local wall_wy = U.m2w(pf.next_my)
           local wall_dist = U.wdist(info.tankx, info.tanky, wall_wx, wall_wy)
@@ -5101,7 +5151,8 @@ local function steer_core(state, world, info, goal)
       local pf = state.pf
       if pf.next_mx >= 0 then
         local next_tt = U.ttype(pf.next_mx, pf.next_my)
-        if next_tt == C.T_BUILDING or next_tt == C.T_HALFBUILD then
+        if (next_tt == C.T_BUILDING or next_tt == C.T_HALFBUILD)
+           and U.wall_shootable(info) then
           taps = bit.bor(taps, KEY_SHOOT)
         end
       end
@@ -5165,7 +5216,16 @@ local function steer_core(state, world, info, goal)
       local by = bit.rshift((info.tanky - U.bcos(info.direction) * 1), 8)
       local bt = U.ttype(bx, by)
       if (bt == C.T_BUILDING or bt == C.T_HALFBUILD) and info.shells > 0 then
-        taps = bit.bor(taps, KEY_SHOOT)
+        if U.wall_shootable(info) then
+          taps = bit.bor(taps, KEY_SHOOT)
+        else
+          -- C.WALL_SHOOT_LIFE_MAX: the wall will not fall, so back off it
+          -- and turn away rather than spend shells on it.
+          keys = bit.bor(bit.band(keys, bit.bnot(KEY_FASTER)), KEY_SLOWER)
+          if bit.band(keys, bit.bor(KEY_TURNLEFT, KEY_TURNRIGHT)) == 0 then
+            keys = bit.bor(keys, KEY_TURNRIGHT)
+          end
+        end
       end
     end
 
@@ -5505,6 +5565,164 @@ local function steer_core(state, world, info, goal)
 end
 
 -- =========================================================================
+-- BOAT SHELL DODGE (C.BOAT_SHELL_DODGE, default false = off).
+-- =========================================================================
+-- A shell flies at 32 wu a brain tick and a boat sails at 16, so a shell
+-- fired from 5 squares takes about 40 ticks to arrive, and in that time a
+-- boat that turns or changes speed moves out of the spot the shooter led.
+-- Each brain tick, every visible shell that is not ours (OBJECT_SHOT whose
+-- info is not SHELLS_BRAIN_FRIENDLY) is flown forward along its heading, and
+-- the boat is flown forward with this tick's keys held. If the shell comes
+-- within C.BOAT_SHELL_DODGE_GAP of the boat (the larger of |dx| and |dy|, the
+-- same square test tank.c uses for a shell hit), the nine mixes of turn
+-- (none / left / right) and throttle (hold / faster / slower) are flown too,
+-- and the keys of the mix that keeps the shell farthest away replace the
+-- turn and throttle keys. The shot key and everything else pass through.
+--
+-- The boat model is the engine's (measured on Joust, info.speed is speed x4):
+--   speed  info.speed / 4 wu a brain tick, at most rules.speed_boat
+--   turn   2 brads a brain tick (turn_boat 1 a sim step, 2 sim steps a tick),
+--          a quarter of that for the first 3 ticks of a new turn (tank.c
+--          tankTurn: the first 6 sim steps turn at 1/8 rate)
+--   throttle +-0.5 wu a tick each tick FASTER/SLOWER is held (0.25 a step)
+--   a square that is not water stops the boat (it cannot sail through it)
+-- The shell lives at most 1 + shell_life * 7 - 5 steps (gunsight 14, the
+-- longest), and is flown no farther than that from where it is now.
+local DODGE_TURNS   = { 0, -1, 1 }
+local DODGE_THROTS  = { 0, 1, -1 }
+
+local function dodge_fly(info, shells, turn, throt, held_turn, vmax, pre_n, pre_turn, pre_throt)
+  local h = info.direction
+  local v = (info.speed or 0) / 4
+  local x, y = info.tankx, info.tanky
+  pre_n = pre_n or 0
+  local cur_turn, cur_throt = turn, throt
+  if pre_n > 0 then cur_turn, cur_throt = pre_turn, pre_throt end
+  local ramp = (cur_turn ~= 0 and cur_turn == held_turn) and 3 or 0
+  local nsh = #shells
+  local sx, sy = {}, {}
+  for i = 1, nsh do sx[i], sy[i] = shells[i].x, shells[i].y end
+  local best = math.huge
+  for k = 1, shells.steps do
+    if k == pre_n + 1 and pre_n > 0 then
+      if turn ~= cur_turn then ramp = 0 end
+      cur_turn, cur_throt = turn, throt
+    end
+    if cur_turn ~= 0 then
+      h = (h + cur_turn * ((ramp < 3) and 0.5 or 2)) % 256
+      ramp = ramp + 1
+    end
+    v = v + cur_throt * 0.5
+    if v > vmax then v = vmax elseif v < 0 then v = 0 end
+    local a = h * C.TWO_PI / 256
+    local nx = x + math.sin(a) * v
+    local ny = y - math.cos(a) * v
+    local tt = U.ttype(bit.rshift(math.floor(nx), 8), bit.rshift(math.floor(ny), 8))
+    if U.is_water(tt) or tt == C.T_BOAT then x, y = nx, ny else v = 0 end
+    for i = 1, nsh do
+      local s = shells[i]
+      if k <= s.steps then
+        sx[i] = sx[i] + s.ux * s.spd
+        sy[i] = sy[i] + s.uy * s.spd
+        local g = math.max(math.abs(sx[i] - x), math.abs(sy[i] - y))
+        if g < best then best = g end
+      end
+    end
+  end
+  return best
+end
+
+local function boat_shell_dodge(state, info, keys, taps)
+  local r = info.rules
+  local spd = (r and r.shell_speed and r.shell_speed > 0) and r.shell_speed or 32
+  local life = (r and r.shell_life and r.shell_life > 0) and r.shell_life or 8
+  local reach = (1 + life * 7 - 5) * spd
+  local vmax = (r and r.speed_boat and r.speed_boat > 0) and r.speed_boat or 16
+  local gap = C.BOAT_SHELL_DODGE_GAP or 192
+  local held = (bit.band(keys, KEY_TURNRIGHT) ~= 0 and 1)
+            or (bit.band(keys, KEY_TURNLEFT) ~= 0 and -1) or 0
+  local prev_held = state._dodge_held_turn or 0
+  state._dodge_held_turn = held
+  local shells = { steps = 0 }
+  for _, ob in ipairs(info.objects or {}) do
+    if ob.type == OBJECT_SHOT and ob.info ~= 0 then
+      local ux = U.bsin(ob.direction) / 128
+      local uy = -U.bcos(ob.direction) / 128
+      local dx, dy = info.tankx - ob.x, info.tanky - ob.y
+      local along = dx * ux + dy * uy
+      local perp = math.abs(dx * uy - dy * ux)
+      -- Behind the shell, out of its reach, or too far to the side to be
+      -- reached by a boat at full speed in the time the shell flies.
+      if along > -gap and along < reach + gap
+         and perp < gap + vmax * (along + gap) / spd then
+        local steps = math.min(math.ceil((along + gap) / spd), math.floor(reach / spd))
+        if steps > 0 then
+          shells[#shells + 1] = { x = ob.x, y = ob.y, ux = ux, uy = uy, spd = spd, steps = steps }
+          if steps > shells.steps then shells.steps = steps end
+        end
+      end
+    end
+  end
+  if #shells == 0 then state._dodge_roll = nil return keys, taps end
+  local throt = (bit.band(keys, KEY_FASTER) ~= 0 and 1)
+             or (bit.band(keys, KEY_SLOWER) ~= 0 and -1) or 0
+  local planned = dodge_fly(info, shells, held, throt, prev_held, vmax)
+  if planned >= gap then state._dodge_roll = nil return keys, taps end
+  -- C.BOAT_SHELL_DODGE_CHANCE: a threat starts here. Roll once, at the first
+  -- tick of the threat, and keep the answer until the threat ends (the two
+  -- returns above clear it). The roll is a hash, not math.random, so it does
+  -- not move the shared random stream and a seed always plays the same.
+  -- 1 = always dodge: no roll is made.
+  local chance = C.BOAT_SHELL_DODGE_CHANCE or 1
+  if chance < 1 then
+    local roll = state._dodge_roll
+    if roll == nil then
+      -- seed < 3000017, so seed * 2654435761 < 2^53 and is exact.
+      local seed = ((state.tick or 0) * 7 + (info.player_number or 0) * 7919
+                    + (state.replan_offset or 0) * 131) % 3000017
+      local h = math.floor(seed * 2654435761 / 65536) % 65536
+      roll = (h / 65536) < chance
+      state._dodge_roll = roll
+      state._dodge_threats = (state._dodge_threats or 0) + 1
+      if roll then state._dodge_rolled_yes = (state._dodge_rolled_yes or 0) + 1 end
+      log.reason("steer", { mode = "boat_shell_dodge_roll", dodge = roll,
+        chance = chance, threats = state._dodge_threats,
+        dodges = state._dodge_rolled_yes or 0 })
+    end
+    if not roll then return keys, taps end
+  end
+  local best_g, best_t, best_s = planned, held, throt
+  for _, t in ipairs(DODGE_TURNS) do
+    for _, s in ipairs(DODGE_THROTS) do
+      if t ~= held or s ~= throt then
+        local g = dodge_fly(info, shells, t, s, prev_held, vmax)
+        if g > best_g then best_g, best_t, best_s = g, t, s end
+      end
+    end
+  end
+  if best_t == held and best_s == throt then return keys, taps end
+  -- C.BOAT_SHELL_DODGE_DEFER: when the best mix still clears the gap if it
+  -- starts this many ticks later, keep this tick's keys (the aim) and decide
+  -- again next tick. 0 = dodge at once.
+  local defer = C.BOAT_SHELL_DODGE_DEFER or 0
+  if defer > 0 and best_g >= gap
+     and dodge_fly(info, shells, best_t, best_s, prev_held, vmax, defer, held, throt) >= gap then
+    return keys, taps
+  end
+  local turn_bits = bit.bor(KEY_TURNLEFT, KEY_TURNRIGHT)
+  keys = bit.band(keys, bit.bnot(bit.bor(turn_bits, KEY_FASTER, KEY_SLOWER)))
+  if taps then taps = bit.band(taps, bit.bnot(turn_bits)) end
+  if best_t == 1 then keys = bit.bor(keys, KEY_TURNRIGHT)
+  elseif best_t == -1 then keys = bit.bor(keys, KEY_TURNLEFT) end
+  if best_s == 1 then keys = bit.bor(keys, KEY_FASTER)
+  elseif best_s == -1 then keys = bit.bor(keys, KEY_SLOWER) end
+  state._dodge_held_turn = best_t
+  log.reason("steer", { mode = "boat_shell_dodge", shells = #shells,
+    planned_gap = planned, gap = best_g, turn = best_t, throttle = best_s })
+  return keys, taps
+end
+
+-- =========================================================================
 -- M.steer — the single choke point where keys leave the steering module.
 -- =========================================================================
 -- STOPPED-TANK DEEP-SEA MASK (C.CLIFF_STOP_MASK_ALL_GOALS).
@@ -5535,7 +5753,31 @@ function M.steer(state, world, info, goal)
   if state._heat_active then
     attack_mod().heat_pill_reap(state, world, info, goal, state.tick or 0)
   end
+  -- C.WALL_SHOOT_LIFE_MAX: a wall the tank will not shoot is not a route
+  -- either, so the pathfinder stops planning through walls (on foot; a boat
+  -- never paths through a wall). Sent only when the answer changes. Default
+  -- 0 never enters this block (unless a bot_init just set it back to 0, and
+  -- then it puts the cost back once).
+  if C.WALL_SHOOT_LIFE_MAX > 0 or state._walls_unshootable then
+    local no_walls = not U.wall_shootable(info)
+    if state._walls_unshootable ~= no_walls then
+      state._walls_unshootable = no_walls
+      cpf.set_config("wall_shoot_cost", no_walls and 1e6 or C.WALL_SHOOT_COST)
+    end
+  end
+  -- C.EDGE_COST_REFRESH_THINKS: see constants.lua. Default 0 never enters.
+  if C.EDGE_COST_REFRESH_THINKS > 0
+     and (state.tick or 0) % C.EDGE_COST_REFRESH_THINKS == 0 then
+    cpf.rebuild_edge_costs()
+  end
   local keys, taps = steer_core(state, world, info, goal)
+  -- C.BOAT_SHELL_DODGE: a boat turns and changes speed to get out of the way
+  -- of a hostile shell that would hit it. Default false never enters.
+  if C.BOAT_SHELL_DODGE and keys and info.inboat then
+    keys, taps = boat_shell_dodge(state, info, keys, taps)
+  else
+    state._dodge_roll = nil   -- off the boat (or dead): the threat is over
+  end
   if C.CLIFF_STOP_MASK_ALL_GOALS and keys and not info.inboat then
     local sdir = U.bsin(info.direction)
     local cdir = U.bcos(info.direction)

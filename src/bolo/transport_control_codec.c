@@ -1741,7 +1741,11 @@ static bool decodeEntitySyncBody(const uint8_t *buf, size_t len,
  * than a stale value — a zero reload interval or a zero armour cap is not a
  * table the game can run on.
  *
- * Fixed length, so the decoder rejects any other size outright rather than
+ * Then the optional tails (control_event.h): CTRL_SIM_RULES_EXT_U8_FIELDS
+ * when either tail is needed, and CTRL_SIM_RULES_EXT2_U8_FIELDS after it
+ * when building_life is not classic. So a body has one of three lengths.
+ *
+ * Fixed lengths, so the decoder rejects any other size outright rather than
  * reading a truncated table. Delivered body-only on CHANNEL_CONTROL, as
  * CTRL_ENTITY_SYNC is: there is no full-packet wrapper or PACKET_* type. */
 
@@ -1771,8 +1775,15 @@ static EncodeResult encodeSimRulesBody(const ControlEvent *evt,
                                        size_t *outLen) {
     size_t pos = 0;
     (void)recipient;
-    bool extended = evt->u.simRules.tank_collision_mac != 0;
-    size_t bodyLen = extended ? CTRL_SIM_RULES_BODY_LEN : CTRL_SIM_RULES_BASE_BODY_LEN;
+    /* The second tail only for a building_life that is not classic (and not
+       the zero of an event nobody filled); the first tail rides with it. */
+    bool extended2 = evt->u.simRules.building_life != 0 &&
+                     evt->u.simRules.building_life !=
+                         CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC;
+    bool extended = extended2 || evt->u.simRules.tank_collision_mac != 0;
+    size_t bodyLen = extended2 ? CTRL_SIM_RULES_EXT2_BODY_LEN
+                   : extended  ? CTRL_SIM_RULES_BODY_LEN
+                               : CTRL_SIM_RULES_BASE_BODY_LEN;
     if (bufCap < bodyLen) return ENCODE_OVERFLOW;
 
 #define SIM_RULES_PACK_U8(name)                                              \
@@ -1791,6 +1802,9 @@ static EncodeResult encodeSimRulesBody(const ControlEvent *evt,
     if (extended) {
         CTRL_SIM_RULES_EXT_U8_FIELDS(SIM_RULES_PACK_U8)
     }
+    if (extended2) {
+        CTRL_SIM_RULES_EXT2_U8_FIELDS(SIM_RULES_PACK_U8)
+    }
 
 #undef SIM_RULES_PACK_U8
 #undef SIM_RULES_PACK_U16
@@ -1804,7 +1818,8 @@ static EncodeResult encodeSimRulesBody(const ControlEvent *evt,
 static bool decodeSimRulesBody(const uint8_t *buf, size_t len,
                                ControlEvent *outEvt) {
     size_t pos = 0;
-    if (len != CTRL_SIM_RULES_BODY_LEN && len != CTRL_SIM_RULES_BASE_BODY_LEN) return false;
+    if (len != CTRL_SIM_RULES_EXT2_BODY_LEN && len != CTRL_SIM_RULES_BODY_LEN &&
+        len != CTRL_SIM_RULES_BASE_BODY_LEN) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_SIM_RULES;
 
@@ -1821,8 +1836,13 @@ static bool decodeSimRulesBody(const uint8_t *buf, size_t len,
     CTRL_SIM_RULES_U16_FIELDS(SIM_RULES_UNPACK_U16)
     CTRL_SIM_RULES_U32_FIELDS(SIM_RULES_UNPACK_U32)
     CTRL_SIM_RULES_F32_FIELDS(SIM_RULES_UNPACK_F32)
-    if (len == CTRL_SIM_RULES_BODY_LEN) {
+    if (len >= CTRL_SIM_RULES_BODY_LEN) {
         CTRL_SIM_RULES_EXT_U8_FIELDS(SIM_RULES_UNPACK_U8)
+    }
+    if (len == CTRL_SIM_RULES_EXT2_BODY_LEN) {
+        CTRL_SIM_RULES_EXT2_U8_FIELDS(SIM_RULES_UNPACK_U8)
+    } else {
+        outEvt->u.simRules.building_life = CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC;
     }
 
 #undef SIM_RULES_UNPACK_U8

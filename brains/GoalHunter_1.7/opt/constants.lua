@@ -2053,6 +2053,62 @@ M.TANK_COMBAT_JINK_PERIOD       = 10    -- ticks between jink direction changes
 M.TANK_COMBAT_JINK_ANGLE        = 32    -- bolo angle offset for lateral jink (~45??)
 M.TANK_COMBAT_OPPORTUNISTIC_RANGE = 4   -- tiles: fire at enemy if already aimed near them
 M.TANK_COMBAT_OPPORTUNISTIC_AIM = 8     -- bolo angle units (~11??) aim tolerance for opportunistic shot
+-- ── attack_tank aim and fire knobs (2026-10-01, Joust) ─────────────────────
+-- Every default below is the OLD behaviour; Joust turns them on for its bots
+-- with PRESETS.joust (data/maps/Joust.scenario.lua, game.bot_init). Each
+-- has its old value in PRESETS.keel.
+-- COMBAT_CLIFF_AIM_KEEP: in attack_tank ENGAGE, when the global cliff brake
+-- fires (heading ray meets deep sea), keep the brake and drop accelerate but
+-- take the AIM turn and the shot from tank_combat_steer instead of the evade
+-- turn. Off: the brake returns its evade turn and the aim and shot are lost
+-- that tick (tests/scenario/acquire_shore).
+M.COMBAT_CLIFF_AIM_KEEP          = false
+-- TANK_COMBAT_TURN_FIRST_BRADS: in engage, no KEY_FASTER while the aim error
+-- is more than this many brads. 0 = off (always hold the dodge speed).
+M.TANK_COMBAT_TURN_FIRST_BRADS   = 0
+-- LEAD_CAP_USE_MEASURED: the lead model's per-terrain speed cap is the larger
+-- of C.MAP_SPEED[terrain] and the target's measured speed. Off: a boat on
+-- deep sea (MAP_SPEED 3) is led at 3 wu/tick while it sails at 16
+-- (tests/scenario/lead_aim_boat).
+M.LEAD_CAP_USE_MEASURED          = false
+-- TANK_COMBAT_FIRE_MAX_FLIGHT: in engage, do not fire when the shell's flight
+-- to the lead point is longer than the shell lives (live shell_life and the
+-- current gunsight). Off: fire whatever the range.
+M.TANK_COMBAT_FIRE_MAX_FLIGHT    = false
+-- TANK_COMBAT_AIM_GATE_BRADS: in engage, fire when the gun is within this
+-- many brads of the lead point. 3 = the old gate.
+M.TANK_COMBAT_AIM_GATE_BRADS     = 3
+-- WALL_SHOOT_LIFE_MAX: walls whose live building_life (info.rules) is above
+-- this are never shot by the combat wall-clear, the nav wall-clear, the
+-- drive-by wall shot or the stuck fallback; the stuck fallback reverses out
+-- instead. 0 = no limit (old behaviour: every wall is shot).
+M.WALL_SHOOT_LIFE_MAX            = 0
+-- BOAT_SHELL_DODGE: a tank on a boat turns and changes speed to get out of
+-- the way of a hostile shell its keys would leave it in the path of
+-- (steering.lua boat_shell_dodge). Off: the keys are never changed for a
+-- shell. BOAT_SHELL_DODGE_GAP: wu; a shell that comes closer than this
+-- (larger of |dx| and |dy|) counts as a hit. tank.c tests 128-144.
+M.BOAT_SHELL_DODGE               = false
+M.BOAT_SHELL_DODGE_GAP           = 192
+-- BOAT_SHELL_DODGE_DEFER: brain ticks. Keep the planned keys (the aim) while
+-- the best dodge would still clear the gap if it started this much later.
+-- 0 = dodge the first tick a shell threatens.
+M.BOAT_SHELL_DODGE_DEFER         = 0
+-- BOAT_SHELL_DODGE_CHANCE: 0..1. The chance that the boat dodges a threat.
+-- The bot rolls once when a threat starts (the first brain tick a shell
+-- would hit the boat with its planned keys) and keeps that answer until no
+-- shell threatens the boat. So it does not switch between dodging and not
+-- dodging each tick. The roll is a hash of the tick, the player number and
+-- state.replan_offset (no math.random), so a seed always plays the same.
+-- 1 = always dodge (old behaviour; no roll is made).
+M.BOAT_SHELL_DODGE_CHANCE        = 1.0
+-- EDGE_COST_REFRESH_THINKS: rebuild the pathfinder's Dijkstra edge-cost table
+-- every this many thinks (steering.lua M.steer). The table is built once in
+-- Brain.open and kept until the map pointer changes, so terrain that differs
+-- from the open-time map stays priced as the old tile: in Joust the slate
+-- route named an arena wall as plain water and the boat drove into it for
+-- good. 0 = never (old behaviour: built once).
+M.EDGE_COST_REFRESH_THINKS       = 0
 -- ── attack_tank: heat a FRIENDLY pill mid-fight (2026-09-06) ──────────────
 -- While fighting enemy tank E, a friendly pill CLOSER to E than we are is a
 -- second gun already in position -- but only if it is angry. The engine's
@@ -5034,6 +5090,19 @@ M.PRESETS = {
     LIVE_PHYSICS_WSIM_BUILD       = false,
     LIVE_PHYSICS_SHELL_LIFE       = false,
     LIVE_PHYSICS_PILL_RANGE_WU    = false,
+    -- 2026-10-01: attack_tank aim/fire knobs for Joust. All default off; KEEL
+    -- pinned at the same old values.
+    COMBAT_CLIFF_AIM_KEEP         = false,
+    TANK_COMBAT_TURN_FIRST_BRADS  = 0,
+    LEAD_CAP_USE_MEASURED         = false,
+    TANK_COMBAT_FIRE_MAX_FLIGHT   = false,
+    TANK_COMBAT_AIM_GATE_BRADS    = 3,
+    WALL_SHOOT_LIFE_MAX           = 0,
+    BOAT_SHELL_DODGE              = false,
+    BOAT_SHELL_DODGE_GAP          = 192,
+    BOAT_SHELL_DODGE_DEFER        = 0,
+    BOAT_SHELL_DODGE_CHANCE       = 1.0,
+    EDGE_COST_REFRESH_THINKS      = 0,
     -- 2026-09-08: while on capture_pill the bot now sweeps the target tile for
     -- an enemy builder rebuilding the corpse -- the kill_lgm aim solution takes
     -- the TURN keys whenever it points within CAPTURE_LGM_HUNT_TOL_BRADS of
@@ -5441,6 +5510,65 @@ M.PRESETS = {
   turtle = {
     PILL_PLACE_TURTLE = true,
   },
+  -- joust: the Joust scenario's bots (2026-10-01). Joust hands every bot
+  -- this preset with game.bot_init, so the knobs touch no other game.
+  joust = {
+    COMBAT_CLIFF_AIM_KEEP         = true,
+    TANK_COMBAT_TURN_FIRST_BRADS  = 24,
+    LEAD_CAP_USE_MEASURED         = true,
+    TANK_COMBAT_FIRE_MAX_FLIGHT   = false,  -- off: fire at any range, a boat may sail into it
+    TANK_COMBAT_AIM_GATE_BRADS    = 24,     -- fire early: a miss costs one shell, back in 2 s
+    TANK_COMBAT_STEADY_TICKS      = 0,      -- do not wait for the target's heading to settle
+    WALL_SHOOT_LIFE_MAX           = 8,
+    BOAT_SHELL_DODGE              = true,
+    BOAT_SHELL_DODGE_DEFER        = 8,
+    EDGE_COST_REFRESH_THINKS      = 250,    -- about 10 s; arena walls never fall
+    -- Per level, on top of the values above (init.lua _apply_cfg_tokens).
+    -- Hard keeps the values above. Medium and Easy aim worse, fire slower
+    -- and wait for a steadier target. Joust is always "outnumbered" in a
+    -- Free For All, so the lower levels must not disengage for it, or a 4-6
+    -- bot round stalls.
+    -- 2026-10-01: Andrew found the first Medium far too easy in play, so
+    -- Medium moved halfway to Hard (he play-tested it: good). Easy plays on
+    -- the general Medium bundle (the block at the end of this file), with
+    -- the values below.
+    -- Why the first Easy beat Medium: shell dodging. A bot that dodges
+    -- shells turns away from its aim, fires later and wastes more shells,
+    -- so in Joust it loses more than it saves. Medium dodged and Easy did
+    -- not, so Easy won 12-4 in 16 games. Medium with dodging off beat plain
+    -- Medium 13-3. Easy now dodges, aims wider, leads a sailing boat too
+    -- slowly (LEAD_CAP_USE_MEASURED off) and fires less often.
+    -- Bench (Free For All Joust, 4 and 6 bots, target 10, winner = side of
+    -- the top scorer): Hard beat Medium 8-0, Medium beat Easy 7-1 (and 28-4
+    -- in a 32-game run), Hard beat Easy 8-0.
+    -- 2026-10-02: Hard dodges a threat on a coin flip (Andrew:
+    -- "unpredictability is good"). Hard with dodging off beat Hard with
+    -- dodging on 25-7 in 32 games (it fires 36% more), but a dodger wins
+    -- more of the close fights. Hard otherwise keeps the values above.
+    by_difficulty = {
+      hard = {
+        BOAT_SHELL_DODGE_CHANCE   = 0.5,
+      },
+      medium = {
+        OUTNUMBERED_DISENGAGE     = false,
+        AIM_ERROR_BRADS           = 3,
+        FIRE_HOLD_TICKS           = 10,
+        REACTION_DELAY_TICKS      = 8,
+        TANK_COMBAT_STEADY_TICKS  = 2,
+        TANK_COMBAT_AIM_GATE_BRADS = 18,
+      },
+      easy = {
+        OUTNUMBERED_DISENGAGE     = false,
+        AIM_ERROR_BRADS           = 10,
+        FIRE_HOLD_TICKS           = 35,
+        REACTION_DELAY_TICKS      = 20,
+        TANK_COMBAT_STEADY_TICKS  = 8,
+        TANK_COMBAT_AIM_GATE_BRADS = 24,
+        BOAT_SHELL_DODGE          = true,
+        LEAD_CAP_USE_MEASURED     = false,
+      },
+    },
+  },
 }
 
 -- ── SIDE SETTINGS (2026-09-29, Andrew; Virus) ─────────────────────────
@@ -5588,6 +5716,30 @@ do
     turtle[level] = t
   end
   M.MODE_LEVELS.turtle = turtle
+end
+
+-- Joust Easy plays on the general Medium bundle (2026-10-01). For every
+-- knob where the general Easy bundle differs from the general Medium
+-- bundle, Joust's easy table writes the Medium value back (Hard's value
+-- where Medium sets none). So in Joust, Easy differs from Medium only in
+-- the Joust values in PRESETS.joust.by_difficulty. It is built from the two
+-- bundles here, so a later change to either bundle reaches Joust too.
+-- Knobs that Joust's own tables set are left alone. Only PRESETS.joust
+-- changes; no other game reads it.
+do
+  local joust = M.PRESETS.joust
+  local easy = joust.by_difficulty.easy
+  local med, low = M.MODE_LEVELS.default.medium, M.MODE_LEVELS.default.easy
+  local names = {}
+  for k in pairs(med) do names[k] = true end
+  for k in pairs(low) do names[k] = true end
+  for k in pairs(names) do
+    local mv = med[k]
+    if mv == nil then mv = M[k] end
+    local ev = low[k]
+    if ev == nil then ev = M[k] end
+    if mv ~= ev and easy[k] == nil and joust[k] == nil then easy[k] = mv end
+  end
 end
 
 return M

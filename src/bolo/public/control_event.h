@@ -636,6 +636,17 @@ typedef struct LobbyScriptEntry {
  * classic games keep their wire format; old recordings decode as zero. */
 #define CTRL_SIM_RULES_EXT_U8_FIELDS(F) F(tank_collision_mac)
 
+/* A second optional tail, after the first. A bot's brain reads
+ * building_life to know whether a wall is worth shooting, and the brain
+ * reads the client's table. Sent only when building_life is not the
+ * classic value (Joust's 255-hit walls), so every other game keeps the body
+ * it had. The first tail always rides in front of this one, zero or not. A
+ * body without this tail decodes as the classic value. Zero is not a value
+ * the row allows, so an event built with the field left at zero is sent
+ * without the tail too. */
+#define CTRL_SIM_RULES_EXT2_U8_FIELDS(F) F(building_life)
+#define CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC 4
+
 /* Every carried rule, whatever its width, for the callers that do not care
  * how wide one goes — the check for whether a changed rule is one this
  * event carries, and the round-trip case that walks them all. */
@@ -644,7 +655,8 @@ typedef struct LobbyScriptEntry {
     CTRL_SIM_RULES_U16_FIELDS(F)                                             \
     CTRL_SIM_RULES_U32_FIELDS(F)                                             \
     CTRL_SIM_RULES_F32_FIELDS(F)                                             \
-    CTRL_SIM_RULES_EXT_U8_FIELDS(F)
+    CTRL_SIM_RULES_EXT_U8_FIELDS(F)                                          \
+    CTRL_SIM_RULES_EXT2_U8_FIELDS(F)
 
 /* The member each list entry becomes. Integer rules keep the int32_t
  * SimRules declares them as whatever width they travel in, so reading one
@@ -663,6 +675,9 @@ typedef struct LobbyScriptEntry {
 #define CTRL_SIM_RULES_BODY_LEN                                              \
     (CTRL_SIM_RULES_BASE_BODY_LEN +                                         \
      (size_t)(0 CTRL_SIM_RULES_EXT_U8_FIELDS(CTRL_SIM_RULES_COUNT_ONE)))
+#define CTRL_SIM_RULES_EXT2_BODY_LEN                                         \
+    (CTRL_SIM_RULES_BODY_LEN +                                              \
+     (size_t)(0 CTRL_SIM_RULES_EXT2_U8_FIELDS(CTRL_SIM_RULES_COUNT_ONE)))
 
 /* `quiet` on the five variants that carry one is the announce policy's
  * answer, stamped by the server where it built the event: 0 to announce the
@@ -1185,6 +1200,7 @@ typedef struct ControlEvent {
             CTRL_SIM_RULES_U32_FIELDS(CTRL_SIM_RULES_INT_MEMBER)
             CTRL_SIM_RULES_F32_FIELDS(CTRL_SIM_RULES_FLT_MEMBER)
             CTRL_SIM_RULES_EXT_U8_FIELDS(CTRL_SIM_RULES_INT_MEMBER)
+            CTRL_SIM_RULES_EXT2_U8_FIELDS(CTRL_SIM_RULES_INT_MEMBER)
         } simRules;
 
         /* CTRL_SCN_PANEL — one panel's display list, replacing whatever

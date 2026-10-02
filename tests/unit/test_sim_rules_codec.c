@@ -159,9 +159,46 @@ int run_sim_rules_codec_roundtrip(void) {
         UT_ASSERT(shortOut.u.simRules.tank_collision_mac == 0);
         UT_ASSERT_MSG(!dec(buf, CTRL_SIM_RULES_BASE_BODY_LEN - 1, &shortOut),
                       "the decoder accepted a truncated base body");
-        UT_ASSERT(!dec(buf, CTRL_SIM_RULES_BODY_LEN + 1, &shortOut));
+        UT_ASSERT(shortOut.u.simRules.building_life ==
+                  CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC);
+        UT_ASSERT(!dec(buf, CTRL_SIM_RULES_EXT2_BODY_LEN + 1, &shortOut));
         UT_ASSERT_MSG(!dec(buf, 0, &shortOut),
                       "the decoder accepted an empty body");
+    }
+
+    /* The second tail. A building_life that is not classic rides after the
+       first tail, which comes along at zero; the body with only the first
+       tail reads the classic value; and a classic building_life sends
+       nothing extra. */
+    {
+        ControlEvent wide, wideOut;
+        size_t       wideLen = 0;
+
+        srFillCounted(&wide);
+        wide.u.simRules.building_life = 255;
+        UT_ASSERT(enc(&wide, NULL, buf, sizeof(buf), &wideLen) == ENCODE_OK);
+        UT_ASSERT_MSG(wideLen == CTRL_SIM_RULES_EXT2_BODY_LEN,
+                      "a 255 building_life wrote %u bytes, expected %u",
+                      (unsigned)wideLen,
+                      (unsigned)CTRL_SIM_RULES_EXT2_BODY_LEN);
+        memset(&wideOut, 0xAB, sizeof(wideOut));
+        UT_ASSERT(dec(buf, wideLen, &wideOut));
+        UT_ASSERT_MSG(wideOut.u.simRules.building_life == 255,
+                      "building_life decoded as %ld, expected 255",
+                      (long)wideOut.u.simRules.building_life);
+        UT_ASSERT(wideOut.u.simRules.tank_collision_mac == 0);
+        UT_ASSERT(wideOut.u.simRules.shell_speed == wide.u.simRules.shell_speed);
+
+        UT_ASSERT(dec(buf, CTRL_SIM_RULES_BODY_LEN, &wideOut));
+        UT_ASSERT(wideOut.u.simRules.building_life ==
+                  CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC);
+
+        wide.u.simRules.building_life = CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC;
+        UT_ASSERT(enc(&wide, NULL, buf, sizeof(buf), &wideLen) == ENCODE_OK);
+        UT_ASSERT_MSG(wideLen == CTRL_SIM_RULES_BASE_BODY_LEN,
+                      "a classic building_life wrote %u bytes, expected the "
+                      "base %u", (unsigned)wideLen,
+                      (unsigned)CTRL_SIM_RULES_BASE_BODY_LEN);
     }
 
     /* And a buffer too small to hold the body is refused rather than
