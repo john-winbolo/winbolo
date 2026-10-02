@@ -10,13 +10,13 @@
 --
 -- What is checked:
 --   1. Up to 45.5 s no builder mode starts, no builder rule moves, and the
---      panel the mod would draw is the tank track's alone ("Next mode in"
---      in it). With Overdrive (four number rows) and preview 3 it ends at
---      118, two upcoming modes, as before there were two tracks.
+--      panel the mod would draw has "Builder: off" for its builder half.
+--      With Overdrive (four number rows) and preview 3 it ends at 96: the
+--      tank half to 80, the line at 81 and the "Builder: off" band 83..96.
 --   2. The tank modes start 20 s apart.
 --   3. At 45.5 s "!roulette builder 30" (through the mod's command
 --      function) starts Hustle on the next second: the builder rules are
---      scaled and the panel is the two-track one.
+--      scaled and the panel's builder half shows Hustle.
 --   4. At 50.5 s "!roulette builder 0" stops the track at once: Hustle's
 --      rules are back and nothing is held to put back.
 --   5. No panel update was refused, and every panel ends inside 128.
@@ -61,8 +61,8 @@ local phase     = "off"   -- "off", "on" (asked), "stopped"
 local bad       = nil
 local starts    = {}      -- tick each tank mode started
 local counted   = 0
-local full_one  = 0       -- Overdrive frames with the one-track panel at 118
-local on_ok     = false   -- Hustle seen in force with the two-track panel
+local full_one  = 0       -- Overdrive frames with the builder-off panel at 96
+local on_ok     = false   -- Hustle seen in force and on the panel
 local stop_ok   = nil
 
 function on_setup(g)
@@ -103,9 +103,9 @@ local function rules_at_start(g)
   return nil
 end
 
-local function one_track(list)
+local function has_text(list, s)
   for _, it in ipairs(list) do
-    if it[1] == "text" and it[7] == "Next mode in" then return true end
+    if it[1] == "text" and it[7] == s then return true end
   end
   return false
 end
@@ -119,9 +119,9 @@ local function check(g)
     if BUILDER.mode ~= nil then return "builder mode " .. BUILDER.mode.name .. " in force" end
     local why = rules_at_start(g)
     if why ~= nil then return "builder off: " .. why end
-    if not one_track(list) then return "builder off but the two-track panel" end
+    if not has_text(list, "Builder: off") then return "builder off but no \"Builder: off\"" end
     if TANK.mode.name == "Overdrive" then
-      if bottom ~= 118 then return "one-track Overdrive panel ends at " .. bottom end
+      if bottom ~= 96 then return "builder-off Overdrive panel ends at " .. bottom end
       full_one = full_one + 1
     end
   elseif BUILDER.mode ~= nil then
@@ -129,7 +129,7 @@ local function check(g)
     if g.rule("man_speed_road") ~= math.floor(start.man_speed_road * 1.25 + 0.5) then
       return "Hustle: man_speed_road " .. tostring(g.rule("man_speed_road"))
     end
-    if one_track(list) then return "Hustle on but the one-track panel" end
+    if not has_text(list, "Builder: Hustle") then return "Hustle on but not on the panel" end
     on_ok = true
   end
   return nil
@@ -143,7 +143,7 @@ local function finish()
   for _, d in ipairs(gaps) do
     if math.abs(d - 2000) > 2 then return false, "tank gaps " .. table.concat(gaps, "/") end
   end
-  if full_one == 0 then return false, "the one-track Overdrive panel never checked" end
+  if full_one == 0 then return false, "the builder-off Overdrive panel never checked" end
   if not on_ok then return false, "Hustle never seen after builder 30" end
   if stop_ok ~= true then return false, tostring(stop_ok or "builder 0 never typed") end
   if BUILDER.changes ~= 1 then return false, BUILDER.changes .. " builder modes" end
