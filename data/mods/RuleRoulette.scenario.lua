@@ -27,17 +27,17 @@
 --
 -- Every `interval` seconds the next tank mode starts, and every
 -- `builder_interval` seconds the next builder mode. A builder interval of 0
--- turns the builder track off: no builder mode plays, and the panel is the
--- tank track's alone. Each track has its own clock, its own order and its
--- own saved rules, so one track changing never moves the other. The order
--- of each track is a shuffle of its own modes from the scenario's own
--- math.random, so a seed and a replay give the same order. When all of a
--- track's modes have played they are shuffled again, and a mode never
--- follows itself across that seam. A short countdown names the mode that
--- is coming; the new mode goes up on the centre of the screen and on the
--- newswire, and panel 0 shows the modes in force, the time each has left
--- and the modes that come next on each track. When both tracks change on
--- the same second, one line on the centre of the screen names both, and
+-- turns the builder track off: no builder mode plays, and the panel's
+-- builder half says "Builder: off". Each track has its own clock, its own
+-- order and its own saved rules, so one track changing never moves the
+-- other. The order of each track is a shuffle of its own modes from the
+-- scenario's own math.random, so a seed and a replay give the same order.
+-- When all of a track's modes have played they are shuffled again, and a
+-- mode never follows itself across that seam. A short countdown names the
+-- mode that is coming; the new mode goes up on the centre of the screen and
+-- on the newswire, and panel 0 shows the modes in force, the time each has
+-- left and the modes that come next on each track. When both tracks change
+-- on the same second, one line on the centre of the screen names both, and
 -- the newswire has a line for each.
 --
 -- It exists to play-test bots that read their own modifiers and rules: the
@@ -491,51 +491,37 @@ end
 -- ── Panel ───────────────────────────────────────────────────────────
 --
 -- 128 x 128 units. Text heights are the frontend's: "small" is 8 units and
--- "normal" 11, in Inter. The widest strings below, measured from that font:
--- a mode name in normal, "Cleanup Crew", 61 units; a tag in small, "GOOD FOR
--- ALL", 49; a meaning in small, "Free roads: pave over the rubble.", 105; a
--- number cell, "Reload 160%", 41; a rule line, "Parachute: 167% speed", 74;
--- a mode name in small, "Cleanup Crew", about 45.
--- The two dealt cells, "Dealt (Tanks) 250%" and "Dealt (Pills) 200%", are
--- wider than half the panel, so each takes a whole line.
+-- "normal" 11, in Inter. The panel is two halves split by a grey line: the
+-- tank track above, the builder track below. Each half is laid out alike:
 --
--- With the builder track off, the tank track has the whole panel:
+--   y +0 .. 13   band: "Tank: Iron Hide" (normal, left, in its kind's
+--                colour) and, when it fits on the band, "Next: Juggernaut"
+--                (small, right, in the next mode's colour)
+--   y +13 .. 15  bar, 2 units tall, filling as the mode runs
+--   y +17        "Next: ..." on its own line (small, right) when it did not
+--                fit on the band
+--   then         "Then: A, B" (small, right, grey) with preview 2 or 3
+--   then         the meaning (small, left) and the clock (small, right)
+--   then         the tank's numbers that are not 100, two to a row, a
+--                dealt on a whole row, up to 4 rows; then the mode's rule
+--                line, if it has one (every builder mode does)
 --
---   y   0 .. 15  band: mode name (normal, left), its tag (small, right)
---   y  17        meaning (small)
---   y  27 ..     numbers that are not 100, two to a row, a dealt on a
---                whole row, up to 4 rows; a rule mode, and Normal, has
---                none of those and one line of its own
---   then         "Next mode in" and the clock
---   then         a bar, 4 units tall, filling as this mode runs
---   then         a rule, and per upcoming mode its name and its meaning
+-- Then a grey line across the panel at the half's end + 1, and the builder
+-- half starts 2 units under it. With the builder track off its half is the
+-- band alone, "Builder: off" in grey.
 --
--- An upcoming mode is drawn only if both its lines fit. With three number
--- rows (Glass Cannon) and three upcoming modes, the last line starts at
--- y 119 and ends at 127. With four rows (Overdrive, Rust Bucket) the second
--- upcoming mode ends at 118 and the third is left off.
+-- Widths measured from Inter at these sizes: "Tank: Glass Cannon" in
+-- normal is 86 units and "Next: Machine Gun" in small 60, so the long names
+-- cannot share the band and their "Next:" takes the line under it;
+-- text_w below works out which do. The widest meaning, "Hover over water
+-- and roads alike.", is 106 from x 3, and a clock ("5:00", 14) right at
+-- 125 leaves 2 units between them. "Then: Glass Cannon, Machine Gun" is
+-- 108.
 --
--- With both tracks on, each track has a block, and the upcoming modes of
--- both share the last rows, one mode a row in each column:
---
---   y   0 .. 13  tank band: mode name (normal, left), its clock (small,
---                right); the tag is left out, the name's colour says it
---   y  13 .. 15  tank bar, 2 units tall, filling as the mode runs
---   y  17        tank meaning (small)
---   y  26 ..     tank numbers as above, up to 4 rows (to y 61), or its
---                one line
---   then +1      builder band, 13 tall, the same as the tank's
---   then         builder bar, 2 units tall
---   then +2      builder meaning (small)
---   then         builder rule line (small); every builder mode has one
---   then +1      a rule
---   then +2      per upcoming row, the tank's next mode at x 3 and the
---                builder's at x 65, each in its kind's colour
---
--- The builder block is always 35 units. With all six tank numbers changed
--- the builder band starts at y 63, its rule line at y 89, the rule at y 99,
--- and the three upcoming rows at y 101, 110 and 119: the last ends at 127.
--- So `preview` counts for both tracks alike and three fits.
+-- The worst case is a tank mode with four number rows (Overdrive, Rust
+-- Bucket), both "Next:" lines wrapped and preview 3: with both "Then:"
+-- lines it would end at 135. So the builder's "Then:" goes first (the
+-- panel ends at 126), and if it still runs past 128 the tank's goes too.
 --
 -- The clocks count themselves down on the client, but a bar is drawn at the
 -- value it is sent, so each_second sends the panel again once a second.
@@ -585,103 +571,6 @@ local function add_numbers(list, m, y)
   return y
 end
 
--- The tank track alone, laid out as the first table above.
-local function build_panel_one()
-  local mode = TANK.mode
-  local list = {
-    { "rect", 0, 0, 128, 15, "grey_dark", true },
-    { "text", 3, 2, KIND_COLOUR[mode.kind], "normal", "left", mode.name },
-    { "text", 125, 4, KIND_COLOUR[mode.kind], "small", "right", KIND_TAG[mode.kind] },
-    { "text", 3, 17, "white", "small", "left", mode.mean },
-  }
-  local y = add_numbers(list, mode, 27)
-  -- A rule mode's line, on a whole line of its own, in the mode's colour.
-  if TANK.shown ~= nil then
-    list[#list + 1] = { "text", 3, y, KIND_COLOUR[mode.kind], "small", "left", TANK.shown }
-    y = y + 9
-  end
-  y = y + 2
-  list[#list + 1] = { "text", 3, y, "grey", "small", "left", "Next mode in" }
-  list[#list + 1] = { "timer", 125, y, "yellow", "small", "right", "down", TANK.next_at }
-  y = y + 9
-  -- Only the inside of a 122x4 bar: a bar outlines itself one unit thick
-  -- and fills inside that, so the fill alone is a 120x2 rect one unit in.
-  -- Nothing is drawn while it is empty.
-  local w = bar_fill(TANK, 120)
-  if w > 0 then
-    list[#list + 1] = { "rect", 4, y + 1, w, 2, "yellow", true }
-  end
-  y = y + 7
-  if preview > 0 then
-    list[#list + 1] = { "line", 3, y, 124, y, "grey_dark" }
-    y = y + 2
-    for i = 1, preview do
-      -- A mode with every number and a whole-line label leaves room for
-      -- fewer upcoming modes; drop the ones that would run off the panel.
-      if y + 17 > 128 then break end
-      local m = TANK.modes[TANK.queue[i]]
-      list[#list + 1] = { "text", 3, y, KIND_COLOUR[m.kind], "small", "left",
-                          (i == 1 and "Next: " or "Then: ") .. m.name }
-      list[#list + 1] = { "text", 9, y + 9, "grey", "small", "left", m.mean }
-      y = y + 18
-    end
-  end
-  return list
-end
-
--- One track's band and bar, from y; answers the y after the bar.
-local function add_band(list, tr, y)
-  local m = tr.mode
-  list[#list + 1] = { "rect", 0, y, 128, 13, "grey_dark", true }
-  list[#list + 1] = { "text", 3, y + 1, KIND_COLOUR[m.kind], "normal", "left", m.name }
-  list[#list + 1] = { "timer", 125, y + 3, "yellow", "small", "right", "down", tr.next_at }
-  local w = bar_fill(tr, 128)
-  if w > 0 then
-    list[#list + 1] = { "rect", 0, y + 13, w, 2, "yellow", true }
-  end
-  return y + 15
-end
-
--- Both tracks, laid out as the second table above.
-local function build_panel_two()
-  local list = {}
-  local tm, bm = TANK.mode, BUILDER.mode
-  local y = add_band(list, TANK, 0) + 2
-  list[#list + 1] = { "text", 3, y, "white", "small", "left", tm.mean }
-  y = add_numbers(list, tm, y + 9)
-  if TANK.shown ~= nil then
-    list[#list + 1] = { "text", 3, y, KIND_COLOUR[tm.kind], "small", "left", TANK.shown }
-    y = y + 9
-  end
-  y = add_band(list, BUILDER, y + 1) + 2
-  list[#list + 1] = { "text", 3, y, "white", "small", "left", bm.mean }
-  y = y + 9
-  if BUILDER.shown ~= nil then
-    list[#list + 1] = { "text", 3, y, KIND_COLOUR[bm.kind], "small", "left", BUILDER.shown }
-  end
-  y = y + 9
-  if preview > 0 then
-    list[#list + 1] = { "line", 3, y + 1, 124, y + 1, "grey_dark" }
-    y = y + 3
-    for i = 1, preview do
-      if y + 8 > 128 then break end
-      for _, c in ipairs({ { TANK, 3 }, { BUILDER, 65 } }) do
-        local m = c[1].modes[c[1].queue[i]]
-        list[#list + 1] = { "text", c[2], y, KIND_COLOUR[m.kind], "small", "left", m.name }
-      end
-      y = y + 9
-    end
-  end
-  return list
-end
-
-local function build_panel()
-  if BUILDER.mode ~= nil then
-    return build_panel_two()
-  end
-  return build_panel_one()
-end
-
 -- The lowest unit a list draws on, for the log: text is 8 or 11 units tall.
 -- A rect or a bar is { name, x, y, w, h, ... }, a line { name, x0, y0, x1, y1 }.
 local function panel_bottom(list)
@@ -700,6 +589,101 @@ local function panel_bottom(list)
   return bottom
 end
 
+-- Inter's advance widths for bytes 32 .. 126, in thousandths of the text
+-- height, measured from data/fonts/InterVariable.ttf the way the frontend
+-- sizes it (ascent plus descent is the height).
+local CHAR_W = {
+  232,237,385,523,530,810,532,248,301,301,414,547,238,379,238,297,
+  522,335,503,510,533,491,513,467,512,513,238,249,547,546,547,422,
+  799,570,541,604,596,496,488,617,614,222,472,555,467,746,622,632,
+  528,632,532,530,533,614,570,813,563,561,520,301,297,301,389,377,
+  267,463,505,472,506,482,306,506,488,201,201,453,200,723,488,495,
+  505,505,310,436,270,488,464,675,451,464,457,352,275,353,547,
+}
+local CHAR_W_MAX = 813   -- for a byte not in the table: never too narrow
+
+-- About how wide s draws at `height` units.
+local function text_w(s, height)
+  local sum = 0
+  for i = 1, #s do
+    sum = sum + (CHAR_W[s:byte(i) - 31] or CHAR_W_MAX)
+  end
+  return sum * height / 1000
+end
+
+local NEXT_GAP = 6       -- the least room between the name and its "Next:"
+
+-- One track's half from y, laid out as the table above; answers the y
+-- after it. `with_then` draws the "Then:" line when preview is 2 or 3.
+local function add_half(list, tr, y, with_then)
+  local m = tr.mode
+  local head = tr.label .. ": " .. m.name
+  list[#list + 1] = { "rect", 0, y, 128, 13, "grey_dark", true }
+  list[#list + 1] = { "text", 3, y + 1, KIND_COLOUR[m.kind], "normal", "left", head }
+  local nm, nxt, wrap = nil, nil, false
+  if preview > 0 then
+    nm  = tr.modes[tr.queue[1]]
+    nxt = "Next: " .. nm.name
+    if 3 + text_w(head, 11) + NEXT_GAP + text_w(nxt, 8) <= 125 then
+      list[#list + 1] = { "text", 125, y + 3, KIND_COLOUR[nm.kind], "small", "right", nxt }
+    else
+      wrap = true
+    end
+  end
+  local w = bar_fill(tr, 128)
+  if w > 0 then
+    list[#list + 1] = { "rect", 0, y + 13, w, 2, "yellow", true }
+  end
+  y = y + 17
+  if wrap then
+    list[#list + 1] = { "text", 125, y, KIND_COLOUR[nm.kind], "small", "right", nxt }
+    y = y + 9
+  end
+  if with_then and preview >= 2 then
+    local names = {}
+    for i = 2, preview do
+      names[#names + 1] = tr.modes[tr.queue[i]].name
+    end
+    list[#list + 1] = { "text", 125, y, "grey", "small", "right",
+                        "Then: " .. table.concat(names, ", ") }
+    y = y + 9
+  end
+  list[#list + 1] = { "text", 3, y, "white", "small", "left", m.mean }
+  list[#list + 1] = { "timer", 125, y, "yellow", "small", "right", "down", tr.next_at }
+  y = add_numbers(list, m, y + 9)
+  if tr.shown ~= nil then
+    list[#list + 1] = { "text", 3, y, KIND_COLOUR[m.kind], "small", "left", tr.shown }
+    y = y + 9
+  end
+  return y
+end
+
+-- Both halves and the line between them.
+local function build_halves(tank_then, builder_then)
+  local list = {}
+  local y = add_half(list, TANK, 0, tank_then)
+  list[#list + 1] = { "line", 0, y + 1, 127, y + 1, "grey" }
+  y = y + 3
+  if BUILDER.mode ~= nil then
+    add_half(list, BUILDER, y, builder_then)
+  else
+    list[#list + 1] = { "rect", 0, y, 128, 13, "grey_dark", true }
+    list[#list + 1] = { "text", 3, y + 1, "grey", "normal", "left", "Builder: off" }
+  end
+  return list
+end
+
+-- The panel, dropping "Then:" lines, the builder's first, until it fits.
+local function build_panel()
+  local list = build_halves(true, true)
+  if panel_bottom(list) > 128 then
+    list = build_halves(true, false)
+  end
+  if panel_bottom(list) > 128 then
+    list = build_halves(false, false)
+  end
+  return list
+end
 -- Sends the panel. A refusal (two updates in one tick, say) is logged and
 -- counted, and the next second's redraw in each_second sends it again.
 local function draw_panel(log_it)

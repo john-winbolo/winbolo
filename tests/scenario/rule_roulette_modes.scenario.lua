@@ -42,8 +42,9 @@
 --      and for a blast.
 --   8. Every frame the panel the mod would draw ends inside the 128 units,
 --      no panel update was refused, and with Overdrive or Rust Bucket (all
---      six numbers) and preview 3 all three upcoming rows still fit: the
---      last one ends at 127.
+--      six numbers) and preview 3 both halves still show their "Next:"
+--      and the tank half its "Then:" (only the builder's "Then:" may be
+--      dropped to make room).
 --
 -- GATE: ticks=22000 bots=0 ai=yesfull gametype=open include=data/mods/RuleRoulette.scenario.lua
 
@@ -149,7 +150,7 @@ local last_name = nil      -- the mode in force last frame
 local pill_hits = { glass = {}, other = {} }  -- armour per shell -> count
 local normal_ok = false    -- the tank Normal seen with every modifier at 100
 local bnormal_ok = false   -- the builder Normal seen with every rule back
-local full_panel = 0       -- frames with six numbers and 3 rows at 127
+local full_panel = 0       -- frames with six numbers, both Next and a Then
 local policy_ok = nil      -- the direct pill_damage_scale answers, or why not
 
 local function T(name) return game.TERRAIN[name] end
@@ -272,13 +273,27 @@ local function check_rules(g)
   end
   -- The panel the mod draws this second, laid out again here.
   if TANK.mode ~= nil then
-    local bottom = panel_bottom(build_panel())
+    local list = build_panel()
+    local bottom = panel_bottom(list)
     if bottom > 128 then
       return string.format("%s/%s: panel ends at %d", tname, name, bottom)
     end
     if (tname == "Overdrive" or tname == "Rust Bucket") and BUILDER.mode ~= nil then
-      if bottom ~= 127 then
-        return string.format("%s/%s: full panel ends at %d, not 127", tname, name, bottom)
+      -- The tank half is everything above the line between the halves.
+      local split = 128
+      for _, it in ipairs(list) do
+        if it[1] == "line" then split = it[3] end
+      end
+      local nexts, tank_then = 0, false
+      for _, it in ipairs(list) do
+        if it[1] == "text" and it[7]:sub(1, 6) == "Next: " then nexts = nexts + 1 end
+        if it[1] == "text" and it[7]:sub(1, 6) == "Then: " and it[3] < split then
+          tank_then = true
+        end
+      end
+      if nexts ~= 2 or not tank_then then
+        return string.format("%s/%s: full panel has %d Next lines and %s tank Then",
+                             tname, name, nexts, tank_then and "a" or "no")
       end
       full_panel = full_panel + 1
     end
