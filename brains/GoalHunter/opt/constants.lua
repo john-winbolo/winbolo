@@ -5118,6 +5118,17 @@ M.PING_ATTACK_CHARGE_NOW      = true  -- keel false
 -- refuel, flee and armour checks stay.
 M.CHARGE_NOW_IGNORE_SAFETY    = true  -- keel false
 
+-- A HUMAN SHOOTING THE PILL = CHARGE NOW (2026-10-02, Andrew).  A bot with
+-- an attack_pill goal (ordered or its own) that sees a human team-mate
+-- shooting at that pill (orders.note_human_shooting: a shell line or a hit
+-- while facing it, within ORDER_HUMAN_SHOOTING_WINDOW_TICKS) charges as if
+-- that human had sent an ATTACK ping on the pill: same record, same
+-- behaviour, CHARGE_NOW_IGNORE_SAFETY applies.  No distance from the bot is
+-- needed.  The human-near suicide run is checked first and wins.  A charge
+-- the human cancelled with a CAUTION ping does not restart on the same pill
+-- until the bot has had some other goal.
+M.HUMAN_SHOOTING_CHARGE_NOW   = true  -- keel false
+
 -- How far the seat a bot is escorting may drift from where the bot was last
 -- sent before the escort re-aims.  A hint may name its own `distance`; this
 -- is what one that does not gets.  Three squares keeps the pair together
@@ -5542,6 +5553,9 @@ M.PRESETS = {
     --   2026-10-02: charge now ignores the bot's own armour, trees and
     --   ammo. KEEL had no charge now at all.
     CHARGE_NOW_IGNORE_SAFETY      = false,
+    --   2026-10-02: a human seen shooting the bot's target pill starts
+    --   charge now. KEEL had no charge now at all.
+    HUMAN_SHOOTING_CHARGE_NOW     = false,
     --   2026-10-02: the human-near rule needs the human to be shooting at
     --   the pill. KEEL counted any visible human within the tiles.
     ORDER_HUMAN_NEAR_NEEDS_SHOOTING   = false,

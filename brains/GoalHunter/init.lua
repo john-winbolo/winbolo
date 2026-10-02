@@ -7343,11 +7343,14 @@ function Brain.think(info)
   -- note_human_shooting stamps which humans were seen shooting at the goal's
   -- pill (ORDER_HUMAN_NEAR_NEEDS_SHOOTING); human_near_suicide reads it.
   -- charge_now_check ends an ATTACK-ping "charge now" whose goal or pill is
-  -- gone (PING_ATTACK_CHARGE_NOW).
+  -- gone (PING_ATTACK_CHARGE_NOW).  human_shooting_charge starts the same
+  -- charge for a human seen shooting the pill (HUMAN_SHOOTING_CHARGE_NOW),
+  -- after human_near_suicide so the suicide run wins.
   ORD.decoy_lock(state, world, info, now)
   ORD.note_human_shooting(state, world, info, now)
   if not state._suicide then ORD.human_near_suicide(state, world, info, now) end
   if state._suicide then ORD.suicide_lock(state, world, info, now) end
+  ORD.human_shooting_charge(state, world, info, now)
   ORD.charge_now_check(state, world, info, now)
   attack.update_attack_substate(state.goal, state, world, info)
   local t_as1 = BRAIN_PROFILE and clock_us() or 0

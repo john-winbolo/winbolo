@@ -1472,7 +1472,8 @@ function M.human_near_suicide(state, world, info, now)
                                        or "human_ally_%d_away", d))
 end
 
--- A HUMAN TEAM-MATE SHOOTING AT THE PILL (ORDER_HUMAN_NEAR_NEEDS_SHOOTING).
+-- A HUMAN TEAM-MATE SHOOTING AT THE PILL (ORDER_HUMAN_NEAR_NEEDS_SHOOTING,
+-- HUMAN_SHOOTING_CHARGE_NOW).
 -- init.lua calls this every think, before human_near_suicide.  It watches the
 -- pill of the bot's attack_pill goal and stamps, per human player number, the
 -- last tick that human was seen shooting at it.  The engine names no shooter
@@ -1487,7 +1488,7 @@ end
 -- The record is state._human_shot = { tid, hp, by = {[pn] = tick} }; a new
 -- target starts a new record.
 function M.note_human_shooting(state, world, info, now)
-  if not C.ORDER_HUMAN_NEAR_NEEDS_SHOOTING then return end
+  if not (C.ORDER_HUMAN_NEAR_NEEDS_SHOOTING or C.HUMAN_SHOOTING_CHARGE_NOW) then return end
   local g = state.goal
   local tid = g and g.kind == "attack_pill" and g.target_id
   if not tid then return end
@@ -3340,32 +3341,80 @@ end
 -- chosen by the bot itself -- tells it to stop waiting.  The record is
 -- state._charge_now = { tid, since, sender }; attack.lua reads it:
 --   * no blocker of the bot's own wall plan standing: straight in, firing
---     (kill_hardline with the suicide aim, but NOT a suicide run: the normal
---     armour / flee rules still apply);
+--     (kill_hardline with the suicide aim, but NOT a suicide run; with
+--     C.CHARGE_NOW_IGNORE_SAFETY the bot's own armour, trees and ammo do
+--     not stop it);
 --   * a blocker standing: the careful way (standoff, aim, fire) with no
 --     waits and no more blockers.
+-- A human seen shooting the pill starts the same charge
+-- (M.human_shooting_charge, C.HUMAN_SHOOTING_CHARGE_NOW).
 -- It ends when the goal ends, the pill is dead / ours / carried
 -- (M.charge_now_check), on a CAUTION ping on the bot or the pill's 3x3
 -- (ping_caution), or when the tank dies (M.on_death).  A running suicide run
 -- wins: no record is made beside one.
+-- The shared start: the ATTACK ping and the human-shooting rule both come
+-- here.  Answers true when a new record was made.
+local function charge_now_begin(state, world, sender, now, why)
+  if state._suicide then return false end
+  local g = state.goal
+  if not (g and g.kind == "attack_pill" and g.target_id) then return false end
+  local p = world and world.pills and world.pills[g.target_id]
+  if suicide_over(p) then return false end
+  local r = state._charge_now
+  if r and r.tid == g.target_id then return false end
+  state._charge_now = { tid = g.target_id, since = now, sender = sender }
+  sayg(state, string.format("Charging pill #%s", tostring(g.target_id)))
+  return true
+end
+
 function charge_now_start(state, world, info, sender, mx, my, now)
   if state._suicide then return end
   local g = state.goal
   if not (g and g.kind == "attack_pill" and g.target_id) then return end
   local hit = M.resolve_ping(state, world, info, mx, my)
   if not (hit and hit.class == "pill" and hit.id == g.target_id) then return end
-  local p = world and world.pills and world.pills[g.target_id]
-  if suicide_over(p) then return end
+  charge_now_begin(state, world, sender, now, "attack_ping")
+end
+
+-- A HUMAN SHOOTING THE PILL = CHARGE NOW (C.HUMAN_SHOOTING_CHARGE_NOW).  A
+-- human team-mate seen shooting at the pill of this bot's attack_pill goal
+-- (ordered or its own; M.human_shooters, from note_human_shooting) counts
+-- as that human's ATTACK ping on it.  No distance from the bot is needed.
+-- init.lua calls this every think, after human_near_suicide, so the suicide
+-- run wins when both apply.  A charge cancelled by a CAUTION ping
+-- (state._charge_now_waived) does not restart on that pill until the bot
+-- has had some other real goal ("none", the gap between goals, does not
+-- count: a cancelled straight charge clears the goal to "none").
+function M.human_shooting_charge(state, world, info, now)
+  if not C.HUMAN_SHOOTING_CHARGE_NOW or state._suicide then return false end
+  local g = state.goal
+  local tid = g and g.kind == "attack_pill" and g.target_id
+  local wv = state._charge_now_waived
+  if wv and g and g.kind and g.kind ~= "none" and tid ~= wv then
+    state._charge_now_waived = nil
+    wv = nil
+  end
+  if not tid or wv == tid then return false end
   local r = state._charge_now
-  if r and r.tid == g.target_id then return end
-  state._charge_now = { tid = g.target_id, since = now, sender = sender }
-  sayg(state, string.format("Charging pill #%s", tostring(g.target_id)))
+  if r and r.tid == tid then return false end
+  local set = M.human_shooters(state, tid, now)
+  if not set then return false end
+  -- The sender: the human seen shooting most recently (lowest number on a tie).
+  local by = state._human_shot.by
+  local pn, best = nil, -1e9
+  for k in pairs(set) do
+    local t = by[k] or -1e9
+    if t > best or (t == best and k < pn) then pn, best = k, t end
+  end
+  return charge_now_begin(state, world, pn, now, "human_shooting")
 end
 
 function M.charge_now_end(state, why)
   local r = state and state._charge_now
   if not r then return false end
   state._charge_now = nil
+  -- A person called it off: the human-shooting rule must not start it again.
+  if why == "caution ping" then state._charge_now_waived = r.tid end
   local g = state.goal
   if g and g.target_id == r.tid then
     g._charge_now = nil
