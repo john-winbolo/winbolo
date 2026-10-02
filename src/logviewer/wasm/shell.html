@@ -4,6 +4,9 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WinBolo Log Viewer</title>
+    <!-- The page is also served at /gamelog/<key>; this keeps logviewer.js,
+         .wasm and .data loading from the site root there. -->
+    <base href="/">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -90,11 +93,10 @@
                 var c = document.getElementById('canvas');
                 console.log('[WASM] Canvas after init:', c.width, 'x', c.height, 'style:', c.style.cssText);
 
-                /* Check URL parameters for a log file to load */
-                var params = new URLSearchParams(window.location.search);
-                var logUrl = params.get('log');
-                if (logUrl) {
-                    loadWbvFromUrl(logUrl);
+                /* A WinBolo.net log key, from /gamelog/<key> or ?key=<key> */
+                var key = logKeyFromLocation();
+                if (key) {
+                    loadWbvFromKey(key);
                 }
             }
         };
@@ -118,20 +120,27 @@
             Module.setStatus('Loaded: ' + displayName);
         }
 
-        /* Load a .wbv file from a URL */
-        function loadWbvFromUrl(url) {
+        /* The log key in the page address: the path /gamelog/<key>, or the
+           query ?key=<key>. Returns '' when there is none. */
+        function logKeyFromLocation() {
+            var m = window.location.pathname.match(/^\/gamelog\/([^\/]+)\/?$/);
+            if (m) return decodeURIComponent(m[1]);
+            return new URLSearchParams(window.location.search).get('key') || '';
+        }
+
+        /* Download a WinBolo.net log by its key and open it. /logdownload is
+           same-origin: the web server passes it on to WinBolo.net. */
+        function loadWbvFromKey(key) {
             Module.setStatus('Downloading log file...');
-            fetch(url)
+            fetch('/logdownload?key=' + encodeURIComponent(key))
                 .then(function(response) {
                     if (!response.ok) throw new Error('HTTP ' + response.status);
                     return response.arrayBuffer();
                 })
                 .then(function(buffer) {
                     var data = new Uint8Array(buffer);
-                    /* Extract a filename from the URL or use a default */
-                    var name = url.split('/').pop().split('?')[0];
-                    if (!name || !name.endsWith('.wbv')) name = 'download.wbv';
-                    openWbvData(data, name);
+                    var name = key.replace(/[^0-9A-Za-z_-]/g, '') || 'download';
+                    openWbvData(data, name + '.wbv');
                 })
                 .catch(function(err) {
                     Module.setStatus('Error loading URL: ' + err.message);
