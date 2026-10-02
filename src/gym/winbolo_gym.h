@@ -502,8 +502,12 @@ WBGYM_API void winbolo_obs_to_reward_batch(
     int count
 );
 
-/* Set reward weights for a game instance. count must equal WBGYM_NUM_REWARD_COMPONENTS.
- * Must be called before stepping if you want C-side reward computation. */
+/* Set reward weights for a game instance. count is how many weights are
+ * passed: at most WBGYM_NUM_REWARD_COMPONENTS are read, and with fewer the
+ * components past count keep the weight they had, which is 0 unless an
+ * earlier call set them. So a caller written for an older, shorter list
+ * still works. Must be called before stepping if you want C-side reward
+ * computation. */
 WBGYM_API void winbolo_set_reward_weights(WinBoloGym *game, const float *weights, int count);
 
 /* Returns the number of reward components (WBGYM_NUM_REWARD_COMPONENTS). */

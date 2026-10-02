@@ -465,7 +465,8 @@ static inline bool gameEventIsReliable(uint8_t type) {
  * recording build keeps it; every per-client build and the UDP drain drop it.
  * EVENT_TANK_HIT is local because nothing on a client reads it: a client
  * learns a tank's armour from its snapshot, and the event is there for the
- * scenario host's on_tank_hit.
+ * scenario host's on_tank_hit and the gym's hit rewards, both of which read
+ * it in the server's own process.
  *
  * A local-only event still needs a gameEventDataSize row: the recording packs
  * it, and the brain event table is sized from the same function. */

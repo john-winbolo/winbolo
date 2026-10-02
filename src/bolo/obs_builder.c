@@ -258,7 +258,9 @@ ObsEventUse obsEventIsRead(uint8_t type) {
 }
 
 /* EVENT_TANK_HIT's pill byte for a shell no pillbox fired (DMG_NO_PILL in
- * the scenario surface, which this file does not include). */
+ * the scenario surface, which this file does not include). The unit test
+ * obs_events_hits builds its events with DMG_NO_PILL, so the two cannot
+ * drift apart without it failing. */
 #define OBS_NO_PILL 0xFF
 
 static void obsAddEvent(WinBoloObs *obs, uint8_t ev) {

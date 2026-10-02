@@ -30,6 +30,7 @@
 #include "input_packet.h"
 #include "client_enums.h"   /* sndEffects */
 #include "obs_builder.h"
+#include "scenario_defs.h"   /* DMG_NO_PILL */
 #include "test_harness.h"
 
 #define OE_SELF   0
@@ -149,18 +150,18 @@ int run_obs_events_hits(void) {
     UT_ASSERT(obs != NULL);
 
     /* [victim, attacker, cause, amount, pill] */
-    e = oeEvent(EVENT_TANK_HIT, OE_ENEMY, OE_SELF, LAST_DEATH_BY_SHELL, 5, 0xFF);
+    e = oeEvent(EVENT_TANK_HIT, OE_ENEMY, OE_SELF, LAST_DEATH_BY_SHELL, 5, DMG_NO_PILL);
     oeBuild(&e, 1, true, obs);
     UT_ASSERT(oeCount(obs, WBGYM_EVENT_HIT_DEALT) == 1);
     UT_ASSERT(oeCount(obs, WBGYM_EVENT_HIT_RECEIVED) == 0);
 
-    e = oeEvent(EVENT_TANK_HIT, OE_SELF, OE_ENEMY, LAST_DEATH_BY_MINES, 10, 0xFF);
+    e = oeEvent(EVENT_TANK_HIT, OE_SELF, OE_ENEMY, LAST_DEATH_BY_MINES, 10, DMG_NO_PILL);
     oeBuild(&e, 1, true, obs);
     UT_ASSERT(oeCount(obs, WBGYM_EVENT_HIT_RECEIVED) == 1);
     UT_ASSERT(oeCount(obs, WBGYM_EVENT_HIT_DEALT) == 0);
 
     /* The agent's own mine damaging an enemy is not a shot that landed. */
-    e = oeEvent(EVENT_TANK_HIT, OE_ENEMY, OE_SELF, LAST_DEATH_BY_MINES, 10, 0xFF);
+    e = oeEvent(EVENT_TANK_HIT, OE_ENEMY, OE_SELF, LAST_DEATH_BY_MINES, 10, DMG_NO_PILL);
     oeBuild(&e, 1, true, obs);
     UT_ASSERT(oeCount(obs, WBGYM_EVENT_HIT_DEALT) == 0);
 
@@ -170,7 +171,7 @@ int run_obs_events_hits(void) {
     UT_ASSERT(oeCount(obs, WBGYM_EVENT_HIT_DEALT) == 0);
 
     /* A pillbox or another tank hitting someone else. */
-    e = oeEvent(EVENT_TANK_HIT, OE_ENEMY, OE_ENEMY2, LAST_DEATH_BY_SHELL, 5, 0xFF);
+    e = oeEvent(EVENT_TANK_HIT, OE_ENEMY, OE_ENEMY2, LAST_DEATH_BY_SHELL, 5, DMG_NO_PILL);
     oeBuild(&e, 1, true, obs);
     UT_ASSERT(obs->num_events == 0);
 

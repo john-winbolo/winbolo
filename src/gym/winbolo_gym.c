@@ -120,8 +120,9 @@ static void gymBufferServerEvents(WinBoloGym *g) {
     ServerSim *ss = g->serverSim;
     int evCount = serverSimGetEventCount(ss);
     const GameEvent *events = serverSimGetEvents(ss);
+    BYTE slot = clientSimGetMyPlayerNum(g->clientSim);
     WORLD wx = 0, wy = 0;
-    bool hasPos = serverSimGetTankState(ss, 0, &wx, &wy);
+    bool hasPos = serverSimGetTankState(ss, slot, &wx, &wy);
     bool positional = serverSimGetPositionalSound(ss);
     SoundPick pick;
 
@@ -129,7 +130,7 @@ static void gymBufferServerEvents(WinBoloGym *g) {
     for (int i = 0; i < evCount && g->cachedEventCount < MAX_BRAIN_EVENTS; i++) {
         if (soundEventIsSound(events[i].type)) {
             if (hasPos) {
-                soundPickOffer(&pick, &events[i], 0, (int)(wx >> 8),
+                soundPickOffer(&pick, &events[i], slot, (int)(wx >> 8),
                                (int)(wy >> 8), true, positional);
             }
         } else if (obsEventIsRead(events[i].type) == OBS_EVENT_READ) {
