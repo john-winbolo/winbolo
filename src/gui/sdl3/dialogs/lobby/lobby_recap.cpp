@@ -693,7 +693,14 @@ void lobbyRenderLastRoundBody(ClientSim *cs, float s) {
          * grouped: each team's row with its score, then its members, each
          * with their own. The order is the grouping's (team score, then own
          * score), so a header click does not reorder a grouped table. The
-         * team a player is listed under is their lobby team. */
+         * team a player is listed under is their lobby team.
+         *
+         * Known limit: that team is read from the lobby slot now, not from
+         * the round. RoundPlayerSummary carries no team, so a player who
+         * left before the recap (an empty slot) is listed under team 0,
+         * outside the team the scenario scored them for, and one who
+         * changed team since is listed under the new one. The name comes
+         * from the slot too, so such a row already reads as no player. */
         const bool grouped = hasScn && roundStatsGroupsByTeam(st);
         RoundStatsGroupRow groupRows[2 * MAX_TANKS];
         int rowCount = n;

@@ -12,7 +12,8 @@
 --  * seat 0 is the "holder": every frame his speed modifier is set to a
 --    carry percent for the square he is on (road 70, grass 85, forest 50,
 --    anything else 60), whole set replaced, and only when his speed is not
---    that percent already (carry_legs);
+--    that percent AND the percent or his speed changed since the last
+--    frame (carry_legs: seen and last, forgotten when the tank dies);
 --  * seat 1 has every modifier cleared every 20 ticks when its speed is not
 --    0 (Pillbox Tag's refresh net);
 --  * a killed tank has every modifier cleared (on_tank_killed).
@@ -27,6 +28,10 @@
 --    the same from one frame to the next (no flip-flop);
 --  * seat 1 ends the frame with the mode's own six numbers;
 --  * under Normal seat 0 has his base back (speed = carry percent);
+--  * no flip-flop of writes: once seat 0 is alive, his carry percent and
+--    the mode have stayed the same for QUIET_AFTER frames, a frame makes
+--    no set_modifiers call on seat 0 at all (by the stand-in or by Rule
+--    Roulette), and at least 500 such quiet frames are seen;
 --  * the checks saw two carry percents under Turbo or Overdrive (the arena
 --    makes the squares round seat 0 road and then grass), and seat 0
 --    alive again after a kill under Turbo.
@@ -43,7 +48,21 @@ ARENA = {
              { at = 3300, what = "road" } },
   painted = 0,
   failed = false,
+  seen = nil,         -- the stand-in's carry_legs state: seat 0's speed last read
+  wrote = nil,        -- and the percent it last wanted
+  writes0 = 0,        -- set_modifiers calls on seat 0 this frame
+  steady = 0,         -- frames seat 0's carry percent and the mode held
+  quiet = 0,          -- frames checked for no writes
+  QUIET_AFTER = 3,
 }
+
+-- Counts every set_modifiers call on seat 0, the stand-in's and Rule
+-- Roulette's alike: both call through the game table.
+ARENA.set_modifiers = game.set_modifiers
+game.set_modifiers = function(p, t)
+  if p == 0 then ARENA.writes0 = ARENA.writes0 + 1 end
+  return ARENA.set_modifiers(p, t)
+end
 
 -- The lobby settings this round plays: 20 s tank modes, no builder track,
 -- no countdown, and multiply on.
@@ -93,9 +112,14 @@ function ARENA.other(tick)
   local t = game.tank(0)
   if t ~= nil and not t.dead then
     local want = ARENA.want(t)
-    if ARENA.pct(t.mods.speed) ~= want then
+    local now = ARENA.pct(t.mods.speed)
+    local changed = (ARENA.wrote ~= want) or (ARENA.seen ~= now)
+    ARENA.seen, ARENA.wrote = now, want
+    if now ~= want and changed then
       game.set_modifiers(0, (want == 100) and {} or { speed = want })
     end
+  else
+    ARENA.seen, ARENA.wrote = nil, nil
   end
   local t1 = game.tank(1)
   if t1 ~= nil and tick % 20 == 0 and t1.mods.speed ~= 0 then
@@ -152,6 +176,20 @@ function ARENA.check(tick)
                                mode.name, l.speed, speed, want))
       return
     end
+    if l ~= nil and l.want == want and l.mode == mode.name then
+      ARENA.steady = ARENA.steady + 1
+    else
+      ARENA.steady = 0
+    end
+    if ARENA.steady >= ARENA.QUIET_AFTER then
+      if ARENA.writes0 > 0 then
+        ARENA.fail(string.format("%s seat0 %d writes in a quiet frame (carry %d, "
+                                 .. "steady %d frames)", mode.name, ARENA.writes0,
+                                 want, ARENA.steady))
+        return
+      end
+      ARENA.quiet = ARENA.quiet + 1
+    end
     ARENA.last = { want = want, mode = mode.name, speed = speed }
     ARENA.checks[mode.name] = (ARENA.checks[mode.name] or 0) + 1
     if mode.name ~= "Normal" then ARENA.wants[want] = true end
@@ -160,6 +198,7 @@ function ARENA.check(tick)
     end
   else
     ARENA.last = nil
+    ARENA.steady = 0
   end
   local t1 = game.tank(1)
   if t1 ~= nil and not t1.dead then
@@ -174,6 +213,7 @@ function ARENA.check(tick)
 end
 
 function on_tick(tick)
+  ARENA.writes0 = 0
   ARENA.other(tick)
   ARENA.mod_tick(tick)
   ARENA.check(tick)
@@ -201,9 +241,12 @@ function on_tick(tick)
       ARENA.fail("only one carry percent seen under Turbo and Overdrive")
     elseif not ARENA.respawned or ARENA.checked_after_respawn < 100 then
       ARENA.fail("seat 0 was not checked after a respawn")
+    elseif ARENA.quiet < 500 then
+      ARENA.fail(string.format("only %d quiet frames checked for no writes", ARENA.quiet))
     else
       verdict(true, string.format("Turbo %d Overdrive %d Normal %d frames, %d carry pcts, "
-                                  .. "respawn ok", c.Turbo, c.Overdrive, c.Normal, nw))
+                                  .. "respawn ok, %d quiet frames with no writes",
+                                  c.Turbo, c.Overdrive, c.Normal, nw, ARENA.quiet))
     end
   end
 end

@@ -11,7 +11,11 @@
 -- In "Free For All", the default, every tank is a side of its own. Tanks
 -- that share a lobby team are each put on a team of their own when the
 -- round starts, so nobody is allied with anybody, and they cannot ally
--- during the round. Their lobby teams are put back when the round ends.
+-- during the round. Their lobby teams are put back when a side reaches the
+-- target and this script ends the round. A round ended any other way (the
+-- lobby's time limit, the host, the server) keeps the Free For All teams:
+-- a roster write is refused once the round has stopped, so on_end cannot
+-- put them back, and no hook tells a script how long the round has left.
 -- In "Use Lobby Teams" each lobby team is a side: its members are allied,
 -- their kills add up to the team's score, and killing a teammate scores
 -- nothing. A tank on no team is a side of its own. Every tank also keeps a
@@ -696,8 +700,10 @@ local function restore_teams()
   if teams_on() then
     return
   end
-  for p, t in pairs(lobby_team) do
-    local slot = game.lobby_slot(p)
+  -- Seat order, not pairs(), so a seed gives the same ops in the same order.
+  for p = 0, game.max_tanks() - 1 do
+    local t = lobby_team[p]
+    local slot = (t ~= nil) and game.lobby_slot(p) or nil
     if slot ~= nil and slot.team ~= t then
       game.set_team(p, t)
     end

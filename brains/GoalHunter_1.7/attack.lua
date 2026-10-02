@@ -9701,9 +9701,12 @@ end
 -- flying towards it (a shell heading away cannot hit it). When armour
 -- drops, the attacker is the owner kept at the last think (the shell that hit
 -- is gone by the time we look), or this think's if the last think saw none.
--- Only that one owner is blamed, and only if it is on the list: a listed
--- hunter's shell flying past while the holder or a pill hits us does not
--- count.
+-- Only that one owner is blamed, and only if it is on the list. That is a
+-- guess, not the real attacker: the nearest inbound shell is not always the
+-- one that hit. When the holder's shell (or a pill's, owner 0xFF) is the
+-- nearest, a listed hunter's shell flying past does not count. When a listed
+-- hunter's shell was the nearest at the last think, that hunter is blamed,
+-- whoever really hit us.
 --
 -- With no list, or C.PEACE_ENABLED off, both helpers do nothing and touch no
 -- state, so a bot without the token behaves exactly as before.
