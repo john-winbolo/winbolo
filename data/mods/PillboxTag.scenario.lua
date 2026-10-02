@@ -805,7 +805,8 @@ local function compass(p, me, tx, ty, what, colour, carrier, rows, rows_key)
     end
     local y = BOARD_Y + (i - 1) * BOARD_STEP
     -- The holder's rows are yellow, the palette's nearest to gold (it has
-    -- no gold), whether or not rows_for had to force them on.
+    -- no gold), whether or not rows_for had to force them on. The player's
+    -- own row is cyan so it stands out, unless they hold the prize.
     local shade = "grey"
     if row.team ~= nil then
       shade = (holder ~= nil and row.team == scoring_team(holder)) and
@@ -813,7 +814,7 @@ local function compass(p, me, tx, ty, what, colour, carrier, rows, rows_key)
     elseif row.slot == holder then
       shade = "yellow"
     elseif row.slot == p then
-      shade = "white"
+      shade = "cyan"
     end
     n = n + 1
     if row.team ~= nil then
