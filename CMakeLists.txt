@@ -2809,6 +2809,16 @@ add_custom_command(TARGET winbolo_gym POST_BUILD
     COMMENT "Copying winbolo_gym lang files to output directory"
 )
 
+# Plays the gym through its public API and checks that real game events reach
+# the observation (tests/gym/gym_events.c).
+add_executable(WinBoloGymEvents tests/gym/gym_events.c)
+target_include_directories(WinBoloGymEvents PRIVATE src/gym)
+target_link_libraries(WinBoloGymEvents PRIVATE winbolo_gym)
+add_test(NAME gym.events
+         COMMAND $<TARGET_FILE:WinBoloGymEvents> ${CMAKE_SOURCE_DIR}/tests/test_arena.map
+         WORKING_DIRECTORY $<TARGET_FILE_DIR:winbolo_gym>)
+set_tests_properties(gym.events PROPERTIES TIMEOUT 120)
+
 # ---------------------------------------------------------------------------
 # gym_batch_test (Phase 0 determinism baseline)
 # ---------------------------------------------------------------------------
@@ -4112,6 +4122,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
     tests/unit/test_sim_rules.c
+    tests/unit/test_obs_events.c
     # The rule list a frontend reads: the names, the classic value behind
     # each one, and what a value does to a rule against that default. The
     # phrase file renders that answer through langGetText, which
@@ -5592,6 +5603,12 @@ set(_unit_test_names
     sim_rules_builder_cost_follows
     sim_rules_are_classic
     sim_rules_obs_refuses_non_classic
+    obs_events_every_type_classified
+    obs_events_kills
+    obs_events_hits
+    obs_events_builders
+    obs_events_sound_ids
+    obs_events_pill_killed
     sim_rules_shell_flight_follows
     sim_rules_brain_shot_follows
     sim_rules_worldsim_pill_follows
