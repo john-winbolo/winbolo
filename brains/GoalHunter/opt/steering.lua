@@ -2696,14 +2696,18 @@ local function attack_pill_steer(state, world, info, goal)
 
     -- SUICIDE RUN PACE (SUICIDE_PACE_AHEAD_TILES; 0 = off). Stay about that
     -- many tiles closer to the pill than the nearest visible human team-mate:
-    -- not that far ahead -> top speed; more than SUICIDE_PACE_SLACK_TILES past
-    -- the lead AND already aiming at the pill (aim_mode: in reach, clear
-    -- line) -> hold still and keep firing; otherwise, or with no human in
-    -- the object list, the old cruise speed. Pacing only sets the throttle;
-    -- it never touches the turn keys or the fire gate.
+    -- not that far ahead -> top speed. Once aiming at the pill (aim_mode: in
+    -- reach, clear line) the bot pushes in ONLY to keep that lead (Andrew,
+    -- 2026-10-02: "the push ahead while engaging should only happen to stay
+    -- ahead of a human"): with the lead kept, or no human in the object
+    -- list, it holds still and keeps firing, creeping only while the pill is
+    -- still past the shell's true reach. Out of aim_mode: the old cruise
+    -- speed. Pacing only sets the throttle; it never touches the turn keys
+    -- or the fire gate. The CHARGE NOW rush paces the same way.
     local cap  = C.NAV_CRUISE_SPEED
     local pace = "off"
-    local ahead = goal._ping_suicide and (C.SUICIDE_PACE_AHEAD_TILES or 0) or 0
+    local ahead = (goal._ping_suicide or goal._charge_now)
+                  and (C.SUICIDE_PACE_AHEAD_TILES or 0) or 0
     if ahead > 0 then
       local hd
       local allies, bots, me = info.allies or 0, info.player_bots or 0, info.player_number
@@ -2719,15 +2723,16 @@ local function attack_pill_steer(state, world, info, goal)
         end
       end
       pace = "nohuman"
-      if hd then
-        local lead = hd - dist_to_pill / 256.0
-        if lead < ahead then
-          cap, pace = C.NAV_TOP_SPEED, "go"
-        elseif lead > ahead + (C.SUICIDE_PACE_SLACK_TILES or 1) and aim_mode then
-          cap, pace = 0, "hold"
+      if hd and hd - dist_to_pill / 256.0 < ahead then
+        cap, pace = C.NAV_TOP_SPEED, "go"
+      elseif aim_mode then
+        if dist_to_pill > shoot_tiles * 256.0 then
+          pace = "reach"
         else
-          pace = "cruise"
+          cap, pace = 0, "hold"
         end
+      elseif hd then
+        pace = "cruise"
       end
     end
 
