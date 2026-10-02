@@ -2625,6 +2625,7 @@ STR_RULE_DESC_tank_slide_armour_bonus=Extra push step at zero armour, added to t
 STR_RULE_DESC_tank_slide_mac=Whether a shell hit pushes a tank the Mac Bolo way. On, the push grows as armour falls, by tank_slide_armour_bonus, and tank_slide_step and tank_bump_decay_shift are read per 40 ms, in a slide that moves every tick. Off is the WinBolo push, the same at every armour level.
 STR_RULE_DESC_pill_aim_mac=Whether pillboxes use Mac Bolo aiming. Moving, unobstructed tanks within about one square make the pill aim far along their heading. Stopped or blocked tanks receive no lead. Overrides pill_massage_range, pill_massage_cosine and pill_aim_iterations.
 STR_RULE_DESC_tank_collision_mac=Whether tanks use Mac Bolo's direction-dependent sprite boxes and pixel nudges against walls, live pills and hostile bases. Allows closer passes beside a pill for pill massage.
+STR_RULE_DESC_tank_deep_sea_safe=Whether a tank with no boat can drive over deep sea without drowning. Off is the classic game: deep sea drowns a tank with no boat. A tank that is out on deep sea with no boat when this goes back off drowns on the next tick.
 
 # Rule range wording
 STR_RULE_RANGE_BETWEEN={string1} to {string2}

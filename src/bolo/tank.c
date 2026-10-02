@@ -724,10 +724,13 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
     }
   } else {
     bool drowned = FALSE;
-    if (!sim->isPredicting && (*value)->onBoat == FALSE && (mapGetPos(mp,bmx, bmy)) == DEEP_SEA) {
+    if (!sim->isPredicting && (*value)->onBoat == FALSE && !sim->rules.tank_deep_sea_safe && (mapGetPos(mp,bmx, bmy)) == DEEP_SEA) {
       /* Death by drowning — server-authoritative. The sink sound and the
          message belong to drowning; the death itself is tankKillNow, which a
          death ordered from outside the sim goes through too.
+         While tank_deep_sea_safe is on, a tank with no boat floats over deep
+         sea instead. The square is tested every tick, so a tank still out
+         there when the rule goes back off drowns on the next one.
          Drowning is not damage, so it never reaches tankApplyDamage and the
          host is asked here instead. Asked before the sound, so a tank the
          host will not let drown sits in the water quietly rather than sinking

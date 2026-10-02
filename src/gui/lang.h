@@ -2938,7 +2938,7 @@
  * rule's own name is not translated — it is what a manifest, a script and an
  * operator line all spell — so there is no id for it here.
  *
- * The numbers run in five stretches rather than one. The first eleven rules
+ * The numbers run in six stretches rather than one. The first eleven rules
  * had 2334 to 2344, which the fog style strings took as well; moving these
  * eleven to the end was the smaller change of the two. Fifty-three more are
  * the rules the table gained after the middle stretch was numbered, and the
@@ -2946,7 +2946,8 @@
  * editor's scenario strings because everything up to them was taken.
  * The pill shell cap pair, pill_base_defend_shape and then the Mac Bolo
  * shell push pair came after all of those and took the next free numbers,
- * at the end of the file. The
+ * at the end of the file, and tank_deep_sea_safe took the next free one
+ * after those. The
  * order of the block is SIM_RULE_LIST's throughout, which is the order that
  * matters, and a hole in the numbers costs nothing: langTable is searched by
  * id rather than indexed by it. */
@@ -3104,6 +3105,7 @@
 #define STR_RULE_DESC_tank_slide_mac             2703
 #define STR_RULE_DESC_pill_aim_mac               2711
 #define STR_RULE_DESC_tank_collision_mac         2712
+#define STR_RULE_DESC_tank_deep_sea_safe         2759
 
 /* Rule range wording */
 

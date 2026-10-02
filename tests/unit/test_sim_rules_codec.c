@@ -112,6 +112,7 @@ int run_sim_rules_codec_roundtrip(void) {
 
     srFillCounted(&in);
     in.u.simRules.tank_collision_mac = 1;
+    in.u.simRules.tank_deep_sea_safe = 1;
     UT_ASSERT_MSG(enc(&in, NULL, buf, sizeof(buf), &outLen) == ENCODE_OK,
                   "the encoder refused a table that fits");
     UT_ASSERT_MSG(outLen == CTRL_SIM_RULES_BODY_LEN,
@@ -157,6 +158,12 @@ int run_sim_rules_codec_roundtrip(void) {
         memset(&shortOut, 0, sizeof(shortOut));
         UT_ASSERT(dec(buf, CTRL_SIM_RULES_BASE_BODY_LEN, &shortOut));
         UT_ASSERT(shortOut.u.simRules.tank_collision_mac == 0);
+        UT_ASSERT(shortOut.u.simRules.tank_deep_sea_safe == 0);
+        /* A sender from before tank_deep_sea_safe stops after the Mac
+           byte, and the rule it never heard of reads off. */
+        UT_ASSERT(dec(buf, CTRL_SIM_RULES_BASE_BODY_LEN + 1, &shortOut));
+        UT_ASSERT(shortOut.u.simRules.tank_collision_mac == 1);
+        UT_ASSERT(shortOut.u.simRules.tank_deep_sea_safe == 0);
         UT_ASSERT_MSG(!dec(buf, CTRL_SIM_RULES_BASE_BODY_LEN - 1, &shortOut),
                       "the decoder accepted a truncated base body");
         UT_ASSERT(!dec(buf, CTRL_SIM_RULES_BODY_LEN + 1, &shortOut));
@@ -366,6 +373,25 @@ int run_sim_rules_codec_golden(void) {
     UT_ASSERT(buf[sizeof(kSrGolden)] == 1);
     UT_ASSERT(dec(buf, outLen, &out));
     UT_ASSERT(out.u.simRules.tank_collision_mac == 1);
+    UT_ASSERT(out.u.simRules.tank_deep_sea_safe == 0);
+
+    /* tank_deep_sea_safe alone sends the whole tail, the Mac byte as 0, so
+       the byte it rides in is the same whatever else is on. */
+    in.u.simRules.tank_collision_mac = 0;
+    in.u.simRules.tank_deep_sea_safe = 1;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &outLen) == ENCODE_OK);
+    UT_ASSERT(outLen == sizeof(kSrGolden) + 2);
+    UT_ASSERT(memcmp(buf, kSrGolden, sizeof(kSrGolden)) == 0);
+    UT_ASSERT(buf[sizeof(kSrGolden)] == 0);
+    UT_ASSERT(buf[sizeof(kSrGolden) + 1] == 1);
+    UT_ASSERT(dec(buf, outLen, &out));
+    UT_ASSERT(out.u.simRules.tank_collision_mac == 0);
+    UT_ASSERT(out.u.simRules.tank_deep_sea_safe == 1);
+
+    /* Both off again is the golden body, with no tail. */
+    in.u.simRules.tank_deep_sea_safe = 0;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &outLen) == ENCODE_OK);
+    UT_ASSERT(outLen == sizeof(kSrGolden));
 
     return 0;
 }

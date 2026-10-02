@@ -29,7 +29,8 @@
 --      and the tank still has none.
 --   4. The builder walks the road at 125% under Hustle and 75% under Lead
 --      Feet, measured from his position each frame.
---   5. A dead builder flies back at 150% under Air Drop, measured the same
+--   5. A dead builder flies back at 175% under Air Drop (the host's 4 at
+--      167% is 6.68, which rounds to 7), measured the same
 --      way.
 --   6. Under Normal every tank has all six modifiers at 100 (and, by 1,
 --      every rule at its value before the roulette).
@@ -96,13 +97,13 @@ local EXPECT = {
   ["Lead Feet"] = { man_speed_road = 12, man_speed_grass = 12, man_speed_forest = 8,
                     man_speed_swamp = 3, man_speed_crater = 3, man_speed_rubble = 3,
                     man_speed_boat = 12, man_speed_refuel_base = 12 },
-  ["Air Drop"] = { lgm_helicopter_speed = 6 },
+  ["Air Drop"] = { lgm_helicopter_speed = 7 },
 }
 local PANEL = {
   ["Cleanup Crew"] = "Roads: free",
   ["Hustle"]       = "Builder: 125% speed",
   ["Lead Feet"]    = "Builder: 75% speed",
-  ["Air Drop"]     = "Parachute: 150% speed",
+  ["Air Drop"]     = "Parachute: 175% speed",
   ["Normal"]       = "Everything classic",
 }
 
@@ -302,7 +303,7 @@ end
 
 local function finish(g)
   local w16, w20, w12 = rate(walk, 16), rate(walk, 20), rate(walk, 12)
-  local f4, f6 = rate(fly, 4), rate(fly, 6)
+  local f4, f7 = rate(fly, 4), rate(fly, 7)
   for _, n in ipairs({ "Cleanup Crew", "Hustle", "Lead Feet", "Air Drop", "Normal",
                        "Glass Cannon" }) do
     if not seen[n] then return false, n .. " never came up" end
@@ -312,8 +313,8 @@ local function finish(g)
     return false, string.format("walk samples missing: 16 %s 20 %s 12 %s",
                                 tostring(w16), tostring(w20), tostring(w12))
   end
-  if not (f4 and f6) then
-    return false, string.format("flight samples missing: 4 %s 6 %s", tostring(f4), tostring(f6))
+  if not (f4 and f7) then
+    return false, string.format("flight samples missing: 4 %s 7 %s", tostring(f4), tostring(f7))
   end
   if not normal_ok then return false, "Normal never checked" end
   if policy_ok ~= true then return false, tostring(policy_ok or "policy never asked") end
@@ -321,8 +322,8 @@ local function finish(g)
     return false, string.format("pillbox armour per shell: Glass Cannon %s, others %s",
                                 hits_text(pill_hits.glass), hits_text(pill_hits.other))
   end
-  local hr, lr, ar = w20 / w16, w12 / w16, f6 / f4
-  local ok = hr > 1.17 and hr < 1.33 and lr > 0.69 and lr < 0.81 and ar > 1.4 and ar < 1.6
+  local hr, lr, ar = w20 / w16, w12 / w16, f7 / f4
+  local ok = hr > 1.17 and hr < 1.33 and lr > 0.69 and lr < 0.81 and ar > 1.65 and ar < 1.85
   return ok, string.format("walk x%.2f/x%.2f, flight x%.2f, free road, rules back, " ..
                            "Normal 100s, pill 2 x%d / 1 x%d",
                            hr, lr, ar, pill_hits.glass[2], pill_hits.other[1])

@@ -2,16 +2,18 @@
 -- Rule Roulette — a mod that changes every tank's numbers, or the builder's,
 -- on a clock, one named mode at a time.
 --
--- There are thirteen modes, each the same for every tank. Eight are a fixed
+-- There are fourteen modes, each the same for every tank. Eight are a fixed
 -- set of the six tank modifiers (speed, accel, turn, reload, dealt and
 -- taken, as percentages of the classic tank). Four leave the tank alone and
--- change the builder's rules instead (see "Rule modes" below). One, Normal,
--- changes nothing: classic Bolo between the others.
+-- change the builder's rules instead, and one, Hovercraft, changes the
+-- tank's terrain rules (see "Rule modes" below). One, Normal, changes
+-- nothing: classic Bolo between the others.
 --
 --   Good for everyone: Overdrive, Turbo, Iron Hide, Cleanup Crew, Hustle,
 --                      Air Drop.
 --   Bad for everyone:  Rust Bucket, Lead Feet.
---   A trade-off:       Glass Cannon, Juggernaut, Machine Gun, Ice Rink.
+--   A trade-off:       Glass Cannon, Juggernaut, Machine Gun, Ice Rink,
+--                      Hovercraft.
 --   No change:         Normal.
 --
 -- Glass Cannon's shells also take twice the armour off a pillbox (the
@@ -19,8 +21,8 @@
 -- a tank takes.
 --
 -- Every `interval` seconds the next mode starts. The order is a shuffle of
--- all thirteen from the scenario's own math.random, so a seed and a replay
--- give the same order. When all thirteen have played they are shuffled
+-- all fourteen from the scenario's own math.random, so a seed and a replay
+-- give the same order. When all fourteen have played they are shuffled
 -- again, and a
 -- mode never follows itself across that seam. A short countdown names the
 -- mode that is coming; the new mode goes up on the centre of the screen and
@@ -38,7 +40,12 @@
 --
 -- Rule modes. Cleanup Crew makes a road cost the builder no trees. Hustle
 -- and Lead Feet make him walk at 125% and 75% of his speed on every
--- terrain. Air Drop makes a dead builder's flight back in 50% faster. Each
+-- terrain. Air Drop makes a dead builder's flight back in 67% faster.
+-- Hovercraft drives every square but forest at the grass speed (so roads
+-- are slower, and water, swamp and rubble much faster), keeps the water
+-- from washing shells and mines out of a tank, and lets a tank with no boat
+-- drive over deep sea. A tank still out on deep sea with no boat when the
+-- mode ends drowns on the next tick, as it would have driving in. Each
 -- reads the rules it changes with game.rule when it starts, so a value a
 -- host or another script set is the one it works from, and puts back exactly
 -- that value when it ends: at the next mode, and at the end of the round.
@@ -71,7 +78,8 @@
 --           out, it is 100.
 --
 -- A mode may also change rules, alone or beside its modifiers:
---   rules = { name = value }  sets each rule to that value.
+--   rules = { name = value }  sets each rule to that value. A value may be
+--           a function of the rule's old value that answers the new one.
 --   scale = { pct, rules, max, max_rule }  sets each rule in the list to pct
 --           percent of the value it had, rounded to the nearest whole
 --           number. A rule at 0 stays 0, and one above 0 stays at least 1,
@@ -89,6 +97,26 @@ local MAN_SPEED_RULES = {
   "man_speed_swamp", "man_speed_crater", "man_speed_rubble", "man_speed_boat",
   "man_speed_deep_sea", "man_speed_refuel_base",
 }
+
+-- The fastest a tank may drive on each terrain (bolo_map.c mapGetSpeed),
+-- all but forest and grass itself. Walls, half walls and live pillboxes
+-- have no rule: the collision test stops a tank there, not its speed.
+local HOVER_SPEED_RULES = {
+  "speed_road", "speed_river", "speed_swamp", "speed_crater", "speed_rubble",
+  "speed_boat", "speed_deep_sea", "speed_refuel_base",
+}
+
+-- Hovercraft's rules: each terrain above at the grass speed in force when
+-- the mode starts, no shells or mines lost wading, and deep sea safe
+-- without a boat.
+local function grass_speed(was)
+  return game.rule("speed_grass") or was
+end
+local HOVER_RULES = { water_loss_shells = 0, water_loss_mines = 0,
+                      tank_deep_sea_safe = 1 }
+for _, name in ipairs(HOVER_SPEED_RULES) do
+  HOVER_RULES[name] = grass_speed
+end
 
 local MODES = {
   { name = "Overdrive",    kind = "good",  mean = "Faster, tougher, hits harder.",
@@ -121,11 +149,16 @@ local MODES = {
   -- tank was, lgm_helicopter_speed a tick, then walks the rest. He lands
   -- when a step ends inside lgm_arrive_tolerance on both axes, so the speed
   -- is kept at or under that tolerance: a longer step could fly past it.
-  -- Classic 3 is 4.5 at 150%, which rounds to 5.
+  -- Classic 3 is 5.01 at 167%, which rounds to 5.
   { name = "Air Drop",     kind = "good",  mean = "Dead builders fly back fast.",
-    scale = { pct = 150, rules = { "lgm_helicopter_speed" }, max = 255,
+    scale = { pct = 167, rules = { "lgm_helicopter_speed" }, max = 255,
               max_rule = "lgm_arrive_tolerance" },
     show = "Parachute: %d%% speed" },
+  -- Every square but forest drives like grass, the water takes nothing,
+  -- and deep sea holds a tank up with no boat. Roads get slower, so it is a
+  -- trade-off.
+  { name = "Hovercraft",   kind = "trade", mean = "Hover over water and roads alike.",
+    rules = HOVER_RULES, show = "Grass speed; deep sea safe" },
   -- Classic Bolo: every modifier 100 and no rule changed. The last mode's
   -- rules go back as they do at every change.
   { name = "Normal",       kind = "normal", mean = "Plain Bolo: nothing changed.",
@@ -210,7 +243,7 @@ end
 
 -- ── The order ───────────────────────────────────────────────────────
 
--- Adds one shuffled round of all thirteen to the queue. The first of the new
+-- Adds one shuffled round of all fourteen to the queue. The first of the new
 -- round is never the mode just before it, so no mode plays twice in a row.
 local function add_round()
   local bag = {}
@@ -669,11 +702,11 @@ end
 
 scenario = {
   name        = "Rule Roulette",
-  description = "Thirteen modes take turns, the same for every tank: good " ..
+  description = "Fourteen modes take turns, the same for every tank: good " ..
                 "(Overdrive, Turbo, Iron Hide, Cleanup Crew, Hustle, Air Drop), " ..
                 "bad (Rust Bucket, Lead Feet), trade-offs (Glass Cannon, " ..
-                "Juggernaut, Machine Gun, Ice Rink) and Normal. Bases rebuild " ..
-                "50% faster.",
+                "Juggernaut, Machine Gun, Ice Rink, Hovercraft) and Normal. " ..
+                "Bases rebuild 50% faster.",
   api         = 1,
   kind        = "mod",
   bound       = false,

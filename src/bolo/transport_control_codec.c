@@ -1727,12 +1727,14 @@ static bool decodeEntitySyncBody(const uint8_t *buf, size_t len,
     return true;
 }
 
-/* CTRL_SIM_RULES body wire format (fixed length):
+/* CTRL_SIM_RULES body wire format (a fixed base and an optional tail):
  *   [one byte per CTRL_SIM_RULES_U8_FIELDS entry, in list order]
  *   [two bytes big-endian per U16 entry]
  *   [four bytes big-endian per U32 entry]
  *   [four bytes per F32 entry — the float's own bit pattern, most
  *    significant byte first]
+ *   [one byte per CTRL_SIM_RULES_EXT_U8_FIELDS entry, up to the last one
+ *    that is not zero; none at all when every one is zero]
  *
  * Every rule the event carries is written and every one is read back: both
  * halves are generated from the lists in control_event.h, so a rule the
@@ -1741,8 +1743,9 @@ static bool decodeEntitySyncBody(const uint8_t *buf, size_t len,
  * than a stale value — a zero reload interval or a zero armour cap is not a
  * table the game can run on.
  *
- * Fixed length, so the decoder rejects any other size outright rather than
- * reading a truncated table. Delivered body-only on CHANNEL_CONTROL, as
+ * The base is fixed length, so the decoder rejects a body shorter than it,
+ * or longer than the base and the whole tail, rather than reading a
+ * truncated table. A tail rule the body stops short of reads zero. Delivered body-only on CHANNEL_CONTROL, as
  * CTRL_ENTITY_SYNC is: there is no full-packet wrapper or PACKET_* type. */
 
 /* The float rules ride as their bit pattern, so the four bytes are exact
@@ -1771,8 +1774,14 @@ static EncodeResult encodeSimRulesBody(const ControlEvent *evt,
                                        size_t *outLen) {
     size_t pos = 0;
     (void)recipient;
-    bool extended = evt->u.simRules.tank_collision_mac != 0;
-    size_t bodyLen = extended ? CTRL_SIM_RULES_BODY_LEN : CTRL_SIM_RULES_BASE_BODY_LEN;
+    /* How many tail rules go out: up to and including the last non-zero
+       one, so a tail of classic zeros is not sent at all. */
+    size_t extCount = 0;
+    size_t extIdx = 0;
+#define SIM_RULES_EXT_LAST(name)                                                 extIdx++;                                                                    if (evt->u.simRules.name != 0) extCount = extIdx;
+    CTRL_SIM_RULES_EXT_U8_FIELDS(SIM_RULES_EXT_LAST)
+#undef SIM_RULES_EXT_LAST
+    size_t bodyLen = CTRL_SIM_RULES_BASE_BODY_LEN + extCount;
     if (bufCap < bodyLen) return ENCODE_OVERFLOW;
 
 #define SIM_RULES_PACK_U8(name)                                              \
@@ -1788,9 +1797,10 @@ static EncodeResult encodeSimRulesBody(const ControlEvent *evt,
     CTRL_SIM_RULES_U16_FIELDS(SIM_RULES_PACK_U16)
     CTRL_SIM_RULES_U32_FIELDS(SIM_RULES_PACK_U32)
     CTRL_SIM_RULES_F32_FIELDS(SIM_RULES_PACK_F32)
-    if (extended) {
-        CTRL_SIM_RULES_EXT_U8_FIELDS(SIM_RULES_PACK_U8)
-    }
+    extIdx = 0;
+#define SIM_RULES_PACK_EXT_U8(name)                                              if (extIdx++ < extCount) { SIM_RULES_PACK_U8(name) }
+    CTRL_SIM_RULES_EXT_U8_FIELDS(SIM_RULES_PACK_EXT_U8)
+#undef SIM_RULES_PACK_EXT_U8
 
 #undef SIM_RULES_PACK_U8
 #undef SIM_RULES_PACK_U16
@@ -1804,7 +1814,12 @@ static EncodeResult encodeSimRulesBody(const ControlEvent *evt,
 static bool decodeSimRulesBody(const uint8_t *buf, size_t len,
                                ControlEvent *outEvt) {
     size_t pos = 0;
-    if (len != CTRL_SIM_RULES_BODY_LEN && len != CTRL_SIM_RULES_BASE_BODY_LEN) return false;
+    size_t extIdx = 0;
+    size_t extCount;
+    /* The base body, then any part of the tail: an older sender stops
+       short of the rules added after it, and those stay zero. */
+    if (len < CTRL_SIM_RULES_BASE_BODY_LEN || len > CTRL_SIM_RULES_BODY_LEN) return false;
+    extCount = len - CTRL_SIM_RULES_BASE_BODY_LEN;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_SIM_RULES;
 
@@ -1821,9 +1836,9 @@ static bool decodeSimRulesBody(const uint8_t *buf, size_t len,
     CTRL_SIM_RULES_U16_FIELDS(SIM_RULES_UNPACK_U16)
     CTRL_SIM_RULES_U32_FIELDS(SIM_RULES_UNPACK_U32)
     CTRL_SIM_RULES_F32_FIELDS(SIM_RULES_UNPACK_F32)
-    if (len == CTRL_SIM_RULES_BODY_LEN) {
-        CTRL_SIM_RULES_EXT_U8_FIELDS(SIM_RULES_UNPACK_U8)
-    }
+#define SIM_RULES_UNPACK_EXT_U8(name)                                            if (extIdx++ < extCount) { SIM_RULES_UNPACK_U8(name) }
+    CTRL_SIM_RULES_EXT_U8_FIELDS(SIM_RULES_UNPACK_EXT_U8)
+#undef SIM_RULES_UNPACK_EXT_U8
 
 #undef SIM_RULES_UNPACK_U8
 #undef SIM_RULES_UNPACK_U16

@@ -1,8 +1,9 @@
 # The scenario arenas
 
-Ninety-seven small maps, each with a scenario script beside it. Most are
+Ninety-nine small maps, each with a scenario script beside it. Most are
 built to make one bot decision happen on purpose and then say whether the bot
-made it; the `rule_roulette_*` pair checks a shipped mod instead.
+made it; the three `rule_roulette_*` arenas check a shipped mod instead, and
+`deep_sea_safe_rule` checks one gameplay rule.
 
 They came from the branch `survival-scenario-bot-improvements-merged`, where
 they ran on a server-side scenario host that no longer exists. They run here
@@ -132,8 +133,9 @@ An arena that checks a shipped script names it, from the repository root:
 
 The runner writes that file, unchanged, between the prelude's head and the
 arena. The arena is in the same chunk, so the script's top-level locals are in
-scope: `rule_roulette_modes` fills Rule Roulette's `queue` to force the mode
-order, and reads `mode` to know which one is in force. The arena then has to
+scope: `rule_roulette_modes` and `rule_roulette_hovercraft` fill Rule
+Roulette's `queue` to force the mode order, and read `mode` to know which one
+is in force. The arena then has to
 put a `scenario` table of its own over the script's (a mod may not end the
 round, and the verdict does) and take over the script's hooks, which take no
 `game` argument, so the tail does not wrap them a second time.

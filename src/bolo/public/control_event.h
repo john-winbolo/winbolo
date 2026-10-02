@@ -632,9 +632,13 @@ typedef struct LobbyScriptEntry {
     F(turn_crater) F(turn_rubble) F(turn_boat) F(turn_deep_sea)              \
     F(turn_refuel_base)
 
-/* Optional tail after the original 131-byte body. Omitted when zero so
- * classic games keep their wire format; old recordings decode as zero. */
-#define CTRL_SIM_RULES_EXT_U8_FIELDS(F) F(tank_collision_mac)
+/* Optional tail after the original 131-byte body, one byte per rule. The
+ * encoder sends the tail only as far as its last non-zero rule, so a classic
+ * game keeps the original body and a game that turns on only the first rule
+ * keeps the 132-byte body it had before the second was added. A rule past
+ * the end of a shorter body decodes as zero, which is each rule's classic
+ * value. Append only: a rule's place in the tail is its place on the wire. */
+#define CTRL_SIM_RULES_EXT_U8_FIELDS(F)                                          F(tank_collision_mac) F(tank_deep_sea_safe)
 
 /* Every carried rule, whatever its width, for the callers that do not care
  * how wide one goes — the check for whether a changed rule is one this
