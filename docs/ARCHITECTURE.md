@@ -2174,7 +2174,22 @@ in this form.
 
 Scope: `GameSim` layout (`game_sim.h`) and the per-substruct
 headers (`players.h`, `tank.h`, `shells.h`, `lgm.h`, etc.) used
-for observation and reward extraction.
+for observation and reward extraction, plus two headers that keep
+the gym's events and sounds the same as a game's:
+
+- `obs_builder.h`, for `obsBuildEventsFrom` and `obsEventIsRead`.
+  The gym and the in-game ML brain turn game events into the
+  observation's events and sounds through that one function, so
+  the gym holds no event switch of its own. `obsEventIsRead` is
+  also the list the gym copies events off the server's queue by.
+- `server_sim_internal.h`, for `SoundPick`, `soundPickOffer` and
+  `soundEventIsSound`. The gym picks the agent's sounds with the
+  same per-recipient pick the snapshot builder and the UDP drain
+  use, so it hears what a bot in a game hears.
+
+A new event type has to be given an answer in `obsEventIsRead`
+and `EVENT_LAST` in `input_packet.h` moved to it; the unit test
+`obs_events_every_type_classified` fails until both are done.
 
 **Rests on** gym not being shipped to players. Remove this the
 moment it ships in any player-facing distribution: at that point
