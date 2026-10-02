@@ -2238,6 +2238,7 @@ square.
 | `tank_slide_armour_bonus` | 32 | 0 to 255 | Extra push step at zero armour, added to `tank_slide_step` in proportion to the armour missing before the hit: nothing at full armour, the whole bonus at none. Only read while `tank_slide_mac` is 1. A `tank_slide_step` of 0 is no push at all, bonus included. |
 | `tank_wall_glide` | 0.0 | 0.0 to 1.0 | 0 slides a tank along a wall it hits; 1 lets it glide off free. Not read while `tank_collision_mac` is 1. |
 | `tank_collision_mac` | 0 | 0 to 1 | Whether a tank collides with walls, live pillboxes and hostile bases the Mac Bolo way. 0, the classic table, is the WinBolo circle: a tank of radius `tank_hit_radius` is pushed out of each solid square and slid along it by `tank_wall_glide`. 1 is Mac Bolo's sixteen direction-dependent tank boxes, nudged one pixel at a time, with a corner pushing on both axes and a tank wedged between opposing walls left where it is. It lets a tank pass closer beside a pillbox than the circle does, which is what puts it inside the bad-lead range of `pill_aim_mac`. |
+| `tank_deep_sea_safe` | 0 | 0 to 1 | Whether a tank with no boat can drive over deep sea. 0, the classic table, drowns it the tick it reaches deep sea. 1 lets it drive there at `speed_deep_sea` and stay alive; a tank on a boat keeps its boat either way. Drowning is tested every tick, so a tank still out on deep sea with no boat when this goes back to 0 drowns on the next tick, the same death as driving in. |
 
 **Terrain: the cap a tank's speed clamps to.**
 

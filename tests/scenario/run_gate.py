@@ -40,6 +40,15 @@ Anything it leaves out takes the default below. An arena marked
 is reported as SKIP, or as an expected failure that does not turn the gate
 red. Both are debts; keep the reason short and say what would repay it.
 
+A SHIPPED SCRIPT UNDER TEST. An arena that tests a mod rather than a bot
+names the file on its GATE line, from the repository root:
+
+    -- GATE: include=data/mods/RuleRoulette.scenario.lua
+
+The runner writes that file, unchanged, after the prelude's head and before
+the arena's own text, so the arena sees the script's globals and its
+`scenario` table and can wrap them. Two or more are separated by commas.
+
 USAGE, from the repo root, where <dir> is the build directory holding
 WinBoloDS (left out, it is build-own):
 
@@ -76,6 +85,7 @@ DEFAULTS = {
     "mines": None,
     "seed": "42",
     "script": None,
+    "include": None,
 }
 
 # The verdict helper a script= arena gets in place of the compat prelude. It
@@ -274,6 +284,13 @@ class Job(object):
                     'GATE_GAMETYPE = "%s"\n\n'
                     % (self.name, self.opts["ticks"], self.opts["gametype"]))
             f.write(self.head)
+            for inc in (self.opts.get("include") or "").split(","):
+                inc = inc.strip()
+                if not inc:
+                    continue
+                with open(os.path.join(ROOT, inc), encoding="utf-8") as g:
+                    f.write("\n-- ===== included: %s =====\n" % inc)
+                    f.write(g.read())
             f.write("\n-- ===== the arena =====\n")
             f.write(body)
             f.write("\n-- ===== the prelude's tail =====\n")

@@ -349,6 +349,9 @@ int run_sim_rules_classic_defaults(void) {
     SR_EQ(pill_aim_mac, 0);
     SR_EQ(tank_collision_mac, 0);
 
+    /* Deep sea */
+    SR_EQ(tank_deep_sea_safe, 0);
+
     return 0;
 }
 
@@ -1299,6 +1302,82 @@ int run_sim_rules_tank_collision_mac(void) {
     return 0;
 }
 
+/* A tank with no boat on deep sea: classic drowns it on the tick it is
+ * there, tank_deep_sea_safe keeps it alive tick after tick, and turning the
+ * rule back off drowns it on the next tick. A tank on a boat keeps its boat
+ * either way, and a predicting sim never drowns anybody. */
+int run_sim_rules_tank_deep_sea_safe(void) {
+    ServerSim *sim = ut_make_running_sim("Deep sea safe");
+    GameSim *gs;
+    tank t;
+    struct tankObj initial;
+    int x, y, i;
+    const WORLD centre = (WORLD)(100 * 256 + 128);
+    UT_ASSERT(sim != NULL);
+    gs = serverSimGetGameSim(sim);
+    t = gs->tanks[0];
+    UT_ASSERT(t != NULL);
+    for (x = 97; x <= 103; x++) for (y = 97; y <= 103; y++) {
+        mapSetPos(gs, &gs->mp, (BYTE)x, (BYTE)y, DEEP_SEA, FALSE, FALSE);
+    }
+    for (i = 0; i < (int)gs->pb->numPills; i++) gs->pb->active[i] = FALSE;
+    t->x = centre;
+    t->y = centre;
+    t->speed = 0;
+    t->autoSlowdown = FALSE;
+    t->destroyed = FALSE;
+    t->onBoat = FALSE;
+    t->boatState = BoatState_NotOnBoat;
+    t->deathWait = 0;
+    t->armour = (BYTE)gs->rules.tank_full_armour;
+    initial = *t;
+
+    /* Classic: the first tick on deep sea is the last. */
+    UT_ASSERT(gs->rules.tank_deep_sea_safe == 0);
+    gs->isPredicting = FALSE;
+    tankUpdate(gs, &gs->tanks[0], 0, FALSE, FALSE);
+    UT_ASSERT_MSG(t->destroyed, "a tank with no boat on deep sea lived on "
+                                "under the classic rules");
+
+    /* A predicting sim leaves drowning to the server. */
+    *t = initial;
+    gs->isPredicting = TRUE;
+    tankUpdate(gs, &gs->tanks[0], 0, FALSE, FALSE);
+    UT_ASSERT_MSG(!t->destroyed, "a predicting sim drowned a tank");
+    gs->isPredicting = FALSE;
+
+    /* Safe: many ticks out there, still alive and still with no boat. */
+    *t = initial;
+    gs->rules.tank_deep_sea_safe = 1;
+    for (i = 0; i < 50; i++) {
+        tankUpdate(gs, &gs->tanks[0], 0, FALSE, FALSE);
+        UT_ASSERT_MSG(!t->destroyed, "a tank drowned on tick %d with "
+                                     "tank_deep_sea_safe on", i);
+    }
+    UT_ASSERT(t->onBoat == FALSE);
+
+    /* The rule back off: the very next tick drowns it. */
+    gs->rules.tank_deep_sea_safe = 0;
+    tankUpdate(gs, &gs->tanks[0], 0, FALSE, FALSE);
+    UT_ASSERT_MSG(t->destroyed, "the tank lived a tick after "
+                                "tank_deep_sea_safe went back off");
+
+    /* A tank on a boat keeps it, with the rule on or off. */
+    for (i = 0; i <= 1; i++) {
+        *t = initial;
+        t->onBoat = TRUE;
+        t->boatState = BoatState_InBoat;
+        gs->rules.tank_deep_sea_safe = i;
+        tankUpdate(gs, &gs->tanks[0], 0, FALSE, FALSE);
+        UT_ASSERT(!t->destroyed);
+        UT_ASSERT_MSG(t->onBoat == TRUE, "the boat was lost on deep sea with "
+                                         "tank_deep_sea_safe %d", i);
+    }
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
 int run_sim_rules_pill_aim_mac(void) {
     /* Mac Bolo reference shell directions, with WinBolo speeds multiplied
      * by four. The first three rows cover moving, stopped and obstructed
@@ -2071,7 +2150,7 @@ int run_sim_rules_are_classic(void) {
 
     /* The last field, so the walk is not stopping short of the end. */
     simRulesClassic(&r);
-    r.tank_collision_mac = 1;
+    r.tank_deep_sea_safe = 1;
     UT_ASSERT_MSG(!simRulesAreClassic(&r),
                   "a table with its last field moved is reported classic");
 
