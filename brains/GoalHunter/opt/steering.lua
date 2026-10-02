@@ -2726,7 +2726,13 @@ local function attack_pill_steer(state, world, info, goal)
       if hd and hd - dist_to_pill / 256.0 < ahead then
         cap, pace = C.NAV_TOP_SPEED, "go"
       elseif aim_mode then
-        if dist_to_pill > shoot_tiles * 256.0 then
+        -- A suicide run holds its standoff at max shell range, but pill hits
+        -- shove the tank back: past (range - SUICIDE_HOLD_MARGIN_TILES) it
+        -- floors it back in instead of cruising (Andrew, 2026-10-02).
+        local margin = goal._ping_suicide and (C.SUICIDE_HOLD_MARGIN_TILES or 0) or 0
+        if goal._ping_suicide and dist_to_pill > (shoot_tiles - margin) * 256.0 then
+          cap, pace = C.NAV_TOP_SPEED, "push"
+        elseif dist_to_pill > shoot_tiles * 256.0 then
           pace = "reach"
         else
           cap, pace = 0, "hold"
