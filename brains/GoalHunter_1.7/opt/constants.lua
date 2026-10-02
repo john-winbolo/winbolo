@@ -5448,11 +5448,23 @@ M.PRESETS = {
     BOAT_SHELL_DODGE_DEFER        = 8,
     EDGE_COST_REFRESH_THINKS      = 250,    -- about 10 s; arena walls never fall
     -- Per level, on top of the values above (init.lua _apply_cfg_tokens).
-    -- Hard keeps the values above. Medium and Easy aim wider, fire slower
-    -- and wait for a steadier target; Easy also does not dodge shells.
+    -- Hard keeps the values above. Medium and Easy aim worse, fire slower
+    -- and wait for a steadier target. Joust is always "outnumbered" in a
+    -- Free For All, so the lower levels must not disengage for it, or a 4-6
+    -- bot round stalls.
     -- 2026-10-01: Andrew found the first Medium far too easy in play, so
-    -- Easy took its values and Medium moved halfway to Hard. Joust is always "outnumbered" in a Free For All, so the
-    -- lower levels must not disengage for it, or a 4-6 bot round stalls.
+    -- Medium moved halfway to Hard (he play-tested it: good). Easy plays on
+    -- the general Medium bundle (the block at the end of this file), with
+    -- the values below.
+    -- Why the first Easy beat Medium: shell dodging. A bot that dodges
+    -- shells turns away from its aim, fires later and wastes more shells,
+    -- so in Joust it loses more than it saves. Medium dodged and Easy did
+    -- not, so Easy won 12-4 in 16 games. Medium with dodging off beat plain
+    -- Medium 13-3. Easy now dodges, aims wider, leads a sailing boat too
+    -- slowly (LEAD_CAP_USE_MEASURED off) and fires less often.
+    -- Bench (Free For All Joust, 4 and 6 bots, target 10, winner = side of
+    -- the top scorer): Hard beat Medium 8-0, Medium beat Easy 7-1 (and 28-4
+    -- in a 32-game run), Hard beat Easy 8-0.
     by_difficulty = {
       medium = {
         OUTNUMBERED_DISENGAGE     = false,
@@ -5464,12 +5476,13 @@ M.PRESETS = {
       },
       easy = {
         OUTNUMBERED_DISENGAGE     = false,
-        AIM_ERROR_BRADS           = 6,
-        FIRE_HOLD_TICKS           = 20,
-        REACTION_DELAY_TICKS      = 16,
-        TANK_COMBAT_STEADY_TICKS  = 5,
-        TANK_COMBAT_AIM_GATE_BRADS = 12,
-        BOAT_SHELL_DODGE          = false,
+        AIM_ERROR_BRADS           = 10,
+        FIRE_HOLD_TICKS           = 35,
+        REACTION_DELAY_TICKS      = 20,
+        TANK_COMBAT_STEADY_TICKS  = 8,
+        TANK_COMBAT_AIM_GATE_BRADS = 24,
+        BOAT_SHELL_DODGE          = true,
+        LEAD_CAP_USE_MEASURED     = false,
       },
     },
   },
@@ -5620,6 +5633,30 @@ do
     turtle[level] = t
   end
   M.MODE_LEVELS.turtle = turtle
+end
+
+-- Joust Easy plays on the general Medium bundle (2026-10-01). For every
+-- knob where the general Easy bundle differs from the general Medium
+-- bundle, Joust's easy table writes the Medium value back (Hard's value
+-- where Medium sets none). So in Joust, Easy differs from Medium only in
+-- the Joust values in PRESETS.joust.by_difficulty. It is built from the two
+-- bundles here, so a later change to either bundle reaches Joust too.
+-- Knobs that Joust's own tables set are left alone. Only PRESETS.joust
+-- changes; no other game reads it.
+do
+  local joust = M.PRESETS.joust
+  local easy = joust.by_difficulty.easy
+  local med, low = M.MODE_LEVELS.default.medium, M.MODE_LEVELS.default.easy
+  local names = {}
+  for k in pairs(med) do names[k] = true end
+  for k in pairs(low) do names[k] = true end
+  for k in pairs(names) do
+    local mv = med[k]
+    if mv == nil then mv = M[k] end
+    local ev = low[k]
+    if ev == nil then ev = M[k] end
+    if mv ~= ev and easy[k] == nil and joust[k] == nil then easy[k] = mv end
+  end
 end
 
 return M
