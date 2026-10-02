@@ -157,7 +157,14 @@ static bool obsAddObjectAsEntity(const ObjectInfo *o, float self_wx, float self_
         ent->allegiance = obsGetAllegiance(o, selfPlayer);
         ent->direction = 0.0f;
         ent->speed = 0.0f;
-        ent->strength = (float)o->refbase_strength / 90.0f;
+        /* The brain feed gives a friendly base's armour in fifths and any
+           other base 1 above the capture threshold or 0 at or below it
+           (basesGetBrainBaseInRect). Scaled to what the gym gives. */
+        if (ent->allegiance == WBGYM_ALLEG_SELF) {
+            ent->strength = (float)o->refbase_strength * 5.0f / 90.0f;
+        } else {
+            ent->strength = o->refbase_strength > 0 ? 1.0f : 0.0f;
+        }
         ent->flags = 0;
         ent->id = (uint8_t)o->idnum;
         (*ne)++;
@@ -203,132 +210,204 @@ static int8_t obsGetPlayerAllegiance(BYTE playerNum, BYTE selfPlayer, PlayerBitM
     return WBGYM_ALLEG_ENEMY;
 }
 
-/* Build events and sound events from BrainInfo events list */
-static void obsBuildEvents(const BrainInfo *bi, WinBoloObs *obs) {
-    BYTE selfPlayer = (BYTE)bi->player_number;
-    PlayerBitMap alliesBits = bi->allies ? *(bi->allies) : 0;
-    int tank_tx = bi->tankx >> 8;
-    int tank_ty = bi->tanky >> 8;
+ObsEventUse obsEventIsRead(uint8_t type) {
+    switch (type) {
+    case EVENT_SOUND:
+    case EVENT_SOUND_SHOOT:
+    case EVENT_SOUND_TANK_HIT:
+    case EVENT_TANK_KILLED:
+    case EVENT_TANK_HIT:
+    case EVENT_PILL_CAPTURED:
+    case EVENT_BASE_CAPTURED:
+    case EVENT_PILL_KILLED:
+    case EVENT_LGM_LOST:
+    case EVENT_ASSISTANT_MSG:
+        return OBS_EVENT_READ;
 
-    for (int i = 0; i < bi->num_events; i++) {
-        GameEvent *e = &bi->events[i];
+    /* Never raised by anything. */
+    case EVENT_SHELL_FIRED:
+    /* Server-only, and the sound of a builder laying a mine already arrives
+     * as EVENT_SOUND manLayingMineNear. Hearing this one would tell the agent
+     * where every hidden mine went in, which the game never tells a player. */
+    case EVENT_MINE_PLACED:
+    /* Shell impacts; the in-game brain's event filter drops them, so the gym
+     * must not hear them either. Mine and tank explosions arrive as EVENT_SOUND
+     * and are heard through that. */
+    case EVENT_EXPLOSION:
+    case EVENT_MINE_EXPLODED:
+    case EVENT_TK_EXPLOSION:
+    /* State the observation reads from the sim directly, or has no use for. */
+    case EVENT_MAP_CHANGE:
+    case EVENT_SERVER_MSG:
+    case EVENT_PILL_UPDATE:
+    case EVENT_BASE_UPDATE:
+    case EVENT_PLAYER_LEAVE:
+    case EVENT_MINE_VISIBLE:
+    case EVENT_BASE_STOCK:
+    case EVENT_PING:
+    case EVENT_TANK_SPAWNED:
+    case EVENT_LGM_LANDED:
+    case EVENT_PILL_PLACED:
+    case EVENT_PILL_PICKED_UP:
+    case EVENT_BUILT:
+        return OBS_EVENT_IGNORED;
+
+    default:
+        return OBS_EVENT_UNKNOWN;
+    }
+}
+
+/* EVENT_TANK_HIT's pill byte for a shell no pillbox fired (DMG_NO_PILL in
+ * the scenario surface, which this file does not include). */
+#define OBS_NO_PILL 0xFF
+
+static void obsAddEvent(WinBoloObs *obs, uint8_t ev) {
+    if (obs->num_events < WBGYM_MAX_EVENTS) {
+        obs->events[obs->num_events++] = ev;
+    }
+}
+
+/* The observation's sound type for an EVENT_SOUND sound id. Ids with no type
+ * of their own are generic; the id itself still travels in sound_id. */
+static uint8_t obsSoundTypeFor(uint8_t soundId) {
+    switch (soundId) {
+    case manDyingNear:
+    case manDyingFar:
+        return WBGYM_SND_LGM_LOST;
+    case mineExplosionNear:
+    case mineExplosionFar:
+    case bigExplosionNear:
+    case bigExplosionFar:
+        return WBGYM_SND_EXPLOSION;
+    case manLayingMineNear:
+        return WBGYM_SND_MINE_PLACE;
+    default:
+        return WBGYM_SND_GENERIC;
+    }
+}
+
+/* Appends a positional sound when it is within 40 squares, or always when
+ * always is set. */
+static void obsAddSound(WinBoloObs *obs, const GameEvent *e, int tankTx,
+                        int tankTy, uint8_t type, int8_t allegiance,
+                        bool always) {
+    float sx = (float)e->data[1] - (float)tankTx;
+    float sy = (float)e->data[2] - (float)tankTy;
+
+    if (obs->num_sounds >= WBGYM_MAX_SOUNDS) {
+        return;
+    }
+    if (!always && (fabsf(sx) >= 40.0f || fabsf(sy) >= 40.0f)) {
+        return;
+    }
+    WinBoloSoundEvent *snd = &obs->sounds[obs->num_sounds++];
+    snd->rx = sx;
+    snd->ry = sy;
+    snd->type = type;
+    snd->allegiance = allegiance;
+    snd->sound_id = e->data[0];
+}
+
+void obsBuildEventsFrom(const GameEvent *events, int count, bool fromServer,
+                        BYTE selfPlayer, PlayerBitMap allies, int tankTx,
+                        int tankTy, WinBoloObs *obs) {
+    for (int i = 0; i < count; i++) {
+        const GameEvent *e = &events[i];
         switch (e->type) {
         case EVENT_SOUND_TANK_HIT:
-            if (e->data[3] != selfPlayer && obs->num_events < WBGYM_MAX_EVENTS)
-                obs->events[obs->num_events++] = WBGYM_EVENT_HIT_DEALT;
-            if (e->data[3] == selfPlayer && obs->num_events < WBGYM_MAX_EVENTS)
-                obs->events[obs->num_events++] = WBGYM_EVENT_HIT_RECEIVED;
-            if (obs->num_sounds < WBGYM_MAX_SOUNDS) {
-                float sx = (float)e->data[1] - (float)tank_tx;
-                float sy = (float)e->data[2] - (float)tank_ty;
-                bool isSelfHit = (e->data[3] == selfPlayer);
-                if (isSelfHit || (fabsf(sx) < 40.0f && fabsf(sy) < 40.0f)) {
-                    WinBoloSoundEvent *snd = &obs->sounds[obs->num_sounds++];
-                    snd->rx = sx;
-                    snd->ry = sy;
-                    snd->type = WBGYM_SND_HIT_TANK;
-                    snd->allegiance = obsGetPlayerAllegiance(e->data[3], selfPlayer, alliesBits);
-                }
+            /* [soundId, mx, my, hitPlayer]. It names the tank hit and nobody
+               else, so it cannot say who dealt a hit; that comes from
+               EVENT_TANK_HIT, and so does a hit received when the list has
+               it (it also covers mines, which make no hit sound). */
+            if (!fromServer && e->data[3] == selfPlayer) {
+                obsAddEvent(obs, WBGYM_EVENT_HIT_RECEIVED);
+            }
+            obsAddSound(obs, e, tankTx, tankTy, WBGYM_SND_HIT_TANK,
+                        obsGetPlayerAllegiance(e->data[3], selfPlayer, allies),
+                        e->data[3] == selfPlayer);
+            break;
+        case EVENT_TANK_HIT:
+            /* [victim, attacker, cause, amount, pill]. A hit dealt is one of
+               the agent's own shells: the shot-accuracy reward divides these
+               by the shots it fired. A mine it laid names it as the attacker
+               too, and a pillbox shell carries a pill index; neither is a
+               shot. (Pillbox shells name NEUTRAL today, and the pill check
+               keeps that true if a pill's owner is ever credited.) */
+            if (e->data[0] == selfPlayer) {
+                obsAddEvent(obs, WBGYM_EVENT_HIT_RECEIVED);
+            } else if (e->data[1] == selfPlayer &&
+                       e->data[2] == LAST_DEATH_BY_SHELL &&
+                       e->data[4] == OBS_NO_PILL) {
+                obsAddEvent(obs, WBGYM_EVENT_HIT_DEALT);
             }
             break;
         case EVENT_TANK_KILLED:
-            if (e->data[0] == selfPlayer && obs->num_events < WBGYM_MAX_EVENTS)
-                obs->events[obs->num_events++] = WBGYM_EVENT_KILL;
-            if (e->data[1] == selfPlayer && obs->num_events < WBGYM_MAX_EVENTS)
-                obs->events[obs->num_events++] = WBGYM_EVENT_DEATH;
+            /* [killer, killed, deathCause, carriedPills]. A death nobody
+               caused, drowning or the tank's own mine, names the dying tank
+               as its killer; that is a death and not a kill. */
+            if (e->data[1] == selfPlayer) {
+                obsAddEvent(obs, WBGYM_EVENT_DEATH);
+            } else if (e->data[0] == selfPlayer) {
+                if (obsGetPlayerAllegiance(e->data[1], selfPlayer, allies) ==
+                    WBGYM_ALLEG_ALLY) {
+                    obsAddEvent(obs, WBGYM_EVENT_ALLY_KILLED);
+                } else {
+                    obsAddEvent(obs, WBGYM_EVENT_KILL);
+                }
+            }
             break;
         case EVENT_PILL_CAPTURED:
-            if (e->data[0] == selfPlayer && obs->num_events < WBGYM_MAX_EVENTS)
-                obs->events[obs->num_events++] = WBGYM_EVENT_PILL_CAPTURED;
-            if (e->data[1] == selfPlayer && obs->num_events < WBGYM_MAX_EVENTS)
-                obs->events[obs->num_events++] = WBGYM_EVENT_PILL_LOST;
+            if (e->data[0] == selfPlayer)
+                obsAddEvent(obs, WBGYM_EVENT_PILL_CAPTURED);
+            if (e->data[1] == selfPlayer)
+                obsAddEvent(obs, WBGYM_EVENT_PILL_LOST);
             break;
         case EVENT_BASE_CAPTURED:
-            if (e->data[0] == selfPlayer && obs->num_events < WBGYM_MAX_EVENTS)
-                obs->events[obs->num_events++] = WBGYM_EVENT_BASE_CAPTURED;
-            if (e->data[1] == selfPlayer && obs->num_events < WBGYM_MAX_EVENTS)
-                obs->events[obs->num_events++] = WBGYM_EVENT_BASE_LOST;
+            if (e->data[0] == selfPlayer)
+                obsAddEvent(obs, WBGYM_EVENT_BASE_CAPTURED);
+            if (e->data[1] == selfPlayer)
+                obsAddEvent(obs, WBGYM_EVENT_BASE_LOST);
+            break;
+        case EVENT_PILL_KILLED:
+            /* [index, attacker] */
+            if (e->data[1] == selfPlayer)
+                obsAddEvent(obs, WBGYM_EVENT_PILL_KILLED);
             break;
         case EVENT_LGM_LOST:
-            if (e->data[0] == selfPlayer && obs->num_events < WBGYM_MAX_EVENTS)
-                obs->events[obs->num_events++] = WBGYM_EVENT_LGM_LOST;
+            /* [victim, killer, quiet]; killer is NEUTRAL when nobody did it. */
+            if (e->data[0] == selfPlayer) {
+                obsAddEvent(obs, WBGYM_EVENT_LGM_LOST);
+            } else if (e->data[1] == selfPlayer &&
+                       obsGetPlayerAllegiance(e->data[0], selfPlayer, allies) ==
+                           WBGYM_ALLEG_ENEMY) {
+                obsAddEvent(obs, WBGYM_EVENT_ENEMY_LGM_KILLED);
+            }
             break;
-        case EVENT_SOUND_SHOOT: {
+        case EVENT_SOUND_SHOOT:
             if (e->data[3] == selfPlayer) break;
-            float sx = (float)e->data[1] - (float)tank_tx;
-            float sy = (float)e->data[2] - (float)tank_ty;
-            if (fabsf(sx) < 40.0f && fabsf(sy) < 40.0f && obs->num_sounds < WBGYM_MAX_SOUNDS) {
-                WinBoloSoundEvent *snd = &obs->sounds[obs->num_sounds++];
-                snd->rx = sx;
-                snd->ry = sy;
-                snd->type = WBGYM_SND_SHOOT;
-                snd->allegiance = obsGetPlayerAllegiance(e->data[3], selfPlayer, alliesBits);
-            }
+            obsAddSound(obs, e, tankTx, tankTy, WBGYM_SND_SHOOT,
+                        obsGetPlayerAllegiance(e->data[3], selfPlayer, allies),
+                        false);
             break;
-        }
-        case EVENT_SOUND: {
-            float sx = (float)e->data[1] - (float)tank_tx;
-            float sy = (float)e->data[2] - (float)tank_ty;
-            if (fabsf(sx) < 40.0f && fabsf(sy) < 40.0f && obs->num_sounds < WBGYM_MAX_SOUNDS) {
-                WinBoloSoundEvent *snd = &obs->sounds[obs->num_sounds++];
-                snd->rx = sx;
-                snd->ry = sy;
-                snd->type = WBGYM_SND_GENERIC;
-                snd->allegiance = WBGYM_ALLEG_NEUTRAL;
-            }
+        case EVENT_SOUND:
+            /* data[3] is whichever player's tick raised it, not who the sound
+               belongs to, so it says nothing about allegiance. */
+            obsAddSound(obs, e, tankTx, tankTy, obsSoundTypeFor(e->data[0]),
+                        WBGYM_ALLEG_NEUTRAL, false);
             break;
-        }
-        case EVENT_EXPLOSION: {
-            float sx = (float)e->data[0] - (float)tank_tx;
-            float sy = (float)e->data[1] - (float)tank_ty;
-            if (fabsf(sx) < 40.0f && fabsf(sy) < 40.0f && obs->num_sounds < WBGYM_MAX_SOUNDS) {
-                WinBoloSoundEvent *snd = &obs->sounds[obs->num_sounds++];
-                snd->rx = sx;
-                snd->ry = sy;
-                snd->type = WBGYM_SND_EXPLOSION;
-                snd->allegiance = WBGYM_ALLEG_NEUTRAL;
-            }
-            break;
-        }
-        case EVENT_MINE_PLACED: {
-            float sx = (float)e->data[1] - (float)tank_tx;
-            float sy = (float)e->data[2] - (float)tank_ty;
-            if (fabsf(sx) < 40.0f && fabsf(sy) < 40.0f && obs->num_sounds < WBGYM_MAX_SOUNDS) {
-                WinBoloSoundEvent *snd = &obs->sounds[obs->num_sounds++];
-                snd->rx = sx;
-                snd->ry = sy;
-                snd->type = WBGYM_SND_MINE_PLACE;
-                snd->allegiance = WBGYM_ALLEG_NEUTRAL;
-            }
-            break;
-        }
-        case EVENT_SHELL_FIRED: {
-            float sx = (float)e->data[1] - (float)tank_tx;
-            float sy = (float)e->data[2] - (float)tank_ty;
-            if (fabsf(sx) < 40.0f && fabsf(sy) < 40.0f && obs->num_sounds < WBGYM_MAX_SOUNDS) {
-                WinBoloSoundEvent *snd = &obs->sounds[obs->num_sounds++];
-                snd->rx = sx;
-                snd->ry = sy;
-                snd->type = WBGYM_SND_SHELL_FIRED;
-                snd->allegiance = WBGYM_ALLEG_NEUTRAL;
-            }
-            break;
-        }
         case EVENT_ASSISTANT_MSG:
             if (e->data[0] == selfPlayer) {
                 obs->assistant_msg = e->data[1];
                 switch (e->data[1]) {
-                case 1:
-                    if (obs->num_events < WBGYM_MAX_EVENTS)
-                        obs->events[obs->num_events++] = WBGYM_EVENT_ASSIST_MAN_DEAD;
+                case ASSIST_MSG_MAN_DEAD:
+                    obsAddEvent(obs, WBGYM_EVENT_ASSIST_MAN_DEAD);
                     break;
-                case 2: case 5:
-                    if (obs->num_events < WBGYM_MAX_EVENTS)
-                        obs->events[obs->num_events++] = WBGYM_EVENT_ASSIST_NO_TREE;
+                case ASSIST_MSG_NO_TREE:
+                case ASSIST_MSG_INSUFFICIENT_TREES:
+                    obsAddEvent(obs, WBGYM_EVENT_ASSIST_NO_TREE);
                     break;
-                case 6:
-                    if (obs->num_events < WBGYM_MAX_EVENTS)
-                        obs->events[obs->num_events++] = WBGYM_EVENT_ASSIST_BUILDTANK;
+                case ASSIST_MSG_BUILDTANK:
+                    obsAddEvent(obs, WBGYM_EVENT_ASSIST_BUILDTANK);
                     break;
                 }
             }
@@ -337,6 +416,15 @@ static void obsBuildEvents(const BrainInfo *bi, WinBoloObs *obs) {
             break;
         }
     }
+}
+
+/* Build events and sound events from BrainInfo events list */
+static void obsBuildEvents(const BrainInfo *bi, WinBoloObs *obs) {
+    PlayerBitMap alliesBits = bi->allies ? *(bi->allies) : 0;
+
+    obsBuildEventsFrom(bi->events, bi->num_events, false,
+                       (BYTE)bi->player_number, alliesBits, bi->tankx >> 8,
+                       bi->tanky >> 8, obs);
 
     if (bi->assistant_msg != 0 && obs->assistant_msg == 0) {
         obs->assistant_msg = bi->assistant_msg;

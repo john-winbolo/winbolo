@@ -1065,17 +1065,27 @@ static void brainInfoFree(BrainInfo *bi) {
 
 /* The event records the state logs derive from one GameEvent, as JSON
  * object fragments from the local player's point of view. Up to two per
- * event: a tank-killed event names both the killer and the victim, and a
- * hit is dealt or received. Returns how many fragments were put in out. */
-static int verboseEventJson(const GameEvent *e, BYTE self, const char *out[2]) {
+ * event: a capture names both the new owner and the old one. Returns how many
+ * fragments were put in out.
+ *
+ * A death nobody caused (drowning, the tank's own mine) names the dying tank
+ * as its own killer, so it is a death and not a kill. There is no hit dealt:
+ * the hit sound names only the tank hit, and the event that names the
+ * attacker never reaches a client. */
+static int verboseEventJson(const GameEvent *e, BYTE self, PlayerBitMap allies,
+                            const char *out[2]) {
   int n = 0;
   switch (e->type) {
   case EVENT_TANK_KILLED:
-    if (e->data[0] == self) out[n++] = "{\"type\":\"kill\",\"target\":\"enemy\"}";
-    if (e->data[1] == self) out[n++] = "{\"type\":\"death\"}";
+    if (e->data[1] == self) {
+      out[n++] = "{\"type\":\"death\"}";
+    } else if (e->data[0] == self) {
+      out[n++] = (e->data[1] < 32 && (allies & (1u << e->data[1])))
+                     ? "{\"type\":\"kill\",\"target\":\"ally\"}"
+                     : "{\"type\":\"kill\",\"target\":\"enemy\"}";
+    }
     break;
   case EVENT_SOUND_TANK_HIT:
-    if (e->data[3] != self) out[n++] = "{\"type\":\"hit_dealt\"}";
     if (e->data[3] == self) out[n++] = "{\"type\":\"hit_received\"}";
     break;
   case EVENT_PILL_CAPTURED:
@@ -1330,7 +1340,7 @@ static void logStateVerbose(int tickNum) {
     int first = 1;
     for (i = 0; i < bi.num_events; i++) {
       const char *frag[2];
-      int n = verboseEventJson(&bi.events[i], selfPlayer, frag);
+      int n = verboseEventJson(&bi.events[i], selfPlayer, alliesBits, frag);
       int k;
       for (k = 0; k < n; k++) {
         if (!first) fprintf(f, ",");
@@ -1696,7 +1706,7 @@ static void logChangesBuild(TextBuf *b) {
     int first = 1;
     for (i = 0; i < logChangesEventCount; i++) {
       const char *frag[2];
-      int n = verboseEventJson(&logChangesEvents[i], selfPlayer, frag);
+      int n = verboseEventJson(&logChangesEvents[i], selfPlayer, alliesBits, frag);
       int k;
       for (k = 0; k < n; k++) {
         textBufPrintf(b, "%s%s", first ? "" : ",", frag[k]);
@@ -1823,17 +1833,21 @@ static void logStateBinary(int tickNum) {
   for (i = 0; i < bi.num_events && numEvents < BINARY_MAX_EVENTS; i++) {
     GameEvent *e = &bi.events[i];
     switch (e->type) {
+    /* Codes are the gym's WBGYM_EVENT_* numbers. No hit dealt (0): the hit
+     * sound names only the tank hit, and the event naming the attacker never
+     * reaches a client. A death nobody caused names the dying tank as its own
+     * killer, so it is a death and not a kill. */
     case EVENT_SOUND_TANK_HIT:
-      if (e->data[3] != selfPlayer && numEvents < BINARY_MAX_EVENTS)
-        eventBuf[numEvents++] = 0; /* hit_dealt */
       if (e->data[3] == selfPlayer && numEvents < BINARY_MAX_EVENTS)
         eventBuf[numEvents++] = 3; /* hit_received */
       break;
     case EVENT_TANK_KILLED:
-      if (e->data[0] == selfPlayer && numEvents < BINARY_MAX_EVENTS)
-        eventBuf[numEvents++] = 1; /* kill */
-      if (e->data[1] == selfPlayer && numEvents < BINARY_MAX_EVENTS)
+      if (e->data[1] == selfPlayer) {
         eventBuf[numEvents++] = 2; /* death */
+      } else if (e->data[0] == selfPlayer) {
+        bool ally = e->data[1] < 32 && (alliesBits & (1u << e->data[1]));
+        eventBuf[numEvents++] = ally ? 13 : 1; /* ally_killed : kill */
+      }
       break;
     case EVENT_PILL_CAPTURED:
       if (e->data[0] == selfPlayer && numEvents < BINARY_MAX_EVENTS)

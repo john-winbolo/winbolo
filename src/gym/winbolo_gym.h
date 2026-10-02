@@ -53,9 +53,6 @@ extern "C" {
 #define WBGYM_MAX_ENTITIES   256
 #define WBGYM_MAX_SOUNDS      32
 
-/* Kept for ml_brain.c compat until Phase 4 model update */
-#define WBGYM_NUM_CHANNELS    10
-
 /* Game type constants (matches engine gameType enum) */
 #define WBGYM_GAME_OPEN              1
 #define WBGYM_GAME_TOURNAMENT        2
@@ -82,6 +79,9 @@ extern "C" {
 #define WBGYM_EVENT_ASSIST_MAN_DEAD    9
 #define WBGYM_EVENT_ASSIST_NO_TREE    10
 #define WBGYM_EVENT_ASSIST_BUILDTANK  11
+#define WBGYM_EVENT_ENEMY_LGM_KILLED  12  /* the agent killed an enemy builder */
+#define WBGYM_EVENT_ALLY_KILLED       13  /* the agent killed an allied tank; not a KILL */
+#define WBGYM_EVENT_PILL_KILLED       14  /* the agent's shot took a pillbox's last armour */
 
 /* Entity type constants */
 #define WBGYM_ENT_TANK       0
@@ -100,18 +100,23 @@ extern "C" {
 
 /* Entity flags bitfield */
 #define WBGYM_FLAG_IN_BOAT    0x01
-#define WBGYM_FLAG_IN_TANK    0x02
+#define WBGYM_FLAG_IN_TANK    0x02  /* a pillbox carried in a tank */
 #define WBGYM_FLAG_IS_SELF    0x04
+/* A tank that is dead or has just respawned, or a builder parachuting back. */
 #define WBGYM_FLAG_DEAD       0x08
 #define WBGYM_FLAG_HIDDEN     0x10
 
-/* Sound event type constants */
-#define WBGYM_SND_SHOOT       0
-#define WBGYM_SND_EXPLOSION   1
+/* Sound event type constants. Every sound also carries the game's own
+ * sound id (sndEffects) in sound_id, so a generic one can still be told apart. */
+#define WBGYM_SND_SHOOT       0  /* another tank firing */
+#define WBGYM_SND_EXPLOSION   1  /* a mine or a tank going up */
 #define WBGYM_SND_HIT_TANK    2
-#define WBGYM_SND_MINE_PLACE  3
+#define WBGYM_SND_MINE_PLACE  3  /* a builder laying a mine; tanks lay silently */
 #define WBGYM_SND_GENERIC     4
-#define WBGYM_SND_LGM_LOST    5
+#define WBGYM_SND_LGM_LOST    5  /* a builder dying */
+/* Never produced: nothing raises the event it was for, and firing is
+ * WBGYM_SND_SHOOT. The number is kept because the model input divides the
+ * type by 6. */
 #define WBGYM_SND_SHELL_FIRED 6
 
 /* Pillbox owner constants */
@@ -121,7 +126,7 @@ extern "C" {
 #define WBGYM_OWNER_ALLY     3
 
 /* ── Reward component indices (must match Python RewardConfig field order) ── */
-#define WBGYM_NUM_REWARD_COMPONENTS 58
+#define WBGYM_NUM_REWARD_COMPONENTS 59
 
 /* Category 1: Survival */
 #define RC_DEATH                  0
@@ -192,6 +197,8 @@ extern "C" {
 #define RC_PILL_HIT              55
 #define RC_RESUPPLY_SHELLS       56
 #define RC_SHOOT_AT_PILL         57
+/* Category 2 again, added after the list was laid out */
+#define RC_ALLY_KILLED           58
 
 /* Rolling window sizes */
 #define WBGYM_SHOT_WINDOW         50
@@ -288,7 +295,12 @@ typedef struct {
     int8_t  allegiance;  /* WBGYM_ALLEG_* */
     float direction;     /* 0..1 normalized angle (for tanks, shells, lgm) */
     float speed;         /* actual_speed / 128.0 (tanks only, 0 otherwise) */
-    float strength;      /* pill: armour/15, shell: life/8, base: armour/90 */
+    /* tank: armour/40, 0 when dead. shell and explosion: life left/8.
+     * pill: armour/15. base: armour/90 in steps of 5 for your own and allied
+     * bases (the game tells a player that base's armour in fifths); any
+     * other base is 1 above the capture threshold and 0 at or below it, which
+     * is all the game tells a player about it. */
+    float strength;
     uint8_t flags;       /* WBGYM_FLAG_* bitfield */
     uint8_t id;          /* playerNum for tanks/lgm, pill/base index, 0xFF=n/a */
 } WinBoloEntity;
@@ -299,16 +311,17 @@ typedef struct {
     float ry;          /* tile-unit Y relative to self tank */
     uint8_t type;      /* WBGYM_SND_* */
     int8_t  allegiance; /* who caused it: self/ally/enemy/neutral */
+    uint8_t sound_id;  /* the game's sndEffects value */
 } WinBoloSoundEvent;
 
-/* Incoming message observation (placeholder for Phase 6) */
+/* Incoming message observation (reserved, always zeroed) */
 typedef struct {
     uint8_t from;          /* sender player number */
     uint8_t type;          /* message type */
     float   data[4];       /* type-dependent payload */
 } WinBoloMsgObs;
 
-/* Alliance state observation (placeholder for Phase 6) */
+/* Alliance state observation (reserved, always zeroed) */
 typedef struct {
     uint8_t alliance_id;         /* which alliance (0 = none) */
     uint8_t alliance_members[16]; /* player IDs in same alliance */
@@ -323,7 +336,8 @@ typedef struct {
     uint8_t armor;    /* 0-15 */
 } WinBoloPillObs;
 
-/* Base observation */
+/* Base observation. shells, mines and armour are filled for your own and
+ * allied bases only and are 0 for every other base. */
 typedef struct {
     uint8_t tx;
     uint8_t ty;
@@ -351,7 +365,9 @@ typedef struct {
     float terrain[WBGYM_SPATIAL_SIZE][WBGYM_SPATIAL_SIZE];
     float mines_map[WBGYM_SPATIAL_SIZE][WBGYM_SPATIAL_SIZE];
 
-    /* Entity list (world-unit precision, all view rects) */
+    /* Entity list (world-unit precision). Tanks, shells, builders and
+     * explosions come from the tank's view and the views of its own and
+     * allied pillboxes; pillboxes and bases are listed map-wide. */
     WinBoloEntity entities[WBGYM_MAX_ENTITIES];
     uint16_t num_entities;
 
@@ -372,10 +388,10 @@ typedef struct {
     /* Assistant message */
     uint8_t assistant_msg;
 
-    /* Alliance state (reserved — zeroed until Phase 6) */
+    /* Alliance state (reserved, always zeroed) */
     WinBoloAllianceObs alliance;
 
-    /* Incoming messages (reserved — zeroed until Phase 6) */
+    /* Incoming messages (reserved, always zeroed) */
     WinBoloMsgObs messages[4];
     uint8_t num_messages;
 
@@ -431,7 +447,9 @@ WBGYM_API WinBoloGym *winbolo_create(const char *map_path, int game_type);
 /* Destroy a game instance and free all resources. */
 WBGYM_API void winbolo_destroy(WinBoloGym *game);
 
-/* Step the game by one game tick (2 engine ticks: game + keys).
+/* Step the game by one game tick: one server frame, which runs both of its
+ * half-steps. The action's buttons are also queued as the keys input, which
+ * the server takes with the next step's frame.
  * Fills obs_out with the resulting observation. */
 WBGYM_API void winbolo_step(WinBoloGym *game, const WinBoloAction *action, WinBoloObs *obs_out);
 

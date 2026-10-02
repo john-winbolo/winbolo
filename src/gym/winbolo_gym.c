@@ -54,6 +54,8 @@
 #include "brain_worldsim.h"
 #include "pillbox.h"
 #include "bases.h"
+#include "obs_builder.h"           /* obsBuildEventsFrom, obsEventIsRead */
+#include "server_sim_internal.h"   /* SoundPick */
 
 /* Required by the engine — stub for library mode */
 bool isInMenu = FALSE;
@@ -97,32 +99,47 @@ static void gymDeliverControl(void *ctx, const ControlEvent *evt) {
     (void)evt;
 }
 
-/* Accumulate server events into pre-allocated cache.
- * Called after each serverSimTick (before the next tick clears them).
- * Filters to the same event types that the snapshot sync path delivered
- * to brainEvents, preserving identical observation behavior. */
+/* The server raises EVENT_TANK_HIT only while some subscriber takes events,
+ * and the gym reads it off the queue for its hit rewards, so it takes them
+ * and does nothing with them here. */
+static void gymDeliverEvent(void *ctx, const GameEvent *evt) {
+    (void)ctx;
+    (void)evt;
+}
+
+/* Copy this frame's events into the pre-allocated cache.
+ * Called after each server frame, before the next one clears them.
+ *
+ * Sounds go through the server's own per-recipient pick, the one a bot's
+ * snapshot is built with: the closest instance of each sound id, the agent's
+ * own shots left out, and nothing out of earshot. So the agent hears what a
+ * bot in a real game hears, and the in-game model, which reads a client's
+ * events, is not handed a quieter world than it was trained in. Everything
+ * else is kept when the observation reads it. */
 static void gymBufferServerEvents(WinBoloGym *g) {
     ServerSim *ss = g->serverSim;
     int evCount = serverSimGetEventCount(ss);
     const GameEvent *events = serverSimGetEvents(ss);
+    WORLD wx = 0, wy = 0;
+    bool hasPos = serverSimGetTankState(ss, 0, &wx, &wy);
+    bool positional = serverSimGetPositionalSound(ss);
+    SoundPick pick;
+
+    soundPickInit(&pick);
     for (int i = 0; i < evCount && g->cachedEventCount < MAX_BRAIN_EVENTS; i++) {
-        switch (events[i].type) {
-        case EVENT_SOUND:
-        case EVENT_SOUND_SHOOT:
-        case EVENT_SOUND_TANK_HIT:
-        case EVENT_PILL_CAPTURED:
-        case EVENT_BASE_CAPTURED:
-        case EVENT_TANK_KILLED:
-        case EVENT_LGM_LOST:
-        case EVENT_PLAYER_LEAVE:
-        case EVENT_PILL_UPDATE:
-        case EVENT_BASE_UPDATE:
-        case EVENT_BASE_STOCK:
-        case EVENT_ASSISTANT_MSG:
+        if (soundEventIsSound(events[i].type)) {
+            if (hasPos) {
+                soundPickOffer(&pick, &events[i], 0, (int)(wx >> 8),
+                               (int)(wy >> 8), true, positional);
+            }
+        } else if (obsEventIsRead(events[i].type) == OBS_EVENT_READ) {
             g->cachedEvents[g->cachedEventCount++] = events[i];
-            break;
-        default:
-            break;
+        }
+    }
+    for (int s = 0; s < SOUND_PICK_TYPES &&
+                    g->cachedEventCount < MAX_BRAIN_EVENTS; s++) {
+        if (pick.has[s]) {
+            g->cachedEvents[g->cachedEventCount++] = pick.ev[s];
         }
     }
 }
@@ -156,6 +173,8 @@ static void gymSetupGame(WinBoloGym *g) {
     g->controlSub = serverSimRegisterSubscriber(g->serverSim,
                                                 gymDeliverControl,
                                                 g->clientSim);
+    serverSimSetSubscriberEventDeliver(g->serverSim, g->controlSub,
+                                       gymDeliverEvent);
 
     g->simTickCounter = 0;
     g->gameTickCount = 0;
@@ -175,10 +194,18 @@ static void gymSetupGame(WinBoloGym *g) {
 }
 
 static void gymTeardownGame(WinBoloGym *g) {
+    BYTE slot = clientSimGetMyPlayerNum(g->clientSim);
+
     serverSimUnregisterSubscriber(g->serverSim, g->controlSub);
     g->controlSub = SUBSCRIBER_HANDLE_INVALID;
     clientSimDestroy(g->clientSim);  /* also tears down the embedded transport */
     g->clientSim = NULL;
+    /* Destroying the client does not take its player off the server, and the
+       next game's start keeps every connected player. Without this each reset
+       left the last episode's tank on the map as an idle enemy. */
+    if (slot < MAX_TANKS) {
+        serverSimRemovePlayer(g->serverSim, slot);
+    }
 }
 
 /* Check win condition: all bases owned by the same alliance, all with
@@ -433,138 +460,8 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
     }
 
     /* ---- Discrete game events + sound events ---- */
-    for (int i = 0; i < bi.num_events; i++) {
-        GameEvent *e = &bi.events[i];
-        switch (e->type) {
-        case EVENT_SOUND_TANK_HIT:
-            if (e->data[3] != selfPlayer && obs->num_events < WBGYM_MAX_EVENTS)
-                obs->events[obs->num_events++] = WBGYM_EVENT_HIT_DEALT;
-            if (e->data[3] == selfPlayer && obs->num_events < WBGYM_MAX_EVENTS)
-                obs->events[obs->num_events++] = WBGYM_EVENT_HIT_RECEIVED;
-            /* Sound event */
-            if (obs->num_sounds < WBGYM_MAX_SOUNDS) {
-                float sx = (float)e->data[1] - (float)tank_tx;
-                float sy = (float)e->data[2] - (float)tank_ty;
-                /* Always deliver self-hit regardless of distance */
-                bool isSelfHit = (e->data[3] == selfPlayer);
-                if (isSelfHit || (fabsf(sx) < 40.0f && fabsf(sy) < 40.0f)) {
-                    WinBoloSoundEvent *snd = &obs->sounds[obs->num_sounds++];
-                    snd->rx = sx;
-                    snd->ry = sy;
-                    snd->type = WBGYM_SND_HIT_TANK;
-                    snd->allegiance = gymGetAllegiance(e->data[3], selfPlayer, alliesBits);
-                }
-            }
-            break;
-        case EVENT_TANK_KILLED:
-            if (e->data[0] == selfPlayer && obs->num_events < WBGYM_MAX_EVENTS)
-                obs->events[obs->num_events++] = WBGYM_EVENT_KILL;
-            if (e->data[1] == selfPlayer && obs->num_events < WBGYM_MAX_EVENTS)
-                obs->events[obs->num_events++] = WBGYM_EVENT_DEATH;
-            break;
-        case EVENT_PILL_CAPTURED:
-            if (e->data[0] == selfPlayer && obs->num_events < WBGYM_MAX_EVENTS)
-                obs->events[obs->num_events++] = WBGYM_EVENT_PILL_CAPTURED;
-            if (e->data[1] == selfPlayer && obs->num_events < WBGYM_MAX_EVENTS)
-                obs->events[obs->num_events++] = WBGYM_EVENT_PILL_LOST;
-            break;
-        case EVENT_BASE_CAPTURED:
-            if (e->data[0] == selfPlayer && obs->num_events < WBGYM_MAX_EVENTS)
-                obs->events[obs->num_events++] = WBGYM_EVENT_BASE_CAPTURED;
-            if (e->data[1] == selfPlayer && obs->num_events < WBGYM_MAX_EVENTS)
-                obs->events[obs->num_events++] = WBGYM_EVENT_BASE_LOST;
-            break;
-        case EVENT_LGM_LOST:
-            if (e->data[0] == selfPlayer && obs->num_events < WBGYM_MAX_EVENTS)
-                obs->events[obs->num_events++] = WBGYM_EVENT_LGM_LOST;
-            break;
-        case EVENT_SOUND_SHOOT: {
-            /* Skip own shoot sounds */
-            if (e->data[3] == selfPlayer) break;
-            float sx = (float)e->data[1] - (float)tank_tx;
-            float sy = (float)e->data[2] - (float)tank_ty;
-            if (fabsf(sx) < 40.0f && fabsf(sy) < 40.0f && obs->num_sounds < WBGYM_MAX_SOUNDS) {
-                WinBoloSoundEvent *snd = &obs->sounds[obs->num_sounds++];
-                snd->rx = sx;
-                snd->ry = sy;
-                snd->type = WBGYM_SND_SHOOT;
-                snd->allegiance = gymGetAllegiance(e->data[3], selfPlayer, alliesBits);
-            }
-            break;
-        }
-        case EVENT_SOUND: {
-            float sx = (float)e->data[1] - (float)tank_tx;
-            float sy = (float)e->data[2] - (float)tank_ty;
-            if (fabsf(sx) < 40.0f && fabsf(sy) < 40.0f && obs->num_sounds < WBGYM_MAX_SOUNDS) {
-                WinBoloSoundEvent *snd = &obs->sounds[obs->num_sounds++];
-                snd->rx = sx;
-                snd->ry = sy;
-                snd->type = WBGYM_SND_GENERIC;
-                snd->allegiance = WBGYM_ALLEG_NEUTRAL;
-            }
-            break;
-        }
-        case EVENT_EXPLOSION: {
-            float sx = (float)e->data[0] - (float)tank_tx;
-            float sy = (float)e->data[1] - (float)tank_ty;
-            if (fabsf(sx) < 40.0f && fabsf(sy) < 40.0f && obs->num_sounds < WBGYM_MAX_SOUNDS) {
-                WinBoloSoundEvent *snd = &obs->sounds[obs->num_sounds++];
-                snd->rx = sx;
-                snd->ry = sy;
-                snd->type = WBGYM_SND_EXPLOSION;
-                snd->allegiance = WBGYM_ALLEG_NEUTRAL;
-            }
-            break;
-        }
-        case EVENT_MINE_PLACED: {
-            float sx = (float)e->data[1] - (float)tank_tx;
-            float sy = (float)e->data[2] - (float)tank_ty;
-            if (fabsf(sx) < 40.0f && fabsf(sy) < 40.0f && obs->num_sounds < WBGYM_MAX_SOUNDS) {
-                WinBoloSoundEvent *snd = &obs->sounds[obs->num_sounds++];
-                snd->rx = sx;
-                snd->ry = sy;
-                snd->type = WBGYM_SND_MINE_PLACE;
-                snd->allegiance = WBGYM_ALLEG_NEUTRAL;
-            }
-            break;
-        }
-        case EVENT_SHELL_FIRED: {
-            float sx = (float)e->data[1] - (float)tank_tx;
-            float sy = (float)e->data[2] - (float)tank_ty;
-            if (fabsf(sx) < 40.0f && fabsf(sy) < 40.0f && obs->num_sounds < WBGYM_MAX_SOUNDS) {
-                WinBoloSoundEvent *snd = &obs->sounds[obs->num_sounds++];
-                snd->rx = sx;
-                snd->ry = sy;
-                snd->type = WBGYM_SND_SHELL_FIRED;
-                snd->allegiance = WBGYM_ALLEG_NEUTRAL;
-            }
-            break;
-        }
-        case EVENT_ASSISTANT_MSG:
-            if (e->data[0] == selfPlayer) {
-                obs->assistant_msg = e->data[1];
-                /* Map assistant messages to game events */
-                switch (e->data[1]) {
-                case 1: /* ASSIST_MSG_MAN_DEAD */
-                    if (obs->num_events < WBGYM_MAX_EVENTS)
-                        obs->events[obs->num_events++] = WBGYM_EVENT_ASSIST_MAN_DEAD;
-                    break;
-                case 2: /* ASSIST_MSG_NO_TREE */
-                case 5: /* ASSIST_MSG_INSUFFICIENT_TREES */
-                    if (obs->num_events < WBGYM_MAX_EVENTS)
-                        obs->events[obs->num_events++] = WBGYM_EVENT_ASSIST_NO_TREE;
-                    break;
-                case 6: /* ASSIST_MSG_BUILDTANK */
-                    if (obs->num_events < WBGYM_MAX_EVENTS)
-                        obs->events[obs->num_events++] = WBGYM_EVENT_ASSIST_BUILDTANK;
-                    break;
-                }
-            }
-            break;
-        default:
-            break;
-        }
-    }
+    obsBuildEventsFrom(bi.events, bi.num_events, true, selfPlayer, alliesBits,
+                       tank_tx, tank_ty, obs);
 
     /* Also pick up assistant_msg from BrainInfo if set */
     if (bi.assistant_msg != 0 && obs->assistant_msg == 0) {
@@ -748,11 +645,20 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
                         : gymGetAllegiance(bowner, selfPlayer, alliesBits);
         ent->direction = 0.0f;
         ent->speed = 0.0f;
-        /* Base armour from stats */
+        /* Base armour, as much of it as the game tells a player: the amount
+           for your own and allied bases, and for any other base only whether
+           it is above the capture threshold (basesGetBrainBaseInRect). */
         {
             BYTE shellsAmt, minesAmt, armourAmt;
             serverSimGetBaseStats(g->serverSim, bsi, &shellsAmt, &minesAmt, &armourAmt);
-            ent->strength = (float)armourAmt / (float)gs->rules.base_full_armour;
+            if (ent->allegiance == WBGYM_ALLEG_SELF ||
+                ent->allegiance == WBGYM_ALLEG_ALLY) {
+                /* In fifths, as the brain feed gives it, so the steps match. */
+                ent->strength = (float)((armourAmt / 5) * 5) /
+                                (float)gs->rules.base_full_armour;
+            } else {
+                ent->strength = armourAmt > gs->rules.base_capture_armour ? 1.0f : 0.0f;
+            }
         }
         ent->flags = 0;
         ent->id = bsi - 1; /* 0-based index */
@@ -964,7 +870,8 @@ static void gymComputeRewardsMut(WinBoloGym *g, WinBoloObs *obs,
     /* ── CATEGORY 2: Combat ── */
     if (w[RC_HIT_DEALT] != 0.0f || w[RC_HIT_RECEIVED] != 0.0f ||
         w[RC_KILL] != 0.0f || w[RC_KILL_CARRIER] != 0.0f ||
-        w[RC_SHOT_FIRED] != 0.0f || w[RC_SHOT_ACCURACY] != 0.0f) {
+        w[RC_SHOT_FIRED] != 0.0f || w[RC_SHOT_ACCURACY] != 0.0f ||
+        w[RC_ALLY_KILLED] != 0.0f) {
 
         float hit_dealt = (float)gymCountEvents(obs, WBGYM_EVENT_HIT_DEALT);
         float hit_received = (float)gymCountEvents(obs, WBGYM_EVENT_HIT_RECEIVED);
@@ -973,6 +880,7 @@ static void gymComputeRewardsMut(WinBoloGym *g, WinBoloObs *obs,
         comp[RC_HIT_DEALT] = hit_dealt;
         comp[RC_HIT_RECEIVED] = hit_received;
         comp[RC_KILL] = kill_count;
+        comp[RC_ALLY_KILLED] = (float)gymCountEvents(obs, WBGYM_EVENT_ALLY_KILLED);
 
         /* kill_carrier: kill happened AND own pill frac went up */
         bool pill_frac_up = has_prev &&
@@ -1011,9 +919,11 @@ static void gymComputeRewardsMut(WinBoloGym *g, WinBoloObs *obs,
         comp[RC_PILL_CAPTURED] = (float)gymCountEvents(obs, WBGYM_EVENT_PILL_CAPTURED);
         comp[RC_PILL_LOST] = (float)gymCountEvents(obs, WBGYM_EVENT_PILL_LOST);
 
-        /* pill_destroyed + pill_hit: track armor damage to non-friendly pills */
+        /* pill_destroyed: pillboxes the agent's own shots finished off */
+        comp[RC_PILL_DESTROYED] = (float)gymCountEvents(obs, WBGYM_EVENT_PILL_KILLED);
+
+        /* pill_hit: armour lost by non-friendly pills, whoever shot them */
         if (has_prev) {
-            float destroyed = 0.0f;
             float hits = 0.0f;
             int np = obs->num_pillboxes < rs->prev_pill_count ?
                      obs->num_pillboxes : rs->prev_pill_count;
@@ -1025,10 +935,8 @@ static void gymComputeRewardsMut(WinBoloGym *g, WinBoloObs *obs,
                                          (prev_owner != WBGYM_OWNER_ALLY);
                 if (prev_not_friendly && prev_armor > curr_armor) {
                     hits += (prev_armor - curr_armor);
-                    if (curr_armor == 0) destroyed += 1.0f;
                 }
             }
-            comp[RC_PILL_DESTROYED] = destroyed;
             comp[RC_PILL_HIT] = hits;
 
             comp[RC_OWN_PILL_FRAC_DELTA] =
@@ -1152,16 +1060,8 @@ static void gymComputeRewardsMut(WinBoloGym *g, WinBoloObs *obs,
         bool lgm_para = (lgm_status > WBGYM_LGM_PARA_LO) && (lgm_status < WBGYM_LGM_PARA_HI);
         comp[RC_LGM_PARACHUTING_TICK] = (alive && lgm_para) ? 1.0f : 0.0f;
 
-        /* enemy_lgm_killed: check for enemy LGM_LOST sound */
-        bool enemy_lgm = false;
-        for (int i = 0; i < obs->num_sounds; i++) {
-            if (obs->sounds[i].type == WBGYM_SND_LGM_LOST &&
-                obs->sounds[i].allegiance == WBGYM_ALLEG_ENEMY) {
-                enemy_lgm = true;
-                break;
-            }
-        }
-        comp[RC_ENEMY_LGM_KILLED] = enemy_lgm ? 1.0f : 0.0f;
+        comp[RC_ENEMY_LGM_KILLED] =
+            (float)gymCountEvents(obs, WBGYM_EVENT_ENEMY_LGM_KILLED);
 
         /* successful_build / failed_build */
         bool prev_lgm_in_tank = rs->prev_lgm_status < WBGYM_LGM_IN_TANK_THRESH;

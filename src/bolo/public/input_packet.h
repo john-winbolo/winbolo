@@ -317,6 +317,11 @@ typedef struct {
                                  * armour the tank actually lost and pill the pill index whose
                                  * shell it was, DMG_NO_PILL otherwise. */
 
+/* The highest event type. Move it when adding one above: the unit tests walk
+ * every type up to it and fail on one that a reader keyed on the full list
+ * (obsEventIsRead, for the ML observation) has not been told about. */
+#define EVENT_LAST           EVENT_TANK_HIT
+
 /* EVENT_BUILT's action byte is the builder's own request code, which is the
  * same number BuilderJob uses in server_sim.h — the two are already pinned
  * together by a static assert in server_sim_accessors.c, so this event needs
