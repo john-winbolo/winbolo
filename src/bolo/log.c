@@ -1004,6 +1004,13 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
     out[off++] = opt3;
     out[off++] = opt4;
     break;
+  case log_VoiceEveryone:
+    /* Who the round's voice goes to: 1 for every player, 0 for the talker's
+       allies alone. The clients are told by CTRL_VOICE_EVERYONE and say so
+       in their own language; this is how a replay says it too. */
+    out[off++] = log_VoiceEveryone;
+    out[off++] = opt1;
+    break;
   default:
     return 0;
   }

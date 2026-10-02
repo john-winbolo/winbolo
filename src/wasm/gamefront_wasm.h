@@ -32,15 +32,32 @@ typedef struct {
   char name[PLAYER_NAME_LEN];     /* ?name=, unvalidated */
   bool showMenu;                  /* true when the page should open on the
                                      menu rather than go straight into mode */
+  bool inPage;                    /* true for a join started from the page's
+                                     game finder; false for a page opened from
+                                     a /join/ link or a dev proxy, and for
+                                     every other game */
 } WasmLaunch;
 
 /* Set up what lasts for the life of the page, once, before any game: seed the
  * player name, the tracker and WinBolo.net token fields, the tank options and
  * the default keys, load the language, create the window on the page's canvas,
- * and bring up sound, the brains list and the message handler. Settings synced
- * or changed after this are never seeded again by a game start. Returns FALSE
- * if the window cannot be created. */
+ * bring up sound and the brains list, and set the message handler. The menu's
+ * background game is made later, by main_wasm.c, only if the menu shows.
+ * Settings synced or changed after this are never seeded again by a game
+ * start. Returns FALSE if the window cannot be created. */
 bool gameFrontWasmSetup(keyItems *keys);
+
+/* Make the menu's shared background game on a newly picked map and set it as
+ * the shared one (bgGameGetShared). Leaves none and logs when it cannot be
+ * made. main_wasm.c calls it, when there is none, each time the menu or the
+ * finder is about to show: on the page's first menu and on each return to
+ * the menu after a single-player game. */
+void wasmBackgroundGameCreate(void);
+
+/* Free the shared background game, its sim and its bots' brains, and clear
+ * the shared pointer. No-op when there is none. main_wasm.c calls it before
+ * each game starts. */
+void wasmBackgroundGameDestroy(void);
 
 /* Start the game the launch describes: join through the relay or dev proxy,
  * the guided tutorial, or single player. Resets the per-game state (game

@@ -2026,6 +2026,7 @@ STR_MENU_MAP_OVERVIEW=マップ全体表示
 STR_MENU_OVERVIEW_IN_WINDOW=フルスクリーン
 STR_OVERVIEW_FOLLOWING=追従
 STR_OVERVIEW_FREE=自由
+STR_OVERVIEW_FREE_HINT=自由（{string1} で追従）
 STR_DLGKEYSETUP_OVERVIEWZOOM=マップズーム（長押し）
 STR_DLGKEYSETUP_OVERVIEWFOLLOW=マップ追従（切替）
 STR_DLGKEYSETUP_OVERVIEWZOOMIN=マップ拡大
@@ -2730,3 +2731,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=ワークショップ
 # The game finder's scripts
 STR_DLGBROWSER_MODS=MOD
 STR_DLGBROWSER_MODS_MORE=+MOD {number}個
+
+# In-game newswire — a scenario changed who hears a player's voice
+STR_VOICE_EVERYONE_ON=ボイスチャットはゲーム内の全員に聞こえるようになりました
+STR_VOICE_EVERYONE_OFF=ボイスチャットは同盟にのみ聞こえるようになりました

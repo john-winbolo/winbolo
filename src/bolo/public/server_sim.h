@@ -2513,6 +2513,21 @@ bool        serverSimGetModsOff(const ServerSim *sim);
 void            serverSimSetVoiceMode(ServerSim *sim, ServerVoiceMode mode);
 ServerVoiceMode serverSimGetVoiceMode(const ServerSim *sim);
 
+/* Voice to everyone — the flag a scenario sets with
+ * game.set_voice_everyone. The getter answers false for a NULL sim and when
+ * the server's voice mode is serverVoiceOff, because then nobody hears
+ * anybody whatever the flag says. The flag goes back to false at every round
+ * start, at the return to the lobby and when a scenario is detached. */
+bool serverSimGetScenarioVoiceEveryone(const ServerSim *sim);
+
+/* Whether the server's voice forward lets player `to` hear player `talker`,
+ * as far as sides go. Outside a running round everyone hears everyone. In a
+ * running round only allies hear each other, unless a scenario has turned
+ * voice to everyone on. Mutes, the talker cap, the server's voice mode and
+ * spectators are the voice forward's own checks and are not looked at here.
+ * False for a NULL sim or a slot out of range. */
+bool serverSimVoiceSidesAllow(const ServerSim *sim, BYTE to, BYTE talker);
+
 /* Script upload policy — how the server treats scripts players send it:
  * OFF refuses them and does not run a script an uploaded map carries,
  * ALLOW keeps them for the session, PERSIST keeps them for good. Set once

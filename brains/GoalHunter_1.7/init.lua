@@ -11015,8 +11015,20 @@ function Brain.think(info)
   -- a busy tick defers it rather than displacing traffic the squad needs.
   -- Dropped once said, and dropped unheard when nobody is on our team: a
   -- queue that grows across ticks is worse than a line nobody needed.
+  --
+  -- WHO HEARS IT (C.BOT_INIT_LINE_TO_HUMANS).  Off (the default): only the
+  -- allied BOTS, never this bot itself and never a human.  A scenario that
+  -- retunes its bots (Virus on every infection, Pillbox Tag on every tag)
+  -- made each bot say this line to every human on its team each time, which
+  -- filled the newswire with lines no person asked for.  A scenario still
+  -- hears it through on_chat when another bot is on the team.  On (keel):
+  -- the whole team, humans included, as before.
   if not send_msg and state.pending_init_msg then
     local allies = info.allies or 0
+    if not C.BOT_INIT_LINE_TO_HUMANS then
+      allies = bit.band(bit.band(allies, info.player_bots or 0),
+                        bit.bnot(bit.lshift(1, state.player_number)))
+    end
     if allies ~= 0 then
       send_msg = state.pending_init_msg
       msg_dest = allies
