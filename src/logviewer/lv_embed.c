@@ -595,6 +595,44 @@ float lvEmbedGetZoomLevel(void) {
     return (zoom > 0.0f) ? zoom : 1.0f;
 }
 
+/* The tank names for the texture the last lvEmbedFrameTexture reported: the
+ * names are not in it, so the host draws them over its image. Count rasterizes
+ * them at pxPerSourcePx host pixels per texture pixel and returns how many;
+ * each one is then a white texture to tint, its top-left in texture pixels (the
+ * space srcX/srcY are in) and its size in pixels. The list is rebuilt only when
+ * the texture is, so the two always match. */
+int lvEmbedTankLabelCount(float pxPerSourcePx) {
+    if (!s_embedActive || g_lv == NULL) {
+        return 0;
+    }
+    return lv_drawTankLabelCount(pxPerSourcePx);
+}
+
+bool lvEmbedTankLabel(int index, void **outTexture, int *outX, int *outY,
+                      int *outW, int *outH) {
+    SDL_Texture *tex = NULL;
+
+    if (!s_embedActive || g_lv == NULL ||
+        !lv_drawTankLabelGet(index, &tex, outX, outY, outW, outH)) {
+        return false;
+    }
+    *outTexture = tex;
+    return true;
+}
+
+/* True puts the names back into the texture, for a host that reads the
+ * texture's pixels (the GIF export); false, the default, leaves them to
+ * lvEmbedTankLabel. */
+void lvEmbedSetTankLabelsInTexture(bool inTexture) {
+    if (!s_embedActive || g_lv == NULL) {
+        return;
+    }
+    lv_clientMutexWaitFor();
+    lv_drawSetTankLabelsInTarget(inTexture ? TRUE : FALSE);
+    lv_clientMutexRelease();
+    g_lv->wantScreenUpdate = TRUE;
+}
+
 void lvEmbedPlay(void) {
     if (!s_embedActive || g_lv == NULL || g_lv->isLoaded == FALSE) {
         return;
