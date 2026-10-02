@@ -138,6 +138,8 @@
 #include "scenario_host.h"
 #include "scenario_manifest.h"
 #include "scenario_lua.h"
+#include "lobby_bot_pools.h"
+#include "start_sides.h"
 #include "test_harness.h"
 
 /* ── A state with the table on it ─────────────────────────────────── */
@@ -969,6 +971,54 @@ int run_scenario_lua_absent_reads_are_nil(void) {
     return 0;
 }
 
+/* ── 5b. The team's bot naming pool ───────────────────────────────── */
+
+/* game.lobby_slot(p).team_pool is the label of the pool the seat's team
+   names its bots from, the one lobbyBotPoolLabel gives for the team's
+   namingPool, and it is absent for a seat on no team and for a team
+   whose metadata is not in use. */
+int run_scenario_lua_lobby_slot_team_pool(void) {
+    ServerSim        *sim = ut_make_running_sim("Seat0");
+    ScenarioManifest  m;
+    ScnLuaCtx         ctx;
+    lua_State        *L;
+    char              err[512];
+    char              got[64];
+    const char       *chunk = "s = game.lobby_slot(0)\n"
+                              "pool = s.team_pool\n"
+                              "has_pool = pool ~= nil\n";
+
+    if (sim == NULL) UT_FAIL("could not build a running sim");
+    memset(&m, 0, sizeof(m));
+    L = slVm(&ctx, sim, &m);
+    UT_ASSERT(L != NULL);
+    UT_ASSERT_MSG(lobbyBotPoolCount() >= 2, "only %d pools",
+                  lobbyBotPoolCount());
+
+    /* Team 5 has no metadata: no pool. */
+    serverSimSetTeam(sim, 0, 5);
+    UT_ASSERT_MSG(slRun(L, chunk, err, sizeof(err)), "chunk: %s", err);
+    UT_ASSERT_MSG(slGlobalIsNil(L, "pool"),
+                  "a team with no metadata answered a pool");
+
+    /* The host picks pool 1 for team 5. */
+    serverSimSetTeamMeta(sim, 5, 0, 1, START_SIDE_ANY, NULL, 0);
+    UT_ASSERT_MSG(slRun(L, chunk, err, sizeof(err)), "chunk: %s", err);
+    slGlobalStr(L, "pool", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, lobbyBotPoolLabel(1)) == 0,
+                  "team 5 read pool '%s', wanted '%s'", got,
+                  lobbyBotPoolLabel(1));
+
+    /* A seat on no team has no pool. */
+    serverSimSetTeam(sim, 0, 0);
+    UT_ASSERT_MSG(slRun(L, chunk, err, sizeof(err)), "chunk: %s", err);
+    UT_ASSERT_MSG(slGlobalIsNil(L, "pool"), "team 0 answered a pool");
+
+    lua_close(L);
+    serverSimDestroy(sim);
+    return 0;
+}
+
 /* ── 6. The whole map in one string ───────────────────────────────── */
 
 int run_scenario_lua_terrain_is_the_whole_map(void) {
@@ -1345,7 +1395,10 @@ static const SlRefusal kSlRunningRefusals[] = {
       "res, code, detail = game.set_modifiers(9, {})\n",
       SCN_OP_NO_SUCH_PLAYER },
     { "a modifier past a percentage",
-      "res, code, detail = game.set_modifiers(0, { speed = 300 })\n",
+      "res, code, detail = game.set_modifiers(0, { accel = 300 })\n",
+      SCN_OP_RANGE },
+    { "a speed past its bound",
+      "res, code, detail = game.set_modifiers(0, { speed = 2001 })\n",
       SCN_OP_RANGE },
     { "an order for a seat nobody holds",
       "res, code, detail = game.builder_order(9, \"road\", 100, 100)\n",
@@ -2506,6 +2559,126 @@ int run_scenario_lua_panel_refusals(void) {
 
     UT_ASSERT_MSG(!slGlobalBool(L, "flat_ok"),
                   "a number was taken as a primitive");
+
+    lua_close(L);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 21b. The large size ──────────────────────────────────────────── */
+
+/* "large" is a word the list takes, as is its number 2, and it goes out as
+ * normal plus the size mark. A size past it is refused, as is the rect the
+ * mark is spelled with, and a list whose large items push it past the
+ * primitive limit on the wire. */
+int run_scenario_lua_panel_large_size(void) {
+    static const uint8_t kExpect[] = {
+        /* text, size byte NORMAL, then the mark */
+        3, 4, 30, 10, 1, 0, 2, 'H', 'i',
+        1, 2, 0, 0, 0, 0, 0,
+        /* name, size 2 written as a number, then the mark */
+        4, 4, 50, 10, 1, 2, 3,
+        1, 2, 0, 0, 0, 0, 0
+    };
+    ServerSim       *sim = ut_make_running_sim("Seat0");
+    ScenarioManifest m;
+    ScnLuaCtx        ctx;
+    lua_State       *L;
+    SlCapture        cap;
+    ScnPanelList     back;
+    char             err[512];
+    char             code[64];
+    char             detail[256];
+
+    if (sim == NULL) UT_FAIL("could not build a running sim");
+    memset(&m, 0, sizeof(m));
+    L = slVm(&ctx, sim, &m);
+    UT_ASSERT(L != NULL);
+    slWatch(sim, &cap);
+
+    UT_ASSERT_MSG(slRun(L,
+                        "ok = game.panel(0, {\n"
+                        "  { \"text\", 4, 30, \"cyan\", \"large\", \"left\", \"Hi\" },\n"
+                        "  { \"name\", 4, 50, \"cyan\", 2, \"right\", 3 },\n"
+                        "})\n"
+                        "size_word = game.SIZE.large\n",
+                        err, sizeof(err)),
+                  "the large chunk would not run: %s", err);
+    UT_ASSERT_MSG(slGlobalBool(L, "ok"), "a large list was not taken");
+    UT_ASSERT(cap.panels == 1);
+    UT_ASSERT_MSG(cap.panel.u.scnPanel.len == sizeof(kExpect),
+                  "the list is %u bytes, expected %u",
+                  (unsigned)cap.panel.u.scnPanel.len,
+                  (unsigned)sizeof(kExpect));
+    UT_ASSERT_MSG(memcmp(cap.panel.u.scnPanel.bytes, kExpect,
+                         sizeof(kExpect)) == 0,
+                  "the bytes are not normal plus the size mark");
+    memset(&back, 0, sizeof(back));
+    UT_ASSERT(scnPanelParse(cap.panel.u.scnPanel.bytes,
+                            cap.panel.u.scnPanel.len, &back) == SCN_PANEL_OK);
+    UT_ASSERT(back.count == 2);
+    UT_ASSERT(back.items[0].u.text.size == SCN_PANEL_SIZE_LARGE);
+    UT_ASSERT(back.items[1].u.name.size == SCN_PANEL_SIZE_LARGE);
+    lua_getglobal(L, "size_word");
+    UT_ASSERT_MSG(lua_tointeger(L, -1) == SCN_PANEL_SIZE_LARGE,
+                  "game.SIZE.large is %d", (int)lua_tointeger(L, -1));
+    lua_pop(L, 1);
+
+    /* A size number past large is refused, naming the range. */
+    sim->tick++;
+    UT_ASSERT_MSG(slRun(L,
+                        "res, code, detail = game.panel(0, {\n"
+                        "  { \"text\", 4, 4, \"white\", 3, \"left\", \"x\" },\n"
+                        "})\n",
+                        err, sizeof(err)),
+                  "the bad size chunk would not run: %s", err);
+    UT_ASSERT_MSG(slGlobalIsNil(L, "res"), "a size of 3 was taken");
+    slGlobalStr(L, "code", code, sizeof(code));
+    UT_ASSERT_MSG(strcmp(code, scenarioLuaResultName(SCN_OP_RANGE)) == 0,
+                  "the bad size answered '%s'", code);
+    slGlobalStr(L, "detail", detail, sizeof(detail));
+    UT_ASSERT_MSG(strstr(detail, "0 to 2") != NULL,
+                  "the refusal does not give the range: %s", detail);
+
+    /* A size word that is not one raises. */
+    UT_ASSERT_MSG(slRun(L,
+                        "word_ok = pcall(function()\n"
+                        "  return game.panel(0, { { \"text\", 4, 4, \"white\","
+                        " \"huge\", \"left\", \"x\" } })\n"
+                        "end)\n",
+                        err, sizeof(err)),
+                  "the bad word chunk would not run: %s", err);
+    UT_ASSERT_MSG(!slGlobalBool(L, "word_ok"), "\"huge\" was taken as a size");
+
+    /* The mark's own rect is refused as an item. */
+    UT_ASSERT_MSG(slRun(L,
+                        "res, code, detail = game.panel(0, {\n"
+                        "  { \"rect\", 2, 0, 0, 0, \"none\", false },\n"
+                        "})\n",
+                        err, sizeof(err)),
+                  "the mark rect chunk would not run: %s", err);
+    UT_ASSERT_MSG(slGlobalIsNil(L, "res"), "the mark-shaped rect was taken");
+    slGlobalStr(L, "code", code, sizeof(code));
+    UT_ASSERT_MSG(strcmp(code, scenarioLuaResultName(SCN_OP_RANGE)) == 0,
+                  "the mark rect answered '%s'", code);
+
+    /* 65 large texts are 130 primitives on the wire. */
+    UT_ASSERT_MSG(slRun(L,
+                        "local big = {}\n"
+                        "for i = 1, 65 do\n"
+                        "  big[i] = { \"text\", 1, 1, \"white\", \"large\","
+                        " \"left\", \"\" }\n"
+                        "end\n"
+                        "res, code, detail = game.panel(0, big)\n",
+                        err, sizeof(err)),
+                  "the long large list would not run: %s", err);
+    UT_ASSERT_MSG(slGlobalIsNil(L, "res"), "65 large items were taken");
+    slGlobalStr(L, "code", code, sizeof(code));
+    UT_ASSERT_MSG(strcmp(code, scenarioLuaResultName(SCN_OP_TOO_BIG)) == 0,
+                  "the long large list answered '%s'", code);
+    slGlobalStr(L, "detail", detail, sizeof(detail));
+    UT_ASSERT_MSG(strstr(detail, "130") != NULL,
+                  "the refusal does not give the wire count: %s", detail);
 
     lua_close(L);
     serverSimDestroy(sim);

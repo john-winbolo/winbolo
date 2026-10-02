@@ -2698,6 +2698,9 @@ static const LangEntry langTable[] = {
     {2755, "Rules:"},
     {2757, "Voice now goes to everyone in the game"},
     {2758, "Voice now goes to your allies only"},
+    {2759, "{string1} (default)"},
+    {2760, "Whether a tank with no boat can drive over deep sea without drowning. Off is the classic game: deep sea drowns a tank with no boat. A tank that is out on deep sea with no boat when this goes back off drowns on the next tick."},
+    {2761, "This scenario comes with the map. To unload it, choose a different map."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

@@ -40,6 +40,15 @@ Anything it leaves out takes the default below. An arena marked
 is reported as SKIP, or as an expected failure that does not turn the gate
 red. Both are debts; keep the reason short and say what would repay it.
 
+A SHIPPED SCRIPT UNDER TEST. An arena that tests a mod rather than a bot
+names the file on its GATE line, from the repository root:
+
+    -- GATE: include=data/mods/RuleRoulette.scenario.lua
+
+The runner writes that file, unchanged, after the prelude's head and before
+the arena's own text, so the arena sees the script's globals and its
+`scenario` table and can wrap them. Two or more are separated by commas.
+
 USAGE, from the repo root, where <dir> is the build directory holding
 WinBoloDS (left out, it is build-own):
 
@@ -75,9 +84,48 @@ DEFAULTS = {
     "limit": "20",
     "mines": None,
     "seed": "42",
+    "script": None,
+    "include": None,
 }
 
+# The verdict helper a script= arena gets in place of the compat prelude. It
+# says its verdict once; a second call is ignored, so a check that runs every
+# second cannot print PASS and then FAIL.
+SCRIPT_VERDICT = """GATE_SAID = false
+function verdict(ok, why)
+  if GATE_SAID then return end
+  GATE_SAID = true
+  game.log(string.sub(string.format("VERDICT %s %s %s",
+    ok and "PASS" or "FAIL", GATE_NAME, tostring(why or "")), 1, 120))
+end
+"""
+
 PER_TEST_TIMEOUT_S = 10 * 60
+
+# A script= arena is one chunk, and Lua allows 200 locals in one. The gate
+# stops above this many, a few short of the cap, so the message comes before
+# the loader error does.
+TOP_LEVEL_LOCALS_MAX = 195
+TOP_LOCAL_RE = re.compile(r"^local\s+(function\s+)?([^=]*)")
+
+
+def top_level_locals(text):
+    """The locals a Lua file declares at its top level: every line that starts
+    "local" in the first column, one for "local function f", and one per name
+    before the "=" for "local a, b = ...". A rough count, which is all the
+    check above needs: the top level of these files starts in column 0 and
+    everything inside a block is indented."""
+    n = 0
+    for line in text.splitlines():
+        m = TOP_LOCAL_RE.match(line)
+        if m is None:
+            continue
+        if m.group(1):
+            n += 1
+            continue
+        names = m.group(2).split("--", 1)[0]
+        n += len([x for x in names.split(",") if x.strip()])
+    return n
 GATE_RE = re.compile(r"^\s*--\s*GATE:\s*(.*)$")
 VERDICT_RE = re.compile(r"^VERDICT\s+(PASS|FAIL)\s+(\S+)\s*(.*)$")
 PORT_RE = re.compile(r"listening on UDP port (\d+)")
@@ -222,6 +270,9 @@ class Job(object):
                   encoding="utf-8") as f:
             body = f.read()
         out = os.path.join(self.work, self.name + ".scenario.lua")
+        if self.opts.get("script"):
+            self.prepare_with_script(out, body)
+            return
         with open(out, "w", encoding="utf-8", newline="\n") as f:
             # What the runner knows and the arena does not: its own name, the
             # tick the server will stop at, and the game type it is started
@@ -233,10 +284,54 @@ class Job(object):
                     'GATE_GAMETYPE = "%s"\n\n'
                     % (self.name, self.opts["ticks"], self.opts["gametype"]))
             f.write(self.head)
+            for inc in (self.opts.get("include") or "").split(","):
+                inc = inc.strip()
+                if not inc:
+                    continue
+                with open(os.path.join(ROOT, inc), encoding="utf-8") as g:
+                    f.write("\n-- ===== included: %s =====\n" % inc)
+                    f.write(g.read())
             f.write("\n-- ===== the arena =====\n")
             f.write(body)
             f.write("\n-- ===== the prelude's tail =====\n")
             f.write(self.tail)
+
+    def prepare_with_script(self, out, body):
+        """An arena that tests a real game script, run as it ships.
+
+        GATE script=<path> names a script under the checkout, such as
+        data/mods/PillboxTag.scenario.lua. The file is written as: the GATE
+        globals, a verdict() helper, the script's own text, then the arena.
+        There is no compat prelude: the prelude hands every hook `game` as its
+        first argument, and a real script's hooks do not take it. Because the
+        arena is in the same chunk as the script, it can read the script's
+        top-level locals and wrap its hooks (keep the old function in a local
+        and call it from the new one). Keep the arena's own top-level locals
+        few: Lua allows 200 in one chunk and a big script uses many of them.
+        The gate counts them first and stops with a clear message when the
+        two together come near the cap, rather than letting every script=
+        arena fail with a loader error.
+        """
+        with open(os.path.join(ROOT, self.opts["script"]),
+                  encoding="utf-8") as f:
+            script = f.read()
+        n = top_level_locals(script) + top_level_locals(body)
+        if n > TOP_LEVEL_LOCALS_MAX:
+            sys.exit("%s: %s and the arena declare %d top-level locals "
+                     "together; Lua allows 200 in one chunk and the gate "
+                     "stops above %d. Fold some of the script's locals into "
+                     "a table." % (self.name, self.opts["script"], n,
+                                   TOP_LEVEL_LOCALS_MAX))
+        with open(out, "w", encoding="utf-8", newline="\n") as f:
+            f.write('GATE_NAME = "%s"\nGATE_TICKS = %s\n'
+                    'GATE_GAMETYPE = "%s"\n\n'
+                    % (self.name, self.opts["ticks"], self.opts["gametype"]))
+            f.write(SCRIPT_VERDICT)
+            f.write("\n-- ===== the script: %s =====\n" % self.opts["script"])
+            f.write(script)
+            f.write("\n-- ===== the arena =====\n")
+            f.write(body)
+            f.write("\n")
 
     def command(self, ds):
         o = self.opts

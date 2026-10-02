@@ -398,9 +398,9 @@ static void lv_screenSetTankStock(BYTE slot, BYTE shells, BYTE mines, BYTE armou
 
 /* Store a slot's modifier set. A log_TankSetModifiers record replaces the whole
  * set, as the op that wrote it did. Nothing draws these yet. */
-static void lv_screenSetTankModifiers(BYTE slot, const BYTE *mods) {
+static void lv_screenSetTankModifiers(BYTE slot, const BYTE *mods, uint16_t speed) {
   if (slot >= MAX_TANKS) return;
-  g_lv->tankMods[slot].speed  = mods[0];
+  g_lv->tankMods[slot].speed  = speed;
   g_lv->tankMods[slot].accel  = mods[1];
   g_lv->tankMods[slot].turn   = mods[2];
   g_lv->tankMods[slot].reload = mods[3];
@@ -2148,20 +2148,28 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_screenSetTankStock(opt1, opt2, opt3, opt4, opt5);
       break;
     case log_TankSetModifiers: {
-      /* player, then a length-prefixed blob of the six modifier bytes. */
+      /* player, then a length-prefixed blob of the six modifier bytes, or
+         eight when the speed is past a byte: the six, then the whole speed
+         as a big-endian u16. */
       BYTE modLen;
       BYTE mods[6];
       logReadBytes(&opt1, 1);
       logReadBytes(&modLen, 1);
       /* Consume the blob whatever its length byte says, so a record with the
          wrong length costs this one value and not the reader's alignment for
-         the rest of the file. Only a six-byte blob is a modifier set. */
+         the rest of the file. Only a six- or eight-byte blob is a modifier
+         set. */
       if (modLen > 0) {
         logReadBytes((BYTE *)mem, modLen);
       }
-      if (modLen == sizeof(mods)) {
+      if (modLen == sizeof(mods) || modLen == sizeof(mods) + 2) {
+        uint16_t speed;
         memcpy(mods, mem, sizeof(mods));
-        lv_screenSetTankModifiers(opt1, mods);
+        speed = mods[0];
+        if (modLen == sizeof(mods) + 2) {
+          speed = (uint16_t)((((BYTE *)mem)[6] << 8) | ((BYTE *)mem)[7]);
+        }
+        lv_screenSetTankModifiers(opt1, mods, speed);
       }
       break;
     }
@@ -3403,8 +3411,8 @@ static int walkSkipEventBody(BYTE code) {
       return 6 + lenByte;
     case log_ChangeName:
     case log_TankSetModifiers:
-      /* 1 opt byte + pascal string (the modifier record's blob is always six
-         bytes, but it is walked as a pascal string like any other) */
+      /* 1 opt byte + pascal string (the modifier record's blob is six or
+         eight bytes, but it is walked as a pascal string like any other) */
       { BYTE b; if (logReadBytes(&b, 1) != 1) return -1; }
       if (logReadBytes(&lenByte, 1) != 1) return -1;
       { BYTE buf[256]; rc = lenByte ? logReadBytes(buf, lenByte) : 0;

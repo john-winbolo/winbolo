@@ -716,6 +716,15 @@ M.STANDOFF_SHOT_TREE_PENALTY    = 8    -- per forest tile on the CHOSEN aim path
 -- spots are now hard-rejected instead of penalized.
 M.STANDOFF_SHOT_BLOCKED_PENALTY = 200
 
+-- Walled-in pill fallback. When no standoff spot on the ring has a shell line
+-- that misses every wall (a pill boxed in by built walls), the spot scan runs a
+-- second pass in which walls count like trees on the line (a wall is 5 shells,
+-- a half-built wall 4, the same numbers shot_path_obstacle_count uses) instead
+-- of blocking. The take then shoots its way through the wall. Pills and bases
+-- on the line still block. The C fast path is untouched: when it finds no spot
+-- and this is on, the Lua sweep runs the wall pass. Off = exactly the old scan.
+M.ATTACK_PILL_WALL_FALLBACK = false        -- keel false
+
 -- Pill-take spots that sit deep inside enemy influence are much harder to
 -- hold during the take. In mid/late game (phase != "opening"), multiply
 -- those spots' total_score so a hostile-territory take ranks well below
@@ -2044,6 +2053,62 @@ M.TANK_COMBAT_JINK_PERIOD       = 10    -- ticks between jink direction changes
 M.TANK_COMBAT_JINK_ANGLE        = 32    -- bolo angle offset for lateral jink (~45??)
 M.TANK_COMBAT_OPPORTUNISTIC_RANGE = 4   -- tiles: fire at enemy if already aimed near them
 M.TANK_COMBAT_OPPORTUNISTIC_AIM = 8     -- bolo angle units (~11??) aim tolerance for opportunistic shot
+-- ── attack_tank aim and fire knobs (2026-10-01, Joust) ─────────────────────
+-- Every default below is the OLD behaviour; Joust turns them on for its bots
+-- with PRESETS.joust (data/maps/Joust.scenario.lua, game.bot_init). Each
+-- has its old value in PRESETS.keel.
+-- COMBAT_CLIFF_AIM_KEEP: in attack_tank ENGAGE, when the global cliff brake
+-- fires (heading ray meets deep sea), keep the brake and drop accelerate but
+-- take the AIM turn and the shot from tank_combat_steer instead of the evade
+-- turn. Off: the brake returns its evade turn and the aim and shot are lost
+-- that tick (tests/scenario/acquire_shore).
+M.COMBAT_CLIFF_AIM_KEEP          = false
+-- TANK_COMBAT_TURN_FIRST_BRADS: in engage, no KEY_FASTER while the aim error
+-- is more than this many brads. 0 = off (always hold the dodge speed).
+M.TANK_COMBAT_TURN_FIRST_BRADS   = 0
+-- LEAD_CAP_USE_MEASURED: the lead model's per-terrain speed cap is the larger
+-- of C.MAP_SPEED[terrain] and the target's measured speed. Off: a boat on
+-- deep sea (MAP_SPEED 3) is led at 3 wu/tick while it sails at 16
+-- (tests/scenario/lead_aim_boat).
+M.LEAD_CAP_USE_MEASURED          = false
+-- TANK_COMBAT_FIRE_MAX_FLIGHT: in engage, do not fire when the shell's flight
+-- to the lead point is longer than the shell lives (live shell_life and the
+-- current gunsight). Off: fire whatever the range.
+M.TANK_COMBAT_FIRE_MAX_FLIGHT    = false
+-- TANK_COMBAT_AIM_GATE_BRADS: in engage, fire when the gun is within this
+-- many brads of the lead point. 3 = the old gate.
+M.TANK_COMBAT_AIM_GATE_BRADS     = 3
+-- WALL_SHOOT_LIFE_MAX: walls whose live building_life (info.rules) is above
+-- this are never shot by the combat wall-clear, the nav wall-clear, the
+-- drive-by wall shot or the stuck fallback; the stuck fallback reverses out
+-- instead. 0 = no limit (old behaviour: every wall is shot).
+M.WALL_SHOOT_LIFE_MAX            = 0
+-- BOAT_SHELL_DODGE: a tank on a boat turns and changes speed to get out of
+-- the way of a hostile shell its keys would leave it in the path of
+-- (steering.lua boat_shell_dodge). Off: the keys are never changed for a
+-- shell. BOAT_SHELL_DODGE_GAP: wu; a shell that comes closer than this
+-- (larger of |dx| and |dy|) counts as a hit. tank.c tests 128-144.
+M.BOAT_SHELL_DODGE               = false
+M.BOAT_SHELL_DODGE_GAP           = 192
+-- BOAT_SHELL_DODGE_DEFER: brain ticks. Keep the planned keys (the aim) while
+-- the best dodge would still clear the gap if it started this much later.
+-- 0 = dodge the first tick a shell threatens.
+M.BOAT_SHELL_DODGE_DEFER         = 0
+-- BOAT_SHELL_DODGE_CHANCE: 0..1. The chance that the boat dodges a threat.
+-- The bot rolls once when a threat starts (the first brain tick a shell
+-- would hit the boat with its planned keys) and keeps that answer until no
+-- shell threatens the boat. So it does not switch between dodging and not
+-- dodging each tick. The roll is a hash of the tick, the player number and
+-- state.replan_offset (no math.random), so a seed always plays the same.
+-- 1 = always dodge (old behaviour; no roll is made).
+M.BOAT_SHELL_DODGE_CHANCE        = 1.0
+-- EDGE_COST_REFRESH_THINKS: rebuild the pathfinder's Dijkstra edge-cost table
+-- every this many thinks (steering.lua M.steer). The table is built once in
+-- Brain.open and kept until the map pointer changes, so terrain that differs
+-- from the open-time map stays priced as the old tile: in Joust the slate
+-- route named an arena wall as plain water and the boat drove into it for
+-- good. 0 = never (old behaviour: built once).
+M.EDGE_COST_REFRESH_THINKS       = 0
 -- ── attack_tank: heat a FRIENDLY pill mid-fight (2026-09-06) ──────────────
 -- While fighting enemy tank E, a friendly pill CLOSER to E than we are is a
 -- second gun already in position -- but only if it is angry. The engine's
@@ -2074,6 +2139,20 @@ M.ATTACK_TANK_HEAT_PILL         = true  -- master: heat a friendly pill during a
 -- opportunistic shot on other goals (init.lua). Needs ATTACK_TANK_HEAT_PILL;
 -- with that off, attack_tank only ever runs on an order.
 M.ATTACK_TANK_PILL_HEAT_ONLY    = false
+-- Peace list (2026-10-01, Andrew; Pillbox Tag hunters). The init token
+-- "peace=1/3/4" names seats this bot does not pick a fight with: they are
+-- never an attack_tank or kill_lgm target and get no opportunistic shot
+-- (goals.lua eval_attack_tank gate "peace", refresh_kill_lgm, init.lua
+-- opportunistic fire). "peace=" with nothing after it empties the list. A
+-- listed seat whose shell hits this bot is a normal enemy for
+-- PEACE_HOSTILE_TICKS; then, for PEACE_COOLDOWN_TICKS, the seat is left
+-- alone again even if it hits this bot again. A hit after that starts a new
+-- hostile spell. Brain ticks (50 a second). An empty list (the default)
+-- changes nothing. A human's `attack <tank>` order on a listed seat still
+-- fights it.
+M.PEACE_ENABLED                 = true
+M.PEACE_HOSTILE_TICKS           = 1500  -- 30 s
+M.PEACE_COOLDOWN_TICKS          = 250   -- 5 s
 M.ATTACK_TANK_HEAT_MIN_HP       = 5     -- health floor of the volley cap: a pill at or below this
                                         -- affords no heat shells at all. The cap scales linearly to
                                         -- PILLS_MAX_HEALTH (15 -> all 4 halvings): hp 15/13/10/7/6
@@ -2404,6 +2483,11 @@ M.PILL_ROLE_REEVAL_TICKS        = 3000  -- re-evaluate a pill's back/front/aggro
 M.PILL_UTILITY_TARGET_FRAC      = 0.25  -- desired share of pills available as blockers/utility; below this, hold a spare pill in tank
 M.ALLY_BLOCKER_REJECT_TICKS     = 150   -- ticks a pill stays rejected from our pools after an ally declares it a blocker while we were targeting it (yield window so we don't immediately re-pick it)
 M.PILL_REPOSITION_MIN_SHELLS    = 15    -- need this many shells to reposition (must shoot the pill down to 0 to pick it up)
+-- 2026-09-30: let a reposition run during the "opening" phase. Off, the
+-- opening refuses it in eval_reposition_pill and in the vote's can_carry_now,
+-- as it always has. A scenario that keeps every base neutral (Pillbox Tag)
+-- never leaves the opening, so it turns this on per bot. KEEL: false.
+M.PILL_REPOSITION_IN_OPENING   = false
 M.REPOSITION_DEMOLISH_GRACE_TICKS = 1500 -- ~30s: while demolishing a pill for reposition, suppress repair_pill on it (avoid shoot???repair???shoot oscillation)
 M.REPAIR_REPOSITION_BLOCK_TICKS = 400  -- 8s @ 50Hz: block repair_pill on a pill we're repositioning (driven by the live goal each tick) AND for this long AFTER the reposition goal ends ??? so a freed pool can't immediately heal the pill we just shot down. Covers the gap REPOSITION_DEMOLISH_GRACE missed (it only refreshes while reposition_steer is firing).
 -- Reposition risk penalties (raise cost = discourage repositioning):
@@ -4527,6 +4611,21 @@ M.CAPTURE_NO_LGM_ROUTE_STRICT     = true   -- keel false
 -- so it reads in the same units as the capture_pill danger term beside it.
 M.CAPTURE_BASE_NO_LGM_DANGER_MULT = 20     -- keel 0 (term absent)
 
+-- A flat cost added to every capture_base row before the phase weight. For a
+-- game mode that wants its bots to leave the bases alone (a Pillbox Tag hunter
+-- has a prize to chase, and a round where every base stays neutral never
+-- leaves the opening phase, whose x0.3 makes a near base beat the prize).
+-- Refuel is its own pool and takes neutral bases too, so it is not touched.
+M.CAPTURE_BASE_EXTRA_COST = 0              -- keel 0 (term absent)
+
+-- A base this close is taken anyway: a capture_base row whose base is within
+-- this many tiles of the tank does NOT pay CAPTURE_BASE_EXTRA_COST. The
+-- distance is Manhattan tiles (U.mdist) from the tank's tile to the base,
+-- because that is what every capture_base site has to hand; the rows hold a
+-- travel COST, not a tile count. 0 = no waiver, the extra applies at every
+-- distance (the old behaviour).
+M.CAPTURE_BASE_EXTRA_FREE_DIST = 0         -- keel 0 (no waiver)
+
 -- 4. "KILL ME" -- handing the stack to a team-mate who can still build.
 --
 -- Allied shells DO hurt allied tanks (tank.c tankIsTankHit only ignores the
@@ -4970,6 +5069,12 @@ M.ORDER_HINT_ESCORT_TILES = 3
 -- not match the constant it replaces.
 M.PRESETS = {
   keel = {
+    -- 2026-10-01: flat capture_base cost for game modes; 0 is no such term.
+    CAPTURE_BASE_EXTRA_COST = 0,
+    -- 2026-10-01: a base this many tiles away skips that cost; 0 is no waiver.
+    CAPTURE_BASE_EXTRA_FREE_DIST = 0,
+    -- 2026-10-01: wall pass for a walled-in pill; off is the old scan.
+    ATTACK_PILL_WALL_FALLBACK = false,
     -- 2026-09-24: live game rules. The bot rescales its physics constants
     -- from info.rules and its own modifiers (a no-op under classic rules).
     -- KEEL reads the classic numbers whatever the scenario sets.
@@ -4985,6 +5090,19 @@ M.PRESETS = {
     LIVE_PHYSICS_WSIM_BUILD       = false,
     LIVE_PHYSICS_SHELL_LIFE       = false,
     LIVE_PHYSICS_PILL_RANGE_WU    = false,
+    -- 2026-10-01: attack_tank aim/fire knobs for Joust. All default off; KEEL
+    -- pinned at the same old values.
+    COMBAT_CLIFF_AIM_KEEP         = false,
+    TANK_COMBAT_TURN_FIRST_BRADS  = 0,
+    LEAD_CAP_USE_MEASURED         = false,
+    TANK_COMBAT_FIRE_MAX_FLIGHT   = false,
+    TANK_COMBAT_AIM_GATE_BRADS    = 3,
+    WALL_SHOOT_LIFE_MAX           = 0,
+    BOAT_SHELL_DODGE              = false,
+    BOAT_SHELL_DODGE_GAP          = 192,
+    BOAT_SHELL_DODGE_DEFER        = 0,
+    BOAT_SHELL_DODGE_CHANCE       = 1.0,
+    EDGE_COST_REFRESH_THINKS      = 0,
     -- 2026-09-08: while on capture_pill the bot now sweeps the target tile for
     -- an enemy builder rebuilding the corpse -- the kill_lgm aim solution takes
     -- the TURN keys whenever it points within CAPTURE_LGM_HUNT_TOL_BRADS of
@@ -5037,6 +5155,9 @@ M.PRESETS = {
     -- 2026-09-29: heat-only attack_tank (no tank fighting of its own). KEEL
     -- fights every tank it picks.
     ATTACK_TANK_PILL_HEAT_ONLY    = false,
+    -- 2026-10-01: peace list. KEEL ignores the "peace=" token and fights
+    -- every enemy it picks.
+    PEACE_ENABLED                 = false,
     -- 2026-09-29: defensive turtle placement (one pill cluster at home).
     -- KEEL spreads its pills by the normal placement scan.
     PILL_PLACE_TURTLE             = false,
@@ -5362,6 +5483,9 @@ M.PRESETS = {
     --   competition, so its keel value has to be the identity, 1.0, for the
     --   baseline pool numbers to come out unchanged.
     FOCUS_OTHER_COST_MULT         = 1.0,
+    --   2026-09-30: a reposition may run in the opening phase.  KEEL: the
+    --   opening refused it.
+    PILL_REPOSITION_IN_OPENING    = false,
   },
   -- nolgm_off: RUDDER as it stood BEFORE the loaded, builder-less work
   -- (2026-09-08) -- every knob that work added, at its pre-change value, and
@@ -5385,6 +5509,65 @@ M.PRESETS = {
   -- and a side word can.
   turtle = {
     PILL_PLACE_TURTLE = true,
+  },
+  -- joust: the Joust scenario's bots (2026-10-01). Joust hands every bot
+  -- this preset with game.bot_init, so the knobs touch no other game.
+  joust = {
+    COMBAT_CLIFF_AIM_KEEP         = true,
+    TANK_COMBAT_TURN_FIRST_BRADS  = 24,
+    LEAD_CAP_USE_MEASURED         = true,
+    TANK_COMBAT_FIRE_MAX_FLIGHT   = false,  -- off: fire at any range, a boat may sail into it
+    TANK_COMBAT_AIM_GATE_BRADS    = 24,     -- fire early: a miss costs one shell, back in 2 s
+    TANK_COMBAT_STEADY_TICKS      = 0,      -- do not wait for the target's heading to settle
+    WALL_SHOOT_LIFE_MAX           = 8,
+    BOAT_SHELL_DODGE              = true,
+    BOAT_SHELL_DODGE_DEFER        = 8,
+    EDGE_COST_REFRESH_THINKS      = 250,    -- about 10 s; arena walls never fall
+    -- Per level, on top of the values above (init.lua _apply_cfg_tokens).
+    -- Hard keeps the values above. Medium and Easy aim worse, fire slower
+    -- and wait for a steadier target. Joust is always "outnumbered" in a
+    -- Free For All, so the lower levels must not disengage for it, or a 4-6
+    -- bot round stalls.
+    -- 2026-10-01: Andrew found the first Medium far too easy in play, so
+    -- Medium moved halfway to Hard (he play-tested it: good). Easy plays on
+    -- the general Medium bundle (the block at the end of this file), with
+    -- the values below.
+    -- Why the first Easy beat Medium: shell dodging. A bot that dodges
+    -- shells turns away from its aim, fires later and wastes more shells,
+    -- so in Joust it loses more than it saves. Medium dodged and Easy did
+    -- not, so Easy won 12-4 in 16 games. Medium with dodging off beat plain
+    -- Medium 13-3. Easy now dodges, aims wider, leads a sailing boat too
+    -- slowly (LEAD_CAP_USE_MEASURED off) and fires less often.
+    -- Bench (Free For All Joust, 4 and 6 bots, target 10, winner = side of
+    -- the top scorer): Hard beat Medium 8-0, Medium beat Easy 7-1 (and 28-4
+    -- in a 32-game run), Hard beat Easy 8-0.
+    -- 2026-10-02: Hard dodges a threat on a coin flip (Andrew:
+    -- "unpredictability is good"). Hard with dodging off beat Hard with
+    -- dodging on 25-7 in 32 games (it fires 36% more), but a dodger wins
+    -- more of the close fights. Hard otherwise keeps the values above.
+    by_difficulty = {
+      hard = {
+        BOAT_SHELL_DODGE_CHANCE   = 0.5,
+      },
+      medium = {
+        OUTNUMBERED_DISENGAGE     = false,
+        AIM_ERROR_BRADS           = 3,
+        FIRE_HOLD_TICKS           = 10,
+        REACTION_DELAY_TICKS      = 8,
+        TANK_COMBAT_STEADY_TICKS  = 2,
+        TANK_COMBAT_AIM_GATE_BRADS = 18,
+      },
+      easy = {
+        OUTNUMBERED_DISENGAGE     = false,
+        AIM_ERROR_BRADS           = 10,
+        FIRE_HOLD_TICKS           = 35,
+        REACTION_DELAY_TICKS      = 20,
+        TANK_COMBAT_STEADY_TICKS  = 8,
+        TANK_COMBAT_AIM_GATE_BRADS = 24,
+        BOAT_SHELL_DODGE          = true,
+        LEAD_CAP_USE_MEASURED     = false,
+      },
+    },
   },
 }
 
@@ -5533,6 +5716,30 @@ do
     turtle[level] = t
   end
   M.MODE_LEVELS.turtle = turtle
+end
+
+-- Joust Easy plays on the general Medium bundle (2026-10-01). For every
+-- knob where the general Easy bundle differs from the general Medium
+-- bundle, Joust's easy table writes the Medium value back (Hard's value
+-- where Medium sets none). So in Joust, Easy differs from Medium only in
+-- the Joust values in PRESETS.joust.by_difficulty. It is built from the two
+-- bundles here, so a later change to either bundle reaches Joust too.
+-- Knobs that Joust's own tables set are left alone. Only PRESETS.joust
+-- changes; no other game reads it.
+do
+  local joust = M.PRESETS.joust
+  local easy = joust.by_difficulty.easy
+  local med, low = M.MODE_LEVELS.default.medium, M.MODE_LEVELS.default.easy
+  local names = {}
+  for k in pairs(med) do names[k] = true end
+  for k in pairs(low) do names[k] = true end
+  for k in pairs(names) do
+    local mv = med[k]
+    if mv == nil then mv = M[k] end
+    local ev = low[k]
+    if ev == nil then ev = M[k] end
+    if mv ~= ev and easy[k] == nil and joust[k] == nil then easy[k] = mv end
+  end
 end
 
 return M

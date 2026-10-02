@@ -1,7 +1,10 @@
 # The scenario arenas
 
-Ninety-five small maps, each with a scenario script beside it, each built to
-make one bot decision happen on purpose and then say whether the bot made it.
+A hundred and forty-one small maps, each with a scenario script beside it.
+Most are built to make one bot decision happen on purpose and then say whether
+the bot made it. Thirty-four check a shipped mod instead: the twenty-three
+`pilltag_*` arenas, the seven `rule_roulette_*` arenas and the four `virus_*`
+arenas. `deep_sea_safe_rule` checks one gameplay rule.
 
 They came from the branch `survival-scenario-bot-improvements-merged`, where
 they ran on a server-side scenario host that no longer exists. They run here
@@ -122,6 +125,22 @@ Two other forms mark a debt, and each carries its reason:
 
 An arena marked `expect=fail` that starts passing is reported as `UPASS`, so a
 mark that has gone stale is noticed rather than hiding a fix.
+
+An arena that checks a shipped script names it, from the repository root:
+
+```
+-- GATE: include=data/mods/RuleRoulette.scenario.lua
+```
+
+The runner writes that file, unchanged, between the prelude's head and the
+arena. The arena is in the same chunk, so the script's top-level locals are in
+scope: the `rule_roulette_*` arenas fill the `queue` of Rule Roulette's
+`TANK` and `BUILDER` tracks to force the mode order, read each track's `mode`
+to know which one is in force, and call the script's own `command` (the
+`!roulette` chat commands) and `build_panel`. The arena then has to
+put a `scenario` table of its own over the script's (a mod may not end the
+round, and the verdict does) and take over the script's hooks, which take no
+`game` argument, so the tail does not wrap them a second time.
 
 ## Traps, all of them paid for once already
 

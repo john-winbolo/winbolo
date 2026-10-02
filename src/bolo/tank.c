@@ -724,10 +724,13 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
     }
   } else {
     bool drowned = FALSE;
-    if (!sim->isPredicting && (*value)->onBoat == FALSE && (mapGetPos(mp,bmx, bmy)) == DEEP_SEA) {
+    if (!sim->isPredicting && (*value)->onBoat == FALSE && !sim->rules.tank_deep_sea_safe && (mapGetPos(mp,bmx, bmy)) == DEEP_SEA) {
       /* Death by drowning — server-authoritative. The sink sound and the
          message belong to drowning; the death itself is tankKillNow, which a
          death ordered from outside the sim goes through too.
+         While tank_deep_sea_safe is on, a tank with no boat floats over deep
+         sea instead. The square is tested every tick, so a tank still out
+         there when the rule goes back off drowns on the next one.
          Drowning is not damage, so it never reaches tankApplyDamage and the
          host is asked here instead. Asked before the sound, so a tank the
          host will not let drown sits in the water quietly rather than sinking
@@ -2457,11 +2460,16 @@ void tankAccel(GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton tb) {
   SPEEDTYPE slowKeyRate = (SPEEDTYPE) (sim->rules.tank_brake_rate * accelPct / 100);
 
   rawCap = mapGetSpeed(sim,mp,pb,bs,bmx,bmy,(*value)->onBoat, gameSimGetTankPlayer(sim, value));
+  /* rawCap is at most 255 and the percent at most TANK_MOD_SPEED_MAX, so the
+     product fits an int with room to spare. */
   displace = (SPEEDTYPE) ((rawCap * tankModPct((*value)->mods.speed)) / 100);
   /* Ground the tank can cross stays crossable however slow it has been made:
      a cap that scales away to nothing becomes the smallest cap that moves. */
   if (rawCap > 0 && displace < 1) {
     displace = 1;
+  }
+  if (displace > TANK_MOD_SPEED_CAP_MAX) {
+    displace = TANK_MOD_SPEED_CAP_MAX;
   }
   if ((tb == TDECEL || tb == TLEFTDECEL || tb == TRIGHTDECEL) || (*value)->speed > displace)  {
     subAmount = (*value)->speed;
@@ -3796,6 +3804,10 @@ void tankSetModifiers(tank value, const TankModifiers *mods) {
     return;
   }
   value->mods = *mods;
+  /* Whatever wrote the set, the speed never goes past its bound. */
+  if (value->mods.speed > TANK_MOD_SPEED_MAX) {
+    value->mods.speed = TANK_MOD_SPEED_MAX;
+  }
 }
 
 /*********************************************************
@@ -3894,7 +3906,12 @@ BYTE tankDamageAmount(GameSim *sim, BYTE base, BYTE owner, BYTE victim,
 *********************************************************/
 BYTE tankBoatExitSpeed(GameSim *sim, tank value) {
   int pct = (value == NULL) ? 100 : tankModPct(value->mods.speed);
-  return (BYTE) ((sim->rules.speed_boat * pct) / 100);
+  int speed = (sim->rules.speed_boat * pct) / 100;
+  /* Held to the cap tankAccel holds the tank to, which also keeps it a byte. */
+  if (speed > TANK_MOD_SPEED_CAP_MAX) {
+    speed = TANK_MOD_SPEED_CAP_MAX;
+  }
+  return (BYTE) speed;
 }
 
 

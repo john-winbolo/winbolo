@@ -844,7 +844,9 @@ local function standoff_shot_obstacle(goal, pill, world)
       local tt = U.ttype(t.mx, t.my)
       if tt == C.T_BUILDING or tt == C.T_HALFBUILD then
         wall_n = wall_n + 1
-        if wall_n > 1 then
+        -- A wall-pass take (goal.through_walls, C.ATTACK_PILL_WALL_FALLBACK)
+        -- chose this line knowing the walls are on it: it shoots through them.
+        if wall_n > 1 and not goal.through_walls then
           return string.format("2+ walls in shot path (at (%d,%d))", t.mx, t.my)
         end
       end
@@ -2137,6 +2139,14 @@ function M.advance_pill_eval_chunk(state, world, info, tmx, tmy, pid, pill)
   sweep.deg_cursor = end_deg + 5
   if sweep.deg_cursor > 355 then
     local best_score, spots, best_spot = M.finalize_pill_eval(sweep.acc, tmx, tmy)
+    if best_spot == nil and C.ATTACK_PILL_WALL_FALLBACK and not sweep.acc.walls then
+      -- No spot has a line that misses every wall: sweep the ring again with
+      -- built walls counted as shells to spend (the wall pass).
+      sweep.acc = M.new_pill_eval_acc(true)
+      sweep.acc.walls = true
+      sweep.deg_cursor = 0
+      return "in_progress"
+    end
     state._pill_eval_cache[pid] = {
       tick = now, best_score = best_score, spots = spots, best_spot = best_spot,
     }
@@ -2921,7 +2931,7 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
   -- selection (caller does that via M.finalize_pill_eval once all
   -- chunks are done). Single-shot mode: acc is nil, we run the full
   -- 0..359 loop and the post-loop selection in one call (legacy).
-  local chunked    = acc ~= nil
+  local chunked    = acc ~= nil and not acc._single
   acc              = acc or M.new_pill_eval_acc(detailed)
   local pmx, pmy = pill.mx, pill.my
   local step_deg = scan_step or C.ATTACK_SCAN_DEGREES
@@ -2931,6 +2941,7 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
   -- _parity_lua_only is set only by the parity self-check below, which
   -- re-enters this function to run the Lua sweep it is comparing against.
   if not detailed and gh_attack and step_deg == 5 and not _parity_lua_only
+      and not acc.walls
       and not (state and state.banned_pill_angles
                and state.banned_pill_angles[pmy * 256 + pmx]) then
     -- The WHOLE world, not just world.pill_at: the C sweep needs base_at and
@@ -2948,10 +2959,18 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
       tmx or -1, tmy or -1, self_contrib)
     if c_mx >= 0 then
       return c_score, nil, { mx = c_mx, my = c_my, deg = c_deg, score = c_score }
-    else
+    elseif not C.ATTACK_PILL_WALL_FALLBACK then
       return math.huge, nil, nil
     end
+    -- No spot from C and the wall pass is on: the C sweep has no wall pass,
+    -- so run the Lua sweep below with built walls counted as shells.
+    acc.walls = true
   end
+  -- Wall pass (C.ATTACK_PILL_WALL_FALLBACK): built walls do not block a spot's
+  -- line, they add the shells needed to shoot through them (see
+  -- spot_margin.aim_line_trees). Pills and bases still block.
+  local walls = acc.walls and true or false
+  local _walls_prev = SM.walls_ok
 
   local R = C.ATTACK_PILL_STANDOFF
   -- Banned-angle map for this pill (set by approach-timeout handler).
@@ -3031,7 +3050,9 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
     local _t_los0 = clock_us()
     local has_los = false
     local _los_stamp = LOS_STAMPS_5DEG and LOS_STAMPS_5DEG[deg]
-    if _los_stamp and step_deg == 5 then
+    if walls then
+      has_los = true   -- the shell test below is the whole test in the wall pass
+    elseif _los_stamp and step_deg == 5 then
       local _bpk = pmy * 256 + pmx   -- base pill key
       for _ai = 1, 5 do
         local _blocked = false
@@ -3069,7 +3090,9 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
     local aim_idx, aim_wx, aim_wy, aim_trees
     if has_los then
       local _t_aim0 = clock_us()
+      SM.walls_ok = walls
       aim_idx, aim_wx, aim_wy, aim_trees = spot_clear_aim(cx, cy, pmx, pmy, world)
+      SM.walls_ok = _walls_prev
       _t_los = _t_los + (clock_us() - _t_aim0)
       if not aim_idx then goto next_spot end
     end
@@ -3281,6 +3304,7 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
           -- how many trees are in the way. plan_position copies these onto the
           -- goal so charge/engage and the blitz GO gate all use the same line.
           aim_idx = aim_idx, aim_wx = aim_wx, aim_wy = aim_wy, aim_trees = aim_trees,
+          walls = walls or nil,
           maneuver_tiles = BRAIN_DEBUG_MODE and maneuver_tiles or nil,
         }
         spots[#spots + 1] = spot_ref
@@ -3289,6 +3313,7 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
         mx = mx, my = my, cx = cx, cy = cy, score = total_score, deg = deg,
         hostile_inf_mult = hostile_inf_mult,
         aim_idx = aim_idx, aim_wx = aim_wx, aim_wy = aim_wy, aim_trees = aim_trees,
+        walls = walls or nil,
         spot = spot_ref,
       }
       _angles_pass = _angles_pass + 1
@@ -3343,7 +3368,17 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
 
   -- Single-shot mode: run the two-pass selection now (writes best_score,
   -- best_spot back into acc) and return the legacy triple.
-  return M.finalize_pill_eval(acc, tmx, tmy)
+  local f_score, f_spots, f_best = M.finalize_pill_eval(acc, tmx, tmy)
+  if f_best == nil and C.ATTACK_PILL_WALL_FALLBACK and not walls
+     and not _parity_lua_only then
+    -- No spot with a wall-free line: run the wall pass over the whole ring.
+    local wacc = M.new_pill_eval_acc(detailed)
+    wacc.walls = true
+    wacc._single = true
+    return M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, state,
+                                      tmx, tmy, nil, nil, wacc)
+  end
+  return f_score, f_spots, f_best
 end
 
 -- =========================================================================
@@ -4197,7 +4232,7 @@ local function effective_anger_wait_max(pill, info)
   return w
 end
 
-function M.update_attack_substate(goal, state, world, info)
+local function update_attack_substate_body(goal, state, world, info)
   if goal.kind ~= "attack_pill" then return end
 
   -- True multi-tank blitz? (commander + >= 1 committed soldier, or we're a
@@ -4651,6 +4686,7 @@ function M.update_attack_substate(goal, state, world, info)
       goal.aim_wx               = nil
       goal.aim_wy               = nil
       goal.aim_idx              = nil
+      goal.through_walls        = nil
       goal._plan_show_tick      = nil
       goal._plan_logged         = nil
       goal._plan_position_cleared = true
@@ -4867,6 +4903,9 @@ function M.update_attack_substate(goal, state, world, info)
         goal.aim_wx  = best.aim_wx
         goal.aim_wy  = best.aim_wy
         goal.aim_idx = best.aim_idx
+        -- Wall-pass spot (C.ATTACK_PILL_WALL_FALLBACK): its line crosses built
+        -- walls, and the take shoots through them.
+        goal.through_walls = best.walls or nil
         -- Blitz soldier replan: the aim point that passed the LOS margin.
         local bz_a = bz_aims and bz_aims[best]
         if bz_a then goal.aim_idx, goal.aim_wx, goal.aim_wy = bz_a[1], bz_a[2], bz_a[3] end
@@ -7572,6 +7611,7 @@ function M.update_attack_substate(goal, state, world, info)
       goal.aim_wx                = nil
       goal.aim_wy                = nil
       goal.aim_idx               = nil
+      goal.through_walls         = nil
       goal._shoot_armour         = nil
       goal._shoot_shells         = nil
       goal._shoot_hits_total     = nil
@@ -7976,6 +8016,24 @@ function M.update_attack_substate(goal, state, world, info)
     end
   end
 
+end
+
+-- A wall-pass take (goal.through_walls, C.ATTACK_PILL_WALL_FALLBACK) runs with
+-- spot_margin's walls_ok on, so every shell-line test it makes (re-aim ladder,
+-- blitz margin, spot checks) treats built walls as shells to spend. Off again
+-- on the way out; walls_reset at the top of each think covers a budget kill.
+local function walls_off(...)
+  SM.walls_ok = false
+  return ...
+end
+
+function M.update_attack_substate(goal, state, world, info)
+  SM.walls_ok = (goal and goal.through_walls) and true or false
+  return walls_off(update_attack_substate_body(goal, state, world, info))
+end
+
+function M.walls_reset()
+  SM.walls_ok = false
 end
 
 -- =========================================================================
@@ -8424,6 +8482,73 @@ function M.heat_pill_fire(state, world, info, goal, pill, pid, hits, shots, now)
   end
 
   return keys, taps
+end
+
+-- ── Peace list ("peace=1/3/4" init token, C.PEACE_*) ─────────────────────
+-- A script can name seats this bot does not pick a fight with (Pillbox Tag:
+-- every hunter lists the other hunters, so they all go for the holder). A
+-- listed seat is skipped as a tank-combat target, a kill_lgm target and an
+-- opportunistic shot, until it hurts this bot. Then it is a normal enemy for
+-- C.PEACE_HOSTILE_TICKS. A cooldown of C.PEACE_COOLDOWN_TICKS follows, and
+-- in it the seat is spared again even if it keeps shooting. The next hit
+-- after the cooldown opens a new hostile window. Hits inside a window do not
+-- extend it.
+--
+-- WHO HIT US: the engine gives no attacker id. A shell object does carry its
+-- firer (ob.owner, 0xFF for a pill), so peace_update keeps the owner of the
+-- NEAREST hostile shell within C.IMD_SHELLS_RADIUS_WU of the tank that is
+-- flying towards it (a shell heading away cannot hit it). When armour
+-- drops, the attacker is the owner kept at the last think (the shell that hit
+-- is gone by the time we look), or this think's if the last think saw none.
+-- Only that one owner is blamed, and only if it is on the list. That is a
+-- guess, not the real attacker: the nearest inbound shell is not always the
+-- one that hit. When the holder's shell (or a pill's, owner 0xFF) is the
+-- nearest, a listed hunter's shell flying past does not count. When a listed
+-- hunter's shell was the nearest at the last think, that hunter is blamed,
+-- whoever really hit us.
+--
+-- With no list, or C.PEACE_ENABLED off, both helpers do nothing and touch no
+-- state, so a bot without the token behaves exactly as before.
+
+-- Is seat `pn` spared right now? `pn` is a player number (a tank's id, a
+-- man's idnum).
+function M.peace_spared(state, pn)
+  local set = state.peace
+  if not set or pn == nil or not set[pn] or not C.PEACE_ENABLED then return false end
+  local hu = state._peace_hostile_until
+  if hu and hu[pn] and (state.tick or 0) < hu[pn] then return false end
+  return true
+end
+
+-- Once per think, after state.took_damage_this_tick is set.
+function M.peace_update(state, info, now)
+  local set = state.peace
+  if not set or next(set) == nil or not C.PEACE_ENABLED then return end
+  local nearest, best = nil, C.IMD_SHELLS_RADIUS_WU * C.IMD_SHELLS_RADIUS_WU
+  for _, ob in ipairs(info.objects or {}) do
+    if ob.type == OBJECT_SHOT and bit.band(ob.info or 0, OBJECT_HOSTILE) ~= 0 then
+      local dx, dy = info.tankx - ob.x, info.tanky - ob.y
+      local d2 = dx * dx + dy * dy
+      local d = ob.direction or 0
+      if d2 <= best and U.bsin(d) * dx - U.bcos(d) * dy > 0 then
+        nearest, best = ob.owner, d2
+      end
+    end
+  end
+  if state.took_damage_this_tick then
+    local pn = state._peace_nearest
+    if pn == nil then pn = nearest end
+    local cu = state._peace_cooldown_until or {}
+    if pn ~= nil and set[pn] and now >= (cu[pn] or 0) then
+      local hu = state._peace_hostile_until or {}
+      state._peace_hostile_until, state._peace_cooldown_until = hu, cu
+      hu[pn] = now + C.PEACE_HOSTILE_TICKS
+      cu[pn] = hu[pn] + C.PEACE_COOLDOWN_TICKS
+      log.event("peace_hostile", string.format("p%d hit us; enemy until %d, spared again until %d",
+                                               pn, hu[pn], cu[pn]))
+    end
+  end
+  state._peace_nearest = nearest
 end
 
 return M

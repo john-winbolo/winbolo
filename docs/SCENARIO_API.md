@@ -458,7 +458,15 @@ everyone else, spectators included, the chooser is read-only.
 is the higher script's, and the details dialog marks the lower one's row
 *Overridden by …*. A region two scripts both name is kept twice, once for
 each, and each script's own lookups find its own. Tags are the union of every
-script's, and every script's triggers are kept, in list order. The round needs
+script's, and every script's triggers are kept, in list order. Hooks run down
+the list, top first, except `on_tick`, which runs up it: the bottom script's
+first and the top script's last. A write such as `game.set_modifiers` or
+`game.set_rule` replaces what was there, so in a frame the last write stands,
+and the top script's `on_tick` write is the one that stands. Note: when a
+tick spends the shared two-million-instruction budget (see above), the rest
+of that tick's calls are dropped, and for `on_tick` those are the scripts
+nearer the top, which run last. So in that tick the top script's `on_tick`
+is the one most likely not to run, and a lower script's write stands. The round needs
 bots when any script on the list says `needs_bots`, whatever its place (see
 `needs_bots` in [The `scenario` table](#the-scenario-table)).
 
@@ -1005,6 +1013,9 @@ settings = {
     min = 1, max = 5, step = 1, default = 5 },
   { id = "sudden_death", label = "Sudden death", type = "bool",
     default = false },
+  { id = "teams", label = "Teams", type = "choice",
+    choices = { "Free For All", "Use Lobby Teams" },
+    default = "Free For All" },
 },
 ```
 
@@ -1012,17 +1023,27 @@ settings = {
 |---|---|
 | `id` | The name `game.setting` takes. 1 to 31 letters, digits and `_`, and unique in the script. |
 | `label` | What the dialog shows beside the dropdown, up to 63 bytes. This is the script's own text; it is not translated. |
-| `type` | `"int"`, a whole number, which is also what a missing type means. `"bool"`, on or off, drawn as a dropdown of On and Off. |
-| `min`, `max` | The range, both ends in it. Required for `"int"`; a `"bool"` row must not give them. |
-| `step` | The gap between entries, above 0. Optional for `"int"`, 1 when missing; a `"bool"` row must not give it. |
-| `default` | The value when the host picks nothing. Required. For `"int"`, a whole number inside the range and on the step; for `"bool"`, `true` or `false`. |
+| `type` | `"int"`, a whole number, which is also what a missing type means. `"bool"`, on or off, drawn as a dropdown of On and Off. `"choice"`, one of a list of words, drawn as a dropdown of the words. |
+| `min`, `max` | The range, both ends in it. Required for `"int"`; a `"bool"` or `"choice"` row must not give them. |
+| `step` | The gap between entries, above 0. Optional for `"int"`, 1 when missing; a `"bool"` or `"choice"` row must not give it. |
+| `choices` | For `"choice"` only, and required there: a list of 2 to 8 different words, each 1 to 31 bytes, in the order the dropdown shows them. Like the label, they are the script's own text and are not translated. |
+| `default` | The value when the host picks nothing. Required. For `"int"`, a whole number inside the range and on the step; for `"bool"`, `true` or `false`; for `"choice"`, one of its words, written exactly as in `choices`. |
 
 A script may declare up to 16 settings, and a setting may offer up to 100
 entries (`(max - min) / step + 1`). A row that breaks a rule, a duplicate id,
 and a row past the sixteenth are reported and dropped; the rest still apply.
 `-validate` prints the same reports. A package's `manifest.json`
 carries the same list under `"settings"` with the same fields, a `"bool"`
-row's `"default"` being JSON `true` or `false`.
+row's `"default"` being JSON `true` or `false` and a `"choice"` row's
+`"choices"` a JSON array of strings.
+
+A `"choice"` row travels to the lobby as its id, label and words in no more
+bytes than the longest `"int"` row takes (113), so a long id and a long label
+leave less room for the words. A row whose id, label and words do not fit is
+reported and dropped. A client or server from before `"choice"` existed skips
+the row: its dialog does not show it, and an older server does not offer it
+at all, so `game.setting` for it raises there as it does for any id that is
+not declared.
 
 The server reads the declaration without running the script, the same way it
 reads `rules`. A value the host picks is held for the lobby session, per
@@ -1116,7 +1137,7 @@ there is nothing for a return to reach. See [Triggers](#triggers).
 |---|---|
 | `on_setup()` | Once, after the scenario's rules are applied and before the round's first tick. Every write is available except the six roster ops — `spawn_bot`, `remove_bot`, `set_team` and the three `lobby_*` calls — which answer `SCN_OP_WRONG_STATE` here. This is where the map gets ready. |
 | `on_start()` | The round's first running tick. The tanks exist and the roster has settled, so this is the first moment a scenario can ask who is playing. |
-| `on_tick(tick)` | Once per frame, fifty times a second. The `tick` it is handed goes up by **2** each time, not by 1 — see [Three clocks](#three-clocks). **Prefer not to declare this.** Timers and the hooks below cover nearly everything, and a handler that runs fifty times a second is a handler that has to be cheap. |
+| `on_tick(tick)` | Once per frame, fifty times a second. The `tick` it is handed goes up by **2** each time, not by 1 — see [Three clocks](#three-clocks). With more than one script on the list, the scripts' `on_tick` run bottom to top, so the top script writes last and its `set_modifiers`, `set_rule` and other writes stand (see [The script list](#the-script-list)). A tick that spends the shared per-tick budget drops the rest of its calls, and for `on_tick` those are the top scripts. **Prefer not to declare this.** Timers and the hooks below cover nearly everything, and a handler that runs fifty times a second is a handler that has to be cheap. |
 | `on_end()` | The round has just ended, for any reason. |
 
 **What a setup arranges, and what it does not.** The window that lets writes
@@ -1475,7 +1496,7 @@ starts comes due after about twice the seconds it asked for.
 |---|---|
 | `game.tank(p)` | `{ mx, my, wx, wy, dir, armour, shells, mines, trees, pills, boat, dead, name, bot, kills, deaths, mods }`, or `nil` when the seat is empty or has no tank. `mx, my` are map squares and `wx, wy` world coordinates; `dir` is the full 0-255 facing, which is what `teleport` takes back. `mods` is `{ speed, accel, turn, reload, dealt, taken }`. |
 | `game.builder(p)` | `{ state, mx, my, wx, wy, job, trees, mines }`, or `nil` when the seat has none. `state` is `"in_tank"`, `"going"`, `"returning"`, `"parachuting"` or `"dead"`; `job` is an action word, or absent when he is on none. The square is tracked while he is out of the tank — in the tank he is wherever his tank is, which is why the state comes first. |
-| `game.lobby_slot(p)` | `{ connected, bot, team, name, ready, fielded, alive }`, or `nil` for an empty seat. **`fielded` is the field that tells a held seat from one on the field.** |
+| `game.lobby_slot(p)` | `{ connected, bot, team, name, ready, fielded, alive, team_pool }`, or `nil` for an empty seat. **`fielded` is the field that tells a held seat from one on the field.** `team_pool` is the label of the bot naming pool the seat's team draws bot names from, such as `"Famous Painters"`: the name the lobby shows in that team's pool dropdown. It is absent when the seat is on no team (0) or the team has no pool. A team has a pool once it is set up in the lobby; teams 1 and 2 start with the first pool, and a team the host never set up has none, so its seats read `nil` even when they hold bots. A dedicated server's `-bots` names its bots from one random pool without setting any team's pool, so there `team_pool` is the first pool's label, not the pool the bot names came from. The label comes from the server's own pools, so every client reads the same word. A script can label a team of bots only by it (see below). |
 | `game.allied(a, b)` | Whether seats `a` and `b` are on the same side in the game: `true` or `false`, `true` for a seat and itself, and `nil` when either seat is empty. This is the alliance table every game rule reads — who a pillbox fires at, which bases refuel whom — including alliances players made and left in play. **It can differ from `game.lobby_slot(p).team`:** two teammates where one has left the alliance share a team but are not allied, and players on different teams who allied share a side but not a team. |
 
 A seat the lobby is holding for a bot reads as connected, a bot, on its team,
@@ -1487,6 +1508,23 @@ for p = 0, game.max_tanks() - 1 do
   if slot and slot.bot and slot.team == RAIDERS then
     out[#out + 1] = p
   end
+end
+```
+
+A team with no human on it can be named after its bots' pool, as Joust and
+Pillbox Tag do on their panels:
+
+```lua
+local function team_label(t)
+  local pool, human = nil, false
+  for p = 0, game.max_tanks() - 1 do
+    local slot = game.lobby_slot(p)
+    if slot and slot.team == t then
+      pool = pool or slot.team_pool
+      human = human or not slot.bot
+    end
+  end
+  return (not human and pool) or ("Team " .. t)
 end
 ```
 
@@ -1556,7 +1594,7 @@ refused with `SCN_OP_BAD_SQUARE`, the same answer as a square off the map.
 | `game.set_boat(p, on)` | Puts a tank on a boat or takes it off one. The square under it has to be water. |
 | `game.give_pill(p, n)` | Puts a pillbox into a tank, however armoured and whoever held it. |
 | `game.drop_pill(p, n[, x, y])` | Puts a carried pillbox back on the map, on a square or under the tank. |
-| `game.set_modifiers(p, t)` | Replaces a tank's `speed`, `accel`, `turn`, `reload`, `dealt` and `taken` percentages. A field the table leaves out goes back to the classic tank: the whole set is replaced, not merged. |
+| `game.set_modifiers(p, t)` | Replaces a tank's `speed`, `accel`, `turn`, `reload`, `dealt` and `taken` percentages. A field the table leaves out goes back to the classic tank: the whole set is replaced, not merged. `speed` goes from 0 to 2000 and the others from 0 to 255; past that the call is refused with `SCN_OP_RANGE`. `speed` scales the ground's speed cap, so 534 puts a river's 3 at a road's 16. However high it is set, the engine holds the tank's scaled cap to 160 world units a frame, the most the byte-sized modifier could give on the fastest speed rule. |
 
 ### The builder
 
@@ -1925,7 +1963,7 @@ exist.
 | Call | What it does |
 |---|---|
 | `game.panel(id, list[, target])` | Draws panel `id` from a list of primitives. An empty list clears it. |
-| `game.score(target, value[, label])` | The scenario's own score for one seat with a number, or for a team with `{ team = t }`. `label` is the short word shown beside it, up to 15 bytes. |
+| `game.score(target, value[, label])` | The scenario's own score for one seat with a number, or for a team with `{ team = t }`. `label` is the short word shown beside it, up to 15 bytes. A round that scores both teams and seats gets a grouped recap table: a row for each scored team, best team score first, with its members (by lobby team) under it, best own score first; seats on no scored team follow. A round that scores only one of the two keeps the plain table of players. |
 | `game.announce(text[, seconds[, target[, position]]])` | A big line across the game view for that many seconds. Left out, `position` puts the line where it has always gone, centred in the upper third of the view. Give `"top"`, `"center"` or `{ x = , y = }` to put the centre of the line somewhere else. Empty text takes the line away. |
 | `game.status(text[, countdown_to[, target]])` | The status line: one line at the very top of the game view, centred, that stays until it is changed or cleared. `countdown_to` is a tick on `game.tick()`'s clock; the client shows the time left to it after the text. Empty text takes the line away. |
 | `game.marker(id, x, y[, colour[, target]])` | Puts mark `id` on a map square. |
@@ -2060,8 +2098,9 @@ element is its name, with the operands after it in the order below:
 | `bar` | `{ "bar", x, y, w, h, colour, value, max }` | A horizontal bar filled to `value` over `max`, outlined. Both are 16-bit, so a bar can show a real total. |
 | `timer` | `{ "timer", x, y, colour, size, align, mode, tick }` | Minutes and seconds counting down to, or up from, a game tick. The client works it out against its own clock, so a countdown is one message rather than one a tick. |
 
-`size` is `"small"` or `"normal"`. `align` is `"left"`, `"centre"` or
-`"right"`, and says which way the text sits about its `x`. A timer's `mode` is
+`size` is `"small"`, `"normal"` or `"large"`, 8, 11 and 16 panel units high.
+A client from before `"large"` draws a large item at normal size. `align` is
+`"left"`, `"centre"` or `"right"`, and says which way the text sits about its `x`. A timer's `mode` is
 `"down"` or `"up"`, and its `tick` is a tick on `game.tick()`'s clock.
 
 ```lua
@@ -2076,11 +2115,13 @@ game.panel(0, {})            -- take it away again
 ```
 
 A list holds up to 128 primitives and is refused with `SCN_OP_TOO_BIG` past
-that, or if the whole list comes to more than the 1017 bytes one update
-carries. A primitive written wrong — a name that spells no primitive, an
+that, with each large item counted twice, or if the whole list comes to more
+than the 1017 bytes one update carries. A primitive written wrong — a name that spells no primitive, an
 operand missing, an operand that is not a number — stops the script, like any
 other call written wrong. A value the simulation will not take, such as a
-colour outside the palette, is refused as an answer the script can read.
+colour outside the palette, is refused as an answer the script can read. A
+`rect` with colour `none`, width and height 0 at `x` 2, `y` 0 is refused too:
+it draws nothing, and on the wire it is the mark that makes an item large.
 
 ### Colours
 
@@ -2103,7 +2144,7 @@ gives them a colour. The names are also on the `game` table as
 
 | Call | What it does |
 |---|---|
-| `game.setting(id)` | The value the host picked in the lobby for one of this script's own [`settings`](#scenariosettings), or its declared default when the host picked nothing: a number for an `"int"` setting, `true` or `false` for a `"bool"` one. An id the script does not declare **raises**, for the reason an unknown rule name does. |
+| `game.setting(id)` | The value the host picked in the lobby for one of this script's own [`settings`](#scenariosettings), or its declared default when the host picked nothing: a number for an `"int"` setting, `true` or `false` for a `"bool"` one, and for a `"choice"` one the chosen word as a string, spelled exactly as the script wrote it in `choices`. An id the script does not declare **raises**, for the reason an unknown rule name does. |
 
 The value is fixed for the round. Read it in `on_init`, or at the top of the
 file, and keep it in a local:
@@ -2112,13 +2153,17 @@ file, and keep it in a local:
 local WAVES        = game.setting("rounds")
 local WAVE_LIMIT_S = game.setting("round_minutes") * 60
 local SUDDEN_DEATH = game.setting("sudden_death")   -- true or false
+local TEAMS        = game.setting("teams") == "Use Lobby Teams"
 ```
 
 A script reads only its own settings: the id is looked up in the declaration
 of the file that makes the call. The server checks every value the host
 sends. A value below the range becomes the lowest entry, one above it the
 highest, and one inside the range but off the step the default. A
-`"bool"` setting takes only on or off; anything else is refused. An older
+`"bool"` setting takes only on or off, and a `"choice"` setting only one of
+its words; anything else is refused. The server and the lobby keep a choice
+as the index of its word, so a script that reorders or renames its words
+moves a pick the host made before the change. An older
 server, or a client that cannot send a pick, leaves every setting at its
 default, so a script must play correctly on its defaults alone.
 
@@ -2201,6 +2246,7 @@ square.
 | `tank_slide_armour_bonus` | 32 | 0 to 255 | Extra push step at zero armour, added to `tank_slide_step` in proportion to the armour missing before the hit: nothing at full armour, the whole bonus at none. Only read while `tank_slide_mac` is 1. A `tank_slide_step` of 0 is no push at all, bonus included. |
 | `tank_wall_glide` | 0.0 | 0.0 to 1.0 | 0 slides a tank along a wall it hits; 1 lets it glide off free. Not read while `tank_collision_mac` is 1. |
 | `tank_collision_mac` | 0 | 0 to 1 | Whether a tank collides with walls, live pillboxes and hostile bases the Mac Bolo way. 0, the classic table, is the WinBolo circle: a tank of radius `tank_hit_radius` is pushed out of each solid square and slid along it by `tank_wall_glide`. 1 is Mac Bolo's sixteen direction-dependent tank boxes, nudged one pixel at a time, with a corner pushing on both axes and a tank wedged between opposing walls left where it is. It lets a tank pass closer beside a pillbox than the circle does, which is what puts it inside the bad-lead range of `pill_aim_mac`. |
+| `tank_deep_sea_safe` | 0 | 0 to 1 | Whether a tank with no boat can drive over deep sea. 0, the classic table, drowns it the tick it reaches deep sea. 1 lets it drive there at `speed_deep_sea` and stay alive; a tank on a boat keeps its boat either way. Drowning is tested every tick, so a tank still out on deep sea with no boat when this goes back to 0 drowns on the next tick, the same death as driving in. |
 
 **Terrain: the cap a tank's speed clamps to.**
 

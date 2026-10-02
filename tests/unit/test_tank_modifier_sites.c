@@ -46,7 +46,7 @@ static void placeOn(ServerSim *sim, BYTE terrain, BYTE mx, BYTE my) {
     tankSetOnBoat(&sim->sim.tanks[0], FALSE);
 }
 
-static void setMods(ServerSim *sim, uint8_t speed, uint8_t accel, uint8_t turn,
+static void setMods(ServerSim *sim, uint16_t speed, uint8_t accel, uint8_t turn,
                     uint8_t reload, uint8_t dealt, uint8_t taken) {
     TankModifiers m;
     m.speed = speed; m.accel = accel; m.turn = turn;
@@ -122,6 +122,45 @@ int run_tank_mod_speed_river_still_moves(void) {
                   "speed 25 on river topped out at %f, expected 1",
                   (double)top);
     UT_ASSERT_MSG(top > 0, "a modified tank must still cross passable ground");
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A speed past a byte. A river's 3 at 533% is 15 (the engine drops the
+ * fraction of 15.99), at 534% 16, a road's own cap. 2000% on a road would be
+ * 320, which the engine holds to TANK_MOD_SPEED_CAP_MAX. */
+int run_tank_mod_speed_wide_on_river(void) {
+    ServerSim *sim = ut_make_running_sim("Tester");
+    SPEEDTYPE top;
+    UT_ASSERT(sim != NULL && sim->sim.tanks[0] != NULL);
+
+    placeOn(sim, RIVER, 40, 40);
+    setMods(sim, 533, 0, 0, 0, 0, 0);
+    top = runToTopSpeed(sim, NULL);
+    UT_ASSERT_MSG(top == (SPEEDTYPE)15,
+                  "speed 533 on river topped out at %f, expected 15",
+                  (double)top);
+
+    placeOn(sim, RIVER, 40, 40);
+    setMods(sim, 534, 0, 0, 0, 0, 0);
+    top = runToTopSpeed(sim, NULL);
+    UT_ASSERT_MSG(top == (SPEEDTYPE)MAP_SPEED_TROAD,
+                  "speed 534 on river topped out at %f, expected %d",
+                  (double)top, MAP_SPEED_TROAD);
+
+    placeOn(sim, ROAD, 40, 40);
+    setMods(sim, TANK_MOD_SPEED_MAX, 0, 0, 0, 0, 0);
+    top = runToTopSpeed(sim, NULL);
+    UT_ASSERT_MSG(top == (SPEEDTYPE)TANK_MOD_SPEED_CAP_MAX,
+                  "speed %d on road topped out at %f, expected %d",
+                  TANK_MOD_SPEED_MAX, (double)top, TANK_MOD_SPEED_CAP_MAX);
+    UT_ASSERT_MSG(tankBoatExitSpeed(&sim->sim, sim->sim.tanks[0]) ==
+                      TANK_MOD_SPEED_CAP_MAX,
+                  "boat exit speed at %d%% is %u, expected %d",
+                  TANK_MOD_SPEED_MAX,
+                  tankBoatExitSpeed(&sim->sim, sim->sim.tanks[0]),
+                  TANK_MOD_SPEED_CAP_MAX);
 
     serverSimDestroy(sim);
     return 0;

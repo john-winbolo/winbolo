@@ -1193,6 +1193,40 @@ local function eval_refuel(state, world, info, tmx, tmy, boat, ammo)
   }
 end
 
+-- CAPTURE_BASE_EXTRA_COST for one capture_base row, and whether it was
+-- waived. Returns extra, dist, free: extra is what the row pays (0 when
+-- waived), dist the Manhattan tile distance from the tank to the base and
+-- free the CAPTURE_BASE_EXTRA_FREE_DIST it was held against. dist is nil when
+-- the knob is 0, so there is no term at all (keel). A base within free tiles
+-- pays 0; free 0 means no waiver, the extra applies at every distance.
+-- Kept on M, not as a local, because the main chunk is at Lua's local cap.
+function M.capture_base_extra(tmx, tmy, bmx, bmy)
+  local extra = C.CAPTURE_BASE_EXTRA_COST or 0
+  if extra == 0 then return 0, nil, 0 end
+  local free = C.CAPTURE_BASE_EXTRA_FREE_DIST or 0
+  local d = U.mdist(tmx, tmy, bmx, bmy)
+  if free > 0 and d <= free then return 0, d, free end
+  return extra, d, free
+end
+
+-- The breakdown text for M.capture_base_extra's answer: a chip for the row
+-- and a detail line, so the panel shows the extra was ADDED or WAIVED and why.
+function M.capture_base_extra_text(extra, d, free)
+  if d == nil then return "", "" end
+  local full = C.CAPTURE_BASE_EXTRA_COST or 0
+  if extra == 0 then
+    return " + extra{0 waived}", string.format(
+      "|extra:CAPTURE_BASE_EXTRA_COST{%.0f} WAIVED, 0 added: the base is %d tiles (Manhattan) from the tank, within CAPTURE_BASE_EXTRA_FREE_DIST{%d}",
+      full, d, free)
+  end
+  local why = (free > 0)
+    and string.format("the base is %d tiles (Manhattan) from the tank, beyond CAPTURE_BASE_EXTRA_FREE_DIST{%d}", d, free)
+    or "CAPTURE_BASE_EXTRA_FREE_DIST is 0, so it applies at every distance"
+  return string.format(" + extra{%.0f}", extra), string.format(
+    "|extra:CAPTURE_BASE_EXTRA_COST{%.0f} ADDED to this capture_base row (a game mode's knob; keel 0 = no such term): %s",
+    extra, why)
+end
+
 local function eval_capture_base(state, world, info, tmx, tmy, boat, ammo)
   local has_capturable = not state.perc
         or (state.perc.neutral_base_count > 0)
@@ -1207,7 +1241,8 @@ local function eval_capture_base(state, world, info, tmx, tmy, boat, ammo)
     function(b) return (C.BASE_PILL_COVER_PEN or 3) * count_new_exposure_pills(world, b.mx, b.my, tmx, tmy, true) end)
   if not base then return nil end
 
-  local raw_cost = bcost
+  local xe, xd, xf = M.capture_base_extra(tmx, tmy, base.mx, base.my)
+  local raw_cost = bcost + xe
   local imminent = false
   if base.health == 0
      and raw_cost <= C.IMMINENT_CAPTURE_PATH_COST
@@ -1250,7 +1285,8 @@ local function eval_capture_base(state, world, info, tmx, tmy, boat, ammo)
 
   local desc = ""  -- pool viz string; populated only when BRAIN_POOL_VIZ
   if BRAIN_POOL_VIZ then
-    desc = string.format("capture_base#%d@(%d,%d) cost=%.0f", bid, base.mx, base.my, raw_cost)
+    desc = string.format("capture_base#%d@(%d,%d) cost=%.0f%s", bid, base.mx, base.my, raw_cost,
+                         (M.capture_base_extra_text(xe, xd, xf)))
     if imminent then desc = desc .. " IMMINENT" end
   end
   -- TODO: Phase 6 race-loss should clear race_mode on captures we've decided not to win.
@@ -2098,6 +2134,11 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
        and not attack.heat_pill_available(state, world, info, et, state.tick or 0,
                                           tmx, tmy, require("steering").shot_path_clear) then
       local_gate = "heat_only"
+    end
+    -- Peace list ("peace=" token): a listed seat is not a target until it
+    -- hurts us (attack.peace_spared).
+    if not local_gate and attack.peace_spared(state, et.id) then
+      local_gate = "peace"
     end
     -- `attack <tank name>` ORDER: the min-shells gate, the pill-crossfire
     -- gate and the heat_only gate are waived for the ONE tank the human
@@ -6345,7 +6386,7 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo, sc
     reject = "lgm_busy"
   elseif info.inboat then
     reject = "inboat"
-  elseif state.phase == "opening" then
+  elseif state.phase == "opening" and not C.PILL_REPOSITION_IN_OPENING then
     reject = "opening"   -- need pills in place during the opening
   elseif not repos_locked and not approved and not my_voting then
     -- Win-then-vote pacing: a just-failed team vote or a very recently executed
@@ -10871,7 +10912,14 @@ function M.rescore_nearby_bases(state, world, info, radius)
               _fcm, _fcn = base_friendly_cover(world, obj, tmx, tmy)
               if _fcn > 0 then _mk = _mk * _fcm; _thr = _thr * _fcm end
             end
-            local total = c + _stale + _mk + _thr
+            -- capture_base's flat game-mode cost (0 at keel) rides along, or
+            -- this rescore would undo it for every base within the radius.
+            -- A base within CAPTURE_BASE_EXTRA_FREE_DIST tiles has it waived.
+            local _extra, _xd, _xf = 0, nil, 0
+            if pool_idx == 3 then
+              _extra, _xd, _xf = M.capture_base_extra(tmx, tmy, cand.mx, cand.my)
+            end
+            local total = c + _stale + _mk + _thr + _extra
             cand.cost = total
             rescored = rescored + 1
             -- Bump the cost-cache timestamp too, so the pool-grid "age" shows
@@ -10881,6 +10929,10 @@ function M.rescore_nearby_bases(state, world, info, radius)
             if entry then
               entry.cost = total; entry.raw = c; entry.tick = now
               entry._age = _age; entry._stale = _stale
+              if pool_idx == 3 then
+                entry._p3_extra = (_extra ~= 0) and _extra or nil
+                entry._p3_xd = _xd; entry._p3_xf = _xd and _xf or nil
+              end
               if pool_idx == 7 then
                 entry._base = _mk; entry._tv = _tv; entry._thr = _thr
                 entry._b_n = _mn; entry._b_nfull = _mnfull; entry._b_frac = _mfrac
@@ -12155,9 +12207,12 @@ local function get_formula_inner(e)
     -- LOADED, BUILDER-LESS surcharge: the one danger term pool 3 otherwise
     -- does not have. Absent (and its chip absent) at the keel value 0.
     local _cb_nb_chip, _cb_nb_det = "", ""
+    if e._p3_xd then
+      _cb_nb_chip, _cb_nb_det = M.capture_base_extra_text(e._p3_extra or 0, e._p3_xd, e._p3_xf or 0)
+    end
     if e._p3_mult then
-      _cb_nb_chip = string.format(" + nobuild_danger{%.1f}", e._p3_dang or 0)
-      _cb_nb_det = string.format(
+      _cb_nb_chip = _cb_nb_chip .. string.format(" + nobuild_danger{%.1f}", e._p3_dang or 0)
+      _cb_nb_det = _cb_nb_det .. string.format(
         "|nobuild_danger:LOADED, BUILDER-LESS — threat.at(base)%.1f × DANGER_SCALE{%.3f} × CAPTURE_BASE_NO_LGM_DANGER_MULT{%d} = %.1f, ADDED. A base is a tile you have to sit on, and sitting on a covered one with an unplaceable stack aboard loses the whole load. At the keel value 0 this term does not exist, which is what pool 3 did before",
         e._p3_dv or 0, C.CAPTURE_PILL_DANGER_SCALE, e._p3_mult, e._p3_dang or 0)
     end
@@ -13442,6 +13497,15 @@ function M.step_eval_queue(state, world, info)
         _p3_dang = _p3_dv * C.CAPTURE_PILL_DANGER_SCALE * _p3_mult
         c = c + _p3_dang
       end
+      -- A flat cost on every capture_base row, for a game mode that wants its
+      -- bots off the bases (Pillbox Tag's hunters). Added before the phase
+      -- weight, like every other term. Keel 0: no such term. A base within
+      -- CAPTURE_BASE_EXTRA_FREE_DIST tiles has it waived.
+      local _p3_extra, _p3_xd, _p3_xf = 0, nil, 0
+      if pool_idx == 3 then
+        _p3_extra, _p3_xd, _p3_xf = M.capture_base_extra(tmx, tmy, obj.mx, obj.my)
+        c = c + _p3_extra
+      end
 
       -- Pool 5 (repair_pill): the UNIFIED repair formula, per candidate.
       -- Historically the damage discount lived only in the finalize step
@@ -13788,6 +13852,8 @@ function M.step_eval_queue(state, world, info)
         entry._p3_dv=(_p3_mult > 0) and _p3_dv or nil
         entry._p3_dang=(_p3_mult > 0) and _p3_dang or nil
         entry._p3_mult=(_p3_mult > 0) and _p3_mult or nil
+        entry._p3_extra=(_p3_extra ~= 0) and _p3_extra or nil
+        entry._p3_xd=_p3_xd; entry._p3_xf=_p3_xd and _p3_xf or nil
       elseif pool_idx == 5 then
         entry._stale=stale_cost; entry._age=_gen_age
         entry._dmg=_rp_dmg
@@ -15452,6 +15518,8 @@ function M.finalize_pools(state, world, info)
                             info.shells or 32, info.trees or 0, info.mines or 0,
                             info.armour or 40)
       if c3 and c3 < 1e8 then
+        local xe3, xd3, xf3 = M.capture_base_extra(tmx, tmy, gb.mx, gb.my)
+        c3 = c3 + xe3
         local imminent3 = false
         if (gb.health or 0) == 0 and c3 <= C.IMMINENT_CAPTURE_PATH_COST
            and (info.armour or 0) >= C.IMMINENT_CAPTURE_MIN_ARMOUR then
@@ -15466,8 +15534,9 @@ function M.finalize_pools(state, world, info)
                    target_id = state.goal.target_id,
                    race_mode = C.CAPTURE_RACE_MODE_CAPTURE },
           desc = BRAIN_POOL_VIZ and string.format(
-                 "capture_base#%d@(%d,%d) cost=%.0f GOAL-BRIDGE%s",
+                 "capture_base#%d@(%d,%d) cost=%.0f%s GOAL-BRIDGE%s",
                  state.goal.target_id, gb.mx, gb.my, c3,
+                 (M.capture_base_extra_text(xe3, xd3, xf3)),
                  imminent3 and " IMMINENT" or "") or "",
         }
       else
@@ -16043,6 +16112,15 @@ function M.refresh_kill_lgm(state, info, world)
   end
   local _cp_hit = nil   -- cheapest discounted row this tick, for the log line
   local elgms = state.perc and state.perc.enemy_lgms
+  -- Peace list ("peace=" token): drop the men of spared seats. A man's
+  -- idnum is his owner's player number. Only built when a list exists.
+  if elgms and state.peace then
+    local kept = {}
+    for _, lgm in ipairs(elgms) do
+      if not attack.peace_spared(state, lgm.idnum) then kept[#kept + 1] = lgm end
+    end
+    elgms = kept
+  end
   if elgms and #elgms > 0 and (info.shells or 0) > 0 then
     -- Cost model mirrors eval_attack_tank: per-target evaluation with
     -- LOS-fast-engage vs Manhattan-boundary-standoff branches, plus

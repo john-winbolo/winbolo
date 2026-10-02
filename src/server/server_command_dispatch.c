@@ -1175,8 +1175,9 @@ scriptListDone:
 
            Nothing from the client is trusted past the names.
            serverSimSetScriptSetting reads the declaration for the file on
-           this server, refuses an id it does not declare and a bool
-           setting given anything but 0 or 1, and falls back to the default
+           this server, refuses an id it does not declare, a bool setting
+           given anything but 0 or 1 and a choice given anything but the
+           index of one of its words, and falls back to the default
            for an int value outside the range or off the step. */
         const CmdSetScriptSetting *s = &cmd->u.setScriptSetting;
 

@@ -112,6 +112,7 @@ int run_sim_rules_codec_roundtrip(void) {
 
     srFillCounted(&in);
     in.u.simRules.tank_collision_mac = 1;
+    in.u.simRules.tank_deep_sea_safe = 1;
     UT_ASSERT_MSG(enc(&in, NULL, buf, sizeof(buf), &outLen) == ENCODE_OK,
                   "the encoder refused a table that fits");
     UT_ASSERT_MSG(outLen == CTRL_SIM_RULES_BODY_LEN,
@@ -157,11 +158,119 @@ int run_sim_rules_codec_roundtrip(void) {
         memset(&shortOut, 0, sizeof(shortOut));
         UT_ASSERT(dec(buf, CTRL_SIM_RULES_BASE_BODY_LEN, &shortOut));
         UT_ASSERT(shortOut.u.simRules.tank_collision_mac == 0);
+        UT_ASSERT(shortOut.u.simRules.tank_deep_sea_safe == 0);
+        /* A sender from before tank_deep_sea_safe stops after the Mac
+           byte, and the rule it never heard of reads off. */
+        UT_ASSERT(dec(buf, CTRL_SIM_RULES_BASE_BODY_LEN + 1, &shortOut));
+        UT_ASSERT(shortOut.u.simRules.tank_collision_mac == 1);
+        UT_ASSERT(shortOut.u.simRules.tank_deep_sea_safe == 0);
         UT_ASSERT_MSG(!dec(buf, CTRL_SIM_RULES_BASE_BODY_LEN - 1, &shortOut),
                       "the decoder accepted a truncated base body");
-        UT_ASSERT(!dec(buf, CTRL_SIM_RULES_BODY_LEN + 1, &shortOut));
+        UT_ASSERT(shortOut.u.simRules.building_life ==
+                  CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC);
+        UT_ASSERT(!dec(buf, CTRL_SIM_RULES_EXT2_BODY_LEN + 1, &shortOut));
         UT_ASSERT_MSG(!dec(buf, 0, &shortOut),
                       "the decoder accepted an empty body");
+    }
+
+    /* The second tail. A building_life that is not classic rides after the
+       first tail, which comes along at zero; the body with only the first
+       tail reads the classic value; and a classic building_life sends
+       nothing extra. */
+    {
+        ControlEvent wide, wideOut;
+        size_t       wideLen = 0;
+
+        srFillCounted(&wide);
+        wide.u.simRules.building_life = 255;
+        UT_ASSERT(enc(&wide, NULL, buf, sizeof(buf), &wideLen) == ENCODE_OK);
+        UT_ASSERT_MSG(wideLen == CTRL_SIM_RULES_EXT2_BODY_LEN,
+                      "a 255 building_life wrote %u bytes, expected %u",
+                      (unsigned)wideLen,
+                      (unsigned)CTRL_SIM_RULES_EXT2_BODY_LEN);
+        memset(&wideOut, 0xAB, sizeof(wideOut));
+        UT_ASSERT(dec(buf, wideLen, &wideOut));
+        UT_ASSERT_MSG(wideOut.u.simRules.building_life == 255,
+                      "building_life decoded as %ld, expected 255",
+                      (long)wideOut.u.simRules.building_life);
+        UT_ASSERT(wideOut.u.simRules.tank_collision_mac == 0);
+        UT_ASSERT(wideOut.u.simRules.shell_speed == wide.u.simRules.shell_speed);
+
+        UT_ASSERT(dec(buf, CTRL_SIM_RULES_BODY_LEN, &wideOut));
+        UT_ASSERT(wideOut.u.simRules.building_life ==
+                  CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC);
+
+        wide.u.simRules.building_life = CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC;
+        UT_ASSERT(enc(&wide, NULL, buf, sizeof(buf), &wideLen) == ENCODE_OK);
+        UT_ASSERT_MSG(wideLen == CTRL_SIM_RULES_BASE_BODY_LEN,
+                      "a classic building_life wrote %u bytes, expected the "
+                      "base %u", (unsigned)wideLen,
+                      (unsigned)CTRL_SIM_RULES_BASE_BODY_LEN);
+    }
+
+    /* The tail is one ordered list: tank_collision_mac, tank_deep_sea_safe,
+       building_life. The body stops after the last rule that is not
+       classic, and the rules in front of it ride along at whatever they
+       hold. */
+    {
+        ControlEvent both, bothOut;
+        size_t       bothLen = 0;
+
+        /* Every tail rule off classic: the whole tail goes out. */
+        srFillCounted(&both);
+        both.u.simRules.tank_collision_mac = 1;
+        both.u.simRules.tank_deep_sea_safe = 1;
+        both.u.simRules.building_life      = 255;
+        UT_ASSERT(enc(&both, NULL, buf, sizeof(buf), &bothLen) == ENCODE_OK);
+        UT_ASSERT_MSG(bothLen == CTRL_SIM_RULES_EXT2_BODY_LEN,
+                      "every tail rule set wrote %u bytes, expected %u",
+                      (unsigned)bothLen,
+                      (unsigned)CTRL_SIM_RULES_EXT2_BODY_LEN);
+        memset(&bothOut, 0xAB, sizeof(bothOut));
+        UT_ASSERT(dec(buf, bothLen, &bothOut));
+        UT_ASSERT(bothOut.u.simRules.tank_collision_mac == 1);
+        UT_ASSERT(bothOut.u.simRules.tank_deep_sea_safe == 1);
+        UT_ASSERT_MSG(bothOut.u.simRules.building_life == 255,
+                      "building_life decoded as %ld, expected 255",
+                      (long)bothOut.u.simRules.building_life);
+        UT_ASSERT(bothOut.u.simRules.shell_speed == both.u.simRules.shell_speed);
+
+        /* Cut short of building_life, the same bytes read it as classic and
+           keep the two rules in front of it. */
+        UT_ASSERT(dec(buf, CTRL_SIM_RULES_BODY_LEN, &bothOut));
+        UT_ASSERT(bothOut.u.simRules.tank_collision_mac == 1);
+        UT_ASSERT(bothOut.u.simRules.tank_deep_sea_safe == 1);
+        UT_ASSERT(bothOut.u.simRules.building_life ==
+                  CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC);
+
+        /* Only tank_deep_sea_safe: the Mac byte rides along at zero and
+           building_life is not sent. */
+        both.u.simRules.tank_collision_mac = 0;
+        both.u.simRules.building_life = CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC;
+        UT_ASSERT(enc(&both, NULL, buf, sizeof(buf), &bothLen) == ENCODE_OK);
+        UT_ASSERT_MSG(bothLen == CTRL_SIM_RULES_BASE_BODY_LEN + 2,
+                      "tank_deep_sea_safe alone wrote %u bytes, expected %u",
+                      (unsigned)bothLen,
+                      (unsigned)(CTRL_SIM_RULES_BASE_BODY_LEN + 2));
+        memset(&bothOut, 0xAB, sizeof(bothOut));
+        UT_ASSERT(dec(buf, bothLen, &bothOut));
+        UT_ASSERT(bothOut.u.simRules.tank_collision_mac == 0);
+        UT_ASSERT(bothOut.u.simRules.tank_deep_sea_safe == 1);
+        UT_ASSERT(bothOut.u.simRules.building_life ==
+                  CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC);
+
+        /* tank_collision_mac and building_life with tank_deep_sea_safe off
+           between them: the whole tail, the middle byte zero. */
+        both.u.simRules.tank_collision_mac = 1;
+        both.u.simRules.tank_deep_sea_safe = 0;
+        both.u.simRules.building_life      = 255;
+        UT_ASSERT(enc(&both, NULL, buf, sizeof(buf), &bothLen) == ENCODE_OK);
+        UT_ASSERT(bothLen == CTRL_SIM_RULES_EXT2_BODY_LEN);
+        memset(&bothOut, 0xAB, sizeof(bothOut));
+        UT_ASSERT(dec(buf, bothLen, &bothOut));
+        UT_ASSERT(bothOut.u.simRules.tank_collision_mac == 1);
+        UT_ASSERT(bothOut.u.simRules.tank_deep_sea_safe == 0);
+        UT_ASSERT(bothOut.u.simRules.building_life == 255);
     }
 
     /* And a buffer too small to hold the body is refused rather than
@@ -366,6 +475,25 @@ int run_sim_rules_codec_golden(void) {
     UT_ASSERT(buf[sizeof(kSrGolden)] == 1);
     UT_ASSERT(dec(buf, outLen, &out));
     UT_ASSERT(out.u.simRules.tank_collision_mac == 1);
+    UT_ASSERT(out.u.simRules.tank_deep_sea_safe == 0);
+
+    /* tank_deep_sea_safe alone sends the whole tail, the Mac byte as 0, so
+       the byte it rides in is the same whatever else is on. */
+    in.u.simRules.tank_collision_mac = 0;
+    in.u.simRules.tank_deep_sea_safe = 1;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &outLen) == ENCODE_OK);
+    UT_ASSERT(outLen == sizeof(kSrGolden) + 2);
+    UT_ASSERT(memcmp(buf, kSrGolden, sizeof(kSrGolden)) == 0);
+    UT_ASSERT(buf[sizeof(kSrGolden)] == 0);
+    UT_ASSERT(buf[sizeof(kSrGolden) + 1] == 1);
+    UT_ASSERT(dec(buf, outLen, &out));
+    UT_ASSERT(out.u.simRules.tank_collision_mac == 0);
+    UT_ASSERT(out.u.simRules.tank_deep_sea_safe == 1);
+
+    /* Both off again is the golden body, with no tail. */
+    in.u.simRules.tank_deep_sea_safe = 0;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &outLen) == ENCODE_OK);
+    UT_ASSERT(outLen == sizeof(kSrGolden));
 
     return 0;
 }

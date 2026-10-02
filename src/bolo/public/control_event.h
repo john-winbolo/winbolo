@@ -632,9 +632,27 @@ typedef struct LobbyScriptEntry {
     F(turn_crater) F(turn_rubble) F(turn_boat) F(turn_deep_sea)              \
     F(turn_refuel_base)
 
-/* Optional tail after the original 131-byte body. Omitted when zero so
- * classic games keep their wire format; old recordings decode as zero. */
-#define CTRL_SIM_RULES_EXT_U8_FIELDS(F) F(tank_collision_mac)
+/* The optional tail after the fixed base body, one byte per rule: first the
+ * CTRL_SIM_RULES_EXT_U8_FIELDS rules, then CTRL_SIM_RULES_EXT2_U8_FIELDS.
+ * The two lists are one ordered tail on the wire. The encoder sends the tail
+ * only as far as its last rule that is not at its classic value, and the
+ * rules in front of that one ride along whatever they hold. So a classic
+ * game sends only the base body, and a game that turns on only the first
+ * rule keeps the base-plus-one body it had before the later rules were
+ * added. A body may stop anywhere in the tail; the rules past its end decode
+ * as their classic values. Append only: a rule's place in the tail is its
+ * place on the wire.
+ *
+ * In the first list the classic value is zero (each rule is an off/on
+ * switch). In the second list it is not: building_life is classic at
+ * CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC (4 hits), and a bot's brain reads it
+ * from the client's table to know whether a wall is worth shooting (Joust's
+ * 255-hit walls). Zero is not a value that row allows, so an event built
+ * with the field left at zero is sent as if it were classic too. */
+#define CTRL_SIM_RULES_EXT_U8_FIELDS(F)                                      \
+    F(tank_collision_mac) F(tank_deep_sea_safe)
+#define CTRL_SIM_RULES_EXT2_U8_FIELDS(F) F(building_life)
+#define CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC 4
 
 /* Every carried rule, whatever its width, for the callers that do not care
  * how wide one goes — the check for whether a changed rule is one this
@@ -644,7 +662,8 @@ typedef struct LobbyScriptEntry {
     CTRL_SIM_RULES_U16_FIELDS(F)                                             \
     CTRL_SIM_RULES_U32_FIELDS(F)                                             \
     CTRL_SIM_RULES_F32_FIELDS(F)                                             \
-    CTRL_SIM_RULES_EXT_U8_FIELDS(F)
+    CTRL_SIM_RULES_EXT_U8_FIELDS(F)                                          \
+    CTRL_SIM_RULES_EXT2_U8_FIELDS(F)
 
 /* The member each list entry becomes. Integer rules keep the int32_t
  * SimRules declares them as whatever width they travel in, so reading one
@@ -653,7 +672,10 @@ typedef struct LobbyScriptEntry {
 #define CTRL_SIM_RULES_FLT_MEMBER(name) float   name;
 
 /* Body size, so the encoder and the decoder agree on it by construction
- * rather than by counting: one byte, two, four and four per entry. */
+ * rather than by counting: one byte, two, four and four per entry.
+ * BASE_BODY_LEN is the shortest body (a classic game), BODY_LEN is the base
+ * and the whole first tail list, and EXT2_BODY_LEN is the base and the whole
+ * tail, the longest body there is. */
 #define CTRL_SIM_RULES_COUNT_ONE(name) + 1
 #define CTRL_SIM_RULES_BASE_BODY_LEN                                         \
     ((size_t)((0 CTRL_SIM_RULES_U8_FIELDS(CTRL_SIM_RULES_COUNT_ONE)) * 1 +   \
@@ -663,6 +685,9 @@ typedef struct LobbyScriptEntry {
 #define CTRL_SIM_RULES_BODY_LEN                                              \
     (CTRL_SIM_RULES_BASE_BODY_LEN +                                         \
      (size_t)(0 CTRL_SIM_RULES_EXT_U8_FIELDS(CTRL_SIM_RULES_COUNT_ONE)))
+#define CTRL_SIM_RULES_EXT2_BODY_LEN                                         \
+    (CTRL_SIM_RULES_BODY_LEN +                                              \
+     (size_t)(0 CTRL_SIM_RULES_EXT2_U8_FIELDS(CTRL_SIM_RULES_COUNT_ONE)))
 
 /* `quiet` on the five variants that carry one is the announce policy's
  * answer, stamped by the server where it built the event: 0 to announce the
@@ -1185,6 +1210,7 @@ typedef struct ControlEvent {
             CTRL_SIM_RULES_U32_FIELDS(CTRL_SIM_RULES_INT_MEMBER)
             CTRL_SIM_RULES_F32_FIELDS(CTRL_SIM_RULES_FLT_MEMBER)
             CTRL_SIM_RULES_EXT_U8_FIELDS(CTRL_SIM_RULES_INT_MEMBER)
+            CTRL_SIM_RULES_EXT2_U8_FIELDS(CTRL_SIM_RULES_INT_MEMBER)
         } simRules;
 
         /* CTRL_SCN_PANEL — one panel's display list, replacing whatever

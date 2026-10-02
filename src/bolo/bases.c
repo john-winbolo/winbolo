@@ -460,9 +460,12 @@ baseAlliance basesGetStatusNum(GameSim *sim, BYTE baseNum) {
 
   baseNum--;
   returnValue = baseNeutral;
-  /* A base off the map has no status to draw; it reads as neutral, which is
-     what the panel shows for a slot the map does not use. */
-  if (baseNum < ((*value)->numBases) && (*value)->active[baseNum] != FALSE) {
+  /* A base off the map has no status to draw. It reads as baseOffMap, and
+     the panel leaves its place empty, the way it leaves every slot past the
+     map's count. */
+  if (baseNum < ((*value)->numBases) && (*value)->active[baseNum] == FALSE) {
+    returnValue = baseOffMap;
+  } else if (baseNum < ((*value)->numBases)) {
     if ((*value)->item[baseNum].armour <= sim->rules.base_capture_armour) {
       returnValue = baseDead;
     } else if ((*value)->item[baseNum].owner == NEUTRAL) {
