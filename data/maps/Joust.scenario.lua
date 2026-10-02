@@ -172,9 +172,11 @@ end
 -- long for a panel row is cut short.
 local LABEL_MAX = 22
 
--- The longest line announce, message and end_round take, in bytes. A longer
--- one is refused and nobody sees it.
-local TEXT_MAX = 128
+-- The longest line this script writes, in bytes. message and end_round take
+-- 128, but an announce line with a position ("top") takes only 125, and the
+-- kill and win lines go out that way. A longer one is refused and nobody
+-- sees it.
+local TEXT_MAX = 125
 
 -- s cut to at most max bytes, ending in ".." when it was cut. The cut falls
 -- between two whole UTF-8 characters, never inside one.

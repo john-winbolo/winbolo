@@ -972,7 +972,10 @@ local function command(p, args)
 
   if verb == "interval" and n then
     TANK.interval = clamp(math.floor(n), INTERVAL_MIN, INTERVAL_MAX)
-    game.message(status_text() .. " (the interval counts from the next mode)")
+    -- Two lines: the status alone is near the 128-byte limit of a message,
+    -- and a longer line is refused and nobody sees it.
+    game.message(status_text())
+    game.message("Rule Roulette: the tank interval counts from the next mode")
   elseif verb == "builder" and n then
     BUILDER.interval = builder_secs(math.floor(n))
     if BUILDER.interval == 0 then
@@ -984,7 +987,8 @@ local function command(p, args)
     elseif BUILDER.mode == nil then
       BUILDER.wake = true   -- the next second starts a builder mode
     end
-    game.message(status_text() .. " (the builder interval counts from the next mode)")
+    game.message(status_text())
+    game.message("Rule Roulette: the builder interval counts from the next mode")
   elseif verb == "preview" and n then
     preview = clamp(math.floor(n), 0, PREVIEW_MAX)
     draw_panel(true)

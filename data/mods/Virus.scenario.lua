@@ -1369,7 +1369,7 @@ scenario = {
       type = "int", min = 0, max = 300, step = 15,
       default = COMPASS_SECONDS },
     { id = "zero_human", label = "First infected is a person",
-      type = "choice", choices = { "Yes", "No", "Random" },
+      type = "choice", choices = { "No", "Yes", "Random" },
       default = ZERO_HUMAN },
   },
 
