@@ -1,9 +1,11 @@
 -- Rule Roulette's Hovercraft mode, then Normal.
 --
 -- The runner writes data/mods/RuleRoulette.scenario.lua in front of this
--- text (the include on the GATE line), so the mod's locals -- MODES, queue,
--- mode, shown, next_at -- are in scope. The queue is given Hovercraft and
--- then Normal before the mod's on_start takes the first mode from it.
+-- text (the include on the GATE line), so the mod's locals -- TANK, with
+-- its modes, queue, mode, shown and next_at -- are in scope. The tank
+-- track's queue is given Hovercraft and then Normal before the mod's
+-- on_start takes the first mode from it. The builder track runs beside it
+-- on the lobby default and touches none of these rules.
 --
 -- One tank, with a brain that holds the accelerator and never turns. The
 -- arena points it east down one test strip after another with
@@ -138,8 +140,8 @@ end
 
 function on_start(g)
   for _, want in ipairs(ORDER) do
-    for i, m in ipairs(MODES) do
-      if m.name == want then queue[#queue + 1] = i end
+    for i, m in ipairs(TANK.modes) do
+      if m.name == want then TANK.queue[#TANK.queue + 1] = i end
     end
   end
   mod_start()
@@ -160,6 +162,7 @@ function on_tank_killed(g, victim, killer, cause, scripted)
 end
 
 local function check_rules(g)
+  local mode, shown = TANK.mode, TANK.shown
   local name = mode and mode.name or "-"
   local want = name == "Hovercraft" and HOVER or {}
   for _, r in ipairs(WATCH) do
@@ -236,13 +239,13 @@ function on_tick(g, tick)
     end
     return
   end
-  if mode == nil or mode.name ~= "Hovercraft" then return end
+  if TANK.mode == nil or TANK.mode.name ~= "Hovercraft" then return end
 
   local tk = g.tank(ME)
   if tk == nil or tk.dead then return end
 
   -- The end of the mode: out on deep sea when the rule goes back off.
-  if not final and strip_i > #STRIPS and next_at - tick <= 300 then
+  if not final and strip_i > #STRIPS and TANK.next_at - tick <= 300 then
     if send(g, STRIPS[4].y) then final = true end
     return
   end
