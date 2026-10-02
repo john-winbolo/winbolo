@@ -93,7 +93,11 @@ static TTF_Font *labelFont = NULL;
 typedef struct {
     char name[PLAYER_NAME_LEN];
     int  x, y;                     /* top-left, in render-target pixels */
+    int  tex;                      /* s_tankLabelTex slot, -1 for none;
+                                      set by lv_drawTankLabelCount */
 } LvTankLabelPos;
+/* One rasterized name. Found by name, not by list position, so a name keeps
+ * its texture when a tank entering or leaving view shifts the list. */
 typedef struct {
     char         name[PLAYER_NAME_LEN];
     SDL_Texture *tex;              /* white; tinted at draw time */
@@ -856,6 +860,9 @@ void lv_drawCleanup(void) {
     lvFlushRegionNames();
     lvFlushTankLabels();
     s_tankLabelCount = 0;
+    /* A GIF export that was still running when the session ended must not
+       leave the next session drawing its names into the target. */
+    s_tankLabelsInTarget = FALSE;
     if (textureTiles) { SDL_DestroyTexture(textureTiles); textureTiles = NULL; }
     if (textureTanks) { SDL_DestroyTexture(textureTanks); textureTanks = NULL; }
     if (textureBoats) { SDL_DestroyTexture(textureBoats); textureBoats = NULL; }
@@ -1543,6 +1550,7 @@ static void lvDrawRecordTankLabel(const char *str, int mx, int my, BYTE px, BYTE
     SDL_strlcpy(l->name, str, sizeof(l->name));
     l->x = (mx+1) * zf * TILE_SIZE_X + zf * (px+1);
     l->y = my * zf * TILE_SIZE_Y + zf * py;
+    l->tex = -1;
 }
 
 static void lvFlushTankLabels(void) {
@@ -1568,7 +1576,8 @@ void lv_drawSetTankLabelsInTarget(BYTE inTarget) {
 }
 
 int lv_drawTankLabelCount(float scale) {
-    int px, i;
+    int px, i, j;
+    bool used[MAX_TANKS];
 
     if (s_tankLabelsInTarget || sdlRenderer == NULL) return 0;
 
@@ -1587,9 +1596,28 @@ int lv_drawTankLabelCount(float scale) {
     }
     if (s_tankLabelFont == NULL) return 0;
 
+    /* First the names that already have a texture, wherever it sits. */
+    for (j = 0; j < MAX_TANKS; j++) used[j] = FALSE;
     for (i = 0; i < s_tankLabelCount; i++) {
-        LvTankLabelTex *t = &s_tankLabelTex[i];
-        if (t->tex != NULL && SDL_strcmp(t->name, s_tankLabelPos[i].name) == 0) continue;
+        s_tankLabelPos[i].tex = -1;
+        for (j = 0; j < MAX_TANKS; j++) {
+            if (!used[j] && s_tankLabelTex[j].tex != NULL &&
+                SDL_strcmp(s_tankLabelTex[j].name, s_tankLabelPos[i].name) == 0) {
+                s_tankLabelPos[i].tex = j;
+                used[j] = TRUE;
+                break;
+            }
+        }
+    }
+    /* Then the rest, each into a slot no name on screen holds. There are as
+       many slots as names, so one is always free. */
+    for (i = 0; i < s_tankLabelCount; i++) {
+        LvTankLabelTex *t;
+        if (s_tankLabelPos[i].tex >= 0) continue;
+        for (j = 0; j < MAX_TANKS && used[j]; j++) {}
+        if (j == MAX_TANKS) break;
+        used[j] = TRUE;
+        t = &s_tankLabelTex[j];
         if (t->tex != NULL) SDL_DestroyTexture(t->tex);
         t->tex = NULL;
         SDL_strlcpy(t->name, s_tankLabelPos[i].name, sizeof(t->name));
@@ -1602,21 +1630,28 @@ int lv_drawTankLabelCount(float scale) {
             t->h = s->h;
             SDL_DestroySurface(s);
         }
-        if (t->tex != NULL) SDL_SetTextureBlendMode(t->tex, SDL_BLENDMODE_BLEND);
+        if (t->tex != NULL) {
+            SDL_SetTextureBlendMode(t->tex, SDL_BLENDMODE_BLEND);
+            s_tankLabelPos[i].tex = j;
+        }
     }
     return s_tankLabelCount;
 }
 
 BYTE lv_drawTankLabelGet(int index, SDL_Texture **outTex, int *outX, int *outY,
                          int *outW, int *outH) {
-    if (index < 0 || index >= s_tankLabelCount || s_tankLabelTex[index].tex == NULL) {
+    const LvTankLabelTex *t;
+
+    if (index < 0 || index >= s_tankLabelCount || s_tankLabelPos[index].tex < 0) {
         return FALSE;
     }
-    *outTex = s_tankLabelTex[index].tex;
-    *outX = s_tankLabelPos[index].x;
-    *outY = s_tankLabelPos[index].y;
-    *outW = s_tankLabelTex[index].w;
-    *outH = s_tankLabelTex[index].h;
+    t = &s_tankLabelTex[s_tankLabelPos[index].tex];
+    if (t->tex == NULL) return FALSE;
+    if (outTex != NULL) *outTex = t->tex;
+    if (outX != NULL) *outX = s_tankLabelPos[index].x;
+    if (outY != NULL) *outY = s_tankLabelPos[index].y;
+    if (outW != NULL) *outW = t->w;
+    if (outH != NULL) *outH = t->h;
     return TRUE;
 }
 

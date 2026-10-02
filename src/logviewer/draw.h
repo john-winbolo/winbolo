@@ -180,7 +180,9 @@ void lv_drawTankLabel(char *str, int mx, int my, BYTE px, BYTE py);
 *  for a target drawn at `scale` screen pixels per target
 *  pixel and returns how many there are. Get gives one: a
 *  white texture of the name (tint it for the fill and the
-*  shadow), its top-left in target pixels and its pixel size.
+*  shadow), its top-left in target pixels and its pixel size;
+*  an out pointer may be NULL. A name keeps its texture across
+*  Count calls until it leaves the screen or the size changes.
 *  Both read 0 / FALSE while the names go into the target.
 *********************************************************/
 struct SDL_Texture;
