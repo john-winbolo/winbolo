@@ -40,6 +40,14 @@ void serverSimScenarioClearSeats(ServerSim *sim);
 void serverSimScenarioReconcileLobby(ServerSim *sim);
 void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath);
 
+/* A map commit: OnMapChanged, after a lobby whose new map brings a script of
+ * its own has had every picked scenario taken off the host's list (mods
+ * stay). The map is the host's newest choice, so its own scenario plays
+ * rather than one picked before it. DropPickedScenarios is that removal on
+ * its own and answers how many rows it took off. */
+void serverSimScenarioOnMapCommitted(ServerSim *sim, const char *mapPath);
+int  serverSimDropPickedScenarios(ServerSim *sim);
+
 /* Whether the map at mapPath has a script beside it, asked through whatever
  * the process registered with serverSimSetScenarioMapScripted. False with
  * nothing registered, which is what a build carrying no scenario library
