@@ -2094,6 +2094,7 @@ int run_sim_rules_pill_angry_divisor_follows(void);
 int run_sim_rules_pill_massage_follows(void);
 int run_sim_rules_pill_aim_mac(void);
 int run_sim_rules_tank_collision_mac(void);
+int run_sim_rules_tank_deep_sea_safe(void);
 /* pill_shell_cap and pill_max_shells_at_tank through pillsUpdate
  * (test_pill_shell_cap.c). */
 int run_pill_shell_cap_off_is_no_limit(void);
