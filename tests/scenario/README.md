@@ -50,7 +50,7 @@ round go past. From the build directory:
 
 ```
 WinBoloDS.exe -map ../data/maps/Survival.map -port 0 -gametype open \
-  -nolobby -bots 4 -allybots 1 -brain ../brains/GoalHunter_1.7/init.lua \
+  -nolobby -bots 4 -allybots 1 -brain ../brains/GoalHunter/init.lua \
   -ai yes -seed 42 -ticks 6000 -asap -brain-no-budget-kill \
   -brain-lua-seed 42 -nowinbolonet -threads 12
 ```

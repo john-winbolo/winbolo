@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-ab_bench -- play GoalHunter 1.7 against ITSELF with two different sets of
+ab_bench -- play GoalHunter against ITSELF with two different sets of
 constants, one per side, and say which side came out ahead.
 
 WHY THIS EXISTS
     Every behaviour change wants an answer to "is it actually better?", and
-    until now that meant freezing a whole second brain tree (brains/GH17_keel,
-    brains/GH17_a, ...) and benching tree against tree.  With the per-bot
+    until now that meant freezing a whole second brain tree (brains/GH_keel,
+    brains/GH_a, ...) and benching tree against tree.  With the per-bot
     override tokens (init.lua, "preset=NAME" / "cfg=NAME=VALUE") one brain can
     play both sides of the same game:
 
@@ -88,9 +88,9 @@ BUILD = REPO / "build"
 OUT_ROOT = BUILD / "ab_bench"
 
 # The PRODUCTION tree: what a real game runs, print2 and viz stripped out.
-BRAIN = "brains/GoalHunter_1.7/opt/init.lua"
+BRAIN = "brains/GoalHunter/opt/init.lua"
 # The same code with the logging still in it -- only --verify-tokens uses it.
-DEBUG_BRAIN = "brains/GoalHunter_1.7/init.lua"
+DEBUG_BRAIN = "brains/GoalHunter/init.lua"
 
 MAP_ALIASES = {
     "oilrig":    "data/maps/DH-Oil Rig.map",
@@ -151,8 +151,8 @@ def bot_range(lo, hi):
 
 
 # Per-side brain override (2026-09-07): --brain-a / --brain-b let one side run a
-# different brain TREE (e.g. a frozen copy of the tree at brains/GH17_keel/opt/
-# init.lua vs the live brains/GoalHunter_1.7) -- the -bot-init range syntax
+# different brain TREE (e.g. a frozen copy of the tree at brains/GH_keel/opt/
+# init.lua vs the live brains/GoalHunter) -- the -bot-init range syntax
 # already carries a brain path per range. None = the shared `brain` (the
 # pre-existing one-tree behaviour), which is the normal case now that only one
 # brain tree ships: the frozen baseline is `--a "preset=keel"` on that tree,

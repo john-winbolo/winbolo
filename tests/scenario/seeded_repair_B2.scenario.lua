@@ -41,7 +41,7 @@ local GRASS = 7
 local FILL_TICK = 120
 local p0 = 0
 
-local BOT_BRAIN = "../brains/GoalHunter_1.7/init.lua"
+local BOT_BRAIN = "../brains/GoalHunter/init.lua"
 -- The driver's TOKENS["B2"]: arena B's two, plus the bonus at its keel value.
 -- NOT the keel seeding rule -- the seeded row competing is what puts the two
 -- rows side by side in the first place.

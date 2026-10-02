@@ -69,7 +69,7 @@
 #define EP_NAME  "Editor Wave"
 #define EP_DESC  "Written by the map editor"
 #define EP_GAME  "tournament"
-#define EP_BRAIN "GoalHunter_1.7"
+#define EP_BRAIN "GoalHunter"
 #define EP_MAX_PLAYERS 6
 #define EP_TEAM_ID     2
 #define EP_TEAM_BOTS   3

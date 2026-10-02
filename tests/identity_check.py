@@ -85,7 +85,7 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_EXE = os.path.join("build", "WinBoloDS.exe")
 DEFAULT_MAP = "data/maps/DH-Oil Rig.map"
-DEFAULT_BRAIN = "brains/GoalHunter_1.7/init.lua"
+DEFAULT_BRAIN = "brains/GoalHunter/init.lua"
 
 
 def build_argv(exe, mapfile, brain, bot_init, bots, teams, threads, port, seed,

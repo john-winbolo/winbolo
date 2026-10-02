@@ -39,7 +39,7 @@ local GRASS = 7
 local FILL_TICK = 120
 local p0 = 0
 
-local BOT_BRAIN = "../brains/GoalHunter_1.7/init.lua"
+local BOT_BRAIN = "../brains/GoalHunter/init.lua"
 -- The driver's TOKENS["C2"]: capture priced out, the farm row at its 99
 -- ceiling, and the rebuild asking for more wood than any tank carries.  Note
 -- REPAIR_BASE_COST is NOT priced out here -- the tree gate is checked on a

@@ -183,7 +183,7 @@ static int slrRound(int bots, bool inPlace) {
        waves reach the field through that arm. The brain the template names
        ships beside the binary, so this is the path a host really runs. */
     serverSimSetBotAiType(sim, aiFull);
-    serverSimSetBotBrainPath(sim, "brains/GoalHunter_1.7/init.lua");
+    serverSimSetBotBrainPath(sim, "brains/GoalHunter/init.lua");
 
     err[0] = '\0';
     host = scenarioHostAttach(sim, mapPath, err, sizeof(err));
@@ -207,7 +207,7 @@ static int slrRound(int bots, bool inPlace) {
         int slot = serverSimFindFreeSlot(sim, true);
         if (slot < 0) UT_FAIL("no free slot for defender bot %d", i);
         if (!serverSimCreateBot(sim, (BYTE)slot,
-                                "brains/GoalHunter_1.7/init.lua", "Def",
+                                "brains/GoalHunter/init.lua", "Def",
                                 serverSimGetBotAiType(sim), gameOpen,
                                 sim->sim.hiddenMines, SLR_DEF_TEAM, NULL)) {
             UT_FAIL("defender bot %d was refused at slot %d", i, slot);
@@ -374,7 +374,7 @@ static int slrRound(int bots, bool inPlace) {
         int lateBuilt = 0;
         UT_ASSERT_MSG(late >= 0, "no free slot for a late defender bot");
         if (!serverSimCreateBot(sim, (BYTE)late,
-                                "brains/GoalHunter_1.7/init.lua", "Late",
+                                "brains/GoalHunter/init.lua", "Late",
                                 serverSimGetBotAiType(sim), gameOpen,
                                 sim->sim.hiddenMines, SLR_DEF_TEAM, NULL)) {
             UT_FAIL("the late defender bot was refused at slot %d", late);
@@ -860,7 +860,7 @@ int run_survival_lobby_round_ds_order(void) {
     slrSim = sim;
     serverSimSetLobbyEnabled(sim, true);
     serverSimSetBotAiType(sim, aiFull);
-    serverSimSetBotBrainPath(sim, "brains/GoalHunter_1.7/init.lua");
+    serverSimSetBotBrainPath(sim, "brains/GoalHunter/init.lua");
 
     err[0] = '\0';
     host = scenarioHostAttach(sim, mapPath, err, sizeof(err));

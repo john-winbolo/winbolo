@@ -15,15 +15,15 @@
 -- MOVES.  A control must isolate one variable, and with a driving ally this
 -- arena is a footrace between its six tiles and our man's seven — which was
 -- measured on this host (2026-09-15, seed 42): the ally scoops the corpse at
--- t=414 and our man has not finished the rebuild, so a real-1.7 version of this
--- arena says nothing about the guard at all.  With the talker the advert is
+-- t=414 and our man has not finished the rebuild, so a version of this with a real GoalHunter ally
+-- says nothing about the guard at all.  With the talker the advert is
 -- live the entire run, so "our man rebuilt it anyway" can only mean the guard
 -- was off.
 
 local CORPSE    = 1                 -- the map's only pillbox
 local OUR_SLOT  = 0
 local ALLY_SLOT = 1
-local GOALHUNTER = "../brains/GoalHunter_1.7/init.lua"    -- from the build dir
+local GOALHUNTER = "../brains/GoalHunter/init.lua"    -- from the build dir
 local TALKER     = "../tests/brains/advert_capture.lua"
 
 -- The driver's OUR_CFG plus its GUARD_OFF, word for word.

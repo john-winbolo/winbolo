@@ -588,7 +588,7 @@ target_link_options(winbolo PRIVATE
     ${WASM_DATA_PRELOAD}
     "SHELL:--preload-file ${PRELOAD_DIR}/EverardIsland.map@/data/EverardIsland.map"
     "SHELL:--preload-file ${PRELOAD_DIR}/InbuiltTutorial.map@/data/InbuiltTutorial.map"
-    "SHELL:--preload-file ${REPO_ROOT}/brains/GoalHunter_1.7@/Brains/GoalHunter_1.7"
+    "SHELL:--preload-file ${REPO_ROOT}/brains/GoalHunter@/Brains/GoalHunter"
     # The licence and its additional permissions, which every copy of the
     # program has to carry, and the About-box docs beside them in /data.
     "SHELL:--preload-file ${REPO_ROOT}/LICENSE@/data/LICENSE"

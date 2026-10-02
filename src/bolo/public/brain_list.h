@@ -76,8 +76,8 @@ bool brainListLoadMeta(const char *name,
  * found; *rgb is 0xRRGGBB. */
 bool brainListLoadColor(const char *name, uint32_t *rgb);
 
-/* The init.lua of the named brain: "GoalHunter_1.7" becomes
- * "brains/GoalHunter_1.7/init.lua" in whichever brains parent holds it. The
+/* The init.lua of the named brain: "GoalHunter" becomes
+ * "brains/GoalHunter/init.lua" in whichever brains parent holds it. The
  * parents are the ones brainListLoadMeta reads a brain's files from — the
  * working directory's brains/ and Brains/, then the same two beside the
  * executable — and the two searches share one list, so a brain whose about.txt
@@ -135,7 +135,7 @@ bool brainDocsDecompress(const uint8_t *z, size_t zLen, size_t rawLen,
                          char *out);
 
 /* Read a brain's announce.txt and commands.txt out of its DIRECTORY
- * ("brains/GoalHunter_1.7", or the server's own brainPaths[i]). Either out
+ * ("brains/GoalHunter", or the server's own brainPaths[i]). Either out
  * buffer may be NULL; both are cleared and NUL-terminated on return. Pass
  * announceSz/docsSz as the full buffer size INCLUDING the NUL. Returns true
  * iff at least one of the two files was found and had content.
@@ -145,7 +145,7 @@ bool brainListLoadTexts(const char *brainDir,
                         char *docs, size_t docsSz,
                         bool *truncated);
 
-/* Same, keyed off the brain's init.lua path ("Brains/GoalHunter_1.7/init.lua")
+/* Same, keyed off the brain's init.lua path ("Brains/GoalHunter/init.lua")
  * — the shape brainListScan stores and the server holds in brainPaths[]. */
 bool brainListLoadTextsForPath(const char *brainPath,
                                char *announce, size_t announceSz,
@@ -273,7 +273,7 @@ typedef struct {
     int       openDefaultMode;                 /* index into modes[]  */
 } BrainModes;
 
-/* Load a brain's mode manifest by its catalogue name ("GoalHunter_1.7"),
+/* Load a brain's mode manifest by its catalogue name ("GoalHunter"),
  * searching the same parents brainListLoadMeta does. *out is ALWAYS filled
  * with something usable: a brain with no (or an unreadable, or an empty)
  * modes.txt gets the synthesized "default" mode described above. Returns
@@ -281,7 +281,7 @@ typedef struct {
  * caller that cares can tell "the brain said so" from "we made it up". */
 bool brainListLoadModes(const char *name, BrainModes *out);
 
-/* Same, keyed off a brain's init.lua path ("Brains/GoalHunter_1.7/init.lua")
+/* Same, keyed off a brain's init.lua path ("Brains/GoalHunter/init.lua")
  * rather than its catalogue name — the shape the dedicated server, the
  * single-player seed and the bot manager all hold. */
 bool brainListLoadModesForPath(const char *brainPath, BrainModes *out);
@@ -305,10 +305,10 @@ int brainModesStartMode(const BrainModes *modes, bool openGame);
  * or declares `standard_levels = yes`. False for NULL. */
 bool brainModeUsesStandardLevels(const BrainMode *mode);
 
-/* Split "Name_<ver>" into base ("Name") + numeric version (1.7). No trailing
+/* Split "Name_<ver>" into base ("Name") + numeric version (1.6). No trailing
  * _<digit> suffix → version 0 and the whole name as base. Used to sort the
  * catalogue newest-first, and by the lobby to label a bot row "GoalHunter"
- * rather than "GoalHunter_1.7". `base` is always NUL-terminated. */
+ * rather than "GoalHunter_1.6". `base` is always NUL-terminated. */
 double brainListSplitVersion(const char *name, char *base, size_t baseSz);
 
 #endif /* BRAIN_LIST_H */

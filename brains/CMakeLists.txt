@@ -4,24 +4,22 @@
 # bot_brains_static, instead of recompiling them per-binary. Every
 # binary that links luabrainshandler.c links this library to pull in
 # the per-tick registrations and bot-specific header search paths.
-# ONE brain's c/ directory is compiled: WINBOLO_BRAIN_C_DIR (default the
-# active GoalHunter). Only one brain version ships now, so the glob has a
-# single candidate -- but the variable stays, and stays a single directory,
-# because of what happened when several versions were in the tree: each
-# frozen older brain carried its own c/ copy with the SAME symbol names
+# Only the GoalHunter brain's c/ directory is compiled, from a fixed path.
+# Keep it to ONE directory. When several brain versions were in the tree,
+# each frozen older brain carried its own c/ copy with the SAME symbol names
 # (naShieldStampRegister, naThreatRegister, ...). Globbing every version
 # compiled them all into this lib, the linker kept the FIRST copy (LNK4006
 # "second definition ignored") and silently dropped the rest -- so every
 # brain, including the active one, ran the oldest version's bindings, and an
-# edit to the active version's c/ never reached the binary. Anyone who
-# freezes a second brain tree again must keep this one-directory rule.
-set(WINBOLO_BRAIN_C_DIR "GoalHunter_1.7" CACHE STRING
-    "brains/<dir>/c is the one set of brain C bindings compiled and linked (all brain versions share it)")
-
+# edit to the active version's c/ never reached the binary. Anyone who adds
+# a second brain tree with a c/ directory must keep this one-directory rule.
+# The path is not a cache option: a cached value outlives a rename of the
+# brain directory in every old build directory.
+set(_bot_c_dir_rel "GoalHunter/c")
 file(GLOB BOT_C_SOURCES CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/${WINBOLO_BRAIN_C_DIR}/c/*.c")
+    "${CMAKE_CURRENT_SOURCE_DIR}/${_bot_c_dir_rel}/*.c")
 if(NOT BOT_C_SOURCES)
-    message(FATAL_ERROR "brains/${WINBOLO_BRAIN_C_DIR}/c has no .c sources (WINBOLO_BRAIN_C_DIR)")
+    message(FATAL_ERROR "brains/${_bot_c_dir_rel} has no .c sources")
 endif()
 
 add_library(bot_brains_static STATIC ${BOT_C_SOURCES})

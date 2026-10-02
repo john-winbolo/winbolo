@@ -90,7 +90,7 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CHECKER = os.path.join(ROOT, "tests", "identity_check.py")
-BRAIN_DIR = os.path.join(ROOT, "brains", "GoalHunter_1.7")
+BRAIN_DIR = os.path.join(ROOT, "brains", "GoalHunter")
 LUA_STRIP = os.path.join(ROOT, "build", "Release", "lua_strip.exe")
 
 SEED = 4242
@@ -184,7 +184,7 @@ def check_strip_invariants():
                 bad.append("opt/%s missing -- regenerate opt/" % name)
             elif _norm(opt_path) != fresh:
                 bad.append("opt/%s is stale: it is not the current strip of "
-                           "%s -- regenerate opt/ (brains/GoalHunter_1.7/"
+                           "%s -- regenerate opt/ (brains/GoalHunter/"
                            "strip.sh) before committing" % (name, name))
             # (b) no detector call on a line the strip removes.
             kept = set(fresh)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Post-match aggregates for the GoalHunter 1.7 build design.
+"""Post-match aggregates for the GoalHunter build design.
 
     python scripts/build_stats.py build/debug_sessions/<session> [bot ...]
 

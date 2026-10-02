@@ -41,7 +41,7 @@ local GRASS = 7
 local FILL_TICK = 120
 local p0 = 0
 
-local BOT_BRAIN = "../brains/GoalHunter_1.7/init.lua"
+local BOT_BRAIN = "../brains/GoalHunter/init.lua"
 -- The driver's TOKENS["A"].
 local TOKENS = "cfg=REPAIR_BASE_COST=1e30;cfg=DEFEND_ALARM_MODE=false"
 -- ONE TOKEN THE DRIVER DID NOT NEED.  cfg=PILL_REPOSITION_ENABLED=false is not

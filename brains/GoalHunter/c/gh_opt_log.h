@@ -25,7 +25,7 @@
  *                                     stop the thread: it is shared by every
  *                                     brain instance in the process (1.6's
  *                                     optimize.lua closes at Brain.close while
- *                                     1.7 brains are still appending)
+ *                                     current brains are still appending)
  */
 
 void naOptLogRegister(lua_State *L);
