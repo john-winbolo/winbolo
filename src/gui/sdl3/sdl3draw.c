@@ -221,6 +221,7 @@ static bool               gOverviewPrepVoiceWanted       = FALSE;
 static bool               gOverviewPrepVoiceMuted        = FALSE;
 static bool               gOverviewPrepVoiceTransmitting = FALSE;
 static float              gOverviewPrepVoiceLevel        = 0.0f;
+static bool               gOverviewPrepVoiceEveryone     = FALSE;
 
 #if defined(WINBOLO_VOICE)
 /* The microphone indicator's two icons, textured on this window's renderer at
@@ -267,6 +268,7 @@ static SDL_Texture *micIndicatorTex(bool muted, int px) {
 typedef struct {
   bool  muted;
   bool  transmitting;
+  bool  everyone; /* a scenario sent voice to every player, not allies alone */
   float level;   /* 0..1, the live capture level */
 } MicIndicatorState;
 
@@ -283,7 +285,13 @@ typedef struct {
    microphone's own shape rather than sitting over it as a rectangle.
 
    Muted fills nothing. The red barred microphone is the whole message there,
-   and a level climbing up it says the opposite at the same time. */
+   and a level climbing up it says the opposite at the same time.
+
+   While a scenario has voice going to every player, the live glyph is amber in
+   place of white: the one icon a player watches while talking says that the
+   other side hears them too. The fill keeps its white and green, so green
+   still means one thing, that the frame is going out. The line in the
+   newswire says it once; this keeps saying it for as long as it holds. */
 static void micIndicatorDraw(float x, float y, int px,
                              const MicIndicatorState *st, Uint8 opacity) {
   SDL_Texture *tex = micIndicatorTex(st->muted, px);
@@ -294,6 +302,9 @@ static void micIndicatorDraw(float x, float y, int px,
   if (st->muted) {
     SDL_SetTextureColorMod(tex, 255, 89, 89);
     SDL_SetTextureAlphaMod(tex, opacity);
+  } else if (st->everyone) {
+    SDL_SetTextureColorMod(tex, 255, 184, 51);
+    SDL_SetTextureAlphaMod(tex, (Uint8)(((int)opacity * 102) / 255));
   } else {
     SDL_SetTextureColorMod(tex, 255, 255, 255);
     SDL_SetTextureAlphaMod(tex, (Uint8)(((int)opacity * 102) / 255));
@@ -984,7 +995,11 @@ SDL_Texture *sdl3DrawGetTilesTexture(void) {
 void sdl3DrawSetOverviewInWindow(bool active) {
   if (active == gOverviewInWindow) return;
   gOverviewInWindow = active;
-  if (!active) {
+  if (active) {
+    /* The map is coming back on screen, so it says what camera it kept. A
+       view not made yet says so on its own when the first draw makes it. */
+    overviewViewShowCameraNotice(gOverviewView);
+  } else {
     overviewViewReleaseCursor(gOverviewView);
     gOverviewRect.x = gOverviewRect.y = gOverviewRect.w = gOverviewRect.h = 0.0f;
     gOverviewHudValid = FALSE;
@@ -2394,6 +2409,7 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
   gOverviewPrepVoiceMuted        = voiceMuted;
   gOverviewPrepVoiceTransmitting = voiceTransmitting;
   gOverviewPrepVoiceLevel        = voiceLevel;
+  gOverviewPrepVoiceEveryone     = clientSimGetVoiceEveryone(cs);
 
   gOverviewPrepW       = w;
   gOverviewPrepH       = h;
@@ -2646,6 +2662,7 @@ void sdl3DrawFlushOverviewInWindow(void) {
         MicIndicatorState mic;
         mic.muted        = gOverviewPrepVoiceMuted;
         mic.transmitting = gOverviewPrepVoiceTransmitting;
+        mic.everyone     = gOverviewPrepVoiceEveryone;
         mic.level        = gOverviewPrepVoiceLevel;
         micIndicatorDraw(roundf(x), roundf(y), px, &mic, colAlpha);
       }
@@ -3264,6 +3281,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       MicIndicatorState mic;
       mic.muted        = voiceIsSelfMuted();
       mic.transmitting = voiceIsTransmitting();
+      mic.everyone     = clientSimGetVoiceEveryone(cs);
       mic.level        = voiceGetInputMeter();
       micIndicatorDraw((float)(micSrcX * gZoomFactor),
                        (float)(micSrcY * gZoomFactor),

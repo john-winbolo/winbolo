@@ -120,6 +120,18 @@ static langid clientPingMessageId(uint8_t kind) {
   return kPingMessageIds[kind];
 }
 
+/* Does this received ping also post a newswire line? A person's ping does,
+ * every kind. A bot's ping does only when it is ON MY WAY: that one answers
+ * an order a person just gave, so the person is owed the line. Every other
+ * bot ping is a marker the bot placed for itself (GoalHunter marks each new
+ * attack goal), and a line for each of those filled the newswire with the
+ * bots' goals. The marker itself is still drawn either way. */
+static bool clientPingPostsNewswire(players *plrs, uint8_t sender,
+                                    uint8_t kind) {
+  if (!playersIsBot(plrs, sender)) return true;
+  return kind == PING_KIND_ON_MY_WAY;
+}
+
 /*********************************************************
 *NAME:          clientBuildInputPacket
 *PURPOSE:
@@ -979,15 +991,17 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
         }
         clientSimAddPing(csPtr, sender, kind, px, py, nowMs);
         if (isHuman) {
-          MessageArgs args;
-          memset(&args, 0, sizeof(args));
-          playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[0],
-                               args.playerName, sizeof(args.playerName), FALSE);
-          args.playerFlags = playersGetAccountFlags(&csPtr->sim.plyrs, events[i].data[0]);
-          playersGetCountryCode(&csPtr->sim.plyrs, events[i].data[0], args.playerCountry);
-          csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx,
-                                          newsWireMessage, MESSAGE_NEWSWIRE,
-                                          clientPingMessageId(kind), &args);
+          if (clientPingPostsNewswire(&csPtr->sim.plyrs, sender, kind)) {
+            MessageArgs args;
+            memset(&args, 0, sizeof(args));
+            playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[0],
+                                 args.playerName, sizeof(args.playerName), FALSE);
+            args.playerFlags = playersGetAccountFlags(&csPtr->sim.plyrs, events[i].data[0]);
+            playersGetCountryCode(&csPtr->sim.plyrs, events[i].data[0], args.playerCountry);
+            csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx,
+                                            newsWireMessage, MESSAGE_NEWSWIRE,
+                                            clientPingMessageId(kind), &args);
+          }
           /* And its sound, out through the same seam the lobby sounds use:
              the frontend owns every audio decision from here on, including
              whether this kind has a sound of its own or plays the default

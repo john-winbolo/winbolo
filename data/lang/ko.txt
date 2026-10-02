@@ -2024,6 +2024,7 @@ STR_MENU_MAP_OVERVIEW=지도 전체 보기
 STR_MENU_OVERVIEW_IN_WINDOW=전체 화면
 STR_OVERVIEW_FOLLOWING=추적
 STR_OVERVIEW_FREE=자유
+STR_OVERVIEW_FREE_HINT=자유 ({string1} 키로 추적)
 STR_DLGKEYSETUP_OVERVIEWZOOM=맵 확대 (홀드)
 STR_DLGKEYSETUP_OVERVIEWFOLLOW=맵 추적 (토글)
 STR_DLGKEYSETUP_OVERVIEWZOOMIN=맵 확대
@@ -2728,3 +2729,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=창작마당
 # The game finder's scripts
 STR_DLGBROWSER_MODS=모드
 STR_DLGBROWSER_MODS_MORE=+모드 {number}개
+
+# In-game newswire — a scenario changed who hears a player's voice
+STR_VOICE_EVERYONE_ON=이제 음성 채팅이 게임의 모든 플레이어에게 전달됩니다
+STR_VOICE_EVERYONE_OFF=이제 음성 채팅이 동맹에게만 전달됩니다

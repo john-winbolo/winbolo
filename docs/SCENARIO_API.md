@@ -977,10 +977,12 @@ round ends.
 ### `scenario.rules`
 
 A table of rule name to value. Names are the ones in [Rules](#rules) —
-the same ones `game.rule` and `game.set_rule` take. A name that spells no rule,
-or a value outside a rule's range, is reported and the rest of the table still
-applies. A value that is not a number is dropped without a report, so `"40"`
-in quotes sets nothing.
+the same ones `game.rule` and `game.set_rule` take. A name that spells no rule
+is reported and dropped, and the rest of the table still applies. A value that
+is not a number is dropped without a report, so `"40"` in quotes sets nothing.
+At round start the table is checked and applied whole: a value outside its
+rule's range, or two values that break a pair between them, applies none of the
+table's rules, and the console says why.
 
 ```lua
 rules = {
@@ -1154,9 +1156,11 @@ without asking for it: the round after a scenario is detached, and a round
 whose script failed to boot — neither has a table of its own to write, and
 neither inherits the last script's.
 
-The table is applied a rule at a time. A rule the file names that the sim
-refuses is reported by name, with the reason, and the rest of the table is
-applied around it; one bad row does not cost a scenario its other rules.
+The table is applied as a whole. Every value goes in before the check reads
+any of them, so a table that raises `pill_max_armour` and `pill_repair_amount`
+together is taken in whatever order it lists them. A table the check refuses
+applies none of its rules: the round plays the classic table, and the console
+names the reason, as `-validate` does.
 
 ### The roster and the lobby
 
@@ -1724,9 +1728,10 @@ there and then, and the bare flags (`noblitz`, `blitzonly`, `suicider`,
 `nosuicider`, `noclaimdead`, `normal`, `ammoless`, `survivor`, `horde`) change the bot's behaviour from the next
 tick. `difficulty=` and `mode=` are **not** applied at runtime — those choose a
 whole bundle of values at load and a second bundle cannot unset the first — so
-the brain logs them as unsupported and leaves them. It also says one line to
-its team, `init updated: <n> tokens`, so a human on the same side can see the
-change land.
+the brain logs them as unsupported and leaves them. It also says one line,
+`init updated: <n> tokens`, to the other bots on its team (never to a human:
+a scenario that retunes its bots often would fill the newswire), so a script's
+`on_chat` can see the change land when another bot is on the same side.
 
 A bot whose brain is not running yet still keeps the table: the record is what
 its next brain is built from, so nothing the script asked for is lost.
@@ -1869,6 +1874,8 @@ to escort a person stays where it is.
 | `game.say(p, text[, target])` | A chat line seat `p` says, exactly as a player typing would: to its own team with no target, to everyone with `"all"`, or to one seat with a number. |
 | `game.sound(name[, x, y])` | Plays one of the server's sounds, at a square or everywhere. |
 | `game.log(text)` | Writes a line to the server's console. No player sees it. |
+| `game.set_voice_everyone(on)` | With `true`, voice in the running round goes to every player rather than to the talker's allies alone. `false` puts it back. |
+| `game.voice_everyone()` | Whether voice is going to everyone: what `set_voice_everyone` last set this round, and `false` on a server with voice off. |
 | `game.end_round([text[, winner_team]])` | Ends the round now, with the line the lobby shows and the team that won it. |
 | `game.set_game_time(ticks)` | How long the round has left, in `game.tick()`'s own units: 100 a second, so a minute is 6000. |
 | `game.add_game_time(ticks)` | Adds to what the round has left, or takes away with a negative, in the same units. A round with no time limit has nothing to add to, so give it a length first. |
@@ -1911,6 +1918,30 @@ receiver that never sees it. Use `"all"` or a seat number there.
 `end_round` is how a scenario wins or loses a round. It stops play there and
 then, and the line it carries is shown in the lobby exactly as written — the
 server adds no verdict of its own.
+
+`set_voice_everyone` is for a round where sides do not fit voice. In a round,
+the server sends a player's voice only to that player's allies, so a round
+where every tank is on a team of its own has nobody hearing anybody. With voice
+to everyone on, the alliance check is skipped and every connected player hears
+every talker. Nothing else changes: a player's mutes still hold, a player still
+hears at most four talkers at a time, and a spectator still hears nobody.
+Outside a round everyone hears everyone already, so the setting has no effect
+in the lobby.
+
+Every player is told when the setting changes in a running round: a line in
+the newswire, in the player's own language, and while it is on the outline of
+the microphone in the game view is drawn amber rather than white. A setting already on when
+the round starts is told as it starts, and a player who joins mid-round is
+told as they join. Setting the value it already holds tells nobody anything,
+so a script may set it every tick. The replay records each change.
+
+The setting is the server's own and lasts for one round. Every round starts
+with it off, and it goes off again when the round returns to the lobby and
+when the scenario is taken off the server, so a later round without the script
+has voice to allies only. Call it from `on_setup` or later; a call in the lobby
+is cleared when the round starts. A server with voice off forwards no voice at
+all, so `set_voice_everyone(true)` is refused there (`SCN_OP_WRONG_STATE`);
+`set_voice_everyone(false)` is always taken.
 
 ---
 

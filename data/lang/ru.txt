@@ -2024,6 +2024,7 @@ STR_MENU_MAP_OVERVIEW=Обзор карты
 STR_MENU_OVERVIEW_IN_WINDOW=Полноэкранный режим
 STR_OVERVIEW_FOLLOWING=слежение
 STR_OVERVIEW_FREE=свободная
+STR_OVERVIEW_FREE_HINT=свободная ({string1} для слежения)
 STR_DLGKEYSETUP_OVERVIEWZOOM=Масштаб карты (удерживать)
 STR_DLGKEYSETUP_OVERVIEWFOLLOW=Слежение на карте (переключение)
 STR_DLGKEYSETUP_OVERVIEWZOOMIN=Увеличить карту
@@ -2730,3 +2731,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Мастерская
 # The game finder's scripts
 STR_DLGBROWSER_MODS=Моды
 STR_DLGBROWSER_MODS_MORE=+ моды ({number})
+
+# In-game newswire — a scenario changed who hears a player's voice
+STR_VOICE_EVERYONE_ON=Голосовой чат теперь слышат все в игре
+STR_VOICE_EVERYONE_OFF=Голосовой чат теперь слышат только ваши союзники

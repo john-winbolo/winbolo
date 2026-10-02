@@ -80,7 +80,8 @@ extern "C" {
  * waits. Hand-declared, as lobby_internal.h declares the reel's fetch. */
 void wasmFinderFetchStart(void);
 int  wasmFinderFetchTake(char **out);
-/* Load /join/<serverKey> in this tab (finder_wasm.c). */
+/* Record the game a Join picked (main_wasm.c); the finder then closes with
+ * openUdpJoin and the page starts that game. */
 void wasmFinderJoin(const char *serverKey);
 /* The page's WinBolo.net account (winbolonet_wasm.c), read from
  * /api/v1/me; signing in goes to www.winbolo.net and returns to the finder. */
@@ -1627,6 +1628,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     if (joinActivate && account == FINDER_ACCOUNT_SIGNED_IN &&
                         finderRowJoinable(e)) {
                         wasmFinderJoin(e.serverKey);
+                        result = (int)openUdpJoin;
+                        running = false;
                     }
 #else
                     if (joinActivate) {
@@ -2350,6 +2353,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 if (!canJoin) ImGui::BeginDisabled();
                 if (ImGui::Button(langGetText(STR_DLGTCP_JOIN), ImVec2(btnW, btnH))) {
                     wasmFinderJoin(servers[selectedItem].serverKey);
+                    result = (int)openUdpJoin;
+                    running = false;
                 }
                 imguiHandOnHover();
                 if (!canJoin) ImGui::EndDisabled();

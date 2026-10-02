@@ -114,6 +114,22 @@ elseif(NOT MSVC)
 endif()
 
 
+# The round recorder on its own. The dedicated binaries get it through
+# server_static below; the web client links it directly, to record practice
+# rounds for the lobby's replay without the UDP server and lifecycle it
+# stubs. Built under sim_owner so it keeps its T2 access at the target
+# level wherever it is linked. The transport's round-log source and the
+# lifecycle's stash hooks it hands itself to are resolved by whichever
+# consumer links it: server_static here, server_stubs_wasm.c on the web.
+add_library(server_round_log_static STATIC EXCLUDE_FROM_ALL
+    server_dedicated_log.c
+    server_dedicated_log_settings.c
+    server_dedicated_log_path.c
+)
+bolo_apply_include_rules(server_round_log_static sim_owner)
+set_target_properties(server_round_log_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(server_round_log_static PUBLIC server_sim_static)
+
 add_library(server_static STATIC EXCLUDE_FROM_ALL
     geolookup.c
     server_console.c
@@ -133,10 +149,8 @@ add_library(server_static STATIC EXCLUDE_FROM_ALL
     udp/udp_server_voice.c
     udp/udp_server_wbn.c
     mdns_advertise.c
-    server_dedicated_log.c
-    server_dedicated_log_settings.c
-    server_dedicated_log_path.c
 )
+target_link_libraries(server_static PUBLIC server_round_log_static)
 
 # mdns_advertise.c is the only TU that pulls in the all-static-inline
 # mdns.h; suppress the unused-function noise for that one file rather

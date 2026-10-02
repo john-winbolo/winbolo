@@ -432,6 +432,9 @@ static SDL_Texture *s_iconSpeaker[ICON_SLOT_COUNT]      = {};
 static SDL_Texture *s_iconMic[ICON_SLOT_COUNT]          = {};
 static SDL_Texture *s_iconMicMuted[ICON_SLOT_COUNT]     = {};
 static SDL_Texture *s_iconMicOff[ICON_SLOT_COUNT]       = {};
+/* The own row with voice switched off on this client: a separate icon from
+ * no microphone, because the fix is different — a setting, not a device. */
+static SDL_Texture *s_iconMicDisabled[ICON_SLOT_COUNT]  = {};
 static SDL_Texture *s_iconSpeakerMuted[ICON_SLOT_COUNT] = {};
 /* The local player's slot, read once a frame in sdl3ImguiPumpAndRender — the
  * only place here with a ClientSim to ask. PLAYER_SELF_UNKNOWN rather than 0
@@ -543,6 +546,7 @@ static void ensureWbnIconsLoaded(void) {
     s_iconMic[slot]          = imguiLoadSvgIconWhite(r, "data/ui/mic.svg",           WBN_ICON_RASTER_PX);
     s_iconMicMuted[slot]     = imguiLoadSvgIconWhite(r, "data/ui/mic-muted.svg",     WBN_ICON_RASTER_PX);
     s_iconMicOff[slot]       = imguiLoadSvgIconWhite(r, "data/ui/mic-off.svg",       WBN_ICON_RASTER_PX);
+    s_iconMicDisabled[slot]  = imguiLoadSvgIconWhite(r, "data/ui/mic-disabled.svg",  WBN_ICON_RASTER_PX);
     s_iconSpeakerMuted[slot] = imguiLoadSvgIconWhite(r, "data/ui/speaker-muted.svg", WBN_ICON_RASTER_PX);
 #endif
     /* Renderer-free, so they are loaded once for every slot rather than
@@ -766,6 +770,7 @@ static void destroyIconSlot(int slot) {
     if (s_iconMic[slot]) { SDL_DestroyTexture(s_iconMic[slot]); s_iconMic[slot] = nullptr; }
     if (s_iconMicMuted[slot]) { SDL_DestroyTexture(s_iconMicMuted[slot]); s_iconMicMuted[slot] = nullptr; }
     if (s_iconMicOff[slot]) { SDL_DestroyTexture(s_iconMicOff[slot]); s_iconMicOff[slot] = nullptr; }
+    if (s_iconMicDisabled[slot]) { SDL_DestroyTexture(s_iconMicDisabled[slot]); s_iconMicDisabled[slot] = nullptr; }
     if (s_iconSpeakerMuted[slot]) { SDL_DestroyTexture(s_iconSpeakerMuted[slot]); s_iconSpeakerMuted[slot] = nullptr; }
 #endif
     s_wbnIconsLoaded[slot] = false;
@@ -1384,6 +1389,9 @@ static void mapOverviewOpen(void) {
     if (sdl3DrawIsOverviewInWindow() || overviewSuppressed()) return;
     s_showMapOverviewPanel   = true;
     gameFrontShowMapOverview = true;
+    /* The map is coming back on screen, so it says what camera it kept. A
+       view not made yet says so on its own when it is. */
+    overviewViewShowCameraNotice(s_overviewView);
 #else
     /* Full screen mode owns the whole window and draws the same map itself,
        so the pop-out never opens while it is on — in a game, in the lobby or
@@ -1432,6 +1440,9 @@ static void mapOverviewOpen(void) {
        up. Its move is saved by the WINDOW_MOVED handler. */
     popOutRescueWindow(s_popMapOverview.window);
     gameFrontShowMapOverview = true;
+    /* The map is coming back on screen, so it says what camera it kept. A
+       view not made yet says so on its own when it is. */
+    overviewViewShowCameraNotice(s_overviewView);
 #endif
 }
 
@@ -1703,13 +1714,23 @@ static void renderSysInfoContent(void) {
         }
 
         if (hasBots) {
-            ImGui::Text("%s: %u",
+            /* Overrun rate against thinks, computed as the dedicated
+             * server's bot report does; 0 when nothing has thought yet. */
+            double poolRate = ps.totalThinks > 0
+                ? (double)ps.totalOverruns * 100.0 / (double)ps.totalThinks
+                : 0.0;
+            ImGui::Text("%s: %u (%.2f%%)",
                         langGetText(STR_DLGSYSINFO_BRAIN_OVERRUNS),
-                        ps.totalOverruns);
+                        ps.totalOverruns, poolRate);
             if (ps.totalOverruns > 0) {
                 for (int i = 0; i < MAX_TANKS; i++) {
                     if (botInfoValid[i] && botInfos[i].overrunCount > 0) {
-                        ImGui::Text("  bot[%d]: %u", i, botInfos[i].overrunCount);
+                        double rate = botInfos[i].thinkCount > 0
+                            ? (double)botInfos[i].overrunCount * 100.0
+                                  / (double)botInfos[i].thinkCount
+                            : 0.0;
+                        ImGui::Text("  bot[%d]: %u (%.2f%%)", i,
+                                    botInfos[i].overrunCount, rate);
                     }
                 }
             }
@@ -2407,6 +2428,31 @@ static void renderCtrlSendMsg(ClientSim *cs) {
 /* -------------------------------------------------------
  * Map Overview pop-out
  * ------------------------------------------------------- */
+/* The camera readout the view hands out for a moment after the zoom or the
+ * follow flag changes, in a box whose left edge is at x and whose top — or,
+ * with anchorBottom, bottom — is at y. Drawn with the window draw list rather
+ * than as a widget: the map image fills its window exactly, and anything that
+ * added to the content would give it a scrollbar. The fade is the view's; the
+ * box and the text take it together. Nothing is drawn once it is over. */
+static void overviewDrawCameraNotice(OverviewView *view, const keyItems *keys,
+                                     float x, float y, bool anchorBottom) {
+    char  status[96];
+    float alpha = 0.0f;
+    if (!overviewViewCameraNotice(view, keys, status, sizeof(status), &alpha))
+        return;
+    const float pad = 4.0f;
+    ImVec2 textSize = ImGui::CalcTextSize(status);
+    float  boxH     = textSize.y + pad * 2.0f;
+    float  top      = anchorBottom ? y - boxH : y;
+    ImVec2 boxMin(x, top);
+    ImVec2 boxMax(x + textSize.x + pad * 2.0f, top + boxH);
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(boxMin, boxMax,
+                      IM_COL32(0, 0, 0, (int)(160.0f * alpha)));
+    dl->AddText(ImVec2(boxMin.x + pad, boxMin.y + pad),
+                IM_COL32(230, 230, 230, (int)(255.0f * alpha)), status);
+}
+
 static void renderMapOverviewContent(ClientSim *cs) {
     SDL_Texture *tex  = overviewViewGetTexture(s_overviewView);
     int          texW = 0;
@@ -2460,28 +2506,11 @@ static void renderMapOverviewContent(ClientSim *cs) {
             gameFrontOverviewFollow = cam->follow;
             gameFrontSaveWindowSettings();
         }
-
-        /* Zoom and follow state along the bottom-left of the map. Drawn onto
-           the image with the window draw list rather than as a widget: the
-           image is exactly DisplaySize, so anything that added to the
-           content would give the pop-out a scrollbar. %g keeps the ladder
-           readable (0.5, 1, 1.5, 2) with no trailing zeros, and the text is
-           ASCII because this file is compiled without /utf-8. */
-        char status[96];
-        SDL_snprintf(status, sizeof(status), "%gx - %s", (double)zoom,
-                     langGetText(cam->follow ? STR_OVERVIEW_FOLLOWING
-                                             : STR_OVERVIEW_FREE));
-        const float pad = 4.0f;
-        ImVec2 textSize = ImGui::CalcTextSize(status);
-        ImVec2 boxMin(imgMin.x,
-                      imgMin.y + (float)texH - (textSize.y + pad * 2.0f));
-        ImVec2 boxMax(imgMin.x + textSize.x + pad * 2.0f,
-                      imgMin.y + (float)texH);
-        ImDrawList *dl = ImGui::GetWindowDrawList();
-        dl->AddRectFilled(boxMin, boxMax, IM_COL32(0, 0, 0, 160));
-        dl->AddText(ImVec2(boxMin.x + pad, boxMin.y + pad),
-                    IM_COL32(230, 230, 230, 255), status);
     }
+
+    /* The zoom and follow readout, bottom-left of the map while it lasts. */
+    overviewDrawCameraNotice(s_overviewView, &keys, imgMin.x,
+                             imgMin.y + (float)texH, true);
 }
 
 #ifdef __EMSCRIPTEN__
@@ -2705,40 +2734,21 @@ static void renderOverviewInWindow(ClientSim *cs) {
                                       overviewViewCamera(view),
                                       (int)rw, (int)rh);
 
-        /* Zoom and follow state along the top of the map — the pop-out puts the
-           same readout bottom-left, but here the bottom of the window is where
-           the newswire goes. Drawn with the window draw list so it adds nothing
-           to the window's content. %g keeps the ladder readable (0.5, 1, 1.5,
-           2) with no trailing zeros, and the text is ASCII because this file is
-           compiled without /utf-8. */
-        OverviewCamera *cam = overviewViewCamera(view);
-        if (cam) {
-            char status[96];
-            SDL_snprintf(status, sizeof(status), "%gx - %s",
-                         (double)overviewCameraZoomScale(cam),
-                         langGetText(cam->follow ? STR_OVERVIEW_FOLLOWING
-                                                 : STR_OVERVIEW_FREE));
-            const float pad = 4.0f;
-            ImVec2 textSize = ImGui::CalcTextSize(status);
-            /* The corner belongs to the build strip, so the readout starts
-               just past it, level with its top. The gap matches the margin the
-               strip itself keeps from the map's edge. With no HUD drawn there
-               is nothing to clear and it sits in the corner. */
-            float textX = rx;
-            float textY = ry;
-            if (haveHud) {
-                const float hudGap = 8.0f;
-                textX = rx + hud.buildX + hud.buildW + hudGap;
-                textY = ry + hud.buildY;
-            }
-            ImVec2 boxMin(textX, textY);
-            ImVec2 boxMax(textX + textSize.x + pad * 2.0f,
-                          textY + textSize.y + pad * 2.0f);
-            ImDrawList *dl = ImGui::GetWindowDrawList();
-            dl->AddRectFilled(boxMin, boxMax, IM_COL32(0, 0, 0, 160));
-            dl->AddText(ImVec2(boxMin.x + pad, boxMin.y + pad),
-                        IM_COL32(230, 230, 230, 255), status);
+        /* The zoom and follow readout along the top of the map while it
+           lasts — the pop-out puts it bottom-left, but here the bottom of the
+           window is where the newswire goes. The corner belongs to the build
+           strip, so the readout starts just past it, level with its top. The
+           gap matches the margin the strip itself keeps from the map's edge.
+           With no HUD drawn there is nothing to clear and it sits in the
+           corner. */
+        float textX = rx;
+        float textY = ry;
+        if (haveHud) {
+            const float hudGap = 8.0f;
+            textX = rx + hud.buildX + hud.buildW + hudGap;
+            textY = ry + hud.buildY;
         }
+        overviewDrawCameraNotice(view, &keys, textX, textY, false);
     }
     ImGui::End();
 }
@@ -9007,12 +9017,12 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                    which cannot arrive once the transport is gone. */
                 clientSimDisconnect(cs);
 #ifdef __EMSCRIPTEN__
-                /* The browser has no welcome screen to fall back to the way
-                   winbolo.c does after imguiLobbyShow returns 0 — the menu is
-                   the hosting page, so navigate back to it. Ordered after the
-                   disconnect so transportUdpClientDestroy still gets its
-                   graceful PACKET_QUIT out over a live socket; the navigation
-                   itself only runs once this frame returns to the browser. */
+                /* The browser runs no lobby loop that returns to the menu the
+                   way winbolo.c's does after imguiLobbyShow returns 0, so ask
+                   the page's game loop to end the game; it then shows the
+                   menu. Ordered after the disconnect so
+                   transportUdpClientDestroy still gets its graceful
+                   PACKET_QUIT out over a live socket. */
                 windowLeaveGame();
 #endif
             }
@@ -10361,6 +10371,10 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
        until it round-tripped, and never at all on a connection that carries no
        voice. */
     if (isSelf) selfMuted = voiceIsSelfMuted();
+    /* Voice switched off here also clears PLAYER_FLAG_HAS_MIC, so without
+       this the own row would say there is no microphone when the reason is
+       the setting. Local truth, like selfMuted above. */
+    bool voiceOff = isSelf && !voiceIsEnabled();
 
     if (!inLobby && !isSelf && !hasMic && !mutedByMe) {
         /* In game, a remote player who has no microphone is not worth a
@@ -10396,6 +10410,10 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
         micTip  = mutedTalking ? STR_PLAYER_TIP_VOICE_MUTEDBYYOU_TALKING
                                : STR_PLAYER_TIP_VOICE_MUTEDBYYOU;
         micPulseFill = mutedTalking;
+    } else if (voiceOff) {
+        micTex  = s_iconMicDisabled[iconSlot];
+        micTint = MIC_TINT_DIM;
+        micTip  = STR_DLGLOBBY_VOICE_OFF;
     } else if (!hasMic) {
         micTex  = s_iconMicOff[iconSlot];
         micTint = MIC_TINT_DIM;
@@ -10443,8 +10461,9 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
         /* An SVG that would not load must still hold the column, or
          * the name and ping shift between rows. */
         ImGui::Dummy(ImVec2(size, size));
-    } else if (isSelf && !hasMic) {
-        /* Not clickable without a microphone: there is nothing to gate.
+    } else if (isSelf && (!hasMic || voiceOff)) {
+        /* Not clickable without a microphone or with voice off: there is
+         * nothing to gate.
          * The clickable branch below toggles a local transmit gate, not
          * the mute the server rejects against yourself. */
         ImGui::ImageWithBg((ImTextureID)micTex, ImVec2(size, size),
