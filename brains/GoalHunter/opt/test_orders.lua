@@ -2751,6 +2751,34 @@ do
   local b = sbot(); settle(b, 101, 115); attack_ping(b, 125)
   check("charge-now: bot-command + ATTACK double ping is still the suicide run",
         b.st._suicide ~= nil and b.st._charge_now == nil, "?")
+
+  -- CHARGE NOW IGNORES SAFETY (C.CHARGE_NOW_IGNORE_SAFETY): the bot's own
+  -- armour, trees and ammo no longer stop the charge.
+  check("charge-now ignores safety live", C.CHARGE_NOW_IGNORE_SAFETY == true, "?")
+  check("keel turns the safety waiver off",
+        C.PRESETS.keel.CHARGE_NOW_IGNORE_SAFETY == false, "?")
+  r = cbot()
+  attack_ping(r, 100)
+  r.inf.armour, r.inf.shells, r.inf.trees = 2, 0, 0
+  local cg = r.st.goal
+  check("charge-now: charge_now_holds while the goal is on the pill",
+        GOALS.charge_now_holds(r.st) == true, "?")
+  local pg = GOALS.pick_goal(r.st, r.w, r.inf, true)
+  check("charge-now: pick_goal at armour 2, 0 shells keeps the attack goal",
+        pg == cg, tostring(pg and pg.kind))
+  local hp = C.ATTACK_PILL_UNSAFE_HP_THRESHOLD
+  local low = { armour = 0 }
+  check("armour floor still applies without charge-now",
+        ATTACK.armour_unsafe_for_pill_take(low, hp, false, {}) ~= nil, "?")
+  check("charge-now: no armour-floor abort",
+        ATTACK.armour_unsafe_for_pill_take(low, hp, false, { _charge_now = true }) == nil, "?")
+  C.CHARGE_NOW_IGNORE_SAFETY = false
+  check("CHARGE_NOW_IGNORE_SAFETY=false: the armour floor is back",
+        ATTACK.armour_unsafe_for_pill_take(low, hp, false, { _charge_now = true }) ~= nil, "?")
+  C.CHARGE_NOW_IGNORE_SAFETY = true
+  r.st.goal = { kind = "refuel" }
+  check("charge-now: charge_now_holds is false once the goal leaves the pill",
+        GOALS.charge_now_holds(r.st) == false, "?")
 end
 
 -- =========================================================================

@@ -632,10 +632,13 @@ M.commit_soak_finish = commit_soak_finish
 -- build_walls / charge to abort attack_pill early instead of dying
 -- mid-charge.  The reason text feeds clear_attack_goal so the left-top
 -- "last attack cleared" overlay shows WHY we bailed.
-local function armour_unsafe_for_pill_take(info, pill_hp, blitz_2plus)
+local function armour_unsafe_for_pill_take(info, pill_hp, blitz_2plus, goal)
   -- On a true blitz with >= 2 tanks the ally shares the incoming fire, so don't
   -- abort the take on low armour — even armour 0 presses on, the partner helps.
   if blitz_2plus then return nil end
+  -- CHARGE NOW IGNORES SAFETY: a person said go in; armour is not a reason
+  -- to stop (C.CHARGE_NOW_IGNORE_SAFETY).
+  if goal and goal._charge_now and C.CHARGE_NOW_IGNORE_SAFETY then return nil end
   if not pill_hp or pill_hp < C.ATTACK_PILL_UNSAFE_HP_THRESHOLD then return nil end
   local arm = info and info.armour or 0
   if arm >= C.ATTACK_PILL_UNSAFE_ARMOUR_FLOOR then return nil end
@@ -4575,7 +4578,8 @@ local function update_attack_substate_body(goal, state, world, info)
   --     a slot that is a building, half-built wall or pillbox, built this take
   --     or already there): straight in, firing -- kill_hardline, which aims
   --     at the pill with the suicide-run aim (steering.lua, SUICIDE_AIM_AT_PILL)
-  --     but is NOT a suicide run: armour, flee and the other goal rules still
+  --     but is NOT a suicide run (CHARGE_NOW_IGNORE_SAFETY waives armour, flee,
+  --     refuel and shell aborts; see constants.lua): the other goal rules still
   --     apply.  A blitz commander also sends GO so its soldiers go in too.
   --   * a blocker standing: the careful way with no waits and no more
   --     blockers (goal._charge_now_careful; the hooks are marked CHARGE NOW
@@ -5755,7 +5759,7 @@ local function update_attack_substate_body(goal, state, world, info)
           print(string.format(TAG .. " ATTACK: plan_position -> gather_trees (%d/%d trees for %d walls)",
                 info.trees or 0, trees_needed, n_pots))
         else
-          local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus)
+          local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus, goal)
           if unsafe then
             clear_attack_goal(state, "abort@approach_entry — " .. unsafe)
             return
@@ -5856,7 +5860,7 @@ local function update_attack_substate_body(goal, state, world, info)
                       or M.human_gather_cap_over(goal, state, now)
     -- CHARGE NOW: stop gathering and go.
     if trees_have >= trees_need or goal._charge_now then
-      local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus)
+      local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus, goal)
       if unsafe then
         clear_attack_goal(state, "abort@approach_entry — " .. unsafe)
         return
@@ -5874,7 +5878,7 @@ local function update_attack_substate_body(goal, state, world, info)
       -- frees init.lua's aim override to set aim_mx/aim_my from the
       -- pill-edge geometry instead of the corner the scan picked,
       -- which would otherwise be unprotected without walls.
-      local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus)
+      local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus, goal)
       if unsafe then
         clear_attack_goal(state, "abort@approach_entry — " .. unsafe)
         return
@@ -6492,13 +6496,15 @@ local function update_attack_substate_body(goal, state, world, info)
     --     (SQUAD_COMMANDER_MIN_ARMOUR); don't risk the pill we're holding.
     --   * The pill-HP-relative unsafe floor (armour_unsafe_for_pill_take) still
     --     exempts a 2+ tank blitz, where the partner shares the incoming fire.
+    --   * CHARGE NOW IGNORES SAFETY waives both floors.
     if (info.carried_pills or 0) >= 1
-       and (info.armour or 0) < (C.SQUAD_COMMANDER_MIN_ARMOUR or 30) then
+       and (info.armour or 0) < (C.SQUAD_COMMANDER_MIN_ARMOUR or 30)
+       and not (goal._charge_now and C.CHARGE_NOW_IGNORE_SAFETY) then
       clear_attack_goal(state, string.format("approach abort: carrying pill, armour %d < %d",
         info.armour or 0, C.SQUAD_COMMANDER_MIN_ARMOUR or 30))
       return
     end
-    local _appr_unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus)
+    local _appr_unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus, goal)
     if _appr_unsafe then
       clear_attack_goal(state, "approach abort: " .. _appr_unsafe)
       return
@@ -6810,7 +6816,7 @@ local function update_attack_substate_body(goal, state, world, info)
         end
         local decision_msg
         if needs_build then
-          local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus)
+          local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus, goal)
           if unsafe then
             clear_attack_goal(state, "abort@build_walls_entry — " .. unsafe)
             return
@@ -7550,7 +7556,9 @@ local function update_attack_substate_body(goal, state, world, info)
         -- finishing shells, so the team's combined fire can drop the pill even when
         -- OUR magazine alone can't. Only a solo (or lone-"blitz"-of-one) take needs
         -- enough shells on its own — there, bail and let refuel replan take over.
-        if avail_shots < total_needed and not blitz_2plus then
+        -- CHARGE NOW IGNORES SAFETY: no shell abort, it goes in anyway.
+        if avail_shots < total_needed and not blitz_2plus
+           and not (goal._charge_now and C.CHARGE_NOW_IGNORE_SAFETY) then
           print(string.format(TAG .. " CHARGE: not enough shells (%d obstacles + %d hp = %d needed, have %d + %d in-flight = %d) — aborting",
             obstacle_shots, pill_hp_live, total_needed, info.shells, in_flight, avail_shots))
           print2(string.format("CHARGE_ABORT_SHELLS obstacles=%d hp=%d needed=%d have=%d inflight=%d avail=%d pill=(%d,%d)",
@@ -7730,7 +7738,7 @@ local function update_attack_substate_body(goal, state, world, info)
           goal._is_ppt = false
           print(TAG .. " ATTACK: PPT had no shield_scan at aim — demoting to non-PPT charge")
         end
-        local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus)
+        local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus, goal)
         if unsafe then
           clear_attack_goal(state, "abort@charge_entry — " .. unsafe)
           return
@@ -7776,7 +7784,7 @@ local function update_attack_substate_body(goal, state, world, info)
         print(string.format(TAG .. " ATTACK: PPT detree done (shots=%d/%d), moving into range",
               fired, needed))
       else
-        local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus)
+        local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus, goal)
         if unsafe then
           clear_attack_goal(state, "abort@charge_entry — " .. unsafe)
           return
@@ -8221,9 +8229,11 @@ local function update_attack_substate_body(goal, state, world, info)
         print2(string.format("SHOOT_PILL_ABORT_NOREACH pill=(%d,%d)", pmx, pmy))
         clear_attack_goal(state, "shot does not reach pill")
         return
-      elseif avail_shots < total_needed and not blitz_2plus then
+      elseif avail_shots < total_needed and not blitz_2plus
+             and not (goal._charge_now and C.CHARGE_NOW_IGNORE_SAFETY) then
         -- 2+ blitz exemption (same as charge): the ally(ies) supply finishing
         -- shells, so our own magazine running short isn't a reason to bail.
+        -- CHARGE NOW IGNORES SAFETY: no shell abort either.
         print(string.format(TAG .. " SHOOT_PILL: not enough shells (%d obstacles + %d hp = %d needed, have %d + %d in-flight = %d) — aborting",
           obstacle_shots, pill_hp, total_needed, info.shells, in_flight, avail_shots))
         print2(string.format("SHOOT_PILL_ABORT_SHELLS obstacles=%d hp=%d needed=%d have=%d inflight=%d avail=%d pill=(%d,%d)",
