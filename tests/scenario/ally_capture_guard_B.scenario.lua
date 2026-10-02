@@ -15,8 +15,8 @@
 -- MOVES.  A control must isolate one variable, and with a driving ally this
 -- arena is a footrace between its six tiles and our man's seven — which was
 -- measured on this host (2026-09-15, seed 42): the ally scoops the corpse at
--- t=414 and our man has not finished the rebuild, so a real-1.7 version of this
--- arena says nothing about the guard at all.  With the talker the advert is
+-- t=414 and our man has not finished the rebuild, so a version of this with a real GoalHunter ally
+-- says nothing about the guard at all.  With the talker the advert is
 -- live the entire run, so "our man rebuilt it anyway" can only mean the guard
 -- was off.
 

@@ -524,7 +524,6 @@ int run_brain_inbox_clear_resets(void);
 int run_brain_list_scan_path_resolves(void);
 int run_brain_list_texts_read(void);
 int run_brain_docs_compress_roundtrip(void);
-int run_brain_list_goalhunter_alias(void);
 
 /* The two test rosters — test_main.c's dispatch table and CMakeLists.txt's
  * _unit_test_names — say the same thing, so a case added to one and not the

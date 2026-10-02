@@ -431,7 +431,6 @@ static const UnitTestEntry s_tests[] = {
     { "brain_list_scan_path_resolves",           run_brain_list_scan_path_resolves           },
     { "brain_list_texts_read",                   run_brain_list_texts_read                   },
     { "brain_docs_compress_roundtrip",           run_brain_docs_compress_roundtrip           },
-    { "brain_list_goalhunter_alias",             run_brain_list_goalhunter_alias             },
     { "unit_test_names_match_cmake",             run_unit_test_names_match_cmake             },
     { "brain_modes_manifest_parses",             run_brain_modes_manifest_parses             },
     { "brain_modes_missing_falls_back",          run_brain_modes_missing_falls_back          },

@@ -99,7 +99,6 @@
 #include "../clientmutex.h"
 #include "../gamefront.h"
 #include "luabrainshandler.h"
-#include "brain_list.h"  /* brainListAliasPath */
 
 
 /* ------------------------------------------------------------------ */
@@ -278,9 +277,6 @@ bool luaBrainsParseBotInitSpec(const char *spec, BotInitSlot *slots, int maxN) {
                 continue;
             }
             SDL_strlcpy(slots[id].path, vbuf, sizeof(slots[id].path));
-            /* An old brains/GoalHunter_1.7 path names the renamed brain. */
-            brainListAliasPath(slots[id].path, slots[id].path,
-                               sizeof(slots[id].path));
             slots[id].init = initTable;
             /* Same suffix text, unparsed, for the BRAIN_INIT_ARG side. */
             SDL_strlcpy(slots[id].arg, argbuf, sizeof(slots[id].arg));
@@ -751,12 +747,6 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
                             aiType aiMode, bool debug_mode,
                             int player_num, const ScnTable *init) {
   lua_State *L;
-  /* A path written for the old brains/GoalHunter_1.7 directory loads the
-   * renamed brains/GoalHunter one (brainListAliasPath). */
-  char aliasedPath[LUA_BRAINS_PATH_MAX];
-  if (path && brainListAliasPath(path, aliasedPath, sizeof(aliasedPath))) {
-    path = aliasedPath;
-  }
 
   memset(inst, 0, sizeof(*inst));
   inst->cs = cs;

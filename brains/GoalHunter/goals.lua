@@ -13045,7 +13045,7 @@ function M.step_eval_queue(state, world, info)
           -- production:
           --   * `if BRAIN_DEBUG_MODE and <cache fresh> then <use cache> else
           --      <evaluate> end` -- lua_strip removes an `if BRAIN_DEBUG_MODE`
-          --      block WHOLE, else branch included, so from the 1.7 baseline
+          --      block WHOLE, else branch included, so from the baseline commit
           --      (7a390beb) the production opt/ brain never called
           --      evaluate_pill_difficulty on this path: diff_score stayed nil
           --      and `diff_cost = diff_score or 999` priced every attack_pill
