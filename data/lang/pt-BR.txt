@@ -2024,6 +2024,7 @@ STR_MENU_MAP_OVERVIEW=Panorama do mapa
 STR_MENU_OVERVIEW_IN_WINDOW=Tela cheia
 STR_OVERVIEW_FOLLOWING=seguindo
 STR_OVERVIEW_FREE=livre
+STR_OVERVIEW_FREE_HINT=livre ({string1} para seguir)
 STR_DLGKEYSETUP_OVERVIEWZOOM=Zoom do mapa (manter pressionado)
 STR_DLGKEYSETUP_OVERVIEWFOLLOW=Seguir mapa (alternar)
 STR_DLGKEYSETUP_OVERVIEWZOOMIN=Ampliar mapa
@@ -2730,3 +2731,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Oficina
 # The game finder's scripts
 STR_DLGBROWSER_MODS=Mods
 STR_DLGBROWSER_MODS_MORE=+{number} mods
+
+# In-game newswire — a scenario changed who hears a player's voice
+STR_VOICE_EVERYONE_ON=O chat de voz agora vai para todos na partida
+STR_VOICE_EVERYONE_OFF=O chat de voz agora vai só para seus aliados

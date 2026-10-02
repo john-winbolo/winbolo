@@ -94,6 +94,10 @@
  * run_scenario_host_round_after_scenario_is_classic
  *                                     — and so does the round started after
  *                                       the scenario is detached
+ * run_scenario_host_rules_table_whole — a rules table whose pair holds only
+ *                                       with both values in is applied; one
+ *                                       that breaks a pair applies none of
+ *                                       itself and says why
  * run_scenario_host_chunk_events_reach_hooks
  *                                     — an event raised by an op the chunk's
  *                                       own top level issued reaches the
@@ -352,8 +356,9 @@ static void shRead(char *out, size_t outLen) {
  * that moment: it runs on the start's own thread, with the lock held and
  * the round's VM already in place.
  *
- * Two lines are used. "scenario: rule" is written when the funnel refuses a
- * rule, which is after the round's VM is installed and before on_setup.
+ * Two lines are used. "scenario: rule" is written when the round's rules
+ * table is refused, which is after the round's VM is installed and before
+ * on_setup.
  * "scenario: on_setup raised" is written when on_setup raises, which is
  * after the roster snapshot the audit holds the roster against and before
  * the audit itself.
@@ -2249,9 +2254,9 @@ int run_scenario_host_disabled_stops_hooks(void) {
 /* ── 18. The same thread, arriving at the lock twice ──────────────── */
 
 /* The scripts for the two lock cases set one rule far outside any row's
- * range. The funnel refuses it and the host writes a console line saying so
- * — on the round start's own thread, with the VM lock held and the round's
- * VM already in place. That line is the moment each case needs. */
+ * range. The sim refuses the table and the host writes a console line
+ * saying so — on the round start's own thread, with the VM lock held and the
+ * round's VM already in place. That line is the moment each case needs. */
 #define SH_LOCK_BODY                                                   \
     "scenario = { name = \"%s\", api = 1,\n"                            \
     "             rules = { tank_death_ticks = 1e12 } }\n"              \
@@ -4027,22 +4032,23 @@ int run_scenario_host_errors_counted_per_script(void) {
 
 /* ── A rules table longer than one tick's allowance ───────────────── */
 
-/* The host applies a script's rules table itself, at the round start, and
- * those are its own ops rather than the script's: a table of more rules than
- * a script may send in a tick still applies in full.
+/* The host applies a script's rules table itself, at the round start, in a
+ * call of its own rather than through the script's ops: a table of more rules
+ * than a script may send in a tick still applies in full.
  *
  * Seventy rules, each at its classic value — the classic table stands, so no
  * value here can break a pair — except tank_death_ticks, which is moved so
  * that reading it back says the table was applied at all. The table's order
  * is Lua's hash order, so which rules come last is not something the case can
- * arrange; a refusal of any of them is a console line, and there must be
+ * arrange; a refusal of the table is a console line, and there must be
  * none. */
 #define SH_MANY_RULES 70
 
 static int shRefusedLines;
 
 static void shCountRefused(const char *msg) {
-    if (strstr(msg, "refused") != NULL) {
+    if (strstr(msg, "refused") != NULL ||
+        strstr(msg, "not applied") != NULL) {
         shRefusedLines++;
     }
 }
@@ -4112,5 +4118,109 @@ int run_scenario_host_many_rules_all_applied(void) {
     scenarioHostDetach(h);
     serverSimDestroy(sim);
     shDrop(kMap);
+    return 0;
+}
+
+/* ── A rules table is applied whole or not at all ─────────────────── */
+
+/* Two scripts, each starting a round of its own.
+ *
+ * The first raises pill_max_armour to 30 and pill_repair_amount to 20.
+ * Against the classic table each of those breaks a pair alone — 20 is above
+ * the classic cap of 15, and a cap of 30 is more than the classic load of 4
+ * times a repair amount of 4 can mend — so whichever order Lua hands the
+ * table over in, one rule at a time sets neither. Together they stand, and
+ * the round plays with both.
+ *
+ * The second sets a cap of 10, which stands alone, beside a repair amount of
+ * 20, which breaks the pair with it. The table fails, so the round plays the
+ * classic cap as well as the classic repair amount, and the host's last
+ * error says the table was not applied and names the pair. */
+int run_scenario_host_rules_table_whole(void) {
+    static const char *const kMapRaise = "scnhost_rules_whole.map";
+    static const char *const kMapBreak = "scnhost_rules_broken.map";
+    static const char *const kLuaRaise =
+        "scenario = {\n"
+        "  name = \"Hard Pills\",\n"
+        "  api = 1,\n"
+        "  rules = { pill_repair_amount = 20, pill_max_armour = 30 },\n"
+        "}\n";
+    static const char *const kLuaBreak =
+        "scenario = {\n"
+        "  name = \"Broken Pair\",\n"
+        "  api = 1,\n"
+        "  rules = { pill_max_armour = 10, pill_repair_amount = 20 },\n"
+        "}\n";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          err[512];
+    int           cap    = simRulesRuleIndex("pill_max_armour");
+    int           repair = simRulesRuleIndex("pill_repair_amount");
+    double        classicCap;
+    double        classicRepair;
+
+    UT_ASSERT_MSG(cap >= 0, "no rule is named pill_max_armour");
+    UT_ASSERT_MSG(repair >= 0, "no rule is named pill_repair_amount");
+    classicCap    = simRulesClassicValue(cap);
+    classicRepair = simRulesClassicValue(repair);
+    UT_ASSERT_MSG(classicCap < 20.0,
+                  "setup: the classic pill_max_armour is %g, so a repair "
+                  "amount of 20 would not break the pair on its own",
+                  classicCap);
+
+    /* ── a table that stands only as a whole ── */
+    UT_ASSERT(shPut(kMapRaise, kLuaRaise));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMapRaise, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+
+    serverSimStartGame(sim);
+    UT_ASSERT_MSG(sim->sim.rules.pill_max_armour == 30,
+                  "pill_max_armour is %ld after the start, expected the "
+                  "table's 30: %s", (long)sim->sim.rules.pill_max_armour,
+                  scenarioHostLastError(h));
+    UT_ASSERT_MSG(sim->sim.rules.pill_repair_amount == 20,
+                  "pill_repair_amount is %ld after the start, expected the "
+                  "table's 20: %s", (long)sim->sim.rules.pill_repair_amount,
+                  scenarioHostLastError(h));
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "not applied") == NULL,
+                  "a table that stands was reported as not applied: %s",
+                  scenarioHostLastError(h));
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMapRaise);
+
+    /* ── a table that breaks a pair ── */
+    UT_ASSERT(shPut(kMapBreak, kLuaBreak));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMapBreak, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+
+    serverSimStartGame(sim);
+    UT_ASSERT_MSG((double)sim->sim.rules.pill_max_armour == classicCap,
+                  "pill_max_armour is %ld after the start, expected the "
+                  "classic %g: half of a refused table landed",
+                  (long)sim->sim.rules.pill_max_armour, classicCap);
+    UT_ASSERT_MSG((double)sim->sim.rules.pill_repair_amount == classicRepair,
+                  "pill_repair_amount is %ld after the start, expected the "
+                  "classic %g", (long)sim->sim.rules.pill_repair_amount,
+                  classicRepair);
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "rules not applied") !=
+                      NULL,
+                  "the host's last error does not say the table was refused: "
+                  "'%s'", scenarioHostLastError(h));
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "pill_repair_amount") !=
+                      NULL,
+                  "the host's last error does not name the pair it broke: "
+                  "'%s'", scenarioHostLastError(h));
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMapBreak);
     return 0;
 }

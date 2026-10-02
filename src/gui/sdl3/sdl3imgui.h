@@ -550,7 +550,8 @@ void renderPlayerNameEx(const char *name, uint8_t flags, uint8_t clientType,
 *  Renders one player's voice cell for a player row: a
 *  size x size icon whose shape and tint reflect the
 *  player's voice state, resolved in precedence order
-*  (muted by this client, no microphone, talking, muted
+*  (muted by this client, voice switched off on the own
+*  row, no microphone, talking, muted
 *  their own microphone, idle), with a tooltip naming that
 *  state. A talking player's speaker is drawn dim and filled
 *  from the bottom, in the talking colour, to how loud they

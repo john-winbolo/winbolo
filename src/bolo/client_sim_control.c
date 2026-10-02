@@ -91,6 +91,25 @@ static void clientSimScnClearPresentation(ClientSim *cs) {
     memset(cs->scnTeamScores, 0, sizeof(cs->scnTeamScores));
 }
 
+/* Bring voiceEveryoneInRound up to date with the flag and the phase, and
+ * tell the player when it moves. Called when the flag arrives and when a
+ * round starts running, so a flag a script set in on_setup, before the
+ * RUNNING phase, is told as the round opens; and a joiner's sync, which
+ * carries the phase ahead of the flag, is told it too. Leaving the round is
+ * not handled here: the phase arms that leave it clear the value silently,
+ * since a lobby is all-talk and "allies only" would be wrong there. */
+static void clientSimSettleVoiceEveryone(ClientSim *cs) {
+    bool inRound = cs->scnVoiceEveryone && cs->netStat == netRunning;
+    if (inRound == cs->voiceEveryoneInRound) {
+        return;
+    }
+    cs->voiceEveryoneInRound = inRound;
+    clientMessageAdd(clientSimGetMessages(cs), newsWireMessage,
+                     (char *)"Server",
+                     langGetText(inRound ? STR_VOICE_EVERYONE_ON
+                                         : STR_VOICE_EVERYONE_OFF));
+}
+
 /* Localized lobby team label: the host-assigned team name, or "Team N"
  * when the team is unnamed (matching the lobby roster header). */
 static void clientSimLobbyTeamLabel(const ClientSim *cs, BYTE team,
@@ -998,6 +1017,9 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * announcement, marker or score belongs to the round that has
          * just ended, and the next one states its own. */
         clientSimScnClearPresentation(cs);
+        /* Out of the round, so out of what decides who hears whom there.
+         * Silent: the lobby is all-talk. */
+        cs->voiceEveryoneInRound = false;
         break;
     case CTRL_GAME_PHASE_COUNTDOWN:
         cs->netStat = netLobbyCountdown;
@@ -1039,6 +1061,10 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * blanked lines now or it shows the last game's until the first
          * message of this one. */
         frontEndMessages(cs, cs->messages.topLine, cs->messages.bottomLine);
+        /* A script that sent voice to everyone in its on_setup did so before
+         * this phase, so the player is told now, after the scroller has been
+         * emptied rather than before. */
+        clientSimSettleVoiceEveryone(cs);
         /* Steam per-game achievement counters (consumed at CTRL_GAME_OVER).
          * Left un-reset, a death in any prior game permanently blocks the
          * flawless / no-LGM-loss achievements for the rest of the session. */
@@ -1081,6 +1107,8 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * non-lobby case is handled by the transport observer. */
         cs->netStat = netLobby;
         cs->countdownSeconds = 0;
+        /* The round is over; as in the LOBBY arm, silently. */
+        cs->voiceEveryoneInRound = false;
         /* Silence in-flight playback so engine/shell/explosion
          * sounds don't keep draining behind the "Returning to
          * lobby" caption. Restored on the next phase event. */
@@ -1388,6 +1416,13 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * the countdown only, and sends one empty set on the way out of
          * them, so nothing is needed here to age it out. */
         cs->voiceTalkingMap = evt->u.voiceTalking.talking;
+        break;
+
+    case CTRL_VOICE_EVERYONE:
+        /* Kept whatever the phase; whether it is told now or when the round
+         * starts is clientSimSettleVoiceEveryone's call. */
+        cs->scnVoiceEveryone = evt->u.voiceEveryone.on;
+        clientSimSettleVoiceEveryone(cs);
         break;
 
     case CTRL_SHELL_DEATH: {

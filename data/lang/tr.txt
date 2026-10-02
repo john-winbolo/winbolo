@@ -2026,6 +2026,7 @@ STR_MENU_MAP_OVERVIEW=Harita Genel Görünümü
 STR_MENU_OVERVIEW_IN_WINDOW=Tam Ekran
 STR_OVERVIEW_FOLLOWING=takip
 STR_OVERVIEW_FREE=serbest
+STR_OVERVIEW_FREE_HINT=serbest (takip için {string1})
 STR_DLGKEYSETUP_OVERVIEWZOOM=Harita Yakınlaştırma (Basılı Tutun)
 STR_DLGKEYSETUP_OVERVIEWFOLLOW=Haritayı Takip Et (Değiştir)
 STR_DLGKEYSETUP_OVERVIEWZOOMIN=Haritayı Yakınlaştır
@@ -2730,3 +2731,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Atölye
 # The game finder's scripts
 STR_DLGBROWSER_MODS=Modlar
 STR_DLGBROWSER_MODS_MORE=+{number} mod
+
+# In-game newswire — a scenario changed who hears a player's voice
+STR_VOICE_EVERYONE_ON=Sesli sohbet artık oyundaki herkese gidiyor
+STR_VOICE_EVERYONE_OFF=Sesli sohbet artık yalnızca müttefiklerine gidiyor

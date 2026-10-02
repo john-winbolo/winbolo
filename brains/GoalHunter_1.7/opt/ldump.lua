@@ -1,3 +1,4 @@
+-- ldump v1.4.0 by Nikita Dobrynin (girvel), https://github.com/girvel/ldump, MIT No Attribution; see THIRD_PARTY_NOTICES.md
 local warnings, allowed_big_upvalues, stack, handle_primitive, cache_packages
 
 -- API --

@@ -799,18 +799,10 @@ static void lvHostHandleResize(const SDL_Event *e) {
     }
     lv_screenSetSizeX((BYTE)newTilesX);
     lv_screenSetSizeY((BYTE)newTilesY);
-    /* Clamp scroll offset so the viewport stays within the 255x255 map, and
-     * reset sub-pixel pan so the resized viewport snaps cleanly to tile
-     * boundaries — there's no in-flight drag state to preserve across a
-     * window resize. */
-    if (g_lv->isLoaded) {
-        BYTE ox, oy;
-        lv_screenGetOffsets(&ox, &oy);
-        if ((int)ox + newTilesX > 255) ox = (BYTE)(255 - newTilesX);
-        if ((int)oy + newTilesY > 255) oy = (BYTE)(255 - newTilesY);
-        lv_screenSetOffset(ox, oy);
-        lv_screenSetSubOffset(0, 0);
-    }
+    /* The size setters keep the offset inside the map for the new grid. The
+     * sub-pixel pan is reset here so the resized viewport snaps cleanly to
+     * tile boundaries: a window resize carries no in-flight drag. */
+    lv_screenSetSubOffset(0, 0);
     lv_drawResizeRenderTarget();
     lv_drawDirtyScreen();
     g_lv->wantScreenUpdate = TRUE;

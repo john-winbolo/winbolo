@@ -163,6 +163,7 @@ Selected event types (see the `logitem` enum for the complete list):
 | 66 | `log_ScnHint` | An order a scenario gave one bot (below) |
 | 67 | `log_ServerTick` | The server's game tick at this entry (below) |
 | 68 | `log_ScnStatus` | A scenario's status line at the top of the view (below) |
+| 69 | `log_VoiceEveryone` | Who a scenario sent the round's voice to: `on:u8`, 1 for every player and 0 for the talker's allies alone. Written when the value changes |
 
 ### `log_GameSettings` payload
 

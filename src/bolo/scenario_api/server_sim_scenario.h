@@ -99,6 +99,44 @@ ScnOpResult serverSimCheckScenarioRules(const ServerSim *sim,
                                         char *why, size_t whyLen);
 
 /*********************************************************
+ *NAME:          serverSimApplyScenarioRules
+ *PURPOSE:
+ *  Sets a whole table of rules at once, or none of them.
+ *  The set is written into a copy of the sim's table and
+ *  checked once, as serverSimCheckScenarioRules checks it,
+ *  and only a copy that passes is committed. A pair two of
+ *  the values move together is judged with both of them in,
+ *  so a table that raises a cap and the rule it caps lands
+ *  whichever order the two are listed in.
+ *
+ *  This is how a round's own rules table is applied at its
+ *  boot. game.set_rule during a round is the funnel's
+ *  SCN_OP_SET_RULE and sets one rule at a time.
+ *
+ *  It is refused as the funnel refuses an op: SCN_OP_IN_POLICY
+ *  from inside a policy call, and SCN_OP_WRONG_STATE while a
+ *  start is in progress with the setup window shut. A set
+ *  that fails the check answers as serverSimCheckScenarioRules
+ *  does — SCN_OP_RANGE, SCN_OP_PAIR, SCN_OP_NO_SUCH_ITEM, or
+ *  SCN_OP_BAD_CALL for a NULL sim or a count with no arrays
+ *  behind it — and leaves the sim's table byte for byte as it
+ *  was.
+ *
+ *  A set that passes is committed whole, with one record per
+ *  rule, one clamp of the world to the new table, and one
+ *  publish when any rule in it is one clients read and the
+ *  setup window is shut. A count of 0 answers SCN_OP_OK and
+ *  changes nothing. why takes the reason the check gave on a
+ *  fault and "" otherwise; it may be NULL only when whyLen
+ *  is 0.
+ *********************************************************/
+ScnOpResult serverSimApplyScenarioRules(ServerSim *sim,
+                                        const uint16_t *rules,
+                                        const double *values,
+                                        uint16_t count,
+                                        char *why, size_t whyLen);
+
+/*********************************************************
  *NAME:          scenarioCheckRulesFromClassic
  *PURPOSE:
  *  The same question as above, asked against the classic

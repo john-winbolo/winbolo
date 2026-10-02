@@ -56,6 +56,8 @@ bool winbolonetThreadCreate(void)                                  { return FALS
 void winbolonetThreadDestroy(void)                                 { }
 bool winbolonetThreadAddRequest(const char *ep, const char *jb)    { (void)ep; (void)jb; return FALSE; }
 int  winbolonetThreadRun(void *data)                                { (void)data; return 0; }
+/* server_dedicated_log.c's round upload; practice rounds are never uploaded. */
+uint32_t winbolonetThreadAddUpload(const char *fn, const char *key) { (void)fn; (void)key; return 0; }
 
 /* -------------------------------------------------------
  * winbolonet.h

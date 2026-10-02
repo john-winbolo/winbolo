@@ -2026,6 +2026,7 @@ STR_MENU_MAP_OVERVIEW=Kaartoverzicht
 STR_MENU_OVERVIEW_IN_WINDOW=Volledig scherm
 STR_OVERVIEW_FOLLOWING=volgt
 STR_OVERVIEW_FREE=vrij
+STR_OVERVIEW_FREE_HINT=vrij ({string1} om te volgen)
 STR_DLGKEYSETUP_OVERVIEWZOOM=Kaartzoom (vasthouden)
 STR_DLGKEYSETUP_OVERVIEWFOLLOW=Kaart volgen (schakelen)
 STR_DLGKEYSETUP_OVERVIEWZOOMIN=Kaart inzoomen
@@ -2730,3 +2731,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop
 # The game finder's scripts
 STR_DLGBROWSER_MODS=Mods
 STR_DLGBROWSER_MODS_MORE=+{number} mods
+
+# In-game newswire — a scenario changed who hears a player's voice
+STR_VOICE_EVERYONE_ON=Voicechat gaat nu naar iedereen in het spel
+STR_VOICE_EVERYONE_OFF=Voicechat gaat nu alleen naar je bondgenoten

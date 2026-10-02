@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Voice switched off on this client: mic.svg scaled to 80% and moved to
+     the upper left, with an X in the lower-right corner. No diagonal slash,
+     so it cannot be read as mic-muted.svg, and the whole microphone is
+     there, so it cannot be read as mic-off.svg. Plain filled paths only:
+     nanosvg rasterises it to a white alpha mask that is then tinted. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#000000">
+  <g transform="translate(0 0.5) scale(0.8)">
+    <path d="M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
+    <path d="M5 10v1a7 7 0 0 0 14 0v-1h-2v1a5 5 0 0 1-10 0v-1H5z"/>
+    <path d="M11 18h2v2h3v2H8v-2h3v-2z"/>
+  </g>
+  <path d="M15.2 16.6L16.6 15.2L23 21.6L21.6 23z"/>
+  <path d="M21.6 15.2L23 16.6L16.6 23L15.2 21.6z"/>
+</svg>

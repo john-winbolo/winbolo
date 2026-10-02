@@ -22,8 +22,8 @@
  *   /api/v1/games needs no authentication and is served from
  *   the page's own origin (docs/web-hosting.md).
  *
- *   Joining a listed game navigates this tab to the game's
- *   /join/ address (wasmFinderJoin).
+ *   Joining a listed game closes the finder and starts the
+ *   game in this page (wasmFinderJoin, main_wasm.c).
  *********************************************************/
 
 #include <emscripten.h>
@@ -78,10 +78,10 @@ EM_JS(int, wasmFinderFetchTake, (char **out), {
     return 1;
 });
 
-/* Join a listed game: load /join/<server key> in this tab, the address the
- * join path mints a join code from. The page unloads once the browser starts
- * the navigation; nothing here waits for it. A password-protected game is
- * joined the same way, and the join path asks for the password. */
-EM_JS(void, wasmFinderJoin, (const char *serverKey), {
-    window.location.href = '/join/' + encodeURIComponent(UTF8ToString(serverKey));
+/* Start the page's relay latency test (Module.wbRelayProbe, shell.html) and
+ * return without waiting for it, so a Join from the finder finds the closest
+ * relay already picked. The test runs once per page; later calls start
+ * nothing. */
+EM_JS(void, wasmRelayProbeStart, (void), {
+    Module.wbRelayProbe();
 });

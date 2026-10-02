@@ -501,18 +501,12 @@ void lvEmbedSetViewportSize(int viewW, int viewH) {
     }
 
     lv_clientMutexWaitFor();
+    /* The size setters keep the offset inside the map for the new grid. The
+     * sub-pixel pan is reset here because a resize carries no in-flight
+     * drag. */
     lv_screenSetSizeX((BYTE)newTilesX);
     lv_screenSetSizeY((BYTE)newTilesY);
-    /* Clamp the scroll offset so the viewport stays inside the 255x255 map,
-     * and reset the sub-pixel pan — a resize carries no in-flight drag. */
-    if (g_lv->isLoaded) {
-        BYTE ox, oy;
-        lv_screenGetOffsets(&ox, &oy);
-        if ((int)ox + newTilesX > 255) ox = (BYTE)(255 - newTilesX);
-        if ((int)oy + newTilesY > 255) oy = (BYTE)(255 - newTilesY);
-        lv_screenSetOffset(ox, oy);
-        lv_screenSetSubOffset(0, 0);
-    }
+    lv_screenSetSubOffset(0, 0);
     lv_drawResizeRenderTarget();
     lv_drawDirtyScreen();
     lv_clientMutexRelease();

@@ -2026,6 +2026,7 @@ STR_MENU_MAP_OVERVIEW=Огляд карти
 STR_MENU_OVERVIEW_IN_WINDOW=Весь екран
 STR_OVERVIEW_FOLLOWING=стеження
 STR_OVERVIEW_FREE=вільна
+STR_OVERVIEW_FREE_HINT=вільна ({string1} для стеження)
 STR_DLGKEYSETUP_OVERVIEWZOOM=Масштаб карти (утримувати)
 STR_DLGKEYSETUP_OVERVIEWFOLLOW=Стеження на карті (перемикання)
 STR_DLGKEYSETUP_OVERVIEWZOOMIN=Збільшити карту
@@ -2730,3 +2731,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Майстерня
 # The game finder's scripts
 STR_DLGBROWSER_MODS=Моди
 STR_DLGBROWSER_MODS_MORE=+ моди ({number})
+
+# In-game newswire — a scenario changed who hears a player's voice
+STR_VOICE_EVERYONE_ON=Голосовий чат тепер чують усі в грі
+STR_VOICE_EVERYONE_OFF=Голосовий чат тепер чують лише ваші союзники

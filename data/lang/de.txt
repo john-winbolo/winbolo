@@ -2026,6 +2026,7 @@ STR_MENU_MAP_OVERVIEW=Kartenübersicht
 STR_MENU_OVERVIEW_IN_WINDOW=Vollbild
 STR_OVERVIEW_FOLLOWING=folgt
 STR_OVERVIEW_FREE=frei
+STR_OVERVIEW_FREE_HINT=frei ({string1} zum Folgen)
 STR_DLGKEYSETUP_OVERVIEWZOOM=Kartenzoom (halten)
 STR_DLGKEYSETUP_OVERVIEWFOLLOW=Kartenverfolgung (umschalten)
 STR_DLGKEYSETUP_OVERVIEWZOOMIN=Karte vergrößern
@@ -2730,3 +2731,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop
 # The game finder's scripts
 STR_DLGBROWSER_MODS=Mods
 STR_DLGBROWSER_MODS_MORE=+{number} Mods
+
+# In-game newswire — a scenario changed who hears a player's voice
+STR_VOICE_EVERYONE_ON=Sprachchat geht jetzt an alle im Spiel
+STR_VOICE_EVERYONE_OFF=Sprachchat geht jetzt nur an deine Verbündeten

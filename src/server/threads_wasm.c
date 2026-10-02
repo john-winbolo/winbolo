@@ -6,8 +6,9 @@
 /*
  * threads_wasm.c - No-op thread manager for WASM build
  *
- * Replaces server/threads.c. In WASM there are no server threads;
- * all game logic runs on the main thread inside emscripten_set_main_loop.
+ * Replaces server/threads.c. In WASM there is no server thread: the server
+ * ticks on the page's thread. Bot thinks run on worker threads, but they
+ * never take this mutex; only the page's thread does, so it stays a no-op.
  */
 
 #include "global.h"

@@ -23,8 +23,8 @@
  * a rate the codec can work at.  A browser that will not give us 48 kHz
  * leaves voice without a context rather than producing pitch-shifted audio.
  *
- * Nothing here uses SharedArrayBuffer: this build has neither -pthread nor
- * the COOP/COEP headers it needs.  Frames cross between the audio thread and
+ * Nothing here uses SharedArrayBuffer, so voice does not depend on the
+ * page being cross-origin isolated.  Frames cross between the audio thread and
  * the main thread as transferable ArrayBuffers, and cross between JS and the
  * wasm heap by being copied sample by sample.  A typed-array view of the
  * heap is never retained across a call - -sALLOW_MEMORY_GROWTH=1 detaches

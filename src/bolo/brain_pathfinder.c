@@ -2212,6 +2212,9 @@ void brainPathfinderDijkstraStart(BrainPathfinder *pf, int slate, uint32_t tick,
   (void)trees; (void)mines; (void)armour;
   if (!pf || !pf->map) return;
   if (slate < 0 || slate >= DIJKSTRA_NUM_SLATES) return;
+#ifndef __EMSCRIPTEN__
+  /* The web build leaves this out: nothing there can create the trigger
+   * file, and the check costs a file-system call per search. */
   /* On-demand dijkstra logging: touch "log_next_dijkstra" to trigger.
    * Only logs for player 0's pathfinder. Deletes the trigger file and
    * logs one full slate start+expansion, then closes the log. */
@@ -2223,6 +2226,7 @@ void brainPathfinderDijkstraStart(BrainPathfinder *pf, int slate, uint32_t tick,
       if (!dijkstra_log) brainPathfinderEnableDijkstraLog(1);
     }
   }
+#endif
   DijkstraSlate *s = &pf->dij_slates[slate];
 
   /* Lazy edge-cost rebuild */

@@ -22,8 +22,8 @@
  *Purpose:
  *  Fixed-size SDL3-backed worker thread pool for parallel
  *  per-bot jobs. Process-wide singleton, single producer
- *  (the main thread). Pre-work for the upcoming parallel
- *  brain-tick path; no caller exists yet.
+ *  (the main thread). botManagerTick runs each tick's bot
+ *  brain thinks on it.
  *
  *  Queueing model — per-worker semaphore pairs:
  *    Each worker owns one go semaphore, one done semaphore,
@@ -49,12 +49,11 @@
 
 #include "../common/wb_log.h"
 
-#if defined(__EMSCRIPTEN__)
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
 
-/* WASM is single-threaded under the build configurations we ship; the
- * pool degrades to a no-op shell that runs every job inline on the
- * calling thread. The four entry points keep the same signatures so
- * callers compile unchanged. */
+/* A web build without -pthread has no threads; the pool degrades to a
+ * no-op shell that runs every job inline on the calling thread. The four
+ * entry points keep the same signatures so callers compile unchanged. */
 
 bool botWorkerPoolCreate(int workerCount) {
     (void)workerCount;
@@ -75,7 +74,7 @@ int botWorkerPoolGetSize(void) {
     return 0;
 }
 
-#else /* !__EMSCRIPTEN__ */
+#else /* !__EMSCRIPTEN__ || __EMSCRIPTEN_PTHREADS__ */
 
 typedef struct BotWorker {
     SDL_Thread    *thread;
@@ -265,4 +264,4 @@ int botWorkerPoolGetSize(void) {
     return g_pool.workerCount;
 }
 
-#endif /* __EMSCRIPTEN__ */
+#endif /* __EMSCRIPTEN__ && !__EMSCRIPTEN_PTHREADS__ */

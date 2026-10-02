@@ -1,12 +1,13 @@
 # Authors
 
-John Morrison
-Andrew Roth
+- John Morrison
+- Andrew Roth
+- Rooklift
 
-Steam acheivement icons by William Morrison and Flora Woodward
+Steam achievement icons by William Morrison and Flora Woodward
 
 ## Older v1 changes
-Min
-Nathan Bryant
-Sticks
-jhood
+- Min
+- Nathan Bryant
+- Sticks
+- jhood

@@ -16,12 +16,10 @@
  *     globals stay FALSE and logStart() is fed an empty filename so
  *     it fails cleanly.
  *
- *   - serverDedicatedLogLastRoundFile: the real body is in
- *     server_dedicated_log.c (server_static), which the wasm client
- *     doesn't link. The lobby's recap reel asks it for a round this
- *     process recorded itself, ahead of the copy the server sends; the
- *     wasm client never hosts, so there is never one, and "" is the
- *     answer the header already defines for that.
+ *   - transportUdpServerSetRoundLogSource / serverLifecycleSetRoundLogHooks:
+ *     server_dedicated_log.c, linked to record practice rounds, hands its
+ *     round-log source and stash/flush hooks to the UDP server and the
+ *     dedicated server's lifecycle, neither of which this build has.
  *
  *   - serverInstanceGetPortmapInfo / TriggerManualProbe /
  *     GetManualProbeState / IsNatPunchActive: NAT/UPnP probe state owned
@@ -47,6 +45,7 @@
                                     * serverSimLocalTick */
 #include "server_lifecycle.h"
 #include "server_dedicated_log.h"
+#include "transport_udp.h"         /* RoundLogSource */
 
 bool isLogging = FALSE;
 bool dontSendLog = TRUE;
@@ -56,8 +55,17 @@ void makeLogFileName(char *outFileName, const char *mapName) {
   if (outFileName) outFileName[0] = '\0';
 }
 
-const char *serverDedicatedLogLastRoundFile(void) {
-  return "";
+/* No UDP server here to answer a client's round-log request. */
+void transportUdpServerSetRoundLogSource(const RoundLogSource *src) {
+  (void)src;
+}
+
+/* No map rotation or empty reset here, the two lifecycle paths that stash a
+ * round the game-over event did not. */
+void serverLifecycleSetRoundLogHooks(void (*stash)(void),
+                                     void (*flush)(void)) {
+  (void)stash;
+  (void)flush;
 }
 
 void serverInstanceGetPortmapInfo(ServerPortmapInfo *out) {
