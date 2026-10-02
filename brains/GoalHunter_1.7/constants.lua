@@ -5448,13 +5448,21 @@ M.PRESETS = {
     BOAT_SHELL_DODGE_DEFER        = 8,
     EDGE_COST_REFRESH_THINKS      = 250,    -- about 10 s; arena walls never fall
     -- Per level, on top of the values above (init.lua _apply_cfg_tokens).
-    -- Hard keeps the values above. Medium and Easy aim wider, fire slower,
-    -- wait for a steadier target and do not dodge shells, so Hard beats
-    -- Medium and Medium beats Easy (2026-10-01 bench: 22-2 and 23-1 over 24
-    -- games each). Joust is always "outnumbered" in a Free For All, so the
+    -- Hard keeps the values above. Medium and Easy aim wider, fire slower
+    -- and wait for a steadier target; Easy also does not dodge shells.
+    -- 2026-10-01: Andrew found the first Medium far too easy in play, so
+    -- Easy took its values and Medium moved halfway to Hard. Joust is always "outnumbered" in a Free For All, so the
     -- lower levels must not disengage for it, or a 4-6 bot round stalls.
     by_difficulty = {
       medium = {
+        OUTNUMBERED_DISENGAGE     = false,
+        AIM_ERROR_BRADS           = 3,
+        FIRE_HOLD_TICKS           = 10,
+        REACTION_DELAY_TICKS      = 8,
+        TANK_COMBAT_STEADY_TICKS  = 2,
+        TANK_COMBAT_AIM_GATE_BRADS = 18,
+      },
+      easy = {
         OUTNUMBERED_DISENGAGE     = false,
         AIM_ERROR_BRADS           = 6,
         FIRE_HOLD_TICKS           = 20,
@@ -5462,16 +5470,6 @@ M.PRESETS = {
         TANK_COMBAT_STEADY_TICKS  = 5,
         TANK_COMBAT_AIM_GATE_BRADS = 12,
         BOAT_SHELL_DODGE          = false,
-      },
-      easy = {
-        OUTNUMBERED_DISENGAGE     = false,
-        AIM_ERROR_BRADS           = 14,
-        FIRE_HOLD_TICKS           = 50,
-        REACTION_DELAY_TICKS      = 24,
-        TANK_COMBAT_STEADY_TICKS  = 10,
-        TANK_COMBAT_AIM_GATE_BRADS = 8,
-        BOAT_SHELL_DODGE          = false,
-        LEAD_CAP_USE_MEASURED     = false,
       },
     },
   },
