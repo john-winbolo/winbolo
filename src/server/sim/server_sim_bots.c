@@ -34,6 +34,7 @@
 #include "server_sim_internal.h"
 #include "server_sim_shared.h"  /* serverSimSetActive — the fielding path's tank build */
 #include "bot_manager.h"
+#include "brain_list.h"         /* brainListAliasPath */
 #include "bot_worker_pool.h"   /* botWorkerPoolDestroy */
 #include "server_sim_join.h"   /* addPlayerInternal, fillAndPublishPlayerJoin, serverSimAssignLobbyStartOnJoin */
 #include "server_sim_scenario.h"  /* serverSimAddUnfieldedSeat and
@@ -460,4 +461,8 @@ void serverSimSetBotBrainPath(ServerSim *sim, const char *path) {
     }
     strncpy(sim->botBrainPath, path, sizeof(sim->botBrainPath) - 1);
     sim->botBrainPath[sizeof(sim->botBrainPath) - 1] = '\0';
+    /* A -brain or config path written for the old brains/GoalHunter_1.7
+     * directory names the renamed brains/GoalHunter one. */
+    brainListAliasPath(sim->botBrainPath, sim->botBrainPath,
+                       sizeof(sim->botBrainPath));
 }

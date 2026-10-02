@@ -922,7 +922,7 @@ static ServerSim *ssSurvivalLobby(ScenarioHost **host, char *mapPath,
     }
     serverSimSetLobbyEnabled(sim, true);
     serverSimSetBotAiType(sim, aiFull);
-    serverSimSetBotBrainPath(sim, "brains/GoalHunter_1.7/init.lua");
+    serverSimSetBotBrainPath(sim, "brains/GoalHunter/init.lua");
     err[0] = '\0';
     *host = scenarioHostAttach(sim, mapPath, err, errLen);
     if (*host == NULL) {

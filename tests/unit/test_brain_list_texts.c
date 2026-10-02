@@ -158,7 +158,7 @@ int run_brain_list_texts_read(void) {
     /* ── The brain this branch actually ships, if it is in the tree ── */
     {
         char shipped[512];
-        SDL_snprintf(shipped, sizeof(shipped), "brains%cGoalHunter_1.7", SEP);
+        SDL_snprintf(shipped, sizeof(shipped), "brains%cGoalHunter", SEP);
         if (brainListLoadTexts(shipped,
                                announce, (size_t)BRAIN_ANNOUNCE_MAX + 1,
                                docs, (size_t)BRAIN_DOCS_MAX + 1,
@@ -257,4 +257,91 @@ int run_brain_docs_compress_roundtrip(void) {
     free(back);
     free(z);
     return 0;
+}
+
+/* AN OLD GoalHunter_1.7 PATH LOADS THE RENAMED GoalHunter BRAIN.
+ *
+ * The brain directory lost its version suffix. Command lines, -bot-init specs
+ * and server configs written for brains/GoalHunter_1.7 must still find it, so
+ * brainListAliasPath rewrites the old directory to the new one. It does so
+ * only when the old path is not on disk and the new one is: a player's own
+ * GoalHunter_1.7 copy still loads as itself, and a path that names neither
+ * comes back unchanged so its error names what was asked for. The texts read
+ * through an old path reach the renamed brain's files as well. */
+#define ALIAS_ROOT "wbtest_brainalias"
+
+static void aliasCleanup(void) {
+    char p[512];
+    SDL_snprintf(p, sizeof(p), "%s%cGoalHunter%cinit.lua", ALIAS_ROOT, SEP, SEP);
+    rmPath(p);
+    SDL_snprintf(p, sizeof(p), "%s%cGoalHunter%cannounce.txt", ALIAS_ROOT, SEP, SEP);
+    rmPath(p);
+    SDL_snprintf(p, sizeof(p), "%s%cGoalHunter", ALIAS_ROOT, SEP);
+    rmPath(p);
+    SDL_snprintf(p, sizeof(p), "%s%cGoalHunter_1.7%cinit.lua", ALIAS_ROOT, SEP, SEP);
+    rmPath(p);
+    SDL_snprintf(p, sizeof(p), "%s%cGoalHunter_1.7", ALIAS_ROOT, SEP);
+    rmPath(p);
+    rmPath(ALIAS_ROOT);
+}
+
+int run_brain_list_goalhunter_alias(void) {
+    char oldPath[512], newPath[512], oldDir[512], newDir[512], p[512];
+    char out[512];
+    char announce[BRAIN_ANNOUNCE_MAX + 1];
+    char docs[64];
+    bool truncated = false;
+    int  rc = 1;
+
+    aliasCleanup();
+    SDL_snprintf(newDir, sizeof(newDir), "%s%cGoalHunter", ALIAS_ROOT, SEP);
+    SDL_snprintf(oldDir, sizeof(oldDir), "%s%cGoalHunter_1.7", ALIAS_ROOT, SEP);
+    SDL_snprintf(newPath, sizeof(newPath), "%s%cinit.lua", newDir, SEP);
+    SDL_snprintf(oldPath, sizeof(oldPath), "%s%cinit.lua", oldDir, SEP);
+
+    /* Neither directory on disk: unchanged, false. */
+    UT_ASSERT(brainListAliasPath(oldPath, out, sizeof(out)) == false);
+    UT_ASSERT_MSG(strcmp(out, oldPath) == 0, "got '%s'", out);
+
+    /* Only the renamed brain on disk: the old path names it. */
+    UT_ASSERT(SDL_CreateDirectory(newDir));
+    UT_ASSERT(writeFile(newPath, "-- fixture\n", 11) == 0);
+    SDL_snprintf(p, sizeof(p), "%s%cannounce.txt", newDir, SEP);
+    UT_ASSERT(writeFile(p, "hello", 5) == 0);
+    UT_ASSERT(brainListAliasPath(oldPath, out, sizeof(out)) == true);
+    UT_ASSERT_MSG(strcmp(out, newPath) == 0, "got '%s', want '%s'", out, newPath);
+
+    /* In place, and with a forward slash and other case. */
+    {
+        char inPlace[512];
+        SDL_snprintf(inPlace, sizeof(inPlace), "%s/goalhunter_1.7/init.lua",
+                     ALIAS_ROOT);
+        UT_ASSERT(brainListAliasPath(inPlace, inPlace, sizeof(inPlace)) == true);
+        UT_ASSERT_MSG(strcmp(inPlace, ALIAS_ROOT "/GoalHunter/init.lua") == 0,
+                      "got '%s'", inPlace);
+    }
+
+    /* Only a whole directory component matches. */
+    SDL_snprintf(p, sizeof(p), "%s%cXGoalHunter_1.7%cinit.lua", ALIAS_ROOT, SEP, SEP);
+    UT_ASSERT(brainListAliasPath(p, out, sizeof(out)) == false);
+    UT_ASSERT_MSG(strcmp(out, p) == 0, "got '%s'", out);
+
+    /* The new path is never touched. */
+    UT_ASSERT(brainListAliasPath(newPath, out, sizeof(out)) == false);
+    UT_ASSERT_MSG(strcmp(out, newPath) == 0, "got '%s'", out);
+
+    /* The lobby texts read through the old path reach the new files. */
+    UT_ASSERT(brainListLoadTextsForPath(oldPath, announce, sizeof(announce),
+                                        docs, sizeof(docs), &truncated));
+    UT_ASSERT_MSG(strcmp(announce, "hello") == 0, "announce '%s'", announce);
+
+    /* A real GoalHunter_1.7 directory wins over the alias. */
+    UT_ASSERT(SDL_CreateDirectory(oldDir));
+    UT_ASSERT(writeFile(oldPath, "-- own copy\n", 12) == 0);
+    UT_ASSERT(brainListAliasPath(oldPath, out, sizeof(out)) == false);
+    UT_ASSERT_MSG(strcmp(out, oldPath) == 0, "got '%s'", out);
+
+    rc = 0;
+    aliasCleanup();
+    return rc;
 }

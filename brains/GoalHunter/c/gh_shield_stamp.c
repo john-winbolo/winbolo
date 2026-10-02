@@ -371,7 +371,7 @@ static int l_load(lua_State *L) {
      * we want to accept the second caller rather than hard-erroring. */
     if (SDL_strcasecmp(path, s_loaded_path) != 0) {
         /* Already loaded from a different brain directory — e.g. GoalHunter_1.0
-         * and GoalHunter_1.7 bots in the same process. The stamp cache is
+         * and GoalHunter bots in the same process. The stamp cache is
          * identical geometry data shared by every GoalHunter version (same
          * shield_stamp_cache.bin), so reuse the already-loaded table for this
          * caller instead of hard-erroring. This is what lets one game mix

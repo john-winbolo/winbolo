@@ -69,7 +69,7 @@ local PONDS    = { { 126, 118 }, { 96, 112 }, { 152, 138 } }
 local GRASS    = 7
 local POND_TICK = 400
 
-local BOT_BRAIN = "../brains/GoalHunter_1.7/init.lua"
+local BOT_BRAIN = "../brains/GoalHunter/init.lua"
 -- The path is relative to the server's working directory, which is the gate's
 -- build directory.  idle.lua reads BRAIN_INIT_ARG and has no init table to
 -- flatten, so it is spawned with none.

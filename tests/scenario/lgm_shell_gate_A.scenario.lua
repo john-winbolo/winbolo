@@ -41,7 +41,7 @@
 -- THE ARENA FIELDS ITS ONE TANK, so the GATE line says bots=0.  The measured
 -- GoalHunter has to come in with lgm_shell_gate_test.py's pins and the runner
 -- fields its -bots N seats with no init at all, so the arena does the spawn.
-local OUR_BRAIN  = "../brains/GoalHunter_1.7/init.lua"
+local OUR_BRAIN  = "../brains/GoalHunter/init.lua"
 local OUR_SLOT   = 0
 -- lgm_shell_gate_test.py TOKENS["A"], verbatim.
 local OUR_TOKENS = "cfg=BUILDER_POOL_UNDER_FIRE_TICKS=0;cfg=PILL_REPOSITION_ENABLED=false"

@@ -15,8 +15,18 @@
 # brain, including the active one, ran the oldest version's bindings, and an
 # edit to the active version's c/ never reached the binary. Anyone who
 # freezes a second brain tree again must keep this one-directory rule.
-set(WINBOLO_BRAIN_C_DIR "GoalHunter_1.7" CACHE STRING
+set(WINBOLO_BRAIN_C_DIR "GoalHunter" CACHE STRING
     "brains/<dir>/c is the one set of brain C bindings compiled and linked (all brain versions share it)")
+# The brain directory was brains/GoalHunter_1.7 until it lost its version
+# suffix. A build directory configured before that still caches the old
+# name, so move it to the new one while no GoalHunter_1.7 tree exists.
+if(WINBOLO_BRAIN_C_DIR STREQUAL "GoalHunter_1.7" AND
+   NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/GoalHunter_1.7/c")
+    message(STATUS "WINBOLO_BRAIN_C_DIR: GoalHunter_1.7 is now GoalHunter")
+    set(WINBOLO_BRAIN_C_DIR "GoalHunter" CACHE STRING
+        "brains/<dir>/c is the one set of brain C bindings compiled and linked (all brain versions share it)"
+        FORCE)
+endif()
 
 file(GLOB BOT_C_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/${WINBOLO_BRAIN_C_DIR}/c/*.c")

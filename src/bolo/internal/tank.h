@@ -111,7 +111,7 @@ struct GameSim;
  * branches on it.
  *
  * The radius is the brain's own near-shell notion: GoalHunter's
- * SWERVE_SHELL_NEAR_WU (brains/GoalHunter_1.7/constants.lua:724) is 400 world
+ * SWERVE_SHELL_NEAR_WU (brains/GoalHunter/constants.lua:724) is 400 world
  * units — 400/256 = 1.56 tiles, i.e. a bit over three tank hit radii
  * (TANK_HIT_RADIUS 112).  That is the distance at which the brain already
  * considers a shell close enough to swerve for, so a drowning with no shell

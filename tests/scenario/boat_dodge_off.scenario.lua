@@ -1,7 +1,7 @@
 -- boat_dodge_off -- boat_dodge with DODGER_CFG = nil (the knob at its default).
 -- Expected to fail. Everything below is boat_dodge's own text.
 --
--- boat_dodge -- does a GoalHunter 1.7 boat get out of the way of shells?
+-- boat_dodge -- does a GoalHunter boat get out of the way of shells?
 --
 -- In Joust every tank is on a boat and one hit sinks it. A shell flies at
 -- 32 wu a frame and a boat sails at 16, so a boat that turns or changes
@@ -12,7 +12,7 @@
 -- shell farthest away (steering.lua boat_shell_dodge).
 --
 -- The arena: Joust.map, a round deep-sea arena with no land. Two GoalHunter
--- 1.7 bots fight. Seat 0 (the dodger) is handed DODGER_CFG through
+-- GoalHunter bots fight. Seat 0 (the dodger) is handed DODGER_CFG through
 -- game.bot_init; seat 1 plays with the defaults. Each round the script puts
 -- both on boats in the middle of the sea, 6 squares apart, facing each
 -- other, with full shells, and the round ends at the first hit (a hit sinks
@@ -28,7 +28,7 @@
 -- is expected to fail.
 --
 -- GATE: ticks=80000 bots=2 gametype=open ai=yesfull
--- GATE: expect=fail GoalHunter 1.7 with BOAT_SHELL_DODGE=false (the default) takes about as many hits as the other seat
+-- GATE: expect=fail GoalHunter with BOAT_SHELL_DODGE=false (the default) takes about as many hits as the other seat
 
 -- KNOB VARIANT. DODGER_CFG goes to seat 0 through game.bot_init at frame 3.
 local DODGER_CFG = nil

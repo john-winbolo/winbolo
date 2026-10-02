@@ -127,7 +127,7 @@ int run_loopback_unfield_tank(void) {
         UT_FAIL("the held seat could not be seated");
     }
     if (!serverSimAddBot(h.sim, LU_SEAT, &(ServerSimBotConfig){
-                             .brainPath   = "brains/GoalHunter_1.7/init.lua",
+                             .brainPath   = "brains/GoalHunter/init.lua",
                              .brainName   = "Raider",
                              .ai          = aiFull,
                              .gameType    = gameOpen,

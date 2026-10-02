@@ -200,7 +200,7 @@ end
 -- may be written in the host's own shape.
 --
 -- The init table does reach the brain. The host hands it to the bot as the
--- BRAIN_INIT global, and brains/GoalHunter_1.7/init.lua flattens it into
+-- BRAIN_INIT global, and brains/GoalHunter/init.lua flattens it into
 -- BRAIN_INIT_ARG -- the "k=v;k=v" string its parse blocks read -- before
 -- either of them runs. Two things about that flattening the arenas depend
 -- on: the keys are sorted, so the same table always builds the same string;
@@ -280,7 +280,7 @@ end
 
 -- ── a brain path, mapped to a brain name ─────────────────────────
 -- An arena names a brain the way the drivers did, by path:
--- "../brains/GoalHunter_1.7/init.lua", "../tests/brains/idle.lua". This host
+-- "../brains/GoalHunter/init.lua", "../tests/brains/idle.lua". This host
 -- takes a NAME -- one directory under a brains parent, holding init.lua --
 -- and refuses any value with a separator in it, so an arena naming a path
 -- gets SCN_OP_NOT_FOUND, the bot is never made, and the arena measures
@@ -291,7 +291,7 @@ end
 --
 -- which is the layout the resolver itself reads. The gate stages every
 -- tests/brains/*.lua as <build>/Brains/<stem>/init.lua so the first shape
--- resolves, and CMake stages GoalHunter_1.7 for the second.
+-- resolves, and CMake stages GoalHunter for the second.
 --
 -- Anything else goes through untouched on purpose: a path that is simply
 -- wrong should still be refused by the host rather than quietly turned into

@@ -445,12 +445,12 @@ static bool wasmPickBackgroundMap(char *out, size_t outLen) {
 
 /* Find the brain practice bots run, trying the same paths in the same order
  * as the desktop's single-player lookup (gamefront.c findBrainPath). The web
- * preloads /Brains/GoalHunter_1.7, which the first path finds. */
+ * preloads /Brains/GoalHunter, which the first path finds. */
 static bool wasmFindBrainPath(char *out, size_t outLen) {
   const char *candidates[] = {
-    "Brains/GoalHunter_1.7/init.lua",
-    "brains/GoalHunter_1.7/init.lua",
-    "data/Brains/GoalHunter_1.7/init.lua",
+    "Brains/GoalHunter/init.lua",
+    "brains/GoalHunter/init.lua",
+    "data/Brains/GoalHunter/init.lua",
   };
   int i;
   for (i = 0; i < 3; i++) {

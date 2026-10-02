@@ -26,7 +26,7 @@
 -- would produce. B and B2 differ by ONE token, and that is
 -- what makes the pair a control rather than two experiments.
 local TOKENS = "cfg=TREE_OPPORTUNISTIC_MAX=41;cfg=BUILDER_POOL_VALUE_FARM=99;cfg=BUILDER_POOL_RETURN_PREDICT=false"
-local OUR_BRAIN = "../brains/GoalHunter_1.7/init.lua"
+local OUR_BRAIN = "../brains/GoalHunter/init.lua"
 
 local SPAWN = { 116, 126 }
 local TARGET = { 139, 126 }

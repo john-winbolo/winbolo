@@ -18,7 +18,7 @@
 local CORPSE    = 1                 -- the map's only pillbox
 local OUR_SLOT  = 0
 local ALLY_SLOT = 1
-local GOALHUNTER = "../brains/GoalHunter_1.7/init.lua"    -- from the build dir
+local GOALHUNTER = "../brains/GoalHunter/init.lua"    -- from the build dir
 local TALKER     = "../tests/brains/advert_capture.lua"
 
 -- The driver's OUR_CFG, word for word.

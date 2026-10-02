@@ -1,4 +1,4 @@
--- boat_dodge -- does a GoalHunter 1.7 boat get out of the way of shells?
+-- boat_dodge -- does a GoalHunter boat get out of the way of shells?
 --
 -- In Joust every tank is on a boat and one hit sinks it. A shell flies at
 -- 32 wu a frame and a boat sails at 16, so a boat that turns or changes
@@ -9,7 +9,7 @@
 -- shell farthest away (steering.lua boat_shell_dodge).
 --
 -- The arena: Joust.map, a round deep-sea arena with no land. Two GoalHunter
--- 1.7 bots fight. Seat 0 (the dodger) is handed DODGER_CFG through
+-- GoalHunter bots fight. Seat 0 (the dodger) is handed DODGER_CFG through
 -- game.bot_init; seat 1 plays with the defaults. Each round the script puts
 -- both on boats in the middle of the sea, 6 squares apart, facing each
 -- other, with full shells, and the round ends at the first hit (a hit sinks

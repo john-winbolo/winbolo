@@ -28,7 +28,7 @@
 -- VALUE_FARM (15) and can never clear MIN_SCORE. 99 is what a 5-tree woodpile
 -- would produce.
 local TOKENS = "cfg=TREE_OPPORTUNISTIC_MAX=41;cfg=BUILDER_POOL_VALUE_FARM=99"
-local OUR_BRAIN = "../brains/GoalHunter_1.7/init.lua"
+local OUR_BRAIN = "../brains/GoalHunter/init.lua"
 
 local SPAWN = { 126, 126 }
 local FIELD = { 120, 132, 124, 128 }   -- x0, x1, y0, y1

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Difficulty no-op invariant (GoalHunter_1.7).
+"""Difficulty no-op invariant (GoalHunter).
 
 The difficulty feature must leave HARD (and preset=keel) bit-for-bit identical
 to the pre-feature brain. Two things guarantee that, and this test asserts both
@@ -17,7 +17,7 @@ import re
 import sys
 from pathlib import Path
 
-CONST = Path(__file__).resolve().parent.parent / "brains" / "GoalHunter_1.7" / "constants.lua"
+CONST = Path(__file__).resolve().parent.parent / "brains" / "GoalHunter" / "constants.lua"
 
 # knob -> expected no-op default (the value at which the knob does nothing)
 NOOP = {
