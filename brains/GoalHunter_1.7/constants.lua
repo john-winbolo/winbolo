@@ -4899,6 +4899,16 @@ M.BOT_PINGS_DEFAULT      = true   -- keel false (2026-09-29: pings on by default
 -- line they just typed (help, "didn't understand", "Busy", the setting
 -- confirmations) is never silenced: see sayg in orders.lua.
 M.BOT_CHAT_DEFAULT       = false  -- keel true (moot; master off)
+-- WHO HEARS "init updated: N tokens", the line a bot says when a scenario
+-- hands it a new init table (game.bot_init).  false = the allied BOTS only:
+-- Virus retunes a bot on every infection and Pillbox Tag on every tag, and
+-- each time every bot said the line to every human on its team.  true = the
+-- whole team, humans included (the old line).
+M.BOT_INIT_LINE_TO_HUMANS = false -- keel true (2026-10-01: newswire spam)
+-- A "Busy (...)" answer to a SCENARIO HINT.  A hint has no person behind it,
+-- so true drops the line; a hint a busy bot cannot take is refused in
+-- silence, as a hint that cannot be built already is.  false = say it.
+M.ORDER_HINT_BUSY_SILENT  = true  -- keel false (2026-10-01: newswire spam)
 -- Shortest gap between two ATTACK markers from the SAME bot about the SAME
 -- target.  A bot re-plans the same goal often, and without this every replan
 -- would put another marker on the same pill.  1500 ticks is 30 s.
@@ -5294,6 +5304,8 @@ M.PRESETS = {
     ORDER_LATCH_REBROADCAST_TICKS = 1500,
     BOT_PINGS_DEFAULT             = false,
     BOT_CHAT_DEFAULT              = true,
+    BOT_INIT_LINE_TO_HUMANS       = true,
+    ORDER_HINT_BUSY_SILENT        = false,
     --   2026-09-17: a bot attacking a pill with a HUMAN team-mate within 7
     --   tiles now skips the wall shield and goes straight in (the lobby docs
     --   promise it). KEEL never looked at where the humans were: 0 = off, so
