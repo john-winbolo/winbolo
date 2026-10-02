@@ -248,6 +248,9 @@ void simRulesClassic(SimRules *out) {
 
     /* ---- Deep sea ---- */
     out->tank_deep_sea_safe      = 0;
+
+    /* ---- Builder walk ---- */
+    out->man_bless_tile_terrain_speed = LGM_BLESS_TILE_TERRAIN_SPEED;
 }
 
 /* ---- Against the classic table -------------------------------------------
@@ -633,7 +636,9 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     X(pill_aim_mac,              INT,    0,      1) \
     X(tank_collision_mac,        INT,    0,      1)                          \
     /* Deep sea */                                                          \
-    X(tank_deep_sea_safe,        INT,    0,      1)
+    X(tank_deep_sea_safe,        INT,    0,      1)                          \
+    /* Builder walk */                                                      \
+    X(man_bless_tile_terrain_speed, INT,  0,      1)
 
 /* The rules a single other rule also caps, as the pairs below hold them.
  * Only a direct field against other_field test is here: where a ceiling is

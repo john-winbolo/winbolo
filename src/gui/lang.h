@@ -2948,7 +2948,8 @@
  * The pill shell cap pair, pill_base_defend_shape and then the Mac Bolo
  * shell push pair came after all of those and took the next free numbers,
  * at the end of the file, and tank_deep_sea_safe took the next free one
- * after those. The
+ * after those, and man_bless_tile_terrain_speed the next free one after
+ * that. The
  * order of the block is SIM_RULE_LIST's throughout, which is the order that
  * matters, and a hole in the numbers costs nothing: langTable is searched by
  * id rather than indexed by it. */
@@ -3107,6 +3108,7 @@
 #define STR_RULE_DESC_pill_aim_mac               2711
 #define STR_RULE_DESC_tank_collision_mac         2712
 #define STR_RULE_DESC_tank_deep_sea_safe         2760
+#define STR_RULE_DESC_man_bless_tile_terrain_speed 2762
 
 /* Rule range wording */
 

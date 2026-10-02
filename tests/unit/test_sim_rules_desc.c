@@ -60,7 +60,9 @@ static const langid srdDescIds[] = {
  * scenario strings, and because the pill shell cap pair,
  * pill_base_defend_shape and then the Mac Bolo shell push pair took the next
  * free numbers after everything else, and tank_deep_sea_safe took the next
- * free one after those. See the block comment in lang.h. */
+ * free one after those. man_bless_tile_terrain_speed took the next free one
+ * after that, past a lobby string, so the last stretch has a hole. See the
+ * block comment in lang.h. */
 #define SRD_FIRST_ID  2345u
 #define SRD_LAST_ID   2425u
 #define SRD_FIRST_ID2 2486u
@@ -70,7 +72,7 @@ static const langid srdDescIds[] = {
 #define SRD_FIRST_ID4 2698u
 #define SRD_LAST_ID4  2712u
 #define SRD_FIRST_ID5 2760u
-#define SRD_LAST_ID5  2760u
+#define SRD_LAST_ID5  2762u
 
 /* ── 1. A description id per rule ──────────────────────────────────────── */
 
