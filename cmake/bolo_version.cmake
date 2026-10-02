@@ -22,7 +22,7 @@
 #                             The suffix does NOT affect these, so a "2.02a"
 #                             build connects to "2.02" peers.
 
-set(WINBOLO_VERSION "2.03" CACHE STRING "WinBolo numeric version number (drives network protocol bytes)")
+set(WINBOLO_VERSION "2.1" CACHE STRING "WinBolo numeric version number (drives network protocol bytes)")
 set(WINBOLO_VERSION_SUFFIX "" CACHE STRING "Display-only version suffix (UI text only, ignored by the network protocol)")
 
 # Human-facing version string. Only affects displayed text; the network
@@ -48,7 +48,9 @@ string(TIMESTAMP WINBOLO_BUILD_YEAR "%Y")
 # Derive network protocol version bytes from WINBOLO_VERSION.
 # Each digit of the version string (skipping dots) becomes one byte.
 # E.g. "1.19" -> MAJOR=0x01, MINOR=0x01, REVISION=0x09.
+# Missing trailing digits count as 0, so "2.1" -> 2, 1, 0.
 string(REPLACE "." "" _VER_DIGITS "${WINBOLO_VERSION}")
+string(APPEND _VER_DIGITS "00")
 string(SUBSTRING "${_VER_DIGITS}" 0 1 _VER_D0)
 string(SUBSTRING "${_VER_DIGITS}" 1 1 _VER_D1)
 string(SUBSTRING "${_VER_DIGITS}" 2 1 _VER_D2)

@@ -134,8 +134,11 @@ target_compile_definitions(bolo_static PRIVATE
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
 )
 
+# PUBLIC because public/brain_lua_glue.h and luabrainshandler.c (compiled
+# into each binary) test the flag too; without it they build the no-op
+# stubs and the real ml_brain.o is never linked.
 if(HAVE_ONNXRUNTIME)
-    target_compile_definitions(bolo_static PRIVATE HAVE_ONNXRUNTIME=1)
+    target_compile_definitions(bolo_static PUBLIC HAVE_ONNXRUNTIME=1)
     target_link_libraries(bolo_static PUBLIC onnxruntime::onnxruntime)
 endif()
 

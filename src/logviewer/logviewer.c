@@ -70,9 +70,6 @@
 #include "platform/mac_menubar.h"
 #endif
 
-/* Version string referenced by imgui_dialogs.cpp */
-const char *lv_g_version_string = "1.01";
-
 /* Game-view accessors (Phase D of plans/ctrailer.md). game_view.c includes
  * the bolo-side mapview.h headers and so cannot include backend.h (the two
  * share type names but use different layouts). These accessors expose

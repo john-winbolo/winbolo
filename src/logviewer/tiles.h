@@ -697,9 +697,9 @@
 #define SHELL_9_Y 83
 #define SHELL_9_WIDTH 3
 #define SHELL_9_HEIGHT 4
-#define SHELL_10_X 456
+#define SHELL_10_X 455
 #define SHELL_10_Y 83
-#define SHELL_10_WIDTH 3
+#define SHELL_10_WIDTH 4
 #define SHELL_10_HEIGHT 4
 #define SHELL_11_X 459
 #define SHELL_11_Y 83

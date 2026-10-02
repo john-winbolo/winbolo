@@ -135,6 +135,15 @@ Uint32 SDLCALL lv_windowTimer(void *userdata, SDL_TimerID timerID, Uint32 interv
     return 0;
 }
 
+/* Set by a host that steps the decoder from its own loop instead of the
+ * lv_windowTimer timer: the web viewer, where that timer is a setTimeout chain
+ * that runs late every tick and plays the log at about half speed. */
+static bool s_hostRunsTicks = false;
+
+void lv_windowSetHostRunsTicks(bool on) {
+    s_hostRunsTicks = on;
+}
+
 /* --------------------------------------------------------------------------
  * Playback control
  * -------------------------------------------------------------------------- */
@@ -148,7 +157,9 @@ void lv_windowPlay(void) {
         return;
     }
     if (g_lv->playIsPlaying == FALSE) {
-        g_lv->timerGameID  = SDL_AddTimer(20,  lv_windowTimer,      NULL);
+        if (!s_hostRunsTicks) {
+            g_lv->timerGameID = SDL_AddTimer(20, lv_windowTimer, NULL);
+        }
         g_lv->timerFrameID = SDL_AddTimer(50,  lv_windowFrameTimer, NULL);
     }
     g_lv->playIsPlaying = TRUE;
@@ -161,7 +172,9 @@ void lv_windowPause(void) {
     }
     lv_clientMutexWaitFor();
     if (g_lv->playIsPlaying == TRUE) {
-        SDL_RemoveTimer(g_lv->timerGameID);
+        if (g_lv->timerGameID != 0) {
+            SDL_RemoveTimer(g_lv->timerGameID);
+        }
         SDL_RemoveTimer(g_lv->timerFrameID);
         g_lv->timerGameID  = 0;
         g_lv->timerFrameID = 0;

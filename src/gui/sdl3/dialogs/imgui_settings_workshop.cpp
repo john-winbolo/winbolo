@@ -535,6 +535,11 @@ static void wsDrawPublish(float s) {
                             langGetText(STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH));
         return;
     }
+    /* The window is opened after the table, at the ID scope
+       workshopPublishDraw begins it in. Opened inside the row it would be
+       keyed on the table's and the row's IDs and never match. */
+    bool openWindow = false;
+
     if (!wsBeginList("##wspub", 2, (int)s_pubRows.size())) return;
     ImGui::TableSetupColumn("##name", ImGuiTableColumnFlags_WidthStretch);
     ImGui::TableSetupColumn("##go", ImGuiTableColumnFlags_WidthFixed);
@@ -568,7 +573,7 @@ static void wsDrawPublish(float s) {
                 SDL_strlcpy(s_pubCtx.source, r.path, sizeof(s_pubCtx.source));
                 s_pubCtx.isLua = r.isLua;
                 s_spec.tag     = r.mod ? "Mod" : "Scenario";
-                ImGui::OpenPopup(s_spec.popupId);
+                openWindow     = true;
             }
         }
         ImGui::EndDisabled();
@@ -576,6 +581,7 @@ static void wsDrawPublish(float s) {
         ImGui::PopID();
     }
     ImGui::EndTable();
+    if (openWindow) ImGui::OpenPopup(s_spec.popupId);
 }
 
 void imguiSettingsWorkshopSection(void) {
