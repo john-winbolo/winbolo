@@ -2565,6 +2565,7 @@
 #define STR_DLGLOBBY_SCENARIO_ROUND_NONE    2601
 #define STR_DLGLOBBY_SCENARIO_REPLACES      2602
 #define STR_DLGLOBBY_SCENARIO_ROUND_FULL    2603
+#define STR_DLGLOBBY_SCENARIO_MAP_UNLOAD    2761
 
 /* The one-word tag after a row's name, and in the details dialog beside the
  * name it describes. One word and not a sentence: it is read at a glance
