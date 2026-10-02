@@ -2044,6 +2044,47 @@ M.TANK_COMBAT_JINK_PERIOD       = 10    -- ticks between jink direction changes
 M.TANK_COMBAT_JINK_ANGLE        = 32    -- bolo angle offset for lateral jink (~45??)
 M.TANK_COMBAT_OPPORTUNISTIC_RANGE = 4   -- tiles: fire at enemy if already aimed near them
 M.TANK_COMBAT_OPPORTUNISTIC_AIM = 8     -- bolo angle units (~11??) aim tolerance for opportunistic shot
+-- ── attack_tank aim and fire knobs (2026-10-01, Joust) ─────────────────────
+-- Every default below is the OLD behaviour; Joust turns them on for its bots
+-- with PRESETS.joust (data/maps/Joust.scenario.lua, game.bot_init). Each
+-- has its old value in PRESETS.keel.
+-- COMBAT_CLIFF_AIM_KEEP: in attack_tank ENGAGE, when the global cliff brake
+-- fires (heading ray meets deep sea), keep the brake and drop accelerate but
+-- take the AIM turn and the shot from tank_combat_steer instead of the evade
+-- turn. Off: the brake returns its evade turn and the aim and shot are lost
+-- that tick (tests/scenario/acquire_shore).
+M.COMBAT_CLIFF_AIM_KEEP          = false
+-- TANK_COMBAT_TURN_FIRST_BRADS: in engage, no KEY_FASTER while the aim error
+-- is more than this many brads. 0 = off (always hold the dodge speed).
+M.TANK_COMBAT_TURN_FIRST_BRADS   = 0
+-- LEAD_CAP_USE_MEASURED: the lead model's per-terrain speed cap is the larger
+-- of C.MAP_SPEED[terrain] and the target's measured speed. Off: a boat on
+-- deep sea (MAP_SPEED 3) is led at 3 wu/tick while it sails at 16
+-- (tests/scenario/lead_aim_boat).
+M.LEAD_CAP_USE_MEASURED          = false
+-- TANK_COMBAT_FIRE_MAX_FLIGHT: in engage, do not fire when the shell's flight
+-- to the lead point is longer than the shell lives (live shell_life and the
+-- current gunsight). Off: fire whatever the range.
+M.TANK_COMBAT_FIRE_MAX_FLIGHT    = false
+-- TANK_COMBAT_AIM_GATE_BRADS: in engage, fire when the gun is within this
+-- many brads of the lead point. 3 = the old gate.
+M.TANK_COMBAT_AIM_GATE_BRADS     = 3
+-- WALL_SHOOT_LIFE_MAX: walls whose live building_life (info.rules) is above
+-- this are never shot by the combat wall-clear, the nav wall-clear, the
+-- drive-by wall shot or the stuck fallback; the stuck fallback reverses out
+-- instead. 0 = no limit (old behaviour: every wall is shot).
+M.WALL_SHOOT_LIFE_MAX            = 0
+-- BOAT_SHELL_DODGE: a tank on a boat turns and changes speed to get out of
+-- the way of a hostile shell its keys would leave it in the path of
+-- (steering.lua boat_shell_dodge). Off: the keys are never changed for a
+-- shell. BOAT_SHELL_DODGE_GAP: wu; a shell that comes closer than this
+-- (larger of |dx| and |dy|) counts as a hit. tank.c tests 128-144.
+M.BOAT_SHELL_DODGE               = false
+M.BOAT_SHELL_DODGE_GAP           = 192
+-- BOAT_SHELL_DODGE_DEFER: brain ticks. Keep the planned keys (the aim) while
+-- the best dodge would still clear the gap if it started this much later.
+-- 0 = dodge the first tick a shell threatens.
+M.BOAT_SHELL_DODGE_DEFER         = 0
 -- ── attack_tank: heat a FRIENDLY pill mid-fight (2026-09-06) ──────────────
 -- While fighting enemy tank E, a friendly pill CLOSER to E than we are is a
 -- second gun already in position -- but only if it is angry. The engine's
@@ -4975,6 +5016,17 @@ M.PRESETS = {
     LIVE_PHYSICS_WSIM_BUILD       = false,
     LIVE_PHYSICS_SHELL_LIFE       = false,
     LIVE_PHYSICS_PILL_RANGE_WU    = false,
+    -- 2026-10-01: attack_tank aim/fire knobs for Joust. All default off; KEEL
+    -- pinned at the same old values.
+    COMBAT_CLIFF_AIM_KEEP         = false,
+    TANK_COMBAT_TURN_FIRST_BRADS  = 0,
+    LEAD_CAP_USE_MEASURED         = false,
+    TANK_COMBAT_FIRE_MAX_FLIGHT   = false,
+    TANK_COMBAT_AIM_GATE_BRADS    = 3,
+    WALL_SHOOT_LIFE_MAX           = 0,
+    BOAT_SHELL_DODGE              = false,
+    BOAT_SHELL_DODGE_GAP          = 192,
+    BOAT_SHELL_DODGE_DEFER        = 0,
     -- 2026-09-08: while on capture_pill the bot now sweeps the target tile for
     -- an enemy builder rebuilding the corpse -- the kill_lgm aim solution takes
     -- the TURN keys whenever it points within CAPTURE_LGM_HUNT_TOL_BRADS of
@@ -5373,6 +5425,19 @@ M.PRESETS = {
   -- and a side word can.
   turtle = {
     PILL_PLACE_TURTLE = true,
+  },
+  -- joust: the Joust scenario's bots (2026-10-01). Joust hands every bot
+  -- this preset with game.bot_init, so the knobs touch no other game.
+  joust = {
+    COMBAT_CLIFF_AIM_KEEP         = true,
+    TANK_COMBAT_TURN_FIRST_BRADS  = 24,
+    LEAD_CAP_USE_MEASURED         = true,
+    TANK_COMBAT_FIRE_MAX_FLIGHT   = false,  -- off: fire at any range, a boat may sail into it
+    TANK_COMBAT_AIM_GATE_BRADS    = 24,     -- fire early: a miss costs one shell, back in 2 s
+    TANK_COMBAT_STEADY_TICKS      = 0,      -- do not wait for the target's heading to settle
+    WALL_SHOOT_LIFE_MAX           = 8,
+    BOAT_SHELL_DODGE              = true,
+    BOAT_SHELL_DODGE_DEFER        = 8,
   },
 }
 

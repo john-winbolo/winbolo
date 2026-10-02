@@ -1,3 +1,8 @@
+-- lead_aim_boat_measured -- lead_aim_boat with cfg=LEAD_CAP_USE_MEASURED=true.
+-- The lead caps each deep-sea step at the boat's measured speed, so a boat
+-- at 16 is led at 16. Everything below the header is lead_aim_boat's own
+-- text; keep the two in step.
+--
 -- lead_aim_boat -- does GoalHunter 1.7 lead a tank on a boat?
 --
 -- The same arena as lead_aim_land (read its header for the method and the
@@ -17,11 +22,11 @@
 -- fifth of what it needs and the shells pass behind the boat. Until that is
 -- fixed the arena is expected to fail.
 --
--- GATE: ticks=20000 bots=1 gametype=open ai=yesfull expect=fail GoalHunter 1.7 leads a boat at C.MAP_SPEED[river/deep sea]=3, not speed_boat=16 (steering.lua engage lead ~3342)
+-- GATE: ticks=20000 bots=1 gametype=open ai=yesfull
 
 -- KNOB VARIANT. A copy of this file with SHOOTER_CFG set hands the shooter
 -- that one cfg= token through game.bot_init at frame 3, before any event.
-local SHOOTER_CFG = nil
+local SHOOTER_CFG = "LEAD_CAP_USE_MEASURED=true"
 local cfg_sent = false
 
 local SHOOTER = 0

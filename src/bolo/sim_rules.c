@@ -46,6 +46,11 @@
 #include "sounddist.h"   /* SDIST_SOFT / SDIST_NONE */
 #include "starts.h"      /* START_* — the spawn-safety defaults */
 
+/* The rules event leaves building_life off the wire while it is classic and
+   decodes a body without it as this value, so the two must agree. */
+BOLO_STATIC_ASSERT(CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC == BUILDING_LIFE,
+                   ctrl_sim_rules_building_life_classic_matches);
+
 void simRulesClassic(SimRules *out) {
     if (out == NULL) {
         return;

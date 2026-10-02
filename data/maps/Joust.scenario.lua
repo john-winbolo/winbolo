@@ -50,6 +50,14 @@ local LABEL          = "KILLS"
 local FREE_FOR_ALL   = "Free For All"
 local LOBBY_TEAMS    = "Use Lobby Teams"
 
+-- The GoalHunter preset Joust's bots play with (brains/GoalHunter_1.7/
+-- constants.lua PRESETS.joust): lead a boat at its real speed, turn onto the
+-- target before speeding up, fire as soon as the gun is near the lead
+-- point, turn or change speed out of the path of a shell, and never shoot
+-- the walls, which take 255 hits here. A brain that has no such preset
+-- logs it and plays on unchanged.
+local BOT_PRESET     = "joust"
+
 -- LuaJIT and Lua 5.1 name the two-argument arc tangent atan2; 5.3 and later
 -- fold it into atan.
 local atan2 = math.atan2 or math.atan
@@ -70,6 +78,7 @@ local lobby_team = {}          -- seat -> its lobby team, kept at on_start or jo
 local ffa_team   = {}          -- seat -> the team of its own this script gave it
 local team_list  = nil         -- the lobby teams in the round, lowest first,
                                -- fixed at on_start
+local tuned      = {}          -- seat -> true once its bot has the preset
 
 -- The host's "Teams" choice. game.setting answers from inside a hook, where
 -- the scenario table at the bottom of the file has been read, so this is
@@ -585,9 +594,25 @@ function on_choose_start(p)
   return best.n
 end
 
+-- A bot seat gets BOT_PRESET once, the first time its tank comes on: a
+-- seat that has been fielded has a brain to take it. A human seat is left
+-- alone.
+local function tune_bot(p)
+  if tuned[p] then
+    return
+  end
+  local slot = game.lobby_slot(p)
+  if slot == nil or not slot.bot then
+    return
+  end
+  tuned[p] = true
+  game.bot_init(p, { preset = BOT_PRESET })
+end
+
 -- A tank arrives on a start out in the deep sea, on a boat.
 function on_tank_spawned(p, mx, my, respawn, scripted)
   spawned[p] = true
+  tune_bot(p)
   last_hit[p] = nil
   -- A start a script op named skips on_choose_start, so start the shield
   -- here when that did not.
@@ -667,6 +692,7 @@ end
 
 function on_player_leave(p, scripted)
   last_hit[p] = nil
+  tuned[p] = nil              -- the seat's next bot has a brain of its own
   spawned[p] = nil
   shield[p] = nil
   own_kills[p] = nil
@@ -789,7 +815,7 @@ scenario = {
     on_choose_start = "Picks each tank's start: one for each place at the opening, then the start farthest from every enemy, on its own team's arc of the ring in a team round.",
     on_tank_hit = "Remembers the last enemy tank that hit each tank.",
     on_tank_killed = "Gives the kill to the killer, or for a drowning to the last enemy hit, adds it to the killer's side, and ends the round at the target.",
-    on_tank_spawned = "Makes sure a new tank is on its boat and starts its one-second shield.",
+    on_tank_spawned = "Makes sure a new tank is on its boat, starts its one-second shield, and gives a bot the Joust preset the first time it comes on.",
     can_hit = "Lets shells pass through a tank in its first second, so nobody is sunk as they arrive.",
     can_ally = "No alliances in Free For All; only lobby teammates in a team round.",
     on_team_changed = "Teams are fixed for the round.",
