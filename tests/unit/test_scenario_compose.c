@@ -1048,7 +1048,7 @@ static const char kScQuietBase[] =
     "  game = \"tournament\",\n"
     "}\n";
 
-/* data/mods/NoLgmDeaths.scenario.lua, which is the mod the composed round
+/* The No LGM Deaths mod, which is the mod the composed round
    has to ask: its whole behaviour is this one policy, and a policy-only mod
    that is loaded and never asked does nothing at all. */
 static const char kScNoLgmDeaths[] =
