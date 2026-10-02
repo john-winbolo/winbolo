@@ -2638,11 +2638,15 @@ static void lobbyScenarioChooserRound(ClientSim *cs, LobbyScenarioRow *rows,
             /* Disabled and not absent for the map's own row. The sentence is
                the whole of what a host is told, so it goes on the control a
                host presses to ask. */
-            /* No tooltip here either, for the reason the add arrow has
-               none. A bound row's arrow is greyed and the row's own tag says
-               it belongs to the map. */
+            /* Only the map's own row gets a hover: a greyed arrow there does
+               not say how the row goes away, and the answer is not on this
+               dialog. Any other row's arrow has none, for the reason the add
+               arrow has none. */
             if (lobbyScenarioArrow("##drop", ImGuiDir_Left,
-                                   lobbyRoundMayDrop(i), NULL)) {
+                                   lobbyRoundMayDrop(i),
+                                   r->bound ? langGetText(
+                                       STR_DLGLOBBY_SCENARIO_MAP_UNLOAD)
+                                            : NULL)) {
                 drop = i;
             }
             ImGui::SameLine(0.0f, inner);
