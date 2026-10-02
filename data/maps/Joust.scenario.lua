@@ -703,7 +703,7 @@ local function finish(key)
   local tail = string.format(" wins the joust with %d kills.", kills[key])
   local line = cut_text(side_name(key), TEXT_MAX - #tail) .. tail
   game.message(line)
-  game.announce(line, 5)
+  game.announce(line, 5, nil, "top")
   local kind, n = key:sub(1, 1), tonumber(key:sub(2))
   local function close()
     restore_teams()
@@ -833,7 +833,8 @@ function on_tank_killed(victim, killer, cause, scripted)
 
   -- One announce line holds the kill and, on a streak, the streak word in
   -- front of it, so the streak never hides who was killed or the score.
-  game.announce(kill_line(by, victim, key, cause, streak_word(run)), 3)
+  game.announce(kill_line(by, victim, key, cause, streak_word(run)), 3,
+                nil, "top")
   if kills[key] >= target then
     finish(key)
   end
