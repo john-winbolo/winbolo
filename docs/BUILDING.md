@@ -346,12 +346,18 @@ python3 -m http.server -d build-wasm-logviewer 8080
 # Open http://localhost:8080/logviewer.html
 ```
 
+To open a log as the page loads, copy it into the build directory and open
+`http://localhost:8080/logviewer.html?url=<file>.wbv`. The WinBolo.net key
+addresses (`/gamelog/<key>`, `?key=<key>`) need the `/logdownload` proxy, which
+a plain static server does not have (see `docs/web-hosting.md`).
+
 ### Packaging for deployment
 
 Both builds have a `wasm-dist` target that brotli- and gzip-precompresses the
 web assets (for a static server with `precompressed br gzip`) and packs them,
-with the licence files, into `wasm-dist.zip` in the build directory. It is not
-part of the normal build — run it explicitly:
+with the licence files, into a zip in the build directory: `wasm-dist.zip` for
+the game, `wasm-logviewer-dist.zip` for the log viewer. It is not part of the
+normal build — run it explicitly:
 
 ```bash
 cmake --build build-wasm-game --target wasm-dist
