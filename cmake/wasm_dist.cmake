@@ -1,11 +1,11 @@
 # wasm_dist.cmake — the wasm-dist packaging target, shared by the web game
 # client (src/wasm) and the web log viewer (src/logviewer/wasm).
 #
-# bolo_add_wasm_dist(<target> COMPRESS <file>... [PLAIN <file>...])
+# bolo_add_wasm_dist(<target> COMPRESS <file>... [PLAIN <file>...] [ZIP <name>])
 #
 # Adds a wasm-dist target that precompresses the web assets (for Caddy
 # `file_server { precompressed br gzip }`) and packs everything a deploy needs
-# into wasm-dist.zip beside <target>'s output:
+# into a zip beside <target>'s output (wasm-dist.zip unless ZIP names it):
 #   COMPRESS  each file with its .br and .gz copies
 #   PLAIN     files packed as they are (images that are already compressed)
 #   and LICENSE, LICENSE-EXCEPTION.md and THIRD_PARTY_NOTICES.md, copied in
@@ -23,7 +23,10 @@
 # warns.
 
 function(bolo_add_wasm_dist target)
-    cmake_parse_arguments(PARSE_ARGV 1 _wd "" "" "COMPRESS;PLAIN")
+    cmake_parse_arguments(PARSE_ARGV 1 _wd "" "ZIP" "COMPRESS;PLAIN")
+    if(NOT _wd_ZIP)
+        set(_wd_ZIP wasm-dist.zip)
+    endif()
 
     find_program(BROTLI_EXE brotli)
     find_program(GZIP_EXE   gzip)
@@ -54,10 +57,10 @@ function(bolo_add_wasm_dist target)
 
     add_custom_target(wasm-dist
         ${_cmds}
-        COMMAND ${CMAKE_COMMAND} -E tar "cf" wasm-dist.zip --format=zip
+        COMMAND ${CMAKE_COMMAND} -E tar "cf" ${_wd_ZIP} --format=zip
                 ${_zip_files}
         WORKING_DIRECTORY $<TARGET_FILE_DIR:${target}>
-        COMMENT "Precompressing web assets (.br + .gz) and packing wasm-dist.zip"
+        COMMENT "Precompressing web assets (.br + .gz) and packing ${_wd_ZIP}"
         VERBATIM
     )
     add_dependencies(wasm-dist ${target})

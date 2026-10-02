@@ -354,8 +354,11 @@ if(_have_fonttools)
     set_property(TARGET logviewer APPEND PROPERTY LINK_DEPENDS "${SUBSET_STAMP}")
 endif()
 
-# wasm-dist: precompressed web assets and licence files in wasm-dist.zip, the
-# same target the game client has (see cmake/wasm_dist.cmake).
+# wasm-dist: precompressed web assets and licence files in
+# wasm-logviewer-dist.zip, the same target the game client has (see
+# cmake/wasm_dist.cmake). The zip has its own name so it can't be mistaken for
+# the game's wasm-dist.zip.
 include(${REPO_ROOT}/cmake/wasm_dist.cmake)
 bolo_add_wasm_dist(logviewer
-    COMPRESS logviewer.html logviewer.js logviewer.wasm logviewer.data)
+    COMPRESS logviewer.html logviewer.js logviewer.wasm logviewer.data
+    ZIP      wasm-logviewer-dist.zip)

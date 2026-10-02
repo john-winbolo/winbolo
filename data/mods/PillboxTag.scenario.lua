@@ -3286,9 +3286,10 @@ end
 -- is sent at it; the dead player comes back as a hunter. A prize in his tank
 -- is left to the drop the death makes, which on_pill_placed already handles.
 --
--- His orders go with him: a brain forgets its order when its tank dies, so
--- what this script last told him is forgotten too, and the next order he
--- gets is a fresh one.
+-- Any bot's orders go with its tank, holder or not: a brain forgets its
+-- order when its tank dies, so what this script last told that seat is
+-- forgotten too, and the first order after it comes back is sent at once
+-- and not held back as a repeat (see AIM_REFRESH in tell).
 --
 -- Any tank's death, holder or not, puts its seat back to the full boost on
 -- its next take (see boost_use), and to the full deep sea time (see
@@ -3308,6 +3309,8 @@ function on_tank_killed(victim, killer, cause, scripted)
       boost_use.base[victim] = nil
       game.set_modifiers(victim, {})
     end
+    told[victim], told_for[victim], told_at[victim], goto_at[victim] =
+      nil, nil, nil, nil
   end
   if over or pill == nil or victim == nil or victim ~= holder then
     return
@@ -3326,8 +3329,6 @@ function on_tank_killed(victim, killer, cause, scripted)
     forfeit = { p = victim, x = man.mx, y = man.my }
   end
   lose_the_prize(victim)
-  told[victim], told_for[victim], told_at[victim], goto_at[victim] =
-    nil, nil, nil, nil
   if standing(pb) then
     game.set_pill_armour(pill, 0)
   end

@@ -1573,6 +1573,7 @@ function Brain.think(info)
   local _think_t0 = BRAIN_DEBUG_MODE and os.clock() or 0
   state.tick = state.tick + 1
   state._last_info = info
+  attack.walls_reset()   -- wall-pass flag never outlives a budget-killed think
   -- Live rules -> physics constants, before anything reads C this think.
   -- Classic rules (or C.LIVE_PHYSICS false) change nothing.
   U.live_physics.apply(info)

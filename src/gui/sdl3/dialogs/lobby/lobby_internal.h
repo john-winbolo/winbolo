@@ -864,6 +864,10 @@ void lvEmbedSetViewportSize(int viewW, int viewH);
 bool lvEmbedFrameTexture(void **outTexture, int *outTexW, int *outTexH,
                          int *outSrcX, int *outSrcY, int *outSrcW, int *outSrcH);
 float lvEmbedGetZoomLevel(void);
+int  lvEmbedTankLabelCount(float pxPerSourcePx);
+bool lvEmbedTankLabel(int index, void **outTexture, int *outX, int *outY,
+                      int *outW, int *outH);
+void lvEmbedSetTankLabelsInTexture(bool inTexture);
 void lvEmbedPlay(void);
 void lvEmbedPause(void);
 bool lvEmbedIsPlaying(void);

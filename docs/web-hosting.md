@@ -166,6 +166,50 @@ Mount the site root into the Caddy container, e.g. in the Caddy
 
 > Volume changes need a recreate (`docker compose up -d`), not just a reload.
 
+## Log viewer (logviewer.winbolo.net)
+
+The web log viewer (`src/logviewer/wasm/`) opens a WinBolo.net round log from
+its key:
+
+| URL | Opens |
+|-----|-------|
+| `/gamelog/<key>` | the log with that key |
+| `/logviewer.html?key=<key>` | the same log |
+| `/logviewer.html?url=<url>` | the log at that address; a relative address is taken from the site root, and another site must allow it with CORS |
+
+The page fetches `/logdownload?key=<key>` from its own origin, so the server
+passes `/logdownload` on to the WinBolo.net backend, and `/gamelog/*` is an
+internal rewrite to `logviewer.html`. The page carries `<base href="/">`, so it
+must be served from the site root.
+
+Build the deploy zip with `cmake --build <build-dir> --target wasm-dist` in the
+log viewer build. It makes `<build-dir>/wasm-logviewer-dist.zip`; unzip it into
+the site root.
+
+```caddy
+logviewer.winbolo.net {
+    encode zstd gzip
+    root * /srv/logviewer
+
+    handle /logdownload* {
+        reverse_proxy host.docker.internal:8080
+    }
+
+    rewrite / /logviewer.html
+    rewrite /gamelog/* /logviewer.html
+
+    handle {
+        file_server {
+            precompressed br gzip
+            hide .*
+        }
+    }
+}
+```
+
+The log viewer does not use threads, so it needs no cross-origin isolation
+headers.
+
 ## Cross-origin isolation
 
 The game runs threads, which need `SharedArrayBuffer`, and the browser gives

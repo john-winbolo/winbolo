@@ -719,6 +719,40 @@ static bool lobbyReelCropOverlay(ImVec2 imgMin, ImVec2 imgSize,
 }
 #endif
 
+/* The tank names over the reel's image. They are not in the texture, which is
+ * 1x pixel art the Image magnifies, so they are rasterized at the size they
+ * appear and drawn here instead: the game's look, grey over a black shadow
+ * offset about one glyph pixel. srcX/srcY and zoom are the slice the Image
+ * drew and its scale. Rasterized at the framebuffer's density and drawn back
+ * down by it, so a high-density display gets sharp glyphs too. */
+static void lobbyReelDrawTankLabels(ImVec2 imgMin, ImVec2 imgSize,
+                                    int srcX, int srcY, float zoom) {
+    float fb = ImGui::GetIO().DisplayFramebufferScale.x;
+    if (fb <= 0.0f) fb = 1.0f;
+    int n = lvEmbedTankLabelCount(zoom * fb);
+    if (n <= 0) return;
+
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    dl->PushClipRect(imgMin, ImVec2(imgMin.x + imgSize.x, imgMin.y + imgSize.y), true);
+    for (int i = 0; i < n; i++) {
+        void *tex = NULL;
+        int tx = 0, ty = 0, tw = 0, th = 0;
+        if (!lvEmbedTankLabel(i, &tex, &tx, &ty, &tw, &th) || tex == NULL) continue;
+        float w = (float)tw / fb;
+        float h = (float)th / fb;
+        float x = floorf(imgMin.x + (float)(tx - srcX) * zoom);
+        float y = floorf(imgMin.y + (float)(ty - srcY) * zoom);
+        float off = floorf(h / 13.0f);
+        if (off < 1.0f) off = 1.0f;
+        dl->AddImage((ImTextureID)tex, ImVec2(x + off, y + off),
+                     ImVec2(x + off + w, y + off + h), ImVec2(0, 0), ImVec2(1, 1),
+                     IM_COL32(0, 0, 0, 255));
+        dl->AddImage((ImTextureID)tex, ImVec2(x, y), ImVec2(x + w, y + h),
+                     ImVec2(0, 0), ImVec2(1, 1), IM_COL32(200, 200, 200, 255));
+    }
+    dl->PopClipRect();
+}
+
 /* One zoom step per notch of travel, from either gesture a trackpad offers.
  *
  * The wheel arrives as whatever SDL had from the device: a mouse notch is a
@@ -1056,6 +1090,7 @@ void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
         imguiPushNearestSampling();
         ImGui::Image((ImTextureID)tex, imgSize, uv0, uv1);
         imguiPopNearestSampling();
+        lobbyReelDrawTankLabels(imgMin, imgSize, srcX, srcY, zoom);
 #if BOLO_RECAP_CLIP_GIF
         /* Publish the exact slice this blit used. The crop frame is normalized
          * against it, so an export maps the frame back through the same
