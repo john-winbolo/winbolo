@@ -78,6 +78,11 @@ static const float DMUL8[8] = { 1.0f, 1.41f, 1.0f, 1.41f, 1.0f, 1.41f, 1.0f, 1.4
 
 /* Sentinel for g_cost (infinity) */
 #define COST_INF 1e30f
+/* A wall_shoot_cost this large means walls do not fall (the brain sets 1e6
+   when C.WALL_SHOOT_LIFE_MAX says the walls are too strong). Such walls are
+   impassable, so a goal behind them is unreachable instead of a 1e6 route
+   whose first step drives into the wall. The default cost (30) is far below. */
+#define WALL_NO_SHOOT_COST 1e5f
 
 /* Sentinel parent value for "no parent" / source node */
 #define PARENT_NONE 0xFFFFFFFFu
@@ -674,7 +679,16 @@ void brainPathfinderSetTerrainSpeed(BrainPathfinder *pf, int type, float speed) 
 void brainPathfinderSetConfig(BrainPathfinder *pf, const char *key, float value) {
   if (!pf || !key) return;
   if (strcmp(key, "turn_cost") == 0)              pf->turn_cost = value;
-  else if (strcmp(key, "wall_shoot_cost") == 0)   pf->wall_shoot_cost = value;
+  else if (strcmp(key, "wall_shoot_cost") == 0) {
+    /* The Dijkstra edge cache bakes this cost into every wall edge, so a
+       changed value makes it stale (C.WALL_SHOOT_LIFE_MAX sets it to 1e6 for
+       walls that never fall). The same value again leaves the cache alone. */
+    if (pf->wall_shoot_cost != value) {
+      pf->edge_cost_valid = 0;
+      pf->cache_dirty = 1;
+    }
+    pf->wall_shoot_cost = value;
+  }
   else if (strcmp(key, "wall_shoot_shells") == 0) pf->wall_shoot_shells = value;
   else if (strcmp(key, "wall_escalate_free") == 0)   pf->wall_escalate_free = value;
   else if (strcmp(key, "wall_escalate_factor") == 0) pf->wall_escalate_factor = value;
@@ -1274,7 +1288,8 @@ static float compute_cost(BrainPathfinder *pf, int nx, int ny,
   if (base >= WALL_THRESHOLD) {
     if (!onBoat && (type == TT_BUILDING || type == TT_HALFBUILD)) {
       wall_shoot_shells = (int)pf->wall_shoot_shells;
-      if (shells_left >= wall_shoot_shells) {
+      if (shells_left >= wall_shoot_shells
+          && pf->wall_shoot_cost < WALL_NO_SHOOT_COST) {
         /* Add danger at the wall tile — you take pill fire while shooting it.
          * Use speed=3 (stopped/slow while shooting). */
         float wall_danger = (float)pf->danger_grid[midx] * pf->danger_scale
@@ -2137,7 +2152,8 @@ void brainPathfinderRebuildEdgeCosts(BrainPathfinder *pf) {
            * execution; the steering layer enforces the shell reserve
            * when actually committing to the move. */
           if (base >= WALL_THRESHOLD) {
-            if (!next_boat && (n_type == TT_BUILDING || n_type == TT_HALFBUILD)) {
+            if (!next_boat && (n_type == TT_BUILDING || n_type == TT_HALFBUILD)
+                && pf->wall_shoot_cost < WALL_NO_SHOOT_COST) {
               ec = pf->wall_shoot_cost;
             } else {
               ec = COST_INF;

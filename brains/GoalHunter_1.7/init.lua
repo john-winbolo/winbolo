@@ -299,11 +299,29 @@ local function _apply_cfg_tokens(a, source, runtime)
       -- Sorted so the log reads the same on every run (pairs() order is not
       -- reproducible, and these lines are compared between runs).
       local keys = {}
-      for k in pairs(tbl) do keys[#keys + 1] = k end
+      for k in pairs(tbl) do
+        if k ~= "by_difficulty" then keys[#keys + 1] = k end
+      end
       table.sort(keys)
       local n = 0
       for _, k in ipairs(keys) do
         if _cfg_set(k, tbl[k], "preset " .. pname) then n = n + 1 end
+      end
+      -- A preset may also carry `by_difficulty = { <level> = {...} }`: the
+      -- part for this bot's C.DIFFICULTY applies after the preset's flat
+      -- values, so one preset can play differently per level (Joust). It
+      -- reads C.DIFFICULTY, which the start tokens set, so it works when the
+      -- preset comes at runtime too. A preset without it is unchanged.
+      local bd = tbl.by_difficulty
+      local dtbl = type(bd) == "table" and bd[C.DIFFICULTY] or nil
+      if type(dtbl) == "table" then
+        local dkeys = {}
+        for k in pairs(dtbl) do dkeys[#dkeys + 1] = k end
+        table.sort(dkeys)
+        local src = "preset " .. pname .. "/" .. tostring(C.DIFFICULTY)
+        for _, k in ipairs(dkeys) do
+          if _cfg_set(k, dtbl[k], src) then n = n + 1 end
+        end
       end
       _INIT_CFG_LOG[#_INIT_CFG_LOG + 1] =
         string.format("[preset] %s applied (%d values)", pname, n)
