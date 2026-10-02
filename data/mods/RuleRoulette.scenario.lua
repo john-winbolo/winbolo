@@ -1,18 +1,27 @@
 -- =========================================================================
--- Rule Roulette — a mod that changes every tank's numbers on a clock, one
--- named mode at a time.
+-- Rule Roulette — a mod that changes every tank's numbers, or the builder's,
+-- on a clock, one named mode at a time.
 --
--- There are eight modes. Each one is a fixed set of the six tank modifiers
--- (speed, accel, turn, reload, dealt and taken, as percentages of the
--- classic tank), the same for every tank:
+-- There are thirteen modes, each the same for every tank. Eight are a fixed
+-- set of the six tank modifiers (speed, accel, turn, reload, dealt and
+-- taken, as percentages of the classic tank). Four leave the tank alone and
+-- change the builder's rules instead (see "Rule modes" below). One, Normal,
+-- changes nothing: classic Bolo between the others.
 --
---   Good for everyone: Overdrive, Turbo, Iron Hide.
---   Bad for everyone:  Rust Bucket.
+--   Good for everyone: Overdrive, Turbo, Iron Hide, Cleanup Crew, Hustle,
+--                      Air Drop.
+--   Bad for everyone:  Rust Bucket, Lead Feet.
 --   A trade-off:       Glass Cannon, Juggernaut, Machine Gun, Ice Rink.
+--   No change:         Normal.
+--
+-- Glass Cannon's shells also take twice the armour off a pillbox (the
+-- pill_damage_scale policy below). Dealt on its own prices only the blows
+-- a tank takes.
 --
 -- Every `interval` seconds the next mode starts. The order is a shuffle of
--- the eight from the scenario's own math.random, so a seed and a replay give
--- the same order. When all eight have played they are shuffled again, and a
+-- all thirteen from the scenario's own math.random, so a seed and a replay
+-- give the same order. When all thirteen have played they are shuffled
+-- again, and a
 -- mode never follows itself across that seam. A short countdown names the
 -- mode that is coming; the new mode goes up on the centre of the screen and
 -- on the newswire, and panel 0 shows it, what it means, the numbers it
@@ -27,8 +36,19 @@
 -- sooner. For those two a higher number is worse; for the other four it is
 -- better.
 --
+-- Rule modes. Cleanup Crew makes a road cost the builder no trees. Hustle
+-- and Lead Feet make him walk at 125% and 75% of his speed on every
+-- terrain. Air Drop makes a dead builder's flight back in 50% faster. Each
+-- reads the rules it changes with game.rule when it starts, so a value a
+-- host or another script set is the one it works from, and puts back exactly
+-- that value when it ends: at the next mode, and at the end of the round.
+-- A rule somebody else changed while the mode was in force is left at their
+-- value. The rules table opens every round on the classic numbers (or the
+-- scenario's own), so a script switched off mid-round leaves nothing behind
+-- past that round.
+--
 -- For the whole round, bases also rebuild their own stock 50% faster than
--- the classic rate (scenario.rules below).
+-- the classic rate (scenario.rules below). No mode touches that rule.
 --
 -- The host sets the interval, how many upcoming modes the panel shows, the
 -- countdown and the chat commands in the lobby (scenario.settings below).
@@ -41,9 +61,35 @@
 
 -- ── The modes ───────────────────────────────────────────────────────
 
--- `kind` is "good" (every number better), "bad" (every number worse) or
--- "trade" (some better, some worse). `mean` is what the mode feels like, in
--- one line the panel can show whole. A modifier left out is 100.
+-- `kind` is "good" (every number better), "bad" (every number worse),
+-- "trade" (some better, some worse) or "normal" (nothing changed). `mean` is
+-- what the mode feels like, in one line the panel can show whole. A
+-- modifier left out is 100.
+--
+-- pill_dealt = pct  prices what a tank's shell takes off a pillbox, as a
+--           percent of the classic amount (pill_damage_scale below). Left
+--           out, it is 100.
+--
+-- A mode may also change rules, alone or beside its modifiers:
+--   rules = { name = value }  sets each rule to that value.
+--   scale = { pct, rules, max, max_rule }  sets each rule in the list to pct
+--           percent of the value it had, rounded to the nearest whole
+--           number. A rule at 0 stays 0, and one above 0 stays at least 1,
+--           so a terrain the builder cannot walk stays shut and one he can
+--           stays open. `max` is the rule's own top; `max_rule` names a rule
+--           whose value is a top as well.
+--   show = "..."  the panel's own line, in place of number rows.
+--           A "%d" in it is the percentage the first scaled rule really got,
+--           after rounding.
+
+-- The builder's walking speed on each terrain (bolo_map.c mapGetManSpeed):
+-- the distance he moves each tick, not a cap. 0 to 63 each.
+local MAN_SPEED_RULES = {
+  "man_speed_road", "man_speed_grass", "man_speed_forest", "man_speed_river",
+  "man_speed_swamp", "man_speed_crater", "man_speed_rubble", "man_speed_boat",
+  "man_speed_deep_sea", "man_speed_refuel_base",
+}
+
 local MODES = {
   { name = "Overdrive",    kind = "good",  mean = "Faster, tougher, hits harder.",
     mods = { speed = 150, accel = 160, turn = 140, reload = 60, dealt = 150, taken = 60 } },
@@ -54,23 +100,50 @@ local MODES = {
   { name = "Rust Bucket",  kind = "bad",   mean = "Slow, fragile, weak shots.",
     mods = { speed = 60, accel = 50, turn = 70, reload = 160, dealt = 70, taken = 150 } },
   { name = "Glass Cannon", kind = "trade", mean = "Hit hard, break fast.",
-    mods = { dealt = 250, taken = 250 } },
+    mods = { dealt = 250, taken = 250 }, pill_dealt = 200 },
   { name = "Juggernaut",   kind = "trade", mean = "Slow and very tough.",
     mods = { speed = 65, accel = 60, reload = 130, taken = 40 } },
   { name = "Machine Gun",  kind = "trade", mean = "Rapid fire, weak shells.",
     mods = { reload = 35, dealt = 45 } },
   { name = "Ice Rink",     kind = "trade", mean = "Hard to stop, hard to steer.",
     mods = { speed = 140, accel = 35, turn = 55 } },
+  -- Fixing up the rubble all the explosions leave: a road costs no trees.
+  -- Walls, pillboxes, boats and mines keep their price.
+  { name = "Cleanup Crew", kind = "good",  mean = "Free roads: pave over the rubble.",
+    rules = { lgm_cost_road = 0 }, show = "Roads: free" },
+  { name = "Hustle",       kind = "good",  mean = "Builders sprint to every job.",
+    scale = { pct = 125, rules = MAN_SPEED_RULES, max = 63 },
+    show = "Builder: %d%% speed" },
+  { name = "Lead Feet",    kind = "bad",   mean = "Builders trudge to every job.",
+    scale = { pct = 75, rules = MAN_SPEED_RULES, max = 63 },
+    show = "Builder: %d%% speed" },
+  -- A dead builder flies from a random start straight back to where his
+  -- tank was, lgm_helicopter_speed a tick, then walks the rest. He lands
+  -- when a step ends inside lgm_arrive_tolerance on both axes, so the speed
+  -- is kept at or under that tolerance: a longer step could fly past it.
+  -- Classic 3 is 4.5 at 150%, which rounds to 5.
+  { name = "Air Drop",     kind = "good",  mean = "Dead builders fly back fast.",
+    scale = { pct = 150, rules = { "lgm_helicopter_speed" }, max = 255,
+              max_rule = "lgm_arrive_tolerance" },
+    show = "Parachute: %d%% speed" },
+  -- Classic Bolo: every modifier 100 and no rule changed. The last mode's
+  -- rules go back as they do at every change.
+  { name = "Normal",       kind = "normal", mean = "Plain Bolo: nothing changed.",
+    show = "Everything classic" },
 }
 
-local KIND_TAG    = { good = "GOOD FOR ALL", bad = "BAD FOR ALL", trade = "TRADE-OFF" }
-local KIND_COLOUR = { good = "green", bad = "red", trade = "yellow" }
+local KIND_TAG    = { good = "GOOD FOR ALL", bad = "BAD FOR ALL", trade = "TRADE-OFF",
+                      normal = "NO CHANGES" }
+local KIND_COLOUR = { good = "green", bad = "red", trade = "yellow", normal = "white" }
 
 local MOD_KEYS   = { "speed", "accel", "turn", "reload", "dealt", "taken" }
+-- The panel's number rows: the six modifiers, with pill_dealt beside dealt.
+local ROW_KEYS   = { "speed", "accel", "turn", "reload", "dealt", "pill_dealt", "taken" }
 local MOD_LABEL  = { speed = "Speed", accel = "Accel", turn = "Turn",
-                     reload = "Reload", dealt = "Dealt (Tanks)", taken = "Taken" }
+                     reload = "Reload", dealt = "Dealt (Tanks)",
+                     pill_dealt = "Dealt (Pills)", taken = "Taken" }
 -- Labels too wide for half the panel; each takes a whole line.
-local WIDE_LABEL = { dealt = true }
+local WIDE_LABEL = { dealt = true, pill_dealt = true }
 -- For these a higher percentage hurts the tank that has it.
 local WORSE_HIGH = { reload = true, taken = true }
 
@@ -94,6 +167,11 @@ local mode_len = 60         -- seconds the mode in force was given, the bar's fu
 local mode     = nil        -- the MODES entry in force
 local queue    = {}         -- MODES indices still to come, in order
 local last_idx = nil        -- the index of the mode in force
+local saved    = nil        -- the rules the mode in force changed, in the
+                            -- order it set them: { name, was, set } each,
+                            -- `was` the value before and `set` the mode's.
+                            -- nil when it changed none.
+local shown    = nil        -- the panel's line for the mode's rules, or nil
 
 -- ── Small helpers ───────────────────────────────────────────────────
 
@@ -109,11 +187,12 @@ local function clamp(v, lo, hi)
   return v
 end
 
--- The full six-field table set_modifiers takes: a missing one is 100.
+-- The full six-field table set_modifiers takes: a missing one is 100, and
+-- a mode with no modifiers at all is the classic tank.
 local function full_mods(m)
   local t = {}
   for _, k in ipairs(MOD_KEYS) do
-    t[k] = m.mods[k] or 100
+    t[k] = (m.mods and m.mods[k]) or 100
   end
   return t
 end
@@ -131,7 +210,7 @@ end
 
 -- ── The order ───────────────────────────────────────────────────────
 
--- Adds one shuffled round of all eight to the queue. The first of the new
+-- Adds one shuffled round of all thirteen to the queue. The first of the new
 -- round is never the mode just before it, so no mode plays twice in a row.
 local function add_round()
   local bag = {}
@@ -184,18 +263,137 @@ local function has_mods(p, t)
   return true
 end
 
+-- ── Rules ───────────────────────────────────────────────────────────
+
+-- pct percent of v, to the nearest whole number: 0 stays 0, anything above
+-- 0 stays at least 1, and a raise goes no higher than `top`. A top already
+-- under v holds the rule at v: a mode that raises a rule never lowers it.
+local function scaled(v, pct, top)
+  if v <= 0 then
+    return v
+  end
+  local n = math.floor(v * pct / 100 + 0.5)
+  if n < 1 then n = 1 end
+  if top ~= nil and n > top then n = math.max(top, v) end
+  return n
+end
+
+-- Sets one rule from what it holds now. `to` is the value, or a function of
+-- the old value that answers it. A rule already at that value is left out of
+-- `saved`, so there is nothing to put back.
+local function set_one(name, to)
+  local was = game.rule(name)
+  if was == nil then
+    return
+  end
+  local v = type(to) == "function" and to(was) or to
+  if v == was then
+    return
+  end
+  local ok, code, why = game.set_rule(name, v)
+  if ok then
+    saved[#saved + 1] = { name = name, was = was, set = v }
+  else
+    game.log(string.format("RuleRoulette: set_rule %s %s refused: %s %s",
+                           name, tostring(v), tostring(code), tostring(why)))
+  end
+end
+
+-- Puts the mode's rules in force and works out its panel line. A rule
+-- that is refused keeps its value and is logged; the rest still apply.
+local function apply_rules(m)
+  saved, shown = {}, nil
+  if m.rules ~= nil then
+    -- In name order, never pairs(): the same order every run.
+    local names = {}
+    for name in pairs(m.rules) do
+      names[#names + 1] = name
+    end
+    table.sort(names)
+    for _, name in ipairs(names) do
+      set_one(name, m.rules[name])
+    end
+  end
+  local sc = m.scale
+  local first_was, first_set
+  if sc ~= nil then
+    local top = sc.max
+    if sc.max_rule ~= nil then
+      local cap = game.rule(sc.max_rule)
+      if cap ~= nil and (top == nil or cap < top) then
+        top = cap
+      end
+    end
+    for i, name in ipairs(sc.rules) do
+      if i == 1 then
+        first_was = game.rule(name)
+      end
+      set_one(name, function(v) return scaled(v, sc.pct, top) end)
+      if i == 1 then
+        first_set = game.rule(name)
+      end
+    end
+  end
+  if m.show ~= nil then
+    if sc ~= nil then
+      -- The percentage the first rule really got: rounding and the top can
+      -- move it off sc.pct, and the panel says what is in force.
+      local pct = sc.pct
+      if first_was ~= nil and first_was > 0 and first_set ~= nil then
+        pct = math.floor(first_set * 100 / first_was + 0.5)
+      end
+      shown = string.format(m.show, pct)
+    else
+      shown = m.show
+    end
+  end
+  if #saved == 0 then
+    saved = nil
+  end
+end
+
+-- Puts back what apply_rules changed, last first. A rule that no longer
+-- holds the mode's value was changed by somebody else meanwhile, and keeps
+-- their value.
+local function restore_rules()
+  local list = saved
+  saved, shown = nil, nil
+  if list == nil then
+    return
+  end
+  for i = #list, 1, -1 do
+    local r = list[i]
+    local now = game.rule(r.name)
+    if now ~= r.set then
+      game.log(string.format("RuleRoulette: %s is %s, not this mode's %s; left as it is",
+                             r.name, tostring(now), tostring(r.set)))
+    else
+      local ok, code, why = game.set_rule(r.name, r.was)
+      if not ok then
+        game.log(string.format("RuleRoulette: putting %s back to %s refused: %s %s",
+                               r.name, tostring(r.was), tostring(code), tostring(why)))
+      end
+    end
+  end
+end
+
 -- ── Panel ───────────────────────────────────────────────────────────
 --
 -- 128 x 128 units. Text heights are the frontend's: "small" is 8 units and
 -- "normal" 11, in Inter. The widest strings below, measured from that font:
--- a mode name in normal, "Glass Cannon", 60 units; a tag in small, "GOOD FOR
--- ALL", 49; a meaning in small, "Tough as nails, quick reload.", 90; a number
--- cell, "Reload 160%", 41. So the header, a meaning on one line and two
--- number cells to a row all fit with room to spare.
+-- a mode name in normal, "Cleanup Crew", 61 units; a tag in small, "GOOD FOR
+-- ALL", 49; a meaning in small, "Free roads: pave over the rubble.", 105; a
+-- number cell, "Reload 160%", 41; a rule line, "Parachute: 167% speed", 74.
+-- The two dealt cells, "Dealt (Tanks) 250%" and "Dealt (Pills) 200%", are
+-- wider than half the panel, so each takes a whole line.
+-- So the header, a meaning on one line (indented to 9 in the preview, it
+-- ends at 114) and two number cells to a row all fit.
 --
 --   y   0 .. 15  band: mode name (normal, left), its tag (small, right)
 --   y  17        meaning (small)
---   y  27 ..     numbers that are not 100, two to a row, up to 3 rows
+--   y  27 ..     numbers that are not 100, two to a row, a dealt on a
+--                whole row, up to 4 rows; a rule mode, and Normal, has
+--                none of those and one line of its own
 --   then         "Next mode in" and the clock
 --   then         a bar, 4 units tall, filling as this mode runs
 --   then         a rule, and per upcoming mode its name and its meaning
@@ -219,8 +417,13 @@ local function build_panel()
     { "text", 3, 17, "white", "small", "left", mode.mean },
   }
   local y, col = 27, 0
-  for _, k in ipairs(MOD_KEYS) do
-    local v = mode.mods[k]
+  for _, k in ipairs(ROW_KEYS) do
+    local v
+    if k == "pill_dealt" then
+      v = mode.pill_dealt
+    else
+      v = mode.mods and mode.mods[k]
+    end
     if v ~= nil and v ~= 100 then
       if WIDE_LABEL[k] and col ~= 0 then
         col, y = 0, y + 9
@@ -234,6 +437,11 @@ local function build_panel()
     end
   end
   if col ~= 0 then
+    y = y + 9
+  end
+  -- A rule mode's line, on a whole line of its own, in the mode's colour.
+  if shown ~= nil then
+    list[#list + 1] = { "text", 3, y, KIND_COLOUR[mode.kind], "small", "left", shown }
     y = y + 9
   end
   y = y + 2
@@ -310,6 +518,8 @@ end
 -- ── Changing mode ───────────────────────────────────────────────────
 
 local function start_mode(idx)
+  -- The last mode's rules go back before this one reads any.
+  restore_rules()
   changes  = changes + 1
   mode     = MODES[idx]
   last_idx = idx
@@ -330,8 +540,15 @@ local function start_mode(idx)
   end
   game.announce(now_text(mode), 5)
   game.message("Rule Roulette: " .. now_text(mode))
-  game.log(string.format("RuleRoulette mode %d tick %d: %s (%s) on %d of %d tanks",
-                         changes, game.tick(), mode.name, mods_text(t), landed, tanks))
+  game.log(string.format("RuleRoulette mode %d tick %d: %s (%s%s) on %d of %d tanks",
+                         changes, game.tick(), mode.name, mods_text(t),
+                         mode.pill_dealt and (" p" .. mode.pill_dealt) or "",
+                         landed, tanks))
+  if mode.rules ~= nil or mode.scale ~= nil or mode.show ~= nil then
+    apply_rules(mode)
+    game.log(string.format("RuleRoulette rules: %d changed, panel \"%s\"",
+                           saved and #saved or 0, shown or "-"))
+  end
   fill_queue()
   draw_panel(true)
 end
@@ -407,7 +624,21 @@ end
 
 function on_end()
   over = true
+  restore_rules()
   game.log(string.format("RuleRoulette ended after %d modes", changes))
+end
+
+-- What a blow takes off a pillbox, as a percent: the mode's pill_dealt for
+-- a shell a tank fired, 100 for anything else. A pillbox's own shell
+-- (attacker game.NEUTRAL) and a dying tank's blast keep the classic amount.
+function pill_damage_scale(attacker, n, cause, pill)
+  if not running or over or mode == nil or mode.pill_dealt == nil then
+    return 100
+  end
+  if cause ~= "shell" or pill ~= nil or attacker == game.NEUTRAL then
+    return 100
+  end
+  return mode.pill_dealt
 end
 
 -- A tank that takes the field gets the mode in force.
@@ -438,10 +669,11 @@ end
 
 scenario = {
   name        = "Rule Roulette",
-  description = "Eight named modes take turns, the same for every tank: good ones " ..
-                "(Overdrive, Turbo, Iron Hide), a bad one (Rust Bucket) and " ..
-                "trade-offs (Glass Cannon, Juggernaut, Machine Gun, Ice Rink). " ..
-                "Bases rebuild their stock 50% faster all round.",
+  description = "Thirteen modes take turns, the same for every tank: good " ..
+                "(Overdrive, Turbo, Iron Hide, Cleanup Crew, Hustle, Air Drop), " ..
+                "bad (Rust Bucket, Lead Feet), trade-offs (Glass Cannon, " ..
+                "Juggernaut, Machine Gun, Ice Rink) and Normal. Bases rebuild " ..
+                "50% faster.",
   api         = 1,
   kind        = "mod",
   bound       = false,
@@ -465,8 +697,11 @@ scenario = {
 
   callbacks = {
     on_start = "Starts the first mode and the clock.",
-    on_end = "Logs how many modes the round had.",
+    on_end = "Puts back the rules the last mode changed and logs how many " ..
+             "modes the round had.",
     on_tank_spawned = "A new or respawned tank gets the mode in force.",
+    pill_damage_scale = "In Glass Cannon a tank's shell takes twice the " ..
+                        "armour off a pillbox.",
     on_chat = "With chat commands on, !roulette changes the interval and the " ..
               "preview, or skips to the next mode.",
   },
