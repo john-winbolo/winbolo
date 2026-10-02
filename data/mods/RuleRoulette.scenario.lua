@@ -89,10 +89,20 @@
 --   held to each field's range (speed 1 to 2000, the rest 1 to 255), and
 --   only when that differs from what it has. So the script never multiplies
 --   its own result, and it follows the other script's every change. A mode
---   that ends, Normal and the end of the round put the base back, not the
---   classic tank. A modifier of 0 is the classic tank, read as 100. One
+--   that ends and Normal put the base back, not the classic tank. The end
+--   of the round does not: set_modifiers is refused once the round is over,
+--   so the tanks keep the last product. A modifier of 0 is the classic
+--   tank, read as 100. One
 --   case it cannot see: another script that writes exactly this script's
 --   last product is taken to have written nothing.
+--
+--   A script that writes whenever the tank's value is not its own would
+--   write every frame, because the tank shows this script's product, and
+--   this script would multiply again every frame: two writes a frame. Such
+--   a script has to write only when its value or the tank's value changed
+--   since its last frame, as Pillbox Tag does for the holder's speed (the
+--   rule_roulette_multiply arena checks that). Then the two settle in two
+--   frames and stay quiet.
 --
 --   For the product to be what the tank drives on, this script's on_tick
 --   has to run after the other script's in the same frame. on_tick is the
@@ -484,19 +494,6 @@ function MULT.all()
       MULT.wrote[p], MULT.base[p] = nil, nil
     elseif not t.dead and t.mods ~= nil then
       MULT.one(p, t, f)
-    end
-  end
-end
-
--- The end of the round: each tank that still has this script's product
--- gets its base back. A write the state refuses changes nothing, so it is
--- not logged.
-function MULT.restore()
-  for p, wrote in pairs(MULT.wrote) do
-    local t = game.tank(p)
-    local base = MULT.base[p]
-    if t ~= nil and t.mods ~= nil and base ~= nil and same_set(t.mods, wrote) then
-      game.set_modifiers(p, mods_table(base))
     end
   end
 end
@@ -1038,9 +1035,8 @@ function on_end()
   -- order puts back the same values.
   restore_rules(BUILDER)
   restore_rules(TANK)
-  if multiply then
-    MULT.restore()
-  end
+  -- No modifier is put back here: set_modifiers is refused once the round
+  -- is over (see the header).
   game.log(string.format("RuleRoulette ended after %d tank modes and %d builder modes, " ..
                          "%d panel refusals", TANK.changes, BUILDER.changes, refused))
 end

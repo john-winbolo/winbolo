@@ -76,7 +76,11 @@
 -- own from the round start, whatever the lobby teams were, so nobody is
 -- allied with anybody and nobody can ally: the holder is against everybody,
 -- and a built prize fires at everybody but him. The lobby teams are put
--- back when the round ends. In "Use Lobby Teams" the lobby teams play as
+-- back when this script ends the round on its own clock (the engine's time
+-- limit is set five seconds later, so the script gets there first). A round
+-- ended any other way, by the host or the server, keeps the Free For All
+-- teams: a roster write is refused once the round has stopped, so on_end
+-- cannot put them back. In "Use Lobby Teams" the lobby teams play as
 -- teams: teammates are allied, every second the holder carries the prize
 -- scores for his team as well as for him, a built prize spares his
 -- teammates, and the team with the most seconds wins. The bots on the
@@ -125,6 +129,17 @@
 -- a tank of armour and 3 mines (a holder carrying the prize gets the mines
 -- but still no shells), and the base then goes off the map for half a minute
 -- before it comes back.
+--
+-- With Rule Roulette's "Multiply other mods' modifiers" on, the holder's
+-- tank shows his speed share times Rule Roulette's mode, not the share
+-- itself. So the holder's speed is written only when the tank is not at the
+-- share and something changed since the last frame: the share, or the
+-- tank's speed (a clear, another script's whole set, a new mode). The two
+-- scripts settle in two frames and then neither writes until something
+-- changes, and a set that replaces the share still gets it put back (see
+-- carry_legs). A base or respawn boost on a seat that is not the holder
+-- (base_legs) does not do this yet: with multiply on, it costs two writes a
+-- frame for the few seconds the boost runs.
 
 -- Tweak these. Each is the default of a setting the host can change in the
 -- lobby's details dialog (scenario.settings at the bottom of the file
@@ -1011,8 +1026,13 @@ local function refresh()
       -- A seat that somehow kept the holder's legs without the pillbox gets
       -- them back here. The hooks below are what normally clears them; this
       -- is the net under those.
-      -- A base or respawn boost is in boost_use.base too.
-      if p ~= carrier and t.mods.speed ~= 0 and boost_use.base[p] == nil then
+      -- A base or respawn boost is in boost_use.base too. The holder is
+      -- left out: carry_legs sets his legs every frame while he is the
+      -- holder. Between a shot-down prize's HOP_PICKUP_SECONDS running out
+      -- and each_second taking it off him, prize() names no carrier, and
+      -- clearing him here would only fight carry_legs.
+      if p ~= carrier and p ~= holder and t.mods.speed ~= 0 and
+         boost_use.base[p] == nil then
         game.set_modifiers(p, {})
       end
     end
@@ -2065,8 +2085,10 @@ local function restore_teams()
   if teams_on() then
     return
   end
-  for p, t in pairs(lobby_team) do
-    local slot = game.lobby_slot(p)
+  -- Seat order, not pairs(), so a seed gives the same ops in the same order.
+  for p = 0, game.max_tanks() - 1 do
+    local t = lobby_team[p]
+    local slot = (t ~= nil) and game.lobby_slot(p) or nil
     if slot ~= nil and slot.team ~= t then
       game.set_team(p, t)
     end
@@ -2770,6 +2792,8 @@ local carry = {
   low   = false,                -- whether he is on the lower cap
   x     = nil,                  -- where he was last frame, nil to start over
   y     = nil,
+  seen  = nil,                  -- his speed modifier as carry_legs last read it
+  last  = nil,                  -- the speed carry_legs last wanted for him
 }
 
 -- Fills carry_by_code on first use, from inside a hook (the rules and the
@@ -2858,6 +2882,7 @@ local function carry_start()
   carry.ahead = 0
   carry.low = false
   carry.x, carry.y = nil, nil
+  carry.seen, carry.last = nil, nil
 end
 
 -- The modifier set is replaced whole, and an empty one is the classic tank,
@@ -2908,9 +2933,21 @@ local function carry_legs(p, t)
     pct = carry_pct(want, cap)
   end
   carry.x, carry.y = t.wx, t.wy
+  -- Written only when the tank is not at pct AND something changed since
+  -- the last read: pct itself, or the tank's speed (a clear, another
+  -- script's whole set, a new Rule Roulette mode). With Rule Roulette's
+  -- multiply on, the tank shows pct times the mode, not pct; without the
+  -- second test this would write pct every frame and Rule Roulette would
+  -- multiply it again every frame. With it, the two settle in two frames
+  -- and then neither writes until something changes.
   local now = (t.mods.speed == 0) and 100 or t.mods.speed
-  if now ~= pct then
-    game.set_modifiers(p, (pct == 100) and {} or { speed = pct })
+  local changed = (carry.last ~= pct) or (carry.seen ~= now)
+  carry.seen = now
+  carry.last = pct
+  if now ~= pct and changed then
+    if not game.set_modifiers(p, (pct == 100) and {} or { speed = pct }) then
+      carry.last = nil   -- refused: try again next frame
+    end
   end
 end
 
@@ -3152,6 +3189,7 @@ lose_the_prize = function(p)
   invuln_seat = nil
   if p ~= nil then
     wet_time.secs[p] = nil
+    carry.seen, carry.last = nil, nil
     game.set_modifiers(p, {})
     tune(p)
     sort_team(p)
@@ -3300,10 +3338,14 @@ function on_tank_killed(victim, killer, cause, scripted)
   aim_everybody()
 end
 
--- A tank that spawns far from the prize gets a speed boost back to it (see
--- boost_use.spawned). A first spawn before the round runs gets none.
+-- A tank that respawns far from the prize gets a speed boost back to it
+-- (see boost_use.spawned). A seat's first spawn gets none: a human's comes
+-- before on_start, but the bots are fielded after it, and they must not
+-- start the round with a boost the humans did not get.
 function on_tank_spawned(p, mx, my, respawn, scripted)
-  boost_use.spawned(p, mx, my)
+  if respawn then
+    boost_use.spawned(p, mx, my)
+  end
 end
 
 -- A standing prize owned by anybody but the holder would be a gun with no

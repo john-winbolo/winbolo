@@ -1207,10 +1207,8 @@ function on_player_leave(p, scripted)
     boosted = nil
     boosted_mods = nil
   end
-  -- One fewer infected: the first one's numbers grow back a step.
-  if was == INFECTED then
-    crown_zero()
-  end
+  -- Nothing is written once the round is over (a modifier write is refused
+  -- then) or decided (ending: the numbers no longer matter).
   if not running or over or ending then
     return
   end
@@ -1224,6 +1222,9 @@ function on_player_leave(p, scripted)
     zero = nil
     crown_zero()
     turn_zero()
+  elseif was == INFECTED then
+    -- One fewer infected: the first one's numbers grow back a step.
+    crown_zero()
   end
 end
 
