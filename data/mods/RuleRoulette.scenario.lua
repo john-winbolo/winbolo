@@ -34,10 +34,10 @@
 -- scenario's own math.random, so a seed and a replay give the same order.
 -- When all of a track's modes have played they are shuffled again, and a
 -- mode never follows itself across that seam. A short countdown names the
--- mode that is coming; the new mode goes up on the centre of the screen and
+-- mode that is coming; the new mode goes up at the top of the screen and
 -- on the newswire, and panel 0 shows the modes in force, the time each has
 -- left and the modes that come next on each track. When both tracks change
--- on the same second, one line on the centre of the screen names both, and
+-- on the same second, one line at the top of the screen names both, and
 -- the newswire has a line for each.
 --
 -- It exists to play-test bots that read their own modifiers and rules: the
@@ -70,8 +70,42 @@
 -- For the whole round, bases also rebuild their own stock 50% faster than
 -- the classic rate (scenario.rules below). No mode touches that rule.
 --
+-- Other mods' modifiers. game.set_modifiers replaces a tank's whole set of
+-- six, so with another script on the server that writes modifiers too
+-- (Pillbox Tag sets the prize holder's speed every frame), the last write
+-- wins and a tank mode can be lost. The lobby setting "Multiply other mods'
+-- modifiers" decides what happens:
+--
+--   No (the default): a tank mode writes its own six numbers when it starts
+--   and when a tank spawns, as it always has. Another script's later write
+--   replaces them.
+--
+--   Yes: every frame (on_tick), for each seat with a live tank, the script
+--   reads the tank's modifiers. It keeps, per seat, the set it wrote last
+--   and the base set it multiplied. When the tank's set is not the one it
+--   wrote last (another script wrote, the tank was cleared, a new tank took
+--   the seat), the tank's set is the new base; otherwise the base stays. The
+--   tank then gets base x the mode's percent, field by field, rounded and
+--   held to each field's range (speed 1 to 2000, the rest 1 to 255), and
+--   only when that differs from what it has. So the script never multiplies
+--   its own result, and it follows the other script's every change. A mode
+--   that ends, Normal and the end of the round put the base back, not the
+--   classic tank. A modifier of 0 is the classic tank, read as 100. One
+--   case it cannot see: another script that writes exactly this script's
+--   last product is taken to have written nothing.
+--
+--   For the product to be what the tank drives on, this script's on_tick
+--   has to run after the other script's in the same frame. on_tick is the
+--   last per-frame hook, and the scripts' on_tick run down the lobby's
+--   list, top first. So put Rule Roulette BELOW the other mod (a lower
+--   priority). Above it, the other mod's on_tick writes after this one, and
+--   its value is the one the tank drives on. A write from the other mod's
+--   timers or event hooks comes before every on_tick, so the order does not
+--   matter for those.
+--
 -- The host sets both intervals, how many upcoming modes the panel shows for
--- each track, the countdown and the chat commands in the lobby
+-- each track, the countdown, the chat commands and the multiply setting in
+-- the lobby
 -- (scenario.settings below). With chat commands on, a human can change the
 -- intervals and the preview and skip to the next mode of either track
 -- during a round; type "!roulette" for the list.
@@ -242,6 +276,7 @@ local PREVIEW_MAX  = 3     -- the most upcoming modes a track shows on the panel
 local preview   = 1        -- the lobby settings, read in on_start
 local countdown = 5
 local chat      = false
+local multiply  = false    -- "Multiply other mods' modifiers" is Yes
 
 local running  = false
 local over     = false
@@ -356,6 +391,7 @@ local function apply_mods(p, t)
     game.log(string.format("RuleRoulette: set_modifiers(%d) refused: %s %s",
                            p, tostring(code), tostring(why)))
   end
+  return ok
 end
 
 -- Whether a tank already carries these numbers. A respawn keeps them, and
@@ -371,6 +407,97 @@ local function has_mods(p, t)
     end
   end
   return true
+end
+
+-- ── Multiplying other mods' modifiers ───────────────────────────────
+--
+-- Only with the "multiply" setting Yes; see the header. MULT.wrote[p] is
+-- the six-field set this script last put on seat p, MULT.base[p] the set it
+-- multiplied to get it. Both hold percentages, with 0 read as 100.
+
+local MULT = { wrote = {}, base = {} }
+-- Each field's top in set_modifiers (scenario_lua.c): speed alone goes past
+-- a byte, to TANK_MOD_SPEED_MAX.
+local MOD_MAX = { speed = 2000, accel = 255, turn = 255, reload = 255,
+                  dealt = 255, taken = 255 }
+
+-- A modifier as a percentage: 0 (and a missing one) is the classic 100.
+local function pct_of(v)
+  if v == nil or v == 0 then
+    return 100
+  end
+  return v
+end
+
+local function same_set(a, b)
+  for _, k in ipairs(MOD_KEYS) do
+    if pct_of(a[k]) ~= pct_of(b[k]) then
+      return false
+    end
+  end
+  return true
+end
+
+-- The set as set_modifiers takes it: a field at 100 is left out (classic),
+-- so a script that reads a speed of 0 as "no modifier" still does.
+local function mods_table(set)
+  local out = {}
+  for _, k in ipairs(MOD_KEYS) do
+    if set[k] ~= 100 then
+      out[k] = set[k]
+    end
+  end
+  return out
+end
+
+-- Seat p's tank t gets its base times the factors f (a full_mods table).
+-- A refused write leaves MULT.wrote as it was, so the next frame cannot
+-- take this script's own old product for a base.
+function MULT.one(p, t, f)
+  local cur = t.mods
+  local wrote, base = MULT.wrote[p], MULT.base[p]
+  if wrote == nil or base == nil or not same_set(cur, wrote) then
+    base = {}
+    for _, k in ipairs(MOD_KEYS) do
+      base[k] = pct_of(cur[k])
+    end
+    MULT.base[p] = base
+  end
+  local target = {}
+  for _, k in ipairs(MOD_KEYS) do
+    target[k] = clamp(math.floor(base[k] * f[k] / 100 + 0.5), 1, MOD_MAX[k])
+  end
+  if same_set(cur, target) or apply_mods(p, mods_table(target)) then
+    MULT.wrote[p] = target
+  end
+end
+
+-- Every seat, once a frame. A seat with no tank forgets its sets, so the
+-- next tank in it starts from its own. A dead tank is skipped: the frame
+-- it is back, its set (kept, or cleared by somebody) is read again.
+function MULT.all()
+  local f = full_mods(TANK.mode)
+  for p = 0, game.max_tanks() - 1 do
+    local t = game.tank(p)
+    if t == nil then
+      MULT.wrote[p], MULT.base[p] = nil, nil
+    elseif not t.dead and t.mods ~= nil then
+      MULT.one(p, t, f)
+    end
+  end
+end
+
+-- The end of the round: each tank that still has this script's product
+-- gets its base back. A write the state refuses changes nothing, so it is
+-- not logged.
+function MULT.restore()
+  for p, wrote in pairs(MULT.wrote) do
+    local t = game.tank(p)
+    local base = MULT.base[p]
+    if t ~= nil and t.mods ~= nil and base ~= nil and same_set(t.mods, wrote) then
+      game.set_modifiers(p, mods_table(base))
+    end
+  end
 end
 
 -- ── Rules ───────────────────────────────────────────────────────────
@@ -718,7 +845,12 @@ local function start_mode(tr, idx)
   tr.next_at  = game.tick() + tr.interval * 100
   local mode  = tr.mode
 
-  if tr == TANK then
+  if tr == TANK and multiply then
+    -- The next on_tick multiplies every tank's base by the new mode.
+    game.log(string.format("RuleRoulette tank mode %d tick %d: %s (%s%s) multiplied",
+                           tr.changes, game.tick(), mode.name, mods_text(full_mods(mode)),
+                           mode.pill_dealt and (" p" .. mode.pill_dealt) or ""))
+  elseif tr == TANK then
     local t = full_mods(mode)
     local tanks, landed = 0, 0
     for p = 0, game.max_tanks() - 1 do
@@ -759,14 +891,16 @@ local function stop_track(tr)
   game.log(string.format("RuleRoulette %s track off at tick %d", tr.id, game.tick()))
 end
 
--- Puts the modes that just started on the screen and the newswire. Two at
+-- Puts the modes that just started on the screen and the newswire. The
+-- screen line goes at the top of the view ("top"; it drops under a status
+-- line if another script has one up), as does the countdown. Two at
 -- once share one line on the screen, so neither covers the other.
 local function announce(changed)
   if #changed == 1 then
-    game.announce(now_text(changed[1].mode), 5)
+    game.announce(now_text(changed[1].mode), 5, nil, "top")
   else
     game.announce(string.format("Now: %s (tank), %s (builder)",
-                                TANK.mode.name, BUILDER.mode.name), 5)
+                                TANK.mode.name, BUILDER.mode.name), 5, nil, "top")
   end
   for _, tr in ipairs(changed) do
     game.message("Rule Roulette " .. tr.id .. ": " .. now_text(tr.mode))
@@ -809,7 +943,7 @@ local function each_second()
     quiet = quiet - 1
     local text = quiet <= 0 and countdown_text() or nil
     if text ~= nil then
-      game.announce(text, 1)
+      game.announce(text, 1, nil, "top")
     end
   end
   -- The bars' new values, the new modes, and a retry of a refused one.
@@ -879,6 +1013,7 @@ function on_start()
   preview   = clamp(game.setting("preview"), 0, PREVIEW_MAX)
   countdown = game.setting("countdown")
   chat      = game.setting("chat")
+  multiply  = game.setting("multiply") == "Yes"
   running   = true
   game.message("Rule Roulette: a new tank mode every " .. TANK.interval .. " s" ..
                (BUILDER.interval > 0
@@ -902,6 +1037,9 @@ function on_end()
   -- order puts back the same values.
   restore_rules(BUILDER)
   restore_rules(TANK)
+  if multiply then
+    MULT.restore()
+  end
   game.log(string.format("RuleRoulette ended after %d tank modes and %d builder modes, " ..
                          "%d panel refusals", TANK.changes, BUILDER.changes, refused))
 end
@@ -920,15 +1058,25 @@ function pill_damage_scale(attacker, n, cause, pill)
   return mode.pill_dealt
 end
 
--- A tank that takes the field gets the tank mode in force.
+-- A tank that takes the field gets the tank mode in force. With multiply
+-- on, on_tick does it instead, from the tank's own set.
 function on_tank_spawned(p, mx, my, respawn, scripted)
-  if not running or over or TANK.mode == nil then
+  if not running or over or TANK.mode == nil or multiply then
     return
   end
   local t = full_mods(TANK.mode)
   if not has_mods(p, t) then
     apply_mods(p, t)
   end
+end
+
+-- With multiply on: every tank gets its base times the tank mode, after
+-- the other scripts' frame (see the header for the order this needs).
+function on_tick(tick)
+  if not multiply or not running or over or TANK.mode == nil then
+    return
+  end
+  MULT.all()
 end
 
 function on_chat(p, text, scripted)
@@ -974,13 +1122,20 @@ scenario = {
       min = 0, max = 10, step = 1, default = 5 },
     { id = "chat", label = "!roulette chat commands", type = "bool",
       default = false },
+    -- Yes: each frame a tank's modifiers are the other mods' set times the
+    -- tank mode, not replaced by it. List Rule Roulette below those mods.
+    { id = "multiply", label = "Multiply other mods' modifiers",
+      type = "choice", choices = { "Yes", "No" }, default = "No" },
   },
 
   callbacks = {
     on_start = "Starts the first tank mode, the first builder mode and the clock.",
     on_end = "Puts back the rules the last tank and builder modes changed and " ..
              "logs how many modes the round had.",
-    on_tank_spawned = "A new or respawned tank gets the tank mode in force.",
+    on_tank_spawned = "A new or respawned tank gets the tank mode in force " ..
+                      "(multiply off).",
+    on_tick = "With multiply on, each frame every tank's modifiers become the " ..
+              "other mods' set times the tank mode.",
     pill_damage_scale = "In Glass Cannon a tank's shell takes twice the " ..
                         "armour off a pillbox.",
     on_chat = "With chat commands on, !roulette changes either interval and the " ..
