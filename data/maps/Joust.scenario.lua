@@ -479,6 +479,7 @@ local function draw_panel(settle)
                     target) },
   }
   local busy, seen, shown, leader = false, {}, {}, true
+  local drawn = {}   -- the lines drawn: line, y, height, first item, flash
   for row, line in ipairs(panel_lines()) do
     local key = line_key(line)
     seen[key] = true
@@ -512,6 +513,8 @@ local function draw_panel(settle)
       if not line.indent then
         leader = false
       end
+      local d = { line = line, y = y, step = step, at = #list + 1 }
+      drawn[#drawn + 1] = d
       -- The flash: a bright bar behind the line, yellow and then orange,
       -- with the line in black on it.
       local ends = flash_end[key]
@@ -522,6 +525,7 @@ local function draw_panel(settle)
         local bar = (ends - now > FLASH_TICKS / 2) and "yellow" or "orange"
         list[#list + 1] = { "rect", 2, y - 1, 124, step, bar, true }
         colour = "black"
+        d.flash = true
       end
       local x = line.indent and 12 or 4
       local score = string.format("%d", line.value)
@@ -540,6 +544,7 @@ local function draw_panel(settle)
                             line.seat }
       end
       list[#list + 1] = { "text", 124, y, colour, size, "right", score }
+      d.last = #list
     end
   end
   -- A line that left the list goes; if it comes back it slides in again.
@@ -556,7 +561,41 @@ local function draw_panel(settle)
       flash_end[key] = nil
     end
   end
-  game.panel(0, list)
+  -- Each human gets their own copy, with a dark bar behind their own line,
+  -- or their team's line when the members do not fit, so they can find
+  -- themselves on the list. A flashing line keeps its flash. A member's
+  -- grey would not show on the bar, so it is drawn white. Bots get none.
+  for p = 0, game.max_tanks() - 1 do
+    local slot = game.lobby_slot(p)
+    if slot ~= nil and not slot.bot then
+      local own = nil
+      for _, d in ipairs(drawn) do
+        if d.line.seat == p then
+          own = d
+        elseif own == nil and d.line.team ~= nil
+               and d.line.team == team_of(p) then
+          own = d
+        end
+      end
+      if own ~= nil and own.flash then
+        own = nil
+      end
+      local out = {}
+      for i, item in ipairs(list) do
+        if own ~= nil and i == own.at then
+          out[#out + 1] = { "rect", 2, own.y - 1, 124, own.step,
+                            "grey_dark", true }
+        end
+        if own ~= nil and i >= own.at and i <= own.last
+           and item[4] == "grey" then
+          item = { item[1], item[2], item[3], "white", item[5], item[6],
+                   item[7] }
+        end
+        out[#out + 1] = item
+      end
+      game.panel(0, out, p)
+    end
+  end
   drawn_at = now
   dirty = busy
   if settle then
