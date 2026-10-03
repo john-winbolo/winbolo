@@ -8,9 +8,12 @@
  *     space, runs collapse, and the ends are trimmed;
  *   - C0, DEL and C1 controls, zero-width and bidi marks are dropped;
  *   - bytes that are not UTF-8 (a stray continuation, a lead byte with no
- *     tail, an overlong form, a surrogate) are dropped;
- *   - the cut never falls inside a character, and the output buffer size is
- *     honoured below maxBytes.
+ *     tail, overlong forms, a surrogate, past U+10FFFF, F5..FF) are dropped;
+ *   - soft hyphen, U+061C, U+180E, U+FFF9..FFFB, tag characters and
+ *     noncharacters are dropped; an emoji is kept;
+ *   - NFC, leading combining marks dropped, stacked marks capped;
+ *   - the cut never falls inside a character or between a letter and its
+ *     marks, and the output buffer size is honoured below maxBytes.
  *
  * run_server_text_sim — the sim's setters sanitise and cut, and the getters
  * give "" for a NULL sim.
@@ -22,14 +25,18 @@
  *   - a name and a description follow the mods;
  *   - a description alone writes a zero name length;
  *   - behind the largest script tail, the name goes whole and the
- *     description is cut to what is left of INFO_REPLY_TAIL_CAP.
+ *     description is cut to what is left of INFO_REPLY_TAIL_CAP (34 bytes),
+ *     which infoReplyServerDescRoom reports; 2 bytes of room write nothing
+ *     and 3 write a one-byte name and an empty description.
  *
  * run_server_text_tail_read — the reader (discoveryReadScriptTail,
  * discovery.c) against literal buffers:
  *   - the old layout, which stops after the mods: true, name empty;
  *   - a name and a description: read;
- *   - a name length of 33, a description length of 201, and a section cut
- *     short: the scripts are kept and the name and description stay empty;
+ *   - a name length of 33, a description length of 201, and a name length
+ *     past the end: the scripts are kept and the server text stays empty,
+ *     except that a good name before a bad description is kept;
+ *   - an empty [0][0] pair: accepted;
  *   - control characters in the bytes are cleaned on read.
  */
 
@@ -103,6 +110,67 @@ int run_server_text_sanitize(void) {
         return 1;
     /* An output buffer smaller than maxBytes wins. */
     if (stCheck("abcdefgh", 4, 32, "abc", "small buffer")) return 1;
+
+    /* A four-byte character is kept. */
+    if (stCheck("hi \xF0\x9F\x98\x80", 64, 32, "hi \xF0\x9F\x98\x80", "emoji"))
+        return 1;
+
+    /* More bytes that are not UTF-8: overlong four- and three-byte forms, a
+       code point past U+10FFFF, and the lead bytes F5..FF that never start
+       a character. */
+    if (stCheck("a\xF0\x80\x80\x80" "b", 64, 32, "ab", "overlong F0 80 80 80"))
+        return 1;
+    if (stCheck("a\xE0\x80\x80" "b", 64, 32, "ab", "overlong E0 80 80"))
+        return 1;
+    if (stCheck("a\xF4\x90\x80\x80" "b", 64, 32, "ab", "past U+10FFFF"))
+        return 1;
+    if (stCheck("a\xF5\x80\x80\x80" "b\xF8\xFB\xFC\xFD\xFE\xFF" "c", 64, 32,
+                "abc", "lead bytes F5..FF")) return 1;
+
+    /* The 32-byte cap falling inside a two-byte character: 31 letters and
+       an é would be 33 bytes, so the é goes. */
+    {
+        char in[40];
+        char want[40];
+        memset(in, 'a', 31);
+        in[31] = (char)0xC3;
+        in[32] = (char)0xA9;
+        in[33] = '\0';
+        memcpy(want, in, 31);
+        want[31] = '\0';
+        if (stCheck(in, SERVER_NAME_LEN, SERVER_NAME_MAX, want,
+                    "cap inside a two-byte character")) return 1;
+    }
+
+    /* More characters that hide or reorder text: U+061C, U+00AD, U+180E,
+       U+FFF9, a tag character U+E0001, the noncharacters U+FDD0, U+FFFE and
+       U+1FFFF. */
+    if (stCheck("a\xD8\x9C" "b\xC2\xAD" "c\xE1\xA0\x8E" "d\xEF\xBF\xB9"
+                "e\xF3\xA0\x80\x81" "f\xEF\xB7\x90" "g\xEF\xBF\xBE"
+                "h\xF0\x9F\xBF\xBF" "i",
+                64, 32, "abcdefghi", "hidden and noncharacters")) return 1;
+
+    /* Combining marks. NFC folds e + U+0301 into the one é it shows as. */
+    if (stCheck("e\xCC\x81", 64, 32, "\xC3\xA9", "NFC")) return 1;
+    /* A mark with nothing to draw on goes: at the start, and after a
+       space. */
+    if (stCheck("\xCC\x81\xCC\x88" "abc", 64, 32, "abc", "leading marks"))
+        return 1;
+    if (stCheck("a \xCC\x81" "b", 64, 32, "a b", "mark after a space"))
+        return 1;
+    /* A letter keeps at most SERVER_TEXT_MARKS_MAX marks; x has no
+       precomposed form, so NFC leaves all six for the cap to cut. */
+    if (stCheck("x\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81\xCC\x81" "y", 64, 32,
+                "x\xCC\x81\xCC\x81\xCC\x81" "y", "stacked marks")) return 1;
+    /* The cut keeps a letter with its marks: x and its mark need 3 bytes
+       and only 2 are left after "ab", so x goes too, and the space before
+       it with it. */
+    if (stCheck("abx\xCC\x81", 64, 4, "ab", "cut before a letter's mark"))
+        return 1;
+    if (stCheck("ab x\xCC\x81", 64, 5, "ab", "cut drops the space too"))
+        return 1;
+    if (stCheck("ab x\xCC\x81", 64, 6, "ab x\xCC\x81", "letter and mark fit"))
+        return 1;
     return 0;
 }
 
@@ -280,7 +348,28 @@ int run_server_text_tail_golden(void) {
                       (unsigned)buf[INFO_SCRIPT_TAIL_MAX + 1 + SERVER_NAME_MAX],
                       (unsigned)descKept);
 
+        /* The room the DS's startup note is worked out from. */
+        UT_ASSERT_MSG(infoReplyServerDescRoom(sim) == descKept,
+                      "infoReplyServerDescRoom is %u, expected %u",
+                      (unsigned)infoReplyServerDescRoom(sim),
+                      (unsigned)descKept);
+
+        /* Two bytes of room would hold only two empty lengths: nothing. */
+        memset(buf, 0xAB, sizeof(buf));
+        n = buildInfoScriptTail(sim, buf, INFO_SCRIPT_TAIL_MAX + 2);
+        UT_ASSERT_MSG(n == INFO_SCRIPT_TAIL_MAX,
+                      "with 2 bytes of room %u bytes were written", (unsigned)n);
+        /* Three bytes: one byte of name and an empty description. */
+        n = buildInfoScriptTail(sim, buf, INFO_SCRIPT_TAIL_MAX + 3);
+        UT_ASSERT_MSG(n == INFO_SCRIPT_TAIL_MAX + 3,
+                      "with 3 bytes of room %u bytes were written", (unsigned)n);
+        UT_ASSERT(buf[INFO_SCRIPT_TAIL_MAX] == 1);
+        UT_ASSERT(buf[INFO_SCRIPT_TAIL_MAX + 1] == 'N');
+        UT_ASSERT(buf[INFO_SCRIPT_TAIL_MAX + 2] == 0);
+
         /* The reader takes it all back. */
+        memset(buf, 0xAB, sizeof(buf));
+        n = buildInfoScriptTail(sim, buf, sizeof(buf));
         {
             DiscoveryScripts s;
             memset(&s, 0xAB, sizeof(s));
@@ -363,12 +452,39 @@ int run_server_text_tail_read(void) {
         UT_ASSERT(s.serverDescription[0] == '\0');
     }
 
-    /* A section cut short: the description's bytes are missing. */
+    /* A section cut short in the description: the name is kept. */
     {
         static const uint8_t buf[] = {
             0x00, 0x00, 0x00, 0x00,
             0x03, 'D', 'e', 'n',
             0x05, 'H', 'i'
+        };
+        memset(&s, 0xAB, sizeof(s));
+        UT_ASSERT(discoveryReadScriptTail(buf, sizeof(buf), &s));
+        UT_ASSERT(s.hasScriptInfo);
+        UT_ASSERT_MSG(strcmp(s.serverName, "Den") == 0,
+                      "the name read as '%s'", s.serverName);
+        UT_ASSERT(s.serverDescription[0] == '\0');
+    }
+
+    /* A name length larger than the bytes left. */
+    {
+        static const uint8_t buf[] = {
+            0x00, 0x00, 0x00, 0x00,
+            0x05, 'D', 'e'
+        };
+        memset(&s, 0xAB, sizeof(s));
+        UT_ASSERT(discoveryReadScriptTail(buf, sizeof(buf), &s));
+        UT_ASSERT(s.hasScriptInfo);
+        UT_ASSERT(s.serverName[0] == '\0');
+        UT_ASSERT(s.serverDescription[0] == '\0');
+    }
+
+    /* An empty pair, [0][0]: accepted, both empty. */
+    {
+        static const uint8_t buf[] = {
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00
         };
         memset(&s, 0xAB, sizeof(s));
         UT_ASSERT(discoveryReadScriptTail(buf, sizeof(buf), &s));

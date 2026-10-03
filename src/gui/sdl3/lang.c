@@ -2703,9 +2703,9 @@ static const LangEntry langTable[] = {
     {2761, "This scenario comes with the map. To unload it, choose a different map."},
     {2762, "Whether the builder crosses the square he is going to build on at that square's terrain speed, as in Mac Bolo. Off is the WinBolo walk: he walks up to the centre of that square at the refuelling base speed, whatever its terrain. A square with no walking speed, such as a river, a wall or a pillbox, keeps the refuelling base speed. The walk back to the tank does not change."},
     {2763, "Server name"},
-    {2764, "The game finder shows this name instead of your address. Up to 32 characters. Leave it empty to show your address."},
+    {2764, "The game finder shows this name instead of your address. Up to 32 letters (fewer with accented letters or other scripts). Leave it empty to show your address."},
     {2765, "Description"},
-    {2766, "The game finder shows this when a player points at or selects your game. Up to 200 characters."},
+    {2766, "The game finder shows this when a player points at or selects your game. Up to 200 letters (fewer with accented letters or other scripts)."},
     {2767, "Address"},
 };
 

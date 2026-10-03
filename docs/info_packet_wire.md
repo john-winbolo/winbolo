@@ -223,14 +223,25 @@ read: no control characters, no bidi or zero-width marks, one line, trimmed.
 The receive buffers on both sides are `MAX_UDPPACKET_SIZE` (1024) bytes, and
 Windows drops a larger datagram, so the whole reply never passes 1024 bytes.
 The script bytes can take 843, which leaves `INFO_REPLY_TAIL_CAP` − 843 = 68
-bytes here. The name always fits whole (a static assert in `netpacks.h` checks
-it); the description is cut on a character boundary to what is left.
+bytes for this section, length bytes included. The name always fits whole (a
+static assert in `netpacks.h` checks it). The description is cut to what is
+left: with a 32-byte name that is 68 − 1 − 32 − 1 = 34 bytes in the worst
+case. The cut never splits a character or a letter from its combining marks.
+With fewer than 3 bytes of room the section is left out. The dedicated server
+prints a note at startup when the description will not go whole beside the
+scripts the round starts with.
 
-A reader that predates the field ignores these bytes. A current reader treats
-them as optional: if they are missing, a length is over its cap, or a field
-runs past the end, the name and description stay empty and the scripts are
-kept. The game finder then shows the address, as it always did. Bytes after
-the description are ignored for a later field.
+Game finders from #449 on read the script bytes and ignore anything after the
+last mod, so they read a server with this section the same as one without it.
+Game finders from before #449 accept only a reply exactly the INFO_PACKET's
+size, so they already cannot read a current server, with or without this
+section.
+
+A current reader treats the section as optional. If it is missing, or the
+name's length is over its cap or runs past the end, the name and description
+stay empty. If only the description is bad, the name is kept. Either way the
+scripts are kept, and a row with no name shows the address, as it always did.
+Bytes after the description are ignored for a later field.
 
 ## Endianness
 

@@ -139,19 +139,21 @@ bool discoveryReadScriptTail(const uint8_t *tail, size_t len, DiscoveryScripts *
   }
   /* The server's name and description, when the server sent them. They are
    * optional: a server from before them, and one whose host gave neither,
-   * stops at the last mod. A malformed pair is dropped whole without
-   * dropping the scripts before it. */
+   * stops at the last mod. A malformed name drops both; a well-formed name
+   * followed by a malformed description keeps the name. Neither drops the
+   * scripts before them. */
   if (pos < len) {
     char name[DISCOVERY_SERVER_NAME_LEN];
     char desc[DISCOVERY_SERVER_DESC_LEN];
     if (discoveryReadTailString(tail, len, &pos, DISCOVERY_SERVER_NAME_LEN - 1,
-                                name) &&
-        discoveryReadTailString(tail, len, &pos, DISCOVERY_SERVER_DESC_LEN - 1,
-                                desc)) {
+                                name)) {
       serverTextSanitize(name, scripts.serverName, sizeof(scripts.serverName),
                          SERVER_NAME_MAX);
-      serverTextSanitize(desc, scripts.serverDescription,
-                         sizeof(scripts.serverDescription), SERVER_DESC_MAX);
+      if (discoveryReadTailString(tail, len, &pos,
+                                  DISCOVERY_SERVER_DESC_LEN - 1, desc)) {
+        serverTextSanitize(desc, scripts.serverDescription,
+                           sizeof(scripts.serverDescription), SERVER_DESC_MAX);
+      }
     }
   }
   /* Bytes past the description are left for a later field. */

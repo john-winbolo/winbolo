@@ -198,38 +198,66 @@ static size_t infoScriptTailPutString(uint8_t *out, const char *str,
  * reply. The sim holds both already sanitised and within their caps; here
  * they are only cut, on a character boundary, to the room there is. The name
  * always fits whole beside the largest script bytes (netpacks.h asserts it),
- * so in practice only the description is ever cut. */
+ * so in practice only the description is ever cut. The cut goes through
+ * serverTextSanitize, which leaves the already clean text alone and keeps a
+ * letter whole with its combining marks. With fewer than 3 bytes of room
+ * there is space for nothing but two empty lengths, so nothing is sent. */
 static size_t buildInfoServerText(ServerSim *sim, uint8_t *out, size_t room) {
-    char   name[SERVER_NAME_LEN];
-    char   desc[SERVER_DESC_LEN];
-    size_t pos = 0;
+    const char *nameIn = serverSimGetServerName(sim);
+    const char *descIn = serverSimGetServerDescription(sim);
+    char        name[SERVER_NAME_LEN];
+    char        desc[SERVER_DESC_LEN];
+    size_t      pos = 0;
 
-    snprintf(name, sizeof(name), "%s", serverSimGetServerName(sim));
-    snprintf(desc, sizeof(desc), "%s", serverSimGetServerDescription(sim));
-    if ((name[0] == '\0' && desc[0] == '\0') || room < 2) {
+    if ((nameIn[0] == '\0' && descIn[0] == '\0') || room < 3) {
         return 0;
     }
-    playerNameTruncateUtf8(name, room - 2 < INFO_SERVER_NAME_MAX
-                                     ? room - 2 : INFO_SERVER_NAME_MAX);
+    serverTextSanitize(nameIn, name, sizeof(name),
+                       room - 2 < INFO_SERVER_NAME_MAX ? room - 2
+                                                       : INFO_SERVER_NAME_MAX);
     pos += infoScriptTailPutString(out + pos, name, INFO_SERVER_NAME_MAX);
-    playerNameTruncateUtf8(desc, room - pos - 1 < INFO_SERVER_DESC_MAX
-                                     ? room - pos - 1 : INFO_SERVER_DESC_MAX);
+    serverTextSanitize(descIn, desc, sizeof(desc),
+                       room - pos - 1 < INFO_SERVER_DESC_MAX
+                           ? room - pos - 1 : INFO_SERVER_DESC_MAX);
     pos += infoScriptTailPutString(out + pos, desc, INFO_SERVER_DESC_MAX);
     return pos;
 }
+
+/* The scripts part of the tail: the scenario, its description and cap, and
+ * the mods. out has room for INFO_SCRIPT_TAIL_MAX bytes. */
+static size_t buildInfoScripts(ServerSim *sim, uint8_t *out);
 
 /* Write the scripts the round runs, as the info-request reply carries them
  * after the INFO_PACKET. The layout is described above INFO_SCRIPT_TAIL_MAX
  * in netpacks.h and in docs/info_packet_wire.md. */
 size_t buildInfoScriptTail(ServerSim *sim, uint8_t *out, size_t cap) {
+    size_t pos;
+
+    if (out == NULL || cap < INFO_SCRIPT_TAIL_MAX) {
+        return 0;
+    }
+    pos = buildInfoScripts(sim, out);
+    pos += buildInfoServerText(sim, out + pos, cap - pos);
+    return pos;
+}
+
+size_t infoReplyServerDescRoom(struct ServerSim *sim) {
+    uint8_t buf[INFO_SCRIPT_TAIL_MAX];
+    size_t  room = INFO_REPLY_TAIL_CAP - buildInfoScripts(sim, buf);
+    size_t  nameLen = strlen(serverSimGetServerName(sim));
+
+    /* The name always fits whole (netpacks.h); its length byte and the
+     * description's take two more. */
+    room -= 2 + nameLen;
+    return room < INFO_SERVER_DESC_MAX ? room : INFO_SERVER_DESC_MAX;
+}
+
+static size_t buildInfoScripts(ServerSim *sim, uint8_t *out) {
     ServerScriptSummary scripts;
     char                desc[SERVER_SCRIPT_DESC_LEN];
     size_t              pos = 0;
     BYTE                i;
 
-    if (out == NULL || cap < INFO_SCRIPT_TAIL_MAX) {
-        return 0;
-    }
     serverSimGetScriptSummary(sim, &scripts);
 
     /* The summary's description is the lobby's 255 bytes; the wire carries
@@ -247,7 +275,6 @@ size_t buildInfoScriptTail(ServerSim *sim, uint8_t *out, size_t cap) {
         pos += infoScriptTailPutString(out + pos, scripts.modNames[i],
                                        SERVER_SCRIPT_NAME_LEN - 1);
     }
-    pos += buildInfoServerText(sim, out + pos, cap - pos);
     return pos;
 }
 

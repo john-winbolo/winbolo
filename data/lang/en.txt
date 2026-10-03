@@ -1716,9 +1716,9 @@ STR_DLGSETTINGS_HOSTING_VOICE_OFF=Off
 STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=Proximity
 STR_DLGSETTINGS_HOSTING_VOICE_TIP=Off drops voice instead of carrying it to anyone. Proximity is not implemented yet and behaves the same as On.
 STR_DLGSETTINGS_HOSTING_SERVERNAME=Server name
-STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=The game finder shows this name instead of your address. Up to 32 characters. Leave it empty to show your address.
+STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=The game finder shows this name instead of your address. Up to 32 letters (fewer with accented letters or other scripts). Leave it empty to show your address.
 STR_DLGSETTINGS_HOSTING_SERVERDESC=Description
-STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=The game finder shows this when a player points at or selects your game. Up to 200 characters.
+STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=The game finder shows this when a player points at or selects your game. Up to 200 letters (fewer with accented letters or other scripts).
 
 # Log viewer Options menu
 STR_LV_HIDE_LOBBY=Hide Lobby
