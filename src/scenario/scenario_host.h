@@ -774,6 +774,27 @@ void scenarioHostDetach(ScenarioHost *h);
 void scenarioHostFollowMap(ServerSim *sim, ScenarioHost **slot);
 
 /*********************************************************
+ *NAME:          scenarioHostDecide
+ *PURPOSE:
+ *  The decision a map commit makes, made now and nothing
+ *  else: *slot is detached, the map's own script and the
+ *  sim's recorded script list are composed again for
+ *  mapPath, and *slot is set to the result or to NULL. The
+ *  lobby is not seated and no list is published — that is
+ *  what serverSimScenarioOnMapChanged adds around the same
+ *  decision, and a server still starting up does both later
+ *  in its own order.
+ *
+ *  For the dedicated server's -mod flags, which write the
+ *  script list once at startup, after the first attach and
+ *  before the lobby is seated. mapPath may be empty for a
+ *  map that came from no file, which composes the list
+ *  alone.
+ *********************************************************/
+void scenarioHostDecide(ServerSim *sim, ScenarioHost **slot,
+                        const char *mapPath);
+
+/*********************************************************
  *NAME:          scenarioHostIsActive
  *PURPOSE:
  *  Whether a scenario is attached and running. False for a
@@ -805,6 +826,11 @@ const char *scenarioHostDescription(const ScenarioHost *h);
  *  never NULL.
  *********************************************************/
 const char *scenarioHostScriptPath(const ScenarioHost *h);
+
+/* The file of the committed map's own script when it is one of the scripts
+   h composed, else "". Unlike scenarioHostScriptPath, never a picked script:
+   what a bare -setting id=value is aimed at. */
+const char *scenarioHostMapScriptPath(const ScenarioHost *h);
 
 /*********************************************************
  *NAME:          scenarioHostLastError

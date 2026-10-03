@@ -2313,7 +2313,11 @@ void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath) {
 
 /* Takes every picked scenario off the host's list and keeps the rest — the
    mods, and the map's own row where the host gave it a place — in the order
-   the host wrote them. Answers how many rows went. */
+   the host wrote them. Answers how many rows went.
+
+   The operator's rows stay too. A plain -mod scenario gives way to the map's
+   own scenario at the compose by itself, and a -mod-required or -mod-locked
+   row may not leave the list mid-lobby (serverSimOperatorModFixed). */
 int serverSimDropPickedScenarios(ServerSim *sim) {
     int kept = 0;
     int i;
@@ -2322,7 +2326,9 @@ int serverSimDropPickedScenarios(ServerSim *sim) {
     for (i = 0; i < sim->scenarioScriptCount; i++) {
         const ScnDirEntry *row = &sim->scenarioScripts[i];
 
-        if (row->file[0] != '\0' && !row->bound && !row->keepsWinCondition) {
+        if (row->file[0] != '\0' && !row->bound && !row->keepsWinCondition &&
+            !serverSimOperatorModFixed(sim, row->file) &&
+            !serverSimOperatorModYieldsToMap(sim, row->file, true)) {
             continue;
         }
         if (kept != i) {

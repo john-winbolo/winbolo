@@ -3121,6 +3121,10 @@ bool clientSimGetLobbyScriptBound(const ClientSim *cs, int i) {
   if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) return false;
   return cs->lobbyScriptBound[i];
 }
+bool clientSimGetLobbyScriptRequired(const ClientSim *cs, int i) {
+  if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) return false;
+  return cs->lobbyScriptRequired[i];
+}
 uint8_t clientSimGetLobbyScriptSource(const ClientSim *cs, int i) {
   if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) {
     return SERVER_SCENARIO_SOURCE_SERVER;

@@ -900,6 +900,181 @@ const char *serverSimGetWorkshopMapDir(const ServerSim *sim);
  *********************************************************/
 const char *serverSimGetSelectedScenario(const ServerSim *sim);
 
+/* How firmly an operator's -mod flag holds a script on the lobby's list.
+ * The values are ordered: a file named under two flags keeps the stronger. */
+typedef enum {
+    SERVER_MOD_DEFAULT  = 1, /* -mod: back on the list at every new lobby;
+                                a host may take it off until then */
+    SERVER_MOD_REQUIRED = 2, /* -mod-required: always on; a host may add,
+                                remove and reorder the rest of the list */
+    SERVER_MOD_LOCKED   = 3  /* -mod-locked: the list is exactly the
+                                operator's and nobody edits it */
+} ServerModStrength;
+
+/*********************************************************
+ *NAME:          serverSimAddOperatorMod
+ *PURPOSE:
+ *  Names one script the operator wants on every game's
+ *  list, as the dedicated server's -mod, -mod-required and
+ *  -mod-locked do. The name is matched against the files
+ *  the scenarios directory lists (serverSimScenarioListDir),
+ *  ignoring case, as given or with .scenario.lua, .lua or
+ *  .scenario added — so "MacBoloRules" and
+ *  "MacBoloRules.scenario.lua" are the same mod.
+ *
+ *  Records only; serverSimRecordOperatorMods puts the rows
+ *  on the list. Answers false with a reason in err for a
+ *  name the directory does not hold, a script tied to a map,
+ *  a second scenario (a round runs one) and a list already
+ *  at LOBBY_SCRIPT_LIST_MAX. A name already added keeps the
+ *  stronger of its two strengths.
+ *
+ *  SERVER_MOD_LOCKED locks the list even when the name is
+ *  refused, so a typo does not open it to every host.
+ *********************************************************/
+bool serverSimAddOperatorMod(ServerSim *sim, const char *name,
+                             ServerModStrength strength,
+                             char *err, size_t errLen);
+
+/*********************************************************
+ *NAME:          serverSimGetOperatorModCount /
+ *               serverSimGetOperatorModFile /
+ *               serverSimGetOperatorModStrength /
+ *               serverSimGetOperatorModsLocked
+ *PURPOSE:
+ *  What serverSimAddOperatorMod recorded, in the order it
+ *  was named. File answers "" and strength 0 outside the
+ *  count. Locked is whether any -mod-locked was given.
+ *********************************************************/
+int               serverSimGetOperatorModCount(const ServerSim *sim);
+const char       *serverSimGetOperatorModFile(const ServerSim *sim, int i);
+ServerModStrength serverSimGetOperatorModStrength(const ServerSim *sim,
+                                                  int i);
+bool              serverSimGetOperatorModsLocked(const ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimOperatorModFixed
+ *PURPOSE:
+ *  Whether file is an operator row no host may take off:
+ *  one named by -mod-required or -mod-locked. A -mod row
+ *  answers false, because the host may remove it.
+ *********************************************************/
+bool serverSimOperatorModFixed(const ServerSim *sim, const char *file);
+
+/*********************************************************
+ *NAME:          serverSimOperatorModLocks
+ *PURPOSE:
+ *  The lobby lock bits the recorded rows call for, for the
+ *  operator's own lock mask: LOBBY_LOCK_MODS when any row
+ *  is required or locked, so the Mods/Scenario checkbox
+ *  cannot switch them off, and LOBBY_LOCK_SCRIPT_LIST as
+ *  well under -mod-locked.
+ *********************************************************/
+uint32_t serverSimOperatorModLocks(const ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimRecordOperatorMods
+ *PURPOSE:
+ *  Puts the recorded rows back on the lobby's script list,
+ *  recording only, as serverSimSetScriptList records.
+ *  Answers whether the list changed; a caller that gets true
+ *  asks for the decision again (serverSimScenarioOnMapChanged,
+ *  or scenarioHostDecide at startup) and publishes it.
+ *
+ *  Under -mod-locked the list becomes exactly the operator's
+ *  rows, in the order they were named. Otherwise the host's
+ *  list stays as it is and each operator row it lacks is put
+ *  on the end of it. Room is made by taking off what the
+ *  host picked, never an operator row: the last pick when
+ *  the list is full, and the host's picked scenario when the
+ *  row going on is a scenario, because a round runs one. The
+ *  map's own row goes too for a -mod-required scenario, but
+ *  not for a plain -mod one, which gives way to the map's
+ *  own scenario or composes beside the map's own mod
+ *  (serverSimOperatorModYieldsToMap).
+ *
+ *  With any operator row recorded, the Mods/Scenario setting
+ *  is switched back on as well: a -mod row on a list whose
+ *  scripts are all switched off would be listed and never
+ *  play. That counts as a change.
+ *
+ *  The sim calls this itself at every return to the lobby
+ *  and at the empty-lobby reset, so a default-on -mod the
+ *  host took off is back for the next game. The dedicated
+ *  server calls it once at startup.
+ *********************************************************/
+bool serverSimRecordOperatorMods(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimOperatorModYieldsToMap
+ *PURPOSE:
+ *  Whether the round about to be composed leaves the list's
+ *  row for file out because the map brings a scenario of
+ *  its own: file is a scenario named by a plain -mod (never
+ *  the map's own row), and mapOwnIsScenario says the
+ *  committed map's own script is a scenario rather than a
+ *  mod. Against a mod map script, or a plain map, the -mod
+ *  scenario composes as usual. A -mod-required or
+ *  -mod-locked scenario never yields; it replaces the map's
+ *  own, as a host's pick does. Asked by the scenario
+ *  decision (scnDecideScenario), which is what reads the
+ *  map's script and knows its kind.
+ *********************************************************/
+bool serverSimOperatorModYieldsToMap(const ServerSim *sim,
+                                     const char *file,
+                                     bool mapOwnIsScenario);
+
+/* What serverSimApplyOperatorModArgs answers. */
+typedef enum {
+    SERVER_MOD_ARGS_OK       = 0,
+    SERVER_MOD_ARGS_CONFLICT = 1  /* -mod-locked beside -mod or
+                                     -mod-required; nothing recorded */
+} ServerModArgsResult;
+
+/* The line the dedicated server prints, and exits on, for
+ * SERVER_MOD_ARGS_CONFLICT. */
+#define SERVER_MOD_ARGS_CONFLICT_TEXT \
+    "Error: -mod-locked cannot be combined with -mod or -mod-required"
+
+/* Where serverSimApplyOperatorModArgs sends each warning and
+ * note: one whole line, no newline. */
+typedef void (*ServerModArgsSay)(void *ctx, const char *line);
+
+/*********************************************************
+ *NAME:          serverSimOperatorModArgsGiven /
+ *               serverSimOperatorModArgsConflict
+ *PURPOSE:
+ *  Given: whether argv holds -mod, -mod-required or
+ *  -mod-locked at all, value or no. Conflict: whether it
+ *  holds -mod-locked and also -mod or -mod-required, which
+ *  the dedicated server refuses to start with. Flags match
+ *  as argExist matches them: a leading '-', case ignored.
+ *********************************************************/
+bool serverSimOperatorModArgsGiven(int argc, const char *const *argv);
+bool serverSimOperatorModArgsConflict(int argc, const char *const *argv);
+
+/*********************************************************
+ *NAME:          serverSimApplyOperatorModArgs
+ *PURPOSE:
+ *  The dedicated server's -mod, -mod-required and
+ *  -mod-locked, read off argv into serverSimAddOperatorMod
+ *  in the order given. Each flag takes the next argument as
+ *  a comma-separated list of names; spaces round a name and
+ *  blank names ("a,,b", a trailing comma) are skipped. A
+ *  flag with no value (the last argument, or followed by
+ *  another flag) and a value longer than the parse buffer
+ *  are warned about and skipped. A name that does not
+ *  resolve is warned about and skipped.
+ *
+ *  Answers SERVER_MOD_ARGS_CONFLICT, recording nothing and
+ *  saying SERVER_MOD_ARGS_CONFLICT_TEXT, when -mod-locked
+ *  is given beside -mod or -mod-required. say may be NULL.
+ *********************************************************/
+ServerModArgsResult serverSimApplyOperatorModArgs(ServerSim *sim, int argc,
+                                                  const char *const *argv,
+                                                  ServerModArgsSay say,
+                                                  void *ctx);
+
 /*********************************************************
  *NAME:          serverSimSetQuitOnWin
  *PURPOSE:

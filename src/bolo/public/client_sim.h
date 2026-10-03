@@ -1164,6 +1164,11 @@ const char *clientSimGetLobbyScriptFile(const ClientSim *cs, int i);
 const char *clientSimGetLobbyScriptName(const ClientSim *cs, int i);
 bool        clientSimGetLobbyScriptKeepsWinCondition(const ClientSim *cs, int i);
 bool        clientSimGetLobbyScriptBound(const ClientSim *cs, int i);
+/* Whether the dedicated server's operator fixed row i on the list
+ * (-mod-required, or a -mod-locked list): the server refuses a list that
+ * leaves it off, so a chooser offers no way to. False from a server that
+ * predates the flag, which has no such rows. */
+bool        clientSimGetLobbyScriptRequired(const ClientSim *cs, int i);
 /* Where the server got the file, one of SERVER_SCENARIO_SOURCE_*
  * (server_sim.h), and the Workshop item it came from, 0 for none. The map's
  * own script reads SERVER. SERVER and 0 out of range. */

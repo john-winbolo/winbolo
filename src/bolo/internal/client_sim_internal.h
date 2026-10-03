@@ -982,6 +982,7 @@ struct ClientSim {
     char     lobbyScriptNames[LOBBY_SCRIPT_LIST_MAX][LOBBY_SCENARIO_NAME_LEN];
     bool     lobbyScriptKeepsWin[LOBBY_SCRIPT_LIST_MAX];
     bool     lobbyScriptBound[LOBBY_SCRIPT_LIST_MAX];
+    bool     lobbyScriptRequired[LOBBY_SCRIPT_LIST_MAX];
     uint8_t  lobbyScriptSource[LOBBY_SCRIPT_LIST_MAX];
     uint64_t lobbyScriptWorkshopId[LOBBY_SCRIPT_LIST_MAX];
     int      lobbyScriptPendingCount;

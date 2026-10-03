@@ -387,6 +387,10 @@ void serverSimFillScriptListEvent(const ServerSim *sim, uint8_t chunk,
         snprintf(dst->name, sizeof(dst->name), "%s", src->name);
         dst->keepsWinCondition = src->keepsWinCondition;
         dst->bound             = src->bound;
+        /* By file against the operator's rows. Never a bound row: the map's
+           own script is the map's, and no -mod flag ever names one. */
+        dst->required          = !src->bound &&
+                                 serverSimOperatorModFixed(sim, src->file);
         dst->source            = src->source;
         dst->workshopId        = src->workshopId;
     }
