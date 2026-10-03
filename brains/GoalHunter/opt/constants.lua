@@ -2245,6 +2245,64 @@ M.KILL_LGM_NAV_INSET   = 3   -- tiles: nav target sits this far INSIDE the engag
                              -- (engage trigger still fires at SHOOT_RANGE; only the
                              -- "where to drive to" target gets pulled in)
 
+-- ── LGM destination aim (2026-09-25) ──────────────────────────────────────
+-- An enemy builder walks a straight line from where his tank stood to the
+-- CENTRE of the tile he was sent to (lgm.c lgmNewPrimaryRequest sets destX/Y
+-- to tile*256+128; lgmMoveAway re-aims at it every tick). A common job is a
+-- repair of his own team's DEAD pill. When his recent positions lie on one
+-- clean line and that line, projected forward, passes a dead hostile pill,
+-- kill_lgm.predict_aim takes the PILL CENTRE as his destination instead of
+-- the map-edge point the 3-window dest_lock uses: the lead sim stops at the
+-- pill (he stands there for LGM_BUILD_TIME, 20 game ticks), and any predicted
+-- impact inside the pill tile snaps to the tile centre. A dead pill does not
+-- stop a shell (pillsIsPillHit needs armour > 0), so the shell must END its
+-- life in that tile; the tile counts as SOLID for the builder death test
+-- (pillsExistPos has no armour check), so the blast kills only a man on that
+-- same tile -- the centre is the point with the most margin. When the man is
+-- not walking a clean line (just out of the tank, stopped, turning, sliding
+-- along a wall, turned back, heading to his own tank) nothing is locked and
+-- the old predictor runs unchanged.
+-- HARD ONLY: M.MODE_LEVELS turns all five switches (AIM, LIVE_PILLS,
+-- HOLD_FIRE, INTERCEPT, PASS_THROUGH) off in every medium and easy bundle, so Easy/Medium keep the old
+-- aim and fire gate. No difficulty token = C.DIFFICULTY "hard" = on.
+M.LGM_DEST_AIM            = true  -- master switch (keel false = old aim exactly)
+M.LGM_DEST_WINDOW_TICKS   = 20    -- brain ticks of position history the heading fit uses
+M.LGM_DEST_MIN_SAMPLES    = 6     -- fewer samples than this in the window = no heading (fallback)
+M.LGM_DEST_COLLINEAR_WU   = 24    -- max distance (wu) of any sample from the oldest->newest chord (man pos is 16-wu quantized)
+M.LGM_DEST_BACKSTEP_WU    = 16    -- a sample may fall this far BEHIND the previous one along the chord (turned back = fallback)
+M.LGM_DEST_MIN_SPEED      = 3     -- wu/tick over the window AND over the last 4 ticks; slower = stopped / stuck (fallback)
+M.LGM_DEST_MIN_SPEED_FRAC = 0.8   -- measured speed / terrain speed below this = sliding along a wall (fallback); 0 = off
+M.LGM_DEST_RAY_TILES      = 16    -- how far ahead of the man the ray looks for a dead pill
+M.LGM_DEST_PERP_WU        = 96    -- a pill centre within this distance (wu) of the ray counts as on it ...
+M.LGM_DEST_PERP_DEG       = 3     -- ... widened to along*tan(this) further out (heading noise grows with range)
+-- 2026-09-25 (Andrew's review): he also walks to a LIVE hostile pill below
+-- full armour to repair it (lgm.c refuses a walk to a full pill). A live pill
+-- STOPS the shell: it goes off at the tile centre on the first tick it is in
+-- the tile (shellsCalcCollision -> pillsIsPillHit). The tile is solid for the
+-- builder death test either way, so only a man on the tile dies. Note: our
+-- shell damages that pill, and a live pill in range shoots back; the pill-
+-- danger logic is unchanged.
+M.LGM_DEST_LIVE_PILLS     = true  -- live hostile pill with 0 < health < PILLS_MAX_HEALTH is a candidate too
+-- Hold fire while a destination pill is locked until the predicted blast goes
+-- off while he stands on the pill tile (entered it, not yet LGM_BUILD_TIME 20
+-- ticks past his arrival). The gun keeps aiming at the pill centre so it is
+-- ready. "Otherwise we just make the LGM mad." (Andrew). No lock = old fire.
+M.LGM_DEST_HOLD_FIRE      = true
+-- 2026-09-25 (Andrew): with the hold on, first try to kill him on his walk IN,
+-- before he steps onto the pill tile (a dead man repairs nothing). The lead
+-- sim stops him at the pill centre, so the lead point never goes through the
+-- pill. Walk-in shot when the lead point is off the pill tile, in shell reach
+-- (14 x 128 wu) and no LIVE pill stops the shell before it; else the hold-fire
+-- pill window as before. Needs LGM_DEST_HOLD_FIRE (without it the lead tier
+-- already fires on the walk in).
+M.LGM_DEST_INTERCEPT      = true
+-- 2026-09-25 (Andrew): wrong guess. He walks on more than 16 wu (the engine's
+-- arrive tolerance) past the locked pill's centre without stopping: that pill
+-- is not his job. Never lock it again while he keeps this heading; look further
+-- along the line for the next pill (then intercept / window again), none =
+-- plain lead. Forgotten when his heading is lost (stop, turn, walk home).
+M.LGM_DEST_PASS_THROUGH   = true
+
 -- ── Capture-pill LGM hunt (2026-09-08) ────────────────────────────────────
 -- A hostile LGM standing on or beside the dead pill we are driving to grab is
 -- a builder rebuilding the corpse out from under us: the moment his repair
@@ -3199,6 +3257,41 @@ M.ORDER_HUMAN_NEAR_SUICIDE_TILES = 7   -- keel 0 (off)
 -- Needs PING_SUICIDE_ENABLED and ORDER_HUMAN_NEAR_SUICIDE_TILES > 0.  The
 -- human is the run's sender, so a bare "cancel" from them ends it.
 M.ORDER_HUMAN_NEAR_SUICIDE_RUN = true   -- keel false
+-- 2026-10-02 (Andrew): being near is not enough for the RUN.  The suicide
+-- run above starts only for a human team-mate within the same tiles who is
+-- SHOOTING AT THE PILL.  The 7-tile check itself is unchanged, and a human
+-- who is near but not shooting still gets the wall skip (attack.lua, no
+-- walls, no tree gather; HUMAN_NEAR_BLITZ_CAP below caps the blitz wait).
+-- "Shooting" means: within the last ORDER_HUMAN_SHOOTING_WINDOW_TICKS brain
+-- ticks (50 = 1 s) a shell FIRED BY THAT HUMAN (the engine gives every
+-- shell's owner) was within ORDER_HUMAN_SHOT_NEAR_TILES of the pill centre,
+-- or flying on a line that passes within ORDER_HUMAN_SHOT_LINE_TILES of it
+-- (exact shell angle, inside the shell's flight left).  The pill losing
+-- armour is not read (the bot's own hits would count).
+-- orders.note_human_shooting keeps the record (per human, for the bot's
+-- attack_pill target); orders.human_near_suicide reads it.
+M.ORDER_HUMAN_NEAR_NEEDS_SHOOTING   = true  -- keel false (near is enough)
+M.ORDER_HUMAN_SHOOTING_WINDOW_TICKS = 150   -- keel 150 (moot; NEEDS_SHOOTING off)
+M.ORDER_HUMAN_SHOT_NEAR_TILES       = 1.5   -- keel 1.5 (moot)
+M.ORDER_HUMAN_SHOT_LINE_TILES       = 1.0   -- keel 1.0 (moot)
+-- 2026-10-02: a line reading does not count when an enemy tank in view sits
+-- on the shell's line (within ORDER_HUMAN_SHOT_LINE_TILES) before the pill:
+-- the human is shooting at the tank.  Near readings are not filtered.
+M.ORDER_HUMAN_SHOT_SKIP_TANK_ON_LINE = true -- keel false
+-- 2026-10-02 (Andrew): a human team-mate within ORDER_HUMAN_NEAR_SUICIDE_TILES
+-- (the wall-skip case, goal._human_near) and the take is a blitz: the bot
+-- waits at most HUMAN_ATTACK_BLITZ_WAIT_MAX_S seconds at its spot, commander
+-- (GO) and soldier (goes without the GO) alike.  A commander with no soldier
+-- at all goes the moment it reaches its spot, blitz-only or not.
+M.HUMAN_NEAR_BLITZ_CAP              = true  -- keel false (no cap)
+-- 2026-10-02 (Andrew): a blitz SOLDIER still driving to its setup point when
+-- the commander charges (GO, or the commander's broadcast shows a firing
+-- substate): as close to the pill as its setup point is, or closer
+-- (Euclidean): it joins the charge now.  Further out: it drops the goal and
+-- goal selection picks again.  If that hands the same pill back while the
+-- charge still runs (an order on the pill, or the blitz row), the new goal
+-- joins the charge at once, so there is no drop-and-repick loop.
+M.BLITZ_SOLDIER_JOIN_CHARGE         = true  -- keel false (drive on to the setup point)
 -- Suicider goal-cost surcharge. User's spec, verbatim: "instead of doing
 -- attack_pill 0.33, do everything but refuel 3x cost" ??? plus the addendum
 -- "defend_pill specifically is x6, not x3". Applied at ONE choke point
@@ -5070,6 +5163,84 @@ M.PING_SUICIDE_WINDOW_TICKS = 50     -- keel 50 (moot; PING_SUICIDE_ENABLED off)
 -- When no square beside the pill can be reached, the run does not end: it
 -- forgets which squares failed and tries them all again after this long.
 M.PING_SUICIDE_RETRY_TICKS  = 50     -- keel 50 (moot; PING_SUICIDE_ENABLED off)
+-- AIM (2026-10-02, bot bug): the run used to steer its heading along the
+-- path and fire whenever that heading was within HARDLINE_FIRE_AIM_TOL (8
+-- brads = 11 degrees) of the pill.  At 7 tiles that is 1.4 tiles off, so the
+-- shells flew past the pill, and once the path bent away the bot stopped
+-- firing.  Now, once a shell can reach the pill with a clear line, the bot
+-- turns to FACE the pill (and drives at it), and fires only when the shell
+-- line passes within SUICIDE_AIM_HIT_HALF_TILES of the pill centre.  A shell
+-- reaches gunrange/2 tiles; the bot fires only within that plus
+-- SUICIDE_AIM_REACH_PAD_TILES (the old gate used + 1, so shells fell short).
+-- The CHARGE NOW rush (PING_ATTACK_CHARGE_NOW below) aims the same way.
+M.SUICIDE_AIM_AT_PILL         = true  -- keel false (old: aim along the path, 8-brad gate)
+M.SUICIDE_AIM_HIT_HALF_TILES  = 0.4   -- keel 0.4 (moot; SUICIDE_AIM_AT_PILL off)
+M.SUICIDE_AIM_REACH_PAD_TILES = 0.5   -- keel 0.5 (moot; SUICIDE_AIM_AT_PILL off)
+-- PACE (2026-10-02, Andrew): the run stays about SUICIDE_PACE_AHEAD_TILES
+-- closer to the pill than the nearest visible human team-mate.  Not that
+-- far ahead: top speed.  Lead kept (or no human visible) and already
+-- aiming at the pill in shell reach: hold still and keep firing; it pushes
+-- in only to keep the lead.  Not yet aiming: the old cruise speed.
+-- 0 = off (old behaviour: always cruise speed).
+M.SUICIDE_PACE_AHEAD_TILES    = 1     -- keel 0 (off)
+-- A suicide run holds at max shell range; when pill hits shove it past
+-- (range - SUICIDE_HOLD_MARGIN_TILES) it accelerates back in at top speed.
+-- A CHARGE NOW rush paces the same way (one shared pace block, steering.lua).
+M.SUICIDE_HOLD_MARGIN_TILES   = 0.5   -- keel 0 (moot; SUICIDE_AIM_AT_PILL off)
+-- CHARGE NOW (2026-10-02, Andrew): an ATTACK ping from a human team-mate on a
+-- pill this bot is attacking (its attack_pill goal, ordered or its own) means
+-- "go now".  No blocker standing in the take's wall slots yet: the bot drops
+-- the plan and charges in to shell range, firing as it goes (kill_hardline,
+-- with the SUICIDE_AIM_* aim and the suicide run's SUICIDE_PACE_AHEAD_TILES /
+-- SUICIDE_HOLD_MARGIN_TILES pace: it holds at max shell reach, pushes back
+-- in when pill hits shove it out, and pushes closer to stay ahead of a human
+-- team-mate).  No tile beside the pill reachable: the goal is kept and it
+-- falls back to the careful way below.  A blocker already up: it carries
+-- on the careful way (standoff, aim, fire) but builds no more walls,
+-- gathers no trees and waits for nothing (no blitz wait, no anger
+-- cool-down).  NOT a suicide run:
+-- refuel, flee and armour checks stay (CHARGE_NOW_IGNORE_SAFETY below waives
+-- them).  Ends when the goal leaves that pill,
+-- the pill dies or is ours, the tank dies, or a caution ping lands on the bot
+-- or the pill.  The bot-command + ATTACK double ping is still the suicide
+-- run; this is the ATTACK ping on its own.
+M.PING_ATTACK_CHARGE_NOW      = true  -- keel false
+
+-- CHARGE NOW IGNORES SAFETY (2026-10-02, Andrew): "If [a human] pings the
+-- attack on the pill already targeted by the bot, it should then ignore its
+-- own armour, trees, ammo and just go in."  While charge-now is on (state.
+-- _charge_now, goal._charge_now) the bot takes the suicide run's waivers:
+--   * pick_goal keeps the attack_pill goal (goals.lua), so no refuel, no
+--     flee, no take_cover and no critical-armour order pause can win;
+--   * no armour-floor abort in attack.lua (armour_unsafe_for_pill_take and
+--     the carrying-a-pill floor on approach), no emergency pill drop;
+--   * no "not enough shells" abort, and 0 shells does not invalidate the
+--     goal (init.lua): it drives in with no shells, like the suicide run;
+--   * no "Refuelling, coming back" chat line.
+-- Trees were already skipped by charge-now itself.  Unlike the suicide run
+-- it still ends when the goal ends, and the careful (blocker standing)
+-- path is kept.  false = the PING_ATTACK_CHARGE_NOW behaviour as it was:
+-- refuel, flee and armour checks stay.
+M.CHARGE_NOW_IGNORE_SAFETY    = true  -- keel false
+
+-- A HUMAN SHOOTING THE PILL = CHARGE NOW (2026-10-02, Andrew).  A bot with
+-- an attack_pill goal (ordered or its own) that sees a human team-mate
+-- shooting at that pill (orders.note_human_shooting: a shell that human
+-- fired on or at the pill, within ORDER_HUMAN_SHOOTING_WINDOW_TICKS) charges as if
+-- that human had sent an ATTACK ping on the pill: same record, same
+-- behaviour, CHARGE_NOW_IGNORE_SAFETY applies.  No distance from the bot is
+-- needed.  The human-near suicide run is checked first and wins.  A charge
+-- the human cancelled with a CAUTION ping does not restart on the same pill
+-- until the bot has had some other goal.
+M.HUMAN_SHOOTING_CHARGE_NOW   = true  -- keel false
+-- A charge whose straight rush found no tile beside the pill (it fell back
+-- to the careful way) does not restart from human shooting on that pill for
+-- this many brain ticks (50 = 1 s), or until the bot has had some other
+-- real goal.  Stops a drop-and-repick loop of "Charging pill #N".  In the
+-- same window a still-running charge whose goal dropped and picked the
+-- same pill again goes the careful way at once (attack.lua), not back into
+-- the straight rush.
+M.CHARGE_NOW_ABORT_WAIVE_TICKS = 500  -- keel 500 (moot; both charge-now starts off)
 
 -- How far the seat a bot is escorting may drift from where the bot was last
 -- sent before the escort re-aims.  A hint may name its own `distance`; this
@@ -5110,6 +5281,21 @@ M.ORDER_HINT_ESCORT_TILES = 3
 -- not match the constant it replaces.
 M.PRESETS = {
   keel = {
+    -- 2026-09-24: live game rules. The bot rescales its physics constants
+    -- from info.rules and its own modifiers (a no-op under classic rules).
+    -- KEEL reads the classic numbers whatever the scenario sets.
+    LIVE_PHYSICS                  = false,
+    -- 2026-09-30: live-physics follow-ups (faster turn raises the cornering
+    -- cap, enemy speed takes our speed modifier, turn scaling per terrain).
+    STEER_TURN_SPEEDUP            = false,
+    STEER_TERRAIN_TURN            = false,
+    ENEMY_SPEED_OWN_MODS          = false,
+    -- 2026-09-30: the man's walk, the world-sim build dwell, shell life and
+    -- the pill range in world units follow the live rules.
+    LIVE_PHYSICS_LGM_WALK         = false,
+    LIVE_PHYSICS_WSIM_BUILD       = false,
+    LIVE_PHYSICS_SHELL_LIFE       = false,
+    LIVE_PHYSICS_PILL_RANGE_WU    = false,
     -- 2026-10-01: flat capture_base cost for game modes; 0 is no such term.
     CAPTURE_BASE_EXTRA_COST = 0,
     -- 2026-10-01: a base this many tiles away skips that cost; 0 is no waiver.
@@ -5489,6 +5675,38 @@ M.PRESETS = {
     PING_SUICIDE_ENABLED          = false,
     PING_SUICIDE_WINDOW_TICKS     = 50,
     PING_SUICIDE_RETRY_TICKS      = 50,
+    --   2026-10-02: the suicide run faces the pill to fire (tight hit gate,
+    --   real shell reach) and paces itself one tile ahead of the nearest
+    --   human. KEEL aimed along its path with the 8-brad gate, at cruise.
+    SUICIDE_AIM_AT_PILL           = false,
+    SUICIDE_AIM_HIT_HALF_TILES    = 0.4,
+    SUICIDE_AIM_REACH_PAD_TILES   = 0.5,
+    SUICIDE_PACE_AHEAD_TILES      = 0,
+    SUICIDE_HOLD_MARGIN_TILES     = 0,
+    --   2026-10-02: an ATTACK ping on a pill the bot is attacking = charge
+    --   now. KEEL read a lone ATTACK ping as a marker only.
+    PING_ATTACK_CHARGE_NOW        = false,
+    --   2026-10-02: charge now ignores the bot's own armour, trees and
+    --   ammo. KEEL had no charge now at all.
+    CHARGE_NOW_IGNORE_SAFETY      = false,
+    --   2026-10-02: a human seen shooting the bot's target pill starts
+    --   charge now. KEEL had no charge now at all.
+    HUMAN_SHOOTING_CHARGE_NOW     = false,
+    CHARGE_NOW_ABORT_WAIVE_TICKS  = 500,
+    --   2026-10-02: the human-near rule needs the human to be shooting at
+    --   the pill. KEEL counted any visible human within the tiles.
+    ORDER_HUMAN_NEAR_NEEDS_SHOOTING   = false,
+    ORDER_HUMAN_SHOOTING_WINDOW_TICKS = 150,
+    ORDER_HUMAN_SHOT_NEAR_TILES       = 1.5,
+    ORDER_HUMAN_SHOT_LINE_TILES       = 1.0,
+    --   2026-10-02: an enemy tank on the shell's line before the pill
+    --   cancels a line reading. KEEL counted the line reading anyway.
+    ORDER_HUMAN_SHOT_SKIP_TANK_ON_LINE = false,
+    --   2026-10-02: human near = blitz wait capped at
+    --   HUMAN_ATTACK_BLITZ_WAIT_MAX_S; a late soldier joins the charge or
+    --   drops the goal. KEEL: no cap, and the soldier drove on to its spot.
+    HUMAN_NEAR_BLITZ_CAP              = false,
+    BLITZ_SOLDIER_JOIN_CHARGE         = false,
     --   2026-09-24: a ping "go there" next to an enemy pill is a HARD decoy
     --   hold, and one with no pill in range ends on arrival. KEEL had only
     --   the soft 10 s hold that any reactive goal could drive away from.
@@ -5532,6 +5750,29 @@ M.PRESETS = {
     --   competition, so its keel value has to be the identity, 1.0, for the
     --   baseline pool numbers to come out unchanged.
     FOCUS_OTHER_COST_MULT         = 1.0,
+    -- 2026-09-25: the kill_lgm lead predictor now takes a dead hostile pill on
+    -- the enemy builder's straight-line heading as his destination (lead sim
+    -- stops at the pill, impact inside the pill tile snaps to its centre).
+    -- KEEL leads him toward the map edge (3-window dest_lock) or linearly.
+    -- The tuning knobs below are unread while the master is false and are
+    -- pinned only so a later tweak to one of their DEFAULTS cannot leak into
+    -- the baseline.
+    LGM_DEST_AIM                  = false,
+    LGM_DEST_WINDOW_TICKS         = 20,
+    LGM_DEST_MIN_SAMPLES          = 6,
+    LGM_DEST_COLLINEAR_WU         = 24,
+    LGM_DEST_BACKSTEP_WU          = 16,
+    LGM_DEST_MIN_SPEED            = 3,
+    LGM_DEST_MIN_SPEED_FRAC       = 0.8,
+    LGM_DEST_RAY_TILES            = 16,
+    LGM_DEST_PERP_WU              = 96,
+    LGM_DEST_PERP_DEG             = 3,
+    LGM_DEST_LIVE_PILLS           = false,
+    LGM_DEST_HOLD_FIRE            = false,
+    -- 2026-09-25: walk-in intercept before the pill window, and dropping a
+    -- pill he walked through (look further along his line). KEEL: neither.
+    LGM_DEST_INTERCEPT            = false,
+    LGM_DEST_PASS_THROUGH         = false,
     --   2026-09-30: a reposition may run in the opening phase.  KEEL: the
     --   opening refused it.
     PILL_REPOSITION_IN_OPENING    = false,
@@ -5702,6 +5943,10 @@ M.MODE_LEVELS = {
       REPAIR_UNDER_FIRE_MULT = 8.0, REPAIR_QUIET_TICKS = 150, REPAIR_DEAD_ADV_RELIEF_PER_TANK = 0.10,
       -- fuelled
       ARMOUR_LOW = 18, SHELLS_LOW = 22, ARMOUR_COMBAT = 33, SHELLS_COMBAT = 33,
+      -- LGM destination aim is Hard only (Andrew, 2026-09-25): the old lead
+      -- predictor and the old fire gate, exactly as before the feature.
+      LGM_DEST_AIM = false, LGM_DEST_LIVE_PILLS = false, LGM_DEST_HOLD_FIRE = false,
+      LGM_DEST_INTERCEPT = false, LGM_DEST_PASS_THROUGH = false,
     },
     easy = {
       -- Blitz: solo, never gangs up (BLITZ_ENABLED=false is the Stage 3 Pass A
@@ -5748,6 +5993,10 @@ M.MODE_LEVELS = {
       CROSSFIRE_MULTIPLIER_ENABLED = true,
       -- Refuel: predictable, fuelled
       ARMOUR_LOW = 22, SHELLS_LOW = 24, ARMOUR_COMBAT = 36, SHELLS_COMBAT = 36,
+      -- LGM destination aim is Hard only (Andrew, 2026-09-25): the old lead
+      -- predictor and the old fire gate, exactly as before the feature.
+      LGM_DEST_AIM = false, LGM_DEST_LIVE_PILLS = false, LGM_DEST_HOLD_FIRE = false,
+      LGM_DEST_INTERCEPT = false, LGM_DEST_PASS_THROUGH = false,
     },
   },
 }
