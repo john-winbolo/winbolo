@@ -104,13 +104,13 @@ end
 -- Sets state.phase, state.strength, state.base_strength, and front line data.
 -- Turtle base-run end test (TURTLE_BASE_RUN_END_FRAC). Returns taken, need:
 -- taken = bases owned by anyone (total - neutral), need = ceil(FRAC x total).
--- need is nil when the test is off (not a turtle nest bot, FRAC <= 0, or no
--- bases). Turtle nest = PILL_PLACE_TURTLE and TURTLE_BASE_NEST, the same test
--- as goals.lua M.turtle_nest_on (inlined: strategy does not require goals).
+-- need is nil when the test is off (not a Turtle2 mode bot, FRAC <= 0, or no
+-- bases). Turtle nest = Turtle2 mode (C.MODE == "turtle2"). This MUST match
+-- goals.lua M.turtle_nest_on (inlined: strategy does not require goals).
 function M.turtle_base_run_end(total_bases, neutral_count)
   local frac = C.TURTLE_BASE_RUN_END_FRAC or 0
   local taken = (total_bases or 0) - (neutral_count or 0)
-  if not (C.PILL_PLACE_TURTLE == true and C.TURTLE_BASE_NEST == true)
+  if C.MODE ~= "turtle2"  -- must match goals.turtle_nest_on
      or frac <= 0 or (total_bases or 0) <= 0 then
     return taken, nil
   end
@@ -185,8 +185,8 @@ function M.update(state, world, info)
   -- perception hasn't counted bases yet (all counts 0) can't false-trigger.
   local all_bases_taken = (total_bases > 0 and neutral_count == 0)
 
-  -- TURTLE BASE-RUN END (TURTLE_BASE_RUN_END_FRAC, turtle nest bots only,
-  -- i.e. PILL_PLACE_TURTLE and TURTLE_BASE_NEST): a turtle stops the base
+  -- TURTLE BASE-RUN END (TURTLE_BASE_RUN_END_FRAC, Turtle2 mode bots only,
+  -- i.e. mode=turtle2): a Turtle2 bot stops the base
   -- run once a share of the bases are taken by anyone (not neutral any more). The OPENING_MIN_TICKS minimum (the branch above
   -- it) and the hysteresis below still apply. Keel 0 = off. Only while we
   -- are still in the opening and a base is still neutral: past the opening,

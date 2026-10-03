@@ -1258,17 +1258,18 @@ function M.turtle_far_search_cap()
   return lim
 end
 
--- Is the turtle nest behaviour on? PILL_PLACE_TURTLE (turtle pill
--- placement, on main) AND TURTLE_BASE_NEST (the master switch for the
--- TURTLE_BASE_* block and TURTLE_NO_INFLUENCE_TAIL). Every reader of those
--- knobs asks this first; strategy.lua inlines the same test. Off = turtle
--- plays as placement only, and nothing below runs.
+-- Is the turtle nest behaviour on? Only in Turtle2 mode (C.MODE ==
+-- "turtle2", from the mode= init token; constants.lua MODE_LEVELS.turtle2).
+-- It gates the TURTLE_BASE_* block and TURTLE_NO_INFLUENCE_TAIL. Every
+-- reader of those knobs asks this first; strategy.lua turtle_base_run_end
+-- inlines the same test. Off = every other mode, Turtle included, plays as
+-- before, and nothing below runs.
 function M.turtle_nest_on()
-  return C.PILL_PLACE_TURTLE == true and C.TURTLE_BASE_NEST == true
+  return C.MODE == "turtle2"
 end
 
 -- Is the influence tail (constants.lua EXPAND_*) built this game? Off when
--- EXPAND_ENABLED is false, and off for a turtle nest bot (M.turtle_nest_on)
+-- EXPAND_ENABLED is false, and off for a Turtle2 mode bot (M.turtle_nest_on)
 -- with TURTLE_NO_INFLUENCE_TAIL: its ground is only the stamped discs around
 -- its own bases and pills. init.lua's influence stamp and the turtle reach
 -- bound below both read this, so they always agree.
@@ -1525,7 +1526,7 @@ function M.turtle_far_start(tc, world, now)
 end
 
 -- d and the multiplier for one base, from a per-bot cache. Returns nil, 1
--- when the turtle nest is off (M.turtle_nest_on), the knob is 0, or we hold
+-- when not in Turtle2 mode (M.turtle_nest_on), the knob is 0, or we hold
 -- no ground (no friendly base and no placed live friendly pill = no positive
 -- influence stamp anywhere).
 -- Third return: "centre" when d is the Chebyshev distance to the nearest
@@ -1592,7 +1593,7 @@ function M.turtle_far_text(d, m, src)
     and "the Chebyshev distance to the nearest friendly base/pill centre (provisional until this base's ring search ends, or the fallback when enemy influence cancels every friendly centre)"
     or "Chebyshev tiles to the nearest tile with influence > 0 (our ground)"
   return string.format(" x turtle_far{d=%s%s,x%.2f}", dtxt, ctr, m), string.format(
-    "|turtle_far:turtle nest bot (PILL_PLACE_TURTLE and TURTLE_BASE_NEST both on). d=%s%s is %s. x min(2^(%d/%d[TURTLE_BASE_DOUBLE_TILES]), %g[TURTLE_BASE_MULT_CAP]) = x%.2f, applied to the row sum before any snap floor. The search stops at %d tiles, where the multiplier reaches the cap; d is rebuilt every %d ticks by one C distance transform (on an older exe without it, by a Lua ring search spread over thinks)",
+    "|turtle_far:Turtle2 mode bot (mode=turtle2). d=%s%s is %s. x min(2^(%d/%d[TURTLE_BASE_DOUBLE_TILES]), %g[TURTLE_BASE_MULT_CAP]) = x%.2f, applied to the row sum before any snap floor. The search stops at %d tiles, where the multiplier reaches the cap; d is rebuilt every %d ticks by one C distance transform (on an older exe without it, by a Lua ring search spread over thinks)",
     dtxt, ctr, how, d, C.TURTLE_BASE_DOUBLE_TILES or 0, C.TURTLE_BASE_MULT_CAP or 1, m,
     lim, C.TURTLE_BASE_D_REFRESH_TICKS or 50)
 end
