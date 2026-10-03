@@ -45,7 +45,6 @@ extern "C" {
 #include "../ping_binding.h"   /* the smart-ping chord slots */
 #include "../../ping_kinds.h"  /* pingKindNameId — the direct rows' labels */
 #include "../input_gamepad.h"  /* GamepadBindings — controller tab */
-#include "../input_source.h"
 #include "../build_cursor.h"   /* build-cursor behaviour option flags */
 #include "../../winbolo.h"
 #include "../../lang.h"
@@ -815,7 +814,7 @@ static int renderFormBody(struct ClientSim *cs) {
                  * the next sim tick respects them. Pre-game (cs==NULL) skips
                  * this — no tank exists yet, and the next clientSimSetupSelf
                  * path applies useAutoslow via frontEndApplyLocalTankPrefs. */
-                clientSimSetTankAutoSlowdown(cs, inputSourceAutoSlowdown(useAutoslow));
+                clientSimSetTankAutoSlowdown(cs, s_autoSlowdown);
                 clientSimSetTankAutoHideGunsight(cs, s_autoGunsight);
             }
             /* gameFrontPutPrefs writes both [KEYS] and [GAMEPAD] (the latter
@@ -1154,8 +1153,10 @@ extern "C" void imguiKeySetupRenderInGamePopup(struct ClientSim *cs) {
         windowGetKeys(&s_keys);
         inputGamepadBindingsGetAll(&s_pad);
         s_padWaitAction = -1;
-        /* Show the saved choice, not temporary controller assistance. */
-        s_autoSlowdown = useAutoslow;
+        /* Seed checkboxes from the live tank so the dialog opens
+         * showing what the tank currently has — this matches the
+         * old in-game popup's behavior. */
+        s_autoSlowdown = cs ? clientSimGetTankAutoSlowdown(cs) : useAutoslow;
         s_autoGunsight = cs ? clientSimGetTankAutoHideGunsight(cs) : useAutohide;
         s_waiting      = ksNone;
         s_pingWaitSlot = -1;

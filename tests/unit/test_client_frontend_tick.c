@@ -67,6 +67,7 @@ bool inputIsMineKeyPressed(keyItems *setKeys, bool isMenu) {
     return false;
 }
 uint8_t inputConsumeGunsightAdj(void) { return 0; }
+bool inputAutoSlowdownAssist(void)    { return false; }
 BYTE gameFrontGetPlayerNum(void)      { return 0; }
 bool brainHandlerIsBrainRunning(void) { return false; }
 

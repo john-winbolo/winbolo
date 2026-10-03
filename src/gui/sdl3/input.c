@@ -51,7 +51,6 @@
 #endif
 
 extern bool smoothScrollingEnabled;
-extern bool useAutoslow;
 
 /* Smooth-scroll speed: game pixels advanced per scroll tick.
    Tile = 16 game pixels, game runs at 20 ticks/sec, so:
@@ -627,11 +626,6 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
   tankButton tb;
   buildSelect curSelect;
 
-  /* Runtime controller assistance must never replace the saved preference.
-   * Update even while a menu has focus so switching device or unplugging
-   * a controller restores the user's choice on the next input sample. */
-  clientSimSetTankAutoSlowdown(cs, inputSourceAutoSlowdown(useAutoslow));
-
   if (isMenu == TRUE || sdl3ImguiWantsKeyboard() || !appHasFocus()) {
     turnTapReset(&leftTurnTap);
     turnTapReset(&rightTurnTap);
@@ -1069,6 +1063,10 @@ uint8_t inputConsumeGunsightAdj(void) {
   uint8_t val = lastGunsightAdj;
   lastGunsightAdj = 0;
   return val;
+}
+
+bool inputAutoSlowdownAssist(void) {
+  return inputSourceAutoSlowdown(FALSE);
 }
 
 void inputBumpGunsight(int direction) {

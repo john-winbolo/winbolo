@@ -30,15 +30,24 @@ static bool        s_haveInput = false;
  * cursor warp — the warp emits an echo motion event a frame later. */
 static int         s_warp_ignore_frames = 0;
 
+/* Controller driving assistance (inputSourceAutoSlowdown). Kept apart from
+ * s_current because the tank is steered by the keyboard or the stick, never
+ * by a mouse or trackpad, so pointer events (a Steam Deck trackpad, a
+ * touchscreen tap, a bumped desk mouse) must not drop the assist while the
+ * stick is still in use. Only a key press or an unplug clears it. */
+static bool        s_pad_assist = false;
+
 static void note(InputSource src) {
   s_current   = src;
   s_haveInput = true;
+  if (src == INPUT_SOURCE_GAMEPAD) s_pad_assist = true;
 }
 
 void inputSourceInit(void) {
   s_haveInput = false;
   s_current   = INPUT_SOURCE_KEYBOARD;
   s_warp_ignore_frames = 0;
+  s_pad_assist = false;
 }
 
 void inputSourceNoteGamepad(void)  { note(INPUT_SOURCE_GAMEPAD);  }
@@ -50,6 +59,9 @@ void inputSourceUpdate(const SDL_Event *ev) {
   if (!ev) return;
   switch (ev->type) {
     case SDL_EVENT_KEY_DOWN:
+      s_pad_assist = false;
+      note(INPUT_SOURCE_KEYBOARD);
+      break;
     case SDL_EVENT_KEY_UP:
     case SDL_EVENT_TEXT_INPUT:
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
@@ -97,6 +109,10 @@ void inputSourceTick(void) {
   if (inputGamepadActivityDetected()) {
     note(INPUT_SOURCE_GAMEPAD);
   }
+  /* A replugged pad must be used again before it brings the assist back. */
+  if (!inputGamepadRealControllerConnected()) {
+    s_pad_assist = false;
+  }
 }
 
 InputSource inputSourceCurrent(void) {
@@ -112,5 +128,5 @@ InputSource inputSourceCurrent(void) {
 
 bool inputSourceAutoSlowdown(bool savedPreference) {
   return savedPreference ||
-         (s_haveInput && inputSourceCurrent() == INPUT_SOURCE_GAMEPAD);
+         (s_pad_assist && inputGamepadRealControllerConnected());
 }

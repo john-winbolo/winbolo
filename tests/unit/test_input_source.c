@@ -2,19 +2,16 @@
  * auto-slowdown choice. Exercise the production input-source tracker with
  * synthetic SDL events and polled Steam Input activity. */
 #include "input_source.h"
-#include "input_gamepad.h"
 #include "test_harness.h"
 
-static bool controllerConnected;
-static bool controllerActivity;
-
-bool inputGamepadRealControllerConnected(void) { return controllerConnected; }
-bool inputGamepadActivityDetected(void) { return controllerActivity; }
+/* Gamepad stubs in test_stubs.c. */
+extern bool gamepadStubConnected;
+extern bool gamepadStubActivity;
 
 int run_input_source_autoslow(void) {
     SDL_Event ev = {0};
-    controllerConnected = true;
-    controllerActivity = false;
+    gamepadStubConnected = true;
+    gamepadStubActivity = false;
     inputSourceInit();
 
     /* UI hints may default to controller, but an untouched attached pad
@@ -37,32 +34,46 @@ int run_input_source_autoslow(void) {
     inputSourceTick();
     UT_ASSERT(inputSourceAutoSlowdown(false));
 
+    /* Pointer input never steers the tank: a Deck trackpad, a touchscreen
+     * tap or a bumped mouse must not drop the assist mid-drive. */
+    ev = (SDL_Event){0};
+    ev.type = SDL_EVENT_MOUSE_MOTION;
+    ev.motion.xrel = 5.0f;
+    inputSourceUpdate(&ev);
+    ev.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+    inputSourceUpdate(&ev);
+    ev.type = SDL_EVENT_MOUSE_WHEEL;
+    inputSourceUpdate(&ev);
+    inputSourceNoteKeyboard();
+    UT_ASSERT(inputSourceCurrent() == INPUT_SOURCE_KEYBOARD);
+    UT_ASSERT_MSG(inputSourceAutoSlowdown(false), "pointer input dropped the assist");
+
     ev.type = SDL_EVENT_KEY_DOWN;
     inputSourceUpdate(&ev);
     UT_ASSERT_MSG(!inputSourceAutoSlowdown(false), "keyboard did not restore Off");
     UT_ASSERT(inputSourceAutoSlowdown(true));
 
     /* Steam Input has no SDL gamepad events. */
-    controllerActivity = true;
+    gamepadStubActivity = true;
     inputSourceTick();
     UT_ASSERT(inputSourceAutoSlowdown(false));
-    controllerActivity = false;
-    ev.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
-    inputSourceUpdate(&ev);
-    UT_ASSERT_MSG(!inputSourceAutoSlowdown(false), "mouse did not restore Off");
+    gamepadStubActivity = false;
 
+    gamepadStubConnected = false;
+    UT_ASSERT_MSG(!inputSourceAutoSlowdown(false), "unplug did not restore Off");
+    UT_ASSERT(inputSourceAutoSlowdown(true));
+    /* Replugging alone must not bring the assist back. */
+    inputSourceTick();
+    gamepadStubConnected = true;
+    UT_ASSERT_MSG(!inputSourceAutoSlowdown(false), "replug enabled slowdown");
     ev.type = SDL_EVENT_GAMEPAD_BUTTON_DOWN;
     inputSourceUpdate(&ev);
     UT_ASSERT(inputSourceAutoSlowdown(false));
-    controllerConnected = false;
-    UT_ASSERT_MSG(!inputSourceAutoSlowdown(false), "unplug did not restore Off");
-    UT_ASSERT(inputSourceAutoSlowdown(true));
 
-    controllerConnected = true;
     inputSourceInit();
     UT_ASSERT_MSG(!inputSourceAutoSlowdown(false), "restart enabled slowdown");
 
-    controllerConnected = false;
+    gamepadStubConnected = false;
     inputSourceInit();
     return 0;
 }

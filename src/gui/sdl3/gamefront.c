@@ -994,9 +994,15 @@ void gameFrontSaveCurrentPrefs(void) {
 void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
   steam_clear_rich_presence();
   clientMutexWaitFor();
-  /* Keep the user's choice, not the tank's effective state: controller
-   * input can temporarily enable auto-slowdown without changing the pref.
-   * The keys dialog updates useAutoslow / useAutohide directly on OK. */
+  /* No tank-readback here. The keys dialog persists useAutoslow /
+   * useAutohide directly to INI on OK (immediate-flush) and nothing
+   * during gameplay mutates tank->autoSlowdown after the initial
+   * clientSimSetTankAutoSlowdown — so reading it back would just
+   * round-trip the same value most of the time. The exception was
+   * the buggy case where clientSimSetTankAutoSlowdown ran before
+   * clientSimSetupSelf existed: it no-op'd on the NULL tank pointer,
+   * then tankCreate later defaulted autoSlowdown to FALSE, and this
+   * readback clobbered the user's INI choice with that default. */
   (void)gamePlayed;
   brainsHandlerShutdown();
   /* Stop the map-preview worker. Idempotent: a no-op if the chooser
