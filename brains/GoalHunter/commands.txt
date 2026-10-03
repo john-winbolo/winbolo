@@ -256,8 +256,9 @@ the third. The order goes out one second after the third shot, so a fourth
 shot in that second takes it back.
 
 The bot with the cheapest route drives there and holds, out of the bots that
-were on your screen when the order went out. A bot further away than that
-does not hear you, and nor does a bot that is working on an order you gave.
+were on your screen when the order went out: within 14 squares of you, across
+or up and down. A bot further away than that does not hear you, and nor does a
+bot that is working on an order you gave.
 
 A place order is a hard one. The bot drops what it was doing and drives to the
 square. On the way it picks no goals of its own -- no pills, no bases, no

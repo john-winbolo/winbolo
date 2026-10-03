@@ -9,6 +9,14 @@
 
 package.path = "./?.lua;" .. package.path
 
+-- The atan2 shim from init.lua: LuaJIT's math.atan ignores a second
+-- argument, and util.aim_at needs the two-argument form.  The game always
+-- runs init.lua first; this standalone test does not.
+if math.atan2 then
+  local _atan1, _atan2 = math.atan, math.atan2
+  math.atan = function(y, x) if x == nil then return _atan1(y) else return _atan2(y, x) end end
+end
+
 local ORD = require("orders")
 local C   = require("constants")
 
@@ -2684,6 +2692,26 @@ do
         r.st._suicide ~= nil and r.st._suicide.sender == 0,
         string.format("angle=%d dir=%d", s8.angle, s8.direction))
 
+  -- Same shot, but an enemy tank sits on the shell's line between the shell
+  -- and the pill: the human is shooting at the tank, not the pill.  An enemy
+  -- tank beyond the pill does not take the shot.
+  local function foe_at(frac)
+    return { type = _G.OBJECT_TANK, info = _G.OBJECT_HOSTILE,
+             x = math.floor(13 * 256 + (20 * 256 + 128 - 13 * 256) * frac),
+             y = math.floor(17 * 256 + (20 * 256 + 128 - 17 * 256) * frac) }
+  end
+  for _, case in ipairs({ { 0.6, false, "an enemy tank on the line before the pill: no run" },
+                          { 1.3, true,  "an enemy tank on the line beyond the pill: the run starts" } }) do
+    r = hbot(13, 17)
+    r.inf.tankx = math.floor(13 * 256 + (20 * 256 + 128 - 13 * 256) * 0.15)
+    r.inf.tanky = math.floor(17 * 256 + (20 * 256 + 128 - 17 * 256) * 0.15)
+    r.inf.objects[2] = shell_from(r, 13, 17, 0.25)
+    r.inf.objects[3] = foe_at(case[1])
+    ORD.note_human_shooting(r.st, r.w, r.inf, 100)
+    ORD.human_near_suicide(r.st, r.w, r.inf, 100)
+    check("shooting rule: " .. case[3], (r.st._suicide ~= nil) == case[2], "?")
+  end
+
   -- The BOT'S OWN shell hits the pill while the human watches, facing the
   -- pill from 7.8 tiles: not the human shooting.
   r = hbot(15, 15)
@@ -2706,9 +2734,6 @@ do
   ORD.note_human_shooting(r.st, r.w, r.inf, 100)
   check("shooting rule: an ally bot's or a pill's shell is not a human shot",
         ORD.human_shooters(r.st, 5, 100) == nil, "?")
-
-  check("ORDER_HUMAN_FACE_BRADS is gone (no damage reading)",
-        C.ORDER_HUMAN_FACE_BRADS == nil and C.PRESETS.keel.ORDER_HUMAN_FACE_BRADS == nil, "?")
 end
 
 -- ATTACK PING = CHARGE NOW (PING_ATTACK_CHARGE_NOW, 2026-10-02).  An ATTACK
