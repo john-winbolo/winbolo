@@ -4601,6 +4601,16 @@ local function update_attack_substate_body(goal, state, world, info)
           placed = true; break
         end
       end
+      -- The straight rush already found no tile beside this pill a moment
+      -- ago (the kill_hardline abort below set state._charge_now_abort) and
+      -- the goal dropped and came back as a new table: go the careful way
+      -- at once, or the bot loops rush -> abort -> careful -> drop.
+      local ab = state._charge_now_abort
+      if not placed and ab and ab.tid == goal.target_id
+         and now - (ab.t or 0) < (C.CHARGE_NOW_ABORT_WAIVE_TICKS or 500) then
+        placed = true
+        goal._charge_now_careful = true
+      end
       print2(string.format("CHARGE_NOW t=%d pill=#%s sub=%s blocker=%s -> %s",
         now, tostring(goal.target_id), tostring(goal.substate), tostring(placed),
         placed and "careful (no waits, no more blockers)" or "kill_hardline"))

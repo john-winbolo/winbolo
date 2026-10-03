@@ -4345,6 +4345,16 @@ local function update_attack_substate_body(goal, state, world, info)
           placed = true; break
         end
       end
+      -- The straight rush already found no tile beside this pill a moment
+      -- ago (the kill_hardline abort below set state._charge_now_abort) and
+      -- the goal dropped and came back as a new table: go the careful way
+      -- at once, or the bot loops rush -> abort -> careful -> drop.
+      local ab = state._charge_now_abort
+      if not placed and ab and ab.tid == goal.target_id
+         and now - (ab.t or 0) < (C.CHARGE_NOW_ABORT_WAIVE_TICKS or 500) then
+        placed = true
+        goal._charge_now_careful = true
+      end
       if not placed then
         if goal._blitz and state.squad_role == "c" then
           goal._blitz_go = true        -- init.lua broadcasts bgo from this
