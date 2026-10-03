@@ -2934,6 +2934,59 @@ do
   think(r, 103)
   check("abort loop: some other real goal lifts the waiver", r.st._charge_now ~= nil, "?")
 
+  -- THE REAL THINK ORDER: the careful way drops the goal and goal selection
+  -- picks the same pill again on the very next think, before
+  -- charge_now_check runs (no "none" think between).  The charge record
+  -- survives (same kind, same pill) and the new goal table has no
+  -- _charge_now, so the charge block runs again: inside the abort window it
+  -- must go the careful way, never back into kill_hardline.
+  r = shbot()
+  r.st.orders.say = {}
+  r.inf.objects[2] = shell_from(r, 26, 20, 0.9)
+  think(r, 101)
+  r.w.pill_at = r.w.pill_at or {}
+  local g1 = r.st.goal
+  g1.substate = "plan_position"
+  ATTACK.update_attack_substate(g1, r.st, r.w, r.inf)
+  check("repick order: first pick with no blocker rushes (kill_hardline)",
+        g1._charge_now == true and g1.substate == "kill_hardline"
+        and g1._charge_now_careful == nil, tostring(g1.substate))
+  g1._hardline_abort = "no navigable tile beside pill"
+  g1._hardline_bad = { [1] = true }
+  ATTACK.update_attack_substate(g1, r.st, r.w, r.inf)
+  check("repick order: the dead end goes careful and arms the abort memory",
+        g1._charge_now_careful == true and g1.substate ~= "kill_hardline"
+        and r.st._charge_now_abort ~= nil and r.st._charge_now_abort.tid == 5,
+        tostring(g1.substate))
+  local rush_again, all_careful = false, true
+  for t = 110, 400, 10 do
+    -- careful way drops the goal; selection repicks pill 5 at once
+    local g2 = { kind = "attack_pill", target_id = 5, mx = 20, my = 20,
+                 substate = "plan_position" }
+    r.st.goal = g2
+    r.inf.objects[2] = shell_from(r, 26, 20, 0.9)
+    think(r, t)                              -- record survives: same pill
+    if r.st._charge_now == nil then all_careful = false end
+    ATTACK.update_attack_substate(g2, r.st, r.w, r.inf)
+    if g2.substate == "kill_hardline" or g2._kill_rush then rush_again = true end
+    if not (g2._charge_now == true and g2._charge_now_careful == true) then
+      all_careful = false
+    end
+  end
+  check("repick order: inside the window every repick goes careful, never kill_hardline",
+        not rush_again and all_careful, tostring(rush_again) .. "/" .. tostring(all_careful))
+  check("repick order: still one \"Charging pill\" line", n_charging(r) == 1,
+        tostring(n_charging(r)))
+  -- Past the window the abort memory lapses and a repick may try the rush again.
+  local g3 = { kind = "attack_pill", target_id = 5, mx = 20, my = 20,
+               substate = "plan_position" }
+  r.st.goal = g3
+  think(r, 101 + C.CHARGE_NOW_ABORT_WAIVE_TICKS + 1)
+  ATTACK.update_attack_substate(g3, r.st, r.w, r.inf)
+  check("repick order: after CHARGE_NOW_ABORT_WAIVE_TICKS the rush is allowed again",
+        r.st._charge_now_abort == nil and g3.substate == "kill_hardline"
+        and g3._charge_now_careful == nil, tostring(g3.substate))
+
   -- Ordered + a shooting human within ORDER_HUMAN_NEAR_SUICIDE_TILES: the
   -- suicide run wins, no charge now beside it.
   r = hbot(14, 15)

@@ -5133,8 +5133,11 @@ M.HUMAN_SHOOTING_CHARGE_NOW   = true  -- keel false
 -- A charge whose straight rush found no tile beside the pill (it fell back
 -- to the careful way) does not restart from human shooting on that pill for
 -- this many brain ticks (50 = 1 s), or until the bot has had some other
--- real goal.  Stops a drop-and-repick loop of "Charging pill #N".
-M.CHARGE_NOW_ABORT_WAIVE_TICKS = 500  -- keel 500 (moot; HUMAN_SHOOTING_CHARGE_NOW off)
+-- real goal.  Stops a drop-and-repick loop of "Charging pill #N".  In the
+-- same window a still-running charge whose goal dropped and picked the
+-- same pill again goes the careful way at once (attack.lua), not back into
+-- the straight rush.
+M.CHARGE_NOW_ABORT_WAIVE_TICKS = 500  -- keel 500 (moot; both charge-now starts off)
 
 -- How far the seat a bot is escorting may drift from where the bot was last
 -- sent before the escort re-aims.  A hint may name its own `distance`; this
