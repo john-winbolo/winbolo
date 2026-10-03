@@ -73,8 +73,8 @@ check("keel TURTLE_BASE_DOUBLE_TILES = 0", C.PRESETS.keel.TURTLE_BASE_DOUBLE_TIL
 check("keel TURTLE_BASE_MULT_CAP = 1", C.PRESETS.keel.TURTLE_BASE_MULT_CAP == 1, C.PRESETS.keel.TURTLE_BASE_MULT_CAP)
 check("default TURTLE_BASE_NEST = false", saved.TURTLE_BASE_NEST == false, saved.TURTLE_BASE_NEST)
 check("keel TURTLE_BASE_NEST = false", C.PRESETS.keel.TURTLE_BASE_NEST == false, C.PRESETS.keel.TURTLE_BASE_NEST)
-check("preset nest: PILL_PLACE_TURTLE = true", C.PRESETS.nest and C.PRESETS.nest.PILL_PLACE_TURTLE == true, C.PRESETS.nest and C.PRESETS.nest.PILL_PLACE_TURTLE)
-check("preset nest: TURTLE_BASE_NEST = true", C.PRESETS.nest and C.PRESETS.nest.TURTLE_BASE_NEST == true, C.PRESETS.nest and C.PRESETS.nest.TURTLE_BASE_NEST)
+check("preset turtle2: PILL_PLACE_TURTLE = true", C.PRESETS.turtle2 and C.PRESETS.turtle2.PILL_PLACE_TURTLE == true, C.PRESETS.turtle2 and C.PRESETS.turtle2.PILL_PLACE_TURTLE)
+check("preset turtle2: TURTLE_BASE_NEST = true", C.PRESETS.turtle2 and C.PRESETS.turtle2.TURTLE_BASE_NEST == true, C.PRESETS.turtle2 and C.PRESETS.turtle2.TURTLE_BASE_NEST)
 check("preset turtle: PILL_PLACE_TURTLE = true", C.PRESETS.turtle.PILL_PLACE_TURTLE == true, C.PRESETS.turtle.PILL_PLACE_TURTLE)
 check("preset turtle: does not set TURTLE_BASE_NEST", C.PRESETS.turtle.TURTLE_BASE_NEST == nil, C.PRESETS.turtle.TURTLE_BASE_NEST)
 check("survivor side word: does not set TURTLE_BASE_NEST",
