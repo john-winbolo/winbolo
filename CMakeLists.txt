@@ -3923,6 +3923,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # lobby-settings byte.
     tests/unit/test_positional_sound_settings.c
     tests/unit/test_lobby_mods_enabled.c
+    # The dedicated server's -mod, -mod-required and -mod-locked: name
+    # matching, the CMD_SET_SCRIPT_LIST refusals, the re-apply at each new
+    # lobby, and the required flag on the wire.
+    tests/unit/test_operator_mods.c
     tests/unit/test_fog_settings.c
     # The named visibility sets the lobby offers, and the match that reads
     # a live set of settings back as one of them.
@@ -4994,6 +4998,16 @@ set(_unit_test_names
     lobby_mods_enabled_defaults
     lobby_mods_enabled_dispatch
     lobby_mods_enabled_codec
+    operator_mods_resolve
+    operator_mods_required
+    operator_mods_locked
+    operator_mods_reapply
+    operator_mods_wire
+    operator_mods_args
+    operator_mods_evict
+    operator_mods_lock_mask
+    operator_mods_mods_off
+    operator_mods_map_yield
     fog_settings_defaults
     fog_settings_classic_mode_preset
     fog_settings_lock_implied
@@ -6651,6 +6665,7 @@ set(_unit_test_names
     scenario_precedence_reload_refuses_bound
     scenario_compose_map_and_mods
     scenario_compose_keeps_map_scenario
+    scenario_compose_operator_mod_yields
     scenario_compose_mod_rules_load
     scenario_compose_region_clash_loads
     scenario_compose_reload_list

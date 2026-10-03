@@ -664,6 +664,23 @@ void printArgs() {
   fprintf(stderr, "                build, which are always offered. A directory that is not\n");
   fprintf(stderr, "                there means the server offers none of its own, which is not\n");
   fprintf(stderr, "                an error. -scenariodir is the old name for this argument.\n");
+  fprintf(stderr, "-mod <Names>  - Comma-separated mods or scenarios from -moddir (or the\n");
+  fprintf(stderr, "                shipped mods) to put on every game's script list. The\n");
+  fprintf(stderr, "                file name, with or without .scenario.lua. On by default:\n");
+  fprintf(stderr, "                the host may take one off for that game; the next lobby\n");
+  fprintf(stderr, "                has it again. May be given more than once.\n");
+  fprintf(stderr, "-mod-required <Names> - The same, but always on: the host cannot take\n");
+  fprintf(stderr, "                these off, and may add or take off any other mod. Also\n");
+  fprintf(stderr, "                locks the Mods/Scenario checkbox on.\n");
+  fprintf(stderr, "-mod-locked <Names> - The script list is exactly these, read-only, as\n");
+  fprintf(stderr, "                -lock mods plus the list. Cannot be given with -mod or\n");
+  fprintf(stderr, "                -mod-required: the server will not start. A name given\n");
+  fprintf(stderr, "                to both -mod and -mod-required keeps -mod-required. A\n");
+  fprintf(stderr, "                -mod scenario gives way to a map's own scenario; a required\n");
+  fprintf(stderr, "                or locked one replaces it. At most 10 scripts and one\n");
+  fprintf(stderr, "                scenario; -noscenarios ignores all three. A mod from any\n");
+  fprintf(stderr, "                of the three keeps the server out of ranked, which allows\n");
+  fprintf(stderr, "                no scripts.\n");
   fprintf(stderr, "-noscenarios  - Do not load the scenario script beside a map. Every map,\n");
   fprintf(stderr, "                including one committed later, plays plainly. A map that\n");
   fprintf(stderr, "                has a script says which one was not loaded.\n");
@@ -1075,6 +1092,38 @@ static bool argIsFlag(const char *arg, const char *name) {
     name++;
   }
   return (*arg == '\0' && *name == '\0') ? TRUE : FALSE;
+}
+
+/* Where serverSimApplyOperatorModArgs sends its warnings and notes: stderr,
+   the way an unknown -lock name is warned about. */
+static void serverModArgsSay(void *ctx, const char *line) {
+  (void)ctx;
+  fprintf(stderr, "%s\n", line);
+}
+
+/* The rows -mod, -mod-required and -mod-locked recorded, one console line
+ * each, so an operator reading the log sees the list every game will open
+ * with. */
+static void serverSayOperatorMods(ServerSim *sim) {
+  char line[SERVER_SCENARIO_FILE_LEN + 64];
+  int  n = serverSimGetOperatorModCount(sim);
+  int  i;
+
+  for (i = 0; i < n; i++) {
+    const char *kind;
+
+    if (serverSimGetOperatorModsLocked(sim)) {
+      kind = "locked";
+    } else if (serverSimGetOperatorModStrength(sim, i) ==
+               SERVER_MOD_REQUIRED) {
+      kind = "required";
+    } else {
+      kind = "on by default";
+    }
+    snprintf(line, sizeof(line), "Mod %s: %s", kind,
+             serverSimGetOperatorModFile(sim, i));
+    serverMessageConsoleMessage(sim, line);
+  }
 }
 
 int findArg(int numArgs, char **argv, const char *argname) {
@@ -1769,6 +1818,18 @@ int main(int argc, char **argv) {
     exit(0);
   }
 
+  /* -mod-locked asks for a list nobody edits; -mod and -mod-required ask for
+     one a host edits around fixed rows. Both at once is a mistake in the
+     command line, not something to guess at, so the server does not start.
+     Checked here, before the sim, the sockets and the tracker are set up,
+     so there is nothing to close. Not under -noscenarios, which ignores all
+     three flags and says so further down. */
+  if (argExist(argc, argv, "noscenarios") != TRUE &&
+      serverSimOperatorModArgsConflict(argc, (const char *const *)argv)) {
+    fprintf(stderr, "%s\n", SERVER_MOD_ARGS_CONFLICT_TEXT);
+    exit(1);
+  }
+
   /* Copy tracker settings to file-scope globals for the timer */
   sTrackerUse = trackerUse;
   if (trackerUse) {
@@ -2062,11 +2123,49 @@ int main(int argc, char **argv) {
   }
   scenarioHostRegisterScenarioLister(serverSim);
 
+  /* -mod, -mod-required, -mod-locked: the operator's mods, on the list every
+     game opens with. Read after the lister above is registered, because a
+     name is resolved against the directory it lists. -mod-locked beside
+     either of the others has already stopped the server at the top of main.
+
+     The rows go on the list once here and the decision is made without
+     seating anyone: the lobby is seated further down, after the startup, as
+     it is for a map's own script, and a server that skipped the lobby has
+     its round built inside the startup from whatever this attaches. That
+     decision reads the map's own script too, so it takes the place of the
+     plain attach below, which would only be detached again (and would say
+     "loaded" for it a second time). From then on the list stays put — no
+     lobby means no command can change it — so -nolobby plays these every
+     round, and so does -maprotate, whose every map commit composes the same
+     list again. A server with a lobby puts them back at each return to it
+     (serverSimReturnToLobby).
+
+     Not under -noscenarios, which turns every script off: a mod named
+     beside it would only fail to load at every game, so it is said once
+     here instead. */
+  bool operatorModsDecided = FALSE;
+  if (serverSimOperatorModArgsGiven(argc, (const char *const *)argv)) {
+    if (argExist(argc, argv, "noscenarios") == TRUE) {
+      fprintf(stderr,
+              "Warning: -noscenarios turns scripts off; -mod, -mod-required "
+              "and -mod-locked are ignored\n");
+    } else {
+      (void)serverSimApplyOperatorModArgs(serverSim, argc,
+                                          (const char *const *)argv,
+                                          serverModArgsSay, NULL);
+      serverSayOperatorMods(serverSim);
+      if (serverSimRecordOperatorMods(serverSim)) {
+        scenarioHostDecide(serverSim, &scenarioHost, scenarioMapPath);
+        operatorModsDecided = TRUE;
+      }
+    }
+  }
+
   /* A scenario script beside the map, when the map came from a file and one
      is there. No script is the ordinary case and says nothing; a script
      that cannot be used says why, as does one -noscenarios turned down, and
      the server runs the map plainly. */
-  if (scenarioMapPath[0] != '\0') {
+  if (!operatorModsDecided && scenarioMapPath[0] != '\0') {
     char scenarioErr[512];
     scenarioHost = scenarioHostAttach(serverSim, scenarioMapPath,
                                       scenarioErr, sizeof(scenarioErr));
@@ -2093,7 +2192,11 @@ int main(int argc, char **argv) {
       scenarioHostPublishMapScript(serverSim, scenarioHost);
     }
     if (scenarioHost != NULL) {
-      const char *path = scenarioHostScriptPath(scenarioHost);
+      /* The map's own entry, not the scenario that decides the round: with
+         -mod rows attached the host may be composed with no map script at
+         all, and a bare id=value must then get "the map has no script"
+         rather than land on an operator's mod. */
+      const char *path = scenarioHostMapScriptPath(scenarioHost);
       const char *p;
       mapScript = path;
       for (p = path; *p != '\0'; p++) {
@@ -2283,6 +2386,21 @@ int main(int argc, char **argv) {
         serverLocks = implied;
       }
     }
+  }
+  /* And the locks the -mod flags above call for: LOBBY_LOCK_MODS for any
+   * -mod-required or -mod-locked row, so the Mods/Scenario checkbox cannot
+   * switch them off, and LOBBY_LOCK_SCRIPT_LIST for -mod-locked, which is
+   * -lock mods plus a list nobody edits. Not a name -lock takes: the list
+   * lock without the rows the operator fixed on it would only be an empty
+   * list. A plain -mod locks nothing, being the host's to take off. */
+  serverLocks |= serverSimOperatorModLocks(serverSim);
+  /* Ranked allows no scripts, and the lobby rules take a lobby with any
+     attached out of ranked, so -ranked beside operator mods does not hold.
+     Said once here rather than left for the operator to find in the lobby. */
+  if (ranked && serverSimGetOperatorModCount(serverSim) > 0) {
+    fprintf(stderr,
+            "Warning: -ranked: the -mod, -mod-required and -mod-locked "
+            "scripts keep the server out of ranked\n");
   }
 
   /* -pillview / -baseview / -allyview and their decay values. Applied

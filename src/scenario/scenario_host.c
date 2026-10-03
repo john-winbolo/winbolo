@@ -9584,6 +9584,68 @@ static void scnPublishMapScript(ServerSim *sim, const ScenarioHost *h,
     }
 }
 
+/* What the committed map's own script is, for the plain -mod scenario that
+ * gives way to a map's own scenario and plays beside a map's own mod
+ * (serverSimOperatorModYieldsToMap). Asked only when such a row is on the
+ * list, so every other decision reads the map's script exactly as often as
+ * it did. The scripted question goes first: it reads no script, and it
+ * already answers no for an uploaded map whose script this server will not
+ * run. A package's kind comes from the manifest found with it; a loose
+ * script's table is run to read its kind, as the scenario lister does, and
+ * a script that declares no table is taken for a scenario, which is what it
+ * would load as. Quiet: the compose reads the script again and says
+ * whatever is worth saying. */
+typedef enum {
+    SCN_MAP_OWN_NONE = 0,
+    SCN_MAP_OWN_SCENARIO,
+    SCN_MAP_OWN_MOD
+} ScnMapOwnKind;
+
+static ScnMapOwnKind scnMapOwnKind(ServerSim *sim, const char *mapPath) {
+    ScnScriptSource own;
+    char            ownErr[256];
+    bool            mod = false;
+
+    if (!scnEnabled || mapPath == NULL || mapPath[0] == '\0' ||
+        !serverSimScenarioMapIsScripted(sim, mapPath)) {
+        return SCN_MAP_OWN_NONE;
+    }
+    memset(&own, 0, sizeof(own));
+    if (!scnFindScript(mapPath, &own, ownErr, sizeof(ownErr))) {
+        return SCN_MAP_OWN_NONE;
+    }
+    if (own.manifest != NULL) {
+        mod = scnManifestKeepsWinCondition(own.manifest);
+    } else {
+        ScnValidateResult *check =
+            (ScnValidateResult *)calloc(1, sizeof(*check));
+        if (check != NULL) {
+            (void)scenarioValidateMap(NULL, mapPath, check);
+            mod = check->haveManifest &&
+                  scnManifestKeepsWinCondition(&check->manifest);
+            free(check);
+        }
+    }
+    scnSourceDrop(&own);
+    return mod ? SCN_MAP_OWN_MOD : SCN_MAP_OWN_SCENARIO;
+}
+
+/* The last "gives way" line said, as map path and file, so a lobby that
+ * decides again and again on one map says it once rather than at every
+ * pick, and a rotation still says it at each map it applies to. Written
+ * only under the tick lock, where every decision runs. */
+static char scnYieldSaid[SCN_SCRIPT_PATH_MAX + SCN_DIR_FILE_LEN + 2];
+
+static void scnSayYield(const char *mapPath, const char *file) {
+    char key[sizeof(scnYieldSaid)];
+
+    snprintf(key, sizeof(key), "%s|%s", mapPath != NULL ? mapPath : "", file);
+    if (strcmp(key, scnYieldSaid) == 0) return;
+    snprintf(scnYieldSaid, sizeof(scnYieldSaid), "%s", key);
+    scnSay(NULL, 0, "scenario: %s (-mod) gives way to this map's own scenario",
+           file);
+}
+
 /* Which scripts this lobby plays, decided in one place because more than one
  * thing changes the answer: a map commit and the host editing its list both
  * come through here.
@@ -9647,6 +9709,7 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
     int             i;
     bool            picked  = false;
     bool            listed  = false;
+    ScnMapOwnKind   mapOwn  = SCN_MAP_OWN_NONE;
 
     if (slot == NULL) return;
     scenarioHostDetach(*slot);
@@ -9655,6 +9718,20 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
 
     err[0] = '\0';
     memset(src, 0, sizeof(src));
+
+    /* Whether a plain -mod scenario on the list meets a map that brings a
+       script of its own, and of which kind: it gives way to a scenario and
+       plays beside a mod. Read before the rows are asked anything, and only
+       when there is such a row. */
+    picks = serverSimGetScriptCount(sim);
+    for (i = 0; i < picks; i++) {
+        const ScnDirEntry *row = serverSimGetScript(sim, i);
+        if (row != NULL && !row->bound &&
+            serverSimOperatorModYieldsToMap(sim, row->file, true)) {
+            mapOwn = scnMapOwnKind(sim, mapPath);
+            break;
+        }
+    }
 
     /* Two questions of the rows the lobby recorded, asked before any file is
        read: whether one of the picks decides the round, and whether the
@@ -9683,8 +9760,27 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
         } else if (!row->keepsWinCondition && !serverSimGetModsOff(sim)) {
             /* Not while the Mods/Scenario setting is off: the loop below
                composes no pick then, and a picked scenario that will not play
-               must not take the map's own script off with it. */
-            picked = true;
+               must not take the map's own script off with it.
+
+               Nor for a scenario the operator put on with a plain -mod, on a
+               map that brings a scenario of its own: that row gives way to
+               the map's (serverSimOperatorModYieldsToMap), so it is skipped
+               below and the map's own composes as if it were not listed.
+               Said once per map and file (scnSayYield), so a rotation shows
+               which maps played their own without a line at every pick.
+
+               On a map whose own script is a mod, the same row plays beside
+               it instead: the map's mod is not a script that decides the
+               round, so there is nothing for the row to replace, and picked
+               stays false so the map's own still goes at the front. */
+            if (serverSimOperatorModYieldsToMap(
+                    sim, row->file, mapOwn == SCN_MAP_OWN_SCENARIO)) {
+                scnSayYield(mapPath, row->file);
+            } else if (mapOwn != SCN_MAP_OWN_MOD ||
+                       !serverSimOperatorModYieldsToMap(sim, row->file,
+                                                        true)) {
+                picked = true;
+            }
         }
     }
 
@@ -9724,6 +9820,12 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
 
            The setting is LST_MODS_OFF, src/bolo/public/wire_limits.h. */
         if (!own && serverSimGetModsOff(sim)) {
+            continue;
+        }
+        /* The plain -mod scenario the first loop already let go. */
+        if (!own &&
+            serverSimOperatorModYieldsToMap(sim, row->file,
+                                            mapOwn == SCN_MAP_OWN_SCENARIO)) {
             continue;
         }
         /* Ten is what a round composes and ten is what the lobby list
@@ -9835,6 +9937,11 @@ void scenarioHostPublishMapScript(ServerSim *sim, const ScenarioHost *h) {
     scnPublishMapScript(sim, h, which);
 }
 
+void scenarioHostDecide(ServerSim *sim, ScenarioHost **slot,
+                        const char *mapPath) {
+    scnDecideScenario(sim, slot, mapPath);
+}
+
 void scenarioHostFollowMap(ServerSim *sim, ScenarioHost **slot) {
     if (sim == NULL) return;
     if (slot == NULL) {
@@ -9920,6 +10027,19 @@ const char *scenarioHostDescription(const ScenarioHost *h) {
    the round. */
 const char *scenarioHostScriptPath(const ScenarioHost *h) {
     return (h != NULL) ? h->entry[h->base].script : "";
+}
+
+/* The map's own entry and nothing else: a host composed from a list with no
+   map script answers "", where scenarioHostScriptPath would name whichever
+   picked script decides the round. */
+const char *scenarioHostMapScriptPath(const ScenarioHost *h) {
+    int i;
+
+    if (h == NULL) return "";
+    for (i = 0; i < h->count; i++) {
+        if (h->entry[i].source == lobbyScenarioMap) return h->entry[i].script;
+    }
+    return "";
 }
 
 const char *scenarioHostLastError(const ScenarioHost *h) {

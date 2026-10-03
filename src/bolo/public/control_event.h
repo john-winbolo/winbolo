@@ -565,6 +565,14 @@ typedef struct LobbyScriptEntry {
      * name a file the listing no longer holds, and a row that cannot say
      * whether it is removable is worse than one row of wire. */
     bool bound;
+    /* Whether the dedicated server's operator fixed this script on the list
+     * (-mod-required, or any row of a -mod-locked list): the server refuses
+     * a list without it, and a chooser draws it with no drop arrow. A
+     * default-on -mod row reads false, because the host may take it off.
+     * Wire bit 2 of the entry's flags byte, which a decoder built before it
+     * never read, so an old client shows the row as removable and the
+     * server refuses the list that leaves it off. */
+    bool required;
     /* Where the server got the file: SCN_DIR_SOURCE_SERVER, _UPLOAD or
      * _WORKSHOP (scenario_defs.h; SERVER_SCENARIO_SOURCE_* in server_sim.h
      * for a gui reader). The map's own script reads SERVER. */

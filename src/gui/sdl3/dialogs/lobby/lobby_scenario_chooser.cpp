@@ -315,6 +315,9 @@ struct LobbyRoundRow {
     bool mod;    /* keeps the round's win condition */
     bool bound;  /* written for one map, so it is the map's and not the
                     host's — it is drawn locked and never sent */
+    bool required;  /* fixed on the list by the server's operator (-mod-
+                       required, or a -mod-locked list): sent like any other
+                       row, but the host is offered no way to drop it */
     uint64_t workshopId;  /* the Workshop item, 0 for none */
 };
 
@@ -342,7 +345,7 @@ static bool          s_roundTaken = false;
 
 static void lobbyRoundSetRow(LobbyRoundRow *r, const char *file,
                              const char *name, bool mod, bool bound,
-                             uint64_t workshopId) {
+                             bool required, uint64_t workshopId) {
     SDL_snprintf(r->file, sizeof(r->file), "%s", file);
     /* A manifest that named nothing still came from a file, and a row with a
        gap where its name goes reads as a fault. */
@@ -350,6 +353,7 @@ static void lobbyRoundSetRow(LobbyRoundRow *r, const char *file,
                  name[0] != '\0' ? name : file);
     r->mod        = mod;
     r->bound      = bound;
+    r->required   = required;
     r->workshopId = workshopId;
 }
 
@@ -398,7 +402,7 @@ static int lobbyRoundLive(ClientSim *cs, LobbyRoundRow *out, int max) {
             lobbyRoundSetRow(&out[n++], attached,
                              clientSimGetLobbyScenarioName(cs),
                              clientSimGetLobbyScenarioKeepsWinCondition(cs),
-                             clientSimGetLobbyScenarioBound(cs), 0);
+                             clientSimGetLobbyScenarioBound(cs), false, 0);
         }
     }
 
@@ -407,6 +411,7 @@ static int lobbyRoundLive(ClientSim *cs, LobbyRoundRow *out, int max) {
                          clientSimGetLobbyScriptName(cs, i),
                          clientSimGetLobbyScriptKeepsWinCondition(cs, i),
                          clientSimGetLobbyScriptBound(cs, i),
+                         clientSimGetLobbyScriptRequired(cs, i),
                          clientSimGetLobbyScriptWorkshopId(cs, i));
     }
     return n;
@@ -563,6 +568,12 @@ static int lobbyRoundWhyNotAdd(const LobbyScenarioRow *row) {
                out. Changing the map is what changes it, and that is what the
                row's own note says as well. */
             if (s_round[at].bound) return STR_DLGLOBBY_SCENARIO_MAP_LOCK;
+            /* Nor is a scenario the server's operator fixed on the list: the
+               server refuses a list without it, so the swap would only come
+               back refused. */
+            if (s_round[at].required) {
+                return STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP;
+            }
             /* One goes out as one comes in, so the list does not grow and the
                cap below cannot be what stops it. */
             return 0;
@@ -606,15 +617,17 @@ static void lobbyRoundAdd(const LobbyScenarioRow *row) {
        column offers. Copied rather than hard-coded false so a row that
        reached here another way is still drawn for what it is. */
     lobbyRoundSetRow(r, row->file, row->name, lobbyScenarioRowIsMod(row),
-                     row->bound, row->workshopId);
+                     row->bound, false, row->workshopId);
 }
 
 /* Whether the row at idx may be taken out of the draft. Not the map's own,
- * which the map decides, and nothing while a pick may be hidden: see
- * lobbyRoundLiveMayBeCut. */
+ * which the map decides, not one the server's operator fixed on the list,
+ * which the server would refuse the list without, and nothing while a pick
+ * may be hidden: see lobbyRoundLiveMayBeCut. */
 static bool lobbyRoundMayDrop(int idx) {
     if (idx < 0 || idx >= s_roundCount) return false;
     if (s_round[idx].bound) return false;
+    if (s_round[idx].required) return false;
     return !lobbyRoundLiveMayBeCut();
 }
 
@@ -2596,7 +2609,12 @@ static void lobbyScenarioChooserRound(ClientSim *cs, LobbyScenarioRow *rows,
        it belongs on the heading's side of the line. It takes the slot the
        left column gives its filter box, which is what keeps the first row of
        the two lists level. */
-    lobbyScenarioHeadNote(langGetText(STR_DLGLOBBY_SCENARIO_ORDER_NOTE));
+    /* A list the server's operator locked has no order for the host to
+       set, so the note says why nothing on this side moves instead. */
+    lobbyScenarioHeadNote(langGetText(
+        (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_SCRIPT_LIST) != 0
+            ? STR_DLGLOBBY_SCENARIO_LIST_LOCKED
+            : STR_DLGLOBBY_SCENARIO_ORDER_NOTE));
     ImGui::Separator();
 
     ImGui::BeginChild("##roundRows", ImVec2(0.0f, 0.0f),
@@ -2642,10 +2660,15 @@ static void lobbyScenarioChooserRound(ClientSim *cs, LobbyScenarioRow *rows,
                not say how the row goes away, and the answer is not on this
                dialog. Any other row's arrow has none, for the reason the add
                arrow has none. */
+            /* A row the server's operator fixed gets one too, for the same
+               reason: the greyed arrow alone does not say the server is
+               the one keeping it there. */
             if (lobbyScenarioArrow("##drop", ImGuiDir_Left,
                                    lobbyRoundMayDrop(i),
                                    r->bound ? langGetText(
                                        STR_DLGLOBBY_SCENARIO_MAP_UNLOAD)
+                                   : r->required ? langGetText(
+                                       STR_DLGLOBBY_SCENARIO_REQUIRED)
                                             : NULL)) {
                 drop = i;
             }
@@ -2671,6 +2694,16 @@ static void lobbyScenarioChooserRound(ClientSim *cs, LobbyScenarioRow *rows,
                                         ImGuiPopupFlags_MouseButtonRight);
         }
         lobbyScenarioKindTag(r->mod, s);
+        /* The lock the lobby draws on a setting the operator fixed, on a row
+           the operator fixed, for every viewer and not only the host: the
+           arrow that carries the sentence is drawn for the host alone. */
+        if (r->required) {
+            lobbyRenderLockBadge();
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s",
+                                  langGetText(STR_DLGLOBBY_SCENARIO_REQUIRED));
+            }
+        }
         /* After the kind chip, so the width test below, which reads the last
            item's right edge, counts it. */
         lobbyScenarioWorkshopTag(r->workshopId, s);
@@ -2854,7 +2887,13 @@ void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
         bool inFlight = false;
         LobbyRoundRow live[LOBBY_ROUND_MAX];
         int  liveCount;
-        bool mayEdit  = lobbyScenarioMayChoose(cs);
+        /* And not while the server's operator has locked the list
+           (WinBoloDS -mod-locked): the server refuses every list then, so
+           this side is drawn the way it is for a player who is not the
+           host, with Close and no arrows. */
+        bool mayEdit  = lobbyScenarioMayChoose(cs) &&
+                        (clientSimGetLobbyServerLocks(cs) &
+                         LOBBY_LOCK_SCRIPT_LIST) == 0;
 
         if (sim != NULL) {
             server      = s_hostRows;

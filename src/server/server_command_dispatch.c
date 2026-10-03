@@ -1016,6 +1016,40 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
            the local transport never met it, and this arm is the one place
            both paths pass through. */
         if (count > CMD_SCRIPT_LIST_MAX) return CMD_REJECT_INVALID;
+        /* The operator's -mod-required and -mod-locked rows, held here and
+           nowhere else: the chooser draws them fixed, but a client is only
+           ever asked, and this is the arm every list passes through.
+
+           A locked list takes no list at all, an empty one included — not
+           even the list it already holds, which would change nothing and
+           still stamp the gap and recompose. Tested on the flag as well as on
+           the lock bit, because the lock bit is the operator's -lock mask and
+           a locked list is locked whatever that mask says.
+
+           Otherwise a list must carry every row the operator fixed. The host
+           may add around them, move them and take off anything else, a
+           default-on -mod row included. Before the empty-list path, which
+           would otherwise clear them, and before the gap is stamped or the
+           directory read, so a refused list costs neither. The host, an
+           admin and an open lobby's anyone are held to it alike: it is the
+           operator's rule, not the host's. */
+        if (serverSimGetOperatorModsLocked(sim) ||
+            (serverSimGetServerLocks(sim) & LOBBY_LOCK_SCRIPT_LIST) != 0) {
+            return CMD_REJECT_LOCKED;
+        }
+        for (i = 0; i < serverSimGetOperatorModCount(sim); i++) {
+            const char *fixed = serverSimGetOperatorModFile(sim, i);
+            bool        named = false;
+
+            if (!serverSimOperatorModFixed(sim, fixed)) continue;
+            for (j = 0; j < count && j < CMD_SCRIPT_LIST_MAX; j++) {
+                if (strcmp(cmd->u.setScriptList.files[j], fixed) == 0) {
+                    named = true;
+                    break;
+                }
+            }
+            if (!named) return CMD_REJECT_LOCKED;
+        }
         /* An empty list clears, and is the one value that needs no name
            checks: there is no name to test the shape of or look up. It is
            exempt from the ranked refusal too, so a host who turned ranked on

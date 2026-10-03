@@ -491,6 +491,44 @@ host wrote it, so turning the box back on brings the same scripts back in the
 same order, and the lobby marks each pick that is switched off. An operator
 locks the box with `-lock mods` on the dedicated server.
 
+**Mods the operator puts on every game.** Three dedicated-server switches put
+scripts on the list for every game. Each takes a comma-separated list of file
+names, with or without `.scenario.lua` (case does not matter), and each may be
+given more than once.
+
+- `-mod <Names>` puts them on at every new lobby, and switches the
+  Mods/Scenario box back on, so a row that is back also plays. The host may
+  take one off, or switch the box off, for that game; the next lobby has them
+  back. The host's own picks stay.
+- `-mod-required <Names>` keeps them on. The server refuses any list without
+  them, the empty one included. The host may add, move and take off anything
+  else. It also locks the Mods/Scenario box on.
+- `-mod-locked <Names>` makes the list exactly these, read-only: `-lock mods`
+  plus the list. Every list is refused.
+
+A script from any of the three keeps the server out of ranked, which allows
+no scripts; with `-ranked` the server prints a warning at startup.
+
+`-mod-locked` cannot be combined with `-mod` or `-mod-required`. Given
+together, the server prints `Error: -mod-locked cannot be combined with -mod
+or -mod-required` and exits with status 1. `-mod` and `-mod-required` do
+combine: a name given to both keeps `-mod-required`. Under `-noscenarios`
+the conflict is not checked, because all three switches are ignored there.
+
+At most ten scripts and one scenario. An operator scenario replaces a
+scenario the host picked. Against a map that brings its own script the rule
+depends on the switch and on the map's script. A `-mod` scenario gives way
+to a map's own scenario, which plays instead; the console says so once per
+map. Beside a map's own mod, a `-mod` scenario plays with it. A
+`-mod-required` or `-mod-locked` scenario replaces the map's own script.
+
+A name that does not resolve, a script tied to a map and a player upload are
+each a warning on stderr and are skipped, as are blank names in the list, a
+switch with no value and a value longer than 1023 characters. `-noscenarios`
+ignores all three switches. With `-nolobby` or `-maprotate` the list is set
+once at startup and plays every round. The lobby chooser draws fixed rows
+with a lock and no drop arrow, and a locked list with no controls at all.
+
 ---
 
 ## Uploads

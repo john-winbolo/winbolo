@@ -18,6 +18,10 @@
  *       published list says so: the map's row first with bound set, the
  *       host's pick behind it. Picking a scenario does take it off, which is
  *       the half of the older rule that stays.
+ *   scenario_compose_operator_mod_yields
+ *       — a plain -mod scenario gives way to a map's own scenario, plays
+ *       beside a map's own mod, and plays alone on a plain map, where the
+ *       host reports no map script for a bare -setting to name.
  *   scenario_compose_mod_rules_load
  *       — a mod that declares a rules block plays. It used to be refused,
  *       because two scripts setting one rule came down to which was read
@@ -763,6 +767,97 @@ int run_scenario_compose_keeps_map_scenario(void) {
 
     scDestroy(sim);
     scDropMapScript();
+    scDropDir();
+    return 0;
+}
+
+/* ── 2b. A plain -mod scenario and the map's own script ───────────── */
+
+/* Every map these cases commit has its script written beside it, so the
+   scripted question answers yes without the map-script cache, which keys on
+   paths that the cases rewrite. */
+static bool scAlwaysScripted(void *ctx, const char *mapPath) {
+    (void)ctx;
+    (void)mapPath;
+    return true;
+}
+
+/* The sim, with Duel put on by the operator as a plain -mod row and the map
+   committed after it, as servermain does at startup. */
+static ServerSim *scOperatorDuelSim(void) {
+    ServerSim *sim = scSim();
+    char       err[256];
+
+    if (sim == NULL) return NULL;
+    serverSimSetScenarioMapScripted(sim, scAlwaysScripted, NULL);
+    err[0] = '\0';
+    if (!serverSimAddOperatorMod(sim, "duel", SERVER_MOD_DEFAULT, err,
+                                 sizeof(err))) {
+        scDestroy(sim);
+        return NULL;
+    }
+    (void)serverSimRecordOperatorMods(sim);
+    scCommit(sim);
+    return sim;
+}
+
+int run_scenario_compose_operator_mod_yields(void) {
+    ServerSim *sim;
+    char       mapScript[512];
+
+    UT_ASSERT(scMakeDir("operator_yield"));
+    UT_ASSERT(scWrite("duel.lua", kScOtherScenario));
+    scScriptFor(scMapPath(), mapScript, sizeof(mapScript));
+
+    /* The map's own script is a scenario: the -mod scenario gives way. */
+    UT_ASSERT(scPutMapScript(kScMapScenario));
+    sim = scOperatorDuelSim();
+    UT_ASSERT_MSG(sim != NULL, "the -mod row was refused");
+    UT_ASSERT_MSG(scSlot != NULL, "nothing attached");
+    UT_ASSERT_MSG(strcmp(sim->scenarioIdentity.name, "Survival") == 0,
+                  "the round is \"%s\", wanted the map's own scenario",
+                  sim->scenarioIdentity.name);
+    UT_ASSERT_MSG(scenarioHostScriptCount(scSlot) == 1,
+                  "%d scripts loaded, wanted the map's own alone",
+                  scenarioHostScriptCount(scSlot));
+    UT_ASSERT_MSG(strcmp(scenarioHostMapScriptPath(scSlot), mapScript) == 0,
+                  "the map's own script reads as \"%s\"",
+                  scenarioHostMapScriptPath(scSlot));
+    scDestroy(sim);
+
+    /* The map's own script is a mod: the -mod scenario plays beside it. */
+    UT_ASSERT(scPutMapScript(kScModOne));
+    sim = scOperatorDuelSim();
+    UT_ASSERT_MSG(sim != NULL, "the -mod row was refused");
+    UT_ASSERT_MSG(scSlot != NULL, "nothing attached");
+    UT_ASSERT_MSG(strcmp(sim->scenarioIdentity.name, "Duel") == 0,
+                  "the round is \"%s\", wanted the -mod scenario",
+                  sim->scenarioIdentity.name);
+    UT_ASSERT_MSG(scenarioHostScriptCount(scSlot) == 2,
+                  "%d scripts loaded, wanted the map's mod and the -mod "
+                  "scenario", scenarioHostScriptCount(scSlot));
+    UT_ASSERT_MSG(scHasRegion(scenarioHostManifest(scSlot), "south"),
+                  "the map's own mod did not compose");
+    UT_ASSERT_MSG(strcmp(scenarioHostMapScriptPath(scSlot), mapScript) == 0,
+                  "the map's own script reads as \"%s\"",
+                  scenarioHostMapScriptPath(scSlot));
+    scDestroy(sim);
+
+    /* A plain map: the -mod scenario plays, and there is no map script for
+       a bare -setting to name. */
+    scDropMapScript();
+    sim = scOperatorDuelSim();
+    UT_ASSERT_MSG(sim != NULL, "the -mod row was refused");
+    UT_ASSERT_MSG(scSlot != NULL, "nothing attached");
+    UT_ASSERT_MSG(strcmp(sim->scenarioIdentity.name, "Duel") == 0,
+                  "the round is \"%s\", wanted the -mod scenario",
+                  sim->scenarioIdentity.name);
+    UT_ASSERT_MSG(scenarioHostMapScriptPath(scSlot)[0] == '\0',
+                  "a plain map reports \"%s\" as its own script",
+                  scenarioHostMapScriptPath(scSlot));
+    UT_ASSERT(scenarioHostScriptPath(scSlot)[0] != '\0');
+    scDestroy(sim);
+
     scDropDir();
     return 0;
 }
