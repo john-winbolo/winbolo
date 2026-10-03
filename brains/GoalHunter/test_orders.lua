@@ -2559,6 +2559,9 @@ local function hbot(hx, hy)
   hold_attack(r)
   return r
 end
+-- These cases are the "near is enough" rule (ORDER_HUMAN_NEAR_NEEDS_SHOOTING
+-- off, the keel value); the shooting rule has its own cases below.
+C.ORDER_HUMAN_NEAR_NEEDS_SHOOTING = false
 do
   local r = hbot(15, 10)
   ORD.human_near_suicide(r.st, r.w, r.inf, 100)
@@ -2614,6 +2617,383 @@ do
   C.ORDER_HUMAN_NEAR_SUICIDE_RUN = true
   check("keel turns the human-near run off",
         C.PRESETS.keel.ORDER_HUMAN_NEAR_SUICIDE_RUN == false, "?")
+end
+C.ORDER_HUMAN_NEAR_NEEDS_SHOOTING = true
+
+-- THE HUMAN MUST BE SHOOTING AT THE PILL (ORDER_HUMAN_NEAR_NEEDS_SHOOTING,
+-- 2026-10-02).  Human p0 at (14,15): 5 tiles from the bot, 8.5 tiles from
+-- the centre of pill 5 at (20,20).  A shell is the human's when the engine
+-- names him as its owner (ob.owner); its exact heading is ob.angle, and
+-- ob.direction is the 16-point snap, which the rule must not use.
+_G.OBJECT_SHOT = _G.OBJECT_SHOT or 2
+local U = require("util")
+local function shell_from(r, hx, hy, frac, owner)
+  local pcx, pcy = 20 * 256 + 128, 20 * 256 + 128
+  local sx = hx * 256 + (pcx - hx * 256) * frac
+  local sy = hy * 256 + (pcy - hy * 256) * frac
+  local a = U.aim_at(hx * 256, hy * 256, pcx, pcy)
+  return { type = _G.OBJECT_SHOT, x = math.floor(sx), y = math.floor(sy), info = 0,
+           owner = owner or 0, angle = a, life = 60,
+           direction = (math.floor((a + 8) / 16) * 16) % 256 }
+end
+do
+  check("shooting rule is on live", C.ORDER_HUMAN_NEAR_NEEDS_SHOOTING == true, "?")
+  check("keel turns the shooting rule off (near is enough)",
+        C.PRESETS.keel.ORDER_HUMAN_NEAR_NEEDS_SHOOTING == false, "?")
+  local r = hbot(14, 15)
+  ORD.note_human_shooting(r.st, r.w, r.inf, 100)
+  ORD.human_near_suicide(r.st, r.w, r.inf, 100)
+  check("shooting rule: a human 5 away who is not shooting: no run",
+        r.st._suicide == nil, "?")
+  r.inf.objects[2] = shell_from(r, 14, 15, 0.9)
+  ORD.note_human_shooting(r.st, r.w, r.inf, 101)
+  ORD.human_near_suicide(r.st, r.w, r.inf, 101)
+  check("shooting rule: a shell from that human on the pill: the run starts",
+        r.st._suicide ~= nil and r.st._suicide.sender == 0, "?")
+
+  r = hbot(14, 15)
+  r.inf.objects[2] = shell_from(r, 14, 15, 0.9)
+  ORD.note_human_shooting(r.st, r.w, r.inf, 100)
+  r.inf.objects[2] = nil
+  ORD.human_near_suicide(r.st, r.w, r.inf, 100 + C.ORDER_HUMAN_SHOOTING_WINDOW_TICKS + 1)
+  check("shooting rule: the last shot is older than the window: no run",
+        r.st._suicide == nil, "?")
+
+  -- A human shell 6 tiles out, flying across the pill line: no.
+  r = hbot(14, 15)
+  local sh = shell_from(r, 14, 15, 0.3)
+  sh.angle = (sh.angle + 64) % 256
+  r.inf.objects[2] = sh
+  ORD.note_human_shooting(r.st, r.w, r.inf, 100)
+  ORD.human_near_suicide(r.st, r.w, r.inf, 100)
+  check("shooting rule: a human shell whose line misses the pill: no run",
+        r.st._suicide == nil, "?")
+
+  -- Human p0 at (13,17), 8.3 tiles from the pill centre, fires at it.  The
+  -- shell has flown 2 tiles; the bot sits ON the line between the human and
+  -- the pill (where SUICIDE_PACE_AHEAD_TILES puts it).  The shell's 16-point
+  -- direction is 4 brads off; the exact angle is what counts.
+  r = hbot(13, 17)
+  local s8 = shell_from(r, 13, 17, 0.25)
+  r.inf.tankx = math.floor(13 * 256 + (20 * 256 + 128 - 13 * 256) * 0.15)
+  r.inf.tanky = math.floor(17 * 256 + (20 * 256 + 128 - 17 * 256) * 0.15)
+  r.inf.objects[2] = s8
+  ORD.note_human_shooting(r.st, r.w, r.inf, 100)
+  ORD.human_near_suicide(r.st, r.w, r.inf, 100)
+  check("shooting rule: a human shell from ~8 tiles, bot on the line: the run starts",
+        r.st._suicide ~= nil and r.st._suicide.sender == 0,
+        string.format("angle=%d dir=%d", s8.angle, s8.direction))
+
+  -- The BOT'S OWN shell hits the pill while the human watches, facing the
+  -- pill from 7.8 tiles: not the human shooting.
+  r = hbot(15, 15)
+  r.inf.objects[1].direction = U.aim_at(15 * 256, 15 * 256, 20 * 256 + 128, 20 * 256 + 128)
+  ORD.note_human_shooting(r.st, r.w, r.inf, 100)
+  r.inf.objects[2] = shell_from(r, 10, 10, 0.95, 1)     -- owner p1 = this bot
+  r.w.pills[5].health = 9
+  ORD.note_human_shooting(r.st, r.w, r.inf, 101)
+  ORD.human_near_suicide(r.st, r.w, r.inf, 101)
+  check("shooting rule: the bot's own shell hits the pill, human watching: no run",
+        r.st._suicide == nil, "?")
+  check("shooting rule: the bot's own hit marks no human as shooting",
+        ORD.human_shooters(r.st, 5, 101) == nil, "?")
+
+  -- An ally BOT's shell and a pill's shell on the pill: not a human.
+  r = hbot(14, 15)
+  r.inf.player_bots = 0x06
+  r.inf.objects[2] = shell_from(r, 14, 15, 0.9, 2)
+  r.inf.objects[3] = shell_from(r, 14, 15, 0.9, 255)
+  ORD.note_human_shooting(r.st, r.w, r.inf, 100)
+  check("shooting rule: an ally bot's or a pill's shell is not a human shot",
+        ORD.human_shooters(r.st, 5, 100) == nil, "?")
+
+  check("ORDER_HUMAN_FACE_BRADS is gone (no damage reading)",
+        C.ORDER_HUMAN_FACE_BRADS == nil and C.PRESETS.keel.ORDER_HUMAN_FACE_BRADS == nil, "?")
+end
+
+-- ATTACK PING = CHARGE NOW (PING_ATTACK_CHARGE_NOW, 2026-10-02).  An ATTACK
+-- ping on its own, on the pill the bot's attack_pill goal is after, from a
+-- human team-mate.
+do
+  check("charge-now is on live", C.PING_ATTACK_CHARGE_NOW == true, "?")
+  check("keel turns charge-now off", C.PRESETS.keel.PING_ATTACK_CHARGE_NOW == false, "?")
+  local function cbot()
+    local r = BOT(1, 10, 10)
+    r.st.goal = { kind = "attack_pill", target_id = 5, mx = 20, my = 20 }
+    return r
+  end
+  local r = cbot()
+  attack_ping(r, 100)
+  check("charge-now: an ATTACK ping on the bot's own target starts it",
+        r.st._charge_now ~= nil and r.st._charge_now.tid == 5 and r.st._suicide == nil, "?")
+  ORD.charge_now_check(r.st, r.w, r.inf, 101)
+  check("charge-now: it stands while the goal is on that pill", r.st._charge_now ~= nil, "?")
+  r.st.goal = { kind = "refuel" }
+  ORD.charge_now_check(r.st, r.w, r.inf, 102)
+  check("charge-now: it ends when the goal ends", r.st._charge_now == nil, "?")
+
+  r = cbot()
+  attack_ping(r, 100, 30, 30)
+  check("charge-now: an ATTACK ping somewhere else: nothing", r.st._charge_now == nil, "?")
+
+  r = cbot()
+  r.st.goal = { kind = "attack_pill", target_id = 9, mx = 60, my = 60 }
+  attack_ping(r, 100)
+  check("charge-now: a ping on a pill that is not its target: nothing",
+        r.st._charge_now == nil, "?")
+
+  r = cbot()
+  attack_ping(r, 100)
+  r.inf.events = { ping(1, 0, 20, 20) }
+  ORD.on_events(r.st, r.w, r.inf, 110)
+  r.inf.events = {}
+  check("charge-now: a caution on the pill ends it", r.st._charge_now == nil, "?")
+  r = cbot()
+  attack_ping(r, 100)
+  r.inf.events = { ping(1, 0, 10, 10) }
+  ORD.on_events(r.st, r.w, r.inf, 110)
+  r.inf.events = {}
+  check("charge-now: a caution on the bot ends it", r.st._charge_now == nil, "?")
+
+  r = cbot()
+  attack_ping(r, 100)
+  r.w.pills[5].health = 0
+  ORD.charge_now_check(r.st, r.w, r.inf, 101)
+  check("charge-now: it ends when the pill dies", r.st._charge_now == nil, "?")
+
+  r = cbot()
+  attack_ping(r, 100)
+  ORD.on_death(r.st, r.inf)
+  check("charge-now: it ends when the tank dies", r.st._charge_now == nil, "?")
+
+  C.PING_ATTACK_CHARGE_NOW = false
+  r = cbot()
+  attack_ping(r, 100)
+  check("PING_ATTACK_CHARGE_NOW=false: a lone ATTACK ping does nothing",
+        r.st._charge_now == nil, "?")
+  C.PING_ATTACK_CHARGE_NOW = true
+
+  -- The double ping is still the suicide run, not a charge.
+  local b = sbot(); settle(b, 101, 115); attack_ping(b, 125)
+  check("charge-now: bot-command + ATTACK double ping is still the suicide run",
+        b.st._suicide ~= nil and b.st._charge_now == nil, "?")
+
+  -- CHARGE NOW IGNORES SAFETY (C.CHARGE_NOW_IGNORE_SAFETY): the bot's own
+  -- armour, trees and ammo no longer stop the charge.
+  check("charge-now ignores safety live", C.CHARGE_NOW_IGNORE_SAFETY == true, "?")
+  check("keel turns the safety waiver off",
+        C.PRESETS.keel.CHARGE_NOW_IGNORE_SAFETY == false, "?")
+  r = cbot()
+  attack_ping(r, 100)
+  r.inf.armour, r.inf.shells, r.inf.trees = 2, 0, 0
+  local cg = r.st.goal
+  check("charge-now: charge_now_holds while the goal is on the pill",
+        GOALS.charge_now_holds(r.st) == true, "?")
+  local pg = GOALS.pick_goal(r.st, r.w, r.inf, true)
+  check("charge-now: pick_goal at armour 2, 0 shells keeps the attack goal",
+        pg == cg, tostring(pg and pg.kind))
+  local hp = C.ATTACK_PILL_UNSAFE_HP_THRESHOLD
+  local low = { armour = 0 }
+  check("armour floor still applies without charge-now",
+        ATTACK.armour_unsafe_for_pill_take(low, hp, false, {}) ~= nil, "?")
+  check("charge-now: no armour-floor abort",
+        ATTACK.armour_unsafe_for_pill_take(low, hp, false, { _charge_now = true }) == nil, "?")
+  C.CHARGE_NOW_IGNORE_SAFETY = false
+  check("CHARGE_NOW_IGNORE_SAFETY=false: the armour floor is back",
+        ATTACK.armour_unsafe_for_pill_take(low, hp, false, { _charge_now = true }) ~= nil, "?")
+  C.CHARGE_NOW_IGNORE_SAFETY = true
+  r.st.goal = { kind = "refuel" }
+  check("charge-now: charge_now_holds is false once the goal leaves the pill",
+        GOALS.charge_now_holds(r.st) == false, "?")
+end
+
+-- A HUMAN SHOOTING THE PILL = CHARGE NOW (HUMAN_SHOOTING_CHARGE_NOW,
+-- 2026-10-02).  Human p0 at (26,20): 6 tiles from pill 5, 16 from the bot
+-- at (10,10), so no human-near suicide run can start.  The steps are the
+-- order init.lua runs them in.
+do
+  check("human-shooting charge is on live", C.HUMAN_SHOOTING_CHARGE_NOW == true, "?")
+  check("keel turns the human-shooting charge off",
+        C.PRESETS.keel.HUMAN_SHOOTING_CHARGE_NOW == false, "?")
+  local function think(r, t)
+    r.st.tick = t
+    ORD.note_human_shooting(r.st, r.w, r.inf, t)
+    if not r.st._suicide then ORD.human_near_suicide(r.st, r.w, r.inf, t) end
+    if r.st._suicide then ORD.suicide_lock(r.st, r.w, r.inf, t) end
+    ORD.human_shooting_charge(r.st, r.w, r.inf, t)
+    ORD.charge_now_check(r.st, r.w, r.inf, t)
+  end
+  local function shbot()
+    local r = hbot(26, 20)
+    r.st.orders.held = nil                  -- a goal the bot chose itself
+    return r
+  end
+  local r = shbot()
+  think(r, 100)
+  check("human-shooting: a human who is not shooting: no charge",
+        r.st._charge_now == nil, "?")
+  r.inf.objects[2] = shell_from(r, 26, 20, 0.9)
+  think(r, 101)
+  check("human-shooting: a shell from the human on the pill starts charge now (self-chosen goal)",
+        r.st._charge_now ~= nil and r.st._charge_now.tid == 5
+        and r.st._charge_now.sender == 0 and r.st._suicide == nil,
+        tostring(r.st._charge_now and r.st._charge_now.sender))
+  r.inf.objects[2] = nil
+  think(r, 102)
+  check("human-shooting: the charge stands while the goal is on the pill",
+        r.st._charge_now ~= nil, "?")
+
+  C.HUMAN_SHOOTING_CHARGE_NOW = false
+  r = shbot()
+  r.inf.objects[2] = shell_from(r, 26, 20, 0.9)
+  think(r, 101)
+  check("HUMAN_SHOOTING_CHARGE_NOW=false: no charge", r.st._charge_now == nil, "?")
+  C.HUMAN_SHOOTING_CHARGE_NOW = true
+
+  -- A CAUTION ping on the pill cancels it, and it does not come back on the
+  -- same pill until the bot has had some other goal.
+  r = shbot()
+  r.inf.objects[2] = shell_from(r, 26, 20, 0.9)
+  think(r, 101)
+  r.inf.events = { ping(1, 0, 20, 20) }
+  ORD.on_events(r.st, r.w, r.inf, 110)
+  r.inf.events = {}
+  check("human-shooting: a caution on the pill ends the charge", r.st._charge_now == nil, "?")
+  think(r, 111)
+  check("human-shooting: after the caution, still shooting: no restart",
+        r.st._charge_now == nil, "?")
+  r.st.goal = { kind = "none" }
+  think(r, 112)
+  r.st.goal = { kind = "attack_pill", target_id = 5, mx = 20, my = 20 }
+  think(r, 113)
+  check("human-shooting: a gap with no goal does not lift the caution",
+        r.st._charge_now == nil, "?")
+  r.st.goal = { kind = "refuel" }
+  think(r, 114)
+  r.st.goal = { kind = "attack_pill", target_id = 5, mx = 20, my = 20 }
+  think(r, 115)
+  check("human-shooting: after some other goal the rule arms again",
+        r.st._charge_now ~= nil, "?")
+
+  -- NO DROP-AND-REPICK LOOP.  The straight rush finds no tile beside the
+  -- pill (_hardline_abort): the goal is kept and falls back to the careful
+  -- way, and when the goal does drop and the same pill comes back while
+  -- the human keeps shooting, the charge does not restart (one "Charging
+  -- pill" line only) until CHARGE_NOW_ABORT_WAIVE_TICKS have passed.
+  check("keel value of CHARGE_NOW_ABORT_WAIVE_TICKS is set",
+        C.PRESETS.keel.CHARGE_NOW_ABORT_WAIVE_TICKS ~= nil, "?")
+  local function n_charging(b)
+    local n = 0
+    for _, l in ipairs((b.st.orders or {}).say or {}) do
+      if l:match("Charging pill") then n = n + 1 end
+    end
+    return n
+  end
+  r = shbot()
+  r.st.orders.say = {}
+  r.inf.objects[2] = shell_from(r, 26, 20, 0.9)
+  think(r, 101)
+  check("abort loop: the charge starts once", r.st._charge_now ~= nil and n_charging(r) == 1,
+        tostring(n_charging(r)))
+  local cg = r.st.goal
+  cg._charge_now = true
+  cg.substate = "kill_hardline"
+  cg._kill_rush, cg._kill_rush_decided = true, true
+  cg._hardline_abort = "no navigable tile beside pill"
+  cg._hardline_bad = { [1] = true }
+  r.w.pill_at = r.w.pill_at or {}
+  ATTACK.update_attack_substate(cg, r.st, r.w, r.inf)
+  check("abort loop: a kill_hardline dead end keeps the goal, careful way",
+        r.st.goal == cg and cg.kind == "attack_pill" and cg.substate ~= "kill_hardline"
+        and cg._charge_now_careful == true and cg._hardline_abort == nil
+        and r.st._charge_now ~= nil,
+        tostring(r.st.goal and r.st.goal.kind) .. "/" .. tostring(cg.substate))
+  -- The goal drops anyway (any other reason) and the same pill comes back,
+  -- over and over, with the human still shooting.
+  for t = 110, 400, 10 do
+    r.st.goal = { kind = "none" }
+    think(r, t)
+    r.st.goal = { kind = "attack_pill", target_id = 5, mx = 20, my = 20 }
+    r.inf.objects[2] = shell_from(r, 26, 20, 0.9)
+    think(r, t + 1)
+  end
+  check("abort loop: no repeated \"Charging pill\" announcements",
+        n_charging(r) == 1 and r.st._charge_now == nil, tostring(n_charging(r)))
+  think(r, 101 + C.CHARGE_NOW_ABORT_WAIVE_TICKS + 1)
+  check("abort loop: after CHARGE_NOW_ABORT_WAIVE_TICKS it arms again",
+        r.st._charge_now ~= nil and n_charging(r) == 2, tostring(n_charging(r)))
+  -- A real other goal lifts the waiver early.
+  r = shbot()
+  r.inf.objects[2] = shell_from(r, 26, 20, 0.9)
+  r.st._charge_now_abort = { tid = 5, t = 100 }
+  think(r, 101)
+  check("abort loop: the waiver holds the same pill", r.st._charge_now == nil, "?")
+  r.st.goal = { kind = "refuel" }
+  think(r, 102)
+  r.st.goal = { kind = "attack_pill", target_id = 5, mx = 20, my = 20 }
+  think(r, 103)
+  check("abort loop: some other real goal lifts the waiver", r.st._charge_now ~= nil, "?")
+
+  -- THE REAL THINK ORDER: the careful way drops the goal and goal selection
+  -- picks the same pill again on the very next think, before
+  -- charge_now_check runs (no "none" think between).  The charge record
+  -- survives (same kind, same pill) and the new goal table has no
+  -- _charge_now, so the charge block runs again: inside the abort window it
+  -- must go the careful way, never back into kill_hardline.
+  r = shbot()
+  r.st.orders.say = {}
+  r.inf.objects[2] = shell_from(r, 26, 20, 0.9)
+  think(r, 101)
+  r.w.pill_at = r.w.pill_at or {}
+  local g1 = r.st.goal
+  g1.substate = "plan_position"
+  ATTACK.update_attack_substate(g1, r.st, r.w, r.inf)
+  check("repick order: first pick with no blocker rushes (kill_hardline)",
+        g1._charge_now == true and g1.substate == "kill_hardline"
+        and g1._charge_now_careful == nil, tostring(g1.substate))
+  g1._hardline_abort = "no navigable tile beside pill"
+  g1._hardline_bad = { [1] = true }
+  ATTACK.update_attack_substate(g1, r.st, r.w, r.inf)
+  check("repick order: the dead end goes careful and arms the abort memory",
+        g1._charge_now_careful == true and g1.substate ~= "kill_hardline"
+        and r.st._charge_now_abort ~= nil and r.st._charge_now_abort.tid == 5,
+        tostring(g1.substate))
+  local rush_again, all_careful = false, true
+  for t = 110, 400, 10 do
+    -- careful way drops the goal; selection repicks pill 5 at once
+    local g2 = { kind = "attack_pill", target_id = 5, mx = 20, my = 20,
+                 substate = "plan_position" }
+    r.st.goal = g2
+    r.inf.objects[2] = shell_from(r, 26, 20, 0.9)
+    think(r, t)                              -- record survives: same pill
+    if r.st._charge_now == nil then all_careful = false end
+    ATTACK.update_attack_substate(g2, r.st, r.w, r.inf)
+    if g2.substate == "kill_hardline" or g2._kill_rush then rush_again = true end
+    if not (g2._charge_now == true and g2._charge_now_careful == true) then
+      all_careful = false
+    end
+  end
+  check("repick order: inside the window every repick goes careful, never kill_hardline",
+        not rush_again and all_careful, tostring(rush_again) .. "/" .. tostring(all_careful))
+  check("repick order: still one \"Charging pill\" line", n_charging(r) == 1,
+        tostring(n_charging(r)))
+  -- Past the window the abort memory lapses and a repick may try the rush again.
+  local g3 = { kind = "attack_pill", target_id = 5, mx = 20, my = 20,
+               substate = "plan_position" }
+  r.st.goal = g3
+  think(r, 101 + C.CHARGE_NOW_ABORT_WAIVE_TICKS + 1)
+  ATTACK.update_attack_substate(g3, r.st, r.w, r.inf)
+  check("repick order: after CHARGE_NOW_ABORT_WAIVE_TICKS the rush is allowed again",
+        r.st._charge_now_abort == nil and g3.substate == "kill_hardline"
+        and g3._charge_now_careful == nil, tostring(g3.substate))
+
+  -- Ordered + a shooting human within ORDER_HUMAN_NEAR_SUICIDE_TILES: the
+  -- suicide run wins, no charge now beside it.
+  r = hbot(14, 15)
+  r.inf.objects[2] = shell_from(r, 14, 15, 0.9)
+  think(r, 101)
+  check("human-shooting: the human-near suicide run takes precedence",
+        r.st._suicide ~= nil and r.st._charge_now == nil, "?")
 end
 
 -- =========================================================================

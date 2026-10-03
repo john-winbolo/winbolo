@@ -4,28 +4,19 @@ QUICK INFO:
 
 1) SMART PING
 
-   - Smart ping using BOT COMMAND on a pill, tanks, or land tile to command
-     the bot.
-   - Closest bot will respond (closest by ROUTE, and only a bot that is free)
-   - A bot that is working on an order you gave keeps it, and a free bot
-     goes. If no bot is free, the nearest busy bot switches to the new ping
-     (a bot on a decoy hold never does). If none can, one bot says
-     "All bots busy".
-   - Ping a pill, base or tank again to add a second bot, etc. Ping the same
-     open ground again and the bot there just keeps going; if no bot is on
-     that order any more (it died or let it go), one bot is sent again.
-
-Ping "CAUTION" on a target or bot to cancel; on a bot holding nothing it
-retreats it. A ping on an ALLY BOT selects it for your next order.
+   - Smart ping using BOT COMMAND on a pill, tanks, or land tile to command the bot.
+   - Closest bot will respond
+   - Keep pinging to add a second bot, etc.
+   - Ping "CAUTION" on a target or bot to cancel.
+   - Ping "ATTACK" on a pill a bot is attacking to make it charge in to
+     shell range now and keep firing, ignoring its own armour, trees and
+     ammo. It pushes closer to stay ahead of you.
+     A "CAUTION" ping on the bot or the pill stops the charge.
+   - Shoot at a pill a bot is attacking and it charges in the same way.
 
 2) SHOOTING
 
-   - Shoot 3 times in a row to command closest bot to go there for 10 seconds
-     (good for decoys).
-
-All three must run their FULL RANGE onto one open square inside two seconds
-with nothing else of yours fired either side. Only bots within 14 squares of
-YOU hear it, and the 10 seconds start on arrival.
+   - Shoot 3 times in a row to command closest bot to go there for 10 seconds (good for decoys).
 
 3) CHAT
 
@@ -64,8 +55,8 @@ capture look at the ones not ours, defend at ours.
 Both take "off". Pings start ON, chat starts OFF. "bot chat off" silences
 the goal lines only; an answer you are owed still comes back.
 
-NOTE: Bots <= 7 tiles from a human will suicide when attacking a pill (no
-wall blockers built, for brevity).
+NOTE: Bots <= 7 tiles from a human build no wall blockers when attacking a
+pill. They make a suicide run only when that human is shooting at the pill.
 
 NOTE: Pillbox repositioning is off when human allies are present. Say
 "repositioning on" to turn it back on.
