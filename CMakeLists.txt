@@ -4380,6 +4380,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # arrays, plus the small-explosion sweep's off-by-one.
     tests/unit/test_tkexp_lgm_pairing.c
     tests/unit/test_input_gate.c
+    tests/unit/test_input_source.c
+    src/gui/sdl3/input_source.c
     tests/unit/test_key_claims.c
     tests/unit/test_server_address_parse.c
     # The map chooser's "Scenarios only" row test, header-only.
@@ -5826,6 +5828,7 @@ set(_unit_test_names
     players_oob_index_safe
     control_oob_player_dropped
     input_gate_taxonomy
+    input_source_autoslow
     key_claims
     addrparse_host_only
     addrparse_host_port
