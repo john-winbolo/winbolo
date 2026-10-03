@@ -994,15 +994,9 @@ void gameFrontSaveCurrentPrefs(void) {
 void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
   steam_clear_rich_presence();
   clientMutexWaitFor();
-  /* No tank-readback here. The keys dialog persists useAutoslow /
-   * useAutohide directly to INI on OK (immediate-flush) and nothing
-   * during gameplay mutates tank->autoSlowdown after the initial
-   * clientSimSetTankAutoSlowdown — so reading it back would just
-   * round-trip the same value most of the time. The exception was
-   * the buggy case where clientSimSetTankAutoSlowdown ran before
-   * clientSimSetupSelf existed: it no-op'd on the NULL tank pointer,
-   * then tankCreate later defaulted autoSlowdown to FALSE, and this
-   * readback clobbered the user's INI choice with that default. */
+  /* Keep the user's choice, not the tank's effective state: controller
+   * input can temporarily enable auto-slowdown without changing the pref.
+   * The keys dialog updates useAutoslow / useAutohide directly on OK. */
   (void)gamePlayed;
   brainsHandlerShutdown();
   /* Stop the map-preview worker. Idempotent: a no-op if the chooser
@@ -4466,13 +4460,6 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   timeLen = (int32_t)atol(buff);
   prefsGetString("GAME OPTIONS", "Auto Slowdown", autoSlowDefault, buff, FILENAME_MAX);
   *pUseAutoslow = YESNO_TO_TRUEFALSE(buff[0]);
-  /* A connected controller forces auto-slowdown on, regardless of the
-     saved pref — analog-stick steering with no slowdown is unmanageable.
-     This overrides at apply time only; the stored pref is left untouched,
-     so it takes over again once the controller is disconnected. */
-  if (inputGamepadIsConnected()) {
-    *pUseAutoslow = TRUE;
-  }
   prefsGetString("GAME OPTIONS", "Auto Show-Hide Gunsight", autoHideDefault, buff, FILENAME_MAX);
   *pUseAutohide = YESNO_TO_TRUEFALSE(buff[0]);
 

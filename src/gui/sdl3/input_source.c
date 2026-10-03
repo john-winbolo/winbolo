@@ -109,3 +109,8 @@ InputSource inputSourceCurrent(void) {
   /* Otherwise follow the most recently used device. */
   return s_current;
 }
+
+bool inputSourceAutoSlowdown(bool savedPreference) {
+  return savedPreference ||
+         (s_haveInput && inputSourceCurrent() == INPUT_SOURCE_GAMEPAD);
+}

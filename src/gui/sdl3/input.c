@@ -40,6 +40,7 @@
 #include "turn_tap.h"
 #include "input_touch.h"
 #include "input_gamepad.h"
+#include "input_source.h"
 #include "build_cursor.h"
 #include "sdl3imgui.h"
 #include "sdl3draw.h"
@@ -50,6 +51,7 @@
 #endif
 
 extern bool smoothScrollingEnabled;
+extern bool useAutoslow;
 
 /* Smooth-scroll speed: game pixels advanced per scroll tick.
    Tile = 16 game pixels, game runs at 20 ticks/sec, so:
@@ -624,6 +626,11 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
   static BYTE gunsightKeyCount = 0;
   tankButton tb;
   buildSelect curSelect;
+
+  /* Runtime controller assistance must never replace the saved preference.
+   * Update even while a menu has focus so switching device or unplugging
+   * a controller restores the user's choice on the next input sample. */
+  clientSimSetTankAutoSlowdown(cs, inputSourceAutoSlowdown(useAutoslow));
 
   if (isMenu == TRUE || sdl3ImguiWantsKeyboard() || !appHasFocus()) {
     turnTapReset(&leftTurnTap);

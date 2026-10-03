@@ -2629,6 +2629,7 @@ int run_tkexp_lgm_pairing(void);
  * input, a focus-stealing modal, a popup/menu on the stack, a defocused
  * window) and never for the transient alliance/vote notifications. */
 int run_input_gate_taxonomy(void);
+int run_input_source_autoslow(void);
 
 /* Game-binding claims (test_key_claims.c). keyIsClaimedByGame() must report
  * every keyItems field as owned by the game, so a second window that drives

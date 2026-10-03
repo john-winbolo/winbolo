@@ -1028,7 +1028,7 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
 void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
   clientMutexWaitFor();
   if (gamePlayed == TRUE) {
-    useAutoslow = clientSimGetTankAutoSlowdown(humanSim);
+    /* Auto-slowdown on the tank may include temporary controller help. */
     useAutohide = clientSimGetTankAutoHideGunsight(humanSim);
   }
   brainsHandlerShutdown();
@@ -1714,7 +1714,7 @@ void gameFrontPumpDirty(void) {
 
 void gameFrontSaveTankPrefs(ClientSim *cs) {
   if (cs != NULL) {
-    useAutoslow = clientSimGetTankAutoSlowdown(cs);
+    /* Keep the saved auto-slowdown choice, not the runtime override. */
     useAutohide = clientSimGetTankAutoHideGunsight(cs);
   }
   gameFrontSaveCurrentPrefs();
