@@ -3450,24 +3450,26 @@ end
 -- has had some other real goal ("none", the gap between goals, does not
 -- count: a cancelled straight charge clears the goal to "none").
 function M.human_shooting_charge(state, world, info, now)
-  if not C.HUMAN_SHOOTING_CHARGE_NOW or state._suicide then return false end
   local g = state.goal
   local tid = g and g.kind == "attack_pill" and g.target_id
-  local wv = state._charge_now_waived
-  if wv and g and g.kind and g.kind ~= "none" and tid ~= wv then
-    state._charge_now_waived = nil
-    wv = nil
-  end
   -- A charge on this pill whose straight rush found no tile beside the pill
   -- (attack.lua, kill_hardline abort; state._charge_now_abort = {tid, t})
   -- does not restart for CHARGE_NOW_ABORT_WAIVE_TICKS, or until the bot has
   -- had some other real goal, so a goal that drops and comes back cannot
-  -- loop "Charging pill #N".
+  -- loop "Charging pill #N".  This clear runs even with
+  -- HUMAN_SHOOTING_CHARGE_NOW off: attack.lua also reads the memory for an
+  -- ATTACK-ping charge.
   local ab = state._charge_now_abort
   if ab and ((g and g.kind and g.kind ~= "none" and tid ~= ab.tid)
              or now - (ab.t or 0) >= (C.CHARGE_NOW_ABORT_WAIVE_TICKS or 500)) then
     state._charge_now_abort = nil
     ab = nil
+  end
+  if not C.HUMAN_SHOOTING_CHARGE_NOW or state._suicide then return false end
+  local wv = state._charge_now_waived
+  if wv and g and g.kind and g.kind ~= "none" and tid ~= wv then
+    state._charge_now_waived = nil
+    wv = nil
   end
   if not tid or wv == tid or (ab and ab.tid == tid) then return false end
   local r = state._charge_now
