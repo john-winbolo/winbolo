@@ -2327,38 +2327,33 @@ int serverSimDropPickedScenarios(ServerSim *sim) {
 }
 
 /* A map commit. The map the host just chose is the newest choice, so when it
-   brings a scenario of its own that scenario is what plays: every picked
-   scenario comes off the list first, and the decision below then finds no
-   pick that would replace the map's own. Mods stay, because a mod plays over
-   the map's scenario and never replaced it.
+   brings a scenario of its own that scenario is what plays, in place of a
+   scenario picked before it. Mods stay, because a mod plays over the map's
+   scenario and never replaced it.
+
+   The decision itself makes the call (scnDecideScenario,
+   src/scenario/scenario_host.c), because only it reads the map's script: it
+   knows whether that script is a scenario or a mod, and whether it loaded.
+   The picked scenarios come off the list only once the map's own scenario
+   has attached in their place, so a map whose script is a mod, or whose
+   script will not load, leaves the picks where they were. This only says
+   that the map is the newer choice, for as long as the decision runs.
 
    The other order — a scenario picked after the map — still replaces the
    map's own, in the decision itself: there the pick is the newer choice.
 
    Only in a lobby. A round started from the command line or a rotation with
    no lobby has no host choosing between the two, and the list it was given
-   is the operator's.
-
-   serverSimScenarioMapIsScripted answers false where scripts are off or the
-   map is an upload whose script will not run, so a map whose own script
-   cannot play leaves the picks alone. */
+   is the operator's. */
 void serverSimScenarioOnMapCommitted(ServerSim *sim, const char *mapPath) {
     if (sim == NULL) return;
-    if (serverSimIsLobbyEnabled(sim) && mapPath != NULL &&
-        mapPath[0] != '\0' && serverSimScenarioMapIsScripted(sim, mapPath)) {
-        int dropped = serverSimDropPickedScenarios(sim);
-
-        if (dropped > 0) {
-            char msg[256];
-
-            SDL_snprintf(msg, sizeof(msg),
-                         "scenario: the map brings its own scenario; %d "
-                         "picked scenario%s taken off the list",
-                         dropped, (dropped == 1) ? "" : "s");
-            serverSimConsoleMessage(msg);
-        }
-    }
+    sim->scenarioMapIsNewer = serverSimIsLobbyEnabled(sim);
     serverSimScenarioOnMapChanged(sim, mapPath);
+    sim->scenarioMapIsNewer = false;
+}
+
+bool serverSimScenarioMapIsNewer(const ServerSim *sim) {
+    return sim != NULL && sim->scenarioMapIsNewer;
 }
 
 /* Put back the AI policy a needs_bots list moved the lobby off, and hold

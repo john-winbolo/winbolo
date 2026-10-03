@@ -6688,7 +6688,11 @@ set(_unit_test_names
     scenario_compose_off_then_on
     scenario_compose_off_full_list_shows_all
     scenario_compose_commit_map_drops_picked
-    scenario_compose_commit_map_drops_picked_off
+    scenario_compose_preview_cancel_keeps_picks
+    scenario_compose_commit_off_keeps_picks
+    scenario_compose_commit_mod_map_keeps_picks
+    scenario_compose_commit_broken_map_keeps_picks
+    scenario_compose_off_on_keeps_map_row_place
     scenario_compose_commit_no_lobby_keeps_picks
     scenario_compose_drop_picked_scenarios
     scenario_compose_fallback_strict

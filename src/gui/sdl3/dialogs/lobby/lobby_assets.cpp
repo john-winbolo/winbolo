@@ -687,20 +687,18 @@ void lobbyRenderScenarioInfoLines(ClientSim *cs, float s) {
         return;
     }
 
-    /* One line a scenario row. A round that plays has one such row, but
-       with Mods/Scenario off on a map that brings its own script the list
-       holds two: the map's own, which plays, and the host's picked one,
-       which the server keeps for when the box goes back on. Both are drawn,
-       so a joiner is shown the switched-off pick the same way a plain map
-       shows it. */
+    /* One line a scenario row. A round that plays has one such row. With
+       Mods/Scenario off nothing plays, and the server publishes no row for
+       the map's own script, so the rows are the host's picks, which the
+       server keeps for when the box goes back on. Each is drawn, dimmed, so
+       a joiner is shown the switched-off pick the same way on any map. */
     for (int scnRow = 0; scenario != NULL && scnRow < lobbyScriptRowCount(cs);
          scnRow++) {
         /* A scenario the host picked is kept out of the round while the
            Mods/Scenario setting is off, the same as the mods, so it is
            dimmed and noted the way the mods line below is, the map's own
-           script included. Pushed
-           here and popped after the note, with nothing that can return
-           between the two. */
+           script included. Pushed here and popped after the note, with
+           nothing that can return between the two. */
         bool scnOff;
 
         if (lobbyScriptRowIsMod(cs, scnRow)) continue;
@@ -743,10 +741,10 @@ void lobbyRenderScenarioInfoLines(ClientSim *cs, float s) {
            when they are not. The note is what answers it.
 
            Each name is dimmed on its own, by lobbyScenarioScriptLinks, and
-           not the line as a whole: a map whose own script is a mod still
-           plays it with the box off, and that name stays at full strength.
-           The label and the note are dimmed only as far as the names are —
-           the label when every mod on the line is off, the note when any is.
+           not the line as a whole. With the box off every name is off,
+           because nothing plays, the map's own script included; the label
+           and the note are still dimmed only as far as the names are — the
+           label when every mod on the line is off, the note when any is.
            Dimmed with an alpha style var and not BeginDisabled, because the
            names are links and a disabled link cannot be pressed. Each push
            is popped with nothing that can return between the two. */
