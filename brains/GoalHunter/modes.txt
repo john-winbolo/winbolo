@@ -54,3 +54,12 @@ about = Builds its pillboxes close together in one cluster at home instead of sp
 levels = easy:Easy:1, medium:Medium:2, hard:Hard:3
 default = hard
 standard_levels = yes
+
+# Turtle2 (local test mode, not for a PR): Turtle plus TURTLE_BASE_NEST, the
+# same as preset=turtle2. constants.lua builds its bundles from Turtle's.
+[turtle2]
+label = Turtle2
+about = Test mode: Turtle plus the nest base rules (TURTLE_BASE_NEST).
+levels = easy:Easy:1, medium:Medium:2, hard:Hard:3
+default = hard
+standard_levels = yes
