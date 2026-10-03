@@ -1532,6 +1532,18 @@ function M.note_human_shooting(state, world, info, now)
   local line_w = (C.ORDER_HUMAN_SHOT_LINE_TILES or 1.0) * 256.0
   -- Flight left when the shell carries no life: shell reach at full sight.
   local reach_w = ((C.GUNSIGHT_MAX or 13.875) / 2.0) * 256.0
+  -- Enemy tanks in view, for the line reading below: a shell aimed at an
+  -- enemy tank near the pill is not a shot at the pill.
+  local OT, OH = _G.OBJECT_TANK, _G.OBJECT_HOSTILE or 0
+  local foes = nil
+  if OT then
+    for _, ob in ipairs(info.objects or {}) do
+      if ob.type == OT and bit.band(ob.info or 0, OH) ~= 0 then
+        foes = foes or {}
+        foes[#foes + 1] = ob
+      end
+    end
+  end
   for _, s in ipairs(info.objects or {}) do
     local pn = s.owner
     if s.type == OS and pn and pn >= 0 and pn < 32 and pn ~= me
@@ -1550,7 +1562,19 @@ function M.note_human_shooting(state, world, info, now)
         local fwd  = dx * vx + dy * vy
         local side = math.abs(dx * vy - dy * vx)
         local left = ((s.life or 0) > 0) and (s.life * (C.SHELL_SPEED or 32)) or reach_w
-        if fwd > 0 and fwd <= left + line_w and side <= line_w then how = "line" end
+        if fwd > 0 and fwd <= left + line_w and side <= line_w then
+          how = "line"
+          -- An enemy tank on the same line, before the pill, takes the
+          -- shell first: the human is shooting at the tank.
+          for _, t in ipairs(foes or {}) do
+            local tx, ty = (t.x or 0) - sx, (t.y or 0) - sy
+            local tf = tx * vx + ty * vy
+            if tf > 0 and tf < fwd and math.abs(tx * vy - ty * vx) <= line_w then
+              how = nil
+              break
+            end
+          end
+        end
       end
       if how then
         if r.by[pn] ~= now then
