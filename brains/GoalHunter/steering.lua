@@ -2872,10 +2872,11 @@ local function attack_pill_steer(state, world, info, goal)
     -- reach, clear line) the bot pushes in ONLY to keep that lead (Andrew,
     -- 2026-10-02: "the push ahead while engaging should only happen to stay
     -- ahead of a human"): with the lead kept, or no human in the object
-    -- list, it holds still and keeps firing, creeping only while the pill is
-    -- still past the shell's true reach. Out of aim_mode: the old cruise
-    -- speed. Pacing only sets the throttle; it never touches the turn keys
-    -- or the fire gate. The CHARGE NOW rush paces the same way.
+    -- list, it holds at max shell reach and keeps firing, pushing back in at
+    -- top speed whenever pill hits shove it out past (reach -
+    -- SUICIDE_HOLD_MARGIN_TILES). Out of aim_mode: the old cruise speed.
+    -- Pacing only sets the throttle; it never touches the turn keys or the
+    -- fire gate. The CHARGE NOW rush paces exactly the same way.
     local cap  = C.NAV_CRUISE_SPEED
     local pace = "off"
     local ahead = (goal._ping_suicide or goal._charge_now)
@@ -2898,14 +2899,13 @@ local function attack_pill_steer(state, world, info, goal)
       if hd and hd - dist_to_pill / 256.0 < ahead then
         cap, pace = C.NAV_TOP_SPEED, "go"
       elseif aim_mode then
-        -- A suicide run holds its standoff at max shell range, but pill hits
+        -- The run holds its standoff at max shell range, but pill hits
         -- shove the tank back: past (range - SUICIDE_HOLD_MARGIN_TILES) it
-        -- floors it back in instead of cruising (Andrew, 2026-10-02).
-        local margin = goal._ping_suicide and (C.SUICIDE_HOLD_MARGIN_TILES or 0) or 0
-        if goal._ping_suicide and dist_to_pill > (shoot_tiles - margin) * 256.0 then
+        -- floors it back in instead of cruising (Andrew, 2026-10-02).  A
+        -- suicide run and a CHARGE NOW rush pace the same way.
+        local margin = C.SUICIDE_HOLD_MARGIN_TILES or 0
+        if dist_to_pill > (shoot_tiles - margin) * 256.0 then
           cap, pace = C.NAV_TOP_SPEED, "push"
-        elseif dist_to_pill > shoot_tiles * 256.0 then
-          pace = "reach"
         else
           cap, pace = 0, "hold"
         end

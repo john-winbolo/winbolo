@@ -4576,15 +4576,20 @@ local function update_attack_substate_body(goal, state, world, info)
   -- the record:
   --   * no blocker standing in this take's wall slots (goal._wall_build_list:
   --     a slot that is a building, half-built wall or pillbox, built this take
-  --     or already there): straight in, firing -- kill_hardline, which aims
-  --     at the pill with the suicide-run aim (steering.lua, SUICIDE_AIM_AT_PILL)
-  --     but is NOT a suicide run (CHARGE_NOW_IGNORE_SAFETY waives armour, flee,
+  --     or already there): in to shell range, firing -- kill_hardline, which
+  --     aims at the pill with the suicide-run aim and paces like the suicide
+  --     run (steering.lua: SUICIDE_AIM_AT_PILL, SUICIDE_PACE_AHEAD_TILES,
+  --     SUICIDE_HOLD_MARGIN_TILES) but is NOT a suicide run (CHARGE_NOW_IGNORE_SAFETY waives armour, flee,
   --     refuel and shell aborts; see constants.lua): the other goal rules still
   --     apply.  A blitz commander also sends GO so its soldiers go in too.
   --   * a blocker standing: the careful way with no waits and no more
-  --     blockers (goal._charge_now_careful; the hooks are marked CHARGE NOW
+  --     blockers (the hooks test goal._charge_now and are marked CHARGE NOW
   --     below: gather_trees, the approach build decision, blitz_wait,
   --     build_walls and the aim anger gate).
+  -- When the straight rush finds no tile beside the pill (kill_hardline's
+  -- _hardline_abort) the goal is NOT dropped: it falls back to the careful
+  -- way (goal._charge_now_careful, which also keeps the 1-HP kill_hardline
+  -- shortcuts off so it does not go back into the same dead end).
   do
     local cn = state._charge_now
     if cn and cn.tid == goal.target_id and not goal._charge_now then
@@ -4599,9 +4604,7 @@ local function update_attack_substate_body(goal, state, world, info)
       print2(string.format("CHARGE_NOW t=%d pill=#%s sub=%s blocker=%s -> %s",
         now, tostring(goal.target_id), tostring(goal.substate), tostring(placed),
         placed and "careful (no waits, no more blockers)" or "kill_hardline"))
-      if placed then
-        goal._charge_now_careful = true
-      else
+      if not placed then
         if goal._blitz and state.squad_role == "c" then
           goal._blitz_go = true        -- init.lua broadcasts bgo from this
           state.squad_blitz_go = true
@@ -5042,7 +5045,8 @@ local function update_attack_substate_body(goal, state, world, info)
       goal._kill_rush_decided = true
       local php    = pill and pill.health or 0
       local panger = pill and pill.anger  or 0
-      if php == 1
+      -- A charge-now that already fell back from kill_hardline stays careful.
+      if php == 1 and not goal._charge_now_careful
          and info.armour >= (C.ATTACK_RUSH_MIN_ARMOUR or 5)
          and panger <= (C.ATTACK_RUSH_MAX_ANGER or 0.34)
          -- Blitz-only: a 1-HP rush is a solo attack unless the blitz already
@@ -6004,6 +6008,22 @@ local function update_attack_substate_body(goal, state, world, info)
   -- ══════════════════════════════════════════════════════════════════
   if goal.substate == "kill_hardline" then
     if goal._hardline_abort then
+      -- CHARGE NOW: no tile beside the pill.  Do not drop the goal (the
+      -- same pill would be picked again and the charge would restart, over
+      -- and over); take the careful charge-now way from plan_position
+      -- (standoff, aim, fire, no waits, no new blockers).  orders.lua does
+      -- not restart a human-shooting charge on this pill for a while.
+      if goal._charge_now then
+        print2(string.format("CHARGE_NOW_CAREFUL t=%d pill=#%s why=%s",
+          now, tostring(goal.target_id), tostring(goal._hardline_abort)))
+        state._charge_now_abort = { tid = goal.target_id, t = now }
+        goal._charge_now_careful = true
+        goal._kill_rush, goal._kill_rush_decided = nil, nil
+        goal._hardline_abort, goal._hardline_bad = nil, nil
+        goal._hardline_mx, goal._hardline_my = nil, nil
+        reset_to_plan_position(state, goal)
+        return
+      end
       clear_attack_goal(state, "kill_hardline abort: " .. tostring(goal._hardline_abort))
       return
     end
@@ -7690,7 +7710,7 @@ local function update_attack_substate_body(goal, state, world, info)
       -- calm enough that we'd open a hardline rush (anger at/below the rush
       -- threshold), switch straight to the dedicated kill_hardline take
       -- instead of continuing the normal aim path.
-      if pill and (pill.health or 0) == 1
+      if pill and (pill.health or 0) == 1 and not goal._charge_now_careful
          and info.armour >= (C.ATTACK_RUSH_MIN_ARMOUR or 5)
          and anger <= (C.ATTACK_RUSH_MAX_ANGER or 0.34)
          and U.mdist(bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8), pmx, pmy) <= (C.HARDLINE_ENGAGE_RANGE or 10) then

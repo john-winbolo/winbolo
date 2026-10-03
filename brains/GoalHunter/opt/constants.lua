@@ -3164,21 +3164,17 @@ M.ORDER_HUMAN_NEAR_SUICIDE_RUN = true   -- keel false
 -- who is near but not shooting still gets the wall skip (attack.lua, no
 -- walls, no tree gather; HUMAN_NEAR_BLITZ_CAP below caps the blitz wait).
 -- "Shooting" means: within the last ORDER_HUMAN_SHOOTING_WINDOW_TICKS brain
--- ticks (50 = 1 s) either
---   * a friendly shell was on or next to the pill (within
---     ORDER_HUMAN_SHOT_NEAR_TILES of its centre) on a line that runs back to
---     that human (the human within ORDER_HUMAN_SHOT_LINE_TILES of the line
---     behind the shell, and within shell reach), or
---   * the pill lost armour while that human was within shell reach of it and
---     facing it (heading within ORDER_HUMAN_FACE_BRADS of the pill).
--- The engine names no shooter for a shell, so this is the best reading the
--- brain has.  orders.note_human_shooting keeps the record (per human, for
--- the bot's attack_pill target); orders.human_near_suicide reads it.
+-- ticks (50 = 1 s) a shell FIRED BY THAT HUMAN (the engine gives every
+-- shell's owner) was within ORDER_HUMAN_SHOT_NEAR_TILES of the pill centre,
+-- or flying on a line that passes within ORDER_HUMAN_SHOT_LINE_TILES of it
+-- (exact shell angle, inside the shell's flight left).  The pill losing
+-- armour is not read (the bot's own hits would count).
+-- orders.note_human_shooting keeps the record (per human, for the bot's
+-- attack_pill target); orders.human_near_suicide reads it.
 M.ORDER_HUMAN_NEAR_NEEDS_SHOOTING   = true  -- keel false (near is enough)
 M.ORDER_HUMAN_SHOOTING_WINDOW_TICKS = 150   -- keel 150 (moot; NEEDS_SHOOTING off)
 M.ORDER_HUMAN_SHOT_NEAR_TILES       = 1.5   -- keel 1.5 (moot)
 M.ORDER_HUMAN_SHOT_LINE_TILES       = 1.0   -- keel 1.0 (moot)
-M.ORDER_HUMAN_FACE_BRADS            = 12    -- keel 12 (moot)
 -- 2026-10-02 (Andrew): a human team-mate within ORDER_HUMAN_NEAR_SUICIDE_TILES
 -- (the wall-skip case, goal._human_near) and the take is a blitz: the bot
 -- waits at most HUMAN_ATTACK_BLITZ_WAIT_MAX_S seconds at its spot, commander
@@ -5086,14 +5082,20 @@ M.SUICIDE_AIM_REACH_PAD_TILES = 0.5   -- keel 0.5 (moot; SUICIDE_AIM_AT_PILL off
 M.SUICIDE_PACE_AHEAD_TILES    = 1     -- keel 0 (off)
 -- A suicide run holds at max shell range; when pill hits shove it past
 -- (range - SUICIDE_HOLD_MARGIN_TILES) it accelerates back in at top speed.
+-- A CHARGE NOW rush paces the same way (one shared pace block, steering.lua).
 M.SUICIDE_HOLD_MARGIN_TILES   = 0.5   -- keel 0 (moot; SUICIDE_AIM_AT_PILL off)
 -- CHARGE NOW (2026-10-02, Andrew): an ATTACK ping from a human team-mate on a
 -- pill this bot is attacking (its attack_pill goal, ordered or its own) means
 -- "go now".  No blocker standing in the take's wall slots yet: the bot drops
--- the plan and rushes straight in, firing as it goes (kill_hardline, with the
--- SUICIDE_AIM_* aim).  A blocker already up: it carries on the careful way
--- (standoff, aim, fire) but builds no more walls, gathers no trees and waits
--- for nothing (no blitz wait, no anger cool-down).  NOT a suicide run:
+-- the plan and charges in to shell range, firing as it goes (kill_hardline,
+-- with the SUICIDE_AIM_* aim and the suicide run's SUICIDE_PACE_AHEAD_TILES /
+-- SUICIDE_HOLD_MARGIN_TILES pace: it holds at max shell reach, pushes back
+-- in when pill hits shove it out, and pushes closer to stay ahead of a human
+-- team-mate).  No tile beside the pill reachable: the goal is kept and it
+-- falls back to the careful way below.  A blocker already up: it carries
+-- on the careful way (standoff, aim, fire) but builds no more walls,
+-- gathers no trees and waits for nothing (no blitz wait, no anger
+-- cool-down).  NOT a suicide run:
 -- refuel, flee and armour checks stay (CHARGE_NOW_IGNORE_SAFETY below waives
 -- them).  Ends when the goal leaves that pill,
 -- the pill dies or is ours, the tank dies, or a caution ping lands on the bot
@@ -5120,14 +5122,19 @@ M.CHARGE_NOW_IGNORE_SAFETY    = true  -- keel false
 
 -- A HUMAN SHOOTING THE PILL = CHARGE NOW (2026-10-02, Andrew).  A bot with
 -- an attack_pill goal (ordered or its own) that sees a human team-mate
--- shooting at that pill (orders.note_human_shooting: a shell line or a hit
--- while facing it, within ORDER_HUMAN_SHOOTING_WINDOW_TICKS) charges as if
+-- shooting at that pill (orders.note_human_shooting: a shell that human
+-- fired on or at the pill, within ORDER_HUMAN_SHOOTING_WINDOW_TICKS) charges as if
 -- that human had sent an ATTACK ping on the pill: same record, same
 -- behaviour, CHARGE_NOW_IGNORE_SAFETY applies.  No distance from the bot is
 -- needed.  The human-near suicide run is checked first and wins.  A charge
 -- the human cancelled with a CAUTION ping does not restart on the same pill
 -- until the bot has had some other goal.
 M.HUMAN_SHOOTING_CHARGE_NOW   = true  -- keel false
+-- A charge whose straight rush found no tile beside the pill (it fell back
+-- to the careful way) does not restart from human shooting on that pill for
+-- this many brain ticks (50 = 1 s), or until the bot has had some other
+-- real goal.  Stops a drop-and-repick loop of "Charging pill #N".
+M.CHARGE_NOW_ABORT_WAIVE_TICKS = 500  -- keel 500 (moot; HUMAN_SHOOTING_CHARGE_NOW off)
 
 -- How far the seat a bot is escorting may drift from where the bot was last
 -- sent before the escort re-aims.  A hint may name its own `distance`; this
@@ -5556,13 +5563,13 @@ M.PRESETS = {
     --   2026-10-02: a human seen shooting the bot's target pill starts
     --   charge now. KEEL had no charge now at all.
     HUMAN_SHOOTING_CHARGE_NOW     = false,
+    CHARGE_NOW_ABORT_WAIVE_TICKS  = 500,
     --   2026-10-02: the human-near rule needs the human to be shooting at
     --   the pill. KEEL counted any visible human within the tiles.
     ORDER_HUMAN_NEAR_NEEDS_SHOOTING   = false,
     ORDER_HUMAN_SHOOTING_WINDOW_TICKS = 150,
     ORDER_HUMAN_SHOT_NEAR_TILES       = 1.5,
     ORDER_HUMAN_SHOT_LINE_TILES       = 1.0,
-    ORDER_HUMAN_FACE_BRADS            = 12,
     --   2026-10-02: human near = blitz wait capped at
     --   HUMAN_ATTACK_BLITZ_WAIT_MAX_S; a late soldier joins the charge or
     --   drops the goal. KEEL: no cap, and the soldier drove on to its spot.
