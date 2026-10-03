@@ -108,7 +108,9 @@ end
 
 print("-- modes.txt lists [turtle2]")
 do
-  local f = io.open("modes.txt", "rb")
+  -- modes.txt sits beside the source tree; the opt/ copy of this test runs
+  -- one folder down, so try the parent folder too.
+  local f = io.open("modes.txt", "rb") or io.open("../modes.txt", "rb")
   check("modes.txt opens", f ~= nil, "")
   local secs, order = {}, {}
   if f then
