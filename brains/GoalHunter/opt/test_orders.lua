@@ -2711,6 +2711,34 @@ do
     ORD.human_near_suicide(r.st, r.w, r.inf, 100)
     check("shooting rule: " .. case[3], (r.st._suicide ~= nil) == case[2], "?")
   end
+  -- An enemy tank before the pill but 1.5 tiles beside the line does not
+  -- take the shot.  ORDER_HUMAN_SHOT_SKIP_TANK_ON_LINE=false: a tank on the
+  -- line does not either.
+  local function run_with_foe(foe)
+    r = hbot(13, 17)
+    r.inf.tankx = math.floor(13 * 256 + (20 * 256 + 128 - 13 * 256) * 0.15)
+    r.inf.tanky = math.floor(17 * 256 + (20 * 256 + 128 - 17 * 256) * 0.15)
+    r.inf.objects[2] = shell_from(r, 13, 17, 0.25)
+    r.inf.objects[3] = foe
+    ORD.note_human_shooting(r.st, r.w, r.inf, 100)
+    ORD.human_near_suicide(r.st, r.w, r.inf, 100)
+    return r.st._suicide ~= nil
+  end
+  do
+    local lx, ly = 20 * 256 + 128 - 13 * 256, 20 * 256 + 128 - 17 * 256
+    local len = math.sqrt(lx * lx + ly * ly)
+    local f = foe_at(0.6)
+    f.x = math.floor(f.x - ly / len * 384)
+    f.y = math.floor(f.y + lx / len * 384)
+    check("shooting rule: an enemy tank 1.5 tiles beside the line: the run starts",
+          run_with_foe(f), "?")
+  end
+  C.ORDER_HUMAN_SHOT_SKIP_TANK_ON_LINE = false
+  check("shooting rule: ORDER_HUMAN_SHOT_SKIP_TANK_ON_LINE=false: a tank on the line does not stop the run",
+        run_with_foe(foe_at(0.6)), "?")
+  C.ORDER_HUMAN_SHOT_SKIP_TANK_ON_LINE = true
+  check("keel turns the tank-on-line skip off",
+        C.PRESETS.keel.ORDER_HUMAN_SHOT_SKIP_TANK_ON_LINE == false, "?")
 
   -- The BOT'S OWN shell hits the pill while the human watches, facing the
   -- pill from 7.8 tiles: not the human shooting.
