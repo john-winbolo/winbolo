@@ -4031,6 +4031,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lobby_team_side_dispatch.c
     tests/unit/test_lobby_default_sides.c
     tests/unit/test_starts_side_integration.c
+    tests/unit/test_mod_lobby_starts.c
     tests/unit/test_input_redundancy.c
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
@@ -5392,6 +5393,7 @@ set(_unit_test_names
     starts_side_unsided_kept_off_chosen_side
     starts_side_two_team_lobby_mirrors
     starts_side_team_change_repicks_stale
+    mod_lobby_starts_mac_bolo_keeps_opposite_sides
     input_redundancy
     bases_closest_for_player
     base_stock_visibility

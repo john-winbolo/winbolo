@@ -45,7 +45,9 @@
 -- walking speed, such as a river, a wall to repair or a live pillbox, keeps
 -- the refuelling base speed. The walk back to the tank is not changed.
 --
--- Starts. A spawn start is picked in two passes. Pass one looks for a
+-- Starts. The round's opening tanks go where the lobby put them: each
+-- player's start, picked by hand or by the team's side, stands. Only a
+-- spawn after that is Mac Bolo's. A spawn start is picked in two passes. Pass one looks for a
 -- start with nothing near it at all: no other tank and no pillbox, whoever
 -- owns them. If every start has something near it, pass two looks for a
 -- start with no enemy tank and no enemy pillbox near it; friendly tanks
@@ -107,7 +109,8 @@ scenario = {
   },
 
   callbacks = {
-    on_choose_start = "Picks a start with no tank or pill near, else one with no enemy tank or pill near.",
+    on_start = "Notes that the opening tanks are on their lobby starts, so the Mac Bolo pick applies only to the spawns after them.",
+    on_choose_start = "Picks a spawn's start with no tank or pill near, else one with no enemy tank or pill near.",
   },
 }
 
@@ -169,7 +172,22 @@ local function usable(s)
          not game.is_mine(s.x, s.y)
 end
 
+-- Whether the round's opening tanks have been placed. on_start runs once
+-- they have; until then the lobby's starts stand.
+local started = false
+
+function on_start()
+  started = true
+end
+
 function on_choose_start(p)
+  -- The opening placement is the lobby's: each player's start, picked by
+  -- hand or by the team's side, was reserved there and the engine puts the
+  -- tank on it. Only a spawn after that is Mac Bolo's.
+  if not started then
+    return nil
+  end
+
   local count = game.num_starts()
   if count == 0 then
     return nil
