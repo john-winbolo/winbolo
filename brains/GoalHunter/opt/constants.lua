@@ -2031,13 +2031,26 @@ M.PILL_PLACE_TURTLE_SPACING = 2
 --     base cost x min(2^(d / TURTLE_BASE_DOUBLE_TILES), TURTLE_BASE_MULT_CAP),
 --     applied before the snap floors (IMMINENT capture, steal, close-out
 --     still win). No positive tile anywhere = x1. DOUBLE_TILES 0 = off.
---   * d is cached per base and recomputed every TURTLE_BASE_D_REFRESH_TICKS;
---     the ring search stops at the distance where the multiplier reaches
---     the cap (at most 64 tiles), and a base past that reads d = that cap.
+--   * d is cached per base and recomputed every TURTLE_BASE_D_REFRESH_TICKS
+--     (one C distance transform of the influence grid, then one lookup per
+--     base). d stops at the distance where the multiplier reaches the cap
+--     (at most 64 tiles), and a base past that reads d = that cap.
+--   * We own a base or placed pill but enemy influence cancels all of it (no
+--     tile reads > 0): d = Chebyshev to the nearest friendly base/pill
+--     centre instead, shown as d=..(centre).
+--   * An older exe without the C helper falls back to a Lua ring search,
+--     spread over thinks at about TURTLE_BASE_D_READS_PER_TICK tile reads.
 M.TURTLE_BASE_RUN_END_FRAC    = 0.25
 M.TURTLE_BASE_DOUBLE_TILES    = 8
 M.TURTLE_BASE_MULT_CAP        = 16
 M.TURTLE_BASE_D_REFRESH_TICKS = 50   -- cache life of d, not a behaviour knob
+M.TURTLE_BASE_D_READS_PER_TICK = 1000 -- fallback search budget, not a behaviour knob
+-- Turtle bots build no influence tail (the EXPAND_* block above): their
+-- ground is only the stamped discs around their own bases and pills, so
+-- "near our ground" for the far-base cost means near the nest itself. Read
+-- only while PILL_PLACE_TURTLE is on (goals.lua M.influence_tail_on). A tail
+-- built before turtle mode came on is cleared. false = the tail as before.
+M.TURTLE_NO_INFLUENCE_TAIL    = true
 
 -- Tank combat
 M.TANK_COMBAT_ENABLED           = true
@@ -5189,6 +5202,8 @@ M.PRESETS = {
     TURTLE_BASE_RUN_END_FRAC      = 0,
     TURTLE_BASE_DOUBLE_TILES      = 0,
     TURTLE_BASE_MULT_CAP          = 1,
+    -- KEEL keeps the influence tail for turtle bots too.
+    TURTLE_NO_INFLUENCE_TAIL      = false,
     -- 2026-09-06: the MAIN defend_pill evaluator is now ALARM MODE (see the
     -- DEFEND_ALARM_* block above): defend_pill is REJECTED unless a hostile
     -- tank is visible within 11 tiles of the pill RIGHT NOW, something enemy
