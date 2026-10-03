@@ -4,15 +4,11 @@ QUICK INFO:
 
 1) SMART PING
 
-   - Smart ping using BOT COMMAND on a pill, tanks, or land tile to command the bot.
+   - Smart ping using "BOT COMMAND" on a pill, tanks, or land tile  to command the bot.
    - Closest bot will respond
    - Keep pinging to add a second bot, etc.
    - Ping "CAUTION" on a target or bot to cancel.
-   - Ping "ATTACK" on a pill a bot is attacking to make it charge in to
-     shell range now and keep firing, ignoring its own armour, trees and
-     ammo. It pushes closer to stay ahead of you.
-     A "CAUTION" ping on the bot or the pill stops the charge.
-   - Shoot at a pill a bot is attacking and it charges in the same way.
+   - Ping "ATTACK" on a pillbox a bot has targeted to force it to go attack right away.
 
 2) SHOOTING
 
