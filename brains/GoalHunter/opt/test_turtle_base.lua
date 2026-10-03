@@ -10,11 +10,13 @@
 --   * goals.turtle_repick          — full evals pick on the multiplied cost
 --   * goals.influence_tail_on      — TURTLE_NO_INFLUENCE_TAIL gate
 --   * strategy.turtle_base_run_end — ceil(FRAC x total) taken bases
---   * goals.turtle_nest_on         — TURTLE_BASE_NEST master switch: off =
---                                    turtle as on main (no reader runs)
+--   * goals.turtle_nest_on         — on only in Turtle2 mode (C.MODE ==
+--                                    "turtle2"); Turtle and default modes
+--                                    play as on main (no reader runs)
+--   * MODE_LEVELS.turtle2 and the [turtle2] section of modes.txt
 -- Each knob is also checked at its PRESETS.keel value (the old behaviour).
--- The sections turn TURTLE_BASE_NEST on (defaults()); the "nest switch off"
--- section checks that every reader is inert without it.
+-- The sections put the bot in Turtle2 mode (defaults()); the "not Turtle2
+-- mode" section checks that every reader is inert in Turtle and default.
 -- No engine: cpathfinder.influence_at is replaced by a Lua table.
 --
 -- Run from this directory with the LuaJIT built beside the game:
@@ -42,7 +44,7 @@ end
 local function near(a, b) return math.abs(a - b) < 1e-9 end
 
 -- Save and restore the knobs so the order of the sections does not matter.
-local KNOBS = { "PILL_PLACE_TURTLE", "TURTLE_BASE_NEST", "TURTLE_BASE_RUN_END_FRAC",
+local KNOBS = { "MODE", "PILL_PLACE_TURTLE", "TURTLE_BASE_RUN_END_FRAC",
                 "TURTLE_BASE_DOUBLE_TILES", "TURTLE_BASE_MULT_CAP",
                 "TURTLE_BASE_D_REFRESH_TICKS", "TURTLE_BASE_D_READS_PER_TICK",
                 "TURTLE_NO_INFLUENCE_TAIL", "EXPAND_ENABLED" }
@@ -50,18 +52,16 @@ local saved = {}
 for _, k in ipairs(KNOBS) do saved[k] = C[k] end
 local function defaults()
   for _, k in ipairs(KNOBS) do C[k] = saved[k] end
+  C.MODE = "turtle2"
   C.PILL_PLACE_TURTLE = true
-  C.TURTLE_BASE_NEST = true
 end
--- The keel values of the TURTLE_BASE_* knobs, with the nest switch held on
--- so each keel value is tested on its own (keel itself also turns the switch
--- off; the "nest switch off" section covers that).
+-- The keel values of the TURTLE_BASE_* knobs, on a Turtle2 mode bot, so
+-- each keel value is tested on its own (keel does not change the mode).
 local function keel()
   defaults()
   for k, v in pairs(C.PRESETS.keel) do
     if k:match("^TURTLE_") then C[k] = v end
   end
-  C.TURTLE_BASE_NEST = true
 end
 
 print("-- defaults and keel values")
@@ -71,21 +71,59 @@ check("default TURTLE_BASE_MULT_CAP = 16", saved.TURTLE_BASE_MULT_CAP == 16, sav
 check("keel TURTLE_BASE_RUN_END_FRAC = 0", C.PRESETS.keel.TURTLE_BASE_RUN_END_FRAC == 0, C.PRESETS.keel.TURTLE_BASE_RUN_END_FRAC)
 check("keel TURTLE_BASE_DOUBLE_TILES = 0", C.PRESETS.keel.TURTLE_BASE_DOUBLE_TILES == 0, C.PRESETS.keel.TURTLE_BASE_DOUBLE_TILES)
 check("keel TURTLE_BASE_MULT_CAP = 1", C.PRESETS.keel.TURTLE_BASE_MULT_CAP == 1, C.PRESETS.keel.TURTLE_BASE_MULT_CAP)
-check("default TURTLE_BASE_NEST = false", saved.TURTLE_BASE_NEST == false, saved.TURTLE_BASE_NEST)
-check("keel TURTLE_BASE_NEST = false", C.PRESETS.keel.TURTLE_BASE_NEST == false, C.PRESETS.keel.TURTLE_BASE_NEST)
-check("preset turtle2: PILL_PLACE_TURTLE = true", C.PRESETS.turtle2 and C.PRESETS.turtle2.PILL_PLACE_TURTLE == true, C.PRESETS.turtle2 and C.PRESETS.turtle2.PILL_PLACE_TURTLE)
-check("preset turtle2: TURTLE_BASE_NEST = true", C.PRESETS.turtle2 and C.PRESETS.turtle2.TURTLE_BASE_NEST == true, C.PRESETS.turtle2 and C.PRESETS.turtle2.TURTLE_BASE_NEST)
+check("default MODE = \"default\"", saved.MODE == "default", saved.MODE)
+check("no C.TURTLE_BASE_NEST knob (the mode is the gate)", C.TURTLE_BASE_NEST == nil, C.TURTLE_BASE_NEST)
+check("no keel TURTLE_BASE_NEST entry", C.PRESETS.keel.TURTLE_BASE_NEST == nil, C.PRESETS.keel.TURTLE_BASE_NEST)
+check("no PRESETS.turtle2 (Turtle2 is a mode, not a preset)", C.PRESETS.turtle2 == nil, C.PRESETS.turtle2)
 check("preset turtle: PILL_PLACE_TURTLE = true", C.PRESETS.turtle.PILL_PLACE_TURTLE == true, C.PRESETS.turtle.PILL_PLACE_TURTLE)
-check("preset turtle: does not set TURTLE_BASE_NEST", C.PRESETS.turtle.TURTLE_BASE_NEST == nil, C.PRESETS.turtle.TURTLE_BASE_NEST)
-check("survivor side word: does not set TURTLE_BASE_NEST",
-      C.SIDE_SETTINGS.survivor and C.SIDE_SETTINGS.survivor.TURTLE_BASE_NEST == nil,
-      C.SIDE_SETTINGS.survivor and C.SIDE_SETTINGS.survivor.TURTLE_BASE_NEST)
+check("preset turtle: does not set MODE", C.PRESETS.turtle.MODE == nil, C.PRESETS.turtle.MODE)
+check("survivor side word: does not set MODE",
+      C.SIDE_SETTINGS.survivor and C.SIDE_SETTINGS.survivor.MODE == nil,
+      C.SIDE_SETTINGS.survivor and C.SIDE_SETTINGS.survivor.MODE)
+
+print("-- MODE_LEVELS.turtle2 = MODE_LEVELS.turtle, level by level")
 do
-  local any = false
-  for _, b in pairs(C.MODE_LEVELS.turtle or {}) do
-    if b.TURTLE_BASE_NEST ~= nil then any = true end
+  local t1, t2 = C.MODE_LEVELS.turtle, C.MODE_LEVELS.turtle2
+  check("MODE_LEVELS.turtle2 exists", type(t2) == "table", type(t2))
+  t2 = t2 or {}
+  for _, lv in ipairs({ "easy", "medium", "hard" }) do
+    local a, b = t1[lv], t2[lv]
+    check("turtle2." .. lv .. " exists", type(b) == "table", type(b))
+    b = b or {}
+    check("turtle2." .. lv .. ": PILL_PLACE_TURTLE = true", b.PILL_PLACE_TURTLE == true, b.PILL_PLACE_TURTLE)
+    check("turtle2." .. lv .. " is a copy, not Turtle's own table", a ~= b, "")
+    local same, why = true, ""
+    for k, v in pairs(a) do
+      if b[k] ~= v then same = false; why = k end
+    end
+    for k, v in pairs(b) do
+      if a[k] ~= v then same = false; why = k end
+    end
+    check("turtle2." .. lv .. ": same keys and values as turtle." .. lv, same, why)
   end
-  check("MODE_LEVELS.turtle: no level sets TURTLE_BASE_NEST", not any, any)
+  local n = 0
+  for _ in pairs(t2) do n = n + 1 end
+  check("turtle2 has exactly 3 levels", n == 3, n)
+end
+
+print("-- modes.txt lists [turtle2]")
+do
+  local f = io.open("modes.txt", "rb")
+  check("modes.txt opens", f ~= nil, "")
+  local secs, order = {}, {}
+  if f then
+    for line in f:read("*a"):gmatch("[^\n]+") do
+      local key = line:gsub("\r$", ""):match("^%[([%w_]+)%]%s*$")
+      if key then secs[key] = true; order[#order + 1] = key end
+    end
+    f:close()
+  end
+  check("modes.txt has [default]", secs.default == true, table.concat(order, ","))
+  check("modes.txt has [turtle]", secs.turtle == true, table.concat(order, ","))
+  check("modes.txt has [turtle2]", secs.turtle2 == true, table.concat(order, ","))
+  local all = true
+  for _, k in ipairs(order) do if not C.MODE_LEVELS[k] then all = false end end
+  check("every modes.txt section has a MODE_LEVELS entry", all, table.concat(order, ","))
 end
 
 print("-- multiplier values (DOUBLE_TILES 8, CAP 16)")
@@ -224,11 +262,11 @@ local world0 = { bases = {
 local st0 = { tick = 10 }
 local dn, mn = G.turtle_far(st0, world0, 3, world0.bases[3])
 check("no ground (only a pill riding in the tank): d=nil, x1", dn == nil and mn == 1, tostring(dn) .. " x" .. tostring(mn))
--- Turtle off: x1 and no search, whatever the knobs say.
-C.PILL_PLACE_TURTLE = false
+-- Not Turtle2 mode: x1 and no search, whatever the knobs say.
+C.MODE = "turtle"
 calls = 0
 local doff, moff = G.turtle_far({ tick = 5 }, world, 3, world.bases[3])
-check("turtle off: d=nil, x1, no influence reads", doff == nil and moff == 1 and calls == 0, tostring(doff) .. " x" .. tostring(moff) .. " reads=" .. calls)
+check("Turtle mode: d=nil, x1, no influence reads", doff == nil and moff == 1 and calls == 0, tostring(doff) .. " x" .. tostring(moff) .. " reads=" .. calls)
 -- Keel: x1 and no search.
 keel()
 calls = 0
@@ -283,21 +321,22 @@ print("-- influence tail gate (TURTLE_NO_INFLUENCE_TAIL)")
 defaults()
 check("default TURTLE_NO_INFLUENCE_TAIL = true", saved.TURTLE_NO_INFLUENCE_TAIL == true, saved.TURTLE_NO_INFLUENCE_TAIL)
 check("keel TURTLE_NO_INFLUENCE_TAIL = false", C.PRESETS.keel.TURTLE_NO_INFLUENCE_TAIL == false, C.PRESETS.keel.TURTLE_NO_INFLUENCE_TAIL)
-check("turtle bot: no tail", G.influence_tail_on() == false, G.influence_tail_on())
-check("turtle bot: reach = max disc radius 12 (no EXPAND_RADIUS term)", G.turtle_far_reach() == 12, G.turtle_far_reach())
-C.PILL_PLACE_TURTLE = false
-check("not a turtle bot: tail on", G.influence_tail_on() == true, G.influence_tail_on())
-C.PILL_PLACE_TURTLE = true
+check("Turtle2 bot: no tail", G.influence_tail_on() == false, G.influence_tail_on())
+check("Turtle2 bot: reach = max disc radius 12 (no EXPAND_RADIUS term)", G.turtle_far_reach() == 12, G.turtle_far_reach())
+C.MODE = "turtle"
+check("Turtle mode bot: tail on", G.influence_tail_on() == true, G.influence_tail_on())
+C.MODE = "default"
+check("default mode bot: tail on", G.influence_tail_on() == true, G.influence_tail_on())
+C.MODE = "turtle2"
 C.TURTLE_NO_INFLUENCE_TAIL = false
-check("turtle bot, knob false: tail on", G.influence_tail_on() == true, G.influence_tail_on())
+check("Turtle2 bot, knob false: tail on", G.influence_tail_on() == true, G.influence_tail_on())
 check("tail on: reach = 12 + EXPAND_RADIUS 10 = 22", G.turtle_far_reach() == 22, G.turtle_far_reach())
 local ex = C.EXPAND_ENABLED
 C.EXPAND_ENABLED = false
 check("EXPAND_ENABLED false: tail off whatever the knob", G.influence_tail_on() == false, G.influence_tail_on())
 C.EXPAND_ENABLED = ex
 keel()
-C.PILL_PLACE_TURTLE = true
-check("keel knob on a turtle bot: tail on (as before)", G.influence_tail_on() == true, G.influence_tail_on())
+check("keel knob on a Turtle2 bot: tail on (as before)", G.influence_tail_on() == true, G.influence_tail_on())
 
 print("-- full-eval re-pick on the multiplied cost (turtle_repick)")
 defaults()
@@ -341,8 +380,8 @@ do
   keel()
   check("keel: no re-pick (nil, the nearest_where pick stands)", G.turtle_repick(sr, wr, wr.bases, cands, plain) == nil, "")
   defaults()
-  C.PILL_PLACE_TURTLE = false
-  check("turtle off: no re-pick", G.turtle_repick(sr, wr, wr.bases, cands, plain) == nil, "")
+  C.MODE = "turtle"
+  check("Turtle mode: no re-pick", G.turtle_repick(sr, wr, wr.bases, cands, plain) == nil, "")
   cpf.influence_at = saved_inf
   cpf.build_own_dist = sb
 end
@@ -352,7 +391,8 @@ defaults()
 local chip, det = G.turtle_far_text(8, 2)
 check("chip names d and the multiplier", chip == " x turtle_far{d=8,x2.00}", chip)
 check("detail names both knobs", det:find("TURTLE_BASE_DOUBLE_TILES", 1, true) ~= nil and det:find("TURTLE_BASE_MULT_CAP", 1, true) ~= nil, det)
-check("detail names both switches (PILL_PLACE_TURTLE, TURTLE_BASE_NEST)", det:find("PILL_PLACE_TURTLE", 1, true) ~= nil and det:find("TURTLE_BASE_NEST", 1, true) ~= nil, det)
+check("detail names the mode (Turtle2 mode bot (mode=turtle2))", det:find("Turtle2 mode bot (mode=turtle2)", 1, true) ~= nil, det)
+check("detail names no removed switch", det:find("TURTLE_BASE_NEST", 1, true) == nil, det)
 local chip2 = G.turtle_far_text(32, 16)
 check("chip at the search cap reads d>=32", chip2 == " x turtle_far{d=>=32,x16.00}", chip2)
 local chip3, det3 = G.turtle_far_text(10, 2 ^ (10 / 8), "centre")
@@ -383,9 +423,12 @@ keel()
 local _, nk = need_at(16, 12)
 check("keel FRAC 0: off", nk == nil, nk)
 defaults()
-C.PILL_PLACE_TURTLE = false
+C.MODE = "turtle"
 local _, noff = need_at(16, 12)
-check("turtle off: off", noff == nil, noff)
+check("Turtle mode: off", noff == nil, noff)
+C.MODE = "default"
+local _, noff2 = need_at(16, 12)
+check("default mode: off", noff2 == nil, noff2)
 
 -- Phase chain: drive strategy.update far enough to see the opening end.
 print("-- strategy.update: the opening ends at 4 of 16 taken")
@@ -432,19 +475,26 @@ run(4, 300, stK)
 check("keel: 4 of 16 taken at t=900 stays opening", stK.phase == "opening", stK.phase)
 cpf.smart_cost_dij_only = real_scdo
 
--- Old turtle: PILL_PLACE_TURTLE on, TURTLE_BASE_NEST off (main's turtle).
--- Every #497 reader must be inert: no far-base multiplier, no re-pick, the
--- influence tail on, the normal opening test, and no own-dist build at all.
-print("-- nest switch off: PILL_PLACE_TURTLE on, TURTLE_BASE_NEST off (turtle as on main)")
+-- Turtle mode (and default mode) with PILL_PLACE_TURTLE on: turtle as on
+-- main. Every #497 reader must be inert: no far-base multiplier, no
+-- re-pick, the influence tail on, the normal opening test, and no own-dist
+-- build at all. The body runs once per mode.
+print("-- not Turtle2 mode: PILL_PLACE_TURTLE on, MODE turtle / default (turtle as on main)")
 defaults()
-C.TURTLE_BASE_NEST = false
-check("turtle_nest_on: turtle on, nest off -> false", G.turtle_nest_on() == false, G.turtle_nest_on())
-C.TURTLE_BASE_NEST = true
-check("turtle_nest_on: both on -> true", G.turtle_nest_on() == true, G.turtle_nest_on())
+check("turtle_nest_on: MODE turtle2 -> true", G.turtle_nest_on() == true, G.turtle_nest_on())
 C.PILL_PLACE_TURTLE = false
-check("turtle_nest_on: nest on, turtle off -> false", G.turtle_nest_on() == false, G.turtle_nest_on())
+check("turtle_nest_on: MODE turtle2, PILL_PLACE_TURTLE off -> true (the mode is the gate)", G.turtle_nest_on() == true, G.turtle_nest_on())
 C.PILL_PLACE_TURTLE = true
-C.TURTLE_BASE_NEST = false
+C.MODE = "turtle"
+check("turtle_nest_on: MODE turtle -> false", G.turtle_nest_on() == false, G.turtle_nest_on())
+C.MODE = "default"
+check("turtle_nest_on: MODE default -> false", G.turtle_nest_on() == false, G.turtle_nest_on())
+C.MODE = nil
+check("turtle_nest_on: MODE nil -> false", G.turtle_nest_on() == false, G.turtle_nest_on())
+for _, mode in ipairs({ "turtle", "default" }) do
+defaults()
+C.MODE = mode
+local tag = "MODE " .. mode
 do
   local s_inf, s_build, s_odat = cpf.influence_at, cpf.build_own_dist, cpf.own_dist_at
   local n_inf, n_build, n_odat = 0, 0, 0
@@ -466,40 +516,41 @@ do
       if d ~= nil then any_d = true end
     end
   end
-  check("nest off: far-base multiplier x1 on every base for 120 ticks", all_x1, all_x1)
-  check("nest off: d=nil (no breakdown chip)", not any_d, any_d)
-  check("nest off: build_own_dist never called", n_build == 0, n_build)
-  check("nest off: own_dist_at never called", n_odat == 0, n_odat)
-  check("nest off: no influence reads", n_inf == 0, n_inf)
-  check("nest off: no turtle_far cache made", sn._turtle_far == nil, tostring(sn._turtle_far))
+  check(tag .. ": far-base multiplier x1 on every base for 120 ticks", all_x1, all_x1)
+  check(tag .. ": d=nil (no breakdown chip)", not any_d, any_d)
+  check(tag .. ": build_own_dist never called", n_build == 0, n_build)
+  check(tag .. ": own_dist_at never called", n_odat == 0, n_odat)
+  check(tag .. ": no influence reads", n_inf == 0, n_inf)
+  check(tag .. ": no turtle_far cache made", sn._turtle_far == nil, tostring(sn._turtle_far))
   local cn = { { id = 3, cost = 100 }, { id = 2, cost = 120 } }
-  check("nest off: no re-pick (nil, the nearest_where pick stands)",
+  check(tag .. ": no re-pick (nil, the nearest_where pick stands)",
         G.turtle_repick(sn, wn, wn.bases, cn, function(_, c, m) return c * m, c * m end) == nil, "")
-  check("nest off: build_own_dist still not called after re-pick", n_build == 0, n_build)
+  check(tag .. ": build_own_dist still not called after re-pick", n_build == 0, n_build)
   cpf.influence_at, cpf.build_own_dist, cpf.own_dist_at = s_inf, s_build, s_odat
 end
-check("nest off: chip empty", G.turtle_far_text(nil, 1) == "", G.turtle_far_text(nil, 1))
-check("nest off, TURTLE_NO_INFLUENCE_TAIL true: tail on", C.TURTLE_NO_INFLUENCE_TAIL == true and G.influence_tail_on() == true, G.influence_tail_on())
+check(tag .. ": chip empty", G.turtle_far_text(nil, 1) == "", G.turtle_far_text(nil, 1))
+check(tag .. ", TURTLE_NO_INFLUENCE_TAIL true: tail on", C.TURTLE_NO_INFLUENCE_TAIL == true and G.influence_tail_on() == true, G.influence_tail_on())
 do
   local tn, nn = S.turtle_base_run_end(16, 12)
-  check("nest off, FRAC 0.25: base-run end off (need nil)", nn == nil and tn == 4, tostring(tn) .. "/" .. tostring(nn))
+  check(tag .. ", FRAC 0.25: base-run end off (need nil)", nn == nil and tn == 4, tostring(tn) .. "/" .. tostring(nn))
   cpf.smart_cost_dij_only = function() return 10 end
   local stN = { tick = 600, birth_tick = 0, phase = "opening" }
   run(4, 300, stN)
-  check("nest off: 4 of 16 taken at t=900 stays opening (normal test)", stN.phase == "opening", tostring(stN.phase) .. " / " .. tostring(stN.phase_reason))
+  check(tag .. ": 4 of 16 taken at t=900 stays opening (normal test)", stN.phase == "opening", tostring(stN.phase) .. " / " .. tostring(stN.phase_reason))
   defaults()
   local stY = { tick = 600, birth_tick = 0, phase = "opening" }
   run(4, 300, stY)
-  check("nest on (same game): 4 of 16 taken at t=900 is middle", stY.phase == "middle", tostring(stY.phase) .. " / " .. tostring(stY.phase_reason))
+  check(tag .. " vs Turtle2 (same game): 4 of 16 taken at t=900 is middle", stY.phase == "middle", tostring(stY.phase) .. " / " .. tostring(stY.phase_reason))
   cpf.smart_cost_dij_only = real_scdo
 end
--- The real keel: TURTLE_* keel values with its TURTLE_BASE_NEST false.
-defaults()
-for k, v in pairs(C.PRESETS.keel) do
-  if k:match("^TURTLE_") then C[k] = v end
 end
-check("full keel on a turtle bot: nest off", G.turtle_nest_on() == false, G.turtle_nest_on())
-check("full keel on a turtle bot: x1", select(2, G.turtle_far({ tick = 5 }, { bases = {}, pills = {} }, 1, { mx = 1, my = 1 })) == 1, "")
+-- The real keel on a Turtle2 bot: keel leaves the mode alone, and its
+-- TURTLE_* values make every reader inert by value.
+keel()
+check("full keel on a Turtle2 bot: still Turtle2 mode", G.turtle_nest_on() == true, G.turtle_nest_on())
+check("full keel on a Turtle2 bot: tail on", G.influence_tail_on() == true, G.influence_tail_on())
+check("full keel on a Turtle2 bot: base-run end off", select(2, S.turtle_base_run_end(16, 12)) == nil, "")
+check("full keel on a Turtle2 bot: x1", select(2, G.turtle_far({ tick = 5 }, { bases = {}, pills = {} }, 1, { mx = 1, my = 1 })) == 1, "")
 
 for _, k in ipairs(KNOBS) do C[k] = saved[k] end
 print(string.format("\n  %d passed, %d failed", pass, fail))

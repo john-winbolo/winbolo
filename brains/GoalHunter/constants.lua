@@ -1991,8 +1991,8 @@ M.STRATEGIC_PLACE_CENTER_BIAS_WEIGHT = 4    -- score per tile closer to the stra
 -- `cfg=PILL_PLACE_TURTLE=true`, or the `survivor` init word (M.SIDE_SETTINGS).
 -- A runtime cfg=PILL_PLACE_TURTLE=false or `horde` turns it off again
 -- (Virus sends `horde` when a survivor turns); the tunables are read only
--- while the switch is on. `preset=turtle2` is this switch plus TURTLE_BASE_NEST
--- (the turtle base behaviour, below).
+-- while the switch is on. The turtle base behaviour below is not part of
+-- this switch: it runs only in Turtle2 mode (mode=turtle2).
 M.PILL_PLACE_TURTLE = false
 -- Easy's back/defensive placement weights. MODE_LEVELS.default.easy reads
 -- the same table, so Easy and turtle share one set of numbers.
@@ -2019,14 +2019,12 @@ M.PILL_PLACE_TURTLE_UNDERDEFENDED_BONUS  = 0
 M.PILL_PLACE_TURTLE_SPACING = 2
 
 -- ── Turtle bases: stay near the nest (2026-10-02, Andrew) ──
--- Read only while PILL_PLACE_TURTLE and TURTLE_BASE_NEST are on. Turtle bots
--- care less about bases overall, unless the base is near their own ground.
--- TURTLE_BASE_NEST is the master switch for this whole block (and for
--- TURTLE_NO_INFLUENCE_TAIL below). false = turtle plays as before this
--- block: PILL_PLACE_TURTLE pill placement only, nothing below is read, and
--- the own-ground distance grid is never built. `preset=turtle2` turns on both
--- switches; `cfg=TURTLE_BASE_NEST=true` adds it to any turtle source
--- (preset=turtle, the `survivor` word, MODE_LEVELS.turtle).
+-- Read only in Turtle2 mode (mode=turtle2; goals.lua M.turtle_nest_on).
+-- Turtle2 bots care less about bases overall, unless the base is near their
+-- own ground. This whole block (and TURTLE_NO_INFLUENCE_TAIL below) is gated
+-- by the bot's mode, not by a knob. Every other mode, Turtle included, plays
+-- as before this block: nothing below is read, and the own-ground distance
+-- grid is never built.
 --   * Base-run end (strategy.lua): the opening phase ends, and the phase
 --     becomes middle, once taken bases (owned by anyone, i.e. not neutral)
 --     >= ceil(TURTLE_BASE_RUN_END_FRAC x total bases). The 500-tick
@@ -2047,7 +2045,6 @@ M.PILL_PLACE_TURTLE_SPACING = 2
 --     centre instead, shown as d=..(centre).
 --   * An older exe without the C helper falls back to a Lua ring search,
 --     spread over thinks at about TURTLE_BASE_D_READS_PER_TICK tile reads.
-M.TURTLE_BASE_NEST            = false  -- master switch (see above); false = turtle as on main
 M.TURTLE_BASE_RUN_END_FRAC    = 0.25
 M.TURTLE_BASE_DOUBLE_TILES    = 8
 M.TURTLE_BASE_MULT_CAP        = 16
@@ -2056,8 +2053,8 @@ M.TURTLE_BASE_D_READS_PER_TICK = 1000 -- fallback search budget, not a behaviour
 -- Turtle bots build no influence tail (the EXPAND_* block above): their
 -- ground is only the stamped discs around their own bases and pills, so
 -- "near our ground" for the far-base cost means near the nest itself. Read
--- only while PILL_PLACE_TURTLE and TURTLE_BASE_NEST are on (goals.lua
--- M.influence_tail_on). A tail built before both came on is cleared.
+-- only in Turtle2 mode (mode=turtle2; goals.lua M.influence_tail_on). A
+-- tail built before the bot was in Turtle2 mode is cleared.
 -- false = the tail as before.
 M.TURTLE_NO_INFLUENCE_TAIL    = true
 
@@ -5207,9 +5204,7 @@ M.PRESETS = {
     PILL_PLACE_TURTLE             = false,
     -- 2026-10-02: turtle bases. KEEL keeps the normal opening test and
     -- prices every base the same however far it is from its own ground
-    -- (only read while PILL_PLACE_TURTLE and TURTLE_BASE_NEST are on).
-    -- 2026-10-02: the nest behaviour is off: KEEL turtle = placement only.
-    TURTLE_BASE_NEST              = false,
+    -- (only read in Turtle2 mode, mode=turtle2).
     TURTLE_BASE_RUN_END_FRAC      = 0,
     TURTLE_BASE_DOUBLE_TILES      = 0,
     TURTLE_BASE_MULT_CAP          = 1,
@@ -5564,14 +5559,6 @@ M.PRESETS = {
   turtle = {
     PILL_PLACE_TURTLE = true,
   },
-  -- turtle2: turtle plus the nest behaviour (2026-10-02, PR #497): the
-  -- TURTLE_BASE_* block (base-run end, far-base cost) and
-  -- TURTLE_NO_INFLUENCE_TAIL. For A/B against preset=turtle, which is the
-  -- placement switch alone.
-  turtle2 = {
-    PILL_PLACE_TURTLE = true,
-    TURTLE_BASE_NEST  = true,
-  },
   -- joust: the Joust scenario's bots (2026-10-01). Joust hands every bot
   -- this preset with game.bot_init, so the knobs touch no other game.
   joust = {
@@ -5778,6 +5765,22 @@ do
     turtle[level] = t
   end
   M.MODE_LEVELS.turtle = turtle
+end
+
+-- Turtle2 mode: Turtle plus the nest base rules (the TURTLE_BASE_* block and
+-- TURTLE_NO_INFLUENCE_TAIL, above). Those rules are gated by the mode itself
+-- (goals.lua M.turtle_nest_on: C.MODE == "turtle2"), not by a knob, so each
+-- level is a plain copy of the matching Turtle level (PILL_PLACE_TURTLE true
+-- comes from Turtle's bundle). Built from Turtle's bundles here, so a change
+-- to a Turtle or default level reaches Turtle2 too.
+do
+  local turtle2 = {}
+  for level, bundle in pairs(M.MODE_LEVELS.turtle) do
+    local t = {}
+    for k, v in pairs(bundle) do t[k] = v end
+    turtle2[level] = t
+  end
+  M.MODE_LEVELS.turtle2 = turtle2
 end
 
 -- Joust Easy plays on the general Medium bundle (2026-10-01). For every

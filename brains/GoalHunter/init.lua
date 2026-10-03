@@ -4059,9 +4059,9 @@ function Brain.think(info)
   -- stamped set or the neutral-pill set changes (or every EXPAND_REFRESH_TICKS
   -- as a backstop); merged into influence_grid every tick, since the stamp
   -- loop above wipes it. Must run BEFORE anything reads influence this tick.
-  -- goals.influence_tail_on(): EXPAND_ENABLED, and not a turtle nest bot
-  -- (PILL_PLACE_TURTLE and TURTLE_BASE_NEST) with TURTLE_NO_INFLUENCE_TAIL
-  -- (turtle nest bots hold only stamped ground).
+  -- goals.influence_tail_on(): EXPAND_ENABLED, and not a Turtle2 mode bot
+  -- (mode=turtle2) with TURTLE_NO_INFLUENCE_TAIL (Turtle2 bots hold only
+  -- stamped ground).
   if goals.influence_tail_on() then
     local _tsig = _inf_sig + _nsig
     if state._tail_sig ~= _tsig
