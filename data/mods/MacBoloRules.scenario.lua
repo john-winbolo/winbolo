@@ -36,6 +36,15 @@
 -- as a circle of radius 7 with the edge left out, so a pillbox exactly 7
 -- away, or at 5 across and 5 down, stays calm.
 --
+-- Builder walk. The builder slows by the terrain he walks over, by the
+-- round's man_speed_* rules, everywhere but the square he is going to build
+-- on. On that square WinBolo always walks him up to its centre at the
+-- refuelling base speed, so a wall or pillbox put on swamp, crater or rubble
+-- is reached at full speed. Mac Bolo slows him there too.
+-- man_bless_tile_terrain_speed turns the Mac Bolo walk on. A square with no
+-- walking speed, such as a river, a wall to repair or a live pillbox, keeps
+-- the refuelling base speed. The walk back to the tank is not changed.
+--
 -- Starts. A spawn start is picked in two passes. Pass one looks for a
 -- start with nothing near it at all: no other tank and no pillbox, whoever
 -- owns them. If every start has something near it, pass two looks for a
@@ -61,7 +70,8 @@
 scenario = {
   name = "Mac Bolo Rules",
   description = "Plays the Mac Bolo shell pushback, pillbox shell cap, " ..
-                "pillbox massage, base defence circle and spawn starts.",
+                "pillbox massage, base defence circle, builder walk and " ..
+                "spawn starts.",
   api = 1,
   kind = "mod",
   bound = false,
@@ -91,6 +101,9 @@ scenario = {
     -- Base defence.
     pill_base_defend_shape = 1,  -- 1 is a circle, 0 the classic square
     pill_base_defend_range = 7,  -- a radius, with the edge left out
+
+    -- Builder walk. Cross the square he builds on at its terrain speed.
+    man_bless_tile_terrain_speed = 1,
   },
 
   callbacks = {
