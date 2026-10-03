@@ -1556,7 +1556,7 @@ function M.turtle_far_text(d, m, src)
     and "the Chebyshev distance to the nearest friendly base/pill centre (provisional until this base's ring search ends, or the fallback when enemy influence cancels every friendly centre)"
     or "Chebyshev tiles to the nearest tile with influence > 0 (our ground)"
   return string.format(" x turtle_far{d=%s%s,x%.2f}", dtxt, ctr, m), string.format(
-    "|turtle_far:turtle bot (PILL_PLACE_TURTLE). d=%s%s is %s. x min(2^(%d/%d[TURTLE_BASE_DOUBLE_TILES]), %g[TURTLE_BASE_MULT_CAP]) = x%.2f, applied to the row sum before any snap floor. The search stops at %d tiles, where the multiplier reaches the cap; d is rebuilt every %d ticks, spread over thinks",
+    "|turtle_far:turtle bot (PILL_PLACE_TURTLE). d=%s%s is %s. x min(2^(%d/%d[TURTLE_BASE_DOUBLE_TILES]), %g[TURTLE_BASE_MULT_CAP]) = x%.2f, applied to the row sum before any snap floor. The search stops at %d tiles, where the multiplier reaches the cap; d is rebuilt every %d ticks by one C distance transform (on an older exe without it, by a Lua ring search spread over thinks)",
     dtxt, ctr, how, d, C.TURTLE_BASE_DOUBLE_TILES or 0, C.TURTLE_BASE_MULT_CAP or 1, m,
     lim, C.TURTLE_BASE_D_REFRESH_TICKS or 50)
 end
@@ -1631,6 +1631,7 @@ local function eval_capture_base(state, world, info, tmx, tmy, boat, ammo)
   -- discount the cost so the bot commits to capturing before the base
   -- recharges for the enemy. Decays after 500 ticks (~10s).
   local urgent = state.urgent_capture_base
+  local urgent_uc = nil
   if urgent and (state.tick or 0) - urgent.tick < 500 then
     if urgent.mx == base.mx and urgent.my == base.my then
       raw_cost = math.min(raw_cost, C.IMMINENT_CAPTURE_FLOOR)
@@ -1650,6 +1651,7 @@ local function eval_capture_base(state, world, info, tmx, tmy, boat, ammo)
               base, bid = ub, ubid
               raw_cost = math.min(uc, C.IMMINENT_CAPTURE_FLOOR)
               imminent = true
+              urgent_uc = uc   -- the desc shows this switch's own sum
               -- Refresh the viz candidate list to the base we switched to.
               bcands = { { id = ubid, mx = ub.mx, my = ub.my, cost = raw_cost } }
             end
@@ -1662,7 +1664,12 @@ local function eval_capture_base(state, world, info, tmx, tmy, boat, ammo)
 
   local desc = ""  -- pool viz string; populated only when BRAIN_POOL_VIZ
   if BRAIN_POOL_VIZ then
-    if tfd then
+    if urgent_uc then
+      -- Urgent switch to the base we just killed: its cost is the path
+      -- cost alone under the IMMINENT floor (no extra, no turtle_far).
+      desc = string.format("capture_base#%d@(%d,%d) cost=%.0f = min(A*{%.0f}, %d[IMMINENT_CAPTURE_FLOOR]) URGENT",
+                           bid, base.mx, base.my, raw_cost, urgent_uc, C.IMMINENT_CAPTURE_FLOOR)
+    elseif tfd then
       -- Turtle: show the whole product so the cost is hand-computable.
       desc = string.format("capture_base#%d@(%d,%d) cost=%.0f = (A*{%.0f}%s)%s", bid, base.mx, base.my,
                            raw_cost, bcost, (M.capture_base_extra_text(xe, xd, xf)),
