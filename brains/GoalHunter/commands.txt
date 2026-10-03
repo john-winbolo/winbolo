@@ -8,10 +8,11 @@ QUICK INFO:
    - Closest bot will respond
    - Keep pinging to add a second bot, etc.
    - Ping "CAUTION" on a target or bot to cancel.
-   - Ping "ATTACK" on a pill a bot is attacking to make it charge in now,
-     ignoring its own armour, trees and ammo.
+   - Ping "ATTACK" on a pill a bot is attacking to make it charge in to
+     shell range now and keep firing, ignoring its own armour, trees and
+     ammo. It pushes closer to stay ahead of you.
      A "CAUTION" ping on the bot or the pill stops the charge.
-   - Shoot at a pill a bot is attacking and it charges in with you.
+   - Shoot at a pill a bot is attacking and it charges in the same way.
 
 2) SHOOTING
 

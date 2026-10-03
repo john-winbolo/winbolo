@@ -1476,16 +1476,18 @@ end
 -- HUMAN_SHOOTING_CHARGE_NOW).
 -- init.lua calls this every think, before human_near_suicide.  It watches the
 -- pill of the bot's attack_pill goal and stamps, per human player number, the
--- last tick that human was seen shooting at it.  The engine names no shooter
--- for a shell, so two readings count:
---   * SHELL: a friendly shell within ORDER_HUMAN_SHOT_NEAR_TILES of the pill
---     centre whose line, run backwards, passes within
---     ORDER_HUMAN_SHOT_LINE_TILES of the human, with the human behind it and
---     within shell reach.
---   * DAMAGE: the pill's armour went down since the last think while the
---     human was within shell reach of it and facing it (heading within
---     ORDER_HUMAN_FACE_BRADS).
--- The record is state._human_shot = { tid, hp, by = {[pn] = tick} }; a new
+-- last tick that human was seen shooting at it.  The engine names the
+-- shooter of every shell (braincore.c: ob.owner, the firing player's number,
+-- 0xFF for a pill; ob.angle, the exact 8-bit heading), so a shell counts as
+-- a human's shot when its owner is a human team-mate (an ally that is not a
+-- bot and not this bot) and either
+--   * it is within ORDER_HUMAN_SHOT_NEAR_TILES of the pill centre, or
+--   * its line (the exact angle, ahead of the shell, within its flight left)
+--     passes within ORDER_HUMAN_SHOT_LINE_TILES of the pill centre.
+-- The human does not have to be in view.  The pill losing armour is NOT
+-- read: the bot's own hits (and other bots') would be credited to a human
+-- who is only watching.
+-- The record is state._human_shot = { tid, by = {[pn] = tick} }; a new
 -- target starts a new record.
 function M.note_human_shooting(state, world, info, now)
   if not (C.ORDER_HUMAN_NEAR_NEEDS_SHOOTING or C.HUMAN_SHOOTING_CHARGE_NOW) then return end
@@ -1496,66 +1498,42 @@ function M.note_human_shooting(state, world, info, now)
   if not p or p.in_tank or not p.mx then return end
   local r = state._human_shot
   if not r or r.tid ~= tid then
-    r = { tid = tid, hp = p.health, by = {} }
+    r = { tid = tid, by = {} }
     state._human_shot = r
   end
+  local OS = _G.OBJECT_SHOT
+  if not OS then return end
   local allies, bots = info.allies or 0, info.player_bots or 0
   local me = info.player_number
-  local OT, OH, OS = _G.OBJECT_TANK, _G.OBJECT_HOSTILE or 0, _G.OBJECT_SHOT
-  local humans = nil
-  for _, ob in ipairs(info.objects or {}) do
-    local pn = ob.idnum or -1
-    if ob.type == OT and pn >= 0 and pn ~= me
-       and bit.band(ob.info or 0, OH) == 0
+  local pwx, pwy = U.m2w(p.mx), U.m2w(p.my)
+  local near_w = (C.ORDER_HUMAN_SHOT_NEAR_TILES or 1.5) * 256.0
+  local line_w = (C.ORDER_HUMAN_SHOT_LINE_TILES or 1.0) * 256.0
+  -- Flight left when the shell carries no life: shell reach at full sight.
+  local reach_w = ((C.GUNSIGHT_MAX or 13.875) / 2.0) * 256.0
+  for _, s in ipairs(info.objects or {}) do
+    local pn = s.owner
+    if s.type == OS and pn and pn >= 0 and pn < 32 and pn ~= me
        and bit.band(allies, bit.lshift(1, pn)) ~= 0
        and bit.band(bots, bit.lshift(1, pn)) == 0 then
-      humans = humans or {}
-      humans[#humans + 1] = ob
-    end
-  end
-  local hp_was = r.hp
-  r.hp = p.health
-  if not humans then return end
-  local pwx, pwy = U.m2w(p.mx), U.m2w(p.my)
-  -- Shell reach (gunrange/2 at full sight) plus a little slack.
-  local reach_w = ((C.GUNSIGHT_MAX or 13.875) / 2.0 + 1.5) * 256.0
-  local near_w  = (C.ORDER_HUMAN_SHOT_NEAR_TILES or 1.5) * 256.0
-  local line_w  = (C.ORDER_HUMAN_SHOT_LINE_TILES or 1.0) * 256.0
-  local face    = C.ORDER_HUMAN_FACE_BRADS or 12
-  local ON      = _G.OBJECT_NEUTRAL or 0
-  -- Is point (x,y) behind shell s, within shell reach and within line_w of
-  -- the shell's back line?  The angle a is between the shell heading and the
-  -- point->shell line; the point's distance from the back line is d*|sin a|.
-  local function on_back_line(s, x, y)
-    local d = U.wdist(x, y, s.x or 0, s.y or 0)
-    if d <= 0 or d > reach_w then return false end
-    local a = U.adiff(s.direction, U.aim_at(x, y, s.x, s.y))
-    return math.abs(a) < 64 and d * math.abs(math.sin(a * C.TWO_PI / 256)) <= line_w
-  end
-  if OS then
-    for _, s in ipairs(info.objects or {}) do
-      if s.type == OS and bit.band(s.info or 0, bit.bor(OH, ON)) == 0
-         and s.direction
-         and U.wdist(s.x or 0, s.y or 0, pwx, pwy) <= near_w
-         and not on_back_line(s, info.tankx or 0, info.tanky or 0) then
-        -- (A shell whose back line runs through this bot is taken as our own.)
-        for _, hb in ipairs(humans) do
-          local hd = U.wdist(hb.x or 0, hb.y or 0, s.x or 0, s.y or 0)
-          if hd > 0 and hd <= reach_w and on_back_line(s, hb.x or 0, hb.y or 0) then
-            if r.by[hb.idnum] ~= now then
-            end
-            r.by[hb.idnum] = now
-          end
-        end
+      local sx, sy = s.x or 0, s.y or 0
+      local d = U.wdist(sx, sy, pwx, pwy)
+      local how = nil
+      if d <= near_w then
+        how = "near"
+      else
+        -- Pill centre in the shell's frame: `fwd` along its heading, `side`
+        -- across it.  Heading vector as danger.lua: (sin a, -cos a).
+        local vx, vy = U.bsin_f(s.angle or 0), -U.bcos_f(s.angle or 0)
+        local dx, dy = pwx - sx, pwy - sy
+        local fwd  = dx * vx + dy * vy
+        local side = math.abs(dx * vy - dy * vx)
+        local left = ((s.life or 0) > 0) and (s.life * (C.SHELL_SPEED or 32)) or reach_w
+        if fwd > 0 and fwd <= left + line_w and side <= line_w then how = "line" end
       end
-    end
-  end
-  if hp_was and (p.health or 0) < hp_was then
-    for _, hb in ipairs(humans) do
-      local hd = U.wdist(hb.x or 0, hb.y or 0, pwx, pwy)
-      if hd <= reach_w and hb.direction
-         and math.abs(U.adiff(hb.direction, U.aim_at(hb.x, hb.y, pwx, pwy))) <= face then
-        r.by[hb.idnum] = now
+      if how then
+        if r.by[pn] ~= now then
+        end
+        r.by[pn] = now
       end
     end
   end
@@ -3340,8 +3318,10 @@ end
 -- ATTACK ping on the pill this bot's attack_pill goal is after -- ordered or
 -- chosen by the bot itself -- tells it to stop waiting.  The record is
 -- state._charge_now = { tid, since, sender }; attack.lua reads it:
---   * no blocker of the bot's own wall plan standing: straight in, firing
---     (kill_hardline with the suicide aim, but NOT a suicide run; with
+--   * no blocker of the bot's own wall plan standing: in to shell range,
+--     firing (kill_hardline with the suicide aim and pace -- it holds at max
+--     shell reach and pushes closer to stay ahead of a human -- but NOT a
+--     suicide run; no tile beside the pill: the careful way below; with
 --     C.CHARGE_NOW_IGNORE_SAFETY the bot's own armour, trees and ammo do
 --     not stop it);
 --   * a blocker standing: the careful way (standoff, aim, fire) with no
@@ -3394,7 +3374,18 @@ function M.human_shooting_charge(state, world, info, now)
     state._charge_now_waived = nil
     wv = nil
   end
-  if not tid or wv == tid then return false end
+  -- A charge on this pill whose straight rush found no tile beside the pill
+  -- (attack.lua, kill_hardline abort; state._charge_now_abort = {tid, t})
+  -- does not restart for CHARGE_NOW_ABORT_WAIVE_TICKS, or until the bot has
+  -- had some other real goal, so a goal that drops and comes back cannot
+  -- loop "Charging pill #N".
+  local ab = state._charge_now_abort
+  if ab and ((g and g.kind and g.kind ~= "none" and tid ~= ab.tid)
+             or now - (ab.t or 0) >= (C.CHARGE_NOW_ABORT_WAIVE_TICKS or 500)) then
+    state._charge_now_abort = nil
+    ab = nil
+  end
+  if not tid or wv == tid or (ab and ab.tid == tid) then return false end
   local r = state._charge_now
   if r and r.tid == tid then return false end
   local set = M.human_shooters(state, tid, now)
