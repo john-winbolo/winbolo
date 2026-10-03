@@ -100,6 +100,10 @@
  *       — box off, a picked scenario and a mod on a map with its own script:
  *       nothing plays, the map's own included, the list is kept and the game
  *       type goes back to the lobby's own.
+ *   scenario_compose_off_on_keeps_map_row_place
+ *       — the host put the map's own row second: box off takes it off what
+ *       the lobby is told, box on puts it back second, and a preview and
+ *       Cancel with the box off do not lose the place.
  *   scenario_compose_off_map_alone_plain
  *       — box off on a map with its own script and no picks: the map plays
  *       plainly, and box on gives its scenario back.
@@ -115,13 +119,23 @@
  *       — box off, a map with its own script and ten picks: no map row, so
  *       the lobby is told all ten.
  *
- * And a map commit against a picked scenario:
+ * And a map commit against a picked scenario, made the way the host's map
+ * list makes it: a preview through serverSimReloadMap, then Use This Map or
+ * Cancel. These cases write real .map files.
  *
  *   scenario_compose_commit_map_drops_picked
- *       — a map with its own scenario committed over a picked scenario: the
- *       map's scenario plays, the pick comes off the list, the mod stays.
- *   scenario_compose_commit_map_drops_picked_off
- *       — the same with the box off: the pick still comes off.
+ *       — a map with its own scenario chosen over a picked scenario: the
+ *       preview and Set Map play the map's scenario, the pick comes off the
+ *       list, the mod stays.
+ *   scenario_compose_preview_cancel_keeps_picks
+ *       — browsing scripted and plain maps and pressing Cancel leaves the
+ *       list the host had, from a plain map and from a scripted one.
+ *   scenario_compose_commit_off_keeps_picks
+ *       — Set Map with the box off: nothing attached, so the picks stay.
+ *   scenario_compose_commit_mod_map_keeps_picks
+ *       — a map whose own script is a mod leaves the picked scenario.
+ *   scenario_compose_commit_broken_map_keeps_picks
+ *       — a map whose own script will not load leaves the picks.
  *   scenario_compose_commit_no_lobby_keeps_picks
  *       — outside a lobby the list is the operator's and is left alone.
  *   scenario_compose_drop_picked_scenarios
@@ -132,9 +146,10 @@
  *
  * These cases drive the real path end to end: a scratch scenarios directory
  * with real files in it, the host's own directory lister registered on the
- * sim, and the picks made by applying CMD_SET_SCRIPT_LIST. A map is named but
- * never written — a loose X.scenario.lua beside it is the first thing the
- * attach looks for, so the .map file itself is not needed.
+ * sim, and the picks made by applying CMD_SET_SCRIPT_LIST. Outside the map
+ * commit cases a map is named but never written — a loose X.scenario.lua
+ * beside it is the first thing the attach looks for, so the .map file itself
+ * is not needed.
  *
  * A script says what happened to it by printing a marked line. A scenario
  * state has no io, and the sandbox routes print to the server console, so
@@ -2504,9 +2519,11 @@ static CmdResult scModsOff(ServerSim *sim, bool off) {
    reads Mods/Scenario, and a host who turns it off on a scenario map wants
    the map played plainly. The picks stay on the list, the lobby is told them
    and no row for the map's own script, and the game type goes back to the
-   one the lobby was on before the scenario moved it to scripted. Box on
-   again and the picks play, the picked scenario in place of the map's own
-   because it was picked after the map. */
+   one the lobby was on before the scenario moved it to scripted. The map's
+   row is not taken off for good: where the host had placed it on the list,
+   the place is held for box on (off_on_keeps_map_row_place). Box on again
+   and the picks play, the picked scenario in place of the map's own because
+   it was picked after the map. */
 int run_scenario_compose_off_map_script_too(void) {
     ServerSim         *sim;
     const ScnDirEntry *row;
@@ -2821,64 +2838,126 @@ int run_scenario_compose_off_full_list_shows_all(void) {
 
 /* ── A map commit against a picked scenario ───────────────────────── */
 
-/* A map commit the way serverSimApplyMapChange makes it, the picked
-   scenarios step included. The map-scripted question is registered so the
-   commit can ask whether the new map brings a script of its own. */
-static void scCommitAsHost(ServerSim *sim) {
-    const char *mapPath = scMapPath();
+/* A second map beside the one scMapPath names, which never has a script:
+   the plain map a host browses to and from. */
+#define SC_PLAIN_LEAF "wbtest_scn_comp_plain.map"
 
-    scenarioHostRegisterMapScripted(sim);
-    SDL_strlcpy(sim->mapFilePath, mapPath, sizeof(sim->mapFilePath));
-    serverSimScenarioOnMapCommitted(sim, mapPath);
-    serverSimScenarioApplyLobbyRules(sim);
+static const char *scPlainPath(void) {
+    static char path[512];
+
+    if (!utScratchPath(path, sizeof(path), SC_PLAIN_LEAF)) {
+        path[0] = '\0';
+    }
+    return path;
+}
+
+/* A real map file at path, copied from the shipped Everard Island, so the
+   cases below can load it the way the host's map list does. Whether the map
+   brings a script is up to the case: scPutMapScript writes one beside
+   scMapPath. */
+static bool scWriteMapFile(const char *path) {
+    char   from[512];
+    size_t len = 0;
+    void  *bytes;
+    FILE  *f;
+    bool   ok;
+
+    snprintf(from, sizeof(from), "%s/Everard Island.map", WB_DATA_MAPS_DIR);
+    bytes = SDL_LoadFile(from, &len);
+    if (bytes == NULL) return false;
+    f  = fopen(path, "wb");
+    ok = f != NULL && fwrite(bytes, 1, len, f) == len;
+    if (f != NULL) fclose(f);
+    SDL_free(bytes);
+    return ok;
+}
+
+/* Both map files, for a case that browses between them. */
+static bool scWriteMapFiles(void) {
+    return scWriteMapFile(scMapPath()) && scWriteMapFile(scPlainPath());
+}
+
+static void scDropMapFiles(void) {
+    remove(scMapPath());
+    remove(scPlainPath());
+}
+
+/* A click on a map in the host's map list: the map is loaded as a preview,
+   through serverSimReloadMap, which is what SET_MAP reaches. */
+static bool scPreview(ServerSim *sim, const char *mapPath) {
+    return serverSimReloadMap(sim, mapPath) ? true : false;
+}
+
+/* Set Map: the click, then Use This Map, which keeps the preview. */
+static bool scSetMap(ServerSim *sim, const char *mapPath) {
+    if (!scPreview(sim, mapPath)) return false;
+    serverSimCommitPreview(sim);
+    return true;
+}
+
+/* Whether the host's list is exactly these files, in this order. */
+static bool scListIs(const ServerSim *sim, const char *const *files,
+                     int count) {
+    int i;
+
+    if (serverSimGetScriptCount(sim) != count) return false;
+    for (i = 0; i < count; i++) {
+        const ScnDirEntry *row = serverSimGetScript(sim, i);
+        if (row == NULL || strcmp(row->file, files[i]) != 0) return false;
+    }
+    return true;
 }
 
 /* A scenario and a mod picked on a plain map, then a map with its own
-   scenario committed: the map is the newer choice, so its scenario plays,
-   the picked scenario comes off the list and the mod stays behind the map's
-   own. A scenario picked after that replaces the map's own again, because
-   then the pick is the newer choice. */
+   scenario chosen from the map list: the map is the newer choice, so its
+   scenario plays, the picked scenario comes off the list and the mod stays
+   behind the map's own. The preview already shows that, and Use This Map
+   keeps it. A scenario picked after that replaces the map's own again,
+   because then the pick is the newer choice. */
 int run_scenario_compose_commit_map_drops_picked(void) {
     ServerSim         *sim;
     const ScnDirEntry *row;
     const char        *picks[2] = { "duel.lua", "modone.lua" };
+    const char        *modOnly[1] = { "modone.lua" };
 
     UT_ASSERT(scMakeDir("commit_drops_picked"));
     UT_ASSERT(scWrite("duel.lua", kScOtherScenario));
     UT_ASSERT(scWrite("modone.lua", kScModOne));
-    scDropMapScript();
+    UT_ASSERT(scWriteMapFiles());
+    UT_ASSERT(scPutMapScript(kScMapScenario));
     sim = scSim();
     UT_ASSERT(sim != NULL);
 
     /* The plain map and the picks: the picked scenario decides the round. */
-    scCommitAsHost(sim);
+    UT_ASSERT(scSetMap(sim, scPlainPath()));
     UT_ASSERT_MSG(scPick(sim, picks, 2) == CMD_OK,
                   "the scenario and the mod were refused");
     UT_ASSERT_MSG(strcmp(sim->scenarioIdentity.name, "Duel") == 0,
                   "setup: the plain map played \"%s\", wanted the pick",
                   sim->scenarioIdentity.name);
 
-    /* The host picks a map that brings its own scenario. */
-    UT_ASSERT(scPutMapScript(kScMapScenario));
-    scCommitAsHost(sim);
+    /* The host clicks the map that brings its own scenario. */
+    UT_ASSERT(scPreview(sim, scMapPath()));
+    UT_ASSERT_MSG(strcmp(sim->scenarioIdentity.name, "Survival") == 0,
+                  "the preview played \"%s\", wanted the map's own",
+                  sim->scenarioIdentity.name);
+    UT_ASSERT_MSG(scListIs(sim, modOnly, 1),
+                  "the preview left %d rows on the host's list, wanted the "
+                  "mod alone", serverSimGetScriptCount(sim));
+
+    /* And keeps it. */
+    serverSimCommitPreview(sim);
     UT_ASSERT_MSG(sim->scenarioIdentity.source == lobbyScenarioMap,
                   "the committed map's scenario did not play: source %d, "
                   "round \"%s\"",
                   (int)sim->scenarioIdentity.source,
                   sim->scenarioIdentity.name);
-    UT_ASSERT_MSG(strcmp(sim->scenarioIdentity.name, "Survival") == 0,
-                  "the round is \"%s\", wanted the map's own",
-                  sim->scenarioIdentity.name);
     UT_ASSERT_MSG(scSlot != NULL && scenarioHostScriptCount(scSlot) == 2,
                   "%d scripts composed, wanted the map's own and the mod",
                   scenarioHostScriptCount(scSlot));
-    UT_ASSERT_MSG(serverSimGetScriptCount(sim) == 1,
-                  "the host's list holds %d, wanted the mod alone",
-                  serverSimGetScriptCount(sim));
-    row = serverSimGetScript(sim, 0);
-    UT_ASSERT(row != NULL);
-    UT_ASSERT_MSG(strcmp(row->file, "modone.lua") == 0,
-                  "the host's list kept \"%s\", wanted the mod", row->file);
+    UT_ASSERT_MSG(scListIs(sim, modOnly, 1),
+                  "the host's list holds %d after Set Map, wanted the mod "
+                  "alone", serverSimGetScriptCount(sim));
     /* The lobby is told the map's own first and the mod behind it. */
     UT_ASSERT_MSG(serverSimGetLobbyScriptCount(sim) == 2,
                   "the lobby was published %d rows, wanted two",
@@ -2899,34 +2978,114 @@ int run_scenario_compose_commit_map_drops_picked(void) {
 
     scDestroy(sim);
     scDropMapScript();
+    scDropMapFiles();
     scDropDir();
     return 0;
 }
 
-/* The same commit with Mods/Scenario off: nothing plays while the box is
-   off, but the picked scenario still comes off the list, so box on plays
-   the map's own scenario the host chose last, with the mod. */
-int run_scenario_compose_commit_map_drops_picked_off(void) {
+/* The host browses the map list and then presses Cancel. Every preview of
+   the scripted map shows its own scenario in place of the picked one, a
+   preview of a plain map after it gives the pick back, and Cancel leaves the
+   lobby on the map and the list it had. Then the same from a committed map
+   that brings its own scenario with a scenario picked over it: Cancel must
+   not take that pick off either, because putting the old map back is not a
+   new choice. */
+int run_scenario_compose_preview_cancel_keeps_picks(void) {
+    ServerSim  *sim;
+    const char *picks[2]   = { "duel.lua", "modone.lua" };
+    const char *modOnly[1] = { "modone.lua" };
+
+    UT_ASSERT(scMakeDir("preview_cancel"));
+    UT_ASSERT(scWrite("duel.lua", kScOtherScenario));
+    UT_ASSERT(scWrite("modone.lua", kScModOne));
+    UT_ASSERT(scWriteMapFiles());
+    UT_ASSERT(scPutMapScript(kScMapScenario));
+    sim = scSim();
+    UT_ASSERT(sim != NULL);
+
+    UT_ASSERT(scSetMap(sim, scPlainPath()));
+    UT_ASSERT(scPick(sim, picks, 2) == CMD_OK);
+    UT_ASSERT(strcmp(sim->scenarioIdentity.name, "Duel") == 0);
+
+    /* Scripted, plain, scripted: each preview decides from the host's
+       list, not from the one the last preview left. */
+    UT_ASSERT(scPreview(sim, scMapPath()));
+    UT_ASSERT_MSG(scListIs(sim, modOnly, 1),
+                  "the first preview left %d rows, wanted the mod alone",
+                  serverSimGetScriptCount(sim));
+    UT_ASSERT(scPreview(sim, scPlainPath()));
+    UT_ASSERT_MSG(scListIs(sim, picks, 2),
+                  "a plain map previewed after a scripted one has %d rows, "
+                  "wanted both picks back", serverSimGetScriptCount(sim));
+    UT_ASSERT_MSG(strcmp(sim->scenarioIdentity.name, "Duel") == 0,
+                  "the plain preview played \"%s\", wanted the pick",
+                  sim->scenarioIdentity.name);
+    UT_ASSERT(scPreview(sim, scMapPath()));
+    UT_ASSERT(strcmp(sim->scenarioIdentity.name, "Survival") == 0);
+
+    UT_ASSERT(serverSimRevertPreview(sim));
+    UT_ASSERT_MSG(strcmp(sim->mapFilePath, scPlainPath()) == 0,
+                  "Cancel left the lobby on \"%s\"", sim->mapFilePath);
+    UT_ASSERT_MSG(scListIs(sim, picks, 2),
+                  "Cancel left %d rows on the host's list, wanted both picks",
+                  serverSimGetScriptCount(sim));
+    UT_ASSERT_MSG(strcmp(sim->scenarioIdentity.name, "Duel") == 0,
+                  "after Cancel the round is \"%s\", wanted the pick",
+                  sim->scenarioIdentity.name);
+    UT_ASSERT_MSG(scSlot != NULL && scenarioHostScriptCount(scSlot) == 2,
+                  "after Cancel %d scripts composed, wanted both picks",
+                  scenarioHostScriptCount(scSlot));
+
+    /* The committed map brings its own scenario, and the host picked a
+       scenario over it after: the pick plays. */
+    UT_ASSERT(scSetMap(sim, scMapPath()));
+    UT_ASSERT(scListIs(sim, modOnly, 1));
+    UT_ASSERT(scPick(sim, picks, 2) == CMD_OK);
+    UT_ASSERT(strcmp(sim->scenarioIdentity.name, "Duel") == 0);
+
+    UT_ASSERT(scPreview(sim, scPlainPath()));
+    UT_ASSERT(serverSimRevertPreview(sim));
+    UT_ASSERT_MSG(strcmp(sim->mapFilePath, scMapPath()) == 0,
+                  "Cancel left the lobby on \"%s\"", sim->mapFilePath);
+    UT_ASSERT_MSG(scListIs(sim, picks, 2),
+                  "Cancel back to the scripted map left %d rows, wanted "
+                  "both picks", serverSimGetScriptCount(sim));
+    UT_ASSERT_MSG(strcmp(sim->scenarioIdentity.name, "Duel") == 0,
+                  "Cancel back to the scripted map played \"%s\", wanted "
+                  "the pick made over it", sim->scenarioIdentity.name);
+
+    scDestroy(sim);
+    scDropMapScript();
+    scDropMapFiles();
+    scDropDir();
+    return 0;
+}
+
+/* Set Map with Mods/Scenario off: nothing plays, and nothing is attached to
+   say what the map's own script is or that it loads, so the picks stay.
+   Box on afterwards plays them, the picked scenario in place of the map's
+   own as for any pick on a scripted map. */
+int run_scenario_compose_commit_off_keeps_picks(void) {
     ServerSim  *sim;
     const char *picks[2] = { "duel.lua", "modone.lua" };
 
-    UT_ASSERT(scMakeDir("commit_drops_picked_off"));
+    UT_ASSERT(scMakeDir("commit_off_keeps"));
     UT_ASSERT(scWrite("duel.lua", kScOtherScenario));
     UT_ASSERT(scWrite("modone.lua", kScModOne));
-    scDropMapScript();
+    UT_ASSERT(scWriteMapFiles());
+    UT_ASSERT(scPutMapScript(kScMapScenario));
     sim = scSim();
     UT_ASSERT(sim != NULL);
     serverSimSetGameType(sim, gameTournament);
 
-    scCommitAsHost(sim);
+    UT_ASSERT(scSetMap(sim, scPlainPath()));
     UT_ASSERT(scPick(sim, picks, 2) == CMD_OK);
     UT_ASSERT(serverSimGetGameType(sim) == gameScripted);
     UT_ASSERT_MSG(scModsOff(sim, true) == CMD_OK,
                   "switching Mods/Scenario off was refused");
     UT_ASSERT(serverSimGetGameType(sim) == gameTournament);
 
-    UT_ASSERT(scPutMapScript(kScMapScenario));
-    scCommitAsHost(sim);
+    UT_ASSERT(scSetMap(sim, scMapPath()));
     UT_ASSERT_MSG(scSlot == NULL,
                   "a commit with the box off attached %d scripts",
                   scenarioHostScriptCount(scSlot));
@@ -2934,22 +3093,164 @@ int run_scenario_compose_commit_map_drops_picked_off(void) {
                   "a commit with the box off left the type at %d, wanted "
                   "tournament",
                   (int)serverSimGetGameType(sim));
-    UT_ASSERT_MSG(serverSimGetScriptCount(sim) == 1,
-                  "the host's list holds %d, wanted the mod alone",
+    UT_ASSERT_MSG(scListIs(sim, picks, 2),
+                  "a commit with the box off left %d rows, wanted both picks",
                   serverSimGetScriptCount(sim));
 
     UT_ASSERT_MSG(scModsOff(sim, false) == CMD_OK,
                   "switching Mods/Scenario back on was refused");
-    UT_ASSERT_MSG(strcmp(sim->scenarioIdentity.name, "Survival") == 0,
-                  "box on played \"%s\", wanted the map's own",
+    UT_ASSERT_MSG(strcmp(sim->scenarioIdentity.name, "Duel") == 0,
+                  "box on played \"%s\", wanted the pick",
                   sim->scenarioIdentity.name);
     UT_ASSERT_MSG(scSlot != NULL && scenarioHostScriptCount(scSlot) == 2,
-                  "box on composed %d scripts, wanted the map's own and the "
-                  "mod",
+                  "box on composed %d scripts, wanted both picks",
                   scenarioHostScriptCount(scSlot));
 
     scDestroy(sim);
     scDropMapScript();
+    scDropMapFiles();
+    scDropDir();
+    return 0;
+}
+
+/* A map whose own script is a mod. A mod never replaced a scenario, so Set
+   Map leaves the picked scenario on the list and it still decides the
+   round. */
+int run_scenario_compose_commit_mod_map_keeps_picks(void) {
+    ServerSim  *sim;
+    const char *picks[1] = { "duel.lua" };
+
+    UT_ASSERT(scMakeDir("commit_mod_map"));
+    UT_ASSERT(scWrite("duel.lua", kScOtherScenario));
+    UT_ASSERT(scWriteMapFiles());
+    UT_ASSERT(scPutMapScript(kScModTwo));
+    sim = scSim();
+    UT_ASSERT(sim != NULL);
+
+    UT_ASSERT(scSetMap(sim, scPlainPath()));
+    UT_ASSERT(scPick(sim, picks, 1) == CMD_OK);
+    UT_ASSERT(strcmp(sim->scenarioIdentity.name, "Duel") == 0);
+
+    UT_ASSERT(scSetMap(sim, scMapPath()));
+    UT_ASSERT_MSG(scListIs(sim, picks, 1),
+                  "a map carrying a mod left %d rows, wanted the picked "
+                  "scenario", serverSimGetScriptCount(sim));
+    UT_ASSERT_MSG(strcmp(sim->scenarioIdentity.name, "Duel") == 0,
+                  "a map carrying a mod played \"%s\", wanted the pick",
+                  sim->scenarioIdentity.name);
+
+    scDestroy(sim);
+    scDropMapScript();
+    scDropMapFiles();
+    scDropDir();
+    return 0;
+}
+
+/* A map whose own script will not load. It replaced nothing, so Set Map
+   leaves the picks on the list and they play, as they did before the map
+   was chosen. */
+int run_scenario_compose_commit_broken_map_keeps_picks(void) {
+    ServerSim  *sim;
+    const char *picks[2] = { "duel.lua", "modone.lua" };
+
+    UT_ASSERT(scMakeDir("commit_broken_map"));
+    UT_ASSERT(scWrite("duel.lua", kScOtherScenario));
+    UT_ASSERT(scWrite("modone.lua", kScModOne));
+    UT_ASSERT(scWriteMapFiles());
+    UT_ASSERT(scPutMapScript(kScModTwoBroken));
+    sim = scSim();
+    UT_ASSERT(sim != NULL);
+
+    UT_ASSERT(scSetMap(sim, scPlainPath()));
+    UT_ASSERT(scPick(sim, picks, 2) == CMD_OK);
+    UT_ASSERT(strcmp(sim->scenarioIdentity.name, "Duel") == 0);
+
+    UT_ASSERT(scSetMap(sim, scMapPath()));
+    UT_ASSERT_MSG(scListIs(sim, picks, 2),
+                  "a map whose script will not load left %d rows, wanted "
+                  "both picks", serverSimGetScriptCount(sim));
+    UT_ASSERT_MSG(strcmp(sim->scenarioIdentity.name, "Duel") == 0,
+                  "a map whose script will not load played \"%s\", wanted "
+                  "the pick", sim->scenarioIdentity.name);
+    UT_ASSERT_MSG(scSlot != NULL && scenarioHostScriptCount(scSlot) == 2,
+                  "%d scripts composed, wanted both picks",
+                  scenarioHostScriptCount(scSlot));
+
+    scDestroy(sim);
+    scDropMapScript();
+    scDropMapFiles();
+    scDropDir();
+    return 0;
+}
+
+/* The host put a mod ahead of the map's own scenario. Box off takes the
+   map's row off what the lobby is told, because the script is not playing;
+   box on puts it back second, where the host had it, and not at the front.
+   A preview and a Cancel made with the box off do not lose the place
+   either. */
+int run_scenario_compose_off_on_keeps_map_row_place(void) {
+    ServerSim              *sim;
+    const ScnDirEntry      *row;
+    const ScenarioManifest *m;
+    const char             *both[2];
+    const char             *modOnly[1] = { "modone.lua" };
+    char                    mapFile[SCN_DIR_FILE_LEN];
+
+    UT_ASSERT(scMakeDir("off_on_row_place"));
+    UT_ASSERT(scWrite("modone.lua", kScModOne));
+    UT_ASSERT(scWriteMapFiles());
+    UT_ASSERT(scPutMapScript(kScMapScenario));
+    sim = scSim();
+    UT_ASSERT(sim != NULL);
+
+    UT_ASSERT(scSetMap(sim, scMapPath()));
+    row = serverSimGetMapScript(sim);
+    UT_ASSERT_MSG(row != NULL, "the map's own script was not published");
+    snprintf(mapFile, sizeof(mapFile), "%s", row->file);
+    both[0] = "modone.lua";
+    both[1] = mapFile;
+    UT_ASSERT_MSG(scPick(sim, both, 2) == CMD_OK,
+                  "a list naming the map's own script second was refused");
+    UT_ASSERT(scListIs(sim, both, 2));
+
+    UT_ASSERT_MSG(scModsOff(sim, true) == CMD_OK,
+                  "switching Mods/Scenario off was refused");
+    UT_ASSERT(scSlot == NULL);
+    UT_ASSERT_MSG(serverSimGetMapScript(sim) == NULL,
+                  "the map's row is published for a script that is not "
+                  "playing");
+    UT_ASSERT_MSG(scListIs(sim, modOnly, 1),
+                  "with the box off the host's list holds %d, wanted the mod "
+                  "alone", serverSimGetScriptCount(sim));
+
+    /* A preview of the plain map and a Cancel, with the box still off. */
+    UT_ASSERT(scPreview(sim, scPlainPath()));
+    UT_ASSERT(serverSimRevertPreview(sim));
+    UT_ASSERT(scListIs(sim, modOnly, 1));
+
+    UT_ASSERT_MSG(scModsOff(sim, false) == CMD_OK,
+                  "switching Mods/Scenario back on was refused");
+    UT_ASSERT_MSG(scListIs(sim, both, 2),
+                  "box on did not put the map's row back second: %d rows, "
+                  "row 0 \"%s\"", serverSimGetScriptCount(sim),
+                  serverSimGetScriptCount(sim) > 0
+                      ? serverSimGetScript(sim, 0)->file : "");
+    UT_ASSERT(serverSimGetScript(sim, 1)->bound);
+    UT_ASSERT_MSG(serverSimGetLobbyScriptCount(sim) == 2,
+                  "the lobby was published %d rows, wanted the host's two",
+                  serverSimGetLobbyScriptCount(sim));
+    UT_ASSERT_MSG(scSlot != NULL && scenarioHostScriptCount(scSlot) == 2,
+                  "box on composed %d scripts, wanted the mod and the map's "
+                  "own", scenarioHostScriptCount(scSlot));
+    m = scenarioHostManifest(scSlot);
+    UT_ASSERT(m != NULL && m->numRegions == 2);
+    UT_ASSERT_MSG(strcmp(m->regions[0].name, "south") == 0,
+                  "region 0 is \"%s\", wanted the mod's, which the host put "
+                  "first", m->regions[0].name);
+
+    scDestroy(sim);
+    scDropMapScript();
+    scDropMapFiles();
     scDropDir();
     return 0;
 }
@@ -2964,17 +3265,17 @@ int run_scenario_compose_commit_no_lobby_keeps_picks(void) {
     UT_ASSERT(scMakeDir("commit_no_lobby"));
     UT_ASSERT(scWrite("duel.lua", kScOtherScenario));
     UT_ASSERT(scWrite("modone.lua", kScModOne));
-    scDropMapScript();
+    UT_ASSERT(scWriteMapFiles());
+    UT_ASSERT(scPutMapScript(kScMapScenario));
     sim = scSim();
     UT_ASSERT(sim != NULL);
 
-    scCommitAsHost(sim);
+    UT_ASSERT(scSetMap(sim, scPlainPath()));
     UT_ASSERT(scPick(sim, picks, 2) == CMD_OK);
     serverSimSetLobbyEnabled(sim, false);
 
-    UT_ASSERT(scPutMapScript(kScMapScenario));
-    scCommitAsHost(sim);
-    UT_ASSERT_MSG(serverSimGetScriptCount(sim) == 2,
+    UT_ASSERT(scSetMap(sim, scMapPath()));
+    UT_ASSERT_MSG(scListIs(sim, picks, 2),
                   "a commit outside a lobby left %d picks, wanted both",
                   serverSimGetScriptCount(sim));
     UT_ASSERT_MSG(strcmp(sim->scenarioIdentity.name, "Duel") == 0,
@@ -2983,6 +3284,7 @@ int run_scenario_compose_commit_no_lobby_keeps_picks(void) {
 
     scDestroy(sim);
     scDropMapScript();
+    scDropMapFiles();
     scDropDir();
     return 0;
 }

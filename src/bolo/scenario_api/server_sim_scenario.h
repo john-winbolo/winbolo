@@ -728,6 +728,53 @@ const ScnDirEntry *serverSimGetScript(const ServerSim *sim, int i);
 void serverSimSetMapScript(ServerSim *sim, const ScnDirEntry *entry);
 
 /*********************************************************
+ *NAME:          serverSimHoldMapScript
+ *PURPOSE:
+ *  The committed map still brings its own script, but the
+ *  round is not playing it because Mods/Scenario is off.
+ *  The row is cleared the way a NULL serverSimSetMapScript
+ *  clears it, so the lobby draws no row for a script that
+ *  is not playing; but where the host's list held the row,
+ *  that place is remembered, and the next
+ *  serverSimSetMapScript with a row puts it back there
+ *  rather than at the front. A hold with no row on the list
+ *  keeps whatever place an earlier hold remembered.
+ *********************************************************/
+void serverSimHoldMapScript(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimGetMapScriptHeldAt
+ *PURPOSE:
+ *  The place serverSimHoldMapScript kept for the map's own
+ *  row, as an index into the host's list, or -1 when no
+ *  place is held. The decision composes the map's own
+ *  script there when the box is on again.
+ *********************************************************/
+int  serverSimGetMapScriptHeldAt(const ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimScenarioMapIsNewer
+ *PURPOSE:
+ *  True while a lobby map commit is being decided: the map
+ *  is the host's newest choice, so a scenario of its own
+ *  that loads plays in place of a scenario picked before
+ *  it. False for every other decision, a cancelled preview
+ *  and a round with no lobby among them.
+ *********************************************************/
+bool serverSimScenarioMapIsNewer(const ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimDropPickedScenarios
+ *PURPOSE:
+ *  Takes every picked scenario off the host's list and
+ *  keeps the rest, the mods and the map's own row, in the
+ *  host's order. Answers how many rows went. Called by
+ *  whoever owns the scenario once the map's own scenario
+ *  has loaded in their place.
+ *********************************************************/
+int  serverSimDropPickedScenarios(ServerSim *sim);
+
+/*********************************************************
  *NAME:          serverSimGetMapScript
  *PURPOSE:
  *  The row serverSimSetMapScript recorded, or NULL when the
