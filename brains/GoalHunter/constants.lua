@@ -1991,7 +1991,7 @@ M.STRATEGIC_PLACE_CENTER_BIAS_WEIGHT = 4    -- score per tile closer to the stra
 -- `cfg=PILL_PLACE_TURTLE=true`, or the `survivor` init word (M.SIDE_SETTINGS).
 -- A runtime cfg=PILL_PLACE_TURTLE=false or `horde` turns it off again
 -- (Virus sends `horde` when a survivor turns); the tunables are read only
--- while the switch is on. `preset=nest` is this switch plus TURTLE_BASE_NEST
+-- while the switch is on. `preset=turtle2` is this switch plus TURTLE_BASE_NEST
 -- (the turtle base behaviour, below).
 M.PILL_PLACE_TURTLE = false
 -- Easy's back/defensive placement weights. MODE_LEVELS.default.easy reads
@@ -2024,7 +2024,7 @@ M.PILL_PLACE_TURTLE_SPACING = 2
 -- TURTLE_BASE_NEST is the master switch for this whole block (and for
 -- TURTLE_NO_INFLUENCE_TAIL below). false = turtle plays as before this
 -- block: PILL_PLACE_TURTLE pill placement only, nothing below is read, and
--- the own-ground distance grid is never built. `preset=nest` turns on both
+-- the own-ground distance grid is never built. `preset=turtle2` turns on both
 -- switches; `cfg=TURTLE_BASE_NEST=true` adds it to any turtle source
 -- (preset=turtle, the `survivor` word, MODE_LEVELS.turtle).
 --   * Base-run end (strategy.lua): the opening phase ends, and the phase
@@ -5564,11 +5564,11 @@ M.PRESETS = {
   turtle = {
     PILL_PLACE_TURTLE = true,
   },
-  -- nest: turtle plus the nest behaviour (2026-10-02, PR #497): the
+  -- turtle2: turtle plus the nest behaviour (2026-10-02, PR #497): the
   -- TURTLE_BASE_* block (base-run end, far-base cost) and
   -- TURTLE_NO_INFLUENCE_TAIL. For A/B against preset=turtle, which is the
   -- placement switch alone.
-  nest = {
+  turtle2 = {
     PILL_PLACE_TURTLE = true,
     TURTLE_BASE_NEST  = true,
   },
