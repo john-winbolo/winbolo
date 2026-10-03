@@ -131,7 +131,9 @@ bool serverSimRandomMapRegenerate(ServerSim *sim) {
     /* Generated, not read — nothing to look beside. */
     sim->mapFilePath[0] = '\0';
 
-    serverSimApplyMapChange(sim, true);
+    /* The round-end regenerate and the map-skip vote, never a host's pick:
+       the chooser's random maps come through serverSimReloadRandomMap. */
+    serverSimApplyMapChange(sim, false);
     return TRUE;
 }
 
@@ -460,6 +462,9 @@ void serverSimHoldMapScript(ServerSim *sim) {
        is off is decided again, and that must not lose the place. */
     if (at < 0 && sim->scenarioMapScriptHeld) {
         at = sim->scenarioMapScriptHeldAt;
+        /* But no further than the end of the list the host has now: a place
+           past it names no row, and the end is where the row goes back. */
+        if (at > sim->scenarioScriptCount) at = sim->scenarioScriptCount;
     }
     serverSimSetMapScript(sim, NULL);
     if (at >= 0) {
@@ -614,7 +619,10 @@ bool serverSimMapDirPickRandom(ServerSim *sim) {
 
     snprintf(msg, sizeof(msg), "Map rotation: loaded '%s'", sim->mapName);
     serverSimConsoleMessage(msg);
-    serverSimApplyMapChange(sim, true);
+    /* Not the newer choice: a rotation, an empty server's reset or a map-skip
+       vote picks this map, not a host, so the operator's list stays as it is
+       and a picked scenario still replaces the map's own. */
+    serverSimApplyMapChange(sim, false);
     return TRUE;
 }
 
@@ -1704,7 +1712,13 @@ int serverSimSearchMapDir(ServerSim *sim, const char *relPath,
  * fields in CTRL_LOBBY_SETTINGS reflect the new map, and clear
  * humans' ready state — which aborts any in-flight countdown via
  * lobbyAutoUnreadyOnChange. Called from every map-mutator at the
- * end of its success path. */
+ * end of its success path.
+ *
+ * mapIsNewer is true only for a map a host chose — the map list, an
+ * upload, the chooser's random map — so that a scenario the map brings
+ * may take the place of one picked before it. A rotation, a vote, the
+ * round-end regenerate and a Cancel pass false and leave the list as it
+ * is. */
 static void serverSimApplyMapChange(ServerSim *sim, bool mapIsNewer) {
     mpDiagLog("[srv] applyMapChange map='%.32s' cachedLen=%d random=%d",
               sim->mapName, sim->cachedMapDataLen,

@@ -2342,9 +2342,11 @@ int serverSimDropPickedScenarios(ServerSim *sim) {
    The other order — a scenario picked after the map — still replaces the
    map's own, in the decision itself: there the pick is the newer choice.
 
-   Only in a lobby. A round started from the command line or a rotation with
-   no lobby has no host choosing between the two, and the list it was given
-   is the operator's. */
+   Only in a lobby, and only for a map a host chose. A round started from
+   the command line has no host choosing between the two, and a rotation, a
+   map-skip vote or the round-end regenerate does not come here at all
+   (serverSimApplyMapChange is told the map is not the newer choice): the
+   list those rounds play is the operator's. */
 void serverSimScenarioOnMapCommitted(ServerSim *sim, const char *mapPath) {
     if (sim == NULL) return;
     sim->scenarioMapIsNewer = serverSimIsLobbyEnabled(sim);

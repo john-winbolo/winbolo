@@ -6694,6 +6694,9 @@ set(_unit_test_names
     scenario_compose_commit_broken_map_keeps_picks
     scenario_compose_off_on_keeps_map_row_place
     scenario_compose_commit_no_lobby_keeps_picks
+    scenario_compose_off_shortened_keeps_map_own
+    scenario_compose_rotation_keeps_picks
+    scenario_compose_round_start_closes_preview
     scenario_compose_drop_picked_scenarios
     scenario_compose_fallback_strict
     scenario_compose_needs_bots_any_mod

@@ -1546,6 +1546,9 @@ void serverSimStartGameInPlace(ServerSim *sim) {
      * to boot — which would otherwise play by the last script's numbers. */
     simRulesClassic(&sim->sim.rules);
     serverSimResetScenarioSeats(sim);
+    /* A preview still open is the map the round plays, as in
+       serverSimStartGame. */
+    serverSimCommitPreview(sim);
     /* Voice to allies only, as serverSimResetGameWorld leaves it for the
        full-reset start, which this path does not go through. */
     serverSimSetScenarioVoiceEveryone(sim, false);
@@ -1703,6 +1706,13 @@ void serverSimStartGame(ServerSim *sim) {
      * capped by that round's rules and not by the previous round's. */
     simRulesClassic(&sim->sim.rules);
     serverSimResetScenarioSeats(sim);
+
+    /* A round that starts while the host is still browsing maps plays the
+       previewed map, so the preview is kept here as Use This Map would keep
+       it. Left open, its stash would outlive the round: the next map change
+       would put the pre-round script list back from it and a Cancel would
+       go back to the map from before this round. */
+    serverSimCommitPreview(sim);
 
     /* Held for the whole start, as in serverSimStartGameInPlace. */
     sim->startInProgress = true;

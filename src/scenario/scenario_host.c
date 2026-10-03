@@ -9625,6 +9625,13 @@ static ScenarioHost *scnComposeList(ServerSim *sim, const char *mapPath,
        there now. The row itself goes back to that place when the decision
        publishes it. */
     heldAt = (listed || picked) ? -1 : serverSimGetMapScriptHeldAt(sim);
+    /* A list the host shortened while the box was off can end before the
+       held place. The map's own script then goes at the end, which is where
+       serverSimSetMapScript puts the row back; left past the end, the loop
+       below would never reach it and the map's own would not play. */
+    if (heldAt > picks) {
+        heldAt = picks;
+    }
     if (!listed && !picked && heldAt < 0 && !modsOff && mapPath != NULL &&
         mapPath[0] != '\0' &&
         scnMapSource(sim, mapPath, &src[0], err, errLen)) {
@@ -9801,9 +9808,10 @@ static bool scnListHasPickedScenario(const ServerSim *sim) {
  * picked scenarios left out, and where the map's own script then attaches
  * and is a scenario, that is the round and the picked scenarios come off the
  * host's list; the mods stay behind the map's own. Where the map's own
- * script is a mod, or does not load, or the map has none, that compose is
- * let go and the list is composed again as the host wrote it, so the picks
- * are not lost to a script that did not replace them.
+ * script is a mod, or does not load, that compose is let go and the list is
+ * composed again as the host wrote it, so the picks are not lost to a script
+ * that did not replace them. A map with no script is composed once, as the
+ * host wrote the list.
  *
  * The Mods/Scenario setting off composes nothing at all, the map's own script
  * included, and the map plays plainly on the lobby's own game type. No pick
@@ -9824,6 +9832,7 @@ static bool scnListHasPickedScenario(const ServerSim *sim) {
 static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
                               const char *mapPath) {
     char            err[512];
+    char            saidErr[512];
     int             mapAt   = -1;
 
     if (slot == NULL) return;
@@ -9831,7 +9840,8 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
     *slot = NULL;
     if (sim == NULL) return;
 
-    err[0] = '\0';
+    err[0]     = '\0';
+    saidErr[0] = '\0';
 
     /* A map commit in a lobby, with a scenario picked before the map: the
        map is the newer choice, so its own scenario plays if it has one and
@@ -9844,9 +9854,12 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
        second attach, and only on this one path.
 
        Not with Mods/Scenario off: nothing composes then, so nothing says
-       what the map's own script is, and the picks stay. */
+       what the map's own script is, and the picks stay. Nor for a map with
+       no script of its own, which has nothing to take the picks' place:
+       the first compose would only attach the mods once more for nothing. */
     if (serverSimScenarioMapIsNewer(sim) && !serverSimGetModsOff(sim) &&
-        scnListHasPickedScenario(sim)) {
+        scnListHasPickedScenario(sim) &&
+        scenarioHostMapCarriesScript(mapPath)) {
         ScenarioHost *h = scnComposeList(sim, mapPath, true, &mapAt, err,
                                          sizeof(err));
 
@@ -9865,6 +9878,7 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
                own scenario is not the one playing. */
             if (h == NULL && err[0] != '\0') {
                 scnSay(NULL, 0, "%s", err);
+                SDL_strlcpy(saidErr, err, sizeof(saidErr));
             }
             scenarioHostDetach(h);
             mapAt  = -1;
@@ -9907,7 +9921,9 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
             scnSay(NULL, 0, "scenario: %d scripts loaded in all",
                    scenarioHostScriptCount(*slot));
         }
-    } else if (err[0] != '\0') {
+    } else if (err[0] != '\0' && strcmp(err, saidErr) != 0) {
+        /* Not twice: where the full list fails on the same file as the
+           first compose did, that line is on the console already. */
         scnSay(NULL, 0, "%s", err);
     }
 }
