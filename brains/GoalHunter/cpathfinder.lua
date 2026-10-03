@@ -261,6 +261,20 @@ function M.influence_at(x, y)
   return cpf_influence_at(x, y)
 end
 
+--- Own-ground distance (brainPathfinderBuildOwnDist). build_own_dist(cap)
+--- fills a per-brain grid with the Chebyshev distance from every tile to the
+--- nearest tile with influence > 0, clamped to cap, and returns how many
+--- tiles read > 0. Returns nil on an older exe without the C function, so a
+--- caller can fall back to its own search. own_dist_at(x, y) reads the grid
+--- as of the last build (255 off the map).
+function M.build_own_dist(cap)
+  if not cpf_build_own_dist then return nil end
+  return cpf_build_own_dist(cap)
+end
+function M.own_dist_at(x, y)
+  return cpf_own_dist_at(x, y)
+end
+
 --- Influence tail (see brainPathfinderRebuildInfluenceTail). Rebuild reads the
 --- stamped grid, so call it after the stamps and before merge; merge every tick.
 --- deep_margin (optional, 0 = off) keeps the tail off tiles within that many

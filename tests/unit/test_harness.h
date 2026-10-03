@@ -567,6 +567,8 @@ int run_pf_tail_meeting_cancels_tie_to_hostile(void);
 int run_pf_tail_never_overwrites_a_stamp(void);
 int run_pf_tail_deep_margin_keeps_off_the_shore(void);
 int run_pf_tail_contact_makes_a_front_line(void);
+int run_pf_own_dist_matches_brute_force(void);
+int run_pf_own_dist_cap_empty_and_edges(void);
 
 int run_loadbrowser_segment_walks_parts(void);
 int run_loadbrowser_segment_crosses_blocks(void);

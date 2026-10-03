@@ -112,6 +112,12 @@ struct BrainPathfinder {
    * discovered, so the mask is rebuilt on every tail rebuild (~0.3ms, and the
    * rebuild only runs on a stamp-set change or every EXPAND_REFRESH_TICKS). */
   uint8_t  deep_margin_mask[65536];
+  /* Own-ground distance (brainPathfinderBuildOwnDist): Chebyshev tiles from
+   * each tile to the nearest tile with influence_grid > 0, clamped to the cap
+   * passed to the build. Filled only on request (the turtle far-base cost in
+   * GoalHunter rebuilds it every TURTLE_BASE_D_REFRESH_TICKS); stale until
+   * the next build. Per pathfinder, so per brain. */
+  uint8_t  own_dist[65536];
   int16_t  danger_offset_grid[65536]; /* per-search danger adjustment (negative = subtract) */
   /* Coastal boat band: 1 where a water/boat tile lies within
    * BRAINPF_COASTAL_BAND euclidean tiles of land. Lets the land-only SHORT
@@ -518,6 +524,16 @@ void brainPathfinderClearInfluence(BrainPathfinder *pf);
 void brainPathfinderStampInfluence(BrainPathfinder *pf, int cx, int cy,
                                     int radius, int strength);
 int16_t brainPathfinderInfluenceAt(BrainPathfinder *pf, int x, int y);
+
+/* Own-ground distance. Build fills own_dist with the exact Chebyshev
+ * (king-move) distance from every tile to the nearest tile whose current
+ * influence_grid value is > 0, clamped to cap (0..254); a tile with no such
+ * tile in range reads cap. Off-map tiles are not sources. Two raster sweeps
+ * over the 256x256 grid, a pure function of influence_grid. Returns the
+ * number of source tiles (0 = no positive tile anywhere: every tile reads
+ * cap). OwnDistAt returns the stored value, or 255 off the map. */
+int brainPathfinderBuildOwnDist(BrainPathfinder *pf, int cap);
+int brainPathfinderOwnDistAt(BrainPathfinder *pf, int x, int y);
 
 /* Influence tail. Rebuild reads the stamped influence_grid (cells with
  * |v| >= seed_min are the cores), grows each side outward over passable
