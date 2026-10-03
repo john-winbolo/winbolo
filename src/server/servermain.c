@@ -702,6 +702,18 @@ void printArgs() {
   fprintf(stderr, "-limit <L>    - Specifies the game time limit (in minutes)\n");
   fprintf(stderr, "                \"-1\" for no time limit (none if not specified)\n");
   fprintf(stderr, "-password <P> - Game Password (none if not specified)\n");
+  fprintf(stderr, "-name <N>     - Short server name the game finder shows instead of this\n");
+  fprintf(stderr, "                server's address: up to 32 bytes of UTF-8, which is 32\n");
+  fprintf(stderr, "                plain letters and fewer accented ones. Quote it if it has\n");
+  fprintf(stderr, "                spaces. Without -name, [HOSTING] \"Server Name\" in the\n");
+  fprintf(stderr, "                WinBolo.json in the working directory; -name \"\" sets no\n");
+  fprintf(stderr, "                name and skips that file.\n");
+  fprintf(stderr, "-desc <D>     - Longer server description the game finder shows beside the\n");
+  fprintf(stderr, "                name: up to 200 bytes of UTF-8, less when a long scenario\n");
+  fprintf(stderr, "                and mods leave no room (a note says so at startup). Without\n");
+  fprintf(stderr, "                -desc, [HOSTING] \"Server Description\" in the same file;\n");
+  fprintf(stderr, "                -desc \"\" sets none and skips it. Control characters are\n");
+  fprintf(stderr, "                removed from both.\n");
 
   fprintf(stderr, "\nLobby & host:\n");
   fprintf(stderr, "-nolobby      - Skip lobby, start game immediately (backward-compatible mode)\n");
@@ -2776,6 +2788,33 @@ int main(int argc, char **argv) {
         instCfg.voiceMode = serverVoiceOff;
       }
     }
+    /* -name / -desc: what the game finder shows for this server in place of
+     * its address. Without the flag, the same [HOSTING] keys a client host
+     * keeps in its WinBolo.json, so an operator can set them once in the
+     * file instead. The sim's setters sanitise and cut both; static because
+     * instCfg only points at them. */
+    {
+      static char serverNameBuf[256];
+      static char serverDescBuf[1024];
+      int nameNum = findArg(argc, argv, "name");
+      int descNum = findArg(argc, argv, "desc");
+      if (nameNum != ARG_NOT_FOUND) {
+        snprintf(serverNameBuf, sizeof(serverNameBuf), "%s",
+                 (char *)argv[nameNum]);
+      } else {
+        prefsGetString("HOSTING", "Server Name", "", serverNameBuf,
+                       sizeof(serverNameBuf));
+      }
+      if (descNum != ARG_NOT_FOUND) {
+        snprintf(serverDescBuf, sizeof(serverDescBuf), "%s",
+                 (char *)argv[descNum]);
+      } else {
+        prefsGetString("HOSTING", "Server Description", "", serverDescBuf,
+                       sizeof(serverDescBuf));
+      }
+      instCfg.serverName        = serverNameBuf;
+      instCfg.serverDescription = serverDescBuf;
+    }
     /* A server that skips the lobby starts its round inside the startup
        below, so the scenario's own settings have to be in force before it:
        the round is built and the first tanks placed in there, and a game
@@ -2793,6 +2832,27 @@ int main(int argc, char **argv) {
       SDL_Quit();
 #endif
       return 0;
+    }
+    /* Say what the finder will show, after the sanitising, so an operator
+     * sees a name that came out shorter or cleaner than typed. */
+    if (serverSimGetServerName(serverSim)[0] != '\0') {
+      fprintf(stderr, "Server name: %s\n", serverSimGetServerName(serverSim));
+    }
+    if (serverSimGetServerDescription(serverSim)[0] != '\0') {
+      size_t descLen = strlen(serverSimGetServerDescription(serverSim));
+      size_t descRoom = infoReplyServerDescRoom(serverSim);
+      fprintf(stderr, "Server description: %s\n",
+              serverSimGetServerDescription(serverSim));
+      /* The reply is capped at one 1024-byte packet, and a long scenario
+       * and mod list leave less room for the description. Checked against
+       * the scripts this round starts with; a later pick can change it. */
+      if (descLen > descRoom) {
+        fprintf(stderr,
+                "Note: the game finder gets only the first %u of the "
+                "description's %u bytes; the scenario and mod names fill "
+                "the rest of the reply.\n",
+                (unsigned)descRoom, (unsigned)descLen);
+      }
     }
 
 #if WB_ENABLE_NETIMPAIR

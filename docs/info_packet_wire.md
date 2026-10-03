@@ -202,6 +202,47 @@ A reader drops the bytes whole if any length is over its cap or any field runs
 past the end of the packet, and reports no scripts, the same as a 113-byte
 reply. Bytes after the last mod are ignored, so a later field can go on the end.
 
+### Server name and description
+
+A server whose host set a name or a description (DS `-name` / `-desc`, or
+`[HOSTING] Server Name` / `Server Description` in `WinBolo.json`) writes them
+straight after the last mod:
+
+| Field | Size | Notes |
+|-------|-----:|-------|
+| `serverNameLen` | 1 | 0..32 (`INFO_SERVER_NAME_MAX`) |
+| `serverName` | `serverNameLen` | UTF-8, no NUL |
+| `serverDescLen` | 1 | 0..200 (`INFO_SERVER_DESC_MAX`) |
+| `serverDesc` | `serverDescLen` | UTF-8, no NUL |
+
+A server with neither writes nothing here, so its reply is byte for byte the
+reply of a server that predates the field. Both strings pass through
+`serverTextSanitize()` (`src/bolo/server_text.c`) on the way in and again when
+read: no control characters, no bidi or zero-width marks, one line, trimmed.
+
+The receive buffers on both sides are `MAX_UDPPACKET_SIZE` (1024) bytes, and
+Windows drops a larger datagram, so the whole reply never passes 1024 bytes.
+The script bytes can take 843, which leaves `INFO_REPLY_TAIL_CAP` − 843 = 68
+bytes for this section, length bytes included. The name always fits whole (a
+static assert in `netpacks.h` checks it). The description is cut to what is
+left: with a 32-byte name that is 68 − 1 − 32 − 1 = 34 bytes in the worst
+case. The cut never splits a character or a letter from its combining marks.
+With fewer than 3 bytes of room the section is left out. The dedicated server
+prints a note at startup when the description will not go whole beside the
+scripts the round starts with.
+
+Game finders from #449 on read the script bytes and ignore anything after the
+last mod, so they read a server with this section the same as one without it.
+Game finders from before #449 accept only a reply exactly the INFO_PACKET's
+size, so they already cannot read a current server, with or without this
+section.
+
+A current reader treats the section as optional. If it is missing, or the
+name's length is over its cap or runs past the end, the name and description
+stay empty. If only the description is bad, the name is kept. Either way the
+scripts are kept, and a row with no name shows the address, as it always did.
+Bytes after the description are ignored for a later field.
+
 ## Endianness
 
 The packet is predominantly host byte order (little-endian in practice on the

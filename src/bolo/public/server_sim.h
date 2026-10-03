@@ -2053,6 +2053,18 @@ const char *serverSimGetMapMd5Hex(const ServerSim *sim);
 const char *serverSimGetBotBrainPath(const ServerSim *sim);
 const char *serverSimGetServerMessageLogFile(const ServerSim *sim);
 
+/* The short name and the longer description the host gave this server
+ * (-name / -desc, or the client host's Hosting settings). The game finder
+ * shows the name in place of the server's address and the description beside
+ * it. The setters run the text through serverTextSanitize (server_text.h) and
+ * cut it to SERVER_NAME_MAX / SERVER_DESC_MAX bytes; NULL clears it. The
+ * getters return "" when none was given and for a NULL sim. Set at startup
+ * from ServerInstanceConfig; neither is a lobby setting. */
+void        serverSimSetServerName(ServerSim *sim, const char *name);
+const char *serverSimGetServerName(const ServerSim *sim);
+void        serverSimSetServerDescription(ServerSim *sim, const char *desc);
+const char *serverSimGetServerDescription(const ServerSim *sim);
+
 /* Indexed-array accessors (bounds-checked; out-of-range
  * returns NULL for pointer types, false/0 for scalars). */
 const LobbyPlayer *serverSimGetLobbyPlayer(const ServerSim *sim, BYTE n);

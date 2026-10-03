@@ -50,6 +50,14 @@
 #include "server_sim_lifecycle.h" /* serverSimGetPassword */
 #include "playername_validate.h" /* playerNameTruncateUtf8 — the description cut
                                   * on a character boundary */
+#include "server_text.h"         /* SERVER_NAME_LEN / SERVER_DESC_LEN */
+
+/* The sim's caps and the wire's caps are the same numbers, so text the sim
+ * accepted is never cut for being too long, only for want of room. */
+BOLO_STATIC_ASSERT(SERVER_NAME_MAX == INFO_SERVER_NAME_MAX,
+                   server_name_cap_matches_the_wire);
+BOLO_STATIC_ASSERT(SERVER_DESC_MAX == INFO_SERVER_DESC_MAX,
+                   server_desc_cap_matches_the_wire);
 
 /* Human-readable terrain name for map-resync diagnostics. Covers the terrain
  * byte stored in mapItem, including the mine range (10-15). */
@@ -184,18 +192,72 @@ static size_t infoScriptTailPutString(uint8_t *out, const char *str,
     return 1 + len;
 }
 
+/* The server's name and description after the last mod, when the host gave
+ * either; nothing at all when it gave neither, so such a server's reply is
+ * what a server from before the field sent. room is what is left of the
+ * reply. The sim holds both already sanitised and within their caps; here
+ * they are only cut, on a character boundary, to the room there is. The name
+ * always fits whole beside the largest script bytes (netpacks.h asserts it),
+ * so in practice only the description is ever cut. The cut goes through
+ * serverTextSanitize, which leaves the already clean text alone and keeps a
+ * letter whole with its combining marks. With fewer than 3 bytes of room
+ * there is space for nothing but two empty lengths, so nothing is sent. */
+static size_t buildInfoServerText(ServerSim *sim, uint8_t *out, size_t room) {
+    const char *nameIn = serverSimGetServerName(sim);
+    const char *descIn = serverSimGetServerDescription(sim);
+    char        name[SERVER_NAME_LEN];
+    char        desc[SERVER_DESC_LEN];
+    size_t      pos = 0;
+
+    if ((nameIn[0] == '\0' && descIn[0] == '\0') || room < 3) {
+        return 0;
+    }
+    serverTextSanitize(nameIn, name, sizeof(name),
+                       room - 2 < INFO_SERVER_NAME_MAX ? room - 2
+                                                       : INFO_SERVER_NAME_MAX);
+    pos += infoScriptTailPutString(out + pos, name, INFO_SERVER_NAME_MAX);
+    serverTextSanitize(descIn, desc, sizeof(desc),
+                       room - pos - 1 < INFO_SERVER_DESC_MAX
+                           ? room - pos - 1 : INFO_SERVER_DESC_MAX);
+    pos += infoScriptTailPutString(out + pos, desc, INFO_SERVER_DESC_MAX);
+    return pos;
+}
+
+/* The scripts part of the tail: the scenario, its description and cap, and
+ * the mods. out has room for INFO_SCRIPT_TAIL_MAX bytes. */
+static size_t buildInfoScripts(ServerSim *sim, uint8_t *out);
+
 /* Write the scripts the round runs, as the info-request reply carries them
  * after the INFO_PACKET. The layout is described above INFO_SCRIPT_TAIL_MAX
  * in netpacks.h and in docs/info_packet_wire.md. */
 size_t buildInfoScriptTail(ServerSim *sim, uint8_t *out, size_t cap) {
+    size_t pos;
+
+    if (out == NULL || cap < INFO_SCRIPT_TAIL_MAX) {
+        return 0;
+    }
+    pos = buildInfoScripts(sim, out);
+    pos += buildInfoServerText(sim, out + pos, cap - pos);
+    return pos;
+}
+
+size_t infoReplyServerDescRoom(struct ServerSim *sim) {
+    uint8_t buf[INFO_SCRIPT_TAIL_MAX];
+    size_t  room = INFO_REPLY_TAIL_CAP - buildInfoScripts(sim, buf);
+    size_t  nameLen = strlen(serverSimGetServerName(sim));
+
+    /* The name always fits whole (netpacks.h); its length byte and the
+     * description's take two more. */
+    room -= 2 + nameLen;
+    return room < INFO_SERVER_DESC_MAX ? room : INFO_SERVER_DESC_MAX;
+}
+
+static size_t buildInfoScripts(ServerSim *sim, uint8_t *out) {
     ServerScriptSummary scripts;
     char                desc[SERVER_SCRIPT_DESC_LEN];
     size_t              pos = 0;
     BYTE                i;
 
-    if (out == NULL || cap < INFO_SCRIPT_TAIL_MAX) {
-        return 0;
-    }
     serverSimGetScriptSummary(sim, &scripts);
 
     /* The summary's description is the lobby's 255 bytes; the wire carries
@@ -223,7 +285,7 @@ size_t buildInfoScriptTail(ServerSim *sim, uint8_t *out, size_t cap) {
  * INFO_PACKET alone and stays sizeof(INFO_PACKET) bytes. */
 void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
                              ServerSim *sim) {
-    uint8_t buf[sizeof(INFO_PACKET) + INFO_SCRIPT_TAIL_MAX];
+    uint8_t buf[sizeof(INFO_PACKET) + INFO_REPLY_TAIL_CAP];
     INFO_PACKET pkt;
     size_t tailLen;
     char consoleMsg[256];

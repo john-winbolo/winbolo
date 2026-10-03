@@ -8,7 +8,7 @@
 #include "clientmutex.h"    /* clientMutexWaitFor / clientMutexRelease */
 #include "gamefront.h"      /* gameFrontGetPlayerNum */
 #include "input.h"          /* keyItems, inputGetKeys, gunsight consume, ... */
-#include "input_packet.h"   /* InputPacket, INPUT_FLAG_GUNSIGHT_SHIFT */
+#include "input_packet.h"   /* InputPacket, INPUT_FLAG_GUNSIGHT_SHIFT, INPUT_FLAG_AUTOSLOW */
 
 /* Frontend globals defined once per client binary (winbolo.c on desktop,
  * main_wasm.c on web). */
@@ -57,6 +57,7 @@ bool clientFrontRunTickStep(ClientSim *cs) {
     if (!brainRunning) {
       uint8_t gsAdj = inputConsumeGunsightAdj();
       if (gsAdj) pkt.flags |= ((gsAdj & 0x3) << INPUT_FLAG_GUNSIGHT_SHIFT);
+      if (inputAutoSlowdownAssist()) pkt.flags |= INPUT_FLAG_AUTOSLOW;
     }
     clientMutexWaitFor();
     clientSimKeysTick(cs, &pkt);
@@ -94,6 +95,7 @@ bool clientFrontRunTickStep(ClientSim *cs) {
   if (!brainRunning) {
     uint8_t gsAdj = inputConsumeGunsightAdj();
     if (gsAdj) pkt.flags |= ((gsAdj & 0x3) << INPUT_FLAG_GUNSIGHT_SHIFT);
+    if (inputAutoSlowdownAssist()) pkt.flags |= INPUT_FLAG_AUTOSLOW;
   }
   clientMutexWaitFor();
   clientSimGameTick(cs, &pkt, brainRunning);

@@ -85,6 +85,7 @@ add_library(bolo_static STATIC
     screentank.c
     scroll.c
     scroll_item_list.c
+    server_text.c
     shells.c
     sight.c
     sim_rules.c

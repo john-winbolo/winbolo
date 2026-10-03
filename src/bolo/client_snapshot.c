@@ -1311,7 +1311,7 @@ void clientApplySnapshot(ClientSim *csPtr,
                   BYTE bmy = tankGetMY(&MY_TANK(csPtr));
                   tankTurn(&csPtr->sim, &MY_TANK(csPtr), bmx, bmy, tb);
                 } else {
-                  tankUpdate(&csPtr->sim, &MY_TANK(csPtr), tb, FALSE, FALSE);
+                  clientStateTankUpdate(&csPtr->sim, &MY_TANK(csPtr), tb, FALSE, histPkt);
                   /* Simulate fire's effect on reload during replay.
                    * tankUpdate was called with shoot=FALSE to avoid creating
                    * shells, but we must still apply the reload reset so the

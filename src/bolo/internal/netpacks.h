@@ -127,6 +127,33 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 113, INFO_PACKET_must_be_113_bytes);
 BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) + INFO_SCRIPT_TAIL_MAX <= MAX_UDPPACKET_SIZE,
                    INFO_PACKET_and_script_tail_fit_one_udp_packet);
 
+/* The name and description the host gave the server, after the last mod of
+ * the script bytes, and only when the host gave at least one of them:
+ *
+ *   [serverNameLen 1][serverName][serverDescLen 1][serverDesc]
+ *
+ * UTF-8, no NULs, each cut on a character boundary: the name to at most
+ * INFO_SERVER_NAME_MAX bytes and the description to at most
+ * INFO_SERVER_DESC_MAX. A server with neither writes nothing here, so its
+ * reply is byte for byte what a server from before this field sent. A game
+ * finder from #449 on, which reads the script bytes, ignores these as "after
+ * the last mod". One from before #449 already refuses any reply longer than
+ * the INFO_PACKET, so it cannot read a current server whether or not these
+ * bytes are there; the field changes nothing for it.
+ *
+ * The whole reply has to stay inside MAX_UDPPACKET_SIZE, because that is the
+ * receive buffer of every game finder, and a Windows recvfrom drops a
+ * datagram longer than its buffer outright. INFO_REPLY_TAIL_CAP is the room
+ * after the INFO_PACKET. The name always fits whole beside the largest
+ * script bytes; the description takes what is left, which is all of it
+ * unless the round runs many mods with long names. In the worst case (843
+ * script bytes and a 32-byte name) 34 bytes of description fit. */
+#define INFO_SERVER_NAME_MAX 32
+#define INFO_SERVER_DESC_MAX 200
+#define INFO_REPLY_TAIL_CAP (MAX_UDPPACKET_SIZE - sizeof(INFO_PACKET))
+BOLO_STATIC_ASSERT(INFO_SCRIPT_TAIL_MAX + 1 + INFO_SERVER_NAME_MAX + 1 <= INFO_REPLY_TAIL_CAP,
+                   INFO_server_name_always_fits_after_the_script_tail);
+
 /* Historical INFO_PACKET wire size, before the flags/count/md5 fields were
  * appended. Servers older than those additions send this; discovery accepts
  * it and parses only the common prefix. */

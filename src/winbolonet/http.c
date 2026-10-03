@@ -93,24 +93,38 @@ static long s_logUploadTimeoutOverride = 0;
 static CURL        *s_workerCurl = NULL;
 static SDL_ThreadID s_workerCurlThread = 0;
 
-/* A post or an upload slower than this leaves one line in the log. The
+/* A post or an upload slower than these leaves one line in the log. The
  * thread is in the line on purpose: these calls belong on the WinBolo.net
  * worker, and one that ran on the server tick thread stalls the tick for
- * every connected client for as long as it takes. */
-#define WBN_SLOW_CALL_WARN_MS 100u
+ * every connected client for as long as it takes.
+ *
+ * There are two values because only a call off the worker does harm by
+ * being slow. Off the worker the limit stays at 100 ms, so a blocking call
+ * on the tick thread or the GUI thread is reported even when the only cause
+ * is network latency. On the worker a slow call stalls nothing, and network
+ * latency alone exceeds 100 ms for a server far from wbn.winbolo.net: from
+ * Australia one round trip is about 200 ms, a post on a reused connection
+ * takes about 200-250 ms and one on a fresh connection (TCP + TLS +
+ * request) about 500-650 ms, with up to about 950 ms seen. 1000 ms is above
+ * all of those, so the worker line only appears when something else is
+ * wrong, such as a slow backend query, a retry or a DNS stall. */
+#define WBN_SLOW_CALL_WARN_MS_OFF_WORKER 100u
+#define WBN_SLOW_CALL_WARN_MS_ON_WORKER  1000u
 
 /* Report a curl_easy_perform that ran long. startMs is SDL_GetTicks taken
  * immediately before the perform. */
 static void wbnLogSlowCall(const char *what, Uint64 startMs) {
   Uint64 elapsedMs = SDL_GetTicks() - startMs;
-  if (elapsedMs > WBN_SLOW_CALL_WARN_MS) {
-    SDL_ThreadID self = SDL_GetCurrentThreadID();
+  SDL_ThreadID self = SDL_GetCurrentThreadID();
+  bool onWorker = (s_workerCurlThread != 0 && self == s_workerCurlThread);
+  Uint64 warnMs = onWorker ? WBN_SLOW_CALL_WARN_MS_ON_WORKER
+                           : WBN_SLOW_CALL_WARN_MS_OFF_WORKER;
+  if (elapsedMs > warnMs) {
     WB_LOG_WARN(WB_LOG_CAT_NET, "slow WBN call [%s]: %llu ms on thread %llu%s",
                 what,
                 (unsigned long long)elapsedMs,
                 (unsigned long long)self,
-                (s_workerCurlThread != 0 && self == s_workerCurlThread)
-                    ? " (wbn worker)" : "");
+                onWorker ? " (wbn worker)" : "");
   }
 }
 

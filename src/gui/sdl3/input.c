@@ -40,6 +40,7 @@
 #include "turn_tap.h"
 #include "input_touch.h"
 #include "input_gamepad.h"
+#include "input_source.h"
 #include "build_cursor.h"
 #include "sdl3imgui.h"
 #include "sdl3draw.h"
@@ -1062,6 +1063,10 @@ uint8_t inputConsumeGunsightAdj(void) {
   uint8_t val = lastGunsightAdj;
   lastGunsightAdj = 0;
   return val;
+}
+
+bool inputAutoSlowdownAssist(void) {
+  return inputSourceAutoSlowdown(FALSE);
 }
 
 void inputBumpGunsight(int direction) {

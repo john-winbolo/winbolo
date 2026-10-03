@@ -61,6 +61,7 @@ void inputSourceNoteGamepad(void) {}
 void inputSourceNoteKeyboard(void) {}
 void inputSourceNoteCursorWarp(void) {}
 InputSource inputSourceCurrent(void) { return INPUT_SOURCE_KEYBOARD; }
+bool inputSourceAutoSlowdown(bool savedPreference) { return savedPreference; }
 
 /* The tutorial overlay is now real in the wasm build — see
  * imgui_tutorial_overlay.cpp (compiled in) and the driver in main_wasm.c. */

@@ -2686,7 +2686,16 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         if (lobbyH < DIALOG_MIN_H) lobbyH = DIALOG_MIN_H;
         dialogSetWindowSize(window, lobbyW, lobbyH);
     }
-    dialogSetWindowTitle(window, langGetText(STR_DLGLOBBY_WINTITLE));
+    /* The server's own name after the usual title, when it has one, so a
+     * player in several lobbies across windows can tell them apart. */
+    if (gameFrontLobbyServerName[0] != '\0') {
+        char lobbyTitle[160];
+        SDL_snprintf(lobbyTitle, sizeof(lobbyTitle), "%s - %s",
+                     langGetText(STR_DLGLOBBY_WINTITLE), gameFrontLobbyServerName);
+        dialogSetWindowTitle(window, lobbyTitle);
+    } else {
+        dialogSetWindowTitle(window, langGetText(STR_DLGLOBBY_WINTITLE));
+    }
     SDL_SetWindowResizable(window, true);
 #endif
     dialogRestorePosition(window);

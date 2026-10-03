@@ -3786,6 +3786,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The script bytes the reply to an info request carries after the
     # INFO_PACKET: the writer and the reader, each against literal bytes.
     tests/unit/test_info_script_tail.c
+    # The host's server name and description: the sanitiser, the sim's
+    # setters, and the bytes after the scripts in the info reply.
+    tests/unit/test_server_text.c
     # The policy a server holds for scripts players send it: the word it is
     # set from, its byte on the lobby-settings event, and the sim's and the
     # client's copies.
@@ -4382,6 +4385,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # arrays, plus the small-explosion sweep's off-by-one.
     tests/unit/test_tkexp_lgm_pairing.c
     tests/unit/test_input_gate.c
+    tests/unit/test_input_source.c
+    src/gui/sdl3/input_source.c
     tests/unit/test_key_claims.c
     tests/unit/test_server_address_parse.c
     # The map chooser's "Scenarios only" row test, header-only.
@@ -5852,6 +5857,7 @@ set(_unit_test_names
     players_oob_index_safe
     control_oob_player_dropped
     input_gate_taxonomy
+    input_source_autoslow
     key_claims
     addrparse_host_only
     addrparse_host_port
@@ -6177,6 +6183,10 @@ set(_unit_test_names
     wbn_lobby_info_scenario
     info_script_tail_golden
     info_script_tail_read
+    server_text_sanitize
+    server_text_sim
+    server_text_tail_golden
+    server_text_tail_read
     script_upload_policy_resolve
     script_upload_policy_word
     script_upload_policy_codec

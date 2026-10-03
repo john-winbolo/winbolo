@@ -64,6 +64,12 @@ void inputSourceNoteCursorWarp(void);
  * before any input). */
 InputSource inputSourceCurrent(void);
 
+/* Effective auto-slowdown for the next input. Controller use temporarily
+ * enables it; mere attachment (the UI's launch default) must not override
+ * the saved choice. A keyboard key press or disconnection restores that
+ * choice; mouse and trackpad input does not, as it never steers the tank. */
+bool inputSourceAutoSlowdown(bool savedPreference);
+
 #ifdef __cplusplus
 }
 #endif

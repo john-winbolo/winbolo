@@ -33,6 +33,7 @@
 #include "everard_map.h"
 #include "frontend.h"
 #include "server_sim.h"
+#include "server_text.h"   /* serverTextSanitize, SERVER_NAME_LEN / SERVER_DESC_LEN */
 #include "../server/server_lifecycle.h"
 #include "../server/server_dedicated_log.h"
 #include "../scenario/scenario_host.h"
@@ -242,6 +243,9 @@ bool           gameFrontHostingLogging          = TRUE;
 char           gameFrontHostingLogDir[FILENAME_MAX] = "";
 bool           gameFrontHostingServeReplays     = TRUE;
 int            gameFrontHostingVoiceMode        = serverVoiceOn;
+char           gameFrontHostingServerName[SERVER_NAME_LEN] = "";
+char           gameFrontHostingServerDesc[SERVER_DESC_LEN] = "";
+char           gameFrontLobbyServerName[SERVER_NAME_LEN]   = "";
 
 /* Visibility rules a hosted game starts with. Same story as the hosting
  * knobs above — held for the dialogs, never applied to a server here.
@@ -1331,6 +1335,14 @@ void gameFrontSetHostingUploadMaxFiles(int maxFiles) { gameFrontHostingUploadMax
 void gameFrontSetHostingLogging(bool logging)        { gameFrontHostingLogging = logging; }
 void gameFrontSetHostingServeReplays(bool serve)     { gameFrontHostingServeReplays = serve; }
 void gameFrontSetHostingVoiceMode(int mode)          { gameFrontHostingVoiceMode = mode; }
+void gameFrontSetHostingServerName(const char *name) {
+  serverTextSanitize(name, gameFrontHostingServerName,
+                     sizeof(gameFrontHostingServerName), SERVER_NAME_MAX);
+}
+void gameFrontSetHostingServerDesc(const char *desc) {
+  serverTextSanitize(desc, gameFrontHostingServerDesc,
+                     sizeof(gameFrontHostingServerDesc), SERVER_DESC_MAX);
+}
 
 void gameFrontSetHostingUploadMaxStorage(int maxStorageMb) {
   gameFrontHostingUploadMaxStorage = maxStorageMb;

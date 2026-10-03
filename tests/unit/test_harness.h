@@ -2645,6 +2645,7 @@ int run_tkexp_lgm_pairing(void);
  * input, a focus-stealing modal, a popup/menu on the stack, a defocused
  * window) and never for the transient alliance/vote notifications. */
 int run_input_gate_taxonomy(void);
+int run_input_source_autoslow(void);
 
 /* Game-binding claims (test_key_claims.c). keyIsClaimedByGame() must report
  * every keyItems field as owned by the game, so a second window that drives
@@ -3018,6 +3019,14 @@ int run_wbn_lobby_info_scenario(void);
  * and the reader against literal buffers, well-formed and not. */
 int run_info_script_tail_golden(void);
 int run_info_script_tail_read(void);
+
+/* The host's server name and description (test_server_text.c): the
+ * sanitiser, the sim's setters, and the bytes the info reply carries after
+ * the scripts, written and read, old layout and malformed. */
+int run_server_text_sanitize(void);
+int run_server_text_sim(void);
+int run_server_text_tail_golden(void);
+int run_server_text_tail_read(void);
 
 /* The policy a server holds for scripts players send it
  * (test_script_upload_policy.c): the word it is set from and the legacy flag

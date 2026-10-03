@@ -78,6 +78,19 @@ void clientStateRecordInput(ClientState *cs, const InputPacket *pkt) {
     cs->newestInput = pkt->tick;
 }
 
+void clientStateTankUpdate(struct GameSim *sim, tank *predictedTank, tankButton tb,
+                           bool inBrain, const InputPacket *pkt) {
+    /* The server applies each input's INPUT_FLAG_AUTOSLOW before stepping
+     * (server_sim_tick.c), and the frontend may add controller assistance
+     * to it per packet, so step with that flag rather than the tank's own
+     * setting. Put the tank's setting back afterwards: it is the saved
+     * preference the next packet is built from, not this input's state. */
+    bool pref = tankGetAutoSlowdown(predictedTank);
+    tankSetAutoSlowdown(predictedTank, (pkt->flags & INPUT_FLAG_AUTOSLOW) != 0);
+    tankUpdate(sim, predictedTank, tb, FALSE, inBrain);
+    tankSetAutoSlowdown(predictedTank, pref);
+}
+
 void clientStatePredictTick(ClientSim *csim, ClientState *cs, const InputPacket *pkt,
                             tank *predictedTank, GameSim *sim,
                             bool isKeysTick, bool inBrain) {
@@ -118,7 +131,7 @@ void clientStatePredictTick(ClientSim *csim, ClientState *cs, const InputPacket 
         /* Pass shoot=FALSE here: shell prediction is handled by
          * clientSimGameTick which checks fire conditions after this
          * call and creates predicted shells in a separate array. */
-        tankUpdate(sim, predictedTank, tb, FALSE, inBrain);
+        clientStateTankUpdate(sim, predictedTank, tb, inBrain, pkt);
     }
     sim->isPredicting = FALSE;
 }
@@ -190,7 +203,7 @@ bool clientStateReconcile(ClientSim *csim, ClientState *cs, uint32_t lastProcess
             tankTurn(sim, predictedTank, bmx, bmy, tb);
         } else {
             /* Replay without shooting to avoid duplicate shells */
-            tankUpdate(sim, predictedTank, tb, FALSE, FALSE);
+            clientStateTankUpdate(sim, predictedTank, tb, FALSE, histPkt);
         }
     }
     sim->isPredicting = FALSE;

@@ -174,6 +174,18 @@ void inputButtonInput(keyItems *setKeys, SDL_Scancode scancode, bool newState,
 uint8_t inputConsumeGunsightAdj(void);
 
 /*********************************************************
+*NAME:          inputAutoSlowdownAssist
+*PURPOSE:
+*  Returns TRUE while controller driving should add
+*  auto-slowdown on top of the saved preference. The
+*  frontend tick ORs it into each InputPacket's
+*  INPUT_FLAG_AUTOSLOW, so the tank's own setting stays the
+*  saved preference and every input carries the value the
+*  server and the local replay both apply to it.
+*********************************************************/
+bool inputAutoSlowdownAssist(void);
+
+/*********************************************************
 *NAME:          inputBumpGunsight
 *PURPOSE:
 *  Queues a single gunsight adjustment from a non-keyboard
