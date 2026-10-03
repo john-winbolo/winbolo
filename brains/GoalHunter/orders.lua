@@ -1536,7 +1536,7 @@ function M.note_human_shooting(state, world, info, now)
   -- enemy tank near the pill is not a shot at the pill.
   local OT, OH = _G.OBJECT_TANK, _G.OBJECT_HOSTILE or 0
   local foes = nil
-  if OT then
+  if OT and C.ORDER_HUMAN_SHOT_SKIP_TANK_ON_LINE then
     for _, ob in ipairs(info.objects or {}) do
       if ob.type == OT and bit.band(ob.info or 0, OH) ~= 0 then
         foes = foes or {}
