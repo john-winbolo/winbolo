@@ -6029,6 +6029,20 @@ do
   M.MODE_LEVELS.turtle = turtle
 end
 
+-- Turtle2 mode (Andrew's local test mode, 2026-10-02; not for a PR): each
+-- level is the Turtle level plus TURTLE_BASE_NEST, the same switches as
+-- preset=turtle2, so the lobby can A/B Turtle against Turtle2.
+do
+  local turtle2 = {}
+  for level, bundle in pairs(M.MODE_LEVELS.turtle) do
+    local t = {}
+    for k, v in pairs(bundle) do t[k] = v end
+    t.TURTLE_BASE_NEST = true
+    turtle2[level] = t
+  end
+  M.MODE_LEVELS.turtle2 = turtle2
+end
+
 -- Joust Easy plays on the general Medium bundle (2026-10-01). For every
 -- knob where the general Easy bundle differs from the general Medium
 -- bundle, Joust's easy table writes the Medium value back (Hard's value
