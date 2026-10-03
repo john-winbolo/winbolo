@@ -1,10 +1,10 @@
 # The scenario arenas
 
-A hundred and forty-one small maps, each with a scenario script beside it.
+A hundred and forty-two small maps, each with a scenario script beside it.
 Most are built to make one bot decision happen on purpose and then say whether
-the bot made it. Thirty-four check a shipped mod instead: the twenty-three
-`pilltag_*` arenas, the seven `rule_roulette_*` arenas and the four `virus_*`
-arenas. `deep_sea_safe_rule` checks one gameplay rule.
+the bot made it. Thirty-five check a shipped mod instead: the twenty-three
+`pilltag_*` arenas, the seven `rule_roulette_*` arenas, the four `virus_*`
+arenas and `bases_only_no_pills`. `deep_sea_safe_rule` checks one gameplay rule.
 
 They came from the branch `survival-scenario-bot-improvements-merged`, where
 they ran on a server-side scenario host that no longer exists. They run here
