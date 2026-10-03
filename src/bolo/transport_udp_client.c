@@ -2407,7 +2407,9 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
          * missing listing now that requests can go out, but keep a completed
          * cache: changing the active map does not change the directory. An
          * empty listing while re-fetching would reset the chooser's scroll.
-         * Upload completion invalidates the cache separately when needed. */
+         * An upload invalidates the uploader's own cache when it completes;
+         * other clients keep theirs, and so miss the new file, until they
+         * navigate to another folder and back. */
         cs->lobbyMapListInFlight = false;
         cs->lobbyMapListSeq++;
         installCompressedMap(cs, c->mapDownloadBuf,
