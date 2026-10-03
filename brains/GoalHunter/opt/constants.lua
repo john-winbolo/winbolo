@@ -1991,7 +1991,8 @@ M.STRATEGIC_PLACE_CENTER_BIAS_WEIGHT = 4    -- score per tile closer to the stra
 -- `cfg=PILL_PLACE_TURTLE=true`, or the `survivor` init word (M.SIDE_SETTINGS).
 -- A runtime cfg=PILL_PLACE_TURTLE=false or `horde` turns it off again
 -- (Virus sends `horde` when a survivor turns); the tunables are read only
--- while the switch is on.
+-- while the switch is on. `preset=nest` is this switch plus TURTLE_BASE_NEST
+-- (the turtle base behaviour, below).
 M.PILL_PLACE_TURTLE = false
 -- Easy's back/defensive placement weights. MODE_LEVELS.default.easy reads
 -- the same table, so Easy and turtle share one set of numbers.
@@ -2018,8 +2019,14 @@ M.PILL_PLACE_TURTLE_UNDERDEFENDED_BONUS  = 0
 M.PILL_PLACE_TURTLE_SPACING = 2
 
 -- ── Turtle bases: stay near the nest (2026-10-02, Andrew) ──
--- Read only while PILL_PLACE_TURTLE is on. Turtle bots care less about bases
--- overall, unless the base is near their own ground.
+-- Read only while PILL_PLACE_TURTLE and TURTLE_BASE_NEST are on. Turtle bots
+-- care less about bases overall, unless the base is near their own ground.
+-- TURTLE_BASE_NEST is the master switch for this whole block (and for
+-- TURTLE_NO_INFLUENCE_TAIL below). false = turtle plays as before this
+-- block: PILL_PLACE_TURTLE pill placement only, nothing below is read, and
+-- the own-ground distance grid is never built. `preset=nest` turns on both
+-- switches; `cfg=TURTLE_BASE_NEST=true` adds it to any turtle source
+-- (preset=turtle, the `survivor` word, MODE_LEVELS.turtle).
 --   * Base-run end (strategy.lua): the opening phase ends, and the phase
 --     becomes middle, once taken bases (owned by anyone, i.e. not neutral)
 --     >= ceil(TURTLE_BASE_RUN_END_FRAC x total bases). The 500-tick
@@ -2040,6 +2047,7 @@ M.PILL_PLACE_TURTLE_SPACING = 2
 --     centre instead, shown as d=..(centre).
 --   * An older exe without the C helper falls back to a Lua ring search,
 --     spread over thinks at about TURTLE_BASE_D_READS_PER_TICK tile reads.
+M.TURTLE_BASE_NEST            = false  -- master switch (see above); false = turtle as on main
 M.TURTLE_BASE_RUN_END_FRAC    = 0.25
 M.TURTLE_BASE_DOUBLE_TILES    = 8
 M.TURTLE_BASE_MULT_CAP        = 16
@@ -2048,8 +2056,9 @@ M.TURTLE_BASE_D_READS_PER_TICK = 1000 -- fallback search budget, not a behaviour
 -- Turtle bots build no influence tail (the EXPAND_* block above): their
 -- ground is only the stamped discs around their own bases and pills, so
 -- "near our ground" for the far-base cost means near the nest itself. Read
--- only while PILL_PLACE_TURTLE is on (goals.lua M.influence_tail_on). A tail
--- built before turtle mode came on is cleared. false = the tail as before.
+-- only while PILL_PLACE_TURTLE and TURTLE_BASE_NEST are on (goals.lua
+-- M.influence_tail_on). A tail built before both came on is cleared.
+-- false = the tail as before.
 M.TURTLE_NO_INFLUENCE_TAIL    = true
 
 -- Tank combat
@@ -5198,7 +5207,9 @@ M.PRESETS = {
     PILL_PLACE_TURTLE             = false,
     -- 2026-10-02: turtle bases. KEEL keeps the normal opening test and
     -- prices every base the same however far it is from its own ground
-    -- (only read while PILL_PLACE_TURTLE is on).
+    -- (only read while PILL_PLACE_TURTLE and TURTLE_BASE_NEST are on).
+    -- 2026-10-02: the nest behaviour is off: KEEL turtle = placement only.
+    TURTLE_BASE_NEST              = false,
     TURTLE_BASE_RUN_END_FRAC      = 0,
     TURTLE_BASE_DOUBLE_TILES      = 0,
     TURTLE_BASE_MULT_CAP          = 1,
@@ -5552,6 +5563,14 @@ M.PRESETS = {
   -- and a side word can.
   turtle = {
     PILL_PLACE_TURTLE = true,
+  },
+  -- nest: turtle plus the nest behaviour (2026-10-02, PR #497): the
+  -- TURTLE_BASE_* block (base-run end, far-base cost) and
+  -- TURTLE_NO_INFLUENCE_TAIL. For A/B against preset=turtle, which is the
+  -- placement switch alone.
+  nest = {
+    PILL_PLACE_TURTLE = true,
+    TURTLE_BASE_NEST  = true,
   },
   -- joust: the Joust scenario's bots (2026-10-01). Joust hands every bot
   -- this preset with game.bot_init, so the knobs touch no other game.

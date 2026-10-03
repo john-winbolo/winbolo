@@ -1232,14 +1232,23 @@ function M.turtle_far_search_cap()
   return lim
 end
 
+-- Is the turtle nest behaviour on? PILL_PLACE_TURTLE (turtle pill
+-- placement, on main) AND TURTLE_BASE_NEST (the master switch for the
+-- TURTLE_BASE_* block and TURTLE_NO_INFLUENCE_TAIL). Every reader of those
+-- knobs asks this first; strategy.lua inlines the same test. Off = turtle
+-- plays as placement only, and nothing below runs.
+function M.turtle_nest_on()
+  return C.PILL_PLACE_TURTLE == true and C.TURTLE_BASE_NEST == true
+end
+
 -- Is the influence tail (constants.lua EXPAND_*) built this game? Off when
--- EXPAND_ENABLED is false, and off for a turtle bot (PILL_PLACE_TURTLE) with
--- TURTLE_NO_INFLUENCE_TAIL: its ground is only the stamped discs around its
--- own bases and pills. init.lua's influence stamp and the turtle reach bound
--- below both read this, so they always agree.
+-- EXPAND_ENABLED is false, and off for a turtle nest bot (M.turtle_nest_on)
+-- with TURTLE_NO_INFLUENCE_TAIL: its ground is only the stamped discs around
+-- its own bases and pills. init.lua's influence stamp and the turtle reach
+-- bound below both read this, so they always agree.
 function M.influence_tail_on()
   if not C.EXPAND_ENABLED then return false end
-  if C.TURTLE_NO_INFLUENCE_TAIL and C.PILL_PLACE_TURTLE then return false end
+  if C.TURTLE_NO_INFLUENCE_TAIL and M.turtle_nest_on() then return false end
   return true
 end
 
@@ -1490,8 +1499,9 @@ function M.turtle_far_start(tc, world, now)
 end
 
 -- d and the multiplier for one base, from a per-bot cache. Returns nil, 1
--- when turtle is off, the knob is 0, or we hold no ground (no friendly base
--- and no placed live friendly pill = no positive influence stamp anywhere).
+-- when the turtle nest is off (M.turtle_nest_on), the knob is 0, or we hold
+-- no ground (no friendly base and no placed live friendly pill = no positive
+-- influence stamp anywhere).
 -- Third return: "centre" when d is the Chebyshev distance to the nearest
 -- friendly centre rather than to the nearest tile reading > 0 (the
 -- provisional value before this base's search ends, or the fallback when
@@ -1503,7 +1513,7 @@ end
 -- on the first call of a tick), so a rebuild never lands as one big spike
 -- inside an eval step either way.
 function M.turtle_far(state, world, bid, base)
-  if not C.PILL_PLACE_TURTLE then return nil, 1 end
+  if not M.turtle_nest_on() then return nil, 1 end
   local lim = M.turtle_far_search_cap()
   if lim <= 0 or not base then return nil, 1 end
   local now = state.tick or 0
@@ -1556,7 +1566,7 @@ function M.turtle_far_text(d, m, src)
     and "the Chebyshev distance to the nearest friendly base/pill centre (provisional until this base's ring search ends, or the fallback when enemy influence cancels every friendly centre)"
     or "Chebyshev tiles to the nearest tile with influence > 0 (our ground)"
   return string.format(" x turtle_far{d=%s%s,x%.2f}", dtxt, ctr, m), string.format(
-    "|turtle_far:turtle bot (PILL_PLACE_TURTLE). d=%s%s is %s. x min(2^(%d/%d[TURTLE_BASE_DOUBLE_TILES]), %g[TURTLE_BASE_MULT_CAP]) = x%.2f, applied to the row sum before any snap floor. The search stops at %d tiles, where the multiplier reaches the cap; d is rebuilt every %d ticks by one C distance transform (on an older exe without it, by a Lua ring search spread over thinks)",
+    "|turtle_far:turtle nest bot (PILL_PLACE_TURTLE and TURTLE_BASE_NEST both on). d=%s%s is %s. x min(2^(%d/%d[TURTLE_BASE_DOUBLE_TILES]), %g[TURTLE_BASE_MULT_CAP]) = x%.2f, applied to the row sum before any snap floor. The search stops at %d tiles, where the multiplier reaches the cap; d is rebuilt every %d ticks by one C distance transform (on an older exe without it, by a Lua ring search spread over thinks)",
     dtxt, ctr, how, d, C.TURTLE_BASE_DOUBLE_TILES or 0, C.TURTLE_BASE_MULT_CAP or 1, m,
     lim, C.TURTLE_BASE_D_REFRESH_TICKS or 50)
 end
@@ -1569,7 +1579,7 @@ end
 -- unfloored sum, then to list order (strict <). Returns the winning candidate
 -- entry, or nil when the term is off (keel: nothing is read, the pick stands).
 function M.turtle_repick(state, world, coll, cands, price)
-  if not C.PILL_PLACE_TURTLE or M.turtle_far_search_cap() <= 0 or not cands then
+  if not M.turtle_nest_on() or M.turtle_far_search_cap() <= 0 or not cands then
     return nil
   end
   local best, best_f, best_u = nil, nil, nil
