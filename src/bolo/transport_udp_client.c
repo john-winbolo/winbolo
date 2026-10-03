@@ -2403,10 +2403,11 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
         }
         c->joinState = UDP_CLIENT_CONNECTED;
         /* A map list request made while the join was not complete was never
-         * sent, and a map change always re-joins, so the listing the chooser
-         * asked for then is still owed. Drop the cache and tick the counter
-         * the chooser watches so it asks again now that a request goes out. */
-        cs->lobbyMapListReady    = false;
+         * sent, and a map change always re-joins. Let the chooser retry a
+         * missing listing now that requests can go out, but keep a completed
+         * cache: changing the active map does not change the directory. An
+         * empty listing while re-fetching would reset the chooser's scroll.
+         * Upload completion invalidates the cache separately when needed. */
         cs->lobbyMapListInFlight = false;
         cs->lobbyMapListSeq++;
         installCompressedMap(cs, c->mapDownloadBuf,
