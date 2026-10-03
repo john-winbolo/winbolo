@@ -3003,6 +3003,14 @@ int run_wbn_lobby_info_scenario(void);
 int run_info_script_tail_golden(void);
 int run_info_script_tail_read(void);
 
+/* The host's server name and description (test_server_text.c): the
+ * sanitiser, the sim's setters, and the bytes the info reply carries after
+ * the scripts, written and read, old layout and malformed. */
+int run_server_text_sanitize(void);
+int run_server_text_sim(void);
+int run_server_text_tail_golden(void);
+int run_server_text_tail_read(void);
+
 /* The policy a server holds for scripts players send it
  * (test_script_upload_policy.c): the word it is set from and the legacy flag
  * that stands for off, the spelling a preference is written in, its byte on

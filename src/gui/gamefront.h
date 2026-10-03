@@ -1160,6 +1160,20 @@ extern int            gameFrontHostingVoiceMode;       /* default ON (0) */
                                * clients send it. Holds a ServerVoiceMode.
                                * serverVoiceProximity is not implemented and
                                * forwards the same as serverVoiceOn. */
+extern char           gameFrontHostingServerName[33];
+                              /* What the game finder shows for a game hosted
+                               * from here, in place of the host's address;
+                               * "" = the address. Sanitised, at most 32
+                               * bytes (SERVER_NAME_MAX). */
+extern char           gameFrontHostingServerDesc[201];
+                              /* The longer description shown beside it;
+                               * "" = none. At most 200 bytes
+                               * (SERVER_DESC_MAX). */
+extern char           gameFrontLobbyServerName[33];
+                              /* The name of the server the lobby is for: the
+                               * host's own name when hosting, else the name
+                               * the server's reply to the join's pre-flight
+                               * info request carried. "" when it has none. */
 
 void gameFrontSetHostingPort(unsigned short port);
 void gameFrontSetHostingAllowSpec(bool allow);
@@ -1179,6 +1193,10 @@ void gameFrontSetHostingLogDir(const char *dir);
 void gameFrontSetHostingScenarioDir(const char *dir);
 void gameFrontSetHostingServeReplays(bool serve);
 void gameFrontSetHostingVoiceMode(int mode);
+/* Sanitise (serverTextSanitize), store and persist the hosting server name /
+ * description to [HOSTING] Server Name / Server Description. */
+void gameFrontSetHostingServerName(const char *name);
+void gameFrontSetHostingServerDesc(const char *desc);
 
 /* Visibility rules a hosted game starts with ([GAME OPTIONS] section).
  * Read by gameFrontGetPrefs and pushed onto the sim with

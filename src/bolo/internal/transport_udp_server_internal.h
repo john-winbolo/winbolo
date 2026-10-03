@@ -501,8 +501,11 @@ void serverHandlePing(const uint8_t *buf, int len,
 const char *resyncTerrainName(BYTE t);
 void buildInfoPacket(struct ServerSim *sim, INFO_PACKET *pkt);
 /* The script bytes the info-request reply carries after the INFO_PACKET, laid
- * out as netpacks.h describes above INFO_SCRIPT_TAIL_MAX. Returns the bytes
- * written, or 0 with nothing written when cap < INFO_SCRIPT_TAIL_MAX. */
+ * out as netpacks.h describes above INFO_SCRIPT_TAIL_MAX, then the server's
+ * name and description when it has either, as netpacks.h describes above
+ * INFO_SERVER_NAME_MAX, cut to fit what is left of cap. Returns the bytes
+ * written, or 0 with nothing written when cap < INFO_SCRIPT_TAIL_MAX. The
+ * reply passes INFO_REPLY_TAIL_CAP. */
 size_t buildInfoScriptTail(struct ServerSim *sim, uint8_t *out, size_t cap);
 void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
                              struct ServerSim *sim);

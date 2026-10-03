@@ -89,6 +89,7 @@
 #include "lobby_bot_pools.h"
 #include "platform_net.h"
 #include "playername_validate.h"
+#include "server_text.h"   /* serverTextSanitize — the hosting server name / description */
 #include "client_net.h"
 #include "../../server/server_lifecycle.h"
 #include "../../server/server_dedicated_log.h"
@@ -287,6 +288,12 @@ bool           gameFrontHostingServeReplays   = TRUE;
  * ServerVoiceMode; serverVoiceOn is what a client host did before this
  * setting existed. */
 int            gameFrontHostingVoiceMode      = serverVoiceOn;
+/* What the game finder shows for a game hosted from here. Empty, which is
+ * what a client host was before the setting existed, shows the address. */
+char           gameFrontHostingServerName[SERVER_NAME_LEN] = "";
+char           gameFrontHostingServerDesc[SERVER_DESC_LEN] = "";
+/* The lobby's title names the server it is for. Set at each join. */
+char           gameFrontLobbyServerName[SERVER_NAME_LEN] = "";
 
 /* Visibility rules a hosted game starts with ([GAME OPTIONS] section).
  * The stock set from view_policy.h, the same one serverSimInit writes —
@@ -1708,6 +1715,14 @@ bool gameFrontSetDlgState(openingStates newState) {
      * recurses into openUdpJoin, so it's only true on the self-host
      * path; every remote join (LAN finder Join, Manual Connect,
      * tracker Join) leaves it false and still pre-flights. */
+    /* The lobby's title names the server: our own name when it is our
+     * server, else whatever the pre-flight reply below carries. */
+    if (spServerSimActive && spServerSim != NULL) {
+      SDL_strlcpy(gameFrontLobbyServerName, serverSimGetServerName(spServerSim),
+                  sizeof(gameFrontLobbyServerName));
+    } else {
+      gameFrontLobbyServerName[0] = '\0';
+    }
     if (!spServerSimActive) {
       DiscoveryPingResult dpr;
       if (!discoveryPingServer(gameFrontUdpAddress, gameFrontTargetUdp, &dpr)) {
@@ -1740,6 +1755,9 @@ bool gameFrontSetDlgState(openingStates newState) {
         s_joinAttemptFailed = TRUE;
         return FALSE;
       }
+      /* Already sanitised by the reader; "" from a server that sent none. */
+      SDL_strlcpy(gameFrontLobbyServerName, dpr.scripts.serverName,
+                  sizeof(gameFrontLobbyServerName));
       /* The password global is only meaningful for a host joining its own
        * server (set by the game setup dialog and sent with the server
        * config). For a remote join it starts empty, so a password entered
@@ -2605,6 +2623,21 @@ void gameFrontSetHostingVoiceMode(int mode) {
                   : (mode == serverVoiceProximity) ? "Proximity"
                                                    : "On";
   prefsSetString("HOSTING", "Voice", str);
+}
+
+/* Stored already sanitised, so the INI holds exactly what the finder will
+ * show. The same keys are the dedicated server's fallback for -name and
+ * -desc. */
+void gameFrontSetHostingServerName(const char *name) {
+  serverTextSanitize(name, gameFrontHostingServerName,
+                     sizeof(gameFrontHostingServerName), SERVER_NAME_MAX);
+  prefsSetString("HOSTING", "Server Name", gameFrontHostingServerName);
+}
+
+void gameFrontSetHostingServerDesc(const char *desc) {
+  serverTextSanitize(desc, gameFrontHostingServerDesc,
+                     sizeof(gameFrontHostingServerDesc), SERVER_DESC_MAX);
+  prefsSetString("HOSTING", "Server Description", gameFrontHostingServerDesc);
 }
 
 /* Visibility write-through setters. Same shape as the hosting ones
@@ -3733,6 +3766,10 @@ bool gameFrontSetupServer(void) {
   /* cfg is memset above, which would leave voiceMode at serverVoiceOn; this
    * line is what carries the [HOSTING] Voice pref to the server instead. */
   cfg.voiceMode           = (ServerVoiceMode)gameFrontHostingVoiceMode;
+  /* What the game finder shows in place of this host's address. The LAN-only
+   * block below leaves both alone: a LAN finder shows them too. */
+  cfg.serverName          = gameFrontHostingServerName;
+  cfg.serverDescription   = gameFrontHostingServerDesc;
   /* Persist saves uploads to disk under the chosen directory. Create it on
    * use and refuse to host if that fails — no silent fallback. Off/Allow
    * never touch disk, so leave uploadPersistDir NULL (memset-zero) for them. */
@@ -4091,6 +4128,14 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   } else {
     gameFrontHostingVoiceMode = serverVoiceOn;
   }
+  /* Absent on an INI from before the setting: no name, so the finder shows
+   * the address as it did. Sanitised on read too, for a hand-edited INI. */
+  prefsGetString("HOSTING", "Server Name", "", buff, FILENAME_MAX);
+  serverTextSanitize(buff, gameFrontHostingServerName,
+                     sizeof(gameFrontHostingServerName), SERVER_NAME_MAX);
+  prefsGetString("HOSTING", "Server Description", "", buff, FILENAME_MAX);
+  serverTextSanitize(buff, gameFrontHostingServerDesc,
+                     sizeof(gameFrontHostingServerDesc), SERVER_DESC_MAX);
 
   /* Driving keys */
   intToStr(DEFAULT_FORWARD, def, sizeof(def));
@@ -4951,6 +4996,8 @@ void gameFrontPutPrefs(keyItems *keys) {
                  gameFrontHostingVoiceMode == serverVoiceOff       ? "Off"
                  : gameFrontHostingVoiceMode == serverVoiceProximity ? "Proximity"
                                                                      : "On");
+  prefsSetString("HOSTING", "Server Name", gameFrontHostingServerName);
+  prefsSetString("HOSTING", "Server Description", gameFrontHostingServerDesc);
 
   /* Language — persist the BCP-47 code, not a file path. */
   prefsSetString("SETTINGS", "Language",

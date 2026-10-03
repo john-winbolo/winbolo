@@ -39,6 +39,7 @@
 #include "scenario_defs.h"  /* ScenarioPolicy — the vtable pointer below */
 #include "scenario_details.h" /* SCN_DETAILS_MAX — the map script's details */
 #include "scenario_settings.h" /* SCN_SETTINGS_BLOB_MAX — its settings */
+#include "server_text.h"    /* SERVER_NAME_LEN / SERVER_DESC_LEN — the finder text below */
 
 /* PlayerRoundStats, NotableType, NotableEvent and NOTABLE_EVENTS_MAX are the
  * shared accumulator/timeline types, defined in round_stats.h (included above)
@@ -840,6 +841,11 @@ struct ServerSim {
     /* WBN registration — cached from CLI args for re-registration between rounds */
     bool         hasPassword;             /* Server has a password set */
     char         password[MAP_STR_SIZE];  /* Runtime join-handshake password text */
+
+    /* What the game finder shows for this server: the host's short name and
+     * longer description, already sanitised. "" when not given. */
+    char         serverName[SERVER_NAME_LEN];
+    char         serverDescription[SERVER_DESC_LEN];
 
     /* WBN team balance proposal */
     BalanceProposal balanceProposal;

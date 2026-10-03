@@ -42,6 +42,7 @@
 #include "udppackets.h"
 #include "util.h"
 #include "discovery.h"
+#include "server_text.h"   /* serverTextSanitize, SERVER_NAME_MAX / SERVER_DESC_MAX */
 #include "../common/wb_log.h"
 
 /* Used to stop socket blocking */
@@ -73,6 +74,12 @@ BOLO_STATIC_ASSERT(DISCOVERY_SCRIPT_DESC_LEN == WBN_SCENARIO_DESC_MAX + 1,
                    discovery_script_desc_len_matches_wbn_scenario_desc_max);
 BOLO_STATIC_ASSERT(DISCOVERY_SCRIPT_MODS_MAX == 9,
                    discovery_script_mods_max_matches_the_wire_mod_cap);
+BOLO_STATIC_ASSERT(DISCOVERY_SERVER_NAME_LEN == INFO_SERVER_NAME_MAX + 1 &&
+                   DISCOVERY_SERVER_NAME_LEN == SERVER_NAME_LEN,
+                   discovery_server_name_len_matches_the_wire_cap);
+BOLO_STATIC_ASSERT(DISCOVERY_SERVER_DESC_LEN == INFO_SERVER_DESC_MAX + 1 &&
+                   DISCOVERY_SERVER_DESC_LEN == SERVER_DESC_LEN,
+                   discovery_server_desc_len_matches_the_wire_cap);
 
 /* One length-prefixed string of the script tail into a NUL-terminated
  * buffer. False when the length is over maxLen or the bytes run past len. */
@@ -130,7 +137,24 @@ bool discoveryReadScriptTail(const uint8_t *tail, size_t len, DiscoveryScripts *
       return false;
     }
   }
-  /* Bytes past the last mod are left for a later field. */
+  /* The server's name and description, when the server sent them. They are
+   * optional: a server from before them, and one whose host gave neither,
+   * stops at the last mod. A malformed pair is dropped whole without
+   * dropping the scripts before it. */
+  if (pos < len) {
+    char name[DISCOVERY_SERVER_NAME_LEN];
+    char desc[DISCOVERY_SERVER_DESC_LEN];
+    if (discoveryReadTailString(tail, len, &pos, DISCOVERY_SERVER_NAME_LEN - 1,
+                                name) &&
+        discoveryReadTailString(tail, len, &pos, DISCOVERY_SERVER_DESC_LEN - 1,
+                                desc)) {
+      serverTextSanitize(name, scripts.serverName, sizeof(scripts.serverName),
+                         SERVER_NAME_MAX);
+      serverTextSanitize(desc, scripts.serverDescription,
+                         sizeof(scripts.serverDescription), SERVER_DESC_MAX);
+    }
+  }
+  /* Bytes past the description are left for a later field. */
   scripts.hasScriptInfo = true;
   *out = scripts;
   return true;

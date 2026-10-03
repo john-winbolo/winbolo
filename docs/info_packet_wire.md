@@ -202,6 +202,36 @@ A reader drops the bytes whole if any length is over its cap or any field runs
 past the end of the packet, and reports no scripts, the same as a 113-byte
 reply. Bytes after the last mod are ignored, so a later field can go on the end.
 
+### Server name and description
+
+A server whose host set a name or a description (DS `-name` / `-desc`, or
+`[HOSTING] Server Name` / `Server Description` in `WinBolo.json`) writes them
+straight after the last mod:
+
+| Field | Size | Notes |
+|-------|-----:|-------|
+| `serverNameLen` | 1 | 0..32 (`INFO_SERVER_NAME_MAX`) |
+| `serverName` | `serverNameLen` | UTF-8, no NUL |
+| `serverDescLen` | 1 | 0..200 (`INFO_SERVER_DESC_MAX`) |
+| `serverDesc` | `serverDescLen` | UTF-8, no NUL |
+
+A server with neither writes nothing here, so its reply is byte for byte the
+reply of a server that predates the field. Both strings pass through
+`serverTextSanitize()` (`src/bolo/server_text.c`) on the way in and again when
+read: no control characters, no bidi or zero-width marks, one line, trimmed.
+
+The receive buffers on both sides are `MAX_UDPPACKET_SIZE` (1024) bytes, and
+Windows drops a larger datagram, so the whole reply never passes 1024 bytes.
+The script bytes can take 843, which leaves `INFO_REPLY_TAIL_CAP` − 843 = 68
+bytes here. The name always fits whole (a static assert in `netpacks.h` checks
+it); the description is cut on a character boundary to what is left.
+
+A reader that predates the field ignores these bytes. A current reader treats
+them as optional: if they are missing, a length is over its cap, or a field
+runs past the end, the name and description stay empty and the scripts are
+kept. The game finder then shows the address, as it always did. Bytes after
+the description are ignored for a later field.
+
 ## Endianness
 
 The packet is predominantly host byte order (little-endian in practice on the

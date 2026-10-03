@@ -702,6 +702,12 @@ void printArgs() {
   fprintf(stderr, "-limit <L>    - Specifies the game time limit (in minutes)\n");
   fprintf(stderr, "                \"-1\" for no time limit (none if not specified)\n");
   fprintf(stderr, "-password <P> - Game Password (none if not specified)\n");
+  fprintf(stderr, "-name <N>     - Short server name the game finder shows instead of this\n");
+  fprintf(stderr, "                server's address (up to 32 characters; quote it if it has\n");
+  fprintf(stderr, "                spaces). Default: [HOSTING] Server Name in WinBolo.json.\n");
+  fprintf(stderr, "-desc <D>     - Longer server description the game finder shows beside the\n");
+  fprintf(stderr, "                name (up to 200 characters). Default: [HOSTING] Server\n");
+  fprintf(stderr, "                Description in WinBolo.json. Control characters are removed.\n");
 
   fprintf(stderr, "\nLobby & host:\n");
   fprintf(stderr, "-nolobby      - Skip lobby, start game immediately (backward-compatible mode)\n");
@@ -2776,6 +2782,33 @@ int main(int argc, char **argv) {
         instCfg.voiceMode = serverVoiceOff;
       }
     }
+    /* -name / -desc: what the game finder shows for this server in place of
+     * its address. Without the flag, the same [HOSTING] keys a client host
+     * keeps in its WinBolo.json, so an operator can set them once in the
+     * file instead. The sim's setters sanitise and cut both; static because
+     * instCfg only points at them. */
+    {
+      static char serverNameBuf[256];
+      static char serverDescBuf[1024];
+      int nameNum = findArg(argc, argv, "name");
+      int descNum = findArg(argc, argv, "desc");
+      if (nameNum != ARG_NOT_FOUND) {
+        snprintf(serverNameBuf, sizeof(serverNameBuf), "%s",
+                 (char *)argv[nameNum]);
+      } else {
+        prefsGetString("HOSTING", "Server Name", "", serverNameBuf,
+                       sizeof(serverNameBuf));
+      }
+      if (descNum != ARG_NOT_FOUND) {
+        snprintf(serverDescBuf, sizeof(serverDescBuf), "%s",
+                 (char *)argv[descNum]);
+      } else {
+        prefsGetString("HOSTING", "Server Description", "", serverDescBuf,
+                       sizeof(serverDescBuf));
+      }
+      instCfg.serverName        = serverNameBuf;
+      instCfg.serverDescription = serverDescBuf;
+    }
     /* A server that skips the lobby starts its round inside the startup
        below, so the scenario's own settings have to be in force before it:
        the round is built and the first tanks placed in there, and a game
@@ -2793,6 +2826,15 @@ int main(int argc, char **argv) {
       SDL_Quit();
 #endif
       return 0;
+    }
+    /* Say what the finder will show, after the sanitising, so an operator
+     * sees a name that came out shorter or cleaner than typed. */
+    if (serverSimGetServerName(serverSim)[0] != '\0') {
+      fprintf(stderr, "Server name: %s\n", serverSimGetServerName(serverSim));
+    }
+    if (serverSimGetServerDescription(serverSim)[0] != '\0') {
+      fprintf(stderr, "Server description: %s\n",
+              serverSimGetServerDescription(serverSim));
     }
 
 #if WB_ENABLE_NETIMPAIR

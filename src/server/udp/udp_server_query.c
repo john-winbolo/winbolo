@@ -50,6 +50,14 @@
 #include "server_sim_lifecycle.h" /* serverSimGetPassword */
 #include "playername_validate.h" /* playerNameTruncateUtf8 — the description cut
                                   * on a character boundary */
+#include "server_text.h"         /* SERVER_NAME_LEN / SERVER_DESC_LEN */
+
+/* The sim's caps and the wire's caps are the same numbers, so text the sim
+ * accepted is never cut for being too long, only for want of room. */
+BOLO_STATIC_ASSERT(SERVER_NAME_MAX == INFO_SERVER_NAME_MAX,
+                   server_name_cap_matches_the_wire);
+BOLO_STATIC_ASSERT(SERVER_DESC_MAX == INFO_SERVER_DESC_MAX,
+                   server_desc_cap_matches_the_wire);
 
 /* Human-readable terrain name for map-resync diagnostics. Covers the terrain
  * byte stored in mapItem, including the mine range (10-15). */
@@ -184,6 +192,32 @@ static size_t infoScriptTailPutString(uint8_t *out, const char *str,
     return 1 + len;
 }
 
+/* The server's name and description after the last mod, when the host gave
+ * either; nothing at all when it gave neither, so such a server's reply is
+ * what a server from before the field sent. room is what is left of the
+ * reply. The sim holds both already sanitised and within their caps; here
+ * they are only cut, on a character boundary, to the room there is. The name
+ * always fits whole beside the largest script bytes (netpacks.h asserts it),
+ * so in practice only the description is ever cut. */
+static size_t buildInfoServerText(ServerSim *sim, uint8_t *out, size_t room) {
+    char   name[SERVER_NAME_LEN];
+    char   desc[SERVER_DESC_LEN];
+    size_t pos = 0;
+
+    snprintf(name, sizeof(name), "%s", serverSimGetServerName(sim));
+    snprintf(desc, sizeof(desc), "%s", serverSimGetServerDescription(sim));
+    if ((name[0] == '\0' && desc[0] == '\0') || room < 2) {
+        return 0;
+    }
+    playerNameTruncateUtf8(name, room - 2 < INFO_SERVER_NAME_MAX
+                                     ? room - 2 : INFO_SERVER_NAME_MAX);
+    pos += infoScriptTailPutString(out + pos, name, INFO_SERVER_NAME_MAX);
+    playerNameTruncateUtf8(desc, room - pos - 1 < INFO_SERVER_DESC_MAX
+                                     ? room - pos - 1 : INFO_SERVER_DESC_MAX);
+    pos += infoScriptTailPutString(out + pos, desc, INFO_SERVER_DESC_MAX);
+    return pos;
+}
+
 /* Write the scripts the round runs, as the info-request reply carries them
  * after the INFO_PACKET. The layout is described above INFO_SCRIPT_TAIL_MAX
  * in netpacks.h and in docs/info_packet_wire.md. */
@@ -213,6 +247,7 @@ size_t buildInfoScriptTail(ServerSim *sim, uint8_t *out, size_t cap) {
         pos += infoScriptTailPutString(out + pos, scripts.modNames[i],
                                        SERVER_SCRIPT_NAME_LEN - 1);
     }
+    pos += buildInfoServerText(sim, out + pos, cap - pos);
     return pos;
 }
 
@@ -223,7 +258,7 @@ size_t buildInfoScriptTail(ServerSim *sim, uint8_t *out, size_t cap) {
  * INFO_PACKET alone and stays sizeof(INFO_PACKET) bytes. */
 void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
                              ServerSim *sim) {
-    uint8_t buf[sizeof(INFO_PACKET) + INFO_SCRIPT_TAIL_MAX];
+    uint8_t buf[sizeof(INFO_PACKET) + INFO_REPLY_TAIL_CAP];
     INFO_PACKET pkt;
     size_t tailLen;
     char consoleMsg[256];
