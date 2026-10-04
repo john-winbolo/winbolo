@@ -31,8 +31,8 @@ same field, three pills in a line so each bot can stand next to one job:
     pill #4 (128,110)      Y, "defend 3": B's job, then C's.
     The arena gives #2..#4 to the bots' team.
 
-The enemy-base field (order_capture_enemy_base, order_capture_live_pill) is
-the first with a second base:
+The enemy-base field (order_capture_enemy_base, order_capture_live_pill,
+order_warmup_start) is the first with a second base:
 
     base #2 (112,128)      the arena gives it to an enemy seat, full armour:
                            "capture base 1".
@@ -69,6 +69,7 @@ CHAIN_ARENA = "order_handoff_chain"
 BASE_ARENAS = [
     "order_capture_enemy_base",
     "order_capture_live_pill",
+    "order_warmup_start",
 ]
 
 PONDS = [(98, 98), (154, 154), (98, 154), (154, 126)]

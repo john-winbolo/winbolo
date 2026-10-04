@@ -677,6 +677,13 @@ function M.goal_kind(cmd, world, info)
       if (p.health or 0) == 0 then return "capture_pill", false, t.id end
       return "attack_pill", true, t.id
     elseif v == "capture" then
+      -- Capturing a live pill that is already ours means nothing: it would
+      -- be a reposition, which an order does not set up, and capture_pill
+      -- on a live pill is dropped the tick it starts.  Turned down here, so
+      -- no order is made.  A dead pill of ours is still picked up.
+      if p.owner == "friendly" and (p.health or 0) > 0 then
+        return nil, false, nil, string.format("pill #%d is already ours", t.id)
+      end
       return "capture_pill", ((p.health or 0) > 0), t.id
     elseif v == "defend" then
       return "defend_pill", true, t.id
