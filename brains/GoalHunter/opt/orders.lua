@@ -745,6 +745,112 @@ function M.travel_cost(state, world, info, ord)
   return best
 end
 
+-- Will this bot stop at a base before it gets to the order's target?  The
+-- same test the order reject pass in goals.lua runs on refuel_at_base: an
+-- order that needs no shells turns the refuel row down while armour is above
+-- ARMOUR_LOW (ORDER_REFUEL_SKIP_NO_SHELLS), so low shells only mean a stop
+-- on an order that needs them, and low armour always does.
+function M.refuel_stop(info, spec)
+  local shells_low = (info.shells or 0) < (C.SHELLS_LOW or 19)
+                     and (spec.needs_shells or not C.ORDER_REFUEL_SKIP_NO_SHELLS)
+  local armour_low = (info.armour or 0) <= (C.ARMOUR_LOW or 15)
+  if shells_low then return true, "shells" end
+  if armour_low then return true, "armour" end
+  return false, nil
+end
+
+-- The nearest friendly base by this bot's own path cost, and that cost.
+-- The Dijkstra slate first, as in travel_cost; Manhattan x ORDER_TILE_COST
+-- when the slate has not reached the base.  A base last seen with nothing
+-- in it at all is skipped.  Ties go to the lower base id.
+local function nearest_friendly_base(world, info)
+  local boat = info.inboat and 1 or 0
+  local tmx = bit.rshift(info.tankx or 0, 8)
+  local tmy = bit.rshift(info.tanky or 0, 8)
+  local best, bid, bb = nil, nil, nil
+  local ids = {}
+  for id in pairs(world.bases or {}) do ids[#ids + 1] = id end
+  table.sort(ids)
+  for _, id in ipairs(ids) do
+    local b = world.bases[id]
+    local empty = b.obs_tick and (b.obs_shells or 0) == 0 and (b.obs_armour or 0) == 0
+    if b.owner == "friendly" and b.mx and b.my and not empty then
+      local c = cpf.smart_cost_dij_only(cpf.KIND_NORMAL, b.mx, b.my, boat)
+      if not c or c >= 1e29 then
+        c = U.mdist(tmx, tmy, b.mx, b.my) * (C.ORDER_TILE_COST or 4)
+      end
+      if not best or c < best then best, bid, bb = c, id, b end
+    end
+  end
+  return bb, bid, best
+end
+
+-- Base -> target.  The bot's Dijkstra slate starts at the bot, so it cannot
+-- price a leg that starts at the base.  The straight-line terrain estimate
+-- (cpf.estimate_cost: terrain + danger cost sampled along the line, the same
+-- units as the slate) is used, on land (a bot leaves a base on its tracks).
+-- Manhattan x ORDER_TILE_COST when the estimate is not there (the unit tests)
+-- or says the line is blocked.
+local function base_to_target(bmx, bmy, mx, my)
+  local ok, c = pcall(cpf.estimate_cost, bmx, bmy, mx, my, 0)
+  if ok and type(c) == "number" and c < 1e29 then return c, "est" end
+  return U.mdist(bmx, bmy, mx, my) * (C.ORDER_TILE_COST or 4), "mdist"
+end
+
+-- THE BID (ORDER_BID_STOP_AWARE, 2026-10-04).  Answers the total and a table
+-- of every term, so a log line can show how the number was made:
+--   path    travel_cost, bot -> target (the old bid, unchanged)
+--   detour  refuel stop only: (bot -> base) + (base -> target) - path
+--   fill    refuel stop only: ORDER_BID_REFUEL_STOP_COST
+--   engaged goal is attack_tank or kill_lgm: ORDER_BID_ENGAGED_COST
+--   total = path + detour + fill + engaged
+-- nil when the target has no tile.  Knob off: total = path, all else 0.
+function M.bid_cost(state, world, info, spec)
+  local path = M.travel_cost(state, world, info, spec)
+  if not path then return nil end
+  local t = { path = path, detour = 0, fill = 0, engaged = 0, stop = nil,
+              base = nil, to_base = nil, from_base = nil, est = nil }
+  if C.ORDER_BID_STOP_AWARE and path < 1e29 then
+    local stop, why = M.refuel_stop(info, spec)
+    if stop then
+      local mx, my = M.target_tile(world, state, spec)
+      local b, bid, to_base = nearest_friendly_base(world, info)
+      if b and mx then
+        local from_base, est = base_to_target(b.mx, b.my, mx, my)
+        t.stop, t.base, t.to_base, t.from_base, t.est = why, bid, to_base, from_base, est
+        t.detour = to_base + from_base - path
+        t.fill = C.ORDER_BID_REFUEL_STOP_COST or 0
+      else
+        t.stop = why .. ",nobase"
+      end
+    end
+    local g = state.goal
+    if g and (g.kind == "attack_tank" or g.kind == "kill_lgm") then
+      t.engaged = C.ORDER_BID_ENGAGED_COST or 0
+    end
+  end
+  t.total = t.path + t.detour + t.fill + t.engaged
+  return t.total, t
+end
+
+-- The terms as one short string for the debug lines.
+function M.bid_terms_str(t)
+  if not t then return "" end
+  local s = string.format("path=%.0f", t.path or 0)
+  if t.stop then
+    if t.base then
+      s = s .. string.format(" refuel=%s base#%s to_base=%.0f from_base=%.0f(%s) detour=%.0f fill=%.0f",
+                             t.stop, tostring(t.base), t.to_base or 0, t.from_base or 0,
+                             t.est or "?", t.detour or 0, t.fill or 0)
+    else
+      s = s .. " refuel=" .. t.stop
+    end
+  end
+  if (t.engaged or 0) ~= 0 then s = s .. string.format(" engaged=%.0f", t.engaged) end
+  if t.hand then s = s .. string.format(" handoff=%.0f", t.hand) end
+  return s .. string.format(" total=%.0f", t.total or 0)
+end
+
 -- =========================================================================
 -- STATE
 -- =========================================================================
@@ -822,6 +928,20 @@ M.sorted_keys = sorted_keys
 local function tx(state, msg)
   local o = S(state)
   o.out[#o.out + 1] = msg
+end
+
+-- THE RELIEF LINE (ORDER_HANDOFF).  ch = { hop, mask, root, asker }: the hop
+-- count, the bitmask of the bots whose jobs are in the chain, the order id
+-- the chain started from, and the bot that asks for the relief.  The long
+-- form goes out only when chains are on (ORDER_HANDOFF_MAX_HOPS); a single
+-- hop needs none of it, and the keel wire stays the bare "obq OLD".
+local function chain_bit(pn) return bit.lshift(1, pn or 0) end
+local function relief_msg(oid, ch)
+  if ch and (C.ORDER_HANDOFF_MAX_HOPS or 0) > 0 then
+    return string.format("/info obq %d %d %d %d %d", oid, ch.hop or 1, ch.mask or 0,
+                         ch.root or oid, ch.asker or 0)
+  end
+  return string.format("/info obq %d", oid)
 end
 
 -- Queue one human-facing line. The queue holds 6 lines and drains one per
@@ -1146,6 +1266,28 @@ function M.rx(sender, text, tick, state)
                         from = sender, tick = tick }
     return true
   end
+  -- RELIEF (ORDER_HANDOFF): "take this job off me".  The sender holds the
+  -- order and won a new auction with a handoff bid; it keeps working this
+  -- job until a bot claims it (obc), then goes to the new one.  Read like an
+  -- offer -- every bot re-opens the auction and the sender drops out of the
+  -- holder set -- except that bots on a person's job answer "no" (no switch,
+  -- no handoff of their own) and an empty answer says nothing: the sender
+  -- still holds the job.
+  -- The long form "obq OLD HOP MASK ROOT ASKER" carries the chain
+  -- (ORDER_HANDOFF_MAX_HOPS, see relief_msg); the bare form is hop 1, with
+  -- the sender as the only bot in the chain and the one that asks.
+  local qo, qh, qm, qr, qa = text:match("^/info obq (%d+) (%d+) (%d+) (%d+) (%d+)$")
+  oid = qo or text:match("^/info obq (%d+)$")
+  if oid then
+    local o = S(state)
+    o.rx[#o.rx + 1] = { kind = "release", offer = true, relief = true,
+                        oid = tonumber(oid), from = sender, tick = tick,
+                        hop = qh and tonumber(qh) or 1,
+                        mask = qm and tonumber(qm) or chain_bit(sender),
+                        root = qr and tonumber(qr) or tonumber(oid),
+                        asker = qa and tonumber(qa) or sender }
+    return true
+  end
   -- CANCEL, the other half of obr: this order is OVER and nobody may take it
   -- up.  obr means "I am handing it back, somebody go"; obx means "forget it".
   -- Without the two verbs every cancel came back one think later, because the
@@ -1228,8 +1370,32 @@ local function forget_order(o, oid)
   o.gclaims[oid]  = nil
   o.announce[oid] = nil
   o.anchors[oid]  = nil
+  if o.retired then o.retired[oid] = nil end
 end
 M.forget_order = forget_order
+
+-- RETIRED ORDERS (ORDER_HANDOFF).  A bot forgets an order another bot still
+-- holds: a newer person's order retires it (clear_older_orders), or it ages
+-- out of o.known (the prune).  The holder may still ask for relief on it
+-- (obq), and a bot that has forgotten it could not take it.  So the spec and
+-- its holders are kept in o.retired, which nothing else reads: no auction,
+-- steal or pickup ever sees it.  Only a relief brings it back into o.known.
+-- An entry ends when the order is cancelled (obx), or when its last holder
+-- releases it.  Knob off: plain forget_order, as before.
+local function retire_order(o, oid, me)
+  local k = o.known[oid]
+  local keep = nil
+  if C.ORDER_HANDOFF and k and k.spec then
+    for pn, c in pairs(o.gclaims[oid] or {}) do
+      if pn ~= me then keep = keep or {}; keep[pn] = c end
+    end
+  end
+  forget_order(o, oid)
+  if keep then
+    o.retired = o.retired or {}
+    o.retired[oid] = { spec = k.spec, holders = keep }
+  end
+end
 
 -- LETTING AN ORDER GO IS TWO DIFFERENT THINGS, and it used to be one.
 --
@@ -1350,6 +1516,14 @@ function M.on_death(state, info)
   if state and state._suicide then M.suicide_end(state, "tank died") end
   if state and state._charge_now then M.charge_now_end(state, "tank died") end
   local o = state and state.orders
+  -- A HANDOFF this bot was waiting on (ORDER_HANDOFF): the new order was
+  -- named to it but never taken, so it is offered on (obo) for a free bot.
+  if o and o.handoff then
+    local nid = o.handoff.new_oid
+    o.handoff = nil
+    tx(state, string.format("/info obo %d", nid))
+    tx(state, string.format("/info obd %d %d", nid, M.BID_BUSY))
+  end
   if not (o and o.held) then
     if state then state._order = nil end
     return false
@@ -1898,14 +2072,32 @@ end
 -- take it (ORDER_NO_FREE_TAKES_LOWEST).  Its old order is DROPPED, not handed
 -- back: a cancel (obx) when this bot is its only holder, else a quiet release
 -- of this bot's share (the other holders keep it).
-local function take_order(state, world, info, spec, cost, now, group, stolen, switched)
+-- lead = the words in front of "Leaving" (a handoff nobody answered says
+-- "No cover. "); nil = "No free bot. " when switched, else nothing.
+-- terms = the bid's terms (M.bid_cost) for the ORDER_TAKE line; nil = priced
+-- again here, for the line only.
+-- say_line (ORDER_HANDOFF) = this line, said now, IN PLACE OF the "Leaving"
+-- line and the ack: a handoff has its own lines ("Covering X for Y", "No
+-- cover. Leaving X for Y"); "" = say nothing (the bot said its line when it
+-- asked for cover).  The "on my way" marker goes out as ever.  nil = the
+-- usual lines.
+local function take_order(state, world, info, spec, cost, now, group, stolen, switched,
+                          lead, terms, say_line)
   local o = S(state)
+  -- A handoff waiting on this bot is settled by whatever it takes now.
+  if o.handoff and o.handoff.new_oid ~= spec.oid then
+    tx(state, string.format("/info obo %d", o.handoff.new_oid))
+    tx(state, string.format("/info obd %d %d", o.handoff.new_oid, M.BID_BUSY))
+  end
+  o.handoff = nil
   if o.held and o.held.oid ~= spec.oid then
     -- Latest order wins.  Say what we are leaving so the human can follow it.
     local old = o.held
-    sayg(state, string.format("%sLeaving %s for %s",
-        switched and "No free bot. " or "",
-        goal_label(old.kind, old.tid), goal_label(spec.kind, spec.tid)))
+    if say_line == nil then
+      sayg(state, string.format("%sLeaving %s for %s",
+          lead or (switched and "No free bot. " or ""),
+          goal_label(old.kind, old.tid), goal_label(spec.kind, spec.tid)))
+    end
     local drop = nil
     if switched then
       drop = true
@@ -1973,9 +2165,13 @@ local function take_order(state, world, info, spec, cost, now, group, stolen, sw
     -- and go only if this bot still holds the order then (M.update).
     local pmx, pmy = M.target_tile(world, state, spec)
     o.ack_due = { oid = spec.oid, due = now + (C.ORDER_AUCTION_TICKS or 10),
-                  line = string.format("%s %s", M.ack_for(my_name(state, info)),
-                                       goal_label(spec.kind, spec.tid)),
+                  line = say_line == nil
+                         and string.format("%s %s", M.ack_for(my_name(state, info)),
+                                           goal_label(spec.kind, spec.tid))
+                         or nil,
                   mx = pmx, my = pmy }
+  elseif say_line ~= nil then
+    -- A handoff line stands in for the ack (said below).
   else
     sayg(state, string.format("%s %s", M.ack_for(my_name(state, info)),
         goal_label(spec.kind, spec.tid)))
@@ -1990,6 +2186,11 @@ local function take_order(state, world, info, spec, cost, now, group, stolen, sw
     if pmx and pmy then
       M.ping(state, _G.PING_KIND_ON_MY_WAY or 4, pmx, pmy)
     end
+  end
+  if say_line and say_line ~= "" then sayg(state, say_line) end
+  if not terms then
+    local _, t = M.bid_cost(state, world, info, spec)
+    terms = t
   end
   -- A bot-command order the attack ping already turned into a suicide run
   -- (the auction was still open, or this is a bot a repeat ping added).
@@ -2355,7 +2556,8 @@ local function clear_older_orders(state, info, keep_oid, now)
       drop[#drop + 1] = oid
     end
   end
-  for _, oid in ipairs(drop) do forget_order(o, oid) end
+  table.sort(drop)
+  for _, oid in ipairs(drop) do retire_order(o, oid, state.player_number) end
   if #drop > 0 then
   end
 end
@@ -2402,9 +2604,34 @@ function M.switch_bid(state, world, info, spec)
   if h.oid == spec.oid or decoy_held(state) then return nil end
   if spec.sender == (M.HINT_SENDER or 255) then return nil end
   if spec.who and spec.who.near then return nil end
-  local c = M.travel_cost(state, world, info, spec)
+  local c = M.bid_cost(state, world, info, spec)
   if not c or c >= 1e29 then return nil end
   return M.BID_HOLD - math.floor(math.min(c, 999999))
+end
+
+-- THE HANDOFF BID (ORDER_HANDOFF, 2026-10-04).  A bot on a person's job that
+-- is not busy for any other reason bids a NORMAL bid on a new auction, plus
+-- ORDER_HANDOFF_PENALTY, so a free bot at the same price still wins.  The
+-- switch_bid exceptions stand: never on its own order, never from a decoy,
+-- never for a scenario hint or a three-shot order.  Never while it is
+-- already waiting on a handoff (one at a time), and never in a relief
+-- auction (another holder's "take my job": a holder answers that one "no",
+-- so a relief never sets off a second handoff).  Answers cost, terms (the
+-- bid_cost table with `hand` added) or nil.
+function M.handoff_bid(state, world, info, spec, who)
+  if not (C.ORDER_HANDOFF and M.holds_job(state)) then return nil end
+  local o = state.orders
+  local h = o.held
+  if o.handoff then return nil end
+  if h.oid == spec.oid or decoy_held(state) then return nil end
+  if spec.sender == (M.HINT_SENDER or 255) then return nil end
+  who = who or spec.who
+  if (who and who.near) or (spec.who and spec.who.near) then return nil end
+  local c, t = M.bid_cost(state, world, info, spec)
+  if not c or c >= 1e29 then return nil end
+  t.hand = C.ORDER_HANDOFF_PENALTY or 0
+  t.total = c + t.hand
+  return t.total, t
 end
 
 function M.merge_early_bids(o, oid, now)
@@ -2423,7 +2650,7 @@ end
 local function start_order(state, world, info, spec, who, now, want)
   local o  = S(state)
   local me = state.player_number
-  local busy, reason = M.busy(state, info)
+  local busy, reason = M.busy(state, info, spec.kind == "take_cover")
 
   if who.mode == "names" then
     local mine = false
@@ -2460,7 +2687,9 @@ local function start_order(state, world, info, spec, who, now, want)
   -- ── auction: everyone bids, the `want` cheapest take it ────────────────
   -- A bot on a person's order bids "no" (ORDER_HOLDER_KEEPS_JOB).
   if not busy and M.holds_job(state) then busy, reason = true, "holding" end
-  local cost = (not busy) and M.travel_cost(state, world, info, spec) or nil
+  local terms = nil
+  local cost = nil
+  if not busy then cost, terms = M.bid_cost(state, world, info, spec) end
   if cost and cost >= 1e29 then cost = nil end
   -- RANGE RULE, for the three-shot order: only bots within who.near tiles
   -- bid at all.  Out of range answers "no" the way a busy bot does, so an
@@ -2491,13 +2720,23 @@ local function start_order(state, world, info, spec, who, now, want)
   M.merge_early_bids(o, spec.oid, now)
   local bid = cost and math.floor(math.min(cost, 999999))
               or (busy and M.BID_BUSY or -1)
-  -- Holding a person's job and busy for no other reason: bid the cost with
-  -- the switch marker (ORDER_NO_FREE_TAKES_LOWEST, M.switch_bid).
+  -- Holding a person's job and busy for no other reason: a HANDOFF bid, a
+  -- normal bid plus the penalty (ORDER_HANDOFF, M.handoff_bid), or else the
+  -- cost with the switch marker (ORDER_NO_FREE_TAKES_LOWEST, M.switch_bid).
+  local hand = nil
   if reason == "holding" then
-    bid = M.switch_bid(state, world, info, spec) or bid
+    local hc, ht = M.handoff_bid(state, world, info, spec, who)
+    if hc then
+      hand, cost, terms = true, hc, ht
+      bid = math.floor(math.min(hc, 999999))
+    else
+      bid = M.switch_bid(state, world, info, spec) or bid
+    end
   end
   M.note_bid(o.auctions[spec.oid], me, bid)
   o.auctions[spec.oid].bids[me] = cost
+  o.auctions[spec.oid].hand = hand
+  o.auctions[spec.oid].terms = terms
   tx(state, string.format("/info obd %d %d", spec.oid, bid))
   return true
 end
@@ -3098,12 +3337,44 @@ end
 -- for squad.busy(state, info)); it forwards here so the rule lives beside
 -- the orders that use it.
 -- =========================================================================
-function M.busy(state, info)
+-- ACTIVELY SHOOTING A PILL (ORDER_HANDOFF, 2026-10-04).  The attack_pill
+-- substates (attack.lua) in which the bot is in the pill's fire and shooting
+-- it, or driving in to shoot it:
+--   kill_hardline  next to the pill, firing on every clear shot (the
+--                  charge-now drive-in and the suicide aim run here too)
+--   charge         the drive in to the standoff, after the aim is set
+--   engage         stopped at the standoff, firing
+--   swerve         the dodge between volleys of an engage; it must finish
+--   shoot_pill     the shielded (PPT) way's firing phase
+--   heat_pill      the heat-pill shots
+-- NOT shooting, so a new order may still take the bot: select_pill,
+-- plan_position, gather_trees, approach, build_walls, blitz_wait, aim,
+-- detree, the in_range_* creep and aim steps, loiter, post_engage, rush.
+local SHOOTING_PILL = {
+  kill_hardline = true, charge = true, engage = true, swerve = true,
+  shoot_pill = true, heat_pill = true,
+}
+M.SHOOTING_PILL = SHOOTING_PILL
+function M.shooting_pill(state)
+  local g = state and state.goal
+  return g ~= nil and g.kind == "attack_pill" and SHOOTING_PILL[g.substate] == true
+end
+
+-- `retreat` = true for a caution-ping retreat on this bot: getting out of a
+-- pill's fire is the one order a pill take must not refuse.
+function M.busy(state, info, retreat)
   local g = state.goal or {}
   -- A SUICIDE RUN TAKES NO OTHER ORDER.  It ends on death, on the pill's
   -- death, or on a cancel -- a new order is not one of those, so the bot
   -- answers "Busy (suicide run)" and keeps going.
   if state._suicide then return true, "suicide run" end
+  -- TAKING A PILL (ORDER_HANDOFF).  A bot that is in a pill's fire and
+  -- shooting it finishes the job: it answers "Busy (taking pill)", whether
+  -- it chose the pill or was ordered to it.  The set-up phases (trees,
+  -- planning, the approach, blockers) do not count.
+  if C.ORDER_HANDOFF and not retreat and M.shooting_pill(state) then
+    return true, "taking pill"
+  end
   -- THE MAN BEING OUT DOES NOT MAKE A BOT BUSY (Andrew, 2026-09-24:
   -- ORDER_MAN_OUT_TAKES).  The tank drives off on the order and the builder
   -- walks back to it as he always does -- a man sent to pick a pill up
@@ -3534,7 +3805,7 @@ local function ping_caution(state, world, info, sender, mx, my, now)
                    needs_shells = false, who = cmd.who, ping = true }
     o.known[spec.oid] = { spec = spec, tick = now }
     note_last(o, sender, spec.oid)
-    local busy, reason = M.busy(state, info)
+    local busy, reason = M.busy(state, info, true)
     if busy then
       say(state, string.format("Busy (%s)", reason))
     else
@@ -3627,6 +3898,160 @@ end
 -- =========================================================================
 -- PER-THINK UPDATE
 -- =========================================================================
+-- =========================================================================
+-- THE HANDOFF (ORDER_HANDOFF, 2026-10-04)
+--
+-- A bot on a person's job (the OLD order) won a NEW auction with a handoff
+-- bid.  The wire, in order:
+--   1. it sends obq OLD and its own "no" for it (obd OLD -2).  Every bot
+--      drops it from OLD's holder set and re-opens the auction on OLD; bots
+--      on a person's job answer "no", so only a free bot can take it.  The
+--      other bots settled the NEW auction too and name this bot its winner
+--      (o.claims), so nobody else takes NEW while it waits.
+--   2. it keeps working OLD meanwhile (o.held does not change).
+--   3. a free bot wins OLD and claims it (obc OLD): this bot takes NEW at
+--      once, which releases OLD quietly (obr; the claimant holds it now).
+--   4. no claim in ORDER_HANDOFF_WAIT_TICKS: it takes NEW anyway and DROPS
+--      OLD (obx when no other bot holds it), saying "No cover. Leaving X
+--      for Y".
+-- Every other way out:
+--   * OLD ends first (done, cancelled, lost a tiebreak): NEW is taken now.
+--   * NEW is cancelled, or another bot claims it: the handoff is called off,
+--     OLD is kept and claimed again (obc OLD), which closes the relief.
+--   * busy when the wait runs out (a pill take began on OLD): called off the
+--     same way, and NEW is offered on (obo) for a free bot.
+--   * this bot dies: NEW is offered on (obo) and OLD is released as on any
+--     death (M.on_death).
+--   * this bot takes some other order: NEW is offered on (take_order).
+--
+-- CHAINS (ORDER_HANDOFF_MAX_HOPS).  The relief auction on OLD is an order
+-- auction too, so a holder that is not shooting a pill may win it with a
+-- handoff bid (only while the relief's hop count is below the knob, and
+-- never a bot whose bit is in the chain's MASK: no loops).  That holder B
+--   1. PROMISES NEW (= the asker's OLD) at once: obc NEW while it still
+--      holds its own job, so the asker is relieved and goes now;
+--   2. asks for relief on its own job: obq ITS-OLD HOP+1 MASK|B ROOT B;
+--   3. from there on it runs the single-hop rules on its own clock: it
+--      takes NEW when its own relief claims, or drops its job and goes
+--      after ORDER_HANDOFF_WAIT_TICKS.
+-- The asker's own claim on NEW is not a rival here (hf.asker).
+--
+-- THE LINES (sayg, one per event per bot):
+--   asker:            "Going to NEW, need cover on OLD"
+--   chained reliever: "Covering NEW for ASKER, need cover on OLD"
+--   free reliever:    "Covering OLD for ASKER" (in take_order)
+--   nobody came:      "No cover. Leaving OLD for NEW"
+-- The relieved take says nothing more; its "on my way" marker still goes.
+-- o.handoff = { new_oid, old_oid, spec, cost, since, group, terms, relieved,
+--               hop, mask, root, asker, promised }
+-- =========================================================================
+-- chain = nil for the bot that starts a chain, else the chain of the relief
+-- this bot won ({ hop, mask, root, asker } with hop and mask already
+-- counting this bot); cover_for = the asker's name for the line.
+function M.handoff_start(state, spec, cost, now, group, terms, chain, cover_for)
+  local o = S(state)
+  local h = o.held
+  local me = state.player_number
+  local ch = chain or { hop = 1, mask = chain_bit(me), root = spec.oid }
+  o.handoff = { new_oid = spec.oid, old_oid = h.oid, spec = spec, cost = cost,
+                since = now, group = group, terms = terms,
+                hop = ch.hop, mask = ch.mask, root = ch.root,
+                asker = chain and chain.asker or nil,
+                promised = chain and true or nil }
+  tx(state, relief_msg(h.oid, { hop = ch.hop, mask = ch.mask, root = ch.root, asker = me }))
+  tx(state, string.format("/info obd %d %d", h.oid, M.BID_BUSY))
+  if chain then
+    -- THE PROMISE: claim NEW now, so the asker goes at once.
+    local ic = math.floor(math.min(cost or 0, 999999))
+    tx(state, string.format("/info obc %d %d", spec.oid, ic))
+    o.gclaims[spec.oid] = o.gclaims[spec.oid] or {}
+    o.gclaims[spec.oid][me] = ic
+    sayg(state, string.format("Covering %s for %s, need cover on %s",
+         goal_label(spec.kind, spec.tid), tostring(cover_for or "team"),
+         goal_label(h.kind, h.tid)))
+  else
+    sayg(state, string.format("Going to %s, need cover on %s",
+         goal_label(spec.kind, spec.tid), goal_label(h.kind, h.tid)))
+  end
+end
+
+-- Keep OLD after all: claim it again, so every bot counts this bot as its
+-- holder and a relief auction still open on OLD closes (a claim ends it).
+-- A chained reliever's PROMISE on NEW is withdrawn too: its share comes off
+-- the holder set here, and on the other bots by obr (or by the caller's obo,
+-- offered = true, which takes it off the same way).
+local function handoff_keep_old(state, why, now, offered)
+  local o = S(state)
+  local hf = o.handoff
+  o.handoff = nil
+  if hf.promised then
+    if o.gclaims[hf.new_oid] then o.gclaims[hf.new_oid][state.player_number] = nil end
+    if not offered then tx(state, string.format("/info obr %d", hf.new_oid)) end
+  end
+  local h = o.held
+  if h and h.oid == hf.old_oid then
+    local ic = h.claim_cost or math.floor(h.cost or 0)
+    tx(state, string.format("/info obc %d %d", h.oid, ic))
+    o.gclaims[h.oid] = o.gclaims[h.oid] or {}
+    o.gclaims[h.oid][state.player_number] = ic
+  end
+end
+
+function M.handoff_step(state, world, info, now)
+  local o = state.orders
+  local hf = o and o.handoff
+  if not hf then return end
+  local me = state.player_number
+  local h  = o.held
+  local k  = o.known[hf.new_oid]
+  local other = false
+  for pn in pairs(o.gclaims[hf.new_oid] or {}) do
+    -- The bot that asked THIS bot for cover still holds NEW until it hears
+    -- the promise: that claim is not a rival.
+    if pn ~= me and pn ~= hf.asker then other = true end
+  end
+  if not k or other then
+    if hf.relieved and h and h.oid == hf.old_oid then
+      -- Relieved, but NEW is gone: the bot that claimed OLD keeps it, and
+      -- this bot lets go of its share in silence.
+      o.handoff = nil
+      if hf.promised and k then
+        tx(state, string.format("/info obr %d", hf.new_oid))
+        if o.gclaims[hf.new_oid] then o.gclaims[hf.new_oid][me] = nil end
+      end
+      release_held(state, info, nil, true)
+      return
+    end
+    handoff_keep_old(state, k and "new taken" or "new gone", now)
+    return
+  end
+  if not h or h.oid ~= hf.old_oid then
+    -- OLD is over by some other road: nothing to hand off, go now.
+    o.handoff = nil
+    take_order(state, world, info, k.spec, hf.cost, now, hf.group, nil, nil, nil, hf.terms, "")
+    return
+  end
+  if hf.relieved then
+    o.handoff = nil
+    take_order(state, world, info, k.spec, hf.cost, now, hf.group, nil, nil, nil, hf.terms, "")
+    return
+  end
+  if now - hf.since >= (C.ORDER_HANDOFF_WAIT_TICKS or 0) then
+    if M.busy(state, info) then
+      local nid = hf.new_oid
+      handoff_keep_old(state, "busy at timeout", now, true)
+      tx(state, string.format("/info obo %d", nid))
+      tx(state, string.format("/info obd %d %d", nid, M.BID_BUSY))
+      return
+    end
+    o.handoff = nil
+    take_order(state, world, info, k.spec, hf.cost, now, hf.group, nil, true,
+               "No cover. ", hf.terms,
+               string.format("No cover. Leaving %s for %s", goal_label(h.kind, h.tid),
+                             goal_label(k.spec.kind, k.spec.tid)))
+  end
+end
+
 function M.update(state, world, info, now)
   if not C.BOT_COMMANDS_ENABLED then
     state._order = nil
@@ -3687,7 +4112,14 @@ function M.update(state, world, info, now)
       local grp = o.announce[r.oid]
                   or (C.ORDER_CLAIM_TIEBREAK and o.held and o.held.oid == r.oid
                       and (o.held.group or (anc and (anc.want or 1) > 1)))
-      if o.held and o.held.oid == r.oid and r.from ~= me
+      -- THE RELIEF CAME (ORDER_HANDOFF): another bot claimed the job this
+      -- bot asked to be taken off it.  That is the promise, not a rival
+      -- claim, so no tiebreak: M.handoff_step moves this bot to the new
+      -- order right after the drain.
+      local hf = o.handoff
+      if hf and r.from ~= me and r.oid == hf.old_oid and not hf.relieved then
+        hf.relieved = r.from
+      elseif o.held and o.held.oid == r.oid and r.from ~= me
          and not grp then
         -- ONE PING, ONE BOT (ORDER_CLAIM_TIEBREAK).  Two bots took the same
         -- solo order.  Both see both claims, and both rank them the same
@@ -3738,6 +4170,18 @@ function M.update(state, world, info, now)
       end
       forget_order(o, r.oid)
     elseif r.kind == "release" then
+      -- A RELIEF for an order this bot had retired (ORDER_HANDOFF): the
+      -- holder vouches that it still stands, so it comes back, fresh.  Any
+      -- other release of a retired order takes that holder off it.
+      local rt = o.retired and o.retired[r.oid]
+      if rt and r.relief and not o.known[r.oid] then
+        o.retired[r.oid] = nil
+        o.known[r.oid] = { spec = rt.spec, tick = now }
+        o.gclaims[r.oid] = rt.holders
+      elseif rt and not r.relief then
+        rt.holders[r.from] = nil
+        if next(rt.holders) == nil then o.retired[r.oid] = nil end
+      end
       if o.claims[r.oid] and o.claims[r.oid].pn == r.from then o.claims[r.oid] = nil end
       -- The releaser is not a holder any more, so the settle below must stop
       -- counting it as one -- otherwise it can never win its own order back.
@@ -3774,25 +4218,55 @@ function M.update(state, world, info, now)
       if C.ORDER_NO_HAND_BACK and not r.offer then k = nil end
       if k and (r.offer or (not still and not o.held)) and not o.auctions[r.oid]
          and (now - k.tick) < (C.ORDER_FOCUS_TICKS or 3000) then
+        -- A CHAINED RELIEF (ORDER_HANDOFF_MAX_HOPS): a bot whose job is
+        -- already in this chain (its bit in the mask) never bids on it, free
+        -- or not -- no loops.  Below the hop limit a holder may hand its own
+        -- job off for it (chain_ok); at the limit only free bots go.
+        local in_chain = r.relief and r.mask
+                         and bit.band(r.mask, chain_bit(me)) ~= 0 or false
+        local chain_ok = r.relief and not in_chain
+                         and (r.hop or 1) < (C.ORDER_HANDOFF_MAX_HOPS or 0)
         local busy = M.busy(state, info) or M.holds_job(state)
-                     or (r.offer and o.held ~= nil)
-        local cost = (not busy) and M.travel_cost(state, world, info, k.spec) or nil
+                     or (r.offer and o.held ~= nil) or in_chain
+        local cost, terms = nil, nil
+        if not busy then cost, terms = M.bid_cost(state, world, info, k.spec) end
         if cost and cost >= 1e29 then cost = nil end
         local anc = o.anchors[r.oid]
         local bid = cost and math.floor(math.min(cost, 999999))
                     or (busy and M.BID_BUSY or -1)
         -- An offer is still a person's order nobody took, so a holder may be
-        -- switched to it when no free bot can go (M.switch_bid).  A plain
+        -- switched to it when no free bot can go (M.switch_bid), or bid to
+        -- hand its own job off for it (ORDER_HANDOFF, M.handoff_bid).  A plain
         -- hand-back (obr) never switches a holder: its old order would be
-        -- handed back in turn, and so on round the team.
-        if r.offer and r.from ~= me and not M.busy(state, info) then
-          bid = M.switch_bid(state, world, info, k.spec) or bid
+        -- handed back in turn, and so on round the team.  Nor does a RELIEF
+        -- (obq): the sender still holds that job, and a holder taking it
+        -- would only move the gap to the job it left -- unless chains are
+        -- on (chain_ok above), and then only by handing its own job off in
+        -- turn (a handoff bid, never the switch cost).
+        local hand = nil
+        if r.offer and (not r.relief or chain_ok) and r.from ~= me
+           and not in_chain and not M.busy(state, info) then
+          local hc, ht = M.handoff_bid(state, world, info, k.spec)
+          if hc then
+            hand, cost, terms = true, hc, ht
+            bid = math.floor(math.min(hc, 999999))
+          elseif not r.relief then
+            bid = M.switch_bid(state, world, info, k.spec) or bid
+          end
         end
         o.auctions[r.oid] = { spec = k.spec, open = now, bids = {},
                               answered = {},
-                              want = r.offer and anc and anc.want or nil }
+                              want = r.offer and anc and anc.want or nil,
+                              relief = r.relief or nil, hand = hand,
+                              terms = terms,
+                              chain = r.relief and { hop = r.hop or 1,
+                                                     mask = r.mask or chain_bit(r.from),
+                                                     root = r.root or r.oid,
+                                                     asker = r.asker or r.from } or nil }
         M.note_bid(o.auctions[r.oid], me, bid)
         o.auctions[r.oid].bids[me] = cost
+        if terms then
+        end
         M.merge_early_bids(o, r.oid, now)
         -- This bot's OWN offer, heard back (a bot hears its own chat lines):
         -- its "no" already went out right after the obo, so no second obd.
@@ -3806,6 +4280,10 @@ function M.update(state, world, info, now)
     end
   end
   o.rx = {}
+
+  -- 1a. A HANDOFF this bot is waiting on (ORDER_HANDOFF): the relief came,
+  --     the wait ran out, or one of the two orders went away.
+  M.handoff_step(state, world, info, now)
 
   -- 1b. ONE SLOT, ONE BOT (ORDER_CLAIM_TIEBREAK; see M.slot_keepers).  More
   --     holders than the order has slots: the dearest let go, quietly (obr,
@@ -3872,10 +4350,36 @@ function M.update(state, world, info, now)
           -- auction window, and it won the other one first.  It keeps that
           -- job and offers this one (obo); the other bots re-open the auction
           -- and this bot answers it "no" (see the obo verb in M.rx).
-          if M.holds_job(state) and o.held.oid ~= oid then
+          -- WON WITH A HANDOFF BID (ORDER_HANDOFF): this bot bid while it
+          -- held a person's job, on purpose.  It keeps that job for now and
+          -- asks the team to take it (M.handoff_start); the other bots name
+          -- it the winner of this order, so nobody else takes it meanwhile.
+          -- A RELIEF won with a handoff bid is a CHAIN hop: this bot promises
+          -- the asker's job and asks for relief of its own (M.handoff_start
+          -- with the chain, one hop further, this bot's bit in the mask).
+          -- A free bot that wins a relief says "Covering X for ASKER".
+          local ch = a.relief and a.chain
+          if M.holds_job(state) and o.held.oid ~= oid and a.hand
+             and C.ORDER_HANDOFF and not o.handoff and not decoy_held(state)
+             and not M.busy(state, info) then
+            if ch then
+              M.handoff_start(state, a.spec, rank[i].c, now, want > 1, a.terms,
+                              { hop = ch.hop + 1, mask = bit.bor(ch.mask, chain_bit(me)),
+                                root = ch.root, asker = ch.asker },
+                              player_name(info, ch.asker))
+            else
+              M.handoff_start(state, a.spec, rank[i].c, now, want > 1, a.terms)
+            end
+          elseif M.holds_job(state) and o.held.oid ~= oid then
             offer = true
           else
-            take_order(state, world, info, a.spec, rank[i].c, now, want > 1)
+            take_order(state, world, info, a.spec, rank[i].c, now, want > 1,
+                       nil, nil, nil, a.terms,
+                       ch and C.ORDER_HANDOFF
+                       and string.format("Covering %s for %s",
+                             goal_label(a.spec.kind, a.spec.tid),
+                             player_name(info, ch.asker))
+                       or nil)
           end
         else
           o.claims[oid] = { pn = rank[i].pn, cost = rank[i].c, tick = now }
@@ -3939,7 +4443,10 @@ function M.update(state, world, info, now)
       -- ORDER_FOCUS_TICKS takes it (3b below).  With ORDER_NO_FREE_TAKES_LOWEST
       -- this is only reached when no holder could be switched either (all
       -- on decoys, busy, or unable to get there), or the knob is off.
-      if C.ORDER_HOLDER_KEEPS_JOB and need > 0 and #won == 0 and not a.repeated then
+      -- A RELIEF nobody answered is not "busy" news: the bot that asked
+      -- still holds that job, and it goes on its own clock (M.handoff_step).
+      if C.ORDER_HOLDER_KEEPS_JOB and need > 0 and #won == 0 and not a.repeated
+         and not a.relief then
         local k = o.known[oid]
         if k then k.unfilled = true end
         local low = nil
@@ -3961,7 +4468,10 @@ function M.update(state, world, info, now)
         -- opened here.  This bot hears its own obo on its next think, and
         -- the release handler above opens the auction then with its own
         -- "no" in it, without sending that "no" a second time.
-        tx(state, string.format("/info obo %d", oid))
+        -- A relief stays a relief when it is passed on, so the next round
+        -- of it still leaves holders out and stays quiet.
+        tx(state, a.relief and relief_msg(oid, a.chain)
+                  or string.format("/info obo %d", oid))
         tx(state, string.format("/info obd %d %d", oid, M.BID_BUSY))
       end
       local bl = {}
@@ -4043,12 +4553,13 @@ function M.update(state, world, info, now)
         if cl and k and cl.pn ~= me and not k.decoy_left
            and (now - cl.tick) >= (C.ORDER_STEAL_HOLD_TICKS or 100)
            and (now - k.tick) < (C.ORDER_FOCUS_TICKS or 3000) then
-          local mine = M.travel_cost(state, world, info, k.spec)
+          local mine, terms = M.bid_cost(state, world, info, k.spec)
           local margin = (C.ORDER_STEAL_MIN_TILES or 2) * (C.ORDER_TILE_COST or 4)
           if mine and mine < 1e29
              and mine <= cl.cost * (1 - (C.ORDER_STEAL_PCT or 0.20))
              and mine <= cl.cost - margin then
-            take_order(state, world, info, k.spec, mine, now, nil, true)
+            take_order(state, world, info, k.spec, mine, now, nil, true,
+                       nil, nil, terms)
             break
           end
         end
@@ -4068,10 +4579,10 @@ function M.update(state, world, info, now)
              and (now - k.tick) < (C.ORDER_FOCUS_TICKS or 3000)
              and sp.sender ~= (M.HINT_SENDER or 255)
              and not (sp.who and sp.who.near) then
-            local mine = M.travel_cost(state, world, info, sp)
+            local mine, terms = M.bid_cost(state, world, info, sp)
             if mine and mine < 1e29 then
               k.unfilled = nil
-              take_order(state, world, info, sp, mine, now)
+              take_order(state, world, info, sp, mine, now, nil, nil, nil, nil, terms)
               break
             end
           end
@@ -4122,7 +4633,27 @@ function M.update(state, world, info, now)
       local dy = tile_of(info.tanky) - h.my
       if dx < 0 then dx = -dx end
       if dy < 0 then dy = -dy end
-      if dx <= 1 and dy <= 1 then
+      -- ARRIVAL IS THE SQUARE ITSELF (ORDER_GOTO_ARRIVE_TILES, 0 live; keel 1
+      -- = the old one-square ring).  A square the tank cannot get onto would
+      -- then never arrive, so once the tank is inside the one-square ring a
+      -- timer runs (ORDER_GOTO_ARRIVE_FALLBACK_TICKS) and arrival comes when
+      -- it is up.  Leaving the ring resets it.  The hold park and steering
+      -- keep their one-square test, so a bot that arrives on the timer parks
+      -- where it stands and does not keep reaching for the square.
+      local cheb = (dx > dy) and dx or dy
+      local arrive = cheb <= (C.ORDER_GOTO_ARRIVE_TILES or 1)
+      local fb = C.ORDER_GOTO_ARRIVE_FALLBACK_TICKS or 0
+      if not arrive then
+        if fb > 0 and cheb <= 1 then
+          h.near_since = h.near_since or now
+          if now - h.near_since >= fb then
+            arrive = true
+          end
+        else
+          h.near_since = nil
+        end
+      end
+      if arrive then
         local hold = C.ORDER_GOTO_HOLD_TICKS or 500
         local npills = (C.ORDER_GOTO_DECOY and h.ping)
                        and decoy_pills(world, h.mx, h.my) or nil
@@ -4288,7 +4819,7 @@ function M.update(state, world, info, now)
   for _, oid in ipairs(sorted_keys(o.known)) do
     local k = o.known[oid]
     if k and (now - k.tick) > (C.ORDER_FOCUS_TICKS or 3000) then
-      forget_order(o, oid)
+      retire_order(o, oid, me)
     end
   end
   if o.sel and now >= (o.sel.until_tick or 0) then

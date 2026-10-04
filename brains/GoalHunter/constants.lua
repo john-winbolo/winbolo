@@ -4729,6 +4729,18 @@ M.ORDER_FOCUS_TICKS     = 3000   -- keel 3000 (moot; master off)
 -- whatever is left of a minute.  500 ticks = 10 s at 50 ticks/s.  The bot
 -- says the number when it arrives, so this knob is what it promises.
 M.ORDER_GOTO_HOLD_TICKS = 500    -- keel 500 (moot; master off)
+-- 2026-10-04: A GO-THERE ORDER REACHES THE SQUARE ITSELF.  The order counts
+-- as arrived (the hold starts) when the tank is within this many squares of
+-- the target, measured as the larger of the two axes.  0 = on the square.
+-- 1 = on it or on any of the eight round it (keel: the old arrival test).
+M.ORDER_GOTO_ARRIVE_TILES = 0    -- keel 1
+-- The way out when the square cannot be reached (a wall, a pill on it,
+-- another tank parked there): once the tank is within one square, a timer
+-- starts, and after this many ticks the order counts as arrived anyway.  The
+-- timer resets when the tank leaves the one-square ring.  A bot that arrives
+-- this way parks where it is, because the hold park (orders.hold_parked) and
+-- steering still use the one-square test.  0 = no fallback (keel).
+M.ORDER_GOTO_ARRIVE_FALLBACK_TICKS = 100   -- keel 0
 -- THE HOLD PHASE STILL FIGHTS.  While the hold runs the hard goto lock comes
 -- off and goal selection runs again, so attack_tank and kill_lgm can win --
 -- but the tank must not DRIVE anywhere: it was sent to that square.  These
@@ -4833,6 +4845,39 @@ M.ORDER_LAND_REPEAT_ADDS = false  -- keel true
 -- never to a bot that already holds that order.  false = nobody goes: one
 -- bot says "All bots busy" and the order waits for a bot to come free.
 M.ORDER_NO_FREE_TAKES_LOWEST = true  -- keel false
+-- 2026-10-04: THE BID PRICES IN A REFUEL STOP AND A FIGHT.  A bot that will
+-- stop at a base on the way (shells < SHELLS_LOW on an order that needs
+-- shells -- any order when ORDER_REFUEL_SKIP_NO_SHELLS is off -- or armour
+-- <= ARMOUR_LOW) bids path(bot -> nearest friendly base) + estimate(base ->
+-- target) + ORDER_BID_REFUEL_STOP_COST instead of its straight path.  A bot
+-- whose goal is attack_tank or kill_lgm adds ORDER_BID_ENGAGED_COST.  The
+-- terms add.  Every term is on the ORDER_BID and ORDER_TAKE debug lines.
+-- false = the bid is the travel cost alone (keel).
+M.ORDER_BID_STOP_AWARE = true        -- keel false
+M.ORDER_BID_REFUEL_STOP_COST = 30    -- keel 0
+M.ORDER_BID_ENGAGED_COST = 30        -- keel 0
+-- 2026-10-04: A BOT SHOOTING A PILL IS BUSY, AND A HOLDER CAN HAND OFF.
+-- Master switch.  With it on:
+--   * a bot on attack_pill in a shooting phase (see orders.SHOOTING_PILL)
+--     is busy for new orders ("Busy (taking pill)"), its own pick or an order;
+--   * a bot on a person's job (ORDER_HOLDER_KEEPS_JOB) that is not busy bids
+--     a NORMAL bid + ORDER_HANDOFF_PENALTY on a new auction.  If it wins, it
+--     keeps working its old job and asks the team to take that one (obq).  A
+--     free bot that claims the old job lets it go to the new one at once; with
+--     no claim in ORDER_HANDOFF_WAIT_TICKS it drops the old job and goes.
+-- false = holders bid "no" (or the ORDER_NO_FREE_TAKES_LOWEST switch cost),
+-- and shooting a pill is not busy (keel).
+M.ORDER_HANDOFF = true               -- keel false
+M.ORDER_HANDOFF_PENALTY = 15         -- keel 0
+M.ORDER_HANDOFF_WAIT_TICKS = 100     -- keel 0
+-- CHAINED HANDOFFS (2026-10-04).  The relief auction for a holder's old job
+-- is an order auction too, so another holder that is not shooting a pill may
+-- win it (with ORDER_HANDOFF_PENALTY) and ask for relief of ITS old job in
+-- turn: a 2-3 bot hop toward nearer jobs.  The hop count travels with the
+-- relief (obq OLD HOP MASK ROOT ASKER); a relief at hop >= this value takes
+-- FREE bots only.  A bot already in the chain (MASK) never bids on it.
+-- 0 or 1 = holders answer every relief "no" (single hop; keel).
+M.ORDER_HANDOFF_MAX_HOPS = 3         -- keel 0
 -- DECOY GETAWAY (Andrew, 2026-09-24).  A decoy hold (ORDER_GOTO_DECOY) looks
 -- for a way out the moment it starts: a chain of up to
 -- DECOY_GETAWAY_MAX_STEPS squares, each one ring further out from the start
@@ -5616,6 +5661,21 @@ M.PRESETS = {
     --   2026-09-25: with no free bot, the cheapest bot on a person's job
     --   switched to the new order.  KEEL: holders never bid.
     ORDER_NO_FREE_TAKES_LOWEST    = false,
+    --   2026-10-04: a go-there order arrives on the square itself, with a
+    --   timer for a square it cannot reach.  KEEL: within one square, no timer.
+    ORDER_GOTO_ARRIVE_TILES       = 1,
+    ORDER_GOTO_ARRIVE_FALLBACK_TICKS = 0,
+    --   2026-10-04: the bid prices in a refuel stop and a fight.  KEEL: the
+    --   bid is the travel cost alone.
+    ORDER_BID_STOP_AWARE          = false,
+    ORDER_BID_REFUEL_STOP_COST    = 0,
+    ORDER_BID_ENGAGED_COST        = 0,
+    --   2026-10-04: shooting a pill is busy, and a holder may win a new
+    --   order and hand its old one off.  KEEL: holders bid "no".
+    ORDER_HANDOFF                 = false,
+    ORDER_HANDOFF_PENALTY         = 0,
+    ORDER_HANDOFF_WAIT_TICKS      = 0,
+    ORDER_HANDOFF_MAX_HOPS        = 0,
     --   FOCUS_OTHER_COST_MULT is the one stage-2 knob that is NOT covered by
     --   the master switch: the focus multiplier sits inside the cost
     --   competition, so its keel value has to be the identity, 1.0, for the
