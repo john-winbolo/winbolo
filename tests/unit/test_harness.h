@@ -1158,6 +1158,11 @@ int run_starts_side_team_change_repicks_stale(void);
 /* A mod with on_choose_start leaves the opening placement to the lobby
  * picks and team sides, and still names the starts after it. */
 int run_mod_lobby_starts_mac_bolo_keeps_opposite_sides(void);
+int run_mac_bolo_settings_defaults_play_old_rules(void);
+int run_mac_bolo_settings_each_part_off(void);
+int run_mac_bolo_settings_numbers(void);
+int run_mac_bolo_first_start_lobby_off_uses_mac_pick(void);
+int run_mac_bolo_spawn_starts_off_engine_picks(void);
 
 /* CTRL_ALLIANCE_RESET batched alliance event (test_alliance_reset.c).
  * Replaces the O(N²) per-pair CTRL_ALLIANCE_ACCEPT burst that overflowed

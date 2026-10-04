@@ -5394,6 +5394,11 @@ set(_unit_test_names
     starts_side_two_team_lobby_mirrors
     starts_side_team_change_repicks_stale
     mod_lobby_starts_mac_bolo_keeps_opposite_sides
+    mac_bolo_settings_defaults_play_old_rules
+    mac_bolo_settings_each_part_off
+    mac_bolo_settings_numbers
+    mac_bolo_first_start_lobby_off_uses_mac_pick
+    mac_bolo_spawn_starts_off_engine_picks
     input_redundancy
     bases_closest_for_player
     base_stock_visibility
