@@ -1154,8 +1154,9 @@ int run_operator_mods_setting_locked(void) {
                                               "armour"));
     UT_ASSERT(!serverSimOperatorSettingLocked(sim, "nolgm.lua", "fog"));
 
-    /* The server refuses a change to it, the same value included, and
-       whoever sends it. */
+    /* The server refuses the host's change to it, the same value
+       included. A player who is not the host is refused before the lock
+       is asked (CMD_REJECT_NOT_HOST). */
     UT_ASSERT_MSG(omSetSetting(sim, 0, "MacRules.scenario.lua", "pushback",
                                1) == CMD_REJECT_LOCKED,
                   "the host changed a locked setting");

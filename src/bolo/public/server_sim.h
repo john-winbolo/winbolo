@@ -1075,8 +1075,11 @@ ServerModArgsResult serverSimApplyOperatorModArgs(ServerSim *sim, int argc,
                                                   ServerModArgsSay say,
                                                   void *ctx);
 
-/* How many -setting values on the operator's own rows are held at once. */
-#define SERVER_OPERATOR_SETTINGS_MAX 32
+/* How many -setting values on the operator's own rows are held at once: as
+ * many as the settings store holds (SERVER_SCRIPT_SETTING_VALUES_MAX, below),
+ * so a value the store took always has a place here and a fixed row's value
+ * is always locked. */
+#define SERVER_OPERATOR_SETTINGS_MAX SERVER_SCRIPT_SETTING_VALUES_MAX
 
 /*********************************************************
  *NAME:          serverSimApplySettingArg

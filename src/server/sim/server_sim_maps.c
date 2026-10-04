@@ -1099,7 +1099,8 @@ bool serverSimApplySettingArg(ServerSim *sim, const char *arg,
                         sizeof(sim->operatorSettings[at].id));
         }
         if (at < 0) {
-            how = " (this game only: too many -setting values on mods)";
+            how = " (this game only, and the host may change it: too many "
+                  "-setting values on mods)";
         } else {
             sim->operatorSettings[at].value = got;
             if (serverSimOperatorModFixed(sim, file)) {
