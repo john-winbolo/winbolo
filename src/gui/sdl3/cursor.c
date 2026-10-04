@@ -194,6 +194,19 @@ static void cursorLog(const char *fmt, ...) {
   gCursorLogEntries++;
 }
 
+/* How far the drawn map is shifted past the whole-tile view, in zoomed
+   pixels: the engine's sub-tile autoscroll plus the renderer's drag offset,
+   which carries the part-tile of a smooth keyboard or gamepad scroll (and
+   is negative going left or up). sdl3DrawMainScreen shifts the map by
+   exactly this, so the tile under a screen pixel is resolved with it. */
+static void cursorEdgePx(int subPosX, int subPosY, int *outX, int *outY) {
+  int zf = sdl3DrawGetZoomFactor();
+  int dragX = 0, dragY = 0;
+  sdl3DrawGetDragOffset(&dragX, &dragY);
+  *outX = subPosX * (zf * TILE_SIZE_X) / 256 + dragX;
+  *outY = subPosY * (zf * TILE_SIZE_Y) / 256 + dragY;
+}
+
 bool cursorPos(RECT *rcWindow, BYTE *xValue, BYTE *yValue,
                int subPosX, int subPosY) {
   (void)rcWindow; /* SDL3 uses window-relative coords from SDL_GetMouseState */
@@ -206,10 +219,17 @@ bool cursorPos(RECT *rcWindow, BYTE *xValue, BYTE *yValue,
     int tileH = zf * TILE_SIZE_Y;
     int xPos  = (int)mx - (zf * MAIN_OFFSET_X);
     int yPos  = (int)my - (zf * MAIN_OFFSET_Y);
-    int edgePxX = subPosX * tileW / 256;
-    int edgePxY = subPosY * tileH / 256;
+    int edgePxX, edgePxY;
+    cursorEdgePx(subPosX, subPosY, &edgePxX, &edgePxY);
     xPos += edgePxX;
     yPos += edgePxY;
+    /* A smooth scroll left or up draws part of the column/row before the
+       first; div truncates toward zero, so that would read as column 1. */
+    if (xPos < 0 || yPos < 0) {
+      *xValue = 0;
+      *yValue = 0;
+      return false;
+    }
     div_t dx = div(xPos, tileW);
     div_t dy = div(yPos, tileH);
     *xValue = (BYTE)(dx.quot + 1);
@@ -261,16 +281,16 @@ void cursorLeaveWindow(void) {
   gAnchorValid = false;
 }
 
-/* The view origin in zoomed game pixels from the map origin. Uses the same
-   sub-tile rounding as cursorPos, so an anchor taken here resolves to the
-   tile cursorPos reported for the same pointer and view. */
+/* The drawn view's origin in zoomed game pixels from the map origin. Uses
+   the same edge as cursorPos, so an anchor taken here resolves to the tile
+   cursorPos reported for the same pointer and view. */
 static void cursorViewOrigin(int xOffset, int yOffset, int subPosX, int subPosY,
                              int *outX, int *outY) {
-  int zf    = sdl3DrawGetZoomFactor();
-  int tileW = zf * TILE_SIZE_X;
-  int tileH = zf * TILE_SIZE_Y;
-  *outX = xOffset * tileW + subPosX * tileW / 256;
-  *outY = yOffset * tileH + subPosY * tileH / 256;
+  int zf = sdl3DrawGetZoomFactor();
+  int edgeX, edgeY;
+  cursorEdgePx(subPosX, subPosY, &edgeX, &edgeY);
+  *outX = xOffset * zf * TILE_SIZE_X + edgeX;
+  *outY = yOffset * zf * TILE_SIZE_Y + edgeY;
 }
 
 /*********************************************************
@@ -394,20 +414,25 @@ bool cursorFollowView(int xOffset, int yOffset, int subPosX, int subPosY,
   int top  = zf * MAIN_OFFSET_Y;
   int gx   = gAnchorX - vx + left;
   int gy   = gAnchorY - vy + top;
-  /* The pixels cursorPos accepts. It adds the sub-tile offset before
-     dividing, so the far edge of column/row 15 comes in by that offset. */
-  int maxX = left + MAIN_SCREEN_SIZE_X * tileW - 1 - (vx - xOffset * tileW);
-  int maxY = top  + MAIN_SCREEN_SIZE_Y * tileH - 1 - (vy - yOffset * tileH);
-  bool offX = gx < left || gx > maxX;
-  bool offY = gy < top || gy > maxY;
+  /* The pixels cursorPos accepts: inside the view, and with the edge added,
+     inside columns/rows 1 to 15. A positive edge brings the far side in by
+     it, a negative one (smooth scrolling left or up) the near side. */
+  int edgeX = vx - xOffset * tileW;
+  int edgeY = vy - yOffset * tileH;
+  int minX = edgeX < 0 ? left - edgeX : left;
+  int minY = edgeY < 0 ? top - edgeY : top;
+  int maxX = left + MAIN_SCREEN_SIZE_X * tileW - 1 - (edgeX > 0 ? edgeX : 0);
+  int maxY = top  + MAIN_SCREEN_SIZE_Y * tileH - 1 - (edgeY > 0 ? edgeY : 0);
+  bool offX = gx < minX || gx > maxX;
+  bool offY = gy < minY || gy > maxY;
   if (offX || offY) {
     /* Its square has gone off the view, so the pointer goes off with it,
        clear of the view on the side it left by, and is no longer on the
        map to be carried back when the view scrolls the other way. */
     int push = zf * CURSOR_PUSH_OFF_PX;
-    if (gx < left) gx = left - push;
+    if (gx < minX) gx = left - push;
     else if (gx > maxX) gx = left + MAIN_SCREEN_SIZE_X * tileW + push;
-    if (gy < top) gy = top - push;
+    if (gy < minY) gy = top - push;
     else if (gy > maxY) gy = top + MAIN_SCREEN_SIZE_Y * tileH + push;
     if (lostMapX) *lostMapX = (BYTE)(gAnchorX / tileW + 1);
     if (lostMapY) *lostMapY = (BYTE)(gAnchorY / tileH + 1);
