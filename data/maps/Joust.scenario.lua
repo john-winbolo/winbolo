@@ -1080,6 +1080,8 @@ scenario = {
                 "boat, so one hit drowns it. First to the kill count wins, " ..
                 "every tank for itself or as lobby teams.",
   api         = 1,
+  author      = "WinBolo",
+  updated     = "2026-10-02T15:08Z",
   game        = "open",
 
   -- The script cuts the map's own starts into arcs of the ring.

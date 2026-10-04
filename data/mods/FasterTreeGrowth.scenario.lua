@@ -48,6 +48,8 @@ scenario = {
   name = "Faster Tree Growth",
   description = "Trees grow back faster: 2x by default, up to 10x, set in the lobby.",
   api = 1,
+  author = "WinBolo",
+  updated = "2026-10-02T17:42Z",
   kind = "mod",
   bound = false,
 

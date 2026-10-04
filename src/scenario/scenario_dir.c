@@ -256,6 +256,8 @@ void scnDirEntryFromManifest(ScnDirEntry *e, const char *file,
     /* The account that published it, for this computer's own listings; the
        wire carries the id alone. */
     e->workshopAuthor = m->workshopAuthor;
+    SDL_strlcpy(e->author, m->author, sizeof(e->author));
+    SDL_strlcpy(e->updated, m->updated, sizeof(e->updated));
 }
 
 /* File-name order. Two scenarios may share a manifest name and two files in

@@ -50,6 +50,7 @@
 #include "scenario_table.h" /* ScnTable — a team's init block below */
 #include "scenario_callbacks.h" /* SCN_CALLBACK_NAME_LEN / _TEXT_LEN */
 #include "scenario_settings.h"  /* ScnSetting / SCN_SETTINGS_MAX */
+#include "scenario_identity.h"  /* SCN_AUTHOR_LEN / SCN_UPDATED_LEN */
 
 /* Tags and regions, at the sizes the scenario table is specified with. A
  * tag names a pill, base or start; a region names a rectangle of map
@@ -420,6 +421,15 @@ typedef struct {
      * or a Lua number is a double, which does not hold every digit of one. */
     uint64_t workshopId;      /* Steam Workshop item this file was published as; 0 = none */
     uint64_t workshopAuthor;  /* SteamID64 of the account that published it; 0 = none */
+
+    /* Who wrote the file and when its content last changed, as the file
+     * states them (scenario_identity.h). Both "" for not stated, which a
+     * lobby shows as unknown. The author is already cleaned: no control
+     * characters, whole UTF-8, trimmed. updated is "" or exactly
+     * "YYYY-MM-DDTHH:MMZ" naming a real minute in UTC; a value in any other
+     * form is read as "" with a validator warning. */
+    char author[SCN_AUTHOR_LEN];
+    char updated[SCN_UPDATED_LEN];
 
     ScnManifestLobby lobby;
 

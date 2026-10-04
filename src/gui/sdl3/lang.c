@@ -2710,6 +2710,8 @@ static const LangEntry langTable[] = {
     {2768, "The server always runs this script. It cannot be removed."},
     {2769, "The server always runs the scenario that is in this round"},
     {2770, "The server sets this list. It cannot be changed."},
+    {2771, "by {string1} · updated {string2}"},
+    {2772, "unknown"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
